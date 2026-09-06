@@ -253,6 +253,15 @@ const nonInteractive = {
   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
 } as const;
 
+const SKILL_LIFECYCLE_OWNING_PATHS = [
+  "src/commands/sandbox/skill.ts",
+  "src/commands/sandbox/skill/",
+  "src/lib/actions/sandbox/skill-install.ts",
+  "src/lib/adapters/openshell/sandbox-command-sdk.ts",
+  "src/lib/agent/skill-integration.ts",
+  "src/lib/skill-install.ts",
+] as const;
+
 // Keep every checked-in input copied by the Pi Dockerfiles in the PR selection boundary.
 // test/e2e/support/pi-agent-qualification-events.test.ts verifies this list against the
 // real Dockerfiles so a new COPY instruction cannot silently reuse a stale image receipt.
@@ -903,7 +912,6 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     testFile: "test/e2e/live/hermes-slack-e2e.test.ts",
     timeoutMinutes: 75,
     installMode: "none",
-    prAdvisorSelectable: true,
     restoreCli: true,
     exposeCliBin: true,
     owningPaths: ["test/e2e/live/hermes-slack-e2e-helpers.ts"],
@@ -1116,25 +1124,15 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   managedRuntimeTarget("openclaw-skill-cli", {
-    displayName: "Skills: OpenClaw installs and inspects workspace skills",
+    displayName: "Skills: OpenClaw owns the public stateless lifecycle",
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
     profile: "nvidia-inference",
-    prAdvisorSelectable: true,
-    timeoutMinutes: 75,
+    timeoutMinutes: 60,
     installMode: "none",
     restoreCli: true,
     exposeCliBin: true,
-    owningPaths: [
-      "scripts/openclaw/patch-skill-remove.mts",
-      "src/commands/sandbox/skill.ts",
-      "src/commands/sandbox/skill/install.ts",
-      "src/commands/sandbox/skill/list.ts",
-      "src/commands/sandbox/skill/remove.ts",
-      "src/lib/skill-install.ts",
-      "src/lib/actions/sandbox/skill-install.ts",
-      "src/lib/skill-remote.ts",
-    ],
+    owningPaths: [...SKILL_LIFECYCLE_OWNING_PATHS, "agents/openclaw/manifest.yaml"],
     environment: {
       ...hostedInference,
       NEMOCLAW_SANDBOX_NAME: "e2e-oc-skill-cli",
@@ -1429,9 +1427,13 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     runnerKey: "security-posture-hermes",
     hostPreparation: "hermes-swap",
     runnerComparison: true,
-    owningPaths: ["test/e2e/live/hermes-skill-lifecycle.ts"],
     shard: "hermes",
     artifactLayout: "flat-shard",
+    owningPaths: [
+      ...SKILL_LIFECYCLE_OWNING_PATHS,
+      "agents/hermes/manifest.yaml",
+      "test/e2e/live/hermes-skill-lifecycle.ts",
+    ],
     environment: {
       ...hostedInference,
       ...nonInteractive,
@@ -1503,7 +1505,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   managedRuntimeTarget("skill-agent", {
-    displayName: "Skills: OpenClaw installs and reads a native workspace skill",
+    displayName: "Skills: OpenClaw reads an injected sandbox skill",
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
     profile: "nvidia-inference",

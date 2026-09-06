@@ -568,18 +568,6 @@ describe("managed startup image runtime", () => {
     expect(runtimeWrites[0]).toContain("export NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS='3'");
     expect(runtimeWrites[1]).toContain("export NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS='5'");
     expect(coordinatorMock.coordinateManagedStartupApplication).toHaveBeenCalledTimes(2);
-    expect(
-      childProcessMock.spawnSync.mock.calls.filter(
-        ([executable, argv]) =>
-          executable === "/usr/local/bin/node" &&
-          Array.isArray(argv) &&
-          argv.some(
-            (argument) =>
-              typeof argument === "string" &&
-              argument.endsWith("scripts/openclaw/patch-skill-remove.mts"),
-          ),
-      ),
-    ).toHaveLength(2);
   });
 
   it("publishes bootstrap completion only after application and preserves attempt identity", async () => {

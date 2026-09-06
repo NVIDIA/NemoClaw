@@ -531,7 +531,6 @@ export interface RebuildRecreateJournal {
   readonly id: string;
   readonly acceptedTarget: boolean;
   readonly sourceConfirmedAbsent: boolean;
-  readonly sourceLiveIdentityFingerprint: string | null;
   readonly gatewayAuthority: CheckpointGatewayAuthority;
   readonly targetGeneration: string;
   readonly targetIntentFingerprint: string;
@@ -714,7 +713,6 @@ export function openRebuildRecreateJournal(
     id: transaction.id,
     acceptedTarget,
     sourceConfirmedAbsent: recovery.action === "continue_create",
-    sourceLiveIdentityFingerprint: transaction.sourceLiveIdentityFingerprint,
     gatewayAuthority,
     targetGeneration: transaction.targetGeneration,
     targetIntentFingerprint: transaction.targetIntentFingerprint,

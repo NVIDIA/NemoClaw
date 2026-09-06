@@ -87,7 +87,6 @@ function stubRecreateJournal(): RebuildRecreateJournal {
     id: "journal-1",
     acceptedTarget: false,
     sourceConfirmedAbsent: false,
-    sourceLiveIdentityFingerprint: null,
     gatewayAuthority: {
       gatewayName: "nemoclaw",
       gatewayPort: 8080,

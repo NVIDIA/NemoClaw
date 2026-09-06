@@ -5,11 +5,12 @@ import {
   listSandboxSkills,
   printSkillInstallUsage,
 } from "../../../lib/actions/sandbox/skill-install";
-import { NemoClawPassthroughCommand } from "../../../lib/cli/nemoclaw-passthrough-command";
+import { NemoClawSkillCommand } from "../../../lib/cli/nemoclaw-skill-command";
 
-export default class SkillListCliCommand extends NemoClawPassthroughCommand {
+export default class SkillListCliCommand extends NemoClawSkillCommand {
   static id = "sandbox:skill:list";
   static customHelp = true;
+  static strict = false;
   static summary = "List skills from the agent's native state";
   static description =
     "Pass through to the selected sandbox agent's native skill list command. Supported output and filter flags are forwarded; lifecycle-bound agent overrides are refused.";
@@ -20,7 +21,8 @@ export default class SkillListCliCommand extends NemoClawPassthroughCommand {
     "<%= config.bin %> sandbox skill list alpha --eligible --verbose",
   ];
   public async run(): Promise<void> {
-    const { extraArgs, sandboxName } = this.passthroughArgs();
+    this.parsed = true;
+    const [sandboxName, ...extraArgs] = this.argv;
     if (
       !sandboxName ||
       sandboxName.trim() === "" ||

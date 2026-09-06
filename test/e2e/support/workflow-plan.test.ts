@@ -673,17 +673,18 @@ describe("E2E workflow plan", () => {
   });
 
   it.each([
-    "scripts/openclaw/patch-skill-remove.mts",
-    "src/commands/sandbox/skill.ts",
-    "src/commands/sandbox/skill/install.ts",
     "src/commands/sandbox/skill/list.ts",
-    "src/commands/sandbox/skill/remove.ts",
     "src/lib/skill-install.ts",
     "src/lib/actions/sandbox/skill-install.ts",
-    "src/lib/skill-remote.ts",
-  ])("selects the OpenClaw skill lifecycle target when %s changes", (changedFile) => {
-    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
-      "openclaw-skill-cli",
+    "src/lib/adapters/openshell/sandbox-command-sdk.ts",
+    "src/lib/agent/skill-integration.ts",
+  ])("selects every agent skill lifecycle when %s changes", (changedFile) => {
+    const plan = buildE2eWorkflowPlan({}, { changedFiles: [changedFile] });
+    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toEqual(
+      expect.arrayContaining(["openclaw-skill-cli", "security-posture-hermes"]),
+    );
+    expect(plan.matrix.map((target) => target.id)).toContain(
+      "ubuntu-repo-cloud-langchain-deepagents-code",
     );
   });
 

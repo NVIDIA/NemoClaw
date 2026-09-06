@@ -2,18 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { installSandboxSkill } from "../../lib/actions/sandbox/skill-install";
-import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
+import { NemoClawSkillCommand } from "../../lib/cli/nemoclaw-skill-command";
 
-export default class SkillCliCommand extends NemoClawCommand {
+export default class SkillCliCommand extends NemoClawSkillCommand {
   static id = "sandbox:skill";
   static strict = false;
   static summary = "Show skill command usage";
   static description = "Show skill install/remove/list usage or report unknown skill subcommands.";
-  static usage = ["<name> install <path>", "<name> remove <skill>", "<name> list"];
+  static usage = ["install <name> <path>", "remove <name> <skill>", "list <name>"];
   static examples = [
-    "<%= config.bin %> sandbox skill alpha install ./my-skill",
-    "<%= config.bin %> sandbox skill alpha remove my-skill",
-    "<%= config.bin %> sandbox skill alpha list --json",
+    "<%= config.bin %> sandbox skill install alpha ./my-skill",
+    "<%= config.bin %> sandbox skill remove alpha my-skill",
+    "<%= config.bin %> sandbox skill list alpha --json",
   ];
 
   public async run(): Promise<void> {

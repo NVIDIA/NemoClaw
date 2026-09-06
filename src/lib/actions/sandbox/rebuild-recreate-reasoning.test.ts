@@ -90,7 +90,6 @@ const recreateJournal: RebuildRecreateJournal = {
   id: "11111111-1111-4111-8111-111111111111",
   acceptedTarget: false,
   sourceConfirmedAbsent: true,
-  sourceLiveIdentityFingerprint: null,
   gatewayAuthority: GATEWAY_AUTHORITY,
   targetGeneration: "22222222-2222-4222-8222-222222222222",
   targetIntentFingerprint: "rebuild-reasoning-target",

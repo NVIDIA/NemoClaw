@@ -134,8 +134,6 @@ openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/agent/memories/" /sandbox/.deep
 openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/agent-skills/" /sandbox/.deepagents/agent/skills/
 ```
 
-Do not restore the retired pre-cutover `/sandbox/.deepagents/skills/` upload directory. Deep Agents Code never loaded it; the corresponding agent-owned copy is `/sandbox/.deepagents/agent/skills/`.
-
 Do not upload saved `.deepagents/.state` contents during manual restore.
 Restore safe Deep Agents files only, then run the managed rebuild or onboarding flow so NemoClaw regenerates route metadata, managed MCP projection state, and credential handling from host-side state.
 

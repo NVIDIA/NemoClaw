@@ -31,8 +31,6 @@ set -euo pipefail
 SANDBOX_NAME="${SANDBOX_NAME:-${NEMOCLAW_SANDBOX_NAME:-e2e-cloud-onboard}}"
 PREFIX="07-deepagents-code-headless-inference"
 HEADLESS_TIMEOUT="${DEEPAGENTS_HEADLESS_TIMEOUT:-120}"
-POST_REMOVE_LIST_REMOTE_TIMEOUT=20
-POST_REMOVE_LIST_HOST_TIMEOUT=25
 
 ok() { printf '%s\n' "${PREFIX}: OK ($*)"; }
 info() { printf '%s\n' "${PREFIX}: $*"; }
@@ -75,13 +73,6 @@ sandbox_direct_rlimit_exec() {
 
 sandbox_direct_dcode() {
   openshell sandbox exec --name "$SANDBOX_NAME" --timeout "$HEADLESS_TIMEOUT" -- dcode "$@" 2>&1
-}
-
-sandbox_bounded_dcode_list() {
-  timeout --signal=TERM --kill-after=5s "${POST_REMOVE_LIST_HOST_TIMEOUT}s" \
-    openshell sandbox exec --name "$SANDBOX_NAME" \
-    --timeout "$POST_REMOVE_LIST_REMOTE_TIMEOUT" -- \
-    dcode skills list --agent agent --json 2>&1
 }
 
 sandbox_dcode_wrapper_contract() {
@@ -608,8 +599,8 @@ main() {
     fail_test "login-shell proxy did not receive HTTP 200 from https://inference.local/v1/models (HTTP ${route_code:-000})"
   fi
 
-  # Bind the public NemoClaw caller to DCode's patched public lifecycle and
-  # agent-owned state before using a fresh inference session as the consumer.
+  # Exercise the stateless public boundary, then let native DCode list/session
+  # behavior remain authoritative for discovery and activation.
   skill_name="nemoclaw-native-lifecycle"
   skill_marker_v1="DCODE_NATIVE_SKILL_V1"
   skill_marker_v2="DCODE_NATIVE_SKILL_V2"
@@ -624,13 +615,13 @@ main() {
     "When asked for the native lifecycle canary, reply with exactly ${skill_marker_v1} and nothing else." \
     >"${skill_root}/SKILL.md"
   if skill_install_output="$("$cli_bin" "$SANDBOX_NAME" skill install "$skill_root" 2>&1)"; then
-    pass "public NemoClaw skill install delegated to DCode native state"
+    pass "public NemoClaw skill install placed the DCode canonical-root copy"
   else
     fail_test "public NemoClaw skill install did not complete through DCode"
   fi
   skill_list_output="$("$cli_bin" "$SANDBOX_NAME" skill list --json 2>&1 || true)"
   if printf '%s\n' "$skill_list_output" | grep -Eq "\"name\"[[:space:]]*:[[:space:]]*\"${skill_name}\""; then
-    pass "public NemoClaw skill list reports DCode native state"
+    pass "public NemoClaw skill list streamed DCode's native view"
   else
     fail_test "public NemoClaw skill list did not report the imported DCode skill"
   fi
@@ -642,9 +633,9 @@ main() {
   first_skill_headless_output="${first_skill_output}
 DCODE_EXIT:${first_skill_exit}"
   if first_skill_classification="$(classify_headless_output "$first_skill_exit" "$first_skill_headless_output" "$skill_marker_v1")"; then
-    pass "fresh direct-exec dcode session consumed the first native skill import (${first_skill_classification}; exit ${first_skill_exit})"
+    pass "fresh direct-exec dcode session consumed the first skill (${first_skill_classification}; exit ${first_skill_exit})"
   else
-    fail_test "fresh direct-exec dcode session did not consume the first native skill import (${first_skill_classification}, exit ${first_skill_exit})"
+    fail_test "fresh direct-exec dcode session did not consume the first skill (${first_skill_classification}, exit ${first_skill_exit})"
   fi
   printf '%s\n' \
     '---' \
@@ -661,9 +652,9 @@ DCODE_EXIT:${first_skill_exit}"
   if [ "$skill_update_status" -eq 0 ] \
     && grep -Fxq "When asked for the native lifecycle canary, reply with exactly ${skill_marker_v2} and nothing else." <<<"$skill_file_output" \
     && ! grep -Fq "$skill_marker_v1" <<<"$skill_file_output"; then
-    pass "public NemoClaw skill update replaced the active DCode native target"
+    pass "public NemoClaw skill update replaced only the DCode canonical-root target"
   else
-    fail_test "public NemoClaw skill update did not replace the active DCode native target"
+    fail_test "public NemoClaw skill update did not replace the DCode canonical-root target"
   fi
 
   # 5. The same login-shell path runs dcode and returns a JSON PONG envelope.
@@ -684,22 +675,22 @@ DCODE_EXIT:${first_skill_exit}"
   direct_headless_output="${direct_output}
 DCODE_EXIT:${direct_exit}"
   if direct_classification="$(classify_headless_output "$direct_exit" "$direct_headless_output" "$skill_marker_v2")"; then
-    pass "fresh direct-exec dcode session consumed only the updated native skill (${direct_classification}; exit ${direct_exit})"
+    pass "fresh direct-exec dcode session consumed only the updated skill (${direct_classification}; exit ${direct_exit})"
   else
-    fail_test "fresh direct-exec dcode session did not consume only the updated native skill (${direct_classification}, exit ${direct_exit})"
+    fail_test "fresh direct-exec dcode session did not consume only the updated skill (${direct_classification}, exit ${direct_exit})"
   fi
   skill_remove_output="$("$cli_bin" "$SANDBOX_NAME" skill remove "$skill_name" 2>&1)" \
     && skill_remove_status=0 || skill_remove_status=$?
   skill_post_remove_list=""
-  info "checking bounded DCode native state after skill removal"
-  skill_post_remove_list="$(sandbox_bounded_dcode_list)" \
+  info "checking DCode's native list through the public boundary after removal"
+  skill_post_remove_list="$("$cli_bin" "$SANDBOX_NAME" skill list --json 2>&1)" \
     && skill_post_remove_list_status=0 || skill_post_remove_list_status=$?
   if [ "$skill_remove_status" -eq 0 ] \
     && [ "$skill_post_remove_list_status" -eq 0 ] \
     && ! grep -Eq "\"name\"[[:space:]]*:[[:space:]]*\"${skill_name}\"" <<<"$skill_post_remove_list"; then
-    pass "public NemoClaw skill remove cleared DCode native state"
+    pass "DCode's native remove and list no longer report the canonical-root skill"
   else
-    fail_test "public NemoClaw skill remove did not clear DCode native state"
+    fail_test "DCode's native remove/list lifecycle still reported the canonical-root skill"
   fi
   if removed_skill_output="$(sandbox_direct_dcode -n "The native lifecycle canary skill was removed. Reply exactly PONG without inventing its value." --json)"; then
     removed_skill_exit=0

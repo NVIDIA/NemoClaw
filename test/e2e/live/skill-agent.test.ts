@@ -23,8 +23,9 @@ import {
   VERIFY_PHRASE,
 } from "../support/skill-agent-classifiers.ts";
 
-// Keep this as a direct live test: the contract is native skill installation
-// into a real OpenClaw sandbox plus an agent turn that must read it.
+// Keep this as a direct live test: the contract is skill fixture
+// injection into a real OpenClaw sandbox plus an agent turn that must read
+// hands off to this live target.
 
 const ADD_SKILL_SCRIPT = path.join(
   REPO_ROOT,
@@ -62,15 +63,13 @@ function sleep(ms: number): Promise<void> {
 function buildVerifySkillFixtureScript(): string {
   // Keep this readable as discrete clauses while emitting one atomic `sh -lc`
   // expression with consistent error propagation.
-  const skillPaths = [
-    `/sandbox/.openclaw/workspace/skills/${SKILL_ID}/SKILL.md`,
-  ];
+  const skillPath = `/sandbox/.openclaw/workspace/skills/${SKILL_ID}/SKILL.md`;
   return [
     `token=${shellQuote(VERIFY_PHRASE)}`,
-    `skill=${shellQuote(SKILL_ID)}`,
-    "found=0",
-    `for path in ${skillPaths.map(shellQuote).join(" ")}; do if [ -f "$path" ] && grep -Fq "$token" "$path"; then echo "SKILL_TOKEN_PATH=$path"; found=1; fi; done`,
-    'test "$found" = 1',
+    `path=${shellQuote(skillPath)}`,
+    'test -f "$path"',
+    'grep -Fq "$token" "$path"',
+    'echo "SKILL_TOKEN_PATH=$path"',
   ].join("; ");
 }
 
@@ -100,14 +99,14 @@ async function ignoreCleanupError(run: () => Promise<unknown>): Promise<void> {
 }
 
 test(
-  "skill-agent: natively installed sandbox skill is read by a real OpenClaw agent turn",
+  "skill-agent: injected sandbox skill is read by a real OpenClaw agent turn",
   {
     timeout: testTimeout(30 * 60_000),
     meta: {
       e2ePhases: [
         "confirm the selected runtime and skill tooling",
         "onboard the OpenClaw skill sandbox",
-        "install and confirm the skill fixture",
+        "inject and confirm the skill fixture",
         "ask the agent to consume the skill",
         "record the verified skill behavior",
       ],
@@ -118,6 +117,9 @@ test(
       fs.existsSync(CLI_ENTRYPOINT),
       "run `npm run build:cli` before live repo CLI targets",
     ).toBe(true);
+    expect(fs.existsSync(ADD_SKILL_SCRIPT), `missing skill add helper: ${ADD_SKILL_SCRIPT}`).toBe(
+      true,
+    );
     expect(
       fs.existsSync(VERIFY_SKILL_SCRIPT),
       `missing skill verify helper: ${VERIFY_SKILL_SCRIPT}`,
@@ -138,7 +140,7 @@ test(
         "the selected runtime is available before onboarding",
         "NVIDIA_INFERENCE_API_KEY is staged as the compatible endpoint credential",
         "nemoclaw onboard creates/recreates a real OpenClaw sandbox",
-        "nemoclaw skill install publishes skill-smoke-fixture through the native OpenClaw path",
+        "skill-smoke-fixture is installed through OpenClaw's native add command",
         "openclaw agent reads SKILL.md and returns SKILL_SMOKE_VERIFY_K9X2",
         "provider/tool-call transport flakes only skip after the skill fixture is proven present",
       ],
@@ -290,20 +292,22 @@ test(
     expect(onboard.exitCode, onboardText).toBe(0);
     sandboxProvisioned = true;
 
-    progress.phase("install and confirm the skill fixture");
+    progress.phase("inject and confirm the skill fixture");
     const addSkill = await host.command("bash", [ADD_SKILL_SCRIPT], {
       artifactName: "add-sandbox-skill-fixture",
       cwd: REPO_ROOT,
       env: {
         ...buildAvailabilityProbeEnv(),
-        NEMOCLAW_CLI_BIN: CLI_ENTRYPOINT,
         SANDBOX_NAME,
         SKILL_ID,
-        SKILL_DESCRIPTION: "E2E native install and agent-consumption proof",
+        SKILL_DESCRIPTION: "E2E smoke skill injected for agent verification",
       },
       timeoutMs: 120_000,
     });
     expect(addSkill.exitCode, resultText(addSkill)).toBe(0);
+    expect(addSkill.stdout).toContain(
+      `QUERY_PATH=/sandbox/.openclaw/workspace/skills/${SKILL_ID}/SKILL.md`,
+    );
     expect(await verifySkillFixturePresent(sandbox, SANDBOX_NAME)).toBe(true);
 
     let lastAgentOutput = "";
@@ -370,7 +374,7 @@ test(
       assertions: {
         runtimeProviderAvailable: true,
         onboardCompleted: onboard.exitCode === 0,
-        skillInstalledNatively: addSkill.exitCode === 0,
+        skillInjected: addSkill.exitCode === 0,
         agentReturnedVerificationToken: agentOk,
       },
     });

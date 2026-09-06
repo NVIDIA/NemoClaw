@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { build, transform } from "esbuild";
+import { build } from "esbuild";
 
 const packageRoot = import.meta.dirname;
 const repoRoot = path.resolve(packageRoot, "../..");
@@ -20,32 +20,6 @@ const outputRoot = checkOnly
   ? fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-runtime-"))
   : reviewedRoot;
 const mcpOutput = path.join(outputRoot, "mcp-tool-discovery");
-const openClawSkillPatchSource = fs.readFileSync(
-  path.join(repoRoot, "scripts", "openclaw", "patch-skill-remove.mts"),
-  "utf8",
-);
-const openClawSkillPatchRuntime = await transform(openClawSkillPatchSource, {
-  format: "esm",
-  loader: "ts",
-  target: "node22",
-});
-const nativeSkillPatchDefines = {
-  __NEMOCLAW_DCODE_NATIVE_SKILL_PATCH_PY__: JSON.stringify(
-    fs.readFileSync(
-      path.join(repoRoot, "agents", "langchain-deepagents-code", "patch-native-skill-import.py"),
-      "utf8",
-    ),
-  ),
-  __NEMOCLAW_HERMES_NATIVE_SKILL_PATCH_PY__: JSON.stringify(
-    fs.readFileSync(
-      path.join(repoRoot, "agents", "hermes", "patch-native-skill-import.py"),
-      "utf8",
-    ),
-  ),
-  __NEMOCLAW_OPENCLAW_NATIVE_SKILL_PATCH_JS__: JSON.stringify(
-    `${openClawSkillPatchRuntime.code}\nprocess.exitCode = main([process.execPath, "managed-startup-openclaw-skill-patch", process.argv[1] ?? ""]);\n`,
-  ),
-};
 
 if (!checkOnly) fs.rmSync(reviewedRoot, { force: true, recursive: true });
 process.env.NEMOCLAW_MCP_BUNDLE_OUTPUT_DIR = mcpOutput;
@@ -63,7 +37,6 @@ try {
     format: "cjs",
     legalComments: "eof",
     minifyWhitespace: true,
-    define: nativeSkillPatchDefines,
     outfile: path.join(outputRoot, "managed-startup-image-runtime.bundle"),
   });
   for (const relativePath of [

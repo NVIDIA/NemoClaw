@@ -9,8 +9,6 @@ import {
   createOpenshellSandboxIdReader,
   fingerprintOpenShellSandboxId,
   fingerprintOpenShellSandboxLiveIdentity,
-  fingerprintOpenShellSandboxSshConfigTarget,
-  fingerprintOpenShellSandboxSshTarget,
   isOpenShellSandboxId,
   NEMOCLAW_CREATE_ATTEMPT_LABEL,
   NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH,
@@ -90,27 +88,6 @@ describe("OpenShell sandbox identity parsing", () => {
     expect(isOpenShellSandboxId("sandbox.alpha_2")).toBe(true);
     expect(isOpenShellSandboxId("sandbox/alpha")).toBe(false);
     expect(isOpenShellSandboxId("a".repeat(513))).toBe(false);
-  });
-
-  it("binds the pinned OpenShell v0.0.106 SSH config target without its token", () => {
-    const expected = fingerprintOpenShellSandboxSshTarget("nemoclaw", "alpha", "default");
-    expect(
-      fingerprintOpenShellSandboxSshConfigTarget(
-        "Host openshell-alpha.default\n  ProxyCommand /usr/local/bin/openshell ssh-proxy --gateway-name nemoclaw --name alpha --workspace default\n",
-      ),
-    ).toBe(expected);
-    expect(
-      fingerprintOpenShellSandboxSshConfigTarget(
-        'Host openshell-alpha.default\n  ProxyCommand openshell ssh-proxy --gateway-name="nemoclaw" --name=\'alpha\' --workspace="default"\n',
-      ),
-    ).toBe(expected);
-    expect(fingerprintOpenShellSandboxSshConfigTarget("Host sandbox\n")).toBeNull();
-    expect(
-      fingerprintOpenShellSandboxSshConfigTarget(
-        "ProxyCommand p --gateway-name nemoclaw --name first --workspace default\nProxyCommand p --gateway-name nemoclaw --name second --workspace default\n",
-      ),
-    ).toBeNull();
-    expect(fingerprintOpenShellSandboxSshTarget("nemoclaw", "alpha", "bad/workspace")).toBeNull();
   });
 });
 

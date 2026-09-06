@@ -116,6 +116,16 @@ const REGISTRY_OWNING_PATHS = [
   "test/e2e/live/registry-targets.test.ts",
   "test/e2e/registry/",
 ] as const;
+const DCODE_SKILL_OWNING_PATHS = [
+  "agents/langchain-deepagents-code/manifest.yaml",
+  "src/commands/sandbox/skill.ts",
+  "src/commands/sandbox/skill/",
+  "src/lib/actions/sandbox/skill-install.ts",
+  "src/lib/adapters/openshell/sandbox-command-sdk.ts",
+  "src/lib/agent/skill-integration.ts",
+  "src/lib/skill-install.ts",
+  "test/e2e/e2e-cloud-experimental/checks/07-deepagents-code-headless-inference.sh",
+] as const;
 const FULL_SUITE_OWNING_PATHS = [
   ".github/actions/docker-auth-setup/",
   ".github/actions/prepare-e2e/",
@@ -466,10 +476,15 @@ function registryTargetsForChangedFiles(
   changedFiles: readonly string[],
   gatewayRuntimes: readonly E2eGatewayRuntime[],
 ): LiveTargetMatrixEntry[] {
+  if (
+    changedFiles.some((file) => REGISTRY_OWNING_PATHS.some((owner) => pathMatches(file, owner)))
+  ) {
+    return buildLiveTargetMatrix([], gatewayRuntimes);
+  }
   return changedFiles.some((file) =>
-    REGISTRY_OWNING_PATHS.some((owner) => pathMatches(file, owner)),
+    DCODE_SKILL_OWNING_PATHS.some((owner) => pathMatches(file, owner)),
   )
-    ? buildLiveTargetMatrix([], gatewayRuntimes)
+    ? buildLiveTargetMatrix(["ubuntu-repo-cloud-langchain-deepagents-code"], gatewayRuntimes)
     : [];
 }
 

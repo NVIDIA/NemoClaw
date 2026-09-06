@@ -192,9 +192,6 @@ describe("managed startup shared-state transaction", () => {
         hermes: () => fs.writeFileSync(path.join(root, ".config-hash"), "new\n"),
         "langchain-deepagents-code": () => {
           fs.mkdirSync(path.join(root, ".state"));
-          // The retired top-level skills path is deliberately outside this
-          // transaction's authority and must survive rollback unchanged.
-          fs.mkdirSync(path.join(root, "skills"));
         },
         pi: () => {
           fs.mkdirSync(path.join(root, "agent"));
@@ -221,17 +218,6 @@ describe("managed startup shared-state transaction", () => {
       expect(
         absentManagedPaths[agent].every((relativePath) =>
           Object.is(fs.existsSync(path.join(root, relativePath)), false),
-        ),
-      ).toBe(true);
-      const preservedUnmanagedPaths: Record<ManagedStartupAgent, readonly string[]> = {
-        openclaw: [],
-        hermes: [],
-        "langchain-deepagents-code": ["skills"],
-        pi: [],
-      };
-      expect(
-        preservedUnmanagedPaths[agent].every((relativePath) =>
-          fs.existsSync(path.join(root, relativePath)),
         ),
       ).toBe(true);
       expect(fs.existsSync(transactionDirectory)).toBe(false);

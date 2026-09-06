@@ -197,7 +197,7 @@ describe("LangChain Deep Agents Code headless runtime contracts", () => {
     expect(classify("1", "No module named deepagents_code\nDCODE_EXIT:1")).toBe(
       "fail:wrapper-missing",
     );
-    expect(classify("0", `${envelope()}\nDCODE_EXIT:0`)).toBe("pass:json-response");
+    expect(classify("0", `${envelope()}\nDCODE_EXIT:0`)).toBe("pass:json-pong");
     expect(classify("0", `dcode version 0.1.12\n${envelope()}\nDCODE_EXIT:0`)).toBe(
       "fail:invalid-json-envelope",
     );

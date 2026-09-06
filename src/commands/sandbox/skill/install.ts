@@ -3,14 +3,14 @@
 
 import { Args } from "@oclif/core";
 import { installSandboxSkill } from "../../../lib/actions/sandbox/skill-install";
-import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
+import { NemoClawSkillCommand } from "../../../lib/cli/nemoclaw-skill-command";
 
-export default class SkillInstallCliCommand extends NemoClawCommand {
+export default class SkillInstallCliCommand extends NemoClawSkillCommand {
   static id = "sandbox:skill:install";
   static strict = true;
-  static summary = "Deploy a skill directory to the sandbox";
+  static summary = "Add a local skill to the selected sandbox agent";
   static description =
-    "Validate and securely stage a local SKILL.md directory for the running sandbox agent's native import command.";
+    "Validate and privately stage a local SKILL.md tree, then use the selected agent's native add command or canonical writable-root fallback.";
   static usage = ["<name> <path>"];
   static examples = [
     "<%= config.bin %> sandbox skill install alpha ./my-skill",

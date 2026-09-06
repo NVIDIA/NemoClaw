@@ -180,11 +180,6 @@ describe("CLI layer import boundaries (#6245)", () => {
       source:
         'import { NemoClawCommand as Base } from "../lib/cli/nemoclaw-oclif-command";\nexport default class Example extends Base {}\n',
     },
-    {
-      name: "the NemoClaw passthrough command base",
-      source:
-        'import { NemoClawPassthroughCommand as Base } from "../lib/cli/nemoclaw-passthrough-command";\nexport default class Example extends Base {}\n',
-    },
   ])("recognizes $name by its import binding (#6245)", ({ source }) => {
     const violations = scanFixture(fixturePath("src/commands", "command-binding"), source);
 

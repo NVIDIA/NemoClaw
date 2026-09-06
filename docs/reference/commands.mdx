@@ -76,7 +76,7 @@ The `/nemoclaw` slash command is available inside the OpenClaw chat interface fo
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-Hermes does not use the OpenClaw chat slash command. Use the host-side `nemohermes` commands for lifecycle, status, policy, and inference operations. The in-sandbox Hermes integration installs the NemoClaw Hermes plugin, which exposes tools for status, environment information, and skill reload support, plus an `on_session_start` hook.
+Hermes does not use the OpenClaw chat slash command. Use the host-side `nemohermes` commands for lifecycle, status, policy, and inference operations. The in-sandbox Hermes integration installs the NemoClaw Hermes plugin, which exposes tools for status and environment information, plus an `on_session_start` hook.
 
 </AgentOnly>
 <AgentOnly variant="deepagents">
@@ -2361,7 +2361,7 @@ $$nemoclaw my-assistant mcp remove github [--force]
 
 ### `$$nemoclaw <name> skill install <path>`
 
-Deploy a skill directory to a running sandbox. The command validates the `SKILL.md` frontmatter, which requires a `name` field, creates a bounded secure snapshot, and stages that snapshot privately for the selected agent's native lifecycle command. NemoClaw does not publish into an agent skill directory itself.
+Add a local skill directory to a running sandbox. NemoClaw validates and privately stages the local regular-file tree, then invokes the selected agent's native add command when one exists. If the pinned agent has no native local-add command, NemoClaw places only that staged tree in the agent's manifest-declared canonical writable user-skill root.
 
 ```bash
 $$nemoclaw my-assistant skill install ./my-skill/
@@ -2371,89 +2371,52 @@ The skill directory must contain a `SKILL.md` file with YAML frontmatter that in
 
 <AgentOnly variant="openclaw">
 
-OpenClaw plugins are a different kind of extension. To install an OpenClaw plugin, refer to [Install OpenClaw Plugins](../manage-sandboxes/install-openclaw-plugins). For a skill, NemoClaw creates an exact host snapshot and transfers it into a private staging directory. It then invokes the pinned native OpenClaw installer in intentional replacement mode for agent `main`. The native installer resolves the active workspace target, replaces a same-name workspace or ClawHub skill through its staged backup and rollback flow, writes its source metadata, and determines precedence and activation. NemoClaw verifies the installed digest plus native `skills list`, `skills info`, and `skills check` results before reporting success. The returned native target must be a canonical `workspace/skills/<name>` or `workspace-*/skills/<name>` path inside `/sandbox/.openclaw`.
-
-The native `main` agent workspace is authoritative. Current configurations normally resolve it to `/sandbox/.openclaw/workspace`; existing configurations that resolve it to a canonical named workspace such as `/sandbox/.openclaw/workspace-main` remain supported. Fresh installs, exact-content retries, and changed-content updates all use that same native replacement path; NemoClaw does not select the workspace, decide whether an existing skill is owned, or keep a parallel list of installed skills. Rebuild and destroy likewise have no NemoClaw skill receipt or inventory to transfer or clean up. Start a new OpenClaw session to load the installed skill; the command does not edit `sessions.json`.
+OpenClaw plugins are a different kind of extension. To install an OpenClaw plugin, refer to [Install OpenClaw Plugins](../manage-sandboxes/install-openclaw-plugins). Skill installation delegates to the unmodified `openclaw skills install` command. OpenClaw owns discovery, precedence, and session activation.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-Hermes plugins are different from skills. For a skill, NemoClaw passes the private staged snapshot to the pinned `hermes skills import-local` command. Hermes parses the staged skill, runs its native skill scanner, rejects a project or external same-name skill that would remain active, publishes or replaces profile state with rollback, records the install in its own Skills Hub lock, clears its loader cache, and verifies the active result before returning success. NemoClaw then verifies the published content digest. It does not keep a Hermes skill list or write `/sandbox/.hermes/skills` directly. Start a new Hermes chat session after an install or update; a gateway restart is not required.
-
-A Hermes sandbox image created before the native import capability was added refuses installation with rebuild-and-retry guidance. Rebuilding preserves Hermes' agent-owned skill state; NemoClaw does not fall back to direct publication.
+Hermes plugins are different from agent skills. Because the pinned Hermes CLI has no native local-add verb, NemoClaw places the skill only at `/sandbox/.hermes/skills/<name>`. Hermes owns discovery and session activation; use `skill list` and a new Hermes session to observe the result.
 
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-For Deep Agents Code, NemoClaw passes the private staged snapshot to the pinned `dcode skills import` command for agent `agent`. DCode validates the staged skill, resolves its user skill directory, refuses a project same-name skill that would remain active, and publishes or replaces its own user state with backup and rollback. It then re-runs DCode skill discovery and returns the resolved active path; NemoClaw verifies the content digest at that returned path. NemoClaw does not keep a DCode skill list or write `/sandbox/.deepagents/agent/skills` directly. The managed `dcode` launchers discover newly imported skills on the next session without accepting executable hook configuration. Installation does not enable project hooks or unmanaged MCP files.
-
-A Deep Agents Code sandbox image created before the native import capability was added refuses installation with rebuild-and-retry guidance. Rebuilding preserves DCode's agent-owned skill state; NemoClaw does not fall back to direct publication.
+Because the pinned Deep Agents Code CLI has no native local-add verb, NemoClaw places the skill only at `/sandbox/.deepagents/agent/skills/<name>`. It does not inspect, mirror, or remove same-name project or legacy copies. Deep Agents Code owns discovery, precedence, and session activation; use `skill list` and a new DCode session to observe the result.
 
 </AgentOnly>
 
 Run `$$nemoclaw <name> skill install --help` to print usage for this subcommand. If you pass a plugin-shaped directory to `skill install`, the CLI prints a plugin-specific hint instead of treating it as a missing skill file.
 
-Files with names starting with `.` (dotfiles) are skipped and listed in the output. Files with unsafe path characters are rejected to prevent shell injection. Symlinks and other non-regular paths are rejected rather than followed or copied.
+Before upload, NemoClaw snapshots at most 1,024 files and 64 MiB with no-follow reads. Files with names starting with `.` are skipped and listed. Unsafe paths, symlinks, and special files are rejected. Staging uses a private temporary directory and is removed after the add attempt.
 
-Before creating a private sandbox stage, the command checks for pre-existing `.nemoclaw-skill-stage*` paths left by an interruption or another sandbox process. A path name, owner, and mode cannot prove that NemoClaw created its contents, so the command never removes it automatically. Installation stops and reports the exact retained path for operator inspection and explicit cleanup before retrying.
-
-The native publisher is bounded to 90 seconds inside the 120-second SSH operation. OpenClaw's three native post-publish checks each have a 5-second bound, leaving time for digest verification and private-stage cleanup. A publisher or verifier timeout terminates the affected process and directs you to run `$$nemoclaw <name> skill list` before retrying. This prevents a retry from deleting staging content that an earlier native operation could still be reading.
-
-OpenClaw, Hermes, and Deep Agents Code snapshot installation is limited to 1,024 selected files and 64 MiB of total file content. The command refuses larger inputs before transfer or installation begins.
-
-For OpenClaw, Hermes, and Deep Agents Code, fresh installs and updates always delegate target resolution, publication, and lifecycle metadata to the pinned native agent command, then verify the resulting native state and content digest. Chat history is preserved. Follow the agent-specific activation guidance above after installation. Agents without a native skill lifecycle are rejected before sandbox skill state changes.
+NemoClaw creates no installed-skill inventory, receipt, provenance record, mirror, or ownership ledger. A successful filesystem placement says only that the named canonical-root copy was placed; it does not claim the skill is active.
 
 ### `$$nemoclaw <name> skill list`
 
-List skills from the selected agent's own state.
-
-Native listing has a 30-second sandbox command bound. If that bound expires, the command exits with status 124 and directs you to retry after the sandbox becomes reachable. Other native failures preserve the agent's diagnostics and report the native exit status without suggesting a reachability retry.
-
-<AgentOnly variant="openclaw">
-
-This is a thin pass-through to `openclaw skills list` for the primary `main` agent inside the sandbox. NemoClaw does not merge, cache, or maintain a second skill list. Supported native output and filtering arguments are forwarded. A bare `--` separator and agent overrides are refused because the lifecycle commands are bound to the sandbox's primary agent state.
+Invoke the unmodified selected agent's native list command and stream its stdout, stderr, and exit status. Native flags can be appended. This command is the authoritative view exposed by the selected agent; NemoClaw never reconstructs the result from host or sandbox state.
 
 ```bash
 $$nemoclaw my-assistant skill list
+$$nemoclaw my-assistant skill list --json
 ```
-
-</AgentOnly>
-<AgentOnly variant="hermes">
-
-This is a thin pass-through to `hermes skills list` inside the sandbox. Supported native filtering and output arguments are forwarded, while a bare `--` separator is refused. NemoClaw does not merge, cache, or maintain a second Hermes skill list.
-
-```bash
-nemohermes my-assistant skill list
-```
-
-</AgentOnly>
-<AgentOnly variant="deepagents">
-
-This is a thin pass-through to `dcode skills list` for DCode's primary `agent` state inside the sandbox. Supported native filtering and output arguments are forwarded. A bare `--` separator and agent overrides are refused because the lifecycle commands are bound to that primary state. NemoClaw does not merge, cache, or maintain a second DCode skill list.
-
-```bash
-nemo-deepagents my-assistant skill list
-```
-
-</AgentOnly>
 
 ### `$$nemoclaw <name> skill remove <skill>`
 
-Remove an installed skill from a running sandbox by skill name when the selected agent supports automatic removal. The command validates the skill name before it applies the agent-specific removal behavior below.
+Remove a named skill through the selected agent's unmodified native remove command when one exists. Otherwise, delete only that name from the manifest-declared canonical writable user-skill root. NemoClaw does not search other roots and does not claim that the skill is globally absent afterward; `skill list` and a new agent session remain authoritative.
 
 <AgentOnly variant="openclaw">
 
-This is a pass-through to the pinned `openclaw skills remove <skill> --agent main` capability. The native command reads OpenClaw's resolved skill status and removes only the exact active workspace target or the exact active native global target under `/sandbox/.openclaw/skills`. It clears OpenClaw's own ClawHub tracking and reads native state again. Bundled, managed, project, and other external entries are refused. If removing one entry reveals a same-name fallback from the other native location, the command reports that remaining active entry and exits nonzero; run the same command again to remove that newly resolved entry. This is also the supported cutover path for skills installed by older NemoClaw releases. A sandbox image created before this capability was added fails the non-mutating capability probe with rebuild guidance; rebuilding preserves both skill locations. NemoClaw does not consult or update a host-side skill list or ownership receipt.
+The pinned OpenClaw CLI has no native remove verb. NemoClaw deletes only `/sandbox/.openclaw/workspace/skills/<name>`. A same-name bundled, project, plugin, global, or higher-precedence copy is untouched.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-This is a pass-through to `hermes skills uninstall <skill> --yes`. Hermes resolves the entry from its own Skills Hub lock, removes the corresponding skill path, updates its lock, and invalidates its skill cache. An untracked, builtin, project, or external skill is refused by Hermes instead of being deleted through a host-side path guess. Start a new Hermes chat session for the removal to take effect. A gateway restart is not required.
+The pinned Hermes `skills uninstall` verb applies only to hub-installed skills and is not equivalent for a locally placed tree. NemoClaw therefore deletes only `/sandbox/.hermes/skills/<name>`.
 
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-This is a pass-through to `dcode skills delete <skill> --agent agent --force --json`. DCode resolves the active skill from its own precedence-aware state and applies its native path and symlink checks before deletion. The named removal explicitly authorizes DCode to delete that native entry, including a user skill created by the agent rather than installed through NemoClaw. NemoClaw does not choose a directory, distinguish skill provenance, or keep removal ownership metadata.
+Removal delegates to `dcode skills delete <name> --agent agent --force --json`.
 
 </AgentOnly>
 

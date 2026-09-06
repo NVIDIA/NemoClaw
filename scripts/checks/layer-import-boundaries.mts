@@ -445,14 +445,15 @@ function checkCommandFile(
     }
 
     const moduleSpecifier = statement.moduleSpecifier.text;
-    const resolvedModule = resolveInternalImport(absPath, moduleSpecifier);
     const exportedBases =
       moduleSpecifier === "@oclif/core"
         ? new Set(["Command"])
-        : resolvedModule === "src/lib/cli/nemoclaw-oclif-command.ts"
+        : resolveInternalImport(absPath, moduleSpecifier) ===
+            "src/lib/cli/nemoclaw-oclif-command.ts"
           ? new Set(["NemoClawCommand"])
-          : resolvedModule === "src/lib/cli/nemoclaw-passthrough-command.ts"
-            ? new Set(["NemoClawPassthroughCommand"])
+          : resolveInternalImport(absPath, moduleSpecifier) ===
+              "src/lib/cli/nemoclaw-skill-command.ts"
+            ? new Set(["NemoClawSkillCommand"])
             : null;
     if (!exportedBases) continue;
 

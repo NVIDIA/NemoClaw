@@ -1360,6 +1360,7 @@ describe("Deep Agents Code durable state files", () => {
       const sshLog = path.join(fixture, "ssh-log.jsonl");
       fs.mkdirSync(binDir, { recursive: true });
       fs.mkdirSync(path.join(deepAgentsDir, ".state"), { recursive: true });
+      fs.mkdirSync(path.join(deepAgentsDir, "skills"), { recursive: true });
       fs.mkdirSync(path.join(deepAgentsDir, "agent", "skills", "note-summarizer"), {
         recursive: true,
       });
@@ -1372,6 +1373,7 @@ describe("Deep Agents Code durable state files", () => {
         path.join(deepAgentsDir, ".state", "chatgpt-auth.json"),
         '{"access_token":"should-not-copy","refresh_token":"should-not-copy"}\n',
       );
+      fs.writeFileSync(path.join(deepAgentsDir, "skills", "README.md"), "skill\n");
       // skill-creator writes user skills under ~/.deepagents/agent/skills (#5753)
       fs.writeFileSync(
         path.join(deepAgentsDir, "agent", "skills", "note-summarizer", "SKILL.md"),
@@ -1482,7 +1484,6 @@ process.exit(0);
       const restore = sandboxState.restoreSandboxState("deepagents", backup.manifest!.backupPath);
       expect(restore.success).toBe(true);
       expect(restore.restoredDirs).toEqual(expect.arrayContaining([".state", "agent/skills"]));
-      expect(restore.restoredDirs).not.toContain("skills");
     } finally {
       oldOpenshell === undefined
         ? delete process.env.NEMOCLAW_OPENSHELL_BIN
