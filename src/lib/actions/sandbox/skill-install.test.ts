@@ -181,6 +181,15 @@ describe("stateless sandbox skill orchestration", () => {
     expect(process.exitCode).toBe(7);
   });
 
+  it("rejects Hermes agent-selection overrides before native list execution", async () => {
+    selectAgent("hermes", "/usr/local/bin/hermes", HERMES);
+
+    await listSandboxSkills("alpha", { extraArgs: ["--agent", "other"] });
+
+    expect(process.exitCode).toBe(2);
+    expect(sdkCommandExecutor.runStreaming).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["openclaw", "/usr/local/bin/openclaw", OPENCLAW],
     ["hermes", "/usr/local/bin/hermes", HERMES],
@@ -322,6 +331,25 @@ describe("stateless sandbox skill orchestration", () => {
     expect(error).toHaveBeenCalledWith(
       expect.stringMatching(/^  Private skill staging cleanup failed: \/sandbox\//u),
     );
+  });
+
+  it("attempts cleanup when stage preparation is interrupted after remote creation", async () => {
+    selectAgent("hermes", "/usr/local/bin/hermes", HERMES);
+    sdkCommandExecutor.runStreaming
+      .mockResolvedValueOnce({
+        outcome: { kind: "completed", exitCode: 143, signal: "SIGTERM" },
+        release: vi.fn(),
+      })
+      .mockResolvedValueOnce({
+        outcome: { kind: "completed", exitCode: 0 },
+        release: vi.fn(),
+      });
+
+    await installSandboxSkill("alpha", { command: "install", path: localSkill() });
+
+    expect(process.exitCode).toBe(1);
+    expect(sdkCommandExecutor.runStreaming).toHaveBeenCalledTimes(2);
+    expect(captureOpenshellAsync).not.toHaveBeenCalled();
   });
 
   it("rejects an endpoint override before any sandbox command or upload", async () => {

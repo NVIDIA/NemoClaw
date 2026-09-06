@@ -131,11 +131,10 @@ function resolveSelectedSkillAgent(sandboxName: string) {
   return { agent: resolution.agent, binary, integration };
 }
 
-function rejectsAgentOverride(agentName: string, extraArgs: readonly string[]): boolean {
+function rejectsAgentOverride(extraArgs: readonly string[]): boolean {
   return (
     extraArgs.includes("--") ||
-    (agentName !== "hermes" &&
-      extraArgs.some((argument) => argument === "--agent" || argument.startsWith("--agent=")))
+    extraArgs.some((argument) => argument === "--agent" || argument.startsWith("--agent="))
   );
 }
 
@@ -237,7 +236,7 @@ export async function listSandboxSkills(
   const selected = resolveSelectedSkillAgent(sandboxName);
   if (!selected) return;
   const extraArgs = request.extraArgs ?? [];
-  if (rejectsAgentOverride(selected.agent.name, extraArgs)) {
+  if (rejectsAgentOverride(extraArgs)) {
     console.error("  `skill list` is bound to the sandbox's selected agent.");
     process.exitCode = 2;
     return;
@@ -420,6 +419,7 @@ export async function installSandboxSkill(
     const selected = resolveSelectedSkillAgent(sandboxName);
     if (!selected) return;
     gatewayName = getSandboxTargetGatewayName(sandboxName);
+    stageCreated = true;
     const prepareExit = await runSdkSandboxCommand(sandboxName, gatewayName, [
       "/bin/sh",
       "-c",
@@ -430,8 +430,6 @@ export async function installSandboxSkill(
       process.exitCode = 1;
       return;
     }
-    stageCreated = true;
-
     const upload = await captureOpenshellAsync(
       // OpenShell SDK 0.0.106 has sandbox exec but no upload/sync API. Keep
       // only this bounded transfer on the existing provider-neutral CLI path.
