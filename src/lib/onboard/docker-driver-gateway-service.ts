@@ -38,7 +38,7 @@ export interface OpenShellGatewayUserServiceOptions {
   commandExists?: (command: string) => boolean;
   env?: NodeJS.ProcessEnv;
   existsSync?: (filePath: string) => boolean;
-  /** Test seam for the checksum-verified, temporary formula trust boundary. */
+  /** Runner for the checksum-verified, temporary formula trust boundary. */
   homebrewFormulaOperation?: (args: string[]) => SpawnSyncLikeResult;
   /** Test seam: read the version output of the package-managed gateway binary. */
   getUpstreamGatewayVersion?: (binaryPath: string) => string | null;
@@ -450,15 +450,8 @@ function homebrewFormulaOperationScript(): string {
   return path.resolve(__dirname, "../../../scripts/install-openshell.sh");
 }
 
-function runTrustedHomebrewFormulaOperation(
-  args: string[],
-  opts: Required<Pick<OpenShellGatewayUserServiceOptions, "env" | "spawnSyncImpl">> &
-    Pick<OpenShellGatewayUserServiceOptions, "homebrewFormulaOperation">,
-): CommandResult {
-  if (opts.homebrewFormulaOperation) {
-    return commandResult(opts.homebrewFormulaOperation(args));
-  }
-  return runCommand(
+function homebrewFormulaOperationCommand(args: string[]): [string, string[]] {
+  return [
     "bash",
     [
       homebrewFormulaOperationScript(),
@@ -468,8 +461,41 @@ function runTrustedHomebrewFormulaOperation(
       "brew",
       ...args,
     ],
-    opts,
-  );
+  ];
+}
+
+export function createOpenShellHomebrewFormulaOperation(
+  opts: Pick<OpenShellGatewayUserServiceOptions, "env" | "spawnSyncImpl"> = {},
+): NonNullable<OpenShellGatewayUserServiceOptions["homebrewFormulaOperation"]> {
+  const env = opts.env ?? process.env;
+  const spawnSyncImpl = opts.spawnSyncImpl ?? spawnSync;
+  return (args) => {
+    try {
+      const [command, commandArgs] = homebrewFormulaOperationCommand(args);
+      return spawnSyncImpl(command, commandArgs, {
+        encoding: "utf-8",
+        env,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (error) {
+      return {
+        error: error instanceof Error ? error : new Error(formatError(error)),
+        status: null,
+      };
+    }
+  };
+}
+
+function runTrustedHomebrewFormulaOperation(
+  args: string[],
+  opts: Required<Pick<OpenShellGatewayUserServiceOptions, "env" | "spawnSyncImpl">> &
+    Pick<OpenShellGatewayUserServiceOptions, "homebrewFormulaOperation">,
+): CommandResult {
+  if (opts.homebrewFormulaOperation) {
+    return commandResult(opts.homebrewFormulaOperation(args));
+  }
+  const [command, commandArgs] = homebrewFormulaOperationCommand(args);
+  return runCommand(command, commandArgs, opts);
 }
 
 const HOMEBREW_FORMULA_REPAIR_GUIDANCE =

@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { isDockerDriverGatewayProcessIdentity } from "../onboard/docker-driver-gateway-process-identity";
 import type { GatewayOwner } from "../onboard/gateway-ownership";
 import { resetTraceForTests, TRACE_FILE_ENV } from "../trace";
+import { collectGatewayObservations } from "./gateway";
 
 const subprocess = vi.hoisted(() => ({
   spawnSync: vi.fn(),
@@ -243,7 +244,7 @@ describe("managed gateway port readiness (#7411)", () => {
     ).toBe(false);
   });
 
-  it("recognizes a Homebrew 6 packaged-service listener in readiness (#11111)", async () => {
+  it("recognizes a Homebrew 6 listener without repeated static formula probes (#11111, #11112)", async () => {
     vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
     vi.spyOn(process, "arch", "get").mockReturnValue("arm64");
     const formulaPrefix = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-readiness-homebrew-"));
@@ -323,10 +324,29 @@ describe("managed gateway port readiness (#7411)", () => {
         observeVersionCompatibility: () => "compatible",
       });
 
-      await expect(deps.observeManagedGateway(managedOwner(gatewayPort))).resolves.toMatchObject({
-        reuseState: "healthy",
-        portConflictState: "none",
+      await expect(collectGatewayObservations(deps)).resolves.toMatchObject({
+        observations: {
+          reuseState: "healthy",
+          portConflictState: "none",
+        },
       });
+      const formulaCalls = () =>
+        subprocess.spawnSync.mock.calls
+          .filter(([command]) => command === "bash")
+          .map(([, args]) => {
+            const brewIndex = args.indexOf("brew");
+            return args.slice(brewIndex + 1);
+          });
+      const expectedFormulaCalls = [
+        ["list", "--formula", "openshell"],
+        ["info", "--json=v2", "openshell"],
+        ["services", "info", "openshell", "--json"],
+        ["services", "info", "openshell", "--json"],
+      ];
+      expect(formulaCalls()).toEqual(expectedFormulaCalls);
+
+      await collectGatewayObservations(deps);
+      expect(formulaCalls()).toEqual([...expectedFormulaCalls, ...expectedFormulaCalls]);
     } finally {
       await new Promise<void>((resolve) => listener.close(() => resolve()));
       fs.rmSync(formulaPrefix, { force: true, recursive: true });

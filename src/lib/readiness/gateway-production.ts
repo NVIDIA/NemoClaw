@@ -35,8 +35,10 @@ import {
 } from "../onboard/docker-driver-gateway-process-identity";
 import { resolveDockerDriverGatewayName } from "../onboard/docker-driver-gateway-runtime";
 import {
+  createOpenShellHomebrewFormulaOperation,
   getTrustedActiveOpenShellGatewayUserServiceIdentity,
   hasOpenShellGatewayUserService,
+  OPENSHELL_GATEWAY_HOMEBREW_SERVICE,
 } from "../onboard/docker-driver-gateway-service";
 import { createGatewayHostRuntime } from "../onboard/gateway-host-runtime";
 import { loadGatewayManagementDeclaration } from "../onboard/gateway-management";
@@ -585,6 +587,52 @@ export function createProductionGatewayReadinessDependencies(
   const trustedGatewayBin = resolveTrustedGatewayBinary(openshellBin);
   const trustedVersionBinaryByPid = new Map<number, string>();
   const trustedTargetBoundPids = new Set<number>();
+  const homebrewFormulaOperation = createOpenShellHomebrewFormulaOperation({ env: probeEnv });
+  const cachedHomebrewFormulaOperations = new Map<
+    string,
+    ReturnType<typeof homebrewFormulaOperation>
+  >();
+  // Cache only static formula evidence for this observation. Service status
+  // remains uncached so the two PID samples still detect replacement.
+  const cacheableHomebrewFormulaOperations = new Set([
+    ["list", "--formula", OPENSHELL_GATEWAY_HOMEBREW_SERVICE].join("\0"),
+    ["info", "--json=v2", OPENSHELL_GATEWAY_HOMEBREW_SERVICE].join("\0"),
+    ["--prefix", OPENSHELL_GATEWAY_HOMEBREW_SERVICE].join("\0"),
+  ]);
+  const directHomebrewPrefixOperation = [
+    "--prefix",
+    OPENSHELL_GATEWAY_HOMEBREW_SERVICE,
+  ].join("\0");
+
+  function resetGatewayServiceObservation(): void {
+    cachedHomebrewFormulaOperations.clear();
+  }
+
+  function runObservedHomebrewFormulaOperation(args: string[]) {
+    const key = args.join("\0");
+    const cached = cachedHomebrewFormulaOperations.get(key);
+    if (cached) return cached;
+    let result: ReturnType<typeof homebrewFormulaOperation>;
+    if (key === directHomebrewPrefixOperation) {
+      try {
+        // `brew --prefix` reads installed-keg metadata without loading formula
+        // Ruby. Formula identity and service evaluation stay wrapped.
+        result = spawnSync("brew", args, {
+          encoding: "utf-8",
+          env: probeEnv,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+      } catch (error) {
+        result = { error: error instanceof Error ? error : new Error(String(error)), status: null };
+      }
+    } else {
+      result = homebrewFormulaOperation(args);
+    }
+    if (result.status === 0 && cacheableHomebrewFormulaOperations.has(key)) {
+      cachedHomebrewFormulaOperations.set(key, result);
+    }
+    return result;
+  }
 
   function observeDirectGatewayBinary(pid: number): string | null {
     if ((process.platform !== "linux" && process.platform !== "darwin") || !trustedGatewayBin) {
@@ -655,6 +703,7 @@ export function createProductionGatewayReadinessDependencies(
     if (process.platform !== "linux" && process.platform !== "darwin") return null;
     const serviceBefore = getTrustedActiveOpenShellGatewayUserServiceIdentity({
       env: probeEnv,
+      homebrewFormulaOperation: runObservedHomebrewFormulaOperation,
       suppressUnsupportedVersionWarning: true,
     });
     if (serviceBefore?.pid !== pid || !serviceBefore.executablePath) return null;
@@ -665,6 +714,7 @@ export function createProductionGatewayReadinessDependencies(
         : readDarwinProcessExecutable(pid, probeEnv);
     const serviceAfter = getTrustedActiveOpenShellGatewayUserServiceIdentity({
       env: probeEnv,
+      homebrewFormulaOperation: runObservedHomebrewFormulaOperation,
       suppressUnsupportedVersionWarning: true,
     });
     // Bracket the complete service-identity probe so PID reuse or re-exec
@@ -726,6 +776,7 @@ export function createProductionGatewayReadinessDependencies(
     hasOpenShellGatewayUserService: () =>
       hasOpenShellGatewayUserService({
         env: probeEnv,
+        homebrewFormulaOperation: runObservedHomebrewFormulaOperation,
         suppressUnsupportedVersionWarning: true,
       }),
     loadGatewayManagementDeclaration,
@@ -738,7 +789,7 @@ export function createProductionGatewayReadinessDependencies(
     supervisorProbeEnv: probeEnv,
   });
 
-  async function observeManagedGateway(): Promise<ManagedGatewayObservations> {
+  async function collectManagedGatewayObservations(): Promise<ManagedGatewayObservations> {
     const { endpointBinding, reuseState } = observeReuseState(
       gatewayName,
       gatewayPort,
@@ -839,9 +890,26 @@ export function createProductionGatewayReadinessDependencies(
     };
   }
 
+  async function observeManagedGateway(): Promise<ManagedGatewayObservations> {
+    try {
+      return await collectManagedGatewayObservations();
+    } finally {
+      resetGatewayServiceObservation();
+    }
+  }
+
   return {
-    resolveOwner: options.resolveOwner ?? runtime.getGatewayOwner,
-    probeAttachment: options.probeAttachment ?? runtime.probeGatewayAttachment,
+    resolveOwner: () => {
+      resetGatewayServiceObservation();
+      return (options.resolveOwner ?? runtime.getGatewayOwner)();
+    },
+    probeAttachment: async (owner) => {
+      try {
+        return await (options.probeAttachment ?? runtime.probeGatewayAttachment)(owner);
+      } finally {
+        resetGatewayServiceObservation();
+      }
+    },
     observeManagedGateway,
   };
 }
