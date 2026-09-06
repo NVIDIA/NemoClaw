@@ -115,8 +115,10 @@ describe("uninstall messaging for a preserved-but-orphaned sandbox registry (#65
         run: (command, args) =>
           command === "openshell" && args[0] === "gateway" && args[1] === "list"
             ? ok(JSON.stringify([{ name: "nemoclaw" }]))
-            : command === "openshell"
-              ? notFound()
+            : command === "openshell" && args[0] === "gateway" && args[1] === "remove"
+              ? { status: 1, stdout: "", stderr: "gateway not found" }
+              : command === "openshell"
+                ? notFound()
               : args[0] === "-c"
                 ? ok("/fake/bin/tool\n")
                 : ok(),

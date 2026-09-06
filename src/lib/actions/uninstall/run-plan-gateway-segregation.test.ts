@@ -250,7 +250,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       },
     );
 
-    expect(result.exitCode).toBe(0);
+    expect(result.exitCode).toBe(1);
     const openshellCalls = calls
       .filter(({ command }) => command === "openshell")
       .map(({ args }) => args);
@@ -341,13 +341,59 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       },
     );
 
-    expect(result.exitCode).toBe(0);
+    expect(result.exitCode).toBe(1);
     const openshellCalls = calls
       .filter(({ command }) => command === "openshell")
       .map(({ args }) => args);
     expect(openshellCalls).toContainEqual(["gateway", "remove", "nemoclaw"]);
     expect(openshellCalls.some((args) => args[1] === "destroy")).toBe(false);
-    expect(warnings.join("\n")).toContain("Gateway 'nemoclaw' already removed or unreachable");
+    expect(warnings.join("\n")).toContain(
+      "Could not remove gateway registration 'nemoclaw': openshell gateway remove failed (exit 1).",
+    );
+  });
+
+  it("exits nonzero and preserves cleanup state when gateway registration removal fails (#9859)", () => {
+    const warnings: string[] = [];
+    const logs: string[] = [];
+    const rmSync = vi.fn();
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: false },
+      {
+        commandExists: () => true,
+        env: { HOME: "/tmp/nemoclaw-uninstall-test-gateway-remove" } as NodeJS.ProcessEnv,
+        error: (line: string) => warnings.push(line),
+        existsSync: () => false,
+        hasPortableRuntimeCleanup: () => false,
+        isTty: false,
+        kill: () => true,
+        log: (line) => logs.push(line),
+        rmSync,
+        run: (command: string, args: string[]) =>
+          command === "openshell" && args[0] === "gateway" && args[1] === "remove"
+            ? {
+                status: 1,
+                stdout: "",
+                stderr: "connection refused; OPENAI_API_KEY=must-not-be-logged",
+              }
+            : command === "openshell" && args[0] === "gateway" && args[1] === "list"
+              ? ok(JSON.stringify([{ name: "nemoclaw" }]))
+              : ok(),
+        runDocker: () => ok(),
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(warnings).toContain(
+      "Could not remove gateway registration 'nemoclaw': openshell gateway remove failed (connection refused; exit 1).",
+    );
+    expect(warnings.join("\n")).not.toContain("must-not-be-logged");
+    expect(warnings).not.toContain("Gateway 'nemoclaw' already removed or unreachable");
+    expect(warnings).toContain(
+      "Uninstall completed with errors. Some state may remain on disk; see warnings above.",
+    );
+    expect(rmSync).not.toHaveBeenCalled();
+    expect(logs).not.toContain("[3/6] NemoClaw CLI");
+    expect(logs).not.toContain("Claws retracted. Until next time.");
   });
 
   it("preserves the gateways/ subtree so uninstalling one environment leaves the others", () => {

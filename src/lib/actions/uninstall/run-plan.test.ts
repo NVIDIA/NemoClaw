@@ -1494,4 +1494,5 @@ describe("uninstall run plan", () => {
     expect(killed).toContain(9999887);
     expect(logs).toContain("Stopped host openshell-gateway process 9999887");
   });
+
 });

@@ -905,10 +905,44 @@ function deletePortableOpenShellSandbox(
   return false;
 }
 
-const GATEWAY_ALREADY_ABSENT =
-  /gateway[^\n]*(?:does not exist|not found)|No (?:active )?gateway|No gateway metadata found/i;
 const GATEWAY_REMOVE_UNSUPPORTED =
   /unrecognized subcommand ['"]remove['"]|unknown command ['"]remove['"]/i;
+
+function isExplicitGatewayRegistrationAbsence(output: string, gatewayLabel: string): boolean {
+  const clean = output.replace(/\x1B\[[0-?]*[ -/]*[@-~]/gu, "");
+  const escapedLabel = gatewayLabel.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const namedGateway = `(?:['"]${escapedLabel}['"]|${escapedLabel})`;
+  if (
+    clean.includes(`No gateway metadata found for '${gatewayLabel}'.`) ||
+    clean.includes(`No gateway metadata found for \"${gatewayLabel}\".`) ||
+    clean.includes(`No gateway metadata found for ${gatewayLabel}.`)
+  ) {
+    return true;
+  }
+  return clean.split(/\r?\n/u).some((rawLine) => {
+    const line = rawLine
+      .trim()
+      .replace(/^Error:\s*/iu, "")
+      .replace(/^×\s*/u, "");
+    return (
+      /^gateway not found\.?$/iu.test(line) ||
+      new RegExp(`^No gateway metadata found for ${namedGateway}\\.?$`, "iu").test(line) ||
+      new RegExp(`^gateway\\s+${namedGateway}\\s+(?:does not exist|not found)\\.?$`, "iu").test(line) ||
+      new RegExp(`^status:\\s*NotFound,\\s*message:\\s*['"]gateway\\s+${escapedLabel}\\s+(?:does not exist|not found)['"]\\.?$`, "iu").test(line)
+    );
+  });
+}
+
+function gatewayRegistrationRemovalFailureMessage(
+  gatewayLabel: string,
+  operation: "destroy" | "remove",
+  result: RunResult,
+): string {
+  const output = `${result.stdout}\n${result.stderr}`;
+  const cause = /connection refused/iu.test(output) ? "connection refused; " : "";
+  const status = result.status === null ? "no exit status" : `exit ${String(result.status)}`;
+  return `Could not remove gateway registration '${gatewayLabel}': openshell gateway ${operation} failed (${cause}${status}).`;
+}
 
 function removeGatewayRegistration(
   runtime: UninstallRuntime,
@@ -924,12 +958,15 @@ function removeGatewayRegistration(
   }
 
   const removeOutput = `${removeResult.stdout}\n${removeResult.stderr}`;
-  if (GATEWAY_ALREADY_ABSENT.test(removeOutput)) {
+  if (
+    isExplicitGatewayRegistrationAbsence(removeOutput, gatewayLabel) ||
+    (/No gateway metadata found for/iu.test(removeOutput) && removeOutput.includes(gatewayLabel))
+  ) {
     runtime.warn(gatewayDestroySkipMessage(gatewayLabel));
     return true;
   }
   if (!GATEWAY_REMOVE_UNSUPPORTED.test(removeOutput)) {
-    runtime.warn(gatewayDestroySkipMessage(gatewayLabel));
+    runtime.warn(gatewayRegistrationRemovalFailureMessage(gatewayLabel, "remove", removeResult));
     return false;
   }
   if (!allowLegacyDestroy) {
@@ -950,11 +987,16 @@ function removeGatewayRegistration(
     runtime.log(`Destroyed legacy gateway '${gatewayLabel}'`);
     return true;
   }
-  if (GATEWAY_ALREADY_ABSENT.test(`${destroyResult.stdout}\n${destroyResult.stderr}`)) {
+  if (
+    isExplicitGatewayRegistrationAbsence(
+      `${destroyResult.stdout}\n${destroyResult.stderr}`,
+      gatewayLabel,
+    )
+  ) {
     runtime.warn(gatewayDestroySkipMessage(gatewayLabel));
     return true;
   }
-  runtime.warn(gatewayDestroySkipMessage(gatewayLabel));
+  runtime.warn(gatewayRegistrationRemovalFailureMessage(gatewayLabel, "destroy", destroyResult));
   return false;
 }
 
@@ -1613,8 +1655,7 @@ function removeOpenShellResources(
       { onSkip: providerDeleteSkipMessage(provider) },
     );
   }
-  removeGatewayRegistration(runtime, gatewayLabel, !externallySupervised);
-  return true;
+  return removeGatewayRegistration(runtime, gatewayLabel, !externallySupervised);
 }
 
 function normalizeGatewayProcessExecutable(
