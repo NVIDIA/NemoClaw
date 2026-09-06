@@ -144,6 +144,11 @@ case "\${1:-} \${2:-}" in
     rm -rf -- "$NATIVE_SKILL_TARGET"
     mkdir -p -- "\$(dirname "$NATIVE_SKILL_TARGET")"
     cp -R -- "\$source" "$NATIVE_SKILL_TARGET"
+    if [ "$NATIVE_SKILL_RECEIPT" = 1 ]; then
+      mkdir -p "$NATIVE_SKILL_TARGET/.deepagents"
+      printf '%s\n' '{"version":1,"source":"dcode-native-local-import"}' > "$NATIVE_SKILL_TARGET/.deepagents/source-origin.json"
+      chmod 600 "$NATIVE_SKILL_TARGET/.deepagents/source-origin.json"
+    fi
     printf 'NEMOCLAW_NATIVE_SKILL_IMPORT={"status":"installed","name":"demo-skill","path":"%s","digest":"%s"}\\n' "$NATIVE_SKILL_TARGET" "\$expected"
     ;;
   "skills list") exit 0 ;;
@@ -177,6 +182,7 @@ esac
               NATIVE_SKILL_HANG: hangInstall ? "1" : "0",
               NATIVE_SKILL_LATE_MARKER: lateInstallMarker,
               NATIVE_SKILL_MUTATE: mutatePayload ? "1" : "0",
+              NATIVE_SKILL_RECEIPT: agent === "langchain-deepagents-code" ? "1" : "0",
               NATIVE_SKILL_TARGET: target,
               OPENSHELL_SANDBOX_ID: SANDBOX_ID,
             },

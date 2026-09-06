@@ -12,7 +12,7 @@ export default class SkillListCliCommand extends NemoClawPassthroughCommand {
   static customHelp = true;
   static summary = "List skills from the agent's native state";
   static description =
-    "Pass through to the selected sandbox agent's native skill list command. Native output and filter flags are forwarded verbatim.";
+    "Pass through to the selected sandbox agent's native skill list command. Supported output and filter flags are forwarded; lifecycle-bound agent overrides are refused.";
   static usage = ["<name> [agent-skill-list-flags...]"];
   static examples = [
     "<%= config.bin %> sandbox skill list alpha",

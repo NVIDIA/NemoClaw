@@ -73,6 +73,9 @@ describe("agent-native local skill import patches", () => {
     expect(source.match(/NemoClaw native local skill import \(#10210\)/g)).toHaveLength(3);
     expect(source).toContain('skills_subparsers.add_parser(\n        "import"');
     expect(source).toContain('elif args.skills_command == "import"');
+    expect(source).toContain('skills_subparsers.add_parser(\n        "remove-imported"');
+    expect(source).toContain('elif args.skills_command == "remove-imported"');
+    expect(source).toContain("def _remove_imported(");
     expect(source).toContain('elif args.skills_command == "delete"');
     expect(source).toContain('delete_parser = skills_subparsers.add_parser(\n        "delete"');
     expect(source).toContain('"--expected-digest"');
@@ -82,6 +85,9 @@ describe("agent-native local skill import patches", () => {
     expect(source).toContain("os.replace(abandoned_backup, destination)");
     expect(source).toContain("os.replace(destination, failed_install)");
     expect(source).toContain("quarantined failed install retained at");
+    expect(source).toContain('Path(".deepagents") / "source-origin.json"');
+    expect(source).toContain("Refusing to remove a skill without matching");
+    expect(source).toContain("os.replace(destination, quarantine)");
     expect(source).not.toContain("shutil.rmtree(destination, ignore_errors=True)");
     expect(source).toContain("NEMOCLAW_NATIVE_SKILL_IMPORT=");
     expect(runPython(["-m", "py_compile", target]).status).toBe(0);

@@ -2411,7 +2411,7 @@ Native listing has a 30-second sandbox command bound. If the selected agent's st
 
 <AgentOnly variant="openclaw">
 
-This is a thin pass-through to `openclaw skills list` for the primary `main` agent inside the sandbox. NemoClaw does not merge, cache, or maintain a second skill list. Native output and filtering arguments are forwarded verbatim. An agent override is refused because the lifecycle commands are bound to the sandbox's primary agent state.
+This is a thin pass-through to `openclaw skills list` for the primary `main` agent inside the sandbox. NemoClaw does not merge, cache, or maintain a second skill list. Supported native output and filtering arguments are forwarded. A bare `--` separator and agent overrides are refused because the lifecycle commands are bound to the sandbox's primary agent state.
 
 ```bash
 $$nemoclaw my-assistant skill list
@@ -2420,7 +2420,7 @@ $$nemoclaw my-assistant skill list
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-This is a thin pass-through to `hermes skills list` inside the sandbox. Native filtering and output arguments are forwarded. NemoClaw does not merge, cache, or maintain a second Hermes skill list.
+This is a thin pass-through to `hermes skills list` inside the sandbox. Supported native filtering and output arguments are forwarded, while a bare `--` separator is refused. NemoClaw does not merge, cache, or maintain a second Hermes skill list.
 
 ```bash
 nemohermes my-assistant skill list
@@ -2429,7 +2429,7 @@ nemohermes my-assistant skill list
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-This is a thin pass-through to `dcode skills list` for DCode's primary `agent` state inside the sandbox. Native filtering and output arguments are forwarded. NemoClaw does not merge, cache, or maintain a second DCode skill list. An agent override is refused because the lifecycle commands are bound to that primary state.
+This is a thin pass-through to `dcode skills list` for DCode's primary `agent` state inside the sandbox. Supported native filtering and output arguments are forwarded. A bare `--` separator and agent overrides are refused because the lifecycle commands are bound to that primary state. NemoClaw does not merge, cache, or maintain a second DCode skill list.
 
 ```bash
 nemo-deepagents my-assistant skill list
@@ -2453,7 +2453,7 @@ This is a pass-through to `hermes skills uninstall <skill> --yes`. Hermes resolv
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-This is a pass-through to `dcode skills delete <skill> --agent agent --force --json`. DCode resolves the skill from its own precedence-aware state and applies its native path and symlink checks before deletion. NemoClaw does not choose a directory or keep removal ownership metadata.
+This is a pass-through to `dcode skills remove-imported <skill> --agent agent --json`. DCode resolves the skill from its own precedence-aware state and removes it only when the exact active user skill carries matching DCode-native import provenance. Agent-authored, project, builtin, untracked, and mismatched skills are refused. DCode owns that per-skill lifecycle metadata and its transactional removal quarantine; NemoClaw does not choose a directory or keep removal ownership metadata.
 
 </AgentOnly>
 

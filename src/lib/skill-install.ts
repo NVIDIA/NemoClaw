@@ -276,11 +276,10 @@ const NATIVE_SKILL_LIFECYCLES: Readonly<
       return [
         binary,
         "skills",
-        "delete",
+        "remove-imported",
         skillName,
         "--agent",
         this.fixedAgentTarget!,
-        "--force",
         "--json",
       ];
     },
@@ -917,6 +916,10 @@ function buildNativeLocalSkillInstallScript(
     skillName,
     expectedDigest,
     expectedSandboxIdentityFingerprint,
+    digestExcludedRelativePath:
+      lifecycle.agentName === "langchain-deepagents-code"
+        ? ".deepagents/source-origin.json"
+        : undefined,
     preStageCommands: [
       `help="$(${renderNativeSkillCommand([lifecycle.binary, ...lifecycle.installHelpArgs])} 2>&1)" || { echo CAPABILITY_MISSING; exit 3; }`,
       ...lifecycle.installRequiredFlags.map(
