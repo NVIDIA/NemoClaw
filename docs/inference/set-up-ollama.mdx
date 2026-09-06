@@ -219,6 +219,20 @@ It pulls missing models through the Ollama HTTP API without requiring an Ollama 
   NemoClaw rejects a reachable Windows daemon when it accepts the untrusted `Host` probe.
 </Warning>
 
+### Recover After Unconfirmed Installer Cancellation
+
+If NemoClaw cannot confirm that the Windows installer stopped, it does not restore the previous Windows Ollama state because the installer might still change it.
+Complete these steps before you rerun onboarding:
+
+1. In Windows PowerShell, stop the installer and every Ollama process.
+2. Restore the previous User-scope `OLLAMA_HOST` value.
+   If the value was previously unset, remove it from User scope.
+3. From WSL, rerun onboarding:
+
+```bash
+$$nemoclaw onboard
+```
+
 If the endpoint is not reachable, NemoClaw also checks the Windows `ollama.exe` process through PowerShell interop.
 When the daemon does not become reachable, onboarding prints PowerShell commands for inspecting the Windows process and port state.
 Choose the WSL-local Ollama install when Docker Desktop cannot reach the protected Windows loopback route.
