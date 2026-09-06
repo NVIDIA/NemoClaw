@@ -135,7 +135,11 @@ function commandFailure(error: unknown): OpenShellSandboxCommandOutcome {
   return {
     kind: "failed",
     error: {
-      kind: /timeout|deadline/iu.test(`${code} ${message}`) ? "timeout" : "invocation",
+      kind: /Cannot find (?:module|package) ['"]@nvidia\/openshell-sdk['"]/u.test(message)
+        ? "unavailable"
+        : /timeout|deadline/iu.test(`${code} ${message}`)
+          ? "timeout"
+          : "invocation",
       message,
     },
   };

@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { createSdkOpenShellSandboxCommandExecutor } from "../../adapters/openshell/sandbox-command-sdk";
+import { createCliOpenShellSandboxCommandExecutor } from "../../adapters/openshell/sandbox-command-cli";
 import { captureOpenshell, OPENSHELL_OPERATION_TIMEOUT_MS } from "../../adapters/openshell/runtime";
 import * as agentRuntime from "../../agent/runtime";
 import { renderAgentSkillCommand } from "../../agent/skill-integration";
@@ -18,6 +19,7 @@ import { wrapExecCommandWithRuntimeEnv } from "./runtime-env";
 
 const SKILL_COMMAND_TIMEOUT_SECONDS = 120;
 const skillCommandExecutor = createSdkOpenShellSandboxCommandExecutor();
+const skillCommandFallbackExecutor = createCliOpenShellSandboxCommandExecutor();
 
 export type SkillInstallRequest = {
   command?: string;
@@ -137,13 +139,18 @@ async function runSdkSandboxCommand(
   gatewayName: string,
   command: readonly string[],
 ): Promise<number> {
-  const completion = await skillCommandExecutor.runStreaming({
+  const request = {
     sandboxName,
     target: { kind: "named", gatewayName },
     command,
     tty: false,
     timeoutSeconds: SKILL_COMMAND_TIMEOUT_SECONDS,
-  });
+  } as const;
+  let completion = await skillCommandExecutor.runStreaming(request);
+  if (completion.outcome.kind === "failed" && completion.outcome.error.kind === "unavailable") {
+    completion.release();
+    completion = await skillCommandFallbackExecutor.runStreaming(request);
+  }
   try {
     if (completion.outcome.kind === "completed") return completion.outcome.exitCode;
     console.error(`  OpenShell SDK execution failed: ${completion.outcome.error.message}`);

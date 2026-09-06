@@ -117,6 +117,28 @@ describe("OpenShell SDK sandbox command executor", () => {
     expect(connect).toHaveBeenCalledTimes(2);
   });
 
+  it("classifies a missing optional SDK package as unavailable", async () => {
+    const executor = createSdkOpenShellSandboxCommandExecutor({
+      connect: vi
+        .fn()
+        .mockRejectedValue(
+          new Error("Cannot find package '@nvidia/openshell-sdk' imported from /app/skill.js"),
+        ),
+    });
+
+    const completion = await executor.runStreaming({
+      sandboxName: "alpha",
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      command: ["true"],
+    });
+    completion.release();
+
+    expect(completion.outcome).toMatchObject({
+      kind: "failed",
+      error: { kind: "unavailable" },
+    });
+  });
+
   it("requires an explicit managed gateway", async () => {
     const executor = createSdkOpenShellSandboxCommandExecutor({
       connect: vi.fn(),

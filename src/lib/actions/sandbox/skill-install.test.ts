@@ -12,6 +12,10 @@ const sdkCommandExecutor = vi.hoisted(() => ({
   probeDirectory: vi.fn(),
   runStreaming: vi.fn(),
 }));
+const cliCommandExecutor = vi.hoisted(() => ({
+  probeDirectory: vi.fn(),
+  runStreaming: vi.fn(),
+}));
 const ensureLiveSandboxOrExit = vi.hoisted(() => vi.fn());
 const getSandboxTargetGatewayName = vi.hoisted(() => vi.fn());
 const getSessionAgent = vi.hoisted(() => vi.fn());
@@ -23,6 +27,9 @@ vi.mock("../../adapters/openshell/runtime", async (importOriginal) => ({
 }));
 vi.mock("../../adapters/openshell/sandbox-command-sdk", () => ({
   createSdkOpenShellSandboxCommandExecutor: () => sdkCommandExecutor,
+}));
+vi.mock("../../adapters/openshell/sandbox-command-cli", () => ({
+  createCliOpenShellSandboxCommandExecutor: () => cliCommandExecutor,
 }));
 vi.mock("../../agent/runtime", () => ({ getSessionAgent, resolveSessionAgentDefinition }));
 vi.mock("./gateway-state", () => ({ ensureLiveSandboxOrExit }));
@@ -88,6 +95,10 @@ describe("stateless sandbox skill orchestration", () => {
       outcome: { kind: "completed", exitCode: 0 },
       release: vi.fn(),
     });
+    cliCommandExecutor.runStreaming.mockResolvedValue({
+      outcome: { kind: "completed", exitCode: 0 },
+      release: vi.fn(),
+    });
     ensureLiveSandboxOrExit.mockResolvedValue(undefined);
     getSandboxTargetGatewayName.mockReturnValue("nemoclaw");
     getSessionAgent.mockReturnValue(null);
@@ -142,6 +153,26 @@ describe("stateless sandbox skill orchestration", () => {
     await listSandboxSkills("alpha");
 
     expect(process.exitCode).toBe(13);
+  });
+
+  it("uses the CLI executor only when the optional SDK package is unavailable", async () => {
+    selectAgent("hermes", "/usr/local/bin/hermes", HERMES);
+    sdkCommandExecutor.runStreaming.mockResolvedValue({
+      outcome: {
+        kind: "failed",
+        error: { kind: "unavailable", message: "OpenShell SDK package unavailable" },
+      },
+      release: vi.fn(),
+    });
+    cliCommandExecutor.runStreaming.mockResolvedValue({
+      outcome: { kind: "completed", exitCode: 7 },
+      release: vi.fn(),
+    });
+
+    await listSandboxSkills("alpha");
+
+    expect(cliCommandExecutor.runStreaming).toHaveBeenCalledOnce();
+    expect(process.exitCode).toBe(7);
   });
 
   it.each([
