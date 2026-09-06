@@ -4,6 +4,8 @@
 import os from "node:os";
 
 import { buildSelectedOpenShellSubprocessEnv } from "../../adapters/openshell/command-argv";
+import { fingerprintOpenShellSandboxId } from "../../adapters/openshell/sandbox-identity";
+import { observeOpenShellSandboxIdentity } from "../../adapters/openshell/sandbox-presence";
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { withModelRouterPortLifecycleLock } from "../../inference/gateway-route-mutation-lock";
@@ -24,7 +26,6 @@ import type {
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import { type DestroyRunOpenshell, selectGatewayForSandboxDestroy } from "./destroy-gateway";
-import { classifyDestroySandboxPresence } from "./destroy-presence";
 import {
   getPersistedSandboxTargetGatewayName,
   getSandboxTargetGatewayName,
@@ -40,6 +41,12 @@ export type SandboxDestroyPreflight = {
   selectedRunOpenshell: DestroyRunOpenshell;
   sandbox: SandboxEntry | null;
   sandboxConfirmedAbsent: boolean;
+  /**
+   * Fingerprint of the exact live OpenShell sandbox id when one is present,
+   * comparable to a retained recovery record's `sandboxIdentityFingerprint`
+   * (#10863). Null when absent or the observation could not be trusted.
+   */
+  presentSandboxIdentityFingerprint: string | null;
 };
 
 export function resolveSandboxDestroyRuntimeSelection(
@@ -342,7 +349,12 @@ export function prepareSandboxDestroy(
   selectGatewayForSandboxDestroy(sandboxName, cleanupGatewayName, selectedRunOpenshell);
   process.env.OPENSHELL_GATEWAY = cleanupGatewayName;
 
-  const sandboxPresence = classifyDestroySandboxPresence(
+  // Read the exact live OpenShell sandbox id (when present) alongside its
+  // presence, not just present/absent, so a caller can prove the live
+  // sandbox is the exact retained one before treating it as safe to delete
+  // by mutable name (#10863) — mirrors the identity comparison already used
+  // for Hermes Portable lifecycle verification.
+  const sandboxIdentityObservation = observeOpenShellSandboxIdentity(
     sandboxName,
     selectedRunOpenshell(["sandbox", "list", "-o", "json"], {
       ignoreError: true,
@@ -350,13 +362,19 @@ export function prepareSandboxDestroy(
       timeout: OPENSHELL_PROBE_TIMEOUT_MS,
     }),
   );
-  const sandboxConfirmedAbsent = sandboxPresence === "absent";
+  const sandboxConfirmedAbsent = sandboxIdentityObservation.kind === "absent";
+  const presentSandboxIdentityFingerprint =
+    sandboxIdentityObservation.kind === "present"
+      ? fingerprintOpenShellSandboxId(sandboxIdentityObservation.id)
+      : null;
+
   return {
     cleanupGatewayName,
     runOpenshell,
     selectedRunOpenshell,
     sandbox,
     sandboxConfirmedAbsent,
+    presentSandboxIdentityFingerprint,
     ...(selectedCaptureOpenshell ? { selectedCaptureOpenshell } : {}),
     ...(runtimeSelection ? { runtimeSelection } : {}),
   };
