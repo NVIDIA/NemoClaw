@@ -456,4 +456,34 @@ print(json.dumps([module.extract_candidate(case) for case in cases]))
       rmSync(directory, { force: true, recursive: true });
     }
   });
+
+  it("marks settlement evidence invalid when any discovered trace cannot be loaded", () => {
+    const directory = mkdtempSync(join(tmpdir(), "nemoclaw-trace-sanitize-unreadable-"));
+    const source = join(directory, "raw");
+    const output = join(directory, "trusted");
+    try {
+      mkdirSync(source);
+      writeFileSync(
+        join(source, "earlier-valid.json"),
+        JSON.stringify(
+          makeTrace({
+            settlement: {
+              timeUnixNano: "1788724801000000000",
+              identityState: "matched",
+              correlation: "8174fa2a5d657551",
+            },
+          }),
+        ),
+      );
+      writeFileSync(join(source, "later-malformed.json"), '{"resource_spans":');
+
+      const result = runSanitizer(source, output);
+      expect(result.status, result.stderr).toBe(0);
+      const summary = JSON.parse(readFileSync(join(output, SUMMARY), "utf8"));
+      expect(summary).not.toHaveProperty("sandbox_identity_settlement");
+      expect(summary).toMatchObject({ sandbox_identity_settlement_evidence: "invalid" });
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
+  });
 });

@@ -265,9 +265,13 @@ def main(argv: list[str]) -> int:
     candidates = []
     identity_settlements = []
     identity_settlements_valid = True
+    source_files_valid = True
     json_files, source_truncated = iter_json_files(source)
     for json_file in json_files:
         artifact = load_json(json_file)
+        if artifact is None:
+            source_files_valid = False
+            continue
         candidate = extract_candidate(artifact)
         if candidate is not None:
             candidates.append(candidate)
@@ -286,7 +290,12 @@ def main(argv: list[str]) -> int:
     identity_settlement, selection_valid = select_latest_identity_settlement(
         identity_settlements
     )
-    if not identity_settlements_valid or source_truncated or not selection_valid:
+    if (
+        not source_files_valid
+        or not identity_settlements_valid
+        or source_truncated
+        or not selection_valid
+    ):
         selected["sandbox_identity_settlement_evidence"] = "invalid"
     elif identity_settlement is not None:
         selected["sandbox_identity_settlement"] = identity_settlement
