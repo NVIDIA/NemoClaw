@@ -35,6 +35,26 @@ function liveStep(workflow: E2eWorkflow, name: string): Record<string, unknown> 
   return step!;
 }
 
+function cloudOnboardStep(workflow: E2eWorkflow, name: string): Record<string, unknown> {
+  const step = workflow.jobs["cloud-onboard"]!.steps.find((entry) => entry.name === name);
+  expect(step).toEqual(expect.any(Object));
+  return step!;
+}
+
+function moveCloudOnboardStepAfter(
+  workflow: E2eWorkflow,
+  stepName: string,
+  anchorName: string,
+): void {
+  const steps = workflow.jobs["cloud-onboard"]!.steps;
+  const stepIndex = steps.findIndex((step) => step.name === stepName);
+  expect(stepIndex).toBeGreaterThanOrEqual(0);
+  const [step] = steps.splice(stepIndex, 1);
+  const anchorIndex = steps.findIndex((current) => current.name === anchorName);
+  expect(anchorIndex).toBeGreaterThanOrEqual(0);
+  steps.splice(anchorIndex + 1, 0, step!);
+}
+
 describe("e2e workflow live job boundary", () => {
   it("rejects a live job that hides the semantic matrix label (#9167)", () => {
     const errors = validateMutatedWorkflow((workflow) => {
@@ -197,9 +217,84 @@ describe("e2e workflow live job boundary", () => {
   });
 });
 
+describe("e2e workflow cloud-onboard trace boundary", () => {
+  it.each([
+    "Configure cloud-onboard trace directory",
+    "Build trusted cloud-onboard timing summary",
+    "Delete raw cloud-onboard traces",
+  ])("rejects a missing cloud-onboard trace boundary step: %s", (name) => {
+    const errors = validateMutatedWorkflow((workflow) => {
+      workflow.jobs["cloud-onboard"]!.steps = workflow.jobs[
+        "cloud-onboard"
+      ]!.steps.filter((step) => step.name !== name);
+    });
+
+    expect(errors).toContain(`cloud-onboard job missing step: ${name}`);
+  });
+
+  it("rejects conditional setup and sanitizer or cleanup steps without always guards", () => {
+    const errors = validateMutatedWorkflow((workflow) => {
+      cloudOnboardStep(workflow, "Configure cloud-onboard trace directory").if = "false";
+      cloudOnboardStep(workflow, "Build trusted cloud-onboard timing summary").if = undefined;
+      cloudOnboardStep(workflow, "Delete raw cloud-onboard traces").if = undefined;
+    });
+
+    expect(errors).toEqual(
+      expect.arrayContaining([
+        "cloud-onboard trace setup must run without an if condition",
+        "cloud-onboard trace sanitizer must always run",
+        "cloud-onboard raw trace cleanup must always run",
+      ]),
+    );
+  });
+
+  it.each([
+    ["Configure cloud-onboard trace directory", "Prepare E2E workspace"],
+    ["Run cloud-onboard live Vitest test", "Build trusted cloud-onboard timing summary"],
+    ["Build trusted cloud-onboard timing summary", "Delete raw cloud-onboard traces"],
+  ])("rejects cloud-onboard trace boundary reordering: %s after %s", (step, anchor) => {
+    const errors = validateMutatedWorkflow((workflow) => {
+      moveCloudOnboardStepAfter(workflow, step, anchor);
+    });
+
+    expect(errors).toContain(
+      "cloud-onboard trace setup, workspace preparation, Vitest run, sanitizer, and cleanup steps must stay in order",
+    );
+  });
+
+  it("rejects a cloud-onboard source guard that moves after Python reads traces", () => {
+    const errors = validateMutatedWorkflow((workflow) => {
+      const sanitizeStep = cloudOnboardStep(
+        workflow,
+        "Build trusted cloud-onboard timing summary",
+      );
+      expect(sanitizeStep.run).toEqual(expect.any(String));
+      sanitizeStep.run =
+        String(sanitizeStep.run).replace(
+          CLOUD_TRACE_SOURCE_ASSIGNMENT + CLOUD_TRACE_SOURCE_GUARD,
+          "",
+        ) +
+        CLOUD_TRACE_SOURCE_ASSIGNMENT +
+        CLOUD_TRACE_SOURCE_GUARD;
+    });
+
+    expect(errors).toContain(
+      "cloud-onboard trace sanitizer must verify source path before reading traces",
+    );
+  });
+});
+
 const TRACE_SOURCE_ASSIGNMENT =
   'expected_trace_dir="${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}"\n';
 const TRACE_SOURCE_GUARD =
+  'if [ -z "${RUNNER_TEMP}" ] || [ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]; then\n' +
+  '  echo "::error title=E2E trace sanitization refused::NEMOCLAW_TRACE_DIR does not match its workflow-owned RUNNER_TEMP path. No raw traces were read or uploaded. Correct the trace path configuration before rerunning." >&2\n' +
+  "  printf 'Expected trace path: %s\\n' \"${expected_trace_dir}\" >&2\n" +
+  "  exit 1\n" +
+  "fi\n";
+const CLOUD_TRACE_SOURCE_ASSIGNMENT =
+  'expected_trace_dir="${RUNNER_TEMP}/nemoclaw-cloud-onboard-traces"\n';
+const CLOUD_TRACE_SOURCE_GUARD =
   'if [ -z "${RUNNER_TEMP}" ] || [ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]; then\n' +
   '  echo "::error title=E2E trace sanitization refused::NEMOCLAW_TRACE_DIR does not match its workflow-owned RUNNER_TEMP path. No raw traces were read or uploaded. Correct the trace path configuration before rerunning." >&2\n' +
   "  printf 'Expected trace path: %s\\n' \"${expected_trace_dir}\" >&2\n" +

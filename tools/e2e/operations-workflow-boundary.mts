@@ -1455,10 +1455,23 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
 
 function validateTraceTiming(errors: string[], workflow: OperationsWorkflow): void {
   const job = workflow.jobs["cloud-onboard"] ?? {};
+  const steps = job.steps ?? [];
+  for (const name of [
+    "Configure cloud-onboard trace directory",
+    "Build trusted cloud-onboard timing summary",
+    "Delete raw cloud-onboard traces",
+  ]) {
+    if (!steps.some((step) => step.name === name)) {
+      errors.push(`cloud-onboard job missing step: ${name}`);
+    }
+  }
   if (job.env?.NEMOCLAW_TRACE_DIR !== undefined) {
     errors.push("cloud-onboard trace directory must not use unavailable job-level contexts");
   }
   const configure = findStep(job, "Configure cloud-onboard trace directory");
+  if (configure.if !== undefined) {
+    errors.push("cloud-onboard trace setup must run without an if condition");
+  }
   for (const fragment of ['"${RUNNER_TEMP}/nemoclaw-cloud-onboard-traces"', '>> "${GITHUB_ENV}"']) {
     if (!String(configure.run ?? "").includes(fragment)) {
       errors.push(`cloud-onboard trace directory setup must retain ${fragment}`);
@@ -1488,10 +1501,10 @@ function validateTraceTiming(errors: string[], workflow: OperationsWorkflow): vo
   ) {
     errors.push("cloud-onboard trace sanitizer must verify source path before reading traces");
   }
-  const steps = job.steps ?? [];
   const configureIndex = steps.findIndex(
     (step) => step.name === "Configure cloud-onboard trace directory",
   );
+  const prepareIndex = steps.findIndex((step) => step.name === "Prepare E2E workspace");
   const runIndex = steps.findIndex((step) => step.name === "Run cloud-onboard live Vitest test");
   const sanitizeIndex = steps.findIndex(
     (step) => step.name === "Build trusted cloud-onboard timing summary",
@@ -1510,6 +1523,19 @@ function validateTraceTiming(errors: string[], workflow: OperationsWorkflow): vo
     if (!String(cleanup.run ?? "").includes(fragment)) {
       errors.push(`cloud-onboard raw trace cleanup must retain ${fragment}`);
     }
+  }
+  if (
+    !(
+      configureIndex >= 0 &&
+      configureIndex < prepareIndex &&
+      prepareIndex < runIndex &&
+      runIndex < sanitizeIndex &&
+      sanitizeIndex < cleanupIndex
+    )
+  ) {
+    errors.push(
+      "cloud-onboard trace setup, workspace preparation, Vitest run, sanitizer, and cleanup steps must stay in order",
+    );
   }
   if (
     !(
