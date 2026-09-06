@@ -610,18 +610,37 @@ function resolveOfficialHomebrewFormulaPaths(
     throwHomebrewFormulaOperationFailure("formula identity inspection", info);
   }
   try {
-    const parsed = JSON.parse(info.stdout ?? "") as {
-      formulae?: Array<{
-        installed?: unknown[];
-        name?: string;
-        service?: { run?: unknown };
-        tap?: string;
-      }>;
-    };
-    const formula = parsed.formulae?.find(
+    const parsed: unknown = JSON.parse(info.stdout ?? "");
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      Array.isArray(parsed) ||
+      !("formulae" in parsed) ||
+      !Array.isArray(parsed.formulae) ||
+      parsed.formulae.some(
+        (candidate) =>
+          typeof candidate !== "object" || candidate === null || Array.isArray(candidate),
+      )
+    ) {
+      throw new OpenShellGatewayServiceTrustError(
+        "OpenShell Homebrew formula identity check returned invalid data",
+      );
+    }
+    const formulae = parsed.formulae as Array<{
+      installed?: unknown[];
+      name?: string;
+      service?: { run?: unknown };
+      tap?: string;
+    }>;
+    const formula = formulae.find(
       (candidate) => candidate.name === OPENSHELL_GATEWAY_HOMEBREW_SERVICE,
     );
-    if (formula?.tap !== OPENSHELL_GATEWAY_HOMEBREW_TAP) {
+    if (!formula) {
+      throw new OpenShellGatewayServiceTrustError(
+        "OpenShell Homebrew formula identity check returned invalid data",
+      );
+    }
+    if (formula.tap !== OPENSHELL_GATEWAY_HOMEBREW_TAP) {
       throw new OpenShellGatewayServiceTrustError(
         `OpenShell Homebrew formula must come from ${OPENSHELL_GATEWAY_HOMEBREW_TAP}`,
       );
