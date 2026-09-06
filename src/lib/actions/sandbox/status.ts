@@ -196,7 +196,8 @@ async function showLegacySandboxStatus(sandboxName: string): Promise<void> {
   // Resolve the docker-driver container once: reused for the paused-container
   // recovery hint (#4495) and the Docker health line below (#3975).
   const dockerRuntime = lookup.state === "present" ? getSandboxDockerRuntime(sandboxName) : null;
-  const phase = lookup.state === "present" ? (lookup.phase ?? null) : null;
+  const isStopped = Boolean(sb?.stopped && (dockerRuntime ? !dockerRuntime.running : true));
+  const phase = isStopped ? "Stopped" : lookup.state === "present" ? (lookup.phase ?? null) : null;
   const effectivePreflight = withoutTerminalPhasePreflight(
     snapshot.postRecoveryPreflight ?? preflight,
     phase,

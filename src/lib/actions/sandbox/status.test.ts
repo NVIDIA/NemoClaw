@@ -366,6 +366,20 @@ describe("classifySandboxStatusPreflightFailure", () => {
     expect(result).toBeNull();
   });
 
+  it("returns null when the sandbox is intentionally stopped (#11025)", async () => {
+    const result = await classifySandboxStatusPreflightFailure(
+      { name: "alpha", openshellDriver: "docker", stopped: true } as never,
+      {
+        dockerProbe: () => true,
+        sandboxContainerProbe: async () => ({
+          layer: "sandbox_container_stopped",
+          detail: "stub stopped container",
+        }),
+      },
+    );
+    expect(result).toBeNull();
+  });
+
   it("returns null when the sandbox is not on the docker driver", async () => {
     let dockerCalled = false;
     let sandboxCalled = false;

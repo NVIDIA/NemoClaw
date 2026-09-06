@@ -21,6 +21,7 @@ import {
   retireRemovedImmutabilityStateRecord,
 } from "../../state/migrations/removed-immutability";
 import * as onboardSession from "../../state/onboard-session";
+import * as registry from "../../state/registry";
 import { load as loadRegistry, REGISTRY_FILE } from "../../state/registry/persistence";
 import {
   captureRebuildPolicyDocument,
@@ -837,6 +838,7 @@ async function rebuildSandboxUnlocked(
         }
         retireRemovedImmutabilityStateRecord(sandboxName, "mutable-rebuild");
       }
+      registry.updateSandbox(sandboxName, { stopped: false });
       if (backup.backupManifest) {
         if (!completePolicyHandoffCleanup(recreateJournal.id, backup.backupManifest)) return;
         if (!clearRecoveryMarker(recreateJournal.id, backup.backupManifest)) return;

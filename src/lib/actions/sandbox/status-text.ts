@@ -57,6 +57,7 @@ function shouldProbeSandboxRuntimeVersion(
   agentRuntimeKind: string,
 ): boolean {
   return (
+    !sandbox.stopped &&
     lookup.state === "present" && (Boolean(sandbox.agentVersion) || agentRuntimeKind === "terminal")
   );
 }
@@ -369,7 +370,7 @@ async function printGatewayProcessStatus(context: SandboxStatusTextContext): Pro
 
 /** Render the live agent process status after the gateway lookup is shown. */
 export async function printAgentProcessStatus(context: SandboxStatusTextContext): Promise<void> {
-  if (context.lookup.state !== "present") return;
+  if (context.lookup.state !== "present" || context.sb?.stopped) return;
   if (context.statusAgent.agentRuntime === "gateway") {
     await printGatewayProcessStatus(context);
     return;

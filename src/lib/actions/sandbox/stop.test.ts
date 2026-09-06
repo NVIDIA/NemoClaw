@@ -81,7 +81,8 @@ function harness(overrides: StopHarnessOverrides = {}) {
     findLabeledSandboxContainers: findContainersOverride,
     ...actionOverrides
   } = overrides;
-  const getSandbox = vi.fn<NonNullable<SandboxStopDeps["getSandbox"]>>(() => sandbox());
+  let storedSandbox = sandbox();
+  const getSandbox = vi.fn<NonNullable<SandboxStopDeps["getSandbox"]>>(() => storedSandbox);
   const isDockerRuntimeDown = vi.fn<DockerRuntimeProviderDependencies["isRuntimeDown"]>(
     () => false,
   );
@@ -102,6 +103,10 @@ function harness(overrides: StopHarnessOverrides = {}) {
   );
   const teardownSandboxDashboardForward =
     vi.fn<NonNullable<SandboxStopDeps["teardownSandboxDashboardForward"]>>();
+  const updateSandbox = vi.fn<NonNullable<SandboxStopDeps["updateSandbox"]>>((_name, updates) => {
+    storedSandbox = { ...storedSandbox, ...updates };
+    return storedSandbox;
+  });
   const log = vi.fn<(message: string) => void>();
   const warn = vi.fn<(message: string) => void>();
   const runtimeProviders = createRuntimeProviderBundleRegistry([
@@ -133,12 +138,14 @@ function harness(overrides: StopHarnessOverrides = {}) {
     }),
     withOllamaModelOwnershipLock: (operation) => operation(),
     withLifecycleLockSync: (_sandboxName, operation) => operation(),
+    updateSandbox,
     ...actionOverrides,
   };
   return {
     deps,
     dockerStop,
     teardownSandboxDashboardForward,
+    updateSandbox,
     findLabeledSandboxContainers,
     getSandbox,
     hasPortableLifecycleReceipt,
@@ -331,6 +338,41 @@ describe("stopSandbox", () => {
 
     expect(result.exitCode).toBe(1);
     expect(h.teardownSandboxDashboardForward).not.toHaveBeenCalled();
+  });
+
+  it("records stopped: true in the sandbox registry on successful stop (#11025)", () => {
+    const h = harness();
+
+    const result = stopSandbox("my-sandbox", h.deps);
+
+    expect(result.exitCode).toBe(0);
+    expect(h.updateSandbox).toHaveBeenCalledWith("my-sandbox", { stopped: true });
+    expect(h.getSandbox("my-sandbox")?.stopped).toBe(true);
+  });
+
+  it("does not record stopped: true when container stop fails (#11025)", () => {
+    const h = harness({ dockerStop: vi.fn(() => ({ status: 1 })) });
+
+    const result = stopSandbox("my-sandbox", h.deps);
+
+    expect(result.exitCode).toBe(1);
+    expect(h.updateSandbox).not.toHaveBeenCalled();
+    expect(h.getSandbox("my-sandbox")?.stopped).toBeUndefined();
+  });
+
+  it("returns retryable error and still runs cleanup when updateSandbox throws (#11025)", () => {
+    const teardownSandboxDashboardForward = vi.fn();
+    const updateSandbox = vi.fn(() => {
+      throw new Error("disk full");
+    });
+    const h = harness({ teardownSandboxDashboardForward, updateSandbox });
+
+    const result = stopSandbox("my-sandbox", h.deps);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.message).toContain("recording stopped status in registry failed: disk full");
+    expect(result.message).toContain("Retry 'nemoclaw my-sandbox stop'");
+    expect(teardownSandboxDashboardForward).toHaveBeenCalledWith("my-sandbox");
   });
 
   it("releases a leftover dashboard forward for an already-stopped sandbox — idempotent (#7227)", () => {

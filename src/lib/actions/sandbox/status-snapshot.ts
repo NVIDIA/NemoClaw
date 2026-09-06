@@ -690,7 +690,7 @@ export async function collectSandboxStatusSnapshot(
   }
   const statusAgent = resolveSandboxStatusAgent(sb?.agent || "openclaw");
   const terminalRuntimeHealth =
-    lookup.state === "present" && statusAgent.agentRuntime === "terminal"
+    lookup.state === "present" && !sb?.stopped && statusAgent.agentRuntime === "terminal"
       ? (opts.deps?.probeTerminalRuntimeHealth ?? probeTerminalRuntimeCgroupOom)(sandboxName)
       : null;
   // The serving-process leg is only meaningful when the gateway is up. A
@@ -761,7 +761,8 @@ async function buildSandboxStatusReport(
     lookup.state === "present" && hasLegacyStatusRuntimeObservation(sb)
       ? getSandboxDockerRuntime(sandboxName)
       : null;
-  const phase = lookup.state === "present" ? (lookup.phase ?? null) : null;
+  const isStopped = Boolean(sb?.stopped && (dockerRuntime ? !dockerRuntime.running : true));
+  const phase = isStopped ? "Stopped" : lookup.state === "present" ? (lookup.phase ?? null) : null;
   const effectivePreflight = withoutTerminalPhasePreflight(
     snapshot.postRecoveryPreflight ?? preflight,
     phase,

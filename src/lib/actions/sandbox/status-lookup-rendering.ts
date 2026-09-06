@@ -133,7 +133,12 @@ function printPresentSandboxGatewayLookupStatus({
     );
     console.log("");
   }
-  console.log(lookup.output);
+  const isStopped = phase === "Stopped";
+  const renderedOutput =
+    isStopped && lookup.output
+      ? lookup.output.replace(/Phase:\s*[A-Za-z0-9_-]+/gu, "Phase: Stopped")
+      : lookup.output;
+  if (renderedOutput) console.log(renderedOutput);
   printNonReadySandboxPhaseGuidance({ sandboxName, phase, dockerRuntime });
 }
 
@@ -237,7 +242,10 @@ function printNonReadySandboxPhaseGuidance({
   dockerRuntime: ReturnType<typeof getSandboxDockerRuntime> | null;
 }): void {
   if (!phase || phase === "Ready") return;
-  if (dockerRuntime?.containerName && !dockerRuntime.running && !dockerRuntime.paused) {
+  if (
+    phase === "Stopped" ||
+    (dockerRuntime?.containerName && !dockerRuntime.running && !dockerRuntime.paused)
+  ) {
     console.log("");
     console.log(`  Sandbox '${sandboxName}' is stopped.`);
     console.log("  Workspace state is preserved.");

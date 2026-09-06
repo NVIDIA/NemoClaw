@@ -71,6 +71,7 @@ export interface SandboxStartDeps {
   observer?: OpenShellSandboxObserver;
   environment?: NodeJS.ProcessEnv;
   getSandbox?: typeof registry.getSandbox;
+  updateSandbox?: typeof registry.updateSandbox;
   restoreProcessState?: (sandboxName: string) => SandboxStartupRecoveryResult;
   runtimeProviders?: RuntimeProviderBundleRegistry;
   restoreStartupState?: (
@@ -195,6 +196,7 @@ async function startSandboxWithinLifecycleFence(
   const result = resolved.lifecycle.start(input);
   if (result.exitCode !== 0) return result;
   if ("hermesPortableVerified" in result && result.hermesPortableVerified === true) {
+    (deps.updateSandbox ?? registry.updateSandbox)(sandboxName, { stopped: false });
     return { exitCode: 0 };
   }
 
@@ -241,6 +243,7 @@ async function startSandboxWithinLifecycleFence(
     await (deps.verifyGateway ?? verifyGateway)(name);
     readiness.inference = checkStartedSandboxInference(name, resolved.sandbox, deps, log);
   });
+  (deps.updateSandbox ?? registry.updateSandbox)(sandboxName, { stopped: false });
   if (readiness.inference && !readiness.inference.ok) {
     log(`  The sandbox started but inference is not usable: ${readiness.inference.detail}.`);
     log(`  Run the sandbox doctor command for '${sandboxName}' to identify the failing hop.`);

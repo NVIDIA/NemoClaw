@@ -153,6 +153,8 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   // different NEMOCLAW_GATEWAY_PORT no longer recreates/kills the first (#4422).
   gatewayName?: string | null;
   gatewayPort?: number | null;
+  /** Whether the sandbox was intentionally stopped via the stop command (#11025). */
+  stopped?: boolean;
 }
 
 export type SandboxWorkloadReceipt =

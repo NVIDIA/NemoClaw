@@ -168,6 +168,9 @@ export async function classifySandboxStatusPreflightFailure(
     deps.sandboxContainerProbe,
   );
   if (sandboxFailure) {
+    if (sb?.stopped && sandboxFailure.layer === "sandbox_container_stopped") {
+      return null;
+    }
     return { layer: sandboxFailure.layer, dockerUnreachable: false };
   }
   return null;
@@ -187,7 +190,7 @@ export async function getSandboxStatusPreflight(
   return {
     failure,
     failureLayer: failure ? failure.layer : null,
-    suppressInferenceProbe: failure !== null,
+    suppressInferenceProbe: failure !== null || sb?.stopped === true,
     exitCode: failure ? 1 : 0,
   };
 }

@@ -238,6 +238,7 @@ export type { SandboxLifecycleResult } from "./runtime/lifecycle-runtime";
 export interface SandboxStopDeps {
   environment?: NodeJS.ProcessEnv;
   getSandbox?: typeof registry.getSandbox;
+  updateSandbox?: typeof registry.updateSandbox;
   runtimeProviders?: RuntimeProviderBundleRegistry;
   stopSandboxChannels?: typeof stopSandboxChannels;
   teardownSandboxDashboardForward?: typeof teardownSandboxDashboardForward;
@@ -310,6 +311,12 @@ function stopSandboxWithinLifecycleFence(
     },
   });
   if (outcome.exitCode !== 0) return outcome;
+  let updateError: unknown = null;
+  try {
+    (deps.updateSandbox ?? registry.updateSandbox)(sandboxName, { stopped: true });
+  } catch (error) {
+    updateError = error;
+  }
   const hermesPortableVerified =
     "hermesPortableVerified" in outcome && outcome.hermesPortableVerified === true;
   const ollamaRelease = releaseStoppedSandboxOllamaModel(resolved.sandbox, deps, log);
@@ -319,6 +326,15 @@ function stopSandboxWithinLifecycleFence(
       deps.teardownSandboxDashboardForward ?? teardownSandboxDashboardForward,
       warn,
     );
+  }
+  if (updateError) {
+    const detail = updateError instanceof Error ? updateError.message : String(updateError);
+    return {
+      exitCode: 1,
+      message:
+        `Sandbox '${sandboxName}' stopped, but recording stopped status in registry failed: ${detail}. ` +
+        `Retry '${CLI_NAME} ${sandboxName} stop'.`,
+    };
   }
   if (!ollamaRelease.ok) return { exitCode: 1, message: ollamaRelease.message };
   if (hermesPortableVerified) {
