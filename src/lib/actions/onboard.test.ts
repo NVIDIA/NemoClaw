@@ -33,6 +33,7 @@ describe("onboard action runtime composition", () => {
     const dashboardReuseLifecycle = {
       startSandbox: vi.fn(),
       stopSandbox: vi.fn(),
+      withSandboxLifecycleLock: vi.fn(),
     };
 
     await runOnboardAction(

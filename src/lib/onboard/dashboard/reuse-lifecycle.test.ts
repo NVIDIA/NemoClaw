@@ -6,8 +6,16 @@ import { expect, it, vi } from "vitest";
 import { getDashboardReuseLifecycle, withDashboardReuseLifecycle } from "./reuse-lifecycle";
 
 it("keeps overlapping onboarding lifecycle scopes independent", async () => {
-  const first = { startSandbox: vi.fn(), stopSandbox: vi.fn() };
-  const second = { startSandbox: vi.fn(), stopSandbox: vi.fn() };
+  const first = {
+    startSandbox: vi.fn(),
+    stopSandbox: vi.fn(),
+    withSandboxLifecycleLock: vi.fn(),
+  };
+  const second = {
+    startSandbox: vi.fn(),
+    stopSandbox: vi.fn(),
+    withSandboxLifecycleLock: vi.fn(),
+  };
   let releaseFirst!: () => void;
   const firstPaused = new Promise<void>((resolve) => {
     releaseFirst = resolve;

@@ -27,9 +27,11 @@ async function runOnboard(
   const { onboard } = (await import("../onboard")) as unknown as {
     onboard: (onboardOptions?: OnboardOptions) => Promise<void>;
   };
+  const startActions = await import("./sandbox/start");
   const lifecycle = runtimeDeps.dashboardReuseLifecycle ?? {
-    startSandbox: (await import("./sandbox/start")).startSandbox,
+    startSandbox: startActions.startSandbox,
     stopSandbox: (await import("./sandbox/stop")).stopSandbox,
+    withSandboxLifecycleLock: startActions.withSandboxLifecycleLock,
   };
   await withDashboardReuseLifecycle(lifecycle, () =>
     onboard({ ...options, googlechatTunnelRuntime: runtimeDeps.googlechatTunnelRuntime }),

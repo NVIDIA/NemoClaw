@@ -47,6 +47,7 @@ function looksLikeForwardPortConflict(diagnostic: string): boolean {
 }
 
 type CommandResult = { status: number | null };
+type SandboxLifecycleLock = <T>(sandboxName: string, operation: () => Promise<T> | T) => Promise<T>;
 
 export interface OnboardDashboardDeps {
   runOpenshell(args: string[], opts?: Record<string, unknown>): CommandResult;
@@ -101,6 +102,7 @@ export interface OnboardDashboardDeps {
     exitCode: number;
     message?: string;
   }>;
+  withSandboxLifecycleLock?: SandboxLifecycleLock;
   printAgentDashboardUi(
     sandboxName: string,
     token: string | null,
@@ -396,114 +398,117 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
   ): Promise<boolean> {
     const port = Number(getDashboardForwardPort(chatUiUrl));
     const isPortBound = deps.isPortBoundOnHost ?? isPortBoundOnHost;
-    if (reconciledOpenClawForwards.get(sandboxName) === port && isPortBound(port)) return true;
     if (!isPortBound(port)) return false;
-    if (getRegistryOccupiedDashboardPorts(sandboxName, listSandboxes).has(String(port))) {
-      throw new Error(
-        `Registered dashboard port ${String(port)} is already occupied; it cannot be reallocated or adopted.`,
-      );
-    }
-
     const lifecycle = getDashboardReuseLifecycle();
-    const stopSandbox = deps.stopSandboxForDashboardReuse ?? lifecycle?.stopSandbox;
-    const startSandbox = deps.startSandboxForDashboardReuse ?? lifecycle?.startSandbox;
-    if (!stopSandbox || !startSandbox) {
+    const withLifecycleLock = deps.withSandboxLifecycleLock ?? lifecycle?.withSandboxLifecycleLock;
+    if (!withLifecycleLock) {
       throw new Error(
-        `Could not restart sandbox '${sandboxName}' to reconcile dashboard port ${String(port)}: sandbox lifecycle is unavailable.`,
+        `Could not restart sandbox '${sandboxName}' to reconcile dashboard port ${String(port)}: sandbox lifecycle lock is unavailable.`,
       );
     }
+    return await withLifecycleLock(sandboxName, async () => {
+      if (reconciledOpenClawForwards.get(sandboxName) === port && isPortBound(port)) return true;
+      if (!isPortBound(port)) return false;
+      if (getRegistryOccupiedDashboardPorts(sandboxName, listSandboxes).has(String(port))) {
+        throw new Error(
+          `Registered dashboard port ${String(port)} is already occupied; it cannot be reallocated or adopted.`,
+        );
+      }
 
-    const readLiveIdentity = (gatewayName: string): string | null =>
-      fingerprintSandboxLiveIdentity(
-        deps.runCaptureOpenshell(["sandbox", "get", "-g", gatewayName, sandboxName], {
-          ignoreError: true,
-          includeStderr: true,
-        }) ?? "",
-      );
-    const registered = getSandbox?.(sandboxName);
-    const gatewayName = registered ? forwardService?.resolveGatewayName(registered) : null;
-    const observedIdentity = gatewayName ? readLiveIdentity(gatewayName) : null;
-    if (
-      !registered ||
-      !gatewayName ||
-      !observedIdentity ||
-      (registered.lifecycleLiveIdentityFingerprint &&
-        registered.lifecycleLiveIdentityFingerprint !== observedIdentity)
-    ) {
-      throw new Error(
-        `Could not verify sandbox '${sandboxName}' before reconciling dashboard port ${String(port)}.`,
-      );
-    }
-    const assertSameSandbox = (operation: string): void => {
-      const current = getSandbox?.(sandboxName);
-      const currentGateway = current ? forwardService?.resolveGatewayName(current) : null;
-      const currentIdentity = currentGateway ? readLiveIdentity(currentGateway) : null;
+      const stopSandbox = deps.stopSandboxForDashboardReuse ?? lifecycle?.stopSandbox;
+      const startSandbox = deps.startSandboxForDashboardReuse ?? lifecycle?.startSandbox;
+      if (!stopSandbox || !startSandbox) {
+        throw new Error(
+          `Could not restart sandbox '${sandboxName}' to reconcile dashboard port ${String(port)}: sandbox lifecycle is unavailable.`,
+        );
+      }
+
+      const readLiveIdentity = (gatewayName: string): string | null =>
+        fingerprintSandboxLiveIdentity(
+          deps.runCaptureOpenshell(["sandbox", "get", "-g", gatewayName, sandboxName], {
+            ignoreError: true,
+            includeStderr: true,
+          }) ?? "",
+        );
+      const registered = getSandbox?.(sandboxName);
+      const gatewayName = registered ? forwardService?.resolveGatewayName(registered) : null;
+      const observedIdentity = gatewayName ? readLiveIdentity(gatewayName) : null;
       if (
-        !current ||
-        currentGateway !== gatewayName ||
-        current.lifecycleGeneration !== registered.lifecycleGeneration ||
-        current.lifecycleLiveIdentityFingerprint !== registered.lifecycleLiveIdentityFingerprint ||
-        currentIdentity !== observedIdentity
+        !registered ||
+        !gatewayName ||
+        !registered.lifecycleLiveIdentityFingerprint ||
+        registered.lifecycleLiveIdentityFingerprint !== observedIdentity
       ) {
         throw new Error(
-          `Refusing to ${operation}: sandbox '${sandboxName}' identity changed during dashboard reconciliation.`,
+          `Could not verify sandbox '${sandboxName}' before reconciling dashboard port ${String(port)}.`,
         );
       }
-    };
+      const assertSameSandbox = (operation: string): void => {
+        const current = getSandbox?.(sandboxName);
+        const currentGateway = current ? forwardService?.resolveGatewayName(current) : null;
+        const currentIdentity = currentGateway ? readLiveIdentity(currentGateway) : null;
+        if (
+          !current ||
+          currentGateway !== gatewayName ||
+          current.lifecycleGeneration !== registered.lifecycleGeneration ||
+          current.lifecycleLiveIdentityFingerprint !==
+            registered.lifecycleLiveIdentityFingerprint ||
+          currentIdentity !== observedIdentity
+        ) {
+          throw new Error(
+            `Refusing to ${operation}: sandbox '${sandboxName}' identity changed during dashboard reconciliation.`,
+          );
+        }
+      };
 
-    revalidateSandboxIdentity?.(
-      `restart sandbox '${sandboxName}' to reconcile dashboard forward ${String(port)}`,
-    );
-    assertSameSandbox(`stop sandbox '${sandboxName}'`);
-    const stopped = stopSandbox(sandboxName);
-    if (stopped.exitCode !== 0) {
-      throw new Error(
-        `Could not stop sandbox '${sandboxName}' to reconcile dashboard port ${String(port)}${
-          stopped.message ? `: ${stopped.message}` : "."
-        }`,
-      );
-    }
-    try {
       revalidateSandboxIdentity?.(
-        `start sandbox '${sandboxName}' to reconcile dashboard forward ${String(port)}`,
+        `restart sandbox '${sandboxName}' to reconcile dashboard forward ${String(port)}`,
       );
-      assertSameSandbox(`start sandbox '${sandboxName}'`);
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      throw new Error(
-        `${detail} The selected sandbox was stopped; verify its identity, then run '${deps.cliName()} ${sandboxName} start'.`,
-      );
-    }
-
-    const portRemainedBound = isPortBound(port);
-    let started: { exitCode: number; message?: string };
-    try {
-      started = await startSandbox(sandboxName);
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      throw new Error(
-        `Could not restart sandbox '${sandboxName}' after releasing dashboard port ${String(port)}: ${detail}. The sandbox may remain stopped; run '${deps.cliName()} ${sandboxName} start' before retrying onboarding.`,
-      );
-    }
-    if (portRemainedBound) {
-      if (started.exitCode !== 0) {
+      assertSameSandbox(`stop sandbox '${sandboxName}'`);
+      const stopped = stopSandbox(sandboxName);
+      if (stopped.exitCode !== 0) {
         throw new Error(
-          `Registered dashboard port ${String(port)} remained occupied after sandbox '${sandboxName}' stopped, and the sandbox could not restart${started.message ? `: ${started.message}` : "."} Run '${deps.cliName()} ${sandboxName} start' after resolving the listener conflict.`,
+          `Could not stop sandbox '${sandboxName}' to reconcile dashboard port ${String(port)}${
+            stopped.message ? `: ${stopped.message}` : "."
+          }`,
         );
       }
-      throw new Error(
-        `Registered dashboard port ${String(port)} remained occupied after sandbox '${sandboxName}' stopped; it cannot be adopted.`,
-      );
-    }
-    if (started.exitCode !== 0 || !isPortBound(port)) {
-      throw new Error(
-        `Sandbox '${sandboxName}' did not restore dashboard port ${String(port)} after restart${
-          started.message ? `: ${started.message}` : "."
-        } The sandbox may remain stopped; run '${deps.cliName()} ${sandboxName} start' before retrying onboarding.`,
-      );
-    }
-    reconciledOpenClawForwards.set(sandboxName, port);
-    return true;
+      try {
+        revalidateSandboxIdentity?.(
+          `start sandbox '${sandboxName}' to reconcile dashboard forward ${String(port)}`,
+        );
+        assertSameSandbox(`start sandbox '${sandboxName}'`);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        throw new Error(
+          `${detail} The selected sandbox was stopped; verify its identity, then run '${deps.cliName()} ${sandboxName} start'.`,
+        );
+      }
+
+      if (isPortBound(port)) {
+        throw new Error(
+          `Registered dashboard port ${String(port)} remained occupied after sandbox '${sandboxName}' stopped; it cannot be adopted. Resolve the listener, run '${deps.cliName()} ${sandboxName} start', then retry onboarding.`,
+        );
+      }
+      let started: { exitCode: number; message?: string };
+      try {
+        started = await startSandbox(sandboxName);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        throw new Error(
+          `Could not restart sandbox '${sandboxName}' after releasing dashboard port ${String(port)}: ${detail}. The sandbox may remain stopped; run '${deps.cliName()} ${sandboxName} start' before retrying onboarding.`,
+        );
+      }
+      if (started.exitCode !== 0 || !isPortBound(port)) {
+        throw new Error(
+          `Sandbox '${sandboxName}' did not restore dashboard port ${String(port)} after restart${
+            started.message ? `: ${started.message}` : "."
+          } The sandbox may remain stopped; run '${deps.cliName()} ${sandboxName} start' before retrying onboarding.`,
+        );
+      }
+      reconciledOpenClawForwards.set(sandboxName, port);
+      return true;
+    });
   }
 
   function ensureDashboardForward(

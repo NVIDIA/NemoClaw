@@ -328,6 +328,7 @@
         "src/lib/onboard/sandbox-gpu-create-flow.test.ts",
         "src/lib/onboard/sandbox-readiness-tracing.test.ts",
         "test/onboarding/onboard-extra-provider-reconciliation.test.ts",
+        "test/onboarding/onboard-finalization-dashboard-forward.test.ts",
         "test/e2e/support/corporate-ca-workload-kind.test.ts",
         "test/runtime/gateway/gateway-state.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",

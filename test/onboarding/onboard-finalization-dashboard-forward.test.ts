@@ -5,10 +5,12 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createOnboardDashboardHelpers } from "../../src/lib/onboard/dashboard";
 import type { ListSandboxesFn } from "../../src/lib/onboard/dashboard-port";
+import { fingerprintSandboxLiveIdentity } from "../../src/lib/onboard/sandbox-recreate-transaction";
 
 function harness(options: {
   listSandboxes: ListSandboxesFn;
   isPortBound?: (port: number) => boolean;
+  registeredIdentity?: boolean;
   sandboxIdentity?: () => string;
   stopSandbox?: (sandboxName: string) => { exitCode: number; message?: string };
   startSandbox?: (sandboxName: string) => Promise<{ exitCode: number; message?: string }>;
@@ -16,6 +18,9 @@ function harness(options: {
   const launch = vi.fn();
   const stopSandbox = vi.fn(options.stopSandbox ?? (() => ({ exitCode: 0 })));
   const startSandbox = vi.fn(options.startSandbox ?? (async () => ({ exitCode: 0 })));
+  const recordedIdentity = fingerprintSandboxLiveIdentity(
+    `Id: ${options.sandboxIdentity?.() ?? "sandbox-id"}`,
+  );
   const helpers = createOnboardDashboardHelpers({
     runOpenshell: vi.fn(() => ({ status: 0 })),
     runCaptureOpenshell: vi.fn((args) =>
@@ -33,10 +38,17 @@ function harness(options: {
     sleep: vi.fn(),
     printAgentDashboardUi: vi.fn(),
     listSandboxes: options.listSandboxes,
-    getSandbox: () => ({ gatewayName: "nemoclaw", dashboardPort: 18_790 }),
+    getSandbox: () => ({
+      gatewayName: "nemoclaw",
+      dashboardPort: 18_790,
+      lifecycleGeneration: "generation-1",
+      lifecycleLiveIdentityFingerprint:
+        options.registeredIdentity === false ? undefined : (recordedIdentity ?? undefined),
+    }),
     isPortBoundOnHost: options.isPortBound ?? (() => false),
     stopSandboxForDashboardReuse: stopSandbox,
     startSandboxForDashboardReuse: startSandbox,
+    withSandboxLifecycleLock: async (_sandboxName, operation) => await operation(),
     forwardService: {
       executable: () => "/usr/local/bin/openshell",
       launch,
@@ -121,14 +133,13 @@ describe("finalization dashboard ForwardTcp launch", () => {
         sandboxes: [{ name: "reonboard-test", dashboardPort: 18_790 }],
       }),
       isPortBound: (port) => port === 18_790,
-      startSandbox: async () => ({ exitCode: 1, message: "listener conflict" }),
     });
 
     await expect(
       helpers.ensureFinalizationDashboardForward("reonboard-test", undefined, true),
-    ).rejects.toThrow(/remained occupied.*Run 'nemoclaw reonboard-test start'/u);
+    ).rejects.toThrow(/remained occupied.*run 'nemoclaw reonboard-test start'/u);
     expect(stopSandbox).toHaveBeenCalledWith("reonboard-test");
-    expect(startSandbox).toHaveBeenCalledWith("reonboard-test");
+    expect(startSandbox).not.toHaveBeenCalled();
     expect(launch).not.toHaveBeenCalled();
   });
 
@@ -153,6 +164,24 @@ describe("finalization dashboard ForwardTcp launch", () => {
       helpers.ensureFinalizationDashboardForward("reonboard-test", undefined, true),
     ).rejects.toThrow(/identity changed.*selected sandbox was stopped/u);
     expect(stopSandbox).toHaveBeenCalledWith("reonboard-test");
+    expect(startSandbox).not.toHaveBeenCalled();
+    expect(launch).not.toHaveBeenCalled();
+  });
+
+  it("does not restart a reused sandbox without a registered live identity", async () => {
+    vi.stubEnv("CHAT_UI_URL", undefined);
+    const { helpers, launch, startSandbox, stopSandbox } = harness({
+      listSandboxes: () => ({
+        sandboxes: [{ name: "reonboard-test", dashboardPort: 18_790 }],
+      }),
+      isPortBound: (port) => port === 18_790,
+      registeredIdentity: false,
+    });
+
+    await expect(
+      helpers.ensureFinalizationDashboardForward("reonboard-test", undefined, true),
+    ).rejects.toThrow(/Could not verify sandbox/u);
+    expect(stopSandbox).not.toHaveBeenCalled();
     expect(startSandbox).not.toHaveBeenCalled();
     expect(launch).not.toHaveBeenCalled();
   });
