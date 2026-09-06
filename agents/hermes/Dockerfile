@@ -454,7 +454,7 @@ COPY --from=hermes-agent-payload / /
 # published base can carry the expected Hermes version while omitting either
 # optional dependency group. This is a build-time package/import guard; live
 # protocol behavior remains a separate E2E concern.
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=b0680d6546c07ad987a1bab4302e6e5657f2e168c7dc265d4def676e8d9e24b2
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=51179a1d6472e984544454b7903b6c5e1656074ea118f6da6fe910ef7ded775a
 # hadolint ignore=DL3059,DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256" /opt/nemoclaw-hermes-config/image-build-probes.py \
@@ -482,7 +482,7 @@ RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
 # same-version wheel selected by its lazy installer. Bind that production
 # boundary to NVIDIA/NemoClaw's reviewed wheel hashes.
 ARG NEMOCLAW_HERMES_HINDSIGHT_LAZY_INTEGRITY_PATCH_SHA256=5c619477c10e0b76cffd7adc214cbccf3beb77e7a1121f394c443502d9e0b736
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=b0680d6546c07ad987a1bab4302e6e5657f2e168c7dc265d4def676e8d9e24b2
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=51179a1d6472e984544454b7903b6c5e1656074ea118f6da6fe910ef7ded775a
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_HINDSIGHT_LAZY_INTEGRITY_PATCH_SHA256" /opt/nemoclaw-hermes-config/hindsight-lazy-integrity.patch \
