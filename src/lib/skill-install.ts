@@ -646,8 +646,7 @@ export interface NativeSkillInstallResult {
 
 const NATIVE_STAGE_RECOVERY_COMMANDS = [
   'stage_recovery_failed() { echo "Unresolved abandoned skill staging path: $1. Inspect and remove it inside the sandbox before retrying." >&2; echo STAGE_RECOVERY_FAILED; exit 7; }',
-  'current_uid="$(id -u)"',
-  'for candidate in "$root"/.nemoclaw-skill-stage "$root"/.nemoclaw-skill-stage.*; do [ -e "$candidate" ] || [ -L "$candidate" ] || continue; [ ! -L "$candidate" ] && [ -d "$candidate" ] || stage_recovery_failed "$candidate"; [ "$(realpath -e -- "$(dirname -- "$candidate")")" = "$root" ] || stage_recovery_failed "$candidate"; [ "$(stat -c "%u:%a" -- "$candidate")" = "$current_uid:700" ] || stage_recovery_failed "$candidate"; unsafe="$(find -P "$candidate" -xdev \\( ! -user "$current_uid" -o \\( ! -type d ! -type f \\) \\) -print -quit)" || stage_recovery_failed "$candidate"; [ -z "$unsafe" ] || stage_recovery_failed "$candidate"; rm -rf --one-file-system -- "$candidate" || stage_recovery_failed "$candidate"; done',
+  'for candidate in "$root"/.nemoclaw-skill-stage "$root"/.nemoclaw-skill-stage.*; do [ -e "$candidate" ] || [ -L "$candidate" ] || continue; stage_recovery_failed "$candidate"; done',
 ] as const;
 
 const NATIVE_SKILL_INSTALL_TIMEOUT_SECONDS = 90;

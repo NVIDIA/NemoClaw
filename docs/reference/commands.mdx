@@ -2395,7 +2395,7 @@ Run `$$nemoclaw <name> skill install --help` to print usage for this subcommand.
 
 Files with names starting with `.` (dotfiles) are skipped and listed in the output. Files with unsafe path characters are rejected to prevent shell injection. Symlinks and other non-regular paths are rejected rather than followed or copied.
 
-Before creating a private sandbox stage, the command reconciles abandoned `.nemoclaw-skill-stage*` directories left by an uncatchable interruption. It removes only same-user, mode-`0700`, regular-file directory trees inside the selected agent state root. If a candidate cannot be proven safe or removed, installation stops and reports the exact path for operator inspection instead of accumulating another stage.
+Before creating a private sandbox stage, the command checks for pre-existing `.nemoclaw-skill-stage*` paths left by an interruption or another sandbox process. A path name, owner, and mode cannot prove that NemoClaw created its contents, so the command never removes it automatically. Installation stops and reports the exact retained path for operator inspection and explicit cleanup before retrying.
 
 The native publisher is bounded to 90 seconds inside the 120-second SSH operation. OpenClaw's three native post-publish checks each have a 5-second bound, leaving time for digest verification and private-stage cleanup. A publisher or verifier timeout terminates the affected process and directs you to run `$$nemoclaw <name> skill list` before retrying. This prevents a retry from deleting staging content that an earlier native operation could still be reading.
 

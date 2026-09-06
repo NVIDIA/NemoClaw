@@ -192,12 +192,22 @@ esac
       expect(
         installOpenClawSkill(ctx, skill, executionPaths, "demo-skill", installOptions(sshExec)),
       ).toEqual({
+        success: false,
+        uploaded: 0,
+        reason: "stage_recovery_failed",
+      });
+      expect(fs.readFileSync(path.join(abandonedStage, "stale"), "utf8")).toBe("stale\n");
+      expect(fs.existsSync(invocationLog)).toBe(false);
+      fs.rmSync(abandonedStage, { recursive: true });
+
+      expect(
+        installOpenClawSkill(ctx, skill, executionPaths, "demo-skill", installOptions(sshExec)),
+      ).toEqual({
         success: true,
         uploaded: 1,
         contentDigest: firstDigest,
       });
       expect(fs.readFileSync(path.join(workspaceSkillDir, "SKILL.md"), "utf8")).toContain("# Demo");
-      expect(fs.existsSync(abandonedStage)).toBe(false);
 
       fs.writeFileSync(path.join(skill, "SKILL.md"), "---\nname: demo-skill\n---\n# Updated\n");
       const updatedDigest = computeSkillContentDigest(skill);

@@ -191,6 +191,26 @@ esac
         return lastSshResult;
       };
 
+      const refusedUnprovenStage = installNativeAgentSkill(
+        context,
+        skill,
+        paths,
+        lifecycle,
+        "demo-skill",
+        {
+          expectedSandboxIdentityFingerprint: SANDBOX_IDENTITY,
+          sshExecImpl: sshExec,
+        },
+      );
+      expect(refusedUnprovenStage).toEqual({
+        success: false,
+        uploaded: 0,
+        reason: "stage_recovery_failed",
+      });
+      expect(fs.readFileSync(path.join(abandonedStage, "stale"), "utf8")).toBe("stale\n");
+      expect(fs.existsSync(target)).toBe(false);
+      fs.rmSync(abandonedStage, { recursive: true });
+
       const firstInstall = installNativeAgentSkill(context, skill, paths, lifecycle, "demo-skill", {
         expectedSandboxIdentityFingerprint: SANDBOX_IDENTITY,
         sshExecImpl: sshExec,
@@ -198,7 +218,6 @@ esac
       expect(firstInstall, JSON.stringify({ firstInstall, lastSshResult })).toMatchObject({
         success: true,
       });
-      expect(fs.existsSync(abandonedStage)).toBe(false);
       fs.writeFileSync(path.join(skill, "SKILL.md"), "---\nname: demo-skill\n---\n# Updated\n");
       expect(
         installNativeAgentSkill(context, skill, paths, lifecycle, "demo-skill", {
