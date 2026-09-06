@@ -3829,6 +3829,10 @@ Set `NEMOCLAW_OLLAMA_INSTALL_MODE=system` to run the official `https://ollama.co
 
 Keep `NEMOCLAW_CUA_ENABLED=1` set whenever NemoClaw uses the experimental `nemocua` agent, including discovery, launch, agent commands, sandbox creation, and rebuild.
 
+<Warning title="Host-local Ollama is not supported">
+NemoCUA does not currently support host-local inference. Do not set `NEMOCLAW_PROVIDER=ollama` when onboarding a `nemocua` sandbox; that combination exits with `Unsupported host-local inference application 'nemocua'`. Choose a non-host-local inference provider instead.
+</Warning>
+
 | Variable | Format | Effect |
 | --- | --- | --- |
 | `NEMOCLAW_CUA_ENABLED` | exactly `1` to enable | Exposes the experimental `nemocua` agent. Other values keep it absent from agent discovery and prevent its manifest from loading. |
