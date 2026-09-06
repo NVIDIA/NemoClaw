@@ -1191,7 +1191,8 @@ state. The summary never retains raw event attributes or the full identity
 fingerprint. Aggregation ratchets require `report-to-pr` and `scorecard` to wait
 for the same execution-job set. The live target's workflow summary reports the
 target and valid settlement provenance, or calls out the `invalid` evidence
-state with the retained-recovery action.
+state as malformed or unusable. For `invalid`, inspect lifecycle logs and use a
+retained recovery record only if the onboarding failure created one.
 
 Registry-driven Vitest targets also enable onboard trace collection. Each live
 matrix target writes raw traces under the runner temporary directory, sanitizes

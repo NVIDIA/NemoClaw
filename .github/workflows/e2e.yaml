@@ -2983,7 +2983,8 @@ jobs:
           if evidence_state == "invalid":
               print(
                   f"- Target `{os.environ['TARGET_ID']}`: `invalid` settlement evidence; "
-                  "inspect the retained recovery record and lifecycle logs."
+                  "inspect lifecycle logs and use a retained recovery record only if the "
+                  "onboarding failure created one."
               )
           elif isinstance(settlement, dict):
               print(f"- Target: `{os.environ['TARGET_ID']}`")

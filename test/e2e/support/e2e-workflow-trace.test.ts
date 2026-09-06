@@ -142,7 +142,28 @@ describe("e2e workflow live job boundary", () => {
     );
   });
 
-  it("surfaces invalid settlement evidence in the target workflow summary", () => {
+  it.each([
+    {
+      title: "invalid",
+      traceSummary: { sandbox_identity_settlement_evidence: "invalid" },
+      expectedSummary:
+        "Target `channels-add-remove`: `invalid` settlement evidence; inspect lifecycle logs and use a retained recovery record only if the onboarding failure created one.",
+    },
+    {
+      title: "valid",
+      traceSummary: {
+        sandbox_identity_settlement: {
+          create_operation_state: "ready",
+          event_time_unix_nano: "1788724801000000000",
+          identity_state: "matched",
+          returned_identity_correlation: "8174fa2a5d657551",
+          trace_id: "0123456789abcdef0123456789abcdef",
+        },
+      },
+      expectedSummary:
+        "- Target: `channels-add-remove`\n- Create operation: `ready`\n- Identity state: `matched`\n- Trace ID: `0123456789abcdef0123456789abcdef`\n- Returned identity correlation: `8174fa2a5d657551`",
+    },
+  ])("surfaces $title settlement evidence in the target workflow summary", (scenario) => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-trace-summary-"));
     const targetId = "channels-add-remove";
     const targetRoot = path.join(tmp, targetId);
@@ -151,7 +172,7 @@ describe("e2e workflow live job boundary", () => {
       fs.mkdirSync(targetRoot, { recursive: true });
       fs.writeFileSync(
         path.join(targetRoot, "cloud-onboard-trace-timing-summary.json"),
-        JSON.stringify({ sandbox_identity_settlement_evidence: "invalid" }),
+        JSON.stringify(scenario.traceSummary),
       );
       const workflow = readWorkflow() as E2eWorkflow;
       const run = String(liveStep(workflow, "Summarize artifacts").run ?? "");
@@ -169,9 +190,7 @@ describe("e2e workflow live job boundary", () => {
       });
 
       expect(result.status, result.stderr).toBe(0);
-      expect(fs.readFileSync(summaryPath, "utf8")).toContain(
-        "Target `channels-add-remove`: `invalid` settlement evidence",
-      );
+      expect(fs.readFileSync(summaryPath, "utf8")).toContain(scenario.expectedSummary);
     } finally {
       fs.rmSync(tmp, { force: true, recursive: true });
     }

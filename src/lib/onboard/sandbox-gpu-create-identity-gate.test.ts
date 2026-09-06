@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { performance } from "node:perf_hooks";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -62,6 +66,7 @@ import {
   NEMOCLAW_CREATE_ATTEMPT_LABEL,
   NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH,
 } from "../adapters/openshell/sandbox-identity";
+import { resetTraceForTests, TRACE_FILE_ENV } from "../trace";
 import {
   createGpuFlowDeps,
   createGpuFlowInput,
@@ -75,6 +80,7 @@ import {
 } from "./experimental/hermes-portable-onboarding";
 import { runSandboxGpuCreateFlow } from "./sandbox-gpu-create-flow";
 import { fingerprintSandboxRecreateValue } from "./sandbox-recreate-transaction";
+import { finishOnboardTrace, startOnboardTrace, withSandboxPhaseTrace } from "./tracing";
 
 const ALPHA_SANDBOX_ID_FINGERPRINT =
   "8174fa2a5d65755138d8339e086c03d736633130b22dca10952e80e74750c01d";
@@ -128,7 +134,11 @@ function refuseEffectStartingWith(prefix: string): (operation: string) => void {
 }
 
 beforeEach(() => setupGpuFlowMocks(mocks));
-afterEach(resetGpuFlowMocks);
+afterEach(() => {
+  delete process.env[TRACE_FILE_ENV];
+  resetTraceForTests();
+  resetGpuFlowMocks();
+});
 
 describe("created sandbox identity gate", () => {
   it("keeps fresh-create readiness probes on the owning gateway (#9803)", async () => {
@@ -496,6 +506,72 @@ describe("created sandbox identity gate", () => {
       identity_state: "matched",
       returned_identity_correlation: ALPHA_SANDBOX_ID_TRACE_CORRELATION,
     });
+  });
+
+  it("retains the delayed identity through real trace sanitization (#10976)", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-identity-trace-evidence-"));
+    const traceFile = path.join(directory, "raw-trace.json");
+    const outputDirectory = path.join(directory, "trusted");
+    try {
+      process.env[TRACE_FILE_ENV] = traceFile;
+      resetTraceForTests();
+      const actualTracing = await vi.importActual<typeof import("./tracing")>("./tracing");
+      mocks.addTraceEvent.mockImplementation(actualTracing.addTraceEvent);
+      let nonce = "";
+      const input = noGpuInput();
+      input.verifyCreatedSandboxBeforeEffects = vi.fn();
+      input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
+      mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(createGpuPatchFixture());
+      mocks.streamSandboxCreate.mockImplementation(async (_command, args, _env, options) => {
+        nonce = createAttemptNonce(args);
+        expect(options.readyCheck?.()).toBe(true);
+        return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
+      });
+      const deps = createGpuFlowDeps();
+      deps.installPortableDemoLifecycle = vi.fn();
+      vi.mocked(deps.runCaptureOpenshell)
+        .mockReturnValueOnce("alpha Ready")
+        .mockReturnValueOnce("[]")
+        .mockImplementationOnce(() =>
+          sandboxListJson("alpha-sandbox-id", {
+            [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce,
+          }),
+        );
+      const trace = startOnboardTrace({ fresh: true }, process.env);
+      try {
+        await expect(
+          withSandboxPhaseTrace("alpha", "nim", "mock", "openclaw", () =>
+            runSandboxGpuCreateFlow(input, deps),
+          ),
+        ).resolves.toMatchObject({ route: "none" });
+      } finally {
+        finishOnboardTrace(trace, true);
+      }
+      const sanitizer = spawnSync(
+        "python3",
+        ["scripts/e2e/sanitize-trace-timing.py", traceFile, outputDirectory],
+        { cwd: process.cwd(), encoding: "utf8" },
+      );
+      expect(sanitizer.status, sanitizer.stderr).toBe(0);
+      const rawTrace = fs.readFileSync(traceFile, "utf8");
+      const summary = fs.readFileSync(
+        path.join(outputDirectory, "cloud-onboard-trace-timing-summary.json"),
+        "utf8",
+      );
+      expect(JSON.parse(summary)).toMatchObject({
+        sandbox_identity_settlement: {
+          create_operation_state: "ready",
+          identity_state: "matched",
+          returned_identity_correlation: ALPHA_SANDBOX_ID_TRACE_CORRELATION,
+        },
+      });
+      expect(rawTrace).not.toContain("alpha-sandbox-id");
+      expect(rawTrace).not.toContain(ALPHA_SANDBOX_ID_FINGERPRINT);
+      expect(summary).not.toContain("alpha-sandbox-id");
+      expect(summary).not.toContain(ALPHA_SANDBOX_ID_FINGERPRINT);
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
   });
 
   it("ends the Ready handoff but blocks effects when identity settlement returns no ID (#10976)", async () => {

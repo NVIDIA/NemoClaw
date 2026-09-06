@@ -346,7 +346,9 @@ test/e2e/
   attributes and the full identity fingerprint are excluded. Malformed
   settlement evidence is replaced with the bounded `invalid` evidence state.
   The live target workflow summary reports the target and valid settlement
-  provenance, or calls out `invalid` evidence with the retained-recovery action.
+  provenance, or calls out `invalid` evidence as malformed or unusable. For
+  `invalid`, inspect lifecycle logs and use a retained recovery record only if
+  the onboarding failure created one.
   Raw onboard traces stay under the runner temporary directory and are deleted
   before artifact upload.
   These per-target summaries are artifact evidence only.
