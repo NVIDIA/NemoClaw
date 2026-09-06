@@ -149,7 +149,10 @@ describe("sandbox skill action orchestration", () => {
     ensureLiveSandboxOrExit.mockResolvedValue(undefined);
     getSandboxTargetGatewayName.mockReturnValue("nemoclaw");
     getSessionAgent.mockReturnValue(genericAgent);
-    resolveSessionAgentDefinition.mockImplementation((selectedAgent) => selectedAgent ?? agent);
+    resolveSessionAgentDefinition.mockImplementation((_sandboxName, selectedAgent) => {
+      const resolvedAgent = selectedAgent ?? agent;
+      return { agent: resolvedAgent, requestedName: resolvedAgent.name, resolved: true };
+    });
     skillInstall.validateSkillName.mockReturnValue(true);
     skillInstall.bindNativeSkillCommandToSandboxIdentity.mockReturnValue([
       "/bin/sh",
@@ -283,17 +286,50 @@ describe("sandbox skill action orchestration", () => {
       displayName: "Manifest OpenClaw",
     };
     getSessionAgent.mockReturnValue(null);
-    resolveSessionAgentDefinition.mockReturnValue(manifestAgent);
+    resolveSessionAgentDefinition.mockReturnValue({
+      agent: manifestAgent,
+      requestedName: "openclaw",
+      resolved: true,
+    });
 
     await listSandboxSkills("alpha", { extraArgs: ["--json"] });
 
-    expect(resolveSessionAgentDefinition).toHaveBeenCalledWith(null);
+    expect(resolveSessionAgentDefinition).toHaveBeenCalledWith("alpha", null);
     expect(execSandbox).toHaveBeenCalledWith(
       "alpha",
       ["/opt/openclaw/bin/openclaw", "skills", "list", "--agent", "main", "--json"],
       { timeoutSeconds: 30 },
       { exit: expect.any(Function) },
     );
+  });
+
+  it("refuses every lifecycle operation for an unresolved registered agent", async () => {
+    const skillDir = makeSkillDir();
+    getSessionAgent.mockReturnValue(null);
+    resolveSessionAgentDefinition.mockReturnValue({
+      agent: null,
+      requestedName: "missing-agent",
+      resolved: false,
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    try {
+      await removeSandboxSkill("alpha", { name: "demo-skill" });
+      await listSandboxSkills("alpha");
+      await installSandboxSkill("alpha", { command: "install", path: skillDir });
+    } finally {
+      fs.rmSync(skillDir, { recursive: true, force: true });
+    }
+
+    expect(process.exitCode).toBe(1);
+    expect(error).toHaveBeenCalledWith(
+      "  Registered agent 'missing-agent' could not be resolved from a trusted manifest; refusing native skill lifecycle access.",
+    );
+    expect(captureSandboxSshConfig).not.toHaveBeenCalled();
+    expect(execSandbox).not.toHaveBeenCalled();
+    expect(skillInstall.installOpenClawSkill).not.toHaveBeenCalled();
+    expect(skillInstall.installNativeAgentSkill).not.toHaveBeenCalled();
   });
 
   it("delegates OpenClaw removal to the native agent command", async () => {

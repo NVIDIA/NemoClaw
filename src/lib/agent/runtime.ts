@@ -47,9 +47,27 @@ export function getSessionAgent(sandboxName?: string): AgentDefinition | null {
   }
 }
 
-/** Resolve OpenClaw's legacy null session representation through its trusted manifest. */
-export function resolveSessionAgentDefinition(agent: AgentDefinition | null): AgentDefinition {
-  return agent ?? loadAgent("openclaw");
+export type SessionAgentDefinitionResolution =
+  | { agent: AgentDefinition; requestedName: string; resolved: true }
+  | { agent: null; requestedName: string; resolved: false };
+
+/** Resolve OpenClaw's legacy null without hiding an invalid registered agent. */
+export function resolveSessionAgentDefinition(
+  sandboxName: string | undefined,
+  agent: AgentDefinition | null,
+): SessionAgentDefinitionResolution {
+  if (agent) return { agent, requestedName: agent.name, resolved: true };
+  let requestedName = "openclaw";
+  try {
+    const registered = sandboxName ? registry.getSandbox(sandboxName) : null;
+    requestedName = registered?.agent || onboardSession.loadSession()?.agent || "openclaw";
+    if (requestedName !== "openclaw") {
+      return { agent: null, requestedName, resolved: false };
+    }
+    return { agent: loadAgent("openclaw"), requestedName, resolved: true };
+  } catch {
+    return { agent: null, requestedName, resolved: false };
+  }
 }
 
 /**

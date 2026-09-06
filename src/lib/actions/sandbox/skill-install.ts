@@ -28,6 +28,21 @@ const NATIVE_SKILL_LIST_TIMEOUT_SECONDS = 30;
 const NATIVE_SKILL_REMOVE_TIMEOUT_SECONDS = 120;
 const NATIVE_SKILL_REMOVE_INNER_TIMEOUT_SECONDS = 110;
 
+function resolveNativeSkillAgent(sandboxName: string) {
+  const resolution = agentRuntime.resolveSessionAgentDefinition(
+    sandboxName,
+    agentRuntime.getSessionAgent(sandboxName),
+  );
+  if (!resolution.resolved) {
+    console.error(
+      `  Registered agent '${resolution.requestedName}' could not be resolved from a trusted manifest; refusing native skill lifecycle access.`,
+    );
+    process.exitCode = 1;
+    return null;
+  }
+  return resolution.agent;
+}
+
 export function printSkillInstallUsage(): void {
   console.log("");
   console.log(`  Usage: ${CLI_NAME} <sandbox> skill install <path>`);
@@ -172,9 +187,8 @@ export async function removeSandboxSkill(
 
   await ensureLiveSandboxOrExit(sandboxName);
 
-  const agent = agentRuntime.resolveSessionAgentDefinition(
-    agentRuntime.getSessionAgent(sandboxName),
-  );
+  const agent = resolveNativeSkillAgent(sandboxName);
+  if (!agent) return;
   const lifecycle = skillInstall.getNativeSkillLifecycle(agent);
   if (!lifecycle) {
     console.error(`  Agent '${agent?.name ?? "unknown"}' has no native skill remove command.`);
@@ -284,9 +298,8 @@ export async function listSandboxSkills(
 ): Promise<void> {
   const extraArgs = request.extraArgs ?? [];
   await ensureLiveSandboxOrExit(sandboxName);
-  const agent = agentRuntime.resolveSessionAgentDefinition(
-    agentRuntime.getSessionAgent(sandboxName),
-  );
+  const agent = resolveNativeSkillAgent(sandboxName);
+  if (!agent) return;
   const lifecycle = skillInstall.getNativeSkillLifecycle(agent);
   if (!lifecycle) {
     console.error(`  Agent '${agent?.name ?? "unknown"}' has no native skill list command.`);
@@ -459,9 +472,8 @@ export async function installSandboxSkill(
   await ensureLiveSandboxOrExit(sandboxName);
 
   // 3. Resolve agent and paths
-  const agent = agentRuntime.resolveSessionAgentDefinition(
-    agentRuntime.getSessionAgent(sandboxName),
-  );
+  const agent = resolveNativeSkillAgent(sandboxName);
+  if (!agent) return;
   const lifecycle = skillInstall.getNativeSkillLifecycle(agent);
   if (!lifecycle) {
     console.error(

@@ -83,6 +83,8 @@ describe("agent-native local skill import patches", () => {
     expect(source).toContain("os.replace(abandoned_backup, destination)");
     expect(source).toContain("os.replace(destination, failed_install)");
     expect(source).toContain("quarantined failed install retained at");
+    expect(source).toContain("native skill import staging cleanup");
+    expect(source).not.toContain("shutil.rmtree(transaction_root, ignore_errors=True)");
     expect(source).not.toContain("shutil.rmtree(destination, ignore_errors=True)");
     expect(source).toContain("NEMOCLAW_NATIVE_SKILL_IMPORT=");
     expect(runPython(["-m", "py_compile", target]).status).toBe(0);
@@ -140,6 +142,9 @@ describe("agent-native local skill import patches", () => {
     expect(source).toContain("os.replace(destination, failed_install)");
     expect(source).toContain("quarantined failed install retained at");
     expect(source).not.toContain("shutil.rmtree(destination, ignore_errors=True)");
+    expect(source).toContain("cleanup_native_quarantine");
+    expect(source).not.toContain("shutil.rmtree(quarantine, ignore_errors=True)");
+    expect(source).toContain("Skills prompt cache requires inspection");
     expect(source).not.toContain(
       "clear_skills_system_prompt_cache(clear_snapshot=True)\n        except",
     );

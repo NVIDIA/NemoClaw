@@ -146,6 +146,32 @@ def do_import_local(skill_path: str, expected_name: str, expected_digest: str, c
         return False
     backup_root = skills_root / ".hub"
     backup_prefix = f"nemoclaw-import-backup.{expected_name}."
+    quarantine_root = backup_root / "quarantine"
+    expected_quarantine = quarantine_root / expected_name
+
+    def cleanup_native_quarantine(candidate) -> None:
+        if candidate is None or not (candidate.exists() or candidate.is_symlink()):
+            return
+        if (
+            quarantine_root.is_symlink()
+            or candidate != expected_quarantine
+            or candidate.is_symlink()
+            or not candidate.is_dir()
+            or candidate.parent.resolve() != quarantine_root.resolve()
+        ):
+            raise RuntimeError(f"native skill quarantine requires inspection: {candidate}")
+        unsafe = next(
+            (
+                entry
+                for entry in candidate.rglob("*")
+                if entry.is_symlink() or not (entry.is_dir() or entry.is_file())
+            ),
+            None,
+        )
+        if unsafe is not None:
+            raise RuntimeError(f"native skill quarantine requires inspection: {unsafe}")
+        shutil.rmtree(candidate)
+
     try:
         if backup_root.is_symlink() or (backup_root.exists() and not backup_root.is_dir()):
             raise RuntimeError(f"native skill transaction root requires inspection: {backup_root}")
@@ -168,6 +194,13 @@ def do_import_local(skill_path: str, expected_name: str, expected_digest: str, c
         if abandoned_backup is not None and not destination.exists():
             os.replace(abandoned_backup, destination)
             abandoned_backup = None
+        if quarantine_root.is_symlink() or (
+            quarantine_root.exists() and not quarantine_root.is_dir()
+        ):
+            raise RuntimeError(
+                f"native skill quarantine root requires inspection: {quarantine_root}"
+            )
+        cleanup_native_quarantine(expected_quarantine)
     except Exception as exc:
         c.print(f"[bold red]Error:[/] Cannot reconcile native skill transaction: {exc}")
         return False
@@ -217,12 +250,17 @@ def do_import_local(skill_path: str, expected_name: str, expected_digest: str, c
         allowed, reason = should_allow_install(scan, force=False)
         if not allowed:
             c.print(f"[bold red]Installation blocked:[/] {reason}")
-            shutil.rmtree(quarantine, ignore_errors=True)
+            try:
+                cleanup_native_quarantine(quarantine)
+            except Exception as cleanup_exc:
+                c.print(f"[bold red]Error:[/] {cleanup_exc}")
             return False
     except Exception as exc:
         c.print(f"[bold red]Error:[/] Native skill scan failed: {exc}")
-        if quarantine is not None:
-            shutil.rmtree(quarantine, ignore_errors=True)
+        try:
+            cleanup_native_quarantine(quarantine)
+        except Exception as cleanup_exc:
+            c.print(f"[bold red]Error:[/] {cleanup_exc}")
         return False
 
     backup = backup_root / f"{backup_prefix}{uuid.uuid4().hex}"
@@ -265,6 +303,8 @@ def do_import_local(skill_path: str, expected_name: str, expected_digest: str, c
         observed_dir = Path(str(observed.get("skill_dir") or "")).resolve()
         if not observed.get("success") or observed_dir != installed_path.resolve():
             raise RuntimeError("Hermes did not resolve the imported profile skill as active")
+        cleanup_native_quarantine(quarantine)
+        quarantine = None
         if moved_existing:
             shutil.rmtree(backup)
             moved_existing = False
@@ -304,6 +344,10 @@ def do_import_local(skill_path: str, expected_name: str, expected_digest: str, c
                 rollback_issues.append(
                     f"prior skill backup requires inspection: {backup}: {rollback_exc}"
                 )
+        try:
+            _clear_skills_prompt_cache()
+        except Exception as rollback_exc:
+            rollback_issues.append(f"Skills prompt cache requires inspection: {rollback_exc}")
         if failed_install.exists():
             try:
                 shutil.rmtree(failed_install)
@@ -311,6 +355,10 @@ def do_import_local(skill_path: str, expected_name: str, expected_digest: str, c
                 rollback_issues.append(
                     f"quarantined failed install retained at {failed_install}: {rollback_exc}"
                 )
+        try:
+            cleanup_native_quarantine(quarantine)
+        except Exception as rollback_exc:
+            rollback_issues.append(str(rollback_exc))
         c.print(f"[bold red]Error:[/] Native skill import failed: {exc}")
         if rollback_issues:
             c.print(
@@ -318,8 +366,6 @@ def do_import_local(skill_path: str, expected_name: str, expected_digest: str, c
                 + "; ".join(rollback_issues)
             )
         return False
-    finally:
-        shutil.rmtree(quarantine, ignore_errors=True)
 '''
 
 ROUTER = '''    # NemoClaw native local skill import (#10210).

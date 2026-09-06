@@ -710,7 +710,7 @@ ARG NEMOCLAW_HERMES_SESSION_LIST_PREVIEW_PATCHER_SHA256=718315e7c36727ca49ac88a1
 # Keep skill lifecycle state inside Hermes. The host only stages a validated
 # payload; this pinned native command owns scanning, replacement, rollback,
 # lock metadata, loader verification, listing, and removal.
-ARG NEMOCLAW_HERMES_NATIVE_SKILL_IMPORT_PATCHER_SHA256=bc53dafe23986de69d6b42c10f93d44fb2d18821a2eb136fb046cc3de9b6496a
+ARG NEMOCLAW_HERMES_NATIVE_SKILL_IMPORT_PATCHER_SHA256=a7ff891965487f6aa84fd1ed57e0514c22eac4eeac9067db177185824ba20973
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_SESSION_LIST_PREVIEW_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-session-list-preview.py \

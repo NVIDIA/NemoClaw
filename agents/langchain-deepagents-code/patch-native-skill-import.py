@@ -230,6 +230,12 @@ def _import_local(
         expected_file = (destination / "SKILL.md").resolve()
         if not observed or Path(observed["path"]).resolve() != expected_file:
             raise RuntimeError("DCode did not resolve the imported skill as active")
+        try:
+            shutil.rmtree(transaction_root)
+        except OSError as cleanup_exc:
+            raise RuntimeError(
+                f"native skill import staging cleanup requires inspection: {transaction_root}: {cleanup_exc}"
+            ) from cleanup_exc
         if moved_existing:
             shutil.rmtree(backup)
             moved_existing = False
@@ -271,6 +277,13 @@ def _import_local(
                 rollback_issues.append(
                     f"quarantined failed install retained at {failed_install}: {rollback_exc}"
                 )
+        if transaction_root.exists():
+            try:
+                shutil.rmtree(transaction_root)
+            except OSError as rollback_exc:
+                rollback_issues.append(
+                    f"native skill import staging cleanup requires inspection: {transaction_root}: {rollback_exc}"
+                )
         console.print(f"[bold red]Error:[/bold red] Native skill import failed: {exc}")
         if rollback_issues:
             console.print(
@@ -278,8 +291,6 @@ def _import_local(
                 + "; ".join(rollback_issues)
             )
         raise SystemExit(1) from exc
-    finally:
-        shutil.rmtree(transaction_root, ignore_errors=True)
 '''
 
 PARSER = '''    # NemoClaw native local skill import (#10210).
