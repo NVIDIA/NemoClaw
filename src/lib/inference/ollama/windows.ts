@@ -37,6 +37,8 @@ type WindowsOllamaInstallerProcess = {
 };
 
 const WINDOWS_INSTALLER_PID_SENTINEL = "__NEMOCLAW_WINDOWS_INSTALLER_PID__:";
+// A Windows DWORD PID has at most 10 digits; allow CRLF after it.
+const WINDOWS_INSTALLER_PID_LINE_MAX_BYTES = Buffer.byteLength(WINDOWS_INSTALLER_PID_SENTINEL) + 12;
 const WINDOWS_INSTALLER_CANCELLATION_TIMEOUT_MS = 5_000;
 
 function reportUnconfirmedWindowsInstallerCancellation(): void {
@@ -112,41 +114,58 @@ function startWindowsOllamaInstaller(): WindowsOllamaInstallerProcess {
     { stdio: ["ignore", "pipe", "pipe"] },
   );
   let windowsPid: number | null = null;
-  let stdoutBuffer = "";
+  let stdoutPrefix = Buffer.alloc(0);
+  let awaitingPidLine = true;
   let resolveWindowsPid: (pid: number | null) => void = () => {};
   let rejectCompletion: (error: unknown) => void = () => {};
   const windowsPidReady = new Promise<number | null>((resolve) => {
     resolveWindowsPid = resolve;
   });
-  const flushStdoutLines = (final: boolean) => {
-    while (true) {
-      const newlineIndex = stdoutBuffer.indexOf("\n");
-      if (newlineIndex < 0 && !final) return;
-      const line = newlineIndex < 0 ? stdoutBuffer : stdoutBuffer.slice(0, newlineIndex + 1);
-      stdoutBuffer = newlineIndex < 0 ? "" : stdoutBuffer.slice(newlineIndex + 1);
-      if (!line) return;
-      const candidate = line.replace(/\r?\n$/, "").slice(WINDOWS_INSTALLER_PID_SENTINEL.length);
-      const parsedPid = line.startsWith(WINDOWS_INSTALLER_PID_SENTINEL)
-        ? parseWindowsProcessId(candidate)
-        : null;
-      if (parsedPid !== null && windowsPid === null) {
-        windowsPid = parsedPid;
-        resolveWindowsPid(parsedPid);
-      } else {
-        process.stdout.write(line);
-      }
+  const settlePidLine = (line: Buffer): boolean => {
+    awaitingPidLine = false;
+    const text = line.toString("utf8").replace(/\r?\n$/, "");
+    const candidate = text.slice(WINDOWS_INSTALLER_PID_SENTINEL.length);
+    const parsedPid = text.startsWith(WINDOWS_INSTALLER_PID_SENTINEL)
+      ? parseWindowsProcessId(candidate)
+      : null;
+    windowsPid = parsedPid;
+    resolveWindowsPid(parsedPid);
+    return parsedPid !== null;
+  };
+  const streamInstallerStdout = (chunk: Buffer) => {
+    if (!awaitingPidLine) {
+      process.stdout.write(chunk);
+      return;
     }
+    const remainingBytes = WINDOWS_INSTALLER_PID_LINE_MAX_BYTES - stdoutPrefix.length;
+    const inspected = chunk.subarray(0, remainingBytes);
+    const newlineIndex = inspected.indexOf(0x0a);
+    if (newlineIndex >= 0) {
+      const line = Buffer.concat([stdoutPrefix, inspected.subarray(0, newlineIndex + 1)]);
+      if (!settlePidLine(line)) process.stdout.write(line);
+      process.stdout.write(chunk.subarray(newlineIndex + 1));
+      stdoutPrefix = Buffer.alloc(0);
+      return;
+    }
+    if (chunk.length >= remainingBytes) {
+      awaitingPidLine = false;
+      resolveWindowsPid(null);
+      process.stdout.write(stdoutPrefix);
+      process.stdout.write(chunk);
+      stdoutPrefix = Buffer.alloc(0);
+      return;
+    }
+    stdoutPrefix = Buffer.concat([stdoutPrefix, chunk]);
   };
   const completion = new Promise<void>((resolve, reject) => {
     rejectCompletion = reject;
-    child.stdout?.on("data", (chunk: Buffer) => {
-      stdoutBuffer += chunk.toString("utf8");
-      flushStdoutLines(false);
-    });
+    child.stdout?.on("data", streamInstallerStdout);
     child.stderr?.on("data", (chunk: Buffer) => process.stderr.write(chunk));
     child.on("close", () => {
-      flushStdoutLines(true);
-      resolveWindowsPid(windowsPid);
+      if (awaitingPidLine) {
+        if (!settlePidLine(stdoutPrefix)) process.stdout.write(stdoutPrefix);
+        stdoutPrefix = Buffer.alloc(0);
+      }
       resolve();
     });
     child.on("error", (err: NodeJS.ErrnoException) => {

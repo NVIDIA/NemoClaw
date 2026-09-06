@@ -365,6 +365,30 @@ describe("Windows Ollama helper", () => {
     }
   });
 
+  it("streams an oversized unterminated PID prefix and cancels the wrapper", async () => {
+    const child = createMockChildProcess();
+    const spawnProcess = vi.fn(() => child);
+    const stdoutWrite = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const { windows, restore } = loadWindowsOllamaWithMocks(vi.fn(), vi.fn(), spawnProcess);
+    const output = Buffer.alloc(256, "x");
+
+    try {
+      const installer = windows.startWindowsOllamaInstaller();
+      child.stdout.emit("data", output);
+      expect(stdoutWrite).toHaveBeenCalledWith(output);
+      child.stdout.emit("data", Buffer.from("\n__NEMOCLAW_WINDOWS_INSTALLER_PID__:4321\n"));
+
+      const cancellation = installer.cancelAndWait();
+      expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+      child.emit("close", null);
+      await expect(cancellation).resolves.toBeUndefined();
+      expect(spawnProcess).toHaveBeenCalledTimes(1);
+    } finally {
+      restore();
+      stdoutWrite.mockRestore();
+    }
+  });
+
   it("describes Docker-client isolation in Windows Ollama timeout diagnostics", () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const { windows, restore } = loadWindowsOllamaWithMocks(vi.fn(), vi.fn());
