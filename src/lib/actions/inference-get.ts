@@ -89,7 +89,7 @@ const ENDPOINT_RECOVERY: Record<InferenceEndpointStatus, string> = {
   "registry-corrupt":
     "Restore a known-good sandbox registry backup, then rerun inference get; if no valid backup exists, stop and obtain recovery support.",
   "registry-unreadable":
-    "Repair ownership and permissions for the NemoClaw state directory or use a writable HOME, then rerun inference get.",
+    "Repair ownership and permissions for the existing NemoClaw state directory, then rerun inference get.",
   invalid:
     "Repair the named sandbox registrations' compatible-route metadata, then rerun inference get; repeat if additional affected registrations are reported.",
   conflicting:
