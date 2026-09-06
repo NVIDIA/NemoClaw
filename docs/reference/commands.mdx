@@ -585,6 +585,7 @@ The Windows chassis product name does not participate in selection.
 Before onboarding, unset `DOCKER_HOST` and select Docker's `default` context.
 Onboarding also requires local Docker Desktop, Arm64, at least 48,000 MiB of Docker and GPU memory, driver version `580.65.06` or later, NVIDIA integration, and successful Docker Desktop GPU passthrough.
 No provider or recipe variable is required for the automatic path.
+If `NEMOCLAW_PROVIDER` remains unset, a compatible `NEMOCLAW_LLAMACPP_RECIPE` value still selects managed llama.cpp and makes its recipe explicit.
 For automation that must make the selection explicit, use these values:
 
 ```bash

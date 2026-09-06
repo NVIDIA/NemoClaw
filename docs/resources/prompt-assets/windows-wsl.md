@@ -23,8 +23,9 @@ Choices:
 
 If Express is selected:
 
-- Leave `NEMOCLAW_PROVIDER`, `NEMOCLAW_MODEL`, and `NEMOCLAW_LLAMACPP_RECIPE` unset.
-  Onboarding selects the automatic managed Qwen recipe only after the complete N1x WSL readiness contract passes.
+- Leave `NEMOCLAW_PROVIDER` and `NEMOCLAW_MODEL` unset.
+  Leave `NEMOCLAW_LLAMACPP_RECIPE` unset for the automatic Qwen recipe, or set it to a compatible recipe ID to make the managed recipe explicit.
+  Onboarding selects managed llama.cpp only after the complete N1x WSL readiness contract passes.
   If N1x readiness does not match before managed selection starts, onboarding selects WSL-local Ollama. If a required check fails after selection starts, onboarding stops before installation.
 - For managed llama.cpp, explain that Hugging Face authentication is optional and anonymous downloads can return HTTP 429. If needed, `HF_TOKEN` supplies a Hugging Face read token only to the temporary downloader. The token remains in the installer environment; remove `HF_TOKEN` after installation when no process needs it.
 - For other WSL hosts, onboarding installs WSL-local Ollama and uses the sandbox authentication proxy, including when Docker Desktop can reach host loopback directly.
