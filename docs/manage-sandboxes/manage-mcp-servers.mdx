@@ -3,13 +3,14 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "Manage MCP Servers"
 sidebar-title: "Manage MCP Servers"
-description: "Inspect advertised tools and DNS pins, probe, rotate, restart, remove, rebuild, and destroy NemoClaw-managed MCP servers."
-description-agent: "Explains managed MCP status, DNS pin drift, advertised tool discovery, credential-resolution probes, credential rotation, restart, removal, rebuild restoration, destroy recovery, and lifecycle locking. Use after an MCP server is registered."
+description: "Inspect advertised tools and DNS pins, change denied tools, probe, rotate, restart, remove, rebuild, and destroy NemoClaw-managed MCP servers."
+description-agent: "Explains managed MCP status, denied-tool policy updates, DNS pin drift, advertised tool discovery, credential-resolution probes, credential rotation, restart, removal, rebuild restoration, destroy recovery, and lifecycle locking. Use after an MCP server is registered."
 keywords:
   [
     "nemoclaw mcp status",
     "mcp dns pin drift",
     "mcp tool discovery",
+    "nemoclaw mcp update",
     "nemoclaw mcp restart",
     "nemoclaw mcp remove",
     "mcp credential rotation",
@@ -120,6 +121,32 @@ If the provider has the profile-less legacy `generic` type, remove the server an
 Restart and rebuild refuse to activate that provider because OpenShell cannot bind it to an endpoint.
 
 Running restart without a server name refreshes every managed server. Export only the variables whose credentials you intend to replace.
+Restart and rebuild regenerate denied-tool rules from the persisted `--deny-tool` values.
+Do not edit generated `deny_rules` directly because status treats a policy that differs from registered intent as drift.
+
+## Change Denied Tools
+
+Replace the complete denied-tool list with repeated `--deny-tool` options:
+
+```bash
+$$nemoclaw my-sandbox mcp update doordash \
+  --deny-tool doordash_submit_order \
+  --deny-tool 'admin_*'
+```
+
+The command changes only the generated OpenShell policy and persisted denied-tool intent.
+It does not change the endpoint, credential, address pins, provider, or agent adapter.
+If policy activation fails after NemoClaw records the new intent, the command reports the failure and preserves that intent.
+Run `$$nemoclaw my-sandbox mcp restart doordash` to retry policy activation.
+
+Clear every denied-tool rule explicitly:
+
+```bash
+$$nemoclaw my-sandbox mcp update doordash --clear-deny-tools
+```
+
+The update command requires either one or more `--deny-tool` options or `--clear-deny-tools`.
+It rejects both modes in one command.
 
 ## Change Endpoint Pins
 

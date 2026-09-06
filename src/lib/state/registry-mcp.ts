@@ -15,6 +15,8 @@ export interface McpBridgeEntry {
   adapter?: string;
   url: string;
   env: string[];
+  /** Tool-name or tool-name-glob selectors denied at the OpenShell MCP proxy. */
+  denyTools?: string[];
   /** Exact URL host explicitly admitted for routed private access. */
   trustedPrivateHost?: string;
   /** Validated endpoint pins recorded as MCP domain state for new bridges. */
@@ -56,6 +58,8 @@ export interface SandboxMcpState {
 
 const MCP_SERVER_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 const MCP_ENV_RE = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
+const MCP_DENY_TOOL_RE = /^[A-Za-z0-9_.?*{}\[\]-]{1,128}$/u;
+const MCP_DENY_TOOL_MAX_COUNT = 500;
 const MCP_SAFE_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 const MCP_PROVIDER_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 const MCP_ADAPTERS = new Set(["mcporter", "hermes-config", "deepagents-config"]);
@@ -204,6 +208,25 @@ function normalizeMcpBridgeEntry(server: string, value: unknown): McpBridgeEntry
       ? [...new Set(rawEnv)]
       : null;
   if (!env) return null;
+  let denyTools: string[] | undefined;
+  const rawDenyTools = value.denyTools;
+  if (rawDenyTools !== undefined) {
+    if (
+      !Array.isArray(rawDenyTools) ||
+      rawDenyTools.length > MCP_DENY_TOOL_MAX_COUNT ||
+      rawDenyTools.some((tool) => typeof tool !== "string" || !MCP_DENY_TOOL_RE.test(tool))
+    ) {
+      return null;
+    }
+    const canonicalDenyTools = [...new Set(rawDenyTools as string[])].sort();
+    if (
+      canonicalDenyTools.length !== rawDenyTools.length ||
+      canonicalDenyTools.some((tool, index) => tool !== rawDenyTools[index])
+    ) {
+      return null;
+    }
+    if (canonicalDenyTools.length > 0) denyTools = canonicalDenyTools;
+  }
   const adapter = typeof value.adapter === "string" && value.adapter ? value.adapter : undefined;
   if (adapter && !MCP_ADAPTERS.has(adapter)) return null;
   const providerName =
@@ -228,6 +251,7 @@ function normalizeMcpBridgeEntry(server: string, value: unknown): McpBridgeEntry
     ...(adapter ? { adapter } : {}),
     url,
     env,
+    ...(denyTools ? { denyTools } : {}),
     ...(trustedPrivateHost ? { trustedPrivateHost } : {}),
     ...(allowedIps ? { allowedIps } : {}),
     ...(providerName ? { providerName } : {}),

@@ -139,7 +139,7 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
     }
     if (entry.addState) {
       throw new McpBridgeError(
-        `MCP server '${name}' has an incomplete add transaction (${entry.addState}). Re-run mcp add with the same URL and --env ${entry.env[0] ?? "KEY"}, or remove it with --force.`,
+        `MCP server '${name}' has an incomplete add transaction (${entry.addState}). Re-run the original mcp add command, including its --deny-tool options, or remove it with --force.`,
       );
     }
     assertAuthenticatedBridgeEntry(entry);

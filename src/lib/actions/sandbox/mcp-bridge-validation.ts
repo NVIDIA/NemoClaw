@@ -16,6 +16,7 @@ import {
   McpBridgeError,
   type ParsedEnvReference,
   type ParsedMcpAddArgs,
+  type ParsedMcpUpdateArgs,
 } from "./mcp-bridge-contracts";
 import { normalizeMcpServerUrl } from "./mcp-bridge-url-validation";
 // This static import is intentionally fail-closed: TypeScript/build packaging
@@ -33,6 +34,8 @@ export {
 
 const VALID_SERVER_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 const VALID_ENV_RE = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
+const VALID_MCP_DENY_TOOL_RE = /^[A-Za-z0-9_.?*{}\[\]-]{1,128}$/u;
+const MCP_DENY_TOOL_MAX_COUNT = 500;
 const OPENSHELL_REVISIONED_CREDENTIAL_NAME_RE = /^v[0-9]+_[A-Za-z0-9_]+$/;
 const OPENSHELL_VERSION_OUTPUT_RE =
   /^openshell\s+([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)$/;
@@ -183,6 +186,28 @@ export function validateMcpServerName(name: string): void {
   }
 }
 
+export function normalizeMcpDenyTools(tools: readonly string[]): string[] {
+  if (tools.length > MCP_DENY_TOOL_MAX_COUNT) {
+    throw new McpBridgeError(
+      `MCP denied-tool policy accepts at most ${String(MCP_DENY_TOOL_MAX_COUNT)} selectors.`,
+      2,
+    );
+  }
+  for (const tool of tools) {
+    if (typeof tool !== "string" || !VALID_MCP_DENY_TOOL_RE.test(tool)) {
+      throw new McpBridgeError(
+        `Invalid MCP denied-tool selector ${diagnosticPreview(tool)}. Use 1 to 128 letters, digits, dots, underscores, hyphens, or OpenShell glob characters.`,
+        2,
+      );
+    }
+  }
+  const unique = [...new Set(tools)];
+  if (unique.length !== tools.length) {
+    throw new McpBridgeError("Duplicate --deny-tool declarations are not accepted.", 2);
+  }
+  return unique.sort();
+}
+
 export function validateMcpCredentialEnvName(name: string): void {
   validatePersistedMcpCredentialEnvName(name);
   if (OPENSHELL_REVISIONED_CREDENTIAL_NAME_RE.test(name)) {
@@ -232,6 +257,7 @@ export function validatePersistedMcpCredentialEnvName(name: string): void {
 
 export function parseMcpAddArgs(argv: string[]): ParsedMcpAddArgs {
   const env: ParsedEnvReference[] = [];
+  const denyTools: string[] = [];
   const trustedPrivateHosts: string[] = [];
   let server = "";
   let rawUrl = "";
@@ -276,6 +302,14 @@ export function parseMcpAddArgs(argv: string[]): ParsedMcpAddArgs {
       rawUrl = argv[++i] ?? "";
       continue;
     }
+    if (token === "--deny-tool") {
+      denyTools.push(argv[++i] ?? "");
+      continue;
+    }
+    if (token?.startsWith("--deny-tool=")) {
+      denyTools.push(token.slice("--deny-tool=".length));
+      continue;
+    }
     if (token?.startsWith("--url=")) {
       rawUrl = token.slice("--url=".length);
       continue;
@@ -307,14 +341,14 @@ export function parseMcpAddArgs(argv: string[]): ParsedMcpAddArgs {
       continue;
     }
     throw new McpBridgeError(
-      "Usage: nemoclaw <sandbox> mcp add <server> --url <https-mcp-url> --env KEY [--trusted-private-host HOST]",
+      "Usage: nemoclaw <sandbox> mcp add <server> --url <https-mcp-url> --env KEY [--deny-tool TOOL] [--trusted-private-host HOST]",
       2,
     );
   }
 
   if (!server) {
     throw new McpBridgeError(
-      "Usage: nemoclaw <sandbox> mcp add <server> --url <https-mcp-url> --env KEY [--trusted-private-host HOST]",
+      "Usage: nemoclaw <sandbox> mcp add <server> --url <https-mcp-url> --env KEY [--deny-tool TOOL] [--trusted-private-host HOST]",
       2,
     );
   }
@@ -353,12 +387,64 @@ export function parseMcpAddArgs(argv: string[]): ParsedMcpAddArgs {
     );
   }
 
+  const normalizedDenyTools = normalizeMcpDenyTools(denyTools);
+
   return {
     server,
     url,
     env,
+    ...(normalizedDenyTools.length > 0 ? { denyTools: normalizedDenyTools } : {}),
     ...(trustedPrivateHosts.length > 0 ? { trustedPrivateHosts } : {}),
   };
+}
+
+export function parseMcpUpdateArgs(argv: string[]): ParsedMcpUpdateArgs {
+  const denyTools: string[] = [];
+  let server = "";
+  let clearDenyTools = false;
+
+  for (let i = 0; i < argv.length; i++) {
+    const token = argv[i];
+    if (token === "--deny-tool") {
+      denyTools.push(argv[++i] ?? "");
+      continue;
+    }
+    if (token?.startsWith("--deny-tool=")) {
+      denyTools.push(token.slice("--deny-tool=".length));
+      continue;
+    }
+    if (token === "--clear-deny-tools") {
+      clearDenyTools = true;
+      continue;
+    }
+    if (token?.startsWith("-")) {
+      throw new McpBridgeError(`Unknown mcp update option: ${token}`, 2);
+    }
+    if (!server) {
+      server = token ?? "";
+      validateMcpServerName(server);
+      continue;
+    }
+    throw new McpBridgeError(
+      "Usage: nemoclaw <sandbox> mcp update <server> (--deny-tool TOOL [...] | --clear-deny-tools)",
+      2,
+    );
+  }
+
+  if (!server || (denyTools.length === 0 && !clearDenyTools)) {
+    throw new McpBridgeError(
+      "Usage: nemoclaw <sandbox> mcp update <server> (--deny-tool TOOL [...] | --clear-deny-tools)",
+      2,
+    );
+  }
+  if (denyTools.length > 0 && clearDenyTools) {
+    throw new McpBridgeError(
+      "Pass repeated --deny-tool options or --clear-deny-tools, but not both.",
+      2,
+    );
+  }
+
+  return { server, denyTools: clearDenyTools ? [] : normalizeMcpDenyTools(denyTools) };
 }
 
 export function uniqueEnvNames(env: readonly ParsedEnvReference[] | readonly string[]): string[] {

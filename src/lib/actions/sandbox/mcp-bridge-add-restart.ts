@@ -25,6 +25,8 @@ import { type McpBridgeAddOptions, McpBridgeError } from "./mcp-bridge-contracts
 import { assertHermesMcpRuntimeIntent } from "./mcp-bridge-hermes-reconciliation";
 import {
   applyGeneratedPolicy,
+  applyRecordedGeneratedPolicy,
+  assertGeneratedPolicyRegistrationMutationSafe,
   buildMcpBridgePolicyKey,
   buildMcpBridgePolicyName,
   buildMcpBridgePolicyYaml,
@@ -62,9 +64,11 @@ import {
 } from "./mcp-bridge-state";
 import type { McpBridgeTargetValidation } from "./mcp-bridge-url-validation";
 import {
+  assertAuthenticatedBridgeEntry,
   assertAuthenticatedCredentialReference,
   assertMcpCredentialBoundaryRuntimeVersion,
   buildMcpBridgeProviderName,
+  normalizeMcpDenyTools,
   normalizeMcpServerUrl,
   preflightMcpServerUrlResolvedTarget,
   resolveCredentialEnv,
@@ -82,6 +86,8 @@ function sameMcpAddIntent(existing: McpBridgeEntry, requested: McpBridgeEntry): 
     existing.providerName === requested.providerName &&
     existing.policyName === requested.policyName &&
     existing.trustedPrivateHost === requested.trustedPrivateHost &&
+    (existing.denyTools?.length ?? 0) === (requested.denyTools?.length ?? 0) &&
+    (existing.denyTools ?? []).every((tool, index) => tool === requested.denyTools?.[index]) &&
     (existing.allowedIps?.length ?? 0) === (requested.allowedIps?.length ?? 0) &&
     (existing.allowedIps ?? []).every(
       (address, index) => address === requested.allowedIps?.[index],
@@ -131,6 +137,7 @@ function assertPreparedMcpAddResourcesAbsent(
     adapter,
     target,
     entry.providerName ?? "",
+    entry.denyTools,
   );
   const policyState = policies.getPresetContentGatewayState(
     sandboxName,
@@ -155,6 +162,67 @@ export async function addMcpBridge(
   });
 }
 
+export async function updateMcpBridgeDenyTools(
+  sandboxName: string,
+  server: string,
+  denyTools: readonly string[],
+): Promise<void> {
+  return withMcpLifecycleLock(sandboxName, () => {
+    assertHermesPortableCommandUnavailable(sandboxName, "sandbox:mcp:update");
+    return updateMcpBridgeDenyToolsUnlocked(sandboxName, server, denyTools);
+  });
+}
+
+async function updateMcpBridgeDenyToolsUnlocked(
+  sandboxName: string,
+  server: string,
+  denyTools: readonly string[],
+): Promise<void> {
+  validateSandboxName(sandboxName);
+  validateMcpServerName(server);
+  const normalizedDenyTools = normalizeMcpDenyTools(denyTools);
+  const sandbox = getSandboxOrThrow(sandboxName);
+  assertMcpDestroyNotPending(sandbox);
+  const storedEntry = bridgeState(sandbox)[server];
+  if (!storedEntry) {
+    throw new McpBridgeError(`MCP server '${server}' not found on sandbox '${sandboxName}'.`);
+  }
+  if (storedEntry.addState) {
+    throw new McpBridgeError(
+      `MCP server '${server}' has an incomplete add transaction (${storedEntry.addState}). Re-run the original mcp add command or remove it with --force before updating denied tools.`,
+    );
+  }
+  assertAuthenticatedBridgeEntry(storedEntry);
+  const { denyTools: _previousDenyTools, ...entryWithoutDenyTools } = storedEntry;
+  const updatedEntry = {
+    ...entryWithoutDenyTools,
+    ...(normalizedDenyTools.length > 0 ? { denyTools: normalizedDenyTools } : {}),
+    updatedAt: nowIso(),
+  };
+  assertGeneratedPolicyRegistrationMutationSafe(sandboxName, updatedEntry);
+  const runtimeSelection = getMcpProviderInspectionRuntimeSelection(sandbox);
+  assertMcpCredentialBoundaryRuntimeVersion();
+  await ensureSandboxGatewaySelected(sandboxName, runtimeSelection);
+
+  // Persist desired policy intent before the external write. If activation is
+  // interrupted, status reports drift and restart can converge to this intent.
+  writeBridgeEntry(sandboxName, updatedEntry);
+  try {
+    applyRecordedGeneratedPolicy(sandboxName, updatedEntry, runtimeSelection);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new McpBridgeError(
+      `${detail} The denied-tool intent was saved; run \`nemoclaw ${sandboxName} mcp restart ${server}\` to retry policy activation.`,
+    );
+  }
+
+  console.log(
+    normalizedDenyTools.length > 0
+      ? `  Updated denied tools for MCP server '${server}'.`
+      : `  Cleared denied tools for MCP server '${server}'.`,
+  );
+}
+
 async function addMcpBridgeUnlocked(
   sandboxName: string,
   options: McpBridgeAddOptions,
@@ -162,6 +230,7 @@ async function addMcpBridgeUnlocked(
   validateSandboxName(sandboxName);
   validateMcpServerName(options.server);
   assertAuthenticatedCredentialReference(options.env);
+  const denyTools = normalizeMcpDenyTools(options.denyTools ?? []);
   let explicitTrustedPrivateHosts: string[];
   let configuredTrustedPrivateHosts: string[];
   try {
@@ -276,6 +345,7 @@ async function addMcpBridgeUnlocked(
     adapter,
     url: normalizedUrl,
     env: envNames,
+    ...(denyTools.length > 0 ? { denyTools } : {}),
     allowedIps: [...target.addresses],
     ...(target.trustedPrivateHost
       ? {
@@ -290,7 +360,7 @@ async function addMcpBridgeUnlocked(
 
   if (existingEntry && !sameMcpAddIntent(existingEntry, requestedEntry)) {
     throw new McpBridgeError(
-      `MCP server '${options.server}' has an incomplete add transaction with different URL, credential, agent, or derived resources. Re-run the original add command or remove it with --force before changing the definition.`,
+      `MCP server '${options.server}' has an incomplete add transaction with different URL, credential, denied tools, agent, or derived resources. Re-run the original add command or remove it with --force before changing the definition.`,
       2,
     );
   }
@@ -299,6 +369,7 @@ async function addMcpBridgeUnlocked(
     ? {
         ...existingEntry,
         env: [...existingEntry.env],
+        ...(existingEntry.denyTools ? { denyTools: [...existingEntry.denyTools] } : {}),
         ...(existingEntry.allowedIps ? { allowedIps: [...existingEntry.allowedIps] } : {}),
       }
     : requestedEntry;

@@ -390,6 +390,7 @@ bridge.addMcpBridge("crash-test", {
   server: "fake",
   url: "https://8.8.8.8/mcp",
   env: [{ name: "FAKE_MCP_SECRET" }],
+  denyTools: ["delete_*"],
 }).then(
   async () => {
     try {
@@ -1175,6 +1176,7 @@ describe("MCP add crash consistency", () => {
         expect(committed).toMatchObject({
           server: "fake",
           env: ["FAKE_MCP_SECRET"],
+          denyTools: ["delete_*"],
           policyName: "mcp-bridge-fake",
         });
         expect(committed.providerName).toBe(pending.providerName);
