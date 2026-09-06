@@ -29,6 +29,7 @@ const ACTION_USES =
   "NVIDIA/NemoClaw/.github/actions/host-dependency-setup@4def1501b34ce586f83b91af50a66b5d22b31d75";
 
 interface WorkflowStep {
+  if?: string;
   name?: string;
   run?: string;
   uses?: string;
@@ -117,6 +118,19 @@ describe("E2E host dependency action boundary (#6961)", () => {
     )!;
     install["continue-on-error"] = true;
     expect(validateE2eWorkflow(workflow)).toContain("live host dependency setup must fail closed");
+  });
+
+  it("keeps DCode TUI dependencies available on every selected runtime", () => {
+    const workflow = readWorkflow();
+    const install = workflow.jobs.live?.steps.find(
+      (step) => step.name === "Install Deep Agents Code TUI host dependencies",
+    )!;
+    install.if =
+      "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' && matrix.runtime_provider == 'docker' }}";
+
+    expect(validateE2eWorkflow(workflow)).toContain(
+      "live DCode TUI host dependencies must be scoped to the typed DCode target",
+    );
   });
 
   it.each(["", "   ", "expect\ncurl", "curl"])(
