@@ -244,7 +244,7 @@ describe("managed gateway port readiness (#7411)", () => {
     ).toBe(false);
   });
 
-  it("recognizes a Homebrew 6 listener without repeated static formula probes (#11111, #11112)", async () => {
+  it("resets Homebrew formula evidence after successful and failed observations (#11111, #11112)", async () => {
     vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
     vi.spyOn(process, "arch", "get").mockReturnValue("arm64");
     const formulaPrefix = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-readiness-homebrew-"));
@@ -324,11 +324,20 @@ describe("managed gateway port readiness (#7411)", () => {
         commandResult(),
       ],
     ]);
+    let failManagedObservation = false;
+    let failingExecutableSamples = 0;
+    const failObservation = (): never => {
+      throw new Error("synthetic managed observation failure");
+    };
     subprocess.spawnSync.mockImplementation((command: string, args: readonly string[] = []) => {
       const brewIndex = args.indexOf("brew");
       const invocation =
         command === "bash" ? ["brew", ...args.slice(brewIndex + 1)] : [command, ...args];
-      return resultByInvocation.get(invocation.join("\0")) ?? commandResult();
+      return failManagedObservation &&
+        command === "/usr/sbin/lsof" &&
+        ++failingExecutableSamples === 3
+        ? failObservation()
+        : (resultByInvocation.get(invocation.join("\0")) ?? commandResult());
     });
 
     try {
@@ -365,9 +374,28 @@ describe("managed gateway port readiness (#7411)", () => {
       ];
       expect(launchctlCalls()).toEqual(expectedLaunchctlCalls);
 
-      await collectGatewayObservations(deps);
+      failManagedObservation = true;
+      await expect(collectGatewayObservations(deps)).resolves.toMatchObject({
+        failure: "Managed gateway observations could not be collected safely.",
+      });
       expect(formulaCalls()).toEqual([...expectedFormulaCalls, ...expectedFormulaCalls]);
-      expect(launchctlCalls()).toEqual([...expectedLaunchctlCalls, ...expectedLaunchctlCalls]);
+      expect(launchctlCalls()).toEqual([
+        ...expectedLaunchctlCalls,
+        ...expectedLaunchctlCalls.slice(0, 2),
+      ]);
+
+      failManagedObservation = false;
+      await collectGatewayObservations(deps);
+      expect(formulaCalls()).toEqual([
+        ...expectedFormulaCalls,
+        ...expectedFormulaCalls,
+        ...expectedFormulaCalls,
+      ]);
+      expect(launchctlCalls()).toEqual([
+        ...expectedLaunchctlCalls,
+        ...expectedLaunchctlCalls.slice(0, 2),
+        ...expectedLaunchctlCalls,
+      ]);
     } finally {
       await new Promise<void>((resolve) => listener.close(() => resolve()));
       fs.rmSync(formulaPrefix, { force: true, recursive: true });

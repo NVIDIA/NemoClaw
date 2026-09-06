@@ -588,10 +588,7 @@ export function createProductionGatewayReadinessDependencies(
   const trustedVersionBinaryByPid = new Map<number, string>();
   const trustedTargetBoundPids = new Set<number>();
   const homebrewFormulaOperation = createOpenShellHomebrewFormulaOperation({ env: probeEnv });
-  const cachedHomebrewFormulaOperations = new Map<
-    string,
-    ReturnType<typeof homebrewFormulaOperation>
-  >();
+  let cachedHomebrewFormulaInfo: ReturnType<typeof homebrewFormulaOperation> | null = null;
   const homebrewFormulaInfoOperation = [
     "info",
     "--json=v2",
@@ -599,16 +596,17 @@ export function createProductionGatewayReadinessDependencies(
   ].join("\0");
 
   function resetGatewayServiceObservation(): void {
-    cachedHomebrewFormulaOperations.clear();
+    cachedHomebrewFormulaInfo = null;
   }
 
   function runObservedHomebrewFormulaOperation(args: string[]) {
     const key = args.join("\0");
-    const cached = cachedHomebrewFormulaOperations.get(key);
-    if (cached) return cached;
+    if (key === homebrewFormulaInfoOperation && cachedHomebrewFormulaInfo) {
+      return cachedHomebrewFormulaInfo;
+    }
     const result = homebrewFormulaOperation(args);
     if (result.status === 0 && key === homebrewFormulaInfoOperation) {
-      cachedHomebrewFormulaOperations.set(key, result);
+      cachedHomebrewFormulaInfo = result;
     }
     return result;
   }
