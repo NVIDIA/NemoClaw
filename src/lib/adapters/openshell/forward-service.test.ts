@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   buildForwardServiceArgs,
+  isForwardServiceListenerOwner,
   launchForwardService,
   type ForwardServiceTarget,
 } from "./forward-service";
@@ -43,6 +44,39 @@ describe("OpenShell forward service", () => {
     expect(buildForwardServiceArgs({ ...target, workspace: "review-workspace" })).toContain(
       "review-workspace",
     );
+  });
+
+  it("proves the exact direct ForwardTcp listener before reuse", () => {
+    const expected = [target.executable, ...buildForwardServiceArgs(target)].join(" ");
+    const probe = vi.fn((executable: string) =>
+      executable === "lsof"
+        ? { status: 0, stdout: "4321\n" }
+        : { status: 0, stdout: `${expected}\n` },
+    );
+
+    expect(isForwardServiceListenerOwner(target, { probe })).toBe(true);
+    expect(probe).toHaveBeenCalledTimes(3);
+  });
+
+  it("rejects a listener whose process does not match the direct ForwardTcp target", () => {
+    const probe = vi.fn((executable: string) =>
+      executable === "lsof"
+        ? { status: 0, stdout: "4321\n" }
+        : { status: 0, stdout: "/usr/bin/node foreign-listener.js\n" },
+    );
+
+    expect(isForwardServiceListenerOwner(target, { probe })).toBe(false);
+  });
+
+  it("rejects ambiguous or changing listener ownership", () => {
+    const expected = [target.executable, ...buildForwardServiceArgs(target)].join(" ");
+    const probe = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0, stdout: "4321\n" })
+      .mockReturnValueOnce({ status: 0, stdout: `${expected}\n` })
+      .mockReturnValueOnce({ status: 0, stdout: "9876\n" });
+
+    expect(isForwardServiceListenerOwner(target, { probe })).toBe(false);
   });
 
   it("detaches the OpenShell child and waits for its local port", () => {

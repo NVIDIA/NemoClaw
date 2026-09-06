@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
 
 import { isValidName } from "../../name-validation";
@@ -35,6 +35,15 @@ export interface ForwardServiceLaunchOptions {
     unref(): void;
   };
   readonly timeoutMs?: number;
+}
+
+type ForwardServiceOwnerProbe = (
+  executable: string,
+  args: readonly string[],
+) => { status: number | null; stdout: string };
+
+export interface ForwardServiceOwnerOptions {
+  readonly probe?: ForwardServiceOwnerProbe;
 }
 
 function isPort(value: unknown): value is number {
@@ -92,6 +101,35 @@ export function buildForwardServiceArgs(target: ForwardServiceTarget): string[] 
     "--local",
     `${target.localHost}:${String(target.localPort)}`,
   ];
+}
+
+function captureProcess(executable: string, args: readonly string[]) {
+  const result = spawnSync(executable, [...args], { encoding: "utf8" });
+  return { status: result.status, stdout: result.stdout ?? "" };
+}
+
+function listenerPids(port: number, probe: ForwardServiceOwnerProbe): string[] {
+  const result = probe("lsof", ["-ti", `:${String(port)}`, "-sTCP:LISTEN"]);
+  if (result.status !== 0) return [];
+  return [...new Set(result.stdout.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean))];
+}
+
+/** Prove that the current listener is the exact direct ForwardTcp command. */
+export function isForwardServiceListenerOwner(
+  target: ForwardServiceTarget,
+  options: ForwardServiceOwnerOptions = {},
+): boolean {
+  validateForwardServiceTarget(target);
+  const probe = options.probe ?? captureProcess;
+  const before = listenerPids(target.localPort, probe);
+  if (before.length !== 1 || !/^[1-9]\d*$/u.test(before[0]!)) return false;
+  const pid = before[0]!;
+  const process = probe("ps", ["-ww", "-p", pid, "-o", "args="]);
+  if (process.status !== 0) return false;
+  const expected = [target.executable, ...buildForwardServiceArgs(target)].join(" ");
+  if (process.stdout.trim() !== expected) return false;
+  const after = listenerPids(target.localPort, probe);
+  return after.length === 1 && after[0] === pid;
 }
 
 /** Launch one foreground OpenShell service forward as a detached host child. */

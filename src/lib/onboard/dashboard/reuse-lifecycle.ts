@@ -15,24 +15,15 @@ export type DashboardReuseLifecycle = {
   withSandboxLifecycleLock<T>(sandboxName: string, operation: () => Promise<T> | T): Promise<T>;
 };
 
-type DashboardReuseTransaction = {
-  lifecycle: DashboardReuseLifecycle;
-  reconciledForwards: Map<string, number>;
-};
-
-const lifecycleStorage = new AsyncLocalStorage<DashboardReuseTransaction>();
+const lifecycleStorage = new AsyncLocalStorage<DashboardReuseLifecycle>();
 
 export function getDashboardReuseLifecycle(): DashboardReuseLifecycle | undefined {
-  return lifecycleStorage.getStore()?.lifecycle;
-}
-
-export function getDashboardReuseReconciledForwards(): Map<string, number> | undefined {
-  return lifecycleStorage.getStore()?.reconciledForwards;
+  return lifecycleStorage.getStore();
 }
 
 export function withDashboardReuseLifecycle<T>(
   lifecycle: DashboardReuseLifecycle,
   operation: () => Promise<T>,
 ): Promise<T> {
-  return lifecycleStorage.run({ lifecycle, reconciledForwards: new Map() }, operation);
+  return lifecycleStorage.run(lifecycle, operation);
 }

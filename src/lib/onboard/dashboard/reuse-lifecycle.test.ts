@@ -3,11 +3,7 @@
 
 import { expect, it, vi } from "vitest";
 
-import {
-  getDashboardReuseLifecycle,
-  getDashboardReuseReconciledForwards,
-  withDashboardReuseLifecycle,
-} from "./reuse-lifecycle";
+import { getDashboardReuseLifecycle, withDashboardReuseLifecycle } from "./reuse-lifecycle";
 
 it("keeps overlapping onboarding lifecycle scopes independent", async () => {
   const first = {
@@ -27,18 +23,14 @@ it("keeps overlapping onboarding lifecycle scopes independent", async () => {
 
   const firstOperation = withDashboardReuseLifecycle(first, async () => {
     expect(getDashboardReuseLifecycle()).toBe(first);
-    getDashboardReuseReconciledForwards()?.set("alpha", 18_789);
     await firstPaused;
     expect(getDashboardReuseLifecycle()).toBe(first);
-    expect(getDashboardReuseReconciledForwards()?.get("alpha")).toBe(18_789);
   });
   await withDashboardReuseLifecycle(second, async () => {
     expect(getDashboardReuseLifecycle()).toBe(second);
-    expect(getDashboardReuseReconciledForwards()?.has("alpha")).toBe(false);
   });
   releaseFirst();
   await firstOperation;
 
   expect(getDashboardReuseLifecycle()).toBeUndefined();
-  expect(getDashboardReuseReconciledForwards()).toBeUndefined();
 });
