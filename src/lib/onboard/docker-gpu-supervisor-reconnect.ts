@@ -119,13 +119,13 @@ function exactReplacementIsRunning(
  */
 export function waitForOpenShellFinalHandoff(
   sandboxName: string,
-  timeoutSecs: number,
+  timeoutMs: number,
   deps: DockerFinalHandoffDeps,
 ): DockerFinalHandoffAcknowledgement {
   const sleep = deps.sleep ?? defaultSleep;
-  const boundedTimeoutSecs = Math.max(1, Math.round(timeoutSecs));
-  const deadline = Date.now() + boundedTimeoutSecs * 1000;
-  const maxAttempts = Math.max(1, Math.ceil(boundedTimeoutSecs / 2) + 1);
+  const boundedTimeoutMs = Math.max(1, Math.round(timeoutMs));
+  const deadline = Date.now() + boundedTimeoutMs;
+  const maxAttempts = Math.max(1, Math.ceil(boundedTimeoutMs / 2000) + 1);
   let lastSandboxPhase: string | null = null;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {

@@ -270,16 +270,13 @@ export function finalizeDockerGpuPatchBackup(
     // the identity-bound handoff waiter, which rejects absent, foreign, and
     // terminal replacement state. Both operations share one deadline so this
     // reconciliation cannot double the configured handoff interval.
-    const remainingHandoffTimeoutSecs = Math.max(
-      0,
-      Math.floor((finalHandoffDeadlineMs - now().getTime()) / 1000),
-    );
+    const remainingHandoffTimeoutMs = Math.max(0, finalHandoffDeadlineMs - now().getTime());
     console.log(
-      `  Waiting for OpenShell to confirm the final replacement handoff (up to ${remainingHandoffTimeoutSecs}s)...`,
+      `  Waiting for OpenShell to confirm the final replacement handoff (up to ${Math.ceil(remainingHandoffTimeoutMs / 1000)}s)...`,
     );
     const acknowledgement =
-      remainingHandoffTimeoutSecs > 0
-        ? waitForOpenShellFinalHandoff(options.sandboxName, remainingHandoffTimeoutSecs, {
+      remainingHandoffTimeoutMs > 0
+        ? waitForOpenShellFinalHandoff(options.sandboxName, remainingHandoffTimeoutMs, {
             runCaptureOpenshell: deps.runCaptureOpenshell,
             runOpenshell: deps.runOpenshell,
             sleep: deps.sleep,

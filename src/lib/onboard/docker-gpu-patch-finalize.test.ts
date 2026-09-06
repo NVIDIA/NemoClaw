@@ -283,6 +283,64 @@ describe("finalizeDockerGpuPatchBackup", () => {
     );
   });
 
+  it("rejects a running replacement that stays Provisioning through the remaining handoff budget (#11096)", () => {
+    const result = exactDeferredCreateResult();
+    let currentTimeMs = new Date("2026-09-04T07:42:01Z").getTime();
+    const runCaptureOpenshell = vi.fn(
+      (_args: string[], _opts?: Record<string, unknown>) =>
+        "alpha  2026-09-04 07:42:01  Provisioning\n",
+    );
+    const runOpenshell = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0 })
+      .mockImplementationOnce(() => {
+        currentTimeMs += 59_500;
+        return { status: 1, error: new Error("timed out waiting for Ready") };
+      });
+    const dockerRun = vi.fn((args: readonly string[]) => {
+      const namespaceInspect = String(args[4]).includes("sandbox-namespace");
+      return args[0] === "ps"
+        ? { status: 0, stdout: `${result.newContainerId}\n` }
+        : namespaceInspect
+          ? { status: 0, stdout: "current-gateway\n" }
+          : { status: 0, stdout: "true\n" };
+    });
+
+    const outcome = finalizeDockerGpuPatchBackup(
+      {
+        result,
+        supervisorReady: true,
+        sandboxName: "alpha",
+        finalHandoffTimeoutSecs: 60,
+      },
+      {
+        dockerStop: vi.fn(() => ({ status: 0 })),
+        dockerRm: vi.fn(() => ({ status: 0 })),
+        dockerRun,
+        dockerStart: vi.fn(() => ({ status: 0 })),
+        runCaptureOpenshell,
+        runOpenshell,
+        sleep: vi.fn(),
+        now: () => new Date(currentTimeMs),
+      },
+    );
+
+    expect(outcome).toEqual({
+      backupRemoved: true,
+      rolledBack: false,
+      replacementStoppedForCommit: true,
+      replacementRestarted: false,
+      lifecycleStopAcknowledged: true,
+      finalHandoffAcknowledged: false,
+      lastSandboxPhase: "Provisioning",
+    });
+    expect(runCaptureOpenshell).toHaveBeenCalledTimes(2);
+    expect(runOpenshell).toHaveBeenCalledTimes(2);
+    const firstListTimeoutMs = Number(runCaptureOpenshell.mock.calls[0]?.[1]?.timeout);
+    expect(firstListTimeoutMs).toBeGreaterThan(0);
+    expect(firstListTimeoutMs).toBeLessThanOrEqual(500);
+  });
+
   it("fails immediately when OpenShell reports Deleting after the final start (#9531)", () => {
     const result = exactDeferredCreateResult();
     const events: string[] = [];

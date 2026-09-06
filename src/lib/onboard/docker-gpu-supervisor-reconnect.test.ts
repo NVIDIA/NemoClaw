@@ -38,7 +38,7 @@ describe("Docker GPU final handoff acknowledgement", () => {
       return true;
     });
 
-    const acknowledgement = waitForOpenShellFinalHandoff("alpha", 60, {
+    const acknowledgement = waitForOpenShellFinalHandoff("alpha", 60_000, {
       runCaptureOpenshell,
       runOpenshell,
       replacementIsExactAndRunning,
@@ -78,7 +78,7 @@ describe("Docker GPU final handoff acknowledgement", () => {
     const sleep = vi.fn();
 
     expect(
-      waitForOpenShellFinalHandoff("alpha", 60, {
+      waitForOpenShellFinalHandoff("alpha", 60_000, {
         runCaptureOpenshell,
         runOpenshell,
         replacementIsExactAndRunning,
@@ -96,7 +96,7 @@ describe("Docker GPU final handoff acknowledgement", () => {
     const replacementIsExactAndRunning = vi.fn(() => false);
 
     expect(
-      waitForOpenShellFinalHandoff("alpha", 60, {
+      waitForOpenShellFinalHandoff("alpha", 60_000, {
         runCaptureOpenshell,
         runOpenshell: vi.fn(() => ({ status: 1 })),
         replacementIsExactAndRunning,
@@ -115,7 +115,7 @@ describe("Docker GPU final handoff acknowledgement", () => {
     const replacementIsExactAndRunning = vi.fn(() => true);
 
     expect(
-      waitForOpenShellFinalHandoff("alpha", 60, {
+      waitForOpenShellFinalHandoff("alpha", 60_000, {
         runCaptureOpenshell,
         runOpenshell,
         replacementIsExactAndRunning,
@@ -135,7 +135,7 @@ describe("Docker GPU final handoff acknowledgement", () => {
     const replacementIsExactAndRunning = vi.fn().mockReturnValueOnce(true).mockReturnValue(false);
 
     expect(
-      waitForOpenShellFinalHandoff("alpha", 60, {
+      waitForOpenShellFinalHandoff("alpha", 60_000, {
         runCaptureOpenshell,
         runOpenshell,
         replacementIsExactAndRunning,
