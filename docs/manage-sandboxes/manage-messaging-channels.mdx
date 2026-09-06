@@ -126,14 +126,15 @@ Google Chat stop and start cycles also preserve the bridge provider and its gate
 
 When `channels start` re-enables a channel, NemoClaw records the channel as enabled in the messaging plan. The rebuild attaches the existing bridge provider before applying its matching built-in policy preset to the replacement sandbox. While a channel remains stopped, the rebuild omits its runtime configuration, token upsert, and channel startup effects. Generic providers and refresh bridges remain detached.
 
+The rebuild also omits the stopped channel's inactive built-in messaging preset from the
+command-time plan. The messaging plan does not persist policy references. Rebuild starts from the
+current OpenShell policy and derives any requested channel change from current manifests.
+
 <AgentOnly variant="hermes">
-  The rebuild also omits the stopped channel's inactive built-in messaging preset from the
-  command-time plan. The messaging plan does not persist policy references; rebuild starts from the
-  current OpenShell policy and derives any requested channel change from current manifests. For
-  stopped Hermes Discord, a preserved custom credential-bound policy requires the exact validated
-  static provider, so the rebuild retains and attaches only that provider without starting Discord
-  or recreating its credentials. A missing or incompatible required provider stops the rebuild
-  before the replacement can use the policy.
+  For stopped Hermes Discord, a preserved custom credential-bound policy requires the exact
+  validated static provider. The rebuild retains and attaches only that provider without starting
+  Discord or recreating its credentials. A missing or incompatible required provider stops the
+  rebuild before the replacement can use the policy.
 </AgentOnly>
 If the command queues the change without rebuilding, the running sandbox keeps its existing bridge
 and network policy until you rebuild it.

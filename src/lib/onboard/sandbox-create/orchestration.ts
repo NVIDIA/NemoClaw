@@ -11,6 +11,11 @@ import { NEMOCLAW_CREATE_ATTEMPT_LABEL } from "../../adapters/openshell/sandbox-
 import type { AgentDefinition } from "../../agent/defs";
 import type { WebSearchConfig } from "../../inference/web-search";
 import {
+  enabledPlanChannelIds,
+  filterEnabledPlanEntries,
+  normalizeMessagingChannelId,
+} from "../../messaging/applier/plan-filter";
+import {
   getMessagingPolicyKeysByChannel,
   listMessagingPolicyPresetMetadata,
 } from "../../messaging/channels/metadata";
@@ -90,17 +95,22 @@ function cancelRecoveryIdentity(
   };
 }
 
+function providerNamesFromCreateArgs(createArgs: readonly string[]): string[] {
+  const startupCommandSeparator = createArgs.indexOf("--");
+  const openshellArgs =
+    startupCommandSeparator < 0 ? createArgs : createArgs.slice(0, startupCommandSeparator);
+  return openshellArgs.flatMap((value, index) =>
+    index > 0 && openshellArgs[index - 1] === "--provider" ? [value] : [],
+  );
+}
+
 /** Finalize provider arguments from the exact policy that creation consumes. */
 export function bindRebuildPolicyProvidersToCreateArgs(
   createArgs: readonly string[],
   policy: Pick<import("../initial-policy").InitialSandboxPolicy, "credentialBindingProviders">,
 ): string[] {
   const result = [...createArgs];
-  const attached = new Set(
-    result.flatMap((value, index) =>
-      index > 0 && result[index - 1] === "--provider" ? [value] : [],
-    ),
-  );
+  const attached = new Set(providerNamesFromCreateArgs(result));
   for (const provider of policy.credentialBindingProviders ?? []) {
     if (attached.has(provider)) continue;
     const startupCommandSeparator = result.indexOf("--");
@@ -121,21 +131,20 @@ export function bindRebuildPolicyProvidersToCreateArgs(
 export function resolveRebuildPolicyProviderAuthority(input: {
   readonly createArgs: readonly string[];
   readonly messagingPlan:
-    | Pick<SandboxMessagingPlan, "credentialBindings" | "disabledChannels">
+    | Pick<SandboxMessagingPlan, "channels" | "credentialBindings" | "disabledChannels">
     | null
     | undefined;
   readonly preservedMcpState: SandboxMcpState | undefined;
   readonly managedMcpRebuildHandoff: boolean;
 }): string[] {
-  const providers = new Set(
-    input.createArgs.flatMap((value, index, args) =>
-      index > 0 && args[index - 1] === "--provider" ? [value] : [],
-    ),
-  );
-  const disabledChannels = new Set(input.messagingPlan?.disabledChannels ?? []);
-  for (const binding of input.messagingPlan?.credentialBindings ?? []) {
-    if (disabledChannels.has(binding.channelId)) continue;
-    providers.add(binding.providerName);
+  const providers = new Set(providerNamesFromCreateArgs(input.createArgs));
+  if (input.messagingPlan) {
+    for (const binding of filterEnabledPlanEntries(
+      input.messagingPlan,
+      input.messagingPlan.credentialBindings,
+    )) {
+      providers.add(binding.providerName);
+    }
   }
   if (input.managedMcpRebuildHandoff) {
     for (const entry of Object.values(input.preservedMcpState?.bridges ?? {})) {
@@ -154,7 +163,7 @@ function asMessagingAgentId(
 
 export function resolveRebuildMessagingPolicyDeltas(
   plan:
-    | Pick<SandboxMessagingPlan, "agent" | "disabledChannels" | "networkPolicy">
+    | Pick<SandboxMessagingPlan, "agent" | "channels" | "disabledChannels" | "networkPolicy">
     | null
     | undefined,
   fallback?: {
@@ -195,26 +204,21 @@ export function resolveRebuildMessagingPolicyDeltas(
       removedNetworkPolicyKeys: [],
     };
   }
-  const disabledChannels = new Set(plan.disabledChannels);
+  const enabledChannelIds = enabledPlanChannelIds(plan);
+  const inactiveChannelIds = new Set([
+    ...plan.disabledChannels.map(normalizeMessagingChannelId),
+    ...plan.channels
+      .map((channel) => normalizeMessagingChannelId(channel.channelId))
+      .filter((channelId) => !enabledChannelIds.has(channelId)),
+  ]);
+  const activeEntries = filterEnabledPlanEntries(plan, plan.networkPolicy.entries);
   const policyKeysByChannel = getMessagingPolicyKeysByChannel({ agent: plan.agent });
   return {
-    requiredNetworkPolicyKeys: [
-      ...new Set(
-        plan.networkPolicy.entries
-          .filter((entry) => !disabledChannels.has(entry.channelId))
-          .flatMap((entry) => entry.policyKeys),
-      ),
-    ],
-    requiredNetworkPolicyPresetNames: [
-      ...new Set(
-        plan.networkPolicy.entries
-          .filter((entry) => !disabledChannels.has(entry.channelId))
-          .map((entry) => entry.presetName),
-      ),
-    ],
+    requiredNetworkPolicyKeys: [...new Set(activeEntries.flatMap((entry) => entry.policyKeys))],
+    requiredNetworkPolicyPresetNames: [...new Set(activeEntries.map((entry) => entry.presetName))],
     removedNetworkPolicyKeys: [
       ...new Set(
-        plan.disabledChannels.flatMap((channelId) => policyKeysByChannel[channelId] ?? []),
+        [...inactiveChannelIds].flatMap((channelId) => policyKeysByChannel[channelId] ?? []),
       ),
     ],
   };

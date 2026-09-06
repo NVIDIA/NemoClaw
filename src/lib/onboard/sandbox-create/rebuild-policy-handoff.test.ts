@@ -12,6 +12,7 @@ import { getMessagingPolicyKeysByChannel } from "../../messaging/channels";
 import * as policies from "../../policy";
 import { getCredentialBindingProviders } from "../initial-policy";
 import { allMessagingChannelPolicyPresets } from "../messaging-policy-presets";
+import { resolveRebuildPolicyProviderAuthority } from "./orchestration";
 import {
   materializeRebuildPolicyHandoff,
   mergeReplacementPolicyAccess,
@@ -293,12 +294,13 @@ network_policies:
     ).toThrow("required network policy 'wechat' is absent");
   });
 
-  it("removes only the policy keys requested by an explicit stopped channel", () => {
+  it("removes an inactive built-in key while preserving same-named custom policy ownership", () => {
     const live = `
 version: 1
 network_policies:
   host_edit: {name: host_edit}
   telegram: {name: telegram}
+  nemoclaw_custom__telegram__telegram: {name: operator_telegram}
   teams: {name: teams}
 `;
 
@@ -312,6 +314,7 @@ network_policies:
     expect(merged.changed).toBe(true);
     expect(YAML.parse(merged.source).network_policies).toEqual({
       host_edit: { name: "host_edit" },
+      nemoclaw_custom__telegram__telegram: { name: "operator_telegram" },
       teams: { name: "teams" },
     });
   });
@@ -436,7 +439,7 @@ network_policies:
     expect(fs.existsSync(livePath)).toBe(true);
   });
 
-  it("rejects live credential bindings outside the verified replacement plan", () => {
+  it("rejects live credential bindings named only by the startup command", () => {
     const livePath = tempPolicy(
       "live-provider.yaml",
       `version: 1
@@ -459,6 +462,24 @@ network_policies:
 `,
     );
 
+    const authorizedCredentialBindingProviders = resolveRebuildPolicyProviderAuthority({
+      createArgs: [
+        "--from",
+        "image",
+        "--provider",
+        "planned-provider",
+        "--",
+        "node",
+        "agent.js",
+        "--provider",
+        "host-added-provider",
+      ],
+      messagingPlan: null,
+      preservedMcpState: undefined,
+      managedMcpRebuildHandoff: false,
+    });
+    expect(authorizedCredentialBindingProviders).toEqual(["planned-provider"]);
+
     expect(() =>
       materializeRebuildPolicyHandoff({
         livePolicyPath: livePath,
@@ -467,6 +488,7 @@ network_policies:
           appliedPresets: [],
           credentialBindingProviders: ["planned-provider"],
         },
+        authorizedCredentialBindingProviders,
       }),
     ).toThrow("outside the verified replacement plan");
 

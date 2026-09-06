@@ -157,53 +157,80 @@ describe("preparePolicyPresetResumeSelection required preset reconciliation", ()
     expect(result.livePolicyPresetsNeedUpdate).toBe(true);
   });
 
-  it("removes a stale Hermes Slack preset when no messaging channel is enabled", () => {
-    const result = preparePolicyPresetResumeSelection(
-      { policies: policies({ applied: ["npm", "slack"] }) },
-      "alpha",
-      {
-        enabledChannels: [],
-        agent: "hermes",
-        webSearchConfig: null,
-        webSearchSupported: true,
-      },
-    );
+  it.each(["hermes", "openclaw"] as const)(
+    "removes a stale %s Slack preset when no messaging channel is enabled",
+    (agent) => {
+      const result = preparePolicyPresetResumeSelection(
+        { policies: policies({ applied: ["npm", "slack"] }) },
+        "alpha",
+        {
+          enabledChannels: [],
+          agent,
+          webSearchConfig: null,
+          webSearchSupported: true,
+        },
+      );
 
-    expect(result.policyPresets).toEqual(["npm"]);
-    expect(result.livePolicyPresetsNeedUpdate).toBe(true);
-  });
+      expect(result.policyPresets).toEqual(["npm"]);
+      expect(result.livePolicyPresetsNeedUpdate).toBe(true);
+    },
+  );
 
-  it("keeps only the enabled Hermes messaging preset during resume", () => {
-    const result = preparePolicyPresetResumeSelection(
-      { policies: policies({ applied: ["npm", "slack", "discord"] }) },
-      "alpha",
-      {
-        enabledChannels: ["discord"],
-        agent: "hermes",
-        webSearchConfig: null,
-        webSearchSupported: true,
-      },
-    );
+  it.each(["hermes", "openclaw"] as const)(
+    "keeps only the enabled %s messaging preset during resume",
+    (agent) => {
+      const result = preparePolicyPresetResumeSelection(
+        { policies: policies({ applied: ["npm", "slack", "discord"] }) },
+        "alpha",
+        {
+          enabledChannels: ["discord"],
+          agent,
+          webSearchConfig: null,
+          webSearchSupported: true,
+        },
+      );
 
-    expect(result.policyPresets).toEqual(["npm", "discord"]);
-    expect(result.livePolicyPresetsNeedUpdate).toBe(true);
-  });
+      expect(result.policyPresets).toEqual(["npm", "discord"]);
+      expect(result.livePolicyPresetsNeedUpdate).toBe(true);
+    },
+  );
 
-  it("preserves custom ownership of an inactive Hermes messaging preset name", () => {
-    const result = preparePolicyPresetResumeSelection(
-      { policies: policies({ applied: ["npm", "slack"], custom: ["slack"] }) },
-      "alpha",
-      {
-        enabledChannels: [],
-        agent: "hermes",
-        webSearchConfig: null,
-        webSearchSupported: true,
-      },
-    );
+  it.each(["hermes", "openclaw"] as const)(
+    "preserves custom ownership of an inactive %s messaging preset name",
+    (agent) => {
+      const result = preparePolicyPresetResumeSelection(
+        { policies: policies({ applied: ["npm", "slack"], custom: ["slack"] }) },
+        "alpha",
+        {
+          enabledChannels: [],
+          agent,
+          webSearchConfig: null,
+          webSearchSupported: true,
+        },
+      );
 
-    expect(result.policyPresets).toEqual(["npm", "slack"]);
-    expect(result.livePolicyPresetsNeedUpdate).toBe(false);
-  });
+      expect(result.policyPresets).toEqual(["npm", "slack"]);
+      expect(result.livePolicyPresetsNeedUpdate).toBe(false);
+    },
+  );
+
+  it.each(["hermes", "openclaw"] as const)(
+    "preserves %s messaging policy when channel state is unavailable",
+    (agent) => {
+      const result = preparePolicyPresetResumeSelection(
+        { policies: policies({ applied: ["npm", "slack"] }) },
+        "alpha",
+        {
+          agent,
+          webSearchConfig: null,
+          webSearchSupported: true,
+        },
+      );
+
+      expect(result.policyPresets).toEqual(["npm", "slack"]);
+      expect(result.livePolicyPresetsNeedUpdate).toBe(false);
+    },
+  );
 });
 
 describe("preparePolicyPresetResumeSelection tier-default preservation (#6844)", () => {

@@ -256,8 +256,8 @@ export function computeSetupPresetSuggestions(
           !isStaleBuiltinWebSearchPolicyPreset(name, {
             webSearchConfig,
             customPresetNames: options.customPresetNames,
-            tierName,
-            agentName: agent,
+            tier: deps.tiers.getTier(tierName),
+            agent,
           }),
       )
       .filter(
@@ -272,6 +272,7 @@ export function computeSetupPresetSuggestions(
       .filter((name) => deps.policies.setupPolicyPresetSupported(name, supportOptions))
       .filter((name) => !known || known.has(name)),
     enabledChannels,
+    agent,
     options.customPresetNames,
   );
   const add = (name: string) => {
@@ -290,8 +291,8 @@ export function computeSetupPresetSuggestions(
       isStaleBuiltinWebSearchPolicyPreset(name, {
         webSearchConfig,
         customPresetNames: options.customPresetNames,
-        tierName,
-        agentName: agent,
+        tier: deps.tiers.getTier(tierName),
+        agent,
       })
     ) {
       return;
