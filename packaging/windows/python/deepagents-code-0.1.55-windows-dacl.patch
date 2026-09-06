@@ -1,0 +1,9 @@
+diff --git a/deepagents_code/offload.py b/deepagents_code/offload.py
+index a42e02e..43a4d0e 100644
+--- a/deepagents_code/offload.py
++++ b/deepagents_code/offload.py
+@@ -103,0 +104,4 @@ def _harden_dir(path: Path) -> None:
++    # Windows access is governed by the inherited DACL. Applying a POSIX mode can
++    # reject an otherwise approved MXC writable root with ERROR_ACCESS_DENIED.
++    if os.name == "nt":
++        return

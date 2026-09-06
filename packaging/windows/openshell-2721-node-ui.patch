@@ -1,0 +1,83 @@
+diff --git a/crates/openshell-driver-mxc/src/driver.rs b/crates/openshell-driver-mxc/src/driver.rs
+index d8e981a4..3fc90a16 100644
+--- a/crates/openshell-driver-mxc/src/driver.rs
++++ b/crates/openshell-driver-mxc/src/driver.rs
+@@ -94,2 +94,4 @@ struct MxcSandboxConfig {
+     cwd: String,
++    #[serde(default)]
++    host_loopback: bool,
+ }
+@@ -636,2 +638,3 @@ async fn run_lifecycle(
+     let command_line = encode_windows_command_line(&sandbox_config.command);
++    let host_loopback = sandbox_config.host_loopback;
+     let process = MxcProcess {
+@@ -702,2 +705,3 @@ async fn run_lifecycle(
+                 capabilities: config.pc_capabilities.clone(),
++                host_loopback,
+             };
+diff --git a/crates/openshell-driver-mxc/src/mxc.rs b/crates/openshell-driver-mxc/src/mxc.rs
+index 32d7006d..ba2eebe9 100644
+--- a/crates/openshell-driver-mxc/src/mxc.rs
++++ b/crates/openshell-driver-mxc/src/mxc.rs
+@@ -80,2 +80,5 @@ pub struct MxcProcessContainer {
+     pub capabilities: Vec<String>,
++    /// Opt in to legacy host-loopback ingress for a host-rendered UI.
++    /// False preserves the NVIDIA/OpenShell#2721 network posture exactly.
++    pub host_loopback: bool,
+ }
+@@ -179,2 +182,3 @@ fn oneshot_config_json(
+         "processContainer": serde_json::Value::Object(pc_json),
++        "ui": { "disable": false },
+         "filesystem": serde_json::Value::Object(filesystem_json),
+@@ -182,3 +186,11 @@ fn oneshot_config_json(
+     if let Some(network) = network {
++        debug_assert!(!pc.host_loopback);
+         config["network"] = network_json(network);
++    } else if pc.host_loopback {
++        config["network"] = serde_json::json!({
++            "defaultPolicy": "block",
++            "allowedHosts": [],
++            "blockedHosts": [],
++            "allowLocalNetwork": true,
++        });
+     }
+@@ -812,2 +824,39 @@ mod tests {
+         assert!(config.get("network").is_none());
++        assert_eq!(config["ui"]["disable"], false);
++    }
++
++    #[test]
++    fn oneshot_host_loopback_uses_legacy_ingress_with_blocked_egress() {
++        let filesystem = MxcFilesystem {
++            readwrite_paths: vec!["C:\\work\\demo".into()],
++            readonly_paths: Vec::new(),
++            denied_paths: Vec::new(),
++        };
++        let pc = MxcProcessContainer {
++            host_loopback: true,
++            ..Default::default()
++        };
++        let process = MxcProcess {
++            command_line: "cmd /c exit 0".into(),
++            cwd: "C:\\work\\demo".into(),
++            env: Vec::new(),
++            timeout: 0,
++        };
++        let config = oneshot_config_json("sb-ui", &filesystem, &pc, &process, None);
++
++        assert_eq!(config["version"], MXC_SCHEMA_VERSION);
++        assert_eq!(config["network"]["defaultPolicy"], "block");
++        assert_eq!(config["network"]["allowLocalNetwork"], true);
++        assert!(
++            config["network"]["allowedHosts"]
++                .as_array()
++                .unwrap()
++                .is_empty()
++        );
++        assert!(
++            config["network"]["blockedHosts"]
++                .as_array()
++                .unwrap()
++                .is_empty()
++        );
+     }

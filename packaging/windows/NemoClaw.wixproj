@@ -1,0 +1,54 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<Project Sdk="WixToolset.Sdk/5.0.2">
+  <PropertyGroup>
+    <OutputType>Package</OutputType>
+    <InstallerPlatform>arm64</InstallerPlatform>
+    <OutputName>NemoClaw-$(ProductVersion)-windows-arm64</OutputName>
+    <OutputPath>$(PackageOutputRoot)</OutputPath>
+    <IntermediateOutputPath>$(PackageIntermediateRoot)\msi\</IntermediateOutputPath>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <EnableDefaultEmbeddedResourceItems>false</EnableDefaultEmbeddedResourceItems>
+    <DefineConstants>$(DefineConstants);ProductVersion=$(ProductVersion);PayloadRoot=$(PayloadRoot);SourceRoot=$(SourceRoot)</DefineConstants>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- Locked npm graphs contain three versionless native payloads. They remain
+         MSI-hashed, exact-manifest-qualified, repairable files; suppress only
+         ICE60's optional PE version/language metadata rule. -->
+    <SuppressIces>ICE60</SuppressIces>
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Product.wxs" />
+    <Compile Include="$(GeneratedPayloadAuthoring)" />
+  </ItemGroup>
+  <Target Name="ValidateNemoClawPackageInputs" BeforeTargets="Build">
+    <Error Condition="'$(ProductVersion)' == ''" Text="ProductVersion is required." />
+    <Error Condition="'$(PayloadRoot)' == ''" Text="PayloadRoot is required." />
+    <Error Condition="'$(SourceRoot)' == ''" Text="SourceRoot is required." />
+    <Error Condition="'$(GeneratedPayloadAuthoring)' == ''" Text="GeneratedPayloadAuthoring is required." />
+    <Error Condition="!Exists('$(GeneratedPayloadAuthoring)')" Text="The grouped payload authoring is missing." />
+    <Error Condition="!Exists('$(PayloadRoot)\bin\openshell.exe')" Text="The ARM64 openshell.exe payload is missing." />
+    <Error Condition="!Exists('$(PayloadRoot)\bin\openshell-gateway.exe')" Text="The ARM64 openshell-gateway.exe payload is missing." />
+    <Error Condition="!Exists('$(PayloadRoot)\bin\node.exe')" Text="The ARM64 Node.js runtime is missing." />
+    <Error Condition="!Exists('$(PayloadRoot)\bin\NemoClaw.exe')" Text="The ARM64 NemoClaw launcher is missing." />
+    <Error Condition="!Exists('$(PayloadRoot)\bin\nemoclaw.cmd')" Text="The NemoClaw launcher is missing." />
+    <Error Condition="!Exists('$(PayloadRoot)\nemoclaw\app\bin\nemoclaw.js')" Text="The NemoClaw CLI package is missing." />
+    <Error Condition="!Exists('$(PayloadRoot)\openclaw\node_modules\openclaw\openclaw.mjs')" Text="The OpenClaw runtime package is missing." />
+    <Error Condition="!Exists('$(PayloadRoot)\pi\node_modules\@earendil-works\pi-coding-agent\dist\cli.js')" Text="The Pi runtime package is missing." />
+    <Error Condition="!Exists('$(PayloadRoot)\python\python.exe')" Text="The native ARM64 Python runtime is missing." />
+    <Error Condition="!Exists('$(PayloadRoot)\hermes\site-packages\hermes_cli\main.py')" Text="The Hermes Agent runtime is missing." />
+    <Error Condition="!Exists('$(PayloadRoot)\deepagents\site-packages\deepagents_code\main.py')" Text="The Deep Agents Code runtime is missing." />
+    <Error Condition="!Exists('$(PayloadRoot)\nemocua\run_with_harness.py')" Text="The experimental NemoCUA runtime is missing." />
+    <Error Condition="!Exists('$(PayloadRoot)\onboarding\index.html')" Text="The NemoClaw graphical onboarder is missing." />
+    <Error Condition="!Exists('$(PayloadRoot)\mxc\wxc-exec.exe')" Text="The MXC executor is missing." />
+    <Error Condition="!Exists('$(PayloadRoot)\mxc\wxc-host-prep.exe')" Text="The MXC host preparation utility is missing." />
+    <Error Condition="!Exists('$(PayloadRoot)\config\mxc-gateway.toml')" Text="The OpenShell MXC gateway configuration is missing." />
+    <Error Condition="!Exists('$(PayloadRoot)\qualification\run-installed-native-turn.mts')" Text="The installed native turn qualification entrypoint is missing." />
+    <Error Condition="!Exists('$(PayloadRoot)\qualification\run-installed-native-web-ui.mts')" Text="The installed native web UI entrypoint is missing." />
+    <Error Condition="!Exists('$(PayloadRoot)\qualification\run-installed-native-console-agent.mts')" Text="The configured native terminal-agent entrypoint is missing." />
+    <Error Condition="!Exists('$(PayloadRoot)\qualification\run-installed-native-pi.mts')" Text="The installed native Pi entrypoint is missing." />
+    <Error Condition="!Exists('$(PayloadRoot)\qualification\run-installed-native-nemocua.mts')" Text="The installed native NemoCUA entrypoint is missing." />
+    <Error Condition="!Exists('$(PayloadRoot)\agent-support.json')" Text="The native Windows agent support catalog is missing." />
+    <Error Condition="!Exists('$(SourceRoot)\packaging\windows\assets\NemoClaw.ico')" Text="The NemoClaw product icon is missing." />
+  </Target>
+</Project>

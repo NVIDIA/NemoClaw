@@ -1,0 +1,59 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+    Name="NemoClaw Runtime"
+    Manufacturer="NVIDIA Corporation"
+    Version="$(var.ProductVersion)"
+    UpgradeCode="52718EC2-AD6D-4A84-9FBF-3D73C9B11864"
+    Language="1033"
+    Scope="perMachine"
+    InstallerVersion="500"
+    Compressed="yes">
+
+    <SummaryInformation
+      Description="NemoClaw native Windows ARM64 preview"
+      Manufacturer="NVIDIA Corporation" />
+    <MajorUpgrade
+      Schedule="afterInstallInitialize"
+      DowngradeErrorMessage="A newer NemoClaw native Windows candidate is already installed." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <Property Id="ARPCOMMENTS" Value="NemoClaw native Windows ARM64 preview with pinned OpenShell, MXC, Node.js, and OpenClaw runtime. Host qualification and production activation remain required." />
+    <Property Id="ARPCONTACT" Value="NVIDIA Corporation" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/NVIDIA/NemoClaw" />
+    <Property Id="ARPPRODUCTICON" Value="NemoClawIcon" />
+    <Icon Id="NemoClawIcon" SourceFile="$(var.SourceRoot)\packaging\windows\assets\NemoClaw.ico" />
+
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="NvidiaFolder" Name="NVIDIA">
+        <Directory Id="INSTALLFOLDER" Name="NemoClaw">
+          <Directory Id="BinFolder" Name="bin">
+            <Component Id="MachinePathComponent" Guid="4A428913-FB6B-4710-9573-5CCF0E3E4686" Bitness="always64">
+              <RegistryValue
+                Root="HKLM"
+                Key="Software\NVIDIA Corporation\NemoClaw Native Windows Candidate"
+                Name="InstallBin"
+                Type="string"
+                Value="[BinFolder]"
+                KeyPath="yes" />
+              <Environment
+                Id="NemoClawMachinePath"
+                Name="PATH"
+                Action="set"
+                Part="last"
+                System="yes"
+                Permanent="no"
+                Value="[BinFolder]" />
+            </Component>
+          </Directory>
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="Complete" Title="NemoClaw" Level="1">
+      <ComponentGroupRef Id="PayloadComponents" />
+      <ComponentRef Id="MachinePathComponent" />
+    </Feature>
+  </Package>
+</Wix>
