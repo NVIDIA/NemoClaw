@@ -37,20 +37,102 @@ Open `agents/langchain-deepagents-code/policy-additions.yaml` and add or modify 
 </AgentOnly>
 
 Edit YAML manually when a maintained preset does not cover the required host, such as a reviewed public partner API.
-Each entry in the `network_policies` section defines an endpoint group with these fields:
+Each entry in the `network_policies` section defines an endpoint group.
+The schema in `schemas/network-policy.schema.json` defines the entry format.
+Onboarding fails when an entry does not match it.
+Each entry requires these fields:
+
+`name`
+: The entry name as a string.
+Use the same value as the policy key.
 
 `endpoints`
-: Host and port pairs that the sandbox can reach.
+: A list of endpoints that the sandbox can reach.
+Each endpoint sets exactly one of `port` or `ports`, and at least one destination: `host`, `allowed_ips`, or both.
+`allowed_ips` changes the server-side request forgery boundary that OpenShell enforces, so review each address before you add one.
+For an HTTP API, each endpoint also sets `protocol: rest` and either its own `rules` list or `access`. The examples below use `enforcement: enforce` with `rules`, which is the least-privilege form.
 
 `binaries`
-: Executables allowed to use the endpoint.
+: A list of `{ path: <absolute path> }` mappings that name the executables allowed to use the endpoints.
+A bare path string is rejected.
+
+Each endpoint accepts these fields:
 
 `rules`
-: HTTP methods and paths that the endpoint permits.
+: A list of `allow` mappings whose shape follows the endpoint's `protocol`.
+For `protocol: rest`, each rule is `allow: { method: <HTTP method>, path: <route> }`.
+`method` accepts `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD`, `OPTIONS`, or `*`.
+`path` is a route pattern that starts with `/`, such as `/v1/**`.
+The `websocket`, `json-rpc`, and `mcp` protocols match on different fields, so read `schemas/network-policy.schema.json` for those shapes.
 
 `allow_encoded_slash`
-: Allows percent-encoded slashes such as `%2F` in request paths.
-Leave this field disabled unless the service uses encoded slashes in its documented route format, such as ClawHub scoped package names.
+: An optional boolean that allows percent-encoded slashes such as `%2F` in request paths.
+Leave this field unset unless the service uses encoded slashes in its documented route format, such as ClawHub scoped package names.
+
+The following entry allows `GET` requests to one partner API:
+
+<AgentOnly variant="openclaw">
+
+```yaml
+network_policies:
+  partner_api:
+    name: partner_api
+    endpoints:
+      - host: api.example.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/v1/**" }
+    binaries:
+      - { path: /usr/local/bin/openclaw }
+      - { path: /usr/local/bin/node }
+```
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+```yaml
+network_policies:
+  partner_api:
+    name: partner_api
+    endpoints:
+      - host: api.example.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/v1/**" }
+    binaries:
+      - { path: /usr/local/bin/hermes }
+      - { path: /usr/bin/python3* }
+      - { path: /opt/hermes/.venv/bin/python }
+```
+
+</AgentOnly>
+<AgentOnly variant="deepagents">
+
+```yaml
+network_policies:
+  partner_api:
+    name: partner_api
+    endpoints:
+      - host: api.example.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/v1/**" }
+    binaries:
+      - { path: /usr/local/bin/dcode }
+      - { path: /opt/venv/bin/python3* }
+```
+
+</AgentOnly>
+
+Add the entry under the existing `network_policies` key.
+List only the executables that open the connection.
+Use the executable path that `openshell term` reports for a blocked request.
 
 To include a maintained preset in the baseline policy, merge its `network_policies` entries into the applicable baseline file.
 Use [Apply Policy Presets](apply-policy-presets) when you need to add a preset to one running sandbox.
@@ -92,3 +174,4 @@ Use `openshell policy get <name>` when you need to inspect the effective OpenShe
 - [Customize the Network Policy](../customize-network-policy) helps you choose the correct policy workflow.
 - [Create Custom Policy Presets](create-custom-policy-presets) adds durable access for one sandbox without changing the baseline.
 - [Network Policies](../../reference/network-policies) explains the baseline policy schema and tiers.
+- [OpenShell Policy Schema](https://docs.nvidia.com/openshell/latest/reference/policy-schema.html) provides the complete endpoint schema. For NemoClaw onboarding, `schemas/network-policy.schema.json` in this repository is authoritative, and it requires the `name` field.
