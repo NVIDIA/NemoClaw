@@ -147,6 +147,32 @@ describe("agent-native local skill import patches", () => {
     expect(source).toContain("NEMOCLAW_NATIVE_SKILL_IMPORT=");
     expect(runPython(["-m", "py_compile", parser, hub]).status).toBe(0);
 
+    const cacheFailure = runPython([
+      "-c",
+      [
+        "import importlib.util, sys, types",
+        "prompt_builder = types.ModuleType('agent.prompt_builder')",
+        "def fail_cache_clear(**_kwargs):",
+        "    raise RuntimeError('controlled cache invalidation failure')",
+        "prompt_builder.clear_skills_system_prompt_cache = fail_cache_clear",
+        "agent = types.ModuleType('agent')",
+        "agent.prompt_builder = prompt_builder",
+        "sys.modules['agent'] = agent",
+        "sys.modules['agent.prompt_builder'] = prompt_builder",
+        "spec = importlib.util.spec_from_file_location('patched_hermes_skills', sys.argv[1])",
+        "module = importlib.util.module_from_spec(spec)",
+        "spec.loader.exec_module(module)",
+        "try:",
+        "    module._clear_skills_prompt_cache()",
+        "except RuntimeError as exc:",
+        "    assert str(exc) == 'controlled cache invalidation failure'",
+        "else:",
+        "    raise AssertionError('cache invalidation failure was suppressed')",
+      ].join("\n"),
+      hub,
+    ]);
+    expect(cacheFailure.status, cacheFailure.stderr).toBe(0);
+
     const behaviorRoot = path.join(root, "behavior");
     const behavior = runPython([
       "-c",

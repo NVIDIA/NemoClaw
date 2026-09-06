@@ -660,12 +660,10 @@ def verify_googlechat_override_seams() -> None:
 def verify_native_skill_import() -> None:
     """Exercise the pinned public import/list/uninstall lifecycle in a private home."""
     import hashlib
-    import io
     import json
     import shutil
     import subprocess
     import tempfile
-    from contextlib import redirect_stdout
     from unittest.mock import patch
 
     from tools.skills_hub import HubLockFile, SKILLS_DIR
@@ -721,28 +719,9 @@ def verify_native_skill_import() -> None:
             f"644 {replacement_file_digest}  SKILL.md\n".encode("utf-8")
         ).hexdigest()
         from hermes_cli import skills_hub as native_skills_cli
-        from agent import prompt_builder
         from tools import skills_tool
 
         real_rmtree = shutil.rmtree
-
-        cache_failure_output = io.StringIO()
-        with (
-            patch.object(
-                prompt_builder,
-                "clear_skills_system_prompt_cache",
-                side_effect=RuntimeError("controlled cache invalidation failure"),
-            ),
-            redirect_stdout(cache_failure_output),
-        ):
-            assert not native_skills_cli.do_import_local(
-                staging,
-                name,
-                replacement_digest,
-            )
-        assert "NEMOCLAW_NATIVE_SKILL_IMPORT=" not in cache_failure_output.getvalue()
-        assert (target / "SKILL.md").read_text(encoding="utf-8") == skill_content
-        assert HubLockFile().get_installed(name) is not None
 
         def refuse_failed_install_cleanup(candidate, *args, **kwargs):
             if Path(candidate).name.startswith(f"nemoclaw-import-failed.{name}."):

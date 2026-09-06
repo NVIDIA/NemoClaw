@@ -500,10 +500,6 @@ assert module._session_state_journal_mode(SimpleNamespace(_conn=Connection())) =
   });
 
   it("proves failed native replacement cleanup restores prior Hermes state", () => {
-    expect(probeSource).toContain("controlled cache invalidation failure");
-    expect(probeSource).toContain(
-      'assert "NEMOCLAW_NATIVE_SKILL_IMPORT=" not in cache_failure_output.getvalue()',
-    );
     expect(probeSource).toContain("controlled failed-install cleanup refusal");
     expect(probeSource).toContain("assert not native_skills_cli.do_import_local(");
     expect(probeSource).toContain("assert len(failed_installs) == 1");

@@ -25,6 +25,13 @@ PARSER = '''    # NemoClaw native local skill import (#10210).
 
 FUNCTION = r'''
 # NemoClaw native local skill import (#10210).
+def _clear_skills_prompt_cache() -> None:
+    """Make native activation failure part of the import transaction."""
+    from agent.prompt_builder import clear_skills_system_prompt_cache
+
+    clear_skills_system_prompt_cache(clear_snapshot=True)
+
+
 def do_import_local(skill_path: str, expected_name: str, expected_digest: str, console: Optional[Console] = None) -> bool:
     """Import a staged regular-file skill through Hermes' own lock and loader."""
     import hashlib
@@ -253,9 +260,7 @@ def do_import_local(skill_path: str, expected_name: str, expected_digest: str, c
         installed_manifest = "".join(line for _, line in sorted(installed_entries))
         if installed_files != set(files) or hashlib.sha256(installed_manifest.encode("utf-8")).hexdigest() != expected_digest:
             raise RuntimeError("installed skill digest changed before native commit")
-        from agent.prompt_builder import clear_skills_system_prompt_cache
-
-        clear_skills_system_prompt_cache(clear_snapshot=True)
+        _clear_skills_prompt_cache()
         observed = json.loads(skill_view(expected_name, preprocess=False))
         observed_dir = Path(str(observed.get("skill_dir") or "")).resolve()
         if not observed.get("success") or observed_dir != installed_path.resolve():
