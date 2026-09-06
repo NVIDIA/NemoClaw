@@ -126,8 +126,10 @@ test(
       env: buildAvailabilityProbeEnv(),
       timeoutMs: 30_000,
     });
-    expect(architecture.exitCode, resultText(architecture)).toBe(0);
-    expect(architecture.stdout.trim()).toBe("x86_64");
+    assert(
+      architecture.exitCode === 0 && architecture.stdout.trim() === "x86_64",
+      resultText(architecture),
+    );
 
     const { modelFile, recipe } = loadGpuSetting();
 
@@ -167,6 +169,35 @@ test(
     );
     const runtimeOperation = runtimeProvider.hostLocalInference.createOperation({ env: env() });
     runtimeOperation.assertAuthority();
+    const runtimeInspection = runtimeOperation.engine.capture(
+      ["container", "inspect", receipt.runtime.runtimeId],
+      30_000,
+    );
+    const inspectedRuntime = (
+      runtimeInspection.status === 0 ? JSON.parse(runtimeInspection.stdout) : []
+    ) as Array<{
+      HostConfig?: { PortBindings?: Record<string, unknown> };
+      NetworkSettings?: { Ports?: Record<string, unknown> };
+    }>;
+    const inspectedContainer = inspectedRuntime[0];
+    const portBindings = inspectedContainer?.HostConfig?.PortBindings;
+    const runtimePorts = inspectedContainer?.NetworkSettings?.Ports;
+    assert(
+      runtimeInspection.status === 0 &&
+        portBindings !== undefined &&
+        Object.keys(portBindings).length === 0 &&
+        runtimePorts !== undefined &&
+        Object.values(runtimePorts).every((value) => value === null),
+      runtimeInspection.error?.message ||
+        runtimeInspection.stderr ||
+        "managed llama.cpp runtime ports must remain unpublished",
+    );
+    await artifacts.writeJson("managed-runtime-network.json", {
+      providerId: receipt.providerId,
+      runtimeId: receipt.runtime.runtimeId,
+      portBindings,
+      ports: runtimePorts,
+    });
     const runtimeProcesses = runtimeOperation.engine.capture(
       ["container", "top", receipt.runtime.runtimeId, "-eo", "pid,comm"],
       30_000,
