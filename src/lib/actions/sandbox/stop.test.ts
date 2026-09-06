@@ -872,6 +872,7 @@ describe("stopSandbox Ollama GPU release", () => {
     const result = stopSandbox("my-sandbox", h.deps);
 
     expect(result.exitCode).toBe(1);
+    expect(result.stopped).toBe(true);
     expect(result.message).toContain("curl: command not found");
     expect(result.message).toContain("retry 'nemoclaw my-sandbox stop'");
   });

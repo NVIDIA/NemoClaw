@@ -81,6 +81,7 @@ export interface SandboxStartDeps {
   verifyGateway?: (sandboxName: string) => Promise<void>;
   probeInferenceInvocation?: typeof probeSandboxInferenceInvocation;
   withLifecycleLock?: typeof withSandboxLifecycleLock;
+  revalidateAtMutationEdge?: () => void;
   log?: (message: string) => void;
 }
 
@@ -193,6 +194,7 @@ async function startSandboxWithinLifecycleFence(
   };
   const preflight = resolved.bundle.preflightDoctor.preflightLifecycle("start", input);
   if (preflight) return preflight;
+  deps.revalidateAtMutationEdge?.();
   const result = resolved.lifecycle.start(input);
   if (result.exitCode !== 0) return result;
   if ("hermesPortableVerified" in result && result.hermesPortableVerified === true) {

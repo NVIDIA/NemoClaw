@@ -30,7 +30,8 @@ export async function runOnboard(
   const startActions = await import("./sandbox/start");
   const stopActions = await import("./sandbox/stop");
   const lifecycle = runtimeDeps.dashboardReuseLifecycle ?? {
-    startSandbox: startActions.startSandbox,
+    startSandbox: (sandboxName: string, revalidateAtMutationEdge: () => void) =>
+      startActions.startSandbox(sandboxName, { revalidateAtMutationEdge }),
     stopSandbox: (sandboxName: string, revalidateAtMutationEdge: () => void) =>
       stopActions.stopSandbox(sandboxName, { revalidateAtMutationEdge }),
     withSandboxLifecycleLock: startActions.withSandboxLifecycleLock,

@@ -100,8 +100,11 @@ export interface OnboardDashboardDeps {
   stopSandboxForDashboardReuse?(
     sandboxName: string,
     revalidateAtMutationEdge: () => void,
-  ): { exitCode: number; message?: string };
-  startSandboxForDashboardReuse?(sandboxName: string): Promise<{
+  ): { exitCode: number; message?: string; stopped?: true };
+  startSandboxForDashboardReuse?(
+    sandboxName: string,
+    revalidateAtMutationEdge: () => void,
+  ): Promise<{
     exitCode: number;
     message?: string;
   }>;
@@ -471,22 +474,17 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
         assertSameSandbox(`stop sandbox '${sandboxName}'`);
       };
       const stopped = stopSandbox(sandboxName, revalidateAtStopBoundary);
-      if (stopped.exitCode !== 0) {
-        throw new Error(
-          `Could not stop sandbox '${sandboxName}' to reconcile dashboard port ${String(port)}${
-            stopped.message ? `: ${stopped.message}` : "."
-          }`,
-        );
-      }
-      try {
+      const revalidateAtStartBoundary = (): void => {
         revalidateSandboxIdentity?.(
           `start sandbox '${sandboxName}' to reconcile dashboard forward ${String(port)}`,
         );
         assertSameSandbox(`start sandbox '${sandboxName}'`);
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error);
+      };
+      if (stopped.exitCode !== 0 && stopped.stopped !== true) {
         throw new Error(
-          `${detail} The selected sandbox was stopped; verify its identity, then run '${deps.cliName()} ${sandboxName} start'.`,
+          `Could not stop sandbox '${sandboxName}' to reconcile dashboard port ${String(port)}${
+            stopped.message ? `: ${stopped.message}` : "."
+          }`,
         );
       }
 
@@ -497,7 +495,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       }
       let started: { exitCode: number; message?: string };
       try {
-        started = await startSandbox(sandboxName);
+        started = await startSandbox(sandboxName, revalidateAtStartBoundary);
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
         throw new Error(
@@ -509,6 +507,13 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
           `Sandbox '${sandboxName}' did not restore dashboard port ${String(port)} after restart${
             started.message ? `: ${started.message}` : "."
           } The sandbox may remain stopped; run '${deps.cliName()} ${sandboxName} start' before retrying onboarding.`,
+        );
+      }
+      if (stopped.exitCode !== 0) {
+        throw new Error(
+          `Sandbox '${sandboxName}' was restored, but its stop cleanup failed${
+            stopped.message ? `: ${stopped.message}` : "."
+          }`,
         );
       }
       reconciledOpenClawForwards.set(sandboxName, port);
@@ -678,7 +683,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       envUrl || (persistedPort === null ? undefined : `http://127.0.0.1:${String(persistedPort)}`);
     const mayReuseForward =
       reuseExistingOpenClawForward || reconciledOpenClawForwards.has(sandboxName);
-    if (mayReuseForward) {
+    if (reuseExistingOpenClawForward && !reconciledOpenClawForwards.has(sandboxName)) {
       await reconcileOpenClawDashboardForwardReuse(
         sandboxName,
         requestedUrl || `http://127.0.0.1:${CONTROL_UI_PORT}`,
@@ -740,7 +745,11 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     const mayReuseOpenClawForward =
       agent.name === "openclaw" &&
       (reuseExistingOpenClawForward || reconciledOpenClawForwards.has(sandboxName));
-    if (mayReuseOpenClawForward) {
+    if (
+      agent.name === "openclaw" &&
+      reuseExistingOpenClawForward &&
+      !reconciledOpenClawForwards.has(sandboxName)
+    ) {
       const registeredPort = getPersistedDashboardPort(sandboxName, listSandboxes);
       const requestedUrl =
         process.env.CHAT_UI_URL ||

@@ -233,6 +233,7 @@ function releaseStoppedSandboxOllamaModel(
 }
 
 export type { SandboxLifecycleResult } from "./runtime/lifecycle-runtime";
+export type SandboxStopResult = SandboxLifecycleResult & { stopped?: true };
 
 export interface SandboxStopDeps {
   environment?: NodeJS.ProcessEnv;
@@ -259,10 +260,7 @@ export interface SandboxStopDeps {
  * Stop the selected provider workload while preserving registry, workspace,
  * credentials, and shared gateway state.
  */
-export function stopSandbox(
-  sandboxName: string,
-  deps: SandboxStopDeps = {},
-): SandboxLifecycleResult {
+export function stopSandbox(sandboxName: string, deps: SandboxStopDeps = {}): SandboxStopResult {
   return (deps.withLifecycleLockSync ?? withSandboxLifecycleLockSync)(sandboxName, () =>
     stopSandboxWithinLifecycleFence(sandboxName, deps),
   );
@@ -271,7 +269,7 @@ export function stopSandbox(
 function stopSandboxWithinLifecycleFence(
   sandboxName: string,
   deps: SandboxStopDeps,
-): SandboxLifecycleResult {
+): SandboxStopResult {
   const log = deps.log ?? console.log;
   const warn = deps.warn ?? console.warn;
   const sandbox = (deps.getSandbox ?? registry.getSandbox)(sandboxName);
@@ -321,7 +319,9 @@ function stopSandboxWithinLifecycleFence(
       warn,
     );
   }
-  if (!ollamaRelease.ok) return { exitCode: 1, message: ollamaRelease.message };
+  if (!ollamaRelease.ok) {
+    return { exitCode: 1, message: ollamaRelease.message, stopped: true };
+  }
   if (hermesPortableVerified) {
     log(
       outcome.state === "already-stopped"

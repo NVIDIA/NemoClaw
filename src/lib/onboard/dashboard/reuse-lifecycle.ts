@@ -7,8 +7,11 @@ export type DashboardReuseLifecycle = {
   stopSandbox(
     sandboxName: string,
     revalidateAtMutationEdge: () => void,
-  ): { exitCode: number; message?: string };
-  startSandbox(sandboxName: string): Promise<{ exitCode: number; message?: string }>;
+  ): { exitCode: number; message?: string; stopped?: true };
+  startSandbox(
+    sandboxName: string,
+    revalidateAtMutationEdge: () => void,
+  ): Promise<{ exitCode: number; message?: string }>;
   withSandboxLifecycleLock<T>(sandboxName: string, operation: () => Promise<T> | T): Promise<T>;
 };
 
