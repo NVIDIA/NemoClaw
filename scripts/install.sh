@@ -3280,35 +3280,47 @@ stop_legacy_openshell_gateway_process() {
 stop_macos_openshell_gateway_user_service() {
   [ "$(uname -s)" = "Darwin" ] || return 1
 
-  local gateway_port service_label service_path service_domain service_program
-  local brew_prefix expected_program active_service active_program
+  local gateway_port service_domain=""
+  local brew_prefix expected_program
+  local candidate_label candidate_path candidate_program candidate_domain candidate_service
+  local candidate_active_program candidate_state
   gateway_port="$(resolve_nemoclaw_gateway_port)" || return 1
   [ "$gateway_port" -eq 8080 ] || return 1
   command_exists brew || return 1
   command_exists launchctl || return 1
   command_exists plutil || return 1
 
-  service_label="homebrew.mxcl.openshell"
-  service_path="${HOME}/Library/LaunchAgents/${service_label}.plist"
-  [ -f "$service_path" ] || return 1
-  if [ -L "$service_path" ] || ! [ -O "$service_path" ]; then
-    error "Refusing to retire the OpenShell gateway from an untrusted macOS user service: ${service_path}"
-  fi
-
-  service_program="$(plutil -extract ProgramArguments.0 raw -o - "$service_path" 2>/dev/null || true)"
-  [ "$(plutil -extract Label raw -o - "$service_path" 2>/dev/null || true)" = "$service_label" ] \
-    || error "Refusing to retire an OpenShell gateway from a macOS user service with an unexpected label: ${service_path}"
   brew_prefix="$(brew --prefix 2>/dev/null || true)"
   [ -n "$brew_prefix" ] || return 1
   expected_program="${brew_prefix%/}/opt/openshell/libexec/openshell-gateway-homebrew-service"
-  [ "$service_program" = "$expected_program" ] && [ -x "$service_program" ] \
-    || error "Refusing to retire an OpenShell gateway from a macOS user service with an untrusted executable: ${service_program:-<empty>}"
+  for candidate_label in sh.brew.openshell homebrew.mxcl.openshell; do
+    candidate_domain="gui/$(id -u)/${candidate_label}"
+    candidate_service="$(launchctl print "$candidate_domain" 2>/dev/null)" || continue
+    candidate_state="$(printf '%s\n' "$candidate_service" | sed -n 's/^[[:space:]]*state = //p' | head -1)"
+    [ "$candidate_state" = "running" ] || continue
+    candidate_path="${HOME}/Library/LaunchAgents/${candidate_label}.plist"
+    [ -f "$candidate_path" ] \
+      || error "Refusing to retire the active OpenShell gateway without its expected macOS user service file: ${candidate_path}"
+    if [ -L "$candidate_path" ] || ! [ -O "$candidate_path" ]; then
+      error "Refusing to retire the OpenShell gateway from an untrusted macOS user service: ${candidate_path}"
+    fi
 
-  service_domain="gui/$(id -u)/${service_label}"
-  active_service="$(launchctl print "$service_domain" 2>/dev/null)" || return 1
-  active_program="$(printf '%s\n' "$active_service" | sed -n 's/^[[:space:]]*program = //p' | head -1)"
-  [ "$active_program" = "$expected_program" ] \
-    || error "Refusing to retire an OpenShell gateway from an active macOS user service with an untrusted executable: ${active_program:-<empty>}"
+    candidate_program="$(plutil -extract ProgramArguments.0 raw -o - "$candidate_path" 2>/dev/null || true)"
+    [ "$(plutil -extract Label raw -o - "$candidate_path" 2>/dev/null || true)" = "$candidate_label" ] \
+      || error "Refusing to retire an OpenShell gateway from a macOS user service with an unexpected label: ${candidate_path}"
+    if [ "$candidate_program" != "$expected_program" ] || ! [ -x "$candidate_program" ]; then
+      error "Refusing to retire an OpenShell gateway from a macOS user service with an untrusted executable: ${candidate_program:-<empty>}"
+    fi
+
+    candidate_active_program="$(printf '%s\n' "$candidate_service" | sed -n 's/^[[:space:]]*program = //p' | head -1)"
+    [ "$candidate_active_program" = "$expected_program" ] \
+      || error "Refusing to retire an OpenShell gateway from an active macOS user service with an untrusted executable: ${candidate_active_program:-<empty>}"
+    if [ -n "$service_domain" ]; then
+      error "Refusing to retire an OpenShell gateway because multiple trusted Homebrew user services are active: ${service_domain} and ${candidate_domain}. Inspect both with 'launchctl print ${service_domain}' and 'launchctl print ${candidate_domain}', stop the obsolete service, then rerun the installer."
+    fi
+    service_domain="$candidate_domain"
+  done
+  [ -n "$service_domain" ] || return 1
   launchctl bootout "$service_domain" >/dev/null 2>&1 \
     || error "Could not stop the trusted OpenShell Homebrew gateway user service. Run 'launchctl print ${service_domain}' for details."
   launchctl print "$service_domain" >/dev/null 2>&1 \
