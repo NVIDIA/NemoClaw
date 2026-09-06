@@ -323,19 +323,24 @@ export function getRebuildSandboxEntryOrBail(
   return sb;
 }
 
-/** Block rebuild before any live-state probe or cleanup can bypass retained recovery. */
-function reportRebuildOnboardLockContention(error: unknown, bail: RebuildBail): boolean {
-  if (!onboardSession.isOnboardLockContentionError(error)) return false;
-  const guidance = formatOnboardLockContentionGuidance(CLI_NAME, error.holderPid);
+function printRebuildLiveLockGuidance(
+  holderPid: number | undefined,
+  bail: RebuildBail,
+  extraDetail?: string,
+): void {
+  const guidance = formatOnboardLockContentionGuidance(CLI_NAME, holderPid);
   printRebuildPreflightFailure(
     guidance.summary,
-    guidance.lines
-      .slice(1)
-      .map((line) => line.trim())
-      .join(" "),
+    [...guidance.lines.slice(1).map((line) => line.trim()), extraDetail].filter(Boolean).join(" "),
     "Could not acquire onboard lock before rebuild",
     bail,
   );
+}
+
+/** Block rebuild before any live-state probe or cleanup can bypass retained recovery. */
+function reportRebuildOnboardLockContention(error: unknown, bail: RebuildBail): boolean {
+  if (!onboardSession.isOnboardLockContentionError(error)) return false;
+  printRebuildLiveLockGuidance(error.holderPid, bail);
   return true;
 }
 
@@ -389,16 +394,16 @@ export function acquireRebuildOnboardLock(
     `${CLI_NAME} ${sandboxName} rebuild --authoritative-resume`,
   );
   if (!lock.acquired) {
-    const pidDetail = lock.holderPid ? ` Lock holder PID: ${lock.holderPid}.` : "";
-    const remediation = lock.stale
-      ? "Wait briefly, then rerun rebuild so verified stale-lock cleanup can finish."
-      : `Wait for the other run to finish, then rerun rebuild.${pidDetail}`;
-    printRebuildPreflightFailure(
-      `another ${CLI_NAME} onboarding run is already in progress.`,
-      remediation,
-      "Could not acquire onboard lock before rebuild",
-      bail,
-    );
+    if (lock.stale) {
+      printRebuildPreflightFailure(
+        `another ${CLI_NAME} onboarding run is already in progress.`,
+        "Wait briefly, then rerun rebuild so verified stale-lock cleanup can finish.",
+        "Could not acquire onboard lock before rebuild",
+        bail,
+      );
+    } else {
+      printRebuildLiveLockGuidance(lock.holderPid, bail, "Then rerun rebuild.");
+    }
     return null;
   }
   let released = false;

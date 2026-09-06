@@ -191,8 +191,9 @@ describe("rebuild preflight guards", () => {
     expect(registerExitHandler).not.toHaveBeenCalled();
     const output = error.mock.calls.flat().join("\n");
     expect(output).toContain("another nemoclaw onboarding run is already in progress.");
-    expect(output).toContain("Wait for the other run to finish, then rerun rebuild.");
     expect(output).toContain("Lock holder PID: 4242.");
+    expect(output).toContain("Wait for the active onboarding run to finish.");
+    expect(output).toContain("Then rerun rebuild.");
     expect(output).not.toContain("remove the stale lock");
   });
 
