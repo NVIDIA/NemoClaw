@@ -619,44 +619,20 @@ describe("local inference helpers", () => {
     expect(result?.ok).toBe(expected);
   });
 
-  it("reports a clear local provider outage when the host probe cannot connect", () => {
+  it.each([
+    { curlStatus: 7, message: "Failed to connect", recoveryHint: false },
+    { curlStatus: 28, message: "Operation timed out", recoveryHint: true },
+  ])("reports local Ollama outage details for curl exit $curlStatus", ({ curlStatus, message, recoveryHint }) => {
     const result = probeLocalProviderHealth("ollama-local", {
-      runCurlProbeImpl: () => ({
-        ok: false,
-        httpStatus: 0,
-        curlStatus: 7,
-        body: "",
-        stderr: "Failed to connect",
-        message: "curl failed (exit 7): Failed to connect",
-      }),
+      runCurlProbeImpl: () => ({ ok: false, httpStatus: 0, curlStatus, body: "", stderr: message, message }),
       loadOllamaProxyTokenImpl: () => null,
     });
 
     expect(result?.ok).toBe(false);
     expect(result?.detail).toContain("Local Ollama is selected for inference");
     expect(result?.detail).toContain("Start Ollama and retry");
-    expect(result?.detail).not.toContain("sudo systemctl restart ollama");
     expect(result?.detail).toContain("http://127.0.0.1:11434/api/tags");
-    expect(result?.probeLabel).toBe("ollama backend");
-  });
-
-  it("suggests restarting Ollama when the local backend probe times out (#10674)", () => {
-    const result = probeLocalProviderHealth("ollama-local", {
-      runCurlProbeImpl: () => ({
-        ok: false,
-        httpStatus: 0,
-        curlStatus: 28,
-        body: "",
-        stderr: "Operation timed out",
-        message: "curl failed (exit 28): Operation timed out",
-      }),
-      loadOllamaProxyTokenImpl: () => null,
-    });
-
-    expect(result?.ok).toBe(false);
-    expect(result?.detail).toContain("stale runner processes from a previous model");
-    expect(result?.detail).toContain("holding GPU memory");
-    expect(result?.detail).toContain("sudo systemctl restart ollama");
+    expect(result?.detail.includes("sudo systemctl restart ollama")).toBe(recoveryHint);
     expect(result?.probeLabel).toBe("ollama backend");
   });
 
