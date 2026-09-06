@@ -61,9 +61,9 @@ Review the [Prerequisites](prerequisites) before you begin.
       Press Enter to use the recommended preset settings on a qualified platform or to explicitly opt into the Deferred N1x preview.
       Express install mode completes the remaining onboarding non-interactively.
       If you accept, wait for the installer to finish, then continue with **Confirm the Sandbox Is Ready**.
-      On N1x, entering `n` stops installation because the Deferred managed-vLLM preview is the only admitted onboarding path.
-      Re-run and accept the preview, or set `NEMOCLAW_PROVIDER=install-vllm` before installation.
-      On the other express platforms, enter `n` to continue with the interactive onboarding flow described in this step.
+      On N1x, enter `n` to continue with the interactive onboarding flow described in this step.
+      N1x remains Deferred, and the provider that you select must meet its existing requirements.
+      Local NVIDIA NIM remains unavailable on N1x.
     </Note>
   </Step>
 
@@ -197,14 +197,14 @@ Use these details when your first-run path needs more control.
     After you press Enter at the express install prompt, or explicitly accept the Deferred N1x preview, the installer switches the remaining onboarding to non-interactive mode and selects the managed local inference path for that platform.
     Express install mode uses `my-assistant` unless you set `NEMOCLAW_SANDBOX_NAME`, and it applies the suggested Balanced policy.
     It can still prompt for `sudo` when host setup needs it.
-    On the other express platforms, set `NEMOCLAW_NO_EXPRESS=1` to skip the express prompt, or set `NEMOCLAW_PROVIDER` to choose a provider yourself.
+    On any express platform, set `NEMOCLAW_NO_EXPRESS=1` to skip the express prompt, or set `NEMOCLAW_PROVIDER` to choose a provider yourself.
 
     N1x Express selects one-host managed vLLM with `nvidia/Qwen3.6-35B-A3B-NVFP4`.
     N1x detection requires Linux `arm64`, a trusted `/etc/fastos-release` marker with `NAME="N1x FASTOS"`, and NVIDIA vendor ID `10de` on a display-class PCI device.
     The N1x path does not use DGX Spark cluster discovery, the fixed catalog path, managed llama.cpp, or NVIDIA NIM.
-    Accepting the N1x prompt supplies the narrow preview intent required to pass the pending-validation readiness finding.
-    Declining the N1x prompt or setting only `NEMOCLAW_NO_EXPRESS=1` stops installation before onboarding; neither path opens interactive provider selection.
-    Set `NEMOCLAW_PROVIDER=install-vllm` when you need to bypass the N1x preview prompt with the same explicit intent.
+    Accepting the N1x prompt supplies the narrow managed-vLLM preview intent required to pass the pending-validation readiness finding.
+    Declining the N1x prompt or setting `NEMOCLAW_NO_EXPRESS=1` continues with ordinary interactive onboarding.
+    Set `NEMOCLAW_PROVIDER=install-vllm` to bypass the prompt with managed-vLLM preview intent, or set a recognized provider other than Local NVIDIA NIM or `install-vllm` to enter standard onboarding directly.
     Refer to [Platform Support](../reference/platform-support) before you rely on this path.
 
     Before the Station express confirmation, the installer reports whether the Hugging Face download is authenticated without displaying the token value.

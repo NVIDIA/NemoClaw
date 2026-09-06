@@ -62,6 +62,13 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       flags: "[--quick] [--output FILE|-o FILE] [--sandbox NAME]",
     },
   ],
+  doctor: [
+    {
+      group: "Troubleshooting",
+      order: 36,
+      flags: "[--json|--text]",
+    },
+  ],
   gc: [
     {
       group: "Cleanup",

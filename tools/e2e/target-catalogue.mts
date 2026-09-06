@@ -1020,6 +1020,10 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     installMode: "none",
     restoreCli: true,
     exposeCliBin: true,
+    owningPaths: [
+      "nemoclaw-blueprint/router/pool-config.yaml",
+      "test/e2e/live/model-router-provider-routed-inference-helpers.ts",
+    ],
     environment: { OPENSHELL_GATEWAY: "nemoclaw" },
   }),
   managedRuntimeTarget("network-policy", {

@@ -206,7 +206,6 @@ export interface SetupNimFlowDeps {
     gpu: SetupNimGpu,
     selectedKey: string,
     requestedModel: string | null,
-    windowsOllamaReachable: boolean,
     winOllamaLoopbackOnly: boolean,
     winOllamaInstalledPath: string | null,
     state: SetupNimSelectionState,
@@ -264,6 +263,17 @@ function maybePromptForSupportedInferenceInputCapability(
 ): Promise<void> {
   if ((agent?.name ?? "openclaw") !== "openclaw") return Promise.resolve();
   return deps.maybePromptForInferenceInputCapability(model);
+}
+
+function exitAfterPinnedVllmFailure(
+  deps: Pick<SetupNimFlowDeps, "abortNonInteractive" | "exitProcess" | "isNonInteractive">,
+  requestedProvider: string | null,
+  message: string,
+): void {
+  if (deps.isNonInteractive()) {
+    deps.abortNonInteractive(message);
+  }
+  if (requestedProvider) deps.exitProcess(1);
 }
 
 function requireSelectedProvider(
@@ -1217,7 +1227,6 @@ export function createSetupNim(
             gpu,
             selected.key,
             requestedModel,
-            windowsOllamaReachable,
             winOllamaLoopbackOnly,
             winOllamaInstalledPath,
             state,
@@ -1262,9 +1271,7 @@ export function createSetupNim(
               String(process.env.NEMOCLAW_VLLM_GPU_DEVICE ?? "").trim() !== "";
             const message = vllmPortConflictMessage(gpu?.platform, deps.vllmPort, hasGpuSelection);
             deps.error(`  ${message}`);
-            if (deps.isNonInteractive()) {
-              deps.abortNonInteractive(message);
-            }
+            exitAfterPinnedVllmFailure(deps, requestedProvider, message);
             continue selectionLoop;
           }
           const vllmState = createSelectionState();
@@ -1294,8 +1301,11 @@ export function createSetupNim(
             },
           });
           if (!result.ok) {
-            if (deps.isNonInteractive())
-              deps.abortNonInteractive("vLLM install failed. See errors above.");
+            exitAfterPinnedVllmFailure(
+              deps,
+              requestedProvider,
+              "vLLM install failed. See errors above.",
+            );
             continue selectionLoop;
           }
           selected = {

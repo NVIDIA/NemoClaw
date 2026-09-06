@@ -243,6 +243,96 @@ describe("managed gateway port readiness (#7411)", () => {
     ).toBe(false);
   });
 
+  it("recognizes a Homebrew 6 packaged-service listener in readiness (#11111)", async () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    vi.spyOn(process, "arch", "get").mockReturnValue("arm64");
+    const formulaPrefix = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-readiness-homebrew-"));
+    const formulaBin = path.join(formulaPrefix, "bin");
+    const openshellBin = path.join(formulaBin, "openshell");
+    const gatewayBin = path.join(formulaBin, "openshell-gateway");
+    fs.mkdirSync(formulaBin);
+    fs.writeFileSync(openshellBin, "");
+    fs.writeFileSync(gatewayBin, "");
+    const listener = net.createServer();
+    await new Promise<void>((resolve, reject) => {
+      listener.once("error", reject);
+      listener.listen(0, "127.0.0.1", resolve);
+    });
+    const gatewayPort = (listener.address() as AddressInfo).port;
+    const gatewayName = "nemoclaw-readiness-test";
+    const status = `Server Status\n\nGateway: ${gatewayName}\nStatus: Connected`;
+    const info = `Gateway Info\n\nGateway: ${gatewayName}\nGateway endpoint: https://127.0.0.1:${gatewayPort}`;
+    const resultByInvocation = new Map([
+      [
+        ["sh", "-c", 'command -v "$1"', "--", "openshell"].join("\0"),
+        commandResult(openshellBin, 0),
+      ],
+      [
+        ["sh", "-c", 'command -v "$1" >/dev/null 2>&1', "sh", "brew"].join("\0"),
+        commandResult("", 0),
+      ],
+      [[openshellBin, "status", "-g", gatewayName].join("\0"), commandResult(status, 0)],
+      [[openshellBin, "gateway", "info", "-g", gatewayName].join("\0"), commandResult(info, 0)],
+      [[openshellBin, "gateway", "info"].join("\0"), commandResult(info, 0)],
+      [[openshellBin, "--version"].join("\0"), commandResult("openshell 0.0.106", 0)],
+      [
+        ["lsof", "-ti", `:${gatewayPort}`, "-sTCP:LISTEN"].join("\0"),
+        commandResult(`${process.pid}\n`, 0),
+      ],
+      [["ps", "-p", String(process.pid), "-o", "args="].join("\0"), commandResult()],
+      [
+        ["/usr/sbin/lsof", "-a", "-p", String(process.pid), "-d", "txt", "-Fn"].join("\0"),
+        commandResult(`p${process.pid}\nftxt\nn${gatewayBin}\n`, 0),
+      ],
+      [["brew", "list", "--formula", "openshell"].join("\0"), commandResult("", 0)],
+      [
+        ["brew", "info", "--json=v2", "openshell"].join("\0"),
+        commandResult(
+          JSON.stringify({ formulae: [{ name: "openshell", tap: "nvidia/openshell" }] }),
+          0,
+        ),
+      ],
+      [
+        ["brew", "services", "info", "openshell", "--json"].join("\0"),
+        commandResult(
+          JSON.stringify([
+            {
+              loaded: true,
+              name: "openshell",
+              pid: process.pid,
+              running: true,
+              service_name: "sh.brew.openshell",
+            },
+          ]),
+          0,
+        ),
+      ],
+      [["brew", "--prefix", "openshell"].join("\0"), commandResult(formulaPrefix, 0)],
+    ]);
+    subprocess.spawnSync.mockImplementation((command: string, args: readonly string[] = []) => {
+      const brewIndex = args.indexOf("brew");
+      const invocation =
+        command === "bash" ? ["brew", ...args.slice(brewIndex + 1)] : [command, ...args];
+      return resultByInvocation.get(invocation.join("\0")) ?? commandResult();
+    });
+
+    try {
+      const deps = createProductionGatewayReadinessDependencies({
+        gatewayName: () => gatewayName,
+        gatewayPort: () => gatewayPort,
+        observeVersionCompatibility: () => "compatible",
+      });
+
+      await expect(deps.observeManagedGateway(managedOwner(gatewayPort))).resolves.toMatchObject({
+        reuseState: "healthy",
+        portConflictState: "none",
+      });
+    } finally {
+      await new Promise<void>((resolve) => listener.close(() => resolve()));
+      fs.rmSync(formulaPrefix, { force: true, recursive: true });
+    }
+  });
+
   it("rejects a listener when Linux process samples change (#8755)", () => {
     const trusted = "/opt/openshell/bin/openshell-gateway";
 

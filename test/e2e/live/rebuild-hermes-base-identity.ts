@@ -19,7 +19,6 @@ const IMAGE_ID = /^sha256:[0-9a-f]{64}$/;
 
 interface DockerImageInspect {
   Id?: unknown;
-  RepoTags?: unknown;
   RepoDigests?: unknown;
   Os?: unknown;
   Architecture?: unknown;
@@ -29,7 +28,6 @@ interface DockerImageInspect {
 
 interface ParsedDockerImageInspect {
   Id: string;
-  RepoTags: unknown[];
   RepoDigests: unknown[];
   Os: string;
   Architecture: string;
@@ -69,7 +67,6 @@ function parseDockerImageInspect(
   label:
     | "old Hermes fixture"
     | "phase 1 current Hermes base"
-    | "current Hermes base reuse alias"
     | "rebuilt Hermes sandbox",
 ): ParsedDockerImageInspect {
   let parsed: DockerImageInspect;
@@ -88,9 +85,6 @@ function parseDockerImageInspect(
     !parsed.Os ||
     typeof parsed.Architecture !== "string" ||
     !parsed.Architecture ||
-    (parsed.RepoTags !== null &&
-      parsed.RepoTags !== undefined &&
-      !Array.isArray(parsed.RepoTags)) ||
     (parsed.RepoDigests !== null &&
       parsed.RepoDigests !== undefined &&
       !Array.isArray(parsed.RepoDigests))
@@ -99,7 +93,6 @@ function parseDockerImageInspect(
   }
   return {
     Id: parsed.Id,
-    RepoTags: Array.isArray(parsed.RepoTags) ? parsed.RepoTags : [],
     RepoDigests: Array.isArray(parsed.RepoDigests) ? parsed.RepoDigests : [],
     Os: parsed.Os,
     Architecture: parsed.Architecture,
@@ -309,58 +302,6 @@ function requireInspectMatchesResolution(
   ) {
     throw new Error(`${subject} inspection lacked its recorded digest`);
   }
-}
-
-/** Prove the normal lane's local alias is the exact phase 1 image, not a rebuild. */
-export function verifyRebuildHermesCurrentBaseReuse(
-  expectedMetadata: SandboxBaseImageResolutionMetadata | null,
-  reuseRef: string,
-  sourceInspectJson: string,
-  reuseInspectJson: string,
-): {
-  reuseImageId: string;
-  pinnedReuseRef: string;
-  sourceDigest: string | null;
-  sourceImageId: string;
-  sourceRef: string;
-  rootFsChain: string;
-  layerCount: number;
-} {
-  const expected = requireRebuildHermesCurrentBaseIdentity(expectedMetadata);
-  if (!LOCAL_HERMES_BASE_REF.test(reuseRef)) {
-    throw new Error("current Hermes base reuse requires a test-owned local image ref");
-  }
-  const source = parseDockerImageInspect(sourceInspectJson, "phase 1 current Hermes base");
-  const reuse = parseDockerImageInspect(reuseInspectJson, "current Hermes base reuse alias");
-  requireInspectMatchesResolution(source, expected, "phase 1 current Hermes base");
-  if (
-    reuse.Id !== source.Id ||
-    reuse.Os !== source.Os ||
-    reuse.Architecture !== source.Architecture
-  ) {
-    throw new Error("current Hermes base reuse alias changed the phase 1 image identity");
-  }
-  if (!reuse.RepoTags.some((entry) => entry === reuseRef)) {
-    throw new Error("current Hermes base reuse alias did not retain its test-owned local ref");
-  }
-  const sourceLayers = rootFsLayers(source, "phase 1 current Hermes base");
-  const reuseLayers = rootFsLayers(reuse, "current Hermes base reuse alias");
-  if (
-    sourceLayers.length !== reuseLayers.length ||
-    !sourceLayers.every((layer, index) => reuseLayers[index] === layer)
-  ) {
-    throw new Error("current Hermes base reuse alias changed the phase 1 root filesystem layers");
-  }
-
-  return {
-    reuseImageId: reuse.Id,
-    pinnedReuseRef: `nemoclaw-hermes-sandbox-base-local:image-${reuse.Id.slice("sha256:".length)}`,
-    sourceDigest: expected.digest,
-    sourceImageId: expected.imageId,
-    sourceRef: expected.ref,
-    rootFsChain: rootFsChain(sourceLayers),
-    layerCount: sourceLayers.length,
-  };
 }
 
 /** Fail unless the rebuilt filesystem is derived from the exact phase 1 base. */

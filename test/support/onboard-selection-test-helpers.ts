@@ -178,8 +178,10 @@ function createIsolatedOnboardEnv(tmpDir: string, provider: string): NodeJS.Proc
   return {
     ...env,
     HOME: tmpDir,
+    PATH: `${tmpDir}${path.delimiter}${env.PATH ?? ""}`,
     NEMOCLAW_MODEL: "qwen3:8b",
     NEMOCLAW_NON_INTERACTIVE: "1",
+    NEMOCLAW_OLLAMA_INSTALL_MODE: "user",
     NEMOCLAW_PROVIDER: provider,
     NEMOCLAW_YES: "1",
   };
@@ -196,12 +198,14 @@ export function runNativeDockerWindowsProviderBoundary(options: {
     path.join(os.tmpdir(), "nemoclaw-onboard-native-docker-windows-provider-"),
   );
   const scriptPath = path.join(tmpDir, "provider-boundary-check.js");
+  const zstdPath = path.join(tmpDir, "zstd");
   const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
   const credentialsPath = JSON.stringify(
     path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
   );
   const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
   const platformPath = JSON.stringify(path.join(repoRoot, "src", "lib", "platform.ts"));
+  const waitPath = JSON.stringify(path.join(repoRoot, "src", "lib", "core", "wait.ts"));
   const topologyPath = JSON.stringify(
     path.join(repoRoot, "src", "lib", "onboard", "local-inference-topology.ts"),
   );
@@ -213,22 +217,20 @@ export function runNativeDockerWindowsProviderBoundary(options: {
 
   const script = String.raw`
 const scenario = ${scenario};
-const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 const platform = require(${platformPath});
-const topology = require(${topologyPath});
-const local = require(${localPath});
-const windows = require(${windowsPath});
+const wait = require(${waitPath});
 
 platform.isWsl = () => true;
-topology.getContainerRuntime = () => "docker";
-credentials.prompt = async () => {
-  throw new Error("Unexpected prompt in non-interactive test");
+wait.waitForHttp = () => {
+  console.error("OLLAMA_READINESS_PROBED");
+  return true;
 };
-credentials.ensureApiKey = async () => {};
+wait.sleepSeconds = () => {};
 runner.runCapture = (command) => {
   const cmd = Array.isArray(command) ? command.join(" ") : String(command);
   if (cmd.includes("command -v ollama")) return "";
+  if (Array.isArray(command) && command.at(-1) === "zstd") return "zstd";
   if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   if (cmd.includes("docker images")) return "";
   if (cmd.includes("powershell.exe") && cmd.includes("Get-Command ollama.exe")) {
@@ -244,6 +246,17 @@ runner.runCapture = (command) => {
 };
 runner.run = () => ({ status: 0 });
 runner.runShell = () => ({ status: 0 });
+
+const credentials = require(${credentialsPath});
+const topology = require(${topologyPath});
+const local = require(${localPath});
+const windows = require(${windowsPath});
+
+topology.getContainerRuntime = () => "docker";
+credentials.prompt = async () => {
+  throw new Error("Unexpected prompt in non-interactive test");
+};
+credentials.ensureApiKey = async () => {};
 local.resetOllamaHostCache();
 if (scenario.reachable) local.setResolvedOllamaHost(local.OLLAMA_HOST_DOCKER_INTERNAL);
 local.getOllamaModelOptions = () => {
@@ -254,14 +267,10 @@ windows.installOllamaOnWindowsHost = async () => {
   console.error("WINDOWS_INSTALL_CALLED");
   return { ok: true, path: "C:\\Users\\tester\\AppData\\Local\\Programs\\Ollama\\ollama.exe" };
 };
-windows.setupWindowsOllamaWith0000Binding = () => {
+windows.setupWindowsOllamaLoopbackBinding = () => {
   console.error("WINDOWS_SETUP_CALLED");
   return true;
 };
-windows.switchToWindowsOllamaHost = () => {
-  console.error("WINDOWS_SWITCH_CALLED");
-};
-
 const { setupNim } = require(${onboardPath});
 
 (async () => {
@@ -273,6 +282,7 @@ const { setupNim } = require(${onboardPath});
 `;
 
   try {
+    fs.writeFileSync(zstdPath, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
     fs.writeFileSync(scriptPath, script);
     return spawnSync(process.execPath, [scriptPath], {
       cwd: repoRoot,
