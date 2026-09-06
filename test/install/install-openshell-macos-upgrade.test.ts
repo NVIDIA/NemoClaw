@@ -323,6 +323,7 @@ function runDarwinGatewayServiceStop(
     trustedActiveProgram?: boolean;
     trustedLabel?: boolean;
     trustedProgram?: boolean;
+    waitingServiceLabel?: string;
   } = {},
 ) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-darwin-gateway-service-stop-"));
@@ -390,6 +391,10 @@ case "\${1:-}" in
       *) exit 1 ;;
     esac
     [ -f '${active}' ] || exit 1
+    case "\${2:-}" in
+      'gui/${process.getuid?.()}/${options.waitingServiceLabel ?? "no-waiting-service"}') printf 'state = waiting\n' ;;
+      *) printf 'state = running\n' ;;
+    esac
     printf 'program = %s\\n' '${
       options.trustedActiveProgram === false
         ? path.join(tmp, "active-foreign-gateway")
@@ -638,25 +643,29 @@ describe("install.sh macOS OpenShell upgrade recovery", () => {
     expect(launchctlLog).not.toContain("bootout");
   });
 
-  it("ignores an inactive stale plist before stopping the active Homebrew 6 service (#11111)", () => {
-    const currentLabel = "sh.brew.openshell";
-    const legacyLabel = "homebrew.mxcl.openshell";
-    const currentDomain = `gui/${process.getuid?.()}/${currentLabel}`;
-    const { result, launchctlLog } = runDarwinGatewayServiceStop({
-      additionalServiceLabel: legacyLabel,
-      inactiveServiceLabel: legacyLabel,
-      serviceLabel: currentLabel,
-      symlinkedServiceLabel: legacyLabel,
-    });
+  it.each(["inactive", "waiting"] as const)(
+    "ignores a stale legacy plist when that service is %s (#11111)",
+    (legacyState) => {
+      const currentLabel = "sh.brew.openshell";
+      const legacyLabel = "homebrew.mxcl.openshell";
+      const currentDomain = `gui/${process.getuid?.()}/${currentLabel}`;
+      const { result, launchctlLog } = runDarwinGatewayServiceStop({
+        additionalServiceLabel: legacyLabel,
+        inactiveServiceLabel: legacyState === "inactive" ? legacyLabel : undefined,
+        serviceLabel: currentLabel,
+        symlinkedServiceLabel: legacyLabel,
+        waitingServiceLabel: legacyState === "waiting" ? legacyLabel : undefined,
+      });
 
-    expect(result.status, result.stdout + result.stderr).toBe(0);
-    expect(launchctlLog.trim().split(/\r?\n/)).toEqual([
-      `print ${currentDomain}`,
-      `print gui/${process.getuid?.()}/${legacyLabel}`,
-      `bootout ${currentDomain}`,
-      `print ${currentDomain}`,
-    ]);
-  });
+      expect(result.status, result.stdout + result.stderr).toBe(0);
+      expect(launchctlLog.trim().split(/\r?\n/)).toEqual([
+        `print ${currentDomain}`,
+        `print gui/${process.getuid?.()}/${legacyLabel}`,
+        `bootout ${currentDomain}`,
+        `print ${currentDomain}`,
+      ]);
+    },
+  );
 
   it("refuses to stop a Homebrew user service with an unexpected label (#10369)", () => {
     const { result, launchctlLog } = runDarwinGatewayServiceStop({ trustedLabel: false });

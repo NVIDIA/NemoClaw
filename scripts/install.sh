@@ -3283,7 +3283,7 @@ stop_macos_openshell_gateway_user_service() {
   local gateway_port service_domain=""
   local brew_prefix expected_program
   local candidate_label candidate_path candidate_program candidate_domain candidate_service
-  local candidate_active_program
+  local candidate_active_program candidate_state
   gateway_port="$(resolve_nemoclaw_gateway_port)" || return 1
   [ "$gateway_port" -eq 8080 ] || return 1
   command_exists brew || return 1
@@ -3296,6 +3296,8 @@ stop_macos_openshell_gateway_user_service() {
   for candidate_label in sh.brew.openshell homebrew.mxcl.openshell; do
     candidate_domain="gui/$(id -u)/${candidate_label}"
     candidate_service="$(launchctl print "$candidate_domain" 2>/dev/null)" || continue
+    candidate_state="$(printf '%s\n' "$candidate_service" | sed -n 's/^[[:space:]]*state = //p' | head -1)"
+    [ "$candidate_state" = "running" ] || continue
     candidate_path="${HOME}/Library/LaunchAgents/${candidate_label}.plist"
     [ -f "$candidate_path" ] \
       || error "Refusing to retire the active OpenShell gateway without its expected macOS user service file: ${candidate_path}"
