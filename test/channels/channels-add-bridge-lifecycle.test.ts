@@ -58,7 +58,7 @@ const GOOGLECHAT_PROFILE_DOC: Record<string, unknown> = {
       header_name: "Authorization",
       query_param: "",
       refresh: {
-        strategy: "google-service-account-jwt",
+        strategy: "google_service_account_jwt",
         scopes: ["https://www.googleapis.com/auth/chat.bot"],
         material: [
           {
@@ -312,16 +312,16 @@ beforeEach(() => {
           ? JSON.stringify(GOOGLECHAT_PROFILE_DOC)
           : providerName && !providerMissing
             ? `Name: ${providerName}\nType: google-chat-bridge\nCredential keys: GOOGLE_CHAT_ACCESS_TOKEN\nConfig keys: <none>\n`
-          : "",
+            : "",
       stderr: invalidRefresh
         ? "invalid secret handoff"
         : commandFailure
           ? commandFailure
-        : profileMissing
-          ? "provider profile 'google-chat-bridge' not found"
-          : providerMissing
-            ? `provider '${args[args.length - 1]}' not found`
-            : "",
+          : profileMissing
+            ? "provider profile 'google-chat-bridge' not found"
+            : providerMissing
+              ? `provider '${args[args.length - 1]}' not found`
+              : "",
       status:
         invalidRefresh || refreshFailure || deleteFailure || profileMissing || providerMissing
           ? 1
