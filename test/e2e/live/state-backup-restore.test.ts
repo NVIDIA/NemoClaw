@@ -26,6 +26,7 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 const WORKSPACE_PATH = "/sandbox/.openclaw/workspace";
 const WORKSPACE_FILES = ["SOUL.md", "USER.md", "IDENTITY.md", "AGENTS.md", "MEMORY.md"];
 const MEMORY_FILE = "memory/2026-04-20.md";
+const UNSAFE_MEMORY_LINK = "memory/e2e-unsafe-link";
 const TEST_SANDBOX_PREFIX = "e2e-state-backup";
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? TEST_SANDBOX_PREFIX;
 const TEST_TIMEOUT_MS = testTimeout(
@@ -129,7 +130,7 @@ async function destroySandboxUntilAbsent(
 }
 
 test(
-  "state-backup-restore: backup-workspace.sh restores workspace files and memory directory (#8006)",
+  "state-backup-restore: rejects linked memory before restoring regular state (#8006, #10636)",
   {
   timeout: TEST_TIMEOUT_MS,
   meta: {
@@ -137,6 +138,7 @@ test(
       "confirm the selected runtime and the workspace backup script",
       "onboard the source sandbox",
       "write workspace and memory markers",
+      "reject a backup that contains a nested symbolic link",
       "capture and inspect the host backup",
       "destroy and re-onboard the sandbox",
       "restore the backup into the fresh sandbox",
@@ -159,8 +161,6 @@ test(
 }) => {
   assertTestOwnedSandboxName();
   secrets.required("NVIDIA_INFERENCE_API_KEY");
-  expect(fs.existsSync(path.join(REPO_ROOT, "scripts", "backup-workspace.sh"))).toBe(true);
-
     await runtimeProvider.requireAvailable({
     artifactName: "prereq-runtime-info",
       scenarioLabel: "state backup and restore",
@@ -174,6 +174,7 @@ test(
     preservedBoundaries: [
       "real nemoclaw onboard with Docker/OpenShell",
       "openshell sandbox exec workspace marker writes and reads",
+      "real backup helper rejects a nested workspace symbolic link without retaining a backup",
       "real scripts/backup-workspace.sh backup host process",
       "real nemoclaw <sandbox> destroy --yes",
       "real scripts/backup-workspace.sh restore host process",
@@ -183,15 +184,19 @@ test(
 
   const stateSnapshot = snapshotRegistryAndSession();
   let createdBackupDir: string | undefined;
+  let rejectedBackupDir: string | undefined;
   cleanup.trackDisposable(`restore NemoClaw state files for ${SANDBOX_NAME}`, () => {
     restoreRegistryAndSession(stateSnapshot);
   });
   cleanup.trackDisposable("remove generated backup-workspace.sh backup", () => {
-    if (!createdBackupDir) return;
     const root = backupRoot();
-    const resolved = path.resolve(createdBackupDir);
-    if (resolved !== root && resolved.startsWith(`${path.resolve(root)}${path.sep}`)) {
-      fs.rmSync(resolved, { recursive: true, force: true });
+    const rejectedResolved = rejectedBackupDir ? path.resolve(rejectedBackupDir) : root;
+    if (rejectedResolved !== root && rejectedResolved.startsWith(`${path.resolve(root)}${path.sep}`)) {
+      fs.rmSync(rejectedResolved, { recursive: true, force: true });
+    }
+    const createdResolved = createdBackupDir ? path.resolve(createdBackupDir) : root;
+    if (createdResolved !== root && createdResolved.startsWith(`${path.resolve(root)}${path.sep}`)) {
+      fs.rmSync(createdResolved, { recursive: true, force: true });
     }
   });
   if (process.env.NEMOCLAW_E2E_KEEP_SANDBOX !== "1") {
@@ -283,6 +288,70 @@ test(
     memoryFilesWritten: 1,
   });
 
+  progress.phase("reject a backup that contains a nested symbolic link");
+  const unsafeLinkPath = path.posix.join(WORKSPACE_PATH, UNSAFE_MEMORY_LINK);
+  const unsafeLinkTarget = path.posix.join(WORKSPACE_PATH, "SOUL.md");
+  const createUnsafeLink = await sandbox.exec(
+    SANDBOX_NAME,
+    ["sh", "-c", 'ln -s "$2" "$1"', "sh", unsafeLinkPath, unsafeLinkTarget],
+    {
+      artifactName: "phase-2-create-unsafe-memory-link",
+      env: sandboxAccessEnv(),
+      timeoutMs: 60_000,
+    },
+  );
+  expect(
+    commandFailed(createUnsafeLink),
+    `TC-STATE-01: Could not create the nested workspace symbolic link:\n${resultText(createUnsafeLink)}`,
+  ).toBe(false);
+
+  const beforeRejectedBackupDirs = new Set(listBackupDirs());
+  try {
+    const rejectedBackup = await host.command(
+      "bash",
+      [path.join(REPO_ROOT, "scripts", "backup-workspace.sh"), "backup", SANDBOX_NAME],
+      {
+        artifactName: "phase-2-reject-unsafe-backup",
+        cwd: REPO_ROOT,
+        env: backupRestoreEnv(),
+        timeoutMs: BACKUP_RESTORE_TIMEOUT_MS,
+      },
+    );
+    const rejectedBackupText = resultText(rejectedBackup);
+    const rejectedBackupDirs = listBackupDirs().filter(
+      (dir) => !beforeRejectedBackupDirs.has(dir),
+    );
+    rejectedBackupDir = latestBackupDir(rejectedBackupDirs);
+    await artifacts.writeJson("phase-2-rejected-backup-summary.json", {
+      exitCode: rejectedBackup.exitCode,
+      output: rejectedBackupText,
+      retainedBackupDirs: rejectedBackupDirs,
+    });
+
+    expect(
+      commandFailed(rejectedBackup) &&
+        rejectedBackupText.includes(
+          "the directory contains an entry that is not a regular file or directory",
+        ) &&
+        rejectedBackupDirs.length === 0,
+      `TC-STATE-01: Unsafe workspace backup must fail with the expected error and retain no new directory:\n${rejectedBackupText}`,
+    ).toBe(true);
+  } finally {
+    const removeUnsafeLink = await sandbox.exec(
+      SANDBOX_NAME,
+      ["sh", "-c", 'rm -f -- "$1"', "sh", unsafeLinkPath],
+      {
+        artifactName: "phase-2-remove-unsafe-memory-link",
+        env: sandboxAccessEnv(),
+        timeoutMs: 60_000,
+      },
+    );
+    expect(
+      commandFailed(removeUnsafeLink),
+      `TC-STATE-01: Could not remove the nested workspace symbolic link:\n${resultText(removeUnsafeLink)}`,
+    ).toBe(false);
+  }
+
   progress.phase("capture and inspect the host backup");
   const beforeBackupDirs = new Set(listBackupDirs());
   const backup = await host.command(
@@ -303,7 +372,7 @@ test(
   }
 
   const newBackupDirs = listBackupDirs().filter((dir) => !beforeBackupDirs.has(dir));
-  createdBackupDir = latestBackupDir(newBackupDirs) ?? latestBackupDir(listBackupDirs());
+  createdBackupDir = latestBackupDir(newBackupDirs);
   expect(createdBackupDir, "TC-STATE-01: Backup dir — no backup directory found").toBeTruthy();
   await artifacts.writeJson("phase-2-backup-summary.json", {
     backupDir: createdBackupDir,
@@ -324,12 +393,8 @@ test(
 
   const memoryBackupPath = path.join(createdBackupDir!, MEMORY_FILE);
   expect(
-    fs.existsSync(memoryBackupPath),
-    `TC-STATE-01: BackupCaptureDir — ${memoryBackupPath} must exist in host backup`,
-  ).toBe(true);
-  expect(
     hostFileContains(memoryBackupPath, `${markerContent}_daily`),
-    "TC-STATE-01: BackupCaptureDir — memory file must contain expected marker",
+    `TC-STATE-01: BackupCaptureDir — ${memoryBackupPath} must contain the expected marker`,
   ).toBe(true);
 
   progress.phase("destroy and re-onboard the sandbox");
@@ -441,7 +506,9 @@ test(
   if (memoryText.includes("STATE=MISSING")) {
     await artifacts.writeText("phase-6-restore-output-for-memory-missing.txt", restoreText);
   }
-  expect(memoryText).toContain("STATE=EXISTS");
-  expect(memoryText).toContain(`${markerContent}_daily`);
+  expect(
+    memoryText.includes("STATE=EXISTS") && memoryText.includes(`${markerContent}_daily`),
+    `TC-STATE-01: MemoryRestore — restored memory must exist and contain the expected marker:\n${memoryText}`,
+  ).toBe(true);
   },
 );

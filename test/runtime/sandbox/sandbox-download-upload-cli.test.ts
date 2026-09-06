@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 import { runWithEnv, writeSandboxRegistry } from "../../cli/helpers";
 import { LAUNCH_READINESS_FIXTURE_POLICY } from "../../helpers/launch-readiness-fixture";
 
-function buildStubOpenshell(home: string, logFile: string): string {
+function buildStubOpenshell(home: string, logFile: string, sourceKind = "file"): string {
   const localBin = path.join(home, "bin");
   fs.mkdirSync(localBin, { recursive: true });
   fs.writeFileSync(
@@ -22,7 +22,7 @@ function buildStubOpenshell(home: string, logFile: string): string {
       '  "sandbox list"*) printf "alpha Ready\\n"; exit 0 ;;',
       '  "sandbox get alpha"*) printf "Name: alpha\\nPhase: Ready\\nPolicy:\\n"; exit 0 ;;',
       '  "gateway info -g nemoclaw"*) printf "Gateway: nemoclaw\\n"; exit 0 ;;',
-      '  "sandbox exec --name alpha -- sh -c"*) printf "file"; exit 0 ;;',
+      `  "sandbox exec --name alpha -- sh -c"*) printf ${JSON.stringify(sourceKind)}; exit 0 ;;`,
       '  "sandbox download alpha"*) artifact="${!#}"; printf "downloaded" > "$artifact"; exit 0 ;;',
       "  *) exit 0 ;;",
       "esac",
@@ -82,6 +82,26 @@ describe("sandbox download/upload CLI wrappers", () => {
       expect(fs.readFileSync(expectedHostDest, "utf8")).toBe("downloaded");
     } finally {
       fs.rmSync(expectedHostDest, { force: true });
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("uses exit status 2 when the sandbox source is absent", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sandbox-missing-"));
+    try {
+      writeSandboxRegistry(home);
+      const openshellLog = path.join(home, "openshell-calls.log");
+      const localBin = buildStubOpenshell(home, openshellLog, "missing");
+
+      const result = runWithEnv("alpha download /sandbox/missing 2>&1", {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      });
+
+      expect(result.code).toBe(2);
+      expect(result.out).toContain("no such path in the sandbox");
+      expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("sandbox download alpha");
+    } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }
   });

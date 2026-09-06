@@ -4,6 +4,8 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+NEMOCLAW_CLI_BIN="${NEMOCLAW_CLI_BIN:-${SCRIPT_DIR}/../bin/nemoclaw.js}"
 WORKSPACE_PATH="/sandbox/.openclaw/workspace"
 BACKUP_BASE="${HOME}/.nemoclaw/backups"
 FILES=(SOUL.md USER.md IDENTITY.md AGENTS.md MEMORY.md)
@@ -45,6 +47,30 @@ shell_quote() {
   printf "'%s'" "$(printf "%s" "$1" | sed "s/'/'\\\\''/g")"
 }
 
+download_backup_item() {
+  local sandbox="$1"
+  local remote_path="$2"
+  local host_dest="$3"
+  local optional="$4"
+  local output
+  local status
+
+  if output="$("$NEMOCLAW_CLI_BIN" "$sandbox" download "$remote_path" "$host_dest" 2>&1)"; then
+    [ -z "$output" ] || printf '%s\n' "$output"
+    return 0
+  else
+    status=$?
+  fi
+
+  if [ "$optional" = "1" ] && [ "$status" -eq 2 ]; then
+    return 2
+  fi
+
+  [ -z "$output" ] || printf '%s\n' "$output" >&2
+  [ "$status" -ne 2 ] || return 1
+  return "$status"
+}
+
 RESTORE_DIR_COUNT=0
 restore_directory() {
   local sandbox="$1"
@@ -82,6 +108,9 @@ restore_directory() {
 
 do_backup() {
   local sandbox="$1"
+  require_cmd "$NEMOCLAW_CLI_BIN"
+  "$NEMOCLAW_CLI_BIN" --version >/dev/null 2>&1 \
+    || fail "The selected NemoClaw CLI cannot start. Run 'npm run dev:setup' from the NemoClaw source repository root. Then retry the backup."
   local ts
   ts="$(date +%Y%m%d-%H%M%S)"
   local dest="${BACKUP_BASE}/${ts}"
@@ -89,32 +118,44 @@ do_backup() {
   mkdir -p "$BACKUP_BASE"
   chmod 0700 "${HOME}/.nemoclaw" "$BACKUP_BASE" \
     || fail "Failed to set secure permissions on ${HOME}/.nemoclaw — check directory ownership."
-  mkdir -p "$dest"
+  mkdir "$dest" \
+    || fail "Failed to create a new backup at ${dest}/. If it already exists, wait one second and retry; otherwise check directory ownership."
   chmod 0700 "$dest"
 
   info "Backing up workspace from sandbox '${sandbox}'..."
 
   local count=0
   for f in "${FILES[@]}"; do
-    if openshell sandbox download "$sandbox" "${WORKSPACE_PATH}/${f}" "${dest}/" 2>/dev/null; then
+    local optional=0
+    [ "$f" = "MEMORY.md" ] && optional=1
+    if download_backup_item "$sandbox" "${WORKSPACE_PATH}/${f}" "${dest}/" "$optional"; then
       count=$((count + 1))
     else
-      warn "Skipped ${f} (not found or download failed)"
+      local status=$?
+      if [ "$status" -eq 2 ]; then
+        warn "Skipped ${f} (not found)"
+        continue
+      fi
+      warn "Failed to download ${f}"
+      rm -rf -- "$dest" || fail "Failed to remove incomplete backup at ${dest}/. Remove it before restore."
+      fail "Removed incomplete backup at ${dest}/ because ${f} was not downloaded. Check ${WORKSPACE_PATH}/${f}, then rerun the backup before restore."
     fi
   done
 
   for d in "${DIRS[@]}"; do
-    if openshell sandbox download "$sandbox" "${WORKSPACE_PATH}/${d}/" "${dest}/${d}/" 2>/dev/null; then
+    if download_backup_item "$sandbox" "${WORKSPACE_PATH}/${d}/" "${dest}/${d}/" 1; then
       count=$((count + 1))
     else
-      warn "Skipped ${d}/ (not found or download failed)"
+      local status=$?
+      if [ "$status" -eq 2 ]; then
+        warn "Skipped ${d}/ (not found)"
+        continue
+      fi
+      warn "Failed to download ${d}/"
+      rm -rf -- "$dest" || fail "Failed to remove incomplete backup at ${dest}/. Remove it before restore."
+      fail "Removed incomplete backup at ${dest}/ because ${d}/ was not downloaded. Remove unsupported entries from ${WORKSPACE_PATH}/${d}/ and rerun the backup before restore."
     fi
   done
-
-  if [ "$count" -eq 0 ]; then
-    rmdir "$dest" 2>/dev/null || true
-    fail "No files were backed up. Check that the sandbox '${sandbox}' exists and has workspace files."
-  fi
 
   info "Backup saved to ${dest}/ (${count} items)"
 }
