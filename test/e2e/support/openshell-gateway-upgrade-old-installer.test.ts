@@ -20,6 +20,10 @@ import {
 const temporaryDirectories: string[] = [];
 const HISTORICAL_BUILD_CONTEXT_MODULE = "src/lib/sandbox/build-context.ts";
 
+function historicalReleaseCommitRef(nemoclawRef: string): string {
+  return `refs/tags/${nemoclawRef}^{commit}`;
+}
+
 function assertHistoricalReleaseIdentity(identity: {
   nemoclawCommit: string;
   nemoclawRef: string;
@@ -32,13 +36,13 @@ function assertHistoricalReleaseIdentity(identity: {
       "rev-parse",
       "--verify",
       "--end-of-options",
-      `${identity.nemoclawRef}^{commit}`,
+      historicalReleaseCommitRef(identity.nemoclawRef),
     ],
     { encoding: "utf8" },
   );
   expect(
     resolved.status,
-    `Historical NemoClaw release ${identity.nemoclawRef} could not be resolved: ${resolved.stderr.trim()}`,
+    `Historical NemoClaw release ${identity.nemoclawRef} could not be resolved from its tag`,
   ).toBe(0);
 
   expect(
@@ -124,12 +128,20 @@ function extractReviewedHistoricalSource(): string {
 
   const archive = spawnSync(
     "git",
-    ["-C", REPO_ROOT, "archive", REVIEWED_GATEWAY_UPGRADE_FIXTURE.nemoclawRef],
+    [
+      "-C",
+      REPO_ROOT,
+      "archive",
+      historicalReleaseCommitRef(REVIEWED_GATEWAY_UPGRADE_FIXTURE.nemoclawRef),
+    ],
     {
       maxBuffer: 128 * 1024 * 1024,
     },
   );
-  expect(archive.status, archive.stderr.toString()).toBe(0);
+  expect(
+    archive.status,
+    `Historical NemoClaw release ${REVIEWED_GATEWAY_UPGRADE_FIXTURE.nemoclawRef} could not be archived from its tag`,
+  ).toBe(0);
   const extract = spawnSync("tar", ["-xf", "-", "-C", sourceRoot], {
     input: archive.stdout,
     maxBuffer: 128 * 1024 * 1024,
