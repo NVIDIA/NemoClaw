@@ -7,6 +7,7 @@ import {
   getTrustedActiveOpenShellGatewayUserServiceIdentity,
   hasOpenShellGatewayUserService,
   OPENSHELL_GATEWAY_HOMEBREW_FORMULA_SHA256,
+  OpenShellGatewayServiceTrustError,
   type SpawnSyncLikeResult,
   startOpenShellGatewayUserService,
   startPackageManagedDockerDriverGateway,
@@ -85,6 +86,23 @@ function queryHomebrewService(records: HomebrewServiceRecord[]) {
 }
 
 describe("OpenShell Homebrew service boundary", () => {
+  it.each([
+    ["a null document", "null"],
+    ["no formula list", "{}"],
+    ["a non-array formula list", '{"formulae":{}}'],
+    ["a null formula entry", '{"formulae":[null]}'],
+  ])("rejects valid JSON with %s (#11129)", (_case, stdout) => {
+    const detectService = () =>
+      hasOpenShellGatewayUserService({
+        commandExists: () => true,
+        homebrewFormulaOperation: () => spawnResult(0, "", stdout),
+        platform: "darwin",
+      });
+
+    expect(detectService).toThrow(OpenShellGatewayServiceTrustError);
+    expect(detectService).toThrow("formula identity check returned invalid data");
+  });
+
   it("rejects a Homebrew formula outside the official tap (#6903)", () => {
     const operation = vi.fn((args: string[]) =>
       args[0] === "info" ? officialFormulaInfo({ tap: "other/tap" }) : spawnResult(),
