@@ -33,6 +33,7 @@ describe("applyReusedSandboxDashboardState", () => {
 
   it("clears Hermes dashboard registry fields when the reused sandbox has it disabled", () => {
     const updateSandbox = vi.fn();
+    const ensureDashboardForward = vi.fn(() => 18789);
     const sandboxGpuConfig: SandboxGpuConfig = {
       hostGpuDetected: false,
       hostGpuPlatform: null,
@@ -53,7 +54,7 @@ describe("applyReusedSandboxDashboardState", () => {
       sandboxGpuConfig,
       gatewayName: "nemoclaw",
       gatewayPort: 8080,
-      ensureDashboardForward: vi.fn(() => 18789),
+      ensureDashboardForward,
       hermesDashboardForwarding: {
         resolveStateForPort: vi.fn(() => hermesDashboardState),
         ensureForState: vi.fn(),
@@ -71,6 +72,9 @@ describe("applyReusedSandboxDashboardState", () => {
       gatewayPort: 8080,
     });
     expect(result.hermesDashboardState).toBe(hermesDashboardState);
+    expect(ensureDashboardForward).toHaveBeenCalledWith("reuse-me", "http://127.0.0.1:18789", {
+      reuseExistingOpenClawForward: true,
+    });
   });
 
   it("skips dashboard forwarding while preserving reuse metadata for terminal agents", () => {
@@ -210,6 +214,7 @@ describe("applyReusedSandboxDashboardState", () => {
         throw new Error("Sandbox identity changed before the dashboard entry");
       });
     const ensureForState = vi.fn();
+    const ensureDashboardForward = vi.fn(() => 18790);
     const updateReusedSandboxMetadata = vi.fn();
     const updateSandbox = vi.fn();
 
@@ -218,7 +223,7 @@ describe("applyReusedSandboxDashboardState", () => {
         sandboxName: "reuse-me",
         chatUiUrl: "http://127.0.0.1:18789",
         env: {},
-        agent: null,
+        agent: { name: "hermes" } as any,
         model: "test-model",
         provider: "openai-compatible",
         selectionVerified: true,
@@ -232,7 +237,7 @@ describe("applyReusedSandboxDashboardState", () => {
         },
         gatewayName: "nemoclaw",
         gatewayPort: 8080,
-        ensureDashboardForward: vi.fn(() => 18790),
+        ensureDashboardForward,
         hermesDashboardForwarding: {
           resolveStateForPort: vi.fn(() => ({ enabled: false, config: null })),
           ensureForState,
@@ -244,6 +249,9 @@ describe("applyReusedSandboxDashboardState", () => {
     ).toThrow(/Sandbox identity changed before/u);
 
     expect(ensureForState).toHaveBeenCalledOnce();
+    expect(ensureDashboardForward).toHaveBeenCalledWith("reuse-me", "http://127.0.0.1:18789", {
+      revalidateSandboxIdentity,
+    });
     expect(updateReusedSandboxMetadata).not.toHaveBeenCalled();
     expect(updateSandbox).not.toHaveBeenCalled();
   });

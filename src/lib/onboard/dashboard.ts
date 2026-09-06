@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   launchForwardService,
+  matchesRunningForwardService,
   type ForwardServiceTarget,
 } from "../adapters/openshell/forward-service";
 import type { AgentDefinition } from "../agent/defs";
@@ -88,6 +89,7 @@ export interface OnboardDashboardDeps {
   forwardService?: {
     executable(): string;
     launch?(target: ForwardServiceTarget): void;
+    matchesListener?(target: ForwardServiceTarget): boolean;
     retireLegacy?(sandboxName: string, gatewayName: string, ports: readonly number[]): number;
     resolveGatewayName(
       sandbox: { gatewayName?: string | null; gatewayPort?: number | null } | null | undefined,
@@ -166,6 +168,7 @@ export interface OnboardDashboardHelpers {
     chatUiUrl?: string,
     options?: Parameters<typeof dashboardAccess.getDashboardForwardTarget>[1],
   ): string;
+  matchesExistingDashboardForward(sandboxName: string, port: number, chatUiUrl: string): boolean;
   getWslHostAddress(
     options?: Parameters<typeof dashboardAccess.getWslHostAddress>[0],
   ): string | null;
@@ -224,6 +227,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
             if (!executable) throw new Error("OpenShell is unavailable");
             return executable;
           },
+          matchesListener: matchesRunningForwardService,
           resolveGatewayName: productionForwardService.resolveGatewayName,
           retireLegacy: (sandboxName: string, gatewayName: string, ports: readonly number[]) =>
             productionForwardService.retireLegacy(sandboxName, gatewayName, ports, {
@@ -373,13 +377,29 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     process.exit(1);
   }
 
+  function matchesExistingDashboardForward(
+    sandboxName: string,
+    port: number,
+    chatUiUrl: string,
+    registryOccupiedPorts = getRegistryOccupiedDashboardPorts(sandboxName, listSandboxes),
+  ): boolean {
+    if (registryOccupiedPorts.has(String(port))) return false;
+    const gatewayName = resolveForwardServiceGateway(sandboxName);
+    return Boolean(
+      gatewayName &&
+      forwardService?.matchesListener?.(
+        forwardTarget(sandboxName, gatewayName, port, getDashboardForwardTarget(chatUiUrl)),
+      ),
+    );
+  }
+
   function ensureDashboardForward(
     sandboxName: string,
     chatUiUrl = `http://127.0.0.1:${CONTROL_UI_PORT}`,
     options: DashboardForwardOptions = {},
   ): number {
     chatUiUrl ||= `http://127.0.0.1:${CONTROL_UI_PORT}`;
-    const { rollbackSandboxOnFailure, allowPortReallocation } =
+    const { rollbackSandboxOnFailure, allowPortReallocation, reuseExistingOpenClawForward } =
       normalizeDashboardForwardOptions(options);
     const { revalidateSandboxIdentity } = options;
     const preferredPort = Number(getDashboardForwardPort(chatUiUrl));
@@ -394,7 +414,22 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     );
     const isPortBound = deps.isPortBoundOnHost ?? isPortBoundOnHost;
     const persistedPort = getPersistedDashboardPort(sandboxName, listSandboxes);
+    const registryOccupiedPorts = getRegistryOccupiedDashboardPorts(sandboxName, listSandboxes);
     if (persistedPort === preferredPort && isPortBound(preferredPort)) {
+      if (
+        reuseExistingOpenClawForward &&
+        matchesExistingDashboardForward(
+          sandboxName,
+          preferredPort,
+          chatUiUrl,
+          registryOccupiedPorts,
+        )
+      ) {
+        revalidateSandboxIdentity?.(
+          `retain dashboard forward ${String(preferredPort)} for sandbox '${sandboxName}'`,
+        );
+        return preferredPort;
+      }
       throw new Error(
         `Registered dashboard port ${String(preferredPort)} is already occupied; it cannot be reallocated or adopted.`,
       );
@@ -406,7 +441,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
         preferredPort,
         existingForwards,
         isPortBound,
-        getRegistryOccupiedDashboardPorts(sandboxName, listSandboxes),
+        registryOccupiedPorts,
       );
     } catch (err) {
       if (!rollbackSandboxOnFailure) throw err;
@@ -519,6 +554,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       envUrl || (persistedPort === null ? undefined : `http://127.0.0.1:${String(persistedPort)}`);
     const actualPort = ensureDashboardForward(sandboxName, requestedUrl, {
       allowPortReallocation: false,
+      reuseExistingOpenClawForward: true,
       ...(revalidateSandboxIdentity ? { revalidateSandboxIdentity } : {}),
     });
     revalidateSandboxIdentity?.(`publish the dashboard URL for sandbox '${sandboxName}'`);
@@ -534,6 +570,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     agent: { forwardPort?: number | null; forward_ports?: number[] | null },
     options: {
       beforeForwardPort?: (port: number) => Promise<void> | void;
+      reuseExistingOpenClawForward?: boolean;
       revalidateSandboxIdentity?: (operation: string) => void;
     } = {},
   ): Promise<number> {
@@ -546,6 +583,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       controlUiPort: chatUiUrl ? Number(getDashboardForwardPort(chatUiUrl)) : undefined,
       hermesApiPort: getSandbox?.(sandboxName)?.hermesApiPort,
       beforeForwardPort: options.beforeForwardPort,
+      reuseExistingOpenClawForward: options.reuseExistingOpenClawForward,
       revalidateSandboxIdentity: options.revalidateSandboxIdentity,
     });
   }
@@ -561,6 +599,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     return agent
       ? ensureAgentDashboardForward(sandboxName, agent, {
           revalidateSandboxIdentity,
+          ...(agent.name === "openclaw" ? { reuseExistingOpenClawForward: true } : {}),
           beforeForwardPort: portReservation
             ? (port) => portReservation.releaseBeforeForward(agent.name, port)
             : undefined,
@@ -787,6 +826,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     getDashboardForwardPort,
     getDashboardForwardTarget,
     getWslHostAddress,
+    matchesExistingDashboardForward,
     printDashboard,
     stopAllDashboardForwards,
   };

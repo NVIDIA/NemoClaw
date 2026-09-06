@@ -21,6 +21,7 @@ export type EnsureDashboardForward = (
   chatUiUrl?: string,
   options?: {
     allowPortReallocation?: boolean;
+    reuseExistingOpenClawForward?: boolean;
     revalidateSandboxIdentity?: (operation: string) => void;
   },
 ) => number;
@@ -39,6 +40,7 @@ export async function ensureAgentDashboardForward(options: {
   /** Host port allocated to this sandbox's OpenAI-compatible API, when it has one. */
   hermesApiPort?: number | null;
   beforeForwardPort?: (port: number) => Promise<void> | void;
+  reuseExistingOpenClawForward?: boolean;
   revalidateSandboxIdentity?: (operation: string) => void;
   warn?: (message: string) => void;
 }): Promise<number> {
@@ -50,6 +52,7 @@ export async function ensureAgentDashboardForward(options: {
     controlUiPort,
     hermesApiPort,
     beforeForwardPort,
+    reuseExistingOpenClawForward = false,
     revalidateSandboxIdentity,
     warn = (message: string) => console.warn(message),
   } = options;
@@ -108,6 +111,7 @@ export async function ensureAgentDashboardForward(options: {
     await beforeForwardPort?.(agentDashboardPort);
     const actualAgentDashboardPort = ensureDashboardForward(sandboxName, requestedDashboardUrl, {
       allowPortReallocation: false,
+      ...(reuseExistingOpenClawForward ? { reuseExistingOpenClawForward: true } : {}),
       ...(revalidateIdentity ? { revalidateSandboxIdentity: revalidateIdentity } : {}),
     });
     if (!usesFixedApiPort) {

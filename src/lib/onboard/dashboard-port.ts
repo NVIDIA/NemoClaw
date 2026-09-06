@@ -413,6 +413,7 @@ export interface CreateSandboxDashboardPortInput {
   forwardListOutput: string | null;
   defaultPort?: number;
   findAvailablePort?: typeof findAvailableDashboardPort;
+  matchesPersistedForward?: (port: number, chatUiUrl: string) => boolean;
   warn?: (message: string) => void;
   // Cross-gateway occupancy view derived from the sandbox registry. Lets the
   // allocator avoid handing out a dashboard port that already belongs to a
@@ -570,6 +571,26 @@ export async function reserveCreateSandboxDashboardPort(
   input: CreateSandboxDashboardPortInput,
   reservePort: (port: number) => Promise<DashboardPortReservation> = reserveDashboardPort,
 ): Promise<ReservedCreateSandboxDashboardPortResult> {
+  const matchesPersistedForward = input.matchesPersistedForward;
+  const persistedCandidate =
+    input.persistedPort !== null && matchesPersistedForward
+      ? resolveCreateSandboxDashboardPort({
+          ...input,
+          findAvailablePort: (_sandboxName, preferredPort) => preferredPort,
+          registryOccupiedPorts: new Map(),
+          warn: undefined,
+        })
+      : null;
+  const checksPersistedForward =
+    persistedCandidate !== null && input.persistedPort === persistedCandidate.preferredPort;
+  if (
+    persistedCandidate &&
+    checksPersistedForward &&
+    matchesPersistedForward?.(persistedCandidate.preferredPort, persistedCandidate.chatUiUrl) ===
+      true
+  ) {
+    return { ...persistedCandidate, reservation: null };
+  }
   const occupied = new Map(
     input.registryOccupiedPorts ?? getRegistryOccupiedDashboardPorts(input.sandboxName),
   );
@@ -580,6 +601,11 @@ export async function reserveCreateSandboxDashboardPort(
       registryOccupiedPorts: occupied,
       warn: undefined,
     });
+    if (checksPersistedForward && result.effectivePort !== result.preferredPort) {
+      throw new Error(
+        `Registered dashboard port ${String(result.preferredPort)} is already occupied; it cannot be reallocated or adopted.`,
+      );
+    }
     if (forwardOwner.get(String(result.effectivePort)) === input.sandboxName) {
       if (result.effectivePort !== result.preferredPort) {
         input.warn?.(

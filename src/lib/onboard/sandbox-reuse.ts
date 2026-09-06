@@ -104,7 +104,10 @@ export interface ReusedSandboxDashboardStateInput {
   ensureDashboardForward(
     sandboxName: string,
     chatUiUrl: string,
-    options?: { revalidateSandboxIdentity?: (operation: string) => void },
+    options?: {
+      reuseExistingOpenClawForward?: boolean;
+      revalidateSandboxIdentity?: (operation: string) => void;
+    },
   ): number;
   hermesDashboardForwarding: ReusedSandboxDashboardForwarding;
   updateSandbox?(sandboxName: string, updates: Partial<SandboxEntry>): unknown;
@@ -141,15 +144,15 @@ export function applyReusedSandboxDashboardState(
       `Sandbox '${input.sandboxName}' was created without remote dashboard exposure. Re-run onboarding with NEMOCLAW_DASHBOARD_BIND=0.0.0.0 and --recreate-sandbox before opening a remote bind.`,
     );
   }
-  input.revalidateSandboxIdentity?.(
-    `restore dashboard state for sandbox '${input.sandboxName}'`,
-  );
+  input.revalidateSandboxIdentity?.(`restore dashboard state for sandbox '${input.sandboxName}'`);
+  const reuseExistingOpenClawForward = input.agent == null || input.agent.name === "openclaw";
   const dashboardPort = manageDashboard
-    ? input.revalidateSandboxIdentity
-      ? input.ensureDashboardForward(input.sandboxName, input.chatUiUrl, {
-          revalidateSandboxIdentity: input.revalidateSandboxIdentity,
-        })
-      : input.ensureDashboardForward(input.sandboxName, input.chatUiUrl)
+    ? input.ensureDashboardForward(input.sandboxName, input.chatUiUrl, {
+        ...(reuseExistingOpenClawForward ? { reuseExistingOpenClawForward: true } : {}),
+        ...(input.revalidateSandboxIdentity
+          ? { revalidateSandboxIdentity: input.revalidateSandboxIdentity }
+          : {}),
+      })
     : 0;
   const chatUiUrl = manageDashboard ? `http://127.0.0.1:${dashboardPort}` : input.chatUiUrl;
   if (manageDashboard) {

@@ -1515,6 +1515,9 @@ const sandboxCreateOrchestrationRuntime = {
   get getDashboardForwardPort() {
     return getDashboardForwardPort;
   },
+  get matchesExistingDashboardForward() {
+    return matchesExistingDashboardForward;
+  },
   readDcodeSelectionDrift: createDcodeSelectionDriftReader(runCaptureOpenshell, () => GATEWAY_NAME),
   getDefaultSandboxNameForAgent,
   getDockerDriverGatewayStateDir,
@@ -2492,25 +2495,21 @@ const setupMessagingChannels = messagingChannelSetup.createSetupMessagingChannel
   isNonInteractive,
   prompt,
 });
-
 // ── Step 7: OpenClaw ─────────────────────────────────────────────
 const syncNemoClawConfigInSandbox = createNemoClawConfigSync({
   getProviderSelectionConfig,
   run,
   openshellArgv,
 });
-
 const configureOpenclawSandbox = openclawSetup.createConfigureOpenclawSandbox({
   syncNemoClawConfigInSandbox,
   reconcileWebSearch: openclawSetup.reconcileOpenClawWebSearchForReuse,
 });
-
 const setupOpenclaw = openclawSetup.createOpenclawSetup({
   step,
   agentProductName,
   configureOpenclawSandbox,
 });
-
 const {
   buildChain,
   buildAgentVerifyChain,
@@ -2521,6 +2520,7 @@ const {
   ensureAgentFixedForward,
   fetchGatewayAuthTokenFromSandbox,
   getDashboardForwardPort,
+  matchesExistingDashboardForward,
   printDashboard,
   stopAllDashboardForwards,
 } = onboardDashboard.createOnboardDashboardHelpers({
