@@ -2897,7 +2897,7 @@ jobs:
 
       # The sanitizer reads raw traces only after checking the workflow-owned
       # runner-temp path, then writes one allowlisted summary into upload roots.
-      - name: Build trusted live E2E trace summary
+      - name: Build trusted live E2E timing summary
         if: always()
         env:
           TARGET_ID: ${{ matrix.id }}
@@ -5801,7 +5801,7 @@ jobs:
       # Keep cleanup as a separate always() step so a sanitizer failure cannot
       # bypass it. A runner-level termination is contained by the ephemeral
       # GitHub-hosted runner.temp boundary. Remove this step only when the trace
-      # producer itself emits the allowlisted timing-only schema.
+      # producer itself emits the equivalent allowlisted summary schema.
       - name: Delete raw cloud-onboard traces
         if: always()
         shell: bash

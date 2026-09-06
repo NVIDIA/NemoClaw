@@ -47,6 +47,7 @@ IDENTITY_SETTLEMENT_EVENT = "sandbox_create_identity_settlement"
 CREATE_OPERATION_STATES = {"ready", "create_client_exited"}
 IDENTITY_SETTLEMENT_STATES = {"matched", "failed"}
 IDENTITY_CORRELATION_RE = re.compile(r"^[0-9a-f]{16}$")
+TRACE_EVENT_TIME_RE = re.compile(r"^[1-9][0-9]{15,20}$")
 
 
 def finite_number(value: Any) -> float | None:
@@ -113,9 +114,11 @@ def extract_spans(artifact: Any) -> list[dict[str, Any]]:
     return [span for span in spans if isinstance(span, dict)] if isinstance(spans, list) else []
 
 
-def extract_identity_settlement(spans: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """Return the last schema-valid settlement event without copying raw attributes."""
-    selected = None
+def extract_identity_settlements(
+    spans: list[dict[str, Any]],
+) -> list[tuple[int, dict[str, Any]]]:
+    """Return ordered settlement evidence without copying raw attributes."""
+    settlements = []
     for span in spans:
         if safe_span_name(span.get("name")) is None:
             continue
@@ -129,6 +132,7 @@ def extract_identity_settlement(spans: list[dict[str, Any]]) -> dict[str, Any] |
             operation_state = attributes.get("create_operation_state")
             identity_state = attributes.get("identity_state")
             correlation = attributes.get("returned_identity_correlation")
+            event_time = event.get("time_unix_nano")
             valid_operation_state = (
                 isinstance(operation_state, str) and operation_state in CREATE_OPERATION_STATES
             )
@@ -145,12 +149,32 @@ def extract_identity_settlement(spans: list[dict[str, Any]]) -> dict[str, Any] |
                 continue
             if identity_state == "matched" and correlation is None:
                 continue
-            selected = {
-                "create_operation_state": operation_state,
-                "identity_state": identity_state,
-                "returned_identity_correlation": correlation,
-            }
-    return selected
+            if not isinstance(event_time, str) or not TRACE_EVENT_TIME_RE.fullmatch(event_time):
+                continue
+            settlements.append(
+                (
+                    int(event_time),
+                    {
+                        "create_operation_state": operation_state,
+                        "identity_state": identity_state,
+                        "returned_identity_correlation": correlation,
+                    },
+                )
+            )
+    return settlements
+
+
+def select_latest_identity_settlement(
+    settlements: list[tuple[int, dict[str, Any]]],
+) -> dict[str, Any] | None:
+    """Select the latest unambiguous settlement by validated event timestamp."""
+    if not settlements:
+        return None
+    latest_time = max(timestamp for timestamp, _evidence in settlements)
+    latest_evidence = [evidence for timestamp, evidence in settlements if timestamp == latest_time]
+    if any(evidence != latest_evidence[0] for evidence in latest_evidence[1:]):
+        return None
+    return latest_evidence[0]
 
 
 def extract_candidate(artifact: Any) -> dict[str, Any] | None:
@@ -202,7 +226,7 @@ def extract_candidate(artifact: Any) -> dict[str, Any] | None:
         "phases": {name: round(phases[name], 3) for name in sorted(phases)},
         "slowest_spans": slowest_spans,
     }
-    identity_settlement = extract_identity_settlement(spans)
+    identity_settlement = select_latest_identity_settlement(extract_identity_settlements(spans))
     if identity_settlement is not None:
         candidate["sandbox_identity_settlement"] = identity_settlement
     return candidate
@@ -229,15 +253,22 @@ def main(argv: list[str]) -> int:
     output_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
 
     candidates = []
+    identity_settlements = []
     for json_file in iter_json_files(source):
-        candidate = extract_candidate(load_json(json_file))
+        artifact = load_json(json_file)
+        candidate = extract_candidate(artifact)
         if candidate is not None:
             candidates.append(candidate)
+            identity_settlements.extend(extract_identity_settlements(extract_spans(artifact)))
     if not candidates:
         print("No valid NemoClaw onboard trace found; no timing summary emitted.")
         return 0
 
-    selected = max(candidates, key=lambda item: item["total_duration_ms"])
+    selected = dict(max(candidates, key=lambda item: item["total_duration_ms"]))
+    selected.pop("sandbox_identity_settlement", None)
+    identity_settlement = select_latest_identity_settlement(identity_settlements)
+    if identity_settlement is not None:
+        selected["sandbox_identity_settlement"] = identity_settlement
     output = output_dir / OUTPUT_FILE
     if output.is_symlink():
         print("trusted timing summary must not be a symlink", file=sys.stderr)

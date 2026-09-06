@@ -605,7 +605,7 @@ describe("E2E scorecard", () => {
     });
   });
 
-  it("sanitizes raw traces into a timing-only artifact", () => {
+  it("sanitizes raw traces into an allowlisted trace summary", () => {
     const directory = mkdtempSync(join(tmpdir(), "nemoclaw-trace-sanitize-"));
     const source = join(directory, "raw");
     const output = join(directory, "trusted");
@@ -737,7 +737,6 @@ describe("E2E scorecard", () => {
       rmSync(directory, { force: true, recursive: true });
     }
   });
-
 
   it("bounds trace input count and file size before parsing", () => {
     const directory = mkdtempSync(join(tmpdir(), "nemoclaw-trace-bounds-"));

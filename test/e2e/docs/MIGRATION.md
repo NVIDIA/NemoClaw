@@ -43,8 +43,11 @@ The durable E2E system has one execution path:
 - NemoClaw fixtures own setup, onboarding, lifecycle mutations,
   expected-state probes, assertion helpers, expected-failure evidence,
   cleanup, artifacts, and secret redaction.
-- Registry-driven live targets publish sanitized onboard trace timing evidence
+- Registry-driven live targets publish a sanitized onboard trace summary
   at `e2e-artifacts/live/<target>/cloud-onboard-trace-timing-summary.json`.
+  It contains timing fields and may contain only the final sandbox
+  identity-settlement state with its 16-hex correlation. Raw event attributes
+  and the full identity fingerprint remain excluded.
   The workflow owns `NEMOCLAW_TRACE_DIR`, keeps raw traces under runner
   temporary storage, and deletes those raw traces before uploading artifacts.
   Older issue and migration notes may call this the Vitest artifact path; in

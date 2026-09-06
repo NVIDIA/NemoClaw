@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -25,7 +25,16 @@ function runSanitizer(source: string, output: string) {
   });
 }
 
-function makeTrace(overrides: Record<string, unknown> = {}) {
+type SettlementTrace = {
+  timeUnixNano: string;
+  identityState: "failed" | "matched";
+  correlation: string | null;
+};
+
+function makeTrace({
+  totalDurationMs = 42.9876,
+  settlement,
+}: { totalDurationMs?: number; settlement?: SettlementTrace } = {}) {
   return {
     resource_spans: [
       {
@@ -44,6 +53,19 @@ function makeTrace(overrides: Record<string, unknown> = {}) {
                 name: "nemoclaw.onboard.phase.gateway",
                 duration_ms: 7.1234,
                 attributes: { endpoint: "https://example.test/token" },
+                events: settlement
+                  ? [
+                      {
+                        name: "sandbox_create_identity_settlement",
+                        time_unix_nano: settlement.timeUnixNano,
+                        attributes: {
+                          create_operation_state: "ready",
+                          identity_state: settlement.identityState,
+                          returned_identity_correlation: settlement.correlation,
+                        },
+                      },
+                    ]
+                  : [],
               },
             ],
           },
@@ -61,9 +83,8 @@ function makeTrace(overrides: Record<string, unknown> = {}) {
           status: "ERROR",
         },
       ],
-      total_duration_ms: 42.9876,
+      total_duration_ms: totalDurationMs,
     },
-    ...overrides,
   };
 }
 
@@ -109,6 +130,7 @@ artifact = {
                     "attributes": {"endpoint": "https://example.test/token"},
                     "events": [{
                         "name": "sandbox_create_identity_settlement",
+                        "time_unix_nano": "1788724801000000000",
                         "attributes": {
                             "create_operation_state": "ready",
                             "identity_state": "matched",
@@ -208,6 +230,54 @@ print(json.dumps([module.extract_candidate(case) for case in cases]))
       });
       expect(statSync(output).mode & 0o777).toBe(0o700);
       expect(statSync(summaryPath).mode & 0o777).toBe(0o600);
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("keeps longest-trace timing while selecting the latest valid settlement event", () => {
+    const directory = mkdtempSync(join(tmpdir(), "nemoclaw-trace-sanitize-order-"));
+    const source = join(directory, "raw");
+    const output = join(directory, "trusted");
+    try {
+      mkdirSync(source);
+      writeFileSync(
+        join(source, "earlier-longer.json"),
+        JSON.stringify(
+          makeTrace({
+            totalDurationMs: 200,
+            settlement: {
+              timeUnixNano: "1788724800000000000",
+              identityState: "failed",
+              correlation: null,
+            },
+          }),
+        ),
+      );
+      writeFileSync(
+        join(source, "later-shorter.json"),
+        JSON.stringify(
+          makeTrace({
+            totalDurationMs: 100,
+            settlement: {
+              timeUnixNano: "1788724801000000000",
+              identityState: "matched",
+              correlation: "8174fa2a5d657551",
+            },
+          }),
+        ),
+      );
+
+      const result = runSanitizer(source, output);
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(readFileSync(join(output, SUMMARY), "utf8"))).toMatchObject({
+        total_duration_ms: 200,
+        sandbox_identity_settlement: {
+          create_operation_state: "ready",
+          identity_state: "matched",
+          returned_identity_correlation: "8174fa2a5d657551",
+        },
+      });
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }
