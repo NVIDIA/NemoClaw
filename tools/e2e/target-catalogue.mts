@@ -1126,6 +1126,11 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     restoreCli: true,
     exposeCliBin: true,
     owningPaths: [
+      "scripts/openclaw/patch-skill-remove.mts",
+      "src/commands/sandbox/skill.ts",
+      "src/commands/sandbox/skill/install.ts",
+      "src/commands/sandbox/skill/list.ts",
+      "src/commands/sandbox/skill/remove.ts",
       "src/lib/skill-install.ts",
       "src/lib/actions/sandbox/skill-install.ts",
       "src/lib/skill-remote.ts",

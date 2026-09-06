@@ -378,7 +378,11 @@ describe("managed startup image runtime", () => {
       expect(childProcessMock.spawnSync).toHaveBeenCalledWith(
         executable,
         expect.arrayContaining([expect.stringContaining(sourcePath)]),
-        expect.objectContaining({ stdio: "inherit" }),
+        expect.objectContaining({
+          killSignal: "SIGKILL",
+          stdio: "inherit",
+          timeout: 30_000,
+        }),
       );
     },
   );
@@ -392,6 +396,29 @@ describe("managed startup image runtime", () => {
       ),
     ).toBe(false);
     expect(childProcessMock.spawnSync).not.toHaveBeenCalled();
+  });
+
+  it("terminates a stalled native skill compatibility patch", () => {
+    childProcessMock.spawnSync.mockReturnValueOnce({
+      error: Object.assign(new Error("spawnSync timed out"), { code: "ETIMEDOUT" }),
+      signal: "SIGKILL",
+      status: null,
+    });
+
+    expect(() =>
+      applyManagedStartupNativeSkillCompatibility(
+        "hermes",
+        {},
+        { exportEnvironment: {}, unsetEnvironment: [] },
+      ),
+    ).toThrow(
+      "Managed startup native skill compatibility for 'hermes' did not complete within 30 seconds and was terminated; repair or rebuild the sandbox before retrying.",
+    );
+    expect(childProcessMock.spawnSync).toHaveBeenCalledWith(
+      "/usr/bin/python3",
+      expect.any(Array),
+      expect.objectContaining({ killSignal: "SIGKILL", timeout: 30_000 }),
+    );
   });
 
   it("verifies copied transaction status only through a read-only receipt mount", async () => {

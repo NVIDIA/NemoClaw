@@ -672,6 +672,11 @@ describe("E2E workflow plan", () => {
   });
 
   it.each([
+    "scripts/openclaw/patch-skill-remove.mts",
+    "src/commands/sandbox/skill.ts",
+    "src/commands/sandbox/skill/install.ts",
+    "src/commands/sandbox/skill/list.ts",
+    "src/commands/sandbox/skill/remove.ts",
     "src/lib/skill-install.ts",
     "src/lib/actions/sandbox/skill-install.ts",
     "src/lib/skill-remote.ts",

@@ -73,6 +73,7 @@ const ROOT_RUNTIME_DIRECTORY = "/run/nemoclaw";
 const ROOT_OWNED_DIRECTORY_MODE = 0o755;
 const MAX_TRUST_BUNDLE_BYTES = 4 * 1024 * 1024;
 const NATIVE_SKILL_PATCH_MAX_BYTES = 512 * 1024;
+const NATIVE_SKILL_PATCH_TIMEOUT_MS = 30_000;
 const OPENCLAW_DIST_DIRECTORY = "/usr/local/lib/node_modules/openclaw/dist";
 const HERMES_SKILLS_PARSER = "/opt/hermes/hermes_cli/subcommands/skills.py";
 const HERMES_SKILLS_IMPLEMENTATION = "/opt/hermes/hermes_cli/skills_hub.py";
@@ -495,20 +496,40 @@ function commandEnvironment(
   return env;
 }
 
+type ManagedStartupCommandExecutionOptions = Readonly<{
+  capture?: boolean;
+  killSignal?: NodeJS.Signals;
+  timeoutDiagnostic?: string;
+  timeoutMs?: number;
+}>;
+
 function execute(
   argv: readonly string[],
   runAs: ManagedStartupImageIdentity,
   configurationEnvironment: Readonly<Record<string, string>>,
   applicationRuntime: ManagedStartupApplicationRuntimePlan,
-  capture = false,
+  options: ManagedStartupCommandExecutionOptions = {},
 ): CommandResult {
   if (argv.length === 0) fail("refusing an empty managed startup command");
+  const capture = options.capture === true;
   const command = runAs === "sandbox" ? [...managedStartupSandboxPrefix(), ...argv] : [...argv];
   const result = spawnSync(command[0] as string, command.slice(1), {
     encoding: "utf8",
     env: commandEnvironment(configurationEnvironment, applicationRuntime),
     stdio: capture ? "pipe" : "inherit",
+    ...(options.timeoutMs === undefined
+      ? {}
+      : {
+          timeout: options.timeoutMs,
+          killSignal: options.killSignal ?? "SIGKILL",
+        }),
   });
+  const timedOut =
+    (result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT" ||
+    (options.timeoutMs !== undefined &&
+      result.status === null &&
+      result.signal === (options.killSignal ?? "SIGKILL"));
+  if (timedOut && options.timeoutDiagnostic) fail(options.timeoutDiagnostic);
   if (result.error) {
     fail(`could not execute ${argv[0]}: ${result.error.message}`);
   }
@@ -601,7 +622,11 @@ export function applyManagedStartupNativeSkillCompatibility(
 ): boolean {
   const command = nativeSkillCompatibilityCommand(agent);
   if (command === null) return false;
-  execute(command, "root", configurationEnvironment, applicationRuntime);
+  execute(command, "root", configurationEnvironment, applicationRuntime, {
+    timeoutMs: NATIVE_SKILL_PATCH_TIMEOUT_MS,
+    killSignal: "SIGKILL",
+    timeoutDiagnostic: `Managed startup native skill compatibility for '${agent}' did not complete within ${String(NATIVE_SKILL_PATCH_TIMEOUT_MS / 1_000)} seconds and was terminated; repair or rebuild the sandbox before retrying.`,
+  });
   return true;
 }
 
@@ -832,7 +857,7 @@ function sealOpenClawConfiguration(
       OPENCLAW_CONFIG_PATH: "/sandbox/.openclaw/openclaw.json",
     },
     applicationRuntime,
-    true,
+    { capture: true },
   );
   let parsed: unknown;
   try {
@@ -1053,7 +1078,7 @@ function sealHermesConfiguration(
     "root",
     configurationEnvironment,
     applicationRuntime,
-    true,
+    { capture: true },
   ).stdout.trim();
   if (!SHA256_RE.test(digest)) {
     fail("Hermes MCP digest helper returned an invalid digest");
