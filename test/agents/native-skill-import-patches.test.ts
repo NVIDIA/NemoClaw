@@ -38,6 +38,9 @@ describe("agent-native local skill import patches", () => {
       target,
       [
         "# fixture",
+        "from pathlib import Path",
+        "def _validate_name(_name): return True, None",
+        "def _validate_skill_path(_destination, _root): return True, None",
         "def _info(",
         "    skill_name,",
         "): return None",
@@ -90,6 +93,63 @@ describe("agent-native local skill import patches", () => {
     expect(source).not.toContain("shutil.rmtree(destination, ignore_errors=True)");
     expect(source).toContain("NEMOCLAW_NATIVE_SKILL_IMPORT=");
     expect(runPython(["-m", "py_compile", target]).status).toBe(0);
+
+    const behaviorRoot = path.join(root, "behavior");
+    const stagedSkill = path.join(behaviorRoot, "stage");
+    fs.mkdirSync(stagedSkill, { recursive: true });
+    fs.writeFileSync(
+      path.join(stagedSkill, "SKILL.md"),
+      "---\nname: demo-skill\ndescription: Digest rejection fixture.\n---\n# Demo\n",
+    );
+    const forgedDigest = runPython([
+      "-c",
+      [
+        "import importlib.util, pathlib, sys, types",
+        "root = pathlib.Path(sys.argv[2])",
+        "skills_root = root / 'skills'",
+        "skills_root.mkdir(parents=True)",
+        "class Console:",
+        "    def __init__(self): self.messages = []",
+        "    def print(self, message): self.messages.append(str(message))",
+        "console = Console()",
+        "class Settings:",
+        "    @classmethod",
+        "    def from_environment(cls): return cls()",
+        "    def ensure_user_skills_dir(self, _agent): return skills_root",
+        "    def get_built_in_skills_dir(self): return root / 'builtin'",
+        "    def get_user_skills_dir(self, _agent): return skills_root",
+        "    def get_project_skills_dir(self): return root / 'project'",
+        "    def get_user_agent_skills_dir(self): return root / 'user-agent'",
+        "    def get_project_agent_skills_dir(self): return root / 'project-agent'",
+        "package = types.ModuleType('deepagents_code')",
+        "package.__path__ = []",
+        "config = types.ModuleType('deepagents_code.config')",
+        "config.Settings = Settings",
+        "config.console = console",
+        "skills = types.ModuleType('deepagents_code.skills')",
+        "skills.__path__ = []",
+        "loader = types.ModuleType('deepagents_code.skills.load')",
+        "loader.list_skills = lambda **_kwargs: []",
+        "sys.modules.update({'deepagents_code': package, 'deepagents_code.config': config, 'deepagents_code.skills': skills, 'deepagents_code.skills.load': loader})",
+        "spec = importlib.util.spec_from_file_location('patched_dcode_skills', sys.argv[1])",
+        "module = importlib.util.module_from_spec(spec)",
+        "spec.loader.exec_module(module)",
+        "args = types.SimpleNamespace(skills_command='import', path=sys.argv[3], name='demo-skill', expected_digest='0' * 64, agent='agent', replace=False)",
+        "try:",
+        "    module.execute(args)",
+        "except SystemExit as exc:",
+        "    assert exc.code == 1",
+        "else:",
+        "    raise AssertionError('forged digest was accepted')",
+        "assert any('digest changed before native publication' in message for message in console.messages)",
+        "assert not (skills_root / 'demo-skill').exists()",
+        "assert not list(skills_root.glob('.demo-skill.*'))",
+      ].join("\n"),
+      target,
+      behaviorRoot,
+      stagedSkill,
+    ]);
+    expect(forgedDigest.status, forgedDigest.stderr).toBe(0);
   });
 
   it("adds Hermes import and fail-closed uninstall at reviewed CLI seams", () => {
@@ -109,6 +169,7 @@ describe("agent-native local skill import patches", () => {
     fs.writeFileSync(
       hub,
       [
+        "from pathlib import Path",
         "from typing import Optional",
         "class Console:",
         "    def __init__(self): self.messages = []",
@@ -201,5 +262,56 @@ describe("agent-native local skill import patches", () => {
       behaviorRoot,
     ]);
     expect(behavior.status, behavior.stderr).toBe(0);
+
+    const stagedSkill = path.join(behaviorRoot, "forged-stage");
+    fs.mkdirSync(stagedSkill, { recursive: true });
+    fs.writeFileSync(
+      path.join(stagedSkill, "SKILL.md"),
+      "---\nname: demo-skill\ndescription: Digest rejection fixture.\n---\n# Demo\n",
+    );
+    const forgedDigest = runPython([
+      "-c",
+      [
+        "import importlib.util, pathlib, sys, types",
+        "root = pathlib.Path(sys.argv[2])",
+        "skills_root = root / 'skills'",
+        "skills_root.mkdir(parents=True, exist_ok=True)",
+        "agent = types.ModuleType('agent')",
+        "agent.__path__ = []",
+        "skill_utils = types.ModuleType('agent.skill_utils')",
+        "skill_utils.is_external_skill_path = lambda _path: False",
+        "tools = types.ModuleType('tools')",
+        "tools.__path__ = []",
+        "guard = types.ModuleType('tools.skills_guard')",
+        "guard.format_scan_report = lambda _scan: ''",
+        "guard.scan_skill_cached = lambda *_args, **_kwargs: (object(), object())",
+        "guard.should_allow_install = lambda _scan, force=False: (True, '')",
+        "hub = types.ModuleType('tools.skills_hub')",
+        "hub.SKILLS_DIR = str(skills_root)",
+        "hub.HubLockFile = type('HubLockFile', (), {})",
+        "hub.SkillBundle = type('SkillBundle', (), {})",
+        "hub.install_from_quarantine = lambda *_args, **_kwargs: skills_root / 'demo-skill'",
+        "hub.quarantine_bundle = lambda *_args, **_kwargs: None",
+        "skill_tool = types.ModuleType('tools.skills_tool')",
+        "skill_tool.skill_view = lambda *_args, **_kwargs: '{}'",
+        "sys.modules.update({'agent': agent, 'agent.skill_utils': skill_utils, 'tools': tools, 'tools.skills_guard': guard, 'tools.skills_hub': hub, 'tools.skills_tool': skill_tool})",
+        "spec = importlib.util.spec_from_file_location('patched_hermes_skills', sys.argv[1])",
+        "module = importlib.util.module_from_spec(spec)",
+        "spec.loader.exec_module(module)",
+        "args = types.SimpleNamespace(path=sys.argv[3], name='demo-skill', expected_digest='0' * 64)",
+        "try:",
+        "    module.route('import-local', args)",
+        "except SystemExit as exc:",
+        "    assert exc.code == 1",
+        "else:",
+        "    raise AssertionError('forged digest was accepted')",
+        "assert any('digest changed before native publication' in message for message in module._console.messages)",
+        "assert not (skills_root / 'demo-skill').exists()",
+      ].join("\n"),
+      hub,
+      behaviorRoot,
+      stagedSkill,
+    ]);
+    expect(forgedDigest.status, forgedDigest.stderr).toBe(0);
   });
 });

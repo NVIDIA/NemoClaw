@@ -272,6 +272,57 @@ describe("OpenClaw native skill remove patch", () => {
     expect(behavior.untracked).toEqual([[workspaceDir, "demo-skill"]]);
   });
 
+  it("refuses a native target beneath a symbolic-link skills root", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-skill-remove-linked-root-"));
+    roots.push(root);
+    const workspaceDir = path.join(root, "workspace");
+    const externalSkills = path.join(root, "credentials");
+    const externalTarget = path.join(externalSkills, "demo-skill");
+    const externalFile = path.join(externalTarget, "SKILL.md");
+    const linkedSkills = path.join(workspaceDir, "skills");
+    const selectedFile = path.join(linkedSkills, "demo-skill", "SKILL.md");
+    fs.mkdirSync(workspaceDir, { recursive: true });
+    fs.mkdirSync(externalTarget, { recursive: true });
+    fs.writeFileSync(externalFile, "---\nname: demo-skill\n---\nprotected\n");
+    fs.symlinkSync(externalSkills, linkedSkills, "dir");
+
+    const behaviorSource = [
+      'import fs from "node:fs/promises";',
+      'import path from "node:path";',
+      "const chain = { description() { return this; }, argument() { return this; }, option() { return this; }, action() { return this; } };",
+      "const skills = { command() { return chain; } };",
+      `const report = ${JSON.stringify({
+        workspaceDir,
+        skills: [{ name: "demo-skill", source: "openclaw-workspace", filePath: selectedFile }],
+      })};`,
+      "async function loadSkillsStatusReport() { return report; }",
+      "function validateRequestedSkillSlug(value) { return value; }",
+      "function resolveSkillStatusEntry(entries, value) { return entries.find((entry) => entry.name === value) ?? null; }",
+      "async function untrackClawHubSkill() { throw new Error('must not untrack linked state'); }",
+      `const CONFIG_DIR = ${JSON.stringify(path.join(root, "global"))};`,
+      SOURCE,
+      "export { nemoClawRemoveWorkspaceSkillFromAgentState };",
+    ].join("\n");
+    const patched = patchSkillRemoveText(behaviorSource, "behavior-linked-root.mjs");
+    const modulePath = path.join(root, "behavior-linked-root.mjs");
+    fs.writeFileSync(modulePath, patched.text);
+    const behavior = (await import(
+      `${pathToFileURL(modulePath).href}?case=${String(Date.now())}`
+    )) as {
+      nemoClawRemoveWorkspaceSkillFromAgentState: (
+        name: string,
+        agentId: string,
+      ) => Promise<Record<string, unknown>>;
+    };
+
+    await expect(
+      behavior.nemoClawRemoveWorkspaceSkillFromAgentState("demo-skill", "main"),
+    ).rejects.toThrow("Refusing to use a symbolic-link or escaped skill root");
+    expect(fs.readFileSync(externalFile, "utf8")).toContain("protected");
+    expect(fs.lstatSync(linkedSkills).isSymbolicLink()).toBe(true);
+    expect(fs.existsSync(externalTarget)).toBe(true);
+  });
+
   it("refuses a same-name skill selected from outside the native workspace target", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-skill-remove-unmanaged-"));
     roots.push(root);
