@@ -128,18 +128,6 @@ test(
     expect(architecture.exitCode, resultText(architecture)).toBe(0);
     expect(architecture.stdout.trim()).toBe("x86_64");
 
-    const computeBefore = await host.command(
-      "nvidia-smi",
-      ["--query-compute-apps=pid,process_name,used_gpu_memory", "--format=csv,noheader,nounits"],
-      {
-        artifactName: "llama-cpp-nvidia-compute-apps-before",
-        env: buildAvailabilityProbeEnv(),
-        timeoutMs: 30_000,
-      },
-    );
-    expect(computeBefore.exitCode, resultText(computeBefore)).toBe(0);
-    expect(llamaGpuApplications(computeBefore.stdout)).toEqual([]);
-
     const { modelFile, recipe } = loadGpuSetting();
 
     progress.phase("run the declarative managed llama.cpp installer");
@@ -164,7 +152,44 @@ test(
       modelFile.path,
     );
     const receipt = loadManagedLlamaCppReceipt(paths);
-    assert(receipt?.service === "llama-cpp", "managed llama.cpp receipt is unavailable");
+    assert(
+      receipt?.service === "llama-cpp" && receipt.runtime.kind === "container",
+      "managed llama.cpp container receipt is unavailable",
+    );
+    const runtimeProvider = resolveRegisteredRuntimeProviderBundle(receipt.providerId);
+    assert(
+      runtimeProvider?.hostLocalInference.supported === true &&
+        runtimeProvider.hostLocalInference.services.includes("llama-cpp"),
+      "receipt runtime provider does not expose managed llama.cpp authority",
+    );
+    const runtimeOperation = runtimeProvider.hostLocalInference.createOperation({ env: env() });
+    runtimeOperation.assertAuthority();
+    const runtimeProcesses = runtimeOperation.engine.capture(
+      ["container", "top", receipt.runtime.runtimeId, "-eo", "pid,comm"],
+      30_000,
+    );
+    assert.equal(
+      runtimeProcesses.status,
+      0,
+      runtimeProcesses.error?.message || runtimeProcesses.stderr,
+    );
+    await artifacts.writeJson("managed-runtime-processes.json", {
+      providerId: receipt.providerId,
+      runtimeId: receipt.runtime.runtimeId,
+      processes: runtimeProcesses.stdout.trim(),
+    });
+    const managedLlamaProcess = runtimeProcesses.stdout
+      .trim()
+      .split("\n")
+      .slice(1)
+      .map((line) => line.trim().split(/\s+/u))
+      .find(([, processName]) => /llama-server$/u.test(processName ?? ""));
+    assert(managedLlamaProcess, "managed runtime does not contain one llama-server process");
+    const managedLlamaPid = Number(managedLlamaProcess[0]);
+    assert(
+      Number.isSafeInteger(managedLlamaPid) && managedLlamaPid > 0,
+      "invalid llama-server PID",
+    );
     const computeApps = await host.command(
       "nvidia-smi",
       ["--query-compute-apps=pid,process_name,used_gpu_memory", "--format=csv,noheader,nounits"],
@@ -175,9 +200,10 @@ test(
       },
     );
     expect(computeApps.exitCode, resultText(computeApps)).toBe(0);
-    const llamaGpuProcesses = llamaGpuApplications(computeApps.stdout);
-    expect(llamaGpuProcesses, resultText(computeApps)).toHaveLength(1);
-    const llamaGpuProcess = llamaGpuProcesses[0];
+    const llamaGpuProcess = llamaGpuApplications(computeApps.stdout).find(
+      ([pid]) => Number(pid) === managedLlamaPid,
+    );
+    expect(llamaGpuProcess, resultText(computeApps)).toBeDefined();
     const usedGpuMemoryMiB = Number(llamaGpuProcess?.[2]);
     const minimumFullOffloadMemoryMiB = Math.ceil(modelFile.sizeBytes / 1024 ** 2);
     expect(usedGpuMemoryMiB).toBeGreaterThanOrEqual(minimumFullOffloadMemoryMiB);
@@ -309,7 +335,9 @@ test(
       },
     );
     expect(computeAfter.exitCode, resultText(computeAfter)).toBe(0);
-    expect(llamaGpuApplications(computeAfter.stdout)).toEqual([]);
+    expect(
+      llamaGpuApplications(computeAfter.stdout).some(([pid]) => Number(pid) === managedLlamaPid),
+    ).toBe(false);
     expect(fs.existsSync(paths.stateDir), "destroy must remove managed llama.cpp state").toBe(
       false,
     );
@@ -317,12 +345,6 @@ test(
       fs.existsSync(modelCacheEntry),
       "destroy must preserve the shared Hugging Face cache entry",
     ).toBe(true);
-    const runtimeProvider = resolveRegisteredRuntimeProviderBundle(receipt.providerId);
-    assert(
-      runtimeProvider?.hostLocalInference.supported === true &&
-        runtimeProvider.hostLocalInference.services.includes("llama-cpp"),
-      "receipt runtime provider does not expose managed llama.cpp cleanup authority",
-    );
     const cleanupProof = createManagedLlamaCppLifecycleAdapter({
       runtimeProvider,
       runtimeOwnerSandboxName: SANDBOX_NAME,

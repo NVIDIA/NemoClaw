@@ -580,7 +580,7 @@ NEMOCLAW_SANDBOX_NAME=my-assistant \
 Use `llama-cpp.muse-glimmer-30b.spark-single.v1` to select the Meta Muse Glimmer recipe explicitly.
 
 On a qualifying Windows WSL N1x host, Windows Express leaves provider selection to onboarding.
-Onboarding recognizes one proof-backed GPU whose bounded NVIDIA identity contains `RTX Spark N1X`, verifies the remaining N1x readiness requirements, and automatically selects the Experimental managed Qwen 3.6 recipe.
+During Windows Express, onboarding recognizes one proof-backed GPU whose bounded NVIDIA identity contains `RTX Spark N1X`, verifies the remaining N1x readiness requirements, and automatically selects the Experimental managed Qwen 3.6 recipe.
 The Windows chassis product name does not participate in selection.
 Before onboarding, unset `DOCKER_HOST` and select Docker's `default` context.
 Onboarding also requires local Docker Desktop, Arm64, at least 48,000 MiB of Docker and GPU memory, driver version `580.65.06` or later, NVIDIA integration, and successful Docker Desktop GPU passthrough.

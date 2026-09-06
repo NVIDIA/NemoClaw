@@ -62,7 +62,7 @@ describe("N1x identity", () => {
     "NVIDIA RTX Spark",
     "NVIDIA RTX Spark N1X2",
     `NVIDIA RTX Spark N1X\nforged`,
-    `NVIDIA RTX Spark N1X${"x".repeat(256)}`,
+    `NVIDIA RTX Spark N1X ${"x".repeat(256)}`,
   ])("rejects a noncanonical N1x WSL GPU identity %s (#10962)", (name) => {
     expect(isN1xWslGpuName(name)).toBe(false);
   });

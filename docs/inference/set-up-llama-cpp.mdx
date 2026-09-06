@@ -89,7 +89,8 @@ Use this experimental path when you want NemoClaw to manage one declarative llam
 On DGX Spark, the recommended recipe serves NVIDIA Nemotron 3 Nano 30B-A3B through the OpenAI Chat Completions API.
 The Meta Muse Glimmer 30B recipe remains available by explicit selection, and existing Muse-owned installations are not migrated.
 Windows WSL N1x Express leaves provider selection to onboarding.
-Onboarding automatically selects the Qwen 3.6 35B-A3B recipe after the N1x readiness requirements pass.
+Accepting Windows Express and its third-party software notice is the explicit opt-in to this Experimental surface.
+During Windows Express, onboarding automatically selects the Qwen 3.6 35B-A3B recipe after the N1x readiness requirements pass.
 
 <Note>
 This path is an experimental implementation.
@@ -144,7 +145,8 @@ NemoClaw lists compatible managed llama.cpp profiles in descending YAML `priorit
 During interactive onboarding without an explicit provider request, the menu ignores `NEMOCLAW_LLAMACPP_RECIPE` and marks the unique highest-priority compatible profile as `(recommended)`.
 On DGX Spark, the recommended profile appears as **Managed llama.cpp: NVIDIA Nemotron 3 Nano 30B-A3B on one DGX Spark (recommended)**.
 On Linux x86_64, the recommended profile identifies one NVIDIA GPU instead.
-On a qualifying Windows WSL N1x host, onboarding selects **Managed llama.cpp: Qwen 3.6 35B-A3B on N1x WSL (recommended)** without a provider or recipe prompt.
+During Windows Express or non-interactive onboarding with no requested or recorded provider, a qualifying Windows WSL N1x host selects **Managed llama.cpp: Qwen 3.6 35B-A3B on N1x WSL (recommended)** without a provider or recipe prompt.
+Ordinary interactive onboarding lists the same recommended profile but allows another provider selection.
 The Meta Muse Glimmer profile remains available on DGX Spark without the recommendation marker.
 Select any listed profile to install its exact repository-owned recipe.
 The selected menu entry determines the exact recipe even when `NEMOCLAW_LLAMACPP_RECIPE` names another recipe.
@@ -159,7 +161,7 @@ NEMOCLAW_SANDBOX_NAME=my-assistant \
 ```
 
 Use `llama-cpp.muse-glimmer-30b.spark-single.v1` to select the Meta Muse Glimmer recipe explicitly.
-On a qualifying Windows WSL N1x host, leave `NEMOCLAW_PROVIDER` and `NEMOCLAW_LLAMACPP_RECIPE` unset for automatic selection.
+For Windows Express or non-interactive onboarding on a qualifying Windows WSL N1x host, leave `NEMOCLAW_PROVIDER` and `NEMOCLAW_LLAMACPP_RECIPE` unset for automatic selection.
 Set `NEMOCLAW_LLAMACPP_RECIPE=llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1` only when automation must make the selected recipe explicit.
 
 For non-interactive onboarding or an explicit `install-llama-cpp` provider request, an unset `NEMOCLAW_LLAMACPP_RECIPE` selects the unique highest-priority compatible automatic profile.

@@ -11,7 +11,7 @@ Offer the maintained Windows Express path before the normal provider menu.
 Explain that Express keeps the selected agent, selects the admitted local inference profile, and leaves optional setup at its defaults.
 For a qualifying N1x WSL host, Express uses managed llama.cpp with Qwen 3.6 35B-A3B and downloads a pinned 20.4 GB GGUF file.
 The installer leaves provider, model, and recipe selection to onboarding.
-Before managed llama.cpp starts, onboarding requires Linux Arm64 WSL, one proof-backed `NVIDIA RTX Spark N1X` GPU, the default local Docker context, at least 48,000 MiB of Docker and GPU memory, driver version `580.65.06` or later, Docker storage and runtime readiness, and NVIDIA GPU integration.
+Before managed llama.cpp starts, onboarding requires Linux Arm64 WSL, one proof-backed `NVIDIA RTX Spark N1X` GPU, the default local Docker context, at least 48,000 MiB of Docker and GPU memory, driver version `580.65.06` or later, Docker storage and runtime readiness, NVIDIA GPU integration, and successful Docker Desktop GPU passthrough.
 Before selecting managed llama.cpp, unset `DOCKER_HOST` and select Docker's `default` context.
 Managed N1x WSL selection rejects other Docker selectors.
 For other Windows WSL hosts, Express uses WSL-local Ollama with its memory-aware default model.
@@ -25,7 +25,7 @@ If Express is selected:
 
 - Leave `NEMOCLAW_PROVIDER`, `NEMOCLAW_MODEL`, and `NEMOCLAW_LLAMACPP_RECIPE` unset.
   Onboarding selects the automatic managed Qwen recipe only after the complete N1x WSL readiness contract passes.
-  If N1x readiness does not match, onboarding selects WSL-local Ollama.
+  If N1x readiness does not match before managed selection starts, onboarding selects WSL-local Ollama. If a required check fails after selection starts, onboarding stops before installation.
 - For managed llama.cpp, explain that Hugging Face authentication is optional and anonymous downloads can return HTTP 429. If needed, `HF_TOKEN` supplies a Hugging Face read token only to the temporary downloader. The token remains in the installer environment; remove `HF_TOKEN` after installation when no process needs it.
 - For other WSL hosts, onboarding installs WSL-local Ollama and uses the sandbox authentication proxy, including when Docker Desktop can reach host loopback directly.
 - Set `NEMOCLAW_AGENT` to the agent already selected in the starter prompt.
