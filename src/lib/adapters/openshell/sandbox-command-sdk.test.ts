@@ -33,6 +33,21 @@ afterEach(() => {
   for (const root of roots.splice(0)) fs.rmSync(root, { force: true, recursive: true });
 });
 
+async function expectStateDirectoryRejected(stateDir: string): Promise<void> {
+  const loadSdk = vi.fn();
+  await expect(
+    connectManagedOpenShellSdk(
+      { kind: "named", gatewayName: "nemoclaw-9443" },
+      {
+        env: { NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: stateDir },
+        homeDir: "/unused",
+        loadSdk,
+      },
+    ),
+  ).rejects.toThrow("Unsafe OpenShell gateway state directory");
+  expect(loadSdk).not.toHaveBeenCalled();
+}
+
 describe("OpenShell SDK sandbox command executor", () => {
   it("connects to the named managed gateway with its local mTLS identity", async () => {
     const stateDir = writeTlsBundle();
@@ -55,28 +70,15 @@ describe("OpenShell SDK sandbox command executor", () => {
     });
   });
 
-  it.each([
-    ["a missing ownership marker", "missing"],
-    ["a marker for another gateway", "wrong-gateway"],
-  ])("rejects %s before loading the SDK", async (_label, fixture) => {
-    const stateDir =
-      fixture === "wrong-gateway" ? writeTlsBundle("nemoclaw-9444", 9444) : writeTlsBundle();
-    if (fixture === "missing") {
-      fs.rmSync(path.join(stateDir, MANAGED_GATEWAY_STATE_ROOT_MARKER));
-    }
-    const loadSdk = vi.fn();
+  it("rejects a missing ownership marker before loading the SDK", async () => {
+    const stateDir = writeTlsBundle();
+    fs.rmSync(path.join(stateDir, MANAGED_GATEWAY_STATE_ROOT_MARKER));
+    await expectStateDirectoryRejected(stateDir);
+  });
 
-    await expect(
-      connectManagedOpenShellSdk(
-        { kind: "named", gatewayName: "nemoclaw-9443" },
-        {
-          env: { NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: stateDir },
-          homeDir: "/unused",
-          loadSdk,
-        },
-      ),
-    ).rejects.toThrow("Unsafe OpenShell gateway state directory");
-    expect(loadSdk).not.toHaveBeenCalled();
+  it("rejects a marker for another gateway before loading the SDK", async () => {
+    const stateDir = writeTlsBundle("nemoclaw-9444", 9444);
+    await expectStateDirectoryRejected(stateDir);
   });
 
   it("streams native stdout and stderr and preserves the SDK exit code", async () => {
