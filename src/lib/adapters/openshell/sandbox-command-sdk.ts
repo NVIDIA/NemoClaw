@@ -222,6 +222,7 @@ export function createSdkOpenShellSandboxCommandExecutor(
           request.sandboxName,
           [...request.command],
           {
+            noLoginShell: true,
             signal: controller.signal,
             ...(request.timeoutSeconds !== undefined
               ? { timeoutSecs: request.timeoutSeconds }
