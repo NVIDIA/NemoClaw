@@ -131,10 +131,11 @@ describe("sandbox inference oclif command adapters (#5977)", () => {
     expect(mocks.runInferenceSet).not.toHaveBeenCalled();
   });
 
-  it("maps the sandbox inference get --json output into oclif JSON handling", async () => {
+  it("preserves a compatible endpoint in sandbox inference get JSON output", async () => {
     mocks.runInferenceGet.mockResolvedValueOnce({
-      provider: "nvidia-prod",
+      provider: "compatible-endpoint",
       model: "nvidia/model-a",
+      endpointUrl: "https://example.test/v1",
     });
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     try {
@@ -146,8 +147,9 @@ describe("sandbox inference oclif command adapters (#5977)", () => {
         sandboxName: "alpha",
       });
       expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toEqual({
-        provider: "nvidia-prod",
+        provider: "compatible-endpoint",
         model: "nvidia/model-a",
+        endpointUrl: "https://example.test/v1",
       });
     } finally {
       log.mockRestore();

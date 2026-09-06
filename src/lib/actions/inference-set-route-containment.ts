@@ -11,7 +11,7 @@ import {
   type HttpsPinCredentialProviderType,
   isHttpsPinRuntimeEligible,
 } from "../inference/https-pin-runtime";
-import { unsafeEndpointUrlViolation } from "../core/url-utils";
+import { unsafeEndpointUrlViolation } from "../core/endpoint-url-safety";
 import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../inference/ollama/contract";
 import { resolveSandboxGatewayName } from "../onboard/gateway-binding";
 import { gatewayReachableCompatibleEndpointUrl } from "../onboard/inference-providers/compatible-endpoint-gateway-route";
@@ -260,7 +260,7 @@ function normalizeExplicitCredentialEnv(
     throw new InferenceSetError(
       expected === OLLAMA_LOCAL_CREDENTIAL_ENV
         ? `credential-env for '${provider}' must be '${expected}': this sandbox's endpoint was ` +
-          `onboarded without authentication, so its provider is bound to the local no-auth proxy credential.`
+            `onboarded without authentication, so its provider is bound to the local no-auth proxy credential.`
         : `credential-env for '${provider}' must be '${expected}' so rebuild can safely reuse it.`,
       2,
     );

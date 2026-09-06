@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { D, R } from "../../cli/terminal-style";
-import { unsafeEndpointUrlViolation } from "../../core/url-utils";
+import { unsafeEndpointUrlViolation } from "../../core/endpoint-url-safety";
 import type { InferenceSelection } from "../../inference/selection";
 import type { RegistryInferenceRoute } from "../../onboard/rebuild-route-handoff";
 import { isRecoveredProviderCredentialReuseSelectionKey } from "../../onboard/recovered-provider-reuse";

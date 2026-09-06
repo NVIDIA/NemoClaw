@@ -166,11 +166,33 @@ describe("CLI dispatch", () => {
     }
   });
 
-  it("inference get --json queries the selected non-default gateway (#10671)", () => {
+  it("inference get --json reports the selected non-default gateway endpoint (#10671)", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-inference-get-port-"));
     const localBin = path.join(home, "bin");
+    const registryDir = path.join(home, ".nemoclaw");
     const openshellArgs = path.join(home, "openshell-args.txt");
     fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(registryDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(registryDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          beta: {
+            name: "beta",
+            agent: "openclaw",
+            provider: "compatible-endpoint",
+            model: "custom/model",
+            endpointUrl: "https://inference.example.test/v1",
+            preferredInferenceApi: "openai-completions",
+            credentialEnv: "CUSTOM_API_KEY",
+            gatewayPort: 19_090,
+            gatewayName: "nemoclaw-19090",
+          },
+        },
+        defaultSandbox: "beta",
+      }),
+      { mode: 0o600 },
+    );
     fs.writeFileSync(
       path.join(localBin, "openshell"),
       [
@@ -204,6 +226,7 @@ describe("CLI dispatch", () => {
       expect(JSON.parse(result.out)).toEqual({
         provider: "compatible-endpoint",
         model: "custom/model",
+        endpointUrl: "https://inference.example.test/v1",
       });
       expect(fs.readFileSync(openshellArgs, "utf8").trim()).toBe("inference get -g nemoclaw-19090");
     } finally {
@@ -227,6 +250,9 @@ describe("CLI dispatch", () => {
             agent: "openclaw",
             provider: "compatible-endpoint",
             model: "custom/model",
+            endpointUrl: "https://inference.example.test/v1",
+            preferredInferenceApi: "openai-completions",
+            credentialEnv: "CUSTOM_API_KEY",
             gatewayPort: 19_090,
             gatewayName: "nemoclaw-19090",
           },
@@ -267,10 +293,9 @@ describe("CLI dispatch", () => {
       expect(JSON.parse(result.out)).toEqual({
         provider: "compatible-endpoint",
         model: "custom/model",
+        endpointUrl: "https://inference.example.test/v1",
       });
-      expect(fs.readFileSync(openshellArgs, "utf8").trim()).toBe(
-        "inference get -g nemoclaw-19090",
-      );
+      expect(fs.readFileSync(openshellArgs, "utf8").trim()).toBe("inference get -g nemoclaw-19090");
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }
