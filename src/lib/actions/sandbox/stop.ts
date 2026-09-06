@@ -117,9 +117,7 @@ export function discoverActiveOllamaSandboxNames(
         }`,
       };
     }
-    const phases = new Map(
-      parseEntries(result.output).map((entry) => [entry.name, entry.phase]),
-    );
+    const phases = new Map(parseEntries(result.output).map((entry) => [entry.name, entry.phase]));
     const activeSandboxes: string[] = [];
     for (const peerName of peerNames) {
       const phase = phases.get(peerName);
@@ -148,19 +146,20 @@ function releaseStoppedSandboxOllamaModel(
   if (!isLocalOllamaRouteOwner(sandbox)) return { ok: true };
 
   try {
-    const proxy = require("../../inference/ollama/proxy") as typeof import("../../inference/ollama/proxy");
+    const proxy =
+      require("../../inference/ollama/proxy") as typeof import("../../inference/ollama/proxy");
     const withOwnershipLock =
       deps.withOllamaModelOwnershipLock ?? proxy.withOllamaModelOwnershipLock;
-    const loadPersistedOllamaHost =
-      deps.loadPersistedOllamaHost ?? proxy.loadPersistedOllamaHost;
+    const loadPersistedOllamaHost = deps.loadPersistedOllamaHost ?? proxy.loadPersistedOllamaHost;
     return withOwnershipLock(() => {
       const selectedHost = loadPersistedOllamaHost();
       if (!isLocalOllamaRouteOwner(sandbox, selectedHost)) return { ok: true };
       const { sandboxes } = (deps.listSandboxes ?? registry.listSandboxes)();
       const matchingPeers = matchingOllamaModelPeers(sandbox, sandboxes, selectedHost);
-      const discovery = (
-        deps.discoverActiveOllamaSandboxNames ?? discoverActiveOllamaSandboxNames
-      )(matchingPeers, deps.environment ?? process.env);
+      const discovery = (deps.discoverActiveOllamaSandboxNames ?? discoverActiveOllamaSandboxNames)(
+        matchingPeers,
+        deps.environment ?? process.env,
+      );
       if (!discovery.ok) {
         return {
           ok: false,
@@ -234,6 +233,7 @@ function releaseStoppedSandboxOllamaModel(
 }
 
 export type { SandboxLifecycleResult } from "./runtime/lifecycle-runtime";
+export type SandboxStopResult = SandboxLifecycleResult & { stopped?: true };
 
 export interface SandboxStopDeps {
   environment?: NodeJS.ProcessEnv;
@@ -251,6 +251,7 @@ export interface SandboxStopDeps {
   loadPersistedOllamaHost?: () => OllamaHostRoute | null;
   withOllamaModelOwnershipLock?: typeof import("../../inference/ollama/proxy").withOllamaModelOwnershipLock;
   withLifecycleLockSync?: typeof withSandboxLifecycleLockSync;
+  revalidateAtMutationEdge?: () => void;
   log?: (message: string) => void;
   warn?: (message: string) => void;
 }
@@ -259,10 +260,7 @@ export interface SandboxStopDeps {
  * Stop the selected provider workload while preserving registry, workspace,
  * credentials, and shared gateway state.
  */
-export function stopSandbox(
-  sandboxName: string,
-  deps: SandboxStopDeps = {},
-): SandboxLifecycleResult {
+export function stopSandbox(sandboxName: string, deps: SandboxStopDeps = {}): SandboxStopResult {
   return (deps.withLifecycleLockSync ?? withSandboxLifecycleLockSync)(sandboxName, () =>
     stopSandboxWithinLifecycleFence(sandboxName, deps),
   );
@@ -271,7 +269,7 @@ export function stopSandbox(
 function stopSandboxWithinLifecycleFence(
   sandboxName: string,
   deps: SandboxStopDeps,
-): SandboxLifecycleResult {
+): SandboxStopResult {
   const log = deps.log ?? console.log;
   const warn = deps.warn ?? console.warn;
   const sandbox = (deps.getSandbox ?? registry.getSandbox)(sandboxName);
@@ -292,6 +290,7 @@ function stopSandboxWithinLifecycleFence(
   const preflight = resolved.bundle.preflightDoctor.preflightLifecycle("stop", input);
   if (preflight) return preflight;
 
+  deps.revalidateAtMutationEdge?.();
   let channelsStopped = false;
   const outcome = resolved.lifecycle.stop(input, {
     beforeStop() {
@@ -320,7 +319,9 @@ function stopSandboxWithinLifecycleFence(
       warn,
     );
   }
-  if (!ollamaRelease.ok) return { exitCode: 1, message: ollamaRelease.message };
+  if (!ollamaRelease.ok) {
+    return { exitCode: 1, message: ollamaRelease.message, stopped: true };
+  }
   if (hermesPortableVerified) {
     log(
       outcome.state === "already-stopped"

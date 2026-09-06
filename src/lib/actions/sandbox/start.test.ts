@@ -116,6 +116,18 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
 }
 
 describe("startSandbox", () => {
+  it("revalidates the selected sandbox at the start mutation boundary", async () => {
+    const revalidateAtMutationEdge = vi.fn(() => {
+      throw new Error("sandbox identity changed");
+    });
+    const h = harness({ revalidateAtMutationEdge });
+
+    await expect(startSandbox("my-sandbox", h.deps)).rejects.toThrow(/sandbox identity changed/u);
+    expect(revalidateAtMutationEdge).toHaveBeenCalledOnce();
+    expect(h.recoverDockerDriverSandbox).not.toHaveBeenCalled();
+    expect(h.recoverPortableSandbox).not.toHaveBeenCalled();
+  });
+
   it("waits for OpenShell readiness before recovering sandbox processes (#8978)", async () => {
     const waitForSandboxReady = vi.fn();
     const restoreProcesses = vi.fn(() => SUCCESSFUL_RECOVERY);

@@ -5,24 +5,40 @@ import { loadServingCatalog } from "../inference/serving/catalog-loader";
 import type { GooglechatTunnelRuntimeDeps } from "../messaging/channels/googlechat/hooks/tunnel-runtime";
 import { type OnboardCommandOptions, runOnboardCommand } from "../onboard/command";
 import { type OnboardFlags, readAgentRegistryNames } from "../onboard/command-support";
+import {
+  type DashboardReuseLifecycle,
+  withDashboardReuseLifecycle,
+} from "../onboard/dashboard/reuse-lifecycle";
 import { resolveOnboardResumeIntent } from "../onboard/session-bootstrap";
 import { loadOnboardCommandResumeSession } from "../onboard/sandbox-registration";
 import type { OnboardOptions } from "../onboard/types";
 
 export interface OnboardActionRuntimeDeps {
   readonly googlechatTunnelRuntime?: Omit<GooglechatTunnelRuntimeDeps, "prompt" | "sandboxName">;
+  readonly dashboardReuseLifecycle?: DashboardReuseLifecycle;
 }
 
-async function runOnboard(
+export async function runOnboard(
   options: OnboardCommandOptions,
-  runtimeDeps: OnboardActionRuntimeDeps,
+  runtimeDeps: OnboardActionRuntimeDeps = {},
 ): Promise<void> {
   // Keep the monolithic legacy onboarding graph lazy so command metadata/help
   // imports do not execute it. Resolve it only when the user invokes onboard.
   const { onboard } = (await import("../onboard")) as unknown as {
     onboard: (onboardOptions?: OnboardOptions) => Promise<void>;
   };
-  await onboard({ ...options, googlechatTunnelRuntime: runtimeDeps.googlechatTunnelRuntime });
+  const startActions = await import("./sandbox/start");
+  const stopActions = await import("./sandbox/stop");
+  const lifecycle = runtimeDeps.dashboardReuseLifecycle ?? {
+    startSandbox: (sandboxName: string, revalidateAtMutationEdge: () => void) =>
+      startActions.startSandbox(sandboxName, { revalidateAtMutationEdge }),
+    stopSandbox: (sandboxName: string, revalidateAtMutationEdge: () => void) =>
+      stopActions.stopSandbox(sandboxName, { revalidateAtMutationEdge }),
+    withSandboxLifecycleLock: startActions.withSandboxLifecycleLock,
+  };
+  await withDashboardReuseLifecycle(lifecycle, () =>
+    onboard({ ...options, googlechatTunnelRuntime: runtimeDeps.googlechatTunnelRuntime }),
+  );
 }
 
 function buildOnboardCommandDeps(flags: OnboardFlags, runtimeDeps: OnboardActionRuntimeDeps) {

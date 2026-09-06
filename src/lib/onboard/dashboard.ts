@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
+  isForwardServiceListenerOwner,
   launchForwardService,
   type ForwardServiceTarget,
 } from "../adapters/openshell/forward-service";
@@ -21,6 +22,7 @@ import {
 } from "./agent-dashboard-forward";
 import { fetchAgentWebAuthTokenFromSandbox as fetchAgentWebAuthToken } from "./agent-web-auth-token";
 import * as dashboardAccess from "./dashboard-access";
+import { getDashboardReuseLifecycle } from "./dashboard/reuse-lifecycle";
 import {
   type DashboardForwardOptions,
   normalizeDashboardForwardOptions,
@@ -32,6 +34,7 @@ import {
   isPortBoundOnHost,
   type ListSandboxesFn,
 } from "./dashboard-port";
+import { fingerprintSandboxLiveIdentity } from "./sandbox-recreate-transaction";
 import {
   ensureMessagingHostForwardForSandbox,
   productionForwardServiceRegistryContext,
@@ -45,6 +48,7 @@ function looksLikeForwardPortConflict(diagnostic: string): boolean {
 }
 
 type CommandResult = { status: number | null };
+type SandboxLifecycleLock = <T>(sandboxName: string, operation: () => Promise<T> | T) => Promise<T>;
 
 export interface OnboardDashboardDeps {
   runOpenshell(args: string[], opts?: Record<string, unknown>): CommandResult;
@@ -79,6 +83,7 @@ export interface OnboardDashboardDeps {
         dashboardPort?: number | null;
         hermesApiPort?: number | null;
         hermesDashboardPort?: number | null;
+        lifecycleGeneration?: string;
         lifecycleLiveIdentityFingerprint?: string;
         pendingRouteReservation?: true;
       }
@@ -87,12 +92,25 @@ export interface OnboardDashboardDeps {
   /** Direct ForwardTcp launcher. */
   forwardService?: {
     executable(): string;
+    owns?(target: ForwardServiceTarget): boolean;
     launch?(target: ForwardServiceTarget): void;
     retireLegacy?(sandboxName: string, gatewayName: string, ports: readonly number[]): number;
     resolveGatewayName(
       sandbox: { gatewayName?: string | null; gatewayPort?: number | null } | null | undefined,
     ): string;
   };
+  stopSandboxForDashboardReuse?(
+    sandboxName: string,
+    revalidateAtMutationEdge: () => void,
+  ): { exitCode: number; message?: string; stopped?: true };
+  startSandboxForDashboardReuse?(
+    sandboxName: string,
+    revalidateAtMutationEdge: () => void,
+  ): Promise<{
+    exitCode: number;
+    message?: string;
+  }>;
+  withSandboxLifecycleLock?: SandboxLifecycleLock;
   printAgentDashboardUi(
     sandboxName: string,
     token: string | null,
@@ -141,7 +159,8 @@ export interface OnboardDashboardHelpers {
   ensureFinalizationDashboardForward(
     sandboxName: string,
     revalidateSandboxIdentity?: (operation: string) => void,
-  ): number;
+    reuseExistingOpenClawForward?: boolean,
+  ): Promise<number>;
   ensureFinalizationAgentDashboardForward(
     sandboxName: string,
     agent: { name: string; forwardPort?: number | null; forward_ports?: number[] | null } | null,
@@ -149,7 +168,13 @@ export interface OnboardDashboardHelpers {
     portReservation?: {
       releaseBeforeForward(agentName: string, port: number): Promise<void> | void;
     },
-  ): Promise<number> | number;
+    reuseExistingOpenClawForward?: boolean,
+  ): Promise<number>;
+  reconcileOpenClawDashboardForwardReuse(
+    sandboxName: string,
+    chatUiUrl: string,
+    revalidateSandboxIdentity?: (operation: string) => void,
+  ): Promise<boolean>;
   ensureAgentFixedForward(
     sandboxName: string,
     port: number,
@@ -224,6 +249,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
             if (!executable) throw new Error("OpenShell is unavailable");
             return executable;
           },
+          owns: isForwardServiceListenerOwner,
           resolveGatewayName: productionForwardService.resolveGatewayName,
           retireLegacy: (sandboxName: string, gatewayName: string, ports: readonly number[]) =>
             productionForwardService.retireLegacy(sandboxName, gatewayName, ports, {
@@ -244,7 +270,6 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
             }),
         }
       : undefined);
-
   function resolveForwardServiceGateway(
     sandboxName: string,
     options: DashboardForwardOptions = {},
@@ -271,6 +296,24 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       targetHost: "127.0.0.1",
       targetPort: port,
     };
+  }
+
+  function ownsDashboardForward(
+    sandboxName: string,
+    gatewayName: string,
+    port: number,
+    chatUiUrl: string,
+  ): boolean {
+    return (
+      forwardService?.owns?.(
+        forwardTarget(
+          sandboxName,
+          gatewayName,
+          port,
+          getDashboardForwardTarget(chatUiUrl),
+        ),
+      ) === true
+    );
   }
 
   function getDashboardForwardPort(
@@ -373,13 +416,140 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     process.exit(1);
   }
 
+  async function reconcileOpenClawDashboardForwardReuse(
+    sandboxName: string,
+    chatUiUrl: string,
+    revalidateSandboxIdentity?: (operation: string) => void,
+  ): Promise<boolean> {
+    const port = Number(getDashboardForwardPort(chatUiUrl));
+    const isPortBound = deps.isPortBoundOnHost ?? isPortBoundOnHost;
+    if (!isPortBound(port)) return false;
+    const lifecycle = getDashboardReuseLifecycle();
+    const withLifecycleLock = deps.withSandboxLifecycleLock ?? lifecycle?.withSandboxLifecycleLock;
+    if (!withLifecycleLock) {
+      throw new Error(
+        `Could not restart sandbox '${sandboxName}' to reconcile dashboard port ${String(port)}: sandbox lifecycle lock is unavailable.`,
+      );
+    }
+    return await withLifecycleLock(sandboxName, async () => {
+      if (!isPortBound(port)) return false;
+      if (getRegistryOccupiedDashboardPorts(sandboxName, listSandboxes).has(String(port))) {
+        throw new Error(
+          `Registered dashboard port ${String(port)} is already occupied; it cannot be reallocated or adopted.`,
+        );
+      }
+
+      const stopSandbox = deps.stopSandboxForDashboardReuse ?? lifecycle?.stopSandbox;
+      const startSandbox = deps.startSandboxForDashboardReuse ?? lifecycle?.startSandbox;
+      if (!stopSandbox || !startSandbox) {
+        throw new Error(
+          `Could not restart sandbox '${sandboxName}' to reconcile dashboard port ${String(port)}: sandbox lifecycle is unavailable.`,
+        );
+      }
+
+      const readLiveIdentity = (gatewayName: string): string | null =>
+        fingerprintSandboxLiveIdentity(
+          deps.runCaptureOpenshell(["sandbox", "get", "-g", gatewayName, sandboxName], {
+            ignoreError: true,
+            includeStderr: true,
+          }) ?? "",
+        );
+      const registered = getSandbox?.(sandboxName);
+      const gatewayName = registered ? forwardService?.resolveGatewayName(registered) : null;
+      const observedIdentity = gatewayName ? readLiveIdentity(gatewayName) : null;
+      if (
+        !registered ||
+        !gatewayName ||
+        !registered.lifecycleLiveIdentityFingerprint ||
+        registered.lifecycleLiveIdentityFingerprint !== observedIdentity
+      ) {
+        throw new Error(
+          `Could not verify sandbox '${sandboxName}' before reconciling dashboard port ${String(port)}.`,
+        );
+      }
+      if (ownsDashboardForward(sandboxName, gatewayName, port, chatUiUrl)) return true;
+      const assertSameSandbox = (operation: string): void => {
+        const current = getSandbox?.(sandboxName);
+        const currentGateway = current ? forwardService?.resolveGatewayName(current) : null;
+        const currentIdentity = currentGateway ? readLiveIdentity(currentGateway) : null;
+        if (
+          !current ||
+          currentGateway !== gatewayName ||
+          current.lifecycleGeneration !== registered.lifecycleGeneration ||
+          current.lifecycleLiveIdentityFingerprint !==
+            registered.lifecycleLiveIdentityFingerprint ||
+          currentIdentity !== observedIdentity
+        ) {
+          throw new Error(
+            `Refusing to ${operation}: sandbox '${sandboxName}' identity changed during dashboard reconciliation.`,
+          );
+        }
+      };
+
+      const revalidateAtStopBoundary = (): void => {
+        revalidateSandboxIdentity?.(
+          `restart sandbox '${sandboxName}' to reconcile dashboard forward ${String(port)}`,
+        );
+        assertSameSandbox(`stop sandbox '${sandboxName}'`);
+      };
+      const stopped = stopSandbox(sandboxName, revalidateAtStopBoundary);
+      const revalidateAtStartBoundary = (): void => {
+        revalidateSandboxIdentity?.(
+          `start sandbox '${sandboxName}' to reconcile dashboard forward ${String(port)}`,
+        );
+        assertSameSandbox(`start sandbox '${sandboxName}'`);
+      };
+      if (stopped.exitCode !== 0 && stopped.stopped !== true) {
+        throw new Error(
+          `Could not stop sandbox '${sandboxName}' to reconcile dashboard port ${String(port)}${
+            stopped.message ? `: ${stopped.message}` : "."
+          }`,
+        );
+      }
+
+      if (isPortBound(port)) {
+        throw new Error(
+          `Registered dashboard port ${String(port)} remained occupied after sandbox '${sandboxName}' stopped; it cannot be adopted. Resolve the listener, run '${deps.cliName()} ${sandboxName} start', then retry onboarding.`,
+        );
+      }
+      let started: { exitCode: number; message?: string };
+      try {
+        started = await startSandbox(sandboxName, revalidateAtStartBoundary);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        throw new Error(
+          `Could not restart sandbox '${sandboxName}' after releasing dashboard port ${String(port)}: ${detail}. The sandbox may remain stopped; run '${deps.cliName()} ${sandboxName} start' before retrying onboarding.`,
+        );
+      }
+      if (
+        started.exitCode !== 0 ||
+        !isPortBound(port) ||
+        !ownsDashboardForward(sandboxName, gatewayName, port, chatUiUrl)
+      ) {
+        throw new Error(
+          `Sandbox '${sandboxName}' did not restore dashboard port ${String(port)} after restart${
+            started.message ? `: ${started.message}` : "."
+          } The sandbox may remain stopped; run '${deps.cliName()} ${sandboxName} start' before retrying onboarding.`,
+        );
+      }
+      if (stopped.exitCode !== 0) {
+        throw new Error(
+          `Sandbox '${sandboxName}' was restored, but its stop cleanup failed${
+            stopped.message ? `: ${stopped.message}` : "."
+          }`,
+        );
+      }
+      return true;
+    });
+  }
+
   function ensureDashboardForward(
     sandboxName: string,
     chatUiUrl = `http://127.0.0.1:${CONTROL_UI_PORT}`,
     options: DashboardForwardOptions = {},
   ): number {
     chatUiUrl ||= `http://127.0.0.1:${CONTROL_UI_PORT}`;
-    const { rollbackSandboxOnFailure, allowPortReallocation } =
+    const { rollbackSandboxOnFailure, allowPortReallocation, reuseExistingOpenClawForward } =
       normalizeDashboardForwardOptions(options);
     const { revalidateSandboxIdentity } = options;
     const preferredPort = Number(getDashboardForwardPort(chatUiUrl));
@@ -394,7 +564,18 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     );
     const isPortBound = deps.isPortBoundOnHost ?? isPortBoundOnHost;
     const persistedPort = getPersistedDashboardPort(sandboxName, listSandboxes);
+    const registryOccupiedPorts = getRegistryOccupiedDashboardPorts(sandboxName, listSandboxes);
     if (persistedPort === preferredPort && isPortBound(preferredPort)) {
+      if (
+        reuseExistingOpenClawForward &&
+        !registryOccupiedPorts.has(String(preferredPort)) &&
+        ownsDashboardForward(sandboxName, forwardGateway, preferredPort, chatUiUrl)
+      ) {
+        revalidateSandboxIdentity?.(
+          `retain dashboard forward ${String(preferredPort)} for sandbox '${sandboxName}'`,
+        );
+        return preferredPort;
+      }
       throw new Error(
         `Registered dashboard port ${String(preferredPort)} is already occupied; it cannot be reallocated or adopted.`,
       );
@@ -406,7 +587,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
         preferredPort,
         existingForwards,
         isPortBound,
-        getRegistryOccupiedDashboardPorts(sandboxName, listSandboxes),
+        registryOccupiedPorts,
       );
     } catch (err) {
       if (!rollbackSandboxOnFailure) throw err;
@@ -509,16 +690,25 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
    * `CHAT_UI_URL`, so after the forward starts this writes the bound port to
    * `CHAT_UI_URL`. (#8970)
    */
-  function ensureFinalizationDashboardForward(
+  async function ensureFinalizationDashboardForward(
     sandboxName: string,
     revalidateSandboxIdentity?: (operation: string) => void,
-  ): number {
+    reuseExistingOpenClawForward = false,
+  ): Promise<number> {
     const envUrl = process.env.CHAT_UI_URL;
     const persistedPort = envUrl ? null : getPersistedDashboardPort(sandboxName, listSandboxes);
     const requestedUrl =
       envUrl || (persistedPort === null ? undefined : `http://127.0.0.1:${String(persistedPort)}`);
+    if (reuseExistingOpenClawForward) {
+      await reconcileOpenClawDashboardForwardReuse(
+        sandboxName,
+        requestedUrl || `http://127.0.0.1:${CONTROL_UI_PORT}`,
+        revalidateSandboxIdentity,
+      );
+    }
     const actualPort = ensureDashboardForward(sandboxName, requestedUrl, {
       allowPortReallocation: false,
+      ...(reuseExistingOpenClawForward ? { reuseExistingOpenClawForward: true } : {}),
       ...(revalidateSandboxIdentity ? { revalidateSandboxIdentity } : {}),
     });
     revalidateSandboxIdentity?.(`publish the dashboard URL for sandbox '${sandboxName}'`);
@@ -534,6 +724,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     agent: { forwardPort?: number | null; forward_ports?: number[] | null },
     options: {
       beforeForwardPort?: (port: number) => Promise<void> | void;
+      reuseExistingOpenClawForward?: boolean;
       revalidateSandboxIdentity?: (operation: string) => void;
     } = {},
   ): Promise<number> {
@@ -546,26 +737,49 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       controlUiPort: chatUiUrl ? Number(getDashboardForwardPort(chatUiUrl)) : undefined,
       hermesApiPort: getSandbox?.(sandboxName)?.hermesApiPort,
       beforeForwardPort: options.beforeForwardPort,
+      reuseExistingOpenClawForward: options.reuseExistingOpenClawForward,
       revalidateSandboxIdentity: options.revalidateSandboxIdentity,
     });
   }
 
-  function ensureFinalizationAgentDashboardForward(
+  async function ensureFinalizationAgentDashboardForward(
     sandboxName: string,
     agent: { name: string; forwardPort?: number | null; forward_ports?: number[] | null } | null,
     revalidateSandboxIdentity?: (operation: string) => void,
     portReservation?: {
       releaseBeforeForward(agentName: string, port: number): Promise<void> | void;
     },
-  ): Promise<number> | number {
-    return agent
-      ? ensureAgentDashboardForward(sandboxName, agent, {
-          revalidateSandboxIdentity,
-          beforeForwardPort: portReservation
-            ? (port) => portReservation.releaseBeforeForward(agent.name, port)
-            : undefined,
-        })
-      : ensureFinalizationDashboardForward(sandboxName, revalidateSandboxIdentity);
+    reuseExistingOpenClawForward = false,
+  ): Promise<number> {
+    if (!agent) {
+      return ensureFinalizationDashboardForward(
+        sandboxName,
+        revalidateSandboxIdentity,
+        reuseExistingOpenClawForward,
+      );
+    }
+    const mayReuseOpenClawForward =
+      agent.name === "openclaw" && reuseExistingOpenClawForward;
+    if (mayReuseOpenClawForward) {
+      const registeredPort = getPersistedDashboardPort(sandboxName, listSandboxes);
+      const requestedUrl =
+        process.env.CHAT_UI_URL ||
+        (registeredPort === null
+          ? `http://127.0.0.1:${CONTROL_UI_PORT}`
+          : `http://127.0.0.1:${String(registeredPort)}`);
+      await reconcileOpenClawDashboardForwardReuse(
+        sandboxName,
+        requestedUrl,
+        revalidateSandboxIdentity,
+      );
+    }
+    return ensureAgentDashboardForward(sandboxName, agent, {
+      revalidateSandboxIdentity,
+      ...(mayReuseOpenClawForward ? { reuseExistingOpenClawForward: true } : {}),
+      beforeForwardPort: portReservation
+        ? (port) => portReservation.releaseBeforeForward(agent.name, port)
+        : undefined,
+    });
   }
 
   function ensureAgentFixedForward(
@@ -788,6 +1002,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     getDashboardForwardTarget,
     getWslHostAddress,
     printDashboard,
+    reconcileOpenClawDashboardForwardReuse,
     stopAllDashboardForwards,
   };
 }

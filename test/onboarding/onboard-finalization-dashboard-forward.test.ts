@@ -5,15 +5,41 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createOnboardDashboardHelpers } from "../../src/lib/onboard/dashboard";
 import type { ListSandboxesFn } from "../../src/lib/onboard/dashboard-port";
+import { fingerprintSandboxLiveIdentity } from "../../src/lib/onboard/sandbox-recreate-transaction";
 
 function harness(options: {
   listSandboxes: ListSandboxesFn;
   isPortBound?: (port: number) => boolean;
+  ownsForward?: () => boolean;
+  registeredIdentity?: boolean;
+  sandboxIdentity?: () => string;
+  stopSandbox?: (sandboxName: string) => {
+    exitCode: number;
+    message?: string;
+    stopped?: true;
+  };
+  startSandbox?: (sandboxName: string) => Promise<{ exitCode: number; message?: string }>;
 }) {
   const launch = vi.fn();
+  const stopSandbox = vi.fn((sandboxName: string, revalidateAtMutationEdge: () => void) => {
+    revalidateAtMutationEdge();
+    return (options.stopSandbox ?? (() => ({ exitCode: 0 })))(sandboxName);
+  });
+  const startSandboxOperation = vi.fn(options.startSandbox ?? (async () => ({ exitCode: 0 })));
+  const startSandbox = vi.fn(async (sandboxName: string, revalidateAtMutationEdge: () => void) => {
+    revalidateAtMutationEdge();
+    return await startSandboxOperation(sandboxName);
+  });
+  const recordedIdentity = fingerprintSandboxLiveIdentity(
+    `Id: ${options.sandboxIdentity?.() ?? "sandbox-id"}`,
+  );
   const helpers = createOnboardDashboardHelpers({
     runOpenshell: vi.fn(() => ({ status: 0 })),
-    runCaptureOpenshell: vi.fn(() => ""),
+    runCaptureOpenshell: vi.fn((args) =>
+      args[0] === "sandbox"
+        ? `Name: reonboard-test\nId: ${options.sandboxIdentity?.() ?? "sandbox-id"}\nState: Ready\n`
+        : "",
+    ),
     openshellArgv: (args) => ["/usr/local/bin/openshell", ...args],
     cliName: () => "nemoclaw",
     agentProductName: () => "NemoClaw",
@@ -24,19 +50,30 @@ function harness(options: {
     sleep: vi.fn(),
     printAgentDashboardUi: vi.fn(),
     listSandboxes: options.listSandboxes,
+    getSandbox: () => ({
+      gatewayName: "nemoclaw",
+      dashboardPort: 18_790,
+      lifecycleGeneration: "generation-1",
+      lifecycleLiveIdentityFingerprint:
+        options.registeredIdentity === false ? undefined : (recordedIdentity ?? undefined),
+    }),
     isPortBoundOnHost: options.isPortBound ?? (() => false),
+    stopSandboxForDashboardReuse: stopSandbox,
+    startSandboxForDashboardReuse: startSandbox,
+    withSandboxLifecycleLock: async (_sandboxName, operation) => await operation(),
     forwardService: {
       executable: () => "/usr/local/bin/openshell",
       launch,
+      owns: vi.fn(options.ownsForward ?? (() => false)),
       resolveGatewayName: () => "nemoclaw",
       retireLegacy: vi.fn(() => 0),
     },
   });
-  return { helpers, launch };
+  return { helpers, launch, startSandbox, startSandboxOperation, stopSandbox };
 }
 
 describe("finalization dashboard ForwardTcp launch", () => {
-  it("launches the persisted dashboard port and publishes its URL", () => {
+  it("launches the persisted dashboard port and publishes its URL", async () => {
     vi.stubEnv("CHAT_UI_URL", undefined);
     const { helpers, launch } = harness({
       listSandboxes: () => ({
@@ -44,7 +81,9 @@ describe("finalization dashboard ForwardTcp launch", () => {
       }),
     });
 
-    expect(helpers.ensureFinalizationDashboardForward("reonboard-test")).toBe(18_790);
+    await expect(helpers.ensureFinalizationDashboardForward("reonboard-test")).resolves.toBe(
+      18_790,
+    );
     expect(launch).toHaveBeenCalledWith(
       expect.objectContaining({
         gatewayName: "nemoclaw",
@@ -56,28 +95,281 @@ describe("finalization dashboard ForwardTcp launch", () => {
     expect(process.env.CHAT_UI_URL).toBe("http://127.0.0.1:18790");
   });
 
-  it("fails closed when a foreign listener occupies the persisted port", () => {
+  it("fails closed when a foreign listener occupies the persisted port", async () => {
     vi.stubEnv("CHAT_UI_URL", undefined);
-    const { helpers, launch } = harness({
+    const { helpers, launch, startSandbox, stopSandbox } = harness({
       listSandboxes: () => ({
         sandboxes: [{ name: "reonboard-test", dashboardPort: 18_790 }],
       }),
       isPortBound: (port) => port === 18_790,
     });
 
-    expect(() => helpers.ensureFinalizationDashboardForward("reonboard-test")).toThrow(
+    await expect(helpers.ensureFinalizationDashboardForward("reonboard-test")).rejects.toThrow(
       /cannot be reallocated/u,
     );
     expect(launch).not.toHaveBeenCalled();
+    expect(stopSandbox).not.toHaveBeenCalled();
+    expect(startSandbox).not.toHaveBeenCalled();
   });
 
-  it("honors an explicit dashboard URL", () => {
+  it("reuses an owned dashboard forward without restarting the sandbox (#11074)", async () => {
+    vi.stubEnv("CHAT_UI_URL", undefined);
+    const { helpers, launch, startSandbox, stopSandbox } = harness({
+      listSandboxes: () => ({
+        sandboxes: [{ name: "reonboard-test", dashboardPort: 18_790 }],
+      }),
+      isPortBound: (port) => port === 18_790,
+      ownsForward: () => true,
+    });
+
+    await expect(
+      helpers.ensureFinalizationDashboardForward("reonboard-test", undefined, true),
+    ).resolves.toBe(18_790);
+    expect(stopSandbox).not.toHaveBeenCalled();
+    expect(startSandbox).not.toHaveBeenCalled();
+    expect(launch).not.toHaveBeenCalled();
+    expect(process.env.CHAT_UI_URL).toBe("http://127.0.0.1:18790");
+  });
+
+  it("does not reconcile a reused dashboard forward twice", async () => {
+    vi.stubEnv("CHAT_UI_URL", undefined);
+    const { helpers, startSandbox, stopSandbox } = harness({
+      listSandboxes: () => ({
+        sandboxes: [{ name: "reonboard-test", dashboardPort: 18_790 }],
+      }),
+      isPortBound: (port) => port === 18_790,
+      ownsForward: () => true,
+    });
+
+    await helpers.reconcileOpenClawDashboardForwardReuse(
+      "reonboard-test",
+      "http://127.0.0.1:18790",
+    );
+    await helpers.ensureFinalizationDashboardForward("reonboard-test", undefined, true);
+
+    expect(stopSandbox).not.toHaveBeenCalled();
+    expect(startSandbox).not.toHaveBeenCalled();
+  });
+
+  it("rechecks ownership instead of trusting an earlier reconciliation", async () => {
+    vi.stubEnv("CHAT_UI_URL", undefined);
+    let owned = true;
+    const { helpers, startSandbox, stopSandbox } = harness({
+      listSandboxes: () => ({
+        sandboxes: [{ name: "reonboard-test", dashboardPort: 18_790 }],
+      }),
+      isPortBound: (port) => port === 18_790,
+      ownsForward: () => owned,
+    });
+
+    await helpers.reconcileOpenClawDashboardForwardReuse(
+      "reonboard-test",
+      "http://127.0.0.1:18790",
+    );
+    owned = false;
+
+    await expect(
+      helpers.ensureFinalizationDashboardForward("reonboard-test", undefined, true),
+    ).rejects.toThrow(/remained occupied/u);
+    expect(stopSandbox).toHaveBeenCalledOnce();
+    expect(startSandbox).not.toHaveBeenCalled();
+  });
+
+  it("rejects an ambiguous listener that remains after the reused sandbox stops", async () => {
+    vi.stubEnv("CHAT_UI_URL", undefined);
+    const { helpers, launch, startSandbox, stopSandbox } = harness({
+      listSandboxes: () => ({
+        sandboxes: [{ name: "reonboard-test", dashboardPort: 18_790 }],
+      }),
+      isPortBound: (port) => port === 18_790,
+    });
+
+    await expect(
+      helpers.ensureFinalizationDashboardForward("reonboard-test", undefined, true),
+    ).rejects.toThrow(/remained occupied.*run 'nemoclaw reonboard-test start'/u);
+    expect(stopSandbox).toHaveBeenCalledWith("reonboard-test", expect.any(Function));
+    expect(startSandbox).not.toHaveBeenCalled();
+    expect(launch).not.toHaveBeenCalled();
+  });
+
+  it("does not start a same-name replacement after the reused sandbox stops", async () => {
+    vi.stubEnv("CHAT_UI_URL", undefined);
+    let bound = true;
+    let identity = "original-id";
+    const { helpers, launch, startSandbox, startSandboxOperation, stopSandbox } = harness({
+      listSandboxes: () => ({
+        sandboxes: [{ name: "reonboard-test", dashboardPort: 18_790 }],
+      }),
+      isPortBound: (port) => port === 18_790 && bound,
+      sandboxIdentity: () => identity,
+      stopSandbox: () => {
+        bound = false;
+        identity = "replacement-id";
+        return { exitCode: 0 };
+      },
+    });
+
+    await expect(
+      helpers.ensureFinalizationDashboardForward("reonboard-test", undefined, true),
+    ).rejects.toThrow(/identity changed.*may remain stopped/u);
+    expect(stopSandbox).toHaveBeenCalledWith("reonboard-test", expect.any(Function));
+    expect(startSandbox).toHaveBeenCalledWith("reonboard-test", expect.any(Function));
+    expect(startSandboxOperation).not.toHaveBeenCalled();
+    expect(launch).not.toHaveBeenCalled();
+  });
+
+  it("does not restart a reused sandbox without a registered live identity", async () => {
+    vi.stubEnv("CHAT_UI_URL", undefined);
+    const { helpers, launch, startSandbox, stopSandbox } = harness({
+      listSandboxes: () => ({
+        sandboxes: [{ name: "reonboard-test", dashboardPort: 18_790 }],
+      }),
+      isPortBound: (port) => port === 18_790,
+      registeredIdentity: false,
+    });
+
+    await expect(
+      helpers.ensureFinalizationDashboardForward("reonboard-test", undefined, true),
+    ).rejects.toThrow(/Could not verify sandbox/u);
+    expect(stopSandbox).not.toHaveBeenCalled();
+    expect(startSandbox).not.toHaveBeenCalled();
+    expect(launch).not.toHaveBeenCalled();
+  });
+
+  it("does not cache a failed sandbox restart as reconciled", async () => {
+    vi.stubEnv("CHAT_UI_URL", undefined);
+    let bound = true;
+    let owned = false;
+    const startOutcomes = [
+      async () => ({ exitCode: 1, message: "restart failed" }),
+      async () => {
+        bound = true;
+        owned = true;
+        return { exitCode: 0 };
+      },
+    ];
+    const { helpers, launch, startSandbox, stopSandbox } = harness({
+      listSandboxes: () => ({
+        sandboxes: [{ name: "reonboard-test", dashboardPort: 18_790 }],
+      }),
+      isPortBound: (port) => port === 18_790 && bound,
+      ownsForward: () => owned,
+      stopSandbox: () => {
+        bound = false;
+        return { exitCode: 0 };
+      },
+      startSandbox: async () => await startOutcomes.shift()!(),
+    });
+
+    await expect(
+      helpers.ensureFinalizationDashboardForward("reonboard-test", undefined, true),
+    ).rejects.toThrow(/did not restore dashboard port.*restart failed/u);
+
+    bound = true;
+    await expect(
+      helpers.ensureFinalizationDashboardForward("reonboard-test", undefined, true),
+    ).resolves.toBe(18_790);
+    expect(stopSandbox).toHaveBeenCalledTimes(2);
+    expect(startSandbox).toHaveBeenCalledTimes(2);
+    expect(launch).not.toHaveBeenCalled();
+  });
+
+  it("restores a sandbox after its stop cleanup fails", async () => {
+    vi.stubEnv("CHAT_UI_URL", undefined);
+    let bound = true;
+    let owned = false;
+    const { helpers, launch, startSandbox, stopSandbox } = harness({
+      listSandboxes: () => ({
+        sandboxes: [{ name: "reonboard-test", dashboardPort: 18_790 }],
+      }),
+      isPortBound: (port) => port === 18_790 && bound,
+      ownsForward: () => owned,
+      stopSandbox: () => {
+        bound = false;
+        return { exitCode: 1, message: "Ollama cleanup failed", stopped: true };
+      },
+      startSandbox: async () => {
+        bound = true;
+        owned = true;
+        return { exitCode: 0 };
+      },
+    });
+
+    await expect(
+      helpers.ensureFinalizationDashboardForward("reonboard-test", undefined, true),
+    ).rejects.toThrow(/was restored.*Ollama cleanup failed/u);
+    expect(stopSandbox).toHaveBeenCalledOnce();
+    expect(startSandbox).toHaveBeenCalledOnce();
+    expect(launch).not.toHaveBeenCalled();
+  });
+
+  it("does not reuse a forward when another sandbox registers the same port", async () => {
+    vi.stubEnv("CHAT_UI_URL", undefined);
+    const { helpers, launch, stopSandbox } = harness({
+      listSandboxes: () => ({
+        sandboxes: [
+          { name: "reonboard-test", dashboardPort: 18_790 },
+          { name: "other", dashboardPort: 18_790 },
+        ],
+      }),
+      isPortBound: (port) => port === 18_790,
+    });
+
+    await expect(
+      helpers.ensureFinalizationDashboardForward("reonboard-test", undefined, true),
+    ).rejects.toThrow(/cannot be reallocated/u);
+    expect(stopSandbox).not.toHaveBeenCalled();
+    expect(launch).not.toHaveBeenCalled();
+  });
+
+  it("enables owned-forward reuse only for OpenClaw agents", async () => {
+    vi.stubEnv("CHAT_UI_URL", undefined);
+    const openClaw = harness({
+      listSandboxes: () => ({
+        sandboxes: [{ name: "reonboard-test", dashboardPort: 18_790 }],
+      }),
+      isPortBound: (port) => port === 18_790,
+      ownsForward: () => true,
+    });
+
+    await expect(
+      openClaw.helpers.ensureFinalizationAgentDashboardForward(
+        "reonboard-test",
+        { name: "openclaw", forwardPort: 18_790 },
+        undefined,
+        undefined,
+        true,
+      ),
+    ).resolves.toBe(18_790);
+
+    const hermes = harness({
+      listSandboxes: () => ({
+        sandboxes: [{ name: "reonboard-test", dashboardPort: 18_790 }],
+      }),
+      isPortBound: (port) => port === 18_790,
+    });
+
+    await expect(
+      hermes.helpers.ensureFinalizationAgentDashboardForward(
+        "reonboard-test",
+        { name: "hermes", forwardPort: 18_790 },
+        undefined,
+        undefined,
+        true,
+      ),
+    ).rejects.toThrow(/cannot be reallocated/u);
+    expect(hermes.stopSandbox).not.toHaveBeenCalled();
+  });
+
+  it("honors an explicit dashboard URL", async () => {
     vi.stubEnv("CHAT_UI_URL", "http://127.0.0.1:19001");
     const { helpers, launch } = harness({
       listSandboxes: () => ({ sandboxes: [] }),
     });
 
-    expect(helpers.ensureFinalizationDashboardForward("reonboard-test")).toBe(19_001);
+    await expect(helpers.ensureFinalizationDashboardForward("reonboard-test")).resolves.toBe(
+      19_001,
+    );
     expect(launch).toHaveBeenCalledWith(expect.objectContaining({ localPort: 19_001 }));
   });
 });

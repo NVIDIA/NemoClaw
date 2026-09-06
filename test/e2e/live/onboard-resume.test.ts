@@ -10,6 +10,7 @@ import {
   ONBOARD_NO_RECREATE_COMMAND_TIMEOUT_MS,
   ONBOARD_RESUME_TEST_TIMEOUT_MS,
 } from "../../../tools/e2e/onboard-timeout-contract.mts";
+import { parseOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
 import { parseSandboxPhase } from "../../../src/lib/state/gateway.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -107,6 +108,29 @@ function markSessionInProgress(file: string): void {
   fs.writeFileSync(file, JSON.stringify(session, null, 2), "utf8");
 }
 
+function registeredDashboardPort(): number {
+  const registry = JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf8")) as {
+    sandboxes?: Record<string, { dashboardPort?: unknown }>;
+  };
+  return Number(registry.sandboxes?.[SANDBOX_NAME]?.dashboardPort);
+}
+
+function requestDashboard(host: HostCliClient, port: number, artifactName: string) {
+  return host.command(
+    "curl",
+    [
+      "--silent",
+      "--show-error",
+      "--output",
+      "/dev/null",
+      "--max-time",
+      "10",
+      `http://127.0.0.1:${String(port)}/`,
+    ],
+    { artifactName, env: buildAvailabilityProbeEnv(), timeoutMs: 20_000 },
+  );
+}
+
 function interruptedSessionSummary(session: SessionStateInterrupted): Record<string, unknown> {
   return {
     status: session.status,
@@ -192,6 +216,7 @@ test(
         "resume proves recreated sandbox provider attachments are selectively reconciled",
         "host trust-store anchor corporate CA source is baked and merged after resume",
         "an unreachable committed route pauses at final verification and completes after repair",
+        "resume reuses the same sandbox and registered dashboard port after restoring its forward",
         "implicit resume is detected and --fresh suppresses that auto-resume",
       ],
     });
@@ -597,7 +622,6 @@ test(
     expect(unavailableResumeText).not.toContain(
       `Deleting and recreating sandbox '${SANDBOX_NAME}'`,
     );
-    expect(unavailableResumeText).not.toContain(`Sandbox '${SANDBOX_NAME}' created`);
 
     const paused = readSession<SessionStateRetryableFailure>(SESSION_FILE);
     await artifacts.writeJson("phase-3-5-session-route-unavailable.json", {
@@ -619,7 +643,24 @@ test(
       requireAuth: true,
       requireAuthModels: true,
     });
-    expect(fake.baseUrl).toBe(`http://${fakePublicHost}:${String(fakePort)}/v1`);
+    const sandboxBeforeRepairedResume = await sandbox.openshell(["sandbox", "get", SANDBOX_NAME], {
+      artifactName: "phase-3-5-sandbox-before-repaired-resume",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 30_000,
+    });
+    const sandboxIdBeforeRepairedResume = parseOpenShellSandboxId(
+      resultText(sandboxBeforeRepairedResume),
+    );
+    expect(sandboxIdBeforeRepairedResume).not.toBeNull();
+    const dashboardPortBeforeRepairedResume = registeredDashboardPort();
+    const dashboardBeforeRepairedResume = await requestDashboard(
+      host,
+      dashboardPortBeforeRepairedResume,
+      "phase-3-5-dashboard-before-repaired-resume",
+    );
+    expect(dashboardBeforeRepairedResume.exitCode, resultText(dashboardBeforeRepairedResume)).toBe(
+      0,
+    );
 
     const repairedResumeRun = await host.command(
       "node",
@@ -633,11 +674,23 @@ test(
     );
     const repairedResumeText = `${repairedResumeRun.stdout}\n${repairedResumeRun.stderr}`;
     expect(repairedResumeRun.exitCode, repairedResumeText).toBe(0);
-    expect(repairedResumeText).toContain("is ready");
+    expect(repairedResumeText).not.toContain("Registered dashboard port");
     expect(repairedResumeText).not.toContain(`Deleting and recreating sandbox '${SANDBOX_NAME}'`);
-    expect(repairedResumeText).not.toContain(`Sandbox '${SANDBOX_NAME}' created`);
-    const repaired = readSession<SessionStateComplete>(SESSION_FILE);
-    expect(repaired.status).toBe("complete");
+    const sandboxAfterRepairedResume = await sandbox.openshell(["sandbox", "get", SANDBOX_NAME], {
+      artifactName: "phase-3-5-sandbox-after-repaired-resume",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 30_000,
+    });
+    expect(parseOpenShellSandboxId(resultText(sandboxAfterRepairedResume))).toBe(
+      sandboxIdBeforeRepairedResume,
+    );
+    expect(registeredDashboardPort()).toBe(dashboardPortBeforeRepairedResume);
+    const dashboardAfterRepairedResume = await requestDashboard(
+      host,
+      dashboardPortBeforeRepairedResume,
+      "phase-3-5-dashboard-after-repaired-resume",
+    );
+    expect(dashboardAfterRepairedResume.exitCode, resultText(dashboardAfterRepairedResume)).toBe(0);
 
     // ──────────────────────────────────────────────────────────────────
     // Phase 4: implicit resume — a plain `onboard` auto-detects an
@@ -669,7 +722,6 @@ test(
       implicitResumeText,
     ).toBe(true);
     expect(implicitResumeText).not.toContain(`Deleting and recreating sandbox '${SANDBOX_NAME}'`);
-    expect(implicitResumeText).not.toContain(`Sandbox '${SANDBOX_NAME}' created`);
 
     markSessionInProgress(SESSION_FILE);
     const freshRun = await host.command(
@@ -694,6 +746,11 @@ test(
     expect(freshText).toContain("[e2e] Forced onboarding failure at step 'preflight'.");
     expect(freshText).not.toContain("(resume mode)");
     expect(freshText).not.toContain(`Sandbox '${SANDBOX_NAME}' created`);
-    await artifacts.target.complete({ id: "onboard-resume", status: "passed" });
+    await artifacts.target.complete({
+      id: "onboard-resume",
+      status: "passed",
+      resumeDashboardPort: dashboardPortBeforeRepairedResume,
+      resumeSandboxIdentityRetained: true,
+    });
   },
 );

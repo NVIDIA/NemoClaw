@@ -1515,6 +1515,9 @@ const sandboxCreateOrchestrationRuntime = {
   get getDashboardForwardPort() {
     return getDashboardForwardPort;
   },
+  get reconcileOpenClawDashboardForwardReuse() {
+    return reconcileOpenClawDashboardForwardReuse;
+  },
   readDcodeSelectionDrift: createDcodeSelectionDriftReader(runCaptureOpenshell, () => GATEWAY_NAME),
   getDefaultSandboxNameForAgent,
   getDockerDriverGatewayStateDir,
@@ -2492,25 +2495,21 @@ const setupMessagingChannels = messagingChannelSetup.createSetupMessagingChannel
   isNonInteractive,
   prompt,
 });
-
 // ── Step 7: OpenClaw ─────────────────────────────────────────────
 const syncNemoClawConfigInSandbox = createNemoClawConfigSync({
   getProviderSelectionConfig,
   run,
   openshellArgv,
 });
-
 const configureOpenclawSandbox = openclawSetup.createConfigureOpenclawSandbox({
   syncNemoClawConfigInSandbox,
   reconcileWebSearch: openclawSetup.reconcileOpenClawWebSearchForReuse,
 });
-
 const setupOpenclaw = openclawSetup.createOpenclawSetup({
   step,
   agentProductName,
   configureOpenclawSandbox,
 });
-
 const {
   buildChain,
   buildAgentVerifyChain,
@@ -2522,6 +2521,7 @@ const {
   fetchGatewayAuthTokenFromSandbox,
   getDashboardForwardPort,
   printDashboard,
+  reconcileOpenClawDashboardForwardReuse,
   stopAllDashboardForwards,
 } = onboardDashboard.createOnboardDashboardHelpers({
   runOpenshell,
@@ -2632,7 +2632,6 @@ async function preflightAuthoritativeRebuildTarget(
   }
 }
 
-// ── Main ─────────────────────────────────────────────────────────
 const wrappedOnboard = onboardEntryOptions.wrapOnboard(runOnboard, onboardSession);
 const onboard = onboardSessionBootstrap.wrapOnboardDeferredExit(wrappedOnboard);
 async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
@@ -3247,6 +3246,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
               selectedAgent,
               undefined,
               hermesApiPortReservationScope,
+              resume,
             ),
           persistDashboardPort: (name, port) =>
             registry.updateSandbox(name, { dashboardPort: port }),
