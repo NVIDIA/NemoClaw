@@ -18,14 +18,18 @@ import {
 
 const roots: string[] = [];
 
+function writeTlsFiles(stateDir: string): void {
+  fs.mkdirSync(path.join(stateDir, "tls", "client"), { mode: 0o700, recursive: true });
+  fs.writeFileSync(path.join(stateDir, "tls", "ca.crt"), "ca");
+  fs.writeFileSync(path.join(stateDir, "tls", "client", "tls.crt"), "cert");
+  fs.writeFileSync(path.join(stateDir, "tls", "client", "tls.key"), "key");
+}
+
 function writeTlsBundle(gatewayName = "nemoclaw-9443", gatewayPort = 9443): string {
   const stateDir = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-sdk-test-"));
   roots.push(stateDir);
   ensureManagedGatewayStateRoot({ gatewayName, gatewayPort, stateDir });
-  fs.mkdirSync(path.join(stateDir, "tls", "client"), { recursive: true });
-  fs.writeFileSync(path.join(stateDir, "tls", "ca.crt"), "ca");
-  fs.writeFileSync(path.join(stateDir, "tls", "client", "tls.crt"), "cert");
-  fs.writeFileSync(path.join(stateDir, "tls", "client", "tls.key"), "key");
+  writeTlsFiles(stateDir);
   return stateDir;
 }
 
@@ -68,6 +72,26 @@ describe("OpenShell SDK sandbox command executor", () => {
       clientCert: Buffer.from("cert"),
       clientKey: Buffer.from("key"),
     });
+  });
+
+  it("accepts the private port-derived default root without a legacy marker", async () => {
+    const homeDir = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-sdk-home-test-"));
+    roots.push(homeDir);
+    const stateDir = path.join(homeDir, ".local", "state", "nemoclaw", "openshell-docker-gateway");
+    fs.mkdirSync(stateDir, { mode: 0o700, recursive: true });
+    writeTlsFiles(stateDir);
+    const connect = vi.fn().mockResolvedValue({ sandbox: {} });
+
+    await connectManagedOpenShellSdk(
+      { kind: "named", gatewayName: "nemoclaw" },
+      {
+        env: {},
+        homeDir,
+        loadSdk: async () => ({ OpenShellClient: { connect } }),
+      },
+    );
+
+    expect(connect).toHaveBeenCalledOnce();
   });
 
   it("rejects a missing ownership marker before loading the SDK", async () => {

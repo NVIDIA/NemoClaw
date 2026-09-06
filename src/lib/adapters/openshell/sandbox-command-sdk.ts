@@ -113,17 +113,19 @@ export async function connectManagedOpenShellSdk(
 ): Promise<SdkClient> {
   const port = gatewayPort(target);
   const environment = deps.env ?? process.env;
+  const configuredStateDir = environment.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR?.trim();
   const stateDir = resolveGatewayStateDirForPort({
-    configured: environment.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
+    configured: configuredStateDir,
     home: deps.homeDir ?? environment.HOME ?? os.homedir(),
     port,
   });
   const gatewayName = target.kind === "named" ? target.gatewayName : "";
-  const ownershipFailure = managedGatewayStateRootOwnershipFailure({
-    gatewayName,
-    gatewayPort: port,
-    stateDir,
-  });
+  const ownershipFailure = managedGatewayStateRootOwnershipFailure(
+    { gatewayName, gatewayPort: port, stateDir },
+    // Canonical default roots predate the marker. Explicit overrides must
+    // always carry the port- and gateway-bound managed marker.
+    { allowLegacyManagedState: !configuredStateDir },
+  );
   if (ownershipFailure) {
     throw new Error(`Unsafe OpenShell gateway state directory: ${ownershipFailure}.`);
   }
