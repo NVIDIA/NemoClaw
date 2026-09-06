@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { CLI_NAME } from "../../cli/branding";
+import { CLI_NAME, formatOnboardLockContentionGuidance } from "../../cli/branding";
 import { G, R, YW } from "../../cli/terminal-style";
 import { prompt as askPrompt } from "../../credentials/store";
 import {
@@ -607,6 +607,12 @@ export async function destroySandbox(
     });
   } catch (error) {
     if (error instanceof SandboxDestroyExitRequest) process.exit(error.exitCode);
+    if (onboardSession.isOnboardLockContentionError(error)) {
+      for (const line of formatOnboardLockContentionGuidance(CLI_NAME, error.holderPid).lines) {
+        console.error(line);
+      }
+      process.exit(1);
+    }
     throw error;
   }
 }
@@ -665,9 +671,7 @@ async function destroySandboxUnlocked(
         : normalizeRuntimeProviderIdentity(null),
       redact: redactDestroyError,
       sandbox: registeredSandbox,
-      ...(retainedSandboxIdentityFingerprint
-        ? { retainedSandboxIdentityFingerprint }
-        : {}),
+      ...(retainedSandboxIdentityFingerprint ? { retainedSandboxIdentityFingerprint } : {}),
     });
   };
   const initialIdentity = portableContainerAuthority ? null : inspectContainerIdentity();
@@ -877,14 +881,13 @@ async function destroySandboxUnlocked(
     runtimeSelection: destroyRuntimeSelection,
   } = destructiveResult;
 
-  if (
-    destroyRuntimeSelection &&
-    cleanupGatewayName !== destroyRuntimeSelection.gatewayName
-  ) {
+  if (destroyRuntimeSelection && cleanupGatewayName !== destroyRuntimeSelection.gatewayName) {
     console.error(
       `  Sandbox '${sandboxName}' was deleted, but its cleanup target changed from '${destroyRuntimeSelection.gatewayName}' to '${cleanupGatewayName}'.`,
     );
-    console.error("  Local ownership state was preserved. Restore the recorded gateway binding and retry destroy.");
+    console.error(
+      "  Local ownership state was preserved. Restore the recorded gateway binding and retry destroy.",
+    );
     preparedManagedLlamaCppCleanup?.abort();
     requestSandboxDestroyExit(1);
   }
@@ -966,11 +969,15 @@ async function destroySandboxUnlocked(
       registeredSandboxCount: registry.listSandboxes().sandboxes.length,
       sandboxStillRegistered: !!registry.getSandbox(sandboxName),
     });
-    cleanupSandboxServices(sandboxName, {
-      stopHostServices: shouldStopHostServices,
-    }, {
-      runOpenshell: cleanupRunOpenshell,
-    });
+    cleanupSandboxServices(
+      sandboxName,
+      {
+        stopHostServices: shouldStopHostServices,
+      },
+      {
+        runOpenshell: cleanupRunOpenshell,
+      },
+    );
   });
   if (deleteSucceededOrAlreadyGone && commonLlamaCppAuthorityRetired === true) {
     preparedManagedLlamaCppCleanup?.abort();
@@ -1127,9 +1134,21 @@ async function destroySandboxUnlocked(
       recoveryResolved = onboardSession.resolveRetainedSandboxRecovery(retainedRecoveryAuthority);
     } catch (error) {
       console.error(
-        `  Sandbox '${sandboxName}' resources are gone, but NemoClaw could not clear its retained recovery record: ${redactDestroyError(error)}`,
+        `  Sandbox '${sandboxName}' resources are gone, but NemoClaw could not clear its retained recovery record.`,
       );
-      console.error(`  Re-run '${CLI_NAME} ${sandboxName} destroy --yes' to finish local cleanup.`);
+      if (onboardSession.isOnboardLockContentionError(error)) {
+        for (const line of formatOnboardLockContentionGuidance(CLI_NAME, error.holderPid).lines) {
+          console.error(line);
+        }
+        console.error(
+          `  Re-run '${CLI_NAME} ${sandboxName} destroy --yes' after the active onboarding run finishes.`,
+        );
+      } else {
+        console.error(`  ${redactDestroyError(error)}`);
+        console.error(
+          `  Re-run '${CLI_NAME} ${sandboxName} destroy --yes' to finish local cleanup.`,
+        );
+      }
       requestSandboxDestroyExit(1);
     }
     if (!recoveryResolved) {
@@ -1143,10 +1162,13 @@ async function destroySandboxUnlocked(
     }
   }
   if (
-    shouldCleanupGatewayAfterConfirmedFinalDestroy({
-      deleteSucceededOrAlreadyGone,
-      removedRegistryEntry: removed,
-    }, cleanupCaptureOpenshell ? { captureOpenshell: cleanupCaptureOpenshell } : {})
+    shouldCleanupGatewayAfterConfirmedFinalDestroy(
+      {
+        deleteSucceededOrAlreadyGone,
+        removedRegistryEntry: removed,
+      },
+      cleanupCaptureOpenshell ? { captureOpenshell: cleanupCaptureOpenshell } : {},
+    )
   ) {
     const shouldCleanupGateway = await resolveCleanupGatewayDecision(normalized);
     if (shouldCleanupGateway) {

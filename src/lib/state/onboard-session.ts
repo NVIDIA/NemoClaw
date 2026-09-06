@@ -346,6 +346,39 @@ export interface LockResult {
   holderCommand?: string | null;
 }
 
+/**
+ * Raised when a second command tries to mutate onboarding state while another
+ * live process holds the onboarding lock (#11052). Carries the holder PID so
+ * the command layer can surface the shipped "another run is in progress"
+ * guidance instead of a bare internal error.
+ */
+export class OnboardLockContentionError extends Error {
+  readonly holderPid: number;
+
+  /** Create a live-contention error for the process that owns the lock. */
+  constructor(holderPid: number) {
+    super("Cannot update onboarding recovery while another onboarding run owns the lock.");
+    this.name = "OnboardLockContentionError";
+    this.holderPid = holderPid;
+  }
+}
+
+/**
+ * Cross-module-instance guard for OnboardLockContentionError. This repo mixes
+ * `require()` and `import` for the same module, which can yield two class
+ * identities; compare by name + shape instead of `instanceof` so a thrown
+ * contention error is recognised regardless of which copy loaded it (#11052).
+ */
+export function isOnboardLockContentionError(error: unknown): error is OnboardLockContentionError {
+  return (
+    error instanceof Error &&
+    error.name === "OnboardLockContentionError" &&
+    "holderPid" in error &&
+    Number.isInteger(error.holderPid) &&
+    Number(error.holderPid) > 0
+  );
+}
+
 export interface SessionUpdates {
   // Nullable fields accept `null` as an explicit clear (e.g. a provider
   // switch from remote→local clears `credentialEnv`). `undefined` means
@@ -1453,11 +1486,15 @@ export function assertOnboardLockOwned(): void {
   }
 }
 
+/** Run one state mutation while this process owns the onboarding writer lock. */
 function withOwnedOnboardLock<T>(command: string, operation: () => T): T {
   const managesOnboardLock = heldLockFd === null;
   if (managesOnboardLock) {
     const lock = acquireOnboardLock(command);
     if (!lock.acquired) {
+      if (!lock.stale && lock.holderPid !== undefined) {
+        throw new OnboardLockContentionError(lock.holderPid);
+      }
       throw new Error(
         "Cannot update onboarding recovery while another onboarding run owns the lock.",
       );

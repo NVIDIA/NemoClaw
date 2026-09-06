@@ -47,6 +47,39 @@ describe("cross-process onboard lock", () => {
     expect(fs.existsSync(session.LOCK_FILE)).toBe(false);
   });
 
+  it("does not classify the legacy migration handshake as live lock contention (#11052)", () => {
+    session.saveSession(
+      session.createSession({ sessionId: "migration-handshake", sandboxName: "alpha" }),
+    );
+    const migrationLock = path.join(tempHome, ".nemoclaw", ".gateway-state-migration.lock");
+    fs.mkdirSync(migrationLock, { recursive: true });
+
+    let failure: unknown = null;
+    try {
+      session.markRetainedSandboxRecovery("alpha", "recovery required", undefined, {
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        lifecycleGeneration: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        createAttemptNonce: "b".repeat(62),
+      });
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(Error);
+    expect(session.isOnboardLockContentionError(failure)).toBe(false);
+    expect(fs.existsSync(session.LOCK_FILE)).toBe(false);
+  });
+
+  it("rejects malformed holder PIDs from the cross-module contention guard (#11052)", () => {
+    const malformed = Object.assign(new Error("synthetic contention"), {
+      name: "OnboardLockContentionError",
+      holderPid: "not-a-pid",
+    });
+
+    expect(session.isOnboardLockContentionError(malformed)).toBe(false);
+  });
+
   it("rejects caller-asserted onboarding lock ownership without a live descriptor (#9833)", async () => {
     const authority = await import("../onboard/portable-retirement-authority");
 

@@ -6,7 +6,7 @@ import {
   printOpenShellStateRpcIssue,
 } from "../../adapters/openshell/gateway-drift";
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
-import { CLI_NAME } from "../../cli/branding";
+import { CLI_NAME, formatOnboardLockContentionGuidance } from "../../cli/branding";
 import {
   checkGatewayRouteCompatibility,
   formatGatewayRouteConflict,
@@ -323,14 +323,41 @@ export function getRebuildSandboxEntryOrBail(
   return sb;
 }
 
+function printRebuildLiveLockGuidance(holderPid: number, bail: RebuildBail): void {
+  const guidance = formatOnboardLockContentionGuidance(CLI_NAME, holderPid);
+  printRebuildPreflightFailure(
+    guidance.summary,
+    guidance.lines
+      .slice(1)
+      .map((line) => line.trim())
+      .join(" "),
+    "Could not acquire onboard lock before rebuild",
+    bail,
+  );
+}
+
 /** Block rebuild before any live-state probe or cleanup can bypass retained recovery. */
+function reportRebuildOnboardLockContention(error: unknown, bail: RebuildBail): boolean {
+  if (!onboardSession.isOnboardLockContentionError(error)) return false;
+  printRebuildLiveLockGuidance(error.holderPid, bail);
+  return true;
+}
+
 export function blockRebuildOnRetainedSandboxRecovery(
   sandboxName: string,
   bail: RebuildBail,
 ): boolean {
-  const retainedRecovery = onboardSession
-    .listRetainedSandboxRecoveryRecords()
-    .find((record) => record.sandboxName === sandboxName);
+  let retainedRecovery:
+    | ReturnType<typeof onboardSession.listRetainedSandboxRecoveryRecords>[number]
+    | undefined;
+  try {
+    retainedRecovery = onboardSession
+      .listRetainedSandboxRecoveryRecords()
+      .find((record) => record.sandboxName === sandboxName);
+  } catch (error) {
+    if (reportRebuildOnboardLockContention(error, bail)) return true;
+    throw error;
+  }
   if (!retainedRecovery) return false;
 
   console.error(
@@ -366,16 +393,23 @@ export function acquireRebuildOnboardLock(
     `${CLI_NAME} ${sandboxName} rebuild --authoritative-resume`,
   );
   if (!lock.acquired) {
-    const pidDetail = lock.holderPid ? ` Lock holder PID: ${lock.holderPid}.` : "";
-    const remediation = lock.stale
-      ? "Wait briefly, then rerun rebuild so verified stale-lock cleanup can finish."
-      : `Wait for the other run to finish, then rerun rebuild.${pidDetail}`;
-    printRebuildPreflightFailure(
-      `another ${CLI_NAME} onboarding run is already in progress.`,
-      remediation,
-      "Could not acquire onboard lock before rebuild",
-      bail,
-    );
+    if (!lock.stale && lock.holderPid !== undefined) {
+      printRebuildLiveLockGuidance(lock.holderPid, bail);
+    } else if (lock.stale) {
+      printRebuildPreflightFailure(
+        `a stale ${CLI_NAME} onboarding lock is blocking rebuild.`,
+        "Wait briefly, then rerun rebuild so verified stale-lock cleanup can finish.",
+        "Could not acquire onboard lock before rebuild",
+        bail,
+      );
+    } else {
+      printRebuildPreflightFailure(
+        `could not acquire the ${CLI_NAME} onboarding lock.`,
+        "Wait briefly, then rerun rebuild.",
+        "Could not acquire onboard lock before rebuild",
+        bail,
+      );
+    }
     return null;
   }
   let released = false;

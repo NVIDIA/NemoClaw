@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { formatAgentAliasSuffix, resolveAgentNameAlias } from "../agent/aliases";
+import { formatOnboardLockContentionGuidance } from "../cli/branding";
 import { withCredentialOverrides } from "../credentials/scoped-overrides";
 import { loadServingCatalog } from "../inference/serving/catalog-loader";
 import { NEMOCLAW_SERVING_PRESET_ENV } from "../inference/serving/managed-cluster-discovery";
@@ -34,6 +35,8 @@ import {
   type ExperimentalOnboardProfile,
   PORTABLE_EXPERIMENTAL_PROFILE,
 } from "./docker-driver-platform";
+import { isOnboardLockContentionError } from "../state/onboard-session";
+import { cliName } from "./branding";
 import {
   loadPortableInferenceDescriptor,
   PORTABLE_INFERENCE_CREDENTIAL_ENV,
@@ -534,7 +537,17 @@ function reportOnboardCommandError(deps: RunOnboardCommandDeps, message: string)
   return 1;
 }
 
+/** Convert known onboarding failures into stable CLI exit behavior. */
 function handleOnboardCommandError(error: unknown, deps: RunOnboardCommandDeps): number | null {
+  // Live onboarding-lock contention: surface the shipped guard text (name the
+  // competing run, print the holder PID, say to wait) instead of the bare
+  // internal error (#11052).
+  if (isOnboardLockContentionError(error)) {
+    return reportOnboardCommandError(
+      deps,
+      formatOnboardLockContentionGuidance(cliName(), error.holderPid).lines.join("\n"),
+    );
+  }
   const cancellationCode = promptCancellationCode(error);
   if (cancellationCode === "SIGINT") {
     // The prompt has already restored terminal state and re-raised SIGINT.
