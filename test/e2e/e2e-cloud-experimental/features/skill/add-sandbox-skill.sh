@@ -37,7 +37,9 @@ mkdir -m 700 "$skill_dir"
 trap 'rm -rf -- "$skill_parent"' EXIT
 
 if [ -n "$SKILL_FILE" ]; then
-  [ ! -L "$SKILL_FILE" ] && [ -f "$SKILL_FILE" ] || die "SKILL_FILE must be a regular file"
+  if [ -L "$SKILL_FILE" ] || [ ! -f "$SKILL_FILE" ]; then
+    die "SKILL_FILE must be a regular file"
+  fi
   cp -- "$SKILL_FILE" "$skill_dir/SKILL.md"
 elif [ -n "$SKILL_BODY" ]; then
   {
@@ -48,8 +50,9 @@ elif [ -n "$SKILL_BODY" ]; then
     printf '%s\n' "$SKILL_BODY"
   } >"$skill_dir/SKILL.md"
 else
-  [ ! -L "$SKILL_TEMPLATE_FILE" ] && [ -f "$SKILL_TEMPLATE_FILE" ] \
-    || die "SKILL_TEMPLATE_FILE must be a regular file"
+  if [ -L "$SKILL_TEMPLATE_FILE" ] || [ ! -f "$SKILL_TEMPLATE_FILE" ]; then
+    die "SKILL_TEMPLATE_FILE must be a regular file"
+  fi
   command -v python3 >/dev/null 2>&1 || die "python3 not on PATH"
   SKILL_ID="$SKILL_ID" SKILL_DESCRIPTION="$SKILL_DESCRIPTION" \
     SKILL_TEMPLATE_FILE="$SKILL_TEMPLATE_FILE" python3 -c '
@@ -79,8 +82,9 @@ raise SystemExit(1)
 ' "$skill_dir/SKILL.md")" || die "SKILL.md has no readable frontmatter name"
 [ "$declared_name" = "$SKILL_ID" ] \
   || die "SKILL_ID '$SKILL_ID' does not match SKILL.md name '$declared_name'"
-[ ! -L "$NEMOCLAW_CLI_BIN" ] && [ -f "$NEMOCLAW_CLI_BIN" ] \
-  || die "NemoClaw CLI not found: $NEMOCLAW_CLI_BIN"
+if [ -L "$NEMOCLAW_CLI_BIN" ] || [ ! -f "$NEMOCLAW_CLI_BIN" ]; then
+  die "NemoClaw CLI not found: $NEMOCLAW_CLI_BIN"
+fi
 
 "$NEMOCLAW_CLI_BIN" "$SANDBOX_NAME" skill install "$skill_dir"
 list_output="$("$NEMOCLAW_CLI_BIN" "$SANDBOX_NAME" skill list)" \

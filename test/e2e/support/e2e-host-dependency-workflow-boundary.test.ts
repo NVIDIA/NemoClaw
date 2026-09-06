@@ -125,12 +125,13 @@ describe("E2E host dependency action boundary (#6961)", () => {
     const install = workflow.jobs.live?.steps.find(
       (step) => step.name === "Install Deep Agents Code TUI host dependencies",
     )!;
+    const expectedError =
+      "live DCode TUI host dependencies must be scoped to the typed DCode target";
+    expect(validateE2eWorkflow(workflow)).not.toContain(expectedError);
     install.if =
       "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' && matrix.runtime_provider == 'docker' }}";
 
-    expect(validateE2eWorkflow(workflow)).toContain(
-      "live DCode TUI host dependencies must be scoped to the typed DCode target",
-    );
+    expect(validateE2eWorkflow(workflow)).toContain(expectedError);
   });
 
   it.each(["", "   ", "expect\ncurl", "curl"])(
@@ -264,8 +265,8 @@ exit 64
 
     expect(validateE2eWorkflow(workflow)).toEqual(
       expect.arrayContaining([
-        "step 'Hide Docker CLI from native Podman public install' run script must include NEMOCLAW_E2E_DISABLED_DOCKER_CLI=%s before sudo mv -- \"${docker_cli}\" \"${disabled_path}\"",
-        "step 'Hide Docker CLI from native Podman public install' run script must include NEMOCLAW_E2E_DOCKER_CLI_RESTORE_PATH=%s before sudo mv -- \"${docker_cli}\" \"${disabled_path}\"",
+        'step \'Hide Docker CLI from native Podman public install\' run script must include NEMOCLAW_E2E_DISABLED_DOCKER_CLI=%s before sudo mv -- "${docker_cli}" "${disabled_path}"',
+        'step \'Hide Docker CLI from native Podman public install\' run script must include NEMOCLAW_E2E_DOCKER_CLI_RESTORE_PATH=%s before sudo mv -- "${docker_cli}" "${disabled_path}"',
       ]),
     );
   });
