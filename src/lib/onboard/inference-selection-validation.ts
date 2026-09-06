@@ -40,7 +40,11 @@ import {
   parseTrustedPrivateInferenceHostsFromEnv,
 } from "../inference/endpoint-ssrf-preflight";
 import { shouldForceCompletionsApi } from "../validation";
-import { getProbeRecovery } from "../validation-recovery";
+import {
+  getProbeRecovery,
+  getTransportRecoveryMessage,
+  type ProbeLike,
+} from "../validation-recovery";
 import { summarizeProbeForDisplay } from "./probe-diagnostics";
 import { normalizeReasoningFlag } from "./reasoning-mode";
 import { OnboardDeferredExitError } from "./session-bootstrap";
@@ -189,11 +193,27 @@ export function createInferenceSelectionValidationHelpers(
 
   function printValidationFailure(
     label: string,
-    probe?: { failures?: unknown[]; message?: unknown },
+    probe?: { failures?: unknown[]; message?: unknown; advisory?: unknown },
   ): void {
     console.error(`  ${label} endpoint validation failed.`);
     if (probe) console.error(`  Validation probe summary: ${summarizeProbeForDisplay(probe)}.`);
     console.error("  Validation details were omitted to avoid exposing credentials.");
+    if (!probe) return;
+    // An interactive run reaches transport guidance through the recovery
+    // prompt. A non-interactive run exits at the next statement, so without
+    // this the operator is left with a bare "curl exit 28" and no next step.
+    if (deps.isNonInteractive()) {
+      const recovery = getProbeRecovery(probe as ProbeLike);
+      if (recovery.kind === "transport" && "failure" in recovery) {
+        console.error(getTransportRecoveryMessage(recovery.failure));
+      }
+    }
+    // The probe's curated advisory rides on `message`, which no caller prints
+    // because it can carry provider response bodies. Neither path shows it
+    // today, so print it here for both (#10413).
+    if (typeof probe.advisory === "string" && probe.advisory) {
+      console.error(`  ${probe.advisory}`);
+    }
   }
 
   function printGeminiRuntimeNotFoundGuidance(
