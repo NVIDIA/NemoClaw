@@ -80,6 +80,8 @@ describe("E2E recommendation normalizer", () => {
         "security-posture",
       ]),
     );
+    expect(inventory.allowedJobIds).toContain("openclaw-skill-cli");
+    expect(inventory.manualOnlyJobIds).not.toContain("openclaw-skill-cli");
 
     const channels = normalizeE2eTargetAdvisorResult(
       { required: [], optional: [], confidence: "high" },

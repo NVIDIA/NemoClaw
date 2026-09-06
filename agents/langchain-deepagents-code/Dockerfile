@@ -205,6 +205,8 @@ COPY agents/langchain-deepagents-code/dcode-session-supervisor.py /usr/local/lib
 COPY scripts/lib/entrypoint-env-wrapper.sh /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh
 COPY agents/langchain-deepagents-code/start.sh /usr/local/bin/nemoclaw-start
 COPY scripts/managed-startup-hold.sh /usr/local/bin/nemoclaw-managed-startup-hold
+
+ARG NEMOCLAW_DCODE_NATIVE_SKILL_IMPORT_PATCHER_SHA256=c1aa6522f877015d047ff90d85ce9acd5cf0a526af4d46d27a1f06176a4e2ea2
 COPY --from=managed-bootstrap-entrypoint-builder /out/usr/local/bin/nemoclaw-managed-bootstrap /usr/local/bin/nemoclaw-managed-bootstrap
 COPY --from=managed-bootstrap-entrypoint-builder /out/usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh
 COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
@@ -242,6 +244,7 @@ RUN test -f /usr/local/bin/nemoclaw-managed-bootstrap \
     && rm -rf /opt/nemoclaw-deepagents-profile-plugin \
     && python3 /opt/nemoclaw-deepagents-code/patch-managed-deepagents-code.py \
     && dcode_skills_commands="$(/opt/venv/bin/python3 -I -c 'import deepagents_code.skills.commands as commands; print(commands.__file__)')" \
+    && printf '%s  %s\n' "$NEMOCLAW_DCODE_NATIVE_SKILL_IMPORT_PATCHER_SHA256" /opt/nemoclaw-deepagents-code/patch-native-skill-import.py | sha256sum -c - \
     && python3 /opt/nemoclaw-deepagents-code/patch-native-skill-import.py "$dcode_skills_commands" \
     && grep -Fq 'NemoClaw native local skill import (#10210)' "$dcode_skills_commands" \
     && /opt/venv/bin/python3 -I -c 'import deepagents_code.skills.commands as commands; assert callable(commands._import_local) and callable(commands._delete)' \
