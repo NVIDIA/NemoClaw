@@ -118,7 +118,6 @@ type LlamaCppQualificationRecipe = {
       image: string;
       imageDownloadSizeBytes: number;
       platforms: string[];
-      containerRuntime: string;
       networkExposure: string;
       restartPolicy: string;
       hosts: number;
@@ -533,7 +532,6 @@ export function loadLlamaCppImageConfig(
     recipe.spec.server.source.revision !== spec?.source?.revision ||
     recipe.spec.model.files.length !== 1 ||
     recipeModelFile?.format !== "gguf" ||
-    recipe.spec.runtime.containerRuntime !== "docker" ||
     recipe.spec.runtime.networkExposure !== "loopback" ||
     recipe.spec.runtime.hosts !== 1 ||
     !recipe.spec.runtime.platforms.includes("linux/arm64") ||
