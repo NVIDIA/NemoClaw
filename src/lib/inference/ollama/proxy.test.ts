@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { EventEmitter } from "node:events";
+import fs from "node:fs";
 import { createRequire } from "node:module";
+import os from "node:os";
+import path from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -14,12 +17,16 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
+import { PROXY_STATUS_ENV } from "./proxy-status";
+
 const require = createRequire(import.meta.url);
 const PROXY_DIST = require.resolve("./proxy");
 const LOCAL_DIST = require.resolve("../local");
 const CREDS_DIST = require.resolve("../../credentials/store");
 const CHILD_PROCESS_DIST = require.resolve("node:child_process");
 const RUNNER_DIST = require.resolve("../../runner");
+const SUBPROCESS_ENV_DIST = require.resolve("../../subprocess-env");
+const LIFECYCLE_DIST = require.resolve("../local-adapter-lifecycle");
 
 interface MockSetup {
   installed: string[] | (() => string[]);
@@ -574,5 +581,138 @@ describe("pullOllamaModel CLI-vs-HTTP dispatch", () => {
     expect(result).toBe(false);
     expect(errors).toContain("Model pull timed out after 30 minutes.");
     expect(errors).not.toContain("Model pull connection timed out");
+  });
+});
+
+type SpawnAdapterOptions = Parameters<
+  typeof import("../local-adapter-lifecycle").spawnDetachedNodeAdapter
+>[0];
+
+describe("ollama auth proxy spawn env bind-probe override (#10240)", () => {
+  const OVERRIDE = "NEMOCLAW_OLLAMA_PROXY_SKIP_BIND_PROBE";
+  const tempHomes: string[] = [];
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+    delete require.cache[LIFECYCLE_DIST];
+    delete require.cache[PROXY_DIST];
+    while (tempHomes.length > 0) {
+      fs.rmSync(tempHomes.pop() as string, { force: true, recursive: true });
+    }
+  });
+
+  // The spawn env map alone never dropped the override: spawnOllamaAuthProxy
+  // hands the map to buildSubprocessEnv, whose allowlist carries no NEMOCLAW_
+  // name, and that is where the operator's value was lost. Assert the same
+  // composition the spawn performs so a narrowed merge is caught here.
+  function proxyChildEnv(backendUrl: string | null): Record<string, string> {
+    const proxy = require(PROXY_DIST) as typeof import("./proxy");
+    const { buildSubprocessEnv } = require(
+      SUBPROCESS_ENV_DIST,
+    ) as typeof import("../../subprocess-env");
+    return buildSubprocessEnv(proxy.buildOllamaAuthProxySpawnEnv("token", backendUrl)) as Record<
+      string,
+      string
+    >;
+  }
+
+  it("reaches the spawned proxy when the operator sets it to 1", () => {
+    vi.stubEnv(OVERRIDE, "1");
+
+    expect(proxyChildEnv(null)[OVERRIDE]).toBe("1");
+  });
+
+  it("stays absent when the operator does not set it, so the proxy enforces the probe", () => {
+    vi.stubEnv(OVERRIDE, undefined);
+
+    expect(proxyChildEnv(null)).not.toHaveProperty(OVERRIDE);
+  });
+
+  it.each(["true", "0", ""])(
+    "stays absent for %j, matching the proxy's own strict check",
+    (value) => {
+      vi.stubEnv(OVERRIDE, value);
+
+      expect(proxyChildEnv(null)).not.toHaveProperty(OVERRIDE);
+    },
+  );
+
+  it("still carries the proxy's own spawn variables, which the allowlist also omits", () => {
+    vi.stubEnv(OVERRIDE, undefined);
+
+    const env = proxyChildEnv("http://127.0.0.1:11434");
+
+    expect(env.OLLAMA_PROXY_TOKEN).toBe("token");
+    expect(env.OLLAMA_BACKEND_URL).toBe("http://127.0.0.1:11434");
+    expect(env[PROXY_STATUS_ENV]).toBeTruthy();
+  });
+
+  // The helper above only proves the map and the filter agree. Drive the real
+  // spawn too: re-inlining the env object at the call site is the exact shape
+  // #10240 reported, and it would leave every assertion above green.
+  function startProxyCapturingSpawn(): { spawned: SpawnAdapterOptions | null; stderr: string } {
+    const home = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "nemoclaw-proxy-spawn-"));
+    tempHomes.push(home);
+    vi.stubEnv("HOME", home);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    delete require.cache[LIFECYCLE_DIST];
+    delete require.cache[PROXY_DIST];
+    const lifecycle = require(LIFECYCLE_DIST) as typeof import("../local-adapter-lifecycle");
+    const runner = require(RUNNER_DIST);
+    const originalSpawn = lifecycle.spawnDetachedNodeAdapter;
+    const originalRunCapture = runner.runCapture;
+    let spawned: SpawnAdapterOptions | null = null;
+
+    try {
+      // An unowned PID makes the readiness poll fail on its first attempt, so
+      // startup returns without sleeping. The spawn options are what matter.
+      lifecycle.spawnDetachedNodeAdapter = (options) => {
+        spawned = options;
+        return { pid: 0x7fff_ffff, unref() {} } as never;
+      };
+      runner.runCapture = () => "";
+      const proxy = require(PROXY_DIST) as typeof import("./proxy");
+
+      proxy.startOllamaAuthProxy("http://127.0.0.1:11434");
+    } finally {
+      lifecycle.spawnDetachedNodeAdapter = originalSpawn;
+      runner.runCapture = originalRunCapture;
+    }
+
+    return { spawned, stderr: errorSpy.mock.calls.map(([message]) => String(message)).join("\n") };
+  }
+
+  it("reaches the real spawn call, not just the helper", () => {
+    vi.stubEnv(OVERRIDE, "1");
+
+    const { spawned } = startProxyCapturingSpawn();
+
+    expect(spawned).not.toBeNull();
+    const childEnv = spawned!.buildEnv(spawned!.env);
+    expect(childEnv[OVERRIDE]).toBe("1");
+  });
+
+  // The proxy writes its own SECURITY PROBE SKIPPED warning, but the managed
+  // launch discards its stdio, so the host has to say it (#9846 owns the
+  // durable record). Without this the operator sees an ordinary success.
+  it("warns on the host that the loopback bind check was disabled", () => {
+    vi.stubEnv(OVERRIDE, "1");
+
+    const { stderr } = startProxyCapturingSpawn();
+
+    expect(stderr).toContain("SECURITY PROBE SKIPPED");
+    expect(stderr).toContain(OVERRIDE);
+    expect(stderr).toContain("selected backend");
+    expect(stderr).toContain("bypasses");
+  });
+
+  it("prints no skip warning when the override is absent", () => {
+    vi.stubEnv(OVERRIDE, undefined);
+
+    const { spawned, stderr } = startProxyCapturingSpawn();
+
+    expect(spawned!.env).not.toHaveProperty(OVERRIDE);
+    expect(stderr).not.toContain("SECURITY PROBE SKIPPED");
   });
 });
