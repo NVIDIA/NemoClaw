@@ -353,9 +353,14 @@ jobs:
           fi
           if ! node -e '
             const expected = {
-              protocol: 1,
+              protocol: 2,
               ok: false,
+              count: 0,
+              tools: [],
+              truncated: false,
               detail: "tool discovery received invalid runtime arguments",
+              failedStage: "preflight",
+              failureClass: "precondition",
             };
             let result;
             try {
@@ -369,9 +374,16 @@ jobs:
                 : undefined;
             if (
               !record ||
+              Object.keys(record).length !== Object.keys(expected).length ||
               record.protocol !== expected.protocol ||
               record.ok !== expected.ok ||
-              record.detail !== expected.detail
+              record.count !== expected.count ||
+              !Array.isArray(record.tools) ||
+              record.tools.length !== 0 ||
+              record.truncated !== expected.truncated ||
+              record.detail !== expected.detail ||
+              record.failedStage !== expected.failedStage ||
+              record.failureClass !== expected.failureClass
             ) {
               process.exit(1);
             }
@@ -741,9 +753,14 @@ jobs:
           fi
           if ! node -e '
             const expected = {
-              protocol: 1,
+              protocol: 2,
               ok: false,
+              count: 0,
+              tools: [],
+              truncated: false,
               detail: "tool discovery received invalid runtime arguments",
+              failedStage: "preflight",
+              failureClass: "precondition",
             };
             let result;
             try {
@@ -757,9 +774,16 @@ jobs:
                 : undefined;
             if (
               !record ||
+              Object.keys(record).length !== Object.keys(expected).length ||
               record.protocol !== expected.protocol ||
               record.ok !== expected.ok ||
-              record.detail !== expected.detail
+              record.count !== expected.count ||
+              !Array.isArray(record.tools) ||
+              record.tools.length !== 0 ||
+              record.truncated !== expected.truncated ||
+              record.detail !== expected.detail ||
+              record.failedStage !== expected.failedStage ||
+              record.failureClass !== expected.failureClass
             ) {
               process.exit(1);
             }

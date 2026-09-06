@@ -89,6 +89,14 @@ policies.getPresetContentGatewayState = () => activePolicyState;
 const executedSandboxCommands = [];
 let providerCredentialObservation = "v11";
 let credentialObservationCount = 0;
+let toolDiscoveryStatus = 0;
+let toolDiscoveryResult = {
+  protocol: 2,
+  ok: true,
+  count: 2,
+  tools: ["alpha", "zeta"],
+  truncated: false,
+};
 processRecovery.executeSandboxExecCommand = () => {
   credentialObservationCount += 1;
   return {
@@ -119,14 +127,8 @@ processRecovery.executeSandboxCommand = (sandboxName, command) => {
     const resultMarker = command.match(/__NEMOCLAW_SANDBOX_EXEC_STARTED___[0-9a-f]{32}/)?.[0];
     if (!resultMarker) throw new Error("tool discovery result marker missing");
     return {
-      status: 0,
-      stdout: resultMarker + "\n" + JSON.stringify({
-        protocol: 1,
-        ok: true,
-        count: 2,
-        tools: ["alpha", "zeta"],
-        truncated: false,
-      }),
+      status: toolDiscoveryStatus,
+      stdout: resultMarker + "\n" + JSON.stringify(toolDiscoveryResult),
       stderr: "",
     };
   }
@@ -793,7 +795,13 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     const payload = JSON.parse(stdout) as {
       status: {
         provider: { credentialResolution?: unknown };
-        toolDiscovery: { ok: boolean; count: number; tools: string[]; truncated: boolean };
+        toolDiscovery: {
+          ok: boolean;
+          count: number;
+          tools: string[];
+          truncated: boolean;
+          commandStatus: number | null;
+        };
       };
       probed: boolean;
       discovered: boolean;
@@ -806,7 +814,67 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
       count: 2,
       tools: ["alpha", "zeta"],
       truncated: false,
+      commandStatus: 0,
     });
+  });
+
+  it("exits nonzero when a zero-exit runtime reports denied authentication (#10944)", () => {
+    const home = createTempHome("nemoclaw-mcp-tools-auth-failure-");
+    const { stdout } = runHarness(
+      home,
+      String.raw`
+  toolDiscoveryResult = {
+    protocol: 2,
+    ok: false,
+    count: 0,
+    tools: [],
+    truncated: false,
+    detail: "MCP endpoint rejected the request (HTTP 401)",
+    failedStage: "initialization",
+    failureClass: "authentication",
+  };
+  await bridge.dispatchMcpBridgeCommand("alpha", ["status", "github", "--tools", "--json"]);
+  const observedExitCode = process.exitCode ?? 0;
+  process.exitCode = 0;
+  writeHarnessResult(JSON.stringify({
+    observedExitCode,
+    status: JSON.parse(logLines.join("\n")),
+  }));
+`,
+    );
+    const payload = JSON.parse(stdout) as {
+      observedExitCode: number;
+      status: { toolDiscovery: Record<string, unknown> };
+    };
+    expect(payload.observedExitCode).toBe(1);
+    expect(payload.status.toolDiscovery).toEqual({
+      ok: false,
+      count: 0,
+      tools: [],
+      truncated: false,
+      commandStatus: 0,
+      detail: "MCP endpoint rejected the request (HTTP 401)",
+      failedStage: "initialization",
+      failureClass: "authentication",
+    });
+  });
+
+  it("does not accept a successful payload from a nonzero runtime (#10944)", () => {
+    const home = createTempHome("nemoclaw-mcp-tools-runtime-failure-");
+    const { stdout } = runHarness(
+      home,
+      String.raw`
+  toolDiscoveryStatus = 7;
+  await bridge.dispatchMcpBridgeCommand("alpha", ["status", "github", "--tools"]);
+  const observedExitCode = process.exitCode ?? 0;
+  process.exitCode = 0;
+  writeHarnessResult(JSON.stringify({ observedExitCode, rendered: logLines }));
+`,
+    );
+    const payload = JSON.parse(stdout) as { observedExitCode: number; rendered: string[] };
+    expect(payload.observedExitCode).toBe(1);
+    expect(payload.rendered.join("\n")).toContain("runtime exit 7");
+    expect(payload.rendered.join("\n")).toContain("FAILED");
   });
 
   it("skips authenticated discovery until provider readiness is verified (#6901)", () => {
@@ -870,7 +938,10 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
           count: 0,
           tools: [],
           truncated: false,
+          commandStatus: null,
           detail: "tool discovery skipped: the credential provider is not attached to the sandbox",
+          failedStage: "preflight",
+          failureClass: "precondition",
         },
         discoveryCommands: 0,
       },
@@ -881,7 +952,10 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
           count: 0,
           tools: [],
           truncated: false,
+          commandStatus: null,
           detail: "tool discovery skipped: provider attachment could not be inspected",
+          failedStage: "preflight",
+          failureClass: "precondition",
         },
         discoveryCommands: 0,
       },
@@ -892,7 +966,10 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
           count: 0,
           tools: [],
           truncated: false,
+          commandStatus: null,
           detail: "tool discovery skipped: provider attachment could not be inspected",
+          failedStage: "preflight",
+          failureClass: "precondition",
         },
         discoveryCommands: 0,
       },
@@ -903,8 +980,11 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
           count: 0,
           tools: [],
           truncated: false,
+          commandStatus: null,
           detail:
             "tool discovery skipped: the OpenShell provider is absent or does not match the recorded credential binding",
+          failedStage: "preflight",
+          failureClass: "precondition",
         },
         discoveryCommands: 0,
       },

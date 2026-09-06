@@ -96,9 +96,14 @@ export function renderMcpBridgeStatus(
     }
     const discovery = status.toolDiscovery;
     if (discovery) {
+      const failureContext = discovery.ok
+        ? ""
+        : ` [${discovery.failureClass ?? "runtime"}, ${discovery.failedStage ?? "runtime"}, runtime exit ${discovery.commandStatus ?? "unavailable"}]`;
       console.log(
         `    tool discovery: ${
-          discovery.ok ? "successful" : `FAILED${discovery.detail ? ` (${discovery.detail})` : ""}`
+          discovery.ok
+            ? "successful"
+            : `FAILED${failureContext}${discovery.detail ? ` (${discovery.detail})` : ""}`
         }`,
       );
       console.log(

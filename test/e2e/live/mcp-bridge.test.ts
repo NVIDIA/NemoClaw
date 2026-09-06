@@ -82,6 +82,7 @@ import {
   assertAuthenticatedMcpDiscoveryWithOneRestart,
   assertAuthenticatedMcpRediscovery,
   assertAuthenticatedMcpToolDiscovery,
+  captureHermesMcpVerificationVersions,
   runHermesInitialMcpReadiness,
 } from "./mcp-bridge-tool-discovery.ts";
 import { assertTrustedPrivateMcpRebindingDenied } from "./mcp-bridge-trusted-private.ts";
@@ -161,6 +162,7 @@ async function onboardAgent(
   expectExitZero(result, `onboard ${options.agent} sandbox for MCP bridge`);
   expectManagedImageQualificationReceipt(options.sandboxName, options.agent);
 }
+
 async function assertSecretAbsentFromSandbox(
   sandbox: SandboxClient,
   sandboxName: string,
@@ -863,7 +865,6 @@ test("mcp-bridge", {
     expectedSecret: HOST_SECRET,
     label: "mcporter authenticated MCP tool discovery",
   });
-  expect(fakeMcp.requests.some((request) => request.auth === `Bearer ${HOST_SECRET}`)).toBe(true);
   expect(fakeMcp.requests.every((request) => !request.auth.includes("openshell:resolve:env"))).toBe(
     true,
   );
@@ -1159,14 +1160,22 @@ mcpBridgeShardTest("hermes")(
             );
           },
         }),
-      inspectToolStatus: () =>
-        assertAuthenticatedMcpToolDiscovery(host, fakeMcp, {
+      inspectToolStatus: async () => {
+        await captureHermesMcpVerificationVersions(
+          host,
+          sandbox,
+          HERMES_SANDBOX_NAME,
+          artifacts,
+        );
+        await assertAuthenticatedMcpToolDiscovery(host, fakeMcp, {
           artifacts,
           sandboxName: HERMES_SANDBOX_NAME,
           artifactPrefix: "hermes",
+          deniedSecret: ROTATED_HOST_SECRET,
           hostSecret: HOST_SECRET,
           progress,
-        }),
+        });
+      },
       prepareModelTurn: async () => {
         await assertBridgeInfrastructure(host, sandbox, {
           sandboxName: HERMES_SANDBOX_NAME,

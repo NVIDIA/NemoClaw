@@ -289,7 +289,7 @@ FLAGS
   --json      Emit MCP server status as JSON
   --probe     Request the wire-level credential-resolution probe for every server
   --no-probe  Skip the probe (it defaults on only when a single server is named)
-  --tools     Discover names advertised by one named MCP server`);
+  --tools     Discover names advertised by one named MCP server; exit nonzero on failure`);
       return;
     case "restart":
       console.log(`USAGE
@@ -375,6 +375,7 @@ export async function dispatchMcpBridgeCommand(
             )}\n`,
           );
         } else renderMcpBridgeStatus(sandboxName, statuses, agent);
+        if (tools && statuses[0]?.toolDiscovery?.ok !== true) process.exitCode = 1;
         return;
       }
       case "restart": {
