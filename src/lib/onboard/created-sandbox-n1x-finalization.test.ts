@@ -27,7 +27,7 @@ import {
 const sandboxName = "n1x-preview";
 const model = "nvidia/Qwen3.6-35B-A3B-NVFP4";
 const provider = "vllm-local";
-const env = { NEMOCLAW_PROVIDER: "install-vllm" };
+const previewEnv = { NEMOCLAW_PROVIDER: "install-vllm" };
 const inferenceSelection = {
   provider,
   model,
@@ -84,7 +84,9 @@ async function createIntentThroughOnboardFlow(input: {
   resume: boolean;
   platform: Gpu["platform"];
   allowDeferredN1xManagedVllm?: boolean;
-}): Promise<{ admitted: boolean; createIntent: CreateIntent }> {
+  environment?: NodeJS.ProcessEnv;
+}): Promise<{ accepted: boolean; createIntent: CreateIntent }> {
+  const environment = input.environment ?? previewEnv;
   const session = createSession({
     provider: input.resume ? provider : null,
     model: input.resume ? model : null,
@@ -101,7 +103,7 @@ async function createIntentThroughOnboardFlow(input: {
     gpuRequested: true,
     noGpu: false,
     allowDeferredN1xManagedVllm: input.allowDeferredN1xManagedVllm,
-    env,
+    env: environment,
     platform: "darwin",
     recordedGpuPassthroughBeforePreflight: false,
     ensureResumePreflightDashboardPortAvailable: vi.fn(),
@@ -151,7 +153,7 @@ async function createIntentThroughOnboardFlow(input: {
       liveExists: false,
     }),
     endpointProvenance,
-    env,
+    env: environment,
     constants: {
       hermesProviderName: "hermes",
       hermesApiKeyAuthMethod: "api_key",
@@ -168,12 +170,12 @@ async function createIntentThroughOnboardFlow(input: {
     recreateSandbox: () => false,
     controlUiPort: null,
     rootDir: "/repo",
-    env,
+    env: environment,
     deps: sandboxHarness.deps as never,
   });
   await sandboxPhase.run(providerResult.context);
   return {
-    admitted: preflight.context.deferredN1xOnboardingAdmitted === true,
+    accepted: preflight.context.deferredN1xManagedVllmPreviewAccepted === true,
     createIntent: (
       sandboxHarness.calls.createSandbox.mock.calls[0] as unknown[]
     )[15] as CreateIntent,
@@ -285,22 +287,24 @@ async function completeRegistration(createIntent: CreateIntent): Promise<{
 }
 
 it.each([
-  ["fresh N1x", false, "n1x", undefined, true],
-  ["resumed N1x", true, "n1x", undefined, true],
-  ["DGX Spark", false, "spark", undefined, false],
-  ["explicit rebuild denial", false, "n1x", false, false],
+  ["fresh N1x", false, "n1x", undefined, previewEnv, true],
+  ["resumed N1x", true, "n1x", true, {}, true],
+  ["DGX Spark", false, "spark", undefined, previewEnv, false],
+  ["explicit rebuild denial", false, "n1x", false, previewEnv, false],
+  ["ordinary N1x opt-out", false, "n1x", undefined, { NEMOCLAW_NO_EXPRESS: "1" }, false],
 ] as const)(
-  "carries %s admission through production final registration (#10959)",
-  async (_case, resume, platform, allow, expected) => {
+  "carries %s preview acceptance through final registration (#10959)",
+  async (_case, resume, platform, allow, environment, expected) => {
     const flow = await createIntentThroughOnboardFlow({
       resume,
       platform,
+      environment,
       ...(allow === undefined ? {} : { allowDeferredN1xManagedVllm: allow }),
     });
     const registration = await completeRegistration(flow.createIntent);
 
     expect([
-      flow.admitted,
+      flow.accepted,
       flow.createIntent.deferredN1xManagedVllmPreviewIntent,
       registration.input.deferredN1xManagedVllmPreviewIntent,
       registration.registered.deferredN1xManagedVllmAccepted,

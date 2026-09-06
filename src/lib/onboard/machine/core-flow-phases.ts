@@ -335,7 +335,7 @@ export function createSandboxOnboardFlowPhase<
       apfInterceptorRequested: options.apfInterceptorRequested === true,
       authoritativeResumeConfig: options.authoritativeResumeConfig,
       deferredN1xManagedVllmPreviewIntent:
-        context.deferredN1xOnboardingAdmitted === true &&
+        context.deferredN1xManagedVllmPreviewAccepted === true &&
         isN1xManagedVllmProviderModel(context.provider, context.model),
       deferSandboxEffectsUntilIdentityVerification: options.apfInterceptorRequested === true,
 

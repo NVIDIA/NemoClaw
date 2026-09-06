@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Session } from "../../../state/onboard-session";
+import { isN1xManagedVllmProviderModel } from "../../../domain/sandbox/n1x-managed-vllm-rebuild";
 import { hasExplicitDeferredN1xOnboardingIntent } from "../../../readiness/onboard-admission";
 import { isN1xOnboardingProviderKey } from "../../inference-providers/provider-selection-keys";
 import { withPreflightTrace } from "../../tracing";
@@ -99,7 +100,7 @@ export interface PreflightStateOptions<
 export interface PreflightStateResult<Gpu, Config extends PreflightSandboxGpuConfig> {
   gpu: Gpu;
   sandboxGpuConfig: Config;
-  deferredN1xOnboardingAdmitted: boolean;
+  deferredN1xManagedVllmPreviewAccepted: boolean;
   resumePreflight: boolean;
   resumeHasResolvedGpuIntent: boolean;
   requestedGpuPassthrough: boolean;
@@ -168,6 +169,11 @@ export async function handlePreflightState<
   const allowDeferredN1xOnboarding =
     allowDeferredN1xManagedVllm ??
     (recordedProviderAllowsDeferredN1x || hasExplicitDeferredN1xOnboardingIntent(env));
+  const deferredN1xManagedVllmPreviewIntent =
+    allowDeferredN1xManagedVllm !== false &&
+    (String(env.NEMOCLAW_PROVIDER ?? "").trim() === "install-vllm" ||
+      (allowDeferredN1xManagedVllm === true &&
+        isN1xManagedVllmProviderModel(session?.provider, session?.model)));
 
   let gpu: Gpu;
   if (resumePreflight) {
@@ -252,9 +258,9 @@ export async function handlePreflightState<
   return {
     gpu,
     sandboxGpuConfig,
-    deferredN1xOnboardingAdmitted:
+    deferredN1xManagedVllmPreviewAccepted:
       (gpu as { platform?: unknown } | null)?.platform === "n1x" &&
-      allowDeferredN1xOnboarding === true,
+      deferredN1xManagedVllmPreviewIntent,
     resumePreflight,
     resumeHasResolvedGpuIntent,
     requestedGpuPassthrough: gpuRequested,
