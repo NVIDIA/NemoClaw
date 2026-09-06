@@ -37,10 +37,16 @@ function n1xProofHarness(proofPassed: boolean, requestedProvider: string | null)
       return "selected";
     },
   );
+  const runtimeProvider = makeDeps().getRuntimeProvider();
+  const getRuntimeProvider = vi.fn(() => runtimeProvider);
   return {
     gpu: { platform: "n1x", wslDockerDesktopGpuProofPassed: proofPassed } as never,
+    getRuntimeProvider,
+    handleLlamaCppSelection,
     installManagedLlamaCpp,
     resolveManagedLlamaCppSelection,
+    runtimeProvider,
+    selection,
     setupNim: createSetupNim(
       makeDeps({
         isNonInteractive: () => true,
@@ -48,6 +54,7 @@ function n1xProofHarness(proofPassed: boolean, requestedProvider: string | null)
         resolveManagedLlamaCppSelection,
         installManagedLlamaCpp,
         handleLlamaCppSelection,
+        getRuntimeProvider,
       }),
     ),
   };
@@ -135,11 +142,17 @@ describe("managed llama.cpp profile onboarding", () => {
     expect(resolveManagedLlamaCppSelection).toHaveBeenLastCalledWith(
       expect.objectContaining({ NEMOCLAW_LLAMACPP_RECIPE: "llama-cpp.alternate.v1" }),
       expect.objectContaining({ platform: "spark" }),
+      undefined,
+      undefined,
+      { runtimeProviderId: "docker" },
     );
     expect(resolveManagedLlamaCppSelection).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({ NEMOCLAW_LLAMACPP_RECIPE: "" }),
       expect.objectContaining({ platform: "spark" }),
+      undefined,
+      undefined,
+      { runtimeProviderId: "docker" },
     );
     expect(installManagedLlamaCpp).toHaveBeenCalledWith(
       alternate,
@@ -154,11 +167,36 @@ describe("managed llama.cpp profile onboarding", () => {
       provider: "llama-cpp-local",
       model: "qwen3.6-35b-a3b",
     });
-    expect(harness.installManagedLlamaCpp).toHaveBeenCalledOnce();
-    expect(harness.resolveManagedLlamaCppSelection).toHaveBeenCalledWith(
+    expect(harness.resolveManagedLlamaCppSelection).toHaveBeenCalledTimes(2);
+    expect(harness.resolveManagedLlamaCppSelection).toHaveBeenNthCalledWith(
+      1,
       undefined,
       expect.objectContaining({ wslDockerDesktopGpuProofPassed: true }),
+      undefined,
+      undefined,
+      { runtimeProviderId: "docker" },
     );
+    expect(harness.resolveManagedLlamaCppSelection).toHaveBeenNthCalledWith(
+      2,
+      undefined,
+      harness.gpu,
+      undefined,
+      undefined,
+      { runtimeProviderId: "docker" },
+    );
+    expect(harness.installManagedLlamaCpp).toHaveBeenCalledWith(
+      harness.selection,
+      expect.objectContaining({
+        sandboxName: "n1x-agent",
+        runtimeProvider: harness.runtimeProvider,
+      }),
+    );
+    expect(harness.handleLlamaCppSelection).toHaveBeenCalledWith(
+      expect.any(Object),
+      "qwen3.6-35b-a3b",
+      null,
+    );
+    expect(harness.getRuntimeProvider).toHaveBeenCalledTimes(2);
   });
 
   it("rejects managed N1x selection when Docker Desktop GPU proof fails", async () => {
@@ -171,6 +209,9 @@ describe("managed llama.cpp profile onboarding", () => {
     expect(harness.resolveManagedLlamaCppSelection).toHaveBeenCalledWith(
       undefined,
       expect.objectContaining({ wslDockerDesktopGpuProofPassed: false }),
+      undefined,
+      undefined,
+      { runtimeProviderId: "docker" },
     );
   });
 

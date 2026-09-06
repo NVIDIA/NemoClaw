@@ -36,6 +36,14 @@ type Workflow = {
 const WORKFLOW_PATH = ".github/workflows/pr-self-hosted.yaml";
 const CANDIDATE_SHA = "a".repeat(40);
 const BASE_SHA = "b".repeat(40);
+const REQUIRED_RUNTIME_AUTHORITY_PATHS = [
+  "src/lib/inference/nim.ts",
+  "src/lib/inference/platform-identity/n1x.ts",
+  "src/lib/onboard/provider-selection.ts",
+  "src/lib/onboard/runtime-provider/configured-runtime.ts",
+  "src/lib/onboard/runtime-provider/current.ts",
+  "src/lib/onboard/setup-nim-flow.ts",
+] as const;
 
 function workflow(): Workflow {
   return YAML.parse(readFileSync(WORKFLOW_PATH, "utf8")) as Workflow;
@@ -127,6 +135,13 @@ fi
 describe("generic NVIDIA GPU PR selection", () => {
   it.each(declaredSelectionPaths())(
     "selects the generic NVIDIA GPU E2E job when %s can change installer readiness",
+    (changedFile) => {
+      expect(selectGenericGpuLane([changedFile])).toBe(`base_sha=${BASE_SHA}\nselected=true`);
+    },
+  );
+
+  it.each(REQUIRED_RUNTIME_AUTHORITY_PATHS)(
+    "independently requires the generic GPU E2E when runtime authority owner %s changes",
     (changedFile) => {
       expect(selectGenericGpuLane([changedFile])).toBe(`base_sha=${BASE_SHA}\nselected=true`);
     },

@@ -34,10 +34,10 @@ export interface ManagedLlamaCppSelectionChoice {
 }
 
 const N1X_WSL_RECIPE_ID = "llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1";
-const RUNTIME_PROVIDER_ENV = "NEMOCLAW_GATEWAY_RUNTIME";
 
 type ManagedLlamaCppSelectionOptions = {
   readonly dockerContextIsDefault?: typeof dockerContextIsDefaultFromBuild;
+  readonly runtimeProviderId?: string;
 };
 
 function n1xWslDockerLocalityFailure(
@@ -50,7 +50,7 @@ function n1xWslDockerLocalityFailure(
 }
 
 function dockerQualifiedPresetRuntimeFailure(
-  env: NodeJS.ProcessEnv,
+  runtimeProviderId: string | undefined,
   selection: ResolvedLlamaCppInferenceSelection,
 ): string | null {
   const requiresDocker = selection.preset.spec.requirements.all.some(
@@ -59,11 +59,9 @@ function dockerQualifiedPresetRuntimeFailure(
       requirement.readiness.kind === "observation" &&
       requirement.readiness.id === "host.docker.runtime",
   );
-  const configuredProvider = String(env[RUNTIME_PROVIDER_ENV] ?? "")
-    .trim()
-    .toLowerCase();
-  return requiresDocker && configuredProvider && configuredProvider !== "docker"
-    ? `Managed llama.cpp preset ${selection.preset.metadata.id} requires the Docker runtime provider selected by its readiness qualification.`
+  const resolvedProvider = String(runtimeProviderId ?? "").trim().toLowerCase();
+  return requiresDocker && resolvedProvider && resolvedProvider !== "docker"
+    ? `Managed llama.cpp preset ${selection.preset.metadata.id} requires the Docker runtime provider selected by its readiness qualification; the resolved runtime provider is ${resolvedProvider}.`
     : null;
 }
 
@@ -206,7 +204,10 @@ export function resolveManagedLlamaCppSelection(
       };
     }
     const selection = highestPriorityChoices[0]!.selection;
-    const runtimeProviderFailure = dockerQualifiedPresetRuntimeFailure(env, selection);
+    const runtimeProviderFailure = dockerQualifiedPresetRuntimeFailure(
+      options.runtimeProviderId,
+      selection,
+    );
     if (runtimeProviderFailure) return { kind: "rejected", reason: runtimeProviderFailure };
     if (selection.recipe.metadata.id === N1X_WSL_RECIPE_ID) {
       const localityFailure = n1xWslDockerLocalityFailure(env, options);
@@ -259,7 +260,10 @@ export function resolveManagedLlamaCppSelection(
   const resolution = selected[0]!.resolution;
   const validated = validatedLlamaCppSelection(resolution, recipeId);
   if (validated.kind === "rejected") return validated;
-  const runtimeProviderFailure = dockerQualifiedPresetRuntimeFailure(env, validated.selection);
+  const runtimeProviderFailure = dockerQualifiedPresetRuntimeFailure(
+    options.runtimeProviderId,
+    validated.selection,
+  );
   return runtimeProviderFailure ? { kind: "rejected", reason: runtimeProviderFailure } : validated;
 }
 

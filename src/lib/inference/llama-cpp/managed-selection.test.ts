@@ -23,7 +23,10 @@ const MUSE_RECIPE_ID = "llama-cpp.muse-glimmer-30b.spark-single.v1";
 const MUSE_PRESET_ID = "llama-cpp.dgx-spark-gb10.single.muse-glimmer-30b";
 const N1X_WSL_RECIPE_ID = "llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1";
 const N1X_WSL_PRESET_ID = "llama-cpp.n1x-wsl-arm64.single.qwen3-6-35b-a3b";
-const LOCAL_DOCKER_SELECTION = { dockerContextIsDefault: () => true } as const;
+const LOCAL_DOCKER_SELECTION = {
+  dockerContextIsDefault: () => true,
+  runtimeProviderId: "docker",
+} as const;
 
 function readinessReport(
   preset: ManagedInferenceServingPreset,
@@ -295,15 +298,28 @@ describe("managed llama.cpp selection", () => {
 
     expect(
       resolveManagedLlamaCppSelection(
-        { ...env, NEMOCLAW_GATEWAY_RUNTIME: "podman" },
+        env,
         catalog,
         report,
-        LOCAL_DOCKER_SELECTION,
+        { ...LOCAL_DOCKER_SELECTION, runtimeProviderId: "podman" },
       ),
     ).toEqual({
       kind: "rejected",
       reason: expect.stringContaining("requires the Docker runtime provider"),
     });
+  });
+
+  it("uses resolved provider authority instead of a conflicting raw environment value", () => {
+    const { catalog, report } = fixture(N1X_WSL_PRESET_ID);
+
+    expect(
+      resolveManagedLlamaCppSelection(
+        { NEMOCLAW_GATEWAY_RUNTIME: "podman" },
+        catalog,
+        report,
+        LOCAL_DOCKER_SELECTION,
+      ),
+    ).toMatchObject({ kind: "selected" });
   });
 
   it("rejects an explicit remote Docker context for N1x WSL", () => {

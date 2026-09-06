@@ -170,10 +170,7 @@ export interface SetupNimFlowDeps {
   exitProcess(code: number): never;
   abortNonInteractive(message: string): never;
   localModelProfileIntegration?: ReturnType<typeof createLocalModelProfileIntegration>;
-  resolveManagedLlamaCppSelection?(
-    env?: NodeJS.ProcessEnv,
-    gpu?: SetupNimGpu,
-  ): ManagedLlamaCppSelectionResult;
+  resolveManagedLlamaCppSelection?: typeof resolveManagedLlamaCppSelectionForGpu;
   listManagedLlamaCppSelectionChoices?(): readonly ManagedLlamaCppSelectionChoice[];
   installManagedLlamaCpp?: typeof installManagedLlamaCpp;
   handleRemoteProviderSelection(
@@ -434,11 +431,16 @@ function resolveManagedLlamaCppSafely(
   deps: SetupNimFlowDeps,
   env?: NodeJS.ProcessEnv,
   gpu: SetupNimGpu = null,
+  runtimeProviderId?: string,
 ): ManagedLlamaCppSelectionResult {
   try {
     return deps.resolveManagedLlamaCppSelection
-      ? deps.resolveManagedLlamaCppSelection(env, gpu)
-      : resolveManagedLlamaCppSelectionForGpu(env, gpu);
+      ? deps.resolveManagedLlamaCppSelection(env, gpu, undefined, undefined, {
+          runtimeProviderId,
+        })
+      : resolveManagedLlamaCppSelectionForGpu(env, gpu, undefined, undefined, {
+          runtimeProviderId,
+        });
   } catch (error) {
     return {
       kind: "rejected",
@@ -522,6 +524,7 @@ function prepareManagedLlamaCppMenu(input: {
   const platform = gpu?.platform;
   const candidate =
     platform === "spark" || platform === "n1x" || requestedProvider === "install-llama-cpp";
+  const runtimeProviderId = candidate ? deps.getRuntimeProvider().identity.id : undefined;
   const resolution = candidate
     ? resolveManagedLlamaCppSafely(
         deps,
@@ -529,8 +532,14 @@ function prepareManagedLlamaCppMenu(input: {
           ? { ...process.env, [LLAMA_CPP_RECIPE_ENV]: "" }
           : undefined,
         gpu,
+        runtimeProviderId,
       )
     : null;
+  if (platform === "n1x" && resolution?.kind === "rejected") {
+    deps.note(
+      `  Managed llama.cpp is unavailable on this N1x host: ${resolution.reason} Fix the reported readiness or runtime-provider requirement, then rerun onboarding.`,
+    );
+  }
   return {
     resolution,
     options: buildManagedLlamaCppOptions({ deps, candidate, requestedProvider, resolution }),
@@ -555,13 +564,20 @@ function resolveSelectedManagedLlamaCpp(input: {
   gpu: SetupNimGpu;
   selectedFromInteractiveMenu: boolean;
   selectedRecipeId: string | undefined;
-}): ManagedLlamaCppSelectionResult {
+}): {
+  resolution: ManagedLlamaCppSelectionResult;
+  runtimeProvider: RuntimeProviderBundle;
+} {
   const { deps, gpu, selectedFromInteractiveMenu, selectedRecipeId } = input;
   const env =
     selectedFromInteractiveMenu && selectedRecipeId
       ? { ...process.env, [LLAMA_CPP_RECIPE_ENV]: selectedRecipeId }
       : undefined;
-  return resolveManagedLlamaCppSafely(deps, env, gpu);
+  const runtimeProvider = deps.getRuntimeProvider();
+  return {
+    resolution: resolveManagedLlamaCppSafely(deps, env, gpu, runtimeProvider.identity.id),
+    runtimeProvider,
+  };
 }
 
 async function runDedicatedLocalModelProfile(input: {
@@ -1159,7 +1175,7 @@ export function createSetupNim(
           // inputs immediately before any install effect so a delayed interactive
           // choice cannot activate against stale host state.
           const selectedRecipeId = selected.managedLlamaCppRecipeId;
-          const resolved = resolveSelectedManagedLlamaCpp({
+          const { resolution: resolved, runtimeProvider } = resolveSelectedManagedLlamaCpp({
             deps,
             gpu,
             selectedFromInteractiveMenu,
@@ -1183,7 +1199,7 @@ export function createSetupNim(
             {
               sandboxName,
               gatewayPort: deps.getGatewayPort(),
-              runtimeProvider: deps.getRuntimeProvider(),
+              runtimeProvider,
               revalidateSandboxIdentity: state.revalidateSandboxIdentity,
             },
           );
