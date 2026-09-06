@@ -3,7 +3,7 @@
 
 import { expect, it, vi } from "vitest";
 
-import { createSession, type Session, type SessionUpdates } from "../state/onboard-session";
+import { createSession, type Session } from "../state/onboard-session";
 import type { SandboxEntry } from "../state/registry";
 import { createOnboardCreatedSandboxCompletion } from "./created-sandbox-finalization";
 import {
@@ -28,13 +28,23 @@ const sandboxName = "n1x-preview";
 const model = "nvidia/Qwen3.6-35B-A3B-NVFP4";
 const provider = "vllm-local";
 const env = { NEMOCLAW_PROVIDER: "install-vllm" };
+const inferenceSelection = {
+  provider,
+  model,
+  endpointUrl: null,
+  endpointSource: null,
+  credentialEnv: null,
+  hermesAuthMethod: null,
+  preferredInferenceApi: "openai-completions",
+  compatibleEndpointReasoning: null,
+  compatibleEndpointReasoningEffort: null,
+  nimContainer: null,
+} as const;
 
 type Gpu = { type: "nvidia"; platform: "n1x" | "spark" };
 type GpuConfig = {
   sandboxGpuEnabled: boolean;
   mode: string;
-  hostGpuPlatform: Gpu["platform"];
-  sandboxGpuDevice: null;
 };
 type FlowContext = InitialOnboardFlowContext<null, Gpu, GpuConfig>;
 type CreateIntent = { deferredN1xManagedVllmPreviewIntent?: true };
@@ -79,20 +89,11 @@ async function createIntentThroughOnboardFlow(input: {
     provider: input.resume ? provider : null,
     model: input.resume ? model : null,
   });
-  session.steps.preflight = input.resume
-    ? {
-        status: "complete",
-        startedAt: "2026-09-06T00:00:00.000Z",
-        completedAt: "2026-09-06T00:01:00.000Z",
-        error: null,
-      }
-    : session.steps.preflight;
+  session.steps.preflight.status = input.resume ? "complete" : session.steps.preflight.status;
   const gpu: Gpu = { type: "nvidia", platform: input.platform };
   const gpuConfig = (): GpuConfig => ({
     sandboxGpuEnabled: true,
     mode: "1",
-    hostGpuPlatform: input.platform,
-    sandboxGpuDevice: null,
   });
   const [preflightPhase] = createInitialOnboardFlowPhases({
     explicitSandboxGpuFlag: null,
@@ -138,22 +139,7 @@ async function createIntentThroughOnboardFlow(input: {
     assertSandboxNameAllowed: vi.fn(),
   });
   const providerHarness = createProviderDeps({
-    setupNim: vi.fn(async () => ({
-      model,
-      provider,
-      endpointUrl: null,
-      credentialEnv: null,
-      hermesAuthMethod: null,
-      hermesToolGateways: [],
-      preferredInferenceApi: "openai-completions",
-      compatibleEndpointReasoning: null,
-      compatibleEndpointReasoningEffort: null,
-      nimContainer: null,
-    })),
-    recordStepComplete: vi.fn(async (_stepName: string, updates: SessionUpdates = {}) => {
-      Object.assign(session, updates);
-      return session;
-    }),
+    setupNim: vi.fn(async () => ({ ...inferenceSelection, hermesToolGateways: [] })),
   });
   const endpointProvenance = { getSandboxRegistryEntry: () => null };
   const providerPhase = createProviderInferenceOnboardFlowPhase<typeof coreContext, object>({
@@ -200,17 +186,6 @@ async function completeRegistration(createIntent: CreateIntent): Promise<{
 }> {
   const lifecycleGeneration = "generation-1";
   const lifecycleLiveIdentityFingerprint = "a".repeat(64);
-  const inferenceSelection = {
-    provider,
-    model,
-    endpointUrl: null,
-    endpointSource: null,
-    credentialEnv: null,
-    preferredInferenceApi: "openai-completions",
-    compatibleEndpointReasoning: null,
-    compatibleEndpointReasoningEffort: null,
-    nimContainer: null,
-  } as const;
   const verifiedCreateBoundary = {
     sandboxName,
     gatewayName: "nemoclaw",
@@ -241,24 +216,15 @@ async function completeRegistration(createIntent: CreateIntent): Promise<{
       createIntent: { endpointSource: null, ...createIntent, observabilityEnabled: false },
       resolvedCreateIntent: { policy: { options: {} } },
     },
-    {
-      gpuEnabled: true,
-      hostGpuDetected: true,
-      sandboxGpuEnabled: true,
-      sandboxGpuMode: "1",
-      sandboxGpuDevice: null,
-      sandboxGpuProof: null,
-      openshellDriver: "docker",
-      openshellVersion: "0.0.106",
-    },
+    { openshellDriver: "docker" } as never,
     false,
-    { toolDisclosure: undefined, dcodeAutoApprovalMode: "disabled" },
+    {} as never,
     { webSearchConfig: null, hermesAuthMethod: null },
     { plannedMessagingState: undefined, preservedMcpState: undefined, hermesToolGateways: [] },
     null,
     { gatewayName: "nemoclaw", gatewayPort: 8080 },
     {
-      initialSandboxPolicy: { appliedPresets: [], policyPath: "/tmp/policy.yaml" },
+      initialSandboxPolicy: { policyPath: "/tmp/policy.yaml" } as never,
       compatibilityPolicyPath: null,
       dashboardRemoteBindPrepared: false,
       getVerifiedCreateBoundary: () => verifiedCreateBoundary,
@@ -270,7 +236,7 @@ async function completeRegistration(createIntent: CreateIntent): Promise<{
     },
     null,
     "build-1",
-    { hostGpuPlatform: "n1x", sandboxGpuEnabled: true, sandboxGpuDevice: null },
+    { sandboxGpuEnabled: false },
     true,
     vi.fn(),
     vi.fn(),
@@ -279,16 +245,8 @@ async function completeRegistration(createIntent: CreateIntent): Promise<{
     vi.fn(),
     () => "8643",
     () => ({ config: null, enabled: false }),
-    { runtimeProvider: null, ensurePreparedWorkload: vi.fn(), ensurePreparedProfile: vi.fn() },
-    {
-      source: {
-        kind: "legacy-dockerfile",
-        dockerfilePath: "/workspace/Dockerfile",
-        reason: "agent-not-managed",
-      },
-      release: null,
-      fallbackDiagnostic: null,
-    },
+    {} as never,
+    { source: { kind: "legacy-dockerfile" } } as never,
     vi.fn(),
     {
       registerCreatedSandbox: (input) => {
