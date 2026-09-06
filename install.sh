@@ -146,6 +146,7 @@ bootstrap_usage() {
   printf "                                 In curl pipes, set this on bash or export it first.\n"
   printf "                                 Example: curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=%s bash\n" "$INSTALL_TAG_EXAMPLE"
   printf "    NEMOCLAW_NON_INTERACTIVE=1   Same as --non-interactive\n"
+  printf "    NEMOCLAW_DISABLE_TELEMETRY=1 Disable installer telemetry\n"
   printf "    NEMOCLAW_DEFER_ONBOARDING=1  Same as --defer-onboarding\n"
   printf "                                 Use only with NEMOCLAW_AGENT=hermes, no registered sandboxes, no local model profile,\n"
   printf "                                 and the build, cloud, or routed NVIDIA hosted provider\n"
