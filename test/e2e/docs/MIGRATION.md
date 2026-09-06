@@ -45,11 +45,11 @@ The durable E2E system has one execution path:
   cleanup, artifacts, and secret redaction.
 - Registry-driven live targets publish a sanitized onboard trace summary
   at `e2e-artifacts/live/<target>/cloud-onboard-trace-timing-summary.json`.
-  It contains timing fields and may contain only the final sandbox
-  identity-settlement state with an optional 16-hex correlation. A matched
-  identity includes the correlation; a failed settlement can use `null` when
-  no identity was observed. Raw event attributes and the full identity
-  fingerprint remain excluded.
+  It contains timing fields and may contain only the latest sandbox
+  identity-settlement state with its own trace ID, validated event timestamp,
+  and optional 16-hex correlation. A matched identity includes the correlation;
+  a failed settlement can use `null` when no identity was observed. Raw event
+  attributes and the full identity fingerprint remain excluded.
   The workflow owns `NEMOCLAW_TRACE_DIR`, keeps raw traces under runner
   temporary storage, and deletes those raw traces before uploading artifacts.
   Older issue and migration notes may call this the Vitest artifact path; in

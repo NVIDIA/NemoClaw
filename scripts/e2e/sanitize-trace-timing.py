@@ -6,9 +6,10 @@
 
 The E2E target controls the raw trace directory, so CI must never upload it.
 This script accepts only the onboard timing shape needed by the scorecard and
-the selected trace's final sandbox identity-settlement state needed for
-lifecycle diagnosis. It writes a single allowlisted summary without raw
-attributes, events, paths, prompts, environment data, or error messages.
+the final sandbox identity-settlement state needed for lifecycle diagnosis.
+Timing and settlement keep their own trace provenance. The script writes a
+single allowlisted summary without raw attributes, events, paths, prompts,
+environment data, or error messages.
 
 Source-of-truth note: raw trace shape is produced by src/lib/trace.ts
 TraceArtifact. This reducer is intentionally narrower than that source schema:
@@ -116,6 +117,7 @@ def extract_spans(artifact: Any) -> list[dict[str, Any]]:
 
 def extract_identity_settlements(
     spans: list[dict[str, Any]],
+    trace_id: str | None,
 ) -> list[tuple[int, dict[str, Any]]] | None:
     """Return ordered settlement evidence, or reject a malformed event."""
     settlements = []
@@ -151,13 +153,17 @@ def extract_identity_settlements(
                 return None
             if not isinstance(event_time, str) or not TRACE_EVENT_TIME_RE.fullmatch(event_time):
                 return None
+            if trace_id is None:
+                return None
             settlements.append(
                 (
                     int(event_time),
                     {
                         "create_operation_state": operation_state,
+                        "event_time_unix_nano": event_time,
                         "identity_state": identity_state,
                         "returned_identity_correlation": correlation,
+                        "trace_id": trace_id,
                     },
                 )
             )
@@ -226,11 +232,6 @@ def extract_candidate(artifact: Any) -> dict[str, Any] | None:
         "phases": {name: round(phases[name], 3) for name in sorted(phases)},
         "slowest_spans": slowest_spans,
     }
-    settlements = extract_identity_settlements(spans)
-    if settlements is not None:
-        identity_settlement = select_latest_identity_settlement(settlements)
-        if identity_settlement is not None:
-            candidate["sandbox_identity_settlement"] = identity_settlement
     return candidate
 
 
@@ -255,16 +256,29 @@ def main(argv: list[str]) -> int:
     output_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
 
     candidates = []
+    identity_settlements = []
+    identity_settlements_valid = True
     for json_file in iter_json_files(source):
         artifact = load_json(json_file)
         candidate = extract_candidate(artifact)
         if candidate is not None:
             candidates.append(candidate)
+            settlements = extract_identity_settlements(
+                extract_spans(artifact), candidate["trace_id"]
+            )
+            if settlements is None:
+                identity_settlements_valid = False
+            else:
+                identity_settlements.extend(settlements)
     if not candidates:
         print("No valid NemoClaw onboard trace found; no timing summary emitted.")
         return 0
 
-    selected = max(candidates, key=lambda item: item["total_duration_ms"])
+    selected = dict(max(candidates, key=lambda item: item["total_duration_ms"]))
+    if identity_settlements_valid:
+        identity_settlement = select_latest_identity_settlement(identity_settlements)
+        if identity_settlement is not None:
+            selected["sandbox_identity_settlement"] = identity_settlement
     output = output_dir / OUTPUT_FILE
     if output.is_symlink():
         print("trusted timing summary must not be a symlink", file=sys.stderr)

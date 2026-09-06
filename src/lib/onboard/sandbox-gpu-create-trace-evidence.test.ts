@@ -91,11 +91,17 @@ type CreateResult = {
 type TraceEvidenceScenario = {
   title: string;
   completed: boolean;
+  operationState: "create_client_exited" | "ready";
   identityState: "failed" | "matched";
   expectedCorrelation: string | null;
+  expectedLifecycleEvents: readonly string[];
   createResult: CreateResult;
-  configureReadyObservation: (deps: FlowDependencies, currentNonce: () => string) => void;
-  configureSettlement: (deps: FlowDependencies, currentNonce: () => string) => void;
+  exerciseReadyCheck: (readyCheck: (() => boolean) | undefined) => void;
+  configureIdentityObservations: (
+    deps: FlowDependencies,
+    currentNonce: () => string,
+    lifecycleEvents: string[],
+  ) => void;
   expectFlow: (flow: Flow) => Promise<void>;
 };
 
@@ -148,21 +154,29 @@ const TIMED_OUT_CREATE = {
   sawProgress: true,
   readyTerminationTimedOut: true,
 } as const;
+const OBSERVE_READY = (readyCheck: (() => boolean) | undefined): void => {
+  expect(readyCheck?.()).toBe(true);
+};
+const SKIP_READY_OBSERVATION = (): void => {};
 
 const TRACE_EVIDENCE_SCENARIOS: readonly TraceEvidenceScenario[] = [
   {
     title: "matched identity",
     completed: true,
+    operationState: "ready",
     identityState: "matched",
     expectedCorrelation: SANDBOX_ID_CORRELATION,
+    expectedLifecycleEvents: ["identity-settled", "verify-created"],
     createResult: SUCCESSFUL_CREATE,
-    configureReadyObservation: (deps) => {
-      vi.mocked(deps.runCaptureOpenshell).mockReturnValueOnce("[]");
-    },
-    configureSettlement: (deps, currentNonce) => {
-      vi.mocked(deps.runCaptureOpenshell).mockImplementationOnce(() =>
-        sandboxListJson(currentNonce()),
-      );
+    exerciseReadyCheck: OBSERVE_READY,
+    configureIdentityObservations: (deps, currentNonce, lifecycleEvents) => {
+      vi.mocked(deps.runCaptureOpenshell)
+        .mockReturnValueOnce("alpha Ready")
+        .mockReturnValueOnce("[]")
+        .mockImplementationOnce(() => {
+          lifecycleEvents.push("identity-settled");
+          return sandboxListJson(currentNonce());
+        });
     },
     expectFlow: async (flow) => {
       await expect(flow).resolves.toMatchObject({ route: "none" });
@@ -171,14 +185,14 @@ const TRACE_EVIDENCE_SCENARIOS: readonly TraceEvidenceScenario[] = [
   {
     title: "failed settlement before identity publication",
     completed: false,
+    operationState: "ready",
     identityState: "failed",
     expectedCorrelation: null,
+    expectedLifecycleEvents: [],
     createResult: SUCCESSFUL_CREATE,
-    configureReadyObservation: (deps) => {
-      vi.mocked(deps.runCaptureOpenshell).mockReturnValueOnce("[]");
-    },
-    configureSettlement: (deps) => {
-      vi.mocked(deps.runCaptureOpenshell).mockReturnValue("[]");
+    exerciseReadyCheck: OBSERVE_READY,
+    configureIdentityObservations: (deps) => {
+      vi.mocked(deps.runCaptureOpenshell).mockReturnValueOnce("alpha Ready").mockReturnValue("[]");
       vi.spyOn(performance, "now")
         .mockReturnValueOnce(0)
         .mockReturnValueOnce(0)
@@ -193,17 +207,38 @@ const TRACE_EVIDENCE_SCENARIOS: readonly TraceEvidenceScenario[] = [
   {
     title: "failed Ready handoff termination with an observed identity",
     completed: false,
+    operationState: "ready",
     identityState: "failed",
     expectedCorrelation: SANDBOX_ID_CORRELATION,
+    expectedLifecycleEvents: [],
     createResult: TIMED_OUT_CREATE,
-    configureReadyObservation: (deps, currentNonce) => {
-      vi.mocked(deps.runCaptureOpenshell).mockImplementationOnce(() =>
-        sandboxListJson(currentNonce()),
-      );
+    exerciseReadyCheck: OBSERVE_READY,
+    configureIdentityObservations: (deps, currentNonce) => {
+      vi.mocked(deps.runCaptureOpenshell)
+        .mockReturnValueOnce("alpha Ready")
+        .mockImplementationOnce(() => sandboxListJson(currentNonce()));
     },
-    configureSettlement: () => {},
     expectFlow: async (flow) => {
       await expect(flow).rejects.toThrow("OpenShell create client did not exit after Ready");
+    },
+  },
+  {
+    title: "matched identity after the create client exits without a Ready observation",
+    completed: true,
+    operationState: "create_client_exited",
+    identityState: "matched",
+    expectedCorrelation: SANDBOX_ID_CORRELATION,
+    expectedLifecycleEvents: ["identity-settled", "verify-created"],
+    createResult: SUCCESSFUL_CREATE,
+    exerciseReadyCheck: SKIP_READY_OBSERVATION,
+    configureIdentityObservations: (deps, currentNonce, lifecycleEvents) => {
+      vi.mocked(deps.runCaptureOpenshell).mockImplementationOnce(() => {
+        lifecycleEvents.push("identity-settled");
+        return sandboxListJson(currentNonce());
+      });
+    },
+    expectFlow: async (flow) => {
+      await expect(flow).resolves.toMatchObject({ route: "none" });
     },
   },
 ];
@@ -229,20 +264,22 @@ describe("sandbox create trace evidence", () => {
         mocks.addTraceEvent.mockImplementation(actualTracing.addTraceEvent);
 
         let nonce = "";
+        const lifecycleEvents: string[] = [];
         const input = noGpuInput();
+        input.verifyCreatedSandboxBeforeEffects = vi.fn(() => {
+          lifecycleEvents.push("verify-created");
+        });
         const patch = createGpuPatchFixture();
         mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
         mocks.streamSandboxCreate.mockImplementation(async (_command, args, _env, options) => {
           nonce = createAttemptNonce(args);
           expect(nonce).toHaveLength(NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH);
-          expect(options.readyCheck?.()).toBe(true);
+          scenario.exerciseReadyCheck(options.readyCheck);
           return scenario.createResult;
         });
         const deps = createGpuFlowDeps();
         deps.installPortableDemoLifecycle = vi.fn();
-        vi.mocked(deps.runCaptureOpenshell).mockReturnValueOnce("alpha Ready");
-        scenario.configureReadyObservation(deps, () => nonce);
-        scenario.configureSettlement(deps, () => nonce);
+        scenario.configureIdentityObservations(deps, () => nonce, lifecycleEvents);
 
         const trace = startOnboardTrace({ fresh: true }, process.env);
         try {
@@ -268,11 +305,14 @@ describe("sandbox create trace evidence", () => {
 
         expect(JSON.parse(summary)).toMatchObject({
           sandbox_identity_settlement: {
-            create_operation_state: "ready",
+            create_operation_state: scenario.operationState,
+            event_time_unix_nano: expect.stringMatching(/^[1-9][0-9]{15,20}$/u),
             identity_state: scenario.identityState,
             returned_identity_correlation: scenario.expectedCorrelation,
+            trace_id: expect.stringMatching(/^[0-9a-f]{32}$/u),
           },
         });
+        expect(lifecycleEvents).toEqual(scenario.expectedLifecycleEvents);
         expect(rawTrace).not.toContain("alpha-sandbox-id");
         expect(rawTrace).not.toContain(SANDBOX_ID_FINGERPRINT);
         expect(summary).not.toContain("alpha-sandbox-id");
