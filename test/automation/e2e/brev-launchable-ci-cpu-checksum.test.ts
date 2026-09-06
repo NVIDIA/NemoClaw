@@ -114,14 +114,14 @@ exec bash -c "\${1:-}"
   writeExecutable(
     path.join(fakeBin, "node"),
     `#!/usr/bin/env bash
-if [ "\${1:-}" = "-p" ]; then printf '${options.nodeSourceChecksumTool === false ? "20" : "22"}\\n'; exit 0; fi
-if [ "\${1:-}" = "--version" ]; then printf 'v22.19.0\\n'; exit 0; fi
+if [ "\${1:-}" = "--version" ]; then printf '${options.nodeSourceChecksumTool === false ? "v22.19.0" : "v24.18.1"}\\n'; exit 0; fi
 exit 0
 `,
   );
   writeExecutable(
     path.join(fakeBin, "npm"),
     `#!/usr/bin/env bash
+if [ "\${1:-}" = "--version" ]; then printf '12.0.2\\n'; exit 0; fi
 printf 'npm stub %s\\n' "$*"
 exit 0
 `,
@@ -287,6 +287,22 @@ describe("brev-launchable-ci-cpu.sh OpenShell checksum gate", { timeout: 30_000 
     expect(fs.statSync(SCRIPT).size).toBeLessThanOrEqual(BREV_LIFECYCLE_SCRIPT_MAX_BYTES);
   });
 
+  it("pins both Node.js 24.18.1 archives and installs the canonical reviewed npm", () => {
+    const source = fs.readFileSync(SCRIPT, "utf8");
+    expect(source).toContain('NODE_VERSION="24.18.1"');
+    expect(source).toContain(
+      'node_sha256="9f5eb6ac21845a66c493c91a253b1da32fd684e89e9b7202d4936982336be4ca"',
+    );
+    expect(source).toContain(
+      'node_sha256="df224555a083b918e46260cc969838501b9f9a87140c1195e5b9597b56d5dae2"',
+    );
+    expect(source).toContain(
+      "bash .github/actions/setup-reviewed-npm/verify-and-install-npm.sh ci/reviewed-npm-audit.json",
+    );
+    expect(source).toContain('[[ "$(npm --version)" == "12.0.2" ]]');
+    expect(source).not.toContain("deb.nodesource.com");
+  });
+
   it("rejects malformed OPENSHELL_VERSION before downloads or privileged setup", () => {
     const { fake, result } = runLaunchable({
       checksum: "match",
@@ -338,7 +354,7 @@ describe("brev-launchable-ci-cpu.sh OpenShell checksum gate", { timeout: 30_000 
     }
   });
 
-  it("refuses to run the NodeSource installer as root when no SHA-256 tool is available", () => {
+  it("refuses to extract the Node.js archive when no SHA-256 tool is available", () => {
     const { fake, result } = runLaunchable({
       checksum: "match",
       nodeSourceChecksumTool: false,
@@ -349,10 +365,10 @@ describe("brev-launchable-ci-cpu.sh OpenShell checksum gate", { timeout: 30_000 
       expect(result.status, out).toBe(1);
       expect(out).toContain("No SHA-256 tool available (sha256sum/shasum)");
       expect(fs.readFileSync(fake.curlLog, "utf-8")).toContain(
-        "https://deb.nodesource.com/setup_22.x",
+        "https://nodejs.org/dist/v24.18.1/node-v24.18.1-linux-x64.tar.gz",
       );
-      expect(sudoLog).not.toMatch(/^-E bash /m);
-      expect(out).not.toContain("NodeSource installer integrity verified");
+      expect(sudoLog).not.toMatch(/^tar -xzf /m);
+      expect(out).not.toContain("Node.js v24.18.1 installed");
     } finally {
       fake.cleanup();
     }

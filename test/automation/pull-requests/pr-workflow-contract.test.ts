@@ -70,17 +70,26 @@ const sharedActionPaths = {
 } as const;
 
 const trustedPrActionPaths = {
-  staticChecks: "./.trusted-ci-actions/.github/actions/ci-static-checks",
-  compileArtifacts: "./.trusted-ci-actions/.github/actions/ci-compile-artifacts",
+  staticChecks:
+    "NVIDIA/NemoClaw/.github/actions/ci-static-checks@7363df49a5f25b0dd1c20c80905917c31760a27e",
+  compileArtifacts:
+    "NVIDIA/NemoClaw/.github/actions/ci-compile-artifacts@7363df49a5f25b0dd1c20c80905917c31760a27e",
   buildTypecheck: "./.trusted-ci-actions/.github/actions/ci-build-typecheck",
-  cliCoverageShard: "./.trusted-ci-actions/.github/actions/ci-cli-coverage-shard",
-  cliCoverageMerge: "./.trusted-ci-actions/.github/actions/ci-cli-coverage-merge",
-  pluginCoverage: "./.trusted-ci-actions/.github/actions/ci-plugin-coverage",
-  installerIntegration: "./.trusted-ci-actions/.github/actions/ci-installer-integration",
+  cliCoverageShard:
+    "NVIDIA/NemoClaw/.github/actions/ci-cli-coverage-shard@7363df49a5f25b0dd1c20c80905917c31760a27e",
+  cliCoverageMerge:
+    "NVIDIA/NemoClaw/.github/actions/ci-cli-coverage-merge@7363df49a5f25b0dd1c20c80905917c31760a27e",
+  pluginCoverage:
+    "NVIDIA/NemoClaw/.github/actions/ci-plugin-coverage@7363df49a5f25b0dd1c20c80905917c31760a27e",
+  installerIntegration:
+    "NVIDIA/NemoClaw/.github/actions/ci-installer-integration@7363df49a5f25b0dd1c20c80905917c31760a27e",
+  reviewedNpmAudit:
+    "NVIDIA/NemoClaw/.github/actions/ci-reviewed-npm-audit@7363df49a5f25b0dd1c20c80905917c31760a27e",
 } as const;
 
 const trustedCheckoutAction = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
 const trustedSetupNodeAction = "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020";
+const reviewedNpmAction = "./.github/actions/setup-reviewed-npm";
 const trustedActionDirs = [
   ".github/actions/ci-static-checks",
   ".github/actions/ci-build-typecheck",
@@ -466,9 +475,7 @@ describe("pull request and main workflow contracts", () => {
   ) as TypeScriptConfig;
   const sharedActions = {
     staticChecks: readYaml<CompositeAction>(".github/actions/ci-static-checks/action.yaml"),
-    compileArtifacts: readYaml<CompositeAction>(
-      ".github/actions/ci-compile-artifacts/action.yaml",
-    ),
+    compileArtifacts: readYaml<CompositeAction>(".github/actions/ci-compile-artifacts/action.yaml"),
     buildTypecheck: readYaml<CompositeAction>(".github/actions/ci-build-typecheck/action.yaml"),
     cliCoverageShard: readYaml<CompositeAction>(
       ".github/actions/ci-cli-coverage-shard/action.yaml",
@@ -489,14 +496,41 @@ describe("pull request and main workflow contracts", () => {
     expect(workflow.jobs["cli-test-shards"]?.["timeout-minutes"]).toBe(cliShardTimeoutMinutes);
   });
 
+  // source-shape-contract: security -- npm-consuming pull request composites must execute from the reviewed immutable migration revision until the base contains npm 12.
+  it("pins npm-consuming pull request composites to the reviewed migration revision", () => {
+    expect([
+      requiredWorkflowStep(prWorkflow.jobs["static-checks"], "Run static checks").uses,
+      requiredWorkflowStep(
+        prWorkflow.jobs["compile-artifacts"],
+        "Compile and verify CLI and plugin outputs",
+      ).uses,
+      requiredWorkflowStep(
+        prWorkflow.jobs["installer-integration"],
+        "Run installer integration tests",
+      ).uses,
+      requiredWorkflowStep(
+        prWorkflow.jobs["reviewed-npm-audit"],
+        "Audit reviewed production npm graphs",
+      ).uses,
+      requiredWorkflowStep(prWorkflow.jobs["cli-test-shards"], "Run CLI coverage shard").uses,
+      requiredWorkflowStep(prWorkflow.jobs["cli-tests"], "Merge CLI coverage").uses,
+      requiredWorkflowStep(prWorkflow.jobs["plugin-tests"], "Run plugin coverage").uses,
+    ]).toEqual([
+      trustedPrActionPaths.staticChecks,
+      trustedPrActionPaths.compileArtifacts,
+      trustedPrActionPaths.installerIntegration,
+      trustedPrActionPaths.reviewedNpmAudit,
+      trustedPrActionPaths.cliCoverageShard,
+      trustedPrActionPaths.cliCoverageMerge,
+      trustedPrActionPaths.pluginCoverage,
+    ]);
+  });
+
   // source-shape-contract: security -- Credential-free workflow structure prevents pull request code from receiving Hugging Face or checkout credentials
   it("verifies changed Hugging Face catalog references without credentials", () => {
     const job = prWorkflow.jobs["hugging-face-models"];
     const filterStep = prWorkflow.jobs.changes.steps?.find((step) => step.id === "filter");
-    const filters = YAML.parse(String(filterStep?.with?.filters ?? "")) as Record<
-      string,
-      string[]
-    >;
+    const filters = YAML.parse(String(filterStep?.with?.filters ?? "")) as Record<string, string[]>;
     const huggingFaceModelFilters = filters.hugging_face_models ?? [];
 
     expect(
@@ -511,7 +545,11 @@ describe("pull request and main workflow contracts", () => {
     ).toBe(true);
     expect(job.needs).toBe("changes");
     expect(job.if).toBe("needs.changes.outputs.hugging_face_models == 'true'");
-    expect(stepUses(job)).toEqual([trustedCheckoutAction, trustedSetupNodeAction]);
+    expect(stepUses(job)).toEqual([
+      trustedCheckoutAction,
+      trustedSetupNodeAction,
+      reviewedNpmAction,
+    ]);
     expect(requiredWorkflowStep(job, "Checkout").with?.["persist-credentials"]).toBe(false);
     expect(requiredWorkflowStep(job, "Install dependencies").run).toBe(
       "npm ci --ignore-scripts --no-audit --no-fund",
@@ -577,6 +615,9 @@ describe("pull request and main workflow contracts", () => {
 
   // source-shape-contract: security -- The PR workflow must select an exact base-controlled package run before publishing its archive internally
   it("passes only the base-packaged SDK archive to pull request dependency jobs", () => {
+    expect(
+      requiredWorkflowStep(prWorkflow.jobs["build-typecheck"], "Install dependencies").env,
+    ).toEqual({ NPM_CONFIG_ALLOW_REMOTE: "root" });
     const packageJob = prWorkflow.jobs["openshell-sdk-package"];
     expect(packageJob["timeout-minutes"]).toBe(10);
     expect(packageJob.permissions).toEqual({ actions: "read", contents: "read" });

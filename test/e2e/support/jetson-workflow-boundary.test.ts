@@ -156,7 +156,21 @@ describe("Jetson nvmap GPU E2E workflow boundary", () => {
     });
 
     expect(errors).toContain(
-      "jetson-nvmap-gpu controller must contain only checkout, Node setup, dispatch, and upload",
+      "jetson-nvmap-gpu controller must contain only checkout, Node/npm setup, dispatch, and upload",
+    );
+  });
+
+  it("rejects a mutable npm setup action in the Jetson controller (#8142)", () => {
+    const errors = validateWorkflowMutation((workflow) => {
+      const job = (workflow.jobs as Record<string, unknown>)["jetson-nvmap-gpu"] as {
+        steps?: Array<{ name?: string; uses?: string }>;
+      };
+      const setup = job.steps!.find((step) => step.name === "Install reviewed npm")!;
+      setup.uses = "NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@main";
+    });
+
+    expect(errors).toContain(
+      "jetson-nvmap-gpu controller must install reviewed npm immutably",
     );
   });
 

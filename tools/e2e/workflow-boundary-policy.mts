@@ -2,10 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export const E2E_ACTION_PROVENANCE = {
+  reviewedNpmSetup: {
+    reference:
+      "NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@7363df49a5f25b0dd1c20c80905917c31760a27e",
+  },
   prepareWorkspace: {
     reference:
-      "NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75",
-    contentSha256: "1283c2eadfbc38ccb3b795684ba5ced9c89ae2040fffbb6b81854a9d1926802b",
+      "NVIDIA/NemoClaw/.github/actions/prepare-e2e@667c431859bf8d0a75b7f6a4946e635640e7734d",
+    contentSha256: "852afadf535895ce781a44725250190fbe0743088303e6819e8e22a9f03017a2",
   },
   nativePodmanRuntime: {
     reference:

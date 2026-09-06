@@ -251,6 +251,7 @@
     },
     {
       "live": "test/e2e/live/openshell-gateway-auth-source-contract.test.ts",
+      "liveSources": ["test/e2e/live/openshell-gateway-auth-probe.ts"],
       "fast": [
         "test/e2e/support/openshell-gateway-auth-source-contract-helpers.test.ts"
       ]

@@ -9,7 +9,7 @@
 #
 # What this installs:
 #   1. Docker (docker.io) — enabled and running
-#   2. Node.js 22 (nodesource)
+#   2. Node.js 24.18.1 and verified npm 12.0.2
 #   3. OpenShell CLI binary (pinned release)
 #   4. NemoClaw repo cloned with npm deps installed and TS plugin built
 #
@@ -251,42 +251,44 @@ sudo usermod -aG docker "$TARGET_USER" 2>/dev/null || true
 # Docker socket permissions to work around stale group membership.
 info "Docker enabled ($(docker --version 2>/dev/null | head -c 40))"
 
-# 3. Node.js 22
-node_major=""
-if command -v node >/dev/null 2>&1; then
-  node_major="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || true)"
-fi
-
-if command -v npm >/dev/null 2>&1 && [[ -n "$node_major" ]] && ((node_major >= 22)); then
+# 3. Node.js 24.18.1
+NODE_VERSION="24.18.1"
+if command -v node >/dev/null 2>&1 && [[ "$(node --version)" == "v${NODE_VERSION}" ]]; then
   info "Node.js already installed: $(node --version)"
 else
-  info "Installing Node.js 22..."
-  # IMPORTANT: update NODESOURCE_SHA256 when changing setup_22.x URL
-  NODESOURCE_URL="https://deb.nodesource.com/setup_22.x"
-  NODESOURCE_SHA256="575583bbac2fccc0b5edd0dbc03e222d9f9dc8d724da996d22754d6411104fd1"
-  ns_tmp="$(mktemp)"
-  curl -fsSL "$NODESOURCE_URL" -o "$ns_tmp" \
-    || {
-      rm -f "$ns_tmp"
-      fail "Failed to download NodeSource installer"
-    }
+  case "$(uname -m)" in
+    x86_64)
+      node_arch="x64"
+      node_sha256="9f5eb6ac21845a66c493c91a253b1da32fd684e89e9b7202d4936982336be4ca"
+      ;;
+    aarch64 | arm64)
+      node_arch="arm64"
+      node_sha256="df224555a083b918e46260cc969838501b9f9a87140c1195e5b9597b56d5dae2"
+      ;;
+    *) fail "Unsupported Node.js architecture: $(uname -m)" ;;
+  esac
+  info "Installing Node.js ${NODE_VERSION}..."
+  node_tmp="$(mktemp)"
+  node_url="https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${node_arch}.tar.gz"
+  curl -fsSL --proto '=https' --tlsv1.2 "$node_url" -o "$node_tmp" || {
+    rm -f "$node_tmp"
+    fail "Failed to download Node.js archive"
+  }
   if command -v sha256sum >/dev/null 2>&1; then
-    actual_hash="$(sha256sum "$ns_tmp" | awk '{print $1}')"
+    actual_hash="$(sha256sum "$node_tmp" | awk '{print $1}')"
   elif command -v shasum >/dev/null 2>&1; then
-    actual_hash="$(shasum -a 256 "$ns_tmp" | awk '{print $1}')"
+    actual_hash="$(shasum -a 256 "$node_tmp" | awk '{print $1}')"
   else
-    rm -f "$ns_tmp"
+    rm -f "$node_tmp"
     fail "No SHA-256 tool available (sha256sum/shasum)"
   fi
-  if [[ "$actual_hash" != "$NODESOURCE_SHA256" ]]; then
-    rm -f "$ns_tmp"
-    fail "NodeSource installer integrity check failed\n  Expected: $NODESOURCE_SHA256\n  Actual:   $actual_hash"
+  if [[ "$actual_hash" != "$node_sha256" ]]; then
+    rm -f "$node_tmp"
+    fail "Node.js archive integrity check failed\n  Expected: $node_sha256\n  Actual:   $actual_hash"
   fi
-  info "NodeSource installer integrity verified"
-  sudo -E bash "$ns_tmp" >/dev/null 2>&1
-  rm -f "$ns_tmp"
-  wait_for_apt_lock
-  retry 3 10 "install nodejs" sudo apt-get install -y -qq nodejs >/dev/null 2>&1
+  sudo tar -xzf "$node_tmp" -C /usr/local --strip-components=1 --no-same-owner
+  rm -f "$node_tmp"
+  [[ "$(node --version)" == "v${NODE_VERSION}" ]] || fail "Node.js installation did not produce v${NODE_VERSION}"
   info "Node.js $(node --version) installed"
 fi
 
@@ -321,6 +323,12 @@ fi
 
 info "Installing npm dependencies..."
 cd "$NEMOCLAW_CLONE_DIR"
+reviewed_npm_tmp="$(mktemp -d)"
+sudo env -u NODE_AUTH_TOKEN -u NPM_TOKEN -u NPM_CONFIG__AUTH_TOKEN \
+  RUNNER_TEMP="$reviewed_npm_tmp" \
+  bash .github/actions/setup-reviewed-npm/verify-and-install-npm.sh ci/reviewed-npm-audit.json
+rm -rf "$reviewed_npm_tmp"
+[[ "$(npm --version)" == "12.0.2" ]] || fail "Reviewed npm 12.0.2 installation failed"
 npm install --ignore-scripts 2>&1 | tail -3
 info "Root deps installed"
 

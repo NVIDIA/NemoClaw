@@ -60,7 +60,7 @@ function writeLock(root: string, archives: readonly LockedArchive[]): string {
           ],
           ...packages.map(({ entry, name }) => [
             `node_modules/${name}`,
-            { integrity: entry.integrity, resolved: entry.resolved },
+            { integrity: entry.integrity, resolved: entry.resolved, version: "1.0.0" },
           ]),
         ]),
       },
@@ -184,6 +184,31 @@ describe("locked npm cache seed materialization", () => {
 
     expect(manifest.archiveCount).toBe(1);
     expect(readdirSync(seed).sort()).toEqual(["alpha-1.0.0.tgz", "manifest.json"]);
+  });
+
+  it("rejects an exact dependency resolved to a different locked version", async () => {
+    const alpha = archive("alpha", "alpha archive");
+    const beta = archive("beta", "beta archive");
+    const lockfile = writeLock(testRoot, [alpha.locked, beta.locked]);
+    const lock = JSON.parse(readFileSync(lockfile, "utf8")) as {
+      packages: Record<string, Record<string, unknown>>;
+    };
+    lock.packages[""].dependencies = { alpha: "1.0.0" };
+    lock.packages["node_modules/alpha"].dependencies = { beta: "2.0.0" };
+    writeFileSync(lockfile, `${JSON.stringify(lock, null, 2)}\n`);
+    const downloadArchive = vi.fn(async () => alpha.bytes);
+
+    await expect(
+      materializeLockedNpmCacheSeed({
+        downloadArchive,
+        lockfile,
+        output: path.join(testRoot, "seed"),
+        target: TARGET,
+      }),
+    ).rejects.toThrow(
+      "package-lock exact dependency is unresolved: beta@2.0.0 from node_modules/alpha",
+    );
+    expect(downloadArchive).not.toHaveBeenCalled();
   });
 
   it("rejects a lock archive outside the exact npm registry origin", async () => {

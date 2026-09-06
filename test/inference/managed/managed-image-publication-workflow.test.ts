@@ -104,11 +104,11 @@ describe("complete managed-image publication workflow", () => {
     ]);
     expect(restores.map(({ with: inputs }) => inputs)).toEqual([
       {
-        key: "reviewed-npm-audit-v1-${{ runner.os }}-${{ steps.cache-buckets.outputs.input-digest }}-${{ steps.cache-buckets.outputs.current }}",
+        key: "reviewed-npm-audit-v2-${{ runner.os }}-${{ steps.cache-buckets.outputs.input-digest }}-${{ steps.cache-buckets.outputs.current }}",
         path: "${{ inputs.cache-directory }}",
       },
       {
-        key: "reviewed-npm-audit-v1-${{ runner.os }}-${{ steps.cache-buckets.outputs.input-digest }}-${{ steps.cache-buckets.outputs.previous }}",
+        key: "reviewed-npm-audit-v2-${{ runner.os }}-${{ steps.cache-buckets.outputs.input-digest }}-${{ steps.cache-buckets.outputs.previous }}",
         path: "${{ inputs.cache-directory }}",
       },
     ]);
@@ -420,7 +420,7 @@ describe("complete managed-image publication workflow", () => {
     });
     const trustedCheckout = step(reviewedAudit, "Checkout trusted reviewed npm audit");
     expect(trustedCheckout.with).toMatchObject({
-      ref: "${{ github.event.pull_request.base.sha }}",
+      ref: "7363df49a5f25b0dd1c20c80905917c31760a27e",
       path: ".trusted-reviewed-npm-audit",
       "persist-credentials": false,
       "sparse-checkout-cone-mode": false,
@@ -431,8 +431,8 @@ describe("complete managed-image publication workflow", () => {
     expect(trustedCheckout.with?.["sparse-checkout"]).toContain("ci/reviewed-npm-audit.json");
     const verifyAuditIdentities = step(reviewedAudit, "Verify exact audit source and target");
     expect(verifyAuditIdentities.env).toEqual({
-      BASE_SHA: "${{ github.event.pull_request.base.sha }}",
       CANDIDATE_SHA: "${{ github.event.pull_request.head.sha }}",
+      REVIEWED_AUDIT_SHA: "7363df49a5f25b0dd1c20c80905917c31760a27e",
     });
     expect(verifyAuditIdentities.run).toContain(
       "git -C .trusted-reviewed-npm-audit rev-parse --verify HEAD",
@@ -485,7 +485,7 @@ describe("complete managed-image publication workflow", () => {
     expect(steps.indexOf(permissionDrift)).toBeLessThan(steps.indexOf(localBaseBuild));
     expect(steps.indexOf(permissionDrift)).toBeLessThan(steps.indexOf(registryBaseBuild));
 
-    for (const action of steps.filter((candidate) => candidate.uses)) {
+    for (const action of steps.filter((candidate) => candidate.uses?.includes("@"))) {
       expect(action.uses, action.name).toMatch(fullShaAction);
     }
 

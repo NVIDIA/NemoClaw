@@ -636,7 +636,7 @@ describe("sandbox image workflow boundary", () => {
         "messaging plan image boundary must retain its 30-minute budget",
         "messaging plan image boundary must remain isolated from canonical image jobs",
         "messaging plan image boundary must set up Node exactly once",
-        "messaging plan image boundary must use Node 22.19.0",
+        "messaging plan image boundary must use Node 24.18.1",
         'openclaw messaging plan image boundary must include scripts/check-production-build-args.sh "${build_args[@]}"',
         'hermes messaging plan image boundary must include scripts/check-production-build-args.sh "${build_args[@]}"',
         'hermes messaging plan image boundary must include --build-arg "NEMOCLAW_CORPORATE_CA_B64=${corporate_ca_b64}"',

@@ -3,7 +3,7 @@
 #
 # Hermes sandbox base image — expensive, rarely-changing layers.
 #
-# Contains: node:24-trixie-slim (OpenShell needs Node), apt packages, setpriv,
+# Contains: node:24.18.1-trixie-slim (OpenShell needs Node), apt packages, setpriv,
 # user/group setup, .hermes directory structure, Hermes CLI, and the
 # dependencies for NemoClaw-supported Hermes integrations.
 #
@@ -14,7 +14,7 @@
 #   1. Hermes version bump      — run scripts/update-hermes-agent.sh
 #   2. New apt package needed   — add it to the apt-get install list
 #   3. util-linux upgrade       — update the pinned apt package version
-#   4. node:24-trixie-slim digest rot — update-docker-pin.sh updates all
+#   4. node:24.18.1-trixie-slim digest rot — update-docker-pin.sh updates that tag's digest
 #   5. npm upgrade              — update upgrade-bundled-npm.mts
 #   6. New .hermes subdirectory — add mkdir/chmod below
 # ────────────────────────────────────────────────────────────────
@@ -23,7 +23,7 @@ ARG PERL_VERSION=5.44.0
 ARG PERL_SHA256=505cf43912e9480495c344c70260452e32aa2a73c546a026b3f100053b23ce91
 ARG PERL_PACKAGE_REVISION=1nemoclaw1
 
-FROM node:24-trixie-slim@sha256:05c08ce4291e9a58f59456a7985176defb12cdd42271f35ff81a3e167ea61d4c AS native-security-builder
+FROM node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc AS native-security-builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential=12.12 \
@@ -58,7 +58,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN bash /scripts/security/build-perl-security-packages.sh \
     /out "${PERL_VERSION}" "${PERL_SHA256}" "${PERL_PACKAGE_REVISION}"
 
-FROM node:24-trixie-slim@sha256:05c08ce4291e9a58f59456a7985176defb12cdd42271f35ff81a3e167ea61d4c
+FROM node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc
 
 COPY --from=perl-builder /out /tmp/nemoclaw-native-security
 
@@ -77,7 +77,6 @@ ARG HERMES_SEMVER=0.20.6
 ARG HERMES_TARBALL_SHA256=e622723b5bf3cd6c1db974d92d32242f1cb63f61c1112b6f708b34d619ef0fc7
 ARG HERMES_NPM_INTEGRITY=sha512-s5q1IEBifCBb77QMwkse4MRaAaoZSxIa4IkicIO3jL7MIdq15YvnSyiNvsTOWNBi6t3shFpIg+H7+9MJsOiSkg==
 ARG HERMES_UV_EXTRAS="anthropic messaging web pty mcp acp"
-ARG NODE_VERSION=24.18.1
 ARG UV_VERSION=0.11.33
 ARG NEMOCLAW_HERMES_RUNTIME_BOUNDARIES_PATCH_SHA256=820563cc3450de582663c8137670001bb9974ac8a5584901880982f6509747b8
 ARG NEMOCLAW_HERMES_SECURE_DIR_SOURCE_SHA256=ffae3271120cf53eb8a7f574f76758eac3ea172f9ddc22c1056277e37d8d392c
@@ -235,33 +234,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && test -z "$(dpkg --audit)"
 
-# The current node:24-trixie-slim digest still contains Node.js 24.16.0. Overlay
-# the reviewed Node.js 24.18.1 release from nodejs.org so the Hermes runtime
-# includes the security fixes without waiting for Docker Hub tag rotation.
-# hadolint ignore=DL4006
-RUN arch="$(dpkg --print-architecture)" \
-    && case "$arch" in \
-        amd64) node_asset_arch="x64"; node_sha256="9f5eb6ac21845a66c493c91a253b1da32fd684e89e9b7202d4936982336be4ca" ;; \
-        arm64) node_asset_arch="arm64"; node_sha256="df224555a083b918e46260cc969838501b9f9a87140c1195e5b9597b56d5dae2" ;; \
-        *) echo "Unsupported architecture for Node.js: $arch" >&2; exit 1 ;; \
-    esac \
-    && node_archive="/tmp/node-v${NODE_VERSION}-linux-${node_asset_arch}.tar.gz" \
-    && curl --proto '=https' --tlsv1.2 -fsSL \
-        --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 300 \
-        -o "$node_archive" \
-        "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${node_asset_arch}.tar.gz" \
-    && printf '%s  %s\n' "$node_sha256" "$node_archive" | sha256sum -c - \
-    && rm -rf \
-        /usr/local/include/node \
-        /usr/local/lib/node_modules/corepack \
-        /usr/local/lib/node_modules/npm \
-        /usr/local/share/doc/node \
-        /usr/local/share/man/man1/node.1 \
-    && rm -f /usr/local/bin/corepack /usr/local/bin/node /usr/local/bin/npm /usr/local/bin/npx \
-    && tar --extract --gzip --file "$node_archive" \
-        --directory /usr/local --strip-components=1 --no-same-owner \
-    && rm -f "$node_archive" \
-    && test "$(node --version)" = "v${NODE_VERSION}" \
+# The exact upstream image supplies the reviewed Node.js and bundled npm.
+RUN test "$(node --version)" = "v24.18.1" \
     && test "$(npm --version)" = "11.16.0"
 
 COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
@@ -269,7 +243,9 @@ COPY scripts/lib/bundled-npm-package.mts /scripts/lib/bundled-npm-package.mts
 COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts
 COPY scripts/lib/patch-bundled-npm-ip-address.mts /scripts/lib/patch-bundled-npm-ip-address.mts
 COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
+COPY scripts/lib/reviewed-npm-identity.mts /scripts/lib/reviewed-npm-identity.mts
 COPY scripts/upgrade-bundled-npm.mts /scripts/upgrade-bundled-npm.mts
+COPY ci/reviewed-npm-audit.json /ci/reviewed-npm-audit.json
 
 # npm 11.16.0 in Node.js 24.18.1 bundles an affected node-tar copy.
 # Patch that private package after curl is installed and before npm processes
@@ -283,19 +259,19 @@ RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
 RUN node --experimental-strip-types /scripts/upgrade-bundled-npm.mts \
     --npm-root /usr/local/lib/node_modules/npm
 
-# npm 11.18.0 restores affected tar 7.5.19. Replace it from the
+# npm 12.0.2 restores affected tar 7.5.19. Replace it from the
 # registry- and SRI-verified 7.5.21 archive before any npm consumers run.
 # hadolint ignore=DL3059
 RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
     --npm-root /usr/local/lib/node_modules/npm
 
-# Replace npm 11.18.0's private brace-expansion 5.0.7 package with the
+# Replace npm 12.0.2's private brace-expansion 5.0.7 package with the
 # registry- and SRI-pinned 5.0.9 release.
 # hadolint ignore=DL3059
 RUN node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts \
     --npm-root /usr/local/lib/node_modules/npm
 
-# Replace npm 11.18.0's private ip-address 10.2.0 package with the
+# Replace npm 12.0.2's private ip-address 10.2.0 package with the
 # registry- and SRI-pinned 10.3.1 release.
 # hadolint ignore=DL3059
 RUN node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts \

@@ -14,10 +14,6 @@ import {
 } from "./reviewed-npm-audit.mts";
 
 export const AUDIT_ARGV = NPM_AUDIT_ARGV;
-// Remove this PR-only compatibility after main produces Yarn-bound audit receipts.
-const LEGACY_NPM_AUDIT_REGISTRY = "https://registry.npmjs.org/";
-const LEGACY_NPM_AUDIT_ARGV = ["audit", "--omit=dev", "--json"] as const;
-export const LEGACY_NPM_AUDIT_RECEIPT_DEADLINE = Date.parse("2026-09-11T00:00:00.000Z");
 export const RECEIPT_LIFETIME_MS = 12 * 60 * 60 * 1000 - 1;
 export const MAX_FUTURE_SKEW_MS = 5 * 60 * 1000;
 const SEVERITIES = new Set(["info", "low", "moderate", "high", "critical"]);
@@ -29,6 +25,7 @@ const RECEIPT_KEYS = [
   "exceptionPolicySha256",
   "expiresAt",
   "graphId",
+  "npmIntegrity",
   "npmVersion",
   "packageJsonSha256",
   "packageLockSha256",
@@ -47,13 +44,14 @@ export type AuditReceipt = Readonly<{
   exceptionPolicySha256: string;
   expiresAt: string;
   graphId: string;
+  npmIntegrity: string;
   npmVersion: string;
   packageJsonSha256: string;
   packageLockSha256: string;
   rawResponseSha256: string;
   registryOrigin: string;
   result: "pass";
-  schemaVersion: 1;
+  schemaVersion: 2;
   severityThreshold: "info" | "low" | "moderate" | "high" | "critical";
 }>;
 
@@ -101,6 +99,7 @@ export function createAuditReceipt(
     createdAt?: Date;
     exceptionPolicySha256: string;
     graphId: string;
+    npmIntegrity: string;
     npmVersion: string;
     packageJson: string | Buffer;
     packageLock: string | Buffer;
@@ -120,13 +119,14 @@ export function createAuditReceipt(
     exceptionPolicySha256: options.exceptionPolicySha256,
     expiresAt: new Date(created.getTime() + RECEIPT_LIFETIME_MS).toISOString(),
     graphId: options.graphId,
+    npmIntegrity: options.npmIntegrity,
     npmVersion: options.npmVersion,
     packageJsonSha256: sha256(options.packageJson),
     packageLockSha256: sha256(options.packageLock),
     rawResponseSha256: sha256(options.rawResponse),
     registryOrigin: options.registryOrigin,
     result: "pass",
-    schemaVersion: 1,
+    schemaVersion: 2,
     severityThreshold: options.severityThreshold,
   };
 }
@@ -135,6 +135,7 @@ export function parseAndVerifyAuditReceipt(
   contents: string,
   expected: Readonly<{
     graphId: string;
+    npmIntegrity: string;
     npmVersion: string;
     exceptionPolicy: string | Buffer;
     severityThreshold: AuditReceipt["severityThreshold"];
@@ -143,7 +144,6 @@ export function parseAndVerifyAuditReceipt(
     rawResponse: string | Buffer;
     registryOrigin: string;
     now?: Date;
-    allowLegacyNpmjsReceipt?: boolean;
   }>,
 ): AuditReceipt {
   let parsed: unknown;
@@ -156,25 +156,22 @@ export function parseAndVerifyAuditReceipt(
     throw new Error("receipt must be an object");
   const value = parsed as Record<string, unknown>;
   exactKeys(value, RECEIPT_KEYS, "receipt");
-  if (value.schemaVersion !== 1 || value.result !== "pass")
-    throw new Error("receipt is not a passing schema version 1 receipt");
-  if (value.graphId !== expected.graphId || value.npmVersion !== expected.npmVersion)
-    throw new Error("receipt identity does not match expected graph and npm");
+  if (value.schemaVersion !== 2 || value.result !== "pass")
+    throw new Error("receipt is not a passing schema version 2 receipt");
+  if (
+    value.graphId !== expected.graphId ||
+    value.npmVersion !== expected.npmVersion ||
+    value.npmIntegrity !== expected.npmIntegrity
+  )
+    throw new Error("receipt identity does not match expected graph and npm artifact");
   const now = (expected.now ?? new Date()).getTime();
-  const currentContract =
-    value.registryOrigin === expected.registryOrigin &&
-    Array.isArray(value.argv) &&
-    value.argv.length === AUDIT_ARGV.length &&
-    value.argv.every((arg, index) => arg === AUDIT_ARGV[index]);
-  const legacyContract =
-    expected.allowLegacyNpmjsReceipt === true &&
-    now < LEGACY_NPM_AUDIT_RECEIPT_DEADLINE &&
-    value.registryOrigin === LEGACY_NPM_AUDIT_REGISTRY &&
-    Array.isArray(value.argv) &&
-    value.argv.length === LEGACY_NPM_AUDIT_ARGV.length &&
-    value.argv.every((arg, index) => arg === LEGACY_NPM_AUDIT_ARGV[index]);
-  if (!currentContract && !legacyContract)
-    throw new Error("receipt npm audit registry and arguments do not match an allowed contract");
+  if (
+    value.registryOrigin !== expected.registryOrigin ||
+    !Array.isArray(value.argv) ||
+    value.argv.length !== AUDIT_ARGV.length ||
+    value.argv.some((arg, index) => arg !== AUDIT_ARGV[index])
+  )
+    throw new Error("receipt npm audit registry and arguments do not match the reviewed contract");
   const accepted = stringArray(value.acceptedAdvisoryIds, "acceptedAdvisoryIds");
   const blocking = stringArray(value.blockingAdvisoryIds, "blockingAdvisoryIds");
   if (blocking.length !== 0) throw new Error("passing receipt contains blocking advisories");
@@ -211,7 +208,9 @@ export function canonicalAuditReceipt(receipt: AuditReceipt): string {
   return `${JSON.stringify(receipt, null, 2)}\n`;
 }
 
-export function reviewedNpmVersionFromConfig(contents: string): string {
+export function reviewedNpmIdentityFromConfig(
+  contents: string,
+): Readonly<{ npmIntegrity: string; npmVersion: string }> {
   let parsed: unknown;
   try {
     parsed = JSON.parse(contents);
@@ -222,6 +221,10 @@ export function reviewedNpmVersionFromConfig(contents: string): string {
     typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
       ? (parsed as Record<string, unknown>).npmVersion
       : undefined;
+  const npmIntegrity =
+    typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>).npmIntegrity
+      : undefined;
   if (
     typeof npmVersion !== "string" ||
     !/^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/.test(npmVersion) ||
@@ -229,7 +232,14 @@ export function reviewedNpmVersionFromConfig(contents: string): string {
   ) {
     throw new Error("reviewed npm audit configuration has an invalid npmVersion");
   }
-  return npmVersion;
+  if (
+    typeof npmIntegrity !== "string" ||
+    !/^sha512-[A-Za-z0-9+/]+={0,2}$/.test(npmIntegrity) ||
+    /[\r\n]/.test(npmIntegrity)
+  ) {
+    throw new Error("reviewed npm audit configuration has an invalid npmIntegrity");
+  }
+  return { npmIntegrity, npmVersion };
 }
 
 function cli(args: readonly string[]): void {
@@ -238,7 +248,7 @@ function cli(args: readonly string[]): void {
     const value = args[index + 1];
     if (!args[index]?.startsWith("--") || value === undefined)
       throw new Error(
-        "usage: npm-audit-receipt.mts --receipt FILE --package-json FILE --package-lock FILE --raw-report FILE --exceptions FILE --graph ID --audit-config FILE --registry ORIGIN --threshold SEVERITY [--legacy-npmjs true] [--result FILE]",
+        "usage: npm-audit-receipt.mts --receipt FILE --package-json FILE --package-lock FILE --raw-report FILE --exceptions FILE --graph ID --audit-config FILE --registry ORIGIN --threshold SEVERITY [--result FILE]",
       );
     values.set(args[index], value);
   }
@@ -253,11 +263,9 @@ function cli(args: readonly string[]): void {
     "--registry",
     "--threshold",
   ];
-  const allowed = [...required, "--result", "--legacy-npmjs"];
+  const allowed = [...required, "--result"];
   exactKeys(
-    Object.fromEntries(
-      [...values].filter(([key]) => key !== "--result" && key !== "--legacy-npmjs"),
-    ),
+    Object.fromEntries([...values].filter(([key]) => key !== "--result")),
     required,
     "verifier arguments",
   );
@@ -267,19 +275,18 @@ function cli(args: readonly string[]): void {
   const packageLock = fs.readFileSync(values.get("--package-lock")!);
   const rawResponse = fs.readFileSync(values.get("--raw-report")!);
   const exceptionPolicy = fs.readFileSync(values.get("--exceptions")!);
-  const npmVersion = reviewedNpmVersionFromConfig(
+  const npmIdentity = reviewedNpmIdentityFromConfig(
     fs.readFileSync(values.get("--audit-config")!, "utf8"),
   );
   parseAndVerifyAuditReceipt(fs.readFileSync(values.get("--receipt")!, "utf8"), {
     graphId: values.get("--graph")!,
-    npmVersion,
+    ...npmIdentity,
     exceptionPolicy,
     severityThreshold: values.get("--threshold")! as AuditReceipt["severityThreshold"],
     packageJson,
     packageLock,
     rawResponse,
     registryOrigin: values.get("--registry")!,
-    allowLegacyNpmjsReceipt: values.get("--legacy-npmjs") === "true",
   });
   const policyResult = evaluateAuditPolicy({
     directory: path.dirname(values.get("--package-json")!),

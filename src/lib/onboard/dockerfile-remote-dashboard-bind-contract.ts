@@ -71,12 +71,13 @@ const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
   "c682148fc7efec9f947c326c6029181cd879b7cba3e8361246aba7d0e6fe70a3",
   "2801e488822e10a39a5586bd150279e54df4612e30c2fa782453534a466def59",
   "8f0861e48c0cec37faa662fccd130ab21f972ac3ed2a0ce5f4e5a1e9ec223130",
-  // Reviewed late messaging inputs, metadata setup, and runtime assertions.
+  // Reviewed late messaging inputs, metadata setup, npm 12 helper, and runtime assertions.
   "7e5f7e1dfb90e5e4b863afdfb9ba58e57e3693bdc6f47ac8c13e80bdc9eff56b",
   "8f5966da093ef75cefd35c2b7f1361fbf5b32e63a4a8a34cb3ac7f76a1330e5e",
   "c6b042ac2cc3d5570ae43f1e387a951cbe89fbb22e8cd9df486f99719bb32939",
   "ba29b499af923b4331cf7abf14648f187dc0e0b8f3dc2c33dac61f079981c187",
   "9c39e3aefbfefb7a48c6ba6879701954ad300f3593d18713063a12056f71af93",
+  "f6a70c469bc8658fd78c2e07adfb7fb9d78aa1189b0966c0bbf5f1d1f1b49e32",
   // COPY --from=openclaw-runtime-payload / /
   // The reviewed scratch payload has no /sandbox/.openclaw content, so this
   // exact late copy preserves the generated remote-dashboard configuration.

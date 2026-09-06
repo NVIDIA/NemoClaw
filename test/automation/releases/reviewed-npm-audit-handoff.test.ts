@@ -12,6 +12,8 @@ import YAML from "yaml";
 import { emitAuditReceipt } from "../../../scripts/audit-reviewed-npm-graph.mts";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
+const NPM_INTEGRITY =
+  "sha512-uIXokLlBj6FpNUTQX1PmT5pz7BlIN9QlixX+zdaSNHsd0qUXsbDLr50xzY6Sw7cJVr0uzHKDOle0swmPW/p5Qw==";
 const TRUSTED_WORKFLOWS = [
   "e2e.yaml",
   "managed-images.yaml",
@@ -108,7 +110,10 @@ describe("reviewed npm audit handoff", () => {
       fs.writeFileSync(packageLockFile, packageLock);
       fs.writeFileSync(rawReportFile, rawReport);
       fs.writeFileSync(exceptionFile, exceptionPolicy);
-      fs.writeFileSync(auditConfigFile, JSON.stringify({ npmVersion: "10.9.4" }));
+      fs.writeFileSync(
+        auditConfigFile,
+        JSON.stringify({ npmIntegrity: NPM_INTEGRITY, npmVersion: "12.0.2" }),
+      );
       fs.writeFileSync(
         path.join(root, "report.provenance.json"),
         JSON.stringify({ run: { startedAt: new Date().toISOString() } }),
@@ -116,7 +121,8 @@ describe("reviewed npm audit handoff", () => {
       const receiptFile = emitAuditReceipt({
         artifactDirectory: root,
         graphId: "temporary-graph",
-        npmVersion: "10.9.4",
+        npmIntegrity: NPM_INTEGRITY,
+        npmVersion: "12.0.2",
         packageJsonFile,
         packageLockFile,
         preserveInputs: true,
@@ -173,7 +179,10 @@ describe("reviewed npm audit handoff", () => {
       });
 
       fs.rmSync(resultFile);
-      fs.writeFileSync(auditConfigFile, JSON.stringify({ npmVersion: "11.18.0" }));
+      fs.writeFileSync(
+        auditConfigFile,
+        JSON.stringify({ npmIntegrity: NPM_INTEGRITY, npmVersion: "11.18.0" }),
+      );
       const rejected = spawnSync(process.execPath, verifierArgs, { encoding: "utf8" });
       expect(rejected.status).not.toBe(0);
       expect(rejected.stderr).toContain("receipt identity does not match expected graph and npm");

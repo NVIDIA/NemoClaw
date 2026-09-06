@@ -6,17 +6,26 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { dockerRunCommandBetween, runLoggedDockerShell } from "../../helpers/dockerfile-run-shell";
+import {
+  dockerRunCommandBetween,
+  runLoggedDockerShell,
+  shellCommandSegmentBetween,
+} from "../../helpers/dockerfile-run-shell";
 
 const ROOT = path.resolve(import.meta.dirname, "../../..");
 const HERMES_DOCKERFILE = path.join(ROOT, "agents", "hermes", "Dockerfile");
 
 function dashboardBuildCommand(hermesRoot: string, rootCache: string): string {
   const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
-  return dockerRunCommandBetween(
+  const finalization = dockerRunCommandBetween(
     dockerfile,
-    "# Published base images can lag Dockerfile.base",
-    "# Harden: remove unnecessary build tools",
+    "# Keep the inherited CLI, Python environment, and dashboard explicit",
+    "# Hermes' WeChat adapter",
+  );
+  return shellCommandSegmentBetween(
+    finalization,
+    "if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]",
+    "dpkg-query -W",
   )
     .replaceAll("/opt/hermes", hermesRoot)
     .replaceAll("/root/.npm", path.join(rootCache, "npm"))

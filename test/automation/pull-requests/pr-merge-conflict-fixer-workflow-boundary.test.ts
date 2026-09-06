@@ -85,8 +85,15 @@ describe("PR merge conflict fixer workflow boundary", () => {
       .map((step) => step.uses)
       .filter((reference): reference is string => typeof reference === "string");
     expect(actionReferences).not.toHaveLength(0);
+    expect(actionReferences.filter((reference) => reference.startsWith("./"))).toEqual([
+      "./.github/actions/setup-reviewed-npm",
+      "./trusted/.github/actions/setup-reviewed-npm",
+      "./trusted/.github/actions/setup-reviewed-npm",
+    ]);
     expect(
-      actionReferences.every((reference) => /^[^@\s]+\/[^@\s]+@[0-9a-f]{40}$/u.test(reference)),
+      actionReferences
+        .filter((reference) => !reference.startsWith("./"))
+        .every((reference) => /^[^@\s]+\/[^@\s]+@[0-9a-f]{40}$/u.test(reference)),
     ).toBe(true);
 
     [scan, resolve, publish].forEach((job) => {

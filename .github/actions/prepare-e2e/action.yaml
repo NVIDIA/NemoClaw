@@ -16,8 +16,11 @@ runs:
     - name: Set up Node
       uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
       with:
-        node-version: 22
+        node-version: 24.18.1
         cache: npm
+
+    - name: Install reviewed npm
+      uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@470a5417558c65260d59cdb5eabb01d35834535e
 
     - name: Install root dependencies
       shell: bash

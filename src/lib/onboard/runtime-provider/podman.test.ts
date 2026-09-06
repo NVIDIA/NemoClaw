@@ -390,7 +390,13 @@ describe("managed Podman runtime provider", () => {
       }),
     ).toEqual({ cleared: false, failure: "cleanup-helper-image-unavailable" });
     expect(cleanupCapture).toHaveBeenCalledExactlyOnceWith(
-      ["image", "inspect", "--format", "{{.Id}}", expect.stringContaining("node:22-trixie-slim")],
+      [
+        "image",
+        "inspect",
+        "--format",
+        "{{.Id}}",
+        expect.stringContaining("node:24.18.1-trixie-slim"),
+      ],
       30_000,
     );
   });
@@ -435,7 +441,7 @@ describe("managed Podman runtime provider", () => {
         "inspect",
         "--format",
         "{{.Id}}",
-        expect.stringContaining("node:22-trixie-slim"),
+        expect.stringContaining("node:24.18.1-trixie-slim"),
       ]);
     },
   );

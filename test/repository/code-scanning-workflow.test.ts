@@ -85,6 +85,13 @@ esac
 }
 
 describe("ShellCheck SARIF workflow boundary", () => {
+  // source-shape-contract: security -- ShellCheck conversion must install npm from an immutable reviewed action before executing the trusted converter
+  it("installs npm from the immutable reviewed action bootstrap", () => {
+    expect(requiredStep("Install reviewed npm").uses).toBe(
+      "NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@7363df49a5f25b0dd1c20c80905917c31760a27e",
+    );
+  });
+
   it("keeps a preinstalled ShellCheck only when its json1 formatter works (#7684)", () => {
     const { calls, result } = runShellCheckInstall({ preinstalledSupportsJson1: true });
 

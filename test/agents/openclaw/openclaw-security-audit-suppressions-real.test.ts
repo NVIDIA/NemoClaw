@@ -7,6 +7,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { parseSingleNpmPackResult } from "../../helpers/npm-pack-result";
+
 import { describe, expect, it } from "vitest";
 
 import { buildConfig } from "../../../scripts/generate-openclaw-config.mts";
@@ -70,7 +72,14 @@ function installReviewedOpenClaw(workspace: string): string {
   };
   const packed = spawnSync(
     "npm",
-    ["pack", reviewed.tarball, "--pack-destination", workspace, "--json"],
+    [
+      "pack",
+      reviewed.tarball,
+      "--allow-remote=all",
+      "--pack-destination",
+      workspace,
+      "--json",
+    ],
     {
       encoding: "utf-8",
       env: childEnv,
@@ -82,7 +91,7 @@ function installReviewedOpenClaw(workspace: string): string {
   assert.equal(packed.error, undefined, `OpenClaw npm pack failed: ${packFailure}`);
   assert.equal(packed.status, 0, `OpenClaw npm pack failed: ${packFailure}`);
   assert.ok(packed.stdout.trim(), `OpenClaw npm pack failed: ${packFailure}`);
-  const packResult = JSON.parse(packed.stdout)[0] as { filename?: string; integrity?: string };
+  const packResult = parseSingleNpmPackResult(packed.stdout);
   assert.equal(packResult.integrity, reviewed.integrity, "OpenClaw tarball integrity mismatch");
   assert.ok(packResult.filename, "OpenClaw npm pack omitted the archive filename");
   assert.equal(path.basename(packResult.filename), packResult.filename, "Unsafe npm pack filename");

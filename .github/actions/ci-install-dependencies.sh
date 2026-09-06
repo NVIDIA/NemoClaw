@@ -56,5 +56,5 @@ if [ "$package_mode" = "registry" ] && [ -n "${NODE_AUTH_TOKEN:-}" ]; then
   export NPM_CONFIG_USERCONFIG="$trusted_npmrc"
 fi
 
-npm ci --ignore-scripts --prefer-offline --no-audit --no-fund --cache "$npm_cache"
-npm --prefix nemoclaw ci --ignore-scripts --prefer-offline --no-audit --no-fund --cache "$npm_cache"
+npm ci --allow-remote=root --ignore-scripts --prefer-offline --no-audit --no-fund --cache "$npm_cache"
+npm --prefix nemoclaw ci --allow-remote=root --ignore-scripts --prefer-offline --no-audit --no-fund --cache "$npm_cache"

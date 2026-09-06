@@ -71,18 +71,28 @@ describe("codebase growth guardrails workflow trust boundary", () => {
         (workflow.jobs["codebase-growth-guardrails"].steps[0].with["persist-credentials"] = true),
     ],
     [
+      "Node pin",
+      (workflow: Value) =>
+        (workflow.jobs["codebase-growth-guardrails"].steps[1].with["node-version"] = "22"),
+    ],
+    [
+      "reviewed npm",
+      (workflow: Value) =>
+        (workflow.jobs["codebase-growth-guardrails"].steps[2].uses = "./unreviewed-action"),
+    ],
+    [
       "dependency install",
       (workflow: Value) =>
-        (workflow.jobs["codebase-growth-guardrails"].steps[1].run = "npm install"),
+        (workflow.jobs["codebase-growth-guardrails"].steps[3].run = "npm install"),
     ],
     [
       "test invocation",
-      (workflow: Value) => (workflow.jobs["codebase-growth-guardrails"].steps[2].run = "npm test"),
+      (workflow: Value) => (workflow.jobs["codebase-growth-guardrails"].steps[4].run = "npm test"),
     ],
     [
       "pull request metadata",
       (workflow: Value) =>
-        (workflow.jobs["codebase-growth-guardrails"].steps[2].env.HEAD_SHA = "untrusted"),
+        (workflow.jobs["codebase-growth-guardrails"].steps[4].env.HEAD_SHA = "untrusted"),
     ],
     [
       "job permission override",
@@ -92,7 +102,7 @@ describe("codebase growth guardrails workflow trust boundary", () => {
     [
       "failure tolerance",
       (workflow: Value) =>
-        (workflow.jobs["codebase-growth-guardrails"].steps[2]["continue-on-error"] = true),
+        (workflow.jobs["codebase-growth-guardrails"].steps[4]["continue-on-error"] = true),
     ],
   ])("rejects a mutation to %s", (_boundary, mutate) => {
     expect(mutatedWorkflow(mutate)).toContain(

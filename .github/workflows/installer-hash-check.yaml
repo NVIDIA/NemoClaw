@@ -36,11 +36,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Set up trusted installer hash parser runtime
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 22.19.0
-
       # The checkout of the latest PR commit supplies data only. The checker and
       # pin parser execute from the checkout of the PR base SHA below.
       - name: Checkout pull request head
@@ -69,6 +64,19 @@ jobs:
             scripts/check-installer-hash.sh
             scripts/checks/extract-installer-pins.mts
           sparse-checkout-cone-mode: false
+
+      - name: Set up trusted installer hash parser runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.18.1
+
+      - name: Install immutable reviewed npm
+        if: github.event_name == 'pull_request'
+        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@7363df49a5f25b0dd1c20c80905917c31760a27e
+
+      - name: Install trusted-event reviewed npm
+        if: github.event_name != 'pull_request'
+        uses: ./.github/actions/setup-reviewed-npm
 
       - name: Verify pull request installer hashes from base-trusted code
         if: github.event_name == 'pull_request'

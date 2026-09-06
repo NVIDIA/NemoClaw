@@ -17,6 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { parseSingleNpmPackResult } from "../helpers/npm-pack-result";
 
 import {
   prepareCiNpmInstallWithReviewedConfig,
@@ -78,10 +79,11 @@ function reviewedConfigSource(packageIdentity: ReviewedSourceRegistryPackage = r
     artifactDirectory: "artifacts/reviewed-npm-audit",
     exceptionFile: "ci/npm-audit-exceptions.json",
     lockedGraphs: [],
-    nodeVersion: "22.23.2",
+    nodeVersion: "24.18.1",
+    npmArchiveSha256: "5dbb86c71d07a1957f2e90734092dd6a58bdcd9ebc2d8d41ca1c6e6a21d364e1",
     npmIntegrity:
-      "sha512-OnUGvKW3lJs/ooPKDKUNfz1UmMfF48YWbjNA20QdiWrCVnZaAPppOfHPnfGiPb+1lKIsxjKXQ4UAfDI7PcvLPg==",
-    npmVersion: "10.9.4",
+      "sha512-uIXokLlBj6FpNUTQX1PmT5pz7BlIN9QlixX+zdaSNHsd0qUXsbDLr50xzY6Sw7cJVr0uzHKDOle0swmPW/p5Qw==",
+    npmVersion: "12.0.2",
     registryOrigin: "https://registry.npmjs.org/",
     schemaVersion: 2,
     severityThreshold: "high",
@@ -132,15 +134,13 @@ function packedInstallFixture() {
   );
   writeFileSync(join(packageRoot, "index.js"), "export {};\n");
   rmSync(join(source.artifactDirectory, artifactName));
-  const packed = JSON.parse(
+  const entry = parseSingleNpmPackResult(
     execFileSync(
       "npm",
       ["pack", packageRoot, "--pack-destination", source.artifactDirectory, "--json"],
       { encoding: "utf8" },
     ),
-  ) as Array<{ filename?: string; integrity?: string }>;
-  expect(packed).toHaveLength(1);
-  const entry = packed[0]!;
+  );
   expect(entry.filename).toBe(artifactName);
   expect(entry.integrity).toMatch(/^sha512-/);
   const packageIdentity = { ...reviewed, integrity: entry.integrity! };
@@ -300,7 +300,7 @@ describe("trusted OpenShell SDK archive preparation", () => {
     expect(stage.mock.calls[0]?.[0].archive.equals(archiveBytes)).toBe(true);
   });
 
-  it("installs the reviewed archive offline after npm stages it", async () => {
+  it("installs the reviewed root archive offline after npm stages it", async () => {
     const { packageIdentity, source } = packedInstallFixture();
 
     await prepareCiNpmInstallWithReviewedConfig(
@@ -311,6 +311,7 @@ describe("trusted OpenShell SDK archive preparation", () => {
       "npm",
       [
         "ci",
+        "--allow-remote=root",
         "--offline",
         "--ignore-scripts",
         "--no-audit",

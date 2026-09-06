@@ -34,8 +34,15 @@ runs:
     - name: Setup Node.js
       uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
       with:
-        node-version: "22"
+        node-version: "24.18.1"
         cache: npm
+
+    - name: Install reviewed npm
+      shell: bash
+      run: >-
+        env -u NODE_AUTH_TOKEN -u NPM_TOKEN -u NPM_CONFIG__AUTH_TOKEN
+        "$GITHUB_ACTION_PATH/../setup-reviewed-npm/verify-and-install-npm.sh"
+        "$GITHUB_ACTION_PATH/../../../ci/reviewed-npm-audit.json"
 
     - name: Install dependencies
       shell: bash

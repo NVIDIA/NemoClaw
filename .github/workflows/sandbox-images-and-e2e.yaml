@@ -269,8 +269,11 @@ jobs:
         name: Set up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22.19.0
+          node-version: 24.18.1
           cache: npm
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
 
       - &install-root-dependencies
         name: Install root dependencies
@@ -353,6 +356,9 @@ jobs:
       - *dockerhub-auth
 
       - *setup-node
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
 
       - name: Resolve sandbox base image
         uses: ./.github/actions/resolve-sandbox-base-image
@@ -474,6 +480,9 @@ jobs:
 
       - *setup-node
 
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
+
       - *install-root-dependencies
 
       - &download-isolation-image
@@ -514,6 +523,9 @@ jobs:
       - *checkout
 
       - *setup-node
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
 
       - *install-root-dependencies
 

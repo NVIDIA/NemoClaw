@@ -112,7 +112,11 @@ describe("native runtime qualification collector workflow", () => {
       "sparse-checkout-cone-mode": false,
     });
     expect(String(checkout.with?.["sparse-checkout"]).trim().split(/\s+/u).sort()).toEqual(
-      localImportClosure(COLLECTOR_ENTRYPOINT),
+      [
+        ".github/actions/setup-reviewed-npm",
+        "ci/reviewed-npm-audit.json",
+        ...localImportClosure(COLLECTOR_ENTRYPOINT),
+      ].sort(),
     );
     expect(
       (collect as WorkflowStep & { readonly "working-directory"?: string })["working-directory"],

@@ -123,9 +123,26 @@ function targetAllows(entry: JsonRecord, key: keyof NpmPlatformTarget, target: s
   return !denied && (allowed.length === 0 || allowed.includes(target));
 }
 
-function dependencyNames(entry: JsonRecord, key: string): string[] {
+function dependencyEntries(
+  entry: JsonRecord,
+  key: string,
+): Array<{ name: string; requested: string }> {
   const value = entry[key];
-  return value === undefined ? [] : Object.keys(record(value, `package-lock ${key}`));
+  if (value === undefined) return [];
+  return Object.entries(record(value, `package-lock ${key}`)).map(([name, requested]) => {
+    if (typeof requested !== "string") {
+      throw new Error(`package-lock ${key} must map package names to string specifications`);
+    }
+    return { name, requested };
+  });
+}
+
+function exactDependencyVersion(requested: string): string | undefined {
+  return /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$/u.test(
+    requested,
+  )
+    ? requested
+    : undefined;
 }
 
 function resolveDependencyPath(
@@ -154,16 +171,21 @@ function resolveDependencyPath(
 
 function reachablePackagePaths(packages: JsonRecord, target: NpmPlatformTarget): string[] {
   const root = record(packages[""], "package-lock root package");
-  const queue: Array<{ dependency: string; fromPath: string; optional: boolean; peer: boolean }> =
-    [];
-  for (const dependency of dependencyNames(root, "dependencies")) {
-    queue.push({ dependency, fromPath: "", optional: false, peer: false });
+  const queue: Array<{
+    dependency: string;
+    fromPath: string;
+    optional: boolean;
+    peer: boolean;
+    requested: string;
+  }> = [];
+  for (const { name, requested } of dependencyEntries(root, "dependencies")) {
+    queue.push({ dependency: name, fromPath: "", optional: false, peer: false, requested });
   }
-  for (const dependency of dependencyNames(root, "devDependencies")) {
-    queue.push({ dependency, fromPath: "", optional: false, peer: false });
+  for (const { name, requested } of dependencyEntries(root, "devDependencies")) {
+    queue.push({ dependency: name, fromPath: "", optional: false, peer: false, requested });
   }
-  for (const dependency of dependencyNames(root, "optionalDependencies")) {
-    queue.push({ dependency, fromPath: "", optional: true, peer: false });
+  for (const { name, requested } of dependencyEntries(root, "optionalDependencies")) {
+    queue.push({ dependency: name, fromPath: "", optional: true, peer: false, requested });
   }
 
   const visited = new Set<string>();
@@ -177,6 +199,12 @@ function reachablePackagePaths(packages: JsonRecord, target: NpmPlatformTarget):
       throw new Error(`package-lock dependency is unresolved: ${edge.dependency}`);
     }
     const entry = record(packages[packagePath], `package-lock entry ${packagePath}`);
+    const exactVersion = exactDependencyVersion(edge.requested);
+    if (exactVersion !== undefined && entry.version !== exactVersion) {
+      throw new Error(
+        `package-lock exact dependency is unresolved: ${edge.dependency}@${exactVersion} from ${edge.fromPath || "root package"}`,
+      );
+    }
     const compatible =
       targetAllows(entry, "os", target.os) &&
       targetAllows(entry, "cpu", target.cpu) &&
@@ -188,20 +216,38 @@ function reachablePackagePaths(packages: JsonRecord, target: NpmPlatformTarget):
     if (visited.has(packagePath)) continue;
     visited.add(packagePath);
 
-    for (const dependency of dependencyNames(entry, "dependencies")) {
-      queue.push({ dependency, fromPath: packagePath, optional: false, peer: false });
+    for (const { name, requested } of dependencyEntries(entry, "dependencies")) {
+      queue.push({
+        dependency: name,
+        fromPath: packagePath,
+        optional: false,
+        peer: false,
+        requested,
+      });
     }
-    for (const dependency of dependencyNames(entry, "optionalDependencies")) {
-      queue.push({ dependency, fromPath: packagePath, optional: true, peer: false });
+    for (const { name, requested } of dependencyEntries(entry, "optionalDependencies")) {
+      queue.push({
+        dependency: name,
+        fromPath: packagePath,
+        optional: true,
+        peer: false,
+        requested,
+      });
     }
     const peerMetadata =
       entry.peerDependenciesMeta === undefined
         ? {}
         : record(entry.peerDependenciesMeta, "package-lock peerDependenciesMeta");
-    for (const dependency of dependencyNames(entry, "peerDependencies")) {
-      const metadata = peerMetadata[dependency];
+    for (const { name, requested } of dependencyEntries(entry, "peerDependencies")) {
+      const metadata = peerMetadata[name];
       const optional = metadata === undefined ? false : record(metadata, "peer metadata").optional;
-      queue.push({ dependency, fromPath: packagePath, optional: optional === true, peer: true });
+      queue.push({
+        dependency: name,
+        fromPath: packagePath,
+        optional: optional === true,
+        peer: true,
+        requested,
+      });
     }
   }
   return [...visited];

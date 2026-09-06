@@ -102,6 +102,66 @@
       "category": "security"
     },
     {
+      "file": "test/platform/images/node-tar-dockerfile-contract.test.ts",
+      "test": "upgrades and verifies reviewed npm before every direct Node stage npm boundary",
+      "category": "security"
+    },
+    {
+      "file": "test/platform/images/node-tar-dockerfile-contract.test.ts",
+      "test": "keeps Hermes npm migration inputs and runtime finalization layer-bounded",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/repository/code-scanning-workflow.test.ts",
+      "test": "installs npm from the immutable reviewed action bootstrap",
+      "category": "security"
+    },
+    {
+      "file": "test/repository/github-actions-node-npm-invariant.test.ts",
+      "test": "selects the reviewed Node and npm identities before further steps",
+      "category": "security"
+    },
+    {
+      "file": "test/repository/github-actions-node-npm-invariant.test.ts",
+      "test": "selects image validation when the reviewed npm bootstrap changes",
+      "category": "security"
+    },
+    {
+      "file": "test/repository/github-actions-node-npm-invariant.test.ts",
+      "test": "keeps composite npm setup dependencies in matching workflow checkouts",
+      "category": "security"
+    },
+    {
+      "file": "test/repository/github-actions-node-npm-invariant.test.ts",
+      "test": "uses one reviewed npm identity across audit, image, and private-patch consumers",
+      "category": "security"
+    },
+    {
+      "file": "test/repository/github-actions-node-npm-invariant.test.ts",
+      "test": "imports the reviewed npm identity from %s",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/e2e/platform-vitest-main-workflow.test.ts",
+      "test": "uses the reviewed Node and npm identities for the WSL build and test lane",
+      "category": "security"
+    },
+    {
+      "file": "test/agents/openclaw/openclaw-npm-remediation.test.ts",
+      "test": "replaces the reviewed bundled Axios graph with the patched graph",
+      "category": "security"
+    },
+    {
+      "file": "test/agents/openclaw/openclaw-npm-remediation.test.ts",
+      "test": "replaces the reviewed Jaeger propagator with its aligned patched core",
+      "category": "security"
+    },
+    {
+      "file": "test/agents/openclaw/openclaw-npm-remediation.test.ts",
+      "test": "replaces the reviewed OpenClaw Discord undici dependency",
+      "category": "security"
+    },
+    {
       "file": "test/agents/openclaw/openclaw-2026-6-npm-remediation.test.ts",
       "test": "rebuilds a guarded core archive with the patched fs-safe package bundled",
       "category": "security"
@@ -127,6 +187,16 @@
       "category": "security"
     },
     {
+      "file": "test/agents/openclaw/openclaw-real-patched-dist-harness.test.ts",
+      "test": "accepts an explicit absolute Node runtime in the reviewed production lane",
+      "category": "security"
+    },
+    {
+      "file": "test/agents/openclaw/openclaw-real-patched-dist-harness.test.ts",
+      "test": "rejects an unsupported explicit real-dist Node runtime before OpenClaw starts",
+      "category": "security"
+    },
+    {
       "file": "test/agents/openclaw/openclaw-locked-install.test.ts",
       "test": "fails closed on missing required packages and symlinked package roots",
       "category": "security"
@@ -149,6 +219,11 @@
     {
       "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
       "test": "executes pull request installer hash checks only from the PR base SHA",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
+      "test": "pins npm-consuming pull request composites to the reviewed migration revision",
       "category": "security"
     },
     {

@@ -113,7 +113,7 @@ describe("hosted-runner recovery workflow boundary", () => {
     });
     const setupNode = step(job, "Setup Node.js");
     expect(setupNode.uses).toBe(TRUSTED_SETUP_NODE);
-    expect(setupNode.with).toEqual({ "node-version": "22" });
+    expect(setupNode.with).toEqual({ "node-version": "24.18.1" });
     expect(
       job.steps?.filter((candidate) => candidate.uses?.startsWith("actions/checkout@")),
     ).toHaveLength(1);

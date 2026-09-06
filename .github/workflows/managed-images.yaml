@@ -32,6 +32,7 @@ on:
   pull_request:
     paths:
       - ".github/actions/ci-reviewed-npm-audit/**"
+      - ".github/actions/setup-reviewed-npm/**"
       - ".github/workflows/base-image.yaml"
       - ".github/actions/publish-managed-image-digest/**"
       - ".github/workflows/managed-images.yaml"
@@ -91,13 +92,14 @@ jobs:
       - name: Checkout trusted reviewed npm audit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: 7363df49a5f25b0dd1c20c80905917c31760a27e
           path: .trusted-reviewed-npm-audit
           persist-credentials: false
           sparse-checkout: |
+            .github/actions/setup-reviewed-npm
+            ci/reviewed-npm-audit.json
             .github/actions/ci-reviewed-npm-audit
             ci/npm-audit-exceptions.json
-            ci/reviewed-npm-audit.json
             scripts/audit-reviewed-npm-graph.mts
             scripts/lib/npm-audit-receipt.mts
             scripts/lib/repository-input-path.mts
@@ -109,13 +111,13 @@ jobs:
       - name: Verify exact audit source and target
         shell: bash
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
           CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
+          REVIEWED_AUDIT_SHA: 7363df49a5f25b0dd1c20c80905917c31760a27e
         run: |
           set -euo pipefail
-          [[ "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]]
           [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]]
-          test "$(git -C .trusted-reviewed-npm-audit rev-parse --verify HEAD)" = "$BASE_SHA"
+          [[ "$REVIEWED_AUDIT_SHA" =~ ^[a-f0-9]{40}$ ]]
+          test "$(git -C .trusted-reviewed-npm-audit rev-parse --verify HEAD)" = "$REVIEWED_AUDIT_SHA"
           test "$(git -C candidate rev-parse --verify HEAD)" = "$CANDIDATE_SHA"
 
       - name: Audit exact PR production npm graphs
@@ -160,7 +162,10 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22.19.0
+          node-version: 24.18.1
+
+      - name: Install reviewed npm
+        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@7363df49a5f25b0dd1c20c80905917c31760a27e
 
       - name: Validate staging QA source
         shell: bash
@@ -201,7 +206,14 @@ jobs:
             install -m 0644 "$source_file" "$destination_file"
           done
           for support_relative in \
+            ci/reviewed-npm-audit.json \
             scripts/lib/bundled-npm-package.mts \
+            scripts/lib/patch-bundled-npm-ip-address.mts \
+            scripts/lib/reviewed-npm-archive.mts \
+            scripts/lib/reviewed-npm-identity.mts \
+            scripts/patch-bundled-npm-brace-expansion.mts \
+            scripts/patch-bundled-npm-tar.mts \
+            scripts/upgrade-bundled-npm.mts \
             scripts/security/patches/perl-5.44.0-net-ping-capability-tests.patch
           do
             support_source="$candidate_root/$support_relative"
@@ -487,7 +499,10 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22.19.0
+          node-version: 24.18.1
+
+      - name: Install reviewed npm
+        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@7363df49a5f25b0dd1c20c80905917c31760a27e
 
       - name: Validate Deep Agents PR base build arguments
         if: matrix.agent == 'langchain-deepagents-code'
@@ -959,7 +974,10 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22.19.0
+          node-version: 24.18.1
+
+      - name: Install reviewed npm
+        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@7363df49a5f25b0dd1c20c80905917c31760a27e
 
       - name: Bind E2E correlation identity
         shell: bash
@@ -1061,7 +1079,10 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22.19.0
+          node-version: 24.18.1
+
+      - name: Install reviewed npm
+        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@7363df49a5f25b0dd1c20c80905917c31760a27e
 
       - name: Bind E2E correlation identity
         shell: bash
@@ -1191,10 +1212,18 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22.19.0
+          node-version: 24.18.1
       # Pi has no published base alias yet, so the candidate lane builds its own
       # base on the target architecture. The activation change adds the shared
       # published-base contract with the rest of the release cohort.
+      - name: Install reviewed npm
+        if: github.event_name == 'pull_request'
+        uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@7363df49a5f25b0dd1c20c80905917c31760a27e
+
+      - name: Install trusted-event reviewed npm
+        if: github.event_name != 'pull_request'
+        uses: ./.github/actions/setup-reviewed-npm
+
       - name: Build the exact Pi candidate base
         id: base
         shell: bash
@@ -1681,6 +1710,14 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.18.1
+
+      - name: Install reviewed npm
+        uses: ./.github/actions/setup-reviewed-npm
 
       - name: Resolve managed image release identity
         id: release

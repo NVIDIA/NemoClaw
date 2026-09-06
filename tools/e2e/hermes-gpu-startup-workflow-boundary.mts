@@ -274,18 +274,21 @@ if ! @run restore`;
   const restoreI = steps.findIndex((step) => step.name === CLI_ARTIFACT_RESTORE_STEP);
   const ni = steps.findIndex((step) => step.name === "Reassert trusted Node runtime");
   const node = steps[ni];
-  const nativePodmanRuntime = steps[ni + 1];
+  const reviewedNpm = steps[ni + 1];
+  const nativePodmanRuntime = steps[ni + 2];
   if (
     runStep.shell !== BASH ||
     !trustedEnv(runStep) ||
     pi < 0 ||
     restoreI <= pi ||
     ni !== restoreI + 1 ||
-    ni + 2 !== steps.indexOf(runStep) ||
+    ni + 3 !== steps.indexOf(runStep) ||
     node?.uses !== "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020" ||
-    asRecord(node?.with)["node-version"] !== "22" ||
+    asRecord(node?.with)["node-version"] !== "24.18.1" ||
     !trustedEnv(node) ||
     asRecord(node?.env).NODE_OPTIONS !== "" ||
+    reviewedNpm?.name !== "Reinstall reviewed npm after Node reassertion" ||
+    reviewedNpm?.uses !== E2E_ACTION_PROVENANCE.reviewedNpmSetup.reference ||
     nativePodmanRuntime?.name !== "Prepare native Podman E2E runtime" ||
     nativePodmanRuntime?.uses !== E2E_ACTION_PROVENANCE.nativePodmanRuntime.reference ||
     asRecord(nativePodmanRuntime?.with).enabled !==

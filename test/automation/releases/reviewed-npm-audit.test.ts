@@ -6,6 +6,10 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  reviewedArchiveGraphManifest,
+  stageReviewedArchiveForInstall,
+} from "../../../scripts/audit-reviewed-npm-graph.mts";
+import {
   type AuditExceptionRegistry,
   NPM_AUDIT_ARGV,
   NPM_AUDIT_ATTEMPT_TIMEOUT_MS,
@@ -37,11 +41,49 @@ const CONFIG = JSON.parse(
 ) as {
   severityThreshold: "info" | "low" | "moderate" | "high" | "critical";
 };
+
+describe("reviewed archive graph materialization", () => {
+  it("rejects an affected tar release", () => {
+    expect(() => reviewedArchiveGraphManifest("7.5.20")).toThrow(
+      "reviewed archive graph tar version must be exactly 7.5.21",
+    );
+  });
+
+  it("stages archives at deterministic graph-relative paths", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-archive-stage-"));
+    try {
+      const firstGraph = path.join(root, "first-random-root", "graph");
+      const secondGraph = path.join(root, "second-random-root", "graph");
+      const firstArchive = path.join(root, "first-random-root", "fixture-1.0.0.tgz");
+      const secondArchive = path.join(root, "second-random-root", "fixture-1.0.0.tgz");
+      fs.mkdirSync(firstGraph, { recursive: true });
+      fs.mkdirSync(secondGraph, { recursive: true });
+      fs.writeFileSync(firstArchive, "reviewed archive bytes");
+      fs.writeFileSync(secondArchive, "reviewed archive bytes");
+
+      const firstInstallPath = stageReviewedArchiveForInstall(firstGraph, firstArchive, 0);
+      const secondInstallPath = stageReviewedArchiveForInstall(secondGraph, secondArchive, 0);
+
+      expect(firstInstallPath).toBe(
+        `.${path.sep}${path.join("reviewed-archives", "0-fixture-1.0.0.tgz")}`,
+      );
+      expect(secondInstallPath).toBe(firstInstallPath);
+      expect(firstInstallPath).not.toContain(root);
+      expect(fs.readFileSync(path.join(firstGraph, firstInstallPath))).toEqual(
+        fs.readFileSync(path.join(secondGraph, secondInstallPath)),
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
 const CHECKED_IN_POLICY = parseAuditExceptionRegistry(
   fs.readFileSync(path.join(REPO_ROOT, "ci", "npm-audit-exceptions.json"), "utf-8"),
 );
 const EMPTY_POLICY: AuditExceptionRegistry = { schemaVersion: 1, exceptions: [] };
 const NOW = new Date("2026-07-21T12:00:00Z");
+const NPM_INTEGRITY =
+  "sha512-uIXokLlBj6FpNUTQX1PmT5pz7BlIN9QlixX+zdaSNHsd0qUXsbDLr50xzY6Sw7cJVr0uzHKDOle0swmPW/p5Qw==";
 
 function withInstalledGraph(
   packages: Readonly<Record<string, string>>,
@@ -481,7 +523,8 @@ describe("reviewed npm audit raw cache", () => {
     try {
       const input = buildAuditCacheInput(
         directory,
-        "10.9.7",
+        NPM_INTEGRITY,
+        "12.0.2",
         "https://user:secret@registry.npmjs.org/private/path?token=query#fragment",
       );
       const filename = path.join(directory, "cache.json");
@@ -491,7 +534,7 @@ describe("reviewed npm audit raw cache", () => {
       fs.writeFileSync(
         filename,
         JSON.stringify({
-          schemaVersion: 1,
+          schemaVersion: 2,
           createdAt: "2026-07-21T11:00:00.000Z",
           input,
           result: { stdout, exitCode: 0 },
@@ -518,12 +561,17 @@ describe("reviewed npm audit raw cache", () => {
   ])("rejects a %s record", (_label, createdOffset) => {
     const directory = fixture();
     try {
-      const input = buildAuditCacheInput(directory, "10.9.7", "https://registry.npmjs.org/");
+      const input = buildAuditCacheInput(
+        directory,
+        NPM_INTEGRITY,
+        "12.0.2",
+        "https://registry.npmjs.org/",
+      );
       const filename = path.join(directory, "cache.json");
       fs.writeFileSync(
         filename,
         JSON.stringify({
-          schemaVersion: 1,
+          schemaVersion: 2,
           createdAt: new Date(NOW.valueOf() + createdOffset).toISOString(),
           input,
           result: { stdout: "{}", exitCode: 0 },
@@ -538,14 +586,19 @@ describe("reviewed npm audit raw cache", () => {
   it("rejects malformed, extra-field, and input-mismatched records", () => {
     const directory = fixture();
     try {
-      const input = buildAuditCacheInput(directory, "10.9.7", "https://registry.npmjs.org/");
+      const input = buildAuditCacheInput(
+        directory,
+        NPM_INTEGRITY,
+        "12.0.2",
+        "https://registry.npmjs.org/",
+      );
       const filename = path.join(directory, "cache.json");
       fs.writeFileSync(filename, "not json");
       expect(readAuditCache(filename, input, NOW)).toBeNull();
       fs.writeFileSync(
         filename,
         JSON.stringify({
-          schemaVersion: 1,
+          schemaVersion: 2,
           createdAt: NOW.toISOString(),
           input,
           result: { stdout: "{}", exitCode: 0 },
@@ -553,21 +606,33 @@ describe("reviewed npm audit raw cache", () => {
         }),
       );
       expect(readAuditCache(filename, input, NOW)).toBeNull();
-      const changed = { ...input, npmVersion: "11.0.0" };
+      const changed = { ...input, npmVersion: "11.18.0" };
       fs.writeFileSync(
         filename,
         JSON.stringify({
-          schemaVersion: 1,
+          schemaVersion: 2,
           createdAt: NOW.toISOString(),
           input,
           result: { stdout: "{}", exitCode: 0 },
         }),
       );
       expect(readAuditCache(filename, changed, NOW)).toBeNull();
+      expect(
+        readAuditCache(
+          filename,
+          { ...input, npmIntegrity: `sha512-${Buffer.alloc(64, 1).toString("base64")}` },
+          NOW,
+        ),
+      ).toBeNull();
       fs.writeFileSync(path.join(directory, "package.json"), '{"name":"changed"}\n');
-      expect(buildAuditCacheInput(directory, "10.9.7", "https://registry.npmjs.org/")).not.toEqual(
-        input,
-      );
+      expect(
+        buildAuditCacheInput(
+          directory,
+          NPM_INTEGRITY,
+          "12.0.2",
+          "https://registry.npmjs.org/",
+        ),
+      ).not.toEqual(input);
     } finally {
       fs.rmSync(directory, { recursive: true, force: true });
     }
@@ -646,8 +711,9 @@ describe("reviewed npm audit provenance", () => {
     const provenance = buildAuditProvenance({
       finishedAt: "2026-07-21T20:09:41.000Z",
       label: "reviewed archive graph",
-      nodeVersion: "v22.22.2",
-      npmVersion: "10.9.7",
+      nodeVersion: "v24.18.1",
+      npmIntegrity: NPM_INTEGRITY,
+      npmVersion: "12.0.2",
       packageSpecs: ["openclaw@2026.6.10", "@openclaw/slack@2026.6.10"],
       rawReportPath: "reviewed-archive-graph.json",
       registry: "https://registry.npmjs.org/",
@@ -655,8 +721,13 @@ describe("reviewed npm audit provenance", () => {
       startedAt: "2026-07-21T20:09:12.000Z",
     });
     expect(provenance).toEqual({
-      schemaVersion: 1,
-      scanner: { name: "npm audit", npmVersion: "10.9.7", nodeVersion: "v22.22.2" },
+      schemaVersion: 2,
+      scanner: {
+        name: "npm audit",
+        npmIntegrity: NPM_INTEGRITY,
+        npmVersion: "12.0.2",
+        nodeVersion: "v24.18.1",
+      },
       registry: deriveAuditEndpoints("https://registry.npmjs.org/"),
       run: { startedAt: "2026-07-21T20:09:12.000Z", finishedAt: "2026-07-21T20:09:41.000Z" },
       graph: {
@@ -674,8 +745,9 @@ describe("reviewed npm audit provenance", () => {
       failure: "npm audit failed without vulnerability findings: ECONNREFUSED",
       finishedAt: "2026-07-21T20:09:41.000Z",
       label: "reviewed archive graph",
-      nodeVersion: "v22.22.2",
-      npmVersion: "10.9.7",
+      nodeVersion: "v24.18.1",
+      npmIntegrity: NPM_INTEGRITY,
+      npmVersion: "12.0.2",
       packageSpecs: ["openclaw@2026.6.10"],
       rawReportPath: "reviewed-archive-graph.json",
       registry: "https://registry.npmjs.org/",
@@ -731,8 +803,9 @@ describe("reviewed npm audit provenance", () => {
           graph: "fixture-graph",
           provenance: {
             label: "fixture graph",
-            nodeVersion: "v22.22.2",
-            npmVersion: "10.9.7",
+            nodeVersion: "v24.18.1",
+            npmIntegrity: NPM_INTEGRITY,
+            npmVersion: "12.0.2",
             packageSpecs: ["fixture@1.0.0"],
           },
           reportFile: reportPath,

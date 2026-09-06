@@ -404,7 +404,7 @@ describe("fetch-guard patch regression guard", () => {
       "newer than reviewed target " + CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION,
     );
     expect(newer.calls).not.toContain(
-      `npm pack https://registry.npmjs.org/openclaw/-/openclaw-${CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION}.tgz --pack-destination`,
+      `npm pack openclaw@${CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION} --pack-destination`,
     );
     expect(newer.calls).not.toContain("npm install -g --no-audit --no-fund --no-progress ");
   });

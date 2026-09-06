@@ -1,8 +1,9 @@
 {
   "schemaVersion": 2,
-  "nodeVersion": "22.23.2",
-  "npmVersion": "10.9.4",
-  "npmIntegrity": "sha512-OnUG836FwboQIbqtefDNlyR0gTHzIfwRfE3DuiNewBvnMnWEpB0VEXwBlFVgqpNzIgYo/MHh3d2Hel/pszapAA==",
+  "nodeVersion": "24.18.1",
+  "npmVersion": "12.0.2",
+  "npmIntegrity": "sha512-uIXokLlBj6FpNUTQX1PmT5pz7BlIN9QlixX+zdaSNHsd0qUXsbDLr50xzY6Sw7cJVr0uzHKDOle0swmPW/p5Qw==",
+  "npmArchiveSha256": "5dbb86c71d07a1957f2e90734092dd6a58bdcd9ebc2d8d41ca1c6e6a21d364e1",
   "registryOrigin": "https://registry.npmjs.org/",
   "sourceRegistryPackage": {
     "artifactName": "nvidia-openshell-sdk-0.0.106.tgz",

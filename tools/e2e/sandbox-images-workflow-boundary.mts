@@ -628,8 +628,8 @@ function validateMessagingPlanImageBoundary(
   if (nodeSetupSteps.length !== 1) {
     errors.push("messaging plan image boundary must set up Node exactly once");
   }
-  if (record(nodeSetupSteps[0]?.with)["node-version"] !== "22.19.0") {
-    errors.push("messaging plan image boundary must use Node 22.19.0");
+  if (record(nodeSetupSteps[0]?.with)["node-version"] !== "24.18.1") {
+    errors.push("messaging plan image boundary must use Node 24.18.1");
   }
   for (const [stepName, action] of [
     ["Resolve sandbox base image", "./.github/actions/resolve-sandbox-base-image"],

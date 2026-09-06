@@ -4,6 +4,7 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -13,6 +14,7 @@ import {
   lockedArchivesFromDirectory,
   seedReviewedNpmCache,
 } from "../../scripts/lib/seed-reviewed-npm-cache.mts";
+import { parseSingleNpmPackResult } from "../helpers/npm-pack-result";
 
 const PACKAGE_NAME = "@example/reviewed";
 const PACKAGE_SPEC = `${PACKAGE_NAME}@1.2.3`;
@@ -20,6 +22,15 @@ const REGISTRY_ORIGIN = "https://registry.npmjs.org/";
 const TARBALL_URL = "https://registry.npmjs.org/@example/reviewed/-/reviewed-1.2.3.tgz";
 const TARGET = { cpu: "x64", libc: "glibc", os: "linux" } as const;
 const roots: string[] = [];
+
+function cachePutFromInstalledNpm(): CachePut {
+  const npmRoot = execFileSync("npm", ["root", "-g"], { encoding: "utf8" }).trim();
+  const require = createRequire(import.meta.url);
+  const cacachePath = require.resolve("cacache", {
+    paths: [path.join(npmRoot, "npm", "node_modules")],
+  });
+  return (require(cacachePath) as Readonly<{ put: CachePut }>).put;
+}
 
 type PutCall = Readonly<{
   cachePath: string;
@@ -138,6 +149,19 @@ describe("reviewed npm cache seed", () => {
     expect(calls[2]?.data.toString()).toContain(`"tarball":"${TARBALL_URL}"`);
     expect(calls[2]?.data.toString()).toContain('"hasShrinkwrap":true');
     expect(calls[2]?.data.toString()).toContain('"bundleDependencies":["bundled-child"]');
+    expect(calls[2]?.metadata).toMatchObject({
+      reqHeaders: {
+        accept: "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
+      },
+      resHeaders: {
+        "content-type": "application/vnd.npm.install-v1+json",
+        vary: "accept",
+      },
+    });
+    expect(calls[3]?.metadata).toMatchObject({
+      reqHeaders: { accept: "application/json" },
+      resHeaders: { "content-type": "application/json", vary: "accept" },
+    });
   });
 
   it("combines every locked version into one offline packument", async () => {
@@ -171,35 +195,90 @@ describe("reviewed npm cache seed", () => {
     ]);
   });
 
-  it("serves npm view offline from lock-derived packuments", async () => {
+  it("serves npm 12 metadata and pack offline after cache verification", async () => {
     const input = fixture();
-    await seedReviewedNpmCache({
-      ...request(input, new Map()),
-      packumentsOnly: true,
-    });
-
-    const integrity = execFileSync(
-      "npm",
-      [
-        "view",
-        PACKAGE_SPEC,
-        "dist.integrity",
-        "--userconfig",
-        "/dev/null",
-        "--registry",
-        REGISTRY_ORIGIN,
-      ],
-      {
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          NPM_CONFIG_CACHE: input.cacheDirectory,
-          NPM_CONFIG_OFFLINE: "true",
+    const packageDirectory = path.join(input.root, "package-source");
+    const outputDirectory = path.join(input.root, "packed-output");
+    fs.mkdirSync(packageDirectory);
+    fs.mkdirSync(outputDirectory);
+    fs.writeFileSync(
+      path.join(packageDirectory, "package.json"),
+      JSON.stringify({ name: PACKAGE_NAME, version: "1.2.3" }),
+    );
+    const localPack = parseSingleNpmPackResult(
+      execFileSync(
+        "npm",
+        ["pack", packageDirectory, "--ignore-scripts", "--pack-destination", input.root, "--json"],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            NPM_CONFIG_CACHE: path.join(input.root, "local-pack-cache"),
+          },
         },
-      },
-    ).trim();
+      ),
+    );
+    expect(localPack.filename).toBeTruthy();
+    const archivePath = path.join(input.root, localPack.filename!);
+    const archive = fs.readFileSync(archivePath);
+    const integrity = `sha512-${createHash("sha512").update(archive).digest("base64")}`;
+    fs.writeFileSync(
+      input.lockfilePath,
+      JSON.stringify({
+        lockfileVersion: 3,
+        packages: {
+          "": { dependencies: { [PACKAGE_NAME]: "1.2.3" } },
+          [`node_modules/${PACKAGE_NAME}`]: {
+            integrity,
+            resolved: TARBALL_URL,
+            version: "1.2.3",
+          },
+        },
+      }),
+    );
 
-    expect(integrity).toBe(input.integrity);
+    await seedReviewedNpmCache(
+      request(input, new Map([[PACKAGE_SPEC, archivePath]])),
+      cachePutFromInstalledNpm(),
+    );
+    execFileSync("npm", ["cache", "verify", "--cache", input.cacheDirectory]);
+    await seedReviewedNpmCache(
+      {
+        ...request(input, new Map()),
+        packumentsOnly: true,
+      },
+      cachePutFromInstalledNpm(),
+    );
+    const npmEnv = {
+      ...process.env,
+      NPM_CONFIG_CACHE: input.cacheDirectory,
+      NPM_CONFIG_OFFLINE: "true",
+    };
+    const viewedIntegrity = execFileSync(
+      "npm",
+      ["view", PACKAGE_SPEC, "dist.integrity", "--registry", REGISTRY_ORIGIN],
+      { encoding: "utf8", env: npmEnv },
+    ).trim();
+    const viewedTarball = execFileSync(
+      "npm",
+      ["view", PACKAGE_SPEC, "dist.tarball", "--registry", REGISTRY_ORIGIN],
+      { encoding: "utf8", env: npmEnv },
+    ).trim();
+    const offlinePack = parseSingleNpmPackResult(
+      execFileSync(
+        "npm",
+        ["pack", PACKAGE_SPEC, "--ignore-scripts", "--pack-destination", outputDirectory, "--json"],
+        {
+          encoding: "utf8",
+          env: npmEnv,
+        },
+      ),
+    );
+
+    expect(viewedIntegrity).toBe(integrity);
+    expect(viewedTarball).toBe(TARBALL_URL);
+    expect(offlinePack.integrity).toBe(integrity);
+    expect(fs.existsSync(path.join(outputDirectory, offlinePack.filename!))).toBe(true);
   });
 
   it("rejects an unreviewed npm version before loading npm cache internals", async () => {
@@ -217,7 +296,7 @@ describe("reviewed npm cache seed", () => {
     vi.stubEnv("NPM_TRACE", tracePath);
 
     await expect(seedReviewedNpmCache(request(input))).rejects.toThrow(
-      "reviewed npm cache seed does not support npm@99.0.0; expected npm@10.9.4, npm@10.9.8, npm@11.17.0, or npm@11.18.0",
+      "reviewed npm cache seed does not support npm@99.0.0; expected npm@12.0.2",
     );
     expect(fs.readFileSync(tracePath, "utf8")).toBe("--version\n");
   });

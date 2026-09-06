@@ -57,7 +57,10 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: "24.18.1"
+
+      - name: Install reviewed npm
+        uses: ./controller/.github/actions/setup-reviewed-npm
 
       - id: identity
         name: Resolve official candidate provenance
@@ -142,9 +145,12 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: "24.18.1"
           cache: npm
           cache-dependency-path: candidate-source/package-lock.json
+
+      - name: Install reviewed npm
+        uses: ./controller/.github/actions/setup-reviewed-npm
 
       - name: Install repository dependencies
         working-directory: candidate-source
@@ -270,9 +276,12 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: "24.18.1"
           cache: npm
           cache-dependency-path: candidate-source/package-lock.json
+
+      - name: Install reviewed npm
+        uses: ./controller/.github/actions/setup-reviewed-npm
 
       - name: Install repository dependencies
         working-directory: candidate-source
@@ -304,7 +313,7 @@ jobs:
         continue-on-error: true
         working-directory: candidate-source
         env:
-          DOCKER_GRPC_PROBE_IMAGE: node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c
+          DOCKER_GRPC_PROBE_IMAGE: node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc
           E2E_ARTIFACT_DIR: ${{ github.workspace }}/candidate-source/e2e-artifacts/live/openshell-gateway-auth-contract
           E2E_JOB: "1"
           E2E_TARGET_ID: openshell-gateway-auth-contract

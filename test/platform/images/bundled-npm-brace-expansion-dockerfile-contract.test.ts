@@ -12,7 +12,10 @@ import {
   REVIEWED_NPM_VERSION,
 } from "../../../scripts/patch-bundled-npm-brace-expansion.mts";
 import { REVIEWED_NPM_VERSION as UPGRADED_NPM_VERSION } from "../../../scripts/upgrade-bundled-npm.mts";
-import { requireSingleReviewedDockerfileRunCommand } from "../../helpers/dockerfile-run-commands";
+import {
+  requireReviewedDockerfileRunCommands,
+  requireSingleReviewedDockerfileRunCommand,
+} from "../../helpers/dockerfile-run-commands";
 
 const repoRoot = path.resolve(import.meta.dirname, "../../..");
 const baseDockerfiles = [
@@ -25,26 +28,30 @@ const finalDockerfiles = [
   "agents/hermes/Dockerfile",
   "agents/langchain-deepagents-code/Dockerfile",
 ] as const;
-const copyInstruction =
-  "COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts";
+const copiedSource = "scripts/patch-bundled-npm-brace-expansion.mts";
 const patchInstruction =
   "node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts";
 const npmRootArguments = ["--npm-root", "/usr/local/lib/node_modules/npm"] as const;
 const hermesTarCacheSeedArguments = [
   ...npmRootArguments,
   "--archive",
-  "/tmp/nemoclaw-bundled-npm-tar.tgz",
+  "/scripts/nemoclaw-bundled-npm-tar.tgz",
 ] as const;
 const tarPatchArgumentsByDockerfile = {
   Dockerfile: npmRootArguments,
   "agents/hermes/Dockerfile": hermesTarCacheSeedArguments,
   "agents/langchain-deepagents-code/Dockerfile": npmRootArguments,
 } as const;
+const tarPatchCountByDockerfile = {
+  Dockerfile: 2,
+  "agents/hermes/Dockerfile": 1,
+  "agents/langchain-deepagents-code/Dockerfile": 1,
+} as const;
 
 describe("bundled npm brace-expansion image remediation contract", () => {
   it("binds the replacement to the reviewed npm and registry artifact", () => {
     expect(REVIEWED_NPM_VERSION).toBe(UPGRADED_NPM_VERSION);
-    expect(REVIEWED_NPM_VERSION).toBe("11.18.0");
+    expect(REVIEWED_NPM_VERSION).toBe("12.0.2");
     expect(FIXED_BRACE_EXPANSION_VERSION).toBe("5.0.9");
     expect(FIXED_BRACE_EXPANSION_INTEGRITY).toMatch(/^sha512-[A-Za-z0-9+/]+=*$/u);
     expect(FIXED_BRACE_EXPANSION_TARBALL).toBe(
@@ -54,7 +61,7 @@ describe("bundled npm brace-expansion image remediation contract", () => {
 
   it.each(baseDockerfiles)("patches the reviewed npm tree after upgrading it in %s", (file) => {
     const source = fs.readFileSync(path.join(repoRoot, file), "utf8");
-    const copy = source.indexOf(copyInstruction);
+    const copy = source.indexOf(copiedSource);
     const upgrade = requireSingleReviewedDockerfileRunCommand(
       source,
       "node --experimental-strip-types /scripts/upgrade-bundled-npm.mts",
@@ -71,24 +78,29 @@ describe("bundled npm brace-expansion image remediation contract", () => {
     expect(patch.commandStart, file).toBeGreaterThan(upgrade);
   });
 
-  it.each(
-    finalDockerfiles,
-  )("reasserts the private package fix in the completed %s filesystem", (file) => {
-    const source = fs.readFileSync(path.join(repoRoot, file), "utf8");
-    const copy = source.indexOf(copyInstruction);
-    const tarPatch = requireSingleReviewedDockerfileRunCommand(
-      source,
-      "node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts",
-      tarPatchArgumentsByDockerfile[file],
-    ).commandStart;
-    const bracePatch = requireSingleReviewedDockerfileRunCommand(
-      source,
-      patchInstruction,
-      npmRootArguments,
-    );
+  it.each(finalDockerfiles)(
+    "reasserts the private package fix in the completed %s filesystem",
+    (file) => {
+      const source = fs.readFileSync(path.join(repoRoot, file), "utf8");
+      const copy = source.indexOf(copiedSource);
+      const tarPatches = requireReviewedDockerfileRunCommands(
+        source,
+        "node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts",
+        tarPatchArgumentsByDockerfile[file],
+        tarPatchCountByDockerfile[file],
+      );
+      const tarPatch = tarPatches.at(-1)!.commandStart;
+      const bracePatches = requireReviewedDockerfileRunCommands(
+        source,
+        patchInstruction,
+        npmRootArguments,
+        tarPatchCountByDockerfile[file],
+      );
+      const bracePatch = bracePatches.at(-1)!;
 
-    expect(copy, file).toBeGreaterThanOrEqual(0);
-    expect(tarPatch, file).toBeGreaterThan(copy);
-    expect(bracePatch.commandStart, file).toBeGreaterThan(tarPatch);
-  });
+      expect(copy, file).toBeGreaterThanOrEqual(0);
+      expect(tarPatch, file).toBeGreaterThan(copy);
+      expect(bracePatch.commandStart, file).toBeGreaterThan(tarPatch);
+    },
+  );
 });

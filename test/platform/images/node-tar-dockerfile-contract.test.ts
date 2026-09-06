@@ -6,11 +6,14 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
+import { FIXED_TAR_VERSION } from "../../../scripts/patch-bundled-npm-tar.mts";
 import {
-  FIXED_TAR_VERSION,
-  NODE_BASES_REQUIRING_BUNDLED_NPM_TAR_PATCH,
-} from "../../../scripts/patch-bundled-npm-tar.mts";
+  REVIEWED_NPM_ARCHIVE_SHA256,
+  REVIEWED_NPM_TARBALL,
+  REVIEWED_NPM_VERSION,
+} from "../../../scripts/upgrade-bundled-npm.mts";
 import {
+  dockerfileInstructions,
   dockerfileRunCommandPositions,
   requireReviewedDockerfileRunCommands,
   requireSingleReviewedDockerfileRunCommand,
@@ -64,7 +67,19 @@ const dockerfiles = [
 ] as const;
 const patchCommand = "node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts";
 const npmRootArguments = ["--npm-root", "/usr/local/lib/node_modules/npm"] as const;
-const hermesFinalArchivePath = "/tmp/nemoclaw-bundled-npm-tar.tgz";
+const reviewedNpmArchivePath = "/tmp/npm-12.0.2.tgz";
+const reviewedNpmUpgradeArguments = [
+  ...npmRootArguments,
+  "--archive",
+  reviewedNpmArchivePath,
+] as const;
+const hermesReviewedNpmArchivePath = "/scripts/npm-12.0.2.tgz";
+const hermesReviewedNpmUpgradeArguments = [
+  ...npmRootArguments,
+  "--archive",
+  hermesReviewedNpmArchivePath,
+] as const;
+const hermesFinalArchivePath = "/scripts/nemoclaw-bundled-npm-tar.tgz";
 const hermesFinalPatchArguments = [
   ...npmRootArguments,
   "--archive",
@@ -76,7 +91,55 @@ const pinnedBaseDockerfiles = [
   "agents/langchain-deepagents-code/Dockerfile.base",
   "agents/pi/Dockerfile.base",
 ] as const;
-const reviewedNodeBases = new Set<string>(NODE_BASES_REQUIRING_BUNDLED_NPM_TAR_PATCH);
+const REVIEWED_NODE_BASE =
+  "node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc";
+const reviewedNodeBases = new Set<string>([REVIEWED_NODE_BASE]);
+const directNodeDockerfiles = [
+  "Dockerfile",
+  "Dockerfile.base",
+  "agents/hermes/Dockerfile",
+  "agents/hermes/Dockerfile.base",
+  "agents/langchain-deepagents-code/Dockerfile",
+  "agents/langchain-deepagents-code/Dockerfile.base",
+  "agents/pi/Dockerfile",
+  "agents/pi/Dockerfile.base",
+] as const;
+const npmHelperInvocationMarkers = [
+  /\/opt\/nemoclaw-build-tools\/npm-ci-locked\.sh/gu,
+  /node --experimental-strip-types \/opt\/[^\s]*reviewed-npm-archive\.mts/gu,
+  /node --experimental-strip-types \/opt\/[^\s]*seed-reviewed-npm-cache\.mts/gu,
+] as const;
+
+interface DirectNodeStage {
+  readonly file: string;
+  readonly name: string;
+  readonly source: string;
+}
+
+function directNodeStages(file: string, source: string): DirectNodeStage[] {
+  const starts = [...source.matchAll(/^FROM(?:\s+--\S+)*\s+([^\s]+)(?:\s+AS\s+(\S+))?$/gmu)];
+  return starts.flatMap((match, index) =>
+    match[1]!.startsWith("node:24.18.1-") || match[1] === "npm12"
+      ? [
+          {
+            file,
+            name: match[2] ?? "<final>",
+            source: source.slice(match.index, starts[index + 1]?.index ?? source.length),
+          },
+        ]
+      : [],
+  );
+}
+
+function firstNpmInvocation(stage: DirectNodeStage): number {
+  const commandPositions = ["npm", "npx"].flatMap((command) =>
+    dockerfileRunCommandPositions(stage.source, command),
+  );
+  const helperPositions = npmHelperInvocationMarkers.flatMap((marker) =>
+    [...stage.source.matchAll(marker)].map((match) => match.index!),
+  );
+  return Math.min(...commandPositions, ...helperPositions, Number.POSITIVE_INFINITY);
+}
 
 interface ShellToken {
   end: number;
@@ -264,20 +327,15 @@ describe("node-tar image remediation contract", () => {
       assertReviewedNodeBases(file, source);
       for (const base of nodeBaseReferences(source)) observedBases.add(base);
     });
-    expect([...observedBases].sort()).toEqual(
-      [...NODE_BASES_REQUIRING_BUNDLED_NPM_TAR_PATCH].sort(),
-    );
+    expect([...observedBases]).toEqual([REVIEWED_NODE_BASE]);
   });
 
   // source-shape-contract: security -- Each managed Dockerfile must remain bound to a reviewed Node base digest.
   it("rejects an isolated unreviewed Deep Agents Code Node base pin", () => {
     const file = "agents/langchain-deepagents-code/Dockerfile.base";
     const source = fs.readFileSync(path.join(repoRoot, file), "utf8");
-    const reviewedBase = NODE_BASES_REQUIRING_BUNDLED_NPM_TAR_PATCH.find((base) =>
-      base.startsWith("node:22-"),
-    );
-    assert(reviewedBase !== undefined, "the reviewed Node 22 base must be registered");
-    const unreviewedBase = `node:22-trixie-slim@sha256:${"0".repeat(64)}`;
+    const reviewedBase = REVIEWED_NODE_BASE;
+    const unreviewedBase = `node:24.18.1-trixie-slim@sha256:${"0".repeat(64)}`;
     const changedSource = source.replaceAll(reviewedBase, unreviewedBase);
 
     expect(() => assertReviewedNodeBases(file, changedSource)).toThrow(
@@ -327,9 +385,7 @@ describe("node-tar image remediation contract", () => {
         .replace(/\s+/g, " ");
       const reviewedCopy = patchInputStage.indexOf("COPY scripts/lib/reviewed-npm-archive.mts");
       const helperCopy = patchInputStage.indexOf("scripts/lib/bundled-npm-package.mts");
-      const patchCopy = patchInputStage.indexOf(
-        "COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts",
-      );
+      const patchCopy = patchInputStage.indexOf("scripts/patch-bundled-npm-tar.mts");
       const patchRuns = requireReviewedDockerfileRunCommands(
         source,
         patchCommand,
@@ -341,10 +397,11 @@ describe("node-tar image remediation contract", () => {
       const patchInputReady = patchPayloadLayer >= 0 ? patchPayloadLayer : patchCopy;
 
       const archiveCopy = `COPY tools/mcp-tool-discovery-runtime/npm-cache-seed/tar-${FIXED_TAR_VERSION}.tgz ${hermesFinalArchivePath}`;
-      const archiveCopyIndex = source.indexOf(archiveCopy);
+      const archiveInputIndex = patchInputStage.indexOf(archiveCopy);
+      const archiveReady = patchPayloadLayer >= 0 ? patchPayloadLayer : archiveInputIndex;
       expect({
-        archiveBeforePatch: archiveCopyIndex >= 0 && firstPatchRun > archiveCopyIndex,
-        archivePresent: archiveCopyIndex >= 0,
+        archiveBeforePatch: archiveInputIndex >= 0 && firstPatchRun > archiveReady,
+        archivePresent: archiveInputIndex >= 0,
       }).toEqual(
         file === "agents/hermes/Dockerfile"
           ? { archiveBeforePatch: true, archivePresent: true }
@@ -354,7 +411,7 @@ describe("node-tar image remediation contract", () => {
       expect(reviewedCopy, file).toBeGreaterThanOrEqual(0);
       expect(
         flattenedPatchInputStage.includes(
-          "COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/bundled-npm-package.mts scripts/lib/reviewed-npm-audit.mts scripts/lib/openclaw-npm-remediation.mts /scripts/lib/",
+          "COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/bundled-npm-package.mts",
         ) ||
           patchInputStage.includes(
             "COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts",
@@ -388,6 +445,186 @@ describe("node-tar image remediation contract", () => {
 });
 
 describe("reviewed npm image remediation contract", () => {
+  it.each([
+    "Dockerfile",
+    "agents/hermes/Dockerfile",
+    "agents/langchain-deepagents-code/Dockerfile",
+    "agents/pi/Dockerfile",
+  ])("installs reviewed npm in the final $file stage from immutable local bytes", (file) => {
+    const dockerfile = fs.readFileSync(path.join(repoRoot, file), "utf8");
+    const archiveStage = namedStage(dockerfile, "reviewed-npm-archive");
+    const source = completedStage(dockerfile);
+    const portableOptions = file === "agents/hermes/Dockerfile" ? "" : "--chmod=0444 ";
+    const archiveSource = `ADD ${portableOptions}--checksum=sha256:${REVIEWED_NPM_ARCHIVE_SHA256} ${REVIEWED_NPM_TARBALL} /npm-${REVIEWED_NPM_VERSION}.tgz`;
+    const selectedArchivePath =
+      file === "agents/hermes/Dockerfile"
+        ? hermesReviewedNpmArchivePath
+        : reviewedNpmArchivePath;
+    const directArchiveCopy = `COPY --from=reviewed-npm-archive /npm-${REVIEWED_NPM_VERSION}.tgz ${selectedArchivePath}`;
+    const archiveCopy =
+      file === "agents/hermes/Dockerfile"
+        ? "COPY --from=hermes-npm-patch-payload / /"
+        : directArchiveCopy;
+    const archiveCopyIndex = source.indexOf(archiveCopy);
+    const upgradeRun = requireSingleReviewedDockerfileRunCommand(
+      source,
+      "node --experimental-strip-types /scripts/upgrade-bundled-npm.mts",
+      file === "agents/hermes/Dockerfile"
+        ? hermesReviewedNpmUpgradeArguments
+        : reviewedNpmUpgradeArguments,
+    ).commandStart;
+    const firstPrivatePatch = source.indexOf(patchCommand);
+
+    expect(archiveStage).toContain(archiveSource);
+    expect(
+      file !== "agents/hermes/Dockerfile" ||
+        namedStage(dockerfile, "hermes-npm-patch-payload").includes(directArchiveCopy),
+    ).toBe(true);
+    expect(archiveCopyIndex, file).toBeGreaterThanOrEqual(0);
+    expect(upgradeRun, file).toBeGreaterThan(archiveCopyIndex);
+    expect(firstPrivatePatch, file).toBeGreaterThan(upgradeRun);
+  });
+
+  it("prepares the root npm build stage from the same immutable archive", () => {
+    const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
+    const npm12 = directNodeStages("Dockerfile", dockerfile).find(({ name }) => name === "npm12");
+    assert(npm12, "Dockerfile must contain the npm12 stage");
+
+    expect(npm12.source).toContain(
+      `COPY --from=reviewed-npm-archive /npm-${REVIEWED_NPM_VERSION}.tgz ${reviewedNpmArchivePath}`,
+    );
+    const upgradeRun = requireSingleReviewedDockerfileRunCommand(
+      npm12.source,
+      "node --experimental-strip-types /scripts/upgrade-bundled-npm.mts",
+      reviewedNpmUpgradeArguments,
+    ).commandStart;
+    const tarRun = requireSingleReviewedDockerfileRunCommand(
+      npm12.source,
+      patchCommand,
+      npmRootArguments,
+    ).commandStart;
+    const braceRun = npm12.source.indexOf(
+      "node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts",
+    );
+    const ipAddressRun = npm12.source.indexOf(
+      "node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts",
+    );
+
+    expect(upgradeRun).toBeGreaterThan(npm12.source.indexOf(reviewedNpmArchivePath));
+    expect(tarRun).toBeGreaterThan(upgradeRun);
+    expect(braceRun).toBeGreaterThan(tarRun);
+    expect(ipAddressRun).toBeGreaterThan(braceRun);
+  });
+
+  // source-shape-contract: compatibility -- Hermes archive staging and adjacent runtime checks must share existing layers so the final image stays within the Docker import ceiling.
+  it("keeps Hermes npm migration inputs and runtime finalization layer-bounded", () => {
+    const dockerfile = fs.readFileSync(path.join(repoRoot, "agents/hermes/Dockerfile"), "utf8");
+    const payload = namedStage(dockerfile, "hermes-npm-patch-payload");
+    const npmUpgrade = requireSingleReviewedDockerfileRunCommand(
+      completedStage(dockerfile),
+      "node --experimental-strip-types /scripts/upgrade-bundled-npm.mts",
+      hermesReviewedNpmUpgradeArguments,
+    );
+    const finalization = dockerfileInstructions(completedStage(dockerfile)).filter(
+      ({ body, keyword }) => keyword === "RUN" && body.includes('hermes_path="$(command -v hermes'),
+    );
+
+    expect(payload).toContain(
+      `COPY --from=reviewed-npm-archive /npm-${REVIEWED_NPM_VERSION}.tgz ${hermesReviewedNpmArchivePath}`,
+    );
+    expect(payload).toContain(
+      `COPY tools/mcp-tool-discovery-runtime/npm-cache-seed/tar-${FIXED_TAR_VERSION}.tgz ${hermesFinalArchivePath}`,
+    );
+    expect(payload).not.toContain("/tmp/");
+    expect(npmUpgrade.instruction.body).not.toContain("/tmp/");
+    expect(finalization).toHaveLength(1);
+    expect(
+      [
+        "chmod -R a+rX /opt/hermes/.venv",
+        "hermes_web_dist=/opt/hermes/hermes_cli/web_dist",
+        "apt-get autoremove --purge -y",
+      ].every((marker) => finalization[0]!.body.includes(marker)),
+    ).toBe(true);
+  });
+
+  // source-shape-contract: security -- Direct Node stages must upgrade reviewed npm before any npm-backed build boundary executes.
+  it("upgrades and verifies reviewed npm before every direct Node stage npm boundary", () => {
+    expect(
+      directNodeStages(
+        "platform-fixture",
+        "FROM --platform=$BUILDPLATFORM node:24.18.1-trixie AS builder\nRUN npm ci\n",
+      ).map(({ file, name }) => `${file}:${name}`),
+    ).toEqual(["platform-fixture:builder"]);
+    const rootDockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
+    const stages = directNodeDockerfiles.flatMap((file) =>
+      directNodeStages(file, fs.readFileSync(path.join(repoRoot, file), "utf8")),
+    );
+    const invokingStages = stages.filter((stage) => Number.isFinite(firstNpmInvocation(stage)));
+    const upgrade = "node --experimental-strip-types /scripts/upgrade-bundled-npm.mts";
+
+    expect(stages.map(({ file, name }) => `${file}:${name}`)).toEqual([
+      "Dockerfile:npm12",
+      "Dockerfile:builder",
+      "Dockerfile:managed-bootstrap-entrypoint-builder",
+      "Dockerfile:codex-acp-runtime",
+      "Dockerfile:wechat-npm-cache",
+      "Dockerfile:openclaw-managed-messaging-npm-cache-0",
+      "Dockerfile:openclaw-managed-messaging-npm-cache-1",
+      "Dockerfile.base:native-security-builder",
+      "Dockerfile.base:<final>",
+      "agents/hermes/Dockerfile:managed-bootstrap-entrypoint-builder",
+      "agents/hermes/Dockerfile.base:native-security-builder",
+      "agents/hermes/Dockerfile.base:<final>",
+      "agents/langchain-deepagents-code/Dockerfile:managed-bootstrap-entrypoint-builder",
+      "agents/langchain-deepagents-code/Dockerfile.base:native-security-builder",
+      "agents/langchain-deepagents-code/Dockerfile.base:<final>",
+      "agents/pi/Dockerfile:managed-bootstrap-entrypoint-builder",
+      "agents/pi/Dockerfile.base:native-security-builder",
+      "agents/pi/Dockerfile.base:<final>",
+    ]);
+    expect(
+      rootDockerfile.match(
+        /^COPY scripts\/lib\/seed-reviewed-npm-cache[.]mts \/scripts\/lib\/seed-reviewed-npm-cache[.]mts$/gmu,
+      ),
+    ).toHaveLength(2);
+    expect(
+      rootDockerfile.match(
+        /^COPY scripts\/checks\/materialize-locked-npm-cache-seed[.]mts \/scripts\/checks\/materialize-locked-npm-cache-seed[.]mts$/gmu,
+      ),
+    ).toHaveLength(2);
+    expect(
+      rootDockerfile.match(
+        /node --experimental-strip-types \/scripts\/lib\/seed-reviewed-npm-cache[.]mts/gmu,
+      ),
+    ).toHaveLength(3);
+    expect(rootDockerfile).toContain(
+      "node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts",
+    );
+    expect(rootDockerfile).not.toContain("/opt/nemoclaw-build-tools/seed-reviewed-npm-cache.mts");
+    expect(rootDockerfile).not.toContain(
+      "/opt/nemoclaw-build-tools/lib/seed-reviewed-npm-cache.mts",
+    );
+    expect(invokingStages.map(({ file, name }) => `${file}:${name}`)).toEqual([
+      "Dockerfile:builder",
+      "Dockerfile:codex-acp-runtime",
+      "Dockerfile:wechat-npm-cache",
+      "Dockerfile:openclaw-managed-messaging-npm-cache-1",
+      "Dockerfile.base:<final>",
+      "agents/hermes/Dockerfile.base:<final>",
+      "agents/pi/Dockerfile.base:<final>",
+    ]);
+    expect(
+      invokingStages.every((stage) => {
+        const position = stage.source.indexOf(upgrade);
+        return (
+          (position >= 0 || stage.source.startsWith("FROM npm12 AS ")) &&
+          position < firstNpmInvocation(stage)
+        );
+      }),
+    ).toBe(true);
+    expect(REVIEWED_NPM_VERSION).toBe("12.0.2");
+  });
+
   it.each([
     ["a flag-only global option", "npm --silent ci"],
     ["mixed global options", "npm --prefix /work --silent install"],

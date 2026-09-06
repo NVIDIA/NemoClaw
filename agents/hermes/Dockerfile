@@ -13,6 +13,9 @@ ARG NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0
 # context pins its accepted x86_64 target because Podman does not supply it.
 ARG TARGETARCH
 
+FROM scratch AS reviewed-npm-archive
+ADD --checksum=sha256:5dbb86c71d07a1957f2e90734092dd6a58bdcd9ebc2d8d41ca1c6e6a21d364e1 https://registry.npmjs.org/npm/-/npm-12.0.2.tgz /npm-12.0.2.tgz
+
 # The reviewed npm graph is audited in CI; image assembly copies only its
 # generated runtime artifacts and therefore needs neither npm nor network.
 FROM scratch AS mcp-tool-discovery-runtime
@@ -25,7 +28,7 @@ COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-im
 # Compile the bootstrap boundary on the target platform. The output is a
 # freestanding static ELF; only its reviewed, non-executable Bash body remains
 # interpreted at runtime after the native boundary has scrubbed process control.
-FROM node:22-trixie@sha256:a566dd560283ae5615c8bb86b58fa8a1b6f3c82b492473a061672416266625da AS managed-bootstrap-entrypoint-builder
+FROM node:24.18.1-trixie@sha256:dfa43abae25030f5456007944f725379d1f5be4bb723bd501ac39ac72ffa5474 AS managed-bootstrap-entrypoint-builder
 ARG TARGETARCH
 WORKDIR /opt/nemoclaw-managed-bootstrap-build
 COPY scripts/managed-bootstrap-entrypoint.c ./
@@ -71,11 +74,16 @@ RUN set -eu; \
 
 FROM scratch AS hermes-npm-patch-payload
 
+COPY --from=reviewed-npm-archive /npm-12.0.2.tgz /scripts/npm-12.0.2.tgz
+COPY tools/mcp-tool-discovery-runtime/npm-cache-seed/tar-7.5.21.tgz /scripts/nemoclaw-bundled-npm-tar.tgz
 COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
 COPY scripts/lib/bundled-npm-package.mts /scripts/lib/bundled-npm-package.mts
 COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts
 COPY scripts/lib/patch-bundled-npm-ip-address.mts /scripts/lib/patch-bundled-npm-ip-address.mts
 COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
+COPY scripts/lib/reviewed-npm-identity.mts /scripts/lib/reviewed-npm-identity.mts
+COPY scripts/upgrade-bundled-npm.mts /scripts/upgrade-bundled-npm.mts
+COPY ci/reviewed-npm-audit.json /ci/reviewed-npm-audit.json
 COPY agents/hermes/runtime-boundaries.patch /scripts/hermes-runtime-boundaries.patch
 COPY agents/hermes/dashboard-external-host.patch /scripts/hermes-dashboard-external-host.patch
 COPY agents/hermes/secure-dir-skip-chmod.patch /scripts/hermes-secure-dir-skip-chmod.patch
@@ -256,6 +264,14 @@ RUN if [ -n "${NEMOCLAW_CORPORATE_CA_B64}" ]; then \
 # one final-image layer while preserving metadata on existing parent paths.
 COPY --from=hermes-npm-patch-payload / /
 
+# A published base can lag the base-image rollout. Install the complete
+# reviewed npm tree from immutable local bytes before private-tree patches.
+RUN node --experimental-strip-types /scripts/upgrade-bundled-npm.mts \
+      --npm-root /usr/local/lib/node_modules/npm \
+      --archive /scripts/npm-12.0.2.tgz
+# hadolint ignore=DL3059
+RUN rm /scripts/npm-12.0.2.tgz
+
 # The immutable selected base owns the reviewed Hindsight and agent-browser
 # patches and the root-owned agent-browser runtime. Verify that inherited boundary
 # without adding a second network-capable install owner in the final image.
@@ -334,10 +350,9 @@ RUN grep -Fq 'from tools.lazy_deps import install_specs' /opt/hermes/hermes_cli/
 # The final Hermes image owns the shipped dependency boundary independently of
 # base freshness. Reassert the idempotent npm-private node-tar fix from the
 # locked cache seed so protected rebuilds remain network-disabled.
-COPY tools/mcp-tool-discovery-runtime/npm-cache-seed/tar-7.5.21.tgz /tmp/nemoclaw-bundled-npm-tar.tgz
 RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
       --npm-root /usr/local/lib/node_modules/npm \
-      --archive /tmp/nemoclaw-bundled-npm-tar.tgz
+      --archive /scripts/nemoclaw-bundled-npm-tar.tgz
 
 # Reassert the npm-private brace-expansion fix for the final filesystem.
 # When onboarding supplied a corporate CA, use it for the registry-backed
@@ -360,8 +375,17 @@ RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
     node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts \
       --npm-root /usr/local/lib/node_modules/npm
 
-# Keep the final image contract explicit even when the published base image
-# changes independently of this Dockerfile.
+# Published base images can lag Dockerfile.base while local feature branches
+# still layer this final image on top. Invalid state: the selected base has
+# Hermes source under /opt/hermes but lacks hermes_cli/web_dist. Prebuild the
+# dashboard bundle here too so `hermes dashboard` never tries to run npm from
+# the sandbox user account. Remove this fallback after all supported base image
+# tags are built from Dockerfile.base with HERMES_WEB_DIST prepopulated.
+ENV HERMES_WEB_DIST="/opt/hermes/hermes_cli/web_dist"
+
+# Keep the inherited CLI, Python environment, and dashboard explicit. Strip
+# build-only compiler and network-probe packages in the same layer so the
+# managed image remains within its import ceiling.
 RUN set -eu; \
     hermes_path="$(command -v hermes 2>/dev/null || true)"; \
     if [ "$hermes_path" != "/usr/local/bin/hermes" ]; then \
@@ -369,19 +393,10 @@ RUN set -eu; \
         exit 1; \
     fi; \
     test -x /usr/local/bin/hermes; \
-    /usr/local/bin/hermes --version
-
-RUN chmod -R a+rX /opt/hermes/.venv \
-    && test -r /opt/hermes/.venv/pyvenv.cfg \
-    && su -s /bin/sh sandbox -c '/opt/hermes/.venv/bin/python3 -c "import urllib.request"'
-
-# Published base images can lag Dockerfile.base while local feature branches
-# still layer this final image on top. Invalid state: the selected base has
-# Hermes source under /opt/hermes but lacks hermes_cli/web_dist. Prebuild the
-# dashboard bundle here too so `hermes dashboard` never tries to run npm from
-# the sandbox user account. Remove this fallback after all supported base image
-# tags are built from Dockerfile.base with HERMES_WEB_DIST prepopulated.
-RUN set -eu; \
+    /usr/local/bin/hermes --version; \
+    chmod -R a+rX /opt/hermes/.venv; \
+    test -r /opt/hermes/.venv/pyvenv.cfg; \
+    su -s /bin/sh sandbox -c '/opt/hermes/.venv/bin/python3 -c "import urllib.request"'; \
     if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
         export CURL_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem; \
         export NODE_EXTRA_CA_CERTS=/usr/local/share/nemoclaw/corporate-ca.pem; \
@@ -408,15 +423,7 @@ RUN set -eu; \
         fi; \
     fi; \
     rm -rf /root/.npm /root/.cache/electron /root/.cache/node-gyp /root/.cache/uv; \
-    test -d "$hermes_web_dist"
-
-ENV HERMES_WEB_DIST="/opt/hermes/hermes_cli/web_dist"
-
-# Harden: remove unnecessary build tools and network probes. build-essential
-# comes from the base image for npm/node-gyp builds; the final image does not
-# compile anything, so strip the installed compiler packages and fail closed if
-# command shims survive.
-RUN set -eu; \
+    test -d "$hermes_web_dist"; \
     dpkg-query -W -f='${Package}\n' >/tmp/hermes-runtime-packages.txt; \
     grep -E '^(build-essential|make|gcc|g\+\+|cpp|gcc-[0-9]+|g\+\+-[0-9]+|cpp-[0-9]+|[[:alnum:]_-]+-linux-gnu-(gcc|g\+\+|cpp)(-[0-9]+)?|netcat-openbsd|netcat-traditional|ncat)$' /tmp/hermes-runtime-packages.txt >/tmp/hermes-runtime-tool-packages.txt || true; \
     if [ -s /tmp/hermes-runtime-tool-packages.txt ]; then xargs -r apt-get purge -y </tmp/hermes-runtime-tool-packages.txt; fi; \
@@ -472,9 +479,10 @@ RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
     && find /opt/nemoclaw-hermes-config -type f -exec chmod 444 {} + \
     && chmod 444 /src/lib/hermes-managed-route.ts /src/lib/tool-disclosure.ts \
     && chmod 444 /scripts/lib/reviewed-npm-archive.mts /scripts/lib/bundled-npm-package.mts \
-        /scripts/lib/openclaw-npm-remediation.mts \
+        /scripts/lib/openclaw-npm-remediation.mts /scripts/lib/reviewed-npm-identity.mts \
         /scripts/patch-bundled-npm-brace-expansion.mts /scripts/lib/patch-bundled-npm-ip-address.mts \
-        /scripts/patch-bundled-npm-tar.mts \
+        /scripts/patch-bundled-npm-tar.mts /scripts/upgrade-bundled-npm.mts \
+        /ci/reviewed-npm-audit.json \
     && chmod -R a+rX /src/lib/messaging
 
 # Hermes 0.20.6 pins the Hindsight version but does not authenticate a
@@ -1621,9 +1629,12 @@ RUN check_metadata() { \
     && check_metadata /opt/hermes/plugins/nemoclaw 'root:root 755' \
     && check_metadata /opt/hermes/plugins/nemoclaw/__init__.py 'root:root 444' \
     && check_metadata /scripts/lib/bundled-npm-package.mts 'root:root 444' \
+    && check_metadata /scripts/lib/reviewed-npm-identity.mts 'root:root 444' \
     && check_metadata /scripts/patch-bundled-npm-brace-expansion.mts 'root:root 444' \
     && check_metadata /scripts/lib/patch-bundled-npm-ip-address.mts 'root:root 444' \
     && check_metadata /scripts/patch-bundled-npm-tar.mts 'root:root 444' \
+    && check_metadata /scripts/upgrade-bundled-npm.mts 'root:root 444' \
+    && check_metadata /ci/reviewed-npm-audit.json 'root:root 444' \
     && check_metadata /opt/nemoclaw-hermes-config/generate-config.ts 'root:root 444' \
     && check_metadata /opt/nemoclaw-hermes-config/hindsight-client-requirements.txt 'root:root 444' \
     && check_metadata /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py 'root:root 755' \
