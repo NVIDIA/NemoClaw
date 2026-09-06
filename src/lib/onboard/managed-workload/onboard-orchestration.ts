@@ -203,6 +203,9 @@ export async function prepareSandboxWorkloadForPortableLifecycle(
   portableLifecycle: boolean,
 ): Promise<PreparedSandboxWorkloadSource> {
   const workload = await runtime.ensurePreparedWorkload();
+  if (workload.source.kind === "portable-image") {
+    throw new Error("Portable image workload activation is not enabled.");
+  }
   assertPortableManagedBootstrapNotSelected(
     portableLifecycle,
     workload.source.kind === "managed-image",
