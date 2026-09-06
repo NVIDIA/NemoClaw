@@ -668,6 +668,21 @@ describe("Windows-host Ollama transport", () => {
     expect(captureEx).toHaveBeenCalledOnce();
   });
 
+  it("omits local systemd guidance for Windows-host Ollama timeouts", () => {
+    setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
+    const capture = respondsOnlyThroughDockerDesktop("/api/show", "");
+
+    const result = validateOllamaModel(
+      "nemotron-3-nano:30b",
+      capture,
+      () => false,
+      () => ({ stdout: "", exitCode: 28, timedOut: true }),
+    );
+
+    expect(result.message).toContain("did not answer the local probe in time");
+    expect(result.message).not.toContain("systemctl");
+  });
+
   it("validates health and container reachability through Docker Desktop (#10553)", () => {
     setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
     const capture = vi.fn((command: readonly string[]) => {
@@ -920,6 +935,7 @@ describe("Windows-host Ollama transport", () => {
         "docker",
         "run",
         "--rm",
+        "-d",
         CONTAINER_REACHABILITY_IMAGE,
         "http://host.docker.internal:11434/api/generate",
       ]),
