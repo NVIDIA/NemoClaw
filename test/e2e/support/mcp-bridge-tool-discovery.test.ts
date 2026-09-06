@@ -313,7 +313,7 @@ describe("authenticated MCP tool discovery transport retry", () => {
               commandStatus: 0,
               failedStage: "initialization",
               failureClass: "connection",
-              detail: "MCP tool discovery request failed",
+              detail: "MCP request failed",
             },
           }),
           stderr: "",
@@ -365,7 +365,7 @@ describe("authenticated MCP tool discovery transport retry", () => {
                 commandStatus: 0,
                 failedStage: "initialization",
                 failureClass: "authentication",
-                detail: "MCP endpoint rejected tool discovery (HTTP 401)",
+                detail: "MCP endpoint rejected the request (HTTP 401)",
               },
             }),
             stderr: "",
@@ -427,7 +427,7 @@ describe("authenticated MCP tool discovery transport retry", () => {
         commandStatus: 0,
         failedStage: "initialization" as const,
         failureClass: "connection" as const,
-        detail: "MCP tool discovery request failed",
+        detail: "MCP request failed",
         credential: STATUS_SECRET,
       },
     };
@@ -476,7 +476,7 @@ describe("authenticated MCP tool discovery transport retry", () => {
         commandStatus: 0,
         failedStage: "initialization",
         failureClass: "connection",
-        detail: "MCP tool discovery request failed",
+        detail: "MCP request failed",
       },
       requests: [
         {

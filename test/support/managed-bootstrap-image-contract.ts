@@ -34,7 +34,7 @@ const MANAGED_BOOTSTRAP_BUILDER_IMAGE =
 const DISCOVERY_RUNTIME_ROOT = "/usr/local/lib/nemoclaw/mcp-tool-discovery-runtime";
 const DISCOVERY_RUNTIME_PATH = `${DISCOVERY_RUNTIME_ROOT}/mcp-tool-discovery.mjs`;
 const DISCOVERY_EXPECTED_CONTRACT =
-  '{"protocol":2,"ok":false,"detail":"tool discovery received invalid runtime arguments","failedStage":"preflight","failureClass":"precondition"}';
+  '{"protocol":2,"ok":false,"count":0,"tools":[],"truncated":false,"detail":"tool discovery received invalid runtime arguments","failedStage":"preflight","failureClass":"precondition"}';
 const REVIEWED_DISCOVERY_RUNTIME_ROOT = path.join(
   import.meta.dirname,
   "..",
@@ -259,9 +259,12 @@ export function expectManagedToolDiscoveryRuntimeImageContract(dockerfile: strin
     const permissionReplay = runPermissionReplay();
     expect(permissionReplay.status, permissionReplay.stderr).toBe(0);
     expect(permissionReplay.stderr).toBe("");
-    expect(JSON.parse(permissionReplay.stdout)).toMatchObject({
+    expect(JSON.parse(permissionReplay.stdout)).toEqual({
       protocol: 2,
       ok: false,
+      count: 0,
+      tools: [],
+      truncated: false,
       detail: "tool discovery received invalid runtime arguments",
       failedStage: "preflight",
       failureClass: "precondition",
@@ -335,7 +338,7 @@ export function expectManagedToolDiscoveryRuntimeImageContract(dockerfile: strin
       expect(contractFailure.status).toBe(1);
       expect(contractFailure.stdout).toBe("");
       expect(contractFailure.stderr).toBe(
-        `ERROR: managed image assertion failed: mcp-tool-discovery-json-contract actual={"protocol":2,"ok":true,"detail":"wrong?<REDACTED>?continued?[31m","failedStage":"<missing>","failureClass":"<missing>"} expected=${DISCOVERY_EXPECTED_CONTRACT}\n`,
+        `ERROR: managed image assertion failed: mcp-tool-discovery-json-contract actual={"protocol":2,"ok":true,"count":"<missing>","tools":"<missing>","truncated":"<missing>","detail":"wrong?<REDACTED>?continued?[31m","failedStage":"<missing>","failureClass":"<missing>"} expected=${DISCOVERY_EXPECTED_CONTRACT}\n`,
       );
       expect(contractFailure.stderr).not.toContain(credential);
       expect(contractFailure.stderr).not.toContain("\u001b");
@@ -356,7 +359,7 @@ export function expectManagedToolDiscoveryRuntimeImageContract(dockerfile: strin
       expect(contractFailure.status).toBe(1);
       expect(contractFailure.stdout).toBe("");
       expect(contractFailure.stderr).toBe(
-        `ERROR: managed image assertion failed: mcp-tool-discovery-json-contract actual={"protocol":2,"ok":true,"detail":"${sanitized}","failedStage":"<missing>","failureClass":"<missing>"} expected=${DISCOVERY_EXPECTED_CONTRACT}\n`,
+        `ERROR: managed image assertion failed: mcp-tool-discovery-json-contract actual={"protocol":2,"ok":true,"count":"<missing>","tools":"<missing>","truncated":"<missing>","detail":"${sanitized}","failedStage":"<missing>","failureClass":"<missing>"} expected=${DISCOVERY_EXPECTED_CONTRACT}\n`,
       );
       expect(contractFailure.stderr).not.toContain(credential);
     }
@@ -381,7 +384,7 @@ export function expectManagedToolDiscoveryRuntimeImageContract(dockerfile: strin
     expect(privateKeyFailure.status).toBe(1);
     expect(privateKeyFailure.stdout).toBe("");
     expect(privateKeyFailure.stderr).toBe(
-      `ERROR: managed image assertion failed: mcp-tool-discovery-json-contract actual={"protocol":2,"ok":true,"detail":"wrong?<REDACTED>","failedStage":"<missing>","failureClass":"<missing>"} expected=${DISCOVERY_EXPECTED_CONTRACT}\n`,
+      `ERROR: managed image assertion failed: mcp-tool-discovery-json-contract actual={"protocol":2,"ok":true,"count":"<missing>","tools":"<missing>","truncated":"<missing>","detail":"wrong?<REDACTED>","failedStage":"<missing>","failureClass":"<missing>"} expected=${DISCOVERY_EXPECTED_CONTRACT}\n`,
     );
     expect(privateKeyFailure.stderr).not.toContain("private-material");
 
@@ -418,6 +421,22 @@ export function expectManagedToolDiscoveryRuntimeImageContract(dockerfile: strin
     expect(success.status, success.stderr).toBe(0);
     expect(success.stdout).toBe("discovery-ok\n");
     expect(success.stderr).toBe("");
+
+    for (const rejectedContract of [
+      { ...JSON.parse(DISCOVERY_EXPECTED_CONTRACT), count: 1 },
+      { ...JSON.parse(DISCOVERY_EXPECTED_CONTRACT), tools: ["unexpected"] },
+      { ...JSON.parse(DISCOVERY_EXPECTED_CONTRACT), truncated: true },
+      { ...JSON.parse(DISCOVERY_EXPECTED_CONTRACT), extra: "unexpected" },
+    ]) {
+      const contractFailure = runDiscoveryChecks({
+        discoveryOutput: JSON.stringify(rejectedContract),
+      });
+      expect(contractFailure.status).toBe(1);
+      expect(contractFailure.stdout).toBe("");
+      expect(contractFailure.stderr).toContain(
+        "ERROR: managed image assertion failed: mcp-tool-discovery-json-contract",
+      );
+    }
 
     const missing = runDiagnostic(missingPath, "regular-file", "unused");
     expect(missing.status).toBe(1);

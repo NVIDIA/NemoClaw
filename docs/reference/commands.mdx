@@ -2300,7 +2300,13 @@ Pass `--tools` with one server name to request a live tool inventory. The shared
 
 Use `--tools` only with a configured endpoint you trust to advertise names while authenticated. The endpoint controls its returned names and can derive them from the request or credential it receives; NemoClaw validates and bounds the text but cannot prove that the endpoint did not encode credential-derived data in an otherwise valid name.
 
-The `toolDiscovery` JSON field contains `ok`, `count`, `tools`, `truncated`, and `commandStatus`. A failed result also contains `failedStage`, `failureClass`, and a redacted `detail`. `commandStatus` is `null` when no runtime exit status exists, such as a failed precondition or an unreachable sandbox. These names are the server's point-in-time advertised tools, not an attestation of the exact tools visible to the model after agent filters, progressive disclosure, or session state. An older sandbox image without the shared client reports that the sandbox must be rebuilt.
+The `toolDiscovery` JSON field contains `ok`, `count`, `tools`, `truncated`, and `commandStatus`.
+A failed result also contains `failedStage`, `failureClass`, and a redacted `detail`.
+A runtime-emitted precondition reports `commandStatus` as `0`.
+A bridge-level precondition that skips runtime execution reports `null`.
+An unreachable sandbox also reports `null` when no runtime exit status exists.
+These names are the server's point-in-time advertised tools, not an attestation of the exact tools visible to the model after agent filters, progressive disclosure, or session state.
+An older sandbox image without the shared client reports that the sandbox must be rebuilt.
 
 Tool discovery is opt-in and sends authenticated network traffic to the configured endpoint. Passing `--tools` suppresses the named-server credential-resolution probe that otherwise runs by default. Pass `--probe --tools` to request both checks explicitly. An unsuccessful discovery exits nonzero but does not remove the ordinary provider, policy, environment, or adapter status from the result.
 

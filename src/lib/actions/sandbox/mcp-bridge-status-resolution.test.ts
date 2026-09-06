@@ -829,7 +829,7 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     count: 0,
     tools: [],
     truncated: false,
-    detail: "MCP endpoint rejected tool discovery (HTTP 401)",
+    detail: "MCP endpoint rejected the request (HTTP 401)",
     failedStage: "initialization",
     failureClass: "authentication",
   };
@@ -853,7 +853,7 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
       tools: [],
       truncated: false,
       commandStatus: 0,
-      detail: "MCP endpoint rejected tool discovery (HTTP 401)",
+      detail: "MCP endpoint rejected the request (HTTP 401)",
       failedStage: "initialization",
       failureClass: "authentication",
     });

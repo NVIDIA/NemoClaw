@@ -241,7 +241,7 @@ describe("shared MCP tool discovery runtime", () => {
       count: 0,
       tools: [],
       truncated: false,
-      detail: "MCP tool discovery request failed",
+      detail: "MCP request failed",
       failedStage: "tool-discovery",
       failureClass: "tool-operation",
     });
@@ -273,7 +273,7 @@ describe("shared MCP tool discovery runtime", () => {
       count: 0,
       tools: [],
       truncated: false,
-      detail: "MCP endpoint rejected tool discovery (HTTP 401)",
+      detail: "MCP endpoint rejected the request (HTTP 401)",
       failedStage: "initialization",
       failureClass: "authentication",
     });
@@ -382,7 +382,7 @@ describe("shared MCP tool discovery runtime", () => {
       (abortSource === "deadline" ? deadline : request).abort();
       const error = await pending.catch((caught: unknown) => caught);
       expect(error).toMatchObject({ code: "timeout" });
-      expect(safeToolDiscoveryErrorDetail(error)).toBe("tool discovery timed out after 10s");
+      expect(safeToolDiscoveryErrorDetail(error)).toBe("MCP request timed out after 10s");
       expect(safeToolDiscoveryErrorDetail(error)).not.toContain("untrusted-timeout-detail");
     },
   );
@@ -395,15 +395,15 @@ describe("shared MCP tool discovery runtime", () => {
       "MCP endpoint redirect was rejected",
     );
     expect(safeToolDiscoveryErrorDetail(new ToolDiscoveryRuntimeError("http-error", 401))).toBe(
-      "MCP endpoint rejected tool discovery (HTTP 401)",
+      "MCP endpoint rejected the request (HTTP 401)",
     );
     expect(
       safeToolDiscoveryErrorDetail(
         Object.assign(new Error("remote body contains Bearer secret-value"), { code: 401 }),
       ),
-    ).toBe("MCP tool discovery request failed");
+    ).toBe("MCP request failed");
     expect(safeToolDiscoveryErrorDetail(new Error("Bearer secret-value"))).toBe(
-      "MCP tool discovery request failed",
+      "MCP request failed",
     );
   });
 

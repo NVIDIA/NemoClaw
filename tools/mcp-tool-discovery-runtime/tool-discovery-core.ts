@@ -357,8 +357,8 @@ export function safeToolDiscoveryErrorDetail(error: unknown): string {
         return "MCP endpoint connection failed";
       case "http-error":
         return typeof error.httpStatus === "number"
-          ? `MCP endpoint rejected tool discovery (HTTP ${error.httpStatus})`
-          : "MCP endpoint rejected tool discovery";
+          ? `MCP endpoint rejected the request (HTTP ${error.httpStatus})`
+          : "MCP endpoint rejected the request";
       case "invalid-response":
         return "MCP endpoint returned an invalid tool-list response";
       case "redirect":
@@ -366,7 +366,7 @@ export function safeToolDiscoveryErrorDetail(error: unknown): string {
       case "response-too-large":
         return `MCP responses exceeded the ${MCP_TOOL_DISCOVERY_LIMITS.maxResponseBytes}-byte safety limit`;
       case "timeout":
-        return `tool discovery timed out after ${MCP_TOOL_DISCOVERY_LIMITS.maxTotalTimeMs / 1_000}s`;
+        return `MCP request timed out after ${MCP_TOOL_DISCOVERY_LIMITS.maxTotalTimeMs / 1_000}s`;
     }
   }
 
@@ -375,11 +375,11 @@ export function safeToolDiscoveryErrorDetail(error: unknown): string {
       error.name === "AbortError" ||
       /(?:request|maximum total) timeout|timed out/iu.test(error.message)
     ) {
-      return `tool discovery timed out after ${MCP_TOOL_DISCOVERY_LIMITS.maxTotalTimeMs / 1_000}s`;
+      return `MCP request timed out after ${MCP_TOOL_DISCOVERY_LIMITS.maxTotalTimeMs / 1_000}s`;
     }
   }
 
-  return "MCP tool discovery request failed";
+  return "MCP request failed";
 }
 
 export function mcpToolDiscoveryFailure(

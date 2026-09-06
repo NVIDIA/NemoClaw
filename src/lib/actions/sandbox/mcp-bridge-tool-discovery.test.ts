@@ -185,7 +185,7 @@ describe("MCP tool discovery host boundary (#6901)", () => {
           count: 0,
           tools: [],
           truncated: false,
-          detail: "MCP endpoint rejected tool discovery (HTTP 401)",
+          detail: "MCP endpoint rejected the request (HTTP 401)",
           failedStage: "initialization",
           failureClass: "authentication",
         }),
@@ -198,7 +198,7 @@ describe("MCP tool discovery host boundary (#6901)", () => {
       tools: [],
       truncated: false,
       commandStatus: 0,
-      detail: "MCP endpoint rejected tool discovery (HTTP 401)",
+      detail: "MCP endpoint rejected the request (HTTP 401)",
       failedStage: "initialization",
       failureClass: "authentication",
     });
