@@ -625,8 +625,8 @@ describe("llama.cpp image PR workflow", () => {
     );
     expect(sbomSteps).toHaveLength(2);
     expect(sbomSteps.map((step) => step.uses)).toEqual([
-      "anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610",
-      "anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610",
+      "anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26",
+      "anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26",
     ]);
     expect(sbomSteps.map((step) => step.with?.["artifact-name"])).toEqual([
       "llama-cpp-sbom-amd64-${{ needs.validate-inputs.outputs.candidate_tag }}",
