@@ -381,14 +381,13 @@ export function resolveManagedLlamaCppSelectionForGpu(
   > = {},
   selectionOptions: ManagedLlamaCppSelectionOptions = {},
 ): ManagedLlamaCppSelectionResult {
-  const report = createHostReadinessReport(getBuildIdentity(), {
-    ...collectionOptions,
-    ...(gpu ? { detectGpu: () => gpu } : {}),
-    ...(gpu?.wslDockerDesktopGpuProofPassed === undefined
-      ? {}
-      : { wslDockerDesktopGpuProofPassed: gpu.wslDockerDesktopGpuProofPassed }),
-  });
-  return resolveManagedLlamaCppSelection(env, catalog, report, selectionOptions);
+  return discoverManagedLlamaCppSelectionsForGpu(
+    env,
+    gpu,
+    catalog,
+    collectionOptions,
+    selectionOptions,
+  ).resolution;
 }
 
 /** Discover managed choices with the GPU proof already admitted by onboarding preflight. */
