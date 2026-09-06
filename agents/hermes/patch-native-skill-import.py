@@ -253,12 +253,9 @@ def do_import_local(skill_path: str, expected_name: str, expected_digest: str, c
         installed_manifest = "".join(line for _, line in sorted(installed_entries))
         if installed_files != set(files) or hashlib.sha256(installed_manifest.encode("utf-8")).hexdigest() != expected_digest:
             raise RuntimeError("installed skill digest changed before native commit")
-        try:
-            from agent.prompt_builder import clear_skills_system_prompt_cache
+        from agent.prompt_builder import clear_skills_system_prompt_cache
 
-            clear_skills_system_prompt_cache(clear_snapshot=True)
-        except Exception:
-            pass
+        clear_skills_system_prompt_cache(clear_snapshot=True)
         observed = json.loads(skill_view(expected_name, preprocess=False))
         observed_dir = Path(str(observed.get("skill_dir") or "")).resolve()
         if not observed.get("success") or observed_dir != installed_path.resolve():

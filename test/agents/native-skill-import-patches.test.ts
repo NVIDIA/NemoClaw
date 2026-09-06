@@ -140,6 +140,9 @@ describe("agent-native local skill import patches", () => {
     expect(source).toContain("os.replace(destination, failed_install)");
     expect(source).toContain("quarantined failed install retained at");
     expect(source).not.toContain("shutil.rmtree(destination, ignore_errors=True)");
+    expect(source).not.toContain(
+      "clear_skills_system_prompt_cache(clear_snapshot=True)\n        except",
+    );
     expect(source).toContain("if not before:");
     expect(source).toContain("NEMOCLAW_NATIVE_SKILL_IMPORT=");
     expect(runPython(["-m", "py_compile", parser, hub]).status).toBe(0);
