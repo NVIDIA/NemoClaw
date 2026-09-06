@@ -341,7 +341,6 @@ export interface LlamaCppServingRecipe extends ServingRecipeEnvelope {
       readonly image: string;
       readonly imageDownloadSizeBytes: number;
       readonly platforms: readonly ("linux/amd64" | "linux/arm64")[];
-      readonly containerRuntime: "docker";
       readonly networkExposure: "loopback";
       readonly restartPolicy: "unless-stopped";
       readonly hosts: 1;

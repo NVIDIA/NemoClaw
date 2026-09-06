@@ -66,6 +66,11 @@ jobs:
                   .filename == ".github/workflows/e2e.yaml"
                   or .filename == ".github/workflows/pr-self-hosted.yaml"
                   or .filename == "scripts/install.sh"
+                  or .filename == "src/lib/inference/nim.ts"
+                  or .filename == "src/lib/onboard/provider-selection.ts"
+                  or .filename == "src/lib/onboard/runtime-provider/configured-runtime.ts"
+                  or .filename == "src/lib/onboard/runtime-provider/current.ts"
+                  or .filename == "src/lib/onboard/setup-nim-flow.ts"
                   or .filename == "test/e2e/live/llama-cpp-generic-gpu.test.ts"
                   or .filename == "test/e2e/live/gpu-e2e-helpers.ts"
                   or .filename == "test/e2e/mock-parity.json"
@@ -139,6 +144,7 @@ jobs:
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_E2E_EXPECTED_SHA: ${{ github.sha }}
       NEMOCLAW_E2E_SHARD: default
+      NEMOCLAW_GATEWAY_RUNTIME: docker
       NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA: ${{ github.sha }}
       NEMOCLAW_LLAMACPP_RECIPE: llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1
       NEMOCLAW_NON_INTERACTIVE: "1"

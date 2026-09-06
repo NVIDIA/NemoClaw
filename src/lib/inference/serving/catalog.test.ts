@@ -217,7 +217,6 @@ spec:
     platforms:
       - linux/amd64
       - linux/arm64
-    containerRuntime: docker
     networkExposure: loopback
     restartPolicy: unless-stopped
     hosts: 1
@@ -771,6 +770,12 @@ describe("managed inference serving catalog compiler", () => {
     networkMode: host`,
     ],
     [
+      "runtime-provider selection",
+      "    networkExposure: loopback",
+      `    containerRuntime: docker
+    networkExposure: loopback`,
+    ],
+    [
       "managed runtime GPU memory sizing",
       "    networkExposure: loopback",
       `    networkExposure: loopback
@@ -1081,11 +1086,6 @@ describe("managed inference serving catalog compiler", () => {
       "            value: windows",
     ],
     ["architecture", "              - arm64", "              - riscv64"],
-    [
-      "container-runtime",
-      "            value: docker",
-      "            value: podman",
-    ],
     ["gpu-count", "            value: 1", "            value: 0"],
     [
       "driver-version",
@@ -1106,6 +1106,16 @@ describe("managed inference serving catalog compiler", () => {
       );
     },
   );
+
+  it("leaves llama.cpp runtime-provider constraints with preset readiness", () => {
+    const podmanPreset = replaceSource(
+      llamaCppPresetSource(),
+      "            value: docker",
+      "            value: podman",
+    );
+
+    expect(() => compile([llamaCppRecipeSource(), podmanPreset])).not.toThrow();
+  });
 
   it.each([
     ["shell syntax", "$(id)"],

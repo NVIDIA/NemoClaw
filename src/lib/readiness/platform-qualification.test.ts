@@ -170,47 +170,37 @@ describe("platform readiness qualification (#7410)", () => {
     expect(capability(result, "host.platform.wsl_gpu_passthrough")).toBe(expected);
   });
 
-  it("collects and qualifies the N1x WSL product identity (#10102)", () => {
-    const missingFastOs = Object.assign(new Error("missing FastOS marker"), { code: "ENOENT" });
-    const runCaptureImpl = vi.fn(() => "RTX Spark N1X\r\n");
-    const identity = collectPlatformIdentity({
-      isWsl: true,
-      runCaptureImpl,
-      productNamePath: "/fixtures/product_name",
-      readFile: () => "Virtual Machine\n",
-      openFile: () => {
-        throw missingFastOs;
-      },
-    });
+  it("qualifies an OEM N1x WSL host from its proof-backed GPU identity (#10962)", () => {
     const result = projectPlatformQualification(
       input({
         architecture: "arm64",
         isWsl: true,
         runtime: "docker-desktop",
         hasNvidiaGpu: true,
-        ...identity,
+        productName: "83N7",
+        n1xWslGpu: true,
+        wslDockerDesktopGpuProofPassed: true,
       }),
     );
 
-    expect(identity).toMatchObject({ n1xWslProduct: true });
     expect(capability(result, "host.platform.n1x_wsl")).toBe("present");
     expect(qualification(result, "host.platform.n1x_wsl")).toBe("qualified");
-    expect(result.evidence[0]?.details).toMatchObject({ n1xWslProduct: true });
+    expect(result.evidence[0]?.details).toMatchObject({ product: "83N7", n1xWslGpu: true });
   });
 
   it.each([
     [false, "absent"],
     [undefined, "absent"],
   ] as const)(
-    "fails closed for N1x WSL product evidence %s (#10102)",
-    (n1xWslProduct, expectedCapability) => {
+    "fails closed for N1x WSL GPU identity %s (#10962)",
+    (n1xWslGpu, expectedCapability) => {
       const result = projectPlatformQualification(
         input({
           architecture: "arm64",
           isWsl: true,
           runtime: "docker-desktop",
           hasNvidiaGpu: true,
-          n1xWslProduct,
+          n1xWslGpu,
         }),
       );
 
@@ -218,6 +208,22 @@ describe("platform readiness qualification (#7410)", () => {
       expect(qualification(result, "host.platform.n1x_wsl")).toBeUndefined();
     },
   );
+
+  it("rejects N1x WSL identity when the Docker Desktop GPU proof fails (#10962)", () => {
+    const result = projectPlatformQualification(
+      input({
+        architecture: "arm64",
+        isWsl: true,
+        runtime: "docker-desktop",
+        hasNvidiaGpu: true,
+        n1xWslGpu: true,
+        wslDockerDesktopGpuProofPassed: false,
+      }),
+    );
+
+    expect(capability(result, "host.platform.n1x_wsl")).toBe("absent");
+    expect(qualification(result, "host.platform.n1x_wsl")).toBe("unqualified");
+  });
 
   it.each([
     ["arm64", "docker-desktop", true],

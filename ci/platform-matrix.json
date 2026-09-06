@@ -57,7 +57,7 @@
       "ci_tested": false,
       "_prd_note": "PRD tracks x86 and ARM (WOA) separately; treating as one entry until ARM is validated independently.",
       "prerequisites_notes": "Requires WSL2 with Docker Desktop backend. See [Additional Setup for Windows Machines](additional-setup/windows-preparation) before the Quickstart.",
-      "notes": "Requires WSL2 with Docker Desktop backend. Qualifying Windows WSL N1x hosts can use the explicit Experimental managed llama.cpp Qwen 3.6 recipe after local-default Docker authority, N1x product identity, ARM64, 48,000 MiB Docker and GPU memory, driver, NVIDIA integration, and Docker Desktop GPU-passthrough checks pass. Other Windows WSL Express installs use WSL-local Ollama. Windows-host Ollama remains available through manual onboarding when Docker Desktop WSL integration, the local `default` Docker context, no `DOCKER_HOST` override, and the required route protections are present. Dedicated N1x WSL CI and physical end-to-end validation are pending."
+      "notes": "Requires WSL2 with Docker Desktop backend. Windows Express acceptance or the required non-interactive third-party software acceptance is the explicit opt-in to this Experimental surface. Windows Express and non-interactive onboarding automatically select managed llama.cpp when no provider is requested or recorded and `NEMOCLAW_MODEL` is unset. With `NEMOCLAW_LLAMACPP_RECIPE` unset, onboarding selects Qwen 3.6; a compatible explicit recipe selects that managed recipe. Selection requires a bounded CUDA proof to validate one GPU whose normalized identity is either `NVIDIA RTX Spark N1X` or `NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)` on Linux ARM64 WSL, the local-default Docker authority to be active, and the 48,000 MiB Docker and GPU memory, driver, NVIDIA integration, and Docker Desktop GPU-passthrough checks to pass. The Windows chassis model does not participate in selection. Ordinary interactive onboarding can select another listed provider. Other Windows WSL Express installs use WSL-local Ollama. Windows-host Ollama remains available through manual onboarding when Docker Desktop WSL integration, the local `default` Docker context, no `DOCKER_HOST` override, and the required route protections are present. Dedicated N1x WSL CI and physical end-to-end validation are pending."
     },
     {
       "name": "DGX OS (Station)",
@@ -148,10 +148,10 @@
       "notes": "Attaches only to an authenticated operator-managed server on loopback port `8081` that passes cooperative native llama.cpp fingerprinting. NemoClaw does not own its server, model, or lifecycle."
     },
     {
-      "name": "Local llama.cpp (managed DGX Spark)",
+      "name": "Local llama.cpp (managed)",
       "status": "experimental",
       "endpoint_type": "Local OpenAI-compatible",
-      "notes": "Uses the repository-owned YAML recipe for NVIDIA Nemotron 3 Nano 30B-A3B, exact GGUF verification, and Docker lifecycle on a qualified DGX Spark host. The recipe remains unqualified for agent support."
+      "notes": "Uses repository-owned YAML recipes and exact GGUF verification. The selected runtime-provider boundary owns lifecycle; all currently qualified profiles require Docker. Qualified DGX Spark hosts offer NVIDIA Nemotron 3 Nano 30B-A3B. Qualifying Windows WSL N1x hosts automatically use managed llama.cpp during Windows Express or non-interactive onboarding when no provider is requested or recorded and `NEMOCLAW_MODEL` is unset. An unset recipe selects Qwen 3.6 35B-A3B; a compatible explicit recipe selects that managed recipe. The N1x recipe remains pending physical agent qualification."
     },
     {
       "name": "Local NVIDIA NIM",
