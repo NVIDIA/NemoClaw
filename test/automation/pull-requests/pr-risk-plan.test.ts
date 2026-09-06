@@ -453,9 +453,10 @@ describe("deterministic PR risk plan", () => {
     expect(result.requiredJobs).toEqual([]);
   });
 
-  it("maps trusted prebuild helper changes to the EXDEV job (#10517)", () => {
-    const changedFile = "test/e2e/live/openclaw-plugin-runtime-exdev-trusted-prebuild.ts";
-
+  it.each([
+    "test/e2e/fixtures/openclaw-plugin-runtime-exdev-onboard.ts",
+    "test/e2e/live/openclaw-plugin-runtime-exdev-trusted-prebuild.ts",
+  ])("maps %s changes to the EXDEV job (#10517)", (changedFile) => {
     expect(focusedE2eJobsForChangedFiles([changedFile])).toEqual([
       {
         id: "openclaw-plugin-runtime-exdev",

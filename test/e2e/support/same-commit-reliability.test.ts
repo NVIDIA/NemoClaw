@@ -520,6 +520,87 @@ describe("same-commit E2E reliability", () => {
     expect(JSON.stringify(result)).not.toContain(secret);
   });
 
+  it.each([
+    {
+      receiptName: "openclaw-plugin-exdev-onboard-retry.json",
+      operation: "openclaw-plugin-runtime-exdev.onboard-pairing",
+    },
+    {
+      receiptName: "openclaw-weather-plugin-recreate-retry.json",
+      operation: "openclaw-plugin-runtime-exdev.recreate-pairing",
+    },
+  ])("consumes the EXDEV retry receipt $receiptName", async ({ receiptName, operation }) => {
+    const dispatch = artifactZip([
+      {
+        name: "dispatch.json",
+        contents: JSON.stringify({
+          kind: "nemoclaw-e2e-dispatch-v2",
+          repository: REPOSITORY,
+          eventName: "workflow_dispatch",
+          workflowRunId: "101",
+          workflowRunAttempt: 1,
+          candidateSha: SHA_A,
+        }),
+      },
+    ]);
+    const evidence = artifactZip([
+      terminalEvidence(SHA_A, "failure"),
+      {
+        name: `e2e-artifacts/live/openclaw-plugin-runtime-exdev/retry/${receiptName}`,
+        contents: JSON.stringify({
+          schemaVersion: 1,
+          operation,
+          owner: "openclaw-plugin-runtime-exdev",
+          idempotence: "reconciled-mutation",
+          maxAttempts: 1,
+          outcome: "failed-no-retry",
+          attempts: [
+            {
+              attempt: 1,
+              outcome: "failed",
+              failureClass: "ambiguous-mutation",
+              retryScheduled: false,
+            },
+          ],
+        }),
+      },
+    ]);
+    const archives = new Map([
+      [1, dispatch],
+      [2, evidence],
+    ]);
+
+    const result = await normalizeReliabilityRun(workflowRun(), {
+      requestJson: async () => ({
+        total_count: 2,
+        artifacts: [
+          {
+            id: 1,
+            name: "e2e-dispatch-101-1",
+            size_in_bytes: dispatch.length,
+            expired: false,
+          },
+          {
+            id: 2,
+            name: "e2e-openclaw-plugin-runtime-exdev",
+            size_in_bytes: evidence.length,
+            expired: false,
+          },
+        ],
+      }),
+      requestArchive: async (artifactId) => archives.get(artifactId)!,
+    });
+
+    expect(result).toMatchObject({
+      candidateSha: SHA_A,
+      source: "manual-qualification",
+      outcome: "failed-first-attempt",
+      failureClasses: ["ambiguous-mutation"],
+      evidence: "complete",
+      failureClassEvidence: "complete",
+    });
+  });
+
   it("normalizes a matching workflow dispatch run to the same reliability sample", async () => {
     const dispatch = artifactZip([
       {

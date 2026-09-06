@@ -10,7 +10,10 @@ import path from "node:path";
 import { LOCAL_SANDBOX_IMAGE_REPO } from "../../../src/lib/domain/sandbox/image-tag.ts";
 import { createCustomBuildContextFilter } from "../../../src/lib/onboard/custom-build-context.ts";
 import { patchStagedDockerfile } from "../../../src/lib/onboard/dockerfile-patch.ts";
-import { REQUIRED_OPENSHELL_MCP_FEATURES } from "../../../src/lib/onboard/openshell-feature-gate.ts";
+import {
+  hasRequiredOpenshellMessagingFeatures,
+  REQUIRED_OPENSHELL_MCP_FEATURES,
+} from "../../../src/lib/onboard/openshell-feature-gate.ts";
 import {
   prebuildSandboxImageIfEligible,
   type SandboxPrebuildResult,
@@ -22,30 +25,109 @@ import { resultText, shellQuote } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
   createOpenShellDriverConfigTestWrapper,
+  resolveOpenShellSiblingComponents,
   type OpenShellDriverConfigTestWrapper,
 } from "./openshell-driver-config-test-wrapper.ts";
 
 export const DELEGATED_CAPABILITY_COMMENT_PREFIX =
   "# TEST-ONLY delegated-capability marker from validated canonical OpenShell: ";
+export const TRUSTED_PLUGIN_FIXTURE_IMAGE_DIR = "/usr/local/share/nemoclaw-e2e/weather-plugin";
+
+export type TrustedPluginFixtureImage = {
+  imageId: string;
+  imageRef: string;
+};
+
+export function createTrustedPluginFixtureDockerfile(options: {
+  crossDeviceVersionSourceName: string;
+  pluginDirName: string;
+  source: string;
+  versionSourceName: string;
+}): string {
+  const runtimeAnchor = "FROM ${BASE_IMAGE}\n";
+  assert(
+    options.source.includes(runtimeAnchor),
+    "trusted EXDEV fixture requires the managed runtime anchor",
+  );
+  const runtime = options.source.replace(runtimeAnchor, "FROM ${BASE_IMAGE} AS nemoclaw-runtime\n");
+  const extension = String.raw`
+
+# Build the deterministic custom-plugin fixture used by this live contract.
+FROM builder AS weather-plugin-builder
+WORKDIR /opt/weather
+COPY ${options.pluginDirName}/package.json ${options.pluginDirName}/package-lock.json ${options.pluginDirName}/tsconfig.json ./
+RUN npm ci --ignore-scripts --no-audit --no-fund
+COPY ${options.pluginDirName}/openclaw.plugin.json ./
+COPY ${options.pluginDirName}/src/ ./src/
+COPY ${options.versionSourceName} ./src/version.ts
+RUN npm run build \
+    && cp -R /opt/weather/dist /opt/weather-runtime-dist
+COPY ${options.crossDeviceVersionSourceName} ./src/version.ts
+RUN npm run build \
+    && npm prune --omit=dev --omit=peer --ignore-scripts --no-audit --no-fund
+
+# Extend the completed managed runtime so its entrypoint, health check, config
+# generation, and permissions remain the source of truth.
+FROM nemoclaw-runtime AS weather-runtime
+ARG NEMOCLAW_TOOL_DISCLOSURE=progressive
+ENV NEMOCLAW_TOOL_DISCLOSURE=${"${NEMOCLAW_TOOL_DISCLOSURE}"}
+COPY --from=weather-plugin-builder --chown=sandbox:sandbox \
+    /opt/weather/package.json \
+    /opt/weather/package-lock.json \
+    /opt/weather/openclaw.plugin.json \
+    ${TRUSTED_PLUGIN_FIXTURE_IMAGE_DIR}/
+COPY --from=weather-plugin-builder --chown=sandbox:sandbox \
+    /opt/weather/dist/ ${TRUSTED_PLUGIN_FIXTURE_IMAGE_DIR}/dist/
+COPY --from=weather-plugin-builder --chown=sandbox:sandbox \
+    /opt/weather/node_modules/ ${TRUSTED_PLUGIN_FIXTURE_IMAGE_DIR}/node_modules/
+
+USER sandbox
+RUN --mount=type=bind,from=weather-plugin-builder,source=/opt/weather-runtime-dist,target=${TRUSTED_PLUGIN_FIXTURE_IMAGE_DIR}/dist,ro \
+    HOME=/sandbox openclaw plugins install ${TRUSTED_PLUGIN_FIXTURE_IMAGE_DIR} \
+    && HOME=/sandbox openclaw plugins enable weather
+
+# Enabling the plugin changes openclaw.json after the managed runtime hashes it.
+# The runtime test copies this image fixture into tmpfs before it installs the
+# plugin across the filesystem boundary.
+# hadolint ignore=DL3002
+USER root
+RUN chown sandbox:sandbox /sandbox/.openclaw/openclaw.json \
+    && chmod 660 /sandbox/.openclaw/openclaw.json \
+    && sha256sum /sandbox/.openclaw/openclaw.json > /sandbox/.openclaw/.config-hash \
+    && chown sandbox:sandbox /sandbox/.openclaw/.config-hash \
+    && chmod 660 /sandbox/.openclaw/.config-hash
+USER sandbox
+`;
+  return runtime.trimEnd() + extension;
+}
 
 const TRUSTED_EXDEV_IMAGE_REF_PATTERN = new RegExp(
   `^${LOCAL_SANDBOX_IMAGE_REPO}:[a-z0-9_][a-z0-9_.-]{0,127}$`,
 );
 
 export type OpenShellTrustedImageWrapper = OpenShellDriverConfigTestWrapper & {
-  selectImage(imageRef: string): void;
+  selectImage(image: TrustedPluginFixtureImage): void;
 };
 
 export function trustedExdevImageRef(tag: string): string {
-  const imageRef = `${LOCAL_SANDBOX_IMAGE_REPO}:${tag}`;
-  assert.match(imageRef, TRUSTED_EXDEV_IMAGE_REF_PATTERN);
-  return imageRef;
+  return `${LOCAL_SANDBOX_IMAGE_REPO}:${tag}`;
 }
 
 export function createOpenShellTrustedImageWrapper(options: {
   driverConfigJson: string;
+  imageInspectorPath?: string;
+  imageInspectorTimeoutMs?: number;
   realOpenshellPath: string;
 }): OpenShellTrustedImageWrapper {
+  const canonicalComponents = resolveOpenShellSiblingComponents(options.realOpenshellPath);
+  assert(
+    hasRequiredOpenshellMessagingFeatures({
+      gatewayBin: canonicalComponents.gateway,
+      openshellBin: canonicalComponents.cli,
+      sandboxBin: canonicalComponents.sandbox,
+    }),
+    "trusted EXDEV image wrapper requires canonical OpenShell components with all required MCP features",
+  );
   const delegated = createOpenShellDriverConfigTestWrapper({
     delegatedCapabilityMarkers: REQUIRED_OPENSHELL_MCP_FEATURES,
     driverConfigJson: options.driverConfigJson,
@@ -53,10 +135,12 @@ export function createOpenShellTrustedImageWrapper(options: {
     realOpenshellPath: options.realOpenshellPath,
   });
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exdev-image-wrapper-"));
-  const imageRefPath = path.join(directory, "selected-image-ref");
+  const imageInspectorPath = options.imageInspectorPath ?? "docker";
+  const imageInspectorTimeoutMs = options.imageInspectorTimeoutMs ?? 30_000;
+  const imageSelectionPath = path.join(directory, "selected-image.json");
   const rewriterPath = path.join(directory, "rewrite-from.cjs");
   const executable = path.join(directory, "openshell");
-  fs.writeFileSync(imageRefPath, "\n", { encoding: "utf8", mode: 0o600 });
+  fs.writeFileSync(imageSelectionPath, "{}\n", { encoding: "utf8", mode: 0o600 });
   fs.writeFileSync(
     rewriterPath,
     `const { spawnSync } = require("node:child_process");
@@ -69,12 +153,40 @@ if (args[0] === "sandbox" && args[1] === "create") {
     process.stderr.write("trusted EXDEV image handoff requires exactly one --from value\\n");
     process.exit(64);
   }
-  const imageRef = fs.readFileSync(${JSON.stringify(imageRefPath)}, "utf8").trim();
-  if (!${TRUSTED_EXDEV_IMAGE_REF_PATTERN.toString()}.test(imageRef)) {
-    process.stderr.write("trusted EXDEV image handoff rejected the selected image ref\\n");
+  let selected;
+  try {
+    selected = JSON.parse(fs.readFileSync(${JSON.stringify(imageSelectionPath)}, "utf8"));
+  } catch {}
+  const imageRef = typeof selected?.imageRef === "string" ? selected.imageRef : "";
+  const imageId = typeof selected?.imageId === "string" ? selected.imageId : "";
+  const invalidImageRef = !${TRUSTED_EXDEV_IMAGE_REF_PATTERN.toString()}.test(imageRef);
+  const invalidImageId = !/^sha256:[0-9a-f]{64}$/.test(imageId);
+  const inspectArgs = ["image", "inspect", "--format", "{{.Id}}", imageRef];
+  const inspected =
+    invalidImageRef || invalidImageId
+      ? { error: undefined, status: 64, stdout: "" }
+      : spawnSync(${JSON.stringify(imageInspectorPath)}, inspectArgs, {
+          encoding: "utf8",
+          killSignal: "SIGKILL",
+          timeout: ${imageInspectorTimeoutMs},
+        });
+  const inspectionTimedOut = inspected.error?.code === "ETIMEDOUT";
+  const rejection = invalidImageRef
+    ? "trusted EXDEV image handoff rejected the selected image ref"
+      : invalidImageId
+      ? "trusted EXDEV image handoff rejected the selected image ID"
+      : inspectionTimedOut
+        ? "trusted EXDEV image inspection timed out"
+        : inspected.error || inspected.status !== 0
+          ? "trusted EXDEV image inspection failed"
+          : inspected.stdout.trim() !== imageId
+          ? "trusted EXDEV image handoff detected an immutable identity mismatch"
+          : "";
+  if (rejection) {
+    process.stderr.write(rejection + "\\n");
     process.exit(64);
   }
-  args[fromIndexes[0] + 1] = imageRef;
+  args[fromIndexes[0] + 1] = imageId;
 }
 const result = spawnSync(${JSON.stringify(delegated.executable)}, args, { stdio: "inherit" });
 if (result.error) throw result.error;
@@ -98,9 +210,9 @@ exec ${shellQuote(process.execPath)} ${shellQuote(rewriterPath)} "$@"
   return {
     directory,
     executable,
-    selectImage: (imageRef) => {
-      assert.match(imageRef, TRUSTED_EXDEV_IMAGE_REF_PATTERN);
-      fs.writeFileSync(imageRefPath, `${imageRef}\n`, {
+    selectImage: (image) => {
+      assert.match(image.imageRef, TRUSTED_EXDEV_IMAGE_REF_PATTERN);
+      fs.writeFileSync(imageSelectionPath, `${JSON.stringify(image)}\n`, {
         encoding: "utf8",
         mode: 0o600,
       });
@@ -162,8 +274,7 @@ export function acceptTrustedPluginFixturePrebuild(options: {
   sandboxName: string;
   version: "v1" | "v2";
 }): { imageId: string; imageRef: string } {
-  assert(options.prebuild.imageRef, "trusted EXDEV fixture prebuild must return a local image ref");
-  const imageRef = options.prebuild.imageRef;
+  const imageRef = String(options.prebuild.imageRef ?? "");
   assert.match(imageRef, TRUSTED_EXDEV_IMAGE_REF_PATTERN);
   options.images.track(imageRef, options.version);
   assert.deepEqual(options.prebuild.createArgs, [
@@ -191,7 +302,7 @@ export async function buildTrustedPluginFixtureImage(options: {
   images: TrustedPluginFixtureImageCleanup;
   sandboxName: string;
   version: "v1" | "v2";
-}): Promise<string> {
+}): Promise<TrustedPluginFixtureImage> {
   const buildId = `exdev-${options.version}-${randomUUID()}`;
   const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), SANDBOX_BUILD_CONTEXT_PREFIX));
   const stagedDockerfile = path.join(buildCtx, "Dockerfile");
@@ -253,5 +364,5 @@ export async function buildTrustedPluginFixtureImage(options: {
     stagedDockerfile,
     version: options.version,
   });
-  return imageRef;
+  return { imageId, imageRef };
 }

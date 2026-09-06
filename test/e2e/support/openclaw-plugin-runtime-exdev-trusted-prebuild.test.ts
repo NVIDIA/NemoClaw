@@ -10,13 +10,18 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   hasRequiredOpenshellMessagingFeatures,
+  REQUIRED_OPENSHELL_MCP_FEATURES,
   REQUIRED_OPENSHELL_SANDBOX_MCP_FEATURE,
 } from "../../../src/lib/onboard/openshell-feature-gate.ts";
+import { ordinaryOpenClawPairingIncompleteMessage } from "../../../src/lib/onboard/machine/finalization-deps.ts";
 import { CleanupRegistry } from "../fixtures/cleanup.ts";
+import { captureIssue4462FailureDiagnostics } from "../fixtures/issue-4462-diagnostics.ts";
+import { runOpenClawPluginWithFailureEvidence } from "../fixtures/openclaw-plugin-runtime-exdev-onboard.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   acceptTrustedPluginFixturePrebuild,
   createOpenShellTrustedImageWrapper,
+  createTrustedPluginFixtureDockerfile,
   registerTrustedPluginFixtureImageCleanup,
   trustedExdevImageRef,
 } from "../live/openclaw-plugin-runtime-exdev-trusted-prebuild.ts";
@@ -26,6 +31,8 @@ import {
 } from "../live/openshell-driver-config-test-wrapper.ts";
 
 const IMAGE_ID = `sha256:${"a".repeat(64)}`;
+const ONBOARD_OPERATION = "openclaw-plugin-runtime-exdev.onboard-pairing";
+const RECREATE_OPERATION = "openclaw-plugin-runtime-exdev.recreate-pairing";
 const DRIVER_CONFIG_JSON = JSON.stringify({
   docker: { mounts: [{ options: ["noexec"], target: "/tmp/exdev", type: "tmpfs" }] },
   podman: { mounts: [{ options: ["noexec"], target: "/tmp/exdev", type: "tmpfs" }] },
@@ -33,42 +40,319 @@ const DRIVER_CONFIG_JSON = JSON.stringify({
 
 afterEach(() => vi.unstubAllEnvs());
 
-function createWrapperFixture() {
+it("rejects a managed Dockerfile without the runtime anchor (#9844)", () => {
+  expect(() =>
+    createTrustedPluginFixtureDockerfile({
+      crossDeviceVersionSourceName: "weather-version-v2.ts",
+      pluginDirName: "weather-plugin",
+      source: "FROM scratch AS builder\n",
+      versionSourceName: "weather-version-v1.ts",
+    }),
+  ).toThrow("trusted EXDEV fixture requires the managed runtime anchor");
+});
+
+it("restores sandbox as the generated Dockerfile's final user (#9844)", () => {
+  const dockerfile = createTrustedPluginFixtureDockerfile({
+    crossDeviceVersionSourceName: "weather-version-v2.ts",
+    pluginDirName: "weather-plugin",
+    source: "FROM ${BASE_IMAGE}\nUSER sandbox\n",
+    versionSourceName: "weather-version-v1.ts",
+  });
+
+  expect(dockerfile.trimEnd()).toMatch(/USER sandbox$/);
+});
+
+function onboardResult(exitCode: number, stderr = ""): ShellProbeResult {
+  return {
+    artifacts: { result: "result.json", stderr: "stderr.txt", stdout: "stdout.txt" },
+    command: ["node", "bin/nemoclaw.js", "onboard"],
+    exitCode,
+    signal: null,
+    stderr,
+    stdout: "",
+    timedOut: false,
+  };
+}
+
+describe("OpenClaw plugin onboarding pairing evidence", () => {
+  it("records first-attempt success without diagnostics (#9844)", async () => {
+    const run = vi.fn(async () => onboardResult(0));
+    const captureDiagnostics = vi.fn(async () => true);
+    const onEvidence = vi.fn();
+
+    const result = await runOpenClawPluginWithFailureEvidence({
+      captureDiagnostics,
+      operation: ONBOARD_OPERATION,
+      sandboxName: "fixture-sandbox",
+      run,
+      onEvidence,
+    });
+
+    expect(result.outcome).toBe("passed");
+    expect(run).toHaveBeenCalledOnce();
+    expect(captureDiagnostics).not.toHaveBeenCalled();
+    expect(onEvidence).toHaveBeenCalledWith(
+      expect.objectContaining({
+        maxAttempts: 1,
+        operation: ONBOARD_OPERATION,
+        outcome: "passed-first-attempt",
+      }),
+    );
+  });
+
+  it("captures diagnostics and fails without retrying ambiguous pairing (#9844)", async () => {
+    const sandboxName = "fixture-sandbox";
+    const run = vi.fn(async () =>
+      onboardResult(
+        1,
+        ordinaryOpenClawPairingIncompleteMessage(sandboxName, "pairing-unavailable"),
+      ),
+    );
+    const captureDiagnostics = vi.fn(async () => false);
+    const onEvidence = vi.fn();
+
+    const result = await runOpenClawPluginWithFailureEvidence({
+      captureDiagnostics,
+      operation: ONBOARD_OPERATION,
+      sandboxName,
+      run,
+      onEvidence,
+    });
+
+    expect(result.outcome).toBe("failed");
+    expect(run).toHaveBeenCalledOnce();
+    expect(captureDiagnostics).toHaveBeenCalledOnce();
+    expect(onEvidence).toHaveBeenCalledWith(
+      expect.objectContaining({
+        maxAttempts: 1,
+        outcome: "failed-no-retry",
+        attempts: [
+          expect.objectContaining({
+            failureClass: "ambiguous-mutation",
+            retryScheduled: false,
+          }),
+        ],
+      }),
+    );
+  });
+
+  it("does not capture pairing diagnostics for a non-pairing onboarding failure (#9844)", async () => {
+    const captureDiagnostics = vi.fn(async () => true);
+
+    const result = await runOpenClawPluginWithFailureEvidence({
+      captureDiagnostics,
+      operation: ONBOARD_OPERATION,
+      sandboxName: "fixture-sandbox",
+      run: vi.fn(async () => onboardResult(1, "provider registration failed")),
+      onEvidence: vi.fn(),
+    });
+
+    expect(result.outcome).toBe("failed");
+    expect(captureDiagnostics).not.toHaveBeenCalled();
+  });
+
+  it("preserves the pairing failure when diagnostic execution throws (#9844)", async () => {
+    const sandboxName = "fixture-sandbox";
+    const run = vi.fn(async () =>
+      onboardResult(
+        1,
+        ordinaryOpenClawPairingIncompleteMessage(sandboxName, "pairing-unavailable"),
+      ),
+    );
+    const diagnosticExec = vi.fn(async () => {
+      throw new Error("diagnostics unavailable");
+    });
+
+    const result = await runOpenClawPluginWithFailureEvidence({
+      captureDiagnostics: () =>
+        captureIssue4462FailureDiagnostics({ exec: diagnosticExec } as never, {
+          env: { PATH: "/usr/bin" },
+          redactionValues: ["secret-api-key"],
+          sandboxName,
+        }),
+      operation: ONBOARD_OPERATION,
+      sandboxName,
+      run,
+      onEvidence: vi.fn(),
+    });
+
+    expect(result.outcome).toBe("failed");
+    expect(run).toHaveBeenCalledOnce();
+    expect(diagnosticExec).toHaveBeenCalledExactlyOnceWith(
+      sandboxName,
+      ["node", "-e", expect.any(String), "/tmp/auto-pair.log", "/tmp/gateway.log"],
+      expect.objectContaining({
+        artifactName: "failure-openclaw-pairing-diagnostics",
+        redactionValues: ["secret-api-key"],
+      }),
+    );
+  });
+});
+
+describe("OpenClaw plugin recreation pairing evidence", () => {
+  it("records successful recreation without diagnostics (#9844)", async () => {
+    const captureDiagnostics = vi.fn(async () => true);
+    const run = vi.fn(async () => onboardResult(0));
+    const onEvidence = vi.fn();
+
+    const result = await runOpenClawPluginWithFailureEvidence({
+      captureDiagnostics,
+      operation: RECREATE_OPERATION,
+      run,
+      sandboxName: "fixture-sandbox",
+      onEvidence,
+    });
+
+    expect(result.outcome).toBe("passed");
+    expect(run).toHaveBeenCalledOnce();
+    expect(captureDiagnostics).not.toHaveBeenCalled();
+    expect(onEvidence).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: RECREATE_OPERATION,
+        outcome: "passed-first-attempt",
+      }),
+    );
+  });
+
+  it("captures diagnostics and stops when recreation scope warm-up fails (#9844)", async () => {
+    const sandboxName = "fixture-sandbox";
+    const captureDiagnostics = vi.fn(async () => true);
+    const onEvidence = vi.fn();
+    const run = vi.fn(async () =>
+      onboardResult(
+        1,
+        ordinaryOpenClawPairingIncompleteMessage(sandboxName, "scope-warmup-failed"),
+      ),
+    );
+
+    const result = await runOpenClawPluginWithFailureEvidence({
+      captureDiagnostics,
+      operation: RECREATE_OPERATION,
+      run,
+      sandboxName,
+      onEvidence,
+    });
+
+    expect(result.outcome).toBe("failed");
+    expect(run).toHaveBeenCalledOnce();
+    expect(captureDiagnostics).toHaveBeenCalledOnce();
+    expect(onEvidence).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: RECREATE_OPERATION,
+        outcome: "failed-no-retry",
+        attempts: [
+          expect.objectContaining({
+            failureClass: "ambiguous-mutation",
+            retryScheduled: false,
+          }),
+        ],
+      }),
+    );
+  });
+});
+
+function createWrapperFixture(
+  canonicalCapabilityMarkers: readonly string[] = REQUIRED_OPENSHELL_MCP_FEATURES,
+  options: { imageInspectorTimeoutMs?: number } = {},
+) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exdev-wrapper-test-"));
   const delegate = path.join(directory, "real-openshell");
+  const imageInspector = path.join(directory, "image-inspector");
+  const imageInspectorArgsPath = path.join(directory, "image-inspector-args.jsonl");
+  const imageInspectorFailurePath = path.join(directory, "image-inspector-failure");
+  const imageInspectorHangPath = path.join(directory, "image-inspector-hang");
+  const imageIdPath = path.join(directory, "resolved-image-id");
+  const nextImageIdPath = path.join(directory, "next-resolved-image-id");
   const gateway = path.join(directory, "openshell-gateway");
   const sandbox = path.join(directory, "openshell-sandbox");
-  const executableSource =
-    '#!/bin/sh\nif [ "${1:-}" = "--version" ]; then echo \'openshell 0.0.106\'; exit 0; fi\nprintf \'%s\\n\' "$@"\n';
-  for (const executable of [delegate, gateway]) {
-    fs.writeFileSync(executable, executableSource, { encoding: "utf8", mode: 0o700 });
-  }
+  fs.writeFileSync(imageIdPath, `${IMAGE_ID}\n`, { encoding: "utf8", mode: 0o600 });
+  const executableSource = `#!/bin/sh
+if [ "\${1:-}" = "--version" ]; then echo 'openshell 0.0.106'; exit 0; fi
+printf '%s\\n' "$@"
+`;
+  const canonicalCapabilityComments = canonicalCapabilityMarkers
+    .map((marker) => `# ${marker}`)
+    .join("\n");
+  fs.writeFileSync(delegate, `${executableSource}${canonicalCapabilityComments}\n`, {
+    encoding: "utf8",
+    mode: 0o700,
+  });
+  fs.writeFileSync(gateway, executableSource, { encoding: "utf8", mode: 0o700 });
   fs.writeFileSync(sandbox, `${executableSource}# ${REQUIRED_OPENSHELL_SANDBOX_MCP_FEATURE}\n`, {
     encoding: "utf8",
     mode: 0o700,
   });
+  fs.writeFileSync(
+    imageInspector,
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(imageInspectorArgsPath)}, JSON.stringify(args) + "\\n");
+if (fs.existsSync(${JSON.stringify(imageInspectorFailurePath)})) process.exit(70);
+if (fs.existsSync(${JSON.stringify(imageInspectorHangPath)})) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 60_000);
+}
+process.stdout.write(fs.readFileSync(${JSON.stringify(imageIdPath)}, "utf8"));
+if (fs.existsSync(${JSON.stringify(nextImageIdPath)})) {
+  fs.renameSync(${JSON.stringify(nextImageIdPath)}, ${JSON.stringify(imageIdPath)});
+}
+`,
+    { encoding: "utf8", mode: 0o700 },
+  );
   const components = resolveOpenShellSiblingComponents(delegate);
-  const wrapper = createOpenShellTrustedImageWrapper({
-    driverConfigJson: DRIVER_CONFIG_JSON,
-    realOpenshellPath: components.cli,
-  });
+  let wrapper: ReturnType<typeof createOpenShellTrustedImageWrapper>;
+  try {
+    wrapper = createOpenShellTrustedImageWrapper({
+      driverConfigJson: DRIVER_CONFIG_JSON,
+      imageInspectorPath: imageInspector,
+      imageInspectorTimeoutMs: options.imageInspectorTimeoutMs,
+      realOpenshellPath: components.cli,
+    });
+  } catch (error) {
+    fs.rmSync(directory, { force: true, recursive: true });
+    throw error;
+  }
   return {
     components,
     directory,
+    failNextInspection: () => {
+      fs.writeFileSync(imageInspectorFailurePath, "fail\n", { encoding: "utf8", mode: 0o600 });
+    },
+    hangNextInspection: () => {
+      fs.writeFileSync(imageInspectorHangPath, "hang\n", { encoding: "utf8", mode: 0o600 });
+    },
+    readInspectorInvocations: (): string[][] =>
+      fs
+        .readFileSync(imageInspectorArgsPath, "utf8")
+        .trimEnd()
+        .split("\n")
+        .map((line) => JSON.parse(line) as string[]),
     remove: () => {
       wrapper.remove();
       fs.rmSync(directory, { force: true, recursive: true });
+    },
+    setResolvedImageId: (imageId: string) => {
+      fs.writeFileSync(imageIdPath, `${imageId}\n`, { encoding: "utf8", mode: 0o600 });
+    },
+    retagAfterNextInspection: (imageId: string) => {
+      fs.writeFileSync(nextImageIdPath, `${imageId}\n`, { encoding: "utf8", mode: 0o600 });
     },
     wrapper,
   };
 }
 
 describe("trusted EXDEV OpenShell wrapper", () => {
-  it("rewrites sandbox creation to the selected local image and injects driver config", () => {
+  it("rejects canonical OpenShell components that lack a required MCP feature", () => {
+    expect(() => createWrapperFixture(REQUIRED_OPENSHELL_MCP_FEATURES.slice(1))).toThrow(
+      "trusted EXDEV image wrapper requires canonical OpenShell components with all required MCP features",
+    );
+  });
+
+  it("rewrites sandbox creation to the verified image ID and injects driver configuration", () => {
     const fixture = createWrapperFixture();
     try {
       const imageRef = trustedExdevImageRef("wrapper-contract-v1");
-      fixture.wrapper.selectImage(imageRef);
+      fixture.wrapper.selectImage({ imageId: IMAGE_ID, imageRef });
       const result = spawnSync(
         fixture.wrapper.executable,
         ["sandbox", "create", "--from", "/tmp/staged/Dockerfile", "--name", "demo"],
@@ -81,8 +365,11 @@ describe("trusted EXDEV OpenShell wrapper", () => {
         forwarded.flatMap((argument, index) => (argument === option ? [forwarded[index + 1]] : []));
       expect(forwarded.slice(0, 2)).toEqual(["sandbox", "create"]);
       expect(valuesFor("--driver-config-json")).toEqual([DRIVER_CONFIG_JSON]);
-      expect(valuesFor("--from")).toEqual([imageRef]);
+      expect(valuesFor("--from")).toEqual([IMAGE_ID]);
       expect(valuesFor("--name")).toEqual(["demo"]);
+      expect(fixture.readInspectorInvocations()).toEqual([
+        ["image", "inspect", "--format", "{{.Id}}", imageRef],
+      ]);
     } finally {
       fixture.remove();
     }
@@ -98,7 +385,12 @@ describe("trusted EXDEV OpenShell wrapper", () => {
       );
       expect(missingImage.status).toBe(64);
       expect(missingImage.stderr).toContain("rejected the selected image ref");
-      expect(() => fixture.wrapper.selectImage("docker.io/untrusted:latest")).toThrow();
+      expect(() =>
+        fixture.wrapper.selectImage({
+          imageId: IMAGE_ID,
+          imageRef: "docker.io/untrusted:latest",
+        }),
+      ).toThrow();
     } finally {
       fixture.remove();
     }
@@ -114,7 +406,10 @@ describe("trusted EXDEV OpenShell wrapper", () => {
   ])("rejects a --from option that is %s", (_condition, args) => {
     const fixture = createWrapperFixture();
     try {
-      fixture.wrapper.selectImage(trustedExdevImageRef("wrapper-contract-v1"));
+      fixture.wrapper.selectImage({
+        imageId: IMAGE_ID,
+        imageRef: trustedExdevImageRef("wrapper-contract-v1"),
+      });
       const result = spawnSync(fixture.wrapper.executable, args, {
         encoding: "utf8",
         killSignal: "SIGKILL",
@@ -130,7 +425,10 @@ describe("trusted EXDEV OpenShell wrapper", () => {
   it("rejects duplicate driver configuration", () => {
     const fixture = createWrapperFixture();
     try {
-      fixture.wrapper.selectImage(trustedExdevImageRef("wrapper-contract-v1"));
+      fixture.wrapper.selectImage({
+        imageId: IMAGE_ID,
+        imageRef: trustedExdevImageRef("wrapper-contract-v1"),
+      });
       const duplicateConfig = spawnSync(
         fixture.wrapper.executable,
         ["sandbox", "create", "--from", "/tmp/staged/Dockerfile", "--driver-config-json", "{}"],
@@ -143,9 +441,109 @@ describe("trusted EXDEV OpenShell wrapper", () => {
     }
   });
 
-  it("passes the OpenShell feature gate and exposes sibling component paths", () => {
+  it("fails closed when the selected tag no longer resolves to its verified image ID", () => {
     const fixture = createWrapperFixture();
     try {
+      const imageRef = trustedExdevImageRef("wrapper-contract-v1");
+      fixture.wrapper.selectImage({ imageId: IMAGE_ID, imageRef });
+      fixture.setResolvedImageId(`sha256:${"b".repeat(64)}`);
+
+      const result = spawnSync(
+        fixture.wrapper.executable,
+        ["sandbox", "create", "--from", "/tmp/staged/Dockerfile", "--name", "demo"],
+        { encoding: "utf8", killSignal: "SIGKILL", timeout: 30_000 },
+      );
+
+      expect(result.status).toBe(64);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain("immutable identity mismatch");
+      expect(fixture.readInspectorInvocations()).toEqual([
+        ["image", "inspect", "--format", "{{.Id}}", imageRef],
+      ]);
+    } finally {
+      fixture.remove();
+    }
+  });
+
+  it("fails closed without delegation when image inspection fails", () => {
+    const fixture = createWrapperFixture();
+    try {
+      const imageRef = trustedExdevImageRef("wrapper-contract-v1");
+      fixture.wrapper.selectImage({ imageId: IMAGE_ID, imageRef });
+      fixture.failNextInspection();
+
+      const result = spawnSync(
+        fixture.wrapper.executable,
+        ["sandbox", "create", "--from", "/tmp/staged/Dockerfile", "--name", "demo"],
+        { encoding: "utf8", killSignal: "SIGKILL", timeout: 30_000 },
+      );
+
+      expect(result.status).toBe(64);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain("image inspection failed");
+      expect(fixture.readInspectorInvocations()).toEqual([
+        ["image", "inspect", "--format", "{{.Id}}", imageRef],
+      ]);
+    } finally {
+      fixture.remove();
+    }
+  });
+
+  it("times out image inspection with a redacted error and no delegation", () => {
+    const fixture = createWrapperFixture(REQUIRED_OPENSHELL_MCP_FEATURES, {
+      imageInspectorTimeoutMs: 25,
+    });
+    try {
+      const imageRef = trustedExdevImageRef("wrapper-contract-v1");
+      fixture.wrapper.selectImage({ imageId: IMAGE_ID, imageRef });
+      fixture.hangNextInspection();
+
+      const result = spawnSync(
+        fixture.wrapper.executable,
+        ["sandbox", "create", "--from", "/tmp/staged/Dockerfile", "--name", "demo"],
+        { encoding: "utf8", killSignal: "SIGKILL", timeout: 30_000 },
+      );
+
+      expect(result.status).toBe(64);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toBe("trusted EXDEV image inspection timed out\n");
+    } finally {
+      fixture.remove();
+    }
+  });
+
+  it("delegates the verified image ID when the selected tag changes after inspection", () => {
+    const fixture = createWrapperFixture();
+    try {
+      const imageRef = trustedExdevImageRef("wrapper-contract-v1");
+      fixture.wrapper.selectImage({ imageId: IMAGE_ID, imageRef });
+      fixture.retagAfterNextInspection(`sha256:${"b".repeat(64)}`);
+
+      const result = spawnSync(
+        fixture.wrapper.executable,
+        ["sandbox", "create", "--from", "/tmp/staged/Dockerfile", "--name", "demo"],
+        { encoding: "utf8", killSignal: "SIGKILL", timeout: 30_000 },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      const forwarded = result.stdout.trimEnd().split("\n");
+      const fromIndex = forwarded.indexOf("--from");
+      expect(forwarded[fromIndex + 1]).toBe(IMAGE_ID);
+    } finally {
+      fixture.remove();
+    }
+  });
+
+  it("passes the OpenShell feature gate for a coherent component set", () => {
+    const fixture = createWrapperFixture();
+    try {
+      expect(
+        hasRequiredOpenshellMessagingFeatures({
+          openshellBin: fixture.components.cli,
+          gatewayBin: fixture.components.gateway,
+          sandboxBin: fixture.components.sandbox,
+        }),
+      ).toBe(true);
       expect(
         hasRequiredOpenshellMessagingFeatures({
           openshellBin: fixture.wrapper.executable,
@@ -155,6 +553,15 @@ describe("trusted EXDEV OpenShell wrapper", () => {
           allowExternalSandboxBin: true,
         }),
       ).toBe(true);
+    } finally {
+      fixture.remove();
+    }
+    expect(fs.existsSync(fixture.wrapper.directory)).toBe(false);
+  });
+
+  it("prepends the wrapper path and sets OpenShell component variables", () => {
+    const fixture = createWrapperFixture();
+    try {
       expect(
         withOpenShellDriverConfigWrapperEnv(
           { PATH: "/usr/bin" },
