@@ -8,11 +8,39 @@ description-agent: "Explains which agent runtimes accept NemoClaw model-limit ov
 keywords: ["nemoclaw context window", "nemoclaw max tokens", "model limits"]
 content:
   type: "how_to"
+agent-variants: ["openclaw", "hermes", "deepagents", "pi"]
 ---
 <AgentOnly variant="openclaw,hermes">
 
 Configure explicit model limits before onboarding so NemoClaw can bake them into the sandbox image.
 Changing an explicit build-time model limit on an existing sandbox requires fresh recreation.
+
+</AgentOnly>
+
+<AgentOnly variant="pi">
+
+## Set Pi Model Metadata
+
+Pi accepts an explicit context window, maximum output-token count, and reasoning flag.
+
+| Variable | Values | Default |
+|---|---|---|
+| `NEMOCLAW_CONTEXT_WINDOW` | Positive integer up to `4194304` tokens | Unset; Pi uses the model default |
+| `NEMOCLAW_MAX_TOKENS` | Integer from `1` to `1000000000` tokens | Unset; Pi uses the model default |
+| `NEMOCLAW_REASONING` | `true` or `false` | Unset; Pi uses the model default |
+
+Export the values before onboarding.
+
+```bash
+export NEMOCLAW_CONTEXT_WINDOW=65536
+export NEMOCLAW_MAX_TOKENS=8192
+export NEMOCLAW_REASONING=true
+nemoclaw onboard --agent pi --name <sandbox-name>
+```
+
+NemoClaw validates each supplied value and writes it to `/sandbox/.pi/agent/models.json` through the managed startup profile.
+An invalid value fails before Pi starts.
+Pi does not support `NEMOCLAW_REASONING_EFFORT`.
 
 </AgentOnly>
 
@@ -111,7 +139,37 @@ $$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox
 
 </AgentOnly>
 
+<AgentOnly variant="pi">
+
+## Recreate a Pi Sandbox
+
+A normal Pi rebuild replays the recorded context window, maximum output-token count, and reasoning flag.
+Changing those values requires a fresh replacement.
+Create a snapshot first when declared user state must survive, then export the new values and recreate the sandbox.
+
+```bash
+nemoclaw <sandbox-name> shields down
+nemoclaw <sandbox-name> snapshot create --name before-model-change
+nemoclaw onboard --agent pi --name <sandbox-name> --fresh --recreate-sandbox
+```
+
+Pi has no runtime `inference set` configuration path.
+Use the same fresh replacement flow to change its provider or model.
+
+</AgentOnly>
+
 ## Related Topics
+
+<AgentOnly variant="openclaw,hermes,deepagents">
 
 - [Configure Inference Timeouts](configure-inference-timeouts) for request, validation, and readiness budgets.
 - [Switch Models](switch-models) to change the selected model.
+
+</AgentOnly>
+
+<AgentOnly variant="pi">
+
+- [Run and Manage Pi](../manage-sandboxes/run-pi) for rebuild and snapshot behaviour.
+- [Pi Support and Security](../reference/pi-support) for supported inference and credential boundaries.
+
+</AgentOnly>
