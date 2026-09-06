@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { OLLAMA_PORT } from "../core/ports";
 import {
@@ -65,6 +65,31 @@ describe("Ollama runtime context helpers", () => {
       ),
     ).toBeNull();
   });
+
+  it("bounds the daemon status probe process and curl request", () => {
+    const capture = vi.fn(
+      (_command: readonly string[], _options?: { ignoreError?: boolean; timeout?: number }) =>
+        JSON.stringify({ models: [] }),
+    );
+
+    probeOllamaRuntimeModelStatus("qwen3.6:35b", getOllamaHost, capture, 1_200);
+
+    expect(capture.mock.calls[0][0]).toEqual(
+      expect.arrayContaining(["--connect-timeout", "1.2", "--max-time", "1.2"]),
+    );
+    expect(capture.mock.calls[0][1]).toMatchObject({ ignoreError: true, timeout: 1_200 });
+  });
+
+  it.each(["{}", "null", '{"models":{}}'])(
+    "treats an invalid daemon status shape as a failed probe: %s",
+    (response) => {
+      expect(probeOllamaRuntimeModelStatus("qwen3.6:35b", getOllamaHost, () => response)).toEqual({
+        probed: false,
+        loaded: false,
+        cpuOnly: false,
+      });
+    },
+  );
 
   it.each(["bogus", "1.5", 0, -1])(
     "warns and ignores malformed Ollama /api/ps context length %#",

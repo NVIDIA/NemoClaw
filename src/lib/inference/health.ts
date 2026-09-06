@@ -14,8 +14,15 @@ import type { CurlProbeOptions, CurlProbeResult } from "../adapters/http/probe";
 import { runCurlProbe } from "../adapters/http/probe";
 import { normalizeCredentialValue, resolveProviderCredential } from "../credentials/store";
 import { getProviderSelectionConfig } from "./config";
-import type { LocalProviderHealthProbeOptions } from "./local";
-import { probeLocalProviderHealth } from "./local";
+import {
+  getResolvedOllamaHost,
+  loadPersistedOllamaHost,
+  type LocalProviderHealthProbeOptions,
+  OLLAMA_PORT,
+  probeOllamaEndpointInventory,
+  probeLocalProviderHealth,
+  type RunCaptureFn,
+} from "./local";
 import { MIN_PROBE_REPLY_TOKENS } from "./max-tokens-field";
 import { getChatCompletionsProbeCurlArgs } from "./onboard-probes";
 import { usesNvidiaEndpointProbePayload } from "./openai-probe-models";
@@ -53,6 +60,30 @@ export interface ProviderHealthProbeOptions {
   model?: string | null;
   getCredentialImpl?: (envName: string) => string | null | undefined;
   isWsl?: boolean;
+}
+
+export type OllamaHostInventoryProbeOptions = {
+  getOllamaHost?: () => string;
+  runCaptureImpl?: RunCaptureFn;
+  prepareDockerEnvironment?: Parameters<typeof probeOllamaEndpointInventory>[3];
+};
+
+/** Probe the persisted raw Ollama daemon through its platform-specific host transport. */
+export function probeOllamaHostInventory(options: OllamaHostInventoryProbeOptions = {}): {
+  endpoint: string;
+  inventory: string[] | null;
+} {
+  const host = options.getOllamaHost
+    ? options.getOllamaHost()
+    : (loadPersistedOllamaHost() ?? getResolvedOllamaHost());
+  const endpoint = `http://${host}:${OLLAMA_PORT}/api/tags`;
+  const inventory = probeOllamaEndpointInventory(
+    host,
+    options.runCaptureImpl,
+    5_000,
+    options.prepareDockerEnvironment,
+  );
+  return { endpoint, inventory };
 }
 
 const COMPATIBLE_PROVIDERS = new Set(["compatible-endpoint", "compatible-anthropic-endpoint"]);

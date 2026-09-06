@@ -12,12 +12,13 @@ import {
   agentDispatchStdio,
   isSilentAgentDispatch,
   isTimedOutAgentDispatch,
+  replaceRequestedAgentTimeoutSeconds,
   requestedAgentTimeoutSeconds,
   runAgentDispatch,
   SILENT_AGENT_DISPATCH_EXIT_CODE,
   TIMED_OUT_AGENT_TURN_EXIT_CODE,
 } from "./passthrough-dispatch";
-import { computeExitCode, type SandboxExecSignalSource } from "../exec";
+import { buildOpenshellExecArgs, computeExitCode, type SandboxExecSignalSource } from "../exec";
 
 function dispatchHarness() {
   const childEvents = new EventEmitter();
@@ -41,7 +42,7 @@ function dispatchHarness() {
     add: (signal, listener) => signalEvents.on(signal, listener),
     remove: (signal, listener) => signalEvents.off(signal, listener),
   };
-  return { child, signalEvents, signalSource, stderr, stdout };
+  return { child, childEvents, signalEvents, signalSource, stderr, stdout };
 }
 
 describe("runAgentDispatch", () => {
@@ -114,6 +115,60 @@ describe("runAgentDispatch", () => {
     expect(result.stdout).toBe("1234");
     expect(result.stderr).toBe("");
   });
+
+  it("delivers a turn timeout reported 20.8 seconds after its requested deadline (#8723)", async () => {
+    vi.useFakeTimers();
+    const harness = dispatchHarness();
+    const requestedDeadlineSeconds = 30;
+    const delayedFinishMilliseconds = (requestedDeadlineSeconds + 20.8) * 1000;
+    const timeoutReport = "Request timed out before a response was generated.\n";
+    const command = [
+      "openclaw",
+      "agent",
+      "--timeout",
+      String(requestedDeadlineSeconds),
+      "-m",
+      "ping",
+    ];
+    const args = buildOpenshellExecArgs("alpha", command, {
+      tty: false,
+      timeoutSeconds: agentDispatchDeadlineSeconds(command),
+    });
+
+    try {
+      const pending = runAgentDispatch(
+        "openshell",
+        args,
+        { stdinIsTty: true },
+        {
+          signalSource: harness.signalSource,
+          spawnChild: (_binary, spawnArgs) => {
+            const hostTimeoutIndex = spawnArgs.indexOf("--timeout");
+            const hostTimeoutMilliseconds = Number(spawnArgs[hostTimeoutIndex + 1]) * 1000;
+            setTimeout(() => harness.child.kill("SIGTERM"), hostTimeoutMilliseconds);
+            setTimeout(() => {
+              harness.stdout.emit("data", timeoutReport);
+              harness.child.exitCode = 0;
+              harness.childEvents.emit("close", 0, null);
+            }, delayedFinishMilliseconds);
+            return harness.child;
+          },
+        },
+      );
+
+      await vi.advanceTimersByTimeAsync(delayedFinishMilliseconds);
+      expect(await pending).toMatchObject({
+        status: 0,
+        signal: null,
+        stdout: timeoutReport,
+        stderr: "",
+      });
+      expect(harness.child.kill).not.toHaveBeenCalled();
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("isSilentAgentDispatch", () => {
@@ -174,11 +229,19 @@ describe("requestedAgentTimeoutSeconds", () => {
   });
 
   it("reads a separated --timeout value (#8723)", () => {
-    expect(requestedAgentTimeoutSeconds(agent("--agent", "main", "--timeout", "30"))).toBe(30);
+    const command = agent("--agent", "main", "--timeout", "30");
+    expect(requestedAgentTimeoutSeconds(command)).toBe(30);
+    expect(replaceRequestedAgentTimeoutSeconds(command, 20)).toEqual(
+      agent("--agent", "main", "--timeout", "20"),
+    );
   });
 
   it("reads an equals-form --timeout value (#8723)", () => {
-    expect(requestedAgentTimeoutSeconds(agent("--timeout=45", "-m", "hi"))).toBe(45);
+    const command = agent("--timeout=45", "-m", "hi");
+    expect(requestedAgentTimeoutSeconds(command)).toBe(45);
+    expect(replaceRequestedAgentTimeoutSeconds(command, 20)).toEqual(
+      agent("--timeout=20", "-m", "hi"),
+    );
   });
 
   it("reads a timeout after documented boolean and equals-form options (#8723)", () => {
@@ -232,10 +295,6 @@ describe("agentDispatchDeadlineSeconds", () => {
 
   it("leaves the transport unbounded when no deadline was requested (#8723)", () => {
     expect(agentDispatchDeadlineSeconds(["openclaw", "agent", "-m", "hi"])).toBeUndefined();
-  });
-
-  it("holds the deadline buffer above the longest aborted-run finish measured (#8723)", () => {
-    expect(AGENT_DISPATCH_DEADLINE_BUFFER_SECONDS).toBeGreaterThan(20);
   });
 
   it("stays unbounded when the buffered deadline leaves the safe-integer range (#8723)", () => {

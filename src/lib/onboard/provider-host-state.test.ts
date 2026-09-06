@@ -564,6 +564,7 @@ describe("detectInferenceProviderHostState", () => {
       wslDetection: { isWsl: true },
       env: {},
       loopbackOnly: true,
+      prepareDockerEnvironment: undefined,
     });
   });
 

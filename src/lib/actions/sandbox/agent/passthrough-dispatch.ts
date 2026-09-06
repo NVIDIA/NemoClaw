@@ -320,23 +320,25 @@ export const OPENCLAW_AGENT_BOOLEAN_FLAGS = new Set(["--deliver"]);
  */
 export const AGENT_DISPATCH_DEADLINE_BUFFER_SECONDS = 30;
 
-/**
- * The `--timeout` an `openclaw agent` argv requests, or null when the argv
- * requests none.
- *
- * Mirrors the documented flag grammar only far enough to read one value.
- * Anything unrecognized, malformed, or past a `--` terminator returns null so
- * the host keeps the wait unbounded rather than shortening a turn without
- * evidence. `--timeout 0` disables the deadline upstream and returns null here
- * for the same reason.
- */
-export function requestedAgentTimeoutSeconds(argv: readonly string[]): number | null {
+type RequestedAgentTimeout = {
+  seconds: number;
+  argumentIndex: number;
+  inline: boolean;
+};
+
+function findRequestedAgentTimeout(argv: readonly string[]): RequestedAgentTimeout | null {
   if (argv[0] !== "openclaw" || argv[1] !== "agent") return null;
   for (let index = 2; index < argv.length; index += 1) {
     const arg = argv[index] as string;
     if (arg === "--") return null;
-    if (arg === "--timeout") return parseDeadlineSeconds(argv[index + 1]);
-    if (arg.startsWith("--timeout=")) return parseDeadlineSeconds(arg.slice("--timeout=".length));
+    if (arg === "--timeout") {
+      const seconds = parseDeadlineSeconds(argv[index + 1]);
+      return seconds === null ? null : { seconds, argumentIndex: index, inline: false };
+    }
+    if (arg.startsWith("--timeout=")) {
+      const seconds = parseDeadlineSeconds(arg.slice("--timeout=".length));
+      return seconds === null ? null : { seconds, argumentIndex: index, inline: true };
+    }
     if (OPENCLAW_AGENT_VALUE_FLAGS.has(arg)) {
       index += 1;
       continue;
@@ -349,16 +351,43 @@ export function requestedAgentTimeoutSeconds(argv: readonly string[]): number | 
     ) {
       continue;
     }
-    if (
-      arg === "--json" ||
-      arg.startsWith("--json=") ||
-      OPENCLAW_AGENT_BOOLEAN_FLAGS.has(arg)
-    ) {
+    if (arg === "--json" || arg.startsWith("--json=") || OPENCLAW_AGENT_BOOLEAN_FLAGS.has(arg)) {
       continue;
     }
     return null;
   }
   return null;
+}
+
+/**
+ * The `--timeout` an `openclaw agent` argv requests, or null when the argv
+ * requests none.
+ *
+ * Mirrors the documented flag grammar only far enough to read one value.
+ * Anything unrecognized, malformed, or past a `--` terminator returns null so
+ * the host keeps the wait unbounded rather than shortening a turn without
+ * evidence. `--timeout 0` disables the deadline upstream and returns null here
+ * for the same reason.
+ */
+export function requestedAgentTimeoutSeconds(argv: readonly string[]): number | null {
+  return findRequestedAgentTimeout(argv)?.seconds ?? null;
+}
+
+/** Replace a valid agent timeout while preserving its separated or equals form. */
+export function replaceRequestedAgentTimeoutSeconds(
+  argv: readonly string[],
+  timeoutSeconds: number,
+): readonly string[] {
+  const requested = findRequestedAgentTimeout(argv);
+  if (requested === null) return argv;
+  const replacement = String(Math.max(1, Math.floor(timeoutSeconds)));
+  const command = [...argv];
+  if (requested.inline) {
+    command[requested.argumentIndex] = `--timeout=${replacement}`;
+  } else {
+    command[requested.argumentIndex + 1] = replacement;
+  }
+  return command;
 }
 
 function parseDeadlineSeconds(raw: string | undefined): number | null {

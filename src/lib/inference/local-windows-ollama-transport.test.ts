@@ -18,6 +18,7 @@ import {
   OLLAMA_HOST_DOCKER_INTERNAL,
   loadPersistedOllamaHost,
   persistResolvedOllamaHost,
+  prepareOllamaApiExecution,
   probeLocalProviderHealth,
   probeOllamaModelCapabilities,
   probeWindowsHostOllamaRouteProtection,
@@ -30,6 +31,8 @@ import {
   validateOllamaModel,
 } from "./local";
 import { withOllamaModelOwnershipTransaction } from "./ollama/proxy";
+
+const WINDOWS_OLLAMA_TAGS_URL = "http://host.docker.internal:11434/api/tags";
 
 function respondsOnlyThroughDockerDesktop(apiPath: string, response: string) {
   return vi.fn((command: readonly string[]) => {
@@ -126,19 +129,79 @@ describe("Windows-host Ollama transport", () => {
         ["-sf", "http://host.docker.internal:11434/api/tags"],
         OLLAMA_HOST_DOCKER_INTERNAL,
       ),
-    ).toEqual([
-      "docker",
-      "run",
-      "--rm",
-      CONTAINER_REACHABILITY_IMAGE,
-      "-sf",
-      "http://host.docker.internal:11434/api/tags",
-    ]);
+    ).toEqual(
+      expect.arrayContaining([
+        "docker",
+        "run",
+        "--rm",
+        "HTTP_PROXY=",
+        "HTTPS_PROXY=",
+        "ALL_PROXY=",
+        "NO_PROXY=host.docker.internal",
+        CONTAINER_REACHABILITY_IMAGE,
+        "-sf",
+        "http://host.docker.internal:11434/api/tags",
+      ]),
+    );
     expect(getOllamaApiCommand(["-sf", "http://127.0.0.1:11434/api/tags"], "127.0.0.1")).toEqual([
       "curl",
       "-sf",
       "http://127.0.0.1:11434/api/tags",
     ]);
+  });
+
+  it("clears container proxy variables without changing Docker client authority", () => {
+    const cleanup = vi.fn(() => ({ ok: true as const }));
+    const dockerEnv = {
+      DOCKER_CONFIG: "/tmp/healthy-docker-config",
+      DOCKER_CONTEXT: "default",
+      HTTPS_PROXY: "https://operator:private-token@proxy.example",
+    };
+    const execution = prepareOllamaApiExecution(
+      ["curl", "-sf", WINDOWS_OLLAMA_TAGS_URL],
+      OLLAMA_HOST_DOCKER_INTERNAL,
+      {
+        env: dockerEnv,
+        runCaptureImpl: (command) => {
+          const rendered = command.join(" ");
+          return rendered.includes("Get-NetTCPConnection")
+            ? "127.0.0.1"
+            : command.includes("Host: rebinding.invalid")
+              ? "403"
+              : command.some((argument) => argument === WINDOWS_OLLAMA_TAGS_URL)
+                ? JSON.stringify({ models: [] })
+                : "";
+        },
+        prepareDockerEnvironment: () => ({
+          env: dockerEnv,
+          isolatedCredentialConfig: false,
+          cleanup,
+        }),
+      },
+    );
+
+    expect(execution.env).toEqual(
+      expect.objectContaining({
+        DOCKER_CONFIG: dockerEnv.DOCKER_CONFIG,
+        DOCKER_CONTEXT: "default",
+      }),
+    );
+    expect(execution.env?.HTTPS_PROXY).toBeUndefined();
+    expect(execution.command).toEqual(
+      expect.arrayContaining([
+        "HTTP_PROXY=",
+        "http_proxy=",
+        "HTTPS_PROXY=",
+        "https_proxy=",
+        "ALL_PROXY=",
+        "all_proxy=",
+        "NO_PROXY=host.docker.internal",
+        "no_proxy=host.docker.internal",
+      ]),
+    );
+    expect(execution.command.join(" ")).not.toContain("private-token");
+    execution.cleanup();
+    expect(cleanup).toHaveBeenCalledTimes(3);
   });
 
   it("accepts route protection only when both probes use Docker Desktop", () => {
@@ -147,7 +210,7 @@ describe("Windows-host Ollama transport", () => {
         command[0] === "docker" &&
         command[1] === "run" &&
         command[2] === "--rm" &&
-        command[3] === CONTAINER_REACHABILITY_IMAGE;
+        command.includes(CONTAINER_REACHABILITY_IMAGE);
       return usesDockerDesktop
         ? command.includes("Host: rebinding.invalid")
           ? "403"
@@ -555,7 +618,7 @@ describe("Windows-host Ollama transport", () => {
           command[0] === "docker" &&
           command[1] === "run" &&
           command[2] === "--rm" &&
-          command[3] === CONTAINER_REACHABILITY_IMAGE &&
+          command.includes(CONTAINER_REACHABILITY_IMAGE) &&
           command.some((argument) => argument === "http://host.docker.internal:11434/api/tags")
             ? JSON.stringify({ models: [] })
             : "",
@@ -603,26 +666,31 @@ describe("Windows-host Ollama transport", () => {
     expect(capture).toHaveBeenCalledTimes(4);
   });
 
-  it("retries an invalid Windows-host inventory before returning installed models (#10259)", () => {
-    setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
-    const capture = respondsWithOllamaInventorySequence([
-      "",
-      "<html>proxy response</html>",
-      JSON.stringify({ models: [{ name: "qwen3.5:9b" }] }),
-    ]);
-    const sleeps: number[] = [];
+  it(
+    "retries an invalid Windows-host inventory before returning installed models (#10259)",
+    () => {
+      setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
+      const capture = respondsWithOllamaInventorySequence([
+        "",
+        "<html>proxy response</html>",
+        JSON.stringify({ models: [{ name: "qwen3.5:9b" }] }),
+      ]);
+      const sleeps: number[] = [];
 
-    expect(getOllamaModelOptions(capture, (milliseconds) => sleeps.push(milliseconds))).toEqual([
-      "qwen3.5:9b",
-    ]);
-    expect(
-      capture.mock.calls.filter(
-        ([command, options]) =>
-          command.some((argument) => argument.endsWith("/api/tags")) && options?.timeout !== 10_000,
-      ),
-    ).toHaveLength(3);
-    expect(sleeps).toEqual([500, 1_000]);
-  });
+      expect(getOllamaModelOptions(capture, (milliseconds) => sleeps.push(milliseconds))).toEqual([
+        "qwen3.5:9b",
+      ]);
+      expect(
+        capture.mock.calls.filter(
+          ([command, options]) =>
+            command.some((argument) => argument.endsWith("/api/tags")) &&
+            options?.timeout !== 10_000,
+        ),
+      ).toHaveLength(3);
+      expect(sleeps).toEqual([500, 1_000]);
+    },
+    10_000,
+  );
 
   it("rejects an invalid Windows-host inventory after bounded retries (#10259)", () => {
     setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
@@ -652,7 +720,7 @@ describe("Windows-host Ollama transport", () => {
         command[0] === "docker" &&
         command[1] === "run" &&
         command[2] === "--rm" &&
-        command[3] === CONTAINER_REACHABILITY_IMAGE &&
+        command.includes(CONTAINER_REACHABILITY_IMAGE) &&
         command.some((argument) => argument === "http://host.docker.internal:11434/api/generate");
       return {
         stdout: expected ? JSON.stringify({ done: true, response: "ready" }) : "",

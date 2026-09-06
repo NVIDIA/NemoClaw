@@ -1,29 +1,94 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { EventEmitter } from "node:events";
+import type { StdioOptions } from "node:child_process";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { describe, expect, it, vi } from "vitest";
 import { OLLAMA_PORT, OLLAMA_PROXY_PORT } from "../../../core/ports";
-import { prepareOllamaApiExecution } from "../../../inference/local";
+import { CONTAINER_REACHABILITY_IMAGE } from "../../../inference/local";
+import type { SandboxExecSignalSource } from "../exec";
+import type { AgentDispatchChild } from "./passthrough-dispatch";
 import {
   maybeWarmOllamaAfterDaemonRestart,
+  runOllamaRecoveryCapture,
+  type OllamaRecoveryCaptureFn,
+  type OllamaRecoveryCaptureResult,
+  type OllamaRecoverySpawner,
   type OllamaRestartRecoveryDeps,
 } from "./ollama-restart-recovery";
 
-const unloadedStatus = {
-  probed: true,
-  loaded: false,
-  cpuOnly: false,
-};
-
-function successfulWarmResult() {
+function recoveryResult(
+  stdout: string,
+  overrides: Partial<OllamaRecoveryCaptureResult> = {},
+): OllamaRecoveryCaptureResult {
   return {
-    stdout: JSON.stringify({ response: "Hello!", done: true }),
+    stdout,
+    stderr: "",
     exitCode: 0,
     timedOut: false,
+    ...overrides,
   };
+}
+
+function successfulWarmResult(): OllamaRecoveryCaptureResult {
+  return recoveryResult(JSON.stringify({ response: "Hello!", done: true }));
+}
+
+function unloadedProbeResult(): OllamaRecoveryCaptureResult {
+  return recoveryResult(JSON.stringify({ models: [] }));
+}
+
+function scriptedRecoveryCapture(
+  ...responses: OllamaRecoveryCaptureResult[]
+): ReturnType<typeof vi.fn<OllamaRecoveryCaptureFn>> {
+  const pending = [...responses];
+  return vi.fn<OllamaRecoveryCaptureFn>(async () =>
+    Promise.resolve(pending.shift() ?? Promise.reject(new Error("unexpected recovery request"))),
+  );
+}
+
+function failingRecoveryCapture(
+  error: Error,
+  ...responses: OllamaRecoveryCaptureResult[]
+): ReturnType<typeof vi.fn<OllamaRecoveryCaptureFn>> {
+  const pending = [
+    ...responses.map((response) => () => Promise.resolve(response)),
+    () => Promise.reject(error),
+  ];
+  return vi.fn<OllamaRecoveryCaptureFn>(async () =>
+    (pending.shift() ?? (() => Promise.reject(new Error("unexpected recovery request"))))(),
+  );
+}
+
+function completingRecoverySpawner(
+  responses: readonly string[],
+): ReturnType<typeof vi.fn<OllamaRecoverySpawner>> {
+  const pending = [...responses];
+  return vi.fn<OllamaRecoverySpawner>((_binary, _args, _stdio, _env) => {
+    const childEvents = new EventEmitter();
+    const stderr = new EventEmitter();
+    const stdout = new EventEmitter();
+    const child: AgentDispatchChild = {
+      exitCode: null,
+      signalCode: null,
+      kill: vi.fn(() => true),
+      once: ((event: string, listener: (...args: unknown[]) => void) =>
+        childEvents.once(event, listener)) as AgentDispatchChild["once"],
+      stderr,
+      stdout,
+    };
+    const response = pending.shift() ?? "";
+    queueMicrotask(() => {
+      stdout.emit("data", response);
+      child.exitCode = 0;
+      childEvents.emit("close", 0, null);
+    });
+    return child;
+  });
 }
 
 function getCommandUrl(command: readonly string[]): string {
@@ -35,81 +100,59 @@ function getCommandBody(command: readonly string[]): Record<string, unknown> {
   return JSON.parse(command[dataIndex + 1] ?? "null") as Record<string, unknown>;
 }
 
-function windowsRouteProtectionCapture(command: readonly string[]): string {
-  const rendered = command.join(" ");
-  return rendered.includes("Get-NetTCPConnection")
-    ? "127.0.0.1"
-    : command.includes("Host: rebinding.invalid")
-      ? "403"
-      : JSON.stringify({ models: [] });
-}
-
 describe("maybeWarmOllamaAfterDaemonRestart", () => {
-  const originalPath = process.env.PATH;
-  let fakeDockerDir: string;
-
-  beforeAll(() => {
-    fakeDockerDir = mkdtempSync(join(tmpdir(), "nemoclaw-restart-recovery-docker-"));
-    const fakeDockerPath = join(fakeDockerDir, "docker");
-    writeFileSync(fakeDockerPath, "#!/bin/sh\nprintf '%s\\n' 'Operating System: Docker Desktop'\n");
-    chmodSync(fakeDockerPath, 0o755);
-    process.env.PATH = `${fakeDockerDir}${delimiter}${originalPath ?? ""}`;
-  });
-
-  afterAll(() => {
-    Reflect.deleteProperty(process.env, "PATH");
-    Object.assign(process.env, originalPath === undefined ? {} : { PATH: originalPath });
-    rmSync(fakeDockerDir, { recursive: true, force: true });
-  });
-
-  beforeEach(() => {
-    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
-    vi.stubEnv("DOCKER_CONTEXT", "default");
-    vi.stubEnv("WSL_DISTRO_NAME", "Ubuntu");
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-    vi.unstubAllEnvs();
-  });
-
-  it("skips routes that are not local Ollama", () => {
-    expect(
+  it("skips routes that are not local Ollama", async () => {
+    await expect(
       maybeWarmOllamaAfterDaemonRestart({ provider: "vllm-local", model: "meta/llama" }),
-    ).toEqual({ kind: "skipped", reason: "not-ollama" });
+    ).resolves.toEqual({ kind: "skipped", reason: "not-ollama" });
   });
 
-  it("skips a local Ollama route without a registered model", () => {
-    expect(maybeWarmOllamaAfterDaemonRestart({ provider: "ollama-local" })).toEqual({
+  it("skips a local Ollama route without a registered model", async () => {
+    await expect(maybeWarmOllamaAfterDaemonRestart({ provider: "ollama-local" })).resolves.toEqual({
       kind: "skipped",
       reason: "missing-model",
     });
   });
 
-  it("uses the persisted direct bridge route for both the default probe and warm-up", () => {
-    const cleanup = vi.fn(() => ({ ok: true as const }));
-    const prepareDockerEnvironment = () => ({
-      env: { DOCKER_CONFIG: "/tmp/credential-free-docker" },
-      isolatedCredentialConfig: true,
-      cleanup,
-    });
-    const runCaptureImpl = vi.fn(
-      (command: readonly string[], options?: { env?: NodeJS.ProcessEnv }) => {
-        const protection = windowsRouteProtectionCapture(command);
-        return protection !== JSON.stringify({ models: [] })
-          ? protection
-          : options?.env?.DOCKER_CONFIG === "/tmp/credential-free-docker"
-            ? protection
-            : "";
-      },
-    );
-    const runCaptureExImpl = vi.fn((_command: string[], options?: { env?: NodeJS.ProcessEnv }) =>
-      options?.env?.DOCKER_CONFIG === "/tmp/credential-free-docker"
-        ? successfulWarmResult()
-        : { stdout: "", exitCode: 1, timedOut: false },
+  it("uses the resolved Windows host for an ambiguous direct bridge route", async () => {
+    const runRecoveryCaptureImpl = scriptedRecoveryCapture(
+      unloadedProbeResult(),
+      successfulWarmResult(),
     );
 
-    expect(
+    await expect(
+      maybeWarmOllamaAfterDaemonRestart(
+        {
+          provider: "ollama-local",
+          model: "qwen3.6:35b",
+          endpointUrl: `http://host.openshell.internal:${OLLAMA_PORT}/v1`,
+        },
+        { getOllamaHost: () => "host.docker.internal",
+          revalidateOllamaHost: () => "host.docker.internal", runRecoveryCaptureImpl },
+      ),
+    ).resolves.toEqual({ kind: "warmed", ok: true });
+
+    expect(getCommandUrl(runRecoveryCaptureImpl.mock.calls[0]?.[0] ?? [])).toBe(
+      `http://host.docker.internal:${OLLAMA_PORT}/api/ps`,
+    );
+    expect(getCommandUrl(runRecoveryCaptureImpl.mock.calls[1]?.[0] ?? [])).toBe(
+      `http://host.docker.internal:${OLLAMA_PORT}/api/generate`,
+    );
+    expect(getCommandBody(runRecoveryCaptureImpl.mock.calls[1]?.[0] ?? [])).toMatchObject({
+      model: "qwen3.6:35b",
+      stream: false,
+      think: false,
+    });
+    expect(runRecoveryCaptureImpl.mock.calls.map(([, options]) => options.host)).toEqual([
+      "host.docker.internal",
+      "host.docker.internal",
+    ]);
+  });
+
+  it("skips a stale raw Windows route before model probes or warm-up", async () => {
+    const runRecoveryCaptureImpl = vi.fn<OllamaRecoveryCaptureFn>();
+
+    await expect(
       maybeWarmOllamaAfterDaemonRestart(
         {
           provider: "ollama-local",
@@ -117,93 +160,377 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
           endpointUrl: `http://host.openshell.internal:${OLLAMA_PORT}/v1`,
         },
         {
-          runCaptureImpl,
-          runCaptureExImpl,
-          revalidateOllamaHost: () => "host.docker.internal",
-          prepareDockerEnvironment,
-          prepareOllamaApiExecution: (command, host, options) =>
-            prepareOllamaApiExecution(command, host, {
-              ...options,
-              prepareDockerEnvironment,
-              runCaptureImpl,
-            }),
+          getOllamaHost: () => "host.docker.internal",
+          revalidateOllamaHost: () => null,
+          runRecoveryCaptureImpl,
         },
       ),
-    ).toEqual({ kind: "warmed", ok: true, timedOut: false });
-
-    const modelProbe = runCaptureImpl.mock.calls.find(([command]) =>
-      getCommandUrl(command).endsWith("/api/ps"),
-    );
-    expect(getCommandUrl(modelProbe?.[0] ?? [])).toBe(
-      `http://host.docker.internal:${OLLAMA_PORT}/api/ps`,
-    );
-    expect(modelProbe?.[0][0]).toBe("docker");
-    expect(getCommandUrl(runCaptureExImpl.mock.calls[0][0])).toBe(
-      `http://host.docker.internal:${OLLAMA_PORT}/api/generate`,
-    );
-    expect(runCaptureExImpl.mock.calls[0][0][0]).toBe("docker");
-    expect(getCommandBody(runCaptureExImpl.mock.calls[0][0])).toMatchObject({
-      model: "qwen3.6:35b",
-      stream: false,
-      think: false,
+    ).resolves.toEqual({
+      kind: "skipped",
+      reason: "unreachable",
+      endpoint: `http://host.docker.internal:${OLLAMA_PORT}`,
     });
-    expect(modelProbe?.[1]?.env?.DOCKER_CONFIG).toBe("/tmp/credential-free-docker");
-    expect(runCaptureExImpl.mock.calls[0][1]?.env?.DOCKER_CONFIG).toBe(
-      "/tmp/credential-free-docker",
-    );
-    expect(cleanup).toHaveBeenCalledTimes(6);
+    expect(runRecoveryCaptureImpl).not.toHaveBeenCalled();
   });
 
-  it("maps an auth-proxy route back to host loopback", () => {
-    const runCaptureImpl = vi.fn((_command: readonly string[]) => JSON.stringify({ models: [] }));
-    const runCaptureExImpl = vi.fn((_command: string[]) => successfulWarmResult());
+  it("uses the resolved WSL-local host for an ambiguous direct bridge route", async () => {
+    const prepareDockerEnvironment = vi.fn(() => {
+      throw new Error("unexpected Docker transport");
+    });
+    const spawnRecoveryChild = completingRecoverySpawner([
+      unloadedProbeResult().stdout,
+      successfulWarmResult().stdout,
+    ]);
 
-    maybeWarmOllamaAfterDaemonRestart(
+    await expect(
+      maybeWarmOllamaAfterDaemonRestart(
+        {
+          provider: "ollama-local",
+          model: "qwen3.6:35b",
+          endpointUrl: `http://host.openshell.internal:${OLLAMA_PORT}/v1`,
+        },
+        {
+          getOllamaHost: () => "127.0.0.1",
+          prepareDockerEnvironment,
+          spawnRecoveryChild,
+        },
+      ),
+    ).resolves.toEqual({ kind: "warmed", ok: true });
+
+    const commands = spawnRecoveryChild.mock.calls.map(([binary, args]) => [binary, ...args]);
+    expect(commands.map(getCommandUrl)).toEqual([
+      `http://127.0.0.1:${OLLAMA_PORT}/api/ps`,
+      `http://127.0.0.1:${OLLAMA_PORT}/api/generate`,
+    ]);
+    expect(commands.map(([binary]) => binary)).toEqual(["curl", "curl"]);
+    expect(prepareDockerEnvironment).not.toHaveBeenCalled();
+  });
+
+  it("runs the production status probe and warm-up through the async capture boundary", async () => {
+    const runRecoveryCaptureImpl = vi
+      .fn()
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify({ models: [] }),
+        stderr: "",
+        exitCode: 0,
+        timedOut: false,
+      })
+      .mockResolvedValueOnce({ ...successfulWarmResult(), stderr: "" });
+
+    await expect(
+      maybeWarmOllamaAfterDaemonRestart(
+        { provider: "ollama-local", model: "qwen3.6:35b" },
+        { runRecoveryCaptureImpl },
+      ),
+    ).resolves.toEqual({ kind: "warmed", ok: true });
+    expect(runRecoveryCaptureImpl).toHaveBeenCalledTimes(2);
+    expect(getCommandUrl(runRecoveryCaptureImpl.mock.calls[0]?.[0] ?? [])).toBe(
+      `http://127.0.0.1:${OLLAMA_PORT}/api/ps`,
+    );
+    expect(getCommandUrl(runRecoveryCaptureImpl.mock.calls[1]?.[0] ?? [])).toBe(
+      `http://127.0.0.1:${OLLAMA_PORT}/api/generate`,
+    );
+  });
+
+  it("runs Windows recovery through the isolated Docker transport", async () => {
+    const fakeDockerDirectory = mkdtempSync(join(tmpdir(), "nemoclaw-recovery-docker-"));
+    const fakeDockerPath = join(fakeDockerDirectory, "docker");
+    writeFileSync(fakeDockerPath, "#!/bin/sh\nprintf '%s\\n' 'Operating System: Docker Desktop'\n");
+    chmodSync(fakeDockerPath, 0o755);
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${fakeDockerDirectory}${delimiter}${originalPath ?? ""}`;
+    const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    vi.stubEnv("DOCKER_CONTEXT", "default");
+    vi.stubEnv("DOCKER_HOST", "");
+    vi.stubEnv("WSL_DISTRO_NAME", "Ubuntu");
+    const cleanup = vi.fn(() => ({ ok: true as const }));
+    const prepareDockerEnvironment = vi.fn(() => ({
+      env: { DOCKER_CONFIG: "/tmp/credential-free-docker" },
+      isolatedCredentialConfig: true,
+      cleanup,
+    }));
+    const routeProtectionCapture = vi.fn((command: readonly string[]) => {
+      const rendered = command.join(" ");
+      return rendered.includes("Get-NetTCPConnection")
+        ? "127.0.0.1"
+        : command.includes("Host: rebinding.invalid")
+          ? "403"
+          : JSON.stringify({ models: [] });
+    });
+    const spawnRecoveryChild = completingRecoverySpawner([
+      unloadedProbeResult().stdout,
+      successfulWarmResult().stdout,
+    ]);
+
+    try {
+      const result = await maybeWarmOllamaAfterDaemonRestart(
+        {
+          provider: "ollama-local",
+          model: "qwen3.6:35b",
+          endpointUrl: `http://host.openshell.internal:${OLLAMA_PORT}/v1`,
+        },
+        {
+          dockerContextIsDefault: () => true,
+          getOllamaHost: () => "host.docker.internal",
+          prepareDockerEnvironment,
+          revalidateOllamaHost: () => "host.docker.internal",
+          routeProtectionCapture,
+          spawnRecoveryChild,
+        },
+      );
+      expect(result).toEqual({ kind: "warmed", ok: true });
+    } finally {
+      Reflect.deleteProperty(process.env, "PATH");
+      Object.assign(process.env, originalPath === undefined ? {} : { PATH: originalPath });
+      platformSpy.mockRestore();
+      vi.unstubAllEnvs();
+      rmSync(fakeDockerDirectory, { recursive: true, force: true });
+    }
+
+    const commands = spawnRecoveryChild.mock.calls.map(([binary, args]) => [binary, ...args]);
+    expect(commands.map(([binary]) => binary)).toEqual(["docker", "docker"]);
+    expect(commands).toEqual([
+      expect.arrayContaining([
+        CONTAINER_REACHABILITY_IMAGE,
+        `http://host.docker.internal:${OLLAMA_PORT}/api/ps`,
+      ]),
+      expect.arrayContaining([
+        CONTAINER_REACHABILITY_IMAGE,
+        `http://host.docker.internal:${OLLAMA_PORT}/api/generate`,
+      ]),
+    ]);
+    expect(spawnRecoveryChild.mock.calls.map(([, , , env]) => env.DOCKER_CONFIG)).toEqual([
+      "/tmp/credential-free-docker",
+      "/tmp/credential-free-docker",
+    ]);
+    expect(prepareDockerEnvironment).toHaveBeenCalled();
+    expect(cleanup).toHaveBeenCalled();
+  });
+
+  it("stops recovery after an async status probe is cancelled", async () => {
+    const runRecoveryCaptureImpl = vi.fn().mockResolvedValue({
+      stdout: "",
+      stderr: "",
+      exitCode: null,
+      timedOut: false,
+      signal: "SIGTERM",
+    });
+
+    await expect(
+      maybeWarmOllamaAfterDaemonRestart(
+        { provider: "ollama-local", model: "qwen3.6:35b" },
+        { runRecoveryCaptureImpl },
+      ),
+    ).resolves.toEqual({ kind: "cancelled", signal: "SIGTERM" });
+    expect(runRecoveryCaptureImpl).toHaveBeenCalledOnce();
+  });
+
+  it("prepares and cleans one Docker environment for each recovery request", async () => {
+    const cleanups: Array<ReturnType<typeof vi.fn>> = [];
+    const prepareDockerEnvironment = vi.fn(() => {
+      const cleanup = vi.fn(() => ({ ok: true as const }));
+      cleanups.push(cleanup);
+      return {
+        env: { DOCKER_CONFIG: `/tmp/credential-free-docker-${cleanups.length}` },
+        isolatedCredentialConfig: true,
+        cleanup,
+      };
+    });
+    const spawnRecoveryChild = completingRecoverySpawner(["one", "two", "three"]);
+    const command = ["docker", "run", "--rm", CONTAINER_REACHABILITY_IMAGE, "true"];
+    const options = {
+      host: "127.0.0.1",
+      timeoutMilliseconds: 5_000,
+      spawnRecoveryChild,
+      prepareDockerEnvironment,
+    };
+    await expect(runOllamaRecoveryCapture(command, options)).resolves.toMatchObject({
+      exitCode: 0,
+      timedOut: false,
+    });
+    await expect(runOllamaRecoveryCapture(command, options)).resolves.toMatchObject({
+      exitCode: 0,
+      timedOut: false,
+    });
+    await expect(runOllamaRecoveryCapture(command, options)).resolves.toMatchObject({
+      exitCode: 0,
+      timedOut: false,
+    });
+
+    const commands = spawnRecoveryChild.mock.calls.map(([binary, args]) => [binary, ...args]);
+    expect(commands.every((command) => command[0] === "docker")).toBe(true);
+    expect(commands).toEqual([
+      expect.arrayContaining([CONTAINER_REACHABILITY_IMAGE]),
+      expect.arrayContaining([CONTAINER_REACHABILITY_IMAGE]),
+      expect.arrayContaining([CONTAINER_REACHABILITY_IMAGE]),
+    ]);
+    expect(spawnRecoveryChild.mock.calls.map(([, , , env]) => env.DOCKER_CONFIG)).toEqual([
+      "/tmp/credential-free-docker-1",
+      "/tmp/credential-free-docker-2",
+      "/tmp/credential-free-docker-3",
+    ]);
+    expect(prepareDockerEnvironment).toHaveBeenCalledTimes(3);
+    expect(cleanups).toHaveLength(3);
+    expect(cleanups[0]).toHaveBeenCalledOnce();
+    expect(cleanups[1]).toHaveBeenCalledOnce();
+    expect(cleanups[2]).toHaveBeenCalledOnce();
+  });
+
+  it("forwards SIGTERM to an active recovery child and releases its Docker environment", async () => {
+    const childEvents = new EventEmitter();
+    const signalEvents = new EventEmitter();
+    const stderr = new EventEmitter();
+    const stdout = new EventEmitter();
+    const cleanup = vi.fn(() => ({ ok: true as const }));
+    const child: AgentDispatchChild = {
+      exitCode: null,
+      signalCode: null,
+      kill: vi.fn((signal) => {
+        child.signalCode = signal;
+        queueMicrotask(() => childEvents.emit("close", null, signal));
+        return true;
+      }),
+      once: ((event: string, listener: (...args: unknown[]) => void) =>
+        childEvents.once(event, listener)) as AgentDispatchChild["once"],
+      stderr,
+      stdout,
+    };
+    const signalSource: SandboxExecSignalSource = {
+      add: (signal, listener) => signalEvents.on(signal, listener),
+      remove: (signal, listener) => signalEvents.off(signal, listener),
+    };
+    const spawnRecoveryChild = vi.fn(
+      (_binary: string, _args: readonly string[], _stdio: StdioOptions, _env: NodeJS.ProcessEnv) =>
+        child,
+    );
+
+    const pending = runOllamaRecoveryCapture(
+      ["docker", "run", "--rm", CONTAINER_REACHABILITY_IMAGE, "true"],
+      {
+        host: "127.0.0.1",
+        timeoutMilliseconds: 300_000,
+        prepareDockerEnvironment: () => ({
+          env: { DOCKER_CONFIG: "/tmp/credential-free-docker" },
+          isolatedCredentialConfig: true,
+          cleanup,
+        }),
+        signalSource,
+        spawnRecoveryChild,
+      },
+    );
+    signalEvents.emit("SIGTERM");
+
+    await expect(pending).resolves.toMatchObject({
+      exitCode: null,
+      signal: "SIGTERM",
+      timedOut: false,
+    });
+    expect(child.kill).toHaveBeenCalledOnce();
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(spawnRecoveryChild.mock.calls[0]?.[0]).toBe("docker");
+    expect(spawnRecoveryChild.mock.calls[0]?.[3]?.DOCKER_CONFIG).toBe(
+      "/tmp/credential-free-docker",
+    );
+    expect(cleanup).toHaveBeenCalledOnce();
+    expect(signalEvents.listenerCount("SIGTERM")).toBe(0);
+    expect(signalEvents.listenerCount("SIGINT")).toBe(0);
+  });
+
+  it("forces a timed-out recovery child to close and releases its Docker environment", async () => {
+    vi.useFakeTimers();
+    const childEvents = new EventEmitter();
+    const signalEvents = new EventEmitter();
+    const cleanup = vi.fn(() => ({ ok: true as const }));
+    let child: AgentDispatchChild;
+    const kill = vi
+      .fn<(signal: NodeJS.Signals) => boolean>()
+      .mockReturnValueOnce(true)
+      .mockImplementationOnce((signal) => {
+        child.signalCode = signal;
+        queueMicrotask(() => childEvents.emit("close", null, signal));
+        return true;
+      });
+    child = {
+      exitCode: null,
+      signalCode: null,
+      kill,
+      once: ((event: string, listener: (...args: unknown[]) => void) =>
+        childEvents.once(event, listener)) as AgentDispatchChild["once"],
+      stderr: new EventEmitter(),
+      stdout: new EventEmitter(),
+    };
+    const signalSource: SandboxExecSignalSource = {
+      add: (signal, listener) => signalEvents.on(signal, listener),
+      remove: (signal, listener) => signalEvents.off(signal, listener),
+    };
+
+    try {
+      const pending = runOllamaRecoveryCapture(
+        ["docker", "run", "--rm", CONTAINER_REACHABILITY_IMAGE, "true"],
+        {
+          host: "127.0.0.1",
+          timeoutMilliseconds: 10,
+          prepareDockerEnvironment: () => ({
+            env: { DOCKER_CONFIG: "/tmp/credential-free-docker" },
+            isolatedCredentialConfig: true,
+            cleanup,
+          }),
+          signalSource,
+          spawnRecoveryChild: vi.fn(() => child),
+        },
+      );
+
+      await vi.advanceTimersByTimeAsync(10);
+      expect(child.kill).toHaveBeenCalledTimes(1);
+      expect(child.kill).toHaveBeenLastCalledWith("SIGTERM");
+      expect(cleanup).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      await expect(pending).resolves.toMatchObject({
+        exitCode: null,
+        signal: "SIGKILL",
+        timedOut: true,
+      });
+      expect(child.kill).toHaveBeenCalledTimes(2);
+      expect(child.kill).toHaveBeenLastCalledWith("SIGKILL");
+      expect(cleanup).toHaveBeenCalledOnce();
+      expect(signalEvents.listenerCount("SIGTERM")).toBe(0);
+      expect(signalEvents.listenerCount("SIGINT")).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("maps an auth-proxy route back to host loopback", async () => {
+    const runRecoveryCaptureImpl = scriptedRecoveryCapture(
+      unloadedProbeResult(),
+      successfulWarmResult(),
+    );
+
+    await maybeWarmOllamaAfterDaemonRestart(
       {
         provider: "ollama-local",
         model: "qwen3.6:35b",
         endpointUrl: `http://host.openshell.internal:${OLLAMA_PROXY_PORT}/v1`,
       },
-      { runCaptureImpl, runCaptureExImpl },
+      { runRecoveryCaptureImpl },
     );
 
-    expect(getCommandUrl(runCaptureImpl.mock.calls[0][0])).toBe(
+    expect(getCommandUrl(runRecoveryCaptureImpl.mock.calls[0]?.[0] ?? [])).toBe(
       `http://127.0.0.1:${OLLAMA_PORT}/api/ps`,
     );
-    expect(runCaptureImpl.mock.calls[0][0][0]).toBe("curl");
-    expect(getCommandUrl(runCaptureExImpl.mock.calls[0][0])).toBe(
+    expect(getCommandUrl(runRecoveryCaptureImpl.mock.calls[1]?.[0] ?? [])).toBe(
       `http://127.0.0.1:${OLLAMA_PORT}/api/generate`,
     );
-    expect(runCaptureExImpl.mock.calls[0][0][0]).toBe("curl");
   });
 
-  it("skips a stale raw Windows route before model probes or warm-up", () => {
-    const probeRuntimeModelStatus = vi.fn(() => unloadedStatus);
-    const runCaptureExImpl = vi.fn(() => successfulWarmResult());
+  it("falls back to an allowlisted host instead of probing an arbitrary registry URL", async () => {
+    const runRecoveryCaptureImpl = scriptedRecoveryCapture(
+      unloadedProbeResult(),
+      successfulWarmResult(),
+    );
 
-    expect(
-      maybeWarmOllamaAfterDaemonRestart(
-        {
-          provider: "ollama-local",
-          model: "qwen3.6:35b",
-          endpointUrl: `http://host.openshell.internal:${OLLAMA_PORT}/v1`,
-        },
-        {
-          revalidateOllamaHost: () => null,
-          probeRuntimeModelStatus,
-          runCaptureExImpl,
-        },
-      ),
-    ).toEqual({ kind: "skipped", reason: "unreachable" });
-    expect(probeRuntimeModelStatus).not.toHaveBeenCalled();
-    expect(runCaptureExImpl).not.toHaveBeenCalled();
-  });
-
-  it("falls back to an allowlisted host instead of probing an arbitrary registry URL", () => {
-    const runCaptureImpl = vi.fn((_command: readonly string[]) => JSON.stringify({ models: [] }));
-    const runCaptureExImpl = vi.fn((_command: string[]) => successfulWarmResult());
-
-    maybeWarmOllamaAfterDaemonRestart(
+    await maybeWarmOllamaAfterDaemonRestart(
       {
         provider: "ollama-local",
         model: "qwen3.6:35b",
@@ -211,20 +538,25 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
       },
       {
         getOllamaHost: () => "also.example.com",
-        runCaptureImpl,
-        runCaptureExImpl,
+        runRecoveryCaptureImpl,
       },
     );
 
-    expect(getCommandUrl(runCaptureImpl.mock.calls[0][0])).toContain("http://127.0.0.1:");
-    expect(getCommandUrl(runCaptureExImpl.mock.calls[0][0])).toContain("http://127.0.0.1:");
+    expect(getCommandUrl(runRecoveryCaptureImpl.mock.calls[0]?.[0] ?? [])).toContain(
+      "http://127.0.0.1:",
+    );
+    expect(getCommandUrl(runRecoveryCaptureImpl.mock.calls[1]?.[0] ?? [])).toContain(
+      "http://127.0.0.1:",
+    );
   });
 
-  it("does not map an unrecognized proxy-port host to host loopback (#6039)", () => {
-    const runCaptureImpl = vi.fn(windowsRouteProtectionCapture);
-    const runCaptureExImpl = vi.fn((_command: string[]) => successfulWarmResult());
+  it("does not map an unrecognized proxy-port host to host loopback (#6039)", async () => {
+    const runRecoveryCaptureImpl = scriptedRecoveryCapture(
+      unloadedProbeResult(),
+      successfulWarmResult(),
+    );
 
-    maybeWarmOllamaAfterDaemonRestart(
+    await maybeWarmOllamaAfterDaemonRestart(
       {
         provider: "ollama-local",
         model: "qwen3.6:35b",
@@ -232,173 +564,260 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
       },
       {
         getOllamaHost: () => "host.docker.internal",
-        revalidateOllamaHost: () => "host.docker.internal",
-        runCaptureImpl,
-        runCaptureExImpl,
-        prepareOllamaApiExecution: (command, host, options) =>
-          prepareOllamaApiExecution(command, host, { ...options, runCaptureImpl }),
+          revalidateOllamaHost: () => "host.docker.internal",
+        runRecoveryCaptureImpl,
       },
     );
 
-    const modelProbe = runCaptureImpl.mock.calls.find(([command]) =>
-      getCommandUrl(command).endsWith("/api/ps"),
-    );
-    expect(getCommandUrl(modelProbe?.[0] ?? [])).toBe(
+    expect(getCommandUrl(runRecoveryCaptureImpl.mock.calls[0]?.[0] ?? [])).toBe(
       `http://host.docker.internal:${OLLAMA_PORT}/api/ps`,
     );
-    expect(getCommandUrl(runCaptureExImpl.mock.calls[0][0])).toBe(
+    expect(getCommandUrl(runRecoveryCaptureImpl.mock.calls[1]?.[0] ?? [])).toBe(
       `http://host.docker.internal:${OLLAMA_PORT}/api/generate`,
     );
   });
 
-  it("skips the warm-up when the selected model is already loaded", () => {
-    const probeRuntimeModelStatus = vi.fn(() => ({
-      probed: true,
-      loaded: true,
-      cpuOnly: false,
-    }));
-    const runCaptureExImpl = vi.fn(() => successfulWarmResult());
+  it("skips the warm-up when the selected model is already loaded", async () => {
+    const runRecoveryCaptureImpl = scriptedRecoveryCapture(
+      recoveryResult(JSON.stringify({ models: [{ name: "qwen3.6:35b", size_vram: 1 }] })),
+    );
 
-    expect(
+    await expect(
       maybeWarmOllamaAfterDaemonRestart(
         { provider: "ollama-local", model: "qwen3.6:35b" },
-        { probeRuntimeModelStatus, runCaptureExImpl },
+        { runRecoveryCaptureImpl },
       ),
-    ).toEqual({ kind: "skipped", reason: "already-loaded" });
-    expect(runCaptureExImpl).not.toHaveBeenCalled();
+    ).resolves.toEqual({ kind: "skipped", reason: "already-loaded" });
+    expect(runRecoveryCaptureImpl).toHaveBeenCalledOnce();
   });
 
-  it("skips the warm-up when the daemon probe is unreachable", () => {
-    const runCaptureExImpl = vi.fn(() => successfulWarmResult());
+  it("skips the warm-up when the daemon probe is unreachable", async () => {
+    const runRecoveryCaptureImpl = scriptedRecoveryCapture(recoveryResult("", { exitCode: 7 }));
 
-    expect(
+    await expect(
       maybeWarmOllamaAfterDaemonRestart(
         { provider: "ollama-local", model: "qwen3.6:35b" },
-        { runCaptureImpl: () => "", runCaptureExImpl },
+        { runRecoveryCaptureImpl },
       ),
-    ).toEqual({ kind: "skipped", reason: "unreachable" });
-    expect(runCaptureExImpl).not.toHaveBeenCalled();
+    ).resolves.toEqual({
+      kind: "skipped",
+      reason: "unreachable",
+      endpoint: `http://127.0.0.1:${OLLAMA_PORT}`,
+    });
+    expect(runRecoveryCaptureImpl).toHaveBeenCalledOnce();
   });
 
-  it("reports a bounded warm-up timeout", () => {
-    expect(
+  it("skips the warm-up when the daemon status response is malformed", async () => {
+    const runRecoveryCaptureImpl = scriptedRecoveryCapture(recoveryResult("not-json"));
+
+    await expect(
       maybeWarmOllamaAfterDaemonRestart(
         { provider: "ollama-local", model: "qwen3.6:35b" },
-        {
-          probeRuntimeModelStatus: () => unloadedStatus,
-          runCaptureExImpl: () => ({
-            stdout: "",
-            exitCode: 28,
-            timedOut: true,
-          }),
-        },
+        { runRecoveryCaptureImpl },
       ),
-    ).toEqual({
+    ).resolves.toEqual({
+      kind: "skipped",
+      reason: "unreachable",
+      endpoint: `http://127.0.0.1:${OLLAMA_PORT}`,
+    });
+    expect(runRecoveryCaptureImpl).toHaveBeenCalledOnce();
+  });
+
+  it("reports a bounded warm-up timeout", async () => {
+    const runRecoveryCaptureImpl = scriptedRecoveryCapture(
+      unloadedProbeResult(),
+      recoveryResult("", { exitCode: 28, timedOut: true }),
+    );
+    await expect(
+      maybeWarmOllamaAfterDaemonRestart(
+        { provider: "ollama-local", model: "qwen3.6:35b" },
+        { runRecoveryCaptureImpl },
+      ),
+    ).resolves.toEqual({
       kind: "warmed",
       ok: false,
-      timedOut: true,
       reason: "timeout",
       endpoint: "http://127.0.0.1:11434",
       detail: "warm-up exceeded 300 seconds",
     });
   });
 
-  it("does not treat an exit-zero Ollama error body as a successful warm-up", () => {
-    expect(
+  it("limits warm-up to the command timeout budget remaining after the probe", async () => {
+    let nowMs = 1_000;
+    const responses = [
+      () => {
+        nowMs = 6_000;
+        return unloadedProbeResult();
+      },
+      () => successfulWarmResult(),
+    ];
+    const runRecoveryCaptureImpl = vi.fn<OllamaRecoveryCaptureFn>(async () => responses.shift()!());
+
+    await expect(
       maybeWarmOllamaAfterDaemonRestart(
-        { provider: "ollama-local", model: "missing:latest" },
+        { provider: "ollama-local", model: "qwen3.6:35b" },
         {
-          probeRuntimeModelStatus: () => unloadedStatus,
-          probeModelInventory: () => null,
-          runCaptureExImpl: () => ({
-            stdout: JSON.stringify({ error: "model not found" }),
-            exitCode: 0,
-            timedOut: false,
-          }),
+          runRecoveryCaptureImpl,
+          timeoutSeconds: 30,
+          now: () => nowMs,
         },
       ),
-    ).toMatchObject({
+    ).resolves.toEqual({ kind: "warmed", ok: true });
+
+    const warmCommand = runRecoveryCaptureImpl.mock.calls[1]?.[0] ?? [];
+    expect(warmCommand[warmCommand.indexOf("--max-time") + 1]).toBe("25");
+    expect(runRecoveryCaptureImpl.mock.calls[0]?.[1].timeoutMilliseconds).toBe(5_000);
+    expect(runRecoveryCaptureImpl.mock.calls[1]?.[1].timeoutMilliseconds).toBe(25_000);
+  });
+
+  it("skips warm-up when the probe consumes the command timeout budget", async () => {
+    let nowMs = 1_000;
+    const runRecoveryCaptureImpl = vi.fn<OllamaRecoveryCaptureFn>(async () => {
+      nowMs = 31_000;
+      return unloadedProbeResult();
+    });
+
+    await expect(
+      maybeWarmOllamaAfterDaemonRestart(
+        { provider: "ollama-local", model: "qwen3.6:35b" },
+        {
+          runRecoveryCaptureImpl,
+          timeoutSeconds: 30,
+          now: () => nowMs,
+        },
+      ),
+    ).resolves.toEqual({
+      kind: "skipped",
+      reason: "deadline-exhausted",
+      endpoint: `http://127.0.0.1:${OLLAMA_PORT}`,
+    });
+    expect(runRecoveryCaptureImpl).toHaveBeenCalledOnce();
+  });
+
+  it("bounds the daemon probe and skips warm-up when a short timeout is consumed", async () => {
+    let nowMs = 1_000;
+    const runRecoveryCaptureImpl = vi.fn<OllamaRecoveryCaptureFn>(async () => {
+      nowMs = 3_000;
+      return unloadedProbeResult();
+    });
+
+    await expect(
+      maybeWarmOllamaAfterDaemonRestart(
+        { provider: "ollama-local", model: "qwen3.6:35b" },
+        { runRecoveryCaptureImpl, timeoutSeconds: 2, now: () => nowMs },
+      ),
+    ).resolves.toEqual({
+      kind: "skipped",
+      reason: "deadline-exhausted",
+      endpoint: `http://127.0.0.1:${OLLAMA_PORT}`,
+    });
+    expect(runRecoveryCaptureImpl.mock.calls[0]?.[1].timeoutMilliseconds).toBe(2_000);
+  });
+
+  it("does not treat an exit-zero Ollama error body as a successful warm-up", async () => {
+    const runRecoveryCaptureImpl = scriptedRecoveryCapture(
+      unloadedProbeResult(),
+      recoveryResult(JSON.stringify({ error: "model not found" })),
+      recoveryResult("not-json"),
+    );
+    await expect(
+      maybeWarmOllamaAfterDaemonRestart(
+        { provider: "ollama-local", model: "missing:latest" },
+        { runRecoveryCaptureImpl },
+      ),
+    ).resolves.toMatchObject({
       kind: "warmed",
       ok: false,
-      timedOut: false,
       reason: "ollama-error",
       endpoint: "http://127.0.0.1:11434",
       detail: expect.stringContaining("model not found"),
     });
   });
 
-  it("reports an endpoint that no longer holds the model instead of a warm failure (#9455)", () => {
-    const probeModelInventory = vi.fn(() => ["llama3.2:1b"]);
-    const runCaptureImpl = vi.fn(windowsRouteProtectionCapture);
+  it("keeps the warm-up error when the inventory probe throws", async () => {
+    const runRecoveryCaptureImpl = failingRecoveryCapture(
+      new Error("inventory unavailable"),
+      unloadedProbeResult(),
+      recoveryResult(JSON.stringify({ error: "runner stopped unexpectedly" })),
+    );
+    await expect(
+      maybeWarmOllamaAfterDaemonRestart(
+        { provider: "ollama-local", model: "qwen3.6:35b" },
+        { runRecoveryCaptureImpl },
+      ),
+    ).resolves.toMatchObject({
+      kind: "warmed",
+      ok: false,
+      reason: "ollama-error",
+      detail: expect.stringContaining("runner stopped unexpectedly"),
+    });
+  });
 
-    expect(
+  it("reports an endpoint that no longer holds the model instead of a warm failure (#9455)", async () => {
+    const runRecoveryCaptureImpl = scriptedRecoveryCapture(
+      unloadedProbeResult(),
+      recoveryResult(JSON.stringify({ error: "model not found" })),
+      recoveryResult(JSON.stringify({ models: [{ name: "llama3.2:1b" }] })),
+    );
+
+    await expect(
       maybeWarmOllamaAfterDaemonRestart(
         {
           provider: "ollama-local",
           model: "gemma4:26b",
           endpointUrl: `http://host.openshell.internal:${OLLAMA_PORT}/v1`,
         },
-        {
-          revalidateOllamaHost: () => "host.docker.internal",
-          probeRuntimeModelStatus: () => unloadedStatus,
-          probeModelInventory,
-          runCaptureImpl,
-          prepareOllamaApiExecution: (command, host, options) =>
-            prepareOllamaApiExecution(command, host, { ...options, runCaptureImpl }),
-          runCaptureExImpl: () => ({
-            stdout: JSON.stringify({ error: "model not found" }),
-            exitCode: 0,
-            timedOut: false,
-          }),
-        },
+        { getOllamaHost: () => "host.docker.internal",
+          revalidateOllamaHost: () => "host.docker.internal", runRecoveryCaptureImpl },
       ),
-    ).toEqual({
+    ).resolves.toEqual({
       kind: "skipped",
       reason: "model-absent",
       endpoint: `http://host.docker.internal:${OLLAMA_PORT}`,
       inventoryLabel: "llama3.2:1b",
     });
-    expect(probeModelInventory).toHaveBeenCalledWith("host.docker.internal", expect.any(Function));
+    expect(runRecoveryCaptureImpl).toHaveBeenCalledTimes(3);
+    expect(getCommandUrl(runRecoveryCaptureImpl.mock.calls[2]?.[0] ?? [])).toBe(
+      `http://host.docker.internal:${OLLAMA_PORT}/api/tags`,
+    );
+    expect(runRecoveryCaptureImpl.mock.calls[2]?.[1].timeoutMilliseconds).toBe(5_000);
   });
 
-  it("keeps the warm failure when the daemon does hold the model (#9455)", () => {
-    expect(
+  it("keeps the warm failure when the daemon does hold the model (#9455)", async () => {
+    const runRecoveryCaptureImpl = scriptedRecoveryCapture(
+      unloadedProbeResult(),
+      recoveryResult(JSON.stringify({ error: "runner stopped unexpectedly" })),
+      recoveryResult(JSON.stringify({ models: [{ name: "qwen3.6:35b" }] })),
+    );
+    await expect(
       maybeWarmOllamaAfterDaemonRestart(
         { provider: "ollama-local", model: "qwen3.6:35b" },
-        {
-          probeRuntimeModelStatus: () => unloadedStatus,
-          probeModelInventory: () => ["qwen3.6:35b"],
-          runCaptureExImpl: () => ({
-            stdout: JSON.stringify({ error: "runner stopped unexpectedly" }),
-            exitCode: 0,
-            timedOut: false,
-          }),
-        },
+        { runRecoveryCaptureImpl },
       ),
-    ).toMatchObject({
+    ).resolves.toMatchObject({
       kind: "warmed",
       ok: false,
-      timedOut: false,
       reason: "ollama-error",
       endpoint: "http://127.0.0.1:11434",
       detail: expect.stringContaining("runner stopped unexpectedly"),
     });
+    expect(runRecoveryCaptureImpl).toHaveBeenCalledTimes(3);
+    expect(getCommandUrl(runRecoveryCaptureImpl.mock.calls[2]?.[0] ?? [])).toBe(
+      `http://127.0.0.1:${OLLAMA_PORT}/api/tags`,
+    );
   });
 
-  it("accepts a completed thinking-only response from a thinking model", () => {
-    expect(
+  it("accepts a completed thinking-only response from a thinking model", async () => {
+    const runRecoveryCaptureImpl = scriptedRecoveryCapture(
+      unloadedProbeResult(),
+      recoveryResult(JSON.stringify({ response: "", thinking: "The model is ready.", done: true })),
+    );
+    await expect(
       maybeWarmOllamaAfterDaemonRestart(
         { provider: "ollama-local", model: "qwen3.6:35b" },
-        {
-          probeRuntimeModelStatus: () => unloadedStatus,
-          runCaptureExImpl: () => ({
-            stdout: JSON.stringify({ response: "", thinking: "The model is ready.", done: true }),
-            exitCode: 0,
-            timedOut: false,
-          }),
-        },
+        { runRecoveryCaptureImpl },
       ),
-    ).toEqual({ kind: "warmed", ok: true, timedOut: false });
+    ).resolves.toEqual({ kind: "warmed", ok: true });
   });
 
   it.each([
@@ -406,57 +825,56 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
     ["malformed JSON", "not-json"],
     ["missing done marker", JSON.stringify({ response: "Hello!" })],
     ["empty response", JSON.stringify({ response: "", done: true })],
-  ])("rejects an invalid warm response: %s", (_name, stdout) => {
-    expect(
+  ])("rejects an invalid warm response: %s", async (_name, stdout) => {
+    const runRecoveryCaptureImpl = scriptedRecoveryCapture(
+      unloadedProbeResult(),
+      recoveryResult(stdout),
+    );
+    await expect(
       maybeWarmOllamaAfterDaemonRestart(
         { provider: "ollama-local", model: "qwen3.6:35b" },
-        {
-          probeRuntimeModelStatus: () => unloadedStatus,
-          runCaptureExImpl: () => ({ stdout, exitCode: 0, timedOut: false }),
-        },
+        { runRecoveryCaptureImpl },
       ),
-    ).toMatchObject({
+    ).resolves.toMatchObject({
       kind: "warmed",
       ok: false,
-      timedOut: false,
       reason: "invalid-response",
       endpoint: "http://127.0.0.1:11434",
     });
   });
 
-  it("reports a non-zero warm command exit", () => {
-    expect(
+  it("reports a non-zero warm command exit", async () => {
+    const runRecoveryCaptureImpl = scriptedRecoveryCapture(
+      unloadedProbeResult(),
+      recoveryResult("", { exitCode: 7 }),
+    );
+    await expect(
       maybeWarmOllamaAfterDaemonRestart(
         { provider: "ollama-local", model: "qwen3.6:35b" },
-        {
-          probeRuntimeModelStatus: () => unloadedStatus,
-          runCaptureExImpl: () => ({ stdout: "", exitCode: 7, timedOut: false }),
-        },
+        { runRecoveryCaptureImpl },
       ),
-    ).toEqual({
+    ).resolves.toEqual({
       kind: "warmed",
       ok: false,
-      timedOut: false,
       reason: "command-failed",
       endpoint: "http://127.0.0.1:11434",
       detail: "warm-up exited 7",
     });
   });
 
-  it("reports a warm process spawn failure without throwing", () => {
+  it("reports a warm process spawn failure without throwing", async () => {
     const deps: OllamaRestartRecoveryDeps = {
-      probeRuntimeModelStatus: () => unloadedStatus,
-      runCaptureExImpl: () => {
-        throw new Error("spawn failed");
-      },
+      runRecoveryCaptureImpl: failingRecoveryCapture(
+        new Error("spawn failed"),
+        unloadedProbeResult(),
+      ),
     };
 
-    expect(
+    await expect(
       maybeWarmOllamaAfterDaemonRestart({ provider: "ollama-local", model: "qwen3.6:35b" }, deps),
-    ).toEqual({
+    ).resolves.toEqual({
       kind: "warmed",
       ok: false,
-      timedOut: false,
       reason: "spawn-failed",
       endpoint: "http://127.0.0.1:11434",
       detail: "spawn failed",

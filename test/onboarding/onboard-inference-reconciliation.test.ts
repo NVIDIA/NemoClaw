@@ -8,6 +8,11 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
+import {
+  clearPersistedOllamaHostIfUnused,
+  loadPersistedOllamaHost,
+  persistResolvedOllamaHost,
+} from "../../src/lib/inference/local.js";
 import { createLocalInferenceRouteApplier } from "../../src/lib/onboard/local-inference-route.js";
 import type { SetupInference, SetupInferenceDeps } from "../../src/lib/onboard/setup-inference.js";
 import { writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
@@ -1087,22 +1092,31 @@ describe("re-onboard Ollama GPU release (#9110)", () => {
     expect(unloadOllamaModels).toHaveBeenCalledWith(["llama3"]);
   });
 
-  it("retires the final Ollama route receipt after switching providers", async () => {
-    const clearPersistedOllamaHostIfUnused = vi.fn(() => true);
-    const harness = releaseHarness({
-      getSandbox: () => priorEntry,
-      sandboxes: [{ ...priorEntry, provider: "vllm-local", model: "vllm-model" }],
-      unloadOllamaModels: vi.fn(),
-      clearPersistedOllamaHostIfUnused,
-    });
+  it("retires the final Windows-host Ollama route receipt after switching providers", async () => {
+    const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-provider-switch-ollama-"));
+    const finalRoutes = [{ ...priorEntry, provider: "vllm-local", model: "vllm-model" }];
+    const clearReceipt = vi.fn((routes: readonly ReleaseEntry[]) =>
+      clearPersistedOllamaHostIfUnused(routes, stateRoot),
+    );
+    try {
+      persistResolvedOllamaHost("host.docker.internal", stateRoot);
+      const harness = releaseHarness({
+        getSandbox: () => priorEntry,
+        sandboxes: finalRoutes,
+        unloadOllamaModels: vi.fn(),
+        loadPersistedOllamaHost: () => loadPersistedOllamaHost(stateRoot),
+        clearPersistedOllamaHostIfUnused: clearReceipt,
+      });
 
-    await expect(harness.setupInference("test-box", "vllm-model", "vllm-local")).resolves.toEqual({
-      ok: true,
-    });
+      await expect(harness.setupInference("test-box", "vllm-model", "vllm-local")).resolves.toEqual(
+        { ok: true },
+      );
 
-    expect(clearPersistedOllamaHostIfUnused).toHaveBeenCalledWith([
-      { ...priorEntry, provider: "vllm-local", model: "vllm-model" },
-    ]);
+      expect(clearReceipt).toHaveBeenCalledWith(finalRoutes);
+      expect(loadPersistedOllamaHost(stateRoot)).toBeNull();
+    } finally {
+      fs.rmSync(stateRoot, { recursive: true, force: true });
+    }
   });
 
   it("keeps the successful route when the superseded model unload fails (#9110)", async () => {
@@ -1277,29 +1291,38 @@ describe("re-onboard Ollama GPU release (#9110)", () => {
     expect(unloadOllamaModels).not.toHaveBeenCalled();
   });
 
-  it("keeps the route and shared model for a compatible local Ollama peer", async () => {
+  it("keeps the Windows-host route and shared model for a compatible local Ollama peer", async () => {
+    const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-provider-switch-peer-"));
     const unloadOllamaModels = vi.fn<(onlyModels: readonly string[]) => void>();
-    const clearPersistedOllamaHostIfUnused = vi.fn(() => true);
+    const clearReceipt = vi.fn((routes: readonly ReleaseEntry[]) =>
+      clearPersistedOllamaHostIfUnused(routes, stateRoot),
+    );
     const peer: ReleaseEntry = {
       name: "peer",
       provider: "compatible-endpoint",
       model: "llama3:latest",
-      endpointUrl: "http://127.0.0.1:11434/v1",
+      endpointUrl: "http://host.docker.internal:11434/v1",
     };
-    const harness = releaseHarness({
-      getSandbox: () => priorEntry,
-      sandboxes: [{ ...priorEntry, provider: "vllm-local", model: "vllm-model" }, peer],
-      unloadOllamaModels,
-      loadPersistedOllamaHost: () => "127.0.0.1",
-      clearPersistedOllamaHostIfUnused,
-    });
+    try {
+      persistResolvedOllamaHost("host.docker.internal", stateRoot);
+      const harness = releaseHarness({
+        getSandbox: () => priorEntry,
+        sandboxes: [{ ...priorEntry, provider: "vllm-local", model: "vllm-model" }, peer],
+        unloadOllamaModels,
+        loadPersistedOllamaHost: () => loadPersistedOllamaHost(stateRoot),
+        clearPersistedOllamaHostIfUnused: clearReceipt,
+      });
 
-    await expect(harness.setupInference("test-box", "vllm-model", "vllm-local")).resolves.toEqual({
-      ok: true,
-    });
+      await expect(harness.setupInference("test-box", "vllm-model", "vllm-local")).resolves.toEqual(
+        { ok: true },
+      );
 
-    expect(unloadOllamaModels).not.toHaveBeenCalled();
-    expect(clearPersistedOllamaHostIfUnused).not.toHaveBeenCalled();
+      expect(unloadOllamaModels).not.toHaveBeenCalled();
+      expect(clearReceipt).not.toHaveBeenCalled();
+      expect(loadPersistedOllamaHost(stateRoot)).toBe("host.docker.internal");
+    } finally {
+      fs.rmSync(stateRoot, { recursive: true, force: true });
+    }
   });
 
   it("reads the prior route and releases the model inside the sandbox mutation lock (#9110)", async () => {

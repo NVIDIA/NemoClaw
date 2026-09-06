@@ -3,6 +3,7 @@
 
 import { dockerCapture as defaultDockerCapture } from "../adapters/docker";
 import {
+  createOllamaApiCapture,
   detectLocalTcpListener,
   findReachableOllamaHost,
   getLocalProviderAvailabilityEndpoint,
@@ -32,10 +33,7 @@ import { type OllamaInstallMenuResult, resolveOllamaInstallMenuEntry } from "./o
 import { buildVllmMenuEntries, type VllmMenuEntry } from "./vllm-menu";
 import { detectWindowsHostOllama, type WindowsHostOllamaState } from "./windows-host-ollama";
 
-type DockerCapture = (
-  args: string[],
-  options?: { env?: NodeJS.ProcessEnv; ignoreError?: boolean; timeout?: number },
-) => string;
+type DockerCapture = RunCaptureFn;
 
 export interface InferenceProviderHostGpu {
   nimCapable?: boolean;
@@ -90,6 +88,7 @@ export interface DetectInferenceProviderHostStateDeps {
   detectVllmProfile: (gpu: InferenceProviderHostGpu | null | undefined) => VllmProfile | null;
   getLocalProviderAvailabilityEndpoint: (provider: string) => string | null;
   detectLocalTcpListener: (port: number) => boolean | null;
+  prepareDockerEnvironment?: Parameters<typeof createOllamaApiCapture>[2];
   probeWindowsHostOllamaRouteProtection: typeof probeWindowsHostOllamaRouteProtection;
   resetOllamaHostCache: () => void;
 }
@@ -123,6 +122,7 @@ function buildDeps(
     getLocalProviderAvailabilityEndpoint:
       overrides.getLocalProviderAvailabilityEndpoint ?? getLocalProviderAvailabilityEndpoint,
     detectLocalTcpListener: overrides.detectLocalTcpListener ?? detectLocalTcpListener,
+    prepareDockerEnvironment: overrides.prepareDockerEnvironment,
     probeWindowsHostOllamaRouteProtection:
       overrides.probeWindowsHostOllamaRouteProtection ?? probeWindowsHostOllamaRouteProtection,
     resetOllamaHostCache: overrides.resetOllamaHostCache ?? defaultResetOllamaHostCache,
@@ -212,6 +212,7 @@ export function detectInferenceProviderHostState(
           wslDetection: { isWsl },
           env: input.env,
           loopbackOnly: hasWindowsOllama ? winOllamaState.loopbackOnly : undefined,
+          prepareDockerEnvironment: deps.prepareDockerEnvironment,
         });
   const windowsOllamaReachable = windowsOllamaProtection.reachable;
   const windowsOllamaRouteProtected = windowsOllamaProtection.protected;

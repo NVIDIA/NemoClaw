@@ -11,7 +11,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   completeOllamaRuntimeContextSelection,
   handleOllamaProbeFailure,
+  OllamaSelectionFatalError,
 } from "./ollama-probe-failure";
+
+function captureFatalSelection(run: () => unknown): OllamaSelectionFatalError {
+  try {
+    run();
+  } catch (error) {
+    expect(error).toBeInstanceOf(OllamaSelectionFatalError);
+    return error as OllamaSelectionFatalError;
+  }
+  throw new Error("expected a fatal Ollama selection outcome");
+}
 
 describe("handleOllamaProbeFailure (#4365)", () => {
   let originalProvider: string | undefined;
@@ -29,22 +40,23 @@ describe("handleOllamaProbeFailure (#4365)", () => {
     else process.env.NEMOCLAW_NON_INTERACTIVE = originalNonInteractive;
   }
 
-  it("exits when a pinned Ollama provider hits a daemon failure", () => {
+  it("defers pinned-provider termination when Ollama hits a daemon failure", () => {
     process.env.NEMOCLAW_PROVIDER = "ollama";
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
-      throw new Error(`process.exit:${code ?? 0}`);
-    }) as never);
 
     try {
-      expect(() =>
+      const fatal = captureFatalSelection(() =>
         handleOllamaProbeFailure(
           { ok: false, message: "runner crashed", daemonFailure: true },
           "nemotron-3-nano:30b",
           () => false,
         ),
-      ).toThrow(/process\.exit:1/);
+      );
+      expect(fatal).toMatchObject({
+        termination: "process",
+        message: "Ollama daemon is unhealthy for model 'nemotron-3-nano:30b'.",
+      });
       const errLines = errSpy.mock.calls.map((c) => String(c[0]));
       expect(
         errLines.some((l) =>
@@ -56,33 +68,31 @@ describe("handleOllamaProbeFailure (#4365)", () => {
     } finally {
       errSpy.mockRestore();
       logSpy.mockRestore();
-      exitSpy.mockRestore();
       restore();
     }
   });
 
-  it("aborts non-interactive runs on a daemon failure", () => {
+  it("defers non-interactive aborts on a daemon failure", () => {
     delete process.env.NEMOCLAW_PROVIDER;
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
-      throw new Error(`process.exit:${code ?? 0}`);
-    }) as never);
 
     try {
-      expect(() =>
+      const fatal = captureFatalSelection(() =>
         handleOllamaProbeFailure(
           { ok: false, message: "runner died", daemonFailure: true },
           "nemotron-3-nano:30b",
           () => true,
         ),
-      ).toThrow(/process\.exit:1/);
-      const errLines = errSpy.mock.calls.map((c) => String(c[0]));
-      expect(errLines.some((l) => l.includes("Aborting: Ollama daemon is unhealthy"))).toBe(true);
+      );
+      expect(fatal).toMatchObject({
+        termination: "non-interactive",
+        message: "Ollama daemon is unhealthy for model 'nemotron-3-nano:30b'.",
+        hint: expect.stringContaining("Pick a non-Ollama provider"),
+      });
     } finally {
       errSpy.mockRestore();
       logSpy.mockRestore();
-      exitSpy.mockRestore();
       restore();
     }
   });
@@ -136,30 +146,26 @@ describe("handleOllamaProbeFailure (#4365)", () => {
     }
   });
 
-  it("aborts non-interactive model-level failures via the legacy message", () => {
+  it("defers non-interactive model-level termination with the legacy message", () => {
     delete process.env.NEMOCLAW_PROVIDER;
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
-      throw new Error(`process.exit:${code ?? 0}`);
-    }) as never);
 
     try {
-      expect(() =>
+      const fatal = captureFatalSelection(() =>
         handleOllamaProbeFailure(
           { ok: false, message: "model requires more system memory" },
           "qwen3.5:9b",
           () => true,
         ),
-      ).toThrow(/process\.exit:1/);
-      const errLines = errSpy.mock.calls.map((c) => String(c[0]));
-      expect(
-        errLines.some((l) => l.includes("Aborting: Ollama model 'qwen3.5:9b' unavailable")),
-      ).toBe(true);
+      );
+      expect(fatal).toMatchObject({
+        termination: "non-interactive",
+        message: "Ollama model 'qwen3.5:9b' unavailable.",
+      });
     } finally {
       errSpy.mockRestore();
       logSpy.mockRestore();
-      exitSpy.mockRestore();
       restore();
     }
   });
@@ -198,51 +204,49 @@ describe("completeOllamaRuntimeContextSelection (#6760)", () => {
     }
   });
 
-  it("aborts non-interactive runs after a runtime context failure", () => {
+  it("defers non-interactive termination after a runtime context failure", () => {
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
-      throw new Error(`process.exit:${code ?? 0}`);
-    }) as never);
 
     try {
-      expect(() =>
+      const fatal = captureFatalSelection(() =>
         completeOllamaRuntimeContextSelection(
           { ok: false, message: "restart Ollama with OLLAMA_CONTEXT_LENGTH=64000" },
           selected,
           () => true,
         ),
-      ).toThrow(/process\.exit:1/);
-      expect(errSpy).toHaveBeenCalledWith(
-        "  [non-interactive] Aborting: restart Ollama with OLLAMA_CONTEXT_LENGTH=64000",
       );
+      expect(fatal).toMatchObject({
+        termination: "non-interactive",
+        message: "restart Ollama with OLLAMA_CONTEXT_LENGTH=64000",
+      });
+      expect(errSpy).not.toHaveBeenCalled();
     } finally {
       errSpy.mockRestore();
-      exitSpy.mockRestore();
     }
   });
 
-  it("exits pinned interactive runs after a runtime context failure", () => {
+  it("defers pinned interactive termination after a runtime context failure", () => {
     vi.stubEnv("NEMOCLAW_PROVIDER", "ollama");
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
-      throw new Error(`process.exit:${code ?? 0}`);
-    }) as never);
 
     try {
-      expect(() =>
+      const fatal = captureFatalSelection(() =>
         completeOllamaRuntimeContextSelection(
           { ok: false, message: "restart Ollama with OLLAMA_CONTEXT_LENGTH=64000" },
           selected,
           () => false,
         ),
-      ).toThrow(/process\.exit:1/);
+      );
+      expect(fatal).toMatchObject({
+        termination: "process",
+        message: "restart Ollama with OLLAMA_CONTEXT_LENGTH=64000",
+      });
       expect(errSpy).toHaveBeenCalledWith("  restart Ollama with OLLAMA_CONTEXT_LENGTH=64000");
       expect(logSpy).not.toHaveBeenCalledWith("  Returning to provider selection.");
     } finally {
       errSpy.mockRestore();
       logSpy.mockRestore();
-      exitSpy.mockRestore();
       vi.unstubAllEnvs();
     }
   });
