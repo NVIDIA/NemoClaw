@@ -1356,7 +1356,7 @@ For OpenClaw, repair `relaunch quarantined` with `$$nemoclaw <name> rebuild --ye
 
 <AgentOnly variant="hermes">
 
-For Hermes, `HERMES_RUNTIME_PREPARATION_FAILED stage=<stage>` identifies a supported input that failed before launch. Correct the named input through its supported host-side configuration or credential flow, then run `$$nemoclaw <name> stop` followed by `$$nemoclaw <name> start`. Rebuild only when the input or sandbox state cannot be repaired safely. An integrity mismatch or exhausted crash budget requires `$$nemoclaw <name> rebuild --yes`; an unsafe startup layout requires a trusted snapshot in a recreated sandbox or recreation from host-side onboarding configuration.
+For Hermes, `HERMES_RUNTIME_PREPARATION_FAILED stage=<stage>` identifies a supported input that failed before launch. Correct the named input through its supported host-side configuration or credential flow, then run `$$nemoclaw <name> stop` followed by `$$nemoclaw <name> start`. Rebuild only when the input or sandbox state cannot be repaired safely. An integrity mismatch or exhausted crash budget requires `$$nemoclaw <name> rebuild --yes`. If startup layout repair reports the maximum log-entry count or repair depth, archive or remove old retained logs from a trusted host-side recovery environment, then retry `$$nemoclaw <name> start`. For symbolic links, hard links, unsafe entry types, or paths that changed during repair, restore a trusted snapshot into a recreated sandbox or recreate from host-side onboarding configuration.
 
 </AgentOnly>
 
