@@ -13,6 +13,7 @@ import {
   computeSkillContentDigest,
   getNativeSkillLifecycle,
   installNativeAgentSkill,
+  probeNativeSkillRemoveCapability,
   shellQuote,
   type NativeLocalSkillAgent,
   type NativeSkillState,
@@ -46,6 +47,28 @@ afterEach(() => {
 });
 
 describe("Hermes and DCode native skill installation", () => {
+  it("probes DCode provenance-bound removal without mutating native state", () => {
+    const sshExec = vi.fn((_ctx: SshContext, _command: string): SshResult => ({
+      status: 0,
+      stdout: "remove help",
+      stderr: "",
+    }));
+
+    expect(
+      probeNativeSkillRemoveCapability(
+        context,
+        SANDBOX_IDENTITY,
+        lifecycleFor("langchain-deepagents-code"),
+        sshExec,
+      ),
+    ).toBe(true);
+    expect(sshExec).toHaveBeenCalledWith(
+      context,
+      expect.stringContaining("'skills' 'remove-imported' '--help'"),
+      { timeout: 30_000 },
+    );
+  });
+
   it.each([
     ["hermes", "/usr/local/bin/hermes", "import-local", "/sandbox/.hermes"],
     ["langchain-deepagents-code", "/usr/local/bin/dcode", "import", "/sandbox/.deepagents"],

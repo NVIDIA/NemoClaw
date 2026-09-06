@@ -245,6 +245,7 @@ RUN test -f /usr/local/bin/nemoclaw-managed-bootstrap \
     && python3 /opt/nemoclaw-deepagents-code/patch-native-skill-import.py "$dcode_skills_commands" \
     && grep -Fq 'NemoClaw native local skill import (#10210)' "$dcode_skills_commands" \
     && /opt/venv/bin/python3 -I -c 'import deepagents_code.skills.commands as commands; assert callable(commands._import_local) and callable(commands._remove_imported)' \
+    && /opt/venv/bin/dcode skills remove-imported --help | grep -Fq 'Remove a DCode-native local import' \
     && rm -f /opt/nemoclaw-deepagents-code/patch-native-skill-import.py \
     && install -d -m 0700 /tmp/nemoclaw-progressive-validation \
     && TMPDIR=/tmp/nemoclaw-progressive-validation python3 /opt/nemoclaw-deepagents-code/validate-progressive-tool-disclosure.py \

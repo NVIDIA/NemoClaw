@@ -2453,7 +2453,7 @@ This is a pass-through to `hermes skills uninstall <skill> --yes`. Hermes resolv
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-This is a pass-through to `dcode skills remove-imported <skill> --agent agent --json`. DCode resolves the skill from its own precedence-aware state and removes it only when the exact active user skill carries matching DCode-native import provenance. Agent-authored, project, builtin, untracked, and mismatched skills are refused. DCode owns that per-skill lifecycle metadata and its transactional removal quarantine; NemoClaw does not choose a directory or keep removal ownership metadata.
+This is a pass-through to `dcode skills remove-imported <skill> --agent agent --json`. DCode resolves the skill from its own precedence-aware state and removes it only when the exact active user skill carries matching DCode-native import provenance. Agent-authored, project, builtin, untracked, and mismatched skills are refused. DCode owns that per-skill lifecycle metadata and its transactional removal quarantine; NemoClaw does not choose a directory or keep removal ownership metadata. A sandbox image created before this provenance-bound native removal command was added fails a non-mutating capability probe with rebuild guidance.
 
 </AgentOnly>
 

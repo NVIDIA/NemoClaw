@@ -13,7 +13,7 @@ import {
   computeSkillContentDigest,
   getNativeSkillLifecycle,
   installOpenClawSkill,
-  probeOpenClawSkillRemoveCapability,
+  probeNativeSkillRemoveCapability,
   SKILL_SNAPSHOT_MAX_BYTES,
   shellQuote,
   type NativeSkillState,
@@ -58,9 +58,7 @@ describe("OpenClaw native skill installation", () => {
       stderr: "",
     }));
 
-    expect(probeOpenClawSkillRemoveCapability(ctx, SANDBOX_IDENTITY, lifecycle, sshExec)).toBe(
-      true,
-    );
+    expect(probeNativeSkillRemoveCapability(ctx, SANDBOX_IDENTITY, lifecycle, sshExec)).toBe(true);
     expect(sshExec).toHaveBeenCalledWith(
       ctx,
       expect.stringContaining("'skills' 'remove' '--help'"),

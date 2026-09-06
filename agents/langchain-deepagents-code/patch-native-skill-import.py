@@ -545,6 +545,7 @@ PARSER = """    # NemoClaw native local skill import (#10210).
     remove_imported_parser = skills_subparsers.add_parser(
         "remove-imported",
         help="Remove a DCode-native local import",
+        description="Remove a DCode-native local import",
     )
     if add_output_args is not None:
         add_output_args(remove_imported_parser)

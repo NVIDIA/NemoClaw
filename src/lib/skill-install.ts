@@ -254,6 +254,8 @@ const NATIVE_SKILL_LIFECYCLES: Readonly<
     fixedAgentTarget: "agent",
     installHelpArgs: ["skills", "import", "--help"],
     installRequiredFlags: ["--name", "--agent", "--replace", "--expected-digest"],
+    removeHelpArgs: ["skills", "remove-imported", "--help"],
+    removeHelpEvidence: "Remove a DCode-native local import",
     install(binary, payloadPath, skillName, expectedDigest) {
       return [
         binary,
@@ -326,19 +328,15 @@ function renderNativeSkillCommand(command: readonly string[], payloadToken?: str
     .join(" ");
 }
 
-/** Probe the pinned native removal capability without mutating agent state. */
-export function probeOpenClawSkillRemoveCapability(
+/** Probe a pinned native removal capability without mutating agent state. */
+export function probeNativeSkillRemoveCapability(
   ctx: SshContext,
   expectedSandboxIdentityFingerprint: string,
   lifecycle: NativeSkillLifecycleDescriptor,
   sshExecImpl: typeof sshExec = sshExec,
 ): boolean {
   if (!SHA256_RE.test(expectedSandboxIdentityFingerprint)) return false;
-  if (
-    lifecycle.agentName !== "openclaw" ||
-    !lifecycle.removeHelpArgs ||
-    !lifecycle.removeHelpEvidence
-  ) {
+  if (!lifecycle.removeHelpArgs || !lifecycle.removeHelpEvidence) {
     return false;
   }
   const identityCheck = sandboxIdentityCheckCommand(expectedSandboxIdentityFingerprint);
