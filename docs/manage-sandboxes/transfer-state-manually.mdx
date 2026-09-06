@@ -29,8 +29,12 @@ openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/SOUL.md "$BAC
 openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/USER.md "$BACKUP_DIR/"
 openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/IDENTITY.md "$BACKUP_DIR/"
 openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/AGENTS.md "$BACKUP_DIR/"
-openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/MEMORY.md "$BACKUP_DIR/"
-openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/memory/ "$BACKUP_DIR/memory/"
+openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/TOOLS.md "$BACKUP_DIR/"
+openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/HEARTBEAT.md "$BACKUP_DIR/"
+openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/POLICY.md "$BACKUP_DIR/"
+# If long-term or daily memory has been used:
+# openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/MEMORY.md "$BACKUP_DIR/"
+# openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/memory/ "$BACKUP_DIR/memory/"
 ```
 
 </AgentOnly>
@@ -102,9 +106,16 @@ openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/SOUL.md" /sandbox/.openclaw/wor
 openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/USER.md" /sandbox/.openclaw/workspace/
 openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/IDENTITY.md" /sandbox/.openclaw/workspace/
 openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/AGENTS.md" /sandbox/.openclaw/workspace/
-openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/MEMORY.md" /sandbox/.openclaw/workspace/
-openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/memory/" /sandbox/.openclaw/workspace/memory/
+openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/TOOLS.md" /sandbox/.openclaw/workspace/
+openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/HEARTBEAT.md" /sandbox/.openclaw/workspace/
+# If long-term or daily memory was backed up:
+# openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/MEMORY.md" /sandbox/.openclaw/workspace/
+# openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/memory/" /sandbox/.openclaw/workspace/memory/
 ```
+
+Do not upload a downloaded `POLICY.md` back into a sandbox.
+NemoClaw regenerates that file from the managed policy whenever a preset is added or removed and at the end of onboarding, so restoring a stale copy can reintroduce drift.
+Run `$$nemoclaw my-assistant policy explain --write` to refresh it in place instead.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -163,7 +174,9 @@ Expected output:
 
 ```text
 Backing up workspace from sandbox 'my-assistant'...
-Backup saved to /home/user/.nemoclaw/backups/20260320-120000/ (6 items)
+Skipped MEMORY.md (not found or download failed)
+Skipped memory/ (not found or download failed)
+Backup saved to /home/user/.nemoclaw/backups/20260320-120000/ (7 items)
 ```
 
 Restore the most recent backup or a specific timestamp:
@@ -172,6 +185,8 @@ Restore the most recent backup or a specific timestamp:
 ./scripts/backup-workspace.sh restore my-assistant
 ./scripts/backup-workspace.sh restore my-assistant 20260320-120000
 ```
+
+The helper saves `POLICY.md` during a backup but never uploads it during a restore, for the same reason as the manual flow above.
 
 Verify the saved files:
 
@@ -183,11 +198,12 @@ Expected output:
 
 ```text
 AGENTS.md
+HEARTBEAT.md
 IDENTITY.md
-MEMORY.md
+POLICY.md
 SOUL.md
+TOOLS.md
 USER.md
-memory/
 ```
 
 </AgentOnly>
