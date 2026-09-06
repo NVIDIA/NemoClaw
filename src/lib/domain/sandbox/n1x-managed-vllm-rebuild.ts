@@ -21,6 +21,7 @@ export interface RecordedN1xManagedVllmRoute {
   endpointSource?: string | null;
   openshellDriver?: string | null;
   hostLocalInferenceReceipt?: string | null;
+  deferredN1xManagedVllmAccepted?: unknown;
 }
 
 export interface N1xManagedVllmRebuildSelection {
@@ -43,16 +44,19 @@ export function isRecordedN1xManagedVllmRebuildEligible(
   sandboxEntry: RecordedN1xManagedVllmRoute,
   rebuildSelection: N1xManagedVllmRebuildSelection,
   parseReceipt: ParseN1xManagedVllmReceipt,
-  vllmPort = VLLM_PORT,
+  options: { vllmPort?: number; explicitPreviewIntent?: boolean } = {},
 ): boolean {
+  const vllmPort = options.vllmPort ?? VLLM_PORT;
   if (!Number.isInteger(vllmPort) || vllmPort < 1024 || vllmPort > 65535) return false;
   const canonicalEndpointUrl = `http://host.openshell.internal:${String(vllmPort)}/v1`;
   const recordedEndpointUsesCanonicalLocalRoute =
     sandboxEntry.endpointUrl === null || sandboxEntry.endpointUrl === canonicalEndpointUrl;
   const recordedSourceIsEligible =
     sandboxEntry.endpointSource === "onboard" ||
-    // Registry normalization clears the source when the canonical endpoint is derived.
-    (sandboxEntry.endpointSource === null && sandboxEntry.endpointUrl === null);
+    (sandboxEntry.endpointSource === null &&
+      sandboxEntry.endpointUrl === null &&
+      (sandboxEntry.deferredN1xManagedVllmAccepted === true ||
+        options.explicitPreviewIntent === true));
   if (
     !isN1xManagedVllmProviderModel(sandboxEntry.provider, sandboxEntry.model) ||
     !recordedEndpointUsesCanonicalLocalRoute ||

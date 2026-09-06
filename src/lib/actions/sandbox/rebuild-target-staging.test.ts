@@ -17,6 +17,7 @@ import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import {
   hydrateMessagingConfigForRebuild,
   prepareRebuildRecreateOptions,
+  stageRecordedDeferredN1xIntent,
 } from "./rebuild-target-staging";
 
 const SANDBOX_ENTRY = {
@@ -155,6 +156,30 @@ describe("prepareRebuildRecreateOptions", () => {
 
     expect(options?.baseImageResolutionHint).toBeNull();
     expect(options).not.toHaveProperty("rebuildRegistryInferenceRoute");
+  });
+});
+
+describe("stageRecordedDeferredN1xIntent", () => {
+  it("accepts one explicit preview retry for a normalized v0.0.119 route (#10959)", () => {
+    const recreateOptions: { allowDeferredN1xManagedVllm?: true } = {};
+    const route = {
+      provider: "vllm-local",
+      model: "nvidia/Qwen3.6-35B-A3B-NVFP4",
+      endpointUrl: null,
+      endpointSource: null,
+      openshellDriver: "docker",
+      hostLocalInferenceReceipt: null,
+      nimContainer: null,
+    };
+
+    stageRecordedDeferredN1xIntent(
+      recreateOptions,
+      route,
+      { ...route, pinEndpoint: true },
+      { NEMOCLAW_PROVIDER: "install-vllm" },
+    );
+
+    expect(recreateOptions).toEqual({ allowDeferredN1xManagedVllm: true });
   });
 });
 

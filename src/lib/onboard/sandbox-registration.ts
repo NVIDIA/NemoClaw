@@ -3,6 +3,7 @@
 
 import { isDeepStrictEqual } from "node:util";
 import type { AgentDefinition } from "../agent/defs";
+import { isN1xManagedVllmProviderModel } from "../domain/sandbox/n1x-managed-vllm-rebuild";
 import type {
   InferenceEndpointSource,
   InferenceSelection,
@@ -68,6 +69,7 @@ export interface CreatedSandboxRegistryEntryInput {
   workload?: SandboxEntry["workload"];
   hostLocalInferenceReceipt?: SandboxEntry["hostLocalInferenceReceipt"];
   hostLocalInferenceProvenance?: SandboxEntry["hostLocalInferenceProvenance"];
+  deferredN1xManagedVllmPreviewIntent?: true;
   openclawImagePluginInstalls?: readonly OpenClawImagePluginInstall[];
   toolDisclosure?: ToolDisclosure;
   observabilityEnabled?: boolean;
@@ -218,6 +220,19 @@ export function buildCreatedSandboxRegistryEntry(
       hostLocalInferenceReceipt,
     );
   }
+  const deferredN1xManagedVllmAccepted =
+    input.deferredN1xManagedVllmPreviewIntent === true &&
+    isN1xManagedVllmProviderModel(
+      input.inferenceSelection.provider,
+      input.inferenceSelection.model,
+    ) &&
+    input.inferenceSelection.nimContainer == null &&
+    input.runtimeFields.openshellDriver === "docker";
+  if (input.deferredN1xManagedVllmPreviewIntent !== undefined && !deferredN1xManagedVllmAccepted) {
+    throw new RuntimeProviderSelectionError(
+      "Sandbox Deferred N1x preview acceptance failed closed validation.",
+    );
+  }
   const agentFields = getSandboxAgentRegistryFields(input.agent, input.agentVersionKnown);
   if (workload?.kind === "managed-image") {
     const requestedAgent = getRequestedSandboxAgentName(input.agent);
@@ -242,6 +257,9 @@ export function buildCreatedSandboxRegistryEntry(
     workload,
     ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
     ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
+    ...(deferredN1xManagedVllmAccepted
+      ? { deferredN1xManagedVllmAccepted: true as const }
+      : {}),
     ...(input.openclawImagePluginInstalls !== undefined
       ? {
           openclawImagePluginInstalls: input.openclawImagePluginInstalls.map((install) => ({

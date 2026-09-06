@@ -93,6 +93,34 @@ function createdRegistryEntryInput(
 }
 
 describe("buildCreatedSandboxRegistryEntry", () => {
+  it("records only valid Deferred N1x preview acceptance (#10959)", () => {
+    const entry = buildCreatedSandboxRegistryEntry(
+      createdRegistryEntryInput({
+        inferenceSelection: {
+          provider: "vllm-local",
+          model: "nvidia/Qwen3.6-35B-A3B-NVFP4",
+          endpointUrl: null,
+          endpointSource: null,
+          credentialEnv: null,
+          preferredInferenceApi: "openai-completions",
+          compatibleEndpointReasoning: null,
+          compatibleEndpointReasoningEffort: null,
+          nimContainer: null,
+        },
+        deferredN1xManagedVllmPreviewIntent: true,
+      }),
+    );
+
+    expect(entry.deferredN1xManagedVllmAccepted).toBe(true);
+    expect(() =>
+      buildCreatedSandboxRegistryEntry(
+        createdRegistryEntryInput({
+          deferredN1xManagedVllmPreviewIntent: true,
+        }),
+      ),
+    ).toThrow("Deferred N1x preview acceptance failed closed validation");
+  });
+
   it("records explicit OpenClaw identity for a managed workload receipt (#9356)", () => {
     const workload = managedWorkloadReceipt("openclaw");
     const entry = buildCreatedSandboxRegistryEntry(

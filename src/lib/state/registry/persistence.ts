@@ -4,6 +4,7 @@
 import path from "node:path";
 import { isObjectRecord } from "../../core/json-types";
 import { GATEWAY_PORT } from "../../core/ports";
+import { isN1xManagedVllmProviderModel } from "../../domain/sandbox/n1x-managed-vllm-rebuild";
 import { parseServingProfileProvenance } from "../../inference/serving/profile-provenance";
 import { readConfigFile, writeConfigFile } from "../config-io";
 import { normalizeExtraProviders } from "../extra-providers";
@@ -83,6 +84,23 @@ function cloneServingProfileProvenanceOrThrow(
   return provenance ?? undefined;
 }
 
+function normalizeDeferredN1xManagedVllmAcceptance(
+  entry: SandboxEntry,
+  operation: "load" | "save",
+): SandboxEntry["deferredN1xManagedVllmAccepted"] {
+  const value = entry.deferredN1xManagedVllmAccepted;
+  if (
+    value !== undefined &&
+    (value !== true ||
+      !isN1xManagedVllmProviderModel(entry.provider, entry.model) ||
+      entry.nimContainer != null ||
+      entry.openshellDriver !== "docker")
+  ) {
+    throw new Error(`Cannot ${operation} a sandbox entry with invalid N1x preview acceptance`);
+  }
+  return value;
+}
+
 export const REGISTRY_FILE = path.join(
   nemoclawStateRoot(process.env.HOME || "/tmp", GATEWAY_PORT),
   "sandboxes.json",
@@ -159,6 +177,10 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
     entry.servingProfileProvenance,
     "load",
   );
+  const deferredN1xManagedVllmAccepted = normalizeDeferredN1xManagedVllmAcceptance(
+    entry,
+    "load",
+  );
   const mcp = normalizeSandboxMcpState(entry.mcp);
   const policyEntry = normalizeSandboxPolicyAttribution(entry);
   const {
@@ -168,6 +190,7 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
     hostLocalInferenceReceipt: _hostLocalInferenceReceipt,
     hostLocalInferenceProvenance: _hostLocalInferenceProvenance,
     servingProfileProvenance: _servingProfileProvenance,
+    deferredN1xManagedVllmAccepted: _deferredN1xManagedVllmAccepted,
     mcp: _mcp,
     ...rest
   } = policyEntry as SandboxEntry & { cuaRuntimeReadiness?: unknown };
@@ -177,6 +200,7 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
     ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
     ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
     ...(servingProfileProvenance ? { servingProfileProvenance } : {}),
+    ...(deferredN1xManagedVllmAccepted ? { deferredN1xManagedVllmAccepted } : {}),
     ...(messaging ? { messaging } : {}),
     ...(mcp ? { mcp } : {}),
   };
@@ -217,6 +241,10 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
     durable.servingProfileProvenance,
     "save",
   );
+  const deferredN1xManagedVllmAccepted = normalizeDeferredN1xManagedVllmAcceptance(
+    durable,
+    "save",
+  );
   const mcp = serializeSandboxMcpStateForDisk(durable.mcp);
   const policyEntry = normalizeSandboxPolicyAttribution(durable);
   const {
@@ -226,6 +254,7 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
     hostLocalInferenceReceipt: _hostLocalInferenceReceipt,
     hostLocalInferenceProvenance: _hostLocalInferenceProvenance,
     servingProfileProvenance: _servingProfileProvenance,
+    deferredN1xManagedVllmAccepted: _deferredN1xManagedVllmAccepted,
     mcp: _mcp,
     ...rest
   } = policyEntry as SandboxEntry & { cuaRuntimeReadiness?: unknown };
@@ -236,6 +265,7 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
     ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
     ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
     ...(servingProfileProvenance ? { servingProfileProvenance } : {}),
+    ...(deferredN1xManagedVllmAccepted ? { deferredN1xManagedVllmAccepted } : {}),
     ...(messaging ? { messaging } : {}),
     ...(mcp ? { mcp } : {}),
   };

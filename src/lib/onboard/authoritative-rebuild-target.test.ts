@@ -44,6 +44,15 @@ describe("authoritative rebuild sandbox flow options", () => {
         authoritativeResumeConfig: false,
       }),
     ).toEqual({ authoritativeResumeConfig: false });
+    expect(
+      authoritativeRebuildSandboxFlowOptions({
+        authoritativeResumeConfig: true,
+        allowDeferredN1xManagedVllm: true,
+      }),
+    ).toEqual({
+      authoritativeResumeConfig: true,
+      deferredN1xManagedVllmPreviewIntent: true,
+    });
   });
 });
 

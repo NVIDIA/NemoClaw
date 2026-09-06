@@ -120,6 +120,11 @@ describe("prepareRebuildTargetPreflights", () => {
           endpointSource === null ? null : "http://host.openshell.internal:8000/v1",
         endpointSource,
         nimContainer,
+        ...(endpointSource === null
+          ? {
+              deferredN1xManagedVllmAccepted: true,
+            }
+          : {}),
         mcp,
       } as never,
       rebuildAgent: "openclaw",

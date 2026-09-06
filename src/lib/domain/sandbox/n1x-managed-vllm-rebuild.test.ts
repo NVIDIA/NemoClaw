@@ -39,7 +39,7 @@ describe("recorded N1x managed-vLLM rebuild eligibility", () => {
       sandboxEntry,
       rebuildSelection,
       parseHostLocalInferenceReceipt,
-      vllmPort,
+      { vllmPort },
     );
 
   it.each([
@@ -64,7 +64,19 @@ describe("recorded N1x managed-vLLM rebuild eligibility", () => {
       eligible({
         ...n1xExpressEntry,
         endpointSource: null,
+        deferredN1xManagedVllmAccepted: true,
       }),
+    ).toBe(true);
+  });
+
+  it("accepts an explicit preview retry for a normalized legacy record (#10959)", () => {
+    expect(
+      isRecordedN1xManagedVllmRebuildEligible(
+        { ...n1xExpressEntry, endpointSource: null },
+        n1xExpressSelection,
+        parseHostLocalInferenceReceipt,
+        { explicitPreviewIntent: true },
+      ),
     ).toBe(true);
   });
 
@@ -130,6 +142,30 @@ describe("recorded N1x managed-vLLM rebuild eligibility", () => {
     {
       caseName: "different endpoint source",
       sandboxEntry: { ...n1xExpressEntry, endpointSource: "inference-set" },
+      rebuildSelection: n1xExpressSelection,
+    },
+    {
+      caseName: "normalized source without preview provenance",
+      sandboxEntry: { ...n1xExpressEntry, endpointSource: null },
+      rebuildSelection: n1xExpressSelection,
+    },
+    {
+      caseName: "normalized source with a recorded endpoint",
+      sandboxEntry: {
+        ...n1xExpressEntry,
+        endpointUrl: "http://host.openshell.internal:8000/v1",
+        endpointSource: null,
+        deferredN1xManagedVllmAccepted: true,
+      },
+      rebuildSelection: n1xExpressSelection,
+    },
+    {
+      caseName: "malformed preview acceptance",
+      sandboxEntry: {
+        ...n1xExpressEntry,
+        endpointSource: null,
+        deferredN1xManagedVllmAccepted: "true",
+      },
       rebuildSelection: n1xExpressSelection,
     },
     {

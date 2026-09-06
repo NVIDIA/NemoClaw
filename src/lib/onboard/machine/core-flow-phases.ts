@@ -75,6 +75,7 @@ export interface SandboxOnboardFlowPhaseOptions<
   hermesPortableLifecycle?: boolean;
   apfInterceptorRequested?: boolean;
   authoritativeResumeConfig?: boolean;
+  deferredN1xManagedVllmPreviewIntent?: boolean;
 
   recreateJournalTargetIntentFingerprint?: string | null;
   resumeAgentChanged: boolean;
@@ -333,6 +334,9 @@ export function createSandboxOnboardFlowPhase<
       hermesPortableLifecycle: options.hermesPortableLifecycle === true,
       apfInterceptorRequested: options.apfInterceptorRequested === true,
       authoritativeResumeConfig: options.authoritativeResumeConfig,
+      deferredN1xManagedVllmPreviewIntent:
+        options.deferredN1xManagedVllmPreviewIntent === true ||
+        String(options.env.NEMOCLAW_PROVIDER ?? "").trim() === "install-vllm",
       deferSandboxEffectsUntilIdentityVerification: options.apfInterceptorRequested === true,
 
       recreateJournalTargetIntentFingerprint: options.recreateJournalTargetIntentFingerprint,
