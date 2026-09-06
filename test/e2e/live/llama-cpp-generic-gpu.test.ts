@@ -14,6 +14,7 @@ import {
 import { createManagedLlamaCppLifecycleAdapter } from "../../../src/lib/inference/llama-cpp/managed-lifecycle-adapter.ts";
 import { isLlamaCppServingRecipe } from "../../../src/lib/inference/serving/adapter-registry.ts";
 import { loadManagedInferenceCatalog } from "../../../src/lib/inference/serving/catalog-loader.ts";
+import { resolveNemoClawGatewayRuntime } from "../../../src/lib/onboard/runtime-provider/configured-runtime.ts";
 import { resolveRegisteredRuntimeProviderBundle } from "../../../src/lib/onboard/runtime-provider/current.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
@@ -153,8 +154,10 @@ test(
     );
     const receipt = loadManagedLlamaCppReceipt(paths);
     assert(
-      receipt?.service === "llama-cpp" && receipt.runtime.kind === "container",
-      "managed llama.cpp container receipt is unavailable",
+      receipt?.service === "llama-cpp" &&
+        receipt.runtime.kind === "container" &&
+        receipt.providerId === resolveNemoClawGatewayRuntime(env()),
+      "managed llama.cpp container receipt does not match the target-selected runtime provider",
     );
     const runtimeProvider = resolveRegisteredRuntimeProviderBundle(receipt.providerId);
     assert(

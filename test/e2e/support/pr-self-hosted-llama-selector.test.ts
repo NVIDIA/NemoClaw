@@ -137,6 +137,10 @@ describe("generic NVIDIA GPU PR selection", () => {
     expect(() => selectGenericGpuLane(["scripts/install.sh"], CANDIDATE_SHA, "main")).toThrow();
   });
 
+  it("pins the Docker-qualified GPU job to the Docker runtime provider", () => {
+    expect(workflow().jobs["llama-cpp-generic-gpu"]?.env?.NEMOCLAW_GATEWAY_RUNTIME).toBe("docker");
+  });
+
   // source-shape-contract: security -- The copied PR workflow must run the publication verifier from the validated PR base before the generic GPU job receives its managed-image revision
   it("binds trusted base publication to the generic NVIDIA GPU job", () => {
     const value = workflow();

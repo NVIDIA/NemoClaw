@@ -139,6 +139,7 @@ jobs:
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_E2E_EXPECTED_SHA: ${{ github.sha }}
       NEMOCLAW_E2E_SHARD: default
+      NEMOCLAW_GATEWAY_RUNTIME: docker
       NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA: ${{ github.sha }}
       NEMOCLAW_LLAMACPP_RECIPE: llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1
       NEMOCLAW_NON_INTERACTIVE: "1"
