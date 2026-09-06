@@ -3294,8 +3294,11 @@ stop_macos_openshell_gateway_user_service() {
   [ -n "$brew_prefix" ] || return 1
   expected_program="${brew_prefix%/}/opt/openshell/libexec/openshell-gateway-homebrew-service"
   for candidate_label in sh.brew.openshell homebrew.mxcl.openshell; do
+    candidate_domain="gui/$(id -u)/${candidate_label}"
+    candidate_service="$(launchctl print "$candidate_domain" 2>/dev/null)" || continue
     candidate_path="${HOME}/Library/LaunchAgents/${candidate_label}.plist"
-    [ -f "$candidate_path" ] || continue
+    [ -f "$candidate_path" ] \
+      || error "Refusing to retire the active OpenShell gateway without its expected macOS user service file: ${candidate_path}"
     if [ -L "$candidate_path" ] || ! [ -O "$candidate_path" ]; then
       error "Refusing to retire the OpenShell gateway from an untrusted macOS user service: ${candidate_path}"
     fi
@@ -3307,13 +3310,12 @@ stop_macos_openshell_gateway_user_service() {
       error "Refusing to retire an OpenShell gateway from a macOS user service with an untrusted executable: ${candidate_program:-<empty>}"
     fi
 
-    candidate_domain="gui/$(id -u)/${candidate_label}"
-    candidate_service="$(launchctl print "$candidate_domain" 2>/dev/null)" || continue
     candidate_active_program="$(printf '%s\n' "$candidate_service" | sed -n 's/^[[:space:]]*program = //p' | head -1)"
     [ "$candidate_active_program" = "$expected_program" ] \
       || error "Refusing to retire an OpenShell gateway from an active macOS user service with an untrusted executable: ${candidate_active_program:-<empty>}"
-    [ -z "$service_domain" ] \
-      || error "Refusing to retire an OpenShell gateway because multiple trusted Homebrew user services are active."
+    if [ -n "$service_domain" ]; then
+      error "Refusing to retire an OpenShell gateway because multiple trusted Homebrew user services are active: ${service_domain} and ${candidate_domain}. Inspect both with 'launchctl print ${service_domain}' and 'launchctl print ${candidate_domain}', stop the obsolete service, then rerun the installer."
+    fi
     service_domain="$candidate_domain"
   done
   [ -n "$service_domain" ] || return 1
