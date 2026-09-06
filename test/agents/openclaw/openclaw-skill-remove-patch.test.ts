@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   INSTALL_INTEGRITY_MARKER,
@@ -200,6 +200,37 @@ describe("OpenClaw native skill remove patch", () => {
     expect(() => patchOpenClawSkillRemove(dist)).toThrow(
       "OpenClaw 2026.9.1 is not reviewed for native skill lifecycle patching",
     );
+  });
+
+  it("resumes after interruption between atomic module publications", () => {
+    const packageRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-skill-patch-resume-"));
+    roots.push(packageRoot);
+    const dist = path.join(packageRoot, "dist");
+    const cliFile = path.join(dist, "skills-cli.js");
+    const stateFile = path.join(dist, "status.js");
+    fs.mkdirSync(dist);
+    fs.writeFileSync(path.join(packageRoot, "package.json"), '{"version":"2026.7.1"}\n');
+    fs.writeFileSync(cliFile, FULL_SOURCE);
+    fs.writeFileSync(stateFile, INSTALL_STATE_SOURCE);
+    const realRename = fs.renameSync;
+    const rename = vi
+      .spyOn(fs, "renameSync")
+      .mockImplementationOnce((source, destination) => realRename(source, destination))
+      .mockImplementationOnce(() => {
+        throw new Error("controlled publication interruption");
+      });
+
+    expect(() => patchOpenClawSkillRemove(dist)).toThrow(
+      "controlled publication interruption",
+    );
+    rename.mockRestore();
+    expect(fs.readFileSync(cliFile, "utf8")).toContain(MARKER);
+    expect(fs.readFileSync(stateFile, "utf8")).not.toContain(INSTALL_INTEGRITY_MARKER);
+    expect(patchOpenClawSkillRemove(dist)).toMatchObject({ status: "patched" });
+    expect(fs.readFileSync(stateFile, "utf8")).toContain(INSTALL_INTEGRITY_MARKER);
+    expect(
+      fs.readdirSync(dist).filter((entry) => entry.includes(".nemoclaw-native-skill-patch.")),
+    ).toEqual([]);
   });
 
   it("removes only the skill selected from native workspace state", async () => {

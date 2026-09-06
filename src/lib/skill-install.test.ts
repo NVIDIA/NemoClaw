@@ -202,7 +202,6 @@ describe("resolveNativeSkillState", () => {
   it("returns only the OpenClaw state boundary", () => {
     expect(resolveNativeSkillState(null)).toEqual({
       stateDir: "/sandbox/.openclaw",
-      isOpenClaw: true,
     });
   });
 
@@ -212,7 +211,6 @@ describe("resolveNativeSkillState", () => {
   ])("returns only %s agent state without computing a skill destination", (name, stateDir) => {
     expect(resolveNativeSkillState({ name, configPaths: { dir: stateDir } })).toEqual({
       stateDir,
-      isOpenClaw: false,
     });
   });
 });

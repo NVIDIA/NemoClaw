@@ -79,7 +79,6 @@ import { getNativeSkillLifecycle } from "../../skill-install";
 
 const paths = {
   stateDir: "/sandbox/.openclaw",
-  isOpenClaw: true,
 };
 
 const agent = {
@@ -96,7 +95,6 @@ const genericAgent = {
 };
 const genericPaths = {
   stateDir: "/sandbox/.hermes",
-  isOpenClaw: false,
 };
 const deepAgent = {
   name: "langchain-deepagents-code",
@@ -112,7 +110,6 @@ const unsupportedAgent = {
 };
 const sharedPaths = {
   stateDir: "/sandbox/.deepagents",
-  isOpenClaw: false,
 };
 
 function makeSkillDir(): string {

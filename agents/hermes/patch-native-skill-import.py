@@ -5,6 +5,9 @@
 from __future__ import annotations
 
 import argparse
+import os
+import stat
+import uuid
 from pathlib import Path
 
 MARKER = "# NemoClaw native local skill import (#10210)."
@@ -12,6 +15,57 @@ PARSER_ANCHOR = '    skills_inspect = skills_subparsers.add_parser(\n        "in
 FUNCTION_ANCHOR = "\ndef do_inspect(identifier: str, console: Optional[Console] = None) -> None:\n"
 ROUTER_ANCHOR = '    elif action == "inspect":\n        do_inspect(args.identifier)\n'
 UNINSTALL_ANCHOR = '    elif action == "uninstall":\n        do_uninstall(args.name, skip_confirm=getattr(args, "yes", False))\n'
+
+
+def _atomic_write_text(path: Path, source: str) -> None:
+    """Replace one module only after a complete same-directory write."""
+    metadata = path.lstat()
+    if path.is_symlink() or not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+        raise SystemExit(f"ERROR: refusing unsafe native skill patch target: {path}")
+    temporary = path.with_name(
+        f".{path.name}.nemoclaw-native-skill-patch.{uuid.uuid4().hex}"
+    )
+    descriptor: int | None = None
+    payload = source.encode("utf-8")
+    try:
+        descriptor = os.open(
+            temporary,
+            os.O_CREAT | os.O_EXCL | os.O_RDWR | os.O_NOFOLLOW,
+            0o600,
+        )
+        os.fchown(descriptor, metadata.st_uid, metadata.st_gid)
+        os.fchmod(descriptor, stat.S_IMODE(metadata.st_mode))
+        offset = 0
+        while offset < len(payload):
+            offset += os.write(descriptor, payload[offset:])
+        os.fsync(descriptor)
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        observed = bytearray()
+        while len(observed) < len(payload):
+            chunk = os.read(descriptor, len(payload) - len(observed))
+            if not chunk:
+                break
+            observed.extend(chunk)
+        if bytes(observed) != payload:
+            raise OSError("native skill patch temporary verification failed")
+        os.close(descriptor)
+        descriptor = None
+        os.replace(temporary, path)
+    except Exception:
+        if descriptor is not None:
+            os.close(descriptor)
+        temporary.unlink(missing_ok=True)
+        raise
+    published = path.lstat()
+    if (
+        path.is_symlink()
+        or not stat.S_ISREG(published.st_mode)
+        or published.st_nlink != 1
+        or (published.st_uid, published.st_gid) != (metadata.st_uid, metadata.st_gid)
+        or stat.S_IMODE(published.st_mode) != stat.S_IMODE(metadata.st_mode)
+        or path.read_bytes() != payload
+    ):
+        raise SystemExit(f"ERROR: published native skill patch failed verification: {path}")
 
 PARSER = '''    # NemoClaw native local skill import (#10210).
     skills_import_local = skills_subparsers.add_parser(
@@ -400,25 +454,44 @@ def patch(parser_path: Path, hub_path: Path) -> None:
     """Patch the pinned Hermes parser and skill-state implementation."""
     parser_source = parser_path.read_text(encoding="utf-8")
     hub_source = hub_path.read_text(encoding="utf-8")
-    if MARKER in parser_source or MARKER in hub_source:
-        if (
-            parser_source.count(MARKER) != 1
-            or hub_source.count(MARKER) != 3
-            or PARSER not in parser_source
-            or FUNCTION not in hub_source
-            or ROUTER not in hub_source
-            or UNINSTALL not in hub_source
-        ):
-            raise SystemExit("ERROR: Hermes native skill import patch is partial")
-        return
-    parser_source = _replace_once(parser_source, PARSER_ANCHOR, f"{PARSER}{PARSER_ANCHOR}", "parser")
-    hub_source = _replace_once(hub_source, FUNCTION_ANCHOR, f"\n{FUNCTION}\ndef do_inspect(identifier: str, console: Optional[Console] = None) -> None:\n", "function")
-    hub_source = _replace_once(hub_source, ROUTER_ANCHOR, f"{ROUTER}{ROUTER_ANCHOR}", "router")
-    hub_source = _replace_once(hub_source, UNINSTALL_ANCHOR, UNINSTALL, "uninstall")
+    parser_patched = MARKER in parser_source
+    hub_patched = MARKER in hub_source
+    if parser_patched and (parser_source.count(MARKER) != 1 or PARSER not in parser_source):
+        raise SystemExit("ERROR: Hermes native skill import parser patch is partial")
+    if hub_patched and (
+        hub_source.count(MARKER) != 3
+        or FUNCTION not in hub_source
+        or ROUTER not in hub_source
+        or UNINSTALL not in hub_source
+    ):
+        raise SystemExit("ERROR: Hermes native skill import state patch is partial")
+    if not parser_patched:
+        parser_source = _replace_once(
+            parser_source,
+            PARSER_ANCHOR,
+            f"{PARSER}{PARSER_ANCHOR}",
+            "parser",
+        )
+    if not hub_patched:
+        hub_source = _replace_once(
+            hub_source,
+            FUNCTION_ANCHOR,
+            f"\n{FUNCTION}\ndef do_inspect(identifier: str, console: Optional[Console] = None) -> None:\n",
+            "function",
+        )
+        hub_source = _replace_once(
+            hub_source,
+            ROUTER_ANCHOR,
+            f"{ROUTER}{ROUTER_ANCHOR}",
+            "router",
+        )
+        hub_source = _replace_once(hub_source, UNINSTALL_ANCHOR, UNINSTALL, "uninstall")
     compile(parser_source, str(parser_path), "exec")
     compile(hub_source, str(hub_path), "exec")
-    parser_path.write_text(parser_source, encoding="utf-8")
-    hub_path.write_text(hub_source, encoding="utf-8")
+    if not parser_patched:
+        _atomic_write_text(parser_path, parser_source)
+    if not hub_patched:
+        _atomic_write_text(hub_path, hub_source)
 
 
 def main() -> int:

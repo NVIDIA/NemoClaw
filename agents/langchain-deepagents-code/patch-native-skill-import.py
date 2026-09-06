@@ -5,6 +5,9 @@
 from __future__ import annotations
 
 import argparse
+import os
+import stat
+import uuid
 from pathlib import Path
 
 MARKER = "# NemoClaw native local skill import (#10210)."
@@ -18,6 +21,57 @@ DELETE_PARSER_ANCHOR = '''    delete_parser = skills_subparsers.add_parser(
 DELETE_DISPATCH_ANCHOR = '''    elif args.skills_command == "delete":
         _delete(
 '''
+
+
+def _atomic_write_text(path: Path, source: str) -> None:
+    """Replace one module only after a complete same-directory write."""
+    metadata = path.lstat()
+    if path.is_symlink() or not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+        raise SystemExit(f"ERROR: refusing unsafe native skill patch target: {path}")
+    temporary = path.with_name(
+        f".{path.name}.nemoclaw-native-skill-patch.{uuid.uuid4().hex}"
+    )
+    descriptor: int | None = None
+    payload = source.encode("utf-8")
+    try:
+        descriptor = os.open(
+            temporary,
+            os.O_CREAT | os.O_EXCL | os.O_RDWR | os.O_NOFOLLOW,
+            0o600,
+        )
+        os.fchown(descriptor, metadata.st_uid, metadata.st_gid)
+        os.fchmod(descriptor, stat.S_IMODE(metadata.st_mode))
+        offset = 0
+        while offset < len(payload):
+            offset += os.write(descriptor, payload[offset:])
+        os.fsync(descriptor)
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        observed = bytearray()
+        while len(observed) < len(payload):
+            chunk = os.read(descriptor, len(payload) - len(observed))
+            if not chunk:
+                break
+            observed.extend(chunk)
+        if bytes(observed) != payload:
+            raise OSError("native skill patch temporary verification failed")
+        os.close(descriptor)
+        descriptor = None
+        os.replace(temporary, path)
+    except Exception:
+        if descriptor is not None:
+            os.close(descriptor)
+        temporary.unlink(missing_ok=True)
+        raise
+    published = path.lstat()
+    if (
+        path.is_symlink()
+        or not stat.S_ISREG(published.st_mode)
+        or published.st_nlink != 1
+        or (published.st_uid, published.st_gid) != (metadata.st_uid, metadata.st_gid)
+        or stat.S_IMODE(published.st_mode) != stat.S_IMODE(metadata.st_mode)
+        or path.read_bytes() != payload
+    ):
+        raise SystemExit(f"ERROR: published native skill patch failed verification: {path}")
 
 FUNCTION = r'''
 # NemoClaw native local skill import (#10210).
@@ -344,7 +398,7 @@ def patch(path: Path) -> None:
     source = _replace_once(source, PARSER_ANCHOR, f"{PARSER}{PARSER_ANCHOR}", "parser")
     source = _replace_once(source, DISPATCH_ANCHOR, f"{DISPATCH}{DISPATCH_ANCHOR}", "dispatch")
     compile(source, str(path), "exec")
-    path.write_text(source, encoding="utf-8")
+    _atomic_write_text(path, source)
 
 
 def main() -> int:

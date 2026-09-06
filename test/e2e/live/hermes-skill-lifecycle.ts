@@ -3,7 +3,7 @@
 
 import path from "node:path";
 
-import { resultText } from "../fixtures/clients/command.ts";
+import { resultText, shellQuote } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import {
@@ -180,6 +180,16 @@ export async function assertHermesSkillLifecycle({
   await exec(
     ["test", "!", "-e", `/sandbox/.hermes/skills/${HERMES_SKILL_ID}`],
     "phase-4-hermes-skill-disk-check-after-remove",
+  );
+  await exec(
+    [
+      "bash",
+      "-c",
+      `output="$(hermes chat --query ${shellQuote(HERMES_SKILL_PROMPT)} --quiet)" && ! printf '%s\\n' "$output" | grep -Fq ${shellQuote(HERMES_SKILL_V1_RESPONSE)} && ! printf '%s\\n' "$output" | grep -Fq ${shellQuote(HERMES_SKILL_V2_RESPONSE)} && printf '%s\\n' "$output"`,
+    ],
+    "phase-4-hermes-removed-skill-fresh-consumer",
+    360,
+    420_000,
   );
 
   if (requestOffset === undefined) return;

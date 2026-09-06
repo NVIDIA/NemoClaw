@@ -701,6 +701,18 @@ DCODE_EXIT:${direct_exit}"
   else
     fail_test "public NemoClaw skill remove did not clear DCode native state"
   fi
+  if removed_skill_output="$(sandbox_direct_dcode -n "The native lifecycle canary skill was removed. Reply exactly PONG without inventing its value." --json)"; then
+    removed_skill_exit=0
+  else
+    removed_skill_exit=$?
+  fi
+  if [ "$removed_skill_exit" -eq 0 ] \
+    && ! grep -Fq "$skill_marker_v1" <<<"$removed_skill_output" \
+    && ! grep -Fq "$skill_marker_v2" <<<"$removed_skill_output"; then
+    pass "fresh direct-exec dcode session did not consume the removed native skill"
+  else
+    fail_test "fresh direct-exec dcode session retained removed native skill content (exit ${removed_skill_exit})"
+  fi
 
   # 7. The user-facing bare-connect readiness path must route every observed
   # sandbox exec to the same sandbox used by the preceding lifecycle evidence.

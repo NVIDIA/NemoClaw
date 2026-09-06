@@ -61,7 +61,6 @@ describe("Hermes and DCode native skill installation", () => {
       });
       const paths: NativeSkillState = {
         stateDir,
-        isOpenClaw: false,
       };
 
       expect(
@@ -89,7 +88,6 @@ describe("Hermes and DCode native skill installation", () => {
     const skill = makeSkill();
     const paths: NativeSkillState = {
       stateDir: "/sandbox/.hermes",
-      isOpenClaw: false,
     };
 
     expect(
@@ -154,7 +152,6 @@ esac
       );
       const paths: NativeSkillState = {
         stateDir,
-        isOpenClaw: false,
       };
       let lastSshResult: SshResult | undefined;
       const sshExec = (

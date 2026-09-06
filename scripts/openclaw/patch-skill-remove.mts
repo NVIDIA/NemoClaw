@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -376,7 +377,9 @@ function resolveTargets(distDir: string): { installStateFile: string; skillsCliF
     if (source.includes(TARGET_SIGNATURE)) skillsCliFiles.push(file);
     if (
       source.includes(INSTALL_STATE_FUNCTION_ANCHOR) &&
-      source.includes(INSTALL_STATE_COPY_ANCHOR)
+      (source.includes(INSTALL_STATE_COPY_ANCHOR) ||
+        (source.includes(INSTALL_INTEGRITY_MARKER) &&
+          source.includes("nemoClawNormalizedSkillDigest(stageDir)")))
     ) {
       installStateFiles.push(file);
     }
@@ -387,6 +390,78 @@ function resolveTargets(distDir: string): { installStateFile: string; skillsCliF
     );
   }
   return { installStateFile: installStateFiles[0], skillsCliFile: skillsCliFiles[0] };
+}
+
+/** Publish one complete module while retaining the previous valid inode until rename. */
+function atomicWriteTextFile(filePath: string, text: string): void {
+  const metadata = fs.lstatSync(filePath);
+  if (metadata.isSymbolicLink() || !metadata.isFile() || metadata.nlink !== 1) {
+    throw new Error(`${filePath}: refusing unsafe native skill patch target`);
+  }
+  const temporary = path.join(
+    path.dirname(filePath),
+    `.${path.basename(filePath)}.nemoclaw-native-skill-patch.${randomBytes(12).toString("hex")}`,
+  );
+  const payload = Buffer.from(text, "utf8");
+  let descriptor: number | undefined;
+  try {
+    descriptor = fs.openSync(
+      temporary,
+      fs.constants.O_CREAT |
+        fs.constants.O_EXCL |
+        fs.constants.O_RDWR |
+        fs.constants.O_NOFOLLOW,
+      0o600,
+    );
+    fs.fchownSync(descriptor, metadata.uid, metadata.gid);
+    fs.fchmodSync(descriptor, metadata.mode & 0o777);
+    let offset = 0;
+    while (offset < payload.length) {
+      offset += fs.writeSync(descriptor, payload, offset, payload.length - offset, offset);
+    }
+    fs.fsyncSync(descriptor);
+    const observed = Buffer.alloc(payload.length);
+    offset = 0;
+    while (offset < observed.length) {
+      const bytes = fs.readSync(
+        descriptor,
+        observed,
+        offset,
+        observed.length - offset,
+        offset,
+      );
+      if (bytes === 0) break;
+      offset += bytes;
+    }
+    if (offset !== payload.length || !observed.equals(payload)) {
+      throw new Error(`${filePath}: native skill patch temporary verification failed`);
+    }
+    fs.closeSync(descriptor);
+    descriptor = undefined;
+    fs.renameSync(temporary, filePath);
+  } catch (error) {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
+    try {
+      fs.unlinkSync(temporary);
+    } catch (cleanupError) {
+      if ((cleanupError as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw new Error(`${filePath}: native skill patch cleanup failed`, { cause: error });
+      }
+    }
+    throw error;
+  }
+  const published = fs.lstatSync(filePath);
+  if (
+    published.isSymbolicLink() ||
+    !published.isFile() ||
+    published.nlink !== 1 ||
+    published.uid !== metadata.uid ||
+    published.gid !== metadata.gid ||
+    (published.mode & 0o777) !== (metadata.mode & 0o777) ||
+    !fs.readFileSync(filePath).equals(payload)
+  ) {
+    throw new Error(`${filePath}: published native skill patch failed verification`);
+  }
 }
 
 /** Apply the native remove capability only to the pinned reviewed OpenClaw version. */
@@ -412,9 +487,9 @@ export function patchOpenClawSkillRemove(distDir: string): {
     installStateFile,
   );
   if (installResult.status === "patched" || removeResult.status === "patched") {
-    fs.writeFileSync(file, removeResult.text);
+    atomicWriteTextFile(file, removeResult.text);
   }
-  if (stateResult.status === "patched") fs.writeFileSync(installStateFile, stateResult.text);
+  if (stateResult.status === "patched") atomicWriteTextFile(installStateFile, stateResult.text);
   const status =
     installResult.status === "patched" ||
     removeResult.status === "patched" ||

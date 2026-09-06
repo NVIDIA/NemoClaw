@@ -188,9 +188,13 @@ describe("agent-native local skill import patches", () => {
         '        do_uninstall(args.name, skip_confirm=getattr(args, "yes", False))',
       ].join("\n") + "\n",
     );
+    const originalHubSource = fs.readFileSync(hub, "utf8");
 
     const first = runPython([HERMES_PATCH, parser, hub]);
     expect(first.status, first.stderr).toBe(0);
+    fs.writeFileSync(hub, originalHubSource);
+    const resumed = runPython([HERMES_PATCH, parser, hub]);
+    expect(resumed.status, resumed.stderr).toBe(0);
     const second = runPython([HERMES_PATCH, parser, hub]);
     expect(second.status, second.stderr).toBe(0);
     const parserSource = fs.readFileSync(parser, "utf8");

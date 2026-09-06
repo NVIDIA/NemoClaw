@@ -403,6 +403,13 @@ test(
       "sandbox-verify-native-skill-removal",
       env,
     );
+    const removedConsumerSession = `${SKILL_ID}-removed-${String(Date.now())}`;
+    await expectSandboxShellZero(
+      sandbox,
+      `agent_output="$(mktemp)" && trap 'rm -f "$agent_output"' EXIT && openclaw agent --agent main --json --thinking off --session-id ${shellQuote(removedConsumerSession)} -m ${shellQuote("The native skill collision replacement is no longer installed. Reply with exactly one word: PONG.")} > "$agent_output" && grep -Fq PONG "$agent_output" && ! grep -Fq ${shellQuote(FIRST_REPLACEMENT_TOKEN)} "$agent_output" && ! grep -Fq ${shellQuote(CONSUMER_TOKEN)} "$agent_output" && cat "$agent_output"`,
+      "sandbox-openclaw-removed-skill-fresh-consumer",
+      env,
+    );
 
     progress.phase("record the workspace skill contract");
     await artifacts.target.complete({

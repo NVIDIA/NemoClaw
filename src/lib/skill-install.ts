@@ -87,7 +87,6 @@ export function parseFrontmatter(content: string): SkillFrontmatter {
 export interface NativeSkillState {
   /** Agent-owned root used only to bound private staging and returned native paths. */
   stateDir: string;
-  isOpenClaw: boolean;
 }
 
 /** Resolve no skill destination; the native agent command owns that decision. */
@@ -96,7 +95,6 @@ export function resolveNativeSkillState(
 ): NativeSkillState {
   return {
     stateDir: agent ? agent.configPaths.dir : "/sandbox/.openclaw",
-    isOpenClaw: !agent || agent.name === "openclaw",
   };
 }
 
@@ -724,9 +722,6 @@ function buildOpenClawNativeInstallScript(
   expectedDigest: string,
   expectedSandboxIdentityFingerprint: string,
 ): string {
-  if (!paths.isOpenClaw) {
-    throw new Error("OpenClaw native install requires a workspace skill destination");
-  }
   if (lifecycle.agentName !== "openclaw") {
     throw new Error("OpenClaw native install requires the OpenClaw lifecycle contract");
   }

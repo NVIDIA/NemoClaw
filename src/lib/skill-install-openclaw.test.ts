@@ -27,7 +27,6 @@ const SANDBOX_ID = "sandbox-alpha";
 const SANDBOX_IDENTITY = createHash("sha256").update(SANDBOX_ID).digest("hex");
 const paths: NativeSkillState = {
   stateDir: "/sandbox/.openclaw",
-  isOpenClaw: true,
 };
 const lifecycle = getNativeSkillLifecycle({
   name: "openclaw",
