@@ -9,6 +9,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { DGX_STATION_PYTHON_IDENTITY_PROBE } from "../src/lib/inference/dgx-station-identity.ts";
 import {
   clearDualStationSshBinding,
   encodeDualStationSshBindingHandoff,
@@ -91,6 +92,8 @@ import re
 import socket
 import subprocess
 
+${DGX_STATION_PYTHON_IDENTITY_PROBE}
+
 def read_text(path):
     try:
         return Path(path).read_text(encoding="utf-8").rstrip("\x00").strip()
@@ -111,17 +114,6 @@ def run(argv, timeout=5):
         return result.returncode, result.stdout.strip()
     except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
         return 127, ""
-
-def product_name():
-    for candidate in (
-        "/sys/class/dmi/id/product_name",
-        "/sys/devices/virtual/dmi/id/product_name",
-        "/sys/firmware/devicetree/base/model",
-    ):
-        value = read_text(candidate)
-        if value:
-            return value
-    return ""
 
 def gpu_inventory():
     rc, output = run([
@@ -204,9 +196,9 @@ def rail_inventory():
     return rails
 
 print(json.dumps({
-    "schemaVersion": 1,
+    "schemaVersion": 2,
     "hostname": socket.gethostname(),
-    "productName": product_name(),
+    **station_identity_payload(),
     "architecture": platform.machine(),
     "gpus": gpu_inventory(),
     "rails": rail_inventory(),

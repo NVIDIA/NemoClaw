@@ -10,10 +10,7 @@ import { isObjectRecord } from "../core/json-types";
 import { getMessagingPolicyKeysByChannel } from "../messaging/channels";
 import type { MessagingChannelConfig } from "../messaging-channel-config";
 import * as policies from "../policy";
-import {
-  collectPlatformIdentity,
-  type PlatformIdentity,
-} from "../readiness/platform-qualification";
+import { collectPlatformIdentity, type PlatformIdentity } from "../readiness/platform-qualification";
 import {
   isQualifiedStationProfile,
   isQualifiedStationRuntime,
@@ -114,6 +111,11 @@ export function discoverStationGb300SysfsReadOnlyPaths(
   } catch {
     // A Station image without PCI sysfs cannot use the scoped GPU exception.
   }
+  if (pciDeviceNames.length > 256) {
+    throw new Error(
+      `Cannot prepare Station GB300 direct GPU sandbox policy; more than 256 PCI entries were found under ${pciDevicesRoot}.`,
+    );
+  }
   for (const pciDeviceName of pciDeviceNames) {
     if (!PCI_BDF_PATTERN.test(pciDeviceName)) continue;
     const pciDeviceRoot = path.join(pciDevicesRoot, pciDeviceName);
@@ -151,7 +153,8 @@ export function discoverHostStationGb300SysfsReadOnlyPaths(
   if (platform !== "linux") return [];
   const identity = options.identity ?? collectPlatformIdentity();
   if (identity.nvidiaPlatform !== "station") return [];
-  if (!identity.productName || !isStationGb300ProductName(identity.productName)) {
+  const stationFirmwareProduct = identity.stationFirmwareProduct ?? identity.productName;
+  if (!stationFirmwareProduct || !isStationGb300ProductName(stationFirmwareProduct)) {
     throw new Error(
       "Cannot prepare Station GB300 direct GPU sandbox policy; the detected Station product is not a qualified GB300 system.",
     );
@@ -175,7 +178,7 @@ export function discoverHostStationGb300SysfsReadOnlyPaths(
     );
   }
   return discoverStationGb300SysfsReadOnlyPaths(
-    identity.productName,
+    stationFirmwareProduct,
     options.sysfsRoot ?? SYSFS_PATH,
     identity.stationProfile,
   );

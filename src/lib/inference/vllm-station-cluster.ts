@@ -6,7 +6,11 @@ import net from "node:net";
 import path from "node:path";
 
 import { buildSubprocessEnv } from "../subprocess-env";
-import { isDgxStationGb300Product } from "./dgx-station-identity";
+import {
+  classifyNvidiaFirmwareProducts,
+  DGX_STATION_PYTHON_IDENTITY_PROBE,
+  NVIDIA_FIRMWARE_VALUE_MAX_BYTES,
+} from "./dgx-station-identity";
 import { buildVllmSshTransportEnv } from "./vllm-docker-env";
 import {
   DUAL_STATION_VLLM_GPU_MEMORY_UTILIZATION,
@@ -23,7 +27,7 @@ import {
 
 export const NEMOCLAW_DGX_STATION_PEER_ENV = "NEMOCLAW_DGX_STATION_PEER";
 
-const HOST_PROBE_SCHEMA_VERSION = 1;
+const HOST_PROBE_SCHEMA_VERSION = 2;
 const CONNECTIVITY_PROBE_SCHEMA_VERSION = 1;
 const COMMAND_TIMEOUT_MS = 20_000;
 const MAX_PROBE_OUTPUT_BYTES = 1024 * 1024;
@@ -121,9 +125,13 @@ export interface StationModelSnapshotProbe {
 }
 
 export interface StationHostProbe {
-  schemaVersion: 1;
+  schemaVersion: 2;
   hostname: string;
   productName: string;
+  productFamily: string;
+  boardName: string;
+  deviceTreeModel: string;
+  stationGb300PciGpu: boolean;
   architecture: string;
   home: string;
   uid: number;
@@ -283,6 +291,7 @@ import subprocess
 MODEL_ID = ${JSON.stringify(DUAL_STATION_VLLM_RUNTIME.modelId)}
 MODEL_REVISION = ${JSON.stringify(DUAL_STATION_VLLM_RUNTIME.modelRevision)}
 MODEL_CACHE_NAME = "models--" + MODEL_ID.replace("/", "--")
+${DGX_STATION_PYTHON_IDENTITY_PROBE}
 
 def read_text(path):
     try:
@@ -304,17 +313,6 @@ def run(argv, timeout=5):
         return result.returncode, result.stdout.strip()
     except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
         return 127, ""
-
-def product_name():
-    for candidate in (
-        "/sys/class/dmi/id/product_name",
-        "/sys/devices/virtual/dmi/id/product_name",
-        "/sys/firmware/devicetree/base/model",
-    ):
-        value = read_text(candidate)
-        if value:
-            return value
-    return ""
 
 def gpu_inventory():
     rc, output = run([
@@ -570,7 +568,7 @@ def snapshot_state():
 payload = {
     "schemaVersion": ${String(HOST_PROBE_SCHEMA_VERSION)},
     "hostname": socket.gethostname(),
-    "productName": product_name(),
+    **station_identity_payload(),
     "architecture": platform.machine(),
     "home": str(Path.home()),
     "uid": os.getuid(),
@@ -847,6 +845,17 @@ function requireString(value: unknown, label: string, maxLength = 1024): string 
   return value;
 }
 
+function requireFirmwareString(value: unknown, label: string): string {
+  if (
+    typeof value !== "string" ||
+    Buffer.byteLength(value, "utf8") > NVIDIA_FIRMWARE_VALUE_MAX_BYTES ||
+    /[\u0000-\u001f\u007f]/u.test(value)
+  ) {
+    throw new Error(`${label} must be bounded printable text`);
+  }
+  return value;
+}
+
 function requireBoolean(value: unknown, label: string): boolean {
   if (typeof value !== "boolean") throw new Error(`${label} must be a boolean`);
   return value;
@@ -1014,9 +1023,13 @@ export function parseStationHostProbe(stdout: string): StationHostProbe {
   }
   const docker = requireRecord(record.docker, "host probe.docker");
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     hostname: requireString(record.hostname, "host probe.hostname", 256),
-    productName: requireString(record.productName, "host probe.productName", 512),
+    productName: requireFirmwareString(record.productName, "host probe.productName"),
+    productFamily: requireFirmwareString(record.productFamily, "host probe.productFamily"),
+    boardName: requireFirmwareString(record.boardName, "host probe.boardName"),
+    deviceTreeModel: requireFirmwareString(record.deviceTreeModel, "host probe.deviceTreeModel"),
+    stationGb300PciGpu: requireBoolean(record.stationGb300PciGpu, "host probe.stationGb300PciGpu"),
     architecture: requireString(record.architecture, "host probe.architecture", 64),
     home,
     uid: requireInteger(record.uid, "host probe.uid", 1, 2_147_483_647),
@@ -1330,14 +1343,30 @@ function buildStaticPlan(
   local: StationHostProbe,
   peer: StationHostProbe,
 ): StaticPlan | PlanFailure {
+  const localFirmware = classifyNvidiaFirmwareProducts([
+    local.productName,
+    local.productFamily,
+    local.boardName,
+    local.deviceTreeModel,
+  ]);
+  const peerFirmware = classifyNvidiaFirmwareProducts([
+    peer.productName,
+    peer.productFamily,
+    peer.boardName,
+    peer.deviceTreeModel,
+  ]);
   if (
-    !isDgxStationGb300Product(local.productName) ||
+    !localFirmware.stationFirmwareProduct ||
+    localFirmware.platformIdentityConflict ||
+    !local.stationGb300PciGpu ||
     !/^(?:aarch64|arm64)$/i.test(local.architecture)
   ) {
     return unavailable("local-not-station", "local host is not a verified arm64 DGX Station");
   }
   if (
-    !isDgxStationGb300Product(peer.productName) ||
+    !peerFirmware.stationFirmwareProduct ||
+    peerFirmware.platformIdentityConflict ||
+    !peer.stationGb300PciGpu ||
     !/^(?:aarch64|arm64)$/i.test(peer.architecture)
   ) {
     return unavailable("peer-not-station", "configured peer is not a verified arm64 DGX Station");
