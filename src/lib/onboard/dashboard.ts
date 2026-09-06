@@ -21,7 +21,10 @@ import {
 } from "./agent-dashboard-forward";
 import { fetchAgentWebAuthTokenFromSandbox as fetchAgentWebAuthToken } from "./agent-web-auth-token";
 import * as dashboardAccess from "./dashboard-access";
-import { getDashboardReuseLifecycle } from "./dashboard/reuse-lifecycle";
+import {
+  getDashboardReuseLifecycle,
+  getDashboardReuseReconciledForwards,
+} from "./dashboard/reuse-lifecycle";
 import {
   type DashboardForwardOptions,
   normalizeDashboardForwardOptions,
@@ -267,8 +270,6 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
             }),
         }
       : undefined);
-  const reconciledOpenClawForwards = new Map<string, number>();
-
   function resolveForwardServiceGateway(
     sandboxName: string,
     options: DashboardForwardOptions = {},
@@ -406,6 +407,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     const isPortBound = deps.isPortBoundOnHost ?? isPortBoundOnHost;
     if (!isPortBound(port)) return false;
     const lifecycle = getDashboardReuseLifecycle();
+    const reconciledOpenClawForwards = getDashboardReuseReconciledForwards();
     const withLifecycleLock = deps.withSandboxLifecycleLock ?? lifecycle?.withSandboxLifecycleLock;
     if (!withLifecycleLock) {
       throw new Error(
@@ -413,7 +415,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       );
     }
     return await withLifecycleLock(sandboxName, async () => {
-      if (reconciledOpenClawForwards.get(sandboxName) === port && isPortBound(port)) return true;
+      if (reconciledOpenClawForwards?.get(sandboxName) === port && isPortBound(port)) return true;
       if (!isPortBound(port)) return false;
       if (getRegistryOccupiedDashboardPorts(sandboxName, listSandboxes).has(String(port))) {
         throw new Error(
@@ -516,7 +518,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
           }`,
         );
       }
-      reconciledOpenClawForwards.set(sandboxName, port);
+      reconciledOpenClawForwards?.set(sandboxName, port);
       return true;
     });
   }
@@ -543,10 +545,11 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     const isPortBound = deps.isPortBoundOnHost ?? isPortBoundOnHost;
     const persistedPort = getPersistedDashboardPort(sandboxName, listSandboxes);
     const registryOccupiedPorts = getRegistryOccupiedDashboardPorts(sandboxName, listSandboxes);
+    const reconciledOpenClawForwards = getDashboardReuseReconciledForwards();
     if (persistedPort === preferredPort && isPortBound(preferredPort)) {
       if (
         reuseExistingOpenClawForward &&
-        reconciledOpenClawForwards.get(sandboxName) === preferredPort &&
+        reconciledOpenClawForwards?.get(sandboxName) === preferredPort &&
         !registryOccupiedPorts.has(String(preferredPort))
       ) {
         revalidateSandboxIdentity?.(
@@ -654,7 +657,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       });
     }
     if (fwdOk && reuseExistingOpenClawForward) {
-      reconciledOpenClawForwards.set(sandboxName, actualPort);
+      reconciledOpenClawForwards?.set(sandboxName, actualPort);
     }
     return actualPort;
   }
@@ -681,9 +684,10 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     const persistedPort = envUrl ? null : getPersistedDashboardPort(sandboxName, listSandboxes);
     const requestedUrl =
       envUrl || (persistedPort === null ? undefined : `http://127.0.0.1:${String(persistedPort)}`);
+    const reconciledOpenClawForwards = getDashboardReuseReconciledForwards();
     const mayReuseForward =
-      reuseExistingOpenClawForward || reconciledOpenClawForwards.has(sandboxName);
-    if (reuseExistingOpenClawForward && !reconciledOpenClawForwards.has(sandboxName)) {
+      reuseExistingOpenClawForward || reconciledOpenClawForwards?.has(sandboxName) === true;
+    if (reuseExistingOpenClawForward && !reconciledOpenClawForwards?.has(sandboxName)) {
       await reconcileOpenClawDashboardForwardReuse(
         sandboxName,
         requestedUrl || `http://127.0.0.1:${CONTROL_UI_PORT}`,
@@ -742,13 +746,14 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
         reuseExistingOpenClawForward,
       );
     }
+    const reconciledOpenClawForwards = getDashboardReuseReconciledForwards();
     const mayReuseOpenClawForward =
       agent.name === "openclaw" &&
-      (reuseExistingOpenClawForward || reconciledOpenClawForwards.has(sandboxName));
+      (reuseExistingOpenClawForward || reconciledOpenClawForwards?.has(sandboxName) === true);
     if (
       agent.name === "openclaw" &&
       reuseExistingOpenClawForward &&
-      !reconciledOpenClawForwards.has(sandboxName)
+      !reconciledOpenClawForwards?.has(sandboxName)
     ) {
       const registeredPort = getPersistedDashboardPort(sandboxName, listSandboxes);
       const requestedUrl =

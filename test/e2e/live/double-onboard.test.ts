@@ -518,6 +518,13 @@ test(
   expect(sandboxAIdAfterFirst, resultText(sandboxAAfterFirst)).not.toBeNull();
   expect(registryHas(SANDBOX_A), `${REGISTRY_FILE} missing ${SANDBOX_A}`).toBe(true);
   assertRegistryInferenceMetadata(SANDBOX_A, fake.baseUrl);
+  const listAfterFirst = await command(host, ["list"], {
+    artifactName: "phase-2-nemoclaw-list",
+    env: commandEnv(),
+    timeoutMs: 60_000,
+  });
+  const portAfterFirst =
+    dashboardPortFromList(listAfterFirst.stdout, SANDBOX_A) ?? "<missing first dashboard port>";
 
   progress.phase("re-onboard same sandbox on existing gateway");
   // Phase 3: second onboard with the same name must reuse the healthy gateway.
@@ -553,7 +560,7 @@ test(
   expect(listAfterSecond.exitCode, resultText(listAfterSecond)).toBe(0);
   expect(stripAnsi(listAfterSecond.stdout)).toContain(SANDBOX_A);
   const portAfterSecond = dashboardPortFromList(listAfterSecond.stdout, SANDBOX_A);
-  expect(portAfterSecond, resultText(listAfterSecond)).toBeTruthy();
+  expect(portAfterSecond, resultText(listAfterSecond)).toBe(portAfterFirst);
   const dashboardAfterSecond = await waitForDashboardReachability(
     host,
     portAfterSecond ?? "",
