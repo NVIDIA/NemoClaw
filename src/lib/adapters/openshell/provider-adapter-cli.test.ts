@@ -140,6 +140,7 @@ describe("CLI OpenShell provider adapter", () => {
     ).resolves.toEqual({ ok: true, value: { names: ["zeta", "alpha"] } });
     expect(run).toHaveBeenCalledWith(["provider", "list", "-g", "nemoclaw-18080", "--names"], {
       ignoreError: true,
+      maxBuffer: 64 * 1024,
       stdio: ["ignore", "pipe", "pipe"],
       timeout: 4_321,
     });
@@ -171,7 +172,9 @@ describe("CLI OpenShell provider adapter", () => {
         0,
         [
           "Name: search-prod",
+          "Id: 11111111-2222-4333-8444-555555555555",
           "Type: tavily",
+          "Resource version: 7",
           "Credential keys: TAVILY_API_KEY",
           "Config keys: <none>",
         ].join("\n"),
@@ -192,6 +195,10 @@ describe("CLI OpenShell provider adapter", () => {
         type: "tavily",
         credentialKeys: ["TAVILY_API_KEY"],
         configKeys: [],
+        revision: {
+          id: "11111111-2222-4333-8444-555555555555",
+          resourceVersion: 7,
+        },
       },
     });
     expect(run).toHaveBeenCalledWith(["provider", "get", "-g", "nemoclaw-18080", "search-prod"], {
@@ -200,6 +207,58 @@ describe("CLI OpenShell provider adapter", () => {
       stdio: ["ignore", "pipe", "pipe"],
       suppressOutput: true,
       timeout: 4_321,
+    });
+  });
+
+  it("returns a null revision when provider output omits revision fields (#9806)", async () => {
+    const adapter = createCliOpenShellProviderAdapter({
+      run: () =>
+        captured(
+          0,
+          [
+            "Name: search-prod",
+            "Type: tavily",
+            "Credential keys: TAVILY_API_KEY",
+            "Config keys: <none>",
+          ].join("\n"),
+        ),
+    });
+
+    await expect(
+      adapter.getProvider({
+        target: selectedOpenShellGateway(),
+        providerName: "search-prod",
+      }),
+    ).resolves.toMatchObject({ ok: true, value: { revision: null } });
+  });
+
+  it.each([
+    ["missing resource version", "Id: 11111111-2222-4333-8444-555555555555"],
+    ["missing identity", "Resource version: 7"],
+    ["invalid resource version", "Id: 11111111-2222-4333-8444-555555555555\nResource version: 0"],
+  ])("rejects provider metadata with %s (#9806)", async (_case, revisionFields) => {
+    const adapter = createCliOpenShellProviderAdapter({
+      run: () =>
+        captured(
+          0,
+          [
+            "Name: search-prod",
+            revisionFields,
+            "Type: tavily",
+            "Credential keys: TAVILY_API_KEY",
+            "Config keys: <none>",
+          ].join("\n"),
+        ),
+    });
+
+    await expect(
+      adapter.getProvider({
+        target: selectedOpenShellGateway(),
+        providerName: "search-prod",
+      }),
+    ).resolves.toEqual({
+      ok: false,
+      error: { kind: "schema", message: "OpenShell returned invalid provider metadata." },
     });
   });
 
@@ -255,9 +314,31 @@ describe("CLI OpenShell provider adapter", () => {
       error: {
         kind: "command",
         reason: "failed",
-        message: "Error: gateway 'nemoclaw' not found while checking provider 'search-prod'",
+        message: "OpenShell could not inspect the provider.",
       },
     });
+  });
+
+  it("does not return stored credential values from provider lookup failures (#9806)", async () => {
+    const storedCredential = "stored-provider-secret"; // gitleaks:allow
+    const adapter = createCliOpenShellProviderAdapter({
+      run: () => captured(1, "", `provider lookup failed with credential ${storedCredential}`),
+    });
+
+    const result = await adapter.getProvider({
+      target: selectedOpenShellGateway(),
+      providerName: "search-prod",
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        kind: "command",
+        reason: "failed",
+        message: "OpenShell could not inspect the provider.",
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain(storedCredential);
   });
 
   it("does not classify signaled lookup output as exact absence (#9806)", async () => {
@@ -278,7 +359,7 @@ describe("CLI OpenShell provider adapter", () => {
       error: {
         kind: "command",
         reason: "failed",
-        message: "Error: provider 'search-prod' not found",
+        message: "OpenShell could not inspect the provider.",
       },
     });
   });

@@ -152,26 +152,28 @@ describe("runInferenceSet failure handling", () => {
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
   });
 
-  it("uses gateway providers instead of stale sandbox providers for the diagnostic (#5924)", async () => {
-    const deps = createDeps({
+  it("uses the route gateway instead of stale sandbox providers for the diagnostic (#5924)", async () => {
+    const baseDeps = createDeps({
       config: {},
       entries: [
         { name: "alpha", agent: "openclaw", provider: "stale-local", model: "stale-model" },
       ],
       openshellStatus: 1,
     });
+    const listProviders = vi.fn().mockResolvedValue({
+      ok: true,
+      value: { names: ["alpha-telegram-bridge", "nvidia-prod"] },
+    });
+    const deps = {
+      ...baseDeps,
+      providerAdapter: { ...baseDeps.providerAdapter, listProviders },
+    };
     deps.calls.captureOpenshell
       .mockReturnValueOnce({
         status: 1,
         output: "",
         stdout: "",
         stderr: "error: provider 'openai-api' not found in gateway",
-      })
-      .mockReturnValueOnce({
-        status: 0,
-        output: "alpha-telegram-bridge\nnvidia-prod",
-        stdout: "alpha-telegram-bridge\nnvidia-prod\n",
-        stderr: "",
       });
 
     const err = await runInferenceSet(
@@ -185,11 +187,14 @@ describe("runInferenceSet failure handling", () => {
     expect(message).toMatch(/Registered providers: nvidia-prod/);
     expect(message).not.toMatch(/stale-local|telegram-bridge/);
     expect(message).toMatch(/Tip: register a new provider with `nemoclaw onboard`/);
-    expect(deps.calls.captureOpenshell).toHaveBeenNthCalledWith(
-      2,
-      ["provider", "list", "--names"],
-      { ignoreError: true, maxBuffer: 64 * 1024, timeout: 5_000 },
-    );
+    expect(listProviders).toHaveBeenCalledExactlyOnceWith({
+      target: {
+        kind: "named",
+        gatewayName: "nemoclaw",
+      },
+      timeoutMs: 5_000,
+    });
+    expect(deps.calls.captureOpenshell).toHaveBeenCalledOnce();
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
   });

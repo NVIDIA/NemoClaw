@@ -174,6 +174,39 @@ describe("runInferenceSet on a loopback no-auth compatible endpoint", () => {
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
   });
 
+  it("refuses a provider without a revision before route mutation (#9806)", async () => {
+    const captureOpenshell = noAuthProviderCapture();
+    const deps = createDeps({
+      config: CONFIG,
+      entry: noAuthEntry(),
+      session: noAuthSession(),
+      captureOpenshell,
+    });
+    const getProvider = vi.spyOn(deps.providerAdapter, "getProvider").mockResolvedValue({
+      ok: true as const,
+      value: {
+        name: "compatible-endpoint",
+        type: "openai",
+        credentialKeys: [NO_AUTH_CREDENTIAL_ENV],
+        configKeys: ["OPENAI_BASE_URL"],
+        revision: null,
+      },
+    });
+
+    await expect(
+      runInferenceSet({ provider: "compatible-endpoint", model: "model-b" }, deps),
+    ).rejects.toThrow(/without a revision/);
+
+    expect(inferenceSetArgs(captureOpenshell)).toEqual([]);
+    expect(providerMutationArgs(captureOpenshell)).toEqual([]);
+    expect(getProvider).toHaveBeenCalledExactlyOnceWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      providerName: "compatible-endpoint",
+    });
+    expect(deps.calls.probeSandboxRoute).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
   it("refuses an absent provider before selecting the route with no endpoint options", async () => {
     const captureOpenshell = noAuthProviderCapture({ initiallyPresent: false });
     const deps = createDeps({
@@ -185,7 +218,7 @@ describe("runInferenceSet on a loopback no-auth compatible endpoint", () => {
 
     await expect(
       runInferenceSet({ provider: "compatible-endpoint", model: "model-b" }, deps),
-    ).rejects.toThrow(/Re-run onboarding to restore the provider/);
+    ).rejects.toThrow(/Rerun onboarding to restore the provider/);
 
     expect(inferenceSetArgs(captureOpenshell)).toEqual([]);
     expect(providerMutationArgs(captureOpenshell)).toEqual([]);
@@ -221,6 +254,9 @@ describe("runInferenceSet on a loopback no-auth compatible endpoint", () => {
 
     expect(probeSandboxRoute).toHaveBeenCalledTimes(2);
     expect(deps.calls.sleep.mock.calls).toEqual([[6_000], [2_000]]);
+    expect(deps.calls.log).toHaveBeenCalledWith(
+      "  Waiting 2s for OpenShell route convergence after the sandbox probe did not receive an HTTP status (probe 1/3)...",
+    );
     expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
       "alpha",
       expect.objectContaining({ model: "model-b", credentialEnv: NO_AUTH_CREDENTIAL_ENV }),
@@ -296,7 +332,7 @@ describe("runInferenceSet on a loopback no-auth compatible endpoint", () => {
         },
         deps,
       ),
-    ).rejects.toThrow(/Re-run onboarding to restore the provider/);
+    ).rejects.toThrow(/Rerun onboarding to restore the provider/);
 
     expect(providerMutationArgs(captureOpenshell)).toEqual([]);
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();

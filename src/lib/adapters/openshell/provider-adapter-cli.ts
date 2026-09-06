@@ -410,7 +410,14 @@ export function createCliOpenShellProviderAdapter(
   const listProviders: OpenShellProviderAdapter["listProviders"] = async (request) => {
     const targetError = namedGatewayEndpointOverrideError(request.target, environment);
     if (targetError) return failure(targetError);
-    const result = invoke(["provider", "list", "--names"], request);
+    const result = invoke(
+      ["provider", "list", "--names"],
+      request,
+      undefined,
+      2,
+      false,
+      PROVIDER_GET_DIAGNOSTIC_LIMIT,
+    );
     const error = commandError(result);
     if (error) return failure(error);
     const names = parseCliOpenShellProviderNames(result.stdout);
@@ -492,8 +499,12 @@ export function createCliOpenShellProviderAdapter(
     const error = commandError(result);
     if (error) {
       return failure(
-        error.kind === "command" && error.reason === "not_found"
-          ? { ...error, reason: "failed" }
+        error.kind === "command"
+          ? {
+              ...error,
+              reason: error.reason === "not_found" ? "failed" : error.reason,
+              message: "OpenShell could not inspect the provider.",
+            }
           : error,
       );
     }

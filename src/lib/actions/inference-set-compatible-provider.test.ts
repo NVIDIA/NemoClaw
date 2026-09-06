@@ -419,6 +419,131 @@ describe("runInferenceSet compatible providers", () => {
     ]);
   });
 
+  it("stops before route mutation when a newly created provider revision changes (#9806)", async () => {
+    let providerCreated = false;
+    let presentInspectionCount = 0;
+    const captureOpenshell = vi.fn((args: string[]) => {
+      switch (`${args[0]}:${args[1]}`) {
+        case "provider:profile":
+          return OPENAI_PROFILE_RESULT;
+        case "provider:get": {
+          const missingOutput = "Error: provider 'compatible-endpoint' not found";
+          presentInspectionCount += providerCreated ? 1 : 0;
+          const presentOutput = [
+            "Name: compatible-endpoint",
+            "Id: 11111111-2222-4333-8444-555555555555",
+            "Type: openai",
+            `Resource version: ${presentInspectionCount === 1 ? 1 : 2}`,
+            "Credential keys: COMPATIBLE_API_KEY",
+            "Config keys: OPENAI_BASE_URL",
+          ].join("\n");
+          return providerCreated
+            ? { status: 0, output: presentOutput, stdout: presentOutput, stderr: "" }
+            : { status: 1, output: missingOutput, stdout: "", stderr: missingOutput };
+        }
+        case "provider:create":
+          providerCreated = true;
+          return { status: 0, output: "", stdout: "", stderr: "" };
+        default:
+          return { status: 0, output: "", stdout: "", stderr: "" };
+      }
+    });
+    const deps = createDeps({
+      config: { agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } } },
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "nvidia-prod",
+        model: "nvidia/model-a",
+      },
+      session: baseSession({ provider: "nvidia-prod", model: "nvidia/model-a" }),
+      captureOpenshell,
+      rewriteConfigUrlsWithDnsPinning: async () => "http://198.51.100.10/v1",
+      resolveCredentialValue: () => "real-upstream-secret",
+    });
+
+    const failure = await runInferenceSet(
+      {
+        provider: "compatible-endpoint",
+        model: "mock-model",
+        endpointUrl: "http://compatible.example/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        inferenceApi: "openai-completions",
+      },
+      deps,
+    ).catch((error: Error) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain(
+      "Could not verify newly created provider 'compatible-endpoint' immediately before inference route mutation",
+    );
+    expect((failure as Error).message).toContain(
+      "Could not verify newly created provider 'compatible-endpoint' before rollback; no provider deletion was attempted",
+    );
+    expect(
+      captureOpenshell.mock.calls.filter(([args]) => args[0] === "inference" && args[1] === "set"),
+    ).toHaveLength(0);
+    expect(
+      captureOpenshell.mock.calls.filter(
+        ([args]) => args[0] === "provider" && args[1] === "delete",
+      ),
+    ).toHaveLength(0);
+    expect(
+      captureOpenshell.mock.calls.filter(([args]) => args[0] === "provider" && args[1] === "get"),
+    ).toHaveLength(4);
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.calls.updateSession).not.toHaveBeenCalled();
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+  });
+
+  it("redacts provider inspection diagnostics before inference handling (#9806)", async () => {
+    const storedCredential = "stored-provider-secret"; // gitleaks:allow
+    const captureOpenshell = vi.fn((args: string[]) => {
+      switch (`${args[0]}:${args[1]}`) {
+        case "provider:get": {
+          const output = `provider lookup failed with credential ${storedCredential}`;
+          return { status: 1, output, stdout: "", stderr: output };
+        }
+        default:
+          return { status: 0, output: "", stdout: "", stderr: "" };
+      }
+    });
+    const deps = createDeps({
+      config: { agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } } },
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "nvidia-prod",
+        model: "nvidia/model-a",
+      },
+      session: baseSession({ provider: "nvidia-prod", model: "nvidia/model-a" }),
+      captureOpenshell,
+      rewriteConfigUrlsWithDnsPinning: async () => "http://198.51.100.10/v1",
+      resolveCredentialValue: () => "real-upstream-secret",
+    });
+
+    const failure = await runInferenceSet(
+      {
+        provider: "compatible-endpoint",
+        model: "mock-model",
+        endpointUrl: "http://compatible.example/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        inferenceApi: "openai-completions",
+      },
+      deps,
+    ).catch((error: Error) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain("OpenShell could not inspect the provider.");
+    expect((failure as Error).message).not.toContain(storedCredential);
+    expect(
+      captureOpenshell.mock.calls.filter(([args]) => args[0] === "inference" && args[1] === "set"),
+    ).toHaveLength(0);
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.calls.updateSession).not.toHaveBeenCalled();
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+  });
+
   it("removes an absent direct provider when verified route selection fails (#7725)", async () => {
     let providerPresent = false;
     const captureOpenshell = vi.fn((args: string[]) => {

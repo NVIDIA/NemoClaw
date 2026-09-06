@@ -56,6 +56,10 @@ export type OpenShellProviderMetadata = Readonly<{
   type: string;
   credentialKeys: readonly string[];
   configKeys: readonly string[];
+  revision?: Readonly<{
+    id: string;
+    resourceVersion: number;
+  }> | null;
 }>;
 
 export type OpenShellProviderProfileInspection = Readonly<{

@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { HTTPS_PIN_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV } from "../inference/https-pin-runtime";
 import type { ConfigObject } from "../security/credential-filter";
 import type { InferenceSetDeps } from "./inference-set";
-import { runInferenceSet } from "./inference-set";
+import { InferenceSetError, runInferenceSet } from "./inference-set";
 import { baseSession, createDeps, HERMES_TARGET } from "./inference-set.test-support";
 import type { EnsureHttpsPinRuntimeAdapterOptions } from "./inference-set-route-containment";
 
@@ -112,76 +112,81 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
       "anthropic",
       "ANTHROPIC_BASE_URL",
     ],
-  ] as const)("keeps the upstream secret host-only and binds a route token for %s", async (provider, credentialEnv, inferenceApi, providerType, configKey) => {
-    vi.stubEnv(credentialEnv, "real-upstream-secret");
-    const adapter = mockAdapter();
-    const capture = providerCapture({ providerName: provider, providerType, credentialEnv });
-    const config: ConfigObject = {
-      agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } },
-      models: { providers: { inference: { api: "openai-completions", models: [] } } },
-    };
-    const deps = createDeps({
-      config,
-      entry: {
-        name: "alpha",
-        agent: "openclaw",
-        provider: "nvidia-prod",
-        model: "nvidia/model-a",
-      },
-      session: baseSession({ provider: "nvidia-prod", model: "nvidia/model-a" }),
-      ensureHttpsPinRuntimeAdapter: adapter,
-      captureOpenshell: capture,
-    });
+  ] as const)(
+    "keeps the upstream secret host-only and binds a route token for %s",
+    async (provider, credentialEnv, inferenceApi, providerType, configKey) => {
+      vi.stubEnv(credentialEnv, "real-upstream-secret");
+      const adapter = mockAdapter();
+      const capture = providerCapture({ providerName: provider, providerType, credentialEnv });
+      const config: ConfigObject = {
+        agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } },
+        models: { providers: { inference: { api: "openai-completions", models: [] } } },
+      };
+      const deps = createDeps({
+        config,
+        entry: {
+          name: "alpha",
+          agent: "openclaw",
+          provider: "nvidia-prod",
+          model: "nvidia/model-a",
+        },
+        session: baseSession({ provider: "nvidia-prod", model: "nvidia/model-a" }),
+        ensureHttpsPinRuntimeAdapter: adapter,
+        captureOpenshell: capture,
+      });
 
-    await runInferenceSet(
-      {
+      await runInferenceSet(
+        {
+          provider,
+          model: "mock-model",
+          endpointUrl: "https://compatible.example/v1",
+          credentialEnv,
+          inferenceApi,
+        },
+        deps,
+      );
+
+      expect(adapter).toHaveBeenCalledWith(
+        expect.objectContaining({ credentialValue: "real-upstream-secret", providerType }),
+      );
+      expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
+        "alpha",
+        expect.objectContaining({ provider, endpointUrl: ADAPTER_BASE_URL, credentialEnv }),
+      ]);
+      expect(deps.getSession()).toMatchObject({
         provider,
-        model: "mock-model",
-        endpointUrl: "https://compatible.example/v1",
+        endpointUrl: ADAPTER_BASE_URL,
         credentialEnv,
-        inferenceApi,
-      },
-      deps,
-    );
+      });
+      expect(JSON.stringify(deps.calls.updateSandbox.mock.calls)).not.toContain(
+        "compatible.example",
+      );
+      expect(JSON.stringify(deps.calls.updateSandbox.mock.calls)).not.toContain("/v1");
+      expect(process.env[HTTPS_PIN_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV]).toBeUndefined();
 
-    expect(adapter).toHaveBeenCalledWith(
-      expect.objectContaining({ credentialValue: "real-upstream-secret", providerType }),
-    );
-    expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
-      "alpha",
-      expect.objectContaining({ provider, endpointUrl: ADAPTER_BASE_URL, credentialEnv }),
-    ]);
-    expect(deps.getSession()).toMatchObject({
-      provider,
-      endpointUrl: ADAPTER_BASE_URL,
-      credentialEnv,
-    });
-    expect(JSON.stringify(deps.calls.updateSandbox.mock.calls)).not.toContain("compatible.example");
-    expect(JSON.stringify(deps.calls.updateSandbox.mock.calls)).not.toContain("/v1");
-    expect(process.env[HTTPS_PIN_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV]).toBeUndefined();
-
-    const mutation = capture.mock.calls.find(
-      ([args]) => args[0] === "provider" && args[1] === "update",
-    );
-    expect(mutation?.[0]).toContain(`${configKey}=${ADAPTER_BASE_URL}`);
-    expect(mutation?.[1]).toEqual(
-      expect.objectContaining({ env: { [credentialEnv]: ADAPTER_TOKEN } }),
-    );
-    expect(JSON.stringify(capture.mock.calls)).not.toContain("real-upstream-secret");
-    expect(JSON.stringify(capture.mock.calls)).not.toContain("compatible.example");
-    expect(capture).toHaveBeenCalledWith(
-      expect.arrayContaining(["inference", "set", "--no-verify"]),
-      expect.any(Object),
-    );
-    const inferenceSetIndex = capture.mock.calls.findIndex(
-      ([args]) => args[0] === "inference" && args[1] === "set",
-    );
-    const providerUpdateIndex = capture.mock.calls.findIndex(
-      ([args]) => args[0] === "provider" && args[1] === "update",
-    );
-    expect(inferenceSetIndex).toBeGreaterThanOrEqual(0);
-    expect(providerUpdateIndex).toBeGreaterThan(inferenceSetIndex);
-  });
+      const mutation = capture.mock.calls.find(
+        ([args]) => args[0] === "provider" && args[1] === "update",
+      );
+      expect(mutation?.[0]).toContain(`${configKey}=${ADAPTER_BASE_URL}`);
+      expect(mutation?.[1]).toEqual(
+        expect.objectContaining({ env: { [credentialEnv]: ADAPTER_TOKEN } }),
+      );
+      expect(JSON.stringify(capture.mock.calls)).not.toContain("real-upstream-secret");
+      expect(JSON.stringify(capture.mock.calls)).not.toContain("compatible.example");
+      expect(capture).toHaveBeenCalledWith(
+        expect.arrayContaining(["inference", "set", "--no-verify"]),
+        expect.any(Object),
+      );
+      const inferenceSetIndex = capture.mock.calls.findIndex(
+        ([args]) => args[0] === "inference" && args[1] === "set",
+      );
+      const providerUpdateIndex = capture.mock.calls.findIndex(
+        ([args]) => args[0] === "provider" && args[1] === "update",
+      );
+      expect(inferenceSetIndex).toBeGreaterThanOrEqual(0);
+      expect(providerUpdateIndex).toBeGreaterThan(inferenceSetIndex);
+    },
+  );
 
   it("uses the OpenAI provider surface for a Hermes compatible-Anthropic route", async () => {
     vi.stubEnv("COMPATIBLE_ANTHROPIC_API_KEY", "real-hermes-upstream-secret");
@@ -279,7 +284,80 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
     expect(providerUpdates).toHaveLength(0);
   });
 
-  it("restores the prior inference selection when the deferred provider update fails", async () => {
+  it("fails before route selection when the provider revision becomes stale (#9806)", async () => {
+    vi.stubEnv("COMPATIBLE_API_KEY", "real-upstream-secret");
+    const capture = providerCapture({
+      providerName: "compatible-endpoint",
+      providerType: "openai",
+      credentialEnv: "COMPATIBLE_API_KEY",
+    });
+    const deps = createDeps({
+      config: {},
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "nvidia-prod",
+        model: "old-model",
+      },
+      session: baseSession({ provider: "nvidia-prod", model: "old-model" }),
+      ensureHttpsPinRuntimeAdapter: mockAdapter(),
+      captureOpenshell: capture,
+    });
+    const getProvider = vi
+      .spyOn(deps.providerAdapter, "getProvider")
+      .mockResolvedValueOnce({
+        ok: true,
+        value: {
+          name: "compatible-endpoint",
+          type: "openai",
+          credentialKeys: ["COMPATIBLE_API_KEY"],
+          configKeys: ["OPENAI_BASE_URL"],
+          revision: { id: PROVIDER_ID, resourceVersion: 4 },
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        value: {
+          name: "compatible-endpoint",
+          type: "openai",
+          credentialKeys: ["COMPATIBLE_API_KEY"],
+          configKeys: ["OPENAI_BASE_URL"],
+          revision: { id: PROVIDER_ID, resourceVersion: 5 },
+        },
+      });
+    const importProviderProfile = vi.spyOn(deps.providerAdapter, "importProviderProfile");
+    const updateProvider = vi.spyOn(deps.providerAdapter, "updateProvider");
+
+    await expect(
+      runInferenceSet(
+        {
+          provider: "compatible-endpoint",
+          model: "new-model",
+          endpointUrl: "https://compatible.example/v1",
+          credentialEnv: "COMPATIBLE_API_KEY",
+          inferenceApi: "openai-completions",
+        },
+        deps,
+      ),
+    ).rejects.toThrow("changed after it was inspected; no provider mutation was attempted");
+
+    expect(getProvider.mock.calls).toEqual([
+      [{ target: { kind: "named", gatewayName: "nemoclaw" }, providerName: "compatible-endpoint" }],
+      [{ target: { kind: "named", gatewayName: "nemoclaw" }, providerName: "compatible-endpoint" }],
+    ]);
+    expect(importProviderProfile).not.toHaveBeenCalled();
+    expect(updateProvider).not.toHaveBeenCalled();
+    expect(
+      capture.mock.calls.filter(([args]) => args[0] === "inference" && args[1] === "set"),
+    ).toHaveLength(0);
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.calls.updateSession).not.toHaveBeenCalled();
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+    expect(deps.calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
+    expect(deps.calls.appendAuditEntry).not.toHaveBeenCalled();
+  });
+
+  it("restores the prior selection and reports partial state after a failed provider command (#9806)", async () => {
     vi.stubEnv("COMPATIBLE_API_KEY", "real-upstream-secret");
     const capture = providerCapture({
       providerName: "compatible-endpoint",
@@ -309,20 +387,24 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
       captureOpenshell: capture,
     });
 
-    await expect(
-      runInferenceSet(
-        {
-          provider: "compatible-endpoint",
-          model: "new-model",
-          endpointUrl: "https://compatible.example/v1",
-          credentialEnv: "COMPATIBLE_API_KEY",
-          inferenceApi: "openai-completions",
-        },
-        deps,
-      ),
-    ).rejects.toThrow(
-      "The previous OpenShell inference selection was restored to 'nvidia-prod' / 'old-model'",
+    const failure = await runInferenceSet(
+      {
+        provider: "compatible-endpoint",
+        model: "new-model",
+        endpointUrl: "https://compatible.example/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        inferenceApi: "openai-completions",
+      },
+      deps,
+    ).catch((error: Error) => error);
+
+    expect(failure).toBeInstanceOf(InferenceSetError);
+    const message = (failure as Error).message;
+    expect(message).toContain(
+      "The previous OpenShell inference selection was restored. Provider state may still be partial.",
     );
+    expect(message).toContain("provider update failed");
+    expect(message).toContain("Rerun onboarding to reconcile the provider");
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
     const selectionMutations = capture.mock.calls.filter(
       ([args]) => args[0] === "inference" && args[1] === "set",
@@ -337,6 +419,218 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
         "--no-verify",
       ]),
     );
+    expect(selectionMutations[1]?.[0]).toEqual(
+      expect.arrayContaining(["--provider", "nvidia-prod", "--model", "old-model", "--no-verify"]),
+    );
+  });
+
+  it("restores the prior selection when provider profile preparation fails (#9806)", async () => {
+    vi.stubEnv("COMPATIBLE_API_KEY", "real-upstream-secret");
+    const capture = providerCapture({
+      providerName: "compatible-endpoint",
+      providerType: "openai",
+      credentialEnv: "COMPATIBLE_API_KEY",
+    });
+    const deps = createDeps({
+      config: {},
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "nvidia-prod",
+        model: "old-model",
+      },
+      session: baseSession({ provider: "nvidia-prod", model: "old-model" }),
+      ensureHttpsPinRuntimeAdapter: mockAdapter(),
+      captureOpenshell: capture,
+    });
+    vi.spyOn(deps.providerAdapter, "importProviderProfile").mockResolvedValue({
+      ok: false,
+      error: {
+        kind: "command",
+        reason: "failed",
+        message: "redacted profile failure",
+      },
+    });
+
+    const failure = await runInferenceSet(
+      {
+        provider: "compatible-endpoint",
+        model: "new-model",
+        endpointUrl: "https://compatible.example/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        inferenceApi: "openai-completions",
+      },
+      deps,
+    ).catch((error: Error) => error);
+
+    expect(failure).toBeInstanceOf(InferenceSetError);
+    const message = (failure as Error).message;
+    expect(message).toContain("redacted profile failure");
+    expect(message).toContain(
+      "The previous OpenShell inference selection was restored. The provider binding was not changed.",
+    );
+
+    const selectionMutations = capture.mock.calls.filter(
+      ([args]) => args[0] === "inference" && args[1] === "set",
+    );
+    expect(selectionMutations).toHaveLength(2);
+    expect(selectionMutations[0]?.[0]).toEqual(
+      expect.arrayContaining([
+        "--provider",
+        "compatible-endpoint",
+        "--model",
+        "new-model",
+        "--no-verify",
+      ]),
+    );
+    expect(selectionMutations[1]?.[0]).toEqual(
+      expect.arrayContaining(["--provider", "nvidia-prod", "--model", "old-model", "--no-verify"]),
+    );
+    expect(
+      capture.mock.calls.filter(([args]) => args[0] === "provider" && args[1] === "update"),
+    ).toHaveLength(0);
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.calls.updateSession).not.toHaveBeenCalled();
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+    expect(deps.calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
+    expect(deps.calls.appendAuditEntry).not.toHaveBeenCalled();
+  });
+
+  it("reports reconciliation when provider update and selection restore both fail (#9806)", async () => {
+    vi.stubEnv("COMPATIBLE_API_KEY", "real-upstream-secret");
+    const capture = providerCapture({
+      providerName: "compatible-endpoint",
+      providerType: "openai",
+      credentialEnv: "COMPATIBLE_API_KEY",
+    });
+    const original = capture.getMockImplementation() as InferenceSetDeps["captureOpenshell"];
+    let inferenceSetCalls = 0;
+    const restoreFailure = {
+      status: 1,
+      stdout: "",
+      stderr: "selection restore failed",
+      output: "selection restore failed",
+    };
+    const inferenceSetResults = [null, restoreFailure];
+    capture.mockImplementation((args, opts) => {
+      switch (`${args[0]}:${args[1]}`) {
+        case "provider:update":
+          return {
+            status: 1,
+            stdout: "",
+            stderr: "provider update failed",
+            output: "provider update failed",
+          };
+        case "inference:set": {
+          const result = inferenceSetResults[inferenceSetCalls++];
+          return result ?? original(args, opts);
+        }
+        default:
+          return original(args, opts);
+      }
+    });
+    const deps = createDeps({
+      config: {},
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "nvidia-prod",
+        model: "old-model",
+      },
+      session: baseSession({ provider: "nvidia-prod", model: "old-model" }),
+      ensureHttpsPinRuntimeAdapter: mockAdapter(),
+      captureOpenshell: capture,
+    });
+
+    const failure = await runInferenceSet(
+      {
+        provider: "compatible-endpoint",
+        model: "new-model",
+        endpointUrl: "https://compatible.example/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        inferenceApi: "openai-completions",
+      },
+      deps,
+    ).catch((error: Error) => error);
+
+    expect(failure).toBeInstanceOf(InferenceSetError);
+    const message = (failure as Error).message;
+    expect(message).toContain("provider update failed");
+    expect(message).toContain(
+      "Failed to restore the previous OpenShell inference selection 'nvidia-prod' / 'old-model': " +
+        "the restore command exited with status 1",
+    );
+    expect(message).toContain(
+      "The live selection and provider binding may be split; rerun onboarding before using this route.",
+    );
+
+    const selectionMutations = capture.mock.calls.filter(
+      ([args]) => args[0] === "inference" && args[1] === "set",
+    );
+    expect(selectionMutations).toHaveLength(2);
+    expect(selectionMutations[0]?.[0]).toEqual(
+      expect.arrayContaining([
+        "--provider",
+        "compatible-endpoint",
+        "--model",
+        "new-model",
+        "--no-verify",
+      ]),
+    );
+    expect(selectionMutations[1]?.[0]).toEqual(
+      expect.arrayContaining(["--provider", "nvidia-prod", "--model", "old-model", "--no-verify"]),
+    );
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.calls.updateSession).not.toHaveBeenCalled();
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+    expect(deps.calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
+    expect(deps.calls.appendAuditEntry).not.toHaveBeenCalled();
+  });
+
+  it("restores the prior selection and reports partial state after an uncertain provider failure (#9806)", async () => {
+    vi.stubEnv("COMPATIBLE_API_KEY", "real-upstream-secret");
+    const capture = providerCapture({
+      providerName: "compatible-endpoint",
+      providerType: "openai",
+      credentialEnv: "COMPATIBLE_API_KEY",
+    });
+    const deps = createDeps({
+      config: {},
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "nvidia-prod",
+        model: "old-model",
+      },
+      ensureHttpsPinRuntimeAdapter: mockAdapter(),
+      captureOpenshell: capture,
+    });
+    vi.spyOn(deps.providerAdapter, "updateProvider").mockResolvedValue({
+      ok: false,
+      error: { kind: "command", reason: "uncertain", message: "safe uncertain failure" },
+    });
+
+    const failure = await runInferenceSet(
+      {
+        provider: "compatible-endpoint",
+        model: "new-model",
+        endpointUrl: "https://compatible.example/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        inferenceApi: "openai-completions",
+      },
+      deps,
+    ).catch((error: Error) => error);
+
+    expect(failure).toBeInstanceOf(InferenceSetError);
+    const message = (failure as Error).message;
+    expect(message).toContain(
+      "The previous OpenShell inference selection was restored. Provider state may still be partial.",
+    );
+    expect(message).toContain("safe uncertain failure");
+    const selectionMutations = capture.mock.calls.filter(
+      ([args]) => args[0] === "inference" && args[1] === "set",
+    );
+    expect(selectionMutations).toHaveLength(2);
     expect(selectionMutations[1]?.[0]).toEqual(
       expect.arrayContaining(["--provider", "nvidia-prod", "--model", "old-model", "--no-verify"]),
     );

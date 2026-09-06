@@ -15,12 +15,21 @@ const ANSI_CSI_PATTERN = /\x1B\[[0-?]*[ -/]*[@-~]/gu;
 const LEADING_FIELD_LABEL_RESET_PATTERN = /^(?:\x1B\[0m)*[ \t]*/u;
 const UNSAFE_FIELD_VALUE_CONTROL_PATTERN = /[\x00-\x08\x0A-\x1F\x7F-\x9F]/u;
 
-type ProviderField = "Name" | "Type" | "Credential keys" | "Config keys";
+type ProviderField =
+  | "Name"
+  | "Id"
+  | "Type"
+  | "Resource version"
+  | "Credential keys"
+  | "Config keys";
 
-const PROVIDER_FIELD_PATTERN = /^\s*(Name|Type|Credential keys|Config keys):\s*(.*?)\s*$/i;
+const PROVIDER_FIELD_PATTERN =
+  /^\s*(Name|Id|Type|Resource version|Credential keys|Config keys):\s*(.*?)\s*$/i;
 const CANONICAL_PROVIDER_FIELDS = new Map<string, ProviderField>([
   ["name", "Name"],
+  ["id", "Id"],
   ["type", "Type"],
+  ["resource version", "Resource version"],
   ["credential keys", "Credential keys"],
   ["config keys", "Config keys"],
 ]);
@@ -92,5 +101,27 @@ export function parseCliOpenShellProviderMetadata(
   const credentialKeys = parseProviderKeys(credentialKeysValue);
   const configKeys = parseProviderKeys(configKeysValue);
   if (!credentialKeys || !configKeys) return null;
-  return { name, type, credentialKeys, configKeys };
+
+  const id = fields.get("Id");
+  const resourceVersionValue = fields.get("Resource version");
+  if ((id === undefined) !== (resourceVersionValue === undefined)) return null;
+  if (id === undefined || resourceVersionValue === undefined) {
+    return { name, type, credentialKeys, configKeys, revision: null };
+  }
+  const resourceVersion = Number(resourceVersionValue);
+  if (
+    !isValidCliOpenShellProviderIdentifier(id) ||
+    !/^[0-9]+$/u.test(resourceVersionValue) ||
+    !Number.isSafeInteger(resourceVersion) ||
+    resourceVersion < 1
+  ) {
+    return null;
+  }
+  return {
+    name,
+    type,
+    credentialKeys,
+    configKeys,
+    revision: { id, resourceVersion },
+  };
 }
