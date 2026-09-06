@@ -14,6 +14,24 @@ export function isN1xManagedVllmProviderModel(
   return provider === N1X_EXPRESS_PROVIDER && model === N1X_EXPRESS_MODEL;
 }
 
+export interface DeferredN1xManagedVllmAcceptanceRoute {
+  provider?: string | null;
+  model?: string | null;
+  nimContainer?: unknown;
+  openshellDriver?: string | null;
+}
+
+/** True only when durable Deferred N1x acceptance is valid for this route. */
+export function isDeferredN1xManagedVllmAcceptanceRoute(
+  route: DeferredN1xManagedVllmAcceptanceRoute,
+): boolean {
+  return (
+    isN1xManagedVllmProviderModel(route.provider, route.model) &&
+    route.nimContainer == null &&
+    route.openshellDriver === "docker"
+  );
+}
+
 export interface RecordedN1xManagedVllmRoute {
   provider?: string | null;
   model?: string | null;

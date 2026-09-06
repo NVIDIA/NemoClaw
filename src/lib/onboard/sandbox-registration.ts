@@ -3,7 +3,7 @@
 
 import { isDeepStrictEqual } from "node:util";
 import type { AgentDefinition } from "../agent/defs";
-import { isN1xManagedVllmProviderModel } from "../domain/sandbox/n1x-managed-vllm-rebuild";
+import { isDeferredN1xManagedVllmAcceptanceRoute } from "../domain/sandbox/n1x-managed-vllm-rebuild";
 import type {
   InferenceEndpointSource,
   InferenceSelection,
@@ -222,12 +222,10 @@ export function buildCreatedSandboxRegistryEntry(
   }
   const deferredN1xManagedVllmAccepted =
     input.deferredN1xManagedVllmPreviewIntent === true &&
-    isN1xManagedVllmProviderModel(
-      input.inferenceSelection.provider,
-      input.inferenceSelection.model,
-    ) &&
-    input.inferenceSelection.nimContainer == null &&
-    input.runtimeFields.openshellDriver === "docker";
+    isDeferredN1xManagedVllmAcceptanceRoute({
+      ...input.inferenceSelection,
+      openshellDriver: input.runtimeFields.openshellDriver,
+    });
   if (input.deferredN1xManagedVllmPreviewIntent !== undefined && !deferredN1xManagedVllmAccepted) {
     throw new RuntimeProviderSelectionError(
       "Sandbox Deferred N1x preview acceptance failed closed validation.",

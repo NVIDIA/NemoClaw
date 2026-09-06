@@ -165,9 +165,10 @@ describe("handlePreflightState", () => {
   });
 
   it.each([
-    ["N1x", "n1x", true],
-    ["DGX Spark", "spark", false],
-  ] as const)("binds managed-vLLM preview admission to %s", async (_name, platform, expected) => {
+    ["N1x", "n1x", undefined, true],
+    ["DGX Spark", "spark", undefined, false],
+    ["an explicit rebuild denial", "n1x", false, false],
+  ] as const)("binds managed-vLLM preview admission to %s", async (_name, platform, allow, expected) => {
     const harness = createDeps({
       runPreflight: vi.fn(async () => ({ type: "nvidia", platform }) as Gpu),
     });
@@ -175,6 +176,7 @@ describe("handlePreflightState", () => {
     const result = await handlePreflightState({
       ...baseOptions(harness.deps),
       env: { NEMOCLAW_PROVIDER: "install-vllm" },
+      ...(allow === undefined ? {} : { allowDeferredN1xManagedVllm: allow }),
     });
 
     expect(result.deferredN1xOnboardingAdmitted).toBe(expected);

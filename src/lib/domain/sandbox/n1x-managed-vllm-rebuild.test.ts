@@ -12,7 +12,28 @@ import {
   parseHostLocalInferenceReceipt,
   serializeHostLocalInferenceReceipt,
 } from "../../onboard/runtime-provider/host-local-inference";
-import { isRecordedN1xManagedVllmRebuildEligible } from "./n1x-managed-vllm-rebuild";
+import {
+  isDeferredN1xManagedVllmAcceptanceRoute,
+  isRecordedN1xManagedVllmRebuildEligible,
+} from "./n1x-managed-vllm-rebuild";
+
+describe("Deferred N1x managed-vLLM acceptance route", () => {
+  const accepted = {
+    provider: "vllm-local",
+    model: "nvidia/Qwen3.6-35B-A3B-NVFP4",
+    nimContainer: null,
+    openshellDriver: "docker",
+  };
+
+  it.each([
+    ["the exact route", accepted, true],
+    ["another model", { ...accepted, model: "other" }, false],
+    ["a NIM container", { ...accepted, nimContainer: "nemoclaw-nim" }, false],
+    ["another driver", { ...accepted, openshellDriver: "kubernetes" }, false],
+  ])("classifies %s", (_case, route, expected) => {
+    expect(isDeferredN1xManagedVllmAcceptanceRoute(route)).toBe(expected);
+  });
+});
 
 describe("recorded N1x managed-vLLM rebuild eligibility", () => {
   const n1xExpressEntry = {

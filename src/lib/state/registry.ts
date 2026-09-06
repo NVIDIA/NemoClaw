@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isDeepStrictEqual } from "node:util";
-import { isN1xManagedVllmProviderModel } from "../domain/sandbox/n1x-managed-vllm-rebuild";
+import { isDeferredN1xManagedVllmAcceptanceRoute } from "../domain/sandbox/n1x-managed-vllm-rebuild";
 import type { InferenceSelection } from "../inference/selection";
 import {
   inferenceSelectionRegistryFields,
@@ -407,9 +407,7 @@ export function registerSandbox(
     if (
       entry.deferredN1xManagedVllmAccepted !== undefined &&
       (entry.deferredN1xManagedVllmAccepted !== true ||
-        !isN1xManagedVllmProviderModel(entry.provider, entry.model) ||
-        entry.nimContainer != null ||
-        entry.openshellDriver !== "docker")
+        !isDeferredN1xManagedVllmAcceptanceRoute(entry))
     ) {
       throw new Error("Cannot register a sandbox with invalid N1x preview acceptance");
     }

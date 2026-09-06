@@ -3,19 +3,206 @@
 
 import { expect, it, vi } from "vitest";
 
+import { createSession, type Session, type SessionUpdates } from "../state/onboard-session";
 import type { SandboxEntry } from "../state/registry";
 import { createOnboardCreatedSandboxCompletion } from "./created-sandbox-finalization";
+import {
+  createProviderInferenceOnboardFlowPhase,
+  createSandboxOnboardFlowPhase,
+} from "./machine/core-flow-phases";
+import { prepareCoreOnboardFlowContext } from "./machine/flow-handoff";
+import { createDeps as createProviderDeps } from "./machine/handlers/provider-inference.test-support";
+import { createDeps as createSandboxDeps } from "./machine/handlers/sandbox-test-fixtures";
+import {
+  createInitialOnboardFlowPhases,
+  type InitialOnboardFlowContext,
+} from "./machine/initial-flow-phases";
 import { pendingSandboxCreateIdentityForBoundary } from "./sandbox-create/identity-boundary";
 import type { SandboxGpuCreateFlowResult } from "./sandbox-gpu-create-flow";
-import { buildCreatedSandboxRegistryEntry } from "./sandbox-registration";
+import {
+  buildCreatedSandboxRegistryEntry,
+  type CreatedSandboxRegistrationInput,
+} from "./sandbox-registration";
 
-it("persists admitted N1x preview intent through final registration (#10959)", async () => {
-  const sandboxName = "n1x-preview";
+const sandboxName = "n1x-preview";
+const model = "nvidia/Qwen3.6-35B-A3B-NVFP4";
+const provider = "vllm-local";
+const env = { NEMOCLAW_PROVIDER: "install-vllm" };
+
+type Gpu = { type: "nvidia"; platform: "n1x" | "spark" };
+type GpuConfig = {
+  sandboxGpuEnabled: boolean;
+  mode: string;
+  hostGpuPlatform: Gpu["platform"];
+  sandboxGpuDevice: null;
+};
+type FlowContext = InitialOnboardFlowContext<null, Gpu, GpuConfig>;
+type CreateIntent = { deferredN1xManagedVllmPreviewIntent?: true };
+
+function flowContext(session: Session, resume: boolean): FlowContext {
+  return {
+    resume,
+    fresh: !resume,
+    session,
+    agent: null,
+    recordedSandboxName: resume ? sandboxName : null,
+    requestedSandboxName: sandboxName,
+    sandboxName,
+    fromDockerfile: null,
+    model: resume ? model : null,
+    provider: resume ? provider : null,
+    endpointUrl: null,
+    credentialEnv: null,
+    hermesAuthMethod: null,
+    hermesToolGateways: [],
+    preferredInferenceApi: "openai-completions",
+    compatibleEndpointReasoning: null,
+    compatibleEndpointReasoningEffort: null,
+    nimContainer: null,
+    webSearchConfig: null,
+    webSearchSupported: false,
+    selectedMessagingChannels: [],
+    gpu: null,
+    sandboxGpuConfig: null,
+    gpuPassthrough: false,
+    resumeHasResolvedGpuIntent: false,
+    requestedGpuPassthrough: true,
+  };
+}
+
+async function createIntentThroughOnboardFlow(input: {
+  resume: boolean;
+  platform: Gpu["platform"];
+  allowDeferredN1xManagedVllm?: boolean;
+}): Promise<{ admitted: boolean; createIntent: CreateIntent }> {
+  const session = createSession({
+    provider: input.resume ? provider : null,
+    model: input.resume ? model : null,
+  });
+  session.steps.preflight = input.resume
+    ? {
+        status: "complete",
+        startedAt: "2026-09-06T00:00:00.000Z",
+        completedAt: "2026-09-06T00:01:00.000Z",
+        error: null,
+      }
+    : session.steps.preflight;
+  const gpu: Gpu = { type: "nvidia", platform: input.platform };
+  const gpuConfig = (): GpuConfig => ({
+    sandboxGpuEnabled: true,
+    mode: "1",
+    hostGpuPlatform: input.platform,
+    sandboxGpuDevice: null,
+  });
+  const [preflightPhase] = createInitialOnboardFlowPhases({
+    explicitSandboxGpuFlag: null,
+    sandboxGpuDevice: null,
+    gpuRequested: true,
+    noGpu: false,
+    allowDeferredN1xManagedVllm: input.allowDeferredN1xManagedVllm,
+    env,
+    platform: "darwin",
+    recordedGpuPassthroughBeforePreflight: false,
+    ensureResumePreflightDashboardPortAvailable: vi.fn(),
+    preflightDeps: {
+      getSandbox: () => null,
+      getResumeSandboxGpuOverrides: () => ({ flag: null, device: null }),
+      detectGpuForReadiness: () => gpu,
+      detectGpu: () => gpu,
+      runPreflight: async () => gpu,
+      assessHost: () => ({}),
+      providerNameToOptionKey: () => null,
+      assertOnboardHostReadiness: vi.fn(),
+      resolveSandboxGpuConfig: gpuConfig,
+      validateSandboxGpuPreflight: vi.fn(),
+      skippedStepMessage: vi.fn(),
+      recordStateSkipped: async () => session,
+      startRecordedStep: vi.fn(),
+      recordStepComplete: async () => session,
+      updateSession: (mutator) => mutator(session) ?? session,
+    },
+    getInitialGatewayReuseState: () => "healthy",
+    assertGatewayReadiness: vi.fn(),
+    gatewayName: "nemoclaw",
+    recreateSandbox: () => false,
+    gatewayDeps: {} as never,
+    note: vi.fn(),
+  });
+  const preflight = await preflightPhase.run(flowContext(session, input.resume));
+  const coreContext = prepareCoreOnboardFlowContext({
+    initial: { context: preflight.context, session: preflight.context.session ?? session },
+    recordedSandboxName: input.resume ? sandboxName : null,
+    requestedSandboxName: sandboxName,
+    checkpointedSandboxName: null,
+    selectedMessagingChannels: [],
+    assertSandboxNameAllowed: vi.fn(),
+  });
+  const providerHarness = createProviderDeps({
+    setupNim: vi.fn(async () => ({
+      model,
+      provider,
+      endpointUrl: null,
+      credentialEnv: null,
+      hermesAuthMethod: null,
+      hermesToolGateways: [],
+      preferredInferenceApi: "openai-completions",
+      compatibleEndpointReasoning: null,
+      compatibleEndpointReasoningEffort: null,
+      nimContainer: null,
+    })),
+    recordStepComplete: vi.fn(async (_stepName: string, updates: SessionUpdates = {}) => {
+      Object.assign(session, updates);
+      return session;
+    }),
+  });
+  const endpointProvenance = { getSandboxRegistryEntry: () => null };
+  const providerPhase = createProviderInferenceOnboardFlowPhase<typeof coreContext, object>({
+    gatewayName: "nemoclaw",
+    forceProviderSelection: true,
+    inspectSandboxForCreate: () => ({
+      existingEntry: null,
+      preservedMcpState: undefined,
+      liveExists: false,
+    }),
+    endpointProvenance,
+    env,
+    constants: {
+      hermesProviderName: "hermes",
+      hermesApiKeyAuthMethod: "api_key",
+      hermesApiKeyCredentialEnv: "HERMES_API_KEY",
+    },
+    deps: providerHarness.deps as never,
+  });
+  const providerResult = await providerPhase.run(coreContext);
+  const sandboxHarness = createSandboxDeps({}, providerResult.context.session ?? session);
+  const sandboxPhase = createSandboxOnboardFlowPhase<typeof providerResult.context>({
+    gatewayName: "nemoclaw",
+    resumeAgentChanged: false,
+    endpointProvenance,
+    recreateSandbox: () => false,
+    controlUiPort: null,
+    rootDir: "/repo",
+    env,
+    deps: sandboxHarness.deps as never,
+  });
+  await sandboxPhase.run(providerResult.context);
+  return {
+    admitted: preflight.context.deferredN1xOnboardingAdmitted === true,
+    createIntent: (
+      sandboxHarness.calls.createSandbox.mock.calls[0] as unknown[]
+    )[15] as CreateIntent,
+  };
+}
+
+async function completeRegistration(createIntent: CreateIntent): Promise<{
+  input: CreatedSandboxRegistrationInput;
+  registered: SandboxEntry;
+}> {
   const lifecycleGeneration = "generation-1";
   const lifecycleLiveIdentityFingerprint = "a".repeat(64);
   const inferenceSelection = {
-    provider: "vllm-local",
-    model: "nvidia/Qwen3.6-35B-A3B-NVFP4",
+    provider,
+    model,
     endpointUrl: null,
     endpointSource: null,
     credentialEnv: null,
@@ -41,6 +228,7 @@ it("persists admitted N1x preview intent through final registration (#10959)", a
     },
     entry: { name: sandboxName },
   } as never;
+  let registrationInput: CreatedSandboxRegistrationInput | undefined;
   const completion = createOnboardCreatedSandboxCompletion(
     sandboxName,
     null,
@@ -50,11 +238,7 @@ it("persists admitted N1x preview intent through final registration (#10959)", a
     { customOpenClawImage: false, isManagedDcodeAgent: false },
     { ...inferenceSelection, preferredInferenceApi: "openai-completions" },
     {
-      createIntent: {
-        endpointSource: null,
-        deferredN1xManagedVllmPreviewIntent: true,
-        observabilityEnabled: false,
-      },
+      createIntent: { endpointSource: null, ...createIntent, observabilityEnabled: false },
       resolvedCreateIntent: { policy: { options: {} } },
     },
     {
@@ -86,11 +270,7 @@ it("persists admitted N1x preview intent through final registration (#10959)", a
     },
     null,
     "build-1",
-    {
-      hostGpuPlatform: "n1x",
-      sandboxGpuEnabled: true,
-      sandboxGpuDevice: null,
-    },
+    { hostGpuPlatform: "n1x", sandboxGpuEnabled: true, sandboxGpuDevice: null },
     true,
     vi.fn(),
     vi.fn(),
@@ -110,7 +290,12 @@ it("persists admitted N1x preview intent through final registration (#10959)", a
       fallbackDiagnostic: null,
     },
     vi.fn(),
-    { registerCreatedSandbox: (input) => buildCreatedSandboxRegistryEntry(input) },
+    {
+      registerCreatedSandbox: (input) => {
+        registrationInput = input;
+        return buildCreatedSandboxRegistryEntry(input);
+      },
+    },
   );
   const created = {
     origin: "created",
@@ -130,7 +315,6 @@ it("persists admitted N1x preview intent through final registration (#10959)", a
       lifecycleLiveIdentityFingerprint: string;
     }) => registration,
   };
-
   const registered = (await completion.complete(
     created,
     null,
@@ -139,6 +323,29 @@ it("persists admitted N1x preview intent through final registration (#10959)", a
     () => ({ lifecycleGeneration }),
     lifecycle,
   )) as SandboxEntry;
+  return { input: registrationInput as unknown as CreatedSandboxRegistrationInput, registered };
+}
 
-  expect(registered.deferredN1xManagedVllmAccepted).toBe(true);
-});
+it.each([
+  ["fresh N1x", false, "n1x", undefined, true],
+  ["resumed N1x", true, "n1x", undefined, true],
+  ["DGX Spark", false, "spark", undefined, false],
+  ["explicit rebuild denial", false, "n1x", false, false],
+] as const)(
+  "carries %s admission through production final registration (#10959)",
+  async (_case, resume, platform, allow, expected) => {
+    const flow = await createIntentThroughOnboardFlow({
+      resume,
+      platform,
+      ...(allow === undefined ? {} : { allowDeferredN1xManagedVllm: allow }),
+    });
+    const registration = await completeRegistration(flow.createIntent);
+
+    expect([
+      flow.admitted,
+      flow.createIntent.deferredN1xManagedVllmPreviewIntent,
+      registration.input.deferredN1xManagedVllmPreviewIntent,
+      registration.registered.deferredN1xManagedVllmAccepted,
+    ]).toEqual(expected ? [true, true, true, true] : [false, undefined, undefined, undefined]);
+  },
+);

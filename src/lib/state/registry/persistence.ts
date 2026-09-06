@@ -4,7 +4,7 @@
 import path from "node:path";
 import { isObjectRecord } from "../../core/json-types";
 import { GATEWAY_PORT } from "../../core/ports";
-import { isN1xManagedVllmProviderModel } from "../../domain/sandbox/n1x-managed-vllm-rebuild";
+import { isDeferredN1xManagedVllmAcceptanceRoute } from "../../domain/sandbox/n1x-managed-vllm-rebuild";
 import { parseServingProfileProvenance } from "../../inference/serving/profile-provenance";
 import { readConfigFile, writeConfigFile } from "../config-io";
 import { normalizeExtraProviders } from "../extra-providers";
@@ -91,10 +91,7 @@ function normalizeDeferredN1xManagedVllmAcceptance(
   const value = entry.deferredN1xManagedVllmAccepted;
   if (
     value !== undefined &&
-    (value !== true ||
-      !isN1xManagedVllmProviderModel(entry.provider, entry.model) ||
-      entry.nimContainer != null ||
-      entry.openshellDriver !== "docker")
+    (value !== true || !isDeferredN1xManagedVllmAcceptanceRoute(entry))
   ) {
     throw new Error(`Cannot ${operation} a sandbox entry with invalid N1x preview acceptance`);
   }
