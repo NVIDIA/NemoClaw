@@ -220,9 +220,7 @@ describe("OpenClaw native skill remove patch", () => {
         throw new Error("controlled publication interruption");
       });
 
-    expect(() => patchOpenClawSkillRemove(dist)).toThrow(
-      "controlled publication interruption",
-    );
+    expect(() => patchOpenClawSkillRemove(dist)).toThrow("controlled publication interruption");
     rename.mockRestore();
     expect(fs.readFileSync(cliFile, "utf8")).toContain(MARKER);
     expect(fs.readFileSync(stateFile, "utf8")).not.toContain(INSTALL_INTEGRITY_MARKER);

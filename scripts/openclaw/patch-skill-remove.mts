@@ -407,10 +407,7 @@ function atomicWriteTextFile(filePath: string, text: string): void {
   try {
     descriptor = fs.openSync(
       temporary,
-      fs.constants.O_CREAT |
-        fs.constants.O_EXCL |
-        fs.constants.O_RDWR |
-        fs.constants.O_NOFOLLOW,
+      fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_RDWR | fs.constants.O_NOFOLLOW,
       0o600,
     );
     fs.fchownSync(descriptor, metadata.uid, metadata.gid);
@@ -423,13 +420,7 @@ function atomicWriteTextFile(filePath: string, text: string): void {
     const observed = Buffer.alloc(payload.length);
     offset = 0;
     while (offset < observed.length) {
-      const bytes = fs.readSync(
-        descriptor,
-        observed,
-        offset,
-        observed.length - offset,
-        offset,
-      );
+      const bytes = fs.readSync(descriptor, observed, offset, observed.length - offset, offset);
       if (bytes === 0) break;
       offset += bytes;
     }

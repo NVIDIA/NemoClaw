@@ -397,17 +397,11 @@ test(
         !listedAfterRemove.skills?.some((entry) => entry.name === SKILL_ID),
       resultText(listAfterRemove),
     ).toBe(true);
-    await expectSandboxShellZero(
-      sandbox,
-      `test ! -e "\${OPENCLAW_WORKSPACE_DIR}/skills/${SKILL_ID}" && ! grep -Fq ${shellQuote(`"${SKILL_ID}"`)} "\${OPENCLAW_WORKSPACE_DIR}/.clawhub/lock.json"`,
-      "sandbox-verify-native-skill-removal",
-      env,
-    );
     const removedConsumerSession = `${SKILL_ID}-removed-${String(Date.now())}`;
     await expectSandboxShellZero(
       sandbox,
-      `agent_output="$(mktemp)" && trap 'rm -f "$agent_output"' EXIT && openclaw agent --agent main --json --thinking off --session-id ${shellQuote(removedConsumerSession)} -m ${shellQuote("The native skill collision replacement is no longer installed. Reply with exactly one word: PONG.")} > "$agent_output" && grep -Fq PONG "$agent_output" && ! grep -Fq ${shellQuote(FIRST_REPLACEMENT_TOKEN)} "$agent_output" && ! grep -Fq ${shellQuote(CONSUMER_TOKEN)} "$agent_output" && cat "$agent_output"`,
-      "sandbox-openclaw-removed-skill-fresh-consumer",
+      `test ! -e "\${OPENCLAW_WORKSPACE_DIR}/skills/${SKILL_ID}" && ! grep -Fq ${shellQuote(`"${SKILL_ID}"`)} "\${OPENCLAW_WORKSPACE_DIR}/.clawhub/lock.json" && agent_output="$(mktemp)" && trap 'rm -f "$agent_output"' EXIT && openclaw agent --agent main --json --thinking off --session-id ${shellQuote(removedConsumerSession)} -m ${shellQuote("The native skill collision replacement is no longer installed. Reply with exactly one word: PONG.")} > "$agent_output" && grep -Fq PONG "$agent_output" && ! grep -Fq ${shellQuote(FIRST_REPLACEMENT_TOKEN)} "$agent_output" && ! grep -Fq ${shellQuote(CONSUMER_TOKEN)} "$agent_output" && cat "$agent_output"`,
+      "sandbox-verify-native-skill-removal",
       env,
     );
 
