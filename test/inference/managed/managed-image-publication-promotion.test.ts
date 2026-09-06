@@ -15,6 +15,41 @@ import {
   required,
   step,
 } from "../../helpers/managed-image-publication-workflow";
+import { validateManagedImageCohort } from "../../../tools/e2e/managed-image-cohort-contract.mts";
+
+const revision = "a".repeat(40);
+const runAttempt = 2;
+const runId = 7744;
+
+function workloadReference(agent: string, digestSuffix: string): string {
+  return `ghcr.io/nvidia/nemoclaw/${agent}-sandbox@sha256:${digestSuffix.padStart(64, "0")}`;
+}
+
+const expectedImages = {
+  openclaw: {
+    "linux/amd64": workloadReference("openclaw", "28"),
+    "linux/arm64": workloadReference("openclaw", "29"),
+  },
+  hermes: {
+    "linux/amd64": workloadReference("hermes", "2a"),
+    "linux/arm64": workloadReference("hermes", "2b"),
+  },
+  "langchain-deepagents-code": {
+    "linux/amd64": workloadReference("langchain-deepagents-code", "2c"),
+    "linux/arm64": workloadReference("langchain-deepagents-code", "2d"),
+  },
+};
+
+function expectedReceipt(cohort: string, receiptAttempt: number): Record<string, unknown> {
+  return {
+    kind: "nemoclaw-managed-image-cohort-receipt-v1",
+    cohort,
+    revision,
+    runAttempt: receiptAttempt,
+    runId,
+    images: expectedImages,
+  };
+}
 
 describe("managed-image publication promotion", () => {
   it("stages all multi-platform cohort aliases before moving the sole root pointer (#7744)", () => {
@@ -33,7 +68,6 @@ describe("managed-image publication promotion", () => {
       "managed image pointer script is missing",
     );
     const cohort = "ghrun-7744-2";
-    const revision = "a".repeat(40);
 
     const failed = runManagedImagePromotion(promotion, "langchain-deepagents-code");
     const failedCalls = failed.calls.join("\n");
@@ -56,9 +90,9 @@ describe("managed-image publication promotion", () => {
       return publicationPlatforms.map((platform) => `pull --platform ${platform} ${reference}`);
     });
     const lastCohortStage = Math.max(
-      acceptedCalls.indexOf(`hermes-sandbox:cohort-${cohort}`),
-      acceptedCalls.indexOf(`langchain-deepagents-code-sandbox:cohort-${cohort}`),
-      acceptedCalls.indexOf(`openclaw-sandbox:cohort-${cohort}`),
+      acceptedCalls.lastIndexOf(`hermes-sandbox:cohort-${cohort}`),
+      acceptedCalls.lastIndexOf(`langchain-deepagents-code-sandbox:cohort-${cohort}`),
+      acceptedCalls.lastIndexOf(`openclaw-sandbox:cohort-${cohort}`),
     );
     const rootPointer = acceptedCalls.indexOf(`openclaw-sandbox:${revision}`);
 
@@ -105,6 +139,13 @@ describe("managed-image publication promotion", () => {
         "langchain-deepagents-code": expect.any(Object),
       },
     });
+    expect(
+      validateManagedImageCohort(accepted.cohortContract, {
+        revision,
+        runAttempt,
+        runId,
+      }),
+    ).toEqual(expectedReceipt(cohort, runAttempt));
 
     const reusedKey = "openclaw|linux/amd64";
     const mixedPromotion = runManagedImagePromotion(promotion, "", "", {
@@ -113,5 +154,36 @@ describe("managed-image publication promotion", () => {
     });
     expect(mixedPromotion.status, mixedPromotion.stderr).toBe(0);
     expect(mixedPromotion.platformContracts[reusedKey]?.run).toEqual({ id: 7744, attempt: 1 });
+    expect(
+      validateManagedImageCohort(mixedPromotion.cohortContract, {
+        revision,
+        runAttempt,
+        runId,
+      }),
+    ).toEqual(expectedReceipt("ghrun-7744-1", 1));
+  });
+
+  it("rejects promotion when a candidate names another workflow run", () => {
+    const promotion = required(
+      step(
+        managedPromoter(readWorkflow("managed-images.yaml")),
+        "Stage validated multi-platform managed image cohort and contracts",
+      ).run,
+      "managed image promotion script is missing",
+    );
+    const foreignRunPromotion = runManagedImagePromotion(promotion, "", "", {
+      mutate: (candidates) => {
+        const candidate = candidates[0]!;
+        const contract = structuredClone(candidate.contract);
+        (contract.run as Record<string, unknown>).id = 8877;
+        return [{ ...candidate, contract }, ...candidates.slice(1)];
+      },
+    });
+
+    expect(foreignRunPromotion.status).not.toBe(0);
+    expect(foreignRunPromotion.stderr).toContain(
+      "staged multi-platform cohort failed exact validation",
+    );
+    expect(foreignRunPromotion.cohortContract).toBeNull();
   });
 });
