@@ -79,6 +79,10 @@ describe("prepareRebuildTargetPreflights", () => {
     model = "nvidia/Qwen3.6-35B-A3B-NVFP4",
     nimContainer: string | null = null,
     accepted = endpointSource === null,
+    entryOverrides: {
+      endpointUrl?: string | null;
+      hostLocalInferenceReceipt?: string | null;
+    } = {},
   ) {
     const resumeConfig = {
       provider,
@@ -129,6 +133,7 @@ describe("prepareRebuildTargetPreflights", () => {
             }
           : {}),
         mcp,
+        ...entryOverrides,
       } as never,
       rebuildAgent: "openclaw",
       autoYes: true,
@@ -236,6 +241,26 @@ describe("prepareRebuildTargetPreflights", () => {
     expect(readinessOptions).toEqual(
       expect.objectContaining({ allowDeferredN1xManagedVllm: true }),
     );
+  });
+
+  it.each([
+    ["a recorded endpoint", null, null, { endpointUrl: "http://host.openshell.internal:8000/v1" }],
+    ["another endpoint source", "inference-set", null, {}],
+    ["a NIM container", null, "nemoclaw-nim", {}],
+    ["a malformed receipt", null, null, { hostLocalInferenceReceipt: "invalid" }],
+  ] as const)("withholds explicit recovery for %s (#10959)", async (_case, source, nim, overrides) => {
+    vi.stubEnv("NEMOCLAW_PROVIDER", "install-vllm");
+    const readinessOptions = await prepareN1xTarget(
+      source,
+      null,
+      undefined,
+      undefined,
+      nim,
+      false,
+      overrides,
+    );
+
+    expect(readinessOptions).not.toHaveProperty("allowDeferredN1xManagedVllm");
   });
 
   it("passes recorded Ollama intent into authoritative readiness (#11041)", async () => {

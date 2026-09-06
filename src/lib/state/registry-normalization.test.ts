@@ -251,6 +251,8 @@ describe("sandbox registry normalization", () => {
       name: "preview",
       provider: "vllm-local",
       model: "nvidia/Qwen3.6-35B-A3B-NVFP4",
+      endpointUrl: null,
+      endpointSource: null,
       openshellDriver: "docker",
       deferredN1xManagedVllmAccepted: true,
     });
@@ -265,6 +267,20 @@ describe("sandbox registry normalization", () => {
       },
     });
     expect(() => malformed.getSandbox("malformed")).toThrow(
+      "invalid N1x preview acceptance",
+    );
+    const mismatchedRoute = await loadRegistryWith({
+      mismatched: {
+        name: "mismatched",
+        provider: "vllm-local",
+        model: "nvidia/Qwen3.6-35B-A3B-NVFP4",
+        endpointUrl: null,
+        endpointSource: "inference-set",
+        openshellDriver: "docker",
+        deferredN1xManagedVllmAccepted: true,
+      },
+    });
+    expect(() => mismatchedRoute.getSandbox("mismatched")).toThrow(
       "invalid N1x preview acceptance",
     );
   });

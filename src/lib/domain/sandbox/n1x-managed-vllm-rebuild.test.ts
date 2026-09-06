@@ -21,6 +21,8 @@ describe("Deferred N1x managed-vLLM acceptance route", () => {
   const accepted = {
     provider: "vllm-local",
     model: "nvidia/Qwen3.6-35B-A3B-NVFP4",
+    endpointUrl: null,
+    endpointSource: null,
     nimContainer: null,
     openshellDriver: "docker",
   };
@@ -28,6 +30,8 @@ describe("Deferred N1x managed-vLLM acceptance route", () => {
   it.each([
     ["the exact route", accepted, true],
     ["another model", { ...accepted, model: "other" }, false],
+    ["a recorded endpoint", { ...accepted, endpointUrl: "http://localhost:8000/v1" }, false],
+    ["another endpoint source", { ...accepted, endpointSource: "inference-set" }, false],
     ["a NIM container", { ...accepted, nimContainer: "nemoclaw-nim" }, false],
     ["another driver", { ...accepted, openshellDriver: "kubernetes" }, false],
   ])("classifies %s", (_case, route, expected) => {

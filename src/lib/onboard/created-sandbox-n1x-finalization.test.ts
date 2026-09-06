@@ -3,6 +3,15 @@
 
 import { expect, it, vi } from "vitest";
 
+const registrationMocks = vi.hoisted(() => ({ registerCreatedSandbox: vi.fn() }));
+vi.mock("./sandbox-registration", async (importOriginal) => {
+  const original = await importOriginal<typeof import("./sandbox-registration")>();
+  registrationMocks.registerCreatedSandbox.mockImplementation(
+    (input: CreatedSandboxRegistrationInput) => original.buildCreatedSandboxRegistryEntry(input),
+  );
+  return { ...original, registerCreatedSandbox: registrationMocks.registerCreatedSandbox };
+});
+
 import { createSession, type Session } from "../state/onboard-session";
 import type { SandboxEntry } from "../state/registry";
 import { createOnboardCreatedSandboxCompletion } from "./created-sandbox-finalization";
@@ -19,10 +28,7 @@ import {
 } from "./machine/initial-flow-phases";
 import { pendingSandboxCreateIdentityForBoundary } from "./sandbox-create/identity-boundary";
 import type { SandboxGpuCreateFlowResult } from "./sandbox-gpu-create-flow";
-import {
-  buildCreatedSandboxRegistryEntry,
-  type CreatedSandboxRegistrationInput,
-} from "./sandbox-registration";
+import type { CreatedSandboxRegistrationInput } from "./sandbox-registration";
 
 const sandboxName = "n1x-preview";
 const model = "nvidia/Qwen3.6-35B-A3B-NVFP4";
@@ -205,7 +211,7 @@ async function completeRegistration(createIntent: CreateIntent): Promise<{
     },
     entry: { name: sandboxName },
   } as never;
-  let registrationInput: CreatedSandboxRegistrationInput | undefined;
+  registrationMocks.registerCreatedSandbox.mockClear();
   const completion = createOnboardCreatedSandboxCompletion(
     sandboxName,
     null,
@@ -250,12 +256,6 @@ async function completeRegistration(createIntent: CreateIntent): Promise<{
     {} as never,
     { source: { kind: "legacy-dockerfile" } } as never,
     vi.fn(),
-    {
-      registerCreatedSandbox: (input) => {
-        registrationInput = input;
-        return buildCreatedSandboxRegistryEntry(input);
-      },
-    },
   );
   const created = {
     origin: "created",
@@ -283,14 +283,18 @@ async function completeRegistration(createIntent: CreateIntent): Promise<{
     () => ({ lifecycleGeneration }),
     lifecycle,
   )) as SandboxEntry;
-  return { input: registrationInput as unknown as CreatedSandboxRegistrationInput, registered };
+  return {
+    input: registrationMocks.registerCreatedSandbox.mock
+      .calls[0]?.[0] as CreatedSandboxRegistrationInput,
+    registered,
+  };
 }
 
 it.each([
   ["fresh N1x", false, "n1x", undefined, previewEnv, true],
   ["resumed N1x", true, "n1x", true, {}, true],
   ["DGX Spark", false, "spark", undefined, previewEnv, false],
-  ["explicit rebuild denial", false, "n1x", false, previewEnv, false],
+  ["explicit rebuild denial", true, "n1x", false, previewEnv, false],
   ["ordinary N1x opt-out", false, "n1x", undefined, { NEMOCLAW_NO_EXPRESS: "1" }, false],
 ] as const)(
   "carries %s preview acceptance through final registration (#10959)",
