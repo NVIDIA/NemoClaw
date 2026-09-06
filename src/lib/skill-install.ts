@@ -809,29 +809,33 @@ function buildOpenClawNativeInstallScript(
   });
 }
 
-/**
- * Securely stage a host snapshot and delegate OpenClaw workspace publication,
- * rollback, precedence, and activation to the pinned native installer.
- */
-export function installOpenClawSkill(
+type NativeSkillInstallOptions = SkillSnapshotOptions & {
+  expectedSandboxIdentityFingerprint: string;
+  sshExecImpl?: typeof sshExec;
+};
+
+const NATIVE_SKILL_FAILURES: readonly {
+  reason: NonNullable<NativeSkillInstallResult["reason"]>;
+  status: number;
+  suffix: string;
+}[] = [
+  { status: 3, suffix: "CAPABILITY_MISSING", reason: "native_capability_missing" },
+  { status: 4, suffix: "VERIFY_FAILED", reason: "verification_failed" },
+  { status: 5, suffix: "NATIVE_INSTALL_FAILED", reason: "native_install_failed" },
+  { status: 6, suffix: "NATIVE_INSTALL_TIMEOUT", reason: "native_install_timed_out" },
+  { status: 7, suffix: "STAGE_RECOVERY_FAILED", reason: "stage_recovery_failed" },
+  { status: 9, suffix: "IDENTITY_CHANGED", reason: "sandbox_identity_changed" },
+];
+
+/** Own the snapshot, identity, transport, success, and failure contract for every native agent. */
+function executeNativeSkillInstall(
   ctx: SshContext,
   localDir: string,
-  paths: NativeSkillState,
   skillName: string,
-  opts: {
-    beforeSnapshotFileRead?: (relativePath: string) => void;
-    beforeSnapshotRootRead?: () => void;
-    expectedRootIdentity?: SkillRootIdentity;
-    expectedSandboxIdentityFingerprint: string;
-    lifecycle: NativeSkillLifecycleDescriptor;
-    sshExecImpl?: typeof sshExec;
-  },
+  opts: NativeSkillInstallOptions,
+  buildScript: (expectedDigest: string) => string,
 ): NativeSkillInstallResult {
-  const snapshot = prepareSkillArchiveSnapshot(localDir, {
-    beforeSnapshotFileRead: opts.beforeSnapshotFileRead,
-    beforeSnapshotRootRead: opts.beforeSnapshotRootRead,
-    expectedRootIdentity: opts.expectedRootIdentity,
-  });
+  const snapshot = prepareSkillArchiveSnapshot(localDir, opts);
   if (snapshot === "limit_exceeded") {
     return { success: false, uploaded: 0, reason: "snapshot_limit_exceeded" };
   }
@@ -841,44 +845,50 @@ export function installOpenClawSkill(
   if (!SHA256_RE.test(opts.expectedSandboxIdentityFingerprint)) {
     return { success: false, uploaded: 0, reason: "sandbox_identity_changed" };
   }
-  const result = (opts.sshExecImpl ?? sshExec)(
-    ctx,
-    buildOpenClawNativeInstallScript(
-      paths,
-      opts.lifecycle,
-      skillName,
-      snapshot.contentDigest,
-      opts.expectedSandboxIdentityFingerprint,
-    ),
-    { input: snapshot.archive, timeout: 120_000 },
-  );
+  const result = (opts.sshExecImpl ?? sshExec)(ctx, buildScript(snapshot.contentDigest), {
+    input: snapshot.archive,
+    timeout: 120_000,
+  });
   const stdout = result?.stdout.trim() ?? "";
-  const success = result?.status === 0 && stdout.endsWith(`INSTALLED ${snapshot.contentDigest}`);
-  if (success) {
+  if (result?.status === 0 && stdout.endsWith(`INSTALLED ${snapshot.contentDigest}`)) {
     return {
       success: true,
       uploaded: snapshot.files.length,
       contentDigest: snapshot.contentDigest,
     };
   }
+  const failure = NATIVE_SKILL_FAILURES.find(
+    ({ status, suffix }) => result?.status === status && stdout.endsWith(suffix),
+  );
   return {
     success: false,
     uploaded: 0,
-    reason:
-      result?.status === 3 && stdout.endsWith("CAPABILITY_MISSING")
-        ? "native_capability_missing"
-        : result?.status === 7 && stdout.endsWith("STAGE_RECOVERY_FAILED")
-          ? "stage_recovery_failed"
-          : result?.status === 5 && stdout.endsWith("NATIVE_INSTALL_FAILED")
-            ? "native_install_failed"
-            : result?.status === 6 && stdout.endsWith("NATIVE_INSTALL_TIMEOUT")
-              ? "native_install_timed_out"
-              : result?.status === 4 && stdout.endsWith("VERIFY_FAILED")
-                ? "verification_failed"
-                : result?.status === 9 && stdout.endsWith("IDENTITY_CHANGED")
-                  ? "sandbox_identity_changed"
-                  : "remote_state_unknown",
+    reason: failure?.reason ?? "remote_state_unknown",
   };
+}
+
+/**
+ * Securely stage a host snapshot and delegate OpenClaw workspace publication,
+ * rollback, precedence, and activation to the pinned native installer.
+ */
+export function installOpenClawSkill(
+  ctx: SshContext,
+  localDir: string,
+  paths: NativeSkillState,
+  skillName: string,
+  opts: NativeSkillInstallOptions & {
+    lifecycle: NativeSkillLifecycleDescriptor;
+  },
+): NativeSkillInstallResult {
+  return executeNativeSkillInstall(ctx, localDir, skillName, opts, (expectedDigest) =>
+    buildOpenClawNativeInstallScript(
+      paths,
+      opts.lifecycle,
+      skillName,
+      expectedDigest,
+      opts.expectedSandboxIdentityFingerprint,
+    ),
+  );
 }
 
 export type NativeLocalSkillAgent = Exclude<NativeSkillAgent, "openclaw">;
@@ -943,56 +953,15 @@ export function installNativeAgentSkill(
   paths: NativeSkillState,
   lifecycle: NativeSkillLifecycleDescriptor,
   skillName: string,
-  opts: SkillSnapshotOptions & {
-    expectedSandboxIdentityFingerprint: string;
-    sshExecImpl?: typeof sshExec;
-  },
+  opts: NativeSkillInstallOptions,
 ): NativeSkillInstallResult {
-  const snapshot = prepareSkillArchiveSnapshot(localDir, opts);
-  if (snapshot === "limit_exceeded") {
-    return { success: false, uploaded: 0, reason: "snapshot_limit_exceeded" };
-  }
-  if (!snapshot || snapshot.skillName !== skillName) {
-    return { success: false, uploaded: 0, reason: "snapshot_failed" };
-  }
-  if (!SHA256_RE.test(opts.expectedSandboxIdentityFingerprint)) {
-    return { success: false, uploaded: 0, reason: "sandbox_identity_changed" };
-  }
-  const result = (opts.sshExecImpl ?? sshExec)(
-    ctx,
+  return executeNativeSkillInstall(ctx, localDir, skillName, opts, (expectedDigest) =>
     buildNativeLocalSkillInstallScript(
       paths,
       lifecycle,
       skillName,
-      snapshot.contentDigest,
+      expectedDigest,
       opts.expectedSandboxIdentityFingerprint,
     ),
-    { input: snapshot.archive, timeout: 120_000 },
   );
-  const stdout = result?.stdout.trim() ?? "";
-  if (result?.status === 0 && stdout.endsWith(`INSTALLED ${snapshot.contentDigest}`)) {
-    return {
-      success: true,
-      uploaded: snapshot.files.length,
-      contentDigest: snapshot.contentDigest,
-    };
-  }
-  return {
-    success: false,
-    uploaded: 0,
-    reason:
-      result?.status === 3 && stdout.endsWith("CAPABILITY_MISSING")
-        ? "native_capability_missing"
-        : result?.status === 7 && stdout.endsWith("STAGE_RECOVERY_FAILED")
-          ? "stage_recovery_failed"
-          : result?.status === 4 && stdout.endsWith("VERIFY_FAILED")
-            ? "verification_failed"
-            : result?.status === 5 && stdout.endsWith("NATIVE_INSTALL_FAILED")
-              ? "native_install_failed"
-              : result?.status === 6 && stdout.endsWith("NATIVE_INSTALL_TIMEOUT")
-                ? "native_install_timed_out"
-                : result?.status === 9 && stdout.endsWith("IDENTITY_CHANGED")
-                  ? "sandbox_identity_changed"
-                  : "remote_state_unknown",
-  };
 }
