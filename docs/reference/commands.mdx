@@ -2387,7 +2387,7 @@ Because the pinned Deep Agents Code CLI has no native local-add verb, NemoClaw p
 
 Run `$$nemoclaw <name> skill install --help` to print usage for this subcommand. If you pass a plugin-shaped directory to `skill install`, the CLI prints a plugin-specific hint instead of treating it as a missing skill file.
 
-Before upload, NemoClaw snapshots at most 1,024 files and 64 MiB with no-follow reads. Files with names starting with `.` are skipped and listed. Unsafe paths, symlinks, and special files are rejected. Staging uses a private temporary directory. NemoClaw attempts cleanup after the add or an interrupted upload, retries once when post-add cleanup fails, and fails the command with the staging path if cleanup cannot complete.
+Before upload, NemoClaw snapshots at most 1,024 files and 64 MiB with no-follow reads. Files with names starting with `.` are skipped and listed. Unsafe paths, symlinks, and special files are rejected. Staging uses a private temporary directory. NemoClaw attempts cleanup after the add or an interrupted upload, retries once when post-add cleanup fails, and fails the command if cleanup cannot complete. When the add succeeded first, the diagnostic prints exact commands to inspect the native list and remove only the reported private staging path.
 
 NemoClaw creates no installed-skill inventory, receipt, provenance record, mirror, or ownership ledger. A successful filesystem placement says only that the named canonical-root copy was placed; it does not claim the skill is active.
 

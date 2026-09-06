@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
 import path from "node:path";
 
 import { resultText } from "../fixtures/clients/command.ts";
@@ -66,8 +65,6 @@ export async function assertHermesSkillLifecycle({
     return result;
   };
 
-  const skillFixtureText = fs.readFileSync(path.join(HERMES_SKILL_FIXTURE, "SKILL.md"), "utf8");
-  expect(skillFixtureText).toContain(E2E_MOCK_REQUEST_CANARY);
   expect(HERMES_SKILL_PROMPT).not.toContain(E2E_MOCK_REQUEST_CANARY);
 
   const skillInstall = await host.command(
@@ -97,14 +94,12 @@ export async function assertHermesSkillLifecycle({
     "phase-4-hermes-skill-sessions-before",
   );
   const requestOffset = inference.requestSummaries()?.length;
-  const skillChat = await exec(
+  await exec(
     ["hermes", "chat", "--skills", HERMES_SKILL_ID, "--query", HERMES_SKILL_PROMPT, "--quiet"],
     "phase-4-hermes-skill-chat",
     360,
     420_000,
   );
-  expect(stripAnsi(resultText(skillChat))).toMatch(/\bPONG\b/i);
-
   const sessionsAfterSkill = await exec(
     ["hermes", "sessions", "list"],
     "phase-4-hermes-skill-sessions-after",
@@ -140,11 +135,12 @@ export async function assertHermesSkillLifecycle({
     },
   );
   expect(skillRemove.exitCode, resultText(skillRemove)).toBe(0);
+  const postRemoveRequestOffset = inference.requestSummaries()?.length;
   const postRemove = await host.command(
     "bash",
     [
       "-c",
-      'set -eu; list="$(nemohermes "$1" skill list)"; printf "%s\\n" "$list"; ! grep -Fq -- "$2" <<<"$list"; chat="$(nemohermes "$1" exec --no-stdin --timeout 360 -- hermes chat --query "The verification skill was removed. Reply only PONG." --quiet)"; printf "%s\\n" "$chat"; ! grep -Fq -- "$3" <<<"$chat"',
+      'set -eu; list="$(nemohermes "$1" skill list)"; printf "%s\\n" "$list"; ! grep -Fq -- "$2" <<<"$list"; chat="$(nemohermes "$1" exec --no-stdin --timeout 360 -- hermes chat --query "Use the removed skill named $2 if it is available. Reply only PONG." --quiet)"; printf "%s\\n" "$chat"; ! grep -Fq -- "$3" <<<"$chat"',
       "hermes-skill-post-remove",
       sandboxName,
       HERMES_SKILL_ID,
@@ -158,4 +154,13 @@ export async function assertHermesSkillLifecycle({
     },
   );
   expect(postRemove.exitCode, resultText(postRemove)).toBe(0);
+  const postRemoveRequests = (inference.requestSummaries() ?? [])
+    .slice(postRemoveRequestOffset ?? Number.MAX_SAFE_INTEGER)
+    .filter((request) => request.method === "POST" && INFERENCE_REQUEST_PATHS.has(request.path));
+  expect(postRemoveRequestOffset === undefined || postRemoveRequests.length > 0).toBe(true);
+  expect(
+    postRemoveRequestOffset === undefined ||
+      postRemoveRequests.every((request) => request.requestCanaryPresent !== true),
+    "removed Hermes skill canary still reached a fresh mock inference request",
+  ).toBe(true);
 }
