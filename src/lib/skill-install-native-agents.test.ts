@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   computeSkillContentDigest,
+  getNativeSkillLifecycle,
   installNativeAgentSkill,
   shellQuote,
   type NativeLocalSkillAgent,
@@ -22,6 +23,16 @@ const roots: string[] = [];
 const context: SshContext = { configFile: "/tmp/ssh-config", sandboxName: "alpha" };
 const SANDBOX_ID = "sandbox-alpha";
 const SANDBOX_IDENTITY = createHash("sha256").update(SANDBOX_ID).digest("hex");
+
+function lifecycleFor(agent: NativeLocalSkillAgent, binary?: string) {
+  const lifecycle = getNativeSkillLifecycle({
+    name: agent,
+    binary_path: binary ?? (agent === "hermes" ? "/usr/local/bin/hermes" : "/usr/local/bin/dcode"),
+    displayName: agent === "hermes" ? "Hermes" : "Deep Agents Code",
+  });
+  expect(lifecycle, `Missing ${agent} lifecycle fixture`).not.toBeNull();
+  return lifecycle!;
+}
 
 function makeSkill(): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-agent-skill-"));
@@ -54,7 +65,7 @@ describe("Hermes and DCode native skill installation", () => {
       };
 
       expect(
-        installNativeAgentSkill(context, skill, paths, agent, "demo-skill", {
+        installNativeAgentSkill(context, skill, paths, lifecycleFor(agent, binary), "demo-skill", {
           expectedSandboxIdentityFingerprint: SANDBOX_IDENTITY,
           sshExecImpl: sshExec,
         }),
@@ -82,7 +93,7 @@ describe("Hermes and DCode native skill installation", () => {
     };
 
     expect(
-      installNativeAgentSkill(context, skill, paths, "hermes", "demo-skill", {
+      installNativeAgentSkill(context, skill, paths, lifecycleFor("hermes"), "demo-skill", {
         expectedSandboxIdentityFingerprint: SANDBOX_IDENTITY,
         sshExecImpl: () => ({ status, stdout, stderr: "" }),
       }),
@@ -104,6 +115,7 @@ describe("Hermes and DCode native skill installation", () => {
       const fakeBinary = path.join(stateDir, "agent-cli");
       const abandonedStage = path.join(stateDir, ".nemoclaw-skill-stage.abandoned");
       const nativeBinary = agent === "hermes" ? "/usr/local/bin/hermes" : "/usr/local/bin/dcode";
+      const lifecycle = lifecycleFor(agent, nativeBinary);
       let hangInstall = false;
       let mutatePayload = false;
       const lateInstallMarker = path.join(stateDir, "late-install");
@@ -179,7 +191,7 @@ esac
         return lastSshResult;
       };
 
-      const firstInstall = installNativeAgentSkill(context, skill, paths, agent, "demo-skill", {
+      const firstInstall = installNativeAgentSkill(context, skill, paths, lifecycle, "demo-skill", {
         expectedSandboxIdentityFingerprint: SANDBOX_IDENTITY,
         sshExecImpl: sshExec,
       });
@@ -189,7 +201,7 @@ esac
       expect(fs.existsSync(abandonedStage)).toBe(false);
       fs.writeFileSync(path.join(skill, "SKILL.md"), "---\nname: demo-skill\n---\n# Updated\n");
       expect(
-        installNativeAgentSkill(context, skill, paths, agent, "demo-skill", {
+        installNativeAgentSkill(context, skill, paths, lifecycle, "demo-skill", {
           expectedSandboxIdentityFingerprint: SANDBOX_IDENTITY,
           sshExecImpl: sshExec,
         }),
@@ -197,7 +209,7 @@ esac
       expect(fs.readFileSync(path.join(target, "SKILL.md"), "utf8")).toContain("# Updated");
       mutatePayload = false;
       hangInstall = true;
-      const timedOut = installNativeAgentSkill(context, skill, paths, agent, "demo-skill", {
+      const timedOut = installNativeAgentSkill(context, skill, paths, lifecycle, "demo-skill", {
         expectedSandboxIdentityFingerprint: SANDBOX_IDENTITY,
         sshExecImpl: (sshContext, command, options) =>
           sshExec(
@@ -218,14 +230,14 @@ esac
 
       hangInstall = false;
       expect(
-        installNativeAgentSkill(context, skill, paths, agent, "demo-skill", {
+        installNativeAgentSkill(context, skill, paths, lifecycle, "demo-skill", {
           expectedSandboxIdentityFingerprint: SANDBOX_IDENTITY,
           sshExecImpl: sshExec,
         }),
       ).toMatchObject({ success: true });
       mutatePayload = true;
       expect(
-        installNativeAgentSkill(context, skill, paths, agent, "demo-skill", {
+        installNativeAgentSkill(context, skill, paths, lifecycle, "demo-skill", {
           expectedSandboxIdentityFingerprint: SANDBOX_IDENTITY,
           sshExecImpl: sshExec,
         }),

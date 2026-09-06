@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import type { AgentDefinition } from "./defs";
+import { type AgentDefinition, loadAgent } from "./defs";
 // Import source directly so tests cannot pass against a stale build.
-import { buildRecoveryScript, getRegisteredAgent } from "./runtime";
+import { buildRecoveryScript, getRegisteredAgent, resolveSessionAgentDefinition } from "./runtime";
 
 function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
   return {
@@ -80,13 +80,24 @@ describe("getRegisteredAgent", () => {
     expect(getRegisteredAgent({ agent: "missing-agent" })).toBeNull();
   });
 
-  it.each([
-    "../openclaw",
-    "/tmp/agent",
-    "hermes/../openclaw",
-    "hermes\\openclaw",
-  ])("fails closed for path-like persisted agent name %j", (agent) => {
-    expect(getRegisteredAgent({ agent })).toBeNull();
+  it.each(["../openclaw", "/tmp/agent", "hermes/../openclaw", "hermes\\openclaw"])(
+    "fails closed for path-like persisted agent name %j",
+    (agent) => {
+      expect(getRegisteredAgent({ agent })).toBeNull();
+    },
+  );
+});
+
+describe("resolveSessionAgentDefinition", () => {
+  it("preserves an explicitly selected agent definition", () => {
+    expect(resolveSessionAgentDefinition(hermesAgent)).toBe(hermesAgent);
+  });
+
+  it("loads the trusted OpenClaw manifest for the legacy null representation", () => {
+    const resolved = resolveSessionAgentDefinition(null);
+
+    expect(resolved).toBe(loadAgent("openclaw"));
+    expect(resolved.binary_path).toBe("/usr/local/bin/openclaw");
   });
 });
 

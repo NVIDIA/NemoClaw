@@ -15,6 +15,7 @@ import path from "node:path";
 // yaml is a production dependency (used by policies.ts, onboard.ts)
 import YAML from "yaml";
 
+import type { AgentDefinition } from "./agent/definition-types";
 import { isObjectRecord } from "./core/json-types";
 import { validateSkillName } from "./skill-name";
 import type { SshContext } from "./skill-remote";
@@ -185,111 +186,139 @@ export interface NativeSkillLifecycleDescriptor {
   remove(skillName: string): string[];
 }
 
-const NATIVE_SKILL_LIFECYCLES: Readonly<Record<NativeSkillAgent, NativeSkillLifecycleDescriptor>> =
-  {
-    openclaw: {
-      agentName: "openclaw",
-      binary: "/usr/local/bin/openclaw",
-      displayName: "OpenClaw",
-      fixedAgentTarget: "main",
-      installHelpArgs: ["skills", "install", "--help"],
-      installRequiredFlags: ["--agent", "--force", "--expected-digest"],
-      removeHelpArgs: ["skills", "remove", "--help"],
-      removeHelpEvidence: OPENCLAW_REMOVE_HELP_EVIDENCE,
-      install(payloadPath, _skillName, expectedDigest) {
-        return [
-          this.binary,
-          "skills",
-          "install",
-          payloadPath,
-          "--agent",
-          this.fixedAgentTarget!,
-          "--force",
-          "--expected-digest",
-          expectedDigest,
-        ];
-      },
-      list(extraArgs = []) {
-        return [this.binary, "skills", "list", "--agent", this.fixedAgentTarget!, ...extraArgs];
-      },
-      remove(skillName) {
-        return [this.binary, "skills", "remove", skillName, "--agent", this.fixedAgentTarget!];
-      },
-    },
-    hermes: {
-      agentName: "hermes",
-      binary: "/usr/local/bin/hermes",
-      displayName: "Hermes",
-      fixedAgentTarget: null,
-      installHelpArgs: ["skills", "import-local", "--help"],
-      installRequiredFlags: ["--name", "--expected-digest"],
-      install(payloadPath, skillName, expectedDigest) {
-        return [
-          this.binary,
-          "skills",
-          "import-local",
-          payloadPath,
-          "--name",
-          skillName,
-          "--expected-digest",
-          expectedDigest,
-        ];
-      },
-      list(extraArgs = []) {
-        return [this.binary, "skills", "list", ...extraArgs];
-      },
-      remove(skillName) {
-        return [this.binary, "skills", "uninstall", skillName, "--yes"];
-      },
-    },
-    "langchain-deepagents-code": {
-      agentName: "langchain-deepagents-code",
-      binary: "/usr/local/bin/dcode",
-      displayName: "Deep Agents Code",
-      fixedAgentTarget: "agent",
-      installHelpArgs: ["skills", "import", "--help"],
-      installRequiredFlags: ["--name", "--agent", "--replace", "--expected-digest"],
-      install(payloadPath, skillName, expectedDigest) {
-        return [
-          this.binary,
-          "skills",
-          "import",
-          payloadPath,
-          "--name",
-          skillName,
-          "--agent",
-          this.fixedAgentTarget!,
-          "--replace",
-          "--expected-digest",
-          expectedDigest,
-        ];
-      },
-      list(extraArgs = []) {
-        return [this.binary, "skills", "list", "--agent", this.fixedAgentTarget!, ...extraArgs];
-      },
-      remove(skillName) {
-        return [
-          this.binary,
-          "skills",
-          "delete",
-          skillName,
-          "--agent",
-          this.fixedAgentTarget!,
-          "--force",
-          "--json",
-        ];
-      },
-    },
-  };
+type NativeSkillLifecycleCommandContract = Omit<
+  NativeSkillLifecycleDescriptor,
+  "binary" | "displayName" | "install" | "list" | "remove"
+> & {
+  install(binary: string, payloadPath: string, skillName: string, expectedDigest: string): string[];
+  list(binary: string, extraArgs?: readonly string[]): string[];
+  remove(binary: string, skillName: string): string[];
+};
 
-/** Resolve the one command contract for every operation on a supported agent's native state. */
+const NATIVE_SKILL_LIFECYCLES: Readonly<
+  Record<NativeSkillAgent, NativeSkillLifecycleCommandContract>
+> = {
+  openclaw: {
+    agentName: "openclaw",
+    fixedAgentTarget: "main",
+    installHelpArgs: ["skills", "install", "--help"],
+    installRequiredFlags: ["--agent", "--force", "--expected-digest"],
+    removeHelpArgs: ["skills", "remove", "--help"],
+    removeHelpEvidence: OPENCLAW_REMOVE_HELP_EVIDENCE,
+    install(binary, payloadPath, _skillName, expectedDigest) {
+      return [
+        binary,
+        "skills",
+        "install",
+        payloadPath,
+        "--agent",
+        this.fixedAgentTarget!,
+        "--force",
+        "--expected-digest",
+        expectedDigest,
+      ];
+    },
+    list(binary, extraArgs = []) {
+      return [binary, "skills", "list", "--agent", this.fixedAgentTarget!, ...extraArgs];
+    },
+    remove(binary, skillName) {
+      return [binary, "skills", "remove", skillName, "--agent", this.fixedAgentTarget!];
+    },
+  },
+  hermes: {
+    agentName: "hermes",
+    fixedAgentTarget: null,
+    installHelpArgs: ["skills", "import-local", "--help"],
+    installRequiredFlags: ["--name", "--expected-digest"],
+    install(binary, payloadPath, skillName, expectedDigest) {
+      return [
+        binary,
+        "skills",
+        "import-local",
+        payloadPath,
+        "--name",
+        skillName,
+        "--expected-digest",
+        expectedDigest,
+      ];
+    },
+    list(binary, extraArgs = []) {
+      return [binary, "skills", "list", ...extraArgs];
+    },
+    remove(binary, skillName) {
+      return [binary, "skills", "uninstall", skillName, "--yes"];
+    },
+  },
+  "langchain-deepagents-code": {
+    agentName: "langchain-deepagents-code",
+    fixedAgentTarget: "agent",
+    installHelpArgs: ["skills", "import", "--help"],
+    installRequiredFlags: ["--name", "--agent", "--replace", "--expected-digest"],
+    install(binary, payloadPath, skillName, expectedDigest) {
+      return [
+        binary,
+        "skills",
+        "import",
+        payloadPath,
+        "--name",
+        skillName,
+        "--agent",
+        this.fixedAgentTarget!,
+        "--replace",
+        "--expected-digest",
+        expectedDigest,
+      ];
+    },
+    list(binary, extraArgs = []) {
+      return [binary, "skills", "list", "--agent", this.fixedAgentTarget!, ...extraArgs];
+    },
+    remove(binary, skillName) {
+      return [
+        binary,
+        "skills",
+        "delete",
+        skillName,
+        "--agent",
+        this.fixedAgentTarget!,
+        "--force",
+        "--json",
+      ];
+    },
+  },
+};
+
+type NativeSkillLifecycleAgentDefinition = Pick<
+  AgentDefinition,
+  "binary_path" | "displayName" | "name"
+>;
+
+/**
+ * Bind native skill verbs to the executable owned by the selected agent manifest.
+ * This descriptor never provides a fallback binary or display name.
+ */
 export function getNativeSkillLifecycle(
-  agentName: string | null | undefined,
+  agent: NativeSkillLifecycleAgentDefinition | null | undefined,
 ): NativeSkillLifecycleDescriptor | null {
-  const resolved = agentName ?? "openclaw";
-  return resolved in NATIVE_SKILL_LIFECYCLES
-    ? NATIVE_SKILL_LIFECYCLES[resolved as NativeSkillAgent]
-    : null;
+  if (!agent || !(agent.name in NATIVE_SKILL_LIFECYCLES)) return null;
+  const binary = agent.binary_path;
+  if (typeof binary !== "string" || binary.trim() !== binary || !path.posix.isAbsolute(binary)) {
+    return null;
+  }
+  const contract = NATIVE_SKILL_LIFECYCLES[agent.name as NativeSkillAgent];
+  return {
+    agentName: contract.agentName,
+    binary,
+    displayName: agent.displayName,
+    fixedAgentTarget: contract.fixedAgentTarget,
+    installHelpArgs: contract.installHelpArgs,
+    installRequiredFlags: contract.installRequiredFlags,
+    removeHelpArgs: contract.removeHelpArgs,
+    removeHelpEvidence: contract.removeHelpEvidence,
+    install: (payloadPath, skillName, expectedDigest) =>
+      contract.install(binary, payloadPath, skillName, expectedDigest),
+    list: (extraArgs = []) => contract.list(binary, extraArgs),
+    remove: (skillName) => contract.remove(binary, skillName),
+  };
 }
 
 function renderNativeSkillCommand(command: readonly string[], payloadToken?: string): string {
@@ -302,11 +331,17 @@ function renderNativeSkillCommand(command: readonly string[], payloadToken?: str
 export function probeOpenClawSkillRemoveCapability(
   ctx: SshContext,
   expectedSandboxIdentityFingerprint: string,
+  lifecycle: NativeSkillLifecycleDescriptor,
   sshExecImpl: typeof sshExec = sshExec,
 ): boolean {
   if (!SHA256_RE.test(expectedSandboxIdentityFingerprint)) return false;
-  const lifecycle = NATIVE_SKILL_LIFECYCLES.openclaw;
-  if (!lifecycle.removeHelpArgs || !lifecycle.removeHelpEvidence) return false;
+  if (
+    lifecycle.agentName !== "openclaw" ||
+    !lifecycle.removeHelpArgs ||
+    !lifecycle.removeHelpEvidence
+  ) {
+    return false;
+  }
   const identityCheck = sandboxIdentityCheckCommand(expectedSandboxIdentityFingerprint);
   const script = [
     "set -eu",
@@ -685,6 +720,7 @@ function buildBoundedNativeSkillVerificationCommand(
 
 function buildOpenClawNativeInstallScript(
   paths: NativeSkillState,
+  lifecycle: NativeSkillLifecycleDescriptor,
   skillName: string,
   expectedDigest: string,
   expectedSandboxIdentityFingerprint: string,
@@ -692,7 +728,9 @@ function buildOpenClawNativeInstallScript(
   if (!paths.isOpenClaw) {
     throw new Error("OpenClaw native install requires a workspace skill destination");
   }
-  const lifecycle = NATIVE_SKILL_LIFECYCLES.openclaw;
+  if (lifecycle.agentName !== "openclaw") {
+    throw new Error("OpenClaw native install requires the OpenClaw lifecycle contract");
+  }
   const fixedAgentTarget = lifecycle.fixedAgentTarget;
   if (!fixedAgentTarget) throw new Error("OpenClaw native install requires a fixed agent target");
   const stageToken = "__NEMOCLAW_PAYLOAD__";
@@ -785,6 +823,7 @@ export function installOpenClawSkill(
     beforeSnapshotRootRead?: () => void;
     expectedRootIdentity?: SkillRootIdentity;
     expectedSandboxIdentityFingerprint: string;
+    lifecycle: NativeSkillLifecycleDescriptor;
     sshExecImpl?: typeof sshExec;
   },
 ): NativeSkillInstallResult {
@@ -806,6 +845,7 @@ export function installOpenClawSkill(
     ctx,
     buildOpenClawNativeInstallScript(
       paths,
+      opts.lifecycle,
       skillName,
       snapshot.contentDigest,
       opts.expectedSandboxIdentityFingerprint,
@@ -846,13 +886,15 @@ export type NativeLocalSkillAgent = Exclude<NativeSkillAgent, "openclaw">;
 /** Build a secure staging wrapper around an agent's native local import command. */
 function buildNativeLocalSkillInstallScript(
   paths: NativeSkillState,
-  agentName: NativeLocalSkillAgent,
+  lifecycle: NativeSkillLifecycleDescriptor,
   skillName: string,
   expectedDigest: string,
   expectedSandboxIdentityFingerprint: string,
 ): string {
   const stageToken = "__NEMOCLAW_PAYLOAD__";
-  const lifecycle = NATIVE_SKILL_LIFECYCLES[agentName];
+  if (lifecycle.agentName === "openclaw") {
+    throw new Error("Native local skill install requires a non-OpenClaw lifecycle contract");
+  }
   const nativeResultParser = [
     'const fs=require("node:fs");',
     'const path=require("node:path");',
@@ -899,7 +941,7 @@ export function installNativeAgentSkill(
   ctx: SshContext,
   localDir: string,
   paths: NativeSkillState,
-  agentName: NativeLocalSkillAgent,
+  lifecycle: NativeSkillLifecycleDescriptor,
   skillName: string,
   opts: SkillSnapshotOptions & {
     expectedSandboxIdentityFingerprint: string;
@@ -920,7 +962,7 @@ export function installNativeAgentSkill(
     ctx,
     buildNativeLocalSkillInstallScript(
       paths,
-      agentName,
+      lifecycle,
       skillName,
       snapshot.contentDigest,
       opts.expectedSandboxIdentityFingerprint,

@@ -172,8 +172,10 @@ export async function removeSandboxSkill(
 
   await ensureLiveSandboxOrExit(sandboxName);
 
-  const agent = agentRuntime.getSessionAgent(sandboxName);
-  const lifecycle = skillInstall.getNativeSkillLifecycle(agent?.name);
+  const agent = agentRuntime.resolveSessionAgentDefinition(
+    agentRuntime.getSessionAgent(sandboxName),
+  );
+  const lifecycle = skillInstall.getNativeSkillLifecycle(agent);
   if (!lifecycle) {
     console.error(`  Agent '${agent?.name ?? "unknown"}' has no native skill remove command.`);
     process.exitCode = 1;
@@ -237,6 +239,7 @@ export async function removeSandboxSkill(
             !skillInstall.probeOpenClawSkillRemoveCapability(
               { configFile: tmpSshConfig.file, sandboxName },
               expectedIdentity,
+              lifecycle,
             )
           ) {
             capabilityMissing = true;
@@ -281,8 +284,10 @@ export async function listSandboxSkills(
 ): Promise<void> {
   const extraArgs = request.extraArgs ?? [];
   await ensureLiveSandboxOrExit(sandboxName);
-  const agent = agentRuntime.getSessionAgent(sandboxName);
-  const lifecycle = skillInstall.getNativeSkillLifecycle(agent?.name);
+  const agent = agentRuntime.resolveSessionAgentDefinition(
+    agentRuntime.getSessionAgent(sandboxName),
+  );
+  const lifecycle = skillInstall.getNativeSkillLifecycle(agent);
   if (!lifecycle) {
     console.error(`  Agent '${agent?.name ?? "unknown"}' has no native skill list command.`);
     process.exitCode = 1;
@@ -454,8 +459,10 @@ export async function installSandboxSkill(
   await ensureLiveSandboxOrExit(sandboxName);
 
   // 3. Resolve agent and paths
-  const agent = agentRuntime.getSessionAgent(sandboxName);
-  const lifecycle = skillInstall.getNativeSkillLifecycle(agent?.name);
+  const agent = agentRuntime.resolveSessionAgentDefinition(
+    agentRuntime.getSessionAgent(sandboxName),
+  );
+  const lifecycle = skillInstall.getNativeSkillLifecycle(agent);
   if (!lifecycle) {
     console.error(
       `  Agent '${agent?.name ?? "unknown"}' has no native local skill import command.`,
@@ -510,12 +517,13 @@ export async function installSandboxSkill(
         ? skillInstall.installOpenClawSkill(context, skillDir, paths, frontmatter.name, {
             expectedRootIdentity,
             expectedSandboxIdentityFingerprint: sandboxIdentityFingerprint,
+            lifecycle,
           })
         : skillInstall.installNativeAgentSkill(
             context,
             skillDir,
             paths,
-            agentName,
+            lifecycle,
             frontmatter.name,
             {
               expectedRootIdentity,

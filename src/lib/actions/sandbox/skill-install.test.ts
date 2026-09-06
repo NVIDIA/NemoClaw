@@ -11,6 +11,7 @@ const fingerprintOpenShellSandboxSshConfigTarget = vi.hoisted(() => vi.fn());
 const fingerprintOpenShellSandboxSshTarget = vi.hoisted(() => vi.fn());
 const inspectOpenShellSandboxIdentityFingerprint = vi.hoisted(() => vi.fn());
 const getSessionAgent = vi.hoisted(() => vi.fn());
+const resolveSessionAgentDefinition = vi.hoisted(() => vi.fn());
 const ensureLiveSandboxOrExit = vi.hoisted(() => vi.fn());
 const getSandboxTargetGatewayName = vi.hoisted(() => vi.fn());
 const execSandbox = vi.hoisted(() => vi.fn());
@@ -51,6 +52,7 @@ vi.mock("../../adapters/openshell/sandbox-identity-cli", () => ({
 
 vi.mock("../../agent/runtime", () => ({
   getSessionAgent,
+  resolveSessionAgentDefinition,
 }));
 
 vi.mock("../../skill-install", async (importOriginal) => ({
@@ -80,17 +82,34 @@ const paths = {
   isOpenClaw: true,
 };
 
-const agent = { name: "openclaw", configPaths: { dir: "/sandbox/.openclaw" } };
-const genericAgent = { name: "hermes", configPaths: { dir: "/sandbox/.hermes" } };
+const agent = {
+  name: "openclaw",
+  binary_path: "/usr/local/bin/openclaw",
+  displayName: "OpenClaw",
+  configPaths: { dir: "/sandbox/.openclaw" },
+};
+const genericAgent = {
+  name: "hermes",
+  binary_path: "/usr/local/bin/hermes",
+  displayName: "Hermes",
+  configPaths: { dir: "/sandbox/.hermes" },
+};
 const genericPaths = {
   stateDir: "/sandbox/.hermes",
   isOpenClaw: false,
 };
 const deepAgent = {
   name: "langchain-deepagents-code",
+  binary_path: "/usr/local/bin/dcode",
+  displayName: "Deep Agents Code",
   configPaths: { dir: "/sandbox/.deepagents" },
 };
-const unsupportedAgent = { name: "pi", configPaths: { dir: "/sandbox/.pi/agent" } };
+const unsupportedAgent = {
+  name: "pi",
+  binary_path: "/usr/local/bin/pi",
+  displayName: "Pi",
+  configPaths: { dir: "/sandbox/.pi/agent" },
+};
 const sharedPaths = {
   stateDir: "/sandbox/.deepagents",
   isOpenClaw: false,
@@ -130,6 +149,7 @@ describe("sandbox skill action orchestration", () => {
     ensureLiveSandboxOrExit.mockResolvedValue(undefined);
     getSandboxTargetGatewayName.mockReturnValue("nemoclaw");
     getSessionAgent.mockReturnValue(genericAgent);
+    resolveSessionAgentDefinition.mockImplementation((selectedAgent) => selectedAgent ?? agent);
     skillInstall.validateSkillName.mockReturnValue(true);
     skillInstall.bindNativeSkillCommandToSandboxIdentity.mockReturnValue([
       "/bin/sh",
@@ -230,7 +250,11 @@ describe("sandbox skill action orchestration", () => {
   ] as const)(
     "owns the complete %s native lifecycle command contract",
     (agentName, displayName, fixedAgentTarget, install, list, remove) => {
-      const lifecycle = getNativeSkillLifecycle(agentName);
+      const lifecycle = getNativeSkillLifecycle({
+        name: agentName,
+        binary_path: install[0],
+        displayName,
+      });
 
       expect(lifecycle).toMatchObject({ agentName, displayName, fixedAgentTarget });
       expect(lifecycle?.install("/stage", "demo-skill", "digest")).toEqual(install);
@@ -238,6 +262,39 @@ describe("sandbox skill action orchestration", () => {
       expect(lifecycle?.remove("demo-skill")).toEqual(remove);
     },
   );
+
+  it("binds install, list, and remove to the selected manifest executable", () => {
+    const lifecycle = getNativeSkillLifecycle({
+      name: "hermes",
+      binary_path: "/opt/agent/bin/hermes",
+      displayName: "Manifest Hermes",
+    });
+
+    expect(lifecycle?.install("/stage", "demo-skill", "digest")[0]).toBe("/opt/agent/bin/hermes");
+    expect(lifecycle?.list()[0]).toBe("/opt/agent/bin/hermes");
+    expect(lifecycle?.remove("demo-skill")[0]).toBe("/opt/agent/bin/hermes");
+    expect(lifecycle?.displayName).toBe("Manifest Hermes");
+  });
+
+  it("loads the trusted OpenClaw manifest for its legacy null session representation", async () => {
+    const manifestAgent = {
+      ...agent,
+      binary_path: "/opt/openclaw/bin/openclaw",
+      displayName: "Manifest OpenClaw",
+    };
+    getSessionAgent.mockReturnValue(null);
+    resolveSessionAgentDefinition.mockReturnValue(manifestAgent);
+
+    await listSandboxSkills("alpha", { extraArgs: ["--json"] });
+
+    expect(resolveSessionAgentDefinition).toHaveBeenCalledWith(null);
+    expect(execSandbox).toHaveBeenCalledWith(
+      "alpha",
+      ["/opt/openclaw/bin/openclaw", "skills", "list", "--agent", "main", "--json"],
+      { timeoutSeconds: 30 },
+      { exit: expect.any(Function) },
+    );
+  });
 
   it("delegates OpenClaw removal to the native agent command", async () => {
     getSessionAgent.mockReturnValue(agent);
@@ -689,7 +746,10 @@ describe("sandbox skill action orchestration", () => {
       expect.objectContaining({ configFile: tempConfig, sandboxName: "alpha" }),
       skillDir,
       sharedPaths,
-      "langchain-deepagents-code",
+      expect.objectContaining({
+        agentName: "langchain-deepagents-code",
+        binary: "/usr/local/bin/dcode",
+      }),
       "demo-skill",
       {
         expectedRootIdentity: {
@@ -801,7 +861,7 @@ describe("sandbox skill action orchestration", () => {
       expect.objectContaining({ sandboxName: "alpha" }),
       skillDir,
       genericPaths,
-      "hermes",
+      expect.objectContaining({ agentName: "hermes", binary: "/usr/local/bin/hermes" }),
       "demo-skill",
       expect.objectContaining({ expectedRootIdentity: expect.any(Object) }),
     );

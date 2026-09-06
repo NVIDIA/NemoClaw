@@ -47,6 +47,11 @@ export function getSessionAgent(sandboxName?: string): AgentDefinition | null {
   }
 }
 
+/** Resolve OpenClaw's legacy null session representation through its trusted manifest. */
+export function resolveSessionAgentDefinition(agent: AgentDefinition | null): AgentDefinition {
+  return agent ?? loadAgent("openclaw");
+}
+
 /**
  * Resolve only the canonical agent persisted on the supplied sandbox registry row.
  * Registry state is user-writable, so validate against the trusted manifest inventory

@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   computeSkillContentDigest,
+  getNativeSkillLifecycle,
   installOpenClawSkill,
   probeOpenClawSkillRemoveCapability,
   SKILL_SNAPSHOT_MAX_BYTES,
@@ -28,6 +29,11 @@ const paths: NativeSkillState = {
   stateDir: "/sandbox/.openclaw",
   isOpenClaw: true,
 };
+const lifecycle = getNativeSkillLifecycle({
+  name: "openclaw",
+  binary_path: "/usr/local/bin/openclaw",
+  displayName: "OpenClaw",
+})!;
 
 function makeSkill(): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-skill-"));
@@ -37,7 +43,7 @@ function makeSkill(): string {
 }
 
 function installOptions(sshExecImpl: typeof import("./skill-remote").sshExec) {
-  return { expectedSandboxIdentityFingerprint: SANDBOX_IDENTITY, sshExecImpl };
+  return { expectedSandboxIdentityFingerprint: SANDBOX_IDENTITY, lifecycle, sshExecImpl };
 }
 
 afterEach(() => {
@@ -52,7 +58,9 @@ describe("OpenClaw native skill installation", () => {
       stderr: "",
     }));
 
-    expect(probeOpenClawSkillRemoveCapability(ctx, SANDBOX_IDENTITY, sshExec)).toBe(true);
+    expect(probeOpenClawSkillRemoveCapability(ctx, SANDBOX_IDENTITY, lifecycle, sshExec)).toBe(
+      true,
+    );
     expect(sshExec).toHaveBeenCalledWith(
       ctx,
       expect.stringContaining("'skills' 'remove' '--help'"),
