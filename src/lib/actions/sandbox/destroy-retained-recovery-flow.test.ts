@@ -10,6 +10,7 @@ import {
   resetDestroyModuleCache,
 } from "../../../../test/helpers/destroy-flow-test-harness";
 import type { RetainedSandboxRecoveryRecord } from "../../state/onboard-session/retained-sandbox-recovery";
+import { OnboardLockContentionError } from "../../state/onboard-session";
 
 function retainedRecoveryRecord(sandboxId = "sb-alpha"): RetainedSandboxRecoveryRecord {
   return {
@@ -104,6 +105,48 @@ describe("destroySandbox retained recovery flow", () => {
         ),
       ).toHaveLength(exactRemovalCallsAfterCleanup);
       expect(harness.resolveRetainedSandboxRecoverySpy).toHaveBeenCalledOnce();
+    },
+  );
+
+  it(
+    "reports holder PID and wait guidance when retained recovery cleanup hits a live onboard lock (#11052)",
+    { timeout: 30_000 },
+    async () => {
+      const recovery = retainedRecoveryRecord();
+      const sandboxContainerId = "a".repeat(64);
+      const bootstrapContainerId = "b".repeat(64);
+      const identityRows = [sandboxContainerId, bootstrapContainerId]
+        .map((id) => `${id}\topenshell\tdefault\tsb-alpha`)
+        .join("\n");
+      const harness = createDestroyHarness({
+        sandboxPresent: false,
+        dockerOrphanIds: [bootstrapContainerId],
+        dockerRunResult: { status: 0, stdout: identityRows },
+        registryEntryOverrides: {
+          lifecycleGeneration: recovery.lifecycleGeneration!,
+          lifecycleLiveIdentityFingerprint: recovery.sandboxIdentityFingerprint!,
+        },
+        retainedRecoveryRecords: [recovery],
+      });
+      harness.resolveRetainedSandboxRecoverySpy.mockImplementation(() => {
+        throw new OnboardLockContentionError(4242);
+      });
+
+      await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow(
+        "process.exit(1)",
+      );
+
+      const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
+      expect(errorOutput).toContain("could not clear its retained recovery record");
+      expect(errorOutput).toContain("another nemoclaw onboarding run is already in progress.");
+      expect(errorOutput).toContain("Lock holder PID: 4242.");
+      expect(errorOutput).toContain("Wait for the active onboarding run to finish.");
+      expect(errorOutput).toContain("after the active onboarding run finishes");
+      expect(errorOutput).not.toContain(
+        "Cannot update onboarding recovery while another onboarding run owns the lock.",
+      );
+      expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
+      expect(exitSpy).toHaveBeenCalledWith(1);
     },
   );
 

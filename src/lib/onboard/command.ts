@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { formatAgentAliasSuffix, resolveAgentNameAlias } from "../agent/aliases";
+import { formatOnboardLockContentionGuidance } from "../cli/branding";
 import { withCredentialOverrides } from "../credentials/scoped-overrides";
 import { loadServingCatalog } from "../inference/serving/catalog-loader";
 import { NEMOCLAW_SERVING_PRESET_ENV } from "../inference/serving/managed-cluster-discovery";
@@ -544,13 +545,7 @@ function handleOnboardCommandError(error: unknown, deps: RunOnboardCommandDeps):
   if (isOnboardLockContentionError(error)) {
     return reportOnboardCommandError(
       deps,
-      [
-        `  another ${cliName()} onboarding run is already in progress.`,
-        error.holderPid ? `  Lock holder PID: ${error.holderPid}.` : "",
-        "  Wait for the active onboarding run to finish.",
-      ]
-        .filter(Boolean)
-        .join("\n"),
+      formatOnboardLockContentionGuidance(cliName(), error.holderPid).lines.join("\n"),
     );
   }
   const cancellationCode = promptCancellationCode(error);

@@ -6,7 +6,7 @@ import {
   printOpenShellStateRpcIssue,
 } from "../../adapters/openshell/gateway-drift";
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
-import { CLI_NAME } from "../../cli/branding";
+import { CLI_NAME, formatOnboardLockContentionGuidance } from "../../cli/branding";
 import {
   checkGatewayRouteCompatibility,
   formatGatewayRouteConflict,
@@ -326,10 +326,13 @@ export function getRebuildSandboxEntryOrBail(
 /** Block rebuild before any live-state probe or cleanup can bypass retained recovery. */
 function reportRebuildOnboardLockContention(error: unknown, bail: RebuildBail): boolean {
   if (!onboardSession.isOnboardLockContentionError(error)) return false;
-  const pidDetail = error.holderPid ? ` Lock holder PID: ${error.holderPid}.` : "";
+  const guidance = formatOnboardLockContentionGuidance(CLI_NAME, error.holderPid);
   printRebuildPreflightFailure(
-    `another ${CLI_NAME} onboarding run is already in progress.`,
-    `Wait for the active onboarding run to finish.${pidDetail}`,
+    guidance.summary,
+    guidance.lines
+      .slice(1)
+      .map((line) => line.trim())
+      .join(" "),
     "Could not acquire onboard lock before rebuild",
     bail,
   );

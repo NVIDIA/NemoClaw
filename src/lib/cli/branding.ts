@@ -92,6 +92,22 @@ const branding = getAgentBranding();
 /** CLI binary name for usage strings — e.g. "nemoclaw", "nemohermes", or "nemo-deepagents". */
 export const CLI_NAME: string = branding.cli;
 
+/** Shared live onboarding-lock contention copy for CLI command boundaries. */
+export function formatOnboardLockContentionGuidance(
+  cli: string,
+  holderPid?: number,
+): { readonly summary: string; readonly lines: readonly string[] } {
+  const summary = `another ${cli} onboarding run is already in progress.`;
+  return {
+    summary,
+    lines: [
+      `  ${summary}`,
+      holderPid ? `  Lock holder PID: ${holderPid}.` : "",
+      "  Wait for the active onboarding run to finish.",
+    ].filter(Boolean),
+  };
+}
+
 /** Title-case display name for headers — e.g. "NemoClaw", "NemoHermes", or "NemoDeepAgents". */
 export const CLI_DISPLAY_NAME: string = branding.display;
 

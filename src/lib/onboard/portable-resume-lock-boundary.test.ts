@@ -10,6 +10,7 @@ import path from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { testTimeoutOptions } from "../../../test/helpers/timeouts";
+import { formatOnboardLockContentionGuidance } from "../cli/branding";
 
 const originalEnv = { ...process.env };
 const STOP_AFTER_PREPARATION = "stop after observed portable preparation";
@@ -93,6 +94,12 @@ async function loadBoundaryModules() {
     rebuildGuards,
     destroy,
   };
+}
+
+function expectLiveOnboardLockGuidance(errorOutput: string, holderPid: number): void {
+  for (const line of formatOnboardLockContentionGuidance("nemoclaw", holderPid).lines) {
+    expect(errorOutput).toContain(line.trim());
+  }
 }
 
 function spawnLiveOnboardLockHolder(lockFile: string) {
@@ -232,10 +239,8 @@ describe("portable resume command lock boundary", () => {
         const errorOutput = (console.error as unknown as ReturnType<typeof vi.fn>).mock.calls
           .map((call: unknown[]) => String(call[0]))
           .join("\n");
-        expect(errorOutput).toContain("another nemoclaw onboarding run is already in progress.");
         expect(child.pid).toBeTypeOf("number");
-        expect(errorOutput).toContain(`Lock holder PID: ${String(child.pid)}.`);
-        expect(errorOutput).toContain("Wait for the active onboarding run to finish.");
+        expectLiveOnboardLockGuidance(errorOutput, child.pid as number);
       } finally {
         const exited = once(child, "exit");
         child.kill();
@@ -258,10 +263,8 @@ describe("portable resume command lock boundary", () => {
       try {
         expect(rebuildGuards.blockRebuildOnRetainedSandboxRecovery("alpha", bail)).toBe(true);
         const errorOutput = error.mock.calls.map((call) => String(call[0])).join("\n");
-        expect(errorOutput).toContain("another nemoclaw onboarding run is already in progress.");
         expect(child.pid).toBeTypeOf("number");
-        expect(errorOutput).toContain(`Lock holder PID: ${String(child.pid)}.`);
-        expect(errorOutput).toContain("Wait for the active onboarding run to finish.");
+        expectLiveOnboardLockGuidance(errorOutput, child.pid as number);
         expect(bail).toHaveBeenCalled();
       } finally {
         const exited = once(child, "exit");
@@ -287,10 +290,8 @@ describe("portable resume command lock boundary", () => {
       try {
         await expect(destroy.destroySandbox("alpha", { yes: true })).rejects.toThrow("exit:1");
         const errorOutput = error.mock.calls.map((call) => String(call[0])).join("\n");
-        expect(errorOutput).toContain("another nemoclaw onboarding run is already in progress.");
         expect(child.pid).toBeTypeOf("number");
-        expect(errorOutput).toContain(`Lock holder PID: ${String(child.pid)}.`);
-        expect(errorOutput).toContain("Wait for the active onboarding run to finish.");
+        expectLiveOnboardLockGuidance(errorOutput, child.pid as number);
       } finally {
         const exited = once(child, "exit");
         child.kill();
