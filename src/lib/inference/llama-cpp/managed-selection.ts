@@ -187,6 +187,10 @@ export function resolveManagedLlamaCppSelection(
       };
     }
     const selection = highestPriorityChoices[0]!.selection;
+    if (selection.recipe.metadata.id === N1X_WSL_RECIPE_ID) {
+      const localityFailure = n1xWslDockerLocalityFailure(env, options);
+      if (localityFailure) return { kind: "rejected", reason: localityFailure };
+    }
     return {
       kind: "selected",
       selection: { ...selection, selection: "automatic" },

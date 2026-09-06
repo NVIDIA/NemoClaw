@@ -472,6 +472,25 @@ function buildManagedLlamaCppOptions(input: {
     );
     choices = [];
   }
+  if (
+    resolution?.kind === "selected" &&
+    !choices.some(
+      ({ selection }) =>
+        selection.recipe.metadata.id === resolution.selection.recipe.metadata.id,
+    )
+  ) {
+    choices = [
+      ...choices,
+      {
+        priority: resolution.selection.preset.spec.priority,
+        selection: resolution.selection,
+      },
+    ].sort(
+      (left, right) =>
+        right.priority - left.priority ||
+        left.selection.preset.metadata.id.localeCompare(right.selection.preset.metadata.id),
+    );
+  }
 
   const defaultRecipeId =
     resolution?.kind === "selected" ? resolution.selection.recipe.metadata.id : null;
@@ -501,7 +520,8 @@ function prepareManagedLlamaCppMenu(input: {
 } {
   const { deps, gpu, requestedProvider } = input;
   const platform = gpu?.platform;
-  const candidate = platform === "spark" || requestedProvider === "install-llama-cpp";
+  const candidate =
+    platform === "spark" || platform === "n1x" || requestedProvider === "install-llama-cpp";
   const resolution = candidate
     ? resolveManagedLlamaCppSafely(
         deps,
@@ -515,6 +535,19 @@ function prepareManagedLlamaCppMenu(input: {
     resolution,
     options: buildManagedLlamaCppOptions({ deps, candidate, requestedProvider, resolution }),
   };
+}
+
+function platformDefaultProviderKey(input: {
+  gpu: SetupNimGpu;
+  isWsl: boolean;
+  managedLlamaCpp: ManagedLlamaCppSelectionResult | null;
+}): "install-llama-cpp" | "install-ollama" | "install-vllm" | undefined {
+  if (input.gpu?.platform === "n1x" && input.managedLlamaCpp?.kind === "selected") {
+    return "install-llama-cpp";
+  }
+  if (input.gpu?.platform === "spark") return "install-vllm";
+  if (input.isWsl) return "install-ollama";
+  return undefined;
 }
 
 function resolveSelectedManagedLlamaCpp(input: {
@@ -934,7 +967,10 @@ export function createSetupNim(
       gpuNimCapable,
     } = providerHostState;
     const agentProviderOptions = deps.getAgentInferenceProviderOptions(agent);
-    const { options: managedLlamaCppOptions } = prepareManagedLlamaCppMenu({
+    const {
+      resolution: managedLlamaCppResolution,
+      options: managedLlamaCppOptions,
+    } = prepareManagedLlamaCppMenu({
       deps,
       gpu,
       requestedProvider,
@@ -1026,7 +1062,11 @@ export function createSetupNim(
             windowsHostOllamaSupported: windowsHostOllamaDockerRequirement.supported,
             windowsHostOllamaReachable: windowsOllamaReachable,
             hermesProviderAvailable,
-            preferManagedVllmDefault: gpu?.platform === "spark",
+            platformDefaultProviderKey: platformDefaultProviderKey({
+              gpu,
+              isWsl: isWslHost,
+              managedLlamaCpp: managedLlamaCppResolution,
+            }),
             ...recordedProviderReaders,
           });
           if (providerSelection.kind === "failure") {

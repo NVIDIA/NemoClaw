@@ -139,7 +139,7 @@ Each capability uses `present`, `absent`, or `unknown`.
 | `host.platform.wsl_docker_desktop` | Docker Desktop integration in WSL. |
 | `host.platform.wsl_native_docker` | Native Docker Engine inside WSL. |
 | `host.platform.wsl_gpu_passthrough` | Docker Desktop GPU passthrough proof. |
-| `host.platform.n1x_wsl` | Windows N1x product identity qualified through WSL on Linux ARM64 with reachable Docker Desktop and an available NVIDIA GPU. |
+| `host.platform.n1x_wsl` | A proof-backed `NVIDIA RTX Spark N1X` GPU qualified through WSL on Linux ARM64 with reachable Docker Desktop. |
 | `host.platform.dgx_spark` | DGX Spark identity on ARM64 with an available NVIDIA GPU. |
 | `host.platform.n1x` | N1x identity from the trusted FastOS marker and NVIDIA display PCI device on Linux ARM64 with an available NVIDIA GPU. This capability does not promote the Deferred platform status. |
 | `host.platform.dgx_station` | Qualified DGX Station GB300 identity, Linux ARM64 runtime, Ubuntu 24.04, hardware, and software profile. |
@@ -153,11 +153,11 @@ It is `absent` when the proof fails or the host has no NVIDIA GPU, and `unknown`
 The read-only `host probe` command does not pull or start the container-backed WSL GPU proof, so a host that needs that proof reports this capability as `unknown`.
 Onboarding can run the bounded proof only after its current host and gateway readiness checks admit the run.
 
-The `host.platform.n1x_wsl` qualification applies when the bounded Windows product query identifies an N1x host through WSL.
-It is `qualified` only for Linux ARM64 WSL with reachable Docker Desktop and an available NVIDIA GPU.
+The `host.platform.n1x_wsl` qualification applies when the bounded CUDA proof validates one GPU whose NVIDIA identity contains `RTX Spark N1X`.
+It is `qualified` only for Linux ARM64 WSL with reachable Docker Desktop and the same successful GPU proof.
 The capability is `present` only when that qualification passes.
-Managed llama.cpp admission also requires `host.platform.wsl_gpu_passthrough` to be `present`.
-The N1x WSL qualification does not replace the separate Docker Desktop GPU proof.
+Managed llama.cpp admission also requires `host.platform.wsl_gpu_passthrough` to be `present`, so selection cannot reuse an unproved GPU name.
+The Windows chassis model is bounded diagnostic evidence only and does not establish N1x WSL identity.
 
 DGX Station qualification fails closed.
 The `host.platform.dgx_station` capability is `present` only when the host runs Linux ARM64 on Ubuntu 24.04, reports an effective NVIDIA GPU, and the product identity, a display-class PCI device with NVIDIA vendor ID (`0x10de`) and GB300 device ID (`0x31c2` or `0x31c3`), and the software profile all qualify.

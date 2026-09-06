@@ -335,8 +335,9 @@ Native N1x FASTOS omits local NVIDIA NIM and offers the Deferred managed-vLLM pr
 Native N1x FASTOS remains outside the supported-platform set because its physical NemoClaw Express E2E validation is incomplete.
 After NemoClaw qualifies the native N1x identity, you must provide explicit Express or standard-onboarding intent.
 A qualifying Windows WSL N1x host uses managed llama.cpp through Windows Express.
-The installer uses local Docker Desktop, Arm64, the Windows N1x product identity, and at least 48,000 MiB of GPU memory as preliminary selection conditions.
-Onboarding also requires the default local Docker context, at least 48,000 MiB of Docker memory, driver version `580.65.06` or later, Docker storage and runtime readiness, NVIDIA GPU integration, and a successful Docker Desktop GPU passthrough proof.
+The installer leaves provider and recipe selection to onboarding.
+Onboarding recognizes one proof-backed GPU whose bounded NVIDIA identity contains `RTX Spark N1X`; the Windows chassis product name does not participate in selection.
+Qualification also requires Linux Arm64 WSL, local Docker Desktop on the default local Docker context, at least 48,000 MiB of Docker and GPU memory, driver version `580.65.06` or later, Docker storage and runtime readiness, NVIDIA GPU integration, and a successful Docker Desktop GPU passthrough proof.
 Onboarding stops managed selection when any required readiness check fails.
 Other Windows WSL Express installs use WSL-local Ollama.
 Windows-host Ollama remains available through manual onboarding when Docker Desktop WSL integration is enabled, `DOCKER_HOST` is unset, Docker uses the local `default` context, and Ollama has a loopback-only listener that is reachable from Docker and rejects unrecognized HTTP `Host` headers.

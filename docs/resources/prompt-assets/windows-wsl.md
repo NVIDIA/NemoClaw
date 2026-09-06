@@ -10,8 +10,8 @@ Use these instructions only after official detection identifies Windows WSL.
 Offer the maintained Windows Express path before the normal provider menu.
 Explain that Express keeps the selected agent, selects the admitted local inference profile, and leaves optional setup at its defaults.
 For a qualifying N1x WSL host, Express uses managed llama.cpp with Qwen 3.6 35B-A3B and downloads a pinned 20.4 GB GGUF file.
-The installer checks only the preliminary Express-selection conditions.
-Before managed llama.cpp starts, onboarding also requires the default local Docker context, at least 48,000 MiB of Docker memory, driver version `580.65.06` or later, Docker storage and runtime readiness, NVIDIA GPU integration, and a successful Docker Desktop GPU passthrough proof.
+The installer leaves provider, model, and recipe selection to onboarding.
+Before managed llama.cpp starts, onboarding requires Linux Arm64 WSL, one proof-backed `NVIDIA RTX Spark N1X` GPU, the default local Docker context, at least 48,000 MiB of Docker and GPU memory, driver version `580.65.06` or later, Docker storage and runtime readiness, and NVIDIA GPU integration.
 Before selecting managed llama.cpp, unset `DOCKER_HOST` and select Docker's `default` context.
 Managed N1x WSL selection rejects other Docker selectors.
 For other Windows WSL hosts, Express uses WSL-local Ollama with its memory-aware default model.
@@ -23,12 +23,11 @@ Choices:
 
 If Express is selected:
 
-- When the installer confirms local Docker Desktop, Arm64, the N1x Windows product identity, and at least 48,000 MiB of GPU memory, set `NEMOCLAW_PROVIDER=install-llama-cpp` and `NEMOCLAW_LLAMACPP_RECIPE=llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1`.
-  Onboarding must then confirm Docker Desktop GPU passthrough before managed llama.cpp starts.
-  If any required readiness check fails, stop and explain that managed llama.cpp is unavailable on this host.
+- Leave `NEMOCLAW_PROVIDER`, `NEMOCLAW_MODEL`, and `NEMOCLAW_LLAMACPP_RECIPE` unset.
+  Onboarding selects the automatic managed Qwen recipe only after the complete N1x WSL readiness contract passes.
+  If N1x readiness does not match, onboarding selects WSL-local Ollama.
 - For managed llama.cpp, explain that Hugging Face authentication is optional and anonymous downloads can return HTTP 429. If needed, `HF_TOKEN` supplies a Hugging Face read token only to the temporary downloader. The token remains in the installer environment; remove `HF_TOKEN` after installation when no process needs it.
-- Otherwise, set `NEMOCLAW_PROVIDER=install-ollama` and leave `NEMOCLAW_MODEL` unset.
-  This installs WSL-local Ollama and uses the sandbox authentication proxy, including when Docker Desktop can reach host loopback directly.
+- For other WSL hosts, onboarding installs WSL-local Ollama and uses the sandbox authentication proxy, including when Docker Desktop can reach host loopback directly.
 - Set `NEMOCLAW_AGENT` to the agent already selected in the starter prompt.
 - Set `NEMOCLAW_NON_INTERACTIVE=1`, `NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt`, `NEMOCLAW_YES=1`, and `NEMOCLAW_POLICY_MODE=suggested`.
 - Set `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1` when Express is accepted.

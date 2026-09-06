@@ -11,7 +11,7 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-function n1xProofHarness(proofPassed: boolean) {
+function n1xProofHarness(proofPassed: boolean, requestedProvider: string | null) {
   const selection = {
     preset: { metadata: { id: "llama-cpp.n1x-wsl-arm64.single.qwen3-6-35b-a3b" } },
     recipe: {
@@ -44,7 +44,7 @@ function n1xProofHarness(proofPassed: boolean) {
     setupNim: createSetupNim(
       makeDeps({
         isNonInteractive: () => true,
-        getNonInteractiveProvider: () => "install-llama-cpp",
+        getNonInteractiveProvider: () => requestedProvider,
         resolveManagedLlamaCppSelection,
         installManagedLlamaCpp,
         handleLlamaCppSelection,
@@ -147,8 +147,8 @@ describe("managed llama.cpp profile onboarding", () => {
     );
   });
 
-  it("carries successful N1x Docker Desktop GPU proof into managed selection", async () => {
-    const harness = n1xProofHarness(true);
+  it("zero-decision onboarding selects managed Qwen on a proven N1x WSL GPU (#10962)", async () => {
+    const harness = n1xProofHarness(true, null);
 
     await expect(harness.setupNim(harness.gpu, "n1x-agent")).resolves.toMatchObject({
       provider: "llama-cpp-local",
@@ -162,7 +162,7 @@ describe("managed llama.cpp profile onboarding", () => {
   });
 
   it("rejects managed N1x selection when Docker Desktop GPU proof fails", async () => {
-    const harness = n1xProofHarness(false);
+    const harness = n1xProofHarness(false, "install-llama-cpp");
 
     await expect(harness.setupNim(harness.gpu, "n1x-agent")).rejects.toThrow(
       "WSL GPU proof is unavailable",

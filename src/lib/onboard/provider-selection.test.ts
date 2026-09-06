@@ -244,7 +244,7 @@ describe("resolveRequestedProviderSelection", () => {
   it("auto-selects managed vLLM on a DGX managed-vLLM platform when no provider is given (#7293)", () => {
     const result = resolve({
       options: [option("build"), option("install-vllm")],
-      preferManagedVllmDefault: true,
+      platformDefaultProviderKey: "install-vllm",
     });
 
     assert.equal(selectedKey(result), "install-vllm");
@@ -254,17 +254,25 @@ describe("resolveRequestedProviderSelection", () => {
     // When vLLM is already running, the menu exposes only `vllm` (not install-vllm).
     const result = resolve({
       options: [option("build"), option("vllm")],
-      preferManagedVllmDefault: true,
+      platformDefaultProviderKey: "install-vllm",
     });
 
     assert.equal(selectedKey(result), "vllm");
+  });
+
+  it("auto-selects managed llama.cpp on its preferred hardware platform (#10962)", () => {
+    const result = resolve({
+      options: [option("build"), option("install-llama-cpp")],
+      platformDefaultProviderKey: "install-llama-cpp",
+    });
+
+    assert.equal(selectedKey(result), "install-llama-cpp");
   });
 
   it("keeps the cloud default when the caller does not prefer managed vLLM (#7293)", () => {
     // The menu can expose managed vLLM without changing the automatic selection.
     const result = resolve({
       options: [option("build"), option("install-vllm")],
-      preferManagedVllmDefault: false,
     });
 
     assert.equal(selectedKey(result), "build");
@@ -273,9 +281,18 @@ describe("resolveRequestedProviderSelection", () => {
   it("keeps the cloud default when no managed-vLLM entry is available (#7293)", () => {
     const result = resolve({
       options: [option("build"), option("openai")],
-      preferManagedVllmDefault: true,
+      platformDefaultProviderKey: "install-vllm",
     });
 
     assert.equal(selectedKey(result), "build");
+  });
+
+  it("keeps WSL-local Ollama as the platform default when N1x is not selected (#10962)", () => {
+    const result = resolve({
+      options: [option("build"), option("install-ollama")],
+      platformDefaultProviderKey: "install-ollama",
+    });
+
+    assert.equal(selectedKey(result), "install-ollama");
   });
 });

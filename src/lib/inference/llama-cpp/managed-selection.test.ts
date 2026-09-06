@@ -116,8 +116,7 @@ function n1xCollectionOptions(): Omit<
       notes: [],
     }),
     collectPlatformIdentity: () => ({
-      productName: "RTX Spark N1X",
-      n1xWslProduct: true,
+      productName: "83N7",
     }),
     detectNvidiaDriverVersion: () => "580.65.06",
   };
@@ -225,29 +224,35 @@ describe("managed llama.cpp selection", () => {
     });
   });
 
-  it("selects managed Qwen 3.6 on a qualifying N1x WSL host (#10102)", () => {
+  it("selects optimized managed Qwen 3.6 automatically on a qualifying N1x WSL host (#10962)", () => {
     const { catalog, report } = fixture(N1X_WSL_PRESET_ID);
 
     expect(
-      resolveManagedLlamaCppSelection(
-        { [LLAMA_CPP_RECIPE_ENV]: N1X_WSL_RECIPE_ID },
-        catalog,
-        report,
-        LOCAL_DOCKER_SELECTION,
-      ),
+      resolveManagedLlamaCppSelection({}, catalog, report, LOCAL_DOCKER_SELECTION),
     ).toMatchObject({
       kind: "selected",
       selection: {
-        recipe: { metadata: { id: N1X_WSL_RECIPE_ID } },
+        selection: "automatic",
         preset: { metadata: { id: N1X_WSL_PRESET_ID } },
+        recipe: {
+          metadata: { id: N1X_WSL_RECIPE_ID },
+          spec: {
+            serve: {
+              chatTemplate: "model-embedded-jinja",
+              chatTemplateArguments: { reasoningStrength: "low" },
+            },
+          },
+        },
       },
     });
   });
 
-  it("selects N1x WSL through the real preflight-proof readiness wrapper (#10102)", () => {
+  it("selects N1x WSL through the proof-backed GPU identity on an OEM host (#10962)", () => {
     const { catalog } = fixture(N1X_WSL_PRESET_ID);
     const gpu = {
       type: "nvidia",
+      name: "NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)",
+      platform: "n1x" as const,
       count: 1,
       totalMemoryMB: 49_088,
       perGpuMB: 49_088,
@@ -257,13 +262,25 @@ describe("managed llama.cpp selection", () => {
 
     expect(
       resolveManagedLlamaCppSelectionForGpu(
-        { [LLAMA_CPP_RECIPE_ENV]: N1X_WSL_RECIPE_ID },
+        {},
         gpu,
         catalog,
         n1xCollectionOptions(),
         LOCAL_DOCKER_SELECTION,
       ),
     ).toMatchObject({ kind: "selected" });
+  });
+
+  it("rejects automatic N1x WSL selection for a remote runtime context (#10962)", () => {
+    const { catalog, report } = fixture(N1X_WSL_PRESET_ID);
+    const dockerContextIsDefault = vi.fn(() => false);
+
+    expect(resolveManagedLlamaCppSelection({}, catalog, report, { dockerContextIsDefault })).toEqual({
+      kind: "rejected",
+      reason:
+        "Managed N1x WSL llama.cpp requires DOCKER_HOST to be unset and the effective Docker context to be default.",
+    });
+    expect(dockerContextIsDefault).toHaveBeenCalledOnce();
   });
 
   it("rejects an explicit remote Docker context for N1x WSL", () => {

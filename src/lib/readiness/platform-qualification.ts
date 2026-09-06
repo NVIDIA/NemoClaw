@@ -31,7 +31,7 @@ export interface PlatformIdentity {
   n1xCandidate?: boolean | null;
   n1xFastOsMarker?: boolean | null;
   n1xPciGpu?: boolean | null;
-  n1xWslProduct?: boolean | null;
+  n1xWslGpu?: boolean | null;
   stationProfile?: StationProfile | null;
   stationGb300PciGpu?: boolean | null;
   osId?: string | null;
@@ -60,48 +60,6 @@ export interface CollectPlatformIdentityOptions extends N1xIdentityOptions {
   productNamePath?: string;
   stationReleasePath?: string;
   osReleasePath?: string;
-  isWsl?: boolean;
-  runCaptureImpl?: (
-    command: readonly string[],
-    options?: { ignoreError?: boolean },
-  ) => string;
-}
-
-const N1X_WSL_PRODUCT_NAME_MAX_BYTES = 256;
-const N1X_WSL_PRODUCT_PATTERN = /(?:^|\s)RTX Spark N1X(?:$|\s)/i;
-
-export function isN1xWslProductName(value: string): boolean {
-  return N1X_WSL_PRODUCT_PATTERN.test(value.trim());
-}
-
-function collectN1xWslProduct(
-  options: CollectPlatformIdentityOptions,
-): boolean | undefined {
-  if (!options.isWsl || !options.runCaptureImpl) return undefined;
-  try {
-    const raw = options.runCaptureImpl(
-      [
-        "powershell.exe",
-        "-NoProfile",
-        "-NonInteractive",
-        "-Command",
-        "(Get-CimInstance Win32_ComputerSystem).Model",
-      ],
-      { ignoreError: true },
-    );
-    const normalized = String(raw ?? "").replace(/\r/g, "").trim();
-    if (
-      !normalized ||
-      normalized.includes("\0") ||
-      normalized.includes("\n") ||
-      Buffer.byteLength(normalized, "utf8") > N1X_WSL_PRODUCT_NAME_MAX_BYTES
-    ) {
-      return undefined;
-    }
-    return isN1xWslProductName(normalized);
-  } catch {
-    return undefined;
-  }
 }
 
 function readOptional(
@@ -272,8 +230,6 @@ export function collectPlatformIdentity(
     readFile,
     options.productNamePath ?? "/sys/class/dmi/id/product_name",
   );
-  const n1xWslProduct = collectN1xWslProduct(options);
-  const wslIdentity = options.isWsl ? { n1xWslProduct } : {};
   let nvidiaPlatform = nvidiaPlatformFromProduct(productName);
   if (nvidiaPlatform === undefined) {
     const n1xIdentity = collectN1xIdentity({
@@ -292,14 +248,13 @@ export function collectPlatformIdentity(
       return {
         nvidiaPlatform,
         productName,
-        ...wslIdentity,
         n1xCandidate: true,
         n1xFastOsMarker: n1xIdentity.fastOsMarker,
         n1xPciGpu: n1xIdentity.pciGpu,
       };
     }
   }
-  if (nvidiaPlatform !== "station") return { nvidiaPlatform, productName, ...wslIdentity };
+  if (nvidiaPlatform !== "station") return { nvidiaPlatform, productName };
   const osRelease = readOptional(readFile, options.osReleasePath ?? "/etc/os-release");
   const { osId, osVersionId } = osRelease ? parseOsRelease(osRelease) : {};
 
@@ -333,7 +288,6 @@ export function collectPlatformIdentity(
   return {
     nvidiaPlatform,
     productName,
-    ...wslIdentity,
     stationProfile,
     stationGb300PciGpu: stationHasGb300PciGpu(
       readFile,
@@ -384,13 +338,14 @@ function deriveN1xWslQualification(
   input: Readonly<PlatformQualificationInput>,
 ): QualificationStatus {
   if (!input.isWsl) return "unqualified";
-  if (input.n1xWslProduct === undefined || input.n1xWslProduct === null) return "unknown";
-  return input.n1xWslProduct === true &&
+  if (input.n1xWslGpu === undefined || input.n1xWslGpu === null) return "unknown";
+  return input.n1xWslGpu === true &&
     input.platform === "linux" &&
     input.architecture === "arm64" &&
     input.runtime === "docker-desktop" &&
     input.dockerReachable &&
-    input.hasNvidiaGpu
+    input.hasNvidiaGpu &&
+    input.wslDockerDesktopGpuProofPassed === true
     ? "qualified"
     : "unqualified";
 }
@@ -465,7 +420,7 @@ export function projectPlatformQualification(
     input.n1xCandidate !== undefined ||
     input.n1xFastOsMarker !== undefined ||
     input.n1xPciGpu !== undefined ||
-    input.n1xWslProduct !== undefined ||
+    input.n1xWslGpu !== undefined ||
     input.stationProfile
   ) {
     evidence.push({
@@ -477,7 +432,7 @@ export function projectPlatformQualification(
         n1xCandidate: input.n1xCandidate ?? null,
         n1xFastOsMarker: input.n1xFastOsMarker ?? null,
         n1xPciGpu: input.n1xPciGpu ?? null,
-        n1xWslProduct: input.n1xWslProduct ?? null,
+        n1xWslGpu: input.n1xWslGpu ?? null,
         stationProfile: input.stationProfile ?? null,
         stationGb300PciGpu: input.stationGb300PciGpu ?? null,
         osId: input.osId ?? null,
@@ -555,7 +510,7 @@ export function projectPlatformQualification(
         ],
       ),
     );
-    if (input.n1xWslProduct === true) {
+    if (input.n1xWslGpu === true) {
       qualifications.push(
         qualification("host.platform.n1x_wsl", n1xWslStatus, ["host.platform.n1x_wsl"]),
       );

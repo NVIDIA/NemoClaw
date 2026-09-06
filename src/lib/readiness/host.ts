@@ -171,9 +171,14 @@ function adaptHostAssessment(
     cdiNvidiaGpuSpecMissing: host.cdiNvidiaGpuSpecMissing,
     cdiNvidiaGpuSpecStale: host.cdiNvidiaGpuSpecStale,
     cdiNvidiaGpuSpecNeedsRepair: host.cdiNvidiaGpuSpecNeedsRepair,
-    platformIdentity: platformIdentity
-      ? { ...platformIdentity, wslDockerDesktopGpuProofPassed }
-      : { wslDockerDesktopGpuProofPassed },
+    platformIdentity: {
+      ...platformIdentity,
+      n1xWslGpu:
+        host.isWsl && hostGpuPlatform === "n1x"
+          ? wslDockerDesktopGpuProofPassed
+          : undefined,
+      wslDockerDesktopGpuProofPassed,
+    },
   };
 }
 
@@ -252,8 +257,6 @@ function observeHost(
           (() =>
             collectPlatformIdentity({
               ...options.platformIdentityOptions,
-              isWsl: assessment.isWsl,
-              runCaptureImpl,
             }))
         )(),
         wslDockerDesktopGpuProofPassed,
