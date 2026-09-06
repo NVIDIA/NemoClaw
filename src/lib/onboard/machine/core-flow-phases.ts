@@ -6,6 +6,7 @@ import {
   normalizeInferenceEndpointSource,
 } from "../../inference/selection";
 import type { WebSearchConfig } from "../../inference/web-search";
+import { isN1xManagedVllmProviderModel } from "../../domain/sandbox/n1x-managed-vllm-rebuild";
 import type { DcodeAutoApprovalMode } from "../dcode-auto-approval";
 import { assertProviderlessInterceptorEnvironment } from "../entry-options";
 import type {
@@ -75,7 +76,6 @@ export interface SandboxOnboardFlowPhaseOptions<
   hermesPortableLifecycle?: boolean;
   apfInterceptorRequested?: boolean;
   authoritativeResumeConfig?: boolean;
-  deferredN1xManagedVllmPreviewIntent?: boolean;
 
   recreateJournalTargetIntentFingerprint?: string | null;
   resumeAgentChanged: boolean;
@@ -335,8 +335,8 @@ export function createSandboxOnboardFlowPhase<
       apfInterceptorRequested: options.apfInterceptorRequested === true,
       authoritativeResumeConfig: options.authoritativeResumeConfig,
       deferredN1xManagedVllmPreviewIntent:
-        options.deferredN1xManagedVllmPreviewIntent === true ||
-        String(options.env.NEMOCLAW_PROVIDER ?? "").trim() === "install-vllm",
+        context.deferredN1xOnboardingAdmitted === true &&
+        isN1xManagedVllmProviderModel(context.provider, context.model),
       deferSandboxEffectsUntilIdentityVerification: options.apfInterceptorRequested === true,
 
       recreateJournalTargetIntentFingerprint: options.recreateJournalTargetIntentFingerprint,

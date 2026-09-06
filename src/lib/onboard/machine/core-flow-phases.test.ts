@@ -634,20 +634,24 @@ describe("core onboard flow phases", () => {
     });
   });
 
-  it("carries explicit N1x managed preview intent into sandbox creation (#10959)", async () => {
+  it("carries only admitted N1x preview intent into sandbox creation (#10959)", async () => {
     const createSandbox = vi.fn(async () => "created-sandbox");
     const { sandbox } = createPhases({
       sandboxOptions: { env: { NEMOCLAW_PROVIDER: "install-vllm" } },
       sandboxDeps: { createSandbox },
     });
+    const selection = { provider: "vllm-local", model: "nvidia/Qwen3.6-35B-A3B-NVFP4" };
 
-    await sandbox.run(
-      context({ provider: "vllm-local", model: "nvidia/Qwen3.6-35B-A3B-NVFP4" }),
+    await sandbox.run(context({ ...selection, deferredN1xOnboardingAdmitted: true }));
+    await sandbox.run(context(selection));
+
+    const intents = createSandbox.mock.calls.map(
+      (call) => (call as unknown[])[15] as Record<string, unknown>,
     );
-
-    expect((createSandbox.mock.calls[0] as unknown[] | undefined)?.[15]).toMatchObject({
-      deferredN1xManagedVllmPreviewIntent: true,
-    });
+    expect(intents.map((intent) => intent.deferredN1xManagedVllmPreviewIntent)).toEqual([
+      true,
+      undefined,
+    ]);
   });
 
   it("keeps ordinary provider effects on the create-time path", async () => {

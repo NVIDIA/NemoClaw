@@ -20,21 +20,14 @@ import type { OnboardOptions } from "./types";
 export type AuthoritativeOnboardGatewayBinding = { name: string; port: number };
 
 export function authoritativeRebuildSandboxFlowOptions(
-  opts: Pick<
-    OnboardOptions,
-    "allowDeferredN1xManagedVllm" | "authoritativeResumeConfig" | "rebuildPolicySourcePath"
-  >,
+  opts: Pick<OnboardOptions, "authoritativeResumeConfig" | "rebuildPolicySourcePath">,
 ): {
   authoritativeResumeConfig: boolean;
-  deferredN1xManagedVllmPreviewIntent?: true;
   rebuildPolicySourcePath?: string;
 } {
   if (opts.authoritativeResumeConfig !== true) return { authoritativeResumeConfig: false };
   return {
     authoritativeResumeConfig: true,
-    ...(opts.allowDeferredN1xManagedVllm === true
-      ? { deferredN1xManagedVllmPreviewIntent: true as const }
-      : {}),
     ...(opts.rebuildPolicySourcePath
       ? { rebuildPolicySourcePath: opts.rebuildPolicySourcePath }
       : {}),

@@ -164,6 +164,22 @@ describe("handlePreflightState", () => {
     expect(result.gpuPassthrough).toBe(false);
   });
 
+  it.each([
+    ["N1x", "n1x", true],
+    ["DGX Spark", "spark", false],
+  ] as const)("binds managed-vLLM preview admission to %s", async (_name, platform, expected) => {
+    const harness = createDeps({
+      runPreflight: vi.fn(async () => ({ type: "nvidia", platform }) as Gpu),
+    });
+
+    const result = await handlePreflightState({
+      ...baseOptions(harness.deps),
+      env: { NEMOCLAW_PROVIDER: "install-vllm" },
+    });
+
+    expect(result.deferredN1xOnboardingAdmitted).toBe(expected);
+  });
+
   it("skips recorded preflight on resume but re-runs live host readiness (#7411)", async () => {
     const session = createSession();
     session.steps.preflight.status = "complete";

@@ -688,6 +688,7 @@ export function createOnboardCreatedSandboxCompletion(
   workloadRuntime: WorkloadResolutionInput["runtime"],
   workload: WorkloadResolutionInput["workload"],
   note: (message: string) => void,
+  registrationDependencies: Pick<CreatedSandboxCompletionDeps, "registerCreatedSandbox"> = {},
 ): CreatedSandboxCompletionActions {
   const { provider, model, preferredInferenceApi, endpointUrl } = inference;
   const { createIntent, resolvedCreateIntent } = createContext;
@@ -795,6 +796,7 @@ export function createOnboardCreatedSandboxCompletion(
       error: console.error,
       exitProcess: (code) => process.exit(code),
       revalidateSandboxIdentity: preparedPolicy.revalidateSandboxIdentity,
+      ...registrationDependencies,
     },
   );
 }

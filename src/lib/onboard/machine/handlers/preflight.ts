@@ -99,6 +99,7 @@ export interface PreflightStateOptions<
 export interface PreflightStateResult<Gpu, Config extends PreflightSandboxGpuConfig> {
   gpu: Gpu;
   sandboxGpuConfig: Config;
+  deferredN1xOnboardingAdmitted: boolean;
   resumePreflight: boolean;
   resumeHasResolvedGpuIntent: boolean;
   requestedGpuPassthrough: boolean;
@@ -251,6 +252,9 @@ export async function handlePreflightState<
   return {
     gpu,
     sandboxGpuConfig,
+    deferredN1xOnboardingAdmitted:
+      (gpu as { platform?: unknown } | null)?.platform === "n1x" &&
+      allowDeferredN1xOnboarding === true,
     resumePreflight,
     resumeHasResolvedGpuIntent,
     requestedGpuPassthrough: gpuRequested,

@@ -177,6 +177,7 @@ export function createInitialOnboardFlowPhases<
           gpu: preflightGpu,
           sandboxGpuConfig: preflightResult.sandboxGpuConfig,
           gpuPassthrough: preflightResult.gpuPassthrough,
+          deferredN1xOnboardingAdmitted: preflightResult.deferredN1xOnboardingAdmitted,
           resumeHasResolvedGpuIntent: preflightResult.resumeHasResolvedGpuIntent,
           requestedGpuPassthrough: preflightResult.requestedGpuPassthrough,
         },
