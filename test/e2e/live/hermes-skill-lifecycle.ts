@@ -101,6 +101,15 @@ export async function assertHermesSkillLifecycle({
   );
   expect(stripAnsi(resultText(skillList))).toContain(HERMES_SKILL_ID);
 
+  const requestOffset = inference.requestSummaries()?.length;
+  const firstSkillChat = await exec(
+    ["hermes", "chat", "--skills", HERMES_SKILL_ID, "--query", HERMES_SKILL_PROMPT, "--quiet"],
+    "phase-4-hermes-first-skill-chat",
+    360,
+    420_000,
+  );
+  const firstSkillChatText = stripAnsi(resultText(firstSkillChat));
+
   const skillUpdate = await host.command(
     "nemohermes",
     [sandboxName, "skill", "install", HERMES_SKILL_UPDATE_FIXTURE],
@@ -126,7 +135,6 @@ export async function assertHermesSkillLifecycle({
     ["hermes", "sessions", "list"],
     "phase-4-hermes-skill-sessions-before",
   );
-  const requestOffset = inference.requestSummaries()?.length;
   const skillChat = await exec(
     ["hermes", "chat", "--skills", HERMES_SKILL_ID, "--query", HERMES_SKILL_PROMPT, "--quiet"],
     "phase-4-hermes-skill-chat",
@@ -135,7 +143,9 @@ export async function assertHermesSkillLifecycle({
   );
   const skillChatText = stripAnsi(resultText(skillChat));
   expect(
-    skillChatText.includes(HERMES_SKILL_V2_RESPONSE) &&
+    firstSkillChatText.includes(HERMES_SKILL_V1_RESPONSE) &&
+      !firstSkillChatText.includes(HERMES_SKILL_V2_RESPONSE) &&
+      skillChatText.includes(HERMES_SKILL_V2_RESPONSE) &&
       !skillChatText.includes(HERMES_SKILL_V1_RESPONSE),
   ).toBe(true);
 

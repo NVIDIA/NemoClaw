@@ -634,6 +634,18 @@ main() {
   else
     fail_test "public NemoClaw skill list did not report the imported DCode skill"
   fi
+  if first_skill_output="$(sandbox_direct_dcode -n "Use the ${skill_name} skill for the native lifecycle canary." --json)"; then
+    first_skill_exit=0
+  else
+    first_skill_exit=$?
+  fi
+  first_skill_headless_output="${first_skill_output}
+DCODE_EXIT:${first_skill_exit}"
+  if first_skill_classification="$(classify_headless_output "$first_skill_exit" "$first_skill_headless_output" "$skill_marker_v1")"; then
+    pass "fresh direct-exec dcode session consumed the first native skill import (${first_skill_classification}; exit ${first_skill_exit})"
+  else
+    fail_test "fresh direct-exec dcode session did not consume the first native skill import (${first_skill_classification}, exit ${first_skill_exit})"
+  fi
   printf '%s\n' \
     '---' \
     "name: ${skill_name}" \

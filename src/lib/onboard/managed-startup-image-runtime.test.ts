@@ -39,7 +39,6 @@ import {
 } from "./managed-bootstrap/image-runtime";
 import {
   applyManagedStartupImageProfile,
-  applyManagedStartupNativeSkillCompatibility,
   applyManagedStartupRootRequest,
   buildManagedStartupImageActionPlan,
   installHermesManagedPolicy,
@@ -355,70 +354,6 @@ describe("managed startup image runtime", () => {
     for (const directory of policyTemporaryDirectories.splice(0)) {
       fs.rmSync(directory, { recursive: true, force: true });
     }
-  });
-
-  it.each([
-    ["openclaw", "/usr/local/bin/node", "scripts/openclaw/patch-skill-remove.mts"],
-    ["hermes", "/usr/bin/python3", "agents/hermes/patch-native-skill-import.py"],
-    [
-      "langchain-deepagents-code",
-      "/opt/venv/bin/python3",
-      "agents/langchain-deepagents-code/patch-native-skill-import.py",
-    ],
-  ] as const)(
-    "applies %s native skill compatibility through managed onboarding",
-    (agent, executable, sourcePath) => {
-      expect(
-        applyManagedStartupNativeSkillCompatibility(
-          agent,
-          {},
-          { exportEnvironment: {}, unsetEnvironment: [] },
-        ),
-      ).toBe(true);
-      expect(childProcessMock.spawnSync).toHaveBeenCalledWith(
-        executable,
-        expect.arrayContaining([expect.stringContaining(sourcePath)]),
-        expect.objectContaining({
-          killSignal: "SIGKILL",
-          stdio: "inherit",
-          timeout: 30_000,
-        }),
-      );
-    },
-  );
-
-  it("does not invent native skill compatibility for Pi", () => {
-    expect(
-      applyManagedStartupNativeSkillCompatibility(
-        "pi",
-        {},
-        { exportEnvironment: {}, unsetEnvironment: [] },
-      ),
-    ).toBe(false);
-    expect(childProcessMock.spawnSync).not.toHaveBeenCalled();
-  });
-
-  it("terminates a stalled native skill compatibility patch", () => {
-    childProcessMock.spawnSync.mockReturnValueOnce({
-      error: Object.assign(new Error("spawnSync timed out"), { code: "ETIMEDOUT" }),
-      signal: "SIGKILL",
-      status: null,
-    });
-
-    expect(() =>
-      applyManagedStartupNativeSkillCompatibility(
-        "hermes",
-        {},
-        { exportEnvironment: {}, unsetEnvironment: [] },
-      ),
-    ).toThrow(
-      "Managed startup native skill compatibility for 'hermes' did not complete within 30 seconds and was terminated; repair or rebuild the sandbox before retrying.",
-    );
-    expect(childProcessMock.spawnSync).toHaveBeenCalledWith(
-      "/usr/bin/python3",
-      expect.any(Array),
-      expect.objectContaining({ killSignal: "SIGKILL", timeout: 30_000 }),
-    );
   });
 
   it("verifies copied transaction status only through a read-only receipt mount", async () => {

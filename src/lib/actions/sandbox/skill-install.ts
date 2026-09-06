@@ -365,12 +365,18 @@ export async function listSandboxSkills(
     {
       exit: (exitCode): never => {
         if (exitCode !== 0) {
-          console.error(
-            `  ${lifecycle.displayName} native skill state could not be inspected within the ${NATIVE_SKILL_LIST_TIMEOUT_SECONDS}-second sandbox command bound.`,
-          );
-          console.error(
-            `  Retry '${CLI_NAME} ${sandboxName} skill list' after the sandbox becomes reachable.`,
-          );
+          if (exitCode === 124) {
+            console.error(
+              `  ${lifecycle.displayName} native skill state could not be inspected within the ${NATIVE_SKILL_LIST_TIMEOUT_SECONDS}-second sandbox command bound.`,
+            );
+            console.error(
+              `  Retry '${CLI_NAME} ${sandboxName} skill list' after the sandbox becomes reachable.`,
+            );
+          } else {
+            console.error(
+              `  ${lifecycle.displayName} native skill list exited with status ${String(exitCode)}; review the native diagnostics above.`,
+            );
+          }
         }
         process.exit(exitCode);
       },

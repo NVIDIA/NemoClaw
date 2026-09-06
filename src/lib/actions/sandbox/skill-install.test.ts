@@ -487,6 +487,26 @@ describe("sandbox skill action orchestration", () => {
     );
   });
 
+  it("preserves native list diagnostics without timeout retry guidance", async () => {
+    getSessionAgent.mockReturnValue(genericAgent);
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await listSandboxSkills("alpha");
+
+    const exitCallback = execSandbox.mock.calls[0]?.[3]?.exit as
+      | ((exitCode: number) => never)
+      | undefined;
+    vi.spyOn(process, "exit").mockImplementation(((code?: string | number | null) => {
+      throw new Error(`process.exit ${code}`);
+    }) as typeof process.exit);
+
+    expect(() => exitCallback?.(2)).toThrow("process.exit 2");
+    expect(error).toHaveBeenCalledWith(
+      "  Hermes native skill list exited with status 2; review the native diagnostics above.",
+    );
+    expect(error).not.toHaveBeenCalledWith(expect.stringContaining("sandbox becomes reachable"));
+  });
+
   it("does not let forwarded list arguments change the selected native agent", async () => {
     getSessionAgent.mockReturnValue(agent);
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);

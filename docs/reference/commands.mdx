@@ -2407,7 +2407,7 @@ For OpenClaw, Hermes, and Deep Agents Code, fresh installs and updates always de
 
 List skills from the selected agent's own state.
 
-Native listing has a 30-second sandbox command bound. If the selected agent's state cannot be inspected within that bound, the command exits nonzero and directs you to retry after the sandbox becomes reachable.
+Native listing has a 30-second sandbox command bound. If that bound expires, the command exits with status 124 and directs you to retry after the sandbox becomes reachable. Other native failures preserve the agent's diagnostics and report the native exit status without suggesting a reachability retry.
 
 <AgentOnly variant="openclaw">
 
