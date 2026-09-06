@@ -286,17 +286,17 @@ async function completeRegistration(createIntent: CreateIntent): Promise<Sandbox
       lifecycleLiveIdentityFingerprint: string;
     }) => registration,
   };
-  const registered = (await completion.complete(
+  await completion.complete(
     created,
     null,
     "disabled",
     false,
     () => ({ lifecycleGeneration }),
     lifecycle,
-  )) as SandboxEntry;
+  );
   vi.resetModules();
   const reloaded = (await import("../state/registry")).getSandbox(sandboxName);
-  return reloaded ?? registered;
+  return reloaded as SandboxEntry;
 }
 
 it.each([

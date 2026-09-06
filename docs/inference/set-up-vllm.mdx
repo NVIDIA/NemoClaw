@@ -487,7 +487,7 @@ On a host that still meets the N1x identity checks, `rebuild` reuses the recorde
 - The registry records model `nvidia/Qwen3.6-35B-A3B-NVFP4`.
 - If the registry records `endpointUrl` as `null`, NemoClaw derives `http://host.openshell.internal:${NEMOCLAW_VLLM_PORT:-8000}/v1`; otherwise, `endpointUrl` must equal that URL.
 - The registry records `openshellDriver` as `docker`.
-- The registry records `endpointSource` as `onboard`, records both route fields as `null` with `deferredN1xManagedVllmAccepted: true`, or the current process supplies the one-time `NEMOCLAW_PROVIDER=install-vllm` recovery decision below.
+- The registry records `endpointSource` as `onboard`, or records both route fields as `null` and either `deferredN1xManagedVllmAccepted: true` or the current process supplies the one-time `NEMOCLAW_PROVIDER=install-vllm` recovery decision below.
 - The replacement keeps the recorded provider and model, then re-derives the canonical local endpoint.
 - `hostLocalInferenceReceipt` is absent or `null`, or contains a canonical vLLM receipt for `host.openshell.internal:${NEMOCLAW_VLLM_PORT:-8000}` and the same model.
 
