@@ -40,7 +40,7 @@ function clonePortableRuntimeSupport(
     contractVersions: [...support.contractVersions],
     capabilityContractVersions: [...support.capabilityContractVersions],
     tokenizedStartupCommands: support.tokenizedStartupCommands,
-    openshellMainProcess: support.openshellMainProcess,
+    openshellSandboxCommand: support.openshellSandboxCommand,
     runtimeSelectedNonRootIdentity: support.runtimeSelectedNonRootIdentity,
     openshellWorkspaceOwnership: support.openshellWorkspaceOwnership,
     ownerOnlyPrivateState: support.ownerOnlyPrivateState,

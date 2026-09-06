@@ -33,11 +33,11 @@ function hermesContract(): PortableAgentRuntimeContractV1 {
     startup: {
       authority: "image-contract",
       argv: ["hermes", "gateway", "run"],
-      workingDirectory: "/home/agent/workspace",
+      workingDirectory: "/sandbox",
     },
     filesystem: {
-      homeDirectory: "/home/agent",
-      configDirectory: "/home/agent/.hermes",
+      homeDirectory: "/sandbox",
+      configDirectory: "/sandbox/.hermes",
       workspaceOwnership: "openshell",
       privateState: "owner-only",
     },
@@ -59,7 +59,7 @@ function fullProviderSupport(): PortableAgentRuntimeProviderSupport {
     contractVersions: [1],
     capabilityContractVersions: [1],
     tokenizedStartupCommands: true,
-    openshellMainProcess: true,
+    openshellSandboxCommand: true,
     runtimeSelectedNonRootIdentity: true,
     openshellWorkspaceOwnership: true,
     ownerOnlyPrivateState: true,
@@ -90,8 +90,8 @@ describe("portable agent runtime contract", () => {
     expect(contract.startup.argv).toEqual(["hermes", "gateway", "run"]);
     expect(contract.startup.argv).not.toContain("/usr/local/bin/nemoclaw-start");
     expect(contract.filesystem).toEqual({
-      homeDirectory: "/home/agent",
-      configDirectory: "/home/agent/.hermes",
+      homeDirectory: "/sandbox",
+      configDirectory: "/sandbox/.hermes",
       workspaceOwnership: "openshell",
       privateState: "owner-only",
     });
@@ -139,8 +139,7 @@ describe("portable agent runtime contract", () => {
     ],
     [
       "traversing workdir",
-      (value: Record<string, unknown>) =>
-        (startup(value).workingDirectory = "/home/agent/../other"),
+      (value: Record<string, unknown>) => (startup(value).workingDirectory = "/sandbox/../other"),
     ],
     [
       "config outside home",
@@ -190,25 +189,52 @@ describe("portable agent runtime contract", () => {
     expect(() => parsePortableAgentRuntimeContractV1(contract, changedAgent)).toThrow(
       /agentDefinitionSha256 does not match/u,
     );
+
+    const changedHealth = mutableContract();
+    (changedHealth.health as Record<string, unknown>).timeoutSeconds = 91;
+    expect(() => parsePortableAgentRuntimeContractV1(changedHealth, agent)).toThrow(
+      /contract.health does not match the agent definition/u,
+    );
   });
 
-  it("accepts only a provider that advertises every portable v1 guarantee (#11079)", () => {
+  it("accepts a provider that advertises every portable v1 guarantee (#11079)", () => {
     const contract = hermesContract();
 
     expect(portableAgentRuntimeSupportError(fullProviderSupport(), contract)).toBeNull();
     expect(portableAgentRuntimeSupportError(null, contract)).toContain("does not advertise");
+  });
+
+  it.each([
+    ["exact digest", { exactDigestReferences: false }, "exact-digest"],
+    ["agent", { agents: ["openclaw"] }, "selected agent"],
+    ["platform", { platforms: ["linux/arm64"] }, "selected platform"],
+    ["contract version", { contractVersions: [2] }, "portable contract version"],
+    ["capability version", { capabilityContractVersions: [2] }, "portable capability version"],
+    ["tokenized command", { tokenizedStartupCommands: false }, "tokenized startup commands"],
+    ["OpenShell command", { openshellSandboxCommand: false }, "OpenShell sandbox command"],
+    [
+      "non-root identity",
+      { runtimeSelectedNonRootIdentity: false },
+      "runtime-selected non-root identity",
+    ],
+    ["workspace ownership", { openshellWorkspaceOwnership: false }, "workspace ownership"],
+    ["private state", { ownerOnlyPrivateState: false }, "owner-only private state"],
+  ] as const)("rejects provider support missing %s (#11079)", (_label, change, message) => {
     expect(
       portableAgentRuntimeSupportError(
-        { ...fullProviderSupport(), openshellMainProcess: false },
-        contract,
+        { ...fullProviderSupport(), ...change } as PortableAgentRuntimeProviderSupport,
+        hermesContract(),
       ),
-    ).toContain("main-process contract");
-    expect(
-      portableAgentRuntimeSupportError(
-        { ...fullProviderSupport(), ownerOnlyPrivateState: false },
-        contract,
-      ),
-    ).toContain("owner-only private state");
+    ).toContain(message);
+  });
+
+  it("rejects a configuration directory not owned by the agent definition (#11079)", () => {
+    const value = mutableContract();
+    filesystem(value).configDirectory = "/sandbox/.other";
+
+    expect(() => parsePortableAgentRuntimeContractV1(value, loadAgent("hermes"))).toThrow(
+      /configDirectory does not match the agent definition/u,
+    );
   });
 
   it("rejects accessor-backed declarations before reading their values (#11079)", () => {
@@ -223,5 +249,23 @@ describe("portable agent runtime contract", () => {
     expect(() => parsePortableAgentRuntimeContractV1(value, loadAgent("hermes"))).toThrow(
       /payload must contain only JSON data properties/u,
     );
+  });
+
+  it("rejects accessor-backed arrays without reading their values (#11079)", () => {
+    const value = mutableContract();
+    const names = value.credentialEnvironmentNames as string[];
+    let getterRan = false;
+    Object.defineProperty(names, "0", {
+      enumerable: true,
+      get() {
+        getterRan = true;
+        return "API_SERVER_KEY";
+      },
+    });
+
+    expect(() => parsePortableAgentRuntimeContractV1(value, loadAgent("hermes"))).toThrow(
+      /payload must contain only JSON data properties/u,
+    );
+    expect(getterRan).toBe(false);
   });
 });

@@ -23,7 +23,7 @@ export interface PortableAgentRuntimeProviderSupport {
   readonly contractVersions: readonly number[];
   readonly capabilityContractVersions: readonly number[];
   readonly tokenizedStartupCommands: boolean;
-  readonly openshellMainProcess: boolean;
+  readonly openshellSandboxCommand: boolean;
   readonly runtimeSelectedNonRootIdentity: boolean;
   readonly openshellWorkspaceOwnership: boolean;
   readonly ownerOnlyPrivateState: boolean;
@@ -31,8 +31,7 @@ export interface PortableAgentRuntimeProviderSupport {
 
 /**
  * Credential-free image declaration combined with repository-owned agent semantics.
- * Runtime providers do not accept this contract until their workload profile advertises
- * the complete v1 capability set.
+ * Workload selection must check the selected provider profile before admitting it.
  */
 export interface PortableAgentRuntimeContractV1 {
   readonly contractVersion: typeof PORTABLE_AGENT_RUNTIME_CONTRACT_VERSION;
@@ -120,7 +119,13 @@ function assertPlainBoundedJson(root: unknown): void {
       ) {
         fail("payload must contain only plain JSON arrays");
       }
-      current.value.forEach((value) => pending.push({ value, depth: current.depth + 1 }));
+      for (let index = 0; index < current.value.length; index += 1) {
+        const descriptor = Object.getOwnPropertyDescriptor(current.value, String(index));
+        if (!descriptor || !("value" in descriptor)) {
+          fail("payload must contain only JSON data properties");
+        }
+        pending.push({ value: descriptor.value, depth: current.depth + 1 });
+      }
       continue;
     }
     if (current.value !== null && typeof current.value === "object") {
@@ -448,6 +453,9 @@ export function parsePortableAgentRuntimeContractV1(
   if (!isWithinDirectory(homeDirectory, configDirectory, false)) {
     fail("contract.filesystem.configDirectory must be below the declared home directory");
   }
+  if (configDirectory !== expectedAgent.configPaths.dir) {
+    fail("contract.filesystem.configDirectory does not match the agent definition");
+  }
   const workspaceOwnership = requireLiteral(
     filesystem.workspaceOwnership,
     "openshell",
@@ -525,8 +533,8 @@ export function portableAgentRuntimeSupportError(
   if (!support.tokenizedStartupCommands) {
     return "the runtime provider does not preserve tokenized startup commands";
   }
-  if (!support.openshellMainProcess) {
-    return "the runtime provider does not provide the OpenShell main-process contract";
+  if (!support.openshellSandboxCommand) {
+    return "the runtime provider does not provide the supported OpenShell sandbox command";
   }
   if (!support.runtimeSelectedNonRootIdentity) {
     return "the runtime provider does not provide runtime-selected non-root identity";

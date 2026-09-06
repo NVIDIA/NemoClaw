@@ -67,7 +67,7 @@ const PORTABLE_PROFILE = {
     contractVersions: [1],
     capabilityContractVersions: [1],
     tokenizedStartupCommands: true,
-    openshellMainProcess: true,
+    openshellSandboxCommand: true,
     runtimeSelectedNonRootIdentity: true,
     openshellWorkspaceOwnership: true,
     ownerOnlyPrivateState: true,
@@ -267,7 +267,7 @@ describe("RuntimeProviderBundle registry contract", () => {
   it("rejects incomplete portable runtime capability advertisements (#11079)", () => {
     const bundle = mxcBundle();
     const support = bundle.workload.profile.portableAgentRuntimeSupport!;
-    const { openshellMainProcess: _openshellMainProcess, ...incomplete } = support;
+    const { openshellSandboxCommand: _openshellSandboxCommand, ...incomplete } = support;
 
     expect(() =>
       createRuntimeProviderBundleRegistry([
@@ -282,7 +282,7 @@ describe("RuntimeProviderBundle registry contract", () => {
           }),
         ],
       ]),
-    ).toThrow(/must declare portable agent runtime openshellMainProcess/u);
+    ).toThrow(/must declare portable agent runtime openshellSandboxCommand/u);
   });
 
   it("registers an MXC-style managed-bootstrap provider through the bundle surface", () => {

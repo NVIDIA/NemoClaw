@@ -34,7 +34,7 @@ const PORTABLE_AGENT_RUNTIME_V1_SUPPORT = {
   contractVersions: [1],
   capabilityContractVersions: [1],
   tokenizedStartupCommands: true,
-  openshellMainProcess: true,
+  openshellSandboxCommand: true,
   runtimeSelectedNonRootIdentity: true,
   openshellWorkspaceOwnership: true,
   ownerOnlyPrivateState: true,
