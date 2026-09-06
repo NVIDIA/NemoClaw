@@ -14,7 +14,7 @@ import {
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import { hermesSessionIds, onlyNewHermesSessionId, stripAnsi } from "./hermes-cli-adapter-live.ts";
 
-const HERMES_SKILL_ID = "nemoclaw-hermes-skill-e2e";
+const HERMES_SKILL_ID = "nc-hermes-e2e";
 const HERMES_SKILL_FIXTURE = path.join(
   REPO_ROOT,
   "test",

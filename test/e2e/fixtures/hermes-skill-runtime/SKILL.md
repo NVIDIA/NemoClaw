@@ -1,5 +1,5 @@
 ---
-name: nemoclaw-hermes-skill-e2e
+name: nc-hermes-e2e
 description: Verifies Hermes skill discovery and fresh-session execution
 ---
 
