@@ -260,6 +260,7 @@ describe("stateless sandbox skill orchestration", () => {
     selectAgent("hermes", "/usr/local/bin/hermes", HERMES);
     const source = localSkill();
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const addRelease = vi.fn();
     sdkCommandExecutor.runStreaming
       .mockResolvedValueOnce({
         outcome: { kind: "completed", exitCode: 0 },
@@ -267,7 +268,7 @@ describe("stateless sandbox skill orchestration", () => {
       })
       .mockResolvedValueOnce({
         outcome: { kind: "completed", exitCode: 0 },
-        release: vi.fn(),
+        release: addRelease,
       })
       .mockResolvedValueOnce({
         outcome: { kind: "completed", exitCode: 1 },
@@ -284,6 +285,9 @@ describe("stateless sandbox skill orchestration", () => {
     expect(sdkCommandExecutor.runStreaming).toHaveBeenCalledTimes(4);
     expect(sdkCommandExecutor.runStreaming.mock.calls[2]?.[0].command).toEqual(
       sdkCommandExecutor.runStreaming.mock.calls[3]?.[0].command,
+    );
+    expect(addRelease.mock.invocationCallOrder[0]).toBeGreaterThan(
+      sdkCommandExecutor.runStreaming.mock.invocationCallOrder[2] ?? 0,
     );
     expect(error).toHaveBeenCalledWith(
       expect.stringMatching(/^  Private skill staging cleanup failed: \/sandbox\//u),

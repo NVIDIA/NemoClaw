@@ -195,6 +195,44 @@ describe("OpenShell SDK sandbox command executor", () => {
     });
   });
 
+  it("settles with the signal exit code when connection is interrupted", async () => {
+    const listeners = new Map<NodeJS.Signals, () => void>();
+    const add = vi.fn((signal: NodeJS.Signals, listener: () => void) =>
+      listeners.set(signal, listener),
+    );
+    const remove = vi.fn((signal: NodeJS.Signals) => listeners.delete(signal));
+    const execStream = vi.fn(async function* () {});
+    let resolveConnection = () => {};
+    const executor = createSdkOpenShellSandboxCommandExecutor({
+      connect: () =>
+        new Promise((resolve) => {
+          resolveConnection = () =>
+            resolve({ sandbox: { exec: vi.fn().mockResolvedValue({ exitCode: 0 }), execStream } });
+        }),
+      signalSource: { add, remove },
+    });
+    const pending = executor.runStreaming({
+      sandboxName: "alpha",
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      command: ["true"],
+    });
+    await Promise.resolve();
+
+    listeners.get("SIGTERM")?.();
+    const completion = await pending;
+
+    expect(completion.outcome).toEqual({
+      kind: "completed",
+      exitCode: 143,
+      signal: "SIGTERM",
+    });
+    resolveConnection();
+    await Promise.resolve();
+    expect(execStream).not.toHaveBeenCalled();
+    completion.release();
+    expect(remove).toHaveBeenCalledTimes(2);
+  });
+
   it("requires an explicit managed gateway", async () => {
     const executor = createSdkOpenShellSandboxCommandExecutor({
       connect: vi.fn(),

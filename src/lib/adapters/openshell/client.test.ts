@@ -474,6 +474,25 @@ describe("openshell helpers", () => {
     expect(remove).toHaveBeenCalledTimes(2);
   });
 
+  it("bounds async capture output and terminates the child", async () => {
+    const result = await captureOpenshellCommandAsync(
+      process.execPath,
+      ["-e", "process.stdout.write('x'.repeat(4096)); setInterval(() => {}, 1000)"],
+      {
+        ignoreError: true,
+        killGraceMs: 10,
+        maxBuffer: 64,
+        timeout: 5000,
+      },
+    );
+
+    expect(Buffer.byteLength(result.output)).toBeLessThanOrEqual(64);
+    expect(result).toMatchObject({
+      status: 1,
+      error: { code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" },
+    });
+  });
+
   it("includes stderr in async capture output when requested", async () => {
     const result = await captureOpenshellCommandAsync(
       process.execPath,

@@ -22,6 +22,7 @@ import { getSandboxTargetGatewayName } from "./gateway-target";
 import { wrapExecCommandWithRuntimeEnv } from "./runtime-env";
 
 const SKILL_COMMAND_TIMEOUT_SECONDS = 120;
+const SKILL_UPLOAD_MAX_OUTPUT_BYTES = 1024 * 1024;
 const skillCommandExecutor = createSdkOpenShellSandboxCommandExecutor();
 const skillCommandFallbackExecutor = createCliOpenShellSandboxCommandExecutor();
 
@@ -138,11 +139,11 @@ function rejectsAgentOverride(agentName: string, extraArgs: readonly string[]): 
   );
 }
 
-async function runSdkSandboxCommand(
+async function runSdkSandboxCommandRetained(
   sandboxName: string,
   gatewayName: string,
   command: readonly string[],
-): Promise<number> {
+): Promise<{ exitCode: number; release: () => void }> {
   const request = {
     sandboxName,
     target: { kind: "named", gatewayName },
@@ -155,10 +156,21 @@ async function runSdkSandboxCommand(
     completion.release();
     completion = await skillCommandFallbackExecutor.runStreaming(request);
   }
+  if (completion.outcome.kind === "completed") {
+    return { exitCode: completion.outcome.exitCode, release: completion.release };
+  }
+  console.error(`  OpenShell SDK execution failed: ${completion.outcome.error.message}`);
+  return { exitCode: 1, release: completion.release };
+}
+
+async function runSdkSandboxCommand(
+  sandboxName: string,
+  gatewayName: string,
+  command: readonly string[],
+): Promise<number> {
+  const completion = await runSdkSandboxCommandRetained(sandboxName, gatewayName, command);
   try {
-    if (completion.outcome.kind === "completed") return completion.outcome.exitCode;
-    console.error(`  OpenShell SDK execution failed: ${completion.outcome.error.message}`);
-    return 1;
+    return completion.exitCode;
   } finally {
     completion.release();
   }
@@ -188,16 +200,32 @@ function runAgentSkillCommand(
   return runSdkSandboxCommand(sandboxName, gatewayName, wrapExecCommandWithRuntimeEnv(command));
 }
 
+function runAgentSkillCommandRetained(
+  sandboxName: string,
+  gatewayName: string,
+  command: readonly string[],
+) {
+  return runSdkSandboxCommandRetained(
+    sandboxName,
+    gatewayName,
+    wrapExecCommandWithRuntimeEnv(command),
+  );
+}
+
 async function runSkillCommandWithStageCleanup(
   sandboxName: string,
   gatewayName: string,
   stageDirectory: string,
   command: readonly string[],
 ): Promise<boolean> {
-  const commandExit = await runAgentSkillCommand(sandboxName, gatewayName, command);
-  const cleaned = await cleanupRemoteStage(sandboxName, gatewayName, stageDirectory);
-  process.exitCode = cleaned || commandExit !== 0 ? commandExit : 1;
-  return cleaned;
+  const completion = await runAgentSkillCommandRetained(sandboxName, gatewayName, command);
+  try {
+    const cleaned = await cleanupRemoteStage(sandboxName, gatewayName, stageDirectory);
+    process.exitCode = cleaned || completion.exitCode !== 0 ? completion.exitCode : 1;
+    return cleaned;
+  } finally {
+    completion.release();
+  }
 }
 
 /** Stream the unmodified selected agent's native skill list. */
@@ -420,11 +448,12 @@ export async function installSandboxSkill(
         ignoreError: true,
         includeStderr: true,
         includeStreams: true,
+        maxBuffer: SKILL_UPLOAD_MAX_OUTPUT_BYTES,
         timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
       },
     );
-    if (upload.status !== 0) {
-      const detail = upload.output.trim();
+    if (upload.status !== 0 || upload.error) {
+      const detail = (upload.output || upload.error?.message || "").trim();
       console.error(`  Skill snapshot upload failed${detail ? `: ${detail}` : "."}`);
       process.exitCode = 1;
       return;

@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   buildCanonicalSkillAddCommand,
@@ -27,6 +27,7 @@ function skill(name = "demo-skill"): string {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const root of roots.splice(0)) fs.rmSync(root, { force: true, recursive: true });
 });
 
@@ -88,6 +89,23 @@ describe("stateless skill snapshots", () => {
     expect(createStatelessSkillSnapshot(root, "demo-skill", fs.lstatSync(root))).toEqual({
       success: false,
       reason: "limit-exceeded",
+    });
+  });
+
+  it("rejects a regular file replaced after enumeration", () => {
+    const root = skill();
+    const skillFile = path.join(root, "SKILL.md");
+    const originalRealpath = fs.realpathSync;
+    vi.spyOn(fs, "realpathSync").mockImplementationOnce(((target: fs.PathLike) => {
+      const resolved = originalRealpath(target);
+      fs.renameSync(skillFile, path.join(root, "original.SKILL.md"));
+      fs.writeFileSync(skillFile, "---\nname: demo-skill\n---\n# Replaced\n");
+      return resolved;
+    }) as typeof fs.realpathSync);
+
+    expect(createStatelessSkillSnapshot(root, "demo-skill", fs.lstatSync(root))).toEqual({
+      success: false,
+      reason: "source-changed",
     });
   });
 });

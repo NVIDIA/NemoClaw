@@ -29,11 +29,7 @@ export {
   withSelectedOpenShellCommandOptions,
 } from "./command-argv";
 
-export {
-  buildOpenShellSubprocessEnv,
-  OPENSHELL_OPERATION_TIMEOUT_MS,
-  OPENSHELL_PROBE_TIMEOUT_MS,
-};
+export { buildOpenShellSubprocessEnv, OPENSHELL_OPERATION_TIMEOUT_MS, OPENSHELL_PROBE_TIMEOUT_MS };
 export { classifyManagedGatewayEndpointBinding } from "./client";
 export { runCaptureEx } from "../../runner";
 
@@ -170,6 +166,7 @@ export function captureOpenshellAsync(args: CommandArgs, opts: RunnerOptions = {
     includeStreams: opts.includeStreams,
     timeout: opts.timeout,
     killGraceMs: 1000,
+    maxBuffer: opts.maxBuffer,
   });
 }
 

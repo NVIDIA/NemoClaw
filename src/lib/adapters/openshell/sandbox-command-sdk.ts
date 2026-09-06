@@ -68,9 +68,31 @@ export type SdkOpenShellSandboxCommandExecutorDeps = Readonly<{
   env?: NodeJS.ProcessEnv;
   homeDir?: string;
   loadSdk?: () => Promise<OpenShellSdkModule>;
+  signalSource?: {
+    add(signal: "SIGINT" | "SIGTERM", listener: () => void): void;
+    remove(signal: "SIGINT" | "SIGTERM", listener: () => void): void;
+  };
   stderr?: (data: Buffer) => void;
   stdout?: (data: Buffer) => void;
 }>;
+
+async function waitForConnection(
+  connection: Promise<SdkClient>,
+  signal: AbortSignal,
+): Promise<SdkClient> {
+  if (signal.aborted) throw new Error("OpenShell SDK connection cancelled");
+  let rejectCancellation: ((reason: Error) => void) | undefined;
+  const cancellation = new Promise<never>((_resolve, reject) => {
+    rejectCancellation = reject;
+  });
+  const cancel = () => rejectCancellation?.(new Error("OpenShell SDK connection cancelled"));
+  signal.addEventListener("abort", cancel, { once: true });
+  try {
+    return await Promise.race([connection, cancellation]);
+  } finally {
+    signal.removeEventListener("abort", cancel);
+  }
+}
 
 function readPem(target: string): Buffer {
   const file = openRegularFileNoFollow(target);
@@ -181,6 +203,10 @@ export function createSdkOpenShellSandboxCommandExecutor(
   };
   const stdout = deps.stdout ?? ((data: Buffer) => process.stdout.write(data));
   const stderr = deps.stderr ?? ((data: Buffer) => process.stderr.write(data));
+  const signalSource = deps.signalSource ?? {
+    add: (signal: "SIGINT" | "SIGTERM", listener: () => void) => process.on(signal, listener),
+    remove: (signal: "SIGINT" | "SIGTERM", listener: () => void) => process.off(signal, listener),
+  };
 
   return {
     probeDirectory: async (request) => {
@@ -228,15 +254,15 @@ export function createSdkOpenShellSandboxCommandExecutor(
       };
       const forwardInt = forward("SIGINT");
       const forwardTerm = forward("SIGTERM");
-      process.on("SIGINT", forwardInt);
-      process.on("SIGTERM", forwardTerm);
+      signalSource.add("SIGINT", forwardInt);
+      signalSource.add("SIGTERM", forwardTerm);
       const release = () => {
-        process.off("SIGINT", forwardInt);
-        process.off("SIGTERM", forwardTerm);
+        signalSource.remove("SIGINT", forwardInt);
+        signalSource.remove("SIGTERM", forwardTerm);
       };
 
       try {
-        const client = await connect(request.target);
+        const client = await waitForConnection(connect(request.target), controller.signal);
         let exitCode: number | undefined;
         for await (const event of client.sandbox.execStream(
           request.sandboxName,

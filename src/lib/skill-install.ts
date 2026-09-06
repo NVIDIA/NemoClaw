@@ -66,14 +66,21 @@ export function validateRelativePath(relativePath: string): boolean {
 
 export interface CollectedSkillFiles {
   files: string[];
+  fileIdentities: Record<string, SkillFileIdentity>;
   skippedDotfiles: string[];
   unsafePaths: string[];
   unsupportedPaths: string[];
 }
 
+interface SkillFileIdentity {
+  dev: number;
+  ino: number;
+}
+
 export function collectSkillFiles(root: string): CollectedSkillFiles {
   const result: CollectedSkillFiles = {
     files: [],
+    fileIdentities: {},
     skippedDotfiles: [],
     unsafePaths: [],
     unsupportedPaths: [],
@@ -96,12 +103,16 @@ export function collectSkillFiles(root: string): CollectedSkillFiles {
         walk(candidate, relativePath);
       } else if (stat.isFile()) {
         result.files.push(relativePath);
+        result.fileIdentities[relativePath] = { dev: stat.dev, ino: stat.ino };
       }
     }
   };
 
   walk(root, "");
-  for (const values of Object.values(result)) values.sort();
+  result.files.sort();
+  result.skippedDotfiles.sort();
+  result.unsafePaths.sort();
+  result.unsupportedPaths.sort();
   return result;
 }
 
@@ -199,6 +210,7 @@ export function createStatelessSkillSnapshot(
     let totalBytes = 0;
     for (const relativePath of collected.files) {
       const source = path.join(sourceRoot, relativePath);
+      const enumerated = collected.fileIdentities[relativePath];
       let descriptor: number | undefined;
       try {
         descriptor = fs.openSync(
@@ -206,7 +218,15 @@ export function createStatelessSkillSnapshot(
           fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
         );
         const opened = fs.fstatSync(descriptor);
-        if (!opened.isFile() || opened.size > SKILL_SNAPSHOT_MAX_BYTES - totalBytes) {
+        if (
+          !enumerated ||
+          !opened.isFile() ||
+          opened.dev !== enumerated.dev ||
+          opened.ino !== enumerated.ino
+        ) {
+          return { success: false, reason: "source-changed" };
+        }
+        if (opened.size > SKILL_SNAPSHOT_MAX_BYTES - totalBytes) {
           return { success: false, reason: "limit-exceeded" };
         }
         const content = readBoundedFile(descriptor, SKILL_SNAPSHOT_MAX_BYTES - totalBytes);

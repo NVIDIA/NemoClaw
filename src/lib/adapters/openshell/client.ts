@@ -201,6 +201,14 @@ function timeoutError(binary: string, args: string[], timeout: number): NodeJS.E
   return error;
 }
 
+function outputLimitError(binary: string, maxBuffer: number): NodeJS.ErrnoException {
+  const error = new Error(
+    `spawn ${binary} exceeded the ${String(maxBuffer)}-byte output limit`,
+  ) as NodeJS.ErrnoException;
+  error.code = "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
+  return error;
+}
+
 function signalProcessTree(child: ChildProcess, signal: NodeJS.Signals): void {
   if (!child.pid) return;
   try {
@@ -354,6 +362,8 @@ export function captureOpenshellCommandAsync(
     let forceTimer: NodeJS.Timeout | undefined;
     let capturedError: Error | undefined;
     let forwardedSignal: "SIGINT" | "SIGTERM" | null = null;
+    let capturedBytes = 0;
+    const outputLimit = opts.maxBuffer && opts.maxBuffer > 0 ? opts.maxBuffer : null;
 
     const terminate = (signal: "SIGINT" | "SIGTERM") => {
       if (killTimer) return;
@@ -385,6 +395,19 @@ export function captureOpenshellCommandAsync(
 
     const buildOutput = () => `${stdout}${shouldIncludeStderr(opts) ? stderr : ""}`.trim();
 
+    const captureChunk = (current: string, chunk: string): string => {
+      if (outputLimit === null) return current + chunk;
+      const bytes = Buffer.from(chunk);
+      const remaining = Math.max(0, outputLimit - capturedBytes);
+      const accepted = bytes.subarray(0, remaining);
+      capturedBytes += accepted.length;
+      if (bytes.length > remaining && !capturedError) {
+        capturedError = outputLimitError(binary, outputLimit);
+        terminate("SIGTERM");
+      }
+      return current + accepted.toString("utf8");
+    };
+
     const settle = (status: number | null, signal: NodeJS.Signals | null, error?: Error) => {
       if (settled) return;
       settled = true;
@@ -393,8 +416,10 @@ export function captureOpenshellCommandAsync(
       signalSource.remove("SIGTERM", forwardTerm);
       resolve({
         status:
-          status ??
-          (timedOut ? null : forwardedSignal === "SIGINT" ? 130 : forwardedSignal ? 143 : 1),
+          capturedError && !timedOut
+            ? 1
+            : (status ??
+              (timedOut ? null : forwardedSignal === "SIGINT" ? 130 : forwardedSignal ? 143 : 1)),
         output: buildOutput(),
         ...maybeCapturedStreams(stdout, stderr, opts),
         ...(error ? { error } : {}),
@@ -405,10 +430,10 @@ export function captureOpenshellCommandAsync(
     child.stdout?.setEncoding("utf8");
     child.stderr?.setEncoding("utf8");
     child.stdout?.on("data", (chunk) => {
-      stdout += chunk;
+      stdout = captureChunk(stdout, chunk);
     });
     child.stderr?.on("data", (chunk) => {
-      stderr += chunk;
+      stderr = captureChunk(stderr, chunk);
     });
     child.on("error", (error) => {
       capturedError = error;
