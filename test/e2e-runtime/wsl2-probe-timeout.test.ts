@@ -6,52 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
 
-type OnboardValidationInternals = {
-  getValidationProbeCurlArgs: (opts?: { isWsl?: boolean }) => string[];
-};
-
-type OnboardValidationCandidate = {
-  getValidationProbeCurlArgs?: unknown;
-  default?: unknown;
-} | null;
-
-function isOnboardValidationInternals(
-  value: OnboardValidationCandidate,
-): value is OnboardValidationInternals {
-  return value !== null && typeof value.getValidationProbeCurlArgs === "function";
-}
-
-const loadedOnboardValidationModule = await import("../../src/lib/onboard.js");
-const onboardValidationInternals = isOnboardValidationInternals(loadedOnboardValidationModule)
-  ? loadedOnboardValidationModule
-  : null;
-if (!isOnboardValidationInternals(onboardValidationInternals)) {
-  throw new Error("Expected onboard validation internals to expose getValidationProbeCurlArgs");
-}
-const { getValidationProbeCurlArgs } = onboardValidationInternals;
-
 describe("WSL2 inference verification timeouts (#987)", () => {
-  describe("getValidationProbeCurlArgs", () => {
-    it("returns standard timeouts on non-WSL platforms", () => {
-      expect(getValidationProbeCurlArgs({ isWsl: false })).toEqual([
-        "--connect-timeout",
-        "10",
-        "--max-time",
-        "15",
-      ]);
-    });
-
-
-    it("returns standard timeouts when called without opts (default path)", () => {
-      // On non-WSL hosts this returns the standard values.
-      // The exact values depend on the host, but the structure must be correct.
-      const args = getValidationProbeCurlArgs();
-      expect(args).toHaveLength(4);
-      expect(args[0]).toBe("--connect-timeout");
-      expect(args[2]).toBe("--max-time");
-    });
-  });
-
   describe("retry logic in probeOpenAiLikeEndpoint", () => {
     function runProbeWithCurlStatuses(statuses: number[], isWsl = false) {
       const httpProbePath = require.resolve("../../src/lib/adapters/http/probe.js");
@@ -137,11 +92,19 @@ describe("WSL2 inference verification timeouts (#987)", () => {
       message: string;
     };
 
-    function runProbeWithResults(results: ProbeResultFixture[], opts: { isWsl?: boolean } = {}) {
+    function runProbeWithResults(
+      results: ProbeResultFixture[],
+      opts: {
+        isWsl?: boolean;
+        probeStreaming?: boolean;
+        streamingResult?: { ok: boolean; missingEvents: string[]; message: string };
+      } = {},
+    ) {
       const httpProbePath = require.resolve("../../src/lib/adapters/http/probe.js");
       const probesPath = require.resolve("../../src/lib/inference/onboard-probes.js");
       const httpProbe = require(httpProbePath);
       const originalRunCurlProbe = httpProbe.runCurlProbe;
+      const originalRunStreamingEventProbe = httpProbe.runStreamingEventProbe;
       const atomics = globalThis as typeof globalThis & {
         Atomics: { wait: (...args: never[]) => "ok" | "not-equal" | "timed-out" };
       };
@@ -152,6 +115,9 @@ describe("WSL2 inference verification timeouts (#987)", () => {
         calls.push(args);
         return results[index++] ?? results[results.length - 1];
       };
+      if (opts.streamingResult) {
+        httpProbe.runStreamingEventProbe = () => opts.streamingResult;
+      }
       atomics.Atomics.wait = () => "ok";
       delete require.cache[probesPath];
       try {
@@ -161,20 +127,26 @@ describe("WSL2 inference verification timeouts (#987)", () => {
             model: string,
             apiKey: string,
             options?: Record<string, unknown>,
-          ) => { ok: boolean; message?: string };
+          ) => { ok: boolean; advisory?: string; message?: string };
         };
         const result = probeOpenAiLikeEndpoint("http://localhost:8000", "test-model", "key", {
           isWsl: opts.isWsl ?? false,
+          probeStreaming: opts.probeStreaming ?? false,
         });
         return { result, calls };
       } finally {
         httpProbe.runCurlProbe = originalRunCurlProbe;
+        httpProbe.runStreamingEventProbe = originalRunStreamingEventProbe;
         atomics.Atomics.wait = originalWait;
         delete require.cache[probesPath];
       }
     }
 
-    function runCalibratedProbeWithResults(results: ProbeResultFixture[], clock: number[]) {
+    function runCalibratedProbeWithResults(
+      results: ProbeResultFixture[],
+      clock: number[],
+      opts: { isWsl?: boolean } = {},
+    ) {
       const httpProbePath = require.resolve("../../src/lib/adapters/http/probe.js");
       const probesPath = require.resolve("../../src/lib/inference/onboard-probes.js");
       const httpProbe = require(httpProbePath);
@@ -199,6 +171,7 @@ describe("WSL2 inference verification timeouts (#987)", () => {
         };
         const result = probeOpenAiLikeEndpoint("http://localhost:8000", "test-model", "key", {
           calibrateTimeouts: true,
+          isWsl: opts.isWsl ?? false,
           skipResponsesProbe: true,
         });
         return { result, calls };
@@ -231,11 +204,24 @@ describe("WSL2 inference verification timeouts (#987)", () => {
       expect(calls.length).toBe(2);
     });
 
-    it("doubles timeout values for the retry attempt", () => {
-      const { calls } = runProbeWithCurlStatuses([28, 28, 0]);
-      expect(calls[2]).toEqual(
-        expect.arrayContaining(["--connect-timeout", "20", "--max-time", "30"]),
-      );
+    it.each([
+      { label: "default budget", override: "", expectedSeconds: ["20", "30"] },
+      { label: "maximum override", override: "600", expectedSeconds: ["600", "600"] },
+    ])("bounds the retry timing for the $label", ({ override, expectedSeconds }) => {
+      vi.stubEnv("NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS", override);
+      try {
+        const { calls } = runProbeWithCurlStatuses([28, 28, 0]);
+        expect(calls[2]).toEqual(
+          expect.arrayContaining([
+            "--connect-timeout",
+            expectedSeconds[0],
+            "--max-time",
+            expectedSeconds[1],
+          ]),
+        );
+      } finally {
+        vi.unstubAllEnvs();
+      }
     });
 
     it("appends WSL2 hint when retry fails on WSL2", () => {
@@ -250,7 +236,33 @@ describe("WSL2 inference verification timeouts (#987)", () => {
       const { result } = runProbeWithResults([failure, failure, failure], { isWsl: true });
       expect(result.ok).toBe(false);
       expect(result.message).toContain("WSL2 detected");
-      expect(result.message).toContain("--skip-verify");
+      // Names the lever onboarding honours; there is no validation bypass flag.
+      expect(result.message).toContain("NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS");
+    });
+
+    it("omits the standard timeout advice for the fixed streaming deadline (#10413)", () => {
+      const success = {
+        ok: true,
+        curlStatus: 0,
+        httpStatus: 200,
+        body: "{}",
+        stderr: "",
+        message: "ok",
+      };
+      const { result } = runProbeWithResults([success], {
+        isWsl: true,
+        probeStreaming: true,
+        streamingResult: {
+          ok: false,
+          missingEvents: [],
+          message: "streaming validation timed out",
+        },
+      });
+
+      expect(result.ok).toBe(false);
+      expect(result.message).toContain("streaming validation timed out");
+      expect(result.advisory).toBeUndefined();
+      expect(result.message).not.toContain("NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS");
     });
 
     it("uses calibrated fast-network timing for provider validation", () => {
@@ -279,6 +291,36 @@ describe("WSL2 inference verification timeouts (#987)", () => {
       expect(calls[0].at(-1)).toBe("http://localhost:8000/models");
       expect(calls[1]).toEqual(
         expect.arrayContaining(["--connect-timeout", "5", "--max-time", "15"]),
+      );
+    });
+
+    it("keeps the WSL floor through production probe calibration (#10413)", () => {
+      const calibration = {
+        ok: false,
+        curlStatus: 0,
+        httpStatus: 401,
+        body: "",
+        stderr: "",
+        message: "HTTP 401",
+      };
+      const success = {
+        ok: true,
+        curlStatus: 0,
+        httpStatus: 200,
+        body: "{}",
+        stderr: "",
+        message: "ok",
+      };
+      const { result, calls } = runCalibratedProbeWithResults(
+        [calibration, success],
+        [1000, 1180],
+        { isWsl: true },
+      );
+
+      expect(result.ok).toBe(true);
+      expect(calls).toHaveLength(2);
+      expect(calls[1]).toEqual(
+        expect.arrayContaining(["--connect-timeout", "20", "--max-time", "30"]),
       );
     });
 

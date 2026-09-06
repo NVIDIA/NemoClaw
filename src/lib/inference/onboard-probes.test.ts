@@ -441,34 +441,40 @@ describe("OpenAI-compatible inference probes", () => {
     expect(args).toContain(JSON.stringify(getChatCompletionsProbePayload("moonshotai/kimi-k2.6")));
   });
 
-  it("uses an extended streaming validation budget for DeepSeek V4 Pro", () => {
-    expect(getDeepSeekV4ProValidationProbeCurlArgs({ isWsl: false })).toEqual([
-      "--connect-timeout",
-      "20",
-      "--max-time",
-      "120",
-    ]);
-    expect(getDeepSeekV4ProValidationProbeCurlArgs({ isWsl: true })).toEqual([
-      "--connect-timeout",
-      "30",
-      "--max-time",
-      "150",
-    ]);
-
-    const args = getChatCompletionsProbeCurlArgs({
-      credentialArgs: FAKE_CREDENTIAL_ARGS,
-      model: "deepseek-ai/deepseek-v4-pro",
-      url: "https://integrate.api.nvidia.com/v1/chat/completions",
-      isWsl: false,
+  it.each([
+    { label: "raised override", override: "360", expected: ["360", "360"] },
+    { label: "lower override", override: "10", expected: ["30", "150"] },
+  ])("applies the $label to DeepSeek V4 Pro streaming", ({ override, expected }) => {
+    vi.stubEnv("NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS", override);
+    const calls: Array<readonly string[]> = [];
+    const spawnSyncImpl = vi.fn((_command: string, args: readonly string[]) => {
+      calls.push(args);
+      fs.writeFileSync(
+        args[args.indexOf("-o") + 1],
+        'data: {"choices":[{"delta":{"content":"OK"}}]}\n\ndata: [DONE]\n',
+      );
+      return { pid: 1, output: [], stdout: "200", stderr: "", status: 0, signal: null };
     });
-
-    expect(args).toContain("--max-time");
-    expect(args[args.indexOf("--max-time") + 1]).toBe("120");
-    // The credentialArgs slice must appear verbatim in the generated argv so
-    // production probe call sites can route credentials via --config without
-    // the helper rewriting or dropping them.
-    expect(args).toContain("--config");
-    expect(args).toContain(FAKE_CONFIG_PATH);
+    try {
+      const result = probeOpenAiLikeEndpoint(
+        "http://127.0.0.1:11434/v1",
+        "deepseek-ai/deepseek-v4-pro",
+        "test-key",
+        { skipResponsesProbe: true, isWsl: true, spawnSyncImpl },
+      );
+      expect({ result, args: calls[0] }).toEqual({
+        result: expect.objectContaining({ ok: true, api: "openai-completions" }),
+        args: expect.arrayContaining([
+          "--connect-timeout",
+          expected[0],
+          "--max-time",
+          expected[1],
+          "--config",
+        ]),
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("retries a reasoning-only tool-call response with a larger output budget", () => {
