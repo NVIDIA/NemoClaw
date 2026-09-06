@@ -75,20 +75,21 @@ def safe_span_name(value: Any) -> str | None:
     return None
 
 
-def iter_json_files(source: Path) -> list[Path]:
+def iter_json_files(source: Path) -> tuple[list[Path], bool]:
     if not source.exists():
-        return []
+        return [], False
     if source.is_file():
-        return [source] if source.suffix == ".json" and not source.is_symlink() else []
+        files = [source] if source.suffix == ".json" and not source.is_symlink() else []
+        return files, False
     if not source.is_dir() or source.is_symlink():
-        return []
+        return [], False
     files: list[Path] = []
     for path in sorted(source.rglob("*.json")):
         if path.is_file() and not path.is_symlink():
-            files.append(path)
             if len(files) >= MAX_JSON_FILES:
-                break
-    return files
+                return files, True
+            files.append(path)
+    return files, False
 
 
 def load_json(path: Path) -> Any | None:
@@ -117,7 +118,7 @@ def extract_spans(artifact: Any) -> list[dict[str, Any]]:
 
 def extract_identity_settlements(
     spans: list[dict[str, Any]],
-    trace_id: str | None,
+    expected_trace_id: str | None,
 ) -> list[tuple[int, dict[str, Any]]] | None:
     """Return ordered settlement evidence, or reject a malformed event."""
     settlements = []
@@ -128,6 +129,14 @@ def extract_identity_settlements(
         for event in events if isinstance(events, list) else []:
             if not isinstance(event, dict) or event.get("name") != IDENTITY_SETTLEMENT_EVENT:
                 continue
+            span_trace_id = span.get("trace_id")
+            if (
+                expected_trace_id is None
+                or not isinstance(span_trace_id, str)
+                or not TRACE_ID_RE.fullmatch(span_trace_id)
+                or span_trace_id != expected_trace_id
+            ):
+                return None
             attributes = event.get("attributes")
             if not isinstance(attributes, dict):
                 return None
@@ -153,8 +162,6 @@ def extract_identity_settlements(
                 return None
             if not isinstance(event_time, str) or not TRACE_EVENT_TIME_RE.fullmatch(event_time):
                 return None
-            if trace_id is None:
-                return None
             settlements.append(
                 (
                     int(event_time),
@@ -163,7 +170,7 @@ def extract_identity_settlements(
                         "event_time_unix_nano": event_time,
                         "identity_state": identity_state,
                         "returned_identity_correlation": correlation,
-                        "trace_id": trace_id,
+                        "trace_id": expected_trace_id,
                     },
                 )
             )
@@ -172,15 +179,15 @@ def extract_identity_settlements(
 
 def select_latest_identity_settlement(
     settlements: list[tuple[int, dict[str, Any]]],
-) -> dict[str, Any] | None:
-    """Select the latest unambiguous settlement by validated event timestamp."""
+) -> tuple[dict[str, Any] | None, bool]:
+    """Select the latest settlement and report whether the selection is unambiguous."""
     if not settlements:
-        return None
+        return None, True
     latest_time = max(timestamp for timestamp, _evidence in settlements)
     latest_evidence = [evidence for timestamp, evidence in settlements if timestamp == latest_time]
     if any(evidence != latest_evidence[0] for evidence in latest_evidence[1:]):
-        return None
-    return latest_evidence[0]
+        return None, False
+    return latest_evidence[0], True
 
 
 def extract_candidate(artifact: Any) -> dict[str, Any] | None:
@@ -258,7 +265,8 @@ def main(argv: list[str]) -> int:
     candidates = []
     identity_settlements = []
     identity_settlements_valid = True
-    for json_file in iter_json_files(source):
+    json_files, source_truncated = iter_json_files(source)
+    for json_file in json_files:
         artifact = load_json(json_file)
         candidate = extract_candidate(artifact)
         if candidate is not None:
@@ -275,12 +283,13 @@ def main(argv: list[str]) -> int:
         return 0
 
     selected = dict(max(candidates, key=lambda item: item["total_duration_ms"]))
-    if not identity_settlements_valid:
+    identity_settlement, selection_valid = select_latest_identity_settlement(
+        identity_settlements
+    )
+    if not identity_settlements_valid or source_truncated or not selection_valid:
         selected["sandbox_identity_settlement_evidence"] = "invalid"
-    else:
-        identity_settlement = select_latest_identity_settlement(identity_settlements)
-        if identity_settlement is not None:
-            selected["sandbox_identity_settlement"] = identity_settlement
+    elif identity_settlement is not None:
+        selected["sandbox_identity_settlement"] = identity_settlement
     output = output_dir / OUTPUT_FILE
     if output.is_symlink():
         print("trusted timing summary must not be a symlink", file=sys.stderr)

@@ -34,11 +34,13 @@ type SettlementTrace = {
 function makeTrace({
   totalDurationMs = 42.9876,
   traceId = "0123456789abcdef0123456789abcdef",
+  settlementTraceId = traceId,
   settlement,
   additionalSettlements = [],
 }: {
   totalDurationMs?: number;
   traceId?: string;
+  settlementTraceId?: string;
   settlement?: SettlementTrace;
   additionalSettlements?: readonly SettlementTrace[];
 } = {}) {
@@ -52,12 +54,14 @@ function makeTrace({
             scope: { name: "nemoclaw.onboard", version: "1.0.0" },
             spans: [
               {
+                trace_id: traceId,
                 name: "nemoclaw.onboard",
                 duration_ms: 42,
                 attributes: { api_key: "nvapi-should-never-appear" },
                 events: [{ name: "prompt", attributes: { value: "secret prompt" } }],
               },
               {
+                trace_id: settlementTraceId,
                 name: "nemoclaw.onboard.phase.gateway",
                 duration_ms: 7.1234,
                 attributes: { endpoint: "https://example.test/token" },
@@ -347,6 +351,101 @@ print(json.dumps([module.extract_candidate(case) for case in cases]))
           }),
         ),
       );
+
+      const result = runSanitizer(source, output);
+      expect(result.status, result.stderr).toBe(0);
+      const summary = JSON.parse(readFileSync(join(output, SUMMARY), "utf8"));
+      expect(summary).not.toHaveProperty("sandbox_identity_settlement");
+      expect(summary).toMatchObject({ sandbox_identity_settlement_evidence: "invalid" });
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("marks settlement evidence invalid when its span belongs to another trace", () => {
+    const directory = mkdtempSync(join(tmpdir(), "nemoclaw-trace-sanitize-provenance-"));
+    const source = join(directory, "raw.json");
+    const output = join(directory, "trusted");
+    try {
+      writeFileSync(
+        source,
+        JSON.stringify(
+          makeTrace({
+            settlementTraceId: "ffffffffffffffffffffffffffffffff",
+            settlement: {
+              timeUnixNano: "1788724801000000000",
+              identityState: "matched",
+              correlation: "8174fa2a5d657551",
+            },
+          }),
+        ),
+      );
+
+      const result = runSanitizer(source, output);
+      expect(result.status, result.stderr).toBe(0);
+      const summary = JSON.parse(readFileSync(join(output, SUMMARY), "utf8"));
+      expect(summary).not.toHaveProperty("sandbox_identity_settlement");
+      expect(summary).toMatchObject({ sandbox_identity_settlement_evidence: "invalid" });
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("marks conflicting latest settlement evidence invalid", () => {
+    const directory = mkdtempSync(join(tmpdir(), "nemoclaw-trace-sanitize-conflict-"));
+    const source = join(directory, "raw.json");
+    const output = join(directory, "trusted");
+    try {
+      writeFileSync(
+        source,
+        JSON.stringify(
+          makeTrace({
+            settlement: {
+              timeUnixNano: "1788724801000000000",
+              identityState: "matched",
+              correlation: "8174fa2a5d657551",
+            },
+            additionalSettlements: [
+              {
+                timeUnixNano: "1788724801000000000",
+                identityState: "failed",
+                correlation: null,
+              },
+            ],
+          }),
+        ),
+      );
+
+      const result = runSanitizer(source, output);
+      expect(result.status, result.stderr).toBe(0);
+      const summary = JSON.parse(readFileSync(join(output, SUMMARY), "utf8"));
+      expect(summary).not.toHaveProperty("sandbox_identity_settlement");
+      expect(summary).toMatchObject({ sandbox_identity_settlement_evidence: "invalid" });
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("marks settlement evidence invalid when the source exceeds the file limit", () => {
+    const directory = mkdtempSync(join(tmpdir(), "nemoclaw-trace-sanitize-truncated-"));
+    const source = join(directory, "raw");
+    const output = join(directory, "trusted");
+    try {
+      mkdirSync(source);
+      Array.from({ length: 101 }, (_value, index) => {
+        writeFileSync(
+          join(source, `trace-${String(index).padStart(3, "0")}.json`),
+          JSON.stringify(
+            makeTrace({
+              settlement: {
+                timeUnixNano: String(1788724801000000000n + BigInt(index)),
+                identityState: index === 100 ? "failed" : "matched",
+                correlation: index === 100 ? null : "8174fa2a5d657551",
+              },
+            }),
+          ),
+        );
+      });
 
       const result = runSanitizer(source, output);
       expect(result.status, result.stderr).toBe(0);
