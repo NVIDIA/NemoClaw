@@ -1,5 +1,5 @@
 {
-  "name": "nemoclaw",
+  "name": "nemoclaw-plugin",
   "version": "0.1.0",
   "description": "Migrate and run OpenClaw inside OpenShell with optional NIM-backed inference",
   "license": "Apache-2.0",
