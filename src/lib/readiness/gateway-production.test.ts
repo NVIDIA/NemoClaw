@@ -251,6 +251,11 @@ describe("managed gateway port readiness (#7411)", () => {
     const formulaBin = path.join(formulaPrefix, "bin");
     const openshellBin = path.join(formulaBin, "openshell");
     const gatewayBin = path.join(formulaBin, "openshell-gateway");
+    const serviceProgram = path.join(
+      formulaPrefix,
+      "libexec",
+      "openshell-gateway-homebrew-service",
+    );
     fs.mkdirSync(formulaBin);
     fs.writeFileSync(openshellBin, "");
     fs.writeFileSync(gatewayBin, "");
@@ -272,6 +277,10 @@ describe("managed gateway port readiness (#7411)", () => {
         ["sh", "-c", 'command -v "$1" >/dev/null 2>&1', "sh", "brew"].join("\0"),
         commandResult("", 0),
       ],
+      [
+        ["sh", "-c", 'command -v "$1" >/dev/null 2>&1', "sh", "launchctl"].join("\0"),
+        commandResult("", 0),
+      ],
       [[openshellBin, "status", "-g", gatewayName].join("\0"), commandResult(status, 0)],
       [[openshellBin, "gateway", "info", "-g", gatewayName].join("\0"), commandResult(info, 0)],
       [[openshellBin, "gateway", "info"].join("\0"), commandResult(info, 0)],
@@ -285,30 +294,35 @@ describe("managed gateway port readiness (#7411)", () => {
         ["/usr/sbin/lsof", "-a", "-p", String(process.pid), "-d", "txt", "-Fn"].join("\0"),
         commandResult(`p${process.pid}\nftxt\nn${gatewayBin}\n`, 0),
       ],
-      [["brew", "list", "--formula", "openshell"].join("\0"), commandResult("", 0)],
       [
         ["brew", "info", "--json=v2", "openshell"].join("\0"),
         commandResult(
-          JSON.stringify({ formulae: [{ name: "openshell", tap: "nvidia/openshell" }] }),
+          JSON.stringify({
+            formulae: [
+              {
+                installed: [{ version: "0.0.106" }],
+                name: "openshell",
+                service: { run: serviceProgram },
+                tap: "nvidia/openshell",
+              },
+            ],
+          }),
           0,
         ),
       ],
       [
-        ["brew", "services", "info", "openshell", "--json"].join("\0"),
+        ["launchctl", "print", `gui/${String(process.getuid?.())}/sh.brew.openshell`].join("\0"),
         commandResult(
-          JSON.stringify([
-            {
-              loaded: true,
-              name: "openshell",
-              pid: process.pid,
-              running: true,
-              service_name: "sh.brew.openshell",
-            },
-          ]),
+          `\tstate = running\n\tprogram = ${serviceProgram}\n\tpid = ${process.pid}\n`,
           0,
         ),
       ],
-      [["brew", "--prefix", "openshell"].join("\0"), commandResult(formulaPrefix, 0)],
+      [
+        ["launchctl", "print", `gui/${String(process.getuid?.())}/homebrew.mxcl.openshell`].join(
+          "\0",
+        ),
+        commandResult(),
+      ],
     ]);
     subprocess.spawnSync.mockImplementation((command: string, args: readonly string[] = []) => {
       const brewIndex = args.indexOf("brew");
@@ -337,16 +351,23 @@ describe("managed gateway port readiness (#7411)", () => {
             const brewIndex = args.indexOf("brew");
             return args.slice(brewIndex + 1);
           });
-      const expectedFormulaCalls = [
-        ["list", "--formula", "openshell"],
-        ["info", "--json=v2", "openshell"],
-        ["services", "info", "openshell", "--json"],
-        ["services", "info", "openshell", "--json"],
-      ];
+      const expectedFormulaCalls = [["info", "--json=v2", "openshell"]];
       expect(formulaCalls()).toEqual(expectedFormulaCalls);
+      const launchctlCalls = () =>
+        subprocess.spawnSync.mock.calls
+          .filter(([command]) => command === "launchctl")
+          .map(([, args]) => args);
+      const expectedLaunchctlCalls = [
+        ["print", `gui/${String(process.getuid?.())}/sh.brew.openshell`],
+        ["print", `gui/${String(process.getuid?.())}/homebrew.mxcl.openshell`],
+        ["print", `gui/${String(process.getuid?.())}/sh.brew.openshell`],
+        ["print", `gui/${String(process.getuid?.())}/homebrew.mxcl.openshell`],
+      ];
+      expect(launchctlCalls()).toEqual(expectedLaunchctlCalls);
 
       await collectGatewayObservations(deps);
       expect(formulaCalls()).toEqual([...expectedFormulaCalls, ...expectedFormulaCalls]);
+      expect(launchctlCalls()).toEqual([...expectedLaunchctlCalls, ...expectedLaunchctlCalls]);
     } finally {
       await new Promise<void>((resolve) => listener.close(() => resolve()));
       fs.rmSync(formulaPrefix, { force: true, recursive: true });

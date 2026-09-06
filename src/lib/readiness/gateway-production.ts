@@ -592,15 +592,9 @@ export function createProductionGatewayReadinessDependencies(
     string,
     ReturnType<typeof homebrewFormulaOperation>
   >();
-  // Cache only static formula evidence for this observation. Service status
-  // remains uncached so the two PID samples still detect replacement.
-  const cacheableHomebrewFormulaOperations = new Set([
-    ["list", "--formula", OPENSHELL_GATEWAY_HOMEBREW_SERVICE].join("\0"),
-    ["info", "--json=v2", OPENSHELL_GATEWAY_HOMEBREW_SERVICE].join("\0"),
-    ["--prefix", OPENSHELL_GATEWAY_HOMEBREW_SERVICE].join("\0"),
-  ]);
-  const directHomebrewPrefixOperation = [
-    "--prefix",
+  const homebrewFormulaInfoOperation = [
+    "info",
+    "--json=v2",
     OPENSHELL_GATEWAY_HOMEBREW_SERVICE,
   ].join("\0");
 
@@ -612,23 +606,8 @@ export function createProductionGatewayReadinessDependencies(
     const key = args.join("\0");
     const cached = cachedHomebrewFormulaOperations.get(key);
     if (cached) return cached;
-    let result: ReturnType<typeof homebrewFormulaOperation>;
-    if (key === directHomebrewPrefixOperation) {
-      try {
-        // `brew --prefix` reads installed-keg metadata without loading formula
-        // Ruby. Formula identity and service evaluation stay wrapped.
-        result = spawnSync("brew", args, {
-          encoding: "utf-8",
-          env: probeEnv,
-          stdio: ["ignore", "pipe", "pipe"],
-        });
-      } catch (error) {
-        result = { error: error instanceof Error ? error : new Error(String(error)), status: null };
-      }
-    } else {
-      result = homebrewFormulaOperation(args);
-    }
-    if (result.status === 0 && cacheableHomebrewFormulaOperations.has(key)) {
+    const result = homebrewFormulaOperation(args);
+    if (result.status === 0 && key === homebrewFormulaInfoOperation) {
       cachedHomebrewFormulaOperations.set(key, result);
     }
     return result;
