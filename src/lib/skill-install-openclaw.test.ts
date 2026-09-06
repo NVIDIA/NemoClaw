@@ -22,7 +22,11 @@ import {
 } from "./skill-install";
 
 const roots: string[] = [];
-const ctx: SshContext = { configFile: "/tmp/ssh-config", sandboxName: "alpha" };
+const ctx: SshContext = {
+  configFile: "/tmp/ssh-config",
+  knownHostsFile: "/tmp/known-hosts",
+  sandboxName: "alpha",
+};
 const SANDBOX_ID = "sandbox-alpha";
 const SANDBOX_IDENTITY = createHash("sha256").update(SANDBOX_ID).digest("hex");
 const paths: NativeSkillState = {
@@ -65,7 +69,7 @@ describe("OpenClaw native skill installation", () => {
       expect.stringContaining("'skills' 'remove' '--help'"),
       { timeout: 30_000 },
     );
-    expect(sshExec.mock.calls[0]?.[1]).toContain("OPENSHELL_SANDBOX_ID");
+    expect(sshExec.mock.calls[0]?.[1]).not.toContain("OPENSHELL_SANDBOX_ID");
   });
 
   it.runIf(process.platform === "linux")(
@@ -172,7 +176,6 @@ esac
                 OPENCLAW_TEST_LOG: invocationLog,
                 OPENCLAW_TEST_MUTATE: mutatePayload ? "1" : "0",
                 OPENCLAW_TEST_TARGET: nativeTarget,
-                OPENSHELL_SANDBOX_ID: SANDBOX_ID,
               },
               input: opts?.input,
               timeout: opts?.timeout,

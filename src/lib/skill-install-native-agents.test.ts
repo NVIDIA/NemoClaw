@@ -20,7 +20,11 @@ import {
 import type { SshContext, SshResult } from "./skill-remote";
 
 const roots: string[] = [];
-const context: SshContext = { configFile: "/tmp/ssh-config", sandboxName: "alpha" };
+const context: SshContext = {
+  configFile: "/tmp/ssh-config",
+  knownHostsFile: "/tmp/known-hosts",
+  sandboxName: "alpha",
+};
 const SANDBOX_ID = "sandbox-alpha";
 const SANDBOX_IDENTITY = createHash("sha256").update(SANDBOX_ID).digest("hex");
 
@@ -175,7 +179,6 @@ esac
               NATIVE_SKILL_LATE_MARKER: lateInstallMarker,
               NATIVE_SKILL_MUTATE: mutatePayload ? "1" : "0",
               NATIVE_SKILL_TARGET: target,
-              OPENSHELL_SANDBOX_ID: SANDBOX_ID,
             },
             input: options?.input,
           },

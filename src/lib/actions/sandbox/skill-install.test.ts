@@ -27,7 +27,7 @@ const withSandboxMutationLock = vi.hoisted(() =>
   }),
 );
 const skillInstall = vi.hoisted(() => ({
-  bindNativeSkillCommandToSandboxIdentity: vi.fn(),
+  buildBoundedNativeSkillCommand: vi.fn(),
   validateSkillName: vi.fn(),
   resolveNativeSkillState: vi.fn(),
   parseFrontmatter: vi.fn(),
@@ -35,6 +35,7 @@ const skillInstall = vi.hoisted(() => ({
   installNativeAgentSkill: vi.fn(),
   installOpenClawSkill: vi.fn(),
   probeOpenClawSkillRemoveCapability: vi.fn(),
+  sshExec: vi.fn(),
 }));
 
 vi.mock("../../adapters/openshell/runtime", () => ({
@@ -151,7 +152,7 @@ describe("sandbox skill action orchestration", () => {
       return { agent: resolvedAgent, requestedName: resolvedAgent.name, resolved: true };
     });
     skillInstall.validateSkillName.mockReturnValue(true);
-    skillInstall.bindNativeSkillCommandToSandboxIdentity.mockReturnValue([
+    skillInstall.buildBoundedNativeSkillCommand.mockReturnValue([
       "/bin/sh",
       "-c",
       "identity-bound-native-skill-command",
@@ -159,6 +160,7 @@ describe("sandbox skill action orchestration", () => {
     skillInstall.resolveNativeSkillState.mockReturnValue(genericPaths);
     skillInstall.parseFrontmatter.mockReturnValue({ name: "demo-skill" });
     skillInstall.probeOpenClawSkillRemoveCapability.mockReturnValue(true);
+    skillInstall.sshExec.mockReturnValue({ status: 0, stderr: "", stdout: "" });
     skillInstall.collectFiles.mockReturnValue({
       files: ["SKILL.md"],
       skippedDotfiles: [],
@@ -337,15 +339,16 @@ describe("sandbox skill action orchestration", () => {
     expect(withSandboxMutationLock).toHaveBeenCalledWith("alpha", expect.any(Function), {
       timeoutMs: 10_000,
     });
-    expect(execSandbox).toHaveBeenCalledWith(
-      "alpha",
-      ["/bin/sh", "-c", "identity-bound-native-skill-command"],
-      { timeoutSeconds: 120 },
-      { exit: expect.any(Function) },
+    expect(skillInstall.sshExec).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        knownHostsFile: expect.stringContaining("known_hosts"),
+        sandboxName: "alpha",
+      }),
+      "'/bin/sh' '-c' 'identity-bound-native-skill-command'",
+      { timeout: 120_000 },
     );
-    expect(skillInstall.bindNativeSkillCommandToSandboxIdentity).toHaveBeenCalledWith(
+    expect(skillInstall.buildBoundedNativeSkillCommand).toHaveBeenCalledWith(
       ["/usr/local/bin/openclaw", "skills", "remove", "demo-skill", "--agent", "main"],
-      "f".repeat(64),
       {
         diagnostic: expect.stringContaining(
           "Native OpenClaw skill removal timed out in sandbox 'alpha' while running '/usr/local/bin/openclaw skills remove'",
@@ -375,19 +378,20 @@ describe("sandbox skill action orchestration", () => {
 
     await removeSandboxSkill("alpha", { name: "demo-skill" });
 
-    expect(skillInstall.bindNativeSkillCommandToSandboxIdentity).toHaveBeenCalledWith(
+    expect(skillInstall.buildBoundedNativeSkillCommand).toHaveBeenCalledWith(
       command,
-      "f".repeat(64),
       {
         diagnostic: expect.stringContaining("skill removal timed out in sandbox 'alpha'"),
         seconds: 110,
       },
     );
-    expect(execSandbox).toHaveBeenCalledWith(
-      "alpha",
-      ["/bin/sh", "-c", "identity-bound-native-skill-command"],
-      { timeoutSeconds: 120 },
-      { exit: expect.any(Function) },
+    expect(skillInstall.sshExec).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        knownHostsFile: expect.stringContaining("known_hosts"),
+        sandboxName: "alpha",
+      }),
+      "'/bin/sh' '-c' 'identity-bound-native-skill-command'",
+      { timeout: 120_000 },
     );
   });
 
@@ -405,6 +409,23 @@ describe("sandbox skill action orchestration", () => {
       "  Failed to bind the OpenClaw skill removal to the exact live sandbox identity.",
     );
     expect(execSandbox).not.toHaveBeenCalled();
+  });
+
+  it("reports an identity change after native removal executes on the pinned host", async () => {
+    getSessionAgent.mockReturnValue(agent);
+    inspectOpenShellSandboxIdentityFingerprint
+      .mockReturnValueOnce("f".repeat(64))
+      .mockReturnValueOnce("f".repeat(64))
+      .mockReturnValueOnce("e".repeat(64));
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await removeSandboxSkill("alpha", { name: "demo-skill" });
+
+    expect(skillInstall.buildBoundedNativeSkillCommand).toHaveBeenCalledOnce();
+    expect(process.exitCode).toBe(1);
+    expect(error).toHaveBeenCalledWith(
+      "  Failed to bind the OpenClaw skill removal to the exact live sandbox identity.",
+    );
   });
 
   it("requires rebuild when a running OpenClaw image lacks native removal", async () => {
@@ -657,7 +678,10 @@ describe("sandbox skill action orchestration", () => {
       timeoutMs: 10_000,
     });
     expect(skillInstall.installOpenClawSkill).toHaveBeenCalledWith(
-      expect.objectContaining({ sandboxName: "alpha" }),
+      expect.objectContaining({
+        knownHostsFile: expect.stringContaining("known_hosts"),
+        sandboxName: "alpha",
+      }),
       skillDir,
       paths,
       "demo-skill",
@@ -671,6 +695,11 @@ describe("sandbox skill action orchestration", () => {
       gatewayName: "nemoclaw-recorded",
       timeoutMs: expect.any(Number),
     });
+    expect(skillInstall.sshExec).toHaveBeenCalledWith(
+      expect.objectContaining({ knownHostsFile: expect.stringContaining("known_hosts") }),
+      ":",
+      { acceptNewHostKey: true, timeout: expect.any(Number) },
+    );
     expect(log).toHaveBeenCalledWith(expect.stringContaining("installed through OpenClaw"));
     expect(process.exitCode).toBeUndefined();
   });
@@ -752,6 +781,30 @@ describe("sandbox skill action orchestration", () => {
     expect(skillInstall.installOpenClawSkill).not.toHaveBeenCalled();
   });
 
+  it("reports an identity change after a native install attempt", async () => {
+    const skillDir = makeSkillDir();
+    getSessionAgent.mockReturnValue(agent);
+    skillInstall.resolveNativeSkillState.mockReturnValue(paths);
+    inspectOpenShellSandboxIdentityFingerprint
+      .mockReturnValueOnce("f".repeat(64))
+      .mockReturnValueOnce("f".repeat(64))
+      .mockReturnValueOnce("e".repeat(64));
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    try {
+      await installSandboxSkill("alpha", { command: "install", path: skillDir });
+    } finally {
+      fs.rmSync(skillDir, { recursive: true, force: true });
+    }
+
+    expect(skillInstall.installOpenClawSkill).toHaveBeenCalledOnce();
+    expect(process.exitCode).toBe(1);
+    expect(error).toHaveBeenCalledWith(
+      "  The OpenClaw sandbox identity changed or could not be proven during native skill installation.",
+    );
+  });
+
   it("fails closed when the pinned OpenClaw installer capability is unavailable", async () => {
     const skillDir = makeSkillDir();
     getSessionAgent.mockReturnValue(agent);
@@ -831,7 +884,11 @@ describe("sandbox skill action orchestration", () => {
     }
 
     expect(skillInstall.installNativeAgentSkill).toHaveBeenCalledWith(
-      expect.objectContaining({ configFile: tempConfig, sandboxName: "alpha" }),
+      expect.objectContaining({
+        configFile: tempConfig,
+        knownHostsFile: expect.stringContaining("known_hosts"),
+        sandboxName: "alpha",
+      }),
       skillDir,
       sharedPaths,
       expect.objectContaining({

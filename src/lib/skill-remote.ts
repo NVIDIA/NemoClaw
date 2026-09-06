@@ -10,6 +10,7 @@ export { shellQuote };
 
 export interface SshContext {
   configFile: string;
+  knownHostsFile?: string;
   sandboxName: string;
 }
 
@@ -26,18 +27,24 @@ export interface SshResult {
 export function sshExec(
   ctx: SshContext,
   command: string,
-  opts: { input?: string | Buffer; timeout?: number } = {},
+  opts: { acceptNewHostKey?: boolean; input?: string | Buffer; timeout?: number } = {},
 ): SshResult | null {
   try {
+    const hostKeyChecking = ctx.knownHostsFile
+      ? opts.acceptNewHostKey
+        ? "accept-new"
+        : "yes"
+      : "no";
+    const knownHostsFile = ctx.knownHostsFile ?? "/dev/null";
     const result = spawnSync(
       "ssh",
       [
         "-F",
         ctx.configFile,
         "-o",
-        "StrictHostKeyChecking=no",
+        `StrictHostKeyChecking=${hostKeyChecking}`,
         "-o",
-        "UserKnownHostsFile=/dev/null",
+        `UserKnownHostsFile=${knownHostsFile}`,
         "-o",
         "ConnectTimeout=10",
         "-o",

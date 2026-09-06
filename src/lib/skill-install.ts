@@ -332,7 +332,13 @@ export function probeOpenClawSkillRemoveCapability(
   lifecycle: NativeSkillLifecycleDescriptor,
   sshExecImpl: typeof sshExec = sshExec,
 ): boolean {
-  if (!SHA256_RE.test(expectedSandboxIdentityFingerprint)) return false;
+  if (
+    !SHA256_RE.test(expectedSandboxIdentityFingerprint) ||
+    !ctx.knownHostsFile ||
+    !path.isAbsolute(ctx.knownHostsFile)
+  ) {
+    return false;
+  }
   if (
     lifecycle.agentName !== "openclaw" ||
     !lifecycle.removeHelpArgs ||
@@ -340,36 +346,20 @@ export function probeOpenClawSkillRemoveCapability(
   ) {
     return false;
   }
-  const identityCheck = sandboxIdentityCheckCommand(expectedSandboxIdentityFingerprint);
   const script = [
     "set -eu",
-    `${identityCheck} || exit 9`,
     `help="$(${[lifecycle.binary, ...lifecycle.removeHelpArgs].map(shellQuote).join(" ")} 2>&1)"`,
     `printf '%s' "$help" | grep -Fq ${shellQuote(lifecycle.removeHelpEvidence)}`,
-    `${identityCheck} || exit 9`,
   ].join("; ");
   return sshExecImpl(ctx, script, { timeout: 30_000 })?.status === 0;
 }
 
-function sandboxIdentityCheckCommand(expectedFingerprint: string): string {
-  const check = [
-    'const crypto=require("node:crypto");',
-    "const expected=process.argv[1];",
-    'const id=process.env.OPENSHELL_SANDBOX_ID||"";',
-    'if(!/^[A-Za-z0-9._-]{1,512}$/.test(id)||crypto.createHash("sha256").update(id).digest("hex")!==expected)process.exit(1);',
-  ].join("");
-  return `node -e ${shellQuote(check)} ${shellQuote(expectedFingerprint)}`;
-}
-
-/** Prefix one fixed native lifecycle command with an in-sandbox identity guard. */
-export function bindNativeSkillCommandToSandboxIdentity(
+/** Bound one fixed native lifecycle command below its outer SSH timeout. */
+export function buildBoundedNativeSkillCommand(
   command: readonly string[],
-  expectedFingerprint: string,
   timeout?: { diagnostic: string; seconds: number },
 ): string[] {
-  if (command.length === 0 || !SHA256_RE.test(expectedFingerprint)) {
-    throw new Error("Native skill command requires a valid sandbox identity binding");
-  }
+  if (command.length === 0) throw new Error("Native skill command is required");
   const nativeCommand = command.map((argument) => shellQuote(argument)).join(" ");
   if (
     timeout &&
@@ -385,7 +375,7 @@ export function bindNativeSkillCommandToSandboxIdentity(
   return [
     "/bin/sh",
     "-c",
-    `${sandboxIdentityCheckCommand(expectedFingerprint)} || { echo IDENTITY_CHANGED >&2; exit 9; }; ${invocation}`,
+    invocation,
   ];
 }
 
@@ -654,15 +644,13 @@ interface NativeSkillStagingScriptOptions {
   paths: NativeSkillState;
   skillName: string;
   expectedDigest: string;
-  expectedSandboxIdentityFingerprint: string;
   preStageCommands: readonly string[];
   lifecycleCommands: readonly string[];
   digestExcludedRelativePath?: string;
 }
 
-/** Emit the one private staging, cleanup, digest, and identity contract for every native agent. */
+/** Emit the one private staging, cleanup, and digest contract for every native agent. */
 function buildNativeSkillStagingScript(options: NativeSkillStagingScriptOptions): string {
-  const identityCheck = sandboxIdentityCheckCommand(options.expectedSandboxIdentityFingerprint);
   const fileSelection = options.digestExcludedRelativePath
     ? `find "$tree" -type f -printf "%P\\n" | LC_ALL=C sort | grep -Fxv ${shellQuote(options.digestExcludedRelativePath)} > "$manifest.files"`
     : 'find "$tree" -type f -printf "%P\\n" | LC_ALL=C sort > "$manifest.files"';
@@ -675,7 +663,6 @@ function buildNativeSkillStagingScript(options: NativeSkillStagingScriptOptions)
     'safe_tree() { [ -d "$1" ] && [ ! -L "$1" ] && [ -z "$(find "$1" -mindepth 1 ! -type d ! -type f -print -quit)" ]; }',
     `digest_tree() { tree="$1"; manifest="$2"; ${fileSelection}; : > "$manifest"; while IFS= read -r rel; do if [ -n "$(find "$tree/$rel" -type f -perm /111 -print -quit)" ]; then mode=755; else mode=644; fi; hash="$(sha256sum "$tree/$rel" | cut -d " " -f 1)"; printf "%s %s  %s\\n" "$mode" "$hash" "$rel" >> "$manifest"; done < "$manifest.files"; sha256sum "$manifest" | cut -d " " -f 1; }`,
     '[ -d "$root" ] && [ ! -L "$root" ] && [ "$(realpath -e -- "$root")" = "$root" ]',
-    `${identityCheck} || { echo IDENTITY_CHANGED; exit 9; }`,
     ...options.preStageCommands,
     ...NATIVE_STAGE_RECOVERY_COMMANDS,
     'stage="$(mktemp -d "$root/.nemoclaw-skill-stage.XXXXXX")"',
@@ -692,7 +679,6 @@ function buildNativeSkillStagingScript(options: NativeSkillStagingScriptOptions)
     'staged="$(digest_tree "$payload" "$stage/staged.manifest")"',
     '[ "$staged" = "$expected" ]',
     ...options.lifecycleCommands,
-    `${identityCheck} || { echo IDENTITY_CHANGED; exit 9; }`,
     'printf "INSTALLED %s\\n" "$installed"',
   ].join("; ");
 }
@@ -720,7 +706,6 @@ function buildOpenClawNativeInstallScript(
   lifecycle: NativeSkillLifecycleDescriptor,
   skillName: string,
   expectedDigest: string,
-  expectedSandboxIdentityFingerprint: string,
 ): string {
   if (lifecycle.agentName !== "openclaw") {
     throw new Error("OpenClaw native install requires the OpenClaw lifecycle contract");
@@ -752,7 +737,6 @@ function buildOpenClawNativeInstallScript(
     paths,
     skillName,
     expectedDigest,
-    expectedSandboxIdentityFingerprint,
     digestExcludedRelativePath: ".openclaw/source-origin.json",
     preStageCommands: [
       `help="$(${renderNativeSkillCommand([lifecycle.binary, ...lifecycle.installHelpArgs])} 2>&1)" || { echo CAPABILITY_MISSING; exit 3; }`,
@@ -839,6 +823,9 @@ function executeNativeSkillInstall(
   if (!SHA256_RE.test(opts.expectedSandboxIdentityFingerprint)) {
     return { success: false, uploaded: 0, reason: "sandbox_identity_changed" };
   }
+  if (!ctx.knownHostsFile || !path.isAbsolute(ctx.knownHostsFile)) {
+    return { success: false, uploaded: 0, reason: "sandbox_identity_changed" };
+  }
   const result = (opts.sshExecImpl ?? sshExec)(ctx, buildScript(snapshot.contentDigest), {
     input: snapshot.archive,
     timeout: 120_000,
@@ -875,13 +862,7 @@ export function installOpenClawSkill(
   },
 ): NativeSkillInstallResult {
   return executeNativeSkillInstall(ctx, localDir, skillName, opts, (expectedDigest) =>
-    buildOpenClawNativeInstallScript(
-      paths,
-      opts.lifecycle,
-      skillName,
-      expectedDigest,
-      opts.expectedSandboxIdentityFingerprint,
-    ),
+    buildOpenClawNativeInstallScript(paths, opts.lifecycle, skillName, expectedDigest),
   );
 }
 
@@ -893,7 +874,6 @@ function buildNativeLocalSkillInstallScript(
   lifecycle: NativeSkillLifecycleDescriptor,
   skillName: string,
   expectedDigest: string,
-  expectedSandboxIdentityFingerprint: string,
 ): string {
   const stageToken = "__NEMOCLAW_PAYLOAD__";
   if (lifecycle.agentName === "openclaw") {
@@ -920,7 +900,6 @@ function buildNativeLocalSkillInstallScript(
     paths,
     skillName,
     expectedDigest,
-    expectedSandboxIdentityFingerprint,
     preStageCommands: [
       `help="$(${renderNativeSkillCommand([lifecycle.binary, ...lifecycle.installHelpArgs])} 2>&1)" || { echo CAPABILITY_MISSING; exit 3; }`,
       ...lifecycle.installRequiredFlags.map(
@@ -950,12 +929,6 @@ export function installNativeAgentSkill(
   opts: NativeSkillInstallOptions,
 ): NativeSkillInstallResult {
   return executeNativeSkillInstall(ctx, localDir, skillName, opts, (expectedDigest) =>
-    buildNativeLocalSkillInstallScript(
-      paths,
-      lifecycle,
-      skillName,
-      expectedDigest,
-      opts.expectedSandboxIdentityFingerprint,
-    ),
+    buildNativeLocalSkillInstallScript(paths, lifecycle, skillName, expectedDigest),
   );
 }

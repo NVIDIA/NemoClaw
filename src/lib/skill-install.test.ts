@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 // Import source directly so tests cannot pass against a stale build.
 import {
-  bindNativeSkillCommandToSandboxIdentity,
+  buildBoundedNativeSkillCommand,
   collectFiles,
   parseFrontmatter,
   resolveNativeSkillState,
@@ -215,24 +215,23 @@ describe("resolveNativeSkillState", () => {
   });
 });
 
-describe("bindNativeSkillCommandToSandboxIdentity", () => {
-  it("checks the durable in-sandbox identity before the fixed native command", () => {
-    const expected = "f".repeat(64);
-    const command = bindNativeSkillCommandToSandboxIdentity(
-      ["/usr/local/bin/openclaw", "skills", "remove", "demo-skill"],
-      expected,
-    );
+describe("buildBoundedNativeSkillCommand", () => {
+  it("executes the fixed native command without an in-sandbox identity dependency", () => {
+    const command = buildBoundedNativeSkillCommand([
+      "/usr/local/bin/openclaw",
+      "skills",
+      "remove",
+      "demo-skill",
+    ]);
 
     expect(command.slice(0, 2)).toEqual(["/bin/sh", "-c"]);
-    expect(command[2]).toContain(expected);
-    expect(command[2]).toContain("OPENSHELL_SANDBOX_ID");
+    expect(command[2]).not.toContain("OPENSHELL_SANDBOX_ID");
     expect(command[2]).toContain("exec '/usr/local/bin/openclaw' 'skills' 'remove' 'demo-skill'");
   });
 
   it("bounds native removal and retains the operator recovery diagnostic", () => {
-    const command = bindNativeSkillCommandToSandboxIdentity(
+    const command = buildBoundedNativeSkillCommand(
       ["/usr/local/bin/hermes", "skills", "uninstall", "demo-skill"],
-      "f".repeat(64),
       {
         diagnostic:
           "Native Hermes skill removal timed out in sandbox 'alpha'. Run 'nemoclaw alpha skill list' before retrying.",

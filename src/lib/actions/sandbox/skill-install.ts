@@ -13,10 +13,6 @@ import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { D, G, R } from "../../cli/terminal-style";
-import {
-  deferSandboxLifecycleExit,
-  runWithDeferredSandboxLifecycleExit,
-} from "../../core/process-exit";
 import { createTempSshConfig } from "../../sandbox/temp-ssh-config";
 import { withSandboxMutationLock } from "../../state/mcp-lifecycle-lock";
 import * as skillInstall from "../../skill-install";
@@ -31,6 +27,15 @@ const NATIVE_SKILL_REMOVE_TIMEOUT_SECONDS = 120;
 const NATIVE_SKILL_REMOVE_INNER_TIMEOUT_SECONDS = 110;
 
 type SkillMutationLockResult<T> = { acquired: true; value: T } | { acquired: false; value?: never };
+
+type IdentityBoundSkillSsh =
+  | {
+      context: skillInstall.SshContext;
+      expectedIdentity: string;
+      release: () => void;
+      success: true;
+    }
+  | { reason: "binding" | "ssh-config"; success: false };
 
 async function withSkillMutationLock<T>(
   sandboxName: string,
@@ -66,6 +71,92 @@ async function withSkillMutationLock<T>(
     return { acquired: false };
   } finally {
     clearTimeout(waitNotice);
+  }
+}
+
+/** Pin one ephemeral OpenShell SSH host key between two authoritative identity reads. */
+function openIdentityBoundSkillSsh(
+  sandboxName: string,
+  gatewayName: string,
+  prefix: string,
+): IdentityBoundSkillSsh {
+  const sshConfigResult = captureSandboxSshConfig(sandboxName, {
+    gatewayName,
+    ignoreError: true,
+    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+  });
+  if (sshConfigResult.status !== 0) return { reason: "ssh-config", success: false };
+
+  const observedTarget = fingerprintOpenShellSandboxSshConfigTarget(sshConfigResult.output);
+  const expectedTarget = fingerprintOpenShellSandboxSshTarget(gatewayName, sandboxName, "default");
+  if (!observedTarget || !expectedTarget || observedTarget !== expectedTarget) {
+    return { reason: "binding", success: false };
+  }
+
+  let expectedIdentity: string;
+  try {
+    expectedIdentity = inspectOpenShellSandboxIdentityFingerprint({
+      sandboxName,
+      gatewayName,
+      timeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
+    });
+  } catch {
+    return { reason: "binding", success: false };
+  }
+
+  const temporary = createTempSshConfig(sshConfigResult.output, prefix);
+  const context: skillInstall.SshContext = {
+    configFile: temporary.file,
+    knownHostsFile: path.join(temporary.dir, "known_hosts"),
+    sandboxName,
+  };
+  const probe = skillInstall.sshExec(context, ":", {
+    acceptNewHostKey: true,
+    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+  });
+  if (!probe || probe.status !== 0) {
+    temporary.cleanup();
+    return { reason: "binding", success: false };
+  }
+
+  try {
+    const confirmedIdentity = inspectOpenShellSandboxIdentityFingerprint({
+      sandboxName,
+      gatewayName,
+      timeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
+    });
+    if (confirmedIdentity !== expectedIdentity) {
+      temporary.cleanup();
+      return { reason: "binding", success: false };
+    }
+  } catch {
+    temporary.cleanup();
+    return { reason: "binding", success: false };
+  }
+
+  return {
+    context,
+    expectedIdentity,
+    release: temporary.cleanup,
+    success: true,
+  };
+}
+
+function sandboxIdentityStillMatches(
+  sandboxName: string,
+  gatewayName: string,
+  expectedIdentity: string,
+): boolean {
+  try {
+    return (
+      inspectOpenShellSandboxIdentityFingerprint({
+        sandboxName,
+        gatewayName,
+        timeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
+      }) === expectedIdentity
+    );
+  } catch {
+    return false;
   }
 }
 
@@ -241,85 +332,62 @@ export async function removeSandboxSkill(
   let bindingFailed = false;
   let capabilityMissing = false;
   let sshConfigFailed = false;
-  const lockedRemoval = await runWithDeferredSandboxLifecycleExit(() =>
-    withSkillMutationLock(sandboxName, async () => {
-      const gatewayName = getSandboxTargetGatewayName(sandboxName);
-      const sshConfigResult = captureSandboxSshConfig(sandboxName, {
-        gatewayName,
-        ignoreError: true,
-        timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-      });
-      if (sshConfigResult.status !== 0) {
-        sshConfigFailed = true;
-        return;
-      }
-      const observedSshTarget = fingerprintOpenShellSandboxSshConfigTarget(sshConfigResult.output);
-      const expectedSshTarget = fingerprintOpenShellSandboxSshTarget(
-        gatewayName,
-        sandboxName,
-        "default",
-      );
-      if (!observedSshTarget || !expectedSshTarget || observedSshTarget !== expectedSshTarget) {
-        bindingFailed = true;
-        return;
-      }
-      let expectedIdentity: string;
-      let confirmedIdentity: string;
-      try {
-        expectedIdentity = inspectOpenShellSandboxIdentityFingerprint({
-          sandboxName,
-          gatewayName,
-          timeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
-        });
-        confirmedIdentity = inspectOpenShellSandboxIdentityFingerprint({
-          sandboxName,
-          gatewayName,
-          timeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
-        });
-      } catch {
-        bindingFailed = true;
-        return;
-      }
-      if (expectedIdentity !== confirmedIdentity) {
-        bindingFailed = true;
-        return;
-      }
+  let removalStatus: number | null = null;
+  const lockedRemoval = await withSkillMutationLock(sandboxName, () => {
+    const gatewayName = getSandboxTargetGatewayName(sandboxName);
+    const binding = openIdentityBoundSkillSsh(
+      sandboxName,
+      gatewayName,
+      "nemoclaw-ssh-skill-remove-",
+    );
+    if (!binding.success) {
+      sshConfigFailed = binding.reason === "ssh-config";
+      bindingFailed = binding.reason === "binding";
+      return;
+    }
+    try {
       if (agentName === "openclaw") {
-        const tmpSshConfig = createTempSshConfig(
-          sshConfigResult.output,
-          "nemoclaw-ssh-skill-remove-",
-        );
-        try {
-          if (
-            !skillInstall.probeOpenClawSkillRemoveCapability(
-              { configFile: tmpSshConfig.file, sandboxName },
-              expectedIdentity,
-              lifecycle,
-            )
-          ) {
-            capabilityMissing = true;
-            return;
-          }
-        } finally {
-          tmpSshConfig.cleanup();
+        if (
+          !skillInstall.probeOpenClawSkillRemoveCapability(
+            binding.context,
+            binding.expectedIdentity,
+            lifecycle,
+          )
+        ) {
+          capabilityMissing = true;
+          return;
         }
       }
-      const identityBoundCommand = skillInstall.bindNativeSkillCommandToSandboxIdentity(
-        command,
-        expectedIdentity,
-        {
+      const identityBoundCommand = skillInstall.buildBoundedNativeSkillCommand(command, {
           diagnostic: `Native ${lifecycle.displayName} skill removal timed out in sandbox '${sandboxName}' while running '${command.slice(0, 3).join(" ")}'. Inspect current agent state with '${CLI_NAME} ${sandboxName} skill list' before retrying.`,
           seconds: NATIVE_SKILL_REMOVE_INNER_TIMEOUT_SECONDS,
-        },
+        });
+      const removal = skillInstall.sshExec(
+        binding.context,
+        identityBoundCommand.map(skillInstall.shellQuote).join(" "),
+        { timeout: NATIVE_SKILL_REMOVE_TIMEOUT_SECONDS * 1_000 },
       );
-      await execSandbox(
-        sandboxName,
-        identityBoundCommand,
-        { timeoutSeconds: NATIVE_SKILL_REMOVE_TIMEOUT_SECONDS },
-        { exit: deferSandboxLifecycleExit },
-      );
-    }),
-  );
+      if (!removal) {
+        bindingFailed = true;
+        return;
+      }
+      if (removal.stdout) console.log(removal.stdout);
+      if (removal.stderr) console.error(removal.stderr);
+      if (
+        !sandboxIdentityStillMatches(
+          sandboxName,
+          gatewayName,
+          binding.expectedIdentity,
+        )
+      ) {
+        bindingFailed = true;
+        return;
+      }
+      removalStatus = removal.status;
+    } finally {
+      binding.release();
+    }
+  });
   if (!lockedRemoval.acquired) return;
   if (sshConfigFailed || bindingFailed || capabilityMissing) {
     console.error(
@@ -330,7 +398,9 @@ export async function removeSandboxSkill(
           : `  Failed to bind the ${lifecycle.displayName} skill removal to the exact live sandbox identity.`,
     );
     process.exitCode = 1;
+    return;
   }
+  if (removalStatus !== null && removalStatus !== 0) process.exitCode = removalStatus;
 }
 
 /** List skills from the selected agent's native state without a host-side inventory. */
@@ -536,62 +606,53 @@ export async function installSandboxSkill(
   let sshConfigFailed = false;
   const lockedInstall = await withSkillMutationLock(sandboxName, () => {
     const gatewayName = getSandboxTargetGatewayName(sandboxName);
-    const sshConfigResult = captureSandboxSshConfig(sandboxName, {
-      gatewayName,
-      ignoreError: true,
-      timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-    });
-    if (sshConfigResult.status !== 0) {
-      sshConfigFailed = true;
-      return null;
-    }
-    const sshConfigTargetFingerprint = fingerprintOpenShellSandboxSshConfigTarget(
-      sshConfigResult.output,
-    );
-    const expectedSshTargetFingerprint = fingerprintOpenShellSandboxSshTarget(
-      gatewayName,
+    const binding = openIdentityBoundSkillSsh(
       sandboxName,
-      "default",
+      gatewayName,
+      "nemoclaw-ssh-skill-",
     );
-    if (
-      !sshConfigTargetFingerprint ||
-      !expectedSshTargetFingerprint ||
-      sshConfigTargetFingerprint !== expectedSshTargetFingerprint
-    ) {
+    if (!binding.success) {
+      sshConfigFailed = binding.reason === "ssh-config";
       return null;
     }
-    const tmpSshConfig = createTempSshConfig(sshConfigResult.output, "nemoclaw-ssh-skill-");
     try {
-      let sandboxIdentityFingerprint: string;
-      try {
-        sandboxIdentityFingerprint = inspectOpenShellSandboxIdentityFingerprint({
-          sandboxName,
-          gatewayName,
-          timeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
-        });
-      } catch {
-        return null;
-      }
-      const context = { configFile: tmpSshConfig.file, sandboxName };
-      return agentName === "openclaw"
-        ? skillInstall.installOpenClawSkill(context, skillDir, paths, frontmatter.name, {
-            expectedRootIdentity,
-            expectedSandboxIdentityFingerprint: sandboxIdentityFingerprint,
-            lifecycle,
-          })
-        : skillInstall.installNativeAgentSkill(
-            context,
-            skillDir,
-            paths,
-            lifecycle,
-            frontmatter.name,
-            {
-              expectedRootIdentity,
-              expectedSandboxIdentityFingerprint: sandboxIdentityFingerprint,
-            },
-          );
+      const native =
+        agentName === "openclaw"
+          ? skillInstall.installOpenClawSkill(
+              binding.context,
+              skillDir,
+              paths,
+              frontmatter.name,
+              {
+                expectedRootIdentity,
+                expectedSandboxIdentityFingerprint: binding.expectedIdentity,
+                lifecycle,
+              },
+            )
+          : skillInstall.installNativeAgentSkill(
+              binding.context,
+              skillDir,
+              paths,
+              lifecycle,
+              frontmatter.name,
+              {
+                expectedRootIdentity,
+                expectedSandboxIdentityFingerprint: binding.expectedIdentity,
+              },
+            );
+      return sandboxIdentityStillMatches(
+        sandboxName,
+        gatewayName,
+        binding.expectedIdentity,
+      )
+        ? native
+        : ({
+            success: false,
+            uploaded: 0,
+            reason: "sandbox_identity_changed",
+          } satisfies skillInstall.NativeSkillInstallResult);
     } finally {
-      tmpSshConfig.cleanup();
+      binding.release();
     }
   });
   if (!lockedInstall.acquired) return;
