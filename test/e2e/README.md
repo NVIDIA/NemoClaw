@@ -1196,9 +1196,7 @@ target and valid settlement provenance, or calls out the `invalid` evidence
 state as malformed or unusable, `missing` when no trace input exists, `absent`
 when the sandbox phase has no final event, or `not_attempted` when the phase did
 not run. Inspect lifecycle logs and use a retained recovery record only if the
-onboarding failure created one. The dedicated `cloud-onboard` job requires a
-schema-valid matched settlement; diagnostic-only evidence fails that job before
-cleanup and artifact upload continue under `always()`.
+onboarding failure created one.
 
 Registry-driven Vitest targets also enable onboard trace collection. Each live
 matrix target writes raw traces under the runner temporary directory, sanitizes

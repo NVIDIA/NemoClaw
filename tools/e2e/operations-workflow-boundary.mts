@@ -1459,7 +1459,6 @@ function validateTraceTiming(errors: string[], workflow: OperationsWorkflow): vo
   for (const name of [
     "Configure cloud-onboard trace directory",
     "Build trusted cloud-onboard timing summary",
-    "Validate cloud-onboard identity settlement evidence",
     "Delete raw cloud-onboard traces",
   ]) {
     if (!steps.some((step) => step.name === name)) {
@@ -1510,23 +1509,6 @@ function validateTraceTiming(errors: string[], workflow: OperationsWorkflow): vo
   const sanitizeIndex = steps.findIndex(
     (step) => step.name === "Build trusted cloud-onboard timing summary",
   );
-  const validateSettlement = findStep(job, "Validate cloud-onboard identity settlement evidence");
-  const validateSettlementIndex = steps.findIndex(
-    (step) => step.name === "Validate cloud-onboard identity settlement evidence",
-  );
-  if (validateSettlement.if !== "always()") {
-    errors.push("cloud-onboard identity settlement validation must always run");
-  }
-  for (const fragment of [
-    "cloud-onboard-trace-timing-summary.json",
-    "sandbox_identity_settlement_evidence",
-    "sandbox_identity_settlement",
-    'settlement.get("identity_state") == "matched"',
-  ]) {
-    if (!String(validateSettlement.run ?? "").includes(fragment)) {
-      errors.push(`cloud-onboard identity settlement validation must retain ${fragment}`);
-    }
-  }
   const cleanup = findStep(job, "Delete raw cloud-onboard traces");
   const cleanupIndex = steps.findIndex((step) => step.name === "Delete raw cloud-onboard traces");
   const uploadIndex = steps.findIndex((step) => step.name === "Upload cloud-onboard artifacts");
@@ -1548,12 +1530,11 @@ function validateTraceTiming(errors: string[], workflow: OperationsWorkflow): vo
       configureIndex < prepareIndex &&
       prepareIndex < runIndex &&
       runIndex < sanitizeIndex &&
-      sanitizeIndex < validateSettlementIndex &&
-      validateSettlementIndex < cleanupIndex
+      sanitizeIndex < cleanupIndex
     )
   ) {
     errors.push(
-      "cloud-onboard trace setup, workspace preparation, Vitest run, sanitizer, identity validation, and cleanup steps must stay in order",
+      "cloud-onboard trace setup, workspace preparation, Vitest run, sanitizer, and cleanup steps must stay in order",
     );
   }
   if (

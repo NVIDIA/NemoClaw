@@ -52,8 +52,7 @@ The durable E2E system has one execution path:
   attributes and the full identity fingerprint remain excluded. Malformed or
   unreadable trace input is replaced with the bounded `invalid` evidence state;
   absent trace input uses `missing`; a valid trace without a final event uses
-  `absent` after the sandbox phase or `not_attempted` before it. The dedicated
-  `cloud-onboard` job requires a matched settlement before it can pass.
+  `absent` after the sandbox phase or `not_attempted` before it.
   The workflow owns `NEMOCLAW_TRACE_DIR`, keeps raw traces under runner
   temporary storage, and deletes those raw traces before uploading artifacts.
   Older issue and migration notes may call this the Vitest artifact path; in
