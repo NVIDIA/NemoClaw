@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 import type { ChannelManifest } from "../messaging/manifest";
@@ -64,9 +65,9 @@ const GC_PROFILE_DOC = {
         strategy: GC_PROFILE.strategy,
         scopes: GC_PROFILE.scopes,
         material: [
-          { name: "client_email", required: true },
+          { name: "client_email", required: true, secret: false },
           { name: "private_key", required: true, secret: true },
-          { name: "scope" },
+          { name: "scope", required: false, secret: false },
         ],
       },
     },
@@ -937,6 +938,49 @@ describe("listMessagingBridgeProfiles", () => {
       },
     ]);
   });
+
+  it.each(["openclaw", "hermes"] as const)(
+    "accepts OpenShell's canonical Google Chat export for %s (#10971)",
+    (agent) => {
+      const profile = listMessagingBridgeProfiles().find(
+        (candidate) => candidate.channelId === "googlechat" && candidate.agent === agent,
+      );
+      expect(profile).toBeDefined();
+
+      const checkedIn = fs.readFileSync(profile!.profilePath, "utf8");
+      const canonicalExport = YAML.parse(checkedIn) as {
+        credentials: Array<Record<string, unknown> & {
+          refresh?: {
+            material?: Array<Record<string, unknown> & { required?: boolean; secret?: boolean }>;
+          };
+        }>;
+      };
+      canonicalExport.credentials = canonicalExport.credentials.map((credential) => ({
+        ...credential,
+        ...(credential.refresh
+          ? {
+              refresh: {
+                ...credential.refresh,
+                material: (credential.refresh.material ?? []).map((material) => ({
+                  ...material,
+                  required: material.required ?? false,
+                  secret: material.secret ?? false,
+                })),
+              },
+            }
+          : {}),
+      }));
+
+      expect(
+        matchesRegisteredMessagingBridgeProfile(profile!.profileId, {
+          root: "/repo",
+          profiles: [profile!],
+          readFileSync: () => checkedIn,
+          runOpenshell: () => ({ status: 0, stdout: JSON.stringify(canonicalExport) }),
+        }),
+      ).toBe(true);
+    },
+  );
 
   it("discovers a co-located bridge profile from injected manifests and YAML", () => {
     const manifest: ChannelManifest = {

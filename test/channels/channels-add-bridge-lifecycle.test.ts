@@ -65,6 +65,7 @@ const GOOGLECHAT_PROFILE_DOC: Record<string, unknown> = {
             name: "client_email",
             description: "Service-account client email (JWT issuer)",
             required: true,
+            secret: false,
           },
           {
             name: "private_key",
@@ -75,6 +76,8 @@ const GOOGLECHAT_PROFILE_DOC: Record<string, unknown> = {
           {
             name: "scope",
             description: "OAuth scope(s) to mint the token for",
+            required: false,
+            secret: false,
           },
         ],
       },
