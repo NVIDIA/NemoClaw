@@ -109,6 +109,7 @@ export function stageRecordedDeferredN1xIntent(
     | "endpointSource"
     | "openshellDriver"
     | "hostLocalInferenceReceipt"
+    | "deferredN1xManagedVllmAccepted"
     | "nimContainer"
   >,
   rebuildSelection: {
@@ -117,6 +118,7 @@ export function stageRecordedDeferredN1xIntent(
     pinEndpoint: boolean;
     endpointUrl: string | null;
   },
+  env: Readonly<Record<string, string | undefined>> = process.env,
 ): void {
   const selectionMatchesRecord =
     rebuildSelection.provider === sandboxEntry.provider &&
@@ -141,6 +143,10 @@ export function stageRecordedDeferredN1xIntent(
       sandboxEntry,
       rebuildSelection,
       parseHostLocalInferenceReceipt,
+      {
+        explicitPreviewIntent:
+          String(env.NEMOCLAW_PROVIDER ?? "").trim() === "install-vllm",
+      },
     );
   if (recordedStandardProviderIsEligible || recordedManagedVllmIsEligible) {
     recreateOptions.allowDeferredN1xManagedVllm = true;
