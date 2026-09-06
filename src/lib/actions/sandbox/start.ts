@@ -100,9 +100,6 @@ function startupRecoveryFailure(check: SandboxStartupRecoveryResult): string | n
   if ("secretBoundaryRefused" in check && check.secretBoundaryRefused) {
     return `secret-boundary refusal: ${String(check.secretBoundaryReason)}`;
   }
-  if ("mcpReconciliationRefused" in check && check.mcpReconciliationRefused) {
-    return `MCP reconciliation refusal: ${String(check.mcpReconciliationReason)}`;
-  }
   if ("forwardRecoveryFailed" in check && check.forwardRecoveryFailed) {
     return String(check.forwardRecoveryFailureDetail);
   }

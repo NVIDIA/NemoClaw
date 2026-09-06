@@ -177,7 +177,11 @@ function runHermesPortValidation(opts: {
   }
 }
 
-function runHermesEnvSecretBoundary(opts: { envFile?: string; symlinkEnvFile?: boolean }) {
+function runHermesEnvSecretBoundary(opts: {
+  envFile?: string;
+  symlinkEnvFile?: boolean;
+  prepareMode?: "nonroot" | "root";
+}) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-env-boundary-"));
   const hermesHome = path.join(tmpDir, ".hermes");
   const envFile = path.join(hermesHome, ".env");
@@ -193,6 +197,13 @@ function runHermesEnvSecretBoundary(opts: { envFile?: string; symlinkEnvFile?: b
   }
 
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
+  const boundaryInvocation = opts.prepareMode
+    ? [
+        'refresh_hermes_runtime_config_hashes() { printf "unexpected-adopt:%s\\n" "$*"; }',
+        extractShellFunctionFromSource(src, `prepare_hermes_${opts.prepareMode}_runtime`),
+        `prepare_hermes_${opts.prepareMode}_runtime`,
+      ]
+    : ["validate_hermes_env_secret_boundary"];
   fs.writeFileSync(
     scriptPath,
     [
@@ -207,7 +218,7 @@ function runHermesEnvSecretBoundary(opts: { envFile?: string; symlinkEnvFile?: b
       extractShellFunctionFromSource(src, "validate_hermes_env_secret_boundary"),
       `HERMES_DIR=${shellQuote(hermesHome)}`,
       `_HERMES_BOUNDARY_VALIDATOR=${shellQuote(SECRET_BOUNDARY_VALIDATOR_SCRIPT)}`,
-      "validate_hermes_env_secret_boundary",
+      ...boundaryInvocation,
     ].join("\n"),
     { mode: 0o700 },
   );
@@ -356,13 +367,13 @@ function runHermesRootStartupMutableRootPreflight() {
       "HERMES_DIR_MODE=750",
       'chmod() { if [ "${1:-}" = "3770" ] && [ "${2:-}" = "$HERMES_DIR" ]; then printf "%s\\n" "$1" > "$CHMOD_LOG"; HERMES_DIR_MODE=770; command chmod 770 "$2"; return 0; fi; command chmod "$@"; }',
       'dir_mode() { printf "%s\\n" "$HERMES_DIR_MODE"; }',
-      'verify_hermes_config_integrity() { printf "verify mode=%s\\n" "$(dir_mode)"; }',
+      'refresh_hermes_runtime_config_hashes() { printf "adopt mode=%s args=%s\\n" "$(dir_mode)" "$*"; }',
+      'inspect_hermes_mcp_integrity() { printf "mcp-integrity mode=%s\\n" "$(dir_mode)"; }',
       'prepare_hermes_lazy_dependencies() { printf "lazy mode=%s\\n" "$(dir_mode)"; }',
       'ensure_hermes_runtime_api_server_key() { printf "api-key mode=%s\\n" "$(dir_mode)"; }',
       "validate_hermes_env_secret_boundary() { :; }",
       "validate_hermes_runtime_env_secret_boundary() { :; }",
       "refresh_hermes_provider_placeholders() { :; }",
-      "refresh_hermes_runtime_config_hashes() { :; }",
       "configure_messaging_channels() { :; }",
       'retry_tirith_marker_if_needed() { printf "tirith-state=%s\\n" "$TIRITH_RETRY_MARKER_CLEARED"; }',
       "prepare_tirith_marker_retry() { TIRITH_RETRY_MARKER_CLEARED=0; retry_tirith_marker_if_needed; }",
@@ -1001,7 +1012,24 @@ describe("agents/hermes/start.sh env secret boundary", () => {
     expect(result.stderr).not.toContain(rawToken);
   });
 
-  it("reconciles mutable hashes after the env boundary and before MCP integrity (#9203)", () => {
+  it.each(["nonroot", "root"] as const)(
+    "stops %s preparation before config adoption when the secret boundary refuses",
+    (prepareMode) => {
+      const rawToken = `SENTINEL_${prepareMode.toUpperCase()}_RAW_SECRET_VALUE`;
+      const result = runHermesEnvSecretBoundary({
+        envFile: `DEVTEST_API_TOKEN=${rawToken}\n`,
+        prepareMode,
+      });
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("raw secret-shaped values");
+      expect(result.stderr).toContain("DEVTEST_API_TOKEN (line 1)");
+      expect(result.stderr).not.toContain(rawToken);
+      expect(result.stdout).not.toContain("unexpected-adopt");
+    },
+  );
+
+  it("adopts mutable config after the env boundary and before MCP integrity (#11108)", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf-8");
     const result = spawnSync(
       "bash",
@@ -1017,7 +1045,7 @@ describe("agents/hermes/start.sh env secret boundary", () => {
           "ensure_hermes_runtime_api_server_key() { trace api-key; }",
           "validate_hermes_runtime_env_secret_boundary() { trace runtime-boundary; }",
           "refresh_hermes_provider_placeholders() { trace placeholders; }",
-          "refresh_hermes_runtime_config_hashes() { trace hashes; hash_state=current; }",
+          'refresh_hermes_runtime_config_hashes() { trace "hashes:$1:${2:-preserve}"; hash_state=current; }',
           "configure_messaging_channels() { trace channels; }",
           "retry_tirith_marker_if_needed() { trace tirith; }",
           extractShellFunctionFromSource(source, "prepare_tirith_marker_retry"),
@@ -1031,14 +1059,14 @@ describe("agents/hermes/start.sh env secret boundary", () => {
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout.trim().split("\n")).toEqual([
       "env-boundary",
-      "hashes",
+      "hashes:compat:adopt",
       "mcp-integrity",
       "lazy-dependencies",
       "api-key",
       "env-boundary",
       "runtime-boundary",
       "placeholders",
-      "hashes",
+      "hashes:compat:preserve",
       "mcp-integrity",
       "channels",
       "tirith",
@@ -1329,7 +1357,8 @@ describe("agents/hermes/start.sh Tirith marker bootstrap", () => {
     const run = runHermesRootStartupMutableRootPreflight();
 
     expect(run.result.status).toBe(0);
-    expect(run.result.stdout).toContain("verify mode=750");
+    expect(run.result.stdout).toContain("adopt mode=750 args=both adopt");
+    expect(run.result.stdout).toContain("mcp-integrity mode=750");
     expect(run.result.stdout).toContain("lazy mode=750");
     expect(run.result.stdout).toContain("api-key mode=770");
     expect(run.result.stdout).toContain("tirith-state=0");

@@ -4,8 +4,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   classifyGatewayRestartFailure,
-  gatewayIntegrityRepairLines,
-  isGatewayIntegrityRepairLayer,
+  gatewayTerminalRepairLines,
+  isGatewayTerminalRepairLayer,
   printGatewayRestartFailure,
 } from "./gateway-restart";
 
@@ -13,22 +13,18 @@ import {
 // attempting relaunch. `scripts/managed-gateway-control.py` allowlists these
 // before forwarding them to the host as `NEMOCLAW_START_LOG=` lines.
 const QUARANTINE_LINES = [
-  "[gateway] CRITICAL: 5 exits in 60s window — Hermes relaunch is quarantined until sandbox recreation; check /tmp/gateway.log",
-  "[SECURITY] Hermes automatic respawn is quarantined until MCP integrity is restored by rebuilding the sandbox",
+  "[gateway] CRITICAL: 5 exits in 60s window — Hermes relaunch is stopped for this supervisor instance; correct the reported failure, then stop and start the sandbox; check /tmp/gateway.log",
   "[gateway] CRITICAL: exact Hermes replacement could not be stopped; managed supervisor is quarantined without another launch",
-  "[CRITICAL] Unproven Hermes gateway child exited; managed supervisor remains quarantined until sandbox recreation",
+  "[CRITICAL] Unproven Hermes gateway child exited; relaunch is stopped for this supervisor instance; correct the reported failure, then stop and start the sandbox",
   "[CRITICAL] Newly launched Hermes gateway pid 4242 failed exact role identity capture; quarantining the managed startup supervisor without signaling the unproven child",
 ] as const;
 
-// Verbatim controller output captured on a Hermes sandbox whose protected
-// `config.yaml` was edited outside a supported command, then restarted.
-const REPORTED_RESTART_OUTPUT = [
+const CRASH_LOOP_RESTART_OUTPUT = [
   "GATEWAY_HEALTH_TIMEOUT",
   "NEMOCLAW_CONTROL_STAGE=await-replacement",
   "NEMOCLAW_SUPERVISOR_PID=42",
   "NEMOCLAW_GATEWAY_PID=0",
-  "NEMOCLAW_START_LOG=[gateway] Hermes gateway respawned (pid 18424)",
-  "NEMOCLAW_START_LOG=[SECURITY] Hermes automatic respawn is quarantined until MCP integrity is restored by rebuilding the sandbox",
+  "NEMOCLAW_START_LOG=[gateway] CRITICAL: 5 exits in 60s window — Hermes relaunch is stopped for this supervisor instance; correct the reported failure, then stop and start the sandbox; check /tmp/gateway.log",
 ].join("\n");
 
 function classify(stdout: string) {
@@ -54,16 +50,10 @@ describe("supervisor relaunch quarantine classification (#7801)", () => {
     expect(classify(line)).toMatchObject({ layer: "relaunch quarantined" });
   });
 
-  it("classifies the reported restart output as a quarantine, not a health timeout", () => {
-    expect(classify(REPORTED_RESTART_OUTPUT)).toMatchObject({ layer: "relaunch quarantined" });
-  });
-
-  it("prefers the quarantine over the MCP drift it is reported through", () => {
-    const output = [
-      "HERMES_MCP_CONFIG_DRIFT",
-      "[SECURITY] Hermes automatic respawn is quarantined until MCP integrity is restored by rebuilding the sandbox",
-    ].join("\n");
-    expect(classify(output)).toMatchObject({ layer: "relaunch quarantined" });
+  it("classifies a crash-loop quarantine ahead of its health timeout", () => {
+    expect(classify(CRASH_LOOP_RESTART_OUTPUT)).toMatchObject({
+      layer: "relaunch quarantined",
+    });
   });
 
   it("keeps the pre-existing layers for output without a quarantine line", () => {
@@ -84,39 +74,43 @@ describe("supervisor relaunch quarantine classification (#7801)", () => {
   });
 });
 
-describe("integrity repair guidance (#7801)", () => {
-  it("treats both deterministic integrity refusals as repairable layers", () => {
-    expect(isGatewayIntegrityRepairLayer("relaunch quarantined")).toBe(true);
-    expect(isGatewayIntegrityRepairLayer("config hash mismatch")).toBe(true);
-    expect(isGatewayIntegrityRepairLayer("health timeout")).toBe(false);
-    expect(isGatewayIntegrityRepairLayer("launch failure")).toBe(false);
-    expect(isGatewayIntegrityRepairLayer(null)).toBe(false);
-    expect(isGatewayIntegrityRepairLayer(undefined)).toBe(false);
+describe("terminal restart repair guidance (#7801)", () => {
+  it("recognizes the terminal repair layers", () => {
+    expect(isGatewayTerminalRepairLayer("relaunch quarantined")).toBe(true);
+    expect(isGatewayTerminalRepairLayer("config hash mismatch")).toBe(true);
+    expect(isGatewayTerminalRepairLayer("health timeout")).toBe(false);
+    expect(isGatewayTerminalRepairLayer("launch failure")).toBe(false);
+    expect(isGatewayTerminalRepairLayer(null)).toBe(false);
+    expect(isGatewayTerminalRepairLayer(undefined)).toBe(false);
   });
 
   it.each([
     "relaunch quarantined",
     "config hash mismatch",
   ] as const)("names the supported repair command for %s", (layer) => {
-    const lines = gatewayIntegrityRepairLines("repro-7801", layer).join("\n");
+    const lines = gatewayTerminalRepairLines("repro-7801", layer).join("\n");
     expect(lines).toContain("nemoclaw repro-7801 rebuild --yes");
-    expect(lines).toContain("Retrying the restart cannot clear it.");
-    expect(lines).toContain("nemoclaw repro-7801 config set");
   });
 
-  it("describes the two refusals differently", () => {
-    const quarantined = gatewayIntegrityRepairLines("alpha", "relaunch quarantined")[0];
-    const drifted = gatewayIntegrityRepairLines("alpha", "config hash mismatch")[0];
-    expect(quarantined).not.toEqual(drifted);
-    expect(drifted).toContain("integrity hash");
-    expect(quarantined).toContain("quarantined");
+  it("resets process quarantine without blaming mutable config (#11108)", () => {
+    const lines = gatewayTerminalRepairLines("alpha", "relaunch quarantined").join("\n");
+    expect(lines).toContain("repeated process or health failures");
+    expect(lines).toContain("nemoclaw alpha stop");
+    expect(lines).toContain("nemoclaw alpha start");
+    expect(lines).not.toContain("config set");
+  });
+
+  it("keeps metadata repair separate from process quarantine", () => {
+    const lines = gatewayTerminalRepairLines("alpha", "config hash mismatch").join("\n");
+    expect(lines).toContain("integrity metadata");
+    expect(lines).not.toContain("nemoclaw alpha stop");
   });
 });
 
 describe("printGatewayRestartFailure repair guidance (#7801)", () => {
   it("appends the repair to a quarantined restart failure", () => {
     const lines = captureStderr(() =>
-      printGatewayRestartFailure("repro-7801", "relaunch quarantined", REPORTED_RESTART_OUTPUT),
+      printGatewayRestartFailure("repro-7801", "relaunch quarantined", CRASH_LOOP_RESTART_OUTPUT),
     ).join("\n");
     expect(lines).toContain("Failure layer: relaunch quarantined");
     expect(lines).toContain("nemoclaw repro-7801 rebuild --yes");

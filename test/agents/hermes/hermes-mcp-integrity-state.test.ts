@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -255,7 +256,7 @@ print(json.dumps({"current": current, "pending": pending, "misuse": misuse}))
     expect(JSON.parse(result.stdout)).toEqual({ current: 0, pending: 10, misuse: 1 });
   });
 
-  it("refreshes safe mutable compatibility drift without changing MCP intent (#9203)", () => {
+  it("adopts valid runtime config regardless of stale host MCP intent (#11108)", () => {
     const result = spawnSync(
       "python3",
       [
@@ -313,13 +314,65 @@ except guard.UnsafePathError as error:
 else:
     mcp_drift_error = ""
 
+guard.refresh_hashes(hermes, anchor, "compat", mcp_transition="adopt")
+adopted_state = guard.inspect_mcp_integrity(hermes, anchor)
+adopted_text = open(anchor, encoding="utf-8").read()
+_config_digest, _env_digest, adopted_mcp = guard._parse_config_hash(
+    adopted_text, config, env
+)
+guard.refresh_hashes(hermes, anchor, "compat", mcp_transition="apply")
+applied_state = guard.inspect_mcp_integrity(hermes, anchor)
+
+write_inputs("after", "two", "https://pending.example/mcp")
+guard.refresh_hashes(hermes, anchor, "compat", mcp_transition="intend")
+pending_text = open(anchor, encoding="utf-8").read()
+write_inputs("after", "two", "https://conflict.example/mcp")
+guard.refresh_hashes(hermes, anchor, "compat", mcp_transition="adopt")
+superseded_state = guard.inspect_mcp_integrity(hermes, anchor)
+superseded_text = open(anchor, encoding="utf-8").read()
+_config_digest, _env_digest, superseded_mcp = guard._parse_config_hash(
+    superseded_text, config, env
+)
+guard.refresh_hashes(hermes, anchor, "compat", mcp_transition="apply")
+superseded_applied_state = guard.inspect_mcp_integrity(hermes, anchor)
+
+strict = os.path.join(root, "hermes.config-hash")
+current_text = open(anchor, encoding="utf-8").read()
+guard._write_hash(strict, current_text)
+_config_digest, _env_digest, root_before = guard._parse_config_hash(
+    current_text, config, env
+)
+write_inputs("after", "two", "https://root.example/mcp")
+guard.refresh_hashes(hermes, strict, "both", mcp_transition="adopt")
+root_pending_text = open(strict, encoding="utf-8").read()
+_config_digest, _env_digest, root_pending = guard._parse_config_hash(
+    root_pending_text, config, env
+)
+root_pending_state = guard.inspect_mcp_integrity(hermes, strict)
+root_anchors_equal = root_pending_text == open(anchor, encoding="utf-8").read()
+guard.refresh_hashes(hermes, strict, "both", mcp_transition="apply")
+root_applied_state = guard.inspect_mcp_integrity(hermes, strict)
+
 proof = {
     "stale_rejected": stale_rejected,
     "refreshed_state": refreshed_state,
     "intended_preserved": refreshed_mcp.intended == initial_state.intended,
     "applied_preserved": refreshed_mcp.applied == initial_state.applied,
     "mcp_drift_error": mcp_drift_error,
-    "anchor_unchanged_after_mcp_drift": open(anchor, encoding="utf-8").read() == refreshed_text,
+    "adopted_state": adopted_state,
+    "adopted_intended_changed": adopted_mcp.intended != initial_state.intended,
+    "adopted_applied_preserved": adopted_mcp.applied == initial_state.applied,
+    "applied_state": applied_state,
+    "superseded_state": superseded_state,
+    "superseded_intended_changed": superseded_mcp.intended != adopted_mcp.intended,
+    "superseded_applied_preserved": superseded_mcp.applied == adopted_mcp.intended,
+    "pending_anchor_replaced": superseded_text != pending_text,
+    "superseded_applied_state": superseded_applied_state,
+    "root_pending_state": root_pending_state,
+    "root_anchors_equal": root_anchors_equal,
+    "root_intended_changed": root_pending.intended != root_before.intended,
+    "root_applied_preserved": root_pending.applied == root_before.applied,
+    "root_applied_state": root_applied_state,
 }
 shutil.rmtree(root)
 print(json.dumps(proof))
@@ -336,8 +389,80 @@ print(json.dumps(proof))
       intended_preserved: true,
       applied_preserved: true,
       mcp_drift_error: "Hermes MCP config differs from persisted intended state",
-      anchor_unchanged_after_mcp_drift: true,
+      adopted_state: "pending",
+      adopted_intended_changed: true,
+      adopted_applied_preserved: true,
+      applied_state: "current",
+      superseded_state: "pending",
+      superseded_intended_changed: true,
+      superseded_applied_preserved: true,
+      pending_anchor_replaced: true,
+      superseded_applied_state: "current",
+      root_pending_state: "pending",
+      root_anchors_equal: true,
+      root_intended_changed: true,
+      root_applied_preserved: true,
+      root_applied_state: "current",
     });
+  });
+
+  it("passes adopt from the shell wrapper to the guard CLI (#11108)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-adopt-cli-"));
+    const hermesDir = path.join(root, ".hermes");
+    const configPath = path.join(hermesDir, "config.yaml");
+    const envPath = path.join(hermesDir, ".env");
+    const anchor = path.join(hermesDir, ".config-hash");
+    const strict = path.join(root, "hermes.config-hash");
+    const beforeConfig = "model: test\nmcp_servers: {}\n";
+    const afterConfig =
+      "model: test\nmcp_servers:\n  alpha:\n    url: https://alpha.example/mcp\n";
+    const env = "SAFE=1\n";
+    const digest = (value: string) => createHash("sha256").update(value).digest("hex");
+    const beforeMcp = digest("{}");
+    const afterMcp = digest('{"alpha":{"url":"https://alpha.example/mcp"}}');
+    const initialHash =
+      `${digest(beforeConfig)}  ${configPath}\n` +
+      `${digest(env)}  ${envPath}\n` +
+      `# nemoclaw-hermes-mcp-state-v1 intended=${beforeMcp} applied=${beforeMcp}\n`;
+    const source = fs.readFileSync(START, "utf-8");
+
+    fs.mkdirSync(hermesDir);
+    fs.writeFileSync(configPath, afterConfig);
+    fs.writeFileSync(envPath, env);
+    fs.writeFileSync(anchor, initialHash);
+
+    try {
+      const result = spawnSync(
+        "bash",
+        [
+          "-c",
+          [
+            "set -uo pipefail",
+            extractShellFunction(source, "refresh_hermes_runtime_config_hashes"),
+            `_HERMES_PYTHON=${bashPrintfQ(process.env.PYTHON || "python3")}`,
+            `_HERMES_RUNTIME_CONFIG_GUARD=${bashPrintfQ(GUARD)}`,
+            `HERMES_DIR=${bashPrintfQ(hermesDir)}`,
+            `HERMES_HASH_FILE=${bashPrintfQ(strict)}`,
+            "STEP_DOWN_PREFIX_SANDBOX=(env)",
+            "if refresh_hermes_runtime_config_hashes compat; then preserve=0; else preserve=$?; fi",
+            "refresh_hermes_runtime_config_hashes compat adopt",
+            'printf "preserve=%s\\n" "$preserve"',
+          ].join("\n"),
+        ],
+        { encoding: "utf-8", timeout: 10_000 },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toBe("preserve=1\n");
+      expect(result.stderr).toContain("Hermes MCP config differs from persisted intended state");
+      expect(fs.readFileSync(anchor, "utf-8")).toBe(
+        `${digest(afterConfig)}  ${configPath}\n` +
+          `${digest(env)}  ${envPath}\n` +
+          `# nemoclaw-hermes-mcp-state-v1 intended=${afterMcp} applied=${beforeMcp}\n`,
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("uses the atomic write outcome for compat applied-state commits", () => {
@@ -404,7 +529,7 @@ print(json.dumps({
     });
   });
 
-  it("validates but does not replace already-current applied-state anchors", () => {
+  it("validates without replacing current apply or adopt anchors (#11108)", () => {
     const result = spawnSync(
       "python3",
       [
@@ -439,6 +564,8 @@ def captured_write_hash(path, text):
 guard._write_hash = captured_write_hash
 guard.refresh_hashes(hermes, strict, "both", mcp_transition="apply")
 guard.refresh_hashes(hermes, strict, "compat", mcp_transition="apply")
+guard.refresh_hashes(hermes, strict, "both", mcp_transition="adopt")
+guard.refresh_hashes(hermes, strict, "compat", mcp_transition="adopt")
 after = {path: os.stat(path).st_ino for path in (strict, compat)}
 print(json.dumps({
     "state": guard.inspect_mcp_integrity(hermes, strict),
@@ -510,9 +637,9 @@ print(json.dumps({
   });
 
   it.each([
-    { status: 0, expected: "rc=0 pending=0 failed=0\n" },
-    { status: 10, expected: "rc=0 pending=1 failed=0\n" },
-    { status: 1, expected: "rc=1 pending=9 failed=1\n" },
+    { status: 0, expected: "rc=0 pending=0\n" },
+    { status: 10, expected: "rc=0 pending=1\n" },
+    { status: 1, expected: "rc=1 pending=9\n" },
   ])("uses only the authenticated guard exit status ($status)", ({ status, expected }) => {
     const source = fs.readFileSync(START, "utf-8");
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-mcp-status-"));
@@ -541,9 +668,8 @@ print(json.dumps({
             "HERMES_DIR=/test/.hermes",
             "HERMES_HASH_FILE=/test/hermes.config-hash",
             "HERMES_MCP_RECONCILE_PENDING=9",
-            "HERMES_MCP_INTEGRITY_FAILED=0",
             "if inspect_hermes_mcp_integrity; then rc=0; else rc=$?; fi",
-            'printf "rc=%s pending=%s failed=%s\\n" "$rc" "$HERMES_MCP_RECONCILE_PENDING" "$HERMES_MCP_INTEGRITY_FAILED"',
+            'printf "rc=%s pending=%s\\n" "$rc" "$HERMES_MCP_RECONCILE_PENDING"',
           ].join("\n"),
         ],
         { encoding: "utf-8", timeout: 5000 },

@@ -1304,7 +1304,17 @@ If a container or OpenShell identity check, reconnect check, or health check lat
 It then requires Podman to report the container as `exited` and OpenShell to report `Error` or `Stopped`.
 If NemoClaw cannot prove that rollback, the command reports both the recovery failure and the rollback failure.
 
-`recover` re-evaluates the documented Hermes secret boundary against `/sandbox/.hermes/.env` and the supervisor runtime environment on every run, including when the gateway is already healthy. If the file contains raw secret-shaped values (for example a pasted Telegram, Discord, or Slack bot token in place of the expected `openshell:resolve:env:<name>` placeholder), the command exits non-zero and prints the offending key. The direct root-entrypoint supervisor stops a running gateway after this refusal, while the managed controller refuses before signaling the observed child. Replace each flagged value with the `openshell:resolve:env:<name>` placeholder and re-run. The direct root-entrypoint supervisor verifies the strict root-owned config hash used by the managed transaction. Mutable config under the managed topology has no durable root-owned hash anchor and retains the same trust and time-of-check/time-of-use limits as managed cold start. If the boundary validator or supervisor helper is missing, recovery fails closed, names the sandbox, explains that `/sandbox/.hermes/.env` could not be re-evaluated, and leaves an otherwise healthy gateway untouched. Rebuild an older sandbox image with `$$nemoclaw <name> rebuild --yes` before retrying.
+`recover` re-evaluates the documented Hermes secret boundary against `/sandbox/.hermes/.env` and the supervisor runtime environment on every run, including when the gateway is already healthy.
+If the file contains raw secret-shaped values, the command exits non-zero and prints the offending key.
+Raw values include a pasted Telegram, Discord, or Slack bot token in place of the expected `openshell:resolve:env:<name>` placeholder.
+The direct root-entrypoint supervisor stops a running gateway after this refusal, while the managed controller refuses before signaling the observed child.
+Replace each flagged value with the `openshell:resolve:env:<name>` placeholder and re-run.
+Both supervisors adopt one stable mutable config snapshot after this boundary passes.
+A direct MCP change becomes pending, supersedes stale host-managed intent, and becomes applied only after gateway health passes.
+A host-managed MCP operation can report a registry mismatch after Hermes is healthy.
+If the boundary validator or supervisor helper is missing, recovery fails closed and names the sandbox.
+It explains that `/sandbox/.hermes/.env` could not be re-evaluated and leaves an otherwise healthy gateway untouched.
+Rebuild an older sandbox image with `$$nemoclaw <name> rebuild --yes` before retrying.
 
 While a NemoClaw cron restore gate exists, Hermes `recover` keeps the same lifecycle lock through restore validation and gate release. That controller call has a 130-second host timeout; the earlier 30-second limit applies only to lifecycle-lock acquisition.
 
@@ -1324,18 +1334,30 @@ Force-restart the supported in-sandbox gateway process through the controller fo
 $$nemoclaw my-assistant gateway restart [--quiet|-q]
 ```
 
-On success, the command reports that the gateway was restarted, health passed, and forwards were checked or recovered. It also checks the dashboard forward, messaging forward, and manifest-declared agent forwards. `--quiet` suppresses progress lines but still prints refusal diagnostics. In the direct root-entrypoint topology, PID 1 stops only the gateway child whose process ID and process start identity match the tracked child, applies the restart seal, and launches the replacement under the separate `gateway` UID. In the OpenShell-managed topology, the installed root controller verifies a stable OpenShell to `nemoclaw-start` to gateway process shape, holds a root-only lifecycle lock, publishes one root-owned exit authorization bound to the exact gateway process ID, kernel start identity, and live controller identity, pidfd-targets the observed child, waits for the nonroot entrypoint supervisor to respawn it under the sandbox UID, and proves the replacement listener and HTTP health. That managed process proof prevents PID reuse from redirecting the signal but cannot establish provenance against a malicious same-UID process or create gateway and agent UID isolation. For Hermes, the entrypoint supervisor also owns the dashboard process, internal API relay, dashboard relay, and gateway log stream. The managed nonroot supervisor continuously repairs those processes, stops an alive but deaf gateway after four consecutive failed health checks, and quarantines relaunch after five unexpected exits or failed replacement candidates within 60 seconds until sandbox recreation. That authorization keeps an authenticated host-requested exit out of the crash budget while its exact root controller remains live; it records host intent for the exit but does not claim that the host signal was the only possible cause in the shared-UID topology. The host repairs only the host-side OpenShell forwards after the supervisor reports a healthy gateway.
+On success, the command reports that the gateway was restarted, health passed, and forwards were checked or recovered.
+It also checks the dashboard forward, messaging forward, and manifest-declared agent forwards.
+`--quiet` suppresses progress lines but still prints refusal diagnostics.
+In the direct root-entrypoint topology, PID 1 stops only the gateway child whose process ID and process start identity match the tracked child, applies the restart seal, and launches the replacement under the separate `gateway` UID.
+In the OpenShell-managed topology, the installed root controller verifies a stable OpenShell to `nemoclaw-start` to gateway process shape, holds a root-only lifecycle lock, publishes one root-owned exit authorization bound to the exact gateway process ID, kernel start identity, and live controller identity, pidfd-targets the observed child, waits for the nonroot entrypoint supervisor to respawn it under the sandbox UID, and proves the replacement listener and HTTP health.
+That managed process proof prevents PID reuse from redirecting the signal but cannot establish provenance against a malicious same-UID process or create gateway and agent UID isolation.
+For Hermes, the entrypoint supervisor also owns the dashboard process, internal API relay, dashboard relay, and gateway log stream.
+The managed nonroot supervisor continuously repairs those processes, stops an alive but deaf gateway after four consecutive failed health checks, and stops relaunch for the current supervisor instance after five unexpected exits or failed replacement candidates within 60 seconds.
+That authorization keeps an authenticated host-requested exit out of the crash budget while its exact root controller remains live.
+It records host intent for the exit but does not claim that the host signal was the only possible cause in the shared-UID topology.
+The host repairs only the host-side OpenShell forwards after the supervisor reports a healthy gateway.
 
 </AgentOnly>
 
 <AgentOnly variant="hermes">
 
 For Hermes, both controllers validate `/sandbox/.hermes/.env` against the secret-boundary guard and validate the supervisor runtime environment before restart.
-The direct root-entrypoint supervisor verifies `/sandbox/.hermes/config.yaml` and `.env` against the strict hash and relaunches the process as the `gateway` user.
-Mutable managed config retains cold-start-equivalent trust and time-of-check/time-of-use limits.
-Neither controller recomputes a trusted strict hash to adopt direct in-sandbox edits.
-Use supported host commands such as `$$nemoclaw <name> config set` and `$$nemoclaw inference set` for intended runtime configuration changes because those commands update the managed config metadata together.
-When a strict hash is available and does not match, the command reports the `config hash mismatch` failure layer.
+Both supervisors adopt one stable snapshot of mutable `config.yaml` and `.env` after the secret boundary passes.
+A direct MCP change becomes pending and supersedes stale host-managed intent.
+The supervisor marks it as applied only after the replacement gateway passes its health checks.
+The host operation that owns a managed MCP transaction can report a registry mismatch after Hermes is healthy.
+The direct root-entrypoint supervisor relaunches the process as the `gateway` user.
+Use supported host commands such as `$$nemoclaw <name> config set` and `$$nemoclaw inference set` for settings that must match host registry state.
+The command reports `unsafe config path` when a config or metadata path is unsafe. It reports `config hash mismatch` when hash or restart transaction metadata is missing, malformed, mismatched, or changed during validation.
 Hermes host config writes and lifecycle seals share one root-only mutation lock.
 Config writes bind to the digest of the matching read and atomically refresh the strict and compatibility hashes before restoring mutable access.
 If a concurrent lifecycle request reports `SUPERVISOR_BUSY` or `Hermes config mutation is already in progress`, wait for the active operation to finish and retry.
@@ -1344,7 +1366,13 @@ If a concurrent lifecycle request reports `SUPERVISOR_BUSY` or `Hermes config mu
 
 <AgentOnly variant="openclaw,hermes">
 
-The command can fail at these layers: unsupported agent, privileged control unavailable, supervisor not running, secret-boundary refusal, unsafe config path, config hash mismatch when a strict hash is available, MCP reconciliation refusal, relaunch quarantined, launch failure, health timeout, or forward recovery failure. `relaunch quarantined` means the in-sandbox supervisor stopped attempting relaunch after a startup refusal or repeated gateway exits, so restart and recovery report the supported repair, `$$nemoclaw <name> rebuild --yes`, instead of a retry. An older direct-container image without the matching supervisor or managed controller helper reports `privileged control unavailable` and requires `$$nemoclaw <name> rebuild --yes`. Ordinary OpenShell exec and manual in-sandbox relaunch are not fallback paths. Terminal agents do not have a gateway runtime and fail as unsupported.
+The command can fail at these layers: unsupported agent, privileged control unavailable, supervisor not running, secret-boundary refusal, unsafe config path, config hash mismatch when transaction metadata cannot be validated, MCP reconciliation refusal, relaunch quarantined, launch failure, health timeout, or forward recovery failure.
+`relaunch quarantined` means the in-sandbox supervisor stopped attempting relaunch after repeated process or health failures.
+Correct the reported cause, then run `$$nemoclaw <name> stop` and `$$nemoclaw <name> start` to reset the supervisor.
+Rebuild only if the sandbox still cannot start.
+An older direct-container image without the matching supervisor or managed controller helper reports `privileged control unavailable` and requires `$$nemoclaw <name> rebuild --yes`.
+Ordinary OpenShell exec and manual in-sandbox relaunch are not fallback paths.
+Terminal agents do not have a gateway runtime and fail as unsupported.
 
 </AgentOnly>
 

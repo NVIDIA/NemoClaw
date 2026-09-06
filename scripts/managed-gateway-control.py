@@ -143,19 +143,19 @@ START_LOG_DIAGNOSTIC_PATTERNS = (
     ),
     re.compile(r"\[gateway\] Hermes gateway respawned \(pid [1-9][0-9]*\)"),
     re.compile(
-        r"\[gateway\] CRITICAL: [1-9][0-9]* exits in 60s window — Hermes relaunch is quarantined until sandbox recreation; check /tmp/gateway\.log"
+        r"\[gateway\] Hermes runtime preparation failed after 5 consecutive attempts; supervisor exiting without launching a gateway; correct the reported failure, then stop and start the sandbox"
+    ),
+    re.compile(
+        r"\[gateway\] CRITICAL: [1-9][0-9]* exits in 60s window — Hermes relaunch is stopped for this supervisor instance; correct the reported failure, then stop and start the sandbox; check /tmp/gateway\.log"
     ),
     re.compile(
         r"\[gateway\] CRITICAL: (?:exact Hermes replacement|unhealthy Hermes gateway|initial Hermes gateway) could not be stopped; managed supervisor is quarantined without another launch"
     ),
     re.compile(
-        r"\[SECURITY\] Hermes automatic respawn is quarantined until MCP integrity is restored by rebuilding the sandbox"
-    ),
-    re.compile(
         r"\[CRITICAL\] Newly launched Hermes (?:gateway|gateway-log|dashboard|dashboard-log|api-socat|dashboard-socat) pid [1-9][0-9]* failed exact role identity capture; quarantining the managed startup supervisor without signaling the unproven child"
     ),
     re.compile(
-        r"\[CRITICAL\] Unproven Hermes (?:gateway|gateway-log|dashboard|dashboard-log|api-socat|dashboard-socat) child exited; managed supervisor remains quarantined until sandbox recreation"
+        r"\[CRITICAL\] Unproven Hermes (?:gateway|gateway-log|dashboard|dashboard-log|api-socat|dashboard-socat) child exited; relaunch is stopped for this supervisor instance; correct the reported failure, then stop and start the sandbox"
     ),
 )
 ANSI_ESCAPE_RE = re.compile(

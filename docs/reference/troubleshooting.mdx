@@ -4344,35 +4344,62 @@ nemohermes <name> start
 
 Then run `nemohermes inference get` and verify Dashboard Chat uses the selected model. If the command succeeds because the dashboard profile is missing, the dashboard is disabled and no dashboard recovery is required.
 
-### Hermes restart reports `config hash mismatch`
+### Hermes restart reports a config integrity failure
 
-A Hermes restart reports `config hash mismatch` when an available managed hash does not match `/sandbox/.hermes/config.yaml` or `/sandbox/.hermes/.env`.
-The direct root-entrypoint supervisor uses the strict hash at `/etc/nemoclaw/hermes.config-hash`.
-Mutable config in the OpenShell-managed topology has no durable tamper-proof hash anchor, so restart retains the same trust and time-of-check/time-of-use limits as managed cold start.
-Both controllers validate the secret boundary and supervisor runtime environment before they stop the tracked gateway.
-They do not recompute a trusted strict hash to adopt direct edits made inside the sandbox.
+Hermes configuration is mutable.
+A current Hermes supervisor does not refuse startup, restart, recovery, or automatic respawn only because `config.yaml` or `.env` changed.
+It validates the secret boundary and records one stable snapshot before a replacement gateway consumes the config.
+A direct MCP change becomes pending and is marked as applied only after gateway health passes.
 
-For intended changes, use supported host commands such as `nemohermes <name> config set` and `nemohermes inference set` so NemoClaw updates the config and its strict and compatibility hashes together. Do not edit either hash file manually.
+An unsafe config or metadata path reports `unsafe config path`.
+A missing, malformed, mismatched, or raced hash or restart metadata file reports `config hash mismatch`.
+Do not edit either hash file manually.
 
-If direct edits have already caused a mismatch, restore the original config and environment files or rebuild from the registered configuration:
+If the error reports an MCP reconciliation refusal, restore the managed MCP projection and retry recovery:
+
+```bash
+nemohermes <name> mcp restart
+nemohermes <name> recover
+```
+
+If the error reports `secret-boundary refusal`, inspect `/sandbox/.hermes/.env` for raw secret-shaped values.
+Replace them through the supported credential flow so the file contains `openshell:resolve:env:<name>` placeholders, then run `nemohermes <name> recover`.
+
+If the error reports `unsafe config path`, do not follow or edit the unsafe path in place. Rebuild from registered configuration to restore the managed layout.
+If it reports `config hash mismatch`, do not repair the hash or restart metadata by hand. Rebuild from registered configuration:
 
 ```bash
 nemohermes <name> rebuild --yes
 ```
 
-If the command instead reports `secret-boundary refusal`, inspect `/sandbox/.hermes/.env` for raw secret-shaped values. Replace them through the supported credential flow so the file contains `openshell:resolve:env:<name>` placeholders, then run `nemohermes <name> recover`. The Hermes entrypoint supervisor remains responsible for the gateway, dashboard, internal API relay, dashboard relay, and gateway log stream throughout recovery. In the OpenShell-managed topology, that nonroot supervisor repairs failed auxiliaries continuously, recovers a gateway after four consecutive failed listener or HTTP health checks, and quarantines relaunch after five exits within 60 seconds until the sandbox is recreated. The host only repairs the host-side OpenShell forwards after the supervised processes pass health checks.
+The Hermes entrypoint supervisor remains responsible for the gateway, dashboard, internal API relay, dashboard relay, and gateway log stream throughout recovery.
+In the OpenShell-managed topology, that nonroot supervisor repairs failed auxiliaries continuously and recovers a gateway after four consecutive failed listener or HTTP health checks.
+Five exits within 60 seconds stop relaunch for the current supervisor instance.
+The host repairs only the host-side OpenShell forwards after the supervised processes pass health checks.
 
 ### Restart or recovery reports `relaunch quarantined`
 
-In the OpenShell-managed topology the strict root-owned hash is not a trust anchor for mutable config, so a direct edit of `/sandbox/.hermes/config.yaml` or `/sandbox/.hermes/.env` is not refused by the host controller. The in-sandbox supervisor still refuses to start a gateway on configuration it cannot match to the persisted managed state, and it stops attempting relaunch once that refusal or repeated gateway exits exhaust its crash budget. `$$nemoclaw <name> gateway restart`, `$$nemoclaw <name> recover`, and `$$nemoclaw <name> connect` then report the `relaunch quarantined` failure layer.
+Valid Hermes config changes do not trigger relaunch quarantine.
+The supervisor quarantines relaunch after five unexpected gateway exits or failed replacement candidates within 60 seconds.
+Invalid Hermes config can make each replacement exit and consume that crash budget.
 
-The refusal is deterministic, so retrying any of those commands cannot clear it. Restore the registered configuration and refresh its integrity metadata in one transaction:
+The quarantine is deterministic, so retrying restart or recovery cannot clear it.
+Inspect the Hermes log and correct the process or config failure.
+Then restart the sandbox to reset the supervisor's crash budget:
+
+```bash
+nemohermes <name> logs --tail 50
+nemohermes <name> stop
+nemohermes <name> start
+```
+
+If the sandbox still cannot start, rebuild it from registered configuration:
 
 ```bash
 nemohermes <name> rebuild --yes
 ```
 
-After the rebuild, make the intended change through a supported command such as `$$nemoclaw <name> config set` or `$$nemoclaw inference set`, which update the configuration and its hashes together.
+After recovery, verify that Hermes starts and the gateway health check passes.
 
 ### Port 8642 in a browser shows a blank page or `Cannot GET /`
 
