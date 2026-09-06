@@ -323,15 +323,14 @@ export function getRebuildSandboxEntryOrBail(
   return sb;
 }
 
-function printRebuildLiveLockGuidance(
-  holderPid: number | undefined,
-  bail: RebuildBail,
-  extraDetail?: string,
-): void {
+function printRebuildLiveLockGuidance(holderPid: number, bail: RebuildBail): void {
   const guidance = formatOnboardLockContentionGuidance(CLI_NAME, holderPid);
   printRebuildPreflightFailure(
     guidance.summary,
-    [...guidance.lines.slice(1).map((line) => line.trim()), extraDetail].filter(Boolean).join(" "),
+    guidance.lines
+      .slice(1)
+      .map((line) => line.trim())
+      .join(" "),
     "Could not acquire onboard lock before rebuild",
     bail,
   );
@@ -394,15 +393,22 @@ export function acquireRebuildOnboardLock(
     `${CLI_NAME} ${sandboxName} rebuild --authoritative-resume`,
   );
   if (!lock.acquired) {
-    if (lock.stale) {
+    if (!lock.stale && lock.holderPid !== undefined) {
+      printRebuildLiveLockGuidance(lock.holderPid, bail);
+    } else if (lock.stale) {
       printRebuildPreflightFailure(
-        `another ${CLI_NAME} onboarding run is already in progress.`,
+        `a stale ${CLI_NAME} onboarding lock is blocking rebuild.`,
         "Wait briefly, then rerun rebuild so verified stale-lock cleanup can finish.",
         "Could not acquire onboard lock before rebuild",
         bail,
       );
     } else {
-      printRebuildLiveLockGuidance(lock.holderPid, bail, "Then rerun rebuild.");
+      printRebuildPreflightFailure(
+        `could not acquire the ${CLI_NAME} onboarding lock.`,
+        "Wait briefly, then rerun rebuild.",
+        "Could not acquire onboard lock before rebuild",
+        bail,
+      );
     }
     return null;
   }

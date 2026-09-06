@@ -95,16 +95,16 @@ export const CLI_NAME: string = branding.cli;
 /** Shared live onboarding-lock contention copy for CLI command boundaries. */
 export function formatOnboardLockContentionGuidance(
   cli: string,
-  holderPid?: number,
+  holderPid: number,
 ): { readonly summary: string; readonly lines: readonly string[] } {
   const summary = `another ${cli} onboarding run is already in progress.`;
   return {
     summary,
     lines: [
       `  ${summary}`,
-      holderPid ? `  Lock holder PID: ${holderPid}.` : "",
+      `  Lock holder PID: ${holderPid}.`,
       "  Wait for the active onboarding run to finish.",
-    ].filter(Boolean),
+    ],
   };
 }
 

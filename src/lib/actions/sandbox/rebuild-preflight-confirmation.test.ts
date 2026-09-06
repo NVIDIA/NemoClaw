@@ -193,7 +193,7 @@ describe("rebuild preflight guards", () => {
     expect(output).toContain("another nemoclaw onboarding run is already in progress.");
     expect(output).toContain("Lock holder PID: 4242.");
     expect(output).toContain("Wait for the active onboarding run to finish.");
-    expect(output).toContain("Then rerun rebuild.");
+    expect(output).not.toContain("a stale nemoclaw onboarding lock is blocking rebuild.");
     expect(output).not.toContain("remove the stale lock");
   });
 
@@ -216,10 +216,39 @@ describe("rebuild preflight guards", () => {
     expect(release).not.toHaveBeenCalled();
     expect(registerExitHandler).not.toHaveBeenCalled();
     const output = error.mock.calls.flat().join("\n");
+    expect(output).toContain("a stale nemoclaw onboarding lock is blocking rebuild.");
     expect(output).toContain(
       "Wait briefly, then rerun rebuild so verified stale-lock cleanup can finish.",
     );
+    expect(output).not.toContain("another nemoclaw onboarding run is already in progress.");
+    expect(output).not.toContain("Lock holder PID:");
     expect(output).not.toContain("remove the stale lock");
+  });
+
+  it("does not report a live onboarding holder when lock acquisition fails without a holder PID", () => {
+    vi.spyOn(onboardSession, "acquireOnboardLock").mockReturnValue({
+      acquired: false,
+      lockFile: "/tmp/nemoclaw-onboard.lock",
+      stale: false,
+    });
+    const release = vi
+      .spyOn(onboardSession, "releaseOnboardLock")
+      .mockImplementation(() => undefined);
+    const registerExitHandler = vi.spyOn(process, "once");
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const bail = vi.fn() as unknown as (message: string, code?: number) => never;
+
+    expect(acquireRebuildOnboardLock("alpha", bail)).toBeNull();
+
+    expect(bail).toHaveBeenCalledWith("Could not acquire onboard lock before rebuild");
+    expect(release).not.toHaveBeenCalled();
+    expect(registerExitHandler).not.toHaveBeenCalled();
+    const output = error.mock.calls.flat().join("\n");
+    expect(output).toContain("could not acquire the nemoclaw onboarding lock.");
+    expect(output).toContain("Wait briefly, then rerun rebuild.");
+    expect(output).not.toContain("another nemoclaw onboarding run is already in progress.");
+    expect(output).not.toContain("a stale nemoclaw onboarding lock is blocking rebuild.");
+    expect(output).not.toContain("Lock holder PID:");
   });
 
   it("rejects a multi-agent sandbox before later rebuild work", () => {
