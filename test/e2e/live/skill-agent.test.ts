@@ -23,8 +23,8 @@ import {
   VERIFY_PHRASE,
 } from "../support/skill-agent-classifiers.ts";
 
-// Keep this as a direct live test: the contract is skill fixture
-// injection into a real OpenClaw sandbox plus an agent turn that must read
+// Keep this as a direct live test: the contract is native skill installation
+// into a real OpenClaw sandbox plus an agent turn that must read it. The helper
 // hands off to this live target.
 
 const ADD_SKILL_SCRIPT = path.join(
@@ -99,14 +99,14 @@ async function ignoreCleanupError(run: () => Promise<unknown>): Promise<void> {
 }
 
 test(
-  "skill-agent: injected sandbox skill is read by a real OpenClaw agent turn",
+  "skill-agent: installed sandbox skill is read by a real OpenClaw agent turn",
   {
     timeout: testTimeout(30 * 60_000),
     meta: {
       e2ePhases: [
         "confirm the selected runtime and skill tooling",
         "onboard the OpenClaw skill sandbox",
-        "inject and confirm the skill fixture",
+        "install and confirm the skill fixture",
         "ask the agent to consume the skill",
         "record the verified skill behavior",
       ],
@@ -292,7 +292,7 @@ test(
     expect(onboard.exitCode, onboardText).toBe(0);
     sandboxProvisioned = true;
 
-    progress.phase("inject and confirm the skill fixture");
+    progress.phase("install and confirm the skill fixture");
     const addSkill = await host.command("bash", [ADD_SKILL_SCRIPT], {
       artifactName: "add-sandbox-skill-fixture",
       cwd: REPO_ROOT,

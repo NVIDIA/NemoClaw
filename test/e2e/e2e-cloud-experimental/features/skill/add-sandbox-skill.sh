@@ -7,7 +7,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../../../.." && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../../.." && pwd)"
 SANDBOX_NAME="${SANDBOX_NAME:-${NEMOCLAW_SANDBOX_NAME:-}}"
 SKILL_ID="${SKILL_ID:-}"
 SKILL_DESCRIPTION="${SKILL_DESCRIPTION:-E2E smoke skill injected into sandbox for read/write validation.}"
@@ -82,7 +82,7 @@ raise SystemExit(1)
 ' "$skill_dir/SKILL.md")" || die "SKILL.md has no readable frontmatter name"
 [ "$declared_name" = "$SKILL_ID" ] \
   || die "SKILL_ID '$SKILL_ID' does not match SKILL.md name '$declared_name'"
-if [ -L "$NEMOCLAW_CLI_BIN" ] || [ ! -f "$NEMOCLAW_CLI_BIN" ]; then
+if [ -L "$NEMOCLAW_CLI_BIN" ] || [ ! -f "$NEMOCLAW_CLI_BIN" ] || [ ! -x "$NEMOCLAW_CLI_BIN" ]; then
   die "NemoClaw CLI not found: $NEMOCLAW_CLI_BIN"
 fi
 

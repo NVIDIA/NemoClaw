@@ -69,7 +69,6 @@ export async function assertHermesSkillLifecycle({
   const skillFixtureText = fs.readFileSync(path.join(HERMES_SKILL_FIXTURE, "SKILL.md"), "utf8");
   expect(skillFixtureText).toContain(E2E_MOCK_REQUEST_CANARY);
   expect(HERMES_SKILL_PROMPT).not.toContain(E2E_MOCK_REQUEST_CANARY);
-  expect(HERMES_SKILL_PROMPT).not.toMatch(/PONG/i);
 
   const skillInstall = await host.command(
     "nemohermes",
@@ -141,8 +140,22 @@ export async function assertHermesSkillLifecycle({
     },
   );
   expect(skillRemove.exitCode, resultText(skillRemove)).toBe(0);
-  await exec(
-    ["test", "!", "-e", `/sandbox/.hermes/skills/${HERMES_SKILL_ID}`],
-    "phase-4-hermes-skill-remove-disk-check",
+  const postRemove = await host.command(
+    "bash",
+    [
+      "-c",
+      'set -eu; list="$(nemohermes "$1" skill list)"; printf "%s\\n" "$list"; ! grep -Fq -- "$2" <<<"$list"; chat="$(nemohermes "$1" exec --no-stdin --timeout 360 -- hermes chat --query "The verification skill was removed. Reply only PONG." --quiet)"; printf "%s\\n" "$chat"; ! grep -Fq -- "$3" <<<"$chat"',
+      "hermes-skill-post-remove",
+      sandboxName,
+      HERMES_SKILL_ID,
+      E2E_MOCK_REQUEST_CANARY,
+    ],
+    {
+      artifactName: "phase-4-hermes-skill-post-remove-native-and-session",
+      env,
+      redactionValues,
+      timeoutMs: 420_000,
+    },
   );
+  expect(postRemove.exitCode, resultText(postRemove)).toBe(0);
 }

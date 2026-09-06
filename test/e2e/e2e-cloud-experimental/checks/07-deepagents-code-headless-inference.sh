@@ -31,6 +31,7 @@ set -euo pipefail
 SANDBOX_NAME="${SANDBOX_NAME:-${NEMOCLAW_SANDBOX_NAME:-e2e-cloud-onboard}}"
 PREFIX="07-deepagents-code-headless-inference"
 HEADLESS_TIMEOUT="${DEEPAGENTS_HEADLESS_TIMEOUT:-120}"
+SKILL_CLI_TIMEOUT_SECONDS=180
 
 ok() { printf '%s\n' "${PREFIX}: OK ($*)"; }
 info() { printf '%s\n' "${PREFIX}: $*"; }
@@ -73,6 +74,11 @@ sandbox_direct_rlimit_exec() {
 
 sandbox_direct_dcode() {
   openshell sandbox exec --name "$SANDBOX_NAME" --timeout "$HEADLESS_TIMEOUT" -- dcode "$@" 2>&1
+}
+
+bounded_skill_cli() {
+  timeout --signal=TERM --kill-after=5s "${SKILL_CLI_TIMEOUT_SECONDS}s" \
+    "$cli_bin" "$SANDBOX_NAME" skill "$@"
 }
 
 sandbox_dcode_wrapper_contract() {
@@ -614,12 +620,12 @@ main() {
     '# Native lifecycle canary' \
     "When asked for the native lifecycle canary, reply with exactly ${skill_marker_v1} and nothing else." \
     >"${skill_root}/SKILL.md"
-  if skill_install_output="$("$cli_bin" "$SANDBOX_NAME" skill install "$skill_root" 2>&1)"; then
+  if skill_install_output="$(bounded_skill_cli install "$skill_root" 2>&1)"; then
     pass "public NemoClaw skill install placed the DCode canonical-root copy"
   else
     fail_test "public NemoClaw skill install did not complete through DCode"
   fi
-  skill_list_output="$("$cli_bin" "$SANDBOX_NAME" skill list --json 2>&1 || true)"
+  skill_list_output="$(bounded_skill_cli list --json 2>&1 || true)"
   if printf '%s\n' "$skill_list_output" | grep -Eq "\"name\"[[:space:]]*:[[:space:]]*\"${skill_name}\""; then
     pass "public NemoClaw skill list streamed DCode's native view"
   else
@@ -645,7 +651,7 @@ DCODE_EXIT:${first_skill_exit}"
     '# Native lifecycle canary' \
     "When asked for the native lifecycle canary, reply with exactly ${skill_marker_v2} and nothing else." \
     >"${skill_root}/SKILL.md"
-  skill_update_output="$("$cli_bin" "$SANDBOX_NAME" skill install "$skill_root" 2>&1)" \
+  skill_update_output="$(bounded_skill_cli install "$skill_root" 2>&1)" \
     && skill_update_status=0 || skill_update_status=$?
   skill_file_output="$(sandbox_exec "cat /sandbox/.deepagents/agent/skills/${skill_name}/SKILL.md" || true)"
   rm -rf -- "$skill_root"
@@ -679,11 +685,11 @@ DCODE_EXIT:${direct_exit}"
   else
     fail_test "fresh direct-exec dcode session did not consume only the updated skill (${direct_classification}, exit ${direct_exit})"
   fi
-  skill_remove_output="$("$cli_bin" "$SANDBOX_NAME" skill remove "$skill_name" 2>&1)" \
+  skill_remove_output="$(bounded_skill_cli remove "$skill_name" 2>&1)" \
     && skill_remove_status=0 || skill_remove_status=$?
   skill_post_remove_list=""
   info "checking DCode's native list through the public boundary after removal"
-  skill_post_remove_list="$("$cli_bin" "$SANDBOX_NAME" skill list --json 2>&1)" \
+  skill_post_remove_list="$(bounded_skill_cli list --json 2>&1)" \
     && skill_post_remove_list_status=0 || skill_post_remove_list_status=$?
   if [ "$skill_remove_status" -eq 0 ] \
     && [ "$skill_post_remove_list_status" -eq 0 ] \

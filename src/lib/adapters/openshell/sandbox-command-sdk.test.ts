@@ -99,6 +99,24 @@ describe("OpenShell SDK sandbox command executor", () => {
     });
   });
 
+  it("reconnects after a transient connection failure", async () => {
+    const exec = vi.fn().mockResolvedValue({ exitCode: 0 });
+    const client = { sandbox: { exec, execStream: vi.fn() } };
+    const connect = vi.fn().mockRejectedValueOnce(new Error("offline")).mockResolvedValue(client);
+    const executor = createSdkOpenShellSandboxCommandExecutor({ connect });
+    const request = {
+      sandboxName: "alpha",
+      target: { kind: "named" as const, gatewayName: "nemoclaw" },
+      path: "/sandbox",
+    };
+
+    await expect(executor.probeDirectory(request)).resolves.toMatchObject({
+      state: "unobservable",
+    });
+    await expect(executor.probeDirectory(request)).resolves.toEqual({ state: "present" });
+    expect(connect).toHaveBeenCalledTimes(2);
+  });
+
   it("requires an explicit managed gateway", async () => {
     const executor = createSdkOpenShellSandboxCommandExecutor({
       connect: vi.fn(),

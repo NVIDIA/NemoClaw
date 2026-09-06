@@ -155,6 +155,9 @@ export function createSdkOpenShellSandboxCommandExecutor(
     let client = clients.get(key);
     if (!client) {
       client = (deps.connect ?? ((selected) => connectManagedOpenShellSdk(selected, deps)))(target);
+      void client.catch(() => {
+        if (clients.get(key) === client) clients.delete(key);
+      });
       clients.set(key, client);
     }
     return client;
