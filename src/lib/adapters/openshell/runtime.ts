@@ -153,13 +153,22 @@ export function getStatusProbeTimeoutMs(): number {
 
 /** Async variant of {@link captureOpenshell} for status probes, with a kill grace period. */
 export function captureOpenshellForStatus(args: CommandArgs, opts: RunnerOptions = {}) {
+  return captureOpenshellAsync(args, {
+    ...opts,
+    timeout: opts.timeout ?? getStatusProbeTimeoutMs(),
+  });
+}
+
+/** Capture a bounded OpenShell command asynchronously so cancellation reaches cleanup. */
+export function captureOpenshellAsync(args: CommandArgs, opts: RunnerOptions = {}) {
   return captureOpenshellCommandAsync(getOpenshellBinary(), args, {
     cwd: ROOT,
     env: opts.env,
     replaceEnv: opts.replaceEnv,
     ignoreError: opts.ignoreError,
+    includeStderr: opts.includeStderr,
     includeStreams: opts.includeStreams,
-    timeout: opts.timeout ?? getStatusProbeTimeoutMs(),
+    timeout: opts.timeout,
     killGraceMs: 1000,
   });
 }

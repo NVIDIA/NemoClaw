@@ -7,7 +7,7 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const captureOpenshell = vi.hoisted(() => vi.fn());
+const captureOpenshellAsync = vi.hoisted(() => vi.fn());
 const sdkCommandExecutor = vi.hoisted(() => ({
   probeDirectory: vi.fn(),
   runStreaming: vi.fn(),
@@ -23,7 +23,7 @@ const resolveSessionAgentDefinition = vi.hoisted(() => vi.fn());
 
 vi.mock("../../adapters/openshell/runtime", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../adapters/openshell/runtime")>()),
-  captureOpenshell,
+  captureOpenshellAsync,
 }));
 vi.mock("../../adapters/openshell/sandbox-command-sdk", () => ({
   createSdkOpenShellSandboxCommandExecutor: () => sdkCommandExecutor,
@@ -90,7 +90,12 @@ describe("stateless sandbox skill orchestration", () => {
     previousExitCode = process.exitCode;
     process.exitCode = undefined;
     vi.clearAllMocks();
-    captureOpenshell.mockReturnValue({ status: 0, output: "", stdout: "", stderr: "" });
+    captureOpenshellAsync.mockResolvedValue({
+      status: 0,
+      output: "",
+      stdout: "",
+      stderr: "",
+    });
     sdkCommandExecutor.runStreaming.mockResolvedValue({
       outcome: { kind: "completed", exitCode: 0 },
       release: vi.fn(),
@@ -106,6 +111,7 @@ describe("stateless sandbox skill orchestration", () => {
 
   afterEach(() => {
     process.exitCode = previousExitCode;
+    vi.unstubAllEnvs();
     for (const root of roots.splice(0)) fs.rmSync(root, { force: true, recursive: true });
   });
 
@@ -140,7 +146,7 @@ describe("stateless sandbox skill orchestration", () => {
       timeoutSeconds: 120,
     });
     expect(request.command.slice(-command.length)).toEqual(command);
-    expect(captureOpenshell).not.toHaveBeenCalled();
+    expect(captureOpenshellAsync).not.toHaveBeenCalled();
   });
 
   it("forwards the native list exit status", async () => {
@@ -224,7 +230,7 @@ describe("stateless sandbox skill orchestration", () => {
 
     await installSandboxSkill("alpha", { command: "install", path: source });
 
-    const upload = captureOpenshell.mock.calls.find((call) => call[0]?.[1] === "upload");
+    const upload = captureOpenshellAsync.mock.calls.find((call) => call[0]?.[1] === "upload");
     expect(upload?.[0].slice(0, 5)).toEqual(["sandbox", "upload", "-g", "nemoclaw", "alpha"]);
     expect(fs.existsSync(path.dirname(upload?.[0]?.[5] as string))).toBe(false);
     const command = sdkCommandExecutor.runStreaming.mock.calls[1]?.[0].command as string[];
@@ -244,7 +250,7 @@ describe("stateless sandbox skill orchestration", () => {
     const command = sdkCommandExecutor.runStreaming.mock.calls[1]?.[0].command as string[];
     expect(command.slice(-3, -1)).toEqual(["/bin/sh", "-c"]);
     expect(command.at(-1)).toContain(integration.writableRoot);
-    expect(JSON.stringify(captureOpenshell.mock.calls)).not.toMatch(
+    expect(JSON.stringify(captureOpenshellAsync.mock.calls)).not.toMatch(
       /docker|podman|receipt|provenance/u,
     );
     expect(process.exitCode).toBe(0);
@@ -282,6 +288,47 @@ describe("stateless sandbox skill orchestration", () => {
     expect(error).toHaveBeenCalledWith(
       expect.stringMatching(/^  Private skill staging cleanup failed: \/sandbox\//u),
     );
+  });
+
+  it("cleans private staging after an interrupted upload and reports failed cleanup", async () => {
+    selectAgent("hermes", "/usr/local/bin/hermes", HERMES);
+    const source = localSkill();
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    captureOpenshellAsync.mockResolvedValue({
+      status: 143,
+      signal: "SIGTERM",
+      output: "",
+      stdout: "",
+      stderr: "",
+    });
+    sdkCommandExecutor.runStreaming
+      .mockResolvedValueOnce({
+        outcome: { kind: "completed", exitCode: 0 },
+        release: vi.fn(),
+      })
+      .mockResolvedValueOnce({
+        outcome: { kind: "completed", exitCode: 1 },
+        release: vi.fn(),
+      });
+
+    await installSandboxSkill("alpha", { command: "install", path: source });
+
+    expect(process.exitCode).toBe(1);
+    expect(sdkCommandExecutor.runStreaming).toHaveBeenCalledTimes(2);
+    expect(error).toHaveBeenCalledWith(
+      expect.stringMatching(/^  Private skill staging cleanup failed: \/sandbox\//u),
+    );
+  });
+
+  it("rejects an endpoint override before any sandbox command or upload", async () => {
+    selectAgent("hermes", "/usr/local/bin/hermes", HERMES);
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://other-gateway.example");
+
+    await expect(
+      installSandboxSkill("alpha", { command: "install", path: localSkill() }),
+    ).rejects.toThrow(/may bypass the gateway recorded for this sandbox/u);
+    expect(sdkCommandExecutor.runStreaming).not.toHaveBeenCalled();
+    expect(captureOpenshellAsync).not.toHaveBeenCalled();
   });
 
   it("fails clearly when the selected agent declares no safe skill integration", async () => {

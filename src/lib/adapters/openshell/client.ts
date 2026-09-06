@@ -68,6 +68,10 @@ export interface CaptureOpenshellOptions extends OpenshellSpawnOptions {
 
 export interface CaptureOpenshellAsyncOptions extends CaptureOpenshellOptions {
   killGraceMs?: number;
+  signalSource?: {
+    add(signal: "SIGINT" | "SIGTERM", listener: () => void): void;
+    remove(signal: "SIGINT" | "SIGTERM", listener: () => void): void;
+  };
   spawnImpl?: OpenshellSpawn;
 }
 
@@ -329,6 +333,10 @@ export function captureOpenshellCommandAsync(
   opts: CaptureOpenshellAsyncOptions = {},
 ): Promise<CaptureOpenshellResult> {
   const spawnImpl = opts.spawnImpl ?? spawn;
+  const signalSource = opts.signalSource ?? {
+    add: (signal: "SIGINT" | "SIGTERM", listener: () => void) => process.on(signal, listener),
+    remove: (signal: "SIGINT" | "SIGTERM", listener: () => void) => process.off(signal, listener),
+  };
   return new Promise((resolve) => {
     const child = spawnImpl(binary, args, {
       cwd: opts.cwd,
@@ -345,6 +353,29 @@ export function captureOpenshellCommandAsync(
     let killTimer: NodeJS.Timeout | undefined;
     let forceTimer: NodeJS.Timeout | undefined;
     let capturedError: Error | undefined;
+    let forwardedSignal: "SIGINT" | "SIGTERM" | null = null;
+
+    const terminate = (signal: "SIGINT" | "SIGTERM") => {
+      if (killTimer) return;
+      child.unref();
+      signalProcessTree(child, signal);
+      killTimer = setTimeout(() => {
+        signalProcessTree(child, "SIGKILL");
+        forceTimer = setTimeout(() => {
+          child.stdout?.destroy();
+          child.stderr?.destroy();
+          settle(null, "SIGKILL", capturedError);
+        }, opts.killGraceMs ?? 1000);
+      }, opts.killGraceMs ?? 1000);
+    };
+    const forwardInt = () => {
+      forwardedSignal = "SIGINT";
+      terminate("SIGINT");
+    };
+    const forwardTerm = () => {
+      forwardedSignal = "SIGTERM";
+      terminate("SIGTERM");
+    };
 
     const clearTimers = () => {
       if (timeout) clearTimeout(timeout);
@@ -358,8 +389,12 @@ export function captureOpenshellCommandAsync(
       if (settled) return;
       settled = true;
       clearTimers();
+      signalSource.remove("SIGINT", forwardInt);
+      signalSource.remove("SIGTERM", forwardTerm);
       resolve({
-        status: status ?? (timedOut ? null : 1),
+        status:
+          status ??
+          (timedOut ? null : forwardedSignal === "SIGINT" ? 130 : forwardedSignal ? 143 : 1),
         output: buildOutput(),
         ...maybeCapturedStreams(stdout, stderr, opts),
         ...(error ? { error } : {}),
@@ -382,21 +417,14 @@ export function captureOpenshellCommandAsync(
     child.on("close", (status, signal) => {
       settle(status, signal, capturedError);
     });
+    signalSource.add("SIGINT", forwardInt);
+    signalSource.add("SIGTERM", forwardTerm);
 
     if (opts.timeout && opts.timeout > 0) {
       timeout = setTimeout(() => {
         timedOut = true;
         capturedError = timeoutError(binary, args, opts.timeout as number);
-        child.unref();
-        signalProcessTree(child, "SIGTERM");
-        killTimer = setTimeout(() => {
-          signalProcessTree(child, "SIGKILL");
-          forceTimer = setTimeout(() => {
-            child.stdout?.destroy();
-            child.stderr?.destroy();
-            settle(null, "SIGKILL", capturedError);
-          }, opts.killGraceMs ?? 1000);
-        }, opts.killGraceMs ?? 1000);
+        terminate("SIGTERM");
       }, opts.timeout);
     }
   });

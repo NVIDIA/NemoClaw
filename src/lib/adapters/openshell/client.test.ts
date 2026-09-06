@@ -448,6 +448,32 @@ describe("openshell helpers", () => {
     expect(result.signal).toBeTruthy();
   });
 
+  it("forwards termination to async captures and releases signal handlers", async () => {
+    const listeners = new Map<NodeJS.Signals, () => void>();
+    const add = vi.fn((signal: NodeJS.Signals, listener: () => void) =>
+      listeners.set(signal, listener),
+    );
+    const remove = vi.fn((signal: NodeJS.Signals) => listeners.delete(signal));
+    const pending = captureOpenshellCommandAsync(
+      process.execPath,
+      ["-e", "setInterval(() => {}, 1000)"],
+      {
+        ignoreError: true,
+        killGraceMs: 10,
+        timeout: 5000,
+        signalSource: { add, remove },
+      },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    listeners.get("SIGTERM")?.();
+    const result = await pending;
+
+    expect(result).toMatchObject({ status: 143, signal: "SIGTERM" });
+    expect(add).toHaveBeenCalledTimes(2);
+    expect(remove).toHaveBeenCalledTimes(2);
+  });
+
   it("includes stderr in async capture output when requested", async () => {
     const result = await captureOpenshellCommandAsync(
       process.execPath,

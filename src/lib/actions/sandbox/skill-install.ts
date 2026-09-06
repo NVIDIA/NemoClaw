@@ -7,11 +7,15 @@ import path from "node:path";
 
 import { createSdkOpenShellSandboxCommandExecutor } from "../../adapters/openshell/sandbox-command-sdk";
 import { createCliOpenShellSandboxCommandExecutor } from "../../adapters/openshell/sandbox-command-cli";
-import { captureOpenshell, OPENSHELL_OPERATION_TIMEOUT_MS } from "../../adapters/openshell/runtime";
+import {
+  captureOpenshellAsync,
+  OPENSHELL_OPERATION_TIMEOUT_MS,
+} from "../../adapters/openshell/runtime";
 import * as agentRuntime from "../../agent/runtime";
 import { renderAgentSkillCommand } from "../../agent/skill-integration";
 import { CLI_NAME } from "../../cli/branding";
 import { D, G, R } from "../../cli/terminal-style";
+import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
 import * as skillInstall from "../../skill-install";
 import { ensureLiveSandboxOrExit } from "./gateway-state";
 import { getSandboxTargetGatewayName } from "./gateway-target";
@@ -343,6 +347,7 @@ export async function installSandboxSkill(
     console.error(`  Usage: ${CLI_NAME} <sandbox> skill install <path>`);
     process.exit(2);
   }
+  assertNoOpenShellGatewayEndpointOverride();
 
   const local = resolveLocalSkill(request.path);
   if (!local) {
@@ -399,7 +404,7 @@ export async function installSandboxSkill(
     }
     stageCreated = true;
 
-    const upload = captureOpenshell(
+    const upload = await captureOpenshellAsync(
       // OpenShell SDK 0.0.106 has sandbox exec but no upload/sync API. Keep
       // only this bounded transfer on the existing provider-neutral CLI path.
       [
