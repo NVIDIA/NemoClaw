@@ -11,6 +11,52 @@ import { pathToFileURL } from "node:url";
 export const SEVERITIES = ["info", "low", "moderate", "high", "critical"] as const;
 export type Severity = (typeof SEVERITIES)[number];
 
+export type ReviewedNpmIdentity = Readonly<{
+  npmArchiveSha256: string;
+  npmIntegrity: string;
+  npmVersion: string;
+}>;
+
+export function parseReviewedNpmIdentity(value: unknown): ReviewedNpmIdentity {
+  const record =
+    typeof value === "object" && value !== null && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  const { npmArchiveSha256, npmIntegrity, npmVersion } = record;
+  if (
+    typeof npmVersion !== "string" ||
+    !/^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/.test(npmVersion) ||
+    /[\r\n]/.test(npmVersion)
+  ) {
+    throw new Error("reviewed npm audit configuration has an invalid npmVersion");
+  }
+  if (
+    typeof npmIntegrity !== "string" ||
+    !/^sha512-[A-Za-z0-9+/]+={0,2}$/.test(npmIntegrity) ||
+    /[\r\n]/.test(npmIntegrity)
+  ) {
+    throw new Error("reviewed npm audit configuration has an invalid npmIntegrity");
+  }
+  if (
+    typeof npmArchiveSha256 !== "string" ||
+    !/^[a-f0-9]{64}$/.test(npmArchiveSha256) ||
+    /[\r\n]/.test(npmArchiveSha256)
+  ) {
+    throw new Error("reviewed npm audit configuration has an invalid npmArchiveSha256");
+  }
+  return { npmArchiveSha256, npmIntegrity, npmVersion };
+}
+
+export function parseReviewedNpmIdentityConfig(contents: string): ReviewedNpmIdentity {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(contents);
+  } catch {
+    throw new Error("reviewed npm audit configuration is not valid JSON");
+  }
+  return parseReviewedNpmIdentity(parsed);
+}
+
 export type AuditException = Readonly<{
   advisory: string;
   decision: "not-affected" | "temporary-risk-acceptance";
@@ -887,8 +933,7 @@ export function runReviewedNpmAudit(
   const audit = cached
     ? runNpmAuditWithRetry({ run: () => cached.result, wait: () => {}, warn: () => {} })
     : runNpmAuditWithRetry({
-        run: () =>
-          spawnSync("npm", NPM_AUDIT_ARGV, npmAuditProcessOptions(options.directory)),
+        run: () => spawnSync("npm", NPM_AUDIT_ARGV, npmAuditProcessOptions(options.directory)),
       });
   const finishedAt = new Date().toISOString();
   if (!cached && cacheFile && cacheInput && audit.report)

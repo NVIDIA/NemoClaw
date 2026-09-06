@@ -48,7 +48,7 @@ Concern ledger:
 
 Issue #8253 showed that image-build audits made sandbox creation depend on current registry and Sigstore TUF data instead of only the committed build inputs. Bundle regeneration uses the shared installer without live advisory or registry-signature queries. It installs the exact lock with lifecycle scripts disabled from integrity-pinned archives, runs the runtime tests and typecheck, and verifies the exact bundle inputs.
 
-The reviewed npm audit CI check now owns production advisory enforcement for this lock. Its trusted action verifies the downloaded `npm@10.9.4` archive against the reviewed SHA-512 before installing it. The check verifies the lock SHA-256 and SDK package integrity, installs the production graph with lifecycle scripts disabled, records audit provenance and policy results, verifies registry signatures, and fails on unaccepted findings at the repository's configured threshold.
+The reviewed npm audit CI check now owns production advisory enforcement for this lock. Its trusted action verifies the downloaded `npm@10.9.4` archive against the reviewed SHA-512 integrity and SHA-256 digest, then confirms that the archive metadata reports the reviewed version before installation. The check verifies the lock SHA-256 and SDK package integrity, installs the production graph with lifecycle scripts disabled, records audit provenance and policy results, verifies registry signatures, and fails on unaccepted findings at the repository's configured threshold.
 
 ## 1.29.0 to 1.30.0 migration review
 

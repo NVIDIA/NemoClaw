@@ -11,6 +11,7 @@ import {
   parseAuditExceptionRegistry,
   parseAuditReport,
   NPM_AUDIT_ARGV,
+  parseReviewedNpmIdentityConfig,
 } from "./reviewed-npm-audit.mts";
 
 export const AUDIT_ARGV = NPM_AUDIT_ARGV;
@@ -212,24 +213,7 @@ export function canonicalAuditReceipt(receipt: AuditReceipt): string {
 }
 
 export function reviewedNpmVersionFromConfig(contents: string): string {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(contents);
-  } catch {
-    throw new Error("reviewed npm audit configuration is not valid JSON");
-  }
-  const npmVersion =
-    typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>).npmVersion
-      : undefined;
-  if (
-    typeof npmVersion !== "string" ||
-    !/^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/.test(npmVersion) ||
-    /[\r\n]/.test(npmVersion)
-  ) {
-    throw new Error("reviewed npm audit configuration has an invalid npmVersion");
-  }
-  return npmVersion;
+  return parseReviewedNpmIdentityConfig(contents).npmVersion;
 }
 
 function cli(args: readonly string[]): void {

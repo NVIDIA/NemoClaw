@@ -32,6 +32,7 @@ on:
   pull_request:
     paths:
       - ".github/actions/ci-reviewed-npm-audit/**"
+      - ".github/actions/setup-reviewed-npm/**"
       - ".github/workflows/base-image.yaml"
       - ".github/actions/publish-managed-image-digest/**"
       - ".github/workflows/managed-images.yaml"
@@ -96,6 +97,7 @@ jobs:
           persist-credentials: false
           sparse-checkout: |
             .github/actions/ci-reviewed-npm-audit
+            .github/actions/setup-reviewed-npm
             ci/npm-audit-exceptions.json
             ci/reviewed-npm-audit.json
             scripts/audit-reviewed-npm-graph.mts

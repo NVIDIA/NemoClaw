@@ -27,6 +27,11 @@ const inputs = {
   registryOrigin: "https://registry.yarnpkg.com",
   now: NOW,
 } as const;
+const reviewedNpmIdentity = {
+  npmArchiveSha256: "0".repeat(64),
+  npmIntegrity: `sha512-${Buffer.alloc(64).toString("base64")}`,
+  npmVersion: inputs.npmVersion,
+};
 function receipt(createdAt = NOW) {
   return createAuditReceipt({
     acceptedAdvisoryIds: ["GHSA-b", "GHSA-a"],
@@ -173,7 +178,7 @@ describe("reviewed npm audit receipt", () => {
         fs.writeFileSync(path.join(root, "raw.json"), inputs.rawResponse);
         fs.writeFileSync(
           path.join(root, "reviewed-npm-audit.json"),
-          JSON.stringify({ npmVersion: inputs.npmVersion }),
+          JSON.stringify(reviewedNpmIdentity),
         );
         const auditReceipt = legacy
           ? {
@@ -232,7 +237,7 @@ describe("reviewed npm audit receipt", () => {
       fs.writeFileSync(path.join(root, "raw.json"), inputs.rawResponse);
       fs.writeFileSync(
         path.join(root, "reviewed-npm-audit.json"),
-        JSON.stringify({ npmVersion: inputs.npmVersion }),
+        JSON.stringify(reviewedNpmIdentity),
       );
       fs.writeFileSync(path.join(root, "receipt.json"), canonicalAuditReceipt(receipt(new Date())));
 

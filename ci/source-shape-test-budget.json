@@ -208,6 +208,16 @@
     },
     {
       "file": "test/automation/releases/reviewed-npm-audit-workflow.test.ts",
+      "test": "uses the single JSON-bound reviewed npm bootstrap owner",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/releases/reviewed-npm-audit-handoff.test.ts",
+      "test": "routes bootstrap-only changes through image qualification and publication",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/releases/reviewed-npm-audit-workflow.test.ts",
       "test": "rejects the removed plural source-registry package shape",
       "category": "security"
     },
@@ -249,6 +259,11 @@
     {
       "file": "test/install/installer-homebrew-formula-reuse-trust.test.ts",
       "test": "accepts the reviewed %s OpenShell 0.0.106 installer template",
+      "category": "security"
+    },
+    {
+      "file": "test/install/installer-brev-npm12-template-trust.test.ts",
+      "test": "binds the exact reviewed npm 12 Brev successor and rejects bootstrap drift",
       "category": "security"
     },
     {
