@@ -80,6 +80,8 @@ describe("agent-native local skill import patches", () => {
     expect(source.match(/_resolve_active_skill\(/g)).toHaveLength(3);
     expect(source).toContain("Cannot reconcile native skill transaction");
     expect(source).toContain('import_prefix = f".{skill_name}.import."');
+    expect(source).toContain("native skill import staging requires inspection");
+    expect(source).not.toContain("for abandoned_import in abandoned_imports");
     expect(source).toContain("os.replace(abandoned_backup, destination)");
     expect(source).toContain("os.replace(destination, failed_install)");
     expect(source).toContain("quarantined failed install retained at");

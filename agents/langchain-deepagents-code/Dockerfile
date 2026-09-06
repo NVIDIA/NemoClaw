@@ -206,7 +206,7 @@ COPY scripts/lib/entrypoint-env-wrapper.sh /usr/local/lib/nemoclaw/entrypoint-en
 COPY agents/langchain-deepagents-code/start.sh /usr/local/bin/nemoclaw-start
 COPY scripts/managed-startup-hold.sh /usr/local/bin/nemoclaw-managed-startup-hold
 
-ARG NEMOCLAW_DCODE_NATIVE_SKILL_IMPORT_PATCHER_SHA256=c1aa6522f877015d047ff90d85ce9acd5cf0a526af4d46d27a1f06176a4e2ea2
+ARG NEMOCLAW_DCODE_NATIVE_SKILL_IMPORT_PATCHER_SHA256=0dc644f376ce1aa390436e364870cc71316897cd117aa29cec549fabe2ce9343
 COPY --from=managed-bootstrap-entrypoint-builder /out/usr/local/bin/nemoclaw-managed-bootstrap /usr/local/bin/nemoclaw-managed-bootstrap
 COPY --from=managed-bootstrap-entrypoint-builder /out/usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh
 COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
@@ -322,6 +322,12 @@ RUN install -d -m 0755 /usr/local/share/nemoclaw \
     && grep -Fq "\"digest\":\"$dcode_skill_digest\"" /tmp/nemoclaw-dcode-skill-import.out \
     && mv /sandbox/.deepagents/agent/skills/nemoclaw-native-import-probe /sandbox/.deepagents/agent/skills/.nemoclaw-native-import-probe.backup.interrupted \
     && mkdir -p /sandbox/.deepagents/agent/skills/.nemoclaw-native-import-probe.import.interrupted/nemoclaw-native-import-probe \
+    && printf '%s\n' 'untrusted retained content' > /sandbox/.deepagents/agent/skills/.nemoclaw-native-import-probe.import.interrupted/nemoclaw-native-import-probe/retained.txt \
+    && if HOME=/sandbox /opt/venv/bin/python3 -I -c 'import sys; from deepagents_code.skills.commands import _import_local; _import_local(sys.argv[1], "nemoclaw-native-import-probe", sys.argv[2], agent="agent", replace=True)' "$dcode_skill_stage" "$dcode_skill_digest" >/tmp/nemoclaw-dcode-skill-unproven-recovery.out 2>&1; then echo 'ERROR: unproven DCode import staging was deleted automatically' >&2; exit 1; fi \
+    && grep -Fq 'native skill import staging' /tmp/nemoclaw-dcode-skill-unproven-recovery.out \
+    && grep -Fq 'requires inspection' /tmp/nemoclaw-dcode-skill-unproven-recovery.out \
+    && grep -Fxq 'untrusted retained content' /sandbox/.deepagents/agent/skills/.nemoclaw-native-import-probe.import.interrupted/nemoclaw-native-import-probe/retained.txt \
+    && rm -rf /sandbox/.deepagents/agent/skills/.nemoclaw-native-import-probe.import.interrupted \
     && HOME=/sandbox /opt/venv/bin/python3 -I -c 'import sys; from deepagents_code.skills.commands import _import_local; _import_local(sys.argv[1], "nemoclaw-native-import-probe", sys.argv[2], agent="agent", replace=True)' "$dcode_skill_stage" "$dcode_skill_digest" > /tmp/nemoclaw-dcode-skill-recovery.out \
     && test -z "$(find /sandbox/.deepagents/agent/skills -maxdepth 1 \( -name '.nemoclaw-native-import-probe.backup.*' -o -name '.nemoclaw-native-import-probe.import.*' \) -print -quit)" \
     && printf '%s\n' '# Mutated after host verification' >> "$dcode_skill_stage/SKILL.md" \
@@ -330,7 +336,7 @@ RUN install -d -m 0755 /usr/local/share/nemoclaw \
     && HOME=/sandbox /opt/venv/bin/python3 -I -c 'import argparse; from deepagents_code.skills import commands; parser = argparse.ArgumentParser(); subparsers = parser.add_subparsers(dest="command"); commands.setup_skills_parser(subparsers, make_help_action=lambda _help: argparse._HelpAction, add_output_args=lambda output_parser: output_parser.add_argument("--json", action="store_const", const="json", dest="output_format")); args = parser.parse_args(["skills", "delete", "nemoclaw-native-import-probe", "--agent", "agent", "--force", "--json"]); commands.execute_skills_command(args)' \
     && test ! -e /sandbox/.deepagents/agent/skills/nemoclaw-native-import-probe \
     && { rmdir /sandbox/.deepagents/agent/skills /sandbox/.deepagents/agent 2>/dev/null || true; } \
-    && rm -rf "$dcode_skill_stage" /tmp/nemoclaw-dcode-skill-import.out /tmp/nemoclaw-dcode-skill-recovery.out /tmp/nemoclaw-dcode-skill-rejected.out \
+    && rm -rf "$dcode_skill_stage" /tmp/nemoclaw-dcode-skill-import.out /tmp/nemoclaw-dcode-skill-recovery.out /tmp/nemoclaw-dcode-skill-unproven-recovery.out /tmp/nemoclaw-dcode-skill-rejected.out \
     && empty_prompt_log="$(mktemp)" \
     && if timeout 10 env -i /usr/local/lib/nemoclaw/dcode-wrapper.sh -n "" >"$empty_prompt_log" 2>&1; then empty_prompt_status=0; else empty_prompt_status=$?; fi \
     && empty_prompt_output="$(cat "$empty_prompt_log")" \

@@ -130,6 +130,11 @@ def _import_local(
         if abandoned_backup is not None and not destination.exists():
             os.replace(abandoned_backup, destination)
             abandoned_backup = None
+        if abandoned_imports:
+            raise RuntimeError(
+                "native skill import staging requires inspection: "
+                + ", ".join(str(entry) for entry in sorted(abandoned_imports, key=str))
+            )
     except Exception as exc:
         console.print(f"[bold red]Error:[/bold red] Cannot reconcile native skill transaction: {exc}")
         raise SystemExit(1) from exc
@@ -143,14 +148,6 @@ def _import_local(
             )
             raise SystemExit(1)
         shutil.rmtree(abandoned_backup)
-    try:
-        for abandoned_import in abandoned_imports:
-            shutil.rmtree(abandoned_import)
-    except OSError as exc:
-        console.print(
-            f"[bold red]Error:[/bold red] Native skill import transaction requires inspection: {abandoned_import}"
-        )
-        raise SystemExit(1) from exc
     if active and active["source"] == "project":
         console.print(
             "[bold red]Error:[/bold red] A project skill with this name is active; "
