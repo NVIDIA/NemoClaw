@@ -343,7 +343,8 @@ test/e2e/
   identity-settlement state with its own trace ID, validated event timestamp,
   and optional 16-hex correlation. A matched identity includes the correlation;
   a failed settlement can use `null` when no identity was observed. Raw event
-  attributes and the full identity fingerprint are excluded.
+  attributes and the full identity fingerprint are excluded. Malformed
+  settlement evidence is replaced with the bounded `invalid` evidence state.
   Raw onboard traces stay under the runner temporary directory and are deleted
   before artifact upload.
   These per-target summaries are artifact evidence only.

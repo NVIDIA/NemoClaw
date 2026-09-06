@@ -67,7 +67,8 @@ and artifact shape operators needed from the retired workflows:
   `e2e-artifacts/live/<target>/cloud-onboard-trace-timing-summary.json`, with
   timing fields plus the latest optional identity-settlement state with its own
   trace ID, validated event timestamp, and optional 16-hex correlation that can
-  be `null` when no identity was observed;
+  be `null` when no identity was observed; malformed settlement evidence uses a
+  bounded `invalid` evidence state;
 - per-target step summary rendered from `run-plan.json`;
 - explicit artifact upload allowlist with action, log, shell command-evidence,
   and JSON summary paths plus 14-day retention.

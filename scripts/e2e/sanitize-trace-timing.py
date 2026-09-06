@@ -275,7 +275,9 @@ def main(argv: list[str]) -> int:
         return 0
 
     selected = dict(max(candidates, key=lambda item: item["total_duration_ms"]))
-    if identity_settlements_valid:
+    if not identity_settlements_valid:
+        selected["sandbox_identity_settlement_evidence"] = "invalid"
+    else:
         identity_settlement = select_latest_identity_settlement(identity_settlements)
         if identity_settlement is not None:
             selected["sandbox_identity_settlement"] = identity_settlement

@@ -350,9 +350,9 @@ print(json.dumps([module.extract_candidate(case) for case in cases]))
 
       const result = runSanitizer(source, output);
       expect(result.status, result.stderr).toBe(0);
-      expect(JSON.parse(readFileSync(join(output, SUMMARY), "utf8"))).not.toHaveProperty(
-        "sandbox_identity_settlement",
-      );
+      const summary = JSON.parse(readFileSync(join(output, SUMMARY), "utf8"));
+      expect(summary).not.toHaveProperty("sandbox_identity_settlement");
+      expect(summary).toMatchObject({ sandbox_identity_settlement_evidence: "invalid" });
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }

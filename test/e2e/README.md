@@ -1186,9 +1186,10 @@ directory. In addition to timing fields, the summary may retain the latest
 sandbox identity-settlement state with its own trace ID, validated event
 timestamp, and optional 16-hex correlation. A matched identity includes the
 correlation; a failed settlement can use `null` when no identity was observed.
-The summary never retains raw event attributes or the full identity fingerprint.
-Aggregation ratchets require `report-to-pr` and `scorecard` to wait for the same
-execution-job set.
+Malformed settlement evidence is replaced with the bounded `invalid` evidence
+state. The summary never retains raw event attributes or the full identity
+fingerprint. Aggregation ratchets require `report-to-pr` and `scorecard` to wait
+for the same execution-job set.
 
 Registry-driven Vitest targets also enable onboard trace collection. Each live
 matrix target writes raw traces under the runner temporary directory, sanitizes

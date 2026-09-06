@@ -101,7 +101,7 @@ type TraceEvidenceScenario = {
     deps: FlowDependencies,
     currentNonce: () => string,
     lifecycleEvents: string[],
-  ) => void;
+  ) => Promise<void> | void;
   expectFlow: (flow: Flow) => Promise<void>;
 };
 
@@ -241,6 +241,30 @@ const TRACE_EVIDENCE_SCENARIOS: readonly TraceEvidenceScenario[] = [
       await expect(flow).resolves.toMatchObject({ route: "none" });
     },
   },
+  {
+    title: "failed settlement after the Ready identity changes",
+    completed: false,
+    operationState: "ready",
+    identityState: "failed",
+    expectedCorrelation: SANDBOX_ID_CORRELATION,
+    expectedLifecycleEvents: [],
+    createResult: SUCCESSFUL_CREATE,
+    exerciseReadyCheck: OBSERVE_READY,
+    configureIdentityObservations: async (deps, currentNonce) => {
+      vi.mocked(deps.runCaptureOpenshell)
+        .mockReturnValueOnce("alpha Ready")
+        .mockImplementationOnce(() => sandboxListJson(currentNonce()));
+      const sandboxIdentity = await import("../adapters/openshell/sandbox-identity");
+      vi.spyOn(sandboxIdentity, "settleCreatedOpenShellSandboxId").mockReturnValue(
+        "replacement-sandbox-id",
+      );
+    },
+    expectFlow: async (flow) => {
+      await expect(flow).rejects.toThrow(
+        "OpenShell did not return one exact durable sandbox identity before post-create effects",
+      );
+    },
+  },
 ];
 
 beforeEach(() => setupGpuFlowMocks(mocks));
@@ -279,7 +303,7 @@ describe("sandbox create trace evidence", () => {
         });
         const deps = createGpuFlowDeps();
         deps.installPortableDemoLifecycle = vi.fn();
-        scenario.configureIdentityObservations(deps, () => nonce, lifecycleEvents);
+        await scenario.configureIdentityObservations(deps, () => nonce, lifecycleEvents);
 
         const trace = startOnboardTrace({ fresh: true }, process.env);
         try {

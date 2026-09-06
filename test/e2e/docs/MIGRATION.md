@@ -49,7 +49,8 @@ The durable E2E system has one execution path:
   identity-settlement state with its own trace ID, validated event timestamp,
   and optional 16-hex correlation. A matched identity includes the correlation;
   a failed settlement can use `null` when no identity was observed. Raw event
-  attributes and the full identity fingerprint remain excluded.
+  attributes and the full identity fingerprint remain excluded. Malformed
+  settlement evidence is replaced with the bounded `invalid` evidence state.
   The workflow owns `NEMOCLAW_TRACE_DIR`, keeps raw traces under runner
   temporary storage, and deletes those raw traces before uploading artifacts.
   Older issue and migration notes may call this the Vitest artifact path; in
