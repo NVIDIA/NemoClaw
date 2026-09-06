@@ -1,20 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { expect, it, vi } from "vitest";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 
-const registrationMocks = vi.hoisted(() => ({ registerCreatedSandbox: vi.fn() }));
-vi.mock("./sandbox-registration", async (importOriginal) => {
-  const original = await importOriginal<typeof import("./sandbox-registration")>();
-  registrationMocks.registerCreatedSandbox.mockImplementation(
-    (input: CreatedSandboxRegistrationInput) => original.buildCreatedSandboxRegistryEntry(input),
-  );
-  return { ...original, registerCreatedSandbox: registrationMocks.registerCreatedSandbox };
-});
+import { afterEach, expect, it, vi } from "vitest";
 
 import { createSession, type Session } from "../state/onboard-session";
 import type { SandboxEntry } from "../state/registry";
-import { createOnboardCreatedSandboxCompletion } from "./created-sandbox-finalization";
 import {
   createProviderInferenceOnboardFlowPhase,
   createSandboxOnboardFlowPhase,
@@ -26,14 +20,18 @@ import {
   createInitialOnboardFlowPhases,
   type InitialOnboardFlowContext,
 } from "./machine/initial-flow-phases";
-import { pendingSandboxCreateIdentityForBoundary } from "./sandbox-create/identity-boundary";
 import type { SandboxGpuCreateFlowResult } from "./sandbox-gpu-create-flow";
-import type { CreatedSandboxRegistrationInput } from "./sandbox-registration";
 
 const sandboxName = "n1x-preview";
 const model = "nvidia/Qwen3.6-35B-A3B-NVFP4";
 const provider = "vllm-local";
 const previewEnv = { NEMOCLAW_PROVIDER: "install-vllm" };
+const homes: string[] = [];
+afterEach(async () => {
+  vi.unstubAllEnvs();
+  vi.resetModules();
+  await Promise.all(homes.splice(0).map((home) => fs.rm(home, { recursive: true, force: true })));
+});
 const inferenceSelection = {
   provider,
   model,
@@ -188,10 +186,16 @@ async function createIntentThroughOnboardFlow(input: {
   };
 }
 
-async function completeRegistration(createIntent: CreateIntent): Promise<{
-  input: CreatedSandboxRegistrationInput;
-  registered: SandboxEntry;
-}> {
+async function completeRegistration(createIntent: CreateIntent): Promise<SandboxEntry> {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-n1x-finalization-"));
+  homes.push(home);
+  vi.stubEnv("HOME", home);
+  vi.resetModules();
+  const [{ createOnboardCreatedSandboxCompletion }, registry, identity] = await Promise.all([
+    import("./created-sandbox-finalization"),
+    import("../state/registry"),
+    import("./sandbox-create/identity-boundary"),
+  ]);
   const lifecycleGeneration = "generation-1";
   const lifecycleLiveIdentityFingerprint = "a".repeat(64);
   const verifiedCreateBoundary = {
@@ -202,16 +206,23 @@ async function completeRegistration(createIntent: CreateIntent): Promise<{
     lifecycleLiveIdentityFingerprint,
     route: "native" as const,
   };
-  const reservation = {
-    authority: {
-      sandboxName,
-      gatewayName: "nemoclaw",
-      sessionId: "session-1",
-      selection: inferenceSelection,
-    },
-    entry: { name: sandboxName },
-  } as never;
-  registrationMocks.registerCreatedSandbox.mockClear();
+  const authority = {
+    sandboxName,
+    gatewayName: "nemoclaw",
+    sessionId: "session-1",
+    selection: inferenceSelection,
+  };
+  registry.reserveSandboxInferenceRoute(sandboxName, {
+    ...inferenceSelection,
+    gatewayName: authority.gatewayName,
+    reservationSessionId: authority.sessionId,
+  });
+  const reservation = registry.qualifyPendingSandboxCreateReservation(
+    authority,
+    registry.getSandbox(sandboxName),
+  );
+  const checkpoint = identity.pendingSandboxCreateIdentityForBoundary(verifiedCreateBoundary);
+  registry.recordPendingSandboxCreateIdentity(reservation, checkpoint);
   const completion = createOnboardCreatedSandboxCompletion(
     sandboxName,
     null,
@@ -238,7 +249,7 @@ async function completeRegistration(createIntent: CreateIntent): Promise<{
       getVerifiedCreateBoundary: () => verifiedCreateBoundary,
       getVerifiedCreateRegistrationAuthority: () => ({
         reservation,
-        checkpoint: pendingSandboxCreateIdentityForBoundary(verifiedCreateBoundary),
+        checkpoint,
       }),
       revalidateSandboxIdentity: vi.fn(),
     },
@@ -283,11 +294,9 @@ async function completeRegistration(createIntent: CreateIntent): Promise<{
     () => ({ lifecycleGeneration }),
     lifecycle,
   )) as SandboxEntry;
-  return {
-    input: registrationMocks.registerCreatedSandbox.mock
-      .calls[0]?.[0] as CreatedSandboxRegistrationInput,
-    registered,
-  };
+  vi.resetModules();
+  const reloaded = (await import("../state/registry")).getSandbox(sandboxName);
+  return reloaded ?? registered;
 }
 
 it.each([
@@ -310,8 +319,7 @@ it.each([
     expect([
       flow.accepted,
       flow.createIntent.deferredN1xManagedVllmPreviewIntent,
-      registration.input.deferredN1xManagedVllmPreviewIntent,
-      registration.registered.deferredN1xManagedVllmAccepted,
-    ]).toEqual(expected ? [true, true, true, true] : [false, undefined, undefined, undefined]);
+      registration.deferredN1xManagedVllmAccepted,
+    ]).toEqual(expected ? [true, true, true] : [false, undefined, undefined]);
   },
 );
