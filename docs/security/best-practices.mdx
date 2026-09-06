@@ -339,8 +339,9 @@ The installer leaves provider and recipe selection to onboarding.
 When no provider is requested or recorded and `NEMOCLAW_MODEL` is unset, onboarding selects managed llama.cpp; an optional compatible `NEMOCLAW_LLAMACPP_RECIPE` value makes the managed recipe explicit.
 Onboarding recognizes one proof-backed GPU only when its normalized NVIDIA identity is either `NVIDIA RTX Spark N1X` or `NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)`; the Windows chassis product name does not participate in selection.
 Qualification also requires Linux Arm64 WSL, local Docker Desktop on the default local Docker context, at least 48,000 MiB of Docker and GPU memory, driver version `580.65.06` or later, Docker storage and runtime readiness, NVIDIA GPU integration, and a successful Docker Desktop GPU passthrough proof.
-Onboarding stops managed selection when any required readiness check fails.
-Other Windows WSL Express installs use WSL-local Ollama.
+If N1x readiness does not match before managed selection starts, Windows Express selects WSL-local Ollama.
+If a required check fails after managed selection starts, onboarding stops before installation.
+Other Windows WSL Express installs also use WSL-local Ollama.
 Windows-host Ollama remains available through manual onboarding when Docker Desktop WSL integration is enabled, `DOCKER_HOST` is unset, Docker uses the local `default` context, and Ollama has a loopback-only listener that is reachable from Docker and rejects unrecognized HTTP `Host` headers.
 An already-running vLLM server on `localhost:${NEMOCLAW_VLLM_PORT:-8000}` appears in standard onboarding because selecting it is an explicit user action.
 Native N1x requires you to decline or disable Express or set `NEMOCLAW_PROVIDER=vllm` first.
