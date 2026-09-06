@@ -441,17 +441,23 @@ function atomicWriteTextFile(filePath: string, text: string): void {
     }
     throw error;
   }
-  const published = fs.lstatSync(filePath);
-  if (
-    published.isSymbolicLink() ||
-    !published.isFile() ||
-    published.nlink !== 1 ||
-    published.uid !== metadata.uid ||
-    published.gid !== metadata.gid ||
-    (published.mode & 0o777) !== (metadata.mode & 0o777) ||
-    !fs.readFileSync(filePath).equals(payload)
-  ) {
-    throw new Error(`${filePath}: published native skill patch failed verification`);
+  let publishedDescriptor: number | undefined;
+  try {
+    publishedDescriptor = fs.openSync(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    const published = fs.fstatSync(publishedDescriptor);
+    const publishedPayload = fs.readFileSync(publishedDescriptor);
+    if (
+      !published.isFile() ||
+      published.nlink !== 1 ||
+      published.uid !== metadata.uid ||
+      published.gid !== metadata.gid ||
+      (published.mode & 0o777) !== (metadata.mode & 0o777) ||
+      !publishedPayload.equals(payload)
+    ) {
+      throw new Error(`${filePath}: published native skill patch failed verification`);
+    }
+  } finally {
+    if (publishedDescriptor !== undefined) fs.closeSync(publishedDescriptor);
   }
 }
 

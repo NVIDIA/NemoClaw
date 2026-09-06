@@ -62,16 +62,25 @@ def _atomic_write_text(path: Path, source: str) -> None:
             os.close(descriptor)
         temporary.unlink(missing_ok=True)
         raise
-    published = path.lstat()
-    if (
-        path.is_symlink()
-        or not stat.S_ISREG(published.st_mode)
-        or published.st_nlink != 1
-        or (published.st_uid, published.st_gid) != (metadata.st_uid, metadata.st_gid)
-        or stat.S_IMODE(published.st_mode) != stat.S_IMODE(metadata.st_mode)
-        or path.read_bytes() != payload
-    ):
-        raise SystemExit(f"ERROR: published native skill patch failed verification: {path}")
+    published_descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        published = os.fstat(published_descriptor)
+        observed = bytearray()
+        while True:
+            chunk = os.read(published_descriptor, 64 * 1024)
+            if not chunk:
+                break
+            observed.extend(chunk)
+        if (
+            not stat.S_ISREG(published.st_mode)
+            or published.st_nlink != 1
+            or (published.st_uid, published.st_gid) != (metadata.st_uid, metadata.st_gid)
+            or stat.S_IMODE(published.st_mode) != stat.S_IMODE(metadata.st_mode)
+            or bytes(observed) != payload
+        ):
+            raise SystemExit(f"ERROR: published native skill patch failed verification: {path}")
+    finally:
+        os.close(published_descriptor)
 
 FUNCTION = r'''
 # NemoClaw native local skill import (#10210).
