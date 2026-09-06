@@ -122,14 +122,7 @@ export function loadDcodeBaseImagePublicationEvidence(
     throw new Error("Deep Agents Code E2E workload source is invalid");
   }
   const candidateCatalog = environment.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON?.trim() ?? "";
-  if (candidateCatalog) {
-    if ((environment[DCODE_BASE_IMAGE_ENV]?.trim() ?? "") || fs.existsSync(evidencePath)) {
-      throw new Error(
-        "Deep Agents Code exact candidate catalog cannot be combined with published base authority",
-      );
-    }
-    return undefined;
-  }
+  if (candidateCatalog) return undefined;
   if (!fs.existsSync(evidencePath)) {
     requireDcodeBaseImageReference(environment);
     if (environment.GITHUB_ACTIONS === "true") {
