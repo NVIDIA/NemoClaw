@@ -47,7 +47,10 @@ import {
   mcpRebuildRequiresRuntimeSelection,
 } from "./rebuild-mcp-phase";
 import { preflightRebuildMessagingConflicts } from "./rebuild-messaging-conflict-preflight";
-import { stageRebuildMessagingPlanOrBail } from "./rebuild-messaging-phase";
+import {
+  createRebuildMessagingPreEnableHookRegistry,
+  stageRebuildMessagingPlanOrBail,
+} from "./rebuild-messaging-phase";
 import {
   checkRebuildGatewaySchemaPreflight,
   commitRebuildRoutePreflight,
@@ -308,6 +311,7 @@ export async function prepareRebuildTargetPreflights(args: {
     cliName: () => CLI_NAME,
     log: (message) => console.log(message),
     error: (message) => console.error(message),
+    preEnableHookRegistry: createRebuildMessagingPreEnableHookRegistry(mcpRuntimeSelection),
     bail,
   });
   const gatewayRecovered = await runRebuildGatewayRecoveryAfterReadiness({

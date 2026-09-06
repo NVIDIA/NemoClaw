@@ -20,7 +20,8 @@ Point that URL at the host port NemoClaw forwards for the sandbox.
 The default local webhook port is `3978`.
 Set `MSTEAMS_PORT` or `TEAMS_PORT` before onboarding or `channels add teams` when you need another port.
 
-No two active Teams sandboxes can share the same local webhook port.
+The selected local webhook port must be free or belong to the current sandbox's active OpenShell forward.
+An unrelated host process or another active Teams sandbox cannot share the port.
 
 ## Configure Credentials and Access
 

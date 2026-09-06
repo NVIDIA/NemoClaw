@@ -6,6 +6,7 @@ import { getCredential, normalizeCredentialValue } from "../credentials/store";
 import {
   type ChannelInputSpec,
   type ChannelManifest,
+  type ConflictRegistry,
   createBuiltInChannelManifestRegistry,
   createBuiltInMessagingHookRegistry,
   createBuiltInRenderTemplateResolver,
@@ -28,6 +29,10 @@ import {
   detectInvalidMessagingChannelConfigEnvValues,
   resolveMessagingChannelConfigEnvValue,
 } from "../messaging-channel-config";
+import {
+  createMessagingHostForwardPreEnableHookRegistry,
+  type MessagingHostForwardPortConflictOptionsDeps,
+} from "./messaging-host-forward";
 import {
   type MessagingSelectorInput,
   type MessagingSelectorOutput,
@@ -61,6 +66,26 @@ export interface CreateSetupMessagingChannelsDeps {
   readonly isNonInteractive: NonNullable<SetupMessagingChannelsDeps["isNonInteractive"]>;
   readonly prompt: NonNullable<GooglechatTunnelRuntimeDeps["prompt"]>;
   readonly googlechatTunnelRuntime?: Omit<GooglechatTunnelRuntimeDeps, "prompt" | "sandboxName">;
+}
+
+export function withPort(
+  registry: ConflictRegistry,
+  runCaptureOpenshell: (args: string[], options: { readonly ignoreError: true }) => string | null,
+  checkPortAvailable: NonNullable<
+    MessagingHostForwardPortConflictOptionsDeps["checkPortAvailable"]
+  >,
+) {
+  return {
+    listSandboxes: registry.listSandboxes,
+    preEnableHookRegistry: createMessagingHostForwardPreEnableHookRegistry({
+      captureForwardList: (gatewayName) => {
+        const args = ["forward", "list"];
+        if (gatewayName) args.push("--gateway", gatewayName);
+        return runCaptureOpenshell(args, { ignoreError: true });
+      },
+      checkPortAvailable,
+    }),
+  };
 }
 
 export function createSetupMessagingChannels(deps: CreateSetupMessagingChannelsDeps) {

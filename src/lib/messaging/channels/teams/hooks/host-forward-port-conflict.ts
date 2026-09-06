@@ -36,15 +36,29 @@ export interface TeamsHostForwardPortOverlap {
 
 export interface TeamsHostForwardPortConflictHookOptions {
   readonly currentSandbox?: string | null | (() => string | null);
+  readonly currentGatewayName?: string | null | (() => string | null);
   readonly registryEntries?:
     | readonly TeamsHostForwardPortConflictRegistryEntry[]
     | (() => readonly TeamsHostForwardPortConflictRegistryEntry[]);
+  readonly checkPortAvailable?: (port: number) => Promise<TeamsHostPortAvailabilityResult>;
+  readonly isCurrentSandboxForward?: (
+    currentSandbox: string,
+    currentGatewayName: string | null,
+    port: number,
+  ) => boolean;
   readonly findConflicts?: (
     currentSandbox: string | null,
     port: number,
     entries: readonly TeamsHostForwardPortConflictRegistryEntry[],
   ) => readonly TeamsHostForwardPortConflict[];
   readonly formatConflict?: (conflict: TeamsHostForwardPortConflict) => string;
+}
+
+export interface TeamsHostPortAvailabilityResult {
+  readonly ok: boolean;
+  readonly process?: string;
+  readonly pid?: number | null;
+  readonly reason?: string;
 }
 
 export interface TeamsHostForwardPortStatusHookOptions {
@@ -59,7 +73,7 @@ export interface TeamsHostForwardPortStatusHookOptions {
 export function createTeamsHostForwardPortConflictHook(
   options: TeamsHostForwardPortConflictHookOptions = {},
 ): MessagingHookHandler {
-  return (context) => {
+  return async (context) => {
     if (context.channelId !== "teams") return {};
 
     const currentSandbox = resolveCurrentSandbox(context, options);
@@ -73,10 +87,26 @@ export function createTeamsHostForwardPortConflictHook(
 
     const findConflicts = options.findConflicts ?? findTeamsHostForwardPortConflicts;
     const conflicts = findConflicts(currentSandbox, port, entries);
-    if (conflicts.length === 0) return {};
+    if (conflicts.length > 0) {
+      const formatConflict = options.formatConflict ?? formatTeamsHostForwardPortConflictMessage;
+      throw new MessagingHookConflictError(conflicts.map(formatConflict).join("\n"));
+    }
 
-    const formatConflict = options.formatConflict ?? formatTeamsHostForwardPortConflictMessage;
-    throw new MessagingHookConflictError(conflicts.map(formatConflict).join("\n"));
+    if (!options.checkPortAvailable) return {};
+    const availability = await options.checkPortAvailable(port);
+    if (availability.ok) return {};
+
+    const currentGatewayName = resolveCurrentGatewayName(context, options);
+    if (
+      currentSandbox &&
+      options.isCurrentSandboxForward?.(currentSandbox, currentGatewayName, port)
+    ) {
+      return {};
+    }
+
+    throw new MessagingHookConflictError(
+      formatTeamsHostPortAvailabilityConflict(port, availability),
+    );
   };
 }
 
@@ -185,6 +215,23 @@ export function formatTeamsHostForwardPortConflictMessage({
   );
 }
 
+export function formatTeamsHostPortAvailabilityConflict(
+  port: number,
+  availability: TeamsHostPortAvailabilityResult,
+): string {
+  const processName = availability.process?.trim();
+  const blocker =
+    processName && processName !== "unknown"
+      ? `${processName}${availability.pid ? ` (PID ${availability.pid})` : ""}`
+      : availability.pid
+        ? `PID ${availability.pid}`
+        : "another process";
+  return (
+    `Microsoft Teams webhook port ${port} is already in use by ${blocker}. ` +
+    "Free the port or set MSTEAMS_PORT to a different free port before enabling Teams."
+  );
+}
+
 function resolveCurrentSandbox(
   context: MessagingHookContext,
   options: TeamsHostForwardPortConflictHookOptions,
@@ -192,6 +239,16 @@ function resolveCurrentSandbox(
   return (
     normalizeNullableString(context.inputs?.currentSandbox) ??
     resolveNullableOption(options.currentSandbox)
+  );
+}
+
+function resolveCurrentGatewayName(
+  context: MessagingHookContext,
+  options: TeamsHostForwardPortConflictHookOptions,
+): string | null {
+  return (
+    normalizeNullableString(context.inputs?.currentGatewayName) ??
+    resolveNullableOption(options.currentGatewayName)
   );
 }
 

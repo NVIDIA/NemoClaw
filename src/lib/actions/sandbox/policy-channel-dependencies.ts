@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { inspectOpenShellSandboxIdentityFingerprint } from "../../adapters/openshell/sandbox-identity-cli";
-import { runOpenshell } from "../../adapters/openshell/runtime";
+import { captureOpenshell, runOpenshell } from "../../adapters/openshell/runtime";
 
 type MessagingProviderTokenDefinition = {
   name: string;
@@ -51,6 +51,7 @@ type GooglechatWebhookProxy = Pick<
   typeof import("../../messaging/channels/googlechat/tunnel/proxy"),
   "readGooglechatWebhookProxyState" | "startGooglechatWebhookProxy" | "stopGooglechatWebhookProxy"
 >;
+type MessagingHostForwardModule = typeof import("../../onboard/messaging-host-forward");
 
 function gatewayRunner(gatewayName: string): typeof runOpenshell {
   const { createGatewayScopedOpenshellRunner } =
@@ -66,6 +67,18 @@ function gatewayRunner(gatewayName: string): typeof runOpenshell {
  * onboarding and rebuild modules at policy-channel import time.
  */
 export const policyChannelDependencies = {
+  createMessagingHostForwardPreEnableHookRegistry() {
+    const messagingHostForward =
+      require("../../onboard/messaging-host-forward") as MessagingHostForwardModule;
+    return messagingHostForward.createMessagingHostForwardPreEnableHookRegistry({
+      captureForwardList: (gatewayName) => {
+        const args = ["forward", "list"];
+        if (gatewayName) args.push("--gateway", gatewayName);
+        const result = captureOpenshell(args, { ignoreError: true });
+        return result.status === 0 ? result.output : null;
+      },
+    });
+  },
   /** Use stopped Docker cleanup only after both in-sandbox cleanup attempts fail. */
   clearStoppedSandboxStateRoots(
     sandboxName: string,
