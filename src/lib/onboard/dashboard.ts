@@ -97,7 +97,10 @@ export interface OnboardDashboardDeps {
       sandbox: { gatewayName?: string | null; gatewayPort?: number | null } | null | undefined,
     ): string;
   };
-  stopSandboxForDashboardReuse?(sandboxName: string): { exitCode: number; message?: string };
+  stopSandboxForDashboardReuse?(
+    sandboxName: string,
+    revalidateAtMutationEdge: () => void,
+  ): { exitCode: number; message?: string };
   startSandboxForDashboardReuse?(sandboxName: string): Promise<{
     exitCode: number;
     message?: string;
@@ -461,11 +464,13 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
         }
       };
 
-      revalidateSandboxIdentity?.(
-        `restart sandbox '${sandboxName}' to reconcile dashboard forward ${String(port)}`,
-      );
-      assertSameSandbox(`stop sandbox '${sandboxName}'`);
-      const stopped = stopSandbox(sandboxName);
+      const revalidateAtStopBoundary = (): void => {
+        revalidateSandboxIdentity?.(
+          `restart sandbox '${sandboxName}' to reconcile dashboard forward ${String(port)}`,
+        );
+        assertSameSandbox(`stop sandbox '${sandboxName}'`);
+      };
+      const stopped = stopSandbox(sandboxName, revalidateAtStopBoundary);
       if (stopped.exitCode !== 0) {
         throw new Error(
           `Could not stop sandbox '${sandboxName}' to reconcile dashboard port ${String(port)}${

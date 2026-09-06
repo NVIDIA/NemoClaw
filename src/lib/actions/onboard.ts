@@ -18,9 +18,9 @@ export interface OnboardActionRuntimeDeps {
   readonly dashboardReuseLifecycle?: DashboardReuseLifecycle;
 }
 
-async function runOnboard(
+export async function runOnboard(
   options: OnboardCommandOptions,
-  runtimeDeps: OnboardActionRuntimeDeps,
+  runtimeDeps: OnboardActionRuntimeDeps = {},
 ): Promise<void> {
   // Keep the monolithic legacy onboarding graph lazy so command metadata/help
   // imports do not execute it. Resolve it only when the user invokes onboard.
@@ -28,9 +28,11 @@ async function runOnboard(
     onboard: (onboardOptions?: OnboardOptions) => Promise<void>;
   };
   const startActions = await import("./sandbox/start");
+  const stopActions = await import("./sandbox/stop");
   const lifecycle = runtimeDeps.dashboardReuseLifecycle ?? {
     startSandbox: startActions.startSandbox,
-    stopSandbox: (await import("./sandbox/stop")).stopSandbox,
+    stopSandbox: (sandboxName: string, revalidateAtMutationEdge: () => void) =>
+      stopActions.stopSandbox(sandboxName, { revalidateAtMutationEdge }),
     withSandboxLifecycleLock: startActions.withSandboxLifecycleLock,
   };
   await withDashboardReuseLifecycle(lifecycle, () =>

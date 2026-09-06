@@ -13,7 +13,8 @@ vi.mock("../agent/defs", () => ({ listAgents: mocks.listAgents }));
 vi.mock("../onboard", () => ({ onboard: mocks.onboard }));
 vi.mock("../onboard/command", () => ({ runOnboardCommand: mocks.runOnboardCommand }));
 
-import { runOnboardAction } from "./onboard";
+import { getDashboardReuseLifecycle } from "../onboard/dashboard/reuse-lifecycle";
+import { runOnboard, runOnboardAction } from "./onboard";
 
 describe("onboard action runtime composition", () => {
   beforeEach(() => {
@@ -46,5 +47,17 @@ describe("onboard action runtime composition", () => {
       resume: false,
       googlechatTunnelRuntime,
     });
+  });
+
+  it("provides the default dashboard reuse lifecycle to direct onboarding callers", async () => {
+    mocks.onboard.mockImplementationOnce(async () => {
+      expect(getDashboardReuseLifecycle()).toEqual({
+        startSandbox: expect.any(Function),
+        stopSandbox: expect.any(Function),
+        withSandboxLifecycleLock: expect.any(Function),
+      });
+    });
+
+    await runOnboard({} as never);
   });
 });

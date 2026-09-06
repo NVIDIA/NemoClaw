@@ -66,9 +66,9 @@ A later onboarding run for another sandbox does not tear down the first sandbox'
 </AgentOnly>
 
 <AgentOnly variant="openclaw">
-Re-onboarding the same ready OpenClaw sandbox briefly stops and starts it to verify the registered dashboard forward.
-If verification leaves the sandbox stopped, resolve the listener conflict.
-Run `nemoclaw <sandbox-name> start`, then retry onboarding.
+If re-onboarding finds the registered dashboard port already bound, NemoClaw briefly stops and starts the same ready OpenClaw sandbox to verify its dashboard forward.
+If the port remains bound after the sandbox stops, resolve the listener conflict, run `nemoclaw <sandbox-name> start`, then retry onboarding.
+For other failures, follow the reported recovery steps.
 </AgentOnly>
 
 <AgentOnly variant="deepagents">

@@ -273,6 +273,18 @@ describe("discoverActiveOllamaSandboxNames", () => {
 });
 
 describe("stopSandbox", () => {
+  it("revalidates the selected sandbox at the stop mutation boundary", () => {
+    const revalidateAtMutationEdge = vi.fn(() => {
+      throw new Error("sandbox identity changed");
+    });
+    const h = harness({ revalidateAtMutationEdge });
+
+    expect(() => stopSandbox("my-sandbox", h.deps)).toThrow(/sandbox identity changed/u);
+    expect(revalidateAtMutationEdge).toHaveBeenCalledOnce();
+    expect(h.stopSandboxChannels).not.toHaveBeenCalled();
+    expect(h.dockerStop).not.toHaveBeenCalled();
+  });
+
   it("gracefully stops in-sandbox channels before stopping the container (#6026)", () => {
     const h = harness();
 

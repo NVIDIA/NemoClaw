@@ -16,7 +16,10 @@ function harness(options: {
   startSandbox?: (sandboxName: string) => Promise<{ exitCode: number; message?: string }>;
 }) {
   const launch = vi.fn();
-  const stopSandbox = vi.fn(options.stopSandbox ?? (() => ({ exitCode: 0 })));
+  const stopSandbox = vi.fn((sandboxName: string, revalidateAtMutationEdge: () => void) => {
+    revalidateAtMutationEdge();
+    return (options.stopSandbox ?? (() => ({ exitCode: 0 })))(sandboxName);
+  });
   const startSandbox = vi.fn(options.startSandbox ?? (async () => ({ exitCode: 0 })));
   const recordedIdentity = fingerprintSandboxLiveIdentity(
     `Id: ${options.sandboxIdentity?.() ?? "sandbox-id"}`,
@@ -120,7 +123,7 @@ describe("finalization dashboard ForwardTcp launch", () => {
     await expect(
       helpers.ensureFinalizationDashboardForward("reonboard-test", undefined, true),
     ).resolves.toBe(18_790);
-    expect(stopSandbox).toHaveBeenCalledWith("reonboard-test");
+    expect(stopSandbox).toHaveBeenCalledWith("reonboard-test", expect.any(Function));
     expect(startSandbox).toHaveBeenCalledWith("reonboard-test");
     expect(launch).not.toHaveBeenCalled();
     expect(process.env.CHAT_UI_URL).toBe("http://127.0.0.1:18790");
@@ -138,7 +141,7 @@ describe("finalization dashboard ForwardTcp launch", () => {
     await expect(
       helpers.ensureFinalizationDashboardForward("reonboard-test", undefined, true),
     ).rejects.toThrow(/remained occupied.*run 'nemoclaw reonboard-test start'/u);
-    expect(stopSandbox).toHaveBeenCalledWith("reonboard-test");
+    expect(stopSandbox).toHaveBeenCalledWith("reonboard-test", expect.any(Function));
     expect(startSandbox).not.toHaveBeenCalled();
     expect(launch).not.toHaveBeenCalled();
   });
@@ -163,7 +166,7 @@ describe("finalization dashboard ForwardTcp launch", () => {
     await expect(
       helpers.ensureFinalizationDashboardForward("reonboard-test", undefined, true),
     ).rejects.toThrow(/identity changed.*selected sandbox was stopped/u);
-    expect(stopSandbox).toHaveBeenCalledWith("reonboard-test");
+    expect(stopSandbox).toHaveBeenCalledWith("reonboard-test", expect.any(Function));
     expect(startSandbox).not.toHaveBeenCalled();
     expect(launch).not.toHaveBeenCalled();
   });
@@ -183,6 +186,41 @@ describe("finalization dashboard ForwardTcp launch", () => {
     ).rejects.toThrow(/Could not verify sandbox/u);
     expect(stopSandbox).not.toHaveBeenCalled();
     expect(startSandbox).not.toHaveBeenCalled();
+    expect(launch).not.toHaveBeenCalled();
+  });
+
+  it("does not cache a failed sandbox restart as reconciled", async () => {
+    vi.stubEnv("CHAT_UI_URL", undefined);
+    let bound = true;
+    const startOutcomes = [
+      async () => ({ exitCode: 1, message: "restart failed" }),
+      async () => {
+        bound = true;
+        return { exitCode: 0 };
+      },
+    ];
+    const { helpers, launch, startSandbox, stopSandbox } = harness({
+      listSandboxes: () => ({
+        sandboxes: [{ name: "reonboard-test", dashboardPort: 18_790 }],
+      }),
+      isPortBound: (port) => port === 18_790 && bound,
+      stopSandbox: () => {
+        bound = false;
+        return { exitCode: 0 };
+      },
+      startSandbox: async () => await startOutcomes.shift()!(),
+    });
+
+    await expect(
+      helpers.ensureFinalizationDashboardForward("reonboard-test", undefined, true),
+    ).rejects.toThrow(/did not restore dashboard port.*restart failed/u);
+
+    bound = true;
+    await expect(
+      helpers.ensureFinalizationDashboardForward("reonboard-test", undefined, true),
+    ).resolves.toBe(18_790);
+    expect(stopSandbox).toHaveBeenCalledTimes(2);
+    expect(startSandbox).toHaveBeenCalledTimes(2);
     expect(launch).not.toHaveBeenCalled();
   });
 
