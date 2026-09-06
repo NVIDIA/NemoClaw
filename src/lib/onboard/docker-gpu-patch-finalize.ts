@@ -101,11 +101,12 @@ function isExactRunningReplacement(
   replacementContainerId: string,
   dockerRun: NonNullable<DockerGpuPatchDeps["dockerRun"]>,
   timeoutMs: number,
+  now: () => Date,
 ): boolean {
   const expectedContainerId = fullDockerContainerId(replacementContainerId);
   if (!expectedContainerId || timeoutMs <= 0) return false;
   try {
-    const deadline = Date.now() + timeoutMs;
+    const deadline = now().getTime() + timeoutMs;
     const namespace = dockerRun(
       [
         "inspect",
@@ -128,7 +129,7 @@ function isExactRunningReplacement(
     ) {
       return false;
     }
-    let remainingMs = deadline - Date.now();
+    let remainingMs = deadline - now().getTime();
     if (remainingMs <= 0) return false;
     const containers = queryOpenShellDockerSandboxContainers(
       sandboxName,
@@ -143,7 +144,7 @@ function isExactRunningReplacement(
     ) {
       return false;
     }
-    remainingMs = deadline - Date.now();
+    remainingMs = deadline - now().getTime();
     if (remainingMs <= 0) return false;
     const inspect = dockerRun(
       [
@@ -250,49 +251,52 @@ export function finalizeDockerGpuPatchBackup(
         lastSandboxPhase: null,
       };
     }
+    const now = deps.now ?? (() => new Date());
+    const finalHandoffDeadlineMs =
+      now().getTime() + Math.max(1, options.finalHandoffTimeoutSecs * 1000);
     console.log(
       `  Starting the exact replacement through OpenShell to complete the final handoff (up to ${options.finalHandoffTimeoutSecs}s)...`,
     );
-    const replacementRestarted = runOpenShellLifecycleCommand(
-      deps.runOpenshell,
-      ["sandbox", "start", options.sandboxName],
-      options.finalHandoffTimeoutSecs,
-    );
-    if (!replacementRestarted) {
-      return {
-        backupRemoved: true,
-        rolledBack: false,
-        replacementStoppedForCommit: true,
-        replacementRestarted: false,
-        lifecycleStopAcknowledged: true,
-        finalHandoffAcknowledged: false,
-        lastSandboxPhase: null,
-      };
-    }
+    const remainingBeforeStartMs = finalHandoffDeadlineMs - now().getTime();
+    const lifecycleStartAcknowledged =
+      remainingBeforeStartMs > 0
+        ? runOpenShellLifecycleCommand(
+            deps.runOpenshell,
+            ["sandbox", "start", options.sandboxName],
+            remainingBeforeStartMs / 1000,
+          )
+        : false;
+    // OpenShell can return nonzero after applying the start mutation when its
+    // internal Ready deadline expires. Reconcile that ambiguous result through
+    // the identity-bound handoff waiter, which rejects absent, foreign, and
+    // terminal replacement state. Both operations share one deadline so this
+    // reconciliation cannot double the configured handoff interval.
+    const remainingHandoffTimeoutMs = Math.max(0, finalHandoffDeadlineMs - now().getTime());
     console.log(
-      `  Waiting for OpenShell to confirm the final replacement handoff (up to ${options.finalHandoffTimeoutSecs}s)...`,
+      `  Waiting for OpenShell to confirm the final replacement handoff (up to ${Math.ceil(remainingHandoffTimeoutMs / 1000)}s)...`,
     );
-    const acknowledgement = waitForOpenShellFinalHandoff(
-      options.sandboxName,
-      options.finalHandoffTimeoutSecs,
-      {
-        runCaptureOpenshell: deps.runCaptureOpenshell,
-        runOpenshell: deps.runOpenshell,
-        sleep: deps.sleep,
-        replacementIsExactAndRunning: (remainingMs) =>
-          isExactRunningReplacement(
-            options.sandboxName,
-            options.result.newContainerId,
-            resolved.dockerRun,
-            remainingMs,
-          ),
-      },
-    );
+    const acknowledgement =
+      remainingHandoffTimeoutMs > 0
+        ? waitForOpenShellFinalHandoff(options.sandboxName, finalHandoffDeadlineMs, {
+            runCaptureOpenshell: deps.runCaptureOpenshell,
+            runOpenshell: deps.runOpenshell,
+            sleep: deps.sleep,
+            now,
+            replacementIsExactAndRunning: (remainingMs) =>
+              isExactRunningReplacement(
+                options.sandboxName,
+                options.result.newContainerId,
+                resolved.dockerRun,
+                remainingMs,
+                now,
+              ),
+          })
+        : { acknowledged: false, lastSandboxPhase: null };
     return {
       backupRemoved: true,
       rolledBack: false,
       replacementStoppedForCommit: true,
-      replacementRestarted: true,
+      replacementRestarted: lifecycleStartAcknowledged || acknowledgement.acknowledged,
       lifecycleStopAcknowledged: true,
       finalHandoffAcknowledged: acknowledgement.acknowledged,
       lastSandboxPhase: acknowledgement.lastSandboxPhase,
