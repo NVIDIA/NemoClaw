@@ -718,6 +718,7 @@ export function prompt(
         .then(resolve)
         .catch((error: NodeJS.ErrnoException) => {
           if (error && error.code === "SIGINT") {
+            process.exitCode = 130;
             reject(error);
             process.kill(process.pid, "SIGINT");
             return;
@@ -759,6 +760,7 @@ export function prompt(
 
     try {
       rl.on("SIGINT", () => {
+        process.exitCode = 130;
         const error = Object.assign(new Error("Prompt interrupted"), { code: "SIGINT" });
         rejectPrompt(error);
         process.kill(process.pid, "SIGINT");
