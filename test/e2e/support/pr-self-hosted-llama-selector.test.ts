@@ -108,13 +108,18 @@ describe("generic NVIDIA GPU PR selection", () => {
     "src/lib/onboard/fatal-runtime-preflight.ts",
     "src/lib/onboard/overlayfs-auto-fix.ts",
     "src/lib/onboard/preflight.ts",
-    "src/lib/onboard/runtime-provider/podman.ts",
   ])(
     "selects the generic NVIDIA GPU E2E job when %s can change installer readiness",
     (changedFile) => {
       expect(selectGenericGpuLane([changedFile])).toBe(`base_sha=${BASE_SHA}\nselected=true`);
     },
   );
+
+  it("does not select the Docker-qualified GPU job for a Podman-only change", () => {
+    expect(selectGenericGpuLane(["src/lib/onboard/runtime-provider/podman.ts"])).toBe(
+      `base_sha=${BASE_SHA}\nselected=false`,
+    );
+  });
 
   it("does not select the generic NVIDIA GPU E2E job for unrelated documentation", () => {
     expect(selectGenericGpuLane(["docs/get-started/quickstart.mdx"])).toBe(

@@ -11,8 +11,10 @@ import {
   loadManagedLlamaCppReceipt,
   managedLlamaCppStatePaths,
 } from "../../../src/lib/inference/llama-cpp/managed-state.ts";
+import { createManagedLlamaCppLifecycleAdapter } from "../../../src/lib/inference/llama-cpp/managed-lifecycle-adapter.ts";
 import { isLlamaCppServingRecipe } from "../../../src/lib/inference/serving/adapter-registry.ts";
 import { loadManagedInferenceCatalog } from "../../../src/lib/inference/serving/catalog-loader.ts";
+import { resolveRegisteredRuntimeProviderBundle } from "../../../src/lib/onboard/runtime-provider/current.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clients/sandbox.ts";
@@ -26,18 +28,12 @@ import {
 
 const TIMEOUT_MS = 110 * 60_000;
 const RECIPE_ID =
-  process.env.NEMOCLAW_LLAMACPP_RECIPE ??
-  "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1";
+  process.env.NEMOCLAW_LLAMACPP_RECIPE ?? "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1";
 const TARGET_ID = process.env.E2E_TARGET_ID ?? "llama-cpp-generic-gpu";
-const MAX_TOKENS = Number.parseInt(
-  process.env.NEMOCLAW_LLAMA_CPP_QUALIFICATION_MAX_TOKENS ?? "32",
-  10,
-);
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-llamacpp-gpu";
 validateSandboxName(SANDBOX_NAME);
 assert.match(RECIPE_ID, /^[a-z0-9][a-z0-9._-]{0,159}$/u, "invalid llama.cpp recipe ID");
 assert.match(TARGET_ID, /^[a-z0-9][a-z0-9-]{0,63}$/u, "invalid E2E target ID");
-assert(Number.isSafeInteger(MAX_TOKENS) && MAX_TOKENS > 0, "invalid qualification token bound");
 
 function llamaGpuApplications(output: string): string[][] {
   return output
@@ -91,9 +87,9 @@ test(
     await artifacts.target.declare({
       id: TARGET_ID,
       boundary:
-        "Linux host + configured runtime provider + one NVIDIA GPU + install.sh managed llama.cpp + OpenShell sandbox route",
+        "Linux AMD64 RTX runner + Docker-qualified managed llama.cpp target + OpenShell sandbox route",
       configurationAuthority:
-        "The repository-owned serving recipe supplies every model and serving value; the selected runtime-provider bundle owns materialization.",
+        "The repository-owned serving recipe supplies every model and serving value; the selected runtime-provider bundle owns materialization, and the artifact records the provider this lane exercised.",
       credentialBoundary:
         "The generated llama.cpp API key remains in owner-only host state and enters commands only through redacted process input.",
     });
@@ -130,7 +126,7 @@ test(
       timeoutMs: 30_000,
     });
     expect(architecture.exitCode, resultText(architecture)).toBe(0);
-    expect(architecture.stdout.trim()).toMatch(/^(?:aarch64|x86_64)$/u);
+    expect(architecture.stdout.trim()).toBe("x86_64");
 
     const computeBefore = await host.command(
       "nvidia-smi",
@@ -145,7 +141,6 @@ test(
     expect(llamaGpuApplications(computeBefore.stdout)).toEqual([]);
 
     const { modelFile, recipe } = loadGpuSetting();
-    expect(MAX_TOKENS).toBeLessThanOrEqual(recipe.spec.serve.limits.maxOutputTokens);
 
     progress.phase("run the declarative managed llama.cpp installer");
     const install = await host.command("bash", ["install.sh", "--non-interactive"], {
@@ -223,7 +218,7 @@ test(
         JSON.stringify({
           model: recipe.spec.model.servedName,
           messages: [{ role: "user", content: "Respond with a short greeting." }],
-          max_tokens: MAX_TOKENS,
+          max_tokens: 32,
         }),
       ],
       {
@@ -243,7 +238,7 @@ test(
           {
             model: recipe.spec.model.servedName,
             messages: [{ role: "user", content: "Respond with a short greeting." }],
-            max_tokens: MAX_TOKENS,
+            max_tokens: 32,
           },
         )}'`,
       ),
@@ -281,32 +276,6 @@ test(
     });
     expect(readySandbox.exitCode, resultText(readySandbox)).toBe(0);
     expect(hasExactReadyPhase(readySandbox.stdout)).toBe(true);
-
-    await artifacts.writeJson("qualification-evidence.json", {
-      candidateSha: qualificationHeadSha,
-      recipe: RECIPE_ID,
-      runtimeProvider: {
-        providerId: receipt.providerId,
-        authorityId: receipt.engineAuthority.authorityId,
-      },
-      model: {
-        id: recipe.spec.model.id,
-        digest: modelFile.digest,
-        servedName: recipe.spec.model.servedName,
-      },
-      gpu: {
-        architecture: architecture.stdout.trim(),
-        computeProcess: computeApps.stdout.trim(),
-        usedMemoryMiB: usedGpuMemoryMiB,
-        minimumFullOffloadMemoryMiB,
-      },
-      probes: {
-        unauthorizedStatus: 401,
-        hostChat: "passed",
-        sandboxChat: "passed",
-        openClawAgent: "passed",
-      },
-    });
 
     const destroyEnv = env();
     delete destroyEnv.NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE;
@@ -348,6 +317,51 @@ test(
       fs.existsSync(modelCacheEntry),
       "destroy must preserve the shared Hugging Face cache entry",
     ).toBe(true);
+    const runtimeProvider = resolveRegisteredRuntimeProviderBundle(receipt.providerId);
+    assert(
+      runtimeProvider?.hostLocalInference.supported === true &&
+        runtimeProvider.hostLocalInference.services.includes("llama-cpp"),
+      "receipt runtime provider does not expose managed llama.cpp cleanup authority",
+    );
+    const cleanupProof = createManagedLlamaCppLifecycleAdapter({
+      runtimeProvider,
+      runtimeOwnerSandboxName: SANDBOX_NAME,
+      expectedModel: recipe.spec.model.servedName,
+      expectedReceipt: receipt,
+      gatewayPort: recipe.spec.serve.port,
+      homeDir: os.homedir(),
+      environment: destroyEnv,
+      operation: runtimeProvider.hostLocalInference.createOperation({ env: destroyEnv }),
+    }).runtime.destroy(receipt);
+    expect(cleanupProof.status).toBe("already-absent");
+
+    await artifacts.writeJson("qualification-evidence.json", {
+      candidateSha: qualificationHeadSha,
+      recipe: RECIPE_ID,
+      runtimeProvider: {
+        providerId: receipt.providerId,
+        authorityId: receipt.engineAuthority.authorityId,
+      },
+      model: {
+        id: recipe.spec.model.id,
+        digest: modelFile.digest,
+        servedName: recipe.spec.model.servedName,
+      },
+      gpu: {
+        architecture: architecture.stdout.trim(),
+        computeProcess: computeApps.stdout.trim(),
+        usedMemoryMiB: usedGpuMemoryMiB,
+        minimumFullOffloadMemoryMiB,
+      },
+      probes: {
+        unauthorizedStatus: 401,
+        hostChat: "passed",
+        sandboxChat: "passed",
+        openClawAgent: "passed",
+        publicDestroy: "passed",
+        providerCleanupReconciliation: cleanupProof.status,
+      },
+    });
 
     await artifacts.target.complete({
       id: TARGET_ID,

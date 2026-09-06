@@ -78,7 +78,7 @@ jobs:
                   or .filename == "src/lib/onboard/fatal-runtime-preflight.ts"
                   or .filename == "src/lib/onboard/overlayfs-auto-fix.ts"
                   or .filename == "src/lib/onboard/preflight.ts"
-                  or (.filename | startswith("src/lib/onboard/runtime-provider/"))
+                  or (.filename | startswith("src/lib/onboard/runtime-provider/docker-llama-cpp"))
                 )
             ' >/dev/null; then
             selected=true
