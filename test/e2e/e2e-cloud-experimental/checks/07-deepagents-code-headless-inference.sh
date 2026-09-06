@@ -458,7 +458,11 @@ if not isinstance(completion["duration_ms"], int) or completion["duration_ms"] <
 if completion["response_bytes"] != len(data["response"].encode("utf-8")):
     raise SystemExit(1)
 '; then
-    printf '%s\n' "json-response"
+    if [ "$expected_response" = "PONG" ]; then
+      printf '%s\n' "json-pong"
+    else
+      printf '%s\n' "json-response"
+    fi
     return 0
   fi
 
@@ -681,7 +685,7 @@ DCODE_EXIT:${first_skill_exit}"
   direct_headless_output="${direct_output}
 DCODE_EXIT:${direct_exit}"
   if direct_classification="$(classify_headless_output "$direct_exit" "$direct_headless_output" "$skill_marker_v2")"; then
-    pass "fresh direct-exec dcode session consumed only the updated skill (${direct_classification}; exit ${direct_exit})"
+    pass "direct-exec dcode -n reached managed inference; fresh direct-exec dcode session consumed only the updated skill (${direct_classification}; exit ${direct_exit})"
   else
     fail_test "fresh direct-exec dcode session did not consume only the updated skill (${direct_classification}, exit ${direct_exit})"
   fi

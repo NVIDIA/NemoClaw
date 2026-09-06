@@ -8,7 +8,7 @@ import { NemoClawSkillCommand } from "../../../lib/cli/nemoclaw-skill-command";
 export default class SkillInstallCliCommand extends NemoClawSkillCommand {
   static id = "sandbox:skill:install";
   static strict = true;
-  static summary = "Add a local skill to the selected sandbox agent";
+  static summary = "Deploy a skill directory to the sandbox";
   static description =
     "Validate and privately stage a local SKILL.md tree, then use the selected agent's native add command or canonical writable-root fallback.";
   static usage = ["<name> <path>"];
