@@ -101,11 +101,12 @@ function isExactRunningReplacement(
   replacementContainerId: string,
   dockerRun: NonNullable<DockerGpuPatchDeps["dockerRun"]>,
   timeoutMs: number,
+  now: () => Date,
 ): boolean {
   const expectedContainerId = fullDockerContainerId(replacementContainerId);
   if (!expectedContainerId || timeoutMs <= 0) return false;
   try {
-    const deadline = Date.now() + timeoutMs;
+    const deadline = now().getTime() + timeoutMs;
     const namespace = dockerRun(
       [
         "inspect",
@@ -128,7 +129,7 @@ function isExactRunningReplacement(
     ) {
       return false;
     }
-    let remainingMs = deadline - Date.now();
+    let remainingMs = deadline - now().getTime();
     if (remainingMs <= 0) return false;
     const containers = queryOpenShellDockerSandboxContainers(
       sandboxName,
@@ -143,7 +144,7 @@ function isExactRunningReplacement(
     ) {
       return false;
     }
-    remainingMs = deadline - Date.now();
+    remainingMs = deadline - now().getTime();
     if (remainingMs <= 0) return false;
     const inspect = dockerRun(
       [
@@ -276,16 +277,18 @@ export function finalizeDockerGpuPatchBackup(
     );
     const acknowledgement =
       remainingHandoffTimeoutMs > 0
-        ? waitForOpenShellFinalHandoff(options.sandboxName, remainingHandoffTimeoutMs, {
+        ? waitForOpenShellFinalHandoff(options.sandboxName, finalHandoffDeadlineMs, {
             runCaptureOpenshell: deps.runCaptureOpenshell,
             runOpenshell: deps.runOpenshell,
             sleep: deps.sleep,
+            now,
             replacementIsExactAndRunning: (remainingMs) =>
               isExactRunningReplacement(
                 options.sandboxName,
                 options.result.newContainerId,
                 resolved.dockerRun,
                 remainingMs,
+                now,
               ),
           })
         : { acknowledged: false, lastSandboxPhase: null };

@@ -285,7 +285,8 @@ describe("finalizeDockerGpuPatchBackup", () => {
 
   it("rejects a running replacement that stays Provisioning through the remaining handoff budget (#11096)", () => {
     const result = exactDeferredCreateResult();
-    let currentTimeMs = new Date("2026-09-04T07:42:01Z").getTime();
+    const startedAtMs = new Date("2026-09-04T07:42:01Z").getTime();
+    let currentTimeMs = startedAtMs;
     const runCaptureOpenshell = vi.fn(
       (_args: string[], _opts?: Record<string, unknown>) =>
         "alpha  2026-09-04 07:42:01  Provisioning\n",
@@ -320,7 +321,9 @@ describe("finalizeDockerGpuPatchBackup", () => {
         dockerStart: vi.fn(() => ({ status: 0 })),
         runCaptureOpenshell,
         runOpenshell,
-        sleep: vi.fn(),
+        sleep: vi.fn((seconds: number) => {
+          currentTimeMs += seconds * 1000;
+        }),
         now: () => new Date(currentTimeMs),
       },
     );
@@ -334,8 +337,9 @@ describe("finalizeDockerGpuPatchBackup", () => {
       finalHandoffAcknowledged: false,
       lastSandboxPhase: "Provisioning",
     });
-    expect(runCaptureOpenshell).toHaveBeenCalledTimes(2);
+    expect(runCaptureOpenshell).toHaveBeenCalledOnce();
     expect(runOpenshell).toHaveBeenCalledTimes(2);
+    expect(currentTimeMs - startedAtMs).toBe(60_000);
     const firstListTimeoutMs = Number(runCaptureOpenshell.mock.calls[0]?.[1]?.timeout);
     expect(firstListTimeoutMs).toBeGreaterThan(0);
     expect(firstListTimeoutMs).toBeLessThanOrEqual(500);

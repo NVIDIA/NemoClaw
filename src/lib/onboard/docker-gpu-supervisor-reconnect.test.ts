@@ -27,7 +27,7 @@ describe("Docker GPU final handoff acknowledgement", () => {
         vi.advanceTimersByTime(seconds * 1000);
       });
 
-      const acknowledgement = waitForOpenShellFinalHandoff("alpha", 500, {
+      const acknowledgement = waitForOpenShellFinalHandoff("alpha", startedAtMs + 500, {
         runCaptureOpenshell,
         runOpenshell: vi.fn(() => ({ status: 1 })),
         replacementIsExactAndRunning: vi.fn(() => true),
@@ -66,7 +66,7 @@ describe("Docker GPU final handoff acknowledgement", () => {
       return true;
     });
 
-    const acknowledgement = waitForOpenShellFinalHandoff("alpha", 60_000, {
+    const acknowledgement = waitForOpenShellFinalHandoff("alpha", Date.now() + 60_000, {
       runCaptureOpenshell,
       runOpenshell,
       replacementIsExactAndRunning,
@@ -106,7 +106,7 @@ describe("Docker GPU final handoff acknowledgement", () => {
     const sleep = vi.fn();
 
     expect(
-      waitForOpenShellFinalHandoff("alpha", 60_000, {
+      waitForOpenShellFinalHandoff("alpha", Date.now() + 60_000, {
         runCaptureOpenshell,
         runOpenshell,
         replacementIsExactAndRunning,
@@ -124,7 +124,7 @@ describe("Docker GPU final handoff acknowledgement", () => {
     const replacementIsExactAndRunning = vi.fn(() => false);
 
     expect(
-      waitForOpenShellFinalHandoff("alpha", 60_000, {
+      waitForOpenShellFinalHandoff("alpha", Date.now() + 60_000, {
         runCaptureOpenshell,
         runOpenshell: vi.fn(() => ({ status: 1 })),
         replacementIsExactAndRunning,
@@ -143,7 +143,7 @@ describe("Docker GPU final handoff acknowledgement", () => {
     const replacementIsExactAndRunning = vi.fn(() => true);
 
     expect(
-      waitForOpenShellFinalHandoff("alpha", 60_000, {
+      waitForOpenShellFinalHandoff("alpha", Date.now() + 60_000, {
         runCaptureOpenshell,
         runOpenshell,
         replacementIsExactAndRunning,
@@ -163,7 +163,7 @@ describe("Docker GPU final handoff acknowledgement", () => {
     const replacementIsExactAndRunning = vi.fn().mockReturnValueOnce(true).mockReturnValue(false);
 
     expect(
-      waitForOpenShellFinalHandoff("alpha", 60_000, {
+      waitForOpenShellFinalHandoff("alpha", Date.now() + 60_000, {
         runCaptureOpenshell,
         runOpenshell,
         replacementIsExactAndRunning,
