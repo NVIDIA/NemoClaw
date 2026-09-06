@@ -97,17 +97,23 @@ export function buildSystemReadinessProbeEnv(
 }
 
 type ReadinessRunCapture = typeof import("../runner").runCapture;
+type ReadinessRunCaptureEx = typeof import("../runner").runCaptureEx;
+
+function readinessProbeArgv(cmd: readonly string[]): [string, string[]] {
+  if (!Array.isArray(cmd) || cmd.length === 0) {
+    throw new Error("Readiness probe command must be a non-empty argv array.");
+  }
+  const [file, ...args] = cmd.map(String);
+  if (!file || file.includes("\0") || args.some((arg) => arg.includes("\0"))) {
+    throw new Error("Readiness probe command contains an invalid executable or argument.");
+  }
+  return [file, args];
+}
 
 /** Build a runCapture-compatible executor whose environment is replaced, not merged. */
 export function createSystemReadinessCapture(env: NodeJS.ProcessEnv): ReadinessRunCapture {
   return (cmd, opts = {}) => {
-    if (!Array.isArray(cmd) || cmd.length === 0) {
-      throw new Error("Readiness probe command must be a non-empty argv array.");
-    }
-    const [file, ...args] = cmd.map(String);
-    if (!file || file.includes("\0") || args.some((arg) => arg.includes("\0"))) {
-      throw new Error("Readiness probe command contains an invalid executable or argument.");
-    }
+    const [file, args] = readinessProbeArgv(cmd);
     const {
       ignoreError,
       includeStderr,
@@ -134,5 +140,31 @@ export function createSystemReadinessCapture(env: NodeJS.ProcessEnv): ReadinessR
       throw new Error("Readiness probe command failed.");
     }
     return output;
+  };
+}
+
+/** Build a structured readiness executor without weakening the replacement environment. */
+export function createSystemReadinessCaptureEx(env: NodeJS.ProcessEnv): ReadinessRunCaptureEx {
+  return (cmd, opts = {}) => {
+    const [file, args] = readinessProbeArgv(cmd);
+    const { env: _ignoredCallerEnv, stdio: _ignoredStdio, shell, ...spawnOptions } = opts;
+    if (shell) throw new Error("Readiness probe commands cannot enable shell interpretation.");
+    const result = spawnSync(file, args, {
+      timeout: READINESS_PROBE_TIMEOUT_MS,
+      maxBuffer: READINESS_PROBE_MAX_BUFFER_BYTES,
+      ...spawnOptions,
+      encoding: "utf-8",
+      env,
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    return {
+      stdout: String(result.stdout ?? "").trim(),
+      stderr: String(result.stderr ?? "").trim(),
+      exitCode: result.status,
+      timedOut:
+        (result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT" ||
+        result.status === 28,
+    };
   };
 }
