@@ -167,8 +167,23 @@ test(
         runtimeProvider.hostLocalInference.services.includes("llama-cpp"),
       "receipt runtime provider does not expose managed llama.cpp authority",
     );
+    const apiKey = loadManagedLlamaCppApiKey(managedLlamaCppStatePaths(os.homedir()));
+    assert(apiKey, "managed llama.cpp API key is missing");
+    artifacts.addRedactionValues([apiKey]);
     const runtimeOperation = runtimeProvider.hostLocalInference.createOperation({ env: env() });
     runtimeOperation.assertAuthority();
+    const runtimeLogs = runtimeOperation.engine.capture(
+      ["container", "logs", "--tail", "20000", receipt.runtime.runtimeId],
+      30_000,
+    );
+    await artifacts.writeJson("managed-runtime-logs.json", {
+      providerId: receipt.providerId,
+      runtimeId: receipt.runtime.runtimeId,
+      status: runtimeLogs.status,
+      error: runtimeLogs.error?.message ?? null,
+      stdout: runtimeLogs.stdout,
+      stderr: runtimeLogs.stderr,
+    });
     const runtimeInspection = runtimeOperation.engine.capture(
       ["container", "inspect", receipt.runtime.runtimeId],
       30_000,
@@ -243,9 +258,6 @@ test(
     expect(usedGpuMemoryMiB).toBeGreaterThanOrEqual(minimumFullOffloadMemoryMiB);
 
     progress.phase("verify authenticated host and sandbox inference");
-    const apiKey = loadManagedLlamaCppApiKey(managedLlamaCppStatePaths(os.homedir()));
-    assert(apiKey, "managed llama.cpp API key is missing");
-    artifacts.addRedactionValues([apiKey]);
     const unauthorized = await host.command(
       "curl",
       [

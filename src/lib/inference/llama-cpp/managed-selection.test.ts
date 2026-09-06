@@ -275,12 +275,35 @@ describe("managed llama.cpp selection", () => {
     const { catalog, report } = fixture(N1X_WSL_PRESET_ID);
     const dockerContextIsDefault = vi.fn(() => false);
 
-    expect(resolveManagedLlamaCppSelection({}, catalog, report, { dockerContextIsDefault })).toEqual({
+    expect(
+      resolveManagedLlamaCppSelection({}, catalog, report, { dockerContextIsDefault }),
+    ).toEqual({
       kind: "rejected",
       reason:
         "Managed N1x WSL llama.cpp requires DOCKER_HOST to be unset and the effective Docker context to be default.",
     });
     expect(dockerContextIsDefault).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["automatic N1x WSL", N1X_WSL_PRESET_ID, {}],
+    ["explicit N1x WSL", N1X_WSL_PRESET_ID, { [LLAMA_CPP_RECIPE_ENV]: N1X_WSL_RECIPE_ID }],
+    ["automatic generic GPU", GENERIC_PRESET_ID, {}],
+    ["explicit DGX Spark", SPARK_PRESET_ID, { [LLAMA_CPP_RECIPE_ENV]: RECIPE_ID }],
+  ])("rejects %s when Docker readiness would start through Podman", (_case, presetId, env) => {
+    const { catalog, report } = fixture(presetId);
+
+    expect(
+      resolveManagedLlamaCppSelection(
+        { ...env, NEMOCLAW_GATEWAY_RUNTIME: "podman" },
+        catalog,
+        report,
+        LOCAL_DOCKER_SELECTION,
+      ),
+    ).toEqual({
+      kind: "rejected",
+      reason: expect.stringContaining("requires the Docker runtime provider"),
+    });
   });
 
   it("rejects an explicit remote Docker context for N1x WSL", () => {

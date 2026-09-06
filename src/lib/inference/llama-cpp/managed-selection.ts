@@ -34,6 +34,7 @@ export interface ManagedLlamaCppSelectionChoice {
 }
 
 const N1X_WSL_RECIPE_ID = "llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1";
+const RUNTIME_PROVIDER_ENV = "NEMOCLAW_GATEWAY_RUNTIME";
 
 type ManagedLlamaCppSelectionOptions = {
   readonly dockerContextIsDefault?: typeof dockerContextIsDefaultFromBuild;
@@ -46,6 +47,24 @@ function n1xWslDockerLocalityFailure(
   return (options.dockerContextIsDefault ?? dockerContextIsDefaultFromBuild)(env)
     ? null
     : "Managed N1x WSL llama.cpp requires DOCKER_HOST to be unset and the effective Docker context to be default.";
+}
+
+function dockerQualifiedPresetRuntimeFailure(
+  env: NodeJS.ProcessEnv,
+  selection: ResolvedLlamaCppInferenceSelection,
+): string | null {
+  const requiresDocker = selection.preset.spec.requirements.all.some(
+    (requirement) =>
+      "readiness" in requirement &&
+      requirement.readiness.kind === "observation" &&
+      requirement.readiness.id === "host.docker.runtime",
+  );
+  const configuredProvider = String(env[RUNTIME_PROVIDER_ENV] ?? "")
+    .trim()
+    .toLowerCase();
+  return requiresDocker && configuredProvider && configuredProvider !== "docker"
+    ? `Managed llama.cpp preset ${selection.preset.metadata.id} requires the Docker runtime provider selected by its readiness qualification.`
+    : null;
 }
 
 function selectablePresetsForRecipe(
@@ -187,6 +206,8 @@ export function resolveManagedLlamaCppSelection(
       };
     }
     const selection = highestPriorityChoices[0]!.selection;
+    const runtimeProviderFailure = dockerQualifiedPresetRuntimeFailure(env, selection);
+    if (runtimeProviderFailure) return { kind: "rejected", reason: runtimeProviderFailure };
     if (selection.recipe.metadata.id === N1X_WSL_RECIPE_ID) {
       const localityFailure = n1xWslDockerLocalityFailure(env, options);
       if (localityFailure) return { kind: "rejected", reason: localityFailure };
@@ -236,7 +257,10 @@ export function resolveManagedLlamaCppSelection(
     };
   }
   const resolution = selected[0]!.resolution;
-  return validatedLlamaCppSelection(resolution, recipeId);
+  const validated = validatedLlamaCppSelection(resolution, recipeId);
+  if (validated.kind === "rejected") return validated;
+  const runtimeProviderFailure = dockerQualifiedPresetRuntimeFailure(env, validated.selection);
+  return runtimeProviderFailure ? { kind: "rejected", reason: runtimeProviderFailure } : validated;
 }
 
 /** Resolve managed selection with the GPU proof already admitted by onboarding preflight. */
