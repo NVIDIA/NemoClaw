@@ -254,8 +254,6 @@ const NATIVE_SKILL_LIFECYCLES: Readonly<
     fixedAgentTarget: "agent",
     installHelpArgs: ["skills", "import", "--help"],
     installRequiredFlags: ["--name", "--agent", "--replace", "--expected-digest"],
-    removeHelpArgs: ["skills", "remove-imported", "--help"],
-    removeHelpEvidence: "Remove a DCode-native local import",
     install(binary, payloadPath, skillName, expectedDigest) {
       return [
         binary,
@@ -278,10 +276,11 @@ const NATIVE_SKILL_LIFECYCLES: Readonly<
       return [
         binary,
         "skills",
-        "remove-imported",
+        "delete",
         skillName,
         "--agent",
         this.fixedAgentTarget!,
+        "--force",
         "--json",
       ];
     },
@@ -328,15 +327,19 @@ function renderNativeSkillCommand(command: readonly string[], payloadToken?: str
     .join(" ");
 }
 
-/** Probe a pinned native removal capability without mutating agent state. */
-export function probeNativeSkillRemoveCapability(
+/** Probe the pinned native removal capability without mutating agent state. */
+export function probeOpenClawSkillRemoveCapability(
   ctx: SshContext,
   expectedSandboxIdentityFingerprint: string,
   lifecycle: NativeSkillLifecycleDescriptor,
   sshExecImpl: typeof sshExec = sshExec,
 ): boolean {
   if (!SHA256_RE.test(expectedSandboxIdentityFingerprint)) return false;
-  if (!lifecycle.removeHelpArgs || !lifecycle.removeHelpEvidence) {
+  if (
+    lifecycle.agentName !== "openclaw" ||
+    !lifecycle.removeHelpArgs ||
+    !lifecycle.removeHelpEvidence
+  ) {
     return false;
   }
   const identityCheck = sandboxIdentityCheckCommand(expectedSandboxIdentityFingerprint);
@@ -914,10 +917,6 @@ function buildNativeLocalSkillInstallScript(
     skillName,
     expectedDigest,
     expectedSandboxIdentityFingerprint,
-    digestExcludedRelativePath:
-      lifecycle.agentName === "langchain-deepagents-code"
-        ? ".deepagents/source-origin.json"
-        : undefined,
     preStageCommands: [
       `help="$(${renderNativeSkillCommand([lifecycle.binary, ...lifecycle.installHelpArgs])} 2>&1)" || { echo CAPABILITY_MISSING; exit 3; }`,
       ...lifecycle.installRequiredFlags.map(

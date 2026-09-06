@@ -34,7 +34,7 @@ const skillInstall = vi.hoisted(() => ({
   collectFiles: vi.fn(),
   installNativeAgentSkill: vi.fn(),
   installOpenClawSkill: vi.fn(),
-  probeNativeSkillRemoveCapability: vi.fn(),
+  probeOpenClawSkillRemoveCapability: vi.fn(),
 }));
 
 vi.mock("../../adapters/openshell/runtime", () => ({
@@ -158,7 +158,7 @@ describe("sandbox skill action orchestration", () => {
     ]);
     skillInstall.resolveNativeSkillState.mockReturnValue(genericPaths);
     skillInstall.parseFrontmatter.mockReturnValue({ name: "demo-skill" });
-    skillInstall.probeNativeSkillRemoveCapability.mockReturnValue(true);
+    skillInstall.probeOpenClawSkillRemoveCapability.mockReturnValue(true);
     skillInstall.collectFiles.mockReturnValue({
       files: ["SKILL.md"],
       skippedDotfiles: [],
@@ -239,10 +239,11 @@ describe("sandbox skill action orchestration", () => {
       [
         "/usr/local/bin/dcode",
         "skills",
-        "remove-imported",
+        "delete",
         "demo-skill",
         "--agent",
         "agent",
+        "--force",
         "--json",
       ],
     ],
@@ -326,10 +327,11 @@ describe("sandbox skill action orchestration", () => {
       [
         "/usr/local/bin/dcode",
         "skills",
-        "remove-imported",
+        "delete",
         "demo-skill",
         "--agent",
         "agent",
+        "--force",
         "--json",
       ],
     ],
@@ -372,7 +374,7 @@ describe("sandbox skill action orchestration", () => {
 
   it("requires rebuild when a running OpenClaw image lacks native removal", async () => {
     getSessionAgent.mockReturnValue(agent);
-    skillInstall.probeNativeSkillRemoveCapability.mockReturnValue(false);
+    skillInstall.probeOpenClawSkillRemoveCapability.mockReturnValue(false);
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     await removeSandboxSkill("alpha", { name: "demo-skill" });
@@ -380,20 +382,6 @@ describe("sandbox skill action orchestration", () => {
     expect(process.exitCode).toBe(1);
     expect(error).toHaveBeenCalledWith(
       "  This OpenClaw sandbox image does not expose native skill removal. Rebuild it with 'nemoclaw alpha rebuild' and retry; rebuild preserves both workspace and legacy global skill directories.",
-    );
-    expect(execSandbox).not.toHaveBeenCalled();
-  });
-
-  it("requires rebuild when a running DCode image lacks provenance-bound removal", async () => {
-    getSessionAgent.mockReturnValue(deepAgent);
-    skillInstall.probeNativeSkillRemoveCapability.mockReturnValue(false);
-    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
-
-    await removeSandboxSkill("alpha", { name: "demo-skill" });
-
-    expect(process.exitCode).toBe(1);
-    expect(error).toHaveBeenCalledWith(
-      "  This Deep Agents Code sandbox image does not expose provenance-bound native skill removal. Rebuild it with 'nemoclaw alpha rebuild' and retry; rebuild preserves Deep Agents Code's agent-owned skill state.",
     );
     expect(execSandbox).not.toHaveBeenCalled();
   });

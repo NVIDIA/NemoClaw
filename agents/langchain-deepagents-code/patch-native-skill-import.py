@@ -11,64 +11,32 @@ MARKER = "# NemoClaw native local skill import (#10210)."
 FUNCTION_ANCHOR = "\ndef _info(\n"
 PARSER_ANCHOR = "    # Skills info\n"
 DISPATCH_ANCHOR = '    elif args.skills_command == "info":\n'
+DELETE_FUNCTION_ANCHOR = "\ndef _delete(\n"
+DELETE_PARSER_ANCHOR = '''    delete_parser = skills_subparsers.add_parser(
+        "delete",
+'''
+DELETE_DISPATCH_ANCHOR = '''    elif args.skills_command == "delete":
+        _delete(
+'''
 
 FUNCTION = r'''
 # NemoClaw native local skill import (#10210).
-_NATIVE_IMPORT_RECEIPT = Path(".deepagents") / "source-origin.json"
-
-
-def _read_native_import_receipt(skill_dir: Path, skill_name: str, agent: str) -> str:
-    """Read DCode-owned import provenance without following mutable links."""
-    import json
-    import os
-    import stat
-
-    receipt_path = skill_dir / _NATIVE_IMPORT_RECEIPT
-    descriptor = None
-    try:
-        if receipt_path.parent.is_symlink():
-            raise OSError("receipt directory is a symbolic link")
-        descriptor = os.open(
-            receipt_path,
-            os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
-        )
-        before = os.fstat(descriptor)
-        if (
-            not stat.S_ISREG(before.st_mode)
-            or stat.S_IMODE(before.st_mode) != 0o600
-            or before.st_uid != os.getuid()
-        ):
-            raise OSError("receipt is not a private regular file")
-        with os.fdopen(descriptor, "rb", closefd=False) as opened:
-            content = opened.read(4097)
-        after = os.stat(receipt_path, follow_symlinks=False)
-        if (
-            len(content) > 4096
-            or not stat.S_ISREG(after.st_mode)
-            or (after.st_dev, after.st_ino) != (before.st_dev, before.st_ino)
-        ):
-            raise OSError("receipt changed while reading")
-        receipt = json.loads(content)
-    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
-        raise RuntimeError(f"native import provenance is unavailable: {exc}") from exc
-    finally:
-        if descriptor is not None:
-            os.close(descriptor)
-    expected_keys = {"version", "source", "name", "agent", "digest"}
-    digest = receipt.get("digest") if isinstance(receipt, dict) else None
-    if (
-        not isinstance(receipt, dict)
-        or set(receipt) != expected_keys
-        or receipt.get("version") != 1
-        or receipt.get("source") != "dcode-native-local-import"
-        or receipt.get("name") != skill_name
-        or receipt.get("agent") != agent
-        or not isinstance(digest, str)
-        or len(digest) != 64
-        or any(character not in "0123456789abcdef" for character in digest)
-    ):
-        raise RuntimeError("native import provenance does not match the selected skill")
-    return digest
+def _resolve_active_skill(settings, agent: str, skill_name: str, list_skills):
+    """Resolve one skill through DCode's complete native precedence query."""
+    return next(
+        (
+            skill
+            for skill in list_skills(
+                built_in_skills_dir=settings.get_built_in_skills_dir(),
+                user_skills_dir=settings.get_user_skills_dir(agent),
+                project_skills_dir=settings.get_project_skills_dir(),
+                user_agent_skills_dir=settings.get_user_agent_skills_dir(),
+                project_agent_skills_dir=settings.get_project_agent_skills_dir(),
+            )
+            if skill["name"] == skill_name
+        ),
+        None,
+    )
 
 
 def _import_local(
@@ -166,27 +134,7 @@ def _import_local(
         console.print(f"[bold red]Error:[/bold red] Cannot reconcile native skill transaction: {exc}")
         raise SystemExit(1) from exc
 
-    def resolve_active_skill():
-        return next(
-            (
-                skill
-                for skill in list_skills(
-                    built_in_skills_dir=settings.get_built_in_skills_dir(),
-                    user_skills_dir=settings.get_user_skills_dir(agent),
-                    project_skills_dir=settings.get_project_skills_dir(),
-                    user_agent_skills_dir=settings.get_user_agent_skills_dir(),
-                    project_agent_skills_dir=settings.get_project_agent_skills_dir(),
-                )
-                if skill["name"] == skill_name
-            ),
-            None,
-        )
-
-    try:
-        active = resolve_active_skill()
-    except Exception as exc:
-        console.print(f"[bold red]Error:[/bold red] Cannot resolve DCode native skill state: {exc}")
-        raise SystemExit(1) from exc
+    active = _resolve_active_skill(settings, agent, skill_name, list_skills)
     if abandoned_backup is not None:
         expected_file = (destination / "SKILL.md").resolve()
         if not active or Path(str(active.get("path") or "")).resolve() != expected_file:
@@ -222,8 +170,6 @@ def _import_local(
         manifest_entries = []
         for directory, dirnames, filenames, directory_fd in os.fwalk(source, topdown=True, follow_symlinks=False):
             relative_dir = Path(directory).relative_to(source)
-            if relative_dir == Path() and ".deepagents" in dirnames:
-                raise ValueError("staged skill contains reserved DCode lifecycle state")
             candidate_dir = candidate / relative_dir
             candidate_dir.mkdir(parents=True, exist_ok=True, mode=0o755)
             for dirname in dirnames:
@@ -260,24 +206,6 @@ def _import_local(
         observed_digest = hashlib.sha256(manifest.encode("utf-8")).hexdigest()
         if observed_digest != expected_digest:
             raise ValueError("staged skill digest changed before native publication")
-        receipt_dir = candidate / _NATIVE_IMPORT_RECEIPT.parent
-        receipt_dir.mkdir(mode=0o700)
-        receipt_path = candidate / _NATIVE_IMPORT_RECEIPT
-        receipt_path.write_text(
-            json.dumps(
-                {
-                    "version": 1,
-                    "source": "dcode-native-local-import",
-                    "name": skill_name,
-                    "agent": agent,
-                    "digest": expected_digest,
-                },
-                separators=(",", ":"),
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-        os.chmod(receipt_path, 0o600, follow_symlinks=False)
         if destination.exists():
             os.replace(destination, backup)
             moved_existing = True
@@ -290,8 +218,6 @@ def _import_local(
                 raise RuntimeError(f"unsupported installed skill path: {entry}")
             if entry.is_file():
                 relative = entry.relative_to(destination).as_posix()
-                if relative == _NATIVE_IMPORT_RECEIPT.as_posix():
-                    continue
                 installed_files.add(relative)
                 mode = "755" if entry.stat(follow_symlinks=False).st_mode & 0o111 else "644"
                 installed_entries.append(
@@ -300,22 +226,7 @@ def _import_local(
         installed_manifest = "".join(line for _, line in sorted(installed_entries))
         if installed_files != {entry[0] for entry in manifest_entries} or hashlib.sha256(installed_manifest.encode("utf-8")).hexdigest() != expected_digest:
             raise RuntimeError("installed skill digest changed before native commit")
-        if _read_native_import_receipt(destination, skill_name, agent) != expected_digest:
-            raise RuntimeError("installed skill provenance does not match its content digest")
-        observed = next(
-            (
-                skill
-                for skill in list_skills(
-                    built_in_skills_dir=settings.get_built_in_skills_dir(),
-                    user_skills_dir=settings.get_user_skills_dir(agent),
-                    project_skills_dir=settings.get_project_skills_dir(),
-                    user_agent_skills_dir=settings.get_user_agent_skills_dir(),
-                    project_agent_skills_dir=settings.get_project_agent_skills_dir(),
-                )
-                if skill["name"] == skill_name
-            ),
-            None,
-        )
+        observed = _resolve_active_skill(settings, agent, skill_name, list_skills)
         expected_file = (destination / "SKILL.md").resolve()
         if not observed or Path(observed["path"]).resolve() != expected_file:
             raise RuntimeError("DCode did not resolve the imported skill as active")
@@ -369,169 +280,9 @@ def _import_local(
         raise SystemExit(1) from exc
     finally:
         shutil.rmtree(transaction_root, ignore_errors=True)
-
-
-def _remove_imported(
-    skill_name: str,
-    *,
-    agent: str = "agent",
-    output_format: str = "text",
-) -> None:
-    """Remove only a DCode-native import carrying DCode-owned provenance."""
-    import os
-    import shutil
-    import uuid
-
-    from deepagents_code.config import Settings, console
-    from deepagents_code.skills.load import list_skills
-
-    valid, error = _validate_name(skill_name)
-    if not valid:
-        console.print(f"[bold red]Error:[/bold red] Invalid skill name: {error}")
-        raise SystemExit(1)
-    settings = Settings.from_environment()
-    destination_root = settings.ensure_user_skills_dir(agent).resolve()
-    destination = destination_root / skill_name
-    valid_path, path_error = _validate_skill_path(destination, destination_root)
-    if not valid_path:
-        console.print(f"[bold red]Error:[/bold red] {path_error}")
-        raise SystemExit(1)
-
-    quarantine_prefix = f".{skill_name}.remove."
-    recovered = False
-    try:
-        quarantines = [
-            entry for entry in destination_root.iterdir() if entry.name.startswith(quarantine_prefix)
-        ]
-        if len(quarantines) > 1:
-            raise RuntimeError(
-                "multiple native removal quarantines require inspection: "
-                + ", ".join(str(entry) for entry in sorted(quarantines, key=str))
-            )
-        for quarantine in quarantines:
-            if (
-                quarantine.is_symlink()
-                or not quarantine.is_dir()
-                or quarantine.parent.resolve() != destination_root
-            ):
-                raise RuntimeError(f"native removal quarantine requires inspection: {quarantine}")
-            _read_native_import_receipt(quarantine, skill_name, agent)
-            shutil.rmtree(quarantine)
-            recovered = True
-    except Exception as exc:
-        console.print(f"[bold red]Error:[/bold red] Cannot reconcile native skill removal: {exc}")
-        raise SystemExit(1) from exc
-
-    if not destination.exists():
-        if recovered:
-            if output_format == "json":
-                from deepagents_code.output import write_json
-
-                write_json(
-                    "skills remove-imported",
-                    {"name": skill_name, "path": str(destination), "deleted": True},
-                )
-            else:
-                console.print(f"Skill '{skill_name}' removal recovered successfully.")
-            return
-        console.print(f"[bold red]Error:[/bold red] Skill '{skill_name}' not found.")
-        raise SystemExit(1)
-    if destination.is_symlink() or not destination.is_dir():
-        console.print("[bold red]Error:[/bold red] Imported skill target is not a regular directory.")
-        raise SystemExit(1)
-
-    def resolve_active_skill():
-        return next(
-            (
-                skill
-                for skill in list_skills(
-                    built_in_skills_dir=settings.get_built_in_skills_dir(),
-                    user_skills_dir=settings.get_user_skills_dir(agent),
-                    project_skills_dir=settings.get_project_skills_dir(),
-                    user_agent_skills_dir=settings.get_user_agent_skills_dir(),
-                    project_agent_skills_dir=settings.get_project_agent_skills_dir(),
-                )
-                if skill["name"] == skill_name
-            ),
-            None,
-        )
-
-    try:
-        active = resolve_active_skill()
-    except Exception as exc:
-        console.print(f"[bold red]Error:[/bold red] Cannot resolve DCode native skill state: {exc}")
-        raise SystemExit(1) from exc
-    expected_file = (destination / "SKILL.md").resolve()
-    if not active or Path(str(active.get("path") or "")).resolve() != expected_file:
-        console.print(
-            "[bold red]Error:[/bold red] The selected native import is not DCode's active skill."
-        )
-        raise SystemExit(1)
-    try:
-        _read_native_import_receipt(destination, skill_name, agent)
-    except RuntimeError as exc:
-        console.print(
-            "[bold red]Error:[/bold red] Refusing to remove a skill without matching "
-            f"DCode-native import provenance: {exc}"
-        )
-        raise SystemExit(1) from exc
-
-    before = destination.stat(follow_symlinks=False)
-    quarantine = destination_root / f"{quarantine_prefix}{uuid.uuid4().hex}"
-    try:
-        os.replace(destination, quarantine)
-        after = quarantine.stat(follow_symlinks=False)
-        if (
-            quarantine.is_symlink()
-            or not quarantine.is_dir()
-            or (after.st_dev, after.st_ino) != (before.st_dev, before.st_ino)
-        ):
-            raise RuntimeError("native removal target changed before quarantine")
-        _read_native_import_receipt(quarantine, skill_name, agent)
-    except Exception as exc:
-        rollback_issue = ""
-        if quarantine.exists() and not destination.exists():
-            try:
-                os.replace(quarantine, destination)
-            except OSError as rollback_exc:
-                rollback_issue = f"; rollback requires inspection: {quarantine}: {rollback_exc}"
-        console.print(f"[bold red]Error:[/bold red] Native skill removal failed: {exc}{rollback_issue}")
-        raise SystemExit(1) from exc
-    try:
-        shutil.rmtree(quarantine)
-    except OSError as exc:
-        console.print(
-            "[bold red]Error:[/bold red] Native skill removal committed, but cleanup requires "
-            f"inspection: {quarantine}: {exc}"
-        )
-        raise SystemExit(1) from exc
-
-    try:
-        remaining = resolve_active_skill()
-    except Exception as exc:
-        console.print(
-            "[bold red]Error:[/bold red] Native skill removal committed, but DCode state "
-            f"verification failed: {exc}"
-        )
-        raise SystemExit(1) from exc
-    if remaining:
-        console.print(
-            "[bold red]Error:[/bold red] Native removal revealed another active same-name skill "
-            f"at {remaining.get('path')}."
-        )
-        raise SystemExit(1)
-    if output_format == "json":
-        from deepagents_code.output import write_json
-
-        write_json(
-            "skills remove-imported",
-            {"name": skill_name, "path": str(destination), "deleted": True},
-        )
-        return
-    console.print(f"Skill '{skill_name}' removed successfully.")
 '''
 
-PARSER = """    # NemoClaw native local skill import (#10210).
+PARSER = '''    # NemoClaw native local skill import (#10210).
     import_parser = skills_subparsers.add_parser(
         "import",
         help="Import a staged local skill into DCode-owned user state",
@@ -542,19 +293,9 @@ PARSER = """    # NemoClaw native local skill import (#10210).
     import_parser.add_argument("--replace", action="store_true", help="Replace an existing user skill")
     import_parser.add_argument("--expected-digest", required=True, help="Expected normalized skill digest")
 
-    remove_imported_parser = skills_subparsers.add_parser(
-        "remove-imported",
-        help="Remove a DCode-native local import",
-        description="Remove a DCode-native local import",
-    )
-    if add_output_args is not None:
-        add_output_args(remove_imported_parser)
-    remove_imported_parser.add_argument("name", help="Name of the imported skill")
-    remove_imported_parser.add_argument("--agent", default="agent", help="Agent identifier for skills")
+'''
 
-"""
-
-DISPATCH = """    # NemoClaw native local skill import (#10210).
+DISPATCH = '''    # NemoClaw native local skill import (#10210).
     elif args.skills_command == "import":
         _import_local(
             args.path,
@@ -563,46 +304,37 @@ DISPATCH = """    # NemoClaw native local skill import (#10210).
             agent=args.agent,
             replace=args.replace,
         )
-    elif args.skills_command == "remove-imported":
-        _remove_imported(
-            args.name,
-            agent=args.agent,
-            output_format=getattr(args, "output_format", "text"),
-        )
-"""
+'''
 
 
 def _replace_once(source: str, anchor: str, replacement: str, label: str) -> str:
     """Replace one exact reviewed anchor or fail closed."""
     count = source.count(anchor)
     if count != 1:
-        raise SystemExit(
-            f"ERROR: Deep Agents Code skill import {label} anchor count is {count}, expected 1"
-        )
+        raise SystemExit(f"ERROR: Deep Agents Code skill import {label} anchor count is {count}, expected 1")
     return source.replace(anchor, replacement, 1)
 
 
 def patch(path: Path) -> None:
     """Patch and compile-check the pinned skills command module."""
     source = path.read_text(encoding="utf-8")
-    if MARKER in source:
-        if (
-            source.count(MARKER) != 3
-            or FUNCTION not in source
-            or PARSER not in source
-            or DISPATCH not in source
-        ):
+    for anchor, label in (
+        (DELETE_FUNCTION_ANCHOR, "native delete function"),
+        (DELETE_PARSER_ANCHOR, "native delete parser"),
+        (DELETE_DISPATCH_ANCHOR, "native delete dispatch"),
+    ):
+        if source.count(anchor) != 1:
             raise SystemExit(
-                "ERROR: Deep Agents Code native skill import patch is partial"
+                f"ERROR: Deep Agents Code skill import {label} anchor count is "
+                f"{source.count(anchor)}, expected 1"
             )
+    if MARKER in source:
+        if source.count(MARKER) != 3 or FUNCTION not in source or PARSER not in source or DISPATCH not in source:
+            raise SystemExit("ERROR: Deep Agents Code native skill import patch is partial")
         return
-    source = _replace_once(
-        source, FUNCTION_ANCHOR, f"\n{FUNCTION}\ndef _info(\n", "function"
-    )
+    source = _replace_once(source, FUNCTION_ANCHOR, f"\n{FUNCTION}\ndef _info(\n", "function")
     source = _replace_once(source, PARSER_ANCHOR, f"{PARSER}{PARSER_ANCHOR}", "parser")
-    source = _replace_once(
-        source, DISPATCH_ANCHOR, f"{DISPATCH}{DISPATCH_ANCHOR}", "dispatch"
-    )
+    source = _replace_once(source, DISPATCH_ANCHOR, f"{DISPATCH}{DISPATCH_ANCHOR}", "dispatch")
     compile(source, str(path), "exec")
     path.write_text(source, encoding="utf-8")
 

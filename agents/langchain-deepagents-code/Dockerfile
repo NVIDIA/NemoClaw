@@ -244,8 +244,7 @@ RUN test -f /usr/local/bin/nemoclaw-managed-bootstrap \
     && dcode_skills_commands="$(/opt/venv/bin/python3 -I -c 'import deepagents_code.skills.commands as commands; print(commands.__file__)')" \
     && python3 /opt/nemoclaw-deepagents-code/patch-native-skill-import.py "$dcode_skills_commands" \
     && grep -Fq 'NemoClaw native local skill import (#10210)' "$dcode_skills_commands" \
-    && /opt/venv/bin/python3 -I -c 'import deepagents_code.skills.commands as commands; assert callable(commands._import_local) and callable(commands._remove_imported)' \
-    && /opt/venv/bin/dcode skills remove-imported --help | grep -Fq 'Remove a DCode-native local import' \
+    && /opt/venv/bin/python3 -I -c 'import deepagents_code.skills.commands as commands; assert callable(commands._import_local) and callable(commands._delete)' \
     && rm -f /opt/nemoclaw-deepagents-code/patch-native-skill-import.py \
     && install -d -m 0700 /tmp/nemoclaw-progressive-validation \
     && TMPDIR=/tmp/nemoclaw-progressive-validation python3 /opt/nemoclaw-deepagents-code/validate-progressive-tool-disclosure.py \
@@ -318,7 +317,6 @@ RUN install -d -m 0755 /usr/local/share/nemoclaw \
     && HOME=/sandbox /opt/venv/bin/python3 -I -c 'import argparse, sys; from deepagents_code.skills import commands; parser = argparse.ArgumentParser(); subparsers = parser.add_subparsers(dest="command"); commands.setup_skills_parser(subparsers, make_help_action=lambda _help: argparse._HelpAction); args = parser.parse_args(["skills", "import", sys.argv[1], "--name", "nemoclaw-native-import-probe", "--agent", "agent", "--replace", "--expected-digest", sys.argv[2]]); commands.execute_skills_command(args)' "$dcode_skill_stage" "$dcode_skill_digest" > /tmp/nemoclaw-dcode-skill-import.out \
     && grep -Fq 'NEMOCLAW_NATIVE_SKILL_IMPORT=' /tmp/nemoclaw-dcode-skill-import.out \
     && grep -Fq "\"digest\":\"$dcode_skill_digest\"" /tmp/nemoclaw-dcode-skill-import.out \
-    && test "$(stat -c '%a' /sandbox/.deepagents/agent/skills/nemoclaw-native-import-probe/.deepagents/source-origin.json)" = '600' \
     && mv /sandbox/.deepagents/agent/skills/nemoclaw-native-import-probe /sandbox/.deepagents/agent/skills/.nemoclaw-native-import-probe.backup.interrupted \
     && mkdir -p /sandbox/.deepagents/agent/skills/.nemoclaw-native-import-probe.import.interrupted/nemoclaw-native-import-probe \
     && HOME=/sandbox /opt/venv/bin/python3 -I -c 'import sys; from deepagents_code.skills.commands import _import_local; _import_local(sys.argv[1], "nemoclaw-native-import-probe", sys.argv[2], agent="agent", replace=True)' "$dcode_skill_stage" "$dcode_skill_digest" > /tmp/nemoclaw-dcode-skill-recovery.out \
@@ -326,15 +324,10 @@ RUN install -d -m 0755 /usr/local/share/nemoclaw \
     && printf '%s\n' '# Mutated after host verification' >> "$dcode_skill_stage/SKILL.md" \
     && if HOME=/sandbox /opt/venv/bin/python3 -I -c 'import sys; from deepagents_code.skills.commands import _import_local; _import_local(sys.argv[1], "nemoclaw-native-import-probe", sys.argv[2], agent="agent", replace=True)' "$dcode_skill_stage" "$dcode_skill_digest" >/tmp/nemoclaw-dcode-skill-rejected.out 2>&1; then echo 'ERROR: changed DCode staging payload was accepted' >&2; exit 1; fi \
     && ! grep -Fq 'Mutated after host verification' /sandbox/.deepagents/agent/skills/nemoclaw-native-import-probe/SKILL.md \
-    && mkdir -p /sandbox/.deepagents/agent/skills/agent-authored \
-    && printf '%s\n' '---' 'name: agent-authored' 'description: Agent-authored skill.' '---' > /sandbox/.deepagents/agent/skills/agent-authored/SKILL.md \
-    && if HOME=/sandbox /opt/venv/bin/python3 -I -c 'import argparse; from deepagents_code.skills import commands; parser = argparse.ArgumentParser(); subparsers = parser.add_subparsers(dest="command"); commands.setup_skills_parser(subparsers, make_help_action=lambda _help: argparse._HelpAction, add_output_args=lambda output_parser: output_parser.add_argument("--json", action="store_const", const="json", dest="output_format")); args = parser.parse_args(["skills", "remove-imported", "agent-authored", "--agent", "agent", "--json"]); commands.execute_skills_command(args)' >/tmp/nemoclaw-dcode-agent-authored-remove.out 2>&1; then echo 'ERROR: DCode removed an agent-authored skill without native import provenance' >&2; exit 1; fi \
-    && test -f /sandbox/.deepagents/agent/skills/agent-authored/SKILL.md \
-    && HOME=/sandbox /opt/venv/bin/python3 -I -c 'import argparse; from deepagents_code.skills import commands; parser = argparse.ArgumentParser(); subparsers = parser.add_subparsers(dest="command"); commands.setup_skills_parser(subparsers, make_help_action=lambda _help: argparse._HelpAction, add_output_args=lambda output_parser: output_parser.add_argument("--json", action="store_const", const="json", dest="output_format")); args = parser.parse_args(["skills", "remove-imported", "nemoclaw-native-import-probe", "--agent", "agent", "--json"]); commands.execute_skills_command(args)' \
+    && HOME=/sandbox /opt/venv/bin/python3 -I -c 'import argparse; from deepagents_code.skills import commands; parser = argparse.ArgumentParser(); subparsers = parser.add_subparsers(dest="command"); commands.setup_skills_parser(subparsers, make_help_action=lambda _help: argparse._HelpAction, add_output_args=lambda output_parser: output_parser.add_argument("--json", action="store_const", const="json", dest="output_format")); args = parser.parse_args(["skills", "delete", "nemoclaw-native-import-probe", "--agent", "agent", "--force", "--json"]); commands.execute_skills_command(args)' \
     && test ! -e /sandbox/.deepagents/agent/skills/nemoclaw-native-import-probe \
-    && rm -rf /sandbox/.deepagents/agent/skills/agent-authored \
     && { rmdir /sandbox/.deepagents/agent/skills /sandbox/.deepagents/agent 2>/dev/null || true; } \
-    && rm -rf "$dcode_skill_stage" /tmp/nemoclaw-dcode-skill-import.out /tmp/nemoclaw-dcode-skill-recovery.out /tmp/nemoclaw-dcode-skill-rejected.out /tmp/nemoclaw-dcode-agent-authored-remove.out \
+    && rm -rf "$dcode_skill_stage" /tmp/nemoclaw-dcode-skill-import.out /tmp/nemoclaw-dcode-skill-recovery.out /tmp/nemoclaw-dcode-skill-rejected.out \
     && empty_prompt_log="$(mktemp)" \
     && if timeout 10 env -i /usr/local/lib/nemoclaw/dcode-wrapper.sh -n "" >"$empty_prompt_log" 2>&1; then empty_prompt_status=0; else empty_prompt_status=$?; fi \
     && empty_prompt_output="$(cat "$empty_prompt_log")" \
