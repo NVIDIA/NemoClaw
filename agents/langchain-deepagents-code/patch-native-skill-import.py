@@ -350,9 +350,15 @@ def patch(path: Path) -> None:
 def main() -> int:
     """Patch one installed Deep Agents Code skills command module."""
     parser = argparse.ArgumentParser()
-    parser.add_argument("path")
+    parser.add_argument("path", nargs="?")
     args = parser.parse_args()
-    patch(Path(args.path))
+    if args.path is None:
+        from deepagents_code.skills import commands
+
+        target = Path(commands.__file__)
+    else:
+        target = Path(args.path)
+    patch(target)
     return 0
 
 

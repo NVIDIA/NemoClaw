@@ -43,7 +43,6 @@ const MCP_TOOLS_LIST_TIMEOUT_PATCH = path.join(
   "scripts",
   "patch-openclaw-mcp-tools-list-timeout.mts",
 );
-const SKILL_REMOVE_PATCH = path.join(REPO_ROOT, "scripts", "openclaw", "patch-skill-remove.mts");
 const REBUILD_RESUME_SESSION = path.join(
   REPO_ROOT,
   "src",
@@ -307,14 +306,9 @@ check_not_contains "$optional_plugin_block" 'pack_reviewed_npm_tarball' "optiona
 	grep -Fq 'NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS' "$mcp_tools_list_timeout_patch"
 	grep -Fq 'TOOLS_LIST_TIMEOUT_MIN_MS = 1500' "$mcp_tools_list_timeout_patch"
 	grep -Fq 'TOOLS_LIST_TIMEOUT_MAX_MS = 10_000' "$mcp_tools_list_timeout_patch"
-	grep -Fq 'COPY scripts/patch-openclaw-mcp-tools-list-timeout.mts scripts/openclaw/patch-skill-remove.mts /usr/local/lib/nemoclaw/' Dockerfile
-	grep -Fq 'node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-mcp-tools-list-timeout.mts' Dockerfile
+	grep -Fq 'COPY scripts/patch-openclaw-mcp-tools-list-timeout.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-tools-list-timeout.mts' Dockerfile
+	grep -Fq 'node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-mcp-tools-list-timeout.mts \\' Dockerfile
 	! grep -Fq 'patch-openclaw-mcp-tools-list-timeout.js' Dockerfile
-	skill_remove_patch=${JSON.stringify(SKILL_REMOVE_PATCH)}
-	grep -Fq 'nemoclaw: native workspace skill removal (#10210)' "$skill_remove_patch"
-	grep -Fq 'scripts/openclaw/patch-skill-remove.mts' Dockerfile
-	grep -Fq 'node --experimental-strip-types /usr/local/lib/nemoclaw/patch-skill-remove.mts' Dockerfile
-	! grep -Fq 'patch-openclaw-skill-remove.js' Dockerfile
 
 	phase_count="$(grep -Ec -- '--phase (runtime-setup|agent-install|post-agent-install)' Dockerfile)"
 test "$phase_count" -eq 3

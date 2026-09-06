@@ -25,8 +25,49 @@ import { ensureLiveSandboxOrExit } from "./gateway-state";
 import { getSandboxTargetGatewayName } from "./gateway-target";
 
 const NATIVE_SKILL_LIST_TIMEOUT_SECONDS = 30;
+const NATIVE_SKILL_LOCK_NOTICE_DELAY_MS = 250;
+const NATIVE_SKILL_LOCK_TIMEOUT_MS = 10_000;
 const NATIVE_SKILL_REMOVE_TIMEOUT_SECONDS = 120;
 const NATIVE_SKILL_REMOVE_INNER_TIMEOUT_SECONDS = 110;
+
+type SkillMutationLockResult<T> = { acquired: true; value: T } | { acquired: false; value?: never };
+
+async function withSkillMutationLock<T>(
+  sandboxName: string,
+  operation: () => Promise<T> | T,
+): Promise<SkillMutationLockResult<T>> {
+  let operationStarted = false;
+  const waitNotice = setTimeout(() => {
+    if (!operationStarted) {
+      console.error(
+        `  Another sandbox mutation is in progress for '${sandboxName}'; waiting up to ${String(NATIVE_SKILL_LOCK_TIMEOUT_MS / 1_000)} seconds for skill lifecycle access.`,
+      );
+    }
+  }, NATIVE_SKILL_LOCK_NOTICE_DELAY_MS);
+  try {
+    const value = await withSandboxMutationLock(
+      sandboxName,
+      () => {
+        operationStarted = true;
+        clearTimeout(waitNotice);
+        return operation();
+      },
+      { timeoutMs: NATIVE_SKILL_LOCK_TIMEOUT_MS },
+    );
+    return { acquired: true, value };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.startsWith("Timed out waiting for the sandbox mutation lock")) throw error;
+    console.error(`  ${message}`);
+    console.error(
+      `  Wait for or stop the current operation, then run '${CLI_NAME} ${sandboxName} status' or '${CLI_NAME} ${sandboxName} recover' before retrying.`,
+    );
+    process.exitCode = 1;
+    return { acquired: false };
+  } finally {
+    clearTimeout(waitNotice);
+  }
+}
 
 function resolveNativeSkillAgent(sandboxName: string) {
   const resolution = agentRuntime.resolveSessionAgentDefinition(
@@ -200,8 +241,8 @@ export async function removeSandboxSkill(
   let bindingFailed = false;
   let capabilityMissing = false;
   let sshConfigFailed = false;
-  await runWithDeferredSandboxLifecycleExit(() =>
-    withSandboxMutationLock(sandboxName, async () => {
+  const lockedRemoval = await runWithDeferredSandboxLifecycleExit(() =>
+    withSkillMutationLock(sandboxName, async () => {
       const gatewayName = getSandboxTargetGatewayName(sandboxName);
       const sshConfigResult = captureSandboxSshConfig(sandboxName, {
         gatewayName,
@@ -279,6 +320,7 @@ export async function removeSandboxSkill(
       );
     }),
   );
+  if (!lockedRemoval.acquired) return;
   if (sshConfigFailed || bindingFailed || capabilityMissing) {
     console.error(
       sshConfigFailed
@@ -486,7 +528,7 @@ export async function installSandboxSkill(
   const paths = skillInstall.resolveNativeSkillState(agent);
 
   let sshConfigFailed = false;
-  const native = await withSandboxMutationLock(sandboxName, () => {
+  const lockedInstall = await withSkillMutationLock(sandboxName, () => {
     const gatewayName = getSandboxTargetGatewayName(sandboxName);
     const sshConfigResult = captureSandboxSshConfig(sandboxName, {
       gatewayName,
@@ -546,6 +588,8 @@ export async function installSandboxSkill(
       tmpSshConfig.cleanup();
     }
   });
+  if (!lockedInstall.acquired) return;
+  const native = lockedInstall.value;
   if (!native) {
     console.error(
       sshConfigFailed

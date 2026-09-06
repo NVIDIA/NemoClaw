@@ -566,24 +566,6 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(launcher).toContain("refusing to launch dcode unhardened");
   });
 
-  it("verifies the native skill patch before privileged execution", () => {
-    const dockerfile = readAgentFile("Dockerfile");
-    const patcher = readAgentFile("patch-native-skill-import.py");
-    const patchPath = "/opt/nemoclaw-deepagents-code/patch-native-skill-import.py";
-    const verification = `printf '%s  %s\\n' "$NEMOCLAW_DCODE_NATIVE_SKILL_IMPORT_PATCHER_SHA256" ${patchPath} | sha256sum -c -`;
-    const execution = `python3 ${patchPath}`;
-
-    expect(dockerfile).toContain(
-      `ARG NEMOCLAW_DCODE_NATIVE_SKILL_IMPORT_PATCHER_SHA256=${sha256(patcher)}`,
-    );
-    expect(dockerfile.indexOf(verification)).toBeGreaterThan(
-      dockerfile.indexOf(
-        `COPY agents/langchain-deepagents-code/patch-native-skill-import.py ${patchPath}`,
-      ),
-    );
-    expect(dockerfile.indexOf(verification)).toBeLessThan(dockerfile.indexOf(execution));
-  });
-
   it("exposes an exact managed MCP capability marker without starting dcode", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-mcp-capability-"));
     try {

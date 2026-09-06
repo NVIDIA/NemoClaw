@@ -30,7 +30,6 @@ const commands = [
   "gateway-runtime-metadata",
   "googlechat-override-seams",
   "langfuse-credentials",
-  "native-skill-import",
   "neutral-platform-inertness",
   "profile-policy",
   "session-delete",
@@ -496,15 +495,6 @@ assert module._session_state_journal_mode(SimpleNamespace(_conn=Connection())) =
     );
     expect(modeInstruction?.text).not.toContain(
       "/usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py",
-    );
-  });
-
-  it("proves failed native replacement cleanup restores prior Hermes state", () => {
-    expect(probeSource).toContain("controlled failed-install cleanup refusal");
-    expect(probeSource).toContain("assert not native_skills_cli.do_import_local(");
-    expect(probeSource).toContain("assert len(failed_installs) == 1");
-    expect(probeSource).toContain(
-      'assert (target / "SKILL.md").read_text(encoding="utf-8") == skill_content',
     );
   });
 

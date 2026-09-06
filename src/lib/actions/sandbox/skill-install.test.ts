@@ -337,7 +337,9 @@ describe("sandbox skill action orchestration", () => {
 
     await removeSandboxSkill("alpha", { name: "demo-skill" });
 
-    expect(withSandboxMutationLock).toHaveBeenCalledWith("alpha", expect.any(Function));
+    expect(withSandboxMutationLock).toHaveBeenCalledWith("alpha", expect.any(Function), {
+      timeoutMs: 10_000,
+    });
     expect(execSandbox).toHaveBeenCalledWith(
       "alpha",
       ["/bin/sh", "-c", "identity-bound-native-skill-command"],
@@ -634,7 +636,9 @@ describe("sandbox skill action orchestration", () => {
       fs.rmSync(skillDir, { recursive: true, force: true });
     }
 
-    expect(withSandboxMutationLock).toHaveBeenCalledWith("alpha", expect.any(Function));
+    expect(withSandboxMutationLock).toHaveBeenCalledWith("alpha", expect.any(Function), {
+      timeoutMs: 10_000,
+    });
     expect(skillInstall.installOpenClawSkill).toHaveBeenCalledWith(
       expect.objectContaining({ sandboxName: "alpha" }),
       skillDir,
@@ -652,6 +656,33 @@ describe("sandbox skill action orchestration", () => {
     });
     expect(log).toHaveBeenCalledWith(expect.stringContaining("installed through OpenClaw"));
     expect(process.exitCode).toBeUndefined();
+  });
+
+  it("bounds skill installation lock contention before any sandbox access", async () => {
+    const skillDir = makeSkillDir();
+    getSessionAgent.mockReturnValue(agent);
+    skillInstall.resolveNativeSkillState.mockReturnValue(paths);
+    withSandboxMutationLock.mockRejectedValueOnce(
+      new Error("Timed out waiting for the sandbox mutation lock for 'alpha' (owner PID 42)."),
+    );
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    try {
+      await installSandboxSkill("alpha", { command: "install", path: skillDir });
+    } finally {
+      fs.rmSync(skillDir, { recursive: true, force: true });
+    }
+
+    expect(process.exitCode).toBe(1);
+    expect(withSandboxMutationLock).toHaveBeenCalledWith("alpha", expect.any(Function), {
+      timeoutMs: 10_000,
+    });
+    expect(error).toHaveBeenCalledWith(
+      "  Timed out waiting for the sandbox mutation lock for 'alpha' (owner PID 42).",
+    );
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("nemoclaw alpha recover"));
+    expect(captureSandboxSshConfig).not.toHaveBeenCalled();
+    expect(skillInstall.installOpenClawSkill).not.toHaveBeenCalled();
   });
 
   it("refuses OpenClaw installation when the SSH target differs from the selected sandbox", async () => {
@@ -672,7 +703,9 @@ describe("sandbox skill action orchestration", () => {
     expect(error).toHaveBeenCalledWith(
       "  Failed to bind the OpenClaw skill install to the exact live sandbox identity.",
     );
-    expect(withSandboxMutationLock).toHaveBeenCalledWith("alpha", expect.any(Function));
+    expect(withSandboxMutationLock).toHaveBeenCalledWith("alpha", expect.any(Function), {
+      timeoutMs: 10_000,
+    });
     expect(inspectOpenShellSandboxIdentityFingerprint).not.toHaveBeenCalled();
     expect(skillInstall.installOpenClawSkill).not.toHaveBeenCalled();
   });
@@ -696,7 +729,9 @@ describe("sandbox skill action orchestration", () => {
     expect(error).toHaveBeenCalledWith(
       "  Failed to bind the OpenClaw skill install to the exact live sandbox identity.",
     );
-    expect(withSandboxMutationLock).toHaveBeenCalledWith("alpha", expect.any(Function));
+    expect(withSandboxMutationLock).toHaveBeenCalledWith("alpha", expect.any(Function), {
+      timeoutMs: 10_000,
+    });
     expect(skillInstall.installOpenClawSkill).not.toHaveBeenCalled();
   });
 

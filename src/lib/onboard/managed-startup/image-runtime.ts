@@ -44,6 +44,10 @@ import {
 } from "./shared-state-transaction";
 import { MANAGED_STARTUP_CA_ENV, MANAGED_STARTUP_PROFILE_ENV } from "./transport";
 
+declare const __NEMOCLAW_DCODE_NATIVE_SKILL_PATCH_PY__: string;
+declare const __NEMOCLAW_HERMES_NATIVE_SKILL_PATCH_PY__: string;
+declare const __NEMOCLAW_OPENCLAW_NATIVE_SKILL_PATCH_JS__: string;
+
 export { MANAGED_STARTUP_CA_ENV, MANAGED_STARTUP_PROFILE_ENV } from "./transport";
 export const MANAGED_STARTUP_RUNTIME_ENV_FILE = "/run/nemoclaw/managed-startup-runtime.env";
 export const MANAGED_STARTUP_RUNTIME_EXECUTABLE =
@@ -68,6 +72,10 @@ const ROOT_STATE_PARENT = "/var/lib/nemoclaw";
 const ROOT_RUNTIME_DIRECTORY = "/run/nemoclaw";
 const ROOT_OWNED_DIRECTORY_MODE = 0o755;
 const MAX_TRUST_BUNDLE_BYTES = 4 * 1024 * 1024;
+const NATIVE_SKILL_PATCH_MAX_BYTES = 512 * 1024;
+const OPENCLAW_DIST_DIRECTORY = "/usr/local/lib/node_modules/openclaw/dist";
+const HERMES_SKILLS_PARSER = "/opt/hermes/hermes_cli/subcommands/skills.py";
+const HERMES_SKILLS_IMPLEMENTATION = "/opt/hermes/hermes_cli/skills_hub.py";
 const HERMES_MANAGED_CONFIG_FILES = [
   "/sandbox/.hermes/config.yaml",
   "/sandbox/.hermes/.env",
@@ -95,14 +103,12 @@ interface ManagedStartupApplyMessagingConstructionActionBase {
   readonly mode: "apply" | "clear";
 }
 
-export interface ManagedStartupApplyMessagingRuntimeConstructionAction
-  extends ManagedStartupApplyMessagingConstructionActionBase {
+export interface ManagedStartupApplyMessagingRuntimeConstructionAction extends ManagedStartupApplyMessagingConstructionActionBase {
   readonly phase: "runtime-setup";
   readonly runAs: "root";
 }
 
-export interface ManagedStartupApplyMessagingConfigConstructionAction
-  extends ManagedStartupApplyMessagingConstructionActionBase {
+export interface ManagedStartupApplyMessagingConfigConstructionAction extends ManagedStartupApplyMessagingConstructionActionBase {
   readonly phase: "post-agent-install";
   readonly runAs: "sandbox";
 }
@@ -515,6 +521,88 @@ function execute(
     stdout: result.stdout ?? "",
     stderr: result.stderr ?? "",
   };
+}
+
+function requireBoundedNativeSkillPatchSource(source: string, agent: ManagedStartupAgent): string {
+  const size = Buffer.byteLength(source, "utf8");
+  const marker =
+    agent === "openclaw"
+      ? "nemoclaw: native workspace skill removal (#10210)"
+      : "NemoClaw native local skill import (#10210)";
+  if (size < 1 || size > NATIVE_SKILL_PATCH_MAX_BYTES || !source.includes(marker)) {
+    fail(`embedded ${agent} native skill compatibility patch is missing or invalid`);
+  }
+  return source;
+}
+
+function nativeSkillCompatibilityCommand(agent: ManagedStartupAgent): readonly string[] | null {
+  switch (agent) {
+    case "openclaw":
+      return typeof __NEMOCLAW_OPENCLAW_NATIVE_SKILL_PATCH_JS__ === "string"
+        ? [
+            "/usr/local/bin/node",
+            "--input-type=module",
+            "--eval",
+            requireBoundedNativeSkillPatchSource(
+              __NEMOCLAW_OPENCLAW_NATIVE_SKILL_PATCH_JS__,
+              agent,
+            ),
+            OPENCLAW_DIST_DIRECTORY,
+          ]
+        : [
+            "/usr/local/bin/node",
+            "--experimental-strip-types",
+            path.resolve(process.cwd(), "scripts/openclaw/patch-skill-remove.mts"),
+            OPENCLAW_DIST_DIRECTORY,
+          ];
+    case "hermes":
+      return typeof __NEMOCLAW_HERMES_NATIVE_SKILL_PATCH_PY__ === "string"
+        ? [
+            "/usr/bin/python3",
+            "-I",
+            "-c",
+            requireBoundedNativeSkillPatchSource(__NEMOCLAW_HERMES_NATIVE_SKILL_PATCH_PY__, agent),
+            HERMES_SKILLS_PARSER,
+            HERMES_SKILLS_IMPLEMENTATION,
+          ]
+        : [
+            "/usr/bin/python3",
+            "-I",
+            path.resolve(process.cwd(), "agents/hermes/patch-native-skill-import.py"),
+            HERMES_SKILLS_PARSER,
+            HERMES_SKILLS_IMPLEMENTATION,
+          ];
+    case "langchain-deepagents-code":
+      return typeof __NEMOCLAW_DCODE_NATIVE_SKILL_PATCH_PY__ === "string"
+        ? [
+            "/opt/venv/bin/python3",
+            "-I",
+            "-c",
+            requireBoundedNativeSkillPatchSource(__NEMOCLAW_DCODE_NATIVE_SKILL_PATCH_PY__, agent),
+          ]
+        : [
+            "/opt/venv/bin/python3",
+            "-I",
+            path.resolve(
+              process.cwd(),
+              "agents/langchain-deepagents-code/patch-native-skill-import.py",
+            ),
+          ];
+    case "pi":
+      return null;
+  }
+}
+
+/** Apply reviewed native skill compatibility through the driver-neutral root applicator. */
+export function applyManagedStartupNativeSkillCompatibility(
+  agent: ManagedStartupAgent,
+  configurationEnvironment: Readonly<Record<string, string>>,
+  applicationRuntime: ManagedStartupApplicationRuntimePlan,
+): boolean {
+  const command = nativeSkillCompatibilityCommand(agent);
+  if (command === null) return false;
+  execute(command, "root", configurationEnvironment, applicationRuntime);
+  return true;
 }
 
 function generatorCommand(agent: ManagedStartupAgent): readonly string[] {
@@ -1049,10 +1137,7 @@ function managedSystemCaAnchorNames(): readonly string[] {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
     fail("could not inspect the managed system CA anchor directory");
   }
-  requireRootOwnedDirectory(
-    MANAGED_STARTUP_SYSTEM_CA_ANCHOR_DIRECTORY,
-    ROOT_OWNED_DIRECTORY_MODE,
-  );
+  requireRootOwnedDirectory(MANAGED_STARTUP_SYSTEM_CA_ANCHOR_DIRECTORY, ROOT_OWNED_DIRECTORY_MODE);
   try {
     return (fs.readdirSync(MANAGED_STARTUP_SYSTEM_CA_ANCHOR_DIRECTORY) as string[])
       .filter((name) => MANAGED_STARTUP_SYSTEM_CA_ANCHOR_RE.test(name))
@@ -1483,6 +1568,11 @@ export async function applyManagedStartupImageProfile(
 
   ensureRootOwnedDirectory(ROOT_STATE_PARENT);
   ensureRootOwnedDirectory(ROOT_RUNTIME_DIRECTORY);
+  applyManagedStartupNativeSkillCompatibility(
+    expectedAgent,
+    mapped.configurationEnvironment,
+    mapped.applicationRuntime,
+  );
   const result = await coordinateManagedStartupApplication(
     {
       encodedProfile,

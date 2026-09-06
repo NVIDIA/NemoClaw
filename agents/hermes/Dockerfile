@@ -95,7 +95,6 @@ COPY agents/hermes/patch-cron-execution-runtime.py /opt/nemoclaw-hermes-config/p
 COPY agents/hermes/patch-cron-restore-drain.py /opt/nemoclaw-hermes-config/patch-cron-restore-drain.py
 COPY agents/hermes/patch-neutral-platform-env-activation.py /opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py
 COPY agents/hermes/patch-session-list-preview.py /opt/nemoclaw-hermes-config/patch-session-list-preview.py
-COPY agents/hermes/patch-native-skill-import.py /opt/nemoclaw-hermes-config/patch-native-skill-import.py
 COPY agents/hermes/patch-profile-policy-defaults.py /opt/nemoclaw-hermes-config/patch-profile-policy-defaults.py
 COPY agents/hermes/hindsight-lazy-integrity.patch /opt/nemoclaw-hermes-config/hindsight-lazy-integrity.patch
 COPY agents/hermes/hindsight-client-probe-requirements.txt /opt/nemoclaw-hermes-config/hindsight-client-requirements.txt
@@ -454,7 +453,7 @@ COPY --from=hermes-agent-payload / /
 # published base can carry the expected Hermes version while omitting either
 # optional dependency group. This is a build-time package/import guard; live
 # protocol behavior remains a separate E2E concern.
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=b0680d6546c07ad987a1bab4302e6e5657f2e168c7dc265d4def676e8d9e24b2
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=7c74c3f190845fef222e3aac1bd7074d58968447e78221114344545c149595c2
 # hadolint ignore=DL3059,DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256" /opt/nemoclaw-hermes-config/image-build-probes.py \
@@ -482,7 +481,7 @@ RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
 # same-version wheel selected by its lazy installer. Bind that production
 # boundary to NVIDIA/NemoClaw's reviewed wheel hashes.
 ARG NEMOCLAW_HERMES_HINDSIGHT_LAZY_INTEGRITY_PATCH_SHA256=5c619477c10e0b76cffd7adc214cbccf3beb77e7a1121f394c443502d9e0b736
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=b0680d6546c07ad987a1bab4302e6e5657f2e168c7dc265d4def676e8d9e24b2
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=7c74c3f190845fef222e3aac1bd7074d58968447e78221114344545c149595c2
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_HINDSIGHT_LAZY_INTEGRITY_PATCH_SHA256" /opt/nemoclaw-hermes-config/hindsight-lazy-integrity.patch \
@@ -707,32 +706,17 @@ RUN set -eu; \
 # titled workspace row renders the latest resumed or continued one-shot turn
 # while a user-authored title remains authoritative.
 ARG NEMOCLAW_HERMES_SESSION_LIST_PREVIEW_PATCHER_SHA256=718315e7c36727ca49ac88a1be44f95e4d495ca737ba70d5bb3d5c509fd9a0e2
-# Keep skill lifecycle state inside Hermes. The host only stages a validated
-# payload; this pinned native command owns scanning, replacement, rollback,
-# lock metadata, loader verification, listing, and removal.
-ARG NEMOCLAW_HERMES_NATIVE_SKILL_IMPORT_PATCHER_SHA256=a7ff891965487f6aa84fd1ed57e0514c22eac4eeac9067db177185824ba20973
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_SESSION_LIST_PREVIEW_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-session-list-preview.py \
-        "$NEMOCLAW_HERMES_NATIVE_SKILL_IMPORT_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-native-skill-import.py \
     | sha256sum -c - \
-    || { echo "ERROR: Hermes session preview or native skill patch identity mismatch" >&2; exit 1; }; \
+    || { echo "ERROR: patch-session-list-preview.py hash mismatch (update NEMOCLAW_HERMES_SESSION_LIST_PREVIEW_PATCHER_SHA256)" >&2; exit 1; }; \
     /usr/bin/python3 -I /opt/nemoclaw-hermes-config/patch-session-list-preview.py \
     && grep -q 'ORDER BY m.timestamp DESC, m.id DESC LIMIT 1' /opt/hermes/hermes_state.py \
     && grep -Fq 'if s.get("title_source") in ("derived", "llm")' /opt/hermes/hermes_cli/sessions_cmd.py \
     && HERMES_HOME="$(mktemp -d)" /opt/hermes/.venv/bin/python -I \
         /opt/nemoclaw-hermes-config/image-build-probes.py session-preview \
-    && /usr/bin/python3 -I /opt/nemoclaw-hermes-config/patch-native-skill-import.py \
-        /opt/hermes/hermes_cli/subcommands/skills.py \
-        /opt/hermes/hermes_cli/skills_hub.py \
-    && grep -Fq 'NemoClaw native local skill import (#10210)' /opt/hermes/hermes_cli/subcommands/skills.py \
-    && grep -Fq 'NEMOCLAW_NATIVE_SKILL_IMPORT=' /opt/hermes/hermes_cli/skills_hub.py \
-    && native_skill_home="$(mktemp -d)" \
-    && HERMES_HOME="$native_skill_home" /opt/hermes/.venv/bin/python -I \
-        /opt/nemoclaw-hermes-config/image-build-probes.py native-skill-import \
-    && rm -rf "$native_skill_home" \
-    && rm /opt/nemoclaw-hermes-config/patch-session-list-preview.py \
-        /opt/nemoclaw-hermes-config/patch-native-skill-import.py
+    && rm /opt/nemoclaw-hermes-config/patch-session-list-preview.py
 
 # Hermes v0.20.6 SessionDB does not set PRAGMA temp_store=MEMORY, so SQLite
 # falls back to file-based temp storage for FK constraint processing (for
@@ -1612,7 +1596,6 @@ RUN check_metadata() { \
     && check_absent /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py \
     && check_absent /opt/nemoclaw-hermes-config/patch-cron-restore-drain.py \
     && check_absent /opt/nemoclaw-hermes-config/patch-session-list-preview.py \
-    && check_absent /opt/nemoclaw-hermes-config/patch-native-skill-import.py \
     && check_absent /opt/nemoclaw-hermes-config/patch-profile-policy-defaults.py \
     && check_absent /opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py \
     && check_absent /opt/nemoclaw-hermes-config/hindsight-lazy-integrity.patch \

@@ -39,6 +39,7 @@ import {
 } from "./managed-bootstrap/image-runtime";
 import {
   applyManagedStartupImageProfile,
+  applyManagedStartupNativeSkillCompatibility,
   applyManagedStartupRootRequest,
   buildManagedStartupImageActionPlan,
   installHermesManagedPolicy,
@@ -356,6 +357,43 @@ describe("managed startup image runtime", () => {
     }
   });
 
+  it.each([
+    ["openclaw", "/usr/local/bin/node", "scripts/openclaw/patch-skill-remove.mts"],
+    ["hermes", "/usr/bin/python3", "agents/hermes/patch-native-skill-import.py"],
+    [
+      "langchain-deepagents-code",
+      "/opt/venv/bin/python3",
+      "agents/langchain-deepagents-code/patch-native-skill-import.py",
+    ],
+  ] as const)(
+    "applies %s native skill compatibility through managed onboarding",
+    (agent, executable, sourcePath) => {
+      expect(
+        applyManagedStartupNativeSkillCompatibility(
+          agent,
+          {},
+          { exportEnvironment: {}, unsetEnvironment: [] },
+        ),
+      ).toBe(true);
+      expect(childProcessMock.spawnSync).toHaveBeenCalledWith(
+        executable,
+        expect.arrayContaining([expect.stringContaining(sourcePath)]),
+        expect.objectContaining({ stdio: "inherit" }),
+      );
+    },
+  );
+
+  it("does not invent native skill compatibility for Pi", () => {
+    expect(
+      applyManagedStartupNativeSkillCompatibility(
+        "pi",
+        {},
+        { exportEnvironment: {}, unsetEnvironment: [] },
+      ),
+    ).toBe(false);
+    expect(childProcessMock.spawnSync).not.toHaveBeenCalled();
+  });
+
   it("verifies copied transaction status only through a read-only receipt mount", async () => {
     const profile = managedStartupE2eProfile("openclaw");
     const profileFingerprint = fingerprintManagedStartupProfile(profile);
@@ -568,6 +606,18 @@ describe("managed startup image runtime", () => {
     expect(runtimeWrites[0]).toContain("export NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS='3'");
     expect(runtimeWrites[1]).toContain("export NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS='5'");
     expect(coordinatorMock.coordinateManagedStartupApplication).toHaveBeenCalledTimes(2);
+    expect(
+      childProcessMock.spawnSync.mock.calls.filter(
+        ([executable, argv]) =>
+          executable === "/usr/local/bin/node" &&
+          Array.isArray(argv) &&
+          argv.some(
+            (argument) =>
+              typeof argument === "string" &&
+              argument.endsWith("scripts/openclaw/patch-skill-remove.mts"),
+          ),
+      ),
+    ).toHaveLength(2);
   });
 
   it("publishes bootstrap completion only after application and preserves attempt identity", async () => {

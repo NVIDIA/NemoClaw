@@ -405,10 +405,6 @@ function stageOptimizedSandboxBuildContext(
   );
   fs.mkdirSync(path.join(stagedScriptsDir, "openclaw"), { recursive: true });
   fs.copyFileSync(
-    path.join(rootDir, "scripts", "openclaw", "patch-skill-remove.mts"),
-    path.join(stagedScriptsDir, "openclaw", "patch-skill-remove.mts"),
-  );
-  fs.copyFileSync(
     path.join(rootDir, "scripts", "openclaw", "patch-gateway-daemon-dialback.mts"),
     path.join(stagedScriptsDir, "openclaw", "patch-gateway-daemon-dialback.mts"),
   );
