@@ -120,6 +120,25 @@ describe("sandbox base-image build diagnostics", () => {
     expect(output).toContain("[diagnostic truncated]");
   });
 
+  it("reuses a short stream's unused budget for the long failure tail (#10548)", () => {
+    const output = formatBuildFailureDiagnostics({
+      stderr: `successful build output\n${"e".repeat(10_000)}\nERROR: stderr build step failed`,
+      stdout: "short stdout diagnostic",
+    });
+
+    expect({
+      length: output.length,
+      hasFailure: output.includes("ERROR: stderr build step failed"),
+      hasShortStream: output.includes("short stdout diagnostic"),
+      hasSuccessfulHead: output.includes("successful build output"),
+    }).toEqual({
+      length: 8_023,
+      hasFailure: true,
+      hasShortStream: true,
+      hasSuccessfulHead: false,
+    });
+  });
+
   it("surfaces a redacted spawn failure cause", () => {
     const token = ["spawn", "secret", "token"].join("-");
     const output = formatBuildFailureDiagnostics({

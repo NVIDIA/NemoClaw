@@ -52,13 +52,17 @@ const BUILD_FAILURE_TRUNCATED_PREFIX = "[diagnostic truncated]\n";
 
 function retainBuildDiagnosticTails(streams: readonly string[]): string {
   let remaining = BUILD_FAILURE_DIAGNOSTIC_LIMIT - (streams.length - 1);
+  const budgets = new Array<number>(streams.length).fill(0);
+  const shortestFirst = streams
+    .map((stream, index) => ({ index, length: stream.length }))
+    .sort((left, right) => left.length - right.length || left.index - right.index);
+  shortestFirst.forEach((stream, index) => {
+    const budget = Math.min(stream.length, Math.floor(remaining / (streams.length - index)));
+    budgets[stream.index] = budget;
+    remaining -= budget;
+  });
   return streams
-    .map((stream, index) => {
-      const budget = Math.floor(remaining / (streams.length - index));
-      const tail = stream.slice(-budget);
-      remaining -= tail.length;
-      return tail;
-    })
+    .map((stream, index) => stream.slice(-budgets[index]!))
     .join("\n");
 }
 
