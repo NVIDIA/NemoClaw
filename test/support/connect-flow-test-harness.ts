@@ -55,6 +55,7 @@ export type ConnectHarness = {
   preflightVllmSpy: MockInstance;
   probeLocalProviderHealthSpy: MockInstance;
   probeOllamaAuthProxyHealthSpy: MockInstance;
+  shouldFrontOllamaWithProxySpy: MockInstance;
   readSandboxConfigSpy: MockInstance;
   recoverPortableDemoLifecycleSpy: MockInstance;
   requalifyPortableAgentAuthoritySpy: MockInstance;
@@ -77,6 +78,7 @@ export type ConnectHarnessOptions = {
   agentName?: string;
   inferenceGetOutput?: string;
   isWsl?: boolean;
+  frontOllamaWithProxy?: boolean;
   inferenceProbeResponses?: Array<
     string | { status?: number | null; output?: string | null; stderr?: string | null }
   >;
@@ -192,6 +194,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     "../../src/lib/onboard/experimental/hermes-portable-ollama-inference.js",
   );
   const processRecovery = requireDist("../../src/lib/actions/sandbox/process-recovery.js");
+  const forwardHealth = requireDist("../../src/lib/actions/sandbox/forward-health.js");
   const autoPairApproval = requireDist("../../src/lib/actions/sandbox/auto-pair-approval.js");
   const connectVllmPreflight = requireDist(
     "../../src/lib/actions/sandbox/connect-vllm-preflight.js",
@@ -470,6 +473,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const checkAndRecoverSpy = vi
     .spyOn(processRecovery, "checkAndRecoverSandboxProcesses")
     .mockReturnValue(options.processCheck ?? { checked: true, wasRunning: true, recovered: false });
+  vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
   const verifyHermesPortableLaunchForwardsSpy = vi
     .spyOn(processRecovery, "verifyHermesPortableLaunchForwards")
     .mockReturnValue({ kind: "healthy" });
@@ -488,6 +492,9 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const probeOllamaAuthProxyHealthSpy = vi
     .spyOn(ollamaProxy, "probeOllamaAuthProxyHealth")
     .mockReturnValue({ ok: true });
+  const shouldFrontOllamaWithProxySpy = vi
+    .spyOn(localInference, "shouldFrontOllamaWithProxy")
+    .mockReturnValue(options.frontOllamaWithProxy ?? options.isWsl !== true);
   const realIsWsl = platform.isWsl as (opts?: WslDetectionOptions) => boolean;
   // Pin the platform gate for every isWsl consumer the harness loads: isWsl
   // answers false off Linux before it reads WSL_DISTRO_NAME, so a case that
@@ -599,6 +606,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     preflightVllmSpy,
     probeLocalProviderHealthSpy,
     probeOllamaAuthProxyHealthSpy,
+    shouldFrontOllamaWithProxySpy,
     readSandboxConfigSpy,
     recoverPortableDemoLifecycleSpy,
     requalifyPortableAgentAuthoritySpy,

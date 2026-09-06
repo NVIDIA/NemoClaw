@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { assertNoOpenShellGatewayEndpointOverride } from "../openshell-gateway-endpoint-guard";
-import { reportsExactProviderNotFound } from "./extra-provider-diagnostic-parser";
+import { reportsExactProviderNotFound } from "../adapters/openshell/provider-diagnostic-cli";
 
 type ExtraProviderRunOpenshell = (
   args: string[],

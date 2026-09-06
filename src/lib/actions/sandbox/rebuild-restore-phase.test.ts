@@ -77,6 +77,40 @@ describe("rebuild filesystem restore", () => {
     );
   });
 
+  it("carries the frozen OpenShell target into fresh-plugin discovery and SSH restore reads (#10514)", () => {
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const restore = vi
+      .spyOn(snapshotRestore, "restoreRecreatedSandboxStateWithManagedAuthority")
+      .mockReturnValue({
+        success: true,
+        restoredDirs: [],
+        restoredFiles: [],
+        failedDirs: [],
+        failedFiles: [],
+      });
+    const runtimeSelection = {
+      gatewayName: "nemoclaw-8081",
+      localTlsDir: "/authority/tls",
+      workspace: "default",
+    };
+
+    runRebuildRestorePhase({
+      sandboxName: "alpha",
+      targetAgentType: "openclaw",
+      targetImageIsCustom: false,
+      backupManifest,
+      runtimeSelection,
+      log: vi.fn(),
+    });
+
+    expect(restore).toHaveBeenCalledWith(
+      "alpha",
+      backupManifest,
+      { targetAgentType: "openclaw", runtimeSelection },
+      { getSandbox: expect.any(Function) },
+    );
+  });
+
   it("migrates restored Hermes dashboard state into its current profile", () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.spyOn(snapshotRestore, "restoreRecreatedSandboxStateWithManagedAuthority").mockReturnValue({

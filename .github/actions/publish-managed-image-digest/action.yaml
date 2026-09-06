@@ -30,6 +30,9 @@ inputs:
   build-args:
     description: Docker build arguments.
     required: true
+  secret-files:
+    description: Optional Docker BuildKit secret files.
+    required: false
   cache-from:
     description: Optional Buildx cache source.
     required: false
@@ -72,6 +75,7 @@ runs:
         outputs: type=image,name=${{ inputs.image }},push-by-digest=true,name-canonical=true,push=true
         labels: ${{ inputs.labels }}
         build-args: ${{ inputs.build-args }}
+        secret-files: ${{ inputs.secret-files }}
         cache-from: ${{ inputs.cache-from }}
         cache-to: ${{ inputs.cache-to }}
         provenance: ${{ inputs.provenance }}

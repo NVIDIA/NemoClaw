@@ -321,7 +321,7 @@ export function resolveHermesPortableStartupContract(
   }
   if (
     manifest.name !== "hermes" ||
-    manifest.expectedVersion !== "0.19.0" ||
+    manifest.expectedVersion !== "0.20.6" ||
     manifest.gatewayCommand !== "hermes gateway run" ||
     manifest.runtime.interactive_command !== "hermes" ||
     manifest.healthProbe?.url !== "http://localhost:8642/health" ||

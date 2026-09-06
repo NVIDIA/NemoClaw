@@ -160,6 +160,43 @@ function providerNameAfterAction(args, providerIndex) {
   return args[firstArgument] === "-g" ? args[firstArgument + 2] : args[firstArgument];
 }
 
+function parseNamedProviderGet(command, gatewayName) {
+  const args = normalizeCommand(command).split(/\s+/);
+  const providerIndex = args.indexOf("provider");
+  if (providerIndex < 0 || args[providerIndex + 1] !== "get") return null;
+  const getArgs = args.slice(providerIndex + 2);
+  if (getArgs.length !== 3 || getArgs[0] !== "-g" || getArgs[1] !== gatewayName) {
+    return {
+      error: { status: 1, stderr: `provider get must target named gateway '${gatewayName}'` },
+    };
+  }
+  return { providerName: getArgs[2] };
+}
+
+function mockNvidiaProviderGetRun(command, gatewayName) {
+  const request = parseNamedProviderGet(command, gatewayName);
+  if (request === null) return null;
+  if (request.error) return request.error;
+  if (request.providerName !== "nvidia-prod") return null;
+  return {
+    status: 0,
+    stdout:
+      "Name: nvidia-prod\nType: nvidia\nCredential keys: NVIDIA_INFERENCE_API_KEY\nConfig keys: <none>\n",
+  };
+}
+
+function mockNvidiaOrMissingProviderGetRun(command, gatewayName) {
+  const request = parseNamedProviderGet(command, gatewayName);
+  if (request === null) return null;
+  if (request.error) return request.error;
+  return (
+    mockNvidiaProviderGetRun(command, gatewayName) ?? {
+      status: 1,
+      stderr: `provider '${request.providerName}' not found`,
+    }
+  );
+}
+
 function mockEndpointlessProviderProfileRun(command, profileId, inferenceCapable) {
   const args = normalizeCommand(command).split(/\s+/);
   const providerIndex = args.indexOf("provider");
@@ -198,6 +235,20 @@ function mockManagedEndpointlessProviderProfileRun(command) {
   return (
     mockEndpointlessProviderProfileRun(command, "openai", true) ??
     mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false)
+  );
+}
+
+function mockProviderPreparationRun(command, gatewayName, profileId, inferenceCapable) {
+  return (
+    mockEndpointlessProviderProfileRun(command, profileId, inferenceCapable) ??
+    mockNvidiaOrMissingProviderGetRun(command, gatewayName)
+  );
+}
+
+function mockManagedProviderPreparationRun(command, gatewayName) {
+  return (
+    mockManagedEndpointlessProviderProfileRun(command) ??
+    mockNvidiaOrMissingProviderGetRun(command, gatewayName)
   );
 }
 
@@ -1355,6 +1406,10 @@ module.exports = {
   installForwardServiceReachabilityFixture,
   mockEndpointlessProviderProfileRun,
   mockManagedEndpointlessProviderProfileRun,
+  mockManagedProviderPreparationRun,
+  mockNvidiaProviderGetRun,
+  mockNvidiaOrMissingProviderGetRun,
+  mockProviderPreparationRun,
   createStatefulMessagingProviderRunner,
   isOpenClawSecurityInventoryProbe,
   mockDockerSandboxLifecycleReleaseFromRunner,

@@ -206,7 +206,6 @@ export interface SetupNimFlowDeps {
     gpu: SetupNimGpu,
     selectedKey: string,
     requestedModel: string | null,
-    windowsOllamaReachable: boolean,
     winOllamaLoopbackOnly: boolean,
     winOllamaInstalledPath: string | null,
     state: SetupNimSelectionState,
@@ -264,6 +263,17 @@ function maybePromptForSupportedInferenceInputCapability(
 ): Promise<void> {
   if ((agent?.name ?? "openclaw") !== "openclaw") return Promise.resolve();
   return deps.maybePromptForInferenceInputCapability(model);
+}
+
+function exitAfterPinnedVllmFailure(
+  deps: Pick<SetupNimFlowDeps, "abortNonInteractive" | "exitProcess" | "isNonInteractive">,
+  requestedProvider: string | null,
+  message: string,
+): void {
+  if (deps.isNonInteractive()) {
+    deps.abortNonInteractive(message);
+  }
+  if (requestedProvider) deps.exitProcess(1);
 }
 
 function requireSelectedProvider(
@@ -651,21 +661,18 @@ function requestedVllmServingProfileModel(
   return requested?.backend === "vllm" ? requested : null;
 }
 
-/** Model ID that an explicit managed-vLLM model selection exposes through `/v1/models`. */
-function requestedManagedVllmModel(
-  resolve: SetupNimFlowDeps["selectVllmModelFromEnv"],
-): string | null {
-  if (!resolve) throw new Error("Managed vLLM model selection could not be resolved.");
-  const requested = resolve();
-  return requested?.servedModelId ?? requested?.id ?? null;
-}
-
 /** Preserve explicit route intent while converting a known catalog alias to its served name. */
 function requestedManagedVllmRouteModel(input: {
   requestedModel: string | null;
   selectVllmModelFromEnv: SetupNimFlowDeps["selectVllmModelFromEnv"];
 }): string | null {
-  if (!input.requestedModel) return requestedManagedVllmModel(input.selectVllmModelFromEnv);
+  if (!input.requestedModel) {
+    if (!input.selectVllmModelFromEnv) {
+      throw new Error("Managed vLLM model selection could not be resolved.");
+    }
+    const requested = input.selectVllmModelFromEnv();
+    return requested?.servedModelId ?? requested?.id ?? null;
+  }
   if (!input.selectVllmModelFromEnv) return input.requestedModel;
   try {
     const catalogModel = input.selectVllmModelFromEnv({
@@ -769,13 +776,18 @@ function policyCheckedVllmInstallRecovery(
   recovery: ReturnType<typeof vllmInstallRecoveryOptions>,
   state: SetupNimSelectionState,
   seedVllmInstallRoute: (modelId: string) => void,
+  selectVllmModelFromEnv: SetupNimFlowDeps["selectVllmModelFromEnv"],
 ): ReturnType<typeof vllmInstallRecoveryOptions> {
   const checkpointInstallIntent = recovery.checkpointInstallIntent;
   if (!checkpointInstallIntent) return recovery;
   return {
     ...recovery,
     checkpointInstallIntent: (modelId: string) => {
-      seedVllmInstallRoute(modelId);
+      const routeModel = requestedManagedVllmRouteModel({
+        requestedModel: modelId,
+        selectVllmModelFromEnv,
+      });
+      seedVllmInstallRoute(routeModel ?? modelId);
       state.revalidateSandboxIdentity?.("record managed vLLM install intent");
       checkpointInstallIntent(modelId);
     },
@@ -1215,7 +1227,6 @@ export function createSetupNim(
             gpu,
             selected.key,
             requestedModel,
-            windowsOllamaReachable,
             winOllamaLoopbackOnly,
             winOllamaInstalledPath,
             state,
@@ -1258,15 +1269,9 @@ export function createSetupNim(
           if (vllmRunning) {
             const hasGpuSelection =
               String(process.env.NEMOCLAW_VLLM_GPU_DEVICE ?? "").trim() !== "";
-            const message = vllmPortConflictMessage(
-              gpu?.platform,
-              deps.vllmPort,
-              hasGpuSelection,
-            );
+            const message = vllmPortConflictMessage(gpu?.platform, deps.vllmPort, hasGpuSelection);
             deps.error(`  ${message}`);
-            if (deps.isNonInteractive()) {
-              deps.abortNonInteractive(message);
-            }
+            exitAfterPinnedVllmFailure(deps, requestedProvider, message);
             continue selectionLoop;
           }
           const vllmState = createSelectionState();
@@ -1283,6 +1288,7 @@ export function createSetupNim(
             vllmInstallRecoveryOptions(deps),
             vllmState,
             seedVllmInstallRoute,
+            deps.selectVllmModelFromEnv,
           );
           const result = await deps.installVllm(vllmProfile, {
             hasImage: hasVllmImage,
@@ -1295,8 +1301,11 @@ export function createSetupNim(
             },
           });
           if (!result.ok) {
-            if (deps.isNonInteractive())
-              deps.abortNonInteractive("vLLM install failed. See errors above.");
+            exitAfterPinnedVllmFailure(
+              deps,
+              requestedProvider,
+              "vLLM install failed. See errors above.",
+            );
             continue selectionLoop;
           }
           selected = {

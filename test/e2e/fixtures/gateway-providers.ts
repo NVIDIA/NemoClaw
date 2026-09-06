@@ -9,7 +9,10 @@ import { resultText } from "./clients/command.ts";
 import type { HostCliClient } from "./clients/host.ts";
 import type { SandboxClient } from "./clients/sandbox.ts";
 import { expect } from "./e2e-test.ts";
-import { bindHermesDiscordPolicyEndpoint } from "./hermes-discord-policy-binding.ts";
+import {
+  assertFixtureProviderPolicyEndpointBinaries,
+  bindFixtureProviderPolicyEndpoint,
+} from "./gateway-provider-policy-binding.ts";
 import type { ShellProbeResult } from "./shell-probe.ts";
 
 const PROVIDER_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u;
@@ -44,6 +47,86 @@ async function runFixtureOpenShell(
   return result;
 }
 
+type FixtureProviderCommandOptions = {
+  readonly artifactName: string;
+  readonly env: NodeJS.ProcessEnv;
+  readonly providerName: string;
+  readonly redactionValues: readonly string[];
+};
+
+async function requireFixtureProviderAttached(
+  host: HostCliClient,
+  sandboxName: string,
+  options: FixtureProviderCommandOptions,
+): Promise<void> {
+  const gatewayName = options.env.OPENSHELL_GATEWAY ?? "nemoclaw";
+  assertProviderName(gatewayName);
+  const attachments = await runFixtureOpenShell(
+    host,
+    ["sandbox", "provider", "list", "-g", gatewayName, sandboxName],
+    options,
+  );
+  if (!resultText(attachments).split(/\s+/u).includes(options.providerName)) {
+    throw new Error(
+      `Fixture provider ${options.providerName} is not attached to sandbox ${sandboxName}`,
+    );
+  }
+}
+
+async function setFixtureProviderPolicyBinding(
+  host: HostCliClient,
+  sandboxName: string,
+  options: FixtureProviderCommandOptions & {
+    readonly endpoint: {
+      readonly host: string;
+      readonly port: number;
+      readonly protocol: "rest" | "websocket";
+    };
+    readonly expectedBinaries?: readonly string[];
+  },
+): Promise<void> {
+  const policy = await host.command(
+    host.openshellCommandPath,
+    ["policy", "get", "--base", sandboxName],
+    {
+      artifactName: `${options.artifactName}-policy-before-rebind`,
+      env: options.env,
+      redactionValues: [...options.redactionValues],
+      timeoutMs: 60_000,
+    },
+  );
+  expect(policy.exitCode, resultText(policy)).toBe(0);
+
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-provider-rebind-"));
+  const boundPolicy = path.join(temporary, "bound-policy.yaml");
+  try {
+    fs.writeFileSync(boundPolicy, policy.stdout, { mode: 0o600 });
+    bindFixtureProviderPolicyEndpoint(
+      boundPolicy,
+      options.providerName,
+      options.endpoint.host,
+      options.endpoint.port,
+      options.endpoint.protocol,
+    );
+    if (options.expectedBinaries) {
+      assertFixtureProviderPolicyEndpointBinaries(
+        boundPolicy,
+        options.endpoint.host,
+        options.endpoint.port,
+        options.endpoint.protocol,
+        options.expectedBinaries,
+      );
+    }
+    await runFixtureOpenShell(
+      host,
+      ["policy", "set", "--policy", boundPolicy, "--wait", sandboxName],
+      options,
+    );
+  } finally {
+    fs.rmSync(temporary, { force: true, recursive: true });
+  }
+}
+
 /** Bind a fixture endpoint without rotating the already-attached provider credential revision. */
 export async function rebindFixtureProviderPolicyEndpoint(
   host: HostCliClient,
@@ -68,60 +151,80 @@ export async function rebindFixtureProviderPolicyEndpoint(
   if (!options.env[options.credentialEnv]) {
     throw new Error(`Missing provider credential env value: ${options.credentialEnv}`);
   }
-  const gatewayName = options.env.OPENSHELL_GATEWAY ?? "nemoclaw";
-  assertProviderName(gatewayName);
   const endpointPort = Number(options.endpoint.port);
   if (!Number.isInteger(endpointPort) || endpointPort < 1 || endpointPort > 65_535) {
     throw new Error("Fixture provider endpoint port must be an integer between 1 and 65535.");
   }
 
   const redactionValues = options.redactionValues ?? [];
-  const policy = await host.command(
-    host.openshellCommandPath,
-    ["policy", "get", "--base", sandboxName],
-    {
-      artifactName: `${options.artifactName}-policy-before-rebind`,
-      env: options.env,
-      redactionValues: [...redactionValues],
-      timeoutMs: 60_000,
-    },
-  );
-  expect(policy.exitCode, resultText(policy)).toBe(0);
+  const commandOptions = {
+    artifactName: options.artifactName,
+    env: options.env,
+    providerName: options.providerName,
+    redactionValues,
+  };
+  await requireFixtureProviderAttached(host, sandboxName, {
+    ...commandOptions,
+    artifactName: `${options.artifactName}-provider-attachments`,
+  });
+  await setFixtureProviderPolicyBinding(host, sandboxName, {
+    ...commandOptions,
+    artifactName: `${options.artifactName}-policy-rebound`,
+    endpoint: { ...options.endpoint, port: endpointPort },
+  });
+}
 
-  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-provider-rebind-"));
-  const boundPolicy = path.join(temporary, "bound-policy.yaml");
-  try {
-    fs.writeFileSync(boundPolicy, policy.stdout, { mode: 0o600 });
-    const attachments = await runFixtureOpenShell(
-      host,
-      ["sandbox", "provider", "list", "-g", gatewayName, sandboxName],
-      {
-        artifactName: `${options.artifactName}-provider-attachments`,
-        env: options.env,
-        redactionValues,
-      },
-    );
-    expect(resultText(attachments).split(/\s+/u)).toContain(options.providerName);
-
-    bindHermesDiscordPolicyEndpoint(
-      boundPolicy,
-      options.providerName,
-      options.endpoint.host,
-      endpointPort,
-      options.endpoint.protocol,
-    );
-    await runFixtureOpenShell(
-      host,
-      ["policy", "set", "--policy", boundPolicy, "--wait", sandboxName],
-      {
-        artifactName: `${options.artifactName}-policy-rebound`,
-        env: options.env,
-        redactionValues,
-      },
-    );
-  } finally {
-    fs.rmSync(temporary, { force: true, recursive: true });
+/** Add a fake endpoint only after proving its credential provider is attached. */
+export async function applyFixtureProviderPolicyEndpoint(
+  host: HostCliClient,
+  sandboxName: string,
+  options: {
+    readonly allowedBinaries?: readonly string[];
+    readonly artifactName: string;
+    readonly endpoint: { readonly port: number | string };
+    readonly env: NodeJS.ProcessEnv;
+    readonly protocol: "rest" | "websocket";
+    readonly providerName: string;
+    readonly redactionValues: readonly string[];
+    readonly rewrite: "request-body-credential-rewrite" | "websocket-credential-rewrite";
+  },
+): Promise<void> {
+  assertProviderName(options.providerName);
+  const endpointPort = Number(options.endpoint.port);
+  if (!Number.isInteger(endpointPort) || endpointPort < 1 || endpointPort > 65_535) {
+    throw new Error("Fixture provider endpoint port must be an integer between 1 and 65535.");
   }
+  const allowedBinaries = options.allowedBinaries ?? ["/usr/local/bin/node", "/usr/bin/node"];
+  const commandOptions = {
+    artifactName: options.artifactName,
+    env: options.env,
+    providerName: options.providerName,
+    redactionValues: options.redactionValues,
+  };
+  await requireFixtureProviderAttached(host, sandboxName, {
+    ...commandOptions,
+    artifactName: `${options.artifactName}-provider-attachments`,
+  });
+
+  const policyHost = "host.openshell.internal";
+  const methods = options.protocol === "rest" ? ["GET", "POST"] : ["GET", "WEBSOCKET_TEXT"];
+  const args = [
+    "policy",
+    "update",
+    sandboxName,
+    "--add-endpoint",
+    `${policyHost}:${String(endpointPort)}:read-write:${options.protocol}:enforce:${options.rewrite},allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16`,
+  ];
+  for (const method of methods)
+    args.push("--add-allow", `${policyHost}:${String(endpointPort)}:${method}:/**`);
+  args.push(...allowedBinaries.flatMap((binary) => ["--binary", binary]), "--wait");
+  await runFixtureOpenShell(host, args, commandOptions);
+  await setFixtureProviderPolicyBinding(host, sandboxName, {
+    ...commandOptions,
+    artifactName: `${options.artifactName}-credential-binding`,
+    endpoint: { host: policyHost, port: endpointPort, protocol: options.protocol },
+    expectedBinaries: allowedBinaries,
+  });
 }
 
 export async function upsertGenericGatewayProvider(

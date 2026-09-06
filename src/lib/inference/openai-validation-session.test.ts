@@ -4,6 +4,7 @@
 import http from "node:http";
 import { describe, expect, it, vi } from "vitest";
 import { probeOpenAiLikeEndpointWithValidationSession } from "./openai-validation-session";
+import { getChatCompletionsProbePayload } from "./openai-probe-models";
 import {
   createOpenAiValidationTestDeps,
   useOpenAiValidationTestServers,
@@ -12,6 +13,44 @@ import {
 const listen = useOpenAiValidationTestServers();
 
 describe("OpenAI validation keepalive sequence", () => {
+  it("sends the NVIDIA Endpoints Nemotron request shape through native validation (#10880)", async () => {
+    let observedBody = "";
+    const server = http.createServer((request, response) => {
+      request.setEncoding("utf8");
+      request.on("data", (chunk) => {
+        observedBody += chunk;
+      });
+      request.on("end", () => {
+        response.end('{"choices":[{"message":{"content":"OK"}}]}');
+      });
+    });
+    const port = await listen(server);
+    const harness = {
+      ...createOpenAiValidationTestDeps(),
+      getChatPayload: getChatCompletionsProbePayload,
+    };
+
+    const result = await probeOpenAiLikeEndpointWithValidationSession(
+      `http://provider.example.test:${port}/v1`,
+      "nvidia/nemotron-3-super-120b-a12b",
+      "test-key",
+      { skipResponsesProbe: true, useNvidiaEndpointProbePayload: true },
+      harness,
+    );
+
+    expect(result).toMatchObject({ ok: true, api: "openai-completions" });
+    expect(JSON.parse(observedBody)).toEqual({
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      messages: [{ role: "user", content: "Reply with exactly: OK" }],
+      max_tokens: 16,
+      temperature: 1,
+      top_p: 0.95,
+      chat_template_kwargs: { enable_thinking: false },
+    });
+    expect(JSON.parse(observedBody)).not.toHaveProperty("thinking");
+    expect(harness.legacyProbe).not.toHaveBeenCalled();
+  });
+
   it("uses the GPT-5 reply-budget field for native tool-call validation (#6642)", async () => {
     let observedBody = "";
     const server = http.createServer((request, response) => {
@@ -200,7 +239,7 @@ describe("OpenAI validation keepalive sequence", () => {
     expect(harness.legacyProbe).not.toHaveBeenCalled();
   });
 
-  it("gives the delayed 4096-token native retry the doubled deadline (#8714)", async () => {
+  it("caps the delayed 4096-token native retry at the validation maximum (#8714)", async () => {
     const observedBodies: Array<Record<string, unknown>> = [];
     const server = http.createServer((request, response) => {
       let body = "";
@@ -221,18 +260,34 @@ describe("OpenAI validation keepalive sequence", () => {
     });
     const port = await listen(server);
     const harness = createOpenAiValidationTestDeps();
+    harness.getChatTimeoutMs = () => 600_000;
+    const timeoutSpy = vi.spyOn(globalThis, "setTimeout");
 
-    const result = await probeOpenAiLikeEndpointWithValidationSession(
-      `http://provider.example.test:${port}/v1`,
-      "nemotron-3-nano:30b",
-      "test-key",
-      { skipResponsesProbe: true, requireChatCompletionsToolCalling: true },
-      harness,
-    );
+    try {
+      const result = await probeOpenAiLikeEndpointWithValidationSession(
+        `http://provider.example.test:${port}/v1`,
+        "nemotron-3-nano:30b",
+        "test-key",
+        { skipResponsesProbe: true, requireChatCompletionsToolCalling: true },
+        harness,
+      );
 
-    expect(result).toMatchObject({ ok: true, api: "openai-completions" });
-    expect(observedBodies.map((body) => body.max_tokens)).toEqual([256, 1024, 4096]);
-    expect(harness.legacyProbe).not.toHaveBeenCalled();
+      expect({
+        result,
+        replyBudgets: observedBodies.map((body) => body.max_tokens),
+        validationDeadlines: timeoutSpy.mock.calls
+          .map((call) => call[1])
+          .filter((delay) => typeof delay === "number" && delay >= 600_000),
+        legacyProbeCalls: vi.mocked(harness.legacyProbe).mock.calls.length,
+      }).toEqual({
+        result: expect.objectContaining({ ok: true, api: "openai-completions" }),
+        replyBudgets: [256, 1024, 4096],
+        validationDeadlines: [600_000, 600_000, 600_000],
+        legacyProbeCalls: 0,
+      });
+    } finally {
+      timeoutSpy.mockRestore();
+    }
   });
 
   it("fails after the full retry ladder without replaying the legacy probe (#8714)", async () => {
