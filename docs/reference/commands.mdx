@@ -2361,7 +2361,7 @@ $$nemoclaw my-assistant mcp remove github [--force]
 
 ### `$$nemoclaw <name> skill install <path>`
 
-Add a local skill directory to a running sandbox. NemoClaw validates and privately stages the local regular-file tree, then invokes the selected agent's native add command when one exists. If the pinned agent has no native local-add command, NemoClaw places only that staged tree in the agent's manifest-declared canonical writable user-skill root.
+Add a local skill directory to a running sandbox. NemoClaw validates and privately stages the local regular-file tree, then invokes the selected agent's native add command when one exists. If the pinned agent has no native local-add command, NemoClaw places only a new named tree in the agent's manifest-declared canonical writable user-skill root. This fallback refuses to replace an existing same-name entry; remove that canonical-root copy explicitly before reinstalling it.
 
 ```bash
 $$nemoclaw my-assistant skill install ./my-skill/
@@ -2371,7 +2371,7 @@ The skill directory must contain a `SKILL.md` file with YAML frontmatter that in
 
 <AgentOnly variant="openclaw">
 
-OpenClaw plugins are a different kind of extension. To install an OpenClaw plugin, refer to [Install OpenClaw Plugins](../manage-sandboxes/install-openclaw-plugins). Skill installation delegates to the unmodified `openclaw skills install` command. OpenClaw owns discovery, precedence, and session activation.
+OpenClaw plugins are a different kind of extension. To install an OpenClaw plugin, refer to [Install OpenClaw Plugins](../manage-sandboxes/install-openclaw-plugins). Skill installation invokes the unmodified `openclaw skills install <staged-path> --agent main --force` command. The pinned native command targets OpenClaw's `main` agent and allows OpenClaw to replace a same-name skill. OpenClaw owns discovery, precedence, and session activation.
 
 </AgentOnly>
 <AgentOnly variant="hermes">

@@ -170,7 +170,9 @@ async function cleanupRemoteStage(
     "-c",
     skillInstall.buildCleanupSkillStageCommand(stageDirectory),
   ]);
-  if (exitCode !== 0) console.error("  Private skill staging cleanup failed.");
+  if (exitCode !== 0) {
+    console.error(`  Private skill staging cleanup failed: ${stageDirectory}`);
+  }
   return exitCode === 0;
 }
 
@@ -187,10 +189,11 @@ async function runSkillCommandWithStageCleanup(
   gatewayName: string,
   stageDirectory: string,
   command: readonly string[],
-): Promise<void> {
+): Promise<boolean> {
   const commandExit = await runAgentSkillCommand(sandboxName, gatewayName, command);
   const cleaned = await cleanupRemoteStage(sandboxName, gatewayName, stageDirectory);
   process.exitCode = cleaned || commandExit !== 0 ? commandExit : 1;
+  return cleaned;
 }
 
 /** Stream the unmodified selected agent's native skill list. */
@@ -430,8 +433,12 @@ export async function installSandboxSkill(
           local.name,
           stagedSkillDirectory,
         );
-    await runSkillCommandWithStageCleanup(sandboxName, gatewayName, stageDirectory, command);
-    stageCreated = false;
+    stageCreated = !(await runSkillCommandWithStageCleanup(
+      sandboxName,
+      gatewayName,
+      stageDirectory,
+      command,
+    ));
   } finally {
     if (stageCreated && gatewayName) {
       await cleanupRemoteStage(sandboxName, gatewayName, stageDirectory);

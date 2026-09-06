@@ -250,6 +250,40 @@ describe("stateless sandbox skill orchestration", () => {
     expect(process.exitCode).toBe(0);
   });
 
+  it("fails a successful add when private staging cleanup fails and retries cleanup", async () => {
+    selectAgent("hermes", "/usr/local/bin/hermes", HERMES);
+    const source = localSkill();
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    sdkCommandExecutor.runStreaming
+      .mockResolvedValueOnce({
+        outcome: { kind: "completed", exitCode: 0 },
+        release: vi.fn(),
+      })
+      .mockResolvedValueOnce({
+        outcome: { kind: "completed", exitCode: 0 },
+        release: vi.fn(),
+      })
+      .mockResolvedValueOnce({
+        outcome: { kind: "completed", exitCode: 1 },
+        release: vi.fn(),
+      })
+      .mockResolvedValueOnce({
+        outcome: { kind: "completed", exitCode: 0 },
+        release: vi.fn(),
+      });
+
+    await installSandboxSkill("alpha", { command: "install", path: source });
+
+    expect(process.exitCode).toBe(1);
+    expect(sdkCommandExecutor.runStreaming).toHaveBeenCalledTimes(4);
+    expect(sdkCommandExecutor.runStreaming.mock.calls[2]?.[0].command).toEqual(
+      sdkCommandExecutor.runStreaming.mock.calls[3]?.[0].command,
+    );
+    expect(error).toHaveBeenCalledWith(
+      expect.stringMatching(/^  Private skill staging cleanup failed: \/sandbox\//u),
+    );
+  });
+
   it("fails clearly when the selected agent declares no safe skill integration", async () => {
     selectAgent("pi", "/usr/local/bin/pi", null);
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);

@@ -659,12 +659,12 @@ DCODE_EXIT:${first_skill_exit}"
     && skill_update_status=0 || skill_update_status=$?
   skill_file_output="$(sandbox_exec "cat /sandbox/.deepagents/agent/skills/${skill_name}/SKILL.md" || true)"
   rm -rf -- "$skill_root"
-  if [ "$skill_update_status" -eq 0 ] \
-    && grep -Fxq "When asked for the native lifecycle canary, reply with exactly ${skill_marker_v2} and nothing else." <<<"$skill_file_output" \
-    && ! grep -Fq "$skill_marker_v1" <<<"$skill_file_output"; then
-    pass "public NemoClaw skill update replaced only the DCode canonical-root target"
+  if [ "$skill_update_status" -ne 0 ] \
+    && grep -Fxq "When asked for the native lifecycle canary, reply with exactly ${skill_marker_v1} and nothing else." <<<"$skill_file_output" \
+    && ! grep -Fq "$skill_marker_v2" <<<"$skill_file_output"; then
+    pass "public NemoClaw skill install refused to replace the existing DCode canonical-root target"
   else
-    fail_test "public NemoClaw skill update did not replace the DCode canonical-root target"
+    fail_test "public NemoClaw skill install replaced or changed the existing DCode canonical-root target"
   fi
 
   # 5. The same login-shell path runs dcode and returns a JSON PONG envelope.
@@ -684,10 +684,10 @@ DCODE_EXIT:${first_skill_exit}"
   fi
   direct_headless_output="${direct_output}
 DCODE_EXIT:${direct_exit}"
-  if direct_classification="$(classify_headless_output "$direct_exit" "$direct_headless_output" "$skill_marker_v2")"; then
-    pass "direct-exec dcode -n reached managed inference; fresh direct-exec dcode session consumed only the updated skill (${direct_classification}; exit ${direct_exit})"
+  if direct_classification="$(classify_headless_output "$direct_exit" "$direct_headless_output" "$skill_marker_v1")"; then
+    pass "direct-exec dcode -n reached managed inference; fresh direct-exec dcode session retained only the original skill (${direct_classification}; exit ${direct_exit})"
   else
-    fail_test "fresh direct-exec dcode session did not consume only the updated skill (${direct_classification}, exit ${direct_exit})"
+    fail_test "fresh direct-exec dcode session did not retain only the original skill (${direct_classification}, exit ${direct_exit})"
   fi
   skill_remove_output="$(bounded_skill_cli remove "$skill_name" 2>&1)" \
     && skill_remove_status=0 || skill_remove_status=$?

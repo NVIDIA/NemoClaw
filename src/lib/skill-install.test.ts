@@ -104,10 +104,9 @@ describe("canonical writable-root fallbacks", () => {
     expect(command.slice(0, 2)).toEqual(["/bin/sh", "-c"]);
     expect(script).toContain("/sandbox/.hermes/skills");
     expect(script).toContain('destination="$name"');
-    expect(script).toContain('expected_destination="$root/$name"');
-    expect(script).toContain(
-      '"$(realpath -e -- "$destination")" = "$expected_destination"',
-    );
+    expect(script).toContain("Refusing to replace existing %s");
+    expect(script).toContain('mv -T -- "$temporary" "$destination"');
+    expect(script).not.toContain('rm -rf -- "$destination"');
     expect(script).toContain("Native skill list and new sessions remain authoritative");
     expect(script).not.toContain("receipt");
     expect(script).not.toContain("provenance");
@@ -124,9 +123,7 @@ describe("canonical writable-root fallbacks", () => {
     expect(script).toContain('cd -P -- "$root"');
     expect(script).toContain('destination="$name"');
     expect(script).toContain('expected_destination="$root/$name"');
-    expect(script).toContain(
-      '"$(realpath -e -- "$destination")" = "$expected_destination"',
-    );
+    expect(script).toContain('"$(realpath -e -- "$destination")" = "$expected_destination"');
     expect(script).toContain("only from the canonical writable skill root");
     expect(script).toContain("Native skill list remains authoritative");
     expect(script).not.toContain("/sandbox/.openclaw/skills");

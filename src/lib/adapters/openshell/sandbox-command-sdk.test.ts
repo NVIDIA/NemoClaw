@@ -2,10 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+import {
+  ensureManagedGatewayStateRoot,
+  MANAGED_GATEWAY_STATE_ROOT_MARKER,
+} from "../../onboard/gateway/state-dir";
 
 import {
   connectManagedOpenShellSdk,
@@ -14,9 +18,10 @@ import {
 
 const roots: string[] = [];
 
-function writeTlsBundle(): string {
-  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sdk-test-"));
+function writeTlsBundle(gatewayName = "nemoclaw-9443", gatewayPort = 9443): string {
+  const stateDir = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-sdk-test-"));
   roots.push(stateDir);
+  ensureManagedGatewayStateRoot({ gatewayName, gatewayPort, stateDir });
   fs.mkdirSync(path.join(stateDir, "tls", "client"), { recursive: true });
   fs.writeFileSync(path.join(stateDir, "tls", "ca.crt"), "ca");
   fs.writeFileSync(path.join(stateDir, "tls", "client", "tls.crt"), "cert");
@@ -48,6 +53,30 @@ describe("OpenShell SDK sandbox command executor", () => {
       clientCert: Buffer.from("cert"),
       clientKey: Buffer.from("key"),
     });
+  });
+
+  it.each([
+    ["a missing ownership marker", "missing"],
+    ["a marker for another gateway", "wrong-gateway"],
+  ])("rejects %s before loading the SDK", async (_label, fixture) => {
+    const stateDir =
+      fixture === "wrong-gateway" ? writeTlsBundle("nemoclaw-9444", 9444) : writeTlsBundle();
+    if (fixture === "missing") {
+      fs.rmSync(path.join(stateDir, MANAGED_GATEWAY_STATE_ROOT_MARKER));
+    }
+    const loadSdk = vi.fn();
+
+    await expect(
+      connectManagedOpenShellSdk(
+        { kind: "named", gatewayName: "nemoclaw-9443" },
+        {
+          env: { NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: stateDir },
+          homeDir: "/unused",
+          loadSdk,
+        },
+      ),
+    ).rejects.toThrow("Unsafe OpenShell gateway state directory");
+    expect(loadSdk).not.toHaveBeenCalled();
   });
 
   it("streams native stdout and stderr and preserves the SDK exit code", async () => {
@@ -96,6 +125,7 @@ describe("OpenShell SDK sandbox command executor", () => {
     ).resolves.toEqual({ state: "missing" });
     expect(exec).toHaveBeenCalledWith("alpha", ["test", "-d", "/sandbox/missing"], {
       noLoginShell: true,
+      timeoutSecs: 30,
     });
   });
 

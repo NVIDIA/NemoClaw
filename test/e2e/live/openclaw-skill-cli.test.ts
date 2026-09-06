@@ -23,6 +23,7 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-oc-skill-cli";
 const SKILL_ID = "openclaw-skill-cli-fixture";
 const SKILL_DESCRIPTION = "E2E fixture proving openclaw skills install + list roundtrip";
+const STALE_SKILL_DESCRIPTION = "stale same-name OpenClaw workspace skill";
 const EXPECTED_WORKSPACE_SKILL_PATH = `/sandbox/.openclaw/workspace/skills/${SKILL_ID}/SKILL.md`;
 const OUTSIDE_WRITABLE_ROOT_SKILL_PATH = `/sandbox/.openclaw/skills/${SKILL_ID}/SKILL.md`;
 const INSTALL_TIMEOUT_MS = 45 * 60_000;
@@ -139,6 +140,7 @@ test(
         "install.sh creates/recreates a real OpenClaw sandbox",
         "OPENCLAW_HOME, OPENCLAW_STATE_DIR, and OPENCLAW_WORKSPACE_DIR reach the sandbox runtime shell",
         "nemoclaw skill install invokes the unmodified native OpenClaw add command",
+        "native OpenClaw installation replaces a stale same-name workspace skill",
         "the installed SKILL.md lands under ${OPENCLAW_WORKSPACE_DIR}/skills/<id>",
         "nemoclaw skill list streams the native OpenClaw list",
         "nemoclaw skill remove deletes only the canonical writable-root copy",
@@ -208,7 +210,7 @@ test(
     progress.phase("confirm OpenClaw runtime directories");
     const envCheck = await expectSandboxShellZero(
       sandbox,
-      'printf "OPENCLAW_HOME=%s\\nOPENCLAW_STATE_DIR=%s\\nOPENCLAW_WORKSPACE_DIR=%s\\n" "${OPENCLAW_HOME:-}" "${OPENCLAW_STATE_DIR:-}" "${OPENCLAW_WORKSPACE_DIR:-}"',
+      `printf "OPENCLAW_HOME=%s\\nOPENCLAW_STATE_DIR=%s\\nOPENCLAW_WORKSPACE_DIR=%s\\n" "\${OPENCLAW_HOME:-}" "\${OPENCLAW_STATE_DIR:-}" "\${OPENCLAW_WORKSPACE_DIR:-}"; mkdir -p ${shellQuote(path.posix.dirname(EXPECTED_WORKSPACE_SKILL_PATH))}; printf '%s\\n' ${shellQuote(`---\nname: "${SKILL_ID}"\ndescription: "${STALE_SKILL_DESCRIPTION}"\n---\n# Stale same-name fixture`)} > ${shellQuote(EXPECTED_WORKSPACE_SKILL_PATH)}`,
       "sandbox-openclaw-runtime-env-check",
       env,
     );
@@ -235,7 +237,7 @@ test(
 
     const diskCheck = await expectSandboxShellZero(
       sandbox,
-      `ls -1 "\${OPENCLAW_WORKSPACE_DIR}/skills/${SKILL_ID}/" 2>&1; test -f "\${OPENCLAW_WORKSPACE_DIR}/skills/${SKILL_ID}/SKILL.md" && echo SKILL_MD_PRESENT`,
+      `ls -1 "\${OPENCLAW_WORKSPACE_DIR}/skills/${SKILL_ID}/" 2>&1; test -f ${shellQuote(EXPECTED_WORKSPACE_SKILL_PATH)} && grep -Fq ${shellQuote(SKILL_DESCRIPTION)} ${shellQuote(EXPECTED_WORKSPACE_SKILL_PATH)} && ! grep -Fq ${shellQuote(STALE_SKILL_DESCRIPTION)} ${shellQuote(EXPECTED_WORKSPACE_SKILL_PATH)} && echo SKILL_MD_PRESENT`,
       "sandbox-openclaw-skill-cli-disk-check",
       env,
     );

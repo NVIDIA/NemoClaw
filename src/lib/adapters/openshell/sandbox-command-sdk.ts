@@ -7,6 +7,7 @@ import path from "node:path";
 import { openRegularFileNoFollow } from "../fs/regular-file";
 import {
   DEFAULT_GATEWAY_PORT,
+  managedGatewayStateRootOwnershipFailure,
   resolveGatewayStateDirForPort,
 } from "../../onboard/gateway/state-dir";
 import { isValidName } from "../../sandbox-name-contract";
@@ -18,6 +19,7 @@ import type {
 import type { OpenShellGatewayTarget } from "./sandbox-observer";
 
 const MAX_PEM_BYTES = 1024 * 1024;
+const DIRECTORY_PROBE_TIMEOUT_SECONDS = 30;
 
 type SdkExecEvent =
   | Readonly<{ stream: "stdout" | "stderr"; data: Buffer }>
@@ -116,6 +118,15 @@ export async function connectManagedOpenShellSdk(
     home: deps.homeDir ?? environment.HOME ?? os.homedir(),
     port,
   });
+  const gatewayName = target.kind === "named" ? target.gatewayName : "";
+  const ownershipFailure = managedGatewayStateRootOwnershipFailure({
+    gatewayName,
+    gatewayPort: port,
+    stateDir,
+  });
+  if (ownershipFailure) {
+    throw new Error(`Unsafe OpenShell gateway state directory: ${ownershipFailure}.`);
+  }
   const tlsDirectory = path.join(stateDir, "tls");
   const sdk = await (deps.loadSdk ?? loadOpenShellSdk)();
   return sdk.OpenShellClient.connect({
@@ -178,7 +189,7 @@ export function createSdkOpenShellSandboxCommandExecutor(
         const result = await client.sandbox.exec(
           request.sandboxName,
           ["test", "-d", request.path],
-          { noLoginShell: true },
+          { noLoginShell: true, timeoutSecs: DIRECTORY_PROBE_TIMEOUT_SECONDS },
         );
         if (result.exitCode === 0) return { state: "present" };
         return result.exitCode === 1 ? { state: "missing" } : { state: "unobservable" };
