@@ -2,18 +2,23 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
-import path from "node:path";
+import {
+  classifyNvidiaFirmwareProducts,
+  hasDgxStationGb300PciGpu,
+  NVIDIA_FIRMWARE_VALUE_MAX_BYTES,
+  readBoundedNvidiaFirmwareValue,
+} from "../inference/dgx-station-identity.js";
 import type { NvidiaPlatform } from "../inference/nim.js";
 import { collectN1xIdentity, type N1xIdentityOptions } from "../inference/platform-identity/n1x.js";
 import {
   isQualifiedStationProfile,
   isQualifiedStationRuntime,
-  isStationGb300PciDevice,
   isStationGb300ProductName,
   isTrustedStationReleaseMarker,
   STATION_RELEASE_MARKER_MAX_BYTES,
   type StationProfile,
 } from "./station-qualification.js";
+import { sanitizeReadinessText } from "./sanitize.js";
 import type {
   QualificationStatus,
   ReadinessCapability,
@@ -27,7 +32,15 @@ export type { StationProfile } from "./station-qualification.js";
 
 export interface PlatformIdentity {
   nvidiaPlatform?: NvidiaPlatform | null;
+  platformIdentityConflict?: boolean | null;
   productName?: string | null;
+  productFamily?: string | null;
+  boardName?: string | null;
+  deviceTreeModel?: string | null;
+  stationFirmwareProduct?: string | null;
+  stationSystemVendor?: string | null;
+  stationCpuCoreCount?: number | null;
+  stationHostMemoryBytes?: number | null;
   n1xCandidate?: boolean | null;
   n1xFastOsMarker?: boolean | null;
   n1xPciGpu?: boolean | null;
@@ -36,6 +49,13 @@ export interface PlatformIdentity {
   stationGb300PciGpu?: boolean | null;
   osId?: string | null;
   osVersionId?: string | null;
+  osPrettyName?: string | null;
+  stationReleaseName?: string | null;
+  stationReleasePrettyName?: string | null;
+  stationReleasePlatform?: string | null;
+  stationSoftwareBuildVersion?: string | null;
+  stationSoftwareBuildDate?: string | null;
+  stationOtaVersion?: string | null;
   wslDockerDesktopGpuProofPassed?: boolean;
 }
 
@@ -47,6 +67,8 @@ export interface PlatformQualificationInput extends PlatformIdentity {
   dockerReachable: boolean;
   runtime: string;
   hasNvidiaGpu: boolean;
+  nvidiaGpuCount?: number;
+  nvidiaGpuMemoryPerDeviceBytes?: number;
 }
 
 export interface PlatformQualificationProjection {
@@ -58,25 +80,28 @@ export interface PlatformQualificationProjection {
 
 export interface CollectPlatformIdentityOptions extends N1xIdentityOptions {
   productNamePath?: string;
+  productFamilyPath?: string;
+  boardNamePath?: string;
+  deviceTreeModelPath?: string;
+  systemVendorPath?: string;
+  cpuPossiblePath?: string;
+  memInfoPath?: string;
   stationReleasePath?: string;
   osReleasePath?: string;
   isWsl?: boolean;
-  runCaptureImpl?: (
-    command: readonly string[],
-    options?: { ignoreError?: boolean },
-  ) => string;
+  runCaptureImpl?: (command: readonly string[], options?: { ignoreError?: boolean }) => string;
 }
 
 const N1X_WSL_PRODUCT_NAME_MAX_BYTES = 256;
 const N1X_WSL_PRODUCT_PATTERN = /(?:^|\s)RTX Spark N1X(?:$|\s)/i;
+const STATION_HOST_INFO_MAX_BYTES = 64 * 1024;
+const MAX_REPORTED_CPU_COUNT = 4096;
 
 export function isN1xWslProductName(value: string): boolean {
   return N1X_WSL_PRODUCT_PATTERN.test(value.trim());
 }
 
-function collectN1xWslProduct(
-  options: CollectPlatformIdentityOptions,
-): boolean | undefined {
+function collectN1xWslProduct(options: CollectPlatformIdentityOptions): boolean | undefined {
   if (!options.isWsl || !options.runCaptureImpl) return undefined;
   try {
     const raw = options.runCaptureImpl(
@@ -89,7 +114,9 @@ function collectN1xWslProduct(
       ],
       { ignoreError: true },
     );
-    const normalized = String(raw ?? "").replace(/\r/g, "").trim();
+    const normalized = String(raw ?? "")
+      .replace(/\r/g, "")
+      .trim();
     if (
       !normalized ||
       normalized.includes("\0") ||
@@ -107,34 +134,25 @@ function collectN1xWslProduct(
 function readOptional(
   readFile: (filePath: string) => string,
   filePath: string,
+  maxBytes = STATION_RELEASE_MARKER_MAX_BYTES,
 ): string | undefined {
   try {
     const contents = readFile(filePath);
-    if (Buffer.byteLength(contents) > STATION_RELEASE_MARKER_MAX_BYTES) return undefined;
+    if (Buffer.byteLength(contents) > maxBytes) return undefined;
     return contents.replace(/\0/g, "").trim() || undefined;
   } catch {
     return undefined;
   }
 }
 
-function nvidiaPlatformFromProduct(productName: string | undefined): NvidiaPlatform | undefined {
-  if (!productName) return undefined;
-  if (/DGX[_\s-]+Spark/i.test(productName)) return "spark";
-  if (
-    /(?<![A-Za-z0-9])P3830(?![A-Za-z0-9])/i.test(productName) ||
-    /DGX[_\s-]+Station/i.test(productName) ||
-    (/Station/i.test(productName) && /GB300/i.test(productName))
-  ) {
-    return "station";
-  }
-  if (/Jetson|Tegra|Thor|Orin|Xavier/i.test(productName)) return "jetson";
-  return undefined;
-}
-
-function parseOsRelease(contents: string): { osId?: string; osVersionId?: string } {
+function parseOsRelease(contents: string): {
+  osId?: string;
+  osVersionId?: string;
+  osPrettyName?: string;
+} {
   const values = new Map<string, string>();
   for (const line of contents.split("\n")) {
-    const match = /^(ID|VERSION_ID)=(?:"([^"]*)"|([A-Za-z0-9._-]+))$/.exec(line);
+    const match = /^(ID|VERSION_ID|PRETTY_NAME)=(?:"([^"\0]*)"|([A-Za-z0-9._-]+))$/.exec(line);
     if (!match) continue;
     const [, key, quotedValue, plainValue] = match;
     if (!key || values.has(key)) continue;
@@ -143,6 +161,68 @@ function parseOsRelease(contents: string): { osId?: string; osVersionId?: string
   return {
     osId: values.get("ID"),
     osVersionId: values.get("VERSION_ID"),
+    osPrettyName: values.get("PRETTY_NAME")?.slice(0, NVIDIA_FIRMWARE_VALUE_MAX_BYTES),
+  };
+}
+
+function parseCpuPossibleCount(contents: string): number | undefined {
+  const ranges: Array<readonly [number, number]> = [];
+  for (const part of contents.trim().split(",")) {
+    const match = /^(\d+)(?:-(\d+))?$/.exec(part);
+    if (!match) return undefined;
+    const start = Number(match[1]);
+    const end = Number(match[2] ?? match[1]);
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start > end) return undefined;
+    if (end >= MAX_REPORTED_CPU_COUNT) return undefined;
+    ranges.push([start, end]);
+  }
+  ranges.sort(([left], [right]) => left - right);
+  let count = 0;
+  let priorEnd = -1;
+  for (const [start, end] of ranges) {
+    if (start <= priorEnd) return undefined;
+    count += end - start + 1;
+    priorEnd = end;
+  }
+  return count || undefined;
+}
+
+function parseHostMemoryBytes(contents: string): number | undefined {
+  const match = /^MemTotal:\s+(\d+)\s+kB$/mu.exec(contents);
+  if (!match) return undefined;
+  const kibibytes = Number(match[1]);
+  const bytes = kibibytes * 1024;
+  return Number.isSafeInteger(bytes) && bytes > 0 ? bytes : undefined;
+}
+
+function identityEvidenceText(value: string | null | undefined): string | null {
+  if (value === undefined || value === null) return null;
+  return sanitizeReadinessText(value, 256);
+}
+
+type StationReleaseDetails = Pick<
+  PlatformIdentity,
+  | "stationReleaseName"
+  | "stationReleasePrettyName"
+  | "stationReleasePlatform"
+  | "stationSoftwareBuildVersion"
+  | "stationSoftwareBuildDate"
+  | "stationOtaVersion"
+>;
+
+function parseStationReleaseDetails(contents: string): StationReleaseDetails {
+  const values = new Map<string, string>();
+  for (const line of contents.split("\n")) {
+    const match = /^([A-Z][A-Z0-9_]*)="([^"]*)"$/.exec(line);
+    if (match?.[1] && match[2] !== undefined) values.set(match[1], match[2]);
+  }
+  return {
+    stationReleaseName: values.get("DGX_NAME"),
+    stationReleasePrettyName: values.get("DGX_PRETTY_NAME"),
+    stationReleasePlatform: values.get("DGX_PLATFORM"),
+    stationSoftwareBuildVersion: values.get("DGX_SWBUILD_VERSION"),
+    stationSoftwareBuildDate: values.get("DGX_SWBUILD_DATE"),
+    stationOtaVersion: values.get("DGX_OTA_VERSION"),
   };
 }
 
@@ -191,12 +271,7 @@ function parseStationRelease(contents: string): StationProfile {
   const otaVersions = values.get("DGX_OTA_VERSION") ?? [];
   if (otaVersions.length > 0) {
     const otaPretty = values.get("DGX_OTA_PRETTY_NAME")?.[0];
-    if (
-      (otaPretty !== undefined && otaPretty !== "DGX OS") ||
-      (otaPretty === undefined && values.get("DGX_PRETTY_NAME")?.[0] !== "NVIDIA DGX GB300WS")
-    ) {
-      return "unsupported-dgx-os";
-    }
+    if (otaPretty !== undefined && otaPretty !== "DGX OS") return "unsupported-dgx-os";
     return ["7.2.0", "7.4.0", "7.5.0"].includes(otaVersions.at(-1) ?? "")
       ? "supported-dgx-os"
       : "unsupported-dgx-os";
@@ -204,50 +279,21 @@ function parseStationRelease(contents: string): StationProfile {
   if (values.has("DGX_OTA_PRETTY_NAME") || values.has("DGX_OTA_DATE")) {
     return "unsupported-dgx-os";
   }
-  const noOtaPrettyName = values.get("DGX_PRETTY_NAME")?.[0];
   const noOtaVersion = values.get("DGX_SWBUILD_VERSION")?.[0];
-  if (
-    (noOtaPrettyName === "NVIDIA DGX GB300WS" || noOtaPrettyName === "NVIDIA DGX Server") &&
-    /^7\.6\.[0-9]+$/u.test(noOtaVersion ?? "") &&
-    values.has("DGX_SWBUILD_DATE")
-  ) {
-    return "supported-dgx-os";
-  }
-  const identity = [noOtaPrettyName, noOtaVersion, values.get("DGX_SWBUILD_DATE")?.[0]].join("|");
-  if (identity === "NVIDIA DGX Server|7.5.0-GB300ws-GB200ws|2026-04-02-08-20-16") {
+  const noOtaBuildDate = values.get("DGX_SWBUILD_DATE")?.[0];
+  if (!noOtaVersion || !noOtaBuildDate) return "unsupported-dgx-os";
+  if (/^7\.6\.[0-9]+$/u.test(noOtaVersion)) return "supported-dgx-os";
+  const identity = [noOtaVersion, noOtaBuildDate].join("|");
+  if (identity === "7.5.0-GB300ws-GB200ws|2026-04-02-08-20-16") {
     return "supported-colossus-baseos";
   }
-  if (identity === "NVIDIA DGX GB300WS|7.5.0|2026-06-16-11-48-10") {
+  if (identity === "7.5.0|2026-06-16-11-48-10") {
     return "supported-ai-developer-tools";
   }
-  if (identity === "NVIDIA DGX GB300WS|7.5.0|2026-05-13-18-42-38") {
+  if (identity === "7.5.0|2026-05-13-18-42-38") {
     return "supported-ai-developer-tools";
   }
   return "unsupported-dgx-os";
-}
-
-function stationHasGb300PciGpu(
-  readFile: (filePath: string) => string,
-  readdir: (directory: string) => readonly string[],
-  pciDevicesPath: string,
-): boolean | undefined {
-  try {
-    const entries = readdir(pciDevicesPath);
-    let incompleteEvidence = entries.length > 256;
-    for (const entry of entries.slice(0, 256)) {
-      const devicePath = path.join(pciDevicesPath, entry);
-      const vendor = readOptional(readFile, path.join(devicePath, "vendor"));
-      const device = readOptional(readFile, path.join(devicePath, "device"));
-      const pciClass = readOptional(readFile, path.join(devicePath, "class"));
-      if (isStationGb300PciDevice(vendor, device, pciClass)) return true;
-      if (vendor === undefined || device === undefined || pciClass === undefined) {
-        incompleteEvidence = true;
-      }
-    }
-    return incompleteEvidence ? undefined : false;
-  } catch {
-    return undefined;
-  }
 }
 
 function readOpenedFile(fileDescriptor: number, maxBytes: number): string {
@@ -268,13 +314,43 @@ export function collectPlatformIdentity(
   const readFileDescriptor = options.readFileDescriptor ?? readOpenedFile;
   const closeFileDescriptor =
     options.closeFileDescriptor ?? ((fileDescriptor) => fs.closeSync(fileDescriptor));
-  const productName = readOptional(
+  const productName = readBoundedNvidiaFirmwareValue(
     readFile,
     options.productNamePath ?? "/sys/class/dmi/id/product_name",
   );
+  const productFamily = readBoundedNvidiaFirmwareValue(
+    readFile,
+    options.productFamilyPath ?? "/sys/class/dmi/id/product_family",
+  );
+  const boardName = readBoundedNvidiaFirmwareValue(
+    readFile,
+    options.boardNamePath ?? "/sys/class/dmi/id/board_name",
+  );
+  const deviceTreeModel = readBoundedNvidiaFirmwareValue(
+    readFile,
+    options.deviceTreeModelPath ?? "/sys/firmware/devicetree/base/model",
+    true,
+  );
+  const stationSystemVendor = readBoundedNvidiaFirmwareValue(
+    readFile,
+    options.systemVendorPath ?? "/sys/class/dmi/id/sys_vendor",
+  );
+  const firmwareProducts = [productName, productFamily, boardName, deviceTreeModel];
+  const firmwareIdentity = classifyNvidiaFirmwareProducts(firmwareProducts);
+  const stationFirmwareProduct = firmwareIdentity.stationFirmwareProduct;
   const n1xWslProduct = collectN1xWslProduct(options);
   const wslIdentity = options.isWsl ? { n1xWslProduct } : {};
-  let nvidiaPlatform = nvidiaPlatformFromProduct(productName);
+  if (firmwareIdentity.platformIdentityConflict) {
+    return {
+      productName,
+      ...(productFamily === undefined ? {} : { productFamily }),
+      ...(boardName === undefined ? {} : { boardName }),
+      ...(deviceTreeModel === undefined ? {} : { deviceTreeModel }),
+      platformIdentityConflict: true,
+      ...wslIdentity,
+    };
+  }
+  let nvidiaPlatform: NvidiaPlatform | undefined = firmwareIdentity.nvidiaPlatform;
   if (nvidiaPlatform === undefined) {
     const n1xIdentity = collectN1xIdentity({
       readFile,
@@ -301,10 +377,22 @@ export function collectPlatformIdentity(
   }
   if (nvidiaPlatform !== "station") return { nvidiaPlatform, productName, ...wslIdentity };
   const osRelease = readOptional(readFile, options.osReleasePath ?? "/etc/os-release");
-  const { osId, osVersionId } = osRelease ? parseOsRelease(osRelease) : {};
+  const { osId, osVersionId, osPrettyName } = osRelease ? parseOsRelease(osRelease) : {};
+  const stationCpuCoreCount = parseCpuPossibleCount(
+    readOptional(
+      readFile,
+      options.cpuPossiblePath ?? "/sys/devices/system/cpu/possible",
+      NVIDIA_FIRMWARE_VALUE_MAX_BYTES,
+    ) ?? "",
+  );
+  const stationHostMemoryBytes = parseHostMemoryBytes(
+    readOptional(readFile, options.memInfoPath ?? "/proc/meminfo", STATION_HOST_INFO_MAX_BYTES) ??
+      "",
+  );
 
   const stationReleasePath = options.stationReleasePath ?? "/etc/dgx-release";
   let stationProfile: StationProfile = "generic-ubuntu";
+  let stationReleaseDetails: StationReleaseDetails = {};
   try {
     const fileDescriptor = openFile(
       stationReleasePath,
@@ -315,9 +403,9 @@ export function collectPlatformIdentity(
       if (!isTrustedStationReleaseMarker(metadata)) {
         stationProfile = "unsupported-dgx-os";
       } else {
-        stationProfile = parseStationRelease(
-          readFileDescriptor(fileDescriptor, STATION_RELEASE_MARKER_MAX_BYTES),
-        );
+        const contents = readFileDescriptor(fileDescriptor, STATION_RELEASE_MARKER_MAX_BYTES);
+        stationProfile = parseStationRelease(contents);
+        stationReleaseDetails = parseStationReleaseDetails(contents);
       }
     } finally {
       closeFileDescriptor(fileDescriptor);
@@ -333,15 +421,24 @@ export function collectPlatformIdentity(
   return {
     nvidiaPlatform,
     productName,
+    ...(productFamily === undefined ? {} : { productFamily }),
+    ...(boardName === undefined ? {} : { boardName }),
+    ...(deviceTreeModel === undefined ? {} : { deviceTreeModel }),
+    ...(stationFirmwareProduct === undefined ? {} : { stationFirmwareProduct }),
+    ...(stationSystemVendor === undefined ? {} : { stationSystemVendor }),
+    ...(stationCpuCoreCount === undefined ? {} : { stationCpuCoreCount }),
+    ...(stationHostMemoryBytes === undefined ? {} : { stationHostMemoryBytes }),
     ...wslIdentity,
     stationProfile,
-    stationGb300PciGpu: stationHasGb300PciGpu(
+    ...stationReleaseDetails,
+    stationGb300PciGpu: hasDgxStationGb300PciGpu(
       readFile,
       readdir,
       options.pciDevicesPath ?? "/sys/bus/pci/devices",
     ),
     osId,
     osVersionId,
+    ...(osPrettyName === undefined ? {} : { osPrettyName }),
   };
 }
 
@@ -395,6 +492,59 @@ function deriveN1xWslQualification(
     : "unqualified";
 }
 
+function deriveStationQualification(input: Readonly<PlatformQualificationInput>): {
+  identity: boolean;
+  qualified: boolean;
+  hardwareStatus: QualificationStatus;
+  softwareStatus: QualificationStatus;
+  runtimeStatus: QualificationStatus;
+  status: QualificationStatus;
+} {
+  const identity = input.nvidiaPlatform === "station";
+  const firmwareProduct =
+    input.stationFirmwareProduct ??
+    (input.productName && isStationGb300ProductName(input.productName)
+      ? input.productName
+      : undefined);
+  const hardwareStatus: QualificationStatus = !identity
+    ? "unknown"
+    : !firmwareProduct || input.stationGb300PciGpu === false
+      ? "unqualified"
+      : input.stationGb300PciGpu === undefined || input.stationGb300PciGpu === null
+        ? "unknown"
+        : "qualified";
+  const softwareStatus: QualificationStatus = isQualifiedStationProfile(input.stationProfile)
+    ? "qualified"
+    : input.stationProfile === "unsupported-dgx-os"
+      ? "unqualified"
+      : "unknown";
+  const knownOs =
+    input.osId !== undefined &&
+    input.osId !== null &&
+    input.osVersionId !== undefined &&
+    input.osVersionId !== null;
+  const runtimeQualified = isQualifiedStationRuntime(input);
+  const runtimeStatus: QualificationStatus = !knownOs
+    ? "unknown"
+    : runtimeQualified
+      ? "qualified"
+      : "unqualified";
+  const observedProfile =
+    input.stationProfile !== undefined &&
+    input.stationProfile !== null &&
+    input.stationProfile !== "unknown";
+  const qualified =
+    hardwareStatus === "qualified" && softwareStatus === "qualified" && runtimeQualified;
+  const status: QualificationStatus = !identity
+    ? "unknown"
+    : hardwareStatus === "unknown" || !observedProfile || !knownOs
+      ? "unknown"
+      : qualified
+        ? "qualified"
+        : "unqualified";
+  return { identity, qualified, hardwareStatus, softwareStatus, runtimeStatus, status };
+}
+
 export function projectPlatformQualification(
   input: Readonly<PlatformQualificationInput>,
 ): PlatformQualificationProjection {
@@ -418,42 +568,20 @@ export function projectPlatformQualification(
       : input.isWsl
         ? "unknown"
         : "absent";
-  const stationIdentity = input.nvidiaPlatform === "station";
-  const stationProduct = input.productName
-    ? isStationGb300ProductName(input.productName)
-    : undefined;
-  const knownStationProfile =
-    input.stationProfile !== undefined &&
-    input.stationProfile !== null &&
-    input.stationProfile !== "unknown";
-  const knownStationOs =
-    input.osId !== undefined &&
-    input.osId !== null &&
-    input.osVersionId !== undefined &&
-    input.osVersionId !== null;
-  const stationRuntimeQualified = isQualifiedStationRuntime(input);
-  const stationQualified =
-    stationIdentity &&
-    stationProduct === true &&
-    input.stationGb300PciGpu === true &&
-    isQualifiedStationProfile(input.stationProfile) &&
-    stationRuntimeQualified;
-  const stationStatus: QualificationStatus = !stationIdentity
-    ? "unknown"
-    : stationProduct === undefined ||
-        input.stationGb300PciGpu === undefined ||
-        !knownStationProfile ||
-        !knownStationOs
-      ? "unknown"
-      : stationQualified
-        ? "qualified"
-        : "unqualified";
+  const station = deriveStationQualification(input);
+  const stationIdentity = station.identity;
+  const stationQualified = station.qualified;
+  const stationHardwareStatus = station.hardwareStatus;
+  const stationSoftwareStatus = station.softwareStatus;
+  const stationRuntimeStatus = station.runtimeStatus;
+  const stationStatus = station.status;
   const sparkIdentity = input.nvidiaPlatform === "spark";
   const sparkQualified = sparkIdentity && input.architecture === "arm64" && input.hasNvidiaGpu;
   const n1x = deriveN1xQualification(input);
   const n1xWslStatus = deriveN1xWslQualification(input);
   const platformSupported =
     (linuxSupported || macosSupported) &&
+    input.platformIdentityConflict !== true &&
     (!stationIdentity || stationQualified) &&
     (!sparkIdentity || sparkQualified) &&
     !n1x.identity &&
@@ -462,18 +590,30 @@ export function projectPlatformQualification(
   if (
     input.productName ||
     input.nvidiaPlatform ||
+    input.platformIdentityConflict !== undefined ||
     input.n1xCandidate !== undefined ||
     input.n1xFastOsMarker !== undefined ||
     input.n1xPciGpu !== undefined ||
     input.n1xWslProduct !== undefined ||
-    input.stationProfile
+    input.stationProfile ||
+    input.stationFirmwareProduct
   ) {
     evidence.push({
       id: "host.platform.identity",
       summary: "Bounded platform identity used for qualification.",
       details: {
-        product: input.productName?.slice(0, 256) ?? null,
+        product: identityEvidenceText(input.productName),
+        productFamily: identityEvidenceText(input.productFamily),
+        boardName: identityEvidenceText(input.boardName),
+        deviceTreeModel: identityEvidenceText(input.deviceTreeModel),
         nvidiaPlatform: input.nvidiaPlatform ?? null,
+        platformIdentityConflict: input.platformIdentityConflict ?? null,
+        stationFirmwareProduct: identityEvidenceText(input.stationFirmwareProduct),
+        stationSystemVendor: identityEvidenceText(input.stationSystemVendor),
+        stationCpuCoreCount: input.stationCpuCoreCount ?? null,
+        stationHostMemoryBytes: input.stationHostMemoryBytes ?? null,
+        nvidiaGpuCount: input.nvidiaGpuCount ?? null,
+        nvidiaGpuMemoryPerDeviceBytes: input.nvidiaGpuMemoryPerDeviceBytes ?? null,
         n1xCandidate: input.n1xCandidate ?? null,
         n1xFastOsMarker: input.n1xFastOsMarker ?? null,
         n1xPciGpu: input.n1xPciGpu ?? null,
@@ -482,12 +622,27 @@ export function projectPlatformQualification(
         stationGb300PciGpu: input.stationGb300PciGpu ?? null,
         osId: input.osId ?? null,
         osVersionId: input.osVersionId ?? null,
+        osPrettyName: identityEvidenceText(input.osPrettyName),
+        stationReleaseName: identityEvidenceText(input.stationReleaseName),
+        stationReleasePrettyName: identityEvidenceText(input.stationReleasePrettyName),
+        stationReleasePlatform: identityEvidenceText(input.stationReleasePlatform),
+        stationSoftwareBuildVersion: identityEvidenceText(input.stationSoftwareBuildVersion),
+        stationSoftwareBuildDate: identityEvidenceText(input.stationSoftwareBuildDate),
+        stationOtaVersion: identityEvidenceText(input.stationOtaVersion),
       },
     });
   }
 
   const capabilities = [
     capability("host.platform.supported", platformSupported ? "present" : "absent"),
+    capability(
+      "host.platform.identity_consistent",
+      input.platformIdentityConflict === undefined || input.platformIdentityConflict === null
+        ? "present"
+        : input.platformIdentityConflict
+          ? "absent"
+          : "present",
+    ),
     capability("host.platform.linux_supported", linuxSupported ? "present" : "absent"),
     capability("host.platform.macos_apple_silicon", macosSupported ? "present" : "absent"),
     capability("host.platform.wsl_docker_desktop", dockerDesktop ? "present" : "absent"),
@@ -507,11 +662,7 @@ export function projectPlatformQualification(
     capability("host.platform.wsl_gpu_passthrough", wslGpuPassthrough),
     capability(
       "host.platform.n1x_wsl",
-      !input.isWsl
-        ? "absent"
-        : n1xWslStatus === "qualified"
-          ? "present"
-          : "absent",
+      !input.isWsl ? "absent" : n1xWslStatus === "qualified" ? "present" : "absent",
     ),
     capability("host.platform.dgx_spark", sparkQualified ? "present" : "absent"),
     capability(
@@ -521,6 +672,36 @@ export function projectPlatformQualification(
         : n1x.status === "qualified"
           ? "present"
           : n1x.status === "unqualified"
+            ? "absent"
+            : "unknown",
+    ),
+    capability(
+      "host.platform.dgx_station_hardware",
+      !stationIdentity
+        ? "absent"
+        : stationHardwareStatus === "qualified"
+          ? "present"
+          : stationHardwareStatus === "unqualified"
+            ? "absent"
+            : "unknown",
+    ),
+    capability(
+      "host.platform.dgx_station_software",
+      !stationIdentity
+        ? "absent"
+        : stationSoftwareStatus === "qualified"
+          ? "present"
+          : stationSoftwareStatus === "unqualified"
+            ? "absent"
+            : "unknown",
+    ),
+    capability(
+      "host.platform.dgx_station_runtime",
+      !stationIdentity
+        ? "absent"
+        : stationRuntimeStatus === "qualified"
+          ? "present"
+          : stationRuntimeStatus === "unqualified"
             ? "absent"
             : "unknown",
     ),
@@ -573,10 +754,32 @@ export function projectPlatformQualification(
   }
   if (stationIdentity) {
     qualifications.push(
-      qualification("host.platform.dgx_station", stationStatus, ["host.platform.dgx_station"]),
+      qualification("host.platform.dgx_station_hardware", stationHardwareStatus, [
+        "host.platform.dgx_station_hardware",
+      ]),
+      qualification("host.platform.dgx_station_software", stationSoftwareStatus, [
+        "host.platform.dgx_station_software",
+      ]),
+      qualification("host.platform.dgx_station_runtime", stationRuntimeStatus, [
+        "host.platform.dgx_station_runtime",
+      ]),
+      qualification("host.platform.dgx_station", stationStatus, [
+        "host.platform.dgx_station_hardware",
+        "host.platform.dgx_station_software",
+        "host.platform.dgx_station_runtime",
+      ]),
     );
   }
   const findings: ReadinessFinding[] = [];
+  if (input.platformIdentityConflict === true) {
+    findings.push({
+      id: "host.platform.identity_conflict",
+      severity: "blocking",
+      summary: "NVIDIA platform identity conflicts across firmware fields.",
+      capabilityIds: ["host.platform.identity_consistent", "host.platform.supported"],
+      ...(evidence.length ? { evidenceIds: ["host.platform.identity"] } : {}),
+    });
+  }
   if (input.isWsl && !input.dockerInstalled) {
     findings.push({
       id: "host.platform.wsl_runtime_unavailable",
