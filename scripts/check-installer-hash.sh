@@ -199,14 +199,9 @@ check_openshell_release_assets() {
       esac
     done <<<"$pin_records"
 
-    if [[ "$count" -ne 9 ]]; then
-      echo "  STALE: expected 9 pinned OpenShell v${release_version} assets, found ${count}."
-      return 1
-    fi
-    if [[ "$release_version" == "$selected_release_version" && "$brev_count" -ne 2 ]]; then
-      echo "  STALE: expected 2 pinned Brev OpenShell v${release_version} CLI assets, found ${brev_count}."
-      return 1
-    fi
+    # The base-trusted parser owns release-specific consumer cardinality.
+    # Verify every emitted pin below and use the matched count to ensure none
+    # are skipped here.
     if [[ "$release_version" != "$selected_release_version" && "$brev_count" -ne 0 ]]; then
       echo "  STALE: unselected OpenShell v${release_version} must not have Brev pins."
       return 1

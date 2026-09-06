@@ -51,6 +51,8 @@ const SYNTHETIC_SUPERVISOR_RUNTIME_TEMPLATE_SHA256 =
 const SYNTHETIC_SANDBOX_BUILD_DIGESTS = ["a".repeat(64), "b".repeat(64)] as const;
 const ASSETS = [...ASSET_DIGESTS.keys()].filter((asset) => asset !== FORMULA_ASSET);
 const INSTALLER_ASSETS = [...ASSETS, FORMULA_ASSET];
+const SYNTHETIC_BREV_ASSETS = [ASSETS[0]];
+const SYNTHETIC_INSTALLER_ASSETS = [ASSETS[0], FORMULA_ASSET];
 const UNPUBLISHED_ASSET = "openshell-sandbox-aarch64-unknown-linux-gnu-unpublished.tar.gz";
 const OFFICIAL_UNEXPECTED_INSTALLER_ASSET = "openshell-driver-vm-x86_64-unknown-linux-gnu.tar.gz";
 const OFFICIAL_UNEXPECTED_INSTALLER_DIGEST =
@@ -481,7 +483,10 @@ const trustAlternateRelease = (source: string): string => {
     manifests: [
 ${manifests}
     ],
-    pinLayout: LEGACY_OPENSHELL_PIN_LAYOUT,
+    pinLayout: {
+      brev: { assets: ["${SYNTHETIC_BREV_ASSETS.join('", "')}"], manifests: [] },
+      installer: { assets: ["${SYNTHETIC_INSTALLER_ASSETS.join('", "')}"], manifests: [] },
+    },
     sandboxBuilds: [
       { required: false, sha256: "${digests[0]}" },
       { required: false, sha256: "${digests[1]}" },
@@ -739,8 +744,12 @@ function createFixture(
   const assetDigests = ASSET_DIGESTS_BY_VERSION.get(openshellVersion) ?? ASSET_DIGESTS;
   const installerPins = openshellVersion === "0.0.116" ? v00116Pins("installer") : undefined;
   const brevPins = openshellVersion === "0.0.116" ? v00116Pins("Brev launchable") : undefined;
-  const installerAssets = installerPins?.map(({ asset }) => asset) ?? INSTALLER_ASSETS;
-  const brevAssets = brevPins?.map(({ asset }) => asset) ?? ASSETS.slice(0, 2);
+  const installerAssets =
+    installerPins?.map(({ asset }) => asset) ??
+    (openshellVersion === "9.9.9" ? SYNTHETIC_INSTALLER_ASSETS : INSTALLER_ASSETS);
+  const brevAssets =
+    brevPins?.map(({ asset }) => asset) ??
+    (openshellVersion === "9.9.9" ? SYNTHETIC_BREV_ASSETS : ASSETS.slice(0, 2));
   const installerDigests = installerPins
     ? new Map(installerPins.map(({ asset, sha256 }) => [asset, sha256]))
     : assetDigests;
@@ -1096,7 +1105,7 @@ describe("installer hash verification", () => {
     },
   );
 
-  it("selects a second complete trusted release from the allowlist", () => {
+  it("accepts a base-trusted release with non-default consumer cardinality", () => {
     const result = runFixture("allowlisted-alternate-version", "9.9.9", true);
 
     expect(result.status).toBe(0);
