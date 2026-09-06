@@ -49,31 +49,6 @@ const MESSAGING_ENDPOINTLESS_PROFILE_EXPORT = JSON.stringify({
   inference_capable: false,
 });
 
-const BRAVE_PROFILE_EXPORT = JSON.stringify({
-  id: "brave",
-  credentials: [
-    {
-      name: "api_key",
-      env_vars: ["BRAVE_API_KEY"],
-      required: true,
-      auth_style: "header",
-      header_name: "x-subscription-token",
-      query_param: "",
-    },
-  ],
-  endpoints: [
-    {
-      host: "api.search.brave.com",
-      port: 443,
-      protocol: "rest",
-      access: "read-write",
-      enforcement: "enforce",
-    },
-  ],
-  binaries: ["/usr/local/bin/node", "/usr/bin/node", "/usr/local/bin/curl", "/usr/bin/curl"],
-  inference_capable: false,
-});
-
 const {
   HOSTED_INFERENCE_ENDPOINT_URL,
   HOSTED_INFERENCE_MODEL,
@@ -153,7 +128,6 @@ const {
     options?: {
       allowedSandboxes?: readonly string[];
       bestEffort?: boolean;
-      gatewayName?: string;
       replaceExisting?: boolean;
       revalidateSandboxIdentity?(operation: string): void;
       requireExactBindings?: boolean;
@@ -704,11 +678,8 @@ describe("onboard provider helpers", () => {
       ],
       (command) => {
         commands.push(command.join(" "));
-        return command[1] === "profile"
-          ? { status: 0, stdout: BRAVE_PROFILE_EXPORT, stderr: "" }
-          : command.includes("get")
-            ? { status: 1, stdout: "", stderr: "" }
-            : { status: 0, stdout: "", stderr: "" };
+        if (command.includes("get")) return { status: 1, stdout: "", stderr: "" };
+        return { status: 0, stdout: "", stderr: "" };
       },
     );
 
@@ -951,9 +922,7 @@ describe("onboard provider helpers", () => {
       ],
       (command) => {
         commands.push(command.join(" "));
-        return command[1] === "profile"
-          ? { status: 0, stdout: BRAVE_PROFILE_EXPORT, stderr: "" }
-          : { status: 0, stdout: "", stderr: "" };
+        return { status: 0, stdout: "", stderr: "" };
       },
     );
 
@@ -961,7 +930,7 @@ describe("onboard provider helpers", () => {
     // still attached to a live sandbox, so reuse paths must use `update`.
     expect(providers).toEqual(["alpha-brave-search"]);
     expect(commands).toEqual([
-      "provider profile export brave --output json",
+      expect.stringContaining("nemoclaw-blueprint/provider-profiles/brave.yaml"),
       "provider get alpha-brave-search",
       "provider update alpha-brave-search --credential BRAVE_API_KEY",
     ]);
@@ -1120,11 +1089,7 @@ describe("onboard provider helpers", () => {
     }
   });
 
-  it("reports a valid unscoped recovery command when bridge refresh throws (#9833)", () => {
-    const runResults = new Map<string, RunResult>([
-      ["get", { status: 1, stdout: "", stderr: "not found" }],
-      ["delete", { status: 1, stdout: "", stderr: "gateway unavailable" }],
-    ]);
+  it("reports providers changed before bridge refresh throws (#9833)", () => {
     const configureRefreshes = vi
       .spyOn(messagingBridgeProvider, "configureMessagingBridgeRefreshes")
       .mockImplementation(() => {
@@ -1134,14 +1099,12 @@ describe("onboard provider helpers", () => {
       expect(() =>
         upsertMessagingProviders(
           [{ name: "alpha-bridge", envKey: "BRIDGE_TOKEN", token: "test-token" }],
-          (command) => runResults.get(command[1] ?? "") ?? { status: 0, stdout: "", stderr: "" },
+          () => ({ status: 0, stdout: "", stderr: "" }),
           { bestEffort: true },
         ),
       ).toThrow(
         expect.objectContaining({
-          message: expect.stringMatching(
-            /sandbox identity changed.*alpha-bridge.*openshell provider delete "alpha-bridge"/isu,
-          ),
+          message: expect.stringMatching(/sandbox identity changed.*alpha-bridge/isu),
           mutatedProviderNames: ["alpha-bridge"],
         }),
       );
@@ -1172,53 +1135,53 @@ describe("onboard provider helpers", () => {
     }
   });
 
-  it("preserves an exact existing bridge provider when refresh fails", () => {
-    const commands: string[] = [];
+  it("reuses the named bridge provider when onboarding retries after a mint failure", () => {
     const ensureProfiles = vi
       .spyOn(messagingBridgeProvider, "ensureMessagingBridgeProfiles")
       .mockImplementation(() => undefined);
     const configureRefreshes = vi
       .spyOn(messagingBridgeProvider, "configureMessagingBridgeRefreshes")
-      .mockReturnValue({ ok: false, reason: "refresh failed" });
-    try {
-      expect(() =>
-        upsertMessagingProviders(
-          [
-            {
-              name: "alpha-googlechat-bridge",
-              envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
-              token: messagingBridgeProvider.MESSAGING_BRIDGE_PENDING_VALUE,
-              providerType: "google-chat-bridge",
-            },
-          ],
-          (command) => {
-            commands.push(command.join(" "));
-            return {
+      .mockReturnValueOnce({ ok: false, reason: "mint timed out" })
+      .mockReturnValueOnce({ ok: true });
+    const commands: string[] = [];
+    let providerExists = false;
+    const run = (command: string[]) => {
+      commands.push(command.join(" "));
+      if (command[1] === "get") {
+        return providerExists
+          ? {
               status: 0,
-              stdout: [
-                "Name: alpha-googlechat-bridge",
-                "Type: google-chat-bridge",
-                "Credential keys: GOOGLE_CHAT_ACCESS_TOKEN",
-                "Config keys: <none>",
-              ].join("\n"),
-              stderr: "",
-            };
-          },
-          { bestEffort: true, gatewayName: "test-gateway" },
-        ),
-      ).toThrow(
-        expect.objectContaining({
-          message: expect.stringMatching(/gateway token minting/u),
-          mutatedProviderNames: ["alpha-googlechat-bridge"],
-        }),
+              stdout:
+                "Name: alpha-googlechat-bridge\nType: google-chat-bridge\nCredential keys: GOOGLE_CHAT_ACCESS_TOKEN\nConfig keys: <none>\n",
+            }
+          : { status: 1, stderr: "provider not found" };
+      }
+      if (command[1] === "create") providerExists = true;
+      return { status: 0, stdout: "", stderr: "" };
+    };
+    const tokenDefs = [
+      {
+        name: "alpha-googlechat-bridge",
+        envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
+        token: "openshell-managed-pending-mint",
+        providerType: "google-chat-bridge",
+      },
+    ];
+
+    try {
+      expect(() => upsertMessagingProviders(tokenDefs, run, { bestEffort: true })).toThrow(
+        /gateway token minting/u,
       );
-      expect(commands).toEqual(["provider get alpha-googlechat-bridge"]);
-      expect(commands.some((command) => /provider (create|update|delete)/u.test(command))).toBe(
-        false,
-      );
+      expect(upsertMessagingProviders(tokenDefs, run, { bestEffort: true })).toEqual([
+        "alpha-googlechat-bridge",
+      ]);
+
+      expect(commands.filter((command) => command.includes("provider create"))).toHaveLength(1);
+      expect(ensureProfiles).toHaveBeenCalledTimes(2);
+      expect(configureRefreshes).toHaveBeenCalledTimes(2);
     } finally {
-      configureRefreshes.mockRestore();
       ensureProfiles.mockRestore();
+      configureRefreshes.mockRestore();
     }
   });
 
@@ -1329,16 +1292,14 @@ describe("onboard provider helpers", () => {
       ],
       (command) => {
         commands.push(command.join(" "));
-        return command[1] === "profile"
-          ? { status: 0, stdout: BRAVE_PROFILE_EXPORT, stderr: "" }
-          : { status: 0, stdout: "", stderr: "" };
+        return { status: 0, stdout: "", stderr: "" };
       },
       { replaceExisting: true },
     );
 
     expect(providers).toEqual(["alpha-brave-search"]);
     expect(commands).toEqual([
-      "provider profile export brave --output json",
+      expect.stringContaining("nemoclaw-blueprint/provider-profiles/brave.yaml"),
       "provider get alpha-brave-search",
       "provider delete alpha-brave-search",
       "provider create --name alpha-brave-search --type brave --credential BRAVE_API_KEY",

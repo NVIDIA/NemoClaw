@@ -71,10 +71,8 @@ function providerMetadata(
   return {
     status: 0,
     stdout: [
-      `Id: provider-${name}`,
       `Name: ${name}`,
       `Type: ${type}`,
-      "Resource version: 1",
       `Credential keys: ${credentialKey}`,
       "Config keys: <none>",
     ].join("\n"),
@@ -356,6 +354,53 @@ describe("credential provider registration", () => {
         "DISCORD_BOT_TOKEN",
       ),
     ).toEqual({ kind: "indeterminate" });
+  });
+
+  it("does not classify an unavailable provider inspection as a missing binding", () => {
+    const session = { stagedCredentialProviders: [] } as unknown as Session;
+    const runOpenshell = vi.fn((_args: string[]) => ({
+      status: 1,
+      stdout: "",
+      stderr: "gateway unavailable",
+    }));
+    const registration = createCredentialProviderRegistration(
+      registrationDeps(runOpenshell, session),
+    );
+
+    expect(() =>
+      registration.providerMatchesGatewayCredential(
+        "alpha-discord-bridge",
+        "generic",
+        "DISCORD_BOT_TOKEN",
+      ),
+    ).toThrow("Could not inspect credential provider 'alpha-discord-bridge'");
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["provider", "get", "-g", "test-gateway", "alpha-discord-bridge"],
+      expect.objectContaining({ ignoreError: true, suppressOutput: true }),
+    );
+  });
+
+  it("does not classify an unavailable static profile inspection as profile drift", () => {
+    const session = { stagedCredentialProviders: [] } as unknown as Session;
+    const runOpenshell = vi.fn((_args: string[]) => ({
+      status: 1,
+      stdout: "",
+      stderr: "gateway unavailable",
+    }));
+    const deps = registrationDeps(runOpenshell, session);
+    deps.root = process.cwd();
+    const registration = createCredentialProviderRegistration(deps);
+
+    expect(() =>
+      registration.providerMatchesGatewayCredential(
+        "alpha-discord-bridge",
+        "discord-hermes-static-v1",
+        "DISCORD_BOT_TOKEN",
+      ),
+    ).toThrow("Could not inspect static provider profile 'discord-hermes-static-v1'");
+    expect(runOpenshell.mock.calls.map(([args]) => args.join(" "))).toEqual([
+      "provider profile -g test-gateway export discord-hermes-static-v1 --output json",
+    ]);
   });
 
   it("rejects tokenless Hermes Discord profile drift before provider mutation", async () => {

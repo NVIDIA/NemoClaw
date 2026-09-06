@@ -4,6 +4,7 @@
 import { vi } from "vitest";
 
 import { makeMessagingPlan } from "../../../../../test/helpers/messaging-plan-fixtures";
+import { mergePolicyMessagingChannels } from "../../messaging-policy-presets";
 import { createSession, type Session, type SessionUpdates } from "../../../state/onboard-session";
 import type { PoliciesStateOptions } from "./policies";
 
@@ -19,13 +20,11 @@ export function createPolicyHandlerDeps(
     activeSandbox: vi.fn(() => ({
       messaging: { plan: makeMessagingPlan({ channels: ["telegram"] }) },
     })),
-    mergeChannels: vi.fn(
-      (selected: string[], recorded: string[], active: string[] | null | undefined) =>
-        selected.length > 0 ? selected : (active ?? recorded),
-    ),
+    mergeChannels: vi.fn(mergePolicyMessagingChannels),
     unconfiguredChannels: vi.fn(
       (_planChannels: readonly string[], _selectedChannels: readonly string[]) => [] as string[],
     ),
+    providerMatchesGatewayCredential: vi.fn(() => false),
     smoke: vi.fn(),
     prepareResume: vi.fn(
       (
@@ -61,6 +60,7 @@ export function createPolicyHandlerDeps(
       getActiveSandbox: calls.activeSandbox,
       mergePolicyMessagingChannels: calls.mergeChannels,
       detectUnconfiguredMessagingChannels: calls.unconfiguredChannels,
+      providerMatchesGatewayCredential: calls.providerMatchesGatewayCredential,
       verifyCompatibleEndpointSandboxSmoke: calls.smoke,
       preparePolicyPresetResumeSelection: calls.prepareResume,
       arePolicyPresetsApplied: calls.appliedCheck,

@@ -4,7 +4,7 @@
 title: "Enable Channels During Onboarding"
 sidebar-title: "Enable Channels During Onboarding"
 description: "Select messaging channels and supply their credentials or pairing inputs during NemoClaw onboarding."
-description-agent: "Explains the interactive and scripted onboarding flows for selecting messaging channels, creating OpenShell bridge providers, and removing a channel with the channel lifecycle commands. Use when enabling or disabling channels during onboarding."
+description-agent: "Explains the interactive and scripted onboarding flows for selecting messaging channels, creating OpenShell bridge providers, preserving reusable channels, and using lifecycle commands to stop or explicitly remove a channel. Use when enabling or disabling channels during onboarding."
 keywords: ["nemoclaw onboard messaging", "messaging channel picker", "channel environment variables", "disable messaging channel"]
 content:
   type: "how_to"
@@ -89,9 +89,8 @@ Credential bindings remain OpenShell credential placeholders, so raw messaging c
 
 ## Remove a Channel
 
-Use `channels remove` when you want to delete a channel's OpenShell provider, runtime configuration, and matching network policy.
-This action can also clear stored pairing state.
-Use `channels stop` when you want to pause the channel without deleting credentials or pairing state.
+Use `channels stop` when you want to pause a channel without deleting its credentials or pairing state.
+Use `channels remove` for an explicit, durable removal of its selection, OpenShell provider, runtime configuration, and matching network policy preset:
 
 ```bash
 $$nemoclaw <sandbox> channels remove <channel>
@@ -100,11 +99,13 @@ $$nemoclaw <sandbox> channels remove <channel>
 Accept the rebuild to remove the channel configuration and its network policy preset from the replacement sandbox.
 When onboarding runs without a terminal on stdin or with `NEMOCLAW_NON_INTERACTIVE=1`, NemoClaw queues the removal.
 Run `$$nemoclaw <sandbox> rebuild` to apply it.
-Clearing the channel's host environment variables is not a removal signal when the matching provider remains in OpenShell.
-Onboarding reuses that provider and keeps the channel selected, including its network egress.
 
-For a QR-paired channel such as WhatsApp, only `channels remove` clears the in-sandbox pairing state.
-Refer to [Manage Messaging Channels](manage-messaging-channels) for channel-specific removal effects and recovery steps.
+Clearing a channel's host environment variables is not a removal signal when its recorded OpenShell gateway provider still matches the channel's credential contract.
+Onboarding preserves the channel selection and matching network policy preset because interactive inputs normally disappear between runs.
+If a required gateway provider is missing or no longer matches the expected credential contract, onboarding disables the channel and drops the matching policy preset.
+
+For an in-sandbox QR-paired channel such as WhatsApp, only `channels remove` clears its session or pairing state before teardown.
+Refer to [Manage Messaging Channels](manage-messaging-channels) for channel-specific removal effects and recovery guidance.
 
 ## Verify the Result
 
