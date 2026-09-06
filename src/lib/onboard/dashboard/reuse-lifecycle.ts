@@ -1,26 +1,22 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { AsyncLocalStorage } from "node:async_hooks";
+
 export type DashboardReuseLifecycle = {
   stopSandbox(sandboxName: string): { exitCode: number; message?: string };
   startSandbox(sandboxName: string): Promise<{ exitCode: number; message?: string }>;
 };
 
-let activeLifecycle: DashboardReuseLifecycle | undefined;
+const lifecycleStorage = new AsyncLocalStorage<DashboardReuseLifecycle>();
 
 export function getDashboardReuseLifecycle(): DashboardReuseLifecycle | undefined {
-  return activeLifecycle;
+  return lifecycleStorage.getStore();
 }
 
-export async function withDashboardReuseLifecycle<T>(
-  lifecycle: DashboardReuseLifecycle | undefined,
+export function withDashboardReuseLifecycle<T>(
+  lifecycle: DashboardReuseLifecycle,
   operation: () => Promise<T>,
 ): Promise<T> {
-  const previous = activeLifecycle;
-  activeLifecycle = lifecycle;
-  try {
-    return await operation();
-  } finally {
-    activeLifecycle = previous;
-  }
+  return lifecycleStorage.run(lifecycle, operation);
 }

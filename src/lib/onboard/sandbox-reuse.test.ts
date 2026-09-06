@@ -205,9 +205,9 @@ describe("applyReusedSandboxDashboardState", () => {
     expect(updateSandbox).not.toHaveBeenCalled();
   });
 
-  it("restores the registered OpenClaw port after the pre-reuse allocator picked another port", async () => {
+  it("launches the registered OpenClaw port when reuse finds no listener", async () => {
     const releaseDashboardPort = vi.fn(async () => undefined);
-    const reconcileOpenClawDashboardForwardReuse = vi.fn(async () => undefined);
+    const reconcileOpenClawDashboardForwardReuse = vi.fn(async () => false);
     const ensureDashboardForward = vi.fn(() => 18_789);
 
     const result = await restoreReusedSandboxDashboardState({
@@ -246,7 +246,9 @@ describe("applyReusedSandboxDashboardState", () => {
       "http://127.0.0.1:18789",
       undefined,
     );
-    expect(ensureDashboardForward).not.toHaveBeenCalled();
+    expect(ensureDashboardForward).toHaveBeenCalledWith("reuse-me", "http://127.0.0.1:18789", {
+      reuseExistingOpenClawForward: true,
+    });
     expect(result.dashboardPort).toBe(18_789);
   });
 

@@ -114,7 +114,7 @@ export interface ReusedSandboxDashboardStateInput {
     sandboxName: string,
     chatUiUrl: string,
     revalidateSandboxIdentity?: (operation: string) => void,
-  ): Promise<void>;
+  ): Promise<boolean>;
   hermesDashboardForwarding: ReusedSandboxDashboardForwarding;
   updateSandbox?(sandboxName: string, updates: Partial<SandboxEntry>): unknown;
   revalidateSandboxIdentity?(operation: string): void;
@@ -211,7 +211,7 @@ export async function restoreReusedSandboxDashboardState(
   const registeredPort = (input.getSandbox ?? registry.getSandbox)(
     input.sandboxName,
   )?.dashboardPort;
-  const preparedOpenClawDashboardPort =
+  const registeredOpenClawDashboardPort =
     reusesOpenClaw &&
     typeof registeredPort === "number" &&
     Number.isInteger(registeredPort) &&
@@ -219,20 +219,23 @@ export async function restoreReusedSandboxDashboardState(
     registeredPort <= 65_535
       ? registeredPort
       : undefined;
-  const chatUiUrl = preparedOpenClawDashboardPort
-    ? `http://127.0.0.1:${String(preparedOpenClawDashboardPort)}`
+  const chatUiUrl = registeredOpenClawDashboardPort
+    ? `http://127.0.0.1:${String(registeredOpenClawDashboardPort)}`
     : input.chatUiUrl;
-  if ((input.manageDashboard ?? true) && reusesOpenClaw) {
-    await input.reconcileOpenClawDashboardForwardReuse?.(
-      input.sandboxName,
-      chatUiUrl,
-      input.revalidateSandboxIdentity,
-    );
-  }
+  const reconciled =
+    (input.manageDashboard ?? true) && reusesOpenClaw
+      ? await input.reconcileOpenClawDashboardForwardReuse?.(
+          input.sandboxName,
+          chatUiUrl,
+          input.revalidateSandboxIdentity,
+        )
+      : false;
   return applyReusedSandboxDashboardState({
     ...input,
     chatUiUrl,
-    ...(preparedOpenClawDashboardPort ? { preparedOpenClawDashboardPort } : {}),
+    ...(reconciled && registeredOpenClawDashboardPort
+      ? { preparedOpenClawDashboardPort: registeredOpenClawDashboardPort }
+      : {}),
   });
 }
 
