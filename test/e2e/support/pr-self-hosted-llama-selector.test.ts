@@ -38,7 +38,6 @@ const CANDIDATE_SHA = "a".repeat(40);
 const BASE_SHA = "b".repeat(40);
 const REQUIRED_RUNTIME_AUTHORITY_PATHS = [
   "src/lib/inference/nim.ts",
-  "src/lib/inference/platform-identity/n1x.ts",
   "src/lib/onboard/provider-selection.ts",
   "src/lib/onboard/runtime-provider/configured-runtime.ts",
   "src/lib/onboard/runtime-provider/current.ts",
@@ -149,6 +148,12 @@ describe("generic NVIDIA GPU PR selection", () => {
 
   it("does not select the Docker-qualified GPU job for a Podman-only change", () => {
     expect(selectGenericGpuLane(["src/lib/onboard/runtime-provider/podman.ts"])).toBe(
+      `base_sha=${BASE_SHA}\nselected=false`,
+    );
+  });
+
+  it("does not treat an N1x identity-only change as generic x86 GPU evidence", () => {
+    expect(selectGenericGpuLane(["src/lib/inference/platform-identity/n1x.ts"])).toBe(
       `base_sha=${BASE_SHA}\nselected=false`,
     );
   });
