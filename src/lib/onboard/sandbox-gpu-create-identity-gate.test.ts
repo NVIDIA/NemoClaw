@@ -792,11 +792,15 @@ describe("created sandbox identity gate", () => {
           { [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce },
           { resource_version: null },
         ),
-        sandboxListJson("replacement-sandbox-id", {
-          [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce,
-        }),
       ],
-      2,
+      1,
+      async () => {
+        const sandboxIdentity = await import("../adapters/openshell/sandbox-identity");
+        vi.spyOn(sandboxIdentity, "settleCreatedOpenShellSandboxId").mockReturnValue(
+          "replacement-sandbox-id",
+        );
+      },
+      ALPHA_SANDBOX_ID_FINGERPRINT,
     ],
     [
       "disappears",
@@ -809,6 +813,8 @@ describe("created sandbox identity gate", () => {
         "[]",
       ],
       2,
+      () => Promise.resolve(),
+      ALPHA_SANDBOX_ID_FINGERPRINT,
     ],
     [
       "publishes malformed metadata",
@@ -820,12 +826,21 @@ describe("created sandbox identity gate", () => {
         ),
       ],
       1,
+      () => Promise.resolve(),
+      null,
     ],
   ])(
     "withholds post-create effects when the nonce-owned row %s (#10423)",
-    async (_case, observationsForNonce, expectedSelectorCalls) => {
+    async (
+      _case,
+      observationsForNonce,
+      expectedSelectorCalls,
+      configureSettlement,
+      expectedIdentityFingerprint,
+    ) => {
       let nonce = "";
       let captureIndex = 0;
+      await configureSettlement();
       const input = noGpuInput();
       input.verifyCreatedSandboxBeforeEffects = vi.fn();
       input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
@@ -857,6 +872,11 @@ describe("created sandbox identity gate", () => {
       expect(patch.exitOnPatchError).not.toHaveBeenCalled();
       expect(patch.ensureApplied).not.toHaveBeenCalled();
       expect(mocks.waitForCreatedSandboxReadyWithTrace).not.toHaveBeenCalled();
+      expect(mocks.addTraceEvent).toHaveBeenCalledWith("sandbox_create_identity_settlement", {
+        create_operation_state: "ready",
+        identity_state: "failed",
+        returned_identity_fingerprint: expectedIdentityFingerprint,
+      });
     },
   );
 

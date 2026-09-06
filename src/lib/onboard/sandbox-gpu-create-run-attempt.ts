@@ -709,6 +709,13 @@ export function createSandboxGpuCreateAttemptRunner(
         throw error;
       }
       if (readyCheckCreatedSandboxId && sandboxId !== readyCheckCreatedSandboxId) {
+        addTraceEvent("sandbox_create_identity_settlement", {
+          create_operation_state: createOperationState,
+          identity_state: "failed",
+          returned_identity_fingerprint: fingerprintSandboxRecreateValue(
+            readyCheckCreatedSandboxId,
+          ),
+        });
         throw new Error("OpenShell create-attempt identity changed after the Ready handoff.");
       }
       addTraceEvent("sandbox_create_identity_settlement", {
