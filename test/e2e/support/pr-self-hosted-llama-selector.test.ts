@@ -51,9 +51,15 @@ function selectorScript(): string {
 
 function declaredSelectionPaths(): readonly string[] {
   const script = selectorScript();
-  const exactPaths = [...script.matchAll(/\.filename == "([^"]+)"/gu)].map(([, value]) => value!);
+  const exactPaths = [...script.matchAll(/\.filename == "([^"]+)"/gu)].map(([, value]) => {
+    assert(typeof value === "string", "exact selector path is missing");
+    return value;
+  });
   const representativePrefixPaths = [...script.matchAll(/startswith\("([^"]+)"\)/gu)].map(
-    ([, value]) => `${value!}selector-contract.ts`,
+    ([, value]) => {
+      assert(typeof value === "string", "selector prefix is missing");
+      return `${value}selector-contract.ts`;
+    },
   );
   const paths = [...new Set([...exactPaths, ...representativePrefixPaths])].sort();
   assert(paths.length > 0, "llama.cpp GPU selector inventory is empty");
@@ -107,6 +113,8 @@ fi
             head: { sha: CANDIDATE_SHA },
           }),
         },
+        killSignal: "SIGKILL",
+        timeout: 10_000,
       },
     );
     expect(result.status, result.stderr).toBe(0);
