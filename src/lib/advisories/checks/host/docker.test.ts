@@ -49,6 +49,16 @@ describe("Docker host advisories (#3213)", () => {
     expect(result.advisories.map((advisory) => advisory.id)).toEqual([expectedId]);
   });
 
+  it("reports a docker info timeout instead of a docker-group remediation (#10645)", () => {
+    const result = runAdvisories(
+      DOCKER_HOST_ADVISORY_CHECKS,
+      host({ dockerServiceActive: true, dockerInfoTimedOut: true }),
+      { phase: "preflight.host" },
+    );
+
+    expect(result.advisories.map((advisory) => advisory.id)).toEqual(["docker_info_timeout"]);
+  });
+
   it("reports an invalid DOCKER_HOST instead of a docker-group remediation (#7731)", () => {
     const result = runAdvisories(
       DOCKER_HOST_ADVISORY_CHECKS,
@@ -163,6 +173,7 @@ describe("Docker host advisories (#3213)", () => {
       "enable_docker_desktop_wsl_integration",
       "install_docker",
       "invalid_docker_host",
+      "docker_info_timeout",
       "docker_group_permission",
       "start_docker",
       "docker_desktop_credential_store_headless",

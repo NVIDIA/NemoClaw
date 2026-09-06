@@ -28,7 +28,7 @@ import {
   isDockerDaemonReachable,
   isSupportedGatewayDockerHost,
 } from "../domain/docker-host";
-import { classifyDockerVersionIdentity } from "../platform";
+import { classifyDockerVersionIdentity, DOCKER_PROBE_TIMEOUT_MS } from "../platform";
 import { resolveOpenshell } from "../readiness/openshell-resolver";
 import {
   MIN_RECOMMENDED_DOCKER_CPUS,
@@ -48,12 +48,16 @@ export { getNvidiaCdiSpecPath, parseDockerCdiSpecDirs } from "./docker-cdi";
 export { isWslDockerDesktopRuntime } from "./wsl-docker-desktop-gpu";
 
 // runner.ts still uses CommonJS-style exports — use require here.
-const { run, runCapture } = require("../runner");
+const { run, runCapture, runCaptureEx } = require("../runner");
 const DOCKER_HOST_ADVISORY_IDS = new Set(DOCKER_HOST_ADVISORY_CHECKS.map(({ id }) => id));
 
 type RunCaptureFn = typeof import("../runner").runCapture;
 type RunFn = typeof import("../runner").run;
 type RunCaptureOpts = Parameters<RunCaptureFn>[1];
+type RunCaptureExFn = (
+  command: readonly string[],
+  options?: { timeout?: number },
+) => import("../runner").CaptureResult;
 type NullableRunCaptureFn = (
   command: Parameters<RunCaptureFn>[0],
   options?: RunCaptureOpts,
@@ -129,9 +133,13 @@ export interface HostAssessment {
   dockerServiceActive?: boolean | null;
   dockerServiceEnabled?: boolean | null;
   dockerHostInvalid?: boolean;
+  /** Docker authority assessed by the bounded preflight probe. */
+  dockerHostAuthority?: string;
   dockerInstalled: boolean;
   dockerRunning: boolean;
   dockerReachable: boolean;
+  /** True when the bounded preflight `docker info` probe timed out (#10645). */
+  dockerInfoTimedOut?: boolean;
   nodeInstalled: boolean;
   openshellInstalled: boolean;
   dockerInfoSummary?: string;
@@ -182,11 +190,13 @@ export interface AssessHostOpts {
   release?: string;
   procVersion?: string;
   dockerInfoOutput?: string;
+  dockerInfoTimedOut?: boolean;
   dockerInfoError?: string;
   dockerVersionOutput?: string;
   readFileImpl?: (filePath: string, encoding: BufferEncoding) => string;
   readdirImpl?: (dir: string) => string[];
   runCaptureImpl?: RunCaptureFn;
+  runCaptureExImpl?: RunCaptureExFn;
   resolveOpenshellImpl?: () => string | null;
   commandExistsImpl?: (commandName: string) => boolean;
   gpuProbeImpl?: () => boolean;
@@ -566,12 +576,22 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   const dockerHostInvalid = !isSupportedGatewayDockerHost(env.DOCKER_HOST);
 
   let dockerInfoOutput = opts.dockerInfoOutput;
+  let dockerInfoTimedOut = opts.dockerInfoTimedOut === true;
   let dockerReachable = false;
   let dockerRunning = false;
   if (dockerInstalled && !dockerHostInvalid && dockerInfoOutput === undefined) {
-    dockerInfoOutput = runCaptureImpl(["docker", "info", "--format", "{{json .}}"], {
-      ignoreError: true,
-    });
+    const dockerInfoCapture = (opts.runCaptureExImpl ?? runCaptureEx)(
+      ["docker", "info", "--format", "{{json .}}"],
+      {
+        timeout: DOCKER_PROBE_TIMEOUT_MS,
+      },
+    );
+    if (dockerInfoCapture.timedOut) {
+      dockerInfoTimedOut = true;
+      dockerInfoOutput = "";
+    } else {
+      dockerInfoOutput = dockerInfoCapture.stdout;
+    }
   }
   if (dockerInstalled && isDockerDaemonReachable(dockerInfoOutput)) {
     dockerReachable = true;
@@ -701,9 +721,11 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
     dockerServiceActive,
     dockerServiceEnabled,
     dockerHostInvalid,
+    dockerHostAuthority: env.DOCKER_HOST ?? "<unset>",
     dockerInstalled,
     dockerRunning,
     dockerReachable,
+    dockerInfoTimedOut,
     nodeInstalled,
     openshellInstalled,
     dockerInfoSummary: parseDockerInfoSummary(dockerInfoOutput),
