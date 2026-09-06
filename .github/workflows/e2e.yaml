@@ -2882,7 +2882,7 @@ jobs:
       # removalCondition: remove only if package installation no longer uses
       # --no-deps or an equivalent earlier build gate proves both imports.
       - name: Verify DCode profile import gate rejects missing base dependencies
-        if: ${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}
+        if: ${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' && matrix.runtime_provider == 'docker' }}
         shell: bash
         run: bash scripts/check-dcode-profile-import-gate.sh
 

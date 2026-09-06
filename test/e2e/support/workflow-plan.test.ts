@@ -129,6 +129,7 @@ describe("E2E workflow plan", () => {
       .map((row) => row.id);
     expect(plan.matrix.map((row) => row.id)).toEqual([
       "ubuntu-policy-custom-missing-presets-negative",
+      "ubuntu-repo-cloud-langchain-deepagents-code",
       "ubuntu-repo-cloud-openclaw",
     ]);
     expect(plan.testMatrix).toEqual([]);
@@ -1312,7 +1313,7 @@ describe("E2E workflow plan", () => {
     );
     expect(complete.stdout).toContain("### Repeated outcomes with distinct evidence");
     expect(complete.stdout).toContain(
-      "| Repository install onboarding and hosted inference succeed | `ubuntu-repo-cloud-langchain-deepagents-code / docker`, `ubuntu-repo-cloud-openclaw / docker` | agent runtime and environment or inference endpoint |",
+      "| Repository install onboarding and hosted inference succeed | `ubuntu-repo-cloud-langchain-deepagents-code / docker`, `ubuntu-repo-cloud-openclaw / docker` | agent runtime |",
     );
     expect(complete.stdout).toContain("### Intentional exclusions");
     expect(complete.stdout).toContain(

@@ -3083,7 +3083,8 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     errors.push("checkout step must set persist-credentials=false");
   }
 
-  const dcodeTargetIf = "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}";
+  const dcodeTargetIf =
+    "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' && matrix.runtime_provider == 'docker' }}";
   const configureTrace = requireStep(errors, steps, "Configure live E2E trace directory");
   const configureTraceEnv = asRecord(configureTrace?.env);
   if (configureTraceEnv.TARGET_ID !== "${{ matrix.id }}") {
