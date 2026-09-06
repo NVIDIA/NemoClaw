@@ -14,6 +14,8 @@ import {
   shouldRecoverRecordedProvider,
   validateLiveGatewayInference,
 } from "./provider-recovery";
+import { resolveRequestedProviderSelection } from "./provider-selection";
+import { prepareProviderDiscovery } from "./setup-nim-provider-discovery";
 
 const { REMOTE_PROVIDER_CONFIG } = require("./providers") as {
   REMOTE_PROVIDER_CONFIG: Record<string, { providerName?: string }>;
@@ -225,6 +227,65 @@ describe("provider recovery persisted routing state", () => {
       selectedGatewayName: () => "nemoclaw",
     });
   }
+
+  it.each([
+    ["managed", { recipe: { backend: "install-llama-cpp" } }, "install-llama-cpp"],
+    ["operator-attached", null, "llama-cpp"],
+  ] as const)(
+    "routes a %s llama.cpp registry record through its exact recovery key",
+    (_label, recipeProvenance, expectedKey) => {
+      vi.spyOn(registry, "getSandbox").mockReturnValue({
+        name: "alpha",
+        provider: "llama-cpp-local",
+        model: "recorded-model",
+        ...(recipeProvenance
+          ? { servingProfileProvenance: { recipe: recipeProvenance.recipe } as never }
+          : {}),
+      });
+      const recovery = helpers();
+      const remoteProviderConfig = REMOTE_PROVIDER_CONFIG as Record<
+        string,
+        { providerName: string }
+      >;
+      const discovery = prepareProviderDiscovery({
+        deps: {
+          remoteProviderConfig,
+          isNonInteractive: () => true,
+          getNonInteractiveProvider: () => null,
+          getNonInteractiveModel: () => null,
+          ...recovery.providerSelectionReaders,
+        },
+        sandboxName: "alpha",
+        recoverProvider: true,
+        rebuildRegistryInferenceRoute: null,
+        recoverySessionId: null,
+      });
+      const result = resolveRequestedProviderSelection({
+        options: [
+          { key: "build", label: "NVIDIA Endpoints" },
+          { key: "llama-cpp", label: "Local llama.cpp" },
+          { key: "install-llama-cpp", label: "Managed llama.cpp" },
+        ],
+        requestedProvider: discovery.requestedProvider,
+        sandboxName: "alpha",
+        remoteProviderConfig,
+        isWsl: false,
+        isWindowsHostOllama: false,
+        windowsHostOllamaSupported: false,
+        windowsHostOllamaReachable: false,
+        hermesProviderAvailable: false,
+        ollamaRunning: false,
+        ...discovery.recordedProviderReaders,
+      });
+
+      expect(result).toMatchObject({
+        kind: "selected",
+        selected: { key: expectedKey },
+        recoveredFromSandbox: true,
+        recoveredModel: "recorded-model",
+      });
+    },
+  );
 
   it("rejects partial live gateway output", () => {
     vi.spyOn(registry, "listSandboxes").mockReturnValue({
