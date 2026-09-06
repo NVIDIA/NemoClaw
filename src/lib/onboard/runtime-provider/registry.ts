@@ -304,7 +304,7 @@ function validateWorkloadProfile(providerId: string, surface: Record<string, unk
     for (const field of [
       "tokenizedStartupCommands",
       "openshellSandboxCommand",
-      "runtimeSelectedNonRootIdentity",
+      "openshellNonRootIdentity",
       "openshellWorkspaceOwnership",
       "ownerOnlyPrivateState",
     ] as const) {

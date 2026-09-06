@@ -471,7 +471,6 @@ const COMPLETE_MANAGED_IMAGE_V1_PROFILE = {
     startupProfileContractVersions: [MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION],
     capabilityContractVersions: [MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION],
   },
-  portableAgentRuntimeSupport: null,
   hostArchitectures: ["amd64", "arm64"],
   managedImageSelectionPolicy: "require-managed",
   legacyDockerfileBuilds: true,
@@ -669,7 +668,6 @@ export function createKubernetesRuntimeProviderBundle(
   const futureReason = "This operation is intentionally deferred to a later provider slice.";
   const profile = {
     support: null,
-    portableAgentRuntimeSupport: null,
     hostArchitectures: [],
     managedImageSelectionPolicy: "prefer-managed",
     legacyDockerfileBuilds: true,

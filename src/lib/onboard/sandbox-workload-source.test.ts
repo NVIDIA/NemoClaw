@@ -93,7 +93,7 @@ function portableHermesContract(): PortableAgentRuntimeContractV1 {
       reference: `${repository}@${digest}`,
     },
     startup: {
-      authority: "image-contract",
+      authority: "agent-definition",
       argv: ["hermes", "gateway", "run"],
       workingDirectory: "/sandbox",
     },
@@ -122,7 +122,7 @@ function portableSupport(): PortableAgentRuntimeProviderSupport {
     capabilityContractVersions: [1],
     tokenizedStartupCommands: true,
     openshellSandboxCommand: true,
-    runtimeSelectedNonRootIdentity: true,
+    openshellNonRootIdentity: true,
     openshellWorkspaceOwnership: true,
     ownerOnlyPrivateState: true,
   };

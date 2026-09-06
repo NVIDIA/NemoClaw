@@ -41,7 +41,7 @@ function clonePortableRuntimeSupport(
     capabilityContractVersions: [...support.capabilityContractVersions],
     tokenizedStartupCommands: support.tokenizedStartupCommands,
     openshellSandboxCommand: support.openshellSandboxCommand,
-    runtimeSelectedNonRootIdentity: support.runtimeSelectedNonRootIdentity,
+    openshellNonRootIdentity: support.openshellNonRootIdentity,
     openshellWorkspaceOwnership: support.openshellWorkspaceOwnership,
     ownerOnlyPrivateState: support.ownerOnlyPrivateState,
   };

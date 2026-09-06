@@ -103,7 +103,6 @@ const QUALIFIED_MANAGED_WORKLOAD_PROFILE = {
     startupProfileContractVersions: [MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION],
     capabilityContractVersions: [MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION],
   },
-  portableAgentRuntimeSupport: null,
   hostArchitectures: ["amd64", "arm64"],
   managedImageSelectionPolicy: "require-managed",
   legacyDockerfileBuilds: false,

@@ -24,7 +24,7 @@ export interface PortableAgentRuntimeProviderSupport {
   readonly capabilityContractVersions: readonly number[];
   readonly tokenizedStartupCommands: boolean;
   readonly openshellSandboxCommand: boolean;
-  readonly runtimeSelectedNonRootIdentity: boolean;
+  readonly openshellNonRootIdentity: boolean;
   readonly openshellWorkspaceOwnership: boolean;
   readonly ownerOnlyPrivateState: boolean;
 }
@@ -46,7 +46,7 @@ export interface PortableAgentRuntimeContractV1 {
     readonly reference: PortableAgentImageReference;
   };
   readonly startup: {
-    readonly authority: "image-contract";
+    readonly authority: "agent-definition";
     readonly argv: readonly string[];
     readonly workingDirectory: string;
   };
@@ -421,7 +421,7 @@ export function parsePortableAgentRuntimeContractV1(
   requireExactKeys(startup, ["argv", "authority", "workingDirectory"], "contract.startup");
   const authority = requireLiteral(
     startup.authority,
-    "image-contract",
+    "agent-definition",
     "contract.startup.authority",
   );
   const argv = requireStringArray(startup.argv, "contract.startup.argv", MAX_ARGUMENTS);
@@ -536,8 +536,8 @@ export function portableAgentRuntimeSupportError(
   if (!support.openshellSandboxCommand) {
     return "the runtime provider does not provide the supported OpenShell sandbox command";
   }
-  if (!support.runtimeSelectedNonRootIdentity) {
-    return "the runtime provider does not provide runtime-selected non-root identity";
+  if (!support.openshellNonRootIdentity) {
+    return "the runtime provider does not provide OpenShell-enforced non-root identity";
   }
   if (!support.openshellWorkspaceOwnership) {
     return "the runtime provider does not provide OpenShell workspace ownership";

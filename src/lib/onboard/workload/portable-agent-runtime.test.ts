@@ -31,7 +31,7 @@ function hermesContract(): PortableAgentRuntimeContractV1 {
       reference: `${IMAGE_REPOSITORY}@${IMAGE_DIGEST}`,
     },
     startup: {
-      authority: "image-contract",
+      authority: "agent-definition",
       argv: ["hermes", "gateway", "run"],
       workingDirectory: "/sandbox",
     },
@@ -60,7 +60,7 @@ function fullProviderSupport(): PortableAgentRuntimeProviderSupport {
     capabilityContractVersions: [1],
     tokenizedStartupCommands: true,
     openshellSandboxCommand: true,
-    runtimeSelectedNonRootIdentity: true,
+    openshellNonRootIdentity: true,
     openshellWorkspaceOwnership: true,
     ownerOnlyPrivateState: true,
   };
@@ -130,6 +130,15 @@ describe("portable agent runtime contract", () => {
     expect(error).toBeInstanceOf(Error);
     expect(String(error)).toContain("contract.startup.argv does not match the agent definition");
     expect(String(error)).not.toContain("do-not-store");
+  });
+
+  it("rejects image-owned startup authority (#11079)", () => {
+    const value = mutableContract();
+    startup(value).authority = "image-contract";
+
+    expect(() => parsePortableAgentRuntimeContractV1(value, loadAgent("hermes"))).toThrow(
+      /contract.startup.authority must be "agent-definition"/u,
+    );
   });
 
   it.each([
@@ -214,8 +223,8 @@ describe("portable agent runtime contract", () => {
     ["OpenShell command", { openshellSandboxCommand: false }, "OpenShell sandbox command"],
     [
       "non-root identity",
-      { runtimeSelectedNonRootIdentity: false },
-      "runtime-selected non-root identity",
+      { openshellNonRootIdentity: false },
+      "OpenShell-enforced non-root identity",
     ],
     ["workspace ownership", { openshellWorkspaceOwnership: false }, "workspace ownership"],
     ["private state", { ownerOnlyPrivateState: false }, "owner-only private state"],

@@ -68,7 +68,7 @@ const PORTABLE_PROFILE = {
     capabilityContractVersions: [1],
     tokenizedStartupCommands: true,
     openshellSandboxCommand: true,
-    runtimeSelectedNonRootIdentity: true,
+    openshellNonRootIdentity: true,
     openshellWorkspaceOwnership: true,
     ownerOnlyPrivateState: true,
   },
@@ -175,7 +175,7 @@ describe("RuntimeProviderBundle registry contract", () => {
           : { supported: false },
       );
       expect(bundle.recovery).toMatchObject({ supported: providerId === "podman" });
-      expect(bundle.workload.profile.portableAgentRuntimeSupport).toBeNull();
+      expect(bundle.workload.profile.portableAgentRuntimeSupport).toBeUndefined();
     });
     expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.docker?.capabilities.hostLocalInference).toBe(true);
     expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.docker?.hostLocalInference).toMatchObject({
