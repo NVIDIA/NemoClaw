@@ -154,6 +154,14 @@ The [`scripts/backup-workspace.sh`](https://github.com/NVIDIA/NemoClaw/blob/main
 It is not installed by the standard installer, so host installs should use `nemoclaw backup-all` or the snapshot commands.
 </Note>
 
+Run the contributor setup from the NemoClaw source repository root before you create a backup:
+
+```bash
+npm run dev:setup
+```
+
+The helper checks that the built NemoClaw CLI can start before it creates a backup.
+
 Back up a workspace:
 
 ```bash

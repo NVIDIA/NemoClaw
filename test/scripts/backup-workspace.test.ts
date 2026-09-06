@@ -31,6 +31,45 @@ describe("backup-workspace.sh", () => {
     fs.rmSync(root, { recursive: true, force: true });
   });
 
+  it("rejects an unbuilt source CLI before creating a backup (#10636)", () => {
+    const sourceRoot = path.join(root, "source");
+    const sourceScript = path.join(sourceRoot, "scripts", "backup-workspace.sh");
+    fs.mkdirSync(path.dirname(sourceScript), { recursive: true });
+    fs.mkdirSync(path.join(sourceRoot, "bin"));
+    fs.symlinkSync(BACKUP_SCRIPT, sourceScript);
+    writeExecutable(
+      path.join(sourceRoot, "bin", "nemoclaw.js"),
+      `#!/usr/bin/env bash
+printf '%s\n' "Error: NemoClaw's compiled CLI is missing or incomplete." >&2
+exit 1
+`,
+    );
+    writeExecutable(
+      path.join(bin, "openshell"),
+      `#!/usr/bin/env bash
+exit 99
+`,
+    );
+
+    const result = spawnSync("bash", [sourceScript, "backup", "test-sandbox"], {
+      cwd: sourceRoot,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        HOME: home,
+        PATH: `${bin}:${process.env.PATH ?? ""}`,
+      },
+    });
+
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain("The selected NemoClaw CLI cannot start.");
+    expect(result.stderr).toContain(
+      "Run 'npm run dev:setup' from the NemoClaw source repository root.",
+    );
+    expect(result.stderr).toContain("Then retry the backup.");
+    expect(fs.existsSync(path.join(home, ".nemoclaw"))).toBe(false);
+  });
+
   it("removes an incomplete backup when a required file is absent (#10636)", () => {
     const calls = path.join(root, "nemoclaw-calls.txt");
     const openshellCalls = path.join(root, "openshell-calls.txt");
@@ -39,6 +78,9 @@ describe("backup-workspace.sh", () => {
       nemoclaw,
       `#!/usr/bin/env bash
 set -euo pipefail
+if [ "\${1:-}" = "--version" ]; then
+  exit 0
+fi
 printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" >> "$NEMOCLAW_TEST_CALLS"
 if [[ "$3" == */SOUL.md ]]; then
   printf 'NEMOCLAW_TEST_REQUIRED_SOURCE_ABSENT\n' >&2
@@ -103,6 +145,9 @@ exit 99
       nemoclaw,
       `#!/usr/bin/env bash
 set -euo pipefail
+if [ "\${1:-}" = "--version" ]; then
+  exit 0
+fi
 printf '%s\\t%s\\t%s\\t%s\\n' "$1" "$2" "$3" "$4" >> "$NEMOCLAW_TEST_CALLS"
 if [[ "$3" == */memory/ ]]; then
   test -L "$NEMOCLAW_TEST_LINKED_MEMBER"
@@ -172,6 +217,9 @@ exit 99
       nemoclaw,
       `#!/usr/bin/env bash
 set -euo pipefail
+if [ "\${1:-}" = "--version" ]; then
+  exit 0
+fi
 printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" >> "$NEMOCLAW_TEST_CALLS"
 case "$3" in
   */MEMORY.md|*/memory/)
@@ -246,6 +294,9 @@ exit 99
     writeExecutable(
       nemoclaw,
       `#!/usr/bin/env bash
+if [ "\${1:-}" = "--version" ]; then
+  exit 0
+fi
 printf '%s\n' "$*" >> "$NEMOCLAW_TEST_CALLS"
 exit 99
 `,

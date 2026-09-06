@@ -109,6 +109,8 @@ restore_directory() {
 do_backup() {
   local sandbox="$1"
   require_cmd "$NEMOCLAW_CLI_BIN"
+  "$NEMOCLAW_CLI_BIN" --version >/dev/null 2>&1 \
+    || fail "The selected NemoClaw CLI cannot start. Run 'npm run dev:setup' from the NemoClaw source repository root. Then retry the backup."
   local ts
   ts="$(date +%Y%m%d-%H%M%S)"
   local dest="${BACKUP_BASE}/${ts}"
