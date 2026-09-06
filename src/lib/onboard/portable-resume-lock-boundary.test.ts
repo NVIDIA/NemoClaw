@@ -81,6 +81,8 @@ async function loadBoundaryModules() {
   const checkpointMigration = await import("../state/onboard-checkpoint-migrate");
   const resumeIntent = await import("./resume/portable-resume-intent");
   const retirement = await import("../state/portable-uninstall-retirement");
+  const rebuildGuards = await import("../actions/sandbox/rebuild-preflight-guards");
+  const destroy = await import("../actions/sandbox/destroy");
   return {
     command,
     onboardModule,
@@ -88,7 +90,29 @@ async function loadBoundaryModules() {
     checkpointMigration,
     resumeIntent,
     retirement,
+    rebuildGuards,
+    destroy,
   };
+}
+
+function spawnLiveOnboardLockHolder(lockFile: string) {
+  const childScript = `
+        const fs = require("node:fs");
+        const path = require("node:path");
+        const lockFile = process.argv[1];
+        fs.mkdirSync(path.dirname(lockFile), { recursive: true });
+        const fd = fs.openSync(lockFile, "wx", 0o600);
+        fs.writeSync(fd, JSON.stringify({
+          pid: process.pid,
+          startedAt: new Date().toISOString(),
+          command: "separate nemoclaw onboard process",
+        }));
+        process.stdout.write("locked\\n");
+        setInterval(() => {}, 1000);
+      `;
+  return spawn(process.execPath, ["-e", childScript, lockFile], {
+    stdio: ["ignore", "pipe", "inherit"],
+  });
 }
 function replacementReentryState(profile: "default" | "portable", phase: string) {
   const { checkpointMigration, retirement, session } = boundaryModules;
@@ -179,23 +203,7 @@ describe("portable resume command lock boundary", () => {
     testTimeoutOptions(30_000),
     async () => {
       const { command, onboardModule, session } = boundaryModules;
-      const childScript = `
-        const fs = require("node:fs");
-        const path = require("node:path");
-        const lockFile = process.argv[1];
-        fs.mkdirSync(path.dirname(lockFile), { recursive: true });
-        const fd = fs.openSync(lockFile, "wx", 0o600);
-        fs.writeSync(fd, JSON.stringify({
-          pid: process.pid,
-          startedAt: new Date().toISOString(),
-          command: "separate nemoclaw onboard process",
-        }));
-        process.stdout.write("locked\\n");
-        setInterval(() => {}, 1000);
-      `;
-      const child = spawn(process.execPath, ["-e", childScript, session.LOCK_FILE], {
-        stdio: ["ignore", "pipe", "inherit"],
-      });
+      const child = spawnLiveOnboardLockHolder(session.LOCK_FILE);
       await once(child.stdout, "data");
       vi.spyOn(console, "error").mockImplementation(() => {});
       vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
@@ -224,6 +232,61 @@ describe("portable resume command lock boundary", () => {
         const errorOutput = (console.error as unknown as ReturnType<typeof vi.fn>).mock.calls
           .map((call: unknown[]) => String(call[0]))
           .join("\n");
+        expect(errorOutput).toContain("another nemoclaw onboarding run is already in progress.");
+        expect(child.pid).toBeTypeOf("number");
+        expect(errorOutput).toContain(`Lock holder PID: ${String(child.pid)}.`);
+        expect(errorOutput).toContain("Wait for the active onboarding run to finish.");
+      } finally {
+        const exited = once(child, "exit");
+        child.kill();
+        await exited;
+        fs.rmSync(session.LOCK_FILE, { force: true });
+      }
+    },
+  );
+
+  it(
+    "reports the holder PID and wait guidance when rebuild reads recovery under a live onboard lock (#11052)",
+    testTimeoutOptions(30_000),
+    async () => {
+      const { rebuildGuards, session } = boundaryModules;
+      const child = spawnLiveOnboardLockHolder(session.LOCK_FILE);
+      await once(child.stdout, "data");
+      const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const bail = vi.fn() as unknown as (message: string, code?: number) => never;
+
+      try {
+        expect(rebuildGuards.blockRebuildOnRetainedSandboxRecovery("alpha", bail)).toBe(true);
+        const errorOutput = error.mock.calls.map((call) => String(call[0])).join("\n");
+        expect(errorOutput).toContain("another nemoclaw onboarding run is already in progress.");
+        expect(child.pid).toBeTypeOf("number");
+        expect(errorOutput).toContain(`Lock holder PID: ${String(child.pid)}.`);
+        expect(errorOutput).toContain("Wait for the active onboarding run to finish.");
+        expect(bail).toHaveBeenCalled();
+      } finally {
+        const exited = once(child, "exit");
+        child.kill();
+        await exited;
+        fs.rmSync(session.LOCK_FILE, { force: true });
+      }
+    },
+  );
+
+  it(
+    "reports the holder PID and wait guidance when destroy reads recovery under a live onboard lock (#11052)",
+    testTimeoutOptions(30_000),
+    async () => {
+      const { destroy, session } = boundaryModules;
+      const child = spawnLiveOnboardLockHolder(session.LOCK_FILE);
+      await once(child.stdout, "data");
+      const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+        throw new Error(`exit:${String(code ?? 0)}`);
+      }) as typeof process.exit);
+
+      try {
+        await expect(destroy.destroySandbox("alpha", { yes: true })).rejects.toThrow("exit:1");
+        const errorOutput = error.mock.calls.map((call) => String(call[0])).join("\n");
         expect(errorOutput).toContain("another nemoclaw onboarding run is already in progress.");
         expect(child.pid).toBeTypeOf("number");
         expect(errorOutput).toContain(`Lock holder PID: ${String(child.pid)}.`);

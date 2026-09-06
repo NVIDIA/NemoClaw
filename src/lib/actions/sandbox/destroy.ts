@@ -607,6 +607,12 @@ export async function destroySandbox(
     });
   } catch (error) {
     if (error instanceof SandboxDestroyExitRequest) process.exit(error.exitCode);
+    if (onboardSession.isOnboardLockContentionError(error)) {
+      console.error(`  another ${CLI_NAME} onboarding run is already in progress.`);
+      if (error.holderPid) console.error(`  Lock holder PID: ${error.holderPid}.`);
+      console.error("  Wait for the active onboarding run to finish.");
+      process.exit(1);
+    }
     throw error;
   }
 }
@@ -665,9 +671,7 @@ async function destroySandboxUnlocked(
         : normalizeRuntimeProviderIdentity(null),
       redact: redactDestroyError,
       sandbox: registeredSandbox,
-      ...(retainedSandboxIdentityFingerprint
-        ? { retainedSandboxIdentityFingerprint }
-        : {}),
+      ...(retainedSandboxIdentityFingerprint ? { retainedSandboxIdentityFingerprint } : {}),
     });
   };
   const initialIdentity = portableContainerAuthority ? null : inspectContainerIdentity();
@@ -877,14 +881,13 @@ async function destroySandboxUnlocked(
     runtimeSelection: destroyRuntimeSelection,
   } = destructiveResult;
 
-  if (
-    destroyRuntimeSelection &&
-    cleanupGatewayName !== destroyRuntimeSelection.gatewayName
-  ) {
+  if (destroyRuntimeSelection && cleanupGatewayName !== destroyRuntimeSelection.gatewayName) {
     console.error(
       `  Sandbox '${sandboxName}' was deleted, but its cleanup target changed from '${destroyRuntimeSelection.gatewayName}' to '${cleanupGatewayName}'.`,
     );
-    console.error("  Local ownership state was preserved. Restore the recorded gateway binding and retry destroy.");
+    console.error(
+      "  Local ownership state was preserved. Restore the recorded gateway binding and retry destroy.",
+    );
     preparedManagedLlamaCppCleanup?.abort();
     requestSandboxDestroyExit(1);
   }
@@ -966,11 +969,15 @@ async function destroySandboxUnlocked(
       registeredSandboxCount: registry.listSandboxes().sandboxes.length,
       sandboxStillRegistered: !!registry.getSandbox(sandboxName),
     });
-    cleanupSandboxServices(sandboxName, {
-      stopHostServices: shouldStopHostServices,
-    }, {
-      runOpenshell: cleanupRunOpenshell,
-    });
+    cleanupSandboxServices(
+      sandboxName,
+      {
+        stopHostServices: shouldStopHostServices,
+      },
+      {
+        runOpenshell: cleanupRunOpenshell,
+      },
+    );
   });
   if (deleteSucceededOrAlreadyGone && commonLlamaCppAuthorityRetired === true) {
     preparedManagedLlamaCppCleanup?.abort();
@@ -1143,10 +1150,13 @@ async function destroySandboxUnlocked(
     }
   }
   if (
-    shouldCleanupGatewayAfterConfirmedFinalDestroy({
-      deleteSucceededOrAlreadyGone,
-      removedRegistryEntry: removed,
-    }, cleanupCaptureOpenshell ? { captureOpenshell: cleanupCaptureOpenshell } : {})
+    shouldCleanupGatewayAfterConfirmedFinalDestroy(
+      {
+        deleteSucceededOrAlreadyGone,
+        removedRegistryEntry: removed,
+      },
+      cleanupCaptureOpenshell ? { captureOpenshell: cleanupCaptureOpenshell } : {},
+    )
   ) {
     const shouldCleanupGateway = await resolveCleanupGatewayDecision(normalized);
     if (shouldCleanupGateway) {

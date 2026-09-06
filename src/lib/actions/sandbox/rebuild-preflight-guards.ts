@@ -324,13 +324,33 @@ export function getRebuildSandboxEntryOrBail(
 }
 
 /** Block rebuild before any live-state probe or cleanup can bypass retained recovery. */
+function reportRebuildOnboardLockContention(error: unknown, bail: RebuildBail): boolean {
+  if (!onboardSession.isOnboardLockContentionError(error)) return false;
+  const pidDetail = error.holderPid ? ` Lock holder PID: ${error.holderPid}.` : "";
+  printRebuildPreflightFailure(
+    `another ${CLI_NAME} onboarding run is already in progress.`,
+    `Wait for the active onboarding run to finish.${pidDetail}`,
+    "Could not acquire onboard lock before rebuild",
+    bail,
+  );
+  return true;
+}
+
 export function blockRebuildOnRetainedSandboxRecovery(
   sandboxName: string,
   bail: RebuildBail,
 ): boolean {
-  const retainedRecovery = onboardSession
-    .listRetainedSandboxRecoveryRecords()
-    .find((record) => record.sandboxName === sandboxName);
+  let retainedRecovery:
+    | ReturnType<typeof onboardSession.listRetainedSandboxRecoveryRecords>[number]
+    | undefined;
+  try {
+    retainedRecovery = onboardSession
+      .listRetainedSandboxRecoveryRecords()
+      .find((record) => record.sandboxName === sandboxName);
+  } catch (error) {
+    if (reportRebuildOnboardLockContention(error, bail)) return true;
+    throw error;
+  }
   if (!retainedRecovery) return false;
 
   console.error(
