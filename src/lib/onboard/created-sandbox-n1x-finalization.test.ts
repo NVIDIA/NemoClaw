@@ -89,13 +89,17 @@ async function createIntentThroughOnboardFlow(input: {
   platform: Gpu["platform"];
   allowDeferredN1xManagedVllm?: boolean;
   environment?: NodeJS.ProcessEnv;
-}): Promise<{ accepted: boolean; createIntent: CreateIntent }> {
+  legacyOnboardRoute?: boolean;
+}): Promise<{ accepted: boolean; createIntent: CreateIntent; endpointSource: string | null }> {
   const environment = input.environment ?? previewEnv;
   const session = createSession({
     provider: input.resume ? provider : null,
     model: input.resume ? model : null,
   });
   session.steps.preflight.status = input.resume ? "complete" : session.steps.preflight.status;
+  session.steps.provider_selection.status = input.legacyOnboardRoute
+    ? "complete"
+    : session.steps.provider_selection.status;
   const gpu: Gpu = { type: "nvidia", platform: input.platform };
   const gpuConfig = (): GpuConfig => ({
     sandboxGpuEnabled: true,
@@ -147,10 +151,19 @@ async function createIntentThroughOnboardFlow(input: {
   const providerHarness = createProviderDeps({
     setupNim: vi.fn(async () => ({ ...inferenceSelection, hermesToolGateways: [] })),
   });
-  const endpointProvenance = { getSandboxRegistryEntry: () => null };
+  const endpointProvenance = {
+    ...(input.legacyOnboardRoute
+      ? {
+          endpointSource: "onboard" as const,
+          endpointSourceProvider: provider,
+          endpointSourceEndpointUrl: null,
+        }
+      : {}),
+    getSandboxRegistryEntry: () => null,
+  };
   const providerPhase = createProviderInferenceOnboardFlowPhase<typeof coreContext, object>({
     gatewayName: "nemoclaw",
-    forceProviderSelection: true,
+    forceProviderSelection: !input.legacyOnboardRoute,
     inspectSandboxForCreate: () => ({
       existingEntry: null,
       preservedMcpState: undefined,
@@ -183,6 +196,7 @@ async function createIntentThroughOnboardFlow(input: {
     createIntent: (
       sandboxHarness.calls.createSandbox.mock.calls[0] as unknown[]
     )[15] as CreateIntent,
+    endpointSource: providerResult.context.endpointSource ?? null,
   };
 }
 
@@ -300,18 +314,20 @@ async function completeRegistration(createIntent: CreateIntent): Promise<Sandbox
 }
 
 it.each([
-  ["fresh N1x", false, "n1x", undefined, previewEnv, true],
-  ["resumed N1x", true, "n1x", true, {}, true],
-  ["DGX Spark", false, "spark", undefined, previewEnv, false],
-  ["explicit rebuild denial", true, "n1x", false, previewEnv, false],
-  ["ordinary N1x opt-out", false, "n1x", undefined, { NEMOCLAW_NO_EXPRESS: "1" }, false],
+  ["fresh N1x", false, "n1x", undefined, previewEnv, false, true],
+  ["resumed N1x", true, "n1x", true, {}, false, true],
+  ["legacy onboard N1x resume", true, "n1x", true, {}, true, true],
+  ["DGX Spark", false, "spark", undefined, previewEnv, false, false],
+  ["explicit rebuild denial", true, "n1x", false, previewEnv, false, false],
+  ["ordinary N1x opt-out", false, "n1x", undefined, { NEMOCLAW_NO_EXPRESS: "1" }, false, false],
 ] as const)(
   "carries %s preview acceptance through final registration (#10959)",
-  async (_case, resume, platform, allow, environment, expected) => {
+  async (_case, resume, platform, allow, environment, legacyOnboardRoute, expected) => {
     const flow = await createIntentThroughOnboardFlow({
       resume,
       platform,
       environment,
+      legacyOnboardRoute,
       ...(allow === undefined ? {} : { allowDeferredN1xManagedVllm: allow }),
     });
     const registration = await completeRegistration(flow.createIntent);
@@ -320,6 +336,7 @@ it.each([
       flow.accepted,
       flow.createIntent.deferredN1xManagedVllmPreviewIntent,
       registration.deferredN1xManagedVllmAccepted,
-    ]).toEqual(expected ? [true, true, true] : [false, undefined, undefined]);
+      flow.endpointSource,
+    ]).toEqual(expected ? [true, true, true, null] : [false, undefined, undefined, null]);
   },
 );
