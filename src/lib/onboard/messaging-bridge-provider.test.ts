@@ -1,11 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-
 import { describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
-import { REPOSITORY_ROOT } from "../core/repository-root";
 import type { ChannelManifest } from "../messaging/manifest";
 import { redactFull } from "../security/redact";
 import {
@@ -921,34 +918,25 @@ describe("matchesRegisteredMessagingBridgeProfile", () => {
 });
 
 describe("listMessagingBridgeProfiles", () => {
-  it.each(["openclaw", "hermes"] as const)(
-    "matches OpenShell's canonical export for the checked-in %s Google Chat profile (#10971)",
-    (agent) => {
-      const profile = listMessagingBridgeProfiles({ root: REPOSITORY_ROOT }).find(
-        (candidate) => candidate.channelId === "googlechat" && candidate.agent === agent,
-      );
-      expect(profile, `missing checked-in ${agent} Google Chat profile`).toBeDefined();
+  it("uses OpenShell's canonical refresh contract in both checked-in Google Chat profiles (#10971)", () => {
+    const googleChatProfiles = listMessagingBridgeProfiles()
+      .filter((profile) => profile.channelId === "googlechat")
+      .map(({ agent, profileId, strategy }) => ({ agent, profileId, strategy }))
+      .sort((left, right) => left.agent.localeCompare(right.agent));
 
-      const exported = YAML.parse(fs.readFileSync(profile!.profilePath, "utf8")) as {
-        credentials: Array<{ refresh?: { strategy?: string } }>;
-      };
-      const refresh = exported.credentials[0]?.refresh;
-      expect(refresh, `${agent} Google Chat refresh boundary`).toBeDefined();
-      refresh!.strategy = refresh!.strategy?.replaceAll("-", "_");
-      const runOpenshell = vi.fn(() => ({
-        status: 0,
-        stdout: JSON.stringify(exported),
-      }));
-
-      expect(
-        matchesRegisteredMessagingBridgeProfile(profile!.profileId, {
-          root: REPOSITORY_ROOT,
-          profiles: [profile!],
-          runOpenshell,
-        }),
-      ).toBe(true);
-    },
-  );
+    expect(googleChatProfiles).toEqual([
+      {
+        agent: "hermes",
+        profileId: "google-chat-hermes-bridge",
+        strategy: "google_service_account_jwt",
+      },
+      {
+        agent: "openclaw",
+        profileId: "google-chat-bridge",
+        strategy: "google_service_account_jwt",
+      },
+    ]);
+  });
 
   it("discovers a co-located bridge profile from injected manifests and YAML", () => {
     const manifest: ChannelManifest = {
