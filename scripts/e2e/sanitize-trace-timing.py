@@ -316,6 +316,10 @@ def main(argv: list[str]) -> int:
         selected["sandbox_identity_settlement_evidence"] = "invalid"
     elif identity_settlement is not None:
         selected["sandbox_identity_settlement"] = identity_settlement
+    elif any("nemoclaw.onboard.phase.sandbox" in candidate["phases"] for candidate in candidates):
+        selected["sandbox_identity_settlement_evidence"] = "absent"
+    else:
+        selected["sandbox_identity_settlement_evidence"] = "not_attempted"
     return write_summary(output_dir, selected)
 
 

@@ -2992,6 +2992,17 @@ jobs:
                   "inspect lifecycle logs and use a retained recovery record only if the "
                   "onboarding failure created one."
               )
+          elif evidence_state == "absent":
+              print(
+                  f"- Target `{os.environ['TARGET_ID']}`: settlement event `absent` after "
+                  "the sandbox phase; inspect lifecycle logs and use a retained recovery "
+                  "record only if the onboarding failure created one."
+              )
+          elif evidence_state == "not_attempted":
+              print(
+                  f"- Target `{os.environ['TARGET_ID']}`: sandbox creation `not_attempted`; "
+                  "inspect the target phase plan and lifecycle logs."
+              )
           elif isinstance(settlement, dict):
               print(f"- Target: `{os.environ['TARGET_ID']}`")
               print(f"- Create operation: `{settlement.get('create_operation_state')}`")
@@ -5826,6 +5837,47 @@ jobs:
           python3 scripts/e2e/sanitize-trace-timing.py \
             "${NEMOCLAW_TRACE_DIR}" \
             "${E2E_ARTIFACT_DIR}"
+
+      - name: Validate cloud-onboard identity settlement evidence
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          summary_path="${E2E_ARTIFACT_DIR}/cloud-onboard-trace-timing-summary.json"
+          if [ ! -f "${summary_path}" ] || [ -L "${summary_path}" ]; then
+            echo "::error title=Cloud onboard identity evidence missing::The trusted trace summary is not a regular file." >&2
+            exit 1
+          fi
+          python3 - "${summary_path}" <<'PY'
+          import json
+          import re
+          import sys
+          from pathlib import Path
+
+          try:
+              summary = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+              print("::error title=Cloud onboard identity evidence invalid::The trusted trace summary is unreadable.", file=sys.stderr)
+              raise SystemExit(1)
+          settlement = summary.get("sandbox_identity_settlement")
+          if summary.get("sandbox_identity_settlement_evidence") is not None or not isinstance(settlement, dict):
+              print("::error title=Cloud onboard identity evidence incomplete::A matched final settlement is required.", file=sys.stderr)
+              raise SystemExit(1)
+          valid = (
+              settlement.get("create_operation_state") in {"ready", "create_client_exited"}
+              and settlement.get("identity_state") == "matched"
+              and isinstance(settlement.get("trace_id"), str)
+              and re.fullmatch(r"[0-9a-f]{32}", settlement["trace_id"])
+              and isinstance(settlement.get("event_time_unix_nano"), str)
+              and re.fullmatch(r"[1-9][0-9]{15,20}", settlement["event_time_unix_nano"])
+              and isinstance(settlement.get("returned_identity_correlation"), str)
+              and re.fullmatch(r"[0-9a-f]{16}", settlement["returned_identity_correlation"])
+          )
+          if not valid:
+              print("::error title=Cloud onboard identity evidence invalid::The final settlement does not match the bounded schema.", file=sys.stderr)
+              raise SystemExit(1)
+          print("Cloud onboard identity settlement evidence: matched")
+          PY
 
       # The target process must emit full local traces for diagnosis, but those
       # traces may contain prompts, environment data, and credential material.

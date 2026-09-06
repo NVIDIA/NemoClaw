@@ -345,10 +345,10 @@ test/e2e/
   a failed settlement can use `null` when no identity was observed. Raw event
   attributes and the full identity fingerprint are excluded. Malformed or
   unreadable trace input is replaced with the bounded `invalid` evidence state;
-  absent trace input uses `missing`. The live target workflow summary reports
-  the target and valid settlement provenance, or calls out `invalid` evidence
-  as malformed or unusable and `missing` evidence as absent. For either state,
-  inspect lifecycle logs and use a retained recovery record only if
+  absent trace input uses `missing`; a valid trace without a final event uses
+  `absent` after the sandbox phase or `not_attempted` before it. The live target
+  workflow summary reports each state and its recovery direction. Inspect
+  lifecycle logs and use a retained recovery record only if
   the onboarding failure created one.
   Raw onboard traces stay under the runner temporary directory and are deleted
   before artifact upload.

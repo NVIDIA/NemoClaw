@@ -2,7 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -34,12 +42,14 @@ type SettlementTrace = {
 function makeTrace({
   totalDurationMs = 42.9876,
   traceId = "0123456789abcdef0123456789abcdef",
+  phaseName = "nemoclaw.onboard.phase.gateway",
   settlementTraceId = traceId,
   settlement,
   additionalSettlements = [],
 }: {
   totalDurationMs?: number;
   traceId?: string;
+  phaseName?: string;
   settlementTraceId?: string;
   settlement?: SettlementTrace;
   additionalSettlements?: readonly SettlementTrace[];
@@ -62,7 +72,7 @@ function makeTrace({
               },
               {
                 trace_id: settlementTraceId,
-                name: "nemoclaw.onboard.phase.gateway",
+                name: phaseName,
                 duration_ms: 7.1234,
                 attributes: { endpoint: "https://example.test/token" },
                 events: settlements.map((current) => ({
@@ -499,6 +509,90 @@ print(json.dumps([module.extract_candidate(case) for case in cases]))
       expect(JSON.parse(readFileSync(join(output, SUMMARY), "utf8"))).toEqual({
         sandbox_identity_settlement_evidence: "missing",
         schema_version: "nemoclaw.trace_timing.v1",
+      });
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it.each([
+    { title: "malformed", contents: '{"resource_spans":' },
+    { title: "oversized", contents: " ".repeat(2 * 1024 * 1024 + 1) },
+  ])("writes invalid settlement evidence for $title trace input", (scenario) => {
+    const directory = mkdtempSync(join(tmpdir(), "nemoclaw-trace-sanitize-invalid-input-"));
+    const source = join(directory, "raw.json");
+    const output = join(directory, "trusted");
+    try {
+      writeFileSync(source, scenario.contents);
+
+      const result = runSanitizer(source, output);
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(readFileSync(join(output, SUMMARY), "utf8"))).toEqual({
+        sandbox_identity_settlement_evidence: "invalid",
+        schema_version: "nemoclaw.trace_timing.v1",
+      });
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("refuses symlinked sources, output directories, and summary files", () => {
+    const directory = mkdtempSync(join(tmpdir(), "nemoclaw-trace-sanitize-symlink-"));
+    const source = join(directory, "raw");
+    const sourceLink = join(directory, "raw-link");
+    const output = join(directory, "trusted");
+    const outputTarget = join(directory, "target-output");
+    const outputLink = join(directory, "target-output-link");
+    const summaryTarget = join(directory, "target-summary.json");
+    try {
+      mkdirSync(source);
+      mkdirSync(output);
+      mkdirSync(outputTarget);
+      writeFileSync(join(source, "trace.json"), JSON.stringify(makeTrace()));
+      writeFileSync(summaryTarget, "do not overwrite\n");
+      symlinkSync(source, sourceLink, "dir");
+      symlinkSync(outputTarget, outputLink, "dir");
+
+      const sourceResult = runSanitizer(sourceLink, join(directory, "unused-output"));
+      expect(sourceResult.status).toBe(2);
+      expect(sourceResult.stderr).toContain("trace source must not be a symlink");
+
+      const outputResult = runSanitizer(source, outputLink);
+      expect(outputResult.status).toBe(2);
+      expect(outputResult.stderr).toContain("trusted output must be a real directory");
+
+      symlinkSync(summaryTarget, join(output, SUMMARY));
+      const summaryResult = runSanitizer(source, output);
+      expect(summaryResult.status).toBe(2);
+      expect(summaryResult.stderr).toContain("trusted timing summary must not be a symlink");
+      expect(readFileSync(summaryTarget, "utf8")).toBe("do not overwrite\n");
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it.each([
+    {
+      title: "not attempted before the sandbox phase",
+      phaseName: "nemoclaw.onboard.phase.gateway",
+      evidence: "not_attempted",
+    },
+    {
+      title: "absent after the sandbox phase",
+      phaseName: "nemoclaw.onboard.phase.sandbox",
+      evidence: "absent",
+    },
+  ])("classifies a valid trace with no settlement event as $title", (scenario) => {
+    const directory = mkdtempSync(join(tmpdir(), "nemoclaw-trace-sanitize-no-settlement-"));
+    const source = join(directory, "raw.json");
+    const output = join(directory, "trusted");
+    try {
+      writeFileSync(source, JSON.stringify(makeTrace({ phaseName: scenario.phaseName })));
+
+      const result = runSanitizer(source, output);
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(readFileSync(join(output, SUMMARY), "utf8"))).toMatchObject({
+        sandbox_identity_settlement_evidence: scenario.evidence,
       });
     } finally {
       rmSync(directory, { force: true, recursive: true });

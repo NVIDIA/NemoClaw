@@ -69,7 +69,8 @@ and artifact shape operators needed from the retired workflows:
   trace ID, validated event timestamp, and optional 16-hex correlation that can
   be `null` when no identity was observed; malformed or unreadable trace input
   uses a bounded `invalid` evidence state, while absent trace input uses
-  `missing`;
+  `missing`; a valid trace without a final event uses `absent` after the sandbox
+  phase or `not_attempted` before it;
 - per-target step summary rendered from `run-plan.json`;
 - explicit artifact upload allowlist with action, log, shell command-evidence,
   and JSON summary paths plus 14-day retention.

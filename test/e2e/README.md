@@ -1187,14 +1187,18 @@ sandbox identity-settlement state with its own trace ID, validated event
 timestamp, and optional 16-hex correlation. A matched identity includes the
 correlation; a failed settlement can use `null` when no identity was observed.
 Malformed or unreadable trace input is replaced with the bounded `invalid`
-evidence state; absent trace input uses `missing`. The summary never retains raw
-event attributes or the full identity fingerprint. Aggregation ratchets require
-`report-to-pr` and `scorecard` to wait
+evidence state; absent trace input uses `missing`. A valid trace without a final
+event uses `absent` after the sandbox phase or `not_attempted` before that phase.
+The summary never retains raw event attributes or the full identity fingerprint.
+Aggregation ratchets require `report-to-pr` and `scorecard` to wait
 for the same execution-job set. The live target's workflow summary reports the
 target and valid settlement provenance, or calls out the `invalid` evidence
-state as malformed or unusable and `missing` when no trace input exists. For
-either state, inspect lifecycle logs and use a retained recovery record only if
-the onboarding failure created one.
+state as malformed or unusable, `missing` when no trace input exists, `absent`
+when the sandbox phase has no final event, or `not_attempted` when the phase did
+not run. Inspect lifecycle logs and use a retained recovery record only if the
+onboarding failure created one. The dedicated `cloud-onboard` job requires a
+schema-valid matched settlement; diagnostic-only evidence fails that job before
+cleanup and artifact upload continue under `always()`.
 
 Registry-driven Vitest targets also enable onboard trace collection. Each live
 matrix target writes raw traces under the runner temporary directory, sanitizes

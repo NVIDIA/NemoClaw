@@ -176,6 +176,18 @@ describe("e2e workflow live job boundary", () => {
         "Target `channels-add-remove`: `missing` settlement evidence; inspect lifecycle logs and use a retained recovery record only if the onboarding failure created one.",
     },
     {
+      title: "absent",
+      traceSummary: { sandbox_identity_settlement_evidence: "absent" },
+      expectedSummary:
+        "Target `channels-add-remove`: settlement event `absent` after the sandbox phase; inspect lifecycle logs and use a retained recovery record only if the onboarding failure created one.",
+    },
+    {
+      title: "not attempted",
+      traceSummary: { sandbox_identity_settlement_evidence: "not_attempted" },
+      expectedSummary:
+        "Target `channels-add-remove`: sandbox creation `not_attempted`; inspect the target phase plan and lifecycle logs.",
+    },
+    {
       title: "valid",
       traceSummary: {
         sandbox_identity_settlement: {
@@ -227,6 +239,7 @@ describe("e2e workflow cloud-onboard trace boundary", () => {
   it.each([
     "Configure cloud-onboard trace directory",
     "Build trusted cloud-onboard timing summary",
+    "Validate cloud-onboard identity settlement evidence",
     "Delete raw cloud-onboard traces",
   ])("rejects a missing cloud-onboard trace boundary step: %s", (name) => {
     const errors = validateMutatedWorkflow((workflow) => {
@@ -242,6 +255,8 @@ describe("e2e workflow cloud-onboard trace boundary", () => {
     const errors = validateMutatedWorkflow((workflow) => {
       cloudOnboardStep(workflow, "Configure cloud-onboard trace directory").if = "false";
       cloudOnboardStep(workflow, "Build trusted cloud-onboard timing summary").if = undefined;
+      cloudOnboardStep(workflow, "Validate cloud-onboard identity settlement evidence").if =
+        undefined;
       cloudOnboardStep(workflow, "Delete raw cloud-onboard traces").if = undefined;
     });
 
@@ -249,6 +264,7 @@ describe("e2e workflow cloud-onboard trace boundary", () => {
       expect.arrayContaining([
         "cloud-onboard trace setup must run without an if condition",
         "cloud-onboard trace sanitizer must always run",
+        "cloud-onboard identity settlement validation must always run",
         "cloud-onboard raw trace cleanup must always run",
       ]),
     );
@@ -258,13 +274,14 @@ describe("e2e workflow cloud-onboard trace boundary", () => {
     ["Configure cloud-onboard trace directory", "Prepare E2E workspace"],
     ["Run cloud-onboard live Vitest test", "Build trusted cloud-onboard timing summary"],
     ["Build trusted cloud-onboard timing summary", "Delete raw cloud-onboard traces"],
+    ["Validate cloud-onboard identity settlement evidence", "Delete raw cloud-onboard traces"],
   ])("rejects cloud-onboard trace boundary reordering: %s after %s", (step, anchor) => {
     const errors = validateMutatedWorkflow((workflow) => {
       moveCloudOnboardStepAfter(workflow, step, anchor);
     });
 
     expect(errors).toContain(
-      "cloud-onboard trace setup, workspace preparation, Vitest run, sanitizer, and cleanup steps must stay in order",
+      "cloud-onboard trace setup, workspace preparation, Vitest run, sanitizer, identity validation, and cleanup steps must stay in order",
     );
   });
 
@@ -287,6 +304,54 @@ describe("e2e workflow cloud-onboard trace boundary", () => {
     expect(errors).toContain(
       "cloud-onboard trace sanitizer must verify source path before reading traces",
     );
+  });
+
+  it.each([
+    {
+      title: "invalid evidence",
+      traceSummary: { sandbox_identity_settlement_evidence: "invalid" },
+      expectedStatus: 1,
+    },
+    {
+      title: "missing evidence",
+      traceSummary: { sandbox_identity_settlement_evidence: "missing" },
+      expectedStatus: 1,
+    },
+    { title: "no settlement object", traceSummary: {}, expectedStatus: 1 },
+    {
+      title: "matched settlement",
+      traceSummary: {
+        sandbox_identity_settlement: {
+          create_operation_state: "ready",
+          event_time_unix_nano: "1788724801000000000",
+          identity_state: "matched",
+          returned_identity_correlation: "8174fa2a5d657551",
+          trace_id: "0123456789abcdef0123456789abcdef",
+        },
+      },
+      expectedStatus: 0,
+    },
+  ])("$title has the expected cloud-onboard gate status", (scenario) => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-cloud-onboard-settlement-"));
+    const summaryPath = path.join(tmp, "cloud-onboard-trace-timing-summary.json");
+    try {
+      fs.writeFileSync(summaryPath, JSON.stringify(scenario.traceSummary));
+      const workflow = readWorkflow() as E2eWorkflow;
+      const run = String(
+        cloudOnboardStep(workflow, "Validate cloud-onboard identity settlement evidence").run ??
+          "",
+      );
+
+      const result = spawnSync("bash", ["-c", run], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        env: { ...process.env, E2E_ARTIFACT_DIR: tmp },
+      });
+
+      expect(result.status, result.stderr).toBe(scenario.expectedStatus);
+    } finally {
+      fs.rmSync(tmp, { force: true, recursive: true });
+    }
   });
 });
 
