@@ -3280,7 +3280,7 @@ stop_legacy_openshell_gateway_process() {
 stop_macos_openshell_gateway_user_service() {
   [ "$(uname -s)" = "Darwin" ] || return 1
 
-  local gateway_port service_domain
+  local gateway_port service_domain=""
   local brew_prefix expected_program
   local candidate_label candidate_path candidate_program candidate_domain candidate_service
   local candidate_active_program
@@ -3303,8 +3303,9 @@ stop_macos_openshell_gateway_user_service() {
     candidate_program="$(plutil -extract ProgramArguments.0 raw -o - "$candidate_path" 2>/dev/null || true)"
     [ "$(plutil -extract Label raw -o - "$candidate_path" 2>/dev/null || true)" = "$candidate_label" ] \
       || error "Refusing to retire an OpenShell gateway from a macOS user service with an unexpected label: ${candidate_path}"
-    [ "$candidate_program" = "$expected_program" ] && [ -x "$candidate_program" ] \
-      || error "Refusing to retire an OpenShell gateway from a macOS user service with an untrusted executable: ${candidate_program:-<empty>}"
+    if [ "$candidate_program" != "$expected_program" ] || ! [ -x "$candidate_program" ]; then
+      error "Refusing to retire an OpenShell gateway from a macOS user service with an untrusted executable: ${candidate_program:-<empty>}"
+    fi
 
     candidate_domain="gui/$(id -u)/${candidate_label}"
     candidate_service="$(launchctl print "$candidate_domain" 2>/dev/null)" || continue

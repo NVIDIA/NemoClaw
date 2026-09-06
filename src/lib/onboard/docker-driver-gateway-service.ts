@@ -992,17 +992,14 @@ export function getTrustedActiveOpenShellGatewayUserServiceIdentity(
         (candidate) =>
           candidate.name === service.serviceName &&
           candidate.service_name !== undefined &&
-          trustedServiceNames.has(candidate.service_name),
+          trustedServiceNames.has(candidate.service_name) &&
+          candidate.running === true &&
+          candidate.loaded === true,
       );
       if (matchingRecords.length !== 1) return null;
       const [record] = matchingRecords;
       const pid =
-        record?.running === true &&
-        record.loaded === true &&
-        Number.isSafeInteger(record.pid) &&
-        Number(record.pid) > 0
-          ? Number(record.pid)
-          : null;
+        Number.isSafeInteger(record?.pid) && Number(record.pid) > 0 ? Number(record.pid) : null;
       if (pid === null) return null;
       return {
         pid,

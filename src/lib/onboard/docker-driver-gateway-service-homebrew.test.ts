@@ -210,4 +210,16 @@ describe("OpenShell Homebrew service boundary", () => {
       ]),
     ).toBeNull();
   });
+
+  it("accepts one active canonical record beside an inactive legacy record (#11111)", () => {
+    expect(
+      queryHomebrewService([
+        serviceRecord({ service_name: "sh.brew.openshell" }),
+        serviceRecord({ pid: 4343, running: false }),
+      ]),
+    ).toEqual({
+      pid: 4242,
+      executablePath: "/opt/homebrew/opt/openshell/bin/openshell-gateway",
+    });
+  });
 });
