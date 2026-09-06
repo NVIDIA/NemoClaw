@@ -353,8 +353,10 @@ export interface LockResult {
  * guidance instead of a bare internal error.
  */
 export class OnboardLockContentionError extends Error {
-  readonly holderPid?: number;
-  constructor(holderPid?: number) {
+  readonly holderPid: number;
+
+  /** Create a live-contention error for the process that owns the lock. */
+  constructor(holderPid: number) {
     super("Cannot update onboarding recovery while another onboarding run owns the lock.");
     this.name = "OnboardLockContentionError";
     this.holderPid = holderPid;
@@ -369,7 +371,11 @@ export class OnboardLockContentionError extends Error {
  */
 export function isOnboardLockContentionError(error: unknown): error is OnboardLockContentionError {
   return (
-    error instanceof Error && error.name === "OnboardLockContentionError" && "holderPid" in error
+    error instanceof Error &&
+    error.name === "OnboardLockContentionError" &&
+    "holderPid" in error &&
+    Number.isInteger(error.holderPid) &&
+    Number(error.holderPid) > 0
   );
 }
 
@@ -1480,12 +1486,18 @@ export function assertOnboardLockOwned(): void {
   }
 }
 
+/** Run one state mutation while this process owns the onboarding writer lock. */
 function withOwnedOnboardLock<T>(command: string, operation: () => T): T {
   const managesOnboardLock = heldLockFd === null;
   if (managesOnboardLock) {
     const lock = acquireOnboardLock(command);
     if (!lock.acquired) {
-      throw new OnboardLockContentionError(lock.holderPid);
+      if (!lock.stale && lock.holderPid !== undefined) {
+        throw new OnboardLockContentionError(lock.holderPid);
+      }
+      throw new Error(
+        "Cannot update onboarding recovery while another onboarding run owns the lock.",
+      );
     }
   }
   try {

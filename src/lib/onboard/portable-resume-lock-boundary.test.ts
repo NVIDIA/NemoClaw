@@ -225,7 +225,8 @@ describe("portable resume command lock boundary", () => {
           .map((call: unknown[]) => String(call[0]))
           .join("\n");
         expect(errorOutput).toContain("another nemoclaw onboarding run is already in progress.");
-        expect(errorOutput).toContain("Lock holder PID:");
+        expect(child.pid).toBeTypeOf("number");
+        expect(errorOutput).toContain(`Lock holder PID: ${String(child.pid)}.`);
         expect(errorOutput).toContain("Wait for the active onboarding run to finish.");
       } finally {
         const exited = once(child, "exit");

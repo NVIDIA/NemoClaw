@@ -536,6 +536,7 @@ function reportOnboardCommandError(deps: RunOnboardCommandDeps, message: string)
   return 1;
 }
 
+/** Convert known onboarding failures into stable CLI exit behavior. */
 function handleOnboardCommandError(error: unknown, deps: RunOnboardCommandDeps): number | null {
   // Live onboarding-lock contention: surface the shipped guard text (name the
   // competing run, print the holder PID, say to wait) instead of the bare
