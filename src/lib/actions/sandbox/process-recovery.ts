@@ -162,6 +162,7 @@ type ManagedGatewaySupervisorActionResult = SandboxCommandResult & {
 
 const MANAGED_GATEWAY_CONTROL_PATH = "/usr/local/bin/nemoclaw-gateway-control";
 const MANAGED_CONTROL_TRANSITION_MAX_ATTEMPTS = 11;
+const MANAGED_CONTAINER_DISCOVERY_MAX_ATTEMPTS = 21;
 const DOCKER_CONTAINER_RESTARTING_ERROR =
   /^Error response from daemon: Container ([0-9a-f]{64}) is restarting, wait until the container is running$/;
 
@@ -469,6 +470,19 @@ function isExactlyManagedControlMarker(
   return lines.length === 1 && lines[0] === marker;
 }
 
+// Discovery can lag OpenShell Ready. Its failures must not consume the
+// controller's startup retries or trigger an immediate supervisor recreation.
+function managedControlTransitionRetryBudget(): (result: SandboxCommandResult | null) => boolean {
+  let discoveryAttempts = 0;
+  let transitionAttempts = 0;
+  return (result) => {
+    if (isExactlyManagedControlMarker(result, "PRIVILEGED_CONTROL_UNAVAILABLE")) {
+      return ++discoveryAttempts < MANAGED_CONTAINER_DISCOVERY_MAX_ATTEMPTS;
+    }
+    return ++transitionAttempts < MANAGED_CONTROL_TRANSITION_MAX_ATTEMPTS;
+  };
+}
+
 function isExactlyRetryableManagedRecoveryFailure(result: SandboxCommandResult | null): boolean {
   return isExactlyManagedControlMarker(result, "SUPERVISOR_BUSY");
 }
@@ -516,7 +530,9 @@ export function waitForManagedGatewaySupervisor(
     options.requestGatewaySupervisorActionImpl ?? executeGatewaySupervisorAction;
   const sleep = options.sleepImpl ?? sleepSeconds;
   const intervalSeconds = options.intervalSeconds ?? 3;
-  const maxAttempts = options.maxAttempts ?? MANAGED_CONTROL_TRANSITION_MAX_ATTEMPTS;
+  const maxAttempts = options.maxAttempts ??
+    (MANAGED_CONTAINER_DISCOVERY_MAX_ATTEMPTS + MANAGED_CONTROL_TRANSITION_MAX_ATTEMPTS - 1);
+  const canRetryTransition = managedControlTransitionRetryBudget();
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const result = requestGatewaySupervisorAction(sandboxName, "probe", OPENSHELL_PROBE_TIMEOUT_MS);
@@ -528,6 +544,7 @@ export function waitForManagedGatewaySupervisor(
     ) {
       return false;
     }
+    if (options.maxAttempts === undefined && !canRetryTransition(result)) break;
     if (attempt < maxAttempts) sleep(intervalSeconds);
   }
   return false;
@@ -820,7 +837,9 @@ function recoverSandboxProcesses(
   const recoveredSsh = (result: SandboxCommandResult | null): SandboxProcessRecovery | null =>
     result && result.status === 0 && hasGatewayRecoveryMarker(result) ? { kind: "custom" } : null;
   const recoverManagedGateway = (): SandboxProcessRecovery | null => {
-    const maxAttempts = MANAGED_CONTROL_TRANSITION_MAX_ATTEMPTS;
+    const maxAttempts =
+      MANAGED_CONTAINER_DISCOVERY_MAX_ATTEMPTS + MANAGED_CONTROL_TRANSITION_MAX_ATTEMPTS - 1;
+    const canRetryTransition = managedControlTransitionRetryBudget();
     const maxBusyAttempts = 3;
     const retryIntervalSeconds = readNonNegativeNumberEnv(
       "NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS",
@@ -848,7 +867,7 @@ function recoverSandboxProcesses(
       ) {
         break;
       }
-      if (attempt === maxAttempts) break;
+      if (!canRetryTransition(execResult)) break;
       sleepSeconds(retryIntervalSeconds);
     }
     const failure = classifyGatewayRestartFailure(execResult);
