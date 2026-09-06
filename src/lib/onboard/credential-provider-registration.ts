@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { legacyCredentialAliases } from "../credentials/legacy-env-aliases";
 import type { WebSearchConfig } from "../inference/web-search";
 import type { CheckpointProviderBinding } from "../state/onboard-checkpoint-types";
 import type { Session } from "../state/onboard-session";
@@ -158,16 +159,25 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
       options,
     );
     if (result.ok && credentialEnv) {
-      const stagedValue = deps.stagedLegacyValues.get(credentialEnv);
-      if (stagedValue !== undefined) {
+      // The legacy file can carry the value under an alias of the canonical
+      // credential env (NVIDIA_API_KEY for NVIDIA_INFERENCE_API_KEY), which
+      // resolveProviderCredential resolves transparently. Account the alias
+      // too, or the staged key never looks migrated and the plaintext file
+      // survives an onboard that used it (#10373).
+      const migrationKeys = [credentialEnv, ...legacyCredentialAliases(credentialEnv)].filter(
+        (key) => deps.stagedLegacyValues.has(key),
+      );
+      if (migrationKeys.length > 0) {
         options.revalidateSandboxIdentity?.(
           `record migrated credential for provider ${JSON.stringify(name)}`,
         );
         const upsertedValue = env[credentialEnv] ?? deps.getCredential(credentialEnv);
-        if (upsertedValue === stagedValue) {
-          deps.migratedLegacyKeys.add(credentialEnv);
-        } else {
-          deps.migratedLegacyKeys.delete(credentialEnv);
+        for (const key of migrationKeys) {
+          if (upsertedValue === deps.stagedLegacyValues.get(key)) {
+            deps.migratedLegacyKeys.add(key);
+          } else {
+            deps.migratedLegacyKeys.delete(key);
+          }
         }
         deps.persistMigratedLegacyKeys();
       }
