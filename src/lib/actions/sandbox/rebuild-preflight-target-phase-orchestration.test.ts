@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   bail: vi.fn(),
@@ -59,6 +59,8 @@ import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 import { prepareRebuildTargetPreflights } from "./rebuild-preflight-target-phase";
 
 describe("prepareRebuildTargetPreflights", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.getMcpPreparationRuntimeSelection.mockReturnValue({
@@ -76,6 +78,7 @@ describe("prepareRebuildTargetPreflights", () => {
     provider = "vllm-local",
     model = "nvidia/Qwen3.6-35B-A3B-NVFP4",
     nimContainer: string | null = null,
+    accepted = endpointSource === null,
   ) {
     const resumeConfig = {
       provider,
@@ -120,7 +123,7 @@ describe("prepareRebuildTargetPreflights", () => {
           endpointSource === null ? null : "http://host.openshell.internal:8000/v1",
         endpointSource,
         nimContainer,
-        ...(endpointSource === null
+        ...(endpointSource === null && accepted
           ? {
               deferredN1xManagedVllmAccepted: true,
             }
@@ -220,6 +223,15 @@ describe("prepareRebuildTargetPreflights", () => {
 
   it("passes normalized N1x Express intent into readiness (#10959)", async () => {
     const readinessOptions = await prepareN1xTarget(null);
+
+    expect(readinessOptions).toEqual(
+      expect.objectContaining({ allowDeferredN1xManagedVllm: true }),
+    );
+  });
+
+  it("passes explicit v0.0.119 recovery intent into readiness (#10959)", async () => {
+    vi.stubEnv("NEMOCLAW_PROVIDER", "install-vllm");
+    const readinessOptions = await prepareN1xTarget(null, null, undefined, undefined, null, false);
 
     expect(readinessOptions).toEqual(
       expect.objectContaining({ allowDeferredN1xManagedVllm: true }),
