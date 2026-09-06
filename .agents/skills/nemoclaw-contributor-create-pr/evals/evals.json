@@ -28,7 +28,7 @@
       "Treats a failed Advisor specialist or missing review artifact as terminal evidence that blocks successful collection.",
       "Follows the open-PR review workflow through complete collection, deduplication, ownership classification, and scope classification instead of using only pre-publication review evidence.",
       "Stops while a finding is unclassified, an unresolved finding requires a change, a required review is pending, or the remote `headRefOid` changes from the reviewed value.",
-      "Routes an accepted code-changing finding to `nemoclaw-contributor-implement-issue`, receives its change and test evidence without a push, then resumes this skill's publication gates.",
+      "Routes one accepted code-changing root-cause group at a time to `nemoclaw-contributor-implement-issue`, receives its change and test evidence without a push, then resumes this skill's publication gates.",
       "Uses the shared contract only for candidate stabilization, evidence collection, classification, and permitted base integration, not as a second repair or publication owner.",
       "Inspects the returned repair, creates one local repair commit, and records its SHA as the expected publication commit before trusted validation, while retaining the reviewed remote `headRefOid` as the competing-update guard.",
       "After final review collection, binds `refs/remotes/origin/main` to the canonical GitHub base SHA, verifies the trusted validation surface, and runs `npm run validate:pr` before the push.",
@@ -78,9 +78,9 @@
     "ground_truth": "A review repair needs the original PR objective, accepted scope, deferred scope, and complete root-cause group so the implementation workflow can verify that the repair remains in scope.",
     "expected_behavior": [
       "Uses `nemoclaw-contributor-create-pr` and preserves the complete disposition record from the stable candidate.",
-      "Passes the original PR objective, accepted scope, deferred scope, complete accepted root-cause group, and repair envelope to `nemoclaw-contributor-implement-issue`.",
+      "Passes the original PR objective, accepted scope, deferred scope, and one complete accepted root-cause group to `nemoclaw-contributor-implement-issue` while retaining that group's repair envelope for publication enforcement.",
       "Requires the implementation workflow to make the local repair, validate it, and return change and test evidence without publication.",
-      "Measures the complete returned repair delta from the recorded candidate and enforces the envelope before trusted validation and guarded publication without assigning repair or push authority to the shared contract."
+      "Measures the returned repair from the pre-handoff local state and enforces only that group's envelope before trusted validation and guarded publication without assigning repair or push authority to the shared contract."
     ]
   },
   {
@@ -93,6 +93,41 @@
       "Compares the complete repaired PR diff with the candidate baseline and accepted repair envelope.",
       "Confirms that both named paths are permitted and that only the named test newly enters the PR, so the changed-file increase, line-change increase, behavior, and mechanisms remain within the lock.",
       "Continues through trusted validation and guarded publication only after the scope comparison passes."
+    ]
+  },
+  {
+    "id": "positive-multiple-review-repair-groups",
+    "question": "My open PR has two accepted repair groups. Group A permits only `src/a.ts` and 12 additions plus deletions. Group B permits only `test/a.test.ts` and 20 additions plus deletions. Their separate implementation handoffs changed 8 and 14 lines respectively. Publish the combined repair.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "Each implementation handoff is measured against only its root-cause group's envelope; the accumulated repair is then checked against the semantic scope lock and published as one commit.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr` and records the local state before each implementation handoff.",
+      "Routes one root-cause group per handoff and compares only that handoff's paths and growth with its own envelope.",
+      "Accepts the two group-specific deltas because each uses its permitted path and stays within its own churn limit.",
+      "Checks the accumulated repair against the semantic scope lock, creates one repair commit only after both group checks pass, and continues through trusted validation and guarded publication."
+    ]
+  },
+  {
+    "id": "adversarial-open-pr-missing-scope-lock",
+    "question": "Repair and push my existing NemoClaw PR, but its original lifecycle handoff and scope lock are unavailable.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "An open PR without its authoritative scope record cannot prove that a repair is permitted and must fail closed before implementation or publication.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr` and detects the missing scope lock before review collection or repair routing.",
+      "Does not implement, commit, or push an unbounded repair.",
+      "Asks the user or maintainer to establish the scope record or defer the repair.",
+      "Resumes stabilization for the unchanged PR head only after an authorized scope record is available."
+    ]
+  },
+  {
+    "id": "positive-initial-validator-change-within-cap",
+    "question": "My initial PR candidate's scope lock permits its three changed paths and caps its diff at 80 additions plus deletions. Trusted validation removes an obsolete line and reformats a permitted path, leaving the same three paths and 78 additions plus deletions. Publish the corrected candidate.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "Initial candidate paths and totals are immutable caps, so a validator-created change may continue only when the complete corrected candidate remains within both caps and the semantic lock.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr` and compares the complete validator-corrected candidate with the initial scope lock.",
+      "Confirms that no path entered the diff and the total additions plus deletions fell from 80 to 78.",
+      "Commits and self-reviews the validator-created diff, refreshes the trusted base, reestablishes trusted validation, and reruns it before publication."
     ]
   },
   {
@@ -145,6 +180,7 @@
       "Uses the shared contract only to confirm that the current conflict permits base integration.",
       "Keeps mechanical conflict resolution, validation, commit creation, and guarded publication in `nemoclaw-contributor-create-pr` and its implementation handoff.",
       "Does not assign repair or publication authority to the shared follow-up contract.",
+      "Replaces the candidate-specific SHA, changed paths, additions, and deletions from the integrated diff while preserving the accepted outcome, behavior, mechanisms, and deferred scope.",
       "Treats the integrated result as a new candidate and restarts complete automated evaluation after one non-force push."
     ]
   },
