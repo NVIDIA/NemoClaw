@@ -11,7 +11,7 @@ Offer the maintained Windows Express path before the normal provider menu.
 Explain that Express keeps the selected agent, selects the admitted local inference profile, and leaves optional setup at its defaults.
 For a qualifying N1x WSL host, Express uses managed llama.cpp with Qwen 3.6 35B-A3B and downloads a pinned 20.4 GB GGUF file.
 The installer leaves provider, model, and recipe selection to onboarding.
-Before managed llama.cpp starts, onboarding requires Linux Arm64 WSL, one proof-backed `NVIDIA RTX Spark N1X` GPU, the default local Docker context, at least 48,000 MiB of Docker and GPU memory, driver version `580.65.06` or later, Docker storage and runtime readiness, NVIDIA GPU integration, and successful Docker Desktop GPU passthrough.
+Before managed llama.cpp starts, onboarding requires Linux Arm64 WSL, one proof-backed GPU whose normalized identity is either `NVIDIA RTX Spark N1X` or `NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)`, the default local Docker context, at least 48,000 MiB of Docker and GPU memory, driver version `580.65.06` or later, Docker storage and runtime readiness, NVIDIA GPU integration, and successful Docker Desktop GPU passthrough.
 Before selecting managed llama.cpp, unset `DOCKER_HOST` and select Docker's `default` context.
 Managed N1x WSL selection rejects other Docker selectors.
 For other Windows WSL hosts, Express uses WSL-local Ollama with its memory-aware default model.

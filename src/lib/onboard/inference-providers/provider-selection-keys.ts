@@ -42,6 +42,7 @@ export const NON_INTERACTIVE_PROVIDER_VALID_VALUES = `Valid values: ${Array.from
 ).join(", ")}`;
 
 const PERSISTED_PROVIDER_SELECTION_KEYS: Readonly<Record<string, string>> = {
+  "llama-cpp-local": "install-llama-cpp",
   "nvidia-router": "routed",
   "ollama-local": "ollama",
   "vllm-local": "vllm",

@@ -158,7 +158,7 @@ If you see "Cannot connect to the Docker daemon", confirm that Docker Desktop is
 
 If the installer offers Express on WSL, a qualifying N1x WSL host uses managed llama.cpp with Qwen 3.6 35B-A3B.
 The installer leaves inference selection to onboarding.
-Onboarding requires Linux ARM64 WSL, one GPU with the bounded `NVIDIA RTX Spark N1X` identity, the default local Docker context, at least 48,000 MiB of Docker and GPU memory, driver version `580.65.06` or later, Docker storage and runtime readiness, NVIDIA GPU integration, and a successful Docker Desktop GPU passthrough proof.
+Onboarding requires Linux ARM64 WSL, one GPU whose normalized identity is either `NVIDIA RTX Spark N1X` or `NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)`, the default local Docker context, at least 48,000 MiB of Docker and GPU memory, driver version `580.65.06` or later, Docker storage and runtime readiness, NVIDIA GPU integration, and a successful Docker Desktop GPU passthrough proof.
 The Windows chassis model does not participate in selection.
 If any required readiness check fails, onboarding stops managed llama.cpp selection.
 Other WSL hosts use WSL-local Ollama for Express installation.

@@ -114,7 +114,7 @@ Before you start, confirm these prerequisites:
 
 For Windows WSL N1x, also confirm these requirements:
 
-- Use Arm64 WSL with one GPU that reports the bounded `NVIDIA RTX Spark N1X` identity.
+- Use Arm64 WSL with one GPU whose normalized identity is either `NVIDIA RTX Spark N1X` or `NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)`.
 - Use the default local Docker Desktop context with at least 48,000 MiB of Docker memory.
 - Unset `DOCKER_HOST` and select Docker's `default` context before you select the managed recipe.
 - Provide at least 48,000 MiB of GPU memory.
@@ -145,7 +145,7 @@ NemoClaw lists compatible managed llama.cpp profiles in descending YAML `priorit
 During interactive onboarding without an explicit provider request, the menu ignores `NEMOCLAW_LLAMACPP_RECIPE` and marks the unique highest-priority compatible profile as `(recommended)`.
 On DGX Spark, the recommended profile appears as **Managed llama.cpp: NVIDIA Nemotron 3 Nano 30B-A3B on one DGX Spark (recommended)**.
 On Linux x86_64, the recommended profile identifies one NVIDIA GPU instead.
-During Windows Express or non-interactive onboarding with no requested or recorded provider, a qualifying Windows WSL N1x host selects **Managed llama.cpp: Qwen 3.6 35B-A3B on N1x WSL (recommended)** without a provider or recipe prompt.
+During Windows Express or non-interactive onboarding with no requested or recorded provider, `NEMOCLAW_MODEL`, or managed-recipe override, a qualifying Windows WSL N1x host selects **Managed llama.cpp: Qwen 3.6 35B-A3B on N1x WSL (recommended)** without a provider or recipe prompt.
 Ordinary interactive onboarding lists the same recommended profile but allows another provider selection.
 The Meta Muse Glimmer profile remains available on DGX Spark without the recommendation marker.
 Select any listed profile to install its exact repository-owned recipe.
@@ -161,7 +161,7 @@ NEMOCLAW_SANDBOX_NAME=my-assistant \
 ```
 
 Use `llama-cpp.muse-glimmer-30b.spark-single.v1` to select the Meta Muse Glimmer recipe explicitly.
-For Windows Express or non-interactive onboarding on a qualifying Windows WSL N1x host, leave `NEMOCLAW_PROVIDER` and `NEMOCLAW_LLAMACPP_RECIPE` unset for automatic selection.
+For Windows Express or non-interactive onboarding on a qualifying Windows WSL N1x host, leave `NEMOCLAW_PROVIDER`, `NEMOCLAW_MODEL`, and `NEMOCLAW_LLAMACPP_RECIPE` unset for automatic selection.
 Set `NEMOCLAW_LLAMACPP_RECIPE=llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1` only when automation must make the selected recipe explicit.
 
 For non-interactive onboarding or an explicit `install-llama-cpp` provider request, an unset `NEMOCLAW_LLAMACPP_RECIPE` selects the unique highest-priority compatible automatic profile.

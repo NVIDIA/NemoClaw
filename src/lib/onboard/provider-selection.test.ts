@@ -154,6 +154,22 @@ describe("resolveRequestedProviderSelection", () => {
     }
   });
 
+  it("recovers managed llama.cpp before applying a platform default", () => {
+    const result = resolve({
+      options: [option("build"), option("install-llama-cpp"), option("install-ollama")],
+      platformDefaultProviderKey: "install-ollama",
+      readRecordedProvider: () => "llama-cpp-local",
+      readRecordedModel: () => "qwen3.6-35b-a3b",
+    });
+
+    assert.deepEqual(result, {
+      kind: "selected",
+      selected: option("install-llama-cpp"),
+      recoveredFromSandbox: true,
+      recoveredModel: "qwen3.6-35b-a3b",
+    });
+  });
+
   it("does not silently map a recorded WSL Ollama provider to Windows-host Ollama", () => {
     const result = resolve({
       options: [option("build"), option("ollama")],

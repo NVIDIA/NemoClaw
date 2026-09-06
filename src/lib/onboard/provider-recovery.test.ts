@@ -25,26 +25,30 @@ afterEach(() => {
 
 describe("persisted provider selection", () => {
   it.each([
-    ["Model Router", "nvidia-router", false],
-    ["Ollama", "ollama-local", false],
-    ["vLLM", "vllm-local", false],
-    ["Local NVIDIA NIM", "vllm-local", true],
-    ["legacy NVIDIA Endpoints", "nvidia-nim", false],
-    ["OpenAI", "openai-api", false],
-    ["OpenRouter", "openrouter-api", false],
-    ["Anthropic", "anthropic-prod", false],
-    ["Anthropic-compatible", "compatible-anthropic-endpoint", false],
-    ["Gemini", "gemini-api", false],
-    ["OpenAI-compatible", "compatible-endpoint", false],
-    ["llama.cpp", "llama-cpp-local", false],
-    ["Hermes Provider", "hermes-provider", false],
-    ["an unknown provider", "unknown-provider", false],
-  ] as const)("uses the shared mapping for %s (#11041)", (_label, provider, hasNimContainer) => {
+    ["Model Router", "nvidia-router", false, "routed"],
+    ["Ollama", "ollama-local", false, "ollama"],
+    ["vLLM", "vllm-local", false, "vllm"],
+    ["Local NVIDIA NIM", "vllm-local", true, "nim-local"],
+    ["legacy NVIDIA Endpoints", "nvidia-nim", false, "build"],
+    ["OpenAI", "openai-api", false, "openai"],
+    ["OpenRouter", "openrouter-api", false, "openrouter"],
+    ["Anthropic", "anthropic-prod", false, "anthropic"],
+    ["Anthropic-compatible", "compatible-anthropic-endpoint", false, "anthropicCompatible"],
+    ["Gemini", "gemini-api", false, "gemini"],
+    ["OpenAI-compatible", "compatible-endpoint", false, "custom"],
+    ["llama.cpp", "llama-cpp-local", false, "install-llama-cpp"],
+    ["Hermes Provider", "hermes-provider", false, "hermesProvider"],
+    ["an unknown provider", "unknown-provider", false, null],
+  ] as const)(
+    "uses the expected shared mapping for %s (#11041)",
+    (_label, provider, hasNimContainer, expected) => {
     const options = { hasNimContainer };
-    expect(providerNameToOptionKey(REMOTE_PROVIDER_CONFIG, provider, options)).toBe(
-      persistedProviderNameToSelectionKey(provider, options, REMOTE_PROVIDER_CONFIG),
-    );
-  });
+      expect(persistedProviderNameToSelectionKey(provider, options, REMOTE_PROVIDER_CONFIG)).toBe(
+        expected,
+      );
+      expect(providerNameToOptionKey(REMOTE_PROVIDER_CONFIG, provider, options)).toBe(expected);
+    },
+  );
 });
 
 describe("validateLiveGatewayInference", () => {
