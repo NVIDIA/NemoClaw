@@ -27,14 +27,22 @@ function runSanitizer(source: string, output: string) {
 
 type SettlementTrace = {
   timeUnixNano: string;
-  identityState: "failed" | "matched";
+  identityState: string;
   correlation: string | null;
 };
 
 function makeTrace({
   totalDurationMs = 42.9876,
+  traceId = "0123456789abcdef0123456789abcdef",
   settlement,
-}: { totalDurationMs?: number; settlement?: SettlementTrace } = {}) {
+  additionalSettlements = [],
+}: {
+  totalDurationMs?: number;
+  traceId?: string;
+  settlement?: SettlementTrace;
+  additionalSettlements?: readonly SettlementTrace[];
+} = {}) {
+  const settlements = settlement ? [settlement, ...additionalSettlements] : [];
   return {
     resource_spans: [
       {
@@ -53,19 +61,15 @@ function makeTrace({
                 name: "nemoclaw.onboard.phase.gateway",
                 duration_ms: 7.1234,
                 attributes: { endpoint: "https://example.test/token" },
-                events: settlement
-                  ? [
-                      {
-                        name: "sandbox_create_identity_settlement",
-                        time_unix_nano: settlement.timeUnixNano,
-                        attributes: {
-                          create_operation_state: "ready",
-                          identity_state: settlement.identityState,
-                          returned_identity_correlation: settlement.correlation,
-                        },
-                      },
-                    ]
-                  : [],
+                events: settlements.map((current) => ({
+                  name: "sandbox_create_identity_settlement",
+                  time_unix_nano: current.timeUnixNano,
+                  attributes: {
+                    create_operation_state: "ready",
+                    identity_state: current.identityState,
+                    returned_identity_correlation: current.correlation,
+                  },
+                })),
               },
             ],
           },
@@ -73,7 +77,7 @@ function makeTrace({
       },
     ],
     summary: {
-      trace_id: "0123456789abcdef0123456789abcdef",
+      trace_id: traceId,
       generated_at: "2026-07-02T00:00:00.000Z",
       output_path: "/tmp/raw-trace.json",
       slowest_spans: [
@@ -161,6 +165,11 @@ print(json.dumps(module.extract_candidate(artifact), sort_keys=True))
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({
       phases: { "nemoclaw.onboard.phase.gateway": 7.123 },
+      sandbox_identity_settlement: {
+        create_operation_state: "ready",
+        identity_state: "matched",
+        returned_identity_correlation: "8174fa2a5d657551",
+      },
       schema_version: "nemoclaw.trace_timing.v1",
       slowest_spans: [
         { duration_ms: 7.123, name: "nemoclaw.onboard.phase.gateway", status: "ERROR" },
@@ -246,7 +255,7 @@ print(json.dumps([module.extract_candidate(case) for case in cases]))
     }
   });
 
-  it("keeps longest-trace timing while selecting the latest valid settlement event", () => {
+  it("keeps settlement evidence with the selected longest trace", () => {
     const directory = mkdtempSync(join(tmpdir(), "nemoclaw-trace-sanitize-order-"));
     const source = join(directory, "raw");
     const output = join(directory, "trusted");
@@ -257,6 +266,7 @@ print(json.dumps([module.extract_candidate(case) for case in cases]))
         JSON.stringify(
           makeTrace({
             totalDurationMs: 200,
+            traceId: "11111111111111111111111111111111",
             settlement: {
               timeUnixNano: "1788724800000000000",
               identityState: "failed",
@@ -270,6 +280,7 @@ print(json.dumps([module.extract_candidate(case) for case in cases]))
         JSON.stringify(
           makeTrace({
             totalDurationMs: 100,
+            traceId: "22222222222222222222222222222222",
             settlement: {
               timeUnixNano: "1788724801000000000",
               identityState: "matched",
@@ -283,12 +294,48 @@ print(json.dumps([module.extract_candidate(case) for case in cases]))
       expect(result.status, result.stderr).toBe(0);
       expect(JSON.parse(readFileSync(join(output, SUMMARY), "utf8"))).toMatchObject({
         total_duration_ms: 200,
+        trace_id: "11111111111111111111111111111111",
         sandbox_identity_settlement: {
           create_operation_state: "ready",
-          identity_state: "matched",
-          returned_identity_correlation: "8174fa2a5d657551",
+          identity_state: "failed",
+          returned_identity_correlation: null,
         },
       });
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("omits settlement evidence when the selected trace contains a malformed event", () => {
+    const directory = mkdtempSync(join(tmpdir(), "nemoclaw-trace-sanitize-malformed-"));
+    const source = join(directory, "raw.json");
+    const output = join(directory, "trusted");
+    try {
+      writeFileSync(
+        source,
+        JSON.stringify(
+          makeTrace({
+            settlement: {
+              timeUnixNano: "1788724800000000000",
+              identityState: "matched",
+              correlation: "8174fa2a5d657551",
+            },
+            additionalSettlements: [
+              {
+                timeUnixNano: "1788724801000000000",
+                identityState: "pending",
+                correlation: "8174fa2a5d657551",
+              },
+            ],
+          }),
+        ),
+      );
+
+      const result = runSanitizer(source, output);
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(readFileSync(join(output, SUMMARY), "utf8"))).not.toHaveProperty(
+        "sandbox_identity_settlement",
+      );
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }

@@ -6,9 +6,9 @@
 
 The E2E target controls the raw trace directory, so CI must never upload it.
 This script accepts only the onboard timing shape needed by the scorecard and
-the final sandbox identity-settlement state needed for lifecycle diagnosis. It
-writes a single allowlisted summary without raw attributes, events, paths,
-prompts, environment data, or error messages.
+the selected trace's final sandbox identity-settlement state needed for
+lifecycle diagnosis. It writes a single allowlisted summary without raw
+attributes, events, paths, prompts, environment data, or error messages.
 
 Source-of-truth note: raw trace shape is produced by src/lib/trace.ts
 TraceArtifact. This reducer is intentionally narrower than that source schema:
@@ -116,8 +116,8 @@ def extract_spans(artifact: Any) -> list[dict[str, Any]]:
 
 def extract_identity_settlements(
     spans: list[dict[str, Any]],
-) -> list[tuple[int, dict[str, Any]]]:
-    """Return ordered settlement evidence without copying raw attributes."""
+) -> list[tuple[int, dict[str, Any]]] | None:
+    """Return ordered settlement evidence, or reject a malformed event."""
     settlements = []
     for span in spans:
         if safe_span_name(span.get("name")) is None:
@@ -128,7 +128,7 @@ def extract_identity_settlements(
                 continue
             attributes = event.get("attributes")
             if not isinstance(attributes, dict):
-                continue
+                return None
             operation_state = attributes.get("create_operation_state")
             identity_state = attributes.get("identity_state")
             correlation = attributes.get("returned_identity_correlation")
@@ -137,20 +137,20 @@ def extract_identity_settlements(
                 isinstance(operation_state, str) and operation_state in CREATE_OPERATION_STATES
             )
             if not valid_operation_state:
-                continue
+                return None
             valid_identity_state = (
                 isinstance(identity_state, str) and identity_state in IDENTITY_SETTLEMENT_STATES
             )
             if not valid_identity_state:
-                continue
+                return None
             if correlation is not None and (
                 not isinstance(correlation, str) or not IDENTITY_CORRELATION_RE.fullmatch(correlation)
             ):
-                continue
+                return None
             if identity_state == "matched" and correlation is None:
-                continue
+                return None
             if not isinstance(event_time, str) or not TRACE_EVENT_TIME_RE.fullmatch(event_time):
-                continue
+                return None
             settlements.append(
                 (
                     int(event_time),
@@ -226,6 +226,11 @@ def extract_candidate(artifact: Any) -> dict[str, Any] | None:
         "phases": {name: round(phases[name], 3) for name in sorted(phases)},
         "slowest_spans": slowest_spans,
     }
+    settlements = extract_identity_settlements(spans)
+    if settlements is not None:
+        identity_settlement = select_latest_identity_settlement(settlements)
+        if identity_settlement is not None:
+            candidate["sandbox_identity_settlement"] = identity_settlement
     return candidate
 
 
@@ -250,21 +255,16 @@ def main(argv: list[str]) -> int:
     output_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
 
     candidates = []
-    identity_settlements = []
     for json_file in iter_json_files(source):
         artifact = load_json(json_file)
         candidate = extract_candidate(artifact)
         if candidate is not None:
             candidates.append(candidate)
-            identity_settlements.extend(extract_identity_settlements(extract_spans(artifact)))
     if not candidates:
         print("No valid NemoClaw onboard trace found; no timing summary emitted.")
         return 0
 
-    selected = dict(max(candidates, key=lambda item: item["total_duration_ms"]))
-    identity_settlement = select_latest_identity_settlement(identity_settlements)
-    if identity_settlement is not None:
-        selected["sandbox_identity_settlement"] = identity_settlement
+    selected = max(candidates, key=lambda item: item["total_duration_ms"])
     output = output_dir / OUTPUT_FILE
     if output.is_symlink():
         print("trusted timing summary must not be a symlink", file=sys.stderr)

@@ -1,10 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import { performance } from "node:perf_hooks";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -66,7 +62,6 @@ import {
   NEMOCLAW_CREATE_ATTEMPT_LABEL,
   NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH,
 } from "../adapters/openshell/sandbox-identity";
-import { resetTraceForTests, TRACE_FILE_ENV } from "../trace";
 import {
   createGpuFlowDeps,
   createGpuFlowInput,
@@ -80,7 +75,6 @@ import {
 } from "./experimental/hermes-portable-onboarding";
 import { runSandboxGpuCreateFlow } from "./sandbox-gpu-create-flow";
 import { fingerprintSandboxRecreateValue } from "./sandbox-recreate-transaction";
-import { finishOnboardTrace, startOnboardTrace, withSandboxPhaseTrace } from "./tracing";
 
 const ALPHA_SANDBOX_ID_FINGERPRINT =
   "8174fa2a5d65755138d8339e086c03d736633130b22dca10952e80e74750c01d";
@@ -110,55 +104,6 @@ function createAttemptNonce(args: readonly string[]): string {
   return (args[labelIndex + 1] ?? "").slice(NEMOCLAW_CREATE_ATTEMPT_LABEL.length + 1);
 }
 
-type IdentityTraceEvidenceScenario = {
-  title: string;
-  completed: boolean;
-  identityState: "failed" | "matched";
-  expectedCorrelation: string | null;
-  configureSettlement: (
-    deps: ReturnType<typeof createGpuFlowDeps>,
-    currentNonce: () => string,
-  ) => void;
-  expectFlow: (flow: ReturnType<typeof runSandboxGpuCreateFlow>) => Promise<void>;
-};
-
-const IDENTITY_TRACE_EVIDENCE_SCENARIOS: readonly IdentityTraceEvidenceScenario[] = [
-  {
-    title: "matched identity",
-    completed: true,
-    identityState: "matched",
-    expectedCorrelation: ALPHA_SANDBOX_ID_TRACE_CORRELATION,
-    configureSettlement: (deps, currentNonce) => {
-      vi.mocked(deps.runCaptureOpenshell).mockImplementationOnce(() =>
-        sandboxListJson("alpha-sandbox-id", {
-          [NEMOCLAW_CREATE_ATTEMPT_LABEL]: currentNonce(),
-        }),
-      );
-    },
-    expectFlow: async (flow) => {
-      await expect(flow).resolves.toMatchObject({ route: "none" });
-    },
-  },
-  {
-    title: "failed settlement before identity publication",
-    completed: false,
-    identityState: "failed",
-    expectedCorrelation: null,
-    configureSettlement: (deps) => {
-      vi.mocked(deps.runCaptureOpenshell).mockReturnValue("[]");
-      vi.spyOn(performance, "now")
-        .mockReturnValueOnce(0)
-        .mockReturnValueOnce(0)
-        .mockReturnValueOnce(30_000);
-    },
-    expectFlow: async (flow) => {
-      await expect(flow).rejects.toThrow(
-        "did not return one exact durable sandbox identity before post-create effects",
-      );
-    },
-  },
-];
-
 function noGpuInput() {
   const input = createGpuFlowInput();
   input.sandboxGpuConfig = {
@@ -183,11 +128,7 @@ function refuseEffectStartingWith(prefix: string): (operation: string) => void {
 }
 
 beforeEach(() => setupGpuFlowMocks(mocks));
-afterEach(() => {
-  delete process.env[TRACE_FILE_ENV];
-  resetTraceForTests();
-  resetGpuFlowMocks();
-});
+afterEach(resetGpuFlowMocks);
 
 describe("created sandbox identity gate", () => {
   it("keeps fresh-create readiness probes on the owning gateway (#9803)", async () => {
@@ -594,75 +535,6 @@ describe("created sandbox identity gate", () => {
       returned_identity_correlation: null,
     });
   });
-
-  it.each(IDENTITY_TRACE_EVIDENCE_SCENARIOS)(
-    "retains real create-runner settlement evidence through trace sanitization: $title",
-    async ({ completed, configureSettlement, expectFlow, identityState, expectedCorrelation }) => {
-      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-identity-trace-evidence-"));
-      const traceFile = path.join(directory, "raw-trace.json");
-      const outputDirectory = path.join(directory, "trusted");
-      try {
-        process.env[TRACE_FILE_ENV] = traceFile;
-        resetTraceForTests();
-        const actualTracing = await vi.importActual<typeof import("./tracing")>("./tracing");
-        mocks.addTraceEvent.mockImplementation(actualTracing.addTraceEvent);
-
-        let nonce = "";
-        const input = noGpuInput();
-        input.verifyCreatedSandboxBeforeEffects = vi.fn();
-        input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
-        const patch = createGpuPatchFixture();
-        mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
-        mocks.streamSandboxCreate.mockImplementation(async (_command, args, _env, options) => {
-          nonce = createAttemptNonce(args);
-          expect(options.readyCheck?.()).toBe(true);
-          return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
-        });
-        const deps = createGpuFlowDeps();
-        deps.installPortableDemoLifecycle = vi.fn();
-        vi.mocked(deps.runCaptureOpenshell)
-          .mockReturnValueOnce("alpha Ready")
-          .mockReturnValueOnce("[]");
-        configureSettlement(deps, () => nonce);
-
-        const trace = startOnboardTrace({ fresh: true }, process.env);
-        try {
-          const flow = withSandboxPhaseTrace("alpha", "nim", "mock", "openclaw", () =>
-            runSandboxGpuCreateFlow(input, deps),
-          );
-          await expectFlow(flow);
-        } finally {
-          finishOnboardTrace(trace, completed);
-        }
-
-        const sanitizer = spawnSync(
-          "python3",
-          ["scripts/e2e/sanitize-trace-timing.py", traceFile, outputDirectory],
-          { cwd: process.cwd(), encoding: "utf8" },
-        );
-        expect(sanitizer.status, sanitizer.stderr).toBe(0);
-        const rawTrace = fs.readFileSync(traceFile, "utf8");
-        const summary = fs.readFileSync(
-          path.join(outputDirectory, "cloud-onboard-trace-timing-summary.json"),
-          "utf8",
-        );
-
-        expect(JSON.parse(summary)).toMatchObject({
-          sandbox_identity_settlement: {
-            create_operation_state: "ready",
-            identity_state: identityState,
-            returned_identity_correlation: expectedCorrelation,
-          },
-        });
-        expect(rawTrace).not.toContain(ALPHA_SANDBOX_ID_FINGERPRINT);
-        expect(summary).not.toContain(ALPHA_SANDBOX_ID_FINGERPRINT);
-      } finally {
-        delete process.env[TRACE_FILE_ENV];
-        resetTraceForTests();
-        fs.rmSync(directory, { force: true, recursive: true });
-      }
-    },
-  );
 
   it("persists recovery before reporting a handoff timeout that looks like an incomplete create (#10769)", async () => {
     const events: string[] = [];

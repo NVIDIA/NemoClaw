@@ -819,6 +819,13 @@ export function createSandboxGpuCreateAttemptRunner(
           }),
       );
       if (createResult.readyTerminationTimedOut) {
+        addTraceEvent("sandbox_create_identity_settlement", {
+          create_operation_state: "ready",
+          identity_state: "failed",
+          returned_identity_correlation: readyCheckCreatedSandboxId
+            ? traceSandboxIdentityCorrelation(readyCheckCreatedSandboxId)
+            : null,
+        });
         if (createAttemptNonce) {
           persistIdentitySettlementRecovery(
             readyCheckCreatedSandboxId
