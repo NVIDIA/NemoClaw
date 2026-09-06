@@ -364,7 +364,7 @@ describe("inference selection validation", () => {
         "https://generativelanguage.googleapis.com/v1beta/openai",
         "gemini-2.5-flash",
         apiKey,
-        { skipResponsesProbe: true, calibrateTimeouts: true },
+        { skipResponsesProbe: true, calibrateTimeouts: true, provider: "gemini-api" },
       );
       const errorOutput = error.mock.calls.map((args) => args.join(" ")).join("\n");
       expect(errorOutput).toContain(

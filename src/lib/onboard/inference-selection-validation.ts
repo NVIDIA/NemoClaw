@@ -342,6 +342,7 @@ export function createInferenceSelectionValidationHelpers(
     const probe = await runOpenAiLikeProbe(endpointUrl, model, apiKey, {
       ...probeOptions,
       calibrateTimeouts: true,
+      ...(provider ? { provider } : {}),
     });
     if (!probe.ok) {
       probeOptions.capabilityCache?.invalidate();

@@ -16,7 +16,7 @@ import { normalizeCredentialValue, resolveProviderCredential } from "../credenti
 import { getProviderSelectionConfig } from "./config";
 import type { LocalProviderHealthProbeOptions } from "./local";
 import { probeLocalProviderHealth } from "./local";
-import { MIN_PROBE_REPLY_TOKENS } from "./max-tokens-field";
+import { MIN_PROBE_REPLY_TOKENS, resolveProbeReplyTokens } from "./max-tokens-field";
 import { getChatCompletionsProbeCurlArgs } from "./onboard-probes";
 import { usesNvidiaEndpointProbePayload } from "./openai-probe-models";
 import { BUILD_ENDPOINT_URL } from "./provider-models";
@@ -106,37 +106,24 @@ function useStatusProbeTiming(argv: string[]): string[] {
   );
 }
 
-function capStatusProbeOutput(argv: string[]): string[] {
-  const next = [...argv];
-  const dataIndex = next.indexOf("-d");
-  if (dataIndex < 0 || dataIndex + 1 >= next.length) return next;
-  const payload = parseJsonRecord(next[dataIndex + 1]);
-  if (!payload) return next;
-  if ("max_tokens" in payload) payload.max_tokens = HEALTH_PROBE_MAX_TOKENS;
-  if ("max_completion_tokens" in payload) {
-    payload.max_completion_tokens = HEALTH_PROBE_MAX_TOKENS;
-  }
-  next[dataIndex + 1] = JSON.stringify(payload);
-  return next;
-}
-
+/** Build curl arguments for an authenticated chat-completions health probe. */
 function buildChatCompletionsStatusProbeCurlArgs(
   model: string,
   endpoint: string,
   authArgs: readonly string[],
   isWsl?: boolean,
   useNvidiaEndpointProbePayload = false,
+  replyBudget: number = HEALTH_PROBE_MAX_TOKENS,
 ): string[] {
-  const args = capStatusProbeOutput(
-    useStatusProbeTiming(
-      getChatCompletionsProbeCurlArgs({
-        credentialArgs: [],
-        model,
-        url: endpoint,
-        isWsl,
-        useNvidiaEndpointProbePayload,
-      }),
-    ),
+  const args = useStatusProbeTiming(
+    getChatCompletionsProbeCurlArgs({
+      credentialArgs: [],
+      model,
+      url: endpoint,
+      isWsl,
+      useNvidiaEndpointProbePayload,
+      replyBudget,
+    }),
   );
   const url = args.pop() || endpoint;
   return [...args, ...authArgs, url];
@@ -503,6 +490,7 @@ function probeChatCompletionsProviderHealth(
   endpoint: string,
   options: ProviderHealthProbeOptions,
   useNvidiaEndpointProbePayload = false,
+  replyBudget: number = HEALTH_PROBE_MAX_TOKENS,
 ): ProviderHealthStatus {
   let apiKey = "";
   try {
@@ -532,6 +520,7 @@ function probeChatCompletionsProviderHealth(
           authConfig.args,
           options.isWsl,
           useNvidiaEndpointProbePayload,
+          replyBudget,
         ),
         { trustedConfigFiles: authConfig.trustedConfigFiles },
       );
@@ -689,6 +678,8 @@ export function probeRemoteProviderHealth(
       config.credentialEnv,
       GEMINI_CHAT_COMPLETIONS_ENDPOINT,
       options,
+      false,
+      resolveProbeReplyTokens(provider),
     );
   }
 
