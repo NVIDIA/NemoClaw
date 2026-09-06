@@ -25,24 +25,31 @@ afterEach(() => {
 
 describe("persisted provider selection", () => {
   it.each([
-    ["Model Router", "nvidia-router", false, "routed"],
-    ["Ollama", "ollama-local", false, "ollama"],
-    ["vLLM", "vllm-local", false, "vllm"],
-    ["Local NVIDIA NIM", "vllm-local", true, "nim-local"],
-    ["legacy NVIDIA Endpoints", "nvidia-nim", false, "build"],
-    ["OpenAI", "openai-api", false, "openai"],
-    ["OpenRouter", "openrouter-api", false, "openrouter"],
-    ["Anthropic", "anthropic-prod", false, "anthropic"],
-    ["Anthropic-compatible", "compatible-anthropic-endpoint", false, "anthropicCompatible"],
-    ["Gemini", "gemini-api", false, "gemini"],
-    ["OpenAI-compatible", "compatible-endpoint", false, "custom"],
-    ["llama.cpp", "llama-cpp-local", false, "install-llama-cpp"],
-    ["Hermes Provider", "hermes-provider", false, "hermesProvider"],
-    ["an unknown provider", "unknown-provider", false, null],
+    ["Model Router", "nvidia-router", false, false, "routed"],
+    ["Ollama", "ollama-local", false, false, "ollama"],
+    ["vLLM", "vllm-local", false, false, "vllm"],
+    ["Local NVIDIA NIM", "vllm-local", true, false, "nim-local"],
+    ["legacy NVIDIA Endpoints", "nvidia-nim", false, false, "build"],
+    ["OpenAI", "openai-api", false, false, "openai"],
+    ["OpenRouter", "openrouter-api", false, false, "openrouter"],
+    ["Anthropic", "anthropic-prod", false, false, "anthropic"],
+    [
+      "Anthropic-compatible",
+      "compatible-anthropic-endpoint",
+      false,
+      false,
+      "anthropicCompatible",
+    ],
+    ["Gemini", "gemini-api", false, false, "gemini"],
+    ["OpenAI-compatible", "compatible-endpoint", false, false, "custom"],
+    ["operator llama.cpp", "llama-cpp-local", false, false, "llama-cpp"],
+    ["managed llama.cpp", "llama-cpp-local", false, true, "install-llama-cpp"],
+    ["Hermes Provider", "hermes-provider", false, false, "hermesProvider"],
+    ["an unknown provider", "unknown-provider", false, false, null],
   ] as const)(
     "uses the expected shared mapping for %s (#11041)",
-    (_label, provider, hasNimContainer, expected) => {
-    const options = { hasNimContainer };
+    (_label, provider, hasNimContainer, hasManagedLlamaCpp, expected) => {
+      const options = { hasManagedLlamaCpp, hasNimContainer };
       expect(persistedProviderNameToSelectionKey(provider, options, REMOTE_PROVIDER_CONFIG)).toBe(
         expected,
       );

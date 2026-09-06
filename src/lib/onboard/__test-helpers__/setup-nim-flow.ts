@@ -112,6 +112,7 @@ export function makeDeps(overrides: Partial<SetupNimFlowDeps> = {}): SetupNimFlo
     loadRoutedProfile: () => null,
     readRecordedProvider: () => null,
     readRecordedNimContainer: () => null,
+    readRecordedManagedLlamaCpp: () => false,
     readRecordedModel: () => null,
     rejectWindowsHostOllama: () => false,
     prompt: async () => "",

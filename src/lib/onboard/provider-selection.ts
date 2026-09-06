@@ -64,6 +64,7 @@ export function resolveSelectedEndpointSource(input: {
 export interface ProviderSelectionRecoveryReaders {
   readRecordedProvider(sandboxName: string | null | undefined): string | null;
   readRecordedNimContainer(sandboxName: string | null | undefined): string | null;
+  readRecordedManagedLlamaCpp?(sandboxName: string | null | undefined): boolean;
   readRecordedModel(sandboxName: string | null | undefined): string | null;
 }
 
@@ -148,6 +149,7 @@ export function resolveRequestedProviderSelection<T extends ProviderOption>(
     const recordedProvider = input.readRecordedProvider(input.sandboxName);
     const hasNimContainer = !!input.readRecordedNimContainer(input.sandboxName);
     const recoveredKey = providerNameToOptionKey(input.remoteProviderConfig, recordedProvider, {
+      hasManagedLlamaCpp: input.readRecordedManagedLlamaCpp?.(input.sandboxName) ?? false,
       hasNimContainer,
     });
 

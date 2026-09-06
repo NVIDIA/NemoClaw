@@ -22,6 +22,10 @@ interface ProviderDiscoveryDeps {
     sandboxName: string | null | undefined,
     recoverySessionId?: string | null,
   ): string | null;
+  readRecordedManagedLlamaCpp?(
+    sandboxName: string | null | undefined,
+    recoverySessionId?: string | null,
+  ): boolean;
   readRecordedModel(
     sandboxName: string | null | undefined,
     recoverySessionId?: string | null,
@@ -31,6 +35,7 @@ interface ProviderDiscoveryDeps {
 interface RecordedProviderReaders {
   readRecordedProvider(sandboxName: string | null | undefined): string | null;
   readRecordedNimContainer(sandboxName: string | null | undefined): string | null;
+  readRecordedManagedLlamaCpp(sandboxName: string | null | undefined): boolean;
   readRecordedModel(sandboxName: string | null | undefined): string | null;
 }
 
@@ -70,6 +75,7 @@ function bindRecordedProviderReaders(
     return {
       readRecordedProvider: () => null,
       readRecordedNimContainer: () => null,
+      readRecordedManagedLlamaCpp: () => false,
       readRecordedModel: () => null,
     };
   }
@@ -77,6 +83,8 @@ function bindRecordedProviderReaders(
     readRecordedProvider: (name) =>
       recoveredRegistryRoute?.provider ?? deps.readRecordedProvider(name, recoverySessionId),
     readRecordedNimContainer: (name) => deps.readRecordedNimContainer(name, recoverySessionId),
+    readRecordedManagedLlamaCpp: (name) =>
+      deps.readRecordedManagedLlamaCpp?.(name, recoverySessionId) ?? false,
     readRecordedModel: (name) =>
       recoveredRegistryRoute?.model ?? deps.readRecordedModel(name, recoverySessionId),
   };
@@ -126,10 +134,16 @@ export function prepareProviderDiscovery(options: {
     const hasRecordedNimContainer =
       recordedProviderName === "vllm-local" &&
       Boolean(recordedProviderReaders.readRecordedNimContainer(sandboxName));
+    const hasRecordedManagedLlamaCpp =
+      recordedProviderName === "llama-cpp-local" &&
+      recordedProviderReaders.readRecordedManagedLlamaCpp(sandboxName);
     const recordedProviderKey = providerNameToOptionKey(
       deps.remoteProviderConfig,
       recordedProviderName,
-      { hasNimContainer: hasRecordedNimContainer },
+      {
+        hasManagedLlamaCpp: hasRecordedManagedLlamaCpp,
+        hasNimContainer: hasRecordedNimContainer,
+      },
     );
     providerChanged = Boolean(recordedProviderKey && recordedProviderKey !== requestedProvider);
   }
@@ -149,6 +163,7 @@ export function prepareProviderDiscovery(options: {
     deps.remoteProviderConfig,
     recoveredProbeProvider,
     {
+      hasManagedLlamaCpp: recordedProviderReaders.readRecordedManagedLlamaCpp(sandboxName),
       hasNimContainer:
         recoveredProbeProvider === "vllm-local" &&
         Boolean(recordedProviderReaders.readRecordedNimContainer(sandboxName)),

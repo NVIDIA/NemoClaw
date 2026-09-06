@@ -149,6 +149,10 @@ export interface SetupNimFlowDeps {
     sandboxName: string | null | undefined,
     recoverySessionId?: string | null,
   ): string | null;
+  readRecordedManagedLlamaCpp?(
+    sandboxName: string | null | undefined,
+    recoverySessionId?: string | null,
+  ): boolean;
   readRecordedModel(
     sandboxName: string | null | undefined,
     recoverySessionId?: string | null,
