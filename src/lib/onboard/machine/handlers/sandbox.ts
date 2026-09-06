@@ -189,6 +189,8 @@ export interface SandboxStateOptions<
   apfInterceptorRequested?: boolean;
   /** Internal rebuild mode: null web-search state is an authoritative disable, not a prompt. */
   authoritativeResumeConfig?: boolean;
+  /** Explicit Deferred N1x managed-vLLM choice admitted by preflight. */
+  deferredN1xManagedVllmPreviewIntent?: boolean;
   /** Internal rebuild tier that must govern create-time and resumed policy selection. */
   /** Keep provider and credential effects behind the exact post-create identity gate. */
   deferSandboxEffectsUntilIdentityVerification?: boolean;
@@ -1756,6 +1758,9 @@ class SandboxStateFlow<
       ...(this.options.endpointUrl ? { endpointUrl: this.options.endpointUrl } : {}),
       ...compatibleEndpointReasoningForCreateIntent(this.options.compatibleEndpointReasoning),
       endpointSource: this.options.endpointSource ?? null,
+      ...(this.options.deferredN1xManagedVllmPreviewIntent === true
+        ? { deferredN1xManagedVllmPreviewIntent: true as const }
+        : {}),
       ...(state.session?.observabilityRequestedExplicitly === true
         ? { observabilityRequestedExplicitly: true as const }
         : {}),

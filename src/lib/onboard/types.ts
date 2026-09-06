@@ -72,6 +72,8 @@ export interface SandboxCreateIntent {
   readonly compatibleEndpointReasoning?: "true" | "false";
   /** Provenance for the endpoint recorded with the created sandbox. */
   readonly endpointSource?: import("../inference/selection").InferenceEndpointSource | null;
+  /** Process-local Deferred N1x managed-vLLM choice awaiting final route validation. */
+  readonly deferredN1xManagedVllmPreviewIntent?: true;
   /** Internal authoritative rebuild tier used before replacement registration completes. */
   readonly policyTier?: string | null;
   /** Gateway-level extra providers reconciled immediately before sandbox creation. */

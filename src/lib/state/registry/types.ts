@@ -124,6 +124,8 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   hostLocalInferenceReceipt?: string | null;
   /** Explicit hidden-lifecycle provenance; absence keeps llama.cpp on its legacy path. */
   hostLocalInferenceProvenance?: SandboxHostLocalInferenceProvenance;
+  /** Explicit Deferred N1x managed-vLLM choice retained after successful onboarding. */
+  deferredN1xManagedVllmAccepted?: true;
   messaging?: SandboxMessagingState;
   mcp?: SandboxMcpState;
   hermesToolGateways?: string[];
