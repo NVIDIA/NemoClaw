@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   collectDockerGpuPatchDiagnostics: vi.fn(),
   queryOpenShellDockerSandboxContainers: vi.fn(),
   queryOpenShellDockerSandboxRuntimeSnapshot: vi.fn(),
+  addTraceEvent: vi.fn(),
 }));
 
 vi.mock("../sandbox/create-stream", () => ({
@@ -50,6 +51,11 @@ vi.mock("./openshell-docker-sandbox-containers", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./openshell-docker-sandbox-containers")>()),
   queryOpenShellDockerSandboxContainers: mocks.queryOpenShellDockerSandboxContainers,
   queryOpenShellDockerSandboxRuntimeSnapshot: mocks.queryOpenShellDockerSandboxRuntimeSnapshot,
+}));
+
+vi.mock("./tracing", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./tracing")>()),
+  addTraceEvent: mocks.addTraceEvent,
 }));
 
 import {
@@ -424,21 +430,90 @@ describe("created sandbox identity gate", () => {
     expect(deps.sleep).not.toHaveBeenCalled();
   });
 
-  it("returns false and blocks effects when the create-attempt selector returns no sandbox ID (#10769)", async () => {
+  it("ends the Ready handoff before a delayed nonce-owned ID appears (#10976)", async () => {
+    const events: string[] = [];
+    let createClientClosed = false;
+    let nonce = "";
+    const input = noGpuInput();
+    input.verifyCreatedSandboxBeforeEffects = vi.fn(async () => {
+      events.push("verify-created");
+      expect(createClientClosed).toBe(true);
+    });
+    input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
+    const patch = createGpuPatchFixture();
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
+    mocks.streamSandboxCreate.mockImplementation(async (_command, args, _env, options) => {
+      nonce = createAttemptNonce(args);
+      events.push("create-client-active");
+      expect(options.readyCheck?.()).toBe(true);
+      createClientClosed = true;
+      events.push("create-client-closed");
+      return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
+    });
+    const deps = createGpuFlowDeps();
+    deps.installPortableDemoLifecycle = vi.fn();
+    vi.mocked(deps.runCaptureOpenshell)
+      .mockImplementationOnce((args) => {
+        expect(args).not.toContain("--selector");
+        events.push("ready-visible");
+        return "alpha Ready";
+      })
+      .mockImplementationOnce((args) => {
+        expect(args).toContain("--selector");
+        expect(createClientClosed).toBe(false);
+        events.push("identity-absent-before-handoff");
+        return "[]";
+      })
+      .mockImplementationOnce((args) => {
+        expect(args).toContain("--selector");
+        expect(createClientClosed).toBe(true);
+        events.push("identity-matched-after-handoff");
+        return sandboxListJson("alpha-sandbox-id", {
+          [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce,
+        });
+      });
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({ route: "none" });
+
+    expect(events.slice(0, 6)).toEqual([
+      "create-client-active",
+      "ready-visible",
+      "identity-absent-before-handoff",
+      "create-client-closed",
+      "identity-matched-after-handoff",
+      "verify-created",
+    ]);
+    expect(input.persistRetainedSandboxRecovery).not.toHaveBeenCalled();
+    expect(input.verifyCreatedSandboxBeforeEffects).toHaveBeenCalledOnce();
+    expect(mocks.addTraceEvent).toHaveBeenCalledWith("sandbox_create_ready_identity_observation", {
+      create_operation_state: "ready",
+      identity_state: "pending",
+      returned_identity_fingerprint: null,
+    });
+    expect(mocks.addTraceEvent).toHaveBeenCalledWith("sandbox_create_identity_settlement", {
+      create_operation_state: "ready",
+      identity_state: "matched",
+      returned_identity_fingerprint: ALPHA_SANDBOX_ID_FINGERPRINT,
+    });
+  });
+
+  it("ends the Ready handoff but blocks effects when identity settlement returns no ID (#10976)", async () => {
     const input = noGpuInput();
     input.verifyCreatedSandboxBeforeEffects = vi.fn();
     input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
     const patch = createGpuPatchFixture();
     mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
     mocks.streamSandboxCreate.mockImplementation(async (_command, _args, _env, options) => {
-      expect(options.readyCheck?.()).toBe(false);
+      expect(options.readyCheck?.()).toBe(true);
       return { status: 0, output: "", sawProgress: true };
     });
     const deps = createGpuFlowDeps();
     deps.installPortableDemoLifecycle = vi.fn();
-    vi.mocked(deps.runCaptureOpenshell)
-      .mockReturnValueOnce("alpha Ready")
-      .mockReturnValueOnce("[]");
+    vi.mocked(deps.runCaptureOpenshell).mockReturnValueOnce("alpha Ready").mockReturnValue("[]");
+    vi.spyOn(performance, "now")
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(30_000);
 
     await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
       "did not return one exact durable sandbox identity before post-create effects",
@@ -453,6 +528,11 @@ describe("created sandbox identity gate", () => {
     expect(patch.commitAfterReady).not.toHaveBeenCalled();
     expect(mocks.waitForCreatedSandboxReadyWithTrace).not.toHaveBeenCalled();
     expect(deps.installPortableDemoLifecycle).not.toHaveBeenCalled();
+    expect(mocks.addTraceEvent).toHaveBeenCalledWith("sandbox_create_identity_settlement", {
+      create_operation_state: "ready",
+      identity_state: "failed",
+      returned_identity_fingerprint: null,
+    });
   });
 
   it("persists recovery before reporting a handoff timeout that looks like an incomplete create (#10769)", async () => {

@@ -677,6 +677,8 @@ export function createSandboxGpuCreateAttemptRunner(
     if (!createExecutable) throw new Error("Sandbox create executable is missing.");
     let readyCheckCreatedSandboxId: string | null = null;
     let readyCheckCreatedIdentityFailure: unknown = null;
+    let readyCheckObservedReady = false;
+    let readyCheckIdentityTraceSignature: string | null = null;
     const failReadyCheckCreatedIdentity = (diagnostic: string): true => {
       readyCheckCreatedIdentityFailure = new Error(
         `OpenShell did not return the exact created identity for sandbox '${input.sandboxName}'. Diagnostic class: ${diagnostic}.`,
@@ -684,18 +686,36 @@ export function createSandboxGpuCreateAttemptRunner(
       return true;
     };
     const settleCreatedIdentity = (): string => {
-      if (readyCheckCreatedIdentityFailure !== null) throw readyCheckCreatedIdentityFailure;
-      const sandboxId = settleCreatedOpenShellSandboxId({
-        sandboxName: input.sandboxName,
-        gatewayName: input.gatewayName,
-        createAttemptNonce: createAttemptNonce!,
-        runCaptureOpenshell: deps.runCaptureOpenshell,
-        priorSandboxId: readyCheckCreatedSandboxId,
-        sleep: (milliseconds) => deps.sleep(milliseconds / 1000),
-      });
+      const createOperationState = readyCheckObservedReady ? "ready" : "create_client_exited";
+      let sandboxId: string;
+      try {
+        if (readyCheckCreatedIdentityFailure !== null) throw readyCheckCreatedIdentityFailure;
+        sandboxId = settleCreatedOpenShellSandboxId({
+          sandboxName: input.sandboxName,
+          gatewayName: input.gatewayName,
+          createAttemptNonce: createAttemptNonce!,
+          runCaptureOpenshell: deps.runCaptureOpenshell,
+          priorSandboxId: readyCheckCreatedSandboxId,
+          sleep: (milliseconds) => deps.sleep(milliseconds / 1000),
+        });
+      } catch (error) {
+        addTraceEvent("sandbox_create_identity_settlement", {
+          create_operation_state: createOperationState,
+          identity_state: "failed",
+          returned_identity_fingerprint: readyCheckCreatedSandboxId
+            ? fingerprintSandboxRecreateValue(readyCheckCreatedSandboxId)
+            : null,
+        });
+        throw error;
+      }
       if (readyCheckCreatedSandboxId && sandboxId !== readyCheckCreatedSandboxId) {
         throw new Error("OpenShell create-attempt identity changed after the Ready handoff.");
       }
+      addTraceEvent("sandbox_create_identity_settlement", {
+        create_operation_state: createOperationState,
+        identity_state: "matched",
+        returned_identity_fingerprint: fingerprintSandboxRecreateValue(sandboxId),
+      });
       return sandboxId;
     };
     const streamCreate = async () => {
@@ -714,6 +734,7 @@ export function createSandboxGpuCreateAttemptRunner(
               });
               const ready = sandboxGpuCreateAttempt.isSandboxReady(list, input.sandboxName);
               if (!ready || !createAttemptNonce) return ready;
+              readyCheckObservedReady = true;
               const observation = observeCreatedOpenShellSandboxId(
                 {
                   sandboxName: input.sandboxName,
@@ -723,13 +744,31 @@ export function createSandboxGpuCreateAttemptRunner(
                 },
                 SANDBOX_READY_PROBE_TIMEOUT_MS,
               );
+              const observedSandboxId =
+                observation.state === "invalid" ? null : observation.sandboxId;
+              const returnedIdentityFingerprint = observedSandboxId
+                ? fingerprintSandboxRecreateValue(observedSandboxId)
+                : null;
+              const identityTraceSignature = `${observation.state}:${returnedIdentityFingerprint ?? "none"}`;
+              if (identityTraceSignature !== readyCheckIdentityTraceSignature) {
+                addTraceEvent("sandbox_create_ready_identity_observation", {
+                  create_operation_state: "ready",
+                  identity_state: observation.state,
+                  returned_identity_fingerprint: returnedIdentityFingerprint,
+                });
+                readyCheckIdentityTraceSignature = identityTraceSignature;
+              }
               if (observation.state === "invalid") {
                 return failReadyCheckCreatedIdentity(observation.diagnostic);
               }
               if (observation.sandboxId === null) {
-                return readyCheckCreatedSandboxId
-                  ? failReadyCheckCreatedIdentity("selector-identity-disappeared")
-                  : false;
+                if (readyCheckCreatedSandboxId) {
+                  return failReadyCheckCreatedIdentity("selector-identity-disappeared");
+                }
+                // End the Ready handoff before OpenShell can regress the live
+                // sandbox. The existing post-handoff gate still requires the
+                // nonce-owned ID before any post-create effect (#10976).
+                return true;
               }
               if (
                 readyCheckCreatedSandboxId &&
