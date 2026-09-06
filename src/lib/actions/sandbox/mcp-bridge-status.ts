@@ -291,6 +291,29 @@ export async function statusMcpBridge(
             detail: hermesCredentialObservationDetail,
           }
         : inspectHermesMcpRuntimeIntent(sandboxName, {
+            // A single-server query (`mcp status <server>`) only observes a
+            // fresh OpenShell credential revision for that one entry (see the
+            // `entries`/`credentialObservations` loop above). If this call is
+            // left to default to every bridge entry, the exact-revision check
+            // below applies to the one entry we actually observed while every
+            // sibling entry falls back to a canonical (revision-agnostic)
+            // expectation. That asymmetry makes the *last-queried* server look
+            // fragile (it can drift out of an exact match against a live
+            // OpenShell credential-revision rotation) while every other
+            // managed server always reports as matched regardless of its real
+            // on-disk state. Scope both `entries` and `managedServerNames` to
+            // the one requested server so the reconciliation result reflects
+            // only what this call actually observed (#11118).
+            ...(server !== undefined
+              ? {
+                  entries: entries
+                    .filter(
+                      (pair): pair is [string, McpBridgeEntry] => pair[1] !== undefined,
+                    )
+                    .map(([, entry]) => entry),
+                  managedServerNames: [server],
+                }
+              : {}),
             credentialRevisions,
             runtimeSelection: providerRuntimeSelection,
           })
