@@ -146,11 +146,13 @@ const MANAGED_IMAGE_OPENCLAW_NEUTRAL_CAPABILITIES = [
   ...MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES,
   ...MANAGED_IMAGE_OPENCLAW_BUNDLED_INERT_CAPABILITIES,
 ] as const;
+// The managed-image capability union installs diagnostics-otel and brave-plugin. It does not
+// install the Tavily Search plugin. OpenClaw validates each plugins.entries key even when
+// the entry is disabled, so omit Tavily from a neutral managed image (#10325).
 const MANAGED_IMAGE_OPENCLAW_PLUGIN_IDS = [
   ...MANAGED_IMAGE_OPENCLAW_NEUTRAL_CAPABILITIES.map(({ pluginId }) => pluginId),
   "diagnostics-otel",
   "brave",
-  "tavily",
 ] as const;
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const SCRIPT_DIR = dirname(SCRIPT_PATH);
@@ -1552,8 +1554,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
   if (webSearchProvider) {
     // OpenClaw 2026.5.x keeps provider-owned credentials under
     // plugins.entries.<provider>.config rather than inline on tools.web.search.
-    // Brave is installed externally during the image build; Tavily ships as a
-    // bundled OpenClaw extension. Both use the same plugin-scoped config shape.
+    // Both providers use the same plugin-scoped configuration shape.
     const credentialEnv = WEB_SEARCH_PROVIDERS[webSearchProvider].credentialEnv;
     tools.web.search = { enabled: true, provider: webSearchProvider };
     config.plugins.entries[webSearchProvider] = {
