@@ -3,13 +3,54 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { CollectHostObservationsOptions } from "../readiness/host";
 import { discoverManagedLlamaCppSelectionsForGpu } from "../inference/llama-cpp/managed-selection";
-import { makeDeps } from "./__test-helpers__/setup-nim-flow";
+import { loadManagedInferenceCatalog } from "../inference/serving/catalog-loader";
+import { makeDeps, makeHostState } from "./__test-helpers__/setup-nim-flow";
 import { createSetupNim, type SetupNimFlowDeps, type SetupNimGpu } from "./setup-nim-flow";
 
 afterEach(() => {
   vi.unstubAllEnvs();
 });
+
+function n1xCollectionOptions(): Omit<
+  CollectHostObservationsOptions,
+  "detectGpu" | "wslDockerDesktopGpuProofPassed"
+> {
+  return {
+    architecture: "arm64",
+    assess: () => ({
+      platform: "linux" as const,
+      isWsl: true,
+      runtime: "docker-desktop" as const,
+      dockerInstalled: true,
+      dockerRunning: true,
+      dockerReachable: true,
+      nodeInstalled: true,
+      openshellInstalled: true,
+      dockerCgroupVersion: "v2",
+      dockerDefaultCgroupnsMode: "private",
+      dockerStorageDriver: "overlay2",
+      dockerUsesContainerdSnapshotter: false,
+      dockerCpus: 12,
+      dockerMemTotalBytes: 64 * 1024 ** 3,
+      isContainerRuntimeUnderProvisioned: false,
+      hasNestedOverlayConflict: false,
+      requiresHostCgroupnsFix: false,
+      isUnsupportedRuntime: false,
+      isHeadlessLikely: false,
+      hasNvidiaGpu: true,
+      dockerCdiSpecDirs: ["/etc/cdi"],
+      cdiNvidiaGpuSpecMissing: false,
+      cdiNvidiaGpuSpecStale: false,
+      cdiNvidiaGpuSpecNeedsRepair: false,
+      nvidiaContainerToolkitInstalled: true,
+      notes: [],
+    }),
+    collectPlatformIdentity: () => ({ productName: "83N7" }),
+    detectNvidiaDriverVersion: () => "580.65.06",
+  };
+}
 
 function n1xProofHarness(proofPassed: boolean, requestedProvider: string | null) {
   const selection = {
@@ -206,6 +247,128 @@ describe("managed llama.cpp profile onboarding", () => {
       null,
     );
     expect(harness.getRuntimeProvider).toHaveBeenCalledTimes(2);
+  });
+
+  it("passes the real N1x discovery selection directly into installation", async () => {
+    const catalog = loadManagedInferenceCatalog();
+    const gpu = {
+      type: "nvidia",
+      name: "NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)",
+      platform: "n1x" as const,
+      count: 1,
+      totalMemoryMB: 49_088,
+      perGpuMB: 49_088,
+      nimCapable: true,
+      wslDockerDesktopGpuProofPassed: true,
+    } as never;
+    const discoverManagedLlamaCppSelections = vi.fn(
+      (env, detectedGpu, _catalog, _collectionOptions, selectionOptions) =>
+        discoverManagedLlamaCppSelectionsForGpu(
+          env,
+          detectedGpu,
+          catalog,
+          n1xCollectionOptions(),
+          { ...selectionOptions, dockerContextIsDefault: () => true },
+        ),
+    );
+    const installManagedLlamaCpp = vi.fn<
+      NonNullable<SetupNimFlowDeps["installManagedLlamaCpp"]>
+    >(async () => ({
+      ok: true as const,
+      apiKey: "a".repeat(64),
+      model: "qwen3.6-35b-a3b",
+      receipt: { schemaVersion: 1 } as never,
+    }));
+    const handleLlamaCppSelection = vi.fn<SetupNimFlowDeps["handleLlamaCppSelection"]>(
+      async (state, requestedModel) => {
+        state.provider = "llama-cpp-local";
+        state.model = requestedModel;
+        return "selected";
+      },
+    );
+    const setupNim = createSetupNim(
+      makeDeps({
+        discoverManagedLlamaCppSelections,
+        handleLlamaCppSelection,
+        installManagedLlamaCpp,
+        isNonInteractive: () => true,
+      }),
+    );
+
+    await expect(setupNim(gpu, "n1x-agent")).resolves.toMatchObject({
+      provider: "llama-cpp-local",
+      model: "qwen3.6-35b-a3b",
+    });
+    const produced = discoverManagedLlamaCppSelections.mock.results[1]?.value;
+    expect(produced).toMatchObject({
+      resolution: {
+        kind: "selected",
+        selection: {
+          recipe: { metadata: { id: "llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1" } },
+        },
+      },
+    });
+    const producedSelection =
+      produced?.resolution.kind === "selected" ? produced.resolution.selection : null;
+    expect(producedSelection).not.toBeNull();
+    expect(installManagedLlamaCpp.mock.calls[0]?.[0]).toBe(producedSelection);
+    expect(handleLlamaCppSelection).toHaveBeenCalledWith(
+      expect.any(Object),
+      "qwen3.6-35b-a3b",
+      null,
+    );
+  });
+
+  it("routes an explicit model to WSL Ollama instead of automatic managed llama.cpp", async () => {
+    const selection = {
+      preset: { metadata: { id: "llama-cpp.n1x-wsl-arm64.single.qwen3-6-35b-a3b" } },
+      recipe: {
+        metadata: { id: "llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1" },
+        spec: { model: { servedName: "qwen3.6-35b-a3b" } },
+      },
+    } as never;
+    const installManagedLlamaCpp = vi.fn();
+    const handleInstallOllamaSelection = vi.fn<SetupNimFlowDeps["handleInstallOllamaSelection"]>(
+      async (_gpu, requestedModel, _recoveredModel, state) => {
+        state.provider = "ollama-local";
+        state.model = requestedModel;
+        return "selected";
+      },
+    );
+    const setupNim = createSetupNim(
+      makeDeps({
+        detectInferenceProviderHostState: () =>
+          makeHostState({
+            isWsl: true,
+            ollamaInstallMenu: {
+              entry: { key: "install-ollama", label: "Install Ollama in WSL" },
+              hasUpgradableOllama: false,
+              binaryNeedsUpgrade: false,
+            },
+          }),
+        discoverManagedLlamaCppSelections: () => ({
+          choices: [{ priority: 500, selection }],
+          resolution: { kind: "selected", selection },
+        }),
+        getNonInteractiveModel: () => "operator/explicit-model",
+        handleInstallOllamaSelection,
+        installManagedLlamaCpp: installManagedLlamaCpp as never,
+        isNonInteractive: () => true,
+      }),
+    );
+
+    await expect(setupNim({ platform: "n1x" } as never, "n1x-agent")).resolves.toMatchObject({
+      provider: "ollama-local",
+      model: "operator/explicit-model",
+    });
+    expect(handleInstallOllamaSelection).toHaveBeenCalledWith(
+      expect.anything(),
+      "operator/explicit-model",
+      null,
+      expect.any(Object),
+      expect.any(Object),
+    );
+    expect(installManagedLlamaCpp).not.toHaveBeenCalled();
   });
 
   it("rejects managed N1x selection when Docker Desktop GPU proof fails", async () => {

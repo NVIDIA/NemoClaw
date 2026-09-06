@@ -525,8 +525,13 @@ function platformDefaultProviderKey(input: {
   gpu: SetupNimGpu;
   isWsl: boolean;
   managedLlamaCpp: ManagedLlamaCppSelectionResult | null;
+  requestedModel: string | null;
 }): "install-llama-cpp" | "install-ollama" | "install-vllm" | undefined {
-  if (input.gpu?.platform === "n1x" && input.managedLlamaCpp?.kind === "selected") {
+  if (
+    input.gpu?.platform === "n1x" &&
+    !input.requestedModel &&
+    input.managedLlamaCpp?.kind === "selected"
+  ) {
     return "install-llama-cpp";
   }
   if (input.gpu?.platform === "spark") return "install-vllm";
@@ -1062,6 +1067,7 @@ export function createSetupNim(
               gpu,
               isWsl: isWslHost,
               managedLlamaCpp: managedLlamaCppResolution,
+              requestedModel,
             }),
             ...recordedProviderReaders,
           });
