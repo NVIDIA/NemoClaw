@@ -250,37 +250,48 @@ export function finalizeDockerGpuPatchBackup(
         lastSandboxPhase: null,
       };
     }
+    const now = deps.now ?? (() => new Date());
+    const finalHandoffDeadlineMs =
+      now().getTime() + Math.max(1, options.finalHandoffTimeoutSecs * 1000);
     console.log(
       `  Starting the exact replacement through OpenShell to complete the final handoff (up to ${options.finalHandoffTimeoutSecs}s)...`,
     );
-    const lifecycleStartAcknowledged = runOpenShellLifecycleCommand(
-      deps.runOpenshell,
-      ["sandbox", "start", options.sandboxName],
-      options.finalHandoffTimeoutSecs,
-    );
+    const remainingBeforeStartMs = finalHandoffDeadlineMs - now().getTime();
+    const lifecycleStartAcknowledged =
+      remainingBeforeStartMs > 0
+        ? runOpenShellLifecycleCommand(
+            deps.runOpenshell,
+            ["sandbox", "start", options.sandboxName],
+            remainingBeforeStartMs / 1000,
+          )
+        : false;
     // OpenShell can return nonzero after applying the start mutation when its
     // internal Ready deadline expires. Reconcile that ambiguous result through
     // the identity-bound handoff waiter, which rejects absent, foreign, and
-    // terminal replacement state.
+    // terminal replacement state. Both operations share one deadline so this
+    // reconciliation cannot double the configured handoff interval.
+    const remainingHandoffTimeoutSecs = Math.max(
+      0,
+      Math.floor((finalHandoffDeadlineMs - now().getTime()) / 1000),
+    );
     console.log(
-      `  Waiting for OpenShell to confirm the final replacement handoff (up to ${options.finalHandoffTimeoutSecs}s)...`,
+      `  Waiting for OpenShell to confirm the final replacement handoff (up to ${remainingHandoffTimeoutSecs}s)...`,
     );
-    const acknowledgement = waitForOpenShellFinalHandoff(
-      options.sandboxName,
-      options.finalHandoffTimeoutSecs,
-      {
-        runCaptureOpenshell: deps.runCaptureOpenshell,
-        runOpenshell: deps.runOpenshell,
-        sleep: deps.sleep,
-        replacementIsExactAndRunning: (remainingMs) =>
-          isExactRunningReplacement(
-            options.sandboxName,
-            options.result.newContainerId,
-            resolved.dockerRun,
-            remainingMs,
-          ),
-      },
-    );
+    const acknowledgement =
+      remainingHandoffTimeoutSecs > 0
+        ? waitForOpenShellFinalHandoff(options.sandboxName, remainingHandoffTimeoutSecs, {
+            runCaptureOpenshell: deps.runCaptureOpenshell,
+            runOpenshell: deps.runOpenshell,
+            sleep: deps.sleep,
+            replacementIsExactAndRunning: (remainingMs) =>
+              isExactRunningReplacement(
+                options.sandboxName,
+                options.result.newContainerId,
+                resolved.dockerRun,
+                remainingMs,
+              ),
+          })
+        : { acknowledged: false, lastSandboxPhase: null };
     return {
       backupRemoved: true,
       rolledBack: false,

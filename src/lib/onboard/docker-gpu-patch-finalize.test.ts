@@ -220,16 +220,21 @@ describe("finalizeDockerGpuPatchBackup", () => {
     );
   });
 
-  it("reconciles a nonzero OpenShell start when the exact replacement reaches Ready (#11096)", () => {
+  it("reconciles a nonzero OpenShell start within the remaining handoff budget (#11096)", () => {
     const result = exactDeferredCreateResult();
+    let currentTimeMs = new Date("2026-09-04T07:42:01Z").getTime();
     const phases = ["Provisioning", "Ready"];
     const runCaptureOpenshell = vi.fn(
-      () => `alpha  2026-09-04 07:42:01  ${phases.shift() ?? "Ready"}\n`,
+      (_args: string[], _opts?: Record<string, unknown>) =>
+        `alpha  2026-09-04 07:42:01  ${phases.shift() ?? "Ready"}\n`,
     );
     const runOpenshell = vi
       .fn()
       .mockReturnValueOnce({ status: 0 })
-      .mockReturnValueOnce({ status: 1, error: new Error("timed out waiting for Ready") })
+      .mockImplementationOnce(() => {
+        currentTimeMs += 40_000;
+        return { status: 1, error: new Error("timed out waiting for Ready") };
+      })
       .mockReturnValue({ status: 0 });
     const dockerRun = vi.fn((args: readonly string[]) => {
       const namespaceInspect = String(args[4]).includes("sandbox-namespace");
@@ -255,6 +260,7 @@ describe("finalizeDockerGpuPatchBackup", () => {
         runCaptureOpenshell,
         runOpenshell,
         sleep: vi.fn(),
+        now: () => new Date(currentTimeMs),
       },
     );
 
@@ -268,6 +274,9 @@ describe("finalizeDockerGpuPatchBackup", () => {
       lastSandboxPhase: "Ready",
     });
     expect(runCaptureOpenshell).toHaveBeenCalledTimes(2);
+    const firstListTimeoutMs = Number(runCaptureOpenshell.mock.calls[0]?.[1]?.timeout);
+    expect(firstListTimeoutMs).toBeGreaterThan(19_000);
+    expect(firstListTimeoutMs).toBeLessThanOrEqual(20_000);
     expect(runOpenshell).toHaveBeenCalledWith(
       ["sandbox", "exec", "-n", "alpha", "--", "true"],
       expect.any(Object),
