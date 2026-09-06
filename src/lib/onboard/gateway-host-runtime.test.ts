@@ -576,11 +576,17 @@ describe("gateway host runtime attachment probe", () => {
 
   it("reads the authoritative gateway port lazily, not at construction (#6576)", () => {
     let port = 8080;
-    const runtime = createGatewayHostRuntime(createDeps({ gatewayPort: () => port }));
+    const getGatewayStartNetworkEnv = vi.fn((gatewayPort: number) => ({
+      OPENSHELL_SERVER_PORT: String(gatewayPort),
+    }));
+    const runtime = createGatewayHostRuntime(
+      createDeps({ gatewayPort: () => port, getGatewayStartNetworkEnv }),
+    );
 
     port = 9443;
 
     expect(runtime.getGatewayStartEnv()).toMatchObject({ OPENSHELL_SERVER_PORT: "9443" });
+    expect(getGatewayStartNetworkEnv).toHaveBeenCalledWith(9443);
   }, 15_000);
 
   it("registers and selects the exact declared endpoint without prior gateway metadata (#6576)", async () => {

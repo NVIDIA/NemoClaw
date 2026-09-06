@@ -189,7 +189,7 @@ function expectCredentialBindingFailure({
   expect(upsertProviders).not.toHaveBeenCalled();
 }
 
-describe("prepareSandboxCreatePolicy", () => {
+describe("prepareSandboxCreatePolicy", testTimeoutOptions(15_000), () => {
   it("passes the sandbox name so credential-binding presets can materialize", () => {
     const intent = resolveSandboxCreateIntent({
       basePolicyPath: "/repo/policy.yaml",

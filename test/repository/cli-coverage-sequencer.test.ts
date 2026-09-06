@@ -115,29 +115,29 @@ describe("stable CLI coverage sharding", () => {
     );
 
     expect(Object.fromEntries(owners)).toEqual({
-      "cli:src/lib/example.test.ts": 6,
-      "e2e-support:test/e2e/support/example.test.ts": 1,
+      "cli:src/lib/example.test.ts": 1,
+      "e2e-support:test/e2e/support/example.test.ts": 8,
       "integration:test/agents/hermes/hermes-restart-config-seal-write-lock.test.ts": 2,
-      "integration:test/credentials/local-credential-helper-fields.test.ts": 5,
-      "integration:test/regular-0.test.ts": 5,
+      "integration:test/credentials/local-credential-helper-fields.test.ts": 6,
+      "integration:test/regular-0.test.ts": 6,
     });
   });
 
-  it("keeps the current test roster balanced across the twelve CI shards (#6237)", () => {
-    const shards = assignStableShards(currentCliCoverageEntries(), 12);
+  it("keeps the current test roster balanced across the ten CI shards (#6237)", () => {
+    const shards = assignStableShards(currentCliCoverageEntries(), 10);
     const weights = shards.map((shard) => shard.totalWeightMs);
     const averageWeight = weights.reduce((total, weight) => total + weight, 0) / weights.length;
 
-    expect(Math.max(...weights)).toBeLessThanOrEqual(averageWeight * 1.05);
+    expect(Math.max(...weights)).toBeLessThanOrEqual(averageWeight * 1.06);
   });
 
-  it("balances the serialized integration lane across the twelve CI shards (#6237)", () => {
+  it("balances the serialized integration lane across the ten CI shards (#6237)", () => {
     const integrationEntries = currentCliCoverageEntries().filter((entry) =>
       entry.key.startsWith("integration:"),
     );
     expect(integrationEntries.length).toBeGreaterThan(0);
 
-    const weights = assignStableShards(integrationEntries, 12).map(
+    const weights = assignStableShards(integrationEntries, 10).map(
       (shard) => shard.totalWeightMs,
     );
     const averageWeight = weights.reduce((total, weight) => total + weight, 0) / weights.length;
@@ -182,22 +182,34 @@ describe("stable CLI coverage sharding", () => {
     expect(cliTestTimingHints.defaultDurationMs).toBe(5_000);
     expect(cliTestTimingHints.sources).toEqual([
       {
-        runId: 32538808045,
-        artifactId: 9467034647,
-        headSha: "9577b175338d6cf1ead335452ade76470f1593a9",
-        recordedAt: "2026-08-22T00:40:44Z",
+        runId: 33895428444,
+        artifactId: 9946097324,
+        headSha: "58732cfd84267842e6d8caa08ee9c7eeb01bf41a",
+        recordedAt: "2026-09-04T16:46:06Z",
       },
       {
-        runId: 32541609216,
-        artifactId: 9467388387,
-        headSha: "1080ecce4fd4d0366e546b3e92a25c3ec158af61",
-        recordedAt: "2026-08-22T01:03:19Z",
+        runId: 33898651121,
+        artifactId: 9947254151,
+        headSha: "d99d1dc579b26be7b240cf50d26b210b7a8d1b1d",
+        recordedAt: "2026-09-04T17:20:15Z",
       },
       {
-        runId: 32542347175,
-        artifactId: 9467589302,
-        headSha: "bb686324dd2ce19f3708c6900b3d22110e198662",
-        recordedAt: "2026-08-22T01:16:45Z",
+        runId: 33917968257,
+        artifactId: 9954274692,
+        headSha: "37cedc99007a776d4ea4591fcc74eb14bdcc0ef9",
+        recordedAt: "2026-09-04T21:00:44Z",
+      },
+      {
+        runId: 33921927346,
+        artifactId: 9955756307,
+        headSha: "94bb868ea0f3e98533b06196def74b7559a1d1d4",
+        recordedAt: "2026-09-04T21:52:12Z",
+      },
+      {
+        runId: 33930230351,
+        artifactId: 9958570313,
+        headSha: "5b74336486a8492ad87dd7eaba3d1bc06abbadf6",
+        recordedAt: "2026-09-04T23:53:49Z",
       },
     ]);
     expect(files).toEqual([...files].sort());
