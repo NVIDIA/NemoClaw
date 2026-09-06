@@ -100,6 +100,7 @@ export interface ReusedSandboxDashboardStateInput {
   gatewayName: string;
   gatewayPort: number;
   manageDashboard?: boolean;
+  preparedOpenClawDashboardPort?: number;
   getSandbox?(sandboxName: string): SandboxEntry | null;
   ensureDashboardForward(
     sandboxName: string,
@@ -109,6 +110,11 @@ export interface ReusedSandboxDashboardStateInput {
       revalidateSandboxIdentity?: (operation: string) => void;
     },
   ): number;
+  reconcileOpenClawDashboardForwardReuse?(
+    sandboxName: string,
+    chatUiUrl: string,
+    revalidateSandboxIdentity?: (operation: string) => void,
+  ): Promise<void>;
   hermesDashboardForwarding: ReusedSandboxDashboardForwarding;
   updateSandbox?(sandboxName: string, updates: Partial<SandboxEntry>): unknown;
   revalidateSandboxIdentity?(operation: string): void;
@@ -147,12 +153,14 @@ export function applyReusedSandboxDashboardState(
   input.revalidateSandboxIdentity?.(`restore dashboard state for sandbox '${input.sandboxName}'`);
   const reuseExistingOpenClawForward = input.agent == null || input.agent.name === "openclaw";
   const dashboardPort = manageDashboard
-    ? input.ensureDashboardForward(input.sandboxName, input.chatUiUrl, {
-        ...(reuseExistingOpenClawForward ? { reuseExistingOpenClawForward: true } : {}),
-        ...(input.revalidateSandboxIdentity
-          ? { revalidateSandboxIdentity: input.revalidateSandboxIdentity }
-          : {}),
-      })
+    ? reuseExistingOpenClawForward && input.preparedOpenClawDashboardPort !== undefined
+      ? input.preparedOpenClawDashboardPort
+      : input.ensureDashboardForward(input.sandboxName, input.chatUiUrl, {
+          ...(reuseExistingOpenClawForward ? { reuseExistingOpenClawForward: true } : {}),
+          ...(input.revalidateSandboxIdentity
+            ? { revalidateSandboxIdentity: input.revalidateSandboxIdentity }
+            : {}),
+        })
     : 0;
   const chatUiUrl = manageDashboard ? `http://127.0.0.1:${dashboardPort}` : input.chatUiUrl;
   if (manageDashboard) {
@@ -199,7 +207,33 @@ export async function restoreReusedSandboxDashboardState(
   input: ReusedSandboxDashboardStateInput & { releaseDashboardPort(): Promise<void> },
 ): Promise<ReusedSandboxDashboardStateResult> {
   await input.releaseDashboardPort();
-  return applyReusedSandboxDashboardState(input);
+  const reusesOpenClaw = input.agent == null || input.agent.name === "openclaw";
+  const registeredPort = (input.getSandbox ?? registry.getSandbox)(
+    input.sandboxName,
+  )?.dashboardPort;
+  const preparedOpenClawDashboardPort =
+    reusesOpenClaw &&
+    typeof registeredPort === "number" &&
+    Number.isInteger(registeredPort) &&
+    registeredPort > 0 &&
+    registeredPort <= 65_535
+      ? registeredPort
+      : undefined;
+  const chatUiUrl = preparedOpenClawDashboardPort
+    ? `http://127.0.0.1:${String(preparedOpenClawDashboardPort)}`
+    : input.chatUiUrl;
+  if ((input.manageDashboard ?? true) && reusesOpenClaw) {
+    await input.reconcileOpenClawDashboardForwardReuse?.(
+      input.sandboxName,
+      chatUiUrl,
+      input.revalidateSandboxIdentity,
+    );
+  }
+  return applyReusedSandboxDashboardState({
+    ...input,
+    chatUiUrl,
+    ...(preparedOpenClawDashboardPort ? { preparedOpenClawDashboardPort } : {}),
+  });
 }
 
 export function createSandboxReuseHelpers(deps: SandboxReuseDeps): SandboxReuseHelpers {

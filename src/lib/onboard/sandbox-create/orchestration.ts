@@ -1222,13 +1222,6 @@ function shouldInspectExistingSandbox(input: {
   return input.liveExists && !input.portableLifecycle && !input.resumingVerifiedCreate;
 }
 
-function openClawPersistedForwardMatcher(
-  agentName: string | null,
-  matcher: (port: number, chatUiUrl: string) => boolean,
-): typeof matcher | undefined {
-  return agentName === "openclaw" ? matcher : undefined;
-}
-
 type PortableAgentReceiptGenerationObservation =
   | { readonly kind: "absent" | "openclaw" }
   | {
@@ -1338,7 +1331,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       formatSandboxAgentName,
       formatSandboxBuildEstimateNote,
       getDashboardForwardPort,
-      matchesExistingDashboardForward,
+      reconcileOpenClawDashboardForwardReuse,
       readDcodeSelectionDrift,
       getDefaultSandboxNameForAgent,
       getDockerDriverGatewayStateDir,
@@ -1497,9 +1490,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         agentForwardPort: dashboardRuntime.getAgentPrimaryForwardPort(agent, DASHBOARD_PORT),
         defaultPort: DASHBOARD_PORT,
         forwardListOutput: runCaptureOpenshell(["forward", "list"], { ignoreError: true }),
-        matchesPersistedForward: openClawPersistedForwardMatcher(requestedAgentName, (port, url) =>
-          matchesExistingDashboardForward(sandboxName, port, url),
-        ),
         warn: (message: string) => console.warn(message),
       });
       ({ effectivePort, chatUiUrl } = dashboardSelection);
@@ -1724,6 +1714,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         gatewayPort: GATEWAY_PORT,
         manageDashboard,
         ensureDashboardForward,
+        reconcileOpenClawDashboardForwardReuse,
         hermesDashboardForwarding,
         updateReusedSandboxMetadata,
         releaseDashboardPort: dashboardPortReservationScope.release,

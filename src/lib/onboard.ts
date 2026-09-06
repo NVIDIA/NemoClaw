@@ -1515,8 +1515,8 @@ const sandboxCreateOrchestrationRuntime = {
   get getDashboardForwardPort() {
     return getDashboardForwardPort;
   },
-  get matchesExistingDashboardForward() {
-    return matchesExistingDashboardForward;
+  get reconcileOpenClawDashboardForwardReuse() {
+    return reconcileOpenClawDashboardForwardReuse;
   },
   readDcodeSelectionDrift: createDcodeSelectionDriftReader(runCaptureOpenshell, () => GATEWAY_NAME),
   getDefaultSandboxNameForAgent,
@@ -2520,8 +2520,8 @@ const {
   ensureAgentFixedForward,
   fetchGatewayAuthTokenFromSandbox,
   getDashboardForwardPort,
-  matchesExistingDashboardForward,
   printDashboard,
+  reconcileOpenClawDashboardForwardReuse,
   stopAllDashboardForwards,
 } = onboardDashboard.createOnboardDashboardHelpers({
   runOpenshell,
@@ -2632,7 +2632,6 @@ async function preflightAuthoritativeRebuildTarget(
   }
 }
 
-// ── Main ─────────────────────────────────────────────────────────
 const wrappedOnboard = onboardEntryOptions.wrapOnboard(runOnboard, onboardSession);
 const onboard = onboardSessionBootstrap.wrapOnboardDeferredExit(wrappedOnboard);
 async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
@@ -3247,6 +3246,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
               selectedAgent,
               undefined,
               hermesApiPortReservationScope,
+              resume,
             ),
           persistDashboardPort: (name, port) =>
             registry.updateSandbox(name, { dashboardPort: port }),

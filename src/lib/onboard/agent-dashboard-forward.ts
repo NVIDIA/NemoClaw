@@ -98,11 +98,7 @@ export async function ensureAgentDashboardForward(options: {
       .filter((port) => port !== declaredPrimaryPort || port === agentDashboardPort)
       .map(resolveDeclaredPort);
     const preservePorts = [
-      ...new Set([
-        agentDashboardPort,
-        ...declaredPorts,
-        optionalDashboardPort,
-      ]),
+      ...new Set([agentDashboardPort, ...declaredPorts, optionalDashboardPort]),
     ].filter(isValidForwardPort);
     const requestedDashboardUrl =
       !usesFixedApiPort && chatUiUrl

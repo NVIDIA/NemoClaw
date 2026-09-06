@@ -25,13 +25,20 @@ describe("onboard action runtime composition", () => {
     );
   });
 
-  it("passes host-only Google Chat dependencies into legacy onboarding", async () => {
+  it("passes host-only runtime dependencies into legacy onboarding", async () => {
     const googlechatTunnelRuntime = {
       loadServices: vi.fn(),
       loadWebhookProxy: vi.fn(),
     };
+    const dashboardReuseLifecycle = {
+      startSandbox: vi.fn(),
+      stopSandbox: vi.fn(),
+    };
 
-    await runOnboardAction({ "non-interactive": true }, { googlechatTunnelRuntime });
+    await runOnboardAction(
+      { "non-interactive": true },
+      { googlechatTunnelRuntime, dashboardReuseLifecycle },
+    );
 
     expect(mocks.onboard).toHaveBeenCalledWith({
       nonInteractive: true,

@@ -6,13 +6,11 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildForwardServiceArgs,
   launchForwardService,
-  matchesRunningForwardService,
-  type ForwardServiceProcess,
   type ForwardServiceTarget,
 } from "./forward-service";
 
 const target: ForwardServiceTarget = {
-  executable: process.execPath,
+  executable: "/usr/local/bin/openshell",
   gatewayName: "nemoclaw",
   workspace: "default",
   sandboxName: "demo",
@@ -21,21 +19,6 @@ const target: ForwardServiceTarget = {
   targetHost: "127.0.0.1",
   targetPort: 18_789,
 };
-const expectedCommand = [target.executable, ...buildForwardServiceArgs(target)].join(" ");
-const testHome = process.env.HOME ?? "";
-const testUid = process.getuid?.() ?? 1_000;
-
-function matchingListenerOptions(overrides: Partial<ForwardServiceProcess> = {}) {
-  return {
-    inspectListener: () => ({
-      commandLine: expectedCommand,
-      executable: target.executable,
-      home: testHome,
-      uid: testUid,
-      ...overrides,
-    }),
-  };
-}
 
 describe("OpenShell forward service", () => {
   it("builds the direct ForwardTcp command with explicit gateway authority", () => {
@@ -89,40 +72,6 @@ describe("OpenShell forward service", () => {
       /already occupied/u,
     );
     expect(spawnDetached).not.toHaveBeenCalled();
-  });
-
-  it("matches the exact forward-service listener started by NemoClaw (#11074)", () => {
-    expect(matchesRunningForwardService(target, matchingListenerOptions())).toBe(true);
-  });
-
-  it.each([
-    {
-      name: "different arguments",
-      overrides: {
-        commandLine: [
-          target.executable,
-          ...buildForwardServiceArgs({ ...target, sandboxName: "other" }),
-        ].join(" "),
-      },
-    },
-    {
-      name: "different user",
-      overrides: { uid: testUid + 1 },
-    },
-    {
-      name: "different executable",
-      overrides: { executable: "/bin/sh" },
-    },
-    {
-      name: "different OpenShell home",
-      overrides: { home: `${testHome}-other` },
-    },
-  ])("rejects a listener with $name", ({ overrides }) => {
-    expect(matchesRunningForwardService(target, matchingListenerOptions(overrides))).toBe(false);
-  });
-
-  it("rejects an inconclusive listener inspection", () => {
-    expect(matchesRunningForwardService(target, { inspectListener: () => null })).toBe(false);
   });
 
   it("fails when the detached service does not bind before the deadline", () => {

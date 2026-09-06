@@ -442,57 +442,6 @@ describe("dashboard port reservation", () => {
     await result.reservation?.release();
     assert.deepEqual(released, [18790]);
   });
-
-  it("keeps a matched direct service on the persisted port during reuse (#11074)", async () => {
-    const reservePort = vi.fn();
-    const matchesPersistedForward = vi.fn(() => true);
-
-    const result = await reserveCreateSandboxDashboardPort(
-      {
-        sandboxName: "cursor",
-        controlUiPort: null,
-        chatUiUrlEnv: null,
-        persistedPort: 18789,
-        agentForwardPort: 18789,
-        forwardListOutput: "",
-        registryOccupiedPorts: new Map(),
-        matchesPersistedForward,
-      },
-      reservePort,
-    );
-
-    expect(result).toEqual({
-      preferredPort: 18789,
-      effectivePort: 18789,
-      chatUiUrl: "http://127.0.0.1:18789",
-      reservation: null,
-    });
-    expect(matchesPersistedForward).toHaveBeenCalledWith(18789, "http://127.0.0.1:18789");
-    expect(reservePort).not.toHaveBeenCalled();
-  });
-
-  it("does not reallocate an occupied persisted port when its service does not match", async () => {
-    const reservePort = vi.fn();
-
-    await expect(
-      reserveCreateSandboxDashboardPort(
-        {
-          sandboxName: "cursor",
-          controlUiPort: null,
-          chatUiUrlEnv: null,
-          persistedPort: 18789,
-          agentForwardPort: 18789,
-          forwardListOutput: "",
-          registryOccupiedPorts: new Map(),
-          findAvailablePort: (_sandboxName, preferredPort) =>
-            preferredPort === 18789 ? 18790 : preferredPort,
-          matchesPersistedForward: () => false,
-        },
-        reservePort,
-      ),
-    ).rejects.toThrow(/cannot be reallocated or adopted/u);
-    expect(reservePort).not.toHaveBeenCalled();
-  });
 });
 
 describe("findAvailableDashboardPort multi-gateway registry occupancy", () => {
