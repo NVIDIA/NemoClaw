@@ -569,7 +569,7 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
   }
 
   it.each([
-    ["Docker", undefined, "docker", ["ps"]],
+    ["Docker", { NEMOCLAW_GATEWAY_RUNTIME: "docker" }, "docker", ["ps"]],
     [
       "Podman",
       {
