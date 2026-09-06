@@ -138,6 +138,21 @@ describe("rebuildSandbox flow: target image", () => {
     expect(harness.onboardSpy).not.toHaveBeenCalled();
   });
 
+  it("stops before sandbox mutation when Hermes base-image preflight fails (#11072)", async () => {
+    const harness = createRebuildFlowHarness({
+      sandboxEntry: { agent: "hermes" },
+      baseImagePreflight: { ok: false, imageRef: null, overrideEnvVar: null },
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+    expectNoSandboxDelete(harness.runOpenshellSpy);
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+  });
+
   it("finalizes the retained Hermes image from backup before sandbox deletion (#7803)", async () => {
     const preservedEnv = [
       {

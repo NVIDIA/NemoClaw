@@ -400,12 +400,18 @@ describe("rebuild agent base image preflight", () => {
 
   it("retains a resolved platform digest for the immutable remote handoff (#7144)", () => {
     const platformRef = `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:${"a".repeat(64)}`;
-    const { pinAgentSandboxBaseImageRef } = mockBaseImagePreflight(platformRef);
+    const { ensureAgentBaseImage, pinAgentSandboxBaseImageRef } =
+      mockBaseImagePreflight(platformRef);
 
     const result = ensureRebuildAgentBaseImage("hermes", makeBail(), {
       resolutionHint: { key: "stale-base" } as never,
     });
 
+    expect(ensureAgentBaseImage).toHaveBeenCalledWith(expect.anything(), {
+      allowLocalFallback: false,
+      forceBaseImageRebuild: false,
+      resolutionHint: { key: "stale-base" },
+    });
     expect(pinAgentSandboxBaseImageRef).not.toHaveBeenCalled();
     expect(result).toEqual({
       ok: true,
@@ -466,7 +472,7 @@ describe("rebuild agent base image preflight", () => {
     }
   });
 
-  it("force-rebuilds instead of trusting fresh fallback metadata after a local tag moved", () => {
+  it("rejects a fresh local fallback after a stale Hermes hint (#11072)", () => {
     const sourceRef = "nemoclaw-hermes-sandbox-base-local:3ef2ca87";
     const imageId = `sha256:${"d".repeat(64)}`;
     const canonicalRef = `nemoclaw-hermes-sandbox-base-local:image-${"d".repeat(64)}`;
@@ -480,47 +486,32 @@ describe("rebuild agent base image preflight", () => {
       ...persistedHint,
       imageId,
     };
-    const forcedMetadata = {
-      ...freshFallbackMetadata,
-      ref: canonicalRef,
-    };
-    const forcedTrust = {
-      ref: canonicalRef,
-      provenance: `${"e".repeat(64)}.${"f".repeat(64)}`,
-    };
     const {
       bindLocalAgentBaseImageHandoffToResolution,
       ensureAgentBaseImage,
       pinAgentSandboxBaseImageRef,
     } = mockBaseImagePreflight(sourceRef);
-    ensureAgentBaseImage
-      .mockReturnValueOnce({
-        imageTag: sourceRef,
-        built: false,
-        resolutionMetadata: freshFallbackMetadata,
-      })
-      .mockReturnValueOnce({
-        imageTag: canonicalRef,
-        built: true,
-        resolutionMetadata: forcedMetadata,
-        trustedLocalOverride: forcedTrust,
-      });
+    ensureAgentBaseImage.mockReturnValue({
+      imageTag: sourceRef,
+      built: false,
+      resolutionMetadata: freshFallbackMetadata,
+    });
     pinAgentSandboxBaseImageRef.mockReturnValue(canonicalRef);
 
-    const result = ensureRebuildAgentBaseImage("hermes", makeBail(), {
-      resolutionHint: persistedHint,
-    });
+    expect(() =>
+      ensureRebuildAgentBaseImage("hermes", makeBail(), {
+        resolutionHint: persistedHint,
+      }),
+    ).toThrow("Hermes rebuild requires the release-pinned immutable base image");
 
     expect(bindLocalAgentBaseImageHandoffToResolution).not.toHaveBeenCalled();
-    expect(ensureAgentBaseImage).toHaveBeenCalledTimes(2);
-    expect(ensureAgentBaseImage).toHaveBeenNthCalledWith(2, expect.anything(), {
-      forceBaseImageRebuild: true,
+    expect(ensureAgentBaseImage).toHaveBeenCalledOnce();
+    expect(ensureAgentBaseImage).toHaveBeenCalledWith(expect.anything(), {
+      allowLocalFallback: false,
+      forceBaseImageRebuild: false,
+      resolutionHint: persistedHint,
     });
-    expect(result).toMatchObject({
-      imageRef: canonicalRef,
-      resolutionMetadata: forcedMetadata,
-      trustedLocalOverride: forcedTrust,
-    });
+    expect(pinAgentSandboxBaseImageRef).not.toHaveBeenCalled();
   });
 
   it("reuses the canonical forced-build metadata on the next offline rebuild", () => {
@@ -555,6 +546,7 @@ describe("rebuild agent base image preflight", () => {
 
     expect(ensureAgentBaseImage).toHaveBeenCalledOnce();
     expect(ensureAgentBaseImage).toHaveBeenCalledWith(expect.anything(), {
+      allowLocalFallback: false,
       forceBaseImageRebuild: false,
       resolutionHint: resolutionMetadata,
     });

@@ -183,7 +183,7 @@ export function verifyRebuildHermesOldBaseIsStale(
     pinnedRemoteRef: oldMetadata.pinnedRemoteRef,
     requireOpenshellSandboxAbi: oldMetadata.requireOpenshellSandboxAbi,
     minGlibcVersion: oldMetadata.minGlibcVersion,
-    inspected,
+    inspectLocalImage: () => inspected,
   });
   if (!oldValidation.ok) {
     throw new Error(`old Hermes fixture identity was invalid: ${oldValidation.reason}`);
@@ -196,7 +196,7 @@ export function verifyRebuildHermesOldBaseIsStale(
     pinnedRemoteRef: current.pinnedRemoteRef,
     requireOpenshellSandboxAbi: current.requireOpenshellSandboxAbi,
     minGlibcVersion: current.minGlibcVersion,
-    inspected,
+    inspectLocalImage: () => inspected,
   });
   if (currentValidation.ok || currentValidation.reason !== "key_mismatch") {
     throw new Error("old Hermes fixture was not classified stale by resolution key mismatch");
