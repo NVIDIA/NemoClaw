@@ -51,7 +51,7 @@ OpenShell resolves the placeholder at egress.
 After `mcp add` commits, NemoClaw performs a fresh status inspection and runs the gated credential-resolution probe once unless you pass `--no-probe`.
 If readiness is inconclusive, the command reports a probe skip without failing the committed add.
 
-Pass `--deny-tool` more than once to block exact tool names or OpenShell glob patterns at the MCP proxy:
+Pass `--deny-tool` once for each exact tool name or OpenShell glob pattern to block at the MCP proxy:
 
 ```bash
 export DOORDASH_MCP_TOKEN='replace-with-secret-manager-value'

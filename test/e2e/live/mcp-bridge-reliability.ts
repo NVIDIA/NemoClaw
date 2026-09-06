@@ -1,9 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { buildHermesMcpStatusCommand } from "../../../src/lib/actions/sandbox/mcp-bridge-adapter-status";
+import {
+  buildHermesMcpStatusCommand,
+  OPENCLAW_MCPORTER_ROOT,
+} from "../../../src/lib/actions/sandbox/mcp-bridge-adapter-status";
 import { buildMcpCredentialRevisionObservationCommand } from "../../../src/lib/actions/sandbox/mcp-bridge-provider";
 import type { McpAttachedCredentialRevision } from "../../../src/lib/actions/sandbox/mcp-bridge-provider-readiness";
+import { shellQuote } from "../../../src/lib/core/shell-quote";
 import type { McpBridgeEntry } from "../../../src/lib/state/registry";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
@@ -11,17 +15,67 @@ import { assertExitZero } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { MCP_BRIDGE_TEST_CREDENTIALS } from "../fixtures/mcp-bridge-credentials.ts";
+import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { runBoundedRetry, type RetryEvidence } from "../../../tools/e2e/retry-evidence.mts";
 import {
   type HermesMcpCommandResult,
   isHermesGatewayDrainingResponse,
 } from "./mcp-bridge-hermes-http.ts";
+import { MCP_PROVIDER_REWRITE_PROBE_SOURCE } from "./mcp-provider-rewrite-probe.ts";
 
 const ANSI_ESCAPE = /\u001b\[[0-9;]*m/gu;
 const HERMES_GATEWAY_DRAINING_RETRIES = 3;
 const HERMES_GATEWAY_DRAINING_RETRY_DELAY_MS = 5_000;
 const HERMES_MCP_STATUS_RETRY_DELAY_MS = 5_000;
 export const MCP_BRIDGE_TEST_REDACTION_VALUES = Object.values(MCP_BRIDGE_TEST_CREDENTIALS);
+
+export async function runDeniedOpenClawToolCall(options: {
+  artifactName: string;
+  deniedTool: string;
+  sandbox: SandboxClient;
+  sandboxName: string;
+  serverName: string;
+  requests: ReadonlyArray<{ rpcMethod?: string }>;
+}): Promise<{ after: number; before: number; result: ShellProbeResult }> {
+  const countToolCalls = () =>
+    options.requests.filter((request) => request.rpcMethod === "tools/call").length;
+  const before = countToolCalls();
+  const result = await options.sandbox.execShell(
+    options.sandboxName,
+    trustedSandboxShellScript(
+      `nemoclaw-start mcporter --root ${shellQuote(OPENCLAW_MCPORTER_ROOT)} call ${options.serverName}.${options.deniedTool} --args '{}' --output json`,
+    ),
+    {
+      artifactName: options.artifactName,
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 90_000,
+    },
+  );
+  return { after: countToolCalls(), before, result };
+}
+
+export async function runMcpProviderRewriteProbe(
+  sandbox: SandboxClient,
+  sandboxName: string,
+  targetUrl: string,
+  method: string,
+  expectation: "allow" | "deny" | "deny-strict",
+  artifactName: string,
+  credentialKey = "FAKE_MCP_SECRET",
+): Promise<ShellProbeResult> {
+  return sandbox.execShell(
+    sandboxName,
+    trustedSandboxShellScript(
+      [
+        "set -eu",
+        `nemoclaw-start node - ${shellQuote(targetUrl)} ${shellQuote(method)} ${shellQuote(expectation)} ${shellQuote(credentialKey)} <<'NEMOCLAW_MCP_PROVIDER_REWRITE_PROBE'`,
+        MCP_PROVIDER_REWRITE_PROBE_SOURCE,
+        "NEMOCLAW_MCP_PROVIDER_REWRITE_PROBE",
+      ].join("\n"),
+    ),
+    { artifactName, env: buildAvailabilityProbeEnv(), timeoutMs: 90_000 },
+  );
+}
 const OPENCLAW_BASELINE_SCOPE_CAUSE =
   "its canonical CLI device did not receive the required baseline scopes";
 const HERMES_RESTART_TRANSPORT_FAILURE_SUFFIX = [

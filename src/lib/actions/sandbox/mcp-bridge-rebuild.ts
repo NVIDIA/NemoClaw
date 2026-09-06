@@ -68,6 +68,41 @@ function policyDocumentsMatch(left: string, right: string): boolean {
   }
 }
 
+function networkPolicyEntries(content: string): Record<string, unknown> | null {
+  try {
+    const parsed = YAML.parse(content)?.network_policies;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function assertMcpRebuildPolicyMatchesRegisteredIntent(
+  sandboxName: string,
+  policyHandoff: string,
+  entries: readonly McpBridgeEntry[],
+): void {
+  const current = networkPolicyEntries(policyHandoff);
+  for (const entry of entries) {
+    const expectedPolicy = assertGeneratedPolicyRegistrationMutationSafe(sandboxName, entry);
+    const expected = networkPolicyEntries(expectedPolicy.content);
+    const key = buildMcpBridgePolicyKey(entry.server);
+    if (
+      !current ||
+      !expected ||
+      !Object.hasOwn(current, key) ||
+      !Object.hasOwn(expected, key) ||
+      !isDeepStrictEqual(current[key], expected[key])
+    ) {
+      throw new McpBridgeError(
+        `MCP server '${entry.server}' generated policy does not match its registered intent. Run \`nemoclaw ${sandboxName} mcp restart ${entry.server}\` before rebuilding the sandbox.`,
+      );
+    }
+  }
+}
+
 function policyWithoutManagedMcpEntries(
   policyHandoff: string,
   entries: readonly McpBridgeEntry[],
@@ -224,6 +259,7 @@ export async function prepareMcpBridgesForRebuild(
       `Cannot prepare the MCP rebuild policy handoff for sandbox '${sandboxName}' because its live OpenShell policy contains a literal credential value. Replace literal credentials with supported OpenShell credential bindings or resolver placeholders, then retry the rebuild.`,
     );
   }
+  assertMcpRebuildPolicyMatchesRegisteredIntent(sandboxName, policyHandoff, entries);
   const expectedTeardownPolicy = policyWithoutManagedMcpEntries(policyHandoff, entries);
   const detached: McpBridgeEntry[] = [];
   const scrubbedAdapters: McpScrubbedAdapterEntry[] = [];

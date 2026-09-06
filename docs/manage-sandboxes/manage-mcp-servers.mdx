@@ -138,6 +138,7 @@ The command changes only the generated OpenShell policy and persisted denied-too
 It does not change the endpoint, credential, address pins, provider, or agent adapter.
 If policy activation fails after NemoClaw records the new intent, the command reports the failure and preserves that intent.
 Run `$$nemoclaw my-sandbox mcp restart doordash` to retry policy activation.
+Rebuild rejects a generated policy that does not match the persisted intent, so run the reported restart before rebuilding.
 
 Clear every denied-tool rule explicitly:
 
