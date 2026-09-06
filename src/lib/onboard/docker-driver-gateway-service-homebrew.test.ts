@@ -88,6 +88,7 @@ function queryHomebrewService(records: HomebrewServiceRecord[]) {
 describe("OpenShell Homebrew service boundary", () => {
   it.each([
     ["a null document", "null"],
+    ["a Boolean document", "true"],
     ["no formula list", "{}"],
     ["a non-array formula list", '{"formulae":{}}'],
     ["a null formula entry", '{"formulae":[null]}'],
