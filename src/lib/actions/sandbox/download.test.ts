@@ -236,15 +236,15 @@ describe("downloadFromSandbox", () => {
     },
   );
 
-  it.runIf(process.platform !== "win32").each(["linked/", "linked/."])(
-    "rejects a directory source link written as %s before download (#10636)",
+  it.runIf(process.platform !== "win32").each(["linked/", "linked/.", "linked/nested"])(
+    "rejects a source path with a link component written as %s before download (#10636)",
     async (sandboxPath) => {
       const probeRoot = await fs.promises.mkdtemp(
         path.join(os.tmpdir(), "nemoclaw-download-root-link-probe-"),
       );
       try {
         const target = path.join(probeRoot, "target");
-        await fs.promises.mkdir(target);
+        await fs.promises.mkdir(path.join(target, "nested"), { recursive: true });
         await fs.promises.writeFile(path.join(target, "inside.txt"), "target contents");
         await fs.promises.symlink(target, path.join(probeRoot, "linked"));
 

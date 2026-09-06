@@ -24,9 +24,10 @@ import {
   type SandboxSourceKind,
 } from "./sessions/download-verify";
 
-// Directory downloads archive every member. Scan without following links,
-// normalize relative roots for `find`, and stop at the first unsupported entry.
-// Probe failures fail closed.
+// Reject links in the source path before classifying it. Directory downloads
+// archive every member, so scan without following links, normalize relative
+// roots for `find`, and stop at the first unsupported entry. Probe failures
+// fail closed.
 const SANDBOX_SOURCE_PROBE_SCRIPT = [
   "p=$1",
   "link_probe=$p",
@@ -38,7 +39,26 @@ const SANDBOX_SOURCE_PROBE_SCRIPT = [
   "  esac",
   '  [ -n "$link_probe" ] || link_probe=/',
   "done",
-  'if [ -L "$link_probe" ]; then printf unsupported; exit 0; fi',
+  'case "$link_probe" in',
+  '  /*) link_prefix=/; link_remainder=${link_probe#/} ;;',
+  '  *) link_prefix=; link_remainder=$link_probe ;;',
+  "esac",
+  "set -f",
+  "old_ifs=$IFS",
+  "IFS=/",
+  "set -- $link_remainder",
+  "IFS=$old_ifs",
+  'for link_part in "$@"; do',
+  '  [ -n "$link_part" ] || continue',
+  '  if [ "$link_prefix" = "/" ]; then',
+  '    link_prefix=/$link_part',
+  '  elif [ -n "$link_prefix" ]; then',
+  '    link_prefix=$link_prefix/$link_part',
+  "  else",
+  '    link_prefix=$link_part',
+  "  fi",
+  '  if [ -L "$link_prefix" ]; then printf unsupported; exit 0; fi',
+  "done",
   'if [ -d "$p" ]; then',
   '  case "$p" in',
   "    /*) root=$p ;;",
