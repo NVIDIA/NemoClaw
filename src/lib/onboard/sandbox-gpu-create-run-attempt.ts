@@ -76,6 +76,13 @@ export type SandboxGpuCreateAttemptState = {
 const REPLACEMENT_STABLE_READY_POLLS = 2;
 const SANDBOX_READY_PROBE_TIMEOUT_MS = 5_000;
 const CREATED_SANDBOX_PUBLICATION_POLL_INTERVAL_SECONDS = 1;
+// Trace artifacts redact long hexadecimal values. This 64-bit digest prefix is
+// diagnostic correlation only; the full fingerprint remains the recovery authority.
+const TRACE_IDENTITY_CORRELATION_HEX_LENGTH = 16;
+
+function traceSandboxIdentityCorrelation(sandboxId: string): string {
+  return fingerprintSandboxRecreateValue(sandboxId).slice(0, TRACE_IDENTITY_CORRELATION_HEX_LENGTH);
+}
 
 async function streamSandboxCreateWithPublicImageCredentialIsolation(
   isolate: boolean,
@@ -702,8 +709,8 @@ export function createSandboxGpuCreateAttemptRunner(
         addTraceEvent("sandbox_create_identity_settlement", {
           create_operation_state: createOperationState,
           identity_state: "failed",
-          returned_identity_fingerprint: readyCheckCreatedSandboxId
-            ? fingerprintSandboxRecreateValue(readyCheckCreatedSandboxId)
+          returned_identity_correlation: readyCheckCreatedSandboxId
+            ? traceSandboxIdentityCorrelation(readyCheckCreatedSandboxId)
             : null,
         });
         throw error;
@@ -712,7 +719,7 @@ export function createSandboxGpuCreateAttemptRunner(
         addTraceEvent("sandbox_create_identity_settlement", {
           create_operation_state: createOperationState,
           identity_state: "failed",
-          returned_identity_fingerprint: fingerprintSandboxRecreateValue(
+          returned_identity_correlation: traceSandboxIdentityCorrelation(
             readyCheckCreatedSandboxId,
           ),
         });
@@ -721,7 +728,7 @@ export function createSandboxGpuCreateAttemptRunner(
       addTraceEvent("sandbox_create_identity_settlement", {
         create_operation_state: createOperationState,
         identity_state: "matched",
-        returned_identity_fingerprint: fingerprintSandboxRecreateValue(sandboxId),
+        returned_identity_correlation: traceSandboxIdentityCorrelation(sandboxId),
       });
       return sandboxId;
     };
@@ -761,7 +768,9 @@ export function createSandboxGpuCreateAttemptRunner(
                 addTraceEvent("sandbox_create_ready_identity_observation", {
                   create_operation_state: "ready",
                   identity_state: observation.state,
-                  returned_identity_fingerprint: returnedIdentityFingerprint,
+                  returned_identity_correlation: observedSandboxId
+                    ? traceSandboxIdentityCorrelation(observedSandboxId)
+                    : null,
                 });
                 readyCheckIdentityTraceSignature = identityTraceSignature;
               }

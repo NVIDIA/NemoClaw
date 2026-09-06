@@ -78,6 +78,7 @@ import { fingerprintSandboxRecreateValue } from "./sandbox-recreate-transaction"
 
 const ALPHA_SANDBOX_ID_FINGERPRINT =
   "8174fa2a5d65755138d8339e086c03d736633130b22dca10952e80e74750c01d";
+const ALPHA_SANDBOX_ID_TRACE_CORRELATION = ALPHA_SANDBOX_ID_FINGERPRINT.slice(0, 16);
 
 function sandboxListJson(
   sandboxId: string,
@@ -488,12 +489,12 @@ describe("created sandbox identity gate", () => {
     expect(mocks.addTraceEvent).toHaveBeenCalledWith("sandbox_create_ready_identity_observation", {
       create_operation_state: "ready",
       identity_state: "pending",
-      returned_identity_fingerprint: null,
+      returned_identity_correlation: null,
     });
     expect(mocks.addTraceEvent).toHaveBeenCalledWith("sandbox_create_identity_settlement", {
       create_operation_state: "ready",
       identity_state: "matched",
-      returned_identity_fingerprint: ALPHA_SANDBOX_ID_FINGERPRINT,
+      returned_identity_correlation: ALPHA_SANDBOX_ID_TRACE_CORRELATION,
     });
   });
 
@@ -531,7 +532,7 @@ describe("created sandbox identity gate", () => {
     expect(mocks.addTraceEvent).toHaveBeenCalledWith("sandbox_create_identity_settlement", {
       create_operation_state: "ready",
       identity_state: "failed",
-      returned_identity_fingerprint: null,
+      returned_identity_correlation: null,
     });
   });
 
@@ -643,9 +644,12 @@ describe("created sandbox identity gate", () => {
 
   it.each([
     ["returns false", (): boolean => false],
-    ["throws", (): boolean => {
-      throw new Error("recovery writer failed");
-    }],
+    [
+      "throws",
+      (): boolean => {
+        throw new Error("recovery writer failed");
+      },
+    ],
   ] as const)(
     "blocks the create after retained recovery persistence %s (#10769)",
     async (_failureMode, persistRecovery) => {
@@ -875,7 +879,7 @@ describe("created sandbox identity gate", () => {
       expect(mocks.addTraceEvent).toHaveBeenCalledWith("sandbox_create_identity_settlement", {
         create_operation_state: "ready",
         identity_state: "failed",
-        returned_identity_fingerprint: expectedIdentityFingerprint,
+        returned_identity_correlation: expectedIdentityFingerprint?.slice(0, 16) ?? null,
       });
     },
   );
