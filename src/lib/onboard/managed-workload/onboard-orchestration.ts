@@ -203,6 +203,9 @@ export async function prepareSandboxWorkloadForPortableLifecycle(
   portableLifecycle: boolean,
 ): Promise<PreparedSandboxWorkloadSource> {
   const workload = await runtime.ensurePreparedWorkload();
+  if (workload.source.kind === "portable-image") {
+    throw new Error("Portable image workload activation is not enabled.");
+  }
   assertPortableManagedBootstrapNotSelected(
     portableLifecycle,
     workload.source.kind === "managed-image",
@@ -221,6 +224,9 @@ export async function prepareHermesPortableSandboxWorkloadForLifecycle(
     throw new Error(
       "Hermes portable onboarding cannot use managed-image bootstrap because that path requires Docker lifecycle operations.",
     );
+  }
+  if (workload.source.kind === "portable-image") {
+    throw new Error("Portable image workload activation is not enabled.");
   }
   if (
     workload.source.reason !== "runtime-unsupported" ||
@@ -446,6 +452,9 @@ function requireLegacyBuildContext(
 export async function prepareOnboardSandboxWorkloadLaunch(
   input: PrepareOnboardSandboxWorkloadLaunchInput,
 ): Promise<PreparedOnboardSandboxWorkloadLaunch> {
+  if (input.workload.source.kind === "portable-image") {
+    throw new Error("Portable image workload activation is not enabled.");
+  }
   const log = input.log ?? console.log;
   const legacyBuildContext =
     input.workload.source.kind === "legacy-dockerfile"
@@ -688,6 +697,9 @@ export function resolveOnboardSandboxWorkloadReceipt(input: {
         shared: false,
       },
     };
+  }
+  if (input.workload.source.kind === "portable-image") {
+    throw new Error("Portable image workload activation is not enabled.");
   }
   const profile = input.runtime.ensurePreparedProfile(input.workload);
   if (!profile) throw new Error("Managed sandbox workload is missing its startup profile.");

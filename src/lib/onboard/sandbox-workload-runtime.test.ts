@@ -10,6 +10,7 @@ import {
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "./runtime-provider/current";
 import { createRuntimeProviderBundleRegistry } from "./runtime-provider/registry";
 import { resolveSandboxWorkloadRuntimeCapabilities } from "./workload/runtime";
+import type { PortableAgentRuntimeProviderSupport } from "./workload/portable-agent-runtime";
 import { createInMemoryRuntimeProviderBundle } from "../../../test/helpers/runtime-provider-bundle";
 
 const AMD64_MANAGED_IMAGE_V1_SUPPORT = {
@@ -26,6 +27,18 @@ const COMPLETE_MANAGED_IMAGE_V1_SUPPORT = {
   ...AMD64_MANAGED_IMAGE_V1_SUPPORT,
   platforms: MANAGED_IMAGE_PLATFORMS,
 } as const;
+const PORTABLE_AGENT_RUNTIME_V1_SUPPORT = {
+  exactDigestReferences: true,
+  agents: ["hermes"],
+  platforms: MANAGED_IMAGE_PLATFORMS,
+  contractVersions: [1],
+  capabilityContractVersions: [1],
+  tokenizedStartupCommands: true,
+  openshellSandboxCommand: true,
+  openshellNonRootIdentity: true,
+  openshellWorkspaceOwnership: true,
+  ownerOnlyPrivateState: true,
+} as const satisfies PortableAgentRuntimeProviderSupport;
 
 describe("sandbox workload runtime capabilities", () => {
   it("registers managed-image v1 capabilities for the Docker compute driver (#7744)", () => {
@@ -36,6 +49,7 @@ describe("sandbox workload runtime capabilities", () => {
       managedImageSelectionPolicy: "require-managed",
       legacyDockerfileBuilds: true,
       managedImages: AMD64_MANAGED_IMAGE_V1_SUPPORT,
+      portableAgentRuntime: null,
     });
   });
 
@@ -47,6 +61,7 @@ describe("sandbox workload runtime capabilities", () => {
       managedImageSelectionPolicy: "require-managed",
       legacyDockerfileBuilds: true,
       managedImages: ARM64_MANAGED_IMAGE_V1_SUPPORT,
+      portableAgentRuntime: null,
     });
   });
 
@@ -58,6 +73,7 @@ describe("sandbox workload runtime capabilities", () => {
       managedImageSelectionPolicy: "require-managed",
       legacyDockerfileBuilds: true,
       managedImages: null,
+      portableAgentRuntime: null,
     });
   });
 
@@ -67,6 +83,7 @@ describe("sandbox workload runtime capabilities", () => {
       managedImageSelectionPolicy: "prefer-managed",
       legacyDockerfileBuilds: true,
       managedImages: null,
+      portableAgentRuntime: null,
     });
   });
 
@@ -76,23 +93,24 @@ describe("sandbox workload runtime capabilities", () => {
       managedImageSelectionPolicy: "require-managed",
       legacyDockerfileBuilds: false,
       managedImages: null,
+      portableAgentRuntime: null,
     });
   });
 
-  it.each([
-    "__proto__",
-    "constructor",
-    "toString",
-  ])("fails inherited-object driver name %s closed (#7744)", (driverName) => {
-    expect(resolveSandboxWorkloadRuntimeCapabilities({ driverName })).toEqual({
-      driverName,
-      managedImageSelectionPolicy: "require-managed",
-      legacyDockerfileBuilds: false,
-      managedImages: null,
-    });
-  });
+  it.each(["__proto__", "constructor", "toString"])(
+    "fails inherited-object driver name %s closed (#7744)",
+    (driverName) => {
+      expect(resolveSandboxWorkloadRuntimeCapabilities({ driverName })).toEqual({
+        driverName,
+        managedImageSelectionPolicy: "require-managed",
+        legacyDockerfileBuilds: false,
+        managedImages: null,
+        portableAgentRuntime: null,
+      });
+    },
+  );
 
-  it("projects a complete portable bundle into workload capabilities (#7744)", () => {
+  it("projects a complete portable bundle into workload capabilities (#11079)", () => {
     const driverName = "portable-test";
     const providers = createRuntimeProviderBundleRegistry([
       ...Object.entries(CURRENT_RUNTIME_PROVIDER_BUNDLES),
@@ -102,6 +120,7 @@ describe("sandbox workload runtime capabilities", () => {
           providerId: driverName,
           workloadProfile: {
             support: COMPLETE_MANAGED_IMAGE_V1_SUPPORT,
+            portableAgentRuntimeSupport: PORTABLE_AGENT_RUNTIME_V1_SUPPORT,
             hostArchitectures: ["amd64"],
             managedImageSelectionPolicy: "require-managed",
             legacyDockerfileBuilds: false,
@@ -115,6 +134,13 @@ describe("sandbox workload runtime capabilities", () => {
       managedImageSelectionPolicy: "require-managed",
       legacyDockerfileBuilds: false,
       managedImages: AMD64_MANAGED_IMAGE_V1_SUPPORT,
+      portableAgentRuntime: {
+        ...PORTABLE_AGENT_RUNTIME_V1_SUPPORT,
+        agents: ["hermes"],
+        platforms: ["linux/amd64"],
+        contractVersions: [1],
+        capabilityContractVersions: [1],
+      },
     });
   });
 
@@ -132,5 +158,6 @@ describe("sandbox workload runtime capabilities", () => {
 
     expect(first.managedImages).not.toBe(second.managedImages);
     expect(first.managedImages?.platforms).not.toBe(second.managedImages?.platforms);
+    expect(first.portableAgentRuntime).toBeNull();
   });
 });

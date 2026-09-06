@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
+import { loadAgent } from "../agent/defs";
 import {
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
   MANAGED_IMAGE_CONTRACT_VERSION,
@@ -20,6 +21,11 @@ import {
   resolveSandboxWorkloadSource,
   type SandboxWorkloadRuntimeCapabilities,
 } from "./workload/source";
+import {
+  portableAgentDefinitionSha256,
+  type PortableAgentRuntimeContractV1,
+  type PortableAgentRuntimeProviderSupport,
+} from "./workload/portable-agent-runtime";
 
 const SOURCE_REVISION = "2f03907c37822ea6f1ac9d1bf5c82a4a4568585f";
 const MANAGED_IMAGE_PLATFORM = MANAGED_IMAGE_PLATFORMS[0];
@@ -71,23 +77,126 @@ function managedRuntime(driverName: string): SandboxWorkloadRuntimeCapabilities 
   };
 }
 
+function portableHermesContract(): PortableAgentRuntimeContractV1 {
+  const repository = "ghcr.io/nvidia/nemoclaw-fixtures/hermes-portable";
+  const digest = `sha256:${"8d".repeat(32)}` as const;
+  return {
+    contractVersion: 1,
+    capabilityContractVersion: 1,
+    agent: "hermes",
+    agentVersion: "0.20.6",
+    agentDefinitionSha256: portableAgentDefinitionSha256(loadAgent("hermes")),
+    platform: MANAGED_IMAGE_PLATFORM,
+    image: {
+      repository,
+      digest,
+      reference: `${repository}@${digest}`,
+    },
+    startup: {
+      authority: "agent-definition",
+      argv: ["hermes", "gateway", "run"],
+      workingDirectory: "/sandbox",
+    },
+    filesystem: {
+      homeDirectory: "/sandbox",
+      configDirectory: "/sandbox/.hermes",
+      workspaceOwnership: "openshell",
+      privateState: "owner-only",
+    },
+    runtimeIdentity: "non-root",
+    credentialEnvironmentNames: ["API_SERVER_KEY"],
+    health: {
+      url: "http://localhost:8642/health",
+      port: 8642,
+      timeoutSeconds: 90,
+    },
+  };
+}
+
+function portableSupport(): PortableAgentRuntimeProviderSupport {
+  return {
+    exactDigestReferences: true,
+    agents: ["hermes"],
+    platforms: [MANAGED_IMAGE_PLATFORM],
+    contractVersions: [1],
+    capabilityContractVersions: [1],
+    tokenizedStartupCommands: true,
+    openshellSandboxCommand: true,
+    openshellNonRootIdentity: true,
+    openshellWorkspaceOwnership: true,
+    ownerOnlyPrivateState: true,
+  };
+}
+
 describe("sandbox workload source resolution", () => {
-  it.each(
-    SHIPPED_MANAGED_IMAGE_AGENTS,
-  )("selects the published managed image for stock %s on a capable runtime (#7744)", (agent) => {
+  it("selects an exact portable Hermes image only through advertised provider semantics (#11079)", () => {
+    const contract = portableHermesContract();
     const source = resolveSandboxWorkloadSource({
-      agentName: agent,
-      legacyDockerfilePath: `agents/${agent}/Dockerfile`,
-      runtime: managedRuntime("podman"),
+      agentName: "hermes",
+      agentDefinition: loadAgent("hermes"),
+      legacyDockerfilePath: "agents/hermes/Dockerfile",
+      portableAgentRuntimeContract: contract,
+      runtime: {
+        ...managedRuntime("qualification-fixture"),
+        portableAgentRuntime: portableSupport(),
+      },
       catalog: CATALOG,
     });
 
     expect(source).toEqual({
-      kind: "managed-image",
-      reference: contractFor(agent).reference,
-      contract: contractFor(agent),
+      kind: "portable-image",
+      reference: contract.image.reference,
+      contract,
     });
   });
+
+  it("rejects portable Hermes selection when the provider has no qualification (#11079)", () => {
+    expect(() =>
+      resolveSandboxWorkloadSource({
+        agentName: "hermes",
+        agentDefinition: loadAgent("hermes"),
+        legacyDockerfilePath: "agents/hermes/Dockerfile",
+        portableAgentRuntimeContract: portableHermesContract(),
+        runtime: managedRuntime("docker"),
+        catalog: CATALOG,
+      }),
+    ).toThrow("does not advertise portable agent runtimes");
+  });
+
+  it("rejects conflicting portable contract and Dockerfile authorities (#11079)", () => {
+    expect(() =>
+      resolveSandboxWorkloadSource({
+        agentName: "hermes",
+        agentDefinition: loadAgent("hermes"),
+        legacyDockerfilePath: "agents/hermes/Dockerfile",
+        customDockerfilePath: "/workspace/custom/Dockerfile",
+        portableAgentRuntimeContract: portableHermesContract(),
+        runtime: {
+          ...managedRuntime("qualification-fixture"),
+          portableAgentRuntime: portableSupport(),
+        },
+        catalog: CATALOG,
+      }),
+    ).toThrow("cannot both own workload selection");
+  });
+
+  it.each(SHIPPED_MANAGED_IMAGE_AGENTS)(
+    "selects the published managed image for stock %s on a capable runtime (#7744)",
+    (agent) => {
+      const source = resolveSandboxWorkloadSource({
+        agentName: agent,
+        legacyDockerfilePath: `agents/${agent}/Dockerfile`,
+        runtime: managedRuntime("podman"),
+        catalog: CATALOG,
+      });
+
+      expect(source).toEqual({
+        kind: "managed-image",
+        reference: contractFor(agent).reference,
+        contract: contractFor(agent),
+      });
+    },
+  );
 
   it("uses the same contract with an MXC-shaped capable driver (#7744)", () => {
     const source = resolveSandboxWorkloadSource({
@@ -246,38 +355,40 @@ describe("sandbox workload source resolution", () => {
     ).toThrow("failed closed validation");
   });
 
-  it.each(
-    CANDIDATE_MANAGED_IMAGE_AGENTS,
-  )("refuses candidate %s while candidate selection is disabled (#7927)", (agent) => {
-    expect(() =>
-      resolveSandboxWorkloadSource({
+  it.each(CANDIDATE_MANAGED_IMAGE_AGENTS)(
+    "refuses candidate %s while candidate selection is disabled (#7927)",
+    (agent) => {
+      expect(() =>
+        resolveSandboxWorkloadSource({
+          agentName: agent,
+          legacyDockerfilePath: `agents/${agent}/Dockerfile`,
+          runtime: managedRuntime("docker"),
+          catalog: { ...CATALOG, [agent]: contractFor(agent) },
+        }),
+      ).toThrow(
+        `Managed image workload is required for '${agent}', but the selected agent is a release candidate and candidate selection is disabled.`,
+      );
+    },
+  );
+
+  it.each(CANDIDATE_MANAGED_IMAGE_AGENTS)(
+    "selects the exact candidate digest for %s behind the gate (#7927)",
+    (agent) => {
+      const source = resolveSandboxWorkloadSource({
         agentName: agent,
         legacyDockerfilePath: `agents/${agent}/Dockerfile`,
         runtime: managedRuntime("docker"),
         catalog: { ...CATALOG, [agent]: contractFor(agent) },
-      }),
-    ).toThrow(
-      `Managed image workload is required for '${agent}', but the selected agent is a release candidate and candidate selection is disabled.`,
-    );
-  });
+        candidateAgentsEnabled: true,
+      });
 
-  it.each(
-    CANDIDATE_MANAGED_IMAGE_AGENTS,
-  )("selects the exact candidate digest for %s behind the gate (#7927)", (agent) => {
-    const source = resolveSandboxWorkloadSource({
-      agentName: agent,
-      legacyDockerfilePath: `agents/${agent}/Dockerfile`,
-      runtime: managedRuntime("docker"),
-      catalog: { ...CATALOG, [agent]: contractFor(agent) },
-      candidateAgentsEnabled: true,
-    });
-
-    expect(source).toEqual({
-      kind: "managed-image",
-      reference: contractFor(agent).reference,
-      contract: contractFor(agent),
-    });
-  });
+      expect(source).toEqual({
+        kind: "managed-image",
+        reference: contractFor(agent).reference,
+        contract: contractFor(agent),
+      });
+    },
+  );
 
   it("never builds a host Dockerfile for a gated candidate on a buildless runtime (#7927)", () => {
     expect(() =>
