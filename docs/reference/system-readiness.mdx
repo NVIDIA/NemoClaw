@@ -153,7 +153,7 @@ It is `absent` when the proof fails or the host has no NVIDIA GPU, and `unknown`
 The read-only `host probe` command does not pull or start the container-backed WSL GPU proof, so a host that needs that proof reports this capability as `unknown`.
 Onboarding can run the bounded proof only after its current host and gateway readiness checks admit the run.
 
-The `host.platform.n1x_wsl` qualification applies when the bounded CUDA proof validates one GPU whose NVIDIA identity contains `RTX Spark N1X`.
+The `host.platform.n1x_wsl` qualification applies when the bounded CUDA proof validates one GPU whose normalized NVIDIA identity is either `NVIDIA RTX Spark N1X` or `NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)`.
 It is `qualified` only for Linux ARM64 WSL with reachable Docker Desktop and the same successful GPU proof.
 The capability is `present` only when that qualification passes.
 Managed llama.cpp admission also requires `host.platform.wsl_gpu_passthrough` to be `present`, so selection cannot reuse an unproved GPU name.
