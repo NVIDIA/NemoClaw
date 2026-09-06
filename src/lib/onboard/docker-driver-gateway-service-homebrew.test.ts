@@ -91,7 +91,9 @@ describe("OpenShell Homebrew service boundary", () => {
     ["a Boolean document", "true"],
     ["no formula list", "{}"],
     ["a non-array formula list", '{"formulae":{}}'],
+    ["no requested formula", '{"formulae":[]}'],
     ["a null formula entry", '{"formulae":[null]}'],
+    ["a Boolean formula entry", '{"formulae":[true]}'],
   ])("rejects valid JSON with %s (#11129)", (_case, stdout) => {
     const detectService = () =>
       hasOpenShellGatewayUserService({

@@ -635,7 +635,12 @@ function resolveOfficialHomebrewFormulaPaths(
     const formula = formulae.find(
       (candidate) => candidate.name === OPENSHELL_GATEWAY_HOMEBREW_SERVICE,
     );
-    if (formula?.tap !== OPENSHELL_GATEWAY_HOMEBREW_TAP) {
+    if (!formula) {
+      throw new OpenShellGatewayServiceTrustError(
+        "OpenShell Homebrew formula identity check returned invalid data",
+      );
+    }
+    if (formula.tap !== OPENSHELL_GATEWAY_HOMEBREW_TAP) {
       throw new OpenShellGatewayServiceTrustError(
         `OpenShell Homebrew formula must come from ${OPENSHELL_GATEWAY_HOMEBREW_TAP}`,
       );
