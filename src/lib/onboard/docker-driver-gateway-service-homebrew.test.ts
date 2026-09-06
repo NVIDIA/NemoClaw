@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  getTrustedActiveOpenShellGatewayUserServiceIdentity,
   hasOpenShellGatewayUserService,
   OPENSHELL_GATEWAY_HOMEBREW_FORMULA_SHA256,
   type SpawnSyncLikeResult,
@@ -21,6 +22,46 @@ function officialFormulaInfo(): SpawnSyncLikeResult {
     "",
     JSON.stringify({ formulae: [{ name: "openshell", tap: "nvidia/openshell" }] }),
   );
+}
+
+interface HomebrewServiceRecord {
+  loaded: boolean;
+  name: string;
+  pid: number;
+  running: boolean;
+  service_name: string;
+}
+
+function serviceRecord(overrides: Partial<HomebrewServiceRecord> = {}): HomebrewServiceRecord {
+  return {
+    loaded: true,
+    name: "openshell",
+    pid: 4242,
+    running: true,
+    service_name: "homebrew.mxcl.openshell",
+    ...overrides,
+  };
+}
+
+function queryHomebrewService(records: HomebrewServiceRecord[]) {
+  const formulaPrefix = "/opt/homebrew/opt/openshell";
+  const gatewayBin = `${formulaPrefix}/bin/openshell-gateway`;
+  const spawnSyncImpl = vi.fn((_command: string, args: string[]) => {
+    const responses = {
+      info: officialFormulaInfo(),
+      services: spawnResult(0, "", JSON.stringify(records)),
+      "--prefix": spawnResult(0, "", formulaPrefix),
+    };
+    return responses[args[0] as keyof typeof responses] ?? spawnResult();
+  });
+
+  return getTrustedActiveOpenShellGatewayUserServiceIdentity({
+    commandExists: (command) => command === "brew",
+    existsSync: (candidate) => candidate === gatewayBin,
+    homebrewFormulaOperation: (args) => spawnSyncImpl("brew", args),
+    platform: "darwin",
+    spawnSyncImpl,
+  });
 }
 
 describe("OpenShell Homebrew service boundary", () => {
@@ -143,5 +184,30 @@ describe("OpenShell Homebrew service boundary", () => {
         platform: "darwin",
       }),
     ).toBe(false);
+  });
+
+  it.each(["homebrew.mxcl.openshell", "sh.brew.openshell"])(
+    "accepts the active official service label %s (#11111)",
+    (serviceName) => {
+      expect(queryHomebrewService([serviceRecord({ service_name: serviceName })])).toEqual({
+        pid: 4242,
+        executablePath: "/opt/homebrew/opt/openshell/bin/openshell-gateway",
+      });
+    },
+  );
+
+  it("rejects a service label that extends the canonical label (#11111)", () => {
+    expect(
+      queryHomebrewService([serviceRecord({ service_name: "sh.brew.openshell.attacker" })]),
+    ).toBeNull();
+  });
+
+  it("rejects canonical and legacy service records with different active PIDs (#11111)", () => {
+    expect(
+      queryHomebrewService([
+        serviceRecord(),
+        serviceRecord({ pid: 4343, service_name: "sh.brew.openshell" }),
+      ]),
+    ).toBeNull();
   });
 });

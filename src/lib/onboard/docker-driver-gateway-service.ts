@@ -984,11 +984,18 @@ export function getTrustedActiveOpenShellGatewayUserServiceIdentity(
         running?: boolean;
         service_name?: string;
       }>;
-      const record = records.find(
+      const trustedServiceNames = new Set([
+        `homebrew.mxcl.${service.serviceName}`,
+        `sh.brew.${service.serviceName}`,
+      ]);
+      const matchingRecords = records.filter(
         (candidate) =>
           candidate.name === service.serviceName &&
-          candidate.service_name === `homebrew.mxcl.${service.serviceName}`,
+          candidate.service_name !== undefined &&
+          trustedServiceNames.has(candidate.service_name),
       );
+      if (matchingRecords.length !== 1) return null;
+      const [record] = matchingRecords;
       const pid =
         record?.running === true &&
         record.loaded === true &&
