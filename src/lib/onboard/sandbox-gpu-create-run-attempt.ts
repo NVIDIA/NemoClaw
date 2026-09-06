@@ -685,7 +685,6 @@ export function createSandboxGpuCreateAttemptRunner(
     let readyCheckCreatedSandboxId: string | null = null;
     let readyCheckCreatedIdentityFailure: unknown = null;
     let readyCheckObservedReady = false;
-    let readyCheckIdentityTraceSignature: string | null = null;
     const failReadyCheckCreatedIdentity = (diagnostic: string): true => {
       readyCheckCreatedIdentityFailure = new Error(
         `OpenShell did not return the exact created identity for sandbox '${input.sandboxName}'. Diagnostic class: ${diagnostic}.`,
@@ -760,20 +759,6 @@ export function createSandboxGpuCreateAttemptRunner(
               );
               const observedSandboxId =
                 observation.state === "invalid" ? null : observation.sandboxId;
-              const returnedIdentityFingerprint = observedSandboxId
-                ? fingerprintSandboxRecreateValue(observedSandboxId)
-                : null;
-              const identityTraceSignature = `${observation.state}:${returnedIdentityFingerprint ?? "none"}`;
-              if (identityTraceSignature !== readyCheckIdentityTraceSignature) {
-                addTraceEvent("sandbox_create_ready_identity_observation", {
-                  create_operation_state: "ready",
-                  identity_state: observation.state,
-                  returned_identity_correlation: observedSandboxId
-                    ? traceSandboxIdentityCorrelation(observedSandboxId)
-                    : null,
-                });
-                readyCheckIdentityTraceSignature = identityTraceSignature;
-              }
               if (observation.state === "invalid") {
                 return failReadyCheckCreatedIdentity(observation.diagnostic);
               }

@@ -7,7 +7,6 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
-  readdirSync,
   readFileSync,
   rmSync,
   symlinkSync,
@@ -641,7 +640,7 @@ describe("E2E scorecard", () => {
     }
   });
 
-  it("emits no timing summary for malformed or non-onboard traces", () => {
+  it("emits invalid evidence for malformed or non-onboard traces", () => {
     const directory = mkdtempSync(join(tmpdir(), "nemoclaw-trace-invalid-"));
     const source = join(directory, "raw");
     const output = join(directory, "trusted");
@@ -670,7 +669,12 @@ describe("E2E scorecard", () => {
       );
       const result = runSanitizer(source, output);
       expect(result.status, result.stderr).toBe(0);
-      expect(readdirSync(output)).toEqual([]);
+      expect(
+        JSON.parse(readFileSync(join(output, "cloud-onboard-trace-timing-summary.json"), "utf8")),
+      ).toEqual({
+        sandbox_identity_settlement_evidence: "invalid",
+        schema_version: "nemoclaw.trace_timing.v1",
+      });
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }
@@ -765,7 +769,12 @@ describe("E2E scorecard", () => {
       rmSync(join(source, "100-ignored.json"));
       const oversizedOnly = runSanitizer(source, output);
       expect(oversizedOnly.status, oversizedOnly.stderr).toBe(0);
-      expect(readdirSync(output)).toEqual([]);
+      expect(
+        JSON.parse(readFileSync(join(output, "cloud-onboard-trace-timing-summary.json"), "utf8")),
+      ).toEqual({
+        sandbox_identity_settlement_evidence: "invalid",
+        schema_version: "nemoclaw.trace_timing.v1",
+      });
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }

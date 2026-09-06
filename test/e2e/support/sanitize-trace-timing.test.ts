@@ -486,4 +486,22 @@ print(json.dumps([module.extract_candidate(case) for case in cases]))
       rmSync(directory, { force: true, recursive: true });
     }
   });
+
+  it("writes missing settlement evidence when no trace input exists", () => {
+    const directory = mkdtempSync(join(tmpdir(), "nemoclaw-trace-sanitize-missing-"));
+    const source = join(directory, "raw");
+    const output = join(directory, "trusted");
+    try {
+      mkdirSync(source);
+
+      const result = runSanitizer(source, output);
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(readFileSync(join(output, SUMMARY), "utf8"))).toEqual({
+        sandbox_identity_settlement_evidence: "missing",
+        schema_version: "nemoclaw.trace_timing.v1",
+      });
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
+  });
 });

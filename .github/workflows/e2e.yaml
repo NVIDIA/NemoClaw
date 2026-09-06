@@ -2986,6 +2986,12 @@ jobs:
                   "inspect lifecycle logs and use a retained recovery record only if the "
                   "onboarding failure created one."
               )
+          elif evidence_state == "missing":
+              print(
+                  f"- Target `{os.environ['TARGET_ID']}`: `missing` settlement evidence; "
+                  "inspect lifecycle logs and use a retained recovery record only if the "
+                  "onboarding failure created one."
+              )
           elif isinstance(settlement, dict):
               print(f"- Target: `{os.environ['TARGET_ID']}`")
               print(f"- Create operation: `{settlement.get('create_operation_state')}`")

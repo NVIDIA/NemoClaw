@@ -1186,13 +1186,15 @@ directory. In addition to timing fields, the summary may retain the latest
 sandbox identity-settlement state with its own trace ID, validated event
 timestamp, and optional 16-hex correlation. A matched identity includes the
 correlation; a failed settlement can use `null` when no identity was observed.
-Malformed settlement evidence is replaced with the bounded `invalid` evidence
-state. The summary never retains raw event attributes or the full identity
-fingerprint. Aggregation ratchets require `report-to-pr` and `scorecard` to wait
+Malformed or unreadable trace input is replaced with the bounded `invalid`
+evidence state; absent trace input uses `missing`. The summary never retains raw
+event attributes or the full identity fingerprint. Aggregation ratchets require
+`report-to-pr` and `scorecard` to wait
 for the same execution-job set. The live target's workflow summary reports the
 target and valid settlement provenance, or calls out the `invalid` evidence
-state as malformed or unusable. For `invalid`, inspect lifecycle logs and use a
-retained recovery record only if the onboarding failure created one.
+state as malformed or unusable and `missing` when no trace input exists. For
+either state, inspect lifecycle logs and use a retained recovery record only if
+the onboarding failure created one.
 
 Registry-driven Vitest targets also enable onboard trace collection. Each live
 matrix target writes raw traces under the runner temporary directory, sanitizes

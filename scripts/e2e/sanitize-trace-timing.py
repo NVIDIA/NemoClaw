@@ -242,6 +242,17 @@ def extract_candidate(artifact: Any) -> dict[str, Any] | None:
     return candidate
 
 
+def write_summary(output_dir: Path, summary: dict[str, Any]) -> int:
+    output = output_dir / OUTPUT_FILE
+    if output.is_symlink():
+        print("trusted timing summary must not be a symlink", file=sys.stderr)
+        return 2
+    output.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.chmod(output, 0o600)
+    print(f"Wrote trusted trace summary: {output}")
+    return 0
+
+
 def main(argv: list[str]) -> int:
     if len(argv) != 3:
         print("usage: sanitize-trace-timing.py <source-file-or-dir> <output-dir>", file=sys.stderr)
@@ -283,8 +294,14 @@ def main(argv: list[str]) -> int:
             else:
                 identity_settlements.extend(settlements)
     if not candidates:
-        print("No valid NemoClaw onboard trace found; no timing summary emitted.")
-        return 0
+        evidence_state = "missing" if not json_files else "invalid"
+        return write_summary(
+            output_dir,
+            {
+                "sandbox_identity_settlement_evidence": evidence_state,
+                "schema_version": SCHEMA_VERSION,
+            },
+        )
 
     selected = dict(max(candidates, key=lambda item: item["total_duration_ms"]))
     identity_settlement, selection_valid = select_latest_identity_settlement(
@@ -299,14 +316,7 @@ def main(argv: list[str]) -> int:
         selected["sandbox_identity_settlement_evidence"] = "invalid"
     elif identity_settlement is not None:
         selected["sandbox_identity_settlement"] = identity_settlement
-    output = output_dir / OUTPUT_FILE
-    if output.is_symlink():
-        print("trusted timing summary must not be a symlink", file=sys.stderr)
-        return 2
-    output.write_text(json.dumps(selected, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    os.chmod(output, 0o600)
-    print(f"Wrote trusted trace summary: {output}")
-    return 0
+    return write_summary(output_dir, selected)
 
 
 if __name__ == "__main__":

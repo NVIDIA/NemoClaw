@@ -496,11 +496,6 @@ describe("created sandbox identity gate", () => {
     ]);
     expect(input.persistRetainedSandboxRecovery).not.toHaveBeenCalled();
     expect(input.verifyCreatedSandboxBeforeEffects).toHaveBeenCalledOnce();
-    expect(mocks.addTraceEvent).toHaveBeenCalledWith("sandbox_create_ready_identity_observation", {
-      create_operation_state: "ready",
-      identity_state: "pending",
-      returned_identity_correlation: null,
-    });
     expect(mocks.addTraceEvent).toHaveBeenCalledWith("sandbox_create_identity_settlement", {
       create_operation_state: "ready",
       identity_state: "matched",

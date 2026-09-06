@@ -170,6 +170,12 @@ describe("e2e workflow live job boundary", () => {
         "Target `channels-add-remove`: `invalid` settlement evidence; inspect lifecycle logs and use a retained recovery record only if the onboarding failure created one.",
     },
     {
+      title: "missing",
+      traceSummary: { sandbox_identity_settlement_evidence: "missing" },
+      expectedSummary:
+        "Target `channels-add-remove`: `missing` settlement evidence; inspect lifecycle logs and use a retained recovery record only if the onboarding failure created one.",
+    },
+    {
       title: "valid",
       traceSummary: {
         sandbox_identity_settlement: {
