@@ -1,12 +1,41 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+
+const mocks = vi.hoisted(() => ({
+  captureOpenshell: vi.fn(),
+  isForwardServiceListenerOwned: vi.fn(),
+}));
+
+vi.mock("../../src/lib/adapters/openshell/forward-service.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/lib/adapters/openshell/forward-service.ts")>()),
+  isForwardServiceListenerOwned: mocks.isForwardServiceListenerOwned,
+}));
+
+vi.mock("../../src/lib/adapters/openshell/resolve.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/lib/adapters/openshell/resolve.ts")>()),
+  resolveOpenshell: () => "/usr/local/bin/openshell",
+}));
+
+vi.mock("../../src/lib/adapters/openshell/runtime.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/lib/adapters/openshell/runtime.ts")>()),
+  captureOpenshell: mocks.captureOpenshell,
+}));
 
 import * as forwardHealth from "../../src/lib/actions/sandbox/forward-health.ts";
 import { areSandboxLaunchForwardsHealthy } from "../../src/lib/actions/sandbox/forward-recovery.ts";
 import * as agentRuntime from "../../src/lib/agent/runtime.ts";
 import * as registry from "../../src/lib/state/registry.ts";
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mocks.captureOpenshell.mockReturnValue({
+    status: 0,
+    output: "SANDBOX BIND PORT PID STATUS",
+  });
+  mocks.isForwardServiceListenerOwned.mockReturnValue(true);
+});
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -27,11 +56,36 @@ function mockLaunchForwardObservation(reachable = true, gatewayRuntime = true): 
   vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(reachable);
 }
 
-it("checks each registered launch-forward port without inspecting a process", () => {
+it("requires exact service ownership for each registered launch-forward port (#11084)", () => {
   mockLaunchForwardObservation();
 
   expect(areSandboxLaunchForwardsHealthy("beta")).toBe(true);
   expect(vi.mocked(forwardHealth.isLocalForwardReachable).mock.calls).toEqual([[18_789], [18_790]]);
+  expect(mocks.isForwardServiceListenerOwned).toHaveBeenCalledTimes(2);
+});
+
+it("rejects a reachable launch-forward port owned by another process (#11084)", () => {
+  mockLaunchForwardObservation();
+  mocks.isForwardServiceListenerOwned.mockImplementation(
+    (forward: { localPort: number }) => forward.localPort === 18_789,
+  );
+
+  expect(areSandboxLaunchForwardsHealthy("beta", "nemoclaw")).toBe(false);
+});
+
+it("uses bound Hermes Portable forward-list authority (#11084)", () => {
+  mockLaunchForwardObservation();
+  const capture = vi.fn(() => ({
+    status: 0,
+    output: [
+      "SANDBOX BIND PORT PID STATUS",
+      "beta 127.0.0.1 18789 101 running",
+      "beta 127.0.0.1 18790 102 running",
+    ].join("\n"),
+  }));
+
+  expect(areSandboxLaunchForwardsHealthy("beta", "nemoclaw", capture)).toBe(true);
+  expect(mocks.isForwardServiceListenerOwned).not.toHaveBeenCalled();
 });
 
 it("checks sandbox-owned Hermes ports instead of manifest defaults", () => {

@@ -273,6 +273,22 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     };
   }
 
+  function launchForward(target: ForwardServiceTarget): void {
+    if (forwardService?.launch) {
+      forwardService.launch(target);
+      return;
+    }
+    launchForwardService(target, {
+      describeState: () => {
+        const output = deps.runCaptureOpenshell(
+          ["forward", "list", "--gateway", target.gatewayName],
+          { ignoreError: true },
+        );
+        return output === null ? "unavailable" : deps.redact(output);
+      },
+    });
+  }
+
   function getDashboardForwardPort(
     chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`,
     options: Parameters<typeof dashboardAccess.getDashboardForwardPort>[1] = {},
@@ -443,9 +459,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
           `start dashboard forward ${String(actualPort)} for sandbox '${sandboxName}'`,
         );
         forwardService?.retireLegacy?.(sandboxName, actualGateway, [actualPort]);
-        (forwardService?.launch ?? launchForwardService)(
-          forwardTarget(sandboxName, actualGateway, actualPort, actualTarget),
-        );
+        launchForward(forwardTarget(sandboxName, actualGateway, actualPort, actualTarget));
         fwdOk = true;
       } catch (error) {
         fwdDiagnostic = error instanceof Error ? error.message : String(error);
@@ -585,9 +599,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
         `start ${label} forward ${String(port)} for sandbox '${sandboxName}'`,
       );
       forwardService?.retireLegacy?.(sandboxName, gatewayName, [port]);
-      (forwardService?.launch ?? launchForwardService)(
-        forwardTarget(sandboxName, gatewayName, port, String(port)),
-      );
+      launchForward(forwardTarget(sandboxName, gatewayName, port, String(port)));
       return true;
     } catch (error) {
       const diagnostic = error instanceof Error ? error.message : String(error);

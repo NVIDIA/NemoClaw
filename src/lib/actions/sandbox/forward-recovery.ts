@@ -6,6 +6,7 @@ import {
   withSelectedOpenShellCommandOptions,
 } from "../../adapters/openshell/command-argv";
 import {
+  isForwardServiceListenerOwned,
   launchForwardService,
   type ForwardServiceTarget,
 } from "../../adapters/openshell/forward-service";
@@ -38,9 +39,10 @@ import {
   ensureHermesDashboardPortForwardIfEnabled as ensureHermesDashboardPortForward,
   getHermesDashboardRecoveryConfig,
 } from "./hermes-dashboard-recovery";
-import type {
-  HermesPortableForwardRecoveryInput,
-  HermesPortableForwardRecoveryTimingEvidence,
+import {
+  verifyHermesPortableLaunchForwards,
+  type HermesPortableForwardRecoveryInput,
+  type HermesPortableForwardRecoveryTimingEvidence,
 } from "./probe/hermes-portable-forward-recovery";
 export {
   HermesPortableForwardRecoveryError,
@@ -194,6 +196,30 @@ function isValidPort(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 65535;
 }
 
+function describeForwardListEntry(output: string, sandboxName: string, port: number): string {
+  const matchingLine = output
+    .replace(/\x1B\[[0-?]*[ -/]*[@-~]/gu, "")
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => {
+      const columns = line.split(/\s+/u);
+      return columns[0] === sandboxName && columns[2] === String(port);
+    });
+  if (!matchingLine) return "no matching forward";
+  const [sandbox, bind, listedPort, pid, status, ...extra] = matchingLine.split(/\s+/u);
+  if (
+    extra.length > 0 ||
+    sandbox !== sandboxName ||
+    (bind !== "127.0.0.1" && bind !== "0.0.0.0") ||
+    listedPort !== String(port) ||
+    !/^\d+$/u.test(pid ?? "") ||
+    !/^[a-z][a-z-]{0,31}$/iu.test(status ?? "")
+  ) {
+    return "matching forward is malformed";
+  }
+  return `${sandbox} ${bind} ${listedPort} ${pid} ${status}`;
+}
+
 export function resolveSandboxDashboardPort(
   sandboxName: string,
   deps: SandboxPortDeps = {},
@@ -301,7 +327,8 @@ export function teardownSandboxDashboardForward(
  * Re-establish the dashboard port forward to the sandbox.
  * Uses the recorded dashboard port when available, including custom ports for
  * non-OpenClaw agents, then falls back to the active agent's declared port.
- * Returns true when the detached OpenShell service makes the port reachable.
+ * Returns true when an existing exact OpenShell service owns the reachable
+ * listener or a newly launched service owns it through the startup stability window.
  */
 export function ensureSandboxPortForward(
   sandboxName: string,
@@ -331,7 +358,7 @@ export function ensureSandboxPortForward(
   });
 }
 
-/** Probe local reachability for a registered sandbox port without claiming process ownership. */
+/** Verify local reachability and exact OpenShell service-forward process ownership. */
 export function isSandboxForwardHealthy(
   sandboxName: string,
   options: { isWsl?: boolean; runtimeSelection?: OpenShellRuntimeSelection } = {},
@@ -350,7 +377,7 @@ export function isSandboxForwardHealthy(
 export function isSandboxPortForwardHealthy(
   sandboxName: string,
   port: number,
-  _expectedBind?: string,
+  expectedBind?: string,
   runtimeSelection?: OpenShellRuntimeSelection,
 ): SandboxForwardHealth {
   const sandbox = registry.getSandbox(sandboxName);
@@ -369,14 +396,27 @@ export function isSandboxPortForwardHealthy(
     ),
   );
   if (
-    !listed.error &&
-    !listed.signal &&
-    listed.status === 0 &&
+    listed.error ||
+    listed.signal ||
+    listed.status !== 0 ||
     isLegacySandboxForwardListed(listed.output, sandboxName, port)
   ) {
     return false;
   }
-  return true;
+  const executable = resolveOpenshell();
+  if (!executable) return false;
+  return (
+    isForwardServiceListenerOwned(
+      forwardServiceTarget(
+        executable,
+        gatewayName,
+        sandboxName,
+        port,
+        expectedBind,
+        runtimeSelection?.workspace ?? "default",
+      ),
+    ) === true
+  );
 }
 
 export function ensureSandboxPortForwardForPort(
@@ -419,6 +459,11 @@ export function ensureSandboxPortForwardForPort(
     if (!sandbox) throw new Error(`Sandbox '${sandboxName}' is not registered`);
     const gatewayName = runtimeSelection?.gatewayName ?? resolveSandboxGatewayName(sandbox);
     retireLegacyForwardServiceMigration(sandboxName, gatewayName, [port], runtimeSelection);
+    if (isLocalForwardReachable(port)) {
+      throw new Error(
+        `host port ${String(port)} is occupied by a listener that does not match the selected OpenShell service forward`,
+      );
+    }
     const executable = resolveOpenshell();
     if (!executable) throw new Error("OpenShell is unavailable");
     launchForwardService(
@@ -430,9 +475,25 @@ export function ensureSandboxPortForwardForPort(
         expectedBind ?? (forwardTarget.startsWith("0.0.0.0:") ? "0.0.0.0" : "127.0.0.1"),
         runtimeSelection?.workspace ?? "default",
       ),
-      runtimeSelection
-        ? { sourceEnvironment: buildSelectedOpenShellSubprocessEnv(runtimeSelection) }
-        : {},
+      {
+        describeState: () => {
+          const listed = captureOpenshell(
+            ["forward", "list", "--gateway", gatewayName],
+            withSelectedOpenShellCommandOptions(
+              {
+                ignoreError: true,
+                includeStreams: true,
+                timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+              },
+              runtimeSelection,
+            ),
+          );
+          return describeForwardListEntry(listed.output, sandboxName, port);
+        },
+        ...(runtimeSelection
+          ? { sourceEnvironment: buildSelectedOpenShellSubprocessEnv(runtimeSelection) }
+          : {}),
+      },
     );
     return acceptSuccessfulForward();
   } catch (error) {
@@ -564,10 +625,47 @@ export function ensureDeclaredAgentForwardPortsHealthy(
  * Observe every host forward that the interactive preflight would recover,
  * without starting, stopping, or rebinding one.
  */
+type SandboxLaunchForwardCapture = (
+  args: string[],
+  options?: NonNullable<Parameters<typeof captureOpenshell>[1]>,
+) => ReturnType<typeof captureOpenshell>;
+
+function verifyPortableLaunchForwards(
+  sandboxName: string,
+  gatewayName: string,
+  ports: readonly number[],
+  capture: SandboxLaunchForwardCapture,
+): boolean | null {
+  const captureList = (args: readonly string[], timeout: number) =>
+    capture([...args], { ignoreError: true, includeStreams: true, timeout });
+  try {
+    return (
+      verifyHermesPortableLaunchForwards({
+        intent: "connect-probe-only",
+        sandboxName,
+        gatewayName,
+        operationTimeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
+        ports,
+        probeTimeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
+        deps: {
+          assertCurrent: () => undefined,
+          assertRollbackCurrent: () => undefined,
+          captureCurrentList: captureList,
+          captureRollbackList: captureList,
+          runCurrentMutation: () => undefined,
+          isPortReachable: isLocalForwardReachable,
+        },
+      }).kind === "healthy"
+    );
+  } catch {
+    return null;
+  }
+}
+
 export function areSandboxLaunchForwardsHealthy(
   sandboxName: string,
   gatewayName?: string,
-  _capture?: unknown,
+  portableCapture?: SandboxLaunchForwardCapture,
 ): boolean | null {
   const sandbox = registry.getSandbox(sandboxName);
   if (!sandbox) return false;
@@ -576,8 +674,26 @@ export function areSandboxLaunchForwardsHealthy(
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const requiredPorts = resolveSandboxLaunchForwardPortsFromAuthority(sandboxName, sandbox, agent);
   if (requiredPorts.length === 0) return true;
+  if (portableCapture) {
+    return verifyPortableLaunchForwards(
+      sandboxName,
+      owningGatewayName,
+      requiredPorts,
+      portableCapture,
+    );
+  }
   try {
-    return requiredPorts.every((port) => isLocalForwardReachable(port));
+    const primaryPort = resolveSandboxDashboardPort(sandboxName);
+    const allInterfaceDashboard = sandbox.dashboardRemoteBindPrepared === true || isWsl();
+    const runtimeSelection = { gatewayName: owningGatewayName, workspace: "default" };
+    return requiredPorts.every((port) =>
+      isSandboxPortForwardHealthy(
+        sandboxName,
+        port,
+        port === primaryPort && allInterfaceDashboard ? "0.0.0.0" : "127.0.0.1",
+        runtimeSelection,
+      ),
+    );
   } catch {
     return null;
   }

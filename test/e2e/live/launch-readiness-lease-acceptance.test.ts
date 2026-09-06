@@ -11,7 +11,9 @@ const SANDBOX_NAME = process.env.NEMOCLAW_ACCEPTANCE_SANDBOX?.trim() ?? "";
 test.runIf(process.platform === "linux" && SANDBOX_NAME.length > 0)(
   "launch readiness locked-image acceptance",
   {
-    timeout: 15 * 60_000,
+    // The 6-minute readiness probe can be followed by 2 launch sessions,
+    // each with 2 bounded 280-second provider attempts, plus cleanup time.
+    timeout: 30 * 60_000,
     meta: {
       e2ePhases: [
         "verify the existing locked-image sandbox",

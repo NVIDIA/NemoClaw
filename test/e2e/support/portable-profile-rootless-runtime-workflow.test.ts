@@ -244,6 +244,7 @@ ${serviceIdentityCheck}`,
     expect(upload?.if).toBe("always()");
     expect(upload?.with?.name).toContain(revisionExpression);
     expect(workflow.jobs["portable-launch"]?.if).toBe("${{ github.ref == 'refs/heads/main' }}");
+    expect(workflow.jobs["portable-launch"]?.["timeout-minutes"]).toBe(90);
     expect(liveSource).toContain('run("git", ["rev-parse", "HEAD"])');
     expect(liveSource).toContain('"network", "rm", disposableNetworkId');
     expect(liveSource).not.toContain('"network", "rm", "--force"');

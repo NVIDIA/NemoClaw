@@ -155,11 +155,13 @@
       "liveSources": [
         "test/e2e/live/agent-turn-latency-helpers.ts",
         "test/e2e/live/full-e2e-inference-probe.ts",
-        "test/e2e/live/full-e2e-workload-evidence.ts"
+        "test/e2e/live/full-e2e-workload-evidence.ts",
+        "test/e2e/live/launch-agent-turn.ts"
       ],
       "fast": [
         "test/e2e/support/hosted-inference.test.ts",
         "test/e2e/support/full-e2e-inference-probe.test.ts",
+        "test/e2e/support/launch-agent-turn-provider-availability.test.ts",
         "test/e2e/support/launch-agent-turn.test.ts",
         "test/e2e/support/openclaw-agent-output.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
@@ -170,10 +172,12 @@
     },
     {
       "live": "test/e2e/live/launch-readiness-lease-acceptance.test.ts",
+      "liveSources": ["test/e2e/live/launch-agent-turn.ts"],
       "fast": [
         "src/lib/actions/sandbox/launch-readiness-gateway-health.test.ts",
         "src/lib/actions/sandbox/launch-readiness.test.ts",
         "src/lib/state/launch-readiness-lease.test.ts",
+        "test/e2e/support/launch-agent-turn-provider-availability.test.ts",
         "test/e2e/support/launch-agent-turn.test.ts",
         "test/e2e-runtime/launch-readiness-forward-observation.test.ts"
       ]

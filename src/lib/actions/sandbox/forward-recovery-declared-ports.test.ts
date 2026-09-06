@@ -10,11 +10,13 @@ const mocks = vi.hoisted(() => ({
   getSandbox: vi.fn(),
   getHermesDashboardRecoveryConfig: vi.fn(() => null),
   isLocalForwardReachable: vi.fn(() => true),
+  isForwardServiceListenerOwned: vi.fn(() => true),
   launchForwardService: vi.fn(),
 }));
 
 vi.mock("../../adapters/openshell/forward-service", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../adapters/openshell/forward-service")>()),
+  isForwardServiceListenerOwned: mocks.isForwardServiceListenerOwned,
   launchForwardService: mocks.launchForwardService,
 }));
 
@@ -63,6 +65,7 @@ beforeEach(() => {
   vi.unstubAllEnvs();
   mocks.runOpenshell.mockReturnValue({ status: 0 });
   mocks.isLocalForwardReachable.mockReturnValue(true);
+  mocks.isForwardServiceListenerOwned.mockReturnValue(true);
   mocks.launchForwardService.mockImplementation(() => {
     mocks.isLocalForwardReachable.mockReturnValue(true);
   });
@@ -83,6 +86,22 @@ describe("ensureDeclaredAgentForwardPortsHealthy", { timeout: 30_000 }, () => {
 
     expect(ensureSandboxPortForward("remote-box")).toBe(true);
     expect(mocks.launchForwardService).not.toHaveBeenCalled();
+  });
+
+  it("rejects a reachable listener without the selected service-forward identity (#11084)", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.getSandbox.mockReturnValue({ agent: "openclaw", dashboardPort: 18789 });
+    mocks.captureOpenshell.mockReturnValue(forwardList([]));
+    mocks.isForwardServiceListenerOwned.mockReturnValue(false);
+    const { ensureSandboxPortForward } = await import("./forward-recovery");
+
+    expect(ensureSandboxPortForward("unknown-listener")).toBe(false);
+    expect(mocks.launchForwardService).not.toHaveBeenCalled();
+    expect(consoleError).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "host port 18789 is occupied by a listener that does not match the selected OpenShell service forward",
+      ),
+    );
   });
 
   it("does not demand the manifest dashboard port from a sandbox that owns a different dashboard port (#8543)", async () => {
@@ -113,7 +132,7 @@ describe("ensureDeclaredAgentForwardPortsHealthy", { timeout: 30_000 }, () => {
     expect(ensureDeclaredAgentForwardPortsHealthy("beta", 18790)).toBe(true);
     expect(mocks.launchForwardService).toHaveBeenCalledWith(
       expect.objectContaining({ localPort: 8643, targetPort: 8643 }),
-      {},
+      { describeState: expect.any(Function) },
     );
   });
 
@@ -160,6 +179,7 @@ describe("ensureDeclaredAgentForwardPortsHealthy", { timeout: 30_000 }, () => {
         workspace: runtimeSelection.workspace,
       }),
       {
+        describeState: expect.any(Function),
         sourceEnvironment: expect.objectContaining({
           OPENSHELL_GATEWAY: runtimeSelection.gatewayName,
           OPENSHELL_WORKSPACE: runtimeSelection.workspace,
@@ -173,6 +193,39 @@ describe("ensureDeclaredAgentForwardPortsHealthy", { timeout: 30_000 }, () => {
     const sourceEnvironment = mocks.launchForwardService.mock.calls[0]?.[1]?.sourceEnvironment;
     expect(sourceEnvironment).not.toHaveProperty("OPENSHELL_GATEWAY_ENDPOINT");
     expect(sourceEnvironment).not.toHaveProperty("OPENSHELL_TOKEN");
+  });
+
+  it("reports bounded selected-gateway state after a forward launch failure (#11084)", async () => {
+    mocks.isLocalForwardReachable.mockReturnValue(false);
+    mocks.getSandbox.mockReturnValue({ agent: "hermes", dashboardPort: 18790 });
+    mocks.captureOpenshell
+      .mockReturnValueOnce(forwardList([]))
+      .mockReturnValueOnce(
+        forwardList(["beta 127.0.0.1 18790 101 failed OPENSHELL_TOKEN=opaque-test-token"]),
+      );
+    mocks.launchForwardService.mockImplementation((_target, options) => {
+      expect(options?.describeState?.()).toBe("matching forward is malformed");
+      throw new Error("fixture forward launch failure");
+    });
+    const runtimeSelection = {
+      gatewayName: "nemoclaw-19080",
+      workspace: "review-workspace",
+      localTlsDir: "/authority/tls",
+    };
+    const { ensureSandboxPortForward } = await import("./forward-recovery");
+
+    expect(ensureSandboxPortForward("beta", { runtimeSelection })).toBe(false);
+    expect(mocks.captureOpenshell).toHaveBeenLastCalledWith(
+      ["forward", "list", "--gateway", runtimeSelection.gatewayName],
+      expect.objectContaining({
+        env: expect.objectContaining({
+          OPENSHELL_GATEWAY: runtimeSelection.gatewayName,
+          OPENSHELL_WORKSPACE: runtimeSelection.workspace,
+          OPENSHELL_LOCAL_TLS_DIR: runtimeSelection.localTlsDir,
+        }),
+        replaceEnv: true,
+      }),
+    );
   });
 
   it("keeps the default API port for a sandbox registered without one (#8543)", async () => {
