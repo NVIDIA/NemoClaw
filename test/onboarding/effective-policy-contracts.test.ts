@@ -623,19 +623,28 @@ describe("effective built-in policy contracts", () => {
         "/usr/local/bin/brew",
       ].sort(),
     );
-    ["github.com", "raw.githubusercontent.com"].forEach((host) => {
-      const endpoint = requireEndpoint(brew, host);
-      expect(endpoint).toMatchObject({ port: 443, access: "full" });
-      expect(endpoint).not.toHaveProperty("protocol");
-      expect(endpoint).not.toHaveProperty("tls");
+    const github = requireEndpoint(brew, "github.com");
+    expect(github).toMatchObject({ port: 443, access: "full" });
+    expect(github).not.toHaveProperty("protocol");
+    expect(github).not.toHaveProperty("tls");
+
+    const rawGithub = requireEndpoint(brew, "raw.githubusercontent.com");
+    expect(rawGithub).toMatchObject({
+      port: 443,
+      protocol: "rest",
+      enforcement: "enforce",
     });
-    (brew.endpoints ?? [])
-      .filter(
-        (candidate) => !["github.com", "raw.githubusercontent.com"].includes(candidate.host ?? ""),
-      )
-      .forEach((endpoint) => {
-        expect(endpoint).toMatchObject({ access: "full", tls: "skip" });
-      });
+    expect(rawGithub).not.toHaveProperty("access");
+    expect(rules(rawGithub)).toEqual([
+      { method: "GET", path: "/**" },
+      { method: "HEAD", path: "/**" },
+    ]);
+
+    (brew.endpoints ?? []).filter(
+      (candidate) => !["github.com", "raw.githubusercontent.com"].includes(candidate.host ?? ""),
+    ).forEach((endpoint) => {
+      expect(endpoint).toMatchObject({ access: "full", tls: "skip" });
+    });
     expect((claude.endpoints ?? []).map((endpoint) => endpoint.host).sort()).toEqual([
       "api.anthropic.com",
       "platform.claude.com",
