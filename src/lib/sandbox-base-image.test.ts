@@ -88,6 +88,19 @@ describe("sandbox base-image build diagnostics", () => {
     expect(output).toContain("****");
   });
 
+  it("removes terminal controls split across captured streams (#10548)", () => {
+    const output = formatBuildFailureDiagnostics({
+      stderr: "build failed\u001b[",
+      stdout: "31mvisible detail\u0007",
+    });
+
+    expect({
+      hasEscape: output.includes("\u001b"),
+      hasBell: output.includes("\u0007"),
+      hasVisibleDetail: output.includes("visible detail"),
+    }).toEqual({ hasEscape: false, hasBell: false, hasVisibleDetail: true });
+  });
+
   it("bounds captured build diagnostics before returning them", () => {
     const output = formatBuildFailureDiagnostics({ stderr: "x".repeat(10_000) });
 

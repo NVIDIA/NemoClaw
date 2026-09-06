@@ -49,6 +49,12 @@ export * from "./sandbox-base-image/types";
 
 const BUILD_FAILURE_DIAGNOSTIC_LIMIT = 8_000;
 const BUILD_FAILURE_TRUNCATED_PREFIX = "[diagnostic truncated]\n";
+const UNSAFE_BUILD_DIAGNOSTIC_CONTROLS =
+  /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/gu;
+
+function stripBuildDiagnosticControls(value: string): string {
+  return stripVTControlCharacters(value).replace(UNSAFE_BUILD_DIAGNOSTIC_CONTROLS, "");
+}
 
 function retainBuildDiagnosticTails(streams: readonly string[]): string {
   let remaining = BUILD_FAILURE_DIAGNOSTIC_LIMIT - (streams.length - 1);
@@ -89,7 +95,7 @@ export function formatBuildFailureDiagnostics(buildResult: {
   if (streams.length === 0) return "";
 
   const sanitizedStreams = streams.map((stream) => {
-    let diagnostics = redact(redactFull(stripVTControlCharacters(stream)));
+    let diagnostics = redact(redactFull(stripBuildDiagnosticControls(stream)));
     for (const [prefix, replacement] of [
       [process.env.HOME, "~"],
       [os.homedir(), "~"],
@@ -100,10 +106,11 @@ export function formatBuildFailureDiagnostics(buildResult: {
     }
     return diagnostics;
   });
-  const diagnostics = sanitizedStreams.join("\n");
-  return diagnostics.length > BUILD_FAILURE_DIAGNOSTIC_LIMIT
+  const diagnostics = stripBuildDiagnosticControls(sanitizedStreams.join("\n"));
+  const retainedDiagnostics = diagnostics.length > BUILD_FAILURE_DIAGNOSTIC_LIMIT
     ? `${BUILD_FAILURE_TRUNCATED_PREFIX}${retainBuildDiagnosticTails(sanitizedStreams)}`
     : diagnostics;
+  return stripBuildDiagnosticControls(retainedDiagnostics);
 }
 
 function localBuildAllowed(env: NodeJS.ProcessEnv = process.env): boolean {
