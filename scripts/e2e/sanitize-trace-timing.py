@@ -226,9 +226,6 @@ def extract_candidate(artifact: Any) -> dict[str, Any] | None:
         "phases": {name: round(phases[name], 3) for name in sorted(phases)},
         "slowest_spans": slowest_spans,
     }
-    identity_settlement = select_latest_identity_settlement(extract_identity_settlements(spans))
-    if identity_settlement is not None:
-        candidate["sandbox_identity_settlement"] = identity_settlement
     return candidate
 
 
@@ -265,7 +262,6 @@ def main(argv: list[str]) -> int:
         return 0
 
     selected = dict(max(candidates, key=lambda item: item["total_duration_ms"]))
-    selected.pop("sandbox_identity_settlement", None)
     identity_settlement = select_latest_identity_settlement(identity_settlements)
     if identity_settlement is not None:
         selected["sandbox_identity_settlement"] = identity_settlement

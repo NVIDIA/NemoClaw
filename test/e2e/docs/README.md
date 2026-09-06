@@ -340,8 +340,10 @@ test/e2e/
   The allowlist includes each target's sanitized onboard trace summary at
   `e2e-artifacts/live/<target>/cloud-onboard-trace-timing-summary.json`.
   The summary retains timing fields and may retain only the final sandbox
-  identity-settlement state plus its 16-hex correlation. Raw event attributes
-  and the full identity fingerprint are excluded.
+  identity-settlement state plus an optional 16-hex correlation. A matched
+  identity includes the correlation; a failed settlement can use `null` when
+  no identity was observed. Raw event attributes and the full identity
+  fingerprint are excluded.
   Raw onboard traces stay under the runner temporary directory and are deleted
   before artifact upload.
   These per-target summaries are artifact evidence only.

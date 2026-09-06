@@ -161,11 +161,6 @@ print(json.dumps(module.extract_candidate(artifact), sort_keys=True))
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({
       phases: { "nemoclaw.onboard.phase.gateway": 7.123 },
-      sandbox_identity_settlement: {
-        create_operation_state: "ready",
-        identity_state: "matched",
-        returned_identity_correlation: "8174fa2a5d657551",
-      },
       schema_version: "nemoclaw.trace_timing.v1",
       slowest_spans: [
         { duration_ms: 7.123, name: "nemoclaw.onboard.phase.gateway", status: "ERROR" },
@@ -218,7 +213,18 @@ print(json.dumps([module.extract_candidate(case) for case in cases]))
     const source = join(directory, "raw.json");
     const output = join(directory, "trusted");
     try {
-      writeFileSync(source, JSON.stringify(makeTrace()));
+      writeFileSync(
+        source,
+        JSON.stringify(
+          makeTrace({
+            settlement: {
+              timeUnixNano: "1788724801000000000",
+              identityState: "matched",
+              correlation: "8174fa2a5d657551",
+            },
+          }),
+        ),
+      );
 
       const result = runSanitizer(source, output);
       expect(result.status, result.stderr).toBe(0);
@@ -226,6 +232,11 @@ print(json.dumps([module.extract_candidate(case) for case in cases]))
       const summaryPath = join(output, SUMMARY);
       expect(JSON.parse(readFileSync(summaryPath, "utf8"))).toMatchObject({
         phases: { "nemoclaw.onboard.phase.gateway": 7.123 },
+        sandbox_identity_settlement: {
+          create_operation_state: "ready",
+          identity_state: "matched",
+          returned_identity_correlation: "8174fa2a5d657551",
+        },
         total_duration_ms: 42.988,
       });
       expect(statSync(output).mode & 0o777).toBe(0o700);
