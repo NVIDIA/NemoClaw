@@ -57,17 +57,23 @@ const defaultDeps: ResolveDeps = {
     ),
 };
 
+/** True only when the registry records the sandbox on the docker driver. */
+export function isDockerDriverSandbox(
+  sandboxName: string,
+  getSandbox: ResolveDeps["getSandbox"] = defaultDeps.getSandbox,
+): boolean {
+  try {
+    return getSandbox(sandboxName)?.openshellDriver === "docker";
+  } catch {
+    return false;
+  }
+}
+
 function resolveDockerDriverSandboxContainer(
   sandboxName: string,
   deps: ResolveDeps,
 ): string | null {
-  try {
-    if (deps.getSandbox(sandboxName)?.openshellDriver !== "docker") {
-      return null;
-    }
-  } catch {
-    return null;
-  }
+  if (!isDockerDriverSandbox(sandboxName, deps.getSandbox)) return null;
   return resolveSandboxContainerOwner(deps.dockerPsNames(), sandboxName, deps.listSandboxNames());
 }
 
@@ -124,11 +130,7 @@ export function getSandboxDockerRuntime(
   depsOverride: Partial<ResolveDeps> = {},
 ): SandboxDockerRuntime {
   const deps: ResolveDeps = { ...defaultDeps, ...depsOverride };
-  try {
-    if (deps.getSandbox(sandboxName)?.openshellDriver !== "docker") {
-      return { health: "none", paused: false, running: false, containerName: null };
-    }
-  } catch {
+  if (!isDockerDriverSandbox(sandboxName, deps.getSandbox)) {
     return { health: "none", paused: false, running: false, containerName: null };
   }
   let labeledContainers: ReturnType<typeof findLabeledSandboxContainers>;
