@@ -1243,7 +1243,10 @@ describe("createSetupNim", () => {
       makeDeps({
         isNonInteractive: () => true,
         getNonInteractiveProvider: () => "install-llama-cpp",
-        resolveManagedLlamaCppSelection: () => ({ kind: "selected", selection }),
+        discoverManagedLlamaCppSelections: () => ({
+          choices: [{ priority: 500, selection }],
+          resolution: { kind: "selected", selection },
+        }),
         installManagedLlamaCpp: installManagedLlamaCpp as never,
       }),
     );
@@ -1268,9 +1271,12 @@ describe("createSetupNim", () => {
 
   it("explains why N1x managed llama.cpp is unavailable before offering fallbacks", async () => {
     const note = vi.fn();
-    const resolveManagedLlamaCppSelection = vi.fn(() => ({
-      kind: "rejected" as const,
-      reason: "host readiness requirements are unmet",
+    const discoverManagedLlamaCppSelections = vi.fn(() => ({
+      choices: [],
+      resolution: {
+        kind: "rejected" as const,
+        reason: "host readiness requirements are unmet",
+      },
     }));
     const selectFromNumberedMenu = vi.fn<SetupNimFlowDeps["selectFromNumberedMenu"]>(
       (_rawChoice, _defaultIndex, options) => {
@@ -1293,7 +1299,7 @@ describe("createSetupNim", () => {
         prompt: async () => "1",
         note,
         selectFromNumberedMenu,
-        resolveManagedLlamaCppSelection,
+        discoverManagedLlamaCppSelections,
         handleRemoteProviderSelection,
       }),
     );
@@ -1301,7 +1307,7 @@ describe("createSetupNim", () => {
     await expect(setupNim({ platform: "n1x" } as never, "n1x-agent")).resolves.toMatchObject({
       provider: "nvidia-prod",
     });
-    expect(resolveManagedLlamaCppSelection).toHaveBeenCalledOnce();
+    expect(discoverManagedLlamaCppSelections).toHaveBeenCalledOnce();
     expect(note).toHaveBeenCalledWith(
       expect.stringContaining(
         "Managed llama.cpp is unavailable on this N1x host: host readiness requirements are unmet",
@@ -1330,7 +1336,7 @@ describe("createSetupNim", () => {
       makeDeps({
         prompt: async () => "1",
         selectFromNumberedMenu,
-        resolveManagedLlamaCppSelection: () => {
+        discoverManagedLlamaCppSelections: () => {
           throw new Error("managed-inference catalog is unavailable");
         },
         handleRemoteProviderSelection,

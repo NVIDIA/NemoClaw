@@ -3,7 +3,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { resolveManagedLlamaCppSelectionForGpu } from "../inference/llama-cpp/managed-selection";
+import { discoverManagedLlamaCppSelectionsForGpu } from "../inference/llama-cpp/managed-selection";
 import { makeDeps } from "./__test-helpers__/setup-nim-flow";
 import { createSetupNim, type SetupNimFlowDeps, type SetupNimGpu } from "./setup-nim-flow";
 
@@ -19,10 +19,17 @@ function n1xProofHarness(proofPassed: boolean, requestedProvider: string | null)
       spec: { model: { servedName: "qwen3.6-35b-a3b" } },
     },
   } as never;
-  const resolveManagedLlamaCppSelection = vi.fn((_env?: NodeJS.ProcessEnv, gpu?: SetupNimGpu) =>
-    gpu?.wslDockerDesktopGpuProofPassed === true
-      ? { kind: "selected" as const, selection }
-      : { kind: "rejected" as const, reason: "WSL GPU proof is unavailable" },
+  const discoverManagedLlamaCppSelections = vi.fn(
+    (_env?: NodeJS.ProcessEnv, gpu?: SetupNimGpu) =>
+      gpu?.wslDockerDesktopGpuProofPassed === true
+        ? {
+            choices: [{ priority: 500, selection }],
+            resolution: { kind: "selected" as const, selection },
+          }
+        : {
+            choices: [],
+            resolution: { kind: "rejected" as const, reason: "WSL GPU proof is unavailable" },
+          },
   );
   const installManagedLlamaCpp = vi.fn(async () => ({
     ok: true as const,
@@ -44,14 +51,14 @@ function n1xProofHarness(proofPassed: boolean, requestedProvider: string | null)
     getRuntimeProvider,
     handleLlamaCppSelection,
     installManagedLlamaCpp,
-    resolveManagedLlamaCppSelection,
+    discoverManagedLlamaCppSelections,
     runtimeProvider,
     selection,
     setupNim: createSetupNim(
       makeDeps({
         isNonInteractive: () => true,
         getNonInteractiveProvider: () => requestedProvider,
-        resolveManagedLlamaCppSelection,
+        discoverManagedLlamaCppSelections,
         installManagedLlamaCpp,
         handleLlamaCppSelection,
         getRuntimeProvider,
@@ -81,11 +88,17 @@ describe("managed llama.cpp profile onboarding", () => {
       "Alternate model",
       "alternate-model",
     );
-    const resolveManagedLlamaCppSelection = vi.fn((env?: NodeJS.ProcessEnv) => ({
-      kind: "selected" as const,
-      selection:
-        env?.NEMOCLAW_LLAMACPP_RECIPE === "llama-cpp.alternate.v1" ? alternate : recommended,
-    }));
+    const discoverManagedLlamaCppSelections = vi.fn((env?: NodeJS.ProcessEnv) => {
+      const selection =
+        env?.NEMOCLAW_LLAMACPP_RECIPE === "llama-cpp.alternate.v1" ? alternate : recommended;
+      return {
+        choices: [
+          { priority: 500, selection: recommended },
+          { priority: 450, selection: alternate },
+        ],
+        resolution: { kind: "selected" as const, selection },
+      };
+    });
     const selectFromNumberedMenu = vi.fn<SetupNimFlowDeps["selectFromNumberedMenu"]>(
       (_rawChoice, _defaultIndex, options) => {
         expect(options.filter(({ key }) => key === "install-llama-cpp")).toEqual([
@@ -125,11 +138,7 @@ describe("managed llama.cpp profile onboarding", () => {
       makeDeps({
         prompt: async () => "1",
         selectFromNumberedMenu,
-        resolveManagedLlamaCppSelection,
-        listManagedLlamaCppSelectionChoices: () => [
-          { priority: 500, selection: recommended },
-          { priority: 450, selection: alternate },
-        ],
+        discoverManagedLlamaCppSelections,
         installManagedLlamaCpp,
         handleLlamaCppSelection,
       }),
@@ -139,14 +148,14 @@ describe("managed llama.cpp profile onboarding", () => {
       provider: "llama-cpp-local",
       model: "alternate-model",
     });
-    expect(resolveManagedLlamaCppSelection).toHaveBeenLastCalledWith(
+    expect(discoverManagedLlamaCppSelections).toHaveBeenLastCalledWith(
       expect.objectContaining({ NEMOCLAW_LLAMACPP_RECIPE: "llama-cpp.alternate.v1" }),
       expect.objectContaining({ platform: "spark" }),
       undefined,
       undefined,
       { runtimeProviderId: "docker" },
     );
-    expect(resolveManagedLlamaCppSelection).toHaveBeenNthCalledWith(
+    expect(discoverManagedLlamaCppSelections).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({ NEMOCLAW_LLAMACPP_RECIPE: "" }),
       expect.objectContaining({ platform: "spark" }),
@@ -167,8 +176,8 @@ describe("managed llama.cpp profile onboarding", () => {
       provider: "llama-cpp-local",
       model: "qwen3.6-35b-a3b",
     });
-    expect(harness.resolveManagedLlamaCppSelection).toHaveBeenCalledTimes(2);
-    expect(harness.resolveManagedLlamaCppSelection).toHaveBeenNthCalledWith(
+    expect(harness.discoverManagedLlamaCppSelections).toHaveBeenCalledTimes(2);
+    expect(harness.discoverManagedLlamaCppSelections).toHaveBeenNthCalledWith(
       1,
       undefined,
       expect.objectContaining({ wslDockerDesktopGpuProofPassed: true }),
@@ -176,7 +185,7 @@ describe("managed llama.cpp profile onboarding", () => {
       undefined,
       { runtimeProviderId: "docker" },
     );
-    expect(harness.resolveManagedLlamaCppSelection).toHaveBeenNthCalledWith(
+    expect(harness.discoverManagedLlamaCppSelections).toHaveBeenNthCalledWith(
       2,
       undefined,
       harness.gpu,
@@ -206,7 +215,7 @@ describe("managed llama.cpp profile onboarding", () => {
       "WSL GPU proof is unavailable",
     );
     expect(harness.installManagedLlamaCpp).not.toHaveBeenCalled();
-    expect(harness.resolveManagedLlamaCppSelection).toHaveBeenCalledWith(
+    expect(harness.discoverManagedLlamaCppSelections).toHaveBeenCalledWith(
       undefined,
       expect.objectContaining({ wslDockerDesktopGpuProofPassed: false }),
       undefined,
@@ -223,7 +232,7 @@ describe("managed llama.cpp profile onboarding", () => {
       makeDeps({
         isNonInteractive: () => true,
         getNonInteractiveProvider: () => "install-llama-cpp",
-        resolveManagedLlamaCppSelection: resolveManagedLlamaCppSelectionForGpu,
+        discoverManagedLlamaCppSelections: discoverManagedLlamaCppSelectionsForGpu,
         installManagedLlamaCpp,
       }),
     );
@@ -232,6 +241,57 @@ describe("managed llama.cpp profile onboarding", () => {
       setupNim({ platform: "n1x", wslDockerDesktopGpuProofPassed: true } as never, "n1x-agent"),
     ).rejects.toThrow("effective Docker context");
     expect(installManagedLlamaCpp).not.toHaveBeenCalled();
+  });
+
+  it("does not offer a Docker-qualified N1x profile under a resolved Podman provider", async () => {
+    const dockerProvider = makeDeps().getRuntimeProvider();
+    const podmanProvider = {
+      ...dockerProvider,
+      identity: { ...dockerProvider.identity, id: "podman", displayName: "Podman" },
+    } as never;
+    const discoverManagedLlamaCppSelections = vi.fn(() => ({
+      choices: [],
+      resolution: {
+        kind: "rejected" as const,
+        reason: "the selected preset requires the Docker runtime provider",
+      },
+    }));
+    const selectFromNumberedMenu = vi.fn<SetupNimFlowDeps["selectFromNumberedMenu"]>(
+      (_rawChoice, _defaultIndex, options) => {
+        expect(options.map(({ key }) => key)).not.toContain("install-llama-cpp");
+        return options.find(({ key }) => key === "build")!;
+      },
+    );
+    const handleRemoteProviderSelection = vi.fn<SetupNimFlowDeps["handleRemoteProviderSelection"]>(
+      async (_args, state) => {
+        state.provider = "nvidia-prod";
+        state.model = "nvidia/nemotron-3-super-120b-a12b";
+        state.endpointUrl = "https://integrate.api.nvidia.com/v1";
+        state.credentialEnv = "NVIDIA_INFERENCE_API_KEY";
+        state.preferredInferenceApi = "openai-completions";
+        return "selected";
+      },
+    );
+    const setupNim = createSetupNim(
+      makeDeps({
+        discoverManagedLlamaCppSelections,
+        getRuntimeProvider: () => podmanProvider,
+        handleRemoteProviderSelection,
+        prompt: async () => "1",
+        selectFromNumberedMenu,
+      }),
+    );
+
+    await expect(setupNim({ platform: "n1x" } as never, "n1x-agent")).resolves.toMatchObject({
+      provider: "nvidia-prod",
+    });
+    expect(discoverManagedLlamaCppSelections).toHaveBeenCalledWith(
+      expect.objectContaining({ NEMOCLAW_LLAMACPP_RECIPE: "" }),
+      expect.objectContaining({ platform: "n1x" }),
+      undefined,
+      undefined,
+      { runtimeProviderId: "podman" },
+    );
   });
 
   it("reports optional profile discovery failures while keeping other providers available", async () => {
@@ -257,11 +317,7 @@ describe("managed llama.cpp profile onboarding", () => {
         note,
         prompt: async () => "1",
         selectFromNumberedMenu,
-        resolveManagedLlamaCppSelection: () => ({
-          kind: "rejected",
-          reason: "managed-inference catalog is unavailable",
-        }),
-        listManagedLlamaCppSelectionChoices: () => {
+        discoverManagedLlamaCppSelections: () => {
           throw new Error("managed-inference catalog is unavailable");
         },
         handleRemoteProviderSelection,

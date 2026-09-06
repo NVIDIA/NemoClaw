@@ -33,6 +33,11 @@ export interface ManagedLlamaCppSelectionChoice {
   readonly selection: ResolvedLlamaCppInferenceSelection;
 }
 
+export interface ManagedLlamaCppDiscoveryResult {
+  readonly resolution: ManagedLlamaCppSelectionResult;
+  readonly choices: readonly ManagedLlamaCppSelectionChoice[];
+}
+
 const N1X_WSL_RECIPE_ID = "llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1";
 
 type ManagedLlamaCppSelectionOptions = {
@@ -159,12 +164,29 @@ export function listManagedLlamaCppSelectionChoices(
   return Object.freeze([...byRecipe.values()]);
 }
 
-/** Resolve one managed llama.cpp recipe through fresh canonical host readiness. */
-export function resolveManagedLlamaCppSelection(
-  env: NodeJS.ProcessEnv = process.env,
-  catalog: CompiledManagedInferenceCatalog = loadManagedInferenceCatalog(),
-  report: SystemReadinessReport = createHostReadinessReport(getBuildIdentity()),
-  options: ManagedLlamaCppSelectionOptions = {},
+function managedLlamaCppChoiceEligibilityFailure(
+  choice: ManagedLlamaCppSelectionChoice,
+  env: NodeJS.ProcessEnv,
+  options: ManagedLlamaCppSelectionOptions,
+): string | null {
+  const runtimeFailure = dockerQualifiedPresetRuntimeFailure(
+    options.runtimeProviderId,
+    choice.selection,
+  );
+  if (runtimeFailure) return runtimeFailure;
+  return (
+    choice.selection.recipe.metadata.id === N1X_WSL_RECIPE_ID &&
+    n1xWslDockerLocalityFailure(env, options)
+  ) || null;
+}
+
+function resolveManagedLlamaCppSelectionFromChoices(
+  env: NodeJS.ProcessEnv,
+  catalog: CompiledManagedInferenceCatalog,
+  report: SystemReadinessReport,
+  options: ManagedLlamaCppSelectionOptions,
+  automaticChoices: readonly ManagedLlamaCppSelectionChoice[],
+  automaticChoiceFailures?: ReadonlyMap<string, string | null>,
 ): ManagedLlamaCppSelectionResult {
   const requestedRecipeId = String(env[LLAMA_CPP_RECIPE_ENV] ?? "").trim();
   if (requestedRecipeId === N1X_WSL_RECIPE_ID) {
@@ -178,23 +200,16 @@ export function resolveManagedLlamaCppSelection(
     };
   }
   if (!requestedRecipeId) {
-    let choices: readonly ManagedLlamaCppSelectionChoice[];
-    try {
-      choices = listManagedLlamaCppSelectionChoices(catalog, report);
-    } catch (error) {
-      return {
-        kind: "rejected",
-        reason: error instanceof Error ? error.message : String(error),
-      };
-    }
-    if (choices.length === 0) {
+    if (automaticChoices.length === 0) {
       return {
         kind: "rejected",
         reason: "No automatic managed llama.cpp preset matches this host.",
       };
     }
-    const highestPriority = choices[0]!.priority;
-    const highestPriorityChoices = choices.filter(({ priority }) => priority === highestPriority);
+    const highestPriority = automaticChoices[0]!.priority;
+    const highestPriorityChoices = automaticChoices.filter(
+      ({ priority }) => priority === highestPriority,
+    );
     if (highestPriorityChoices.length > 1) {
       return {
         kind: "rejected",
@@ -204,15 +219,10 @@ export function resolveManagedLlamaCppSelection(
       };
     }
     const selection = highestPriorityChoices[0]!.selection;
-    const runtimeProviderFailure = dockerQualifiedPresetRuntimeFailure(
-      options.runtimeProviderId,
-      selection,
-    );
-    if (runtimeProviderFailure) return { kind: "rejected", reason: runtimeProviderFailure };
-    if (selection.recipe.metadata.id === N1X_WSL_RECIPE_ID) {
-      const localityFailure = n1xWslDockerLocalityFailure(env, options);
-      if (localityFailure) return { kind: "rejected", reason: localityFailure };
-    }
+    const choiceFailure = automaticChoiceFailures?.has(selection.preset.metadata.id)
+      ? automaticChoiceFailures.get(selection.preset.metadata.id)
+      : managedLlamaCppChoiceEligibilityFailure(highestPriorityChoices[0]!, env, options);
+    if (choiceFailure) return { kind: "rejected", reason: choiceFailure };
     return {
       kind: "selected",
       selection: { ...selection, selection: "automatic" },
@@ -267,6 +277,99 @@ export function resolveManagedLlamaCppSelection(
   return runtimeProviderFailure ? { kind: "rejected", reason: runtimeProviderFailure } : validated;
 }
 
+function choicesIncludingResolution(
+  choices: readonly ManagedLlamaCppSelectionChoice[],
+  resolution: ManagedLlamaCppSelectionResult,
+): readonly ManagedLlamaCppSelectionChoice[] {
+  if (
+    resolution.kind === "rejected" ||
+    choices.some(
+      ({ selection }) => selection.recipe.metadata.id === resolution.selection.recipe.metadata.id,
+    )
+  ) {
+    return choices;
+  }
+  return Object.freeze(
+    [
+      ...choices,
+      { priority: resolution.selection.preset.spec.priority, selection: resolution.selection },
+    ].sort(
+      (left, right) =>
+        right.priority - left.priority ||
+        left.selection.preset.metadata.id.localeCompare(right.selection.preset.metadata.id),
+    ),
+  );
+}
+
+/** Discover menu choices and the default selection through one readiness/provider authority. */
+export function discoverManagedLlamaCppSelections(
+  env: NodeJS.ProcessEnv = process.env,
+  catalog: CompiledManagedInferenceCatalog = loadManagedInferenceCatalog(),
+  report: SystemReadinessReport = createHostReadinessReport(getBuildIdentity()),
+  options: ManagedLlamaCppSelectionOptions = {},
+): ManagedLlamaCppDiscoveryResult {
+  const explicitRequest = Boolean(
+    String(env[LLAMA_CPP_RECIPE_ENV] ?? "").trim() || String(env.NEMOCLAW_MODEL ?? "").trim(),
+  );
+  if (explicitRequest) {
+    const resolution = resolveManagedLlamaCppSelectionFromChoices(
+      env,
+      catalog,
+      report,
+      options,
+      [],
+    );
+    return {
+      resolution,
+      choices: choicesIncludingResolution([], resolution),
+    };
+  }
+  let choices: readonly ManagedLlamaCppSelectionChoice[];
+  try {
+    choices = listManagedLlamaCppSelectionChoices(catalog, report);
+  } catch (error) {
+    return {
+      choices: [],
+      resolution: {
+        kind: "rejected",
+        reason: error instanceof Error ? error.message : String(error),
+      },
+    };
+  }
+  const choiceFailures = new Map(
+    choices.map((choice) => [
+      choice.selection.preset.metadata.id,
+      managedLlamaCppChoiceEligibilityFailure(choice, env, options),
+    ]),
+  );
+  const eligibleChoices = choices.filter(
+    (choice) => choiceFailures.get(choice.selection.preset.metadata.id) === null,
+  );
+  const resolutionChoices = eligibleChoices.length > 0 ? eligibleChoices : choices;
+  const resolution = resolveManagedLlamaCppSelectionFromChoices(
+    env,
+    catalog,
+    report,
+    options,
+    resolutionChoices,
+    choiceFailures,
+  );
+  return {
+    resolution,
+    choices: choicesIncludingResolution(eligibleChoices, resolution),
+  };
+}
+
+/** Resolve one managed llama.cpp recipe through fresh canonical host readiness. */
+export function resolveManagedLlamaCppSelection(
+  env: NodeJS.ProcessEnv = process.env,
+  catalog: CompiledManagedInferenceCatalog = loadManagedInferenceCatalog(),
+  report: SystemReadinessReport = createHostReadinessReport(getBuildIdentity()),
+  options: ManagedLlamaCppSelectionOptions = {},
+): ManagedLlamaCppSelectionResult {
+  return discoverManagedLlamaCppSelections(env, catalog, report, options).resolution;
+}
+
 /** Resolve managed selection with the GPU proof already admitted by onboarding preflight. */
 export function resolveManagedLlamaCppSelectionForGpu(
   env: NodeJS.ProcessEnv | undefined,
@@ -286,4 +389,25 @@ export function resolveManagedLlamaCppSelectionForGpu(
       : { wslDockerDesktopGpuProofPassed: gpu.wslDockerDesktopGpuProofPassed }),
   });
   return resolveManagedLlamaCppSelection(env, catalog, report, selectionOptions);
+}
+
+/** Discover managed choices with the GPU proof already admitted by onboarding preflight. */
+export function discoverManagedLlamaCppSelectionsForGpu(
+  env: NodeJS.ProcessEnv | undefined,
+  gpu: GpuDetection | null,
+  catalog: CompiledManagedInferenceCatalog = loadManagedInferenceCatalog(),
+  collectionOptions: Omit<
+    CollectHostObservationsOptions,
+    "detectGpu" | "wslDockerDesktopGpuProofPassed"
+  > = {},
+  selectionOptions: ManagedLlamaCppSelectionOptions = {},
+): ManagedLlamaCppDiscoveryResult {
+  const report = createHostReadinessReport(getBuildIdentity(), {
+    ...collectionOptions,
+    ...(gpu ? { detectGpu: () => gpu } : {}),
+    ...(gpu?.wslDockerDesktopGpuProofPassed === undefined
+      ? {}
+      : { wslDockerDesktopGpuProofPassed: gpu.wslDockerDesktopGpuProofPassed }),
+  });
+  return discoverManagedLlamaCppSelections(env, catalog, report, selectionOptions);
 }

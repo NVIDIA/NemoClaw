@@ -11,6 +11,7 @@ import { loadManagedInferenceCatalog } from "../serving/catalog-loader";
 import type { ManagedInferenceServingPreset } from "../serving/types";
 import { LLAMA_CPP_RECIPE_ENV } from "./contract";
 import {
+  discoverManagedLlamaCppSelections,
   listManagedLlamaCppSelectionChoices,
   resolveManagedLlamaCppSelection,
   resolveManagedLlamaCppSelectionForGpu,
@@ -320,6 +321,21 @@ describe("managed llama.cpp selection", () => {
         LOCAL_DOCKER_SELECTION,
       ),
     ).toMatchObject({ kind: "selected" });
+  });
+
+  it("omits Docker-qualified automatic profiles under a resolved Podman provider", () => {
+    const { catalog, report } = fixture(N1X_WSL_PRESET_ID);
+
+    const discovery = discoverManagedLlamaCppSelections({}, catalog, report, {
+      ...LOCAL_DOCKER_SELECTION,
+      runtimeProviderId: "podman",
+    });
+
+    expect(discovery.resolution).toEqual({
+      kind: "rejected",
+      reason: expect.stringContaining("requires the Docker runtime provider"),
+    });
+    expect(discovery.choices).toEqual([]);
   });
 
   it("rejects an explicit remote Docker context for N1x WSL", () => {
