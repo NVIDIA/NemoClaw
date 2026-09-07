@@ -633,6 +633,8 @@ describe("local inference helpers", () => {
     expect(result?.detail).toContain("Start Ollama and retry");
     expect(result?.detail).toContain("http://127.0.0.1:11434/api/tags");
     expect(result?.detail.includes("sudo systemctl restart ollama")).toBe(recoveryHint);
+    expect(result?.detail.includes("stale runner processes from a previous model")).toBe(recoveryHint);
+    expect(result?.detail.includes("holding GPU memory")).toBe(recoveryHint);
     expect(result?.probeLabel).toBe("ollama backend");
   });
 
