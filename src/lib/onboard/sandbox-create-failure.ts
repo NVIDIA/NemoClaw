@@ -23,6 +23,11 @@ type BoundedFileTail = {
   truncated: boolean;
 };
 
+type SandboxLogBlock = {
+  lines: string[];
+  identityAnchored: boolean;
+};
+
 export type SandboxCreateFailureDiagnostics = {
   dir: string;
   gatewayLogPath: string | null;
@@ -124,7 +129,7 @@ function findLatestSandboxBlock(
   lines: string[],
   sandboxName: string,
   requiredSandboxId?: string,
-): string[] {
+): SandboxLogBlock {
   let startIndex = -1;
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i] || "";
@@ -138,7 +143,10 @@ function findLatestSandboxBlock(
     }
   }
   if (startIndex < 0) {
-    return requiredSandboxId ? lines : lines.slice(-MAX_RELEVANT_LOG_LINES);
+    return {
+      lines: requiredSandboxId ? lines : lines.slice(-MAX_RELEVANT_LOG_LINES),
+      identityAnchored: false,
+    };
   }
 
   let endIndex = lines.length;
@@ -152,7 +160,10 @@ function findLatestSandboxBlock(
       break;
     }
   }
-  return lines.slice(startIndex, endIndex);
+  return {
+    lines: lines.slice(startIndex, endIndex),
+    identityAnchored: requiredSandboxId !== undefined,
+  };
 }
 
 function getLatestSandboxId(block: string[], sandboxName: string): string | null {
@@ -169,11 +180,17 @@ function filterRelevantLines(
   sandboxName: string,
   sandboxId: string | null,
   requireExactIdentity: boolean,
+  allowUnscopedRelevantLines: boolean,
 ): string[] {
   const relevant = block.filter((line) => {
     if (!line.trim()) return false;
     if (requireExactIdentity) {
-      return Boolean(sandboxId && extractField(line, "sandbox_id") === sandboxId);
+      const lineSandboxId = extractField(line, "sandbox_id");
+      if (lineSandboxId) return lineSandboxId === sandboxId;
+      return (
+        allowUnscopedRelevantLines &&
+        /ERROR krun|VmCreate|ProcessExited|console_output=|state_dir=/.test(line)
+      );
     }
     if (extractField(line, "sandbox_name") === sandboxName) return true;
     if (sandboxId && extractField(line, "sandbox_id") === sandboxId) return true;
@@ -239,14 +256,6 @@ export function collectSandboxCreateFailureDiagnostics(
     `${timestampForPath(now)}-${sanitizePathPart(sandboxName)}`,
   );
 
-  try {
-    rejectSymlinksOnPath(dir);
-    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-    rejectSymlinksOnPath(dir);
-  } catch {
-    return null;
-  }
-
   const gatewayLogPath =
     options.gatewayLogPath ??
     gatewayLogCandidates(
@@ -259,14 +268,14 @@ export function collectSandboxCreateFailureDiagnostics(
   const rawLines = gatewayLog?.lines ?? null;
   const block = rawLines
     ? findLatestSandboxBlock(rawLines, sandboxName, options.sandboxId)
-    : [];
-  if (options.sandboxId && block.length === 0) return null;
-  const sandboxId = options.sandboxId ?? getLatestSandboxId(block, sandboxName);
+    : { lines: [], identityAnchored: false };
+  const sandboxId = options.sandboxId ?? getLatestSandboxId(block.lines, sandboxName);
   const relevantLines = filterRelevantLines(
-    block,
+    block.lines,
     sandboxName,
     sandboxId,
     options.sandboxId !== undefined,
+    block.identityAnchored,
   );
   if (options.sandboxId && relevantLines.length === 0) return null;
   const gatewayTailLines =
@@ -277,6 +286,15 @@ export function collectSandboxCreateFailureDiagnostics(
   const consoleOutput =
     latestFieldValue(relevantLines, "console_output") ??
     (stateDir ? path.join(stateDir, "rootfs-console.log") : null);
+
+  try {
+    rejectSymlinksOnPath(dir);
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    rejectSymlinksOnPath(dir);
+  } catch {
+    return null;
+  }
+
   const copiedConsoleOutput = copyFileTailIfPresent(
     consoleOutput,
     path.join(dir, "rootfs-console.log"),

@@ -66,7 +66,7 @@ describe("sandbox create failure diagnostics", () => {
         `2026-05-12T20:30:56Z INFO vm driver: create_sandbox received sandbox_id=${sandboxId} sandbox_name=my-assistant`,
         `2026-05-12T20:30:56Z INFO vm driver: resolved image ref, preparing rootfs sandbox_id=${sandboxId} state_dir=${stateDir}`,
         `2026-05-12T20:34:28Z INFO vm driver: spawning VM launcher sandbox_id=${sandboxId} console_output=${consolePath}`,
-        `[2026-05-12T20:34:29Z ERROR krun] sandbox_id=${sandboxId} Building the microVM failed: Internal(Vm(VmSetup(VmCreate)))`,
+        "[2026-05-12T20:34:29Z ERROR krun] Building the microVM failed: Internal(Vm(VmSetup(VmCreate)))",
         `2026-05-12T20:34:29Z WARN Sandbox failed to become ready sandbox_id=${sandboxId} sandbox_name=my-assistant reason=ProcessExited`,
         `2026-05-12T20:34:30Z INFO vm driver: create_sandbox received sandbox_id=${replacementId} sandbox_name=my-assistant`,
         `2026-05-12T20:34:30Z INFO vm driver: spawning VM launcher sandbox_id=${replacementId} console_output=${replacementConsolePath}`,
@@ -109,12 +109,15 @@ describe("sandbox create failure diagnostics", () => {
       "create_sandbox received sandbox_id=828d0e10-b2dc-4e64-86c6-8a9b1f352f02 sandbox_name=my-assistant\n",
     );
 
-    expect(
-      collectSandboxCreateFailureDiagnostics("my-assistant", {
+    const result = collectSandboxCreateFailureDiagnostics("my-assistant", {
         homeDir,
         sandboxId: "691344ae-f514-41c1-b29e-db7f2f7ef257",
-      }),
-    ).toBeNull();
+      });
+
+    expect({
+      failureRootExists: fs.existsSync(path.join(homeDir, ".nemoclaw", "onboard-failures")),
+      result,
+    }).toEqual({ failureRootExists: false, result: null });
   });
 
   it("prints saved diagnostics and retained backup details", () => {
@@ -180,9 +183,12 @@ describe("sandbox create failure diagnostics", () => {
     const logDir = path.join(homeDir, ".local", "state", "nemoclaw", "openshell-docker-gateway");
     const sandboxId = "691344ae-f514-41c1-b29e-db7f2f7ef257";
     const stateDir = path.join(logDir, "vm-driver", "sandboxes", sandboxId);
-    const consolePath = path.join(stateDir, "rootfs-console.log");
+    const consolePath = path.join(logDir, "rootfs-console.log");
     const gatewayLogPath = path.join(logDir, "openshell-gateway.log");
     fs.mkdirSync(stateDir, { recursive: true });
+    Array.from({ length: 201 }, (_, index) =>
+      fs.writeFileSync(path.join(stateDir, `entry-${String(index).padStart(3, "0")}`), ""),
+    );
     fs.writeFileSync(consolePath, `${"old console output\n".repeat(30_000)}final console failure\n`);
     fs.writeFileSync(
       gatewayLogPath,
@@ -210,6 +216,8 @@ describe("sandbox create failure diagnostics", () => {
       gatewayContainsFailure: gatewayEvidence.toString("utf8").includes("reason=ProcessExited"),
       gatewayLogTruncated: diagnostics?.gatewayLogTruncated,
       printedTruncationNotices: diagnostics?.summaryLines.slice(0, 2),
+      stateEntriesOmitted: summary.includes("<additional entries omitted>"),
+      stateEntryCount: (summary.match(/^  entry-\d+$/gmu) ?? []).length,
       summaryRecordsBounds:
         summary.includes("gateway_log_truncated=true") &&
         summary.includes("console_output_truncated=true"),
@@ -224,6 +232,8 @@ describe("sandbox create failure diagnostics", () => {
         "gateway log: earlier content omitted",
         "rootfs console: earlier content omitted",
       ],
+      stateEntriesOmitted: true,
+      stateEntryCount: 200,
       summaryRecordsBounds: true,
     });
   });
