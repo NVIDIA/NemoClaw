@@ -9,7 +9,11 @@ import { registerAgentAdapterAtCurrentCredentialRevision } from "./mcp-bridge-ad
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import { assertHermesMcpRuntimeIntent } from "./mcp-bridge-hermes-reconciliation";
 import { redactBridgeFailureForDisplay } from "./mcp-bridge-output";
-import { applyGeneratedPolicy, assertGeneratedPolicyMutationSafe } from "./mcp-bridge-policy";
+import {
+  applyGeneratedPolicy,
+  assertGeneratedPolicyMutationSafe,
+  materializePendingMcpDenyTools,
+} from "./mcp-bridge-policy";
 import {
   assertMcpProviderRecoverable,
   assertNoAttachedProviderCredentialCollisions,
@@ -78,6 +82,25 @@ function resolvedTargetPins(
   return target;
 }
 
+function sameAddressPins(left: readonly string[] | undefined, right: readonly string[]): boolean {
+  return (
+    !!left && left.length === right.length && left.every((value, index) => value === right[index])
+  );
+}
+
+function retainPendingDenyToolJournal(
+  entry: McpBridgeEntry,
+  storedEntry: McpBridgeEntry,
+): McpBridgeEntry {
+  if (storedEntry.pendingDenyTools === undefined) return entry;
+  const { denyTools: _replacementDenyTools, ...entryWithoutDenyTools } = entry;
+  return {
+    ...entryWithoutDenyTools,
+    ...(storedEntry.denyTools ? { denyTools: [...storedEntry.denyTools] } : {}),
+    pendingDenyTools: [...storedEntry.pendingDenyTools],
+  };
+}
+
 async function assertRestartCredentialsAvailable(
   sandboxName: string,
   entries: readonly McpBridgeEntry[],
@@ -89,6 +112,7 @@ async function assertRestartCredentialsAvailable(
     let detail = "wire-level credential verification did not return a result";
     try {
       const [status] = await statusMcpBridge(sandboxName, entry.server, {
+        allowCredentialProbeWithAdapterMismatch: true,
         probeCredentialResolution: true,
         runtimeSelection,
       });
@@ -139,14 +163,15 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
     }
     if (entry.addState) {
       throw new McpBridgeError(
-        `MCP server '${name}' has an incomplete add transaction (${entry.addState}). Re-run mcp add with the same URL and --env ${entry.env[0] ?? "KEY"}, or remove it with --force.`,
+        `MCP server '${name}' has an incomplete add transaction (${entry.addState}). Re-run the original mcp add command, including its --deny-tool options, or remove it with --force.`,
       );
     }
     assertAuthenticatedBridgeEntry(entry);
   }
   const targetEntries = targets
     .map(([, entry]) => entry)
-    .filter((entry): entry is McpBridgeEntry => !!entry);
+    .filter((entry): entry is McpBridgeEntry => !!entry)
+    .map(materializePendingMcpDenyTools);
   const providerRuntimeSelection = getMcpProviderInspectionRuntimeSelection(sandbox);
   const resolvedByServer = await preflightMcpEntryTargets(targetEntries);
   assertMcpCredentialBoundaryRuntimeVersion();
@@ -194,10 +219,14 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
   for (const [name, storedEntry] of targets) {
     // Validated as a complete authenticated entry before gateway side effects.
     if (!storedEntry) continue;
-    let entry = storedEntry;
+    let entry = materializePendingMcpDenyTools(storedEntry);
     const envRefs = entry.env.map((envName) => ({ name: envName }));
     const adapterEnvValues = resolveCredentialEnv(envRefs);
     const target = resolvedTargetPins(resolvedByServer, entry);
+    if (!entry.trustedPrivateHost && !sameAddressPins(entry.allowedIps, target.addresses)) {
+      entry = { ...entry, allowedIps: [...target.addresses], updatedAt: nowIso() };
+      writeBridgeEntry(sandboxName, retainPendingDenyToolJournal(entry, storedEntry));
+    }
     let previousCredentialRevision: McpCredentialRevisionObservation | undefined;
     assertNoAttachedProviderCredentialCollisions(sandboxName, [entry], providerRuntimeSelection);
     // Revalidate the actual running supervisor before rotating or recreating
@@ -233,7 +262,10 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
     if (refreshedEntry !== entry) {
       // A missing owned provider may be recreated during restart. Record the
       // replacement object's immutable ID before policy/attach/adapter work.
-      writeBridgeEntry(sandboxName, refreshedEntry);
+      writeBridgeEntry(
+        sandboxName,
+        retainPendingDenyToolJournal(refreshedEntry, storedEntry),
+      );
       entry = refreshedEntry;
     }
     assertNoAttachedProviderCredentialCollisions(sandboxName, [entry], providerRuntimeSelection);
