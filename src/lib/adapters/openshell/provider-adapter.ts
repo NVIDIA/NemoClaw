@@ -13,6 +13,7 @@ export type OpenShellProviderCommandReason =
   | "uncertain";
 
 export type OpenShellProviderTransportReason =
+  | "connection_loss"
   | "identity_mismatch"
   | "process_start"
   | "unreachable";
@@ -102,6 +103,25 @@ export type DetachOpenShellProviderRequest = DeleteOpenShellProviderRequest &
     sandboxName: string;
   }>;
 
+export type AttachOpenShellProviderRequest = DetachOpenShellProviderRequest;
+
+export type ConfigureOpenShellProviderRefreshRequest = GetOpenShellProviderRequest &
+  Readonly<{
+    credentialKey: string;
+    strategy: string;
+    material: readonly Readonly<{ key: string; value: string }>[];
+    secretMaterial: readonly Readonly<{ key: string; value: string }>[];
+  }>;
+
+export type GetOpenShellProviderRefreshStatusRequest = GetOpenShellProviderRequest &
+  Readonly<{
+    credentialKey: string;
+  }>;
+
+export type OpenShellProviderRefreshStatus = Readonly<{
+  status: string | null;
+}>;
+
 /** Transport-neutral provider operations used by NemoClaw consumers. */
 export interface OpenShellProviderAdapter {
   listProviders(
@@ -127,4 +147,14 @@ export interface OpenShellProviderAdapter {
   deleteProvider(request: DeleteOpenShellProviderRequest): Promise<OpenShellProviderMutationResult>;
 
   detachProvider(request: DetachOpenShellProviderRequest): Promise<OpenShellProviderMutationResult>;
+
+  attachProvider(request: AttachOpenShellProviderRequest): Promise<OpenShellProviderMutationResult>;
+
+  configureProviderRefresh(
+    request: ConfigureOpenShellProviderRefreshRequest,
+  ): Promise<OpenShellProviderMutationResult>;
+
+  getProviderRefreshStatus(
+    request: GetOpenShellProviderRefreshStatusRequest,
+  ): Promise<OpenShellProviderResult<OpenShellProviderRefreshStatus>>;
 }
