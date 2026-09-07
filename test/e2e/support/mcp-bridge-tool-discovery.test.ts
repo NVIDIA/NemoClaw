@@ -383,25 +383,18 @@ describe("authenticated MCP tool discovery transport retry", () => {
     expect(diagnostics).not.toContain(PROTOCOL_VERSION);
   });
 
-  it("retries one generic transport failure before any request reaches the fixture", () => {
-    expect(
-      shouldRetryMcpToolDiscoveryTransportFailure(
-        { ok: false, detail: "MCP tool discovery request failed" },
-        [],
-        1,
-      ),
-    ).toBe(true);
+  it.each([
+    ["generic transport failure", "MCP tool discovery request failed"],
+    ["bounded discovery timeout", "tool discovery timed out after 10s"],
+  ])("retries one %s before any request reaches the fixture", (_case, detail) => {
+    expect(shouldRetryMcpToolDiscoveryTransportFailure({ ok: false, detail }, [])).toBe(true);
   });
 
-  it.each([
-    ["the fixture received a request", [request("initialize")], 1],
-    ["the retry budget is exhausted", [], 2],
-  ])("does not retry when %s", (_case, requests, attempt) => {
+  it("does not retry after the fixture received a request", () => {
     expect(
       shouldRetryMcpToolDiscoveryTransportFailure(
         { ok: false, detail: "MCP tool discovery request failed" },
-        requests as FakeMcpRequest[],
-        attempt as number,
+        [request("initialize")],
       ),
     ).toBe(false);
   });
@@ -411,9 +404,91 @@ describe("authenticated MCP tool discovery transport retry", () => {
       shouldRetryMcpToolDiscoveryTransportFailure(
         { ok: false, detail: "MCP endpoint returned an invalid tool-list response" },
         [],
-        1,
       ),
     ).toBe(false);
+  });
+
+  it("retains evidence for a successful retry after a no-request timeout", async () => {
+    const failedStatus = {
+      provider: {
+        registryPresent: true,
+        gatewayPresent: true,
+        attached: true,
+        credentialReady: true,
+      },
+      policy: { registryPresent: true, gatewayPresent: true },
+      adapter: { registered: true },
+      toolDiscovery: {
+        ok: false,
+        count: 0,
+        tools: [],
+        truncated: false,
+        detail: "tool discovery timed out after 10s",
+      },
+    };
+    const passedStatus = {
+      ...failedStatus,
+      toolDiscovery: {
+        ok: true,
+        count: 2,
+        tools: ["fake_echo", "fake_status"],
+        truncated: false,
+      },
+    };
+    const fakeMcp = fakeDiscoveryServer();
+    const host = {
+      nemoclaw: vi
+        .fn()
+        .mockResolvedValueOnce({ exitCode: 0, stdout: JSON.stringify(failedStatus), stderr: "" })
+        .mockImplementationOnce(async () => {
+          fakeMcp.requests.push(
+            successfulInitialize(),
+            request("notifications/initialized"),
+            request("tools/list"),
+            request("tools/list"),
+          );
+          return { exitCode: 0, stdout: JSON.stringify(passedStatus), stderr: "" };
+        }),
+    } as unknown as Parameters<typeof assertAuthenticatedMcpToolDiscovery>[0];
+    const artifacts = discoveryArtifacts();
+    const progress = { event: vi.fn() };
+    const sleep = vi.fn().mockResolvedValue(undefined);
+
+    await assertAuthenticatedMcpToolDiscovery(
+      host,
+      fakeMcp,
+      {
+        artifacts,
+        sandboxName: "sandbox",
+        artifactPrefix: "openclaw",
+        hostSecret: EXPECTED_SECRET,
+        progress,
+      },
+      { sleep },
+    );
+
+    expect(host.nemoclaw).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledWith(1_000);
+    expect(progress.event).toHaveBeenCalledWith(
+      "MCP tool discovery failed before reaching the fixture; retrying read-only status once",
+    );
+    expect(artifacts.writeJson).toHaveBeenCalledWith("openclaw-mcp-tool-discovery-retry.json", {
+      schemaVersion: 1,
+      operation: "mcp-tool-discovery.status",
+      owner: "mcp-bridge-live-e2e",
+      idempotence: "read-only",
+      maxAttempts: 2,
+      outcome: "passed-after-retry",
+      attempts: [
+        {
+          attempt: 1,
+          outcome: "failed",
+          failureClass: "transient-external",
+          retryScheduled: true,
+        },
+        { attempt: 2, outcome: "passed", retryScheduled: false },
+      ],
+    });
   });
 });
 
@@ -443,45 +518,48 @@ describe("authenticated MCP discovery restart retry", () => {
     ["metadata-bearing", { sessionId: SESSION_ID, protocolVersion: PROTOCOL_VERSION }],
     ["wrong-path", { path: "/health", responseStatus: 404 }],
     ["body-bearing", { body: "unexpected readiness body" }],
-  ])("does not restart after a %s HEAD request arrived after the offset", async (_case, override) => {
-    const readinessHead: FakeMcpRequest = {
-      method: "HEAD",
-      path: "/mcp",
-      auth: "",
-      body: "",
-      sessionId: "",
-      protocolVersion: "",
-      responseStatus: 405,
-    };
-    const fakeMcp = fakeDiscoveryServer([], [readinessHead, { ...readinessHead, ...override }]);
-    const failure = new Error("discovery failed after observed HEAD request");
-    const assertDiscovery = vi.fn().mockRejectedValueOnce(failure);
-    const restart = vi.fn().mockResolvedValueOnce(undefined);
-    const artifacts = discoveryArtifacts();
+  ])(
+    "does not restart after a %s HEAD request arrived after the offset",
+    async (_case, override) => {
+      const readinessHead: FakeMcpRequest = {
+        method: "HEAD",
+        path: "/mcp",
+        auth: "",
+        body: "",
+        sessionId: "",
+        protocolVersion: "",
+        responseStatus: 405,
+      };
+      const fakeMcp = fakeDiscoveryServer([], [readinessHead, { ...readinessHead, ...override }]);
+      const failure = new Error("discovery failed after observed HEAD request");
+      const assertDiscovery = vi.fn().mockRejectedValueOnce(failure);
+      const restart = vi.fn().mockResolvedValueOnce(undefined);
+      const artifacts = discoveryArtifacts();
 
-    await expect(
-      assertAuthenticatedMcpDiscoveryWithOneRestart(
-        fakeMcp,
-        discoveryRestartOptions(restart, artifacts, { observationOffset: 1 }),
-        { assertDiscovery },
-      ),
-    ).rejects.toBe(failure);
+      await expect(
+        assertAuthenticatedMcpDiscoveryWithOneRestart(
+          fakeMcp,
+          discoveryRestartOptions(restart, artifacts, { observationOffset: 1 }),
+          { assertDiscovery },
+        ),
+      ).rejects.toBe(failure);
 
-    expect(restart).not.toHaveBeenCalled();
-    expect(artifacts.writeJson).toHaveBeenCalledWith(DISCOVERY_RETRY_ARTIFACT, {
-      schemaVersion: 1,
-      attempts: [
-        {
-          attempt: 1,
-          requestCount: 1,
-          classification: "request-observed",
-          restartDecision: "no-restart",
-          outcome: "failed",
-        },
-      ],
-      finalOutcome: "failed-no-restart",
-    });
-  });
+      expect(restart).not.toHaveBeenCalled();
+      expect(artifacts.writeJson).toHaveBeenCalledWith(DISCOVERY_RETRY_ARTIFACT, {
+        schemaVersion: 1,
+        attempts: [
+          {
+            attempt: 1,
+            requestCount: 1,
+            classification: "request-observed",
+            restartDecision: "no-restart",
+            outcome: "failed",
+          },
+        ],
+        finalOutcome: "failed-no-restart",
+      });
+    },
+  );
 
   it("does not retry after the fixture received a request", () => {
     expect(shouldRetryMcpDiscoveryAfterRestart([request("initialize")])).toBe(false);

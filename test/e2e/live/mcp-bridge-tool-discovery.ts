@@ -8,6 +8,7 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertExitZero } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
+import { runBoundedRetry } from "../../../tools/e2e/retry-evidence.mts";
 import type { FakeMcpHttpsServer, FakeMcpRequest } from "./mcp-bridge-servers.ts";
 
 export interface AuthenticatedMcpDiscoveryTarget {
@@ -17,18 +18,18 @@ export interface AuthenticatedMcpDiscoveryTarget {
 }
 
 const MCP_TOOL_DISCOVERY_TRANSPORT_FAILURE = "MCP tool discovery request failed";
+const MCP_TOOL_DISCOVERY_TIMEOUT = "tool discovery timed out after 10s";
 const MCP_TOOL_DISCOVERY_ATTEMPTS = 2;
 const MCP_TOOL_DISCOVERY_RETRY_DELAY_MS = 1_000;
 
 export function shouldRetryMcpToolDiscoveryTransportFailure(
   toolDiscovery: { ok: boolean; detail?: string },
   requestsSinceAttempt: readonly FakeMcpRequest[],
-  attempt: number,
 ): boolean {
   return (
-    attempt < MCP_TOOL_DISCOVERY_ATTEMPTS &&
     !toolDiscovery.ok &&
-    toolDiscovery.detail === MCP_TOOL_DISCOVERY_TRANSPORT_FAILURE &&
+    (toolDiscovery.detail === MCP_TOOL_DISCOVERY_TRANSPORT_FAILURE ||
+      toolDiscovery.detail === MCP_TOOL_DISCOVERY_TIMEOUT) &&
     requestsSinceAttempt.length === 0
   );
 }
@@ -436,42 +437,65 @@ export async function assertAuthenticatedMcpToolDiscovery(
     progress: Pick<TestProgress, "event">;
     serverName?: string;
   },
+  deps: { sleep: (milliseconds: number) => Promise<void> } = {
+    sleep: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+  },
 ): Promise<void> {
   const credentialKey = options.credentialKey ?? "FAKE_MCP_SECRET";
   const serverName = options.serverName ?? "fake";
   const requestOffset = fakeMcp.requests.length;
-  let status: Awaited<ReturnType<HostCliClient["nemoclaw"]>> | undefined;
-  let statusJson: McpToolDiscoveryStatusJson | undefined;
-  for (let attempt = 1; attempt <= MCP_TOOL_DISCOVERY_ATTEMPTS; attempt += 1) {
-    status = await host.nemoclaw(
-      [options.sandboxName, "mcp", "status", serverName, "--tools", "--json"],
-      {
-        artifactName: `${options.artifactPrefix}-mcp-status-tools-json${attempt === 1 ? "" : `-retry-${attempt}`}`,
-        env: {
-          ...buildAvailabilityProbeEnv(),
-          [credentialKey]: options.hostSecret,
+  const execution = await runBoundedRetry<{
+    status: Awaited<ReturnType<HostCliClient["nemoclaw"]>>;
+    statusJson: McpToolDiscoveryStatusJson;
+  }>({
+    operation: "mcp-tool-discovery.status",
+    owner: "mcp-bridge-live-e2e",
+    idempotence: "read-only",
+    maxAttempts: MCP_TOOL_DISCOVERY_ATTEMPTS,
+    delayMs: MCP_TOOL_DISCOVERY_RETRY_DELAY_MS,
+    sleep: async (milliseconds) => {
+      options.progress.event(
+        "MCP tool discovery failed before reaching the fixture; retrying read-only status once",
+      );
+      await deps.sleep(milliseconds);
+    },
+    onEvidence: async (evidence) => {
+      await options.artifacts.writeJson(
+        `${options.artifactPrefix}-mcp-tool-discovery-retry.json`,
+        evidence,
+      );
+    },
+    run: async (attempt) => {
+      const status = await host.nemoclaw(
+        [options.sandboxName, "mcp", "status", serverName, "--tools", "--json"],
+        {
+          artifactName: `${options.artifactPrefix}-mcp-status-tools-json${attempt === 1 ? "" : `-retry-${attempt}`}`,
+          env: {
+            ...buildAvailabilityProbeEnv(),
+            [credentialKey]: options.hostSecret,
+          },
+          redactionValues: [options.hostSecret],
+          timeoutMs: 60_000,
         },
-        redactionValues: [options.hostSecret],
-        timeoutMs: 60_000,
-      },
-    );
-    assertExitZero(status, `${options.artifactPrefix} mcp status --tools --json`);
-    statusJson = JSON.parse(status.stdout) as McpToolDiscoveryStatusJson;
-    if (
-      !shouldRetryMcpToolDiscoveryTransportFailure(
-        statusJson.toolDiscovery,
+      );
+      assertExitZero(status, `${options.artifactPrefix} mcp status --tools --json`);
+      return { status, statusJson: JSON.parse(status.stdout) as McpToolDiscoveryStatusJson };
+    },
+    classify: (value, error) => {
+      if (error !== undefined || value === undefined) {
+        return { outcome: "failed", failureClass: "deterministic" };
+      }
+      if (value.statusJson.toolDiscovery.ok) return { outcome: "passed" };
+      return shouldRetryMcpToolDiscoveryTransportFailure(
+        value.statusJson.toolDiscovery,
         fakeMcp.requests.slice(requestOffset),
-        attempt,
       )
-    ) {
-      break;
-    }
-    options.progress.event(
-      "MCP tool discovery transport failed before reaching the fixture; retrying once",
-    );
-    await new Promise((resolve) => setTimeout(resolve, MCP_TOOL_DISCOVERY_RETRY_DELAY_MS));
-  }
-  if (!status || !statusJson) throw new Error("MCP tool discovery did not run");
+        ? { outcome: "failed", failureClass: "transient-external" }
+        : { outcome: "failed", failureClass: "deterministic" };
+    },
+  });
+  if (!execution.value) throw new Error("MCP tool discovery did not return status");
+  const { status, statusJson } = execution.value;
   const discoveryRequests = fakeMcp.requests.slice(requestOffset);
   await options.artifacts.writeJson(
     `${options.artifactPrefix}-mcp-tool-discovery-diagnostics.json`,
