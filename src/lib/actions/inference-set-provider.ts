@@ -262,7 +262,8 @@ function incompleteProviderRevisionMessage(
 function isUncertainProviderMutationError(error: OpenShellProviderError): boolean {
   return (
     error.kind === "timeout" ||
-    (error.kind === "transport" && error.reason === "unreachable") ||
+    (error.kind === "transport" &&
+      (error.reason === "unreachable" || error.reason === "connection_loss")) ||
     (error.kind === "command" && (error.reason === "failed" || error.reason === "uncertain"))
   );
 }

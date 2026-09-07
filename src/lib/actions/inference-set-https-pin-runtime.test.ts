@@ -707,7 +707,7 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
     expect(deps.calls.appendAuditEntry).not.toHaveBeenCalled();
   });
 
-  it("restores the prior selection and reports partial state after an uncertain provider failure (#9806)", async () => {
+  it("restores the prior selection and reports partial state after provider connection loss (#9806)", async () => {
     vi.stubEnv("COMPATIBLE_API_KEY", "real-upstream-secret");
     const capture = providerCapture({
       providerName: "compatible-endpoint",
@@ -727,7 +727,11 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
     });
     vi.spyOn(deps.providerAdapter, "updateProvider").mockResolvedValue({
       ok: false,
-      error: { kind: "command", reason: "uncertain", message: "safe uncertain failure" },
+      error: {
+        kind: "transport",
+        reason: "connection_loss",
+        message: "provider connection closed before the outcome was confirmed",
+      },
     });
 
     const failure = await runInferenceSet(
@@ -746,7 +750,7 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
     expect(message).toContain(
       "The previous OpenShell inference selection was restored. Provider state may still be partial.",
     );
-    expect(message).toContain("safe uncertain failure");
+    expect(message).toContain("provider connection closed before the outcome was confirmed");
     const selectionMutations = capture.mock.calls.filter(
       ([args]) => args[0] === "inference" && args[1] === "set",
     );
