@@ -60,7 +60,7 @@ describe("command-registry", () => {
       // singular `agent` passthrough that forwards to `openclaw agent`, the
       // download + upload host-side openshell wrappers, the stop + start
       // container lifecycle pair (#6026), the policy baseline exclude + restore
-      // pair, plus five MCP bridge display entries under the `mcp` parent and
+      // pair, plus six MCP bridge display entries under the `mcp` parent and
       // the gateway restart command under the `gateway` parent.
       expect(sandboxCommands()).toHaveLength(60);
     });

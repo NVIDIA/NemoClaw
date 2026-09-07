@@ -30,6 +30,45 @@ const RESTART_REFUSED = {
 } as const;
 
 describe("binding the Hermes gateway to restored state", () => {
+  it("keeps selected OpenShell operations pinned while using frozen rebuild supervisor authority", () => {
+    const runtimeSelection = {
+      gatewayName: "nemoclaw-19080",
+      workspace: "default",
+      localTlsDir: "/authority/tls",
+    };
+    const frozenTargetGatewaySupervisorAction = vi.fn(() => null);
+    const restartSandboxGateway = vi.fn(() => RESTART_SUCCEEDED);
+    const checkAndRecoverSandboxProcesses = vi.fn(() => ({
+      checked: true,
+      wasRunning: true,
+      recovered: false,
+    }));
+
+    const restartState = restartHermesGatewayAfterStateRestore("alpha", "hermes", {
+      frozenTargetGatewaySupervisorAction,
+      restartSandboxGateway,
+      runtimeSelection,
+    });
+    expect(restartState).toBe("restarted");
+    expect(restartSandboxGateway).toHaveBeenCalledExactlyOnceWith("alpha", {
+      quiet: true,
+      deps: { requestGatewaySupervisorAction: frozenTargetGatewaySupervisorAction },
+      runtimeSelection,
+    });
+
+    expect(
+      verifyHermesGatewayAfterStateRestore("alpha", "hermes", restartState, {
+        checkAndRecoverSandboxProcesses,
+        frozenTargetGatewaySupervisorAction,
+        runtimeSelection,
+      }),
+    ).toBe("healthy");
+    expect(checkAndRecoverSandboxProcesses).toHaveBeenCalledExactlyOnceWith("alpha", {
+      quiet: true,
+      requestGatewaySupervisorAction: frozenTargetGatewaySupervisorAction,
+      runtimeSelection,
+    });
+  });
   it("preserves an MCP refusal before gateway replacement (#8671)", () => {
     const restartState = restartHermesGatewayAfterStateRestore("alpha", "hermes", {
       restartSandboxGateway: () => RESTART_REFUSED,

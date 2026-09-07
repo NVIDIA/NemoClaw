@@ -17,7 +17,7 @@ import {
   inspectHermesMcpRuntimeIntent,
 } from "./mcp-bridge-hermes-reconciliation";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
-import { getPolicyPresence, getRegisteredGeneratedPolicy } from "./mcp-bridge-policy";
+import { getPolicyGatewayState, getRegisteredGeneratedPolicy } from "./mcp-bridge-policy";
 import {
   getMcpProviderInspectionRuntimeSelection,
   inspectMcpProvider,
@@ -157,6 +157,12 @@ function getAdapterRegistration(
 }
 
 export interface McpBridgeStatusOptions {
+  /**
+   * Let a credential-only recovery preflight verify the current attached
+   * revision even when the managed agent projection still names an older
+   * revision. The normal status path remains fail-closed on adapter drift.
+   */
+  allowCredentialProbeWithAdapterMismatch?: boolean;
   /**
    * Run the wire-level credential-resolution probe for each entry (#6379).
    * Costs one SSH round trip plus an in-sandbox MCP initialize per entry, so
@@ -319,7 +325,9 @@ export async function statusMcpBridge(
   return entries.map(([name, entry]) => {
     const support = entry ? getPersistedBridgeSupport(entry) : getSupportSummary(agent);
     const registeredPolicy = getRegisteredGeneratedPolicy(sandboxName, entry);
-    const policyPresence = getPolicyPresence(sandboxName, entry, providerRuntimeSelection);
+    const policyState = getPolicyGatewayState(sandboxName, entry, providerRuntimeSelection);
+    const policyPresence =
+      policyState === "match" ? true : policyState === "absent" ? false : null;
     const hasCredentialBinding =
       !!entry &&
       Array.isArray(entry.env) &&
@@ -355,6 +363,19 @@ export async function statusMcpBridge(
       if (urlWarning) warnings.push(urlWarning);
       credentialWarning = storedCredentialWarning(entry);
       if (credentialWarning) warnings.push(credentialWarning);
+      if (entry.pendingDenyTools !== undefined) {
+        warnings.push(
+          `Denied-tool update is interrupted. Run \`nemoclaw ${sandboxName} mcp restart ${entry.server}\` to commit it and restore the generated policy.`,
+        );
+      } else if (policyState === "drift") {
+        warnings.push(
+          `Generated policy differs from registered MCP intent. Run \`nemoclaw ${sandboxName} mcp restart ${entry.server}\` to restore it.`,
+        );
+      } else if (policyState === "absent") {
+        warnings.push(
+          `Generated policy is missing for registered MCP intent. Run \`nemoclaw ${sandboxName} mcp restart ${entry.server}\` to restore it.`,
+        );
+      }
     }
     const privatePinStatus = privatePinStatusByServer.get(name);
     if (privatePinStatus?.state === "drift") {
@@ -394,7 +415,8 @@ export async function statusMcpBridge(
             }
           : observationDetail
             ? { ok: null, detail: `probe skipped: ${observationDetail}` }
-            : adapterRegistration.registered !== true
+            : adapterRegistration.registered !== true &&
+                options.allowCredentialProbeWithAdapterMismatch !== true
               ? {
                   ok: null,
                   detail:
@@ -472,6 +494,7 @@ export async function statusMcpBridge(
         name: entry?.policyName,
         registryPresent: !!registeredPolicy,
         gatewayPresent: policyPresence,
+        ...(policyState === "drift" ? { state: "drift" as const } : {}),
       },
       adapter: adapterRegistration,
       ...(toolDiscovery ? { toolDiscovery } : {}),
