@@ -146,6 +146,7 @@ jobs:
       NEMOCLAW_E2E_SHARD: default
       NEMOCLAW_GATEWAY_RUNTIME: docker
       NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA: ${{ github.sha }}
+      NEMOCLAW_LLAMA_CPP_RUNTIME_IMAGE_SCOPE: published-base
       NEMOCLAW_LLAMACPP_RECIPE: llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_PROVIDER: install-llama-cpp

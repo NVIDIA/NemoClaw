@@ -30,6 +30,7 @@ import {
 const TIMEOUT_MS = 110 * 60_000;
 const RECIPE_ID =
   process.env.NEMOCLAW_LLAMACPP_RECIPE ?? "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1";
+const RUNTIME_IMAGE_SCOPE = process.env.NEMOCLAW_LLAMA_CPP_RUNTIME_IMAGE_SCOPE ?? "";
 const TARGET_ID = process.env.E2E_TARGET_ID ?? "llama-cpp-generic-gpu";
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-llamacpp-gpu";
 validateSandboxName(SANDBOX_NAME);
@@ -88,11 +89,13 @@ test(
     await artifacts.target.declare({
       id: TARGET_ID,
       boundary:
-        "Linux AMD64 RTX runner + Docker-qualified managed llama.cpp target + OpenShell sandbox route",
+        "Exact NemoClaw source + published-base llama.cpp image on a Linux AMD64 RTX runner + Docker-qualified managed runtime + OpenShell sandbox route",
       configurationAuthority:
-        "The repository-owned serving recipe supplies every model and serving value; the selected runtime-provider bundle owns materialization, and the artifact records the provider this lane exercised.",
+        "The exact source candidate owns orchestration; the base-published serving recipe supplies the runtime image, model, and serving values; the artifact does not qualify the PR-built llama.cpp image.",
       credentialBoundary:
         "The generated llama.cpp API key remains in owner-only host state and enters commands only through redacted process input.",
+      prBuiltLlamaCppImageRuntimeQualified: false,
+      runtimeImageScope: RUNTIME_IMAGE_SCOPE,
     });
 
     const cleanupEnv = env();
@@ -158,8 +161,10 @@ test(
     assert(
       receipt?.service === "llama-cpp" &&
         receipt.runtime.kind === "container" &&
-        receipt.providerId === resolveNemoClawGatewayRuntime(env()),
-      "managed llama.cpp container receipt does not match the target-selected runtime provider",
+        receipt.providerId === resolveNemoClawGatewayRuntime(env()) &&
+        RUNTIME_IMAGE_SCOPE === "published-base" &&
+        receipt.runtime.imageRef === recipe.spec.runtime.image,
+      "managed llama.cpp receipt does not match the selected runtime provider and base-published image",
     );
     const runtimeProvider = resolveRegisteredRuntimeProviderBundle(receipt.providerId);
     assert(
@@ -404,8 +409,13 @@ test(
     expect(cleanupProof.status).toBe("already-absent");
 
     await artifacts.writeJson("qualification-evidence.json", {
-      candidateSha: qualificationHeadSha,
+      sourceCandidateSha: qualificationHeadSha,
       recipe: RECIPE_ID,
+      runtimeImage: {
+        reference: receipt.runtime.imageRef,
+        scope: RUNTIME_IMAGE_SCOPE,
+        prBuiltCandidateTested: false,
+      },
       runtimeProvider: {
         providerId: receipt.providerId,
         authorityId: receipt.engineAuthority.authorityId,
@@ -435,8 +445,12 @@ test(
       id: TARGET_ID,
       status: "passed",
       candidateSha: qualificationHeadSha,
+      candidateScope: "NemoClaw source only",
       fullGpuOffload: true,
       model: recipe.spec.model.servedName,
+      prBuiltLlamaCppImageRuntimeQualified: false,
+      runtimeImageReference: receipt.runtime.imageRef,
+      runtimeImageScope: RUNTIME_IMAGE_SCOPE,
     });
   },
 );
