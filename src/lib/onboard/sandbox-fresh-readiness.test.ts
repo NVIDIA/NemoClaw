@@ -56,6 +56,7 @@ import {
   setupGpuFlowMocks,
 } from "./__test-helpers__/sandbox-gpu-create-flow";
 import { runSandboxGpuCreateFlow, type SandboxGpuCreateFlowDeps } from "./sandbox-gpu-create-flow";
+import { fingerprintSandboxRecreateValue } from "./sandbox-recreate-transaction";
 
 type OpenShellResult = ReturnType<SandboxGpuCreateFlowDeps["runOpenshell"]>;
 
@@ -190,6 +191,12 @@ describe("fresh sandbox executable readiness", () => {
     ["returns null", () => null],
   ])("rolls back when terminal readiness diagnostics %s (#9050)", async (_label, runDiagnostics) => {
     const deps = createDeps();
+    const input = createInput();
+    input.resumeVerifiedCreate = {
+      route: "native",
+      liveIdentityFingerprint: fingerprintSandboxRecreateValue("alpha-sandbox-id"),
+      createAttemptNonce: "a".repeat(62),
+    };
     const patch = createGpuPatchFixture();
     const order: string[] = [];
     patch.rollbackManagedStartupAfterCreateFailure.mockImplementation(() => {
@@ -202,7 +209,7 @@ describe("fresh sandbox executable readiness", () => {
     });
     vi.mocked(deps.runOpenshell).mockImplementation(
       createSequencedOpenShellRunner([
-        ["sandbox get -g nemoclaw alpha", [readySandboxGetResult()]],
+        ["sandbox get -g nemoclaw alpha", [readySandboxGetResult(), readySandboxGetResult()]],
         [
           "sandbox exec -g nemoclaw --name alpha -- true",
           [{ status: 1, stdout: "", stderr: "permission denied" }],
@@ -211,7 +218,9 @@ describe("fresh sandbox executable readiness", () => {
     );
     mockExit();
 
-    await expect(runSandboxGpuCreateFlow(createInput(), deps)).rejects.toThrow("process.exit:1");
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
+      "did not become ready after verified creation",
+    );
 
     expect({
       diagnosticCall: mocks.printSandboxCreateFailureDiagnostics.mock.calls[0],
@@ -239,6 +248,12 @@ describe("fresh sandbox executable readiness", () => {
 
   it("preserves the readiness failure when rollback rejects (#10412)", async () => {
     const deps = createDeps();
+    const input = createInput();
+    input.resumeVerifiedCreate = {
+      route: "native",
+      liveIdentityFingerprint: fingerprintSandboxRecreateValue("alpha-sandbox-id"),
+      createAttemptNonce: "a".repeat(62),
+    };
     const patch = createGpuPatchFixture();
     patch.rollbackManagedStartupAfterCreateFailure.mockRejectedValue(
       new Error("rollback unavailable"),
@@ -246,7 +261,7 @@ describe("fresh sandbox executable readiness", () => {
     mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
     vi.mocked(deps.runOpenshell).mockImplementation(
       createSequencedOpenShellRunner([
-        ["sandbox get -g nemoclaw alpha", [readySandboxGetResult()]],
+        ["sandbox get -g nemoclaw alpha", [readySandboxGetResult(), readySandboxGetResult()]],
         [
           "sandbox exec -g nemoclaw --name alpha -- true",
           [{ status: 1, stdout: "", stderr: "permission denied" }],
@@ -255,7 +270,9 @@ describe("fresh sandbox executable readiness", () => {
     );
     mockExit();
 
-    await expect(runSandboxGpuCreateFlow(createInput(), deps)).rejects.toThrow("process.exit:1");
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
+      "did not become ready after verified creation",
+    );
 
     expect(console.error).toHaveBeenCalledWith(
       "  Sandbox failure rollback did not complete: rollback unavailable",
@@ -300,9 +317,15 @@ describe("fresh sandbox executable readiness", () => {
     });
     mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
     const deps = createDeps();
+    const input = createInput();
+    input.resumeVerifiedCreate = {
+      route: "native",
+      liveIdentityFingerprint: fingerprintSandboxRecreateValue(sandboxId),
+      createAttemptNonce: "a".repeat(62),
+    };
     vi.mocked(deps.runOpenshell).mockImplementation(
       createSequencedOpenShellRunner([
-        ["sandbox get -g nemoclaw alpha", [readySandboxGetResult()]],
+        ["sandbox get -g nemoclaw alpha", [readySandboxGetResult(), readySandboxGetResult()]],
         [
           "sandbox exec -g nemoclaw --name alpha -- true",
           [{ status: 1, stdout: "", stderr: "permission denied" }],
@@ -311,7 +334,9 @@ describe("fresh sandbox executable readiness", () => {
     );
     mockExit();
 
-    await expect(runSandboxGpuCreateFlow(createInput(), deps)).rejects.toThrow("process.exit:1");
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
+      "did not become ready after verified creation",
+    );
 
     const bundlePath = path.join(bundleRoot, fs.readdirSync(bundleRoot)[0]!);
     const gatewayEvidence = fs.readFileSync(
@@ -421,10 +446,9 @@ describe("fresh sandbox executable readiness", () => {
       ["sandbox", "delete", "alpha"],
       expect.anything(),
     );
-    expect(mocks.printSandboxCreateFailureDiagnostics).toHaveBeenCalledWith("alpha", {
-      backupPath: null,
-      gatewayPort: 8080,
-      sandboxId: "alpha-sandbox-id",
-    });
+    expect(mocks.printSandboxCreateFailureDiagnostics).not.toHaveBeenCalled();
+    expect(console.error).toHaveBeenCalledWith(
+      "  Sandbox failure diagnostics were not collected because no durable sandbox identity was verified.",
+    );
   });
 });

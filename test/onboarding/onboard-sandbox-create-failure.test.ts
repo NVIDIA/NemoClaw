@@ -68,7 +68,7 @@ describe("sandbox create failure diagnostics", () => {
     const replacementConsolePath = path.join(replacementStateDir, "rootfs-console.log");
     const gatewayLogPath = path.join(logDir, "openshell-gateway.log");
     const gatewaySecret = "sk-abcdefghijklmnopqrstuvwxyz1234567890";
-    const consoleSecret = "console-secret-token";
+    const consoleSecret = "zxqv-console-secret-token";
 
     fs.mkdirSync(stateDir, { recursive: true });
     fs.mkdirSync(replacementStateDir, { recursive: true });
@@ -118,9 +118,16 @@ describe("sandbox create failure diagnostics", () => {
     expect(relevant).not.toContain(replacementConsolePath);
     const capturedOutput = `${relevant}\n${consoleOutput}\n${diagnostics?.summaryLines.join("\n")}`;
     expect({
+      consolePrefixPresent: capturedOutput.includes("zxqv"),
       consoleSecretPresent: capturedOutput.includes(consoleSecret),
+      gatewayPrefixPresent: capturedOutput.includes("sk-a"),
       gatewaySecretPresent: capturedOutput.includes(gatewaySecret),
-    }).toEqual({ consoleSecretPresent: false, gatewaySecretPresent: false });
+    }).toEqual({
+      consolePrefixPresent: false,
+      consoleSecretPresent: false,
+      gatewayPrefixPresent: false,
+      gatewaySecretPresent: false,
+    });
     expect(fs.readFileSync(path.join(diagnostics!.dir, "summary.txt"), "utf-8")).toContain(
       "backup_path=/tmp/pre-upgrade-backup",
     );
@@ -225,16 +232,13 @@ describe("sandbox create failure diagnostics", () => {
       now: new Date("2026-05-12T20:35:00.000Z"),
     });
     const retained = fs.readdirSync(failureRoot).sort();
+    const expectedRetained = [path.basename(diagnostics!.dir), ...oldBundles.slice(-9)].sort();
 
     expect({
-      currentRetained: retained.includes(path.basename(diagnostics!.dir)),
-      oldestRemoved: !retained.includes(oldBundles[0]!),
-      retainedCount: retained.length,
+      retained,
       retentionPruned: diagnostics?.retentionPruned,
     }).toEqual({
-      currentRetained: true,
-      oldestRemoved: true,
-      retainedCount: 10,
+      retained: expectedRetained,
       retentionPruned: true,
     });
   });

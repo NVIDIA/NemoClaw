@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { redact, redactFull } from "../security/redact";
+import { redactFullWithUrls } from "../security/redact";
 import type { DockerContainerInspect } from "./docker-gpu-patch-types";
 
 const SENSITIVE_ENV_KEY =
@@ -81,10 +81,7 @@ export function createDockerGpuDiagnosticRedactor(
 ): DockerGpuDiagnosticRedactor {
   const sensitiveValues = new Set([...initialSensitiveValues].filter((value) => value.length > 0));
   const redactText = (text: string): string => {
-    // `redactFull` covers known secret shapes, while `redact` additionally
-    // parses credential-bearing URLs such as proxy values. Apply both before
-    // replacing opaque values learned from Docker inspect records.
-    let redacted = redactFull(redact(text));
+    let redacted = redactFullWithUrls(text);
     for (const value of [...sensitiveValues].sort((left, right) => right.length - left.length)) {
       redacted = redacted.split(value).join("<REDACTED>");
     }

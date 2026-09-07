@@ -215,7 +215,7 @@ describe("Docker GPU diagnostic redaction", () => {
       ).toThrow(/__test_exit__/);
 
       const stderr = output.join("\n");
-      expect(stderr).toContain("https://****:****@proxy.example:8443/");
+      expect(stderr).toContain("https://proxy.example:8443/");
       expect(stderr).not.toContain(rawProxy);
       expect(stderr).not.toContain("proxy-user-7a9c");
       expect(stderr).not.toContain("proxy-secret-8b0d");

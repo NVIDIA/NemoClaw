@@ -350,12 +350,10 @@ function checkCreatedSandboxReadyIdentity(
   gatewayName: string,
   deps: SandboxGpuCreateFlowDeps,
   getRemainingMs: () => number,
-  onIdentified: (sandboxId: string) => void,
 ): ReturnType<CreatedSandboxReadyIdentityCheck> {
   const identity = probeExactOpenShellSandboxId(sandboxName, gatewayName, deps, getRemainingMs);
   if (identity.state === "not_ready") return "not_ready";
   if (identity.state === "failed") return "probe_failed";
-  onIdentified(identity.sandboxId);
   return checkSandboxExecutableReadiness(sandboxName, gatewayName, deps, getRemainingMs);
 }
 
@@ -1174,9 +1172,6 @@ export function createSandboxGpuCreateAttemptRunner(
                 input.gatewayName,
                 deps,
                 getRemainingMs,
-                (sandboxId) => {
-                  verifiedCreatedSandboxId = sandboxId;
-                },
               ),
       sleep: deps.sleep,
     });
