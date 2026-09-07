@@ -107,10 +107,10 @@ describe("OpenShell SDK sandbox command executor", () => {
   it("streams native stdout and stderr and preserves the SDK exit code", async () => {
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
+    const listeners = new Map<NodeJS.Signals, () => void>();
     const executor = createSdkOpenShellSandboxCommandExecutor({
       connect: async () => ({
         sandbox: {
-          exec: vi.fn(),
           execStream: async function* () {
             yield { stream: "stdout" as const, data: Buffer.from("native out\n") };
             yield { stream: "stderr" as const, data: Buffer.from("native err\n") };
@@ -118,6 +118,10 @@ describe("OpenShell SDK sandbox command executor", () => {
           },
         },
       }),
+      signalSource: {
+        add: (signal, listener) => listeners.set(signal, listener),
+        remove: (signal) => listeners.delete(signal),
+      },
       stdout: (data) => stdout.push(data),
       stderr: (data) => stderr.push(data),
     });
@@ -128,8 +132,10 @@ describe("OpenShell SDK sandbox command executor", () => {
       command: ["/usr/local/bin/openclaw", "skills", "list"],
       timeoutSeconds: 120,
     });
+    expect(listeners.size).toBe(2);
     completion.release();
 
+    expect(listeners.size).toBe(0);
     expect(completion.outcome).toEqual({ kind: "completed", exitCode: 7 });
     expect(Buffer.concat(stdout).toString()).toBe("native out\n");
     expect(Buffer.concat(stderr).toString()).toBe("native err\n");
@@ -308,7 +314,7 @@ describe("OpenShell SDK sandbox command executor", () => {
         kind: "failed",
         error: { kind: "timeout" },
       });
-      expect(remove).toHaveBeenCalledTimes(2);
+      expect(remove).not.toHaveBeenCalled();
       completion.release();
       expect(remove).toHaveBeenCalledTimes(2);
     } finally {

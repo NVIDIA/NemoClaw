@@ -313,7 +313,6 @@ export function createSdkOpenShellSandboxCommandExecutor(
           : { outcome: commandFailure(result.error), release };
       } finally {
         if (timeout) clearTimeout(timeout);
-        release();
       }
     },
   };
