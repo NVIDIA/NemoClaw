@@ -128,7 +128,7 @@ export function resolveEntryOptions<Entry extends PendingCreateRecoveryEntry>(
     registryState.listSandboxes().sandboxes,
     state.reconstructRetainedSandboxRecoveryFromPendingCreate,
   );
-  return resolveDefaultRunEntryOptionsFromState(options, validateSandboxName, state);
+  return readOptions(options, validateSandboxName, state);
 }
 
 type NonInteractiveEntryOptions = { nonInteractive?: boolean };
@@ -266,7 +266,7 @@ export function resolveDefaultRunEntryOptions(
   );
 }
 
-export function resolveDefaultRunEntryOptionsFromState(
+export function readOptions(
   options: OnboardEntryOptionsInput["opts"] & { autoYes?: boolean; nonInteractive?: boolean },
   validateSandboxName: OnboardEntryOptionsDeps["validateName"],
   state: DefaultRunEntryState,
