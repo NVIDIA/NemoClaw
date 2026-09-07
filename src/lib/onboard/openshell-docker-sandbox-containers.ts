@@ -10,6 +10,13 @@ import type { DockerGpuPatchDeps } from "./docker-gpu-patch-types";
 
 export const OPENSHELL_MANAGED_BY_LABEL = "openshell.ai/managed-by";
 export const OPENSHELL_MANAGED_BY_VALUE = "openshell";
+// OpenShell's Podman driver does not stamp OPENSHELL_MANAGED_BY_LABEL on the
+// containers it creates; it stamps this driver-specific marker instead
+// (verified against a live OpenShell 0.0.106 Podman-driver sandbox create,
+// #11139). Treat either marker as proof of OpenShell ownership so destroy's
+// identity check does not fail closed on every Podman-driver sandbox.
+export const OPENSHELL_PODMAN_MANAGED_LABEL = "openshell.managed";
+export const OPENSHELL_PODMAN_MANAGED_VALUE = "true";
 export const OPENSHELL_SANDBOX_NAME_LABEL = "openshell.ai/sandbox-name";
 export const OPENSHELL_SANDBOX_ID_LABEL = "openshell.ai/sandbox-id";
 export const OPENSHELL_SANDBOX_NAMESPACE_LABEL = "openshell.ai/sandbox-namespace";
@@ -31,7 +38,10 @@ export function hasOpenShellSandboxOwnership(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
   const ownership = resolveOpenShellSandboxOwnershipLabel(env);
-  return labels[ownership.label] === ownership.value;
+  return (
+    labels[ownership.label] === ownership.value ||
+    labels[OPENSHELL_PODMAN_MANAGED_LABEL] === OPENSHELL_PODMAN_MANAGED_VALUE
+  );
 }
 
 const DOCKER_SANDBOX_QUERY_TIMEOUT_MS = 30_000;
@@ -148,6 +158,7 @@ export function inspectDockerSandboxNameLabeledContainers(
     managedBy: OPENSHELL_MANAGED_BY_LABEL,
     workspace: OPENSHELL_SANDBOX_WORKSPACE_LABEL,
     sandboxId: OPENSHELL_SANDBOX_ID_LABEL,
+    managedAlt: OPENSHELL_PODMAN_MANAGED_LABEL,
   });
 }
 
