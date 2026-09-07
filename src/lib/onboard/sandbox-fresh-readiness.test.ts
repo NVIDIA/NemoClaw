@@ -191,8 +191,15 @@ describe("fresh sandbox executable readiness", () => {
   ])("rolls back when terminal readiness diagnostics %s (#9050)", async (_label, runDiagnostics) => {
     const deps = createDeps();
     const patch = createGpuPatchFixture();
+    const order: string[] = [];
+    patch.rollbackManagedStartupAfterCreateFailure.mockImplementation(() => {
+      order.push("rollback");
+    });
     mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
-    mocks.printSandboxCreateFailureDiagnostics.mockImplementationOnce(runDiagnostics);
+    mocks.printSandboxCreateFailureDiagnostics.mockImplementationOnce(() => {
+      order.push("diagnostics");
+      return runDiagnostics();
+    });
     vi.mocked(deps.runOpenshell).mockImplementation(
       createSequencedOpenShellRunner([
         ["sandbox get -g nemoclaw alpha", [readySandboxGetResult()]],
@@ -213,6 +220,7 @@ describe("fresh sandbox executable readiness", () => {
         .mock.calls.flat()
         .join("\n")
         .includes("Sandbox failure diagnostics were unavailable; continuing rollback."),
+      order,
       rollbackCalls: patch.rollbackManagedStartupAfterCreateFailure.mock.calls.length,
       sandboxDeletedByName: vi.mocked(deps.runOpenshell).mock.calls.some(
         ([args]) => args.join(" ") === "sandbox delete alpha",
@@ -223,9 +231,35 @@ describe("fresh sandbox executable readiness", () => {
         { backupPath: null, gatewayPort: 8080, sandboxId: "alpha-sandbox-id" },
       ],
       diagnosticUnavailable: true,
+      order: ["diagnostics", "rollback"],
       rollbackCalls: 1,
       sandboxDeletedByName: false,
     });
+  });
+
+  it("preserves the readiness failure when rollback rejects (#10412)", async () => {
+    const deps = createDeps();
+    const patch = createGpuPatchFixture();
+    patch.rollbackManagedStartupAfterCreateFailure.mockRejectedValue(
+      new Error("rollback unavailable"),
+    );
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
+    vi.mocked(deps.runOpenshell).mockImplementation(
+      createSequencedOpenShellRunner([
+        ["sandbox get -g nemoclaw alpha", [readySandboxGetResult()]],
+        [
+          "sandbox exec -g nemoclaw --name alpha -- true",
+          [{ status: 1, stdout: "", stderr: "permission denied" }],
+        ],
+      ]),
+    );
+    mockExit();
+
+    await expect(runSandboxGpuCreateFlow(createInput(), deps)).rejects.toThrow("process.exit:1");
+
+    expect(console.error).toHaveBeenCalledWith(
+      "  Sandbox failure rollback did not complete: rollback unavailable",
+    );
   });
 
   it("saves verified readiness evidence before rollback (#10412)", async () => {

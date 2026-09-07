@@ -305,8 +305,9 @@ function pruneFailureBundles(root: string, currentBundleName: string): boolean {
       retained.push(entry.name);
       retained.sort().reverse();
       if (retained.length <= MAX_FAILURE_BUNDLES) continue;
-      const oldest = retained.pop();
-      if (!oldest || oldest === currentBundleName) return false;
+      const oldest = [...retained].reverse().find((name) => name !== currentBundleName);
+      if (!oldest) return false;
+      retained.splice(retained.indexOf(oldest), 1);
       const target = path.join(root, oldest);
       rejectSymlinksOnPath(target);
       if (!fs.lstatSync(target).isDirectory()) return false;
@@ -391,13 +392,19 @@ export function collectSandboxCreateFailureDiagnostics(
   const backupPath = options.backupPath ?? null;
 
   if (relevantLines.length > 0) {
+    const serializedGatewayEvidence = redactAndBoundText(
+      `${relevantLines.join("\n")}\n`,
+      MAX_GATEWAY_LOG_BYTES,
+      true,
+    );
     fs.writeFileSync(
       path.join(dir, "openshell-gateway-relevant.log"),
-      `${relevantLines.join("\n")}\n`,
+      serializedGatewayEvidence.contents,
       {
         mode: 0o600,
       },
     );
+    if (serializedGatewayEvidence.truncated) gatewayLog!.truncated = true;
   }
   const gatewayTailPath =
     gatewayTailLines.length > 0 ? path.join(dir, "openshell-gateway-tail.log") : null;

@@ -54,6 +54,10 @@ export type SandboxCreateFailureReportDeps = {
   exitProcess(code: number): never;
 };
 
+export function formatSandboxCreateRollbackFailure(error: unknown): string {
+  return `  Sandbox failure rollback did not complete: ${redact(error instanceof Error ? error.message : String(error))}`;
+}
+
 /**
  * Report a non-zero sandbox create-stream exit. A mere "create incomplete"
  * (the sandbox exists in the gateway but the stream exited non-zero, e.g. SSH
@@ -86,9 +90,7 @@ export async function reportSandboxCreateFailure(
   try {
     await deps.rollbackCreateFailure();
   } catch (error) {
-    deps.error(
-      `  Sandbox failure rollback did not complete: ${redact(error instanceof Error ? error.message : String(error))}`,
-    );
+    deps.error(formatSandboxCreateRollbackFailure(error));
   }
   deps.printCreateFailureDiagnostics(options.sandboxName, {
     backupPath: options.restoreBackupPath,

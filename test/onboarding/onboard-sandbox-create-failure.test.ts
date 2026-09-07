@@ -216,7 +216,7 @@ describe("sandbox create failure diagnostics", () => {
     const oldBundles = Array.from(
       { length: 12 },
       (_, index) =>
-        `2026-01-01T00-00-${String(index).padStart(2, "0")}-000Z-old-${String(index)}`,
+        `2027-01-01T00-00-${String(index).padStart(2, "0")}-000Z-old-${String(index)}`,
     );
     oldBundles.forEach((name) => fs.mkdirSync(path.join(failureRoot, name)));
 

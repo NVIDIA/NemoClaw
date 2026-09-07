@@ -23,6 +23,7 @@ import { getReadyCheckOutputPatternsForAgent } from "../sandbox/create-stream-re
 import type { SandboxGpuProofResult } from "../state/registry";
 import { classifySandboxCreateFailure } from "../validation";
 import {
+  formatSandboxCreateRollbackFailure,
   formatRetainedSandboxRecoveryMessage,
   reportSandboxCreateFailure,
 } from "./created-sandbox-failure";
@@ -54,7 +55,10 @@ import type {
 import { fingerprintSandboxRecreateValue } from "./sandbox-recreate-transaction";
 import * as sandboxGpuPreflight from "./sandbox-gpu-preflight";
 import { SANDBOX_RECREATE_PROBE_TIMEOUT_MS } from "./sandbox-recreate-probe";
-import type { CreatedSandboxReadyIdentityCheck } from "./sandbox-readiness-tracing";
+import type {
+  CreatedSandboxReadinessResult,
+  CreatedSandboxReadyIdentityCheck,
+} from "./sandbox-readiness-tracing";
 import * as sandboxReadinessTracing from "./sandbox-readiness-tracing";
 import { addTraceEvent } from "./tracing";
 
@@ -470,6 +474,25 @@ function printIdentityBoundCreateFailureDiagnostics(
     return;
   }
   printDiagnostics(sandboxName, { backupPath, gatewayPort, sandboxId });
+}
+
+async function rollbackReadinessFailure(
+  rollback: () => unknown,
+): Promise<void> {
+  try {
+    await rollback();
+  } catch (error) {
+    console.error(formatSandboxCreateRollbackFailure(error));
+  }
+}
+
+function readinessDiagnosticSandboxId(
+  readiness: CreatedSandboxReadinessResult,
+  expectedRecreatedSandboxId: string | null,
+  verifiedCreatedSandboxId: string | null,
+): string | null {
+  if (readiness.reason === "identity_changed") return null;
+  return expectedRecreatedSandboxId ?? verifiedCreatedSandboxId;
 }
 
 export function createSandboxGpuCreateAttemptRunner(
@@ -1199,7 +1222,11 @@ export function createSandboxGpuCreateAttemptRunner(
           ...nativeCleanup,
         } as const;
       }
-      const diagnosticSandboxId = expectedRecreatedSandboxId ?? verifiedCreatedSandboxId;
+      const diagnosticSandboxId = readinessDiagnosticSandboxId(
+        readiness,
+        expectedRecreatedSandboxId,
+        verifiedCreatedSandboxId,
+      );
       printIdentityBoundCreateFailureDiagnostics(
         printCreateFailureDiagnosticsBeforeRollback,
         input.sandboxName,
@@ -1207,7 +1234,9 @@ export function createSandboxGpuCreateAttemptRunner(
         input.gatewayPort,
         diagnosticSandboxId,
       );
-      await runtimePatch.rollbackManagedStartupAfterCreateFailure();
+      await rollbackReadinessFailure(() =>
+        runtimePatch.rollbackManagedStartupAfterCreateFailure(),
+      );
       if (compatibility) runtimePatch.printReadinessFailureIfEnabled();
       else if (expectedRecreatedSandboxId) {
         console.error(

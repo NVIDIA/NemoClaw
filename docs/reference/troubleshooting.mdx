@@ -2739,13 +2739,7 @@ Starting with NemoClaw v0.0.43, the standard installer handles the `/proc/<pid>/
 If an older release fails direct GPU proof with that path and `Permission denied`, upgrade NemoClaw and rerun onboarding.
 </Note>
 
-When inspection confirms that the failed sandbox remains, delete it with a command such as:
-
-```bash
-openshell sandbox delete <sandbox-name>
-```
-
-Fix the NVIDIA Container Toolkit or CDI configuration reported in the diagnostics. Run the deletion command only after confirming that the pre-patch sandbox was not restored, then rerun onboarding. If you do not need GPU access inside the sandbox, rerun with `--no-sandbox-gpu`.
+Do not delete a failed sandbox by mutable name. Follow the retained-sandbox recovery output and require NemoClaw to validate the durable sandbox identity before removal. If NemoClaw retains an exact validated replacement-container ID and prints a `docker rm -f <container-id>` command, use only that exact command after confirming that the pre-patch sandbox was not restored. Fix the NVIDIA Container Toolkit or CDI configuration reported in the diagnostics, then rerun onboarding. If you do not need GPU access inside the sandbox, rerun with `--no-sandbox-gpu`.
 
 If sandbox creation fails with `CDI device injection failed: unresolvable CDI devices nvidia.com/gpu=all`, the OpenShell gateway tried `docker create --device nvidia.com/gpu=all` and Docker could not resolve the CDI spec. This injection happens inside the gateway, so `NEMOCLAW_DOCKER_GPU_PATCH=0` does not bypass it. Rerun with `--no-gpu`, or set `NEMOCLAW_SANDBOX_GPU=0` and resume onboarding.
 
