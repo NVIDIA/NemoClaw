@@ -157,12 +157,11 @@ function adaptHostAssessment(
       gpu?.totalMemoryMB === undefined ? undefined : gpu.totalMemoryMB * 1024 * 1024,
     nvidiaGpuMemoryAvailableBytes:
       gpu?.availableMemoryMB === undefined ? undefined : gpu.availableMemoryMB * 1024 * 1024,
-    nvidiaGpuMemoryPerDeviceBytes:
-      gpu?.gpus?.length
-        ? Math.min(...gpu.gpus.map(({ memoryMB }) => memoryMB)) * 1024 * 1024
-        : gpu?.perGpuMB === undefined
-          ? undefined
-          : gpu.perGpuMB * 1024 * 1024,
+    nvidiaGpuMemoryPerDeviceBytes: gpu?.gpus?.length
+      ? Math.min(...gpu.gpus.map(({ memoryMB }) => memoryMB)) * 1024 * 1024
+      : gpu?.perGpuMB === undefined
+        ? undefined
+        : gpu.perGpuMB * 1024 * 1024,
     nvidiaGpuUnifiedMemory: gpu?.unifiedMemory,
     nvidiaGpuComputeConstrained: gpu?.computeConstrained,
     hostGpuPlatform,
@@ -174,9 +173,7 @@ function adaptHostAssessment(
     platformIdentity: {
       ...platformIdentity,
       n1xWslGpu:
-        host.isWsl && hostGpuPlatform === "n1x"
-          ? wslDockerDesktopGpuProofPassed
-          : undefined,
+        host.isWsl && hostGpuPlatform === "n1x" ? wslDockerDesktopGpuProofPassed : undefined,
       wslDockerDesktopGpuProofPassed,
     },
   };
@@ -500,6 +497,7 @@ export function projectHostReadiness(
       dockerReachable: dockerEvidenceUsable,
       runtime: host.runtime,
       hasNvidiaGpu: host.hasNvidiaGpu,
+      nvidiaGpuCount: host.nvidiaGpuCount,
       ...host.platformIdentity,
     });
     evidence.push(...platform.evidence);

@@ -468,6 +468,11 @@ describe("managed llama.cpp selection", () => {
       observations: report.observations.map((observation) =>
         observation.id === "host.gpu.count" ? { ...observation, value: 2 } : observation,
       ),
+      qualifications: report.qualifications.map((qualification) =>
+        qualification.id === "host.platform.n1x_wsl"
+          ? { ...qualification, status: "unqualified" as const }
+          : qualification,
+      ),
     };
 
     expect(

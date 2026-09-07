@@ -46,6 +46,7 @@ describe("handleProviderInferenceState managed llama.cpp resume", () => {
       expect(recoverManagedLlamaCpp).toHaveBeenCalledWith(
         "llama-cpp-local",
         "spark-agent",
+        expect.any(Function),
       );
       expect(recoverManagedLlamaCpp.mock.invocationCallOrder[0]).toBeLessThan(
         calls.recoverProvider.mock.invocationCallOrder[0]!,
@@ -63,4 +64,43 @@ describe("handleProviderInferenceState managed llama.cpp resume", () => {
     },
   );
 
+  it("refuses managed runtime recovery when the live sandbox identity changes", async () => {
+    const session = createSession({
+      sandboxName: "spark-agent",
+      provider: "llama-cpp-local",
+      model: "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-GGUF",
+      endpointUrl: "http://host.openshell.internal:8081/v1",
+      credentialEnv: "LLAMA_CPP_API_KEY",
+      preferredInferenceApi: "openai-completions",
+      sandboxPromptProgress: {
+        sandboxName: true,
+        webSearch: false,
+        messaging: false,
+        resourceProfile: false,
+      },
+    });
+    session.steps.provider_selection.status = "complete";
+    let runtimeMutationStarted = false;
+    const recoverManagedLlamaCpp = vi.fn(async (_provider, _sandboxName, revalidate) => {
+      revalidate?.("resume the managed llama.cpp runtime");
+      runtimeMutationStarted = true;
+      return true;
+    });
+    const { deps } = createDeps({
+      ensureManagedLlamaCppResumeReady: recoverManagedLlamaCpp,
+      isInferenceRouteReady: vi.fn(() => true),
+      revalidateManagedLlamaCppResumeSandboxIdentity: () => {
+        throw new Error("sandbox identity changed");
+      },
+    });
+
+    await expect(
+      handleProviderInferenceState({
+        ...baseOptions(deps, session),
+        resume: true,
+        sandboxName: "spark-agent",
+      }),
+    ).rejects.toThrow("sandbox identity changed");
+    expect(runtimeMutationStarted).toBe(false);
+  });
 });

@@ -33,13 +33,21 @@ const RECIPE_ID =
 const RUNTIME_IMAGE_SCOPE =
   process.env.NEMOCLAW_LLAMA_CPP_RUNTIME_IMAGE_SCOPE ??
   (process.env.NEMOCLAW_E2E_PHASE_COLLECTION === "1" ? "published-base" : "");
+const RUNTIME_IMAGE =
+  process.env.NEMOCLAW_LLAMA_CPP_RUNTIME_IMAGE ??
+  (process.env.NEMOCLAW_E2E_PHASE_COLLECTION === "1"
+    ? `ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:${"0".repeat(64)}`
+    : "");
 const TARGET_ID = process.env.E2E_TARGET_ID ?? "llama-cpp-generic-gpu";
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-llamacpp-gpu";
 validateSandboxName(SANDBOX_NAME);
-assert.match(
-  `${RUNTIME_IMAGE_SCOPE}:${RECIPE_ID}`,
-  /^published-base:[a-z0-9][a-z0-9._-]{0,159}$/u,
-  "invalid llama.cpp runtime image scope or recipe ID",
+assert(
+  /^published-base$/u.test(RUNTIME_IMAGE_SCOPE) &&
+    /^[a-z0-9][a-z0-9._-]{0,159}$/u.test(RECIPE_ID) &&
+    /^(?:[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?\/)?(?:[a-z0-9]+(?:[._-][a-z0-9]+)*\/)*[a-z0-9]+(?:[._-][a-z0-9]+)*@sha256:[0-9a-f]{64}$/u.test(
+      RUNTIME_IMAGE,
+    ),
+  "invalid llama.cpp runtime image scope, recipe ID, or base-pinned image",
 );
 assert.match(TARGET_ID, /^[a-z0-9][a-z0-9-]{0,63}$/u, "invalid E2E target ID");
 
@@ -71,7 +79,10 @@ function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
 function loadGpuSetting() {
   const catalog = loadManagedInferenceCatalog();
   const recipe = catalog.recipes.find(({ metadata }) => metadata.id === RECIPE_ID);
-  assert(recipe && isLlamaCppServingRecipe(recipe), "GPU E2E llama.cpp recipe is missing");
+  assert(
+    recipe && isLlamaCppServingRecipe(recipe) && recipe.spec.runtime.image === RUNTIME_IMAGE,
+    "GPU E2E llama.cpp recipe is missing or disagrees with the trusted PR-base image",
+  );
   const modelFile = recipe.spec.model.files[0];
   assert(modelFile && "sizeBytes" in modelFile, "generic GPU E2E GGUF identity is incomplete");
   return { modelFile, recipe };
@@ -182,7 +193,7 @@ test(
     const paths = managedLlamaCppStatePaths(os.homedir());
     const interruptedReceipt = requireExpectedManagedReceipt(
       loadManagedLlamaCppReceipt(paths),
-      recipe.spec.runtime.image,
+      RUNTIME_IMAGE,
     );
     const interruptedRuntimeId = interruptedReceipt.runtime.runtimeId;
     const stopRuntime = await host.command("docker", ["stop", interruptedRuntimeId], {
@@ -234,7 +245,7 @@ test(
     );
     const receipt = requireExpectedManagedReceipt(
       loadManagedLlamaCppReceipt(paths),
-      recipe.spec.runtime.image,
+      RUNTIME_IMAGE,
       interruptedRuntimeId,
     );
     const runtimeProvider = resolveRegisteredRuntimeProviderBundle(receipt.providerId);
@@ -484,6 +495,7 @@ test(
       recipe: RECIPE_ID,
       runtimeImage: {
         reference: receipt.runtime.imageRef,
+        sourceRevision: process.env.NEMOCLAW_LLAMA_CPP_RUNTIME_IMAGE_SOURCE_REVISION ?? null,
         scope: RUNTIME_IMAGE_SCOPE,
         prBuiltCandidateTested: false,
       },

@@ -141,6 +141,7 @@ export function createDeps(
     updateSandbox: vi.fn(),
     checkpointSandboxIdentity: vi.fn(async () => undefined),
     prepareLocalProviderForInference: vi.fn(async () => null),
+    revalidateManagedLlamaCppResumeSandboxIdentity: vi.fn(),
     promptName: vi.fn(async () => "my-assistant"),
     prompt: vi.fn(async () => "1"),
     log: vi.fn(),
@@ -174,6 +175,8 @@ export function createDeps(
       toSessionUpdates: (updates: Record<string, unknown>) => updates as SessionUpdates,
       skippedStepMessage: calls.skipped,
       ensureManagedLlamaCppResumeReady: calls.recoverManagedLlamaCpp,
+      revalidateManagedLlamaCppResumeSandboxIdentity:
+        calls.revalidateManagedLlamaCppResumeSandboxIdentity,
       ensureResumeProviderReady: calls.recoverProvider,
       isResumeProviderSurfaceReady: calls.surfaceReady,
       recordStateSkipped: calls.recordSkip,

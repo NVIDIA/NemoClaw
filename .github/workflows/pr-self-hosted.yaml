@@ -36,6 +36,7 @@ jobs:
       contents: read
     outputs:
       base_sha: ${{ steps.changed.outputs.base_sha }}
+      llama_cpp_runtime_image: ${{ steps.llama_cpp_runtime_image.outputs.reference }}
       managed_image_revision: ${{ steps.publication.outputs.head_sha }}
       selected: ${{ steps.changed.outputs.selected }}
     steps:
@@ -115,6 +116,30 @@ jobs:
         if: ${{ steps.changed.outputs.selected == 'true' }}
         run: npm ci --ignore-scripts --no-audit --no-fund
 
+      - id: llama_cpp_runtime_image
+        name: Resolve base llama.cpp runtime image
+        if: ${{ steps.changed.outputs.selected == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import fs from "node:fs";
+          import YAML from "yaml";
+
+          const source = fs.readFileSync(
+            "managed-inference/recipes/llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1.yaml",
+            "utf8",
+          );
+          const reference = YAML.parse(source)?.spec?.runtime?.image;
+          if (
+            typeof reference !== "string" ||
+            !/^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?\/(?:[a-z0-9]+(?:[._-][a-z0-9]+)*\/)*[a-z0-9]+(?:[._-][a-z0-9]+)*@sha256:[a-f0-9]{64}$/u.test(reference)
+          ) {
+            throw new Error("The PR base llama.cpp recipe does not contain an immutable runtime image.");
+          }
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `reference=${reference}\n`, "utf8");
+          NODE
+
       - id: publication
         name: Verify complete base and managed-image publication
         if: ${{ steps.changed.outputs.selected == 'true' }}
@@ -148,6 +173,8 @@ jobs:
       NEMOCLAW_E2E_SHARD: default
       NEMOCLAW_GATEWAY_RUNTIME: docker
       NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA: ${{ github.sha }}
+      NEMOCLAW_LLAMA_CPP_RUNTIME_IMAGE: ${{ needs.select-llama-cpp-generic-gpu.outputs.llama_cpp_runtime_image }}
+      NEMOCLAW_LLAMA_CPP_RUNTIME_IMAGE_SOURCE_REVISION: ${{ needs.select-llama-cpp-generic-gpu.outputs.base_sha }}
       NEMOCLAW_LLAMA_CPP_RUNTIME_IMAGE_SCOPE: published-base
       NEMOCLAW_LLAMACPP_RECIPE: llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1
       NEMOCLAW_NON_INTERACTIVE: "1"

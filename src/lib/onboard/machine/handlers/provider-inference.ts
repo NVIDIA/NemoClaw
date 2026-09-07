@@ -226,6 +226,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       sandboxName: string | null | undefined,
       revalidateSandboxIdentity?: (operation: string) => void,
     ): Promise<boolean>;
+    revalidateManagedLlamaCppResumeSandboxIdentity(sandboxName: string, operation: string): void;
     isResumeProviderSurfaceReady(
       gatewayName: string,
       provider: string | null | undefined,
@@ -690,10 +691,20 @@ async function ensureLegacyManagedLlamaCppResumeReady(
   ensure: (
     provider: string | null | undefined,
     sandboxName: string | null | undefined,
+    revalidateSandboxIdentity?: (operation: string) => void,
   ) => Promise<boolean>,
+  revalidateSandboxIdentity?: (operation: string) => void,
 ): Promise<void> {
   if (selection?.setupOptions.hostLocalInference) return;
-  await ensure(provider, sandboxName);
+  await ensure(provider, sandboxName, revalidateSandboxIdentity);
+}
+
+function bindManagedLlamaCppResumeIdentityRevalidation(
+  sandboxName: string | null,
+  revalidate: (sandboxName: string, operation: string) => void,
+): ((operation: string) => void) | undefined {
+  if (!sandboxName) return undefined;
+  return (operation) => revalidate(sandboxName, operation);
 }
 
 function endpointSourceForCurrentUrl(
@@ -1346,6 +1357,10 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         provider,
         sandboxName,
         deps.ensureManagedLlamaCppResumeReady,
+        bindManagedLlamaCppResumeIdentityRevalidation(
+          sandboxName,
+          deps.revalidateManagedLlamaCppResumeSandboxIdentity,
+        ),
       );
       const recovery = await deps.ensureResumeProviderReady(gatewayName, provider, credentialEnv);
       forceInferenceSetup ||= recovery.forceInferenceSetup;

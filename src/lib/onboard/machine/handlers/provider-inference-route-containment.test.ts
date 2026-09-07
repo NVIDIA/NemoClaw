@@ -100,6 +100,7 @@ function createDeps() {
     toSessionUpdates: (updates: Record<string, unknown>) => updates as SessionUpdates,
     skippedStepMessage: vi.fn(),
     ensureManagedLlamaCppResumeReady: vi.fn(async () => false),
+    revalidateManagedLlamaCppResumeSandboxIdentity: vi.fn(),
     ensureResumeProviderReady: vi.fn(async (_gatewayName, _provider, credentialEnv) => ({
       forceInferenceSetup: false,
       credentialEnv: credentialEnv ?? null,

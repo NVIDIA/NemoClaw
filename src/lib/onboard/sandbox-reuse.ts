@@ -54,6 +54,7 @@ export interface SandboxReuseHelpers {
     sandboxName: string | null,
     gatewayName?: string,
   ): SandboxRecreateObservation;
+  revalidateRecordedSandboxLiveIdentity(sandboxName: string, operation: string): void;
   waitForSandboxRecreateDeleteAbsence(
     sandboxName: string,
     gatewayName: string,
@@ -141,9 +142,7 @@ export function applyReusedSandboxDashboardState(
       `Sandbox '${input.sandboxName}' was created without remote dashboard exposure. Re-run onboarding with NEMOCLAW_DASHBOARD_BIND=0.0.0.0 and --recreate-sandbox before opening a remote bind.`,
     );
   }
-  input.revalidateSandboxIdentity?.(
-    `restore dashboard state for sandbox '${input.sandboxName}'`,
-  );
+  input.revalidateSandboxIdentity?.(`restore dashboard state for sandbox '${input.sandboxName}'`);
   const dashboardPort = manageDashboard
     ? input.revalidateSandboxIdentity
       ? input.ensureDashboardForward(input.sandboxName, input.chatUiUrl, {
@@ -265,6 +264,20 @@ export function createSandboxReuseHelpers(deps: SandboxReuseDeps): SandboxReuseH
     };
   }
 
+  function revalidateRecordedSandboxLiveIdentity(sandboxName: string, operation: string): void {
+    const recorded = registry.getSandbox(sandboxName);
+    const expectedIdentity = recorded?.lifecycleLiveIdentityFingerprint;
+    if (!recorded || !expectedIdentity) {
+      throw new Error(
+        `Cannot ${operation}: sandbox '${sandboxName}' has no recorded live identity.`,
+      );
+    }
+    const observed = getSandboxRecreateObservation(sandboxName, recorded.gatewayName ?? undefined);
+    if (observed.liveIdentityFingerprint !== expectedIdentity) {
+      throw new Error(`Cannot ${operation}: sandbox '${sandboxName}' live identity changed.`);
+    }
+  }
+
   function getSandboxReuseState(sandboxName: string | null): string {
     return readSandboxState(sandboxName).state;
   }
@@ -319,6 +332,7 @@ export function createSandboxReuseHelpers(deps: SandboxReuseDeps): SandboxReuseH
   return {
     getSandboxReuseState,
     getSandboxRecreateObservation,
+    revalidateRecordedSandboxLiveIdentity,
     waitForSandboxRecreateDeleteAbsence,
   };
 }

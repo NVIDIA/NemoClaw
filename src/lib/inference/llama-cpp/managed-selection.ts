@@ -56,19 +56,11 @@ function n1xWslDockerLocalityFailure(
     : "Managed N1x WSL llama.cpp requires DOCKER_HOST to be unset and the effective Docker context to be default.";
 }
 
-function n1xWslGpuCountFailure(report: SystemReadinessReport): string | null {
-  const gpuCount = report.observations.find(
-    (observation) => observation.id === "host.gpu.count" && observation.state === "present",
-  )?.value;
-  return gpuCount === 1 ? null : "Managed N1x WSL llama.cpp requires exactly one GPU.";
-}
-
 function n1xWslEligibilityFailure(
   env: NodeJS.ProcessEnv,
-  report: SystemReadinessReport,
   options: ManagedLlamaCppSelectionOptions,
 ): string | null {
-  return n1xWslDockerLocalityFailure(env, options) || n1xWslGpuCountFailure(report);
+  return n1xWslDockerLocalityFailure(env, options);
 }
 
 function dockerQualifiedPresetRuntimeFailure(
@@ -196,7 +188,7 @@ function managedLlamaCppChoiceEligibilityFailure(
   if (runtimeFailure) return runtimeFailure;
   return (
     (choice.selection.recipe.metadata.id === N1X_WSL_RECIPE_ID &&
-      n1xWslEligibilityFailure(env, report, options)) ||
+      n1xWslEligibilityFailure(env, options)) ||
     null
   );
 }
@@ -211,7 +203,7 @@ function resolveManagedLlamaCppSelectionFromChoices(
 ): ManagedLlamaCppSelectionResult {
   const requestedRecipeId = String(env[LLAMA_CPP_RECIPE_ENV] ?? "").trim();
   if (requestedRecipeId === N1X_WSL_RECIPE_ID) {
-    const eligibilityFailure = n1xWslEligibilityFailure(env, report, options);
+    const eligibilityFailure = n1xWslEligibilityFailure(env, options);
     if (eligibilityFailure) return { kind: "rejected", reason: eligibilityFailure };
   }
   if (String(env.NEMOCLAW_MODEL ?? "").trim()) {
