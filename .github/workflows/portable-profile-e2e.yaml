@@ -28,6 +28,8 @@ on:
       - main
     paths:
       - ".github/workflows/portable-profile-e2e.yaml"
+      - "agents/hermes/image-build-probes.py"
+      - "agents/hermes/patch-hermes-kanban-atomic-schema.py"
       - "install.sh"
       - "scripts/install.sh"
       - "scripts/install-openshell.sh"
