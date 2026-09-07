@@ -81,7 +81,7 @@ export function discoverDockerGpuDiagnosticSensitiveValuesFromEnv(
     .filter(
       ([key, value]) =>
         typeof value === "string" &&
-        Buffer.byteLength(value, "utf8") >= 8 &&
+        value.length > 0 &&
         (SENSITIVE_ENV_KEY.test(key) || extraPlaceholderKeys.has(key)),
     )
     .map(([, value]) => value as string);

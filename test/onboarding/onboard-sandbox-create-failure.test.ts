@@ -152,7 +152,7 @@ describe("sandbox create failure diagnostics", () => {
   it("captures bounded redacted OpenShell failure evidence before WSL ARM cleanup (#10412)", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-create-failure-openshell-"));
     const homeDir = path.join(tmp, "home");
-    const token = "opaque-credential-value-10412";
+    const token = "z7!";
     const logLines = [
       "x".repeat(64 * 1024),
       ...Array.from({ length: 119 }, (_, index) => `earlier log ${String(index)}`),
@@ -211,5 +211,22 @@ describe("sandbox create failure diagnostics", () => {
       tokenPresent: false,
       withinByteLimit: true,
     });
+  });
+
+  it("preserves the diagnostic bundle when OpenShell log capture fails (#10412)", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-create-failure-capture-error-"));
+    const diagnostics = collectSandboxCreateFailureDiagnostics("my-assistant", {
+      homeDir: path.join(tmp, "home"),
+      runCaptureOpenshell: () => {
+        throw new Error("OpenShell unavailable");
+      },
+    });
+
+    expect({
+      logsPath: diagnostics?.openshellLogsPath,
+      recordsMissingLog: fs
+        .readFileSync(path.join(diagnostics!.dir, "summary.txt"), "utf8")
+        .includes("openshell_logs=not-written"),
+    }).toEqual({ logsPath: null, recordsMissingLog: true });
   });
 });

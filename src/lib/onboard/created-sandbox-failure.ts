@@ -47,6 +47,7 @@ export type SandboxCreateFailureReportOptions = {
 export type SandboxCreateFailureReportDeps = {
   classifyCreateFailure(output: string): { kind: string };
   printCreateFailureDiagnostics(sandboxName: string, options: { backupPath: string | null }): void;
+  rollbackCreateFailure(): Promise<void>;
   printRecoveryHints(output: string, options: { createArgs: readonly string[] }): void;
   warn(message: string): void;
   error(message: string): void;
@@ -59,16 +60,17 @@ export type SandboxCreateFailureReportDeps = {
  * 255) warns and returns so the caller can fall through to the ready-wait loop;
  * any other failure prints diagnostics + recovery hints and exits.
  */
-export function reportSandboxCreateFailure(
+export async function reportSandboxCreateFailure(
   options: SandboxCreateFailureReportOptions,
   deps: SandboxCreateFailureReportDeps,
-): void {
+): Promise<void> {
   const redactedCreateOutput = redact(options.createOutput);
   const failure = deps.classifyCreateFailure(redactedCreateOutput);
   if (failure.kind === "sandbox_create_incomplete") {
     // The sandbox was created in the gateway but the create stream exited
     // with a non-zero code (e.g. SSH 255).  Fall through to the ready-wait
     // loop — the sandbox may still reach Ready on its own.
+    await deps.rollbackCreateFailure();
     deps.warn("");
     deps.warn(
       `  Create stream exited with code ${options.createStatus} after sandbox was created.`,
@@ -82,12 +84,17 @@ export function reportSandboxCreateFailure(
     deps.error("");
     deps.error(redactedCreateOutput);
   }
-  deps.printCreateFailureDiagnostics(options.sandboxName, {
-    backupPath: options.restoreBackupPath,
-  });
+  try {
+    deps.printCreateFailureDiagnostics(options.sandboxName, {
+      backupPath: options.restoreBackupPath,
+    });
+  } catch {
+    // Diagnostics must not replace the original sandbox-create failure.
+  }
+  await deps.rollbackCreateFailure();
   deps.error("  Try:  openshell sandbox list        # check gateway state");
   deps.printRecoveryHints(redactedCreateOutput, { createArgs: options.createArgs });
-  return deps.exitProcess(options.createStatus === 0 ? 1 : options.createStatus);
+  deps.exitProcess(options.createStatus === 0 ? 1 : options.createStatus);
 }
 
 export type SandboxReadinessFailureReportOptions = {

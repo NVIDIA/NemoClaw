@@ -45,6 +45,7 @@ vi.mock("./openshell-docker-sandbox-containers", async (importOriginal) => ({
 }));
 
 import {
+  createGpuPatchFixture,
   createGpuFlowDeps as createDeps,
   createGpuFlowInput as createInput,
   resetGpuFlowMocks,
@@ -96,6 +97,30 @@ beforeEach(() => setupGpuFlowMocks(mocks));
 afterEach(resetGpuFlowMocks);
 
 describe("fresh sandbox executable readiness", () => {
+  it("captures a hard create failure before rollback (#10412)", async () => {
+    const order: string[] = [];
+    const patch = createGpuPatchFixture();
+    patch.rollbackManagedStartupAfterCreateFailure.mockImplementation(() => {
+      order.push("rollback");
+    });
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
+    mocks.streamSandboxCreate.mockResolvedValue({
+      status: 1,
+      output: "sandbox create failed",
+      sawProgress: true,
+    });
+    mocks.printSandboxCreateFailureDiagnostics.mockImplementation(() => {
+      order.push("diagnostics");
+    });
+    mockExit();
+
+    await expect(runSandboxGpuCreateFlow(createInput(), createDeps())).rejects.toThrow(
+      "process.exit:1",
+    );
+
+    expect(order).toEqual(["diagnostics", "rollback"]);
+  });
+
   it("keeps a transient executable not-ready response inside the bounded wait (#9050)", async () => {
     const deps = createDeps();
     vi.mocked(deps.runOpenshell).mockImplementation(

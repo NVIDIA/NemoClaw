@@ -1006,8 +1006,7 @@ export function createSandboxGpuCreateAttemptRunner(
           ...nativeCleanup,
         } as const;
       } else {
-        await runtimePatch.rollbackManagedStartupAfterCreateFailure();
-        reportSandboxCreateFailure(
+        await reportSandboxCreateFailure(
           {
             sandboxName: input.sandboxName,
             createStatus: createResult.status,
@@ -1018,6 +1017,9 @@ export function createSandboxGpuCreateAttemptRunner(
           {
             classifyCreateFailure: classifySandboxCreateFailure,
             printCreateFailureDiagnostics,
+            rollbackCreateFailure: async () => {
+              await runtimePatch.rollbackManagedStartupAfterCreateFailure();
+            },
             printRecoveryHints: printSandboxCreateRecoveryHints,
             warn: (message) => console.warn(message),
             error: (message) => console.error(message),
