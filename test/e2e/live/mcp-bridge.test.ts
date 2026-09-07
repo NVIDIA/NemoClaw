@@ -733,7 +733,13 @@ test("mcp-bridge", {
     toolResultToken: openClawResult,
     openClawToolSearch: {
       query: "fake echo",
-      toolNames: ["mcp__fake__fake_echo", "mcp_fake_fake_echo", "fake_fake_echo", "fake_echo"],
+      toolNames: [
+        "mcp__fake__fake_echo",
+        "mcp_fake_fake_echo",
+        "fake__fake_echo",
+        "fake_fake_echo",
+        "fake_echo",
+      ],
     },
   });
   cleanup.add("stop MCP bridge compatible endpoint mock", () => compatibleMock.close());

@@ -1075,7 +1075,7 @@ describe("authenticated MCP live fixtures", () => {
   });
 
   it("uses Hermes progressive disclosure when the MCP tool is deferred", async () => {
-    const deferredToolName = "mcp__fake__fake_echo";
+    const deferredToolName = "fake__fake_echo";
     const resultToken = "MCP_AUTH_REWRITE_OK::deferred-fixture";
     const server = await startCompatibleMock({
       apiKey: "compatible-key",
