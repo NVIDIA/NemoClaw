@@ -39,27 +39,30 @@ before changing candidate history.
 
 ### Scope lock
 
-For initial publication, record the accepted outcome, delivered behavior, permitted mechanisms,
-changed paths, total additions and deletions, and deferred scope. Use the implementation handoff and
-the candidate diff against the canonical comparison ref. This record is the scope lock. Its changed
-paths and totals are immutable caps for that candidate.
+For initial publication, use the implementation handoff and candidate diff to record two records
+before review collection. The semantic scope lock contains the accepted outcome, delivered behavior,
+permitted mechanisms, deferred scope, and pre-authorized repair paths or path rules. Each repair path
+must have a recorded relationship to that behavior and mechanism. The candidate baseline contains the
+candidate and base SHAs, actual changed paths, and total additions and deletions.
 
-For an open PR, require the scope lock from the original lifecycle handoff before review collection.
-If it is unavailable, stop before implementation, commit, or push and ask the user or maintainer to
-establish the record or defer the repair. Resume stabilization for the unchanged head after an
-authorized record is available.
+For an open PR, require both records from the original lifecycle handoff before review collection. If
+either is unavailable, stop before implementation, commit, or push and ask the user or maintainer to
+establish it or defer the repair. Resume stabilization for the unchanged head after the authorized
+records are available.
 
-Preserve the scope lock and use each repair envelope returned by the shared follow-up contract. Route
+Preserve both records and use each repair envelope returned by the shared follow-up contract. Require
+every envelope path to be within the lock's pre-authorized repair paths before implementation. Route
 one root-cause group per implementation handoff. Record the local state before each handoff, then
 measure only that handoff's added, modified, renamed, or deleted paths and growth against its group's
-envelope before routing another group. Require the complete accumulated repair to remain within the
-semantic scope lock. Do not widen an envelope after its implementation starts.
+envelope and the candidate baseline before routing another group. Require the complete accumulated
+repair to remain within the semantic scope lock. Do not widen an envelope after implementation starts.
 
 A smaller diff is allowed when it still delivers the accepted outcome. Numeric headroom does not
 authorize unrelated changes. A reviewer, bot, implementation worker, formatter, or validator cannot
-expand the lock. A general request to address review findings does not authorize expansion. Remove
-separable out-of-scope work. Otherwise, stop before commit or push and ask the user or maintainer to
-approve the expansion or defer it to a separate change.
+expand the lock. A general request to address review findings does not authorize expansion. If a
+correct repair needs a path outside the pre-authorized set, stop before implementation and require an
+explicit user or maintainer expansion that records the path, required behavior and mechanism, and why
+the existing authority is insufficient; otherwise defer it. Remove other separable out-of-scope work.
 
 ### Validation
 
@@ -95,12 +98,12 @@ Confirm that the complete validation execution surface is byte-for-byte identica
 
 Do not infer executable identity from a package name or version. Do not use a branch-defined validator as independent evidence. If any surface differs, is unavailable, or cannot be traced, do not execute the candidate validator or publish. Report the path or executable and canonical base SHA.
 
-Run `npm run validate:pr` before every agent-managed push only after that comparison succeeds. Do not push when it fails or is inconclusive. If it changes a tracked file, inspect the validator-created local diff and repeat the complete scope comparison. Discard those changes and stop before commit or push when they exceed the scope lock or a repair envelope. For multiple repair groups, attribute each validator change to its group and remeasure that group's cumulative delta; discard changes that cannot be attributed. Otherwise, commit them and record the new commit as the expected publication SHA. Do not reuse review evidence from the earlier commit for that later change. Before the first push, repeat the initial-publication review step for the new commit, including a self-review of the validator-created diff. For an open PR, preserve the completed remote disposition record and inspect the validator-created local diff as new pre-publication review evidence without recollecting the unchanged remote candidate. Refresh and resolve the trusted base, reestablish the trusted validation surface, and rerun validation. Use `npm run check` for repository-wide validation changes, such as hooks, formatter configuration, generated-check scripts, or coverage baselines.
+Run `npm run validate:pr` before every agent-managed push only after that comparison succeeds. Do not push when it fails or is inconclusive. If it changes a tracked file, inspect the validator-created local diff and repeat the complete scope comparison. Discard those changes and stop before commit or push when they exceed the semantic scope lock, an applicable repair envelope, or the initial-publication candidate-baseline caps. For multiple repair groups, attribute each validator change to its group and remeasure that group's cumulative delta; discard changes that cannot be attributed. Record any discarded deterministic change as a `validator-induced scope-breach` disposition with its paths, diff totals, and applicable group. Resume only after an in-envelope source repair leaves validation clean, or after deferring the repair and establishing an authorized new candidate and lock; never widen the active envelope. Otherwise, commit the validator changes and record the new commit as the expected publication SHA. Do not reuse review evidence from the earlier commit for that later change. Before the first push, repeat the initial-publication review step for the new commit, including a self-review of the validator-created diff. For an open PR, preserve the completed remote disposition record and inspect the validator-created local diff as new pre-publication review evidence without recollecting the unchanged remote candidate. Refresh and resolve the trusted base, reestablish the trusted validation surface, and rerun validation. Use `npm run check` for repository-wide validation changes, such as hooks, formatter configuration, generated-check scripts, or coverage baselines.
 
-For initial publication, the scope lock's path and diff totals are immutable caps: accept a
-validator-created change only when the complete candidate still uses the recorded paths and does not
-exceed either total. After a permitted base integration, replace the candidate-specific SHA, paths,
-and totals from the new diff baseline while preserving the semantic lock before validation resumes.
+For initial publication, the candidate baseline's paths and diff totals are immutable caps: accept a
+validator-created change only when the complete candidate still uses those paths and does not exceed
+either total. After a permitted base integration, replace the candidate baseline from the integrated
+diff while preserving the semantic scope lock and repair-path authority before validation resumes.
 
 A maintainer may unblock unavailable trusted-base validation only with recorded evidence identifying the base and candidate SHAs, isolated environment, trusted validator entry point and resolved executables, exact command and result, and publication authorization. The environment must not give candidate code contributor-host credentials.
 
