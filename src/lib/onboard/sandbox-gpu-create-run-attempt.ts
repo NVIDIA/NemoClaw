@@ -447,7 +447,12 @@ export function createSandboxGpuCreateAttemptRunner(
           console.error(
             `  Hermes portable sandbox '${sandboxName}' did not complete receipt-owned creation. Preserve its lifecycle receipt and resume onboarding after correcting the reported failure.`,
           )
-      : printSandboxCreateFailureDiagnostics);
+      : (sandboxName, options) =>
+          printSandboxCreateFailureDiagnostics(sandboxName, {
+            ...options,
+            gatewayName: input.gatewayName,
+            runCaptureOpenshell: deps.runCaptureOpenshell,
+          }));
   if (
     portableLifecycle &&
     (input.gpuRoutePlan === "compatibility-only" ||
@@ -1141,10 +1146,10 @@ export function createSandboxGpuCreateAttemptRunner(
           ...nativeCleanup,
         } as const;
       }
-      await runtimePatch.rollbackManagedStartupAfterCreateFailure();
       printCreateFailureDiagnostics(input.sandboxName, {
         backupPath: input.restoreBackupPath,
       });
+      await runtimePatch.rollbackManagedStartupAfterCreateFailure();
       if (compatibility) runtimePatch.printReadinessFailureIfEnabled();
       else if (expectedRecreatedSandboxId) {
         console.error(

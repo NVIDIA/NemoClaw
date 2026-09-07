@@ -737,6 +737,8 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     );
     expect(mocks.printSandboxCreateFailureDiagnostics).toHaveBeenCalledWith("alpha", {
       backupPath: null,
+      gatewayName: "nemoclaw",
+      runCaptureOpenshell: deps.runCaptureOpenshell,
     });
     expect(errorOutput()).toContain(
       "NemoClaw left the sandbox in place for inspection and recovery",

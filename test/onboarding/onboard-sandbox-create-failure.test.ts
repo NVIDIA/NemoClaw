@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   collectSandboxCreateFailureDiagnostics,
@@ -145,5 +145,51 @@ describe("sandbox create failure diagnostics", () => {
     expect(fs.readFileSync(path.join(diagnostics!.dir, "summary.txt"), "utf-8")).toContain(
       "gateway_tail=",
     );
+  });
+
+  it("captures bounded redacted OpenShell failure evidence before WSL ARM cleanup (#10412)", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-create-failure-openshell-"));
+    const homeDir = path.join(tmp, "home");
+    const token = "opaque-credential-value-10412";
+    const logLines = [
+      "x".repeat(64 * 1024),
+      ...Array.from({ length: 119 }, (_, index) => `earlier log ${String(index)}`),
+      `Authorization: Bearer ${token}`,
+      "[sandbox] /usr/local/bin/hermes: Exec format error",
+    ];
+    const runCaptureOpenshell = vi.fn(
+      (_args: string[], _options?: { ignoreError?: boolean; timeout?: number }) =>
+        `${logLines.join("\n")}\n`,
+    );
+
+    const diagnostics = collectSandboxCreateFailureDiagnostics("my-assistant", {
+      gatewayName: "nemoclaw",
+      homeDir,
+      now: new Date("2026-08-26T16:02:46.000Z"),
+      runCaptureOpenshell,
+    });
+    const captured = fs.readFileSync(diagnostics!.openshellLogsPath!, "utf8");
+
+    expect({
+      calls: runCaptureOpenshell.mock.calls.map(([args, options]) => ({ args, options })),
+      lineCount: captured.trim().split("\n").length,
+      lastLine: captured.trim().split("\n").at(-1),
+      summaryLines: diagnostics?.summaryLines,
+      tokenPresent: captured.includes(token),
+    }).toEqual({
+      calls: [
+        {
+          args: ["logs", "-g", "nemoclaw", "my-assistant", "-n", "120", "--source", "all"],
+          options: { ignoreError: true, timeout: 10_000 },
+        },
+      ],
+      lineCount: 120,
+      lastLine: "[sandbox] /usr/local/bin/hermes: Exec format error",
+      summaryLines: [
+        "sandbox logs: Authorization: Bearer <REDACTED>",
+        "sandbox logs: [sandbox] /usr/local/bin/hermes: Exec format error",
+      ],
+      tokenPresent: false,
+    });
   });
 });

@@ -6,14 +6,24 @@ import os from "node:os";
 import path from "node:path";
 
 import { GATEWAY_PORT } from "../core/ports";
+import { buildSandboxLogsArgs } from "../domain/sandbox/logs";
 import { rejectSymlinksOnPath } from "../state/config-io";
 import { nemoclawStateRoot } from "../state/state-root";
+import { createDockerGpuDiagnosticRedactor } from "./docker-gpu-diagnostic-redaction";
 import { resolveGatewayLogPathForPort } from "./gateway/state-dir";
 
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 const MAX_RELEVANT_LOG_LINES = 120;
 const MAX_GATEWAY_TAIL_LINES = 240;
+const MAX_OPENSHELL_CAPTURE_BYTES = 64 * 1024;
+const MAX_OPENSHELL_CAPTURE_LINES = 120;
+const OPENSHELL_CAPTURE_TIMEOUT_MS = 10_000;
+
+type RunCaptureOpenshell = (
+  args: string[],
+  options?: { ignoreError?: boolean; timeout?: number },
+) => string;
 
 export type SandboxCreateFailureDiagnostics = {
   dir: string;
@@ -23,6 +33,7 @@ export type SandboxCreateFailureDiagnostics = {
   consoleOutput: string | null;
   copiedConsoleOutput: string | null;
   gatewayTailPath: string | null;
+  openshellLogsPath: string | null;
   backupPath: string | null;
   summaryLines: string[];
 };
@@ -32,6 +43,8 @@ export type SandboxCreateFailureDiagnosticOptions = {
   gatewayPort?: number;
   gatewayLogPath?: string | null;
   gatewayStateDir?: string;
+  gatewayName?: string;
+  runCaptureOpenshell?: RunCaptureOpenshell;
   backupPath?: string | null;
   now?: Date;
 };
@@ -154,6 +167,51 @@ function listStateDir(stateDir: string | null): string[] {
   }
 }
 
+function boundedRedactedCapture(output: string): string[] {
+  const bytes = Buffer.from(stripAnsi(output), "utf8");
+  const offset = Math.max(0, bytes.length - MAX_OPENSHELL_CAPTURE_BYTES);
+  let bounded = bytes.subarray(offset).toString("utf8");
+  if (offset > 0) {
+    const firstCompleteLine = bounded.indexOf("\n");
+    bounded = firstCompleteLine === -1 ? "" : bounded.slice(firstCompleteLine + 1);
+  }
+  return createDockerGpuDiagnosticRedactor()
+    .redactText(bounded)
+    .split(/\r?\n/u)
+    .filter((line) => line.trim().length > 0)
+    .slice(-MAX_OPENSHELL_CAPTURE_LINES);
+}
+
+function captureOpenShellFailureLogs(
+  dir: string,
+  sandboxName: string,
+  options: SandboxCreateFailureDiagnosticOptions,
+): { path: string | null; summaryLines: string[] } {
+  if (!options.runCaptureOpenshell) return { path: null, summaryLines: [] };
+  try {
+    const lines = boundedRedactedCapture(
+      options.runCaptureOpenshell(
+        buildSandboxLogsArgs(
+          sandboxName,
+          { follow: false, lines: String(MAX_OPENSHELL_CAPTURE_LINES), since: null },
+          options.gatewayName,
+        ),
+        { ignoreError: true, timeout: OPENSHELL_CAPTURE_TIMEOUT_MS },
+      ),
+    );
+    if (lines.length === 0) return { path: null, summaryLines: [] };
+    const filePath = path.join(dir, "openshell-logs.txt");
+    fs.writeFileSync(filePath, `${lines.join("\n")}\n`, { mode: 0o600 });
+    return {
+      path: filePath,
+      summaryLines: lines.slice(-2).map((line) => `sandbox logs: ${line}`),
+    };
+  } catch {
+    // Diagnostics must not replace the original sandbox-create failure.
+    return { path: null, summaryLines: [] };
+  }
+}
+
 export function collectSandboxCreateFailureDiagnostics(
   sandboxName: string,
   options: SandboxCreateFailureDiagnosticOptions = {},
@@ -215,6 +273,7 @@ export function collectSandboxCreateFailureDiagnostics(
   if (gatewayTailPath) {
     fs.writeFileSync(gatewayTailPath, `${gatewayTailLines.join("\n")}\n`, { mode: 0o600 });
   }
+  const openshellLogs = captureOpenShellFailureLogs(dir, sandboxName, options);
   const summaryLines = [
     `created_at=${now.toISOString()}`,
     `sandbox_name=${sandboxName}`,
@@ -224,6 +283,7 @@ export function collectSandboxCreateFailureDiagnostics(
     `state_dir=${stateDir ?? "unknown"}`,
     `console_output=${consoleOutput ?? "unknown"}`,
     `copied_console_output=${copiedConsoleOutput ?? "not-copied"}`,
+    `openshell_logs=${openshellLogs.path ?? "not-written"}`,
     `backup_path=${backupPath ?? "none"}`,
   ];
   if (stateEntries.length > 0) {
@@ -242,8 +302,17 @@ export function collectSandboxCreateFailureDiagnostics(
     consoleOutput,
     copiedConsoleOutput,
     gatewayTailPath,
+    openshellLogsPath: openshellLogs.path,
     backupPath,
-    summaryLines: relevantLines.length > 0 ? relevantLines.slice(-8) : gatewayTailLines.slice(-8),
+    summaryLines:
+      openshellLogs.summaryLines.length > 0
+        ? [
+            ...(relevantLines.length > 0 ? relevantLines : gatewayTailLines).slice(-2),
+            ...openshellLogs.summaryLines,
+          ].slice(-8)
+        : relevantLines.length > 0
+          ? relevantLines.slice(-8)
+          : gatewayTailLines.slice(-8),
   };
 }
 
