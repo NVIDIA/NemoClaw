@@ -462,6 +462,10 @@ function runInstallBlock(
       .replaceAll("/usr/local/lib/nemoclaw/extract-semver", openclawVersionExtractor)
       .replaceAll("/usr/local/lib", path.join(tmp, "usr-local-lib"))
       .replaceAll("/usr/local/bin", path.join(tmp, "usr-local-bin"))
+      .replaceAll(
+        "bash /scripts/lib/verify-mcporter-audit.sh",
+        "node --experimental-strip-types /scripts/lib/reviewed-npm-audit.mts --directory /usr/local/lib/nemoclaw/mcporter-runtime --exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --threshold high",
+      )
       .replaceAll("/scripts/lib/reviewed-npm-archive.mts", REVIEWED_NPM_ARCHIVE_HELPER)
       .replaceAll("/scripts/lib/openclaw-npm-remediation.mts", remediationHelper)
       .replaceAll("/scripts/lib/reviewed-npm-audit.mts", auditHelper)
