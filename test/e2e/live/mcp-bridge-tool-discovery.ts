@@ -74,6 +74,24 @@ type McpToolDiscoveryStatusJson = {
   };
 };
 
+function parseMcpToolDiscoveryStatusJson(stdout: string): McpToolDiscoveryStatusJson | undefined {
+  try {
+    return JSON.parse(stdout) as McpToolDiscoveryStatusJson;
+  } catch {
+    return undefined;
+  }
+}
+
+function requireMcpToolDiscoveryStatusJson(
+  status: McpToolDiscoveryStatusJson | undefined,
+  label: string,
+): McpToolDiscoveryStatusJson {
+  if (!status?.toolDiscovery) {
+    throw new Error(`${label} did not return valid MCP discovery JSON`);
+  }
+  return status;
+}
+
 function buildMcpToolDiscoveryDiagnostics(
   status: McpToolDiscoveryStatusJson,
   requests: readonly FakeMcpRequest[],
@@ -561,11 +579,13 @@ export async function assertAuthenticatedMcpToolDiscovery(
         timeoutMs: 60_000,
       },
     );
-    statusJson = JSON.parse(status.stdout) as McpToolDiscoveryStatusJson;
+    statusJson = parseMcpToolDiscoveryStatusJson(status.stdout);
+    const retryDiscovery = statusJson?.toolDiscovery;
     const shouldRetry =
       status.exitCode !== 0 &&
+      retryDiscovery !== undefined &&
       shouldRetryMcpToolDiscoveryTransportFailure(
-        statusJson.toolDiscovery,
+        retryDiscovery,
         fakeMcp.requests.slice(requestOffset),
         attempt,
       );
@@ -575,14 +595,16 @@ export async function assertAuthenticatedMcpToolDiscovery(
     );
     await new Promise((resolve) => setTimeout(resolve, MCP_TOOL_DISCOVERY_RETRY_DELAY_MS));
   }
-  if (!status || !statusJson) throw new Error("MCP tool discovery did not run");
-  assertExitZero(status, `${options.artifactPrefix} mcp status --tools --json`);
+  const statusLabel = `${options.artifactPrefix} mcp status --tools --json`;
+  const completedStatus = status!;
+  assertExitZero(completedStatus, statusLabel);
+  statusJson = requireMcpToolDiscoveryStatusJson(statusJson, statusLabel);
   const discoveryRequests = fakeMcp.requests.slice(requestOffset);
   await options.artifacts.writeJson(
     `${options.artifactPrefix}-mcp-tool-discovery-diagnostics.json`,
     buildMcpToolDiscoveryDiagnostics(statusJson, discoveryRequests, options.hostSecret),
   );
-  expect(status.stdout).not.toContain(options.hostSecret);
+  expect(completedStatus.stdout).not.toContain(options.hostSecret);
   const discoveryProtocolRequests = discoveryRequests.filter(
     (request) =>
       (request.method === "POST" || request.method === "DELETE") && request.path === "/mcp",
@@ -685,7 +707,10 @@ export async function assertAuthenticatedMcpToolDiscovery(
       },
     );
     expect(result.exitCode).not.toBe(0);
-    const deniedStatusJson = JSON.parse(result.stdout) as McpToolDiscoveryStatusJson;
+    const deniedStatusJson = requireMcpToolDiscoveryStatusJson(
+      parseMcpToolDiscoveryStatusJson(result.stdout),
+      `${options.artifactPrefix} denied-authentication mcp status --tools --json`,
+    );
     const deniedRequests = fakeMcp.requests.slice(deniedRequestOffset);
     await options.artifacts.writeJson(
       `${options.artifactPrefix}-mcp-tool-discovery-denied-auth.json`,

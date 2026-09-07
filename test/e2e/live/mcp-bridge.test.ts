@@ -842,6 +842,7 @@ test(
       artifacts,
       sandboxName: OPENCLAW_SANDBOX_NAME,
       artifactPrefix: "openclaw",
+      deniedSecret: ROTATED_HOST_SECRET,
       hostSecret: HOST_SECRET,
       progress,
     });

@@ -401,6 +401,44 @@ describe("authenticated MCP tool discovery transport retry", () => {
     expect(JSON.stringify(artifacts.writeJson.mock.calls)).not.toContain(EXPECTED_SECRET);
   });
 
+  it.each([
+    [
+      "a failed command",
+      1,
+      "runtime failed",
+      "openclaw mcp status --tools --json failed: not-json\nruntime failed",
+    ],
+    [
+      "a successful command",
+      0,
+      "",
+      "openclaw mcp status --tools --json did not return valid MCP discovery JSON",
+    ],
+  ])(
+    "does not retry malformed status output from %s (#10944)",
+    async (_case, exitCode, stderr, expectedError) => {
+      const host = {
+        nemoclaw: vi.fn(async () => ({ exitCode, stdout: "not-json", stderr })),
+      } as unknown as Parameters<typeof assertAuthenticatedMcpToolDiscovery>[0];
+      const artifacts = discoveryArtifacts();
+      const progress = { event: vi.fn() };
+
+      await expect(
+        assertAuthenticatedMcpToolDiscovery(host, fakeDiscoveryServer(), {
+          artifacts,
+          sandboxName: "sandbox",
+          artifactPrefix: "openclaw",
+          hostSecret: EXPECTED_SECRET,
+          progress,
+        }),
+      ).rejects.toThrow(expectedError);
+
+      expect(host.nemoclaw).toHaveBeenCalledOnce();
+      expect(progress.event).not.toHaveBeenCalled();
+      expect(artifacts.writeJson).not.toHaveBeenCalled();
+    },
+  );
+
   it("writes redacted boundary diagnostics before a discovery failure (#8746)", async () => {
     const statusJson = {
       provider: {
