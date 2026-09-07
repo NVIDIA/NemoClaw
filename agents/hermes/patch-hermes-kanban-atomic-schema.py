@@ -3,19 +3,21 @@
 # SPDX-License-Identifier: Apache-2.0
 """Make Hermes' initial Kanban schema creation one atomic transaction.
 
-Hermes v0.20.6 opens Kanban connections in autocommit mode and passes a schema
-script without transaction statements to ``sqlite3.Connection.executescript``.
-When Hermes rejects its linked SQLite version for WAL use, every CREATE in the
-script becomes a separate synchronous DELETE-journal transaction. Slow
-container overlay storage can therefore keep the gateway from listening for
-minutes while it creates a fresh board.
+The patched ``kanban_db.py`` belongs to the pinned Hermes v0.20.6 runtime. It
+opens Kanban connections in autocommit mode and passes a schema script without
+transaction statements to ``sqlite3.Connection.executescript``. When the
+connection uses synchronous DELETE journaling, every CREATE becomes a separate
+transaction. Slow container overlay storage can therefore keep the gateway
+from listening for minutes while it creates a fresh board.
 
 The patch brackets only the idempotent base schema script with BEGIN IMMEDIATE
 and COMMIT. Additive legacy migrations keep their existing transaction policy.
 Besides reducing the fresh-board fsync count, an interrupted base-schema setup
 now rolls back instead of leaving a partial schema.
 
-Remove this patch when the pinned Hermes release creates ``SCHEMA_SQL`` in one
+The durable fix belongs in Hermes. Regression evidence lives in
+``test/agents/hermes/hermes-kanban-atomic-schema-patch.test.ts``. Remove this
+localized patch when the pinned Hermes release creates ``SCHEMA_SQL`` in one
 explicit transaction or provides an equivalent bounded fresh-board path.
 """
 

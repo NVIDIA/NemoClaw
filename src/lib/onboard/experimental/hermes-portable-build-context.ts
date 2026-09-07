@@ -53,6 +53,7 @@ const LOCAL_COPY_SOURCES = [
   "agents/hermes/patch-discord-recovery-permissions.py",
   "agents/hermes/patch-gateway-process-identity.py",
   "agents/hermes/patch-gateway-runtime-metadata.py",
+  "agents/hermes/patch-hermes-kanban-atomic-schema.py",
   "agents/hermes/patch-hermes-sqlite-temp-store.py",
   "agents/hermes/patch-langfuse-credentials.mts",
   "agents/hermes/patch-neutral-platform-env-activation.py",

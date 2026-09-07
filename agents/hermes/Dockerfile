@@ -729,12 +729,12 @@ RUN printf '%s  %s\n' \
 # PRAGMA temp_store=MEMORY before PRAGMA foreign_keys=ON ensures FK processing
 # uses in-memory storage. Docker execution permits the file-based storage path.
 ARG NEMOCLAW_HERMES_SQLITE_TEMP_STORE_PATCHER_SHA256=495afa4b7b960a3df8d46c2380561307773449ca5bfa96ca8f4a49c4147c4b6a
-# Hermes v0.20.6 initializes a fresh Kanban schema in autocommit mode. Its
-# SQLite safety fallback selects synchronous DELETE journaling on this image,
-# so slow overlay storage can spend minutes syncing each CREATE separately and
-# keep the gateway from listening. Bracket the base schema with one explicit
-# transaction; legacy migrations retain their upstream transaction policy.
-ARG NEMOCLAW_HERMES_KANBAN_ATOMIC_SCHEMA_PATCHER_SHA256=4eafc2c662c87ca7d1e51cd7c2606247cbbc116dfc97ee84a4ebfd664854e583
+# Hermes v0.20.6 initializes a fresh Kanban schema in autocommit mode. When the
+# connection uses synchronous DELETE journaling, slow overlay storage can spend
+# minutes syncing each CREATE separately and keep the gateway from listening.
+# Bracket the base schema with one explicit transaction; legacy migrations
+# retain their upstream transaction policy.
+ARG NEMOCLAW_HERMES_KANBAN_ATOMIC_SCHEMA_PATCHER_SHA256=e5d60251f450903bd7f6dd4693ec166daaa285e9c93dff8136bd2973eef7a3a4
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_SQLITE_TEMP_STORE_PATCHER_SHA256" /usr/local/lib/nemoclaw/patch-hermes-sqlite-temp-store.py \
@@ -745,6 +745,8 @@ RUN /usr/bin/python3 -I /usr/local/lib/nemoclaw/patch-hermes-sqlite-temp-store.p
     && /usr/bin/python3 -I /opt/nemoclaw-hermes-config/patch-hermes-kanban-atomic-schema.py \
     && grep -q 'PRAGMA temp_store=MEMORY' /opt/hermes/hermes_state.py \
     && grep -Fq 'BEGIN IMMEDIATE;' /opt/hermes/hermes_cli/kanban_db.py \
+    && /opt/hermes/.venv/bin/python -I \
+        /opt/nemoclaw-hermes-config/image-build-probes.py kanban-init \
     && HERMES_HOME="$(mktemp -d)" /opt/hermes/.venv/bin/python -I \
         /opt/nemoclaw-hermes-config/image-build-probes.py session-delete \
     && rm /opt/nemoclaw-hermes-config/patch-hermes-kanban-atomic-schema.py

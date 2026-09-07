@@ -12,6 +12,10 @@ import { afterEach, describe, expect, it } from "vitest";
 const root = path.join(import.meta.dirname, "../../..");
 const patcher = path.join(root, "agents", "hermes", "patch-hermes-kanban-atomic-schema.py");
 const dockerfile = fs.readFileSync(path.join(root, "agents", "hermes", "Dockerfile"), "utf8");
+const imageProbe = fs.readFileSync(
+  path.join(root, "agents", "hermes", "image-build-probes.py"),
+  "utf8",
+);
 const fixtures: string[] = [];
 
 function moduleSource(middle = ""): string {
@@ -134,6 +138,9 @@ if tables:
     expect(dockerfile).toContain(
       "/usr/bin/python3 -I /opt/nemoclaw-hermes-config/patch-hermes-kanban-atomic-schema.py",
     );
+    expect(dockerfile).toContain("/opt/nemoclaw-hermes-config/image-build-probes.py kanban-init");
+    expect(imageProbe).toContain('[str(hermes), "kanban", "init"]');
+    expect(imageProbe).toContain('connection.execute("PRAGMA integrity_check")');
     expect(dockerfile).toContain(
       "check_absent /opt/nemoclaw-hermes-config/patch-hermes-kanban-atomic-schema.py",
     );
