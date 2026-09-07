@@ -3,6 +3,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import * as forwardService from "../../adapters/openshell/forward-service";
 import * as openshellRuntime from "../../adapters/openshell/runtime";
 import * as agentRuntime from "../../agent/runtime";
 import * as registry from "../../state/registry";
@@ -36,6 +37,7 @@ function mockOpenClawSandbox(sandboxName: string): void {
 
 function mockRecoveredForward(_sandboxName: string): void {
   vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
+  vi.spyOn(forwardService, "isForwardServiceListenerOwner").mockReturnValue(true);
   vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
     status: 0,
     output: "SANDBOX  BIND  PORT  PID  STATUS",

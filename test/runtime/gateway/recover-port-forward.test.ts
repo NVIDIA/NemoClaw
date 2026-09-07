@@ -11,7 +11,7 @@ import {
   LAUNCH_READINESS_FIXTURE_POLICY,
   launchReadinessRegistryFixture,
 } from "../../helpers/launch-readiness-fixture";
-import { nonWslPlatformNodeOptions } from "../../helpers/platform-override-node-options";
+import { syntheticForwardNodeOptions } from "../../helpers/platform-override-node-options";
 import { execTimeout, testTimeoutOptions } from "../../helpers/timeouts";
 
 const tmpFixtures: string[] = [];
@@ -332,7 +332,7 @@ function runRecover(fixture: Fixture) {
       env: {
         ...process.env,
         HOME: fixture.tmpDir,
-        NODE_OPTIONS: nonWslPlatformNodeOptions(fixture.tmpDir),
+        NODE_OPTIONS: syntheticForwardNodeOptions(fixture.tmpDir),
         PATH: "/usr/bin:/bin",
         NEMOCLAW_NO_CONNECT_HINT: "1",
         NEMOCLAW_FORWARD_RECOVERY_WAIT_MS: fixture.recoveryWaitMs,
