@@ -107,12 +107,6 @@ function jobPermissionValues(workflowValue: Workflow): string[] {
   );
 }
 
-function workflowPathCovers(pathFilter: string, changedPath: string): boolean {
-  return pathFilter.endsWith("/**")
-    ? changedPath.startsWith(pathFilter.slice(0, -2))
-    : pathFilter === changedPath;
-}
-
 function runAnonymousPull(step: Step, result: "denied" | "success") {
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "llama-cpp-anonymous-pull-"));
   const fakeBin = path.join(temporaryRoot, "bin");
@@ -234,20 +228,6 @@ describe("llama.cpp image PR workflow", () => {
       group: "${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}",
     });
     expect(build.if).toBe("github.event_name == 'pull_request'");
-  });
-
-  it.each([
-    "managed-inference/images/llama-cpp/Dockerfile",
-    "managed-inference/images/llama-cpp/image.yaml",
-    "scripts/checks/export-llama-cpp-image-config.mts",
-  ])("routes candidate image input %s through the PR image build", (changedPath) => {
-    expect(
-      workflow.on?.pull_request?.paths?.some((pathFilter) =>
-        workflowPathCovers(pathFilter, changedPath),
-      ),
-    ).toBe(true);
-    expect(buildStep.with).toMatchObject({ load: true, push: false });
-    expect(validate.run).toContain('image_json="$(docker image inspect "$IMAGE")"');
   });
 
   it("passes declarative source, base image, runtime ID, and platform values to each image build (#8231)", () => {

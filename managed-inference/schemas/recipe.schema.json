@@ -296,6 +296,9 @@
                 }
               ]
             },
+            "containerRuntime": {
+              "const": "docker"
+            },
             "networkExposure": {
               "const": "loopback"
             },
@@ -1317,6 +1320,7 @@
               "image",
               "imageDownloadSizeBytes",
               "platforms",
+              "containerRuntime",
               "networkExposure",
               "restartPolicy",
               "hosts",
@@ -1328,6 +1332,7 @@
               "image": {},
               "imageDownloadSizeBytes": {},
               "platforms": {},
+              "containerRuntime": {},
               "networkExposure": {},
               "restartPolicy": {},
               "hosts": {},

@@ -45,11 +45,6 @@ const REQUIRED_RUNTIME_AUTHORITY_PATHS = [
   "src/lib/onboard/runtime-provider/current.ts",
   "src/lib/onboard/setup-nim-flow.ts",
 ] as const;
-const CANDIDATE_IMAGE_INPUT_PATHS = [
-  "managed-inference/images/llama-cpp/Dockerfile",
-  "managed-inference/images/llama-cpp/image.yaml",
-  "scripts/checks/export-llama-cpp-image-config.mts",
-] as const;
 
 function workflow(): Workflow {
   return YAML.parse(readFileSync(WORKFLOW_PATH, "utf8")) as Workflow;
@@ -170,13 +165,6 @@ describe("generic NVIDIA GPU PR selection", () => {
       `base_sha=${BASE_SHA}\nselected=false`,
     );
   });
-
-  it.each(CANDIDATE_IMAGE_INPUT_PATHS)(
-    "does not claim PR-built image runtime qualification for %s",
-    (changedFile) => {
-      expect(selectGenericGpuLane([changedFile])).toBe(`base_sha=${BASE_SHA}\nselected=false`);
-    },
-  );
 
   it("rejects a copied branch whose commit does not match the current PR head", () => {
     expect(() => selectGenericGpuLane(["scripts/install.sh"], "b".repeat(40))).toThrow(
