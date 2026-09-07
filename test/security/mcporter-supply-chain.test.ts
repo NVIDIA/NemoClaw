@@ -255,14 +255,12 @@ describe("mcporter image supply-chain controls", () => {
       "NEMOCLAW_REVIEWED_NPM_AUDIT_LOCKED_GRAPH=mcporter-runtime NEMOCLAW_REVIEWED_NPM_AUDIT_REPORT_DIR=artifacts/reviewed-npm-audit",
     );
     expect(producer).toContain("FROM scratch AS protected-mcporter-audit-evidence");
-    expect(contents).toContain("FROM scratch AS protected-mcporter-audit-cache");
     expect(contents).toContain(
-      "--mount=type=bind,from=protected-mcporter-audit-cache,source=/seed,target=/run/nemoclaw-mcporter-audit-cache",
+      "--mount=type=secret,id=nemoclaw-mcporter-audit-receipt,required=false",
     );
     expect(contents).toContain("bash /scripts/lib/verify-mcporter-audit.sh");
-    expect(mcporterAuditHelper).toContain("seed-cached mcporter audit evidence is incomplete");
     expect(mcporterAuditHelper).toContain(
-      "seed-cached mcporter audit receipt SHA-256 is invalid",
+      "cached mcporter audit requires paired receipt, raw report, and receipt SHA-256",
     );
     expect(mcporterAuditHelper.replace(/\\\s*\n/g, " ").replace(/\s+/g, " ")).toContain(
       `printf '%s %s\\n' "$receipt_sha256" "$receipt" | sha256sum --check --status -`,

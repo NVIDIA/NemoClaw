@@ -171,6 +171,28 @@ audit_evidence_dir=""
 audit_receipt=""
 audit_raw_report=""
 audit_receipt_sha256=""
+validate_audit_evidence() {
+  local directory="$1"
+  [[ -d "$directory" && ! -L "$directory" && -z "$(find "$directory" -type l -print -quit)" ]] || {
+    echo "ERROR: protected managed-image reviewed audit evidence is missing or unsafe" >&2
+    exit 1
+  }
+  audit_receipt="$directory/mcporter-runtime.receipt.json"
+  audit_raw_report="$directory/mcporter-runtime.raw.json"
+  local hash_file="$directory/mcporter-runtime.receipt.sha256"
+  [[ -f "$audit_receipt" && -s "$audit_receipt" && -f "$audit_raw_report" && -s "$audit_raw_report" && -f "$hash_file" ]] || {
+    echo "ERROR: protected managed-image reviewed audit evidence is incomplete" >&2
+    exit 1
+  }
+  local recorded_hash
+  read -r recorded_hash <"$hash_file"
+  audit_receipt_sha256="$(sha256sum "$audit_receipt" | awk '{print $1}')"
+  [[ "$recorded_hash" =~ ^[a-f0-9]{64}$ && "$recorded_hash" == "$audit_receipt_sha256" ]] || {
+    echo "ERROR: protected managed-image reviewed audit receipt hash does not match" >&2
+    exit 1
+  }
+}
+
 if [[ -n "$cache_to" ]]; then
   audit_evidence_dir="$cache_to/reviewed-npm-audit"
   docker buildx build \
@@ -181,49 +203,19 @@ if [[ -n "$cache_to" ]]; then
     --provenance=false \
     --sbom=false \
     "$source_root"
+  [[ -f "$audit_evidence_dir/mcporter-runtime.receipt.json" && ! -L "$audit_evidence_dir/mcporter-runtime.receipt.json" ]] || {
+    echo "ERROR: protected managed-image reviewed audit receipt is missing or unsafe" >&2
+    exit 1
+  }
+  sha256sum "$audit_evidence_dir/mcporter-runtime.receipt.json" | awk '{print $1}' \
+    >"$audit_evidence_dir/mcporter-runtime.receipt.sha256"
+  chmod 0400 "$audit_evidence_dir/mcporter-runtime.receipt.sha256"
 elif [[ -n "$cache_from" ]]; then
   audit_evidence_dir="$cache_from/reviewed-npm-audit"
 fi
 
 if [[ -n "$audit_evidence_dir" ]]; then
-  [[ -d "$audit_evidence_dir" && ! -L "$audit_evidence_dir" ]] || {
-    echo "ERROR: protected managed-image cache has no reviewed mcporter audit evidence" >&2
-    exit 1
-  }
-  [[ -z "$(find "$audit_evidence_dir" -type l -print -quit)" ]] || {
-    echo "ERROR: protected managed-image reviewed audit evidence contains a symlink" >&2
-    exit 1
-  }
-  audit_receipt="$audit_evidence_dir/mcporter-runtime.receipt.json"
-  audit_raw_report="$audit_evidence_dir/mcporter-runtime.raw.json"
-  audit_receipt_sha_file="$audit_evidence_dir/mcporter-runtime.receipt.sha256"
-  [[ -f "$audit_receipt" && ! -L "$audit_receipt" && -s "$audit_receipt" ]] || {
-    echo "ERROR: protected managed-image reviewed audit receipt is missing or unsafe" >&2
-    exit 1
-  }
-  [[ -f "$audit_raw_report" && ! -L "$audit_raw_report" && -s "$audit_raw_report" ]] || {
-    echo "ERROR: protected managed-image reviewed audit raw report is missing or unsafe" >&2
-    exit 1
-  }
-  audit_receipt_sha256="$(sha256sum "$audit_receipt" | awk '{print $1}')"
-  [[ "$audit_receipt_sha256" =~ ^[a-f0-9]{64}$ ]] || {
-    echo "ERROR: protected managed-image reviewed audit receipt hash is invalid" >&2
-    exit 1
-  }
-  if [[ -n "$cache_to" ]]; then
-    printf '%s\n' "$audit_receipt_sha256" >"$audit_receipt_sha_file"
-    chmod 0400 "$audit_receipt_sha_file"
-  else
-    [[ -f "$audit_receipt_sha_file" && ! -L "$audit_receipt_sha_file" ]] || {
-      echo "ERROR: protected managed-image reviewed audit receipt hash is missing or unsafe" >&2
-      exit 1
-    }
-    read -r recorded_audit_receipt_sha256 <"$audit_receipt_sha_file"
-    [[ "$recorded_audit_receipt_sha256" =~ ^[a-f0-9]{64}$ && "$recorded_audit_receipt_sha256" == "$audit_receipt_sha256" ]] || {
-      echo "ERROR: protected managed-image reviewed audit receipt hash does not match" >&2
-      exit 1
-    }
-  fi
+  validate_audit_evidence "$audit_evidence_dir"
 fi
 
 work_dir="$(mktemp -d "${RUNNER_TEMP:-/tmp}/nemoclaw-protected-images.XXXXXX")"
@@ -251,17 +243,6 @@ restore_worktree() {
 trap restore_worktree EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-
-if [[ -n "$cache_to" ]]; then
-  cp -pR -- "$source_seed_dir" "$seed_backup"
-  seed_overlay_active=1
-  install -d -m 0700 "$source_seed_dir/reviewed-npm-audit"
-  install -m 0400 \
-    "$audit_receipt" \
-    "$audit_raw_report" \
-    "$audit_receipt_sha_file" \
-    "$source_seed_dir/reviewed-npm-audit/"
-fi
 
 if [[ -n "$cache_from" ]]; then
   imported_seed="$work_dir/npm-cache-seed-import"
@@ -566,9 +547,6 @@ if [[ -n "$cache_to" ]]; then
     --os "$npm_target_os" \
     --cpu "$npm_target_cpu" \
     --libc "$npm_target_libc"
-  cp -pR -- \
-    "$source_seed_dir/reviewed-npm-audit" \
-    "$cache_to/npm-cache-seed/reviewed-npm-audit"
   node --experimental-strip-types --no-warnings "$seed_helper" export \
     --lockfile "$source_mcp_lockfile" \
     --output "$cache_to/mcp-runtime-npm-cache-seed" \

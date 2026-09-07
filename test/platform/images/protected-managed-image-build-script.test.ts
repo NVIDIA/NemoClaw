@@ -462,23 +462,9 @@ describe("protected managed-image build-cache boundary", () => {
     expect(existsSync(path.join(cacheRoot, "messaging-npm-cache-seed", "manifest.json"))).toBe(
       true,
     );
-    expect(existsSync(path.join(cacheRoot, "reviewed-npm-audit", "mcporter-runtime.raw.json"))).toBe(
-      true,
-    );
     expect(
       readFileSync(
         path.join(cacheRoot, "reviewed-npm-audit", "mcporter-runtime.receipt.sha256"),
-        "utf8",
-      ),
-    ).toBe(`${DIGEST}\n`);
-    expect(
-      readFileSync(
-        path.join(
-          cacheRoot,
-          "npm-cache-seed",
-          "reviewed-npm-audit",
-          "mcporter-runtime.receipt.sha256",
-        ),
         "utf8",
       ),
     ).toBe(`${DIGEST}\n`);
@@ -574,31 +560,31 @@ describe("protected managed-image build-cache boundary", () => {
     expect(existsSync(dockerLog)).toBe(false);
   });
 
-  it("rejects an imported cache without reviewed mcporter audit evidence (#11088)", () => {
-    const cacheRoot = path.join(testRoot, "imported-cache");
-    completeImportedCache(cacheRoot);
-    rmSync(path.join(cacheRoot, "reviewed-npm-audit"), { recursive: true });
-
-    const result = runBuild(REPO_ROOT, ["--cache-from", cacheRoot]);
-
-    expect(result.status, result.stderr).toBe(1);
-    expect(result.stderr).toContain("cache has no reviewed mcporter audit evidence");
-    expect(existsSync(dockerLog)).toBe(false);
-  });
-
-  it("rejects a changed reviewed audit receipt before invoking Docker (#11088)", () => {
+  it.each([
+    [
+      "missing",
+      (cacheRoot: string) => rmSync(path.join(cacheRoot, "reviewed-npm-audit"), { recursive: true }),
+      "reviewed audit evidence is missing or unsafe",
+    ],
+    [
+      "changed",
+      (cacheRoot: string) =>
+        writeFileSync(
+          path.join(cacheRoot, "reviewed-npm-audit", "mcporter-runtime.receipt.sha256"),
+          `${"c".repeat(64)}\n`,
+        ),
+      "reviewed audit receipt hash does not match",
+    ],
+  ])("rejects %s reviewed audit evidence before invoking Docker (#11088)", (_case, mutate, error) => {
     const cacheRoot = path.join(testRoot, "imported-cache");
     completeImportedCache(cacheRoot);
     stubBuildInvocation();
-    writeFileSync(
-      path.join(cacheRoot, "reviewed-npm-audit", "mcporter-runtime.receipt.sha256"),
-      `${"c".repeat(64)}\n`,
-    );
+    mutate(cacheRoot);
 
     const result = runBuild(REPO_ROOT, ["--cache-from", cacheRoot]);
 
     expect(result.status, result.stderr).toBe(1);
-    expect(result.stderr).toContain("reviewed audit receipt hash does not match");
+    expect(result.stderr).toContain(error);
     expect(existsSync(dockerLog)).toBe(false);
   });
 

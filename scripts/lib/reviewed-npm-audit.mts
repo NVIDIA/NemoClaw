@@ -371,87 +371,61 @@ function responseEvidence(
   ].join(" ");
 }
 
+function rejectedAuditResponse(
+  result: Readonly<{ status: number | null; stdout: string }>,
+  reason: NpmAuditFailureReason,
+  retryable: boolean,
+  fields: readonly string[] = [],
+): NpmAuditResponseClassification {
+  return {
+    failure: {
+      diagnostic: responseEvidence(result, [`condition=${reason}`, ...fields]),
+      reason,
+      retryable,
+    },
+  };
+}
+
 /** Classify one npm response without retaining payload text or unbounded field names. */
 export function classifyNpmAuditResponse(result: {
   status: number | null;
   stderr: string;
   stdout: string;
 }): NpmAuditResponseClassification {
-  if (!result.stdout.trim()) {
-    return {
-      failure: {
-        diagnostic: responseEvidence(result, ["condition=empty-output"]),
-        reason: "empty-output",
-        retryable: true,
-      },
-    };
-  }
+  if (!result.stdout.trim()) return rejectedAuditResponse(result, "empty-output", true);
 
   let value: unknown;
   try {
     value = JSON.parse(result.stdout);
   } catch {
-    return {
-      failure: {
-        diagnostic: responseEvidence(result, ["condition=invalid-json"]),
-        reason: "invalid-json",
-        retryable: true,
-      },
-    };
+    return rejectedAuditResponse(result, "invalid-json", true);
   }
 
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return {
-      failure: {
-        diagnostic: responseEvidence(result, [
-          "condition=incomplete-report",
-          `required-field=report:${valueShape(value)}`,
-        ]),
-        reason: "incomplete-report",
-        retryable: false,
-      },
-    };
+    return rejectedAuditResponse(result, "incomplete-report", false, [
+      `required-field=report:${valueShape(value)}`,
+    ]);
   }
   const report = value as Record<string, unknown>;
   const invalidField = firstInvalidAuditField(report);
   if (report.error !== undefined) {
     const code = transportCode(report, result.stderr);
     const reason = code ? "registry-network-error" : "npm-error-document";
-    return {
-      failure: {
-        diagnostic: responseEvidence(result, [
-          `condition=${reason}`,
-          ...(code ? [`transport=${code}`] : []),
-          ...(invalidField ? [`required-field=${invalidField}`] : []),
-        ]),
-        reason,
-        retryable: code !== undefined,
-      },
-    };
+    return rejectedAuditResponse(result, reason, code !== undefined, [
+      ...(code ? [`transport=${code}`] : []),
+      ...(invalidField ? [`required-field=${invalidField}`] : []),
+    ]);
   }
   if (invalidField) {
-    return {
-      failure: {
-        diagnostic: responseEvidence(result, [
-          "condition=incomplete-report",
-          `required-field=${invalidField}`,
-        ]),
-        reason: "incomplete-report",
-        retryable: false,
-      },
-    };
+    return rejectedAuditResponse(result, "incomplete-report", false, [
+      `required-field=${invalidField}`,
+    ]);
   }
 
   const counts = vulnerabilityCounts(report);
   const findingCount = SEVERITIES.reduce((total, severity) => total + counts[severity], 0);
   if (result.status === null || result.status > 1 || (result.status !== 0 && findingCount === 0)) {
-    return {
-      failure: {
-        diagnostic: responseEvidence(result, ["condition=invalid-exit-status"]),
-        reason: "invalid-exit-status",
-        retryable: false,
-      },
-    };
+    return rejectedAuditResponse(result, "invalid-exit-status", false);
   }
   return { report };
 }
@@ -499,15 +473,9 @@ export function runNpmAuditWithRetry(
     }
     lastResult = result;
     const classified: NpmAuditResponseClassification = result.error
-      ? {
-          failure: {
-            diagnostic: responseEvidence(result, [
-              `condition=timeout timeout-ms=${NPM_AUDIT_ATTEMPT_TIMEOUT_MS}`,
-            ]),
-            reason: "timeout",
-            retryable: true,
-          },
-        }
+      ? rejectedAuditResponse(result, "timeout", true, [
+          `timeout-ms=${NPM_AUDIT_ATTEMPT_TIMEOUT_MS}`,
+        ])
       : classifyNpmAuditResponse(result);
     if ("report" in classified) return { report: classified.report, result };
     lastFailure = classified.failure;
