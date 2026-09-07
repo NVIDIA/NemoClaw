@@ -439,6 +439,17 @@ function resolveResumedServingProfile(
       `  --profile ${requested.preset.id} does not match resumed profile ${current.preset.id}.`,
     );
   }
+  const requestedLlamaCppRecipe = String(deps.env.NEMOCLAW_LLAMACPP_RECIPE ?? "").trim();
+  if (
+    requestedLlamaCppRecipe &&
+    (current.recipe.backend !== "install-llama-cpp" ||
+      requestedLlamaCppRecipe !== current.recipe.id)
+  ) {
+    fail(
+      deps,
+      `  NEMOCLAW_LLAMACPP_RECIPE=${requestedLlamaCppRecipe} does not match resumed recipe ${current.recipe.id}. Start fresh to select another recipe.`,
+    );
+  }
   validateServingProfileConflicts(current.preset.id, deps);
   return current;
 }
