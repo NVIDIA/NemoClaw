@@ -740,7 +740,7 @@ jobs:
       # Publish immutable source-run toolchains before candidate checkout or
       # candidate-controlled workspace preparation can execute on this runner.
       - name: Stage immutable native Podman E2E toolchains
-        uses: NVIDIA/NemoClaw/.github/actions/stage-native-podman-e2e-toolchains@1a0f53d5d7e5420556be72b50d79ed5a333d637d
+        uses: NVIDIA/NemoClaw/.github/actions/stage-native-podman-e2e-toolchains@1385418619a2518fb79c3b603efba69d5d825f0d
         with:
           enabled: ${{ contains(format(',{0},', inputs.gateway_runtimes || inputs.gateway_runtime || 'docker'), ',podman,') && 'true' || 'false' }}
           github-token: ${{ github.token }}
