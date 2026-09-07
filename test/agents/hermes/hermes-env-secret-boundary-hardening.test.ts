@@ -337,6 +337,42 @@ except module.UnsafeEnvInputError:
 });
 
 describe("Hermes env secret-boundary namespace pinning", () => {
+  it("accepts the legacy 0750 Hermes root before startup repairs its mode (#11110)", () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-env-legacy-")));
+    const sandbox = path.join(root, "sandbox");
+    const hermes = path.join(sandbox, ".hermes");
+    const envPath = path.join(hermes, ".env");
+    fs.mkdirSync(hermes, { recursive: true });
+    fs.chmodSync(sandbox, 0o770);
+    fs.chmodSync(hermes, 0o750);
+    fs.writeFileSync(envPath, "SAFE=1\n", { mode: 0o640 });
+    fs.chmodSync(envPath, 0o640);
+    try {
+      const result = spawnSync(
+        "python3",
+        [
+          "-c",
+          `import importlib.util, os, sys
+spec = importlib.util.spec_from_file_location("validator", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+module.__file__ = module.INSTALLED_BOUNDARY_VALIDATOR
+module.INSTALLED_ENV_ROOT = sys.argv[2]
+module.INSTALLED_ENV_PATH = sys.argv[3]
+module._sandbox_identity = lambda: (os.geteuid(), os.getegid())
+raise SystemExit(module.validate_env_file(sys.argv[3]))`,
+          VALIDATOR,
+          sandbox,
+          envPath,
+        ],
+        { encoding: "utf-8", timeout: 5000 },
+      );
+      expect(result.status, result.stderr).toBe(0);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("anchors installed validation at sandbox when Landlock denies opening root", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-env-landlock-root-"));
     const sandbox = path.join(root, "sandbox");

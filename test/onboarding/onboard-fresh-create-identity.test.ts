@@ -315,7 +315,7 @@ runner.run = (command, opts = {}) => {
   return "";
 };
 	const retainedRegistryEntry = recoveryReentry && fs.existsSync(${JSON.stringify(payloadPath)})
-	  ? JSON.parse(fs.readFileSync(${JSON.stringify(payloadPath)}, "utf8")).currentRegistryEntry
+	  ? JSON.parse(fs.readFileSync(${JSON.stringify(payloadPath)}, "utf8")).recoveryRegistryEntry
 	  : null;
 	const registryMutationCalls = [];
   let checkpointReadCalls = 0;
@@ -575,6 +575,13 @@ if (${JSON.stringify(
 	      return;
 	    }
 	    if (recoveryReentry === "fresh-same-registry-only") {
+	      if (!retainedRegistryEntry?.pendingCreateIdentity) {
+	        throw new Error("missing verified create checkpoint for registry-only recovery");
+	      }
+	      registry.save({
+	        defaultSandbox: null,
+	        sandboxes: { "my-assistant": retainedRegistryEntry },
+	      });
 	      onboardModule.onboardSession.saveSession(
 	        onboardModule.onboardSession.createSession({
 	          sessionId: "replacement-session",
