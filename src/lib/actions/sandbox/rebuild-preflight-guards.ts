@@ -325,9 +325,11 @@ export function getRebuildSandboxEntryOrBail(
 
 /** Block rebuild before any live-state probe or cleanup can bypass retained recovery. */
 export function blockRebuildOnRetainedSandboxRecovery(
-  sandboxName: string,
+  sandbox: RebuildSandboxEntry,
   bail: RebuildBail,
 ): boolean {
+  const sandboxName = sandbox.name;
+  onboardSession.reconstructRetainedSandboxRecoveryFromPendingCreate(sandbox);
   const retainedRecovery = onboardSession
     .listRetainedSandboxRecoveryRecords()
     .find((record) => record.sandboxName === sandboxName);
