@@ -2,42 +2,33 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { inspectOpenShellSandboxIdentityFingerprint } from "../../adapters/openshell/sandbox-identity-cli";
+import { createCliOpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter-cli";
 import { runOpenshell } from "../../adapters/openshell/runtime";
+import { namedOpenShellGateway } from "../../adapters/openshell/sandbox-observer";
+import { REPOSITORY_ROOT } from "../../core/repository-root";
+import { getCredential, normalizeCredentialValue } from "../../credentials/store";
+import {
+  isMessagingProviderBindingConflict as isTypedMessagingProviderBindingConflict,
+  isMessagingProviderMutationFailure as isTypedMessagingProviderMutationFailure,
+} from "../../messaging/applier/openshell-provider";
+import { buildMessagingProviderApplication } from "../../messaging/applier/provider-application";
+import { MessagingSetupApplier } from "../../messaging/applier/setup-applier";
+import type { SandboxMessagingPlan } from "../../messaging/manifest";
 
 type MessagingProviderTokenDefinition = {
   name: string;
   envKey: string;
   token: string | null;
   providerType?: string;
+  additionalCredentials?: Array<{ envKey: string; token: string | null }>;
 };
 
 type MessagingProviderUpsertOptions = {
   replaceExisting?: boolean;
-  bestEffort?: boolean;
-  requireExactBindings?: boolean;
-  gatewayName?: string;
-};
-
-type LegacyOnboardProvidersModule = {
-  isMessagingProviderBindingConflict(error: unknown): error is Error & {
-    readonly mutatedProviderNames: readonly string[];
-    readonly createdProviderNames?: readonly string[];
-  };
-  isMessagingProviderMutationFailure(error: unknown): error is Error & {
-    readonly mutatedProviderNames: readonly string[];
-    readonly createdProviderNames: readonly string[];
-  };
-  upsertMessagingProviders(
-    tokenDefs: MessagingProviderTokenDefinition[],
-    run: typeof runOpenshell,
-    options?: MessagingProviderUpsertOptions,
-  ): string[];
 };
 
 type RebuildModule = typeof import("./rebuild");
 type PrivilegedExecModule = typeof import("../../sandbox/privileged-exec");
-type SetupInferenceModule = typeof import("../../onboard/setup-inference");
-type SandboxProviderCleanupModule = typeof import("../../onboard/sandbox-provider-cleanup");
 type PolicyModule = typeof import("../../policy");
 type GooglechatWebhookLifecycleModule =
   typeof import("../../messaging/channels/googlechat/tunnel/lifecycle");
@@ -51,12 +42,6 @@ type GooglechatWebhookProxy = Pick<
   typeof import("../../messaging/channels/googlechat/tunnel/proxy"),
   "readGooglechatWebhookProxyState" | "startGooglechatWebhookProxy" | "stopGooglechatWebhookProxy"
 >;
-
-function gatewayRunner(gatewayName: string): typeof runOpenshell {
-  const { createGatewayScopedOpenshellRunner } =
-    require("../../onboard/setup-inference") as SetupInferenceModule;
-  return createGatewayScopedOpenshellRunner(runOpenshell, gatewayName);
-}
 
 /**
  * Injectable, late-bound boundary around provider registration and rebuild
@@ -74,30 +59,11 @@ export const policyChannelDependencies = {
     const cleanup = require("../../sandbox/privileged-exec") as PrivilegedExecModule;
     return cleanup.clearStoppedSandboxStateRoots(sandboxName, paths);
   },
-  deleteMessagingProviderWithRecovery(
-    providerName: string,
-    sandboxName: string,
-    gatewayName: string,
-  ): ReturnType<SandboxProviderCleanupModule["deleteProviderWithRecovery"]> {
-    const cleanup =
-      require("../../onboard/sandbox-provider-cleanup") as SandboxProviderCleanupModule;
-    return cleanup.deleteProviderWithRecovery(providerName, {
-      allowedSandboxes: [sandboxName],
-      runOpenshell: gatewayRunner(gatewayName),
-    });
-  },
   revalidateChannelProviderPolicy(sandboxName: string, gatewayName: string): void {
     const policy = require("../../policy") as PolicyModule;
     const operation = `change messaging providers for sandbox '${sandboxName}'`;
     const context = policy.inspectPolicyMutationContext(sandboxName, operation, gatewayName);
     policy.recheckPolicyMutationContext(sandboxName, operation, context);
-  },
-  runGatewayOpenshell(
-    gatewayName: string,
-    args: Parameters<typeof runOpenshell>[0],
-    options?: Parameters<typeof runOpenshell>[1],
-  ): ReturnType<typeof runOpenshell> {
-    return gatewayRunner(gatewayName)(args, options);
   },
   inspectMessagingProviderAttachmentTarget(sandboxName: string, gatewayName: string): string {
     return inspectOpenShellSandboxIdentityFingerprint({
@@ -108,26 +74,62 @@ export const policyChannelDependencies = {
   isMessagingProviderBindingConflict(error: unknown): error is Error & {
     readonly mutatedProviderNames: readonly string[];
     readonly createdProviderNames?: readonly string[];
+    readonly replacedProviderNames?: readonly string[];
   } {
-    const providers = require("../../onboard/providers") as LegacyOnboardProvidersModule;
-    return providers.isMessagingProviderBindingConflict(error);
+    return isTypedMessagingProviderBindingConflict(error);
   },
   isMessagingProviderMutationFailure(error: unknown): error is Error & {
     readonly mutatedProviderNames: readonly string[];
     readonly createdProviderNames: readonly string[];
+    readonly replacedProviderNames?: readonly string[];
   } {
-    const providers = require("../../onboard/providers") as LegacyOnboardProvidersModule;
-    return providers.isMessagingProviderMutationFailure(error);
+    return isTypedMessagingProviderMutationFailure(error);
   },
   upsertMessagingProviders(
     tokenDefs: MessagingProviderTokenDefinition[],
     gatewayName: string,
     options?: MessagingProviderUpsertOptions,
-  ): string[] {
-    const providers = require("../../onboard/providers") as LegacyOnboardProvidersModule;
-    return providers.upsertMessagingProviders(tokenDefs, gatewayRunner(gatewayName), {
-      ...options,
-      gatewayName,
+    context?: {
+      readonly plan: SandboxMessagingPlan;
+      readonly channelName: string;
+      readonly sandboxAgent: string | null | undefined;
+      readonly sandboxName: string;
+      readonly revalidateSandboxIdentity: (operation: string) => void;
+    },
+  ): string[] | Promise<string[]> {
+    if (!context) throw new Error("Messaging provider application context is missing.");
+    const application = buildMessagingProviderApplication({
+      tokenDefs,
+      root: REPOSITORY_ROOT,
+      agent: context.sandboxAgent,
+      getCredential,
+      env: process.env,
+      normalizeCredentialValue: (value) => normalizeCredentialValue(value as string | undefined),
+      channelIdForCredential: () => context.channelName,
+    });
+    return MessagingSetupApplier.applyCredentialsAtOpenShell(context.plan, {
+      providerAdapter: createCliOpenShellProviderAdapter({ run: runOpenshell }),
+      target: namedOpenShellGateway(gatewayName),
+      definitions: application.definitions,
+      refreshes: application.refreshes,
+      replaceExisting: options?.replaceExisting,
+      allowedSandboxes: [context.sandboxName],
+      attachToSandbox: context.sandboxName,
+      revalidateSandboxIdentity: context.revalidateSandboxIdentity,
+      log: (message) => console.error(`  ${message}`),
+    }).then((result) => [...result.providerNames]);
+  },
+  cleanupMessagingProviders(
+    providerNames: readonly string[],
+    sandboxName: string,
+    gatewayName: string,
+    revalidateSandboxIdentity: (operation: string) => void,
+  ) {
+    return MessagingSetupApplier.cleanupProvidersAtOpenShell(providerNames, {
+      providerAdapter: createCliOpenShellProviderAdapter({ run: runOpenshell }),
+      target: namedOpenShellGateway(gatewayName),
+      allowedSandboxes: [sandboxName],
+      revalidateSandboxIdentity,
     });
   },
   rebuildSandbox(

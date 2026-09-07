@@ -575,17 +575,19 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
   it("removes credential-free policy when provider attachment fails", async () => {
     arrangeRegistry({ current: makeEmptyEntry("alpha") });
     getCredentialMock.mockReturnValue(TELEGRAM_TOKEN);
-    upsertMock.mockReturnValue(["alpha-telegram-bridge"]);
+    upsertMock.mockRejectedValue(
+      Object.assign(new Error("provider attachment failed"), {
+        code: "NEMOCLAW_MESSAGING_PROVIDER_MUTATION_FAILURE",
+        mutatedProviderNames: ["alpha-telegram-bridge"],
+        createdProviderNames: ["alpha-telegram-bridge"],
+      }),
+    );
     vi.mocked(policy.listPresets).mockReturnValue([
       { file: "telegram.yaml", name: "telegram", description: "Telegram" },
     ]);
     vi.mocked(policy.getAppliedPresets).mockReturnValue(["telegram"]);
     const removePresetMock = vi.spyOn(policy, "removePreset").mockReturnValue(true);
-    runOpenshellMock.mockImplementation((args: readonly string[]) =>
-      args.includes("attach")
-        ? { ...successfulOpenshellResult(), status: 1 }
-        : successfulOpenshellResult(),
-    );
+    runOpenshellMock.mockReturnValue(successfulOpenshellResult());
 
     await expect(addSandboxChannel("alpha", { channel: "telegram" })).rejects.toThrow(
       "process.exit(1)",
@@ -641,7 +643,12 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
         },
       ],
       "nemoclaw",
-      { bestEffort: true, requireExactBindings: true },
+      { replaceExisting: true },
+      expect.objectContaining({
+        channelName: "discord",
+        sandboxAgent: "hermes",
+        sandboxName: "alpha",
+      }),
     );
   });
 

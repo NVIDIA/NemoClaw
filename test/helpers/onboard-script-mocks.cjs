@@ -35,7 +35,9 @@ if (process.env.NEMOCLAW_TEST_FORWARD_SERVICE_FIXTURE === "1") {
       return loaded;
     }
     if (
-      resolved.includes(`${path.sep}adapters${path.sep}openshell${path.sep}local-forward-listener.`) &&
+      resolved.includes(
+        `${path.sep}adapters${path.sep}openshell${path.sep}local-forward-listener.`,
+      ) &&
       typeof loaded?.probeLocalForwardListener === "function"
     ) {
       loaded.probeLocalForwardListener = () => {
@@ -1110,6 +1112,23 @@ function mockStandaloneGatewayTeardownAuthority() {
   });
 }
 
+function mockManagedStateVolumeOnboardLifecycle() {
+  const managedWorkloadOnboard = require(
+    path.resolve(__dirname, "../../src/lib/onboard/managed-workload/onboard-orchestration.ts"),
+  );
+  managedWorkloadOnboard.createManagedStateVolumeOnboardLifecycle = ({ roots }) => ({
+    roots,
+    materializeSandboxCreatePlan: (input, materialize) => materialize(input),
+    commit: () => {},
+  });
+}
+
+function mockIsolatedDockerSandboxLifecycleFromRunner() {
+  mockStandaloneGatewayTeardownAuthority();
+  mockManagedStateVolumeOnboardLifecycle();
+  mockDockerSandboxLifecycleReleaseFromRunner();
+}
+
 function mockDockerSandboxLifecycleReleaseFromRunner() {
   const runner = require(path.resolve(__dirname, "../../src/lib/runner.ts"));
   const state = runner.run.__nemoclawDockerLifecycleState ?? {
@@ -1420,6 +1439,8 @@ module.exports = {
   sandboxLifecycleFixture,
   mockOnboardRunCapture,
   mockStandaloneGatewayTeardownAuthority,
+  mockManagedStateVolumeOnboardLifecycle,
+  mockIsolatedDockerSandboxLifecycleFromRunner,
   normalizeCommand,
   sandboxCreateArgsWithVerifiedReservation,
 };

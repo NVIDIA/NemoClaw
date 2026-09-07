@@ -452,7 +452,7 @@ await planner.buildChannelAddPlanFromSandboxEntry({
 ```ts
 MessagingSetupApplier.writePlanToEnv(plan);
 
-MessagingSetupApplier.applyCredentialsAtOpenShell(plan, credentialOptions);
+await MessagingSetupApplier.applyCredentialsAtOpenShell(plan, credentialOptions);
 MessagingSetupApplier.applyPolicyAtOpenShell(plan, policyOptions);
 await MessagingSetupApplier.applyPreEnableChecks(plan, hookOptions);
 await MessagingSetupApplier.applyAgentConfigAtOpenShell(plan, configOptions);

@@ -4,9 +4,9 @@
 import type { WebSearchConfig } from "../inference/web-search";
 import * as webSearch from "../inference/web-search";
 import { listMessagingCredentialMetadata } from "../messaging/channels";
+import { HERMES_TAVILY_PROVIDER_PROFILE_ID } from "../messaging/applier/web-search-provider-profile";
 import { MESSAGING_CREDENTIAL_PROVIDER_TYPE } from "../messaging/provider-profile";
 import { type ChannelDef, getChannelTokenKeys } from "../sandbox/channels";
-import * as braveProviderProfile from "./brave-provider-profile";
 import type { ExtraPlaceholderCredentialSources } from "./extra-placeholder-keys";
 import {
   bridgeProviderNamesForChannel,
@@ -125,12 +125,12 @@ export function prepareCreateSandboxMessaging(
     .filter(({ envKey }) => !disabledEnvKeys.has(envKey))
     .map(({ retainWhileDisabled: _retainWhileDisabled, ...definition }) => definition);
 
-  const webSearchEnabled = braveProviderProfile.shouldEnableWebSearch(input.webSearchConfig);
+  const webSearchEnabled = webSearch.isWebSearchEnabled(input.webSearchConfig);
   const webSearchProvider = webSearch.webSearchProviderForConfig(input.webSearchConfig);
   const webSearchCredentialEnv = webSearch.webSearchEnvFor(webSearchProvider);
   const webSearchProviderType =
     webSearchProvider === "tavily" && input.agentName?.trim().toLowerCase() === "hermes"
-      ? braveProviderProfile.HERMES_TAVILY_PROVIDER_PROFILE_ID
+      ? HERMES_TAVILY_PROVIDER_PROFILE_ID
       : webSearchProvider;
   const webSearchProviderName = `${input.sandboxName}-${webSearchProvider}-search`;
   const webSearchApiKey = webSearchEnabled
@@ -177,8 +177,8 @@ export function prepareCreateSandboxMessaging(
   // gateway-side (declared by a co-located provider-profile YAML) registers a
   // refresh-minted provider so the gateway mints the token (secret stays
   // gateway-side) and the L7 proxy injects it. The credential value is a sentinel
-  // (minted by refresh, configured post-create in onboard's
-  // upsertMessagingProviders wrapper). Today only Google Chat uses this.
+  // (minted by refresh, configured through the messaging applier). Today only
+  // Google Chat uses this.
   // Resolve the agent instead of defaulting it: an agent no manifest supports
   // must configure no bridge, not the OpenClaw one.
   const bridgeProfiles = messagingProviderProfiles.filter((profile) => profile.strategy !== null);

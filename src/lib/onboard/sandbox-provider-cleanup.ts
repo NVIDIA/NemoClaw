@@ -256,10 +256,9 @@ export function recoverAttachedProvider(
  * downstream operations that immediately follow the cleanup already surface
  * the same residual attachment with an actionable, name-scoped error:
  *
- *   - The onboard recreate path runs `upsertMessagingProviders(...,
- *     { replaceExisting: true })` next; its `provider delete` step calls
- *     `process.exit(1)` with the exact OpenShell FailedPrecondition diagnostic
- *     for any provider still attached.
+ *   - The onboard recreate path runs typed messaging provider application with
+ *     `replaceExisting: true` next; a residual attachment rejects with a
+ *     name-scoped `MessagingProviderApplyError` and preserves retry state.
  *   - The destroy path runs `runOpenshell(["sandbox", "delete", sandboxName])`
  *     next; that call hard-fails on non-`alreadyGone` errors before any
  *     registry state is removed, so a real gateway outage stops destroy

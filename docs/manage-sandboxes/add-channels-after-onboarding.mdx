@@ -20,6 +20,13 @@ List the supported channel names:
 $$nemoclaw my-assistant channels list
 ```
 
+<Warning>
+  `channels add` can replace a mismatched provider when complete credentials are available.
+  Replacement is allowed only when the provider is unattached or attached only to the selected sandbox.
+  An attachment to another sandbox stops the operation.
+  The `--force` flag does not override this provider attachment authority.
+</Warning>
+
 Add the channel you want:
 
 ```bash
@@ -64,15 +71,21 @@ It uses Pub/Sub REST pull and does not create or configure a public webhook endp
 A missing or malformed preset aborts before token prompts, registry writes, or the rebuild prompt, so the sandbox never advertises a channel without matching policy.
 With the preset present, the command applies it before rebuild.
 
-When policy application fails after a fresh add writes registry state, NemoClaw attempts to roll back the bridge providers, `messagingChannels` entry, and staged environment credentials.
+OpenShell provider inspection uncertainty stops the operation before provider mutation.
+On a fresh add, NemoClaw may already have applied the credential-free policy preset and attempts to remove it before exiting.
+If that policy cleanup fails, rebuild the sandbox first, then run the `$$nemoclaw <name> policy remove <channel>` command printed by the CLI.
+
+When final policy application fails after provider registration during a fresh add, NemoClaw attempts to roll back the bridge providers, preset, and staged environment credentials.
+The registry has not been updated at that point.
 It exits without prompting for a rebuild.
 If a gateway-side cleanup step fails, rollback continues and prints `Rollback could not fully clean <surfaces>` so you can clean up manually.
 
-When the same failure happens while re-adding an enabled channel, NemoClaw restores the prior `messagingChannels` entry, staged environment credentials when available, registry credential hashes, and prior bridge providers.
-It flags `gateway-providers` as residual because the in-flight upsert can leave the gateway with the new token.
-
-Verify the gateway bridge before relying on the channel.
-Restore the preset YAML and rerun the original command.
+When the same failure happens while re-adding an enabled channel, NemoClaw restores the prior `messagingChannels` entry, staged environment credentials when available, and registry credential hashes.
+An existing provider can be changed during re-add.
+NemoClaw attempts to restore stored provider credentials, but it cannot restore prior gateway refresh material that was available only during the earlier setup command.
+NemoClaw flags `gateway-providers` as residual.
+Inspect the channel's gateway providers, restore the preset YAML, and correct the gateway failure.
+When the gateway is reachable, run the `$$nemoclaw <name> channels remove <channel>` command printed by the CLI, then rerun `$$nemoclaw <name> channels add <channel>`.
 
 Choose the rebuild so the running sandbox image picks up the new channel.
 For Telegram, Discord, and Slack, `channels add` checks the rebuilt runtime for the selected bridge and reports startup, credential, or missing-plugin warnings before returning.
