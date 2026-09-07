@@ -583,14 +583,15 @@ function applyServingProfileEnvironment(
   if (!options.servingProfile) return () => {};
   const previous = env[NEMOCLAW_SERVING_PRESET_ENV];
   env[NEMOCLAW_SERVING_PRESET_ENV] = options.servingProfile;
-  // The preset selects the model once a provider is chosen; the profile's
-  // backend is what selects the provider. Setting only the former left the
-  // provider unresolved and onboarding fell back to the menu (#9313).
+  // On a fresh run the profile backend selects the provider. A resume keeps
+  // the recorded runtime provider authoritative: mapping `llama-cpp-local`
+  // back to its installer key would create a false resume conflict.
   // `validateServingProfileConflicts` already rejected an operator-supplied
   // NEMOCLAW_PROVIDER, so nothing of the caller's is being overwritten here.
-  const providerKey = options.servingProfileProvenance
-    ? servingProfileProviderKey(options.servingProfileProvenance)
-    : null;
+  const providerKey =
+    !options.resume && options.servingProfileProvenance
+      ? servingProfileProviderKey(options.servingProfileProvenance)
+      : null;
   const previousProvider = env.NEMOCLAW_PROVIDER;
   if (providerKey) env.NEMOCLAW_PROVIDER = providerKey;
   return () => {
