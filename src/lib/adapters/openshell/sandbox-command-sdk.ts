@@ -189,8 +189,10 @@ export function createSdkOpenShellSandboxCommandExecutor(
   deps: SdkOpenShellSandboxCommandExecutorDeps = {},
 ): OpenShellSandboxCommandExecutor {
   const clients = new Map<string, Promise<SdkClient>>();
+  const clientKey = (target: OpenShellGatewayTarget): string =>
+    target.kind === "named" ? target.gatewayName : "";
   const connect = (target: OpenShellGatewayTarget): Promise<SdkClient> => {
-    const key = target.kind === "named" ? target.gatewayName : "";
+    const key = clientKey(target);
     let client = clients.get(key);
     if (!client) {
       client = (deps.connect ?? ((selected) => connectManagedOpenShellSdk(selected, deps)))(target);
@@ -200,6 +202,13 @@ export function createSdkOpenShellSandboxCommandExecutor(
       clients.set(key, client);
     }
     return client;
+  };
+  const forgetPendingConnection = (
+    target: OpenShellGatewayTarget,
+    connection: Promise<SdkClient>,
+  ): void => {
+    const key = clientKey(target);
+    if (clients.get(key) === connection) clients.delete(key);
   };
   const stdout = deps.stdout ?? ((data: Buffer) => process.stdout.write(data));
   const stderr = deps.stderr ?? ((data: Buffer) => process.stderr.write(data));
@@ -248,6 +257,14 @@ export function createSdkOpenShellSandboxCommandExecutor(
 
       const controller = new AbortController();
       let forwardedSignal: "SIGINT" | "SIGTERM" | null = null;
+      let timedOut = false;
+      const timeout =
+        request.timeoutSeconds !== undefined && request.timeoutSeconds > 0
+          ? setTimeout(() => {
+              timedOut = true;
+              controller.abort();
+            }, request.timeoutSeconds * 1000)
+          : null;
       const forward = (signal: "SIGINT" | "SIGTERM") => () => {
         forwardedSignal = signal;
         controller.abort();
@@ -261,8 +278,12 @@ export function createSdkOpenShellSandboxCommandExecutor(
         signalSource.remove("SIGTERM", forwardTerm);
       };
 
+      let connection: Promise<SdkClient> | null = null;
+      let connected = false;
       try {
-        const client = await waitForConnection(connect(request.target), controller.signal);
+        connection = connect(request.target);
+        const client = await waitForConnection(connection, controller.signal);
+        connected = true;
         let exitCode: number | undefined;
         for await (const event of client.sandbox.execStream(
           request.sandboxName,
@@ -284,6 +305,9 @@ export function createSdkOpenShellSandboxCommandExecutor(
           throw new Error("OpenShell SDK exec stream ended without an exit event");
         return { outcome: { kind: "completed", exitCode }, release };
       } catch (error) {
+        if (!connected && connection && controller.signal.aborted) {
+          forgetPendingConnection(request.target, connection);
+        }
         if (forwardedSignal) {
           return {
             outcome: {
@@ -294,7 +318,21 @@ export function createSdkOpenShellSandboxCommandExecutor(
             release,
           };
         }
+        if (timedOut) {
+          return {
+            outcome: {
+              kind: "failed",
+              error: {
+                kind: "timeout",
+                message: `OpenShell SDK command timed out after ${String(request.timeoutSeconds)} seconds`,
+              },
+            },
+            release,
+          };
+        }
         return { outcome: commandFailure(error), release };
+      } finally {
+        if (timeout) clearTimeout(timeout);
       }
     },
   };

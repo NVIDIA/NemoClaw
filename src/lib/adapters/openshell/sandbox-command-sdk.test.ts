@@ -233,6 +233,42 @@ describe("OpenShell SDK sandbox command executor", () => {
     expect(remove).toHaveBeenCalledTimes(2);
   });
 
+  it("bounds connection setup and starts a fresh connection after timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      const execStream = vi.fn(async function* () {
+        yield { type: "exit" as const, exitCode: 0 };
+      });
+      const connect = vi
+        .fn()
+        .mockImplementationOnce(() => new Promise(() => {}))
+        .mockResolvedValueOnce({ sandbox: { exec: vi.fn(), execStream } });
+      const executor = createSdkOpenShellSandboxCommandExecutor({ connect });
+      const request = {
+        sandboxName: "alpha",
+        target: { kind: "named" as const, gatewayName: "nemoclaw" },
+        command: ["true"],
+        timeoutSeconds: 1,
+      };
+
+      const pending = executor.runStreaming(request);
+      await vi.advanceTimersByTimeAsync(1000);
+      const timedOut = await pending;
+      timedOut.release();
+
+      expect(timedOut.outcome).toMatchObject({
+        kind: "failed",
+        error: { kind: "timeout" },
+      });
+      const retry = await executor.runStreaming(request);
+      retry.release();
+      expect(retry.outcome).toEqual({ kind: "completed", exitCode: 0 });
+      expect(connect).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("requires an explicit managed gateway", async () => {
     const executor = createSdkOpenShellSandboxCommandExecutor({
       connect: vi.fn(),

@@ -20,6 +20,7 @@ const ensureLiveSandboxOrExit = vi.hoisted(() => vi.fn());
 const getSandboxTargetGatewayName = vi.hoisted(() => vi.fn());
 const getSessionAgent = vi.hoisted(() => vi.fn());
 const resolveSessionAgentDefinition = vi.hoisted(() => vi.fn());
+const loadGatewayManagementDeclaration = vi.hoisted(() => vi.fn());
 
 vi.mock("../../adapters/openshell/runtime", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../adapters/openshell/runtime")>()),
@@ -32,6 +33,10 @@ vi.mock("../../adapters/openshell/sandbox-command-cli", () => ({
   createCliOpenShellSandboxCommandExecutor: () => cliCommandExecutor,
 }));
 vi.mock("../../agent/runtime", () => ({ getSessionAgent, resolveSessionAgentDefinition }));
+vi.mock("../../onboard/gateway-management", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../onboard/gateway-management")>()),
+  loadGatewayManagementDeclaration,
+}));
 vi.mock("./gateway-state", () => ({ ensureLiveSandboxOrExit }));
 vi.mock("./gateway-target", () => ({ getSandboxTargetGatewayName }));
 
@@ -107,6 +112,11 @@ describe("stateless sandbox skill orchestration", () => {
     ensureLiveSandboxOrExit.mockResolvedValue(undefined);
     getSandboxTargetGatewayName.mockReturnValue("nemoclaw");
     getSessionAgent.mockReturnValue(null);
+    loadGatewayManagementDeclaration.mockReturnValue({
+      ok: true,
+      declaration: null,
+      source: null,
+    });
   });
 
   afterEach(() => {
@@ -179,6 +189,27 @@ describe("stateless sandbox skill orchestration", () => {
 
     expect(cliCommandExecutor.runStreaming).toHaveBeenCalledOnce();
     expect(process.exitCode).toBe(7);
+  });
+
+  it("uses only the gateway-scoped CLI executor for externally supervised gateways", async () => {
+    selectAgent("hermes", "/usr/local/bin/hermes", HERMES);
+    loadGatewayManagementDeclaration.mockReturnValue({
+      ok: true,
+      declaration: { mode: "externally-supervised" },
+      source: "file",
+    });
+
+    await listSandboxSkills("alpha");
+    await removeSandboxSkill("alpha", { name: "demo-skill" });
+    await installSandboxSkill("alpha", { command: "install", path: localSkill() });
+
+    expect(sdkCommandExecutor.runStreaming).not.toHaveBeenCalled();
+    expect(cliCommandExecutor.runStreaming).toHaveBeenCalledTimes(5);
+    expect(
+      cliCommandExecutor.runStreaming.mock.calls.every(
+        ([request]) => request.target.gatewayName === "nemoclaw",
+      ),
+    ).toBe(true);
   });
 
   it("rejects Hermes agent-selection overrides before native list execution", async () => {

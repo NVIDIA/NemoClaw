@@ -15,6 +15,10 @@ import * as agentRuntime from "../../agent/runtime";
 import { renderAgentSkillCommand } from "../../agent/skill-integration";
 import { CLI_NAME } from "../../cli/branding";
 import { D, G, R } from "../../cli/terminal-style";
+import {
+  invalidGatewayManagementDeclarationError,
+  loadGatewayManagementDeclaration,
+} from "../../onboard/gateway-management";
 import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
 import * as skillInstall from "../../skill-install";
 import { ensureLiveSandboxOrExit } from "./gateway-state";
@@ -138,7 +142,13 @@ function rejectsAgentOverride(extraArgs: readonly string[]): boolean {
   );
 }
 
-async function runSdkSandboxCommandRetained(
+function mustUseGatewayScopedCli(): boolean {
+  const loaded = loadGatewayManagementDeclaration();
+  if (!loaded.ok) throw invalidGatewayManagementDeclarationError(loaded.reason);
+  return loaded.declaration?.mode === "externally-supervised";
+}
+
+async function runSandboxCommandRetained(
   sandboxName: string,
   gatewayName: string,
   command: readonly string[],
@@ -150,7 +160,23 @@ async function runSdkSandboxCommandRetained(
     tty: false,
     timeoutSeconds: SKILL_COMMAND_TIMEOUT_SECONDS,
   } as const;
-  let completion = await skillCommandExecutor.runStreaming(request);
+  let useCli: boolean;
+  try {
+    useCli = mustUseGatewayScopedCli();
+  } catch (error) {
+    console.error(`  ${error instanceof Error ? error.message : String(error)}`);
+    return { exitCode: 1, release: () => {} };
+  }
+  let completion = await (useCli ? skillCommandFallbackExecutor : skillCommandExecutor).runStreaming(
+    request,
+  );
+  if (useCli) {
+    if (completion.outcome.kind === "completed") {
+      return { exitCode: completion.outcome.exitCode, release: completion.release };
+    }
+    console.error(`  OpenShell CLI execution failed: ${completion.outcome.error.message}`);
+    return { exitCode: 1, release: completion.release };
+  }
   if (completion.outcome.kind === "failed" && completion.outcome.error.kind === "unavailable") {
     completion.release();
     completion = await skillCommandFallbackExecutor.runStreaming(request);
@@ -162,12 +188,12 @@ async function runSdkSandboxCommandRetained(
   return { exitCode: 1, release: completion.release };
 }
 
-async function runSdkSandboxCommand(
+async function runSandboxCommand(
   sandboxName: string,
   gatewayName: string,
   command: readonly string[],
 ): Promise<number> {
-  const completion = await runSdkSandboxCommandRetained(sandboxName, gatewayName, command);
+  const completion = await runSandboxCommandRetained(sandboxName, gatewayName, command);
   try {
     return completion.exitCode;
   } finally {
@@ -180,7 +206,7 @@ async function cleanupRemoteStage(
   gatewayName: string,
   stageDirectory: string,
 ): Promise<boolean> {
-  const exitCode = await runSdkSandboxCommand(sandboxName, gatewayName, [
+  const exitCode = await runSandboxCommand(sandboxName, gatewayName, [
     "/bin/sh",
     "-c",
     skillInstall.buildCleanupSkillStageCommand(stageDirectory),
@@ -200,7 +226,7 @@ function runAgentSkillCommand(
   gatewayName: string,
   command: readonly string[],
 ): Promise<number> {
-  return runSdkSandboxCommand(sandboxName, gatewayName, wrapExecCommandWithRuntimeEnv(command));
+  return runSandboxCommand(sandboxName, gatewayName, wrapExecCommandWithRuntimeEnv(command));
 }
 
 function runAgentSkillCommandRetained(
@@ -208,7 +234,7 @@ function runAgentSkillCommandRetained(
   gatewayName: string,
   command: readonly string[],
 ) {
-  return runSdkSandboxCommandRetained(
+  return runSandboxCommandRetained(
     sandboxName,
     gatewayName,
     wrapExecCommandWithRuntimeEnv(command),
@@ -424,7 +450,7 @@ export async function installSandboxSkill(
     if (!selected) return;
     gatewayName = getSandboxTargetGatewayName(sandboxName);
     stageCreated = true;
-    const prepareExit = await runSdkSandboxCommand(sandboxName, gatewayName, [
+    const prepareExit = await runSandboxCommand(sandboxName, gatewayName, [
       "/bin/sh",
       "-c",
       skillInstall.buildPrepareSkillStageCommand(stageDirectory),
