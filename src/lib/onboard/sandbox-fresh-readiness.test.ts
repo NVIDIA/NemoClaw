@@ -153,6 +153,8 @@ describe("fresh sandbox executable readiness", () => {
     );
     expect(mocks.printSandboxCreateFailureDiagnostics).toHaveBeenCalledWith("alpha", {
       backupPath: null,
+      gatewayName: "nemoclaw",
+      runCaptureOpenshell: deps.runCaptureOpenshell,
     });
   });
 
@@ -183,6 +185,8 @@ describe("fresh sandbox executable readiness", () => {
     );
     expect(mocks.printSandboxCreateFailureDiagnostics).toHaveBeenCalledWith("alpha", {
       backupPath: null,
+      gatewayName: "nemoclaw",
+      runCaptureOpenshell: deps.runCaptureOpenshell,
     });
   });
 
@@ -244,6 +248,8 @@ describe("fresh sandbox executable readiness", () => {
     );
     expect(mocks.printSandboxCreateFailureDiagnostics).toHaveBeenCalledWith("alpha", {
       backupPath: null,
+      gatewayName: "nemoclaw",
+      runCaptureOpenshell: deps.runCaptureOpenshell,
     });
   });
 });

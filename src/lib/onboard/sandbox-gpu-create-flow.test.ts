@@ -727,10 +727,7 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
       };
     });
     mockExit();
-
     await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow("process.exit:1");
-
-    expect(patch.rollbackManagedStartupAfterCreateFailure).toHaveBeenCalledOnce();
     expect(deps.runOpenshell).not.toHaveBeenCalledWith(
       ["sandbox", "delete", "alpha"],
       expect.anything(),
@@ -740,6 +737,9 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
       gatewayName: "nemoclaw",
       runCaptureOpenshell: deps.runCaptureOpenshell,
     });
+    expect(mocks.printSandboxCreateFailureDiagnostics.mock.invocationCallOrder[0]).toBeLessThan(
+      patch.rollbackManagedStartupAfterCreateFailure.mock.invocationCallOrder[0]!,
+    );
     expect(errorOutput()).toContain(
       "NemoClaw left the sandbox in place for inspection and recovery",
     );

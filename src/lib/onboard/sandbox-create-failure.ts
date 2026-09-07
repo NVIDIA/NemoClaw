@@ -9,7 +9,10 @@ import { GATEWAY_PORT } from "../core/ports";
 import { buildSandboxLogsArgs } from "../domain/sandbox/logs";
 import { rejectSymlinksOnPath } from "../state/config-io";
 import { nemoclawStateRoot } from "../state/state-root";
-import { createDockerGpuDiagnosticRedactor } from "./docker-gpu-diagnostic-redaction";
+import {
+  createDockerGpuDiagnosticRedactor,
+  discoverDockerGpuDiagnosticSensitiveValuesFromEnv,
+} from "./docker-gpu-diagnostic-redaction";
 import { resolveGatewayLogPathForPort } from "./gateway/state-dir";
 
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
@@ -22,7 +25,7 @@ const OPENSHELL_CAPTURE_TIMEOUT_MS = 10_000;
 
 type RunCaptureOpenshell = (
   args: string[],
-  options?: { ignoreError?: boolean; timeout?: number },
+  options?: { ignoreError?: boolean; killProcessTreeOnTimeout?: boolean; timeout?: number },
 ) => string;
 
 export type SandboxCreateFailureDiagnostics = {
@@ -45,6 +48,7 @@ export type SandboxCreateFailureDiagnosticOptions = {
   gatewayStateDir?: string;
   gatewayName?: string;
   runCaptureOpenshell?: RunCaptureOpenshell;
+  env?: NodeJS.ProcessEnv;
   backupPath?: string | null;
   now?: Date;
 };
@@ -167,7 +171,7 @@ function listStateDir(stateDir: string | null): string[] {
   }
 }
 
-function boundedRedactedCapture(output: string): string[] {
+function boundedRedactedCapture(output: string, env: NodeJS.ProcessEnv): string[] {
   const bytes = Buffer.from(stripAnsi(output), "utf8");
   const offset = Math.max(0, bytes.length - MAX_OPENSHELL_CAPTURE_BYTES);
   let bounded = bytes.subarray(offset).toString("utf8");
@@ -175,7 +179,7 @@ function boundedRedactedCapture(output: string): string[] {
     const firstCompleteLine = bounded.indexOf("\n");
     bounded = firstCompleteLine === -1 ? "" : bounded.slice(firstCompleteLine + 1);
   }
-  return createDockerGpuDiagnosticRedactor()
+  return createDockerGpuDiagnosticRedactor(discoverDockerGpuDiagnosticSensitiveValuesFromEnv(env))
     .redactText(bounded)
     .split(/\r?\n/u)
     .filter((line) => line.trim().length > 0)
@@ -196,8 +200,13 @@ function captureOpenShellFailureLogs(
           { follow: false, lines: String(MAX_OPENSHELL_CAPTURE_LINES), since: null },
           options.gatewayName,
         ),
-        { ignoreError: true, timeout: OPENSHELL_CAPTURE_TIMEOUT_MS },
+        {
+          ignoreError: true,
+          killProcessTreeOnTimeout: true,
+          timeout: OPENSHELL_CAPTURE_TIMEOUT_MS,
+        },
       ),
+      options.env ?? process.env,
     );
     if (lines.length === 0) return { path: null, summaryLines: [] };
     const filePath = path.join(dir, "openshell-logs.txt");
@@ -325,7 +334,7 @@ export function printSandboxCreateFailureDiagnostics(
 
   console.error(`  Diagnostics saved: ${diagnostics.dir}`);
   if (diagnostics.summaryLines.length > 0) {
-    console.error("  Recent OpenShell gateway failure:");
+    console.error("  Recent OpenShell failure diagnostics:");
     for (const line of diagnostics.summaryLines) {
       console.error(`    ${line}`);
     }

@@ -68,6 +68,25 @@ export function discoverDockerGpuDiagnosticSensitiveValues(
     .map(([, value]) => value);
 }
 
+/** Return staged credential values that a failed sandbox can echo into its logs. */
+export function discoverDockerGpuDiagnosticSensitiveValuesFromEnv(
+  env: NodeJS.ProcessEnv,
+): string[] {
+  const extraPlaceholderKeys = new Set(
+    String(env[EXTRA_PLACEHOLDER_KEYS_ENV] ?? "")
+      .split(/[\s,]+/u)
+      .filter(Boolean),
+  );
+  return Object.entries(env)
+    .filter(
+      ([key, value]) =>
+        typeof value === "string" &&
+        Buffer.byteLength(value, "utf8") >= 8 &&
+        (SENSITIVE_ENV_KEY.test(key) || extraPlaceholderKeys.has(key)),
+    )
+    .map(([, value]) => value as string);
+}
+
 /**
  * SOURCE_OF_TRUTH_REVIEW (shared Docker GPU diagnostic redaction; #6110):
  * invalidState: inspect, network, log, or startup-command credentials reach an artifact sink.

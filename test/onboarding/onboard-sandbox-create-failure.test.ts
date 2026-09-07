@@ -104,10 +104,12 @@ describe("sandbox create failure diagnostics", () => {
         homeDir,
         backupPath: "/tmp/pre-upgrade-backup",
         now: new Date("2026-05-12T20:35:00.000Z"),
+        runCaptureOpenshell: () => "sandbox startup failed\n",
       });
 
       expect(diagnostics?.dir).toContain(path.join(homeDir, ".nemoclaw", "onboard-failures"));
       expect(messages).toContain(`  Diagnostics saved: ${diagnostics!.dir}`);
+      expect(messages).toContain("  Recent OpenShell failure diagnostics:");
       expect(messages).toContain("  State backup retained: /tmp/pre-upgrade-backup");
     } finally {
       console.error = originalError;
@@ -154,12 +156,18 @@ describe("sandbox create failure diagnostics", () => {
     const logLines = [
       "x".repeat(64 * 1024),
       ...Array.from({ length: 119 }, (_, index) => `earlier log ${String(index)}`),
-      `Authorization: Bearer ${token}`,
+      `custom provider output ${token}`,
       "[sandbox] /usr/local/bin/hermes: Exec format error",
     ];
     const runCaptureOpenshell = vi.fn(
-      (_args: string[], _options?: { ignoreError?: boolean; timeout?: number }) =>
-        `${logLines.join("\n")}\n`,
+      (
+        _args: string[],
+        _options?: {
+          ignoreError?: boolean;
+          killProcessTreeOnTimeout?: boolean;
+          timeout?: number;
+        },
+      ) => `${logLines.join("\n")}\n`,
     );
 
     const diagnostics = collectSandboxCreateFailureDiagnostics("my-assistant", {
@@ -167,29 +175,41 @@ describe("sandbox create failure diagnostics", () => {
       homeDir,
       now: new Date("2026-08-26T16:02:46.000Z"),
       runCaptureOpenshell,
+      env: {
+        CUSTOM_PROVIDER_CREDENTIAL: token,
+        NEMOCLAW_EXTRA_PLACEHOLDER_KEYS: "CUSTOM_PROVIDER_CREDENTIAL",
+      },
     });
     const captured = fs.readFileSync(diagnostics!.openshellLogsPath!, "utf8");
 
     expect({
       calls: runCaptureOpenshell.mock.calls.map(([args, options]) => ({ args, options })),
+      firstLine: captured.trim().split("\n").at(0),
       lineCount: captured.trim().split("\n").length,
       lastLine: captured.trim().split("\n").at(-1),
       summaryLines: diagnostics?.summaryLines,
       tokenPresent: captured.includes(token),
+      withinByteLimit: Buffer.byteLength(captured, "utf8") <= 64 * 1024,
     }).toEqual({
       calls: [
         {
           args: ["logs", "-g", "nemoclaw", "my-assistant", "-n", "120", "--source", "all"],
-          options: { ignoreError: true, timeout: 10_000 },
+          options: {
+            ignoreError: true,
+            killProcessTreeOnTimeout: true,
+            timeout: 10_000,
+          },
         },
       ],
+      firstLine: "earlier log 1",
       lineCount: 120,
       lastLine: "[sandbox] /usr/local/bin/hermes: Exec format error",
       summaryLines: [
-        "sandbox logs: Authorization: Bearer <REDACTED>",
+        "sandbox logs: custom provider output <REDACTED>",
         "sandbox logs: [sandbox] /usr/local/bin/hermes: Exec format error",
       ],
       tokenPresent: false,
+      withinByteLimit: true,
     });
   });
 });
