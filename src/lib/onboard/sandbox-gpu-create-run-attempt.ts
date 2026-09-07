@@ -450,6 +450,7 @@ export function createSandboxGpuCreateAttemptRunner(
       : (sandboxName, options) =>
           printSandboxCreateFailureDiagnostics(sandboxName, {
             ...options,
+            ...(input.hostEnv ? { env: input.hostEnv } : {}),
             gatewayName: input.gatewayName,
             runCaptureOpenshell: deps.runCaptureOpenshell,
           }));

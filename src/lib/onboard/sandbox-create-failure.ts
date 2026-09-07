@@ -171,7 +171,7 @@ function listStateDir(stateDir: string | null): string[] {
   }
 }
 
-function boundedRedactedCapture(output: string, env: NodeJS.ProcessEnv): string[] {
+function boundedRedactedCapture(output: string, env: NodeJS.ProcessEnv): string {
   const bytes = Buffer.from(stripAnsi(output), "utf8");
   const offset = Math.max(0, bytes.length - MAX_OPENSHELL_CAPTURE_BYTES);
   let bounded = bytes.subarray(offset).toString("utf8");
@@ -179,11 +179,22 @@ function boundedRedactedCapture(output: string, env: NodeJS.ProcessEnv): string[
     const firstCompleteLine = bounded.indexOf("\n");
     bounded = firstCompleteLine === -1 ? "" : bounded.slice(firstCompleteLine + 1);
   }
-  return createDockerGpuDiagnosticRedactor(discoverDockerGpuDiagnosticSensitiveValuesFromEnv(env))
+  const lines = createDockerGpuDiagnosticRedactor(
+    discoverDockerGpuDiagnosticSensitiveValuesFromEnv(env),
+  )
     .redactText(bounded)
     .split(/\r?\n/u)
     .filter((line) => line.trim().length > 0)
     .slice(-MAX_OPENSHELL_CAPTURE_LINES);
+  if (lines.length === 0) return "";
+  const serialized = `${lines.join("\n")}\n`;
+  const serializedBytes = Buffer.from(serialized, "utf8");
+  if (serializedBytes.length <= MAX_OPENSHELL_CAPTURE_BYTES) return serialized;
+  const tail = serializedBytes
+    .subarray(serializedBytes.length - MAX_OPENSHELL_CAPTURE_BYTES)
+    .toString("utf8");
+  const firstCompleteLine = tail.indexOf("\n");
+  return firstCompleteLine === -1 ? "" : tail.slice(firstCompleteLine + 1);
 }
 
 function captureOpenShellFailureLogs(
@@ -193,7 +204,7 @@ function captureOpenShellFailureLogs(
 ): { path: string | null; summaryLines: string[] } {
   if (!options.runCaptureOpenshell) return { path: null, summaryLines: [] };
   try {
-    const lines = boundedRedactedCapture(
+    const contents = boundedRedactedCapture(
       options.runCaptureOpenshell(
         buildSandboxLogsArgs(
           sandboxName,
@@ -208,9 +219,10 @@ function captureOpenShellFailureLogs(
       ),
       options.env ?? process.env,
     );
-    if (lines.length === 0) return { path: null, summaryLines: [] };
+    if (!contents) return { path: null, summaryLines: [] };
+    const lines = contents.trimEnd().split("\n");
     const filePath = path.join(dir, "openshell-logs.txt");
-    fs.writeFileSync(filePath, `${lines.join("\n")}\n`, { mode: 0o600 });
+    fs.writeFileSync(filePath, contents, { mode: 0o600 });
     return {
       path: filePath,
       summaryLines: lines.slice(-2).map((line) => `sandbox logs: ${line}`),

@@ -109,16 +109,20 @@ describe("fresh sandbox executable readiness", () => {
       output: "sandbox create failed",
       sawProgress: true,
     });
+    const input = createInput();
+    input.hostEnv = { CUSTOM_PROVIDER_CREDENTIAL: "z7!" };
     mocks.printSandboxCreateFailureDiagnostics.mockImplementation(() => {
       order.push("diagnostics");
     });
     mockExit();
 
-    await expect(runSandboxGpuCreateFlow(createInput(), createDeps())).rejects.toThrow(
-      "process.exit:1",
-    );
+    await expect(runSandboxGpuCreateFlow(input, createDeps())).rejects.toThrow("process.exit:1");
 
     expect(order).toEqual(["diagnostics", "rollback"]);
+    expect(mocks.printSandboxCreateFailureDiagnostics).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ env: input.hostEnv }),
+    );
   });
 
   it("keeps a transient executable not-ready response inside the bounded wait (#9050)", async () => {

@@ -70,7 +70,6 @@ export async function reportSandboxCreateFailure(
     // The sandbox was created in the gateway but the create stream exited
     // with a non-zero code (e.g. SSH 255).  Fall through to the ready-wait
     // loop — the sandbox may still reach Ready on its own.
-    await deps.rollbackCreateFailure();
     deps.warn("");
     deps.warn(
       `  Create stream exited with code ${options.createStatus} after sandbox was created.`,
@@ -91,7 +90,13 @@ export async function reportSandboxCreateFailure(
   } catch {
     // Diagnostics must not replace the original sandbox-create failure.
   }
-  await deps.rollbackCreateFailure();
+  try {
+    await deps.rollbackCreateFailure();
+  } catch (error) {
+    deps.error(
+      `  Sandbox failure rollback did not complete: ${redact(error instanceof Error ? error.message : String(error))}`,
+    );
+  }
   deps.error("  Try:  openshell sandbox list        # check gateway state");
   deps.printRecoveryHints(redactedCreateOutput, { createArgs: options.createArgs });
   deps.exitProcess(options.createStatus === 0 ? 1 : options.createStatus);

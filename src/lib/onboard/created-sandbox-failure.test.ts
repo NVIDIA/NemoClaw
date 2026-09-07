@@ -59,6 +59,7 @@ describe("reportSandboxCreateFailure", () => {
       "  Create stream exited with code 3 after sandbox was created.",
     );
     expect(deps.printCreateFailureDiagnostics).not.toHaveBeenCalled();
+    expect(deps.rollbackCreateFailure).not.toHaveBeenCalled();
     expect(deps.printRecoveryHints).not.toHaveBeenCalled();
     expect(deps.exitProcess).not.toHaveBeenCalled();
   });
@@ -77,8 +78,46 @@ describe("reportSandboxCreateFailure", () => {
     expect(deps.printRecoveryHints).toHaveBeenCalledWith("boom", {
       createArgs: ["sandbox", "create", "alpha"],
     });
+    expect(deps.rollbackCreateFailure).toHaveBeenCalledOnce();
     expect(deps.exitProcess).toHaveBeenCalledWith(42);
     expect(deps.warn).not.toHaveBeenCalled();
+  });
+
+  it("waits for rollback before recovery hints and exit", async () => {
+    let settleRollback = (): void => {};
+    const rollback = new Promise<void>((resolve) => {
+      settleRollback = resolve;
+    });
+    const deps = createFailureDeps({ rollbackCreateFailure: vi.fn(() => rollback) });
+    const reporting = reportSandboxCreateFailure(createFailureOptions(), deps);
+    await vi.waitFor(() => expect(deps.printCreateFailureDiagnostics).toHaveBeenCalledOnce());
+
+    expect({
+      hints: vi.mocked(deps.printRecoveryHints).mock.calls,
+      exit: vi.mocked(deps.exitProcess).mock.calls,
+    }).toEqual({ hints: [], exit: [] });
+    settleRollback();
+    await expect(reporting).rejects.toThrow(ExitSignal);
+    expect({
+      hints: vi.mocked(deps.printRecoveryHints).mock.calls.length,
+      exit: vi.mocked(deps.exitProcess).mock.calls[0],
+    }).toEqual({ hints: 1, exit: [3] });
+  });
+
+  it("preserves the create status when rollback fails", async () => {
+    const deps = createFailureDeps({
+      rollbackCreateFailure: vi.fn(async () => {
+        throw new Error("rollback unavailable");
+      }),
+    });
+
+    await expect(
+      reportSandboxCreateFailure(createFailureOptions({ createStatus: 42 }), deps),
+    ).rejects.toThrow("exit:42");
+    expect(deps.error).toHaveBeenCalledWith(
+      "  Sandbox failure rollback did not complete: rollback unavailable",
+    );
+    expect(deps.exitProcess).toHaveBeenCalledWith(42);
   });
 
   it("redacts create output before classification and echoing", async () => {

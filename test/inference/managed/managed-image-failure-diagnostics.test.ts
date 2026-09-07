@@ -110,6 +110,7 @@ describe("managed-image failure diagnostic export", () => {
         } as const
       )[scenario]!;
       expect(exported).not.toContain(secret);
+      expect(exported).not.toContain("ghp_");
 
       expect(exported).not.toContain("this raw file must never enter the artifact");
       expect(fs.existsSync(path.join(outputRoot, "bundle-01", "unrelated.raw"))).toBe(false);
