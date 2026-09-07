@@ -5,14 +5,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const installSandboxSkill = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const removeSandboxSkill = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+const listSandboxSkills = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+const printSkillInstallUsage = vi.hoisted(() => vi.fn());
 
 vi.mock("../../lib/actions/sandbox/skill-install", () => ({
   installSandboxSkill,
   removeSandboxSkill,
+  listSandboxSkills,
+  printSkillInstallUsage,
 }));
 
 import SkillCliCommand from "./skill";
 import SkillInstallCliCommand from "./skill/install";
+import SkillListCliCommand from "./skill/list";
 import SkillRemoveCliCommand from "./skill/remove";
 
 const rootDir = process.cwd();
@@ -20,6 +25,8 @@ const rootDir = process.cwd();
 function clearSkillMocks(): void {
   installSandboxSkill.mockClear();
   removeSandboxSkill.mockClear();
+  listSandboxSkills.mockClear();
+  printSkillInstallUsage.mockClear();
 }
 
 describe("SkillCliCommand", () => {
@@ -27,21 +34,25 @@ describe("SkillCliCommand", () => {
     clearSkillMocks();
   });
 
-  it("records a parser-style failure when the sandbox name is missing", async () => {
-    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const previousExitCode = process.exitCode;
-    process.exitCode = undefined;
+  it(
+    "records a parser-style failure when the sandbox name is missing",
+    async () => {
+      const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const previousExitCode = process.exitCode;
+      process.exitCode = undefined;
 
-    try {
-      await expect(SkillCliCommand.run([], rootDir)).resolves.toBeUndefined();
-      expect(process.exitCode).toBe(2);
-      expect(error).toHaveBeenCalledWith("Missing required sandboxName for skill.");
-      expect(installSandboxSkill).not.toHaveBeenCalled();
-      expect(removeSandboxSkill).not.toHaveBeenCalled();
-    } finally {
-      process.exitCode = previousExitCode;
-    }
-  });
+      try {
+        await expect(SkillCliCommand.run([], rootDir)).resolves.toBeUndefined();
+        expect(process.exitCode).toBe(2);
+        expect(error).toHaveBeenCalledWith("Missing required sandboxName for skill.");
+        expect(installSandboxSkill).not.toHaveBeenCalled();
+        expect(removeSandboxSkill).not.toHaveBeenCalled();
+      } finally {
+        process.exitCode = previousExitCode;
+      }
+    },
+    30_000,
+  );
 });
 
 describe("SkillInstallCliCommand", () => {
@@ -92,5 +103,26 @@ describe("SkillRemoveCliCommand", () => {
     await expect(SkillRemoveCliCommand.run(["alpha"], rootDir)).rejects.toThrow(/skill/i);
 
     expect(removeSandboxSkill).not.toHaveBeenCalled();
+  });
+});
+
+describe("SkillListCliCommand", () => {
+  beforeEach(() => {
+    clearSkillMocks();
+  });
+
+  it("forwards native agent list flags", async () => {
+    await SkillListCliCommand.run(["alpha", "--json", "--eligible"], rootDir);
+
+    expect(listSandboxSkills).toHaveBeenCalledWith("alpha", {
+      extraArgs: ["--json", "--eligible"],
+    });
+  });
+
+  it("renders wrapper help without contacting agent state", async () => {
+    await SkillListCliCommand.run(["alpha", "--help"], rootDir);
+
+    expect(printSkillInstallUsage).toHaveBeenCalledOnce();
+    expect(listSandboxSkills).not.toHaveBeenCalled();
   });
 });

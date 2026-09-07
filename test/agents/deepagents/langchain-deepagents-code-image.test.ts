@@ -967,7 +967,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
     "connect --probe-only 2>&1",
     "dcode_connect_fail_closed_contract",
     "connect rejects untrusted image-backed route evidence before session attach",
-    "direct-exec dcode -n reached managed inference",
+    "fresh direct-exec dcode session retained only the original skill",
     "connect --probe-only accepted the managed inference route",
     'sandbox_login_exec "cd /sandbox',
     "https://inference.local/v1/models",

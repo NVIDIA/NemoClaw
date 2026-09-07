@@ -150,7 +150,7 @@ print(json.dumps({
     });
   });
 
-  it("accepts Hermes dispatch kwargs for status, info, and reload handlers", () => {
+  it("accepts Hermes dispatch kwargs for status and info handlers", () => {
     const output = runPython(`
 import importlib.util
 import json
@@ -174,15 +174,9 @@ module._get_sandbox_info = lambda: {
     "gateway": "running",
     "port": 8642,
 }
-module._reload_skills = lambda: {
-    "alpha": {"description": "First skill"},
-    "beta": {"description": "Second skill"},
-}
-
 result = {
     "status": module._handle_status({}, None, task_id="t-123", session_id="s-456"),
     "info": json.loads(module._handle_info({}, None, task_id="t-123", user_task="inspect")),
-    "reload": module._handle_reload_skills({}, None, task_id="t-123", session_id="s-456"),
 }
 print(json.dumps(result))
 `);
@@ -190,7 +184,6 @@ print(json.dumps(result))
     const result = JSON.parse(output) as {
       status: string;
       info: Record<string, unknown>;
-      reload: string;
     };
 
     expect(result.status).toContain("NemoClaw Sandbox Status (Hermes)");
@@ -202,9 +195,6 @@ print(json.dumps(result))
       gateway: "running",
       port: 8642,
     });
-    expect(result.reload).toContain("Skill reload complete. 2 skill(s) discovered:");
-    expect(result.reload).toContain("alpha: First skill");
-    expect(result.reload).toContain("beta: Second skill");
   });
 
   it("patches Hermes managed-tool modules for NemoClaw broker mode", () => {

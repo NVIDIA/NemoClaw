@@ -36,14 +36,19 @@ config:
   env_file: .env
   format: toml
 
+# Static integration metadata only. DCode remains the authority on which
+# skills are visible or active.
+skills:
+  writable_root: /sandbox/.deepagents/agent/skills
+  list_command: [skills, list, --agent, agent]
+  remove_command: [skills, delete, "{name}", --agent, agent, --force, --json]
+
 # ── State directories ──────────────────────────────────────────
 # dcode runs with HOME=/sandbox, so its state dirs resolve under
 # /sandbox/.deepagents. The built-in skill-creator writes user skills to
-# agent/skills (per its init_skill.py), so it must be backed up alongside
-# .state and skills — otherwise skills are silently lost on rebuild.
+# agent/skills (per its init_skill.py), so that agent-owned root is preserved.
 state_dirs:
   - .state
-  - skills
   - agent/skills
 
 # ── Top-level durable state files ───────────────────────────────

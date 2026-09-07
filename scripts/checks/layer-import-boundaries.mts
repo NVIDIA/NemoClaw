@@ -451,7 +451,10 @@ function checkCommandFile(
         : resolveInternalImport(absPath, moduleSpecifier) ===
             "src/lib/cli/nemoclaw-oclif-command.ts"
           ? new Set(["NemoClawCommand"])
-          : null;
+          : resolveInternalImport(absPath, moduleSpecifier) ===
+              "src/lib/cli/nemoclaw-skill-command.ts"
+            ? new Set(["NemoClawSkillCommand"])
+            : null;
     if (!exportedBases) continue;
 
     const bindings = statement.importClause.namedBindings;

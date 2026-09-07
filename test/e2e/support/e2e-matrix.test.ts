@@ -115,9 +115,10 @@ describe("live E2E target matrix", () => {
     expectExecutableTypedTargetCoverage();
   });
 
-  it("keeps Docker-only typed fixtures out of the native Podman matrix", () => {
+  it("includes managed-runtime typed fixtures in the native Podman matrix", () => {
     expect(buildLiveTargetMatrix([], ["podman"]).map((row) => row.id)).toEqual([
       "ubuntu-policy-custom-missing-presets-negative",
+      "ubuntu-repo-cloud-langchain-deepagents-code",
       "ubuntu-repo-cloud-openclaw",
     ]);
   });

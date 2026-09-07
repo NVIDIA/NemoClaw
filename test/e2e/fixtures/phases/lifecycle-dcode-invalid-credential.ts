@@ -12,6 +12,7 @@ import {
   HOSTED_INFERENCE_PROVIDER_NAME,
 } from "../hosted-inference.ts";
 import { isValidSecretEnvKey } from "../redaction.ts";
+import type { RuntimeProviderPrerequisite } from "../runtime-provider.ts";
 import type { ShellProbeResult } from "../shell-probe.ts";
 import type { NemoClawInstance } from "./onboarding.ts";
 import { latestRebuildBackupDir } from "./state-validation.ts";
@@ -35,6 +36,7 @@ export interface DcodeInvalidCredentialLifecycleDeps {
   host: HostCliClient;
   sandbox: SandboxClient;
   cleanup: { add(name: string, run: () => Promise<void> | void): void };
+  runtimeProvider: RuntimeProviderPrerequisite;
 }
 
 export interface DcodeInvalidCredentialLifecycleResult {
@@ -150,8 +152,7 @@ async function managedContainerIds(
   phase: string,
   redactionValues: string[],
 ): Promise<ShellProbeResult> {
-  const result = await deps.host.command(
-    "docker",
+  const result = await deps.runtimeProvider.command(
     [
       "ps",
       "-a",
@@ -165,7 +166,6 @@ async function managedContainerIds(
     ],
     {
       artifactName: `lifecycle-dcode-container-ids-${phase}`,
-      env: buildAvailabilityProbeEnv(),
       redactionValues,
       timeoutMs: 15_000,
     },

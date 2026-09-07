@@ -927,9 +927,9 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
   }
   if (
     live.env?.NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF !==
-    "${{ needs.generate-matrix.outputs.workload_source == 'managed-image' && needs.base-image-publication.outputs.dcode_base_ref || '' }}"
+    "${{ needs.generate-matrix.outputs.workload_source == 'managed-image' && needs.base-image-publication.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.dcode_base_ref || '' }}"
   ) {
-    errors.push("live DCode must use the selected immutable base reference");
+    errors.push("live DCode must use one selected immutable image authority");
   }
   const evidence = findStep(live, "Record immutable Deep Agents Code base evidence");
   const upload = findStep(live, "Upload E2E artifacts");
@@ -940,14 +940,16 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
   const liveSteps = live.steps ?? [];
   if (
     evidence.if !==
-      "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' && needs.generate-matrix.outputs.workload_source == 'managed-image' }}" ||
+      "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' && needs.generate-matrix.outputs.workload_source == 'managed-image' && needs.base-image-publication.outputs.managed_image_catalog == '' }}" ||
     evidence.env?.BASE_CONTRACT !==
       "${{ needs.base-image-publication.outputs.dcode_base_contract }}" ||
     !String(evidence.run ?? "").includes("dcode-base-image.json") ||
     liveSteps.indexOf(evidence) >= liveSteps.indexOf(findStep(live, "Run live E2E tests")) ||
     !String(upload.with?.path ?? "").includes("dcode-base-image.json")
   ) {
-    errors.push("live DCode must record its immutable base contract before E2E execution");
+    errors.push(
+      "live DCode must record its immutable base contract only without a candidate catalog",
+    );
   }
   if (!uploadPaths.includes(COLD_ONBOARD_PERFORMANCE_EVIDENCE_PATH)) {
     errors.push("live E2E must upload cold-onboard performance evidence");

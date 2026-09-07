@@ -263,8 +263,8 @@ For upstream behavior, refer to the official Deep Agents Code pages for [memory 
 
 ## Important Deep Agents State
 
-The `/sandbox/.deepagents/agent/` paths below do not exist immediately after onboarding.
-Deep Agents Code creates them when you start the first `dcode` session.
+Deep Agents Code normally creates the `/sandbox/.deepagents/agent/` paths below when you start the first `dcode` session.
+`nemoclaw <name> skill install` can create `/sandbox/.deepagents/agent/skills/` earlier.
 
 | Path | Purpose |
 |---|---|
@@ -272,8 +272,7 @@ Deep Agents Code creates them when you start the first `dcode` session.
 | `/sandbox/.deepagents/.state/` | Deep Agents Code runtime state, including persisted session and MCP-related state. |
 | `/sandbox/.deepagents/agent/AGENTS.md` | Global memory file for the default Deep Agents Code agent, loaded at session start. |
 | `/sandbox/.deepagents/agent/memories/` | Topic-specific markdown memories that Deep Agents Code can read and update across sessions. |
-| `/sandbox/.deepagents/skills/` | Legacy NemoClaw skill-upload state. Deep Agents Code does not load skills from this path, and `$$nemoclaw <name> skill install` leaves it untouched. |
-| `/sandbox/.deepagents/agent/skills/` | Skills that Deep Agents Code loads at session start, including skills created by the built-in skill creator and fresh-name skills installed directly by `$$nemoclaw <name> skill install`. Preserved by NemoClaw snapshots. |
+| `/sandbox/.deepagents/agent/skills/` | Canonical writable user-skill root declared by the Deep Agents Code integration. The agent owns discovery and activation; NemoClaw preserves this agent state in snapshots. |
 | `/sandbox/.deepagents/.nemoclaw-mcp.json` | NemoClaw-generated managed MCP projection with OpenShell credential placeholders. NemoClaw reconstructs it from host-side registry state. |
 | `/sandbox/.deepagents/.state/auth.json` | Upstream auth state. The managed launchers refuse to start when this file contains credentials. |
 | `/sandbox/.deepagents/.state/chatgpt-auth.json` | Upstream ChatGPT auth state. The managed launchers refuse to start when this file exists. |
@@ -294,7 +293,6 @@ The Deep Agents manifest declares these durable directories:
 
 ```text
 /sandbox/.deepagents/.state/
-/sandbox/.deepagents/skills/
 /sandbox/.deepagents/agent/skills/
 ```
 
@@ -328,7 +326,7 @@ Use `$$nemoclaw <name> connect` when you need to inspect runtime files interacti
 Use Deep Agents Code commands for upstream-managed memories and skills.
 For example, run `dcode skills create <name>` inside the sandbox to create a user skill, or use `/remember` inside an interactive `dcode` session to update memory.
 
-NemoClaw preserves the manifest-declared skills and state directories, but it does not inspect or validate the content of user-authored memory and skill files beyond the snapshot safety checks.
+NemoClaw preserves the manifest-declared agent state directories, but it does not maintain a skill inventory or infer which skills are visible or active. Use `$$nemoclaw <name> skill list` for the selected agent's native view.
 
 ## Python Environment
 
