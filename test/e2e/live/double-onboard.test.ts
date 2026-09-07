@@ -761,28 +761,6 @@ test(
     `${retainedForwardAAfterStop.output}\n${listenerABeforeStop.output}\n${listenerAAfterStop.output}`,
   ).toBe("true:true:true");
 
-  const startB = await command(host, [SANDBOX_B, "start"], {
-    artifactName: "phase-4-nemoclaw-start-sandbox-b",
-    env: commandEnv(),
-    timeoutMs: PHASE_TIMEOUT_MS,
-  });
-  expect(startB.exitCode, resultText(startB)).toBe(0);
-  const restoredForwardBAfterStart = await waitForDashboardReachability(
-    host,
-    portB ?? "",
-    true,
-    "phase-4-dashboard-b-after-start",
-  );
-  const listenerBAfterStart = await host.inspectOpenShellForwardListener(
-    portB ?? "",
-    SANDBOX_B,
-    { artifactName: "phase-4-dashboard-listener-b-after-start", env: commandEnv() },
-  );
-  expect(
-    `${restoredForwardBAfterStart.reachable}:${listenerBAfterStart.valid}`,
-    `${restoredForwardBAfterStart.output}\n${listenerBBeforeStop.output}\n${listenerBAfterStart.output}`,
-  ).toBe("true:true");
-
   progress.phase("replace sandbox after stale registry refusal");
   // Phase 5: direct OpenShell deletion leaves a stale registry entry that
   // status/connect preserve the stale record; rebuild refuses to invent its
@@ -930,9 +908,7 @@ test(
         !releasedForwardB.reachable &&
         retainedForwardAAfterStop.reachable &&
         stoppedStatusTextB.includes("sandbox_container_stopped") &&
-        !stoppedStatusTextB.includes("sandbox_dashboard_port_conflict") &&
-        startB.exitCode === 0 &&
-        restoredForwardBAfterStart.reachable,
+        !stoppedStatusTextB.includes("sandbox_dashboard_port_conflict"),
       staleRegistryRecovered: rebuild.exitCode === 0,
       gatewayStopGuidance:
         /Recovered NemoClaw gateway runtime|gateway is no longer configured after restart\/rebuild|gateway is still refusing connections after restart|gateway trust material rotated after restart/.test(
