@@ -243,6 +243,7 @@ export function createInferenceSelectionValidationHelpers(
     provider: string | undefined,
     selectedModel: string,
     providerDefaultModel: string | undefined,
+    credentialEnv: string | null,
     probe: { failures?: unknown[] },
   ): void {
     if (provider !== "gemini-api" || !Array.isArray(probe.failures)) return;
@@ -257,8 +258,11 @@ export function createInferenceSelectionValidationHelpers(
 
     const recovery = getProbeRecovery(probe as ProbeLike, { allowModelRetry: true });
     if (recovery.kind === "credential") {
+      const credentialName = /^[A-Z][A-Z0-9_]*$/.test(credentialEnv ?? "")
+        ? `\`${credentialEnv}\``
+        : "the selected Gemini credential";
       console.error(
-        "  Google rejected the Gemini credential. Verify or rotate `GEMINI_API_KEY`, then rerun the original onboarding command.",
+        `  Google rejected the Gemini credential. Verify or rotate ${credentialName}, then rerun the original onboarding command.`,
       );
       return;
     }
@@ -389,7 +393,13 @@ export function createInferenceSelectionValidationHelpers(
       probeOptions.capabilityCache?.invalidate();
       printValidationFailure(label, probe);
       printGeminiRuntimeNotFoundGuidance(provider, probe);
-      printGeminiBadRequestGuidance(provider, model, probeOptions.providerDefaultModel, probe);
+      printGeminiBadRequestGuidance(
+        provider,
+        model,
+        probeOptions.providerDefaultModel,
+        credentialEnv,
+        probe,
+      );
       if (deps.isNonInteractive()) {
         exitNonInteractiveValidationFailure();
       }

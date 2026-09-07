@@ -3,7 +3,9 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { requireValue } from "../core/require-value";
 import { createInferenceSelectionValidationHelpers } from "./inference-selection-validation";
+import { createRemoteModelValidator, type SetupNimSelectionState } from "./setup-nim-selection";
 
 const resumableValidationExit = {
   code: 1,
@@ -12,6 +14,47 @@ const resumableValidationExit = {
 };
 
 describe("Gemini inference selection validation errors", () => {
+  it("distinguishes a runtime 404 from native model catalog validation (#9298)", async () => {
+    const apiKey = "gemini-test-secret";
+    const probeOpenAiLikeEndpoint = vi.fn(() => ({
+      ok: false,
+      failures: [{ name: "Chat Completions API", httpStatus: 404, curlStatus: 0 }],
+    }));
+    const promptValidationRecovery = vi.fn(async () => "selection" as const);
+    const helpers = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => false,
+      agentProductName: () => "OpenClaw",
+      getCredential: () => apiKey,
+      probeOpenAiLikeEndpoint,
+      promptValidationRecovery,
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      await expect(
+        helpers.validateOpenAiLikeSelection(
+          "Google Gemini",
+          "https://generativelanguage.googleapis.com/v1beta/openai",
+          "gemini-2.5-flash",
+          "GEMINI_API_KEY",
+          undefined,
+          undefined,
+          { provider: "gemini-api", skipResponsesProbe: true },
+        ),
+      ).resolves.toEqual({ ok: false, retry: "selection" });
+      const errorOutput = error.mock.calls.map((args) => args.join(" ")).join("\n");
+      expect(errorOutput).toContain(
+        "This 404 came from Google's OpenAI-compatible Chat Completions runtime route, not the native /v1beta/models catalog.",
+      );
+      expect(errorOutput).toContain("the sandbox uses that Chat Completions route at runtime");
+      expect(errorOutput).not.toContain(apiKey);
+    } finally {
+      log.mockRestore();
+      error.mockRestore();
+    }
+  });
+
   it("prints redaction-safe HTTP 400 recovery before non-interactive exit (#11141)", async () => {
     const originalExitCode = process.exitCode;
     const apiKey = "gemini-test-secret";
@@ -108,6 +151,7 @@ describe("Gemini inference selection validation errors", () => {
 
   it("routes an HTTP 400 credential response to credential recovery (#11141)", async () => {
     const apiKey = "gemini-test-secret";
+    const credentialEnv = "GEMINI_FIXTURE_API_KEY";
     const probeOpenAiLikeEndpoint = vi.fn(() => ({
       ok: false,
       failures: [
@@ -136,7 +180,7 @@ describe("Gemini inference selection validation errors", () => {
           "Google Gemini",
           "https://generativelanguage.googleapis.com/v1beta/openai",
           "gemini-2.5-flash",
-          "GEMINI_API_KEY",
+          credentialEnv,
           undefined,
           undefined,
           {
@@ -148,7 +192,8 @@ describe("Gemini inference selection validation errors", () => {
       ).resolves.toEqual({ ok: false, retry: "credential" });
       expect(promptValidationRecovery).toHaveBeenCalledOnce();
       const errorOutput = error.mock.calls.map((args) => args.join(" ")).join("\n");
-      expect(errorOutput).toContain("Verify or rotate `GEMINI_API_KEY`");
+      expect(errorOutput).toContain(`Verify or rotate \`${credentialEnv}\``);
+      expect(errorOutput).not.toContain("GEMINI_API_KEY");
       expect(errorOutput).not.toContain("NEMOCLAW_MODEL=gemini-3.6-flash");
       expect(errorOutput).not.toContain(apiKey);
       expect(errorOutput).not.toContain("provider response echoed");
@@ -200,6 +245,75 @@ describe("Gemini inference selection validation errors", () => {
       expect(errorOutput).not.toContain("configured Gemini default");
       expect(errorOutput).not.toContain("NEMOCLAW_MODEL=");
     } finally {
+      error.mockRestore();
+    }
+  });
+
+  it("carries provider metadata through the real validator into HTTP 400 guidance (#11141)", async () => {
+    const selectedModel = "gemini-selected-model";
+    const providerDefaultModel = "gemini-fixture-default";
+    const endpointUrl = "https://generativelanguage.googleapis.com/v1beta/openai";
+    const state: SetupNimSelectionState = {
+      model: selectedModel,
+      provider: "gemini-api",
+      endpointUrl,
+      credentialEnv: "GEMINI_FIXTURE_API_KEY",
+      hermesAuthMethod: null,
+      hermesToolGateways: [],
+      preferredInferenceApi: null,
+      nimContainer: null,
+      allowToolsIncompatible: false,
+    };
+    const promptValidationRecovery = vi.fn(async () => "selection" as const);
+    const validationHelpers = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => false,
+      agentProductName: () => "NemoHermes",
+      getCredential: () => "gemini-test-secret",
+      probeOpenAiLikeEndpoint: () => ({
+        ok: false,
+        failures: [{ name: "Chat Completions API", httpStatus: 400, curlStatus: 0 }],
+      }),
+      promptValidationRecovery,
+    });
+    const { validateSelectedRemoteModel } = createRemoteModelValidator({
+      OPENAI_ENDPOINT_URL: "https://default-openai.example/v1",
+      ANTHROPIC_ENDPOINT_URL: "https://default-anthropic.example/v1",
+      requireValue,
+      isBackToSelection: (_value): _value is never => false,
+      validateCustomOpenAiLikeSelection: async () => ({ ok: false, retry: "selection" }),
+      validateCustomAnthropicSelection: async () => ({ ok: false, retry: "selection" }),
+      validateAnthropicSelectionWithRetryMessage: async () => ({
+        ok: false,
+        retry: "selection",
+      }),
+      validateOpenAiLikeSelection: validationHelpers.validateOpenAiLikeSelection,
+      shouldRequireResponsesToolCalling: () => true,
+      shouldSkipResponsesProbe: () => true,
+      getProbeAuthMode: () => undefined,
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      await expect(
+        validateSelectedRemoteModel({
+          selected: { key: "gemini" },
+          remoteConfig: {
+            label: "Google Gemini",
+            endpointUrl,
+            helpUrl: null,
+            defaultModel: providerDefaultModel,
+          },
+          state,
+          selectedCredentialEnv: "GEMINI_FIXTURE_API_KEY",
+        }),
+      ).resolves.toBe("retry-selection");
+      expect(state.model).toBe(selectedModel);
+      const errorOutput = error.mock.calls.map((args) => args.join(" ")).join("\n");
+      expect(errorOutput).toContain(`NEMOCLAW_MODEL=${providerDefaultModel}`);
+      expect(errorOutput).not.toContain("NEMOCLAW_MODEL=gemini-3.6-flash");
+    } finally {
+      log.mockRestore();
       error.mockRestore();
     }
   });
