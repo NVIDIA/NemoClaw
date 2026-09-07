@@ -35,6 +35,7 @@ function createLinuxOwnerFixture(actualExecutable?: string) {
   const binRoot = path.join(root, "bin");
   mkdirSync(path.join(procRoot, "net"), { recursive: true });
   mkdirSync(path.join(procRoot, "4321", "fd"), { recursive: true });
+  mkdirSync(path.join(procRoot, "9876", "fd"), { recursive: true });
   mkdirSync(binRoot);
   const executable = path.join(binRoot, "openshell");
   const runtime = actualExecutable ? path.join(binRoot, actualExecutable) : executable;
@@ -44,7 +45,12 @@ function createLinuxOwnerFixture(actualExecutable?: string) {
     path.join(procRoot, "net", "tcp"),
     "  0: 0100007F:4965 00000000:0000 0A 00000000:00000000 00:00000000 00000000  998 0 12345 1\n",
   );
+  writeFileSync(
+    path.join(procRoot, "net", "tcp6"),
+    "  1: 00000000000000000000000001000000:4965 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000  998 0 67890 1\n",
+  );
   symlinkSync("socket:[12345]", path.join(procRoot, "4321", "fd", "7"));
+  symlinkSync("socket:[67890]", path.join(procRoot, "9876", "fd", "8"));
   symlinkSync(runtime, path.join(procRoot, "4321", "exe"));
   return { procRoot, target: { ...target, executable } };
 }
@@ -126,7 +132,7 @@ describe("OpenShell forward service", () => {
     ).toBe(false);
   });
 
-  it("proves Linux listener ownership through /proc without lsof", () => {
+  it("proves Linux IPv4 ownership while ignoring an IPv6-only listener", () => {
     const fixture = createLinuxOwnerFixture();
     const expected = [fixture.target.executable, ...buildForwardServiceArgs(fixture.target)].join(
       " ",
@@ -147,6 +153,7 @@ describe("OpenShell forward service", () => {
       }),
     ).toBe(true);
     expect(probe).toHaveBeenCalledTimes(3);
+    expect(probe).toHaveBeenCalledWith("lsof", ["-ti4TCP:18789", "-sTCP:LISTEN"]);
     expect(probe).toHaveBeenCalledWith("ps", ["-ww", "-p", "4321", "-o", "args="]);
   });
 

@@ -134,7 +134,7 @@ function captureProcess(executable: string, args: readonly string[]) {
 }
 
 function lsofListenerPids(port: number, probe: ForwardServiceOwnerProbe): string[] | null {
-  const result = probe("lsof", ["-ti", `:${String(port)}`, "-sTCP:LISTEN"]);
+  const result = probe("lsof", [`-ti4TCP:${String(port)}`, "-sTCP:LISTEN"]);
   if (result.status === null) return null;
   if (result.status !== 0) return [];
   return [
@@ -151,21 +151,19 @@ function linuxListenerPids(port: number, procRoot: string, workLimit: number): s
   if (!Number.isSafeInteger(workLimit) || workLimit < 1) return [];
   const portSuffix = `:${port.toString(16).padStart(4, "0").toUpperCase()}`;
   const socketInodes = new Set<string>();
-  for (const table of ["tcp", "tcp6"]) {
-    try {
-      for (const line of readFileSync(path.join(procRoot, "net", table), "utf8").split("\n")) {
-        const fields = line.trim().split(/\s+/u);
-        if (
-          fields[3] === "0A" &&
-          fields[1]?.toUpperCase().endsWith(portSuffix) &&
-          /^\d+$/u.test(fields[9] ?? "")
-        ) {
-          socketInodes.add(fields[9]!);
-        }
+  try {
+    for (const line of readFileSync(path.join(procRoot, "net", "tcp"), "utf8").split("\n")) {
+      const fields = line.trim().split(/\s+/u);
+      if (
+        fields[3] === "0A" &&
+        fields[1]?.toUpperCase().endsWith(portSuffix) &&
+        /^\d+$/u.test(fields[9] ?? "")
+      ) {
+        socketInodes.add(fields[9]!);
       }
-    } catch {
-      // A missing or unreadable table cannot prove ownership.
     }
+  } catch {
+    // A missing or unreadable IPv4 table cannot prove ownership.
   }
   if (socketInodes.size === 0) return [];
 
