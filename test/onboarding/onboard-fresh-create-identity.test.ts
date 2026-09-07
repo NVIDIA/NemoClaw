@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
@@ -18,6 +19,18 @@ beforeEach(() => {
   vi.stubEnv("NEMOCLAW_TEST_FORWARD_SERVICE_FIXTURE", "1");
   vi.stubEnv("NEMOCLAW_SANDBOX_PREBUILD", "1");
 });
+
+function reserveFreePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const probe = net.createServer();
+    probe.once("error", reject);
+    probe.listen(0, "127.0.0.1", () => {
+      const address = probe.address();
+      const port = typeof address === "object" && address ? address.port : 0;
+      probe.close(() => resolve(port));
+    });
+  });
+}
 
 describe("fresh create identity", () => {
   it.each([
@@ -151,6 +164,8 @@ describe("fresh create identity", () => {
     async ({ agent, apfInterceptorRequested, expectedOutcome, model, provider }) => {
       const repoRoot = path.join(import.meta.dirname, "../..");
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-create-ready-"));
+      const gatewayPort = await reserveFreePort();
+      const gatewayName = `nemoclaw-${String(gatewayPort)}`;
       const fakeBin = path.join(tmpDir, "bin");
       const scriptPath = path.join(tmpDir, "create-sandbox-ready-check.js");
       const payloadPath = path.join(tmpDir, "payload.json");
@@ -661,7 +676,7 @@ if (${JSON.stringify(
   console.error(error);
   process.exit(1);
 });
-`;
+`.replaceAll("18080", String(gatewayPort));
       fs.writeFileSync(scriptPath, script);
 
       const childEnv = {
@@ -669,7 +684,7 @@ if (${JSON.stringify(
         HOME: tmpDir,
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
         NEMOCLAW_NON_INTERACTIVE: expectedOutcome.startsWith("cancel-after-create-") ? "" : "1",
-        NEMOCLAW_GATEWAY_PORT: "18080",
+        NEMOCLAW_GATEWAY_PORT: String(gatewayPort),
         OPENSHELL_DRIVERS: "docker",
         NEMOCLAW_MESSAGING_PLAN_B64:
           expectedOutcome === "staged-messaging-refusal"
@@ -701,8 +716,8 @@ if (${JSON.stringify(
       );
       const identityFingerprint = createHash("sha256").update(payload.sandboxId).digest("hex");
       const assertRecoveryTuple = (record: Record<string, unknown>) => {
-        assert.equal(record.gatewayName, "nemoclaw-18080");
-        assert.equal(record.gatewayPort, 18080);
+        assert.equal(record.gatewayName, gatewayName);
+        assert.equal(record.gatewayPort, gatewayPort);
         assert.equal(record.sandboxIdentityFingerprint, identityFingerprint);
         assert.equal(record.lifecycleGeneration, payload.recoveryRegistryEntry.lifecycleGeneration);
       };
@@ -768,7 +783,7 @@ if (${JSON.stringify(
           /--label ai\.nvidia\.nemoclaw\.create-attempt=[0-9a-f]{62}/u,
         );
         const ownerScopedObservations = payload.lifecycleObservationCommands.filter(
-          (command: string) => command.includes("-g nemoclaw-18080"),
+          (command: string) => command.includes(`-g ${gatewayName}`),
         );
         assert.ok(
           ownerScopedObservations.length >= 6,
@@ -777,8 +792,8 @@ if (${JSON.stringify(
         assert.ok(
           ownerScopedObservations.every(
             (command: string) =>
-              command.includes("sandbox get -g nemoclaw-18080 my-assistant") ||
-              command.includes("sandbox list -g nemoclaw-18080"),
+              command.includes(`sandbox get -g ${gatewayName} my-assistant`) ||
+              command.includes(`sandbox list -g ${gatewayName}`),
           ),
           `fresh identity observations must remain scoped to the owning gateway: ${JSON.stringify(ownerScopedObservations)}`,
         );
