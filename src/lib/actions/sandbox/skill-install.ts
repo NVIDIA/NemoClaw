@@ -296,7 +296,13 @@ function resolveLocalSkill(skillPath: string): {
     console.error(`  Skill directory '${directory}' must remain a regular directory.`);
     return null;
   }
-  const source = readRegularFileNoFollow(path.join(directory, "SKILL.md"));
+  const skillFile = path.join(directory, "SKILL.md");
+  if (!lstatOrNull(skillFile)) {
+    console.error(`  No SKILL.md found in '${directory}'.`);
+    if (looksLikeOpenClawPlugin(directory)) printPluginInstallHint();
+    return null;
+  }
+  const source = readRegularFileNoFollow(skillFile);
   if (source === null) {
     console.error(`  SKILL.md in '${directory}' must be a regular file.`);
     return null;
