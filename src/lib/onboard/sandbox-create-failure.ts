@@ -138,7 +138,7 @@ function findLatestSandboxBlock(
     }
   }
   if (startIndex < 0) {
-    return requiredSandboxId ? [] : lines.slice(-MAX_RELEVANT_LOG_LINES);
+    return requiredSandboxId ? lines : lines.slice(-MAX_RELEVANT_LOG_LINES);
   }
 
   let endIndex = lines.length;
@@ -268,6 +268,7 @@ export function collectSandboxCreateFailureDiagnostics(
     sandboxId,
     options.sandboxId !== undefined,
   );
+  if (options.sandboxId && relevantLines.length === 0) return null;
   const gatewayTailLines =
     rawLines && !options.sandboxId && relevantLines.length === 0
       ? rawLines.filter((line) => line.trim()).slice(-MAX_GATEWAY_TAIL_LINES)

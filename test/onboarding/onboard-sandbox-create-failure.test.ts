@@ -186,8 +186,7 @@ describe("sandbox create failure diagnostics", () => {
     fs.writeFileSync(consolePath, `${"old console output\n".repeat(30_000)}final console failure\n`);
     fs.writeFileSync(
       gatewayLogPath,
-      `${"old gateway output\n".repeat(100_000)}${[
-        `create_sandbox received sandbox_id=${sandboxId} sandbox_name=my-assistant`,
+      `create_sandbox received sandbox_id=${sandboxId} sandbox_name=my-assistant\n${"old gateway output\n".repeat(100_000)}${[
         `sandbox_id=${sandboxId} state_dir=${stateDir} console_output=${consolePath}`,
         `ERROR krun sandbox_id=${sandboxId} sandbox_name=my-assistant reason=ProcessExited`,
       ].join("\n")}\n`,
