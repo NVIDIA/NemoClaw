@@ -478,22 +478,25 @@ export function createSandboxGpuCreateAttemptRunner(
   reverifyManagedBridgeReachability: () => Promise<void>,
 ) {
   const portableLifecycle = input.portableLifecycle === true;
+  const printHermesPortableCreateFailureNotice = (sandboxName: string) =>
+    console.error(
+      `  Hermes portable sandbox '${sandboxName}' did not complete receipt-owned creation. Preserve its lifecycle receipt and resume onboarding after correcting the reported failure.`,
+    );
   const basePrintCreateFailureDiagnostics =
     deps.printCreateFailureDiagnostics ??
     (input.hermesPortableLifecycle
-      ? (sandboxName: string) =>
-          console.error(
-            `  Hermes portable sandbox '${sandboxName}' did not complete receipt-owned creation. Preserve its lifecycle receipt and resume onboarding after correcting the reported failure.`,
-          )
+      ? printHermesPortableCreateFailureNotice
       : printSandboxCreateFailureDiagnostics);
   const printCreateFailureDiagnosticsBeforeRollback = containCreateFailureDiagnostics(
     basePrintCreateFailureDiagnostics,
     "  Sandbox failure diagnostics were unavailable; continuing rollback.",
   );
-  const reportUnverifiedCreateFailureDiagnostics = () =>
-    console.error(
-      "  Sandbox failure diagnostics were not collected after rollback because no durable sandbox identity was verified.",
-    );
+  const reportUnverifiedCreateFailureDiagnostics = input.hermesPortableLifecycle
+    ? printHermesPortableCreateFailureNotice
+    : () =>
+        console.error(
+          "  Sandbox failure diagnostics were not collected after rollback because no durable sandbox identity was verified.",
+        );
   if (
     portableLifecycle &&
     (input.gpuRoutePlan === "compatibility-only" ||
