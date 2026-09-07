@@ -405,20 +405,39 @@ describe("authenticated MCP tool discovery transport retry", () => {
     [
       "a failed command",
       1,
+      "not-json",
       "runtime failed",
       "openclaw mcp status --tools --json failed: not-json\nruntime failed",
     ],
     [
       "a successful command",
       0,
+      "not-json",
+      "",
+      "openclaw mcp status --tools --json did not return valid MCP discovery JSON",
+    ],
+    [
+      "a successful command with incomplete JSON",
+      0,
+      JSON.stringify({
+        provider: {
+          registryPresent: true,
+          gatewayPresent: true,
+          attached: true,
+          credentialReady: true,
+        },
+        policy: { registryPresent: true, gatewayPresent: true },
+        adapter: { registered: true },
+        toolDiscovery: {},
+      }),
       "",
       "openclaw mcp status --tools --json did not return valid MCP discovery JSON",
     ],
   ])(
     "does not retry malformed status output from %s (#10944)",
-    async (_case, exitCode, stderr, expectedError) => {
+    async (_case, exitCode, stdout, stderr, expectedError) => {
       const host = {
-        nemoclaw: vi.fn(async () => ({ exitCode, stdout: "not-json", stderr })),
+        nemoclaw: vi.fn(async () => ({ exitCode, stdout, stderr })),
       } as unknown as Parameters<typeof assertAuthenticatedMcpToolDiscovery>[0];
       const artifacts = discoveryArtifacts();
       const progress = { event: vi.fn() };

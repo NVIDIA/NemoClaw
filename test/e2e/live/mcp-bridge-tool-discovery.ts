@@ -74,9 +74,52 @@ type McpToolDiscoveryStatusJson = {
   };
 };
 
+function isJsonRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isBooleanOrNull(value: unknown): value is boolean | null {
+  return typeof value === "boolean" || value === null;
+}
+
+function isMcpToolDiscoveryStatusJson(value: unknown): value is McpToolDiscoveryStatusJson {
+  if (!isJsonRecord(value)) return false;
+  const { provider, policy, adapter, trustedPrivateTarget, toolDiscovery } = value;
+  return (
+    isJsonRecord(provider) &&
+    typeof provider.registryPresent === "boolean" &&
+    isBooleanOrNull(provider.gatewayPresent) &&
+    isBooleanOrNull(provider.attached) &&
+    isBooleanOrNull(provider.credentialReady) &&
+    isJsonRecord(policy) &&
+    typeof policy.registryPresent === "boolean" &&
+    isBooleanOrNull(policy.gatewayPresent) &&
+    isJsonRecord(adapter) &&
+    isBooleanOrNull(adapter.registered) &&
+    (trustedPrivateTarget === undefined ||
+      (isJsonRecord(trustedPrivateTarget) &&
+        (trustedPrivateTarget.state === "match" ||
+          trustedPrivateTarget.state === "drift" ||
+          trustedPrivateTarget.state === "unresolved"))) &&
+    isJsonRecord(toolDiscovery) &&
+    typeof toolDiscovery.ok === "boolean" &&
+    Number.isSafeInteger(toolDiscovery.count) &&
+    (toolDiscovery.count as number) >= 0 &&
+    Array.isArray(toolDiscovery.tools) &&
+    toolDiscovery.tools.length === toolDiscovery.count &&
+    toolDiscovery.tools.every((tool) => typeof tool === "string") &&
+    typeof toolDiscovery.truncated === "boolean" &&
+    (toolDiscovery.commandStatus === null || Number.isSafeInteger(toolDiscovery.commandStatus)) &&
+    (toolDiscovery.detail === undefined || typeof toolDiscovery.detail === "string") &&
+    (toolDiscovery.failedStage === undefined || typeof toolDiscovery.failedStage === "string") &&
+    (toolDiscovery.failureClass === undefined || typeof toolDiscovery.failureClass === "string")
+  );
+}
+
 function parseMcpToolDiscoveryStatusJson(stdout: string): McpToolDiscoveryStatusJson | undefined {
   try {
-    return JSON.parse(stdout) as McpToolDiscoveryStatusJson;
+    const value: unknown = JSON.parse(stdout);
+    return isMcpToolDiscoveryStatusJson(value) ? value : undefined;
   } catch {
     return undefined;
   }
