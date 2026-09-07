@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { testTimeoutOptions } from "../../../../test/helpers/timeouts";
 import { computeCapabilityPreflight, type VllmProfile } from "../vllm.js";
 import {
   HOST_LOCAL_VLLM_LIFECYCLE_REF,
@@ -146,76 +147,80 @@ describe("host-local vLLM GPU memory materialization", () => {
 describe("host-local vLLM selection", () => {
   beforeEach(() => mocks.resolveManagedInferenceServing.mockReset());
 
-  it("resolves an explicit preset into the catalog-derived Spark profile", () => {
-    const selection = hostLocalSelection();
-    const gpuMemoryUtilization = Number(
-      selection.recipe.spec.serve.arguments.find(
-        ({ name }) => name === "--gpu-memory-utilization",
-      )?.value,
-    );
-    mocks.resolveManagedInferenceServing.mockReturnValue(selection);
+  it(
+    "resolves an explicit preset into the catalog-derived Spark profile",
+    testTimeoutOptions(15_000),
+    () => {
+      const selection = hostLocalSelection();
+      const gpuMemoryUtilization = Number(
+        selection.recipe.spec.serve.arguments.find(
+          ({ name }) => name === "--gpu-memory-utilization",
+        )?.value,
+      );
+      mocks.resolveManagedInferenceServing.mockReturnValue(selection);
 
-    const result = resolveHostLocalVllmSelection(baseProfile(), {
-      NEMOCLAW_SERVING_PRESET: selection.preset.metadata.id,
-    });
+      const result = resolveHostLocalVllmSelection(baseProfile(), {
+        NEMOCLAW_SERVING_PRESET: selection.preset.metadata.id,
+      });
 
-    expect(result).toMatchObject({
-      kind: "selected",
-      presetId: selection.preset.metadata.id,
-      recipeId: selection.recipe.metadata.id,
-      profile: {
-        image: selection.recipe.spec.runtime.image,
-        minComputeCapability: selection.recipe.spec.runtime.minimumComputeCapability,
-        minGpuMemoryBytes: selection.recipe.spec.runtime.minimumGpuMemoryBytes,
-        gpuMemoryUtilization,
-        servingCatalog: {
-          presetDigest: selection.presetDigest,
-          recipeDigest: selection.recipeDigest,
-        },
-      },
-      model: {
-        id: selection.recipe.spec.model.id,
-        runtime: {
+      expect(result).toMatchObject({
+        kind: "selected",
+        presetId: selection.preset.metadata.id,
+        recipeId: selection.recipe.metadata.id,
+        profile: {
+          image: selection.recipe.spec.runtime.image,
           minComputeCapability: selection.recipe.spec.runtime.minimumComputeCapability,
           minGpuMemoryBytes: selection.recipe.spec.runtime.minimumGpuMemoryBytes,
           gpuMemoryUtilization,
+          servingCatalog: {
+            presetDigest: selection.presetDigest,
+            recipeDigest: selection.recipeDigest,
+          },
         },
-      },
-    });
-    expect(mocks.resolveManagedInferenceServing).toHaveBeenCalledOnce();
-    expect(mocks.resolveManagedInferenceServing).toHaveBeenCalledWith(
-      expect.objectContaining({
-        topologyQualifications: [],
-        intent: { preset: selection.preset.metadata.id },
-      }),
-    );
-    assert(
-      result.kind === "selected",
-      "expected a selected host-local profile",
-    );
-    expect(result.model.runtime?.dockerRunArgs).toContain(
-      `type=bind,source=${path.join(os.homedir(), ".cache", "huggingface", "hub")},target=${selection.recipe.spec.runtime.modelCache.target}/hub,readonly`,
-    );
-    expect(result.model.runtime?.dockerRunArgs?.join("\n")).not.toContain(
-      `source=${path.join(os.homedir(), ".cache", "huggingface")},target=`,
-    );
-    expect(result.model.serveEnv).toMatchObject({
-      HF_HOME: selection.recipe.spec.runtime.modelCache.target,
-      HF_HUB_OFFLINE: "1",
-      TRANSFORMERS_OFFLINE: "1",
-    });
-    expect(result.model).toMatchObject({
-      fixedServeCommand: true,
-      managedBearerAuth: true,
-    });
-    expect(
-      computeCapabilityPreflight(
-        result.model,
-        [1],
-        result.profile.minComputeCapability,
-      ),
-    ).toMatchObject({ ok: false });
-  });
+        model: {
+          id: selection.recipe.spec.model.id,
+          runtime: {
+            minComputeCapability: selection.recipe.spec.runtime.minimumComputeCapability,
+            minGpuMemoryBytes: selection.recipe.spec.runtime.minimumGpuMemoryBytes,
+            gpuMemoryUtilization,
+          },
+        },
+      });
+      expect(mocks.resolveManagedInferenceServing).toHaveBeenCalledOnce();
+      expect(mocks.resolveManagedInferenceServing).toHaveBeenCalledWith(
+        expect.objectContaining({
+          topologyQualifications: [],
+          intent: { preset: selection.preset.metadata.id },
+        }),
+      );
+      assert(
+        result.kind === "selected",
+        "expected a selected host-local profile",
+      );
+      expect(result.model.runtime?.dockerRunArgs).toContain(
+        `type=bind,source=${path.join(os.homedir(), ".cache", "huggingface", "hub")},target=${selection.recipe.spec.runtime.modelCache.target}/hub,readonly`,
+      );
+      expect(result.model.runtime?.dockerRunArgs?.join("\n")).not.toContain(
+        `source=${path.join(os.homedir(), ".cache", "huggingface")},target=`,
+      );
+      expect(result.model.serveEnv).toMatchObject({
+        HF_HOME: selection.recipe.spec.runtime.modelCache.target,
+        HF_HUB_OFFLINE: "1",
+        TRANSFORMERS_OFFLINE: "1",
+      });
+      expect(result.model).toMatchObject({
+        fixedServeCommand: true,
+        managedBearerAuth: true,
+      });
+      expect(
+        computeCapabilityPreflight(
+          result.model,
+          [1],
+          result.profile.minComputeCapability,
+        ),
+      ).toMatchObject({ ok: false });
+    },
+  );
 
   it("routes a direct model slug through the same readiness resolver", () => {
     const selection = hostLocalSelection();
