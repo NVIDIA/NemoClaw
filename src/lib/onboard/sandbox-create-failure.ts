@@ -370,9 +370,10 @@ export function collectSandboxCreateFailureDiagnostics(
         recordedConsoleOutput,
       )
     : null;
-  if (options.sandboxId && !validatedPaths) return null;
-  const stateDir = validatedPaths?.stateDir ?? recordedStateDir;
-  const consoleOutput = validatedPaths?.consoleOutput ?? recordedConsoleOutput;
+  const stateDir = options.sandboxId ? (validatedPaths?.stateDir ?? null) : recordedStateDir;
+  const consoleOutput = options.sandboxId
+    ? (validatedPaths?.consoleOutput ?? null)
+    : recordedConsoleOutput;
 
   try {
     rejectSymlinksOnPath(dir);

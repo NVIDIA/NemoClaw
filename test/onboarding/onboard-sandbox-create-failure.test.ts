@@ -169,15 +169,43 @@ describe("sandbox create failure diagnostics", () => {
       sandboxId,
     });
 
+    const bundleContents = fs
+      .readdirSync(result!.dir)
+      .map((name) => fs.readFileSync(path.join(result!.dir, name), "utf8"))
+      .join("\n");
     expect({
-      failureRootExists: fs.existsSync(path.join(homeDir, ".nemoclaw", "onboard-failures")),
-      outsideContent: fs.readFileSync(outsidePath, "utf8"),
-      result,
+      copiedConsoleOutput: result?.copiedConsoleOutput,
+      gatewayEvidenceRetained: bundleContents.includes(`sandbox_id=${sandboxId}`),
+      outsideContentCopied: bundleContents.includes("outside-secret-value"),
     }).toEqual({
-      failureRootExists: false,
-      outsideContent: "outside-secret-value\n",
-      result: null,
+      copiedConsoleOutput: null,
+      gatewayEvidenceRetained: true,
+      outsideContentCopied: false,
     });
+  });
+
+  it("retains verified gateway evidence when console metadata is unavailable", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-create-failure-gateway-only-"));
+    const homeDir = path.join(tmp, "home");
+    const logDir = path.join(homeDir, ".local", "state", "nemoclaw", "openshell-docker-gateway");
+    const sandboxId = "691344ae-f514-41c1-b29e-db7f2f7ef257";
+    fs.mkdirSync(logDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(logDir, "openshell-gateway.log"),
+      `create_sandbox received sandbox_id=${sandboxId} sandbox_name=my-assistant\nERROR krun sandbox_id=${sandboxId} reason=ProcessExited\n`,
+    );
+
+    const diagnostics = collectSandboxCreateFailureDiagnostics("my-assistant", {
+      homeDir,
+      sandboxId,
+    });
+
+    expect({
+      consoleCopy: diagnostics?.copiedConsoleOutput,
+      gatewayFailure: fs
+        .readFileSync(path.join(diagnostics!.dir, "openshell-gateway-relevant.log"), "utf8")
+        .includes("reason=ProcessExited"),
+    }).toEqual({ consoleCopy: null, gatewayFailure: true });
   });
 
   it("retains only the ten newest failure bundles", () => {
