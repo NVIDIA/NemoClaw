@@ -237,6 +237,35 @@ export function createInferenceSelectionValidationHelpers(
     );
   }
 
+  function printGeminiBadRequestGuidance(
+    provider: string | undefined,
+    probe: { failures?: unknown[] },
+  ): void {
+    if (provider !== "gemini-api" || !Array.isArray(probe.failures)) return;
+    const chatBadRequest = probe.failures.some((failure) => {
+      if (!failure || typeof failure !== "object") return false;
+      const { name, httpStatus } = failure as Record<string, unknown>;
+      return (
+        typeof name === "string" && name.startsWith("Chat Completions API") && httpStatus === 400
+      );
+    });
+    if (!chatBadRequest) return;
+
+    const recovery = getProbeRecovery(probe as ProbeLike, { allowModelRetry: true });
+    if (recovery.kind === "credential") {
+      console.error(
+        "  Google rejected the Gemini credential. Verify or rotate `GEMINI_API_KEY`, then rerun the original onboarding command.",
+      );
+      return;
+    }
+    console.error(
+      "  Google rejected the configured model or Chat Completions request. Retry the original command with `NEMOCLAW_MODEL=gemini-3.6-flash`.",
+    );
+    console.error(
+      "  If that also fails, verify that the selected model has OpenAI-compatible function-calling access for this API key in Google AI Studio.",
+    );
+  }
+
   // DNS-backed SSRF preflight for user-supplied custom endpoints. Resolves the
   // endpoint host and fails closed before any host-side probe curl when it (or
   // a resolved address) is private/reserved, so a public-looking name that
@@ -347,6 +376,7 @@ export function createInferenceSelectionValidationHelpers(
       probeOptions.capabilityCache?.invalidate();
       printValidationFailure(label, probe);
       printGeminiRuntimeNotFoundGuidance(provider, probe);
+      printGeminiBadRequestGuidance(provider, probe);
       if (deps.isNonInteractive()) {
         exitNonInteractiveValidationFailure();
       }
