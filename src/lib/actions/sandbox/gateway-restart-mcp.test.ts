@@ -36,51 +36,23 @@ function baseDeps(overrides: Partial<GatewayRestartDeps> = {}): GatewayRestartDe
     recoverMessagingHostForward: vi.fn(() => null),
     recoverDeclaredAgentForwardPorts: vi.fn(() => null),
     printGatewayWedgeDiagnostics: vi.fn(() => false),
-    inspectHermesMcpReconciliationRefusal: vi.fn(() => null),
     ...overrides,
   };
 }
 
 describe("Hermes MCP gateway restart", () => {
-  it("refuses to report a restarted gateway with stale MCP intent", () => {
+  it("completes generic restart without host MCP reconciliation (#11108)", () => {
     const restore = silenceConsole();
     try {
-      const deps = baseDeps({
-        inspectHermesMcpReconciliationRefusal: vi.fn(() => ({
-          detail: "Hermes MCP config does not match persisted managed intent",
-        })),
-      });
+      const deps = baseDeps();
 
       expect(restartSandboxGateway("alpha", { quiet: true, deps })).toEqual({
-        ok: false,
-        failureLayer: "MCP reconciliation refusal",
-        detail: "Hermes MCP config does not match persisted managed intent",
         restarted: true,
+        ok: true,
         healthPassed: true,
+        forwardRecovered: true,
       });
-      expect(deps.ensureSandboxPortForward).not.toHaveBeenCalled();
-    } finally {
-      restore();
-    }
-  });
-
-  it("returns only sanitized MCP reconciliation detail", () => {
-    const restore = silenceConsole();
-    try {
-      const deps = baseDeps({
-        inspectHermesMcpReconciliationRefusal: vi.fn(() => ({
-          detail: "integrity pending FORGED SUCCESS <REDACTED>",
-        })),
-      });
-
-      expect(restartSandboxGateway("alpha", { quiet: true, deps })).toEqual({
-        ok: false,
-        failureLayer: "MCP reconciliation refusal",
-        detail: "integrity pending FORGED SUCCESS <REDACTED>",
-        restarted: true,
-        healthPassed: true,
-      });
-      expect(deps.ensureSandboxPortForward).not.toHaveBeenCalled();
+      expect(deps.ensureSandboxPortForward).toHaveBeenCalledWith("alpha");
     } finally {
       restore();
     }
