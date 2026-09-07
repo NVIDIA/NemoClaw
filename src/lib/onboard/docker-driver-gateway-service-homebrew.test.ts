@@ -16,18 +16,33 @@ function spawnResult(status = 0, stderr = "", stdout = ""): SpawnSyncLikeResult 
   return { status, stderr, stdout };
 }
 
-function officialFormulaInfo(): SpawnSyncLikeResult {
+const FORMULA_PREFIX = "/opt/homebrew/opt/openshell";
+const GATEWAY_BIN = `${FORMULA_PREFIX}/bin/openshell-gateway`;
+const SERVICE_PROGRAM = `${FORMULA_PREFIX}/libexec/openshell-gateway-homebrew-service`;
+
+function officialFormulaInfo(
+  options: { installed?: unknown[]; serviceProgram?: unknown; tap?: string } = {},
+): SpawnSyncLikeResult {
   return spawnResult(
     0,
     "",
-    JSON.stringify({ formulae: [{ name: "openshell", tap: "nvidia/openshell" }] }),
+    JSON.stringify({
+      formulae: [
+        {
+          installed: options.installed ?? [{ version: "0.0.106" }],
+          name: "openshell",
+          service: { run: options.serviceProgram ?? SERVICE_PROGRAM },
+          tap: options.tap ?? "nvidia/openshell",
+        },
+      ],
+    }),
   );
 }
 
 interface HomebrewServiceRecord {
   loaded: boolean;
-  name: string;
   pid: number;
+  program: string;
   running: boolean;
   service_name: string;
 }
@@ -35,8 +50,8 @@ interface HomebrewServiceRecord {
 function serviceRecord(overrides: Partial<HomebrewServiceRecord> = {}): HomebrewServiceRecord {
   return {
     loaded: true,
-    name: "openshell",
     pid: 4242,
+    program: SERVICE_PROGRAM,
     running: true,
     service_name: "homebrew.mxcl.openshell",
     ...overrides,
@@ -44,20 +59,25 @@ function serviceRecord(overrides: Partial<HomebrewServiceRecord> = {}): Homebrew
 }
 
 function queryHomebrewService(records: HomebrewServiceRecord[]) {
-  const formulaPrefix = "/opt/homebrew/opt/openshell";
-  const gatewayBin = `${formulaPrefix}/bin/openshell-gateway`;
-  const spawnSyncImpl = vi.fn((_command: string, args: string[]) => {
-    const responses = {
-      info: officialFormulaInfo(),
-      services: spawnResult(0, "", JSON.stringify(records)),
-      "--prefix": spawnResult(0, "", formulaPrefix),
-    };
-    return responses[args[0] as keyof typeof responses] ?? spawnResult();
+  const spawnSyncImpl = vi.fn((command: string, args: string[]) => {
+    const label = args[1]?.split("/").at(-1);
+    const record = records.find((candidate) => candidate.service_name === label);
+    return command === "brew"
+      ? args[0] === "info"
+        ? officialFormulaInfo()
+        : spawnResult()
+      : !record?.loaded
+        ? spawnResult(113)
+        : spawnResult(
+            0,
+            "",
+            `\tstate = ${record.running ? "running" : "waiting"}\n\tprogram = ${record.program}\n\tpid = ${String(record.pid)}\n`,
+          );
   });
 
   return getTrustedActiveOpenShellGatewayUserServiceIdentity({
-    commandExists: (command) => command === "brew",
-    existsSync: (candidate) => candidate === gatewayBin,
+    commandExists: (command) => command === "brew" || command === "launchctl",
+    existsSync: (candidate) => candidate === GATEWAY_BIN,
     homebrewFormulaOperation: (args) => spawnSyncImpl("brew", args),
     platform: "darwin",
     spawnSyncImpl,
@@ -67,13 +87,7 @@ function queryHomebrewService(records: HomebrewServiceRecord[]) {
 describe("OpenShell Homebrew service boundary", () => {
   it("rejects a Homebrew formula outside the official tap (#6903)", () => {
     const operation = vi.fn((args: string[]) =>
-      args[0] === "info"
-        ? spawnResult(
-            0,
-            "",
-            JSON.stringify({ formulae: [{ name: "openshell", tap: "other/tap" }] }),
-          )
-        : spawnResult(),
+      args[0] === "info" ? officialFormulaInfo({ tap: "other/tap" }) : spawnResult(),
     );
 
     expect(() =>
@@ -83,6 +97,24 @@ describe("OpenShell Homebrew service boundary", () => {
         platform: "darwin",
       }),
     ).toThrow("must come from nvidia/openshell");
+  });
+
+  it.each([
+    ["is not installed", { installed: [] }, "pinned checksum and temporary trust contract"],
+    ["has a relative service command", { serviceProgram: "bin/gateway" }, "one absolute path"],
+    [
+      "has a different service command",
+      { serviceProgram: `${FORMULA_PREFIX}/bin/other` },
+      "expected gateway wrapper",
+    ],
+  ])("rejects an official formula that %s (#11112)", (_case, options, expected) => {
+    expect(() =>
+      hasOpenShellGatewayUserService({
+        commandExists: () => true,
+        homebrewFormulaOperation: () => officialFormulaInfo(options),
+        platform: "darwin",
+      }),
+    ).toThrow(expected);
   });
 
   it("uses the temporary formula trust boundary for inspection (#7707)", () => {
@@ -98,7 +130,6 @@ describe("OpenShell Homebrew service boundary", () => {
       }),
     ).toBe(true);
     expect(operation.mock.calls.map(([args]) => args)).toEqual([
-      ["list", "--formula", "openshell"],
       ["info", "--json=v2", "openshell"],
     ]);
   });
@@ -148,8 +179,8 @@ describe("OpenShell Homebrew service boundary", () => {
         OPENSHELL_GATEWAY_HOMEBREW_FORMULA_SHA256,
         "--",
         "brew",
-        "list",
-        "--formula",
+        "info",
+        "--json=v2",
         "openshell",
       ]),
       expect.any(Object),
@@ -199,6 +230,20 @@ describe("OpenShell Homebrew service boundary", () => {
   it("rejects a service label that extends the canonical label (#11111)", () => {
     expect(
       queryHomebrewService([serviceRecord({ service_name: "sh.brew.openshell.attacker" })]),
+    ).toBeNull();
+  });
+
+  it("rejects an active canonical service with a foreign program (#11112)", () => {
+    expect(
+      queryHomebrewService([
+        serviceRecord({ program: "/tmp/foreign-service", service_name: "sh.brew.openshell" }),
+      ]),
+    ).toBeNull();
+  });
+
+  it("rejects an active canonical service with a malformed PID (#11112)", () => {
+    expect(
+      queryHomebrewService([serviceRecord({ pid: Number.NaN, service_name: "sh.brew.openshell" })]),
     ).toBeNull();
   });
 
