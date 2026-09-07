@@ -10,7 +10,6 @@ import * as policyChannelDependenciesModule from "../../../src/lib/actions/sandb
 import * as policyChannelModule from "../../../src/lib/actions/sandbox/policy-channel.ts";
 import * as openshellRuntimeModule from "../../../src/lib/adapters/openshell/runtime.ts";
 import * as messagingBridgeProviderModule from "../../../src/lib/onboard/messaging-bridge-provider.ts";
-import * as legacyProvidersModule from "../../../src/lib/onboard/providers.ts";
 import { clearStoppedSandboxStateRoots } from "../../../src/lib/sandbox/privileged-exec.ts";
 import * as statePathsModule from "../../../src/lib/state/paths.ts";
 import {
@@ -91,9 +90,11 @@ const messagingBridgeProvider = (
     : messagingBridgeProviderModule
 ) as MessagingBridgeProviderModule;
 const { ensureMessagingBridgeProfiles } = messagingBridgeProvider;
-const legacyProviderDependencies = (
-  "default" in legacyProvidersModule ? legacyProvidersModule.default : legacyProvidersModule
-) as ProviderDependencies;
+// Use the same CommonJS module instance as the onboarding registration graph.
+// An ESM namespace import is a separate wrapper, so mutating it cannot intercept
+// the late-bound `require("./providers")` used during an in-process rebuild.
+const legacyProviderDependencies =
+  require("../../../src/lib/onboard/providers") as ProviderDependencies;
 const statePaths = (
   "default" in statePathsModule ? statePathsModule.default : statePathsModule
 ) as StatePathsModule;

@@ -58,13 +58,14 @@ const GOOGLECHAT_PROFILE_DOC: Record<string, unknown> = {
       header_name: "Authorization",
       query_param: "",
       refresh: {
-        strategy: "google-service-account-jwt",
+        strategy: "google_service_account_jwt",
         scopes: ["https://www.googleapis.com/auth/chat.bot"],
         material: [
           {
             name: "client_email",
             description: "Service-account client email (JWT issuer)",
             required: true,
+            secret: false,
           },
           {
             name: "private_key",
@@ -75,6 +76,8 @@ const GOOGLECHAT_PROFILE_DOC: Record<string, unknown> = {
           {
             name: "scope",
             description: "OAuth scope(s) to mint the token for",
+            required: false,
+            secret: false,
           },
         ],
       },

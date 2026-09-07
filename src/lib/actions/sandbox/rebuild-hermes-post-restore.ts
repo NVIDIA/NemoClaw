@@ -97,7 +97,6 @@ type GatewayRecoveryObservation = {
   recovered: boolean;
   forwardRecoveryFailed?: boolean;
   secretBoundaryRefused?: boolean;
-  mcpReconciliationRefused?: boolean;
 };
 
 interface HermesPostRestoreGatewayDeps {
@@ -152,12 +151,7 @@ export async function restartHermesGatewayAfterStateRestore(
     ...(deps.runtimeSelection ? { runtimeSelection: deps.runtimeSelection } : {}),
   });
   if (result.ok) return "restarted";
-  const mcpRestoreCanSupersede =
-    result.failureLayer === "MCP reconciliation refusal" &&
-    result.restarted === true &&
-    result.healthPassed === true;
-  // Final verification still requires MCP reconciliation after restoration.
-  return mcpRestoreCanSupersede ? "restarted" : "restart-failed";
+  return "restart-failed";
 }
 
 export async function verifyHermesGatewayAfterStateRestore(
@@ -223,11 +217,7 @@ async function verifyHermesGatewayAfterStateRestoreImpl(
       quiet: true,
       ...(deps.runtimeSelection ? { runtimeSelection: deps.runtimeSelection } : {}),
     });
-    if (
-      observation.forwardRecoveryFailed === true ||
-      observation.secretBoundaryRefused === true ||
-      observation.mcpReconciliationRefused === true
-    ) {
+    if (observation.forwardRecoveryFailed === true || observation.secretBoundaryRefused === true) {
       return { state: "unverified" };
     }
     if (!observation.checked) continue;

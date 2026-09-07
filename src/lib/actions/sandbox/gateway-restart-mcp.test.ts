@@ -36,51 +36,23 @@ function baseDeps(overrides: Partial<GatewayRestartDeps> = {}): GatewayRestartDe
     recoverMessagingHostForward: vi.fn(() => null),
     recoverDeclaredAgentForwardPorts: vi.fn(() => null),
     printGatewayWedgeDiagnostics: vi.fn(async () => false),
-    inspectHermesMcpReconciliationRefusal: vi.fn(() => null),
     ...overrides,
   };
 }
 
 describe("Hermes MCP gateway restart", () => {
-  it("refuses to report a restarted gateway with stale MCP intent", async () => {
+  it("completes generic restart without host MCP reconciliation (#11108)", async () => {
     const restore = silenceConsole();
     try {
-      const deps = baseDeps({
-        inspectHermesMcpReconciliationRefusal: vi.fn(() => ({
-          detail: "Hermes MCP config does not match persisted managed intent",
-        })),
-      });
+      const deps = baseDeps();
 
       expect(await restartSandboxGateway("alpha", { quiet: true, deps })).toEqual({
-        ok: false,
-        failureLayer: "MCP reconciliation refusal",
-        detail: "Hermes MCP config does not match persisted managed intent",
         restarted: true,
+        ok: true,
         healthPassed: true,
+        forwardRecovered: true,
       });
-      expect(deps.ensureSandboxPortForward).not.toHaveBeenCalled();
-    } finally {
-      restore();
-    }
-  });
-
-  it("returns only sanitized MCP reconciliation detail", async () => {
-    const restore = silenceConsole();
-    try {
-      const deps = baseDeps({
-        inspectHermesMcpReconciliationRefusal: vi.fn(() => ({
-          detail: "integrity pending FORGED SUCCESS <REDACTED>",
-        })),
-      });
-
-      expect(await restartSandboxGateway("alpha", { quiet: true, deps })).toEqual({
-        ok: false,
-        failureLayer: "MCP reconciliation refusal",
-        detail: "integrity pending FORGED SUCCESS <REDACTED>",
-        restarted: true,
-        healthPassed: true,
-      });
-      expect(deps.ensureSandboxPortForward).not.toHaveBeenCalled();
+      expect(deps.ensureSandboxPortForward).toHaveBeenCalledWith("alpha");
     } finally {
       restore();
     }
@@ -94,7 +66,7 @@ describe("Hermes MCP gateway restart", () => {
           status: 1,
           stdout: "",
           stderr:
-            "v1 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa failed mcp-integrity 4242 0\nHERMES_MCP_CONFIG_DRIFT",
+            "v1 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa failed mcp-integrity 4242 0\n\u001b[31mHERMES_MCP_CONFIG_DRIFT\u001b[0m\nGITHUB_TOKEN=secret",
         })),
       });
 
@@ -102,13 +74,21 @@ describe("Hermes MCP gateway restart", () => {
       expect(result).toMatchObject({
         ok: false,
         failureLayer: "MCP reconciliation refusal",
+        detail: expect.stringContaining("GITHUB_TOKEN=<REDACTED>"),
       });
       expect(result).not.toHaveProperty("restarted");
       expect(result).not.toHaveProperty("healthPassed");
+      expect(result.ok).toBe(false);
+      expect((result as Extract<typeof result, { ok: false }>).detail).not.toMatch(
+        /\x1b|GITHUB_TOKEN=secret/u,
+      );
       expect(deps.waitForRecoveredSandboxGateway).not.toHaveBeenCalled();
+      expect(deps.ensureSandboxPortForward).not.toHaveBeenCalled();
       const output = vi.mocked(console.error).mock.calls.flat().join("\n");
       expect(output).toContain("nemoclaw alpha mcp restart");
       expect(output).toContain("nemoclaw alpha rebuild --yes");
+      expect(output).toContain("GITHUB_TOKEN=<REDACTED>");
+      expect(output).not.toMatch(/\x1b|GITHUB_TOKEN=secret/u);
     } finally {
       restore();
     }
