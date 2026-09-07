@@ -402,7 +402,7 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
     }
   });
 
-  it("selects the Darwin gateway instead of the VM driver", () => {
+  it("requests the Darwin Arm64 gateway archive instead of the VM-driver archive when driver binaries are missing", () => {
     const result = runWithInstalledVersion(
       REQUIRED_OPENSHELL_VERSION,
       {},

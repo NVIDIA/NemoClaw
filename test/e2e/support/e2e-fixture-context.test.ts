@@ -358,7 +358,7 @@ describe("E2E fixture primitives", () => {
     ).toThrow(/argument cannot contain NUL bytes/);
   });
 
-  it("shell probe and retained logs enforce options.redactionValues", async () => {
+  it("redacts ShellProbe output and retained logs when the secret is registered on both surfaces", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-e2e-shell-probe-enforce-"));
     try {
       const artifacts = new ArtifactSink(tmp);
