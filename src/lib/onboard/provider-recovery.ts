@@ -371,13 +371,13 @@ export function createProviderRecoveryHelpers(deps: ProviderRecoveryDeps): Provi
       if (authority === "unauthorized") return null;
       if (entry) return managedLlamaCppRecipeId(entry);
     } catch {
-      return null;
+      return INVALID_MANAGED_LLAMA_CPP_RECOVERY;
     }
     try {
       const session = onboardSession.loadSession();
       return session?.sandboxName === sandboxName ? managedLlamaCppRecipeId(session) : null;
     } catch {
-      return null;
+      return INVALID_MANAGED_LLAMA_CPP_RECOVERY;
     }
   }
 

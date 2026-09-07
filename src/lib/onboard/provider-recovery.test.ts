@@ -365,6 +365,41 @@ describe("provider recovery persisted routing state", () => {
     });
   });
 
+  it("rejects managed recovery when authority becomes unreadable after provider lookup", () => {
+    vi.spyOn(registry, "getSandbox")
+      .mockReturnValueOnce({
+        name: "alpha",
+        provider: "llama-cpp-local",
+        model: "recorded-model",
+      })
+      .mockImplementation(() => {
+        throw new Error("registry became unreadable");
+      });
+    const recovery = helpers();
+
+    expect(
+      resolveRequestedProviderSelection({
+        options: [
+          { key: "llama-cpp", label: "Local llama.cpp" },
+          { key: "install-llama-cpp", label: "Managed llama.cpp" },
+        ],
+        requestedProvider: null,
+        sandboxName: "alpha",
+        remoteProviderConfig: {},
+        isWsl: false,
+        isWindowsHostOllama: false,
+        windowsHostOllamaSupported: false,
+        windowsHostOllamaReachable: false,
+        hermesProviderAvailable: false,
+        ollamaRunning: false,
+        ...recovery.providerSelectionReaders,
+      }),
+    ).toMatchObject({
+      kind: "failure",
+      reason: { kind: "invalid-managed-llama-cpp-recovery", sandboxName: "alpha" },
+    });
+  });
+
   it.each([
     [
       "managed",
