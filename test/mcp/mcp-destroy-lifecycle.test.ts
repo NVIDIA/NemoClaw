@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import YAML from "yaml";
 
 import type { McpBridgeEntry } from "../../src/lib/state/registry";
 import { findObservedCredentialRevision } from "../helpers/mcp-provider-revision";
@@ -246,12 +247,26 @@ beforeEach(() => {
     return true;
   });
   testState.captureRecordedSandboxBasePolicy.mockImplementation(() => {
-    const entries = ["mcp_bridge_github", "mcp_bridge_slack"].filter(
-      (key) => !testState.removedPolicyKeys.has(key),
+    const entries = Object.values(bridgeEntries).filter(
+      (entry) => !testState.removedPolicyKeys.has(`mcp_bridge_${entry.server}`),
     );
-    return entries.length === 0
-      ? "version: 1\nnetwork_policies: {}\n"
-      : `version: 1\nnetwork_policies:\n${entries.map((key) => `  ${key}: {}`).join("\n")}\n`;
+    const networkPolicies = Object.assign(
+      {},
+      ...entries.map(
+        (entry) =>
+          YAML.parse(
+            bridge.buildMcpBridgePolicyYaml(
+              entry.server,
+              entry.url,
+              "mcporter",
+              { addresses: entry.allowedIps ?? [] },
+              entry.providerName ?? "",
+              entry.denyTools,
+            ),
+          ).network_policies,
+      ),
+    );
+    return YAML.stringify({ version: 1, network_policies: networkPolicies });
   });
   testState.runOpenshell.mockReturnValue({ status: 0, stdout: "", stderr: "" });
   testState.resolveHostAddresses.mockImplementation(async (host: string) => [{ address: host }]);
@@ -1081,20 +1096,17 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
     expect(onDeleted).not.toHaveBeenCalled();
   });
 
-  it("removes the generated key during rebuild even when its live content was edited", async () => {
+  it("rejects rebuild when the generated key's live content was edited", async () => {
     registerAlphaGithubBridge();
-    testState.getPresetContentGatewayState.mockReturnValue("drift");
-
-    const preparation = await bridge.prepareMcpBridgesForRebuild("alpha");
-
-    expect(preparation.entries).toEqual([bridgeEntries.github]);
-    expect(preparation.policyHandoff).toContain("mcp_bridge_github");
-    expect(testState.removePreset).toHaveBeenCalledWith(
-      "alpha",
-      "mcp-bridge-github",
-      expect.objectContaining({ presetContent: expect.any(String) }),
+    testState.captureRecordedSandboxBasePolicy.mockReturnValue(
+      "version: 1\nnetwork_policies:\n  mcp_bridge_github:\n    endpoints: []\n",
     );
-    await expect(preparation.revalidateBeforeDelete?.()).resolves.toBeUndefined();
+
+    await expect(bridge.prepareMcpBridgesForRebuild("alpha")).rejects.toThrow(
+      /generated policy does not match.*mcp restart github/u,
+    );
+
+    expect(testState.removePreset).not.toHaveBeenCalled();
   });
 
   it("rejects a host policy edit that lands after the bounded rebuild handoff", async () => {
