@@ -14,6 +14,8 @@ import { REPO_ROOT } from "../fixtures/paths.ts";
 import { hermesSessionIds, onlyNewHermesSessionId, stripAnsi } from "./hermes-cli-adapter-live.ts";
 
 const HERMES_SKILL_ID = "nc-hermes-e2e";
+const HERMES_SKILL_RESPONSE = "PONG";
+const HERMES_REMOVED_RESPONSE = "REMOVED_OK";
 const HERMES_SKILL_FIXTURE = path.join(
   REPO_ROOT,
   "test",
@@ -141,11 +143,13 @@ export async function assertHermesSkillLifecycle({
     "bash",
     [
       "-c",
-      'set -eu; list="$(nemohermes "$1" skill list)"; printf "%s\\n" "$list"; ! grep -Fq -- "$2" <<<"$list"; chat="$(nemohermes "$1" exec --no-stdin --timeout 360 -- hermes chat --query "Use the removed skill named $2 if it is available. Reply only PONG." --quiet)"; printf "%s\\n" "$chat"; ! grep -Fq -- "$3" <<<"$chat"',
+      'set -eu; list="$(nemohermes "$1" skill list)"; printf "%s\\n" "$list"; ! grep -Fq -- "$2" <<<"$list"; chat="$(nemohermes "$1" exec --no-stdin --timeout 360 -- hermes chat --query "Use the removed skill named $2 if it is available. If it is unavailable, reply only $4. NEMOCLAW_E2E_FAKE_RESPONSE=$4" --quiet)"; printf "%s\\n" "$chat"; grep -Fq -- "$4" <<<"$chat"; ! grep -Fq -- "$5" <<<"$chat"; ! grep -Fq -- "$3" <<<"$chat"',
       "hermes-skill-post-remove",
       sandboxName,
       HERMES_SKILL_ID,
       E2E_MOCK_REQUEST_CANARY,
+      HERMES_REMOVED_RESPONSE,
+      HERMES_SKILL_RESPONSE,
     ],
     {
       artifactName: "phase-4-hermes-skill-post-remove-native-and-session",

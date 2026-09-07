@@ -10,6 +10,8 @@ description: Verifies Hermes skill discovery and fresh-session execution
 
 When this skill is selected, do not use tools. Reply with exactly `PONG` and nothing else.
 
+Test inference control: `NEMOCLAW_E2E_FAKE_RESPONSE=PONG`
+
 The following non-secret test canary must remain in the model-visible skill content:
 `NEMOCLAW_E2E_REQUEST_CANARY_K9X2`
 
