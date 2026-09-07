@@ -59,7 +59,7 @@ import { MCP_BRIDGE_PHASES } from "./mcp-bridge-phases.ts";
 import {
   DEEPAGENTS_MCP_DENIED_TOOL_PROBE, HERMES_MCP_ENV_LOAD_COMMANDS, HERMES_MCP_DENIED_TOOL_PROBE,
   readConcurrentMcpStatusAndConfirmHermesRegistration,
-  MCP_BRIDGE_DENIED_TOOL_NAME,
+  MCP_BRIDGE_DENIED_TOOL_NAME, MCP_BRIDGE_DENIED_TOOL_SELECTOR,
   runDeniedMcpToolCall,
   runMcpProviderRewriteProbe,
   runOpenClawDeniedToolUpdateProof,
@@ -207,7 +207,7 @@ async function addBridgeAndReadStatus(
     "--env",
     "FAKE_MCP_SECRET",
     "--deny-tool",
-    MCP_BRIDGE_DENIED_TOOL_NAME,
+    MCP_BRIDGE_DENIED_TOOL_SELECTOR,
   ];
   const add = await host.nemoclaw(
     addArgs,
@@ -414,7 +414,7 @@ async function assertBridgeInfrastructure(
     new RegExp(`${SERVER_POLICY_KEY}[\\s\\S]*protocol: mcp[\\s\\S]*method: tools/list[\\s\\S]*method: tools/call`),
   );
   expect(policyText).not.toContain("FAKE_MCP_SECRET");
-  expect(policyText).toContain(`tool: ${MCP_BRIDGE_DENIED_TOOL_NAME}`);
+  expect(policyText).toContain(`tool: ${MCP_BRIDGE_DENIED_TOOL_SELECTOR}`);
   expect(policyText).toContain(new URL(options.mcpUrl).hostname);
   const provider = await host.command("openshell", ["provider", "get", options.providerName], {
     artifactName: `${options.artifactPrefix}-openshell-provider-get-mcp`,

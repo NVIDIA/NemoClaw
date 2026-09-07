@@ -31,6 +31,7 @@ const HERMES_GATEWAY_DRAINING_RETRY_DELAY_MS = 5_000;
 const HERMES_MCP_STATUS_RETRY_DELAY_MS = 5_000;
 export const MCP_BRIDGE_TEST_REDACTION_VALUES = Object.values(MCP_BRIDGE_TEST_CREDENTIALS);
 export const MCP_BRIDGE_DENIED_TOOL_NAME = "fake_status";
+export const MCP_BRIDGE_DENIED_TOOL_SELECTOR = "fake_*";
 export const HERMES_MCP_ENV_LOAD_COMMANDS = [
   "set -a",
   "[ ! -f /sandbox/.hermes/.env ] || . /sandbox/.hermes/.env",
@@ -135,7 +136,7 @@ export async function runOpenClawDeniedToolUpdateProof(
   );
   const calls = requests.filter((request) => request.rpcMethod === "tools/call");
   const replace = await host.nemoclaw(
-    [sandboxName, "mcp", "update", "fake", "--deny-tool", MCP_BRIDGE_DENIED_TOOL_NAME],
+    [sandboxName, "mcp", "update", "fake", "--deny-tool", MCP_BRIDGE_DENIED_TOOL_SELECTOR],
     commandOptions("openclaw-restore-denied-tool"),
   );
   const denied = await runDeniedMcpToolCall({
