@@ -58,6 +58,22 @@ describe("OpenShell forward service", () => {
     expect(probe).toHaveBeenCalledTimes(3);
   });
 
+  it("uses ss when lsof is unavailable", () => {
+    const expected = [target.executable, ...buildForwardServiceArgs(target)].join(" ");
+    const responses: Record<string, { status: number | null; stdout: string }> = {
+      lsof: { status: null, stdout: "" },
+      ss: {
+        status: 0,
+        stdout: 'LISTEN 0 1024 127.0.0.1:18789 0.0.0.0:* users:(("openshell",pid=4321,fd=9))\n',
+      },
+      ps: { status: 0, stdout: `${expected}\n` },
+    };
+    const probe = vi.fn((executable: string) => responses[executable] ?? { status: 1, stdout: "" });
+
+    expect(isForwardServiceListenerOwner(target, { probe })).toBe(true);
+    expect(probe).toHaveBeenCalledTimes(5);
+  });
+
   it("rejects a listener whose process does not match the direct ForwardTcp target", () => {
     const probe = vi.fn((executable: string) =>
       executable === "lsof"
@@ -75,6 +91,20 @@ describe("OpenShell forward service", () => {
       .mockReturnValueOnce({ status: 0, stdout: "4321\n" })
       .mockReturnValueOnce({ status: 0, stdout: `${expected}\n` })
       .mockReturnValueOnce({ status: 0, stdout: "9876\n" });
+
+    expect(isForwardServiceListenerOwner(target, { probe })).toBe(false);
+  });
+
+  it("rejects ambiguous ss listener ownership when lsof is unavailable", () => {
+    const responses: Record<string, { status: number | null; stdout: string }> = {
+      lsof: { status: null, stdout: "" },
+      ss: {
+        status: 0,
+        stdout:
+          'LISTEN 0 1024 127.0.0.1:18789 0.0.0.0:* users:(("openshell",pid=4321,fd=9),("foreign",pid=9876,fd=8))\n',
+      },
+    };
+    const probe = vi.fn((executable: string) => responses[executable] ?? { status: 1, stdout: "" });
 
     expect(isForwardServiceListenerOwner(target, { probe })).toBe(false);
   });
