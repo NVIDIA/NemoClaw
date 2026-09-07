@@ -359,7 +359,7 @@ describe("CLI OpenShell provider adapter", () => {
     expect(run.mock.calls[0]?.[0]).not.toContain(credentialValue);
   });
 
-  it("attaches a provider and keeps refresh secrets in the child environment (#9806)", async () => {
+  it("translates a canonical refresh strategy and keeps secrets in the child environment (#9806)", async () => {
     const run = vi.fn<RunProviderCommand>((args) =>
       args.includes("status")
         ? captured(0, "search-prod  TAVILY_API_KEY  test-refresh  refreshed  2026-09-02 20:00:00\n")
@@ -378,7 +378,7 @@ describe("CLI OpenShell provider adapter", () => {
       target,
       providerName: "search-prod",
       credentialKey: "TAVILY_API_KEY",
-      strategy: "test-refresh",
+      strategy: "test_refresh",
       material: [{ key: "scope", value: "search" }],
       secretMaterial: [{ key: "private_key", value: refreshSecret }],
     });

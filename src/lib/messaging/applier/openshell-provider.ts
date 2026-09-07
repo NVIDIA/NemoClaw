@@ -719,11 +719,20 @@ async function deleteProviderForReplacement(
       options.revalidateSandboxIdentity?.(
         `detach messaging provider ${JSON.stringify(providerName)} from sandbox ${JSON.stringify(sandboxName)}`,
       );
-      const detachResult = await providerAdapter.detachProvider({
-        target,
-        providerName,
-        sandboxName,
-      });
+      let detachResult: Awaited<ReturnType<OpenShellProviderAdapter["detachProvider"]>>;
+      try {
+        detachResult = await providerAdapter.detachProvider({
+          target,
+          providerName,
+          sandboxName,
+        });
+      } catch (error) {
+        const rejected = rejectedProviderOperationError(error);
+        throw new MessagingProviderApplyError({
+          message: `Could not detach messaging provider '${providerName}' from sandbox '${sandboxName}': ${rejected.message}`,
+          mutatedProviderNames: [providerName],
+        });
+      }
       if (!detachResult.ok) {
         throw new MessagingProviderApplyError({
           message: `Could not detach messaging provider '${providerName}' from sandbox '${sandboxName}': ${providerErrorMessage(detachResult.error)}`,
@@ -748,7 +757,7 @@ async function deleteProviderForReplacement(
           target,
         );
       }
-      throw withMutationEvidence(error, [], []);
+      throw redactedMutationFailure(error);
     }
   }
   try {
@@ -810,9 +819,20 @@ async function throwReplacementFailureAfterAttachmentRecovery(
 function rejectedProviderOperationError(error: unknown): OpenShellProviderError {
   return {
     kind: "command",
-    reason: "failed",
+    reason: "uncertain",
     message: redactStandaloneSecretsFull(error instanceof Error ? error.message : String(error)),
   };
+}
+
+function redactedMutationFailure(error: unknown): MessagingProviderApplyError {
+  const existing = error instanceof MessagingProviderApplyError ? error : undefined;
+  return new MessagingProviderApplyError({
+    message: redactStandaloneSecretsFull(error instanceof Error ? error.message : String(error)),
+    bindingConflict: isMessagingProviderBindingConflict(error),
+    mutatedProviderNames: existing?.mutatedProviderNames,
+    createdProviderNames: existing?.createdProviderNames,
+    replacedProviderNames: existing?.replacedProviderNames,
+  });
 }
 
 function mutationOutcomeUncertain(error: OpenShellProviderError): boolean {

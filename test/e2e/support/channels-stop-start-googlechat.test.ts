@@ -19,133 +19,141 @@ type GooglechatFixtureChannelDependencies = NonNullable<
   GooglechatFixtureDependencies["channelDependencies"]
 >;
 describe("channels stop/start Google Chat live composition", () => {
-  it("uses the fixed access token for typed channel add and rebuild application", async () => {
-    const providerName = "e2e-oc-ch-cycle-googlechat-bridge";
-    const plan: SandboxMessagingPlan = {
-      schemaVersion: 1,
-      sandboxName: "e2e-oc-ch-cycle",
-      agent: "openclaw",
-      workflow: "onboard",
-      channels: [],
-      disabledChannels: [],
-      credentialBindings: [],
-      networkPolicy: { presets: [], entries: [] },
-      agentRender: [],
-      buildSteps: [],
-      stateUpdates: [],
-      healthChecks: [],
-    };
-    const definition = {
-      channelId: "googlechat",
-      credentialId: "GOOGLE_CHAT_ACCESS_TOKEN",
-      providerName,
-      providerType: "google-chat-bridge",
-      credentials: [{ name: "GOOGLE_CHAT_ACCESS_TOKEN", value: "openshell-managed-pending-mint" }],
-      profile: { profilePath: "/repo/googlechat.yaml", profileType: "google-chat-bridge" },
-    } as const;
-    const refresh = {
-      channelId: "googlechat",
-      providerName,
-      credentialKey: "GOOGLE_CHAT_ACCESS_TOKEN",
-      strategy: "google-service-account-jwt",
-      material: [{ key: "client_email", value: "bot@example.test" }],
-      secretMaterial: [{ key: "private_key", value: "fixture-private-key" }],
-    } as const;
-    const applied = {
-      upserted: [],
-      reused: [],
-      missing: [],
-      replacedProviderNames: [],
-      providerNames: [providerName],
-      sandboxCreateProviderArgs: ["--provider", providerName],
-    } as const;
-    const applyCredentialsAtOpenShell = vi.fn<
-      GooglechatFixtureApplier["applyCredentialsAtOpenShell"]
-    >(async () => applied);
-    const messagingSetupApplier: GooglechatFixtureApplier = { applyCredentialsAtOpenShell };
-    const channelDependencies: GooglechatFixtureChannelDependencies = {
-      upsertMessagingProviders: vi.fn(async (_tokenDefs, _gatewayName, _options, context) => {
-        const result = await messagingSetupApplier.applyCredentialsAtOpenShell(context!.plan, {
+  it.each([
+    ["openclaw", "e2e-oc-ch-cycle", "google-chat-bridge"],
+    ["hermes", "e2e-hm-ch-cycle", "google-chat-hermes-bridge"],
+  ] as const)(
+    "uses the fixed access token for typed %s channel add and rebuild application",
+    async (agent, sandboxName, providerType) => {
+      const providerName = `${sandboxName}-googlechat-bridge`;
+      const plan: SandboxMessagingPlan = {
+        schemaVersion: 1,
+        sandboxName,
+        agent,
+        workflow: "onboard",
+        channels: [],
+        disabledChannels: [],
+        credentialBindings: [],
+        networkPolicy: { presets: [], entries: [] },
+        agentRender: [],
+        buildSteps: [],
+        stateUpdates: [],
+        healthChecks: [],
+      };
+      const definition = {
+        channelId: "googlechat",
+        credentialId: "GOOGLE_CHAT_ACCESS_TOKEN",
+        providerName,
+        providerType,
+        credentials: [
+          { name: "GOOGLE_CHAT_ACCESS_TOKEN", value: "openshell-managed-pending-mint" },
+        ],
+        profile: { profilePath: "/repo/googlechat.yaml", profileType: providerType },
+      } as const;
+      const refresh = {
+        channelId: "googlechat",
+        providerName,
+        credentialKey: "GOOGLE_CHAT_ACCESS_TOKEN",
+        strategy: "google_service_account_jwt",
+        material: [{ key: "client_email", value: "bot@example.test" }],
+        secretMaterial: [{ key: "private_key", value: "fixture-private-key" }],
+      } as const;
+      const applied = {
+        upserted: [],
+        reused: [],
+        missing: [],
+        replacedProviderNames: [],
+        providerNames: [providerName],
+        sandboxCreateProviderArgs: ["--provider", providerName],
+      } as const;
+      const applyCredentialsAtOpenShell = vi.fn<
+        GooglechatFixtureApplier["applyCredentialsAtOpenShell"]
+      >(async () => applied);
+      const messagingSetupApplier: GooglechatFixtureApplier = { applyCredentialsAtOpenShell };
+      const channelDependencies: GooglechatFixtureChannelDependencies = {
+        upsertMessagingProviders: vi.fn(async (_tokenDefs, _gatewayName, _options, context) => {
+          const result = await messagingSetupApplier.applyCredentialsAtOpenShell(context!.plan, {
+            runOpenshell: () => ({ status: 0, stdout: "", stderr: "" }),
+            definitions: [definition],
+            refreshes: [refresh],
+          });
+          return [...result.providerNames];
+        }),
+      };
+      const fixture = installGooglechatCredentialFixture(sandboxName, agent, {
+        channelDependencies,
+        messagingSetupApplier,
+      });
+
+      try {
+        const addProviderNames = await fixture.upsertMessagingProviders(
+          [
+            {
+              name: providerName,
+              envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
+              token: "openshell-managed-pending-mint",
+              providerType,
+            },
+          ],
+          "test-gateway",
+          {},
+          {
+            plan,
+            channelName: "googlechat",
+            sandboxAgent: agent,
+            sandboxName,
+            revalidateSandboxIdentity: () => undefined,
+          },
+        );
+        const rebuildApplication = await fixture.applyCredentialsAtOpenShell(plan, {
           runOpenshell: () => ({ status: 0, stdout: "", stderr: "" }),
           definitions: [definition],
           refreshes: [refresh],
         });
-        return [...result.providerNames];
-      }),
-    };
-    const fixture = installGooglechatCredentialFixture("e2e-oc-ch-cycle", "openclaw", {
-      channelDependencies,
-      messagingSetupApplier,
-    });
 
-    try {
-      const addProviderNames = await fixture.upsertMessagingProviders(
-        [
+        expect(addProviderNames).toEqual([providerName]);
+        expect(rebuildApplication).toEqual(applied);
+        expect(channelDependencies.upsertMessagingProviders).toHaveBeenCalledTimes(1);
+        expect(applyCredentialsAtOpenShell).toHaveBeenCalledTimes(2);
+        expect(
+          applyCredentialsAtOpenShell.mock.calls.map(([, options]) => ({
+            definitions: options.definitions,
+            refreshes: options.refreshes,
+          })),
+        ).toEqual([
           {
-            name: providerName,
-            envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
-            token: "openshell-managed-pending-mint",
-            providerType: "google-chat-bridge",
+            definitions: [
+              {
+                ...definition,
+                credentials: [
+                  { name: "GOOGLE_CHAT_ACCESS_TOKEN", value: GOOGLECHAT_E2E_ACCESS_TOKEN },
+                ],
+              },
+            ],
+            refreshes: [],
           },
-        ],
-        "test-gateway",
-        {},
-        {
-          plan,
-          channelName: "googlechat",
-          sandboxAgent: "openclaw",
-          sandboxName: "e2e-oc-ch-cycle",
-          revalidateSandboxIdentity: () => undefined,
-        },
-      );
-      const rebuildApplication = await fixture.applyCredentialsAtOpenShell(plan, {
-        runOpenshell: () => ({ status: 0, stdout: "", stderr: "" }),
-        definitions: [definition],
-        refreshes: [refresh],
-      });
+          {
+            definitions: [
+              {
+                ...definition,
+                credentials: [
+                  { name: "GOOGLE_CHAT_ACCESS_TOKEN", value: GOOGLECHAT_E2E_ACCESS_TOKEN },
+                ],
+              },
+            ],
+            refreshes: [],
+          },
+        ]);
+        expect(JSON.stringify(applyCredentialsAtOpenShell.mock.calls)).not.toContain(
+          "fixture-private-key",
+        );
+      } finally {
+        fixture();
+      }
 
-      expect(addProviderNames).toEqual([providerName]);
-      expect(rebuildApplication).toEqual(applied);
-      expect(channelDependencies.upsertMessagingProviders).toHaveBeenCalledTimes(1);
-      expect(applyCredentialsAtOpenShell).toHaveBeenCalledTimes(2);
-      expect(
-        applyCredentialsAtOpenShell.mock.calls.map(([, options]) => ({
-          definitions: options.definitions,
-          refreshes: options.refreshes,
-        })),
-      ).toEqual([
-        {
-          definitions: [
-            {
-              ...definition,
-              credentials: [
-                { name: "GOOGLE_CHAT_ACCESS_TOKEN", value: GOOGLECHAT_E2E_ACCESS_TOKEN },
-              ],
-            },
-          ],
-          refreshes: [],
-        },
-        {
-          definitions: [
-            {
-              ...definition,
-              credentials: [
-                { name: "GOOGLE_CHAT_ACCESS_TOKEN", value: GOOGLECHAT_E2E_ACCESS_TOKEN },
-              ],
-            },
-          ],
-          refreshes: [],
-        },
-      ]);
-      expect(JSON.stringify(applyCredentialsAtOpenShell.mock.calls)).not.toContain(
-        "fixture-private-key",
-      );
-    } finally {
-      fixture();
-    }
-
-    expect(messagingSetupApplier.applyCredentialsAtOpenShell).toBe(applyCredentialsAtOpenShell);
-  });
+      expect(messagingSetupApplier.applyCredentialsAtOpenShell).toBe(applyCredentialsAtOpenShell);
+    },
+  );
 
   it("grants a process-local audience capability to the exact live sandbox", async () => {
     const addSandboxChannel = vi.fn(async () => {});

@@ -429,6 +429,55 @@ describe("messaging OpenShell provider application", () => {
     expect(adapter.createProvider).not.toHaveBeenCalled();
   });
 
+  it("redacts a rejected first replacement detach and reports uncertain mutation (#9806)", async () => {
+    const expected = definition();
+    const secret = "nvapi-rejected-detach-secret-do-not-leak";
+    const adapter = providerAdapter({
+      getProvider: vi.fn<OpenShellProviderAdapter["getProvider"]>().mockResolvedValue({
+        ok: true,
+        value: { ...metadata(expected), type: "generic" },
+      }),
+      deleteProvider: vi.fn<OpenShellProviderAdapter["deleteProvider"]>().mockResolvedValue({
+        ok: false,
+        error: {
+          kind: "command",
+          reason: "attached",
+          message: "provider is attached",
+          attachedSandboxes: ["alpha"],
+        },
+      }),
+      detachProvider: vi
+        .fn<OpenShellProviderAdapter["detachProvider"]>()
+        .mockRejectedValue(new Error(`NVIDIA_API_KEY=${secret}`)),
+    });
+
+    const failure = await applyCredentialsAtOpenShell(plan, {
+      providerAdapter: adapter,
+      target,
+      definitions: [expected],
+      replaceExisting: true,
+      allowedSandboxes: ["alpha"],
+    }).catch((error: unknown) => error);
+
+    expect(failure).toMatchObject({
+      message:
+        "Could not detach messaging provider 'alpha-telegram-bridge' from sandbox 'alpha': NVIDIA_API_KEY=<REDACTED>",
+      mutatedProviderNames: [expected.providerName],
+      createdProviderNames: [],
+      replacedProviderNames: [],
+    });
+    expect((failure as Error).cause).toBeUndefined();
+    expect((failure as Error).message).not.toContain(secret);
+    expect(JSON.stringify(failure)).not.toContain(secret);
+    expect(adapter.detachProvider).toHaveBeenCalledExactlyOnceWith({
+      target,
+      providerName: expected.providerName,
+      sandboxName: "alpha",
+    });
+    expect(adapter.attachProvider).not.toHaveBeenCalled();
+    expect(adapter.createProvider).not.toHaveBeenCalled();
+  });
+
   it("redacts failed replacement attachment recovery (#9806)", async () => {
     const expected = definition();
     const secret = "nvapi-replacement-recovery-secret-do-not-leak";
@@ -728,7 +777,7 @@ describe("messaging OpenShell provider application", () => {
       profilePath: "/repo/googlechat/openclaw.yaml",
       profileId: "google-chat-bridge",
       credentialKey: "GOOGLE_CHAT_ACCESS_TOKEN",
-      strategy: "google-service-account-jwt",
+      strategy: "google_service_account_jwt",
       scopes: ["https://www.googleapis.com/auth/chat.bot"],
       secretMaterialKeys: ["private_key"],
       sourceSecretEnv: "GOOGLECHAT_SERVICE_ACCOUNT",
@@ -780,7 +829,7 @@ describe("messaging OpenShell provider application", () => {
       target,
       providerName: expected.providerName,
       credentialKey: "GOOGLE_CHAT_ACCESS_TOKEN",
-      strategy: "google-service-account-jwt",
+      strategy: "google_service_account_jwt",
       material: [
         { key: "client_email", value: "bot@example.test" },
         { key: "scope", value: "https://www.googleapis.com/auth/chat.bot" },

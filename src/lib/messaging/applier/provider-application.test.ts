@@ -12,7 +12,7 @@ const googlechatProfile: MessagingBridgeProfile = {
   profilePath: "/repo/googlechat/openclaw.yaml",
   profileId: "google-chat-bridge",
   credentialKey: "GOOGLE_CHAT_ACCESS_TOKEN",
-  strategy: "google-service-account-jwt",
+  strategy: "google_service_account_jwt",
   scopes: ["https://www.googleapis.com/auth/chat.bot"],
   secretMaterialKeys: ["private_key"],
   sourceSecretEnv: "GOOGLECHAT_SERVICE_ACCOUNT",
@@ -61,7 +61,7 @@ describe("messaging provider application planning", () => {
         channelId: "googlechat",
         providerName: "alpha-googlechat-bridge",
         credentialKey: "GOOGLE_CHAT_ACCESS_TOKEN",
-        strategy: "google-service-account-jwt",
+        strategy: "google_service_account_jwt",
         material: [
           { key: "client_email", value: "bot@example.test" },
           { key: "scope", value: "https://www.googleapis.com/auth/chat.bot" },

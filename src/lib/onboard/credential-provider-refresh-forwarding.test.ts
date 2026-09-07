@@ -36,6 +36,7 @@ describe("onboarding provider refresh forwarding", () => {
 
   it("forwards Google Chat refresh material to the messaging applier (#9806)", async () => {
     const privateKey = "test-google-chat-private-key";
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const serviceAccount = JSON.stringify({
       client_email: "bot@example.test",
       private_key: privateKey,
@@ -95,7 +96,7 @@ describe("onboarding provider refresh forwarding", () => {
             channelId: "googlechat",
             providerName,
             credentialKey: "GOOGLE_CHAT_ACCESS_TOKEN",
-            strategy: "google-service-account-jwt",
+            strategy: "google_service_account_jwt",
             material: [
               { key: "client_email", value: "bot@example.test" },
               { key: "scope", value: "https://www.googleapis.com/auth/chat.bot" },
@@ -105,6 +106,19 @@ describe("onboarding provider refresh forwarding", () => {
         ],
       }),
     );
-    expect(JSON.stringify(providerNames)).not.toContain(privateKey);
+    const applyOptions = apply.mock.calls[0]?.[1];
+    expect(applyOptions?.refreshes?.flatMap(({ secretMaterial }) => secretMaterial)).toEqual([
+      { key: "private_key", value: privateKey },
+    ]);
+    expect(JSON.stringify(applyOptions).split(privateKey)).toHaveLength(2);
+    expect(JSON.stringify(applyOptions?.definitions)).not.toContain(privateKey);
+    expect(
+      JSON.stringify(applyOptions?.refreshes?.flatMap(({ material }) => material)),
+    ).not.toContain(privateKey);
+    expect(JSON.stringify({ providerNames, diagnostics: consoleError.mock.calls })).not.toContain(
+      privateKey,
+    );
+    expect(JSON.stringify({ plan, session })).not.toContain(privateKey);
+    expect(deps.persistMigratedLegacyKeys).not.toHaveBeenCalled();
   });
 });

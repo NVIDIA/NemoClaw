@@ -386,7 +386,7 @@ export function buildMessagingBridgeRefreshMaterial(
 ):
   | { ok: true; material: { key: string; value: string }[]; secretKeys: string[] }
   | { ok: false; reason: string } {
-  if (profile.strategy === "google-service-account-jwt") {
+  if (profile.strategy === "google_service_account_jwt") {
     let parsed: Record<string, unknown>;
     try {
       parsed = JSON.parse(secret) as Record<string, unknown>;

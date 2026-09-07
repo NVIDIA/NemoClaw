@@ -662,7 +662,8 @@ export function createCliOpenShellProviderAdapter(
       "--credential-key",
       request.credentialKey,
       "--strategy",
-      request.strategy,
+      // Provider profile documents use snake_case; the CLI flag uses kebab-case.
+      request.strategy.replaceAll("_", "-"),
     ];
     for (const entry of request.material) args.push("--material", `${entry.key}=${entry.value}`);
     const env: Record<string, string> = {};
