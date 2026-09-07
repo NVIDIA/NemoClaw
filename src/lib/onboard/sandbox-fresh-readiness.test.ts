@@ -163,6 +163,11 @@ describe("fresh sandbox executable readiness", () => {
 
   it("fails when the executable readiness probe is terminal (#9050)", async () => {
     const deps = createDeps();
+    const patch = createGpuPatchFixture();
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
+    mocks.printSandboxCreateFailureDiagnostics.mockImplementationOnce(() => {
+      throw new Error("diagnostics unavailable");
+    });
     vi.mocked(deps.runOpenshell).mockImplementation(
       createSequencedOpenShellRunner([
         ["sandbox get -g nemoclaw alpha", [readySandboxGetResult()]],
@@ -185,6 +190,7 @@ describe("fresh sandbox executable readiness", () => {
       gatewayName: "nemoclaw",
       runCaptureOpenshell: deps.runCaptureOpenshell,
     });
+    expect(patch.rollbackManagedStartupAfterCreateFailure).toHaveBeenCalledOnce();
   });
 
   it("preserves a fresh sandbox when sandbox get omits a durable ID (#9050)", async () => {

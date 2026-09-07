@@ -434,6 +434,18 @@ async function verifyActivatedManagedCreateBeforeEffects(input: {
   }
 }
 
+function printCreateFailureDiagnosticsOrContinue(
+  printDiagnostics: NonNullable<SandboxGpuCreateFlowDeps["printCreateFailureDiagnostics"]>,
+  sandboxName: string,
+  backupPath: string | null,
+): void {
+  try {
+    printDiagnostics(sandboxName, { backupPath });
+  } catch {
+    console.error("  Sandbox failure diagnostics were unavailable; continuing rollback.");
+  }
+}
+
 export function createSandboxGpuCreateAttemptRunner(
   input: SandboxGpuCreateFlowInput,
   deps: SandboxGpuCreateFlowDeps,
@@ -1149,9 +1161,11 @@ export function createSandboxGpuCreateAttemptRunner(
           ...nativeCleanup,
         } as const;
       }
-      printCreateFailureDiagnostics(input.sandboxName, {
-        backupPath: input.restoreBackupPath,
-      });
+      printCreateFailureDiagnosticsOrContinue(
+        printCreateFailureDiagnostics,
+        input.sandboxName,
+        input.restoreBackupPath,
+      );
       await runtimePatch.rollbackManagedStartupAfterCreateFailure();
       if (compatibility) runtimePatch.printReadinessFailureIfEnabled();
       else if (expectedRecreatedSandboxId) {

@@ -233,16 +233,19 @@ describe("sandbox create failure diagnostics", () => {
   it("bounds serialized output after short credential redaction expands it (#10412)", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-create-failure-expanded-"));
     const token = "z7!";
+    const repeatedTokens = Array.from({ length: 100 }, () => token).join(" ");
     const diagnostics = collectSandboxCreateFailureDiagnostics("my-assistant", {
       env: { NEMOCLAW_PROVIDER_KEY: token },
       homeDir: path.join(tmp, "home"),
       runCaptureOpenshell: () =>
-        `${Array.from({ length: 120 }, (_, index) => `line ${String(index)} ${token.repeat(100)}`).join("\n")}\n`,
+        `${Array.from({ length: 120 }, (_, index) => `line ${String(index)} ${repeatedTokens}`).join("\n")}\n`,
     });
     const captured = fs.readFileSync(diagnostics!.openshellLogsPath!, "utf8");
 
     expect({
-      endsWithLastLine: captured.trimEnd().endsWith(`line 119 ${"<REDACTED>".repeat(100)}`),
+      endsWithLastLine: captured
+        .trimEnd()
+        .endsWith(`line 119 ${Array.from({ length: 100 }, () => "<REDACTED>").join(" ")}`),
       tokenPresent: captured.includes(token),
       withinByteLimit: Buffer.byteLength(captured, "utf8") <= 64 * 1024,
     }).toEqual({ endsWithLastLine: true, tokenPresent: false, withinByteLimit: true });

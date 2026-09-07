@@ -180,6 +180,7 @@ function boundedRedactedCapture(output: string, env: NodeJS.ProcessEnv): string 
     bounded = firstCompleteLine === -1 ? "" : bounded.slice(firstCompleteLine + 1);
   }
   const lines = createDockerGpuDiagnosticRedactor(
+    [],
     discoverDockerGpuDiagnosticSensitiveValuesFromEnv(env),
   )
     .redactText(bounded)

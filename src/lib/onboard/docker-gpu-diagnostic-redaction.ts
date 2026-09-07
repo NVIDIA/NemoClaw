@@ -49,6 +49,11 @@ export type DockerGpuDiagnosticRedactor = {
   sanitizeInspect(inspect: DockerContainerInspect): DockerContainerInspect;
 };
 
+export type DockerGpuDiagnosticSensitiveBinding = Readonly<{
+  key: string;
+  value: string;
+}>;
+
 export function discoverDockerGpuDiagnosticSensitiveValues(
   inspect: DockerContainerInspect,
 ): string[] {
@@ -71,7 +76,7 @@ export function discoverDockerGpuDiagnosticSensitiveValues(
 /** Return staged credential values that a failed sandbox can echo into its logs. */
 export function discoverDockerGpuDiagnosticSensitiveValuesFromEnv(
   env: NodeJS.ProcessEnv,
-): string[] {
+): DockerGpuDiagnosticSensitiveBinding[] {
   const extraPlaceholderKeys = new Set(
     String(env[EXTRA_PLACEHOLDER_KEYS_ENV] ?? "")
       .split(/[\s,]+/u)
@@ -84,7 +89,7 @@ export function discoverDockerGpuDiagnosticSensitiveValuesFromEnv(
         value.length > 0 &&
         (SENSITIVE_ENV_KEY.test(key) || extraPlaceholderKeys.has(key)),
     )
-    .map(([, value]) => value as string);
+    .map(([key, value]) => ({ key, value: value as string }));
 }
 
 /**
@@ -97,12 +102,34 @@ export function discoverDockerGpuDiagnosticSensitiveValuesFromEnv(
  */
 export function createDockerGpuDiagnosticRedactor(
   initialSensitiveValues: Iterable<string> = [],
+  initialSensitiveBindings: Iterable<DockerGpuDiagnosticSensitiveBinding> = [],
 ): DockerGpuDiagnosticRedactor {
   const sensitiveValues = new Set([...initialSensitiveValues].filter((value) => value.length > 0));
+  const sensitiveBindings = [...initialSensitiveBindings].filter(
+    ({ key, value }) => key.length > 0 && value.length > 0,
+  );
   const redactText = (text: string): string => {
     let redacted = redactFullWithUrls(text);
     for (const value of [...sensitiveValues].sort((left, right) => right.length - left.length)) {
       redacted = redacted.split(value).join("<REDACTED>");
+    }
+    for (const { key, value } of sensitiveBindings.sort(
+      (left, right) => right.value.length - left.value.length,
+    )) {
+      const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+      const escapedValue = value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+      redacted = redacted.replace(
+        new RegExp(`(?<![A-Za-z0-9_])(${escapedKey}[ \\t]*[=:][ \\t]*)${escapedValue}`, "gu"),
+        "$1<REDACTED>",
+      );
+      if (value.length >= 8) {
+        redacted = redacted.split(value).join("<REDACTED>");
+        continue;
+      }
+      redacted = redacted.replace(
+        new RegExp(`(?<![A-Za-z0-9])${escapedValue}(?![A-Za-z0-9])`, "gu"),
+        "<REDACTED>",
+      );
     }
     return redacted;
   };
