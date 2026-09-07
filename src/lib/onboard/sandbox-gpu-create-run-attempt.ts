@@ -757,8 +757,6 @@ export function createSandboxGpuCreateAttemptRunner(
                 },
                 SANDBOX_READY_PROBE_TIMEOUT_MS,
               );
-              const observedSandboxId =
-                observation.state === "invalid" ? null : observation.sandboxId;
               if (observation.state === "invalid") {
                 return failReadyCheckCreatedIdentity(observation.diagnostic);
               }
