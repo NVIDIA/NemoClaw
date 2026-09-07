@@ -440,11 +440,26 @@ async function restoreCleanupAttachments(
       failures.push({ sandboxName, error: before });
       continue;
     }
-    const restored = await options.providerAdapter.attachProvider({
-      target,
-      providerName,
-      sandboxName,
-    });
+    let restored: Awaited<ReturnType<OpenShellProviderAdapter["attachProvider"]>>;
+    try {
+      restored = await options.providerAdapter.attachProvider({
+        target,
+        providerName,
+        sandboxName,
+      });
+    } catch (error) {
+      failures.push({
+        sandboxName,
+        error: {
+          kind: "command",
+          reason: "failed",
+          message: redactStandaloneSecretsFull(
+            error instanceof Error ? error.message : String(error),
+          ),
+        },
+      });
+      continue;
+    }
     if (!restored.ok) {
       failures.push({ sandboxName, error: restored.error });
       continue;

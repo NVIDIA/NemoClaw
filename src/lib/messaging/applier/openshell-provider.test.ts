@@ -1053,6 +1053,67 @@ describe("messaging OpenShell provider application", () => {
     expect(JSON.stringify(result)).not.toContain(secret);
   });
 
+  it("records a rejected attachment recovery and continues restoring later sandboxes (#9806)", async () => {
+    const providerName = "alpha-telegram-bridge";
+    const secret = "nvapi-rejected-reattach-secret-do-not-leak";
+    const deleteProvider = vi
+      .fn<OpenShellProviderAdapter["deleteProvider"]>()
+      .mockResolvedValueOnce({
+        ok: false,
+        error: {
+          kind: "command",
+          reason: "attached",
+          message: "provider is attached",
+          attachedSandboxes: ["alpha", "beta"],
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        error: { kind: "transport", reason: "unreachable", message: "delete unavailable" },
+      });
+    const attachProvider = vi
+      .fn<OpenShellProviderAdapter["attachProvider"]>()
+      .mockRejectedValueOnce(new Error(`NVIDIA_API_KEY=${secret}`))
+      .mockResolvedValueOnce({ ok: true });
+    const adapter = providerAdapter({ deleteProvider, attachProvider });
+
+    const result = await cleanupProvidersAtOpenShell([providerName], {
+      providerAdapter: adapter,
+      target,
+      allowedSandboxes: ["alpha", "beta"],
+    });
+
+    expect(result.detachedAttachments).toEqual([
+      { providerName, sandboxName: "alpha" },
+      { providerName, sandboxName: "beta" },
+    ]);
+    expect(result.residualProviders).toEqual([
+      {
+        providerName,
+        error: {
+          kind: "transport",
+          reason: "unreachable",
+          message: expect.stringContaining(
+            'Automatic attachment recovery failed for provider "alpha-telegram-bridge" on sandbox "beta":',
+          ),
+        },
+      },
+    ]);
+    expect(attachProvider).toHaveBeenNthCalledWith(1, {
+      target,
+      providerName,
+      sandboxName: "beta",
+    });
+    expect(attachProvider).toHaveBeenNthCalledWith(2, {
+      target,
+      providerName,
+      sandboxName: "alpha",
+    });
+    expect(result.residualProviders[0]?.error.message).toContain("<REDACTED>");
+    expect(result.residualProviders[0]?.error.message).not.toContain('sandbox "alpha":');
+    expect(JSON.stringify(result)).not.toContain(secret);
+  });
+
   it("distinguishes an already absent provider from one removed by cleanup (#9806)", async () => {
     const providerName = "alpha-telegram-bridge";
     const adapter = providerAdapter({
