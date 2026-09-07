@@ -317,7 +317,7 @@ runner.run = (command, opts = {}) => {
 	const retainedRegistryEntry = recoveryReentry && fs.existsSync(${JSON.stringify(payloadPath)})
 	  ? JSON.parse(fs.readFileSync(${JSON.stringify(payloadPath)}, "utf8")).recoveryRegistryEntry
 	  : null;
-	let recoveryRegistryEntry = retainedRegistryEntry;
+	let verifiedRecoveryRegistryEntry = null;
 	const registryMutationCalls = [];
   let checkpointReadCalls = 0;
 	if (!recoveryReentry) {
@@ -394,7 +394,7 @@ runner.run = (command, opts = {}) => {
 	  registry.recordPendingSandboxCreateIdentity.bind(registry);
 	registry.recordPendingSandboxCreateIdentity = (...args) => {
 	  const entry = recordPendingSandboxCreateIdentity(...args);
-	  recoveryRegistryEntry = structuredClone(entry);
+	  verifiedRecoveryRegistryEntry = structuredClone(entry);
 	  return entry;
 	};
 if (postCreateRunnerRefusal) {
@@ -517,7 +517,8 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
     checkpointReadCalls,
     registryMutationCalls,
     currentRegistryEntry: cancelAfterCreate ? registry.getSandbox("my-assistant") : null,
-    recoveryRegistryEntry,
+    recoveryRegistryEntry: registry.getSandbox("my-assistant"),
+    verifiedRecoveryRegistryEntry,
     savedSession:
       cancelAfterCreate ||
       postCreateRunnerRefusal ||
@@ -950,9 +951,15 @@ if (${JSON.stringify(
           assert.deepEqual(reentryPayload.retainedRecoveryRecords, []);
         }
 
-        // Refusal reentries replace the payload. Restore the original verified
-        // checkpoint before modeling the registry-only process boundary.
-        fs.writeFileSync(payloadPath, JSON.stringify(payload));
+        // Refusal reentries replace the payload. Give only the registry-only
+        // child the verified checkpoint captured at its persistence boundary.
+        fs.writeFileSync(
+          payloadPath,
+          JSON.stringify({
+            ...payload,
+            recoveryRegistryEntry: payload.verifiedRecoveryRegistryEntry,
+          }),
+        );
         const registryOnlyReentry = spawnSync(process.execPath, [scriptPath], {
           cwd: repoRoot,
           encoding: "utf-8",
