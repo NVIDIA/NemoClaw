@@ -3192,6 +3192,8 @@ Other HTTP failures are not retried.
 If provider verification or that request fails, the command leaves or restores the previous OpenShell selection and removes the provider only when it can verify the revision created by this switch.
 If removal was not attempted or could not be confirmed, rerun onboarding before using that provider route or retrying the switch.
 Provider updates for DNS-backed HTTPS routes occur after route selection.
+If sandbox verification fails after an existing provider update succeeds, NemoClaw restores the previous inference selection but leaves the updated provider binding in place.
+Rerun onboarding before using that provider route or retrying the switch.
 If NemoClaw rejects an update before the provider command runs, the provider binding stays unchanged.
 If a provider command fails without confirming that no change occurred, provider state may be partial.
 If the error says that provider state may be partial, rerun onboarding to reconcile the provider before using the route or rerunning `inference set`.

@@ -138,6 +138,8 @@ A rebuild reuses the recorded endpoint and cannot change it.
 
 DNS-backed HTTPS routes use an HTTPS Pin Runtime binding.
 Provider updates occur after OpenShell selects the new route.
+If sandbox verification fails after an existing provider update succeeds, NemoClaw restores the previous inference selection but leaves the updated provider binding in place.
+Rerun onboarding before using that provider route or retrying the switch.
 If an update fails, NemoClaw attempts to restore the previously recorded provider and model.
 If NemoClaw rejects the update before the provider command runs, the provider binding stays unchanged.
 After a provider command fails without confirming that no change occurred, provider state may be partial.

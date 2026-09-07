@@ -424,6 +424,106 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
     );
   });
 
+  it("reports an updated binding when sandbox verification restores the prior selection (#9806)", async () => {
+    vi.stubEnv("NEMOCLAW_OLLAMA_PROXY_TOKEN", "real-upstream-secret");
+    const capture = providerCapture({
+      providerName: "compatible-endpoint",
+      providerType: "openai",
+      credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+    });
+    const adapter = mockAdapter();
+    const deps = createDeps({
+      config: {
+        agents: { defaults: { model: { primary: "inference/old-model" } } },
+        models: { providers: { inference: { api: "openai-completions", models: [] } } },
+      },
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "compatible-endpoint",
+        model: "old-model",
+        endpointUrl: "http://127.0.0.1:11434/v1",
+        endpointSource: "onboard",
+        credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+        preferredInferenceApi: "openai-completions",
+      },
+      session: baseSession({
+        provider: "compatible-endpoint",
+        model: "old-model",
+        endpointUrl: "http://127.0.0.1:11434/v1",
+        credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+        preferredInferenceApi: "openai-completions",
+      }),
+      ensureHttpsPinRuntimeAdapter: adapter,
+      captureOpenshell: capture,
+      probeSandboxRoute: () => ({
+        ok: false,
+        detail: "sandbox inference invocation probe returned HTTP 500",
+        httpStatus: 500,
+      }),
+    });
+
+    const failure = await runInferenceSet(
+      {
+        provider: "compatible-endpoint",
+        model: "new-model",
+        endpointUrl: "https://compatible.example/v1",
+        credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+        inferenceApi: "openai-completions",
+      },
+      deps,
+    ).catch((error: Error) => error);
+
+    expect(failure).toBeInstanceOf(InferenceSetError);
+    const message = (failure as Error).message;
+    expect(message).toContain("sandbox inference invocation probe returned HTTP 500");
+    expect(message).toContain("The previous OpenShell inference selection was restored");
+    expect(message).toContain("existing OpenShell provider binding was updated");
+    expect(message).toContain(
+      "Rerun onboarding to reconcile the provider before using this provider route or retrying this switch.",
+    );
+    expect(message).not.toContain(
+      "The existing OpenShell provider binding and inference selection were not changed.",
+    );
+    expect(adapter).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        gatewayName: "nemoclaw",
+        provider: "compatible-endpoint",
+        endpointUrl: "https://compatible.example/v1",
+        providerType: "openai",
+        credentialValue: "real-upstream-secret",
+      }),
+    );
+    expect(
+      capture.mock.calls.filter(([args]) => args[0] === "provider" && args[1] === "update"),
+    ).toHaveLength(1);
+    expect(
+      capture.mock.calls
+        .filter(([args]) => args[0] === "inference" && args[1] === "set")
+        .map(([args]) => args),
+    ).toEqual([
+      expect.arrayContaining([
+        "--provider",
+        "compatible-endpoint",
+        "--model",
+        "new-model",
+        "--no-verify",
+      ]),
+      expect.arrayContaining([
+        "--provider",
+        "compatible-endpoint",
+        "--model",
+        "old-model",
+        "--no-verify",
+      ]),
+    ]);
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.calls.updateSession).not.toHaveBeenCalled();
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+    expect(deps.calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
+    expect(deps.calls.appendAuditEntry).not.toHaveBeenCalled();
+  });
+
   it("restores the prior selection when provider profile preparation fails (#9806)", async () => {
     vi.stubEnv("COMPATIBLE_API_KEY", "real-upstream-secret");
     const capture = providerCapture({

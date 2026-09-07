@@ -1510,18 +1510,23 @@ async function runInferenceSetWithoutHostLock(
     const detail = error instanceof Error ? error.message : String(error);
     const exitCode = error instanceof InferenceSetError ? error.exitCode : 1;
     if (!appliedInferenceSelection) {
-      try {
-        await providerMutation.rollback();
-      } catch (rollbackError) {
-        const rollbackDetail =
-          rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
-        throw new InferenceSetError(`${detail}\n  ${rollbackDetail}`, exitCode);
+      if (providerMutation.action === "create") {
+        try {
+          await providerMutation.rollback();
+        } catch (rollbackError) {
+          const rollbackDetail =
+            rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
+          throw new InferenceSetError(`${detail}\n  ${rollbackDetail}`, exitCode);
+        }
       }
-      const unchanged =
+      const recovery =
         providerMutation.action === "create"
           ? "The newly created OpenShell provider was removed; the inference selection was not changed."
-          : "The existing OpenShell provider binding and inference selection were not changed.";
-      throw new InferenceSetError(`${detail}\n  ${unchanged}`, exitCode);
+          : appliedProvider
+            ? "The previous OpenShell inference selection was restored, but the existing OpenShell provider binding was updated. " +
+              "Rerun onboarding to reconcile the provider before using this provider route or retrying this switch."
+            : "The existing OpenShell provider binding and inference selection were not changed.";
+      throw new InferenceSetError(`${detail}\n  ${recovery}`, exitCode);
     }
     const residual = appliedProvider
       ? httpsPinProviderBinding
