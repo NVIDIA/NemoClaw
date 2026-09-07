@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { describe, expect, it, vi } from "vitest";
 import type { OnboardPolicyApplicationDeps } from "../../src/lib/onboard/policy-selection.js";
+import { restoreEnv } from "../helpers/env-test-helpers";
 
 const require = createRequire(import.meta.url);
 
@@ -164,11 +165,7 @@ describe("onboarding policy application production wiring", () => {
         "lock released",
       ]);
     } finally {
-      if (priorMinimalBootstrap === undefined) {
-        delete process.env.NEMOCLAW_MINIMAL_BOOTSTRAP;
-      } else {
-        process.env.NEMOCLAW_MINIMAL_BOOTSTRAP = priorMinimalBootstrap;
-      }
+      restoreEnv("NEMOCLAW_MINIMAL_BOOTSTRAP", priorMinimalBootstrap);
       restoreRequireCache(priorCache);
     }
   });
