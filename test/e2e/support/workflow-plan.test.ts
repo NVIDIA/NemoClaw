@@ -662,6 +662,15 @@ describe("E2E workflow plan", () => {
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-standard", "jetson-nvmap-gpu"]);
   });
 
+  it.each([
+    "nemoclaw-blueprint/router/pool-config.yaml",
+    "test/e2e/live/model-router-provider-routed-inference-helpers.ts",
+  ])("selects the Model Router target when %s changes", (changedFile) => {
+    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
+      "model-router-provider-routed-inference",
+    );
+  });
+
   it("selects only the catalogue Personal public-fetch owner for an assertion change", () => {
     const plan = buildE2eWorkflowPlan(
       {},

@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import {
   buildSelectedOpenShellSubprocessEnv,
   withSelectedOpenShellCommandOptions,
@@ -10,9 +9,11 @@ import {
   launchForwardService,
   type ForwardServiceTarget,
 } from "../../adapters/openshell/forward-service";
+import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import { isLegacySandboxForwardListed } from "../../adapters/openshell/forward-service-migration";
 import {
   captureOpenshell,
+  captureResolvedOpenshell,
   type OpenShellRuntimeSelection,
   runOpenshell,
 } from "../../adapters/openshell/runtime";
@@ -84,40 +85,34 @@ export function createHermesPortableForwardRecoveryInput(input: {
     deps: {
       assertCurrent: input.assertCurrent,
       assertRollbackCurrent: input.assertRollbackCurrent,
-      isReachable: isLocalForwardReachable,
-      launch: (port) =>
-        launchForwardService(
-          forwardServiceTarget(
-            input.commandAuthority.executablePath,
-            input.gatewayName,
-            input.sandboxName,
-            port,
-            "127.0.0.1",
-          ),
-          { sourceEnvironment: input.commandAuthority.env },
-        ),
-      migrateLegacy: (ports) =>
-        retireProductionLegacySandboxForwards(input.sandboxName, input.gatewayName, ports, {
-          capture: (gatewayName) =>
-            captureOpenshell(["forward", "list", "--gateway", gatewayName], {
-              env: input.commandAuthority.env,
-              openshellBinary: input.commandAuthority.executablePath,
-              replaceEnv: true,
-              ignoreError: true,
-              includeStreams: true,
-              timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-            }),
-          isReachable: isLocalForwardReachable,
-          run: (gatewayName, sandboxName, port) =>
-            runOpenshell(["forward", "stop", String(port), sandboxName, "--gateway", gatewayName], {
-              env: input.commandAuthority.env,
-              openshellBinary: input.commandAuthority.executablePath,
-              replaceEnv: true,
-              ignoreError: true,
-              stdio: "ignore",
-              timeout: 30_000,
-            }),
+      captureCurrentList: (args, timeout) =>
+        captureResolvedOpenshell([...args], {
+          env: input.commandAuthority.env,
+          openshellBinary: input.commandAuthority.executablePath,
+          replaceEnv: true,
+          ignoreError: true,
+          includeStreams: true,
+          timeout,
         }),
+      captureRollbackList: (args, timeout) =>
+        captureResolvedOpenshell([...args], {
+          env: input.commandAuthority.env,
+          openshellBinary: input.commandAuthority.executablePath,
+          replaceEnv: true,
+          ignoreError: true,
+          includeStreams: true,
+          timeout,
+        }),
+      runCurrentMutation: (args, timeout) =>
+        runOpenshell([...args], {
+          env: input.commandAuthority.env,
+          openshellBinary: input.commandAuthority.executablePath,
+          replaceEnv: true,
+          ignoreError: true,
+          stdio: "ignore",
+          timeout,
+        }),
+      isPortReachable: isLocalForwardReachable,
     },
   };
 }
@@ -477,17 +472,19 @@ export function ensureMessagingHostForwardHealthy(
 ): boolean | null {
   const forward = getSandboxMessagingHostForward(sandboxName);
   if (!forward) return null;
-  const health = isSandboxPortForwardHealthy(sandboxName, forward.port, undefined, runtimeSelection);
+  const health = isSandboxPortForwardHealthy(
+    sandboxName,
+    forward.port,
+    undefined,
+    runtimeSelection,
+  );
   if (health === true) return true;
   return ensureSandboxPortForwardForPort(sandboxName, forward.port, { runtimeSelection });
 }
 
 export function recoverMessagingHostForward(
   sandboxName: string,
-  {
-    quiet,
-    runtimeSelection,
-  }: { quiet: boolean; runtimeSelection?: OpenShellRuntimeSelection },
+  { quiet, runtimeSelection }: { quiet: boolean; runtimeSelection?: OpenShellRuntimeSelection },
 ): boolean | null {
   const recovered = ensureMessagingHostForwardHealthy(sandboxName, runtimeSelection);
   if (!quiet && recovered === false) {
@@ -624,10 +621,7 @@ export function resolveSandboxLaunchForwardPorts(sandboxName: string): number[] 
 export function recoverDeclaredAgentForwardPorts(
   sandboxName: string,
   recoveryPort: number,
-  {
-    quiet,
-    runtimeSelection,
-  }: { quiet: boolean; runtimeSelection?: OpenShellRuntimeSelection },
+  { quiet, runtimeSelection }: { quiet: boolean; runtimeSelection?: OpenShellRuntimeSelection },
 ): boolean | null {
   const recovered = ensureDeclaredAgentForwardPortsHealthy(
     sandboxName,

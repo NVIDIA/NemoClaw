@@ -44,6 +44,7 @@ describe("command-registry", () => {
       expect(usages).toContain("nemoclaw tunnel stop");
       expect(usages).toContain("nemoclaw tunnel status");
       expect(usages).toContain("nemoclaw status");
+      expect(usages).toContain("nemoclaw doctor");
     });
 
     it.each(globalCommands())("$usage has global scope", (cmd) => {
@@ -169,11 +170,12 @@ describe("command-registry", () => {
   });
 
   describe("globalCommandTokens()", () => {
-    it("returns the exact set of 29 tokens matching the global dispatch commands", () => {
+    it("returns the exact set of 30 tokens matching the global dispatch commands", () => {
       const tokens = globalCommandTokens();
       const expected = new Set([
         "agents",
         "completion",
+        "config",
         "host",
         "onboard",
         "profiles",
@@ -187,6 +189,7 @@ describe("command-registry", () => {
         "stop",
         "tunnel",
         "status",
+        "doctor",
         "debug",
         "uninstall",
         "credentials",

@@ -67,7 +67,7 @@ jobs:
           cache: npm
 
       - name: Install docs-only check dependencies
-        run: npm install --ignore-scripts
+        run: npm install --ignore-scripts --no-audit --no-fund
 
       - name: Install hadolint
         shell: bash
@@ -131,6 +131,8 @@ jobs:
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
             scripts/lib/reviewed-npm-audit.mts
+            scripts/lib/npm-audit-receipt.mts
+            scripts/lib/repository-input-path.mts
           sparse-checkout-cone-mode: false
 
       - name: Download verified OpenShell SDK archive
@@ -161,7 +163,7 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci --ignore-scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Verify Hugging Face model references
         run: npm run catalog:verify-hugging-face
@@ -200,6 +202,8 @@ jobs:
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
             scripts/lib/reviewed-npm-audit.mts
+            scripts/lib/npm-audit-receipt.mts
+            scripts/lib/repository-input-path.mts
           sparse-checkout-cone-mode: false
 
       - name: Locate exact base-controlled SDK package run
@@ -385,6 +389,8 @@ jobs:
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
             scripts/lib/reviewed-npm-audit.mts
+            scripts/lib/npm-audit-receipt.mts
+            scripts/lib/repository-input-path.mts
           sparse-checkout-cone-mode: false
 
       - name: Download verified OpenShell SDK archive
@@ -444,6 +450,8 @@ jobs:
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
             scripts/lib/reviewed-npm-audit.mts
+            scripts/lib/npm-audit-receipt.mts
+            scripts/lib/repository-input-path.mts
           sparse-checkout-cone-mode: false
 
       - name: Download verified OpenShell SDK archive
@@ -502,6 +510,8 @@ jobs:
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
             scripts/lib/reviewed-npm-audit.mts
+            scripts/lib/npm-audit-receipt.mts
+            scripts/lib/repository-input-path.mts
           sparse-checkout-cone-mode: false
 
       - name: Download verified OpenShell SDK archive
@@ -518,7 +528,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -539,6 +549,8 @@ jobs:
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
             scripts/lib/reviewed-npm-audit.mts
+            scripts/lib/npm-audit-receipt.mts
+            scripts/lib/repository-input-path.mts
           sparse-checkout-cone-mode: false
 
       - name: Audit reviewed production npm graphs
@@ -546,6 +558,7 @@ jobs:
         with:
           target-root: ${{ github.workspace }}
           report-dir: artifacts/reviewed-npm-audit
+          cache-directory: ${{ runner.temp }}/reviewed-npm-audit-cache
 
   cli-test-shards:
     needs: [changes, compile-artifacts, openshell-sdk-package]
@@ -589,6 +602,8 @@ jobs:
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
             scripts/lib/reviewed-npm-audit.mts
+            scripts/lib/npm-audit-receipt.mts
+            scripts/lib/repository-input-path.mts
           sparse-checkout-cone-mode: false
 
       - name: Download verified OpenShell SDK archive
@@ -715,6 +730,8 @@ jobs:
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
             scripts/lib/reviewed-npm-audit.mts
+            scripts/lib/npm-audit-receipt.mts
+            scripts/lib/repository-input-path.mts
           sparse-checkout-cone-mode: false
 
       - name: Download verified OpenShell SDK archive
@@ -765,6 +782,8 @@ jobs:
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
             scripts/lib/reviewed-npm-audit.mts
+            scripts/lib/npm-audit-receipt.mts
+            scripts/lib/repository-input-path.mts
           sparse-checkout-cone-mode: false
 
       - name: Download verified OpenShell SDK archive

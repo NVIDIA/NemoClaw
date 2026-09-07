@@ -4,10 +4,13 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 
+import { createCliOpenShellSandboxCommandExecutor } from "../../adapters/openshell/sandbox-command-cli";
+import type {
+  OpenShellSandboxCommandExecutor,
+  OpenShellSandboxCommandOutcome,
+} from "../../adapters/openshell/sandbox-command";
 import {
-  cleanupFailureMessage,
-  runSandboxExecChild,
-  runSandboxExecCommand,
+  execSandbox,
   type SandboxExecChild,
   type SandboxExecCleanupDeps,
   type SandboxExecSignalSource,
@@ -45,20 +48,80 @@ function cleanupDeps(overrides: Partial<SandboxExecCleanupDeps> = {}): SandboxEx
   };
 }
 
-describe("runSandboxExecCommand mutable OpenClaw cleanup (#6047)", () => {
+async function runExecCase(options: {
+  cleanupDeps: SandboxExecCleanupDeps;
+  command?: readonly string[];
+  executor?: OpenShellSandboxCommandExecutor;
+  onRun?: () => void;
+  outcome?: OpenShellSandboxCommandOutcome;
+  release?: () => void;
+}): Promise<{ exitCode: number; stderr: string[] }> {
+  const exitSignal = new Error("__exec_exit__");
+  const stderr: string[] = [];
+  let exitCode = Number.NaN;
+  const executor =
+    options.executor ??
+    ({
+      probeDirectory: async () => ({ state: "present" }),
+      runStreaming: async () => {
+        options.onRun?.();
+        return {
+          outcome: options.outcome ?? { kind: "completed", exitCode: 0 },
+          release: options.release ?? (() => {}),
+        };
+      },
+    } satisfies OpenShellSandboxCommandExecutor);
+  const errorSpy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+    stderr.push(args.map(String).join(" "));
+  });
+
+  try {
+    await execSandbox(
+      "alpha",
+      options.command ?? ["true"],
+      {},
+      {
+        selectGateway: () => ({ outcome: "unregistered", gatewayName: null }),
+        commandExecutor: executor,
+        cleanupDeps: options.cleanupDeps,
+        policyHint: {
+          now: () => 0,
+          env: {},
+          probeLogs: () => "",
+          enableAudit: () => {},
+          sleep: async () => {},
+          attempts: 1,
+          writeStderr: () => {},
+        },
+        exit: ((code: number) => {
+          exitCode = code;
+          throw exitSignal;
+        }) as (code: number) => never,
+      },
+    );
+    throw new Error("execSandbox returned without exiting");
+  } catch (error) {
+    expect(error).toBe(exitSignal);
+  } finally {
+    errorSpy.mockRestore();
+  }
+  return { exitCode, stderr };
+}
+
+describe("execSandbox mutable OpenClaw cleanup (#6047)", () => {
   it("preserves a nonzero command status when the mutable contract is already healthy", async () => {
     const repair = vi.fn(() => ({ applied: true as const, verified: true, errors: [] }));
-    const completion = await runSandboxExecCommand(
-      "openshell",
-      "alpha",
-      ["false"],
-      {},
-      () => ({ status: 42 }),
-      cleanupDeps({ repairMutableConfigPerms: repair }),
-    );
+    const release = vi.fn();
+    const result = await runExecCase({
+      command: ["false"],
+      outcome: { kind: "completed", exitCode: 42 },
+      cleanupDeps: cleanupDeps({ repairMutableConfigPerms: repair }),
+      release,
+    });
 
-    expect(completion).toEqual({ code: 42, commandCode: 42 });
+    expect(result.exitCode).toBe(42);
     expect(repair).not.toHaveBeenCalled();
+    expect(release).toHaveBeenCalledOnce();
   });
 
   it("repairs a tightened tree after the command, re-inspects it, and preserves status 42", async () => {
@@ -78,44 +141,40 @@ describe("runSandboxExecCommand mutable OpenClaw cleanup (#6047)", () => {
       return { applied: true as const, verified: true, errors: [] };
     });
 
-    const completion = await runSandboxExecCommand(
-      "openshell",
-      "alpha",
-      ["bash", "-c", "openclaw doctor --fix"],
-      {},
-      () => {
-        order.push("command");
-        return { status: 42 };
-      },
-      cleanupDeps({ inspectMutableConfigPerms: inspect, repairMutableConfigPerms: repair }),
-    );
+    const result = await runExecCase({
+      command: ["bash", "-c", "openclaw doctor --fix"],
+      outcome: { kind: "completed", exitCode: 42 },
+      onRun: () => order.push("command"),
+      cleanupDeps: cleanupDeps({
+        inspectMutableConfigPerms: inspect,
+        repairMutableConfigPerms: repair,
+      }),
+      release: () => order.push("release"),
+    });
 
-    expect(completion).toEqual({ code: 42, commandCode: 42 });
-    expect(order).toEqual(["command", "inspect-before", "repair", "inspect-after"]);
+    expect(result.exitCode).toBe(42);
+    expect(order).toEqual(["command", "inspect-before", "repair", "inspect-after", "release"]);
   });
 
   it("lets cleanup failure override status 42 and reports both statuses", async () => {
-    const completion = await runSandboxExecCommand(
-      "openshell",
-      "alpha",
-      ["false"],
-      {},
-      () => ({ status: 42 }),
-      cleanupDeps({
+    const order: string[] = [];
+    const result = await runExecCase({
+      command: ["false"],
+      outcome: { kind: "completed", exitCode: 42 },
+      cleanupDeps: cleanupDeps({
         inspectMutableConfigPerms: () => TIGHTENED_MUTABLE_CONFIG,
-        repairMutableConfigPerms: () => ({
-          applied: true,
-          verified: false,
-          errors: ["chmod denied"],
-        }),
+        repairMutableConfigPerms: () => {
+          order.push("repair");
+          return { applied: true, verified: false, errors: ["chmod denied"] };
+        },
       }),
-    );
+      release: () => order.push("release"),
+    });
 
-    expect(completion).toMatchObject({ code: 1, commandCode: 42 });
-    expect(completion.cleanupError).toContain("chmod denied");
-    expect(cleanupFailureMessage(completion.commandCode, completion.cleanupError || "")).toContain(
-      "command exit 42; cleanup exit 1",
-    );
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr.join("\n")).toContain("command exit 42; cleanup exit 1");
+    expect(result.stderr.join("\n")).toContain("chmod denied");
+    expect(order).toEqual(["repair", "release"]);
   });
 
   it.each([
@@ -126,58 +185,51 @@ describe("runSandboxExecCommand mutable OpenClaw cleanup (#6047)", () => {
     const inspect = vi.fn(() => HEALTHY_MUTABLE_CONFIG);
     const repair = vi.fn(() => ({ applied: true as const, verified: true, errors: [] }));
 
-    const completion = await runSandboxExecCommand(
-      "openshell",
-      "alpha",
-      ["true"],
-      {},
-      () => ({ status: 0 }),
-      cleanupDeps({
+    const result = await runExecCase({
+      outcome: { kind: "completed", exitCode: 0 },
+      cleanupDeps: cleanupDeps({
         getSandbox: () => entry,
         inspectMutableConfigPerms: inspect,
         repairMutableConfigPerms: repair,
       }),
-    );
+    });
 
-    expect(completion).toEqual({ code: 0, commandCode: 0 });
+    expect(result.exitCode).toBe(0);
     expect(inspect).not.toHaveBeenCalled();
     expect(repair).not.toHaveBeenCalled();
   });
 
   it("still verifies cleanup after an OpenShell transport failure", async () => {
     const inspect = vi.fn(() => HEALTHY_MUTABLE_CONFIG);
-    const completion = await runSandboxExecCommand(
-      "openshell",
-      "alpha",
-      ["true"],
-      {},
-      () => ({ status: null, error: new Error("ENOENT") }),
-      cleanupDeps({ inspectMutableConfigPerms: inspect }),
-    );
+    const release = vi.fn();
+    const result = await runExecCase({
+      outcome: { kind: "failed", error: { kind: "unavailable", message: "ENOENT" } },
+      cleanupDeps: cleanupDeps({ inspectMutableConfigPerms: inspect }),
+      release,
+    });
 
-    expect(completion).toEqual({ code: 1, commandCode: 1, invocationError: "ENOENT" });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr.join("\n")).toContain("Failed to invoke openshell: ENOENT");
     expect(inspect).toHaveBeenCalledOnce();
+    expect(release).toHaveBeenCalledOnce();
   });
 
   it("reports registry read failure as cleanup failure after the command", async () => {
     const inspect = vi.fn(() => HEALTHY_MUTABLE_CONFIG);
-    const completion = await runSandboxExecCommand(
-      "openshell",
-      "alpha",
-      ["false"],
-      {},
-      () => ({ status: 42 }),
-      cleanupDeps({
+    const result = await runExecCase({
+      command: ["false"],
+      outcome: { kind: "completed", exitCode: 42 },
+      cleanupDeps: cleanupDeps({
         getSandbox: () => {
           throw new Error("invalid registry JSON");
         },
         inspectMutableConfigPerms: inspect,
       }),
-    );
+    });
 
-    expect(completion).toMatchObject({ code: 1, commandCode: 42 });
-    expect(completion.cleanupError).toContain("sandbox registry lookup failed");
-    expect(completion.cleanupError).toContain("invalid registry JSON");
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr.join("\n")).toContain("sandbox registry lookup failed");
+    expect(result.stderr.join("\n")).toContain("invalid registry JSON");
     expect(inspect).not.toHaveBeenCalled();
   });
 
@@ -204,7 +256,14 @@ describe("runSandboxExecCommand mutable OpenClaw cleanup (#6047)", () => {
     };
     const signalSource: SandboxExecSignalSource = {
       add: (name, listener) => signalEvents.on(name, listener),
-      remove: (name, listener) => signalEvents.off(name, listener),
+      remove: (name, listener) => {
+        const recordRelease = {
+          SIGTERM: () => order.push("release"),
+          SIGINT: () => undefined,
+        }[name];
+        recordRelease();
+        signalEvents.off(name, listener);
+      },
     };
     const inspect = vi.fn(() => {
       order.push("cleanup");
@@ -213,21 +272,23 @@ describe("runSandboxExecCommand mutable OpenClaw cleanup (#6047)", () => {
       return HEALTHY_MUTABLE_CONFIG;
     });
 
-    const pending = runSandboxExecCommand(
-      "openshell",
-      "alpha",
-      ["sleep", "30"],
-      {},
-      (binary, args) => runSandboxExecChild(binary, args, {}, () => child, signalSource),
-      cleanupDeps({ inspectMutableConfigPerms: inspect }),
-    );
+    const executor = createCliOpenShellSandboxCommandExecutor({
+      resolveBinary: () => "openshell",
+      spawnChild: () => child,
+      signalSource,
+    });
+    const pending = runExecCase({
+      command: ["sleep", "30"],
+      executor,
+      cleanupDeps: cleanupDeps({ inspectMutableConfigPerms: inspect }),
+    });
     signalEvents.emit(signal);
-    const completion = await pending;
+    const result = await pending;
 
-    expect(completion).toEqual({ code, commandCode: code });
+    expect(result.exitCode).toBe(code);
     expect(child.kill).toHaveBeenCalledWith(signal);
     expect(child.kill).toHaveBeenCalledTimes(1);
-    expect(order).toEqual([`kill:${signal}`, "close", "cleanup"]);
+    expect(order).toEqual([`kill:${signal}`, "close", "cleanup", "release"]);
     expect(signalEvents.listenerCount("SIGTERM")).toBe(0);
     expect(signalEvents.listenerCount("SIGINT")).toBe(0);
   });
@@ -252,20 +313,22 @@ describe("runSandboxExecCommand mutable OpenClaw cleanup (#6047)", () => {
       return HEALTHY_MUTABLE_CONFIG;
     });
 
-    const pending = runSandboxExecCommand(
-      "openshell",
-      "alpha",
-      ["sleep", "30"],
-      {},
-      (binary, args) => runSandboxExecChild(binary, args, {}, () => child, signalSource),
-      cleanupDeps({ inspectMutableConfigPerms: inspect }),
-    );
+    const executor = createCliOpenShellSandboxCommandExecutor({
+      resolveBinary: () => "openshell",
+      spawnChild: () => child,
+      signalSource,
+    });
+    const pending = runExecCase({
+      command: ["sleep", "30"],
+      executor,
+      cleanupDeps: cleanupDeps({ inspectMutableConfigPerms: inspect }),
+    });
     signalEvents.emit("SIGINT");
     child.signalCode = "SIGINT";
     childEvents.emit("close", null, "SIGINT");
-    const completion = await pending;
+    const result = await pending;
 
-    expect(completion).toEqual({ code: 130, commandCode: 130 });
+    expect(result.exitCode).toBe(130);
     expect(child.kill).not.toHaveBeenCalled();
     expect(inspect).toHaveBeenCalledOnce();
     expect(signalEvents.listenerCount("SIGINT")).toBe(0);
@@ -281,16 +344,12 @@ describe("runSandboxExecCommand mutable OpenClaw cleanup (#6047)", () => {
         reason: "could not stat config (container stopped)",
       });
 
-    const completion = await runSandboxExecCommand(
-      "openshell",
-      "alpha",
-      ["true"],
-      {},
-      () => ({ status: 0 }),
-      cleanupDeps({ inspectMutableConfigPerms: inspect }),
-    );
+    const result = await runExecCase({
+      outcome: { kind: "completed", exitCode: 0 },
+      cleanupDeps: cleanupDeps({ inspectMutableConfigPerms: inspect }),
+    });
 
-    expect(completion).toMatchObject({ code: 1, commandCode: 0 });
-    expect(completion.cleanupError).toContain("post-repair permission verification unavailable");
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr.join("\n")).toContain("post-repair permission verification unavailable");
   });
 });

@@ -466,6 +466,15 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
     };
   };
 
+  const expectedStatusCall = (server: string) => ({
+    sandboxName: "alpha",
+    server,
+    options: {
+      probeCredentialResolution: true,
+      runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
+    },
+  });
+
   it("refuses a hostless restart whose stored credential is not verified (#10750)", () => {
     const payload = runCredentialRestart({
       probeResponses: {
@@ -486,13 +495,7 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
       exitCode: 1,
       policyApplyCalls: 0,
       providerCalls: [],
-      statusCalls: [
-        {
-          sandboxName: "alpha",
-          server: "example",
-          options: { probeCredentialResolution: true },
-        },
-      ],
+      statusCalls: [expectedStatusCall("example")],
     });
   }, 75_000);
 
@@ -516,13 +519,7 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
       exitCode: 1,
       policyApplyCalls: 0,
       providerCalls: [],
-      statusCalls: [
-        {
-          sandboxName: "alpha",
-          server: "example",
-          options: { probeCredentialResolution: true },
-        },
-      ],
+      statusCalls: [expectedStatusCall("example")],
     });
   }, 75_000);
 
@@ -537,13 +534,7 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
       outcome: "refreshed",
       policyApplyCalls: 2,
       providerCalls: ["provider update alpha-mcp-example"],
-      statusCalls: [
-        {
-          sandboxName: "alpha",
-          server: "example",
-          options: { probeCredentialResolution: true },
-        },
-      ],
+      statusCalls: [expectedStatusCall("example")],
     });
   }, 75_000);
 
@@ -563,13 +554,7 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
       exitCode: 1,
       policyApplyCalls: 0,
       providerCalls: [],
-      statusCalls: [
-        {
-          sandboxName: "alpha",
-          server: "example",
-          options: { probeCredentialResolution: true },
-        },
-      ],
+      statusCalls: [expectedStatusCall("example")],
     });
   }, 75_000);
 
@@ -595,21 +580,7 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
       exitCode: 1,
       policyApplyCalls: 0,
       providerCalls: [],
+      statusCalls: [expectedStatusCall("example"), expectedStatusCall("later")],
     });
-    expect(payload.statusCalls).toHaveLength(2);
-    expect(payload.statusCalls).toEqual(
-      expect.arrayContaining([
-        {
-          sandboxName: "alpha",
-          server: "example",
-          options: { probeCredentialResolution: true },
-        },
-        {
-          sandboxName: "alpha",
-          server: "later",
-          options: { probeCredentialResolution: true },
-        },
-      ]),
-    );
   }, 75_000);
 });

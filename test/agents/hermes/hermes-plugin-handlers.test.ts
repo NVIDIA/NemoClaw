@@ -22,6 +22,81 @@ function runPython(script: string): string {
 }
 
 describe("Hermes NemoClaw plugin handlers", () => {
+  it("uses only the migrated Hermes home when no explicit home is set", () => {
+    const output = runPython(`
+import importlib.util
+import io
+import json
+import os
+import pathlib
+import sys
+import types
+
+plugin_path = pathlib.Path(sys.argv[1])
+yaml_stub = types.ModuleType("yaml")
+yaml_stub.safe_load = lambda *_args, **_kwargs: {}
+sys.modules.setdefault("yaml", yaml_stub)
+spec = importlib.util.spec_from_file_location("hermes_plugin", plugin_path)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+os.environ.pop("HERMES_HOME", None)
+dotenv_by_path = {
+    "/sandbox/.hermes/.env": "NEMOCLAW_TEST_VALUE=current\\n",
+    "/sandbox/.hermes-data/.env": "NEMOCLAW_TEST_VALUE=legacy\\n",
+}
+opened = []
+def fake_open(path, *_args, **_kwargs):
+    opened.append(path)
+    return io.StringIO(dotenv_by_path[path])
+module.open = fake_open
+module.os.path.exists = lambda path: path in dotenv_by_path
+
+loaded_homes = []
+hermes_cli = types.ModuleType("hermes_cli")
+env_loader = types.ModuleType("hermes_cli.env_loader")
+env_loader.load_hermes_dotenv = lambda *, hermes_home: loaded_homes.append(hermes_home)
+hermes_cli.env_loader = env_loader
+sys.modules["hermes_cli"] = hermes_cli
+sys.modules["hermes_cli.env_loader"] = env_loader
+
+module._get_sandbox_info = lambda: {
+    "agent": "hermes",
+    "model": "nemotron",
+    "provider": "nvidia",
+    "base_url": "http://localhost:8642/v1",
+    "gateway": "running",
+    "port": 8642,
+}
+module._active_managed_gateway_services = lambda: []
+module._broker_mode_enabled = lambda: False
+
+value = module._get_env_value("NEMOCLAW_TEST_VALUE")
+module._load_hermes_dotenv()
+context = module._build_nemoclaw_agent_context()
+print(json.dumps({
+    "value": value,
+    "opened": opened,
+    "loaded_homes": loaded_homes,
+    "context": context,
+}))
+`);
+
+    const result = JSON.parse(output) as {
+      value: string;
+      opened: string[];
+      loaded_homes: string[];
+      context: string;
+    };
+
+    expect(result.value).toBe("current");
+    expect(result.opened).toContain("/sandbox/.hermes/.env");
+    expect(result.opened).not.toContain("/sandbox/.hermes-data/.env");
+    expect(result.loaded_homes).toEqual(["/sandbox/.hermes"]);
+    expect(result.context).toContain("Parent Hermes sandbox config lives under /sandbox/.hermes");
+    expect(result.context).not.toContain(".hermes-data");
+  });
+
   it("uses only allocated ASCII API ports from the supervisor or marker (#8543)", () => {
     const output = runPython(`
 import importlib.util
@@ -281,6 +356,108 @@ print(json.dumps(result))
     expect(result.firecrawl_url).toBe("http://host.openshell.internal:11436/firecrawl/v2/search");
   });
 
+  it("blocks private broker URLs and patches loaded Hermes URL guards", () => {
+    const output = runPython(`
+import importlib.util
+import json
+import os
+import pathlib
+import sys
+import types
+
+plugin_path = pathlib.Path(sys.argv[1])
+yaml_stub = types.ModuleType("yaml")
+yaml_stub.safe_load = lambda *_args, **_kwargs: {}
+sys.modules.setdefault("yaml", yaml_stub)
+os.environ["NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER"] = "1"
+
+def add_module(name, module):
+    sys.modules[name] = module
+    parent, _, child = name.rpartition(".")
+    if parent:
+        parent_module = sys.modules.setdefault(parent, types.ModuleType(parent))
+        setattr(parent_module, child, module)
+    return module
+
+url_safety = add_module("tools.url_safety", types.ModuleType("tools.url_safety"))
+url_safety.is_safe_url = lambda _url: True
+web_tools = add_module("tools.web_tools", types.ModuleType("tools.web_tools"))
+web_tools.is_safe_url = lambda _url: True
+browser_tool = add_module("tools.browser_tool", types.ModuleType("tools.browser_tool"))
+browser_tool._is_safe_url = lambda _url: True
+browser_tool._allow_private_urls_resolved = True
+
+spec = importlib.util.spec_from_file_location("hermes_plugin", plugin_path)
+plugin = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(plugin)
+plugin._load_hermes_config = lambda: {"security": {"allow_private_urls": False}}
+
+blocked_urls = [
+    "http://169.254.169.254/latest/meta-data",
+    "http://169.254.170.2/v2/credentials",
+    "http://169.254.169.253/metadata",
+    "http://100.100.100.200/latest/meta-data",
+    "http://[fd00:ec2::254]/latest/meta-data",
+    "http://metadata.google.internal/computeMetadata/v1",
+    "http://metadata.goog/computeMetadata/v1",
+    "http://127.0.0.1",
+    "http://[::1]",
+    "http://10.0.0.1",
+    "http://172.16.0.1",
+    "http://192.168.0.1",
+    "http://[fc00::1]",
+    "http://169.254.1.1",
+    "http://[fe80::1]",
+    "http://240.0.0.1",
+    "http://224.0.0.1",
+    "http://[ff02::1]",
+    "http://0.0.0.0",
+    "http://[::]",
+    "http://100.64.0.1",
+    "https://service.internal",
+    "https://service.local",
+    "https://service.lan",
+    "https://single-label",
+    "https://123.456",
+    "ftp://example.com/file",
+    "file:///etc/passwd",
+    "://missing-scheme",
+    "https://[bad",
+    "",
+]
+
+patched = plugin._install_broker_url_safety_patch()
+print(json.dumps({
+    "accepted": [
+        plugin._broker_safe_url("https://example.com/path"),
+        plugin._broker_safe_url("https://8.8.8.8/dns-query"),
+    ],
+    "blocked": [plugin._broker_safe_url(url) for url in blocked_urls],
+    "patched": patched,
+    "same_predicate": [
+        url_safety.is_safe_url is plugin._broker_safe_url,
+        web_tools.is_safe_url is plugin._broker_safe_url,
+        browser_tool._is_safe_url is plugin._broker_safe_url,
+    ],
+    "allow_private_urls": browser_tool._allow_private_urls_resolved,
+}))
+`);
+
+    const result = JSON.parse(output) as {
+      accepted: boolean[];
+      blocked: boolean[];
+      patched: boolean;
+      same_predicate: boolean[];
+      allow_private_urls: boolean;
+    };
+
+    expect(result.accepted).toEqual([true, true]);
+    expect(result.blocked.every((value) => value === false)).toBe(true);
+    expect(result.patched).toBe(true);
+    expect(result.same_predicate).toEqual([true, true, true]);
+    expect(result.allow_private_urls).toBe(false);
+  });
+
   it("normalizes raw messaging pseudo-tool responses before delivery", () => {
     const output = runPython(`
 import importlib.util
@@ -527,6 +704,80 @@ print(json.dumps({
     expect(result.discord_stale_target).toBe(
       'send_message: "to telegram: should not normalize on discord"',
     );
+  });
+
+  it("defers the run_agent patch until the first hook after plugin registration", () => {
+    const output = runPython(`
+import builtins
+import importlib.util
+import json
+import pathlib
+import sys
+import types
+
+plugin_path = pathlib.Path(sys.argv[1])
+yaml_stub = types.ModuleType("yaml")
+yaml_stub.safe_load = lambda *_args, **_kwargs: {}
+sys.modules.setdefault("yaml", yaml_stub)
+
+spec = importlib.util.spec_from_file_location("hermes_plugin", plugin_path)
+plugin = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(plugin)
+plugin._install_nous_tool_broker_patch = lambda: False
+plugin._install_googlechat_adapter = lambda _ctx: False
+
+hooks = {}
+class Context:
+    def register_tool(self, **_kwargs):
+        pass
+
+    def register_hook(self, name, callback):
+        hooks[name] = callback
+
+original_import = builtins.__import__
+def refuse_partial_run_agent(name, *args, **kwargs):
+    if name == "run_agent":
+        raise AssertionError("plugin registration imported partial run_agent")
+    return original_import(name, *args, **kwargs)
+
+builtins.__import__ = refuse_partial_run_agent
+try:
+    plugin.register(Context())
+finally:
+    builtins.__import__ = original_import
+
+run_agent = types.ModuleType("run_agent")
+class AIAgent:
+    @staticmethod
+    def _strip_think_blocks(content):
+        return content
+run_agent.AIAgent = AIAgent
+sys.modules["run_agent"] = run_agent
+plugin._get_sandbox_info = lambda: {
+    "agent": "hermes",
+    "model": "n",
+    "provider": "p",
+    "base_url": "b",
+    "gateway": "g",
+    "port": 1,
+}
+
+hooks["pre_llm_call"](user_message="hello", is_first_turn=True, platform="telegram")
+normalized = AIAgent._strip_think_blocks(
+    'send_message: "to telegram: registration completed"'
+)
+print(json.dumps({
+    "hooks": sorted(hooks),
+    "normalized": normalized,
+    "patched": getattr(AIAgent, plugin._MESSAGING_RESPONSE_PATCH_ATTR, False),
+}))
+`);
+
+    expect(JSON.parse(output)).toEqual({
+      hooks: ["on_session_start", "pre_llm_call"],
+      normalized: "registration completed",
+      patched: true,
+    });
   });
 
   it("grounds first Telegram turns to reply directly instead of spelling tool calls", () => {

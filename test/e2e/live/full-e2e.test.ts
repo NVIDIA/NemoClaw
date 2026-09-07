@@ -470,9 +470,7 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
         artifactName: "phase-1-brev-launchable-quickstart",
         env: env({
           ...hosted.env,
-          NVIDIA_API_KEY: hosted.apiKey,
           NEMOCLAW_AGENT: "openclaw",
-          NEMOCLAW_PROVIDER: "build",
         }),
         redactionValues,
         timeoutMs: INSTALL_TIMEOUT_MS,

@@ -569,23 +569,8 @@ fi
 
 info "27. NEMOCLAW_MODEL_OVERRIDE patches openclaw.json"
 OUT=$(docker run --rm --user root -e NEMOCLAW_MODEL_OVERRIDE="test/override-model" \
-  --entrypoint "" "$IMAGE" bash -c '
-  # Source the entrypoint function without running the full startup. Keep the
-  # extraction whitespace-tolerant and fail closed if the function cannot be
-  # found, instead of sourcing an empty snippet.
-  APPLY_MODEL_OVERRIDE_SNIPPET=$(sed -n "/^[[:space:]]*apply_model_override[[:space:]]*()[[:space:]]*{/,/^[[:space:]]*}[[:space:]]*$/p" /usr/local/bin/nemoclaw-start)
-  if [ -z "$APPLY_MODEL_OVERRIDE_SNIPPET" ]; then
-    echo "EXTRACT_FAIL apply_model_override"
-    exit 1
-  fi
-  source /dev/stdin <<<"$APPLY_MODEL_OVERRIDE_SNIPPET"
-  # Keep this case scoped to the JSON rewrite. Permission normalization and
-  # owner dispatch are exercised by the dedicated cases below.
-  normalize_mutable_config_perms() { :; }
-  run_openclaw_config_as_owner() { "$@"; }
-  ensure_mutable_openclaw_config_hash() { :; }
-  export NEMOCLAW_MODEL_OVERRIDE="test/override-model"
-  apply_model_override
+  "$IMAGE" bash -c '
+  set -e
   python3 -c "
 import json
 with open(\"/sandbox/.openclaw/openclaw.json\") as f:
@@ -598,13 +583,19 @@ all_patched = all(
     for m in all_models
 )
 if primary == \"test/override-model\" and all_models and all_patched:
-    print(\"OVERRIDE_OK\")
+    print(\"OVERRIDE_JSON_OK\")
 else:
-    print(f\"OVERRIDE_FAIL primary={primary} models={len(all_models)} all_patched={all_patched}\")
+    raise SystemExit(f\"OVERRIDE_FAIL primary={primary} models={len(all_models)} all_patched={all_patched}\")
 "
+  cd /sandbox/.openclaw
+  sha256sum -c .config-hash --status
+  test "$(stat -c "%a %U:%G" .)" = "2770 sandbox:sandbox"
+  test "$(stat -c "%a %U:%G" openclaw.json)" = "660 sandbox:sandbox"
+  test "$(stat -c "%a %U:%G" .config-hash)" = "660 sandbox:sandbox"
+  printf "OVERRIDE_OK\n"
 ' 2>&1 || true)
 if echo "$OUT" | grep -q "OVERRIDE_OK"; then
-  pass "NEMOCLAW_MODEL_OVERRIDE patches primary, id, and name"
+  pass "model override runs through owner dispatch with valid hash and mutable modes"
 else
   fail "model override did not patch correctly: $OUT"
 fi
