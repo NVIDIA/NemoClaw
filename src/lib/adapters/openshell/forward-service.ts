@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawn, spawnSync } from "node:child_process";
+import { readFileSync, readdirSync, readlinkSync, realpathSync } from "node:fs";
 import path from "node:path";
 
 import { isValidName } from "../../name-validation";
@@ -43,7 +44,9 @@ type ForwardServiceOwnerProbe = (
 ) => { status: number | null; stdout: string };
 
 export interface ForwardServiceOwnerOptions {
+  readonly platform?: NodeJS.Platform;
   readonly probe?: ForwardServiceOwnerProbe;
+  readonly procRoot?: string;
 }
 
 const FORWARD_OWNER_PROBE_TIMEOUT_MS = 5_000;
@@ -113,10 +116,101 @@ function captureProcess(executable: string, args: readonly string[]) {
   return { status: result.status, stdout: result.stdout ?? "" };
 }
 
-function listenerPids(port: number, probe: ForwardServiceOwnerProbe): string[] {
+function lsofListenerPids(port: number, probe: ForwardServiceOwnerProbe): string[] {
   const result = probe("lsof", ["-ti", `:${String(port)}`, "-sTCP:LISTEN"]);
   if (result.status !== 0) return [];
-  return [...new Set(result.stdout.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean))];
+  return [
+    ...new Set(
+      result.stdout
+        .split(/\r?\n/u)
+        .map((line) => line.trim())
+        .filter(Boolean),
+    ),
+  ];
+}
+
+function linuxListenerPids(port: number, procRoot: string): string[] {
+  const portSuffix = `:${port.toString(16).padStart(4, "0").toUpperCase()}`;
+  const socketInodes = new Set<string>();
+  for (const table of ["tcp", "tcp6"]) {
+    try {
+      for (const line of readFileSync(path.join(procRoot, "net", table), "utf8").split("\n")) {
+        const fields = line.trim().split(/\s+/u);
+        if (
+          fields[3] === "0A" &&
+          fields[1]?.toUpperCase().endsWith(portSuffix) &&
+          /^\d+$/u.test(fields[9] ?? "")
+        ) {
+          socketInodes.add(fields[9]!);
+        }
+      }
+    } catch {
+      // A missing or unreadable table cannot prove ownership.
+    }
+  }
+  if (socketInodes.size === 0) return [];
+
+  const pids = new Set<string>();
+  try {
+    for (const entry of readdirSync(procRoot, { withFileTypes: true })) {
+      if (!entry.isDirectory() || !/^[1-9]\d*$/u.test(entry.name)) continue;
+      try {
+        for (const descriptor of readdirSync(path.join(procRoot, entry.name, "fd"))) {
+          const link = readlinkSync(path.join(procRoot, entry.name, "fd", descriptor));
+          const match = /^socket:\[(\d+)\]$/u.exec(link);
+          if (match && socketInodes.has(match[1]!)) {
+            pids.add(entry.name);
+            break;
+          }
+        }
+      } catch {
+        // Processes can exit or deny access while /proc is being inspected.
+      }
+    }
+  } catch {
+    return [];
+  }
+  return [...pids];
+}
+
+function listenerPids(
+  port: number,
+  platform: NodeJS.Platform,
+  procRoot: string,
+  probe: ForwardServiceOwnerProbe,
+): string[] {
+  return platform === "linux"
+    ? linuxListenerPids(port, procRoot)
+    : platform === "darwin"
+      ? lsofListenerPids(port, probe)
+      : [];
+}
+
+function executableMatches(actualExecutable: string, expectedExecutable: string): boolean {
+  try {
+    return realpathSync(actualExecutable) === realpathSync(expectedExecutable);
+  } catch {
+    return false;
+  }
+}
+
+function processExecutableMatches(
+  pid: string,
+  target: ForwardServiceTarget,
+  platform: NodeJS.Platform,
+  procRoot: string,
+  probe: ForwardServiceOwnerProbe,
+): boolean {
+  if (platform === "linux") {
+    return executableMatches(path.join(procRoot, pid, "exe"), target.executable);
+  }
+  if (platform !== "darwin") return false;
+  const result = probe("lsof", ["-a", "-p", pid, "-d", "txt", "-Fn"]);
+  if (result.status !== 0) return false;
+  return result.stdout
+    .split(/\r?\n/u)
+    .filter((line) => line.startsWith("n/"))
+    .some((line) => executableMatches(line.slice(1), target.executable));
 }
 
 /** Prove that the current listener is the exact direct ForwardTcp command. */
@@ -125,15 +219,18 @@ export function isForwardServiceListenerOwner(
   options: ForwardServiceOwnerOptions = {},
 ): boolean {
   validateForwardServiceTarget(target);
+  const platform = options.platform ?? process.platform;
   const probe = options.probe ?? captureProcess;
-  const before = listenerPids(target.localPort, probe);
+  const procRoot = options.procRoot ?? "/proc";
+  const before = listenerPids(target.localPort, platform, procRoot, probe);
   if (before.length !== 1 || !/^[1-9]\d*$/u.test(before[0]!)) return false;
   const pid = before[0]!;
-  const process = probe("ps", ["-ww", "-p", pid, "-o", "args="]);
-  if (process.status !== 0) return false;
+  if (!processExecutableMatches(pid, target, platform, procRoot, probe)) return false;
+  const commandLine = probe("ps", ["-ww", "-p", pid, "-o", "args="]);
+  if (commandLine.status !== 0) return false;
   const expected = [target.executable, ...buildForwardServiceArgs(target)].join(" ");
-  if (process.stdout.trim() !== expected) return false;
-  const after = listenerPids(target.localPort, probe);
+  if (commandLine.stdout.trim() !== expected) return false;
+  const after = listenerPids(target.localPort, platform, procRoot, probe);
   return after.length === 1 && after[0] === pid;
 }
 

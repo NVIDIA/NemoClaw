@@ -251,7 +251,6 @@ export interface SandboxStopDeps {
   loadPersistedOllamaHost?: () => OllamaHostRoute | null;
   withOllamaModelOwnershipLock?: typeof import("../../inference/ollama/proxy").withOllamaModelOwnershipLock;
   withLifecycleLockSync?: typeof withSandboxLifecycleLockSync;
-  revalidateAtMutationEdge?: () => void;
   log?: (message: string) => void;
   warn?: (message: string) => void;
 }
@@ -293,7 +292,6 @@ function stopSandboxWithinLifecycleFence(
   const preflight = resolved.bundle.preflightDoctor.preflightLifecycle("stop", input);
   if (preflight) return preflight;
 
-  deps.revalidateAtMutationEdge?.();
   let channelsStopped = false;
   const outcome = resolved.lifecycle.stop(input, {
     beforeStop() {
