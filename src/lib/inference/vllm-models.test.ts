@@ -589,7 +589,7 @@ describe("vllm model registry", () => {
     expect(qwen35b!.gated).toBe(false);
   });
 
-  it("permits reply and compaction concurrency within the N1x serving envelope (#10955)", () => {
+  it("configures two sequences within the N1x serving envelope (#10955)", () => {
     const qwen35b = VLLM_MODELS.find((model) => model.envValue === "qwen3.6-35b-a3b-nvfp4");
     const n1xProfile = detectVllmProfile({ platform: "n1x", type: "nvidia" })!;
     const n1xModel = resolveVllmModelRuntime(n1xProfile, qwen35b!, "arm64").model;

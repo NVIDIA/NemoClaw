@@ -463,6 +463,36 @@ The installer applies the existing CUDA and Container Device Interface (CDI) rea
 The N1x memory, context, and batch limits above have reached the ready vLLM endpoint on one physical host.
 Physical validation of compaction with the two-sequence limit and the full Express onboarding E2E remain pending.
 
+#### Upgrade an Existing N1x Managed vLLM Runtime
+
+An existing `nemoclaw-vllm` container retains its original command after a NemoClaw update or sandbox rebuild.
+A container created by v0.0.119 therefore retains `--max-num-seqs 1` until you replace the managed runtime.
+
+Before replacement, follow [Handle a Running vLLM Server](#handle-a-running-vllm-server) to inspect every gateway environment and confirm that no other sandbox or distributed deployment uses the server.
+Stop only the exact verified managed container ID.
+If another sandbox can use the server, schedule coordinated downtime instead of continuing.
+
+Rebuild the affected sandbox with explicit managed-vLLM intent.
+
+```bash
+NEMOCLAW_PROVIDER=install-vllm \
+  $$nemoclaw my-assistant rebuild --yes
+```
+
+NemoClaw verifies the stopped container ownership, replaces that container with the current N1x recipe, and then continues the transactional sandbox rebuild.
+If managed-vLLM startup fails, the existing sandbox remains registered, but its stopped host inference server can remain unavailable.
+Correct the reported startup problem, then repeat the same rebuild command.
+
+Verify that the replacement container uses the two-sequence limit.
+
+```bash
+docker container inspect \
+  --format '{{json .Config.Cmd}}' \
+  nemoclaw-vllm
+```
+
+Accept the result when the command contains `--max-num-seqs 2`.
+
 NemoClaw requires all of this N1x identity evidence:
 
 - The host runs Linux on `arm64`.
