@@ -288,6 +288,28 @@ describe("MCP adapter teardown rollback", () => {
     expect(mocks.ensureSandboxGatewaySelected).not.toHaveBeenCalled();
   });
 
+  it.each([
+    [
+      "an interrupted denied-tool update",
+      { ...entry, pendingDenyTools: ["replacement_*"] },
+      /interrupted denied-tool update.*mcp restart github/,
+    ],
+    [
+      "a legacy public entry without pins",
+      { ...entry, allowedIps: undefined },
+      /legacy public registration without recorded address pins.*mcp restart github/,
+    ],
+  ] as const)("rejects exec-unavailable rebuild for %s (#11115)", async (_case, candidate, error) => {
+    mocks.bridgeState.mockReturnValue({ github: candidate });
+    mocks.getSandboxAgent.mockReturnValue({ name: "hermes" });
+    mocks.getBridgeAdapter.mockReturnValue("hermes-config");
+
+    await expect(prepareMcpBridgesForExecUnavailableRebuild("alpha")).rejects.toThrow(error);
+
+    expect(mocks.ensureSandboxGatewaySelected).not.toHaveBeenCalled();
+    expect(mocks.preflightMcpEntryTargets).not.toHaveBeenCalled();
+  });
+
   const expectLegacyPublicPinsPersisted = async (
     prepare: (sandboxName: string) => Promise<{ entries: McpBridgeEntry[] }>,
   ) => {
