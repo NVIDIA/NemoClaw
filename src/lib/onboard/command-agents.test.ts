@@ -105,4 +105,48 @@ describe("onboard --agents", () => {
       restoreEnvironment();
     }
   });
+
+  it("rejects per-agent maxSpawnDepth before invoking onboard", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-agents-invalid-"));
+    const manifestPath = path.join(tmpDir, "agents.yaml");
+    fs.writeFileSync(
+      manifestPath,
+      ["agents:", "  - id: alpha", "    subagents:", "      maxSpawnDepth: 2", ""].join("\n"),
+    );
+    const runOnboard = vi.fn();
+
+    await expect(
+      runOnboardCommand({
+        flags: { agents: manifestPath },
+        env: {},
+        exit: exitWithCode,
+        runOnboard,
+      }),
+    ).rejects.toThrow(
+      "NEMOCLAW_EXTRA_AGENTS_JSON.agents[0].subagents.maxSpawnDepth is not accepted per-agent",
+    );
+
+    expect(runOnboard).not.toHaveBeenCalled();
+  });
+
+  it("rejects raw per-agent maxSpawnDepth before invoking onboard", async () => {
+    const runOnboard = vi.fn();
+
+    await expect(
+      runOnboardCommand({
+        flags: {},
+        env: {
+          NEMOCLAW_EXTRA_AGENTS_JSON: JSON.stringify([
+            { id: "alpha", subagents: { maxSpawnDepth: 2 } },
+          ]),
+        },
+        exit: exitWithCode,
+        runOnboard,
+      }),
+    ).rejects.toThrow(
+      "NEMOCLAW_EXTRA_AGENTS_JSON.agents[0].subagents.maxSpawnDepth is not accepted per-agent",
+    );
+
+    expect(runOnboard).not.toHaveBeenCalled();
+  });
 });

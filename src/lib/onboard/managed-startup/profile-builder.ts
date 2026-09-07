@@ -8,6 +8,7 @@ import { MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW } from "../../inference/ollama-r
 import { hydrateDerivedSandboxMessagingPlanFields } from "../../messaging/hydration";
 import { parseSandboxMessagingPlan } from "../../messaging/plan-validation";
 import { withLocalNoProxy } from "../../proxy/local-no-proxy";
+import { assertNoPerAgentMaxSpawnDepth } from "../agents-manifest";
 import {
   MAX_CORPORATE_CA_BYTES,
   MAX_CORPORATE_CA_CERTS,
@@ -301,6 +302,7 @@ function normalizeExtraAgentsCandidate(value: unknown): ManagedStartupExtraAgent
   if (value === null || value === undefined) {
     return { agents: [], defaults: emptyDefaults, main: {} };
   }
+  assertNoPerAgentMaxSpawnDepth(value);
   if (Array.isArray(value)) {
     return {
       agents: normalizeExtraAgentList(value, "NEMOCLAW_EXTRA_AGENTS_JSON"),

@@ -859,6 +859,29 @@ describe("buildManagedStartupProfile", () => {
     ).toThrow(message);
   });
 
+  it.each([
+    [
+      "raw JSON",
+      {
+        NEMOCLAW_EXTRA_AGENTS_JSON: JSON.stringify([
+          { id: "reviewer", subagents: { maxSpawnDepth: 2 } },
+        ]),
+      },
+    ],
+    [
+      "base64 JSON",
+      {
+        NEMOCLAW_EXTRA_AGENTS_JSON_B64: encodeJson({
+          agents: [{ id: "reviewer", subagents: { maxSpawnDepth: 2 } }],
+        }),
+      },
+    ],
+  ])("rejects per-agent maxSpawnDepth from %s profile input", (_label, environment) => {
+    expect(() => buildManagedStartupProfile(openClawInput({ environment }))).toThrow(
+      /NEMOCLAW_EXTRA_AGENTS_JSON\.agents\[0\]\.subagents\.maxSpawnDepth is not accepted per-agent.*defaults\.subagents\.maxSpawnDepth/,
+    );
+  });
+
   it("rejects malformed or non-CA certificate material", () => {
     expect(() =>
       buildManagedStartupProfile(

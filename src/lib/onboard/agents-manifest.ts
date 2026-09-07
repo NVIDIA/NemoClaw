@@ -77,6 +77,39 @@ function assertNoCredentialFields(value: unknown, label: string): void {
   }
 }
 
+function assertNoMaxSpawnDepth(value: unknown, label: string): void {
+  if (!isObjectRecord(value) || !Object.hasOwn(value, "maxSpawnDepth")) return;
+  throw new Error(
+    `${label}.maxSpawnDepth is not accepted per-agent; OpenClaw honours it only on agents.defaults.subagents. Set it under the manifest 'defaults.subagents.maxSpawnDepth' instead.`,
+  );
+}
+
+export function assertNoPerAgentMaxSpawnDepth(value: unknown): void {
+  const agents = Array.isArray(value)
+    ? value
+    : isObjectRecord(value) && Array.isArray(value.agents)
+      ? value.agents
+      : [];
+  agents.forEach((entry, index) => {
+    if (!isObjectRecord(entry)) return;
+    assertNoMaxSpawnDepth(entry.subagents, `NEMOCLAW_EXTRA_AGENTS_JSON.agents[${index}].subagents`);
+  });
+  if (isObjectRecord(value) && isObjectRecord(value.main)) {
+    assertNoMaxSpawnDepth(value.main.subagents, "NEMOCLAW_EXTRA_AGENTS_JSON.main.subagents");
+  }
+}
+
+export function assertNoPerAgentMaxSpawnDepthJson(raw: string | undefined): void {
+  if (!raw?.trim()) return;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw) as unknown;
+  } catch {
+    return;
+  }
+  assertNoPerAgentMaxSpawnDepth(parsed);
+}
+
 function expectedAgentPath(kind: "workspace" | "agentDir", id: string): string {
   const segment = kind === "workspace" ? `workspace-${id}` : `agents/${id}`;
   return `${AGENT_DATA_ROOT}/${segment}`;
@@ -103,15 +136,6 @@ export interface AgentsManifestPayload {
   main?: unknown;
 }
 
-/**
- * Load and shallow-shape-check the agents manifest YAML. Heavy validation
- * (shape of each agent entry, model-ref/provider match, allowlists) lives
- * at the build-time validator in scripts/generate-openclaw-config.mts so
- * the build is the single source of truth for structured errors. We only
- * surface obvious early errors (missing file, top-level shape) and
- * auto-fill canonical workspace/agentDir paths from the agent id so the
- * caller can write a terse YAML.
- */
 export function loadAgentsManifest(filePath: string): AgentsManifestPayload {
   const resolved = path.resolve(filePath);
   let raw: string;
@@ -169,16 +193,10 @@ export function loadAgentsManifest(filePath: string): AgentsManifestPayload {
     out.main = parsed.main;
   }
   assertNoCredentialFields(out, "agents-manifest");
+  assertNoPerAgentMaxSpawnDepth(out);
   return out;
 }
 
-/**
- * Read the manifest at `filePath` and set `NEMOCLAW_EXTRA_AGENTS_JSON` so
- * the downstream Dockerfile patcher can base64-encode and bake it. The
- * patcher does not parse or shape-check the payload (that is the build
- * validator's job), so structured errors raised here would mask the
- * authoritative build-time errors; we keep host-side checks light.
- */
 export function applyAgentsManifestEnv(
   filePath: string,
   env: NodeJS.ProcessEnv = process.env,

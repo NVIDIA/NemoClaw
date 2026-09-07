@@ -2477,7 +2477,9 @@ $$nemoclaw my-assistant agents delete work --force --json
 
 ### `$$nemoclaw <name> agents apply`
 
-Reconcile the live sandbox roster against a declarative [agents.yaml manifest](../configure-agents/declarative-agents-manifest). The verb lists current agents via `openclaw agents list --json`, diffs them against the manifest, and adds missing secondaries or deletes orphan ones through `openclaw agents add|delete`. Per-agent `model`, `subagents.*`, `tools`, top-level `defaults`, and `main` overrides need a sandbox rebuild and are surfaced as warnings rather than silently dropped; rerun `$$nemoclaw onboard --agents <agents.yaml> --recreate-sandbox` to bake those fields. When the diff removes orphan agents, NemoClaw invokes OpenClaw's confirmation-skipping delete mode internally. `--non-interactive` controls the host-side `agents apply` prompt and is not forwarded to OpenClaw's delete command.
+Reconcile the live sandbox roster against a declarative [agents.yaml manifest](../configure-agents/declarative-agents-manifest). The verb lists current agents via `openclaw agents list --json`, diffs them against the manifest, and adds missing secondaries or deletes orphan ones through `openclaw agents add|delete`. Supported per-agent `model`, `subagents`, and `tools` overrides, top-level `defaults`, and `main` overrides need a sandbox rebuild and are surfaced as warnings rather than silently dropped; rerun `$$nemoclaw onboard --agents <agents.yaml> --recreate-sandbox` to bake those fields. When the diff removes orphan agents, NemoClaw invokes OpenClaw's confirmation-skipping delete mode internally. `--non-interactive` controls the host-side `agents apply` prompt and is not forwarded to OpenClaw's delete command.
+
+Per-agent `subagents.maxSpawnDepth` is invalid and is rejected while loading the manifest; move it to `defaults.subagents.maxSpawnDepth` before retrying `agents apply` or onboarding.
 
 ```bash
 $$nemoclaw my-assistant agents apply -f ./agents.yaml
