@@ -525,19 +525,40 @@ export async function startCompatibleMock(options: {
           requiredContent.every((value) => content.includes(value))
         );
       };
+      const parseToolResultRecord = (
+        value: unknown,
+        depth = 0,
+      ): Record<string, unknown> | undefined => {
+        if (depth > 4) return undefined;
+        if (typeof value === "string") {
+          try {
+            return parseToolResultRecord(JSON.parse(value), depth + 1);
+          } catch {
+            return undefined;
+          }
+        }
+        if (Array.isArray(value)) {
+          for (const entry of value) {
+            const parsed = parseToolResultRecord(entry, depth + 1);
+            if (parsed) return parsed;
+          }
+          return undefined;
+        }
+        if (!value || typeof value !== "object") return undefined;
+        const record = value as Record<string, unknown>;
+        for (const key of ["details", "payload", "text", "content"] as const) {
+          if (!Object.hasOwn(record, key)) continue;
+          const parsed = parseToolResultRecord(record[key], depth + 1);
+          if (parsed) return parsed;
+        }
+        return record;
+      };
       const parsedToolResult = (index: number, toolCallId: string) => {
         const message = toolResults[index];
-        if (message?.tool_call_id !== toolCallId || typeof message.content !== "string") {
+        if (message?.tool_call_id !== toolCallId) {
           return undefined;
         }
-        try {
-          const parsed = JSON.parse(message.content);
-          return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-            ? (parsed as Record<string, unknown>)
-            : undefined;
-        } catch {
-          return undefined;
-        }
+        return parseToolResultRecord(message.content);
       };
       const classifyHermesSearchResult = (
         index: number,

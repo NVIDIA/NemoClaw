@@ -1164,11 +1164,16 @@ describe("authenticated MCP live fixtures", () => {
     const searchResult = {
       role: "tool",
       tool_call_id: "call_openclaw_tool_search",
-      content: JSON.stringify({
-        query: "fake echo",
-        count: 1,
-        matches: [{ name: deferredToolName, description: "Deferred echo" }],
-      }),
+      content: JSON.stringify([
+        {
+          type: "text",
+          text: JSON.stringify({
+            query: "fake echo",
+            count: 1,
+            matches: [{ name: deferredToolName, description: "Deferred echo" }],
+          }),
+        },
+      ]),
     };
     expect((await call([searchResult])).choices[0].message.tool_calls[0]).toMatchObject({
       id: "call_openclaw_tool_describe",
@@ -1177,10 +1182,15 @@ describe("authenticated MCP live fixtures", () => {
     const descriptionResult = {
       role: "tool",
       tool_call_id: "call_openclaw_tool_describe",
-      content: JSON.stringify({
-        name: deferredToolName,
-        parameters: { properties: { challenge: { type: "string" } } },
-      }),
+      content: JSON.stringify([
+        {
+          type: "text",
+          text: JSON.stringify({
+            name: deferredToolName,
+            parameters: { properties: { challenge: { type: "string" } } },
+          }),
+        },
+      ]),
     };
     expect(
       (await call([searchResult, descriptionResult])).choices[0].message.tool_calls[0],
