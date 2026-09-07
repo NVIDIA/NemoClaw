@@ -566,6 +566,7 @@ function assertVerifiedCreateBoundaryMatchesLifecycle(
 
 type OnboardCreateIntent = {
   readonly endpointSource?: RegistrationSeed["inferenceSelection"]["endpointSource"];
+  readonly deferredN1xManagedVllmPreviewIntent?: RegistrationSeed["deferredN1xManagedVllmPreviewIntent"];
   readonly observabilityEnabled?: boolean;
 } | null;
 type OnboardResolvedCreateIntent = {
@@ -722,6 +723,9 @@ export function createOnboardCreatedSandboxCompletion(
           preferredInferenceApi,
           createIntent?.endpointSource ?? null,
         ),
+        ...(createIntent?.deferredN1xManagedVllmPreviewIntent
+          ? { deferredN1xManagedVllmPreviewIntent: true as const }
+          : {}),
         runtimeFields,
         agent,
         agentVersionKnown: !fromDockerfile,

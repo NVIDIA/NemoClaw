@@ -316,16 +316,29 @@ printf 'openshell=%s\ngateway=%s\npath=%s\n' "$NEMOCLAW_OPENSHELL_BIN" "$NEMOCLA
 
 function runDarwinGatewayServiceStop(
   options: {
+    additionalServiceLabel?: string;
+    inactiveServiceLabel?: string;
+    serviceLabel?: string;
+    symlinkedServiceLabel?: string;
     trustedActiveProgram?: boolean;
     trustedLabel?: boolean;
     trustedProgram?: boolean;
+    waitingServiceLabel?: string;
   } = {},
 ) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-darwin-gateway-service-stop-"));
   const home = path.join(tmp, "home");
   const bin = path.join(tmp, "bin");
   const brewPrefix = path.join(tmp, "homebrew");
-  const serviceLabel = "homebrew.mxcl.openshell";
+  const serviceLabel = options.serviceLabel ?? "homebrew.mxcl.openshell";
+  const serviceLabels = [serviceLabel, options.additionalServiceLabel].filter(
+    (candidate): candidate is string => candidate !== undefined,
+  );
+  const activeServicePattern =
+    serviceLabels
+      .filter((label) => label !== options.inactiveServiceLabel)
+      .map((label) => `'gui/${process.getuid?.()}/${label}'`)
+      .join(" | ") || "'no-active-service'";
   const servicePath = path.join(home, "Library", "LaunchAgents", `${serviceLabel}.plist`);
   const serviceProgram = path.join(
     brewPrefix,
@@ -339,7 +352,12 @@ function runDarwinGatewayServiceStop(
   fs.mkdirSync(path.dirname(servicePath), { recursive: true });
   fs.mkdirSync(path.dirname(serviceProgram), { recursive: true });
   fs.mkdirSync(bin, { recursive: true });
-  fs.writeFileSync(servicePath, "test plist\n");
+  for (const label of serviceLabels) {
+    const candidatePath = path.join(home, "Library", "LaunchAgents", `${label}.plist`);
+    label === options.symlinkedServiceLabel
+      ? fs.symlinkSync(serviceProgram, candidatePath)
+      : fs.writeFileSync(candidatePath, "test plist\n");
+  }
   fs.writeFileSync(active, "active\n");
   writeExecutable(serviceProgram, "#!/usr/bin/env bash\nexit 0\n");
   writeExecutable(path.join(bin, "uname"), "#!/usr/bin/env bash\nprintf 'Darwin\\n'\n");
@@ -353,7 +371,9 @@ function runDarwinGatewayServiceStop(
     path.join(bin, "plutil"),
     `#!/usr/bin/env bash
 case "\${2:-}" in
-  Label) printf '%s\n' '${options.trustedLabel === false ? "other.service" : serviceLabel}' ;;
+  Label)
+    ${options.trustedLabel === false ? "printf '%s\\n' 'other.service'" : 'basename "\${6:-}" .plist'}
+    ;;
   ProgramArguments.0) printf '%s\n' '${
     options.trustedProgram === false ? path.join(tmp, "foreign-gateway") : serviceProgram
   }' ;;
@@ -366,7 +386,15 @@ esac
 printf '%s\n' "$*" >>'${launchctlLog}'
 case "\${1:-}" in
   print)
+    case "\${2:-}" in
+      ${activeServicePattern}) ;;
+      *) exit 1 ;;
+    esac
     [ -f '${active}' ] || exit 1
+    case "\${2:-}" in
+      'gui/${process.getuid?.()}/${options.waitingServiceLabel ?? "no-waiting-service"}') printf 'state = waiting\n' ;;
+      *) printf 'state = running\n' ;;
+    esac
     printf 'program = %s\\n' '${
       options.trustedActiveProgram === false
         ? path.join(tmp, "active-foreign-gateway")
@@ -579,24 +607,72 @@ describe("install.sh macOS OpenShell upgrade recovery", () => {
     expect(symlinked.result.stderr).toContain("untrusted PID file");
   });
 
-  it("stops only the active trusted OpenShell Homebrew user service (#10369)", () => {
-    const { result, launchctlLog } = runDarwinGatewayServiceStop();
-    const serviceDomain = `gui/${process.getuid?.()}/homebrew.mxcl.openshell`;
+  it.each(["homebrew.mxcl.openshell", "sh.brew.openshell"])(
+    "stops only the active trusted OpenShell Homebrew user service with label %s (#11111)",
+    (serviceLabel) => {
+      const { result, launchctlLog } = runDarwinGatewayServiceStop({ serviceLabel });
+      const serviceDomain = `gui/${process.getuid?.()}/${serviceLabel}`;
+      const otherServiceLabel =
+        serviceLabel === "sh.brew.openshell" ? "homebrew.mxcl.openshell" : "sh.brew.openshell";
 
-    expect(result.status, result.stdout + result.stderr).toBe(0);
-    expect(launchctlLog.trim().split(/\r?\n/)).toEqual([
-      `print ${serviceDomain}`,
-      `bootout ${serviceDomain}`,
-      `print ${serviceDomain}`,
-    ]);
+      expect(result.status, result.stdout + result.stderr).toBe(0);
+      expect(launchctlLog.trim().split(/\r?\n/)).toEqual([
+        ...(serviceLabel === "sh.brew.openshell"
+          ? []
+          : [`print gui/${process.getuid?.()}/${otherServiceLabel}`]),
+        `print ${serviceDomain}`,
+        ...(serviceLabel === "sh.brew.openshell"
+          ? [`print gui/${process.getuid?.()}/${otherServiceLabel}`]
+          : []),
+        `bootout ${serviceDomain}`,
+        `print ${serviceDomain}`,
+      ]);
+    },
+  );
+
+  it("refuses to stop ambiguous active OpenShell Homebrew user services (#11111)", () => {
+    const { result, launchctlLog } = runDarwinGatewayServiceStop({
+      additionalServiceLabel: "sh.brew.openshell",
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("multiple trusted Homebrew user services are active");
+    expect(result.stderr).toContain(`gui/${process.getuid?.()}/sh.brew.openshell`);
+    expect(result.stderr).toContain(`gui/${process.getuid?.()}/homebrew.mxcl.openshell`);
+    expect(result.stderr).toContain("stop the obsolete service, then rerun the installer");
+    expect(launchctlLog).not.toContain("bootout");
   });
+
+  it.each(["inactive", "waiting"] as const)(
+    "ignores a stale legacy plist when that service is %s (#11111)",
+    (legacyState) => {
+      const currentLabel = "sh.brew.openshell";
+      const legacyLabel = "homebrew.mxcl.openshell";
+      const currentDomain = `gui/${process.getuid?.()}/${currentLabel}`;
+      const { result, launchctlLog } = runDarwinGatewayServiceStop({
+        additionalServiceLabel: legacyLabel,
+        inactiveServiceLabel: legacyState === "inactive" ? legacyLabel : undefined,
+        serviceLabel: currentLabel,
+        symlinkedServiceLabel: legacyLabel,
+        waitingServiceLabel: legacyState === "waiting" ? legacyLabel : undefined,
+      });
+
+      expect(result.status, result.stdout + result.stderr).toBe(0);
+      expect(launchctlLog.trim().split(/\r?\n/)).toEqual([
+        `print ${currentDomain}`,
+        `print gui/${process.getuid?.()}/${legacyLabel}`,
+        `bootout ${currentDomain}`,
+        `print ${currentDomain}`,
+      ]);
+    },
+  );
 
   it("refuses to stop a Homebrew user service with an unexpected label (#10369)", () => {
     const { result, launchctlLog } = runDarwinGatewayServiceStop({ trustedLabel: false });
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("macOS user service with an unexpected label");
-    expect(launchctlLog).toBe("");
+    expect(launchctlLog).not.toContain("bootout");
   });
 
   it("refuses to stop a Homebrew user service with an unexpected executable (#10369)", () => {
@@ -604,7 +680,7 @@ describe("install.sh macOS OpenShell upgrade recovery", () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("macOS user service with an untrusted executable");
-    expect(launchctlLog).toBe("");
+    expect(launchctlLog).not.toContain("bootout");
   });
 
   it("refuses to stop a trusted plist when the active launchd job has a foreign executable (#10369)", () => {
@@ -612,9 +688,8 @@ describe("install.sh macOS OpenShell upgrade recovery", () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("active macOS user service with an untrusted executable");
-    expect(launchctlLog.trim().split(/\r?\n/)).toEqual([
-      `print gui/${process.getuid?.()}/homebrew.mxcl.openshell`,
-    ]);
+    expect(launchctlLog).toContain(`print gui/${process.getuid?.()}/homebrew.mxcl.openshell`);
+    expect(launchctlLog).not.toContain("bootout");
   });
 
   it("selects Homebrew binaries after a verified formula install (#10386)", () => {

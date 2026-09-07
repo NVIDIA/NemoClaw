@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isDeepStrictEqual } from "node:util";
+import { isDeferredN1xManagedVllmAcceptanceRoute } from "../domain/sandbox/n1x-managed-vllm-rebuild";
 import type { InferenceSelection } from "../inference/selection";
 import {
   inferenceSelectionRegistryFields,
@@ -403,6 +404,13 @@ export function registerSandbox(
     if (entry.servingProfileProvenance !== undefined && !servingProfileProvenance) {
       throw new Error("Cannot register a sandbox with invalid serving profile provenance");
     }
+    if (
+      entry.deferredN1xManagedVllmAccepted !== undefined &&
+      (entry.deferredN1xManagedVllmAccepted !== true ||
+        !isDeferredN1xManagedVllmAcceptanceRoute(entry))
+    ) {
+      throw new Error("Cannot register a sandbox with invalid N1x preview acceptance");
+    }
     const normalizedPolicyEntry = normalizeSandboxPolicyAttribution(entry);
     assertPendingCreateIdentityMatchesRegistration(
       recordedEntry,
@@ -468,6 +476,7 @@ export function registerSandbox(
       name: entry.name,
       createdAt: entry.createdAt || new Date().toISOString(),
       servingProfileProvenance: servingProfileProvenance ?? undefined,
+      deferredN1xManagedVllmAccepted: entry.deferredN1xManagedVllmAccepted,
       ...inferenceSelectionRegistryFields(entry),
       gpuEnabled: entry.gpuEnabled || false,
       hostGpuDetected: entry.hostGpuDetected === true,
@@ -664,6 +673,7 @@ export function reserveSandboxInferenceRoute(
     const next = normalizeSandboxPolicyAttribution({
       ...existingForReservation,
       pendingRouteReservation: true,
+      deferredN1xManagedVllmAccepted: undefined,
       reservationSessionId:
         route.reservationSessionId ??
         (existing?.pendingRouteReservation === true ? existing.reservationSessionId : undefined),
@@ -699,6 +709,15 @@ const HOST_LOCAL_INFERENCE_LIFECYCLE_AUTHORITY_FIELDS = new Set<keyof SandboxEnt
   "model",
   "openshellDriver",
   "preferredInferenceApi",
+  "provider",
+]);
+const DEFERRED_N1X_ROUTE_AUTHORITY_FIELDS = new Set<keyof SandboxEntry>([
+  "endpointSource",
+  "endpointUrl",
+  "hostLocalInferenceReceipt",
+  "model",
+  "nimContainer",
+  "openshellDriver",
   "provider",
 ]);
 
@@ -739,7 +758,18 @@ export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boo
       return false;
     }
     if (changesHostLocalInferenceLifecycleAuthority(current, updates)) return false;
-    data.sandboxes[name] = normalizeSandboxPolicyAttribution({ ...current, ...updates });
+    const next = normalizeSandboxPolicyAttribution({ ...current, ...updates });
+    if (
+      current.deferredN1xManagedVllmAccepted === true &&
+      Object.entries(updates).some(
+        ([field, value]) =>
+          DEFERRED_N1X_ROUTE_AUTHORITY_FIELDS.has(field as keyof SandboxEntry) &&
+          !isDeepStrictEqual(value, current[field as keyof SandboxEntry]),
+      )
+    ) {
+      next.deferredN1xManagedVllmAccepted = undefined;
+    }
+    data.sandboxes[name] = next;
     save(data);
     return true;
   });
