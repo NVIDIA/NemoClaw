@@ -281,6 +281,13 @@ async function completeRegistration(createIntent: CreateIntent): Promise<Sandbox
     {} as never,
     { source: { kind: "legacy-dockerfile" } } as never,
     vi.fn(),
+    {
+      runBuffered: vi.fn(async () => ({
+        outcome: { kind: "completed" as const, exitCode: 0 },
+        stdout: "",
+        stderr: "",
+      })),
+    },
   );
   const created = {
     origin: "created",
