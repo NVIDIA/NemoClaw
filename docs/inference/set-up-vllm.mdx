@@ -465,7 +465,7 @@ Physical validation of compaction with the two-sequence limit and the full Expre
 
 #### Upgrade an Existing N1x Managed vLLM Runtime
 
-An existing `nemoclaw-vllm` container retains its original command after a NemoClaw update or sandbox rebuild.
+An existing `nemoclaw-vllm` container retains its original command after a NemoClaw update or ordinary sandbox rebuild.
 A container created by v0.0.119 therefore retains `--max-num-seqs 1` until you replace the managed runtime.
 
 Before replacement, follow [Handle a Running vLLM Server](#handle-a-running-vllm-server) to inspect every gateway environment and confirm that no other sandbox or distributed deployment uses the server.

@@ -140,6 +140,7 @@ describe("rebuild replacement target fingerprint", () => {
     { recreateProvider: "compatible-endpoint" },
     { recreateModel: "model-b" },
     { recreatePreferredInferenceApi: "anthropic" },
+    { reinstallDeferredN1xManagedVllm: true },
   ] as const)("changes when a recorded replacement input changes [case %#]", (drift) => {
     expect(fingerprintRebuildRecreateTargetIntent({ ...recreateOptions, ...drift })).not.toBe(
       fingerprintRebuildRecreateTargetIntent(recreateOptions),
