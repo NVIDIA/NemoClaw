@@ -21,6 +21,8 @@ import type { OpenShellGatewayTarget } from "./sandbox-observer";
 const MAX_PEM_BYTES = 1024 * 1024;
 const DIRECTORY_PROBE_TIMEOUT_SECONDS = 30;
 
+class OpenShellSdkPreflightUnavailableError extends Error {}
+
 type SdkExecEvent =
   | Readonly<{ stream: "stdout" | "stderr"; data: Buffer }>
   | Readonly<{ type: "exit"; exitCode: number }>;
@@ -149,7 +151,9 @@ export async function connectManagedOpenShellSdk(
     { allowLegacyManagedState: !configuredStateDir },
   );
   if (ownershipFailure) {
-    throw new Error(`Unsafe OpenShell gateway state directory: ${ownershipFailure}.`);
+    throw new OpenShellSdkPreflightUnavailableError(
+      `Unsafe OpenShell gateway state directory: ${ownershipFailure}.`,
+    );
   }
   const tlsDirectory = path.join(stateDir, "tls");
   const sdk = await (deps.loadSdk ?? loadOpenShellSdk)();
@@ -170,11 +174,13 @@ function commandFailure(error: unknown): OpenShellSandboxCommandOutcome {
   return {
     kind: "failed",
     error: {
-      kind: /Cannot find (?:module|package) ['"]@nvidia\/openshell-sdk['"]/u.test(message)
-        ? "unavailable"
-        : /timeout|deadline/iu.test(`${code} ${message}`)
-          ? "timeout"
-          : "invocation",
+      kind:
+        error instanceof OpenShellSdkPreflightUnavailableError ||
+        /Cannot find (?:module|package) ['"]@nvidia\/openshell-sdk['"]/u.test(message)
+          ? "unavailable"
+          : /timeout|deadline/iu.test(`${code} ${message}`)
+            ? "timeout"
+            : "invocation",
       message,
     },
   };

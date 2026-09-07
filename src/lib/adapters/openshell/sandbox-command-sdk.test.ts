@@ -195,6 +195,30 @@ describe("OpenShell SDK sandbox command executor", () => {
     });
   });
 
+  it("classifies an unsafe SDK state root as unavailable before sandbox execution", async () => {
+    const stateDir = writeTlsBundle();
+    fs.rmSync(path.join(stateDir, MANAGED_GATEWAY_STATE_ROOT_MARKER));
+    const loadSdk = vi.fn();
+    const executor = createSdkOpenShellSandboxCommandExecutor({
+      env: { NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: stateDir },
+      homeDir: "/unused",
+      loadSdk,
+    });
+
+    const completion = await executor.runStreaming({
+      sandboxName: "alpha",
+      target: { kind: "named", gatewayName: "nemoclaw-9443" },
+      command: ["true"],
+    });
+    completion.release();
+
+    expect(completion.outcome).toMatchObject({
+      kind: "failed",
+      error: { kind: "unavailable" },
+    });
+    expect(loadSdk).not.toHaveBeenCalled();
+  });
+
   it("settles with the signal exit code when connection is interrupted", async () => {
     const listeners = new Map<NodeJS.Signals, () => void>();
     const add = vi.fn((signal: NodeJS.Signals, listener: () => void) =>
