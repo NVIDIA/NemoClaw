@@ -3,11 +3,70 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { createCredentialProviderRegistration } from "../../../src/lib/onboard/credential-provider-registration.ts";
+import { MESSAGING_BRIDGE_PENDING_VALUE } from "../../../src/lib/onboard/messaging-bridge-provider.ts";
 import {
   addAndRebuildGooglechatForChannelsStopStartLiveE2e,
+  installGooglechatCredentialFixture,
   rebuildGooglechatForChannelsStopStartLiveE2e,
 } from "../live/channels-stop-start-helpers.ts";
+
+type FixtureRunner = typeof import("../../../src/lib/adapters/openshell/runtime.ts").runOpenshell;
+
 describe("channels stop/start Google Chat live composition", () => {
+  it.each([
+    ["openclaw", "e2e-oc-ch-cycle", "google-chat-bridge"],
+    ["hermes", "e2e-hm-ch-cycle", "google-chat-hermes-bridge"],
+  ] as const)(
+    "intercepts the current %s onboarding registration path before refresh minting",
+    (agent, sandboxName, providerType) => {
+      const expectedName = `${sandboxName}-googlechat-bridge`;
+      const runMock = vi
+        .fn<(args: string[]) => { status: number; stdout: string; stderr: string }>()
+        .mockReturnValueOnce({ status: 1, stdout: "", stderr: "" })
+        .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" });
+      const run = runMock as unknown as FixtureRunner;
+      const ensureProfiles = vi.fn();
+      const restore = installGooglechatCredentialFixture(sandboxName, agent, {
+        ensureProfiles,
+        root: "/repo",
+        run,
+      });
+
+      try {
+        const registration = createCredentialProviderRegistration({
+          root: "/repo",
+          runOpenshell: run,
+          getGatewayName: () => "nemoclaw",
+          getCredential: () => null,
+          updateSession: vi.fn() as never,
+          stagedLegacyValues: new Map(),
+          migratedLegacyKeys: new Set(),
+          persistMigratedLegacyKeys: vi.fn(),
+        });
+
+        expect(
+          registration.upsertMessagingProviders([
+            {
+              name: expectedName,
+              envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
+              token: MESSAGING_BRIDGE_PENDING_VALUE,
+              providerType,
+            },
+          ]),
+        ).toEqual([expectedName]);
+        expect(ensureProfiles).toHaveBeenCalledOnce();
+        expect(runMock.mock.calls.map(([args]) => args.slice(0, 2))).toEqual([
+          ["provider", "get"],
+          ["provider", "create"],
+        ]);
+        expect(runMock.mock.calls.some(([args]) => args.includes("refresh"))).toBe(false);
+      } finally {
+        restore();
+      }
+    },
+  );
+
   it("grants a process-local audience capability to the exact live sandbox", async () => {
     const addSandboxChannel = vi.fn(async () => {});
     const rebuildSandbox = vi.fn(async () => {});
@@ -194,5 +253,4 @@ describe("channels stop/start Google Chat live composition", () => {
     expect(events).toEqual(["install", "rebuild", "restore"]);
     expect(restore).toHaveBeenCalledOnce();
   });
-
 });

@@ -14,6 +14,28 @@ export function isN1xManagedVllmProviderModel(
   return provider === N1X_EXPRESS_PROVIDER && model === N1X_EXPRESS_MODEL;
 }
 
+export interface DeferredN1xManagedVllmAcceptanceRoute {
+  provider?: string | null;
+  model?: string | null;
+  endpointUrl?: string | null;
+  endpointSource?: string | null;
+  nimContainer?: unknown;
+  openshellDriver?: string | null;
+}
+
+/** True only when durable Deferred N1x acceptance is valid for this route. */
+export function isDeferredN1xManagedVllmAcceptanceRoute(
+  route: DeferredN1xManagedVllmAcceptanceRoute,
+): boolean {
+  return (
+    isN1xManagedVllmProviderModel(route.provider, route.model) &&
+    route.endpointUrl === null &&
+    route.endpointSource === null &&
+    route.nimContainer == null &&
+    route.openshellDriver === "docker"
+  );
+}
+
 export interface RecordedN1xManagedVllmRoute {
   provider?: string | null;
   model?: string | null;
@@ -21,6 +43,7 @@ export interface RecordedN1xManagedVllmRoute {
   endpointSource?: string | null;
   openshellDriver?: string | null;
   hostLocalInferenceReceipt?: string | null;
+  deferredN1xManagedVllmAccepted?: unknown;
 }
 
 export interface N1xManagedVllmRebuildSelection {
@@ -43,16 +66,23 @@ export function isRecordedN1xManagedVllmRebuildEligible(
   sandboxEntry: RecordedN1xManagedVllmRoute,
   rebuildSelection: N1xManagedVllmRebuildSelection,
   parseReceipt: ParseN1xManagedVllmReceipt,
-  vllmPort = VLLM_PORT,
+  options: { vllmPort?: number; explicitPreviewIntent?: boolean } = {},
 ): boolean {
+  const vllmPort = options.vllmPort ?? VLLM_PORT;
   if (!Number.isInteger(vllmPort) || vllmPort < 1024 || vllmPort > 65535) return false;
   const canonicalEndpointUrl = `http://host.openshell.internal:${String(vllmPort)}/v1`;
   const recordedEndpointUsesCanonicalLocalRoute =
     sandboxEntry.endpointUrl === null || sandboxEntry.endpointUrl === canonicalEndpointUrl;
+  const recordedSourceIsEligible =
+    sandboxEntry.endpointSource === "onboard" ||
+    (sandboxEntry.endpointSource === null &&
+      sandboxEntry.endpointUrl === null &&
+      (sandboxEntry.deferredN1xManagedVllmAccepted === true ||
+        options.explicitPreviewIntent === true));
   if (
     !isN1xManagedVllmProviderModel(sandboxEntry.provider, sandboxEntry.model) ||
     !recordedEndpointUsesCanonicalLocalRoute ||
-    sandboxEntry.endpointSource !== "onboard" ||
+    !recordedSourceIsEligible ||
     sandboxEntry.openshellDriver !== "docker" ||
     rebuildSelection.provider !== sandboxEntry.provider ||
     rebuildSelection.model !== sandboxEntry.model ||
