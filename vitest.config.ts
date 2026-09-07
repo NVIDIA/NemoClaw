@@ -188,11 +188,6 @@ export default defineConfig({
           env: {
             ...controlledNonLiveEnv,
             NODE_OPTIONS: sourceNodeOptions,
-            // Integration fixtures exercise onboarding against controlled fake
-            // Docker state. Keep a base-image Dockerfile change in the PR from
-            // redirecting those fixtures into the real local-build guard.
-            NEMOCLAW_SANDBOX_BASE_IMAGE_REF:
-              "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           },
           include: ["test/**/*.test.{js,ts}"],
           exclude: [
