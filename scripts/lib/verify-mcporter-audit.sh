@@ -4,8 +4,8 @@
 
 set -euo pipefail
 
-secret_root="${NEMOCLAW_MCPORTER_AUDIT_SECRET_ROOT:-/run/secrets}"
-seed_root="${NEMOCLAW_MCPORTER_AUDIT_SEED_ROOT:-/run/nemoclaw-mcporter-audit-cache/reviewed-npm-audit}"
+secret_root="/run/secrets"
+seed_root="/run/nemoclaw-mcporter-audit-cache/reviewed-npm-audit"
 secret_receipt="$secret_root/nemoclaw-mcporter-audit-receipt"
 secret_raw_report="$secret_root/nemoclaw-mcporter-audit-raw-report"
 receipt=""

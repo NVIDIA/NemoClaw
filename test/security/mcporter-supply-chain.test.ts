@@ -258,6 +258,12 @@ describe("mcporter image supply-chain controls", () => {
     );
     expect(contents).toContain("from=protected-mcporter-audit-cache");
     expect(contents).toContain("bash /scripts/lib/verify-mcporter-audit.sh");
+    expect(mcporterAuditHelper).toContain('secret_root="/run/secrets"');
+    expect(mcporterAuditHelper).toContain(
+      'seed_root="/run/nemoclaw-mcporter-audit-cache/reviewed-npm-audit"',
+    );
+    expect(mcporterAuditHelper).not.toContain("NEMOCLAW_MCPORTER_AUDIT_SECRET_ROOT");
+    expect(mcporterAuditHelper).not.toContain("NEMOCLAW_MCPORTER_AUDIT_SEED_ROOT");
     expect(mcporterAuditHelper).toContain(
       "cached mcporter audit requires paired receipt, raw report, and receipt SHA-256",
     );
