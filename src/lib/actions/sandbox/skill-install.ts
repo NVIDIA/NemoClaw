@@ -17,7 +17,8 @@ import { renderAgentSkillCommand } from "../../agent/skill-integration";
 import { CLI_NAME } from "../../cli/branding";
 import { D, G, R } from "../../cli/terminal-style";
 import * as skillInstall from "../../skill-install";
-import { ensureLiveSandboxOrExit, getSandboxTargetGatewayName } from "./gateway-state";
+import { ensureLiveSandboxOrExit } from "./gateway-state";
+import { getSandboxTargetGatewayName } from "./gateway-target";
 import { wrapExecCommandWithRuntimeEnv } from "./runtime-env";
 
 const SKILL_COMMAND_TIMEOUT_SECONDS = 120;

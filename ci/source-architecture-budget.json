@@ -3,6 +3,7 @@
   "fanIn": {
     "defaultMax": 20,
     "maxByFile": {
+      "src/lib/actions/sandbox/gateway-target.ts": 21,
       "src/lib/actions/sandbox/mcp-bridge-contracts.ts": 25,
       "src/lib/actions/sandbox/process-recovery.ts": 26,
       "src/lib/adapters/docker/index.ts": 42,

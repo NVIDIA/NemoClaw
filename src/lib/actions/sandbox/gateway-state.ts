@@ -29,7 +29,6 @@ import {
   getPersistedSandboxTargetGatewayName,
   getSandboxTargetGatewayName,
 } from "./gateway-target";
-export { getSandboxTargetGatewayName };
 
 const { pruneKnownHostsEntries } = require("../../onboard/known-hosts") as {
   pruneKnownHostsEntries: (contents: string) => string;
@@ -897,13 +896,11 @@ export async function getReconciledSandboxGatewayState(
     getState?: SandboxGatewayStateLookup;
     gatewayRecovery?: GatewayRecoveryMode;
     selectOwningGateway?: boolean;
-    targetGatewayName?: string;
   } = {},
 ): Promise<SandboxGatewayState> {
   const getState = opts.getState ?? getSandboxGatewayState;
   const gatewayRecovery: GatewayRecoveryMode = opts.gatewayRecovery ?? "recover";
-  let targetGatewayName =
-    opts.targetGatewayName ?? getKnownSandboxTargetGatewayName(sandboxName) ?? undefined;
+  let targetGatewayName = getKnownSandboxTargetGatewayName(sandboxName) ?? undefined;
   const endpointOverride = gatewayEndpointOverrideState();
   if (endpointOverride) return endpointOverride;
   if (targetGatewayName && opts.selectOwningGateway !== false) {
@@ -1028,20 +1025,17 @@ export async function ensureLiveSandboxOrExit(
     allowNonReadyPhase = false,
     gatewayRecovery = "recover",
     selectOwningGateway = true,
-    targetGatewayName,
     exit = process.exit,
   }: {
     allowNonReadyPhase?: boolean;
     gatewayRecovery?: GatewayRecoveryMode;
     selectOwningGateway?: boolean;
-    targetGatewayName?: string;
     exit?: (code: number) => never;
   } = {},
 ): Promise<SandboxGatewayState> {
   const lookup = await getReconciledSandboxGatewayState(sandboxName, {
     gatewayRecovery,
     selectOwningGateway,
-    targetGatewayName,
   });
   if (lookup.state === "present") {
     const phase = lookup.phase ?? null;
