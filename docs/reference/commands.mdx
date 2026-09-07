@@ -2299,8 +2299,9 @@ For a legacy public registration without recorded address pins, the command also
 Pass one or more `--deny-tool <name-or-glob>` options, or pass `--clear-deny-tools` to remove every denied-tool rule.
 The two modes cannot be combined.
 NemoClaw journals the replacement intent, removes the current generated policy, commits the replacement, and then applies it.
-If replacement policy activation fails, the route remains blocked.
-Run `$$nemoclaw <name> mcp restart <server>` to commit any journaled replacement and converge to the recorded intent.
+If the command reports that replacement intent was journaled or saved, or status reports an interrupted update, run `$$nemoclaw <name> mcp restart <server>` to commit the replacement and converge to the recorded intent.
+The MCP route remains blocked when replacement activation fails.
+If removal of the existing policy fails, NemoClaw restores the prior recorded list; resolve the removal failure and rerun `mcp update` instead.
 Rebuild rejects a generated policy that does not match the persisted intent.
 
 ```bash

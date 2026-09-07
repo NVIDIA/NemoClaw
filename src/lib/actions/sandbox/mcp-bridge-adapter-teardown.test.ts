@@ -105,6 +105,7 @@ import {
   prepareMcpBridgesForAbsentSandboxRebuild,
   prepareMcpBridgesForExecUnavailableRebuild,
   prepareMcpBridgesForRebuild,
+  restoreMcpBridgesAfterRebuild,
 } from "./mcp-bridge-rebuild";
 import { scrubManagedMcpAdapterOrThrow } from "./mcp-bridge-adapter-teardown";
 
@@ -341,6 +342,46 @@ describe("MCP adapter teardown rollback", () => {
     expect(preparation.entries[0]).not.toHaveProperty("pendingDenyTools");
     expect(mocks.setBridgeState).toHaveBeenCalledWith("alpha", {
       github: expect.objectContaining({ denyTools: ["replacement_*"] }),
+    });
+  });
+
+  it("commits journaled denied tools only after post-rebuild runtime restoration (#11115)", async () => {
+    const pendingEntry = {
+      ...entry,
+      denyTools: ["old_tool"],
+      pendingDenyTools: ["replacement_*"],
+    };
+
+    await restoreMcpBridgesAfterRebuild("alpha", [pendingEntry], runtimeSelection);
+
+    expect(mocks.setBridgeState).toHaveBeenNthCalledWith(1, "alpha", {
+      github: expect.objectContaining({ pendingDenyTools: ["replacement_*"] }),
+    });
+    expect(mocks.restoreExistingMcpBridgeRuntime).toHaveBeenCalledWith(
+      "alpha",
+      [expect.objectContaining({ denyTools: ["replacement_*"] })],
+      expect.objectContaining({ applyPolicy: false }),
+    );
+    expect(mocks.setBridgeState).toHaveBeenLastCalledWith("alpha", {
+      github: expect.not.objectContaining({ pendingDenyTools: expect.anything() }),
+    });
+  });
+
+  it("retains journaled denied tools when post-rebuild runtime restoration fails (#11115)", async () => {
+    mocks.restoreExistingMcpBridgeRuntime.mockRejectedValueOnce(new Error("restore failed"));
+    const pendingEntry = {
+      ...entry,
+      denyTools: ["old_tool"],
+      pendingDenyTools: ["replacement_*"],
+    };
+
+    await expect(
+      restoreMcpBridgesAfterRebuild("alpha", [pendingEntry], runtimeSelection),
+    ).rejects.toThrow("restore failed");
+
+    expect(mocks.setBridgeState).toHaveBeenCalledOnce();
+    expect(mocks.setBridgeState).toHaveBeenCalledWith("alpha", {
+      github: expect.objectContaining({ pendingDenyTools: ["replacement_*"] }),
     });
   });
 

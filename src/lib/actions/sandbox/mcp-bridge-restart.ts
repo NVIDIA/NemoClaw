@@ -88,6 +88,19 @@ function sameAddressPins(left: readonly string[] | undefined, right: readonly st
   );
 }
 
+function retainPendingDenyToolJournal(
+  entry: McpBridgeEntry,
+  storedEntry: McpBridgeEntry,
+): McpBridgeEntry {
+  if (storedEntry.pendingDenyTools === undefined) return entry;
+  const { denyTools: _replacementDenyTools, ...entryWithoutDenyTools } = entry;
+  return {
+    ...entryWithoutDenyTools,
+    ...(storedEntry.denyTools ? { denyTools: [...storedEntry.denyTools] } : {}),
+    pendingDenyTools: [...storedEntry.pendingDenyTools],
+  };
+}
+
 async function assertRestartCredentialsAvailable(
   sandboxName: string,
   entries: readonly McpBridgeEntry[],
@@ -157,11 +170,7 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
   const targetEntries = targets
     .map(([, entry]) => entry)
     .filter((entry): entry is McpBridgeEntry => !!entry)
-    .map((entry) => {
-      const materialized = materializePendingMcpDenyTools(entry);
-      if (entry.pendingDenyTools !== undefined) writeBridgeEntry(sandboxName, materialized);
-      return materialized;
-    });
+    .map(materializePendingMcpDenyTools);
   const providerRuntimeSelection = getMcpProviderInspectionRuntimeSelection(sandbox);
   const resolvedByServer = await preflightMcpEntryTargets(targetEntries);
   assertMcpCredentialBoundaryRuntimeVersion();
@@ -215,7 +224,7 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
     const target = resolvedTargetPins(resolvedByServer, entry);
     if (!entry.trustedPrivateHost && !sameAddressPins(entry.allowedIps, target.addresses)) {
       entry = { ...entry, allowedIps: [...target.addresses], updatedAt: nowIso() };
-      writeBridgeEntry(sandboxName, entry);
+      writeBridgeEntry(sandboxName, retainPendingDenyToolJournal(entry, storedEntry));
     }
     let previousCredentialRevision: McpCredentialRevisionObservation | undefined;
     assertNoAttachedProviderCredentialCollisions(sandboxName, [entry], providerRuntimeSelection);
@@ -252,7 +261,10 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
     if (refreshedEntry !== entry) {
       // A missing owned provider may be recreated during restart. Record the
       // replacement object's immutable ID before policy/attach/adapter work.
-      writeBridgeEntry(sandboxName, refreshedEntry);
+      writeBridgeEntry(
+        sandboxName,
+        retainPendingDenyToolJournal(refreshedEntry, storedEntry),
+      );
       entry = refreshedEntry;
     }
     assertNoAttachedProviderCredentialCollisions(sandboxName, [entry], providerRuntimeSelection);

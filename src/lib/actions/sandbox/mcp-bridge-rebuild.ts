@@ -430,6 +430,7 @@ export async function restoreMcpBridgesAfterRebuild(
 ): Promise<void> {
   if (entries.length === 0) return;
   for (const entry of entries) assertAuthenticatedBridgeEntry(entry);
+  const committedEntries = entries.map(materializePendingMcpDenyTools);
   const bridges = Object.fromEntries(
     entries.map((entry) => [entry.server, cloneMcpBridgeEntry(entry)]),
   );
@@ -439,8 +440,16 @@ export async function restoreMcpBridgesAfterRebuild(
   // Sandbox creation already received the complete pre-rebuild OpenShell
   // policy. Restore providers and adapters without regenerating or overwriting
   // policy entries that an operator may have edited independently.
-  await restoreExistingMcpBridgeRuntime(sandboxName, entries, {
+  await restoreExistingMcpBridgeRuntime(sandboxName, committedEntries, {
     applyPolicy: false,
     ...(runtimeSelection ? { runtimeSelection } : {}),
   });
+  if (entries.some((entry) => entry.pendingDenyTools !== undefined)) {
+    setBridgeState(
+      sandboxName,
+      Object.fromEntries(
+        committedEntries.map((entry) => [entry.server, cloneMcpBridgeEntry(entry)]),
+      ),
+    );
+  }
 }
