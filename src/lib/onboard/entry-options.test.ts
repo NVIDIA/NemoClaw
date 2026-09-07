@@ -51,6 +51,15 @@ describe("pending create recovery admission", () => {
     expect(reconstruct).toHaveBeenCalledExactlyOnceWith(entry);
   });
 
+  it("reconstructs an ownerless checkpoint instead of matching absent session IDs (#11096)", () => {
+    const reconstruct = vi.fn();
+    const entry = { name: "alpha", pendingCreateIdentity: {} };
+
+    reconstructUnownedPendingCreateRecoveries({ resume: true }, null, [entry], reconstruct);
+
+    expect(reconstruct).toHaveBeenCalledExactlyOnceWith(entry);
+  });
+
   it.each([
     ["explicit resume", { resume: true }, "failed"],
     ["automatic resume", {}, "in_progress"],

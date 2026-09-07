@@ -1995,22 +1995,16 @@ export function listRetainedSandboxRecoveryRecords(): readonly RetainedSandboxRe
 
 const SAFE_RECOVERY_EVIDENCE = /^[A-Za-z0-9._:@/-]{1,256}$/u;
 
+const safeRecoveryEvidence = (value: unknown): string[] =>
+  typeof value === "string" && SAFE_RECOVERY_EVIDENCE.test(value) ? [value] : [];
+
 function pendingCreateRecoveryResources(
   entry: SandboxEntry,
 ): RecordRetainedSandboxRecoveryInput["resources"] {
-  const safeValues = (values: readonly unknown[]): string[] =>
-    [
-      ...new Set(
-        values.filter(
-          (value): value is string =>
-            typeof value === "string" && SAFE_RECOVERY_EVIDENCE.test(value),
-        ),
-      ),
-    ].sort();
   return {
-    sharedInferenceProviders: safeValues([entry.provider]),
-    sandboxScopedProviders: safeValues([entry.hermesInferenceProvider]),
-    credentialEnvironmentVariables: safeValues([entry.credentialEnv]),
+    sharedInferenceProviders: safeRecoveryEvidence(entry.provider),
+    sandboxScopedProviders: safeRecoveryEvidence(entry.hermesInferenceProvider),
+    credentialEnvironmentVariables: safeRecoveryEvidence(entry.credentialEnv),
   };
 }
 
@@ -2056,10 +2050,9 @@ export function reconstructRetainedSandboxRecoveryFromPendingCreate(
   return withOwnedOnboardLock("nemoclaw retained sandbox recovery reconstruction", () => {
     const records = readRetainedSandboxRecoveryRecords(RETAINED_SANDBOX_RECOVERY_FILE);
     const sameName = records.filter((record) => record.sandboxName === entry.name);
-    const matching = sameName.filter((record) =>
-      retainedRecoveryMatchesPendingCreate(record, entry),
-    );
-    if (matching.length === 1 && sameName.length === 1) return matching[0]!;
+    if (sameName.length === 1 && retainedRecoveryMatchesPendingCreate(sameName[0]!, entry)) {
+      return sameName[0]!;
+    }
     if (sameName.length > 0) {
       throw new Error(
         `Cannot reconstruct retained sandbox recovery for '${entry.name}': its independent recovery authority conflicts with the verified create checkpoint.`,

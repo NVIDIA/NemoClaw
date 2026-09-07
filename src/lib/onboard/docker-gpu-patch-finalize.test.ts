@@ -168,6 +168,7 @@ describe("finalizeDockerGpuPatchBackup", () => {
         runCaptureOpenshell,
         runOpenshell,
         sleep: vi.fn(),
+        now: () => new Date("2026-08-23T10:00:02Z"),
       },
     );
 

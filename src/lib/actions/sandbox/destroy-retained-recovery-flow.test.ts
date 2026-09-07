@@ -86,10 +86,15 @@ describe("destroySandbox retained recovery flow", () => {
       expect(harness.reconstructRetainedSandboxRecoverySpy).toHaveBeenCalledWith(
         expect.objectContaining({ pendingCreateIdentity }),
       );
-      expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
-        ["sandbox", "delete", "alpha"],
-        expect.anything(),
-      );
+      expect(
+        harness.runOpenshellSpy.mock.calls.some(
+          ([args]) =>
+            Array.isArray(args) &&
+            args[0] === "sandbox" &&
+            args[1] === "delete" &&
+            args[2] === "alpha",
+        ),
+      ).toBe(false);
       expect(harness.resolveRetainedSandboxRecoverySpy).toHaveBeenCalledWith(recovery);
       expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
       expect(exitSpy).not.toHaveBeenCalled();

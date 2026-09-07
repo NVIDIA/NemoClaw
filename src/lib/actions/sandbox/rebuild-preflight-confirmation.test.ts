@@ -165,7 +165,7 @@ describe("createRebuildCommandContext bail behaviour (#6376)", () => {
     expect(errorSpy).toHaveBeenCalledWith(`  ${redacted}`);
     // ... and the raw secret never surfaced.
     expect(
-      errorSpy.mock.calls.every((call) => !String(call[0]).includes("SUPERSECRETTOKEN123")),
+      errorSpy.mock.calls.flat().every((value) => !String(value).includes("SUPERSECRETTOKEN123")),
     ).toBe(true);
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
@@ -194,12 +194,16 @@ describe("rebuild preflight guards", () => {
       reason: "retained_after_sandbox_creation_failure",
       recordedAt: "2026-09-07T00:00:00.000Z",
     };
+    let retainedRecoveryRecords: onboardSession.RetainedSandboxRecoveryRecord[] = [];
     const reconstruct = vi
       .spyOn(onboardSession, "reconstructRetainedSandboxRecoveryFromPendingCreate")
-      .mockReturnValue(recoveryRecord);
+      .mockImplementation(() => {
+        retainedRecoveryRecords = [recoveryRecord];
+        return recoveryRecord;
+      });
     const listRecovery = vi
       .spyOn(onboardSession, "listRetainedSandboxRecoveryRecords")
-      .mockReturnValue([recoveryRecord]);
+      .mockImplementation(() => retainedRecoveryRecords);
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const bail = vi.fn() as unknown as (message: string, code?: number) => never;
     const sandbox = {

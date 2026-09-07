@@ -584,6 +584,7 @@ if (${JSON.stringify(
 	    }
 	    try {
 	      await onboardModule.onboard({
+	        acceptThirdPartySoftware: true,
 	        resume: recoveryReentry === "explicit",
 	        fresh:
 	          recoveryReentry === "fresh-same" ||

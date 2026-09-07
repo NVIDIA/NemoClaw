@@ -494,7 +494,6 @@ if (scenario.mode === "stale-recovery-admission") {
 
 if (scenario.mode === "stale-session-decision") {
   const resolveEntryOptions = onboardEntryOptions.readOptions;
-  const resolveRecoveryOptions = onboardEntryOptions.resolveEntryOptions;
   let optionReads = 0;
   onboardEntryOptions.readOptions = (...args) => {
     optionReads += 1;
@@ -503,10 +502,6 @@ if (scenario.mode === "stale-session-decision") {
       seedResumeSession("preflight", false);
     }
     return resolved;
-  };
-  onboardEntryOptions.resolveEntryOptions = (...args) => {
-    called.push("recovery-pass");
-    return resolveRecoveryOptions(...args);
   };
   lockedRuntime.prepare = async (_opts, resume) => {
     called.push("locked-resume:" + String(resume));
@@ -647,9 +642,8 @@ describe("live onboard FSM slice boundaries", () => {
     assert.deepEqual(runSliceProbe({ slice: "initial", mode: "stale-recovery-admission" }), []);
   });
 
-  it("runs recovery once and uses the session decision read after locking (#9833)", () => {
+  it("uses the session decision read after acquiring the onboarding lock (#9833)", () => {
     assert.deepEqual(runSliceProbe({ slice: "initial", mode: "stale-session-decision" }), [
-      "recovery-pass",
       "locked-resume:true",
     ]);
   });

@@ -99,13 +99,12 @@ export function reconstructUnownedPendingCreateRecoveries<Entry extends PendingC
     (options.fresh !== true && persistedSession?.status === "in_progress");
   for (const entry of entries) {
     if (!entry.pendingCreateIdentity) continue;
+    const matchingSessionId =
+      entry.reservationSessionId !== undefined &&
+      entry.reservationSessionId === persistedSession?.sessionId;
     const sessionAlreadyOwnsRecovery =
-      entry.reservationSessionId === persistedSession?.sessionId &&
-      entry.name === persistedSession?.cancellationRecovery?.sandboxName;
-    if (
-      sessionAlreadyOwnsRecovery ||
-      (preservesPendingCreateSession && entry.reservationSessionId === persistedSession?.sessionId)
-    ) {
+      matchingSessionId && entry.name === persistedSession?.cancellationRecovery?.sandboxName;
+    if (sessionAlreadyOwnsRecovery || (preservesPendingCreateSession && matchingSessionId)) {
       continue;
     }
     reconstruct(entry);
@@ -266,7 +265,7 @@ export function resolveDefaultRunEntryOptions(
   );
 }
 
-export function readOptions(
+export function resolveDefaultRunEntryOptionsFromState(
   options: OnboardEntryOptionsInput["opts"] & { autoYes?: boolean; nonInteractive?: boolean },
   validateSandboxName: OnboardEntryOptionsDeps["validateName"],
   state: DefaultRunEntryState,
@@ -280,6 +279,8 @@ export function readOptions(
     state.listRetainedSandboxRecoveryRecords().map((record) => record.sandboxName),
   );
 }
+
+export const readOptions = resolveDefaultRunEntryOptionsFromState;
 
 export function assertDefaultSandboxNameAllowed(sandboxName: string): void {
   if (!RESERVED_SANDBOX_NAMES.has(sandboxName)) return;
