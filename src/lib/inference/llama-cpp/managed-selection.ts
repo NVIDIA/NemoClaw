@@ -54,6 +54,21 @@ function n1xWslDockerLocalityFailure(
     : "Managed N1x WSL llama.cpp requires DOCKER_HOST to be unset and the effective Docker context to be default.";
 }
 
+function n1xWslGpuCountFailure(report: SystemReadinessReport): string | null {
+  const gpuCount = report.observations.find(
+    (observation) => observation.id === "host.gpu.count" && observation.state === "present",
+  )?.value;
+  return gpuCount === 1 ? null : "Managed N1x WSL llama.cpp requires exactly one GPU.";
+}
+
+function n1xWslEligibilityFailure(
+  env: NodeJS.ProcessEnv,
+  report: SystemReadinessReport,
+  options: ManagedLlamaCppSelectionOptions,
+): string | null {
+  return n1xWslDockerLocalityFailure(env, options) || n1xWslGpuCountFailure(report);
+}
+
 function dockerQualifiedPresetRuntimeFailure(
   runtimeProviderId: string | undefined,
   selection: ResolvedLlamaCppInferenceSelection,
@@ -169,6 +184,7 @@ export function listManagedLlamaCppSelectionChoices(
 function managedLlamaCppChoiceEligibilityFailure(
   choice: ManagedLlamaCppSelectionChoice,
   env: NodeJS.ProcessEnv,
+  report: SystemReadinessReport,
   options: ManagedLlamaCppSelectionOptions,
 ): string | null {
   const runtimeFailure = dockerQualifiedPresetRuntimeFailure(
@@ -178,7 +194,7 @@ function managedLlamaCppChoiceEligibilityFailure(
   if (runtimeFailure) return runtimeFailure;
   return (
     (choice.selection.recipe.metadata.id === N1X_WSL_RECIPE_ID &&
-      n1xWslDockerLocalityFailure(env, options)) ||
+      n1xWslEligibilityFailure(env, report, options)) ||
     null
   );
 }
@@ -193,8 +209,8 @@ function resolveManagedLlamaCppSelectionFromChoices(
 ): ManagedLlamaCppSelectionResult {
   const requestedRecipeId = String(env[LLAMA_CPP_RECIPE_ENV] ?? "").trim();
   if (requestedRecipeId === N1X_WSL_RECIPE_ID) {
-    const localityFailure = n1xWslDockerLocalityFailure(env, options);
-    if (localityFailure) return { kind: "rejected", reason: localityFailure };
+    const eligibilityFailure = n1xWslEligibilityFailure(env, report, options);
+    if (eligibilityFailure) return { kind: "rejected", reason: eligibilityFailure };
   }
   if (String(env.NEMOCLAW_MODEL ?? "").trim()) {
     return {
@@ -224,7 +240,7 @@ function resolveManagedLlamaCppSelectionFromChoices(
     const selection = highestPriorityChoices[0]!.selection;
     const choiceFailure = automaticChoiceFailures?.has(selection.preset.metadata.id)
       ? automaticChoiceFailures.get(selection.preset.metadata.id)
-      : managedLlamaCppChoiceEligibilityFailure(highestPriorityChoices[0]!, env, options);
+      : managedLlamaCppChoiceEligibilityFailure(highestPriorityChoices[0]!, env, report, options);
     if (choiceFailure) return { kind: "rejected", reason: choiceFailure };
     return {
       kind: "selected",
@@ -342,7 +358,7 @@ export function discoverManagedLlamaCppSelections(
   const choiceFailures = new Map(
     choices.map((choice) => [
       choice.selection.preset.metadata.id,
-      managedLlamaCppChoiceEligibilityFailure(choice, env, options),
+      managedLlamaCppChoiceEligibilityFailure(choice, env, report, options),
     ]),
   );
   const eligibleChoices = choices.filter(

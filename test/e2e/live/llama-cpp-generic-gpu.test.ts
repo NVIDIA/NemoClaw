@@ -30,11 +30,17 @@ import {
 const TIMEOUT_MS = 110 * 60_000;
 const RECIPE_ID =
   process.env.NEMOCLAW_LLAMACPP_RECIPE ?? "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1";
-const RUNTIME_IMAGE_SCOPE = process.env.NEMOCLAW_LLAMA_CPP_RUNTIME_IMAGE_SCOPE ?? "";
+const RUNTIME_IMAGE_SCOPE =
+  process.env.NEMOCLAW_LLAMA_CPP_RUNTIME_IMAGE_SCOPE ??
+  (process.env.NEMOCLAW_E2E_PHASE_COLLECTION === "1" ? "published-base" : "");
 const TARGET_ID = process.env.E2E_TARGET_ID ?? "llama-cpp-generic-gpu";
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-llamacpp-gpu";
 validateSandboxName(SANDBOX_NAME);
-assert.match(RECIPE_ID, /^[a-z0-9][a-z0-9._-]{0,159}$/u, "invalid llama.cpp recipe ID");
+assert.match(
+  `${RUNTIME_IMAGE_SCOPE}:${RECIPE_ID}`,
+  /^published-base:[a-z0-9][a-z0-9._-]{0,159}$/u,
+  "invalid llama.cpp runtime image scope or recipe ID",
+);
 assert.match(TARGET_ID, /^[a-z0-9][a-z0-9-]{0,63}$/u, "invalid E2E target ID");
 
 function llamaGpuApplications(output: string): string[][] {
@@ -162,7 +168,6 @@ test(
       receipt?.service === "llama-cpp" &&
         receipt.runtime.kind === "container" &&
         receipt.providerId === resolveNemoClawGatewayRuntime(env()) &&
-        RUNTIME_IMAGE_SCOPE === "published-base" &&
         receipt.runtime.imageRef === recipe.spec.runtime.image,
       "managed llama.cpp receipt does not match the selected runtime provider and base-published image",
     );

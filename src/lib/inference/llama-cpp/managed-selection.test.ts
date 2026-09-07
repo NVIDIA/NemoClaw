@@ -461,6 +461,25 @@ describe("managed llama.cpp selection", () => {
     ).toMatchObject({ kind: "rejected" });
   });
 
+  it("rejects the N1x WSL recipe when readiness reports multiple GPUs (#10962)", () => {
+    const { catalog, report } = fixture(N1X_WSL_PRESET_ID);
+    const multipleGpus = {
+      ...report,
+      observations: report.observations.map((observation) =>
+        observation.id === "host.gpu.count" ? { ...observation, value: 2 } : observation,
+      ),
+    };
+
+    expect(
+      discoverManagedLlamaCppSelections(
+        { [LLAMA_CPP_RECIPE_ENV]: N1X_WSL_RECIPE_ID },
+        catalog,
+        multipleGpus,
+        LOCAL_DOCKER_SELECTION,
+      ).resolution,
+    ).toMatchObject({ kind: "rejected" });
+  });
+
   it("rejects the N1x WSL recipe without Docker Desktop runtime (#10102)", () => {
     const { catalog, report } = fixture(N1X_WSL_PRESET_ID);
     const nativeDocker = {
