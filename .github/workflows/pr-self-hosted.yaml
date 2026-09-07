@@ -68,6 +68,7 @@ jobs:
                   or .filename == ".github/workflows/pr-self-hosted.yaml"
                   or .filename == "scripts/install.sh"
                   or .filename == "src/lib/inference/nim.ts"
+                  or .filename == "src/lib/inference/serving/profile-provenance.ts"
                   or .filename == "src/lib/onboard/machine/handlers/provider-inference.ts"
                   or .filename == "src/lib/onboard/provider-selection.ts"
                   or .filename == "src/lib/onboard/setup-nim-provider-discovery.ts"

@@ -38,6 +38,7 @@ const CANDIDATE_SHA = "a".repeat(40);
 const BASE_SHA = "b".repeat(40);
 const REQUIRED_RUNTIME_AUTHORITY_PATHS = [
   "src/lib/inference/nim.ts",
+  "src/lib/inference/serving/profile-provenance.ts",
   "src/lib/onboard/machine/handlers/provider-inference.ts",
   "src/lib/onboard/provider-selection.ts",
   "src/lib/onboard/setup-nim-provider-discovery.ts",

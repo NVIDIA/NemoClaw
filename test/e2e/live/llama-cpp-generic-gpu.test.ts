@@ -196,10 +196,25 @@ test(
       RUNTIME_IMAGE,
     );
     const interruptedRuntimeId = interruptedReceipt.runtime.runtimeId;
-    const stopRuntime = await host.command("docker", ["stop", interruptedRuntimeId], {
-      artifactName: "stop-managed-llama-cpp-before-resume",
-      env: env(),
-      timeoutMs: 60_000,
+    const runtimeProvider = resolveRegisteredRuntimeProviderBundle(interruptedReceipt.providerId);
+    assert(
+      runtimeProvider?.hostLocalInference.supported === true &&
+        runtimeProvider.hostLocalInference.services.includes("llama-cpp"),
+      "receipt runtime provider does not expose managed llama.cpp authority",
+    );
+    const runtimeOperation = runtimeProvider.hostLocalInference.createOperation({ env: env() });
+    runtimeOperation.assertAuthority();
+    const stopRuntime = runtimeOperation.engine.capture(
+      ["container", "stop", interruptedRuntimeId],
+      60_000,
+    );
+    await artifacts.writeJson("stop-managed-llama-cpp-before-resume.json", {
+      providerId: interruptedReceipt.providerId,
+      runtimeId: interruptedRuntimeId,
+      status: stopRuntime.status,
+      error: stopRuntime.error?.message ?? null,
+      stdout: stopRuntime.stdout,
+      stderr: stopRuntime.stderr,
     });
     const resumeEnv = env();
     delete resumeEnv.NEMOCLAW_E2E_FAILURE_INJECTION;
@@ -227,9 +242,19 @@ test(
     expect(
       install.exitCode === 1 &&
         resultText(install).includes("Forced onboarding failure at step 'policies'") &&
-        stopRuntime.exitCode === 0 &&
+        stopRuntime.status === 0 &&
+        stopRuntime.error === undefined &&
         resume.exitCode === 0,
-      [resultText(install), resultText(stopRuntime), resultText(resume)].join("\n"),
+      [
+        resultText(install),
+        JSON.stringify({
+          error: stopRuntime.error?.message ?? null,
+          status: stopRuntime.status,
+          stderr: stopRuntime.stderr,
+          stdout: stopRuntime.stdout,
+        }),
+        resultText(resume),
+      ].join("\n"),
     ).toBe(true);
 
     progress.phase("verify full GPU offload");
@@ -248,17 +273,9 @@ test(
       RUNTIME_IMAGE,
       interruptedRuntimeId,
     );
-    const runtimeProvider = resolveRegisteredRuntimeProviderBundle(receipt.providerId);
-    assert(
-      runtimeProvider?.hostLocalInference.supported === true &&
-        runtimeProvider.hostLocalInference.services.includes("llama-cpp"),
-      "receipt runtime provider does not expose managed llama.cpp authority",
-    );
     const apiKey = loadManagedLlamaCppApiKey(managedLlamaCppStatePaths(os.homedir()));
     assert(apiKey, "managed llama.cpp API key is missing");
     artifacts.addRedactionValues([apiKey]);
-    const runtimeOperation = runtimeProvider.hostLocalInference.createOperation({ env: env() });
-    runtimeOperation.assertAuthority();
     const runtimeLogs = runtimeOperation.engine.capture(
       ["container", "logs", "--tail", "20000", receipt.runtime.runtimeId],
       30_000,
