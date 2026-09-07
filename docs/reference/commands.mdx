@@ -2159,7 +2159,36 @@ Register a messaging channel with the sandbox and rebuild so the image picks up 
 
 Google Chat uses an experimental token-paste flow for the service-account JSON on both agents. OpenClaw also requires interactive public-webhook confirmation and prompts for optional app-principal configuration during enrollment. Hermes instead prompts for the Google Cloud project ID, complete Pub/Sub subscription name, and email sender allowlist. It pulls inbound events from Pub/Sub over REST and does not create a public webhook endpoint.
 
-After registering the channel, NemoClaw asks whether to rebuild immediately. Running `add` for an already-configured channel overwrites the stored credentials where applicable. The operation is idempotent. Static channel credentials use a validated endpointless OpenShell provider profile so the gateway can replace their sandbox placeholders. NemoClaw validates the existing profile, provider type, and credential keys before it reuses a provider. A missing, malformed, conflicting, or incompatible provider state stops the operation before reuse. Hermes Discord uses its dedicated static provider type because its policy binds the Discord API and Gateway endpoints. Channel names are trimmed and lowercased before NemoClaw stores credentials, names bridge providers, or prints rebuild messages. NemoClaw requires the matching built-in network policy preset YAML to be present. A missing or malformed preset YAML (no `network_policies:` section) aborts `channels add` before any token prompt, registry write, or rebuild prompt. After validating that preset, NemoClaw discloses its effect before prompting for credentials or changing gateway or registry state. It prints the exact effective egress scope when the preset would open or replace access, or reports that no new egress would be opened when the preset is already effective. The `--dry-run` path prints the same disclosure without collecting credentials or applying changes. With the preset file in place, NemoClaw applies it to the sandbox before the rebuild so the bridge has egress to its upstream API. When the apply step itself fails after the registry write on a fresh add, NemoClaw attempts to roll back the bridge providers, the `messagingChannels` entry, and any staged environment credentials, then exits without prompting for a rebuild; if any gateway-side step (provider detach or delete) fails the rollback continues and prints a `Rollback could not fully clean <surfaces>` warning so the operator can clean up manually. When the same failure happens on a re-add of an already-enabled channel, NemoClaw restores the prior `messagingChannels` entry, restores staged environment credentials when available, restores registry credential hashes, and attempts to re-upsert the prior bridge providers, but flags `gateway-providers` as residual because the in-flight upsert may have left the gateway with the new token; verify the gateway bridge before relying on the channel. Restore the preset YAML and re-run `$$nemoclaw <name> channels add <channel>`. For Telegram, Discord, and Slack, a rebuild triggered by `channels add` also verifies that the selected bridge starts and reports credential, startup, or plugin discovery warnings.
+After registering the channel, NemoClaw asks whether to rebuild immediately.
+Running `add` for an already-configured channel overwrites the stored credentials where applicable.
+Repeating a successful add with identical inputs is idempotent.
+A failed re-add can leave residual gateway-provider state when prior refresh material cannot be restored.
+Static channel credentials use a validated endpointless OpenShell provider profile so the gateway can replace their sandbox placeholders.
+NemoClaw validates the existing profile, provider type, and credential keys before it reuses a provider.
+A missing provider is created when complete credentials are available.
+OpenShell provider inspection uncertainty stops the operation before provider mutation.
+On a fresh add, NemoClaw may already have applied the credential-free policy preset and attempts to remove it before exiting.
+If that policy cleanup fails, rebuild the sandbox first, then run the `$$nemoclaw <name> policy remove <channel>` command printed by the CLI.
+With complete credentials, NemoClaw replaces a mismatched provider only when it is unattached or attached exclusively to the selected sandbox.
+An attachment to another sandbox stops replacement.
+The `--force` flag does not override this provider attachment authority.
+Hermes Discord uses its dedicated static provider type because its policy binds the Discord API and Gateway endpoints.
+Channel names are trimmed and lowercased before NemoClaw stores credentials, names bridge providers, or prints rebuild messages.
+NemoClaw requires the matching built-in network policy preset YAML to be present.
+A missing or malformed preset YAML (no `network_policies:` section) aborts `channels add` before any token prompt, registry write, or rebuild prompt.
+After validating that preset, NemoClaw discloses its effect before prompting for credentials or changing gateway or registry state.
+It prints the exact effective egress scope when the preset would open or replace access, or reports that no new egress would be opened when the preset is already effective.
+The `--dry-run` path prints the same disclosure without collecting credentials or applying changes.
+With the preset file in place, NemoClaw applies it to the sandbox before the rebuild so the bridge has egress to its upstream API.
+When final policy application fails after provider registration during a fresh add, NemoClaw attempts to roll back the bridge providers, preset, and staged environment credentials before registry state is written, then exits without prompting for a rebuild.
+If any gateway-side step fails, rollback continues and prints a `Rollback could not fully clean <surfaces>` warning so the operator can clean up manually.
+When the same failure happens on a re-add of an already-enabled channel, NemoClaw restores the prior `messagingChannels` entry, staged environment credentials when available, and registry credential hashes.
+An existing provider can be changed during re-add.
+NemoClaw attempts to restore stored provider credentials, but it cannot restore prior gateway refresh material that was available only during the earlier setup command.
+It flags `gateway-providers` as residual.
+Inspect the channel's gateway providers, restore the preset YAML, and correct the gateway failure.
+When the gateway is reachable, run the `$$nemoclaw <name> channels remove <channel>` command printed by the CLI, then rerun `$$nemoclaw <name> channels add <channel>`.
+For Telegram, Discord, and Slack, a rebuild triggered by `channels add` also verifies that the selected bridge starts and reports credential, startup, or plugin discovery warnings.
 
 ```bash
 $$nemoclaw my-assistant channels add telegram
@@ -2168,13 +2197,13 @@ $$nemoclaw my-assistant channels add telegram
 | Flag | Description |
 | --- | --- |
 | `--dry-run` | Validate the channel name and matching policy preset without prompting for credentials, contacting the gateway, or rebuilding |
-| `--force` | Add the channel despite a credential conflict, shared-resource conflict, or incomplete required check. This flag is the only conflict override. |
+| `--force` | Add the channel despite a credential conflict, shared-resource conflict, or another forceable check. This flag does not bypass missing or partial credentials or authorize replacing a provider attached to another sandbox. |
 
 Slack requires both `SLACK_BOT_TOKEN` (bot user OAuth) and `SLACK_APP_TOKEN` (app-level Socket Mode token); the command prompts for each in turn. The conflict check compares only sandboxes in the selected OpenShell gateway's sandbox registry. It cannot detect Slack token reuse across independent OpenShell gateways. Run only one active Slack sandbox on each OpenShell gateway, and use distinct Slack bot and app tokens across gateways. Optional Slack allowlists come from `SLACK_ALLOWED_USERS` and `SLACK_ALLOWED_CHANNELS` at rebuild time. Telegram and Discord mention mode default to `1` when no environment, session, or saved state value exists for that setting. Discord applies that default only when a server ID is configured. A run with `NEMOCLAW_NON_INTERACTIVE=1`, or a run without a terminal on stdin, fails fast on any missing token and shows no rebuild prompt. Instead, the change is queued and you are told to run `$$nemoclaw <name> rebuild` manually. An SSH command without `-t`, a service unit, or a CI job has no terminal on stdin, so it does not need `NEMOCLAW_NON_INTERACTIVE=1` to reach this path. If you omit the required `<channel>` argument, the CLI prints the `channels add <channel>` usage with the supported channel list instead of falling back to top-level help.
 
 ### `$$nemoclaw <name> channels remove <channel>`
 
-Clear the stored credentials for a messaging channel and rebuild the sandbox so the image drops the channel. Running `remove` for a channel that was never configured is a no-op against the credentials file and still triggers the rebuild prompt. When the bridge provider is attached to a live sandbox, NemoClaw detaches it before deleting the provider from the OpenShell gateway. If the matching built-in policy preset is applied, NemoClaw also removes that preset from the current OpenShell policy so the upstream API is no longer allow-listed after the channel is gone. No session preset list exists to synchronize.
+Clear the stored credentials for a messaging channel and rebuild the sandbox so the image drops the channel. Running `remove` for a channel that was never configured is a no-op against the credentials file and still triggers the rebuild prompt. When the bridge provider is attached to a live sandbox, NemoClaw detaches it before deleting the provider from the OpenShell gateway. If deletion fails, NemoClaw attempts to restore the attachment before returning the failure. If restoration also fails, the diagnostic names the provider and sandbox and warns that channel delivery may remain interrupted. If the matching built-in policy preset is applied, NemoClaw also removes that preset from the current OpenShell policy so the upstream API is no longer allow-listed after the channel is gone. No session preset list exists to synchronize.
 
 For QR-paired channels (today: WhatsApp), NemoClaw destructively clears the in-sandbox session directories before the rebuild so the `state_dirs` backup does not restore the auth blob and let the channel reconnect:
 
