@@ -110,18 +110,22 @@ describe("fresh sandbox executable readiness", () => {
       sawProgress: true,
     });
     const input = createInput();
-    input.hostEnv = { CUSTOM_PROVIDER_CREDENTIAL: "z7!" };
     mocks.printSandboxCreateFailureDiagnostics.mockImplementation(() => {
       order.push("diagnostics");
+      throw new Error("diagnostics unavailable");
     });
     mockExit();
 
-    await expect(runSandboxGpuCreateFlow(input, createDeps())).rejects.toThrow("process.exit:1");
+    const deps = createDeps();
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow("process.exit:1");
 
     expect(order).toEqual(["diagnostics", "rollback"]);
-    expect(mocks.printSandboxCreateFailureDiagnostics).toHaveBeenCalledWith(
-      "alpha",
-      expect.objectContaining({ env: input.hostEnv }),
+    expect(mocks.printSandboxCreateFailureDiagnostics).toHaveBeenCalledWith("alpha", {
+      backupPath: null,
+    });
+    expect(deps.runCaptureOpenshell).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["logs"]),
+      expect.anything(),
     );
   });
 
@@ -187,8 +191,6 @@ describe("fresh sandbox executable readiness", () => {
     );
     expect(mocks.printSandboxCreateFailureDiagnostics).toHaveBeenCalledWith("alpha", {
       backupPath: null,
-      gatewayName: "nemoclaw",
-      runCaptureOpenshell: deps.runCaptureOpenshell,
     });
     expect(patch.rollbackManagedStartupAfterCreateFailure).toHaveBeenCalledOnce();
   });
@@ -220,8 +222,6 @@ describe("fresh sandbox executable readiness", () => {
     );
     expect(mocks.printSandboxCreateFailureDiagnostics).toHaveBeenCalledWith("alpha", {
       backupPath: null,
-      gatewayName: "nemoclaw",
-      runCaptureOpenshell: deps.runCaptureOpenshell,
     });
   });
 
@@ -283,8 +283,6 @@ describe("fresh sandbox executable readiness", () => {
     );
     expect(mocks.printSandboxCreateFailureDiagnostics).toHaveBeenCalledWith("alpha", {
       backupPath: null,
-      gatewayName: "nemoclaw",
-      runCaptureOpenshell: deps.runCaptureOpenshell,
     });
   });
 });

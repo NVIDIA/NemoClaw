@@ -434,16 +434,57 @@ async function verifyActivatedManagedCreateBeforeEffects(input: {
   }
 }
 
-function printCreateFailureDiagnosticsOrContinue(
-  printDiagnostics: NonNullable<SandboxGpuCreateFlowDeps["printCreateFailureDiagnostics"]>,
-  sandboxName: string,
-  backupPath: string | null,
-): void {
-  try {
-    printDiagnostics(sandboxName, { backupPath });
-  } catch {
-    console.error("  Sandbox failure diagnostics were unavailable; continuing rollback.");
+type PrintCreateFailureDiagnostics = NonNullable<
+  SandboxGpuCreateFlowDeps["printCreateFailureDiagnostics"]
+>;
+
+function containCreateFailureDiagnostics(
+  printDiagnostics: PrintCreateFailureDiagnostics,
+): PrintCreateFailureDiagnostics {
+  return (sandboxName, options): void => {
+    try {
+      printDiagnostics(sandboxName, options);
+    } catch {
+      console.error("  Sandbox failure diagnostics were unavailable; continuing rollback.");
+    }
+  };
+}
+
+function createFailureDiagnosticPrinters(
+  input: SandboxGpuCreateFlowInput,
+  deps: SandboxGpuCreateFlowDeps,
+): { unverified: PrintCreateFailureDiagnostics; verified: PrintCreateFailureDiagnostics } {
+  const base =
+    deps.printCreateFailureDiagnostics ??
+    (input.hermesPortableLifecycle
+      ? (sandboxName: string) =>
+          console.error(
+            `  Hermes portable sandbox '${sandboxName}' did not complete receipt-owned creation. Preserve its lifecycle receipt and resume onboarding after correcting the reported failure.`,
+          )
+      : printSandboxCreateFailureDiagnostics);
+  const unverified = containCreateFailureDiagnostics(base);
+  if (deps.printCreateFailureDiagnostics || input.hermesPortableLifecycle) {
+    return { unverified, verified: unverified };
   }
+  const verified = containCreateFailureDiagnostics((sandboxName, options) =>
+    printSandboxCreateFailureDiagnostics(sandboxName, {
+      ...options,
+      ...(input.hostEnv ? { env: input.hostEnv } : {}),
+      gatewayName: input.gatewayName,
+      runCaptureOpenshell: deps.runCaptureOpenshell,
+    }),
+  );
+  return { unverified, verified };
+}
+
+function selectFailureDiagnostics(
+  createdSandboxVerified: boolean,
+  expectedRecreatedSandboxId: string | null,
+  printers: { unverified: PrintCreateFailureDiagnostics; verified: PrintCreateFailureDiagnostics },
+): PrintCreateFailureDiagnostics {
+  return createdSandboxVerified || expectedRecreatedSandboxId
+    ? printers.verified
+    : printers.unverified;
 }
 
 export function createSandboxGpuCreateAttemptRunner(
@@ -452,20 +493,8 @@ export function createSandboxGpuCreateAttemptRunner(
   reverifyManagedBridgeReachability: () => Promise<void>,
 ) {
   const portableLifecycle = input.portableLifecycle === true;
-  const printCreateFailureDiagnostics =
-    deps.printCreateFailureDiagnostics ??
-    (input.hermesPortableLifecycle
-      ? (sandboxName: string) =>
-          console.error(
-            `  Hermes portable sandbox '${sandboxName}' did not complete receipt-owned creation. Preserve its lifecycle receipt and resume onboarding after correcting the reported failure.`,
-          )
-      : (sandboxName, options) =>
-          printSandboxCreateFailureDiagnostics(sandboxName, {
-            ...options,
-            ...(input.hostEnv ? { env: input.hostEnv } : {}),
-            gatewayName: input.gatewayName,
-            runCaptureOpenshell: deps.runCaptureOpenshell,
-          }));
+  const failureDiagnosticPrinters = createFailureDiagnosticPrinters(input, deps);
+  const printCreateFailureDiagnostics = failureDiagnosticPrinters.unverified;
   if (
     portableLifecycle &&
     (input.gpuRoutePlan === "compatibility-only" ||
@@ -1161,11 +1190,12 @@ export function createSandboxGpuCreateAttemptRunner(
           ...nativeCleanup,
         } as const;
       }
-      printCreateFailureDiagnosticsOrContinue(
-        printCreateFailureDiagnostics,
-        input.sandboxName,
-        input.restoreBackupPath,
+      const failureDiagnostics = selectFailureDiagnostics(
+        createdSandboxVerified,
+        expectedRecreatedSandboxId,
+        failureDiagnosticPrinters,
       );
+      failureDiagnostics(input.sandboxName, { backupPath: input.restoreBackupPath });
       await runtimePatch.rollbackManagedStartupAfterCreateFailure();
       if (compatibility) runtimePatch.printReadinessFailureIfEnabled();
       else if (expectedRecreatedSandboxId) {

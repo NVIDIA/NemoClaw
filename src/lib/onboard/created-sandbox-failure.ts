@@ -83,13 +83,9 @@ export async function reportSandboxCreateFailure(
     deps.error("");
     deps.error(redactedCreateOutput);
   }
-  try {
-    deps.printCreateFailureDiagnostics(options.sandboxName, {
-      backupPath: options.restoreBackupPath,
-    });
-  } catch {
-    // Diagnostics must not replace the original sandbox-create failure.
-  }
+  deps.printCreateFailureDiagnostics(options.sandboxName, {
+    backupPath: options.restoreBackupPath,
+  });
   try {
     await deps.rollbackCreateFailure();
   } catch (error) {
