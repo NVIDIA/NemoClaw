@@ -190,7 +190,13 @@ describe("Gemini inference selection validation errors", () => {
           },
         ),
       ).resolves.toEqual({ ok: false, retry: "credential" });
-      expect(promptValidationRecovery).toHaveBeenCalledOnce();
+      expect(promptValidationRecovery).toHaveBeenCalledWith(
+        "Google Gemini",
+        { kind: "credential", retry: "credential" },
+        credentialEnv,
+        null,
+        undefined,
+      );
       const errorOutput = error.mock.calls.map((args) => args.join(" ")).join("\n");
       expect(errorOutput).toContain(`Verify or rotate \`${credentialEnv}\``);
       expect(errorOutput).not.toContain("GEMINI_API_KEY");

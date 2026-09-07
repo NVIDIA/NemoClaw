@@ -218,19 +218,26 @@ export function createInferenceSelectionValidationHelpers(
     }
   }
 
+  function hasGeminiChatCompletionsHttpFailure(
+    provider: string | undefined,
+    probe: { failures?: unknown[] },
+    status: number,
+  ): boolean {
+    if (provider !== "gemini-api" || !Array.isArray(probe.failures)) return false;
+    return probe.failures.some((failure) => {
+      if (!failure || typeof failure !== "object") return false;
+      const { name, httpStatus } = failure as Record<string, unknown>;
+      return (
+        typeof name === "string" && name.startsWith("Chat Completions API") && httpStatus === status
+      );
+    });
+  }
+
   function printGeminiRuntimeNotFoundGuidance(
     provider: string | undefined,
     probe: { failures?: unknown[] },
   ): void {
-    if (provider !== "gemini-api" || !Array.isArray(probe.failures)) return;
-    const chatNotFound = probe.failures.some((failure) => {
-      if (!failure || typeof failure !== "object") return false;
-      const { name, httpStatus } = failure as Record<string, unknown>;
-      return (
-        typeof name === "string" && name.startsWith("Chat Completions API") && httpStatus === 404
-      );
-    });
-    if (!chatNotFound) return;
+    if (!hasGeminiChatCompletionsHttpFailure(provider, probe, 404)) return;
     console.error(
       "  This 404 came from Google's OpenAI-compatible Chat Completions runtime route, not the native /v1beta/models catalog.",
     );
@@ -246,15 +253,7 @@ export function createInferenceSelectionValidationHelpers(
     credentialEnv: string | null,
     probe: { failures?: unknown[] },
   ): void {
-    if (provider !== "gemini-api" || !Array.isArray(probe.failures)) return;
-    const chatBadRequest = probe.failures.some((failure) => {
-      if (!failure || typeof failure !== "object") return false;
-      const { name, httpStatus } = failure as Record<string, unknown>;
-      return (
-        typeof name === "string" && name.startsWith("Chat Completions API") && httpStatus === 400
-      );
-    });
-    if (!chatBadRequest) return;
+    if (!hasGeminiChatCompletionsHttpFailure(provider, probe, 400)) return;
 
     const recovery = getProbeRecovery(probe as ProbeLike, { allowModelRetry: true });
     if (recovery.kind === "credential") {
