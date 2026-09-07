@@ -936,6 +936,8 @@
       "live": "test/e2e/live/registry-targets.test.ts",
       "liveSources": [
         "test/e2e/live/cloud-experimental-checks.ts",
+        "test/e2e/live/deepagents-observability-contract.ts",
+        "test/e2e/live/deepagents-otlp-capture-server.ts",
         "test/e2e/live/dcode-base-image-runtime-evidence.ts"
       ],
       "fast": [
@@ -944,7 +946,9 @@
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
         "test/e2e/support/e2e-semantic-phase-check.test.ts",
+        "test/e2e/support/deepagents-observability-contract.test.ts",
         "test/e2e/support/onboard-timeout-contract.test.ts",
+        "test/e2e/support/platform-parity-cloud-experimental.test.ts",
         "test/e2e/support/workflow-plan.test.ts",
         "test/e2e/support/workflow-e2e-progress.test.ts"
       ]
