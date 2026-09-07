@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -196,13 +197,36 @@ describe("OpenShell SDK sandbox command executor", () => {
   });
 
   it("classifies an unsafe SDK state root as unavailable before sandbox execution", async () => {
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sdk-unsafe-home-"));
+    roots.push(homeDir);
+    const loadSdk = vi.fn();
+    const executor = createSdkOpenShellSandboxCommandExecutor({
+      env: {},
+      homeDir,
+      loadSdk,
+    });
+
+    const completion = await executor.runStreaming({
+      sandboxName: "alpha",
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      command: ["true"],
+    });
+    completion.release();
+
+    expect(completion.outcome).toMatchObject({
+      kind: "failed",
+      error: { kind: "unavailable" },
+    });
+    expect(loadSdk).not.toHaveBeenCalled();
+  });
+
+  it("does not make an explicit unsafe state override eligible for fallback", async () => {
     const stateDir = writeTlsBundle();
     fs.rmSync(path.join(stateDir, MANAGED_GATEWAY_STATE_ROOT_MARKER));
-    const loadSdk = vi.fn();
     const executor = createSdkOpenShellSandboxCommandExecutor({
       env: { NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: stateDir },
       homeDir: "/unused",
-      loadSdk,
+      loadSdk: vi.fn(),
     });
 
     const completion = await executor.runStreaming({
@@ -214,9 +238,8 @@ describe("OpenShell SDK sandbox command executor", () => {
 
     expect(completion.outcome).toMatchObject({
       kind: "failed",
-      error: { kind: "unavailable" },
+      error: { kind: "invocation" },
     });
-    expect(loadSdk).not.toHaveBeenCalled();
   });
 
   it("settles with the signal exit code when connection is interrupted", async () => {

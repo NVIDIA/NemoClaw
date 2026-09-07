@@ -151,9 +151,9 @@ export async function connectManagedOpenShellSdk(
     { allowLegacyManagedState: !configuredStateDir },
   );
   if (ownershipFailure) {
-    throw new OpenShellSdkPreflightUnavailableError(
-      `Unsafe OpenShell gateway state directory: ${ownershipFailure}.`,
-    );
+    const message = `Unsafe OpenShell gateway state directory: ${ownershipFailure}.`;
+    if (configuredStateDir) throw new Error(message);
+    throw new OpenShellSdkPreflightUnavailableError(message);
   }
   const tlsDirectory = path.join(stateDir, "tls");
   const sdk = await (deps.loadSdk ?? loadOpenShellSdk)();
