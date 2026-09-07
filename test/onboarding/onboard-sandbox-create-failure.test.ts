@@ -66,8 +66,9 @@ describe("sandbox create failure diagnostics", () => {
         `2026-05-12T20:30:56Z INFO vm driver: create_sandbox received sandbox_id=${sandboxId} sandbox_name=my-assistant`,
         `2026-05-12T20:30:56Z INFO vm driver: resolved image ref, preparing rootfs sandbox_id=${sandboxId} state_dir=${stateDir}`,
         `2026-05-12T20:34:28Z INFO vm driver: spawning VM launcher sandbox_id=${sandboxId} console_output=${consolePath}`,
-        "[2026-05-12T20:34:29Z ERROR krun] Building the microVM failed: Internal(Vm(VmSetup(VmCreate)))",
+        `[2026-05-12T20:34:29Z ERROR krun] sandbox_id=${sandboxId} Building the microVM failed: Internal(Vm(VmSetup(VmCreate)))`,
         `2026-05-12T20:34:29Z WARN Sandbox failed to become ready sandbox_id=${sandboxId} sandbox_name=my-assistant reason=ProcessExited`,
+        `[2026-05-12T20:34:29Z ERROR krun] console_output=${replacementConsolePath} reason=ProcessExited`,
         `2026-05-12T20:34:30Z INFO vm driver: create_sandbox received sandbox_id=${replacementId} sandbox_name=my-assistant`,
         `2026-05-12T20:34:30Z INFO vm driver: spawning VM launcher sandbox_id=${replacementId} console_output=${replacementConsolePath}`,
       ].join("\n"),
@@ -94,6 +95,7 @@ describe("sandbox create failure diagnostics", () => {
     expect(relevant).toContain("VmCreate");
     expect(relevant).toContain("sandbox_name=my-assistant");
     expect(relevant).not.toContain(replacementId);
+    expect(relevant).not.toContain(replacementConsolePath);
     expect(fs.readFileSync(path.join(diagnostics!.dir, "summary.txt"), "utf-8")).toContain(
       "backup_path=/tmp/pre-upgrade-backup",
     );

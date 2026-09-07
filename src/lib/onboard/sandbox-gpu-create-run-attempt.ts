@@ -485,10 +485,6 @@ export function createSandboxGpuCreateAttemptRunner(
             `  Hermes portable sandbox '${sandboxName}' did not complete receipt-owned creation. Preserve its lifecycle receipt and resume onboarding after correcting the reported failure.`,
           )
       : printSandboxCreateFailureDiagnostics);
-  const printCreateFailureDiagnostics = containCreateFailureDiagnostics(
-    basePrintCreateFailureDiagnostics,
-    "  Sandbox failure diagnostics were unavailable.",
-  );
   const printCreateFailureDiagnosticsBeforeRollback = containCreateFailureDiagnostics(
     basePrintCreateFailureDiagnostics,
     "  Sandbox failure diagnostics were unavailable; continuing rollback.",

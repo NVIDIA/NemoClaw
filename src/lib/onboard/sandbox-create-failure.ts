@@ -23,11 +23,6 @@ type BoundedFileTail = {
   truncated: boolean;
 };
 
-type SandboxLogBlock = {
-  lines: string[];
-  identityAnchored: boolean;
-};
-
 export type SandboxCreateFailureDiagnostics = {
   dir: string;
   gatewayLogPath: string | null;
@@ -129,7 +124,7 @@ function findLatestSandboxBlock(
   lines: string[],
   sandboxName: string,
   requiredSandboxId?: string,
-): SandboxLogBlock {
+): string[] {
   let startIndex = -1;
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i] || "";
@@ -143,10 +138,7 @@ function findLatestSandboxBlock(
     }
   }
   if (startIndex < 0) {
-    return {
-      lines: requiredSandboxId ? lines : lines.slice(-MAX_RELEVANT_LOG_LINES),
-      identityAnchored: false,
-    };
+    return requiredSandboxId ? lines : lines.slice(-MAX_RELEVANT_LOG_LINES);
   }
 
   let endIndex = lines.length;
@@ -160,10 +152,7 @@ function findLatestSandboxBlock(
       break;
     }
   }
-  return {
-    lines: lines.slice(startIndex, endIndex),
-    identityAnchored: requiredSandboxId !== undefined,
-  };
+  return lines.slice(startIndex, endIndex);
 }
 
 function getLatestSandboxId(block: string[], sandboxName: string): string | null {
@@ -180,17 +169,11 @@ function filterRelevantLines(
   sandboxName: string,
   sandboxId: string | null,
   requireExactIdentity: boolean,
-  allowUnscopedRelevantLines: boolean,
 ): string[] {
   const relevant = block.filter((line) => {
     if (!line.trim()) return false;
     if (requireExactIdentity) {
-      const lineSandboxId = extractField(line, "sandbox_id");
-      if (lineSandboxId) return lineSandboxId === sandboxId;
-      return (
-        allowUnscopedRelevantLines &&
-        /ERROR krun|VmCreate|ProcessExited|console_output=|state_dir=/.test(line)
-      );
+      return Boolean(sandboxId && extractField(line, "sandbox_id") === sandboxId);
     }
     if (extractField(line, "sandbox_name") === sandboxName) return true;
     if (sandboxId && extractField(line, "sandbox_id") === sandboxId) return true;
@@ -268,14 +251,13 @@ export function collectSandboxCreateFailureDiagnostics(
   const rawLines = gatewayLog?.lines ?? null;
   const block = rawLines
     ? findLatestSandboxBlock(rawLines, sandboxName, options.sandboxId)
-    : { lines: [], identityAnchored: false };
-  const sandboxId = options.sandboxId ?? getLatestSandboxId(block.lines, sandboxName);
+    : [];
+  const sandboxId = options.sandboxId ?? getLatestSandboxId(block, sandboxName);
   const relevantLines = filterRelevantLines(
-    block.lines,
+    block,
     sandboxName,
     sandboxId,
     options.sandboxId !== undefined,
-    block.identityAnchored,
   );
   if (options.sandboxId && relevantLines.length === 0) return null;
   const gatewayTailLines =
