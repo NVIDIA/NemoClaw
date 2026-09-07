@@ -242,10 +242,7 @@ describe("mcporter image supply-chain controls", () => {
 
   it("carries a networked reviewed audit into the offline protected OpenClaw build", () => {
     const contents = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
-    const producer = fs.readFileSync(
-      path.join(repoRoot, "Dockerfile.protected-npm-audit"),
-      "utf8",
-    );
+    const producer = fs.readFileSync(path.join(repoRoot, "Dockerfile.protected-npm-audit"), "utf8");
     const flattenedProducer = producer.replace(/\\\s*\n/g, " ").replace(/\s+/g, " ");
 
     expect(producer).toContain(
@@ -255,13 +252,16 @@ describe("mcporter image supply-chain controls", () => {
       "NEMOCLAW_REVIEWED_NPM_AUDIT_LOCKED_GRAPH=mcporter-runtime NEMOCLAW_REVIEWED_NPM_AUDIT_REPORT_DIR=artifacts/reviewed-npm-audit",
     );
     expect(producer).toContain("FROM scratch AS protected-mcporter-audit-evidence");
+    expect(contents).toContain("FROM scratch AS protected-mcporter-audit-cache");
     expect(contents).toContain(
       "--mount=type=secret,id=nemoclaw-mcporter-audit-receipt,required=false",
     );
+    expect(contents).toContain("from=protected-mcporter-audit-cache");
     expect(contents).toContain("bash /scripts/lib/verify-mcporter-audit.sh");
     expect(mcporterAuditHelper).toContain(
       "cached mcporter audit requires paired receipt, raw report, and receipt SHA-256",
     );
+    expect(mcporterAuditHelper).toContain("seed-cached mcporter audit evidence is incomplete");
     expect(mcporterAuditHelper.replace(/\\\s*\n/g, " ").replace(/\s+/g, " ")).toContain(
       `printf '%s %s\\n' "$receipt_sha256" "$receipt" | sha256sum --check --status -`,
     );

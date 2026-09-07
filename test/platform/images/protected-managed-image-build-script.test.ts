@@ -228,8 +228,7 @@ function recordedBuildInvocations(): string[] {
   return readFileSync(dockerLog, "utf8")
     .split("\n")
     .filter(
-      (line) =>
-        line.startsWith("buildx build ") && line.includes("io.nvidia.nemoclaw.agent="),
+      (line) => line.startsWith("buildx build ") && line.includes("io.nvidia.nemoclaw.agent="),
     );
 }
 
@@ -251,11 +250,7 @@ function recordedBuildInvocation(agent: string): string {
   return invocation!;
 }
 
-function runBuild(
-  sourceRoot: string,
-  extraArgs: readonly string[] = [],
-  platform = "linux/amd64",
-) {
+function runBuild(sourceRoot: string, extraArgs: readonly string[] = [], platform = "linux/amd64") {
   const output = path.join(testRoot, "contracts.json");
   return spawnSync(
     "bash",
@@ -368,7 +363,9 @@ describe("protected managed-image build-cache boundary", () => {
     expect(recordedBuildInvocation("openclaw")).toContain("--build-arg TARGETARCH=arm64");
     expect(recordedBuildInvocation("hermes")).toContain("--platform linux/arm64");
     expect(recordedBuildInvocation("hermes")).toContain("--build-arg TARGETARCH=arm64");
-    expect(recordedBuildInvocation("langchain-deepagents-code")).toContain("--platform linux/arm64");
+    expect(recordedBuildInvocation("langchain-deepagents-code")).toContain(
+      "--platform linux/arm64",
+    );
     expect(recordedBuildInvocation("langchain-deepagents-code")).toContain(
       "--build-arg TARGETARCH=arm64",
     );
@@ -407,8 +404,12 @@ describe("protected managed-image build-cache boundary", () => {
     expect(recordedBuildInvocation("openclaw")).toContain("--build-arg TARGETARCH=arm64");
     expect(recordedBuildInvocation("hermes")).toContain("--platform linux/arm64");
     expect(recordedBuildInvocation("hermes")).toContain("--build-arg TARGETARCH=arm64");
-    expect(recordedBuildInvocation("langchain-deepagents-code")).toContain("--platform linux/arm64");
-    expect(recordedBuildInvocation("langchain-deepagents-code")).toContain("--build-arg TARGETARCH=arm64");
+    expect(recordedBuildInvocation("langchain-deepagents-code")).toContain(
+      "--platform linux/arm64",
+    );
+    expect(recordedBuildInvocation("langchain-deepagents-code")).toContain(
+      "--build-arg TARGETARCH=arm64",
+    );
   });
 
   it("passes each agent one empty absolute cache export root", () => {
@@ -465,6 +466,17 @@ describe("protected managed-image build-cache boundary", () => {
     expect(
       readFileSync(
         path.join(cacheRoot, "reviewed-npm-audit", "mcporter-runtime.receipt.sha256"),
+        "utf8",
+      ),
+    ).toBe(`${DIGEST}\n`);
+    expect(
+      readFileSync(
+        path.join(
+          cacheRoot,
+          "npm-cache-seed",
+          "reviewed-npm-audit",
+          "mcporter-runtime.receipt.sha256",
+        ),
         "utf8",
       ),
     ).toBe(`${DIGEST}\n`);
@@ -563,7 +575,8 @@ describe("protected managed-image build-cache boundary", () => {
   it.each([
     [
       "missing",
-      (cacheRoot: string) => rmSync(path.join(cacheRoot, "reviewed-npm-audit"), { recursive: true }),
+      (cacheRoot: string) =>
+        rmSync(path.join(cacheRoot, "reviewed-npm-audit"), { recursive: true }),
       "reviewed audit evidence is missing or unsafe",
     ],
     [
@@ -575,18 +588,21 @@ describe("protected managed-image build-cache boundary", () => {
         ),
       "reviewed audit receipt hash does not match",
     ],
-  ])("rejects %s reviewed audit evidence before invoking Docker (#11088)", (_case, mutate, error) => {
-    const cacheRoot = path.join(testRoot, "imported-cache");
-    completeImportedCache(cacheRoot);
-    stubBuildInvocation();
-    mutate(cacheRoot);
+  ])(
+    "rejects %s reviewed audit evidence before invoking Docker (#11088)",
+    (_case, mutate, error) => {
+      const cacheRoot = path.join(testRoot, "imported-cache");
+      completeImportedCache(cacheRoot);
+      stubBuildInvocation();
+      mutate(cacheRoot);
 
-    const result = runBuild(REPO_ROOT, ["--cache-from", cacheRoot]);
+      const result = runBuild(REPO_ROOT, ["--cache-from", cacheRoot]);
 
-    expect(result.status, result.stderr).toBe(1);
-    expect(result.stderr).toContain(error);
-    expect(existsSync(dockerLog)).toBe(false);
-  });
+      expect(result.status, result.stderr).toBe(1);
+      expect(result.stderr).toContain(error);
+      expect(existsSync(dockerLog)).toBe(false);
+    },
+  );
 
   it("imports locked seeds, reuses safe agent caches, and disables RUN network access", () => {
     const cacheRoot = path.join(testRoot, "imported-cache");

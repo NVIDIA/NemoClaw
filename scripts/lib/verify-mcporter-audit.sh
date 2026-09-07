@@ -5,6 +5,7 @@
 set -euo pipefail
 
 secret_root="${NEMOCLAW_MCPORTER_AUDIT_SECRET_ROOT:-/run/secrets}"
+seed_root="${NEMOCLAW_MCPORTER_AUDIT_SEED_ROOT:-/run/nemoclaw-mcporter-audit-cache/reviewed-npm-audit}"
 secret_receipt="$secret_root/nemoclaw-mcporter-audit-receipt"
 secret_raw_report="$secret_root/nemoclaw-mcporter-audit-raw-report"
 receipt=""
@@ -19,6 +20,19 @@ if [[ -e "$secret_receipt" || -L "$secret_receipt" || -e "$secret_raw_report" ||
   fi
   receipt="$secret_receipt"
   raw_report="$secret_raw_report"
+elif [[ -e "$seed_root" || -L "$seed_root" ]]; then
+  receipt="$seed_root/mcporter-runtime.receipt.json"
+  raw_report="$seed_root/mcporter-runtime.raw.json"
+  hash_file="$seed_root/mcporter-runtime.receipt.sha256"
+  if [[ ! -d "$seed_root" || -L "$seed_root" || ! -f "$receipt" || -L "$receipt" || ! -f "$raw_report" || -L "$raw_report" || ! -f "$hash_file" || -L "$hash_file" ]]; then
+    echo "ERROR: seed-cached mcporter audit evidence is incomplete" >&2
+    exit 1
+  fi
+  read -r receipt_sha256 <"$hash_file"
+  if ! printf '%s' "$receipt_sha256" | grep -qxE '[0-9a-f]{64}'; then
+    echo "ERROR: seed-cached mcporter audit receipt SHA-256 is invalid" >&2
+    exit 1
+  fi
 fi
 
 if [[ -z "$receipt" ]]; then

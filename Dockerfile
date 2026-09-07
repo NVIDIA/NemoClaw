@@ -600,6 +600,11 @@ COPY src/lib/tool-disclosure.ts /src/lib/tool-disclosure.ts
 COPY nemoclaw-blueprint/openclaw-plugins/ /usr/local/share/nemoclaw/openclaw-plugins/
 COPY --from=mcp-tool-discovery-runtime /opt/mcp-tool-discovery-runtime/dist/ /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/
 
+# Protected consumers import reviewed audit evidence through the existing
+# locked seed because their build driver comes from trusted main.
+FROM scratch AS protected-mcporter-audit-cache
+COPY tools/mcp-tool-discovery-runtime/npm-cache-seed/ /seed/
+
 # Stage 3: Runtime image — pull cached base from GHCR
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
@@ -824,6 +829,7 @@ RUN command -v codex-acp >/dev/null
 RUN --network=default \
     --mount=type=secret,id=nemoclaw-mcporter-audit-receipt,required=false \
     --mount=type=secret,id=nemoclaw-mcporter-audit-raw-report,required=false \
+    --mount=type=bind,from=protected-mcporter-audit-cache,source=/seed,target=/run/nemoclaw-mcporter-audit-cache \
     set -eu; \
     if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
         export CURL_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem; \
