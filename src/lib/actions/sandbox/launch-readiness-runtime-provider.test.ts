@@ -68,11 +68,19 @@ describe("launch readiness runtime-provider projection", () => {
       policyName: "mcp-bridge-github",
       addedAt: "2026-09-05T00:00:00.000Z",
     };
-    const project = (denyTools?: string[]) =>
+    const project = (denyTools?: string[], pendingDenyTools?: string[]) =>
       buildLaunchReadinessRegistryProjection(
         {
           ...SANDBOX,
-          mcp: { bridges: { github: { ...bridge, ...(denyTools ? { denyTools } : {}) } } },
+          mcp: {
+            bridges: {
+              github: {
+                ...bridge,
+                ...(denyTools ? { denyTools } : {}),
+                ...(pendingDenyTools ? { pendingDenyTools } : {}),
+              },
+            },
+          },
         },
         loadAgent("openclaw"),
       ) as { mcpSha256: string };
@@ -80,6 +88,9 @@ describe("launch readiness runtime-provider projection", () => {
     expect(project().mcpSha256).not.toBe(project(["delete_*"]).mcpSha256);
     expect(project(["delete_*"]).mcpSha256).not.toBe(
       project(["delete_*", "submit_*"]).mcpSha256,
+    );
+    expect(project(["delete_*"], ["replacement_*"]).mcpSha256).not.toBe(
+      project(["delete_*"]).mcpSha256,
     );
   });
 });

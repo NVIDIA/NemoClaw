@@ -24,6 +24,7 @@ import {
   isHermesGatewayDrainingResponse,
 } from "./mcp-bridge-hermes-http.ts";
 import { MCP_PROVIDER_REWRITE_PROBE_SOURCE } from "./mcp-provider-rewrite-probe.ts";
+import { FAKE_MCP_STATUS_RESULT_TOKEN } from "./mcp-bridge-servers.ts";
 
 const ANSI_ESCAPE = /\u001b\[[0-9;]*m/gu;
 const HERMES_GATEWAY_DRAINING_RETRIES = 3;
@@ -106,7 +107,7 @@ export async function runDeniedMcpToolCall(options: {
 export async function runOpenClawDeniedToolUpdateProof(
   host: HostCliClient,
   sandbox: SandboxClient,
-  requests: Array<{ auth: string; rpcMethod?: string }>,
+  requests: Array<{ auth: string; rpcMethod?: string; rpcToolName?: string }>,
   sandboxName: string,
 ): Promise<{
   after: number;
@@ -114,7 +115,7 @@ export async function runOpenClawDeniedToolUpdateProof(
   clear: ShellProbeResult;
   commandsSucceeded: boolean;
   call: ShellProbeResult;
-  lastCall: { auth: string; rpcMethod?: string } | undefined;
+  lastCall: { auth: string; rpcMethod?: string; rpcToolName?: string } | undefined;
   replace: ShellProbeResult;
 }> {
   const commandOptions = (artifactName: string) => ({
@@ -150,6 +151,9 @@ export async function runOpenClawDeniedToolUpdateProof(
   });
   const commandsSucceeded =
     [clear, call, replace].every((result) => !result.timedOut && result.exitCode === 0) &&
+    resultText(call).includes(FAKE_MCP_STATUS_RESULT_TOKEN) &&
+    calls.at(-1)?.rpcMethod === "tools/call" &&
+    calls.at(-1)?.rpcToolName === MCP_BRIDGE_DENIED_TOOL_NAME &&
     !denied.result.timedOut &&
     denied.result.exitCode !== null &&
     /policy_denied|blocked by deny rule/iu.test(resultText(denied.result)) &&

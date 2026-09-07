@@ -193,6 +193,11 @@ async function updateMcpBridgeDenyToolsUnlocked(
       `MCP server '${server}' has an incomplete add transaction (${storedEntry.addState}). Re-run the original mcp add command or remove it with --force before updating denied tools.`,
     );
   }
+  if (storedEntry.pendingDenyTools !== undefined) {
+    throw new McpBridgeError(
+      `MCP server '${server}' has an interrupted denied-tool update. Run \`nemoclaw ${sandboxName} mcp restart ${server}\` before updating it again.`,
+    );
+  }
   assertAuthenticatedBridgeEntry(storedEntry);
   let allowedIps = storedEntry.allowedIps;
   if (!storedEntry.trustedPrivateHost && !allowedIps) {
@@ -204,22 +209,45 @@ async function updateMcpBridgeDenyToolsUnlocked(
     }
     allowedIps = [...target.addresses];
   }
-  const { denyTools: _previousDenyTools, ...entryWithoutDenyTools } = storedEntry;
+  const updatedAt = nowIso();
+  const pendingEntry = {
+    ...storedEntry,
+    ...(allowedIps ? { allowedIps } : {}),
+    pendingDenyTools: [...normalizedDenyTools],
+    updatedAt,
+  };
+  const {
+    denyTools: _previousDenyTools,
+    pendingDenyTools: _pendingDenyTools,
+    ...entryWithoutDenyTools
+  } = pendingEntry;
   const updatedEntry = {
     ...entryWithoutDenyTools,
-    ...(allowedIps ? { allowedIps } : {}),
     ...(normalizedDenyTools.length > 0 ? { denyTools: normalizedDenyTools } : {}),
-    updatedAt: nowIso(),
+    updatedAt,
   };
   assertGeneratedPolicyRegistrationMutationSafe(sandboxName, updatedEntry);
   const runtimeSelection = getMcpProviderInspectionRuntimeSelection(sandbox);
   assertMcpCredentialBoundaryRuntimeVersion();
   await ensureSandboxGatewaySelected(sandboxName, runtimeSelection);
 
-  // Remove the previous route before recording and applying the replacement.
-  // A failed narrowing update therefore leaves no usable MCP policy.
-  removeGeneratedPolicy(sandboxName, storedEntry, { runtimeSelection });
-  writeBridgeEntry(sandboxName, updatedEntry);
+  // Journal replacement intent before removing the route. Restart can finish
+  // the update even if this process stops between external and registry writes.
+  writeBridgeEntry(sandboxName, pendingEntry);
+  try {
+    removeGeneratedPolicy(sandboxName, storedEntry, { runtimeSelection });
+  } catch (error) {
+    writeBridgeEntry(sandboxName, storedEntry);
+    throw error;
+  }
+  try {
+    writeBridgeEntry(sandboxName, updatedEntry);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new McpBridgeError(
+      `${detail} The denied-tool replacement intent was journaled; run \`nemoclaw ${sandboxName} mcp restart ${server}\` to finish the update.`,
+    );
+  }
   try {
     applyRecordedGeneratedPolicy(sandboxName, updatedEntry, runtimeSelection);
   } catch (error) {

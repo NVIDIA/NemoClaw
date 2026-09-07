@@ -44,6 +44,9 @@ export function cloneMcpBridgeEntry(entry: McpBridgeEntry): McpBridgeEntry {
     ...entry,
     env: [...entry.env],
     ...(entry.denyTools ? { denyTools: [...entry.denyTools] } : {}),
+    ...(entry.pendingDenyTools !== undefined
+      ? { pendingDenyTools: [...entry.pendingDenyTools] }
+      : {}),
     ...(entry.allowedIps ? { allowedIps: [...entry.allowedIps] } : {}),
   };
 }
@@ -57,6 +60,10 @@ function mcpBridgeEntriesEqual(left: McpBridgeEntry, right: McpBridgeEntry): boo
     left.trustedPrivateHost === right.trustedPrivateHost &&
     (left.denyTools?.length ?? 0) === (right.denyTools?.length ?? 0) &&
     (left.denyTools ?? []).every((tool, index) => tool === right.denyTools?.[index]) &&
+    (left.pendingDenyTools?.length ?? -1) === (right.pendingDenyTools?.length ?? -1) &&
+    (left.pendingDenyTools ?? []).every(
+      (tool, index) => tool === right.pendingDenyTools?.[index],
+    ) &&
     (left.allowedIps?.length ?? 0) === (right.allowedIps?.length ?? 0) &&
     (left.allowedIps ?? []).every((address, index) => address === right.allowedIps?.[index]) &&
     left.providerName === right.providerName &&

@@ -9,7 +9,11 @@ import { registerAgentAdapterAtCurrentCredentialRevision } from "./mcp-bridge-ad
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import { assertHermesMcpRuntimeIntent } from "./mcp-bridge-hermes-reconciliation";
 import { redactBridgeFailureForDisplay } from "./mcp-bridge-output";
-import { applyGeneratedPolicy, assertGeneratedPolicyMutationSafe } from "./mcp-bridge-policy";
+import {
+  applyGeneratedPolicy,
+  assertGeneratedPolicyMutationSafe,
+  materializePendingMcpDenyTools,
+} from "./mcp-bridge-policy";
 import {
   assertMcpProviderRecoverable,
   assertNoAttachedProviderCredentialCollisions,
@@ -152,7 +156,12 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
   }
   const targetEntries = targets
     .map(([, entry]) => entry)
-    .filter((entry): entry is McpBridgeEntry => !!entry);
+    .filter((entry): entry is McpBridgeEntry => !!entry)
+    .map((entry) => {
+      const materialized = materializePendingMcpDenyTools(entry);
+      if (entry.pendingDenyTools !== undefined) writeBridgeEntry(sandboxName, materialized);
+      return materialized;
+    });
   const providerRuntimeSelection = getMcpProviderInspectionRuntimeSelection(sandbox);
   const resolvedByServer = await preflightMcpEntryTargets(targetEntries);
   assertMcpCredentialBoundaryRuntimeVersion();
@@ -200,7 +209,7 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
   for (const [name, storedEntry] of targets) {
     // Validated as a complete authenticated entry before gateway side effects.
     if (!storedEntry) continue;
-    let entry = storedEntry;
+    let entry = materializePendingMcpDenyTools(storedEntry);
     const envRefs = entry.env.map((envName) => ({ name: envName }));
     const adapterEnvValues = resolveCredentialEnv(envRefs);
     const target = resolvedTargetPins(resolvedByServer, entry);

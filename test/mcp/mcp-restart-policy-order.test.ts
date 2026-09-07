@@ -203,6 +203,8 @@ const entry = {
   adapter: "mcporter",
   url: "https://8.8.8.8/mcp",
   env: ["MCP_TOKEN"],
+  denyTools: ["old_tool"],
+  pendingDenyTools: ["replacement_*"],
   providerName: "alpha-mcp-example",
   providerId: "11111111-2222-4333-8444-555555555555",
   policyName: "mcp-bridge-example",
@@ -289,6 +291,8 @@ bridge.restartMcpBridge("alpha", "example").then(
     providerCalls,
     registeredProviderGets,
     persistedAllowedIps: registry.getSandbox("alpha")?.mcp?.bridges?.example?.allowedIps,
+    persistedDenyTools: registry.getSandbox("alpha")?.mcp?.bridges?.example?.denyTools,
+    persistedPendingDenyTools: registry.getSandbox("alpha")?.mcp?.bridges?.example?.pendingDenyTools,
   })),
   (error) => { console.error(error); process.exit(1); },
 );
@@ -313,6 +317,8 @@ bridge.restartMcpBridge("alpha", "example").then(
       providerCalls: string[];
       registeredProviderGets: number;
       persistedAllowedIps: string[];
+      persistedDenyTools: string[];
+      persistedPendingDenyTools?: string[];
     };
     expect(payload.observations).toEqual(["v1", "v3", "v3", "v3", "v3", "v3"]);
     expect(payload.providerCalls).toEqual([
@@ -321,6 +327,8 @@ bridge.restartMcpBridge("alpha", "example").then(
     ]);
     expect(payload.registeredProviderGets).toBe(1);
     expect(payload.persistedAllowedIps).toEqual(["8.8.8.8"]);
+    expect(payload.persistedDenyTools).toEqual(["replacement_*"]);
+    expect(payload.persistedPendingDenyTools).toBeUndefined();
     expect(payload.proofScripts).toHaveLength(6);
     expect(payload.proofScripts.join("\n")).not.toMatch(/\/tmp|snapshot/);
   });

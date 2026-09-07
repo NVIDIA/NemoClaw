@@ -92,13 +92,20 @@ describe("incomplete MCP add discard", () => {
 });
 
 describe("MCP lifecycle snapshots", () => {
-  it("clones denied-tool intent without sharing its mutable list (#11115)", () => {
-    const source = { ...preparedEntry, denyTools: ["delete_*"] };
+  it("clones denied-tool intent and its pending replacement without sharing lists (#11115)", () => {
+    const source = {
+      ...preparedEntry,
+      denyTools: ["delete_*"],
+      pendingDenyTools: ["replacement_*"],
+    };
     const cloned = cloneMcpBridgeEntry(source);
 
     cloned.denyTools?.push("submit_*");
+    cloned.pendingDenyTools?.push("replacement_exact");
 
     expect(source.denyTools).toEqual(["delete_*"]);
+    expect(source.pendingDenyTools).toEqual(["replacement_*"]);
     expect(cloned.denyTools).toEqual(["delete_*", "submit_*"]);
+    expect(cloned.pendingDenyTools).toEqual(["replacement_*", "replacement_exact"]);
   });
 });

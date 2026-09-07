@@ -29,6 +29,8 @@ export interface StartedHttpServer {
   close(): Promise<void>;
 }
 
+export const FAKE_MCP_STATUS_RESULT_TOKEN = "MCP_STATUS_OK";
+
 export interface FakeMcpRequest {
   method: string;
   path: string;
@@ -37,6 +39,7 @@ export interface FakeMcpRequest {
   sessionId: string;
   protocolVersion: string;
   rpcMethod?: string;
+  rpcToolName?: string;
   responseStatus?: number;
   responseHasResult?: boolean;
   negotiatedSessionId?: string;
@@ -934,6 +937,9 @@ export async function startFakeMcpHttpsServer(options: {
     if (typeof parsedPayload?.method === "string") {
       recordedObservation.rpcMethod = parsedPayload.method;
     }
+    if (parsedPayload?.method === "tools/call" && typeof parsedPayload.params?.name === "string") {
+      recordedObservation.rpcToolName = parsedPayload.params.name;
+    }
     // The public quick-tunnel readiness probe uses HEAD /mcp. Keep it out of
     // the protocol request ledger so zero-upstream decoy and policy-denial
     // assertions continue to measure only attempted MCP traffic.
@@ -1212,27 +1218,35 @@ export async function startFakeMcpHttpsServer(options: {
         return;
       }
     } else if (parsedPayload.method === "tools/call") {
+      const toolName = parsedPayload.params?.name;
       const challenge = parsedPayload.params?.arguments?.challenge;
-      if (
-        parsedPayload.params?.name !== "fake_echo" ||
-        (options.challenge !== undefined && challenge !== options.challenge)
-      ) {
-        respondRpc(responseId, {
-          jsonrpc: "2.0",
-          id: responseId,
-          error: { code: -32602, message: "invalid fake_echo challenge" },
-        });
-        return;
+      if (toolName === "fake_status") {
+        result = {
+          content: [{ type: "text", text: FAKE_MCP_STATUS_RESULT_TOKEN }],
+          isError: false,
+        };
+      } else {
+        if (
+          toolName !== "fake_echo" ||
+          (options.challenge !== undefined && challenge !== options.challenge)
+        ) {
+          respondRpc(responseId, {
+            jsonrpc: "2.0",
+            id: responseId,
+            error: { code: -32602, message: "invalid fake_echo challenge" },
+          });
+          return;
+        }
+        result = {
+          content: [
+            {
+              type: "text",
+              text: options.resultToken ?? `MCP_AUTH_REWRITE_OK::${String(challenge ?? "")}`,
+            },
+          ],
+          isError: false,
+        };
       }
-      result = {
-        content: [
-          {
-            type: "text",
-            text: options.resultToken ?? `MCP_AUTH_REWRITE_OK::${String(challenge ?? "")}`,
-          },
-        ],
-        isError: false,
-      };
     } else if (
       typeof parsedPayload.method === "string" &&
       Object.prototype.hasOwnProperty.call(MCP_EMPTY_RESULT_BY_METHOD, parsedPayload.method)

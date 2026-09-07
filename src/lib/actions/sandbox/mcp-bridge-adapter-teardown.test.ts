@@ -62,7 +62,8 @@ vi.mock("./mcp-bridge-destroy-preflight", () => ({
   inspectExactMcpDestroyProvider: mocks.inspectExactMcpDestroyProvider,
 }));
 
-vi.mock("./mcp-bridge-policy", () => ({
+vi.mock("./mcp-bridge-policy", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./mcp-bridge-policy")>()),
   assertGeneratedPolicyMutationSafe: vi.fn(),
   assertGeneratedPolicyRegistrationMutationSafe:
     mocks.assertGeneratedPolicyRegistrationMutationSafe,
@@ -321,6 +322,26 @@ describe("MCP adapter teardown rollback", () => {
 
   it("persists validated pins for a legacy public entry during absent rebuild preparation (#11115)", async () => {
     await expectLegacyPublicPinsPersisted(prepareMcpBridgesForAbsentSandboxRebuild);
+  });
+
+  it("materializes an interrupted denied-tool update during rebuild preparation (#11115)", async () => {
+    mocks.bridgeState.mockReturnValue({
+      github: {
+        ...entry,
+        denyTools: ["old_tool"],
+        pendingDenyTools: ["replacement_*"],
+      },
+    });
+
+    const preparation = await prepareMcpBridgesForAbsentSandboxRebuild("alpha");
+
+    expect(preparation.entries).toEqual([
+      expect.objectContaining({ denyTools: ["replacement_*"] }),
+    ]);
+    expect(preparation.entries[0]).not.toHaveProperty("pendingDenyTools");
+    expect(mocks.setBridgeState).toHaveBeenCalledWith("alpha", {
+      github: expect.objectContaining({ denyTools: ["replacement_*"] }),
+    });
   });
 
   it("rejects rebuild when live policy differs from persisted denied-tool intent (#11115)", async () => {

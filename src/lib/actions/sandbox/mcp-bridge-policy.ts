@@ -33,6 +33,19 @@ export {
   MCP_BRIDGE_POLICY_MAX_BODY_BYTES,
 } from "./mcp-bridge-policy-render";
 
+export function materializePendingMcpDenyTools(entry: McpBridgeEntry): McpBridgeEntry {
+  if (entry.pendingDenyTools === undefined) return entry;
+  const {
+    denyTools: _previousDenyTools,
+    pendingDenyTools,
+    ...entryWithoutDenyToolTransition
+  } = entry;
+  return {
+    ...entryWithoutDenyToolTransition,
+    ...(pendingDenyTools.length > 0 ? { denyTools: [...pendingDenyTools] } : {}),
+  };
+}
+
 export function applyGeneratedPolicy(
   sandboxName: string,
   entry: McpBridgeEntry,
@@ -42,31 +55,32 @@ export function applyGeneratedPolicy(
     runtimeSelection: McpProviderInspectionRuntimeSelection;
   },
 ): void {
-  const addresses = assertMcpBridgePolicyTarget(entry, target);
+  const policyEntry = materializePendingMcpDenyTools(entry);
+  const addresses = assertMcpBridgePolicyTarget(policyEntry, target);
   if (addresses.length === 0) {
     throw new McpBridgeError(
-      `Refusing to apply generated MCP policy '${entry.policyName}' without address pins.`,
+      `Refusing to apply generated MCP policy '${policyEntry.policyName}' without address pins.`,
     );
   }
-  const adapter = isAgentMcpAdapter(entry.adapter) ? entry.adapter : "mcporter";
+  const adapter = isAgentMcpAdapter(policyEntry.adapter) ? policyEntry.adapter : "mcporter";
   const content =
     options.bindCredential === false
       ? buildMcpBridgeCapabilityPolicyYaml(
-          entry.server,
-          entry.url,
+          policyEntry.server,
+          policyEntry.url,
           adapter,
           target,
-          entry.denyTools,
+          policyEntry.denyTools,
         )
       : buildMcpBridgePolicyYaml(
-          entry.server,
-          entry.url,
+          policyEntry.server,
+          policyEntry.url,
           adapter,
           target,
-          entry.providerName ?? "",
-          entry.denyTools,
+          policyEntry.providerName ?? "",
+          policyEntry.denyTools,
         );
-  applyGeneratedPolicyContent(sandboxName, entry, content, options.runtimeSelection);
+  applyGeneratedPolicyContent(sandboxName, policyEntry, content, options.runtimeSelection);
 }
 
 function applyGeneratedPolicyContent(
@@ -157,14 +171,15 @@ function generatedPolicyContent(
   adapter: AgentMcpAdapter = isAgentMcpAdapter(entry.adapter) ? entry.adapter : "mcporter",
   target: McpBridgeTargetValidation = recordedMcpTarget(entry),
 ): string {
-  assertMcpBridgePolicyTarget(entry, target);
+  const policyEntry = materializePendingMcpDenyTools(entry);
+  assertMcpBridgePolicyTarget(policyEntry, target);
   return buildMcpBridgePolicyYaml(
-    entry.server,
-    entry.url,
+    policyEntry.server,
+    policyEntry.url,
     adapter,
     target,
-    entry.providerName ?? "",
-    entry.denyTools,
+    policyEntry.providerName ?? "",
+    policyEntry.denyTools,
   );
 }
 

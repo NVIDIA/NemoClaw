@@ -703,6 +703,30 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     });
   });
 
+  it("reports journaled denied-tool intent even when the old policy still matches (#11115)", () => {
+    const home = createTempHome("nemoclaw-mcp-policy-update-journal-");
+    const { stdout } = runHarness(
+      home,
+      String.raw`
+  const sandbox = registry.getSandbox("alpha");
+  registry.updateSandbox("alpha", {
+    mcp: { ...sandbox.mcp, bridges: {
+      github: { ...sandbox.mcp.bridges.github, pendingDenyTools: ["replacement_*"] },
+    } },
+  });
+  activePolicyState = "match";
+  const [status] = await bridge.statusMcpBridge("alpha", "github");
+  logLines.length = 0;
+  await bridge.dispatchMcpBridgeCommand("alpha", ["status", "github", "--no-probe"]);
+  writeHarnessResult(JSON.stringify({ status, text: logLines.join("\n") }));
+`,
+    );
+    const payload = JSON.parse(stdout) as { status: { warnings: string[] }; text: string };
+
+    expect(payload.status.warnings).toEqual([expect.stringMatching(/update is interrupted/)]);
+    expect(payload.text).toMatch(/update is interrupted[\s\S]*mcp restart github/);
+  });
+
   it("renders the identical-rejection probe in the human-readable status output (#6379)", () => {
     const home = createTempHome("nemoclaw-mcp-resolution-render-");
     const { stdout } = runHarness(

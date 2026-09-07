@@ -15,6 +15,7 @@ import { MCP_BRIDGE_ALLOWED_METHODS } from "../../src/lib/actions/sandbox/mcp-br
 import { startTestProgress } from "../e2e/fixtures/progress.ts";
 import {
   buildCloudflaredQuickTunnelArgs,
+  FAKE_MCP_STATUS_RESULT_TOKEN,
   HERMES_DEFERRED_TOOL_SEARCH_MISS,
   parseTryCloudflareOrigin,
   type StartedHttpServer,
@@ -803,6 +804,16 @@ describe("authenticated MCP live fixtures", () => {
         isError: false,
       },
     });
+    const statusCall = await request("POST", {
+      jsonrpc: "2.0",
+      id: 4,
+      method: "tools/call",
+      params: { name: "fake_status", arguments: {} },
+    });
+    expect(statusCall.json()).toMatchObject({
+      result: { content: [{ type: "text", text: FAKE_MCP_STATUS_RESULT_TOKEN }], isError: false },
+    });
+    expect(server.requests.at(-1)?.rpcToolName).toBe("fake_status");
     const paramsByMethod: Partial<Record<(typeof MCP_BRIDGE_ALLOWED_METHODS)[number], unknown>> = {
       initialize: {
         protocolVersion: "2025-11-25",

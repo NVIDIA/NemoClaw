@@ -7,6 +7,7 @@ import YAML from "yaml";
 
 import type { McpBridgeEntry } from "../../state/registry";
 import * as policies from "../../policy";
+import { parseNetworkPolicies } from "../../policy/preset-parsing";
 import { isSandboxPolicyCredentialFree } from "../../policy/sandbox-policy-validation";
 import {
   rollbackScrubbedMcpAdapters,
@@ -23,6 +24,7 @@ import {
   assertGeneratedPolicyMutationSafe,
   assertGeneratedPolicyRegistrationMutationSafe,
   buildMcpBridgePolicyKey,
+  materializePendingMcpDenyTools,
   removeGeneratedPolicy,
 } from "./mcp-bridge-policy";
 import {
@@ -69,26 +71,15 @@ function policyDocumentsMatch(left: string, right: string): boolean {
   }
 }
 
-function networkPolicyEntries(content: string): Record<string, unknown> | null {
-  try {
-    const parsed = YAML.parse(content)?.network_policies;
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : null;
-  } catch {
-    return null;
-  }
-}
-
 function assertMcpRebuildPolicyMatchesRegisteredIntent(
   sandboxName: string,
   policyHandoff: string,
   entries: readonly McpBridgeEntry[],
 ): void {
-  const current = networkPolicyEntries(policyHandoff);
+  const current = parseNetworkPolicies(policyHandoff);
   for (const entry of entries) {
     const expectedPolicy = assertGeneratedPolicyRegistrationMutationSafe(sandboxName, entry);
-    const expected = networkPolicyEntries(expectedPolicy.content);
+    const expected = parseNetworkPolicies(expectedPolicy.content);
     const key = buildMcpBridgePolicyKey(entry.server);
     if (
       !current ||
@@ -134,22 +125,26 @@ function assertMcpTeardownPolicyUnchanged(
 
 export { prepareMcpBridgesForExecUnavailableRebuild } from "./mcp-bridge-rebuild-exec-unavailable";
 
-function persistValidatedLegacyPublicPins(
+function persistMcpRebuildEntryUpgrades(
   sandboxName: string,
   entries: readonly McpBridgeEntry[],
   targets: Awaited<ReturnType<typeof preflightMcpEntryTargets>>,
 ): McpBridgeEntry[] {
   let changed = false;
   const strengthened = entries.map((entry) => {
-    if (entry.trustedPrivateHost || (entry.allowedIps?.length ?? 0) > 0) return entry;
-    const target = targets.get(entry.server);
+    const materialized = materializePendingMcpDenyTools(entry);
+    if (entry.pendingDenyTools !== undefined) changed = true;
+    if (materialized.trustedPrivateHost || (materialized.allowedIps?.length ?? 0) > 0) {
+      return materialized;
+    }
+    const target = targets.get(materialized.server);
     if (!target || target.addresses.length === 0) {
       throw new McpBridgeError(
-        `MCP server '${entry.server}' has no validated public address pins for rebuild.`,
+        `MCP server '${materialized.server}' has no validated public address pins for rebuild.`,
       );
     }
     changed = true;
-    return { ...entry, allowedIps: [...target.addresses], updatedAt: nowIso() };
+    return { ...materialized, allowedIps: [...target.addresses], updatedAt: nowIso() };
   });
   if (changed) {
     setBridgeState(
@@ -221,7 +216,7 @@ export async function prepareMcpBridgesForAbsentSandboxRebuild(
     throw new McpBridgeError(`Could not resolve MCP runtime authority for '${sandboxName}'.`);
   }
   const targets = await preflightMcpEntryTargets(storedEntries);
-  const entries = persistValidatedLegacyPublicPins(sandboxName, storedEntries, targets);
+  const entries = persistMcpRebuildEntryUpgrades(sandboxName, storedEntries, targets);
   await ensureSandboxGatewaySelected(sandboxName, providerRuntimeSelection);
   for (const entry of entries) {
     assertGeneratedPolicyRegistrationMutationSafe(sandboxName, entry);
@@ -257,7 +252,7 @@ export async function prepareMcpBridgesForRebuild(
     throw new McpBridgeError(`Could not resolve MCP runtime authority for '${sandboxName}'.`);
   }
   const targets = await preflightMcpEntryTargets(storedEntries);
-  const entries = persistValidatedLegacyPublicPins(sandboxName, storedEntries, targets);
+  const entries = persistMcpRebuildEntryUpgrades(sandboxName, storedEntries, targets);
   await ensureSandboxGatewaySelected(sandboxName, providerRuntimeSelection);
   for (const entry of entries) assertGeneratedPolicyMutationSafe(sandboxName, entry);
   assertMcpAdapterTeardownRuntimeCapabilities(

@@ -87,20 +87,28 @@ describe("MCP denied-tool policy updates", () => {
   it("persists replacement intent before policy activation (#11115)", async () => {
     await updateMcpBridgeDenyTools("alpha", "github", ["submit_*", "delete_repo"]);
 
+    const pendingEntry = expect.objectContaining({
+      pendingDenyTools: ["delete_repo", "submit_*"],
+      updatedAt: "2026-09-06T00:00:00.000Z",
+    });
     const updatedEntry = expect.objectContaining({
       denyTools: ["delete_repo", "submit_*"],
       updatedAt: "2026-09-06T00:00:00.000Z",
     });
-    expect(mocks.writeBridgeEntry).toHaveBeenCalledWith("alpha", updatedEntry);
+    expect(mocks.writeBridgeEntry).toHaveBeenNthCalledWith(1, "alpha", pendingEntry);
+    expect(mocks.writeBridgeEntry).toHaveBeenNthCalledWith(2, "alpha", updatedEntry);
     expect(mocks.applyRecordedGeneratedPolicy).toHaveBeenCalledWith("alpha", updatedEntry, {
       gatewayName: "nemoclaw-9090",
       workspace: "default",
     });
     expect(mocks.writeBridgeEntry.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.applyRecordedGeneratedPolicy.mock.invocationCallOrder[0],
+      mocks.removeGeneratedPolicy.mock.invocationCallOrder[0],
     );
     expect(mocks.removeGeneratedPolicy.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.writeBridgeEntry.mock.invocationCallOrder[0],
+      mocks.writeBridgeEntry.mock.invocationCallOrder[1],
+    );
+    expect(mocks.writeBridgeEntry.mock.invocationCallOrder[1]).toBeLessThan(
+      mocks.applyRecordedGeneratedPolicy.mock.invocationCallOrder[0],
     );
   });
 
@@ -111,9 +119,12 @@ describe("MCP denied-tool policy updates", () => {
 
     await updateMcpBridgeDenyTools("alpha", "github", []);
 
-    expect(mocks.writeBridgeEntry).toHaveBeenCalledWith(
+    expect(mocks.writeBridgeEntry).toHaveBeenLastCalledWith(
       "alpha",
-      expect.not.objectContaining({ denyTools: expect.anything() }),
+      expect.not.objectContaining({
+        denyTools: expect.anything(),
+        pendingDenyTools: expect.anything(),
+      }),
     );
   });
 
@@ -125,7 +136,7 @@ describe("MCP denied-tool policy updates", () => {
     await expect(updateMcpBridgeDenyTools("alpha", "github", ["delete_repo"])).rejects.toThrow(
       /intent was saved.*mcp restart github/,
     );
-    expect(mocks.writeBridgeEntry).toHaveBeenCalledOnce();
+    expect(mocks.writeBridgeEntry).toHaveBeenCalledTimes(2);
     expect(mocks.removeGeneratedPolicy).toHaveBeenCalledOnce();
   });
 
@@ -164,7 +175,19 @@ describe("MCP denied-tool policy updates", () => {
     expect(mocks.applyRecordedGeneratedPolicy).not.toHaveBeenCalled();
   });
 
-  it("leaves intent unchanged when the old policy cannot be removed (#11115)", async () => {
+  it("rejects a new update while replacement intent awaits restart (#11115)", async () => {
+    vi.mocked(state.bridgeState).mockReturnValueOnce({
+      github: { ...entry, pendingDenyTools: ["delete_repo"] },
+    });
+
+    await expect(updateMcpBridgeDenyTools("alpha", "github", ["submit_*"])).rejects.toThrow(
+      /interrupted denied-tool update.*mcp restart github/,
+    );
+    expect(mocks.writeBridgeEntry).not.toHaveBeenCalled();
+    expect(mocks.removeGeneratedPolicy).not.toHaveBeenCalled();
+  });
+
+  it("restores prior intent when the old policy cannot be removed (#11115)", async () => {
     mocks.removeGeneratedPolicy.mockImplementationOnce(() => {
       throw new Error("remove failed");
     });
@@ -173,7 +196,32 @@ describe("MCP denied-tool policy updates", () => {
       "remove failed",
     );
 
-    expect(mocks.writeBridgeEntry).not.toHaveBeenCalled();
+    expect(mocks.writeBridgeEntry).toHaveBeenNthCalledWith(
+      1,
+      "alpha",
+      expect.objectContaining({ pendingDenyTools: ["delete_repo"] }),
+    );
+    expect(mocks.writeBridgeEntry).toHaveBeenNthCalledWith(2, "alpha", entry);
+    expect(mocks.applyRecordedGeneratedPolicy).not.toHaveBeenCalled();
+  });
+
+  it("retains journaled replacement intent when final persistence is interrupted (#11115)", async () => {
+    mocks.writeBridgeEntry
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw new Error("final write interrupted");
+      });
+
+    await expect(updateMcpBridgeDenyTools("alpha", "github", ["delete_repo"])).rejects.toThrow(
+      "final write interrupted",
+    );
+
+    expect(mocks.writeBridgeEntry).toHaveBeenNthCalledWith(
+      1,
+      "alpha",
+      expect.objectContaining({ pendingDenyTools: ["delete_repo"] }),
+    );
+    expect(mocks.removeGeneratedPolicy).toHaveBeenCalledOnce();
     expect(mocks.applyRecordedGeneratedPolicy).not.toHaveBeenCalled();
   });
 

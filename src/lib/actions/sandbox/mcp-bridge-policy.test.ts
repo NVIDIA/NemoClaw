@@ -89,6 +89,24 @@ describe("generated MCP policy", () => {
     expect(stateSpy).toHaveBeenCalledOnce();
   });
 
+  it("renders journaled replacement intent for restart recovery (#11115)", () => {
+    const managed = getRegisteredGeneratedPolicy("alpha", {
+      ...entry,
+      denyTools: ["old_tool"],
+      pendingDenyTools: ["replacement_*"],
+    });
+    const parsed = YAML.parse(managed?.content ?? "") as {
+      network_policies: Record<
+        string,
+        { endpoints: Array<{ deny_rules?: Array<{ method: string; tool: string }> }> }
+      >;
+    };
+
+    expect(parsed.network_policies.mcp_bridge_github.endpoints[0].deny_rules).toEqual([
+      { method: "tools/call", tool: "replacement_*" },
+    ]);
+  });
+
   it("keeps policy drift distinct from unavailable inspection (#11115)", () => {
     vi.spyOn(policies, "getPresetContentGatewayState").mockReturnValue("drift");
 

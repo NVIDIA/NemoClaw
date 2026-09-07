@@ -357,7 +357,11 @@ export async function statusMcpBridge(
       if (urlWarning) warnings.push(urlWarning);
       credentialWarning = storedCredentialWarning(entry);
       if (credentialWarning) warnings.push(credentialWarning);
-      if (policyState === "drift") {
+      if (entry.pendingDenyTools !== undefined) {
+        warnings.push(
+          `Denied-tool update is interrupted. Run \`nemoclaw ${sandboxName} mcp restart ${entry.server}\` to commit it and restore the generated policy.`,
+        );
+      } else if (policyState === "drift") {
         warnings.push(
           `Generated policy differs from registered MCP intent. Run \`nemoclaw ${sandboxName} mcp restart ${entry.server}\` to restore it.`,
         );
