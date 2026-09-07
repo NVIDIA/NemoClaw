@@ -3,6 +3,8 @@
 
 import path from "node:path";
 
+import { readSandboxConfig, resolveAgentConfig, writeSandboxConfig } from "../../sandbox/config";
+import type { ConfigObject } from "../../security/credential-filter";
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import {
   type AdapterMutationOptions,
@@ -12,6 +14,7 @@ import {
 import {
   DEFAULT_OPENCLAW_CONFIG_DIR,
   entryHeaders,
+  openClawHeadersMatchExpected,
   openClawHeaderMatcherSource,
   OPENCLAW_MCP_CONFIG_DIR,
   openClawConfigDir,
@@ -160,17 +163,42 @@ export function registerOpenClawAdapter(
   credentialRevision?: McpAttachedCredentialRevision,
 ): void {
   const root = openClawConfigRootForEntry(entry);
-  const result = executeSandboxCommand(
-    sandboxName,
-    buildOpenClawMcpRegisterCommand(entry, replaceExisting, root, credentialRevision),
-    { runtimeSelection },
-  );
-  const output = redactBridgeSecretsForDisplay(
-    [result?.stdout, result?.stderr].filter(Boolean).join("\n").trim(),
-    entry,
-    envValues,
-  );
-  if (!result || result.status !== 0) {
+  try {
+    const target = resolveAgentConfig(sandboxName);
+    if (target.agentName !== "openclaw" || target.configPath !== openClawConfigPath(root)) {
+      throw new Error("OpenClaw MCP config target does not match the registered agent source");
+    }
+    const current = readSandboxConfig(sandboxName, target);
+    if (
+      current.mcp !== undefined &&
+      (!current.mcp || typeof current.mcp !== "object" || Array.isArray(current.mcp))
+    ) {
+      throw new Error("OpenClaw mcp configuration must be an object");
+    }
+    const mcp = (current.mcp ?? {}) as ConfigObject;
+    if (
+      mcp.servers !== undefined &&
+      (!mcp.servers || typeof mcp.servers !== "object" || Array.isArray(mcp.servers))
+    ) {
+      throw new Error("OpenClaw mcp.servers configuration must be an object");
+    }
+    const servers = { ...((mcp.servers ?? {}) as ConfigObject) };
+    if (Object.hasOwn(servers, entry.server) && !replaceExisting) {
+      throw new Error(`MCP server '${entry.server}' already exists in OpenClaw configuration`);
+    }
+    const headers = entryHeaders(entry, credentialRevision);
+    servers[entry.server] = {
+      url: entry.url,
+      ...(Object.keys(headers).length > 0 ? { headers } : {}),
+    };
+    current.mcp = { ...mcp, servers };
+    writeSandboxConfig(sandboxName, target, current);
+  } catch (error) {
+    const output = redactBridgeSecretsForDisplay(
+      error instanceof Error ? error.message : String(error),
+      entry,
+      envValues,
+    );
     throw new McpBridgeError(output || `OpenClaw MCP config add failed for '${entry.server}'.`);
   }
 
@@ -214,18 +242,49 @@ export function unregisterOpenClawAdapter(
   options: AdapterMutationOptions = {},
 ): void {
   const root = openClawConfigRootForEntry(entry);
-  const result = executeSandboxCommand(
-    sandboxName,
-    buildOpenClawMcpRemoveCommand(entry, options.force === true, root),
-    { runtimeSelection },
-  );
-  const output = redactBridgeSecretsForDisplay(
-    [result?.stdout, result?.stderr].filter(Boolean).join("\n").trim(),
-    entry,
-    options.envValues ?? {},
-  );
-  if (!result || result.status !== 0) {
+  try {
+    const target = resolveAgentConfig(sandboxName);
+    if (target.agentName !== "openclaw" || target.configPath !== openClawConfigPath(root)) {
+      throw new Error("OpenClaw MCP config target does not match the registered agent source");
+    }
+    const current = readSandboxConfig(sandboxName, target);
+    const mcp = current.mcp;
+    const servers =
+      mcp && typeof mcp === "object" && !Array.isArray(mcp)
+        ? (mcp as ConfigObject).servers
+        : undefined;
+    if (!servers || typeof servers !== "object" || Array.isArray(servers)) return;
+    const entries = { ...(servers as ConfigObject) };
+    if (!Object.hasOwn(entries, entry.server)) return;
+    const actual = entries[entry.server];
+    const actualRecord =
+      actual && typeof actual === "object" && !Array.isArray(actual)
+        ? (actual as Record<string, unknown>)
+        : undefined;
+    const headers =
+      actualRecord?.headers &&
+      typeof actualRecord.headers === "object" &&
+      !Array.isArray(actualRecord.headers)
+        ? actualRecord.headers
+        : {};
+    const exact =
+      actualRecord?.url === entry.url &&
+      openClawHeadersMatchExpected(headers, entryHeaders(entry));
+    if (!exact && options.force !== true) {
+      throw new Error(
+        `Refusing to remove modified OpenClaw MCP server '${entry.server}'. Use --force to remove it.`,
+      );
+    }
+    delete entries[entry.server];
+    current.mcp = { ...(mcp as ConfigObject), servers: entries };
+    writeSandboxConfig(sandboxName, target, current);
+  } catch (error) {
     if (options.bestEffort) return;
+    const output = redactBridgeSecretsForDisplay(
+      error instanceof Error ? error.message : String(error),
+      entry,
+      options.envValues ?? {},
+    );
     throw new McpBridgeError(output || `OpenClaw MCP config remove failed for '${entry.server}'.`);
   }
 }

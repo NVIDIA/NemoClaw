@@ -12,8 +12,11 @@ const mocks = vi.hoisted(() => ({
   executeGatewaySupervisorAction: vi.fn(),
   getSandbox: vi.fn(),
   observeMcpCredentialRevision: vi.fn(),
+  readSandboxConfig: vi.fn(),
+  resolveAgentConfig: vi.fn(),
   restartSandboxGateway: vi.fn(),
   runOpenshellProviderCommand: vi.fn(),
+  writeSandboxConfig: vi.fn(),
   waitForMcpBridgeCondition: vi.fn((condition: () => boolean) =>
     Array.from({ length: 12 }).some(() => condition()),
   ),
@@ -24,6 +27,12 @@ vi.mock("./process-recovery", () => ({
   executeSandboxExecCommand: mocks.executeSandboxExecCommand,
   executeGatewaySupervisorAction: mocks.executeGatewaySupervisorAction,
   restartSandboxGateway: mocks.restartSandboxGateway,
+}));
+
+vi.mock("../../sandbox/config", () => ({
+  readSandboxConfig: mocks.readSandboxConfig,
+  resolveAgentConfig: mocks.resolveAgentConfig,
+  writeSandboxConfig: mocks.writeSandboxConfig,
 }));
 
 vi.mock("../../adapters/openshell/provider-command", () => ({
@@ -77,6 +86,15 @@ const registered = { status: 0, stdout: "registered\n", stderr: "" };
 const mismatch = { status: 0, stdout: "mismatch\n", stderr: "" };
 const sandbox = { name: "alpha", agent: "hermes", gatewayName: "nemoclaw-8091" };
 const runtimeSelection = { gatewayName: "nemoclaw-8091", workspace: "default" };
+
+function resetOpenClawConfigMocks(): void {
+  mocks.readSandboxConfig.mockReset().mockReturnValue({});
+  mocks.resolveAgentConfig.mockReset().mockReturnValue({
+    agentName: "openclaw",
+    configPath: "/sandbox/.openclaw/openclaw.json",
+  });
+  mocks.writeSandboxConfig.mockReset();
+}
 
 interface AdapterCase {
   name: string;
@@ -208,7 +226,9 @@ describe("OpenClaw MCP adapter registration", () => {
   beforeEach(() => {
     mocks.executeSandboxCommand.mockReset();
     mocks.getSandbox.mockReset().mockReturnValue(sandbox);
+    resetOpenClawConfigMocks();
     mocks.restartSandboxGateway.mockReset();
+    mocks.writeSandboxConfig.mockReset();
   });
 
   it("restarts the gateway only for native OpenClaw MCP mutations", () => {
@@ -251,9 +271,7 @@ describe("OpenClaw MCP adapter registration", () => {
     const verification = openClawHeadersMatchExpected(actualV11Headers, entryHeaders(entry, "v12"))
       ? registered
       : mismatch;
-    mocks.executeSandboxCommand
-      .mockReturnValueOnce(commandSuccess)
-      .mockReturnValueOnce(verification);
+    mocks.executeSandboxCommand.mockReturnValueOnce(verification);
 
     expect(() =>
       registerOpenClawAdapter(
@@ -269,11 +287,47 @@ describe("OpenClaw MCP adapter registration", () => {
     expect(mocks.executeSandboxCommand.mock.calls[0]?.[1]).toContain(
       "openshell:resolve:env:v12_GITHUB_TOKEN",
     );
-    expect(mocks.executeSandboxCommand.mock.calls[1]?.[1]).toContain(
-      "Bearer openshell:resolve:env:v12_GITHUB_TOKEN",
+    expect(mocks.writeSandboxConfig).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ configPath: "/sandbox/.openclaw/openclaw.json" }),
+      expect.objectContaining({
+        mcp: {
+          servers: {
+            github: {
+              url: entry.url,
+              headers: { Authorization: "Bearer openshell:resolve:env:v12_GITHUB_TOKEN" },
+            },
+          },
+        },
+      }),
     );
-    expect(mocks.executeSandboxCommand.mock.calls.map((call) => call[2])).toEqual(
-      Array(mocks.executeSandboxCommand.mock.calls.length).fill({ runtimeSelection }),
+  });
+
+  it("removes the native entry through the paired config and hash transaction", () => {
+    const entry: McpSourceEntry = {
+      ...baseEntry,
+      agent: "openclaw",
+      adapter: "openclaw-config",
+    };
+    mocks.readSandboxConfig.mockReturnValue({
+      preserved: true,
+      mcp: {
+        servers: {
+          github: {
+            url: entry.url,
+            headers: { Authorization: "Bearer openshell:resolve:env:v12_GITHUB_TOKEN" },
+          },
+        },
+      },
+    });
+
+    expect(unregisterAgentAdapter("alpha", "openclaw-config", entry, runtimeSelection)).toBe(
+      "removed",
+    );
+    expect(mocks.writeSandboxConfig).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ configPath: "/sandbox/.openclaw/openclaw.json" }),
+      { preserved: true, mcp: { servers: {} } },
     );
   });
 });
@@ -363,6 +417,7 @@ describe.each(reconciliationCases)(
       mocks.runOpenshellProviderCommand.mockReset();
       mocks.getSandbox.mockReset();
       mocks.getSandbox.mockReturnValue(sandbox);
+      resetOpenClawConfigMocks();
       mocks.observeMcpCredentialRevision.mockReset();
       mocks.observeMcpCredentialRevision.mockReturnValue("v12");
     });
@@ -396,6 +451,7 @@ describe("MCP adapter credential revision reconciliation failures", () => {
     mocks.runOpenshellProviderCommand.mockReset();
     mocks.getSandbox.mockReset().mockReturnValue(sandbox);
     mocks.observeMcpCredentialRevision.mockReset();
+    resetOpenClawConfigMocks();
   });
 
   it("keeps one operation target after the registry target changes (#10514)", () => {
@@ -512,10 +568,6 @@ describe("MCP adapter credential revision reconciliation failures", () => {
         "v10",
       ),
     ).toThrow("credential revision did not stabilize");
-    expect(
-      mocks.executeSandboxCommand.mock.calls.filter(([, command]) =>
-        String(command).includes("servers[payload.server]"),
-      ),
-    ).toHaveLength(2);
+    expect(mocks.writeSandboxConfig).toHaveBeenCalledTimes(2);
   });
 });
