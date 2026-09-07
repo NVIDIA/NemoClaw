@@ -401,7 +401,8 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
     expect(failure).toBeInstanceOf(InferenceSetError);
     const message = (failure as Error).message;
     expect(message).toContain(
-      "The previous OpenShell inference selection was restored. Provider state may still be partial.",
+      "The previous OpenShell inference selection was restored. Provider state may still be partial. " +
+        "Rerun onboarding to reconcile it before using this provider route or retrying this switch.",
     );
     expect(message).toContain("provider update failed");
     expect(message).toContain("Rerun onboarding to reconcile the provider");
@@ -748,7 +749,8 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
     expect(failure).toBeInstanceOf(InferenceSetError);
     const message = (failure as Error).message;
     expect(message).toContain(
-      "The previous OpenShell inference selection was restored. Provider state may still be partial.",
+      "The previous OpenShell inference selection was restored. Provider state may still be partial. " +
+        "Rerun onboarding to reconcile it before using this provider route or retrying this switch.",
     );
     expect(message).toContain("provider connection closed before the outcome was confirmed");
     const selectionMutations = capture.mock.calls.filter(

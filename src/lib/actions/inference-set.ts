@@ -152,7 +152,7 @@ function providerCommitFailureAfterSelection(options: {
     );
   }
   const providerState = providerStateMayBePartial
-    ? "Provider state may still be partial. Rerun onboarding to reconcile it before rerunning this command."
+    ? "Provider state may still be partial. Rerun onboarding to reconcile it before using this provider route or retrying this switch."
     : "The provider binding was not changed.";
   return new InferenceSetError(
     `${providerDetail}\n  The previous OpenShell inference selection was restored. ${providerState}`,
