@@ -90,6 +90,21 @@ export function validateForwardServiceTarget(target: ForwardServiceTarget): Forw
   return target;
 }
 
+export function createForwardServiceTarget(
+  target: Pick<
+    ForwardServiceTarget,
+    "executable" | "gatewayName" | "workspace" | "sandboxName" | "localHost"
+  >,
+  port: number,
+): ForwardServiceTarget {
+  return validateForwardServiceTarget({
+    ...target,
+    localPort: port,
+    targetHost: "127.0.0.1",
+    targetPort: port,
+  });
+}
+
 /** Build the direct ForwardTcp command introduced in OpenShell 0.0.106. */
 export function buildForwardServiceArgs(target: ForwardServiceTarget): string[] {
   validateForwardServiceTarget(target);

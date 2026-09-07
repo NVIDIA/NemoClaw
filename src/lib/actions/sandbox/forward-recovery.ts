@@ -6,6 +6,7 @@ import {
   withSelectedOpenShellCommandOptions,
 } from "../../adapters/openshell/command-argv";
 import {
+  createForwardServiceTarget,
   isForwardServiceListenerOwner,
   launchForwardService,
   type ForwardServiceTarget,
@@ -179,16 +180,16 @@ function forwardServiceTarget(
   expectedBind = "127.0.0.1",
   workspace = "default",
 ): ForwardServiceTarget {
-  return {
-    executable,
-    gatewayName,
-    workspace,
-    sandboxName,
-    localHost: expectedBind === "0.0.0.0" ? ("0.0.0.0" as const) : ("127.0.0.1" as const),
-    localPort: port,
-    targetHost: "127.0.0.1",
-    targetPort: port,
-  };
+  return createForwardServiceTarget(
+    {
+      executable,
+      gatewayName,
+      workspace,
+      sandboxName,
+      localHost: expectedBind === "0.0.0.0" ? "0.0.0.0" : "127.0.0.1",
+    },
+    port,
+  );
 }
 
 function isValidPort(value: unknown): value is number {

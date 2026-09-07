@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
+  createForwardServiceTarget,
   isForwardServiceListenerOwner,
   launchForwardService,
   type ForwardServiceTarget,
@@ -263,16 +264,16 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     port: number,
     target: string,
   ): ForwardServiceTarget {
-    return {
-      executable: forwardService!.executable(),
-      gatewayName,
-      workspace: "default",
-      sandboxName,
-      localHost: target.startsWith("0.0.0.0:") ? ("0.0.0.0" as const) : ("127.0.0.1" as const),
-      localPort: port,
-      targetHost: "127.0.0.1",
-      targetPort: port,
-    };
+    return createForwardServiceTarget(
+      {
+        executable: forwardService!.executable(),
+        gatewayName,
+        workspace: "default",
+        sandboxName,
+        localHost: target.startsWith("0.0.0.0:") ? "0.0.0.0" : "127.0.0.1",
+      },
+      port,
+    );
   }
 
   function ownsDashboardForward(
