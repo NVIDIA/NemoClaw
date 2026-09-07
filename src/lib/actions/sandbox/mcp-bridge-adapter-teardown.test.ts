@@ -22,9 +22,11 @@ const mocks = vi.hoisted(() => ({
   inspectExactMcpDestroyProvider: vi.fn(),
   inspectMcpProvider: vi.fn(),
   observeMcpCredentialRevision: vi.fn(),
+  preflightMcpEntryTargets: vi.fn(),
   removeGeneratedPolicy: vi.fn(),
   registerAgentAdapterAtCurrentCredentialRevision: vi.fn(),
   restoreExistingMcpBridgeRuntime: vi.fn(),
+  setBridgeState: vi.fn(),
   unregisterAgentAdapter: vi.fn(),
 }));
 
@@ -50,7 +52,7 @@ vi.mock("./mcp-bridge-provider", () => ({
   detachProvider: vi.fn(),
   getMcpProviderInspectionRuntimeSelection: mocks.getMcpProviderInspectionRuntimeSelection,
   inspectMcpProvider: mocks.inspectMcpProvider,
-  preflightMcpEntryTargets: vi.fn(),
+  preflightMcpEntryTargets: mocks.preflightMcpEntryTargets,
   waitForDetachedMcpCredential: vi.fn(),
 }));
 
@@ -89,7 +91,7 @@ vi.mock("./mcp-bridge-state", () => ({
   getSandboxAgent: mocks.getSandboxAgent,
   getSandboxOrThrow: mocks.getSandboxOrThrow,
   nowIso: vi.fn(() => new Date(0).toISOString()),
-  setBridgeState: vi.fn(),
+  setBridgeState: mocks.setBridgeState,
 }));
 
 vi.mock("./mcp-bridge-validation", () => ({
@@ -113,6 +115,7 @@ const entry: McpBridgeEntry = {
   adapter: "hermes-config",
   url: "https://api.githubcopilot.com/mcp/",
   env: ["GITHUB_TOKEN"],
+  allowedIps: ["8.8.8.8"],
   providerName: "alpha-mcp-github",
   providerId: "11111111-2222-4333-8444-555555555555",
   policyName: "mcp-bridge-github",
@@ -143,11 +146,15 @@ describe("MCP adapter teardown rollback", () => {
     });
     mocks.inspectMcpProvider.mockReset().mockReturnValue({ exists: false });
     mocks.observeMcpCredentialRevision.mockReset().mockReturnValue("v12");
+    mocks.preflightMcpEntryTargets
+      .mockReset()
+      .mockResolvedValue(new Map([[entry.server, { addresses: ["8.8.8.8"] }]]));
     mocks.removeGeneratedPolicy.mockReset().mockImplementation(() => {
       throw new Error("forced lifecycle failure after adapter scrub");
     });
     mocks.registerAgentAdapterAtCurrentCredentialRevision.mockReset();
     mocks.restoreExistingMcpBridgeRuntime.mockReset();
+    mocks.setBridgeState.mockReset();
     mocks.unregisterAgentAdapter.mockReset().mockReturnValue("removed");
   });
 
@@ -277,6 +284,43 @@ describe("MCP adapter teardown rollback", () => {
 
     expect(mocks.getMcpProviderInspectionRuntimeSelection).not.toHaveBeenCalled();
     expect(mocks.ensureSandboxGatewaySelected).not.toHaveBeenCalled();
+  });
+
+  const expectLegacyPublicPinsPersisted = async (
+    prepare: (sandboxName: string) => Promise<{ entries: McpBridgeEntry[] }>,
+  ) => {
+    const legacyEntry = { ...entry, allowedIps: undefined };
+    mocks.bridgeState.mockReturnValue({ github: legacyEntry });
+    mocks.preflightMcpEntryTargets.mockResolvedValue(
+      new Map([[entry.server, { addresses: ["9.9.9.9"] }]]),
+    );
+
+    const preparation = await prepare("alpha");
+
+    expect(preparation.entries).toEqual([
+      expect.objectContaining({ allowedIps: ["9.9.9.9"], updatedAt: new Date(0).toISOString() }),
+    ]);
+    expect(mocks.setBridgeState).toHaveBeenCalledWith("alpha", {
+      github: expect.objectContaining({ allowedIps: ["9.9.9.9"] }),
+    });
+    expect(mocks.assertGeneratedPolicyRegistrationMutationSafe).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ allowedIps: ["9.9.9.9"] }),
+    );
+  };
+
+  it("persists validated pins for a legacy public entry during live rebuild preparation (#11115)", async () => {
+    mocks.removeGeneratedPolicy.mockReset();
+    mocks.captureRecordedSandboxBasePolicy
+      .mockReset()
+      .mockReturnValueOnce("version: 1\nnetwork_policies:\n  mcp_bridge_github: {}\n")
+      .mockReturnValueOnce("version: 1\nnetwork_policies: {}\n");
+
+    await expectLegacyPublicPinsPersisted(prepareMcpBridgesForRebuild);
+  });
+
+  it("persists validated pins for a legacy public entry during absent rebuild preparation (#11115)", async () => {
+    await expectLegacyPublicPinsPersisted(prepareMcpBridgesForAbsentSandboxRebuild);
   });
 
   it("rejects rebuild when live policy differs from persisted denied-tool intent (#11115)", async () => {

@@ -42,6 +42,7 @@ import {
   bridgeState,
   ensureSandboxGatewaySelected,
   getSandboxOrThrow,
+  nowIso,
   setBridgeState,
 } from "./mcp-bridge-state";
 import { assertAuthenticatedBridgeEntry, validateSandboxName } from "./mcp-bridge-validation";
@@ -133,6 +134,32 @@ function assertMcpTeardownPolicyUnchanged(
 
 export { prepareMcpBridgesForExecUnavailableRebuild } from "./mcp-bridge-rebuild-exec-unavailable";
 
+function persistValidatedLegacyPublicPins(
+  sandboxName: string,
+  entries: readonly McpBridgeEntry[],
+  targets: Awaited<ReturnType<typeof preflightMcpEntryTargets>>,
+): McpBridgeEntry[] {
+  let changed = false;
+  const strengthened = entries.map((entry) => {
+    if (entry.trustedPrivateHost || (entry.allowedIps?.length ?? 0) > 0) return entry;
+    const target = targets.get(entry.server);
+    if (!target || target.addresses.length === 0) {
+      throw new McpBridgeError(
+        `MCP server '${entry.server}' has no validated public address pins for rebuild.`,
+      );
+    }
+    changed = true;
+    return { ...entry, allowedIps: [...target.addresses], updatedAt: nowIso() };
+  });
+  if (changed) {
+    setBridgeState(
+      sandboxName,
+      Object.fromEntries(strengthened.map((entry) => [entry.server, entry])),
+    );
+  }
+  return strengthened;
+}
+
 async function getCompleteMcpRebuildEntries(
   sandboxName: string,
   options: {
@@ -180,9 +207,9 @@ export async function prepareMcpBridgesForAbsentSandboxRebuild(
   sandboxName: string,
   runtimeSelection?: McpProviderInspectionRuntimeSelection,
 ): Promise<McpRebuildPreparation> {
-  const { entries, runtimeSelection: providerRuntimeSelection } =
+  const { entries: storedEntries, runtimeSelection: providerRuntimeSelection } =
     await getCompleteMcpRebuildEntries(sandboxName, { sandboxAbsent: true, runtimeSelection });
-  if (entries.length === 0) {
+  if (storedEntries.length === 0) {
     return {
       entries: [],
       detachedProviderEntries: [],
@@ -193,7 +220,8 @@ export async function prepareMcpBridgesForAbsentSandboxRebuild(
   if (!providerRuntimeSelection) {
     throw new McpBridgeError(`Could not resolve MCP runtime authority for '${sandboxName}'.`);
   }
-  await preflightMcpEntryTargets(entries);
+  const targets = await preflightMcpEntryTargets(storedEntries);
+  const entries = persistValidatedLegacyPublicPins(sandboxName, storedEntries, targets);
   await ensureSandboxGatewaySelected(sandboxName, providerRuntimeSelection);
   for (const entry of entries) {
     assertGeneratedPolicyRegistrationMutationSafe(sandboxName, entry);
@@ -215,9 +243,9 @@ export async function prepareMcpBridgesForRebuild(
   runtimeSelection?: McpProviderInspectionRuntimeSelection,
 ): Promise<McpRebuildPreparation> {
   const sandbox = getSandboxOrThrow(sandboxName);
-  const { entries, runtimeSelection: providerRuntimeSelection } =
+  const { entries: storedEntries, runtimeSelection: providerRuntimeSelection } =
     await getCompleteMcpRebuildEntries(sandboxName, { runtimeSelection });
-  if (entries.length === 0) {
+  if (storedEntries.length === 0) {
     return {
       entries: [],
       detachedProviderEntries: [],
@@ -228,7 +256,8 @@ export async function prepareMcpBridgesForRebuild(
   if (!providerRuntimeSelection) {
     throw new McpBridgeError(`Could not resolve MCP runtime authority for '${sandboxName}'.`);
   }
-  await preflightMcpEntryTargets(entries);
+  const targets = await preflightMcpEntryTargets(storedEntries);
+  const entries = persistValidatedLegacyPublicPins(sandboxName, storedEntries, targets);
   await ensureSandboxGatewaySelected(sandboxName, providerRuntimeSelection);
   for (const entry of entries) assertGeneratedPolicyMutationSafe(sandboxName, entry);
   assertMcpAdapterTeardownRuntimeCapabilities(
