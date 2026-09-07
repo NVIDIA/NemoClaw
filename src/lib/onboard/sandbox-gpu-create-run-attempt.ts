@@ -476,10 +476,10 @@ export function createSandboxGpuCreateAttemptRunner(
     basePrintCreateFailureDiagnostics,
     "  Sandbox failure diagnostics were unavailable; continuing rollback.",
   );
-  const printCreateFailureDiagnosticsAfterRollback = containCreateFailureDiagnostics(
-    basePrintCreateFailureDiagnostics,
-    "  Sandbox failure diagnostics were unavailable after rollback.",
-  );
+  const reportUnverifiedCreateFailureDiagnostics = () =>
+    console.error(
+      "  Sandbox failure diagnostics were not collected after rollback because no durable sandbox identity was verified.",
+    );
   if (
     portableLifecycle &&
     (input.gpuRoutePlan === "compatibility-only" ||
@@ -1043,7 +1043,7 @@ export function createSandboxGpuCreateAttemptRunner(
           },
           {
             classifyCreateFailure: classifySandboxCreateFailure,
-            printCreateFailureDiagnostics: printCreateFailureDiagnosticsAfterRollback,
+            printCreateFailureDiagnostics: reportUnverifiedCreateFailureDiagnostics,
             rollbackCreateFailure: async () => {
               await runtimePatch.rollbackManagedStartupAfterCreateFailure();
             },

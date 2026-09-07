@@ -97,15 +97,7 @@ beforeEach(() => setupGpuFlowMocks(mocks));
 afterEach(resetGpuFlowMocks);
 
 describe("fresh sandbox executable readiness", () => {
-  it.each([
-    [
-      "throws",
-      () => {
-        throw new Error("diagnostics unavailable");
-      },
-    ],
-    ["returns null", () => null],
-  ])("rolls back before diagnostics that %s (#10412)", async (_label, runDiagnostics) => {
+  it("does not collect name-scoped diagnostics after an unverified hard failure (#10412)", async () => {
     const order: string[] = [];
     const patch = createGpuPatchFixture();
     patch.rollbackManagedStartupAfterCreateFailure.mockImplementation(() => {
@@ -118,27 +110,23 @@ describe("fresh sandbox executable readiness", () => {
       sawProgress: true,
     });
     const input = createInput();
-    mocks.printSandboxCreateFailureDiagnostics.mockImplementation(() => {
-      order.push("diagnostics");
-      return runDiagnostics();
-    });
     mockExit();
 
     const deps = createDeps();
     await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow("process.exit:1");
 
     expect({
-      diagnosticCall: mocks.printSandboxCreateFailureDiagnostics.mock.calls[0],
-      diagnosticUnavailable: vi
+      diagnosticCalls: mocks.printSandboxCreateFailureDiagnostics.mock.calls,
+      identityNotice: vi
         .mocked(console.error)
         .mock.calls.flat()
         .join("\n")
-        .includes("Sandbox failure diagnostics were unavailable after rollback."),
+        .includes("no durable sandbox identity was verified"),
       order,
     }).toEqual({
-      diagnosticCall: ["alpha", { backupPath: null }],
-      diagnosticUnavailable: true,
-      order: ["rollback", "diagnostics"],
+      diagnosticCalls: [],
+      identityNotice: true,
+      order: ["rollback"],
     });
   });
 
@@ -178,13 +166,19 @@ describe("fresh sandbox executable readiness", () => {
     );
   });
 
-  it("fails when the executable readiness probe is terminal (#9050)", async () => {
+  it.each([
+    [
+      "throws",
+      () => {
+        throw new Error("diagnostics unavailable");
+      },
+    ],
+    ["returns null", () => null],
+  ])("rolls back when terminal readiness diagnostics %s (#9050)", async (_label, runDiagnostics) => {
     const deps = createDeps();
     const patch = createGpuPatchFixture();
     mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
-    mocks.printSandboxCreateFailureDiagnostics.mockImplementationOnce(() => {
-      throw new Error("diagnostics unavailable");
-    });
+    mocks.printSandboxCreateFailureDiagnostics.mockImplementationOnce(runDiagnostics);
     vi.mocked(deps.runOpenshell).mockImplementation(
       createSequencedOpenShellRunner([
         ["sandbox get -g nemoclaw alpha", [readySandboxGetResult()]],
@@ -198,14 +192,23 @@ describe("fresh sandbox executable readiness", () => {
 
     await expect(runSandboxGpuCreateFlow(createInput(), deps)).rejects.toThrow("process.exit:1");
 
-    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
-      ["sandbox", "delete", "alpha"],
-      expect.anything(),
-    );
-    expect(mocks.printSandboxCreateFailureDiagnostics).toHaveBeenCalledWith("alpha", {
-      backupPath: null,
+    expect({
+      diagnosticCall: mocks.printSandboxCreateFailureDiagnostics.mock.calls[0],
+      diagnosticUnavailable: vi
+        .mocked(console.error)
+        .mock.calls.flat()
+        .join("\n")
+        .includes("Sandbox failure diagnostics were unavailable; continuing rollback."),
+      rollbackCalls: patch.rollbackManagedStartupAfterCreateFailure.mock.calls.length,
+      sandboxDeletedByName: vi.mocked(deps.runOpenshell).mock.calls.some(
+        ([args]) => args.join(" ") === "sandbox delete alpha",
+      ),
+    }).toEqual({
+      diagnosticCall: ["alpha", { backupPath: null }],
+      diagnosticUnavailable: true,
+      rollbackCalls: 1,
+      sandboxDeletedByName: false,
     });
-    expect(patch.rollbackManagedStartupAfterCreateFailure).toHaveBeenCalledOnce();
   });
 
   it("preserves a fresh sandbox when sandbox get omits a durable ID (#9050)", async () => {

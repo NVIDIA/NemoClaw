@@ -146,4 +146,56 @@ describe("sandbox create failure diagnostics", () => {
       "gateway_tail=",
     );
   });
+
+  it("bounds gateway and console evidence captured before rollback (#10412)", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-create-failure-bounded-"));
+    const homeDir = path.join(tmp, "home");
+    const logDir = path.join(homeDir, ".local", "state", "nemoclaw", "openshell-docker-gateway");
+    const sandboxId = "691344ae-f514-41c1-b29e-db7f2f7ef257";
+    const stateDir = path.join(logDir, "vm-driver", "sandboxes", sandboxId);
+    const consolePath = path.join(stateDir, "rootfs-console.log");
+    const gatewayLogPath = path.join(logDir, "openshell-gateway.log");
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(consolePath, `${"old console output\n".repeat(30_000)}final console failure\n`);
+    fs.writeFileSync(
+      gatewayLogPath,
+      `${"old gateway output\n".repeat(100_000)}${[
+        `create_sandbox received sandbox_id=${sandboxId} sandbox_name=my-assistant`,
+        `sandbox_id=${sandboxId} state_dir=${stateDir} console_output=${consolePath}`,
+        `ERROR krun sandbox_id=${sandboxId} sandbox_name=my-assistant reason=ProcessExited`,
+      ].join("\n")}\n`,
+    );
+
+    const diagnostics = collectSandboxCreateFailureDiagnostics("my-assistant", { homeDir });
+    const gatewayEvidence = fs.readFileSync(
+      path.join(diagnostics!.dir, "openshell-gateway-relevant.log"),
+    );
+    const consoleEvidence = fs.readFileSync(diagnostics!.copiedConsoleOutput!);
+    const summary = fs.readFileSync(path.join(diagnostics!.dir, "summary.txt"), "utf8");
+
+    expect({
+      consoleBounded: consoleEvidence.byteLength <= 256 * 1024,
+      consoleEndsWithFailure: consoleEvidence.toString("utf8").endsWith("final console failure\n"),
+      consoleOutputTruncated: diagnostics?.consoleOutputTruncated,
+      gatewayBounded: gatewayEvidence.byteLength <= 1024 * 1024,
+      gatewayContainsFailure: gatewayEvidence.toString("utf8").includes("reason=ProcessExited"),
+      gatewayLogTruncated: diagnostics?.gatewayLogTruncated,
+      printedTruncationNotices: diagnostics?.summaryLines.slice(0, 2),
+      summaryRecordsBounds:
+        summary.includes("gateway_log_truncated=true") &&
+        summary.includes("console_output_truncated=true"),
+    }).toEqual({
+      consoleBounded: true,
+      consoleEndsWithFailure: true,
+      consoleOutputTruncated: true,
+      gatewayBounded: true,
+      gatewayContainsFailure: true,
+      gatewayLogTruncated: true,
+      printedTruncationNotices: [
+        "gateway log: earlier content omitted",
+        "rootfs console: earlier content omitted",
+      ],
+      summaryRecordsBounds: true,
+    });
+  });
 });
