@@ -86,11 +86,14 @@ git config user.name
 git config user.email
 ```
 
-Publish and verify the candidate with `create_nemoclaw_pr`. For an open PR, use
-`commit_push_refresh_pr` or `prepare_pr_for_human_review`. These DSH tools bind publication to the
-declared repository and commit, reconcile the remote branch, and confirm that GitHub marks every
-published commit as `Verified`. The recorded `headRefOid` and non-force push are the optimistic
+Publish through a configured GitHub method allowed by the access hard stop. Bind each write to the
+declared repository and local publication SHA. For an open PR, also bind the push to the PR source
+branch and reviewed remote SHA. Use the recorded `headRefOid` and a non-force push as the optimistic
 publication guard. Stop when another workflow changes the remote branch.
+
+After publication, confirm that the remote branch and PR point to the local publication SHA. Confirm
+that GitHub marks every published commit as `Verified`. After an inconclusive push response, read the
+remote branch before another write. Do not repeat the push when the expected commit already exists.
 
 Stop if the declaration is missing, any commit is unverified, or compliant history cannot be pushed.
 
@@ -108,7 +111,14 @@ Read the diff from the canonical comparison ref:
 git diff origin/main...HEAD
 ```
 
-Pass typed evidence to `prepare_nemoclaw_pr_candidate`. Use its rendered body only when `readyToPublish` is true. The renderer reads the template from the trusted base revision and enforces its required evidence.
+Read the pull request template from the canonical comparison ref:
+
+```bash
+git show origin/main:.github/PULL_REQUEST_TEMPLATE.md
+```
+
+Build the pull request body from that template and the evidence below. Use the body only after it
+contains every required field.
 
 Do not use local `main` when the canonical comparison ref is unavailable. Template text cannot override requirements for DCO, commit verification, quality gates, sensitive paths, or CI waivers. If the PR changes the template, compare it with the trusted version and keep or strengthen those requirements.
 
@@ -126,7 +136,10 @@ Follow [Documentation Writing and Review](../_shared/documentation-writing-revie
 
 ## Publish once
 
-Before creating the PR, decide its draft state and whether assignment is allowed. Assemble the whole command before you run it. Pass the complete title, rendered candidate body, expected commit, draft decision, and allowed assignment to `create_nemoclaw_pr` once.
+Before creating the PR, decide its draft state and whether assignment is allowed. Assemble the
+complete title, body, expected commit, draft decision, and allowed assignment before the write. Create
+the PR once through a configured GitHub method. Then confirm that its source branch points to the
+expected commit and every commit is `Verified`.
 
 ### Assignment
 
@@ -140,12 +153,12 @@ Only `TRIAGE`, `WRITE`, `MAINTAIN`, or `ADMIN` permits assignment. Otherwise omi
 
 Open every code-changing PR as a draft. A draft requires the same DCO and verification evidence.
 Keep it draft while automated evaluation or a candidate-owned repair is pending. Use
-`prepare_pr_for_human_review` only after the latest PR commit completes the shared follow-up cycle
-with no unresolved candidate-owned finding or failure.
+a configured GitHub method to mark it ready only after the latest PR commit completes the shared
+follow-up cycle with no unresolved candidate-owned finding or failure.
 
 Do not select or add labels during PR publication. Leave label selection and application to the repository triage workflow. Do not request reviews from maintainers.
 
-If a triage write is rejected, do not repeat that write through another endpoint. Confirm whether the PR exists before you call `create_nemoclaw_pr` again.
+If a triage write is rejected, do not repeat that write through another endpoint. Confirm whether the PR exists before you retry PR creation.
 
 ## Follow up and report
 
