@@ -57,9 +57,12 @@ import {
 } from "./mcp-bridge-onboard-env.ts";
 import { MCP_BRIDGE_PHASES } from "./mcp-bridge-phases.ts";
 import {
+  DEEPAGENTS_MCP_DENIED_TOOL_PROBE,
+  HERMES_MCP_ENV_LOAD_COMMANDS,
+  HERMES_MCP_DENIED_TOOL_PROBE,
   readConcurrentMcpStatusAndConfirmHermesRegistration,
   MCP_BRIDGE_DENIED_TOOL_NAME,
-  runDeniedOpenClawToolCall,
+  runDeniedMcpToolCall,
   runMcpProviderRewriteProbe,
   runOpenClawDeniedToolUpdateProof,
   restartBridgeWithoutHostSecret,
@@ -602,9 +605,7 @@ async function assertRealAdapterToolCall(
       ? `nemoclaw-start mcporter --root ${shellQuote(OPENCLAW_MCPORTER_ROOT)} call fake.fake_echo --args ${JSON.stringify(JSON.stringify({ challenge: TOOL_CHALLENGE }))} --output json`
       : options.agent === "hermes"
         ? [
-            "set -a",
-            "[ ! -f /sandbox/.hermes/.env ] || . /sandbox/.hermes/.env",
-            "set +a",
+            ...HERMES_MCP_ENV_LOAD_COMMANDS,
             buildHermesMcpChatProbeScript(hermesPayload, options.resultToken),
           ].join("\n")
         : `nemoclaw-start dcode -n ${JSON.stringify(prompt)}`;
@@ -646,19 +647,16 @@ async function assertRealAdapterToolCall(
   });
   expect(calls.at(-1)?.auth).not.toContain("openshell:resolve:env");
   const denied = options.deniedTool
-    ? await runDeniedOpenClawToolCall({
+    ? await runDeniedMcpToolCall({
+        ...options,
         artifactName: `${options.artifactName}-denied-${options.deniedTool}`,
-        deniedTool: options.deniedTool,
         requests: fakeMcp.requests,
         sandbox,
-        sandboxName: options.sandboxName,
         serverName: SERVER_NAME,
       })
     : null;
   expect(denied ? denied.result.timedOut || denied.result.exitCode === null : false).toBe(false);
-  expect(denied ? resultText(denied.result) : "policy_denied").toMatch(
-    /policy_denied|blocked by deny rule/,
-  );
+  expect(denied ? resultText(denied.result) : "policy_denied").toMatch(/policy_denied|blocked by deny rule|NEMOCLAW_HERMES_MCP_RESULT_TOKEN=present/);
   expect(denied ? denied.after : calls.length).toBe(denied ? denied.before : calls.length);
 }
 
@@ -883,9 +881,7 @@ test("mcp-bridge", {
     expectedSecret: HOST_SECRET,
     label: "mcporter authenticated MCP tool discovery",
   });
-  expect(fakeMcp.requests.every((request) => !request.auth.includes("openshell:resolve:env"))).toBe(
-    true,
-  );
+  expect(fakeMcp.requests.every((request) => !request.auth.includes("openshell:resolve:env"))).toBe(true);
 
   const mcpCallScript = MCP_PROVIDER_REWRITE_PROBE_SOURCE;
   await artifacts.writeText("mcp-provider-rewrite-proof.cjs", mcpCallScript);
@@ -1103,6 +1099,7 @@ mcpBridgeShardTest("hermes")(
       toolResultToken: hermesResult,
       toolNames: ["mcp__fake__fake_echo"],
       deferredToolName: "mcp__fake__fake_echo",
+      deniedToolProbe: HERMES_MCP_DENIED_TOOL_PROBE,
     });
     cleanup.add("stop Hermes MCP bridge compatible endpoint mock", () => compatibleMock.close());
     const fakeMcp = await startFakeMcpHttpsServer({
@@ -1294,6 +1291,7 @@ mcpBridgeShardTest("hermes")(
       resultToken: hermesResult,
       artifactName: "hermes-real-mcp-tool-call-after-rebuild",
       expectedSecret: ROTATED_HOST_SECRET,
+      deniedTool: MCP_BRIDGE_DENIED_TOOL_NAME,
     });
     await removeBridgeAndAssertEmpty(host, sandbox, {
       agent: "hermes",
@@ -1346,6 +1344,7 @@ mcpBridgeShardTest("deepagents")(
       toolChallenge: TOOL_CHALLENGE,
       toolResultToken: deepAgentsResult,
       progressiveToolSearch: { toolName: "fake_fake_echo", query: "AuThEnTiCaTeD McP" },
+      deniedToolProbe: DEEPAGENTS_MCP_DENIED_TOOL_PROBE,
     });
     cleanup.add("stop Deep Agents MCP bridge compatible endpoint mock", () =>
       compatibleMock.close(),
@@ -1480,6 +1479,7 @@ mcpBridgeShardTest("deepagents")(
       resultToken: deepAgentsResult,
       artifactName: "deepagents-real-mcp-tool-call-after-rebuild",
       expectedSecret: ROTATED_HOST_SECRET,
+      deniedTool: MCP_BRIDGE_DENIED_TOOL_NAME,
     });
     await exactMainProof.assertSnapshotResidue("after-rebuild-tool-call");
     await removeBridgeAndAssertEmpty(host, sandbox, {

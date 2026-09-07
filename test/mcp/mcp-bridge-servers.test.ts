@@ -973,6 +973,98 @@ describe("authenticated MCP live fixtures", () => {
     });
   });
 
+  it("drives bridge and progressive denied-tool probes to a verified policy denial", async () => {
+    const prompt = "run denied probe";
+    const headers = {
+      authorization: "Bearer compatible-key",
+      "content-type": "application/json",
+    };
+    const post = async (
+      server: StartedHttpServer,
+      messages: Array<{ role: string; content: string; tool_call_id?: string }>,
+      tools: string[],
+    ) =>
+      (await (
+        await fetch(`http://127.0.0.1:${server.port}/v1/chat/completions`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            messages,
+            tools: tools.map((name) => ({ type: "function", function: { name, parameters: {} } })),
+          }),
+        })
+      ).json()) as CompatibleToolCallResponse;
+    const bridge = await startCompatibleMock({
+      apiKey: "compatible-key",
+      model: "mock/model",
+      toolChallenge: "denied",
+      deniedToolProbe: {
+        mode: "bridge",
+        promptMarker: prompt,
+        resultToken: "policy_denied",
+        toolName: "mcp__fake__fake_status",
+      },
+    });
+    servers.push(bridge);
+    const user = { role: "user", content: prompt };
+    const bridgeCall = await post(bridge, [user], ["tool_call"]);
+    expect(bridgeCall.choices[0].message.tool_calls[0].function.name).toBe("tool_call");
+    const bridgeResult = await post(
+      bridge,
+      [
+        user,
+        {
+          role: "tool",
+          tool_call_id: "call_denied_tool_bridge",
+          content: "blocked by deny rule",
+        },
+      ],
+      ["tool_call"],
+    );
+    expect(bridgeResult.choices[0].message.content).toBe("policy_denied");
+
+    const progressive = await startCompatibleMock({
+      apiKey: "compatible-key",
+      model: "mock/model",
+      toolChallenge: "denied",
+      deniedToolProbe: {
+        mode: "progressive",
+        promptMarker: prompt,
+        query: "status",
+        resultToken: "policy_denied",
+        toolName: "fake_fake_status",
+      },
+    });
+    servers.push(progressive);
+    const searchCall = await post(progressive, [user], ["search_tools"]);
+    expect(searchCall.choices[0].message.tool_calls[0].function.name).toBe("search_tools");
+    const searchResult = {
+      role: "tool",
+      tool_call_id: "call_denied_tool_search",
+      content: "Found 1\n- fake_fake_status: status",
+    };
+    const deniedCall = await post(
+      progressive,
+      [user, searchResult],
+      ["search_tools", "fake_fake_status"],
+    );
+    expect(deniedCall.choices[0].message.tool_calls[0].function.name).toBe("fake_fake_status");
+    const deniedResult = await post(
+      progressive,
+      [
+        user,
+        searchResult,
+        {
+          role: "tool",
+          tool_call_id: "call_denied_progressive_tool",
+          content: "policy_denied",
+        },
+      ],
+      ["search_tools", "fake_fake_status"],
+    );
+    expect(deniedResult.choices[0].message.content).toBe("policy_denied");
+  });
+
   it("uses Hermes progressive disclosure when the MCP tool is deferred", async () => {
     const deferredToolName = "mcp__fake__fake_echo";
     const resultToken = "MCP_AUTH_REWRITE_OK::deferred-fixture";

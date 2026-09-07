@@ -18,6 +18,8 @@ import { MCP_BRIDGE_TEST_CREDENTIALS } from "../fixtures/mcp-bridge-credentials.
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { runBoundedRetry, type RetryEvidence } from "../../../tools/e2e/retry-evidence.mts";
 import {
+  buildHermesMcpChatProbeScript,
+  HERMES_MCP_FAILURE_CAPTURE_BYTES,
   type HermesMcpCommandResult,
   isHermesGatewayDrainingResponse,
 } from "./mcp-bridge-hermes-http.ts";
@@ -29,10 +31,33 @@ const HERMES_GATEWAY_DRAINING_RETRY_DELAY_MS = 5_000;
 const HERMES_MCP_STATUS_RETRY_DELAY_MS = 5_000;
 export const MCP_BRIDGE_TEST_REDACTION_VALUES = Object.values(MCP_BRIDGE_TEST_CREDENTIALS);
 export const MCP_BRIDGE_DENIED_TOOL_NAME = "fake_status";
+export const HERMES_MCP_ENV_LOAD_COMMANDS = [
+  "set -a",
+  "[ ! -f /sandbox/.hermes/.env ] || . /sandbox/.hermes/.env",
+  "set +a",
+] as const;
+const MCP_BRIDGE_DENIED_TOOL_PROMPT =
+  "Run the managed denied-tool policy probe and return its result verbatim.";
+const MCP_BRIDGE_DENIED_TOOL_RESULT = "policy_denied";
 
-export async function runDeniedOpenClawToolCall(options: {
+export const HERMES_MCP_DENIED_TOOL_PROBE = {
+  mode: "bridge" as const,
+  promptMarker: MCP_BRIDGE_DENIED_TOOL_PROMPT,
+  resultToken: MCP_BRIDGE_DENIED_TOOL_RESULT,
+  toolName: `mcp__fake__${MCP_BRIDGE_DENIED_TOOL_NAME}`,
+};
+export const DEEPAGENTS_MCP_DENIED_TOOL_PROBE = {
+  mode: "progressive" as const,
+  promptMarker: MCP_BRIDGE_DENIED_TOOL_PROMPT,
+  query: "Denied MCP status",
+  resultToken: MCP_BRIDGE_DENIED_TOOL_RESULT,
+  toolName: `fake_${MCP_BRIDGE_DENIED_TOOL_NAME}`,
+};
+
+export async function runDeniedMcpToolCall(options: {
+  agent: "openclaw" | "hermes" | "langchain-deepagents-code";
   artifactName: string;
-  deniedTool: string;
+  deniedTool?: string;
   sandbox: SandboxClient;
   sandboxName: string;
   serverName: string;
@@ -41,17 +66,39 @@ export async function runDeniedOpenClawToolCall(options: {
   const countToolCalls = () =>
     options.requests.filter((request) => request.rpcMethod === "tools/call").length;
   const before = countToolCalls();
-  const result = await options.sandbox.execShell(
-    options.sandboxName,
-    trustedSandboxShellScript(
-      `nemoclaw-start mcporter --root ${shellQuote(OPENCLAW_MCPORTER_ROOT)} call ${options.serverName}.${options.deniedTool} --args '{}' --output json`,
-    ),
-    {
-      artifactName: options.artifactName,
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 90_000,
-    },
-  );
+  const payload = JSON.stringify({
+    model: "mock/mcp-bridge",
+    messages: [{ role: "user", content: MCP_BRIDGE_DENIED_TOOL_PROMPT }],
+    max_tokens: 256,
+  });
+  const redactionValues = [
+    ...MCP_BRIDGE_TEST_REDACTION_VALUES,
+    MCP_BRIDGE_DENIED_TOOL_PROMPT,
+    payload,
+  ];
+  const command =
+    options.agent === "openclaw"
+      ? `nemoclaw-start mcporter --root ${shellQuote(OPENCLAW_MCPORTER_ROOT)} call ${options.serverName}.${options.deniedTool ?? MCP_BRIDGE_DENIED_TOOL_NAME} --args '{}' --output json`
+      : options.agent === "hermes"
+        ? [
+            ...HERMES_MCP_ENV_LOAD_COMMANDS,
+            buildHermesMcpChatProbeScript(payload, MCP_BRIDGE_DENIED_TOOL_RESULT),
+          ].join("\n")
+        : `nemoclaw-start dcode -n ${JSON.stringify(MCP_BRIDGE_DENIED_TOOL_PROMPT)}`;
+  const run = (artifactName: string) =>
+    options.sandbox.execShell(
+      options.sandboxName,
+      trustedSandboxShellScript(["set -eu", command].join("\n")),
+      {
+        artifactName,
+        captureLimitBytes:
+          options.agent === "hermes" ? HERMES_MCP_FAILURE_CAPTURE_BYTES : undefined,
+        env: buildAvailabilityProbeEnv(),
+        redactionValues: options.agent === "hermes" ? redactionValues : [],
+        timeoutMs: options.agent === "openclaw" ? 90_000 : 5 * 60_000,
+      },
+    );
+  const result = await run(options.artifactName);
   return { after: countToolCalls(), before, result };
 }
 

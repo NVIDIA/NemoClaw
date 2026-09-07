@@ -475,6 +475,15 @@ export async function startCompatibleMock(options: {
   toolNames?: string[];
   deferredToolName?: string;
   progressiveToolSearch?: { toolName: string; query: string };
+  deniedToolProbe?:
+    | { mode: "bridge"; promptMarker: string; resultToken: string; toolName: string }
+    | {
+        mode: "progressive";
+        promptMarker: string;
+        query: string;
+        resultToken: string;
+        toolName: string;
+      };
 }): Promise<StartedHttpServer> {
   const server = http.createServer(async (req, res) => {
     const requestPath = new URL(req.url ?? "/", "http://compatible.mock").pathname;
@@ -508,6 +517,10 @@ export async function startCompatibleMock(options: {
       );
       const toolResults = (body.messages ?? []).filter((message) => message.role === "tool");
       const toolResultCount = toolResults.length;
+      const deniedToolProbe = options.deniedToolProbe;
+      const deniedToolProbeRequested =
+        deniedToolProbe !== undefined &&
+        JSON.stringify(body.messages ?? []).includes(deniedToolProbe.promptMarker);
       const sawAuthenticatedToolResult = toolResults.some((message) =>
         JSON.stringify(message.content).includes(options.toolResultToken ?? "__never__"),
       );
@@ -615,8 +628,66 @@ export async function startCompatibleMock(options: {
         | { id: string; name: string; arguments: Record<string, unknown> }
         | undefined;
       let protocolError: string | undefined;
+      let deniedToolProbeComplete = false;
 
-      if (!sawAuthenticatedToolResult && options.progressiveToolSearch) {
+      if (deniedToolProbeRequested && deniedToolProbe) {
+        if (deniedToolProbe.mode === "bridge") {
+          if (toolResultCount === 0 && !visibleToolNames.has("tool_call")) {
+            protocolError = "denied-tool probe requires the tool_call bridge";
+          } else if (toolResultCount === 0) {
+            plannedToolCall = {
+              id: "call_denied_tool_bridge",
+              name: "tool_call",
+              arguments: { name: deniedToolProbe.toolName, arguments: {} },
+            };
+          } else if (toolResultCount === 1) {
+            deniedToolProbeComplete =
+              toolResults[0]?.tool_call_id === "call_denied_tool_bridge" &&
+              /policy_denied|blocked by deny rule/iu.test(
+                JSON.stringify(toolResults[0]?.content),
+              );
+            if (!deniedToolProbeComplete) {
+              protocolError = "denied-tool bridge call did not report a policy denial";
+            }
+          } else {
+            protocolError = "denied-tool bridge returned an unexpected result sequence";
+          }
+        } else if (toolResultCount === 0 && visibleToolNames.has(deniedToolProbe.toolName)) {
+          protocolError = `denied progressive target ${deniedToolProbe.toolName} was visible before search_tools`;
+        } else if (toolResultCount === 0 && !visibleToolNames.has("search_tools")) {
+          protocolError = "denied-tool probe requires search_tools";
+        } else if (toolResultCount === 0) {
+          plannedToolCall = {
+            id: "call_denied_tool_search",
+            name: "search_tools",
+            arguments: { query: deniedToolProbe.query },
+          };
+        } else if (
+          toolResultCount === 1 &&
+          !hasExpectedToolResult(0, "call_denied_tool_search", [
+            `- ${deniedToolProbe.toolName}:`,
+          ])
+        ) {
+          protocolError = "search_tools did not return the denied progressive target";
+        } else if (toolResultCount === 1 && !visibleToolNames.has(deniedToolProbe.toolName)) {
+          protocolError = "denied progressive target was not visible after search_tools";
+        } else if (toolResultCount === 1) {
+          plannedToolCall = {
+            id: "call_denied_progressive_tool",
+            name: deniedToolProbe.toolName,
+            arguments: {},
+          };
+        } else if (toolResultCount === 2) {
+          deniedToolProbeComplete =
+            toolResults[1]?.tool_call_id === "call_denied_progressive_tool" &&
+            /policy_denied|blocked by deny rule/iu.test(JSON.stringify(toolResults[1]?.content));
+          if (!deniedToolProbeComplete) {
+            protocolError = "denied progressive tool call did not report a policy denial";
+          }
+        } else {
+          protocolError = "denied progressive tool returned an unexpected result sequence";
+        }
+      } else if (!sawAuthenticatedToolResult && options.progressiveToolSearch) {
         const { query, toolName } = options.progressiveToolSearch;
         if (toolResultCount === 0 && visibleToolNames.has(toolName)) {
           protocolError = `progressive target ${toolName} was visible before search_tools`;
@@ -698,7 +769,9 @@ export async function startCompatibleMock(options: {
           };
         }
       }
-      const responseMessage = sawAuthenticatedToolResult
+      const responseMessage = deniedToolProbeComplete
+        ? { role: "assistant", content: deniedToolProbe?.resultToken }
+        : sawAuthenticatedToolResult
         ? {
             role: "assistant",
             content: options.toolResultToken,

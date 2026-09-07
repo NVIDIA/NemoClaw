@@ -2295,6 +2295,7 @@ unset LOCAL_MCP_TOKEN
 ### `$$nemoclaw <name> mcp update`
 
 Replace the complete denied-tool list for one managed MCP server without changing its endpoint, credential, address pins, provider, or agent adapter.
+For a legacy public registration without recorded address pins, the command first resolves and records the current validated pins.
 Pass one or more `--deny-tool <name-or-glob>` options, or pass `--clear-deny-tools` to remove every denied-tool rule.
 The two modes cannot be combined.
 NemoClaw removes the current generated policy before it records and applies the replacement intent.
