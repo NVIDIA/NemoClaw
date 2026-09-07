@@ -245,6 +245,9 @@ let recoveryJournalReadbackFailuresRemaining = ${JSON.stringify(
             ? 1
             : 0,
       )};
+if (recoveryReentry === "fresh-same-registry-only") {
+  recoveryJournalReadbackFailuresRemaining = 0;
+}
 const postCreatePolicyChange = ${JSON.stringify(expectedOutcome === "post-create-policy-change")};
 let cancelPrompt = false;
 const originalGetCredential = credentials.getCredential;
@@ -571,10 +574,21 @@ if (${JSON.stringify(
 	      clearInterval(keepAlive);
 	      return;
 	    }
+	    if (recoveryReentry === "fresh-same-registry-only") {
+	      onboardModule.onboardSession.saveSession(
+	        onboardModule.onboardSession.createSession({
+	          sessionId: "replacement-session",
+	          sandboxName: "my-assistant",
+	        }),
+	      );
+	    }
 	    try {
 	      await onboardModule.onboard({
+	        acceptThirdPartySoftware: true,
 	        resume: recoveryReentry === "explicit",
-	        fresh: recoveryReentry === "fresh-same",
+	        fresh:
+	          recoveryReentry === "fresh-same" ||
+	          recoveryReentry === "fresh-same-registry-only",
 	        recreateSandbox: recoveryReentry === "recreate",
 	        sandboxName: "my-assistant",
 	        deferProcessExit: true,
@@ -920,6 +934,28 @@ if (${JSON.stringify(
           assert.equal(reentryPayload.savedSession.sandboxName, "my-assistant");
           assert.deepEqual(reentryPayload.retainedRecoveryRecords, []);
         }
+
+        const registryOnlyReentry = spawnSync(process.execPath, [scriptPath], {
+          cwd: repoRoot,
+          encoding: "utf-8",
+          env: {
+            ...childEnv,
+            NEMOCLAW_RECOVERY_REENTRY: "fresh-same-registry-only",
+          },
+          timeout: 30000,
+        });
+        assert.equal(registryOnlyReentry.status, 0, registryOnlyReentry.stderr);
+        const registryOnlyPayload = JSON.parse(fs.readFileSync(payloadPath, "utf8"));
+        assert.equal(registryOnlyPayload.exitCode, 1);
+        assert.match(registryOnlyReentry.stderr, /cannot use retained sandbox 'my-assistant'/u);
+        assert.match(registryOnlyReentry.stderr, /destroy command.*same-name fresh onboarding/u);
+        assert.deepEqual(registryOnlyPayload.commandNames, []);
+        assert.equal(registryOnlyPayload.credentialReadCalls, 0);
+        assert.equal(registryOnlyPayload.routeReservationCalls, 0);
+        assert.deepEqual(registryOnlyPayload.registryMutationCalls, []);
+        assert.equal(registryOnlyPayload.savedSession.sessionId, "replacement-session");
+        assert.equal(registryOnlyPayload.retainedRecoveryRecords.length, 1);
+        assertRecoveryTuple(registryOnlyPayload.retainedRecoveryRecords[0]);
       };
       const assertPostCreateRegistrationRecoveryRetry = () => {
         assert.equal(payload.sandboxName, null);

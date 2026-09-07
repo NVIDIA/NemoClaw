@@ -53,6 +53,55 @@ describe("destroySandbox retained recovery flow", () => {
   });
 
   it(
+    "reconstructs a missing recovery record from the verified-create registry checkpoint (#11096)",
+    { timeout: 30_000 },
+    async () => {
+      const recovery = retainedRecoveryRecord();
+      const pendingCreateIdentity = {
+        schemaVersion: 1 as const,
+        state: "verified-create" as const,
+        gatewayName: recovery.gatewayName,
+        gatewayPort: recovery.gatewayPort,
+        sandboxName: recovery.sandboxName,
+        lifecycleGeneration: recovery.lifecycleGeneration!,
+        sandboxIdentityFingerprint: recovery.sandboxIdentityFingerprint!,
+        createAttemptNonce: recovery.createAttemptNonce,
+        route: "native" as const,
+      };
+      const harness = createDestroyHarness({
+        sandboxPresent: false,
+        dockerRunResult: { status: 0, stdout: "" },
+        registryEntryOverrides: {
+          pendingRouteReservation: true,
+          reservationSessionId: "failed-create-session",
+          lifecycleGeneration: recovery.lifecycleGeneration!,
+          lifecycleLiveIdentityFingerprint: recovery.sandboxIdentityFingerprint!,
+          pendingCreateIdentity,
+        },
+        reconstructRetainedRecoveryRecord: recovery,
+      });
+
+      await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+      expect(harness.reconstructRetainedSandboxRecoverySpy).toHaveBeenCalledWith(
+        expect.objectContaining({ pendingCreateIdentity }),
+      );
+      expect(
+        harness.runOpenshellSpy.mock.calls.some(
+          ([args]) =>
+            Array.isArray(args) &&
+            args[0] === "sandbox" &&
+            args[1] === "delete" &&
+            args[2] === "alpha",
+        ),
+      ).toBe(false);
+      expect(harness.resolveRetainedSandboxRecoverySpy).toHaveBeenCalledWith(recovery);
+      expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
+      expect(exitSpy).not.toHaveBeenCalled();
+    },
+  );
+
+  it(
     "removes every container after OpenShell confirms the retained sandbox absent (#10547)",
     { timeout: 30_000 },
     async () => {
