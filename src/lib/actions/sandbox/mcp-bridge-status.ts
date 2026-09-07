@@ -361,6 +361,10 @@ export async function statusMcpBridge(
         warnings.push(
           `Generated policy differs from registered MCP intent. Run \`nemoclaw ${sandboxName} mcp restart ${entry.server}\` to restore it.`,
         );
+      } else if (policyState === "absent") {
+        warnings.push(
+          `Generated policy is missing for registered MCP intent. Run \`nemoclaw ${sandboxName} mcp restart ${entry.server}\` to restore it.`,
+        );
       }
     }
     const privatePinStatus = privatePinStatusByServer.get(name);

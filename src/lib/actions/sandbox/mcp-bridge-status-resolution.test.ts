@@ -672,26 +672,35 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     });
   });
 
-  it("reports generated policy drift with restart recovery (#11115)", () => {
+  it("reports missing and drifted generated policies with restart recovery (#11115)", () => {
     const home = createTempHome("nemoclaw-mcp-policy-drift-");
     const { stdout } = runHarness(
       home,
       String.raw`
-  activePolicyState = "drift";
-  const [status] = await bridge.statusMcpBridge("alpha", "github");
-  logLines.length = 0;
-  await bridge.dispatchMcpBridgeCommand("alpha", ["status", "github", "--no-probe"]);
-  writeHarnessResult(JSON.stringify({ status, text: logLines.join("\n") }));
+  const outcomes = [];
+  for (const policyState of ["absent", "drift"]) {
+    activePolicyState = policyState;
+    const [status] = await bridge.statusMcpBridge("alpha", "github");
+    logLines.length = 0;
+    await bridge.dispatchMcpBridgeCommand("alpha", ["status", "github", "--no-probe"]);
+    outcomes.push({ status, text: logLines.join("\n") });
+  }
+  writeHarnessResult(JSON.stringify(outcomes));
 `,
     );
-    const payload = JSON.parse(stdout) as {
+    const outcomes = JSON.parse(stdout) as Array<{
       status: { policy: { gatewayPresent: null; state: string }; warnings: string[] };
       text: string;
-    };
+    }>;
 
-    expect(payload.status.policy).toMatchObject({ gatewayPresent: null, state: "drift" });
-    expect(payload.status.warnings).toEqual([expect.stringMatching(/mcp restart github/)]);
-    expect(payload.text).toMatch(/policy: drift[\s\S]*mcp restart github/);
+    expect(outcomes.map(({ status }) => status.policy)).toEqual([
+      expect.objectContaining({ gatewayPresent: false }),
+      expect.objectContaining({ gatewayPresent: null, state: "drift" }),
+    ]);
+    outcomes.forEach(({ status, text }) => {
+      expect(status.warnings).toEqual([expect.stringMatching(/mcp restart github/)]);
+      expect(text).toMatch(/policy: (?:missing|drift)[\s\S]*mcp restart github/);
+    });
   });
 
   it("renders the identical-rejection probe in the human-readable status output (#6379)", () => {

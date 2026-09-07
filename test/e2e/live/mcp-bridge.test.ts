@@ -57,9 +57,7 @@ import {
 } from "./mcp-bridge-onboard-env.ts";
 import { MCP_BRIDGE_PHASES } from "./mcp-bridge-phases.ts";
 import {
-  DEEPAGENTS_MCP_DENIED_TOOL_PROBE,
-  HERMES_MCP_ENV_LOAD_COMMANDS,
-  HERMES_MCP_DENIED_TOOL_PROBE,
+  DEEPAGENTS_MCP_DENIED_TOOL_PROBE, HERMES_MCP_ENV_LOAD_COMMANDS, HERMES_MCP_DENIED_TOOL_PROBE,
   readConcurrentMcpStatusAndConfirmHermesRegistration,
   MCP_BRIDGE_DENIED_TOOL_NAME,
   runDeniedMcpToolCall,
@@ -1112,7 +1110,7 @@ mcpBridgeShardTest("hermes")(
         agent: "hermes",
         sandboxName: HERMES_SANDBOX_NAME,
         resultToken: hermesResult,
-        artifactName,
+        artifactName, deniedTool: MCP_BRIDGE_DENIED_TOOL_NAME,
       });
     cleanup.add("stop fake Hermes MCP HTTPS server", () => fakeMcp.close());
     const fakeMcpTunnel = await startPublicMcpHttpsTunnel({
@@ -1430,6 +1428,7 @@ mcpBridgeShardTest("deepagents")(
       sandboxName: DEEPAGENTS_SANDBOX_NAME,
       resultToken: deepAgentsResult,
       artifactName: "deepagents-real-mcp-tool-call-initial",
+      deniedTool: MCP_BRIDGE_DENIED_TOOL_NAME,
     });
     await exactMainProof.assertSnapshotResidue("after-initial-tool-call");
     await exactMainProof.assertLogPrivacy([TOOL_CHALLENGE, deepAgentsResult], "fake_echo");
@@ -1439,6 +1438,7 @@ mcpBridgeShardTest("deepagents")(
       sandboxName: DEEPAGENTS_SANDBOX_NAME,
       resultToken: deepAgentsResult,
       artifactName: "deepagents-real-mcp-tool-call-after-restart",
+      deniedTool: MCP_BRIDGE_DENIED_TOOL_NAME,
     });
     await exactMainProof.assertSnapshotResidue("after-restart-tool-call");
     fakeMcp.setSecret(ROTATED_HOST_SECRET);

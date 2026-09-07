@@ -11,7 +11,7 @@ import { shellQuote } from "../../../src/lib/core/shell-quote";
 import type { McpBridgeEntry } from "../../../src/lib/state/registry";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
-import { assertExitZero } from "../fixtures/clients/command.ts";
+import { assertExitZero, resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { MCP_BRIDGE_TEST_CREDENTIALS } from "../fixtures/mcp-bridge-credentials.ts";
@@ -138,9 +138,21 @@ export async function runOpenClawDeniedToolUpdateProof(
     [sandboxName, "mcp", "update", "fake", "--deny-tool", MCP_BRIDGE_DENIED_TOOL_NAME],
     commandOptions("openclaw-restore-denied-tool"),
   );
-  const commandsSucceeded = [clear, call, replace].every(
-    (result) => !result.timedOut && result.exitCode === 0,
-  );
+  const denied = await runDeniedMcpToolCall({
+    agent: "openclaw",
+    artifactName: "openclaw-restored-denied-tool-call",
+    deniedTool: MCP_BRIDGE_DENIED_TOOL_NAME,
+    requests,
+    sandbox,
+    sandboxName,
+    serverName: "fake",
+  });
+  const commandsSucceeded =
+    [clear, call, replace].every((result) => !result.timedOut && result.exitCode === 0) &&
+    !denied.result.timedOut &&
+    denied.result.exitCode !== null &&
+    /policy_denied|blocked by deny rule/iu.test(resultText(denied.result)) &&
+    denied.after === denied.before;
   return {
     after: calls.length,
     before,
