@@ -337,14 +337,14 @@ except module.UnsafeEnvInputError:
 });
 
 describe("Hermes env secret-boundary namespace pinning", () => {
-  it("accepts the legacy 0750 Hermes root before startup repairs its mode (#11110)", () => {
+  const validateHermesRootMode = (mode: number) => {
     const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-env-legacy-")));
     const sandbox = path.join(root, "sandbox");
     const hermes = path.join(sandbox, ".hermes");
     const envPath = path.join(hermes, ".env");
     fs.mkdirSync(hermes, { recursive: true });
     fs.chmodSync(sandbox, 0o770);
-    fs.chmodSync(hermes, 0o750);
+    fs.chmodSync(hermes, mode);
     fs.writeFileSync(envPath, "SAFE=1\n", { mode: 0o640 });
     fs.chmodSync(envPath, 0o640);
     try {
@@ -367,10 +367,23 @@ raise SystemExit(module.validate_env_file(sys.argv[3]))`,
         ],
         { encoding: "utf-8", timeout: 5000 },
       );
-      expect(result.status, result.stderr).toBe(0);
+      return result;
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  };
+
+  it("accepts the legacy 0750 Hermes root before startup repairs its mode (#11110)", () => {
+    const result = validateHermesRootMode(0o750);
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  it("rejects adjacent 0755 while admitting the legacy Hermes root mode (#11170)", () => {
+    const result = validateHermesRootMode(0o755);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toMatch(
+      /\/sandbox\/\.hermes does not match a trusted owner\/group\/mode posture/u,
+    );
   });
 
   it("anchors installed validation at sandbox when Landlock denies opening root", () => {

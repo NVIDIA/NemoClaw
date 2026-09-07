@@ -942,6 +942,9 @@ if (${JSON.stringify(
           assert.deepEqual(reentryPayload.retainedRecoveryRecords, []);
         }
 
+        // Refusal reentries replace the payload. Restore the original verified
+        // checkpoint before modeling the registry-only process boundary.
+        fs.writeFileSync(payloadPath, JSON.stringify(payload));
         const registryOnlyReentry = spawnSync(process.execPath, [scriptPath], {
           cwd: repoRoot,
           encoding: "utf-8",
