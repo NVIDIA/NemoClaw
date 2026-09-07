@@ -324,8 +324,9 @@ runner.run = (command, opts = {}) => {
   return "";
 };
 	const retainedRegistryEntry = recoveryReentry && fs.existsSync(${JSON.stringify(payloadPath)})
-	  ? JSON.parse(fs.readFileSync(${JSON.stringify(payloadPath)}, "utf8")).currentRegistryEntry
+	  ? JSON.parse(fs.readFileSync(${JSON.stringify(payloadPath)}, "utf8")).recoveryRegistryEntry
 	  : null;
+	let verifiedRecoveryRegistryEntry = null;
 	const registryMutationCalls = [];
   let checkpointReadCalls = 0;
 	if (!recoveryReentry) {
@@ -398,6 +399,13 @@ runner.run = (command, opts = {}) => {
 	  setDefault: (name) => { registryMutationCalls.push({ operation: "set-default", name }); },
 	  removeSandbox: (name) => { registryMutationCalls.push({ operation: "remove", name }); },
 	});
+	const recordPendingSandboxCreateIdentity =
+	  registry.recordPendingSandboxCreateIdentity.bind(registry);
+	registry.recordPendingSandboxCreateIdentity = (...args) => {
+	  const entry = recordPendingSandboxCreateIdentity(...args);
+	  verifiedRecoveryRegistryEntry = structuredClone(entry);
+	  return entry;
+	};
 if (postCreateRunnerRefusal) {
   const requireCurrentCheckpoint = registry.requireCurrentPendingSandboxCreateIdentity;
   registry.requireCurrentPendingSandboxCreateIdentity = (...args) => {
@@ -519,6 +527,7 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
     registryMutationCalls,
     currentRegistryEntry: cancelAfterCreate ? registry.getSandbox("my-assistant") : null,
     recoveryRegistryEntry: registry.getSandbox("my-assistant"),
+    verifiedRecoveryRegistryEntry,
     savedSession:
       cancelAfterCreate ||
       postCreateRunnerRefusal ||
@@ -584,6 +593,13 @@ if (${JSON.stringify(
 	      return;
 	    }
 	    if (recoveryReentry === "fresh-same-registry-only") {
+	      if (!retainedRegistryEntry?.pendingCreateIdentity) {
+	        throw new Error("missing verified create checkpoint for registry-only recovery");
+	      }
+	      registry.save({
+	        defaultSandbox: null,
+	        sandboxes: { "my-assistant": retainedRegistryEntry },
+	      });
 	      onboardModule.onboardSession.saveSession(
 	        onboardModule.onboardSession.createSession({
 	          sessionId: "replacement-session",
@@ -944,6 +960,15 @@ if (${JSON.stringify(
           assert.deepEqual(reentryPayload.retainedRecoveryRecords, []);
         }
 
+        // Refusal reentries replace the payload. Give only the registry-only
+        // child the verified checkpoint captured at its persistence boundary.
+        fs.writeFileSync(
+          payloadPath,
+          JSON.stringify({
+            ...payload,
+            recoveryRegistryEntry: payload.verifiedRecoveryRegistryEntry,
+          }),
+        );
         const registryOnlyReentry = spawnSync(process.execPath, [scriptPath], {
           cwd: repoRoot,
           encoding: "utf-8",
