@@ -75,24 +75,22 @@ describe("OpenShell SDK sandbox command executor", () => {
     });
   });
 
-  it("accepts the private port-derived default root without a legacy marker", async () => {
+  it("rejects an unmarked port-derived default root before loading the SDK", async () => {
     const homeDir = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-sdk-home-test-"));
     roots.push(homeDir);
     const stateDir = path.join(homeDir, ".local", "state", "nemoclaw", "openshell-docker-gateway");
     fs.mkdirSync(stateDir, { mode: 0o700, recursive: true });
     writeTlsFiles(stateDir);
-    const connect = vi.fn().mockResolvedValue({ sandbox: {} });
+    const loadSdk = vi.fn();
 
-    await connectManagedOpenShellSdk(
-      { kind: "named", gatewayName: "nemoclaw" },
-      {
-        env: {},
-        homeDir,
-        loadSdk: async () => ({ OpenShellClient: { connect } }),
-      },
-    );
+    await expect(
+      connectManagedOpenShellSdk(
+        { kind: "named", gatewayName: "nemoclaw" },
+        { env: {}, homeDir, loadSdk },
+      ),
+    ).rejects.toThrow("managed gateway state root marker");
 
-    expect(connect).toHaveBeenCalledOnce();
+    expect(loadSdk).not.toHaveBeenCalled();
   });
 
   it("rejects a missing ownership marker before loading the SDK", async () => {

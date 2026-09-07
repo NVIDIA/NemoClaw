@@ -144,12 +144,11 @@ export async function connectManagedOpenShellSdk(
     port,
   });
   const gatewayName = target.kind === "named" ? target.gatewayName : "";
-  const ownershipFailure = managedGatewayStateRootOwnershipFailure(
-    { gatewayName, gatewayPort: port, stateDir },
-    // Canonical default roots predate the marker. Explicit overrides must
-    // always carry the port- and gateway-bound managed marker.
-    { allowLegacyManagedState: !configuredStateDir },
-  );
+  const ownershipFailure = managedGatewayStateRootOwnershipFailure({
+    gatewayName,
+    gatewayPort: port,
+    stateDir,
+  });
   if (ownershipFailure) {
     const message = `Unsafe OpenShell gateway state directory: ${ownershipFailure}.`;
     if (configuredStateDir) throw new Error(message);
