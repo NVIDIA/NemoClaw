@@ -100,10 +100,6 @@ export interface ProviderSelectionRecoveryReaderBundle {
     sandboxName: string | null | undefined,
     recoverySessionId?: string | null,
   ): string | null;
-  readRecordedManagedLlamaCpp?(
-    sandboxName: string | null | undefined,
-    recoverySessionId?: string | null,
-  ): boolean;
   readRecordedManagedLlamaCppRecipeId?(
     sandboxName: string | null | undefined,
     recoverySessionId?: string | null,
@@ -288,9 +284,6 @@ export function createProviderRecoveryHelpers(deps: ProviderRecoveryDeps): Provi
     }
   };
 
-  const isManagedLlamaCppState = (value: ManagedLlamaCppRecoveryState): boolean =>
-    managedLlamaCppRecipeId(value) !== null;
-
   function refuseRecoveryAfterRegistryError(sandboxName: string, error: unknown): null {
     const detail = error instanceof Error ? error.message : String(error);
     deps.warn?.(
@@ -358,26 +351,6 @@ export function createProviderRecoveryHelpers(deps: ProviderRecoveryDeps): Provi
       return live.provider;
     }
     return null;
-  }
-
-  function readRecordedManagedLlamaCpp(
-    sandboxName: string | null | undefined,
-    recoverySessionId?: string | null,
-  ): boolean {
-    if (!sandboxName) return false;
-    try {
-      const { authority, entry } = readRegistryRecoveryState(sandboxName, recoverySessionId);
-      if (authority === "unauthorized") return false;
-      if (entry) return isManagedLlamaCppState(entry);
-    } catch {
-      return false;
-    }
-    try {
-      const session = onboardSession.loadSession();
-      return Boolean(session?.sandboxName === sandboxName && isManagedLlamaCppState(session));
-    } catch {
-      return false;
-    }
   }
 
   function readRecordedManagedLlamaCppRecipeId(
@@ -538,14 +511,12 @@ export function createProviderRecoveryHelpers(deps: ProviderRecoveryDeps): Provi
     providerSelectionReaders: {
       readRecordedProvider,
       readRecordedNimContainer,
-      readRecordedManagedLlamaCpp,
       readRecordedManagedLlamaCppRecipeId,
       readRecordedModel,
     },
     readLiveInference,
     readRecordedProvider,
     readRecordedNimContainer,
-    readRecordedManagedLlamaCpp,
     readRecordedManagedLlamaCppRecipeId,
     readRecordedModel,
     readRecordedEndpointUrl,

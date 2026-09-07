@@ -258,7 +258,6 @@ describe("managed llama.cpp profile onboarding", () => {
         installManagedLlamaCpp,
         isNonInteractive: () => true,
         readRecordedProvider: () => "llama-cpp-local",
-        readRecordedManagedLlamaCpp: () => true,
         readRecordedManagedLlamaCppRecipeId: () => recoveredRecipeId,
         readRecordedModel: () => "muse-model",
       }),

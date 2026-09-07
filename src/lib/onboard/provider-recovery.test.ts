@@ -277,7 +277,6 @@ describe("provider recovery persisted routing state", () => {
 
     const recovery = helpers();
 
-    expect(recovery.readRecordedManagedLlamaCpp("alpha")).toBe(true);
     expect(recovery.readRecordedManagedLlamaCppRecipeId("alpha")).toBe(recipeId);
   });
 
@@ -296,7 +295,6 @@ describe("provider recovery persisted routing state", () => {
     });
     const recovery = helpers();
 
-    expect(recovery.readRecordedManagedLlamaCpp("alpha")).toBe(false);
     expect(recovery.readRecordedManagedLlamaCppRecipeId("alpha")).toBeNull();
     expect(
       resolveRequestedProviderSelection({
@@ -339,7 +337,6 @@ describe("provider recovery persisted routing state", () => {
     });
     const recovery = helpers();
 
-    expect(recovery.readRecordedManagedLlamaCpp("alpha")).toBe(false);
     expect(recovery.readRecordedManagedLlamaCppRecipeId("alpha")).toBeNull();
     expect(
       resolveRequestedProviderSelection({

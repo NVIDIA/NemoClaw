@@ -57,7 +57,6 @@ function bindRecordedProviderReaders(
     return {
       readRecordedProvider: () => null,
       readRecordedNimContainer: () => null,
-      readRecordedManagedLlamaCpp: () => false,
       readRecordedManagedLlamaCppRecipeId: () => null,
       readRecordedModel: () => null,
     };
@@ -66,8 +65,6 @@ function bindRecordedProviderReaders(
     readRecordedProvider: (name) =>
       recoveredRegistryRoute?.provider ?? deps.readRecordedProvider(name, recoverySessionId),
     readRecordedNimContainer: (name) => deps.readRecordedNimContainer(name, recoverySessionId),
-    readRecordedManagedLlamaCpp: (name) =>
-      deps.readRecordedManagedLlamaCpp?.(name, recoverySessionId) ?? false,
     readRecordedManagedLlamaCppRecipeId: (name) =>
       deps.readRecordedManagedLlamaCppRecipeId?.(name, recoverySessionId) ?? null,
     readRecordedModel: (name) =>
@@ -113,20 +110,23 @@ export function prepareProviderDiscovery(options: {
   );
   const nonInteractive = deps.isNonInteractive();
   const requestedProvider = deps.getNonInteractiveProvider();
+  const recordedProviderName = recoverProvider
+    ? recordedProviderReaders.readRecordedProvider(sandboxName)
+    : null;
+  const recordedManagedLlamaCppRecipeId =
+    recordedProviderName === "llama-cpp-local"
+      ? recordedProviderReaders.readRecordedManagedLlamaCppRecipeId(sandboxName)
+      : null;
   let providerChanged = false;
   if (nonInteractive && requestedProvider && recoverProvider) {
-    const recordedProviderName = recordedProviderReaders.readRecordedProvider(sandboxName);
     const hasRecordedNimContainer =
       recordedProviderName === "vllm-local" &&
       Boolean(recordedProviderReaders.readRecordedNimContainer(sandboxName));
-    const hasRecordedManagedLlamaCpp =
-      recordedProviderName === "llama-cpp-local" &&
-      recordedProviderReaders.readRecordedManagedLlamaCpp(sandboxName);
     const recordedProviderKey = providerNameToOptionKey(
       deps.remoteProviderConfig,
       recordedProviderName,
       {
-        hasManagedLlamaCpp: hasRecordedManagedLlamaCpp,
+        hasManagedLlamaCpp: recordedManagedLlamaCppRecipeId !== null,
         hasNimContainer: hasRecordedNimContainer,
       },
     );
@@ -140,15 +140,12 @@ export function prepareProviderDiscovery(options: {
         allowProviderModelFallback: !providerChanged,
       })
     : null;
-  const recoveredProbeProvider =
-    nonInteractive && !requestedProvider
-      ? recordedProviderReaders.readRecordedProvider(sandboxName)
-      : null;
+  const recoveredProbeProvider = nonInteractive && !requestedProvider ? recordedProviderName : null;
   const recoveredProbeKey = providerNameToOptionKey(
     deps.remoteProviderConfig,
     recoveredProbeProvider,
     {
-      hasManagedLlamaCpp: recordedProviderReaders.readRecordedManagedLlamaCpp(sandboxName),
+      hasManagedLlamaCpp: recordedManagedLlamaCppRecipeId !== null,
       hasNimContainer:
         recoveredProbeProvider === "vllm-local" &&
         Boolean(recordedProviderReaders.readRecordedNimContainer(sandboxName)),

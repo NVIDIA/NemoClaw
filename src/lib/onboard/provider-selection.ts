@@ -157,8 +157,12 @@ export function resolveRequestedProviderSelection<T extends ProviderOption>(
   if (!providerKey) {
     const recordedProvider = input.readRecordedProvider(input.sandboxName);
     const hasNimContainer = !!input.readRecordedNimContainer(input.sandboxName);
+    const recordedManagedLlamaCppRecipeId =
+      recordedProvider === "llama-cpp-local"
+        ? (input.readRecordedManagedLlamaCppRecipeId?.(input.sandboxName) ?? null)
+        : null;
     const recoveredKey = providerNameToOptionKey(input.remoteProviderConfig, recordedProvider, {
-      hasManagedLlamaCpp: input.readRecordedManagedLlamaCpp?.(input.sandboxName) ?? false,
+      hasManagedLlamaCpp: recordedManagedLlamaCppRecipeId !== null,
       hasNimContainer,
     });
 
@@ -194,9 +198,7 @@ export function resolveRequestedProviderSelection<T extends ProviderOption>(
       recoveredFromSandbox = true;
       recoveredModel = input.readRecordedModel(input.sandboxName);
       recoveredManagedLlamaCppRecipeId =
-        recoveredKey === "install-llama-cpp"
-          ? (input.readRecordedManagedLlamaCppRecipeId?.(input.sandboxName) ?? null)
-          : null;
+        recoveredKey === "install-llama-cpp" ? recordedManagedLlamaCppRecipeId : null;
     } else {
       const platformDefault = input.platformDefaultProviderKey;
       providerKey =
