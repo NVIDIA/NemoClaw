@@ -2653,8 +2653,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   setOnboardBrandingAgent(opts.agent || process.env.NEMOCLAW_AGENT || null);
   AUTO_YES = opts.autoYes === true || process.env.NEMOCLAW_YES === "1";
   const resolveEntryOptions = () =>
-    onboardEntryOptions.resolveDefaultRunEntryOptionsFromState(opts, validateName, onboardSession);
-  const initialEntryOptions = resolveEntryOptions();
+    onboardEntryOptions.resolveEntryOptions(opts, validateName, onboardSession, registry);
+  const initialEntryOptions = onboardEntryOptions.readOptions(opts, validateName, onboardSession);
   NON_INTERACTIVE = initialEntryOptions.nonInteractive;
   RECREATE_SANDBOX = opts.recreateSandbox || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
   _preflightDashboardPort =
