@@ -23,6 +23,15 @@ export { resolveVerifyAgentApiPort } from "./hermes-api-port";
  * listen on every interface, and the operator opt-in for that is
  * `NEMOCLAW_DASHBOARD_BIND`, so onboarding has to report the wider surface it
  * is about to open rather than leave the user to find it with `ss` (#10861).
+ *
+ * The warning names the Host header check because a reader can reasonably
+ * assume it is what keeps the wider bind safe, and it is not. The dashboard
+ * binds `127.0.0.1` inside the sandbox and reaches the network through a socat
+ * bridge and the host-side forward, so `_is_accepted_host` always observes a
+ * loopback bind and cannot tell an exposed deployment from a private one. It
+ * also accepts the `CHAT_UI_URL` hostname on purpose, for the reverse-proxy
+ * deployments this variable exists to serve. It is Host validation, not
+ * authentication.
  */
 export function discloseDashboardBindWidening(
   dashboardUrl: string,
@@ -34,7 +43,9 @@ export function discloseDashboardBindWidening(
   warn(
     `  ! CHAT_UI_URL is not a loopback address, so the dashboard forward for port ${String(port)} ` +
       `binds ${chain.bindAddress} instead of 127.0.0.1. Every host that can reach this machine on ` +
-      `that port can reach the dashboard. Unset CHAT_UI_URL to keep the loopback bind.`,
+      `that port can reach the dashboard. The dashboard's Host header check is not an access ` +
+      `control — it accepts the CHAT_UI_URL hostname by design — so serve it through an ` +
+      `authenticating proxy, or unset CHAT_UI_URL to keep the loopback bind.`,
   );
 }
 
@@ -117,11 +128,7 @@ export async function ensureAgentDashboardForward(options: {
       .filter((port) => port !== declaredPrimaryPort || port === agentDashboardPort)
       .map(resolveDeclaredPort);
     const preservePorts = [
-      ...new Set([
-        agentDashboardPort,
-        ...declaredPorts,
-        optionalDashboardPort,
-      ]),
+      ...new Set([agentDashboardPort, ...declaredPorts, optionalDashboardPort]),
     ].filter(isValidForwardPort);
     const requestedDashboardUrl =
       !usesFixedApiPort && chatUiUrl

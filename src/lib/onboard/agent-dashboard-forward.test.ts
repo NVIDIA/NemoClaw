@@ -172,11 +172,9 @@ describe("ensureAgentDashboardForward", () => {
       }),
     ).toBe(8647);
 
-    expect(ensureDashboardForward).toHaveBeenCalledWith(
-      "api-agent",
-      "http://127.0.0.1:8647",
-      { allowPortReallocation: false },
-    );
+    expect(ensureDashboardForward).toHaveBeenCalledWith("api-agent", "http://127.0.0.1:8647", {
+      allowPortReallocation: false,
+    });
     expect(ensureDashboardForward).not.toHaveBeenCalledWith(
       "api-agent",
       "http://127.0.0.1:8642",
@@ -238,8 +236,30 @@ describe("dashboard bind widening disclosure", () => {
       warn,
     });
 
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("binds 0.0.0.0 instead of 127.0.0.1"));
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("binds 0.0.0.0 instead of 127.0.0.1"),
+    );
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("CHAT_UI_URL"));
+  });
+
+  it("denies that the Host header check restricts access to the wider bind (#10861)", async () => {
+    const warn = vi.fn();
+    const ensureDashboardForward = vi.fn(() => 18789);
+
+    await ensureAgentDashboardForward({
+      sandboxName: "hm",
+      agent: { forwardPort: 18789, forward_ports: [18789] },
+      ensureDashboardForward,
+      chatUiUrl: "https://dashboard.example.com:18789",
+      warn,
+    });
+
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("Host header check is not an access control"),
+    );
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("serve it through an authenticating proxy"),
+    );
   });
 
   it("stays quiet when the dashboard keeps its loopback bind", async () => {
