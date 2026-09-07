@@ -3,6 +3,7 @@
 
 import { DASHBOARD_PORT, HERMES_OPENAI_API_PORT } from "../core/ports";
 import { buildChain } from "../dashboard/contract";
+import { type DashboardAccessOptions, resolveDashboardPlatformHints } from "./dashboard-access";
 import {
   type DashboardRuntimeAgent,
   getAgentDeclaredForwardPorts,
@@ -37,8 +38,19 @@ export function discloseDashboardBindWidening(
   dashboardUrl: string,
   port: number,
   warn: (message: string) => void,
+  accessOptions: DashboardAccessOptions = {},
 ): void {
-  const chain = buildChain({ chatUiUrl: dashboardUrl, port });
+  // `bindWidenedByChatUiUrl` excludes WSL and the explicit
+  // `NEMOCLAW_DASHBOARD_BIND` opt-in, but only when it is told about them.
+  // Building the chain from the URL alone dropped both, so the warning fired
+  // on hosts where the bind was already wide for another reason and told the
+  // operator to unset `CHAT_UI_URL` to restore a loopback bind they would not
+  // get back.
+  const chain = buildChain({
+    chatUiUrl: dashboardUrl,
+    port,
+    ...resolveDashboardPlatformHints(accessOptions),
+  });
   if (!chain.bindWidenedByChatUiUrl) return;
   warn(
     `  ! CHAT_UI_URL is not a loopback address, so the dashboard forward for port ${String(port)} ` +
@@ -74,6 +86,8 @@ export async function ensureAgentDashboardForward(options: {
   beforeForwardPort?: (port: number) => Promise<void> | void;
   revalidateSandboxIdentity?: (operation: string) => void;
   warn?: (message: string) => void;
+  /** Host hints for the bind-widening disclosure; production reads the real environment. */
+  dashboardAccess?: DashboardAccessOptions;
 }): Promise<number> {
   const {
     sandboxName,
@@ -85,6 +99,7 @@ export async function ensureAgentDashboardForward(options: {
     beforeForwardPort,
     revalidateSandboxIdentity,
     warn = (message: string) => console.warn(message),
+    dashboardAccess = {},
   } = options;
   if (!shouldManageDashboardForAgent(agent)) {
     return 0;
@@ -134,7 +149,7 @@ export async function ensureAgentDashboardForward(options: {
       !usesFixedApiPort && chatUiUrl
         ? replaceUrlPort(chatUiUrl, agentDashboardPort)
         : `http://127.0.0.1:${agentDashboardPort}`;
-    discloseDashboardBindWidening(requestedDashboardUrl, agentDashboardPort, warn);
+    discloseDashboardBindWidening(requestedDashboardUrl, agentDashboardPort, warn, dashboardAccess);
     await beforeForwardPort?.(agentDashboardPort);
     const actualAgentDashboardPort = ensureDashboardForward(sandboxName, requestedDashboardUrl, {
       allowPortReallocation: false,

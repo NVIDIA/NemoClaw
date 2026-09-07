@@ -262,6 +262,38 @@ describe("dashboard bind widening disclosure", () => {
     );
   });
 
+  it("stays quiet on WSL, where the bind is already wide for another reason (#10861)", async () => {
+    const warn = vi.fn();
+    const ensureDashboardForward = vi.fn(() => 18789);
+
+    await ensureAgentDashboardForward({
+      sandboxName: "hm",
+      agent: { forwardPort: 18789, forward_ports: [18789] },
+      ensureDashboardForward,
+      chatUiUrl: "https://dashboard.example.com:18789",
+      warn,
+      dashboardAccess: { isWsl: true, wslHostAddress: "172.20.0.2", env: {} },
+    });
+
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("stays quiet when the operator opted in with NEMOCLAW_DASHBOARD_BIND (#10861)", async () => {
+    const warn = vi.fn();
+    const ensureDashboardForward = vi.fn(() => 18789);
+
+    await ensureAgentDashboardForward({
+      sandboxName: "hm",
+      agent: { forwardPort: 18789, forward_ports: [18789] },
+      ensureDashboardForward,
+      chatUiUrl: "https://dashboard.example.com:18789",
+      warn,
+      dashboardAccess: { isWsl: false, env: { NEMOCLAW_DASHBOARD_BIND: "0.0.0.0" } },
+    });
+
+    expect(warn).not.toHaveBeenCalled();
+  });
+
   it("stays quiet when the dashboard keeps its loopback bind", async () => {
     const warn = vi.fn();
     const ensureDashboardForward = vi.fn(() => 18789);
