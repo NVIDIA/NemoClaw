@@ -35,13 +35,7 @@ describe("persisted provider selection", () => {
     ["OpenAI", "openai-api", false, false, "openai"],
     ["OpenRouter", "openrouter-api", false, false, "openrouter"],
     ["Anthropic", "anthropic-prod", false, false, "anthropic"],
-    [
-      "Anthropic-compatible",
-      "compatible-anthropic-endpoint",
-      false,
-      false,
-      "anthropicCompatible",
-    ],
+    ["Anthropic-compatible", "compatible-anthropic-endpoint", false, false, "anthropicCompatible"],
     ["Gemini", "gemini-api", false, false, "gemini"],
     ["OpenAI-compatible", "compatible-endpoint", false, false, "custom"],
     ["operator llama.cpp", "llama-cpp-local", false, false, "llama-cpp"],
@@ -229,11 +223,21 @@ describe("provider recovery persisted routing state", () => {
   }
 
   it.each([
-    ["managed", { recipe: { backend: "install-llama-cpp" } }, "install-llama-cpp"],
-    ["operator-attached", null, "llama-cpp"],
+    [
+      "managed",
+      {
+        recipe: {
+          backend: "install-llama-cpp",
+          id: "llama-cpp.muse-glimmer-30b.spark-single.v1",
+        },
+      },
+      "install-llama-cpp",
+      "llama-cpp.muse-glimmer-30b.spark-single.v1",
+    ],
+    ["operator-attached", null, "llama-cpp", null],
   ] as const)(
     "routes a %s llama.cpp registry record through its exact recovery key",
-    (_label, recipeProvenance, expectedKey) => {
+    (_label, recipeProvenance, expectedKey, expectedRecipeId) => {
       vi.spyOn(registry, "getSandbox").mockReturnValue({
         name: "alpha",
         provider: "llama-cpp-local",
@@ -284,6 +288,9 @@ describe("provider recovery persisted routing state", () => {
         recoveredFromSandbox: true,
         recoveredModel: "recorded-model",
       });
+      expect(
+        result.kind === "selected" ? (result.recoveredManagedLlamaCppRecipeId ?? null) : null,
+      ).toBe(expectedRecipeId);
     },
   );
 

@@ -153,6 +153,10 @@ export interface SetupNimFlowDeps {
     sandboxName: string | null | undefined,
     recoverySessionId?: string | null,
   ): boolean;
+  readRecordedManagedLlamaCppRecipeId?(
+    sandboxName: string | null | undefined,
+    recoverySessionId?: string | null,
+  ): string | null;
   readRecordedModel(
     sandboxName: string | null | undefined,
     recoverySessionId?: string | null,
@@ -539,20 +543,28 @@ function platformDefaultProviderKey(input: {
   return undefined;
 }
 
+function selectedManagedLlamaCppRecipeId(input: {
+  selectedFromInteractiveMenu: boolean;
+  menuRecipeId: string | undefined;
+  recoveredRecipeId: string | null;
+}): string | undefined {
+  return input.selectedFromInteractiveMenu
+    ? input.menuRecipeId
+    : (input.recoveredRecipeId ?? undefined);
+}
+
 function resolveSelectedManagedLlamaCpp(input: {
   deps: SetupNimFlowDeps;
   gpu: SetupNimGpu;
-  selectedFromInteractiveMenu: boolean;
   selectedRecipeId: string | undefined;
 }): {
   resolution: ManagedLlamaCppSelectionResult;
   runtimeProvider: RuntimeProviderBundle;
 } {
-  const { deps, gpu, selectedFromInteractiveMenu, selectedRecipeId } = input;
-  const env =
-    selectedFromInteractiveMenu && selectedRecipeId
-      ? { ...process.env, [LLAMA_CPP_RECIPE_ENV]: selectedRecipeId }
-      : undefined;
+  const { deps, gpu, selectedRecipeId } = input;
+  const env = selectedRecipeId
+    ? { ...process.env, [LLAMA_CPP_RECIPE_ENV]: selectedRecipeId }
+    : undefined;
   const runtimeProvider = deps.getRuntimeProvider();
   return {
     resolution: discoverManagedLlamaCppSafely(
@@ -1048,6 +1060,7 @@ export function createSetupNim(
         let selectedFromInteractiveMenu = false;
         recoveredFromSandbox = false;
         let recoveredModel: string | null = null;
+        let recoveredManagedLlamaCppRecipeId: string | null = null;
         let preparedVllmState: SetupNimSelectionState | null = null;
         hermesAuthMethod = null;
 
@@ -1084,6 +1097,8 @@ export function createSetupNim(
           selected = providerSelection.selected;
           recoveredFromSandbox = providerSelection.recoveredFromSandbox;
           recoveredModel = providerSelection.recoveredModel;
+          recoveredManagedLlamaCppRecipeId =
+            providerSelection.recoveredManagedLlamaCppRecipeId ?? null;
           deps.note(
             recoveredFromSandbox
               ? `  [non-interactive] Provider: ${selected.key} (recovered from sandbox '${sandboxName}')`
@@ -1160,11 +1175,14 @@ export function createSetupNim(
           // Menu discovery is advisory. Re-read the canonical readiness/catalog
           // inputs immediately before any install effect so a delayed interactive
           // choice cannot activate against stale host state.
-          const selectedRecipeId = selected.managedLlamaCppRecipeId;
+          const selectedRecipeId = selectedManagedLlamaCppRecipeId({
+            selectedFromInteractiveMenu,
+            menuRecipeId: selected.managedLlamaCppRecipeId,
+            recoveredRecipeId: recoveredManagedLlamaCppRecipeId,
+          });
           const { resolution: resolved, runtimeProvider } = resolveSelectedManagedLlamaCpp({
             deps,
             gpu,
-            selectedFromInteractiveMenu,
             selectedRecipeId,
           });
           if (resolved.kind === "rejected") {

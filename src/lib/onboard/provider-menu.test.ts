@@ -144,6 +144,7 @@ describe("buildInferenceProviderMenu", () => {
         readRecordedProvider: () => null,
         readRecordedNimContainer: () => null,
         readRecordedManagedLlamaCpp: () => false,
+        readRecordedManagedLlamaCppRecipeId: () => null,
         readRecordedModel: () => null,
       }),
     ).toEqual({

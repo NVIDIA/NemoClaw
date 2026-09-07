@@ -39,6 +39,7 @@ export interface ProviderSelectionSuccess<T extends ProviderOption> {
   selected: T;
   recoveredFromSandbox: boolean;
   recoveredModel: string | null;
+  recoveredManagedLlamaCppRecipeId?: string;
 }
 
 export interface ProviderSelectionFailure {
@@ -65,11 +66,13 @@ export interface ProviderSelectionRecoveryReaders {
   readRecordedProvider(sandboxName: string | null | undefined): string | null;
   readRecordedNimContainer(sandboxName: string | null | undefined): string | null;
   readRecordedManagedLlamaCpp?(sandboxName: string | null | undefined): boolean;
+  readRecordedManagedLlamaCppRecipeId?(sandboxName: string | null | undefined): string | null;
   readRecordedModel(sandboxName: string | null | undefined): string | null;
 }
 
-export interface ResolveRequestedProviderSelectionInput<T extends ProviderOption>
-  extends ProviderSelectionRecoveryReaders {
+export interface ResolveRequestedProviderSelectionInput<
+  T extends ProviderOption,
+> extends ProviderSelectionRecoveryReaders {
   options: T[];
   requestedProvider: string | null;
   sandboxName: string | null;
@@ -140,10 +143,18 @@ export function resolveRequestedProviderSelection<T extends ProviderOption>(
   let providerKey = input.requestedProvider;
   let recoveredFromSandbox = false;
   let recoveredModel: string | null = null;
+  let recoveredManagedLlamaCppRecipeId: string | null = null;
   const canUseWindowsHostOllama =
     input.isWindowsHostOllama &&
     input.windowsHostOllamaSupported &&
     input.windowsHostOllamaReachable === true;
+  const selectedResult = (selected: T): ProviderSelectionSuccess<T> => ({
+    kind: "selected",
+    selected,
+    recoveredFromSandbox,
+    recoveredModel,
+    ...(recoveredManagedLlamaCppRecipeId ? { recoveredManagedLlamaCppRecipeId } : {}),
+  });
 
   if (!providerKey) {
     const recordedProvider = input.readRecordedProvider(input.sandboxName);
@@ -184,6 +195,10 @@ export function resolveRequestedProviderSelection<T extends ProviderOption>(
       providerKey = recoveredKey;
       recoveredFromSandbox = true;
       recoveredModel = input.readRecordedModel(input.sandboxName);
+      recoveredManagedLlamaCppRecipeId =
+        recoveredKey === "install-llama-cpp"
+          ? (input.readRecordedManagedLlamaCppRecipeId?.(input.sandboxName) ?? null)
+          : null;
     } else {
       const platformDefault = input.platformDefaultProviderKey;
       providerKey =
@@ -209,7 +224,7 @@ export function resolveRequestedProviderSelection<T extends ProviderOption>(
     }
     const restart = findOption(input.options, "start-windows-ollama");
     if (restart) {
-      return { kind: "selected", selected: restart, recoveredFromSandbox, recoveredModel };
+      return selectedResult(restart);
     }
     return {
       kind: "failure",
@@ -219,12 +234,12 @@ export function resolveRequestedProviderSelection<T extends ProviderOption>(
 
   const runningDaemon = collapseWindowsInstallToRunningDaemon(input, providerKey);
   if (runningDaemon) {
-    return { kind: "selected", selected: runningDaemon, recoveredFromSandbox, recoveredModel };
+    return selectedResult(runningDaemon);
   }
 
   const selected = findOption(input.options, providerKey);
   if (selected) {
-    return { kind: "selected", selected, recoveredFromSandbox, recoveredModel };
+    return selectedResult(selected);
   }
 
   if (
@@ -245,12 +260,7 @@ export function resolveRequestedProviderSelection<T extends ProviderOption>(
     canUseWindowsHostOllama,
   });
   if (fallback) {
-    return {
-      kind: "selected",
-      selected: fallback,
-      recoveredFromSandbox,
-      recoveredModel,
-    };
+    return selectedResult(fallback);
   }
 
   if (providerKey === "hermesProvider" && !input.hermesProviderAvailable) {

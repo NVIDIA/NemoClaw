@@ -12,6 +12,7 @@ const interactiveDeps = {
   readRecordedProvider: () => null,
   readRecordedNimContainer: () => null,
   readRecordedManagedLlamaCpp: () => false,
+  readRecordedManagedLlamaCppRecipeId: () => null,
   readRecordedModel: () => null,
 };
 

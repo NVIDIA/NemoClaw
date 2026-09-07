@@ -113,6 +113,7 @@ export function makeDeps(overrides: Partial<SetupNimFlowDeps> = {}): SetupNimFlo
     readRecordedProvider: () => null,
     readRecordedNimContainer: () => null,
     readRecordedManagedLlamaCpp: () => false,
+    readRecordedManagedLlamaCppRecipeId: () => null,
     readRecordedModel: () => null,
     rejectWindowsHostOllama: () => false,
     prompt: async () => "",

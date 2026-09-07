@@ -102,6 +102,10 @@ export interface ProviderSelectionRecoveryReaderBundle {
     sandboxName: string | null | undefined,
     recoverySessionId?: string | null,
   ): boolean;
+  readRecordedManagedLlamaCppRecipeId(
+    sandboxName: string | null | undefined,
+    recoverySessionId?: string | null,
+  ): string | null;
   readRecordedModel(
     sandboxName: string | null | undefined,
     recoverySessionId?: string | null,
@@ -139,6 +143,7 @@ export interface RecordedInferenceRoute {
 const MAX_LIVE_PROVIDER_LENGTH = 128;
 const MAX_LIVE_MODEL_LENGTH = 512;
 const SAFE_LIVE_PROVIDER = /^[A-Za-z0-9._:-]+$/;
+const SAFE_MANAGED_LLAMA_CPP_RECIPE_ID = /^[a-z0-9][a-z0-9._-]{0,159}$/u;
 
 export type SandboxRecoveryAuthority = "missing" | "authorized" | "unauthorized";
 
@@ -233,12 +238,25 @@ function completeRecordedInferenceRoute(
 export function createProviderRecoveryHelpers(deps: ProviderRecoveryDeps): ProviderRecoveryHelpers {
   const isManagedLlamaCppState = (value: {
     provider?: string | null;
-    servingProfileProvenance?: { recipe: { backend: string } } | null;
+    servingProfileProvenance?: { recipe: { backend: string; id?: string } } | null;
     hostLocalInferenceProvenance?: unknown;
   }): boolean =>
     value.provider === "llama-cpp-local" &&
     (value.servingProfileProvenance?.recipe.backend === "install-llama-cpp" ||
       value.hostLocalInferenceProvenance != null);
+
+  const managedLlamaCppRecipeId = (value: {
+    provider?: string | null;
+    servingProfileProvenance?: { recipe: { backend: string; id?: string } } | null;
+  }): string | null => {
+    const recipe = value.servingProfileProvenance?.recipe;
+    return value.provider === "llama-cpp-local" &&
+      recipe?.backend === "install-llama-cpp" &&
+      typeof recipe.id === "string" &&
+      SAFE_MANAGED_LLAMA_CPP_RECIPE_ID.test(recipe.id)
+      ? recipe.id
+      : null;
+  };
 
   function refuseRecoveryAfterRegistryError(sandboxName: string, error: unknown): null {
     const detail = error instanceof Error ? error.message : String(error);
@@ -326,6 +344,26 @@ export function createProviderRecoveryHelpers(deps: ProviderRecoveryDeps): Provi
       return Boolean(session?.sandboxName === sandboxName && isManagedLlamaCppState(session));
     } catch {
       return false;
+    }
+  }
+
+  function readRecordedManagedLlamaCppRecipeId(
+    sandboxName: string | null | undefined,
+    recoverySessionId?: string | null,
+  ): string | null {
+    if (!sandboxName) return null;
+    try {
+      const { authority, entry } = readRegistryRecoveryState(sandboxName, recoverySessionId);
+      if (authority === "unauthorized") return null;
+      if (entry) return managedLlamaCppRecipeId(entry);
+    } catch {
+      return null;
+    }
+    try {
+      const session = onboardSession.loadSession();
+      return session?.sandboxName === sandboxName ? managedLlamaCppRecipeId(session) : null;
+    } catch {
+      return null;
     }
   }
 
@@ -468,12 +506,14 @@ export function createProviderRecoveryHelpers(deps: ProviderRecoveryDeps): Provi
       readRecordedProvider,
       readRecordedNimContainer,
       readRecordedManagedLlamaCpp,
+      readRecordedManagedLlamaCppRecipeId,
       readRecordedModel,
     },
     readLiveInference,
     readRecordedProvider,
     readRecordedNimContainer,
     readRecordedManagedLlamaCpp,
+    readRecordedManagedLlamaCppRecipeId,
     readRecordedModel,
     readRecordedEndpointUrl,
     readRecordedInferenceRoute,

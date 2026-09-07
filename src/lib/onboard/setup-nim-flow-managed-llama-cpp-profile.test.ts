@@ -210,6 +210,69 @@ describe("managed llama.cpp profile onboarding", () => {
     );
   });
 
+  it("recovers the recorded managed recipe instead of the automatic default", async () => {
+    const automaticRecipeId = "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1";
+    const recoveredRecipeId = "llama-cpp.muse-glimmer-30b.spark-single.v1";
+    const selection = (recipeId: string, model: string) =>
+      ({
+        preset: { metadata: { id: `${recipeId}.preset`, displayName: recipeId } },
+        recipe: {
+          metadata: { id: recipeId, displayName: recipeId },
+          spec: { model: { servedName: model } },
+        },
+      }) as never;
+    const automatic = selection(automaticRecipeId, "nemotron-model");
+    const recovered = selection(recoveredRecipeId, "muse-model");
+    const discoverManagedLlamaCppSelections = vi.fn((env?: NodeJS.ProcessEnv) => {
+      const resolved = env?.NEMOCLAW_LLAMACPP_RECIPE === recoveredRecipeId ? recovered : automatic;
+      return {
+        choices: [{ priority: 500, selection: automatic }],
+        resolution: { kind: "selected" as const, selection: resolved },
+      };
+    });
+    const installManagedLlamaCpp = vi.fn(async () => ({
+      ok: true as const,
+      apiKey: "a".repeat(64),
+      model: "muse-model",
+      receipt: { schemaVersion: 1 } as never,
+    }));
+    const handleLlamaCppSelection = vi.fn<SetupNimFlowDeps["handleLlamaCppSelection"]>(
+      async (state, requestedModel) => {
+        state.provider = "llama-cpp-local";
+        state.model = requestedModel;
+        return "selected";
+      },
+    );
+    const setupNim = createSetupNim(
+      makeDeps({
+        discoverManagedLlamaCppSelections,
+        handleLlamaCppSelection,
+        installManagedLlamaCpp,
+        isNonInteractive: () => true,
+        readRecordedProvider: () => "llama-cpp-local",
+        readRecordedManagedLlamaCpp: () => true,
+        readRecordedManagedLlamaCppRecipeId: () => recoveredRecipeId,
+        readRecordedModel: () => "muse-model",
+      }),
+    );
+
+    await expect(setupNim({ platform: "spark" } as never, "muse-agent")).resolves.toMatchObject({
+      provider: "llama-cpp-local",
+      model: "muse-model",
+    });
+    expect(discoverManagedLlamaCppSelections).toHaveBeenLastCalledWith(
+      expect.objectContaining({ NEMOCLAW_LLAMACPP_RECIPE: recoveredRecipeId }),
+      expect.objectContaining({ platform: "spark" }),
+      undefined,
+      undefined,
+      { runtimeProviderId: "docker" },
+    );
+    expect(installManagedLlamaCpp).toHaveBeenCalledWith(
+      recovered,
+      expect.objectContaining({ sandboxName: "muse-agent" }),
+    );
+  });
+
   it("zero-decision onboarding selects managed Qwen on a proven N1x WSL GPU (#10962)", async () => {
     const harness = n1xProofHarness(true, null);
 
