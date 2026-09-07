@@ -988,7 +988,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     exposeCliBin: true,
     environment: {
       ...nonInteractive,
-      NEMOCLAW_LLAMA_CPP_RUNTIME_IMAGE_SCOPE: "published-base",
+      NEMOCLAW_LLAMA_CPP_RUNTIME_IMAGE_SCOPE: "catalogue",
       NEMOCLAW_PROVIDER: "install-llama-cpp",
       NEMOCLAW_LLAMACPP_RECIPE: "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1",
       NEMOCLAW_SANDBOX_NAME: "e2e-llamacpp-gpu",

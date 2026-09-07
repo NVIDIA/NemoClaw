@@ -32,22 +32,20 @@ const RECIPE_ID =
   process.env.NEMOCLAW_LLAMACPP_RECIPE ?? "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1";
 const RUNTIME_IMAGE_SCOPE =
   process.env.NEMOCLAW_LLAMA_CPP_RUNTIME_IMAGE_SCOPE ??
-  (process.env.NEMOCLAW_E2E_PHASE_COLLECTION === "1" ? "published-base" : "");
-const RUNTIME_IMAGE =
-  process.env.NEMOCLAW_LLAMA_CPP_RUNTIME_IMAGE ??
-  (process.env.NEMOCLAW_E2E_PHASE_COLLECTION === "1"
-    ? `ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:${"0".repeat(64)}`
-    : "");
+  (process.env.NEMOCLAW_E2E_PHASE_COLLECTION === "1" ? "catalogue" : "");
+const RUNTIME_IMAGE = process.env.NEMOCLAW_LLAMA_CPP_RUNTIME_IMAGE ?? "";
 const TARGET_ID = process.env.E2E_TARGET_ID ?? "llama-cpp-generic-gpu";
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-llamacpp-gpu";
 validateSandboxName(SANDBOX_NAME);
 assert(
-  /^published-base$/u.test(RUNTIME_IMAGE_SCOPE) &&
-    /^[a-z0-9][a-z0-9._-]{0,159}$/u.test(RECIPE_ID) &&
-    /^(?:[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?\/)?(?:[a-z0-9]+(?:[._-][a-z0-9]+)*\/)*[a-z0-9]+(?:[._-][a-z0-9]+)*@sha256:[0-9a-f]{64}$/u.test(
-      RUNTIME_IMAGE,
-    ),
-  "invalid llama.cpp runtime image scope, recipe ID, or base-pinned image",
+  /^[a-z0-9][a-z0-9._-]{0,159}$/u.test(RECIPE_ID) &&
+    (RUNTIME_IMAGE_SCOPE === "catalogue"
+      ? RUNTIME_IMAGE === ""
+      : RUNTIME_IMAGE_SCOPE === "published-base" &&
+        /^(?:[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?\/)?(?:[a-z0-9]+(?:[._-][a-z0-9]+)*\/)*[a-z0-9]+(?:[._-][a-z0-9]+)*@sha256:[0-9a-f]{64}$/u.test(
+          RUNTIME_IMAGE,
+        )),
+  "invalid llama.cpp recipe ID or runtime-image evidence mode",
 );
 assert.match(TARGET_ID, /^[a-z0-9][a-z0-9-]{0,63}$/u, "invalid E2E target ID");
 
@@ -79,13 +77,18 @@ function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
 function loadGpuSetting() {
   const catalog = loadManagedInferenceCatalog();
   const recipe = catalog.recipes.find(({ metadata }) => metadata.id === RECIPE_ID);
+  const runtimeImage =
+    RUNTIME_IMAGE_SCOPE === "published-base" ? RUNTIME_IMAGE : recipe?.spec.runtime.image;
   assert(
-    recipe && isLlamaCppServingRecipe(recipe) && recipe.spec.runtime.image === RUNTIME_IMAGE,
-    "GPU E2E llama.cpp recipe is missing or disagrees with the trusted PR-base image",
+    recipe &&
+      isLlamaCppServingRecipe(recipe) &&
+      typeof runtimeImage === "string" &&
+      recipe.spec.runtime.image === runtimeImage,
+    "GPU E2E llama.cpp recipe is missing or disagrees with its declared image authority",
   );
   const modelFile = recipe.spec.model.files[0];
   assert(modelFile && "sizeBytes" in modelFile, "generic GPU E2E GGUF identity is incomplete");
-  return { modelFile, recipe };
+  return { modelFile, recipe, runtimeImage };
 }
 
 type ManagedContainerReceipt = NonNullable<ReturnType<typeof loadManagedLlamaCppReceipt>> & {
@@ -131,9 +134,13 @@ test(
     await artifacts.target.declare({
       id: TARGET_ID,
       boundary:
-        "Exact NemoClaw source + published-base llama.cpp image on a Linux AMD64 RTX runner + Docker-qualified managed runtime + OpenShell sandbox route",
+        RUNTIME_IMAGE_SCOPE === "published-base"
+          ? "Exact NemoClaw source + published-base llama.cpp image on a Linux AMD64 RTX runner + Docker-qualified managed runtime + OpenShell sandbox route"
+          : "Exact NemoClaw source + catalogue-selected llama.cpp image on a Linux AMD64 RTX runner + Docker-qualified managed runtime + OpenShell sandbox route",
       configurationAuthority:
-        "The exact source candidate owns orchestration; the base-published serving recipe supplies the runtime image, model, and serving values; the artifact does not qualify the PR-built llama.cpp image.",
+        RUNTIME_IMAGE_SCOPE === "published-base"
+          ? "The exact source candidate owns orchestration; the trusted base recipe supplies the runtime image while the candidate recipe must match it. The artifact does not qualify a PR-built llama.cpp image."
+          : "The exact source and its catalogue own orchestration and pinned image selection. The artifact does not qualify a PR-built llama.cpp image.",
       credentialBoundary:
         "The generated llama.cpp API key remains in owner-only host state and enters commands only through redacted process input.",
       prBuiltLlamaCppImageRuntimeQualified: false,
@@ -176,7 +183,7 @@ test(
       resultText(architecture),
     );
 
-    const { modelFile, recipe } = loadGpuSetting();
+    const { modelFile, recipe, runtimeImage } = loadGpuSetting();
 
     progress.phase("run the declarative managed llama.cpp installer");
     const install = await host.command("bash", ["install.sh", "--non-interactive"], {
@@ -193,7 +200,7 @@ test(
     const paths = managedLlamaCppStatePaths(os.homedir());
     const interruptedReceipt = requireExpectedManagedReceipt(
       loadManagedLlamaCppReceipt(paths),
-      RUNTIME_IMAGE,
+      runtimeImage,
     );
     const interruptedRuntimeId = interruptedReceipt.runtime.runtimeId;
     const runtimeProvider = resolveRegisteredRuntimeProviderBundle(interruptedReceipt.providerId);
@@ -270,7 +277,7 @@ test(
     );
     const receipt = requireExpectedManagedReceipt(
       loadManagedLlamaCppReceipt(paths),
-      RUNTIME_IMAGE,
+      runtimeImage,
       interruptedRuntimeId,
     );
     const apiKey = loadManagedLlamaCppApiKey(managedLlamaCppStatePaths(os.homedir()));
@@ -512,7 +519,8 @@ test(
       recipe: RECIPE_ID,
       runtimeImage: {
         reference: receipt.runtime.imageRef,
-        sourceRevision: process.env.NEMOCLAW_LLAMA_CPP_RUNTIME_IMAGE_SOURCE_REVISION ?? null,
+        sourceRevision:
+          process.env.NEMOCLAW_LLAMA_CPP_RUNTIME_IMAGE_SOURCE_REVISION ?? qualificationHeadSha,
         scope: RUNTIME_IMAGE_SCOPE,
         prBuiltCandidateTested: false,
       },
@@ -545,7 +553,10 @@ test(
       id: TARGET_ID,
       status: "passed",
       candidateSha: qualificationHeadSha,
-      candidateScope: "NemoClaw source only",
+      candidateScope:
+        RUNTIME_IMAGE_SCOPE === "published-base"
+          ? "NemoClaw source only"
+          : "NemoClaw source and catalogue image selection",
       fullGpuOffload: true,
       model: recipe.spec.model.servedName,
       prBuiltLlamaCppImageRuntimeQualified: false,
