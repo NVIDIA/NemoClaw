@@ -84,7 +84,7 @@ const entry: McpBridgeEntry = {
 beforeEach(() => vi.clearAllMocks());
 
 describe("MCP denied-tool policy updates", () => {
-  it("persists replacement intent before policy activation (#11115)", async () => {
+  it("journals intent and removes the old route before replacement activation (#11115)", async () => {
     await updateMcpBridgeDenyTools("alpha", "github", ["submit_*", "delete_repo"]);
 
     const pendingEntry = expect.objectContaining({

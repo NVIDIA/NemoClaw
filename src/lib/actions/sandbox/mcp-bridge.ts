@@ -274,7 +274,7 @@ function renderMcpHelp(subcommand: string): void {
   switch (subcommand) {
     case "add":
       console.log(`USAGE
-  nemoclaw <name> mcp add <server> --url <https-mcp-url> --env KEY [--deny-tool TOOL] [--trusted-private-host HOST]
+  nemoclaw <name> mcp add <server> --url <https-mcp-url> --env KEY [--deny-tool TOOL ...] [--trusted-private-host HOST]
 
 FLAGS
   --url URL        MCP Streamable HTTP endpoint
@@ -350,7 +350,7 @@ export async function dispatchMcpBridgeCommand(
         const { probe, rest: addRest } = parseProbeFlags(rest);
         if (probe === true)
           throw new McpBridgeError(
-            "Usage: nemoclaw <sandbox> mcp add <server> --url <https-mcp-url> --env KEY [--deny-tool TOOL] [--trusted-private-host HOST] [--no-probe]",
+            "Usage: nemoclaw <sandbox> mcp add <server> --url <https-mcp-url> --env KEY [--deny-tool TOOL ...] [--trusted-private-host HOST] [--no-probe]",
             2,
           );
         const options = parseMcpAddArgs(addRest);

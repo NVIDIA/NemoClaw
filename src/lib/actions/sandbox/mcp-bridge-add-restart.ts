@@ -231,8 +231,11 @@ async function updateMcpBridgeDenyToolsUnlocked(
   assertMcpCredentialBoundaryRuntimeVersion();
   await ensureSandboxGatewaySelected(sandboxName, runtimeSelection);
 
-  // Journal replacement intent before removing the route. Restart can finish
-  // the update even if this process stops between external and registry writes.
+  // Journal replacement intent before removing the route. Do not replace the
+  // same policy key in place: a failed stricter update could otherwise leave
+  // the prior, more-permissive rule active. Removing the generated allow route
+  // first keeps interrupted activation fail-closed, and restart can finish the
+  // update from the journal.
   writeBridgeEntry(sandboxName, pendingEntry);
   try {
     removeGeneratedPolicy(sandboxName, storedEntry, { runtimeSelection });

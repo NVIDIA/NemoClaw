@@ -341,14 +341,14 @@ export function parseMcpAddArgs(argv: string[]): ParsedMcpAddArgs {
       continue;
     }
     throw new McpBridgeError(
-      "Usage: nemoclaw <sandbox> mcp add <server> --url <https-mcp-url> --env KEY [--deny-tool TOOL] [--trusted-private-host HOST]",
+      "Usage: nemoclaw <sandbox> mcp add <server> --url <https-mcp-url> --env KEY [--deny-tool TOOL ...] [--trusted-private-host HOST]",
       2,
     );
   }
 
   if (!server) {
     throw new McpBridgeError(
-      "Usage: nemoclaw <sandbox> mcp add <server> --url <https-mcp-url> --env KEY [--deny-tool TOOL] [--trusted-private-host HOST]",
+      "Usage: nemoclaw <sandbox> mcp add <server> --url <https-mcp-url> --env KEY [--deny-tool TOOL ...] [--trusted-private-host HOST]",
       2,
     );
   }

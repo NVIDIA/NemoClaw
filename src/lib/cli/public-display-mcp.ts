@@ -17,7 +17,7 @@ export const SANDBOX_MCP_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLa
       order: 25.2,
       usage: "nemoclaw <name> mcp add",
       description: "Add an OpenShell-enforced MCP HTTP server",
-      flags: "<server> --url <url> --env KEY [--deny-tool TOOL]",
+      flags: "<server> --url <url> --env KEY [--deny-tool TOOL ...]",
     },
     {
       group: "MCP Servers",
