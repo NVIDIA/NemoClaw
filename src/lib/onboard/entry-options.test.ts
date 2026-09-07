@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   type OnboardEntryOptionsDeps,
   reconstructUnownedPendingCreateRecoveries,
+  resolveEntryOptions,
   resolveOnboardEntryOptions,
   resolveOnboardRunOptions,
   withNonInteractiveEnvironment,
@@ -33,6 +34,31 @@ function createDeps(overrides: Partial<OnboardEntryOptionsDeps> = {}): OnboardEn
 }
 
 describe("pending create recovery admission", () => {
+  it("ignores an unrelated checkpoint for an explicit different sandbox (#11096)", () => {
+    const reconstruct = vi.fn(() => {
+      throw new Error("alpha recovery is unavailable");
+    });
+    const state = {
+      loadSession: () => ({ status: "failed" }),
+      listRetainedSandboxRecoveryRecords: () => [],
+      reconstructRetainedSandboxRecoveryFromPendingCreate: reconstruct,
+    };
+
+    const resolved = resolveEntryOptions(
+      { fresh: true, sandboxName: "bravo" },
+      (name) => name,
+      state,
+      {
+        listSandboxes: () => ({
+          sandboxes: [{ name: "alpha", pendingCreateIdentity: {} }],
+        }),
+      },
+    );
+
+    expect(resolved.requestedSandboxName).toBe("bravo");
+    expect(reconstruct).not.toHaveBeenCalled();
+  });
+
   it("reconstructs the discarded session authority before fresh onboarding (#11096)", () => {
     const reconstruct = vi.fn();
     const entry = {

@@ -121,10 +121,15 @@ export function resolveEntryOptions<Entry extends PendingCreateRecoveryEntry>(
   registryState: { listSandboxes(): { sandboxes: readonly Entry[] } },
 ) {
   const persistedSession = state.loadSession();
+  const entryOptions = readOptions(options, validateSandboxName, state);
+  const targetSandboxName =
+    entryOptions.requestedSandboxName ?? persistedSession?.sandboxName?.trim();
   reconstructUnownedPendingCreateRecoveries(
     options,
     persistedSession,
-    registryState.listSandboxes().sandboxes,
+    registryState
+      .listSandboxes()
+      .sandboxes.filter((entry) => !targetSandboxName || entry.name === targetSandboxName),
     state.reconstructRetainedSandboxRecoveryFromPendingCreate,
   );
   return readOptions(options, validateSandboxName, state);
