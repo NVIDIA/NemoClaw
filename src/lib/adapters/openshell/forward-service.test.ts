@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   buildForwardServiceArgs,
+  forwardServiceInternals,
   getForwardListenerOwnership,
   launchForwardService,
   type ForwardServiceTarget,
@@ -325,6 +326,38 @@ describe("OpenShell forward service", () => {
     expect(sleep).toHaveBeenCalledWith(2_000);
   });
 
+  it("classifies a creating handoff that exits before its identity can be read (#11084)", () => {
+    const diagnostic =
+      "sandbox 'demo' is no longer ready (phase: creating); stopping service forward";
+    const spawnDetached = vi
+      .fn()
+      .mockReturnValueOnce({
+        pid: 53,
+        readOutput: () => diagnostic,
+        removeOutput: vi.fn(),
+        unref: vi.fn(),
+      })
+      .mockReturnValueOnce({ pid: 54, removeOutput: vi.fn(), unref: vi.fn() });
+
+    launchForwardService(target, {
+      getProcessIdentity: (pid) => (pid === 53 ? null : stableProcessIdentity(pid)),
+      isListenerOwned: (pid) => pid === 54,
+      isProcessRunning: (pid) => pid === 54,
+      isReachable: vi
+        .fn()
+        .mockReturnValueOnce(false)
+        .mockReturnValueOnce(false)
+        .mockReturnValueOnce(true),
+      maxSandboxCreatingRetries: 1,
+      onSandboxCreatingRetry: () => {},
+      sleep: () => {},
+      spawnDetached,
+      timeoutMs: 10_000,
+    });
+
+    expect(spawnDetached).toHaveBeenCalledTimes(2);
+  });
+
   it.each([
     [
       "terminal phase",
@@ -463,6 +496,41 @@ describe("OpenShell forward service", () => {
       }),
     ).toThrow(/forwarding-announced/u);
   });
+
+  it.runIf(process.platform === "linux" || process.platform === "darwin")(
+    "bounds output retained by a long-running forward child (#11084)",
+    async () => {
+      const child = forwardServiceInternals.spawnForwardService(
+        process.execPath,
+        [
+          "-e",
+          'process.stdout.write("x".repeat(65536)); setInterval(() => process.stdout.write("later\\n"), 10);',
+        ],
+        process.env,
+      );
+      try {
+        await vi.waitFor(
+          () =>
+            expect(child.readOutput?.()).toHaveLength(
+              forwardServiceInternals.startOutputLimitBytes,
+            ),
+          { interval: 25, timeout: 2_000 },
+        );
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        expect(child.readOutput?.()).toHaveLength(forwardServiceInternals.startOutputLimitBytes);
+        child.removeOutput?.();
+        expect(child.readOutput?.()).toBe("");
+      } finally {
+        child.removeOutput?.();
+        expect(child.pid).toBeTypeOf("number");
+        try {
+          process.kill(child.pid as number, "SIGTERM");
+        } catch {
+          // The fixture may already have stopped after a failed assertion.
+        }
+      }
+    },
+  );
 
   it.runIf(process.platform === "linux")(
     "proves listener ownership from Linux procfs without connecting (#11084)",

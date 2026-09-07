@@ -17,11 +17,17 @@ const SANDBOX_CREATING_RETRY_INTERVAL_MS = 2_000;
 const SANDBOX_CREATING_MAX_RETRIES = START_TIMEOUT_MS / SANDBOX_CREATING_RETRY_INTERVAL_MS;
 const STOP_TIMEOUT_MS = 5_000;
 const POLL_INTERVAL_MS = 100;
+const START_OUTPUT_LIMIT_BYTES = 16 * 1_024;
 // OpenShell 0.0.106 rechecks sandbox readiness every two seconds after it
 // binds. Re-prove exact listener ownership after the next complete check.
 const LISTENER_RECHECK_DELAY_MS = SANDBOX_CREATING_RETRY_INTERVAL_MS + POLL_INTERVAL_MS;
 const FORWARD_INSTANCE_ENV = "NEMOCLAW_FORWARD_INSTANCE_ID";
 const sleepBuffer = new Int32Array(new SharedArrayBuffer(4));
+const boundedOutputWrapper = [
+  "capture_path=$1",
+  "shift",
+  `exec \"$@\" > >({ /usr/bin/head -c ${String(START_OUTPUT_LIMIT_BYTES)} > \"$capture_path\"; /bin/cat >/dev/null; }) 2>&1`,
+].join("\n");
 
 type ForwardServiceChild = {
   readonly pid?: number;
@@ -225,11 +231,17 @@ function spawnForwardService(
   const outputDescriptor = fs.openSync(outputPath, "wx", 0o600);
   let child: ReturnType<typeof spawn>;
   try {
-    child = spawn(executable, [...args], {
-      detached: true,
-      env: environment,
-      stdio: ["ignore", outputDescriptor, outputDescriptor],
-    });
+    // Bash exec preserves the launch PID while the process substitution keeps
+    // only a bounded startup prefix and drains all later output to /dev/null.
+    child = spawn(
+      "/bin/bash",
+      ["-c", boundedOutputWrapper, "nemoclaw-forward-service", outputPath, executable, ...args],
+      {
+        detached: true,
+        env: environment,
+        stdio: ["ignore", "ignore", "ignore"],
+      },
+    );
   } catch (error) {
     try {
       fs.closeSync(outputDescriptor);
@@ -246,7 +258,7 @@ function spawnForwardService(
   try {
     fs.closeSync(outputDescriptor);
   } catch {
-    // The child owns its inherited descriptor; the parent no longer needs it.
+    // The drain wrapper reopens the path; the parent no longer needs this descriptor.
   }
   return {
     pid: child.pid,
@@ -267,6 +279,11 @@ function spawnForwardService(
     },
   };
 }
+
+export const forwardServiceInternals = Object.freeze({
+  spawnForwardService,
+  startOutputLimitBytes: START_OUTPUT_LIMIT_BYTES,
+});
 
 function compactOpenShellDiagnostic(output: string): string {
   return stripVTControlCharacters(output)
