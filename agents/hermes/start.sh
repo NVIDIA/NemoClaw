@@ -1145,6 +1145,16 @@ def fail(message: str) -> None:
     sys.exit(1)
 
 
+def fail_repair_limit(message: str) -> None:
+    print(
+        f"[SECURITY] Refusing Hermes log repair because {message}; "
+        "archive or remove old retained logs from a trusted host-side "
+        "recovery environment before retrying",
+        file=sys.stderr,
+    )
+    sys.exit(os.EX_TEMPFAIL)
+
+
 if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY"):
     fail("descriptor-safe directory flags are unavailable")
 
@@ -1341,10 +1351,9 @@ def repair_file(parent_fd: int, name: str, path: str) -> None:
 def account_repair_entry(entry_count: list[int]) -> None:
     entry_count[0] += 1
     if entry_count[0] > max_repair_entries:
-        fail(
+        fail_repair_limit(
             f"{root}/logs exceeds maximum repair entry count "
-            f"{max_repair_entries}; archive or remove old retained logs "
-            "from a trusted host-side recovery environment before retrying"
+            f"{max_repair_entries}"
         )
 
 
@@ -1366,7 +1375,7 @@ def repair_directory(
     depth: int = 0,
 ) -> None:
     if depth > max_repair_depth:
-        fail(f"{display_path} exceeds maximum repair depth {max_repair_depth}")
+        fail_repair_limit(f"{display_path} exceeds maximum repair depth {max_repair_depth}")
 
     for name in scan_names(directory_fd, display_path):
         account_repair_entry(entry_count)
@@ -1402,7 +1411,7 @@ def validate_repair_entry_budget(
     depth: int = 0,
 ) -> None:
     if depth > max_repair_depth:
-        fail(f"{display_path} exceeds maximum repair depth {max_repair_depth}")
+        fail_repair_limit(f"{display_path} exceeds maximum repair depth {max_repair_depth}")
     for name in scan_names(directory_fd, display_path):
         account_repair_entry(entry_count)
         if name in skip_names:
@@ -1651,9 +1660,13 @@ fail_hermes_startup_layout_repair() {
 # supervised relaunch cannot make this condition transient, so callers must
 # quarantine instead of retrying the same mutation forever.
 readonly HERMES_LAYOUT_REPAIR_REFUSED_STATUS=78
+readonly HERMES_LOG_REPAIR_LIMIT_STATUS=75
+HERMES_LAYOUT_REPAIR_RECOVERY_ACTION=recreate
 
 repair_hermes_startup_layout() {
-  local state_dir
+  local log_repair_status state_dir
+
+  HERMES_LAYOUT_REPAIR_RECOVERY_ACTION=recreate
 
   # The gateway writes state below sessions, gateway, and runtime. Sandbox
   # backup and restore also access these directories. Keep them group-writable;
@@ -1669,8 +1682,15 @@ repair_hermes_startup_layout() {
     fail_hermes_startup_layout_repair "config root"
     return 1
   fi
-  if ! repair_hermes_log_permissions; then
-    fail_hermes_startup_layout_repair "logs directory"
+  log_repair_status=0
+  repair_hermes_log_permissions || log_repair_status=$?
+  if [ "$log_repair_status" -ne 0 ]; then
+    if [ "$log_repair_status" -eq "$HERMES_LOG_REPAIR_LIMIT_STATUS" ]; then
+      HERMES_LAYOUT_REPAIR_RECOVERY_ACTION="retained-log-cleanup"
+      echo "[gateway] Hermes pre-launch layout repair stopped at the retained-log safety limit" >&2
+    else
+      fail_hermes_startup_layout_repair "logs directory"
+    fi
     return 1
   fi
   for state_dir in hooks image_cache audio_cache; do
@@ -3653,7 +3673,11 @@ recover_hermes_gateway_current_user() {
     launch_hermes_gateway_current_user || launch_status=$?
     case "$launch_status" in
       "$layout_repair_refused_status")
-        echo "[gateway] Hermes startup layout repair refused automatic respawn; relaunch is quarantined until sandbox recreation" >&2
+        if [ "${HERMES_LAYOUT_REPAIR_RECOVERY_ACTION:-recreate}" = "retained-log-cleanup" ]; then
+          echo "[gateway] Hermes startup layout repair reached the retained-log safety limit; automatic respawn is quarantined until old retained logs are archived or removed from a trusted host-side recovery environment and the sandbox is restarted" >&2
+        else
+          echo "[gateway] Hermes startup layout repair refused automatic respawn; relaunch is quarantined until sandbox recreation" >&2
+        fi
         quarantine_hermes_managed_gateway_relaunch
         return 1
         ;;

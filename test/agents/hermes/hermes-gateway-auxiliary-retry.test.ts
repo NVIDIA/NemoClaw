@@ -144,6 +144,43 @@ describe("Hermes gateway auxiliary retry", () => {
     expect(result.stderr).not.toContain("retrying under the same supervisor");
   });
 
+  it("keeps status 78 recoverable when retained logs exceed a safety limit", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf-8");
+    const launchFunction = extractShellFunction(
+      source,
+      "launch_hermes_gateway_current_user",
+    ).replace(
+      "launch_hermes_gateway_current_user() {",
+      "launch_hermes_gateway_current_user_impl() {",
+    );
+    const result = runBashHarness([
+      "prepare_hermes_nonroot_runtime() { return 0; }",
+      "has_live_hermes_gateway() { return 1; }",
+      'repair_hermes_startup_layout() { HERMES_LAYOUT_REPAIR_RECOVERY_ACTION=retained-log-cleanup; return 1; }',
+      extractShellFunction(source, "cleanup_stale_hermes_gateway_runtime"),
+      launchFunction,
+      "launch_hermes_gateway_current_user() { launch_hermes_gateway_current_user_impl; }",
+      "quarantine_hermes_managed_gateway_relaunch() { quarantine_calls=$((quarantine_calls + 1)); return 0; }",
+      extractShellFunction(source, "recover_hermes_gateway_current_user"),
+      "HERMES_LAYOUT_REPAIR_REFUSED_STATUS=78",
+      "HERMES_DIR=/unused-hermes-home",
+      "quarantine_calls=0",
+      "if recover_hermes_gateway_current_user; then recovery_status=0; else recovery_status=$?; fi",
+      'printf "recovery_status=%s\\nquarantine_calls=%s\\n" "$recovery_status" "$quarantine_calls"',
+    ]);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim().split("\n")).toEqual([
+      "recovery_status=1",
+      "quarantine_calls=1",
+    ]);
+    expect(result.stderr).toContain(
+      "automatic respawn is quarantined until old retained logs are archived or removed from a trusted host-side recovery environment and the sandbox is restarted",
+    );
+    expect(result.stderr).not.toContain("until sandbox recreation");
+    expect(result.stderr).not.toContain("retrying under the same supervisor");
+  });
+
   it("stops and charges a replacement that loses health during auxiliary retry", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf-8");
     const result = runBashHarness([

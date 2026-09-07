@@ -665,6 +665,7 @@ function runHermesGatewayRuntimeCleanup(opts: {
       `HERMES_DIR=${shellQuote(hermesHome)}`,
       `NEMOCLAW_PROC_ROOT=${shellQuote(procRoot)}`,
       "readonly HERMES_LAYOUT_REPAIR_REFUSED_STATUS=78",
+      "readonly HERMES_LOG_REPAIR_LIMIT_STATUS=75",
       "PUBLIC_PORT=8642",
       "INTERNAL_PORT=18642",
       "DASHBOARD_PUBLIC_PORT=18789",
@@ -1366,9 +1367,11 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
   });
   it("refuses a log tree beyond the bounded repair depth", () => {
     const run = runHermesGatewayRuntimeCleanup({ deepLogDepth: 65 });
-    expect(run.result.status).not.toBe(0);
+    expect(run.result.status).toBe(78);
     expect(run.result.stderr).toContain("[SECURITY] Refusing Hermes log repair because");
     expect(run.result.stderr).toContain("exceeds maximum repair depth 64");
+    expect(run.result.stderr).toContain("archive or remove old retained logs");
+    expect(run.result.stderr).not.toContain("recreated sandbox");
     expect(run.result.stderr).not.toContain("RecursionError");
   });
   it("refuses a log tree beyond the bounded repair entry count", { timeout: 30_000 }, () => {
@@ -1376,6 +1379,7 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
     expect(run.result.status).toBe(78);
     expect(run.result.stderr).toContain("/logs exceeds maximum repair entry count 4096");
     expect(run.result.stderr).toContain("archive or remove old retained logs");
+    expect(run.result.stderr).not.toContain("recreated sandbox");
     expect(run.wideLogEntriesAfter).toEqual(run.wideLogEntriesBefore);
   });
   it("refuses a history path that hard-links the mutable config file", () => {

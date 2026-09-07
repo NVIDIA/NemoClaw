@@ -15,6 +15,8 @@ const PREPARATION_QUARANTINE_DIAGNOSTIC =
   "[gateway] HERMES_RUNTIME_PREPARATION_FAILED stage=future-preparation-stage; automatic respawn is quarantined until the sandbox state is repaired and the sandbox is restarted";
 const LAYOUT_QUARANTINE_DIAGNOSTIC =
   "[gateway] Hermes startup layout repair refused automatic respawn; relaunch is quarantined until sandbox recreation";
+const LOG_LIMIT_QUARANTINE_DIAGNOSTIC =
+  "[gateway] Hermes startup layout repair reached the retained-log safety limit; automatic respawn is quarantined until old retained logs are archived or removed from a trusted host-side recovery environment and the sandbox is restarted";
 const LAYOUT_REPAIR_DIAGNOSTICS = ["sessions", "gateway", "runtime"]
   .map((name) => `[gateway] Hermes pre-launch layout repair failed at ${name} state directory`)
   .concat(
@@ -974,6 +976,7 @@ with tempfile.TemporaryDirectory() as root:
         *layout_repair_events,
         "[gateway] HERMES_RUNTIME_PREPARATION_FAILED stage=future-preparation-stage; automatic respawn is quarantined until the sandbox state is repaired and the sandbox is restarted",
         "[gateway] Hermes startup layout repair refused automatic respawn; relaunch is quarantined until sandbox recreation",
+        "[gateway] Hermes startup layout repair reached the retained-log safety limit; automatic respawn is quarantined until old retained logs are archived or removed from a trusted host-side recovery environment and the sandbox is restarted",
         "[gateway] Hermes auxiliary repair failed; retrying while the exact gateway remains healthy",
         "[gateway] Hermes replacement gateway failed listener or health validation; stopping the exact child",
         "[gateway] Hermes replacement gateway lost its listener or health endpoint during auxiliary validation; stopping the exact child",
@@ -1131,6 +1134,7 @@ with tempfile.TemporaryDirectory() as root:
             *layout_repair_events,
             "[gateway] HERMES_RUNTIME_PREPARATION_FAILED stage=future-preparation-stage; automatic respawn is quarantined until the sandbox state is repaired and the sandbox is restarted",
             "[gateway] Hermes startup layout repair refused automatic respawn; relaunch is quarantined until sandbox recreation",
+            "[gateway] Hermes startup layout repair reached the retained-log safety limit; automatic respawn is quarantined until old retained logs are archived or removed from a trusted host-side recovery environment and the sandbox is restarted",
             "[gateway] Hermes auxiliary repair failed; retrying while the exact gateway remains healthy",
             "[gateway] CRITICAL: Hermes gateway lost its listener or health endpoint; stopping the exact child for recovery",
         ]
@@ -1374,6 +1378,7 @@ describe("managed gateway root control", () => {
           ...LAYOUT_REPAIR_DIAGNOSTICS,
           PREPARATION_QUARANTINE_DIAGNOSTIC,
           LAYOUT_QUARANTINE_DIAGNOSTIC,
+          LOG_LIMIT_QUARANTINE_DIAGNOSTIC,
           "[gateway] Hermes auxiliary repair failed; retrying while the exact gateway remains healthy",
           "[gateway] Hermes replacement gateway failed listener or health validation; stopping the exact child",
           "[gateway] Hermes replacement gateway lost its listener or health endpoint during auxiliary validation; stopping the exact child",
@@ -1408,6 +1413,7 @@ describe("managed gateway root control", () => {
           ...LAYOUT_REPAIR_DIAGNOSTICS.map((line) => `NEMOCLAW_START_LOG=${line}`),
           `NEMOCLAW_START_LOG=${PREPARATION_QUARANTINE_DIAGNOSTIC}`,
           `NEMOCLAW_START_LOG=${LAYOUT_QUARANTINE_DIAGNOSTIC}`,
+          `NEMOCLAW_START_LOG=${LOG_LIMIT_QUARANTINE_DIAGNOSTIC}`,
           "NEMOCLAW_START_LOG=[gateway] Hermes auxiliary repair failed; retrying while the exact gateway remains healthy",
           "NEMOCLAW_START_LOG=[gateway] CRITICAL: Hermes gateway lost its listener or health endpoint; stopping the exact child for recovery",
         ],
@@ -1422,6 +1428,7 @@ describe("managed gateway root control", () => {
           ...LAYOUT_REPAIR_DIAGNOSTICS.map((line) => `NEMOCLAW_START_LOG=${line}`),
           `NEMOCLAW_START_LOG=${PREPARATION_QUARANTINE_DIAGNOSTIC}`,
           `NEMOCLAW_START_LOG=${LAYOUT_QUARANTINE_DIAGNOSTIC}`,
+          `NEMOCLAW_START_LOG=${LOG_LIMIT_QUARANTINE_DIAGNOSTIC}`,
           "NEMOCLAW_START_LOG=[gateway] Hermes auxiliary repair failed; retrying while the exact gateway remains healthy",
           "NEMOCLAW_START_LOG=[gateway] CRITICAL: Hermes gateway lost its listener or health endpoint; stopping the exact child for recovery",
         ],
