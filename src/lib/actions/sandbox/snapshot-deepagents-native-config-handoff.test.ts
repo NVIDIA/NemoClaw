@@ -49,8 +49,8 @@ afterEach(() => {
   }
 });
 
-describe("runSandboxSnapshot Deep Agents projection handoff", () => {
-  it("executes the managed projection repair before restoring snapshot files (#10756)", async () => {
+describe("runSandboxSnapshot Deep Agents native config handoff", () => {
+  it("executes the native config repair before restoring snapshot files (#10756)", async () => {
     f.getLatestBackupMock.mockReturnValue({
       snapshotVersion: 4,
       name: "stable",
@@ -70,7 +70,6 @@ describe("runSandboxSnapshot Deep Agents projection handoff", () => {
             env: ["GITHUB_TOKEN"],
             providerName: "alpha-mcp-github",
             policyName: "mcp-bridge-github",
-            addedAt: "2026-06-01T00:00:00.000Z",
           },
           jira: {
             server: "jira",
@@ -80,17 +79,15 @@ describe("runSandboxSnapshot Deep Agents projection handoff", () => {
             env: ["JIRA_MCP_TOKEN"],
             providerName: "alpha-mcp-jira",
             policyName: "mcp-bridge-jira",
-            addedAt: "2026-06-01T00:00:00.000Z",
           },
           slack: {
             server: "slack",
             agent: "openclaw",
-            adapter: "mcporter",
+            adapter: "openclaw-config",
             url: "https://mcp.slack.com/v1/",
             env: ["SLACK_MCP_TOKEN"],
             providerName: "alpha-mcp-slack",
             policyName: "mcp-bridge-slack",
-            addedAt: "2026-06-01T00:00:00.000Z",
           },
         },
       },
@@ -104,8 +101,8 @@ describe("runSandboxSnapshot Deep Agents projection handoff", () => {
         return "v2\n";
       })
       .mockImplementationOnce((_sandboxName, _entry, command: string) => {
-        expect(command).toContain("reset_projection(data)");
-        f.lifecycleMock.events.push("restore-mcp-projection");
+        expect(command).toContain("reset_native_config(data)");
+        f.lifecycleMock.events.push("restore-mcp-native-config");
         projectedConfig = runDeepAgentsConfigCommand(command);
         expect(projectedConfig.status, projectedConfig.stderr).toBe(0);
         return projectedConfig.stdout;
@@ -114,7 +111,7 @@ describe("runSandboxSnapshot Deep Agents projection handoff", () => {
       f.lifecycleMock.events.push("authorize-mutation");
     });
     adapterMocks.inspectRegistration.mockImplementation(() => {
-      f.lifecycleMock.events.push("verify-mcp-projection");
+      f.lifecycleMock.events.push("verify-mcp-native-config");
       return { state: "registered" };
     });
     f.restoreSandboxStateMock.mockImplementation(() => {
@@ -153,9 +150,9 @@ describe("runSandboxSnapshot Deep Agents projection handoff", () => {
     expect(f.lifecycleMock.events).toEqual([
       "classify-runtime",
       "authorize-mutation",
-      "restore-mcp-projection",
-      "verify-mcp-projection",
-      "verify-mcp-projection",
+      "restore-mcp-native-config",
+      "verify-mcp-native-config",
+      "verify-mcp-native-config",
       "restore-snapshot-state",
     ]);
   });

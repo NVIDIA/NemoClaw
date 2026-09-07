@@ -81,25 +81,24 @@ If status reports an incomplete add transaction, rerun the original `mcp add` co
 Re-export the value if the provider still needs to be created.
 
 To abandon the transaction, run `mcp remove <server> --force`.
-NemoClaw cleans only resources whose ownership it can prove and keeps the registry entry when residual cleanup remains.
+NemoClaw disables the native agent entry first and cleans only live resources whose ownership it can prove. It preserves the workspace provider and reports any residual policy or attachment cleanup.
 
 ## Agent MCP Capability Is Missing
 
-If add or restart reports that `mcporter`, the Hermes transaction helper, or Deep Agents managed MCP capability v2 is unavailable, rebuild the sandbox onto a current image before retrying.
-An existing Deep Agents v1 entry remains removable, destroyable, and eligible for rebuild teardown when NemoClaw can identify the registry-owned legacy entry.
-
-The rebuilt image must pass the v2 capability check before its MCP runtime is restored.
+If add or restart reports that the OpenClaw native writer, Hermes transaction helper, or Deep Agents native MCP capability v3 is unavailable, rebuild the sandbox onto a current image before retrying.
+When an older OpenClaw or Deep Agents sandbox has a legacy MCP file, preview `mcp migrate`, then use `mcp migrate --apply` to convert it. A native definition that conflicts with the legacy definition stops migration before mutation.
 
 <AgentOnly variant="deepagents">
-The rebuild installs the current projection path and reconstructs `/sandbox/.deepagents/.nemoclaw-mcp.json` from the host registry.
-Rebuild a Deep Agents sandbox, then retry the managed MCP command:
+Migration carries the legacy `.deepagents/.nemoclaw-mcp.json` entries through a normal rebuild into the native `/sandbox/.deepagents/.mcp.json` file.
+Preview and apply the migration, then retry the managed MCP command:
 
 ```bash
-nemo-deepagents <name> rebuild
+nemo-deepagents <name> mcp migrate
+nemo-deepagents <name> mcp migrate --apply
 nemo-deepagents <name> mcp add <server-name> --url <url> --env <credential-env>
 ```
 
-NemoClaw does not auto-load user-owned `/sandbox/.deepagents/.mcp.json` or project MCP files into managed configuration.
+NemoClaw preserves unrelated entries in `/sandbox/.deepagents/.mcp.json` and mutates only the named managed server.
 Use `nemo-deepagents <name> mcp ...` for servers that need OpenShell credential replacement and egress policy.
 </AgentOnly>
 
@@ -348,7 +347,7 @@ If the endpoint resolves to RFC1918, carrier-grade network address translation (
 The declared host must equal the normalized hostname from `--url`.
 NemoClaw rejects a private endpoint without that explicit declaration before provider, policy, registry, or adapter mutation.
 
-An agent-native registration path, such as OpenClaw `mcporter` run inside the sandbox, may accept a plain-HTTP or local URL, but it bypasses NemoClaw credential replacement and generated egress policy.
+An agent-native registration path, such as editing OpenClaw `openclaw.json` inside the sandbox, may accept a plain-HTTP or local URL, but it bypasses NemoClaw credential replacement and generated egress policy.
 A URL that the agent-native path accepts is therefore not registrable through managed `mcp add`.
 
 For a host-local server, keep the MCP process on loopback when practical.

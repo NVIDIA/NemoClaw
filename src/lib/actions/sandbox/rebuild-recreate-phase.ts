@@ -32,7 +32,7 @@ import {
 import {
   type McpRebuildPreparation,
   printMcpRebuildRetryCommand,
-  restoreMcpRegistryForRebuildRetry,
+  retainMcpHandoffForRebuildRetry,
 } from "./rebuild-mcp-phase";
 import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
 import type { RebuildRecreateJournal } from "./rebuild-recreate-journal";
@@ -336,7 +336,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     }
 
     registryRollback.restoreForRetry();
-    restoreMcpRegistryForRebuildRetry(recoveryRecreate, rebuildMcpEntries, sb, log);
+    retainMcpHandoffForRebuildRetry(recoveryRecreate, rebuildMcpEntries, sb, log);
 
     console.error("");
     if (recoveryRecreate) {

@@ -5,7 +5,6 @@ import { GATEWAY_RESTART_MARKERS as MARKERS } from "../../agent/gateway-restart-
 import * as agentRuntime from "../../agent/runtime";
 import { G, R } from "../../cli/terminal-style";
 import { redactFullWithUrls } from "../../security/redact";
-import { hermesMcpReconciliationRemediationLines } from "./mcp-bridge-hermes-reconciliation";
 import { assertHermesPortableCommandUnavailable } from "../../onboard/experimental/portable-agent-lifecycle";
 import { withMcpLifecycleLockSync } from "../../state/mcp-lifecycle-lock-acquisition";
 
@@ -65,7 +64,6 @@ export type GatewayRestartFailureLayer =
   | "secret-boundary refusal"
   | "unsafe config path"
   | "config hash mismatch"
-  | "MCP reconciliation refusal"
   | "relaunch quarantined"
   | "launch failure"
   | "health timeout"
@@ -257,16 +255,6 @@ export function classifyGatewayRestartFailure(result: GatewayRestartCommandResul
     };
   }
   if (
-    output.includes("mcp-integrity") ||
-    output.includes("mcp-reconcile-required") ||
-    output.includes("HERMES_MCP_CONFIG_DRIFT")
-  ) {
-    return {
-      layer: "MCP reconciliation refusal",
-      detail: detail || "Hermes MCP reconciliation refused",
-    };
-  }
-  if (
     output.includes(MARKERS.GATEWAY_CONFIG_HASH_MISMATCH) ||
     output.includes("HERMES_LOCKED_HASH_MISMATCH") ||
     output.includes("HERMES_CONFIG_HASH_MISMATCH")
@@ -341,11 +329,6 @@ export function printGatewayRestartFailure(
   }
   // Remediation is emitted outside the detail guard: an empty controller detail
   // is exactly the case where the operator has nothing else to go on.
-  if (layer === "MCP reconciliation refusal") {
-    for (const line of hermesMcpReconciliationRemediationLines(sandboxName)) {
-      console.error(`  ${line}`);
-    }
-  }
   if (gatewayLogTail.length > 0) {
     console.error("  Hermes gateway log tail (sanitized):");
     for (const line of gatewayLogTail) console.error(`  ${line}`);

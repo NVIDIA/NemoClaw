@@ -9,7 +9,7 @@
 
 import { stripAnsi } from "../../adapters/openshell/client";
 import { runOpenshellProviderCommand } from "../../adapters/openshell/provider-command";
-import type { McpBridgeEntry } from "../../state/registry";
+import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import { commandOutput, type OpenShellCommandResult } from "./mcp-bridge-output";
 import {
@@ -29,7 +29,7 @@ import {
 
 function exactAttachment(
   sandboxName: string,
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
 ): { inspection: McpProviderAttachmentInspection; attachment?: McpProviderAttachment } {
   const inspection = inspectMcpProviderAttachments(sandboxName, runtimeSelection);
@@ -43,7 +43,7 @@ function exactAttachment(
 
 function attachmentMatchesCurrentProviderSnapshot(
   attachment: McpProviderAttachment | undefined,
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
 ): boolean {
   return (
     !!attachment &&
@@ -56,7 +56,7 @@ function attachmentMatchesCurrentProviderSnapshot(
 
 export function attachProvider(
   sandboxName: string,
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
 ): void {
   if (!entry.providerName) return;
@@ -125,7 +125,7 @@ function isRetryableSandboxMutationConflict(status: number | null, output: strin
 
 export function detachProvider(
   sandboxName: string,
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
   options: {
     allowLegacyGeneric?: boolean;
     bestEffort?: boolean;
@@ -206,7 +206,7 @@ export function detachProvider(
  */
 export function detachMissingProviderReference(
   sandboxName: string,
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
 ): ProviderDetachOutcome {
   if (!entry.providerName) return "absent";

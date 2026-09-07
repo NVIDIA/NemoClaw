@@ -1,16 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { getSandbox, type McpBridgeEntry } from "../../state/registry";
+import type { McpSourceEntry } from "./mcp-bridge-contracts";
+import { getTransientBridgeState } from "./mcp-bridge/transient-state";
 import { assertDeepAgentsMcpMutationRuntimeCapability } from "./mcp-bridge-adapter-deepagents-capability";
 import { runDeepAgentsAdapterCommand } from "./mcp-bridge-adapter-deepagents-command";
 import { inspectDeepAgentsAdapterRegistration } from "./mcp-bridge-adapter-deepagents-inspection";
 import { buildDeepAgentsMcpRollbackRegisterCommand } from "./mcp-bridge-adapter-deepagents-legacy";
 import {
-  DEEPAGENTS_MANAGED_PROJECTION_HELPERS,
+  DEEPAGENTS_NATIVE_MCP_CONFIG_HELPERS,
   DEEPAGENTS_MCP_MAX_SERVERS,
   DEEPAGENTS_STRICT_JSON_HELPERS,
-} from "./mcp-bridge-adapter-deepagents-projection";
+} from "./mcp-bridge-adapter-deepagents-native-config";
 import {
   MANAGED_HTTP_SERVER_MATCH_HELPERS,
   DEEPAGENTS_MCP_CONFIG_PATH,
@@ -23,21 +24,21 @@ import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provide
 import { McpBridgeError } from "./mcp-bridge-contracts";
 
 export function buildDeepAgentsMcpRegisterCommand(
-  entry: McpBridgeEntry | undefined,
+  entry: McpSourceEntry | undefined,
   replaceExisting = false,
-  managedEntries: readonly McpBridgeEntry[] = entry ? [entry] : [],
+  managedEntries: readonly McpSourceEntry[] = entry ? [entry] : [],
   teardownRollback = false,
   credentialRevision?: McpAttachedCredentialRevision,
-  options: { resetManagedProjection?: boolean } = {},
+  options: { resetNativeConfig?: boolean } = {},
 ): string {
-  const resetManagedProjection = options.resetManagedProjection === true;
-  if (resetManagedProjection && (!replaceExisting || teardownRollback)) {
+  const resetNativeConfig = options.resetNativeConfig === true;
+  if (resetNativeConfig && (!replaceExisting || teardownRollback)) {
     throw new McpBridgeError(
-      "Deep Agents managed MCP projection reset requires an ordinary replacement mutation.",
+      "Deep Agents native MCP configuration reset requires an ordinary replacement mutation.",
     );
   }
-  if (!entry && !resetManagedProjection) {
-    throw new McpBridgeError("Deep Agents MCP registration requires a registry entry.");
+  if (!entry && !resetNativeConfig) {
+    throw new McpBridgeError("Deep Agents MCP registration requires a source entry.");
   }
   const expectedServers = Object.fromEntries(
     managedEntries
@@ -58,7 +59,7 @@ export function buildDeepAgentsMcpRegisterCommand(
   }
   if (teardownRollback) {
     if (!entry) {
-      throw new McpBridgeError("Deep Agents MCP rollback requires a registry entry.");
+      throw new McpBridgeError("Deep Agents MCP rollback requires a source entry.");
     }
     return buildDeepAgentsMcpRollbackRegisterCommand(entry, expectedServers);
   }
@@ -67,10 +68,10 @@ export function buildDeepAgentsMcpRegisterCommand(
     expected: entry ? deepAgentsManagedServerConfig(entry, credentialRevision) : null,
     expectedServers,
     replaceExisting,
-    resetManagedProjection,
+    resetNativeConfig,
   };
-  // Snapshot restore has explicit authority to replace this exact NemoClaw-owned
-  // projection. Stage a regular file and replace the directory entry atomically,
+  // Snapshot restore has explicit authority to replace this exact native file.
+  // Stage a regular file and replace the directory entry atomically,
   // so a symlink or FIFO is never opened and a symlink target stays unchanged.
   return [
     "/opt/venv/bin/python3 -I - <<'PY'",
@@ -78,18 +79,18 @@ export function buildDeepAgentsMcpRegisterCommand(
     `payload = json.loads(${pythonJsonLiteral(payload)})`,
     `config_path = pathlib.Path(${JSON.stringify(DEEPAGENTS_MCP_CONFIG_PATH)})`,
     ...DEEPAGENTS_STRICT_JSON_HELPERS,
-    ...DEEPAGENTS_MANAGED_PROJECTION_HELPERS,
+    ...DEEPAGENTS_NATIVE_MCP_CONFIG_HELPERS,
     ...MANAGED_HTTP_SERVER_MATCH_HELPERS,
     "source_descriptor = None",
     "def fail_registration(message):",
-    "    close_managed_projection_descriptor(source_descriptor)",
+    "    close_native_mcp_config_descriptor(source_descriptor)",
     "    print(message, file=sys.stderr)",
     "    raise SystemExit(2)",
-    "def open_projection_parent():",
+    "def open_native_config_parent():",
     "    parent_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW",
     "    parent_name = config_path.parent.name",
     "    if not parent_name or parent_name in ('.', '..'):",
-    "        raise ValueError('managed MCP projection parent is unsafe')",
+    "        raise ValueError('native MCP configuration parent is unsafe')",
     "    anchor_descriptor = os.open(config_path.parent.parent, parent_flags)",
     "    try:",
     "        try:",
@@ -102,16 +103,16 @@ export function buildDeepAgentsMcpRegisterCommand(
     "        safe = (stat.S_ISDIR(opened.st_mode) and opened.st_uid == os.getuid() and (opened.st_dev, opened.st_ino) == (linked.st_dev, linked.st_ino))",
     "        if not safe:",
     "            os.close(parent_descriptor)",
-    "            raise ValueError('managed MCP projection parent is unsafe')",
+    "            raise ValueError('native MCP configuration parent is unsafe')",
     "        return parent_descriptor",
     "    finally:",
     "        os.close(anchor_descriptor)",
-    "def reset_projection(value):",
-    "    payload_bytes = managed_projection_bytes(value)",
+    "def reset_native_config(value):",
+    "    payload_bytes = native_mcp_config_bytes(value)",
     "    try:",
-    "        parent_descriptor = open_projection_parent()",
+    "        parent_descriptor = open_native_config_parent()",
     "    except (OSError, ValueError) as exc:",
-    "        raise ValueError('managed MCP projection parent is unsafe') from exc",
+    "        raise ValueError('native MCP configuration parent is unsafe') from exc",
     "    staged_name = ''",
     "    staged_descriptor = None",
     "    try:",
@@ -124,28 +125,28 @@ export function buildDeepAgentsMcpRegisterCommand(
     "            except FileExistsError:",
     "                continue",
     "        if staged_descriptor is None:",
-    "            raise ValueError('managed MCP projection staging file could not be created')",
+    "            raise ValueError('native MCP configuration staging file could not be created')",
     "        staged_metadata = os.fstat(staged_descriptor)",
     "        if not stat.S_ISREG(staged_metadata.st_mode) or staged_metadata.st_uid != os.getuid() or stat.S_IMODE(staged_metadata.st_mode) != 0o600 or staged_metadata.st_nlink != 1:",
-    "            raise ValueError('managed MCP projection staging file is unsafe')",
+    "            raise ValueError('native MCP configuration staging file is unsafe')",
     "        offset = 0",
     "        while offset < len(payload_bytes):",
     "            written = os.write(staged_descriptor, payload_bytes[offset:])",
     "            if written <= 0:",
-    "                raise OSError('managed MCP projection write made no progress')",
+    "                raise OSError('native MCP configuration write made no progress')",
     "            offset += written",
     "        os.fsync(staged_descriptor)",
     "        staged_after = os.fstat(staged_descriptor)",
     "        staged_link = os.stat(staged_name, dir_fd=parent_descriptor, follow_symlinks=False)",
     "        staged_stable = (stat.S_ISREG(staged_after.st_mode) and staged_after.st_uid == os.getuid() and stat.S_IMODE(staged_after.st_mode) == 0o600 and staged_after.st_nlink == 1 and staged_after.st_size == len(payload_bytes) and managed_fingerprint(staged_after) == managed_fingerprint(staged_link))",
     "        if not staged_stable:",
-    "            raise ValueError('managed MCP projection staging file changed before publication')",
+    "            raise ValueError('native MCP configuration staging file changed before publication')",
     "        try:",
     "            current = os.stat(config_path.name, dir_fd=parent_descriptor, follow_symlinks=False)",
     "        except FileNotFoundError:",
     "            current = None",
     "        if current is not None and stat.S_ISDIR(current.st_mode):",
-    "            raise ValueError('managed MCP projection path is a directory')",
+    "            raise ValueError('native MCP configuration path is a directory')",
     "        os.replace(staged_name, config_path.name, src_dir_fd=parent_descriptor, dst_dir_fd=parent_descriptor)",
     "        staged_name = ''",
     "        os.fsync(parent_descriptor)",
@@ -158,65 +159,47 @@ export function buildDeepAgentsMcpRegisterCommand(
     "            except FileNotFoundError:",
     "                pass",
     "        os.close(parent_descriptor)",
-    "    persisted, _ = read_managed_projection(config_path)",
+    "    persisted, _ = read_native_mcp_config(config_path)",
     "    if persisted != value:",
-    "        raise ValueError('managed MCP projection verification failed')",
-    "if payload['resetManagedProjection']:",
+    "        raise ValueError('native MCP configuration verification failed')",
+    "if payload['resetNativeConfig']:",
     "    data = {}",
     "    source_identity = None",
     "else:",
     "    try:",
-    "        data, source_identity, source_descriptor = load_managed_projection_for_update(config_path)",
+    "        data, source_identity, source_descriptor = load_native_mcp_config_for_update(config_path)",
     "    except (OSError, UnicodeDecodeError, ValueError) as exc:",
     `        fail_registration(f'Invalid ${DEEPAGENTS_MCP_CONFIG_PATH}: {exc}')`,
     "if not isinstance(data, dict):",
     `    fail_registration('Invalid ${DEEPAGENTS_MCP_CONFIG_PATH}: expected a JSON object')`,
-    "if data and set(data) != {'mcpServers'}:",
-    `    fail_registration('Invalid ${DEEPAGENTS_MCP_CONFIG_PATH}: only mcpServers is allowed')`,
     "servers = data.setdefault('mcpServers', {})",
     "if not isinstance(servers, dict):",
     `    fail_registration('Invalid ${DEEPAGENTS_MCP_CONFIG_PATH}: mcpServers must be an object')`,
     "if payload['server'] in servers and not payload['replaceExisting']:",
     `    fail_registration(f"MCP server '{payload['server']}' already exists in ${DEEPAGENTS_MCP_CONFIG_PATH} and is not managed by NemoClaw.")`,
-    "if not payload['resetManagedProjection']:",
-    "    for name, expected in payload['expectedServers'].items():",
-    "        if name == payload['server']:",
-    "            continue",
-    "        if name not in servers:",
-    `            fail_registration(f"Invalid ${DEEPAGENTS_MCP_CONFIG_PATH}: registry-owned MCP sibling '{name}' is absent")`,
-    "        if not managed_http_server_matches(servers[name], expected, True):",
-    `            fail_registration(f"Invalid ${DEEPAGENTS_MCP_CONFIG_PATH}: registry-owned MCP sibling '{name}' is not exact registry-owned state")`,
-    "for name, current in servers.items():",
-    "    if name == payload['server'] and payload['replaceExisting']:",
-    "        continue",
-    "    if not managed_http_server_matches(current, payload['expectedServers'].get(name), True):",
-    `        fail_registration(f"Invalid ${DEEPAGENTS_MCP_CONFIG_PATH}: MCP server '{name}' is not exact registry-owned state")`,
-    "next_servers = {}",
-    "for name, expected in payload['expectedServers'].items():",
-    "    if not payload['resetManagedProjection'] and name != payload['server'] and name in servers:",
-    "        next_servers[name] = servers[name]",
-    "    else:",
-    "        next_servers[name] = expected",
-    "data = {'mcpServers': next_servers}",
-    "if not payload['resetManagedProjection']:",
+    "if payload['resetNativeConfig']:",
+    "    data = {'mcpServers': dict(payload['expectedServers'])}",
+    "elif payload['server'] is not None:",
+    "    servers[payload['server']] = payload['expected']",
+    "if not payload['resetNativeConfig']:",
     "    config_path.parent.mkdir(parents=True, exist_ok=True)",
     "try:",
-    "    if payload['resetManagedProjection']:",
-    "        reset_projection(data)",
+    "    if payload['resetNativeConfig']:",
+    "        reset_native_config(data)",
     "    else:",
-    "        write_managed_projection(config_path, data, source_identity, source_descriptor)",
+    "        write_native_mcp_config(config_path, data, source_identity, source_descriptor)",
     "except (OSError, ValueError) as exc:",
     `    fail_registration(f'Could not publish ${DEEPAGENTS_MCP_CONFIG_PATH}: {exc}')`,
     "PY",
   ].join("\n");
 }
 
-function registryOwnedDeepAgentsEntries(
+function observedDeepAgentsEntries(
   sandboxName: string,
-  entry: McpBridgeEntry,
-): McpBridgeEntry[] {
-  const entries = new Map<string, McpBridgeEntry>();
-  const bridges = getSandbox(sandboxName)?.mcp?.bridges ?? {};
+  entry: McpSourceEntry,
+): McpSourceEntry[] {
+  const entries = new Map<string, McpSourceEntry>();
+  const bridges = getTransientBridgeState(sandboxName);
   for (const bridge of Object.values(bridges)) entries.set(bridge.server, bridge);
   entries.set(entry.server, entry);
   return [...entries.values()];
@@ -224,7 +207,7 @@ function registryOwnedDeepAgentsEntries(
 
 function verifyDeepAgentsAdapterRegistration(
   sandboxName: string,
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
   credentialRevision?: McpAttachedCredentialRevision,
 ): void {
@@ -243,7 +226,7 @@ function verifyDeepAgentsAdapterRegistration(
 
 export function registerDeepAgentsAdapter(
   sandboxName: string,
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
   envValues: Record<string, string> = {},
   replaceExisting = false,
@@ -256,7 +239,7 @@ export function registerDeepAgentsAdapter(
     buildDeepAgentsMcpRegisterCommand(
       entry,
       replaceExisting,
-      registryOwnedDeepAgentsEntries(sandboxName, entry),
+      observedDeepAgentsEntries(sandboxName, entry),
       teardownRollback,
       credentialRevision,
     ),
@@ -275,9 +258,9 @@ export function registerDeepAgentsAdapter(
   }
 }
 
-export function restoreDeepAgentsManagedMcpProjection(
+export function restoreDeepAgentsNativeMcpConfig(
   sandboxName: string,
-  entries: readonly McpBridgeEntry[],
+  entries: readonly McpSourceEntry[],
   runtimeSelection: McpProviderInspectionRuntimeSelection,
 ): void {
   const managedEntries = [...entries].sort((left, right) =>
@@ -290,11 +273,11 @@ export function restoreDeepAgentsManagedMcpProjection(
     )
   ) {
     throw new McpBridgeError(
-      "Managed MCP projection repair requires Deep Agents registry entries.",
+      "Native MCP configuration repair requires Deep Agents source entries.",
     );
   }
   const entry = managedEntries[0];
-  const commandEntry: Pick<McpBridgeEntry, "env"> = entry ?? { env: [] };
+  const commandEntry: Pick<McpSourceEntry, "env"> = entry ?? { env: [] };
   const runtimeKind = runDeepAgentsAdapterCommand(
     sandboxName,
     commandEntry,
@@ -314,9 +297,9 @@ export function restoreDeepAgentsManagedMcpProjection(
     sandboxName,
     commandEntry,
     buildDeepAgentsMcpRegisterCommand(entry, true, managedEntries, false, undefined, {
-      resetManagedProjection: true,
+      resetNativeConfig: true,
     }),
-    "Deep Agents Code managed MCP projection repair failed.",
+    "Deep Agents Code native MCP configuration repair failed.",
     runtimeSelection,
   );
   for (const managedEntry of managedEntries) {

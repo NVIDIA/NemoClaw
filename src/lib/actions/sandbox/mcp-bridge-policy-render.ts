@@ -59,10 +59,8 @@ function endpointPath(url: URL): string {
 
 function binariesForAdapter(adapter: AgentMcpAdapter): Array<{ path: string }> {
   switch (adapter) {
-    case "mcporter":
+    case "openclaw-config":
       return [
-        { path: "/usr/local/bin/mcporter" },
-        { path: "/usr/bin/mcporter" },
         { path: "/usr/local/bin/openclaw" },
         // npm entrypoints are #!/usr/bin/env node scripts. OpenShell binds
         // policy to /proc/<pid>/exe and ancestors, not spoofable argv paths.

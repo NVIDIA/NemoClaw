@@ -25,12 +25,12 @@ const RESTART_FAILED = {
 } as const;
 const RESTART_REFUSED = {
   ok: false,
-  failureLayer: "MCP reconciliation refusal",
+  failureLayer: "config hash mismatch",
   detail: "supervisor refused the restart before replacing the gateway",
 } as const;
 
 describe("binding the Hermes gateway to restored state", () => {
-  it("preserves an MCP refusal before gateway replacement (#8671)", () => {
+  it("preserves a config-integrity refusal before gateway replacement (#8671)", () => {
     const restartState = restartHermesGatewayAfterStateRestore("alpha", "hermes", {
       restartSandboxGateway: () => RESTART_REFUSED,
     });

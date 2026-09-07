@@ -430,38 +430,19 @@ describe("rebuild policy provider handoff", () => {
             },
           ],
         },
-        preservedMcpState,
-        managedMcpRebuildHandoff: true,
+        policyDocument: `network_policies:\n  mcp_bridge_github:\n    endpoints:\n      - protocol: mcp\n        credential_binding:\n          provider: alpha-mcp-github\n`,
       }),
     ).toEqual(["inference-provider", "alpha-telegram-bridge", "alpha-mcp-github"]);
   });
 
-  it("does not authorize MCP registry names without the managed rebuild handoff", () => {
+  it("does not authorize MCP providers absent from the source policy", () => {
     expect(
       resolveRebuildPolicyProviderAuthority({
         createArgs: [],
         messagingPlan: null,
-        preservedMcpState,
-        managedMcpRebuildHandoff: false,
+        policyDocument: "network_policies: {}\n",
       }),
     ).toEqual([]);
   });
 
-  it("ignores incomplete MCP add records even with a managed rebuild handoff", () => {
-    expect(
-      resolveRebuildPolicyProviderAuthority({
-        createArgs: [],
-        messagingPlan: null,
-        preservedMcpState: {
-          bridges: {
-            github: {
-              ...preservedMcpState.bridges.github,
-              addState: "prepared",
-            },
-          },
-        },
-        managedMcpRebuildHandoff: true,
-      }),
-    ).toEqual([]);
-  });
 });

@@ -1,24 +1,23 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { McpBridgeEntry } from "../../state/registry";
+import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import type { McpAttachedCredentialRevision } from "./mcp-bridge-provider-readiness";
 import {
   DEEPAGENTS_LEGACY_CONFIG_HELPERS,
   DEEPAGENTS_LEGACY_MCP_CONFIG_PATH,
 } from "./mcp-bridge/deepagents-legacy-config";
 import {
-  DEEPAGENTS_MANAGED_PROJECTION_READ_HELPERS,
+  DEEPAGENTS_NATIVE_MCP_CONFIG_READ_HELPERS,
   DEEPAGENTS_STRICT_JSON_HELPERS,
-  DEEPAGENTS_UNSAFE_MCP_PROJECTION_TYPES,
-} from "./mcp-bridge-adapter-deepagents-projection";
+  DEEPAGENTS_UNSAFE_MCP_CONFIG_TYPES,
+} from "./mcp-bridge-adapter-deepagents-native-config";
 
-// NemoClaw owns this dedicated projection. Deep Agents Code's user/project
-// `.mcp.json` discovery is disabled in the managed image so user-authored MCP
-// state can never be layered over the validated registry projection.
-export const DEEPAGENTS_MCP_CONFIG_PATH = "/sandbox/.deepagents/.nemoclaw-mcp.json";
-export const UNSAFE_DEEPAGENTS_MCP_PROJECTION_PREFIX =
-  "Unsafe managed Deep Agents MCP projection path";
+// This is the agent-native MCP source consumed by the managed Deep Agents
+// runtime. Ambient project discovery is disabled so another file cannot layer
+// unvalidated credential or endpoint state over it.
+export const DEEPAGENTS_MCP_CONFIG_PATH = "/sandbox/.deepagents/.mcp.json";
+export const UNSAFE_DEEPAGENTS_MCP_CONFIG_PREFIX = "Unsafe Deep Agents native MCP config path";
 export const DEFAULT_OPENCLAW_CONFIG_DIR = "/sandbox/.openclaw";
 export const HERMES_MCP_TRANSACTION_HELPER =
   "/usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py";
@@ -58,40 +57,40 @@ export function buildDeepAgentsMcpRuntimeKindCommand(): string {
   ].join("\n");
 }
 
-/** Resolve Mcporter's project root beneath an OpenClaw agent configuration directory. */
-export function openClawMcporterRoot(configDir = DEFAULT_OPENCLAW_CONFIG_DIR): string {
-  return `${configDir.replace(/\/+$/, "")}/workspace`;
+/** Normalize the OpenClaw agent configuration directory. */
+export function openClawConfigDir(configDir = DEFAULT_OPENCLAW_CONFIG_DIR): string {
+  return configDir.replace(/\/+$/, "");
 }
-export const OPENCLAW_MCPORTER_ROOT = openClawMcporterRoot();
+export const OPENCLAW_MCP_CONFIG_DIR = openClawConfigDir();
 const DEFAULT_AUTH_HEADER = "Authorization";
 const DEFAULT_AUTH_SCHEME = "Bearer";
 
-export interface UnsafeDeepAgentsMcpProjectionResult {
+export interface UnsafeDeepAgentsMcpConfigResult {
   messagePrefix: string;
   path: string;
 }
 
-/** Parse only the unsafe-projection result emitted by the Deep Agents status adapter. */
-export function parseUnsafeDeepAgentsMcpProjectionResult(result: {
+/** Parse only the unsafe native-config result emitted by the Deep Agents status adapter. */
+export function parseUnsafeDeepAgentsMcpConfigResult(result: {
   status: number | null;
   stdout: string;
   stderr: string;
-}): UnsafeDeepAgentsMcpProjectionResult | null {
+}): UnsafeDeepAgentsMcpConfigResult | null {
   if (result.status === 0) return null;
   const detail = (result.stderr || result.stdout || "not found").trim();
-  for (const type of DEEPAGENTS_UNSAFE_MCP_PROJECTION_TYPES) {
-    const messagePrefix = `${UNSAFE_DEEPAGENTS_MCP_PROJECTION_PREFIX}: ${type} at `;
+  for (const type of DEEPAGENTS_UNSAFE_MCP_CONFIG_TYPES) {
+    const messagePrefix = `${UNSAFE_DEEPAGENTS_MCP_CONFIG_PREFIX}: ${type} at `;
     if (!detail.startsWith(messagePrefix)) continue;
-    const projectionPath = detail.slice(messagePrefix.length);
-    return projectionPath && !/[\r\n]/u.test(projectionPath)
-      ? { messagePrefix, path: projectionPath }
+    const configPath = detail.slice(messagePrefix.length);
+    return configPath && !/[\r\n]/u.test(configPath)
+      ? { messagePrefix, path: configPath }
       : null;
   }
   return null;
 }
 
 function authPlaceholder(
-  entry: Pick<McpBridgeEntry, "env">,
+  entry: Pick<McpSourceEntry, "env">,
   credentialRevision?: McpAttachedCredentialRevision,
 ): string | null {
   const envName = entry.env[0];
@@ -101,7 +100,7 @@ function authPlaceholder(
 }
 
 export function authorizationValue(
-  entry: Pick<McpBridgeEntry, "env">,
+  entry: Pick<McpSourceEntry, "env">,
   credentialRevision?: McpAttachedCredentialRevision,
 ): string | null {
   const placeholder = authPlaceholder(entry, credentialRevision);
@@ -109,7 +108,7 @@ export function authorizationValue(
 }
 
 export function entryHeaders(
-  entry: Pick<McpBridgeEntry, "env">,
+  entry: Pick<McpSourceEntry, "env">,
   credentialRevision?: McpAttachedCredentialRevision,
 ): Record<string, string> {
   const authorization = authorizationValue(entry, credentialRevision);
@@ -120,19 +119,8 @@ export function pythonJsonLiteral(value: unknown): string {
   return JSON.stringify(JSON.stringify(value));
 }
 
-/**
- * mcporter@0.7.3 normalizes every HTTP definition returned by
- * `config get --json` with an `accept: application/json, text/event-stream`
- * header, even when that header is absent from the persisted config. Treat
- * only that synthesized header as equivalent; every persisted/other header
- * remains part of the ownership fingerprint. When the expected placeholder is
- * canonical, a strictly bounded revisioned form of the same credential is also
- * equivalent. A revisioned expectation remains exact.
- *
- * This function is also serialized into the in-sandbox inspection commands,
- * so keep it self-contained (no references to module-scope values).
- */
-export function mcporterHeadersMatchExpected(
+/** Compare native OpenClaw headers, tolerating only a revisioned form of the same resolver key. */
+export function openClawHeadersMatchExpected(
   actual: unknown,
   expected: Record<string, string>,
 ): boolean {
@@ -162,22 +150,15 @@ export function mcporterHeadersMatchExpected(
       return false;
     }
   }
-  const extraNames = Object.keys(actualHeaders).filter((name) => !Object.hasOwn(expected, name));
-  if (extraNames.length === 0) return true;
-  if (extraNames.length !== 1) return false;
-  const [extraName] = extraNames;
-  return (
-    extraName.toLowerCase() === "accept" &&
-    actualHeaders[extraName] === "application/json, text/event-stream"
-  );
+  return Object.keys(actualHeaders).every((name) => Object.hasOwn(expected, name));
 }
 
-export function mcporterHeaderMatcherSource(): string {
-  return `const mcporterHeadersMatchExpected = ${mcporterHeadersMatchExpected.toString()};`;
+export function openClawHeaderMatcherSource(): string {
+  return `const openClawHeadersMatchExpected = ${openClawHeadersMatchExpected.toString()};`;
 }
 
 export function hermesManagedServerConfig(
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
   credentialRevision?: McpAttachedCredentialRevision,
 ): Record<string, unknown> {
   const headers = entryHeaders(entry, credentialRevision);
@@ -198,8 +179,8 @@ export interface HermesMcpIntentPayload {
 
 /** Render the host registry into the credential-safe shape persisted by Hermes. */
 export function buildHermesMcpIntentPayload(
-  entries: readonly McpBridgeEntry[],
-  managedServerNames: readonly string[],
+  entries: readonly McpSourceEntry[],
+  expectedServerNames: readonly string[],
   credentialRevisions: ReadonlyMap<string, McpAttachedCredentialRevision> = new Map(),
 ): HermesMcpIntentPayload {
   const sortedEntries = [...entries].sort((left, right) => left.server.localeCompare(right.server));
@@ -210,12 +191,12 @@ export function buildHermesMcpIntentPayload(
     ]),
   );
   const presentNames = new Set(Object.keys(present));
-  const absent = [...new Set(managedServerNames)].filter((name) => !presentNames.has(name)).sort();
+  const absent = [...new Set(expectedServerNames)].filter((name) => !presentNames.has(name)).sort();
   return { present, absent };
 }
 
 export function deepAgentsManagedServerConfig(
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
   credentialRevision?: McpAttachedCredentialRevision,
 ): Record<string, unknown> {
   const headers = entryHeaders(entry, credentialRevision);
@@ -227,7 +208,7 @@ export function deepAgentsManagedServerConfig(
 }
 
 export function buildHermesMcpStatusCommand(
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
   credentialRevision?: McpAttachedCredentialRevision,
 ): string {
   const payload = {
@@ -285,7 +266,7 @@ export const MANAGED_HTTP_SERVER_MATCH_HELPERS = [
 ];
 
 export function buildDeepAgentsMcpStatusCommand(
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
   credentialRevision?: McpAttachedCredentialRevision,
 ): string {
   const payload = {
@@ -300,16 +281,16 @@ export function buildDeepAgentsMcpStatusCommand(
     `managed_path = pathlib.Path(${JSON.stringify(DEEPAGENTS_MCP_CONFIG_PATH)})`,
     `legacy_path = pathlib.Path(${JSON.stringify(DEEPAGENTS_LEGACY_MCP_CONFIG_PATH)})`,
     ...DEEPAGENTS_STRICT_JSON_HELPERS,
-    ...DEEPAGENTS_MANAGED_PROJECTION_READ_HELPERS,
+    ...DEEPAGENTS_NATIVE_MCP_CONFIG_READ_HELPERS,
     ...DEEPAGENTS_LEGACY_CONFIG_HELPERS,
     ...MANAGED_HTTP_SERVER_MATCH_HELPERS,
     ...buildDeepAgentsRuntimeKindCommandLines(),
     "is_v2 = runtime_kind == 'v2'",
     "config_path = managed_path if is_v2 else legacy_path",
     "try:",
-    "    data = read_managed_projection(config_path)[0] if is_v2 else read_legacy_config(config_path)[0]",
-    "except UnsafeManagedProjectionError as exc:",
-    `    print(f'${UNSAFE_DEEPAGENTS_MCP_PROJECTION_PREFIX}: {exc} at {config_path}', file=sys.stderr)`,
+    "    data = read_native_mcp_config(config_path)[0] if is_v2 else read_legacy_config(config_path)[0]",
+    "except UnsafeNativeMcpConfigError as exc:",
+    `    print(f'${UNSAFE_DEEPAGENTS_MCP_CONFIG_PREFIX}: {exc} at {config_path}', file=sys.stderr)`,
     "    raise SystemExit(2)",
     "except FileNotFoundError:",
     "    data = {}",
@@ -325,10 +306,10 @@ export function buildDeepAgentsMcpStatusCommand(
   ].join("\n");
 }
 
-export function buildOpenClawMcporterInspectCommand(
-  entry: McpBridgeEntry,
+export function buildOpenClawMcpInspectCommand(
+  entry: McpSourceEntry,
   failOnMismatch: boolean,
-  root = OPENCLAW_MCPORTER_ROOT,
+  root = OPENCLAW_MCP_CONFIG_DIR,
   credentialRevision?: McpAttachedCredentialRevision,
 ): string {
   const payload = {
@@ -336,25 +317,18 @@ export function buildOpenClawMcporterInspectCommand(
     url: entry.url,
     headers: entryHeaders(entry, credentialRevision),
     failOnMismatch,
-    root,
+    configPath: `${root}/openclaw.json`,
   };
   return [
     "node - <<'NODE'",
-    'const { spawnSync } = require("node:child_process");',
+    'const fs = require("node:fs");',
+    'const path = require("node:path");',
     `const expected = JSON.parse(${pythonJsonLiteral(payload)});`,
-    'const result = spawnSync("mcporter", ["--root", expected.root, "config", "get", expected.server, "--json"], { encoding: "utf8" });',
-    "if (result.error) { console.error(result.error.message); process.exit(3); }",
-    "if (result.status !== 0) {",
-    '  const detail = `${result.stderr || ""}\n${result.stdout || ""}`;',
-    "  if (/not\\s+found|does\\s+not\\s+exist|unknown\\s+server/i.test(detail)) { console.log('absent'); process.exit(0); }",
-    "  console.error(detail.trim() || `mcporter config get exited ${result.status}`);",
-    "  process.exit(3);",
-    "}",
-    "let actual = null;",
-    "try { actual = JSON.parse(result.stdout); } catch {}",
+    "let actual = null; try { const configPath = path.resolve(expected.configPath); const fd = fs.openSync(configPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW); try { const before = fs.fstatSync(fd); const linked = fs.lstatSync(configPath); if (!before.isFile() || !linked.isFile() || before.uid !== process.getuid() || before.nlink !== 1 || before.dev !== linked.dev || before.ino !== linked.ino || before.size > 1048576) throw new Error('OpenClaw configuration source is unsafe'); const raw = Buffer.alloc(before.size); let count = 0; while (count < raw.length) { const read = fs.readSync(fd, raw, count, raw.length - count, count); if (read === 0) break; count += read; } if (count !== before.size) throw new Error('OpenClaw configuration read was incomplete'); const data = JSON.parse(raw.toString('utf8')); actual = data && data.mcp && data.mcp.servers && data.mcp.servers[expected.server]; } finally { fs.closeSync(fd); } } catch (error) { if (error && error.code === 'ENOENT') { console.log('absent'); process.exit(0); } console.error(error instanceof Error ? error.message : String(error)); process.exit(3); }",
+    "if (!actual) { console.log('absent'); process.exit(0); }",
     'const headers = actual && actual.headers && typeof actual.headers === "object" ? actual.headers : {};',
-    mcporterHeaderMatcherSource(),
-    'const registered = !!actual && actual.name === expected.server && actual.transport === "http" && actual.baseUrl === expected.url && mcporterHeadersMatchExpected(headers, expected.headers);',
+    openClawHeaderMatcherSource(),
+    'const registered = !!actual && actual.url === expected.url && openClawHeadersMatchExpected(headers, expected.headers);',
     'console.log(registered ? "registered" : "mismatch");',
     "if (!registered && expected.failOnMismatch) process.exit(2);",
     "NODE",

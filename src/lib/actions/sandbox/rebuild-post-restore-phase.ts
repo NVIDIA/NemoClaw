@@ -113,7 +113,7 @@ function printHermesApiTokenChangeNotice(sandboxName: string, targetAgentName: s
 }
 
 /**
- * Repair agent state, restore MCP/forwarding, reconcile the registry, and report
+ * Repair agent state, restore MCP/forwarding, reconcile non-MCP registry state, and report
  * the final transaction result. Boundary coverage: rebuild-flow.test.ts and
  * rebuild-config-hash.test.ts cover the complete/incomplete post-restore paths;
  * rebuild-post-restore-phase.test.ts covers forwarding recovery reports.

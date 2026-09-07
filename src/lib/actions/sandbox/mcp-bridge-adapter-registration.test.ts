@@ -4,7 +4,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentMcpAdapter } from "../../agent/defs";
-import type { McpBridgeEntry } from "../../state/registry";
+import type { McpSourceEntry } from "./mcp-bridge-contracts";
 
 const mocks = vi.hoisted(() => ({
   executeSandboxCommand: vi.fn(),
@@ -51,9 +51,9 @@ import {
   unregisterAgentAdapter,
 } from "./mcp-bridge-adapters";
 import { registerOpenClawAdapter } from "./mcp-bridge-adapter-openclaw";
-import { entryHeaders, mcporterHeadersMatchExpected } from "./mcp-bridge-adapter-status";
+import { entryHeaders, openClawHeadersMatchExpected } from "./mcp-bridge-adapter-status";
 
-const baseEntry: McpBridgeEntry = {
+const baseEntry: McpSourceEntry = {
   server: "github",
   agent: "hermes",
   adapter: "hermes-config",
@@ -61,7 +61,6 @@ const baseEntry: McpBridgeEntry = {
   env: ["GITHUB_TOKEN"],
   providerName: "alpha-mcp-github",
   policyName: "mcp-bridge-github",
-  addedAt: new Date(0).toISOString(),
 };
 
 const lifecycleSuccess = {
@@ -79,9 +78,9 @@ const runtimeSelection = { gatewayName: "nemoclaw-8091", workspace: "default" };
 interface AdapterCase {
   name: string;
   adapter: AgentMcpAdapter;
-  entry: McpBridgeEntry;
+  entry: McpSourceEntry;
   arrangeInspection: (result: typeof registered) => void;
-  statusCommand: (entry: McpBridgeEntry) => string;
+  statusCommand: (entry: McpSourceEntry) => string;
 }
 
 const adapterCases: AdapterCase[] = [
@@ -113,7 +112,7 @@ const adapterCases: AdapterCase[] = [
 interface ReconciliationCase {
   name: string;
   adapter: AgentMcpAdapter;
-  entry: McpBridgeEntry;
+  entry: McpSourceEntry;
   arrange: () => void;
   mutationCalls: () => string;
 }
@@ -121,8 +120,8 @@ interface ReconciliationCase {
 const reconciliationCases: ReconciliationCase[] = [
   {
     name: "OpenClaw",
-    adapter: "mcporter",
-    entry: { ...baseEntry, agent: "openclaw", adapter: "mcporter" },
+    adapter: "openclaw-config",
+    entry: { ...baseEntry, agent: "openclaw", adapter: "openclaw-config" },
     arrange: () => {
       mocks.executeSandboxCommand.mockImplementation((_sandbox, command: string) =>
         command === "command -v mcporter"
@@ -209,19 +208,18 @@ describe("OpenClaw MCP adapter registration", () => {
   });
 
   it("rejects a v11 post-write observation after registering the readiness-proven v12", () => {
-    const entry: McpBridgeEntry = {
+    const entry: McpSourceEntry = {
       ...baseEntry,
       agent: "openclaw",
-      adapter: "mcporter",
+      adapter: "openclaw-config",
     };
     const actualV11Headers = {
       Authorization: "Bearer openshell:resolve:env:v11_GITHUB_TOKEN",
     };
-    const verification = mcporterHeadersMatchExpected(actualV11Headers, entryHeaders(entry, "v12"))
+    const verification = openClawHeadersMatchExpected(actualV11Headers, entryHeaders(entry, "v12"))
       ? registered
       : mismatch;
     mocks.executeSandboxCommand
-      .mockReturnValueOnce({ status: 0, stdout: "/usr/bin/mcporter\n", stderr: "" })
       .mockReturnValueOnce(commandSuccess)
       .mockReturnValueOnce(verification);
 
@@ -234,12 +232,12 @@ describe("OpenClaw MCP adapter registration", () => {
         false,
         "v12",
       ),
-    ).toThrow("mcporter config verification failed after adding 'github': mismatch");
+    ).toThrow("OpenClaw MCP config verification failed after adding 'github': mismatch");
 
-    expect(mocks.executeSandboxCommand.mock.calls[1]?.[1]).toContain(
-      "Authorization=Bearer openshell:resolve:env:v12_GITHUB_TOKEN",
+    expect(mocks.executeSandboxCommand.mock.calls[0]?.[1]).toContain(
+      "openshell:resolve:env:v12_GITHUB_TOKEN",
     );
-    expect(mocks.executeSandboxCommand.mock.calls[2]?.[1]).toContain(
+    expect(mocks.executeSandboxCommand.mock.calls[1]?.[1]).toContain(
       "Bearer openshell:resolve:env:v12_GITHUB_TOKEN",
     );
     expect(mocks.executeSandboxCommand.mock.calls.map((call) => call[2])).toEqual(
@@ -255,7 +253,7 @@ describe("Deep Agents MCP adapter credential revision", () => {
   });
 
   it("writes and verifies the readiness-proven revision", () => {
-    const entry: McpBridgeEntry = {
+    const entry: McpSourceEntry = {
       ...baseEntry,
       agent: "langchain-deepagents-code",
       adapter: "deepagents-config",
@@ -371,15 +369,13 @@ describe("MCP adapter credential revision reconciliation failures", () => {
       localTlsDir: "/authority/gateway-8091/tls",
       workspace: "default",
     } as const;
-    const entry: McpBridgeEntry = {
+    const entry: McpSourceEntry = {
       ...baseEntry,
       agent: "openclaw",
-      adapter: "mcporter",
+      adapter: "openclaw-config",
     };
     mocks.executeSandboxCommand.mockImplementation((_sandbox, command: string) =>
-      command === "command -v mcporter"
-        ? { status: 0, stdout: "/usr/bin/mcporter\n", stderr: "" }
-        : command.includes("config' 'add")
+      command.includes("servers[payload.server]")
           ? commandSuccess
           : registered,
     );
@@ -395,7 +391,7 @@ describe("MCP adapter credential revision reconciliation failures", () => {
     expect(
       registerAgentAdapterAtCurrentCredentialRevision(
         "alpha",
-        "mcporter",
+        "openclaw-config",
         entry,
         operationSelection,
         {},
@@ -426,8 +422,8 @@ describe("MCP adapter credential revision reconciliation failures", () => {
       expect(() =>
         registerAgentAdapterAtCurrentCredentialRevision(
           "alpha",
-          "mcporter",
-          { ...baseEntry, agent: "openclaw", adapter: "mcporter" },
+          "openclaw-config",
+          { ...baseEntry, agent: "openclaw", adapter: "openclaw-config" },
           runtimeSelection,
           {},
           "v11",
@@ -450,8 +446,8 @@ describe("MCP adapter credential revision reconciliation failures", () => {
     expect(() =>
       registerAgentAdapterAtCurrentCredentialRevision(
         "alpha",
-        "mcporter",
-        { ...baseEntry, agent: "openclaw", adapter: "mcporter" },
+        "openclaw-config",
+        { ...baseEntry, agent: "openclaw", adapter: "openclaw-config" },
         runtimeSelection,
         {},
         "v10",
@@ -476,8 +472,8 @@ describe("MCP adapter credential revision reconciliation failures", () => {
     expect(() =>
       registerAgentAdapterAtCurrentCredentialRevision(
         "alpha",
-        "mcporter",
-        { ...baseEntry, agent: "openclaw", adapter: "mcporter" },
+        "openclaw-config",
+        { ...baseEntry, agent: "openclaw", adapter: "openclaw-config" },
         runtimeSelection,
         {},
         "v10",
@@ -485,7 +481,7 @@ describe("MCP adapter credential revision reconciliation failures", () => {
     ).toThrow("credential revision did not stabilize");
     expect(
       mocks.executeSandboxCommand.mock.calls.filter(([, command]) =>
-        String(command).includes("config' 'add"),
+        String(command).includes("servers[payload.server]"),
       ),
     ).toHaveLength(2);
   });

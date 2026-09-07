@@ -29,11 +29,31 @@ $$nemoclaw my-sandbox mcp list
 $$nemoclaw my-sandbox mcp status github --json
 ```
 
-`list --json` and `status --json` never include environment values. They report provider presence, provider attachment, whether live policy matches registered policy, environment readiness, and adapter registration state.
+`list --json` and `status --json` never include environment values. They report the agent-native registration together with current OpenShell provider, attachment, policy, credential-readiness, and runtime observations. Provider and policy objects use source-state terms such as `configured`, `unbound`, `blocked`, `unavailable`, and `conflict`; there are no registry-presence fields.
 
 The per-server `warnings` array reports unsupported stored boundaries, trusted-private DNS pin changes, and credential-resolution findings. The `env.missing` field lists recorded host variable names that are currently unset.
 
 An existing valid provider can remain ready when a host variable is unset because OpenShell retains the credential. The JSON value `support.mode: "bridge"` identifies the agent's config-adapter capability, not a host-side traffic bridge.
+
+## Migrate an Existing Registration
+
+Preview legacy Mcporter or Deep Agents projection entries before the first mutation with the cutover release:
+
+```bash
+$$nemoclaw my-sandbox mcp migrate
+```
+
+The preview is secret-free and identifies each server, URL, native destination, OpenShell policy and provider linkage, and whether migration activates behavior that the old adapter did not load. Native agent configuration always wins; a conflicting native and legacy definition stops without changing either source.
+
+Apply the preview explicitly:
+
+```bash
+$$nemoclaw my-sandbox mcp migrate --apply
+```
+
+OpenClaw translates the managed Mcporter `baseUrl` entry into `openclaw.json` `mcp.servers.url`. Deep Agents rebuilds onto a native-MCP-capable image and moves the legacy `mcpServers` entries into `.deepagents/.mcp.json`. Hermes already uses native `config.yaml` and normally has nothing to translate.
+
+Migration writes the native configuration atomically, reloads or rebuilds the agent, verifies native enumeration, and only then retires the legacy adapter or projection. Failure restores newly created native entries and leaves the legacy configuration, OpenShell policy, provider, and attachment available for retry.
 
 For a trusted private server, status resolves the endpoint without changing managed state. Text output reports `private address pins: match`, `drift`, or `unresolved`. JSON output reports the same value in `trustedPrivateTarget.state` and includes the recorded pins. Status never adds a new address to the policy.
 
@@ -109,15 +129,9 @@ For a trusted-private entry, restart replays the exact address pins recorded by 
 
 The raw value passes only through the OpenShell provider command's process environment and is not added to argv, NemoClaw state, or sandbox config. Revoke the old credential upstream after restart succeeds.
 
-If the provider was deleted, restart recreates it from the exported value.
+If the provider was deleted, restart reports the source as unbound. Remove and add the server again when you intend to create a replacement provider.
 
-When the host variable is unset, restart reuses an existing provider only when its current ID and credential-key metadata match the registry, its type is `nemoclaw-mcp-v1`, and the credential-resolution probe verifies the stored credential.
-Restart checks every selected server before it reapplies a policy, updates a provider, or changes an agent adapter.
-If credential verification fails or is inconclusive, restart exits without those changes.
-Export the recorded variable and retry to replace the stored credential.
-If the provider is missing, export the recorded variable before retrying.
-If the provider has the profile-less legacy `generic` type, remove the server and add it again with the recorded variable exported.
-Restart and rebuild refuse to activate that provider because OpenShell cannot bind it to an endpoint.
+Restart follows the live policy credential binding and reloads only when the current provider ID, type, attachment, and credential-key metadata agree with the agent registration. It does not recreate or update the provider and does not reapply policy. If a source is missing or conflicting, repair it explicitly or remove and add the server again.
 
 Running restart without a server name refreshes every managed server. Export only the variables whose credentials you intend to replace.
 
@@ -137,7 +151,7 @@ $$nemoclaw my-sandbox mcp add local-tools \
 unset LOCAL_MCP_TOKEN
 ```
 
-Removing the server deletes the exact provider and adapter state recorded for that bridge and removes its generated key from the current OpenShell policy. The re-add performs a new DNS preflight and records the reviewed exact address set.
+Removing the server deletes the agent-native entry, removes its generated key from the current OpenShell policy, and detaches the provider. The provider itself is preserved for explicit cleanup. The re-add performs a new DNS preflight and records the reviewed exact address set.
 
 ## Remove a Server
 
@@ -147,17 +161,17 @@ $$nemoclaw my-sandbox mcp remove github
 
 Removing a server blocks new requests and reconnects but does not terminate a response or SSE stream that is already open. For immediate revocation, revoke the upstream credential first, then run `$$nemoclaw <sandbox> rebuild --yes` or destroy the sandbox to terminate an existing stream.
 
-`remove --force` may remove a modified same-name adapter entry so an operator can clear local config. Provider deletion still requires the recorded provider ID and credential key plus an accepted managed provider type. Exact legacy `generic` providers are accepted only for cleanup.
+`remove --force` may remove a modified same-name native entry so an operator can clear agent configuration. It never claims or deletes an ambiguous OpenShell provider.
 
-Policy deletion still requires exact owned content. Force never claims an unowned or drifted provider or same-key live policy.
+Policy removal targets the deterministic current MCP policy key. Force never claims an unrelated policy or provider.
 
-For an ordinary managed entry, NemoClaw cleans up the adapter, removes the exact owned policy, and then detaches its provider because OpenShell rejects detach while `credential_binding.provider` still references that provider. For a stored legacy entry whose credential name is no longer accepted, it first detaches the exact provider so adapter cleanup cannot start with that credential attached. It deletes the provider only after detach and credential-removal checks succeed.
+NemoClaw removes the agent registration first, removes the policy key, and then detaches a provider only when the live policy binding, provider ID, type, and credential key agree. This ordering blocks new agent use before cleanup. The workspace provider is retained because current OpenShell provider deletion is name-based.
 
-If cleanup leaves a residual, the command exits nonzero and preserves the registry entry so cleanup can be retried. It never detaches the provider from other sandboxes.
+If cleanup leaves a residual, the command reports the exact policy or attachment warning and the provider name to inspect. It never detaches the provider from another sandbox or silently reports that the provider was deleted.
 
 ## Rebuild with Managed MCP State
 
-`rebuild` preserves providers that match the recorded ID and credential-key metadata and the active `nemoclaw-mcp-v1` type. Before it changes an adapter, policy, or provider, NemoClaw captures the current round-trippable OpenShell base policy for the replacement and refuses a handoff that contains a literal credential value. Managed provider entries are restored through the MCP lifecycle rather than copied into that base-policy handoff. If capture of the current live policy finds a literal credential before replacement begins, replace it with a supported OpenShell credential binding or resolver placeholder, then retry.
+`rebuild` constructs a bounded handoff from the current agent-native registrations and live OpenShell policy, providers, and attachments. It captures the round-trippable policy for the replacement and refuses a handoff containing a literal credential value. This temporary mode-`0600` handoff is removed after restoration; it is not durable desired state.
 
 If rebuild instead reports a retained credential-bearing policy handoff, do not edit that handoff or retry rebuild. Follow the [unsafe retained policy handoff recovery](../operate-sandboxes/recover-and-rebuild-sandboxes#continue-an-interrupted-replacement).
 
@@ -167,9 +181,9 @@ After this check, rebuild removes adapter entries and exact owned policies, then
 NemoClaw revalidates the prepared Deep Agents replacement after MCP preparation and before stopping inference or deleting the old sandbox.
 If that check fails, it restores prior MCP attachment and adapter state and keeps the old sandbox.
 
-For a Deep Agents v1 image, remove, rebuild, and destroy scrub only the matching registry-owned legacy entry from `.deepagents/.mcp.json`. Other user servers and unrelated top-level content remain unchanged.
+For a legacy Deep Agents image, explicit MCP migration uses rebuild to carry the observed legacy servers into native `.deepagents/.mcp.json`. Other native servers and unrelated top-level content remain unchanged.
 
-The replacement image must expose managed MCP capability v2 before NemoClaw restores MCP runtime state.
+The replacement image must expose native MCP capability v3 before NemoClaw restores MCP runtime state.
 
 </AgentOnly>
 
@@ -177,21 +191,7 @@ If sandbox replacement fails, NemoClaw attempts to restore the previous attachme
 
 ## Destroy a Sandbox with MCP State
 
-Destroy removes adapter entries and exact owned policies, then detaches providers that match recorded metadata before asking OpenShell to delete the sandbox. Before changing each managed adapter, a fresh sandbox process must expose a revision-scoped OpenShell credential placeholder for that adapter. If an observation is absent, unscoped, or unavailable, NemoClaw leaves the affected adapter and every provider unchanged. It attempts to restore adapter entries prepared earlier in the operation and reports rollback failures. Follow the reported [credential-revision recovery](../../reference/troubleshoot-mcp-servers#rebuild-or-destroy-cannot-prove-a-credential-revision), then retry destroy. If deletion is refused, NemoClaw attempts to restore previous MCP state, reports rollback failures, and preserves recovery state. Provider deletion and registry cleanup happen only after OpenShell confirms the sandbox is gone.
-
-An interrupted destroy can leave a durable transaction marker. A prepared-only marker means deletion is not durably confirmed. If the sandbox is still live, remove each affected server with force until the managed manifest is empty:
-
-```bash
-$$nemoclaw my-sandbox mcp remove <server> --force
-```
-
-A pending marker means the registry records that OpenShell deletion was already confirmed. `mcp remove --force` refuses that state because provider or policy cleanup can still be owed. Finish the idempotent destroy instead:
-
-```bash
-$$nemoclaw my-sandbox destroy
-```
-
-While either marker remains, rebuild refuses before backup or deletion and prints the applicable recovery command.
+Destroy reads the current agent and OpenShell sources before deletion but does not scrub a separate MCP registry or write destroy markers. OpenShell deletes the sandbox-scoped policy and attachments with the sandbox. NemoClaw preserves workspace-level MCP providers and prints their exact names for later inspection. An interrupted destroy is retried from current sandbox presence; no local MCP marker authorizes cleanup.
 
 ## Respect the Lifecycle Lock
 

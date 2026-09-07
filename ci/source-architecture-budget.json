@@ -3,7 +3,7 @@
   "fanIn": {
     "defaultMax": 20,
     "maxByFile": {
-      "src/lib/actions/sandbox/mcp-bridge-contracts.ts": 25,
+      "src/lib/actions/sandbox/mcp-bridge-contracts.ts": 24,
       "src/lib/actions/sandbox/process-recovery.ts": 26,
       "src/lib/adapters/docker/index.ts": 42,
       "src/lib/adapters/openshell/client.ts": 21,
@@ -11,10 +11,10 @@
       "src/lib/adapters/openshell/resolve.ts": 25,
       "src/lib/adapters/openshell/runtime.ts": 53,
       "src/lib/adapters/openshell/timeouts.ts": 33,
-      "src/lib/agent/defs.ts": 32,
+      "src/lib/agent/defs.ts": 33,
       "src/lib/cli/branding.ts": 80,
       "src/lib/cli/nemoclaw-oclif-command.ts": 105,
-      "src/lib/cli/terminal-style.ts": 42,
+      "src/lib/cli/terminal-style.ts": 41,
       "src/lib/core/json-types.ts": 34,
       "src/lib/core/ports.ts": 89,
       "src/lib/core/shell-quote.ts": 27,
@@ -23,12 +23,12 @@
       "src/lib/credentials/store.ts": 45,
       "src/lib/inference/config.ts": 30,
       "src/lib/messaging/channels/index.ts": 25,
-      "src/lib/onboard/gateway-binding.ts": 53,
+      "src/lib/onboard/gateway-binding.ts": 52,
       "src/lib/runner.ts": 84,
-      "src/lib/security/redact.ts": 52,
-      "src/lib/state/mcp-lifecycle-lock.ts": 21,
+      "src/lib/security/redact.ts": 51,
+      "src/lib/state/mcp-lifecycle-lock.ts": 22,
       "src/lib/state/onboard-session.ts": 35,
-      "src/lib/state/registry.ts": 96,
+      "src/lib/state/registry.ts": 92,
       "src/lib/state/state-root.ts": 21,
       "src/lib/subprocess-env.ts": 22,
       "src/lib/validation.ts": 24
@@ -63,7 +63,7 @@
     "src/lib/onboard": 301,
     "src/lib/actions": 18,
     "src/lib/actions/sandbox": 177,
-    "src/lib/state": 38,
+    "src/lib/state": 37,
     "src/lib/inference": 63,
     "scripts": 42
   }

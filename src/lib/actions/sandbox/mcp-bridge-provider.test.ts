@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as providerCommand from "../../adapters/openshell/provider-command";
-import type { McpBridgeEntry } from "../../state/registry";
+import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import {
   buildMcpCredentialRevisionObservationCommand,
   parseMcpProviderAttachmentNames,
@@ -22,7 +22,6 @@ import {
 import {
   attachProvider,
   assertMcpProviderRecoverable,
-  deleteProvider,
   detachMissingProviderReference,
   detachProvider,
   ensureMcpBridgeProviderProfile,
@@ -133,16 +132,15 @@ Provider:
         "Id: 11111111-2222-4333-8444-555555555555\nType: generic\nResource version: 7\nCredential keys: GITHUB_TOKEN\n",
       stderr: "",
     });
-    const entry: McpBridgeEntry = {
+    const entry: McpSourceEntry = {
       server: "github",
       agent: "openclaw",
-      adapter: "mcporter",
+      adapter: "openclaw-config",
       url: "https://api.githubcopilot.com/mcp",
       env: ["GITHUB_TOKEN"],
       providerName: "alpha-mcp-github",
       providerId: "11111111-2222-4333-8444-555555555555",
       policyName: "mcp-bridge-github",
-      addedAt: "2026-08-19T00:00:00.000Z",
     };
 
     expect(() => assertMcpProviderRecoverable(entry, runtimeSelection)).toThrow(
@@ -182,13 +180,12 @@ Provider:
         {
           server: "github",
           agent: "openclaw",
-          adapter: "mcporter",
+          adapter: "openclaw-config",
           url: "https://api.githubcopilot.com/mcp",
           env: ["GITHUB_TOKEN"],
           providerName: "alpha-mcp-github",
           providerId: id,
           policyName: "mcp-bridge-github",
-          addedAt: "2026-08-19T00:00:00.000Z",
         },
         {
           gatewayName: "nemoclaw-8080",
@@ -262,10 +259,6 @@ Provider:
           commandFamilies.add("update");
           resourceVersion += 1;
           return { status: 0, stdout: "Updated", stderr: "" };
-        case "provider delete alpha-mcp-fake":
-          commandFamilies.add("delete");
-          providerExists = false;
-          return { status: 0, stdout: "Deleted", stderr: "" };
         case "sandbox provider list":
           commandFamilies.add("list");
           return providerAttached
@@ -306,117 +299,23 @@ Provider:
       allowExisting: false,
       runtimeSelection,
     });
-    const entry: McpBridgeEntry = {
+    const entry: McpSourceEntry = {
       server: "fake",
       agent: "openclaw",
-      adapter: "mcporter",
+      adapter: "openclaw-config",
       url: "https://mcp.example.test/mcp",
       env: ["EXPECTED_TOKEN"],
       providerName: "alpha-mcp-fake",
       providerId: created.inspection.id ?? undefined,
       policyName: "mcp-bridge-fake",
-      addedAt: "2026-06-01T00:00:00.000Z",
     };
     attachProvider("alpha", entry, runtimeSelection);
     refreshMcpProviderEnvironment(entry, runtimeSelection);
     expect(detachProvider("alpha", entry, { runtimeSelection })).toBe("detached");
-    deleteProvider(entry, { runtimeSelection });
-    expect(detachMissingProviderReference("alpha", entry, runtimeSelection)).toBe("absent");
 
     expect(commandFamilies).toEqual(
-      new Set(["profile", "get", "create", "attach", "list", "update", "detach", "delete"]),
+      new Set(["profile", "get", "create", "attach", "list", "update", "detach"]),
     );
-  });
-
-  it.each([
-    "NotFound: provider",
-    "provider 'other-mcp-github' not found",
-    'status: NotFound, message: "gateway nemoclaw-8091 not found"',
-  ])(
-    "rejects ambiguous provider-delete output %s while cleanup is retryable (#10514)",
-    (diagnostic) => {
-      const id = "11111111-2222-4333-8444-555555555555";
-      const runtimeSelection = { gatewayName: "nemoclaw-8091", workspace: "default" };
-      const run = vi
-        .spyOn(providerCommand, "runOpenshellProviderCommand")
-        .mockReturnValueOnce({
-          pid: 1234,
-          status: 0,
-          signal: null,
-          output: [
-            null,
-            `Id: ${id}\nType: nemoclaw-mcp-v1\nResource version: 7\nCredential keys: GITHUB_TOKEN\n`,
-            "",
-          ],
-          stdout: `Id: ${id}\nType: nemoclaw-mcp-v1\nResource version: 7\nCredential keys: GITHUB_TOKEN\n`,
-          stderr: "",
-        })
-        .mockReturnValueOnce({
-          pid: 1234,
-          status: 1,
-          signal: null,
-          output: [null, "", diagnostic],
-          stdout: "",
-          stderr: diagnostic,
-        });
-      const entry: McpBridgeEntry = {
-        server: "github",
-        agent: "openclaw",
-        adapter: "mcporter",
-        url: "https://api.githubcopilot.com/mcp",
-        env: ["GITHUB_TOKEN"],
-        providerName: "alpha-mcp-github",
-        providerId: id,
-        policyName: "mcp-bridge-github",
-        addedAt: "2026-08-19T00:00:00.000Z",
-      };
-
-      expect(() => deleteProvider(entry, { allowMissing: true, runtimeSelection })).toThrow(
-        diagnostic,
-      );
-      expect(run).toHaveBeenCalledTimes(2);
-    },
-  );
-
-  it("accepts an exact provider-delete absence while cleanup is retryable (#10514)", () => {
-    const id = "11111111-2222-4333-8444-555555555555";
-    const runtimeSelection = { gatewayName: "nemoclaw-8091", workspace: "default" };
-    const run = vi
-      .spyOn(providerCommand, "runOpenshellProviderCommand")
-      .mockReturnValueOnce({
-        pid: 1234,
-        status: 0,
-        signal: null,
-        output: [
-          null,
-          `Id: ${id}\nType: nemoclaw-mcp-v1\nResource version: 7\nCredential keys: GITHUB_TOKEN\n`,
-          "",
-        ],
-        stdout: `Id: ${id}\nType: nemoclaw-mcp-v1\nResource version: 7\nCredential keys: GITHUB_TOKEN\n`,
-        stderr: "",
-      })
-      .mockReturnValueOnce({
-        pid: 1234,
-        status: 1,
-        signal: null,
-        output: [null, "", "provider 'alpha-mcp-github' not found"],
-        stdout: "",
-        stderr: "provider 'alpha-mcp-github' not found",
-      });
-    const entry: McpBridgeEntry = {
-      server: "github",
-      agent: "openclaw",
-      adapter: "mcporter",
-      url: "https://api.githubcopilot.com/mcp",
-      env: ["GITHUB_TOKEN"],
-      providerName: "alpha-mcp-github",
-      providerId: id,
-      policyName: "mcp-bridge-github",
-      addedAt: "2026-08-19T00:00:00.000Z",
-    };
-
-    expect(() => deleteProvider(entry, { allowMissing: true, runtimeSelection })).not.toThrow();
-    expect(run).toHaveBeenCalledTimes(2);
   });
 
   it("distinguishes a real detach from OpenShell's idempotent success", () => {
@@ -446,16 +345,15 @@ alpha-mcp-slack   generic  1                 0
 
   it("rejects a multi-key bridge before provider collision inspection", () => {
     const providerCommandRun = vi.spyOn(providerCommand, "runOpenshellProviderCommand");
-    const entry: McpBridgeEntry = {
+    const entry: McpSourceEntry = {
       server: "example",
       agent: "openclaw",
-      adapter: "mcporter",
+      adapter: "openclaw-config",
       url: "https://8.8.8.8/mcp",
       env: ["PRIMARY_TOKEN", "SECONDARY_TOKEN"],
       providerName: "alpha-mcp-example",
       providerId: "11111111-2222-4333-8444-555555555555",
       policyName: "mcp-bridge-example",
-      addedAt: "2026-06-01T00:00:00.000Z",
     };
 
     expect(() =>
@@ -470,7 +368,7 @@ alpha-mcp-slack   generic  1                 0
   });
 
   it("rejects a registered provider that will collide on the next rebuild (#9388)", () => {
-    const entry: McpBridgeEntry = {
+    const entry: McpSourceEntry = {
       server: "test-dir1",
       agent: "hermes",
       adapter: "hermes-config",
@@ -478,7 +376,6 @@ alpha-mcp-slack   generic  1                 0
       env: ["TEST_DIR1_TOKEN"],
       providerName: "hermes-mcp-test-dir1",
       policyName: "mcp-bridge-test-dir1",
-      addedAt: "2026-08-18T00:00:00.000Z",
     };
 
     expect(() =>
@@ -526,16 +423,15 @@ alpha-mcp-slack   generic  1                 0
           "Id: 99999999-8888-4777-8666-555555555555\nType: nemoclaw-mcp-v1\nResource version: 1\nCredential keys: GITHUB_TOKEN\n",
         stderr: "",
       });
-    const entry: McpBridgeEntry = {
+    const entry: McpSourceEntry = {
       server: "github",
       agent: "openclaw",
-      adapter: "mcporter",
+      adapter: "openclaw-config",
       url: "https://api.githubcopilot.com/mcp",
       env: ["GITHUB_TOKEN"],
       providerName: "alpha-mcp-github",
       providerId: "11111111-2222-4333-8444-555555555555",
       policyName: "mcp-bridge-github",
-      addedAt: "2026-08-19T00:00:00.000Z",
     };
 
     expect(() =>
@@ -566,16 +462,15 @@ alpha-mcp-slack   generic  1                 0
         "Id: 99999999-8888-4777-8666-555555555555\nType: nemoclaw-mcp-v1\nResource version: 1\nCredential keys: GITHUB_TOKEN\n",
       stderr: "",
     });
-    const entry: McpBridgeEntry = {
+    const entry: McpSourceEntry = {
       server: "github",
       agent: "openclaw",
-      adapter: "mcporter",
+      adapter: "openclaw-config",
       url: "https://api.githubcopilot.com/mcp",
       env: ["GITHUB_TOKEN"],
       providerName: "alpha-mcp-github",
       providerId: "11111111-2222-4333-8444-555555555555",
       policyName: "mcp-bridge-github",
-      addedAt: "2026-08-19T00:00:00.000Z",
     };
 
     expect(() =>
@@ -639,13 +534,12 @@ alpha-mcp-slack   generic  1                 0
       observeMcpCredentialRevision("alpha", {
         server: "github",
         agent: "openclaw",
-        adapter: "mcporter",
+        adapter: "openclaw-config",
         url: "https://mcp.example.test/mcp",
         env: ["GITHUB_TOKEN"],
         providerName: "alpha-mcp-github-0123456789abcdef",
         providerId: "11111111-2222-4333-8444-555555555555",
         policyName: "mcp-bridge-github",
-        addedAt: "2026-06-01T00:00:00.000Z",
       }, runtimeSelection),
     ).toBe("v11");
     const proofCommand = exec.mock.calls[0]?.[1] ?? "";
@@ -663,13 +557,12 @@ alpha-mcp-slack   generic  1                 0
       observeMcpCredentialRevision("alpha", {
         server: "github",
         agent: "openclaw",
-        adapter: "mcporter",
+        adapter: "openclaw-config",
         url: "https://mcp.example.test/mcp",
         env: ["GITHUB_TOKEN"],
         providerName: "alpha-mcp-github-0123456789abcdef",
         providerId: "11111111-2222-4333-8444-555555555555",
         policyName: "mcp-bridge-github",
-        addedAt: "2026-06-01T00:00:00.000Z",
       }, runtimeSelection),
     ).toThrow(/Could not observe the current OpenShell credential revision/);
   });
@@ -686,13 +579,12 @@ alpha-mcp-slack   generic  1                 0
       {
         server: "github",
         agent: "openclaw",
-        adapter: "mcporter",
+        adapter: "openclaw-config",
         url: "https://mcp.example.test/mcp",
         env: ["GITHUB_TOKEN"],
         providerName: "alpha-mcp-github-0123456789abcdef",
         providerId: "11111111-2222-4333-8444-555555555555",
         policyName: "mcp-bridge-github",
-        addedAt: "2026-06-01T00:00:00.000Z",
       },
       runtimeSelection,
       { refreshAfterObservedAbsence },
@@ -709,16 +601,15 @@ alpha-mcp-slack   generic  1                 0
   });
 
   it("waits for a post-policy credential revision to settle before returning", () => {
-    const entry: McpBridgeEntry = {
+    const entry: McpSourceEntry = {
       server: "github",
       agent: "openclaw",
-      adapter: "mcporter",
+      adapter: "openclaw-config",
       url: "https://mcp.example.test/mcp",
       env: ["GITHUB_TOKEN"],
       providerName: "alpha-mcp-github-0123456789abcdef",
       providerId: "11111111-2222-4333-8444-555555555555",
       policyName: "mcp-bridge-github",
-      addedAt: "2026-06-01T00:00:00.000Z",
     };
     const exec = vi
       .spyOn(processRecovery, "executeSandboxExecCommand")
@@ -730,16 +621,15 @@ alpha-mcp-slack   generic  1                 0
   });
 
   it("rejects a stable pre-update revision until the opaque provider mutation is projected", () => {
-    const entry: McpBridgeEntry = {
+    const entry: McpSourceEntry = {
       server: "github",
       agent: "openclaw",
-      adapter: "mcporter",
+      adapter: "openclaw-config",
       url: "https://mcp.example.test/mcp",
       env: ["GITHUB_TOKEN"],
       providerName: "alpha-mcp-github-0123456789abcdef",
       providerId: "11111111-2222-4333-8444-555555555555",
       policyName: "mcp-bridge-github",
-      addedAt: "2026-06-01T00:00:00.000Z",
     };
     const exec = vi
       .spyOn(processRecovery, "executeSandboxExecCommand")
@@ -775,7 +665,6 @@ alpha-mcp-slack   generic  1                 0
         providerName: "alpha-mcp-github-0123456789abcdef",
         providerId: "11111111-2222-4333-8444-555555555555",
         policyName: "mcp-bridge-github",
-        addedAt: "2026-06-01T00:00:00.000Z",
       }, runtimeSelection),
     ).toThrow(/last bounded observation: canonical/);
   });
@@ -793,29 +682,27 @@ alpha-mcp-slack   generic  1                 0
       waitForAttachedMcpCredential("alpha", {
         server: "github",
         agent: "openclaw",
-        adapter: "mcporter",
+        adapter: "openclaw-config",
         url: "https://mcp.example.test/mcp",
         env: ["GITHUB_TOKEN"],
         providerName: "alpha-mcp-github-0123456789abcdef",
         providerId: "11111111-2222-4333-8444-555555555555",
         policyName: "mcp-bridge-github",
-        addedAt: "2026-06-01T00:00:00.000Z",
       }, runtimeSelection),
     ).toThrow(/last bounded observation: absent/);
     expect(exec).toHaveBeenCalledOnce();
   });
 
   it("runs one provider-owned refresh after a fresh exec reports the credential absent", () => {
-    const entry: McpBridgeEntry = {
+    const entry: McpSourceEntry = {
       server: "github",
       agent: "openclaw",
-      adapter: "mcporter",
+      adapter: "openclaw-config",
       url: "https://mcp.example.test/mcp",
       env: ["GITHUB_TOKEN"],
       providerName: "alpha-mcp-github-0123456789abcdef",
       providerId: "11111111-2222-4333-8444-555555555555",
       policyName: "mcp-bridge-github",
-      addedAt: "2026-06-01T00:00:00.000Z",
     };
     const exec = vi
       .spyOn(processRecovery, "executeSandboxExecCommand")
@@ -848,13 +735,12 @@ alpha-mcp-slack   generic  1                 0
         {
           server: "github",
           agent: "openclaw",
-          adapter: "mcporter",
+          adapter: "openclaw-config",
           url: "https://mcp.example.test/mcp",
           env: ["GITHUB_TOKEN"],
           providerName: "alpha-mcp-github-0123456789abcdef",
           providerId: "11111111-2222-4333-8444-555555555555",
           policyName: "mcp-bridge-github",
-          addedAt: "2026-06-01T00:00:00.000Z",
         },
         runtimeSelection,
         { refreshAfterObservedAbsence },
@@ -881,13 +767,12 @@ alpha-mcp-slack   generic  1                 0
         {
           server: "github",
           agent: "openclaw",
-          adapter: "mcporter",
+          adapter: "openclaw-config",
           url: "https://mcp.example.test/mcp",
           env: ["GITHUB_TOKEN"],
           providerName: "alpha-mcp-github-0123456789abcdef",
           providerId: "11111111-2222-4333-8444-555555555555",
           policyName: "mcp-bridge-github",
-          addedAt: "2026-06-01T00:00:00.000Z",
         },
         runtimeSelection,
         { refreshAfterObservedAbsence },
@@ -917,13 +802,12 @@ alpha-mcp-slack   generic  1                 0
         {
           server: "github",
           agent: "openclaw",
-          adapter: "mcporter",
+          adapter: "openclaw-config",
           url: "https://mcp.example.test/mcp",
           env: ["GITHUB_TOKEN"],
           providerName: "alpha-mcp-github-0123456789abcdef",
           providerId: "11111111-2222-4333-8444-555555555555",
           policyName: "mcp-bridge-github",
-          addedAt: "2026-06-01T00:00:00.000Z",
         },
         runtimeSelection,
         { refreshAfterObservedAbsence },
@@ -947,13 +831,12 @@ alpha-mcp-slack   generic  1                 0
         {
           server: "github",
           agent: "openclaw",
-          adapter: "mcporter",
+          adapter: "openclaw-config",
           url: "https://mcp.example.test/mcp",
           env: ["GITHUB_TOKEN"],
           providerName: "alpha-mcp-github-0123456789abcdef",
           providerId: "11111111-2222-4333-8444-555555555555",
           policyName: "mcp-bridge-github",
-          addedAt: "2026-06-01T00:00:00.000Z",
         },
         runtimeSelection,
         { previousRevision: "v11", refreshAfterObservedAbsence },
@@ -972,13 +855,12 @@ alpha-mcp-slack   generic  1                 0
       waitForDetachedMcpCredential("alpha", {
         server: "github",
         agent: "openclaw",
-        adapter: "mcporter",
+        adapter: "openclaw-config",
         url: "https://mcp.example.test/mcp",
         env: ["GITHUB_TOKEN"],
         providerName: "alpha-mcp-github-0123456789abcdef",
         providerId: "11111111-2222-4333-8444-555555555555",
         policyName: "mcp-bridge-github",
-        addedAt: "2026-06-01T00:00:00.000Z",
       }, runtimeSelection),
     ).toThrow(/did not confirm credential 'GITHUB_TOKEN' was revoked/);
 
@@ -995,13 +877,12 @@ alpha-mcp-slack   generic  1                 0
     const entry = {
       server: "github",
       agent: "openclaw",
-      adapter: "mcporter",
+      adapter: "openclaw-config",
       url: "https://mcp.example.test/mcp",
       env: ["GITHUB_TOKEN"],
       providerName: "alpha-mcp-github-0123456789abcdef",
       providerId: "11111111-2222-4333-8444-555555555555",
       policyName: "mcp-bridge-github",
-      addedAt: "2026-06-01T00:00:00.000Z",
     };
     const exec = vi.spyOn(processRecovery, "executeSandboxExecCommand").mockReturnValue({
       status: 0,

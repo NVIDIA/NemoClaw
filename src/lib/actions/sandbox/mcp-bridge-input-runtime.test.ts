@@ -161,7 +161,7 @@ describe("MCP input runtime boundaries", () => {
       await dispatchMcpBridgeCommand("missing-sandbox", ["remove", "--help"]);
       expect(logSpy).toHaveBeenCalledWith(
         expect.stringContaining(
-          "Best-effort owned cleanup; preserves registry state when residuals remain",
+          "Best-effort source cleanup; preserves ambiguous providers",
         ),
       );
       expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining("stale registry removal"));

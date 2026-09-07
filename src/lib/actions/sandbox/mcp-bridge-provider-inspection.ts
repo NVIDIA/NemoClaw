@@ -21,7 +21,8 @@ import {
   type GatewayOwner,
 } from "../../onboard/gateway-ownership";
 import { replayTrustedPrivateEndpoint } from "../../security/trusted-private-endpoint";
-import { listExtraProviders, type McpBridgeEntry, type SandboxEntry } from "../../state/registry";
+import type { SandboxEntry } from "../../state/registry";
+import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import { getPersistedSandboxTargetGateway } from "./gateway-target";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import { commandOutput, type OpenShellCommandResult } from "./mcp-bridge-output";
@@ -257,7 +258,7 @@ export function inspectMcpProviderAttachments(
 
 export function assertNoAttachedProviderCredentialCollisions(
   sandboxName: string,
-  entries: readonly McpBridgeEntry[],
+  entries: readonly McpSourceEntry[],
   runtimeSelection: McpProviderInspectionRuntimeSelection,
 ): void {
   if (entries.length === 0) return;
@@ -284,7 +285,7 @@ export function assertNoAttachedProviderCredentialCollisions(
 }
 
 export function assertNoRegisteredProviderCredentialCollisions(
-  entries: readonly McpBridgeEntry[],
+  entries: readonly McpSourceEntry[],
   deps: {
     listExtraProviders?: () => string[];
     inspectProvider?: (providerName: string) => McpProviderInspection;
@@ -293,7 +294,35 @@ export function assertNoRegisteredProviderCredentialCollisions(
 ): void {
   if (entries.length === 0) return;
   for (const entry of entries) assertAuthenticatedBridgeEntry(entry);
-  const queryExtraProviders = deps.listExtraProviders ?? listExtraProviders;
+  const queryExtraProviders =
+    deps.listExtraProviders ??
+    (() => {
+      const result = runOpenshellProviderCommand(["provider", "list", "--output", "json"], {
+        ignoreError: true,
+        runtimeSelection: deps.runtimeSelection,
+        stdio: ["ignore", "pipe", "pipe"],
+      }) as OpenShellCommandResult;
+      if (result.status !== 0) {
+        throw new McpBridgeError(
+          commandOutput(result) || "Could not list current OpenShell providers.",
+        );
+      }
+      let value: unknown;
+      try {
+        value = JSON.parse(String(result.stdout ?? ""));
+      } catch {
+        throw new McpBridgeError("OpenShell returned invalid provider inventory JSON.");
+      }
+      if (!Array.isArray(value)) {
+        throw new McpBridgeError("OpenShell returned invalid provider inventory JSON.");
+      }
+      return value.flatMap((entry): string[] =>
+        entry && typeof entry === "object" && !Array.isArray(entry) &&
+        typeof (entry as { name?: unknown }).name === "string"
+          ? [(entry as { name: string }).name]
+          : [],
+      );
+    });
   const inspectProvider =
     deps.inspectProvider ??
     ((providerName: string) => inspectMcpProvider(providerName, deps.runtimeSelection));
@@ -303,7 +332,7 @@ export function assertNoRegisteredProviderCredentialCollisions(
     if (provider.exists !== true || !provider.id || !provider.credentialKeys) {
       throw new McpBridgeError(
         provider.error ??
-          `Could not inspect registered provider '${providerName}' before managed MCP reconciliation.`,
+          `Could not inspect registered provider '${providerName}' during the live MCP collision check.`,
       );
     }
     for (const entry of entries) {
@@ -322,7 +351,7 @@ export function assertNoRegisteredProviderCredentialCollisions(
 
 export function assertNoProviderCredentialCollisions(
   sandboxName: string,
-  entries: readonly McpBridgeEntry[],
+  entries: readonly McpSourceEntry[],
   runtimeSelection: McpProviderInspectionRuntimeSelection,
 ): void {
   assertNoAttachedProviderCredentialCollisions(sandboxName, entries, runtimeSelection);
@@ -375,8 +404,8 @@ export function providerShapeDetail(
   const id = inspection.id ?? "unparseable";
   if (!expectedProviderId) {
     return inspection.exists
-      ? `The registry entry has no stable OpenShell provider ID; live provider ID is '${id}'.`
-      : "The registry entry has no stable OpenShell provider ID.";
+      ? `The source linkage has no stable OpenShell provider ID; live provider ID is '${id}'.`
+      : "The source linkage has no stable OpenShell provider ID.";
   }
   if (!inspection.exists) return undefined;
   if (providerMatchesCredential(inspection, expectedCredential, expectedProviderId)) {
@@ -401,7 +430,7 @@ export function providerShapeDetail(
 }
 
 export function assertMcpProviderRecoverable(
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
 ): McpProviderInspection {
   assertAuthenticatedBridgeEntry(entry);
@@ -444,7 +473,7 @@ export function assertMcpProviderRecoverable(
 }
 
 export async function preflightMcpEntryTargets(
-  entries: readonly McpBridgeEntry[],
+  entries: readonly McpSourceEntry[],
 ): Promise<Map<string, McpBridgeTargetValidation>> {
   for (const entry of entries) assertAuthenticatedBridgeEntry(entry);
   const results = await Promise.all(

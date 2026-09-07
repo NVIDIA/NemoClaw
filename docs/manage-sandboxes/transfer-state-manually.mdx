@@ -137,7 +137,7 @@ openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/agent-skills/" /sandbox/.deepag
 ```
 
 Do not upload saved `.deepagents/.state` contents during manual restore.
-Restore safe Deep Agents files only, then run the managed rebuild or onboarding flow so NemoClaw regenerates route metadata, managed MCP projection state, and credential handling from host-side state.
+Restore safe Deep Agents files only, including the credential-free native `.mcp.json`, then run the managed rebuild or onboarding flow so NemoClaw regenerates route metadata and reconnects MCP entries to live OpenShell policy and provider state.
 
 Treat downloaded `config.toml` as inspection context.
 Do not upload an old `config.toml` over a rebuilt sandbox unless you are intentionally replacing NemoClaw's generated route metadata.

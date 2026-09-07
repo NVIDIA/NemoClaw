@@ -136,7 +136,6 @@ export function classifyExportRegistryFidelity(
       "web search",
     ],
     ["spec.sandboxes[].integrations.messaging", entry.messaging, "messaging"],
-    ["spec.sandboxes[].integrations.mcp", entry.mcp, "managed tools"],
     [
       "spec.sandboxes[].agents.secondary",
       entry.openclawImagePluginInstalls,

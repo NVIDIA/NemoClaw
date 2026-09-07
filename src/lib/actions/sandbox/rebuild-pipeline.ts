@@ -37,7 +37,10 @@ import {
   removeStaleRebuildDockerOrphan,
   snapshotOpenShellEnv,
 } from "./rebuild-flow-helpers";
-import { mcpRebuildRequiresRuntimeSelection } from "./rebuild-mcp-phase";
+import {
+  mcpRebuildRequiresRuntimeSelection,
+  observeMcpStateForRebuild,
+} from "./rebuild-mcp-phase";
 import { stageMessagingManifestPlanForRebuild } from "./rebuild-messaging-phase";
 import {
   type HermesCronRestoreIdentity,
@@ -240,7 +243,11 @@ async function rebuildSandboxUnlocked(
       recoveryManifest = preDeleteRecovery.manifest;
       recoveryRegistrySnapshot = preDeleteRecovery.registrySnapshot;
       const activeRecoveryTransaction = onboardSession.loadSession()?.checkpoint?.sandboxRecreate;
-      const mcpEntries = Object.values(sandboxEntry.mcp?.bridges ?? {});
+      const mcpEntries = observeMcpStateForRebuild(
+        sandboxEntry,
+        recreateOptions.runtimeSelection,
+        Boolean(activeRecoveryTransaction),
+      );
       const mcpRuntimeSelectionRequired = mcpRebuildRequiresRuntimeSelection(sandboxEntry);
       const mcpRuntimeSelection = mcpRuntimeSelectionRequired
         ? recreateOptions.runtimeSelection

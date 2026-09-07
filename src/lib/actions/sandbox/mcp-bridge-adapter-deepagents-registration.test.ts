@@ -6,9 +6,9 @@ import {
   baseEntry,
   runDeepAgentsConfigCommand,
 } from "../../../../test/helpers/mcp-bridge-adapter-deepagents-fixture";
-import type { McpBridgeEntry } from "../../state/registry";
+import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import { buildDeepAgentsMcpRegisterCommand } from "./mcp-bridge-adapter-deepagents";
-import { restoreDeepAgentsManagedMcpProjection } from "./mcp-bridge-adapter-deepagents-registration";
+import { restoreDeepAgentsNativeMcpConfig } from "./mcp-bridge-adapter-deepagents-registration";
 import { buildDeepAgentsMcpRuntimeKindCommand } from "./mcp-bridge-adapter-status";
 import { executeSandboxCommand } from "./process-recovery";
 
@@ -19,7 +19,7 @@ vi.mock("./process-recovery", () => ({
 const executeSandboxCommandMock = vi.mocked(executeSandboxCommand);
 const runtimeSelection = { gatewayName: "nemoclaw-8091", workspace: "default" } as const;
 
-function jiraEntry(): McpBridgeEntry {
+function jiraEntry(): McpSourceEntry {
   return {
     ...baseEntry,
     server: "jira",
@@ -35,7 +35,7 @@ beforeEach(() => {
 });
 
 describe("Deep Agents MCP config adapter registration", () => {
-  it("writes only the dedicated managed projection with a credential placeholder", () => {
+  it("writes only the agent-native config with a credential placeholder", () => {
     const legacyConfig = { mcpServers: { user: { command: "user-command" } } };
     const registration = runDeepAgentsConfigCommand(
       buildDeepAgentsMcpRegisterCommand(baseEntry),
@@ -63,7 +63,7 @@ describe("Deep Agents MCP config adapter registration", () => {
   it("creates a missing Deep Agents config parent during snapshot repair (#10756)", () => {
     const registration = runDeepAgentsConfigCommand(
       buildDeepAgentsMcpRegisterCommand(baseEntry, true, [baseEntry], false, "v12", {
-        resetManagedProjection: true,
+        resetNativeConfig: true,
       }),
     );
 
@@ -103,23 +103,31 @@ describe("Deep Agents MCP config adapter registration", () => {
     expect(registration.configText).not.toContain("host-only-secret");
   });
 
-  it("rejects unowned config before registration mutates the file", () => {
+  it("preserves unrelated native config while registering a server", () => {
     const initialConfig = { ui: { theme: "dark" } };
     const registration = runDeepAgentsConfigCommand(
       buildDeepAgentsMcpRegisterCommand(baseEntry),
       initialConfig,
     );
 
-    expect(registration.status).toBe(2);
-    expect(registration.stderr).toContain("only mcpServers is allowed");
-    expect(registration.config).toEqual(initialConfig);
+    expect(registration.status, registration.stderr).toBe(0);
+    expect(registration.config).toEqual({
+      ...initialConfig,
+      mcpServers: {
+        github: {
+          type: "http",
+          url: baseEntry.url,
+          headers: { Authorization: "Bearer openshell:resolve:env:GITHUB_TOKEN" },
+        },
+      },
+    });
   });
 
   it("replaces an unsafe symbolic link during snapshot restore without following it (#10756)", () => {
     const initialConfig = { mcpServers: {} };
     const registration = runDeepAgentsConfigCommand(
       buildDeepAgentsMcpRegisterCommand(baseEntry, true, [baseEntry], false, "v12", {
-        resetManagedProjection: true,
+        resetNativeConfig: true,
       }),
       initialConfig,
       "v2",
@@ -149,7 +157,7 @@ describe("Deep Agents MCP config adapter registration", () => {
   it("replaces an unsafe FIFO during snapshot restore without opening it (#10756)", () => {
     const registration = runDeepAgentsConfigCommand(
       buildDeepAgentsMcpRegisterCommand(baseEntry, true, [baseEntry], false, "v12", {
-        resetManagedProjection: true,
+        resetNativeConfig: true,
       }),
       { mcpServers: {} },
       "v2",
@@ -176,7 +184,7 @@ describe("Deep Agents MCP config adapter registration", () => {
   it("replaces an unsafe dangling symlink during snapshot restore (#10756)", () => {
     const registration = runDeepAgentsConfigCommand(
       buildDeepAgentsMcpRegisterCommand(baseEntry, true, [baseEntry], false, "v12", {
-        resetManagedProjection: true,
+        resetNativeConfig: true,
       }),
       undefined,
       "v2",
@@ -201,10 +209,10 @@ describe("Deep Agents MCP config adapter registration", () => {
     expect(registration.managedSymlinkTargetExists).toBe(false);
   });
 
-  it("preserves a directory at the managed projection path for operator recovery (#10756)", () => {
+  it("preserves a directory at the native config path for operator recovery (#10756)", () => {
     const registration = runDeepAgentsConfigCommand(
       buildDeepAgentsMcpRegisterCommand(baseEntry, true, [baseEntry], false, "v12", {
-        resetManagedProjection: true,
+        resetNativeConfig: true,
       }),
       undefined,
       "v2",
@@ -214,7 +222,7 @@ describe("Deep Agents MCP config adapter registration", () => {
     );
 
     expect(registration.status).toBe(2);
-    expect(registration.stderr).toContain("managed MCP projection path is a directory");
+    expect(registration.stderr).toContain("native MCP configuration path is a directory");
     expect(registration.managedDirectoryEntries).toEqual(["preserved.txt"]);
   });
 
@@ -222,12 +230,12 @@ describe("Deep Agents MCP config adapter registration", () => {
     { label: "symbolic link", managedOptions: { symlink: true } },
     { label: "FIFO", managedOptions: { fifo: true } },
   ])(
-    "replaces an unsafe $label with an empty managed projection when the registry is empty (#10756)",
+    "replaces an unsafe $label with an empty native config when the registry is empty (#10756)",
     ({ managedOptions }) => {
       const initialConfig = { mcpServers: { unmanaged: { command: "unmanaged" } } };
       const registration = runDeepAgentsConfigCommand(
         buildDeepAgentsMcpRegisterCommand(undefined, true, [], false, undefined, {
-          resetManagedProjection: true,
+          resetNativeConfig: true,
         }),
         initialConfig,
         "v2",
@@ -242,10 +250,10 @@ describe("Deep Agents MCP config adapter registration", () => {
     },
   );
 
-  it("preserves a directory when the empty registry requires projection reset (#10756)", () => {
+  it("preserves a directory when an empty handoff requires native reset (#10756)", () => {
     const registration = runDeepAgentsConfigCommand(
       buildDeepAgentsMcpRegisterCommand(undefined, true, [], false, undefined, {
-        resetManagedProjection: true,
+        resetNativeConfig: true,
       }),
       undefined,
       "v2",
@@ -255,12 +263,12 @@ describe("Deep Agents MCP config adapter registration", () => {
     );
 
     expect(registration.status).toBe(2);
-    expect(registration.stderr).toContain("managed MCP projection path is a directory");
+    expect(registration.stderr).toContain("native MCP configuration path is a directory");
     expect(registration.managedDirectoryEntries).toEqual(["preserved.txt"]);
   });
 
   it("preserves a sibling revision while revising the target server", () => {
-    const jiraEntry: McpBridgeEntry = {
+    const jiraEntry: McpSourceEntry = {
       ...baseEntry,
       server: "jira",
       url: "https://mcp.atlassian.com/v1/",
@@ -300,8 +308,8 @@ describe("Deep Agents MCP config adapter registration", () => {
     });
   });
 
-  it("rejects a missing registry sibling before changing the target server", () => {
-    const jiraEntry: McpBridgeEntry = {
+  it("does not reconstruct an absent sibling from command-local handoff state", () => {
+    const jiraEntry: McpSourceEntry = {
       ...baseEntry,
       server: "jira",
       url: "https://mcp.atlassian.com/v1/",
@@ -315,14 +323,21 @@ describe("Deep Agents MCP config adapter registration", () => {
       initialConfig,
     );
 
-    expect(registration.status).toBe(2);
-    expect(registration.stderr).toContain("registry-owned MCP sibling 'github' is absent");
-    expect(registration.config).toEqual(initialConfig);
+    expect(registration.status, registration.stderr).toBe(0);
+    expect(registration.config).toEqual({
+      mcpServers: {
+        jira: {
+          type: "http",
+          url: jiraEntry.url,
+          headers: { Authorization: "Bearer openshell:resolve:env:v12_JIRA_MCP_TOKEN" },
+        },
+      },
+    });
     expect(registration.configText).not.toContain("openshell:resolve:env:GITHUB_TOKEN");
   });
 
-  it("rejects a 65-server projection before rendering a mutation command", () => {
-    const managedEntries = Array.from({ length: 65 }, (_, index): McpBridgeEntry => ({
+  it("rejects a 65-server config before rendering a mutation command", () => {
+    const managedEntries = Array.from({ length: 65 }, (_, index): McpSourceEntry => ({
       ...baseEntry,
       server: `server${String(index)}`,
       env: [`SERVER_${String(index)}_TOKEN`],
@@ -344,14 +359,14 @@ describe("Deep Agents MCP config adapter registration", () => {
       .mockReturnValueOnce({ status: 0, stdout: "v2\n", stderr: "" })
       .mockReturnValueOnce({
         status: 0,
-        stdout: "NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=2\n",
+        stdout: "NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=3\n",
         stderr: "",
       })
       .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" })
       .mockReturnValueOnce({ status: 0, stdout: "registered\n", stderr: "" })
       .mockReturnValueOnce({ status: 0, stdout: "registered\n", stderr: "" });
 
-    restoreDeepAgentsManagedMcpProjection("alpha", entries, runtimeSelection);
+    restoreDeepAgentsNativeMcpConfig("alpha", entries, runtimeSelection);
 
     expect(executeSandboxCommandMock).toHaveBeenCalledTimes(5);
     expect(
@@ -372,17 +387,17 @@ describe("Deep Agents MCP config adapter registration", () => {
     );
   });
 
-  it("resets the managed v2 projection when the registry has no Deep Agents bridges (#10756)", () => {
+  it("resets the native MCP configuration when the registry has no Deep Agents bridges (#10756)", () => {
     executeSandboxCommandMock
       .mockReturnValueOnce({ status: 0, stdout: "v2\n", stderr: "" })
       .mockReturnValueOnce({
         status: 0,
-        stdout: "NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=2\n",
+        stdout: "NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=3\n",
         stderr: "",
       })
       .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" });
 
-    restoreDeepAgentsManagedMcpProjection("alpha", [], runtimeSelection);
+    restoreDeepAgentsNativeMcpConfig("alpha", [], runtimeSelection);
 
     expect(executeSandboxCommandMock).toHaveBeenCalledTimes(3);
     expect(executeSandboxCommandMock.mock.calls[2]?.[1]).toContain('\\"expectedServers\\":{}');
@@ -395,20 +410,20 @@ describe("Deep Agents MCP config adapter registration", () => {
       stderr: "",
     });
 
-    expect(() => restoreDeepAgentsManagedMcpProjection("alpha", [], runtimeSelection)).toThrow(
+    expect(() => restoreDeepAgentsNativeMcpConfig("alpha", [], runtimeSelection)).toThrow(
       "Could not identify the managed Deep Agents MCP runtime.",
     );
     expect(executeSandboxCommandMock).toHaveBeenCalledOnce();
   });
 
-  it("leaves the v2 projection unchanged for a legacy Deep Agents runtime (#10756)", () => {
+  it("leaves the native config unchanged for a legacy Deep Agents runtime (#10756)", () => {
     executeSandboxCommandMock.mockReturnValueOnce({
       status: 0,
       stdout: "legacy\n",
       stderr: "",
     });
 
-    restoreDeepAgentsManagedMcpProjection("alpha", [baseEntry], runtimeSelection);
+    restoreDeepAgentsNativeMcpConfig("alpha", [baseEntry], runtimeSelection);
 
     expect(executeSandboxCommandMock).toHaveBeenCalledOnce();
   });
@@ -423,8 +438,8 @@ describe("Deep Agents MCP config adapter registration", () => {
       });
 
     expect(() =>
-      restoreDeepAgentsManagedMcpProjection("alpha", [baseEntry], runtimeSelection),
-    ).toThrow("does not contain managed MCP capability v2");
+      restoreDeepAgentsNativeMcpConfig("alpha", [baseEntry], runtimeSelection),
+    ).toThrow("does not contain native MCP capability v3");
     expect(executeSandboxCommandMock).toHaveBeenCalledTimes(2);
     expect(executeSandboxCommandMock.mock.calls[1]?.[1]).toBe(
       "/usr/local/bin/deepagents-code --nemoclaw-mcp-capability",
@@ -448,19 +463,19 @@ describe("Deep Agents MCP config adapter registration", () => {
     expect(inspection.legacyConfig).toEqual(legacyConfig);
   });
 
-  it("fails when the managed projection mutation command fails (#10756)", () => {
+  it("fails when the native config mutation command fails (#10756)", () => {
     executeSandboxCommandMock
       .mockReturnValueOnce({ status: 0, stdout: "v2\n", stderr: "" })
       .mockReturnValueOnce({
         status: 0,
-        stdout: "NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=2\n",
+        stdout: "NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=3\n",
         stderr: "",
       })
-      .mockReturnValueOnce({ status: 2, stdout: "", stderr: "projection is unsafe" });
+      .mockReturnValueOnce({ status: 2, stdout: "", stderr: "native config is unsafe" });
 
     expect(() =>
-      restoreDeepAgentsManagedMcpProjection("alpha", [baseEntry, jiraEntry()], runtimeSelection),
-    ).toThrow("projection is unsafe");
+      restoreDeepAgentsNativeMcpConfig("alpha", [baseEntry, jiraEntry()], runtimeSelection),
+    ).toThrow("native config is unsafe");
     expect(executeSandboxCommandMock).toHaveBeenCalledTimes(3);
   });
 
@@ -469,7 +484,7 @@ describe("Deep Agents MCP config adapter registration", () => {
       .mockReturnValueOnce({ status: 0, stdout: "v2\n", stderr: "" })
       .mockReturnValueOnce({
         status: 0,
-        stdout: "NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=2\n",
+        stdout: "NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=3\n",
         stderr: "",
       })
       .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" })
@@ -477,7 +492,7 @@ describe("Deep Agents MCP config adapter registration", () => {
       .mockReturnValueOnce({ status: 0, stdout: "mismatch\n", stderr: "" });
 
     expect(() =>
-      restoreDeepAgentsManagedMcpProjection("alpha", [baseEntry, jiraEntry()], runtimeSelection),
+      restoreDeepAgentsNativeMcpConfig("alpha", [baseEntry, jiraEntry()], runtimeSelection),
     ).toThrow("config verification failed after adding 'jira': mismatch");
   });
 
@@ -491,7 +506,6 @@ describe("Deep Agents MCP config adapter registration", () => {
         env: baseEntry.env,
         providerName: baseEntry.providerName,
         policyName: baseEntry.policyName,
-        addedAt: baseEntry.addedAt,
       },
     },
     {
@@ -500,8 +514,8 @@ describe("Deep Agents MCP config adapter registration", () => {
     },
   ])("rejects $label before running a sandbox command (#10756)", ({ entry }) => {
     expect(() =>
-      restoreDeepAgentsManagedMcpProjection("alpha", [entry as McpBridgeEntry], runtimeSelection),
-    ).toThrow("requires Deep Agents registry entries");
+      restoreDeepAgentsNativeMcpConfig("alpha", [entry as McpSourceEntry], runtimeSelection),
+    ).toThrow("requires Deep Agents source entries");
     expect(executeSandboxCommandMock).not.toHaveBeenCalled();
   });
 });

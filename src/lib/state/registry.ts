@@ -41,7 +41,6 @@ export {
   type SandboxInferenceRouteReservationDisposition,
 } from "./registry/route-reservation";
 import { cloneSandboxWorkloadReceipt } from "./registry/workload";
-import { normalizeSandboxMcpState } from "./registry-mcp";
 import {
   normalizePendingSandboxCreateIdentity,
   normalizeSandboxPolicyAttribution,
@@ -65,10 +64,6 @@ export {
   listExtraProviders,
   removeExtraProvider,
 } from "./registry/extra-providers";
-export {
-  listManagedMcpCredentialReservations,
-  type ManagedMcpCredentialReservation,
-} from "./registry/mcp-credential-reservations";
 
 import { isDcodeAutoApprovalMode } from "../onboard/dcode-auto-approval";
 import { cloneSandboxHostMounts, hasUnsafeHostMountTerminalText } from "./registry/host-mount";
@@ -105,8 +100,6 @@ export type {
   SandboxRegistry,
   SandboxWorkloadReceipt,
 } from "./registry/types";
-export type { McpBridgeEntry, SandboxMcpState } from "./registry-mcp";
-export { normalizeSandboxMcpState };
 export {
   getConfiguredMessagingChannelsFromEntry,
   getDisabledMessagingChannelsFromEntry,
@@ -526,7 +519,6 @@ export function registerSandbox(
       lifecycleGeneration: entry.lifecycleGeneration,
       lifecycleLiveIdentityFingerprint: entry.lifecycleLiveIdentityFingerprint,
       messaging: cloneSandboxMessagingState(entry.messaging),
-      mcp: normalizeSandboxMcpState(entry.mcp),
       hermesToolGateways:
         Array.isArray(entry.hermesToolGateways) && entry.hermesToolGateways.length > 0
           ? [...entry.hermesToolGateways]

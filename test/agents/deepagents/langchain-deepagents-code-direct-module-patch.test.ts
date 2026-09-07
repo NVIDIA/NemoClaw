@@ -639,7 +639,7 @@ check("disabled", False)
     (snapshotKind) => {
       const tempDir = createPackageFixture();
       patchFixture(tempDir);
-      const configPath = path.join(tempDir, ".nemoclaw-mcp.json");
+      const configPath = path.join(tempDir, ".mcp.json");
       const managedConfig = {
         mcpServers: {
           github: {

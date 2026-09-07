@@ -192,7 +192,7 @@ For headless runs, `--max-retries` remains available after Deep Agents Code vali
 The managed boundary discards every other model parameter, including credentials, endpoints, and provider settings.
 Project and user-defined subagents remain available, but they inherit the managed chat model instead of accepting their own model override.
 
-MCP servers registered through `nemo-deepagents <sandbox-name> mcp add` remain available through NemoClaw's dedicated `/sandbox/.deepagents/.nemoclaw-mcp.json` projection and OpenShell egress policy.
+MCP servers registered through `nemo-deepagents <sandbox-name> mcp add` remain available through the agent-native `/sandbox/.deepagents/.mcp.json` configuration and OpenShell egress policy.
 Project and user MCP files are never auto-loaded.
 Sandboxes with the older managed MCP v1 runtime must rebuild before `mcp add` or `mcp restart`.
 Remove, rebuild, and destroy can still scrub registry-owned legacy entries without claiming unrelated user content.

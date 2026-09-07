@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import * as onboardSession from "../state/onboard-session";
-import type { SandboxEntry, SandboxMcpState } from "../state/registry";
+import type { SandboxEntry } from "../state/registry";
 import * as registry from "../state/registry";
 import type { SelectionDrift } from "./selection-drift";
 
@@ -40,7 +40,6 @@ export interface SandboxLifecycleDeps {
 export interface SandboxLifecycleHelpers {
   inspectSandboxForCreate(sandboxName: string): {
     existingEntry: SandboxEntry | null;
-    preservedMcpState: SandboxMcpState | undefined;
     liveExists: boolean;
   };
   shouldRestoreLatestBackupOnRecreate(): boolean;
@@ -64,19 +63,8 @@ export function createSandboxLifecycleHelpers(deps: SandboxLifecycleDeps): Sandb
 
   function inspectSandboxForCreate(sandboxName: string) {
     const existingEntry = registry.getSandbox(sandboxName);
-    if (existingEntry?.mcp?.destroyPreparedAt || existingEntry?.mcp?.destroyPendingAt) {
-      throw new Error(
-        `Sandbox '${sandboxName}' has an incomplete MCP destroy transaction. Re-run the sandbox destroy command to finish cleanup before recreating it.`,
-      );
-    }
-    const preservedMcpState =
-      existingEntry?.mcp && Object.keys(existingEntry.mcp.bridges).length > 0
-        ? existingEntry.mcp
-        : undefined;
-    // MCP state is the rebuild transaction manifest. Preserve it while the
-    // sandbox is absent; registration carries the validated state forward.
     const liveExists = sandboxExistsInGateway(sandboxName);
-    return { existingEntry, preservedMcpState, liveExists };
+    return { existingEntry, liveExists };
   }
 
   function shouldRestoreLatestBackupOnRecreate(): boolean {

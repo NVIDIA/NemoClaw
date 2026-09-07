@@ -44,15 +44,15 @@ export function shouldRetryMcpDiscoveryAfterRestart(
 
 type McpToolDiscoveryStatusJson = {
   provider: Record<string, unknown> & {
-    registryPresent: boolean;
-    gatewayPresent: boolean | null;
+    present: boolean | null;
+    state: string;
     attached: boolean | null;
     credentialReady: boolean | null;
     credentialResolution?: unknown;
   };
   policy: Record<string, unknown> & {
-    registryPresent: boolean;
-    gatewayPresent: boolean | null;
+    present: boolean | null;
+    state: string;
   };
   adapter: Record<string, unknown> & {
     registered: boolean | null;
@@ -78,15 +78,15 @@ function buildMcpToolDiscoveryDiagnostics(
 ): Record<string, unknown> {
   return {
     provider: {
-      registryPresent: status.provider.registryPresent,
-      gatewayPresent: status.provider.gatewayPresent,
+      present: status.provider.present,
+      state: status.provider.state,
       attached: status.provider.attached,
       credentialReady: status.provider.credentialReady,
       credentialResolutionPresent: status.provider.credentialResolution !== undefined,
     },
     policy: {
-      registryPresent: status.policy.registryPresent,
-      gatewayPresent: status.policy.gatewayPresent,
+      present: status.policy.present,
+      state: status.policy.state,
     },
     adapter: {
       registered: status.adapter.registered,

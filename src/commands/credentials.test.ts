@@ -9,9 +9,6 @@ const mocks = vi.hoisted(() => ({
   runOpenshellProviderCommand: vi.fn(),
   recordExtraProvider: vi.fn(),
   forgetExtraProvider: vi.fn(),
-  listManagedMcpCredentialReservations: vi.fn<
-    () => Array<{ sandboxName: string; server: string; credentialKeys: string[] }>
-  >(() => []),
   resolveGatewayCredentialMutationAuthority: vi.fn(),
 }));
 
@@ -25,7 +22,6 @@ vi.mock("../lib/actions/global", () => ({
   recoverNamedGatewayRuntime: mocks.recoverNamedGatewayRuntime,
   recordExtraProvider: mocks.recordExtraProvider,
   forgetExtraProvider: mocks.forgetExtraProvider,
-  listManagedMcpCredentialReservations: mocks.listManagedMcpCredentialReservations,
 }));
 vi.mock("../lib/adapters/openshell/provider-command", async (importOriginal) => {
   const actual =
@@ -61,7 +57,6 @@ describe("credentials oclif adapter source coverage", () => {
     vi.clearAllMocks();
     mocks.recoverNamedGatewayRuntime.mockResolvedValue({ recovered: true, attempted: false });
     mocks.runOpenshellProviderCommand.mockReturnValue({ status: 0, stdout: "nvidia-prod\n" });
-    mocks.listManagedMcpCredentialReservations.mockReturnValue([]);
     mocks.resolveGatewayCredentialMutationAuthority.mockReturnValue({});
     process.exitCode = undefined;
   });
@@ -185,82 +180,16 @@ describe("credentials oclif adapter source coverage", () => {
     expect(mocks.runOpenshellProviderCommand).not.toHaveBeenCalled();
   });
 
-  it("rejects a provider credential reserved by managed MCP before gateway mutation (#9388)", async () => {
-    vi.stubEnv("MAAS_GLEAN_TOKEN", "qa-secret-value");
-    mocks.listManagedMcpCredentialReservations.mockReturnValue([
-      {
-        sandboxName: "hermes",
-        server: "maas-glean",
-        credentialKeys: ["MAAS_GLEAN_TOKEN"],
-      },
-    ]);
-
-    const result = await runCredentialsAddAction({
-      provider: "maas-glean",
-      type: "generic",
-      credentials: ["MAAS_GLEAN_TOKEN"],
-      configPairs: [],
-      fromExisting: false,
-    });
-
-    expect(result.exitCode).toBe(1);
-    expect(result.failureLines.join("\n")).toContain(
-      "Credential key 'MAAS_GLEAN_TOKEN' is reserved by managed MCP server 'maas-glean' on sandbox 'hermes'",
-    );
-    expect(result.failureLines.join("\n")).not.toContain("qa-secret-value");
-    expect(mocks.recoverNamedGatewayRuntime).not.toHaveBeenCalled();
-    expect(mocks.runOpenshellProviderCommand).not.toHaveBeenCalled();
-    expect(mocks.recordExtraProvider).not.toHaveBeenCalled();
-  });
-
-  it("allows --from-existing after inspecting disjoint managed MCP credential keys (#9388)", async () => {
-    mocks.listManagedMcpCredentialReservations.mockReturnValue([
-      {
-        sandboxName: "hermes",
-        server: "maas-glean",
-        credentialKeys: ["MAAS_GLEAN_TOKEN"],
-      },
-    ]);
-    mocks.runOpenshellProviderCommand
-      .mockReturnValueOnce({
-        status: 0,
-        stdout: JSON.stringify({
-          id: "generic",
-          credentials: [{ env_vars: ["CUSTOM_TOKEN"] }],
-        }),
-      })
-      .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" });
-
-    const result = await runCredentialsAddAction({
-      provider: "custom-provider",
-      type: "generic",
-      credentials: [],
-      configPairs: [],
-      fromExisting: true,
-    });
-
-    expect(result.exitCode).toBe(0);
-    expect(mocks.runOpenshellProviderCommand).toHaveBeenNthCalledWith(
-      1,
-      ["provider", "profile", "-g", "nemoclaw", "export", "generic", "--output", "json"],
-      expect.any(Object),
-    );
-    expect(mocks.runOpenshellProviderCommand).toHaveBeenNthCalledWith(
-      2,
-      expect.arrayContaining(["provider", "create", "custom-provider", "--from-existing"]),
-      expect.any(Object),
-    );
-    expect(mocks.recordExtraProvider).toHaveBeenCalledWith("custom-provider");
-  });
-
   it("releases a provider reservation when credential registration fails (#9388)", async () => {
     vi.stubEnv("CUSTOM_TOKEN", "host-only-secret");
     mocks.recordExtraProvider.mockReturnValueOnce(true);
-    mocks.runOpenshellProviderCommand.mockReturnValueOnce({
-      status: 1,
-      stdout: "",
-      stderr: "provider creation failed",
-    });
+    mocks.runOpenshellProviderCommand
+      .mockReturnValueOnce({ status: 0, stdout: "nvidia-prod\n", stderr: "" })
+      .mockReturnValueOnce({
+        status: 1,
+        stdout: "",
+        stderr: "provider creation failed",
+      });
 
     const result = await runCredentialsAddAction({
       provider: "custom-provider",
@@ -274,7 +203,7 @@ describe("credentials oclif adapter source coverage", () => {
     expect(mocks.recordExtraProvider).toHaveBeenCalledWith("custom-provider");
     expect(mocks.forgetExtraProvider).toHaveBeenCalledWith("custom-provider");
     expect(mocks.recordExtraProvider.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.runOpenshellProviderCommand.mock.invocationCallOrder[0],
+      mocks.runOpenshellProviderCommand.mock.invocationCallOrder[1],
     );
   });
 
@@ -358,6 +287,7 @@ describe("credentials oclif adapter source coverage", () => {
       })
       .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" })
       .mockReturnValueOnce({ status: 0, stdout: EXACT_OPENAI_PROFILE, stderr: "" })
+      .mockReturnValueOnce({ status: 0, stdout: "nvidia-prod\n", stderr: "" })
       .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" });
 
     const result = await runCredentialsAddAction({
@@ -381,6 +311,7 @@ describe("credentials oclif adapter source coverage", () => {
         expect.stringMatching(/provider-profiles\/openai\.yaml$/u),
       ],
       ["provider", "profile", "-g", "nemoclaw", "export", "openai", "--output", "json"],
+      ["provider", "list", "-g", "nemoclaw", "--names"],
       [
         "provider",
         "create",

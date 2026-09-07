@@ -1383,7 +1383,7 @@ describe("Deep Agents Code durable state files", () => {
       fs.writeFileSync(path.join(deepAgentsDir, ".env"), "NVIDIA_API_KEY=should-not-copy\n");
       fs.writeFileSync(path.join(deepAgentsDir, ".mcp.json"), '{"token":"should-not-copy"}\n');
       fs.writeFileSync(
-        path.join(deepAgentsDir, ".nemoclaw-mcp.json"),
+        path.join(deepAgentsDir, ".mcp.json"),
         '{"mcpServers":{"reconstructable":{}}}\n',
       );
 
@@ -1475,13 +1475,13 @@ process.exit(0);
       );
       expect(fs.existsSync(path.join(backup.manifest!.backupPath, ".env"))).toBe(false);
       expect(fs.existsSync(path.join(backup.manifest!.backupPath, ".mcp.json"))).toBe(false);
-      expect(fs.existsSync(path.join(backup.manifest!.backupPath, ".nemoclaw-mcp.json"))).toBe(
+      expect(fs.existsSync(path.join(backup.manifest!.backupPath, ".mcp.json"))).toBe(
         false,
       );
       const loggedCommands = fs.readFileSync(sshLog, "utf-8");
       expect(loggedCommands).not.toContain(".env");
       expect(loggedCommands).not.toContain(".mcp.json");
-      expect(loggedCommands).not.toContain(".nemoclaw-mcp.json");
+      expect(loggedCommands).not.toContain(".mcp.json");
       // #5753: restore must include agent/skills after backup and recreation.
       const restore = sandboxState.restoreSandboxState("deepagents", backup.manifest!.backupPath);
       expect(restore.success).toBe(true);

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { McpBridgeEntry } from "../../state/registry";
+import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import type { McpScrubbedAdapterEntry } from "./mcp-bridge-adapter-teardown";
 import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider";
 import { addMcpBridge as addMcpBridgeLifecycle } from "./mcp-bridge-add-restart";
@@ -26,10 +26,13 @@ import {
   restoreMcpBridgesAfterRebuild as restoreMcpBridgesAfterRebuildLifecycle,
 } from "./mcp-bridge-rebuild";
 import { removeMcpBridge as removeMcpBridgeLifecycle } from "./mcp-bridge-remove";
+import { migrateMcpBridges } from "./mcp-bridge-migration";
 import { renderMcpBridgeList, renderMcpBridgeStatus } from "./mcp-bridge-render";
 import { credentialResolutionWarning } from "./mcp-bridge-resolution-probe";
 import { restartMcpBridge as restartMcpBridgeLifecycle } from "./mcp-bridge-restart";
-import { getSandboxAgent, getSandboxOrThrow } from "./mcp-bridge-state";
+import { getMcpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider";
+import { inspectLegacyBridgeState, inspectSourceBridgeState } from "./mcp-bridge-source";
+import { getSandboxAgent, getSandboxOrThrow, hydrateBridgeState } from "./mcp-bridge-state";
 import { buildJsonSummary, statusMcpBridge } from "./mcp-bridge-status";
 import { parseMcpAddArgs } from "./mcp-bridge-validation";
 
@@ -40,12 +43,12 @@ export {
   buildHermesMcpExecArgs,
   buildHermesMcpProbeCommand,
   buildHermesMcpRegisterCommand,
-  buildOpenClawMcporterInspectCommand,
-  buildOpenClawMcporterRegisterCommand,
-  buildOpenClawMcporterRemoveCommand,
+  buildOpenClawMcpInspectCommand,
+  buildOpenClawMcpRegisterCommand,
+  buildOpenClawMcpRemoveCommand,
   DEEPAGENTS_MCP_CONFIG_PATH,
   MCPORTER_VERSION,
-  mcporterHeadersMatchExpected,
+  openClawHeadersMatchExpected,
   parseAdapterRegistrationInspection,
 } from "./mcp-bridge-adapters";
 export type {
@@ -73,7 +76,6 @@ export {
   parseMcpProviderMetadata,
   providerDetachChangedState,
 } from "./mcp-bridge-provider";
-export { prepareMcpBridgesForExecUnavailableRebuild } from "./mcp-bridge-rebuild";
 export {
   buildMcpBridgeProviderName,
   MCP_SERVER_URL_MAX_LENGTH,
@@ -86,6 +88,31 @@ export {
 export type { McpDestroyPreparation } from "./mcp-bridge-destroy-preflight";
 export type { McpRebuildPreparation };
 export { statusMcpBridge };
+
+function hydrateCurrentBridgeState(
+  sandboxName: string,
+  runtimeSelection?: McpProviderInspectionRuntimeSelection,
+  options: { allowLegacyHandoff?: boolean } = {},
+): McpProviderInspectionRuntimeSelection {
+  const sandbox = getSandboxOrThrow(sandboxName);
+  const selected = runtimeSelection ?? getMcpProviderInspectionRuntimeSelection(sandbox);
+  const observed = inspectSourceBridgeState(sandbox, selected);
+  const legacyNames = Object.keys(observed.sources.legacy).sort();
+  if (legacyNames.length > 0 && !options.allowLegacyHandoff) {
+    throw new McpBridgeError(
+      `Legacy MCP agent configuration requires explicit migration for '${legacyNames.join(", ")}'. Run \`nemoclaw ${sandboxName} mcp migrate\` to preview it.`,
+      2,
+    );
+  }
+  const bridges = options.allowLegacyHandoff
+    ? {
+        ...inspectLegacyBridgeState(sandbox, selected).bridges,
+        ...observed.bridges,
+      }
+    : observed.bridges;
+  hydrateBridgeState(sandboxName, bridges);
+  return selected;
+}
 
 export async function addMcpBridge(
   sandboxName: string,
@@ -113,6 +140,8 @@ export async function prepareMcpBridgesForAbsentSandboxDestroy(
     runtimeSelection?: McpProviderInspectionRuntimeSelection;
   } = {},
 ): Promise<McpDestroyPreparation> {
+  if (options.runtimeSelection)
+    hydrateCurrentBridgeState(sandboxName, options.runtimeSelection, { allowLegacyHandoff: true });
   return prepareMcpBridgesForAbsentSandboxDestroyLifecycle(sandboxName, options);
 }
 
@@ -123,6 +152,7 @@ export async function prepareMcpBridgesForDestroy(
     runtimeSelection?: McpProviderInspectionRuntimeSelection;
   } = {},
 ): Promise<McpDestroyPreparation> {
+  hydrateCurrentBridgeState(sandboxName, options.runtimeSelection, { allowLegacyHandoff: true });
   return prepareMcpBridgesForDestroyLifecycle(sandboxName, options);
 }
 
@@ -145,6 +175,8 @@ export async function prepareMcpBridgesForAbsentSandboxRebuild(
   sandboxName: string,
   runtimeSelection?: McpProviderInspectionRuntimeSelection,
 ): Promise<McpRebuildPreparation> {
+  if (runtimeSelection)
+    hydrateCurrentBridgeState(sandboxName, runtimeSelection, { allowLegacyHandoff: true });
   return prepareMcpBridgesForAbsentSandboxRebuildLifecycle(sandboxName, runtimeSelection);
 }
 
@@ -152,12 +184,13 @@ export async function prepareMcpBridgesForRebuild(
   sandboxName: string,
   runtimeSelection?: McpProviderInspectionRuntimeSelection,
 ): Promise<McpRebuildPreparation> {
+  hydrateCurrentBridgeState(sandboxName, runtimeSelection, { allowLegacyHandoff: true });
   return prepareMcpBridgesForRebuildLifecycle(sandboxName, runtimeSelection);
 }
 
 export async function reattachMcpProvidersAfterRebuildAbort(
   sandboxName: string,
-  entries: readonly McpBridgeEntry[],
+  entries: readonly McpSourceEntry[],
   scrubbedAdapterEntries: readonly McpScrubbedAdapterEntry[] = [],
   runtimeSelection?: McpProviderInspectionRuntimeSelection,
 ): Promise<void> {
@@ -171,7 +204,7 @@ export async function reattachMcpProvidersAfterRebuildAbort(
 
 export async function restoreMcpBridgesAfterRebuild(
   sandboxName: string,
-  entries: readonly McpBridgeEntry[],
+  entries: readonly McpSourceEntry[],
   runtimeSelection?: McpProviderInspectionRuntimeSelection,
 ): Promise<void> {
   return restoreMcpBridgesAfterRebuildLifecycle(sandboxName, entries, runtimeSelection);
@@ -300,17 +333,26 @@ FLAGS
   nemoclaw <name> mcp remove <server> [--force]
 
 FLAGS
-  --force  Best-effort owned cleanup; preserves registry state when residuals remain`);
+  --force  Best-effort source cleanup; preserves ambiguous providers`);
+      return;
+    case "migrate":
+      console.log(`USAGE
+  nemoclaw <name> mcp migrate [--apply] [--json]
+
+FLAGS
+  --apply  Atomically materialize legacy entries in agent-native configuration
+  --json   Emit the secret-free migration plan as JSON`);
       return;
     default:
       console.log(`USAGE
-  nemoclaw <name> mcp <add|list|status|restart|remove> [args...]`);
+  nemoclaw <name> mcp <add|list|status|restart|remove|migrate> [args...]`);
   }
 }
 
 export async function dispatchMcpBridgeCommand(
   sandboxName: string,
   actionArgs: string[],
+  dependencies: { rebuildForMigration?: (sandboxName: string) => Promise<void> } = {},
 ): Promise<void> {
   const [subcommand = "list", ...rest] = actionArgs;
   try {
@@ -391,9 +433,41 @@ export async function dispatchMcpBridgeCommand(
         await removeMcpBridge(sandboxName, server, { force });
         return;
       }
+      case "migrate": {
+        const apply = rest.includes("--apply");
+        const json = rest.includes("--json");
+        const extra = rest.filter((arg) => arg !== "--apply" && arg !== "--json");
+        requireNoExtraArgs(extra, "Usage: nemoclaw <sandbox> mcp migrate [--apply] [--json]");
+        const plan = await migrateMcpBridges(sandboxName, {
+          apply,
+          rebuildSandbox: dependencies.rebuildForMigration,
+        });
+        if (json) {
+          process.stdout.write(`${JSON.stringify(plan, null, 2)}\n`);
+          return;
+        }
+        if (plan.items.length === 0) {
+          console.log(`  No legacy MCP agent configuration found on '${sandboxName}'.`);
+          return;
+        }
+        for (const item of plan.items) {
+          console.log(
+            `  ${item.action === "migrate" ? "Migrate" : "Verify"} '${item.server}': legacy -> native (${item.url})`,
+          );
+          if (item.activationChanges) {
+            console.log("    This activates an OpenClaw server that the legacy Mcporter adapter did not load.");
+          }
+        }
+        console.log(
+          plan.applied
+            ? "  MCP migration completed and legacy registry fields were retired."
+            : "  Preview only. Rerun with --apply to authorize native materialization.",
+        );
+        return;
+      }
       default:
         throw new McpBridgeError(
-          "Usage: nemoclaw <sandbox> mcp <add|list|status|restart|remove> [args...]",
+          "Usage: nemoclaw <sandbox> mcp <add|list|status|restart|remove|migrate> [args...]",
           2,
         );
     }

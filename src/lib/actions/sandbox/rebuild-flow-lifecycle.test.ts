@@ -134,7 +134,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
       env: ["GITHUB_TOKEN"],
       providerName: "nemoclaw-mcp-alpha-github",
       policyName: "mcp-bridge-github",
-      adapter: "mcporter",
+      adapter: "openclaw-config",
       createdAt: "2026-06-01T00:00:00.000Z",
       updatedAt: "2026-06-01T00:00:00.000Z",
     };
@@ -637,7 +637,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
     const preparedMcpEntry = {
       server: "github",
       agent: "openclaw",
-      adapter: "mcporter",
+      adapter: "openclaw-config",
       url: "https://mcp.example.test/mcp",
       env: ["GITHUB_TOKEN"],
       policyName: "mcp-bridge-github",
@@ -718,7 +718,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
     const mcpEntry = {
       server: "github",
       agent: "openclaw",
-      adapter: "mcporter",
+      adapter: "openclaw-config",
       url: "https://mcp.example.test/mcp",
       env: ["GITHUB_TOKEN"],
       providerName: "alpha-mcp-github",

@@ -289,7 +289,7 @@ describe("prepareRebuildTargetPreflights", () => {
     expect(readinessOptions).not.toHaveProperty("allowDeferredN1xManagedVllm");
   });
 
-  it("freezes one MCP runtime target before authoritative readiness (#10514)", async () => {
+  it("does not derive runtime authority from retired registry MCP fields (#11134)", async () => {
     const runtimeSelection = {
       gatewayName: "nemoclaw",
       localTlsDir: "/authority/tls",
@@ -301,7 +301,7 @@ describe("prepareRebuildTargetPreflights", () => {
       bridges: { github: { server: "github" } },
     });
 
-    expect(mocks.getMcpPreparationRuntimeSelection).toHaveBeenCalledOnce();
-    expect(readinessOptions?.runtimeSelection).toBe(runtimeSelection);
+    expect(mocks.getMcpPreparationRuntimeSelection).not.toHaveBeenCalled();
+    expect(readinessOptions).not.toHaveProperty("runtimeSelection");
   });
 });

@@ -599,7 +599,7 @@ def inspect_managed_config(payload: dict[str, object]) -> dict[str, object]:
     )
     # TOCTOU contract: this call reads config, env, and every hash anchor into
     # one authenticated snapshot. After comparing the returned config bytes to
-    # host intent, `assert_mcp_integrity_snapshot_current` reopens every path and
+    # the command's requested entry, `assert_mcp_integrity_snapshot_current` reopens every path and
     # requires the same inode/content metadata before any match is reported.
     integrity = guard.inspect_mcp_integrity_snapshot(
         HERMES_DIR, hash_path, compatibility_hash_path
@@ -610,23 +610,23 @@ def inspect_managed_config(payload: dict[str, object]) -> dict[str, object]:
     if parsed is None:
         parsed = {}
     if not isinstance(parsed, dict):
-        raise RuntimeError("Hermes MCP config does not match persisted managed intent")
+        raise RuntimeError("Hermes MCP config does not match the requested native entry")
     servers = parsed.get("mcp_servers", {})
     if servers is None:
         servers = {}
     if not isinstance(servers, dict):
-        raise RuntimeError("Hermes MCP config does not match persisted managed intent")
+        raise RuntimeError("Hermes MCP config does not match the requested native entry")
     present = payload["present"]
     absent = payload["absent"]
     if not isinstance(present, dict) or not isinstance(absent, list):
-        raise RuntimeError("Hermes MCP config does not match persisted managed intent")
+        raise RuntimeError("Hermes MCP config does not match the requested native entry")
     matches = all(
         _managed_candidate_matches(servers.get(name), expected, True)
         for name, expected in present.items()
     )
     matches = matches and all(name not in servers for name in absent)
     if not matches:
-        raise RuntimeError("Hermes MCP config does not match persisted managed intent")
+        raise RuntimeError("Hermes MCP config does not match the requested native entry")
     guard.assert_mcp_integrity_snapshot_current(integrity)
     return {"ok": True, "state": "matched"}
 
@@ -721,12 +721,8 @@ def _refresh_and_verify_hashes(
         HERMES_DIR,
         STRICT_HASH_PATH if privileged else os.path.join(HERMES_DIR, ".config-hash"),
     )
-    expected_state = {
-        "apply": "current",
-        "rollback": "pending",
-    }.get(mcp_transition)
-    if expected_state is not None and state != expected_state:
-        raise RuntimeError("Hermes MCP applied hash state is stale")
+    if state != "current":
+        raise RuntimeError("Hermes config hash is stale")
 
 
 def _restore_hash_snapshots(
@@ -783,12 +779,15 @@ def apply_transaction(action: str, payload: dict[str, object]) -> bool:
     guard = _load_guard()
     original_text, original_snapshot = guard._read_text(CONFIG_PATH)
     _assert_mutable_snapshot(original_snapshot)
-    hash_originals = {
-        path: guard._read_text(path) for path in _managed_hash_paths(privileged)
-    }
     integrity_path = (
         STRICT_HASH_PATH if privileged else os.path.join(HERMES_DIR, ".config-hash")
     )
+    # Direct Hermes configuration changes are authoritative. Adopt the current
+    # source bytes into the file-integrity seal before this scoped mutation.
+    _refresh_and_verify_hashes(guard, privileged, "adopt")
+    hash_originals = {
+        path: guard._read_text(path) for path in _managed_hash_paths(privileged)
+    }
     guard.inspect_mcp_integrity(HERMES_DIR, integrity_path)
     parsed = yaml.safe_load(original_text)
     if parsed is None:

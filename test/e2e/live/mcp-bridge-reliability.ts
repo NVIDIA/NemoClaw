@@ -4,7 +4,7 @@
 import { buildHermesMcpStatusCommand } from "../../../src/lib/actions/sandbox/mcp-bridge-adapter-status";
 import { buildMcpCredentialRevisionObservationCommand } from "../../../src/lib/actions/sandbox/mcp-bridge-provider";
 import type { McpAttachedCredentialRevision } from "../../../src/lib/actions/sandbox/mcp-bridge-provider-readiness";
-import type { McpBridgeEntry } from "../../../src/lib/state/registry";
+import type { McpSourceEntry } from "../../../src/lib/actions/sandbox/mcp-bridge-contracts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { assertExitZero } from "../fixtures/clients/command.ts";
@@ -148,17 +148,17 @@ export function isHermesMcpStatusAwaitingRestartSettlement(
     env?.ready === true &&
     typeof provider?.name === "string" &&
     provider.name !== "" &&
-    provider?.registryPresent === true &&
-    provider.gatewayPresent === true &&
+    provider?.present === true &&
+    provider.state === "configured" &&
     provider.attached === true &&
     provider.credentialReady === true &&
     credentialResolution?.ok === null &&
     credentialResolution.detail ===
       "probe skipped: the current OpenShell credential revision could not be observed" &&
-    policy?.registryPresent === true &&
+    policy?.present === true &&
     typeof policy.name === "string" &&
     policy.name !== "" &&
-    policy.gatewayPresent === true &&
+    policy.state === "configured" &&
     adapterStatus?.registered === null &&
     adapterStatus.detail ===
       "Adapter inspection was skipped because the current OpenShell credential revision could not be observed."
@@ -245,7 +245,7 @@ export async function confirmHermesMcpRegistrationAfterRestartSettlement(options
 function hermesEntryFromStatus(
   result: McpStatusCommandResult,
   expected: { server: string; url: string; credentialEnvName: string },
-): McpBridgeEntry | null {
+): McpSourceEntry | null {
   try {
     const status = objectValue(JSON.parse(result.stdout) as unknown);
     const provider = objectValue(status?.provider);
@@ -257,9 +257,7 @@ function hermesEntryFromStatus(
       typeof provider?.name !== "string" ||
       provider.name === "" ||
       typeof policy?.name !== "string" ||
-      policy.name === "" ||
-      typeof status.addedAt !== "string" ||
-      status.addedAt === ""
+      policy.name === ""
     ) {
       return null;
     }
@@ -271,7 +269,6 @@ function hermesEntryFromStatus(
       env: [expected.credentialEnvName],
       providerName: provider.name,
       policyName: policy.name,
-      addedAt: status.addedAt,
     };
   } catch {
     return null;

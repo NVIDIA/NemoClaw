@@ -1101,22 +1101,6 @@ describe("source registry fingerprint", () => {
     }
   });
 
-  it("survives MCP cleanup-state preparation", () => {
-    const sourceEntry: SandboxEntry = {
-      ...SOURCE_ENTRY,
-      lifecycleGeneration: TARGET_GENERATION,
-      lifecycleLiveIdentityFingerprint: SOURCE_ID,
-      mcp: { bridges: {}, managedServerNames: ["search"] },
-    };
-    const journaled = fingerprintSandboxRegistryEntry(sourceEntry);
-    const preparedEntry: SandboxEntry = {
-      ...sourceEntry,
-      mcp: { bridges: {}, managedServerNames: [] },
-    };
-
-    expect(fingerprintSandboxRegistryEntry(preparedEntry)).toBe(journaled);
-  });
-
   it("changes when the row records another sandbox", async () => {
     const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-recreate-journal-"));
     vi.stubEnv("HOME", home);

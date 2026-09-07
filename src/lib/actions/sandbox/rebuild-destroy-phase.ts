@@ -249,7 +249,7 @@ function reconcileFailedSandboxDelete(
 /**
  * Detach owned MCP state, delete the old sandbox, and then stop inference.
  * Boundary coverage: rebuild-flow.test.ts exercises success, stale recovery,
- * delete failure, provider reattach failure, and MCP-bearing registry retention.
+ * delete failure, provider reattach failure, and bounded MCP handoff retention.
  */
 export async function runRebuildDestroyPhase(
   input: RebuildDestroyPhaseInput,
@@ -397,8 +397,8 @@ export async function runRebuildDestroyPhase(
     }
   }
 
-  // MCP preparation can await external systems; re-read the registry at the
-  // synchronous delete edge so those checks and deletion use one target.
+  // MCP preparation can await external systems; re-read non-MCP routing state
+  // at the synchronous delete edge so those checks and deletion use one target.
   if (!rebuildDeleteTargetMatchesRegistry(deleteTarget)) {
     const mcpRecoveryFailure = await reattachMcpAfterDeleteFailure(
       sandboxName,
@@ -530,7 +530,7 @@ export async function runRebuildDestroyPhase(
         "  Sandbox deletion returned an error, and exact post-delete state is ambiguous.",
       );
       console.error(
-        "  MCP ownership and recovery metadata were preserved; local NIM was not stopped.",
+        "  The bounded MCP handoff and recovery metadata were preserved; local NIM was not stopped.",
       );
       if (backupManifest) {
         console.error("  State backup is preserved at: " + backupManifest.backupPath);

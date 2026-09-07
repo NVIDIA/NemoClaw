@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import crypto from "node:crypto";
-
 import type { AgentMcpAdapter } from "../../agent/defs";
 import * as policies from "../../policy";
 import {
@@ -12,7 +10,7 @@ import {
 } from "../../security/trusted-private-endpoint";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import { assertHermesPortableCommandUnavailable } from "../../onboard/experimental/portable-agent-lifecycle";
-import type { McpBridgeEntry } from "../../state/registry";
+import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import * as registry from "../../state/registry";
 import { withMcpCredentialOwnershipLock } from "../../state/mcp-lifecycle-lock/credential-ownership";
 import {
@@ -22,7 +20,6 @@ import {
   unregisterAgentAdapter,
 } from "./mcp-bridge-adapters";
 import { type McpBridgeAddOptions, McpBridgeError } from "./mcp-bridge-contracts";
-import { assertHermesMcpRuntimeIntent } from "./mcp-bridge-hermes-reconciliation";
 import {
   applyGeneratedPolicy,
   buildMcpBridgePolicyKey,
@@ -34,12 +31,12 @@ import {
   assertMcpProviderRecoverable,
   assertNoProviderCredentialCollisions,
   attachProvider,
-  deleteProvider,
   detachMissingProviderReference,
   detachProvider,
   ensureMcpBridgeProviderProfile,
   getMcpProviderInspectionRuntimeSelection,
   inspectMcpProvider,
+  MCP_BRIDGE_PROVIDER_TYPE,
   type McpCredentialRevisionObservation,
   observeMcpCredentialRevision,
   providerMatchesCredential,
@@ -50,16 +47,16 @@ import {
   waitForDetachedMcpCredential,
 } from "./mcp-bridge-provider";
 import {
-  assertMcpDestroyNotPending,
   assertNoDerivedResourceCollision,
   bridgeState,
   ensureSandboxGatewaySelected,
   getBridgeAdapter,
   getSandboxAgent,
   getSandboxOrThrow,
-  nowIso,
+  hydrateBridgeState,
   writeBridgeEntry,
 } from "./mcp-bridge-state";
+import { inspectSourceBridgeState } from "./mcp-bridge-source";
 import type { McpBridgeTargetValidation } from "./mcp-bridge-url-validation";
 import {
   assertAuthenticatedCredentialReference,
@@ -73,7 +70,11 @@ import {
   validateSandboxName,
 } from "./mcp-bridge-validation";
 
-function sameMcpAddIntent(existing: McpBridgeEntry, requested: McpBridgeEntry): boolean {
+type McpAddWorkingEntry = McpSourceEntry & {
+  recoveryPhase: "prepared" | "preflighted";
+};
+
+function sameMcpAddIntent(existing: McpSourceEntry, requested: McpSourceEntry): boolean {
   return (
     existing.server === requested.server &&
     existing.agent === requested.agent &&
@@ -94,7 +95,7 @@ function sameMcpAddIntent(existing: McpBridgeEntry, requested: McpBridgeEntry): 
 function assertPreparedMcpAddResourcesAbsent(
   sandboxName: string,
   adapter: AgentMcpAdapter,
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
   target: McpBridgeTargetValidation,
   providerRuntimeSelection: ReturnType<typeof getMcpProviderInspectionRuntimeSelection>,
 ): void {
@@ -110,7 +111,7 @@ function assertPreparedMcpAddResourcesAbsent(
         ? adapterInspection.detail
         : `server name is already ${adapterInspection.state}`;
     throw new McpBridgeError(
-      `MCP add preflight for '${entry.server}' found an existing ${adapter} adapter entry: ${detail}. The durable add manifest was preserved without claiming it.`,
+      `MCP add preflight for '${entry.server}' found an existing ${adapter} adapter entry: ${detail}. No source was changed.`,
     );
   }
 
@@ -121,7 +122,7 @@ function assertPreparedMcpAddResourcesAbsent(
         ? (providerInspection.error ?? "provider inspection failed")
         : (providerShapeDetail(providerInspection, entry.env[0]) ?? "provider already exists");
     throw new McpBridgeError(
-      `MCP add preflight for '${entry.server}' could not prove provider '${entry.providerName}' absent: ${detail}. The durable add manifest was preserved without claiming it.`,
+      `MCP add preflight for '${entry.server}' could not prove provider '${entry.providerName}' absent: ${detail}. No source was changed.`,
     );
   }
 
@@ -140,7 +141,7 @@ function assertPreparedMcpAddResourcesAbsent(
   );
   if (policyState !== "absent") {
     throw new McpBridgeError(
-      `MCP add preflight for '${entry.server}' could not prove generated policy key '${buildMcpBridgePolicyKey(entry.server)}' absent (state: ${policyState ?? "unreachable"}). The durable add manifest was preserved without claiming it.`,
+      `MCP add preflight for '${entry.server}' could not prove generated policy key '${buildMcpBridgePolicyKey(entry.server)}' absent (state: ${policyState ?? "unreachable"}). No source was changed.`,
     );
   }
 }
@@ -196,11 +197,20 @@ async function addMcpBridgeUnlocked(
   }
   const matchingTrustedPrivateHosts = allTrustedPrivateHosts.filter((host) => host === urlHost);
   const sandbox = getSandboxOrThrow(sandboxName);
-  assertMcpDestroyNotPending(sandbox);
+  const sourceRuntimeSelection = getMcpProviderInspectionRuntimeSelection(sandbox);
+  const observed = inspectSourceBridgeState(sandbox, sourceRuntimeSelection);
+  const legacyNames = Object.keys(observed.sources.legacy).sort();
+  if (legacyNames.length > 0) {
+    throw new McpBridgeError(
+      `Legacy MCP agent configuration requires explicit migration for '${legacyNames.join(", ")}'. Run \`nemoclaw ${sandboxName} mcp migrate\` to preview it.`,
+      2,
+    );
+  }
+  hydrateBridgeState(sandboxName, observed.bridges);
   const agent = getSandboxAgent(sandbox);
   const adapter = getBridgeAdapter(agent);
-  const existingEntry = bridgeState(sandbox)[options.server];
-  if (existingEntry && !existingEntry.addState) {
+  let existingEntry = bridgeState(sandbox)[options.server] as McpAddWorkingEntry | undefined;
+  if (existingEntry && !existingEntry.recoveryPhase) {
     throw new McpBridgeError(
       `MCP server '${options.server}' already exists on sandbox '${sandboxName}'.`,
     );
@@ -255,11 +265,7 @@ async function addMcpBridgeUnlocked(
   const providerName =
     envNames.length > 0
       ? (existingEntry?.providerName ??
-        buildMcpBridgeProviderName(
-          sandboxName,
-          options.server,
-          crypto.randomBytes(8).toString("hex"),
-        ))
+        buildMcpBridgeProviderName(sandboxName, options.server))
       : undefined;
   const adapterEnvValues = resolveCredentialEnv(options.env);
   if (!existingEntry && !Object.hasOwn(adapterEnvValues, envNames[0])) {
@@ -270,7 +276,7 @@ async function addMcpBridgeUnlocked(
   }
   const policyName = buildMcpBridgePolicyName(options.server);
   assertNoDerivedResourceCollision(sandbox, options.server, providerName, policyName);
-  const requestedEntry: McpBridgeEntry = {
+  const requestedEntry: McpAddWorkingEntry = {
     server: options.server,
     agent: agent.name,
     adapter,
@@ -284,9 +290,31 @@ async function addMcpBridgeUnlocked(
       : {}),
     ...(providerName ? { providerName } : {}),
     policyName,
-    addedAt: existingEntry?.addedAt ?? nowIso(),
-    addState: existingEntry?.addState ?? "prepared",
+    recoveryPhase: existingEntry?.recoveryPhase ?? "prepared",
   };
+
+  if (!existingEntry && providerName) {
+    const observedProvider = inspectMcpProvider(
+      providerName,
+      getMcpProviderInspectionRuntimeSelection(sandbox),
+    );
+    if (
+      observedProvider.exists === true &&
+      observedProvider.id &&
+      observedProvider.type === MCP_BRIDGE_PROVIDER_TYPE &&
+      observedProvider.credentialKeys?.length === 1 &&
+      observedProvider.credentialKeys[0] === envNames[0]
+    ) {
+      // The deterministic provider name plus its current OpenShell shape is
+      // source evidence of an interrupted add. Resume from the live object;
+      // no host-side journal is needed.
+      existingEntry = {
+        ...requestedEntry,
+        providerId: observedProvider.id,
+        recoveryPhase: "preflighted",
+      };
+    }
+  }
 
   if (existingEntry && !sameMcpAddIntent(existingEntry, requestedEntry)) {
     throw new McpBridgeError(
@@ -295,15 +323,15 @@ async function addMcpBridgeUnlocked(
     );
   }
 
-  let entry: McpBridgeEntry = existingEntry
+  let entry: McpAddWorkingEntry = existingEntry
     ? {
         ...existingEntry,
         env: [...existingEntry.env],
         ...(existingEntry.allowedIps ? { allowedIps: [...existingEntry.allowedIps] } : {}),
       }
     : requestedEntry;
-  const resumingPreflightedAdd = existingEntry?.addState === "preflighted";
-  if (existingEntry?.addState === "prepared" && !Object.hasOwn(adapterEnvValues, entry.env[0])) {
+  const resumingPreflightedAdd = existingEntry?.recoveryPhase === "preflighted";
+  if (existingEntry?.recoveryPhase === "prepared" && !Object.hasOwn(adapterEnvValues, entry.env[0])) {
     throw new McpBridgeError(
       `Host environment variable '${entry.env[0]}' is required to create MCP provider '${entry.providerName}'.`,
       1,
@@ -311,14 +339,13 @@ async function addMcpBridgeUnlocked(
   }
   const providerRuntimeSelection = getMcpProviderInspectionRuntimeSelection(sandbox);
   // Bind the static credential-name deny-list to the OpenShell binary before
-  // persisting ownership or mutating a provider, policy, or adapter.
+  // mutating a provider, policy, or adapter.
   assertMcpCredentialBoundaryRuntimeVersion();
   await ensureSandboxGatewaySelected(sandboxName, providerRuntimeSelection);
   if (!existingEntry) {
     await withMcpCredentialOwnershipLock(() => {
-      // Publish the durable MCP reservation under the same cross-command lock
-      // used by credentials add. Neither command can pass its collision check
-      // before the other records its credential-key reservation.
+      // Check live providers under the same cross-command lock used by
+      // credentials add so neither command can race its collision check.
       assertNoProviderCredentialCollisions(sandboxName, [entry], providerRuntimeSelection);
       writeBridgeEntry(sandboxName, entry);
     });
@@ -343,8 +370,7 @@ async function addMcpBridgeUnlocked(
         // OpenShell cannot start any sandbox child while that dangling name is
         // present, so detaching the already-missing provider reference is the
         // one recovery side effect that must precede the image capability
-        // probe. It neither reads nor replaces credential material, and the
-        // durable add manifest retains ownership if the later probe fails.
+        // probe. It neither reads nor replaces credential material.
         detachMissingProviderReference(sandboxName, entry, providerRuntimeSelection);
         detachedMissingProviderReference = true;
       }
@@ -368,7 +394,7 @@ async function addMcpBridgeUnlocked(
       }
     }
 
-    if (entry.addState === "prepared") {
+    if (entry.recoveryPhase === "prepared") {
       assertPreparedMcpAddResourcesAbsent(
         sandboxName,
         adapter,
@@ -376,10 +402,10 @@ async function addMcpBridgeUnlocked(
         target,
         providerRuntimeSelection,
       );
-      entry = { ...entry, addState: "preflighted" };
-      // This second durable boundary proves the derived resource names and the
-      // adapter slot were absent before any side effect. After a crash, retries
-      // may therefore reuse only missing or exact resources, never drift.
+      entry = { ...entry, recoveryPhase: "preflighted" };
+      // This command-local boundary proves the derived resource names and the
+      // adapter slot were absent before any side effect. After a crash, a retry
+      // re-derives authority from the deterministic provider and live sources.
       writeBridgeEntry(sandboxName, entry);
     }
     const adapterInspection = inspectAgentAdapterRegistration(
@@ -530,12 +556,7 @@ async function addMcpBridgeUnlocked(
       replaceExisting: resumingPreflightedAdd && adapterInspection.state === "registered",
       credentialRevision,
     });
-    if (adapter === "hermes-config") {
-      assertHermesMcpRuntimeIntent(sandboxName, {
-        runtimeSelection: providerRuntimeSelection,
-      });
-    }
-    const { addState: _completedAddState, ...committedEntry } = entry;
+    const { recoveryPhase: _completedAddState, ...committedEntry } = entry;
     writeBridgeEntry(sandboxName, committedEntry);
   } catch (error) {
     const rollbackProviderInspection =
@@ -574,18 +595,12 @@ async function addMcpBridgeUnlocked(
       }
     }
     if (providerCreated && rollbackProviderOwned && reservationCleanupProved) {
-      const beforeDelete = inspectMcpProvider(providerName, providerRuntimeSelection);
-      if (providerMatchesCredential(beforeDelete, entry.env[0], entry.providerId)) {
-        deleteProvider(entry, {
-          allowMissing: true,
-          bestEffort: true,
-          runtimeSelection: providerRuntimeSelection,
-        });
-      }
+      console.warn(
+        `  Preserved detached OpenShell provider '${providerName}' after MCP add rollback. Remove it explicitly after confirming no sandbox uses it.`,
+      );
     }
     // Exception rollback is best-effort and process death skips it entirely.
-    // Keep the durable add manifest until a retry converges or `mcp remove`
-    // proves and cleans each exact resource.
+    // A retry re-derives the partial transaction from the agent and OpenShell.
     throw error;
   }
   return providerRuntimeSelection;

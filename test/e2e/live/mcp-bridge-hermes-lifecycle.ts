@@ -323,7 +323,7 @@ export async function assertHermesRemovalSurvivesGatewayRestart(
   const registry = JSON.parse(registryRaw) as {
     sandboxes?: Record<
       string,
-      { mcp?: { bridges?: Record<string, unknown>; managedServerNames?: string[] } }
+      { mcp?: { bridges?: Record<string, unknown>; expectedServerNames?: string[] } }
     >;
   };
   const mcpState = registry.sandboxes?.[sandboxName]?.mcp;
@@ -331,7 +331,7 @@ export async function assertHermesRemovalSurvivesGatewayRestart(
     {},
   );
   expect(
-    mcpState?.managedServerNames,
+    mcpState?.expectedServerNames,
     "removed Hermes bridge must retain its managed-name tombstone",
   ).toContain(SERVER_NAME);
 

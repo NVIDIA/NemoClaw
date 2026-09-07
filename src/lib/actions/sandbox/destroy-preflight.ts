@@ -43,17 +43,11 @@ export type SandboxDestroyPreflight = {
 };
 
 export function resolveSandboxDestroyRuntimeSelection(
-  sandbox: SandboxEntry | null,
+  _sandbox: SandboxEntry | null,
 ): OpenShellRuntimeSelection | undefined {
-  if (
-    !sandbox ||
-    !Object.values(sandbox.mcp?.bridges ?? {}).some((entry) => entry.addState !== "prepared")
-  ) {
-    return undefined;
-  }
-  return (
-    require("./mcp-bridge-provider") as typeof import("./mcp-bridge-provider")
-  ).getMcpProviderInspectionRuntimeSelection(sandbox);
+  // MCP source inspection freezes its gateway target during preparation. The
+  // non-MCP registry is only a routing hint and cannot assert MCP ownership.
+  return undefined;
 }
 
 export function stopSandboxInferenceResources(

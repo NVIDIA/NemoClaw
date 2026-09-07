@@ -48,7 +48,6 @@ import {
 } from "../../state/launch-readiness-lease";
 import { withMcpLifecycleLock as withSandboxMutationLock } from "../../state/mcp-lifecycle-lock-acquisition";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry";
-import { normalizeSandboxMcpState } from "../../state/registry";
 import * as registry from "../../state/registry";
 import {
   cloneSandboxMessagingState,
@@ -371,36 +370,6 @@ function projectWorkload(workload: SandboxWorkloadReceipt | undefined): unknown 
   };
 }
 
-function projectMcpState(value: unknown): unknown {
-  const state = normalizeSandboxMcpState(value);
-  if (!state) return null;
-  if (state.destroyPreparedAt || state.destroyPendingAt) throw new ObservationError("config");
-  return {
-    bridges: Object.values(state.bridges)
-      .map((bridge) => {
-        if (bridge.addState) throw new ObservationError("config");
-        const endpoint = new URL(bridge.url);
-        if (endpoint.username || endpoint.password || endpoint.search || endpoint.hash) {
-          throw new ObservationError("config");
-        }
-        return {
-          server: bridge.server,
-          agent: bridge.agent,
-          adapter: bridge.adapter ?? null,
-          url: bridge.url,
-          env: [...bridge.env],
-          trustedPrivateHost: bridge.trustedPrivateHost ?? null,
-          allowedIps: bridge.allowedIps ? [...bridge.allowedIps] : null,
-          providerName: bridge.providerName ?? null,
-          providerId: bridge.providerId ?? null,
-          policyName: bridge.policyName,
-        };
-      })
-      .sort((left, right) => left.server.localeCompare(right.server)),
-    managedServerNames: [...(state.managedServerNames ?? [])].sort(),
-  };
-}
-
 function projectMessagingState(entry: SandboxEntry): unknown {
   const state = cloneSandboxMessagingState(entry.messaging);
   const persisted = serializeSandboxMessagingStateForDisk(entry.messaging);
@@ -628,7 +597,6 @@ export function buildLaunchReadinessRegistryProjection(
     observabilityEnabled: entry.observabilityEnabled === true,
     dcodeAutoApprovalMode: entry.dcodeAutoApprovalMode ?? null,
     messagingSha256: launchReadinessDigest(projectMessagingState(entry)),
-    mcpSha256: launchReadinessDigest(projectMcpState(entry.mcp)),
     hermesToolGateways: [...(entry.hermesToolGateways ?? [])],
     hermesInferenceProvider: normalizedString(entry.hermesInferenceProvider),
     hermesAuthMethod,

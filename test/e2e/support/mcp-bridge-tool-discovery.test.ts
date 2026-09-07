@@ -287,14 +287,14 @@ describe("authenticated MCP tool discovery transport retry", () => {
   it("writes redacted boundary diagnostics before a discovery failure (#8746)", async () => {
     const statusJson = {
       provider: {
-        registryPresent: true,
-        gatewayPresent: true,
+        present: true,
+        state: "configured",
         attached: true,
         credentialReady: true,
         credentialResolution: { detail: STATUS_SECRET },
         token: STATUS_SECRET,
       },
-      policy: { registryPresent: true, gatewayPresent: true, token: STATUS_SECRET },
+      policy: { present: true, state: "configured", token: STATUS_SECRET },
       adapter: { registered: true, detail: STATUS_SECRET, sessionId: STATUS_SECRET },
       trustedPrivateTarget: {
         state: "match" as const,
@@ -339,13 +339,13 @@ describe("authenticated MCP tool discovery transport retry", () => {
     const diagnostics = await fs.readFile(artifactPath, "utf8");
     expect(JSON.parse(diagnostics)).toEqual({
       provider: {
-        registryPresent: true,
-        gatewayPresent: true,
+        present: true,
+        state: "configured",
         attached: true,
         credentialReady: true,
         credentialResolutionPresent: true,
       },
-      policy: { registryPresent: true, gatewayPresent: true },
+      policy: { present: true, state: "configured" },
       adapter: { registered: true, detailPresent: true },
       trustedPrivateTarget: { state: "match", detailPresent: true },
       toolDiscovery: {

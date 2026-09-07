@@ -16,7 +16,7 @@ import {
 import { type WebSearchConfig, webSearchProviderForConfig } from "../inference/web-search";
 import * as onboardSession from "../state/onboard-session";
 import type { OpenClawImagePluginInstall } from "../state/openclaw-plugin-restore";
-import type { SandboxEntry, SandboxMcpState, SandboxMessagingState } from "../state/registry";
+import type { SandboxEntry, SandboxMessagingState } from "../state/registry";
 import * as registry from "../state/registry";
 import {
   cloneSandboxHostLocalInferenceProvenance,
@@ -79,11 +79,6 @@ export interface CreatedSandboxRegistryEntryInput {
   fromDockerfile?: string | null;
   hermesAuthMethod?: "oauth" | "api_key" | null;
   plannedMessagingState: SandboxMessagingState | undefined;
-  /**
-   * Durable MCP rebuild manifest carried across an already-absent sandbox.
-   * The caller must only supply state captured from the same sandbox name.
-   */
-  preservedMcpState?: SandboxMcpState;
   hermesToolGateways: string[];
   hermesDashboardState: HermesDashboardOnboardState;
   /** Host port this sandbox exposes its OpenAI-compatible API on. */
@@ -277,7 +272,6 @@ export function buildCreatedSandboxRegistryEntry(
     fromDockerfile: input.fromDockerfile ?? null,
     hermesAuthMethod: input.hermesAuthMethod ?? null,
     messaging: messagingState,
-    mcp: input.preservedMcpState,
     hermesToolGateways:
       input.hermesToolGateways.length > 0 ? [...input.hermesToolGateways] : undefined,
     ...getHermesDashboardRegistryFields(input.hermesDashboardState),

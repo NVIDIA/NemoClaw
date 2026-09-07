@@ -8,7 +8,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import type { AgentMcpAdapter } from "../../agent/defs";
-import type { McpBridgeEntry } from "../../state/registry";
+import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import {
   buildMcpToolDiscoveryCommand,
   classifyMcpToolDiscoveryResult,
@@ -22,8 +22,8 @@ const entry = {
   server: "github",
   url: "https://api.githubcopilot.com/mcp/",
   env: ["GITHUB_TOKEN"],
-} as McpBridgeEntry;
-const unauthenticatedEntry = { ...entry, env: [] } as McpBridgeEntry;
+} as McpSourceEntry;
+const unauthenticatedEntry = { ...entry, env: [] } as McpSourceEntry;
 
 function framedResult(value: unknown) {
   return {
@@ -38,7 +38,7 @@ describe("MCP tool discovery host boundary (#6901)", () => {
     "launches the same shared runtime below every adapter policy ancestor [%s]",
     (preserved) => {
       const expectedAncestor: Record<AgentMcpAdapter, string> = {
-        mcporter: "nemoclaw-start node -e",
+        "openclaw-config": "nemoclaw-start node -e",
         "hermes-config": "/opt/hermes/.venv/bin/python -I -c",
         "deepagents-config": "/opt/venv/bin/python3 -I -c",
       };
@@ -91,14 +91,14 @@ describe("MCP tool discovery host boundary (#6901)", () => {
   });
 
   it("passes only the credential key name and rejects missing or non-canonical inputs", () => {
-    const authenticated = buildMcpToolDiscoveryCommand(entry, "mcporter");
+    const authenticated = buildMcpToolDiscoveryCommand(entry, "openclaw-config");
     expect(authenticated).not.toBeNull();
     expect(authenticated?.command).not.toContain("Authorization");
-    expect(buildMcpToolDiscoveryCommand(unauthenticatedEntry, "mcporter")).toBeNull();
+    expect(buildMcpToolDiscoveryCommand(unauthenticatedEntry, "openclaw-config")).toBeNull();
     expect(
       buildMcpToolDiscoveryCommand(
         { ...unauthenticatedEntry, url: "https://api.githubcopilot.com:443/mcp/" },
-        "mcporter",
+        "openclaw-config",
       ),
     ).toBeNull();
   });

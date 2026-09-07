@@ -7,11 +7,10 @@ import path from "node:path";
 import {
   buildDeepAgentsMcpStatusCommand,
   buildHermesMcpStatusCommand,
-  buildOpenClawMcporterInspectCommand,
-  OPENCLAW_MCPORTER_ROOT,
+  buildOpenClawMcpInspectCommand,
 } from "../../../src/lib/actions/sandbox/mcp-bridge-adapter-status";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
-import type { McpBridgeEntry } from "../../../src/lib/state/registry";
+import type { McpSourceEntry } from "../../../src/lib/actions/sandbox/mcp-bridge-contracts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -236,10 +235,10 @@ async function addBridgeAndReadStatus(
     env: { names: string[]; ready: boolean; missing: string[] };
     provider: {
       name: string;
-      gatewayPresent: boolean | null;
+      present: boolean | null;
       attached: boolean | null;
     };
-    policy: { gatewayPresent: boolean | null };
+    policy: { present: boolean | null };
     adapter: { registered: boolean | null };
   };
   expect(statusJson.support).toMatchObject({
@@ -250,15 +249,13 @@ async function addBridgeAndReadStatus(
     server: SERVER_NAME,
     url: options.mcpUrl,
     env: { names: ["FAKE_MCP_SECRET"], ready: true, missing: [] },
-    provider: { gatewayPresent: true, attached: true },
-    policy: { gatewayPresent: true },
+    provider: { present: true, attached: true },
+    policy: { present: true },
     adapter: { registered: true },
   });
   expect(statusJson.warnings).toEqual([]);
   expect(status.stdout).not.toContain(HOST_SECRET);
-  expect(statusJson.provider.name).toMatch(
-    new RegExp(`^${options.sandboxName}-mcp-${SERVER_NAME}-[a-f0-9]{16}$`),
-  );
+  expect(statusJson.provider.name).toBe(`${options.sandboxName}-mcp-${SERVER_NAME}`);
 
   return statusJson.provider.name;
 }
@@ -324,12 +321,12 @@ async function assertConcurrentAddSerialized(
     support: { adapter: options.expectedAdapter },
     env: { names: ["FAKE_MCP_SECRET"], ready: true, missing: [] },
     provider: {
-      registryPresent: true,
-      gatewayPresent: true,
+      present: true,
+      state: "configured",
       attached: true,
       credentialReady: true,
     },
-    policy: { registryPresent: true, gatewayPresent: true },
+    policy: { present: true, state: "configured" },
   });
   expect(statusObservation.registered).toBe(true);
   const duplicateRejection = await retryAfterHermesRestartTransportFailure({
@@ -477,7 +474,7 @@ async function removeBridgeAndAssertEmpty(
   expectExitZero(policy, `${options.artifactPrefix} policy after remove`);
   expect(resultText(policy)).not.toMatch(/mcp[-_]bridge[-_]fake/);
   expect(resultText(policy)).toContain("mcp_host_edit_e2e");
-  const entry: McpBridgeEntry = {
+  const entry: McpSourceEntry = {
     server: SERVER_NAME,
     agent: options.agent,
     adapter: options.adapter,
@@ -485,11 +482,10 @@ async function removeBridgeAndAssertEmpty(
     env: ["FAKE_MCP_SECRET"],
     providerName: options.providerName,
     policyName: "mcp-bridge-fake",
-    addedAt: "2026-06-01T00:00:00.000Z",
   };
   const adapterStatusCommand =
-    options.adapter === "mcporter"
-      ? buildOpenClawMcporterInspectCommand(entry, true)
+    options.adapter === "openclaw-config"
+      ? buildOpenClawMcpInspectCommand(entry, true)
       : options.adapter === "hermes-config"
         ? buildHermesMcpStatusCommand(entry)
         : buildDeepAgentsMcpStatusCommand(entry);
@@ -544,7 +540,7 @@ async function assertDeepAgentsConfig(
     "set -eu",
     "python3 - <<'PY'",
     "import json, pathlib, re",
-    "path = pathlib.Path('/sandbox/.deepagents/.nemoclaw-mcp.json')",
+    "path = pathlib.Path('/sandbox/.deepagents/.mcp.json')",
     "text = path.read_text(encoding='utf-8')",
     "data = json.loads(text)",
     `entry = data['mcpServers'][${JSON.stringify(SERVER_NAME)}]`,
@@ -594,7 +590,7 @@ async function assertRealAdapterToolCall(
   ];
   const command =
     options.agent === "openclaw"
-      ? `nemoclaw-start mcporter --root ${shellQuote(OPENCLAW_MCPORTER_ROOT)} call fake.fake_echo --args ${JSON.stringify(JSON.stringify({ challenge: TOOL_CHALLENGE }))} --output json`
+      ? `nemoclaw-start openclaw agent --agent main --json --thinking off --session-id mcp-e2e-native -m ${shellQuote(prompt)}`
       : options.agent === "hermes"
         ? [
             "set -a",
@@ -760,10 +756,10 @@ test("mcp-bridge", {
   );
 
   cleanup.add("remove MCP bridge", () =>
-    cleanupMcpBridge(host, OPENCLAW_SANDBOX_NAME, SERVER_NAME, "mcporter"),
+    cleanupMcpBridge(host, OPENCLAW_SANDBOX_NAME, SERVER_NAME, "openclaw-config"),
   );
   cleanup.add("remove unexpected missing-secret MCP state", () =>
-    cleanupMcpBridge(host, OPENCLAW_SANDBOX_NAME, "missingsecret", "mcporter"),
+    cleanupMcpBridge(host, OPENCLAW_SANDBOX_NAME, "missingsecret", "openclaw-config"),
   );
 
   await expectMcpCliFailure(
@@ -806,14 +802,14 @@ test("mcp-bridge", {
   await assertConcurrentAddSerialized(host, cleanup, artifacts, sandbox, {
     sandboxName: OPENCLAW_SANDBOX_NAME,
     mcpUrl,
-    expectedAdapter: "mcporter",
+    expectedAdapter: "openclaw-config",
     artifactPrefix: "openclaw",
   });
 
   const providerName = await addBridgeAndReadStatus(host, sandbox, {
     sandboxName: OPENCLAW_SANDBOX_NAME,
     mcpUrl,
-    expectedAdapter: "mcporter",
+    expectedAdapter: "openclaw-config",
     artifactPrefix: "openclaw",
   });
   await assertAuthenticatedMcpToolDiscovery(host, fakeMcp, {
@@ -841,28 +837,6 @@ test("mcp-bridge", {
     },
   );
 
-  const mcporterRequestOffset = fakeMcp.requests.length;
-  const mcporterList = await sandbox.execShell(
-    OPENCLAW_SANDBOX_NAME,
-    trustedSandboxShellScript(
-      [
-        "set -eu",
-        `nemoclaw-start mcporter --root ${shellQuote(OPENCLAW_MCPORTER_ROOT)} list ${SERVER_NAME} --json`,
-      ].join("\n"),
-    ),
-    {
-      artifactName: "mcp-mcporter-list-tools",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 90_000,
-    },
-  );
-  expectExitZero(mcporterList, "mcporter lists tools through OpenShell MCP policy");
-  expect(resultText(mcporterList)).toContain("fake_echo");
-  await assertAuthenticatedMcpDiscovery(fakeMcp, {
-    requestOffset: mcporterRequestOffset,
-    expectedSecret: HOST_SECRET,
-    label: "mcporter authenticated MCP tool discovery",
-  });
   expect(fakeMcp.requests.some((request) => request.auth === `Bearer ${HOST_SECRET}`)).toBe(true);
   expect(fakeMcp.requests.every((request) => !request.auth.includes("openshell:resolve:env"))).toBe(
     true,
@@ -896,12 +870,12 @@ test("mcp-bridge", {
 
   await runFullMcpBridgeE2eCoverage(mcpBridgeE2eScope, () =>
     assertTrustedPrivateMcpRebindingDenied(host, sandbox, cleanup, {
-      adapter: "mcporter",
+      adapter: "openclaw-config",
       artifacts,
       artifactPrefix: "openclaw",
       assertSecretAbsent: assertSecretAbsentFromSandbox,
       cleanupBridge: cleanupMcpBridge,
-      mutationTimeoutMs: MCP_MUTATION_TIMEOUT_MS.mcporter,
+      mutationTimeoutMs: MCP_MUTATION_TIMEOUT_MS["openclaw-config"],
       sandboxName: OPENCLAW_SANDBOX_NAME,
       secretPaths: ["/sandbox/.openclaw", "/sandbox/.mcp.json"],
       survivingMcpUrl: mcpUrl,
@@ -1056,14 +1030,14 @@ test("mcp-bridge", {
 
   await removeBridgeAndAssertEmpty(host, sandbox, {
     agent: "openclaw",
-    adapter: "mcporter",
+    adapter: "openclaw-config",
     sandboxName: OPENCLAW_SANDBOX_NAME,
     artifactPrefix: "openclaw",
     providerName,
     mcpUrl,
   });
   await assertAdapterRequestDeniedAfterRemove(sandbox, fakeMcp, {
-    adapter: "mcporter",
+    adapter: "openclaw-config",
     sandboxName: OPENCLAW_SANDBOX_NAME,
     mcpUrl,
     artifactPrefix: "openclaw",

@@ -16,18 +16,11 @@ import { help, version } from "./root-help";
 
 type GatewayRecovery = { recovered: boolean };
 
-export type ManagedMcpCredentialReservation = {
-  sandboxName: string;
-  server: string;
-  credentialKeys: readonly string[];
-};
-
 type GlobalCliActionRuntimeHooks = {
   recoverNamedGatewayRuntime?: () => Promise<GatewayRecovery>;
   upgradeSandboxes?: (options?: string[] | UpgradeSandboxesOptions) => Promise<void>;
   recordExtraProvider?: (name: string) => boolean;
   forgetExtraProvider?: (name: string) => boolean;
-  listManagedMcpCredentialReservations?: () => readonly ManagedMcpCredentialReservation[];
 };
 
 let runtimeHooks: GlobalCliActionRuntimeHooks = {};
@@ -99,15 +92,4 @@ export function forgetExtraProvider(name: string): boolean {
     removeExtraProvider: (name: string) => boolean;
   };
   return removeExtraProvider(name);
-}
-
-export function listManagedMcpCredentialReservations(): readonly ManagedMcpCredentialReservation[] {
-  if (typeof runtimeHooks.listManagedMcpCredentialReservations === "function") {
-    return runtimeHooks.listManagedMcpCredentialReservations();
-  }
-  const { listManagedMcpCredentialReservations: queryReservations } =
-    require("../state/registry/mcp-credential-reservations") as {
-      listManagedMcpCredentialReservations: () => readonly ManagedMcpCredentialReservation[];
-    };
-  return queryReservations();
 }

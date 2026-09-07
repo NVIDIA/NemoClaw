@@ -274,7 +274,7 @@ Deep Agents Code creates them when you start the first `dcode` session.
 | `/sandbox/.deepagents/agent/memories/` | Topic-specific markdown memories that Deep Agents Code can read and update across sessions. |
 | `/sandbox/.deepagents/skills/` | Legacy NemoClaw skill-upload state. Deep Agents Code does not load skills from this path, and `$$nemoclaw <name> skill install` leaves it untouched. |
 | `/sandbox/.deepagents/agent/skills/` | Skills that Deep Agents Code loads at session start, including skills created by the built-in skill creator and fresh-name skills installed directly by `$$nemoclaw <name> skill install`. Preserved by NemoClaw snapshots. |
-| `/sandbox/.deepagents/.nemoclaw-mcp.json` | NemoClaw-generated managed MCP projection with OpenShell credential placeholders. NemoClaw reconstructs it from host-side registry state. |
+| `/sandbox/.deepagents/.mcp.json` | Agent-native MCP configuration. NemoClaw-managed entries contain OpenShell credential placeholders and are read directly during status, migration, and rebuild. |
 | `/sandbox/.deepagents/.state/auth.json` | Upstream auth state. The managed launchers refuse to start when this file contains credentials. |
 | `/sandbox/.deepagents/.state/chatgpt-auth.json` | Upstream ChatGPT auth state. The managed launchers refuse to start when this file exists. |
 | `/sandbox/.deepagents/.env` | User-managed Deep Agents Code environment file. NemoClaw treats it as credential-bearing and does not snapshot it. |
@@ -310,7 +310,7 @@ A Deep Agents target created from a custom Dockerfile restores `config.toml` as 
 On the managed key-level restore path, if config validation or safe atomic replacement fails, NemoClaw marks the restore as failed instead of falling back to a whole-file copy.
 Credential-bearing files such as `.deepagents/.env` and user-authored `.deepagents/.mcp.json` are intentionally omitted from snapshots.
 
-Managed MCP state is rebuilt from the host-side NemoClaw registry and OpenShell provider state instead of treated as user-authored durable state.
+Managed MCP state is rebuilt from the agent-native file and current OpenShell policy, provider, and attachment state. NemoClaw keeps no host-side MCP desired state.
 Memory files such as `/sandbox/.deepagents/agent/AGENTS.md` and `/sandbox/.deepagents/agent/memories/` are upstream Deep Agents Code files.
 
 If you rely on them before they are manifest-backed in your release, copy them manually with `$$nemoclaw <name> download` before destroying the sandbox.

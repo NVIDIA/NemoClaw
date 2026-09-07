@@ -58,14 +58,13 @@ const HERMES_RESTART_SETTLING_PAYLOAD = {
   server: "concurrent",
   agent: "hermes",
   url: "https://fixture.trycloudflare.com/mcp",
-  addedAt: "2026-08-31T00:00:00.000Z",
   warnings: [],
   support: { supported: true, mode: "bridge", adapter: "hermes-config" },
   env: { names: ["FAKE_MCP_SECRET"], missing: [], ready: true },
   provider: {
     name: "e2e-mcp-hermes-mcp-concurrent-0123456789abcdef",
-    registryPresent: true,
-    gatewayPresent: true,
+    present: true,
+    state: "configured",
     attached: true,
     credentialReady: true,
     credentialResolution: {
@@ -75,8 +74,8 @@ const HERMES_RESTART_SETTLING_PAYLOAD = {
   },
   policy: {
     name: "mcp-bridge-concurrent",
-    registryPresent: true,
-    gatewayPresent: true,
+    present: true,
+    state: "configured",
   },
   adapter: {
     registered: null,
@@ -101,7 +100,7 @@ const HERMES_RESTART_SETTLEMENT_FIELD_MISMATCHES: Array<
   ["warnings are not an array", (payload) => Object.assign(payload, { warnings: "warning" })],
   ["support is unavailable", (payload) => Object.assign(payload.support, { supported: false })],
   ["support mode differs", (payload) => Object.assign(payload.support, { mode: "direct" })],
-  ["support adapter differs", (payload) => Object.assign(payload.support, { adapter: "mcporter" })],
+  ["support adapter differs", (payload) => Object.assign(payload.support, { adapter: "openclaw-config" })],
   ["environment names are empty", (payload) => Object.assign(payload.env, { names: [] })],
   ["environment name is not text", (payload) => Object.assign(payload.env, { names: [42] })],
   [
@@ -111,12 +110,8 @@ const HERMES_RESTART_SETTLEMENT_FIELD_MISMATCHES: Array<
   ["environment is not ready", (payload) => Object.assign(payload.env, { ready: false })],
   ["provider name is empty", (payload) => Object.assign(payload.provider, { name: "" })],
   [
-    "provider registry is incomplete",
-    (payload) => Object.assign(payload.provider, { registryPresent: false }),
-  ],
-  [
-    "provider gateway is incomplete",
-    (payload) => Object.assign(payload.provider, { gatewayPresent: false }),
+    "provider source is incomplete",
+    (payload) => Object.assign(payload.provider, { present: false }),
   ],
   ["provider is detached", (payload) => Object.assign(payload.provider, { attached: false })],
   [
@@ -136,12 +131,8 @@ const HERMES_RESTART_SETTLEMENT_FIELD_MISMATCHES: Array<
   ],
   ["policy name is empty", (payload) => Object.assign(payload.policy, { name: "" })],
   [
-    "policy registry is incomplete",
-    (payload) => Object.assign(payload.policy, { registryPresent: false }),
-  ],
-  [
-    "policy gateway is incomplete",
-    (payload) => Object.assign(payload.policy, { gatewayPresent: false }),
+    "policy source is incomplete",
+    (payload) => Object.assign(payload.policy, { present: false }),
   ],
   [
     "adapter registration is resolved",
@@ -185,7 +176,7 @@ describe("MCP bridge transient classification", () => {
     expect(isHermesMcpAddPostProbeNotReady("hermes-config", HERMES_ADD_POST_PROBE_NOT_READY)).toBe(
       true,
     );
-    expect(isHermesMcpAddPostProbeNotReady("mcporter", HERMES_ADD_POST_PROBE_NOT_READY)).toBe(
+    expect(isHermesMcpAddPostProbeNotReady("openclaw-config", HERMES_ADD_POST_PROBE_NOT_READY)).toBe(
       false,
     );
     expect(
@@ -227,7 +218,7 @@ describe("MCP bridge transient classification", () => {
     ).toBe(true);
     expect(
       isHermesMcpStatusAwaitingRestartSettlement(
-        "mcporter",
+        "openclaw-config",
         "concurrent",
         HERMES_RESTART_SETTLING_STATUS,
       ),
@@ -609,7 +600,7 @@ describe("MCP bridge transient classification", () => {
 
   it("accepts only the Hermes managed-restart broken-pipe signature (#6692)", () => {
     expect(isHermesRestartTransportFailure("hermes-config", HERMES_BROKEN_PIPE)).toBe(true);
-    expect(isHermesRestartTransportFailure("mcporter", HERMES_BROKEN_PIPE)).toBe(false);
+    expect(isHermesRestartTransportFailure("openclaw-config", HERMES_BROKEN_PIPE)).toBe(false);
     expect(isHermesRestartTransportFailure("deepagents-config", HERMES_BROKEN_PIPE)).toBe(false);
     expect(isHermesRestartTransportFailure("hermes-config", "h2 protocol error")).toBe(false);
     expect(isHermesRestartTransportFailure("hermes-config", "stream closed: broken pipe")).toBe(

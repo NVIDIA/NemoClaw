@@ -253,7 +253,7 @@ async function completeRegistration(createIntent: CreateIntent): Promise<Sandbox
     false,
     {} as never,
     { webSearchConfig: null, hermesAuthMethod: null },
-    { plannedMessagingState: undefined, preservedMcpState: undefined, hermesToolGateways: [] },
+    { plannedMessagingState: undefined, hermesToolGateways: [] },
     null,
     { gatewayName: "nemoclaw", gatewayPort: 8080 },
     {

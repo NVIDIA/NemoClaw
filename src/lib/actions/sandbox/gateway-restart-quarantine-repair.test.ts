@@ -58,9 +58,7 @@ describe("supervisor relaunch quarantine classification (#7801)", () => {
 
   it("keeps the pre-existing layers for output without a quarantine line", () => {
     expect(classify("GATEWAY_HEALTH_TIMEOUT")).toMatchObject({ layer: "health timeout" });
-    expect(classify("HERMES_MCP_CONFIG_DRIFT")).toMatchObject({
-      layer: "MCP reconciliation refusal",
-    });
+    expect(classify("HERMES_MCP_CONFIG_DRIFT")).toMatchObject({ layer: "launch failure" });
     expect(classify("GATEWAY_CONFIG_HASH_MISMATCH")).toMatchObject({
       layer: "config hash mismatch",
     });
@@ -134,10 +132,4 @@ describe("printGatewayRestartFailure repair guidance (#7801)", () => {
     expect(launch).not.toContain("rebuild --yes");
   });
 
-  it("keeps the MCP reconciliation remediation it already emitted", () => {
-    const lines = captureStderr(() =>
-      printGatewayRestartFailure("repro-7801", "MCP reconciliation refusal", "mcp-integrity"),
-    ).join("\n");
-    expect(lines).toContain("nemoclaw repro-7801 mcp restart");
-  });
 });

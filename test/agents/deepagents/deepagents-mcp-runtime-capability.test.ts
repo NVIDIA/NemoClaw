@@ -64,7 +64,7 @@ describe("Deep Agents managed MCP runtime capability", () => {
     expect(
       runDeepAgentsProbe({
         status: 0,
-        stdout: "NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=2\n",
+        stdout: "NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=3\n",
         stderr: "",
       }),
     ).toEqual({
@@ -92,7 +92,7 @@ describe("Deep Agents managed MCP runtime capability", () => {
     (result) => {
       const probe = runDeepAgentsProbe(result);
       expect(probe.calls).toHaveLength(1);
-      expect(probe.message).toMatch(/does not contain managed MCP capability v2/i);
+      expect(probe.message).toMatch(/does not contain native MCP capability v3/i);
       expect(probe.message).toMatch(/rebuild the sandbox before changing authenticated MCP state/i);
       expect(probe.message).not.toContain("unknown option");
     },

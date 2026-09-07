@@ -106,7 +106,7 @@ inference:
 # ── MCP server support ───────────────────────────────────────────
 mcp:
   support: bridge
-  adapter: mcporter
+  adapter: openclaw-config
 
 # ── Phone-home hosts ───────────────────────────────────────────
 phone_home_hosts:

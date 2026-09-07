@@ -172,6 +172,7 @@ const policy = require("./src/lib/actions/sandbox/mcp-bridge-policy.js");
 const provider = require("./src/lib/actions/sandbox/mcp-bridge-provider.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
 const state = require("./src/lib/actions/sandbox/mcp-bridge-state.js");
+const sourceState = require("./src/lib/actions/sandbox/mcp-bridge-source.js");
 const validation = require("./src/lib/actions/sandbox/mcp-bridge-validation.js");
 const trusted = require("./src/lib/security/trusted-private-endpoint.js");
 let admittedTarget;
@@ -183,6 +184,7 @@ replace(policy, "applyGeneratedPolicy", (_sandbox, _entry, target) => { admitted
 replace(state, "ensureSandboxGatewaySelected", async () => {});
 replace(validation, "assertMcpCredentialBoundaryRuntimeVersion", () => {});
 replace(provider, "assertNoProviderCredentialCollisions", () => {});
+replace(provider, "getMcpProviderInspectionRuntimeSelection", () => ({ gatewayName: "nemoclaw-9090", workspace: "default" }));
 replace(provider, "ensureMcpBridgeProviderProfile", () => {});
 replace(provider, "inspectMcpProvider", () => ({
   credentialKeys: null, exists: false, id: null, resourceVersion: null, type: null,
@@ -208,6 +210,9 @@ replace(processRecovery, "executeSandboxExecCommand", () => ({
   stdout: "v1\\n",
   stderr: "",
 }));
+replace(sourceState, "inspectSourceBridgeState", () => ({
+  bridges: {}, sources: { native: {}, legacy: {} },
+}));
 registry.registerSandbox({
   name: "alpha",
   agent: "openclaw",
@@ -220,7 +225,7 @@ require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
   env: [{ name: "LOCAL_MCP_TOKEN" }],
   trustedPrivateHosts: ["MCP.CORP.EXAMPLE."],
 }).then(() => {
-  const entry = registry.getSandbox("alpha").mcp.bridges.local;
+  const entry = state.bridgeState(registry.getSandbox("alpha")).local;
   process.stdout.write(JSON.stringify({
     entry,
     target: {

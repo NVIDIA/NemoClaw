@@ -510,7 +510,7 @@ describe("rebuildSandbox flow: recovery", () => {
     expect(harness.onboardSpy).not.toHaveBeenCalled();
   });
 
-  it("does not reclaim the default sandbox when an MCP rebuild recreate fails", async () => {
+  it("does not reconstruct MCP registry state when source-backed recreate fails", async () => {
     const mcpEntry = {
       server: "github",
       providerName: "nemoclaw-mcp-alpha-github",
@@ -533,9 +533,7 @@ describe("rebuildSandbox flow: recovery", () => {
     ).rejects.toThrow("Recreate failed");
 
     expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
-    expect(harness.restoreSandboxEntrySpy.mock.calls).toEqual([
-      [expect.objectContaining({ name: "alpha" })],
-    ]);
+    expect(harness.restoreSandboxEntrySpy).not.toHaveBeenCalled();
   });
 
   it("starts the active Teams host forward after a successful rebuild", async () => {

@@ -28,7 +28,6 @@ export type { ProviderDetachOutcome } from "./mcp-bridge-provider-mutation";
 export {
   attachProvider,
   buildMcpBridgeProviderArgs,
-  deleteProvider,
   detachMissingProviderReference,
   detachProvider,
   ensureMcpBridgeProviderProfile,

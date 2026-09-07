@@ -3,7 +3,7 @@
 
 import type { AgentMcpAdapter } from "../../agent/defs";
 import { shellQuote } from "../../core/shell-quote";
-import type { McpBridgeEntry } from "../../state/registry";
+import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import type { McpBridgeStatus } from "./mcp-bridge-contracts";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
@@ -66,7 +66,7 @@ export function toolDiscoveryReadinessSkipDetail(
 }
 
 export function buildMcpToolDiscoveryCommand(
-  entry: Pick<McpBridgeEntry, "server" | "url" | "env">,
+  entry: Pick<McpSourceEntry, "server" | "url" | "env">,
   adapter: AgentMcpAdapter,
 ): McpToolDiscoveryCommand | null {
   const credentialEnv = entry.env[0];
@@ -132,7 +132,7 @@ function compareNames(left: string, right: string): number {
 
 export function classifyMcpToolDiscoveryResult(
   result: SandboxCommandResult | null,
-  entry: Pick<McpBridgeEntry, "env">,
+  entry: Pick<McpSourceEntry, "env">,
   resultMarker: string,
 ): NonNullable<McpBridgeStatus["toolDiscovery"]> {
   if (result === null) return failure("sandbox unreachable");
@@ -224,13 +224,12 @@ export function classifyMcpToolDiscoveryResult(
 
 export function discoverMcpTools(
   sandboxName: string,
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
   adapter: AgentMcpAdapter | undefined,
   readiness: McpToolDiscoveryReadiness,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
 ): NonNullable<McpBridgeStatus["toolDiscovery"]> {
   if (!adapter) return failure("tool discovery skipped: MCP adapter is not declared");
-  if (entry.addState) return failure("tool discovery skipped: add transaction is incomplete");
   const readinessSkipDetail = toolDiscoveryReadinessSkipDetail(readiness);
   if (readinessSkipDetail) return failure(readinessSkipDetail);
   const discoveryCommand = buildMcpToolDiscoveryCommand(entry, adapter);

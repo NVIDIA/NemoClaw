@@ -578,23 +578,22 @@ describe("LangChain Deep Agents Code image contracts", () => {
       });
 
       expect(result.status, result.stderr).toBe(0);
-      expect(result.stdout).toBe("NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=2\n");
+      expect(result.stdout).toBe("NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=3\n");
       expect(fs.existsSync(ranMarker)).toBe(false);
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });
 
-  it("keeps NemoClaw MCP state separate from user discovery", () => {
+  it("loads the agent-native MCP source through the hardened runtime boundary", () => {
     const wrapper = readAgentFile("dcode-wrapper.sh");
     const managedRuntime = readAgentFile("managed-dcode-runtime.py");
     const patcher = readAgentFile("patch-managed-deepagents-code.py");
     const agent = loadAgent("langchain-deepagents-code");
-    const managedPath = "/sandbox/.deepagents/.nemoclaw-mcp.json";
+    const managedPath = "/sandbox/.deepagents/.mcp.json";
 
-    // The pinned release's user/project .mcp.json files remain user-authored.
-    // Managed images suppress discovery and pass only an integrity-bound
-    // snapshot of NemoClaw's dedicated projection.
+    // Managed images suppress ambient project discovery and pass an
+    // integrity-bound snapshot of the agent-native configuration.
     expect(wrapper).toContain("extra_args=(--sandbox none --no-mcp)");
     expect(managedRuntime).toContain(`_MCP_CONFIG_FILE = Path("${managedPath}")`);
     expect(patcher).toContain("managed_mcp_config = _nemoclaw_managed_mcp_config_path()");
@@ -604,7 +603,6 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(patcher).toContain("def discover_mcp_configs(");
     expect(patcher).toContain("return []");
     expect(agent.userManagedFiles).toContain(".deepagents/.mcp.json");
-    expect(agent.userManagedFiles).not.toContain(".deepagents/.nemoclaw-mcp.json");
     expect(wrapper).not.toContain("--mcp-config /sandbox/.mcp.json");
     expect(wrapper).not.toContain("managed_mcp_config_path");
     expect(patcher).not.toContain('managed_mcp_config = "/sandbox/.mcp.json"');
