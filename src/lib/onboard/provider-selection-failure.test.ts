@@ -70,7 +70,7 @@ describe("reportProviderSelectionFailure", () => {
     assert.deepEqual(rejected, []);
     assert.deepEqual(errors, [
       "  Recorded managed llama.cpp authority for sandbox 'alpha' is invalid or conflicting.",
-      "  Repair or remove the recorded managed runtime state before selecting another provider.",
+      "  Run `nemoclaw alpha destroy` to reconcile the managed runtime. If ownership cannot be verified, preserve the recorded state and follow the reported remediation.",
     ]);
   });
 

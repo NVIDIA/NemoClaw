@@ -39,7 +39,7 @@ export function reportProviderSelectionFailure(input: ReportProviderSelectionFai
         `  Recorded managed llama.cpp authority for sandbox '${input.reason.sandboxName}' is invalid or conflicting.`,
       );
       input.writeError(
-        "  Repair or remove the recorded managed runtime state before selecting another provider.",
+        `  Run \`nemoclaw ${input.reason.sandboxName} destroy\` to reconcile the managed runtime. If ownership cannot be verified, preserve the recorded state and follow the reported remediation.`,
       );
       break;
     case "unsupported-windows-host-ollama":
