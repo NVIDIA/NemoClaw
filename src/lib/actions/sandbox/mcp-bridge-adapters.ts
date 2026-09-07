@@ -22,6 +22,7 @@ import type {
 } from "./mcp-bridge-adapter-inspection";
 import {
   inspectOpenClawAdapterRegistration,
+  reloadOpenClawGatewayAfterMcpMutation as reloadOpenClawGateway,
   registerOpenClawAdapter,
   unregisterOpenClawAdapter,
 } from "./mcp-bridge-adapter-openclaw";
@@ -31,9 +32,7 @@ import {
   type McpAttachedCredentialRevision,
   observeMcpCredentialRevision,
 } from "./mcp-bridge-provider-readiness";
-import {
-  type McpProviderInspectionRuntimeSelection,
-} from "./mcp-bridge-provider-inspection";
+import { type McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
 import { waitForMcpBridgeCondition } from "./mcp-bridge/timing";
 
 const STABLE_CREDENTIAL_REVISION_OBSERVATIONS = 3;
@@ -115,6 +114,13 @@ export function assertAgentMcpTeardownRuntimeCapability(
   if (adapter === "hermes-config") {
     assertAgentMcpMutationRuntimeCapability(sandboxName, adapter, runtimeSelection);
   }
+}
+
+export function reloadOpenClawGatewayAfterMcpMutation(
+  sandboxName: string,
+  adapters: readonly AgentMcpAdapter[],
+): void {
+  if (adapters.includes("openclaw-config")) reloadOpenClawGateway(sandboxName);
 }
 
 export function registerAgentAdapter(

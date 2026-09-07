@@ -22,7 +22,7 @@ import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
 import type { McpAttachedCredentialRevision } from "./mcp-bridge-provider-readiness";
 import { getAgentConfigDir } from "./mcp-bridge-state";
-import { executeSandboxCommand } from "./process-recovery";
+import { executeSandboxCommand, restartSandboxGateway } from "./process-recovery";
 
 export const MCPORTER_VERSION = "0.7.3";
 export { OPENCLAW_MCP_CONFIG_DIR } from "./mcp-bridge-adapter-status";
@@ -80,7 +80,7 @@ export function buildStrictOpenClawMcpInspectCommand(
     "if (!actual) { console.log('absent'); process.exit(0); }",
     'const headers = actual.headers && typeof actual.headers === "object" ? actual.headers : {};',
     openClawHeaderMatcherSource(),
-    'const registered = actual.url === expected.url && openClawHeadersMatchExpected(headers, expected.headers);',
+    "const registered = actual.url === expected.url && openClawHeadersMatchExpected(headers, expected.headers);",
     'console.log(registered ? "registered" : "mismatch");',
     "if (!registered && expected.failOnMismatch) process.exit(2);",
     "NODE",
@@ -196,6 +196,15 @@ export function registerOpenClawAdapter(
       `OpenClaw MCP config verification failed after adding '${entry.server}'${verificationOutput ? `: ${verificationOutput}` : "."}`,
     );
   }
+}
+
+/** Make a verified config mutation visible to the long-lived OpenClaw gateway. */
+export function reloadOpenClawGatewayAfterMcpMutation(sandboxName: string): void {
+  const result = restartSandboxGateway(sandboxName, { quiet: true });
+  if (result.ok) return;
+  throw new McpBridgeError(
+    `OpenClaw gateway did not activate the native MCP configuration (${result.failureLayer}: ${result.detail}).`,
+  );
 }
 
 export function unregisterOpenClawAdapter(

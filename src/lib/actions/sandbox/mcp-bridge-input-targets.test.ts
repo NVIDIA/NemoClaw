@@ -176,6 +176,7 @@ const sourceState = require("./src/lib/actions/sandbox/mcp-bridge-source.js");
 const validation = require("./src/lib/actions/sandbox/mcp-bridge-validation.js");
 const trusted = require("./src/lib/security/trusted-private-endpoint.js");
 let admittedTarget;
+let gatewayRestarted = false;
 replace(policies, "getPresetContentGatewayState", () => "absent");
 replace(adapters, "assertAgentMcpMutationRuntimeCapability", () => {});
 replace(adapters, "inspectAgentAdapterRegistration", () => ({ state: "absent" }));
@@ -210,6 +211,10 @@ replace(processRecovery, "executeSandboxExecCommand", () => ({
   stdout: "v1\\n",
   stderr: "",
 }));
+replace(processRecovery, "restartSandboxGateway", () => {
+  gatewayRestarted = true;
+  return { ok: true, restarted: true, healthPassed: true, forwardRecovered: true };
+});
 replace(sourceState, "inspectSourceBridgeState", () => ({
   bridges: {}, sources: { native: {}, legacy: {} },
 }));
@@ -236,6 +241,7 @@ require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
       capabilityAddresses: admittedTarget.trustedPrivateCapability.addresses,
       trustedPrivateHost: admittedTarget.trustedPrivateHost,
     },
+    gatewayRestarted,
   }), () => process.exit(0));
 }, (error) => {
   process.stderr.write(error.stack || error.message, () => process.exit(1));
@@ -258,6 +264,7 @@ require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
         const admission = JSON.parse(result.stdout) as {
           entry: Record<string, unknown>;
           target: Record<string, unknown>;
+          gatewayRestarted: boolean;
         };
         expect(admission.entry).toMatchObject({
           allowedIps: ["10.20.30.40", "10.20.30.41"],
@@ -269,6 +276,7 @@ require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
           capabilityAddresses: ["10.20.30.40", "10.20.30.41"],
           trustedPrivateHost: "mcp.corp.example",
         });
+        expect(admission.gatewayRestarted).toBe(true);
       } finally {
         fs.rmSync(home, { recursive: true, force: true });
       }

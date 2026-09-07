@@ -1,10 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { AgentMcpAdapter } from "../../agent/defs";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import { assertHermesPortableCommandUnavailable } from "../../onboard/experimental/portable-agent-lifecycle";
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
-import { registerAgentAdapterAtCurrentCredentialRevision } from "./mcp-bridge-adapters";
+import {
+  registerAgentAdapterAtCurrentCredentialRevision,
+  reloadOpenClawGatewayAfterMcpMutation,
+} from "./mcp-bridge-adapters";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import { applyGeneratedPolicy, assertGeneratedPolicyMutationSafe } from "./mcp-bridge-policy";
 import {
@@ -98,6 +102,7 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
     .map(([, entry]) => entry)
     .filter((entry): entry is McpSourceEntry => !!entry);
   const providerRuntimeSelection = getMcpProviderInspectionRuntimeSelection(sandbox);
+  const reloadedAdapters: AgentMcpAdapter[] = [];
   assertMcpCredentialBoundaryRuntimeVersion();
   await ensureSandboxGatewaySelected(sandboxName, providerRuntimeSelection);
   assertMcpAdapterMutationRuntimeCapabilities(
@@ -145,8 +150,10 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
       credentialObservation,
       { replaceExisting: true },
     );
+    reloadedAdapters.push(entryAdapter);
     console.log(`  Reloaded MCP server '${name}' from current agent configuration.`);
   }
+  reloadOpenClawGatewayAfterMcpMutation(sandboxName, reloadedAdapters);
 }
 
 export async function restoreExistingMcpBridgeRuntime(
@@ -188,6 +195,7 @@ export async function restoreExistingMcpBridgeRuntime(
     );
   }
   const defaultAdapter = getBridgeAdapter(getSandboxAgent(sandbox));
+  const restoredAdapters: AgentMcpAdapter[] = [];
   for (const entry of entries) {
     assertGeneratedPolicyMutationSafe(sandboxName, entry);
     const provider = assertMcpProviderRecoverable(entry, providerRuntimeSelection);
@@ -236,6 +244,8 @@ export async function restoreExistingMcpBridgeRuntime(
         teardownRollback: options.lifecyclePhase === "teardown-rollback",
       },
     );
+    restoredAdapters.push(adapter);
     writeBridgeEntry(sandboxName, { ...entry, adapter });
   }
+  reloadOpenClawGatewayAfterMcpMutation(sandboxName, restoredAdapters);
 }

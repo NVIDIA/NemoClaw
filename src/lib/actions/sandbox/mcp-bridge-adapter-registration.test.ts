@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   executeGatewaySupervisorAction: vi.fn(),
   getSandbox: vi.fn(),
   observeMcpCredentialRevision: vi.fn(),
+  restartSandboxGateway: vi.fn(),
   runOpenshellProviderCommand: vi.fn(),
   waitForMcpBridgeCondition: vi.fn((condition: () => boolean) =>
     Array.from({ length: 12 }).some(() => condition()),
@@ -22,6 +23,7 @@ vi.mock("./process-recovery", () => ({
   executeSandboxCommand: mocks.executeSandboxCommand,
   executeSandboxExecCommand: mocks.executeSandboxExecCommand,
   executeGatewaySupervisorAction: mocks.executeGatewaySupervisorAction,
+  restartSandboxGateway: mocks.restartSandboxGateway,
 }));
 
 vi.mock("../../adapters/openshell/provider-command", () => ({
@@ -48,6 +50,7 @@ import {
   buildHermesMcpStatusCommand,
   registerAgentAdapter,
   registerAgentAdapterAtCurrentCredentialRevision,
+  reloadOpenClawGatewayAfterMcpMutation,
   unregisterAgentAdapter,
 } from "./mcp-bridge-adapters";
 import { registerOpenClawAdapter } from "./mcp-bridge-adapter-openclaw";
@@ -205,6 +208,35 @@ describe("OpenClaw MCP adapter registration", () => {
   beforeEach(() => {
     mocks.executeSandboxCommand.mockReset();
     mocks.getSandbox.mockReset().mockReturnValue(sandbox);
+    mocks.restartSandboxGateway.mockReset();
+  });
+
+  it("restarts the gateway only for native OpenClaw MCP mutations", () => {
+    mocks.restartSandboxGateway.mockReturnValue({
+      ok: true,
+      restarted: true,
+      healthPassed: true,
+      forwardRecovered: true,
+    });
+
+    reloadOpenClawGatewayAfterMcpMutation("alpha", ["openclaw-config"]);
+    reloadOpenClawGatewayAfterMcpMutation("alpha", ["hermes-config", "deepagents-config"]);
+
+    expect(mocks.restartSandboxGateway).toHaveBeenCalledExactlyOnceWith("alpha", {
+      quiet: true,
+    });
+  });
+
+  it("fails when the gateway cannot activate the verified config", () => {
+    mocks.restartSandboxGateway.mockReturnValue({
+      ok: false,
+      failureLayer: "health timeout",
+      detail: "gateway process restarted but health did not pass before timeout",
+    });
+
+    expect(() => reloadOpenClawGatewayAfterMcpMutation("alpha", ["openclaw-config"])).toThrow(
+      "OpenClaw gateway did not activate the native MCP configuration (health timeout: gateway process restarted but health did not pass before timeout).",
+    );
   });
 
   it("rejects a v11 post-write observation after registering the readiness-proven v12", () => {
@@ -323,37 +355,40 @@ describe("Hermes MCP adapter credential revision", () => {
   });
 });
 
-describe.each(reconciliationCases)("$name MCP credential revision reconciliation", (adapterCase) => {
-  beforeEach(() => {
-    mocks.executeSandboxCommand.mockReset();
-    mocks.runOpenshellProviderCommand.mockReset();
-    mocks.getSandbox.mockReset();
-    mocks.getSandbox.mockReturnValue(sandbox);
-    mocks.observeMcpCredentialRevision.mockReset();
-    mocks.observeMcpCredentialRevision.mockReturnValue("v12");
-  });
+describe.each(reconciliationCases)(
+  "$name MCP credential revision reconciliation",
+  (adapterCase) => {
+    beforeEach(() => {
+      mocks.executeSandboxCommand.mockReset();
+      mocks.runOpenshellProviderCommand.mockReset();
+      mocks.getSandbox.mockReset();
+      mocks.getSandbox.mockReturnValue(sandbox);
+      mocks.observeMcpCredentialRevision.mockReset();
+      mocks.observeMcpCredentialRevision.mockReturnValue("v12");
+    });
 
-  it("reconciles registration to a later stable revision", () => {
-    mocks.observeMcpCredentialRevision.mockReturnValueOnce("v11");
-    adapterCase.arrange();
+    it("reconciles registration to a later stable revision", () => {
+      mocks.observeMcpCredentialRevision.mockReturnValueOnce("v11");
+      adapterCase.arrange();
 
-    expect(
-      registerAgentAdapterAtCurrentCredentialRevision(
-        "alpha",
-        adapterCase.adapter,
-        adapterCase.entry,
-        runtimeSelection,
-        { GITHUB_TOKEN: "host-only-secret" },
-        "v11",
-      ),
-    ).toBe("v12");
+      expect(
+        registerAgentAdapterAtCurrentCredentialRevision(
+          "alpha",
+          adapterCase.adapter,
+          adapterCase.entry,
+          runtimeSelection,
+          { GITHUB_TOKEN: "host-only-secret" },
+          "v11",
+        ),
+      ).toBe("v12");
 
-    const mutationCalls = adapterCase.mutationCalls();
-    expect(mutationCalls).toContain("openshell:resolve:env:v11_GITHUB_TOKEN");
-    expect(mutationCalls).toContain("openshell:resolve:env:v12_GITHUB_TOKEN");
-    expect(mutationCalls).not.toContain("host-only-secret");
-  });
-});
+      const mutationCalls = adapterCase.mutationCalls();
+      expect(mutationCalls).toContain("openshell:resolve:env:v11_GITHUB_TOKEN");
+      expect(mutationCalls).toContain("openshell:resolve:env:v12_GITHUB_TOKEN");
+      expect(mutationCalls).not.toContain("host-only-secret");
+    });
+  },
+);
 
 describe("MCP adapter credential revision reconciliation failures", () => {
   beforeEach(() => {
@@ -375,9 +410,7 @@ describe("MCP adapter credential revision reconciliation failures", () => {
       adapter: "openclaw-config",
     };
     mocks.executeSandboxCommand.mockImplementation((_sandbox, command: string) =>
-      command.includes("servers[payload.server]")
-          ? commandSuccess
-          : registered,
+      command.includes("servers[payload.server]") ? commandSuccess : registered,
     );
     mocks.observeMcpCredentialRevision.mockImplementation(() => {
       mocks.getSandbox.mockReturnValue({
@@ -399,9 +432,9 @@ describe("MCP adapter credential revision reconciliation failures", () => {
       ),
     ).toBe("v11");
     expect(mocks.getSandbox()).toMatchObject({ gatewayName: "foreign-gateway" });
-    expect(
-      mocks.executeSandboxCommand.mock.calls.map((call) => call[2]?.runtimeSelection),
-    ).toEqual(Array(mocks.executeSandboxCommand.mock.calls.length).fill(operationSelection));
+    expect(mocks.executeSandboxCommand.mock.calls.map((call) => call[2]?.runtimeSelection)).toEqual(
+      Array(mocks.executeSandboxCommand.mock.calls.length).fill(operationSelection),
+    );
     expect(mocks.observeMcpCredentialRevision.mock.calls.map((call) => call[2])).toEqual(
       Array(mocks.observeMcpCredentialRevision.mock.calls.length).fill(operationSelection),
     );

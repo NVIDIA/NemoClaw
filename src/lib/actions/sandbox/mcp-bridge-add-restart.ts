@@ -15,6 +15,7 @@ import { withMcpCredentialOwnershipLock } from "../../state/mcp-lifecycle-lock/c
 import {
   assertAgentMcpMutationRuntimeCapability,
   inspectAgentAdapterRegistration,
+  reloadOpenClawGatewayAfterMcpMutation,
   registerAgentAdapter,
   unregisterAgentAdapter,
 } from "./mcp-bridge-adapters";
@@ -347,8 +348,7 @@ async function addMcpBridgeUnlocked(
   }
   const providerName =
     envNames.length > 0
-      ? (existingEntry?.providerName ??
-        buildMcpBridgeProviderName(sandboxName, options.server))
+      ? (existingEntry?.providerName ?? buildMcpBridgeProviderName(sandboxName, options.server))
       : undefined;
   const adapterEnvValues = resolveCredentialEnv(options.env);
   if (!existingEntry && !Object.hasOwn(adapterEnvValues, envNames[0])) {
@@ -393,7 +393,10 @@ async function addMcpBridgeUnlocked(
       }
     : requestedEntry;
   const resumingPreflightedAdd = existingEntry?.recoveryPhase === "preflighted";
-  if (existingEntry?.recoveryPhase === "prepared" && !Object.hasOwn(adapterEnvValues, entry.env[0])) {
+  if (
+    existingEntry?.recoveryPhase === "prepared" &&
+    !Object.hasOwn(adapterEnvValues, entry.env[0])
+  ) {
     throw new McpBridgeError(
       `Host environment variable '${entry.env[0]}' is required to create MCP provider '${entry.providerName}'.`,
       1,
@@ -553,38 +556,38 @@ async function addMcpBridgeUnlocked(
       entry,
       providerRuntimeSelection,
       {
-      ...(providerResult.action === "updated"
-        ? {
-            previousRevision: previousCredentialRevision,
+        ...(providerResult.action === "updated"
+          ? {
+              previousRevision: previousCredentialRevision,
+            }
+          : {}),
+        // A no-field provider update advances only the provider resource version.
+        // If the credential remains available, republish it after observing an
+        // absence; otherwise, a hostless recovery advances the provider revision.
+        refreshAfterObservedAbsence: () => {
+          refreshedAfterObservedAbsence = true;
+          // invalidState: OpenShell 0.0.106 can coalesce a no-field provider
+          // refresh without publishing the credential into fresh sandbox execs.
+          // sourceBoundary: OpenShell owns provider revision projection.
+          // whyNotSourceFix: NemoClaw can only observe absence after the bound
+          // policy is active, then republish when this process still has the host
+          // credential value. Hostless recovery retains the credential-free path.
+          // regressionTest: mcp-add-crash-consistency.test.ts covers republish
+          // and hostless recovery; mcp-provider-ownership.test.ts covers loss of
+          // the persisted provider identity before republish.
+          // removalCondition: remove the credential-bearing republish when the
+          // supported OpenShell version guarantees that a post-policy no-field
+          // refresh projects the bound credential into fresh sandbox execs.
+          const republished = upsertMcpProvider(entry.providerName ?? "", options.env, {
+            allowExisting: true,
+            expectedProviderId: entry.providerId,
+            requireExisting: true,
+            runtimeSelection: providerRuntimeSelection,
+          });
+          if (republished.action !== "updated") {
+            refreshMcpProviderEnvironment(entry, providerRuntimeSelection);
           }
-        : {}),
-      // A no-field provider update advances only the provider resource version.
-      // If the credential remains available, republish it after observing an
-      // absence; otherwise, a hostless recovery advances the provider revision.
-      refreshAfterObservedAbsence: () => {
-        refreshedAfterObservedAbsence = true;
-        // invalidState: OpenShell 0.0.106 can coalesce a no-field provider
-        // refresh without publishing the credential into fresh sandbox execs.
-        // sourceBoundary: OpenShell owns provider revision projection.
-        // whyNotSourceFix: NemoClaw can only observe absence after the bound
-        // policy is active, then republish when this process still has the host
-        // credential value. Hostless recovery retains the credential-free path.
-        // regressionTest: mcp-add-crash-consistency.test.ts covers republish
-        // and hostless recovery; mcp-provider-ownership.test.ts covers loss of
-        // the persisted provider identity before republish.
-        // removalCondition: remove the credential-bearing republish when the
-        // supported OpenShell version guarantees that a post-policy no-field
-        // refresh projects the bound credential into fresh sandbox execs.
-        const republished = upsertMcpProvider(entry.providerName ?? "", options.env, {
-          allowExisting: true,
-          expectedProviderId: entry.providerId,
-          requireExisting: true,
-          runtimeSelection: providerRuntimeSelection,
-        });
-        if (republished.action !== "updated") {
-          refreshMcpProviderEnvironment(entry, providerRuntimeSelection);
-        }
-      },
+        },
       },
     );
     if (Object.hasOwn(adapterEnvValues, entry.env[0]) && !refreshedAfterObservedAbsence) {
@@ -618,6 +621,7 @@ async function addMcpBridgeUnlocked(
       replaceExisting: resumingPreflightedAdd && adapterInspection.state === "registered",
       credentialRevision,
     });
+    reloadOpenClawGatewayAfterMcpMutation(sandboxName, [adapter]);
     const { recoveryPhase: _completedAddState, ...committedEntry } = entry;
     writeBridgeEntry(sandboxName, committedEntry);
   } catch (error) {
