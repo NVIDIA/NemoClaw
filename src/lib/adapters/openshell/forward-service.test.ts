@@ -66,7 +66,11 @@ describe("OpenShell forward service", () => {
   });
 
   it("keeps the gateway registration root when HOME is isolated", () => {
-    const spawnDetached = vi.fn(() => ({ unref: vi.fn() }));
+    const spawnDetached = vi.fn(
+      (_executable: string, _args: readonly string[], _environment: NodeJS.ProcessEnv) => ({
+        unref: vi.fn(),
+      }),
+    );
     let probes = 0;
 
     launchForwardService(target, {
