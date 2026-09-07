@@ -117,10 +117,12 @@ export interface ProviderSelectionResult {
   servingProfileProvenance?: ServingProfileProvenance;
 }
 
-function selectedServingProfileSessionUpdate(provenance: ServingProfileProvenance | undefined): {
-  servingProfileProvenance?: ServingProfileProvenance;
+function selectedServingProfileSessionUpdate(
+  provenance: ServingProfileProvenance | null | undefined,
+): {
+  servingProfileProvenance?: ServingProfileProvenance | null;
 } {
-  return provenance ? { servingProfileProvenance: provenance } : {};
+  return provenance === undefined ? {} : { servingProfileProvenance: provenance };
 }
 
 export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
@@ -1320,7 +1322,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       resolver: resolveHostLocalInferenceStartupSelection,
     });
     let shouldRecordProviderSelection = false;
-    let selectedServingProfileProvenance: ServingProfileProvenance | undefined;
+    let selectedServingProfileProvenance: ServingProfileProvenance | null | undefined;
     // A review interruption selected a provider but did not configure its
     // route. Do not let a coincidentally ready gateway route skip setup.
     forceInferenceSetup ||=
@@ -1501,7 +1503,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       endpointTrustedPrivateCapability = selection.endpointTrustedPrivateCapability;
       inferenceCapabilityCache = selection.inferenceCapabilityCache;
       vllmModelIdentity = selection.vllmModelIdentity;
-      selectedServingProfileProvenance = selection.servingProfileProvenance;
+      selectedServingProfileProvenance = selection.servingProfileProvenance ?? null;
       shouldRecordProviderSelection = true;
       if (
         reuseGatewayCredentialWithoutLocalKey &&
