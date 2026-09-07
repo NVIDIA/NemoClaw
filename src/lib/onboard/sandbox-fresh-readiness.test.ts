@@ -97,7 +97,15 @@ beforeEach(() => setupGpuFlowMocks(mocks));
 afterEach(resetGpuFlowMocks);
 
 describe("fresh sandbox executable readiness", () => {
-  it("rolls back an unverified hard create failure before diagnostics (#10412)", async () => {
+  it.each([
+    [
+      "throws",
+      () => {
+        throw new Error("diagnostics unavailable");
+      },
+    ],
+    ["returns null", () => null],
+  ])("rolls back before diagnostics that %s (#10412)", async (_label, runDiagnostics) => {
     const order: string[] = [];
     const patch = createGpuPatchFixture();
     patch.rollbackManagedStartupAfterCreateFailure.mockImplementation(() => {
@@ -112,7 +120,7 @@ describe("fresh sandbox executable readiness", () => {
     const input = createInput();
     mocks.printSandboxCreateFailureDiagnostics.mockImplementation(() => {
       order.push("diagnostics");
-      throw new Error("diagnostics unavailable");
+      return runDiagnostics();
     });
     mockExit();
 
@@ -125,7 +133,7 @@ describe("fresh sandbox executable readiness", () => {
         .mocked(console.error)
         .mock.calls.flat()
         .join("\n")
-        .includes("Sandbox failure diagnostics were unavailable; continuing rollback."),
+        .includes("Sandbox failure diagnostics were unavailable after rollback."),
       order,
     }).toEqual({
       diagnosticCall: ["alpha", { backupPath: null }],

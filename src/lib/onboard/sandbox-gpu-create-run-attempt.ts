@@ -440,12 +440,16 @@ type PrintCreateFailureDiagnostics = NonNullable<
 
 function containCreateFailureDiagnostics(
   printDiagnostics: PrintCreateFailureDiagnostics,
+  unavailableMessage: string,
 ): PrintCreateFailureDiagnostics {
-  return (sandboxName, options): void => {
+  return (sandboxName, options) => {
     try {
-      printDiagnostics(sandboxName, options);
+      const result = printDiagnostics(sandboxName, options);
+      if (result === null) console.error(unavailableMessage);
+      return result;
     } catch {
-      console.error("  Sandbox failure diagnostics were unavailable; continuing rollback.");
+      console.error(unavailableMessage);
+      return null;
     }
   };
 }
@@ -456,14 +460,25 @@ export function createSandboxGpuCreateAttemptRunner(
   reverifyManagedBridgeReachability: () => Promise<void>,
 ) {
   const portableLifecycle = input.portableLifecycle === true;
-  const printCreateFailureDiagnostics = containCreateFailureDiagnostics(
+  const basePrintCreateFailureDiagnostics =
     deps.printCreateFailureDiagnostics ??
-      (input.hermesPortableLifecycle
-        ? (sandboxName: string) =>
-            console.error(
-              `  Hermes portable sandbox '${sandboxName}' did not complete receipt-owned creation. Preserve its lifecycle receipt and resume onboarding after correcting the reported failure.`,
-            )
-        : printSandboxCreateFailureDiagnostics),
+    (input.hermesPortableLifecycle
+      ? (sandboxName: string) =>
+          console.error(
+            `  Hermes portable sandbox '${sandboxName}' did not complete receipt-owned creation. Preserve its lifecycle receipt and resume onboarding after correcting the reported failure.`,
+          )
+      : printSandboxCreateFailureDiagnostics);
+  const printCreateFailureDiagnostics = containCreateFailureDiagnostics(
+    basePrintCreateFailureDiagnostics,
+    "  Sandbox failure diagnostics were unavailable.",
+  );
+  const printCreateFailureDiagnosticsBeforeRollback = containCreateFailureDiagnostics(
+    basePrintCreateFailureDiagnostics,
+    "  Sandbox failure diagnostics were unavailable; continuing rollback.",
+  );
+  const printCreateFailureDiagnosticsAfterRollback = containCreateFailureDiagnostics(
+    basePrintCreateFailureDiagnostics,
+    "  Sandbox failure diagnostics were unavailable after rollback.",
   );
   if (
     portableLifecycle &&
@@ -1028,7 +1043,7 @@ export function createSandboxGpuCreateAttemptRunner(
           },
           {
             classifyCreateFailure: classifySandboxCreateFailure,
-            printCreateFailureDiagnostics,
+            printCreateFailureDiagnostics: printCreateFailureDiagnosticsAfterRollback,
             rollbackCreateFailure: async () => {
               await runtimePatch.rollbackManagedStartupAfterCreateFailure();
             },
@@ -1160,7 +1175,9 @@ export function createSandboxGpuCreateAttemptRunner(
           ...nativeCleanup,
         } as const;
       }
-      printCreateFailureDiagnostics(input.sandboxName, { backupPath: input.restoreBackupPath });
+      printCreateFailureDiagnosticsBeforeRollback(input.sandboxName, {
+        backupPath: input.restoreBackupPath,
+      });
       await runtimePatch.rollbackManagedStartupAfterCreateFailure();
       if (compatibility) runtimePatch.printReadinessFailureIfEnabled();
       else if (expectedRecreatedSandboxId) {
