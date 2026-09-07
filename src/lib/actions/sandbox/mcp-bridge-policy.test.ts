@@ -12,7 +12,6 @@ import {
   buildMcpBridgePolicyName,
   buildMcpBridgePolicyYaml,
   getPolicyGatewayState,
-  getPolicyPresence,
   getRegisteredGeneratedPolicy,
   MCP_BRIDGE_ALLOWED_METHODS,
   MCP_BRIDGE_POLICY_MAX_BODY_BYTES,
@@ -83,9 +82,9 @@ describe("generated MCP policy", () => {
       },
     );
 
-    expect(getPolicyPresence("alpha", { ...entry, denyTools: ["delete_*"] }, runtimeSelection)).toBe(
-      true,
-    );
+    expect(
+      getPolicyGatewayState("alpha", { ...entry, denyTools: ["delete_*"] }, runtimeSelection),
+    ).toBe("match");
     expect(stateSpy).toHaveBeenCalledOnce();
   });
 
@@ -108,12 +107,14 @@ describe("generated MCP policy", () => {
   });
 
   it("keeps policy drift distinct from unavailable inspection (#11115)", () => {
-    vi.spyOn(policies, "getPresetContentGatewayState").mockReturnValue("drift");
+    vi.spyOn(policies, "getPresetContentGatewayState")
+      .mockReturnValueOnce("drift")
+      .mockReturnValueOnce(null);
 
     expect(
       getPolicyGatewayState("alpha", { ...entry, denyTools: ["delete_*"] }, runtimeSelection),
     ).toBe("drift");
-    expect(getPolicyPresence("alpha", entry, runtimeSelection)).toBeNull();
+    expect(getPolicyGatewayState("alpha", entry, runtimeSelection)).toBeNull();
   });
 
   it("omits deny_rules when the bridge has no denied tools (#11115)", () => {

@@ -240,15 +240,6 @@ export function getRegisteredGeneratedPolicy(
   }
 }
 
-export function getPolicyPresence(
-  sandboxName: string,
-  entry: McpBridgeEntry | undefined,
-  runtimeSelection: McpProviderInspectionRuntimeSelection,
-): boolean | null {
-  const state = getPolicyGatewayState(sandboxName, entry, runtimeSelection);
-  return state === "match" ? true : state === "absent" ? false : null;
-}
-
 export function getPolicyGatewayState(
   sandboxName: string,
   entry: McpBridgeEntry | undefined,
