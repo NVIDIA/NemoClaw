@@ -64,7 +64,9 @@ function dockerQualifiedPresetRuntimeFailure(
       requirement.readiness.kind === "observation" &&
       requirement.readiness.id === "host.docker.runtime",
   );
-  const resolvedProvider = String(runtimeProviderId ?? "").trim().toLowerCase();
+  const resolvedProvider = String(runtimeProviderId ?? "")
+    .trim()
+    .toLowerCase();
   return requiresDocker && resolvedProvider && resolvedProvider !== "docker"
     ? `Managed llama.cpp preset ${selection.preset.metadata.id} requires the Docker runtime provider selected by its readiness qualification; the resolved runtime provider is ${resolvedProvider}.`
     : null;
@@ -175,9 +177,10 @@ function managedLlamaCppChoiceEligibilityFailure(
   );
   if (runtimeFailure) return runtimeFailure;
   return (
-    choice.selection.recipe.metadata.id === N1X_WSL_RECIPE_ID &&
-    n1xWslDockerLocalityFailure(env, options)
-  ) || null;
+    (choice.selection.recipe.metadata.id === N1X_WSL_RECIPE_ID &&
+      n1xWslDockerLocalityFailure(env, options)) ||
+    null
+  );
 }
 
 function resolveManagedLlamaCppSelectionFromChoices(
@@ -358,36 +361,6 @@ export function discoverManagedLlamaCppSelections(
     resolution,
     choices: choicesIncludingResolution(eligibleChoices, resolution),
   };
-}
-
-/** Resolve one managed llama.cpp recipe through fresh canonical host readiness. */
-export function resolveManagedLlamaCppSelection(
-  env: NodeJS.ProcessEnv = process.env,
-  catalog: CompiledManagedInferenceCatalog = loadManagedInferenceCatalog(),
-  report: SystemReadinessReport = createHostReadinessReport(getBuildIdentity()),
-  options: ManagedLlamaCppSelectionOptions = {},
-): ManagedLlamaCppSelectionResult {
-  return discoverManagedLlamaCppSelections(env, catalog, report, options).resolution;
-}
-
-/** Resolve managed selection with the GPU proof already admitted by onboarding preflight. */
-export function resolveManagedLlamaCppSelectionForGpu(
-  env: NodeJS.ProcessEnv | undefined,
-  gpu: GpuDetection | null,
-  catalog: CompiledManagedInferenceCatalog = loadManagedInferenceCatalog(),
-  collectionOptions: Omit<
-    CollectHostObservationsOptions,
-    "detectGpu" | "wslDockerDesktopGpuProofPassed"
-  > = {},
-  selectionOptions: ManagedLlamaCppSelectionOptions = {},
-): ManagedLlamaCppSelectionResult {
-  return discoverManagedLlamaCppSelectionsForGpu(
-    env,
-    gpu,
-    catalog,
-    collectionOptions,
-    selectionOptions,
-  ).resolution;
 }
 
 /** Discover managed choices with the GPU proof already admitted by onboarding preflight. */

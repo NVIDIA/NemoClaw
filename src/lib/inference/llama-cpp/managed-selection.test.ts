@@ -12,9 +12,8 @@ import type { ManagedInferenceServingPreset } from "../serving/types";
 import { LLAMA_CPP_RECIPE_ENV } from "./contract";
 import {
   discoverManagedLlamaCppSelections,
+  discoverManagedLlamaCppSelectionsForGpu,
   listManagedLlamaCppSelectionChoices,
-  resolveManagedLlamaCppSelection,
-  resolveManagedLlamaCppSelectionForGpu,
 } from "./managed-selection";
 
 const RECIPE_ID = "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1";
@@ -207,13 +206,13 @@ describe("managed llama.cpp selection", () => {
       },
     );
 
-    expect(resolveManagedLlamaCppSelection({}, catalog, report).kind).toBe("selected");
+    expect(discoverManagedLlamaCppSelections({}, catalog, report).resolution.kind).toBe("selected");
   });
 
   it("selects Nemotron by default on a qualified DGX Spark (#10239)", () => {
     const { catalog, report } = fixture();
 
-    const resolved = resolveManagedLlamaCppSelection({}, catalog, report);
+    const resolved = discoverManagedLlamaCppSelections({}, catalog, report).resolution;
 
     expect(resolved).toMatchObject({
       kind: "selected",
@@ -232,7 +231,7 @@ describe("managed llama.cpp selection", () => {
     const { catalog, report } = fixture(N1X_WSL_PRESET_ID);
 
     expect(
-      resolveManagedLlamaCppSelection({}, catalog, report, LOCAL_DOCKER_SELECTION),
+      discoverManagedLlamaCppSelections({}, catalog, report, LOCAL_DOCKER_SELECTION).resolution,
     ).toMatchObject({
       kind: "selected",
       selection: {
@@ -265,13 +264,13 @@ describe("managed llama.cpp selection", () => {
     };
 
     expect(
-      resolveManagedLlamaCppSelectionForGpu(
+      discoverManagedLlamaCppSelectionsForGpu(
         {},
         gpu,
         catalog,
         n1xCollectionOptions(),
         LOCAL_DOCKER_SELECTION,
-      ),
+      ).resolution,
     ).toMatchObject({ kind: "selected" });
   });
 
@@ -280,7 +279,7 @@ describe("managed llama.cpp selection", () => {
     const dockerContextIsDefault = vi.fn(() => false);
 
     expect(
-      resolveManagedLlamaCppSelection({}, catalog, report, { dockerContextIsDefault }),
+      discoverManagedLlamaCppSelections({}, catalog, report, { dockerContextIsDefault }).resolution,
     ).toEqual({
       kind: "rejected",
       reason:
@@ -298,12 +297,10 @@ describe("managed llama.cpp selection", () => {
     const { catalog, report } = fixture(presetId);
 
     expect(
-      resolveManagedLlamaCppSelection(
-        env,
-        catalog,
-        report,
-        { ...LOCAL_DOCKER_SELECTION, runtimeProviderId: "podman" },
-      ),
+      discoverManagedLlamaCppSelections(env, catalog, report, {
+        ...LOCAL_DOCKER_SELECTION,
+        runtimeProviderId: "podman",
+      }).resolution,
     ).toEqual({
       kind: "rejected",
       reason: expect.stringContaining("requires the Docker runtime provider"),
@@ -314,12 +311,12 @@ describe("managed llama.cpp selection", () => {
     const { catalog, report } = fixture(N1X_WSL_PRESET_ID);
 
     expect(
-      resolveManagedLlamaCppSelection(
+      discoverManagedLlamaCppSelections(
         { NEMOCLAW_GATEWAY_RUNTIME: "podman" },
         catalog,
         report,
         LOCAL_DOCKER_SELECTION,
-      ),
+      ).resolution,
     ).toMatchObject({ kind: "selected" });
   });
 
@@ -343,7 +340,7 @@ describe("managed llama.cpp selection", () => {
     const dockerContextIsDefault = vi.fn(() => false);
 
     expect(
-      resolveManagedLlamaCppSelection(
+      discoverManagedLlamaCppSelections(
         {
           [LLAMA_CPP_RECIPE_ENV]: N1X_WSL_RECIPE_ID,
           DOCKER_CONTEXT: "remote-builder",
@@ -351,7 +348,7 @@ describe("managed llama.cpp selection", () => {
         catalog,
         report,
         { dockerContextIsDefault },
-      ),
+      ).resolution,
     ).toMatchObject({
       kind: "rejected",
       reason: expect.stringContaining("effective Docker context to be default"),
@@ -366,12 +363,12 @@ describe("managed llama.cpp selection", () => {
     const dockerContextIsDefault = vi.fn(() => false);
 
     expect(
-      resolveManagedLlamaCppSelection(
+      discoverManagedLlamaCppSelections(
         { [LLAMA_CPP_RECIPE_ENV]: N1X_WSL_RECIPE_ID, HOME: "/home/test" },
         catalog,
         report,
         { dockerContextIsDefault },
-      ),
+      ).resolution,
     ).toMatchObject({
       kind: "rejected",
       reason: expect.stringContaining("effective Docker context to be default"),
@@ -391,13 +388,13 @@ describe("managed llama.cpp selection", () => {
     };
 
     expect(
-      resolveManagedLlamaCppSelectionForGpu(
+      discoverManagedLlamaCppSelectionsForGpu(
         { [LLAMA_CPP_RECIPE_ENV]: N1X_WSL_RECIPE_ID },
         gpu,
         catalog,
         n1xCollectionOptions(),
         LOCAL_DOCKER_SELECTION,
-      ),
+      ).resolution,
     ).toMatchObject({ kind: "rejected" });
   });
 
@@ -413,12 +410,12 @@ describe("managed llama.cpp selection", () => {
     };
 
     expect(
-      resolveManagedLlamaCppSelection(
+      discoverManagedLlamaCppSelections(
         { [LLAMA_CPP_RECIPE_ENV]: N1X_WSL_RECIPE_ID },
         catalog,
         withoutGpuProof,
         LOCAL_DOCKER_SELECTION,
-      ),
+      ).resolution,
     ).toMatchObject({ kind: "rejected" });
   });
 
@@ -434,12 +431,12 @@ describe("managed llama.cpp selection", () => {
     };
 
     expect(
-      resolveManagedLlamaCppSelection(
+      discoverManagedLlamaCppSelections(
         { [LLAMA_CPP_RECIPE_ENV]: N1X_WSL_RECIPE_ID },
         catalog,
         withoutN1xIdentity,
         LOCAL_DOCKER_SELECTION,
-      ),
+      ).resolution,
     ).toMatchObject({ kind: "rejected" });
   });
 
@@ -455,12 +452,12 @@ describe("managed llama.cpp selection", () => {
     };
 
     expect(
-      resolveManagedLlamaCppSelection(
+      discoverManagedLlamaCppSelections(
         { [LLAMA_CPP_RECIPE_ENV]: N1X_WSL_RECIPE_ID },
         catalog,
         belowMemoryFloor,
         LOCAL_DOCKER_SELECTION,
-      ),
+      ).resolution,
     ).toMatchObject({ kind: "rejected" });
   });
 
@@ -476,12 +473,12 @@ describe("managed llama.cpp selection", () => {
     };
 
     expect(
-      resolveManagedLlamaCppSelection(
+      discoverManagedLlamaCppSelections(
         { [LLAMA_CPP_RECIPE_ENV]: N1X_WSL_RECIPE_ID },
         catalog,
         nativeDocker,
         LOCAL_DOCKER_SELECTION,
-      ),
+      ).resolution,
     ).toMatchObject({ kind: "rejected" });
   });
 
@@ -489,7 +486,7 @@ describe("managed llama.cpp selection", () => {
     const { catalog, report } = fixture();
     const synthetic = withSyntheticRecipe(catalog, 550);
 
-    const resolved = resolveManagedLlamaCppSelection({}, synthetic.catalog, report);
+    const resolved = discoverManagedLlamaCppSelections({}, synthetic.catalog, report).resolution;
 
     expect(resolved).toMatchObject({
       kind: "selected",
@@ -513,7 +510,7 @@ describe("managed llama.cpp selection", () => {
     const { catalog, report } = fixture();
     const synthetic = withSyntheticRecipe(catalog, 450);
 
-    expect(resolveManagedLlamaCppSelection({}, synthetic.catalog, report)).toEqual({
+    expect(discoverManagedLlamaCppSelections({}, synthetic.catalog, report).resolution).toEqual({
       kind: "rejected",
       reason: `Automatic managed llama.cpp selection is ambiguous at priority 450: ${SPARK_PRESET_ID}, ${synthetic.presetId}.`,
     });
@@ -523,11 +520,11 @@ describe("managed llama.cpp selection", () => {
     const { catalog, report } = fixture();
     const synthetic = withSyntheticRecipe(catalog, 550);
 
-    const resolved = resolveManagedLlamaCppSelection(
+    const resolved = discoverManagedLlamaCppSelections(
       { [LLAMA_CPP_RECIPE_ENV]: MUSE_RECIPE_ID },
       synthetic.catalog,
       report,
-    );
+    ).resolution;
 
     expect(resolved).toMatchObject({
       kind: "selected",
@@ -589,11 +586,11 @@ describe("managed llama.cpp selection", () => {
       },
     );
 
-    const resolved = resolveManagedLlamaCppSelection(
+    const resolved = discoverManagedLlamaCppSelections(
       { [LLAMA_CPP_RECIPE_ENV]: RECIPE_ID },
       catalog,
       report,
-    );
+    ).resolution;
 
     expect(resolved).toMatchObject({
       kind: "selected",
@@ -611,11 +608,11 @@ describe("managed llama.cpp selection", () => {
       metadata: { ...preset.metadata, id: `${GENERIC_PRESET_ID}.duplicate` },
     };
 
-    const resolved = resolveManagedLlamaCppSelection(
+    const resolved = discoverManagedLlamaCppSelections(
       { [LLAMA_CPP_RECIPE_ENV]: RECIPE_ID },
       { ...catalog, presets: [...catalog.presets, duplicate] },
       report,
-    );
+    ).resolution;
 
     expect(resolved).toEqual({
       kind: "rejected",
@@ -626,11 +623,11 @@ describe("managed llama.cpp selection", () => {
   it("selects an explicitly named shipped recipe", () => {
     const { catalog, report } = fixture();
 
-    const resolved = resolveManagedLlamaCppSelection(
+    const resolved = discoverManagedLlamaCppSelections(
       { [LLAMA_CPP_RECIPE_ENV]: RECIPE_ID },
       catalog,
       report,
-    );
+    ).resolution;
 
     expect(resolved.kind).toBe("selected");
   });
@@ -638,11 +635,11 @@ describe("managed llama.cpp selection", () => {
   it("rejects a model override outside the declarative recipe", () => {
     const { catalog, report } = fixture();
 
-    const resolved = resolveManagedLlamaCppSelection(
+    const resolved = discoverManagedLlamaCppSelections(
       { [LLAMA_CPP_RECIPE_ENV]: RECIPE_ID, NEMOCLAW_MODEL: "another/model" },
       catalog,
       report,
-    );
+    ).resolution;
 
     expect(resolved).toEqual({
       kind: "rejected",
@@ -660,7 +657,7 @@ describe("managed llama.cpp selection", () => {
       },
     });
 
-    const resolved = resolveManagedLlamaCppSelection({}, catalog, stale);
+    const resolved = discoverManagedLlamaCppSelections({}, catalog, stale).resolution;
 
     expect(resolved).toMatchObject({
       kind: "rejected",
