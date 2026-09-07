@@ -218,30 +218,37 @@ describe("rebuild agent base image preflight", () => {
     };
   }
 
-  it("forces a repository-local build and returns its exact ref when no override exists", () => {
-    const imageRef = `nemoclaw-hermes-sandbox-base-local:image-${"a".repeat(64)}`;
-    const trustedLocalOverride = {
-      ref: imageRef,
-      provenance: `${"b".repeat(64)}.${"c".repeat(64)}`,
-    };
+  it("uses the pinned Hermes base when a legacy sandbox has no resolution hint (#10903)", () => {
+    const imageRef = `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:${"a".repeat(64)}`;
     const { ensureAgentBaseImage } = mockBaseImagePreflight(imageRef);
     ensureAgentBaseImage.mockReturnValue({
       imageTag: imageRef,
-      built: true,
-      trustedLocalOverride,
+      built: false,
     });
 
     const result = ensureRebuildAgentBaseImage("hermes", makeBail());
 
     expect(ensureAgentBaseImage).toHaveBeenCalledWith(expect.objectContaining({ name: "hermes" }), {
-      forceBaseImageRebuild: true,
+      allowLocalFallback: false,
+      forceBaseImageRebuild: false,
     });
     expect(result).toEqual({
       ok: true,
       imageRef,
       overrideEnvVar,
-      trustedLocalOverride,
     });
+  });
+
+  it("rejects a missing Hermes base when a legacy sandbox has no resolution hint (#10903)", () => {
+    const { ensureAgentBaseImage } = mockBaseImagePreflight("");
+    ensureAgentBaseImage.mockReturnValue({
+      imageTag: null,
+      built: false,
+    });
+
+    expect(() => ensureRebuildAgentBaseImage("hermes", makeBail())).toThrow(
+      "Hermes rebuild requires the release-pinned immutable base image",
+    );
   });
 
   it("hands a pinned NemoCUA image alias to the inner sandbox create (#9649)", () => {

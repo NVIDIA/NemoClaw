@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { isDockerDriverGatewayProcessIdentity } from "../onboard/docker-driver-gateway-process-identity";
 import type { GatewayOwner } from "../onboard/gateway-ownership";
 import { resetTraceForTests, TRACE_FILE_ENV } from "../trace";
+import { collectGatewayObservations } from "./gateway";
 
 const subprocess = vi.hoisted(() => ({
   spawnSync: vi.fn(),
@@ -241,6 +242,164 @@ describe("managed gateway port readiness (#7411)", () => {
         "darwin",
       ),
     ).toBe(false);
+  });
+
+  it("resets Homebrew formula evidence after successful and failed observations (#11111, #11112)", async () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    vi.spyOn(process, "arch", "get").mockReturnValue("arm64");
+    const formulaPrefix = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-readiness-homebrew-"));
+    const formulaBin = path.join(formulaPrefix, "bin");
+    const openshellBin = path.join(formulaBin, "openshell");
+    const gatewayBin = path.join(formulaBin, "openshell-gateway");
+    const serviceProgram = path.join(
+      formulaPrefix,
+      "libexec",
+      "openshell-gateway-homebrew-service",
+    );
+    fs.mkdirSync(formulaBin);
+    fs.writeFileSync(openshellBin, "");
+    fs.writeFileSync(gatewayBin, "");
+    const listener = net.createServer();
+    await new Promise<void>((resolve, reject) => {
+      listener.once("error", reject);
+      listener.listen(0, "127.0.0.1", resolve);
+    });
+    const gatewayPort = (listener.address() as AddressInfo).port;
+    const gatewayName = "nemoclaw-readiness-test";
+    const status = `Server Status\n\nGateway: ${gatewayName}\nStatus: Connected`;
+    const info = `Gateway Info\n\nGateway: ${gatewayName}\nGateway endpoint: https://127.0.0.1:${gatewayPort}`;
+    const resultByInvocation = new Map([
+      [
+        ["sh", "-c", 'command -v "$1"', "--", "openshell"].join("\0"),
+        commandResult(openshellBin, 0),
+      ],
+      [
+        ["sh", "-c", 'command -v "$1" >/dev/null 2>&1', "sh", "brew"].join("\0"),
+        commandResult("", 0),
+      ],
+      [
+        ["sh", "-c", 'command -v "$1" >/dev/null 2>&1', "sh", "launchctl"].join("\0"),
+        commandResult("", 0),
+      ],
+      [[openshellBin, "status", "-g", gatewayName].join("\0"), commandResult(status, 0)],
+      [[openshellBin, "gateway", "info", "-g", gatewayName].join("\0"), commandResult(info, 0)],
+      [[openshellBin, "gateway", "info"].join("\0"), commandResult(info, 0)],
+      [[openshellBin, "--version"].join("\0"), commandResult("openshell 0.0.106", 0)],
+      [
+        ["lsof", "-ti", `:${gatewayPort}`, "-sTCP:LISTEN"].join("\0"),
+        commandResult(`${process.pid}\n`, 0),
+      ],
+      [["ps", "-p", String(process.pid), "-o", "args="].join("\0"), commandResult()],
+      [
+        ["/usr/sbin/lsof", "-a", "-p", String(process.pid), "-d", "txt", "-Fn"].join("\0"),
+        commandResult(`p${process.pid}\nftxt\nn${gatewayBin}\n`, 0),
+      ],
+      [
+        ["brew", "info", "--json=v2", "openshell"].join("\0"),
+        commandResult(
+          JSON.stringify({
+            formulae: [
+              {
+                installed: [{ version: "0.0.106" }],
+                name: "openshell",
+                service: { run: serviceProgram },
+                tap: "nvidia/openshell",
+              },
+            ],
+          }),
+          0,
+        ),
+      ],
+      [
+        ["launchctl", "print", `gui/${String(process.getuid?.())}/sh.brew.openshell`].join("\0"),
+        commandResult(
+          `\tstate = running\n\tprogram = ${serviceProgram}\n\tpid = ${process.pid}\n`,
+          0,
+        ),
+      ],
+      [
+        ["launchctl", "print", `gui/${String(process.getuid?.())}/homebrew.mxcl.openshell`].join(
+          "\0",
+        ),
+        commandResult(),
+      ],
+    ]);
+    let failManagedObservation = false;
+    let failingExecutableSamples = 0;
+    const failObservation = (): never => {
+      throw new Error("synthetic managed observation failure");
+    };
+    subprocess.spawnSync.mockImplementation((command: string, args: readonly string[] = []) => {
+      const brewIndex = args.indexOf("brew");
+      const invocation =
+        command === "bash" ? ["brew", ...args.slice(brewIndex + 1)] : [command, ...args];
+      return failManagedObservation &&
+        command === "/usr/sbin/lsof" &&
+        ++failingExecutableSamples === 3
+        ? failObservation()
+        : (resultByInvocation.get(invocation.join("\0")) ?? commandResult());
+    });
+
+    try {
+      const deps = createProductionGatewayReadinessDependencies({
+        gatewayName: () => gatewayName,
+        gatewayPort: () => gatewayPort,
+        observeVersionCompatibility: () => "compatible",
+      });
+
+      await expect(collectGatewayObservations(deps)).resolves.toMatchObject({
+        observations: {
+          reuseState: "healthy",
+          portConflictState: "none",
+        },
+      });
+      const formulaCalls = () =>
+        subprocess.spawnSync.mock.calls
+          .filter(([command]) => command === "bash")
+          .map(([, args]) => {
+            const brewIndex = args.indexOf("brew");
+            return args.slice(brewIndex + 1);
+          });
+      const expectedFormulaCalls = [["info", "--json=v2", "openshell"]];
+      expect(formulaCalls()).toEqual(expectedFormulaCalls);
+      const launchctlCalls = () =>
+        subprocess.spawnSync.mock.calls
+          .filter(([command]) => command === "launchctl")
+          .map(([, args]) => args);
+      const expectedLaunchctlCalls = [
+        ["print", `gui/${String(process.getuid?.())}/sh.brew.openshell`],
+        ["print", `gui/${String(process.getuid?.())}/homebrew.mxcl.openshell`],
+        ["print", `gui/${String(process.getuid?.())}/sh.brew.openshell`],
+        ["print", `gui/${String(process.getuid?.())}/homebrew.mxcl.openshell`],
+      ];
+      expect(launchctlCalls()).toEqual(expectedLaunchctlCalls);
+
+      failManagedObservation = true;
+      await expect(collectGatewayObservations(deps)).resolves.toMatchObject({
+        failure: "Managed gateway observations could not be collected safely.",
+      });
+      expect(formulaCalls()).toEqual([...expectedFormulaCalls, ...expectedFormulaCalls]);
+      expect(launchctlCalls()).toEqual([
+        ...expectedLaunchctlCalls,
+        ...expectedLaunchctlCalls.slice(0, 2),
+      ]);
+
+      failManagedObservation = false;
+      await collectGatewayObservations(deps);
+      expect(formulaCalls()).toEqual([
+        ...expectedFormulaCalls,
+        ...expectedFormulaCalls,
+        ...expectedFormulaCalls,
+      ]);
+      expect(launchctlCalls()).toEqual([
+        ...expectedLaunchctlCalls,
+        ...expectedLaunchctlCalls.slice(0, 2),
+        ...expectedLaunchctlCalls,
+      ]);
+    } finally {
+      await new Promise<void>((resolve) => listener.close(() => resolve()));
+      fs.rmSync(formulaPrefix, { force: true, recursive: true });
+    }
   });
 
   it("rejects a listener when Linux process samples change (#8755)", () => {

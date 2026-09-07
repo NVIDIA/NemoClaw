@@ -37,15 +37,19 @@ runs:
         set -euo pipefail
         current_bucket="$(( $(date -u +%s) / 43200 ))"
         previous_bucket="$(( current_bucket - 1 ))"
-        node --input-type=module - "$GITHUB_ACTION_PATH/../../../ci/reviewed-npm-audit.json" <<'NODE'
+        node --experimental-strip-types --input-type=module - \
+          "$GITHUB_ACTION_PATH/../../../ci/reviewed-npm-audit.json" \
+          "$GITHUB_ACTION_PATH/../../../scripts/lib/repository-input-path.mts" <<'NODE'
         import { createHash } from "node:crypto";
         import { appendFileSync, readFileSync } from "node:fs";
         import { join } from "node:path";
+        import { pathToFileURL } from "node:url";
         const targetRoot = process.env.NEMOCLAW_REVIEWED_NPM_AUDIT_TARGET_ROOT;
-        const [configFile] = process.argv.slice(2);
+        const [configFile, resolverFile] = process.argv.slice(2);
         if (!targetRoot) {
           throw new Error("reviewed npm audit target root is required");
         }
+        const { resolvePathWithinRoot } = await import(pathToFileURL(resolverFile).href);
         const configSource = readFileSync(configFile, "utf8");
         const config = JSON.parse(configSource);
         if (!/^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/.test(config.npmVersion) || /[\r\n]/.test(config.npmVersion)) {
@@ -62,7 +66,7 @@ runs:
           for (const file of ["package.json", "package-lock.json"]) {
             const relative = join(directory, file);
             hash.update(relative);
-            hash.update(readFileSync(join(targetRoot, relative)));
+            hash.update(readFileSync(resolvePathWithinRoot(targetRoot, relative, "reviewed npm audit target input")));
           }
         }
         appendFileSync(
