@@ -19,11 +19,36 @@ const ROUTE = {
   gatewayName: GATEWAY,
 };
 
+const createdHomes: string[] = [];
+const heldLockModules: (typeof import("../state/onboard-session"))[] = [];
+
+/**
+ * Point the registry and the onboard session at a private state root.
+ *
+ * Every test drives the real modules rather than mocks, so each one needs its
+ * own `HOME`. The directory is recorded for teardown: an assertion that throws
+ * mid-test would otherwise leave it behind.
+ */
 async function isolatedOnboardHome(): Promise<string> {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-abandoned-reservation-"));
+  createdHomes.push(home);
   vi.stubEnv("HOME", home);
   vi.resetModules();
   return home;
+}
+
+/**
+ * Acquire the onboard lock for a session that owns `sessionId`.
+ *
+ * Teardown releases the lock through the same module instance, because
+ * `vi.resetModules()` would otherwise strand the held descriptor in a module
+ * copy no later test can reach.
+ */
+async function onboardingSessionUnderLock(sessionId: string, command: string): Promise<void> {
+  const onboardSession = await import("../state/onboard-session");
+  heldLockModules.push(onboardSession);
+  onboardSession.acquireOnboardLock(command);
+  onboardSession.saveSession(onboardSession.createSession({ sessionId }));
 }
 
 /** Reserve a route under `sessionId`, then abandon the run without releasing it. */
@@ -33,9 +58,13 @@ async function seedAbandonedReservation(sessionId: string): Promise<void> {
 }
 
 describe("abandoned inference route reservation (#11051)", () => {
-  afterEach(() => {
+  afterEach(async () => {
+    for (const onboardSession of heldLockModules.splice(0)) onboardSession.releaseOnboardLock();
     vi.unstubAllEnvs();
     vi.resetModules();
+    for (const home of createdHomes.splice(0)) {
+      await fs.rm(home, { recursive: true, force: true });
+    }
   });
 
   it("refuses a later onboarding session while the abandoned reservation stands", async () => {
@@ -56,13 +85,9 @@ describe("abandoned inference route reservation (#11051)", () => {
   it("releases the abandoned reservation and admits the fresh run", async () => {
     await isolatedOnboardHome();
     await seedAbandonedReservation("session-from-an-abandoned-run");
-    const onboardSession = await import("../state/onboard-session");
     const registry = await import("../state/registry");
     const { releaseAbandonedRouteReservation } = await import("./sandbox-lifecycle");
-    onboardSession.acquireOnboardLock("onboard --fresh");
-    onboardSession.saveSession(
-      onboardSession.createSession({ sessionId: "session-of-this-fresh-run" }),
-    );
+    await onboardingSessionUnderLock("session-of-this-fresh-run", "onboard --fresh");
 
     expect(releaseAbandonedRouteReservation(SANDBOX)).toBe(true);
     expect(registry.getSandbox(SANDBOX)).toBeNull();
@@ -72,26 +97,20 @@ describe("abandoned inference route reservation (#11051)", () => {
         reservationSessionId: "session-of-this-fresh-run",
       }),
     ).toBe(true);
-    onboardSession.releaseOnboardLock();
   });
 
   it("keeps a reservation the running onboarding session already owns", async () => {
     await isolatedOnboardHome();
     await seedAbandonedReservation("session-of-this-fresh-run");
-    const onboardSession = await import("../state/onboard-session");
     const registry = await import("../state/registry");
     const { releaseAbandonedRouteReservation } = await import("./sandbox-lifecycle");
-    onboardSession.acquireOnboardLock("onboard --resume");
-    onboardSession.saveSession(
-      onboardSession.createSession({ sessionId: "session-of-this-fresh-run" }),
-    );
+    await onboardingSessionUnderLock("session-of-this-fresh-run", "onboard --resume");
 
     expect(releaseAbandonedRouteReservation(SANDBOX)).toBe(false);
     expect(registry.getSandbox(SANDBOX)).toMatchObject({
       name: SANDBOX,
       reservationSessionId: "session-of-this-fresh-run",
     });
-    onboardSession.releaseOnboardLock();
   });
 
   it("keeps a foreign reservation when this process does not hold the onboard lock", async () => {
@@ -115,17 +134,12 @@ describe("abandoned inference route reservation (#11051)", () => {
   it("keeps a published sandbox row that is no longer a route-only reservation", async () => {
     await isolatedOnboardHome();
     await seedAbandonedReservation("session-from-an-abandoned-run");
-    const onboardSession = await import("../state/onboard-session");
     const registry = await import("../state/registry");
     const { releaseAbandonedRouteReservation } = await import("./sandbox-lifecycle");
     registry.finalizeSandboxRouteReservation(SANDBOX, "session-from-an-abandoned-run");
-    onboardSession.acquireOnboardLock("onboard --fresh");
-    onboardSession.saveSession(
-      onboardSession.createSession({ sessionId: "session-of-this-fresh-run" }),
-    );
+    await onboardingSessionUnderLock("session-of-this-fresh-run", "onboard --fresh");
 
     expect(releaseAbandonedRouteReservation(SANDBOX)).toBe(false);
     expect(registry.getSandbox(SANDBOX)).toMatchObject({ name: SANDBOX });
-    onboardSession.releaseOnboardLock();
   });
 });
