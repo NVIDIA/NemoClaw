@@ -638,38 +638,24 @@ export async function startCompatibleMock(options: {
         index: number,
       ): "target" | "miss" | "invalid" => {
         const search = options.openClawToolSearch;
-        const parsed = parsedToolResult(index, "call_openclaw_tool_search");
-        if (
-          !search ||
-          !parsed ||
-          parsed.query !== search.query.toLowerCase() ||
-          !Number.isInteger(parsed.count) ||
-          !Array.isArray(parsed.matches)
-        ) {
-          return "invalid";
-        }
-        const names = parsed.matches.map((match) =>
-          match && typeof match === "object" && !Array.isArray(match)
-            ? (match as Record<string, unknown>).name
-            : undefined,
-        );
-        if (names.some((name) => typeof name !== "string")) return "invalid";
-        selectedOpenClawToolName = search.toolNames.find((name) => names.includes(name));
+        const message = toolResults[index];
+        if (!search || message?.tool_call_id !== "call_openclaw_tool_search") return "invalid";
+        const content = JSON.stringify(message.content);
+        selectedOpenClawToolName = search.toolNames.find((name) => content.includes(name));
         return selectedOpenClawToolName ? "target" : "miss";
       };
       const hasExpectedOpenClawDescription = (index: number): boolean => {
-        const parsed = parsedToolResult(index, "call_openclaw_tool_describe");
-        const parameters = parsed?.parameters;
-        const properties =
-          parameters && typeof parameters === "object" && !Array.isArray(parameters)
-            ? (parameters as Record<string, unknown>).properties
-            : undefined;
+        const message = toolResults[index];
+        if (
+          message?.tool_call_id !== "call_openclaw_tool_describe" ||
+          !selectedOpenClawToolName
+        ) {
+          return false;
+        }
+        const content = JSON.stringify(message.content);
         return (
-          parsed?.name === selectedOpenClawToolName &&
-          properties !== null &&
-          typeof properties === "object" &&
-          !Array.isArray(properties) &&
-          Object.hasOwn(properties, "challenge")
+          content.includes(selectedOpenClawToolName) &&
+          content.includes("challenge")
         );
       };
       let plannedToolCall:
