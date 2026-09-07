@@ -75,6 +75,8 @@ export interface OpenAiSelectionValidationOptions {
   useNvidiaEndpointProbePayload?: boolean;
   /** Provider identity used only for safe, provider-specific diagnostics. */
   provider?: string;
+  /** Provider-owned default model used only for safe, provider-specific diagnostics. */
+  providerDefaultModel?: string;
   revalidateSandboxIdentity?: (operation: string) => void;
 
   skipResponsesProbe?: boolean;
@@ -239,6 +241,8 @@ export function createInferenceSelectionValidationHelpers(
 
   function printGeminiBadRequestGuidance(
     provider: string | undefined,
+    selectedModel: string,
+    providerDefaultModel: string | undefined,
     probe: { failures?: unknown[] },
   ): void {
     if (provider !== "gemini-api" || !Array.isArray(probe.failures)) return;
@@ -258,11 +262,20 @@ export function createInferenceSelectionValidationHelpers(
       );
       return;
     }
+    const defaultModel = String(providerDefaultModel ?? "").trim();
+    if (defaultModel && selectedModel !== defaultModel) {
+      console.error(
+        `  Google rejected the configured model or Chat Completions request. Retry the original command with \`NEMOCLAW_MODEL=${defaultModel}\`.`,
+      );
+    } else if (defaultModel) {
+      console.error(
+        "  Google rejected the configured model or Chat Completions request. The selected model is already the configured Gemini default.",
+      );
+    } else {
+      console.error("  Google rejected the configured model or Chat Completions request.");
+    }
     console.error(
-      "  Google rejected the configured model or Chat Completions request. Retry the original command with `NEMOCLAW_MODEL=gemini-3.6-flash`.",
-    );
-    console.error(
-      "  If that also fails, verify that the selected model has OpenAI-compatible function-calling access for this API key in Google AI Studio.",
+      "  Verify that the selected model has OpenAI-compatible function-calling access for this API key in Google AI Studio before retrying.",
     );
   }
 
@@ -376,7 +389,7 @@ export function createInferenceSelectionValidationHelpers(
       probeOptions.capabilityCache?.invalidate();
       printValidationFailure(label, probe);
       printGeminiRuntimeNotFoundGuidance(provider, probe);
-      printGeminiBadRequestGuidance(provider, probe);
+      printGeminiBadRequestGuidance(provider, model, probeOptions.providerDefaultModel, probe);
       if (deps.isNonInteractive()) {
         exitNonInteractiveValidationFailure();
       }
