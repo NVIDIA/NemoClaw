@@ -70,7 +70,7 @@ import {
   type RetainedSandboxRecoveryRecord,
   type RetainedSandboxRecoveryReason,
 } from "./onboard-session/retained-sandbox-recovery";
-import type { SandboxHostMount } from "./registry/types";
+import type { SandboxEntry, SandboxHostMount } from "./registry/types";
 import { hasUnsafeHostMountTerminalText } from "./registry/host-mount";
 import { nemoclawStateRoot } from "./state-root";
 
@@ -1990,6 +1990,91 @@ export function listRetainedSandboxRecoveryRecords(): readonly RetainedSandboxRe
       }
     }
     return records;
+  });
+}
+
+const SAFE_RECOVERY_EVIDENCE = /^[A-Za-z0-9._:@/-]{1,256}$/u;
+
+function pendingCreateRecoveryResources(
+  entry: SandboxEntry,
+): RecordRetainedSandboxRecoveryInput["resources"] {
+  const safeValues = (values: readonly unknown[]): string[] =>
+    [
+      ...new Set(
+        values.filter(
+          (value): value is string =>
+            typeof value === "string" && SAFE_RECOVERY_EVIDENCE.test(value),
+        ),
+      ),
+    ].sort();
+  return {
+    sharedInferenceProviders: safeValues([entry.provider]),
+    sandboxScopedProviders: safeValues([entry.hermesInferenceProvider]),
+    credentialEnvironmentVariables: safeValues([entry.credentialEnv]),
+  };
+}
+
+function retainedRecoveryMatchesPendingCreate(
+  record: RetainedSandboxRecoveryRecord,
+  entry: SandboxEntry,
+): boolean {
+  const checkpoint = entry.pendingCreateIdentity;
+  return Boolean(
+    checkpoint &&
+    record.sandboxName === checkpoint.sandboxName &&
+    record.sandboxIdentityFingerprint === checkpoint.sandboxIdentityFingerprint &&
+    record.gatewayName === checkpoint.gatewayName &&
+    record.gatewayPort === checkpoint.gatewayPort &&
+    record.lifecycleGeneration === checkpoint.lifecycleGeneration &&
+    record.createAttemptNonce === checkpoint.createAttemptNonce,
+  );
+}
+
+/**
+ * Reconstruct the independent retained-sandbox record when the verified-create
+ * registry checkpoint is the only recovery authority that survived a crash.
+ */
+export function reconstructRetainedSandboxRecoveryFromPendingCreate(
+  entry: SandboxEntry,
+): RetainedSandboxRecoveryRecord | null {
+  const checkpoint = entry.pendingCreateIdentity;
+  const createAttemptNonce = checkpoint?.createAttemptNonce;
+  if (!checkpoint || entry.pendingRouteReservation !== true || !createAttemptNonce) {
+    return null;
+  }
+  if (
+    entry.name !== checkpoint.sandboxName ||
+    entry.gatewayName !== checkpoint.gatewayName ||
+    entry.gatewayPort !== checkpoint.gatewayPort ||
+    entry.lifecycleGeneration !== checkpoint.lifecycleGeneration ||
+    entry.lifecycleLiveIdentityFingerprint !== checkpoint.sandboxIdentityFingerprint
+  ) {
+    throw new Error(
+      `Cannot reconstruct retained sandbox recovery for '${entry.name}': its verified create checkpoint does not match the registry lifecycle authority.`,
+    );
+  }
+  return withOwnedOnboardLock("nemoclaw retained sandbox recovery reconstruction", () => {
+    const records = readRetainedSandboxRecoveryRecords(RETAINED_SANDBOX_RECOVERY_FILE);
+    const sameName = records.filter((record) => record.sandboxName === entry.name);
+    const matching = sameName.filter((record) =>
+      retainedRecoveryMatchesPendingCreate(record, entry),
+    );
+    if (matching.length === 1 && sameName.length === 1) return matching[0]!;
+    if (sameName.length > 0) {
+      throw new Error(
+        `Cannot reconstruct retained sandbox recovery for '${entry.name}': its independent recovery authority conflicts with the verified create checkpoint.`,
+      );
+    }
+    return writeRetainedSandboxRecovery(RETAINED_SANDBOX_RECOVERY_FILE, {
+      sandboxName: checkpoint.sandboxName,
+      sandboxIdentityFingerprint: checkpoint.sandboxIdentityFingerprint,
+      gatewayName: checkpoint.gatewayName,
+      gatewayPort: checkpoint.gatewayPort,
+      lifecycleGeneration: checkpoint.lifecycleGeneration,
+      createAttemptNonce,
+      resources: pendingCreateRecoveryResources(entry),
+      reason: "retained_after_sandbox_creation_failure",
+    });
   });
 }
 
