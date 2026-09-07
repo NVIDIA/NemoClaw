@@ -65,6 +65,28 @@ describe("OpenShell forward service", () => {
     expect(unref).toHaveBeenCalledOnce();
   });
 
+  it("keeps the gateway registration root when HOME is isolated", () => {
+    const spawnDetached = vi.fn(() => ({ unref: vi.fn() }));
+    let probes = 0;
+
+    launchForwardService(target, {
+      isReachable: () => ++probes >= 2,
+      sleep: () => {},
+      sourceEnvironment: {
+        HOME: "/tmp/isolated-home",
+        XDG_CONFIG_HOME: "/home/runner/.config",
+        OPENSHELL_GATEWAY_ENDPOINT: "https://untrusted.example",
+      },
+      spawnDetached,
+    });
+
+    expect(spawnDetached.mock.calls[0]?.[2]).toMatchObject({
+      HOME: "/tmp/isolated-home",
+      XDG_CONFIG_HOME: "/home/runner/.config",
+    });
+    expect(spawnDetached.mock.calls[0]?.[2]).not.toHaveProperty("OPENSHELL_GATEWAY_ENDPOINT");
+  });
+
   it("refuses an occupied port without launching or adopting its listener", () => {
     const spawnDetached = vi.fn();
 
