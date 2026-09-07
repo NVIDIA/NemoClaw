@@ -436,6 +436,23 @@ network_policies:
     expect(fs.existsSync(livePath)).toBe(true);
   });
 
+  it("materializes captured policy bytes even when the source path changes", () => {
+    const source = "version: 1\nnetwork_policies:\n  host_edit: {}\n";
+    const livePath = tempPolicy("live-captured.yaml", source);
+    const replacementPath = tempPolicy("replacement-captured.yaml", source);
+    fs.writeFileSync(livePath, "network_policies:\n  broken: [\n", "utf8");
+
+    const handoff = materializeRebuildPolicyHandoff({
+      livePolicyPath: livePath,
+      livePolicySource: source,
+      replacementPolicy: { policyPath: replacementPath, appliedPresets: [] },
+    });
+
+    expect(handoff.policyPath).not.toBe(livePath);
+    expect(fs.readFileSync(handoff.policyPath, "utf8")).toBe(source);
+    expect(handoff.cleanup?.()).toBe(true);
+  });
+
   it("rejects live credential bindings outside the verified replacement plan", () => {
     const livePath = tempPolicy(
       "live-provider.yaml",

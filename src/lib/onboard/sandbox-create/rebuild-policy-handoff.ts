@@ -305,7 +305,7 @@ export function materializeRebuildPolicyHandoff(input: {
     input.requiredNetworkPolicySources,
     input.sandboxName,
   );
-  if (!merged.changed) {
+  if (!merged.changed && input.livePolicySource === undefined) {
     return {
       ...input.replacementPolicy,
       policyPath: input.livePolicyPath,
