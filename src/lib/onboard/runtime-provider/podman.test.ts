@@ -248,7 +248,7 @@ describe("managed Podman runtime provider", () => {
     async (agent) => {
       const runtime = providerHarness(agent);
       const verifyGateway = vi.fn(async () => undefined);
-      const restoreStartupState = vi.fn(() => SUCCESSFUL_RECOVERY);
+      const restoreStartupState = vi.fn(async () => SUCCESSFUL_RECOVERY);
       const stopSandboxChannels = vi.fn();
 
       await expect(
@@ -291,7 +291,7 @@ describe("managed Podman runtime provider", () => {
       startSandbox(runtime.sandboxName, {
         getSandbox: () => runtime.entry,
         runtimeProviders: runtime.providers,
-        restoreStartupState: vi.fn(() => SUCCESSFUL_RECOVERY),
+        restoreStartupState: vi.fn(async () => SUCCESSFUL_RECOVERY),
         verifyGateway,
         log: vi.fn(),
       }),

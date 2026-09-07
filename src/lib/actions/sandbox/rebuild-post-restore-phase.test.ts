@@ -43,7 +43,7 @@ describe("rebuild post-restore phase", () => {
           runtime: { kind: runtimeKindByAgent[agentName] },
         }) as never,
     );
-    vi.spyOn(processRecovery, "executeSandboxExecCommand").mockImplementation(() => {
+    vi.spyOn(processRecovery, "executeSandboxExecCommand").mockImplementation(async () => {
       order.push("doctor");
       return { status: 0, stdout: "", stderr: "" };
     });
@@ -68,10 +68,13 @@ describe("rebuild post-restore phase", () => {
       order.push("config-hash-final");
       return true;
     });
-    vi.spyOn(mutableConfigPerms, "repairMutableConfigPerms").mockReturnValue({
-      applied: true,
-      verified: true,
-      errors: [],
+    vi.spyOn(mutableConfigPerms, "repairMutableConfigPerms").mockImplementation(() => {
+      order.push("permissions");
+      return {
+        applied: true,
+        verified: true,
+        errors: [],
+      };
     });
     vi.spyOn(mutableConfigPerms, "inspectMutableHermesConfigPerms").mockReturnValue({
       verified: true,
@@ -82,17 +85,17 @@ describe("rebuild post-restore phase", () => {
       return true;
     });
     vi.spyOn(rebuildHermesPostRestore, "restartHermesGatewayAfterStateRestore").mockImplementation(
-      (_sandboxName, targetAgentName) =>
+      async (_sandboxName, targetAgentName) =>
         targetAgentName === "hermes" ? "restarted" : "not-applicable",
     );
     vi.spyOn(rebuildHermesPostRestore, "verifyHermesGatewayAfterStateRestore").mockImplementation(
-      (_sandboxName, targetAgentName) =>
+      async (_sandboxName, targetAgentName) =>
         targetAgentName === "hermes" ? "healthy" : "not-applicable",
     );
     vi.spyOn(
       rebuildHermesPostRestore,
       "verifyHermesGatewayAfterStateRestoreForCronGate",
-    ).mockReturnValue({
+    ).mockResolvedValue({
       state: "healthy",
       replacementIdentity: { pid: 77, start_time: 903, drain_token: "restore-token" },
     });
@@ -155,7 +158,9 @@ describe("rebuild post-restore phase", () => {
       "doctor",
       "reconcile",
       "messaging",
+      "permissions",
       "mcp",
+      "permissions",
       "config-hash",
       "config-hash-final",
       "host-forward",
@@ -166,6 +171,42 @@ describe("rebuild post-restore phase", () => {
       "openclaw doctor --fix",
       300_000,
       { allowLocalDockerFallback: false },
+    );
+  });
+
+  it("re-establishes mutable config permissions after MCP writers settle", async () => {
+    let repairAttempt = 0;
+    vi.mocked(mutableConfigPerms.repairMutableConfigPerms).mockImplementation(() => {
+      repairAttempt += 1;
+      order.push(`permissions:${String(repairAttempt)}`);
+      return repairAttempt === 1
+        ? { applied: true, verified: true, errors: [] }
+        : {
+            applied: true,
+            verified: false,
+            errors: ["config.json mode changed after MCP restore"],
+          };
+    });
+    const args = input();
+
+    const verification = await runRebuildPostRestorePhase(args);
+
+    expect(order).toEqual([
+      "doctor",
+      "reconcile",
+      "messaging",
+      "permissions:1",
+      "mcp",
+      "permissions:2",
+      "config-hash",
+      "config-hash-final",
+      "host-forward",
+      "config-hash-final",
+    ]);
+    expect(verification).toEqual({ mutableConfigPermissionsVerified: false });
+    expect(args.bail).not.toHaveBeenCalled();
+    expect(vi.mocked(console.log).mock.calls.flat().join("\n")).toContain(
+      "Mutable config permissions were not verified",
     );
   });
 
@@ -211,7 +252,7 @@ describe("rebuild post-restore phase", () => {
   });
 
   it("does not record a final hash without trusted doctor completion (#9946)", async () => {
-    vi.mocked(processRecovery.executeSandboxExecCommand).mockReturnValue(null);
+    vi.mocked(processRecovery.executeSandboxExecCommand).mockResolvedValue(null);
     const args = input();
 
     await runRebuildPostRestorePhase(args);
@@ -248,7 +289,7 @@ describe("rebuild post-restore phase", () => {
   });
 
   it("stops before later writes when doctor exits nonzero (#9946)", async () => {
-    vi.mocked(processRecovery.executeSandboxExecCommand).mockReturnValue({
+    vi.mocked(processRecovery.executeSandboxExecCommand).mockResolvedValue({
       status: 255,
       stdout: "",
       stderr: "",
@@ -297,7 +338,7 @@ describe("rebuild post-restore phase", () => {
 
   it("captures a completed doctor mutation and rejects a later config change (#9946)", async () => {
     let configHashValid = true;
-    vi.mocked(processRecovery.executeSandboxExecCommand).mockImplementation(() => {
+    vi.mocked(processRecovery.executeSandboxExecCommand).mockImplementation(async () => {
       configHashValid = false;
       return { status: 0, stdout: "sensitive doctor output", stderr: "" };
     });
@@ -469,7 +510,7 @@ describe("rebuild post-restore phase", () => {
     let dispatchHeld = true;
     const attemptDispatch = () => events.push(dispatchHeld ? "dispatch-blocked" : "dispatch-ran");
     vi.mocked(rebuildHermesPostRestore.restartHermesGatewayAfterStateRestore).mockImplementation(
-      () => {
+      async () => {
         events.push("restart");
         attemptDispatch();
         return "restarted";
@@ -482,7 +523,7 @@ describe("rebuild post-restore phase", () => {
     });
     vi.mocked(
       rebuildHermesPostRestore.verifyHermesGatewayAfterStateRestoreForCronGate,
-    ).mockImplementation(() => {
+    ).mockImplementation(async () => {
       events.push("health-verified");
       attemptDispatch();
       return {
@@ -542,7 +583,7 @@ describe("rebuild post-restore phase", () => {
     agentName = "hermes";
     vi.mocked(
       rebuildHermesPostRestore.verifyHermesGatewayAfterStateRestoreForCronGate,
-    ).mockReturnValue({ state: "unverified" });
+    ).mockResolvedValue({ state: "unverified" });
     const args = {
       ...input(),
       hermesCronRestoreIdentity: {
@@ -570,7 +611,7 @@ describe("rebuild post-restore phase", () => {
     agentName = "hermes";
     const events: string[] = [];
     vi.mocked(rebuildHermesPostRestore.restartHermesGatewayAfterStateRestore).mockImplementation(
-      () => {
+      async () => {
         events.push("restart-failed");
         return "restart-failed";
       },
@@ -581,7 +622,7 @@ describe("rebuild post-restore phase", () => {
     });
     vi.mocked(
       rebuildHermesPostRestore.verifyHermesGatewayAfterStateRestoreForCronGate,
-    ).mockImplementation((_sandboxName, _agentName, restartState) => {
+    ).mockImplementation(async (_sandboxName, _agentName, restartState) => {
       events.push(`verify:${restartState}`);
       return { state: "unverified" };
     });
@@ -710,7 +751,7 @@ describe("rebuild post-restore phase", () => {
     vi.mocked(rebuildMcp.restoreMcpAfterRebuild).mockResolvedValue(false);
     vi.mocked(
       rebuildHermesPostRestore.verifyHermesGatewayAfterStateRestoreForCronGate,
-    ).mockReturnValue({ state: "unverified" });
+    ).mockResolvedValue({ state: "unverified" });
     const args = {
       ...input(),
       hermesCronRestoreIdentity: {
@@ -762,7 +803,7 @@ describe("rebuild post-restore phase", () => {
 
   it("does not print the Hermes API token notice when post-restore verification is incomplete (#7175)", async () => {
     agentName = "hermes";
-    vi.mocked(rebuildHermesPostRestore.verifyHermesGatewayAfterStateRestore).mockReturnValue(
+    vi.mocked(rebuildHermesPostRestore.verifyHermesGatewayAfterStateRestore).mockResolvedValue(
       "unverified",
     );
     const args = input();
@@ -807,7 +848,7 @@ describe("rebuild post-restore phase", () => {
 
   it("prints the Hermes API token notice after gateway recovery (#7175)", async () => {
     agentName = "hermes";
-    vi.mocked(rebuildHermesPostRestore.verifyHermesGatewayAfterStateRestore).mockReturnValue(
+    vi.mocked(rebuildHermesPostRestore.verifyHermesGatewayAfterStateRestore).mockResolvedValue(
       "recovered",
     );
     const args = input();

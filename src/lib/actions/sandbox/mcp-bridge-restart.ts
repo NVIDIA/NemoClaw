@@ -154,11 +154,7 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
   // A hostless restart may reuse an attached stored credential only after the
   // existing wire probe verifies it. Check every target before policy or
   // provider mutation so a multi-server restart cannot half-apply (#10750).
-  await assertRestartCredentialsAvailable(
-    sandboxName,
-    targetEntries,
-    providerRuntimeSelection,
-  );
+  await assertRestartCredentialsAvailable(sandboxName, targetEntries, providerRuntimeSelection);
   // Validate every generated policy name before inspecting or updating any provider.
   for (const entry of targetEntries) assertGeneratedPolicyMutationSafe(sandboxName, entry);
   const providerInspectionByServer = new Map<string, McpProviderInspection>();
@@ -186,7 +182,7 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
     providerRuntimeSelection,
   );
   for (const entry of missingProviderEntries) {
-    waitForDetachedMcpCredential(sandboxName, entry, providerRuntimeSelection);
+    await waitForDetachedMcpCredential(sandboxName, entry, providerRuntimeSelection);
   }
   // Inspect registered providers once before the first mutation. Per-entry
   // checks below inspect only attached providers at each mutation edge.
@@ -208,13 +204,13 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
       bindCredential: false,
       runtimeSelection: providerRuntimeSelection,
     });
-    const providerResult = upsertMcpProvider(entry.providerName ?? "", envRefs, {
+    const providerResult = await upsertMcpProvider(entry.providerName ?? "", envRefs, {
       allowExisting: true,
       expectedProviderId: entry.providerId,
       runtimeSelection: providerRuntimeSelection,
-      prepareMutation: (action) => {
+      prepareMutation: async (action) => {
         if (action === "update") {
-          previousCredentialRevision = observeMcpCredentialRevision(
+          previousCredentialRevision = await observeMcpCredentialRevision(
             sandboxName,
             entry,
             providerRuntimeSelection,
@@ -248,7 +244,7 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
     });
     refreshMcpProviderEnvironment(entry, providerRuntimeSelection);
     const entryAdapter = (entry.adapter as AgentMcpAdapter | undefined) ?? adapter;
-    const credentialRevision = waitForAttachedMcpCredential(
+    const credentialRevision = await waitForAttachedMcpCredential(
       sandboxName,
       entry,
       providerRuntimeSelection,
@@ -258,7 +254,7 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
           : {}),
       },
     );
-    registerAgentAdapterAtCurrentCredentialRevision(
+    await registerAgentAdapterAtCurrentCredentialRevision(
       sandboxName,
       entryAdapter,
       entry,
@@ -352,12 +348,12 @@ export async function restoreExistingMcpBridgeRuntime(
     }
     const adapter = (entry.adapter as AgentMcpAdapter | undefined) ?? defaultAdapter;
     refreshMcpProviderEnvironment(entry, providerRuntimeSelection);
-    const credentialRevision = waitForAttachedMcpCredential(
+    const credentialRevision = await waitForAttachedMcpCredential(
       sandboxName,
       entry,
       providerRuntimeSelection,
     );
-    registerAgentAdapterAtCurrentCredentialRevision(
+    await registerAgentAdapterAtCurrentCredentialRevision(
       sandboxName,
       adapter,
       entry,

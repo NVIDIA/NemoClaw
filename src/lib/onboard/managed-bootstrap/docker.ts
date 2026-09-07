@@ -191,6 +191,7 @@ export type DockerManagedBootstrapDeps = Pick<
   | "dockerRun"
   | "dockerStart"
   | "dockerStop"
+  | "commandExecutor"
   | "runCaptureOpenshell"
   | "runOpenshell"
   | "sleep"
@@ -3857,11 +3858,17 @@ export function createDockerManagedBootstrapAdapter(
       const supervisorReconnectTimeoutSecs =
         getDockerGpuSupervisorReconnectTimeoutSecs(timeoutSecs);
       if (
-        !waitForOpenShellSupervisorReconnect(
+        !deps.commandExecutor ||
+        !(await waitForOpenShellSupervisorReconnect(
           handle.sandbox.sandboxName,
           supervisorReconnectTimeoutSecs,
-          deps,
-        )
+          {
+            commandExecutor: deps.commandExecutor,
+            runCaptureOpenshell: deps.runCaptureOpenshell,
+            sleep: deps.sleep,
+            errorPhaseDebouncePolls: deps.errorPhaseDebouncePolls,
+          },
+        ))
       ) {
         throw new Error(supervisorReconnectFailureDetail(replacement.replacementRuntimeId, deps));
       }

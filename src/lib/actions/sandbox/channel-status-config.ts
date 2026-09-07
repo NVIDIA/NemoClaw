@@ -38,23 +38,19 @@ type ExecRunner = (
   sandboxName: string,
   command: string,
   timeoutMs?: number,
-) => {
-  status: number;
-  stdout: string;
-  stderr: string;
-} | null;
+) => Promise<{ status: number; stdout: string; stderr: string } | null>;
 
 export type ChannelStatusConfigDeps = {
   execSandbox: ExecRunner;
 };
 
-export function buildConfigStatusSignals(
+export async function buildConfigStatusSignals(
   sandboxName: string,
   channelName: string,
   entry: ReturnType<typeof registry.getSandbox>,
   agent: AgentDefinition,
   deps: ChannelStatusConfigDeps,
-): DiagnosticSignal[] {
+): Promise<DiagnosticSignal[]> {
   const plan = registry.getMessagingPlanFromEntry(entry);
   const channelPlan = plan?.channels.find((channel) => channel.channelId === channelName);
   if (!channelPlan?.configured) return [];
@@ -80,7 +76,7 @@ export function buildConfigStatusSignals(
         )
       : [];
   const sourceReads = parser
-    ? readConfigSourceValues(sandboxName, renderSources, parser, deps)
+    ? await readConfigSourceValues(sandboxName, renderSources, parser, deps)
     : emptyConfigSourceReads();
   const configInputs = new Map(
     channelPlan.inputs
@@ -294,17 +290,17 @@ function resolveConfigTarget(
   return null;
 }
 
-function readConfigSourceValues(
+async function readConfigSourceValues(
   sandboxName: string,
   sources: readonly ConfigRenderSource[],
   parser: RenderedChannelConfigParser,
   deps: ChannelStatusConfigDeps,
-): ConfigSourceReads {
+): Promise<ConfigSourceReads> {
   const targetReads = new Map<string, ConfigTargetRead>();
   for (const target of new Set(sources.map((source) => source.resolvedTarget))) {
     // Targets are resolved only from built-in channel manifests via resolveConfigTarget.
     // Keep this command path closed to user-provided targets before broadening shellQuote use.
-    const result = deps.execSandbox(
+    const result = await deps.execSandbox(
       sandboxName,
       `head -c ${CONFIG_STATUS_MAX_SOURCE_BYTES + 1} ${shellQuote(target)}`,
       CONFIG_STATUS_TIMEOUT_MS,

@@ -5,6 +5,10 @@ import { spawnSync } from "node:child_process";
 import { isDeepStrictEqual } from "node:util";
 import { createCliOpenShellSandboxObserver } from "../../adapters/openshell/sandbox-observer-cli";
 import {
+  createCliOpenShellSandboxCommandExecutor,
+  createCurrentnessBoundCliOpenShellSandboxBufferedCommandExecutor,
+} from "../../adapters/openshell/sandbox-command-cli";
+import {
   namedOpenShellGateway,
   type OpenShellSandboxError,
   type OpenShellSandboxObservation,
@@ -26,7 +30,7 @@ import type { AgentDefinition } from "../../agent/defs";
 import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { D, G, R, YW } from "../../cli/terminal-style";
-import { retryUntil, retryUntilAsync } from "../../core/retry";
+import { retryUntilAsync } from "../../core/retry";
 
 import { spawnExitCode } from "../../core/process-exit";
 import { shellQuote } from "../../core/shell-quote";
@@ -75,7 +79,7 @@ import {
   sandboxUsesLegacyClusterGateway,
 } from "./connect-inference-gateway";
 import {
-  buildSandboxInferenceRouteProbeArgs,
+  buildSandboxInferenceRouteProbeRequest,
   type InferenceRouteProbeAgent,
   parseSandboxInferenceRouteProbeResult,
 } from "./connect-inference-route-probe";
@@ -145,6 +149,7 @@ import { applyOpenShellVmDnsMonkeypatch, shouldApplyVmDnsMonkeypatch } from "./v
 export { runConnectAutoPairApprovalPass, waitForManagedGatewaySupervisor };
 
 const HERMES_READINESS_PUBLICATION_SETTLE_DELAYS_MS = [100, 250] as const;
+const sandboxCommandExecutor = createCliOpenShellSandboxCommandExecutor({ hostCwd: ROOT });
 
 async function publishHermesLaunchReadinessWithSettlement(
   publication: Parameters<typeof publishLaunchReadiness>[0],
@@ -162,7 +167,9 @@ export type SandboxConnectOptions = {
   requireLaunchReadinessPublication?: boolean;
 };
 
-export type SandboxStartupRecoveryResult = ReturnType<typeof checkAndRecoverSandboxProcesses> & {
+export type SandboxStartupRecoveryResult = Awaited<
+  ReturnType<typeof checkAndRecoverSandboxProcesses>
+> & {
   recoveryFailureDetail?: string | null;
   recoveryFailureLayer?: GatewayRestartFailureLayer | null;
 };
@@ -205,7 +212,10 @@ export type SandboxInferenceRouteRepairResult = {
 
 export type SandboxInferenceRouteRepairDeps = {
   isRepairDisabled?: () => boolean;
-  probe: (sandboxName: string, options?: InferenceRouteProbeOptions) => SandboxInferenceRouteProbe;
+  probe: (
+    sandboxName: string,
+    options?: InferenceRouteProbeOptions,
+  ) => Promise<SandboxInferenceRouteProbe>;
   shouldApplyVmDnsMonkeypatch: (sb: SandboxEntry | null) => boolean;
   applyVmDnsMonkeypatch: (
     sandboxName: string,
@@ -214,7 +224,7 @@ export type SandboxInferenceRouteRepairDeps = {
   reapplyVmInferenceRoute: (
     sandboxName: string,
     sb: SandboxEntry | null,
-  ) => SandboxInferenceRouteProbe | null;
+  ) => Promise<SandboxInferenceRouteProbe | null>;
   repairLegacyDnsProxy: (
     sandboxName: string,
     quiet: boolean,
@@ -230,7 +240,10 @@ export type ManagedInferenceRouteResetDeps = {
     options: { quiet?: boolean },
   ) => boolean;
   runInferenceSet: (provider: string, model: string) => { status: number | null };
-  probe: (sandboxName: string, options?: InferenceRouteProbeOptions) => SandboxInferenceRouteProbe;
+  probe: (
+    sandboxName: string,
+    options?: InferenceRouteProbeOptions,
+  ) => Promise<SandboxInferenceRouteProbe>;
   printUnrecoverableInferenceRoute: (sandboxName: string, route: string, detail: string) => void;
   log?: (message: string) => void;
   error?: (message: string) => void;
@@ -308,13 +321,13 @@ function exitOnForwardRecoveryFailure(
   process.exit(1);
 }
 
-function exitOnGatewayRecoveryFailure(
+async function exitOnGatewayRecoveryFailure(
   sandboxName: string,
   agentName: string,
   detail: string,
   operation: "Probe" | "Recovery" = "Probe",
   showWedgeDiagnostics = false,
-): never {
+): Promise<never> {
   const safeDetail = sanitizeSandboxStartupRecoveryDetail(detail);
   const terminalPunctuation = /[.!?]$/u.test(safeDetail) ? "" : ".";
   console.error("");
@@ -323,7 +336,7 @@ function exitOnGatewayRecoveryFailure(
   );
   console.error(`  Recovery detail: ${safeDetail}${terminalPunctuation}`);
   if (showWedgeDiagnostics) {
-    printGatewayWedgeDiagnostics(sandboxName, executeSandboxExecCommand);
+    await printGatewayWedgeDiagnostics(sandboxName, executeSandboxExecCommand);
     console.error("  Check /tmp/gateway.log inside the sandbox for details.");
   }
   process.exit(1);
@@ -363,7 +376,7 @@ async function runSandboxConnectProbe(
   const agentName = agentRuntime.getAgentDisplayName(agent);
   if (hermesPortable) {
     if (probeOnly !== true) throw new Error("Hermes inference recovery requires probe-only mode");
-    const route = measure("inference", () =>
+    const route = await measureAsync("inference", () =>
       verifyOrRecoverHermesPortableInferenceRouteForProbeOnlyOrExit(sandboxName, agent, undefined, {
         commandAuthority: hermesPortableCommandAuthority,
         probeTiming,
@@ -398,11 +411,11 @@ async function runSandboxConnectProbe(
     const routeResult = await measureAsync("inference", () =>
       ensureSandboxInferenceRoute(sandboxName, agent, { quiet: true }),
     );
-    measure("inference", () =>
+    await measureAsync("inference", () =>
       runTerminalAgentConnectProbe({
         agent,
         agentName,
-        capture: captureOpenshell,
+        commandExecutor: sandboxCommandExecutor,
         ensureInferenceRoute: () => routeResult,
         sandboxName,
       }),
@@ -414,7 +427,7 @@ async function runSandboxConnectProbe(
   // only way this path can tell a retryable wedge apart from a deterministic
   // integrity refusal that no restart, recover, or connect can clear (#7801).
   let recoveryFailureLayer: GatewayRestartFailureLayer | null = null;
-  const processCheck = checkAndRecoverSandboxProcesses(sandboxName, {
+  const processCheck = await checkAndRecoverSandboxProcesses(sandboxName, {
     quiet: true,
     probeTiming,
     onRecoveryFailureLayer: (layer) => {
@@ -451,7 +464,7 @@ async function runSandboxConnectProbe(
   }
   if ("recoveryFailureDetail" in processCheck && processCheck.recoveryFailureDetail) {
     probeTiming?.markFailureStage("processes");
-    exitOnGatewayRecoveryFailure(
+    await exitOnGatewayRecoveryFailure(
       sandboxName,
       agentName,
       String(processCheck.recoveryFailureDetail),
@@ -504,7 +517,7 @@ async function runSandboxConnectProbe(
   // Surface the #4710 wedge signature: recovery ran with quiet=true, so this
   // is the operator's only window into a gateway that served briefly and
   // then dropped its listener.
-  printGatewayWedgeDiagnostics(sandboxName, executeSandboxExecCommand);
+  await printGatewayWedgeDiagnostics(sandboxName, executeSandboxExecCommand);
   console.error("  Check /tmp/gateway.log inside the sandbox for details.");
   process.exit(1);
 }
@@ -601,6 +614,15 @@ function probeTimingLaunchReadinessDeps(
     : {};
 }
 
+function ordinaryLaunchReadinessDeps(
+  probeTiming?: ProbeTimingRecorder,
+): NonNullable<Parameters<typeof inspectLaunchReadiness>[1]> {
+  return {
+    commandExecutor: sandboxCommandExecutor,
+    ...probeTimingLaunchReadinessDeps(probeTiming),
+  };
+}
+
 function captureHermesPortableReadinessObservation(
   authority: HermesPortableReadinessCommandAuthority,
   args: string[],
@@ -629,8 +651,16 @@ function hermesPortableLaunchReadinessDeps(
     args: string[],
     options: NonNullable<Parameters<typeof captureResolvedOpenshell>[1]> = {},
   ) => captureHermesPortableReadinessObservation(authority, args, options, assertCurrent);
+  const commandExecutor = createCurrentnessBoundCliOpenShellSandboxBufferedCommandExecutor(
+    {
+      resolveBinary: () => authority.executablePath,
+      hostCwd: ROOT,
+      hostEnv: authority.env,
+    },
+    assertCurrent,
+  );
   return {
-    ...createBoundLaunchReadinessDeps(capture),
+    ...createBoundLaunchReadinessDeps(capture, commandExecutor),
     ...probeTimingLaunchReadinessDeps(probeTiming),
   };
 }
@@ -812,12 +842,12 @@ function refuseHermesPortableInferenceRoute(reason: string): never {
 }
 
 /** Verify the recorded Hermes route without invoking repair or process exit. */
-function verifyHermesPortableInferenceRoute(
+async function verifyHermesPortableInferenceRoute(
   sandboxName: string,
   agent: InferenceRouteProbeAgent,
   expectedAuthority?: HermesPortableActiveLifecycleAuthority,
   commandAuthority?: HermesPortableReadinessCommandAuthority,
-): SandboxEntry {
+): Promise<SandboxEntry> {
   let authority: ReturnType<typeof requireHermesPortableActiveLifecycleAuthority>;
   try {
     authority = requireHermesPortableActiveLifecycleAuthority(
@@ -857,12 +887,32 @@ function verifyHermesPortableInferenceRoute(
   if (planInferenceRouteReconcile(live, inference).kind !== "aligned") {
     refuseHermesPortableInferenceRoute("different from its recorded provider or model");
   }
-  const probe = parseSandboxInferenceRouteProbeResult(
-    capture(buildSandboxInferenceRouteProbeArgs(sandboxName, agent, authority.gatewayName), {
-      includeStreams: true,
-      timeout: OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
-    }),
-  );
+  const portableCommandAuthority =
+    commandAuthority ?? buildHermesPortableCommandAuthority(sandboxName);
+  const commandExecutor = createCliOpenShellSandboxCommandExecutor({
+    resolveBinary: () => portableCommandAuthority.executablePath,
+    hostCwd: ROOT,
+    hostEnv: portableCommandAuthority.env,
+  });
+  commandAuthority?.assertCurrent();
+  let completion: Awaited<ReturnType<typeof commandExecutor.runBuffered>>;
+  try {
+    completion = await commandExecutor.runBuffered(
+      buildSandboxInferenceRouteProbeRequest(
+        sandboxName,
+        agent,
+        authority.gatewayName,
+        OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
+      ),
+    );
+  } finally {
+    commandAuthority?.assertCurrent();
+  }
+  const probe = parseSandboxInferenceRouteProbeResult({
+    status: completion.outcome.kind === "completed" ? completion.outcome.exitCode : null,
+    output: completion.stdout,
+    stderr: completion.stderr,
+  });
   if (
     !probe.healthy ||
     (inference.provider === "ollama-local" &&
@@ -892,14 +942,14 @@ function verifyHermesPortableInferenceRoute(
 }
 
 /** Verify the recorded Hermes route without invoking any inference repair. */
-function verifyHermesPortableInferenceRouteOrExit(
+async function verifyHermesPortableInferenceRouteOrExit(
   sandboxName: string,
   agent: InferenceRouteProbeAgent,
   expectedAuthority?: HermesPortableActiveLifecycleAuthority,
   commandAuthority?: HermesPortableReadinessCommandAuthority,
-): SandboxEntry {
+): Promise<SandboxEntry> {
   try {
-    return verifyHermesPortableInferenceRoute(
+    return await verifyHermesPortableInferenceRoute(
       sandboxName,
       agent,
       expectedAuthority,
@@ -924,12 +974,12 @@ type HermesPortableProbeRouteOptions = {
 };
 
 /** Verify the recorded route and resume published Ollama only for probe-only recovery. */
-function verifyOrRecoverHermesPortableInferenceRouteForProbeOnlyOrExit(
+async function verifyOrRecoverHermesPortableInferenceRouteForProbeOnlyOrExit(
   sandboxName: string,
   agent: InferenceRouteProbeAgent,
   expectedAuthority?: HermesPortableActiveLifecycleAuthority,
   options: HermesPortableProbeRouteOptions = {},
-): HermesPortableProbeRouteResult {
+): Promise<HermesPortableProbeRouteResult> {
   let authority: HermesPortableActiveLifecycleAuthority;
   try {
     authority = requireHermesPortableActiveLifecycleAuthority(
@@ -941,7 +991,7 @@ function verifyOrRecoverHermesPortableInferenceRouteForProbeOnlyOrExit(
     failHermesPortableInferenceRoute(sandboxName, "missing or incomplete");
   }
   if (authority.entry.provider !== "ollama-local") {
-    const entry = verifyHermesPortableInferenceRouteOrExit(
+    const entry = await verifyHermesPortableInferenceRouteOrExit(
       sandboxName,
       agent,
       authority,
@@ -957,7 +1007,7 @@ function verifyOrRecoverHermesPortableInferenceRouteForProbeOnlyOrExit(
   let verified: SandboxEntry | null = null;
   let preparedForwards: PreparedHermesPortableForwardRecovery | null = null;
   try {
-    recoverHermesPortableInferenceForConnectProbe({
+    await recoverHermesPortableInferenceForConnectProbe({
       sandboxName,
       authority,
       readRegistry: registry.getSandbox,
@@ -983,8 +1033,8 @@ function verifyOrRecoverHermesPortableInferenceRouteForProbeOnlyOrExit(
             },
           }
         : {}),
-      verifyRoute: () => {
-        verified = verifyHermesPortableInferenceRoute(
+      verifyRoute: async () => {
+        verified = await verifyHermesPortableInferenceRoute(
           sandboxName,
           agent,
           authority,
@@ -1110,45 +1160,45 @@ function failIfGatewayBlocksConnectReadiness(sandboxName: string): void {
   }
 }
 
-function sleepSync(milliseconds: number): void {
-  if (milliseconds <= 0) return;
-  if (process.env.VITEST === "true" || process.env.NEMOCLAW_TEST_NO_SLEEP === "1") return;
-  spawnSync(process.execPath, ["-e", `setTimeout(() => {}, ${milliseconds})`], {
-    stdio: "ignore",
-    timeout: milliseconds + 1_000,
+async function runSandboxInferenceRouteProbe(
+  sandboxName: string,
+  agent: InferenceRouteProbeAgent,
+): Promise<SandboxInferenceRouteProbe> {
+  const completion = await sandboxCommandExecutor.runBuffered(
+    buildSandboxInferenceRouteProbeRequest(
+      sandboxName,
+      agent,
+      undefined,
+      OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
+    ),
+  );
+  const parsed = parseSandboxInferenceRouteProbeResult({
+    status: completion.outcome.kind === "completed" ? completion.outcome.exitCode : null,
+    output: completion.stdout,
+    stderr: completion.stderr,
   });
+  return {
+    healthy: parsed.healthy,
+    broken: parsed.broken,
+    httpStatus: parsed.httpStatus,
+    detail: parsed.detail,
+  };
 }
 
-export function probeSandboxInferenceRoute(
+export async function probeSandboxInferenceRoute(
   sandboxName: string,
   agent: InferenceRouteProbeAgent,
   { attempts = 1, delayMs = 0 }: InferenceRouteProbeOptions = {},
-): SandboxInferenceRouteProbe {
+): Promise<SandboxInferenceRouteProbe> {
   const attemptCount = Math.max(1, Math.floor(attempts));
-  return retryUntil(
-    () => {
-      // Keep the shell string inside the sandbox: curl write-out, body capture,
-      // and status classification must run as one bounded probe. sandboxName
-      // remains an argv value, so no user input is interpolated into the script.
-      const probe = captureOpenshell(buildSandboxInferenceRouteProbeArgs(sandboxName, agent), {
-        ignoreError: true,
-        includeStreams: true,
-        timeout: OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
-      });
-      const parsed = parseSandboxInferenceRouteProbeResult(probe);
-      return {
-        healthy: parsed.healthy,
-        broken: parsed.broken,
-        httpStatus: parsed.httpStatus,
-        detail: parsed.detail,
-      };
-    },
-    {
-      accept: (result) => result.healthy,
-      retryDelaysMs: Array.from({ length: attemptCount - 1 }, () => delayMs),
-      sleep: sleepSync,
-    },
-  );
+  return retryUntilAsync(() => runSandboxInferenceRouteProbe(sandboxName, agent), {
+    accept: (result) => result.healthy,
+    retryDelaysMs: Array.from({ length: attemptCount - 1 }, () => delayMs),
+    sleep: (milliseconds) =>
+      process.env.VITEST === "true" || process.env.NEMOCLAW_TEST_NO_SLEEP === "1"
+        ? Promise.resolve()
+        : new Promise((resolve) => setTimeout(resolve, milliseconds)),
+  });
 }
 
 function shouldUseLegacyDnsProxyRepair(sb: SandboxEntry | null): boolean {
@@ -1161,12 +1211,12 @@ function shouldUseLegacyDnsProxyRepair(sb: SandboxEntry | null): boolean {
   return sandboxUsesLegacyClusterGateway(sb);
 }
 
-function reapplyVmInferenceRoute(
+async function reapplyVmInferenceRoute(
   sandboxName: string,
   sb: SandboxEntry | null,
   agent: InferenceRouteProbeAgent,
   gatewayName: string,
-): SandboxInferenceRouteProbe | null {
+): Promise<SandboxInferenceRouteProbe | null> {
   const inference = sb ? registry.getSandboxEntryInference(sb) : null;
   if (inference?.kind !== "configured") return null;
   runOpenshell(buildGatewayInferenceSetArgs(gatewayName, inference.provider, inference.model), {
@@ -1176,16 +1226,16 @@ function reapplyVmInferenceRoute(
   return probeSandboxInferenceRoute(sandboxName, agent);
 }
 
-export function repairSandboxInferenceRouteWithDeps(
+export async function repairSandboxInferenceRouteWithDeps(
   sandboxName: string,
   sb: SandboxEntry | null,
   { quiet = false }: { quiet?: boolean } = {},
   deps: SandboxInferenceRouteRepairDeps,
-): SandboxInferenceRouteRepairResult {
+): Promise<SandboxInferenceRouteRepairResult> {
   const log = deps.log ?? console.log;
   const error = deps.error ?? console.error;
   deps.assertRouteCompatible?.(sandboxName, sb);
-  const initialProbe = deps.probe(sandboxName);
+  const initialProbe = await deps.probe(sandboxName);
   if (initialProbe.healthy) {
     return { healthy: true, repairAttempted: false, detail: initialProbe.detail };
   }
@@ -1209,7 +1259,7 @@ export function repairSandboxInferenceRouteWithDeps(
       }
       const patch = deps.applyVmDnsMonkeypatch(sandboxName, sb);
       const patchedProbe = patch.ok
-        ? deps.probe(sandboxName, {
+        ? await deps.probe(sandboxName, {
             attempts: INFERENCE_ROUTE_POST_REPAIR_PROBE_ATTEMPTS,
             delayMs: INFERENCE_ROUTE_POST_REPAIR_PROBE_DELAY_MS,
           })
@@ -1241,7 +1291,7 @@ export function repairSandboxInferenceRouteWithDeps(
         `  inference.local is unavailable inside '${sandboxName}'. Reapplying OpenShell inference route...`,
       );
     }
-    const finalProbe = deps.reapplyVmInferenceRoute(sandboxName, sb);
+    const finalProbe = await deps.reapplyVmInferenceRoute(sandboxName, sb);
     if (!quiet) {
       if (finalProbe?.healthy) {
         log("  inference.local route repaired.");
@@ -1282,7 +1332,7 @@ export function repairSandboxInferenceRouteWithDeps(
     };
   }
 
-  const repairedProbe = deps.probe(sandboxName, {
+  const repairedProbe = await deps.probe(sandboxName, {
     attempts: INFERENCE_ROUTE_POST_REPAIR_PROBE_ATTEMPTS,
     delayMs: INFERENCE_ROUTE_POST_REPAIR_PROBE_DELAY_MS,
   });
@@ -1300,14 +1350,14 @@ export function repairSandboxInferenceRouteWithDeps(
   };
 }
 
-function repairSandboxInferenceRouteIfNeeded(
+async function repairSandboxInferenceRouteIfNeeded(
   sandboxName: string,
   sb: SandboxEntry | null,
   agent: InferenceRouteProbeAgent,
   gatewayName: string,
   { quiet = false }: { quiet?: boolean } = {},
-): SandboxInferenceRouteRepairResult {
-  return repairSandboxInferenceRouteWithDeps(
+): Promise<SandboxInferenceRouteRepairResult> {
+  return await repairSandboxInferenceRouteWithDeps(
     sandboxName,
     sb,
     { quiet },
@@ -1390,12 +1440,12 @@ function printUnrecoverableInferenceRoute(
   );
 }
 
-export function resetManagedInferenceRouteWithDeps(
+export async function resetManagedInferenceRouteWithDeps(
   sandboxName: string,
   sb: SandboxEntry,
   { detail, quiet = false }: { detail: string; quiet?: boolean },
   deps: ManagedInferenceRouteResetDeps,
-): boolean {
+): Promise<boolean> {
   const log = deps.log ?? console.log;
   const inference = registry.getSandboxEntryInference(sb);
   if (inference.kind !== "configured") return false;
@@ -1420,7 +1470,7 @@ export function resetManagedInferenceRouteWithDeps(
     return fail(detail);
   }
 
-  const finalProbe = deps.probe(sandboxName, {
+  const finalProbe = await deps.probe(sandboxName, {
     attempts: INFERENCE_ROUTE_POST_REPAIR_PROBE_ATTEMPTS,
     delayMs: INFERENCE_ROUTE_POST_REPAIR_PROBE_DELAY_MS,
   });
@@ -1435,14 +1485,14 @@ export function resetManagedInferenceRouteWithDeps(
   );
 }
 
-function resetManagedInferenceRoute(
+async function resetManagedInferenceRoute(
   sandboxName: string,
   sb: SandboxEntry,
   agent: InferenceRouteProbeAgent,
   gatewayName: string,
   { detail, quiet = false }: { detail: string; quiet?: boolean },
-): boolean {
-  return resetManagedInferenceRouteWithDeps(
+): Promise<boolean> {
+  return await resetManagedInferenceRouteWithDeps(
     sandboxName,
     sb,
     { detail, quiet },
@@ -1459,11 +1509,11 @@ function resetManagedInferenceRoute(
   );
 }
 
-function ensureSandboxInferenceRouteUnlocked(
+async function ensureSandboxInferenceRouteUnlocked(
   sandboxName: string,
   agent: InferenceRouteProbeAgent,
   { quiet = false }: { quiet?: boolean } = {},
-): SandboxInferenceRouteEnsureResult {
+): Promise<SandboxInferenceRouteEnsureResult> {
   let sb: SandboxEntry | null = null;
   let inference: ReturnType<typeof registry.getSandboxEntryInference> | null = null;
   try {
@@ -1518,9 +1568,13 @@ function ensureSandboxInferenceRouteUnlocked(
         );
       }
     }
-    const repairResult = repairSandboxInferenceRouteIfNeeded(sandboxName, sb, agent, gatewayName, {
-      quiet,
-    });
+    const repairResult = await repairSandboxInferenceRouteIfNeeded(
+      sandboxName,
+      sb,
+      agent,
+      gatewayName,
+      { quiet },
+    );
     if (!repairResult.healthy && !repairResult.repairAttempted) {
       // Unavailable or malformed probe output is a permanent fail-closed
       // classification at the OpenShell exec/DNS/TLS/proxy boundary. There is
@@ -1538,7 +1592,7 @@ function ensureSandboxInferenceRouteUnlocked(
     }
     let routeReady = repairResult.healthy;
     if (!routeReady && repairResult.repairAttempted) {
-      routeReady = resetManagedInferenceRoute(sandboxName, sb, agent, gatewayName, {
+      routeReady = await resetManagedInferenceRoute(sandboxName, sb, agent, gatewayName, {
         detail: repairResult.detail,
         quiet,
       });
@@ -1548,7 +1602,7 @@ function ensureSandboxInferenceRouteUnlocked(
       if (!verifyLocalInferenceRouteDependencies(provider, { quiet })) {
         return { sandbox: sb, routeHealthy: false };
       }
-      const finalProbe = probeSandboxInferenceRoute(sandboxName, agent);
+      const finalProbe = await probeSandboxInferenceRoute(sandboxName, agent);
       const strictRouteHealthy =
         finalProbe.healthy &&
         finalProbe.httpStatus !== undefined &&
@@ -1646,10 +1700,12 @@ function maybeEnsureHermesToolGatewayBroker(sb: SandboxEntry | null): void {
   }
 }
 
-export function restoreSandboxStartupState(sandboxName: string): SandboxStartupRecoveryResult {
+export async function restoreSandboxStartupState(
+  sandboxName: string,
+): Promise<SandboxStartupRecoveryResult> {
   let reportedRecoveryFailureDetail: string | null = null;
   let reportedRecoveryFailureLayer: GatewayRestartFailureLayer | null = null;
-  const processCheck = checkAndRecoverSandboxProcesses(sandboxName, {
+  const processCheck = await checkAndRecoverSandboxProcesses(sandboxName, {
     quiet: true,
     onRecoveryFailureLayer: (layer, detail) => {
       reportedRecoveryFailureLayer = layer;
@@ -2173,7 +2229,7 @@ export async function prepareInteractiveSession(sandboxName: string): Promise<{
     withinLifecycleFence: async ({ hermesPortable, requalify }) => {
       if (!hermesPortable) {
         printInteractiveSessionHints(sandboxName);
-        const processCheck = checkAndRecoverSandboxProcesses(sandboxName);
+        const processCheck = await checkAndRecoverSandboxProcesses(sandboxName);
         if ("secretBoundaryRefused" in processCheck && processCheck.secretBoundaryRefused) {
           const agentName = agentRuntime.getAgentDisplayName(
             agentRuntime.getSessionAgent(sandboxName),
@@ -2198,7 +2254,12 @@ export async function prepareInteractiveSession(sandboxName: string): Promise<{
           const agentName = agentRuntime.getAgentDisplayName(
             agentRuntime.getSessionAgent(sandboxName),
           );
-          exitOnGatewayRecoveryFailure(sandboxName, agentName, recoveryFailureDetail, "Recovery");
+          await exitOnGatewayRecoveryFailure(
+            sandboxName,
+            agentName,
+            recoveryFailureDetail,
+            "Recovery",
+          );
         }
       }
       // Ensure Ollama auth proxy is running (recovers from host reboots)
@@ -2218,7 +2279,7 @@ export async function prepareInteractiveSession(sandboxName: string): Promise<{
       // ── Inference route swap (#1248, #3390) ───────────────────────
       const agent = agentRuntime.getSessionAgent(sandboxName);
       const sb = hermesPortable
-        ? verifyHermesPortableInferenceRouteOrExit(sandboxName, agent)
+        ? await verifyHermesPortableInferenceRouteOrExit(sandboxName, agent)
         : await ensureSandboxInferenceRouteOrExit(sandboxName, agent);
       requalify();
       if (!hermesPortable && !(await settlePortablePairingOrExit(sandboxName))) {
@@ -2452,7 +2513,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
           sandboxName,
           hermesReadinessAuthority
             ? hermesPortableLaunchReadinessDeps(hermesReadinessAuthority.command, probeTiming)
-            : probeTimingLaunchReadinessDeps(probeTiming),
+            : ordinaryLaunchReadinessDeps(probeTiming),
         ),
       );
       probeTiming!.recordReadinessDecision(readiness.category);
@@ -2697,7 +2758,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
               probeTiming,
             });
             if (!hermesPortable) {
-              probeTiming!.measure("gateway", () =>
+              await probeTiming!.measureAsync("gateway", () =>
                 waitForSandboxReadyOrExit(sandboxName, {
                   allowInitialErrorAfterStart: true,
                   allowDockerRuntimeInspection: false,
@@ -2714,13 +2775,11 @@ async function prepareConnectSandboxWithinLifecycleFence(
           probeTiming!.measure("authority", retainedCommand.assertCurrent);
         }
         const published = await probeTiming!.measureAsync("publication", () =>
-          (retainedCommand
-            ? publishHermesLaunchReadinessWithSettlement
-            : publishLaunchReadiness)(
+          (retainedCommand ? publishHermesLaunchReadinessWithSettlement : publishLaunchReadiness)(
             publicationRequest,
             retainedCommand
               ? hermesPortableLaunchReadinessDeps(retainedCommand, probeTiming)
-              : probeTimingLaunchReadinessDeps(probeTiming),
+              : ordinaryLaunchReadinessDeps(probeTiming),
           ),
         );
         if (retainedCommand) {
@@ -2766,7 +2825,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
           }
         } else {
           readiness = await probeTiming!.measureAsync("readiness", () =>
-            inspectLaunchReadiness(sandboxName, probeTimingLaunchReadinessDeps(probeTiming)),
+            inspectLaunchReadiness(sandboxName, ordinaryLaunchReadinessDeps(probeTiming)),
           );
         }
         probeTiming!.recordReadinessDecision(readiness.category);

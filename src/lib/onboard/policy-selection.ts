@@ -65,7 +65,7 @@ export type OnboardPolicyApplicationDeps = Omit<
   localInferenceProviders: readonly string[];
   withSandboxMutationLock: typeof import("../state/mcp-lifecycle-lock").withSandboxMutationLock;
   waitForSandboxReady(sandboxName: string): Promise<SandboxReadyWaitResult>;
-  waitForSandboxControlPlaneReady(sandboxName: string): boolean;
+  waitForSandboxControlPlaneReady(sandboxName: string): Promise<boolean>;
   parsePolicyPresetEnv(raw: string): string[];
   env: NodeJS.ProcessEnv;
 };
@@ -131,7 +131,7 @@ export type SetupPolicySelectionDeps = {
   note: (message: string) => void;
   isNonInteractive: () => boolean;
   waitForSandboxReady: (sandboxName: string) => Promise<SandboxReadyWaitResult>;
-  waitForSandboxControlPlaneReady: (sandboxName: string) => boolean;
+  waitForSandboxControlPlaneReady: (sandboxName: string) => Promise<boolean>;
   syncPresetSelection: (
     sandboxName: string,
     currentAppliedPresets: string[],
@@ -360,7 +360,7 @@ async function requireSandboxReady(
     console.error(`  Sandbox '${sandboxName}' was not ready ${stage} policy application.`);
     process.exit(1);
   }
-  if (stage === "after" && !deps.waitForSandboxControlPlaneReady(sandboxName)) {
+  if (stage === "after" && !(await deps.waitForSandboxControlPlaneReady(sandboxName))) {
     console.error(
       `  Sandbox '${sandboxName}' did not re-register with OpenShell after policy application.`,
     );

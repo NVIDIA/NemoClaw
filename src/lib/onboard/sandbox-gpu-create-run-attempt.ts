@@ -17,6 +17,7 @@ import {
   resolveOpenShellSandboxId,
   settleCreatedOpenShellSandboxId,
 } from "../adapters/openshell/sandbox-identity";
+import { namedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
 import { printSandboxCreateRecoveryHints } from "../build-context";
 import { streamSandboxCreate, type StreamSandboxCreateResult } from "../sandbox/create-stream";
 import { getReadyCheckOutputPatternsForAgent } from "../sandbox/create-stream-ready-gate";
@@ -177,7 +178,7 @@ async function rollbackNativeGpuFailureForFallback(
   return { nativeCleanupHandoff: rollback };
 }
 
-function normalizedOpenShellCommandOutput(result: OpenShellCommandResult): string {
+function normalizedOpenShellCommandOutput(result: { stdout?: unknown; stderr?: unknown }): string {
   return `${String(result.stderr ?? "")}\n${String(result.stdout ?? "")}`
     .replace(ANSI_RE, "")
     .replace(/[×│]/gu, " ")
@@ -327,7 +328,7 @@ function waitForCreatedOpenShellSandboxPublication(
   );
 }
 
-function checkRecreatedSandboxReadyIdentity(
+async function checkRecreatedSandboxReadyIdentity(
   sandboxName: string,
   gatewayName: string,
   expectedSandboxId: string,
@@ -338,10 +339,10 @@ function checkRecreatedSandboxReadyIdentity(
   if (identity.state === "not_ready") return "not_ready";
   if (identity.state === "failed") return "probe_failed";
   if (identity.sandboxId !== expectedSandboxId) return "identity_changed";
-  return checkSandboxExecutableReadiness(sandboxName, gatewayName, deps, getRemainingMs);
+  return await checkSandboxExecutableReadiness(sandboxName, gatewayName, deps, getRemainingMs);
 }
 
-function checkCreatedSandboxReadyIdentity(
+async function checkCreatedSandboxReadyIdentity(
   sandboxName: string,
   gatewayName: string,
   deps: SandboxGpuCreateFlowDeps,
@@ -350,10 +351,10 @@ function checkCreatedSandboxReadyIdentity(
   const identity = probeExactOpenShellSandboxId(sandboxName, gatewayName, deps, getRemainingMs);
   if (identity.state === "not_ready") return "not_ready";
   if (identity.state === "failed") return "probe_failed";
-  return checkSandboxExecutableReadiness(sandboxName, gatewayName, deps, getRemainingMs);
+  return await checkSandboxExecutableReadiness(sandboxName, gatewayName, deps, getRemainingMs);
 }
 
-function checkSandboxExecutableReadiness(
+async function checkSandboxExecutableReadiness(
   sandboxName: string,
   gatewayName: string,
   deps: SandboxGpuCreateFlowDeps,
@@ -361,20 +362,17 @@ function checkSandboxExecutableReadiness(
 ): ReturnType<CreatedSandboxReadyIdentityCheck> {
   const timeout = remainingReadinessProbeTimeout(getRemainingMs);
   if (timeout === null) return "not_ready";
-  const result = deps.runOpenshell(
-    ["sandbox", "exec", "-g", gatewayName, "--name", sandboxName, "--", "true"],
-    {
-      ignoreError: true,
-      suppressOutput: true,
-      timeout,
-      killSignal: "SIGKILL",
-      killProcessTreeOnTimeout: true,
-    },
-  );
-  if (result.status === 0 && !result.error) return "ready";
-  if (result.error || result.status === null || ("signal" in result && result.signal)) {
+  const result = await deps.commandExecutor.runBuffered({
+    sandboxName,
+    target: namedOpenShellGateway(gatewayName),
+    command: ["true"],
+    timeoutMilliseconds: timeout,
+    timeoutKillSignal: "SIGKILL",
+  });
+  if (result.outcome.kind === "failed") {
     return "probe_failed";
   }
+  if (result.outcome.exitCode === 0) return "ready";
   return OPENSHELL_SANDBOX_NOT_READY.test(normalizedOpenShellCommandOutput(result))
     ? "not_ready"
     : "probe_failed";
@@ -620,6 +618,7 @@ export function createSandboxGpuCreateAttemptRunner(
             reverifyBridgeReachability: reverifyManagedBridgeReachability,
           },
           dependencies: {
+            commandExecutor: deps.commandExecutor,
             runCaptureOpenshell: deps.runCaptureOpenshell,
             runOpenshell: deps.runOpenshell,
             sleep: deps.sleep,

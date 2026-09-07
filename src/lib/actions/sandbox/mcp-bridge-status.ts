@@ -261,7 +261,7 @@ export async function statusMcpBridge(
     try {
       credentialObservations.set(
         name,
-        observeMcpCredentialRevision(sandboxName, entry, providerRuntimeSelection),
+        await observeMcpCredentialRevision(sandboxName, entry, providerRuntimeSelection),
       );
     } catch {
       credentialObservations.set(name, null);
@@ -316,7 +316,8 @@ export async function statusMcpBridge(
     }),
   );
 
-  return entries.map(([name, entry]) => {
+  const statuses: McpBridgeStatus[] = [];
+  for (const [name, entry] of entries) {
     const support = entry ? getPersistedBridgeSupport(entry) : getSupportSummary(agent);
     const registeredPolicy = getRegisteredGeneratedPolicy(sandboxName, entry);
     const policyPresence = getPolicyPresence(sandboxName, entry, providerRuntimeSelection);
@@ -343,11 +344,7 @@ export async function statusMcpBridge(
       expectedCredential,
       entry?.providerId,
     );
-    const attached = providerAttached(
-      sandboxName,
-      entry?.providerName,
-      providerRuntimeSelection,
-    );
+    const attached = providerAttached(sandboxName, entry?.providerName, providerRuntimeSelection);
     const warnings: string[] = [];
     let credentialWarning: string | undefined;
     if (entry) {
@@ -400,7 +397,7 @@ export async function statusMcpBridge(
                   detail:
                     "probe skipped: the managed agent adapter does not match the current credential revision",
                 }
-              : probeCredentialResolution(
+              : await probeCredentialResolution(
                   sandboxName,
                   entry,
                   support.adapter,
@@ -431,7 +428,7 @@ export async function statusMcpBridge(
               providerRuntimeSelection,
             )
         : undefined;
-    return {
+    statuses.push({
       server: name,
       agent: entry?.agent ?? agent.name,
       warnings,
@@ -477,8 +474,9 @@ export async function statusMcpBridge(
       ...(toolDiscovery ? { toolDiscovery } : {}),
       ...(entry?.addedAt ? { addedAt: entry.addedAt } : {}),
       ...(entry?.updatedAt ? { updatedAt: entry.updatedAt } : {}),
-    };
-  });
+    });
+  }
+  return statuses;
 }
 
 function getPersistedBridgeSupport(entry: McpBridgeEntry): McpBridgeStatus["support"] {

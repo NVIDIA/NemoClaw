@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { loadAgent } from "../../agent/defs";
+import { createCliOpenShellSandboxCommandExecutor } from "../../adapters/openshell/sandbox-command-cli";
 import { compareChannelSets, probeChannelRuntimeStatus } from "../../channel-runtime-status";
 import { CLI_NAME } from "../../cli/branding";
 import {
@@ -16,6 +17,7 @@ import { buildStatusCommandDeps } from "../../status-command-deps";
 import type { DoctorCheck } from "./doctor-report";
 
 const CHANNEL_STATUS_DIAGNOSTICS = collectBuiltInMessagingChannelDiagnostics();
+const sandboxCommandExecutor = createCliOpenShellSandboxCommandExecutor({ hostCwd: ROOT });
 
 function runtimeProbeUnavailableCheck(sandboxName: string, detail: string): DoctorCheck {
   return {
@@ -107,11 +109,11 @@ function unreachableRuntimeCheck(sandboxName: string): DoctorCheck {
  * evidence. A null result means the probe does not apply, so the caller omits
  * the line instead of rendering a no-op diagnostic.
  */
-function channelRuntimeDoctorCheck(
+async function channelRuntimeDoctorCheck(
   sandboxName: string,
   enabledChannels: string[],
   sb: SandboxEntry,
-): DoctorCheck | null {
+): Promise<DoctorCheck | null> {
   if (enabledChannels.length === 0) return null;
   let agent: ReturnType<typeof loadAgent>;
   try {
@@ -125,10 +127,10 @@ function channelRuntimeDoctorCheck(
   }
   if (agent.configPaths.format !== "json") return null;
   const configFilePath = `${agent.configPaths.dir}/${agent.configPaths.configFile}`;
-  const runtime = probeChannelRuntimeStatus({
+  const runtime = await probeChannelRuntimeStatus({
     configFilePath,
     executeSandboxCommand: (script: string) =>
-      executeSandboxCommandForVerification(sandboxName, script),
+      executeSandboxCommandForVerification(sandboxName, script, sandboxCommandExecutor),
   });
   if (!runtime.ok) return runtimeProbeUnavailableCheck(sandboxName, runtime.detail);
   if (runtime.logProbeOk) {
@@ -261,17 +263,17 @@ function configuredChannelsCheck(sandboxName: string, sb: SandboxEntry): DoctorC
   };
 }
 
-export function collectMessagingDoctorChecks(
+export async function collectMessagingDoctorChecks(
   sandboxName: string,
   sb: SandboxEntry,
   sandboxReachable: boolean,
-): DoctorCheck[] {
+): Promise<DoctorCheck[]> {
   const checks = [configuredChannelsCheck(sandboxName, sb)];
   const registered = registry.getConfiguredMessagingChannelsFromEntry(sb);
   const disabled = new Set(registry.getDisabledMessagingChannelsFromEntry(sb));
   const enabled = registered.filter((channel: string) => !disabled.has(channel));
   const runtimeCheck = sandboxReachable
-    ? channelRuntimeDoctorCheck(sandboxName, enabled, sb)
+    ? await channelRuntimeDoctorCheck(sandboxName, enabled, sb)
     : enabled.length > 0
       ? unreachableRuntimeCheck(sandboxName)
       : null;

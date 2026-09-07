@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import YAML from "yaml";
+import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
+import { selectedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
 import { shellQuote } from "../core/shell-quote";
 
 export type WebSearchVerifyProvider = "brave" | "tavily";
@@ -14,10 +16,7 @@ export type WebSearchVerifyAgent =
   | undefined;
 
 export type WebSearchVerifyDeps = {
-  runCaptureOpenshell: (
-    args: string[],
-    options: { ignoreError: true; timeout: number },
-  ) => string | null;
+  commandExecutor: OpenShellSandboxBufferedCommandExecutor;
   cliName: () => string;
   webSearchEnvFor: (provider: WebSearchVerifyProvider) => string;
   webSearchLabelFor: (provider: WebSearchVerifyProvider) => string;
@@ -77,29 +76,39 @@ export function classifyWebSearchEnvBoundary(
  * actionable alert for a raw-secret exposure or an unverifiable result. Returns
  * true for either unsafe state so finalization can refuse a successful handoff.
  */
-function checkWebSearchEnvSecretBoundary(
+async function runSandboxCommand(
+  deps: WebSearchVerifyDeps,
+  sandboxName: string,
+  command: readonly string[],
+  timeoutMilliseconds: number,
+): Promise<string | null> {
+  const completed = await deps.commandExecutor.runBuffered({
+    sandboxName,
+    target: selectedOpenShellGateway(),
+    command,
+    timeoutMilliseconds,
+  });
+  return completed.outcome.kind === "completed" && completed.outcome.exitCode === 0
+    ? completed.stdout
+    : null;
+}
+
+async function checkWebSearchEnvSecretBoundary(
   sandboxName: string,
   provider: WebSearchVerifyProvider,
   deps: WebSearchVerifyDeps,
   warn: (message?: string) => void,
-): boolean {
+): Promise<boolean> {
   const envKey = deps.webSearchEnvFor(provider);
   let probe: string | null = null;
   try {
-    probe = deps.runCaptureOpenshell(
+    probe = await runSandboxCommand(
+      deps,
+      sandboxName,
       // `sh -c` (not `-lc`): no login profiles run, so their output cannot
       // contaminate the sentinel the host classifies.
-      [
-        "sandbox",
-        "exec",
-        "-n",
-        sandboxName,
-        "--",
-        "sh",
-        "-c",
-        buildWebSearchEnvBoundaryScript(envKey),
-      ],
-      { ignoreError: true, timeout: 10_000 },
+      ["sh", "-c", buildWebSearchEnvBoundaryScript(envKey)],
+      10_000,
     );
   } catch {
     // The missing sentinel below is handled as an unsafe, unknown boundary.
@@ -226,28 +235,27 @@ function hasTavilyResult(body: string): boolean {
  * raw credential or an unverifiable isolation result returns false so onboarding
  * cannot report the sandbox as ready.
  */
-export function verifyWebSearchInsideSandbox(
+export async function verifyWebSearchInsideSandbox(
   sandboxName: string,
   agent: WebSearchVerifyAgent,
   provider: WebSearchVerifyProvider,
   deps: WebSearchVerifyDeps,
-): boolean {
+): Promise<boolean> {
   const log = deps.log ?? console.log;
   const warn = deps.warn ?? console.warn;
   const agentName = agent?.name || "openclaw";
-  if (checkWebSearchEnvSecretBoundary(sandboxName, provider, deps, warn)) return false;
+  if (await checkWebSearchEnvSecretBoundary(sandboxName, provider, deps, warn)) return false;
 
   try {
     if (agentName === "hermes") {
       // Hermes v2026.6.19 `dump` does not expose web.backend. Inspect the
       // generated config directly, then prove that the configured body
       // placeholder is rewritten on a real request.
-      const configText = deps.runCaptureOpenshell(
-        ["sandbox", "exec", "-n", sandboxName, "--", "cat", "/sandbox/.hermes/config.yaml"],
-        {
-          ignoreError: true,
-          timeout: 10_000,
-        },
+      const configText = await runSandboxCommand(
+        deps,
+        sandboxName,
+        ["cat", "/sandbox/.hermes/config.yaml"],
+        10_000,
       );
       if (!configText) {
         warn("  ⚠ Could not read Hermes config to verify Tavily Search.");
@@ -272,18 +280,11 @@ export function verifyWebSearchInsideSandbox(
       }
 
       const placeholder = "openshell:resolve:env:TAVILY_API_KEY";
-      const probe = deps.runCaptureOpenshell(
-        [
-          "sandbox",
-          "exec",
-          "-n",
-          sandboxName,
-          "--",
-          "sh",
-          "-lc",
-          buildTavilyBodyEgressProbeCommand(placeholder),
-        ],
-        { ignoreError: true, timeout: 30_000 },
+      const probe = await runSandboxCommand(
+        deps,
+        sandboxName,
+        ["sh", "-lc", buildTavilyBodyEgressProbeCommand(placeholder)],
+        30_000,
       );
       if (!probe) {
         warn("  ⚠ Tavily Search config exists, but the egress verification request failed.");
@@ -300,9 +301,11 @@ export function verifyWebSearchInsideSandbox(
     } else if (agentName === "openclaw") {
       // OpenClaw: verify tools.web.search exists, then prove the selected
       // provider placeholder works at egress through its credential header.
-      const configCheck = deps.runCaptureOpenshell(
-        ["sandbox", "exec", "-n", sandboxName, "--", "cat", "/sandbox/.openclaw/openclaw.json"],
-        { ignoreError: true, timeout: 10_000 },
+      const configCheck = await runSandboxCommand(
+        deps,
+        sandboxName,
+        ["cat", "/sandbox/.openclaw/openclaw.json"],
+        10_000,
       );
       if (!configCheck) {
         warn("  ⚠ Could not verify web search config inside sandbox.");
@@ -347,9 +350,11 @@ export function verifyWebSearchInsideSandbox(
           provider === "tavily"
             ? buildTavilyEgressProbeCommand(apiKey)
             : buildBraveEgressProbeCommand(apiKey);
-        const probe = deps.runCaptureOpenshell(
-          ["sandbox", "exec", "-n", sandboxName, "--", "sh", "-lc", probeCommand],
-          { ignoreError: true, timeout: 30_000 },
+        const probe = await runSandboxCommand(
+          deps,
+          sandboxName,
+          ["sh", "-lc", probeCommand],
+          30_000,
         );
         if (!probe) {
           warn(`  ⚠ ${providerLabel} config exists, but the egress verification request failed.`);

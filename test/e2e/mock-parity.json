@@ -211,6 +211,7 @@
     },
     {
       "live": "test/e2e/live/gateway-guard-recovery.test.ts",
+      "liveSources": ["test/e2e/live/gateway-guard-legacy-keepalive-fixture.ts"],
       "fast": [
         "src/lib/actions/sandbox/supervisor-relaunch.test.ts",
         "src/lib/onboard/docker-gpu-patch-finalize.test.ts",

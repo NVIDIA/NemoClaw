@@ -314,11 +314,7 @@ async function removeMcpBridgeUnlocked(
       // this probe precedes every provider/policy/adapter side effect. Hermes
       // retains its helper/lifecycle validation; Deep Agents intentionally
       // skips only the marker that an older image cannot expose.
-      assertAgentMcpTeardownRuntimeCapability(
-        sandboxName,
-        adapter,
-        providerRuntimeSelection,
-      );
+      assertAgentMcpTeardownRuntimeCapability(sandboxName, adapter, providerRuntimeSelection);
       const adapterRemoval = unregisterAgentAdapter(
         sandboxName,
         (entry.adapter as AgentMcpAdapter | undefined) ?? adapter,
@@ -395,7 +391,7 @@ async function removeMcpBridgeUnlocked(
         // skipping a fresh-exec probe lets cleanup proceed even if another
         // unrelated provider reference is also dangling.
         if (!providerWasMissing && !providerDetachedBeforeAdapterCleanup) {
-          waitForDetachedMcpCredential(sandboxName, entry, providerRuntimeSelection);
+          await waitForDetachedMcpCredential(sandboxName, entry, providerRuntimeSelection);
         }
         reservationCleanupProved = true;
       }

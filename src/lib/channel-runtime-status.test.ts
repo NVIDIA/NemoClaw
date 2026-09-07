@@ -18,8 +18,8 @@ import {
 function makeMockExec(
   configBody: string | null,
   logChannelsFound: string[] | null,
-): (script: string) => { status: number; stdout: string; stderr: string } | null {
-  return (script: string) => {
+): (script: string) => Promise<{ status: number; stdout: string; stderr: string } | null> {
+  return async (script: string) => {
     if (script.startsWith("cat ")) {
       if (configBody === null) return null;
       return { status: 0, stdout: configBody, stderr: "" };
@@ -141,24 +141,25 @@ describe("buildGatewayLogScanScript", () => {
     expect(script).toContain("echo GATEWAY_LOG_PROBED");
   });
 
-  it.each(
-    ["telegram", "discord", "slack", "whatsapp", "wechat", "openclaw-weixin"],
-  )("isolates the current launch segment with awk before grepping [%s]", (token) => {
-    // Without launch-segment isolation a stale channel mention from a
-    // previous gateway run would still satisfy the probe even though the
-    // *current* OpenClaw process never started the channel (#4156 review).
-    // The awk filter resets its buffer on every boot/respawn marker so
-    // only the segment since the last launch reaches grep.
-    const script = buildGatewayLogScanScript("/tmp/gateway.log");
-    expect(script).toContain("(launched|respawning)");
-    expect(script).toContain('buf=""');
-    expect(script).toContain("grep -iwoE '");
+  it.each(["telegram", "discord", "slack", "whatsapp", "wechat", "openclaw-weixin"])(
+    "isolates the current launch segment with awk before grepping [%s]",
+    (token) => {
+      // Without launch-segment isolation a stale channel mention from a
+      // previous gateway run would still satisfy the probe even though the
+      // *current* OpenClaw process never started the channel (#4156 review).
+      // The awk filter resets its buffer on every boot/respawn marker so
+      // only the segment since the last launch reaches grep.
+      const script = buildGatewayLogScanScript("/tmp/gateway.log");
+      expect(script).toContain("(launched|respawning)");
+      expect(script).toContain('buf=""');
+      expect(script).toContain("grep -iwoE '");
 
-    expect(script).toContain(token);
+      expect(script).toContain(token);
 
-    expect(script).not.toContain("tail -n");
-    expect(script).not.toContain("grep -m 1 -iwF 'telegram'");
-  });
+      expect(script).not.toContain("tail -n");
+      expect(script).not.toContain("grep -m 1 -iwF 'telegram'");
+    },
+  );
 
   it("escapes single quotes in the log path", () => {
     const script = buildGatewayLogScanScript("/tmp/odd'path.log");
@@ -270,10 +271,10 @@ describe("buildGatewayLogScanScript end-to-end shell behavior", () => {
 });
 
 describe("probeChannelRuntimeStatus", () => {
-  it("returns ok=false when sandbox exec fails", () => {
-    const result = probeChannelRuntimeStatus({
+  it("returns ok=false when sandbox exec fails", async () => {
+    const result = await probeChannelRuntimeStatus({
       configFilePath: "/sandbox/.openclaw/openclaw.json",
-      executeSandboxCommand: () => null,
+      executeSandboxCommand: async () => null,
     });
     expect(result.ok).toBe(false);
     expect(result.visibleChannels).toEqual([]);
@@ -281,8 +282,8 @@ describe("probeChannelRuntimeStatus", () => {
     expect(result.logProbeOk).toBe(false);
   });
 
-  it("returns ok=false when config file is missing or empty", () => {
-    const result = probeChannelRuntimeStatus({
+  it("returns ok=false when config file is missing or empty", async () => {
+    const result = await probeChannelRuntimeStatus({
       configFilePath: "/sandbox/.openclaw/openclaw.json",
       executeSandboxCommand: makeMockExec("", []),
     });
@@ -290,8 +291,8 @@ describe("probeChannelRuntimeStatus", () => {
     expect(result.detail).toContain("missing or empty");
   });
 
-  it("returns ok=false on invalid JSON", () => {
-    const result = probeChannelRuntimeStatus({
+  it("returns ok=false on invalid JSON", async () => {
+    const result = await probeChannelRuntimeStatus({
       configFilePath: "/sandbox/.openclaw/openclaw.json",
       executeSandboxCommand: makeMockExec("{not json", []),
     });
@@ -299,11 +300,11 @@ describe("probeChannelRuntimeStatus", () => {
     expect(result.detail).toContain("not valid JSON");
   });
 
-  it("treats a configured channel as visible when the gateway log mentions it", () => {
+  it("treats a configured channel as visible when the gateway log mentions it", async () => {
     const config = JSON.stringify({
       channels: { telegram: { accounts: { default: { enabled: true } } } },
     });
-    const result = probeChannelRuntimeStatus({
+    const result = await probeChannelRuntimeStatus({
       configFilePath: "/sandbox/.openclaw/openclaw.json",
       executeSandboxCommand: makeMockExec(config, ["telegram"]),
     });
@@ -313,7 +314,7 @@ describe("probeChannelRuntimeStatus", () => {
     expect(result.configuredButNotRunning).toEqual([]);
   });
 
-  it("flags a configured channel as not-running when the gateway log never mentions it in the reporter case (#4156)", () => {
+  it("flags a configured channel as not-running when the gateway log never mentions it in the reporter case (#4156)", async () => {
     // Reporter symptom: openclaw.json had the telegram block but the
     // dashboard rendered "No channels found." This is the failure mode —
     // configured but the OpenClaw runtime never logged anything for it.
@@ -326,7 +327,7 @@ describe("probeChannelRuntimeStatus", () => {
         },
       },
     });
-    const result = probeChannelRuntimeStatus({
+    const result = await probeChannelRuntimeStatus({
       configFilePath: "/sandbox/.openclaw/openclaw.json",
       executeSandboxCommand: makeMockExec(config, []),
     });
@@ -336,8 +337,8 @@ describe("probeChannelRuntimeStatus", () => {
     expect(result.configuredButNotRunning).toEqual(["telegram"]);
   });
 
-  it("returns empty visible channels when runtime config has no channels block", () => {
-    const result = probeChannelRuntimeStatus({
+  it("returns empty visible channels when runtime config has no channels block", async () => {
+    const result = await probeChannelRuntimeStatus({
       configFilePath: "/sandbox/.openclaw/openclaw.json",
       executeSandboxCommand: makeMockExec(JSON.stringify({ models: {} }), []),
     });
@@ -346,13 +347,13 @@ describe("probeChannelRuntimeStatus", () => {
     expect(result.configuredButNotRunning).toEqual([]);
   });
 
-  it("collapses openclaw-weixin in the log onto the wechat channel name", () => {
+  it("collapses openclaw-weixin in the log onto the wechat channel name", async () => {
     const config = JSON.stringify({
       channels: {
         "openclaw-weixin": { accounts: { "acct-1": { enabled: true } } },
       },
     });
-    const result = probeChannelRuntimeStatus({
+    const result = await probeChannelRuntimeStatus({
       configFilePath: "/sandbox/.openclaw/openclaw.json",
       // Log mentions only the plugin name, not "wechat"
       executeSandboxCommand: makeMockExec(config, ["openclaw-weixin"]),
@@ -361,11 +362,11 @@ describe("probeChannelRuntimeStatus", () => {
     expect(result.configuredButNotRunning).toEqual([]);
   });
 
-  it("keeps visibleChannels empty when the gateway log is missing, so callers do not treat an inconclusive probe as healthy", () => {
+  it("keeps visibleChannels empty when the gateway log is missing, so callers do not treat an inconclusive probe as healthy", async () => {
     const config = JSON.stringify({
       channels: { telegram: { accounts: { default: { enabled: true } } } },
     });
-    const result = probeChannelRuntimeStatus({
+    const result = await probeChannelRuntimeStatus({
       configFilePath: "/sandbox/.openclaw/openclaw.json",
       // logChannelsFound=null = no OK marker emitted = log unreadable
       executeSandboxCommand: makeMockExec(config, null),
@@ -385,11 +386,11 @@ describe("probeChannelRuntimeStatus", () => {
     expect(result.detail).toContain("unreadable");
   });
 
-  it("escapes single quotes in the config file path", () => {
+  it("escapes single quotes in the config file path", async () => {
     const captured: string[] = [];
-    probeChannelRuntimeStatus({
+    await probeChannelRuntimeStatus({
       configFilePath: "/sandbox/.open'claw/openclaw.json",
-      executeSandboxCommand: (script: string) => {
+      executeSandboxCommand: async (script: string) => {
         captured.push(script);
         if (script.startsWith("cat ")) return { status: 0, stdout: "{}", stderr: "" };
         return { status: 0, stdout: "", stderr: "" };
@@ -398,12 +399,12 @@ describe("probeChannelRuntimeStatus", () => {
     expect(captured[0]).toContain(`'/sandbox/.open'\\''claw/openclaw.json'`);
   });
 
-  it("honors a custom gateway log path override", () => {
+  it("honors a custom gateway log path override", async () => {
     const captured: string[] = [];
-    probeChannelRuntimeStatus({
+    await probeChannelRuntimeStatus({
       configFilePath: "/sandbox/.openclaw/openclaw.json",
       gatewayLogPath: "/var/log/openclaw/agent.log",
-      executeSandboxCommand: (script: string) => {
+      executeSandboxCommand: async (script: string) => {
         captured.push(script);
         if (script.startsWith("cat ")) return { status: 0, stdout: "{}", stderr: "" };
         return { status: 0, stdout: "", stderr: "" };

@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
+
 type DockerRunResult = {
   status?: number | null;
   stdout?: string | Buffer | null;
@@ -23,6 +25,7 @@ type ContainerDnsProbeFn = (
 ) => import("./preflight").DnsProbeResult;
 
 export type DockerGpuPatchDeps = {
+  commandExecutor?: OpenShellSandboxBufferedCommandExecutor;
   dockerCapture?: DockerCaptureFn;
   dockerRun?: DockerRunFn;
   dockerRunDetached?: DockerRunFn;

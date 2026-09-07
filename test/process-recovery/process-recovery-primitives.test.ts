@@ -389,14 +389,14 @@ describe("executeGatewaySupervisorAction", () => {
   );
 });
 
-function withFakeOpenshellBinary<T>(fn: () => T): T {
+async function withFakeOpenshellBinary<T>(script: string, fn: () => Promise<T>): Promise<T> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fake-openshell-"));
   const bin = path.join(dir, "openshell");
   const previous = process.env.NEMOCLAW_OPENSHELL_BIN;
-  fs.writeFileSync(bin, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  fs.writeFileSync(bin, `#!/bin/sh\n${script}\n`, { mode: 0o755 });
   process.env.NEMOCLAW_OPENSHELL_BIN = bin;
   try {
-    return fn();
+    return await fn();
   } finally {
     previous === undefined
       ? delete process.env.NEMOCLAW_OPENSHELL_BIN
@@ -462,28 +462,24 @@ describe("resolveSandboxDashboardPort", () => {
 });
 
 describe("executeSandboxExecCommand", () => {
-  it("does not forward an MCP credential to the OpenShell child process", () => {
-    const childProcess = requireSource("node:child_process");
-    const spawn = vi.spyOn(childProcess, "spawnSync").mockReturnValue({
-      status: 0,
-      stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nREADY\n",
-      stderr: "",
-    } as never);
+  it("does not forward an MCP credential to the OpenShell child process", async () => {
     const priorSecret = process.env.TEST_MCP_RAW_TOKEN;
     const priorGateway = process.env.OPENSHELL_GATEWAY;
     process.env.TEST_MCP_RAW_TOKEN = "must-reach-only-provider-mutation";
     process.env.OPENSHELL_GATEWAY = "nemoclaw-19080";
 
     try {
-      const result = withFakeOpenshellBinary(() =>
-        executeSandboxExecCommand("hermes-box", "printf READY"),
+      const result = await withFakeOpenshellBinary(
+        [
+          'test -z "${TEST_MCP_RAW_TOKEN+x}" || exit 90',
+          'test "$OPENSHELL_GATEWAY" = "nemoclaw-19080" || exit 91',
+          'test -n "$PATH" || exit 92',
+          "printf '%s\\n' '__NEMOCLAW_SANDBOX_EXEC_STARTED__' 'READY'",
+        ].join("\n"),
+        () => executeSandboxExecCommand("hermes-box", "printf READY"),
       );
-      const options = spawn.mock.calls[0]?.[2] as { env?: NodeJS.ProcessEnv };
 
       expect(result).toEqual({ status: 0, stdout: "READY", stderr: "" });
-      expect(options.env?.TEST_MCP_RAW_TOKEN).toBeUndefined();
-      expect(options.env?.OPENSHELL_GATEWAY).toBe("nemoclaw-19080");
-      expect(options.env?.PATH).toBe(process.env.PATH);
     } finally {
       priorSecret === undefined
         ? delete process.env.TEST_MCP_RAW_TOKEN
@@ -494,39 +490,25 @@ describe("executeSandboxExecCommand", () => {
     }
   });
 
-  it("honors the sandbox-exec timeout without falling back to SSH", () => {
-    const childProcess = requireSource("node:child_process");
+  it("honors the sandbox-exec timeout without falling back to Docker", async () => {
     const privilegedExec = requireSource("../../src/lib/sandbox/privileged-exec.ts");
-    const timeoutError = Object.assign(new Error("timed out"), { code: "ETIMEDOUT" });
-    const spawn = vi.spyOn(childProcess, "spawnSync").mockReturnValue({
-      status: null,
-      stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\n",
-      stderr: "",
-      error: timeoutError,
-    } as never);
     const executePrivileged = vi
       .spyOn(privilegedExec, "executePrivilegedSandboxCommand")
-      .mockReturnValue({
-        status: null,
-        signal: null,
-        stdout: Buffer.alloc(0),
-        stderr: Buffer.alloc(0),
-        error: timeoutError,
-      } as never);
+      .mockImplementation(() => {
+        throw new Error("Docker fallback must not run after an OpenShell timeout");
+      });
     const previousTimeout = process.env.NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS;
     process.env.NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS = "50";
 
     try {
-      const result = withFakeOpenshellBinary(() =>
+      const startedAt = Date.now();
+      const result = await withFakeOpenshellBinary("sleep 10", () =>
         executeSandboxExecCommand("alpha", "printf RUNNING"),
       );
 
       expect(result).toBeNull();
-      expect(spawn.mock.calls.some(([command]) => command === "ssh")).toBe(false);
-      expect(spawn.mock.calls[0]?.[2]).toEqual(expect.objectContaining({ timeout: 50 }));
-      expect(executePrivileged.mock.calls[0]?.[2]).toEqual(
-        expect.objectContaining({ sanitizeEnvironment: true, timeout: 50 }),
-      );
+      expect(Date.now() - startedAt).toBeLessThan(2_000);
+      expect(executePrivileged).not.toHaveBeenCalled();
     } finally {
       previousTimeout === undefined
         ? delete process.env.NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS
@@ -534,128 +516,77 @@ describe("executeSandboxExecCommand", () => {
     }
   });
 
-  it("parses stdout-framed root exec output after the startup marker", () => {
-    const childProcess = requireSource("node:child_process");
-    vi.spyOn(childProcess, "spawnSync").mockReturnValue({
-      status: 0,
-      stdout: [
-        "OpenShell sandbox exec output:",
-        "stdout: __NEMOCLAW_SANDBOX_EXEC_STARTED__",
-        "stdout: SECRET_BOUNDARY_OK",
-      ].join("\n"),
-      stderr: "",
-    } as never);
-
-    const result = withFakeOpenshellBinary(() =>
-      executeSandboxExecCommand("hermes-box", "echo SECRET_BOUNDARY_OK"),
+  it("parses stdout-framed root exec output after the startup marker", async () => {
+    const result = await withFakeOpenshellBinary(
+      "printf '%s\\n' 'OpenShell sandbox exec output:' 'stdout: __NEMOCLAW_SANDBOX_EXEC_STARTED__' 'stdout: SECRET_BOUNDARY_OK'",
+      () => executeSandboxExecCommand("hermes-box", "echo SECRET_BOUNDARY_OK"),
     );
 
     expect(result).toEqual({ status: 0, stdout: "SECRET_BOUNDARY_OK", stderr: "" });
   });
 
-  it("rejects a non-frame preamble and surfaces a missing trusted fallback identity", () => {
-    const childProcess = requireSource("node:child_process");
+  it("rejects a non-frame preamble without retrying through Docker", async () => {
     const privilegedExec = requireSource("../../src/lib/sandbox/privileged-exec.ts");
-    vi.spyOn(childProcess, "spawnSync").mockReturnValue({
-      status: 0,
-      stdout: [
-        "operator preamble mentions __NEMOCLAW_SANDBOX_EXEC_STARTED__ before child stdout",
-        "stdout: RUNNING",
-      ].join("\n"),
-      stderr: "",
-    } as never);
     const executePrivileged = vi.spyOn(privilegedExec, "executePrivilegedSandboxCommand");
 
-    expect(() =>
-      withFakeOpenshellBinary(() => executeSandboxExecCommand("hermes-box", "echo RUNNING")),
-    ).toThrow(/No NemoClaw registry entry found.*refusing privileged exec/);
-    expect(executePrivileged).toHaveBeenCalledTimes(1);
-  });
-
-  it("keeps the Hermes validator source out of the host shell payload", () => {
-    const childProcess = requireSource("node:child_process");
-    const spawn = vi.spyOn(childProcess, "spawnSync").mockReturnValue({
-      status: 0,
-      stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nSECRET_BOUNDARY_OK\n",
-      stderr: "",
-    } as never);
-
-    const result = withFakeOpenshellBinary(() =>
-      executeSandboxExecCommand(
-        "hermes-box",
-        "python3 /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py env-file /sandbox/.hermes/.env\necho SECRET_BOUNDARY_OK",
+    await expect(
+      withFakeOpenshellBinary(
+        "printf '%s\\n' 'operator preamble mentions __NEMOCLAW_SANDBOX_EXEC_STARTED__ before child stdout' 'stdout: RUNNING'",
+        () => executeSandboxExecCommand("hermes-box", "echo RUNNING"),
       ),
-    );
-
-    const args = spawn.mock.calls[0]?.[1] as string[];
-    const shellPayload = args.at(-1) ?? "";
-    expect(result).toEqual({ status: 0, stdout: "SECRET_BOUNDARY_OK", stderr: "" });
-    expect(shellPayload).toContain("printf '%s\\n' '__NEMOCLAW_SANDBOX_EXEC_STARTED__'");
-    expect(shellPayload).toContain("base64 -d | sh");
-    expect(shellPayload).not.toContain("echo SECRET_BOUNDARY_OK");
-  });
-
-  it("falls back to local Docker root exec when OpenShell exec output has no marker", () => {
-    const childProcess = requireSource("node:child_process");
-    const privilegedExec = requireSource("../../src/lib/sandbox/privileged-exec.ts");
-    vi.spyOn(childProcess, "spawnSync").mockReturnValue({
-      status: 0,
-      stdout: "OpenShell transport preamble\n",
-      stderr: "",
-    } as never);
-    const executePrivileged = vi
-      .spyOn(privilegedExec, "executePrivilegedSandboxCommand")
-      .mockReturnValue({
-        status: 0,
-        signal: null,
-        stdout: Buffer.from("__NEMOCLAW_SANDBOX_EXEC_STARTED__\nSECRET_BOUNDARY_OK\n"),
-        stderr: Buffer.alloc(0),
-      } as never);
-
-    const priorSecret = process.env.TEST_MCP_RAW_TOKEN;
-    const priorGateway = process.env.OPENSHELL_GATEWAY;
-    process.env.TEST_MCP_RAW_TOKEN = "must-reach-only-provider-mutation";
-    process.env.OPENSHELL_GATEWAY = "nemoclaw-19080";
-    const result = withFakeOpenshellBinary(() =>
-      executeSandboxExecCommand("hermes-box", "echo SECRET_BOUNDARY_OK"),
-    );
-    priorSecret === undefined
-      ? delete process.env.TEST_MCP_RAW_TOKEN
-      : (process.env.TEST_MCP_RAW_TOKEN = priorSecret);
-    priorGateway === undefined
-      ? delete process.env.OPENSHELL_GATEWAY
-      : (process.env.OPENSHELL_GATEWAY = priorGateway);
-
-    expect(result).toEqual({ status: 0, stdout: "SECRET_BOUNDARY_OK", stderr: "" });
-    expect(executePrivileged).toHaveBeenCalledWith(
-      "hermes-box",
-      ["sh", "-c", expect.stringContaining("echo SECRET_BOUNDARY_OK")],
-      expect.objectContaining({ sanitizeEnvironment: true }),
-    );
-  });
-
-  it("does not let Docker fallback satisfy a strict provider credential proof", () => {
-    const childProcess = requireSource("node:child_process");
-    const privilegedExec = requireSource("../../src/lib/sandbox/privileged-exec.ts");
-    const spawn = vi.spyOn(childProcess, "spawnSync").mockReturnValue({
-      status: 1,
-      stdout: "OpenShell transport failed before the child marker\n",
-      stderr: "gateway unavailable\n",
-    } as never);
-    const executePrivileged = vi.spyOn(privilegedExec, "executePrivilegedSandboxCommand");
-
-    const result = withFakeOpenshellBinary(() =>
-      executeSandboxExecCommand("hermes-box", '[ -z "${FAKE_MCP_SECRET+x}" ]', undefined, {
-        allowLocalDockerFallback: false,
-      }),
-    );
-
-    expect(result).toBeNull();
+    ).resolves.toBeNull();
     expect(executePrivileged).not.toHaveBeenCalled();
-    const args = spawn.mock.calls[0]?.[1] as string[];
-    const shellPayload = args.at(-1) ?? "";
-    expect(shellPayload).not.toMatch(/[\r\n]/);
-    expect(shellPayload).toContain("printf '%s\\n' '__NEMOCLAW_SANDBOX_EXEC_STARTED__'");
+  });
+
+  it("keeps the Hermes validator source out of the host shell payload", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-args-"));
+    const captureFile = path.join(dir, "args.txt");
+
+    try {
+      const result = await withFakeOpenshellBinary(
+        `printf '%s\\n' "$@" > '${captureFile}'\nprintf '%s\\n' '__NEMOCLAW_SANDBOX_EXEC_STARTED__' 'SECRET_BOUNDARY_OK'`,
+        () =>
+          executeSandboxExecCommand(
+            "hermes-box",
+            "python3 /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py env-file /sandbox/.hermes/.env\necho SECRET_BOUNDARY_OK",
+          ),
+      );
+
+      const shellPayload = fs.readFileSync(captureFile, "utf8");
+      expect(result).toEqual({ status: 0, stdout: "SECRET_BOUNDARY_OK", stderr: "" });
+      expect(shellPayload).toContain("printf '%s\\n' '__NEMOCLAW_SANDBOX_EXEC_STARTED__'");
+      expect(shellPayload).toContain("base64 -d | sh");
+      expect(shellPayload).not.toContain("validate-hermes-env-secret-boundary.py");
+      expect(shellPayload).not.toContain("/sandbox/.hermes/.env");
+      expect(shellPayload).not.toContain("echo SECRET_BOUNDARY_OK");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not let Docker fallback satisfy a strict provider credential proof", async () => {
+    const privilegedExec = requireSource("../../src/lib/sandbox/privileged-exec.ts");
+    const executePrivileged = vi.spyOn(privilegedExec, "executePrivilegedSandboxCommand");
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-strict-provider-args-"));
+    const captureFile = path.join(dir, "args.txt");
+
+    try {
+      const result = await withFakeOpenshellBinary(
+        `printf '%s\n' "$@" > '${captureFile}'\nexit 1`,
+        () =>
+          executeSandboxExecCommand("hermes-box", '[ -z "${FAKE_MCP_SECRET+x}" ]', undefined, {
+            allowLocalDockerFallback: false,
+          }),
+      );
+
+      expect(result).toBeNull();
+      expect(executePrivileged).not.toHaveBeenCalled();
+      const shellPayload = fs.readFileSync(captureFile, "utf8").trim().split(/\r?\n/u).at(-1) ?? "";
+      expect(shellPayload).not.toMatch(/[\r\n]/u);
+      expect(shellPayload).toContain("printf '%s\\n' '__NEMOCLAW_SANDBOX_EXEC_STARTED__'");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

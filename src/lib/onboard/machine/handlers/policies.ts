@@ -68,7 +68,7 @@ export interface PoliciesStateOptions<Agent, WebSearchConfig> {
       forceCanonicalRoute?: boolean;
       hostLocalInferenceProofAuthority?: HostLocalInferenceSandboxProofAuthority;
       beforeSuccess?: () => void;
-    }): void;
+    }): Promise<void>;
     preparePolicyPresetResumeSelection(
       sandboxName: string,
       options: {
@@ -184,7 +184,7 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
         : {}),
     });
   if (preserveRebuildLivePolicy) {
-    verifySandboxInferenceRoute();
+    await verifySandboxInferenceRoute();
     deps.skippedStepMessage("policies", "live OpenShell rebuild policy");
     await deps.recordStateSkipped("policies", {
       reason: "rebuild-live-policy",
@@ -207,7 +207,7 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
       }),
     };
   }
-  if (!hostLocalInferenceRouteOnly) verifySandboxInferenceRoute();
+  if (!hostLocalInferenceRouteOnly) await verifySandboxInferenceRoute();
 
   const policyResumeSelection = deps.preparePolicyPresetResumeSelection(sandboxName, {
     disabledChannels,
@@ -234,7 +234,7 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
   let appliedPolicyPresets = livePolicyPresetsForSupport;
   let session: Session | null;
   if (resumePolicies) {
-    if (hostLocalInferenceRouteOnly) verifySandboxInferenceRoute();
+    if (hostLocalInferenceRouteOnly) await verifySandboxInferenceRoute();
     deps.skippedStepMessage("policies", livePolicyPresetsForSupport.join(", "));
     await deps.recordStateSkipped("policies", {
       reason: "resume",
@@ -271,7 +271,7 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
       hermesToolGateways,
       onSelection: () => undefined,
     });
-    if (hostLocalInferenceRouteOnly) verifySandboxInferenceRoute();
+    if (hostLocalInferenceRouteOnly) await verifySandboxInferenceRoute();
     session = await deps.recordStepComplete(
       "policies",
       deps.toSessionUpdates({

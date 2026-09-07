@@ -220,6 +220,10 @@ function createHermesPortableOllamaRecoveryTimingRecorder(
     readonly onComplete: (durationMs: number) => void;
   };
   readonly measure: <T>(stage: HermesPortableOllamaRecoveryTimingStage, operation: () => T) => T;
+  readonly measureAsync: <T>(
+    stage: HermesPortableOllamaRecoveryTimingStage,
+    operation: () => Promise<T>,
+  ) => Promise<T>;
   readonly finish: (
     runtimeAction: HermesPortableOllamaRecoveryTimingEvidence["runtimeAction"],
     counts: Pick<
@@ -289,6 +293,23 @@ function createHermesPortableOllamaRecoveryTimingRecorder(
         onComplete: (durationMs: number) => recordExternalStage(stage, durationMs),
       }),
     measure: measureStage,
+    async measureAsync(stage, operation) {
+      const stageStartedAt = safeTimingNow(now);
+      const frame = { childMs: 0 };
+      activeStages.push(frame);
+      try {
+        return await operation();
+      } finally {
+        const duration = elapsed(stageStartedAt, safeTimingNow(now));
+        activeStages.pop();
+        durations.set(
+          stage,
+          Math.min(9_999_999, (durations.get(stage) ?? 0) + Math.max(0, duration - frame.childMs)),
+        );
+        const parent = activeStages.at(-1);
+        if (parent) parent.childMs = Math.min(9_999_999, parent.childMs + duration);
+      }
+    },
     finish(runtimeAction, counts, result = "proved"): void {
       if (finished) return;
       finished = true;
@@ -336,8 +357,9 @@ function writeHermesPortablePublishedResumeTiming(
   );
 }
 
-const DEFAULT_HERMES_PORTABLE_PUBLISHED_RESUME_TIMING: PodmanPublishedResumeTiming =
-  Object.freeze({ onComplete: writeHermesPortablePublishedResumeTiming });
+const DEFAULT_HERMES_PORTABLE_PUBLISHED_RESUME_TIMING: PodmanPublishedResumeTiming = Object.freeze({
+  onComplete: writeHermesPortablePublishedResumeTiming,
+});
 
 interface PreparedHermesPortableOllamaRecoveryEntry {
   readonly registryRecovery: PreparedPortableRegistryRecovery;
@@ -431,8 +453,7 @@ function prepareHermesPortableOllamaRecoveryEntry(options: {
           assertForwardAuthority: runtimeOptions.assertForwardAuthority,
         },
         publishedResumeTiming:
-          runtimeOptions.publishedResumeTiming ??
-          DEFAULT_HERMES_PORTABLE_PUBLISHED_RESUME_TIMING,
+          runtimeOptions.publishedResumeTiming ?? DEFAULT_HERMES_PORTABLE_PUBLISHED_RESUME_TIMING,
         onFailureEvidence: (evidence) => {
           const message = redactOnboardDiagnosticText(evidence.message);
           if (message) console.error(`  Podman inference ${evidence.phase}: ${message}`);
@@ -459,8 +480,7 @@ function prepareHermesPortableOllamaRecoveryEntry(options: {
             environment: options.env,
           },
           publishedResumeTiming:
-            runtimeOptions.publishedResumeTiming ??
-            DEFAULT_HERMES_PORTABLE_PUBLISHED_RESUME_TIMING,
+            runtimeOptions.publishedResumeTiming ?? DEFAULT_HERMES_PORTABLE_PUBLISHED_RESUME_TIMING,
           onFailureEvidence: (evidence) => {
             const message = redactOnboardDiagnosticText(evidence.message);
             if (message) console.error(`  Podman inference ${evidence.phase}: ${message}`);
@@ -575,8 +595,7 @@ export function createHermesPortableOllamaRuntimeAuthority(options: {
               assertForwardAuthority: options.publishedRecovery.assertForwardAuthority,
             },
             publishedResumeTiming:
-              options.publishedResumeTiming ??
-              DEFAULT_HERMES_PORTABLE_PUBLISHED_RESUME_TIMING,
+              options.publishedResumeTiming ?? DEFAULT_HERMES_PORTABLE_PUBLISHED_RESUME_TIMING,
           }
         : {}),
       authorityStore: openFilePersistedEngineAuthorityStore(inferenceStateDir),
@@ -674,7 +693,7 @@ export interface HermesPortableOllamaRecoveryInput {
   readonly stateDir?: string;
   readonly runGatewayOpenshell: HermesPortableOllamaGatewayRunner;
   readonly readRegistry: (sandboxName: string) => SandboxEntry | null;
-  readonly verifyRoute: () => SandboxEntry;
+  readonly verifyRoute: () => Promise<SandboxEntry>;
   readonly prepareProbeDependency?: () => HermesPortableOllamaPreparedProbeDependency;
   readonly assertCallerTransactionCurrent?: () => void;
   readonly assertCallerCurrent?: () => void;
@@ -947,10 +966,10 @@ function restoreStoppedRuntime(
 }
 
 /** Resume and re-prove only the exact published Hermes Portable Ollama runtime. */
-export function recoverHermesPortableOllamaInference(
+export async function recoverHermesPortableOllamaInference(
   input: HermesPortableOllamaRecoveryInput,
   overrides: Partial<HermesPortableOllamaRecoveryDeps> = {},
-): HermesPortableOllamaRecoveryResult {
+): Promise<HermesPortableOllamaRecoveryResult> {
   if (input.intent !== "connect-probe-only") {
     failRecovery("recovery is restricted to connect --probe-only");
   }
@@ -1168,8 +1187,8 @@ export function recoverHermesPortableOllamaInference(
       assertPreparedAuthorityCurrent(true);
       requireRetainedCurrent();
     };
-    const verifyFinalRoute = (): void => {
-      const verified = input.verifyRoute();
+    const verifyFinalRoute = async (): Promise<void> => {
+      const verified = await input.verifyRoute();
       if (!isDeepStrictEqual(verified, input.entry)) {
         failRecovery("final route verification returned different registry authority");
       }
@@ -1204,7 +1223,7 @@ export function recoverHermesPortableOllamaInference(
           );
           requireRetainedCurrent();
         });
-        recoveryTiming.measure("route", verifyFinalRoute);
+        await recoveryTiming.measureAsync("route", verifyFinalRoute);
         preparedDependency = recoveryTiming.measure(
           "dependency",
           () => input.prepareProbeDependency?.() ?? null,
@@ -1274,7 +1293,7 @@ export function recoverHermesPortableOllamaInference(
         );
         requireRetainedCurrent();
       });
-      recoveryTiming.measure("route", verifyFinalRoute);
+      await recoveryTiming.measureAsync("route", verifyFinalRoute);
       preparedDependency = recoveryTiming.measure(
         "dependency",
         () => input.prepareProbeDependency?.() ?? null,

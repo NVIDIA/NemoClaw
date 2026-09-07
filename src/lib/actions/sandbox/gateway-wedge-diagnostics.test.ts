@@ -7,8 +7,8 @@ import { describe, expect, it } from "vitest";
 import { collectGatewayWedgeDiagnostics, sanitizeWedgeLogLine } from "./gateway-wedge-diagnostics";
 
 describe("collectGatewayWedgeDiagnostics wedge signature (#4710)", () => {
-  it("returns the matching gateway.log lines, trimmed", () => {
-    const lines = collectGatewayWedgeDiagnostics("my-sandbox", () => ({
+  it("returns the matching gateway.log lines, trimmed", async () => {
+    const lines = await collectGatewayWedgeDiagnostics("my-sandbox", async () => ({
       status: 0,
       stdout:
         "  [reload] config change requires gateway restart (plugins.installs)\n" +
@@ -21,8 +21,8 @@ describe("collectGatewayWedgeDiagnostics wedge signature (#4710)", () => {
     ]);
   });
 
-  it("returns [] when nothing matches (grep exits non-zero)", () => {
-    const lines = collectGatewayWedgeDiagnostics("my-sandbox", () => ({
+  it("returns [] when nothing matches (grep exits non-zero)", async () => {
+    const lines = await collectGatewayWedgeDiagnostics("my-sandbox", async () => ({
       status: 1,
       stdout: "",
       stderr: "",
@@ -30,13 +30,13 @@ describe("collectGatewayWedgeDiagnostics wedge signature (#4710)", () => {
     expect(lines).toEqual([]);
   });
 
-  it("returns [] when the sandbox exec is unavailable", () => {
-    const lines = collectGatewayWedgeDiagnostics("my-sandbox", () => null);
+  it("returns [] when the sandbox exec is unavailable", async () => {
+    const lines = await collectGatewayWedgeDiagnostics("my-sandbox", async () => null);
     expect(lines).toEqual([]);
   });
 
-  it("sanitizes sandbox-controlled log lines before returning them", () => {
-    const lines = collectGatewayWedgeDiagnostics("my-sandbox", () => ({
+  it("sanitizes sandbox-controlled log lines before returning them", async () => {
+    const lines = await collectGatewayWedgeDiagnostics("my-sandbox", async () => ({
       status: 0,
       stdout:
         "gateway startup failed: Authorization: Bearer abc.def.ghi rejected\n" +
@@ -113,9 +113,7 @@ describe("sanitizeWedgeLogLine", () => {
 
   it("preserves a carriage-return boundary until redaction completes", () => {
     expect(
-      sanitizeWedgeLogLine(
-        'gateway startup failed: CUSTOM_TOKEN="opaque secret\rsafe diagnostic"',
-      ),
+      sanitizeWedgeLogLine('gateway startup failed: CUSTOM_TOKEN="opaque secret\rsafe diagnostic"'),
     ).toBe('gateway startup failed: CUSTOM_TOKEN="<REDACTED>"safe diagnostic"');
   });
 

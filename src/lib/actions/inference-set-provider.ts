@@ -37,7 +37,7 @@ export { RuntimeProviderSelectionError };
 
 export type InferenceSetSandboxRouteProbe = (
   input: SandboxInferenceInvocationInput,
-) => SandboxInferenceInvocationResult;
+) => Promise<SandboxInferenceInvocationResult>;
 
 // OpenShell 0.0.106 refreshes the sandbox route cache every five seconds.
 // A stale route can still return a valid 2xx response, so wait one complete
@@ -49,11 +49,11 @@ export function sleepInferenceSetRouteConvergence(milliseconds: number): Promise
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-export function probeInferenceSetSandboxRoute(
+export async function probeInferenceSetSandboxRoute(
   input: SandboxInferenceInvocationInput,
-): SandboxInferenceInvocationResult {
+): Promise<SandboxInferenceInvocationResult> {
   const probe: typeof import("./sandbox/inference-invocation-probe") = require("./sandbox/inference-invocation-probe");
-  return probe.probeSandboxInferenceInvocation(
+  return await probe.probeSandboxInferenceInvocation(
     input,
     {},
     probe.READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,

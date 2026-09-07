@@ -41,7 +41,10 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
     ): NonNullable<OnboardStateCompleteResult["updates"]>;
     removeLegacyCredentialsFile(): void;
     cleanupStaleHostFiles(): void;
-    checkAndRecoverSandboxProcesses(sandboxName: string, options: { quiet: boolean }): void;
+    checkAndRecoverSandboxProcesses(
+      sandboxName: string,
+      options: { quiet: boolean },
+    ): Promise<void>;
     settleOrdinaryOpenClawPairing(
       sandboxName: string,
     ): Promise<OrdinaryOpenClawPairingSettlementResult>;
@@ -81,7 +84,7 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
       sandboxName: string,
       agent: Agent,
       provider: WebSearchVerifyProvider,
-    ): boolean;
+    ): Promise<boolean>;
     printDashboard(
       sandboxName: string,
       model: string,
@@ -206,7 +209,7 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   deps.cleanupStaleHostFiles();
   if (manageDashboard) {
     // Policy application can restart the sandbox; recover OpenClaw before verification (#3573).
-    deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
+    await deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
   }
 
   return {
@@ -302,7 +305,7 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
     // The bounded warm-up can outlive a forward that was healthy after policy recovery.
     // Recheck the gateway and forward before deployment verification.
     if (manageDashboard) {
-      deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
+      await deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
     }
   }
   if (manageDashboard) {
@@ -313,7 +316,7 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
     const webSearchCredentialBoundarySafe =
       !webSearchEnabled ||
       (webSearchProvider !== null &&
-        deps.verifyWebSearchInsideSandbox(sandboxName, agent, webSearchProvider));
+        (await deps.verifyWebSearchInsideSandbox(sandboxName, agent, webSearchProvider)));
     // Confirm the delivered sandbox is reachable before printing the live dashboard (#2342).
     const verifyChain = deps.buildVerifyChain(deps.getChatUiUrl(), sandboxName);
     const verificationResult = await deps.verifyDeployment(sandboxName, verifyChain);

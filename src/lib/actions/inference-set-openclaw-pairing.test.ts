@@ -171,7 +171,7 @@ describe("settleInferenceSetOpenClawPairing", () => {
     expect(deps.approveScopeRequest).toHaveBeenCalledOnce();
   });
 
-  it("fails closed when required convergence has no pairing target (#9527)", () => {
+  it("fails closed when required convergence has no pairing target (#9527)", async () => {
     const appendAuditEntry = vi.fn();
     const log = vi.fn();
     const settleOpenClawPairing = vi.fn(() => ({ ok: true }) as const);
@@ -192,12 +192,12 @@ describe("settleInferenceSetOpenClawPairing", () => {
       { appendAuditEntry, log },
     );
 
-    expect(() =>
+    await expect(
       completeInferencePostCommit(mutation, {
         appendAuditEntry,
         log,
         restartSandboxGateway: vi.fn(
-          () =>
+          async () =>
             ({
               ok: true,
               restarted: true,
@@ -207,7 +207,7 @@ describe("settleInferenceSetOpenClawPairing", () => {
         ),
         settleOpenClawPairing,
       }),
-    ).toThrow("OpenClaw gateway pairing did not converge (pairing-target-unavailable)");
+    ).rejects.toThrow("OpenClaw gateway pairing did not converge (pairing-target-unavailable)");
     expect(settleOpenClawPairing).not.toHaveBeenCalled();
     expect(log.mock.calls.flat().join("\n")).not.toContain("Inference route synced");
     expect(appendAuditEntry).toHaveBeenCalledWith(

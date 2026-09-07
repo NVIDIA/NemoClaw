@@ -3,6 +3,8 @@
 
 import { spawnSync } from "node:child_process";
 import { createTempSshConfig } from "../../sandbox/temp-ssh-config";
+import type { OpenShellSandboxBufferedCommandExecutor } from "../openshell/sandbox-command";
+import { namedOpenShellGateway, selectedOpenShellGateway } from "../openshell/sandbox-observer";
 import { resolveOpenshellSandboxSshHost } from "../openshell/sandbox-ssh-host";
 
 export type SandboxCommandResult = {
@@ -46,10 +48,9 @@ export type CommandTransportDependencies = {
     readonly error?: unknown;
   };
   extractSandboxExecCommandStdout: (output: string) => string | null;
-  getOpenshellBinary: () => string;
+  commandExecutor: OpenShellSandboxBufferedCommandExecutor;
   isDirectSandboxFallbackUnavailableError: (error: unknown) => boolean;
   openshellProbeTimeoutMs: number;
-  root: string;
 };
 
 export const DEFAULT_SANDBOX_EXEC_TIMEOUT_MS = 15000;
@@ -158,42 +159,32 @@ function executeLocalSandboxCommand(
   }
 }
 
-export function executeSandboxExecCommandTransport(
+export async function executeSandboxExecCommandTransport(
   deps: CommandTransportDependencies,
   sandboxName: string,
   command: string,
   timeout: number,
   options: SandboxExecCommandOptions,
-): SandboxCommandResult | null {
+): Promise<SandboxCommandResult | null> {
   const markedCommand = deps.buildSandboxExecMarkedCommand(command);
   const effectiveTimeout = resolveSandboxExecTimeout(timeout);
-  try {
-    const gatewayArgs = options.gatewayName ? ["-g", options.gatewayName] : [];
-    const result = spawnSync(
-      deps.getOpenshellBinary(),
-      [
-        "sandbox",
-        "exec",
-        "--name",
-        sandboxName,
-        ...gatewayArgs,
-        "--",
-        "sh",
-        "-c",
-        markedCommand,
-      ],
-      {
-        cwd: deps.root,
-        encoding: "utf-8",
-        env: options.runtimeEnv ?? deps.buildSubprocessEnv(),
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: effectiveTimeout,
-      },
-    );
-    const parsed = parseSandboxCommandResult(deps, result);
-    if (parsed !== null) return parsed;
-  } catch {
-    // OpenShell transport failed; try the trusted direct-container fallback.
+  const completed = await deps.commandExecutor.runBuffered({
+    sandboxName,
+    target: options.gatewayName
+      ? namedOpenShellGateway(options.gatewayName)
+      : selectedOpenShellGateway(),
+    command: ["sh", "-c", markedCommand],
+    environment: options.runtimeEnv ?? deps.buildSubprocessEnv(),
+    timeoutMilliseconds: effectiveTimeout,
+  });
+  if (completed.outcome.kind === "completed") {
+    return parseSandboxCommandResult(deps, {
+      status: completed.outcome.exitCode,
+      stdout: completed.stdout,
+      stderr: completed.stderr,
+    });
+  } else if (completed.outcome.error.kind !== "unavailable") {
+    return null;
   }
   if (options.allowLocalDockerFallback === false) return null;
   // Keep the fallback outside the OpenShell try/catch so a fail-closed identity

@@ -53,52 +53,54 @@ export function createTelegramStatusHealthHook(
     // the top-level status runner does not thread an exec runner into this hook).
     if (!execute || !sandboxName) return {};
 
-    const timeoutMs = normalizeTimeoutMs(options.timeoutMs);
-    const exec = execute(sandboxName, buildTelegramProbeScript(), timeoutMs);
-    const lines = String(exec?.stdout ?? "").split(/\r?\n/);
-    // A non-zero exec (timeout/kill/unhealthy sandbox) can still carry partial
-    // stdout with a stale `provider ready` line; require a clean exit so a failed
-    // probe classifies as probe_failed rather than a false healthy.
-    const reachable = exec?.status === 0 && lines.includes(TG_SHELL_OK);
+    return (async () => {
+      const timeoutMs = normalizeTimeoutMs(options.timeoutMs);
+      const exec = await execute(sandboxName, buildTelegramProbeScript(), timeoutMs);
+      const lines = String(exec?.stdout ?? "").split(/\r?\n/);
+      // A non-zero exec (timeout/kill/unhealthy sandbox) can still carry partial
+      // stdout with a stale `provider ready` line; require a clean exit so a failed
+      // probe classifies as probe_failed rather than a false healthy.
+      const reachable = exec?.status === 0 && lines.includes(TG_SHELL_OK);
 
-    const logStart = lines.indexOf(TG_LOG_BEGIN);
-    const logEnd = lines.indexOf(TG_LOG_END);
-    const logLines =
-      logStart !== -1 && logEnd > logStart
-        ? lines
-            .slice(logStart + 1, logEnd)
-            .map((line) => line.trim())
-            .filter(Boolean)
-        : [];
-    const breadcrumbs = reachable ? parseTelegramBreadcrumbs(logLines) : null;
+      const logStart = lines.indexOf(TG_LOG_BEGIN);
+      const logEnd = lines.indexOf(TG_LOG_END);
+      const logLines =
+        logStart !== -1 && logEnd > logStart
+          ? lines
+              .slice(logStart + 1, logEnd)
+              .map((line) => line.trim())
+              .filter(Boolean)
+          : [];
+      const breadcrumbs = reachable ? parseTelegramBreadcrumbs(logLines) : null;
 
-    const sawProc = lines.some((line) => line.startsWith("PROC "));
-    const sawProcDone = lines.includes(TG_PROC_DONE);
-    const gatewayProcessAlive = sawProc ? true : sawProcDone ? false : null;
+      const sawProc = lines.some((line) => line.startsWith("PROC "));
+      const sawProcDone = lines.includes(TG_PROC_DONE);
+      const gatewayProcessAlive = sawProc ? true : sawProcDone ? false : null;
 
-    const input: TelegramProbeInput = {
-      agent: normalizeString(context.inputs?.agent) ?? "openclaw",
-      probeReachable: reachable,
-      gatewayProcessAlive,
-      breadcrumbs,
-      probedAt: normalizeString(context.inputs?.probedAt) ?? "",
-      presetApplied: Boolean(context.inputs?.presetApplied),
-      presetOnGateway: normalizeTristate(context.inputs?.presetOnGateway),
-      channelEnabledInRegistry: Boolean(context.inputs?.channelEnabledInRegistry),
-    };
+      const input: TelegramProbeInput = {
+        agent: normalizeString(context.inputs?.agent) ?? "openclaw",
+        probeReachable: reachable,
+        gatewayProcessAlive,
+        breadcrumbs,
+        probedAt: normalizeString(context.inputs?.probedAt) ?? "",
+        presetApplied: Boolean(context.inputs?.presetApplied),
+        presetOnGateway: normalizeTristate(context.inputs?.presetOnGateway),
+        channelEnabledInRegistry: Boolean(context.inputs?.channelEnabledInRegistry),
+      };
 
-    const report = evaluateTelegramDiagnostics(input);
-    return {
-      outputs: {
-        channelHealth: {
-          kind: "status",
-          value: {
-            type: MESSAGING_CHANNEL_HEALTH_OUTPUT_TYPE,
-            report,
-          } as unknown as MessagingSerializableValue,
+      const report = evaluateTelegramDiagnostics(input);
+      return {
+        outputs: {
+          channelHealth: {
+            kind: "status",
+            value: {
+              type: MESSAGING_CHANNEL_HEALTH_OUTPUT_TYPE,
+              report,
+            } as unknown as MessagingSerializableValue,
+          },
         },
-      },
-    };
+      };
+    })();
   };
 }
 

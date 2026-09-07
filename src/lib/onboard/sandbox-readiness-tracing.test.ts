@@ -8,6 +8,7 @@ import {
   type OpenShellSandboxObserver,
   type OpenShellSandboxReadinessProbe,
 } from "../adapters/openshell/sandbox-observer";
+import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
 import {
   pendingSandboxFrame,
   readySandboxFrame,
@@ -36,6 +37,16 @@ const REJECTED_OBSERVATION_ERROR = {
 
 function replay(frames: readonly SandboxObservationFrame[]) {
   return replaySandboxObservations(NAME, frames);
+}
+
+function dashboardExecutorThrough(run: () => string): OpenShellSandboxBufferedCommandExecutor {
+  return {
+    runBuffered: vi.fn(async () => ({
+      outcome: { kind: "completed" as const, exitCode: 0 },
+      stdout: run(),
+      stderr: "",
+    })),
+  };
 }
 
 describe("createSandboxReadyWaiter", () => {
@@ -284,7 +295,10 @@ describe("createSandboxReadyWaiter", () => {
 describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
   it("waits for the exact recreated sandbox to become executable before accepting stable Ready (#9050)", async () => {
     const { observer, listSandboxes, sleep } = replay([readySandboxFrame()]);
-    const checkReadyIdentity = vi.fn().mockReturnValueOnce("not_ready").mockReturnValue("ready");
+    const checkReadyIdentity = vi
+      .fn()
+      .mockResolvedValueOnce("not_ready")
+      .mockResolvedValue("ready");
 
     await expect(
       waitForCreatedSandboxReadyWithTrace({
@@ -311,7 +325,7 @@ describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
         timeoutSecs: 30,
         observer,
         target: TARGET,
-        checkReadyIdentity: () => "identity_changed",
+        checkReadyIdentity: async () => "identity_changed",
         sleep,
       }),
     ).resolves.toEqual({ ready: false, reason: "identity_changed", failurePhase: null });
@@ -327,7 +341,7 @@ describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
       timeoutSecs: 30,
       observer,
       target: TARGET,
-      checkReadyIdentity: () => "probe_failed",
+      checkReadyIdentity: async () => "probe_failed",
       sleep,
     });
     expect(readiness).toEqual({
@@ -655,65 +669,65 @@ describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
 });
 
 describe("waitForDashboardReadyWithTrace", () => {
-  it("traces a zero-budget deadline without probing", () => {
+  it("traces a zero-budget deadline without probing", async () => {
     const runCaptureOpenshell = vi.fn(() => "200");
     const sleep = vi.fn();
     const trace = vi.fn();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
-    expect(
+    await expect(
       waitForDashboardReadyWithTrace({
         sandboxName: NAME,
         port: 18789,
-        runCaptureOpenshell,
+        commandExecutor: dashboardExecutorThrough(runCaptureOpenshell),
         sleep,
         timeoutSecs: 0,
         trace,
       }),
-    ).toBe(false);
+    ).resolves.toBe(false);
     expect(trace).toHaveBeenCalledWith("not_ready", { attempts: 0, deadline_ms: 0 });
     expect(runCaptureOpenshell).not.toHaveBeenCalled();
     expect(sleep).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("0ms deadline"));
   });
 
-  it("returns immediately when the dashboard is ready", () => {
+  it("returns immediately when the dashboard is ready", async () => {
     const runCaptureOpenshell = vi.fn(() => "200");
     const sleep = vi.fn();
 
-    expect(
+    await expect(
       waitForDashboardReadyWithTrace({
         sandboxName: NAME,
         port: 18789,
-        runCaptureOpenshell,
+        commandExecutor: dashboardExecutorThrough(runCaptureOpenshell),
         sleep,
       }),
-    ).toBe(true);
+    ).resolves.toBe(true);
     expect(runCaptureOpenshell).toHaveBeenCalledOnce();
     expect(sleep).not.toHaveBeenCalled();
   });
 
-  it("retries with fast polling and accepts an authenticated dashboard", () => {
+  it("retries with fast polling and accepts an authenticated dashboard", async () => {
     let nowMs = 1_000;
     const runCaptureOpenshell = vi.fn().mockReturnValueOnce("503").mockReturnValue("401");
     const sleep = vi.fn((seconds: number) => {
       nowMs += seconds * 1000;
     });
 
-    expect(
+    await expect(
       waitForDashboardReadyWithTrace({
         sandboxName: NAME,
         port: 18789,
-        runCaptureOpenshell,
+        commandExecutor: dashboardExecutorThrough(runCaptureOpenshell),
         sleep,
         now: () => nowMs,
       }),
-    ).toBe(true);
+    ).resolves.toBe(true);
     expect(runCaptureOpenshell).toHaveBeenCalledTimes(2);
     expect(sleep).toHaveBeenCalledWith(0.25);
   });
 
-  it("reports the actual short deadline on timeout", () => {
+  it("reports the actual short deadline on timeout", async () => {
     let nowMs = 1_000;
     const runCaptureOpenshell = vi.fn(() => "503");
     const sleep = vi.fn((seconds: number) => {
@@ -721,16 +735,16 @@ describe("waitForDashboardReadyWithTrace", () => {
     });
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
-    expect(
+    await expect(
       waitForDashboardReadyWithTrace({
         sandboxName: NAME,
         port: 18789,
-        runCaptureOpenshell,
+        commandExecutor: dashboardExecutorThrough(runCaptureOpenshell),
         sleep,
         timeoutSecs: 0.1,
         now: () => nowMs,
       }),
-    ).toBe(false);
+    ).resolves.toBe(false);
     expect(sleep.mock.calls.reduce((total, [seconds]) => total + seconds, 0)).toBe(0.1);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("100ms deadline"));
   });

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
 
 import {
   classifyWebSearchEnvBoundary,
@@ -11,10 +12,22 @@ import {
 
 function deps(output: string | null | Array<string | null>) {
   const outputs = Array.isArray(output) ? [...output] : [output];
+  const runBuffered = vi.fn<OpenShellSandboxBufferedCommandExecutor["runBuffered"]>(async () => {
+    const result = outputs.shift() ?? null;
+    return result === null
+      ? {
+          outcome: {
+            kind: "failed" as const,
+            error: { kind: "invocation" as const, message: "failed" },
+          },
+          stdout: "",
+          stderr: "",
+        }
+      : { outcome: { kind: "completed" as const, exitCode: 0 }, stdout: result, stderr: "" };
+  });
   return {
-    runCaptureOpenshell: vi.fn<WebSearchVerifyDeps["runCaptureOpenshell"]>(
-      () => outputs.shift() ?? null,
-    ),
+    runBuffered,
+    commandExecutor: { runBuffered },
     cliName: vi.fn(() => "nemoclaw"),
     webSearchEnvFor: vi.fn((provider) =>
       provider === "tavily" ? "TAVILY_API_KEY" : "BRAVE_API_KEY",
@@ -24,11 +37,11 @@ function deps(output: string | null | Array<string | null>) {
     ),
     log: vi.fn(),
     warn: vi.fn(),
-  } satisfies WebSearchVerifyDeps;
+  } satisfies WebSearchVerifyDeps & { runBuffered: typeof runBuffered };
 }
 
 describe("verifyWebSearchInsideSandbox", () => {
-  it("verifies Hermes Tavily egress through JSON body credential rewriting", () => {
+  it("verifies Hermes Tavily egress through JSON body credential rewriting", async () => {
     // Before config diagnostics and the egress probe, the secret-boundary check
     // classifies the selected env var in-sandbox.
     const d = deps([
@@ -37,49 +50,40 @@ describe("verifyWebSearchInsideSandbox", () => {
       JSON.stringify({ results: [{ title: "NVIDIA" }] }) + "\nHTTP_STATUS:200\n",
     ]);
 
-    verifyWebSearchInsideSandbox("alpha", { name: "hermes" }, "tavily", d);
+    await verifyWebSearchInsideSandbox("alpha", { name: "hermes" }, "tavily", d);
 
-    expect(d.runCaptureOpenshell).toHaveBeenCalledTimes(3);
-    expect(d.runCaptureOpenshell.mock.calls[1][0]).toEqual([
-      "sandbox",
-      "exec",
-      "-n",
-      "alpha",
-      "--",
-      "cat",
-      "/sandbox/.hermes/config.yaml",
-    ]);
+    expect(d.runBuffered).toHaveBeenCalledTimes(3);
+    expect(d.runBuffered.mock.calls[1][0]).toMatchObject({
+      sandboxName: "alpha",
+      target: { kind: "selected" },
+      command: ["cat", "/sandbox/.hermes/config.yaml"],
+    });
     // The boundary probe classifies in-sandbox with `sh -c` (no login profiles)
     // and returns only a marked sentinel.
-    expect(d.runCaptureOpenshell.mock.calls[0][0].slice(0, 7)).toEqual([
-      "sandbox",
-      "exec",
-      "-n",
-      "alpha",
-      "--",
-      "sh",
-      "-c",
-    ]);
-    expect(d.runCaptureOpenshell.mock.calls[0][0][7]).toContain("printenv TAVILY_API_KEY");
-    expect(d.runCaptureOpenshell.mock.calls[0][0][7]).not.toContain("cat ");
-    expect(d.runCaptureOpenshell.mock.calls[2][0]).toEqual([
-      "sandbox",
-      "exec",
-      "-n",
-      "alpha",
-      "--",
-      "sh",
-      "-lc",
-      expect.stringContaining('"api_key":"openshell:resolve:env:TAVILY_API_KEY"'),
-    ]);
+    expect(d.runBuffered.mock.calls[0][0]).toMatchObject({
+      sandboxName: "alpha",
+      target: { kind: "selected" },
+      command: ["sh", "-c", expect.stringContaining("printenv TAVILY_API_KEY")],
+      timeoutMilliseconds: 10_000,
+    });
+    expect(d.runBuffered.mock.calls[0][0].command[2]).not.toContain("cat ");
+    expect(d.runBuffered.mock.calls[2][0]).toMatchObject({
+      sandboxName: "alpha",
+      target: { kind: "selected" },
+      command: [
+        "sh",
+        "-lc",
+        expect.stringContaining('"api_key":"openshell:resolve:env:TAVILY_API_KEY"'),
+      ],
+    });
     expect(d.log).toHaveBeenCalledWith("  ✓ Tavily Search egress verified inside sandbox");
     expect(d.warn).not.toHaveBeenCalled();
   });
 
-  it("blocks Hermes handoff when the sandbox env exposes a raw Tavily key (#7425)", () => {
+  it("blocks Hermes handoff when the sandbox env exposes a raw Tavily key (#7425)", async () => {
     const d = deps("__nemoclaw_wsenv__:raw-secret");
 
-    const credentialBoundarySafe = verifyWebSearchInsideSandbox(
+    const credentialBoundarySafe = await verifyWebSearchInsideSandbox(
       "alpha",
       { name: "hermes" },
       "tavily",
@@ -87,7 +91,7 @@ describe("verifyWebSearchInsideSandbox", () => {
     );
 
     expect(credentialBoundarySafe).toBe(false);
-    expect(d.runCaptureOpenshell).toHaveBeenCalledTimes(1);
+    expect(d.runBuffered).toHaveBeenCalledTimes(1);
     expect(d.warn).toHaveBeenCalledWith(
       "  ✗ SECURITY: the Tavily Search credential is exposed in the sandbox environment.",
     );
@@ -126,21 +130,26 @@ describe("verifyWebSearchInsideSandbox", () => {
     },
   ])(
     "blocks $label before configuration diagnostics (#7425)",
-    ({ agent, provider, config, alert }) => {
+    async ({ agent, provider, config, alert }) => {
       const d = deps(["__nemoclaw_wsenv__:raw-secret", config]);
 
-      const credentialBoundarySafe = verifyWebSearchInsideSandbox("alpha", agent, provider, d);
+      const credentialBoundarySafe = await verifyWebSearchInsideSandbox(
+        "alpha",
+        agent,
+        provider,
+        d,
+      );
 
       expect(credentialBoundarySafe).toBe(false);
-      expect(d.runCaptureOpenshell).toHaveBeenCalledTimes(1);
+      expect(d.runBuffered).toHaveBeenCalledTimes(1);
       expect(d.warn).toHaveBeenCalledWith(alert);
     },
   );
 
-  it("does not treat pinned Hermes dump-shaped output as an active Tavily backend", () => {
+  it("does not treat pinned Hermes dump-shaped output as an active Tavily backend", async () => {
     const d = deps(["__nemoclaw_wsenv__:absent", "active toolsets: web, shell\n"]);
 
-    verifyWebSearchInsideSandbox("alpha", { name: "hermes" }, "tavily", d);
+    await verifyWebSearchInsideSandbox("alpha", { name: "hermes" }, "tavily", d);
 
     expect(d.warn).toHaveBeenCalledWith(
       "  ⚠ Tavily Search was configured but Hermes config does not select web.backend=tavily.",
@@ -148,24 +157,24 @@ describe("verifyWebSearchInsideSandbox", () => {
     expect(d.warn).toHaveBeenCalledWith(
       "    Check: nemoclaw alpha exec -- cat /sandbox/.hermes/config.yaml",
     );
-    expect(d.runCaptureOpenshell).toHaveBeenCalledTimes(2);
+    expect(d.runBuffered).toHaveBeenCalledTimes(2);
   });
 
-  it("warns when the Hermes config is missing or malformed", () => {
+  it("warns when the Hermes config is missing or malformed", async () => {
     const missing = deps(["__nemoclaw_wsenv__:absent", null]);
-    verifyWebSearchInsideSandbox("alpha", { name: "hermes" }, "tavily", missing);
+    await verifyWebSearchInsideSandbox("alpha", { name: "hermes" }, "tavily", missing);
     expect(missing.warn).toHaveBeenCalledWith(
       "  ⚠ Could not read Hermes config to verify Tavily Search.",
     );
 
     const malformed = deps(["__nemoclaw_wsenv__:absent", "web: [\n"]);
-    verifyWebSearchInsideSandbox("alpha", { name: "hermes" }, "tavily", malformed);
+    await verifyWebSearchInsideSandbox("alpha", { name: "hermes" }, "tavily", malformed);
     expect(malformed.warn).toHaveBeenCalledWith(
       "  ⚠ Could not parse Hermes config to verify Tavily Search.",
     );
   });
 
-  it("verifies OpenClaw Brave Search egress through the subscription-token header", () => {
+  it("verifies OpenClaw Brave Search egress through the subscription-token header", async () => {
     // Current schema: the provider-owned apiKey lives under
     // plugins.entries.brave.config.webSearch, not inline on tools.web.search.
     const d = deps([
@@ -184,7 +193,7 @@ describe("verifyWebSearchInsideSandbox", () => {
       JSON.stringify({ web: { results: [{ title: "NVIDIA" }] } }) + "\nHTTP_STATUS:200\n",
     ]);
 
-    const credentialBoundarySafe = verifyWebSearchInsideSandbox(
+    const credentialBoundarySafe = await verifyWebSearchInsideSandbox(
       "alpha",
       { name: "openclaw" },
       "brave",
@@ -192,31 +201,26 @@ describe("verifyWebSearchInsideSandbox", () => {
     );
 
     expect(credentialBoundarySafe).toBe(true);
-    expect(d.runCaptureOpenshell).toHaveBeenCalledTimes(3);
-    expect(d.runCaptureOpenshell.mock.calls[0][0].slice(0, 7)).toEqual([
-      "sandbox",
-      "exec",
-      "-n",
-      "alpha",
-      "--",
-      "sh",
-      "-c",
-    ]);
-    expect(d.runCaptureOpenshell.mock.calls[0][0][7]).toContain("printenv BRAVE_API_KEY");
-    expect(d.runCaptureOpenshell.mock.calls[2][0]).toEqual([
-      "sandbox",
-      "exec",
-      "-n",
-      "alpha",
-      "--",
-      "sh",
-      "-lc",
-      expect.stringContaining("X-Subscription-Token: openshell:resolve:env:BRAVE_API_KEY"),
-    ]);
+    expect(d.runBuffered).toHaveBeenCalledTimes(3);
+    expect(d.runBuffered.mock.calls[0][0]).toMatchObject({
+      sandboxName: "alpha",
+      target: { kind: "selected" },
+      command: ["sh", "-c", expect.stringContaining("printenv BRAVE_API_KEY")],
+      timeoutMilliseconds: 10_000,
+    });
+    expect(d.runBuffered.mock.calls[2][0]).toMatchObject({
+      sandboxName: "alpha",
+      target: { kind: "selected" },
+      command: [
+        "sh",
+        "-lc",
+        expect.stringContaining("X-Subscription-Token: openshell:resolve:env:BRAVE_API_KEY"),
+      ],
+    });
     expect(d.log).toHaveBeenCalledWith("  ✓ Brave Search egress verified inside sandbox");
   });
 
-  it("verifies OpenClaw Tavily Search egress through the bearer header", () => {
+  it("verifies OpenClaw Tavily Search egress through the bearer header", async () => {
     const d = deps([
       "__nemoclaw_wsenv__:placeholder",
       JSON.stringify({
@@ -233,7 +237,7 @@ describe("verifyWebSearchInsideSandbox", () => {
       JSON.stringify({ results: [{ title: "NVIDIA" }] }) + "\nHTTP_STATUS:200\n",
     ]);
 
-    const credentialBoundarySafe = verifyWebSearchInsideSandbox(
+    const credentialBoundarySafe = await verifyWebSearchInsideSandbox(
       "alpha",
       { name: "openclaw" },
       "tavily",
@@ -241,22 +245,21 @@ describe("verifyWebSearchInsideSandbox", () => {
     );
 
     expect(credentialBoundarySafe).toBe(true);
-    expect(d.runCaptureOpenshell).toHaveBeenCalledTimes(3);
-    expect(d.runCaptureOpenshell.mock.calls[2][0]).toEqual([
-      "sandbox",
-      "exec",
-      "-n",
-      "alpha",
-      "--",
-      "sh",
-      "-lc",
-      expect.stringContaining("Authorization: Bearer openshell:resolve:env:TAVILY_API_KEY"),
-    ]);
-    expect(d.runCaptureOpenshell.mock.calls[2][0][7]).toContain("https://api.tavily.com/search");
+    expect(d.runBuffered).toHaveBeenCalledTimes(3);
+    expect(d.runBuffered.mock.calls[2][0]).toMatchObject({
+      sandboxName: "alpha",
+      target: { kind: "selected" },
+      command: [
+        "sh",
+        "-lc",
+        expect.stringContaining("Authorization: Bearer openshell:resolve:env:TAVILY_API_KEY"),
+      ],
+    });
+    expect(d.runBuffered.mock.calls[2][0].command[2]).toContain("https://api.tavily.com/search");
     expect(d.log).toHaveBeenCalledWith("  ✓ Tavily Search egress verified inside sandbox");
   });
 
-  it("does not accept an empty Tavily results array as successful verification", () => {
+  it("does not accept an empty Tavily results array as successful verification", async () => {
     const d = deps([
       "__nemoclaw_wsenv__:absent",
       JSON.stringify({
@@ -273,7 +276,7 @@ describe("verifyWebSearchInsideSandbox", () => {
       JSON.stringify({ results: [] }) + "\nHTTP_STATUS:200\n",
     ]);
 
-    const credentialBoundarySafe = verifyWebSearchInsideSandbox(
+    const credentialBoundarySafe = await verifyWebSearchInsideSandbox(
       "alpha",
       { name: "openclaw" },
       "tavily",
@@ -287,7 +290,7 @@ describe("verifyWebSearchInsideSandbox", () => {
     expect(d.log).not.toHaveBeenCalled();
   });
 
-  it("still probes legacy configs that carry the apiKey inline on tools.web.search", () => {
+  it("still probes legacy configs that carry the apiKey inline on tools.web.search", async () => {
     const d = deps([
       "__nemoclaw_wsenv__:absent",
       JSON.stringify({
@@ -304,13 +307,13 @@ describe("verifyWebSearchInsideSandbox", () => {
       JSON.stringify({ web: { results: [{ title: "NVIDIA" }] } }) + "\nHTTP_STATUS:200\n",
     ]);
 
-    verifyWebSearchInsideSandbox("alpha", { name: "openclaw" }, "brave", d);
+    await verifyWebSearchInsideSandbox("alpha", { name: "openclaw" }, "brave", d);
 
-    expect(d.runCaptureOpenshell).toHaveBeenCalledTimes(3);
+    expect(d.runBuffered).toHaveBeenCalledTimes(3);
     expect(d.log).toHaveBeenCalledWith("  ✓ Brave Search egress verified inside sandbox");
   });
 
-  it("warns when OpenClaw Brave Search egress rejects the placeholder", () => {
+  it("warns when OpenClaw Brave Search egress rejects the placeholder", async () => {
     const d = deps([
       "__nemoclaw_wsenv__:placeholder",
       JSON.stringify({
@@ -327,7 +330,7 @@ describe("verifyWebSearchInsideSandbox", () => {
       '{"message":"Unauthorized"}\nHTTP_STATUS:401\n',
     ]);
 
-    verifyWebSearchInsideSandbox("alpha", { name: "openclaw" }, "brave", d);
+    await verifyWebSearchInsideSandbox("alpha", { name: "openclaw" }, "brave", d);
 
     expect(d.warn).toHaveBeenCalledWith(
       "  ⚠ Brave Search config exists, but egress verification returned HTTP 401.",
@@ -337,7 +340,7 @@ describe("verifyWebSearchInsideSandbox", () => {
     );
   });
 
-  it("refuses to probe when the apiKey is a literal secret rather than a placeholder", () => {
+  it("refuses to probe when the apiKey is a literal secret rather than a placeholder", async () => {
     const d = deps([
       "__nemoclaw_wsenv__:absent",
       JSON.stringify({
@@ -353,30 +356,26 @@ describe("verifyWebSearchInsideSandbox", () => {
       }),
     ]);
 
-    verifyWebSearchInsideSandbox("alpha", { name: "openclaw" }, "brave", d);
+    await verifyWebSearchInsideSandbox("alpha", { name: "openclaw" }, "brave", d);
 
     // The config read and the sentinel-only boundary probe run, but no curl
     // probe interpolates the raw key.
-    expect(d.runCaptureOpenshell).toHaveBeenCalledTimes(2);
-    expect(d.runCaptureOpenshell.mock.calls[0][0].slice(0, 7)).toEqual([
-      "sandbox",
-      "exec",
-      "-n",
-      "alpha",
-      "--",
-      "sh",
-      "-c",
-    ]);
-    const commandArguments = d.runCaptureOpenshell.mock.calls.flatMap(([args]) => args);
+    expect(d.runBuffered).toHaveBeenCalledTimes(2);
+    expect(d.runBuffered.mock.calls[0][0]).toMatchObject({
+      sandboxName: "alpha",
+      target: { kind: "selected" },
+      command: ["sh", "-c", expect.any(String)],
+    });
+    const commandArguments = d.runBuffered.mock.calls.flatMap(([request]) => request.command);
     expect(commandArguments.join("\n")).not.toContain("literal-secret-do-not-interpolate");
     expect(d.warn).toHaveBeenCalledWith(
       "  ⚠ Brave Search apiKey in openclaw.json is not an OpenShell placeholder; skipping egress probe.",
     );
   });
 
-  it("warns when OpenClaw config is malformed or disabled", () => {
+  it("warns when OpenClaw config is malformed or disabled", async () => {
     const malformed = deps(["__nemoclaw_wsenv__:absent", "not-json"]);
-    verifyWebSearchInsideSandbox("alpha", { name: "openclaw" }, "brave", malformed);
+    await verifyWebSearchInsideSandbox("alpha", { name: "openclaw" }, "brave", malformed);
     expect(malformed.warn).toHaveBeenCalledWith(
       "  ⚠ Could not parse openclaw.json to verify web search config.",
     );
@@ -385,26 +384,26 @@ describe("verifyWebSearchInsideSandbox", () => {
       "__nemoclaw_wsenv__:absent",
       JSON.stringify({ tools: { web: { search: { enabled: false } } } }),
     ]);
-    verifyWebSearchInsideSandbox("alpha", { name: "openclaw" }, "brave", disabled);
+    await verifyWebSearchInsideSandbox("alpha", { name: "openclaw" }, "brave", disabled);
     expect(disabled.warn).toHaveBeenCalledWith(
       "  ⚠ Web search was configured but tools.web.search is not enabled in openclaw.json.",
     );
   });
 
-  it("warns for unknown agents after checking the selected credential boundary", () => {
+  it("warns for unknown agents after checking the selected credential boundary", async () => {
     const unknown = deps("__nemoclaw_wsenv__:absent");
-    verifyWebSearchInsideSandbox("alpha", { name: "other" }, "brave", unknown);
+    await verifyWebSearchInsideSandbox("alpha", { name: "other" }, "brave", unknown);
     expect(unknown.warn).toHaveBeenCalledWith(
       "  ⚠ Web search verification is not implemented for agent 'other'.",
     );
   });
 
-  it("blocks handoff when the credential-boundary probe fails closed (#7425)", () => {
+  it("blocks handoff when the credential-boundary probe fails closed (#7425)", async () => {
     const throwing = deps(null);
-    throwing.runCaptureOpenshell = vi.fn(() => {
+    throwing.commandExecutor.runBuffered = vi.fn(async () => {
       throw new Error("boom");
     });
-    const credentialBoundarySafe = verifyWebSearchInsideSandbox(
+    const credentialBoundarySafe = await verifyWebSearchInsideSandbox(
       "alpha",
       { name: "openclaw" },
       "brave",
@@ -416,12 +415,12 @@ describe("verifyWebSearchInsideSandbox", () => {
     );
   });
 
-  it("raises a security alert when the sandbox env exposes a raw Brave key (#7425)", () => {
+  it("raises a security alert when the sandbox env exposes a raw Brave key (#7425)", async () => {
     // The in-sandbox probe returns only the `raw-secret` sentinel — never the
     // key itself — so the guard does not pull the credential across the boundary.
     const d = deps("__nemoclaw_wsenv__:raw-secret");
 
-    const credentialBoundarySafe = verifyWebSearchInsideSandbox(
+    const credentialBoundarySafe = await verifyWebSearchInsideSandbox(
       "alpha",
       { name: "openclaw" },
       "brave",
@@ -433,11 +432,11 @@ describe("verifyWebSearchInsideSandbox", () => {
     );
     expect(d.warn).toHaveBeenCalledWith("      nemoclaw onboard --recreate-sandbox");
     expect(credentialBoundarySafe).toBe(false);
-    expect(d.runCaptureOpenshell).toHaveBeenCalledTimes(1);
+    expect(d.runBuffered).toHaveBeenCalledTimes(1);
     expect(d.log).not.toHaveBeenCalledWith("  ✓ Brave Search egress verified inside sandbox");
   });
 
-  it("accepts a resolve:env placeholder sentinel without a security alert", () => {
+  it("accepts a resolve:env placeholder sentinel without a security alert", async () => {
     const d = deps([
       "__nemoclaw_wsenv__:placeholder",
       JSON.stringify({
@@ -454,9 +453,11 @@ describe("verifyWebSearchInsideSandbox", () => {
       JSON.stringify({ web: { results: [{ title: "NVIDIA" }] } }) + "\nHTTP_STATUS:200\n",
     ]);
 
-    verifyWebSearchInsideSandbox("alpha", { name: "openclaw" }, "brave", d);
+    await verifyWebSearchInsideSandbox("alpha", { name: "openclaw" }, "brave", d);
 
-    expect(d.warn.mock.calls.every((call) => !String(call[0] ?? "").includes("SECURITY"))).toBe(true);
+    expect(d.warn.mock.calls.every((call) => !String(call[0] ?? "").includes("SECURITY"))).toBe(
+      true,
+    );
     expect(d.log).toHaveBeenCalledWith("  ✓ Brave Search egress verified inside sandbox");
   });
 });

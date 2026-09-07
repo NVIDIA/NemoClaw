@@ -293,7 +293,7 @@ beforeEach(() => {
 
   execSpy = vi
     .spyOn(processRecovery, "executeSandboxExecCommand")
-    .mockImplementation((_name, command) => {
+    .mockImplementation(async (_name, command) => {
       return command.includes("/sandbox/.openclaw/openclaw.json")
         ? { status: 0, stdout: JSON.stringify(testConfig), stderr: "" }
         : command.includes("tail -n 400") && command.includes("/tmp/gateway.log")
@@ -426,12 +426,8 @@ describe("channels add applies a matching policy preset (#3437)", () => {
         entry === `applyPreset:${channel}` ? [index] : [],
       );
       expect(presetCallIndexes).toHaveLength(2);
-      expect(presetCallIndexes[0]).toBeLessThan(
-        callOrder.indexOf("upsertMessagingProviders"),
-      );
-      expect(callOrder.indexOf("upsertMessagingProviders")).toBeLessThan(
-        presetCallIndexes[1],
-      );
+      expect(presetCallIndexes[0]).toBeLessThan(callOrder.indexOf("upsertMessagingProviders"));
+      expect(callOrder.indexOf("upsertMessagingProviders")).toBeLessThan(presetCallIndexes[1]);
       expect(presetCallIndexes[1]).toBeLessThan(callOrder.indexOf("promptAndRebuild"));
     },
   );

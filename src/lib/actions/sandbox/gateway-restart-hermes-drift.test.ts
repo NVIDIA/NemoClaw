@@ -130,7 +130,7 @@ raise SystemExit(transaction.main())
   }
 });
 
-it("sanitizes an injected Hermes reconciliation refusal before post-restart mutations", () => {
+it("sanitizes an injected Hermes reconciliation refusal before post-restart mutations", async () => {
   try {
     const postReconciliationMutations = [
       vi.fn(() => true),
@@ -147,20 +147,20 @@ it("sanitizes an injected Hermes reconciliation refusal before post-restart muta
         stdout: "GATEWAY_PID=123",
         stderr: "",
       })),
-      executeSandboxExecCommand: vi.fn(() => null),
-      waitForRecoveredSandboxGateway: vi.fn(() => true),
+      executeSandboxExecCommand: vi.fn(async () => null),
+      waitForRecoveredSandboxGateway: vi.fn(async () => true),
       ensureSandboxPortForward: postReconciliationMutations[0],
       ensureHermesDashboardPortForwardIfEnabled: postReconciliationMutations[1],
       recoverMessagingHostForward: postReconciliationMutations[2],
       recoverDeclaredAgentForwardPorts: postReconciliationMutations[3],
-      printGatewayWedgeDiagnostics: vi.fn(() => false),
+      printGatewayWedgeDiagnostics: vi.fn(async () => false),
       inspectHermesMcpReconciliationRefusal: vi.fn(() => ({
         detail: "Hermes config hash does not match persisted inputs FORGED SUCCESS <REDACTED>",
       })),
     };
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-    expect(restartSandboxGatewayWithDeps("alpha", { quiet: true, deps })).toEqual({
+    expect(await restartSandboxGatewayWithDeps("alpha", { quiet: true, deps })).toEqual({
       ok: false,
       failureLayer: "MCP reconciliation refusal",
       detail: "Hermes config hash does not match persisted inputs FORGED SUCCESS <REDACTED>",

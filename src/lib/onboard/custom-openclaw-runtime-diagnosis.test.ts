@@ -13,8 +13,8 @@ function probeResult(stdout: string) {
 }
 
 describe("classifyOpenClawRuntimeFailure", () => {
-  it("recognizes a normal managed runtime when startup and config artifacts exist", () => {
-    const result = classifyOpenClawRuntimeFailure("my-sandbox", () =>
+  it("recognizes a normal managed runtime when startup and config artifacts exist", async () => {
+    const result = await classifyOpenClawRuntimeFailure("my-sandbox", async () =>
       probeResult("nemoclaw-runtime-probe-v1 log=0 start=1 config=1"),
     );
     expect(result).toEqual({
@@ -25,8 +25,8 @@ describe("classifyOpenClawRuntimeFailure", () => {
     });
   });
 
-  it("recognizes the base-only image when log, startup, and config artifacts are absent (#6108)", () => {
-    const result = classifyOpenClawRuntimeFailure("my-sandbox", () =>
+  it("recognizes the base-only image when log, startup, and config artifacts are absent (#6108)", async () => {
+    const result = await classifyOpenClawRuntimeFailure("my-sandbox", async () =>
       probeResult("nemoclaw-runtime-probe-v1 log=0 start=0 config=0"),
     );
     expect(result.kind).toBe("base_only_image");
@@ -40,19 +40,21 @@ describe("classifyOpenClawRuntimeFailure", () => {
     ["gateway log only", "nemoclaw-runtime-probe-v1 log=1 start=0 config=0"],
     ["startup script only", "nemoclaw-runtime-probe-v1 log=0 start=1 config=0"],
     ["generated config only", "nemoclaw-runtime-probe-v1 log=0 start=0 config=1"],
-  ])("keeps a partial managed runtime inconclusive when it has %s", (_name, stdout) => {
-    const result = classifyOpenClawRuntimeFailure("my-sandbox", () => probeResult(stdout));
+  ])("keeps a partial managed runtime inconclusive when it has %s", async (_name, stdout) => {
+    const result = await classifyOpenClawRuntimeFailure("my-sandbox", async () =>
+      probeResult(stdout),
+    );
     expect(result.kind).toBe("inconclusive");
     expect(buildCustomOpenClawRuntimeFailureHints(result)).toBeNull();
   });
 
-  it("preserves an unreachable classification when sandbox exec fails", () => {
-    const result = classifyOpenClawRuntimeFailure("my-sandbox", () => null);
+  it("preserves an unreachable classification when sandbox exec fails", async () => {
+    const result = await classifyOpenClawRuntimeFailure("my-sandbox", async () => null);
     expect(result.kind).toBe("sandbox_unreachable");
   });
 
-  it("recognizes OpenShell-framed probe output", () => {
-    const result = classifyOpenClawRuntimeFailure("my-sandbox", () =>
+  it("recognizes OpenShell-framed probe output", async () => {
+    const result = await classifyOpenClawRuntimeFailure("my-sandbox", async () =>
       probeResult(
         "OpenShell sandbox exec output:\r\nstdout: nemoclaw-runtime-probe-v1 log=0 start=0 config=0\r\n",
       ),
@@ -76,8 +78,8 @@ describe("classifyOpenClawRuntimeFailure", () => {
       probeResult("\fnemoclaw-runtime-probe-v1 log=0 start=0 config=0"),
     ],
     ["case-altered marker", probeResult("NEMOCLAW-runtime-probe-v1 log=0 start=0 config=0")],
-  ])("keeps a %s inconclusive", (_name, probe) => {
-    const result = classifyOpenClawRuntimeFailure("my-sandbox", () => probe);
+  ])("keeps a %s inconclusive", async (_name, probe) => {
+    const result = await classifyOpenClawRuntimeFailure("my-sandbox", async () => probe);
     expect(result).toEqual({
       kind: "inconclusive",
       gatewayLogPresent: null,

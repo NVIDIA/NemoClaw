@@ -174,10 +174,10 @@ describe("config set helpers", () => {
   });
 
   describe("restartSandboxAgentAfterConfigSet", () => {
-    it("routes --restart through the managed gateway supervisor flow", () => {
+    it("routes --restart through the managed gateway supervisor flow", async () => {
       const calls: string[] = [];
 
-      restartSandboxAgentAfterConfigSet("alpha", "openclaw", (sandboxName: string) => {
+      await restartSandboxAgentAfterConfigSet("alpha", "openclaw", async (sandboxName: string) => {
         calls.push(sandboxName);
         return { ok: true };
       });
@@ -185,10 +185,10 @@ describe("config set helpers", () => {
       expect(calls).toEqual(["alpha"]);
     });
 
-    it("fails with a written-but-not-applied message and a retry hint when the restart fails", () => {
+    it("fails with a written-but-not-applied message and a retry hint when the restart fails", async () => {
       let thrown: unknown;
       try {
-        restartSandboxAgentAfterConfigSet("alpha", "openclaw", () => ({ ok: false }));
+        await restartSandboxAgentAfterConfigSet("alpha", "openclaw", async () => ({ ok: false }));
       } catch (error) {
         thrown = error;
       }

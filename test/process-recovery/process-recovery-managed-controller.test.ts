@@ -32,14 +32,14 @@ function getSandboxExecShellCommand(rawArgs: unknown): string {
   return match ? Buffer.from(match[1], "base64").toString("utf8") : payload;
 }
 
-function withFakeOpenshellBinary<T>(fn: () => T): T {
+async function withFakeOpenshellBinary<T>(fn: () => Promise<T>): Promise<T> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fake-openshell-"));
   const bin = path.join(dir, "openshell");
   const previous = process.env.NEMOCLAW_OPENSHELL_BIN;
   fs.writeFileSync(bin, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
   process.env.NEMOCLAW_OPENSHELL_BIN = bin;
   try {
-    return fn();
+    return await fn();
   } finally {
     previous === undefined
       ? delete process.env.NEMOCLAW_OPENSHELL_BIN
@@ -353,7 +353,7 @@ describe("managed gateway recovery controller", () => {
     },
   ])(
     "enforces managed recovery for $label",
-    ({
+    async ({
       label,
       recoverResults,
       expectedResult,
@@ -422,10 +422,14 @@ describe("managed gateway recovery controller", () => {
           output: runningForward,
         });
 
-        const result = withFakeOpenshellBinary(() =>
+        const result = await withFakeOpenshellBinary(() =>
           checkAndRecoverSandboxProcesses("beta", {
             quiet: true,
             requestGatewaySupervisorAction,
+            isSandboxGatewayRunningImpl: async () => {
+              healthProbeCalls += 1;
+              return false;
+            },
           }),
         );
         expect(result).toEqual(expectedResult);

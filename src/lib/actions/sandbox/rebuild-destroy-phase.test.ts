@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   reattachMcpAfterDeleteFailure: vi.fn(),
   removeSandboxRegistryEntryWithReceipt: vi.fn(() => null),
   waitUntil: vi.fn(),
+  waitUntilAsync: vi.fn(),
   warnUnpreservedUserManagedFiles: vi.fn(),
   runOpenshell: vi.fn(
     (
@@ -48,6 +49,7 @@ vi.mock("../../adapters/openshell/runtime", () => ({
 
 vi.mock("../../core/wait", () => ({
   waitUntil: mocks.waitUntil,
+  waitUntilAsync: mocks.waitUntilAsync,
 }));
 
 vi.mock("../../inference/nim", () => ({
@@ -483,12 +485,7 @@ describe("rebuild destroy phase", () => {
     expect(revalidateBeforeDelete).toHaveBeenCalledOnce();
     expect(mocks.runOpenshell).not.toHaveBeenCalled();
     expect(mocks.removeSandboxRegistryEntryWithReceipt).not.toHaveBeenCalled();
-    expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledWith(
-      "alpha",
-      [],
-      [],
-      undefined,
-    );
+    expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledWith("alpha", [], [], undefined);
     expect(mocks.stopNimContainer).not.toHaveBeenCalled();
     expect(mocks.stopNimContainerByName).not.toHaveBeenCalled();
   });
@@ -528,12 +525,7 @@ describe("rebuild destroy phase", () => {
     expect(revalidateBeforeDelete.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.runOpenshell.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
     );
-    expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledWith(
-      "alpha",
-      [],
-      [],
-      undefined,
-    );
+    expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledWith("alpha", [], [], undefined);
     expect(mocks.teardownSandboxDashboardForward).not.toHaveBeenCalled();
     expect(mocks.restoreSandboxLaunchForwards).not.toHaveBeenCalled();
     expect(mocks.removeSandboxRegistryEntryWithReceipt).not.toHaveBeenCalled();

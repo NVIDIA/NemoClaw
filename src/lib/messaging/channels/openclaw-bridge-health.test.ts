@@ -26,7 +26,7 @@ describe("OpenClaw bridge health hook", () => {
         {
           sandboxName: "alpha",
           log: (message) => logs.push(message),
-          executeSandboxCommand: (command) => {
+          executeSandboxCommand: async (command) => {
             commands.push(command);
             if (command.includes("openclaw.json")) {
               return {

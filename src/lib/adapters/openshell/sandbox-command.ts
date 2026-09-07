@@ -13,8 +13,24 @@ export type OpenShellSandboxCommandRequest = Readonly<{
   stdin?: boolean;
 }>;
 
+export type OpenShellSandboxBufferedCommandRequest = Readonly<{
+  sandboxName: string;
+  target: OpenShellGatewayTarget;
+  command: readonly string[];
+  /** Environment for the host-side OpenShell process. */
+  environment?: NodeJS.ProcessEnv;
+  /** Environment assignments for the command inside the sandbox. */
+  sandboxEnvironment?: Readonly<Record<string, string>>;
+  input?: string;
+  tty?: boolean | null;
+  workdir?: string;
+  timeoutMilliseconds?: number;
+  timeoutKillSignal?: "SIGTERM" | "SIGKILL";
+  outputLimitBytes?: number;
+}>;
+
 export type OpenShellSandboxCommandError = Readonly<{
-  kind: "invocation" | "timeout" | "unavailable";
+  kind: "capture" | "invocation" | "timeout" | "unavailable";
   message: string;
 }>;
 
@@ -38,6 +54,12 @@ export type OpenShellSandboxCommandCompletion = Readonly<{
   release: () => void;
 }>;
 
+export type OpenShellSandboxBufferedCommandCompletion = Readonly<{
+  outcome: OpenShellSandboxCommandOutcome;
+  stdout: string;
+  stderr: string;
+}>;
+
 export type OpenShellSandboxDirectoryProbe =
   | Readonly<{ state: "present" }>
   | Readonly<{ state: "missing" }>
@@ -51,4 +73,10 @@ export interface OpenShellSandboxCommandExecutor {
     path: string;
   }): Promise<OpenShellSandboxDirectoryProbe>;
   runStreaming(request: OpenShellSandboxCommandRequest): Promise<OpenShellSandboxCommandCompletion>;
+}
+
+export interface OpenShellSandboxBufferedCommandExecutor {
+  runBuffered(
+    request: OpenShellSandboxBufferedCommandRequest,
+  ): Promise<OpenShellSandboxBufferedCommandCompletion>;
 }

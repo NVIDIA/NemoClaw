@@ -28,7 +28,7 @@ describe("policy channel remove/enable flows", () => {
     }) as never);
     logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
-    vi.spyOn(processRecovery, "executeSandboxExecCommand").mockReturnValue({
+    vi.spyOn(processRecovery, "executeSandboxExecCommand").mockResolvedValue({
       status: 0,
       stdout: "NEMOCLAW_CHANNEL_CLEAR_OK\n",
       stderr: "",
@@ -176,7 +176,7 @@ describe("policy channel remove/enable flows", () => {
     "clears every Hermes WhatsApp session path through $scenario",
     async ({ execStatus, usesSsh }) => {
       const { updateSandbox } = await arrangeHermesWhatsappRemoval();
-      vi.mocked(processRecovery.executeSandboxExecCommand).mockReturnValue({
+      vi.mocked(processRecovery.executeSandboxExecCommand).mockResolvedValue({
         status: execStatus,
         stdout: execStatus === 0 ? "NEMOCLAW_CHANNEL_CLEAR_OK\n" : "",
         stderr: execStatus === 0 ? "" : "exec unavailable",
@@ -210,7 +210,7 @@ describe("policy channel remove/enable flows", () => {
   it("keeps channel state unchanged when both Hermes cleanup transports fail", async () => {
     const { rebuildSandbox, removePreset, updateSandbox } = await arrangeHermesWhatsappRemoval();
     const runOpenshell = vi.spyOn(openshellRuntime, "runOpenshell");
-    vi.mocked(processRecovery.executeSandboxExecCommand).mockReturnValue({
+    vi.mocked(processRecovery.executeSandboxExecCommand).mockResolvedValue({
       status: 1,
       stdout: "",
       stderr: "exec unavailable",

@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
+import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
 import { collectDockerGpuPatchDiagnostics, type DockerGpuPatchResult } from "./docker-gpu-patch";
 import {
   type DockerGpuPatchFinalizeOutcome,
@@ -38,10 +39,43 @@ function exactDeferredCreateResult(): DockerGpuPatchResult {
   };
 }
 
+function commandExecutorThrough(
+  runOpenshell: (
+    args: string[],
+    opts?: Record<string, unknown>,
+  ) => {
+    status: number | null;
+    stdout?: string;
+    stderr?: string;
+  },
+): OpenShellSandboxBufferedCommandExecutor {
+  return {
+    runBuffered: vi.fn(async (request) => {
+      const result = runOpenshell(
+        ["sandbox", "exec", "-n", request.sandboxName, "--", ...request.command],
+        { ignoreError: true, suppressOutput: true },
+      );
+      return {
+        outcome:
+          result.status === null
+            ? {
+                kind: "failed" as const,
+                error: { kind: "invocation" as const, message: "failed" },
+              }
+            : { kind: "completed" as const, exitCode: result.status },
+        stdout: result.stdout ?? "",
+        stderr: result.stderr ?? "",
+      };
+    }),
+  };
+}
+
 function readyHandoffDeps() {
+  const runOpenshell = vi.fn(() => ({ status: 0 }));
   return {
     runCaptureOpenshell: vi.fn(() => "alpha  2026-08-23 10:00:02  Ready\n"),
-    runOpenshell: vi.fn(() => ({ status: 0 })),
+    runOpenshell,
+    commandExecutor: commandExecutorThrough(runOpenshell),
     sleep: vi.fn(),
   };
 }
@@ -79,13 +113,13 @@ function collectRollbackDiagnostics(
 }
 
 describe("finalizeDockerGpuPatchBackup", () => {
-  it("retains both containers when final acknowledgement probes are unavailable (#9531)", () => {
+  it("retains both containers when final acknowledgement probes are unavailable (#9531)", async () => {
     const dockerStop = vi.fn(() => ({ status: 0 }));
     const dockerRm = vi.fn(() => ({ status: 0 }));
     const dockerStart = vi.fn(() => ({ status: 0 }));
 
     expect(
-      finalizeDockerGpuPatchBackup(
+      await finalizeDockerGpuPatchBackup(
         {
           result: exactDeferredCreateResult(),
           supervisorReady: true,
@@ -107,7 +141,7 @@ describe("finalizeDockerGpuPatchBackup", () => {
     expect(dockerStart).not.toHaveBeenCalled();
   });
 
-  it("uses authoritative OpenShell stop/start around the exact Docker commit (#9531)", () => {
+  it("uses authoritative OpenShell stop/start around the exact Docker commit (#9531)", async () => {
     const result = exactDeferredCreateResult();
     const events: string[] = [];
     const dockerStop = vi.fn(() => {
@@ -153,7 +187,7 @@ describe("finalizeDockerGpuPatchBackup", () => {
       return response.result;
     });
 
-    const outcome = finalizeDockerGpuPatchBackup(
+    const outcome = await finalizeDockerGpuPatchBackup(
       {
         result,
         supervisorReady: true,
@@ -167,6 +201,7 @@ describe("finalizeDockerGpuPatchBackup", () => {
         dockerStart,
         runCaptureOpenshell,
         runOpenshell,
+        commandExecutor: commandExecutorThrough(runOpenshell),
         sleep: vi.fn(),
       },
     );
@@ -220,11 +255,15 @@ describe("finalizeDockerGpuPatchBackup", () => {
     );
   });
 
-  it("fails immediately when OpenShell reports Deleting after the final start (#9531)", () => {
+  it("fails immediately when OpenShell reports Deleting after the final start (#9531)", async () => {
     const result = exactDeferredCreateResult();
     const events: string[] = [];
     const sleep = vi.fn();
-    const outcome = finalizeDockerGpuPatchBackup(
+    const runOpenshell = vi.fn((args: string[]) => {
+      events.push(args[1] === "stop" ? "stop through OpenShell" : "start through OpenShell");
+      return { status: 0 };
+    });
+    const outcome = await finalizeDockerGpuPatchBackup(
       {
         result,
         supervisorReady: true,
@@ -245,10 +284,8 @@ describe("finalizeDockerGpuPatchBackup", () => {
           events.push("observe deleting");
           return "alpha  2026-08-23 10:00:02  Deleting\n";
         }),
-        runOpenshell: vi.fn((args: string[]) => {
-          events.push(args[1] === "stop" ? "stop through OpenShell" : "start through OpenShell");
-          return { status: 0 };
-        }),
+        runOpenshell,
+        commandExecutor: commandExecutorThrough(runOpenshell),
         dockerRun: vi.fn(() => ({ status: 0, stdout: `${result.newContainerId}\n` })),
         sleep,
       },
@@ -273,7 +310,7 @@ describe("finalizeDockerGpuPatchBackup", () => {
     expect(sleep).not.toHaveBeenCalled();
   });
 
-  it("scopes the final sole-container proof to the replacement gateway namespace", () => {
+  it("scopes the final sole-container proof to the replacement gateway namespace", async () => {
     const result = exactDeferredCreateResult();
     const dockerRun = vi.fn((args: readonly string[]) =>
       args[0] === "inspect"
@@ -283,7 +320,8 @@ describe("finalizeDockerGpuPatchBackup", () => {
         : { status: 0, stdout: `${result.newContainerId}\n` },
     );
 
-    const outcome = finalizeDockerGpuPatchBackup(
+    const runOpenshell = vi.fn(() => ({ status: 0 }));
+    const outcome = await finalizeDockerGpuPatchBackup(
       {
         result,
         supervisorReady: true,
@@ -296,7 +334,8 @@ describe("finalizeDockerGpuPatchBackup", () => {
         dockerStart: vi.fn(() => ({ status: 0 })),
         dockerRun,
         runCaptureOpenshell: vi.fn(() => "restored-name  2026-08-23 01:40:37  Ready\n"),
-        runOpenshell: vi.fn(() => ({ status: 0 })),
+        runOpenshell,
+        commandExecutor: commandExecutorThrough(runOpenshell),
         sleep: vi.fn(),
       },
     );
@@ -337,7 +376,7 @@ describe("finalizeDockerGpuPatchBackup", () => {
     ]);
   });
 
-  it("rejects multiple same-name containers within the replacement gateway namespace", () => {
+  it("rejects multiple same-name containers within the replacement gateway namespace", async () => {
     const result = exactDeferredCreateResult();
     const dockerRun = vi.fn((args: readonly string[]) =>
       args[0] === "inspect"
@@ -349,7 +388,8 @@ describe("finalizeDockerGpuPatchBackup", () => {
           : { status: 0, stdout: `${result.newContainerId}\n` },
     );
 
-    const outcome = finalizeDockerGpuPatchBackup(
+    const runOpenshell = vi.fn(() => ({ status: 0 }));
+    const outcome = await finalizeDockerGpuPatchBackup(
       {
         result,
         supervisorReady: true,
@@ -362,7 +402,8 @@ describe("finalizeDockerGpuPatchBackup", () => {
         dockerStart: vi.fn(() => ({ status: 0 })),
         dockerRun,
         runCaptureOpenshell: vi.fn(() => "alpha  2026-08-23 01:40:37  Ready\n"),
-        runOpenshell: vi.fn(() => ({ status: 0 })),
+        runOpenshell,
+        commandExecutor: commandExecutorThrough(runOpenshell),
         sleep: vi.fn(),
       },
     );
@@ -375,7 +416,7 @@ describe("finalizeDockerGpuPatchBackup", () => {
     });
   });
 
-  it("does not require name absence between authoritative stop and start (#10153)", () => {
+  it("does not require name absence between authoritative stop and start (#10153)", async () => {
     const result = exactDeferredCreateResult();
     const events: string[] = [];
     const dockerRunResults = {
@@ -398,7 +439,7 @@ describe("finalizeDockerGpuPatchBackup", () => {
       return { status: 0 };
     });
 
-    const outcome = finalizeDockerGpuPatchBackup(
+    const outcome = await finalizeDockerGpuPatchBackup(
       {
         result,
         supervisorReady: true,
@@ -415,6 +456,7 @@ describe("finalizeDockerGpuPatchBackup", () => {
         dockerStart,
         runCaptureOpenshell,
         runOpenshell,
+        commandExecutor: commandExecutorThrough(runOpenshell),
         sleep: vi.fn(),
       },
     );
@@ -435,14 +477,15 @@ describe("finalizeDockerGpuPatchBackup", () => {
     expect(runOpenshell).not.toHaveBeenCalledWith(["sandbox", "list"], expect.any(Object));
   });
 
-  it("does not mutate containers when authoritative OpenShell stop fails (#10153)", () => {
+  it("does not mutate containers when authoritative OpenShell stop fails (#10153)", async () => {
     const result = exactDeferredCreateResult();
     const dockerStop = vi.fn(() => ({ status: 0 }));
     const dockerRm = vi.fn(() => ({ status: 0 }));
     const dockerStart = vi.fn(() => ({ status: 0 }));
     const runCaptureOpenshell = vi.fn(() => "alpha  2026-08-23 01:40:35  Ready\n");
 
-    const outcome = finalizeDockerGpuPatchBackup(
+    const runOpenshell = vi.fn(() => ({ status: 1 }));
+    const outcome = await finalizeDockerGpuPatchBackup(
       {
         result,
         supervisorReady: true,
@@ -455,7 +498,8 @@ describe("finalizeDockerGpuPatchBackup", () => {
         dockerRun: vi.fn(),
         dockerStart,
         runCaptureOpenshell,
-        runOpenshell: vi.fn(() => ({ status: 1 })),
+        runOpenshell,
+        commandExecutor: commandExecutorThrough(runOpenshell),
         sleep: vi.fn(),
       },
     );
@@ -471,12 +515,12 @@ describe("finalizeDockerGpuPatchBackup", () => {
     expect(runCaptureOpenshell).not.toHaveBeenCalled();
   });
 
-  it("rolls back to the backup container when supervisor reconnect failed", () => {
+  it("rolls back to the backup container when supervisor reconnect failed", async () => {
     const dockerStop = vi.fn(() => ({ status: 0 }));
     const dockerRm = vi.fn((_name: string) => ({ status: 0 }));
     const dockerRename = vi.fn((_old: string, _next: string) => ({ status: 0 }));
     const dockerStart = vi.fn(() => ({ status: 0 }));
-    const outcome = finalizeDockerGpuPatchBackup(
+    const outcome = await finalizeDockerGpuPatchBackup(
       { result: deferredCreateResult(), supervisorReady: false },
       { dockerStop, dockerRm, dockerRename, dockerStart },
     );
@@ -505,7 +549,7 @@ describe("finalizeDockerGpuPatchBackup", () => {
     ).toBe(false);
   });
 
-  it("reports rolledBack=false when restoring the backup fails", () => {
+  it("reports rolledBack=false when restoring the backup fails", async () => {
     const newContainerId = "e".repeat(64);
     const dockerStop = vi.fn(() => ({ status: 0 }));
     const dockerRm = vi.fn((_name: string) => ({ status: 0 }));
@@ -514,7 +558,7 @@ describe("finalizeDockerGpuPatchBackup", () => {
       stderr: "no such container",
     }));
     const dockerStart = vi.fn(() => ({ status: 0 }));
-    const outcome = finalizeDockerGpuPatchBackup(
+    const outcome = await finalizeDockerGpuPatchBackup(
       {
         result: { ...deferredCreateResult(), newContainerId },
         supervisorReady: false,
@@ -537,8 +581,8 @@ describe("finalizeDockerGpuPatchBackup", () => {
     expect(diagnostics.summary).not.toContain("docker rm -f");
   });
 
-  it("does not report rollback success when restarting the backup has no exit status", () => {
-    const outcome = finalizeDockerGpuPatchBackup(
+  it("does not report rollback success when restarting the backup has no exit status", async () => {
+    const outcome = await finalizeDockerGpuPatchBackup(
       { result: deferredCreateResult(), supervisorReady: false },
       {
         dockerStop: vi.fn(() => ({ status: 0 })),
@@ -557,10 +601,10 @@ describe("finalizeDockerGpuPatchBackup", () => {
     });
   });
 
-  it("is a no-op when the backup was already removed by the patch helper", () => {
+  it("is a no-op when the backup was already removed by the patch helper", async () => {
     const dockerRm = vi.fn((_name: string) => ({ status: 0 }));
     const result = { ...deferredCreateResult(), backupRemoved: true };
-    const outcome = finalizeDockerGpuPatchBackup(
+    const outcome = await finalizeDockerGpuPatchBackup(
       {
         result,
         supervisorReady: true,
@@ -573,14 +617,14 @@ describe("finalizeDockerGpuPatchBackup", () => {
     expect(dockerRm).not.toHaveBeenCalled();
   });
 
-  it("reports backupRemoved=false when supervisor reconnect succeeded but docker rm of the backup failed", () => {
+  it("reports backupRemoved=false when supervisor reconnect succeeded but docker rm of the backup failed", async () => {
     const dockerStop = vi.fn(() => ({ status: 0 }));
     const dockerRm = vi.fn((_name: string) => ({
       status: 1,
       stderr: "Error response from daemon: container is in use",
     }));
     const dockerStart = vi.fn(() => ({ status: 0 }));
-    const outcome = finalizeDockerGpuPatchBackup(
+    const outcome = await finalizeDockerGpuPatchBackup(
       {
         result: deferredCreateResult(),
         supervisorReady: true,
@@ -605,11 +649,11 @@ describe("finalizeDockerGpuPatchBackup", () => {
     expect(dockerStart).not.toHaveBeenCalled();
   });
 
-  it("fails closed when backup removal has no exit status", () => {
+  it("fails closed when backup removal has no exit status", async () => {
     const dockerStop = vi.fn(() => ({ status: 0 }));
     const dockerRm = vi.fn((_name: string) => ({ status: null, stderr: "timed out" }));
     const dockerStart = vi.fn(() => ({ status: 0 }));
-    const outcome = finalizeDockerGpuPatchBackup(
+    const outcome = await finalizeDockerGpuPatchBackup(
       {
         result: deferredCreateResult(),
         supervisorReady: true,
@@ -630,12 +674,12 @@ describe("finalizeDockerGpuPatchBackup", () => {
     expect(dockerStart).not.toHaveBeenCalled();
   });
 
-  it("retains the backup when the replacement cannot be stopped for the final handoff", () => {
+  it("retains the backup when the replacement cannot be stopped for the final handoff", async () => {
     const dockerStop = vi.fn(() => ({ status: 1 }));
     const dockerRm = vi.fn(() => ({ status: 0 }));
     const dockerStart = vi.fn(() => ({ status: 0 }));
 
-    const outcome = finalizeDockerGpuPatchBackup(
+    const outcome = await finalizeDockerGpuPatchBackup(
       {
         result: deferredCreateResult(),
         supervisorReady: true,
@@ -656,12 +700,12 @@ describe("finalizeDockerGpuPatchBackup", () => {
     expect(dockerStart).not.toHaveBeenCalled();
   });
 
-  it("reports a failed replacement restart after the backup is removed", () => {
+  it("reports a failed replacement restart after the backup is removed", async () => {
     const runOpenshell = vi
       .fn()
       .mockReturnValueOnce({ status: 0 })
       .mockReturnValueOnce({ status: 1 });
-    const outcome = finalizeDockerGpuPatchBackup(
+    const outcome = await finalizeDockerGpuPatchBackup(
       {
         result: deferredCreateResult(),
         supervisorReady: true,
@@ -674,6 +718,7 @@ describe("finalizeDockerGpuPatchBackup", () => {
         dockerStart: vi.fn(() => ({ status: 1 })),
         runCaptureOpenshell: vi.fn(() => "alpha  2026-08-23 10:00:02  Ready\n"),
         runOpenshell,
+        commandExecutor: commandExecutorThrough(runOpenshell),
         sleep: vi.fn(),
       },
     );
@@ -699,9 +744,9 @@ describe("finalizeDockerGpuPatchBackup", () => {
     );
   });
 
-  it("records a remaining exact-ID replacement when removal fails (#7996)", () => {
+  it("records a remaining exact-ID replacement when removal fails (#7996)", async () => {
     const newContainerId = "a".repeat(64);
-    const outcome = finalizeDockerGpuPatchBackup(
+    const outcome = await finalizeDockerGpuPatchBackup(
       {
         result: { ...deferredCreateResult(), newContainerId },
         supervisorReady: false,
@@ -724,9 +769,9 @@ describe("finalizeDockerGpuPatchBackup", () => {
     });
   });
 
-  it("records confirmed absence when exact-ID removal reports failure but listing is empty (#7996)", () => {
+  it("records confirmed absence when exact-ID removal reports failure but listing is empty (#7996)", async () => {
     const newContainerId = "b".repeat(64);
-    const outcome = finalizeDockerGpuPatchBackup(
+    const outcome = await finalizeDockerGpuPatchBackup(
       {
         result: { ...deferredCreateResult(), newContainerId },
         supervisorReady: false,
@@ -749,14 +794,14 @@ describe("finalizeDockerGpuPatchBackup", () => {
     });
   });
 
-  it("retries a failed replacement observation before confirming absence (#7996)", () => {
+  it("retries a failed replacement observation before confirming absence (#7996)", async () => {
     const newContainerId = "c".repeat(64);
     const dockerRun = vi
       .fn()
       .mockReturnValueOnce({ status: 1, stderr: "daemon unavailable" })
       .mockReturnValueOnce({ status: 0, stdout: "" });
     const sleep = vi.fn();
-    const outcome = finalizeDockerGpuPatchBackup(
+    const outcome = await finalizeDockerGpuPatchBackup(
       {
         result: { ...deferredCreateResult(), newContainerId },
         supervisorReady: false,
@@ -777,11 +822,11 @@ describe("finalizeDockerGpuPatchBackup", () => {
     expect(sleep).toHaveBeenCalledWith(0.5);
   });
 
-  it("keeps replacement presence unknown after repeated daemon errors (#7996)", () => {
+  it("keeps replacement presence unknown after repeated daemon errors (#7996)", async () => {
     const newContainerId = "d".repeat(64);
     const dockerRun = vi.fn(() => ({ status: 1, stderr: "daemon unavailable" }));
     const sleep = vi.fn();
-    const outcome = finalizeDockerGpuPatchBackup(
+    const outcome = await finalizeDockerGpuPatchBackup(
       {
         result: { ...deferredCreateResult(), newContainerId },
         supervisorReady: false,
@@ -809,9 +854,9 @@ describe("finalizeDockerGpuPatchBackup", () => {
     expect(diagnostics.summary).not.toContain("openshell sandbox delete");
   });
 
-  it("stops rollback before start when rename has no exit status", () => {
+  it("stops rollback before start when rename has no exit status", async () => {
     const dockerStart = vi.fn(() => ({ status: 0 }));
-    const outcome = finalizeDockerGpuPatchBackup(
+    const outcome = await finalizeDockerGpuPatchBackup(
       { result: deferredCreateResult(), supervisorReady: false },
       {
         dockerStop: vi.fn(() => ({ status: 0 })),
@@ -830,8 +875,8 @@ describe("finalizeDockerGpuPatchBackup", () => {
     expect(dockerStart).not.toHaveBeenCalled();
   });
 
-  it("fails closed when rollback start has no exit status", () => {
-    const outcome = finalizeDockerGpuPatchBackup(
+  it("fails closed when rollback start has no exit status", async () => {
+    const outcome = await finalizeDockerGpuPatchBackup(
       { result: deferredCreateResult(), supervisorReady: false },
       {
         dockerStop: vi.fn(() => ({ status: 0 })),

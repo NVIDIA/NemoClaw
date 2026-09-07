@@ -8,13 +8,13 @@ import { redactFullWithUrls } from "../../security/redact";
 import { hermesMcpReconciliationRemediationLines } from "./mcp-bridge-hermes-reconciliation";
 import { inspectHermesMcpReconciliationRefusal } from "./mcp-bridge-recovery";
 import { assertHermesPortableCommandUnavailable } from "../../onboard/experimental/portable-agent-lifecycle";
-import { withMcpLifecycleLockSync } from "../../state/mcp-lifecycle-lock-acquisition";
+import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock-acquisition";
 
-export function withUnsupportedHermesPortableGatewayRestartFence<T>(
+export async function withUnsupportedHermesPortableGatewayRestartFence<T>(
   sandboxName: string,
-  operation: () => T,
-): T {
-  return withMcpLifecycleLockSync(sandboxName, () => {
+  operation: () => Promise<T>,
+): Promise<T> {
+  return withMcpLifecycleLock(sandboxName, async () => {
     assertHermesPortableCommandUnavailable(sandboxName, "sandbox:gateway:restart");
     return operation();
   });
@@ -106,7 +106,7 @@ type SandboxExec = (
   sandboxName: string,
   command: string,
   timeout?: number,
-) => GatewayRestartCommandResult | null;
+) => Promise<GatewayRestartCommandResult | null>;
 
 const GATEWAY_RESTART_SUPPORTED_AGENTS = ["openclaw", "hermes"] as const;
 
@@ -135,7 +135,7 @@ export type GatewayRestartDeps = {
       timeoutSeconds?: number;
       initialManagedHealthPassed?: boolean;
     },
-  ) => boolean;
+  ) => Promise<boolean>;
   ensureSandboxPortForward: (sandboxName: string) => boolean;
   ensureHermesDashboardPortForwardIfEnabled: (sandboxName: string) => boolean | null;
   recoverMessagingHostForward: (sandboxName: string, options: { quiet: boolean }) => boolean | null;
@@ -146,8 +146,8 @@ export type GatewayRestartDeps = {
   ) => boolean | null;
   printGatewayWedgeDiagnostics: (
     sandboxName: string,
-    exec: (sandboxName: string, command: string) => GatewayRestartCommandResult | null,
-  ) => boolean;
+    exec: (sandboxName: string, command: string) => Promise<GatewayRestartCommandResult | null>,
+  ) => Promise<boolean>;
   inspectHermesMcpReconciliationRefusal: typeof inspectHermesMcpReconciliationRefusal;
 };
 
@@ -223,7 +223,10 @@ export function classifyGatewayRestartFailure(result: GatewayRestartCommandResul
       layer: "container identity changed",
       detail:
         sanitizeGatewayRestartFailureDetail(
-          outputLines.filter((line) => !isIdentityChangedMarkerLine(line)).join("\n").trim(),
+          outputLines
+            .filter((line) => !isIdentityChangedMarkerLine(line))
+            .join("\n")
+            .trim(),
         ) || "the selected container identity changed",
     };
   }
@@ -325,11 +328,11 @@ export function gatewayIntegrityRepairLines(
 const HERMES_GATEWAY_LOG_TAIL_LINES = 12;
 const HERMES_GATEWAY_LOG_TAIL_COMMAND = `tail -n ${String(HERMES_GATEWAY_LOG_TAIL_LINES)} /tmp/gateway.log 2>/dev/null || true`;
 
-function hermesGatewayLogTail(
+async function hermesGatewayLogTail(
   sandboxName: string,
-  exec: (sandboxName: string, command: string) => GatewayRestartCommandResult | null,
-): string[] {
-  const result = exec(sandboxName, HERMES_GATEWAY_LOG_TAIL_COMMAND);
+  exec: (sandboxName: string, command: string) => Promise<GatewayRestartCommandResult | null>,
+): Promise<string[]> {
+  const result = await exec(sandboxName, HERMES_GATEWAY_LOG_TAIL_COMMAND);
   if (!result || result.status !== 0) return [];
   return sanitizeGatewayRestartFailureDetail(result.stdout)
     .split(/\r?\n/)
@@ -393,7 +396,7 @@ function failedAuxiliaryRecoveryDetail(results: RestartAuxiliaryRecoveryResult[]
   return `gateway health passed but ${failed.join(", ")} could not be re-established`;
 }
 
-export function restartSandboxGatewayWithDeps(
+export async function restartSandboxGatewayWithDeps(
   sandboxName: string,
   {
     quiet = false,
@@ -402,7 +405,7 @@ export function restartSandboxGatewayWithDeps(
     quiet?: boolean;
     deps: GatewayRestartDeps;
   },
-): GatewayRestartResult {
+): Promise<GatewayRestartResult> {
   const agent = deps.getSessionAgent(sandboxName);
   let persistedAgent: string | null;
   try {
@@ -465,21 +468,21 @@ export function restartSandboxGatewayWithDeps(
     const failure = classifyGatewayRestartFailure(restartResult);
     const gatewayLogTail =
       agentName === "hermes"
-        ? hermesGatewayLogTail(sandboxName, deps.executeSandboxExecCommand)
+        ? await hermesGatewayLogTail(sandboxName, deps.executeSandboxExecCommand)
         : [];
     printGatewayRestartFailure(sandboxName, failure.layer, failure.detail, gatewayLogTail);
     return { ok: false, failureLayer: failure.layer, detail: failure.detail };
   }
 
   if (
-    !deps.waitForRecoveredSandboxGateway(sandboxName, {
+    !(await deps.waitForRecoveredSandboxGateway(sandboxName, {
       quiet,
       initialManagedHealthPassed: true,
-    })
+    }))
   ) {
     const detail = "gateway process restarted but health did not pass before timeout";
     printGatewayRestartFailure(sandboxName, "health timeout", detail);
-    deps.printGatewayWedgeDiagnostics(sandboxName, deps.executeSandboxExecCommand);
+    await deps.printGatewayWedgeDiagnostics(sandboxName, deps.executeSandboxExecCommand);
     return { ok: false, failureLayer: "health timeout", detail };
   }
 

@@ -1825,11 +1825,11 @@ function stoppedWechatCleanupFailureGuidance(
  * OpenShell exec runs first, followed by SSH and the selected provider's stopped-state fallback.
  * Fixes #3998.
  */
-function clearSandboxChannelDurableState(
+async function clearSandboxChannelDurableState(
   sandboxName: string,
   channelName: string,
   options: { readonly allowAbsentStoppedState?: boolean } = {},
-): boolean {
+): Promise<boolean> {
   const agent = resolveAgentForSandbox(sandboxName);
   const paths = getSandboxChannelStatePaths(agent, channelName);
   if (!paths.every(isSafeChannelStatePath)) {
@@ -1843,7 +1843,7 @@ function clearSandboxChannelDurableState(
   const sentinelSeen = (result: { stdout?: string | null } | null): boolean =>
     !!result && typeof result.stdout === "string" && result.stdout.includes(CHANNEL_CLEAR_SENTINEL);
 
-  let result = executeSandboxExecCommand(sandboxName, cmd);
+  let result = await executeSandboxExecCommand(sandboxName, cmd);
   if (!sentinelSeen(result)) {
     result = executeSandboxCommand(sandboxName, cmd);
   }
@@ -1990,9 +1990,9 @@ async function removeSandboxChannelUnlocked(
   if (
     requiresStateCleanupBeforeTeardown &&
     (hasChannelResidue || recoverPhysicalWechatResidue) &&
-    !clearSandboxChannelDurableState(sandboxName, canonical, {
+    !(await clearSandboxChannelDurableState(sandboxName, canonical, {
       allowAbsentStoppedState: !hasChannelResidue,
-    })
+    }))
   ) {
     console.error(
       `  Refusing to proceed: '${canonical}' session state is still inside the sandbox.`,
@@ -2071,7 +2071,7 @@ async function removeSandboxChannelUnlocked(
   // revocation already prevents the bot from authenticating, so a
   // failure here is a warning, not a bail.
   if (!requiresStateCleanupBeforeTeardown) {
-    clearSandboxChannelDurableState(sandboxName, canonical);
+    await clearSandboxChannelDurableState(sandboxName, canonical);
   }
 
   const rebuilt = await promptAndRebuild(sandboxName, `remove '${canonical}'`);

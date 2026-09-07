@@ -3,13 +3,32 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import type { DockerContainerInspect } from "./docker-gpu-patch";
+import type { DockerContainerInspect, DockerGpuPatchResult } from "./docker-gpu-patch";
 import { recreateOpenShellDockerSandboxWithStartupCommand } from "./docker-startup-command-patch";
 
+type RecreateStartupCommandOptions = Parameters<
+  typeof recreateOpenShellDockerSandboxWithStartupCommand
+>[0];
+type RecreateStartupCommandDeps = Parameters<
+  typeof recreateOpenShellDockerSandboxWithStartupCommand
+>[1];
+
 function recreateStartupCommandForTest(
-  options: Parameters<typeof recreateOpenShellDockerSandboxWithStartupCommand>[0],
-  deps: Parameters<typeof recreateOpenShellDockerSandboxWithStartupCommand>[1] = {},
-): ReturnType<typeof recreateOpenShellDockerSandboxWithStartupCommand> {
+  options: RecreateStartupCommandOptions & { waitForSupervisor: false },
+  deps?: RecreateStartupCommandDeps,
+): DockerGpuPatchResult;
+function recreateStartupCommandForTest(
+  options: RecreateStartupCommandOptions & { waitForSupervisor?: true },
+  deps?: RecreateStartupCommandDeps,
+): Promise<DockerGpuPatchResult>;
+function recreateStartupCommandForTest(
+  options: RecreateStartupCommandOptions,
+  deps?: RecreateStartupCommandDeps,
+): DockerGpuPatchResult | Promise<DockerGpuPatchResult>;
+function recreateStartupCommandForTest(
+  options: RecreateStartupCommandOptions,
+  deps: RecreateStartupCommandDeps = {},
+): DockerGpuPatchResult | Promise<DockerGpuPatchResult> {
   return recreateOpenShellDockerSandboxWithStartupCommand(options, {
     detectSandboxFallbackDns: () => null,
     ...deps,
@@ -211,39 +230,39 @@ describe("Docker startup-command patch", () => {
     expect(dockerRunDetached).not.toHaveBeenCalled();
   });
 
-  it.each([
-    "different-container-id",
-    "",
-  ])("refuses to mutate when the pinned container identity is changed or empty", (expectedOldContainerId) => {
-    const dockerStop = vi.fn(() => ({ status: 0 }));
-    const dockerRename = vi.fn(() => ({ status: 0 }));
-    const dockerRunDetached = vi.fn(() => ({ status: 0, stdout: "new-container-id\n" }));
+  it.each(["different-container-id", ""])(
+    "refuses to mutate when the pinned container identity is changed or empty",
+    (expectedOldContainerId) => {
+      const dockerStop = vi.fn(() => ({ status: 0 }));
+      const dockerRename = vi.fn(() => ({ status: 0 }));
+      const dockerRunDetached = vi.fn(() => ({ status: 0, stdout: "new-container-id\n" }));
 
-    expect(() =>
-      recreateStartupCommandForTest(
-        {
-          sandboxName: "alpha",
-          openshellSandboxCommand: ["env", "nemoclaw-start"],
-          expectedOldContainerId,
-        },
-        {
-          dockerCapture: vi.fn((args: readonly string[]) =>
-            args[0] === "ps"
-              ? "old-container-id\n"
-              : args[0] === "inspect"
-                ? JSON.stringify([inspectFixture()])
-                : "",
-          ),
-          dockerRunDetached,
-          dockerRename,
-          dockerStop,
-        },
-      ),
-    ).toThrow("observed container differs from the pinned identity");
-    expect(dockerStop).not.toHaveBeenCalled();
-    expect(dockerRename).not.toHaveBeenCalled();
-    expect(dockerRunDetached).not.toHaveBeenCalled();
-  });
+      expect(() =>
+        recreateStartupCommandForTest(
+          {
+            sandboxName: "alpha",
+            openshellSandboxCommand: ["env", "nemoclaw-start"],
+            expectedOldContainerId,
+          },
+          {
+            dockerCapture: vi.fn((args: readonly string[]) =>
+              args[0] === "ps"
+                ? "old-container-id\n"
+                : args[0] === "inspect"
+                  ? JSON.stringify([inspectFixture()])
+                  : "",
+            ),
+            dockerRunDetached,
+            dockerRename,
+            dockerStop,
+          },
+        ),
+      ).toThrow("observed container differs from the pinned identity");
+      expect(dockerStop).not.toHaveBeenCalled();
+      expect(dockerRename).not.toHaveBeenCalled();
+      expect(dockerRunDetached).not.toHaveBeenCalled();
+    },
+  );
 
   it("does not rename or recreate when the original container cannot be stopped", () => {
     const dockerRename = vi.fn(() => ({ status: 0 }));

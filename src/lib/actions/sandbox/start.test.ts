@@ -67,7 +67,7 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
     Promise.resolve(),
   );
   const restoreStartupState = vi.fn<NonNullable<SandboxStartDeps["restoreStartupState"]>>(
-    () => SUCCESSFUL_RECOVERY,
+    async () => SUCCESSFUL_RECOVERY,
   );
   const waitForManagedGatewaySupervisor = vi.fn<
     NonNullable<SandboxStartDeps["waitForManagedGatewaySupervisor"]>
@@ -118,7 +118,7 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
 describe("startSandbox", () => {
   it("waits for OpenShell readiness before recovering sandbox processes (#8978)", async () => {
     const waitForSandboxReady = vi.fn();
-    const restoreProcesses = vi.fn(() => SUCCESSFUL_RECOVERY);
+    const restoreProcesses = vi.fn(async () => SUCCESSFUL_RECOVERY);
 
     await restoreStoppedSandboxStartupState("my-sandbox", {
       waitForSandboxReady,
@@ -133,7 +133,7 @@ describe("startSandbox", () => {
 
   it("waits for OpenShell readiness before recovering Hermes sandbox processes (#8978)", async () => {
     const waitForSandboxReady = vi.fn();
-    const restoreProcesses = vi.fn(() => SUCCESSFUL_RECOVERY);
+    const restoreProcesses = vi.fn(async () => SUCCESSFUL_RECOVERY);
 
     await restoreStoppedSandboxStartupState("my-sandbox", {
       waitForSandboxReady,
@@ -147,7 +147,7 @@ describe("startSandbox", () => {
 
   it("starts the container, then waits for readiness, then recovers, then probes the gateway (#8978)", async () => {
     const waitForSandboxReady = vi.fn();
-    const restoreProcesses = vi.fn(() => SUCCESSFUL_RECOVERY);
+    const restoreProcesses = vi.fn(async () => SUCCESSFUL_RECOVERY);
     const h = harness({
       restoreStartupState: (name: string) =>
         restoreStoppedSandboxStartupState(name, {
@@ -197,7 +197,7 @@ describe("startSandbox", () => {
       const observer: OpenShellSandboxObserver = {
         listSandboxes,
       };
-      const restoreProcesses = vi.fn(() => SUCCESSFUL_RECOVERY);
+      const restoreProcesses = vi.fn(async () => SUCCESSFUL_RECOVERY);
       const h = harness({
         allowDockerRuntimeInspection: false,
         observer,
@@ -249,7 +249,7 @@ describe("startSandbox", () => {
     testTimeoutOptions(30_000),
     async () => {
       const h = harness();
-      h.restoreStartupState.mockReturnValueOnce(FAILED_RECOVERY);
+      h.restoreStartupState.mockResolvedValueOnce(FAILED_RECOVERY);
 
       await expect(startSandbox("my-sandbox", h.deps)).rejects.toThrow("gateway did not recover");
       expect(h.verifyGateway).not.toHaveBeenCalled();
@@ -268,12 +268,12 @@ describe("startSandbox", () => {
   it("waits for a transient managed supervisor before repeating full startup recovery (#8726)", async () => {
     const h = harness();
     h.restoreStartupState
-      .mockReturnValueOnce({
+      .mockResolvedValueOnce({
         ...FAILED_RECOVERY,
         recoveryFailureLayer: "supervisor not running",
         recoveryFailureDetail: "SUPERVISOR_NOT_RUNNING",
       })
-      .mockReturnValueOnce(SUCCESSFUL_RECOVERY);
+      .mockResolvedValueOnce(SUCCESSFUL_RECOVERY);
     h.waitForManagedGatewaySupervisor.mockReturnValue(true);
 
     const result = await startSandbox("my-sandbox", h.deps);
@@ -296,7 +296,7 @@ describe("startSandbox", () => {
 
   it("preserves the first recovery failure when the managed supervisor remains absent (#8726)", async () => {
     const h = harness();
-    h.restoreStartupState.mockReturnValue({
+    h.restoreStartupState.mockResolvedValue({
       ...FAILED_RECOVERY,
       recoveryFailureLayer: "supervisor not running",
       recoveryFailureDetail: "SUPERVISOR_NOT_RUNNING",
@@ -312,7 +312,7 @@ describe("startSandbox", () => {
 
   it("preserves the first recovery failure when the managed supervisor wait throws (#8726)", async () => {
     const h = harness();
-    h.restoreStartupState.mockReturnValue({
+    h.restoreStartupState.mockResolvedValue({
       ...FAILED_RECOVERY,
       recoveryFailureLayer: "supervisor not running",
       recoveryFailureDetail: "SUPERVISOR_NOT_RUNNING",
@@ -336,7 +336,7 @@ describe("startSandbox", () => {
       recoveryFailureLayer: "supervisor not running" as const,
       recoveryFailureDetail: "SUPERVISOR_NOT_RUNNING",
     };
-    h.restoreStartupState.mockReturnValue(missingSupervisor);
+    h.restoreStartupState.mockResolvedValue(missingSupervisor);
     h.waitForManagedGatewaySupervisor.mockReturnValue(true);
 
     await expect(startSandbox("my-sandbox", h.deps)).rejects.toThrow(
@@ -362,7 +362,7 @@ describe("startSandbox", () => {
     ],
   ] as const)("does not wait after a %s (#8726)", async (_label, layer, detail) => {
     const h = harness();
-    h.restoreStartupState.mockReturnValue({
+    h.restoreStartupState.mockResolvedValue({
       ...FAILED_RECOVERY,
       recoveryFailureLayer: layer,
       recoveryFailureDetail: detail,
@@ -376,7 +376,7 @@ describe("startSandbox", () => {
 
   it("keeps successful legacy supervisor relaunch recovery free of a settling wait (#8726)", async () => {
     const h = harness();
-    h.restoreStartupState.mockReturnValue({
+    h.restoreStartupState.mockResolvedValue({
       ...SUCCESSFUL_RECOVERY,
       wasRunning: false,
       recovered: true,
@@ -416,7 +416,7 @@ describe("startSandbox", () => {
     async (agent, _layer, recovery, expected) => {
       const h = harness();
       h.getSandbox.mockReturnValue(sandbox({ agent }));
-      h.restoreStartupState.mockReturnValue(recovery);
+      h.restoreStartupState.mockResolvedValue(recovery);
 
       const failure = await startSandbox("my-sandbox", h.deps).catch((error) => String(error));
       expect(failure).toMatch(expected);
@@ -428,7 +428,7 @@ describe("startSandbox", () => {
 
   it("does not claim preservation when startup recovery reports a failed rollback (#9364)", async () => {
     const h = harness();
-    h.restoreStartupState.mockReturnValue({
+    h.restoreStartupState.mockResolvedValue({
       ...FAILED_RECOVERY,
       recoveryFailureDetail:
         "NemoClaw could not confirm rollback to the previous sandbox container. Inspect Docker state before retrying. Recovery failure before rollback: the sandbox did not become ready in OpenShell",
@@ -477,7 +477,7 @@ describe("startSandbox", () => {
   });
 
   it("keeps active Hermes start out of every Docker path (#9203)", async () => {
-    const probeInferenceInvocation = vi.fn(() => ({ ok: true }) as const);
+    const probeInferenceInvocation = vi.fn(async () => ({ ok: true }) as const);
     const h = harness({ probeInferenceInvocation });
     h.getSandbox.mockReturnValue(
       sandbox({
@@ -687,7 +687,7 @@ describe("startSandbox", () => {
   });
 
   it("pins a Deep Agents Code start probe to its recorded gateway and managed launcher identity (#10080)", async () => {
-    const probeInferenceInvocation = vi.fn(() => ({ ok: true }) as const);
+    const probeInferenceInvocation = vi.fn(async () => ({ ok: true }) as const);
     const h = harness({ probeInferenceInvocation });
     h.getSandbox.mockReturnValue(
       sandbox({
@@ -721,7 +721,7 @@ describe("startSandbox", () => {
   });
 
   it("pins a Hermes start probe to its recorded OpenShell gateway (#10302)", async () => {
-    const probeInferenceInvocation = vi.fn(() => ({ ok: true }) as const);
+    const probeInferenceInvocation = vi.fn(async () => ({ ok: true }) as const);
     const h = harness({ probeInferenceInvocation });
     h.getSandbox.mockReturnValue(
       sandbox({
@@ -755,7 +755,7 @@ describe("startSandbox", () => {
 
   it("exits nonzero when the started gateway will not serve an agent request", async () => {
     const probeInferenceInvocation = vi.fn(
-      () =>
+      async () =>
         ({
           ok: false,
           detail: "sandbox inference invocation probe returned HTTP 401",
@@ -776,7 +776,7 @@ describe("startSandbox", () => {
   });
 
   it("stays unattested instead of failing when the sandbox records no route", async () => {
-    const probeInferenceInvocation = vi.fn(() => ({ ok: true }) as const);
+    const probeInferenceInvocation = vi.fn(async () => ({ ok: true }) as const);
     const h = harness({ probeInferenceInvocation });
 
     const result = await startSandbox("my-sandbox", h.deps);

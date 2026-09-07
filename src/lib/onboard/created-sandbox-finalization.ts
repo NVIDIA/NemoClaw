@@ -5,6 +5,7 @@ import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 import { restoreRecreatedSandboxStateWithManagedAuthority } from "../actions/sandbox/snapshot/restore-authority";
+import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
 import * as buildContext from "../build-context";
 import { resolveSandboxImageTagFromCreateOutput } from "../domain/sandbox/image-tag";
 import type {
@@ -82,7 +83,7 @@ export type CreatedSandboxFinalizationDeps = {
     model: string,
     preferredInferenceApi: string | null,
     endpointUrl: string | null,
-  ): SelectionDrift;
+  ): Promise<SelectionDrift>;
   prepareRegistration?(
     openclawImagePluginInstalls?: readonly OpenClawImagePluginInstall[],
   ): SandboxEntry;
@@ -688,6 +689,7 @@ export function createOnboardCreatedSandboxCompletion(
   workloadRuntime: WorkloadResolutionInput["runtime"],
   workload: WorkloadResolutionInput["workload"],
   note: (message: string) => void,
+  commandExecutor: OpenShellSandboxBufferedCommandExecutor,
 ): CreatedSandboxCompletionActions {
   const { provider, model, preferredInferenceApi, endpointUrl } = inference;
   const { createIntent, resolvedCreateIntent } = createContext;
@@ -788,7 +790,7 @@ export function createOnboardCreatedSandboxCompletion(
       restoreRecreatedSandboxState: (name, backupPath, restoreOptions, resolveTarget) =>
         restoreSelectedOnboardSnapshot(name, backupPath, restoreOptions, resolveTarget),
       getDcodeSelectionDrift: createDcodeSelectionDriftReader(
-        runCaptureOpenshell,
+        commandExecutor,
         () => gateway.gatewayName,
       ),
       note,
@@ -800,10 +802,10 @@ export function createOnboardCreatedSandboxCompletion(
 }
 
 /** Restore state and validate the live managed DCode route before registry publication. */
-export function finalizeCreatedSandbox(
+export async function finalizeCreatedSandbox(
   options: CreatedSandboxFinalizationOptions,
   deps: CreatedSandboxFinalizationDeps,
-): SandboxEntry | void {
+): Promise<SandboxEntry | void> {
   const reportUnregisteredSandboxRecovery = (): void => {
     deps.error(
       `  NemoClaw left unregistered sandbox '${options.sandboxName}' in place because OpenShell can delete it only by mutable name.`,
@@ -919,7 +921,7 @@ export function finalizeCreatedSandbox(
   }
 
   if (options.validateManagedDcode) {
-    const finalSelection = deps.getDcodeSelectionDrift(
+    const finalSelection = await deps.getDcodeSelectionDrift(
       options.sandboxName,
       options.provider,
       options.model,

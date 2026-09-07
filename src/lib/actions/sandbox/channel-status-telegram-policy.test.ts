@@ -4,11 +4,23 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   entry,
-  makeDeps,
+  makeDeps as makeSyncDeps,
   reportSignals,
   showSandboxChannelStatus,
   withTelegramProbe,
 } from "./channel-status.test-helpers";
+
+function makeDeps(options: Parameters<typeof makeSyncDeps>[0]) {
+  const result = makeSyncDeps(options);
+  const execSandbox = result.deps.execSandbox;
+  return {
+    ...result,
+    deps: {
+      ...result.deps,
+      execSandbox: async (...args: Parameters<typeof execSandbox>) => execSandbox(...args),
+    },
+  };
+}
 
 describe("showSandboxChannelStatus Telegram group policy", () => {
   it("uses manifest defaults when no stored config value exists", async () => {
@@ -114,6 +126,28 @@ describe("showSandboxChannelStatus Telegram group policy", () => {
 });
 
 describe("showSandboxChannelStatus Telegram health exit propagation", () => {
+  it("classifies a rejected sandbox exec as probe_failed", async () => {
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code})`);
+    }) as never);
+    const { deps, out_lines } = makeDeps({
+      exec: () => ({ status: 0, stdout: "{}", stderr: "" }),
+      sandbox: entry(["telegram"]),
+      appliedPresets: ["telegram"],
+      gatewayPresets: ["telegram"],
+    });
+    deps.execSandbox = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("sandbox exec unavailable"))
+      .mockResolvedValue({ status: 0, stdout: "{}", stderr: "" });
+
+    await expect(showSandboxChannelStatus("alpha", { deps, channel: "telegram" })).rejects.toThrow(
+      "process.exit(1)",
+    );
+    exitSpy.mockRestore();
+    expect(out_lines.join("\n")).toMatch(/Verdict:.*probe_failed/);
+  });
+
   it("exits non-zero in text mode for an unhealthy (unreachable) telegram probe (#6743)", async () => {
     // The whole point of the probe is a non-zero exit on an unhealthy channel so
     // automation cannot treat a failed health check as success. Drive an
