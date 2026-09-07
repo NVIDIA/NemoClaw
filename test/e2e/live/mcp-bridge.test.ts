@@ -569,6 +569,7 @@ async function assertDeepAgentsConfig(
 }
 
 async function assertRealAdapterToolCall(
+  host: HostCliClient,
   sandbox: SandboxClient,
   fakeMcp: Awaited<ReturnType<typeof startFakeMcpHttpsServer>>,
   options: {
@@ -645,7 +646,7 @@ async function assertRealAdapterToolCall(
   });
   expect(calls.at(-1)?.auth).not.toContain("openshell:resolve:env");
   const denied = options.deniedTool
-    ? await runDeniedMcpToolCall({
+      ? await runDeniedMcpToolCall(host, {
         ...options,
         artifactName: `${options.artifactName}-denied-${options.deniedTool}`,
         requests: fakeMcp.requests,
@@ -654,10 +655,9 @@ async function assertRealAdapterToolCall(
       })
     : null;
   expect(denied ? denied.result.timedOut || denied.result.exitCode === null : false).toBe(false);
-  expect(denied ? resultText(denied.result) : "policy_denied").toMatch(/policy_denied|blocked by deny rule|NEMOCLAW_HERMES_MCP_RESULT_TOKEN=present|Calling tool: fake_fake_status[\s\S]*managed non-interactive error:/u);
+  expect(denied ? denied.policyDenied : true).toBe(true);
   expect(denied ? denied.after : calls.length).toBe(denied ? denied.before : calls.length);
 }
-
 async function captureHermesGatewayIdentity(
   sandbox: SandboxClient,
   artifactName: string,
@@ -1004,7 +1004,7 @@ test("mcp-bridge", {
 
   progress.phase("exercise lifecycle and confirm OpenClaw bridge removal");
   const openClawResult = `MCP_AUTH_REWRITE_OK::${TOOL_CHALLENGE}`;
-  await assertRealAdapterToolCall(sandbox, fakeMcp, {
+  await assertRealAdapterToolCall(host, sandbox, fakeMcp, {
     agent: "openclaw",
     sandboxName: OPENCLAW_SANDBOX_NAME,
     resultToken: openClawResult,
@@ -1021,7 +1021,7 @@ test("mcp-bridge", {
   expect(updateProof.after).toBe(updateProof.before + 1);
   expect(updateProof.lastCall).toMatchObject({ auth: `Bearer ${HOST_SECRET}` });
   await restartBridgeWithoutHostSecret(host, OPENCLAW_SANDBOX_NAME, "openclaw");
-  await assertRealAdapterToolCall(sandbox, fakeMcp, {
+  await assertRealAdapterToolCall(host, sandbox, fakeMcp, {
     agent: "openclaw",
     sandboxName: OPENCLAW_SANDBOX_NAME,
     resultToken: openClawResult,
@@ -1030,7 +1030,7 @@ test("mcp-bridge", {
   });
   fakeMcp.setSecret(ROTATED_HOST_SECRET);
   await rotateBridgeCredential(host, OPENCLAW_SANDBOX_NAME, "openclaw");
-  await assertRealAdapterToolCall(sandbox, fakeMcp, {
+  await assertRealAdapterToolCall(host, sandbox, fakeMcp, {
     agent: "openclaw",
     sandboxName: OPENCLAW_SANDBOX_NAME,
     resultToken: openClawResult,
@@ -1052,7 +1052,7 @@ test("mcp-bridge", {
     [HOST_SECRET, ROTATED_HOST_SECRET],
     "openclaw-assert-secrets-absent-after-rebuild",
   );
-  await assertRealAdapterToolCall(sandbox, fakeMcp, {
+  await assertRealAdapterToolCall(host, sandbox, fakeMcp, {
     agent: "openclaw",
     sandboxName: OPENCLAW_SANDBOX_NAME,
     resultToken: openClawResult,
@@ -1106,7 +1106,7 @@ mcpBridgeShardTest("hermes")(
       resultToken: hermesResult,
     });
     const assertHermesToolCall = (artifactName: string) =>
-      assertRealAdapterToolCall(sandbox, fakeMcp, {
+      assertRealAdapterToolCall(host, sandbox, fakeMcp, {
         agent: "hermes",
         sandboxName: HERMES_SANDBOX_NAME,
         resultToken: hermesResult,
@@ -1229,7 +1229,7 @@ mcpBridgeShardTest("hermes")(
     await assertAuthenticatedMcpRediscovery(survivingMcp, survivingDiscoveryOffset);
     fakeMcp.setSecret(ROTATED_HOST_SECRET);
     await rotateBridgeCredential(host, HERMES_SANDBOX_NAME, "hermes");
-    await assertRealAdapterToolCall(sandbox, fakeMcp, {
+    await assertRealAdapterToolCall(host, sandbox, fakeMcp, {
       agent: "hermes",
       sandboxName: HERMES_SANDBOX_NAME,
       resultToken: hermesResult,
@@ -1283,7 +1283,7 @@ mcpBridgeShardTest("hermes")(
       [HOST_SECRET, ROTATED_HOST_SECRET],
       "hermes-assert-secrets-absent-after-rebuild",
     );
-    await assertRealAdapterToolCall(sandbox, fakeMcp, {
+    await assertRealAdapterToolCall(host, sandbox, fakeMcp, {
       agent: "hermes",
       sandboxName: HERMES_SANDBOX_NAME,
       resultToken: hermesResult,
@@ -1423,7 +1423,7 @@ mcpBridgeShardTest("deepagents")(
       }),
     );
     progress.phase("exercise lifecycle and confirm Deep Agents bridge removal");
-    await assertRealAdapterToolCall(sandbox, fakeMcp, {
+    await assertRealAdapterToolCall(host, sandbox, fakeMcp, {
       agent: "langchain-deepagents-code",
       sandboxName: DEEPAGENTS_SANDBOX_NAME,
       resultToken: deepAgentsResult,
@@ -1433,7 +1433,7 @@ mcpBridgeShardTest("deepagents")(
     await exactMainProof.assertSnapshotResidue("after-initial-tool-call");
     await exactMainProof.assertLogPrivacy([TOOL_CHALLENGE, deepAgentsResult], "fake_echo");
     await restartBridgeWithoutHostSecret(host, DEEPAGENTS_SANDBOX_NAME, "deepagents");
-    await assertRealAdapterToolCall(sandbox, fakeMcp, {
+    await assertRealAdapterToolCall(host, sandbox, fakeMcp, {
       agent: "langchain-deepagents-code",
       sandboxName: DEEPAGENTS_SANDBOX_NAME,
       resultToken: deepAgentsResult,
@@ -1443,7 +1443,7 @@ mcpBridgeShardTest("deepagents")(
     await exactMainProof.assertSnapshotResidue("after-restart-tool-call");
     fakeMcp.setSecret(ROTATED_HOST_SECRET);
     await rotateBridgeCredential(host, DEEPAGENTS_SANDBOX_NAME, "deepagents");
-    await assertRealAdapterToolCall(sandbox, fakeMcp, {
+    await assertRealAdapterToolCall(host, sandbox, fakeMcp, {
       agent: "langchain-deepagents-code",
       sandboxName: DEEPAGENTS_SANDBOX_NAME,
       resultToken: deepAgentsResult,
@@ -1473,7 +1473,7 @@ mcpBridgeShardTest("deepagents")(
       [HOST_SECRET, ROTATED_HOST_SECRET],
       "deepagents-assert-secrets-absent-after-rebuild",
     );
-    await assertRealAdapterToolCall(sandbox, fakeMcp, {
+    await assertRealAdapterToolCall(host, sandbox, fakeMcp, {
       agent: "langchain-deepagents-code",
       sandboxName: DEEPAGENTS_SANDBOX_NAME,
       resultToken: deepAgentsResult,

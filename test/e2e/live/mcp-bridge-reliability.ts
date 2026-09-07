@@ -41,6 +41,10 @@ export const HERMES_MCP_ENV_LOAD_COMMANDS = [
 const MCP_BRIDGE_DENIED_TOOL_PROMPT =
   "Run the managed denied-tool policy probe and return its result verbatim.";
 const MCP_BRIDGE_DENIED_TOOL_RESULT = "policy_denied";
+const MCP_DENIAL_AUDIT_RE =
+  /\bJSONRPC_L7_REQUEST decision=deny rule_methods=tools\/call tools=fake_status\b[^\r\n]*\breason=[^\r\n]*deny rule/giu;
+const MCP_DENIAL_AUDIT_ATTEMPTS = 5;
+const MCP_DENIAL_AUDIT_RETRY_MS = 250;
 
 export const HERMES_MCP_DENIED_TOOL_PROBE = {
   mode: "bridge" as const,
@@ -56,7 +60,7 @@ export const DEEPAGENTS_MCP_DENIED_TOOL_PROBE = {
   toolName: `fake_${MCP_BRIDGE_DENIED_TOOL_NAME}`,
 };
 
-export async function runDeniedMcpToolCall(options: {
+export async function runDeniedMcpToolCall(host: HostCliClient, options: {
   agent: "openclaw" | "hermes" | "langchain-deepagents-code";
   artifactName: string;
   deniedTool?: string;
@@ -64,9 +68,36 @@ export async function runDeniedMcpToolCall(options: {
   sandboxName: string;
   serverName: string;
   requests: ReadonlyArray<{ rpcMethod?: string }>;
-}): Promise<{ after: number; before: number; result: ShellProbeResult }> {
+}): Promise<{ after: number; before: number; policyDenied: boolean; result: ShellProbeResult }> {
   const countToolCalls = () =>
     options.requests.filter((request) => request.rpcMethod === "tools/call").length;
+  const readDenialAuditCount = async (artifactName: string): Promise<number | null> => {
+    const logs = await host.command(
+      host.openshellCommandPath,
+      ["logs", options.sandboxName, "-n", "500", "--source", "all", "--since", "2m"],
+      {
+        artifactName,
+        env: buildAvailabilityProbeEnv(),
+        redactionValues: MCP_BRIDGE_TEST_REDACTION_VALUES,
+        timeoutMs: 30_000,
+      },
+    );
+    if (logs.timedOut || logs.exitCode !== 0) return null;
+    return resultText(logs).match(MCP_DENIAL_AUDIT_RE)?.length ?? 0;
+  };
+  const audit = await host.command(
+    host.openshellCommandPath,
+    ["settings", "set", options.sandboxName, "--key", "ocsf_json_enabled", "--value", "true"],
+    {
+      artifactName: `${options.artifactName}-enable-audit`,
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  const denialAuditBefore =
+    !audit.timedOut && audit.exitCode === 0
+      ? await readDenialAuditCount(`${options.artifactName}-audit-before`)
+      : null;
   const before = countToolCalls();
   const payload = JSON.stringify({
     model: "mock/mcp-bridge",
@@ -101,7 +132,29 @@ export async function runDeniedMcpToolCall(options: {
       },
     );
   const result = await run(options.artifactName);
-  return { after: countToolCalls(), before, result };
+  let denialAuditAfter = denialAuditBefore;
+  for (
+    let attempt = 1;
+    denialAuditBefore !== null && attempt <= MCP_DENIAL_AUDIT_ATTEMPTS;
+    attempt += 1
+  ) {
+    denialAuditAfter = await readDenialAuditCount(
+      `${options.artifactName}-audit-after-${String(attempt)}`,
+    );
+    if (denialAuditAfter !== null && denialAuditAfter > denialAuditBefore) break;
+    if (attempt < MCP_DENIAL_AUDIT_ATTEMPTS) {
+      await new Promise((resolve) => setTimeout(resolve, MCP_DENIAL_AUDIT_RETRY_MS));
+    }
+  }
+  return {
+    after: countToolCalls(),
+    before,
+    policyDenied:
+      denialAuditBefore !== null &&
+      denialAuditAfter !== null &&
+      denialAuditAfter > denialAuditBefore,
+    result,
+  };
 }
 
 export async function runOpenClawDeniedToolUpdateProof(
@@ -140,7 +193,7 @@ export async function runOpenClawDeniedToolUpdateProof(
     [sandboxName, "mcp", "update", "fake", "--deny-tool", MCP_BRIDGE_DENIED_TOOL_SELECTOR],
     commandOptions("openclaw-restore-denied-tool"),
   );
-  const denied = await runDeniedMcpToolCall({
+  const denied = await runDeniedMcpToolCall(host, {
     agent: "openclaw",
     artifactName: "openclaw-restored-denied-tool-call",
     deniedTool: MCP_BRIDGE_DENIED_TOOL_NAME,
@@ -156,6 +209,7 @@ export async function runOpenClawDeniedToolUpdateProof(
     calls.at(-1)?.rpcToolName === MCP_BRIDGE_DENIED_TOOL_NAME &&
     !denied.result.timedOut &&
     denied.result.exitCode !== null &&
+    denied.policyDenied &&
     /policy_denied|blocked by deny rule/iu.test(resultText(denied.result)) &&
     denied.after === denied.before;
   return {

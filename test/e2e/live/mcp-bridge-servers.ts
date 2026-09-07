@@ -556,7 +556,7 @@ export async function startCompatibleMock(options: {
       const isDeniedBridgeToolResult = (index: number, toolCallId: string) => {
         const message = toolResults[index];
         if (message?.tool_call_id !== toolCallId) return false;
-        return /policy_denied|blocked by deny rule|MCP call failed:/iu.test(JSON.stringify(message.content));
+        return /policy_denied|blocked by deny rule/iu.test(JSON.stringify(message.content));
       };
       const classifyHermesSearchResult = (
         index: number,

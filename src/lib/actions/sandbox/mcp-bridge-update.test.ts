@@ -119,13 +119,9 @@ describe("MCP denied-tool policy updates", () => {
 
     await updateMcpBridgeDenyTools("alpha", "github", []);
 
-    expect(mocks.writeBridgeEntry).toHaveBeenLastCalledWith(
-      "alpha",
-      expect.not.objectContaining({
-        denyTools: expect.anything(),
-        pendingDenyTools: expect.anything(),
-      }),
-    );
+    const [, clearedEntry] = mocks.writeBridgeEntry.mock.lastCall as [string, McpBridgeEntry];
+    expect(clearedEntry).not.toHaveProperty("denyTools");
+    expect(clearedEntry).not.toHaveProperty("pendingDenyTools");
   });
 
   it("retains desired intent when policy activation fails (#11115)", async () => {
