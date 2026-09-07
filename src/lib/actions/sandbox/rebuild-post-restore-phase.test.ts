@@ -210,6 +210,31 @@ describe("rebuild post-restore phase", () => {
     );
   });
 
+  it("uses the verified final permission repair for prepared recovery", async () => {
+    let repairAttempt = 0;
+    vi.mocked(mutableConfigPerms.repairMutableConfigPerms).mockImplementation(() => {
+      repairAttempt += 1;
+      return repairAttempt === 1
+        ? {
+            applied: true,
+            verified: false,
+            errors: ["initial repair did not verify"],
+          }
+        : { applied: true, verified: true, errors: [] };
+    });
+    const args = { ...input(), preparedBackupRecovery: true };
+
+    await expect(runRebuildPostRestorePhase(args)).resolves.toEqual({
+      mutableConfigPermissionsVerified: true,
+    });
+
+    expect(mutableConfigPerms.repairMutableConfigPerms).toHaveBeenCalledTimes(2);
+    expect(args.bail).not.toHaveBeenCalled();
+    expect(vi.mocked(console.log).mock.calls.flat().join("\n")).toContain(
+      "Sandbox 'alpha' rebuild completed",
+    );
+  });
+
   it("reuses the MCP rebuild target for every post-restore sandbox command (#10514)", async () => {
     vi.stubEnv("OPENSHELL_GATEWAY", "hostile-gateway");
     vi.stubEnv("OPENSHELL_WORKSPACE", "hostile-workspace");

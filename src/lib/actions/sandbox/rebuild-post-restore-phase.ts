@@ -170,6 +170,7 @@ export async function runRebuildPostRestorePhase(
   let effectiveMessagingPlan = messagingPlan;
 
   const repairMutableOpenClawConfigPermissions = (message: string): void => {
+    mutablePermsRepairUnverified = true;
     mutableConfigPermissionsVerified = false;
     log(message);
     let permRepair: ReturnType<typeof repairMutableConfigPerms> | null = null;
@@ -186,6 +187,7 @@ export async function runRebuildPostRestorePhase(
     } else if (!permRepair.applied) {
       log(`Mutable config permission repair skipped: ${permRepair.reason}`);
     } else if (permRepair.verified) {
+      mutablePermsRepairUnverified = false;
       mutableConfigPermissionsVerified = true;
       console.log(`  ${G}\u2713${R} Mutable config permissions restored`);
     } else {
