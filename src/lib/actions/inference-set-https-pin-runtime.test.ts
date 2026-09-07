@@ -496,7 +496,27 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
     );
     expect(
       capture.mock.calls.filter(([args]) => args[0] === "provider" && args[1] === "update"),
-    ).toHaveLength(1);
+    ).toEqual([
+      [
+        [
+          "provider",
+          "update",
+          "-g",
+          "nemoclaw",
+          "compatible-endpoint",
+          "--credential",
+          "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+          "--config",
+          `OPENAI_BASE_URL=${ADAPTER_BASE_URL}`,
+        ],
+        {
+          env: { NEMOCLAW_OLLAMA_PROXY_TOKEN: ADAPTER_TOKEN },
+          ignoreError: true,
+          includeStreams: true,
+          timeout: 30_000,
+        },
+      ],
+    ]);
     expect(
       capture.mock.calls
         .filter(([args]) => args[0] === "inference" && args[1] === "set")
