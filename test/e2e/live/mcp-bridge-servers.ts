@@ -639,17 +639,14 @@ export async function startCompatibleMock(options: {
       ): "target" | "miss" | "invalid" => {
         const search = options.openClawToolSearch;
         const message = toolResults[index];
-        if (!search || message?.tool_call_id !== "call_openclaw_tool_search") return "invalid";
+        if (!search || !message) return "invalid";
         const content = JSON.stringify(message.content);
         selectedOpenClawToolName = search.toolNames.find((name) => content.includes(name));
         return selectedOpenClawToolName ? "target" : "miss";
       };
       const hasExpectedOpenClawDescription = (index: number): boolean => {
         const message = toolResults[index];
-        if (
-          message?.tool_call_id !== "call_openclaw_tool_describe" ||
-          !selectedOpenClawToolName
-        ) {
+        if (!message || !selectedOpenClawToolName) {
           return false;
         }
         const content = JSON.stringify(message.content);

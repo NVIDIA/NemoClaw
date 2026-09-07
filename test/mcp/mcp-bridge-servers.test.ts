@@ -1163,7 +1163,7 @@ describe("authenticated MCP live fixtures", () => {
     });
     const searchResult = {
       role: "tool",
-      tool_call_id: "call_openclaw_tool_search",
+      tool_call_id: "openclaw-rewritten-search-id",
       content: JSON.stringify([
         {
           type: "text",
@@ -1181,7 +1181,7 @@ describe("authenticated MCP live fixtures", () => {
     });
     const descriptionResult = {
       role: "tool",
-      tool_call_id: "call_openclaw_tool_describe",
+      tool_call_id: "openclaw-rewritten-describe-id",
       content: JSON.stringify([
         {
           type: "text",
