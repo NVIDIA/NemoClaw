@@ -1122,6 +1122,87 @@ describe("authenticated MCP live fixtures", () => {
     });
   });
 
+  it("uses the OpenClaw tool catalog before calling a deferred MCP tool", async () => {
+    const deferredToolName = "mcp__fake__fake_echo";
+    const resultToken = "MCP_AUTH_REWRITE_OK::openclaw-fixture";
+    const server = await startCompatibleMock({
+      apiKey: "compatible-key",
+      model: "mock/model",
+      toolChallenge: "openclaw-fixture",
+      toolResultToken: resultToken,
+      openClawToolSearch: { query: "fake echo", toolNames: [deferredToolName] },
+    });
+    servers.push(server);
+    const call = async (
+      messages: Array<{ role: string; content: string; tool_call_id?: string }>,
+    ) =>
+      (await (
+        await fetch(`http://127.0.0.1:${server.port}/v1/chat/completions`, {
+          method: "POST",
+          headers: {
+            authorization: "Bearer compatible-key",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            model: "mock/model",
+            messages,
+            tools: ["tool_search", "tool_describe", "tool_call"].map((name) => ({
+              type: "function",
+              function: { name, parameters: {} },
+            })),
+          }),
+        })
+      ).json()) as CompatibleToolCallResponse;
+    const searchBody = await call([{ role: "user", content: "use the deferred tool" }]);
+    expect(searchBody.choices[0].message.tool_calls[0]).toMatchObject({
+      id: "call_openclaw_tool_search",
+      function: {
+        name: "tool_search",
+        arguments: JSON.stringify({ query: "fake echo", limit: 8 }),
+      },
+    });
+    const searchResult = {
+      role: "tool",
+      tool_call_id: "call_openclaw_tool_search",
+      content: JSON.stringify({
+        query: "fake echo",
+        count: 1,
+        matches: [{ name: deferredToolName, description: "Deferred echo" }],
+      }),
+    };
+    expect((await call([searchResult])).choices[0].message.tool_calls[0]).toMatchObject({
+      id: "call_openclaw_tool_describe",
+      function: { name: "tool_describe", arguments: JSON.stringify({ name: deferredToolName }) },
+    });
+    const descriptionResult = {
+      role: "tool",
+      tool_call_id: "call_openclaw_tool_describe",
+      content: JSON.stringify({
+        name: deferredToolName,
+        parameters: { properties: { challenge: { type: "string" } } },
+      }),
+    };
+    expect(
+      (await call([searchResult, descriptionResult])).choices[0].message.tool_calls[0],
+    ).toMatchObject({
+      id: "call_openclaw_tool_call",
+      function: {
+        name: "tool_call",
+        arguments: JSON.stringify({
+          name: deferredToolName,
+          arguments: { challenge: "openclaw-fixture" },
+        }),
+      },
+    });
+    expect(
+      await call([
+        searchResult,
+        descriptionResult,
+        { role: "tool", tool_call_id: "call_openclaw_tool_call", content: resultToken },
+      ]),
+    ).toMatchObject({ choices: [{ message: { content: resultToken } }] });
+  });
+
   it("fails closed when a Hermes deferred tool leaks into the model registry", async () => {
     const deferredToolName = "mcp__fake__fake_echo";
     const server = await startCompatibleMock({

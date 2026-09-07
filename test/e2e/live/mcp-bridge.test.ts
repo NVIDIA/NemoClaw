@@ -708,12 +708,23 @@ test("mcp-bridge", {
     scope: mcpBridgeE2eScope,
     server: SERVER_NAME,
   });
+  const openClawResult = `MCP_AUTH_REWRITE_OK::${TOOL_CHALLENGE}`;
   const compatibleMock = await startCompatibleMock({
     apiKey: COMPATIBLE_KEY,
     model: COMPATIBLE_MODEL,
+    toolChallenge: TOOL_CHALLENGE,
+    toolResultToken: openClawResult,
+    openClawToolSearch: {
+      query: "fake echo",
+      toolNames: ["mcp__fake__fake_echo", "mcp_fake_fake_echo", "fake_fake_echo", "fake_echo"],
+    },
   });
   cleanup.add("stop MCP bridge compatible endpoint mock", () => compatibleMock.close());
-  const fakeMcp = await startFakeMcpHttpsServer({ secret: HOST_SECRET });
+  const fakeMcp = await startFakeMcpHttpsServer({
+    secret: HOST_SECRET,
+    challenge: TOOL_CHALLENGE,
+    resultToken: openClawResult,
+  });
   cleanup.add("stop fake MCP HTTPS server", () => fakeMcp.close());
   const fakeMcpTunnel = await startPublicMcpHttpsTunnel({
     cleanup,
@@ -982,7 +993,6 @@ test("mcp-bridge", {
   ]);
 
   progress.phase("exercise lifecycle and confirm OpenClaw bridge removal");
-  const openClawResult = `MCP_AUTH_REWRITE_OK::${TOOL_CHALLENGE}`;
   await assertRealAdapterToolCall(sandbox, fakeMcp, {
     agent: "openclaw",
     sandboxName: OPENCLAW_SANDBOX_NAME,

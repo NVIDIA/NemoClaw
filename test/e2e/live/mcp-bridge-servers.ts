@@ -475,7 +475,9 @@ export async function startCompatibleMock(options: {
   toolNames?: string[];
   deferredToolName?: string;
   progressiveToolSearch?: { toolName: string; query: string };
+  openClawToolSearch?: { toolNames: string[]; query: string };
 }): Promise<StartedHttpServer> {
+  let selectedOpenClawToolName: string | undefined;
   const server = http.createServer(async (req, res) => {
     const requestPath = new URL(req.url ?? "/", "http://compatible.mock").pathname;
     const auth = req.headers.authorization === `Bearer ${options.apiKey}`;
@@ -611,12 +613,93 @@ export async function startCompatibleMock(options: {
           Object.hasOwn(properties, "challenge")
         );
       };
+      const classifyOpenClawSearchResult = (
+        index: number,
+      ): "target" | "miss" | "invalid" => {
+        const search = options.openClawToolSearch;
+        const parsed = parsedToolResult(index, "call_openclaw_tool_search");
+        if (
+          !search ||
+          !parsed ||
+          parsed.query !== search.query.toLowerCase() ||
+          !Number.isInteger(parsed.count) ||
+          !Array.isArray(parsed.matches)
+        ) {
+          return "invalid";
+        }
+        const names = parsed.matches.map((match) =>
+          match && typeof match === "object" && !Array.isArray(match)
+            ? (match as Record<string, unknown>).name
+            : undefined,
+        );
+        if (names.some((name) => typeof name !== "string")) return "invalid";
+        selectedOpenClawToolName = search.toolNames.find((name) => names.includes(name));
+        return selectedOpenClawToolName ? "target" : "miss";
+      };
+      const hasExpectedOpenClawDescription = (index: number): boolean => {
+        const parsed = parsedToolResult(index, "call_openclaw_tool_describe");
+        const parameters = parsed?.parameters;
+        const properties =
+          parameters && typeof parameters === "object" && !Array.isArray(parameters)
+            ? (parameters as Record<string, unknown>).properties
+            : undefined;
+        return (
+          parsed?.name === selectedOpenClawToolName &&
+          properties !== null &&
+          typeof properties === "object" &&
+          !Array.isArray(properties) &&
+          Object.hasOwn(properties, "challenge")
+        );
+      };
       let plannedToolCall:
         | { id: string; name: string; arguments: Record<string, unknown> }
         | undefined;
       let protocolError: string | undefined;
 
-      if (!sawAuthenticatedToolResult && options.progressiveToolSearch) {
+      if (!sawAuthenticatedToolResult && options.openClawToolSearch) {
+        const bridgeNames = ["tool_search", "tool_describe", "tool_call"];
+        const missingBridges = bridgeNames.filter((name) => !visibleToolNames.has(name));
+        if (options.openClawToolSearch.toolNames.some((name) => visibleToolNames.has(name))) {
+          protocolError = "OpenClaw deferred MCP target leaked into model tools";
+        } else if (missingBridges.length > 0) {
+          protocolError = `OpenClaw tool catalog bridges missing: ${missingBridges.join(", ")}`;
+        } else if (toolResultCount === 0) {
+          plannedToolCall = {
+            id: "call_openclaw_tool_search",
+            name: "tool_search",
+            arguments: { query: options.openClawToolSearch.query, limit: 8 },
+          };
+        } else if (toolResultCount === 1) {
+          const searchResult = classifyOpenClawSearchResult(0);
+          if (searchResult === "target") {
+            plannedToolCall = {
+              id: "call_openclaw_tool_describe",
+              name: "tool_describe",
+              arguments: { name: selectedOpenClawToolName },
+            };
+          } else {
+            protocolError =
+              searchResult === "miss"
+                ? "OpenClaw tool_search did not find the deferred MCP target"
+                : "OpenClaw returned an invalid tool_search result";
+          }
+        } else if (toolResultCount === 2) {
+          if (hasExpectedOpenClawDescription(1) && selectedOpenClawToolName) {
+            plannedToolCall = {
+              id: "call_openclaw_tool_call",
+              name: "tool_call",
+              arguments: {
+                name: selectedOpenClawToolName,
+                arguments: { challenge: options.toolChallenge },
+              },
+            };
+          } else {
+            protocolError = "OpenClaw tool_describe did not return the deferred MCP schema";
+          }
+        } else {
+          protocolError = "OpenClaw returned an unexpected tool catalog result sequence";
+        }
+      } else if (!sawAuthenticatedToolResult && options.progressiveToolSearch) {
         const { query, toolName } = options.progressiveToolSearch;
         if (toolResultCount === 0 && visibleToolNames.has(toolName)) {
           protocolError = `progressive target ${toolName} was visible before search_tools`;
