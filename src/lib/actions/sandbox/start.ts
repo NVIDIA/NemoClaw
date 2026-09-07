@@ -15,7 +15,6 @@ import {
   type SandboxInferenceInvocationResult,
 } from "./inference-invocation-probe";
 import { withSandboxLifecycleLock } from "./gateway-state";
-export { withSandboxLifecycleLock };
 import { getPersistedSandboxTargetGatewayName } from "./gateway-target";
 import {
   resolveSandboxLifecycleProvider,

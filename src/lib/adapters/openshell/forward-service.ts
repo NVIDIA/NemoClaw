@@ -46,6 +46,8 @@ export interface ForwardServiceOwnerOptions {
   readonly probe?: ForwardServiceOwnerProbe;
 }
 
+const FORWARD_OWNER_PROBE_TIMEOUT_MS = 5_000;
+
 function isPort(value: unknown): value is number {
   return Number.isSafeInteger(value) && Number(value) >= 1 && Number(value) <= 65_535;
 }
@@ -104,7 +106,10 @@ export function buildForwardServiceArgs(target: ForwardServiceTarget): string[] 
 }
 
 function captureProcess(executable: string, args: readonly string[]) {
-  const result = spawnSync(executable, [...args], { encoding: "utf8" });
+  const result = spawnSync(executable, [...args], {
+    encoding: "utf8",
+    timeout: FORWARD_OWNER_PROBE_TIMEOUT_MS,
+  });
   return { status: result.status, stdout: result.stdout ?? "" };
 }
 

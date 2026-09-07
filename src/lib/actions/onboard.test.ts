@@ -13,8 +13,7 @@ vi.mock("../agent/defs", () => ({ listAgents: mocks.listAgents }));
 vi.mock("../onboard", () => ({ onboard: mocks.onboard }));
 vi.mock("../onboard/command", () => ({ runOnboardCommand: mocks.runOnboardCommand }));
 
-import { getDashboardReuseLifecycle } from "../onboard/dashboard/reuse-lifecycle";
-import { runOnboard, runOnboardAction } from "./onboard";
+import { runOnboardAction } from "./onboard";
 
 describe("onboard action runtime composition", () => {
   beforeEach(() => {
@@ -26,38 +25,18 @@ describe("onboard action runtime composition", () => {
     );
   });
 
-  it("passes host-only runtime dependencies into legacy onboarding", async () => {
+  it("passes host-only Google Chat dependencies into legacy onboarding", async () => {
     const googlechatTunnelRuntime = {
       loadServices: vi.fn(),
       loadWebhookProxy: vi.fn(),
     };
-    const dashboardReuseLifecycle = {
-      startSandbox: vi.fn(),
-      stopSandbox: vi.fn(),
-      withSandboxLifecycleLock: vi.fn(),
-    };
 
-    await runOnboardAction(
-      { "non-interactive": true },
-      { googlechatTunnelRuntime, dashboardReuseLifecycle },
-    );
+    await runOnboardAction({ "non-interactive": true }, { googlechatTunnelRuntime });
 
     expect(mocks.onboard).toHaveBeenCalledWith({
       nonInteractive: true,
       resume: false,
       googlechatTunnelRuntime,
     });
-  });
-
-  it("provides the default dashboard reuse lifecycle to direct onboarding callers", async () => {
-    mocks.onboard.mockImplementationOnce(async () => {
-      expect(getDashboardReuseLifecycle()).toEqual({
-        startSandbox: expect.any(Function),
-        stopSandbox: expect.any(Function),
-        withSandboxLifecycleLock: expect.any(Function),
-      });
-    });
-
-    await runOnboard({} as never);
   });
 });

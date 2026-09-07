@@ -207,7 +207,6 @@ describe("applyReusedSandboxDashboardState", () => {
 
   it("launches the registered OpenClaw port when reuse finds no listener", async () => {
     const releaseDashboardPort = vi.fn(async () => undefined);
-    const reconcileOpenClawDashboardForwardReuse = vi.fn(async () => false);
     const ensureDashboardForward = vi.fn(() => 18_789);
 
     const result = await restoreReusedSandboxDashboardState({
@@ -231,7 +230,6 @@ describe("applyReusedSandboxDashboardState", () => {
       getSandbox: () => ({ dashboardPort: 18_789 }) as never,
       releaseDashboardPort,
       ensureDashboardForward,
-      reconcileOpenClawDashboardForwardReuse,
       hermesDashboardForwarding: {
         resolveStateForPort: vi.fn(() => ({ enabled: false, config: null })),
         ensureForState: vi.fn(),
@@ -241,11 +239,6 @@ describe("applyReusedSandboxDashboardState", () => {
     });
 
     expect(releaseDashboardPort).toHaveBeenCalledOnce();
-    expect(reconcileOpenClawDashboardForwardReuse).toHaveBeenCalledWith(
-      "reuse-me",
-      "http://127.0.0.1:18789",
-      undefined,
-    );
     expect(ensureDashboardForward).toHaveBeenCalledWith("reuse-me", "http://127.0.0.1:18789", {
       reuseExistingOpenClawForward: true,
     });

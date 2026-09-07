@@ -24,16 +24,8 @@ type RebuildOnboardModule = {
   ) => Promise<CheckpointGatewayAuthority>;
 };
 
-type OnboardActionModule = {
-  runOnboard(options: RebuildRecreateOnboardOpts): Promise<void>;
-};
-
 function loadOnboardModule(): RebuildOnboardModule {
   return require("../../onboard") as RebuildOnboardModule;
-}
-
-function loadOnboardActionModule(): OnboardActionModule {
-  return require("../onboard") as OnboardActionModule;
 }
 
 /**
@@ -53,7 +45,7 @@ export const rebuildOnboardDependencies = {
     return loadOnboardModule().hydrateCredentialEnv(name);
   },
   onboard(options: RebuildRecreateOnboardOpts): Promise<void> {
-    return loadOnboardActionModule().runOnboard(options);
+    return loadOnboardModule().onboard(options);
   },
   preflightAuthoritativeRebuildTarget(
     options: RebuildAuthoritativePreflightOptions,

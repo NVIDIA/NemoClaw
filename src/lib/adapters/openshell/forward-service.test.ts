@@ -79,6 +79,17 @@ describe("OpenShell forward service", () => {
     expect(isForwardServiceListenerOwner(target, { probe })).toBe(false);
   });
 
+  it("rejects ownership when a host probe times out", () => {
+    const lsofTimeout = vi.fn(() => ({ status: null, stdout: "" }));
+    expect(isForwardServiceListenerOwner(target, { probe: lsofTimeout })).toBe(false);
+
+    const psTimeout = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0, stdout: "4321\n" })
+      .mockReturnValueOnce({ status: null, stdout: "" });
+    expect(isForwardServiceListenerOwner(target, { probe: psTimeout })).toBe(false);
+  });
+
   it("detaches the OpenShell child and waits for its local port", () => {
     const unref = vi.fn();
     const spawnDetached = vi.fn(() => ({ unref }));

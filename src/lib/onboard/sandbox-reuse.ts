@@ -100,7 +100,6 @@ export interface ReusedSandboxDashboardStateInput {
   gatewayName: string;
   gatewayPort: number;
   manageDashboard?: boolean;
-  preparedOpenClawDashboardPort?: number;
   getSandbox?(sandboxName: string): SandboxEntry | null;
   ensureDashboardForward(
     sandboxName: string,
@@ -110,11 +109,6 @@ export interface ReusedSandboxDashboardStateInput {
       revalidateSandboxIdentity?: (operation: string) => void;
     },
   ): number;
-  reconcileOpenClawDashboardForwardReuse?(
-    sandboxName: string,
-    chatUiUrl: string,
-    revalidateSandboxIdentity?: (operation: string) => void,
-  ): Promise<boolean>;
   hermesDashboardForwarding: ReusedSandboxDashboardForwarding;
   updateSandbox?(sandboxName: string, updates: Partial<SandboxEntry>): unknown;
   revalidateSandboxIdentity?(operation: string): void;
@@ -150,17 +144,17 @@ export function applyReusedSandboxDashboardState(
       `Sandbox '${input.sandboxName}' was created without remote dashboard exposure. Re-run onboarding with NEMOCLAW_DASHBOARD_BIND=0.0.0.0 and --recreate-sandbox before opening a remote bind.`,
     );
   }
-  input.revalidateSandboxIdentity?.(`restore dashboard state for sandbox '${input.sandboxName}'`);
+  input.revalidateSandboxIdentity?.(
+    `restore dashboard state for sandbox '${input.sandboxName}'`,
+  );
   const reuseExistingOpenClawForward = input.agent == null || input.agent.name === "openclaw";
   const dashboardPort = manageDashboard
-    ? reuseExistingOpenClawForward && input.preparedOpenClawDashboardPort !== undefined
-      ? input.preparedOpenClawDashboardPort
-      : input.ensureDashboardForward(input.sandboxName, input.chatUiUrl, {
-          ...(reuseExistingOpenClawForward ? { reuseExistingOpenClawForward: true } : {}),
-          ...(input.revalidateSandboxIdentity
-            ? { revalidateSandboxIdentity: input.revalidateSandboxIdentity }
-            : {}),
-        })
+    ? input.ensureDashboardForward(input.sandboxName, input.chatUiUrl, {
+        ...(reuseExistingOpenClawForward ? { reuseExistingOpenClawForward: true } : {}),
+        ...(input.revalidateSandboxIdentity
+          ? { revalidateSandboxIdentity: input.revalidateSandboxIdentity }
+          : {}),
+      })
     : 0;
   const chatUiUrl = manageDashboard ? `http://127.0.0.1:${dashboardPort}` : input.chatUiUrl;
   if (manageDashboard) {
@@ -222,20 +216,9 @@ export async function restoreReusedSandboxDashboardState(
   const chatUiUrl = registeredOpenClawDashboardPort
     ? `http://127.0.0.1:${String(registeredOpenClawDashboardPort)}`
     : input.chatUiUrl;
-  const reconciled =
-    (input.manageDashboard ?? true) && reusesOpenClaw
-      ? await input.reconcileOpenClawDashboardForwardReuse?.(
-          input.sandboxName,
-          chatUiUrl,
-          input.revalidateSandboxIdentity,
-        )
-      : false;
   return applyReusedSandboxDashboardState({
     ...input,
     chatUiUrl,
-    ...(reconciled && registeredOpenClawDashboardPort
-      ? { preparedOpenClawDashboardPort: registeredOpenClawDashboardPort }
-      : {}),
   });
 }
 
