@@ -118,7 +118,7 @@ processRecovery.executeSandboxCommand = (sandboxName, command) => {
         "",
         "NEMOCLAW_MCP_PROBE_HTTP_CODE=" + resultMarker + ":__PROBE_HTTP_STATUS__",
         "NEMOCLAW_MCP_PROBE_CURL_EXIT=" + resultMarker + ":0",
-        "NEMOCLAW_MCP_CONTROL_HTTP_CODE=" + resultMarker + ":__PROBE_HTTP_STATUS__",
+        "NEMOCLAW_MCP_CONTROL_HTTP_CODE=" + resultMarker + ":__CONTROL_HTTP_STATUS__",
         "NEMOCLAW_MCP_CONTROL_CURL_EXIT=" + resultMarker + ":0",
       ].join("\n"),
       stderr: "",
@@ -179,12 +179,12 @@ console.error = (...parts) => errorLines.push(parts.join(" "));
 function runHarness(
   home: string,
   body: string,
-  options: { probeHttpStatus?: number } = {},
+  options: { controlHttpStatus?: number; probeHttpStatus?: number } = {},
 ): { status: number | null; stdout: string } {
-  const prelude = harnessPreludeTemplate.replaceAll(
-    "__PROBE_HTTP_STATUS__",
-    String(options.probeHttpStatus ?? 401),
-  );
+  const probeHttpStatus = options.probeHttpStatus ?? 401;
+  const prelude = harnessPreludeTemplate
+    .replaceAll("__PROBE_HTTP_STATUS__", String(probeHttpStatus))
+    .replaceAll("__CONTROL_HTTP_STATUS__", String(options.controlHttpStatus ?? probeHttpStatus));
   const script = `
 process.env.HOME = ${JSON.stringify(home)};
 ${prelude}
@@ -352,6 +352,50 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
       "openshell:resolve:env:v12_GITHUB_TOKEN",
     );
     expect(JSON.stringify(outcomes)).not.toContain("openshell:resolve:env:v11_GITHUB_TOKEN");
+  });
+
+  it("lets restart verify a stored credential before repairing a stale adapter revision", () => {
+    const home = createTempHome("nemoclaw-mcp-status-restart-revision-");
+    const { stdout } = runHarness(
+      home,
+      String.raw`
+  providerCredentialObservation = "v12";
+  persistedCredentialRevision = "v11";
+  const current = registry.getSandbox("alpha");
+  registry.updateSandbox("alpha", {
+    agent: "hermes",
+    mcp: {
+      bridges: {
+        github: { ...current.mcp.bridges.github, agent: "hermes", adapter: "hermes-config" },
+      },
+      managedServerNames: ["github"],
+    },
+  });
+  const [status] = await bridge.statusMcpBridge("alpha", "github", {
+    allowCredentialProbeWithAdapterMismatch: true,
+    probeCredentialResolution: true,
+  });
+  writeHarnessResult(JSON.stringify({
+    adapter: status.adapter,
+    resolution: status.provider.credentialResolution,
+    probed: executedSandboxCommands.some((command) => command.includes("NEMOCLAW_MCP_PROBE")),
+  }));
+`,
+      { controlHttpStatus: 401, probeHttpStatus: 200 },
+    );
+    const payload = JSON.parse(stdout) as {
+      adapter: { registered: boolean | null };
+      resolution: { ok: boolean | null; httpStatus?: number; controlHttpStatus?: number };
+      probed: boolean;
+    };
+
+    expect(payload.adapter.registered).toBe(false);
+    expect(payload.probed).toBe(true);
+    expect(payload.resolution).toMatchObject({
+      ok: true,
+      httpStatus: 200,
+      controlHttpStatus: 401,
+    });
   });
 
   it("reports an unsafe Deep Agents projection when credential handling would hide it (#10754)", () => {

@@ -528,6 +528,7 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
     sandboxName: "alpha",
     server,
     options: {
+      allowCredentialProbeWithAdapterMismatch: true,
       probeCredentialResolution: true,
       runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
     },

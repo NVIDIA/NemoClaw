@@ -158,6 +158,12 @@ function getAdapterRegistration(
 
 export interface McpBridgeStatusOptions {
   /**
+   * Let a credential-only recovery preflight verify the current attached
+   * revision even when the managed agent projection still names an older
+   * revision. The normal status path remains fail-closed on adapter drift.
+   */
+  allowCredentialProbeWithAdapterMismatch?: boolean;
+  /**
    * Run the wire-level credential-resolution probe for each entry (#6379).
    * Costs one SSH round trip plus an in-sandbox MCP initialize per entry, so
    * the dispatch layer enables it only where the operator asked for it.
@@ -409,7 +415,8 @@ export async function statusMcpBridge(
             }
           : observationDetail
             ? { ok: null, detail: `probe skipped: ${observationDetail}` }
-            : adapterRegistration.registered !== true
+            : adapterRegistration.registered !== true &&
+                options.allowCredentialProbeWithAdapterMismatch !== true
               ? {
                   ok: null,
                   detail:

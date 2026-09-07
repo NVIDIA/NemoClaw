@@ -112,6 +112,7 @@ async function assertRestartCredentialsAvailable(
     let detail = "wire-level credential verification did not return a result";
     try {
       const [status] = await statusMcpBridge(sandboxName, entry.server, {
+        allowCredentialProbeWithAdapterMismatch: true,
         probeCredentialResolution: true,
         runtimeSelection,
       });
