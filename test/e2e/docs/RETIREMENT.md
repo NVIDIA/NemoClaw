@@ -63,8 +63,14 @@ and artifact shape operators needed from the retired workflows:
 - per-target `run-plan.json`;
 - per-phase `environment.result.json`, `onboarding.result.json`, and
   `state-validation.result.json`;
-- per-target sanitized onboard trace timing summary at
-  `e2e-artifacts/live/<target>/cloud-onboard-trace-timing-summary.json`;
+- per-target sanitized onboard trace summary at
+  `e2e-artifacts/live/<target>/cloud-onboard-trace-timing-summary.json`, with
+  timing fields plus the latest optional identity-settlement state with its own
+  trace ID, validated event timestamp, and optional 16-hex correlation that can
+  be `null` when no identity was observed; malformed or unreadable trace input
+  uses a bounded `invalid` evidence state, while absent trace input uses
+  `missing`; a valid trace without a final event uses `absent` after the sandbox
+  phase or `not_attempted` before it;
 - per-target step summary rendered from `run-plan.json`;
 - explicit artifact upload allowlist with action, log, shell command-evidence,
   and JSON summary paths plus 14-day retention.

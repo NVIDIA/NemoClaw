@@ -2896,7 +2896,7 @@ jobs:
           npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/registry-targets.test.ts --selector "^${TARGET_ID}:"
 
       # The sanitizer reads raw traces only after checking the workflow-owned
-      # runner-temp path, then writes the timing-only file into upload roots.
+      # runner-temp path, then writes one allowlisted summary into upload roots.
       - name: Build trusted live E2E timing summary
         if: always()
         env:
@@ -2972,6 +2972,48 @@ jobs:
                   f"`{os.environ['TARGET_ID']}` | `(missing run-plan.json)` | "
                   "`(missing run-plan.json)` | `(missing)` | `(missing)` |"
               )
+          trace_summary_path = root / "cloud-onboard-trace-timing-summary.json"
+          trace_summary = {}
+          if trace_summary_path.exists():
+              trace_summary = json.loads(trace_summary_path.read_text(encoding="utf-8"))
+          settlement = trace_summary.get("sandbox_identity_settlement")
+          evidence_state = trace_summary.get("sandbox_identity_settlement_evidence")
+          print()
+          print("## Sandbox identity settlement")
+          if evidence_state == "invalid":
+              print(
+                  f"- Target `{os.environ['TARGET_ID']}`: `invalid` settlement evidence; "
+                  "inspect lifecycle logs and use a retained recovery record only if the "
+                  "onboarding failure created one."
+              )
+          elif evidence_state == "missing":
+              print(
+                  f"- Target `{os.environ['TARGET_ID']}`: `missing` settlement evidence; "
+                  "inspect lifecycle logs and use a retained recovery record only if the "
+                  "onboarding failure created one."
+              )
+          elif evidence_state == "absent":
+              print(
+                  f"- Target `{os.environ['TARGET_ID']}`: settlement event `absent` after "
+                  "the sandbox phase; inspect lifecycle logs and use a retained recovery "
+                  "record only if the onboarding failure created one."
+              )
+          elif evidence_state == "not_attempted":
+              print(
+                  f"- Target `{os.environ['TARGET_ID']}`: sandbox creation `not_attempted`; "
+                  "inspect the target phase plan and lifecycle logs."
+              )
+          elif isinstance(settlement, dict):
+              print(f"- Target: `{os.environ['TARGET_ID']}`")
+              print(f"- Create operation: `{settlement.get('create_operation_state')}`")
+              print(f"- Identity state: `{settlement.get('identity_state')}`")
+              print(f"- Trace ID: `{settlement.get('trace_id')}`")
+              print(
+                  "- Returned identity correlation: "
+                  f"`{settlement.get('returned_identity_correlation')}`"
+              )
+          else:
+              print(f"- Target `{os.environ['TARGET_ID']}`: no final settlement evidence emitted.")
           PY
 
       - name: Upload E2E artifacts
@@ -5801,7 +5843,7 @@ jobs:
       # Keep cleanup as a separate always() step so a sanitizer failure cannot
       # bypass it. A runner-level termination is contained by the ephemeral
       # GitHub-hosted runner.temp boundary. Remove this step only when the trace
-      # producer itself emits the allowlisted timing-only schema.
+      # producer itself emits the equivalent allowlisted summary schema.
       - name: Delete raw cloud-onboard traces
         if: always()
         shell: bash

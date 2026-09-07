@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -32,6 +33,26 @@ function liveStep(workflow: E2eWorkflow, name: string): Record<string, unknown> 
   const step = workflow.jobs.live.steps.find((entry) => entry.name === name);
   expect(step).toEqual(expect.any(Object));
   return step!;
+}
+
+function cloudOnboardStep(workflow: E2eWorkflow, name: string): Record<string, unknown> {
+  const step = workflow.jobs["cloud-onboard"]!.steps.find((entry) => entry.name === name);
+  expect(step).toEqual(expect.any(Object));
+  return step!;
+}
+
+function moveCloudOnboardStepAfter(
+  workflow: E2eWorkflow,
+  stepName: string,
+  anchorName: string,
+): void {
+  const steps = workflow.jobs["cloud-onboard"]!.steps;
+  const stepIndex = steps.findIndex((step) => step.name === stepName);
+  expect(stepIndex).toBeGreaterThanOrEqual(0);
+  const [step] = steps.splice(stepIndex, 1);
+  const anchorIndex = steps.findIndex((current) => current.name === anchorName);
+  expect(anchorIndex).toBeGreaterThanOrEqual(0);
+  steps.splice(anchorIndex + 1, 0, step!);
 }
 
 describe("e2e workflow live job boundary", () => {
@@ -140,6 +161,146 @@ describe("e2e workflow live job boundary", () => {
       "step 'Build trusted live E2E timing summary' run script must include scripts/e2e/sanitize-trace-timing.py",
     );
   });
+
+  it.each([
+    {
+      title: "invalid",
+      traceSummary: { sandbox_identity_settlement_evidence: "invalid" },
+      expectedSummary:
+        "Target `channels-add-remove`: `invalid` settlement evidence; inspect lifecycle logs and use a retained recovery record only if the onboarding failure created one.",
+    },
+    {
+      title: "missing",
+      traceSummary: { sandbox_identity_settlement_evidence: "missing" },
+      expectedSummary:
+        "Target `channels-add-remove`: `missing` settlement evidence; inspect lifecycle logs and use a retained recovery record only if the onboarding failure created one.",
+    },
+    {
+      title: "absent",
+      traceSummary: { sandbox_identity_settlement_evidence: "absent" },
+      expectedSummary:
+        "Target `channels-add-remove`: settlement event `absent` after the sandbox phase; inspect lifecycle logs and use a retained recovery record only if the onboarding failure created one.",
+    },
+    {
+      title: "not attempted",
+      traceSummary: { sandbox_identity_settlement_evidence: "not_attempted" },
+      expectedSummary:
+        "Target `channels-add-remove`: sandbox creation `not_attempted`; inspect the target phase plan and lifecycle logs.",
+    },
+    {
+      title: "valid",
+      traceSummary: {
+        sandbox_identity_settlement: {
+          create_operation_state: "ready",
+          event_time_unix_nano: "1788724801000000000",
+          identity_state: "matched",
+          returned_identity_correlation: "8174fa2a5d657551",
+          trace_id: "0123456789abcdef0123456789abcdef",
+        },
+      },
+      expectedSummary:
+        "- Target: `channels-add-remove`\n- Create operation: `ready`\n- Identity state: `matched`\n- Trace ID: `0123456789abcdef0123456789abcdef`\n- Returned identity correlation: `8174fa2a5d657551`",
+    },
+  ])("surfaces $title settlement evidence in the target workflow summary", (scenario) => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-trace-summary-"));
+    const targetId = "channels-add-remove";
+    const targetRoot = path.join(tmp, targetId);
+    const summaryPath = path.join(tmp, "step-summary.md");
+    try {
+      fs.mkdirSync(targetRoot, { recursive: true });
+      fs.writeFileSync(
+        path.join(targetRoot, "cloud-onboard-trace-timing-summary.json"),
+        JSON.stringify(scenario.traceSummary),
+      );
+      const workflow = readWorkflow() as E2eWorkflow;
+      const run = String(liveStep(workflow, "Summarize artifacts").run ?? "");
+
+      const result = spawnSync("bash", ["-c", run], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          E2E_ARTIFACT_DIR: tmp,
+          GITHUB_STEP_SUMMARY: summaryPath,
+          TARGET_ID: targetId,
+          TARGET_LABEL: "Telegram add/remove",
+        },
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.readFileSync(summaryPath, "utf8")).toContain(scenario.expectedSummary);
+    } finally {
+      fs.rmSync(tmp, { force: true, recursive: true });
+    }
+  });
+});
+
+describe("e2e workflow cloud-onboard trace boundary", () => {
+  it.each([
+    "Configure cloud-onboard trace directory",
+    "Build trusted cloud-onboard timing summary",
+    "Delete raw cloud-onboard traces",
+  ])("rejects a missing cloud-onboard trace boundary step: %s", (name) => {
+    const errors = validateMutatedWorkflow((workflow) => {
+      workflow.jobs["cloud-onboard"]!.steps = workflow.jobs[
+        "cloud-onboard"
+      ]!.steps.filter((step) => step.name !== name);
+    });
+
+    expect(errors).toContain(`cloud-onboard job missing step: ${name}`);
+  });
+
+  it("rejects conditional setup and sanitizer or cleanup steps without always guards", () => {
+    const errors = validateMutatedWorkflow((workflow) => {
+      cloudOnboardStep(workflow, "Configure cloud-onboard trace directory").if = "false";
+      cloudOnboardStep(workflow, "Build trusted cloud-onboard timing summary").if = undefined;
+      cloudOnboardStep(workflow, "Delete raw cloud-onboard traces").if = undefined;
+    });
+
+    expect(errors).toEqual(
+      expect.arrayContaining([
+        "cloud-onboard trace setup must run without an if condition",
+        "cloud-onboard trace sanitizer must always run",
+        "cloud-onboard raw trace cleanup must always run",
+      ]),
+    );
+  });
+
+  it.each([
+    ["Configure cloud-onboard trace directory", "Prepare E2E workspace"],
+    ["Run cloud-onboard live Vitest test", "Build trusted cloud-onboard timing summary"],
+    ["Build trusted cloud-onboard timing summary", "Delete raw cloud-onboard traces"],
+  ])("rejects cloud-onboard trace boundary reordering: %s after %s", (step, anchor) => {
+    const errors = validateMutatedWorkflow((workflow) => {
+      moveCloudOnboardStepAfter(workflow, step, anchor);
+    });
+
+    expect(errors).toContain(
+      "cloud-onboard trace setup, workspace preparation, Vitest run, sanitizer, and cleanup steps must stay in order",
+    );
+  });
+
+  it("rejects a cloud-onboard source guard that moves after Python reads traces", () => {
+    const errors = validateMutatedWorkflow((workflow) => {
+      const sanitizeStep = cloudOnboardStep(
+        workflow,
+        "Build trusted cloud-onboard timing summary",
+      );
+      expect(sanitizeStep.run).toEqual(expect.any(String));
+      sanitizeStep.run =
+        String(sanitizeStep.run).replace(
+          CLOUD_TRACE_SOURCE_ASSIGNMENT + CLOUD_TRACE_SOURCE_GUARD,
+          "",
+        ) +
+        CLOUD_TRACE_SOURCE_ASSIGNMENT +
+        CLOUD_TRACE_SOURCE_GUARD;
+    });
+
+    expect(errors).toContain(
+      "cloud-onboard trace sanitizer must verify source path before reading traces",
+    );
+  });
+
 });
 
 const TRACE_SOURCE_ASSIGNMENT =
@@ -147,6 +308,14 @@ const TRACE_SOURCE_ASSIGNMENT =
 const TRACE_SOURCE_GUARD =
   'if [ -z "${RUNNER_TEMP}" ] || [ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]; then\n' +
   '  echo "::error title=E2E trace sanitization refused::NEMOCLAW_TRACE_DIR does not match its workflow-owned RUNNER_TEMP path. No raw traces were read or uploaded. Correct the trace path configuration before rerunning." >&2\n' +
-  '  printf \'Expected trace path: %s\\n\' "${expected_trace_dir}" >&2\n' +
+  "  printf 'Expected trace path: %s\\n' \"${expected_trace_dir}\" >&2\n" +
+  "  exit 1\n" +
+  "fi\n";
+const CLOUD_TRACE_SOURCE_ASSIGNMENT =
+  'expected_trace_dir="${RUNNER_TEMP}/nemoclaw-cloud-onboard-traces"\n';
+const CLOUD_TRACE_SOURCE_GUARD =
+  'if [ -z "${RUNNER_TEMP}" ] || [ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]; then\n' +
+  '  echo "::error title=E2E trace sanitization refused::NEMOCLAW_TRACE_DIR does not match its workflow-owned RUNNER_TEMP path. No raw traces were read or uploaded. Correct the trace path configuration before rerunning." >&2\n' +
+  "  printf 'Expected trace path: %s\\n' \"${expected_trace_dir}\" >&2\n" +
   "  exit 1\n" +
   "fi\n";

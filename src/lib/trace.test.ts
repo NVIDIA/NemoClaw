@@ -99,6 +99,27 @@ describe("onboard trace artifacts", () => {
     });
   });
 
+  it("preserves a bounded identity correlation without persisting its full fingerprint", () => {
+    withTraceFile((traceFile) => {
+      const fullFingerprint = "a".repeat(64);
+      const correlation = fullFingerprint.slice(0, 16);
+
+      withTraceSpan("nemoclaw.onboard.phase.sandbox_create", {}, () => {
+        addTraceEvent("sandbox_create_identity_settlement", {
+          returned_identity_correlation: correlation,
+        });
+      });
+
+      expect(flushTrace()).toBe(traceFile);
+      const text = fs.readFileSync(traceFile, "utf8");
+      const artifact = JSON.parse(text) as TraceArtifact;
+      const event = artifact.resource_spans[0].scope_spans[0].spans[0].events[0];
+
+      expect(event.attributes?.returned_identity_correlation).toBe(correlation);
+      expect(text).not.toContain(fullFingerprint);
+    });
+  });
+
   it("sanitizes curl probe URLs and records status metadata", () => {
     withTraceFile((traceFile) => {
       // Use a URL with a benign query parameter (`model`) that the curl-arg

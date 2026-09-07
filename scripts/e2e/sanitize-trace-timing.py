@@ -2,18 +2,20 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Reduce raw NemoClaw traces to a timing-only scorecard artifact.
+"""Reduce raw NemoClaw traces to an allowlisted scorecard artifact.
 
 The E2E target controls the raw trace directory, so CI must never upload it.
 This script accepts only the onboard timing shape needed by the scorecard and
-writes a single allowlisted summary without attributes, events, paths, prompts,
-environment data, or raw error messages.
+the final sandbox identity-settlement state needed for lifecycle diagnosis.
+Timing and settlement keep their own trace provenance. The script writes a
+single allowlisted summary without raw attributes, events, paths, prompts,
+environment data, or error messages.
 
 Source-of-truth note: raw trace shape is produced by src/lib/trace.ts
 TraceArtifact. This reducer is intentionally narrower than that source schema:
 raw traces remain useful local diagnostics, while CI only needs timing evidence.
-If the producer grows a timing-only artifact, this post-run reducer can be
-removed in favor of that source artifact.
+If the producer grows an equivalent allowlisted artifact, this post-run reducer
+can be removed in favor of that source artifact.
 """
 
 from __future__ import annotations
@@ -42,6 +44,11 @@ MAX_JSON_BYTES = 2 * 1024 * 1024
 MAX_SLOWEST_SPANS = 10
 TRACE_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 STATUS_VALUES = {"OK", "ERROR", "UNSET"}
+IDENTITY_SETTLEMENT_EVENT = "sandbox_create_identity_settlement"
+CREATE_OPERATION_STATES = {"ready", "create_client_exited"}
+IDENTITY_SETTLEMENT_STATES = {"matched", "failed"}
+IDENTITY_CORRELATION_RE = re.compile(r"^[0-9a-f]{16}$")
+TRACE_EVENT_TIME_RE = re.compile(r"^[1-9][0-9]{15,20}$")
 
 
 def finite_number(value: Any) -> float | None:
@@ -68,20 +75,21 @@ def safe_span_name(value: Any) -> str | None:
     return None
 
 
-def iter_json_files(source: Path) -> list[Path]:
+def iter_json_files(source: Path) -> tuple[list[Path], bool]:
     if not source.exists():
-        return []
+        return [], False
     if source.is_file():
-        return [source] if source.suffix == ".json" and not source.is_symlink() else []
+        files = [source] if source.suffix == ".json" and not source.is_symlink() else []
+        return files, False
     if not source.is_dir() or source.is_symlink():
-        return []
+        return [], False
     files: list[Path] = []
     for path in sorted(source.rglob("*.json")):
         if path.is_file() and not path.is_symlink():
-            files.append(path)
             if len(files) >= MAX_JSON_FILES:
-                break
-    return files
+                return files, True
+            files.append(path)
+    return files, False
 
 
 def load_json(path: Path) -> Any | None:
@@ -106,6 +114,80 @@ def extract_spans(artifact: Any) -> list[dict[str, Any]]:
     scope = first_dict(resource.get("scope_spans"))
     spans = scope.get("spans", [])
     return [span for span in spans if isinstance(span, dict)] if isinstance(spans, list) else []
+
+
+def extract_identity_settlements(
+    spans: list[dict[str, Any]],
+    expected_trace_id: str | None,
+) -> list[tuple[int, dict[str, Any]]] | None:
+    """Return ordered settlement evidence, or reject a malformed event."""
+    settlements = []
+    for span in spans:
+        if safe_span_name(span.get("name")) is None:
+            continue
+        events = span.get("events", [])
+        for event in events if isinstance(events, list) else []:
+            if not isinstance(event, dict) or event.get("name") != IDENTITY_SETTLEMENT_EVENT:
+                continue
+            span_trace_id = span.get("trace_id")
+            if (
+                expected_trace_id is None
+                or not isinstance(span_trace_id, str)
+                or not TRACE_ID_RE.fullmatch(span_trace_id)
+                or span_trace_id != expected_trace_id
+            ):
+                return None
+            attributes = event.get("attributes")
+            if not isinstance(attributes, dict):
+                return None
+            operation_state = attributes.get("create_operation_state")
+            identity_state = attributes.get("identity_state")
+            correlation = attributes.get("returned_identity_correlation")
+            event_time = event.get("time_unix_nano")
+            valid_operation_state = (
+                isinstance(operation_state, str) and operation_state in CREATE_OPERATION_STATES
+            )
+            if not valid_operation_state:
+                return None
+            valid_identity_state = (
+                isinstance(identity_state, str) and identity_state in IDENTITY_SETTLEMENT_STATES
+            )
+            if not valid_identity_state:
+                return None
+            if correlation is not None and (
+                not isinstance(correlation, str) or not IDENTITY_CORRELATION_RE.fullmatch(correlation)
+            ):
+                return None
+            if identity_state == "matched" and correlation is None:
+                return None
+            if not isinstance(event_time, str) or not TRACE_EVENT_TIME_RE.fullmatch(event_time):
+                return None
+            settlements.append(
+                (
+                    int(event_time),
+                    {
+                        "create_operation_state": operation_state,
+                        "event_time_unix_nano": event_time,
+                        "identity_state": identity_state,
+                        "returned_identity_correlation": correlation,
+                        "trace_id": expected_trace_id,
+                    },
+                )
+            )
+    return settlements
+
+
+def select_latest_identity_settlement(
+    settlements: list[tuple[int, dict[str, Any]]],
+) -> tuple[dict[str, Any] | None, bool]:
+    """Select the latest settlement and report whether the selection is unambiguous."""
+    if not settlements:
+        return None, True
+    latest_time = max(timestamp for timestamp, _evidence in settlements)
+    latest_evidence = [evidence for timestamp, evidence in settlements if timestamp == latest_time]
+    if any(evidence != latest_evidence[0] for evidence in latest_evidence[1:]):
+        return None, False
+    return latest_evidence[0], True
 
 
 def extract_candidate(artifact: Any) -> dict[str, Any] | None:
@@ -150,13 +232,25 @@ def extract_candidate(artifact: Any) -> dict[str, Any] | None:
             break
 
     trace_id = summary.get("trace_id")
-    return {
+    candidate = {
         "schema_version": SCHEMA_VERSION,
         "trace_id": trace_id if isinstance(trace_id, str) and TRACE_ID_RE.fullmatch(trace_id) else None,
         "total_duration_ms": round(total_ms, 3),
         "phases": {name: round(phases[name], 3) for name in sorted(phases)},
         "slowest_spans": slowest_spans,
     }
+    return candidate
+
+
+def write_summary(output_dir: Path, summary: dict[str, Any]) -> int:
+    output = output_dir / OUTPUT_FILE
+    if output.is_symlink():
+        print("trusted timing summary must not be a symlink", file=sys.stderr)
+        return 2
+    output.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.chmod(output, 0o600)
+    print(f"Wrote trusted trace summary: {output}")
+    return 0
 
 
 def main(argv: list[str]) -> int:
@@ -180,23 +274,53 @@ def main(argv: list[str]) -> int:
     output_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
 
     candidates = []
-    for json_file in iter_json_files(source):
-        candidate = extract_candidate(load_json(json_file))
+    identity_settlements = []
+    identity_settlements_valid = True
+    source_files_valid = True
+    json_files, source_truncated = iter_json_files(source)
+    for json_file in json_files:
+        artifact = load_json(json_file)
+        if artifact is None:
+            source_files_valid = False
+            continue
+        candidate = extract_candidate(artifact)
         if candidate is not None:
             candidates.append(candidate)
+            settlements = extract_identity_settlements(
+                extract_spans(artifact), candidate["trace_id"]
+            )
+            if settlements is None:
+                identity_settlements_valid = False
+            else:
+                identity_settlements.extend(settlements)
     if not candidates:
-        print("No valid NemoClaw onboard trace found; no timing summary emitted.")
-        return 0
+        evidence_state = "missing" if not json_files else "invalid"
+        return write_summary(
+            output_dir,
+            {
+                "sandbox_identity_settlement_evidence": evidence_state,
+                "schema_version": SCHEMA_VERSION,
+            },
+        )
 
-    selected = max(candidates, key=lambda item: item["total_duration_ms"])
-    output = output_dir / OUTPUT_FILE
-    if output.is_symlink():
-        print("trusted timing summary must not be a symlink", file=sys.stderr)
-        return 2
-    output.write_text(json.dumps(selected, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    os.chmod(output, 0o600)
-    print(f"Wrote trusted trace timing summary: {output}")
-    return 0
+    selected = dict(max(candidates, key=lambda item: item["total_duration_ms"]))
+    identity_settlement, selection_valid = select_latest_identity_settlement(
+        identity_settlements
+    )
+    if (
+        not source_files_valid
+        or not identity_settlements_valid
+        or source_truncated
+        or not selection_valid
+    ):
+        selected["sandbox_identity_settlement_evidence"] = "invalid"
+    elif identity_settlement is not None:
+        selected["sandbox_identity_settlement"] = identity_settlement
+    elif any("nemoclaw.onboard.phase.sandbox" in candidate["phases"] for candidate in candidates):
+        selected["sandbox_identity_settlement_evidence"] = "absent"
+    else:
+        selected["sandbox_identity_settlement_evidence"] = "not_attempted"
+    return write_summary(output_dir, selected)
 
 
 if __name__ == "__main__":
