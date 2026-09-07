@@ -24,6 +24,8 @@ import type {
 } from "../serving/types";
 import { LLAMA_CPP_RECIPE_ENV } from "./contract";
 
+export { resolvedLlamaCppServingProfileProvenance } from "../serving/profile-provenance";
+
 export type ManagedLlamaCppSelectionResult =
   | { readonly kind: "selected"; readonly selection: ResolvedLlamaCppInferenceSelection }
   | { readonly kind: "rejected"; readonly reason: string };

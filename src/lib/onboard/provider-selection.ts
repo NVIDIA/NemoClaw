@@ -3,7 +3,11 @@
 
 import { isBedrockRuntimeEndpoint } from "../inference/bedrock-runtime";
 import { type ProviderOption, resolveProviderKeyFallback } from "./provider-key-fallback";
-import { providerNameToOptionKey, type RemoteProviderConfigEntryLike } from "./provider-recovery";
+import {
+  providerNameToOptionKey,
+  type ProviderSelectionRecoveryReaderBundle,
+  type RemoteProviderConfigEntryLike,
+} from "./provider-recovery";
 
 export {
   applyVllmInstallResumeDefaults,
@@ -62,13 +66,7 @@ export function resolveSelectedEndpointSource(input: {
   return isBedrockRuntimeEndpoint(input.endpointUrl) ? "onboard" : null;
 }
 
-export interface ProviderSelectionRecoveryReaders {
-  readRecordedProvider(sandboxName: string | null | undefined): string | null;
-  readRecordedNimContainer(sandboxName: string | null | undefined): string | null;
-  readRecordedManagedLlamaCpp?(sandboxName: string | null | undefined): boolean;
-  readRecordedManagedLlamaCppRecipeId?(sandboxName: string | null | undefined): string | null;
-  readRecordedModel(sandboxName: string | null | undefined): string | null;
-}
+export type ProviderSelectionRecoveryReaders = ProviderSelectionRecoveryReaderBundle;
 
 export interface ResolveRequestedProviderSelectionInput<
   T extends ProviderOption,

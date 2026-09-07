@@ -3,10 +3,13 @@
 
 import type { GatewayRouteDiscoveryConstraints } from "../inference/gateway-route-compatibility";
 import type { ProviderInferenceProbeRoute } from "./machine/handlers/provider-inference-route-containment";
-import { providerNameToOptionKey } from "./provider-recovery";
+import {
+  providerNameToOptionKey,
+  type ProviderSelectionRecoveryReaderBundle,
+} from "./provider-recovery";
 import type { RebuildRouteHandoff, RegistryInferenceRoute } from "./rebuild-route-handoff";
 
-interface ProviderDiscoveryDeps {
+interface ProviderDiscoveryDeps extends ProviderSelectionRecoveryReaderBundle {
   remoteProviderConfig: Record<string, { providerName: string }>;
   isNonInteractive(): boolean;
   getNonInteractiveProvider(): string | null;
@@ -14,35 +17,9 @@ interface ProviderDiscoveryDeps {
     providerKey: string,
     options?: { allowProviderModelFallback?: boolean },
   ): string | null;
-  readRecordedProvider(
-    sandboxName: string | null | undefined,
-    recoverySessionId?: string | null,
-  ): string | null;
-  readRecordedNimContainer(
-    sandboxName: string | null | undefined,
-    recoverySessionId?: string | null,
-  ): string | null;
-  readRecordedManagedLlamaCpp?(
-    sandboxName: string | null | undefined,
-    recoverySessionId?: string | null,
-  ): boolean;
-  readRecordedManagedLlamaCppRecipeId?(
-    sandboxName: string | null | undefined,
-    recoverySessionId?: string | null,
-  ): string | null;
-  readRecordedModel(
-    sandboxName: string | null | undefined,
-    recoverySessionId?: string | null,
-  ): string | null;
 }
 
-interface RecordedProviderReaders {
-  readRecordedProvider(sandboxName: string | null | undefined): string | null;
-  readRecordedNimContainer(sandboxName: string | null | undefined): string | null;
-  readRecordedManagedLlamaCpp(sandboxName: string | null | undefined): boolean;
-  readRecordedManagedLlamaCppRecipeId(sandboxName: string | null | undefined): string | null;
-  readRecordedModel(sandboxName: string | null | undefined): string | null;
-}
+type RecordedProviderReaders = Required<ProviderSelectionRecoveryReaderBundle>;
 
 const OLLAMA_PROBE_PROVIDER_KEYS = new Set([
   "ollama",

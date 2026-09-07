@@ -3,12 +3,14 @@
 
 import * as onboardSession from "../state/onboard-session";
 import * as registry from "../state/registry";
+import { requireSandboxHostLocalInferenceProvenance } from "../state/registry/host-local-inference";
 import { isSafeModelId } from "../validation";
 import { getPersistedSandboxTargetGatewayName } from "../actions/sandbox/gateway-target";
 import {
   type InferenceEndpointSource,
   normalizeInferenceEndpointSource,
 } from "../inference/selection";
+import { parseHostLocalInferenceReceipt } from "./runtime-provider/host-local-inference";
 import { getLiveGatewayInference } from "../inference/live";
 import {
   persistedProviderNameToSelectionKey,
@@ -98,11 +100,11 @@ export interface ProviderSelectionRecoveryReaderBundle {
     sandboxName: string | null | undefined,
     recoverySessionId?: string | null,
   ): string | null;
-  readRecordedManagedLlamaCpp(
+  readRecordedManagedLlamaCpp?(
     sandboxName: string | null | undefined,
     recoverySessionId?: string | null,
   ): boolean;
-  readRecordedManagedLlamaCppRecipeId(
+  readRecordedManagedLlamaCppRecipeId?(
     sandboxName: string | null | undefined,
     recoverySessionId?: string | null,
   ): string | null;
@@ -112,7 +114,7 @@ export interface ProviderSelectionRecoveryReaderBundle {
   ): string | null;
 }
 
-export interface ProviderRecoveryHelpers extends ProviderSelectionRecoveryReaderBundle {
+export interface ProviderRecoveryHelpers extends Required<ProviderSelectionRecoveryReaderBundle> {
   readonly providerSelectionReaders: ProviderSelectionRecoveryReaderBundle;
   readLiveInference(
     sandboxName: string | null | undefined,
@@ -248,14 +250,41 @@ export function createProviderRecoveryHelpers(deps: ProviderRecoveryDeps): Provi
   const managedLlamaCppRecipeId = (value: {
     provider?: string | null;
     servingProfileProvenance?: { recipe: { backend: string; id?: string } } | null;
+    hostLocalInferenceReceipt?: string | null;
+    hostLocalInferenceProvenance?: unknown;
   }): string | null => {
     const recipe = value.servingProfileProvenance?.recipe;
-    return value.provider === "llama-cpp-local" &&
+    if (
+      value.provider === "llama-cpp-local" &&
       recipe?.backend === "install-llama-cpp" &&
       typeof recipe.id === "string" &&
       SAFE_MANAGED_LLAMA_CPP_RECIPE_ID.test(recipe.id)
-      ? recipe.id
-      : null;
+    ) {
+      return recipe.id;
+    }
+    if (
+      value.provider !== "llama-cpp-local" ||
+      typeof value.hostLocalInferenceReceipt !== "string" ||
+      value.hostLocalInferenceProvenance == null
+    ) {
+      return null;
+    }
+    try {
+      requireSandboxHostLocalInferenceProvenance(
+        value.hostLocalInferenceProvenance,
+        value.hostLocalInferenceReceipt,
+      );
+      const receipt = parseHostLocalInferenceReceipt(value.hostLocalInferenceReceipt);
+      const recipeId =
+        receipt.runtime.kind === "container" ? receipt.runtime.model?.recipeId : null;
+      return receipt.service === "llama-cpp" &&
+        typeof recipeId === "string" &&
+        SAFE_MANAGED_LLAMA_CPP_RECIPE_ID.test(recipeId)
+        ? recipeId
+        : null;
+    } catch {
+      return null;
+    }
   };
 
   function refuseRecoveryAfterRegistryError(sandboxName: string, error: unknown): null {

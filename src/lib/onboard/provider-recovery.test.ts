@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import * as onboardSession from "../state/onboard-session";
 import * as registry from "../state/registry";
+import { createSandboxHostLocalInferenceProvenance } from "../state/registry/host-local-inference";
 import { persistedProviderNameToSelectionKey } from "./inference-providers/provider-selection-keys";
 import {
   classifySandboxRecoveryAuthority,
@@ -15,6 +16,7 @@ import {
   validateLiveGatewayInference,
 } from "./provider-recovery";
 import { resolveRequestedProviderSelection } from "./provider-selection";
+import { serializeHostLocalInferenceReceipt } from "./runtime-provider/host-local-inference";
 import { prepareProviderDiscovery } from "./setup-nim-provider-discovery";
 
 const { REMOTE_PROVIDER_CONFIG } = require("./providers") as {
@@ -24,6 +26,43 @@ const { REMOTE_PROVIDER_CONFIG } = require("./providers") as {
 afterEach(() => {
   vi.restoreAllMocks();
 });
+
+function managedLlamaCppReceipt(recipeId: string): string {
+  return serializeHostLocalInferenceReceipt({
+    schemaVersion: 1,
+    providerId: "docker",
+    service: "llama-cpp",
+    engineAuthority: {
+      schemaVersion: 1,
+      providerId: "docker",
+      operation: "host-local-inference",
+      engineId: "docker",
+      authorityId: `docker-endpoint:${"a".repeat(64)}`,
+      bindingSha256: "b".repeat(64),
+    },
+    endpoint: {
+      host: "host.openshell.internal",
+      port: 8081,
+      networkName: "openshell",
+    },
+    runtime: {
+      kind: "container",
+      runtimeId: "docker-runtime:alpha",
+      name: "nemoclaw-llama-cpp-alpha",
+      imageRef: `nvcr.io/nvidia/llama-cpp@sha256:${"c".repeat(64)}`,
+      probeImageRef: `quay.io/curl/curl@sha256:${"d".repeat(64)}`,
+      specSha256: "e".repeat(64),
+      model: {
+        planDigest: `sha256:${"f".repeat(64)}`,
+        recipeId,
+        generation: "9".repeat(64),
+        digest: `sha256:${"8".repeat(64)}`,
+        sizeBytes: 1,
+      },
+      gpu: { vendor: "nvidia", count: 1 },
+    },
+  });
+}
 
 describe("persisted provider selection", () => {
   it.each([
@@ -221,6 +260,26 @@ describe("provider recovery persisted routing state", () => {
       selectedGatewayName: () => "nemoclaw",
     });
   }
+
+  it("recovers the exact managed recipe from a provenance-bound host-local receipt", () => {
+    const recipeId = "llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1";
+    const hostLocalInferenceReceipt = managedLlamaCppReceipt(recipeId);
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "alpha",
+      provider: "llama-cpp-local",
+      model: "qwen3.6-35b-a3b",
+      hostLocalInferenceReceipt,
+      hostLocalInferenceProvenance: createSandboxHostLocalInferenceProvenance(
+        "alpha",
+        hostLocalInferenceReceipt,
+      ),
+    });
+
+    const recovery = helpers();
+
+    expect(recovery.readRecordedManagedLlamaCpp("alpha")).toBe(true);
+    expect(recovery.readRecordedManagedLlamaCppRecipeId("alpha")).toBe(recipeId);
+  });
 
   it.each([
     [
