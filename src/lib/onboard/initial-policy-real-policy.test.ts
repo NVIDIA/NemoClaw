@@ -622,9 +622,18 @@ describe("initial sandbox policy real preset merge", () => {
       },
     );
     const effective = readPreparedPolicy(prepared);
+    const observability = effective.network_policies?.["observability-otlp-local"];
+    const endpoint = observability?.endpoints?.find(
+      (candidate) => candidate.host === "host.openshell.internal" && candidate.port === 4318,
+    );
 
     expect(prepared.appliedPresets).toContain("observability-otlp-local");
-    expect(effective.network_policies?.["observability-otlp-local"]).toBeDefined();
+    expect(endpoint?.allowed_ips).toEqual([
+      "10.0.0.0/8",
+      "172.16.0.0/12",
+      "192.168.0.0/16",
+      "169.254.2.2/32",
+    ]);
   });
 
   it.each([

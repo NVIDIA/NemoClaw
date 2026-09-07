@@ -60,6 +60,25 @@ network_policies:
       - { path: /opt/venv/bin/python3* }
       - { path: /opt/venv/lib/python3.13/** }
 
+  observability-otlp-local:
+    name: observability-otlp-local
+    endpoints:
+      - host: host.openshell.internal
+        port: 4318
+        protocol: rest
+        enforcement: enforce
+        # Keep one static agent policy for every supported runtime. Docker
+        # uses an RFC1918 bridge; native Podman owns the exact link-local /32.
+        allowed_ips:
+          - 10.0.0.0/8
+          - 172.16.0.0/12
+          - 192.168.0.0/16
+          - 169.254.2.2/32
+        rules:
+          - allow: { method: POST, path: "/v1/traces" }
+    binaries:
+      - { path: /opt/venv/bin/python3* }
+
   github:
     name: github
     endpoints:

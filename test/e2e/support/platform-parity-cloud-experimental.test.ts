@@ -33,6 +33,10 @@ fi
 `;
 const dcodeFreshReonboardCheck = path.join(cloudChecksDir, "04-deepagents-code-fresh-reonboard.sh");
 const dcodeLandlockCheck = path.join(cloudChecksDir, "05-deepagents-code-landlock-readonly.sh");
+const dcodeObservabilityCheck = path.join(
+  cloudChecksDir,
+  "11-deepagents-code-observability.sh",
+);
 const DEFAULT_TEST_PATH = process.env.PATH ?? "/usr/bin:/bin";
 const tavilyBlocked = "BLOCKED:policy denied";
 const observabilityEnabled = "enabled";
@@ -111,6 +115,13 @@ describe("P0-E cloud-experimental parity guardrails", () => {
 
     expect(script).toContain("executePrivilegedSandboxCommand");
     expect(script).not.toContain('spawnSync(\n  "docker"');
+  });
+
+  it("accepts only the provider-owned Podman host address outside RFC1918", () => {
+    const script = fs.readFileSync(dcodeObservabilityCheck, "utf8");
+
+    expect(script).toContain("169.254.2.2");
+    expect(script).not.toContain("169.254.*");
   });
 
   it("preserves the repeated env-unset pairs from the failed observability invocation", async () => {
