@@ -327,7 +327,7 @@ describe("wipeSandboxState (#5449)", () => {
   // clean state. Skips on Windows because the `cd ... && rm -rf` script
   // is POSIX-shell-only.
   it.skipIf(process.platform === "win32")(
-    "deletes USER.md and SOUL.md when the constructed script executes for PRA-1 and PRA-2 (#5455)",
+    "deletes USER.md, SOUL.md, and POLICY.md when the constructed script executes (#5455, #10951)",
     () => {
       const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-wipe-behavioral-"));
       try {
@@ -338,6 +338,7 @@ describe("wipeSandboxState (#5449)", () => {
         fs.mkdirSync(fakeWorkspace, { recursive: true });
         fs.writeFileSync(path.join(fakeWorkspace, "USER.md"), "user notes from prior session");
         fs.writeFileSync(path.join(fakeWorkspace, "SOUL.md"), "soul state from prior session");
+        fs.writeFileSync(path.join(fakeWorkspace, "POLICY.md"), "policy state from prior session");
         // Also seed a multi-agent workspace dir to confirm the glob works.
         const fakeMultiAgentWorkspace = path.join(fakeConfigDir, "workspace-other-agent");
         fs.mkdirSync(fakeMultiAgentWorkspace);
@@ -401,6 +402,7 @@ describe("wipeSandboxState (#5449)", () => {
         // The destroy/re-onboard contract: prior workspace state is gone.
         expect(fs.existsSync(path.join(fakeWorkspace, "USER.md"))).toBe(false);
         expect(fs.existsSync(path.join(fakeWorkspace, "SOUL.md"))).toBe(false);
+        expect(fs.existsSync(path.join(fakeWorkspace, "POLICY.md"))).toBe(false);
         expect(fs.existsSync(fakeWorkspace)).toBe(false);
         // Multi-agent workspace-* glob also wiped.
         expect(fs.existsSync(fakeMultiAgentWorkspace)).toBe(false);
@@ -497,4 +499,104 @@ describe("wipeSandboxState (#5449)", () => {
     // No empty quoted argument that would expand to nothing in sh -c.
     expect(script).not.toMatch(/rm\s+-rf\s+--\s*''/);
   });
+
+  // #10951: POLICY_CONTEXT_SANDBOX_PATH is a fixed absolute path NemoClaw
+  // writes to regardless of any manifest declaration. Before this fix its
+  // removal on destroy was only incidental -- it happened to fall inside
+  // the manifest-declared `workspace` state_dir. A manifest that omits
+  // `workspace` (or renames it) would silently leave POLICY.md behind while
+  // still correctly wiping every declared state_dir/state_file, producing
+  // exactly the "USER.md/SOUL.md gone, POLICY.md survives" symptom reported
+  // in #10951. Assert the wipe targets it explicitly, independent of what
+  // the manifest declares.
+  it("explicitly targets the in-sandbox POLICY.md path even when the manifest omits `workspace` (#10951)", () => {
+    const { deps, runOpenshell } = buildDeps({
+      loadAgent: vi.fn(() => ({
+        configPaths: { dir: "/sandbox/.openclaw" },
+        stateDirs: ["agents", "extensions", "skills", "hooks", "identity"],
+        stateDirPrefixes: [],
+        stateFiles: [],
+      })),
+    });
+
+    destroy.wipeSandboxState("test-sb", deps as never);
+
+    const { script } = execCommand(runOpenshell);
+    expect(script).toContain("'workspace/POLICY.md'");
+  });
+
+  // #10951: for an agent whose config dir doesn't share the hardcoded
+  // POLICY_CONTEXT_SANDBOX_PATH prefix (e.g. Hermes at /sandbox/.hermes),
+  // no unrelated path should be added to the wipe.
+  it("does not add the openclaw policy-context path for an agent under a different config dir (#10951)", () => {
+    const { deps, runOpenshell } = buildDeps({
+      getSandbox: vi.fn(() => ({ agent: "hermes" }) as never),
+      loadAgent: vi.fn(() => ({
+        configPaths: { dir: "/sandbox/.hermes" },
+        stateDirs: ["workspace"],
+        stateDirPrefixes: [],
+        stateFiles: [],
+      })),
+    });
+
+    destroy.wipeSandboxState("test-sb", deps as never);
+
+    const { script } = execCommand(runOpenshell);
+    expect(script).not.toContain("POLICY.md");
+  });
+
+  // #10951 behavioral proof: run the actual generated script against a real
+  // directory that mirrors a manifest without `workspace` declared, and
+  // confirm POLICY.md -- unlike before this fix -- does not survive.
+  it.skipIf(process.platform === "win32")(
+    "deletes POLICY.md when executed even though `workspace` is absent from the manifest (#10951)",
+    () => {
+      const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-wipe-behavioral-"));
+      try {
+        const fakeSandboxRoot = path.join(tmpRoot, "sandbox");
+        const fakeConfigDir = path.join(fakeSandboxRoot, ".openclaw");
+        const fakeWorkspace = path.join(fakeConfigDir, "workspace");
+        fs.mkdirSync(fakeWorkspace, { recursive: true });
+        fs.writeFileSync(path.join(fakeWorkspace, "POLICY.md"), "policy state from prior session");
+        fs.mkdirSync(path.join(fakeConfigDir, "agents"), { recursive: true });
+
+        const isExecCall = (args: string[]): boolean => args[0] === "sandbox" && args[1] === "exec";
+        const executeScript = (script: string): { status: number | null } =>
+          [() => execFileSync("sh", ["-c", script], { stdio: "ignore" })].map((run) => {
+            try {
+              run();
+              return { status: 0 as number | null };
+            } catch {
+              return { status: 1 as number | null };
+            }
+          })[0];
+
+        const simulatedConfigDir = `/sandbox/${path.basename(fakeConfigDir)}`;
+        const runOpenshell = vi.fn((args: string[]): { status: number | null } =>
+          isExecCall(args)
+            ? executeScript(
+                (args[args.length - 1] as string).replace(simulatedConfigDir, fakeConfigDir),
+              )
+            : { status: 0 },
+        );
+        const deps = {
+          getSandbox: vi.fn(() => ({ agent: "openclaw" }) as never),
+          loadAgent: vi.fn(() => ({
+            configPaths: { dir: simulatedConfigDir },
+            // No `workspace` entry -- only unrelated state dirs.
+            stateDirs: ["agents"],
+            stateDirPrefixes: [],
+            stateFiles: [],
+          })),
+          runOpenshell,
+        };
+
+        destroy.wipeSandboxState("test-sb", deps as never);
+
+        expect(fs.existsSync(path.join(fakeWorkspace, "POLICY.md"))).toBe(false);
+      } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+      }
+    },
+  );
 });

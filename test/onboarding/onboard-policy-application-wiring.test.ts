@@ -27,7 +27,7 @@ function restoreRequireCache(prior: Map<string, NodeModule>): void {
 }
 
 describe("onboarding policy application production wiring", () => {
-  it("wires resume policy application to live policy, readiness checks, and sandbox mutation lock (#7695)", async () => {
+  it("wires policy application and keeps minimal-bootstrap re-onboard free of POLICY.md (#7695, #10951)", async () => {
     const priorCache = new Map(
       Object.entries(require.cache).filter(
         (entry): entry is [string, NodeModule] => entry[1] !== undefined,
@@ -61,6 +61,7 @@ describe("onboarding policy application production wiring", () => {
     const seedInitialPolicyContext = vi.fn(() => events.push("policy context seeded"));
     let capturedDeps: OnboardPolicyApplicationDeps | undefined;
     let application: PolicyApplication | undefined;
+    const priorMinimalBootstrap = process.env.NEMOCLAW_MINIMAL_BOOTSTRAP;
 
     const onboardPath = require.resolve("../../src/lib/onboard.js");
     const policyPath = require.resolve("../../src/lib/policy/index.js");
@@ -147,7 +148,27 @@ describe("onboarding policy application production wiring", () => {
         "policy context seeded",
         "lock released",
       ]);
+
+      events.length = 0;
+      process.env.NEMOCLAW_MINIMAL_BOOTSTRAP = "1";
+
+      await expect(
+        application.setupPoliciesWithSelection("alpha", { selectedPresets: ["npm"] }),
+      ).resolves.toEqual(["npm"]);
+      expect(events).toEqual([
+        "lock entered",
+        "sandbox ready",
+        "policies synchronized",
+        "sandbox ready",
+        "control plane ready",
+        "lock released",
+      ]);
     } finally {
+      if (priorMinimalBootstrap === undefined) {
+        delete process.env.NEMOCLAW_MINIMAL_BOOTSTRAP;
+      } else {
+        process.env.NEMOCLAW_MINIMAL_BOOTSTRAP = priorMinimalBootstrap;
+      }
       restoreRequireCache(priorCache);
     }
   });
