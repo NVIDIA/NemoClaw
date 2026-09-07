@@ -11,10 +11,16 @@
 # PID 1 entrypoint in a minimal image, so both properties are decided
 # structurally. The grammar admits no sign, so a value is greater than zero
 # exactly when a non-zero digit survives deleting the separators and zeros. The
-# magnitude is the significant-integer-digit count plus the decimal exponent;
-# capping it at 308 keeps the value below 1e308, so it can never parse to
-# infinity. Digit ranges are enumerated rather than written [0-9] so the match
-# does not depend on an inherited LC_COLLATE.
+# magnitude is the decimal position of the first significant digit, taken from
+# the integer digits when there are any and otherwise from the leading zeros of
+# the fraction, plus the decimal exponent. Capping it at 308 keeps the value
+# below 1e308, so it can never parse to infinity; flooring it at -324 rejects a
+# value that would underflow to zero as a double, which the launch renderer
+# already rejects for not being positive. The bounds are deliberately no
+# stricter than the renderer's, so a value the CLI admits cannot be refused here
+# and fail the sandbox late.
+# Digit ranges are enumerated rather than written [0-9] so the match does not
+# depend on an inherited LC_COLLATE.
 #
 # An empty value is admitted: the watcher reads it as "use the built-in
 # default", which is what an unset name already does.
@@ -23,6 +29,9 @@ _nemoclaw_bounded_seconds_value() {
   local _nemoclaw_mantissa
   local _nemoclaw_integer
   local _nemoclaw_exponent
+  local _nemoclaw_fraction
+  local _nemoclaw_leading
+  local _nemoclaw_magnitude
   [ -n "${1-}" ] || return 0
   _nemoclaw_value="${1#+}"
   if [[ ! "$_nemoclaw_value" =~ ^([0123456789]+(\.[0123456789]*)?|\.[0123456789]+)([eE][+-]?[0123456789]{1,3})?$ ]]; then
@@ -34,6 +43,7 @@ _nemoclaw_bounded_seconds_value() {
   esac
   _nemoclaw_integer="${_nemoclaw_mantissa%%.*}"
   _nemoclaw_integer="${_nemoclaw_integer#"${_nemoclaw_integer%%[!0]*}"}"
+  _nemoclaw_fraction="${_nemoclaw_mantissa#*.}"
   _nemoclaw_exponent=0
   case "$_nemoclaw_value" in
     *[eE]*)
@@ -44,7 +54,13 @@ _nemoclaw_bounded_seconds_value() {
       esac
       ;;
   esac
-  [ "$((${#_nemoclaw_integer} + _nemoclaw_exponent))" -le 308 ]
+  if [ -n "$_nemoclaw_integer" ]; then
+    _nemoclaw_magnitude=$((${#_nemoclaw_integer} + _nemoclaw_exponent))
+  else
+    _nemoclaw_leading="${_nemoclaw_fraction%%[!0]*}"
+    _nemoclaw_magnitude=$((_nemoclaw_exponent - ${#_nemoclaw_leading}))
+  fi
+  [ "$_nemoclaw_magnitude" -le 308 ] && [ "$_nemoclaw_magnitude" -ge -324 ]
 }
 
 # The fast-reentry counter is an integer, so it carries the launch renderer's

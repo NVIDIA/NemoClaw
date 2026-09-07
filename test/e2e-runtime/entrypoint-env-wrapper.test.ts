@@ -9,7 +9,14 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { sliceBlock } from "../helpers/corporate-ca-support";
 
-const HELPER = path.join(import.meta.dirname, "..", "..", "scripts", "lib", "entrypoint-env-wrapper.sh");
+const HELPER = path.join(
+  import.meta.dirname,
+  "..",
+  "..",
+  "scripts",
+  "lib",
+  "entrypoint-env-wrapper.sh",
+);
 const OPENCLAW_START = path.join(import.meta.dirname, "..", "..", "scripts", "nemoclaw-start.sh");
 
 function runNormalizer(argv: readonly string[]) {
@@ -202,6 +209,14 @@ describe("OCI entrypoint env-wrapper normalization", () => {
     },
     { name: "an infinite run timeout", assignment: "NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS=inf" },
     {
+      name: "an interval that underflows to zero",
+      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=1e-999",
+    },
+    {
+      name: "a fractional mantissa past the finite ceiling",
+      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=.1e310",
+    },
+    {
       name: "an infinite watcher deadline",
       assignment: "NEMOCLAW_AUTO_PAIR_DEADLINE_SECS=Infinity",
     },
@@ -234,6 +249,16 @@ describe("OCI entrypoint env-wrapper normalization", () => {
       name: "an interval in exponent form",
       assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=6e2",
       probe: "FAST_REENTRY_INTERVAL=6e2",
+    },
+    {
+      name: "a fractional mantissa the launch renderer also accepts",
+      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=.000000001e309",
+      probe: "FAST_REENTRY_INTERVAL=.000000001e309",
+    },
+    {
+      name: "a leading-dot mantissa at the finite ceiling",
+      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=.1e308",
+      probe: "FAST_REENTRY_INTERVAL=.1e308",
     },
     {
       name: "a month-long interval",
