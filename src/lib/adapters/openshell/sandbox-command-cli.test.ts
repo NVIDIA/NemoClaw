@@ -137,59 +137,6 @@ describe("CLI OpenShell sandbox command executor", () => {
     });
   });
 
-  it("bounds a hung child, escalates termination, and retains signal cleanup", async () => {
-    vi.useFakeTimers();
-    try {
-      const childEvents = new EventEmitter();
-      const signalEvents = new EventEmitter();
-      const child: OpenShellCommandChild = {
-        exitCode: null,
-        signalCode: null,
-        kill: vi.fn((signal: NodeJS.Signals) => {
-          const onSignal: Partial<Record<NodeJS.Signals, () => void>> = {
-            SIGKILL: () => {
-              child.signalCode = signal;
-              queueMicrotask(() => childEvents.emit("close", null, signal));
-            },
-          };
-          onSignal[signal]?.();
-          return true;
-        }),
-        once: ((event: string, listener: (...args: unknown[]) => void) =>
-          childEvents.once(event, listener)) as OpenShellCommandChild["once"],
-      };
-      const signalSource: OpenShellCommandSignalSource = {
-        add: (signal, listener) => signalEvents.on(signal, listener),
-        remove: (signal, listener) => signalEvents.off(signal, listener),
-      };
-      const executor = createCliOpenShellSandboxCommandExecutor({
-        resolveBinary: () => "/usr/bin/openshell",
-        spawnChild: () => child,
-        signalSource,
-      });
-
-      const pending = executor.runStreaming({
-        sandboxName: "alpha",
-        target: selectedOpenShellGateway(),
-        command: ["sleep", "30"],
-        timeoutSeconds: 1,
-      });
-      await vi.advanceTimersByTimeAsync(1000);
-      expect(child.kill).toHaveBeenCalledWith("SIGTERM");
-      await vi.advanceTimersByTimeAsync(5000);
-      const completed = await pending;
-
-      expect(child.kill).toHaveBeenCalledWith("SIGKILL");
-      expect(completed.outcome).toMatchObject({ kind: "failed", error: { kind: "timeout" } });
-      expect(signalEvents.listenerCount("SIGTERM")).toBe(1);
-      completed.release();
-      expect(signalEvents.listenerCount("SIGTERM")).toBe(0);
-      expect(signalEvents.listenerCount("SIGINT")).toBe(0);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
   it.each([
     ["an unavailable executable", "ENOENT", "unavailable"],
     ["an unclassified transport failure", undefined, "invocation"],

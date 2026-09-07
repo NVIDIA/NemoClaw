@@ -37,7 +37,6 @@ function tlsBundle(): string {
 }
 
 afterEach(() => {
-  vi.useRealTimers();
   for (const root of roots.splice(0)) fs.rmSync(root, { force: true, recursive: true });
 });
 
@@ -66,15 +65,20 @@ describe("OpenShell SDK sandbox command executor", () => {
   it("streams native output and preserves the exit status", async () => {
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
+    let receivedOptions: unknown;
+    const execStream = vi.fn(async function* (
+      _name: string,
+      _command: string[],
+      options?: unknown,
+    ) {
+      receivedOptions = options;
+      yield { stream: "stdout" as const, data: Buffer.from("native out\n") };
+      yield { stream: "stderr" as const, data: Buffer.from("native err\n") };
+      yield { type: "exit" as const, exitCode: 7 };
+    });
     const executor = createSdkOpenShellSandboxCommandExecutor({
       connect: async () => ({
-        sandbox: {
-          execStream: async function* () {
-            yield { stream: "stdout" as const, data: Buffer.from("native out\n") };
-            yield { stream: "stderr" as const, data: Buffer.from("native err\n") };
-            yield { type: "exit" as const, exitCode: 7 };
-          },
-        },
+        sandbox: { execStream },
       }),
       stdout: (data) => stdout.push(data),
       stderr: (data) => stderr.push(data),
@@ -84,6 +88,10 @@ describe("OpenShell SDK sandbox command executor", () => {
     expect(completion.outcome).toEqual({ kind: "completed", exitCode: 7 });
     expect(Buffer.concat(stdout).toString()).toBe("native out\n");
     expect(Buffer.concat(stderr).toString()).toBe("native err\n");
+    expect(receivedOptions).toMatchObject({
+      noLoginShell: true,
+      timeoutSecs: 120,
+    });
     completion.release();
   });
 
@@ -102,49 +110,5 @@ describe("OpenShell SDK sandbox command executor", () => {
       error: { kind: "unavailable" },
     });
     completion.release();
-  });
-
-  it("bounds connection and streaming even when the SDK ignores abort", async () => {
-    vi.useFakeTimers();
-    const connect = vi
-      .fn()
-      .mockImplementationOnce(() => new Promise(() => {}))
-      .mockResolvedValueOnce({
-        sandbox: {
-          execStream: async function* () {
-            await new Promise(() => {});
-          },
-        },
-      })
-      .mockResolvedValueOnce({
-        sandbox: {
-          execStream: async function* () {
-            yield { type: "exit" as const, exitCode: 0 };
-          },
-        },
-      });
-    const executor = createSdkOpenShellSandboxCommandExecutor({ connect });
-
-    const pendingConnection = executor.runStreaming(request(1));
-    await vi.advanceTimersByTimeAsync(1000);
-    const connectionTimeout = await pendingConnection;
-    expect(connectionTimeout.outcome).toMatchObject({
-      kind: "failed",
-      error: { kind: "timeout" },
-    });
-    connectionTimeout.release();
-
-    const pendingStream = executor.runStreaming(request(1));
-    await vi.advanceTimersByTimeAsync(1000);
-    const streamTimeout = await pendingStream;
-    expect(streamTimeout.outcome).toMatchObject({
-      kind: "failed",
-      error: { kind: "timeout" },
-    });
-    streamTimeout.release();
-    const success = await executor.runStreaming(request(1));
-    expect(success.outcome).toEqual({ kind: "completed", exitCode: 0 });
-    success.release();
-    expect(connect).toHaveBeenCalledTimes(3);
   });
 });

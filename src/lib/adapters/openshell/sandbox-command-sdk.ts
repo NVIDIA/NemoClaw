@@ -184,61 +184,30 @@ export function createSdkOpenShellSandboxCommandExecutor(
         };
       }
 
-      const controller = new AbortController();
-      let timer: NodeJS.Timeout | undefined;
       try {
-        const execute = async (): Promise<OpenShellSandboxCommandOutcome> => {
-          try {
-            const client = await connect(request.target);
-            if (controller.signal.aborted) {
-              throw new Error("OpenShell SDK connection cancelled");
-            }
-            let exitCode: number | undefined;
-            for await (const event of client.sandbox.execStream(
-              request.sandboxName,
-              [...request.command],
-              {
-                noLoginShell: true,
-                signal: controller.signal,
-                ...(request.timeoutSeconds !== undefined
-                  ? { timeoutSecs: request.timeoutSeconds }
-                  : {}),
-                ...(request.workdir ? { workdir: request.workdir } : {}),
-              },
-            )) {
-              if ("type" in event) exitCode = event.exitCode;
-              else if (event.stream === "stdout") stdout(event.data);
-              else stderr(event.data);
-            }
-            if (exitCode === undefined)
-              throw new Error("OpenShell SDK exec stream ended without an exit event");
-            return { kind: "completed", exitCode };
-          } catch (error) {
-            return commandFailure(error);
-          }
-        };
-        let outcome: OpenShellSandboxCommandOutcome;
-        const timeoutSeconds = request.timeoutSeconds;
-        if (timeoutSeconds !== undefined && timeoutSeconds > 0) {
-          const timedOut = new Promise<OpenShellSandboxCommandOutcome>((resolve) => {
-            timer = setTimeout(() => {
-              controller.abort();
-              resolve({
-                kind: "failed",
-                error: {
-                  kind: "timeout",
-                  message: `OpenShell SDK command timed out after ${String(timeoutSeconds)} seconds`,
-                },
-              });
-            }, timeoutSeconds * 1000);
-          });
-          outcome = await Promise.race([execute(), timedOut]);
-        } else {
-          outcome = await execute();
+        const client = await connect(request.target);
+        let exitCode: number | undefined;
+        for await (const event of client.sandbox.execStream(
+          request.sandboxName,
+          [...request.command],
+          {
+            noLoginShell: true,
+            ...(request.timeoutSeconds !== undefined
+              ? { timeoutSecs: request.timeoutSeconds }
+              : {}),
+            ...(request.workdir ? { workdir: request.workdir } : {}),
+          },
+        )) {
+          if ("type" in event) exitCode = event.exitCode;
+          else if (event.stream === "stdout") stdout(event.data);
+          else stderr(event.data);
         }
-        return { outcome, release: () => {} };
-      } finally {
-        if (timer) clearTimeout(timer);
+        if (exitCode === undefined) {
+          throw new Error("OpenShell SDK exec stream ended without an exit event");
+        }
+        return { outcome: { kind: "completed", exitCode }, release: () => {} };
+      } catch (error) {
+        return { outcome: commandFailure(error), release: () => {} };
       }
     },
   };

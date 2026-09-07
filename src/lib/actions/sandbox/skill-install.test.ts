@@ -8,41 +8,26 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const captureOpenshell = vi.hoisted(() => vi.fn());
+const runOpenshell = vi.hoisted(() => vi.fn());
 const sdkCommandExecutor = vi.hoisted(() => ({
-  probeDirectory: vi.fn(),
-  runStreaming: vi.fn(),
-}));
-const cliCommandExecutor = vi.hoisted(() => ({
-  probeDirectory: vi.fn(),
   runStreaming: vi.fn(),
 }));
 const ensureLiveSandboxOrExit = vi.hoisted(() => vi.fn());
-const getKnownSandboxTarget = vi.hoisted(() => vi.fn());
-const getPersistedSandboxTargetGatewayName = vi.hoisted(() => vi.fn());
+const getSandboxTargetGatewayName = vi.hoisted(() => vi.fn());
 const getSessionAgent = vi.hoisted(() => vi.fn());
 const resolveSessionAgentDefinition = vi.hoisted(() => vi.fn());
-const loadGatewayManagementDeclaration = vi.hoisted(() => vi.fn());
 
 vi.mock("../../adapters/openshell/runtime", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../adapters/openshell/runtime")>()),
   captureOpenshell,
+  runOpenshell,
 }));
 vi.mock("../../adapters/openshell/sandbox-command-sdk", () => ({
   createSdkOpenShellSandboxCommandExecutor: () => sdkCommandExecutor,
 }));
-vi.mock("../../adapters/openshell/sandbox-command-cli", () => ({
-  createCliOpenShellSandboxCommandExecutor: () => cliCommandExecutor,
-}));
 vi.mock("../../agent/runtime", () => ({ getSessionAgent, resolveSessionAgentDefinition }));
-vi.mock("../../onboard/gateway-management", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../onboard/gateway-management")>()),
-  loadGatewayManagementDeclaration,
-}));
 vi.mock("./gateway-state", () => ({ ensureLiveSandboxOrExit }));
-vi.mock("./gateway-target", () => ({
-  getKnownSandboxTarget,
-  getPersistedSandboxTargetGatewayName,
-}));
+vi.mock("./gateway-target", () => ({ getSandboxTargetGatewayName }));
 
 import { installSandboxSkill, listSandboxSkills, removeSandboxSkill } from "./skill-install";
 import type { AgentSkillIntegration } from "../../agent/skill-integration";
@@ -99,36 +84,19 @@ describe("stateless sandbox skill orchestration", () => {
     previousExitCode = process.exitCode;
     process.exitCode = undefined;
     vi.clearAllMocks();
-    captureOpenshell.mockReturnValue({
-      status: 0,
-      output: "",
-      stdout: "",
-      stderr: "",
-    });
+    captureOpenshell.mockReturnValue({ status: 0, output: "", stdout: "", stderr: "" });
+    runOpenshell.mockReturnValue({ status: 0 });
     sdkCommandExecutor.runStreaming.mockResolvedValue({
       outcome: { kind: "completed", exitCode: 0 },
       release: vi.fn(),
     });
-    cliCommandExecutor.runStreaming.mockResolvedValue({
-      outcome: { kind: "completed", exitCode: 0 },
-      release: vi.fn(),
-    });
     ensureLiveSandboxOrExit.mockResolvedValue(undefined);
-    getKnownSandboxTarget.mockReturnValue({ name: "alpha", gatewayName: "nemoclaw" });
-    getPersistedSandboxTargetGatewayName.mockImplementation(
-      (sandbox: { gatewayName: string }) => sandbox.gatewayName,
-    );
+    getSandboxTargetGatewayName.mockReturnValue("nemoclaw");
     getSessionAgent.mockReturnValue(null);
-    loadGatewayManagementDeclaration.mockReturnValue({
-      ok: true,
-      declaration: null,
-      source: null,
-    });
   });
 
   afterEach(() => {
     process.exitCode = previousExitCode;
-    vi.unstubAllEnvs();
     for (const root of roots.splice(0)) fs.rmSync(root, { force: true, recursive: true });
   });
 
@@ -178,55 +146,33 @@ describe("stateless sandbox skill orchestration", () => {
     expect(process.exitCode).toBe(13);
   });
 
-  it("uses the CLI executor only when the optional SDK package is unavailable", async () => {
+  it("uses the existing CLI transport only when the SDK is unavailable", async () => {
     selectAgent("hermes", "/usr/local/bin/hermes", HERMES);
     sdkCommandExecutor.runStreaming.mockResolvedValue({
-      outcome: {
-        kind: "failed",
-        error: { kind: "unavailable", message: "OpenShell SDK package unavailable" },
-      },
-      release: vi.fn(),
-    });
-    cliCommandExecutor.runStreaming.mockResolvedValue({
-      outcome: { kind: "completed", exitCode: 7 },
+      outcome: { kind: "failed", error: { kind: "unavailable", message: "SDK unavailable" } },
       release: vi.fn(),
     });
 
     await listSandboxSkills("alpha");
 
-    expect(cliCommandExecutor.runStreaming).toHaveBeenCalledOnce();
-    expect(process.exitCode).toBe(7);
+    expect(runOpenshell).toHaveBeenCalledWith(
+      expect.arrayContaining(["sandbox", "exec", "--name", "alpha", "-g", "nemoclaw"]),
+      expect.objectContaining({ stdio: ["ignore", "inherit", "inherit"] }),
+    );
+    expect(process.exitCode).toBe(0);
   });
 
-  it("uses only the gateway-scoped CLI executor for externally supervised gateways", async () => {
-    selectAgent("hermes", "/usr/local/bin/hermes", HERMES);
-    loadGatewayManagementDeclaration.mockReturnValue({
-      ok: true,
-      declaration: { mode: "externally-supervised" },
-      source: "file",
-    });
+  it.each([["--"], ["--agent", "other"], ["--agent=other"]])(
+    "rejects native list agent overrides %#",
+    async (...extraArgs) => {
+      selectAgent("hermes", "/usr/local/bin/hermes", HERMES);
 
-    await listSandboxSkills("alpha");
-    await removeSandboxSkill("alpha", { name: "demo-skill" });
-    await installSandboxSkill("alpha", { command: "install", path: localSkill() });
+      await listSandboxSkills("alpha", { extraArgs });
 
-    expect(sdkCommandExecutor.runStreaming).not.toHaveBeenCalled();
-    expect(cliCommandExecutor.runStreaming).toHaveBeenCalledTimes(5);
-    expect(
-      cliCommandExecutor.runStreaming.mock.calls.every(
-        ([request]) => request.target.gatewayName === "nemoclaw",
-      ),
-    ).toBe(true);
-  });
-
-  it("rejects Hermes agent-selection overrides before native list execution", async () => {
-    selectAgent("hermes", "/usr/local/bin/hermes", HERMES);
-
-    await listSandboxSkills("alpha", { extraArgs: ["--agent", "other"] });
-
-    expect(process.exitCode).toBe(2);
-    expect(sdkCommandExecutor.runStreaming).not.toHaveBeenCalled();
-  });
+      expect(process.exitCode).toBe(2);
+      expect(sdkCommandExecutor.runStreaming).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     ["openclaw", "/usr/local/bin/openclaw", OPENCLAW],
@@ -301,157 +247,6 @@ describe("stateless sandbox skill orchestration", () => {
       /docker|podman|receipt|provenance/u,
     );
     expect(process.exitCode).toBe(0);
-  });
-
-  it("fails a successful add when private staging cleanup fails and retries cleanup", async () => {
-    selectAgent("hermes", "/usr/local/bin/hermes", HERMES);
-    const source = localSkill();
-    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const addRelease = vi.fn();
-    sdkCommandExecutor.runStreaming
-      .mockResolvedValueOnce({
-        outcome: { kind: "completed", exitCode: 0 },
-        release: vi.fn(),
-      })
-      .mockResolvedValueOnce({
-        outcome: { kind: "completed", exitCode: 0 },
-        release: addRelease,
-      })
-      .mockResolvedValueOnce({
-        outcome: { kind: "completed", exitCode: 1 },
-        release: vi.fn(),
-      })
-      .mockResolvedValueOnce({
-        outcome: { kind: "completed", exitCode: 0 },
-        release: vi.fn(),
-      });
-
-    await installSandboxSkill("alpha", { command: "install", path: source });
-
-    expect(process.exitCode).toBe(1);
-    expect(sdkCommandExecutor.runStreaming).toHaveBeenCalledTimes(4);
-    expect(sdkCommandExecutor.runStreaming.mock.calls[2]?.[0].command).toEqual(
-      sdkCommandExecutor.runStreaming.mock.calls[3]?.[0].command,
-    );
-    expect(addRelease.mock.invocationCallOrder[0]).toBeGreaterThan(
-      sdkCommandExecutor.runStreaming.mock.invocationCallOrder[2] ?? 0,
-    );
-    expect(error).toHaveBeenCalledWith(
-      expect.stringMatching(/^  Private skill staging cleanup failed: \/sandbox\//u),
-    );
-    expect(error).toHaveBeenCalledWith(expect.stringContaining(" skill list"));
-    expect(error).toHaveBeenCalledWith(expect.stringContaining(" exec -- rm -rf -- /sandbox/"));
-  });
-
-  it("retains private staging after an interrupted upload", async () => {
-    selectAgent("hermes", "/usr/local/bin/hermes", HERMES);
-    const source = localSkill();
-    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    captureOpenshell.mockReturnValue({
-      status: 143,
-      signal: "SIGTERM",
-      output: "",
-      stdout: "",
-      stderr: "",
-    });
-    sdkCommandExecutor.runStreaming.mockResolvedValueOnce({
-      outcome: { kind: "completed", exitCode: 0 },
-      release: vi.fn(),
-    });
-
-    await installSandboxSkill("alpha", { command: "install", path: source });
-
-    expect(process.exitCode).toBe(1);
-    expect(sdkCommandExecutor.runStreaming).toHaveBeenCalledOnce();
-    expect(error).toHaveBeenCalledWith(
-      expect.stringMatching(/^  Private skill stage retained .*: \/sandbox\//u),
-    );
-    expect(error).toHaveBeenCalledWith(expect.stringContaining("confirm that no skill command"));
-  });
-
-  it("retains a possible stage when preparation termination is not confirmed", async () => {
-    selectAgent("hermes", "/usr/local/bin/hermes", HERMES);
-    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    sdkCommandExecutor.runStreaming.mockResolvedValueOnce({
-      outcome: { kind: "completed", exitCode: 143, signal: "SIGTERM" },
-      release: vi.fn(),
-    });
-
-    await installSandboxSkill("alpha", { command: "install", path: localSkill() });
-
-    expect(process.exitCode).toBe(143);
-    expect(sdkCommandExecutor.runStreaming).toHaveBeenCalledOnce();
-    expect(captureOpenshell).not.toHaveBeenCalled();
-    expect(error).toHaveBeenCalledWith(
-      expect.stringMatching(/^  Private skill stage retained .*: \/sandbox\//u),
-    );
-  });
-
-  it("retains the private stage when native add termination is not confirmed", async () => {
-    selectAgent("openclaw", "/usr/local/bin/openclaw", OPENCLAW);
-    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    sdkCommandExecutor.runStreaming
-      .mockResolvedValueOnce({
-        outcome: { kind: "completed", exitCode: 0 },
-        release: vi.fn(),
-      })
-      .mockResolvedValueOnce({
-        outcome: {
-          kind: "failed",
-          error: { kind: "timeout", message: "deadline" },
-        },
-        release: vi.fn(),
-      });
-
-    await installSandboxSkill("alpha", { command: "install", path: localSkill() });
-
-    expect(process.exitCode).toBe(1);
-    expect(sdkCommandExecutor.runStreaming).toHaveBeenCalledTimes(2);
-    expect(error).toHaveBeenCalledWith(
-      expect.stringMatching(/^  Private skill stage retained .*: \/sandbox\//u),
-    );
-    expect(error).toHaveBeenCalledWith(expect.stringContaining("confirm that no skill command"));
-  });
-
-  it("does not upload, publish, or clean up through a changed gateway binding", async () => {
-    selectAgent("hermes", "/usr/local/bin/hermes", HERMES);
-    const original = { name: "alpha", gatewayName: "nemoclaw" };
-    const replacement = { name: "alpha", gatewayName: "nemoclaw-9090" };
-    getKnownSandboxTarget
-      .mockReturnValueOnce(original)
-      .mockReturnValueOnce(original)
-      .mockReturnValue(replacement);
-    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
-
-    await installSandboxSkill("alpha", { command: "install", path: localSkill() });
-
-    expect(ensureLiveSandboxOrExit).toHaveBeenCalledWith("alpha", {
-      selectOwningGateway: false,
-      targetGatewayName: "nemoclaw",
-    });
-    expect(sdkCommandExecutor.runStreaming).toHaveBeenCalledOnce();
-    expect(sdkCommandExecutor.runStreaming.mock.calls[0]?.[0].target).toEqual({
-      kind: "named",
-      gatewayName: "nemoclaw",
-    });
-    expect(captureOpenshell).not.toHaveBeenCalled();
-    expect(error).toHaveBeenCalledWith(
-      expect.stringContaining("changed gateway binding during the skill operation"),
-    );
-    expect(error).toHaveBeenCalledWith(
-      expect.stringContaining("Private skill stage was not removed"),
-    );
-  });
-
-  it("rejects an endpoint override before any sandbox command or upload", async () => {
-    selectAgent("hermes", "/usr/local/bin/hermes", HERMES);
-    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://other-gateway.example");
-
-    await expect(
-      installSandboxSkill("alpha", { command: "install", path: localSkill() }),
-    ).rejects.toThrow(/may bypass the gateway recorded for this sandbox/u);
-    expect(sdkCommandExecutor.runStreaming).not.toHaveBeenCalled();
-    expect(captureOpenshell).not.toHaveBeenCalled();
   });
 
   it("fails clearly when the selected agent declares no safe skill integration", async () => {

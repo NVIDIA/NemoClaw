@@ -5,27 +5,24 @@ import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
+import { buildCliOpenShellSandboxExecArgs } from "../../adapters/openshell/sandbox-command-cli";
 import { createSdkOpenShellSandboxCommandExecutor } from "../../adapters/openshell/sandbox-command-sdk";
-import { createCliOpenShellSandboxCommandExecutor } from "../../adapters/openshell/sandbox-command-cli";
-import { captureOpenshell, OPENSHELL_OPERATION_TIMEOUT_MS } from "../../adapters/openshell/runtime";
+import {
+  captureOpenshell,
+  OPENSHELL_OPERATION_TIMEOUT_MS,
+  runOpenshell,
+} from "../../adapters/openshell/runtime";
 import * as agentRuntime from "../../agent/runtime";
 import { renderAgentSkillCommand } from "../../agent/skill-integration";
 import { CLI_NAME } from "../../cli/branding";
 import { D, G, R } from "../../cli/terminal-style";
-import {
-  invalidGatewayManagementDeclarationError,
-  loadGatewayManagementDeclaration,
-} from "../../onboard/gateway-management";
-import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
 import * as skillInstall from "../../skill-install";
 import { ensureLiveSandboxOrExit } from "./gateway-state";
-import { getKnownSandboxTarget, getPersistedSandboxTargetGatewayName } from "./gateway-target";
+import { getSandboxTargetGatewayName } from "./gateway-target";
 import { wrapExecCommandWithRuntimeEnv } from "./runtime-env";
 
 const SKILL_COMMAND_TIMEOUT_SECONDS = 120;
-const SKILL_UPLOAD_MAX_OUTPUT_BYTES = 1024 * 1024;
 const skillCommandExecutor = createSdkOpenShellSandboxCommandExecutor();
-const skillCommandFallbackExecutor = createCliOpenShellSandboxCommandExecutor();
 
 export type SkillInstallRequest = {
   command?: string;
@@ -129,7 +126,7 @@ function resolveSelectedSkillAgent(sandboxName: string) {
     process.exitCode = 1;
     return null;
   }
-  return { agent: resolution.agent, binary, integration };
+  return { binary, integration };
 }
 
 function rejectsAgentOverride(extraArgs: readonly string[]): boolean {
@@ -139,93 +136,27 @@ function rejectsAgentOverride(extraArgs: readonly string[]): boolean {
   );
 }
 
-function mustUseGatewayScopedCli(): boolean {
-  const loaded = loadGatewayManagementDeclaration();
-  if (!loaded.ok) throw invalidGatewayManagementDeclarationError(loaded.reason);
-  return loaded.declaration?.mode === "externally-supervised";
-}
-
-function resolveSkillGatewayBinding(sandboxName: string): string | null {
-  const sandbox = getKnownSandboxTarget(sandboxName);
-  if (!sandbox) {
-    console.error(`  Sandbox '${sandboxName}' has no persisted gateway binding.`);
-    process.exitCode = 1;
-    return null;
-  }
-  try {
-    return getPersistedSandboxTargetGatewayName(sandbox);
-  } catch (error) {
-    console.error(`  ${error instanceof Error ? error.message : String(error)}`);
-    process.exitCode = 1;
-    return null;
-  }
-}
-
-function skillGatewayBindingIsCurrent(sandboxName: string, gatewayName: string): boolean {
-  const sandbox = getKnownSandboxTarget(sandboxName);
-  if (!sandbox) return false;
-  try {
-    return getPersistedSandboxTargetGatewayName(sandbox) === gatewayName;
-  } catch {
-    return false;
-  }
-}
-
-function requireCurrentSkillGatewayBinding(sandboxName: string, gatewayName: string): boolean {
-  if (skillGatewayBindingIsCurrent(sandboxName, gatewayName)) return true;
-  console.error(
-    `  Sandbox '${sandboxName}' changed gateway binding during the skill operation; no further mutation was attempted.`,
-  );
-  process.exitCode = 1;
-  return false;
-}
-
-async function runSandboxCommandRetained(
+function runCliSandboxCommand(
   sandboxName: string,
   gatewayName: string,
   command: readonly string[],
-): Promise<{ exitCode: number; release: () => void; terminationConfirmed: boolean }> {
-  const request = {
-    sandboxName,
-    target: { kind: "named", gatewayName },
-    command,
-    tty: false,
-    timeoutSeconds: SKILL_COMMAND_TIMEOUT_SECONDS,
-  } as const;
-  let useCli: boolean;
-  try {
-    useCli = mustUseGatewayScopedCli();
-  } catch (error) {
-    console.error(`  ${error instanceof Error ? error.message : String(error)}`);
-    return { exitCode: 1, release: () => {}, terminationConfirmed: false };
-  }
-  let completion = await (
-    useCli ? skillCommandFallbackExecutor : skillCommandExecutor
-  ).runStreaming(request);
-  if (useCli) {
-    if (completion.outcome.kind === "completed") {
-      return {
-        exitCode: completion.outcome.exitCode,
-        release: completion.release,
-        terminationConfirmed: !completion.outcome.signal,
-      };
-    }
-    console.error(`  OpenShell CLI execution failed: ${completion.outcome.error.message}`);
-    return { exitCode: 1, release: completion.release, terminationConfirmed: false };
-  }
-  if (completion.outcome.kind === "failed" && completion.outcome.error.kind === "unavailable") {
-    completion.release();
-    completion = await skillCommandFallbackExecutor.runStreaming(request);
-  }
-  if (completion.outcome.kind === "completed") {
-    return {
-      exitCode: completion.outcome.exitCode,
-      release: completion.release,
-      terminationConfirmed: !completion.outcome.signal,
-    };
-  }
-  console.error(`  OpenShell SDK execution failed: ${completion.outcome.error.message}`);
-  return { exitCode: 1, release: completion.release, terminationConfirmed: false };
+): number {
+  const result = runOpenshell(
+    buildCliOpenShellSandboxExecArgs({
+      sandboxName,
+      target: { kind: "named", gatewayName },
+      command,
+      tty: false,
+      timeoutSeconds: SKILL_COMMAND_TIMEOUT_SECONDS,
+    }),
+    {
+      ignoreError: true,
+      killProcessTreeOnTimeout: true,
+      stdio: ["ignore", "inherit", "inherit"],
+      timeout: SKILL_COMMAND_TIMEOUT_SECONDS * 1000,
+    },
+  );
+  return result.status ?? 1;
 }
 
 async function runSandboxCommand(
@@ -233,9 +164,20 @@ async function runSandboxCommand(
   gatewayName: string,
   command: readonly string[],
 ): Promise<number> {
-  const completion = await runSandboxCommandRetained(sandboxName, gatewayName, command);
+  const completion = await skillCommandExecutor.runStreaming({
+    sandboxName,
+    target: { kind: "named", gatewayName },
+    command,
+    tty: false,
+    timeoutSeconds: SKILL_COMMAND_TIMEOUT_SECONDS,
+  });
   try {
-    return completion.exitCode;
+    if (completion.outcome.kind === "completed") return completion.outcome.exitCode;
+    if (completion.outcome.error.kind === "unavailable") {
+      return runCliSandboxCommand(sandboxName, gatewayName, command);
+    }
+    console.error(`  OpenShell SDK execution failed: ${completion.outcome.error.message}`);
+    return 1;
   } finally {
     completion.release();
   }
@@ -246,25 +188,12 @@ async function cleanupRemoteStage(
   gatewayName: string,
   stageDirectory: string,
 ): Promise<boolean> {
-  if (!skillGatewayBindingIsCurrent(sandboxName, gatewayName)) {
-    console.error(
-      `  Private skill stage was not removed because sandbox '${sandboxName}' no longer belongs to gateway '${gatewayName}': ${stageDirectory}`,
-    );
-    process.exitCode = 1;
-    return false;
-  }
   const exitCode = await runSandboxCommand(sandboxName, gatewayName, [
     "/bin/sh",
     "-c",
     skillInstall.buildCleanupSkillStageCommand(stageDirectory),
   ]);
-  if (exitCode !== 0) {
-    console.error(`  Private skill staging cleanup failed: ${stageDirectory}`);
-    console.error(`  Inspect agent state with: ${CLI_NAME} ${sandboxName} skill list`);
-    console.error(
-      `  Remove only the reported private stage with: ${CLI_NAME} ${sandboxName} exec -- rm -rf -- ${stageDirectory}`,
-    );
-  }
+  if (exitCode !== 0) console.error("  Private skill staging cleanup failed.");
   return exitCode === 0;
 }
 
@@ -276,50 +205,15 @@ function runAgentSkillCommand(
   return runSandboxCommand(sandboxName, gatewayName, wrapExecCommandWithRuntimeEnv(command));
 }
 
-function runAgentSkillCommandRetained(
-  sandboxName: string,
-  gatewayName: string,
-  command: readonly string[],
-) {
-  return runSandboxCommandRetained(
-    sandboxName,
-    gatewayName,
-    wrapExecCommandWithRuntimeEnv(command),
-  );
-}
-
-function reportRetainedRemoteStage(
-  sandboxName: string,
-  gatewayName: string,
-  stageDirectory: string,
-): void {
-  console.error(
-    `  Private skill stage retained because remote command termination was not confirmed: ${stageDirectory}`,
-  );
-  console.error(
-    `  Inspect sandbox '${sandboxName}' on gateway '${gatewayName}', confirm that no skill command is still running, then remove only this private stage.`,
-  );
-}
-
 async function runSkillCommandWithStageCleanup(
   sandboxName: string,
   gatewayName: string,
   stageDirectory: string,
   command: readonly string[],
-): Promise<boolean> {
-  const completion = await runAgentSkillCommandRetained(sandboxName, gatewayName, command);
-  try {
-    if (!completion.terminationConfirmed) {
-      reportRetainedRemoteStage(sandboxName, gatewayName, stageDirectory);
-      process.exitCode = completion.exitCode;
-      return true;
-    }
-    const cleaned = await cleanupRemoteStage(sandboxName, gatewayName, stageDirectory);
-    process.exitCode = cleaned || completion.exitCode !== 0 ? completion.exitCode : 1;
-    return cleaned;
-  } finally {
-    completion.release();
-  }
+): Promise<void> {
+  const commandExit = await runAgentSkillCommand(sandboxName, gatewayName, command);
+  const cleaned = await cleanupRemoteStage(sandboxName, gatewayName, stageDirectory);
+  process.exitCode = cleaned || commandExit !== 0 ? commandExit : 1;
 }
 
 /** Stream the unmodified selected agent's native skill list. */
@@ -327,13 +221,7 @@ export async function listSandboxSkills(
   sandboxName: string,
   request: SkillListRequest = {},
 ): Promise<void> {
-  const gatewayName = resolveSkillGatewayBinding(sandboxName);
-  if (!gatewayName) return;
-  await ensureLiveSandboxOrExit(sandboxName, {
-    selectOwningGateway: false,
-    targetGatewayName: gatewayName,
-  });
-  if (!requireCurrentSkillGatewayBinding(sandboxName, gatewayName)) return;
+  await ensureLiveSandboxOrExit(sandboxName, { selectOwningGateway: false });
   const selected = resolveSelectedSkillAgent(sandboxName);
   if (!selected) return;
   const extraArgs = request.extraArgs ?? [];
@@ -342,6 +230,7 @@ export async function listSandboxSkills(
     process.exitCode = 2;
     return;
   }
+  const gatewayName = getSandboxTargetGatewayName(sandboxName);
   process.exitCode = await runAgentSkillCommand(sandboxName, gatewayName, [
     ...renderAgentSkillCommand(selected.binary, selected.integration.listCommand),
     ...extraArgs,
@@ -367,20 +256,18 @@ export async function removeSandboxSkill(
     process.exit(2);
   }
 
-  const gatewayName = resolveSkillGatewayBinding(sandboxName);
-  if (!gatewayName) return;
-  await ensureLiveSandboxOrExit(sandboxName, {
-    selectOwningGateway: false,
-    targetGatewayName: gatewayName,
-  });
-  if (!requireCurrentSkillGatewayBinding(sandboxName, gatewayName)) return;
+  await ensureLiveSandboxOrExit(sandboxName, { selectOwningGateway: false });
   const selected = resolveSelectedSkillAgent(sandboxName);
   if (!selected) return;
   const native = selected.integration.removeCommand;
   const command = native
     ? renderAgentSkillCommand(selected.binary, native, { name: skillName })
     : skillInstall.buildCanonicalSkillRemoveCommand(selected.integration.writableRoot, skillName);
-  process.exitCode = await runAgentSkillCommand(sandboxName, gatewayName, command);
+  process.exitCode = await runAgentSkillCommand(
+    sandboxName,
+    getSandboxTargetGatewayName(sandboxName),
+    command,
+  );
 }
 
 function resolveLocalSkill(skillPath: string): {
@@ -409,18 +296,7 @@ function resolveLocalSkill(skillPath: string): {
     console.error(`  Skill directory '${directory}' must remain a regular directory.`);
     return null;
   }
-  const skillFile = path.join(directory, "SKILL.md");
-  const skillFileStat = lstatOrNull(skillFile);
-  if (!skillFileStat) {
-    console.error(`  No SKILL.md found in '${directory}'.`);
-    if (looksLikeOpenClawPlugin(directory)) printPluginInstallHint();
-    return null;
-  }
-  if (skillFileStat.isSymbolicLink() || !skillFileStat.isFile()) {
-    console.error(`  SKILL.md in '${directory}' must be a regular file.`);
-    return null;
-  }
-  const source = readRegularFileNoFollow(skillFile);
+  const source = readRegularFileNoFollow(path.join(directory, "SKILL.md"));
   if (source === null) {
     console.error(`  SKILL.md in '${directory}' must be a regular file.`);
     return null;
@@ -476,7 +352,6 @@ export async function installSandboxSkill(
     console.error(`  Usage: ${CLI_NAME} <sandbox> skill install <path>`);
     process.exit(2);
   }
-  assertNoOpenShellGatewayEndpointOverride();
 
   const local = resolveLocalSkill(request.path);
   if (!local) {
@@ -517,37 +392,22 @@ export async function installSandboxSkill(
   let gatewayName = "";
   let stageCreated = false;
   try {
-    gatewayName = resolveSkillGatewayBinding(sandboxName) ?? "";
-    if (!gatewayName) return;
-    await ensureLiveSandboxOrExit(sandboxName, {
-      selectOwningGateway: false,
-      targetGatewayName: gatewayName,
-    });
-    if (!requireCurrentSkillGatewayBinding(sandboxName, gatewayName)) return;
+    await ensureLiveSandboxOrExit(sandboxName, { selectOwningGateway: false });
     const selected = resolveSelectedSkillAgent(sandboxName);
     if (!selected) return;
-    stageCreated = true;
-    const prepare = await runSandboxCommandRetained(sandboxName, gatewayName, [
+    gatewayName = getSandboxTargetGatewayName(sandboxName);
+    const prepareExit = await runSandboxCommand(sandboxName, gatewayName, [
       "/bin/sh",
       "-c",
       skillInstall.buildPrepareSkillStageCommand(stageDirectory),
     ]);
-    try {
-      if (!prepare.terminationConfirmed) {
-        reportRetainedRemoteStage(sandboxName, gatewayName, stageDirectory);
-        stageCreated = false;
-        process.exitCode = prepare.exitCode;
-        return;
-      }
-      if (prepare.exitCode !== 0) {
-        console.error("  Private skill staging failed.");
-        process.exitCode = 1;
-        return;
-      }
-    } finally {
-      prepare.release();
+    if (prepareExit !== 0) {
+      console.error("  Private skill staging failed.");
+      process.exitCode = 1;
+      return;
     }
-    if (!requireCurrentSkillGatewayBinding(sandboxName, gatewayName)) return;
+    stageCreated = true;
+
     const upload = captureOpenshell(
       // OpenShell SDK 0.0.106 has sandbox exec but no upload/sync API. Keep
       // only this bounded transfer on the existing provider-neutral CLI path.
@@ -564,18 +424,12 @@ export async function installSandboxSkill(
         ignoreError: true,
         includeStderr: true,
         includeStreams: true,
-        maxBuffer: SKILL_UPLOAD_MAX_OUTPUT_BYTES,
         timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
       },
     );
-    if (upload.status !== 0 || upload.error) {
-      const detail = (upload.output || upload.error?.message || "").trim();
+    if (upload.status !== 0) {
+      const detail = upload.output.trim();
       console.error(`  Skill snapshot upload failed${detail ? `: ${detail}` : "."}`);
-      const errorCode = (upload.error as NodeJS.ErrnoException | undefined)?.code;
-      if (upload.signal || errorCode === "ETIMEDOUT") {
-        reportRetainedRemoteStage(sandboxName, gatewayName, stageDirectory);
-        stageCreated = false;
-      }
       process.exitCode = 1;
       return;
     }
@@ -588,13 +442,8 @@ export async function installSandboxSkill(
           local.name,
           stagedSkillDirectory,
         );
-    if (!requireCurrentSkillGatewayBinding(sandboxName, gatewayName)) return;
-    stageCreated = !(await runSkillCommandWithStageCleanup(
-      sandboxName,
-      gatewayName,
-      stageDirectory,
-      command,
-    ));
+    await runSkillCommandWithStageCleanup(sandboxName, gatewayName, stageDirectory, command);
+    stageCreated = false;
   } finally {
     if (stageCreated && gatewayName) {
       await cleanupRemoteStage(sandboxName, gatewayName, stageDirectory);
