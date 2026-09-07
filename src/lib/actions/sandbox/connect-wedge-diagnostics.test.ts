@@ -13,7 +13,7 @@ describe("connectSandbox wedge diagnostic failures", () => {
   let exitSpy: MockInstance;
 
   beforeEach(() => {
-    process.env.NEMOCLAW_TEST_NO_SLEEP = "1";
+    vi.stubEnv("NEMOCLAW_TEST_NO_SLEEP", "1");
     exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number | string | null) => {
       throw new Error(`process.exit(${code ?? 0})`);
     }) as never);
@@ -22,7 +22,6 @@ describe("connectSandbox wedge diagnostic failures", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
-    delete process.env.NEMOCLAW_TEST_NO_SLEEP;
     delete require.cache[requireDist.resolve(connectModulePath)];
   });
 
