@@ -38,6 +38,46 @@ const MCP_REFUSED_BEFORE_RESTART = {
 
 describe("binding the Hermes gateway to restored state", () => {
 
+  it("keeps selected OpenShell operations pinned while using frozen rebuild supervisor authority", () => {
+    const runtimeSelection = {
+      gatewayName: "nemoclaw-19080",
+      workspace: "default",
+      localTlsDir: "/authority/tls",
+    };
+    const frozenTargetGatewaySupervisorAction = vi.fn(() => null);
+    const restartSandboxGateway = vi.fn(() => RESTART_SUCCEEDED);
+    const checkAndRecoverSandboxProcesses = vi.fn(() => ({
+      checked: true,
+      wasRunning: true,
+      recovered: false,
+    }));
+
+    const restartState = restartHermesGatewayAfterStateRestore("alpha", "hermes", {
+      frozenTargetGatewaySupervisorAction,
+      restartSandboxGateway,
+      runtimeSelection,
+    });
+    expect(restartState).toBe("restarted");
+    expect(restartSandboxGateway).toHaveBeenCalledExactlyOnceWith("alpha", {
+      quiet: true,
+      deps: { requestGatewaySupervisorAction: frozenTargetGatewaySupervisorAction },
+      runtimeSelection,
+    });
+
+    expect(
+      verifyHermesGatewayAfterStateRestore("alpha", "hermes", restartState, {
+        checkAndRecoverSandboxProcesses,
+        frozenTargetGatewaySupervisorAction,
+        runtimeSelection,
+      }),
+    ).toBe("healthy");
+    expect(checkAndRecoverSandboxProcesses).toHaveBeenCalledExactlyOnceWith("alpha", {
+      quiet: true,
+      requestGatewaySupervisorAction: frozenTargetGatewaySupervisorAction,
+      runtimeSelection,
+    });
+  });
+
   it("keeps restart evidence while rebuild restores the managed MCP projection (#8671)", () => {
     const restartState = restartHermesGatewayAfterStateRestore("alpha", "hermes", {
       restartSandboxGateway: () => RESTARTED_WITH_MCP_MISMATCH,
