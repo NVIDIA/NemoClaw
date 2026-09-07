@@ -245,6 +245,9 @@ let recoveryJournalReadbackFailuresRemaining = ${JSON.stringify(
             ? 1
             : 0,
       )};
+if (recoveryReentry === "fresh-same-registry-only") {
+  recoveryJournalReadbackFailuresRemaining = 0;
+}
 const postCreatePolicyChange = ${JSON.stringify(expectedOutcome === "post-create-policy-change")};
 let cancelPrompt = false;
 const originalGetCredential = credentials.getCredential;
@@ -312,8 +315,9 @@ runner.run = (command, opts = {}) => {
   return "";
 };
 	const retainedRegistryEntry = recoveryReentry && fs.existsSync(${JSON.stringify(payloadPath)})
-	  ? JSON.parse(fs.readFileSync(${JSON.stringify(payloadPath)}, "utf8")).currentRegistryEntry
+	  ? JSON.parse(fs.readFileSync(${JSON.stringify(payloadPath)}, "utf8")).recoveryRegistryEntry
 	  : null;
+	let verifiedRecoveryRegistryEntry = null;
 	const registryMutationCalls = [];
   let checkpointReadCalls = 0;
 	if (!recoveryReentry) {
@@ -386,6 +390,13 @@ runner.run = (command, opts = {}) => {
 	  setDefault: (name) => { registryMutationCalls.push({ operation: "set-default", name }); },
 	  removeSandbox: (name) => { registryMutationCalls.push({ operation: "remove", name }); },
 	});
+	const recordPendingSandboxCreateIdentity =
+	  registry.recordPendingSandboxCreateIdentity.bind(registry);
+	registry.recordPendingSandboxCreateIdentity = (...args) => {
+	  const entry = recordPendingSandboxCreateIdentity(...args);
+	  verifiedRecoveryRegistryEntry = structuredClone(entry);
+	  return entry;
+	};
 if (postCreateRunnerRefusal) {
   const requireCurrentCheckpoint = registry.requireCurrentPendingSandboxCreateIdentity;
   registry.requireCurrentPendingSandboxCreateIdentity = (...args) => {
@@ -507,6 +518,7 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
     registryMutationCalls,
     currentRegistryEntry: cancelAfterCreate ? registry.getSandbox("my-assistant") : null,
     recoveryRegistryEntry: registry.getSandbox("my-assistant"),
+    verifiedRecoveryRegistryEntry,
     savedSession:
       cancelAfterCreate ||
       postCreateRunnerRefusal ||
@@ -571,10 +583,28 @@ if (${JSON.stringify(
 	      clearInterval(keepAlive);
 	      return;
 	    }
+	    if (recoveryReentry === "fresh-same-registry-only") {
+	      if (!retainedRegistryEntry?.pendingCreateIdentity) {
+	        throw new Error("missing verified create checkpoint for registry-only recovery");
+	      }
+	      registry.save({
+	        defaultSandbox: null,
+	        sandboxes: { "my-assistant": retainedRegistryEntry },
+	      });
+	      onboardModule.onboardSession.saveSession(
+	        onboardModule.onboardSession.createSession({
+	          sessionId: "replacement-session",
+	          sandboxName: "my-assistant",
+	        }),
+	      );
+	    }
 	    try {
 	      await onboardModule.onboard({
+	        acceptThirdPartySoftware: true,
 	        resume: recoveryReentry === "explicit",
-	        fresh: recoveryReentry === "fresh-same",
+	        fresh:
+	          recoveryReentry === "fresh-same" ||
+	          recoveryReentry === "fresh-same-registry-only",
 	        recreateSandbox: recoveryReentry === "recreate",
 	        sandboxName: "my-assistant",
 	        deferProcessExit: true,
@@ -920,6 +950,37 @@ if (${JSON.stringify(
           assert.equal(reentryPayload.savedSession.sandboxName, "my-assistant");
           assert.deepEqual(reentryPayload.retainedRecoveryRecords, []);
         }
+
+        // Refusal reentries replace the payload. Give only the registry-only
+        // child the verified checkpoint captured at its persistence boundary.
+        fs.writeFileSync(
+          payloadPath,
+          JSON.stringify({
+            ...payload,
+            recoveryRegistryEntry: payload.verifiedRecoveryRegistryEntry,
+          }),
+        );
+        const registryOnlyReentry = spawnSync(process.execPath, [scriptPath], {
+          cwd: repoRoot,
+          encoding: "utf-8",
+          env: {
+            ...childEnv,
+            NEMOCLAW_RECOVERY_REENTRY: "fresh-same-registry-only",
+          },
+          timeout: 30000,
+        });
+        assert.equal(registryOnlyReentry.status, 0, registryOnlyReentry.stderr);
+        const registryOnlyPayload = JSON.parse(fs.readFileSync(payloadPath, "utf8"));
+        assert.equal(registryOnlyPayload.exitCode, 1);
+        assert.match(registryOnlyReentry.stderr, /cannot use retained sandbox 'my-assistant'/u);
+        assert.match(registryOnlyReentry.stderr, /destroy command.*same-name fresh onboarding/u);
+        assert.deepEqual(registryOnlyPayload.commandNames, []);
+        assert.equal(registryOnlyPayload.credentialReadCalls, 0);
+        assert.equal(registryOnlyPayload.routeReservationCalls, 0);
+        assert.deepEqual(registryOnlyPayload.registryMutationCalls, []);
+        assert.equal(registryOnlyPayload.savedSession.sessionId, "replacement-session");
+        assert.equal(registryOnlyPayload.retainedRecoveryRecords.length, 1);
+        assertRecoveryTuple(registryOnlyPayload.retainedRecoveryRecords[0]);
       };
       const assertPostCreateRegistrationRecoveryRetry = () => {
         assert.equal(payload.sandboxName, null);

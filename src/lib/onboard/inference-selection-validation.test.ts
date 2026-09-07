@@ -11,6 +11,11 @@ import { useOpenAiValidationTestServers } from "../inference/openai-validation-s
 import { OnboardInferenceCapabilityCache } from "./inference-capability-cache";
 import { createInferenceSelectionValidationHelpers } from "./inference-selection-validation";
 
+const EXPECTED_WSL_SLOW_VERIFICATION_ADVISORY =
+  "WSL2 detected — network verification may be slower than expected. " +
+  "Check proxy and VPN health, then run onboarding again with a longer budget: " +
+  "`NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS=360 nemoclaw onboard`.";
+
 const listen = useOpenAiValidationTestServers();
 const resumableValidationExit = {
   code: 1,
@@ -413,6 +418,157 @@ describe("inference selection validation", () => {
       process.exitCode = originalExitCode;
       error.mockRestore();
       exit.mockRestore();
+    }
+  });
+
+  it("prints transport guidance and the WSL advisory before the non-interactive abort (#10413)", async () => {
+    // A non-interactive run exits before the recovery prompt, which is where
+    // this guidance normally reaches an operator. Without it the terminal ends
+    // at a bare "curl exit 28" and names no next step.
+    const originalExitCode = process.exitCode;
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const promptValidationRecovery = vi.fn(async () => "selection" as const);
+    const helpers = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => true,
+      agentProductName: () => "OpenClaw",
+      getCredential: () => "nvapi-test-key-12345",
+      probeOpenAiLikeEndpoint: () => ({
+        ok: false,
+        advisory: EXPECTED_WSL_SLOW_VERIFICATION_ADVISORY,
+        failures: [
+          {
+            name: "Chat Completions API",
+            curlStatus: 28,
+            message: "curl failed (exit 28)",
+          },
+        ],
+      }),
+      teardownOrphanManagedGatewayOnAbort: () => true,
+      promptValidationRecovery,
+    });
+
+    try {
+      await expect(
+        helpers.validateOpenAiLikeSelection(
+          "NVIDIA Endpoints",
+          "https://integrate.api.nvidia.com/v1",
+          "meta/llama-3.3-70b-instruct",
+          "NVIDIA_INFERENCE_API_KEY",
+        ),
+      ).rejects.toMatchObject(resumableValidationExit);
+      expect(promptValidationRecovery).not.toHaveBeenCalled();
+      expect(error.mock.calls.map((args) => args.join(" "))).toEqual([
+        "  NVIDIA Endpoints endpoint validation failed.",
+        "  Validation probe summary: Chat Completions API: curl exit 28.",
+        "  Validation details were omitted to avoid exposing credentials.",
+        "  Validation timed out before the provider replied. Retry, or check network/proxy health.",
+        `  ${EXPECTED_WSL_SLOW_VERIFICATION_ADVISORY}`,
+      ]);
+    } finally {
+      process.exitCode = originalExitCode;
+      error.mockRestore();
+    }
+  });
+
+  it("carries a default-probe WSL timeout through non-interactive teardown (#10413)", async () => {
+    let requestIndex = 0;
+    const reasoningResponse =
+      '{"choices":[{"finish_reason":"length","message":{"content":"","reasoning_content":"Planning the tool call."}}]}';
+    const replies = [(response: http.ServerResponse) => response.end(reasoningResponse), () => {}];
+    const server = http.createServer((request, response) => {
+      request.resume();
+      (replies[requestIndex++] ?? replies[1])(response);
+    });
+    const port = await listen(server);
+    const originalExitCode = process.exitCode;
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const promptValidationRecovery = vi.fn(async () => "selection" as const);
+    const teardownOrphanManagedGatewayOnAbort = vi.fn(() => true);
+    const helpers = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => true,
+      agentProductName: () => "OpenClaw",
+      getCredential: () => "test-key",
+      teardownOrphanManagedGatewayOnAbort,
+      promptValidationRecovery,
+    });
+    const probeOptions = {
+      skipResponsesProbe: true,
+      requireChatCompletionsToolCalling: true,
+      isWsl: true,
+      spawnSyncImpl: () => {
+        throw new Error("unexpected legacy probe");
+      },
+      validationTiming: { connectTimeoutSeconds: 0.01, maxTimeSeconds: 0.01, source: "standard" },
+      validationSessionOptions: {
+        env: {},
+        lookup: async () => [{ address: "127.0.0.1", family: 4 }],
+        allowPrivateAddressesForTesting: true,
+      },
+    };
+    try {
+      const failure = await helpers
+        .validateOpenAiLikeSelection(
+          "Compatible endpoint",
+          `http://provider.example.com:${port}/v1`,
+          "qwen3-vl:4b",
+          null,
+          undefined,
+          undefined,
+          probeOptions,
+        )
+        .catch((caught) => caught);
+      expect({
+        failure,
+        output: error.mock.calls.map((args) => args.join(" ")),
+        promptCalls: promptValidationRecovery.mock.calls.length,
+        teardownCalls: teardownOrphanManagedGatewayOnAbort.mock.calls.length,
+      }).toEqual({
+        failure: expect.objectContaining(resumableValidationExit),
+        output: expect.arrayContaining([
+          "  Validation timed out before the provider replied. Retry, or check network/proxy health.",
+          `  ${EXPECTED_WSL_SLOW_VERIFICATION_ADVISORY}`,
+        ]),
+        promptCalls: 0,
+        teardownCalls: 1,
+      });
+    } finally {
+      process.exitCode = originalExitCode;
+      error.mockRestore();
+    }
+  });
+
+  it("shows the WSL advisory on the interactive recovery path too (#10413)", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const promptValidationRecovery = vi.fn(async () => "selection" as const);
+    const helpers = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => false,
+      agentProductName: () => "OpenClaw",
+      getCredential: () => "nvapi-test-key-12345",
+      probeOpenAiLikeEndpoint: () => ({
+        ok: false,
+        advisory: EXPECTED_WSL_SLOW_VERIFICATION_ADVISORY,
+        failures: [{ name: "Chat Completions API", curlStatus: 28 }],
+      }),
+      promptValidationRecovery,
+    });
+
+    try {
+      await helpers.validateOpenAiLikeSelection(
+        "NVIDIA Endpoints",
+        "https://integrate.api.nvidia.com/v1",
+        "meta/llama-3.3-70b-instruct",
+        "NVIDIA_INFERENCE_API_KEY",
+      );
+      // The prompt owns transport guidance here, so only the advisory is added.
+      expect(error.mock.calls.map((args) => args.join(" "))).toEqual([
+        "  NVIDIA Endpoints endpoint validation failed.",
+        "  Validation probe summary: Chat Completions API: curl exit 28.",
+        "  Validation details were omitted to avoid exposing credentials.",
+        `  ${EXPECTED_WSL_SLOW_VERIFICATION_ADVISORY}`,
+      ]);
+      expect(promptValidationRecovery).toHaveBeenCalledOnce();
+    } finally {
+      error.mockRestore();
     }
   });
 

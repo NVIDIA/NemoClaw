@@ -26,6 +26,27 @@ const {
   resolveProviderCredential,
 } = require("../credentials/store");
 const { isWsl } = require("../platform");
+
+/**
+ * Guidance for a WSL2 host whose endpoint verification keeps timing out.
+ *
+ * Names the one lever onboarding actually honours for this failure:
+ * `withValidationTimeoutOverride` raises the connection and maximum times for
+ * standard validation probes, including the chat-completions call that times
+ * out here.
+ * Streaming event probes stay capped at five seconds regardless. The override
+ * only ever raises a probe's budget, so the suggested value has to clear every
+ * default it might meet, including the 300-second extended NVIDIA profile.
+ * Onboarding has no flag that bypasses validation, so this must not imply one.
+ *
+ * The onboarding failure path receives this text through the probe result. It
+ * prints failure summaries rather than the raw probe message, which can carry
+ * provider response bodies (#10413).
+ */
+const WSL_SLOW_VERIFICATION_ADVISORY =
+  "WSL2 detected \u2014 network verification may be slower than expected. " +
+  "Check proxy and VPN health, then run onboarding again with a longer budget: " +
+  "`NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS=360 nemoclaw onboard`.";
 const httpProbe = require("../adapters/http/probe");
 const authConfigModule = require("../adapters/http/auth-config");
 const openrouter = require("./openrouter");
@@ -73,6 +94,7 @@ const {
   getStreamingEventProbeCurlArgs,
   getCurlMaxTimeSeconds,
   getProbeProcessTimeoutMs,
+  MAX_ONBOARD_VALIDATION_TIMEOUT_SECONDS,
 } = require("./probe-http-helpers");
 const {
   getCurlTimingArgs,
@@ -424,7 +446,9 @@ function probeChatCompletionsToolCalling(endpointUrl, model, apiKey, options = {
     // exit 28. The connect timeout stays: the endpoint already answered the
     // earlier rungs, and the native session doubles only the request deadline.
     const doubledTimingArgs = timingArgs.map((arg, index) =>
-      timingArgs[index - 1] === "--max-time" ? String(Number(arg) * 2) : arg,
+      timingArgs[index - 1] === "--max-time"
+        ? String(Math.min(Number(arg) * 2, MAX_ONBOARD_VALIDATION_TIMEOUT_SECONDS))
+        : arg,
     );
     const runToolProbe = (maxTokens, timing = timingArgs) => {
       const args = [
@@ -618,9 +642,9 @@ function runChatCompletionsProbe({
 }
 
 // Extracted from probeOpenAiLikeEndpoint so the chat-completions retry path
-// can be tested independently. Doubles the timing args (--connect-timeout,
-// --max-time) and replays through the same backoff schedule as transient HTTP
-// statuses. See PR #5975 review note PRA-8.
+// can be tested independently. Increases the timing args (--connect-timeout,
+// --max-time) up to the validation cap and replays through the same backoff
+// schedule as transient HTTP statuses. See PR #5975 review note PRA-8.
 function runDoubledTimeoutChatCompletionsRetry({
   endpointUrl,
   model,
@@ -631,7 +655,11 @@ function runDoubledTimeoutChatCompletionsRetry({
 }) {
   const platformOptions = getProbeTimingOptions(options);
   const baseArgs = getChatCompletionsProbeTimingArgs(model, platformOptions);
-  const doubledArgs = baseArgs.map((arg) => (/^\d+$/.test(arg) ? String(Number(arg) * 2) : arg));
+  const doubledArgs = baseArgs.map((arg) =>
+    /^\d+$/.test(arg)
+      ? String(Math.min(Number(arg) * 2, MAX_ONBOARD_VALIDATION_TIMEOUT_SECONDS))
+      : arg,
+  );
   const buildRetryArgs = () => [
     "-sS",
     ...buildResolvePinArgs(`${baseUrl}/chat/completions`, options.pinnedAddresses),
@@ -1083,16 +1111,12 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
     const baseMessage = failures
       .map((failure) => `${failure.name}: ${failure.message}`)
       .join(" | ");
-    const wslHint =
-      isWsl({ isWsl: options.isWsl }) && retriedAfterTimeout
-        ? " · WSL2 detected \u2014 network verification may be slower than expected. " +
-          "Run `nemoclaw onboard` with the `--skip-verify` flag if this endpoint is known to be reachable."
-        : "";
-    return {
+    const result = {
       ok: false,
-      message: baseMessage + wslHint,
+      message: baseMessage,
       failures,
     };
+    return retriedAfterTimeout ? withWslSlowVerificationAdvisory(result, options) : result;
   } catch (error) {
     return openAiLikeFailureFromError(error);
   } finally {
@@ -1108,7 +1132,7 @@ export async function probeOpenAiLikeEndpointOptimized(endpointUrl, model, apiKe
   const baseUrl = String(endpointUrl).replace(/\/+$/, "");
   const validationTiming = resolveOpenAiLikeValidationTiming(baseUrl, options);
   const sessionProbeOptions = validationTiming ? { ...options, validationTiming } : options;
-  return probeOpenAiLikeEndpointWithValidationSession(
+  const result = await probeOpenAiLikeEndpointWithValidationSession(
     endpointUrl,
     model,
     normalizedKey,
@@ -1132,6 +1156,28 @@ export async function probeOpenAiLikeEndpointOptimized(endpointUrl, model, apiKe
       sessionOptions: sessionProbeOptions.validationSessionOptions,
     },
   );
+  return withWslSlowVerificationAdvisory(result, options);
+}
+
+// Callers print failure summaries rather than `message`, because a raw probe
+// message can carry provider response bodies. Attach the curated advisory in
+// one place so legacy and native failures give a WSL2 operator the same next
+// step without widening the displayed failure data (#10413).
+function withWslSlowVerificationAdvisory(result, options) {
+  if (
+    result.ok ||
+    result.advisory ||
+    !isWsl({ isWsl: options.isWsl }) ||
+    !Array.isArray(result.failures) ||
+    !result.failures.some((failure) => isTimeoutOrConnFailureStatus(failure?.curlStatus))
+  ) {
+    return result;
+  }
+  return {
+    ...result,
+    message: `${result.message} · ${WSL_SLOW_VERIFICATION_ADVISORY}`,
+    advisory: WSL_SLOW_VERIFICATION_ADVISORY,
+  };
 }
 
 // ── Anthropic probe ──────────────────────────────────────────────
@@ -1147,7 +1193,6 @@ module.exports = {
   getProbeAuthMode,
   getOpenAiSelectionProbeOptions,
   getProbeExtraHeaders,
-  getValidationProbeCurlArgs,
   getDeepSeekV4ProValidationProbeCurlArgs,
   getKimiK26ValidationProbeCurlArgs,
   getChatCompletionsProbePayload,

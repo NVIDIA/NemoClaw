@@ -65,30 +65,26 @@ describe("OpenShell forward service", () => {
     expect(unref).toHaveBeenCalledOnce();
   });
 
-  it("keeps the gateway registration root when HOME is isolated", () => {
-    const spawnDetached = vi.fn(
-      (_executable: string, _args: readonly string[], _environment: NodeJS.ProcessEnv) => ({
-        unref: vi.fn(),
-      }),
-    );
-    let probes = 0;
+  it("uses the selected OpenShell configuration without exposing credentials (#11084)", () => {
+    const spawnDetached = vi.fn(() => ({ unref: vi.fn() }));
 
     launchForwardService(target, {
-      isReachable: () => ++probes >= 2,
+      isReachable: vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true),
       sleep: () => {},
       sourceEnvironment: {
         HOME: "/tmp/isolated-home",
-        XDG_CONFIG_HOME: "/home/runner/.config",
-        OPENSHELL_GATEWAY_ENDPOINT: "https://untrusted.example",
+        NVIDIA_INFERENCE_API_KEY: "secret-value",
+        PATH: "/usr/bin",
+        XDG_CONFIG_HOME: "/tmp/selected-openshell-config",
       },
       spawnDetached,
     });
 
-    expect(spawnDetached.mock.calls[0]?.[2]).toMatchObject({
+    expect(spawnDetached).toHaveBeenCalledWith(target.executable, buildForwardServiceArgs(target), {
       HOME: "/tmp/isolated-home",
-      XDG_CONFIG_HOME: "/home/runner/.config",
+      PATH: "/usr/bin",
+      XDG_CONFIG_HOME: "/tmp/selected-openshell-config",
     });
-    expect(spawnDetached.mock.calls[0]?.[2]).not.toHaveProperty("OPENSHELL_GATEWAY_ENDPOINT");
   });
 
   it("refuses an occupied port without launching or adopting its listener", () => {
