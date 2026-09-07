@@ -32,7 +32,6 @@ import {
   cleanupMcpBridge,
   MCP_MUTATION_TIMEOUT_MS,
   type McpAdapter,
-  prepareOwnedSandboxForOnboard,
   removeMcpBridgeWithOneConcurrencyRetry,
 } from "./mcp-bridge-cleanup.ts";
 import {
@@ -61,10 +60,10 @@ import {
   readConcurrentMcpStatusAndConfirmHermesRegistration,
   MCP_BRIDGE_DENIED_TOOL_NAME, MCP_BRIDGE_DENIED_TOOL_SELECTOR,
   runDeniedMcpToolCall,
+  runMcpBridgeOnboardWithLifecycleRetry,
   runMcpProviderRewriteProbe,
   runOpenClawDeniedToolUpdateProof,
   restartBridgeWithoutHostSecret,
-  retryOpenClawBaselineScopeOnboardFailure,
   retryAfterHermesRestartTransportFailure,
   retryHermesGatewayDraining,
 } from "./mcp-bridge-reliability.ts";
@@ -127,6 +126,7 @@ async function onboardAgent(
   host: HostCliClient,
   sandbox: SandboxClient,
   cleanup: CleanupRegistry,
+  artifacts: Pick<ArtifactSink, "writeJson">,
   endpointUrl: string,
   options: {
     agent: McpAgent;
@@ -136,7 +136,6 @@ async function onboardAgent(
   },
 ): Promise<void> {
   const corporateCaBundle = requireMcpBridgeTlsCaCert();
-  await prepareOwnedSandboxForOnboard(host, sandbox, cleanup, options.sandboxName);
   const args = buildMcpBridgeOnboardArgs();
   const commandOptions = {
     artifactName: options.artifactName,
@@ -152,15 +151,15 @@ async function onboardAgent(
     redactionValues: [COMPATIBLE_KEY],
     timeoutMs: execTimeout(20 * 60_000),
   };
-  const result = await retryOpenClawBaselineScopeOnboardFailure({
+  const result = await runMcpBridgeOnboardWithLifecycleRetry({
     agent: options.agent,
+    artifacts,
+    args,
+    cleanup,
+    commandOptions,
+    host,
+    sandbox,
     sandboxName: options.sandboxName,
-    initialResult: await host.nemoclaw(args, commandOptions),
-    retry: () =>
-      host.nemoclaw(args, {
-        ...commandOptions,
-        artifactName: `${options.artifactName}-baseline-scope-retry`,
-      }),
   });
   expectExitZero(result, `onboard ${options.agent} sandbox for MCP bridge`);
   expectManagedImageQualificationReceipt(options.sandboxName, options.agent);
@@ -754,7 +753,7 @@ test("mcp-bridge", {
   const mcpUrl = fakeMcpTunnel.url;
   const decoyMcpUrl = decoyMcpTunnel.url;
   progress.phase("onboard OpenClaw and prove base policy");
-  await onboardAgent(host, sandbox, cleanup, endpointUrl, {
+  await onboardAgent(host, sandbox, cleanup, artifacts, endpointUrl, {
     agent: "openclaw",
     sandboxName: OPENCLAW_SANDBOX_NAME,
     artifactName: "onboard-openclaw-mcp-bridge",
@@ -1123,7 +1122,7 @@ mcpBridgeShardTest("hermes")(
     const endpointUrl = `http://${hostAddress}:${compatibleMock.port}/v1`;
     const mcpUrl = fakeMcpTunnel.url;
     progress.phase("onboard the Hermes MCP sandbox");
-    await onboardAgent(host, sandbox, cleanup, endpointUrl, {
+    await onboardAgent(host, sandbox, cleanup, artifacts, endpointUrl, {
       agent: "hermes",
       sandboxName: HERMES_SANDBOX_NAME,
       artifactName: "onboard-hermes-mcp-bridge",
@@ -1368,7 +1367,7 @@ mcpBridgeShardTest("deepagents")(
       mcpUrl,
     );
     progress.phase("onboard the Deep Agents MCP sandbox");
-    await onboardAgent(host, sandbox, cleanup, endpointUrl, {
+    await onboardAgent(host, sandbox, cleanup, artifacts, endpointUrl, {
       agent: "langchain-deepagents-code",
       sandboxName: DEEPAGENTS_SANDBOX_NAME,
       artifactName: "onboard-deepagents-mcp-bridge",

@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { runBoundedRetry } from "../../../tools/e2e/retry-evidence.mts";
+import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { assertCleanupSucceededOrAbsent } from "../fixtures/cleanup-resources.ts";
@@ -18,6 +20,10 @@ export const MCP_MUTATION_TIMEOUT_MS: Record<McpAdapter, number> = {
 
 const MCP_BRIDGE_ALREADY_ABSENT =
   /No MCP servers are registered|No MCP server '.+' is registered|MCP server '.+' not found/iu;
+const OPENSHELL_SANDBOX_ABSENT =
+  /\bNotFound\b|\bNot Found\b|sandbox[^\n]*(?:not found|not present|does not exist)|no such sandbox/iu;
+const PRE_ONBOARD_ABSENCE_ATTEMPTS = 10;
+const PRE_ONBOARD_ABSENCE_DELAY_MS = 5_000;
 
 function buildOwnedSandboxCleanupEnv(): NodeJS.ProcessEnv {
   return {
@@ -31,26 +37,37 @@ function buildOwnedSandboxCleanupEnv(): NodeJS.ProcessEnv {
 /** Prepare a sandbox name exclusively owned by this isolated qualification job. */
 export async function prepareOwnedSandboxForOnboard(
   host: Pick<HostCliClient, "bestEffortCleanupSandbox" | "cleanupSandbox">,
-  sandbox: Pick<SandboxClient, "cleanupSandbox">,
+  sandbox: Pick<SandboxClient, "cleanupSandbox" | "openshell">,
   cleanup: CleanupRegistry,
+  artifacts: Pick<ArtifactSink, "writeJson">,
   sandboxName: string,
+  deps: {
+    artifactPrefix?: string;
+    registerCleanup?: boolean;
+    sleep: (milliseconds: number) => Promise<void>;
+  } = {
+    sleep: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+  },
 ): Promise<void> {
+  const artifactPrefix = deps.artifactPrefix ?? "precleanup";
   const openshellCleanupEnv = buildOwnedSandboxCleanupEnv();
-  cleanup.trackSandbox(host, sandboxName, {
-    artifactName: "cleanup-destroy-sandbox",
-    timeoutMs: 15 * 60_000,
-  });
-  // A failed onboard may leave a live sandbox that the production CLI safely
-  // refuses to delete by mutable name. Register the trusted administrator
-  // deletion last so LIFO cleanup removes OpenShell state before `destroy`
-  // reconciles the durable recovery record and identity-verified containers.
-  cleanup.trackDisposable(`delete owned OpenShell sandbox ${sandboxName}`, () =>
-    sandbox.cleanupSandbox(sandboxName, {
-      artifactName: "cleanup-delete-openshell-sandbox",
-      env: openshellCleanupEnv,
+  if (deps.registerCleanup !== false) {
+    cleanup.trackSandbox(host, sandboxName, {
+      artifactName: "cleanup-destroy-sandbox",
       timeoutMs: 15 * 60_000,
-    }),
-  );
+    });
+    // A failed onboard may leave a live sandbox that the production CLI safely
+    // refuses to delete by mutable name. Register the trusted administrator
+    // deletion last so LIFO cleanup removes OpenShell state before `destroy`
+    // reconciles the durable recovery record and identity-verified containers.
+    cleanup.trackDisposable(`delete owned OpenShell sandbox ${sandboxName}`, () =>
+      sandbox.cleanupSandbox(sandboxName, {
+        artifactName: "cleanup-delete-openshell-sandbox",
+        env: openshellCleanupEnv,
+        timeoutMs: 15 * 60_000,
+      }),
+    );
+  }
   // A fresh qualification runner has no active OpenShell gateway yet. Let the
   // production CLI initialize it and perform any cleanup it can prove safe.
   // Retained-state refusal remains non-fatal here because the identity-bound
@@ -68,6 +85,39 @@ export async function prepareOwnedSandboxForOnboard(
     artifactName: "precleanup-destroy-sandbox",
     timeoutMs: 15 * 60_000,
   });
+  const absence = await runBoundedRetry({
+    operation: "mcp-bridge.precleanup-absence",
+    owner: "mcp-bridge-live-e2e",
+    idempotence: "read-only",
+    maxAttempts: PRE_ONBOARD_ABSENCE_ATTEMPTS,
+    delayMs: PRE_ONBOARD_ABSENCE_DELAY_MS,
+    sleep: deps.sleep,
+    onEvidence: async (evidence) => {
+      await artifacts.writeJson(`${artifactPrefix}-sandbox-absence-retry.json`, evidence);
+    },
+    run: (attempt) =>
+      sandbox.openshell(["sandbox", "get", sandboxName], {
+        artifactName: `${artifactPrefix}-wait-sandbox-absent-${attempt}`,
+        env: openshellCleanupEnv,
+        timeoutMs: 30_000,
+      }),
+    classify: (value, error) => {
+      if (error !== undefined || value === undefined) {
+        return { outcome: "failed", failureClass: "deterministic" };
+      }
+      if (value.exitCode !== 0 && OPENSHELL_SANDBOX_ABSENT.test(resultText(value))) {
+        return { outcome: "passed" };
+      }
+      return value.exitCode === 0
+        ? { outcome: "failed", failureClass: "transient-external" }
+        : { outcome: "failed", failureClass: "deterministic" };
+    },
+  });
+  if (absence.outcome !== "passed") {
+    return Promise.reject(
+      new Error(`Could not confirm owned sandbox '${sandboxName}' absent after pre-onboard deletion.`),
+    );
+  }
 }
 
 export async function cleanupMcpBridge(

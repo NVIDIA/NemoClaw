@@ -14,8 +14,9 @@ import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { assertExitZero, resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
+import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { MCP_BRIDGE_TEST_CREDENTIALS } from "../fixtures/mcp-bridge-credentials.ts";
-import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import type { ShellProbeResult, ShellProbeRunOptions } from "../fixtures/shell-probe.ts";
 import { runBoundedRetry, type RetryEvidence } from "../../../tools/e2e/retry-evidence.mts";
 import {
   buildHermesMcpChatProbeScript,
@@ -25,6 +26,7 @@ import {
 } from "./mcp-bridge-hermes-http.ts";
 import { MCP_PROVIDER_REWRITE_PROBE_SOURCE } from "./mcp-provider-rewrite-probe.ts";
 import { FAKE_MCP_STATUS_RESULT_TOKEN } from "./mcp-bridge-servers.ts";
+import { prepareOwnedSandboxForOnboard } from "./mcp-bridge-cleanup.ts";
 
 const ANSI_ESCAPE = /\u001b\[[0-9;]*m/gu;
 const HERMES_GATEWAY_DRAINING_RETRIES = 3;
@@ -249,6 +251,8 @@ export async function runMcpProviderRewriteProbe(
 }
 const OPENCLAW_BASELINE_SCOPE_CAUSE =
   "its canonical CLI device did not receive the required baseline scopes";
+const OPENCLAW_ONBOARD_LIFECYCLE_RETRY_ATTEMPTS = 2;
+const OPENCLAW_ONBOARD_LIFECYCLE_RETRY_DELAY_MS = 1_000;
 const HERMES_RESTART_TRANSPORT_FAILURE_SUFFIX = [
   `Error: x code: 'Unknown error', message: "h2 protocol error: error reading a body`,
   `| from connection", source: hyper::Error(Body, Error { kind: Io(Custom`,
@@ -645,6 +649,155 @@ export async function retryOpenClawBaselineScopeOnboardFailure<
   )
     ? options.retry()
     : options.initialResult;
+}
+
+export function isRetryableOpenClawPostReadyDeletingOnboardFailure(
+  agent: string,
+  sandboxName: string,
+  result: {
+    exitCode: number | null;
+    signal: NodeJS.Signals | null;
+    timedOut: boolean;
+    stdout: string;
+    stderr: string;
+  },
+): boolean {
+  if (
+    agent !== "openclaw" ||
+    result.exitCode === null ||
+    result.exitCode === 0 ||
+    result.signal !== null ||
+    result.timedOut
+  ) {
+    return false;
+  }
+  const diagnostic = `${result.stdout}\n${result.stderr}`
+    .replace(ANSI_ESCAPE, "")
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s+/gu, " ");
+  return (
+    diagnostic.includes(
+      "Sandbox reported Ready; waiting for the create ownership handoff to finish.",
+    ) &&
+    diagnostic.includes(
+      `sandbox '${sandboxName}' is not ready (phase: Deleting); wait for it to reach Ready state`,
+    )
+  );
+}
+
+/** Retry one exact post-Ready OpenShell deletion race after proving the mutation absent. */
+export async function retryOpenClawPostReadyDeletingOnboardFailure<
+  T extends {
+    exitCode: number | null;
+    signal: NodeJS.Signals | null;
+    timedOut: boolean;
+    stdout: string;
+    stderr: string;
+  },
+>(options: {
+  agent: string;
+  sandboxName: string;
+  run: (attempt: number) => Promise<T>;
+  reconcile: () => Promise<boolean>;
+  onEvidence: (evidence: RetryEvidence) => Promise<void> | void;
+  sleep?: (milliseconds: number) => Promise<void>;
+}): Promise<T> {
+  if (options.agent !== "openclaw") return options.run(1);
+
+  const outcome = await runBoundedRetry({
+    operation: "mcp-bridge.openclaw-onboard-lifecycle",
+    owner: "mcp-bridge-live-e2e",
+    idempotence: "reconciled-mutation",
+    maxAttempts: OPENCLAW_ONBOARD_LIFECYCLE_RETRY_ATTEMPTS,
+    delayMs: OPENCLAW_ONBOARD_LIFECYCLE_RETRY_DELAY_MS,
+    ...(options.sleep === undefined ? {} : { sleep: options.sleep }),
+    onEvidence: options.onEvidence,
+    run: options.run,
+    classify: (value, error) => {
+      if (error !== undefined || value === undefined) {
+        return { outcome: "failed", failureClass: "deterministic" };
+      }
+      if (!value.timedOut && value.signal === null && value.exitCode === 0) {
+        return { outcome: "passed" };
+      }
+      return isRetryableOpenClawPostReadyDeletingOnboardFailure(
+        options.agent,
+        options.sandboxName,
+        value,
+      )
+        ? { outcome: "failed", failureClass: "transient-external" }
+        : { outcome: "failed", failureClass: "deterministic" };
+    },
+    reconcile: options.reconcile,
+  });
+  return outcome.value as T;
+}
+
+export async function runMcpBridgeOnboardWithLifecycleRetry(options: {
+  agent: "openclaw" | "hermes" | "langchain-deepagents-code";
+  artifacts: Pick<ArtifactSink, "writeJson">;
+  args: string[];
+  cleanup: CleanupRegistry;
+  commandOptions: ShellProbeRunOptions;
+  host: HostCliClient;
+  sandbox: SandboxClient;
+  sandboxName: string;
+}): Promise<ShellProbeResult> {
+  await prepareOwnedSandboxForOnboard(
+    options.host,
+    options.sandbox,
+    options.cleanup,
+    options.artifacts,
+    options.sandboxName,
+  );
+  return retryOpenClawPostReadyDeletingOnboardFailure({
+    agent: options.agent,
+    sandboxName: options.sandboxName,
+    run: async (attempt) => {
+      const artifactName =
+        attempt === 1
+          ? options.commandOptions.artifactName
+          : `${options.commandOptions.artifactName}-lifecycle-retry`;
+      return retryOpenClawBaselineScopeOnboardFailure({
+        agent: options.agent,
+        sandboxName: options.sandboxName,
+        initialResult: await options.host.nemoclaw(options.args, {
+          ...options.commandOptions,
+          artifactName,
+        }),
+        retry: () =>
+          options.host.nemoclaw(options.args, {
+            ...options.commandOptions,
+            artifactName: `${artifactName}-baseline-scope-retry`,
+          }),
+      });
+    },
+    reconcile: async () => {
+      try {
+        await prepareOwnedSandboxForOnboard(
+          options.host,
+          options.sandbox,
+          options.cleanup,
+          options.artifacts,
+          options.sandboxName,
+          {
+            artifactPrefix: "onboard-lifecycle-reconcile",
+            registerCleanup: false,
+            sleep: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+          },
+        );
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    onEvidence: async (evidence) => {
+      await options.artifacts.writeJson("openclaw-onboard-lifecycle-retry.json", evidence);
+    },
+  });
 }
 
 export function isHermesRestartTransportFailure(adapter: string, diagnostic: string): boolean {
