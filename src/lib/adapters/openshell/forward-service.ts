@@ -18,8 +18,8 @@ const SANDBOX_CREATING_MAX_RETRIES = START_TIMEOUT_MS / SANDBOX_CREATING_RETRY_I
 const STOP_TIMEOUT_MS = 5_000;
 const POLL_INTERVAL_MS = 100;
 // OpenShell 0.0.106 rechecks sandbox readiness every two seconds after it
-// binds. Retain exact listener ownership through the next complete check.
-const STABLE_LISTENER_OBSERVATIONS = SANDBOX_CREATING_RETRY_INTERVAL_MS / POLL_INTERVAL_MS + 1;
+// binds. Re-prove exact listener ownership after the next complete check.
+const LISTENER_RECHECK_DELAY_MS = SANDBOX_CREATING_RETRY_INTERVAL_MS + POLL_INTERVAL_MS;
 const FORWARD_INSTANCE_ENV = "NEMOCLAW_FORWARD_INSTANCE_ID";
 const sleepBuffer = new Int32Array(new SharedArrayBuffer(4));
 
@@ -483,8 +483,7 @@ function startForwardServiceAttempt(input: {
       ? readIdentity(pid)
       : `${process.platform}:${instanceId}`;
   child.unref();
-  let stableObservations = 0;
-  let stabilityDeadline: number | undefined;
+  let firstOwnedListenerAt: number | undefined;
   let listenerObservation: ForwardListenerObservation = "absent";
 
   while (true) {
@@ -502,18 +501,19 @@ function startForwardServiceAttempt(input: {
       );
     }
     listenerObservation = observeListener(pid, input.target.localPort);
+    const now = Date.now();
     if (listenerObservation === "owned") {
-      stabilityDeadline ??= Date.now() + SANDBOX_CREATING_RETRY_INTERVAL_MS + POLL_INTERVAL_MS;
-      stableObservations += 1;
-      if (stableObservations >= STABLE_LISTENER_OBSERVATIONS) {
+      firstOwnedListenerAt ??= now;
+      if (now - firstOwnedListenerAt >= LISTENER_RECHECK_DELAY_MS) {
         child.removeOutput?.();
         return null;
       }
-    } else {
-      stableObservations = 0;
     }
-    const now = Date.now();
-    if (stabilityDeadline !== undefined ? now >= stabilityDeadline : now >= input.readyDeadline) {
+    const observationDeadline =
+      firstOwnedListenerAt === undefined
+        ? input.readyDeadline
+        : Math.max(input.readyDeadline, firstOwnedListenerAt + LISTENER_RECHECK_DELAY_MS);
+    if (now >= observationDeadline) {
       break;
     }
     sleep(POLL_INTERVAL_MS);

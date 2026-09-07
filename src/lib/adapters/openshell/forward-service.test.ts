@@ -135,20 +135,46 @@ describe("OpenShell forward service", () => {
     expect(stopProcess).toHaveBeenCalledWith(42, "SIGTERM");
   });
 
-  it("accepts delayed ownership only after it remains stable (#11084)", () => {
+  it("accepts delayed ownership only after the exact child survives a health-check window (#11084)", () => {
+    let now = 0;
     let ownershipChecks = 0;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
 
     launchForwardService(target, {
       getProcessIdentity: stableProcessIdentity,
       isListenerOwned: () => ++ownershipChecks >= 3,
       isProcessRunning: () => true,
       isReachable: () => false,
-      sleep: () => {},
+      sleep: (milliseconds) => {
+        now += milliseconds;
+      },
       spawnDetached: () => ({ pid: 43, unref: vi.fn() }),
       timeoutMs: 10_000,
     });
 
-    expect(ownershipChecks).toBe(23);
+    expect(ownershipChecks).toBe(24);
+    expect(now).toBe(2_300);
+  });
+
+  it("does not require every intermediate listener inspection to observe the owned socket (#11084)", () => {
+    let now = 0;
+    let ownershipChecks = 0;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+
+    launchForwardService(target, {
+      getProcessIdentity: stableProcessIdentity,
+      isListenerOwned: () => ++ownershipChecks % 10 === 1,
+      isProcessRunning: () => true,
+      isReachable: () => false,
+      sleep: (milliseconds) => {
+        now += milliseconds;
+      },
+      spawnDetached: () => ({ pid: 44, unref: vi.fn() }),
+      timeoutMs: 10_000,
+    });
+
+    expect(ownershipChecks).toBe(31);
+    expect(now).toBe(3_000);
   });
 
   it("does not signal a process whose launch identity changed (#11084)", () => {
