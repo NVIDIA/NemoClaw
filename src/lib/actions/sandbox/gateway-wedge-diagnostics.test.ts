@@ -35,6 +35,13 @@ describe("collectGatewayWedgeDiagnostics wedge signature (#4710)", () => {
     expect(lines).toEqual([]);
   });
 
+  it("returns [] when the sandbox exec rejects", async () => {
+    const lines = await collectGatewayWedgeDiagnostics("my-sandbox", async () => {
+      throw new Error("untrusted diagnostic failure");
+    });
+    expect(lines).toEqual([]);
+  });
+
   it("sanitizes sandbox-controlled log lines before returning them", async () => {
     const lines = await collectGatewayWedgeDiagnostics("my-sandbox", async () => ({
       status: 0,

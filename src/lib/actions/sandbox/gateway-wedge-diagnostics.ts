@@ -58,7 +58,12 @@ export async function collectGatewayWedgeDiagnostics(
   exec: SandboxExec,
 ): Promise<string[]> {
   const command = `grep -E ${shellQuote(WEDGE_LOG_SIGNATURE)} /tmp/gateway.log 2>/dev/null | tail -5`;
-  const result = await exec(sandboxName, command);
+  let result: SandboxCommandResult | null;
+  try {
+    result = await exec(sandboxName, command);
+  } catch {
+    return [];
+  }
   if (!result || result.status !== 0) {
     return [];
   }
