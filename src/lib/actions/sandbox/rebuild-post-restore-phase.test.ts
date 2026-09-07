@@ -68,10 +68,13 @@ describe("rebuild post-restore phase", () => {
       order.push("config-hash-final");
       return true;
     });
-    vi.spyOn(mutableConfigPerms, "repairMutableConfigPerms").mockReturnValue({
-      applied: true,
-      verified: true,
-      errors: [],
+    vi.spyOn(mutableConfigPerms, "repairMutableConfigPerms").mockImplementation(() => {
+      order.push("permissions");
+      return {
+        applied: true,
+        verified: true,
+        errors: [],
+      };
     });
     vi.spyOn(mutableConfigPerms, "inspectMutableHermesConfigPerms").mockReturnValue({
       verified: true,
@@ -155,7 +158,9 @@ describe("rebuild post-restore phase", () => {
       "doctor",
       "reconcile",
       "messaging",
+      "permissions",
       "mcp",
+      "permissions",
       "config-hash",
       "config-hash-final",
       "host-forward",
@@ -166,6 +171,42 @@ describe("rebuild post-restore phase", () => {
       "openclaw doctor --fix",
       300_000,
       { allowLocalDockerFallback: false },
+    );
+  });
+
+  it("re-establishes mutable config permissions after MCP writers settle", async () => {
+    let repairAttempt = 0;
+    vi.mocked(mutableConfigPerms.repairMutableConfigPerms).mockImplementation(() => {
+      repairAttempt += 1;
+      order.push(`permissions:${String(repairAttempt)}`);
+      return repairAttempt === 1
+        ? { applied: true, verified: true, errors: [] }
+        : {
+            applied: true,
+            verified: false,
+            errors: ["config.json mode changed after MCP restore"],
+          };
+    });
+    const args = input();
+
+    const verification = await runRebuildPostRestorePhase(args);
+
+    expect(order).toEqual([
+      "doctor",
+      "reconcile",
+      "messaging",
+      "permissions:1",
+      "mcp",
+      "permissions:2",
+      "config-hash",
+      "config-hash-final",
+      "host-forward",
+      "config-hash-final",
+    ]);
+    expect(verification).toEqual({ mutableConfigPermissionsVerified: false });
+    expect(args.bail).not.toHaveBeenCalled();
+    expect(vi.mocked(console.log).mock.calls.flat().join("\n")).toContain(
+      "Mutable config permissions were not verified",
     );
   });
 

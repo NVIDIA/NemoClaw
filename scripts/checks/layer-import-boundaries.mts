@@ -396,40 +396,89 @@ function checkBufferedExecHelperImport(
     return;
   }
   const namespaceImports = new Set<string>();
+  const addNamedBindingViolation = (node: ts.Node): void => {
+    const pos = position(sourceFile, node);
+    addViolation(
+      violations,
+      repoPath,
+      pos.line,
+      pos.column,
+      "buffered-exec-uses-async-executor",
+      "buffered sandbox execution must use the async command executor instead of buildOpenshellExecArgs",
+    );
+  };
+  const isLegacyModuleLoaderCall = (node: ts.Node): node is ts.CallExpression =>
+    ts.isCallExpression(node) &&
+    ((ts.isIdentifier(node.expression) && node.expression.text === "require") ||
+      node.expression.kind === ts.SyntaxKind.ImportKeyword) &&
+    node.arguments.length === 1 &&
+    ts.isStringLiteralLike(node.arguments[0]) &&
+    resolveInternalImport(absPath, node.arguments[0].text) === LEGACY_BUFFERED_EXEC_HELPER;
+  const unwrapModuleExpression = (node: ts.Expression): ts.Expression => {
+    let current = node;
+    while (ts.isParenthesizedExpression(current) || ts.isAwaitExpression(current)) {
+      current = current.expression;
+    }
+    return current;
+  };
   for (const statement of sourceFile.statements) {
-    if (
-      !ts.isImportDeclaration(statement) ||
-      !ts.isStringLiteralLike(statement.moduleSpecifier) ||
-      resolveInternalImport(absPath, statement.moduleSpecifier.text) !== LEGACY_BUFFERED_EXEC_HELPER
-    ) {
+    if (ts.isImportDeclaration(statement) && ts.isStringLiteralLike(statement.moduleSpecifier)) {
+      if (
+        resolveInternalImport(absPath, statement.moduleSpecifier.text) !==
+        LEGACY_BUFFERED_EXEC_HELPER
+      ) {
+        continue;
+      }
+      const bindings = statement.importClause?.namedBindings;
+      if (bindings && ts.isNamedImports(bindings)) {
+        for (const binding of bindings.elements) {
+          if ((binding.propertyName?.text ?? binding.name.text) !== "buildOpenshellExecArgs")
+            continue;
+          addNamedBindingViolation(binding);
+        }
+      } else if (bindings && ts.isNamespaceImport(bindings)) {
+        namespaceImports.add(bindings.name.text);
+      }
       continue;
     }
-    const bindings = statement.importClause?.namedBindings;
-    if (bindings && ts.isNamedImports(bindings)) {
-      for (const binding of bindings.elements) {
-        if ((binding.propertyName?.text ?? binding.name.text) !== "buildOpenshellExecArgs")
-          continue;
-        const pos = position(sourceFile, binding);
-        addViolation(
-          violations,
-          repoPath,
-          pos.line,
-          pos.column,
-          "buffered-exec-uses-async-executor",
-          "buffered sandbox execution must use the async command executor instead of buildOpenshellExecArgs",
-        );
-      }
-    } else if (bindings && ts.isNamespaceImport(bindings)) {
-      namespaceImports.add(bindings.name.text);
+
+    if (
+      ts.isImportEqualsDeclaration(statement) &&
+      ts.isExternalModuleReference(statement.moduleReference) &&
+      statement.moduleReference.expression &&
+      ts.isStringLiteralLike(statement.moduleReference.expression) &&
+      resolveInternalImport(absPath, statement.moduleReference.expression.text) ===
+        LEGACY_BUFFERED_EXEC_HELPER
+    ) {
+      namespaceImports.add(statement.name.text);
+      continue;
     }
   }
-  if (namespaceImports.size === 0) return;
+  const collectRequireBindings = (node: ts.Node): void => {
+    if (ts.isVariableDeclaration(node)) {
+      const initializer = node.initializer;
+      if (initializer && isLegacyModuleLoaderCall(unwrapModuleExpression(initializer))) {
+        if (ts.isIdentifier(node.name)) {
+          namespaceImports.add(node.name.text);
+        } else if (ts.isObjectBindingPattern(node.name)) {
+          for (const binding of node.name.elements) {
+            const importedName = binding.propertyName ?? binding.name;
+            if (ts.isIdentifier(importedName) && importedName.text === "buildOpenshellExecArgs") {
+              addNamedBindingViolation(binding);
+            }
+          }
+        }
+      }
+    }
+    ts.forEachChild(node, collectRequireBindings);
+  };
+  collectRequireBindings(sourceFile);
   const visit = (node: ts.Node): void => {
     if (
       ts.isPropertyAccessExpression(node) &&
-      ts.isIdentifier(node.expression) &&
-      namespaceImports.has(node.expression.text) &&
-      node.name.text === "buildOpenshellExecArgs"
+      node.name.text === "buildOpenshellExecArgs" &&
+      ((ts.isIdentifier(node.expression) && namespaceImports.has(node.expression.text)) ||
+        isLegacyModuleLoaderCall(unwrapModuleExpression(node.expression)))
     ) {
       const pos = position(sourceFile, node);
       addViolation(

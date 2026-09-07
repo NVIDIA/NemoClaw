@@ -614,6 +614,15 @@ function probeTimingLaunchReadinessDeps(
     : {};
 }
 
+function ordinaryLaunchReadinessDeps(
+  probeTiming?: ProbeTimingRecorder,
+): NonNullable<Parameters<typeof inspectLaunchReadiness>[1]> {
+  return {
+    commandExecutor: sandboxCommandExecutor,
+    ...probeTimingLaunchReadinessDeps(probeTiming),
+  };
+}
+
 function captureHermesPortableReadinessObservation(
   authority: HermesPortableReadinessCommandAuthority,
   args: string[],
@@ -2504,7 +2513,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
           sandboxName,
           hermesReadinessAuthority
             ? hermesPortableLaunchReadinessDeps(hermesReadinessAuthority.command, probeTiming)
-            : probeTimingLaunchReadinessDeps(probeTiming),
+            : ordinaryLaunchReadinessDeps(probeTiming),
         ),
       );
       probeTiming!.recordReadinessDecision(readiness.category);
@@ -2770,7 +2779,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
             publicationRequest,
             retainedCommand
               ? hermesPortableLaunchReadinessDeps(retainedCommand, probeTiming)
-              : probeTimingLaunchReadinessDeps(probeTiming),
+              : ordinaryLaunchReadinessDeps(probeTiming),
           ),
         );
         if (retainedCommand) {
@@ -2816,7 +2825,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
           }
         } else {
           readiness = await probeTiming!.measureAsync("readiness", () =>
-            inspectLaunchReadiness(sandboxName, probeTimingLaunchReadinessDeps(probeTiming)),
+            inspectLaunchReadiness(sandboxName, ordinaryLaunchReadinessDeps(probeTiming)),
           );
         }
         probeTiming!.recordReadinessDecision(readiness.category);

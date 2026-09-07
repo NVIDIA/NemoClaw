@@ -556,6 +556,8 @@ describe("executeSandboxExecCommand", () => {
       expect(result).toEqual({ status: 0, stdout: "SECRET_BOUNDARY_OK", stderr: "" });
       expect(shellPayload).toContain("printf '%s\\n' '__NEMOCLAW_SANDBOX_EXEC_STARTED__'");
       expect(shellPayload).toContain("base64 -d | sh");
+      expect(shellPayload).not.toContain("validate-hermes-env-secret-boundary.py");
+      expect(shellPayload).not.toContain("/sandbox/.hermes/.env");
       expect(shellPayload).not.toContain("echo SECRET_BOUNDARY_OK");
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });

@@ -168,7 +168,12 @@ runner.runCapture = (command) => {
   const normalized = normalize(command);
   const sandboxCapture = createdSandbox.capture(command);
   if (sandboxCapture !== null) return sandboxCapture;
-  if (normalized.includes("sandbox exec") && normalized.includes("dcode identity")) {
+  if (
+    normalized ===
+    "openshell sandbox exec --name " +
+      sandboxName +
+      " -g nemoclaw -- /usr/local/bin/dcode identity"
+  ) {
     return [
       "Route:    inference",
       "Provider: nvidia-prod",

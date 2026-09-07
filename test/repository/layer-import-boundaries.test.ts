@@ -63,6 +63,44 @@ describe("CLI layer import boundaries (#6245)", () => {
     );
   });
 
+  it.each([
+    [
+      "static require destructuring",
+      'const { buildOpenshellExecArgs } = require("../actions/sandbox/exec");\nexport const value = buildOpenshellExecArgs;\n',
+    ],
+    [
+      "TypeScript import equals",
+      'import legacy = require("../actions/sandbox/exec");\nexport const value = legacy.buildOpenshellExecArgs;\n',
+    ],
+    [
+      "nested static require destructuring",
+      'export function value() {\n  const { buildOpenshellExecArgs } = require("../actions/sandbox/exec");\n  return buildOpenshellExecArgs;\n}\n',
+    ],
+    [
+      "direct require property",
+      'export const value = require("../actions/sandbox/exec").buildOpenshellExecArgs;\n',
+    ],
+    [
+      "dynamic import property",
+      'export async function value() {\n  return (await import("../actions/sandbox/exec")).buildOpenshellExecArgs;\n}\n',
+    ],
+    [
+      "awaited dynamic import binding",
+      'export async function value() {\n  const { buildOpenshellExecArgs } = await import("../actions/sandbox/exec");\n  return buildOpenshellExecArgs;\n}\n',
+    ],
+  ])("rejects buffered sandbox commands through %s (#10991)", (_label, source) => {
+    const violations = scanFixture(
+      fixturePath("src/lib/onboard", "buffered-exec-helper-alternate"),
+      source,
+    );
+
+    expect(violations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ rule: "buffered-exec-uses-async-executor" }),
+      ]),
+    );
+  });
+
   it("collects TypeScript import-equals references (#6245)", () => {
     const violations = scanFixture(
       fixturePath("src/lib/domain", "import-equals"),

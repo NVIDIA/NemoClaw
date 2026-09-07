@@ -475,6 +475,32 @@ describe("CLI OpenShell sandbox command executor", () => {
     });
   });
 
+  it("maps a real buffered spawn failure to unavailable", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-missing-openshell-"));
+    try {
+      const executor = createCliOpenShellSandboxCommandExecutor({
+        resolveBinary: () => path.join(dir, "missing-openshell"),
+      });
+
+      await expect(
+        executor.runBuffered({
+          sandboxName: "alpha",
+          target: selectedOpenShellGateway(),
+          command: ["true"],
+        }),
+      ).resolves.toEqual({
+        outcome: {
+          kind: "failed",
+          error: { kind: "unavailable", message: expect.stringContaining("ENOENT") },
+        },
+        stdout: "",
+        stderr: "",
+      });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("maps a buffered timeout without treating it as a remote exit", async () => {
     const executor = createCliOpenShellSandboxCommandExecutor({
       resolveBinary: () => "/usr/bin/openshell",
