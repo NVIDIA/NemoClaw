@@ -1121,4 +1121,26 @@ describe("backupSandboxStateForRebuild stopped-container recovery (#11137)", () 
     ).rejects.toThrow("bail: Failed to back up sandbox state.");
     expect(returnStoppedSpy).toHaveBeenCalledWith(startedForBackup);
   });
+
+  it("aborts a successful recovered backup when the container cannot return to stopped", async () => {
+    backupSpy.mockReturnValue({
+      success: false,
+      backedUpDirs: [],
+      backedUpFiles: [],
+      failedDirs: [".state"],
+      failedFiles: [],
+      manifest: null,
+      unreachable: true,
+    });
+    startSpy.mockReturnValue(startedForBackup);
+    backupStartedSpy.mockResolvedValue(makeBackupResult());
+    returnStoppedSpy.mockReturnValue(false);
+
+    await expect(
+      backupSandboxStateForRebuild("alpha", makeSandboxEntry(), false, () => undefined, makeBail()),
+    ).rejects.toThrow(
+      "bail: Could not return the sandbox's recovered container to its stopped state.",
+    );
+    expect(returnStoppedSpy).toHaveBeenCalledWith(startedForBackup);
+  });
 });

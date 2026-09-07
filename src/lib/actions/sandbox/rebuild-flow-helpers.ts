@@ -511,15 +511,30 @@ export async function backupSandboxStateForRebuild(
     if (started) {
       console.log("  Sandbox container is stopped; starting it to back up state before rebuild...");
       log(`Started stopped container '${started.containerName}' to retry backup`);
+      let returnedToStopped = false;
       try {
         backup = await backupStartedSandboxState(sandboxName);
         log(
           `Retry backup result: success=${backup.success}, backed=${backup.backedUpDirs.join(",")}; files=${backup.backedUpFiles.join(",")}, failed=${backup.failedDirs.join(",")}; failedFiles=${backup.failedFiles.join(",")}`,
         );
       } finally {
-        if (!returnSandboxContainerToStopped(started)) {
+        returnedToStopped = returnSandboxContainerToStopped(started);
+        if (!returnedToStopped) {
           log(`Could not return '${sandboxName}' container to its stopped state after backup retry`);
         }
+      }
+      // A successful backup is not itself safe to proceed on if the container
+      // it required starting could not be returned to stopped: the sandbox
+      // would now be running when it was stopped before rebuild started, and
+      // a later rebuild bail (e.g. an unsafe policy handoff) would strand it
+      // that way with no data-loss warning attached (#11137 review).
+      if (backup.success && !returnedToStopped) {
+        console.error("  Backed up sandbox state after starting its stopped container, but could not");
+        console.error(`  return container '${started.containerName}' to its stopped state.`);
+        console.error(
+          "  The sandbox was stopped before rebuild started; stop the container manually, then retry rebuild.",
+        );
+        bail("Could not return the sandbox's recovered container to its stopped state.");
       }
     }
   }
