@@ -13,6 +13,7 @@ export {
   preflightRebuildTargetRuntime,
 } from "./rebuild-target-runtime";
 export {
+  hasValidDeferredN1xManagedVllmReplacementAuthority,
   hydrateMessagingConfigForRebuild,
   prepareRebuildRecreateOptions,
   stageRebuildHermesDashboardConfig,

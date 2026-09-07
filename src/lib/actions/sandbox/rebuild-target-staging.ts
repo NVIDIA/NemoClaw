@@ -160,6 +160,24 @@ export function stageRecordedDeferredN1xIntent(
   }
 }
 
+/** Recheck the staged N1x replacement authority before destructive boundaries. */
+export function hasValidDeferredN1xManagedVllmReplacementAuthority(
+  recreateOptions: Pick<
+    RebuildRecreateOnboardOpts,
+    "allowDeferredN1xManagedVllm" | "reinstallDeferredN1xManagedVllm"
+  >,
+  sandboxEntry: Pick<RebuildSandboxEntry, "openshellDriver" | "nimContainer">,
+  rebuildSelection: { provider: string; model: string },
+): boolean {
+  return (
+    recreateOptions.reinstallDeferredN1xManagedVllm !== true ||
+    (recreateOptions.allowDeferredN1xManagedVllm === true &&
+      isN1xManagedVllmProviderModel(rebuildSelection.provider, rebuildSelection.model) &&
+      sandboxEntry.openshellDriver === "docker" &&
+      !sandboxEntry.nimContainer)
+  );
+}
+
 export function hydrateMessagingConfigForRebuild(
   sandboxName: string,
   log: (msg: string) => void,
