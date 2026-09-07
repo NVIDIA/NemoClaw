@@ -206,11 +206,7 @@ function queueLegacyMcpResponse(
   requestId: string | number | null,
   payload: unknown,
 ): LegacyQueueResult {
-  if (
-    session.phase === "closed" ||
-    session.response.destroyed ||
-    session.response.writableEnded
-  ) {
+  if (session.phase === "closed" || session.response.destroyed || session.response.writableEnded) {
     return { ok: false, status: 410, message: "legacy MCP event stream is closed" };
   }
   const requestIdKey = jsonRpcIdKey(requestId);
@@ -624,9 +620,7 @@ export async function startCompatibleMock(options: {
         ) {
           return "invalid";
         }
-        return names.includes(toolName)
-          ? "target"
-          : "miss";
+        return names.includes(toolName) ? "target" : "miss";
       };
       const hasExpectedHermesDescription = (index: number, toolName: string) => {
         const parsed = parsedToolResult(index, "call_hermes_tool_describe");
@@ -655,9 +649,7 @@ export async function startCompatibleMock(options: {
           Object.hasOwn(properties, "challenge")
         );
       };
-      const classifyOpenClawSearchResult = (
-        index: number,
-      ): "target" | "miss" | "invalid" => {
+      const classifyOpenClawSearchResult = (index: number): "target" | "miss" | "invalid" => {
         const search = options.openClawToolSearch;
         const message = toolResults[index];
         if (!search || !message) return "invalid";
@@ -671,15 +663,44 @@ export async function startCompatibleMock(options: {
           return false;
         }
         const content = JSON.stringify(message.content);
-        return (
-          content.includes(selectedOpenClawToolName) &&
-          content.includes("challenge")
-        );
+        return content.includes(selectedOpenClawToolName) && content.includes("challenge");
+      };
+      const collectOpenClawSearchIdentifiers = (
+        value: unknown,
+        identifiers: string[] = [],
+        depth = 0,
+      ): string[] => {
+        if (depth > 6) return identifiers;
+        if (typeof value === "string") {
+          try {
+            return collectOpenClawSearchIdentifiers(JSON.parse(value), identifiers, depth + 1);
+          } catch {
+            return identifiers;
+          }
+        }
+        if (Array.isArray(value)) {
+          for (const entry of value) {
+            collectOpenClawSearchIdentifiers(entry, identifiers, depth + 1);
+          }
+          return identifiers;
+        }
+        if (!value || typeof value !== "object") return identifiers;
+        const record = value as Record<string, unknown>;
+        for (const key of ["name", "id"] as const) {
+          if (typeof record[key] === "string" && !identifiers.includes(record[key])) {
+            identifiers.push(record[key]);
+          }
+        }
+        for (const nested of Object.values(record)) {
+          collectOpenClawSearchIdentifiers(nested, identifiers, depth + 1);
+        }
+        return identifiers;
       };
       let plannedToolCall:
         | { id: string; name: string; arguments: Record<string, unknown> }
         | undefined;
       let protocolError: string | undefined;
+      let openClawSearchDiagnostic = "";
       let deniedToolProbeComplete = false;
 
       if (deniedToolProbeRequested && deniedToolProbe) {
@@ -693,8 +714,7 @@ export async function startCompatibleMock(options: {
               arguments: { name: deniedToolProbe.toolName, arguments: {} },
             };
           } else if (toolResultCount === 1) {
-            deniedToolProbeComplete =
-              isDeniedBridgeToolResult(0, "call_denied_tool_bridge");
+            deniedToolProbeComplete = isDeniedBridgeToolResult(0, "call_denied_tool_bridge");
             if (!deniedToolProbeComplete) {
               protocolError = "denied-tool bridge call did not report a policy denial";
             }
@@ -713,9 +733,7 @@ export async function startCompatibleMock(options: {
           };
         } else if (
           toolResultCount === 1 &&
-          !hasExpectedToolResult(0, "call_denied_tool_search", [
-            `- ${deniedToolProbe.toolName}:`,
-          ])
+          !hasExpectedToolResult(0, "call_denied_tool_search", [`- ${deniedToolProbe.toolName}:`])
         ) {
           protocolError = "search_tools did not return the denied progressive target";
         } else if (toolResultCount === 1 && !visibleToolNames.has(deniedToolProbe.toolName)) {
@@ -751,16 +769,31 @@ export async function startCompatibleMock(options: {
           };
         } else if (toolResultCount === 1) {
           const searchResult = classifyOpenClawSearchResult(0);
-          if (searchResult === "target") {
+          if (searchResult === "miss") {
+            const identifiers = collectOpenClawSearchIdentifiers(toolResults[0]?.content);
+            const terms = options.openClawToolSearch.query
+              .toLowerCase()
+              .split(/[^a-z0-9]+/u)
+              .filter(Boolean);
+            selectedOpenClawToolName = identifiers.find((identifier) => {
+              const normalized = identifier.toLowerCase().replace(/[^a-z0-9]+/gu, " ");
+              return terms.every((term) => normalized.includes(term));
+            });
+            openClawSearchDiagnostic =
+              identifiers.length > 0
+                ? identifiers.join(", ").slice(0, 512)
+                : JSON.stringify(toolResults[0]?.content).replace(/\s+/gu, " ").slice(0, 512);
+          }
+          if (searchResult === "target" || selectedOpenClawToolName) {
             plannedToolCall = {
               id: "call_openclaw_tool_describe",
               name: "tool_describe",
-              arguments: { name: selectedOpenClawToolName },
+              arguments: { id: selectedOpenClawToolName },
             };
           } else {
             protocolError =
               searchResult === "miss"
-                ? "OpenClaw tool_search did not find the deferred MCP target"
+                ? `OpenClaw tool_search did not find the deferred MCP target; observed ${openClawSearchDiagnostic || "no identifiers"}`
                 : "OpenClaw returned an invalid tool_search result";
           }
         } else if (toolResultCount === 2) {
@@ -769,8 +802,8 @@ export async function startCompatibleMock(options: {
               id: "call_openclaw_tool_call",
               name: "tool_call",
               arguments: {
-                name: selectedOpenClawToolName,
-                arguments: { challenge: options.toolChallenge },
+                id: selectedOpenClawToolName,
+                args: { challenge: options.toolChallenge },
               },
             };
           } else {
@@ -864,29 +897,29 @@ export async function startCompatibleMock(options: {
       const responseMessage = deniedToolProbeComplete
         ? { role: "assistant", content: deniedToolProbe?.resultToken }
         : sawAuthenticatedToolResult
-        ? {
-            role: "assistant",
-            content: options.toolResultToken,
-          }
-        : protocolError
-          ? { role: "assistant", content: `mock protocol error: ${protocolError}` }
-          : plannedToolCall && (deniedToolProbeRequested || options.toolChallenge)
-            ? {
-                role: "assistant",
-                content: null,
-                tool_calls: [
-                  {
-                    index: 0,
-                    id: plannedToolCall.id,
-                    type: "function",
-                    function: {
-                      name: plannedToolCall.name,
-                      arguments: JSON.stringify(plannedToolCall.arguments),
+          ? {
+              role: "assistant",
+              content: options.toolResultToken,
+            }
+          : protocolError
+            ? { role: "assistant", content: `mock protocol error: ${protocolError}` }
+            : plannedToolCall && (deniedToolProbeRequested || options.toolChallenge)
+              ? {
+                  role: "assistant",
+                  content: null,
+                  tool_calls: [
+                    {
+                      index: 0,
+                      id: plannedToolCall.id,
+                      type: "function",
+                      function: {
+                        name: plannedToolCall.name,
+                        arguments: JSON.stringify(plannedToolCall.arguments),
+                      },
                     },
-                  },
-                ],
-              }
-            : { role: "assistant", content: "ok" };
+                  ],
+                }
+              : { role: "assistant", content: "ok" };
       const finishReason = "tool_calls" in responseMessage ? "tool_calls" : "stop";
       if (body.stream) {
         res.writeHead(200, {
@@ -1178,10 +1211,13 @@ export async function startFakeMcpHttpsServer(options: {
     }
     const requestId = jsonRpcId(parsedPayload.id);
     const isNotification =
-      typeof parsedPayload.method === "string" && MCP_NOTIFICATION_METHODS.has(parsedPayload.method);
+      typeof parsedPayload.method === "string" &&
+      MCP_NOTIFICATION_METHODS.has(parsedPayload.method);
     if (legacySession) {
       if (sessionId !== "") {
-        respondJson(400, { error: { message: "legacy MCP requests must not mix session headers" } });
+        respondJson(400, {
+          error: { message: "legacy MCP requests must not mix session headers" },
+        });
         return;
       }
       if (parsedPayload.method === "initialize") {
