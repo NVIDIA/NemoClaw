@@ -783,7 +783,7 @@ export async function startCompatibleMock(options: {
           }
         : protocolError
           ? { role: "assistant", content: `mock protocol error: ${protocolError}` }
-          : plannedToolCall && options.toolChallenge
+          : plannedToolCall && (deniedToolProbeRequested || options.toolChallenge)
             ? {
                 role: "assistant",
                 content: null,

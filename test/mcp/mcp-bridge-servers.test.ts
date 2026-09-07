@@ -1008,7 +1008,6 @@ describe("authenticated MCP live fixtures", () => {
     const bridge = await startCompatibleMock({
       apiKey: "compatible-key",
       model: "mock/model",
-      toolChallenge: "denied",
       deniedToolProbe: {
         mode: "bridge",
         promptMarker: prompt,
@@ -1037,7 +1036,6 @@ describe("authenticated MCP live fixtures", () => {
     const progressive = await startCompatibleMock({
       apiKey: "compatible-key",
       model: "mock/model",
-      toolChallenge: "denied",
       deniedToolProbe: {
         mode: "progressive",
         promptMarker: prompt,
