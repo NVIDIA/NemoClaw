@@ -21,7 +21,7 @@ const START_SCRIPT = path.join(
  * watcher's own prelude, up to and including the last scheduler constant, so
  * the assertions cover the values the watcher actually computes.
  */
-function resolveSchedulerConstants(env: Record<string, string>): {
+function resolveSchedulerConstants(env: NodeJS.ProcessEnv): {
   status: number | null;
   stderr: string;
   constants: Record<string, string>;
