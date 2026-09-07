@@ -230,13 +230,21 @@ export function getPolicyPresence(
   entry: McpBridgeEntry | undefined,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
 ): boolean | null {
+  const state = getPolicyGatewayState(sandboxName, entry, runtimeSelection);
+  return state === "match" ? true : state === "absent" ? false : null;
+}
+
+export function getPolicyGatewayState(
+  sandboxName: string,
+  entry: McpBridgeEntry | undefined,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
+): "absent" | "drift" | "match" | null {
   const registered = getRegisteredGeneratedPolicy(sandboxName, entry);
-  if (!registered) return entry ? null : false;
-  const state = policies.getPresetContentGatewayState(
+  if (!registered) return entry ? null : "absent";
+  return policies.getPresetContentGatewayState(
     sandboxName,
     registered.content,
     undefined,
     runtimeSelection,
   );
-  return state === "match" ? true : state === "absent" ? false : null;
 }

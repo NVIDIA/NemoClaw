@@ -28,6 +28,7 @@ const HERMES_GATEWAY_DRAINING_RETRIES = 3;
 const HERMES_GATEWAY_DRAINING_RETRY_DELAY_MS = 5_000;
 const HERMES_MCP_STATUS_RETRY_DELAY_MS = 5_000;
 export const MCP_BRIDGE_TEST_REDACTION_VALUES = Object.values(MCP_BRIDGE_TEST_CREDENTIALS);
+export const MCP_BRIDGE_DENIED_TOOL_NAME = "fake_status";
 
 export async function runDeniedOpenClawToolCall(options: {
   artifactName: string;
@@ -52,6 +53,56 @@ export async function runDeniedOpenClawToolCall(options: {
     },
   );
   return { after: countToolCalls(), before, result };
+}
+
+export async function runOpenClawDeniedToolUpdateProof(
+  host: HostCliClient,
+  sandbox: SandboxClient,
+  requests: Array<{ auth: string; rpcMethod?: string }>,
+  sandboxName: string,
+): Promise<{
+  after: number;
+  before: number;
+  clear: ShellProbeResult;
+  commandsSucceeded: boolean;
+  call: ShellProbeResult;
+  lastCall: { auth: string; rpcMethod?: string } | undefined;
+  replace: ShellProbeResult;
+}> {
+  const commandOptions = (artifactName: string) => ({
+    artifactName,
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 90_000,
+  });
+  const clear = await host.nemoclaw(
+    [sandboxName, "mcp", "update", "fake", "--clear-deny-tools"],
+    commandOptions("openclaw-clear-denied-tools"),
+  );
+  const before = requests.filter((request) => request.rpcMethod === "tools/call").length;
+  const call = await sandbox.execShell(
+    sandboxName,
+    trustedSandboxShellScript(
+      `nemoclaw-start mcporter --root ${shellQuote(OPENCLAW_MCPORTER_ROOT)} call fake.${MCP_BRIDGE_DENIED_TOOL_NAME} --args '{}' --output json`,
+    ),
+    commandOptions("openclaw-formerly-denied-tool-call"),
+  );
+  const calls = requests.filter((request) => request.rpcMethod === "tools/call");
+  const replace = await host.nemoclaw(
+    [sandboxName, "mcp", "update", "fake", "--deny-tool", MCP_BRIDGE_DENIED_TOOL_NAME],
+    commandOptions("openclaw-restore-denied-tool"),
+  );
+  const commandsSucceeded = [clear, call, replace].every(
+    (result) => !result.timedOut && result.exitCode === 0,
+  );
+  return {
+    after: calls.length,
+    before,
+    call,
+    clear,
+    commandsSucceeded,
+    lastCall: calls.at(-1),
+    replace,
+  };
 }
 
 export async function runMcpProviderRewriteProbe(

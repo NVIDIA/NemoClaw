@@ -78,6 +78,12 @@ function resolvedTargetPins(
   return target;
 }
 
+function sameAddressPins(left: readonly string[] | undefined, right: readonly string[]): boolean {
+  return (
+    !!left && left.length === right.length && left.every((value, index) => value === right[index])
+  );
+}
+
 async function assertRestartCredentialsAvailable(
   sandboxName: string,
   entries: readonly McpBridgeEntry[],
@@ -198,6 +204,10 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
     const envRefs = entry.env.map((envName) => ({ name: envName }));
     const adapterEnvValues = resolveCredentialEnv(envRefs);
     const target = resolvedTargetPins(resolvedByServer, entry);
+    if (!entry.trustedPrivateHost && !sameAddressPins(entry.allowedIps, target.addresses)) {
+      entry = { ...entry, allowedIps: [...target.addresses], updatedAt: nowIso() };
+      writeBridgeEntry(sandboxName, entry);
+    }
     let previousCredentialRevision: McpCredentialRevisionObservation | undefined;
     assertNoAttachedProviderCredentialCollisions(sandboxName, [entry], providerRuntimeSelection);
     // Revalidate the actual running supervisor before rotating or recreating

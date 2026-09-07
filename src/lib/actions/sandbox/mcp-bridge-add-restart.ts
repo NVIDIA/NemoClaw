@@ -46,6 +46,7 @@ import {
   observeMcpCredentialRevision,
   providerMatchesCredential,
   providerShapeDetail,
+  preflightMcpEntryTargets,
   refreshMcpProviderEnvironment,
   upsertMcpProvider,
   waitForAttachedMcpCredential,
@@ -193,9 +194,20 @@ async function updateMcpBridgeDenyToolsUnlocked(
     );
   }
   assertAuthenticatedBridgeEntry(storedEntry);
+  let allowedIps = storedEntry.allowedIps;
+  if (!storedEntry.trustedPrivateHost && !allowedIps) {
+    const target = (await preflightMcpEntryTargets([storedEntry])).get(server);
+    if (!target || target.addresses.length === 0) {
+      throw new McpBridgeError(
+        `MCP server '${server}' has no validated public address pins. Run \`nemoclaw ${sandboxName} mcp restart ${server}\` before updating denied tools.`,
+      );
+    }
+    allowedIps = [...target.addresses];
+  }
   const { denyTools: _previousDenyTools, ...entryWithoutDenyTools } = storedEntry;
   const updatedEntry = {
     ...entryWithoutDenyTools,
+    ...(allowedIps ? { allowedIps } : {}),
     ...(normalizedDenyTools.length > 0 ? { denyTools: normalizedDenyTools } : {}),
     updatedAt: nowIso(),
   };
@@ -204,8 +216,9 @@ async function updateMcpBridgeDenyToolsUnlocked(
   assertMcpCredentialBoundaryRuntimeVersion();
   await ensureSandboxGatewaySelected(sandboxName, runtimeSelection);
 
-  // Persist desired policy intent before the external write. If activation is
-  // interrupted, status reports drift and restart can converge to this intent.
+  // Remove the previous route before recording and applying the replacement.
+  // A failed narrowing update therefore leaves no usable MCP policy.
+  removeGeneratedPolicy(sandboxName, storedEntry, { runtimeSelection });
   writeBridgeEntry(sandboxName, updatedEntry);
   try {
     applyRecordedGeneratedPolicy(sandboxName, updatedEntry, runtimeSelection);

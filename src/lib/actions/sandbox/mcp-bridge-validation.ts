@@ -7,6 +7,10 @@ import crypto from "node:crypto";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import { diagnosticPreview, isValidName, NAME_ALLOWED_FORMAT } from "../../sandbox-name-contract";
 import {
+  inspectMcpDeniedToolSelectors,
+  MCP_DENIED_TOOL_SELECTOR_MAX_COUNT,
+} from "../../security/mcp-denied-tool-selector";
+import {
   normalizeTrustedPrivateHost,
   parseTrustedPrivateHosts,
 } from "../../security/trusted-private-endpoint";
@@ -34,8 +38,6 @@ export {
 
 const VALID_SERVER_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 const VALID_ENV_RE = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
-const VALID_MCP_DENY_TOOL_RE = /^[A-Za-z0-9_.?*{}\[\]-]{1,128}$/u;
-const MCP_DENY_TOOL_MAX_COUNT = 500;
 const OPENSHELL_REVISIONED_CREDENTIAL_NAME_RE = /^v[0-9]+_[A-Za-z0-9_]+$/;
 const OPENSHELL_VERSION_OUTPUT_RE =
   /^openshell\s+([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)$/;
@@ -187,25 +189,23 @@ export function validateMcpServerName(name: string): void {
 }
 
 export function normalizeMcpDenyTools(tools: readonly string[]): string[] {
-  if (tools.length > MCP_DENY_TOOL_MAX_COUNT) {
+  const inspection = inspectMcpDeniedToolSelectors(tools);
+  if (!inspection.ok && inspection.reason === "too-many") {
     throw new McpBridgeError(
-      `MCP denied-tool policy accepts at most ${String(MCP_DENY_TOOL_MAX_COUNT)} selectors.`,
+      `MCP denied-tool policy accepts at most ${String(MCP_DENIED_TOOL_SELECTOR_MAX_COUNT)} selectors.`,
       2,
     );
   }
-  for (const tool of tools) {
-    if (typeof tool !== "string" || !VALID_MCP_DENY_TOOL_RE.test(tool)) {
-      throw new McpBridgeError(
-        `Invalid MCP denied-tool selector ${diagnosticPreview(tool)}. Use 1 to 128 letters, digits, dots, underscores, hyphens, or OpenShell glob characters.`,
-        2,
-      );
-    }
+  if (!inspection.ok) {
+    throw new McpBridgeError(
+      `Invalid MCP denied-tool selector ${diagnosticPreview(inspection.invalidSelector)}. Use 1 to 128 letters, digits, dots, underscores, hyphens, or OpenShell glob characters.`,
+      2,
+    );
   }
-  const unique = [...new Set(tools)];
-  if (unique.length !== tools.length) {
+  if (inspection.duplicate) {
     throw new McpBridgeError("Duplicate --deny-tool declarations are not accepted.", 2);
   }
-  return unique.sort();
+  return inspection.selectors;
 }
 
 export function validateMcpCredentialEnvName(name: string): void {

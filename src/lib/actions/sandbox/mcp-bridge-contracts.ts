@@ -82,6 +82,7 @@ export interface McpBridgeStatus {
     name?: string;
     registryPresent: boolean;
     gatewayPresent: boolean | null;
+    state?: "drift";
   };
   adapter: {
     registered: boolean | null;

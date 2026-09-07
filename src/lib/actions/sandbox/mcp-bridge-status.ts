@@ -17,7 +17,7 @@ import {
   inspectHermesMcpRuntimeIntent,
 } from "./mcp-bridge-hermes-reconciliation";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
-import { getPolicyPresence, getRegisteredGeneratedPolicy } from "./mcp-bridge-policy";
+import { getPolicyGatewayState, getRegisteredGeneratedPolicy } from "./mcp-bridge-policy";
 import {
   getMcpProviderInspectionRuntimeSelection,
   inspectMcpProvider,
@@ -319,7 +319,9 @@ export async function statusMcpBridge(
   return entries.map(([name, entry]) => {
     const support = entry ? getPersistedBridgeSupport(entry) : getSupportSummary(agent);
     const registeredPolicy = getRegisteredGeneratedPolicy(sandboxName, entry);
-    const policyPresence = getPolicyPresence(sandboxName, entry, providerRuntimeSelection);
+    const policyState = getPolicyGatewayState(sandboxName, entry, providerRuntimeSelection);
+    const policyPresence =
+      policyState === "match" ? true : policyState === "absent" ? false : null;
     const hasCredentialBinding =
       !!entry &&
       Array.isArray(entry.env) &&
@@ -355,6 +357,11 @@ export async function statusMcpBridge(
       if (urlWarning) warnings.push(urlWarning);
       credentialWarning = storedCredentialWarning(entry);
       if (credentialWarning) warnings.push(credentialWarning);
+      if (policyState === "drift") {
+        warnings.push(
+          `Generated policy differs from registered MCP intent. Run \`nemoclaw ${sandboxName} mcp restart ${entry.server}\` to restore it.`,
+        );
+      }
     }
     const privatePinStatus = privatePinStatusByServer.get(name);
     if (privatePinStatus?.state === "drift") {
@@ -472,6 +479,7 @@ export async function statusMcpBridge(
         name: entry?.policyName,
         registryPresent: !!registeredPolicy,
         gatewayPresent: policyPresence,
+        ...(policyState === "drift" ? { state: "drift" as const } : {}),
       },
       adapter: adapterRegistration,
       ...(toolDiscovery ? { toolDiscovery } : {}),

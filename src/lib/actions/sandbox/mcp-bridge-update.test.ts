@@ -11,6 +11,10 @@ const mocks = vi.hoisted(() => ({
   assertHermesPortableCommandUnavailable: vi.fn(),
   assertMcpCredentialBoundaryRuntimeVersion: vi.fn(),
   ensureSandboxGatewaySelected: vi.fn().mockResolvedValue(undefined),
+  preflightMcpEntryTargets: vi
+    .fn()
+    .mockResolvedValue(new Map([["github", { addresses: ["8.8.8.8"] }]])),
+  removeGeneratedPolicy: vi.fn(),
   writeBridgeEntry: vi.fn(),
 }));
 
@@ -27,6 +31,7 @@ vi.mock("./mcp-bridge-policy", async (importOriginal) => {
     applyRecordedGeneratedPolicy: mocks.applyRecordedGeneratedPolicy,
     assertGeneratedPolicyRegistrationMutationSafe:
       mocks.assertGeneratedPolicyRegistrationMutationSafe,
+    removeGeneratedPolicy: mocks.removeGeneratedPolicy,
   };
 });
 vi.mock("./mcp-bridge-provider", async (importOriginal) => {
@@ -37,6 +42,7 @@ vi.mock("./mcp-bridge-provider", async (importOriginal) => {
       gatewayName: "nemoclaw-9090",
       workspace: "default",
     })),
+    preflightMcpEntryTargets: mocks.preflightMcpEntryTargets,
   };
 });
 vi.mock("./mcp-bridge-state", async (importOriginal) => {
@@ -93,6 +99,9 @@ describe("MCP denied-tool policy updates", () => {
     expect(mocks.writeBridgeEntry.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.applyRecordedGeneratedPolicy.mock.invocationCallOrder[0],
     );
+    expect(mocks.removeGeneratedPolicy.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.writeBridgeEntry.mock.invocationCallOrder[0],
+    );
   });
 
   it("clears the persisted denied-tool list explicitly (#11115)", async () => {
@@ -117,6 +126,7 @@ describe("MCP denied-tool policy updates", () => {
       /intent was saved.*mcp restart github/,
     );
     expect(mocks.writeBridgeEntry).toHaveBeenCalledOnce();
+    expect(mocks.removeGeneratedPolicy).toHaveBeenCalledOnce();
   });
 
   it("rejects invalid stored policy state before persisting an update (#11115)", async () => {
@@ -152,5 +162,32 @@ describe("MCP denied-tool policy updates", () => {
     );
     expect(mocks.writeBridgeEntry).not.toHaveBeenCalled();
     expect(mocks.applyRecordedGeneratedPolicy).not.toHaveBeenCalled();
+  });
+
+  it("leaves intent unchanged when the old policy cannot be removed (#11115)", async () => {
+    mocks.removeGeneratedPolicy.mockImplementationOnce(() => {
+      throw new Error("remove failed");
+    });
+
+    await expect(updateMcpBridgeDenyTools("alpha", "github", ["delete_repo"])).rejects.toThrow(
+      "remove failed",
+    );
+
+    expect(mocks.writeBridgeEntry).not.toHaveBeenCalled();
+    expect(mocks.applyRecordedGeneratedPolicy).not.toHaveBeenCalled();
+  });
+
+  it("records validated pins while updating a legacy public registration (#11115)", async () => {
+    vi.mocked(state.bridgeState).mockReturnValueOnce({
+      github: { ...entry, allowedIps: undefined },
+    });
+
+    await updateMcpBridgeDenyTools("alpha", "github", ["delete_repo"]);
+
+    expect(mocks.preflightMcpEntryTargets).toHaveBeenCalledOnce();
+    expect(mocks.writeBridgeEntry).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ allowedIps: ["8.8.8.8"], denyTools: ["delete_repo"] }),
+    );
   });
 });

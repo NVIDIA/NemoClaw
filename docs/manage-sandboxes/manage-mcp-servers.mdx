@@ -136,7 +136,8 @@ $$nemoclaw my-sandbox mcp update doordash \
 
 The command changes only the generated OpenShell policy and persisted denied-tool intent.
 It does not change the endpoint, credential, address pins, provider, or agent adapter.
-If policy activation fails after NemoClaw records the new intent, the command reports the failure and preserves that intent.
+NemoClaw removes the current generated policy before it records and applies the replacement intent.
+If replacement policy activation fails, the command reports the failure, preserves that intent, and leaves the MCP route blocked.
 Run `$$nemoclaw my-sandbox mcp restart doordash` to retry policy activation.
 Rebuild rejects a generated policy that does not match the persisted intent, so run the reported restart before rebuilding.
 

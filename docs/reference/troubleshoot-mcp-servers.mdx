@@ -393,7 +393,7 @@ Do not treat matching DNS pins as evidence that the path, method, adapter identi
 
 ## Lifecycle Lock Times Out
 
-Confirm that no `mcp add`, `mcp restart`, `mcp remove`, `rebuild`, or `destroy` command for the sandbox is still running, then retry the original command.
+Confirm that no `mcp add`, `mcp update`, `mcp restart`, `mcp remove`, `rebuild`, or `destroy` command for the sandbox is still running, then retry the original command.
 NemoClaw recovers a lock only when its local process is provably dead or its PID has a different process-start identity.
 
 It does not expose a force-unlock flag.
