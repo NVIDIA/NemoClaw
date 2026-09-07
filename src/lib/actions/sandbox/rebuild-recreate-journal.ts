@@ -558,6 +558,7 @@ export function fingerprintRebuildRecreateTargetIntent(
     | "toolDisclosure"
     | "dcodeAutoApprovalMode"
     | "observabilityEnabled"
+    | "reinstallDeferredN1xManagedVllm"
   >,
 ): string {
   const hostMounts = (options.hostMounts ?? []).map(
@@ -590,6 +591,9 @@ export function fingerprintRebuildRecreateTargetIntent(
     toolDisclosure: options.toolDisclosure,
     dcodeAutoApprovalMode: options.dcodeAutoApprovalMode,
     observabilityEnabled: options.observabilityEnabled,
+    ...(options.reinstallDeferredN1xManagedVllm === true
+      ? { reinstallDeferredN1xManagedVllm: true }
+      : {}),
   });
 }
 
