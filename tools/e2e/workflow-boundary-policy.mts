@@ -7,10 +7,20 @@ export const E2E_ACTION_PROVENANCE = {
       "NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75",
     contentSha256: "1283c2eadfbc38ccb3b795684ba5ced9c89ae2040fffbb6b81854a9d1926802b",
   },
+  nativePodmanRuntime: {
+    reference:
+      "NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@c87144de2c8e2d90b14cf11b31718846e32c65de",
+    contentSha256: "ea633b602a0c44f19cdb4c4e4ca28c9b22732e848c34edd871c148675da83349",
+  },
+  stageNativePodmanToolchains: {
+    reference:
+      "NVIDIA/NemoClaw/.github/actions/stage-native-podman-e2e-toolchains@1a0f53d5d7e5420556be72b50d79ed5a333d637d",
+    contentSha256: "e6be7f926407795a2575a6dac8dc8b61738c9f19f7dd09ff6e52dff50ec2140f",
+  },
   restoreCliArtifact: {
     reference:
-      "NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@813ca162c2867a34ba3692ad60dba73f3282baea",
-    contentSha256: "6f8d0138589b7c48a977d004f41cc60f7328d193d85ea5365f0a48b65f3e7485",
+      "NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@17759906bd7f80319c58af759dd60cfb893109bf",
+    contentSha256: "4a6a6b21993e579855916dfb897995a3f35dc4461d04666094af7eddb8676077",
   },
   uploadArtifacts: {
     reference:

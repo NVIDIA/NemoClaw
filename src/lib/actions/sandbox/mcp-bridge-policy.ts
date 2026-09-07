@@ -21,6 +21,7 @@ import {
   buildMcpBridgePolicyName,
   buildMcpBridgePolicyYaml,
 } from "./mcp-bridge-policy-render";
+import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
 import type { McpBridgeTargetValidation } from "./mcp-bridge-url-validation";
 
 export { MCP_BRIDGE_POLICY_SOURCE } from "./mcp-bridge-contracts";
@@ -36,7 +37,10 @@ export function applyGeneratedPolicy(
   sandboxName: string,
   entry: McpBridgeEntry,
   target: McpBridgeTargetValidation,
-  options: { bindCredential?: boolean } = {},
+  options: {
+    bindCredential?: boolean;
+    runtimeSelection: McpProviderInspectionRuntimeSelection;
+  },
 ): void {
   const addresses = assertMcpBridgePolicyTarget(entry, target);
   if (addresses.length === 0) {
@@ -58,8 +62,14 @@ export function applyGeneratedPolicy(
   if (
     !policies.applyPresetContent(sandboxName, entry.policyName, content, {
       nonFatal: true,
+      runtimeSelection: options.runtimeSelection,
     }) ||
-    policies.getPresetContentGatewayState(sandboxName, content) !== "match"
+    policies.getPresetContentGatewayState(
+      sandboxName,
+      content,
+      undefined,
+      options.runtimeSelection,
+    ) !== "match"
   ) {
     throw new McpBridgeError(`Failed to activate generated MCP policy '${entry.policyName}'.`);
   }
@@ -161,13 +171,17 @@ export function assertGeneratedPolicyRegistrationMutationSafe(
 export function removeGeneratedPolicy(
   sandboxName: string,
   entry: McpBridgeEntry,
-  options: { bestEffort?: boolean } = {},
+  options: {
+    bestEffort?: boolean;
+    runtimeSelection: McpProviderInspectionRuntimeSelection;
+  },
 ): void {
   const policyKey = buildMcpBridgePolicyKey(entry.server);
   const content = `network_policies:\n  ${policyKey}: {}\n`;
   const removed = policies.removePreset(sandboxName, entry.policyName, {
     nonFatal: true,
     presetContent: content,
+    runtimeSelection: options.runtimeSelection,
   });
   if (removed) return;
   if (options.bestEffort) return;
@@ -193,9 +207,15 @@ export function getRegisteredGeneratedPolicy(
 export function getPolicyPresence(
   sandboxName: string,
   entry: McpBridgeEntry | undefined,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
 ): boolean | null {
   const registered = getRegisteredGeneratedPolicy(sandboxName, entry);
   if (!registered) return entry ? null : false;
-  const state = policies.getPresetContentGatewayState(sandboxName, registered.content);
+  const state = policies.getPresetContentGatewayState(
+    sandboxName,
+    registered.content,
+    undefined,
+    runtimeSelection,
+  );
   return state === "match" ? true : state === "absent" ? false : null;
 }

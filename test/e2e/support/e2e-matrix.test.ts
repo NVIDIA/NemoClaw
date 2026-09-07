@@ -110,15 +110,21 @@ describe("live E2E target matrix", () => {
   });
 
   it("exposes execution coverage for every executable typed target (#9167)", () => {
+    expect(buildLiveTargetMatrix()).toEqual(buildLiveTargetMatrix([], ["docker"]));
     expect(buildLiveTargetMatrix()).toHaveLength(4);
     expectExecutableTypedTargetCoverage();
   });
 
+  it("keeps Docker-only typed fixtures out of the native Podman matrix", () => {
+    expect(buildLiveTargetMatrix([], ["podman"]).map((row) => row.id)).toEqual([
+      "ubuntu-policy-custom-missing-presets-negative",
+      "ubuntu-repo-cloud-openclaw",
+    ]);
+  });
+
   it("assigns a 160-minute job timeout only to post-reboot recovery (#9622)", () => {
     expect(
-      Object.fromEntries(
-        buildLiveTargetMatrix().map((row) => [row.id, row.timeout_minutes]),
-      ),
+      Object.fromEntries(buildLiveTargetMatrix().map((row) => [row.id, row.timeout_minutes])),
     ).toEqual({
       "ubuntu-policy-custom-missing-presets-negative": 45,
       "ubuntu-repo-cloud-langchain-deepagents-code": 45,

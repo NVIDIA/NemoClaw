@@ -8,7 +8,11 @@ description: Create a GitHub pull request with the NemoClaw template. Then, moni
 
 # Create GitHub Pull Request
 
-Publish one complete candidate from a feature branch based on the refreshed canonical comparison ref. Stop unless branch state, implementation-owned validation, DCO declaration, and GitHub commit verification are complete. For access errors, follow [Git and GitHub Access Hard Stop](../_shared/git-github-hard-stop.md).
+Publish one complete candidate from a feature branch based on the current canonical comparison ref.
+Treat each pushed commit as one candidate. Finish required CI and scheduled automated reviews before
+another push. Stop unless branch state, implementation-owned validation, DCO declaration, and
+GitHub commit verification are complete. For access errors, follow
+[Git and GitHub Access Hard Stop](../_shared/git-github-hard-stop.md).
 
 ## Satisfy publication requirements
 
@@ -29,6 +33,10 @@ git status --short
 
 Every command must succeed. The `origin/main` name is a local comparison ref; it does not prove remote identity. Do not replace the canonical API endpoint or fetch URL with a checkout remote. Stop if the sources differ. Do not validate against a stale ref. Do not publish from `main` or with uncommitted changes.
 
+This fetch refreshes read-only comparison evidence. It does not authorize merging or rebasing
+`main` into the candidate. Follow [Integrate the base branch](../_shared/pr-follow-up.md#integrate-the-base-branch)
+before changing candidate history.
+
 ### Validation
 
 Normal `pre-commit`, `commit-msg`, and `pre-push` hooks provide early feedback, but a successful commit or push does not prove that they ran; hooks can be missing, stale, or redirected through `core.hooksPath`.
@@ -36,7 +44,21 @@ Normal `pre-commit`, `commit-msg`, and `pre-push` hooks provide early feedback, 
 Select review evidence for the publication state before every agent-managed push:
 
 - For an initial publication, use the implementation handoff's self-review and any other available pre-publication review evidence. Do not query PR state or follow the open-PR workflow because the PR does not exist.
-- Before updating an open PR, follow [Collect](../_shared/pr-follow-up.md#collect) and [Decide](../_shared/pr-follow-up.md#decide). Set the repair scope, group valid code-changing findings by root cause, and route only in-scope groups to `nemoclaw-contributor-implement-issue`. Do not push while a finding is unclassified or an unresolved finding requires a change. Preserve excluded or deferred dispositions. Repeat collection as the final review step before the canonical base refresh. The initial and final `headRefOid` values must match.
+- Before updating an open PR:
+
+  1. Follow [Stabilize](../_shared/pr-follow-up.md#stabilize-the-candidate), [Collect](../_shared/pr-follow-up.md#collect), and [Decide](../_shared/pr-follow-up.md#decide) for the recorded remote `headRefOid`.
+  2. Route only returned in-scope root-cause groups to `nemoclaw-contributor-implement-issue` with their returned scope records.
+  3. Inspect the returned change and test evidence because the shared contract cannot repair, validate, commit, or push.
+  4. Create one local repair commit and record it as the expected publication SHA.
+  5. Mark each accepted repair group resolved by the inspected local repair, subject to trusted validation.
+  6. Reread `headRefOid` before the canonical base fetch and restart collection only when it differs from the reviewed remote SHA.
+  7. Do not push while the original collection is pending, a finding is unclassified, an accepted group lacks an inspected repair, or validation is unresolved.
+  8. Immediately before publication, require the remote `headRefOid` to equal the reviewed remote SHA.
+  9. Require the push tool's expected commit to equal the local publication SHA.
+
+  Do not repeat collection or classification of the unchanged remote candidate after an inspected
+  implementation repair. The reviewed remote SHA is now only the competing-update guard. A local
+  repair commit does not violate that guard. An unrelated remote update does.
 
 After the applicable review step, repeat every canonical base read, fetch, and comparison command in Branch state immediately before each validation attempt.
 
@@ -49,7 +71,7 @@ Confirm that the complete validation execution surface is byte-for-byte identica
 
 Do not infer executable identity from a package name or version. Do not use a branch-defined validator as independent evidence. If any surface differs, is unavailable, or cannot be traced, do not execute the candidate validator or publish. Report the path or executable and canonical base SHA.
 
-Run `npm run validate:pr` before every agent-managed push only after that comparison succeeds. Do not push when it fails or is inconclusive. If it changes a tracked file, commit the change, repeat the applicable review step, refresh and resolve the trusted base, reestablish the trusted validation surface, and rerun validation. Use `npm run check` for repository-wide validation changes, such as hooks, formatter configuration, generated-check scripts, or coverage baselines.
+Run `npm run validate:pr` before every agent-managed push only after that comparison succeeds. Do not push when it fails or is inconclusive. If it changes a tracked file, inspect and commit the validator-created local diff. Record the new commit as the expected publication SHA. Do not reuse review evidence from the earlier commit for that later change. Before the first push, repeat the initial-publication review step for the new commit, including a self-review of the validator-created diff. For an open PR, preserve the completed remote disposition record and inspect the validator-created local diff as new pre-publication review evidence without recollecting the unchanged remote candidate. Refresh and resolve the trusted base, reestablish the trusted validation surface, and rerun validation. Use `npm run check` for repository-wide validation changes, such as hooks, formatter configuration, generated-check scripts, or coverage baselines.
 
 A maintainer may unblock unavailable trusted-base validation only with recorded evidence identifying the base and candidate SHAs, isolated environment, trusted validator entry point and resolved executables, exact command and result, and publication authorization. The environment must not give candidate code contributor-host credentials.
 
@@ -64,7 +86,11 @@ git config user.name
 git config user.email
 ```
 
-Publish and verify the candidate with `create_nemoclaw_pr`. For an open PR, use `commit_push_refresh_pr` or `prepare_pr_for_human_review`. These DSH tools bind publication to the declared repository and commit, reconcile the remote branch, and confirm that GitHub marks every published commit as `Verified`.
+Publish and verify the candidate with `create_nemoclaw_pr`. For an open PR, use
+`commit_push_refresh_pr` or `prepare_pr_for_human_review`. These DSH tools bind publication to the
+declared repository and commit, reconcile the remote branch, and confirm that GitHub marks every
+published commit as `Verified`. The recorded `headRefOid` and non-force push are the optimistic
+publication guard. Stop when another workflow changes the remote branch.
 
 Stop if the declaration is missing, any commit is unverified, or compliant history cannot be pushed.
 
@@ -112,7 +138,10 @@ gh repo view NVIDIA/NemoClaw --json viewerPermission --jq .viewerPermission
 
 Only `TRIAGE`, `WRITE`, `MAINTAIN`, or `ADMIN` permits assignment. Otherwise omit it and report that a maintainer must assign the PR.
 
-Add `--draft` when the work is not ready for review. A draft requires the same DCO and verification evidence.
+Open every code-changing PR as a draft. A draft requires the same DCO and verification evidence.
+Keep it draft while automated evaluation or a candidate-owned repair is pending. Use
+`prepare_pr_for_human_review` only after the latest PR commit completes the shared follow-up cycle
+with no unresolved candidate-owned finding or failure.
 
 Do not select or add labels during PR publication. Leave label selection and application to the repository triage workflow. Do not request reviews from maintainers.
 
@@ -120,7 +149,10 @@ If a triage write is rejected, do not repeat that write through another endpoint
 
 ## Follow up and report
 
-Follow [Collect](../_shared/pr-follow-up.md#collect) and [Decide](../_shared/pr-follow-up.md#decide). Route accepted repair groups to `nemoclaw-contributor-implement-issue`. Then apply this skill's validation and publication gates. Repeat until required CI and automated reviews settle, then report:
+Follow the [PR follow-up contract](../_shared/pr-follow-up.md). Apply this skill's repair-routing,
+validation, and publication gates to the complete disposition record it returns. Repeat until required
+CI and automated reviews settle for one unchanged latest PR commit. Do not report pending evaluation
+as completed work. Then report:
 
 ```text
 Created PR [#NNN](https://github.com/NVIDIA/NemoClaw/pull/NNN)

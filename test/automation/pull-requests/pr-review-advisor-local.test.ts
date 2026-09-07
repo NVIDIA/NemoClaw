@@ -127,6 +127,8 @@ function repository(): string {
     "ignored.txt\nartifacts/pr-review-advisor-local/\n",
   );
   fs.writeFileSync(path.join(directory, "committed.txt"), "base\n");
+  fs.symlinkSync("committed.txt", path.join(directory, "tracked-internal-link"));
+  fs.symlinkSync("/etc/passwd", path.join(directory, "tracked-retargeted-link"));
   fs.writeFileSync(path.join(directory, "staged.txt"), "base\n");
   fs.writeFileSync(path.join(directory, "unstaged.txt"), "base\n");
   fs.mkdirSync(path.join(directory, "tools", "pr-review-advisor"), { recursive: true });
@@ -144,6 +146,8 @@ function repository(): string {
   fs.writeFileSync(path.join(directory, "staged.txt"), "staged\n");
   git(directory, ["add", "staged.txt"]);
   fs.writeFileSync(path.join(directory, "unstaged.txt"), "unstaged\n");
+  fs.rmSync(path.join(directory, "tracked-retargeted-link"));
+  fs.symlinkSync("committed.txt", path.join(directory, "tracked-retargeted-link"));
   fs.writeFileSync(path.join(directory, "untracked.txt"), "untracked\n");
   fs.symlinkSync("/etc/passwd", path.join(directory, "untracked-link"));
   fs.writeFileSync(path.join(directory, "ignored.txt"), "ignored\n");
@@ -406,12 +410,23 @@ describe("local PR review advisor", () => {
 
     expect(
       git(snapshot, ["diff", "--name-only", refs.baseRef + ".." + refs.headRef]).split("\n"),
-    ).toEqual(["committed.txt", "staged.txt", "unstaged.txt", "untracked-link", "untracked.txt"]);
+    ).toEqual([
+      "committed.txt",
+      "staged.txt",
+      "tracked-retargeted-link",
+      "unstaged.txt",
+      "untracked-link",
+      "untracked.txt",
+    ]);
     expect(fs.readFileSync(path.join(snapshot, "committed.txt"), "utf8")).toBe("branch\n");
     expect(fs.readFileSync(path.join(snapshot, "staged.txt"), "utf8")).toBe("staged\n");
     expect(fs.readFileSync(path.join(snapshot, "unstaged.txt"), "utf8")).toBe("unstaged\n");
     expect(fs.readFileSync(path.join(snapshot, "untracked.txt"), "utf8")).toBe("untracked\n");
     expect(fs.existsSync(path.join(snapshot, "ignored.txt"))).toBe(false);
+    expect(fs.readlinkSync(path.join(snapshot, "tracked-internal-link"))).toBe("committed.txt");
+    expect(fs.readlinkSync(path.join(snapshot, "tracked-retargeted-link"))).toBe("committed.txt");
+    expect(git(snapshot, ["ls-tree", refs.headRef, "tracked-internal-link"])).toContain("120000 blob");
+    expect(git(snapshot, ["ls-tree", refs.headRef, "tracked-retargeted-link"])).toContain("120000 blob");
     expect(git(snapshot, ["ls-tree", refs.headRef, "untracked-link"])).toContain("120000 blob");
     expect(fs.existsSync(path.join(snapshot, "untracked-link"))).toBe(false);
     expect(git(source, ["status", "--porcelain=v1", "-uall"])).toBe(before);

@@ -340,6 +340,7 @@ process.stdout.write("\\n__RESULT__" + JSON.stringify({
     expect(payload.policy).toEqual(drifted);
     expect(payload.registry).not.toHaveProperty("policies");
     expect(calls.some((call) => call.startsWith("policy set "))).toBe(false);
-    expect(stderr).toContain("differs from both the reviewed baseline");
+    expect(stderr).toContain("validation failed");
+    expect(stderr).not.toContain("differs from both the reviewed baseline");
   });
 });

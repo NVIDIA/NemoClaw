@@ -18,7 +18,7 @@ const requireForTest = createRequire(import.meta.url);
 const policies = requireForTest(
   path.join(import.meta.dirname, "..", "../..", "src", "lib", "policy", "index.ts"),
 ) as typeof import("../../../src/lib/policy");
-const policyState = requireForTest(
+const sandboxIdentity = requireForTest(
   path.join(
     import.meta.dirname,
     "..",
@@ -27,9 +27,21 @@ const policyState = requireForTest(
     "lib",
     "adapters",
     "openshell",
-    "policy-state.ts",
+    "sandbox-identity-cli.ts",
   ),
-) as typeof import("../../../src/lib/adapters/openshell/policy-state");
+) as typeof import("../../../src/lib/adapters/openshell/sandbox-identity-cli");
+const policyReader = requireForTest(
+  path.join(
+    import.meta.dirname,
+    "..",
+    "../..",
+    "src",
+    "lib",
+    "adapters",
+    "openshell",
+    "sandbox-policy-cli.ts",
+  ),
+) as typeof import("../../../src/lib/adapters/openshell/sandbox-policy-cli");
 const registry = requireForTest(
   path.join(import.meta.dirname, "..", "../..", "src", "lib", "state", "registry.ts"),
 ) as typeof import("../../../src/lib/state/registry");
@@ -51,12 +63,18 @@ describe("OpenShell policy mutation read failures", () => {
   const tempDirs: string[] = [];
 
   beforeEach(() => {
-    vi.spyOn(policyState, "inspectSandboxPolicy").mockReturnValue({
-      policySource: "sandbox",
-      effectivePolicy: {},
-      policyIdentity: { hash: POLICY_HASH, activeVersion: POLICY_VERSION },
+    vi.spyOn(
+      policyReader.syncCliOpenShellSandboxPolicyReader,
+      "inspectSandboxPolicy",
+    ).mockReturnValue({
+      ok: true,
+      value: {
+        policySource: "sandbox",
+        effectivePolicy: {},
+        policyIdentity: { hash: POLICY_HASH, activeVersion: POLICY_VERSION },
+      },
     });
-    vi.spyOn(policyState, "inspectOpenShellSandboxIdentityFingerprint").mockReturnValue(
+    vi.spyOn(sandboxIdentity, "inspectOpenShellSandboxIdentityFingerprint").mockReturnValue(
       SANDBOX_IDENTITY,
     );
     vi.spyOn(registry, "getSandbox").mockReturnValue(managedSandboxEntry("alpha"));

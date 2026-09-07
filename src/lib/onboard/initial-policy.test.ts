@@ -10,13 +10,17 @@ import YAML from "yaml";
 
 const logPresetScopeMock = vi.hoisted(() => vi.fn());
 vi.mock("../policy", () => ({
-  mergePresetNamesIntoPolicy: (policy: string, presetNames: string[]) => ({
-    policy: `${policy.trimEnd()}\n${presetNames
-      .map((preset) => `  ${preset === "wechat" ? "wechat_bridge" : preset}: {}`)
-      .join("\n")}\n`,
-    appliedPresets: presetNames,
-    missingPresets: [],
-  }),
+  mergePresetNamesIntoPolicy: (policy: string, presetNames: string[]) => {
+    const additions = presetNames.flatMap((preset) => {
+      const policyKey = preset === "wechat" ? "wechat_bridge" : preset;
+      return new RegExp(`^  ${policyKey}:`, "mu").test(policy) ? [] : [`  ${policyKey}: {}`];
+    });
+    return {
+      policy: additions.length === 0 ? policy : `${policy.trimEnd()}\n${additions.join("\n")}\n`,
+      appliedPresets: presetNames,
+      missingPresets: [],
+    };
+  },
   logPresetScope: logPresetScopeMock,
 }));
 
@@ -654,22 +658,26 @@ network_policies: {}
     expect(fs.existsSync(prepared.policyPath)).toBe(false);
   });
 
-  it("records an existing create-time preset without writing a temp policy", () => {
+  it("replaces an existing messaging key with its active channel preset", () => {
     const basePolicyPath = tmpPolicy("version: 1\nnetwork_policies:\n  slack: {}\n");
 
-    expect(prepareInitialSandboxCreatePolicy(basePolicyPath, ["slack"])).toEqual({
-      policyPath: basePolicyPath,
-      appliedPresets: ["slack"],
+    const prepared = prepareInitialSandboxCreatePolicy(basePolicyPath, ["slack"], {
+      sandboxName: "active-slack",
     });
+
+    expect(prepared.policyPath).not.toBe(basePolicyPath);
+    expect(prepared.appliedPresets).toEqual(["slack"]);
+    expect(prepared.cleanup?.()).toBe(true);
   });
 
-  it("records active channel policies already provided by an agent base policy", () => {
+  it("materializes active channel policy authority over an agent base entry", () => {
     const basePolicyPath = tmpPolicy("version: 1\nnetwork_policies:\n  discord: {}\n");
 
-    expect(prepareInitialSandboxCreatePolicy(basePolicyPath, ["discord"])).toEqual({
-      policyPath: basePolicyPath,
-      appliedPresets: ["discord"],
-    });
+    const prepared = prepareInitialSandboxCreatePolicy(basePolicyPath, ["discord"]);
+
+    expect(prepared.policyPath).not.toBe(basePolicyPath);
+    expect(prepared.appliedPresets).toEqual(["discord"]);
+    expect(prepared.cleanup?.()).toBe(true);
   });
 
   it("filters inactive Hermes messaging policies from the create-time policy", () => {

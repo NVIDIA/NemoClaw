@@ -18,6 +18,83 @@ afterEach(() => {
 });
 
 describe("createSetupNim vLLM resume", () => {
+  it("aborts after one failed managed vLLM install when the provider is pinned", async () => {
+    const profile = { name: "N1x", platform: "n1x" } as VllmProfile;
+    const installVllm = vi.fn<SetupNimFlowDeps["installVllm"]>(async () => ({ ok: false }));
+    const failure = new Error("pinned managed vLLM install aborted");
+    const exitProcess = vi.fn<SetupNimFlowDeps["exitProcess"]>(() => {
+      throw failure;
+    });
+    const abortNonInteractive = vi.fn<SetupNimFlowDeps["abortNonInteractive"]>(() =>
+      unexpected("non-interactive abort"),
+    );
+    const setupNim = createSetupNim(
+      makeDeps({
+        getNonInteractiveProvider: () => "install-vllm",
+        selectFromNumberedMenu: () => unexpected("provider menu"),
+        detectInferenceProviderHostState: () =>
+          makeHostState({
+            vllmProfile: profile,
+            vllmEntries: [{ key: "install-vllm", label: "Install vLLM (N1x)" }],
+        }),
+        installVllm,
+        exitProcess,
+        abortNonInteractive,
+      }),
+    );
+
+    await expect(setupNim({ platform: "n1x" } as never)).rejects.toBe(failure);
+
+    expect({
+      installCalls: installVllm.mock.calls.length,
+      exitCalls: exitProcess.mock.calls,
+      nonInteractiveAbortCalls: abortNonInteractive.mock.calls.length,
+    }).toEqual({ installCalls: 1, exitCalls: [[1]], nonInteractiveAbortCalls: 0 });
+  });
+
+  it("exits an interactive pinned-provider port conflict without a non-interactive marker", async () => {
+    const profile = { name: "N1x", platform: "n1x" } as VllmProfile;
+    const failure = new Error("pinned managed vLLM port conflict");
+    const exitProcess = vi.fn<SetupNimFlowDeps["exitProcess"]>(() => {
+      throw failure;
+    });
+    const abortNonInteractive = vi.fn<SetupNimFlowDeps["abortNonInteractive"]>(() =>
+      unexpected("non-interactive abort"),
+    );
+    const error = vi.fn();
+    const installVllm = vi.fn<SetupNimFlowDeps["installVllm"]>();
+    const setupNim = createSetupNim(
+      makeDeps({
+        getNonInteractiveProvider: () => "install-vllm",
+        selectFromNumberedMenu: () => unexpected("provider menu"),
+        detectInferenceProviderHostState: () =>
+          makeHostState({
+            vllmRunning: true,
+            vllmProfile: profile,
+            vllmEntries: [{ key: "install-vllm", label: "Install vLLM (N1x)" }],
+          }),
+        error,
+        installVllm,
+        exitProcess,
+        abortNonInteractive,
+      }),
+    );
+
+    await expect(setupNim({ platform: "n1x" } as never)).rejects.toBe(failure);
+
+    expect({
+      errorCalls: error.mock.calls,
+      installCalls: installVllm.mock.calls.length,
+      exitCalls: exitProcess.mock.calls,
+      nonInteractiveAbortCalls: abortNonInteractive.mock.calls.length,
+    }).toEqual({
+      errorCalls: [[expect.stringContaining("localhost:8000")]],
+      installCalls: 0,
+      exitCalls: [[1]],
+      nonInteractiveAbortCalls: 0,
+    });
+  });
+
   it("resumes a checkpointed install without prompting for a provider (#9582)", async () => {
     const profile = { name: "DGX Spark" } as VllmProfile;
     const prompt = vi.fn(async () => unexpected("provider prompt"));
@@ -69,17 +146,122 @@ describe("createSetupNim vLLM resume", () => {
     expect(prompt).not.toHaveBeenCalled();
   });
 
+  it("resumes an interrupted catalog alias with the served vLLM route", async () => {
+    const alias = "nemotron-3-nano-4b";
+    const servedModel = "nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8";
+    const profile = { name: "Linux NVIDIA GPU" } as VllmProfile;
+    let checkpointedModel: string | null = null;
+    const checkpointVllmInstallModel = vi.fn((modelId: string) => {
+      checkpointedModel = modelId;
+    });
+    const installVllm = vi
+      .fn<SetupNimFlowDeps["installVllm"]>()
+      .mockImplementationOnce(async (_selected, options) => {
+        expect(options.modelIntent).toBeUndefined();
+        options.checkpointInstallIntent?.(alias);
+        return { ok: false };
+      })
+      .mockImplementationOnce(async (_selected, options) => {
+        expect(options.modelIntent).toBe(alias);
+        options.checkpointInstallIntent?.(alias);
+        return { ok: true };
+      });
+    const handleVllmSelection = vi.fn<SetupNimFlowDeps["handleVllmSelection"]>(async (state) => {
+      expect(state.model).toBe(servedModel);
+      state.provider = "vllm-local";
+      state.endpointUrl = "http://127.0.0.1:8000/v1";
+      state.credentialEnv = null;
+      state.preferredInferenceApi = "openai-completions";
+      return "selected";
+    });
+    const selectVllmModelFromEnv = vi.fn((env?: NodeJS.ProcessEnv) => {
+      expect(env?.NEMOCLAW_VLLM_MODEL).toBe(alias);
+      return { id: servedModel, servedModelId: servedModel };
+    });
+    const revalidateSandboxIdentity = vi.fn();
+    const setupNim = createSetupNim(
+      makeDeps({
+        isNonInteractive: () => true,
+        getNonInteractiveProvider: () => "install-vllm",
+        getVllmInstallResumeModel: () => checkpointedModel,
+        checkpointVllmInstallModel,
+        abortNonInteractive: (message) => {
+          throw new Error(message);
+        },
+        detectInferenceProviderHostState: () =>
+          makeHostState({
+            vllmProfile: profile,
+            hasVllmImage: true,
+            vllmEntries: [{ key: "install-vllm", label: "Start vLLM" }],
+          }),
+        installVllm,
+        handleVllmSelection,
+        selectVllmModelFromEnv,
+      }),
+    );
+
+    await expect(
+      setupNim(
+        null,
+        null,
+        null,
+        true,
+        null,
+        null,
+        undefined,
+        undefined,
+        undefined,
+        revalidateSandboxIdentity,
+      ),
+    ).rejects.toThrow("vLLM install failed");
+    expect(checkpointedModel).toBe(alias);
+    expect(handleVllmSelection).not.toHaveBeenCalled();
+
+    await expect(
+      setupNim(
+        null,
+        null,
+        null,
+        true,
+        null,
+        null,
+        undefined,
+        undefined,
+        undefined,
+        revalidateSandboxIdentity,
+      ),
+    ).resolves.toMatchObject({ model: servedModel, provider: "vllm-local" });
+    expect(revalidateSandboxIdentity).toHaveBeenCalledWith(
+      {
+        provider: "vllm-local",
+        model: servedModel,
+        endpointUrl: null,
+        credentialEnv: null,
+        preferredInferenceApi: "openai-completions",
+      },
+      "record managed vLLM install intent",
+    );
+    expect(checkpointVllmInstallModel).toHaveBeenCalledTimes(2);
+    expect(checkpointVllmInstallModel).toHaveBeenLastCalledWith(alias);
+    expect(revalidateSandboxIdentity.mock.invocationCallOrder[0]).toBeLessThan(
+      checkpointVllmInstallModel.mock.invocationCallOrder[0],
+    );
+    expect(selectVllmModelFromEnv).toHaveBeenCalledTimes(2);
+  });
+
   it("refuses checkpoint-first vLLM installation when sandbox identity changes (#9833)", async () => {
     const profile = { name: "DGX Spark" } as VllmProfile;
     const checkpointVllmInstallModel = vi.fn();
     const installEffect = vi.fn();
     const handleVllmSelection = vi.fn<SetupNimFlowDeps["handleVllmSelection"]>();
+    const alias = "nemotron-3-nano-4b";
+    const servedModel = "nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8";
     vi.spyOn(onboardSession, "loadSession").mockReturnValue({
-      vllmInstallModel: "nvidia/resumed-model",
+      vllmInstallModel: alias,
       steps: { provider_selection: { status: "failed" } },
     } as unknown as ReturnType<typeof onboardSession.loadSession>);
     const installVllm = vi.fn<SetupNimFlowDeps["installVllm"]>(async (_profile, options) => {
-      options.checkpointInstallIntent?.("nvidia/resumed-model");
+      options.checkpointInstallIntent?.(alias);
       installEffect();
       options.beforeInstall?.("nvidia/resumed-model");
       return { ok: true };
@@ -97,6 +279,10 @@ describe("createSetupNim vLLM resume", () => {
           }),
         installVllm,
         handleVllmSelection,
+        selectVllmModelFromEnv: (env) => {
+          expect(env?.NEMOCLAW_VLLM_MODEL).toBe(alias);
+          return { id: servedModel, servedModelId: servedModel };
+        },
       }),
     );
     const revalidateSandboxIdentity = vi.fn(() => {
@@ -121,7 +307,7 @@ describe("createSetupNim vLLM resume", () => {
     expect(revalidateSandboxIdentity).toHaveBeenCalledWith(
       expect.objectContaining({
         provider: "vllm-local",
-        model: "nvidia/resumed-model",
+        model: servedModel,
         endpointUrl: null,
         credentialEnv: null,
         preferredInferenceApi: "openai-completions",

@@ -8,6 +8,27 @@ import path from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
 
 import { createHermesStateVolumeDockerHarness } from "../__test-helpers__/hermes-state-volume";
+import {
+  managedStartupStateRoots,
+  managedStartupWorkspaceRoot,
+} from "../managed-startup/state-roots";
+
+describe("managed workspace-root declarations", () => {
+  it("preserves the DCode sticky root-owned login-profile boundary generically", () => {
+    expect(
+      managedStartupWorkspaceRoot({
+        agent: "langchain-deepagents-code",
+        agentIdentity: { uid: 999, gid: 999 },
+      }),
+    ).toEqual({ uid: 0, gid: 999, mode: 0o1775 });
+    expect(
+      managedStartupWorkspaceRoot({
+        agent: "openclaw",
+        agentIdentity: { uid: 998, gid: 998 },
+      }),
+    ).toEqual({ uid: 998, gid: 998, mode: 0o755 });
+  });
+});
 
 const preparationState = vi.hoisted(() => ({
   prepared: undefined as unknown,
@@ -40,7 +61,7 @@ vi.mock("../../core/version", () => ({
 
 import { mapManagedStartupProfileToAgentEnvironment } from "../managed-startup/agent-environment";
 import {
-  createManagedHermesStateVolumeOnboardLifecycle,
+  createManagedStateVolumeOnboardLifecycle,
   createManagedWorkloadOnboardRuntime,
   prepareHermesPortableSandboxWorkloadForLifecycle,
   prepareOnboardSandboxWorkloadLaunch,
@@ -327,15 +348,26 @@ describe("managed workload onboard orchestration", () => {
     const docker = createHermesStateVolumeDockerHarness();
     let exitCleanup: (() => void) | null = null;
 
-    const lifecycle = createManagedHermesStateVolumeOnboardLifecycle(
+    const lifecycle = createManagedStateVolumeOnboardLifecycle(
       {
-        agentName: "hermes",
-        runtimeProvider: { identity: { id: "docker" } } as never,
-        sandboxName: "alpha",
-        workloadKind: "managed-image",
+        roots: managedStartupStateRoots({
+          agent: "hermes",
+          sandboxName: "alpha",
+          agentIdentity: { uid: 1000, gid: 1000 },
+        }),
+        runtimeProvider: {
+          identity: { id: "docker" },
+          workload: { managedStateMountDriverId: "docker" },
+          containerEngine: {
+            supported: true,
+            identities: [
+              { operation: "sandbox-lifecycle", engineId: "docker", displayName: "Docker" },
+            ],
+          },
+        } as never,
       },
       {
-        runDocker: docker.runDocker as never,
+        runContainerEngine: docker.runDocker as never,
         registerExitCleanup: (cleanup) => {
           exitCleanup = cleanup;
           return vi.fn();
@@ -343,8 +375,11 @@ describe("managed workload onboard orchestration", () => {
       },
     );
 
-    lifecycle!.materializeSandboxCreatePlan({} as never, (input) => {
-      expect(input.managedStateMount).toMatchObject({ target: "/sandbox/.hermes" });
+    lifecycle.materializeSandboxCreatePlan({} as never, (input) => {
+      expect(input.managedStateMounts).toEqual([
+        expect.objectContaining({ target: "/sandbox/.hermes" }),
+      ]);
+      expect(input.managedStateMountDriverId).toBe("docker");
       return {} as never;
     });
     exitCleanup!();
@@ -398,6 +433,33 @@ describe("managed workload onboard orchestration", () => {
         expect.objectContaining({
           catalogPath,
           expectedCatalogRevision: catalogRevision,
+        }),
+      );
+    } finally {
+      fs.rmSync(fixtureRoot, { force: true, recursive: true });
+    }
+  });
+
+  it("retains reused managed-image publication identity for live PR onboarding", async () => {
+    const candidateRevision = "b".repeat(40);
+    const publicationRevision = "a".repeat(40);
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-live-e2e-catalog-"));
+    const catalogPath = path.join(fixtureRoot, "catalog.json");
+    fs.writeFileSync(catalogPath, "{}\n", { mode: 0o600 });
+    try {
+      const { prepared, runtime } = createFreshOnboardingRuntime({
+        GITHUB_ACTIONS: "true",
+        NEMOCLAW_RUN_LIVE_E2E: "1",
+        NEMOCLAW_E2E_EXPECTED_SHA: candidateRevision,
+        NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: catalogPath,
+        NEMOCLAW_E2E_MANAGED_IMAGE_REVISION: publicationRevision,
+      });
+
+      await expect(runtime.ensurePreparedWorkload()).resolves.toBe(prepared);
+      expect(prepareSandboxWorkloadSource).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          catalogPath,
+          expectedCatalogRevision: publicationRevision,
         }),
       );
     } finally {

@@ -15,6 +15,7 @@ import {
 } from "../../onboard/docker-gpu-patch-finalize";
 import { getDockerGpuSupervisorReconnectTimeoutSecs } from "../../onboard/docker-gpu-supervisor-reconnect";
 import { recreateOpenShellDockerSandboxWithStartupCommand } from "../../onboard/docker-startup-command-patch";
+import { resolveRegisteredRuntimeProvider } from "../../onboard/runtime-provider/selection";
 import { buildSandboxRuntimeEnvArgs } from "../../onboard/sandbox-create-launch";
 import { readManagedWorkloadAuthority } from "../../onboard/workload/authority";
 import { resolveDirectSandboxContainer } from "../../sandbox/privileged-exec";
@@ -65,6 +66,51 @@ export type ManagedSupervisorRelaunchDeps = {
     Parameters<typeof finalizeDockerGpuPatchBackup>[1]
   >["runCaptureOpenshell"];
 };
+
+export type RegisteredRuntimeRecoveryResult = {
+  readonly exitCode: number;
+  readonly message?: string;
+};
+
+/** Whether the registered provider exposes the managed in-sandbox controller. */
+export function usesManagedGatewayController(entry: registry.SandboxEntry): boolean {
+  const provider = resolveRegisteredRuntimeProvider(entry.openshellDriver);
+  return (
+    provider?.gateway.supported === true &&
+    provider.gateway.launcher === "nemoclaw" &&
+    provider.lifecycle.supported === true
+  );
+}
+
+/** Whether retained default-engine gateway compatibility logic applies. */
+export function usesLegacyManagedGatewayRecovery(entry: registry.SandboxEntry): boolean {
+  const provider = resolveRegisteredRuntimeProvider(entry.openshellDriver);
+  if (
+    !provider ||
+    provider.lifecycle.supported !== true ||
+    provider.gateway.launcher !== "nemoclaw"
+  ) {
+    return false;
+  }
+  try {
+    return (
+      provider.gateway.prepareHostRuntime({
+        environment: process.env,
+        platform: process.platform,
+      }).socketPath === null
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Execute provider-owned recovery when the persisted provider registers it. */
+export function recoverRegisteredRuntimeProviderSandbox(
+  entry: registry.SandboxEntry,
+): RegisteredRuntimeRecoveryResult | null {
+  const provider = resolveRegisteredRuntimeProvider(entry.openshellDriver);
+  return provider?.recovery.supported === true ? provider.recovery.recover(entry) : null;
+}
 
 function inspectContainer(containerId: string): DockerContainerInspect {
   return parseDockerInspectJson(
@@ -157,7 +203,7 @@ export function relaunchManagedSupervisorSession(
   const entry = getSandbox(sandboxName);
   if (!entry) return null;
   const driver = entry.openshellDriver?.trim().toLowerCase() ?? null;
-  if (driver !== null && driver !== "docker" && driver !== "vm") return null;
+  if (!usesLegacyManagedGatewayRecovery(entry)) return null;
   const startupCommand = reconstructSupervisorLaunchCommand(sandboxName, entry, quiet, deps);
   if (startupCommand === null) return null;
 

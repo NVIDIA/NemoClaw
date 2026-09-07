@@ -5,6 +5,7 @@ import type { McpBridgeEntry } from "../../state/registry";
 import type { AdapterMutationOptions } from "./mcp-bridge-adapter-inspection";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
+import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
 import { executeSandboxCommand } from "./process-recovery";
 
 export function runDeepAgentsAdapterCommand(
@@ -12,9 +13,10 @@ export function runDeepAgentsAdapterCommand(
   entry: Pick<McpBridgeEntry, "env">,
   command: string,
   failureMessage: string,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
   options: AdapterMutationOptions = {},
 ): string {
-  const result = executeSandboxCommand(sandboxName, command);
+  const result = executeSandboxCommand(sandboxName, command, { runtimeSelection });
   const output = redactBridgeSecretsForDisplay(
     [result?.stdout, result?.stderr].filter(Boolean).join("\n").trim(),
     entry,

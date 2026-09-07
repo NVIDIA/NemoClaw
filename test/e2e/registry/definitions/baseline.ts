@@ -8,6 +8,7 @@ import {
   macosRepoDocker,
   ubuntuRepoDocker,
   ubuntuRepoDockerLifecycle,
+  ubuntuRepoManagedRuntime,
   ubuntuRepoNoDocker,
   wslRepoDocker,
 } from "../matrix.ts";
@@ -16,6 +17,10 @@ import {
   type E2eExecutionMetadata,
   validateE2eExecutionMetadata,
 } from "../../../../tools/e2e/execution-coverage.mts";
+import {
+  E2E_GATEWAY_RUNTIMES,
+  type E2eGatewayRuntimeSupport,
+} from "../../../../tools/e2e/gateway-runtime.mts";
 
 interface CanonicalTargetInput {
   id: string;
@@ -30,6 +35,7 @@ interface CanonicalTargetInput {
   requiredSecrets?: string[];
   skippedCapabilities?: Array<Record<string, unknown>>;
   expectedFailure?: ExpectedFailureContract;
+  gatewayRuntimes: E2eGatewayRuntimeSupport;
 }
 
 function canonicalTarget(input: CanonicalTargetInput): TargetDefinition {
@@ -53,7 +59,7 @@ function canonicalTarget(input: CanonicalTargetInput): TargetDefinition {
   if (input.expectedFailure) {
     builder = builder.expectedFailure(input.expectedFailure);
   }
-  const definition = builder.build();
+  const definition = { ...builder.build(), gatewayRuntimes: input.gatewayRuntimes };
   if (!input.executionCoverage) return definition;
   return {
     ...definition,
@@ -76,21 +82,23 @@ const macosDockerSkipped = [
 const canonicalTargetInputs: CanonicalTargetInput[] = [
   {
     id: "ubuntu-repo-cloud-openclaw",
+    gatewayRuntimes: E2E_GATEWAY_RUNTIMES,
     manifestName: "openclaw-nvidia",
-    environment: ubuntuRepoDocker("cloud-openclaw"),
+    environment: ubuntuRepoManagedRuntime("cloud-openclaw"),
     expectedStateId: "cloud-openclaw-ready",
     suiteIds: ["smoke", "inference", "credentials"],
-    description: "Ubuntu repo checkout with Docker and cloud OpenClaw onboarding.",
+    description: "Ubuntu repo checkout with managed-runtime cloud OpenClaw onboarding.",
     executionCoverage: {
       agentRuntime: "openclaw",
       observableOutcome: "Repository install onboarding and hosted inference succeed",
-      environmentOrInferenceEndpoint: "Ubuntu Docker host; NVIDIA hosted inference",
+      environmentOrInferenceEndpoint: "Ubuntu managed-runtime host; NVIDIA hosted inference",
       unresolvedReason: "",
     },
     requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
   },
   {
     id: "ubuntu-repo-cloud-hermes",
+    gatewayRuntimes: ["docker"],
     manifestName: "hermes-nvidia",
     environment: ubuntuRepoDocker("cloud-hermes"),
     expectedStateId: "cloud-hermes-ready",
@@ -99,6 +107,7 @@ const canonicalTargetInputs: CanonicalTargetInput[] = [
   },
   {
     id: "ubuntu-repo-cloud-langchain-deepagents-code",
+    gatewayRuntimes: ["docker"],
     manifestName: "langchain-deepagents-code-nvidia",
     environment: ubuntuRepoDockerLifecycle(
       "cloud-langchain-deepagents-code",
@@ -117,6 +126,7 @@ const canonicalTargetInputs: CanonicalTargetInput[] = [
   },
   {
     id: "gpu-repo-local-ollama-openclaw",
+    gatewayRuntimes: ["docker"],
     manifestName: "openclaw-ollama-gpu",
     environment: gpuRepoDockerCdi("local-ollama-openclaw"),
     expectedStateId: "local-ollama-openclaw-ready",
@@ -125,6 +135,7 @@ const canonicalTargetInputs: CanonicalTargetInput[] = [
   },
   {
     id: "macos-repo-cloud-openclaw",
+    gatewayRuntimes: ["docker"],
     manifestName: "openclaw-nvidia-macos",
     environment: macosRepoDocker("cloud-openclaw"),
     expectedStateId: "macos-cli-ready-docker-optional",
@@ -136,6 +147,7 @@ const canonicalTargetInputs: CanonicalTargetInput[] = [
   },
   {
     id: "wsl-repo-cloud-openclaw",
+    gatewayRuntimes: ["docker"],
     manifestName: "openclaw-nvidia-wsl",
     environment: wslRepoDocker("cloud-openclaw"),
     expectedStateId: "cloud-openclaw-ready",
@@ -145,6 +157,7 @@ const canonicalTargetInputs: CanonicalTargetInput[] = [
   },
   {
     id: "brev-launchable-cloud-openclaw",
+    gatewayRuntimes: ["docker"],
     manifestName: "openclaw-nvidia-brev-launchable",
     environment: brevLaunchableRemote("cloud-openclaw"),
     expectedStateId: "cloud-openclaw-ready",
@@ -154,6 +167,7 @@ const canonicalTargetInputs: CanonicalTargetInput[] = [
   },
   {
     id: "ubuntu-no-docker-preflight-negative",
+    gatewayRuntimes: ["docker"],
     manifestName: "openclaw-nvidia-no-docker-negative",
     environment: ubuntuRepoNoDocker("cloud-openclaw"),
     expectedStateId: "preflight-failure-no-sandbox",
@@ -176,6 +190,7 @@ const canonicalTargetInputs: CanonicalTargetInput[] = [
     // future `rebuild-from-old-version` lifecycle profile and is
     // intentionally out of scope here.
     id: "ubuntu-rebuild-openclaw",
+    gatewayRuntimes: ["docker"],
     manifestName: "openclaw-nvidia-rebuild",
     environment: ubuntuRepoDockerLifecycle("cloud-openclaw", "rebuild-current-version"),
     expectedStateId: "cloud-openclaw-ready",
@@ -196,6 +211,7 @@ const canonicalTargetInputs: CanonicalTargetInput[] = [
     // Docker container present (running, stopped, or a
     // `*-nemoclaw-gpu-backup-*` sibling).
     id: "ubuntu-repo-docker-post-reboot-recovery",
+    gatewayRuntimes: ["docker"],
     manifestName: "openclaw-nvidia-post-reboot-recovery",
     environment: ubuntuRepoDockerLifecycle("cloud-openclaw", "post-reboot-recovery"),
     expectedStateId: "post-reboot-recovery-ready",
@@ -213,6 +229,7 @@ const canonicalTargetInputs: CanonicalTargetInput[] = [
   },
   {
     id: "ubuntu-repo-openai-compatible-openclaw",
+    gatewayRuntimes: ["docker"],
     manifestName: "openclaw-openai-compatible",
     environment: ubuntuRepoDocker("openai-compatible-openclaw"),
     expectedStateId: "cloud-openclaw-ready",
@@ -221,6 +238,7 @@ const canonicalTargetInputs: CanonicalTargetInput[] = [
   },
   {
     id: "ubuntu-repo-cloud-openclaw-brave",
+    gatewayRuntimes: ["docker"],
     manifestName: "openclaw-nvidia-brave",
     environment: ubuntuRepoDocker("cloud-nvidia-openclaw-brave"),
     expectedStateId: "cloud-openclaw-ready",
@@ -229,6 +247,7 @@ const canonicalTargetInputs: CanonicalTargetInput[] = [
   },
   {
     id: "ubuntu-repo-cloud-openclaw-telegram",
+    gatewayRuntimes: ["docker"],
     manifestName: "openclaw-nvidia-telegram",
     environment: ubuntuRepoDocker("cloud-nvidia-openclaw-telegram"),
     expectedStateId: "cloud-openclaw-ready",
@@ -237,6 +256,7 @@ const canonicalTargetInputs: CanonicalTargetInput[] = [
   },
   {
     id: "ubuntu-repo-cloud-openclaw-discord",
+    gatewayRuntimes: ["docker"],
     manifestName: "openclaw-nvidia-discord",
     environment: ubuntuRepoDocker("cloud-nvidia-openclaw-discord"),
     expectedStateId: "cloud-openclaw-ready",
@@ -245,6 +265,7 @@ const canonicalTargetInputs: CanonicalTargetInput[] = [
   },
   {
     id: "ubuntu-repo-cloud-openclaw-slack",
+    gatewayRuntimes: ["docker"],
     manifestName: "openclaw-nvidia-slack",
     environment: ubuntuRepoDocker("cloud-nvidia-openclaw-slack"),
     expectedStateId: "cloud-openclaw-ready",
@@ -253,6 +274,7 @@ const canonicalTargetInputs: CanonicalTargetInput[] = [
   },
   {
     id: "ubuntu-repo-cloud-hermes-discord",
+    gatewayRuntimes: ["docker"],
     manifestName: "hermes-nvidia-discord",
     environment: ubuntuRepoDocker("cloud-nvidia-hermes-discord"),
     expectedStateId: "cloud-hermes-ready",
@@ -261,6 +283,7 @@ const canonicalTargetInputs: CanonicalTargetInput[] = [
   },
   {
     id: "ubuntu-repo-cloud-hermes-slack",
+    gatewayRuntimes: ["docker"],
     manifestName: "hermes-nvidia-slack",
     environment: ubuntuRepoDocker("cloud-nvidia-hermes-slack"),
     expectedStateId: "cloud-hermes-ready",
@@ -269,6 +292,7 @@ const canonicalTargetInputs: CanonicalTargetInput[] = [
   },
   {
     id: "ubuntu-repo-cloud-openclaw-resume",
+    gatewayRuntimes: ["docker"],
     manifestName: "openclaw-nvidia-resume",
     environment: ubuntuRepoDocker("cloud-nvidia-openclaw-resume-after-interrupt"),
     expectedStateId: "cloud-openclaw-ready",
@@ -277,6 +301,7 @@ const canonicalTargetInputs: CanonicalTargetInput[] = [
   },
   {
     id: "ubuntu-repo-cloud-openclaw-repair",
+    gatewayRuntimes: ["docker"],
     manifestName: "openclaw-nvidia-repair",
     environment: ubuntuRepoDocker("cloud-nvidia-openclaw-repair-existing-config"),
     expectedStateId: "cloud-openclaw-ready",
@@ -285,6 +310,7 @@ const canonicalTargetInputs: CanonicalTargetInput[] = [
   },
   {
     id: "ubuntu-repo-cloud-openclaw-double-same-provider",
+    gatewayRuntimes: ["docker"],
     manifestName: "openclaw-nvidia-double-same-provider",
     environment: ubuntuRepoDocker("cloud-nvidia-openclaw-double-same-provider"),
     expectedStateId: "cloud-openclaw-ready",
@@ -293,6 +319,7 @@ const canonicalTargetInputs: CanonicalTargetInput[] = [
   },
   {
     id: "ubuntu-repo-cloud-openclaw-double-provider-switch",
+    gatewayRuntimes: ["docker"],
     manifestName: "openclaw-nvidia-double-provider-switch",
     environment: ubuntuRepoDocker("cloud-nvidia-openclaw-double-provider-switch"),
     expectedStateId: "cloud-openclaw-ready",
@@ -301,6 +328,7 @@ const canonicalTargetInputs: CanonicalTargetInput[] = [
   },
   {
     id: "ubuntu-repo-cloud-openclaw-token-rotation",
+    gatewayRuntimes: ["docker"],
     manifestName: "openclaw-nvidia-token-rotation",
     environment: ubuntuRepoDocker("cloud-nvidia-openclaw-token-rotation"),
     expectedStateId: "cloud-openclaw-ready",
@@ -309,6 +337,7 @@ const canonicalTargetInputs: CanonicalTargetInput[] = [
   },
   {
     id: "ubuntu-repo-cloud-openclaw-custom-policies",
+    gatewayRuntimes: ["docker"],
     manifestName: "openclaw-nvidia-custom-policies",
     environment: ubuntuRepoDocker("cloud-openclaw-custom-policies"),
     expectedStateId: "cloud-openclaw-custom-policies-ready",
@@ -325,6 +354,7 @@ const canonicalTargetInputs: CanonicalTargetInput[] = [
   },
   {
     id: "ubuntu-invalid-nvidia-key-negative",
+    gatewayRuntimes: ["docker"],
     manifestName: "openclaw-nvidia-invalid-key",
     environment: ubuntuRepoDocker("cloud-openclaw-invalid-nvidia-key"),
     expectedStateId: "onboarding-failure-invalid-nvidia-key",
@@ -339,6 +369,7 @@ const canonicalTargetInputs: CanonicalTargetInput[] = [
   },
   {
     id: "ubuntu-gateway-port-conflict-negative",
+    gatewayRuntimes: ["docker"],
     manifestName: "openclaw-nvidia-gateway-port-conflict",
     environment: ubuntuRepoDocker("cloud-openclaw-gateway-port-conflict"),
     expectedStateId: "onboarding-failure-gateway-port-conflict",
@@ -353,8 +384,9 @@ const canonicalTargetInputs: CanonicalTargetInput[] = [
   },
   {
     id: "ubuntu-policy-custom-missing-presets-negative",
+    gatewayRuntimes: E2E_GATEWAY_RUNTIMES,
     manifestName: "openclaw-nvidia-policy-custom-missing-presets",
-    environment: ubuntuRepoDocker("cloud-openclaw-policy-custom-missing-presets"),
+    environment: ubuntuRepoManagedRuntime("cloud-openclaw-policy-custom-missing-presets"),
     expectedStateId: "onboarding-failure-policy-presets-required",
     onboardingAssertionIds: ["base-installed", "preflight-passed"],
     suiteIds: [],

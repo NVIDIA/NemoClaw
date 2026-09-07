@@ -9,12 +9,18 @@ import { isDeepStrictEqual } from "node:util";
 import {
   buildLiveTargetInventory,
   buildLiveTargetMatrix,
+  liveTargetGatewayRuntimes,
   type LiveTargetMatrixEntry,
 } from "../../test/e2e/registry/run.ts";
+import { listTargets } from "../../test/e2e/registry/registry.ts";
 import { buildRiskPlan } from "../advisors/risk-plan.mts";
 import {
+  type CredentialFreeTestDefinitionRow,
   type CredentialFreeTestMatrixRow,
   credentialFreeTestCoverage,
+  credentialFreeTestGatewayRuntimes,
+  credentialFreeTestMatrix,
+  credentialFreeTestSupportsGatewayRuntime,
   discoverCredentialFreeTests,
   SHARED_E2E_JOB_ID,
 } from "./credential-free-tests.mts";
@@ -46,6 +52,16 @@ import {
   validateE2eExecutionRows,
   validateE2eExecutionMetadata,
 } from "./execution-coverage.mts";
+import {
+  E2E_RUNTIME_AGNOSTIC,
+  type E2eGatewayRuntime,
+  type E2eGatewayRuntimeSupport,
+  type E2eRuntimeProvider,
+  e2eGatewayRuntimes,
+  e2eRuntimeProviders,
+  runtimeCoverageVariant,
+  supportsE2eGatewayRuntime,
+} from "./gateway-runtime.mts";
 
 export type WorkflowPlanSelectors = {
   jobs?: string;
@@ -53,17 +69,20 @@ export type WorkflowPlanSelectors = {
 };
 
 export type E2eWorkflowPlan = {
+  gatewayRuntimes: E2eGatewayRuntime[];
   matrix: LiveTargetMatrixEntry[];
   testMatrix: CredentialFreeTestMatrixRow[];
   catalogueMatrices: Record<E2eExecutionProfile, E2eCatalogueMatrixRow[]>;
   coverageMatrix: E2eExecutionRow[];
   selectedJobs: string[];
+  runtimeProvidersByJob: Record<string, E2eRuntimeProvider[]>;
   hermesSelected: boolean;
   explicitOnlyJobs: string[];
 };
 
 type WorkflowPlanOptions = {
   changedFiles?: readonly string[];
+  gatewayRuntimes?: readonly E2eGatewayRuntime[];
 };
 
 type WorkflowPlanCliOptions = WorkflowPlanSelectors & {
@@ -152,6 +171,7 @@ function isLiveTargetMatrixEntry(value: unknown): value is LiveTargetMatrixEntry
     !hasExactKeys(value, [
       "agentRuntime",
       "environmentOrInferenceEndpoint",
+      "execution_id",
       "expectedStateId",
       "id",
       "install",
@@ -161,6 +181,8 @@ function isLiveTargetMatrixEntry(value: unknown): value is LiveTargetMatrixEntry
       "pendingRuntimeSuites",
       "platform",
       "requiredSecrets",
+      "runtime_provider",
+      "coverage_variant",
       "runner",
       "runtime",
       "suites",
@@ -175,6 +197,13 @@ function isLiveTargetMatrixEntry(value: unknown): value is LiveTargetMatrixEntry
   return (
     typeof value.id === "string" &&
     /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(value.id) &&
+    typeof value.execution_id === "string" &&
+    /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(value.execution_id) &&
+    typeof value.coverage_variant === "string" &&
+    /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(value.coverage_variant) &&
+    (value.runtime_provider === "docker" ||
+      value.runtime_provider === "podman" ||
+      value.runtime_provider === "none") &&
     typeof value.runner === "string" &&
     /^[A-Za-z0-9_-]+$/u.test(value.runner) &&
     typeof value.label === "string" &&
@@ -200,14 +229,32 @@ function isLiveTargetMatrixEntry(value: unknown): value is LiveTargetMatrixEntry
 }
 
 function isCredentialFreeTestMatrixRow(value: unknown): value is CredentialFreeTestMatrixRow {
-  if (!isRecord(value) || !hasExactKeys(value, ["file", "id", "project"])) return false;
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      "coverage_variant",
+      "execution_id",
+      "file",
+      "id",
+      "project",
+      "runtime_provider",
+    ])
+  )
+    return false;
   if (
     typeof value.id !== "string" ||
     !/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(value.id) ||
     typeof value.file !== "string" ||
     value.file.split("/").some((segment) => segment === "." || segment === "..") ||
     !/^test\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+[.]test[.](?:js|ts)$/u.test(value.file) ||
-    typeof value.project !== "string"
+    typeof value.project !== "string" ||
+    typeof value.execution_id !== "string" ||
+    !/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(value.execution_id) ||
+    typeof value.coverage_variant !== "string" ||
+    !/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(value.coverage_variant) ||
+    (value.runtime_provider !== "docker" &&
+      value.runtime_provider !== "podman" &&
+      value.runtime_provider !== "none")
   ) {
     return false;
   }
@@ -219,8 +266,8 @@ function isCredentialFreeTestMatrixRow(value: unknown): value is CredentialFreeT
   );
 }
 
-function hasUniqueIds(rows: readonly { id: string }[]): boolean {
-  return new Set(rows.map((row) => row.id)).size === rows.length;
+function hasUniqueValues<T>(rows: readonly T[], value: (row: T) => string): boolean {
+  return new Set(rows.map(value)).size === rows.length;
 }
 
 function isCatalogueMatrixRow(value: unknown): value is E2eCatalogueMatrixRow {
@@ -231,7 +278,9 @@ function isCatalogueMatrixRow(value: unknown): value is E2eCatalogueMatrixRow {
       "agent_runtime",
       "cloudflared",
       "compatible_api_key",
+      "coverage_variant",
       "id",
+      "execution_id",
       "display_name",
       "environment_or_inference_endpoint",
       "host_preparation",
@@ -244,6 +293,7 @@ function isCatalogueMatrixRow(value: unknown): value is E2eCatalogueMatrixRow {
       "runner_comparison",
       "runner_key",
       "runner_pressure",
+      "runtime_provider",
       "shard",
       "target_id",
       "test_file",
@@ -252,6 +302,13 @@ function isCatalogueMatrixRow(value: unknown): value is E2eCatalogueMatrixRow {
     ]) &&
     typeof value.id === "string" &&
     /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(value.id) &&
+    typeof value.execution_id === "string" &&
+    /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(value.execution_id) &&
+    typeof value.coverage_variant === "string" &&
+    /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(value.coverage_variant) &&
+    (value.runtime_provider === "docker" ||
+      value.runtime_provider === "podman" ||
+      value.runtime_provider === "none") &&
     typeof value.display_name === "string" &&
     /^[A-Z][A-Za-z0-9 .'+()-]+: [^/\r\n]{1,72}$/u.test(value.display_name) &&
     typeof value.agent_runtime === "string" &&
@@ -360,7 +417,12 @@ function isCatalogueMatrixRowForProfile(
     target.runnerPressure === value.runner_pressure &&
     target.compatibleApiKey === value.compatible_api_key &&
     target.shard === value.shard &&
-    target.artifactLayout === value.artifact_layout
+    target.artifactLayout === value.artifact_layout &&
+    value.coverage_variant === runtimeCoverageVariant(target.shard, value.runtime_provider) &&
+    value.execution_id === `${target.id}-${value.coverage_variant}` &&
+    e2eRuntimeProviders(target.gatewayRuntimes, ["docker", "podman"]).includes(
+      value.runtime_provider,
+    )
   );
 }
 
@@ -390,18 +452,52 @@ function emptyCatalogueMatrices(): Record<E2eExecutionProfile, E2eCatalogueMatri
 
 function catalogueMatrices(
   targets: readonly E2eCatalogueTarget[],
+  gatewayRuntimes: readonly E2eGatewayRuntime[],
 ): Record<E2eExecutionProfile, E2eCatalogueMatrixRow[]> {
   return Object.fromEntries(
-    E2E_EXECUTION_PROFILES.map((profile) => [profile, catalogueMatrix(profile, targets)]),
+    E2E_EXECUTION_PROFILES.map((profile) => [
+      profile,
+      catalogueMatrix(profile, targets, gatewayRuntimes),
+    ]),
   ) as Record<E2eExecutionProfile, E2eCatalogueMatrixRow[]>;
 }
 
-function registryTargetsForChangedFiles(changedFiles: readonly string[]): LiveTargetMatrixEntry[] {
+function registryTargetsForChangedFiles(
+  changedFiles: readonly string[],
+  gatewayRuntimes: readonly E2eGatewayRuntime[],
+): LiveTargetMatrixEntry[] {
   return changedFiles.some((file) =>
     REGISTRY_OWNING_PATHS.some((owner) => pathMatches(file, owner)),
   )
-    ? buildLiveTargetMatrix()
+    ? buildLiveTargetMatrix([], gatewayRuntimes)
     : [];
+}
+
+function workflowJobRuntimeProviders(
+  inventory: ReturnType<typeof readFreeStandingJobsInventory>,
+  job: string,
+  gatewayRuntimes: readonly E2eGatewayRuntime[],
+): E2eRuntimeProvider[] {
+  return e2eRuntimeProviders(
+    inventory.gatewayRuntimesByJob.get(job) ?? E2E_RUNTIME_AGNOSTIC,
+    gatewayRuntimes,
+  );
+}
+
+function runtimeProvidersByJob(
+  inventory: ReturnType<typeof readFreeStandingJobsInventory>,
+  jobs: readonly string[],
+  gatewayRuntimes: readonly E2eGatewayRuntime[],
+  sharedRows: readonly CredentialFreeTestMatrixRow[] = [],
+): Record<string, E2eRuntimeProvider[]> {
+  return Object.fromEntries(
+    jobs.map((job) => [
+      job,
+      job === SHARED_E2E_JOB_ID && sharedRows.length > 0
+        ? [...new Set(sharedRows.map((row) => row.runtime_provider))]
+        : workflowJobRuntimeProviders(inventory, job, gatewayRuntimes),
+    ]),
+  );
 }
 
 function changedFilesFromEnvironment(environment: NodeJS.ProcessEnv): string[] | undefined {
@@ -424,9 +520,9 @@ function selectorIds(value: string | undefined, label: "jobs" | "targets"): stri
 }
 
 function selectTestRows(
-  rows: readonly CredentialFreeTestMatrixRow[],
+  rows: readonly CredentialFreeTestDefinitionRow[],
   ids: readonly string[],
-): CredentialFreeTestMatrixRow[] {
+): CredentialFreeTestDefinitionRow[] {
   if (ids.length === 0) return [...rows];
   const selected = new Set(ids);
   return rows.filter((row) => selected.has(row.id));
@@ -478,13 +574,15 @@ function mapTrustedControllerJobs(
   };
 }
 
-function emptyE2eWorkflowPlan(): E2eWorkflowPlan {
+function emptyE2eWorkflowPlan(gatewayRuntimes: readonly E2eGatewayRuntime[]): E2eWorkflowPlan {
   return {
+    gatewayRuntimes: [...gatewayRuntimes],
     matrix: [],
     testMatrix: [],
     catalogueMatrices: emptyCatalogueMatrices(),
     coverageMatrix: [],
     selectedJobs: [],
+    runtimeProvidersByJob: {},
     hermesSelected: false,
     explicitOnlyJobs: readFreeStandingJobsInventory().explicitOnlyJobs,
   };
@@ -499,7 +597,7 @@ function coverageMatrixForPlan(
   const catalogueRows = E2E_EXECUTION_PROFILES.flatMap((profile) =>
     plan.catalogueMatrices[profile].map((row) => ({
       id: row.id,
-      variant: "",
+      variant: row.coverage_variant,
       source: "catalogue" as const,
       agentRuntime: row.agent_runtime,
       observableOutcome: row.observable_outcome,
@@ -509,7 +607,7 @@ function coverageMatrixForPlan(
   );
   const registryRows = plan.matrix.map((row) => ({
     id: row.id,
-    variant: "",
+    variant: row.coverage_variant,
     source: "typed-registry" as const,
     agentRuntime: row.agentRuntime,
     observableOutcome: row.observableOutcome,
@@ -518,12 +616,23 @@ function coverageMatrixForPlan(
   }));
   const sharedRows = plan.testMatrix.map((row) => ({
     id: row.id,
-    variant: "",
+    variant: row.coverage_variant,
     source: "shared-e2e" as const,
     ...credentialFreeTestCoverage(row.id),
   }));
   const selectedJobs = new Set(plan.selectedJobs);
-  const workflowRows = inventory.coverageRows.filter((row) => selectedJobs.has(row.id));
+  const workflowRows = inventory.coverageRows
+    .filter((row) => selectedJobs.has(row.id))
+    .flatMap((row) => {
+      const support =
+        inventory.gatewayRuntimesByCoverageRow.get(`${row.id}:${row.variant}`) ??
+        inventory.gatewayRuntimesByJob.get(row.id) ??
+        E2E_RUNTIME_AGNOSTIC;
+      return e2eRuntimeProviders(support, plan.gatewayRuntimes).map((runtimeProvider) => ({
+        ...row,
+        variant: runtimeCoverageVariant(row.variant, runtimeProvider),
+      }));
+    });
   const rows = [...catalogueRows, ...registryRows, ...sharedRows, ...workflowRows];
   validateE2eExecutionRows(rows);
   return rows;
@@ -575,6 +684,7 @@ export function buildE2eWorkflowPlan(
   selectors: WorkflowPlanSelectors = {},
   options: WorkflowPlanOptions = {},
 ): E2eWorkflowPlan {
+  const gatewayRuntimes = e2eGatewayRuntimes((options.gatewayRuntimes ?? ["docker"]).join(","));
   const jobs = selectorIds(selectors.jobs, "jobs");
   const targets = selectorIds(selectors.targets, "targets");
 
@@ -596,10 +706,12 @@ export function buildE2eWorkflowPlan(
   if (jetsonDispatchSelected) {
     return withCoverageMatrix(
       {
+        gatewayRuntimes,
         matrix: [],
         testMatrix: [],
         catalogueMatrices: emptyCatalogueMatrices(),
         selectedJobs: [JETSON_DISPATCH_TARGET],
+        runtimeProvidersByJob: { [JETSON_DISPATCH_TARGET]: ["none"] },
         hermesSelected: false,
         explicitOnlyJobs: [...inventory.explicitOnlyJobs],
       },
@@ -627,6 +739,26 @@ export function buildE2eWorkflowPlan(
     const selectedCatalogueTargets = E2E_TARGET_CATALOGUE.filter(
       (target) => selectedIds.has(target.id) || selectedIds.has(target.targetId),
     );
+    const unsupportedCatalogueTarget = selectedCatalogueTargets.find(
+      (target) => e2eRuntimeProviders(target.gatewayRuntimes, gatewayRuntimes).length === 0,
+    );
+    if (unsupportedCatalogueTarget) {
+      throw new Error(
+        `E2E target ${unsupportedCatalogueTarget.id} does not support requested gateway runtimes ${gatewayRuntimes.join(",")}`,
+      );
+    }
+    const unsupportedSharedTest = discoverCredentialFreeTests().find(
+      (row) =>
+        selectedIds.has(row.id) &&
+        !gatewayRuntimes.some((runtime) =>
+          credentialFreeTestSupportsGatewayRuntime(row.id, runtime),
+        ),
+    );
+    if (unsupportedSharedTest) {
+      throw new Error(
+        `E2E target ${unsupportedSharedTest.id} does not support requested gateway runtimes ${gatewayRuntimes.join(",")}`,
+      );
+    }
     const registryTargets = targets.filter(
       (target) => !inventory.targetToJob.has(target) && !catalogueIds.has(target),
     );
@@ -639,12 +771,38 @@ export function buildE2eWorkflowPlan(
       selectedJobSet.add("openshell-credential-generation-window");
     }
     const selectedJobs = [...selectedJobSet];
+    const unsupportedWorkflowJob = selectedJobs.find(
+      (job) => workflowJobRuntimeProviders(inventory, job, gatewayRuntimes).length === 0,
+    );
+    if (unsupportedWorkflowJob) {
+      throw new Error(
+        `E2E job ${unsupportedWorkflowJob} does not support requested gateway runtimes ${gatewayRuntimes.join(",")}`,
+      );
+    }
+    const registryMatrix =
+      registryTargets.length > 0 ? buildLiveTargetMatrix(registryTargets, gatewayRuntimes) : [];
+    if (registryTargets.some((target) => !registryMatrix.some((row) => row.id === target))) {
+      throw new Error(
+        `Selected typed E2E target does not support requested gateway runtimes ${gatewayRuntimes.join(",")}`,
+      );
+    }
+    const selectedTestDefinitions = selectedIds.has(SHARED_E2E_JOB_ID)
+      ? credentialFreeTests
+      : selectTestRows(credentialFreeTests, [...jobs, ...targets]);
+    const testMatrix = credentialFreeTestMatrix(selectedTestDefinitions, gatewayRuntimes);
     return withCoverageMatrix(
       {
-        matrix: registryTargets.length > 0 ? buildLiveTargetMatrix(registryTargets) : [],
-        testMatrix: selectTestRows(credentialFreeTests, [...jobs, ...targets]),
-        catalogueMatrices: catalogueMatrices(selectedCatalogueTargets),
+        gatewayRuntimes,
+        matrix: registryMatrix,
+        testMatrix,
+        catalogueMatrices: catalogueMatrices(selectedCatalogueTargets, gatewayRuntimes),
         selectedJobs,
+        runtimeProvidersByJob: runtimeProvidersByJob(
+          inventory,
+          selectedJobs,
+          gatewayRuntimes,
+          testMatrix,
+        ),
         hermesSelected: selectedJobs.includes(HERMES_JOB_ID),
         explicitOnlyJobs: [...inventory.explicitOnlyJobs],
       },
@@ -657,11 +815,20 @@ export function buildE2eWorkflowPlan(
     if (
       changedFiles.some((file) => FULL_SUITE_OWNING_PATHS.some((owner) => pathMatches(file, owner)))
     ) {
-      const plan = buildE2eWorkflowPlan(selectors);
-      return {
-        ...plan,
-        selectedJobs: [...new Set([...plan.selectedJobs, JETSON_DISPATCH_TARGET])],
-      };
+      const plan = buildE2eWorkflowPlan(selectors, { gatewayRuntimes });
+      const { coverageMatrix: _coverageMatrix, ...planWithoutCoverage } = plan;
+      const selectedJobs = [...new Set([...plan.selectedJobs, JETSON_DISPATCH_TARGET])];
+      return withCoverageMatrix(
+        {
+          ...planWithoutCoverage,
+          selectedJobs,
+          runtimeProvidersByJob: {
+            ...plan.runtimeProvidersByJob,
+            [JETSON_DISPATCH_TARGET]: ["none"],
+          },
+        },
+        inventory,
+      );
     }
     const focusedLegacyJobs = focusedE2eJobsForChangedFiles(changedFiles, inventory);
     const directlySelectedCatalogueTargets = catalogueTargetsForChangedFiles(changedFiles);
@@ -692,7 +859,13 @@ export function buildE2eWorkflowPlan(
     }
     selectedJobSet.add(JETSON_DISPATCH_TARGET);
     const selectedJobs = [...selectedJobSet];
-    const selectedTests = credentialFreeTests.filter((row) => changedFiles.includes(row.file));
+    const runtimeSelectedJobs = selectedJobs.filter(
+      (job) => workflowJobRuntimeProviders(inventory, job, gatewayRuntimes).length > 0,
+    );
+    const selectedTests = credentialFreeTestMatrix(
+      credentialFreeTests.filter((row) => changedFiles.includes(row.file)),
+      gatewayRuntimes,
+    );
     const selectedCatalogueIds = new Set([
       ...directlySelectedCatalogueTargets.map((target) => target.id),
       ...riskJobIds,
@@ -702,31 +875,54 @@ export function buildE2eWorkflowPlan(
     );
     const riskTargetIds = riskPlan.requiredTargets.map((target) => target.id);
     const registryMatrix = [
-      ...registryTargetsForChangedFiles(changedFiles),
-      ...(riskTargetIds.length > 0 ? buildLiveTargetMatrix(riskTargetIds) : []),
-    ].filter((entry, index, rows) => rows.findIndex((row) => row.id === entry.id) === index);
+      ...registryTargetsForChangedFiles(changedFiles, gatewayRuntimes),
+      ...(riskTargetIds.length > 0 ? buildLiveTargetMatrix(riskTargetIds, gatewayRuntimes) : []),
+    ].filter(
+      (entry, index, rows) =>
+        rows.findIndex((row) => row.execution_id === entry.execution_id) === index,
+    );
     return withCoverageMatrix(
       {
+        gatewayRuntimes,
         matrix: registryMatrix,
         testMatrix: selectedTests,
-        catalogueMatrices: catalogueMatrices(selectedCatalogueTargets),
-        selectedJobs,
-        hermesSelected: selectedJobs.includes(HERMES_JOB_ID),
+        catalogueMatrices: catalogueMatrices(selectedCatalogueTargets, gatewayRuntimes),
+        selectedJobs: runtimeSelectedJobs,
+        runtimeProvidersByJob: runtimeProvidersByJob(
+          inventory,
+          runtimeSelectedJobs,
+          gatewayRuntimes,
+          selectedTests,
+        ),
+        hermesSelected: runtimeSelectedJobs.includes(HERMES_JOB_ID),
         explicitOnlyJobs: [...inventory.explicitOnlyJobs],
       },
       inventory,
     );
   }
 
+  const testMatrix = credentialFreeTestMatrix(credentialFreeTests, gatewayRuntimes);
+  const selectedJobs = inventory.workflowJobs.filter(
+    (job) =>
+      !inventory.explicitOnlyJobs.includes(job) &&
+      (job !== SHARED_E2E_JOB_ID || testMatrix.length > 0) &&
+      workflowJobRuntimeProviders(inventory, job, gatewayRuntimes).length > 0,
+  );
   return withCoverageMatrix(
     {
-      matrix: buildLiveTargetMatrix(),
-      testMatrix: credentialFreeTests,
-      catalogueMatrices: catalogueMatrices(E2E_TARGET_CATALOGUE),
-      selectedJobs: inventory.workflowJobs.filter(
-        (job) => !inventory.explicitOnlyJobs.includes(job),
+      gatewayRuntimes,
+      matrix: buildLiveTargetMatrix([], gatewayRuntimes),
+      testMatrix,
+      catalogueMatrices: catalogueMatrices(E2E_TARGET_CATALOGUE, gatewayRuntimes),
+      selectedJobs,
+      runtimeProvidersByJob: runtimeProvidersByJob(
+        inventory,
+        selectedJobs,
+        gatewayRuntimes,
+        testMatrix,
       ),
-      hermesSelected: true,
+      hermesSelected:
+        workflowJobRuntimeProviders(inventory, HERMES_JOB_ID, gatewayRuntimes).length > 0,
       explicitOnlyJobs: [...inventory.explicitOnlyJobs],
     },
     inventory,
@@ -739,9 +935,11 @@ export function validateE2eWorkflowPlan(plan: unknown): E2eWorkflowPlan {
     !hasExactKeys(plan, [
       "catalogueMatrices",
       "explicitOnlyJobs",
+      "gatewayRuntimes",
       "hermesSelected",
       "matrix",
       "coverageMatrix",
+      "runtimeProvidersByJob",
       "selectedJobs",
       "testMatrix",
     ])
@@ -755,16 +953,64 @@ export function validateE2eWorkflowPlan(plan: unknown): E2eWorkflowPlan {
   const catalogueMatrixRows = E2E_EXECUTION_PROFILES.flatMap(
     (profile) => catalogueMatricesValue[profile],
   );
+  const credentialFreeDefinitions = new Map(
+    discoverCredentialFreeTests().map((row) => [row.id, row]),
+  );
+  const validCredentialFreeTestRows =
+    Array.isArray(plan.testMatrix) &&
+    plan.testMatrix.every((row) => {
+      if (!isCredentialFreeTestMatrixRow(row)) return false;
+      const definition = credentialFreeDefinitions.get(row.id);
+      return (
+        definition?.file === row.file &&
+        definition.project === row.project &&
+        row.runtime_provider !== "none" &&
+        credentialFreeTestSupportsGatewayRuntime(row.id, row.runtime_provider)
+      );
+    });
+  const validLiveTargetRows =
+    Array.isArray(plan.matrix) && plan.matrix.every(isLiveTargetMatrixEntry);
+  const uniqueExecutionIds =
+    validLiveTargetRows &&
+    validCredentialFreeTestRows &&
+    hasUniqueValues(
+      [
+        ...(plan.matrix as LiveTargetMatrixEntry[]),
+        ...(plan.testMatrix as CredentialFreeTestMatrixRow[]),
+        ...catalogueMatrixRows,
+      ],
+      (row) => row.execution_id,
+    );
+  const validGatewayRuntimes =
+    Array.isArray(plan.gatewayRuntimes) &&
+    plan.gatewayRuntimes.length > 0 &&
+    plan.gatewayRuntimes.every((runtime) => runtime === "docker" || runtime === "podman") &&
+    new Set(plan.gatewayRuntimes).size === plan.gatewayRuntimes.length;
+  const selectedJobsValue = plan.selectedJobs;
+  const validRuntimeProvidersByJob =
+    isRecord(plan.runtimeProvidersByJob) &&
+    isStringArray(selectedJobsValue) &&
+    Object.keys(plan.runtimeProvidersByJob).length === selectedJobsValue.length &&
+    Object.keys(plan.runtimeProvidersByJob).every((job) => selectedJobsValue.includes(job)) &&
+    Object.values(plan.runtimeProvidersByJob).every(
+      (providers) =>
+        Array.isArray(providers) &&
+        providers.length > 0 &&
+        providers.every(
+          (provider) => provider === "docker" || provider === "podman" || provider === "none",
+        ) &&
+        new Set(providers).size === providers.length,
+    );
   if (
-    !Array.isArray(plan.matrix) ||
-    !plan.matrix.every(isLiveTargetMatrixEntry) ||
-    !Array.isArray(plan.testMatrix) ||
-    !plan.testMatrix.every(isCredentialFreeTestMatrixRow) ||
+    !validGatewayRuntimes ||
+    !validLiveTargetRows ||
+    !validCredentialFreeTestRows ||
     !isE2eExecutionRows(plan.coverageMatrix) ||
-    !hasUniqueIds([...plan.matrix, ...plan.testMatrix, ...catalogueMatrixRows]) ||
-    !isStringArray(plan.selectedJobs) ||
-    !plan.selectedJobs.every((job) => /^[A-Za-z0-9_-]+$/u.test(job)) ||
-    !hasUniqueIds(plan.selectedJobs.map((id) => ({ id }))) ||
+    !uniqueExecutionIds ||
+    !isStringArray(selectedJobsValue) ||
+    !selectedJobsValue.every((job) => /^[A-Za-z0-9_-]+$/u.test(job)) ||
+    !hasUniqueValues(selectedJobsValue, (id) => id) ||
+    !validRuntimeProvidersByJob ||
     typeof plan.hermesSelected !== "boolean" ||
     !isStringArray(plan.explicitOnlyJobs) ||
     !plan.explicitOnlyJobs.every((job) => /^[A-Za-z0-9_-]+$/u.test(job)) ||
@@ -844,13 +1090,76 @@ function restrictUnauthorizedCandidatePlan(
 ): E2eWorkflowPlan {
   const candidatePlan = withoutCredentialedCatalogueProfiles(plan);
   const { coverageMatrix: _coverageMatrix, ...planWithoutCoverage } = candidatePlan;
+  const selectedJobs = hasPlannerSelectors ? plan.selectedJobs : [];
   return withCoverageMatrix(
     {
       ...planWithoutCoverage,
-      selectedJobs: hasPlannerSelectors ? plan.selectedJobs : [],
+      selectedJobs,
+      runtimeProvidersByJob: Object.fromEntries(
+        selectedJobs.map((job) => [job, plan.runtimeProvidersByJob[job]]),
+      ),
       hermesSelected: hasPlannerSelectors && plan.hermesSelected,
     },
     readFreeStandingJobsInventory(),
+  );
+}
+
+type RuntimeExclusion = {
+  id: string;
+  excluded: E2eGatewayRuntime[];
+  supported: readonly E2eGatewayRuntime[];
+};
+
+function runtimeExclusion(
+  id: string,
+  support: E2eGatewayRuntimeSupport,
+  requested: readonly E2eGatewayRuntime[],
+): RuntimeExclusion | undefined {
+  if (support === E2E_RUNTIME_AGNOSTIC) return undefined;
+  const excluded = requested.filter((runtime) => !supportsE2eGatewayRuntime(support, runtime));
+  return excluded.length > 0 ? { id, excluded, supported: support } : undefined;
+}
+
+function runtimeExclusionsForPlan(
+  plan: E2eWorkflowPlan,
+  inventory: ReturnType<typeof readFreeStandingJobsInventory>,
+): RuntimeExclusion[] {
+  const catalogueIds = new Set(
+    Object.values(plan.catalogueMatrices)
+      .flat()
+      .map((row) => row.id),
+  );
+  const liveIds = new Set(plan.matrix.map((row) => row.id));
+  const sharedIds = new Set(plan.testMatrix.map((row) => row.id));
+  const selectedJobs = new Set(plan.selectedJobs);
+  const candidates = [
+    ...E2E_TARGET_CATALOGUE.filter((target) => catalogueIds.has(target.id)).map((target) =>
+      runtimeExclusion(target.id, target.gatewayRuntimes, plan.gatewayRuntimes),
+    ),
+    ...listTargets()
+      .filter((target) => liveIds.has(target.id))
+      .map((target) =>
+        runtimeExclusion(target.id, liveTargetGatewayRuntimes(target), plan.gatewayRuntimes),
+      ),
+    ...discoverCredentialFreeTests()
+      .filter((row) => sharedIds.has(row.id))
+      .map((row) =>
+        runtimeExclusion(row.id, credentialFreeTestGatewayRuntimes(row.id), plan.gatewayRuntimes),
+      ),
+    ...inventory.coverageRows
+      .filter((row) => selectedJobs.has(row.id))
+      .map((row) =>
+        runtimeExclusion(
+          e2eExecutionLabel(row),
+          inventory.gatewayRuntimesByCoverageRow.get(`${row.id}:${row.variant}`) ??
+            inventory.gatewayRuntimesByJob.get(row.id) ??
+            E2E_RUNTIME_AGNOSTIC,
+          plan.gatewayRuntimes,
+        ),
+      ),
+  ].filter((row): row is RuntimeExclusion => row !== undefined);
+  return [...new Map(candidates.map((row) => [row.id, row])).values()].sort((a, b) =>
+    a.id.localeCompare(b.id),
   );
 }
 
@@ -876,6 +1185,7 @@ export function renderE2eWorkflowPlanSummary(
   const explicitOnlyRows = inventory.coverageRows.filter((row) =>
     plan.explicitOnlyJobs.includes(row.id),
   );
+  const runtimeExclusions = runtimeExclusionsForPlan(plan, inventory);
   const unsupportedDeclarations = buildLiveTargetInventory().filter((row) => !row.supported);
   const outcomeRows = new Map<string, E2eExecutionRow[]>();
   for (const row of plan.coverageMatrix) {
@@ -897,10 +1207,21 @@ export function renderE2eWorkflowPlanSummary(
       new Set(rows.map((row) => row.environmentOrInferenceEndpoint)).size > 1
         ? "environment or inference endpoint"
         : "",
+      new Set(rows.map((row) => row.variant)).size > 1 ? "coverage variant" : "",
     ].filter(Boolean);
     lines.push(
       `| ${outcome} | ${rows.map((row) => `\`${e2eExecutionLabel(row)}\``).join(", ")} | ${dimensions.join(" and ")} |`,
     );
+  }
+  lines.push(
+    "",
+    "### Intentional runtime exclusions",
+    "",
+    "| Target or job | Requested runtime not scheduled | Declared runtime support |",
+    "| --- | --- | --- |",
+  );
+  for (const row of runtimeExclusions) {
+    lines.push(`| \`${row.id}\` | ${row.excluded.join(", ")} | ${row.supported.join(", ")} |`);
   }
   lines.push(
     "",
@@ -945,12 +1266,15 @@ export function writeE2eWorkflowPlanCiOutput(
   }
   const controllerMap = mapTrustedControllerJobs(selectors, environment);
   const plannerSelectors = controllerMap.selectors;
+  const gatewayRuntimes = e2eGatewayRuntimes(
+    environment.NEMOCLAW_GATEWAY_RUNTIMES ?? environment.NEMOCLAW_GATEWAY_RUNTIME,
+  );
   const hasPlannerSelectors = Boolean(plannerSelectors.jobs || plannerSelectors.targets);
   const changedFiles = hasPlannerSelectors ? undefined : changedFilesFromEnvironment(environment);
   const planned =
     controllerMap.retiredSelectorSelected && !hasPlannerSelectors
-      ? emptyE2eWorkflowPlan()
-      : buildE2eWorkflowPlan(plannerSelectors, { changedFiles });
+      ? emptyE2eWorkflowPlan(gatewayRuntimes)
+      : buildE2eWorkflowPlan(plannerSelectors, { changedFiles, gatewayRuntimes });
   const availableOptionalCredentials = new Set<E2eOptionalCredential>(
     E2E_OPTIONAL_CREDENTIALS.filter(
       (credential) => environment[`NEMOCLAW_E2E_${credential}_AVAILABLE`] !== "false",
@@ -986,6 +1310,8 @@ export function writeE2eWorkflowPlanCiOutput(
       `catalogue_nvidia_inference_matrix=${JSON.stringify(plan.catalogueMatrices["nvidia-inference"])}`,
       `catalogue_github_read_matrix=${JSON.stringify(plan.catalogueMatrices["github-read"])}`,
       `catalogue_brave_nvidia_inference_matrix=${JSON.stringify(plan.catalogueMatrices["brave-nvidia-inference"])}`,
+      `gateway_runtimes=${JSON.stringify(plan.gatewayRuntimes)}`,
+      `runtime_providers_by_job=${JSON.stringify(plan.runtimeProvidersByJob)}`,
       `selected_jobs=${JSON.stringify(plan.selectedJobs)}`,
       `selected_workflow_jobs=${JSON.stringify(selectedWorkflowJobs(plan))}`,
       `hermes_selected=${plan.hermesSelected}`,

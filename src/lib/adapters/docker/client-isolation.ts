@@ -136,6 +136,8 @@ export function dockerContextIsDefaultFromBuild(
   // Any explicit endpoint owns daemon authority, including alternate Unix
   // sockets. Preserve its client configuration and registry credentials.
   if (env.DOCKER_HOST) return false;
+  const explicitContext = String(env.DOCKER_CONTEXT ?? "").trim();
+  if (explicitContext) return explicitContext === "default";
   return showContext(env) === "default";
 }
 

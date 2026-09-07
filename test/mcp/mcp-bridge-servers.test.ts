@@ -1009,14 +1009,19 @@ describe("authenticated MCP live fixtures", () => {
       id: "call_hermes_tool_search",
       function: {
         name: "tool_search",
-        arguments: JSON.stringify({ query: deferredToolName }),
+        arguments: JSON.stringify({ queries: [deferredToolName] }),
       },
     });
     const missedSearch = await call([
       {
         role: "tool",
         tool_call_id: "call_hermes_tool_search",
-        content: '{"matches":[{"name":"some_other_tool"}]}',
+        content: JSON.stringify({
+          queries: [deferredToolName],
+          total_available: 1,
+          results: [{ query: deferredToolName, matches: ["some_other_tool"] }],
+          tools: { some_other_tool: { description: "Another tool" } },
+        }),
       },
     ]);
     expect(missedSearch).toMatchObject({
@@ -1032,7 +1037,12 @@ describe("authenticated MCP live fixtures", () => {
       {
         role: "tool",
         tool_call_id: "call_hermes_tool_search",
-        content: JSON.stringify({ query: deferredToolName, matches: [] }),
+        content: JSON.stringify({
+          queries: [deferredToolName],
+          total_available: 1,
+          results: [{ query: deferredToolName, matches: [] }],
+          tools: {},
+        }),
       },
     ]);
     expect(echoedSearchQueryWithoutMatch).toMatchObject({
@@ -1047,13 +1057,18 @@ describe("authenticated MCP live fixtures", () => {
     const searchResult = {
       role: "tool",
       tool_call_id: "call_hermes_tool_search",
-      content: JSON.stringify({ matches: [{ name: deferredToolName }] }),
+      content: JSON.stringify({
+        queries: [deferredToolName],
+        total_available: 1,
+        results: [{ query: deferredToolName, matches: [deferredToolName] }],
+        tools: { [deferredToolName]: { description: "Deferred echo" } },
+      }),
     };
     const describeBody = await call([searchResult]);
     expect(describeBody.choices[0].message.tool_calls[0]).toMatchObject({
       function: {
         name: "tool_describe",
-        arguments: JSON.stringify({ name: deferredToolName }),
+        arguments: JSON.stringify({ names: [deferredToolName] }),
       },
     });
     const wrongDescription = await call([
@@ -1061,7 +1076,7 @@ describe("authenticated MCP live fixtures", () => {
       {
         role: "tool",
         tool_call_id: "call_hermes_tool_describe",
-        content: JSON.stringify({ name: deferredToolName, parameters: {} }),
+        content: JSON.stringify({ tools: { [deferredToolName]: {} } }),
       },
     ]);
     expect(wrongDescription).toMatchObject({
@@ -1073,8 +1088,12 @@ describe("authenticated MCP live fixtures", () => {
       role: "tool",
       tool_call_id: "call_hermes_tool_describe",
       content: JSON.stringify({
-        name: deferredToolName,
-        parameters: { properties: { challenge: { type: "string" } } },
+        tools: {
+          [deferredToolName]: {
+            description: "Deferred echo",
+            parameters: { properties: { challenge: { type: "string" } } },
+          },
+        },
       }),
     };
     const callBody = await call([searchResult, descriptionResult]);

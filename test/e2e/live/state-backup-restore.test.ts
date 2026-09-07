@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertExitZero, resultText } from "../fixtures/clients/index.ts";
 import { sandboxAccessEnv, validateSandboxName } from "../fixtures/clients/sandbox.ts";
@@ -27,8 +28,10 @@ const WORKSPACE_FILES = ["SOUL.md", "USER.md", "IDENTITY.md", "AGENTS.md", "MEMO
 const MEMORY_FILE = "memory/2026-04-20.md";
 const TEST_SANDBOX_PREFIX = "e2e-state-backup";
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? TEST_SANDBOX_PREFIX;
-const TEST_TIMEOUT_MS = Number(process.env.NEMOCLAW_E2E_TIMEOUT_SECONDS ?? 3_600) * 1_000;
-const ONBOARD_TIMEOUT_MS = 30 * 60_000;
+const TEST_TIMEOUT_MS = testTimeout(
+  Number(process.env.NEMOCLAW_E2E_TIMEOUT_SECONDS ?? 3_600) * 1_000,
+);
+const ONBOARD_TIMEOUT_MS = execTimeout(30 * 60_000);
 const BACKUP_RESTORE_TIMEOUT_MS = 5 * 60_000;
 const DESTROY_ATTEMPTS = 3;
 const DESTROY_RETRY_DELAY_MS = 10_000;
@@ -125,11 +128,13 @@ async function destroySandboxUntilAbsent(
   );
 }
 
-test("state-backup-restore: backup-workspace.sh restores workspace files and memory directory (#8006)", {
+test(
+  "state-backup-restore: backup-workspace.sh restores workspace files and memory directory (#8006)",
+  {
   timeout: TEST_TIMEOUT_MS,
   meta: {
     e2ePhases: [
-      "confirm Docker and the workspace backup script",
+      "confirm the selected runtime and the workspace backup script",
       "onboard the source sandbox",
       "write workspace and memory markers",
       "capture and inspect the host backup",
@@ -138,13 +143,15 @@ test("state-backup-restore: backup-workspace.sh restores workspace files and mem
       "validate restored workspace and memory",
     ],
   },
-}, async ({
+  },
+  async ({
   artifacts,
   cleanup,
   environment,
   host,
   onboard,
   progress,
+    runtimeProvider,
   sandbox,
   secrets,
   skip,
@@ -154,19 +161,10 @@ test("state-backup-restore: backup-workspace.sh restores workspace files and mem
   secrets.required("NVIDIA_INFERENCE_API_KEY");
   expect(fs.existsSync(path.join(REPO_ROOT, "scripts", "backup-workspace.sh"))).toBe(true);
 
-  const dockerInfo = await host.command("docker", ["info"], {
-    artifactName: "prereq-docker-info",
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 30_000,
+    await runtimeProvider.requireAvailable({
+    artifactName: "prereq-runtime-info",
+      scenarioLabel: "state backup and restore",
   });
-  if (dockerInfo.exitCode !== 0) {
-    if (process.env.GITHUB_ACTIONS === "true") {
-      throw new Error(
-        `Docker is required for state-backup-restore live coverage: ${resultText(dockerInfo)}`,
-      );
-    }
-    skip("Docker is required for state-backup-restore live coverage");
-  }
 
   await artifacts.writeJson("contract.json", {
     sandboxName: SANDBOX_NAME,
@@ -233,7 +231,7 @@ test("state-backup-restore: backup-workspace.sh restores workspace files and mem
   const ready = await environment.assertReady({
     platform: "ubuntu-local",
     install: "repo-current",
-    runtime: "docker-running",
+      runtime: "managed-runtime-running",
     onboarding: "cloud-openclaw",
   });
 
@@ -445,4 +443,5 @@ test("state-backup-restore: backup-workspace.sh restores workspace files and mem
   }
   expect(memoryText).toContain("STATE=EXISTS");
   expect(memoryText).toContain(`${markerContent}_daily`);
-});
+  },
+);

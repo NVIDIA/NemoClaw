@@ -139,9 +139,7 @@ describe("OpenShell policy boundary", () => {
         ),
       ),
     ).toEqual({ version: 1, network_policies: { npm: {} } });
-    expect(() => stripProviderComposedPolicies("version: [unterminated")).toThrow(
-      /invalid YAML/,
-    );
+    expect(() => stripProviderComposedPolicies("version: [unterminated")).toThrow(/invalid YAML/);
   });
 
   it("classifies the OpenShell global history absence contract", () => {

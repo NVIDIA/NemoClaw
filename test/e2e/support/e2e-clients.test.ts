@@ -7,10 +7,6 @@ import path from "node:path";
 
 import { describe, expect, expectTypeOf, it, vi } from "vitest";
 import {
-  getOllamaApiCommand,
-  OLLAMA_HOST_DOCKER_INTERNAL,
-} from "../../../src/lib/inference/local.ts";
-import {
   assertExitZero,
   type CommandRunner,
   GatewayClient,
@@ -81,21 +77,6 @@ class FakeRunner implements CommandRunner {
 }
 
 describe("E2E fixture clients", () => {
-  it("uses a digest-pinned image for the live Windows-host transport", () => {
-    const command = getOllamaApiCommand(
-      ["-sf", "http://host.docker.internal:11434/api/tags"],
-      OLLAMA_HOST_DOCKER_INTERNAL,
-    );
-
-    expect(command.slice(0, 4)).toEqual([
-      "docker",
-      "run",
-      "--rm",
-      expect.stringMatching(/^docker\.io\/curlimages\/curl@sha256:[a-f0-9]{64}$/u),
-    ]);
-    expect(command).not.toContain("curlimages/curl:8.10.1");
-  });
-
   it.each([
     "a2345678901234567890",
     "e2e--sandbox",
@@ -130,6 +111,17 @@ describe("E2E fixture clients", () => {
         },
       },
     ]);
+  });
+
+  it("does not require a stock-image receipt for onboarding help", async () => {
+    const runner = new FakeRunner();
+    const host = new HostCliClient(runner);
+
+    await expect(
+      host.command("node", ["/workspace/bin/nemoclaw.js", "onboard", "--help"], {
+        env: { E2E_MANAGED_IMAGE_REVISION: "a".repeat(40) },
+      }),
+    ).resolves.toMatchObject({ exitCode: 0 });
   });
 
   it.each([
@@ -503,7 +495,7 @@ describe("E2E fixture clients", () => {
     const containerGateway = new GatewayClient(containerHost, new SandboxClient(containerRunner));
     const runtime = containerGateway.resolveHostRuntime();
     containerRunner.exitCode = 0;
-    containerRunner.stdout = "abc123\n";
+    containerRunner.stdout = "abc123\topenshell-cluster-nemoclaw\n";
     await expect(runtime).resolves.toEqual({ kind: "container", id: "abc123" });
 
     const statusRunner = new FakeRunner();

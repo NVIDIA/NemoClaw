@@ -10,6 +10,7 @@ import { GATEWAY_PORT } from "../../core/ports";
 import { resolveSandboxContainerOwner } from "../../domain/sandbox/container-owner";
 import { resolveGatewayPortFromName } from "../../onboard/gateway-binding";
 import type { PortablePodmanReadinessResult } from "../../onboard/experimental/portable-runtime-readiness";
+import type { RuntimeProviderSnapshotLifecycleState } from "../../onboard/runtime-provider/contract";
 import {
   inspectPortableRuntimeReceiptReadiness,
   type PortableRuntimeReceiptReadinessDeps,
@@ -213,6 +214,25 @@ const defaultSandboxContainerRunners: SandboxContainerFailureRunners = {
 
 function isValidDashboardPort(port: number | null | undefined): port is number {
   return typeof port === "number" && Number.isInteger(port) && port >= 1 && port <= 65535;
+}
+
+export async function classifyObservedSandboxContainerFailure(
+  sandboxName: string,
+  lifecycleState: RuntimeProviderSnapshotLifecycleState,
+  dashboardPort: number | null | undefined,
+  portProbe: (port: number) => Promise<boolean> = defaultPortProbe,
+): Promise<SandboxContainerFailureResult | null> {
+  if (lifecycleState !== "stopped") return null;
+  if (isValidDashboardPort(dashboardPort) && (await portProbe(dashboardPort))) {
+    return {
+      layer: "sandbox_dashboard_port_conflict",
+      detail: `Sandbox '${sandboxName}' is stopped and dashboard port ${dashboardPort} is held by another process.`,
+    };
+  }
+  return {
+    layer: "sandbox_container_stopped",
+    detail: `Sandbox '${sandboxName}' exists but is not running.`,
+  };
 }
 
 export async function classifySandboxContainerFailure(

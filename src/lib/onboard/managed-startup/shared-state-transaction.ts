@@ -15,6 +15,7 @@ import {
   type ManagedStartupAgent,
   type ManagedStartupProfile,
 } from "./profile";
+import { managedStartupStateRootMountTargets } from "./state-roots";
 
 const TRANSACTION_SCHEMA_VERSION = 1;
 const MAX_TRANSACTION_FILES = 128;
@@ -312,17 +313,27 @@ function relativeTarget(target: string, options: ResolvedOptions): string {
 
 /**
  * SOURCE_OF_TRUTH_REVIEW
- * invalidState: the authorized Hermes named-volume root appears on another filesystem and is
- *   rejected as a nested mount, while a broader exception could hide an unsafe descendant mount.
- * sourceBoundary: the managed Hermes volume lifecycle authorizes only the exact `.hermes` root;
- *   these transaction validators remain authoritative for every descendant device boundary.
- * whyNotSourceFix: a Docker named volume necessarily changes the root device, so the transaction
- *   must adopt that device at the exact Hermes root and continue rejecting later device changes.
+ * invalidState: an agent-declared managed state root appears on another filesystem and is rejected
+ *   as a nested mount, while a broader exception could hide an unsafe descendant mount.
+ * sourceBoundary: the managed state-root declaration authorizes only its exact agent root; these
+ *   transaction validators remain authoritative for every descendant device boundary.
+ * whyNotSourceFix: a managed volume necessarily changes the root device, so the transaction must
+ *   adopt that device at the exact declared root and continue rejecting later device changes.
  * regressionTest: managed-startup-shared-state-transaction.test.ts proves exact-root prepare and
  *   rollback acceptance, descendant-mount rejection in both paths, and rejection for other agents.
- * removalCondition: remove the Hermes exception when its durable state root no longer arrives as
- *   a distinct filesystem mount, or when transaction storage moves wholly inside that mount.
+ * removalCondition: remove this adoption when managed roots no longer arrive as distinct
+ *   filesystem mounts, or when transaction storage moves wholly inside each declared root.
  */
+function isDeclaredAgentStateRoot(
+  expectedAgent: ManagedStartupAgent,
+  outputRoot: string,
+  options: ResolvedOptions,
+): boolean {
+  const relative = path.relative(options.sandboxRoot, outputRoot).split(path.sep).join("/");
+  const canonicalTarget = path.posix.join("/sandbox", relative);
+  return managedStartupStateRootMountTargets(expectedAgent).includes(canonicalTarget);
+}
+
 function validateExistingAncestors(
   target: string,
   expectedAgent: ManagedStartupAgent,
@@ -349,11 +360,9 @@ function validateExistingAncestors(
     if (stat.isSymbolicLink() || !stat.isDirectory()) {
       fail(`transaction path ancestor is unsafe: ${current}`);
     }
-    // Hermes owns one explicitly durable state root. Docker supplies that root
-    // as a named volume, so its exact mountpoint may cross from /sandbox onto
-    // another filesystem. Keep every descendant on that same device and keep
-    // the historical no-nested-mount contract for every other agent.
-    if (current === outputRoot && expectedAgent === "hermes") {
+    // An exact agent-declared state root may cross from /sandbox onto its
+    // managed volume. Every descendant must remain on that adopted device.
+    if (current === outputRoot && isDeclaredAgentStateRoot(expectedAgent, outputRoot, options)) {
       expectedDevice = stat.dev;
     } else if (stat.dev !== expectedDevice) {
       fail(`transaction path crosses a nested filesystem mount: ${current}`);
@@ -374,7 +383,7 @@ function managedOutputDevice(expectedAgent: ManagedStartupAgent, options: Resolv
   if (stat.isSymbolicLink() || !stat.isDirectory()) {
     fail(`managed output root is unsafe: ${outputRoot}`);
   }
-  if (expectedAgent !== "hermes" && stat.dev !== sandboxStat.dev) {
+  if (!isDeclaredAgentStateRoot(expectedAgent, outputRoot, options) && stat.dev !== sandboxStat.dev) {
     fail(`managed output root crosses a nested filesystem mount: ${outputRoot}`);
   }
   return stat.dev;

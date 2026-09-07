@@ -16,10 +16,6 @@ vi.mock("../onboard/config.js", () => ({
   describeOnboardProvider: vi.fn(),
 }));
 
-vi.mock("./shields-status.js", () => ({
-  slashShieldsStatus: vi.fn(() => ({ text: "**Shields status unavailable**" })),
-}));
-
 vi.mock("./config-show.js", () => ({
   slashConfigShow: vi.fn(() => ({ text: "**NemoClaw Config**" })),
 }));
@@ -30,14 +26,12 @@ import {
   describeOnboardProvider,
   loadOnboardConfig,
 } from "../onboard/config.js";
-import { slashShieldsStatus } from "./shields-status.js";
 import { handleSlashCommand } from "./slash.js";
 
 const mockedLoadState = vi.mocked(loadState);
 const mockedLoadOnboardConfig = vi.mocked(loadOnboardConfig);
 const mockedDescribeOnboardEndpoint = vi.mocked(describeOnboardEndpoint);
 const mockedDescribeOnboardProvider = vi.mocked(describeOnboardProvider);
-const mockedSlashShieldsStatus = vi.mocked(slashShieldsStatus);
 
 function makeCtx(args?: string): PluginCommandContext {
   return {
@@ -95,9 +89,6 @@ describe("commands/slash", () => {
       expect(result.text).toContain("NemoClaw");
       expect(result.text).toContain("Subcommands:");
       expect(result.text).toContain("status");
-      expect(result.text).toContain("shields");
-      expect(result.text).toContain("Show how to check shields status from the host");
-      expect(result.text).not.toContain("up/down, timeout, policy");
       expect(result.text).toContain("config");
       expect(result.text).toContain("eject");
       expect(result.text).toContain("onboard");
@@ -106,44 +97,6 @@ describe("commands/slash", () => {
     it("returns help text for unknown subcommand", () => {
       const result = handleSlashCommand(makeCtx("unknown"), makeApi());
       expect(result.text).toContain("Subcommands:");
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // shields (routing)
-  // -------------------------------------------------------------------------
-
-  describe("shields", () => {
-    it("routes to shields status handler with no argument when only `shields` is given", () => {
-      const result = handleSlashCommand(makeCtx("shields"), makeApi());
-      expect(result.text).toContain("Shields");
-      expect(mockedSlashShieldsStatus).toHaveBeenCalledTimes(1);
-      expect(mockedSlashShieldsStatus).toHaveBeenCalledWith(undefined);
-    });
-
-    it("forwards `status` as the sub-argument", () => {
-      handleSlashCommand(makeCtx("shields status"), makeApi());
-      expect(mockedSlashShieldsStatus).toHaveBeenCalledWith("status");
-    });
-
-    it("forwards `down` as the sub-argument", () => {
-      handleSlashCommand(makeCtx("shields down"), makeApi());
-      expect(mockedSlashShieldsStatus).toHaveBeenCalledWith("down");
-    });
-
-    it("forwards `up` as the sub-argument", () => {
-      handleSlashCommand(makeCtx("shields up"), makeApi());
-      expect(mockedSlashShieldsStatus).toHaveBeenCalledWith("up");
-    });
-
-    it("forwards an unknown sub-argument verbatim", () => {
-      handleSlashCommand(makeCtx("shields abcxyz"), makeApi());
-      expect(mockedSlashShieldsStatus).toHaveBeenCalledWith("abcxyz");
-    });
-
-    it("ignores tokens past the second one", () => {
-      handleSlashCommand(makeCtx("shields down   --timeout 5m"), makeApi());
-      expect(mockedSlashShieldsStatus).toHaveBeenCalledWith("down");
     });
   });
 

@@ -3,7 +3,6 @@
 
 import { isDeepStrictEqual } from "node:util";
 
-import { dockerSpawnSync } from "../../../adapters/docker/exec";
 import type { RuntimeProviderBundle } from "../../../onboard/runtime-provider/contract";
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "../../../onboard/runtime-provider/current";
 import {
@@ -14,7 +13,7 @@ import { requireRuntimeProviderBundleForSandbox } from "../../../onboard/runtime
 import type { SandboxEntry } from "../../../state/registry/types";
 import * as sandboxState from "../../../state/sandbox";
 import {
-  privilegedSandboxExecArgv,
+  executePrivilegedSandboxCommand,
   withPrivilegedSandboxExecutionLease,
 } from "../../../sandbox/privileged-exec";
 import { sanitizeReadinessText } from "../../../readiness/sanitize";
@@ -170,7 +169,7 @@ export function captureOpenClawStateFile(
       sandboxName,
       "OpenClaw config snapshot capture",
       () => {
-        const argv = privilegedSandboxExecArgv(
+        const result = executePrivilegedSandboxCommand(
           sandboxName,
           [
             "/usr/bin/python3",
@@ -181,15 +180,12 @@ export function captureOpenClawStateFile(
             OPENCLAW_CONFIG_DIRECTORY,
             OPENCLAW_CONFIG_NAME,
           ],
-          false,
-          true,
+          {
+            sanitizeEnvironment: true,
+            timeout: OPENCLAW_CONFIG_CAPTURE_TIMEOUT_MS,
+            maxOutputBytes: OPENCLAW_CONFIG_CAPTURE_MAX_BUFFER,
+          },
         );
-        const result = dockerSpawnSync(argv, {
-          encoding: null,
-          stdio: ["ignore", "pipe", "pipe"],
-          timeout: OPENCLAW_CONFIG_CAPTURE_TIMEOUT_MS,
-          maxBuffer: OPENCLAW_CONFIG_CAPTURE_MAX_BUFFER,
-        });
         const protocolFailure = captureFailureProtocol(result.stderr);
         if (
           result.status === 2 &&

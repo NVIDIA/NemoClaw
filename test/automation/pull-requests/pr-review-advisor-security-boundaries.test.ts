@@ -5,18 +5,20 @@ import fs from "node:fs";
 import path from "node:path";
 import { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { deleteBotOwnedStickyComments, upsertStickyComment } from "../../../tools/advisors/github.mts";
+import {
+  deleteBotOwnedStickyComments,
+  upsertStickyComment,
+} from "../../../tools/advisors/github.mts";
 import { runReadOnlyAdvisor } from "../../../tools/advisors/session.mts";
 
 const ROOT = path.resolve(import.meta.dirname, "../../..");
-
 
 describe("PR review advisor security boundaries", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it("removes the model credential from the tool environment after in-memory setup", async () => {
+  it("removes the model credential after registering the selected model in memory", async () => {
     const credentialEnv = "PR_REVIEW_ADVISOR_TEST_API_KEY";
     vi.stubEnv(credentialEnv, "test-secret");
     const configDir = fs.mkdtempSync(path.join(ROOT, ".tmp-pr-advisor-config-"));
@@ -33,6 +35,7 @@ describe("PR review advisor security boundaries", () => {
           timeoutMs: 1000,
           heartbeatMs: 1000,
           maxCaptureBytes: 1024,
+          provider: "advisor-credential-cleanup-test",
           modelId: "missing-model",
           credentialEnv,
           logPrefix: "test",
@@ -193,5 +196,4 @@ describe("PR review advisor security boundaries", () => {
     ).resolves.toBe(0);
     expect(fetchMock).not.toHaveBeenCalled();
   });
-
 });

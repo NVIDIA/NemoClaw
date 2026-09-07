@@ -318,7 +318,6 @@ if (args[0] === "logs") {
 }
 
 if (args[0] === "forward" && args[1] === "list") {
-  process.stdout.write("${sandboxName} 127.0.0.1 ${dashboardPort} 12345 running\\n");
   process.exit(0);
 }
 
@@ -514,10 +513,8 @@ export function setupFixture(
   const curlPath = path.join(homeLocalBin, "curl");
   const psPath = path.join(homeLocalBin, "ps");
   const sandboxName = String(sandboxEntry.name);
-  // The OpenShell stub advertises this forward as running. Back that claim
-  // with a real listener so probe-only forward ownership checks behave the
-  // same on Linux and macOS, not according to whether a host happens to have
-  // the historical default port open.
+  // Model a reachable direct ForwardTcp service. Direct services do not create
+  // entries in the legacy `openshell forward list` registry.
   const dashboardPort = startFixtureForwardListener(tmpDir);
 
   fs.mkdirSync(homeLocalBin, { recursive: true });

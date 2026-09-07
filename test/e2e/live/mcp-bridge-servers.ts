@@ -542,29 +542,69 @@ export async function startCompatibleMock(options: {
         toolName: string,
       ): "target" | "miss" | "invalid" => {
         const parsed = parsedToolResult(index, "call_hermes_tool_search");
-        if (!Array.isArray(parsed?.matches)) return "invalid";
-        const matches = parsed.matches;
-        const hasValidEntries = matches.every(
-          (match) =>
-            match &&
-            typeof match === "object" &&
-            !Array.isArray(match) &&
-            typeof (match as Record<string, unknown>).name === "string",
+        if (!parsed) return "invalid";
+        if (
+          !Array.isArray(parsed.queries) ||
+          parsed.queries.length !== 1 ||
+          parsed.queries[0] !== toolName ||
+          !Number.isInteger(parsed.total_available) ||
+          (parsed.total_available as number) < 0 ||
+          !Array.isArray(parsed.results) ||
+          parsed.results.length !== 1 ||
+          !parsed.tools ||
+          typeof parsed.tools !== "object" ||
+          Array.isArray(parsed.tools)
+        ) {
+          return "invalid";
+        }
+        const result = parsed.results[0];
+        if (!result || typeof result !== "object" || Array.isArray(result)) return "invalid";
+        const resultRecord = result as Record<string, unknown>;
+        if (resultRecord.query !== toolName || !Array.isArray(resultRecord.matches)) {
+          return "invalid";
+        }
+        const names = resultRecord.matches.map((match) =>
+          typeof match === "string" ? match : undefined,
         );
-        if (!hasValidEntries) return "invalid";
-        return matches.some((match) => (match as Record<string, unknown>).name === toolName)
+        if (names.some((name) => name === undefined)) return "invalid";
+        const tools = parsed.tools as Record<string, unknown>;
+        if (
+          names.some(
+            (name) =>
+              !name ||
+              !Object.hasOwn(tools, name) ||
+              !tools[name] ||
+              typeof tools[name] !== "object" ||
+              Array.isArray(tools[name]),
+          )
+        ) {
+          return "invalid";
+        }
+        return names.includes(toolName)
           ? "target"
           : "miss";
       };
       const hasExpectedHermesDescription = (index: number, toolName: string) => {
         const parsed = parsedToolResult(index, "call_hermes_tool_describe");
-        const parameters = parsed?.parameters;
+        const tools = parsed?.tools;
+        const describedTool =
+          tools && typeof tools === "object" && !Array.isArray(tools)
+            ? (tools as Record<string, unknown>)[toolName]
+            : undefined;
+        const parameters =
+          describedTool && typeof describedTool === "object" && !Array.isArray(describedTool)
+            ? (describedTool as Record<string, unknown>).parameters
+            : undefined;
+        const description =
+          describedTool && typeof describedTool === "object" && !Array.isArray(describedTool)
+            ? (describedTool as Record<string, unknown>).description
+            : undefined;
         const properties =
           parameters && typeof parameters === "object" && !Array.isArray(parameters)
             ? (parameters as Record<string, unknown>).properties
             : undefined;
         return (
-          parsed?.name === toolName &&
+          typeof description === "string" &&
           properties !== null &&
           typeof properties === "object" &&
           !Array.isArray(properties) &&
@@ -612,7 +652,7 @@ export async function startCompatibleMock(options: {
           plannedToolCall = {
             id: "call_hermes_tool_search",
             name: "tool_search",
-            arguments: { query: options.deferredToolName },
+            arguments: { queries: [options.deferredToolName] },
           };
         } else if (toolResultCount === 1) {
           const searchResult = classifyHermesSearchResult(0, options.deferredToolName);
@@ -620,7 +660,7 @@ export async function startCompatibleMock(options: {
             plannedToolCall = {
               id: "call_hermes_tool_describe",
               name: "tool_describe",
-              arguments: { name: options.deferredToolName },
+              arguments: { names: [options.deferredToolName] },
             };
           } else if (searchResult === "miss") {
             protocolError = HERMES_DEFERRED_TOOL_SEARCH_MISS;

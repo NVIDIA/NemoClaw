@@ -6,7 +6,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText, shellQuote } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
@@ -115,11 +114,13 @@ async function expectSandboxShellZero(
   return result;
 }
 
-test("openclaw-skill-cli: direct OpenClaw skills install/list/info/check roundtrip uses workspace path", {
+test(
+  "openclaw-skill-cli: direct OpenClaw skills install/list/info/check roundtrip uses workspace path",
+  {
   timeout: INSTALL_TIMEOUT_MS + 10 * 60_000,
   meta: {
     e2ePhases: [
-      "confirm built CLI Docker and hosted inference",
+      "confirm built CLI, selected runtime, and hosted inference",
       "clear the OpenClaw skill CLI sandbox",
       "install and onboard the OpenClaw sandbox",
       "confirm OpenClaw runtime directories",
@@ -128,7 +129,8 @@ test("openclaw-skill-cli: direct OpenClaw skills install/list/info/check roundtr
       "record the workspace skill contract",
     ],
   },
-}, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
+  },
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
   expect(
     fs.existsSync(CLI_ENTRYPOINT),
     "run `npm run build:cli` before live repo CLI targets",
@@ -139,7 +141,7 @@ test("openclaw-skill-cli: direct OpenClaw skills install/list/info/check roundtr
     boundary: "install-sh-onboard-and-openclaw-skills-cli-in-sandbox",
     sandboxName: SANDBOX_NAME,
     contracts: [
-      "Docker is available before install/onboard",
+      "the selected runtime is available before install/onboard",
       "NVIDIA_INFERENCE_API_KEY is staged as the compatible endpoint credential",
       "install.sh creates/recreates a real OpenClaw sandbox",
       "OPENCLAW_HOME, OPENCLAW_STATE_DIR, and OPENCLAW_WORKSPACE_DIR reach the sandbox runtime shell",
@@ -154,17 +156,10 @@ test("openclaw-skill-cli: direct OpenClaw skills install/list/info/check roundtr
   const hosted = requireHostedInferenceConfig(secrets);
   const apiKey = hosted.apiKey;
 
-  const docker = await host.command("docker", ["info"], {
-    artifactName: "prereq-docker-info-openclaw-skill-cli",
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 30_000,
+    await runtimeProvider.requireAvailable({
+    artifactName: "prereq-runtime-info-openclaw-skill-cli",
+      scenarioLabel: "OpenClaw skill CLI",
   });
-  if (docker.exitCode !== 0) {
-    if (process.env.GITHUB_ACTIONS === "true") {
-      throw new Error(`Docker is required for openclaw-skill-cli E2E: ${resultText(docker)}`);
-    }
-    skip("Docker is required for openclaw-skill-cli E2E");
-  }
 
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-skill-cli-home-"));
   const env = testEnv(home);
@@ -291,4 +286,5 @@ test("openclaw-skill-cli: direct OpenClaw skills install/list/info/check roundtr
     installedSkill: SKILL_ID,
     expectedDiskPath: EXPECTED_WORKSPACE_SKILL_PATH,
   });
-});
+  },
+);
