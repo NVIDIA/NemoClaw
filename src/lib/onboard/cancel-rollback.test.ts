@@ -282,7 +282,7 @@ describe("installSandboxCancelRollback", () => {
 
     const guidance = log.mock.calls.flat().join("\n");
     expect(guidance).toContain("identity fingerprint is unavailable");
-    expect(guidance).toContain("OpenShell administrator");
+    expect(guidance).toContain("openshell sandbox list -o json");
   });
 });
 

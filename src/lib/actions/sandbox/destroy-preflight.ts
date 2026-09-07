@@ -4,7 +4,6 @@
 import os from "node:os";
 
 import { buildSelectedOpenShellSubprocessEnv } from "../../adapters/openshell/command-argv";
-import { fingerprintOpenShellSandboxId } from "../../adapters/openshell/sandbox-identity";
 import { observeOpenShellSandboxIdentity } from "../../adapters/openshell/sandbox-presence";
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
@@ -41,12 +40,6 @@ export type SandboxDestroyPreflight = {
   selectedRunOpenshell: DestroyRunOpenshell;
   sandbox: SandboxEntry | null;
   sandboxConfirmedAbsent: boolean;
-  /**
-   * Fingerprint of the exact live OpenShell sandbox id when one is present,
-   * comparable to a retained recovery record's `sandboxIdentityFingerprint`
-   * (#10863). Null when absent or the observation could not be trusted.
-   */
-  presentSandboxIdentityFingerprint: string | null;
 };
 
 export function resolveSandboxDestroyRuntimeSelection(
@@ -349,11 +342,6 @@ export function prepareSandboxDestroy(
   selectGatewayForSandboxDestroy(sandboxName, cleanupGatewayName, selectedRunOpenshell);
   process.env.OPENSHELL_GATEWAY = cleanupGatewayName;
 
-  // Read the exact live OpenShell sandbox id (when present) alongside its
-  // presence, not just present/absent, so a caller can prove the live
-  // sandbox is the exact retained one before treating it as safe to delete
-  // by mutable name (#10863) — mirrors the identity comparison already used
-  // for Hermes Portable lifecycle verification.
   const sandboxIdentityObservation = observeOpenShellSandboxIdentity(
     sandboxName,
     selectedRunOpenshell(["sandbox", "list", "-o", "json"], {
@@ -363,10 +351,6 @@ export function prepareSandboxDestroy(
     }),
   );
   const sandboxConfirmedAbsent = sandboxIdentityObservation.kind === "absent";
-  const presentSandboxIdentityFingerprint =
-    sandboxIdentityObservation.kind === "present"
-      ? fingerprintOpenShellSandboxId(sandboxIdentityObservation.id)
-      : null;
 
   return {
     cleanupGatewayName,
@@ -374,7 +358,6 @@ export function prepareSandboxDestroy(
     selectedRunOpenshell,
     sandbox,
     sandboxConfirmedAbsent,
-    presentSandboxIdentityFingerprint,
     ...(selectedCaptureOpenshell ? { selectedCaptureOpenshell } : {}),
     ...(runtimeSelection ? { runtimeSelection } : {}),
   };

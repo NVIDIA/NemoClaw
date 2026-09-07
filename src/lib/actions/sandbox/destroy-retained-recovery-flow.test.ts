@@ -9,7 +9,6 @@ import {
   createDestroyHarness,
   resetDestroyModuleCache,
 } from "../../../../test/helpers/destroy-flow-test-harness";
-import { executeSandboxDestroy } from "./destroy-execution";
 import type { RetainedSandboxRecoveryRecord } from "../../state/onboard-session/retained-sandbox-recovery";
 
 function retainedRecoveryRecord(sandboxId = "sb-alpha"): RetainedSandboxRecoveryRecord {
@@ -169,7 +168,7 @@ describe("destroySandbox retained recovery flow", () => {
       );
 
       expect(harness.errorSpy).toHaveBeenCalledWith(
-        expect.stringContaining("could not prove it is the exact retained sandbox"),
+        expect.stringContaining("cannot safely bind an automatic delete to the retained record"),
       );
       expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
         ["sandbox", "delete", "alpha"],
@@ -203,7 +202,7 @@ describe("destroySandbox retained recovery flow", () => {
       );
 
       expect(harness.errorSpy).toHaveBeenCalledWith(
-        expect.stringContaining("could not prove it is the exact retained sandbox"),
+        expect.stringContaining("cannot safely bind an automatic delete to the retained record"),
       );
       expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
         ["sandbox", "delete", "alpha"],
@@ -215,9 +214,15 @@ describe("destroySandbox retained recovery flow", () => {
   );
 
   it(
-    "issues mutable-name deletion for a live retained sandbox with a proven-matching OpenShell identity (#10863)",
+    "still fails closed for a live retained sandbox even with a proven-matching OpenShell identity (#10863)",
     { timeout: 30_000 },
     async () => {
+      // OpenShell exposes no atomic delete-by-identity primitive, so no
+      // amount of identity proof inside NemoClaw can close the window where
+      // another OpenShell client replaces the sandbox under the same name
+      // between the last read and OpenShell processing the delete. Automatic
+      // deletion of a live retained sandbox is therefore always fail-closed,
+      // even when the live OpenShell id matches the retained record.
       const recovery = retainedRecoveryRecord("sandbox-alpha");
       const containerId = "a".repeat(64);
       const harness = createDestroyHarness({
@@ -232,50 +237,21 @@ describe("destroySandbox retained recovery flow", () => {
         retainedRecoveryRecords: [recovery],
       });
 
-      await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+      await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow(
+        "process.exit(1)",
+      );
 
-      expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
+      expect(harness.errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("cannot safely bind an automatic delete to the retained record"),
+      );
+      expect(harness.errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining(`openshell sandbox delete -g ${recovery.gatewayName} alpha`),
+      );
+      expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
         ["sandbox", "delete", "alpha"],
         expect.anything(),
       );
-      expect(harness.resolveRetainedSandboxRecoverySpy).toHaveBeenCalledWith(recovery);
-      expect(exitSpy).not.toHaveBeenCalled();
-    },
-  );
-
-  it(
-    "aborts the delete when the retained sandbox's live identity no longer matches at the delete boundary (#10863)",
-    { timeout: 30_000 },
-    async () => {
-      const recovery = retainedRecoveryRecord("sandbox-alpha");
-      const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
-
-      const result = await executeSandboxDestroy({
-        cleanupShieldsArtifacts: () => undefined,
-        force: false,
-        runOpenshell,
-        sandbox: null,
-        sandboxConfirmedAbsent: false,
-        sandboxName: "alpha",
-        stopInferenceResources: () => undefined,
-        expectedRetainedSandboxIdentity: {
-          gatewayName: recovery.gatewayName,
-          sandboxIdentityFingerprint: recovery.sandboxIdentityFingerprint!,
-        },
-        deps: {
-          // Simulates a same-name replacement sandbox that appeared after the
-          // destroy.ts preflight proof but before this delete-boundary re-check.
-          inspectOpenShellSandboxIdentityFingerprint: () => "b".repeat(64),
-          readTimerMarker: () => null,
-          wipeSandboxState: () => undefined,
-        },
-      });
-
-      expect(result).toMatchObject({
-        ok: false,
-        deleteOutput: expect.stringContaining("Retained sandbox identity"),
-      });
-      expect(runOpenshell).not.toHaveBeenCalled();
+      expect(harness.resolveRetainedSandboxRecoverySpy).not.toHaveBeenCalled();
     },
   );
 

@@ -742,30 +742,22 @@ async function destroySandboxUnlocked(
     selectedRunOpenshell: cleanupRunOpenshell,
     sandbox,
     sandboxConfirmedAbsent,
-    presentSandboxIdentityFingerprint,
   } = destroyPreflight;
-  let confirmedRetainedSandboxIdentityFingerprint: string | null = null;
   if (retainedRecoveryAuthority && !sandboxConfirmedAbsent) {
-    // The live OpenShell sandbox with this mutable name may be the exact
-    // retained sandbox recovery is waiting on, or (rarely) a replacement
-    // sandbox that has since reused the same name. Prove which one this is
-    // from the live sandbox id fingerprint before deciding (#10863): a
-    // confirmed match is provably the retained sandbox, so destroy proceeds
-    // exactly as it would for any other present sandbox — an ordinary user
-    // running `openshell sandbox delete <name>` themselves reaches the same
-    // outcome, so NemoClaw can safely do it once identity is proven.
-    const identityConfirmedMatch =
-      retainedRecoveryAuthority.sandboxIdentityFingerprint !== null &&
-      presentSandboxIdentityFingerprint !== null &&
-      retainedRecoveryAuthority.sandboxIdentityFingerprint === presentSandboxIdentityFingerprint;
-    if (!identityConfirmedMatch) {
-      console.error(
-        `  Refusing to automatically delete retained sandbox '${sandboxName}': OpenShell reports a sandbox present under this name, but NemoClaw could not prove it is the exact retained sandbox (create-attempt label '${retainedRecoveryAuthority.createAttemptNonce}') rather than a different sandbox that has since reused the same name. No sandbox resources were removed. Compare 'openshell sandbox list -o json' against the create-attempt label above; if you confirm it is the same sandbox, 'openshell sandbox delete ${sandboxName}' is the exact command NemoClaw would otherwise run, and is safe to run yourself. After OpenShell confirms the retained sandbox is absent, rerun '${CLI_NAME} ${sandboxName} destroy --yes' to reconcile its verified Docker containers and recovery record.`,
-      );
-      preparedManagedLlamaCppCleanup?.abort();
-      requestSandboxDestroyExit(1);
-    }
-    confirmedRetainedSandboxIdentityFingerprint = retainedRecoveryAuthority.sandboxIdentityFingerprint;
+    // OpenShell has no atomic delete-by-identity primitive: it exposes no
+    // way to bind a mutable-name delete to the retained record's immutable
+    // sandbox id/resource version. Even a fresh identity read immediately
+    // before the delete command cannot close the window where another
+    // OpenShell client removes the retained sandbox and creates a
+    // replacement under the same name between that read and OpenShell
+    // processing the delete (#10863). Automatic deletion of a live retained
+    // sandbox is therefore always fail-closed; a human must confirm identity
+    // out-of-band and run the exact OpenShell command themselves.
+    console.error(
+      `  Refusing to automatically delete retained sandbox '${sandboxName}': OpenShell reports a sandbox present under this name, but NemoClaw cannot safely bind an automatic delete to the retained record (create-attempt label '${retainedRecoveryAuthority.createAttemptNonce}') without an atomic OpenShell delete-by-identity primitive. No sandbox resources were removed. Compare 'openshell sandbox list -o json' against the create-attempt label above; once you have confirmed it is the same sandbox, run 'openshell sandbox delete -g ${retainedRecoveryAuthority.gatewayName} ${sandboxName}' yourself. After OpenShell confirms the sandbox is absent, rerun '${CLI_NAME} ${sandboxName} destroy --yes' to reconcile its verified Docker containers and recovery record.`,
+    );
+    preparedManagedLlamaCppCleanup?.abort();
+    requestSandboxDestroyExit(1);
   }
   // Recheck identity after pre-delete qualification and recoverable journal
   // publication reconciliation, before any sandbox runtime mutation.
@@ -815,14 +807,6 @@ async function destroySandboxUnlocked(
         ? { expectedRuntimeProviderIdentity: initialIdentity.providerIdentity }
         : {}),
       ...(portableContainerAuthority ? { portableContainerAuthority } : {}),
-      ...(retainedRecoveryAuthority && confirmedRetainedSandboxIdentityFingerprint !== null
-        ? {
-            expectedRetainedSandboxIdentity: {
-              gatewayName: retainedRecoveryAuthority.gatewayName,
-              sandboxIdentityFingerprint: confirmedRetainedSandboxIdentityFingerprint,
-            },
-          }
-        : {}),
       verifyForwardPortsReleased: () => teardownSandboxDashboardForward(sandboxName),
       stopInferenceResources: () => stopSandboxInferenceResources(sandboxName, sandbox),
     });

@@ -73,7 +73,7 @@ export function buildCancelRollbackMessage(
         ]
       : [
           "  Its durable identity fingerprint is unavailable; preserve the registry and onboarding recovery state.",
-          "  Ask an OpenShell administrator to establish the exact sandbox identity before recovery or removal.",
+          "  Inspect 'openshell sandbox list -o json' yourself to identify and remove the sandbox; NemoClaw cannot verify its identity without a recorded fingerprint.",
         ]),
     "  NemoClaw did not run OpenShell's mutable-name deletion command because the name may now identify a replacement sandbox.",
     "  Do not delete the sandbox by mutable sandbox name.",
@@ -82,11 +82,11 @@ export function buildCancelRollbackMessage(
       ? [
           `  Run '${cliName()} ${sandboxName} destroy'. If OpenShell confirms the retained sandbox absent, destroy removes only verified residual containers and can clear the matching recovery record.`,
           recoveryContext
-            ? "  If it is still live, give the displayed create-attempt label to an OpenShell administrator for identity-bound removal."
-            : "  If it is still live, preserve the displayed fingerprint and ask an OpenShell administrator for identity-bound removal.",
+            ? "  If it is still live, destroy refuses automatic deletion and prints the exact manual removal command once you confirm identity against the create-attempt label above yourself."
+            : "  If it is still live, preserve the displayed fingerprint; destroy refuses automatic deletion and prints manual removal guidance once you confirm identity yourself.",
         ]
       : [
-          "  NemoClaw cannot clear this recovery record until an OpenShell administrator establishes the exact sandbox identity.",
+          "  NemoClaw cannot clear this recovery record until you manually confirm and remove the sandbox; inspect 'openshell sandbox list -o json' yourself.",
         ]),
   ];
 }
