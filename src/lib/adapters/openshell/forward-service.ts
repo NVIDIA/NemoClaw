@@ -47,9 +47,11 @@ export interface ForwardServiceOwnerOptions {
   readonly platform?: NodeJS.Platform;
   readonly probe?: ForwardServiceOwnerProbe;
   readonly procRoot?: string;
+  readonly procWorkLimit?: number;
 }
 
 const FORWARD_OWNER_PROBE_TIMEOUT_MS = 5_000;
+const LINUX_PROC_WORK_LIMIT = 50_000;
 
 function isPort(value: unknown): value is number {
   return Number.isSafeInteger(value) && Number(value) >= 1 && Number(value) <= 65_535;
@@ -116,8 +118,9 @@ function captureProcess(executable: string, args: readonly string[]) {
   return { status: result.status, stdout: result.stdout ?? "" };
 }
 
-function lsofListenerPids(port: number, probe: ForwardServiceOwnerProbe): string[] {
+function lsofListenerPids(port: number, probe: ForwardServiceOwnerProbe): string[] | null {
   const result = probe("lsof", ["-ti", `:${String(port)}`, "-sTCP:LISTEN"]);
+  if (result.status === null) return null;
   if (result.status !== 0) return [];
   return [
     ...new Set(
@@ -129,7 +132,8 @@ function lsofListenerPids(port: number, probe: ForwardServiceOwnerProbe): string
   ];
 }
 
-function linuxListenerPids(port: number, procRoot: string): string[] {
+function linuxListenerPids(port: number, procRoot: string, workLimit: number): string[] {
+  if (!Number.isSafeInteger(workLimit) || workLimit < 1) return [];
   const portSuffix = `:${port.toString(16).padStart(4, "0").toUpperCase()}`;
   const socketInodes = new Set<string>();
   for (const table of ["tcp", "tcp6"]) {
@@ -151,11 +155,14 @@ function linuxListenerPids(port: number, procRoot: string): string[] {
   if (socketInodes.size === 0) return [];
 
   const pids = new Set<string>();
+  let inspected = 0;
   try {
     for (const entry of readdirSync(procRoot, { withFileTypes: true })) {
       if (!entry.isDirectory() || !/^[1-9]\d*$/u.test(entry.name)) continue;
+      if (++inspected > workLimit) return [];
       try {
         for (const descriptor of readdirSync(path.join(procRoot, entry.name, "fd"))) {
+          if (++inspected > workLimit) return [];
           const link = readlinkSync(path.join(procRoot, entry.name, "fd", descriptor));
           const match = /^socket:\[(\d+)\]$/u.exec(link);
           if (match && socketInodes.has(match[1]!)) {
@@ -177,13 +184,12 @@ function listenerPids(
   port: number,
   platform: NodeJS.Platform,
   procRoot: string,
+  procWorkLimit: number,
   probe: ForwardServiceOwnerProbe,
 ): string[] {
-  return platform === "linux"
-    ? linuxListenerPids(port, procRoot)
-    : platform === "darwin"
-      ? lsofListenerPids(port, probe)
-      : [];
+  const lsof = lsofListenerPids(port, probe);
+  if (lsof !== null || platform !== "linux") return lsof ?? [];
+  return linuxListenerPids(port, procRoot, procWorkLimit);
 }
 
 function executableMatches(actualExecutable: string, expectedExecutable: string): boolean {
@@ -222,7 +228,8 @@ export function isForwardServiceListenerOwner(
   const platform = options.platform ?? process.platform;
   const probe = options.probe ?? captureProcess;
   const procRoot = options.procRoot ?? "/proc";
-  const before = listenerPids(target.localPort, platform, procRoot, probe);
+  const procWorkLimit = options.procWorkLimit ?? LINUX_PROC_WORK_LIMIT;
+  const before = listenerPids(target.localPort, platform, procRoot, procWorkLimit, probe);
   if (before.length !== 1 || !/^[1-9]\d*$/u.test(before[0]!)) return false;
   const pid = before[0]!;
   if (!processExecutableMatches(pid, target, platform, procRoot, probe)) return false;
@@ -230,7 +237,7 @@ export function isForwardServiceListenerOwner(
   if (commandLine.status !== 0) return false;
   const expected = [target.executable, ...buildForwardServiceArgs(target)].join(" ");
   if (commandLine.stdout.trim() !== expected) return false;
-  const after = listenerPids(target.localPort, platform, procRoot, probe);
+  const after = listenerPids(target.localPort, platform, procRoot, procWorkLimit, probe);
   return after.length === 1 && after[0] === pid;
 }
 

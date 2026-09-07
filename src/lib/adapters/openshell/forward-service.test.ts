@@ -131,7 +131,13 @@ describe("OpenShell forward service", () => {
     const expected = [fixture.target.executable, ...buildForwardServiceArgs(fixture.target)].join(
       " ",
     );
-    const probe = vi.fn(() => ({ status: 0, stdout: `${expected}\n` }));
+    const responses = {
+      lsof: { status: null, stdout: "" },
+      ps: { status: 0, stdout: `${expected}\n` },
+    };
+    const probe = vi.fn(
+      (executable: string) => responses[executable as keyof typeof responses] ?? responses.lsof,
+    );
 
     expect(
       isForwardServiceListenerOwner(fixture.target, {
@@ -140,7 +146,7 @@ describe("OpenShell forward service", () => {
         procRoot: fixture.procRoot,
       }),
     ).toBe(true);
-    expect(probe).toHaveBeenCalledOnce();
+    expect(probe).toHaveBeenCalledTimes(3);
     expect(probe).toHaveBeenCalledWith("ps", ["-ww", "-p", "4321", "-o", "args="]);
   });
 
@@ -149,7 +155,13 @@ describe("OpenShell forward service", () => {
     const expected = [fixture.target.executable, ...buildForwardServiceArgs(fixture.target)].join(
       " ",
     );
-    const probe = vi.fn(() => ({ status: 0, stdout: `${expected}\n` }));
+    const responses = {
+      lsof: { status: null, stdout: "" },
+      ps: { status: 0, stdout: `${expected}\n` },
+    };
+    const probe = vi.fn(
+      (executable: string) => responses[executable as keyof typeof responses] ?? responses.lsof,
+    );
 
     expect(
       isForwardServiceListenerOwner(fixture.target, {
@@ -158,7 +170,22 @@ describe("OpenShell forward service", () => {
         procRoot: fixture.procRoot,
       }),
     ).toBe(false);
-    expect(probe).not.toHaveBeenCalled();
+    expect(probe).toHaveBeenCalledOnce();
+  });
+
+  it("denies Linux ownership when the /proc work limit is reached", () => {
+    const fixture = createLinuxOwnerFixture();
+    const probe = vi.fn(() => ({ status: null, stdout: "" }));
+
+    expect(
+      isForwardServiceListenerOwner(fixture.target, {
+        platform: "linux",
+        probe,
+        procRoot: fixture.procRoot,
+        procWorkLimit: 1,
+      }),
+    ).toBe(false);
+    expect(probe).toHaveBeenCalledOnce();
   });
 
   it("detaches the OpenShell child and waits for its local port", () => {

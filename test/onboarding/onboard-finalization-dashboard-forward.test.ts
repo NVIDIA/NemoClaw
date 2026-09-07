@@ -3,15 +3,17 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import type { ForwardServiceTarget } from "../../src/lib/adapters/openshell/forward-service";
 import { createOnboardDashboardHelpers } from "../../src/lib/onboard/dashboard";
 import type { ListSandboxesFn } from "../../src/lib/onboard/dashboard-port";
 
 function harness(options: {
   listSandboxes: ListSandboxesFn;
   isPortBound?: (port: number) => boolean;
-  ownsForward?: () => boolean;
+  ownsForward?: (target: ForwardServiceTarget) => boolean;
 }) {
   const launch = vi.fn();
+  const owns = vi.fn(options.ownsForward ?? (() => false));
   const helpers = createOnboardDashboardHelpers({
     runOpenshell: vi.fn(() => ({ status: 0 })),
     runCaptureOpenshell: vi.fn(() => ""),
@@ -29,12 +31,12 @@ function harness(options: {
     forwardService: {
       executable: () => "/usr/local/bin/openshell",
       launch,
-      owns: vi.fn(options.ownsForward ?? (() => false)),
+      owns,
       resolveGatewayName: () => "nemoclaw",
       retireLegacy: vi.fn(() => 0),
     },
   });
-  return { helpers, launch };
+  return { helpers, launch, owns };
 }
 
 describe("finalization dashboard ForwardTcp launch", () => {
@@ -75,7 +77,7 @@ describe("finalization dashboard ForwardTcp launch", () => {
 
   it("reuses an exactly owned dashboard forward (#11074)", () => {
     vi.stubEnv("CHAT_UI_URL", undefined);
-    const { helpers, launch } = harness({
+    const { helpers, launch, owns } = harness({
       listSandboxes: () => ({
         sandboxes: [{ name: "reonboard-test", dashboardPort: 18_790 }],
       }),
@@ -84,6 +86,17 @@ describe("finalization dashboard ForwardTcp launch", () => {
     });
 
     expect(helpers.ensureFinalizationDashboardForward("reonboard-test")).toBe(18_790);
+    expect(owns).toHaveBeenCalledOnce();
+    expect(owns).toHaveBeenCalledWith({
+      executable: "/usr/local/bin/openshell",
+      gatewayName: "nemoclaw",
+      workspace: "default",
+      sandboxName: "reonboard-test",
+      localHost: "127.0.0.1",
+      localPort: 18_790,
+      targetHost: "127.0.0.1",
+      targetPort: 18_790,
+    });
     expect(launch).not.toHaveBeenCalled();
     expect(process.env.CHAT_UI_URL).toBe("http://127.0.0.1:18790");
   });

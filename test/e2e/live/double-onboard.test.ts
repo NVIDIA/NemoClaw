@@ -127,6 +127,7 @@ async function waitForDashboardReachability(
       [
         "--silent",
         "--show-error",
+        "--fail",
         "--output",
         "/dev/null",
         "--max-time",
@@ -145,6 +146,45 @@ async function waitForDashboardReachability(
     if (attempt < PROBE_ATTEMPTS) await sleep(PROBE_DELAY_MS);
   }
   return { reachable, output };
+}
+
+async function inspectForwardListener(
+  host: HostCliClient,
+  port: string,
+  sandboxName: string,
+  artifactName: string,
+): Promise<ShellProbeResult> {
+  return await host.command(
+    "bash",
+    [
+      "-lc",
+      [
+        "set -euo pipefail",
+        'pid="$(lsof -ti ":$1" -sTCP:LISTEN)"',
+        '[[ "$pid" =~ ^[1-9][0-9]*$ ]]',
+        'args="$(ps -ww -p "$pid" -o args=)"',
+        'expected="--gateway nemoclaw --workspace default forward service $2 --target-port $1 --target-host 127.0.0.1 --local 127.0.0.1:$1"',
+        '[[ "$args" == *"$expected" ]]',
+        'printf "%s\\t%s\\n" "$pid" "$args"',
+      ].join("\n"),
+      "nemoclaw-forward-listener",
+      port,
+      sandboxName,
+    ],
+    { artifactName, env: commandEnv(), timeoutMs: 15_000 },
+  );
+}
+
+async function inspectNoListener(
+  host: HostCliClient,
+  port: string,
+  artifactName: string,
+): Promise<ShellProbeResult> {
+  return await host.command(
+    "lsof",
+    ["-ti", `:${port}`, "-sTCP:LISTEN"],
+    { artifactName, env: commandEnv(), timeoutMs: 15_000 },
+  );
 }
 
 async function cleanupDoubleOnboardState(
@@ -525,6 +565,12 @@ test(
   });
   const portAfterFirst =
     dashboardPortFromList(listAfterFirst.stdout, SANDBOX_A) ?? "<missing first dashboard port>";
+  const listenerBeforeSecond = await inspectForwardListener(
+    host,
+    portAfterFirst,
+    SANDBOX_A,
+    "phase-2-dashboard-listener-before-second-onboard",
+  );
 
   progress.phase("re-onboard same sandbox on existing gateway");
   // Phase 3: second onboard with the same name must reuse the healthy gateway.
@@ -567,7 +613,16 @@ test(
     true,
     "phase-3-dashboard-after-second-onboard",
   );
-  expect(dashboardAfterSecond.reachable, dashboardAfterSecond.output).toBe(true);
+  const listenerAfterSecond = await inspectForwardListener(
+    host,
+    portAfterSecond ?? "",
+    SANDBOX_A,
+    "phase-3-dashboard-listener-after-second-onboard",
+  );
+  expect(
+    `${dashboardAfterSecond.reachable}:${listenerBeforeSecond.exitCode}:${listenerBeforeSecond.timedOut}:${listenerAfterSecond.exitCode}:${listenerAfterSecond.timedOut}:${resultText(listenerBeforeSecond) === resultText(listenerAfterSecond)}`,
+    `${dashboardAfterSecond.output}\n${resultText(listenerBeforeSecond)}\n${resultText(listenerAfterSecond)}`,
+  ).toBe("true:0:false:0:false:true");
 
   progress.phase("recreate same sandbox on existing gateway");
   const gatewayBeforeRecreate = await gatewayRuntimeId(gateway);
@@ -654,14 +709,32 @@ test(
     true,
     "phase-4-dashboard-a-before-stop",
   );
-  expect(dashboardABeforeStop.reachable, dashboardABeforeStop.output).toBe(true);
+  const listenerABeforeStop = await inspectForwardListener(
+    host,
+    portA ?? "",
+    SANDBOX_A,
+    "phase-4-dashboard-listener-a-before-stop",
+  );
+  expect(
+    `${dashboardABeforeStop.reachable}:${listenerABeforeStop.exitCode}:${listenerABeforeStop.timedOut}`,
+    `${dashboardABeforeStop.output}\n${resultText(listenerABeforeStop)}`,
+  ).toBe("true:0:false");
   const dashboardBBeforeStop = await waitForDashboardReachability(
     host,
     portB ?? "",
     true,
     "phase-4-dashboard-b-before-stop",
   );
-  expect(dashboardBBeforeStop.reachable, dashboardBBeforeStop.output).toBe(true);
+  const listenerBBeforeStop = await inspectForwardListener(
+    host,
+    portB ?? "",
+    SANDBOX_B,
+    "phase-4-dashboard-listener-b-before-stop",
+  );
+  expect(
+    `${dashboardBBeforeStop.reachable}:${listenerBBeforeStop.exitCode}:${listenerBBeforeStop.timedOut}`,
+    `${dashboardBBeforeStop.output}\n${resultText(listenerBBeforeStop)}`,
+  ).toBe("true:0:false");
 
   progress.phase("stop sibling sandbox without disturbing the first forward");
   const stopB = await command(host, [SANDBOX_B, "stop"], {
@@ -677,7 +750,15 @@ test(
     false,
     "phase-4-dashboard-b-after-stop",
   );
-  expect(releasedForwardB.reachable, releasedForwardB.output).toBe(false);
+  const listenerBAfterStop = await inspectNoListener(
+    host,
+    portB ?? "",
+    "phase-4-dashboard-listener-b-after-stop",
+  );
+  expect(
+    `${releasedForwardB.reachable}:${listenerBAfterStop.exitCode}:${listenerBAfterStop.timedOut}`,
+    `${releasedForwardB.output}\n${resultText(listenerBAfterStop)}`,
+  ).toBe("false:1:false");
 
   const stoppedStatusB = await command(host, [SANDBOX_B, "status"], {
     artifactName: "phase-4-nemoclaw-status-sandbox-b-after-stop",
@@ -695,7 +776,16 @@ test(
     true,
     "phase-4-dashboard-a-after-b-stop",
   );
-  expect(retainedForwardAAfterStop.reachable, retainedForwardAAfterStop.output).toBe(true);
+  const listenerAAfterStop = await inspectForwardListener(
+    host,
+    portA ?? "",
+    SANDBOX_A,
+    "phase-4-dashboard-listener-a-after-b-stop",
+  );
+  expect(
+    `${retainedForwardAAfterStop.reachable}:${listenerAAfterStop.exitCode}:${listenerAAfterStop.timedOut}:${resultText(listenerAAfterStop) === resultText(listenerABeforeStop)}`,
+    `${retainedForwardAAfterStop.output}\n${resultText(listenerABeforeStop)}\n${resultText(listenerAAfterStop)}`,
+  ).toBe("true:0:false:true");
 
   const startB = await command(host, [SANDBOX_B, "start"], {
     artifactName: "phase-4-nemoclaw-start-sandbox-b",
@@ -709,7 +799,16 @@ test(
     true,
     "phase-4-dashboard-b-after-start",
   );
-  expect(restoredForwardBAfterStart.reachable, restoredForwardBAfterStart.output).toBe(true);
+  const listenerBAfterStart = await inspectForwardListener(
+    host,
+    portB ?? "",
+    SANDBOX_B,
+    "phase-4-dashboard-listener-b-after-start",
+  );
+  expect(
+    `${restoredForwardBAfterStart.reachable}:${listenerBAfterStart.exitCode}:${listenerBAfterStart.timedOut}`,
+    `${restoredForwardBAfterStart.output}\n${resultText(listenerBBeforeStop)}\n${resultText(listenerBAfterStart)}`,
+  ).toBe("true:0:false");
 
   progress.phase("replace sandbox after stale registry refusal");
   // Phase 5: direct OpenShell deletion leaves a stale registry entry that

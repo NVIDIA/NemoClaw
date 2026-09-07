@@ -6,6 +6,7 @@ import {
   withSelectedOpenShellCommandOptions,
 } from "../../adapters/openshell/command-argv";
 import {
+  isForwardServiceListenerOwner,
   launchForwardService,
   type ForwardServiceTarget,
 } from "../../adapters/openshell/forward-service";
@@ -350,7 +351,7 @@ export function isSandboxForwardHealthy(
 export function isSandboxPortForwardHealthy(
   sandboxName: string,
   port: number,
-  _expectedBind?: string,
+  expectedBind?: string,
   runtimeSelection?: OpenShellRuntimeSelection,
 ): SandboxForwardHealth {
   const sandbox = registry.getSandbox(sandboxName);
@@ -376,7 +377,18 @@ export function isSandboxPortForwardHealthy(
   ) {
     return false;
   }
-  return true;
+  const executable = resolveOpenshell();
+  if (!executable) return false;
+  return isForwardServiceListenerOwner(
+    forwardServiceTarget(
+      executable,
+      gatewayName,
+      sandboxName,
+      port,
+      expectedBind ?? "127.0.0.1",
+      runtimeSelection?.workspace ?? "default",
+    ),
+  );
 }
 
 export function ensureSandboxPortForwardForPort(
