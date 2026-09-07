@@ -1,27 +1,252 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { buildHermesMcpStatusCommand } from "../../../src/lib/actions/sandbox/mcp-bridge-adapter-status";
+import {
+  buildHermesMcpStatusCommand,
+  OPENCLAW_MCPORTER_ROOT,
+} from "../../../src/lib/actions/sandbox/mcp-bridge-adapter-status";
 import { buildMcpCredentialRevisionObservationCommand } from "../../../src/lib/actions/sandbox/mcp-bridge-provider";
 import type { McpAttachedCredentialRevision } from "../../../src/lib/actions/sandbox/mcp-bridge-provider-readiness";
+import { shellQuote } from "../../../src/lib/core/shell-quote";
 import type { McpBridgeEntry } from "../../../src/lib/state/registry";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
-import { assertExitZero } from "../fixtures/clients/command.ts";
+import { assertExitZero, resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { MCP_BRIDGE_TEST_CREDENTIALS } from "../fixtures/mcp-bridge-credentials.ts";
+import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { runBoundedRetry, type RetryEvidence } from "../../../tools/e2e/retry-evidence.mts";
 import {
+  buildHermesMcpChatProbeScript,
+  HERMES_MCP_FAILURE_CAPTURE_BYTES,
   type HermesMcpCommandResult,
   isHermesGatewayDrainingResponse,
 } from "./mcp-bridge-hermes-http.ts";
+import { MCP_PROVIDER_REWRITE_PROBE_SOURCE } from "./mcp-provider-rewrite-probe.ts";
+import { FAKE_MCP_STATUS_RESULT_TOKEN } from "./mcp-bridge-servers.ts";
 
 const ANSI_ESCAPE = /\u001b\[[0-9;]*m/gu;
 const HERMES_GATEWAY_DRAINING_RETRIES = 3;
 const HERMES_GATEWAY_DRAINING_RETRY_DELAY_MS = 5_000;
 const HERMES_MCP_STATUS_RETRY_DELAY_MS = 5_000;
 export const MCP_BRIDGE_TEST_REDACTION_VALUES = Object.values(MCP_BRIDGE_TEST_CREDENTIALS);
+export const MCP_BRIDGE_DENIED_TOOL_NAME = "fake_status";
+export const MCP_BRIDGE_DENIED_TOOL_SELECTOR = "fake_s*";
+export const HERMES_MCP_ENV_LOAD_COMMANDS = [
+  "set -a",
+  "[ ! -f /sandbox/.hermes/.env ] || . /sandbox/.hermes/.env",
+  "set +a",
+] as const;
+const MCP_BRIDGE_DENIED_TOOL_PROMPT =
+  "Run the managed denied-tool policy probe and return its result verbatim.";
+const MCP_BRIDGE_DENIED_TOOL_RESULT = "policy_denied";
+const MCP_DENIAL_AUDIT_RE =
+  /\bJSONRPC_L7_REQUEST decision=deny rule_methods=tools\/call tools=fake_status\b[^\r\n]*\breason=[^\r\n]*deny rule/iu;
+const MCP_DENIAL_AUDIT_ATTEMPTS = 5;
+const MCP_DENIAL_AUDIT_RETRY_MS = 250;
+
+export const HERMES_MCP_DENIED_TOOL_PROBE = {
+  mode: "bridge" as const,
+  promptMarker: MCP_BRIDGE_DENIED_TOOL_PROMPT,
+  resultToken: MCP_BRIDGE_DENIED_TOOL_RESULT,
+  toolName: `mcp__fake__${MCP_BRIDGE_DENIED_TOOL_NAME}`,
+};
+export const DEEPAGENTS_MCP_DENIED_TOOL_PROBE = {
+  mode: "progressive" as const,
+  promptMarker: MCP_BRIDGE_DENIED_TOOL_PROMPT,
+  query: MCP_BRIDGE_DENIED_TOOL_NAME,
+  resultToken: MCP_BRIDGE_DENIED_TOOL_RESULT,
+  toolName: `fake_${MCP_BRIDGE_DENIED_TOOL_NAME}`,
+};
+
+export async function runDeniedMcpToolCall(host: HostCliClient, options: {
+  agent: "openclaw" | "hermes" | "langchain-deepagents-code";
+  artifactName: string;
+  deniedTool?: string;
+  sandbox: SandboxClient;
+  sandboxName: string;
+  serverName: string;
+  requests: ReadonlyArray<{ rpcMethod?: string }>;
+}): Promise<{ after: number; before: number; policyDenied: boolean; result: ShellProbeResult }> {
+  const countToolCalls = () =>
+    options.requests.filter((request) => request.rpcMethod === "tools/call").length;
+  const readDenialAuditEvents = async (artifactName: string): Promise<string[] | null> => {
+    const logs = await host.command(
+      host.openshellCommandPath,
+      ["logs", options.sandboxName, "-n", "500", "--source", "all", "--since", "2m"],
+      {
+        artifactName,
+        env: buildAvailabilityProbeEnv(),
+        redactionValues: MCP_BRIDGE_TEST_REDACTION_VALUES,
+        timeoutMs: 30_000,
+      },
+    );
+    if (logs.timedOut || logs.exitCode !== 0) return null;
+    return resultText(logs)
+      .split(/\r?\n/u)
+      .filter((line) => MCP_DENIAL_AUDIT_RE.test(line));
+  };
+  const audit = await host.command(
+    host.openshellCommandPath,
+    ["settings", "set", options.sandboxName, "--key", "ocsf_json_enabled", "--value", "true"],
+    {
+      artifactName: `${options.artifactName}-enable-audit`,
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  const denialAuditBefore =
+    !audit.timedOut && audit.exitCode === 0
+      ? await readDenialAuditEvents(`${options.artifactName}-audit-before`)
+      : null;
+  const priorDenialAuditEvents = new Set(denialAuditBefore ?? []);
+  const before = countToolCalls();
+  const payload = JSON.stringify({
+    model: "mock/mcp-bridge",
+    messages: [{ role: "user", content: MCP_BRIDGE_DENIED_TOOL_PROMPT }],
+    max_tokens: 256,
+  });
+  const redactionValues = [
+    ...MCP_BRIDGE_TEST_REDACTION_VALUES,
+    MCP_BRIDGE_DENIED_TOOL_PROMPT,
+    payload,
+  ];
+  const command =
+    options.agent === "openclaw"
+      ? `nemoclaw-start mcporter --root ${shellQuote(OPENCLAW_MCPORTER_ROOT)} call ${options.serverName}.${options.deniedTool ?? MCP_BRIDGE_DENIED_TOOL_NAME} --args '{}' --output json`
+      : options.agent === "hermes"
+        ? [
+            ...HERMES_MCP_ENV_LOAD_COMMANDS,
+            buildHermesMcpChatProbeScript(payload, MCP_BRIDGE_DENIED_TOOL_RESULT),
+          ].join("\n")
+        : `nemoclaw-start dcode -n ${JSON.stringify(MCP_BRIDGE_DENIED_TOOL_PROMPT)}`;
+  const run = (artifactName: string) =>
+    options.sandbox.execShell(
+      options.sandboxName,
+      trustedSandboxShellScript(["set -eu", command].join("\n")),
+      {
+        artifactName,
+        captureLimitBytes:
+          options.agent === "hermes" ? HERMES_MCP_FAILURE_CAPTURE_BYTES : undefined,
+        env: buildAvailabilityProbeEnv(),
+        redactionValues: options.agent === "hermes" ? redactionValues : [],
+        timeoutMs: options.agent === "openclaw" ? 90_000 : 5 * 60_000,
+      },
+    );
+  const result = await run(options.artifactName);
+  let policyDenied = false;
+  for (
+    let attempt = 1;
+    denialAuditBefore !== null && attempt <= MCP_DENIAL_AUDIT_ATTEMPTS;
+    attempt += 1
+  ) {
+    const denialAuditAfter = await readDenialAuditEvents(
+      `${options.artifactName}-audit-after-${String(attempt)}`,
+    );
+    policyDenied =
+      denialAuditAfter?.some((event) => !priorDenialAuditEvents.has(event)) ?? false;
+    if (policyDenied) break;
+    if (attempt < MCP_DENIAL_AUDIT_ATTEMPTS) {
+      await new Promise((resolve) => setTimeout(resolve, MCP_DENIAL_AUDIT_RETRY_MS));
+    }
+  }
+  return {
+    after: countToolCalls(),
+    before,
+    policyDenied,
+    result,
+  };
+}
+
+export async function runOpenClawDeniedToolUpdateProof(
+  host: HostCliClient,
+  sandbox: SandboxClient,
+  requests: Array<{ auth: string; rpcMethod?: string; rpcToolName?: string }>,
+  sandboxName: string,
+): Promise<{
+  after: number;
+  before: number;
+  clear: ShellProbeResult;
+  commandsSucceeded: boolean;
+  call: ShellProbeResult;
+  lastCall: { auth: string; rpcMethod?: string; rpcToolName?: string } | undefined;
+  replace: ShellProbeResult;
+}> {
+  const commandOptions = (artifactName: string) => ({
+    artifactName,
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 90_000,
+  });
+  const clear = await host.nemoclaw(
+    [sandboxName, "mcp", "update", "fake", "--clear-deny-tools"],
+    commandOptions("openclaw-clear-denied-tools"),
+  );
+  const before = requests.filter((request) => request.rpcMethod === "tools/call").length;
+  const call = await sandbox.execShell(
+    sandboxName,
+    trustedSandboxShellScript(
+      `nemoclaw-start mcporter --root ${shellQuote(OPENCLAW_MCPORTER_ROOT)} call fake.${MCP_BRIDGE_DENIED_TOOL_NAME} --args '{}' --output json`,
+    ),
+    commandOptions("openclaw-formerly-denied-tool-call"),
+  );
+  const calls = requests.filter((request) => request.rpcMethod === "tools/call");
+  const replace = await host.nemoclaw(
+    [sandboxName, "mcp", "update", "fake", "--deny-tool", MCP_BRIDGE_DENIED_TOOL_SELECTOR],
+    commandOptions("openclaw-restore-denied-tool"),
+  );
+  const denied = await runDeniedMcpToolCall(host, {
+    agent: "openclaw",
+    artifactName: "openclaw-restored-denied-tool-call",
+    deniedTool: MCP_BRIDGE_DENIED_TOOL_NAME,
+    requests,
+    sandbox,
+    sandboxName,
+    serverName: "fake",
+  });
+  const commandsSucceeded =
+    [clear, call, replace].every((result) => !result.timedOut && result.exitCode === 0) &&
+    resultText(call).includes(FAKE_MCP_STATUS_RESULT_TOKEN) &&
+    calls.at(-1)?.rpcMethod === "tools/call" &&
+    calls.at(-1)?.rpcToolName === MCP_BRIDGE_DENIED_TOOL_NAME &&
+    !denied.result.timedOut &&
+    denied.result.exitCode !== null &&
+    denied.policyDenied &&
+    /policy_denied|blocked by deny rule/iu.test(resultText(denied.result)) &&
+    denied.after === denied.before;
+  return {
+    after: calls.length,
+    before,
+    call,
+    clear,
+    commandsSucceeded,
+    lastCall: calls.at(-1),
+    replace,
+  };
+}
+
+export async function runMcpProviderRewriteProbe(
+  sandbox: SandboxClient,
+  sandboxName: string,
+  targetUrl: string,
+  method: string,
+  expectation: "allow" | "deny" | "deny-strict",
+  artifactName: string,
+  credentialKey = "FAKE_MCP_SECRET",
+): Promise<ShellProbeResult> {
+  return sandbox.execShell(
+    sandboxName,
+    trustedSandboxShellScript(
+      [
+        "set -eu",
+        `nemoclaw-start node - ${shellQuote(targetUrl)} ${shellQuote(method)} ${shellQuote(expectation)} ${shellQuote(credentialKey)} <<'NEMOCLAW_MCP_PROVIDER_REWRITE_PROBE'`,
+        MCP_PROVIDER_REWRITE_PROBE_SOURCE,
+        "NEMOCLAW_MCP_PROVIDER_REWRITE_PROBE",
+      ].join("\n"),
+    ),
+    { artifactName, env: buildAvailabilityProbeEnv(), timeoutMs: 90_000 },
+  );
+}
 const OPENCLAW_BASELINE_SCOPE_CAUSE =
   "its canonical CLI device did not receive the required baseline scopes";
 const HERMES_RESTART_TRANSPORT_FAILURE_SUFFIX = [

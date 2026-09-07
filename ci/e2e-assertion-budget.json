@@ -23,8 +23,8 @@
       "throwGuards": 87,
       "objectFieldAssertions": 245,
       "assertionPoints": 2834,
-      "generatedProbeBlocks": 126,
-      "generatedProbeConditions": 340
+      "generatedProbeBlocks": 125,
+      "generatedProbeConditions": 339
     },
     "unique": {
       "expectCalls": 2307,

@@ -389,6 +389,9 @@ function projectMcpState(value: unknown): unknown {
           adapter: bridge.adapter ?? null,
           url: bridge.url,
           env: [...bridge.env],
+          denyTools: bridge.denyTools ? [...bridge.denyTools] : null,
+          pendingDenyTools:
+            bridge.pendingDenyTools !== undefined ? [...bridge.pendingDenyTools] : null,
           trustedPrivateHost: bridge.trustedPrivateHost ?? null,
           allowedIps: bridge.allowedIps ? [...bridge.allowedIps] : null,
           providerName: bridge.providerName ?? null,
