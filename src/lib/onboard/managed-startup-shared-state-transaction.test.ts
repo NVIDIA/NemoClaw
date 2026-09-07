@@ -839,11 +839,11 @@ describe("managed startup shared-state transaction", () => {
     expect(fs.existsSync(transactionDirectory)).toBe(false);
   });
 
-  it("does not rewrite unchanged shield-like files or directory metadata", () => {
+  it("does not rewrite unchanged files or directory metadata", () => {
     const root = agentRoot("openclaw");
     fs.mkdirSync(root, { mode: 0o755 });
     const config = path.join(root, "openclaw.json");
-    fs.writeFileSync(config, "shielded\n");
+    fs.writeFileSync(config, "unchanged\n");
     fs.chmodSync(config, 0o444);
     beginManagedStartupSharedStateTransaction(managedStartupE2eProfile("openclaw"), options);
     const rename = vi.spyOn(fs, "renameSync");
@@ -852,7 +852,7 @@ describe("managed startup shared-state transaction", () => {
     expect(rollbackManagedStartupSharedStateTransaction("openclaw", options)).toBe(true);
     expect(rename).not.toHaveBeenCalled();
     expect(chown).not.toHaveBeenCalled();
-    expect(fs.readFileSync(config, "utf8")).toBe("shielded\n");
+    expect(fs.readFileSync(config, "utf8")).toBe("unchanged\n");
     expect(mode(config)).toBe(0o444);
   });
 

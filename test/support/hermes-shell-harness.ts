@@ -67,9 +67,6 @@ export function runHermesSandboxInitPreludeWithFakePath(
     const fakeBin = path.join(tmpDir, "bin");
     const fakeInit = path.join(tmpDir, "sandbox-init.sh");
     const fakeSupervisor = path.join(tmpDir, "gateway-supervisor.sh");
-    const fakeGatePython = path.join(tmpDir, "gate-python");
-    const fakeGateHelper = path.join(tmpDir, "runtime-state-mutation-startup-gate.py");
-    const fakeSetpriv = path.join(tmpDir, "setpriv");
     const marker = path.join(tmpDir, "dirname-called");
     const sourcePathLog = path.join(tmpDir, "source-path.log");
     const scriptPath = path.join(tmpDir, "run.sh");
@@ -87,20 +84,6 @@ export function runHermesSandboxInitPreludeWithFakePath(
       ].join("\n"),
     );
     fs.writeFileSync(fakeSupervisor, "# supervisor fixture\n");
-    fs.writeFileSync(fakeGatePython, "#!/usr/bin/env bash\nexit 0\n", { mode: 0o700 });
-    fs.writeFileSync(fakeGateHelper, "# startup gate fixture\n");
-    fs.writeFileSync(
-      fakeSetpriv,
-      [
-        "#!/usr/bin/env bash",
-        'while [ "$#" -gt 0 ]; do',
-        '  if [ "$1" = "--" ]; then shift; break; fi',
-        "  shift",
-        "done",
-        'exec "$@"',
-      ].join("\n"),
-      { mode: 0o700 },
-    );
 
     const src = fs.readFileSync(startScript, "utf-8");
     const start = src.indexOf(
@@ -110,9 +93,6 @@ export function runHermesSandboxInitPreludeWithFakePath(
     assert(start >= 0 && end >= 0, "Hermes start.sh prelude markers not found");
     const prelude = src
       .slice(start, end)
-      .replaceAll("/opt/hermes/.venv/bin/python3", fakeGatePython)
-      .replaceAll("/usr/local/lib/nemoclaw/runtime-state-mutation-startup-gate.py", fakeGateHelper)
-      .replaceAll("/usr/bin/setpriv", fakeSetpriv)
       .replaceAll("/usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh", envWrapper)
       .replaceAll("/usr/local/lib/nemoclaw/sandbox-init.sh", fakeInit)
       .replaceAll("/usr/local/lib/nemoclaw/gateway-supervisor.sh", fakeSupervisor);

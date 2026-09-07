@@ -35,10 +35,7 @@ import {
   managedStartupStateRoots,
   managedStartupWorkspaceRoot,
 } from "../managed-startup/state-roots";
-import {
-  getChannelsFromPlan,
-  getMessagingChannelConfigFromPlan,
-} from "../messaging-plan-session";
+import { getChannelsFromPlan, getMessagingChannelConfigFromPlan } from "../messaging-plan-session";
 import type { MessagingTokenDef } from "../messaging-prep";
 import { resolveSandboxBuildContext, resolveSandboxBuildPatch } from "../prepared-dcode-rebuild";
 import {
@@ -395,6 +392,7 @@ export interface PrepareOnboardSandboxWorkloadLaunchInput {
     readonly intent: SandboxCreateIntent;
     readonly policylessCreate?: boolean;
     readonly deferSandboxEffectsUntilIdentityVerification?: boolean;
+    readonly skipProviderEffects?: boolean;
     readonly rebindMessagingTokenDefs: () => Promise<readonly MessagingTokenDef[]>;
     readonly runProviderPreDeleteCleanup: MaterializeSandboxCreatePlanInput["runProviderPreDeleteCleanup"];
     readonly upsertMessagingProviders: MaterializeSandboxCreatePlanInput["upsertMessagingProviders"];
@@ -471,6 +469,7 @@ export async function prepareOnboardSandboxWorkloadLaunch(
     policylessCreate: input.plan.policylessCreate,
     deferSandboxEffectsUntilIdentityVerification:
       input.plan.deferSandboxEffectsUntilIdentityVerification,
+    skipProviderEffects: input.plan.skipProviderEffects,
     messagingTokenDefs: [...messagingTokenDefs],
     messagingConfig:
       input.messagingConfig ?? getMessagingChannelConfigFromPlan(input.plannedMessagingPlan),

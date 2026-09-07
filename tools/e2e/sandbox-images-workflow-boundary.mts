@@ -265,7 +265,7 @@ function validateCanonicalAuth(errors: string[], auth: SandboxImagesWorkflowStep
     `if printf '%s' "\${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "\${DOCKERHUB_USERNAME}" --password-stdin; then`,
     "if ((attempt < login_attempts)); then",
     'sleep "${retry_seconds}"',
-    'Docker Hub login failed after ${login_attempts} attempts',
+    "Docker Hub login failed after ${login_attempts} attempts",
   ];
   for (const fragment of requiredFragments) {
     if (!run.includes(fragment)) {
@@ -1005,109 +1005,6 @@ function validateHermesImageReuse(errors: string[], workflow: SandboxImagesWorkf
   }
 }
 
-function validateStateDirGuardMetadataImageReuse(
-  errors: string[],
-  workflow: SandboxImagesWorkflow,
-): void {
-  const jobName = "state-dir-guard-metadata";
-  const job = workflow.jobs[jobName] ?? {};
-  const expectedNeeds = ["build-sandbox-images", "build-hermes-sandbox-image"];
-  if (!isDeepStrictEqual(job.needs, expectedNeeds)) {
-    errors.push("state-dir guard metadata must depend on both production image producers");
-  }
-  if (job["timeout-minutes"] !== 30) {
-    errors.push("state-dir guard metadata job must retain its 30-minute budget");
-  }
-
-  const expectedEnv = {
-    E2E_ARTIFACT_DIR: "${{ github.workspace }}/e2e-artifacts/live/state-dir-guard-metadata",
-    E2E_TARGET_ID: "state-dir-guard-metadata",
-    NEMOCLAW_RUN_LIVE_E2E: "1",
-    NEMOCLAW_OPENCLAW_TEST_IMAGE: "nemoclaw-production",
-    NEMOCLAW_HERMES_TEST_IMAGE: "nemoclaw-hermes-production",
-  };
-  if (!isDeepStrictEqual(record(job.env), expectedEnv)) {
-    errors.push("state-dir guard metadata must consume both named prebuilt production images");
-  }
-  for (const stepName of ["Set up Node", "Install root dependencies"]) {
-    if (steps(job).filter((step) => step.name === stepName).length !== 1) {
-      errors.push(`${jobName} must run '${stepName}' exactly once`);
-    }
-  }
-  if (findStep(job, AUTH_STEP_NAME)) {
-    errors.push("state-dir guard metadata must not authenticate to Docker Hub");
-  }
-  const allRuns = steps(job)
-    .map((step) => step.run ?? "")
-    .join("\n");
-  if (/\bdocker\s+build\b/u.test(allRuns)) {
-    errors.push("state-dir guard metadata must not rebuild either production image");
-  }
-  for (const producerName of expectedNeeds) {
-    const producerRuns = steps(workflow.jobs[producerName] ?? {})
-      .map((step) => step.run ?? "")
-      .join("\n");
-    if (producerRuns.includes("test/e2e/live/state-dir-guard-metadata.test.ts")) {
-      errors.push(`${producerName} must not run the failure-isolated state-dir guard probe`);
-    }
-  }
-
-  const openclawDownload = requireStep(errors, jobName, job, "Download OpenClaw production image");
-  const hermesDownload = requireStep(errors, jobName, job, "Download Hermes production image");
-  for (const [label, step, expectedWith] of [
-    ["OpenClaw", openclawDownload, { name: "isolation-image", path: "/tmp" }],
-    ["Hermes", hermesDownload, { name: "hermes-isolation-image", path: "/tmp" }],
-  ] as const) {
-    if (
-      step.uses !== HERMES_DOWNLOAD_ARTIFACT_ACTION ||
-      !isDeepStrictEqual(record(step.with), expectedWith)
-    ) {
-      errors.push(`state-dir guard metadata must download the saved ${label} production image`);
-    }
-  }
-
-  const load = requireStep(errors, jobName, job, "Load production images");
-  for (const fragment of [
-    "/tmp/isolation-image.tar.gz | docker load",
-    "/tmp/hermes-isolation-image.tar.gz | docker load",
-    "docker image inspect nemoclaw-production",
-    "docker image inspect nemoclaw-hermes-production",
-  ]) {
-    if (!(load.run ?? "").includes(fragment)) {
-      errors.push(`state-dir guard metadata image load must include ${fragment}`);
-    }
-  }
-  const tools = requireStep(errors, jobName, job, "Install filesystem metadata tools");
-  for (const fragment of [
-    "sudo apt-get install --yes --no-install-recommends acl attr",
-    "command -v setfacl getfacl setfattr getfattr",
-  ]) {
-    if (!(tools.run ?? "").includes(fragment)) {
-      errors.push(`state-dir guard metadata tool setup must include ${fragment}`);
-    }
-  }
-  const probe = requireStep(errors, jobName, job, "Run installed state-dir guard metadata test");
-  if (probe["timeout-minutes"] !== 15) {
-    errors.push("state-dir guard metadata probe must retain its 15-minute budget");
-  }
-  if (!(probe.run ?? "").includes("test/e2e/live/state-dir-guard-metadata.test.ts")) {
-    errors.push("state-dir guard metadata step must run its focused live Vitest target");
-  }
-  const upload = requireStep(errors, jobName, job, "Upload state-dir guard metadata artifacts");
-  if (upload.if !== "always()" || upload.uses !== "./.github/actions/upload-e2e-artifacts") {
-    errors.push("state-dir guard metadata must always use the shared E2E artifact uploader");
-  }
-  if (
-    stepIndex(job, openclawDownload.name ?? "") >= stepIndex(job, load.name ?? "") ||
-    stepIndex(job, hermesDownload.name ?? "") >= stepIndex(job, load.name ?? "") ||
-    stepIndex(job, load.name ?? "") >= stepIndex(job, tools.name ?? "") ||
-    stepIndex(job, tools.name ?? "") >= stepIndex(job, probe.name ?? "") ||
-    stepIndex(job, probe.name ?? "") >= stepIndex(job, upload.name ?? "")
-  ) {
-    errors.push("state-dir guard metadata image handoff and evidence steps are out of order");
-  }
-}
-
 export function readSandboxImagesWorkflow(
   workflowPath = DEFAULT_WORKFLOW_PATH,
 ): SandboxImagesWorkflow {
@@ -1177,7 +1074,6 @@ export function validateSandboxImagesWorkflow(
   validateMessagingPlanImageBoundary(errors, workflow);
   validateRuntimeImageReuse(errors, workflow);
   validateHermesImageReuse(errors, workflow);
-  validateStateDirGuardMetadataImageReuse(errors, workflow);
   return errors;
 }
 

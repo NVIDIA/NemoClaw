@@ -10,7 +10,9 @@ import {
   removeGeneratedPolicy,
 } from "./mcp-bridge-policy";
 import {
+  getMcpProviderInspectionRuntimeSelection,
   inspectMcpProvider,
+  type McpProviderInspectionRuntimeSelection,
   type McpProviderInspection,
   providerMatchesManagedCredential,
   providerShapeDetail,
@@ -31,6 +33,8 @@ export interface McpDestroyPreparation {
   destroyAlreadyPrepared: boolean;
   /** True when a previous destroy already confirmed the sandbox was absent. */
   destroyAlreadyPending: boolean;
+  /** One authority-derived OpenShell target frozen for this destroy attempt. */
+  runtimeSelection?: McpProviderInspectionRuntimeSelection;
   /** True when `--force` continued without scrubbing the retained-volume adapter entry. */
   adapterScrubSkipped?: true;
 }
@@ -66,20 +70,29 @@ function mcpBridgeEntriesEqual(left: McpBridgeEntry, right: McpBridgeEntry): boo
 export async function discardSafeIncompleteMcpAdds(
   sandboxName: string,
   sandbox: SandboxEntry,
-  options: { sandboxAbsent?: boolean } = {},
+  options: {
+    runtimeSelection?: McpProviderInspectionRuntimeSelection;
+    sandboxAbsent?: boolean;
+  } = {},
 ): Promise<SandboxEntry> {
   const bridges = bridgeState(sandbox);
   const providerlessCandidates = Object.values(bridges).filter(
     (entry) => entry.addState === "preflighted" && !entry.providerId,
   );
-  if (providerlessCandidates.length > 0) await ensureSandboxGatewaySelected(sandboxName);
+  const providerRuntimeSelection =
+    providerlessCandidates.length > 0
+      ? (options.runtimeSelection ?? getMcpProviderInspectionRuntimeSelection(sandbox))
+      : undefined;
+  if (providerRuntimeSelection) {
+    await ensureSandboxGatewaySelected(sandboxName, providerRuntimeSelection);
+  }
   const remainingEntries: Array<[string, McpBridgeEntry]> = [];
   const providerlessPreflighted: McpBridgeEntry[] = [];
   for (const [server, entry] of Object.entries(bridges)) {
     if (entry.addState === "prepared") continue;
     if (entry.addState === "preflighted" && !entry.providerId) {
       assertAuthenticatedBridgeEntry(entry);
-      const inspection = inspectMcpProvider(entry.providerName);
+      const inspection = inspectMcpProvider(entry.providerName, providerRuntimeSelection!);
       if (inspection.exists === false) {
         providerlessPreflighted.push(entry);
         continue;
@@ -93,7 +106,9 @@ export async function discardSafeIncompleteMcpAdds(
     if (options.sandboxAbsent) {
       assertGeneratedPolicyRegistrationMutationSafe(sandboxName, entry);
     } else {
-      removeGeneratedPolicy(sandboxName, entry);
+      removeGeneratedPolicy(sandboxName, entry, {
+        runtimeSelection: providerRuntimeSelection!,
+      });
     }
   }
   // A prepared add precedes all external side effects, so destroy drops only
@@ -124,7 +139,11 @@ export function assertMcpDestroySnapshotCurrent(
 
 export function inspectExactMcpDestroyProvider(
   entry: McpBridgeEntry,
-  options: { allowMissing: boolean; force?: boolean },
+  options: {
+    allowMissing: boolean;
+    force?: boolean;
+    runtimeSelection: McpProviderInspectionRuntimeSelection;
+  },
 ): McpProviderInspection {
   assertAuthenticatedBridgeEntry(entry);
   if (!entry.providerId) {
@@ -132,7 +151,7 @@ export function inspectExactMcpDestroyProvider(
       `MCP server '${entry.server}' has no stable OpenShell provider ID. Refusing destructive cleanup of same-name provider '${entry.providerName}'. Remove the legacy bridge with --force only after independently cleaning that provider.`,
     );
   }
-  const inspection = inspectMcpProvider(entry.providerName);
+  const inspection = inspectMcpProvider(entry.providerName, options.runtimeSelection);
   if (inspection.exists === null) {
     throw new McpBridgeError(
       inspection.error ?? `Could not inspect OpenShell provider '${entry.providerName}'.`,
@@ -162,17 +181,36 @@ export function inspectExactMcpDestroyProvider(
 /** Build cleanup state after a gateway-pinned list proves the sandbox absent. */
 export async function prepareMcpBridgesForAbsentSandboxDestroy(
   sandboxName: string,
-  options: { force?: boolean } = {},
+  options: {
+    force?: boolean;
+    runtimeSelection?: McpProviderInspectionRuntimeSelection;
+  } = {},
 ): Promise<McpDestroyPreparation> {
   validateSandboxName(sandboxName);
-  const sandbox = await discardSafeIncompleteMcpAdds(sandboxName, getSandboxOrThrow(sandboxName), {
+  const currentSandbox = getSandboxOrThrow(sandboxName);
+  const entriesRequiringExternalCleanup = Object.values(bridgeState(currentSandbox)).filter(
+    (entry) => entry.addState !== "prepared",
+  );
+  let providerRuntimeSelection = options.runtimeSelection;
+  if (entriesRequiringExternalCleanup.length > 0) {
+    providerRuntimeSelection ??= getMcpProviderInspectionRuntimeSelection(currentSandbox);
+  }
+  const sandbox = await discardSafeIncompleteMcpAdds(sandboxName, currentSandbox, {
+    runtimeSelection: providerRuntimeSelection,
     sandboxAbsent: true,
   });
   const entries = Object.values(bridgeState(sandbox)).map(cloneMcpBridgeEntry);
   const destroyAlreadyPrepared = !!sandbox.mcp?.destroyPreparedAt;
   const destroyAlreadyPending = !!sandbox.mcp?.destroyPendingAt;
+  if (entries.length > 0) {
+    providerRuntimeSelection ??= getMcpProviderInspectionRuntimeSelection(sandbox);
+  }
   for (const entry of entries) {
-    inspectExactMcpDestroyProvider(entry, { allowMissing: true, force: options.force });
+    inspectExactMcpDestroyProvider(entry, {
+      allowMissing: true,
+      force: options.force,
+      runtimeSelection: providerRuntimeSelection!,
+    });
   }
   return {
     entries,
@@ -180,5 +218,6 @@ export async function prepareMcpBridgesForAbsentSandboxDestroy(
     scrubbedAdapterEntries: [],
     destroyAlreadyPrepared,
     destroyAlreadyPending,
+    runtimeSelection: providerRuntimeSelection,
   };
 }

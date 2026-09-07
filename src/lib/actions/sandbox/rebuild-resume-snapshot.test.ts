@@ -24,12 +24,12 @@ import * as registry from "../../state/registry";
 import * as sandboxState from "../../state/sandbox";
 import * as sandboxSession from "../../state/sandbox-session";
 import * as destroy from "./destroy";
+import * as mcpBridgeProvider from "./mcp-bridge-provider";
 import { rebuildSandbox } from "./rebuild";
 import * as rebuildImagePreflight from "./rebuild-custom-image-preflight";
 import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
 import * as rebuildRoutePreflight from "./rebuild-preflight-guards";
 import * as rebuildRecreateJournal from "./rebuild-recreate-journal";
-import * as rebuildShields from "./rebuild-shields";
 import * as rebuildUsageNotice from "./rebuild-usage-notice";
 import * as policyGet from "./policy-get";
 
@@ -204,6 +204,10 @@ describe("rebuild resume snapshot repair", () => {
       } as never),
       vi.spyOn(registry, "updateSandbox").mockReturnValue(true),
       vi.spyOn(registry, "listSandboxes").mockReturnValue({ sandboxes: [] } as never),
+      vi.spyOn(mcpBridgeProvider, "getMcpProviderInspectionRuntimeSelection").mockReturnValue({
+        gatewayName: "nemoclaw",
+        workspace: "default",
+      }),
       vi.spyOn(rebuildRoutePreflight, "commitRebuildRoutePreflight").mockReturnValue({
         ok: true,
         receipt: {
@@ -230,11 +234,6 @@ describe("rebuild resume snapshot repair", () => {
         expectedVersion: "0.1.0",
         sandboxVersion: "0.0.1",
       } as never),
-      vi.spyOn(rebuildShields, "openRebuildShieldsWindow").mockReturnValue({
-        relocked: false,
-        wasLocked: false,
-      }),
-      vi.spyOn(rebuildShields, "relockRebuildShieldsWindow").mockReturnValue(true),
       vi.spyOn(sandboxState, "backupSandboxState").mockReturnValue({
         success: true,
         backedUpDirs: [],

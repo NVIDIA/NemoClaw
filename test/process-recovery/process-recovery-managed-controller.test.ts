@@ -364,10 +364,10 @@ describe("managed gateway recovery controller", () => {
     }) => {
       const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
       const agentRuntime = requireSource("../../src/lib/agent/runtime.js");
+      const forwardHealth = requireSource("../../src/lib/actions/sandbox/forward-health.ts");
       const registry = requireSource("../../src/lib/state/registry.js");
       const childProcess = requireSource("node:child_process");
-      const runningForward = `SANDBOX  BIND  PORT  PID  STATUS
-beta  127.0.0.1  18789  12345  running`;
+      const runningForward = "SANDBOX  BIND  PORT  PID  STATUS";
       const previousWaitSeconds = process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS;
       const previousPollInterval = process.env.NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS;
       const previousSettleSeconds = process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS;
@@ -410,6 +410,7 @@ beta  127.0.0.1  18789  12345  running`;
           },
         );
         vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue(null);
+        vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
         vi.spyOn(registry, "getSandbox").mockReturnValue({
           name: "beta",
           agent: "openclaw",

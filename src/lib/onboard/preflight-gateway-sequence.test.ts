@@ -108,24 +108,22 @@ describe("full preflight gateway sequence under external supervision (#6576)", (
     expectNoDestructiveEffect(h);
   });
 
-  it.each<GatewayReuseState>([
-    "healthy",
-    "stale",
-    "active-unnamed",
-    "foreign-active",
-  ])("performs no cleanup and preserves reuse state %s", async (gatewayReuseState) => {
-    const h = harness({
-      gatewayReuseState,
-      externallySupervised: true,
-      containerState: "missing",
-      orphanContainerPresent: true,
-      httpReady: false,
-      imageDrift: { currentVersion: "1.0.0", expectedVersion: "2.0.0" },
-    });
-    const result = await runPreflightGatewaySequence(h.deps);
-    expect(result).toBe(gatewayReuseState);
-    expectNoDestructiveEffect(h);
-  });
+  it.each<GatewayReuseState>(["healthy", "stale", "active-unnamed", "foreign-active"])(
+    "performs no cleanup and preserves reuse state %s",
+    async (gatewayReuseState) => {
+      const h = harness({
+        gatewayReuseState,
+        externallySupervised: true,
+        containerState: "missing",
+        orphanContainerPresent: true,
+        httpReady: false,
+        imageDrift: { currentVersion: "1.0.0", expectedVersion: "2.0.0" },
+      });
+      const result = await runPreflightGatewaySequence(h.deps);
+      expect(result).toBe(gatewayReuseState);
+      expectNoDestructiveEffect(h);
+    },
+  );
 });
 
 describe("full preflight gateway sequence when NemoClaw owns the gateway (#6576)", () => {
@@ -153,9 +151,8 @@ describe("full preflight gateway sequence when NemoClaw owns the gateway (#6576)
     });
     await runPreflightGatewaySequence(h.deps);
     expect(h.destructive.destroyGatewayForReuse).toHaveBeenCalledTimes(1);
-    expect(h.destructive.runOpenshell).toHaveBeenCalledWith(["forward", "stop", "3000"], {
-      ignoreError: true,
-    });
+    expect(h.destructive.stopAllDashboardForwards).toHaveBeenCalledOnce();
+    expect(h.destructive.runOpenshell).not.toHaveBeenCalled();
   });
 
   it("feeds each stage the reuse state the previous stage produced", async () => {

@@ -57,7 +57,7 @@
   },
   {
     "name": "NEMOCLAW_TEST_STATE_DIR",
-    "reason": "Internal Vitest-only state root that keeps lifecycle locks and Shields artifacts out of the caller's real NemoClaw state. The production resolver honors it only while Vitest is active."
+    "reason": "Internal Vitest-only state root that keeps lifecycle locks out of the caller's real NemoClaw state. The production resolver honors it only while Vitest is active."
   },
   {
     "name": "NEMOCLAW_TELEGRAM_STARTUP_GRACE_MS",
@@ -82,10 +82,6 @@
   {
     "name": "NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL",
     "reason": "Legacy E2E-only model override used by cloud and hosted-inference live test scripts. Not a supported production configuration knob."
-  },
-  {
-    "name": "NEMOCLAW_FORWARD_RECOVERY_WAIT_MS",
-    "reason": "Internal Vitest-only override that shortens the bounded post-start forward-settle poll in subprocess fixtures. Production uses the built-in three-second window."
   },
   {
     "name": "NEMOCLAW_DOCKER_GPU_PATCH_NETWORK",

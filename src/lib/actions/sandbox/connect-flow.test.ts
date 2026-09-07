@@ -89,8 +89,6 @@ describe("connectSandbox flow", () => {
   });
 
   it("runs readiness checks, recovery probes, auto-pair approval, and opens the OpenShell shell", async () => {
-    const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
-    const clearIntervalSpy = vi.spyOn(globalThis, "clearInterval");
     const harness = createConnectHarness();
 
     await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
@@ -110,9 +108,6 @@ describe("connectSandbox flow", () => {
         stdin: true,
       }),
     );
-    expect(setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 1_000);
-    const watcherTimer = setIntervalSpy.mock.results[setIntervalSpy.mock.results.length - 1]?.value;
-    expect(clearIntervalSpy).toHaveBeenCalledWith(watcherTimer);
     expect(harness.runSandboxExecChildSpy.mock.invocationCallOrder[0]!).toBeLessThan(
       exitSpy.mock.invocationCallOrder[0]!,
     );
@@ -1022,7 +1017,7 @@ describe("connectSandbox flow", () => {
     expect(errorOutput).toContain(
       "Probe failed: OpenClaw gateway is running in 'alpha', but the dashboard/API host forward could not be restored.",
     );
-    expect(errorOutput).toContain("openshell forward start --background 18789 alpha");
+    expect(errorOutput).toContain("nemoclaw alpha recover");
     const logOutput = harness.logSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
     expect(logOutput).not.toContain("Probe complete");
     expect(exitSpy).toHaveBeenCalledWith(1);

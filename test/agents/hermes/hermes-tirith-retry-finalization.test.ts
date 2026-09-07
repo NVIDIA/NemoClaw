@@ -173,7 +173,6 @@ describe("agents/hermes/start.sh Tirith retry finalization", () => {
       "prepare_hermes_lazy_dependencies() { :; }",
       "ensure_hermes_config_root_mode() { :; }",
       "ensure_hermes_runtime_api_server_key() { :; }",
-      "apply_shields_up_runtime_env() { :; }",
       "validate_hermes_env_secret_boundary() { :; }",
       "validate_hermes_runtime_env_secret_boundary() { :; }",
       "refresh_hermes_provider_placeholders() { :; }",

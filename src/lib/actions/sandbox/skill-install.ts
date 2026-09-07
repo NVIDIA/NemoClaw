@@ -47,13 +47,13 @@ export function looksLikeOpenClawPlugin(candidatePath: string): boolean {
     const openclawBlock = packageJson?.openclaw;
     return Boolean(
       packageJson?.["openclaw.plugin"] === true ||
-        openclawBlock === true ||
-        (typeof openclawBlock === "object" &&
-          openclawBlock !== null &&
-          (openclawBlock.plugin === true ||
-            typeof openclawBlock.entry === "string" ||
-            typeof openclawBlock.main === "string" ||
-            (Array.isArray(openclawBlock.extensions) && openclawBlock.extensions.length > 0))),
+      openclawBlock === true ||
+      (typeof openclawBlock === "object" &&
+        openclawBlock !== null &&
+        (openclawBlock.plugin === true ||
+          typeof openclawBlock.entry === "string" ||
+          typeof openclawBlock.main === "string" ||
+          (Array.isArray(openclawBlock.extensions) && openclawBlock.extensions.length > 0))),
     );
   } catch {
     return false;
@@ -114,15 +114,6 @@ export function printPluginInstallHint(): void {
   console.error("  `skill install` only accepts skill directories or direct SKILL.md paths.");
   console.error(
     "  To use an OpenClaw plugin today, bake it into a custom sandbox image with `nemoclaw onboard --from <Dockerfile>`.",
-  );
-}
-
-function printSkillUploadFailureHint(sandboxName: string): void {
-  console.error(
-    "  Skill uploads write to the agent skills directory, which is locked while shields are up.",
-  );
-  console.error(
-    `  If shields are up, run \`${CLI_NAME} ${sandboxName} shields down\` before installing skills.`,
   );
 }
 
@@ -418,7 +409,6 @@ export async function installSandboxSkill(
     const { uploaded, failed } = skillInstall.uploadDirectory(ctx, skillDir, paths.uploadDir);
     if (failed.length > 0) {
       console.error(`  Failed to upload ${failed.length} file(s): ${failed.join(", ")}`);
-      printSkillUploadFailureHint(sandboxName);
       process.exitCode = 1;
       return;
     }

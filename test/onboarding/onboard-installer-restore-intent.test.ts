@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, it } from "vitest";
+import { afterEach, beforeEach, describe, it, vi } from "vitest";
 
 import { writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
 
@@ -16,6 +16,10 @@ const onboardScriptMocksPath = JSON.stringify(
 );
 const ONBOARD_SUBPROCESS_TIMEOUT_MS = 30_000;
 const createdTmpDirs: string[] = [];
+
+beforeEach(() => {
+  vi.stubEnv("NEMOCLAW_TEST_FORWARD_SERVICE_FIXTURE", "1");
+});
 
 function makeTmpDir(prefix: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -75,7 +79,7 @@ createdSandbox.installRuntimeObservation();
 runner.run = (command) => {
   const cmd = _n(command);
   events.push({ kind: "run", cmd });
-  const profileResult = fixtureMocks.mockManagedEndpointlessProviderProfileRun(command);
+  const profileResult = fixtureMocks.mockManagedProviderPreparationRun(command, "nemoclaw");
   if (profileResult !== null) return profileResult;
   if (cmd.includes("sandbox delete")) {
     createdSandbox.delete();
@@ -90,7 +94,7 @@ runner.runCapture = (command) => {
   if (cmd.includes("policy get") && cmd.includes("--output json")) return JSON.stringify({ scope: "sandbox", sandbox: "my-assistant", status: "effective", policy_source: "sandbox", hash: "fixture-policy", active_version: 1, policy: {} });
   const sandboxCapture = createdSandbox.capture(command);
   if (sandboxCapture !== null) return sandboxCapture;
-  if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (cmd.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   {
     const mockedCapture = fixtureMocks.mockOnboardRunCapture(command, {
       defaultCurlOutput: "ok",
@@ -161,7 +165,7 @@ childProcess.spawn = (...args) => {
 };
 
 const { createSandbox } = require(${onboardPath});
-const { runSandboxExecCommand } = require(${execActionPath});
+const { execSandbox } = require(${execActionPath});
 
 const MARKER_PATH = "/sandbox/workspace/marker.txt";
 const MARKER_SHA = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
@@ -177,27 +181,53 @@ const MARKER_SHA = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852
 
   // Prove the recreated + restored sandbox is reachable through the real
   // "nemoclaw <name> exec" boundary and can read a preserved workspace marker.
-  const completion = await runSandboxExecCommand(
-    "openshell",
-    sandboxName,
-    ["sha256sum", MARKER_PATH],
-    {},
-    async (binary, args) => {
-      const joined = _n([binary, ...args]);
-      const reads =
-        joined.includes("sandbox exec") &&
-        joined.includes("--name " + sandboxName) &&
-        joined.includes("sha256sum " + MARKER_PATH);
-      events.push({ kind: "exec", cmd: joined, marker: reads ? MARKER_SHA : null });
-      return { status: reads ? 0 : 1 };
-    },
-    {
-      getSandbox: () => ({ agent: "openclaw" }),
-      inspectMutableConfigPerms: () => ({ applies: true, ok: true }),
-      repairMutableConfigPerms: () => ({ applied: false }),
-    },
-  );
-  console.log(JSON.stringify({ sandboxName, events, execCode: completion.code }));
+  let execCode = null;
+  const execFinished = new Error("__exec_finished__");
+  try {
+    await execSandbox(
+      sandboxName,
+      ["sha256sum", MARKER_PATH],
+      {},
+      {
+        selectGateway: () => ({ outcome: "unregistered", gatewayName: null }),
+        commandExecutor: {
+          probeDirectory: async () => ({ state: "present" }),
+          runStreaming: async (request) => {
+            const joined = _n([
+              "openshell",
+              "sandbox",
+              "exec",
+              "--name",
+              request.sandboxName,
+              "--",
+              ...request.command,
+            ]);
+            const reads =
+              joined.includes("sandbox exec") &&
+              joined.includes("--name " + sandboxName) &&
+              joined.includes("sha256sum " + MARKER_PATH);
+            events.push({ kind: "exec", cmd: joined, marker: reads ? MARKER_SHA : null });
+            return {
+              outcome: { kind: "completed", exitCode: reads ? 0 : 1 },
+              release: () => {},
+            };
+          },
+        },
+        cleanupDeps: {
+          getSandbox: () => ({ agent: "openclaw" }),
+          inspectMutableConfigPerms: () => ({ applies: true, ok: true }),
+          repairMutableConfigPerms: () => ({ applied: false }),
+        },
+        exit: (code) => {
+          execCode = code;
+          throw execFinished;
+        },
+      },
+    );
+  } catch (error) {
+    if (error !== execFinished) throw error;
+  }
+  console.log(JSON.stringify({ sandboxName, events, execCode }));
 })().catch((error) => {
   console.error(error);
   process.exit(1);
@@ -337,7 +367,7 @@ runner.runCapture = (command) => {
   if (normalized.includes("sandbox get") && normalized.includes("my-assistant")) return "";
   if (normalized.includes("sandbox list")) return "";
   if (normalized.includes("forward list")) {
-    return "my-assistant 127.0.0.1 18789 12345 running";
+    return "SANDBOX BIND PORT PID STATUS";
   }
   const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
     defaultCurlOutput: "ok",
@@ -455,7 +485,7 @@ runner.runCapture = (command) => {
   // Keep dashboard allocation inside this restore-intent fixture; host port
   // occupancy is unrelated to the not-ready decision under test.
   if (normalized.includes("forward list")) {
-    return "my-assistant 127.0.0.1 18789 12345 running";
+    return "SANDBOX BIND PORT PID STATUS";
   }
   return "";
 };

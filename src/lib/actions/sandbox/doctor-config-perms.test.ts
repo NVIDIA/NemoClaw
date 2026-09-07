@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   MutableConfigPermsInspection,
   MutableConfigRepairResult,
-} from "../../shields/mutable-config-perms";
+} from "../../sandbox/mutable-config-perms";
 import { buildConfigPermsCheck } from "./doctor-config-perms";
 
 const inspect = vi.fn<(name: string) => MutableConfigPermsInspection>();
@@ -48,7 +48,11 @@ describe("buildConfigPermsCheck (#4538)", () => {
   });
 
   it("returns null when the check does not apply", () => {
-    inspect.mockReturnValue({ applies: false, skipReason: "locked", reason: "shields up" });
+    inspect.mockReturnValue({
+      applies: false,
+      skipReason: "unavailable",
+      reason: "container is stopped",
+    });
     expect(buildConfigPermsCheck("alpha", false, deps())).toBeNull();
   });
 
@@ -116,17 +120,17 @@ describe("buildConfigPermsCheck (#4538)", () => {
     expect(check?.detail).toContain(".config-hash");
   });
 
-  it("warns when --fix is skipped (e.g. shields flipped to locked)", () => {
+  it("warns when --fix is skipped for another agent", () => {
     inspect.mockReturnValue(tightened);
     repair.mockReturnValue({
       applied: false,
-      skipReason: "locked",
-      reason: "shields are up (config is locked)",
+      skipReason: "agent",
+      reason: "agent does not use the OpenClaw config contract",
     });
     const check = buildConfigPermsCheck("alpha", true, deps());
     expect(check?.status).toBe("warn");
     expect(check?.detail).toContain("repair skipped");
-    expect(check?.detail).toContain("locked");
+    expect(check?.detail).toContain("does not use");
   });
 
   it("preserves the re-inspection reason when --fix verifies but re-inspect fails", () => {

@@ -35,7 +35,6 @@ import {
 import {
   RUNTIME_PROVIDER_NATIVE_ARTIFACT_BOOTSTRAP_CONTRACT_VERSION,
   RUNTIME_PROVIDER_SNAPSHOT_CONTRACT_VERSION,
-  RUNTIME_PROVIDER_STATE_MUTATION_CONTRACT_VERSION,
   type RuntimeProviderBundle,
 } from "./contract";
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES, createCurrentRuntimeProviderBundles } from "./current";
@@ -109,18 +108,6 @@ function completeBundle(providerId: string): RuntimeProviderBundle {
   });
   return {
     ...base,
-    stateMutation: {
-      providerId,
-      supported: true,
-      contractVersion: RUNTIME_PROVIDER_STATE_MUTATION_CONTRACT_VERSION,
-      acquire: unreachable,
-      assertFenced: unreachable,
-      publish: unreachable,
-      rollback: unreachable,
-      activate: unreachable,
-      release: unreachable,
-      recover: unreachable,
-    },
     bootstrap: {
       providerId,
       supported: true,
@@ -192,17 +179,6 @@ function registration(
 }
 
 const INCOMPLETE_SURFACES = [
-  [
-    "stateMutation",
-    (bundle: RuntimeProviderBundle) => ({
-      ...bundle,
-      stateMutation: {
-        providerId: bundle.identity.id,
-        supported: false as const,
-        reason: "incomplete fixture",
-      },
-    }),
-  ],
   [
     "bootstrap",
     (bundle: RuntimeProviderBundle) => ({

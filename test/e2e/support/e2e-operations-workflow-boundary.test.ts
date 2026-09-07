@@ -469,12 +469,26 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
 
   it.each([
     [
+      "an exact PR base revision",
+      "NVIDIA/NemoClaw",
+      "b",
+      "b",
+      "c",
+      "refs/heads/main",
+      "",
+      "",
+      0,
+      "",
+    ],
+    [
       "an invalid source repository name",
       "invalid-repository",
       "a",
       "b",
       "c",
       "refs/heads/main",
+      "",
+      "",
       1,
       "::error::checkout_repository must be an owner/repository name\n",
     ],
@@ -485,6 +499,8 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       "d",
       "c",
       "refs/heads/main",
+      "",
+      "",
       1,
       "::error::base_sha must match the PR base SHA\n",
     ],
@@ -495,6 +511,8 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       "b",
       "d",
       "refs/heads/main",
+      "",
+      "",
       1,
       "::error::workflow_sha must match the trusted main workflow SHA\n",
     ],
@@ -505,9 +523,33 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       "b",
       "c",
       "refs/heads/pr-controlled-workflow",
+      "",
+      "",
       0,
       "",
     ],
+    ...(
+      [
+        ["Jetson", "jetson-nvmap-gpu"],
+        ["DGX Spark", "llama-cpp-dgx-spark-qualification"],
+      ] as const
+    ).flatMap(([name, selector]) =>
+      (["job", "target"] as const).map(
+        (channel) =>
+          [
+            `an exact-base ${name} ${channel}`,
+            "NVIDIA/NemoClaw",
+            "b",
+            "b",
+            "c",
+            "refs/heads/main",
+            channel === "job" ? selector : "",
+            channel === "target" ? selector : "",
+            1,
+            "::error::exact-base E2E cannot select dedicated hardware jobs\n",
+          ] as const,
+      ),
+    ),
   ] as const)(
     "handles manual PR authentication for %s",
     (
@@ -517,6 +559,8 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       requestedBaseCharacter,
       expectedWorkflowCharacter,
       workflowRef,
+      jobs,
+      targets,
       expectedStatus,
       expectedStderr,
     ) => {
@@ -539,6 +583,8 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
           encoding: "utf8",
           env: {
             ...process.env,
+            ALLOW_DGX_SPARK_RUNNER_QUEUE: "false",
+            ALLOW_JETSON_DISPATCH: "false",
             BASE_SHA: requestedBaseCharacter.repeat(40),
             CHECKOUT_REPOSITORY: requestedRepository,
             CHECKOUT_SHA: requestedHeadCharacter.repeat(40),
@@ -547,8 +593,9 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
             GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
             GITHUB_TOKEN: "token",
             INCLUDE_LAUNCHABLE: "false",
-            JOBS: "",
+            JOBS: jobs,
             PR_NUMBER: "42",
+            TARGETS: targets,
             WORKFLOW_EVENT: "workflow_dispatch",
             WORKFLOW_REF: workflowRef,
             WORKFLOW_SHA: workflowSha,
@@ -560,6 +607,40 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       expect(result.stderr).toBe(expectedStderr);
     },
   );
+
+  it("revalidates an exact PR base after checkout", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const validation = workflow.jobs["generate-matrix"].steps!.find(
+      (step) => step.name === "Validate manual PR checkout",
+    )!;
+    const headSha = "a".repeat(40);
+    const baseSha = "b".repeat(40);
+    const prefix = [
+      "git() { printf '%s\\n' \"$CHECKOUT_SHA\"; }",
+      "curl() {",
+      `  printf '%s' '{"state":"open","head":{"repo":{"full_name":"NVIDIA/NemoClaw","owner":{"login":"NVIDIA","type":"Organization"}},"sha":"${headSha}"},"base":{"repo":{"full_name":"NVIDIA/NemoClaw"},"ref":"main","sha":"${baseSha}"}}'`,
+      "}",
+    ].join("\n");
+    const result = spawnSync(
+      "bash",
+      ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", `${prefix}\n${validation.run}`],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          BASE_SHA: baseSha,
+          CHECKOUT_REPOSITORY: "NVIDIA/NemoClaw",
+          CHECKOUT_SHA: baseSha,
+          GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+          GITHUB_TOKEN: "token",
+          NVIDIA_OWNED: "true",
+          PR_NUMBER: "42",
+        },
+      },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+  });
 
   it.each([
     ["NVIDIA inclusion flag", "NVIDIA/NemoClaw", "NVIDIA", "Organization", "true", "", 0, ""],

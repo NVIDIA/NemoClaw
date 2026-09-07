@@ -16,9 +16,8 @@
 version: 1
 
 filesystem_policy:
-  # Home directory writable (matches Hermes). Agents can create dotfiles,
-  # caches, etc. natively. Immutability is opt-in via `shields up` (DAC +
-  # chattr only — Landlock can't be toggled at runtime).
+  # Home directory writable (matches Hermes). Agents can create dotfiles and
+  # caches natively.
   include_workdir: true
   read_only:
     - /usr
@@ -45,7 +44,7 @@ filesystem_policy:
                                     # failed: Permission denied` (#4513). Grant
                                     # the directory, not /dev/ptmx itself — the
                                     # supervisor refuses to chown that symlink.
-    - /sandbox/.openclaw            # Agent config (lockable via shields up)
+    - /sandbox/.openclaw            # Mutable agent config and state.
     - /sandbox/.nemoclaw            # Plugin state and config (state.ts, config.ts).
                                     # Blueprints are root-owned; sticky bit (1755)
                                     # on parent prevents rename/delete (#1607).
@@ -60,13 +59,6 @@ filesystem_policy:
 # across different kernel versions before we flip this. (ref #516 item 3)
 landlock:
   compatibility: best_effort
-
-# Note: tool-level write/edit restrictions for openclaw.json are intentionally
-# NOT declared here. OpenShell's PolicyFile schema does not support a
-# `tool_policy` section (serde deny_unknown_fields — only version, filesystem_policy,
-# landlock, process, network_policies are accepted). Config protection when
-# shields are up is achieved via DAC (444 root:root) and chattr +i.
-# Ref: https://github.com/NVIDIA/NemoClaw/pull/654#pullrequestreview-…
 
 process:
   run_as_user: sandbox

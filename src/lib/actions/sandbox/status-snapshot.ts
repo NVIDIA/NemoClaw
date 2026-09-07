@@ -39,6 +39,7 @@ import type { SandboxGatewayState } from "./gateway-state";
 import { getReconciledSandboxGatewayState, getSandboxGatewayStateForStatus } from "./gateway-state";
 import {
   buildSandboxInferenceRouteHealth,
+  isTransientInferenceInvocationFailure,
   type ProbeSandboxInferenceInvocation,
   probeSandboxInferenceGatewayHealth,
   runSandboxInferenceInvocationProbe,
@@ -63,8 +64,8 @@ type ProbeProviderHealth = (
 type ProbeSandboxInferenceGatewayHealth = typeof probeSandboxInferenceGatewayHealth;
 type DelayInferenceRecoveryProbe = (delayMs: number) => Promise<void>;
 
-const RECOVERED_INFERENCE_PROBE_ATTEMPTS = 3;
-const RECOVERED_INFERENCE_PROBE_DELAY_MS = 2_000;
+const INFERENCE_PROBE_ATTEMPTS = 3;
+const INFERENCE_PROBE_RETRY_DELAY_MS = 2_000;
 
 /**
  * Honest serving-process state while the self-report response and probe
@@ -291,6 +292,7 @@ interface CollectSandboxStatusSnapshotDeps {
   probeSandboxInferenceInvocationImpl?: ProbeSandboxInferenceInvocation;
   delayInferenceRecoveryProbe?: DelayInferenceRecoveryProbe;
   reportInferenceProbeError?: (message: string) => void;
+  reportInferenceProbeRetry?: (message: string) => void;
   probeTerminalRuntimeHealth?: ProbeTerminalRuntimeHealth;
   recoverSandboxProcesses?: RecoverSandboxProcesses;
   reconcile?: ReconcileSandboxGatewayState;
@@ -387,6 +389,33 @@ function reportInferenceProbeError(error: unknown, writer: (message: string) => 
   const detail = sanitizedStatusDetail(error);
   writer(
     `  Warning: the authoritative inference.local probe could not run: ${detail || "unknown error"}`,
+  );
+}
+
+function reportInferenceProbeRetry(
+  gatewayChain: Awaited<ReturnType<ProbeSandboxInferenceGatewayHealth>>,
+  invocation: ReturnType<typeof runSandboxInferenceInvocationProbe> | null,
+  delayMs: number,
+  attempt: number,
+  writer: (message: string) => void,
+): void {
+  let reason = "route probe did not pass";
+  if (gatewayChain?.ok) {
+    reason = "request probe did not pass";
+    if (
+      invocation &&
+      !invocation.ok &&
+      invocation.httpStatus !== null &&
+      (invocation.httpStatus < 200 || invocation.httpStatus >= 300)
+    ) {
+      reason = `request returned HTTP ${invocation.httpStatus}`;
+    }
+  } else if (gatewayChain && gatewayChain.httpStatus > 0) {
+    reason = `route probe returned HTTP ${gatewayChain.httpStatus}`;
+  }
+  writer(
+    `  Inference ${reason}; retrying route and request in ${delayMs / 1_000}s ` +
+      `(attempt ${attempt + 1}/${INFERENCE_PROBE_ATTEMPTS})...`,
   );
 }
 
@@ -597,7 +626,6 @@ export async function collectSandboxStatusSnapshot(
     try {
       const probe =
         opts.deps?.probeSandboxInferenceGatewayHealthImpl ?? probeSandboxInferenceGatewayHealth;
-      const attempts = recoveredManagedGateway ? RECOVERED_INFERENCE_PROBE_ATTEMPTS : 1;
       await retryUntilAsync(
         async () => {
           gatewayChain = gatewayName ? await probe(sandboxName, { gatewayName }) : null;
@@ -623,12 +651,28 @@ export async function collectSandboxStatusSnapshot(
           return { gatewayChain, invocation };
         },
         {
-          accept: ({ gatewayChain: chain, invocation: result }) =>
-            Boolean(chain?.ok && (!canProbeInvocation || result?.ok)),
+          accept: ({ gatewayChain: chain, invocation: result }) => {
+            if (chain?.ok && (!canProbeInvocation || result?.ok)) return true;
+            // After this run recovered a managed gateway, keep waiting for the
+            // restarted chain to settle whatever the failure shape (#8572).
+            if (recoveredManagedGateway) return false;
+            // Otherwise retry only a transient gateway or availability status on
+            // the inference request. Every other request failure, and every
+            // route probe failure, is final on the first attempt (#10709).
+            return !isTransientInferenceInvocationFailure(result);
+          },
           retryDelaysMs: Array.from(
-            { length: attempts - 1 },
-            () => RECOVERED_INFERENCE_PROBE_DELAY_MS,
+            { length: INFERENCE_PROBE_ATTEMPTS - 1 },
+            () => INFERENCE_PROBE_RETRY_DELAY_MS,
           ),
+          onRetry: ({ gatewayChain: chain, invocation: result }, delayMs, attempt) =>
+            reportInferenceProbeRetry(
+              chain,
+              result,
+              delayMs,
+              attempt,
+              opts.deps?.reportInferenceProbeRetry ?? console.error,
+            ),
           sleep: opts.deps?.delayInferenceRecoveryProbe ?? sleep,
         },
       );

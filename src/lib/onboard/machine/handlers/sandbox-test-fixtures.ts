@@ -120,7 +120,7 @@ export function bindJournaledRecreate(
       const transaction = updateSession((current) => current).checkpoint?.sandboxRecreate;
       expect(transaction).toBeDefined();
       const ownedTransaction = transaction as CheckpointSandboxRecreateTransaction;
-      const createIntent = args.at(-1) as
+      const createIntent = args.at(-2) as
         | { recreate?: boolean; recreateTransaction?: { id?: string } }
         | undefined;
       expect(createIntent?.recreate).toBe(true);
@@ -318,7 +318,6 @@ export function createDeps(
       stageSandboxCredentialProviders: calls.stageCredentialProviders,
       promptValidatedSandboxName: calls.promptName,
       selectResourceProfileForSandbox: calls.selectResourceProfile,
-      stopStaleDashboardListenersForSandbox: calls.stopStale,
       listRegistrySandboxes: () => ({ sandboxes: [{ name: "old" }] }),
       planRegisteredExtraProviders: calls.planRegisteredExtraProviders,
       resolveSandboxCreateIntent: calls.resolveCreateIntent,

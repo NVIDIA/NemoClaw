@@ -99,6 +99,8 @@ export type MaterializeSandboxCreatePlanInput = {
   policylessCreate?: boolean;
   /** Keep provider mutations and attachments behind the exact post-create identity gate. */
   deferSandboxEffectsUntilIdentityVerification?: boolean;
+  /** A verified create resume must rebuild its plan without replaying provider mutations. */
+  skipProviderEffects?: boolean;
   messagingTokenDefs: MessagingTokenDef[];
   /** Non-secret config captured in the messaging plan that owns exact policy endpoints. */
   messagingConfig?: MessagingChannelConfig | null;

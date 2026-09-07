@@ -84,7 +84,8 @@ Pi starts with `umask 077`, so generated configuration and session files are pri
 
 ## Qualification Evidence
 
-The release gate runs one repository-owned target on native Linux AMD64 and Linux ARM64 runners. Each target records:
+The full lifecycle release gate runs one repository-owned target on a native Linux AMD64 runner.
+The target records:
 
 - CLI, workflow, receipt, package, image, platform, and OpenShell identities;
 - Docker as the compute runtime;
@@ -97,4 +98,10 @@ The release gate runs one repository-owned target on native Linux AMD64 and Linu
 - absence of the upstream credential from sandbox environment, files, registry, logs, and uploaded evidence;
 - cleanup after destroy.
 
-The [versioned qualification task](https://github.com/NVIDIA/NemoClaw/blob/main/test/e2e/live/pi-agent-qualification.test.ts) uses the [structured event oracle](https://github.com/NVIDIA/NemoClaw/blob/main/test/e2e/live/pi-agent-qualification-events.ts) and the checked-in [AMD64](https://github.com/NVIDIA/NemoClaw/blob/main/ci/pi-agent-qualification-v1-linux-amd64.json) and [ARM64](https://github.com/NVIDIA/NemoClaw/blob/main/ci/pi-agent-qualification-v1-linux-arm64.json) receipts. Each trusted run uploads a bounded `pi-agent-qualification.json` oracle result and the standard `evidence-manifest.json`. Final activation must retain durable links to passing results for both platforms and must not require manual sandbox repair.
+Linux ARM64 remains release-gated by its native managed-image build, startup, publication, and receipt evidence.
+The checked-in [AMD64](https://github.com/NVIDIA/NemoClaw/blob/main/ci/pi-agent-qualification-v1-linux-amd64.json) and [ARM64](https://github.com/NVIDIA/NemoClaw/blob/main/ci/pi-agent-qualification-v1-linux-arm64.json) receipts must identify one source revision, release, and publication cohort.
+
+The [versioned qualification task](https://github.com/NVIDIA/NemoClaw/blob/main/test/e2e/live/pi-agent-qualification.test.ts) uses the [structured event oracle](https://github.com/NVIDIA/NemoClaw/blob/main/test/e2e/live/pi-agent-qualification-events.ts) and the AMD64 receipt.
+Each trusted lifecycle run uploads a bounded `pi-agent-qualification.json` oracle result and the standard `evidence-manifest.json`.
+Final activation must retain durable links to the passing AMD64 lifecycle result and both platform managed-image results.
+It must not require manual sandbox repair.

@@ -157,15 +157,45 @@ info "4b. Verify blueprint runner apply smoke test"
 # Apply runs the full codepath (profile resolution, sandbox creation,
 # provider setup, state save) against a fixture CLI. Policy mutation reads must
 # return the same metadata + YAML shape as OpenShell 0.0.72; an empty successful
-# response is intentionally rejected by the runner.
+# response is intentionally rejected by the runner. Use an independent
+# blueprint so shipped policy endpoints cannot preempt the apply behavior under
+# test.
 FAKE_OPENSHELL_BIN=$(mktemp -d)
+APPLY_BLUEPRINT_PATH=$(mktemp -d)
 APPLY_OUTPUT=$(mktemp)
 APPLY_CALLS="$FAKE_OPENSHELL_BIN/calls"
 cleanup_apply_fixture() {
-  rm -rf "$FAKE_OPENSHELL_BIN"
+  rm -rf "$FAKE_OPENSHELL_BIN" "$APPLY_BLUEPRINT_PATH"
   rm -f "$APPLY_OUTPUT" "$APPLY_CALLS"
 }
 trap cleanup_apply_fixture EXIT
+cat >"$APPLY_BLUEPRINT_PATH/blueprint.yaml" <<'YAML'
+components:
+  sandbox:
+    image: openclaw
+    name: openclaw
+    forward_ports:
+      - 18789
+  inference:
+    profiles:
+      ncp:
+        provider_type: nvidia
+        provider_name: nvidia-ncp
+        model: nvidia/nemotron-3-super-120b-a12b
+  policy:
+    additions:
+      fixture_service:
+        name: fixture_service
+        endpoints:
+          - host: 93.184.216.34
+            port: 8000
+            access: full
+YAML
+cat >"$APPLY_BLUEPRINT_PATH/sandbox-policy.yaml" <<'YAML'
+version: 1
+network_policies: {}
+YAML
+cp /opt/nemoclaw-blueprint/private-networks.yaml "$APPLY_BLUEPRINT_PATH/private-networks.yaml"
 cat >"$FAKE_OPENSHELL_BIN/openshell" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -199,7 +229,7 @@ if [ "${1:-} ${2:-}" = "policy get" ]; then
 fi
 if [ "${1:-} ${2:-}" = "policy get" ] && [[ " $* " == *" --output json "* ]]; then
   sandbox="${@: -1}"
-  policy_file=/opt/nemoclaw-blueprint/policies/openclaw-sandbox.yaml
+  policy_file="${OPENSHELL_SANDBOX_POLICY:?}"
   policy_hash=sha256:fixture-policy
   policy_version=1
   if [ -f "${BASH_SOURCE[0]%/*}/effective-policy.yaml" ]; then
@@ -229,8 +259,12 @@ case "$*" in
       echo "unexpected policy read: expected policy get -g fixture-gateway --base <sandbox>" >&2
       exit 64
     fi
+    policy_file="${OPENSHELL_SANDBOX_POLICY:?}"
+    if [ -f "${BASH_SOURCE[0]%/*}/effective-policy.yaml" ]; then
+      policy_file="${BASH_SOURCE[0]%/*}/effective-policy.yaml"
+    fi
     printf '%s\n' 'Policy for sandbox fixture' '---'
-    cat /opt/nemoclaw-blueprint/policies/openclaw-sandbox.yaml
+    cat "$policy_file"
     ;;
   "policy get "*)
     echo "unexpected policy read: expected policy get -g fixture-gateway --base <sandbox>" >&2
@@ -240,8 +274,8 @@ esac
 SH
 chmod 0755 "$FAKE_OPENSHELL_BIN/openshell"
 PATH="$FAKE_OPENSHELL_BIN:$PATH" \
-  NEMOCLAW_BLUEPRINT_PATH=/opt/nemoclaw-blueprint \
-  OPENSHELL_SANDBOX_POLICY=/opt/nemoclaw-blueprint/policies/openclaw-sandbox.yaml \
+  NEMOCLAW_BLUEPRINT_PATH="$APPLY_BLUEPRINT_PATH" \
+  OPENSHELL_SANDBOX_POLICY="$APPLY_BLUEPRINT_PATH/sandbox-policy.yaml" \
   node --input-type=module -e "
   const { main } = await import('/opt/nemoclaw/dist/blueprint/runner.js');
   await main(['apply', '--profile', 'ncp']);

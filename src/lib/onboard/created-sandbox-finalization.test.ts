@@ -17,51 +17,25 @@ import {
   createOnboardCreatedSandboxCompletion,
   createOnboardCreatedSandboxRegistration,
   finalizeCreatedSandbox,
+  restoreSelectedOnboardSnapshot,
 } from "./created-sandbox-finalization";
 import { getDcodeSelectionDrift } from "./dcode-selection-drift";
-import { dashboardForwardControlRuntime } from "./dashboard-forward-control";
 import type { HermesPortableConfiguredReceipt } from "./experimental/hermes-portable-receipt";
 import { pendingSandboxCreateIdentityForBoundary } from "./sandbox-create/identity-boundary";
 import type { SandboxGpuCreateFlowResult } from "./sandbox-gpu-create-flow";
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 import type { CreatedSandboxRegistrationInput } from "./sandbox-registration";
+import { OnboardRestoreSnapshotDriftError } from "./session-bootstrap";
 
 const fixtures: string[] = [];
 
-describe("ordinary managed sandbox completion", () => {
-  it.each(["docker", "podman"] as const)(
-    "does not mutate attached provider generations after %s sandbox startup",
-    (openshellDriver) => {
-      const providerExistsInGateway = vi.fn(() => true);
-
-      expect(
-        completeOrdinaryOnboardSandboxCreation(
-          {
-            sandboxName: "alpha",
-            sandboxWasLiveDefault: false,
-            gatewayPort: 8080,
-            runtimeFields: { openshellDriver } as SandboxEntry,
-            messagingProviders: ["alpha-slack", "alpha-slack"],
-            liveExists: true,
-          },
-          {
-            setDefault: vi.fn(),
-            runFile: vi.fn(),
-            scriptsDir: "/tmp/scripts",
-            gatewayName: "nemoclaw",
-            providerExistsInGateway,
-            armCancelRollback: vi.fn(),
-            markCancellationRecovery: vi.fn(),
-            dockerInfoFormat: vi.fn(() => "true"),
-            runCapture: vi.fn(() => ""),
-            revalidateSandboxIdentity: vi.fn(),
-          },
-        ),
-      ).toBe("alpha");
-      expect(providerExistsInGateway).toHaveBeenCalledTimes(2);
-    },
-  );
-});
+function preparedRestoreAuthority(sandboxName: string) {
+  const prepared = { name: sandboxName } as SandboxEntry;
+  return {
+    prepareRegistration: () => prepared,
+    revalidatePreparedRegistration: (target: SandboxEntry) => target,
+  };
+}
 
 afterEach(() => {
   delete process.env.NEMOCLAW_OPENSHELL_BIN;
@@ -84,7 +58,9 @@ describe("created sandbox registration authority", () => {
     await expect(
       register(
         null,
-        { lifecycleGeneration: "generation-1" } as HermesPortableConfiguredReceipt,
+        {
+          lifecycleGeneration: "generation-1",
+        } as HermesPortableConfiguredReceipt,
         "a".repeat(64),
         vi.fn(),
       ),
@@ -308,6 +284,60 @@ function identityFromConfig(config: string): string {
 }
 
 describe("created DCode sandbox finalization", () => {
+  it("refuses a changed pre-upgrade snapshot before sandbox creation (#10546)", () => {
+    vi.spyOn(sandboxState, "getLatestBackup").mockReturnValue({
+      backupPath: "/tmp/newer-backup",
+    } as ReturnType<typeof sandboxState.getLatestBackup>);
+    const completionArgs = [
+      "openclaw",
+      "/tmp/selected-backup",
+      "/tmp/selected-backup",
+      null,
+      null,
+      { customOpenClawImage: false, isManagedDcodeAgent: false },
+      {
+        provider: "compatible-endpoint",
+        model: "demo",
+        preferredInferenceApi: "openai-completions",
+        endpointUrl: null,
+      },
+      { createIntent: null, resolvedCreateIntent: {} },
+    ] as unknown as Parameters<typeof createOnboardCreatedSandboxCompletion>;
+
+    expect(() => createOnboardCreatedSandboxCompletion(...completionArgs)).toThrow(
+      OnboardRestoreSnapshotDriftError,
+    );
+  });
+
+  it("rechecks the latest snapshot before managed state restoration (#10546)", () => {
+    const restoreManaged = vi.fn();
+    const restore = vi.fn();
+
+    const result = restoreSelectedOnboardSnapshot(
+      "openclaw",
+      "/tmp/selected-backup",
+      { targetAgentType: "openclaw" },
+      () => ({ name: "openclaw" }) as SandboxEntry,
+      {
+        getLatestBackup: () =>
+          ({ backupPath: "/tmp/newer-backup" }) as ReturnType<typeof sandboxState.getLatestBackup>,
+        restoreManaged,
+        restore,
+      },
+    );
+
+    expect(result).toEqual({
+      success: false,
+      restoredDirs: [],
+      failedDirs: [],
+      restoredFiles: [],
+      failedFiles: [],
+      error: expect.stringContaining("changed before state restoration"),
+    });
+    expect(restoreManaged).not.toHaveBeenCalled();
+    expect(restore).not.toHaveBeenCalled();
+  });
+
   it("merges stale backup preferences before live validation and registry publication (#6311)", () => {
     const fixture = makeRestoreFixture();
     const order: string[] = [];
@@ -325,6 +355,7 @@ describe("created DCode sandbox finalization", () => {
           preferredInferenceApi: null,
         },
         {
+          ...preparedRestoreAuthority("dcode"),
           discoverFreshOpenClawImagePluginInstalls: () => ({
             ok: true,
             extensionDirs: [],
@@ -428,39 +459,16 @@ describe("created DCode sandbox finalization", () => {
       reservation: {} as never,
       checkpoint: pendingSandboxCreateIdentityForBoundary(verifiedCreateBoundary),
     } as NonNullable<CreatedSandboxRegistrationInput["verifiedCreate"]>;
-    const runCaptureOpenshell = vi
-      .fn()
-      .mockReturnValueOnce(
-        ["SANDBOX BIND PORT PID STATUS", "alpha 127.0.0.1 18789 101 running"].join("\n"),
-      )
-      .mockReturnValue(
-        [
-          "Sandbox:  dcode",
-          "Route:    inference",
-          "Provider: compatible-endpoint",
-          `Model:    openai:${model}`,
-          "Endpoint: https://inference.local/v1",
-          "Runtime:  Deep Agents Code (terminal)",
-        ].join("\n"),
-      );
-    const ensureDashboardForward = vi.fn(() => 8643);
-    const preservedSibling = {
-      bind: "127.0.0.1",
-      gatewayName: "nemoclaw",
-      lifecycleGeneration: "generation-alpha",
-      lifecycleLiveIdentityFingerprint: "b".repeat(64),
-      openshellDriver: "podman",
-      pid: 101,
-      port: "18789",
-      sandboxName: "alpha",
-    };
-    vi.spyOn(dashboardForwardControlRuntime, "getSandbox").mockReturnValue({
-      name: "alpha",
-      gatewayName: preservedSibling.gatewayName,
-      lifecycleGeneration: preservedSibling.lifecycleGeneration,
-      lifecycleLiveIdentityFingerprint: preservedSibling.lifecycleLiveIdentityFingerprint,
-      openshellDriver: preservedSibling.openshellDriver,
-    });
+    const runCaptureOpenshell = vi.fn(() =>
+      [
+        "Sandbox:  dcode",
+        "Route:    inference",
+        "Provider: compatible-endpoint",
+        `Model:    openai:${model}`,
+        "Endpoint: https://inference.local/v1",
+        "Runtime:  Deep Agents Code (terminal)",
+      ].join("\n"),
+    );
     vi.spyOn(process, "exit").mockImplementation((code): never => {
       throw new Error(`exit ${code}`);
     });
@@ -480,7 +488,11 @@ describe("created DCode sandbox finalization", () => {
         endpointUrl,
       },
       {
-        createIntent: { endpointUrl, endpointSource: null, observabilityEnabled: false },
+        createIntent: {
+          endpointUrl,
+          endpointSource: null,
+          observabilityEnabled: false,
+        },
         resolvedCreateIntent: {
           policy: { options: {} },
           hostMounts: undefined,
@@ -533,8 +545,6 @@ describe("created DCode sandbox finalization", () => {
       "http://127.0.0.1:8643",
       { config: null, enabled: false },
       vi.fn(),
-      ensureDashboardForward,
-      vi.fn(),
       vi.fn(),
       vi.fn(),
       {
@@ -564,10 +574,6 @@ describe("created DCode sandbox finalization", () => {
       })),
     ] as unknown as Parameters<typeof createOnboardCreatedSandboxCompletion>;
     const completion = createOnboardCreatedSandboxCompletion(...completionArgs);
-    expect(runCaptureOpenshell).toHaveBeenCalledOnce();
-    expect(runCaptureOpenshell).toHaveBeenCalledWith(["forward", "list"], {
-      ignoreError: true,
-    });
     const created = {
       createResult: { status: 0, output: "", sawProgress: true },
       route: "native",
@@ -597,25 +603,12 @@ describe("created DCode sandbox finalization", () => {
         created,
         null,
         "disabled",
-        true,
+        false,
         () => ({ lifecycleGeneration: "generation-1" }),
         lifecycle,
       ),
     ).rejects.toThrow("exit 1");
-    expect(runCaptureOpenshell).toHaveBeenCalledTimes(2);
-    expect(ensureDashboardForward).toHaveBeenCalledWith("dcode", "http://127.0.0.1:8643", {
-      rollbackSandboxOnFailure: true,
-      preservedSiblingForwards: [preservedSibling],
-      revalidateSandboxIdentity: expect.any(Function),
-    });
-
-    runCaptureOpenshell.mockClear();
-    const portableCompletionArgs = [...completionArgs] as Parameters<
-      typeof createOnboardCreatedSandboxCompletion
-    >;
-    portableCompletionArgs[9] = true;
-    createOnboardCreatedSandboxCompletion(...portableCompletionArgs);
-    expect(runCaptureOpenshell).not.toHaveBeenCalled();
+    expect(runCaptureOpenshell).toHaveBeenCalledOnce();
   });
 
   it("does not publish registry metadata when live validation fails (#6311)", () => {
@@ -681,6 +674,7 @@ describe("created DCode sandbox finalization", () => {
             preferredInferenceApi: null,
           },
           {
+            ...preparedRestoreAuthority("dcode"),
             discoverFreshOpenClawImagePluginInstalls: vi.fn(),
             restoreRecreatedSandboxState: (name, backup, options) => {
               const restored = sandboxState.restoreRecreatedSandboxState(name, backup, options);
@@ -746,6 +740,7 @@ describe("created DCode sandbox finalization", () => {
           preferredInferenceApi: null,
         },
         {
+          ...preparedRestoreAuthority("custom-dcode"),
           discoverFreshOpenClawImagePluginInstalls: vi.fn(),
           restoreRecreatedSandboxState: (name, backup, options) => {
             expect(options.allowCustomImageWholeStateFileRestore).toBe(true);
@@ -884,6 +879,7 @@ describe("created OpenClaw sandbox finalization", () => {
         preferredInferenceApi: "openai-completions",
       },
       {
+        ...preparedRestoreAuthority("openclaw"),
         discoverFreshOpenClawImagePluginInstalls: () => {
           order.push("discover");
           return { ok: true, extensionDirs: ["weather"], pluginInstalls };
@@ -900,16 +896,129 @@ describe("created OpenClaw sandbox finalization", () => {
     );
 
     expect(order).toEqual(["discover", "restore", "register"]);
-    expect(restoreRecreatedSandboxState).toHaveBeenCalledWith("openclaw", "/tmp/openclaw-backup", {
-      targetAgentType: "openclaw",
-      freshOpenClawImagePluginInstalls: pluginInstalls,
-    });
-    expect(register).toHaveBeenCalledWith(pluginInstalls);
+    expect(restoreRecreatedSandboxState).toHaveBeenCalledWith(
+      "openclaw",
+      "/tmp/openclaw-backup",
+      {
+        targetAgentType: "openclaw",
+        freshOpenClawImagePluginInstalls: pluginInstalls,
+      },
+      expect.any(Function),
+    );
+    expect(register).toHaveBeenCalledWith(pluginInstalls, expect.anything());
   });
 
-  it("defers managed restore before unregistered target authority can be bound", () => {
+  it("restores through a revalidated target row before publishing it (#10546)", () => {
+    const order: string[] = [];
+    const prepared = { name: "openclaw" } as SandboxEntry;
+    const restoredTarget = { ...prepared } as SandboxEntry;
+    const publishedTarget = { ...prepared } as SandboxEntry;
+    const expectedTargets = [prepared, restoredTarget];
+    const refreshedTargets = [restoredTarget, publishedTarget];
+    const register = vi.fn((_plugins, target) => {
+      order.push("register");
+      expect(target).toBe(publishedTarget);
+      return target;
+    });
+    let revalidation = 0;
+
+    const result = finalizeCreatedSandbox(
+      {
+        sandboxName: "openclaw",
+        restoreBackupPath: "/tmp/managed-openclaw-backup",
+        preUpgradeBackup: true,
+        targetAgentType: "openclaw",
+        validateManagedDcode: false,
+        provider: "compatible-endpoint",
+        model: "demo",
+        preferredInferenceApi: "openai-completions",
+      },
+      {
+        discoverFreshOpenClawImagePluginInstalls: vi.fn(),
+        prepareRegistration: () => {
+          order.push("prepare");
+          return prepared;
+        },
+        revalidatePreparedRegistration: (target) => {
+          order.push("revalidate");
+          expect(target).toBe(expectedTargets[revalidation]);
+          return refreshedTargets[revalidation++]!;
+        },
+        restoreRecreatedSandboxState: (_name, _backupPath, _options, resolveTarget) => {
+          order.push("restore");
+          expect(resolveTarget?.()).toBe(restoredTarget);
+          return {
+            success: true,
+            restoredDirs: ["workspace"],
+            failedDirs: [],
+            restoredFiles: [],
+            failedFiles: [],
+          };
+        },
+        getDcodeSelectionDrift: vi.fn(),
+        register,
+        note: vi.fn(),
+        error: vi.fn(),
+        exitProcess: (code): never => {
+          throw new Error(`exit ${code}`);
+        },
+      },
+    );
+
+    expect(result).toBe(publishedTarget);
+    expect(order).toEqual(["prepare", "restore", "revalidate", "revalidate", "register"]);
+    expect(register).toHaveBeenCalledWith(undefined, publishedTarget);
+  });
+
+  it("does not publish the prepared target when managed restore fails (#10546)", () => {
+    const prepared = { name: "openclaw" } as SandboxEntry;
+    const register = vi.fn();
+
+    expect(() =>
+      finalizeCreatedSandbox(
+        {
+          sandboxName: "openclaw",
+          restoreBackupPath: "/tmp/managed-openclaw-backup",
+          preUpgradeBackup: true,
+          targetAgentType: "openclaw",
+          validateManagedDcode: false,
+          provider: "compatible-endpoint",
+          model: "demo",
+          preferredInferenceApi: "openai-completions",
+        },
+        {
+          discoverFreshOpenClawImagePluginInstalls: vi.fn(),
+          prepareRegistration: () => prepared,
+          revalidatePreparedRegistration: () => prepared,
+          restoreRecreatedSandboxState: (_name, _backupPath, _options, resolveTarget) => {
+            expect(resolveTarget?.()).toBe(prepared);
+            return {
+              success: false,
+              restoredDirs: [],
+              failedDirs: ["workspace"],
+              restoredFiles: [],
+              failedFiles: [],
+              error: "copy failed",
+            };
+          },
+          getDcodeSelectionDrift: vi.fn(),
+          register,
+          note: vi.fn(),
+          error: vi.fn(),
+          exitProcess: (code): never => {
+            throw new Error(`exit ${code}`);
+          },
+        },
+      ),
+    ).toThrow("exit 1");
+
+    expect(register).not.toHaveBeenCalled();
+  });
+
+  it("fails closed before restore when prepared registration authority is unavailable", () => {
     const register = vi.fn();
     const error = vi.fn();
+    const restoreRecreatedSandboxState = vi.fn();
 
     expect(() =>
       finalizeCreatedSandbox(
@@ -925,14 +1034,7 @@ describe("created OpenClaw sandbox finalization", () => {
         },
         {
           discoverFreshOpenClawImagePluginInstalls: vi.fn(),
-          restoreRecreatedSandboxState: () => ({
-            success: false,
-            restoredDirs: [],
-            failedDirs: ["manifest"],
-            restoredFiles: [],
-            failedFiles: [],
-            error: sandboxState.MANAGED_SNAPSHOT_RESTORE_AUTHORITY_ERROR,
-          }),
+          restoreRecreatedSandboxState,
           getDcodeSelectionDrift: vi.fn(),
           register,
           note: vi.fn(),
@@ -944,8 +1046,11 @@ describe("created OpenClaw sandbox finalization", () => {
       ),
     ).toThrow("exit 1");
 
+    expect(restoreRecreatedSandboxState).not.toHaveBeenCalled();
     expect(register).not.toHaveBeenCalled();
-    expect(error).toHaveBeenCalledWith(expect.stringContaining("restore is deferred"));
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("has no prepared registration authority"),
+    );
     expect(error).toHaveBeenCalledWith(
       "  State was not restored and registry metadata was not updated.",
     );
@@ -973,6 +1078,7 @@ describe("created OpenClaw sandbox finalization", () => {
           preferredInferenceApi: "openai-completions",
         },
         {
+          ...preparedRestoreAuthority("openclaw"),
           discoverFreshOpenClawImagePluginInstalls: () => ({
             ok: false,
             error: "registry unreadable",
@@ -1021,6 +1127,7 @@ describe("created OpenClaw sandbox finalization", () => {
           preferredInferenceApi: "openai-completions",
         },
         {
+          ...preparedRestoreAuthority("openclaw"),
           discoverFreshOpenClawImagePluginInstalls: () => ({
             ok: true,
             extensionDirs: ["weather"],
@@ -1176,40 +1283,11 @@ describe("created sandbox completion actions", () => {
           dashboard: {
             chatUiUrl: "http://127.0.0.1:8643",
             initialHermesState: { config: null, enabled: false },
-            preservedSiblingForwards: [
-              {
-                bind: "127.0.0.1",
-                gatewayName: "nemoclaw",
-                lifecycleGeneration: "generation-alpha",
-                lifecycleLiveIdentityFingerprint: "b".repeat(64),
-                openshellDriver: "podman",
-                pid: 101,
-                port: "18789",
-                sandboxName: "alpha",
-              },
-            ],
             releasePort: async () => {
               order.push("dashboard-release");
             },
-            ensureForward: (_sandboxName, _chatUiUrl, options) => {
-              expect(options.preservedSiblingForwards).toEqual([
-                {
-                  bind: "127.0.0.1",
-                  gatewayName: "nemoclaw",
-                  lifecycleGeneration: "generation-alpha",
-                  lifecycleLiveIdentityFingerprint: "b".repeat(64),
-                  openshellDriver: "podman",
-                  pid: 101,
-                  port: "18789",
-                  sandboxName: "alpha",
-                },
-              ]);
-              order.push("dashboard-forward");
-              return 8644;
-            },
             getForwardPort: () => "8643",
             resolveHermesState: () => ({ config: null, enabled: false }),
-            ensureHermesForward: () => order.push("dashboard-hermes"),
           },
           workload: {
             runtime: {
@@ -1296,7 +1374,7 @@ describe("created sandbox completion actions", () => {
         "lifecycle-capture",
         "lifecycle-revalidate",
         "gpu",
-        ...(manageDashboard ? ["dashboard-release", "dashboard-forward", "dashboard-hermes"] : []),
+        ...(manageDashboard ? ["dashboard-release"] : []),
         ...(schema5 ? [] : ["workload"]),
         "lifecycle-revalidate",
         "registry",
@@ -1306,7 +1384,7 @@ describe("created sandbox completion actions", () => {
         expect.objectContaining({
           imageTag: "hermes:test",
           hermesPortableLifecycle: schema5,
-          dashboardPort: manageDashboard ? 8644 : 0,
+          dashboardPort: manageDashboard ? 8643 : 0,
           lifecycleGeneration: "generation-1",
           lifecycleLiveIdentityFingerprint: "a".repeat(64),
           inferenceSelection: inferenceRouteReservation.authority.selection,

@@ -570,6 +570,8 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
     );
   });
 
+  // Coverage shards exercise this rollback path under aggregate process load;
+  // keep its behavior deadline bounded above the default 5 seconds.
   it("removes credential-free policy when provider attachment fails", async () => {
     arrangeRegistry({ current: makeEmptyEntry("alpha") });
     getCredentialMock.mockReturnValue(TELEGRAM_TOKEN);
@@ -590,7 +592,7 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
     );
 
     expect(removePresetMock).toHaveBeenCalledWith("alpha", "telegram");
-  }, 15_000);
+  }, 60_000);
 
   // Scenario 5b
   it("different hash on the other sandbox is NOT a conflict (no warning, add proceeds)", async () => {

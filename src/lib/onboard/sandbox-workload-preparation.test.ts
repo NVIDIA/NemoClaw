@@ -193,7 +193,7 @@ describe("sandbox workload preparation", () => {
         liveE2eManagedImageCatalog({
           GITHUB_ACTIONS: "true",
           NEMOCLAW_RUN_LIVE_E2E: "1",
-          NEMOCLAW_E2E_EXPECTED_SHA: REVISION,
+          NEMOCLAW_E2E_EXPECTED_SHA: "b".repeat(40),
           NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: JSON.stringify(CATALOG),
         }),
       ).toEqual({ catalog: CATALOG, revision: REVISION });

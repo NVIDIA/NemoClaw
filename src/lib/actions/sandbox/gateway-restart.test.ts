@@ -185,6 +185,29 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
     );
   });
 
+  it("fails closed instead of using host-local supervisor control for a selected runtime", () => {
+    const deps = baseDeps();
+    const { requestGatewaySupervisorAction: hostLocalSupervisorAction, ...nonSupervisorDeps } =
+      deps;
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const result = restartSandboxGateway("alpha", {
+      quiet: true,
+      runtimeSelection: { gatewayName: "remote-gateway", workspace: "remote-workspace" },
+      deps: nonSupervisorDeps,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      failureLayer: "privileged control unavailable",
+      detail: expect.stringContaining("SELECTED_RUNTIME_SUPERVISOR_UNAVAILABLE"),
+    });
+    expect(hostLocalSupervisorAction).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Failure layer: privileged control unavailable"),
+    );
+  });
+
   it("prints a bounded sanitized Hermes gateway-log tail after supervisor failure (#8614)", () => {
     const restore = silenceConsole();
     try {

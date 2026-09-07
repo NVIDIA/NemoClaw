@@ -44,7 +44,14 @@ function runNodeScript(
   home: string,
   script: string,
 ): { status: number | null; stdout: string; stderr: string } {
-  const result = spawnSync(process.execPath, ["-e", script], {
+  const runtimeSelectionSetup = `
+const providerInspection = require("./src/lib/actions/sandbox/mcp-bridge-provider-inspection.js");
+providerInspection.getMcpProviderInspectionRuntimeSelection = () => ({
+  gatewayName: "nemoclaw",
+  workspace: "default",
+});
+`;
+  const result = spawnSync(process.execPath, ["-e", `${runtimeSelectionSetup}\n${script}`], {
     cwd: process.cwd(),
     encoding: "utf8",
     env: { ...process.env, HOME: home, NODE_OPTIONS: sourceNodeOptions },
@@ -241,7 +248,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
           stdout: "Id: " + expectedId + "\nType: nemoclaw-mcp-v1\nResource version: 4\nCredential keys: EXPECTED_TOKEN\n",
           stderr: "",
         }
-      : { status: 1, stdout: "", stderr: "NotFound: provider" };
+      : { status: 1, stdout: "", stderr: "provider '" + args[2] + "' not found" };
   }
   if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "list") {
     events.push(attached ? "provider:list:attached" : "provider:list:detached");
@@ -545,7 +552,6 @@ const state = require("./src/lib/actions/sandbox/mcp-bridge-state.js");
 const adapters = require("./src/lib/actions/sandbox/mcp-bridge-adapters.js");
 const policy = require("./src/lib/actions/sandbox/mcp-bridge-policy.js");
 state.ensureSandboxGatewaySelected = async () => {};
-adapters.assertAgentMcpConfigMutationAllowed = () => {};
 adapters.assertAgentMcpTeardownRuntimeCapability = () => {};
 adapters.unregisterAgentAdapter = () => {
   throw new Error("adapter cleanup failed (injected)");
@@ -596,7 +602,6 @@ const state = require("./src/lib/actions/sandbox/mcp-bridge-state.js");
 const adapters = require("./src/lib/actions/sandbox/mcp-bridge-adapters.js");
 const policy = require("./src/lib/actions/sandbox/mcp-bridge-policy.js");
 state.ensureSandboxGatewaySelected = async () => {};
-adapters.assertAgentMcpConfigMutationAllowed = () => {};
 adapters.assertAgentMcpTeardownRuntimeCapability = () => {};
 adapters.unregisterAgentAdapter = () => "removed";
 policy.assertGeneratedPolicyMutationSafe = () => {};

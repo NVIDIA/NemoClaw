@@ -16,7 +16,8 @@ request does not authorize `Staging Brev Launchable`.
 
 ## Route the Request
 
-- For E2E against a pull request revision, read and follow [Manual PR Runs](references/manual-pr.md).
+- For E2E against a pull request revision, including failure-triggered comparison with its exact
+  base, read and follow [Manual PR Runs](references/manual-pr.md).
 - To dispatch ordinary, focused, staging Launchable, or full E2E on `main`, read and follow
   [Main Runs](references/main-runs.md) and the Launchable boundary below.
 - For a release decision inspection, use the section below. Do not load a dispatch reference unless the maintainer requests a new run.

@@ -54,7 +54,6 @@ const OPENCLAW_TARGET: import("./config").AgentConfigTarget = {
   configDir: "/sandbox/.openclaw",
   configFile: "openclaw.json",
   format: "json",
-  stateLockPlanInImage: true,
 };
 
 describe("readSandboxConfig stopped-sandbox detail (#10251)", () => {
