@@ -19,6 +19,12 @@ import {
 
 export type { RemoteProviderConfigEntryLike } from "./inference-providers/provider-selection-keys";
 
+export const INVALID_MANAGED_LLAMA_CPP_RECOVERY = Symbol("invalid-managed-llama-cpp-recovery");
+export type RecordedManagedLlamaCppRecovery =
+  | string
+  | null
+  | typeof INVALID_MANAGED_LLAMA_CPP_RECOVERY;
+
 interface VllmInstallResumeSession {
   readonly vllmInstallModel?: string | null;
   readonly steps?: {
@@ -103,7 +109,7 @@ export interface ProviderSelectionRecoveryReaderBundle {
   readRecordedManagedLlamaCppRecipeId?(
     sandboxName: string | null | undefined,
     recoverySessionId?: string | null,
-  ): string | null;
+  ): RecordedManagedLlamaCppRecovery;
   readRecordedModel(
     sandboxName: string | null | undefined,
     recoverySessionId?: string | null,
@@ -241,7 +247,9 @@ export function createProviderRecoveryHelpers(deps: ProviderRecoveryDeps): Provi
     hostLocalInferenceProvenance?: unknown;
   };
 
-  const managedLlamaCppRecipeId = (value: ManagedLlamaCppRecoveryState): string | null => {
+  const managedLlamaCppRecipeId = (
+    value: ManagedLlamaCppRecoveryState,
+  ): RecordedManagedLlamaCppRecovery => {
     if (value.provider !== "llama-cpp-local") return null;
     const recipe = value.servingProfileProvenance?.recipe;
     const hasProfile = value.servingProfileProvenance != null;
@@ -251,7 +259,7 @@ export function createProviderRecoveryHelpers(deps: ProviderRecoveryDeps): Provi
       SAFE_MANAGED_LLAMA_CPP_RECIPE_ID.test(recipe.id)
         ? recipe.id
         : null;
-    if (hasProfile && profileRecipeId === null) return null;
+    if (hasProfile && profileRecipeId === null) return INVALID_MANAGED_LLAMA_CPP_RECOVERY;
 
     const hasReceiptAuthority =
       value.hostLocalInferenceReceipt != null || value.hostLocalInferenceProvenance != null;
@@ -260,7 +268,7 @@ export function createProviderRecoveryHelpers(deps: ProviderRecoveryDeps): Provi
       typeof value.hostLocalInferenceReceipt !== "string" ||
       value.hostLocalInferenceProvenance == null
     ) {
-      return null;
+      return INVALID_MANAGED_LLAMA_CPP_RECOVERY;
     }
     try {
       requireSandboxHostLocalInferenceProvenance(
@@ -276,11 +284,11 @@ export function createProviderRecoveryHelpers(deps: ProviderRecoveryDeps): Provi
         !SAFE_MANAGED_LLAMA_CPP_RECIPE_ID.test(receiptRecipeId) ||
         (profileRecipeId !== null && profileRecipeId !== receiptRecipeId)
       ) {
-        return null;
+        return INVALID_MANAGED_LLAMA_CPP_RECOVERY;
       }
       return receiptRecipeId;
     } catch {
-      return null;
+      return INVALID_MANAGED_LLAMA_CPP_RECOVERY;
     }
   };
 
@@ -356,7 +364,7 @@ export function createProviderRecoveryHelpers(deps: ProviderRecoveryDeps): Provi
   function readRecordedManagedLlamaCppRecipeId(
     sandboxName: string | null | undefined,
     recoverySessionId?: string | null,
-  ): string | null {
+  ): RecordedManagedLlamaCppRecovery {
     if (!sandboxName) return null;
     try {
       const { authority, entry } = readRegistryRecoveryState(sandboxName, recoverySessionId);

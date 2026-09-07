@@ -4,6 +4,7 @@
 import { isBedrockRuntimeEndpoint } from "../inference/bedrock-runtime";
 import { type ProviderOption, resolveProviderKeyFallback } from "./provider-key-fallback";
 import {
+  INVALID_MANAGED_LLAMA_CPP_RECOVERY,
   providerNameToOptionKey,
   type ProviderSelectionRecoveryReaderBundle,
   type RemoteProviderConfigEntryLike,
@@ -25,6 +26,10 @@ export type ProviderSelectionFailureReason =
       recordedProvider: string;
       recoveredKey: string;
       windowsHostKey: string | null;
+    }
+  | {
+      kind: "invalid-managed-llama-cpp-recovery";
+      sandboxName: string;
     }
   | {
       kind: "unsupported-windows-host-ollama";
@@ -157,10 +162,21 @@ export function resolveRequestedProviderSelection<T extends ProviderOption>(
   if (!providerKey) {
     const recordedProvider = input.readRecordedProvider(input.sandboxName);
     const hasNimContainer = !!input.readRecordedNimContainer(input.sandboxName);
-    const recordedManagedLlamaCppRecipeId =
+    const recordedManagedLlamaCppRecovery =
       recordedProvider === "llama-cpp-local"
         ? (input.readRecordedManagedLlamaCppRecipeId?.(input.sandboxName) ?? null)
         : null;
+    if (recordedManagedLlamaCppRecovery === INVALID_MANAGED_LLAMA_CPP_RECOVERY) {
+      return {
+        kind: "failure",
+        reason: {
+          kind: "invalid-managed-llama-cpp-recovery",
+          sandboxName: input.sandboxName ?? "unknown",
+        },
+      };
+    }
+    const recordedManagedLlamaCppRecipeId =
+      typeof recordedManagedLlamaCppRecovery === "string" ? recordedManagedLlamaCppRecovery : null;
     const recoveredKey = providerNameToOptionKey(input.remoteProviderConfig, recordedProvider, {
       hasManagedLlamaCpp: recordedManagedLlamaCppRecipeId !== null,
       hasNimContainer,

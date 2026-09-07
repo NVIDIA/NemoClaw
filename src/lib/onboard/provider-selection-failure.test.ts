@@ -62,6 +62,18 @@ describe("reportProviderSelectionFailure", () => {
     ]);
   });
 
+  it("stops invalid managed llama.cpp recovery before provider attachment", () => {
+    const { errors, rejected } = report({
+      reason: { kind: "invalid-managed-llama-cpp-recovery", sandboxName: "alpha" },
+    });
+
+    assert.deepEqual(rejected, []);
+    assert.deepEqual(errors, [
+      "  Recorded managed llama.cpp authority for sandbox 'alpha' is invalid or conflicting.",
+      "  Repair or remove the recorded managed runtime state before selecting another provider.",
+    ]);
+  });
+
   it("delegates unsupported Windows-host Ollama failures to the rejection helper", () => {
     const { errors, rejected } = report({
       reason: { kind: "unsupported-windows-host-ollama", providerKey: "start-windows-ollama" },

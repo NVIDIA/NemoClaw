@@ -126,7 +126,7 @@ export function prepareProviderDiscovery(options: {
       deps.remoteProviderConfig,
       recordedProviderName,
       {
-        hasManagedLlamaCpp: recordedManagedLlamaCppRecipeId !== null,
+        hasManagedLlamaCpp: typeof recordedManagedLlamaCppRecipeId === "string",
         hasNimContainer: hasRecordedNimContainer,
       },
     );
@@ -145,7 +145,7 @@ export function prepareProviderDiscovery(options: {
     deps.remoteProviderConfig,
     recoveredProbeProvider,
     {
-      hasManagedLlamaCpp: recordedManagedLlamaCppRecipeId !== null,
+      hasManagedLlamaCpp: typeof recordedManagedLlamaCppRecipeId === "string",
       hasNimContainer:
         recoveredProbeProvider === "vllm-local" &&
         Boolean(recordedProviderReaders.readRecordedNimContainer(sandboxName)),

@@ -11,6 +11,7 @@ import {
   classifySandboxRecoveryAuthority,
   createProviderRecoveryHelpers,
   getSandboxRecoveryAuthority,
+  INVALID_MANAGED_LLAMA_CPP_RECOVERY,
   providerNameToOptionKey,
   shouldRecoverRecordedProvider,
   validateLiveGatewayInference,
@@ -295,7 +296,9 @@ describe("provider recovery persisted routing state", () => {
     });
     const recovery = helpers();
 
-    expect(recovery.readRecordedManagedLlamaCppRecipeId("alpha")).toBeNull();
+    expect(recovery.readRecordedManagedLlamaCppRecipeId("alpha")).toBe(
+      INVALID_MANAGED_LLAMA_CPP_RECOVERY,
+    );
     expect(
       resolveRequestedProviderSelection({
         options: [
@@ -314,9 +317,8 @@ describe("provider recovery persisted routing state", () => {
         ...recovery.providerSelectionReaders,
       }),
     ).toMatchObject({
-      kind: "selected",
-      selected: { key: "llama-cpp" },
-      recoveredFromSandbox: true,
+      kind: "failure",
+      reason: { kind: "invalid-managed-llama-cpp-recovery", sandboxName: "alpha" },
     });
   });
 
@@ -337,7 +339,9 @@ describe("provider recovery persisted routing state", () => {
     });
     const recovery = helpers();
 
-    expect(recovery.readRecordedManagedLlamaCppRecipeId("alpha")).toBeNull();
+    expect(recovery.readRecordedManagedLlamaCppRecipeId("alpha")).toBe(
+      INVALID_MANAGED_LLAMA_CPP_RECOVERY,
+    );
     expect(
       resolveRequestedProviderSelection({
         options: [
@@ -355,7 +359,10 @@ describe("provider recovery persisted routing state", () => {
         ollamaRunning: false,
         ...recovery.providerSelectionReaders,
       }),
-    ).toMatchObject({ selected: { key: "llama-cpp" } });
+    ).toMatchObject({
+      kind: "failure",
+      reason: { kind: "invalid-managed-llama-cpp-recovery", sandboxName: "alpha" },
+    });
   });
 
   it.each([
