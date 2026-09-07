@@ -174,6 +174,14 @@ describe("Hermes portable staged build context", testTimeoutOptions(30_000), () 
       ),
     ).toBe(true);
     expect(
+      fs.existsSync(
+        path.join(
+          first.buildContextPath,
+          "agents/hermes/patch-hermes-kanban-atomic-schema.py",
+        ),
+      ),
+    ).toBe(true);
+    expect(
       fs.existsSync(path.join(first.buildContextPath, "agents/hermes/plugin/__pycache__")),
     ).toBe(false);
     expect(

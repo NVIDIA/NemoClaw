@@ -131,6 +131,7 @@ if tables:
 
   it("binds the Hermes image to the reviewed atomic-schema patcher", () => {
     const digest = createHash("sha256").update(fs.readFileSync(patcher)).digest("hex");
+    const imageProbeDigest = createHash("sha256").update(imageProbe).digest("hex");
 
     expect(dockerfile).toContain(
       `ARG NEMOCLAW_HERMES_KANBAN_ATOMIC_SCHEMA_PATCHER_SHA256=${digest}`,
@@ -141,6 +142,11 @@ if tables:
     expect(dockerfile).toContain("/opt/nemoclaw-hermes-config/image-build-probes.py kanban-init");
     expect(imageProbe).toContain('[str(hermes), "kanban", "init"]');
     expect(imageProbe).toContain('connection.execute("PRAGMA integrity_check")');
+    expect(
+      dockerfile.match(
+        new RegExp(`ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=${imageProbeDigest}`, "gu"),
+      ),
+    ).toHaveLength(2);
     expect(dockerfile).toContain(
       "check_absent /opt/nemoclaw-hermes-config/patch-hermes-kanban-atomic-schema.py",
     );

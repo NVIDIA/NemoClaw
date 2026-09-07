@@ -87,6 +87,7 @@ describe("portable profile rootless runtime workflow", () => {
       expect.arrayContaining([
         "agents/hermes/Dockerfile",
         "agents/hermes/dashboard-external-host.patch",
+        "agents/hermes/patch-hermes-kanban-atomic-schema.py",
         "agents/hermes/start.sh",
         "src/lib/onboard/experimental/hermes-portable-build-context-files.ts",
         "src/lib/onboard/experimental/hermes-portable-build-context.ts",
