@@ -42,7 +42,7 @@ const MCP_BRIDGE_DENIED_TOOL_PROMPT =
   "Run the managed denied-tool policy probe and return its result verbatim.";
 const MCP_BRIDGE_DENIED_TOOL_RESULT = "policy_denied";
 const MCP_DENIAL_AUDIT_RE =
-  /\bJSONRPC_L7_REQUEST decision=deny rule_methods=tools\/call tools=fake_status\b[^\r\n]*\breason=[^\r\n]*deny rule/giu;
+  /\bJSONRPC_L7_REQUEST decision=deny rule_methods=tools\/call tools=fake_status\b[^\r\n]*\breason=[^\r\n]*deny rule/iu;
 const MCP_DENIAL_AUDIT_ATTEMPTS = 5;
 const MCP_DENIAL_AUDIT_RETRY_MS = 250;
 
@@ -71,7 +71,7 @@ export async function runDeniedMcpToolCall(host: HostCliClient, options: {
 }): Promise<{ after: number; before: number; policyDenied: boolean; result: ShellProbeResult }> {
   const countToolCalls = () =>
     options.requests.filter((request) => request.rpcMethod === "tools/call").length;
-  const readDenialAuditCount = async (artifactName: string): Promise<number | null> => {
+  const readDenialAuditEvents = async (artifactName: string): Promise<string[] | null> => {
     const logs = await host.command(
       host.openshellCommandPath,
       ["logs", options.sandboxName, "-n", "500", "--source", "all", "--since", "2m"],
@@ -83,7 +83,9 @@ export async function runDeniedMcpToolCall(host: HostCliClient, options: {
       },
     );
     if (logs.timedOut || logs.exitCode !== 0) return null;
-    return resultText(logs).match(MCP_DENIAL_AUDIT_RE)?.length ?? 0;
+    return resultText(logs)
+      .split(/\r?\n/u)
+      .filter((line) => MCP_DENIAL_AUDIT_RE.test(line));
   };
   const audit = await host.command(
     host.openshellCommandPath,
@@ -96,8 +98,9 @@ export async function runDeniedMcpToolCall(host: HostCliClient, options: {
   );
   const denialAuditBefore =
     !audit.timedOut && audit.exitCode === 0
-      ? await readDenialAuditCount(`${options.artifactName}-audit-before`)
+      ? await readDenialAuditEvents(`${options.artifactName}-audit-before`)
       : null;
+  const priorDenialAuditEvents = new Set(denialAuditBefore ?? []);
   const before = countToolCalls();
   const payload = JSON.stringify({
     model: "mock/mcp-bridge",
@@ -132,16 +135,18 @@ export async function runDeniedMcpToolCall(host: HostCliClient, options: {
       },
     );
   const result = await run(options.artifactName);
-  let denialAuditAfter = denialAuditBefore;
+  let policyDenied = false;
   for (
     let attempt = 1;
     denialAuditBefore !== null && attempt <= MCP_DENIAL_AUDIT_ATTEMPTS;
     attempt += 1
   ) {
-    denialAuditAfter = await readDenialAuditCount(
+    const denialAuditAfter = await readDenialAuditEvents(
       `${options.artifactName}-audit-after-${String(attempt)}`,
     );
-    if (denialAuditAfter !== null && denialAuditAfter > denialAuditBefore) break;
+    policyDenied =
+      denialAuditAfter?.some((event) => !priorDenialAuditEvents.has(event)) ?? false;
+    if (policyDenied) break;
     if (attempt < MCP_DENIAL_AUDIT_ATTEMPTS) {
       await new Promise((resolve) => setTimeout(resolve, MCP_DENIAL_AUDIT_RETRY_MS));
     }
@@ -149,10 +154,7 @@ export async function runDeniedMcpToolCall(host: HostCliClient, options: {
   return {
     after: countToolCalls(),
     before,
-    policyDenied:
-      denialAuditBefore !== null &&
-      denialAuditAfter !== null &&
-      denialAuditAfter > denialAuditBefore,
+    policyDenied,
     result,
   };
 }
