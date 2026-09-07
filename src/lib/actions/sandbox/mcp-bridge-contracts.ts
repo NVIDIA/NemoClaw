@@ -25,6 +25,7 @@ export interface ParsedMcpAddArgs {
   server: string;
   url: string;
   env: ParsedEnvReference[];
+  denyTools?: string[];
   trustedPrivateHosts?: string[];
 }
 
@@ -52,6 +53,11 @@ export interface McpBridgeToolDiscoveryResult {
   detail?: string;
   failedStage?: McpBridgeToolDiscoveryFailedStage;
   failureClass?: McpBridgeToolDiscoveryFailureClass;
+}
+
+export interface ParsedMcpUpdateArgs {
+  server: string;
+  denyTools: string[];
 }
 
 export interface McpBridgeStatus {
@@ -100,6 +106,7 @@ export interface McpBridgeStatus {
     name?: string;
     registryPresent: boolean;
     gatewayPresent: boolean | null;
+    state?: "drift";
   };
   adapter: {
     registered: boolean | null;

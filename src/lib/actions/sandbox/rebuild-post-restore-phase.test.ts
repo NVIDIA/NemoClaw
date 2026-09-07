@@ -210,6 +210,31 @@ describe("rebuild post-restore phase", () => {
     expect(process.env.OPENSHELL_GATEWAY).toBe("hostile-gateway");
   });
 
+  it("refuses frozen Hermes supervisor authority when the recreated gateway binding changed", async () => {
+    agentName = "hermes";
+    vi.mocked(registry.getSandbox).mockReturnValue({
+      agent: "hermes",
+      gatewayName: "nemoclaw-19081",
+      gatewayPort: 19081,
+    } as never);
+    const args = {
+      ...input(),
+      mcpRuntimeSelection: {
+        gatewayName: "nemoclaw-19080",
+        workspace: "default",
+      },
+    };
+
+    await runRebuildPostRestorePhase(args);
+
+    expect(args.bail).toHaveBeenCalledWith(
+      "Recreated sandbox agent identity did not match the authoritative rebuild target.",
+    );
+    expect(
+      rebuildHermesPostRestore.restartHermesGatewayAfterStateRestore,
+    ).not.toHaveBeenCalled();
+  });
+
   it("does not record a final hash without trusted doctor completion (#9946)", async () => {
     vi.mocked(processRecovery.executeSandboxExecCommand).mockReturnValue(null);
     const args = input();

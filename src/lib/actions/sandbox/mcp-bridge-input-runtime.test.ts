@@ -12,6 +12,7 @@ import {
   removeMcpBridge,
   restartMcpBridge,
   resolveCredentialEnv,
+  updateMcpBridgeDenyTools,
 } from "./mcp-bridge";
 
 describe("MCP input runtime boundaries", () => {
@@ -38,10 +39,14 @@ describe("MCP input runtime boundaries", () => {
     await expect(restartMcpBridge("missing-sandbox", "github")).rejects.toThrow(
       "schema-5 rejected",
     );
+    await expect(
+      updateMcpBridgeDenyTools("missing-sandbox", "github", ["delete_*"]),
+    ).rejects.toThrow("schema-5 rejected");
     expect(guard.mock.calls.map((call) => call[1])).toEqual([
       "sandbox:mcp:add",
       "sandbox:mcp:remove",
       "sandbox:mcp:restart",
+      "sandbox:mcp:update",
     ]);
   });
 

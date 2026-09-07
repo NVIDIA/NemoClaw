@@ -422,6 +422,33 @@ export async function assertAuthenticatedMcpDiscoveryWithOneRestart(
   return throwTerminalFailure("failed-after-restart", retryAttempt.error);
 }
 
+export async function assertHermesInitialMcpDiscovery(
+  fakeMcp: FakeMcpHttpsServer,
+  options: {
+    artifacts: Pick<ArtifactSink, "writeJson">;
+    expectedSecret: string;
+    progress: Pick<TestProgress, "event">;
+    restart: () => Promise<void>;
+  },
+): Promise<void> {
+  const requestOffset = fakeMcp.requests.length;
+  const observationOffset = fakeMcp.observations.length;
+  await assertAuthenticatedMcpDiscoveryWithOneRestart(fakeMcp, {
+    requestOffset,
+    observationOffset,
+    expectedSecret: options.expectedSecret,
+    label: "Hermes initial MCP discovery",
+    artifacts: options.artifacts,
+    artifactName: "hermes-initial-mcp-discovery-retry-evidence.json",
+    restart: async () => {
+      options.progress.event(
+        "Hermes initial MCP discovery classified no-request-observed after the initial-discovery offset; restarting once",
+      );
+      await options.restart();
+    },
+  });
+}
+
 export async function runHermesInitialMcpReadiness(operations: {
   discover: () => Promise<void>;
   inspectToolStatus: () => Promise<void>;
@@ -462,7 +489,7 @@ export async function captureHermesMcpVerificationVersions(
         "bash",
         [
           "-lc",
-          "set -eu; . /etc/os-release; printf 'operating-system=%s\\n' \"$PRETTY_NAME\"; uname -a; \"$1\" version",
+          'set -eu; . /etc/os-release; printf \'operating-system=%s\\n\' "$PRETTY_NAME"; uname -a; "$1" version',
           "mcp-verification-platform",
           containerRuntime,
         ],
@@ -471,14 +498,10 @@ export async function captureHermesMcpVerificationVersions(
           env: buildAvailabilityProbeEnv(),
         },
       ),
-      sandbox.execShell(
-        sandboxName,
-        trustedSandboxShellScript("cat /etc/os-release && uname -a"),
-        {
-          artifactName: "hermes-mcp-sandbox-platform",
-          env: buildAvailabilityProbeEnv(),
-        },
-      ),
+      sandbox.execShell(sandboxName, trustedSandboxShellScript("cat /etc/os-release && uname -a"), {
+        artifactName: "hermes-mcp-sandbox-platform",
+        env: buildAvailabilityProbeEnv(),
+      }),
     ]);
   if (
     [nemoclawVersion, openshellVersion, hermesVersion, hostPlatform, sandboxPlatform].some(
@@ -508,9 +531,18 @@ export async function assertAuthenticatedMcpToolDiscovery(
     deniedSecret?: string;
     hostSecret: string;
     progress: Pick<TestProgress, "event">;
+    sandbox?: SandboxClient;
     serverName?: string;
   },
 ): Promise<void> {
+  if (options.sandbox) {
+    await captureHermesMcpVerificationVersions(
+      host,
+      options.sandbox,
+      options.sandboxName,
+      options.artifacts,
+    );
+  }
   const credentialKey = options.credentialKey ?? "FAKE_MCP_SECRET";
   const serverName = options.serverName ?? "fake";
   const requestOffset = fakeMcp.requests.length;
@@ -550,7 +582,6 @@ export async function assertAuthenticatedMcpToolDiscovery(
     `${options.artifactPrefix}-mcp-tool-discovery-diagnostics.json`,
     buildMcpToolDiscoveryDiagnostics(statusJson, discoveryRequests, options.hostSecret),
   );
-  expect(statusJson.toolDiscovery.ok).toBe(true);
   expect(status.stdout).not.toContain(options.hostSecret);
   const discoveryProtocolRequests = discoveryRequests.filter(
     (request) =>

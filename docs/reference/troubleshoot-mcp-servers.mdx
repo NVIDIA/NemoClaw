@@ -77,7 +77,7 @@ If restart still cannot prove the revision, repair the reported OpenShell provid
 
 ## Add Transaction Is Incomplete
 
-If status reports an incomplete add transaction, rerun the original `mcp add` command with the same URL and environment-variable name.
+If status reports an incomplete add transaction, rerun the original `mcp add` command with the same URL, environment-variable name, and any `--deny-tool` options.
 Re-export the value if the provider still needs to be created.
 
 To abandon the transaction, run `mcp remove <server> --force`.
@@ -393,7 +393,7 @@ Do not treat matching DNS pins as evidence that the path, method, adapter identi
 
 ## Lifecycle Lock Times Out
 
-Confirm that no `mcp add`, `mcp restart`, `mcp remove`, `rebuild`, or `destroy` command for the sandbox is still running, then retry the original command.
+Confirm that no `mcp add`, `mcp update`, `mcp restart`, `mcp remove`, `rebuild`, or `destroy` command for the sandbox is still running, then retry the original command.
 NemoClaw recovers a lock only when its local process is provably dead or its PID has a different process-start identity.
 
 It does not expose a force-unlock flag.

@@ -25,12 +25,16 @@ For `recover` and `gateway restart`, the managed controller acquires the expecte
 Lock acquisition, gateway termination, and replacement health share one recovery deadline.
 If lock acquisition reaches that deadline, the controller returns `SUPERVISOR_BUSY` without publishing an expected-exit marker.
 
-Mutable managed config retains the trust and time-of-check/time-of-use limits of managed cold start.
 <AgentOnly variant="hermes">
-In the direct root-entrypoint topology, PID 1 validates the Hermes secret boundary and runtime environment and verifies the strict root-owned hash without recomputing it.
-For Hermes, the managed controller preflights the secret boundary before it signals the observed child.
+Hermes configuration remains mutable in both topologies.
+Before a restart, the supervisor validates the secret boundary and records one stable config snapshot in its transaction metadata.
+A direct MCP change becomes pending and supersedes stale host-managed intent.
+The supervisor marks that change as applied only after the replacement gateway passes its health checks.
+The host operation that owns a managed MCP transaction can report a registry mismatch after Hermes is healthy.
 
-Mutable config in the managed topology has no durable root-owned hash anchor, so a restart cannot promise a `config hash mismatch` for direct drift.
+The direct root-entrypoint topology keeps the integrity metadata under root ownership while it seals a restart transaction.
+That metadata does not make the complete Hermes config a relaunch allowlist.
+The managed topology has no durable root-owned config anchor because the supervisor, gateway, and agent share one UID.
 </AgentOnly>
 
 This compatibility path remains necessary while the OpenShell-managed topology owns a nonroot supervisor and shared gateway-agent UID.
@@ -50,8 +54,11 @@ Custom agents that recover through an SSH script do not use this controller prob
 The nonroot Hermes supervisor continuously repairs the gateway, API relay, dashboard, dashboard relay, and gateway log stream.
 Four consecutive gateway health failures trigger recovery of the observed gateway child.
 
-Five unexpected gateway exits or failed replacement candidates within 60 seconds quarantine relaunch until the sandbox is recreated.
+Five unexpected gateway exits or failed replacement candidates within 60 seconds stop relaunch for the current supervisor instance.
 An authenticated host action authorizes one exit bound to the gateway process ID and kernel start identity while the root controller process remains live, so deliberate `gateway restart` and controller-driven replacement do not consume that crash budget.
+
+Correct the reported process or health failure, then stop and start the sandbox to reset the supervisor.
+Rebuild only if the sandbox still cannot start.
 
 The authorization records host intent for that exit; it does not claim that the host signal was the only possible cause of process termination in the shared-UID topology.
 After the in-sandbox processes are healthy, the host repairs only the host-side OpenShell forwards.
