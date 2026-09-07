@@ -365,6 +365,24 @@ describe("OpenShell forward service", () => {
     expect(removeOutput).toHaveBeenCalledOnce();
   });
 
+  it("records an exact OpenShell bind announcement without exposing raw output (#11084)", () => {
+    expect(() =>
+      launchForwardService(target, {
+        getProcessIdentity: stableProcessIdentity,
+        isProcessRunning: () => false,
+        isReachable: () => false,
+        sleep: () => {},
+        spawnDetached: () => ({
+          pid: 83,
+          readOutput: () =>
+            "✓ Forwarding 127.0.0.1:18789 -> 127.0.0.1:18789 in sandbox demo via gRPC",
+          removeOutput: vi.fn(),
+          unref: vi.fn(),
+        }),
+      }),
+    ).toThrow(/forwarding-announced/u);
+  });
+
   it.runIf(process.platform === "linux")(
     "proves listener ownership from Linux procfs without connecting (#11084)",
     async () => {

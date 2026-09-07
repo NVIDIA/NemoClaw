@@ -163,11 +163,22 @@ function linuxProcessOwnsListener(
   return unreadableDescriptor ? null : false;
 }
 
+type ForwardListenerObservation = "owned" | "absent" | "foreign" | "unavailable";
+
+function observeLinuxForwardListener(pid: number, port: number): ForwardListenerObservation {
+  const listenerInodes = readLinuxListeningSocketInodes(port);
+  if (listenerInodes === null) return "unavailable";
+  if (listenerInodes.size === 0) return "absent";
+  const owned = linuxProcessOwnsListener(pid, listenerInodes);
+  if (owned === null) return "unavailable";
+  return owned ? "owned" : "foreign";
+}
+
 /** Prove that a listener belongs to the exact child requested by this launch. */
 export function getForwardListenerOwnership(pid: number, port: number): boolean | null {
   if (process.platform === "linux") {
-    const listenerInodes = readLinuxListeningSocketInodes(port);
-    return listenerInodes ? linuxProcessOwnsListener(pid, listenerInodes) : null;
+    const observation = observeLinuxForwardListener(pid, port);
+    return observation === "owned" ? true : observation === "unavailable" ? null : false;
   }
   const result = spawnSync(
     "lsof",
@@ -272,18 +283,27 @@ function isSandboxCreatingHandoff(output: string, sandboxName: string): boolean 
   ).test(compactOpenShellDiagnostic(output));
 }
 
+function isForwardingAnnounced(output: string, target: ForwardServiceTarget): boolean {
+  const expected =
+    `Forwarding ${target.localHost}:${String(target.localPort)} - ` +
+    `${target.targetHost}:${String(target.targetPort)} in sandbox ${target.sandboxName} via gRPC`;
+  return compactOpenShellDiagnostic(output).includes(expected);
+}
+
 function classifyStartOutput(
   child: ForwardServiceChild,
-  sandboxName: string,
+  target: ForwardServiceTarget,
 ): { readonly category: string; readonly sandboxCreating: boolean } {
   const output = child.readOutput?.() ?? "";
-  const sandboxCreating = isSandboxCreatingHandoff(output, sandboxName);
+  const sandboxCreating = isSandboxCreatingHandoff(output, target.sandboxName);
   return {
     category: sandboxCreating
       ? "sandbox-creating"
-      : output.trim()
-        ? "non-readiness-diagnostic"
-        : "empty-diagnostic",
+      : isForwardingAnnounced(output, target)
+        ? "forwarding-announced"
+        : output.trim()
+          ? "non-readiness-diagnostic"
+          : "empty-diagnostic",
     sandboxCreating,
   };
 }
@@ -425,7 +445,17 @@ function startForwardServiceAttempt(input: {
   readonly target: ForwardServiceTarget;
 }): ForwardAttemptResult | null {
   const readIdentity = input.options.getProcessIdentity ?? getProcessIdentity;
-  const listenerOwned = input.options.isListenerOwned ?? getForwardListenerOwnership;
+  const observeListener = input.options.isListenerOwned
+    ? (pid: number, port: number): ForwardListenerObservation => {
+        const owned = input.options.isListenerOwned?.(pid, port);
+        return owned === true ? "owned" : owned === false ? "absent" : "unavailable";
+      }
+    : process.platform === "linux"
+      ? observeLinuxForwardListener
+      : (pid: number, port: number): ForwardListenerObservation => {
+          const owned = getForwardListenerOwnership(pid, port);
+          return owned === true ? "owned" : owned === false ? "absent" : "unavailable";
+        };
   const running = input.options.isProcessRunning ?? isProcessRunning;
   const sleep =
     input.options.sleep ??
@@ -440,7 +470,7 @@ function startForwardServiceAttempt(input: {
     [FORWARD_INSTANCE_ENV]: instanceId,
   });
   if (!isProcessId(child.pid)) {
-    const start = classifyStartOutput(child, input.target.sandboxName);
+    const start = classifyStartOutput(child, input.target);
     child.removeOutput?.();
     throw new Error(
       `OpenShell forward service returned no process identity for ${input.target.localHost}:${String(input.target.localPort)}; refusing to start a duplicate service; forward start: ${start.category}`,
@@ -455,22 +485,24 @@ function startForwardServiceAttempt(input: {
   child.unref();
   let stableObservations = 0;
   let stabilityDeadline: number | undefined;
+  let listenerObservation: ForwardListenerObservation = "absent";
 
   while (true) {
     const identity = processIdentityStatus(pid, expectedIdentity, readIdentity);
     if (identity === "exited" || !running(pid)) {
-      const start = classifyStartOutput(child, input.target.sandboxName);
+      const start = classifyStartOutput(child, input.target);
       child.removeOutput?.();
       return { ...start, processId: pid };
     }
     if (identity === "unverified") {
-      const start = classifyStartOutput(child, input.target.sandboxName);
+      const start = classifyStartOutput(child, input.target);
       child.removeOutput?.();
       throw new Error(
         `OpenShell forward service process ${String(pid)} changed identity before binding ${input.target.localHost}:${String(input.target.localPort)}; refusing to signal or retry; forward start: ${start.category}`,
       );
     }
-    if (listenerOwned(pid, input.target.localPort) === true) {
+    listenerObservation = observeListener(pid, input.target.localPort);
+    if (listenerObservation === "owned") {
       stabilityDeadline ??= Date.now() + SANDBOX_CREATING_RETRY_INTERVAL_MS + POLL_INTERVAL_MS;
       stableObservations += 1;
       if (stableObservations >= STABLE_LISTENER_OBSERVATIONS) {
@@ -496,21 +528,21 @@ function startForwardServiceAttempt(input: {
     stop,
     timeoutMs: input.options.stopTimeoutMs ?? STOP_TIMEOUT_MS,
   });
-  const start = classifyStartOutput(child, input.target.sandboxName);
+  const start = classifyStartOutput(child, input.target);
   child.removeOutput?.();
   if (stopped !== "stopped") {
     throw new Error(
-      `OpenShell forward service process ${String(pid)} did not become ready and ${stopped === "unverified" ? "could not be verified as owned" : "could not be stopped"}; refusing to retry; forward start: ${start.category}`,
+      `OpenShell forward service process ${String(pid)} did not become ready and ${stopped === "unverified" ? "could not be verified as owned" : "could not be stopped"}; refusing to retry; listener: ${listenerObservation}; forward start: ${start.category}`,
     );
   }
   const reachable = input.options.isReachable ?? probeLocalForwardListener;
   if (reachable(input.target.localPort)) {
     throw new Error(
-      `Host port ${String(input.target.localPort)} remained reachable after the launched process stopped; refusing to adopt its listener or retry; forward start: ${start.category}`,
+      `Host port ${String(input.target.localPort)} remained reachable after the launched process stopped; refusing to adopt its listener or retry; listener: ${listenerObservation}; forward start: ${start.category}`,
     );
   }
   throw new Error(
-    `OpenShell forward service did not become ready at ${input.target.localHost}:${String(input.target.localPort)}; forward start: ${start.category}`,
+    `OpenShell forward service did not become ready at ${input.target.localHost}:${String(input.target.localPort)}; listener: ${listenerObservation}; forward start: ${start.category}`,
   );
 }
 
