@@ -145,7 +145,7 @@ describe("CLI OpenShell sandbox command executor", () => {
       const child: OpenShellCommandChild = {
         exitCode: null,
         signalCode: null,
-        kill: vi.fn((signal) => {
+        kill: vi.fn((signal: NodeJS.Signals) => {
           child.signalCode = signal;
           queueMicrotask(() => childEvents.emit("close", null, signal));
           return true;
@@ -193,11 +193,14 @@ describe("CLI OpenShell sandbox command executor", () => {
       const child: OpenShellCommandChild = {
         exitCode: null,
         signalCode: null,
-        kill: vi.fn((signal) => {
-          if (signal === "SIGKILL") {
-            child.signalCode = signal;
-            queueMicrotask(() => childEvents.emit("close", null, signal));
-          }
+        kill: vi.fn((signal: NodeJS.Signals) => {
+          const onSignal: Partial<Record<NodeJS.Signals, () => void>> = {
+            SIGKILL: () => {
+              child.signalCode = signal;
+              queueMicrotask(() => childEvents.emit("close", null, signal));
+            },
+          };
+          onSignal[signal]?.();
           return true;
         }),
         once: ((event: string, listener: (...args: unknown[]) => void) =>
