@@ -123,8 +123,7 @@ export function stageRecordedDeferredN1xIntent(
   },
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): void {
-  const explicitPreviewIntent =
-    String(env.NEMOCLAW_PROVIDER ?? "").trim() === "install-vllm";
+  const explicitPreviewIntent = String(env.NEMOCLAW_PROVIDER ?? "").trim() === "install-vllm";
   const selectionMatchesRecord =
     rebuildSelection.provider === sandboxEntry.provider &&
     rebuildSelection.model === sandboxEntry.model;
@@ -158,24 +157,6 @@ export function stageRecordedDeferredN1xIntent(
   if (recordedManagedVllmIsEligible && explicitPreviewIntent) {
     recreateOptions.reinstallDeferredN1xManagedVllm = true;
   }
-}
-
-/** Recheck the staged N1x replacement authority before destructive boundaries. */
-export function hasValidDeferredN1xManagedVllmReplacementAuthority(
-  recreateOptions: Pick<
-    RebuildRecreateOnboardOpts,
-    "allowDeferredN1xManagedVllm" | "reinstallDeferredN1xManagedVllm"
-  >,
-  sandboxEntry: Pick<RebuildSandboxEntry, "openshellDriver" | "nimContainer">,
-  rebuildSelection: { provider: string; model: string },
-): boolean {
-  return (
-    recreateOptions.reinstallDeferredN1xManagedVllm !== true ||
-    (recreateOptions.allowDeferredN1xManagedVllm === true &&
-      isN1xManagedVllmProviderModel(rebuildSelection.provider, rebuildSelection.model) &&
-      sandboxEntry.openshellDriver === "docker" &&
-      !sandboxEntry.nimContainer)
-  );
 }
 
 export function hydrateMessagingConfigForRebuild(

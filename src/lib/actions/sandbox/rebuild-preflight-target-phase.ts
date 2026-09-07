@@ -270,11 +270,7 @@ export async function prepareRebuildTargetPreflights(args: {
   recreateOptions.observabilityRequestedExplicitly = requestedObservabilityEnabled !== undefined;
   stageRecordedDeferredN1xIntent(recreateOptions, sandboxEntry, resumeConfig);
   if (
-    !hasValidDeferredN1xManagedVllmReplacementAuthority(
-      recreateOptions,
-      sandboxEntry,
-      resumeConfig,
-    )
+    !hasValidDeferredN1xManagedVllmReplacementAuthority(recreateOptions, sandboxEntry, resumeConfig)
   ) {
     return bail("Deferred N1x managed-vLLM replacement authority is invalid.");
   }

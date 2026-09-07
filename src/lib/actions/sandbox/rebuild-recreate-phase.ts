@@ -4,6 +4,7 @@
 import { CLI_NAME } from "../../cli/branding";
 import { RD as _RD, R } from "../../cli/terminal-style";
 import { normalizeProcessExitCode } from "../../core/process-exit";
+import { hasValidDeferredN1xManagedVllmReplacementAuthority } from "../../domain/sandbox/n1x-managed-vllm-rebuild";
 import { MessagingSetupApplier, type SandboxMessagingPlan } from "../../messaging";
 import { markLastStartedStepFailed } from "../../onboard/exit-step-failure";
 import { gatewayOwnerFromCheckpoint } from "../../onboard/gateway-authority-checkpoint";
@@ -38,7 +39,6 @@ import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
 import type { RebuildRecreateJournal } from "./rebuild-recreate-journal";
 import type { RebuildRegistryRollback } from "./rebuild-registry-rollback";
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
-import { hasValidDeferredN1xManagedVllmReplacementAuthority } from "./rebuild-target-staging";
 
 export interface RebuildRecreatePhaseInput {
   sandboxName: string;
