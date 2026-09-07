@@ -317,6 +317,7 @@ runner.run = (command, opts = {}) => {
 	const retainedRegistryEntry = recoveryReentry && fs.existsSync(${JSON.stringify(payloadPath)})
 	  ? JSON.parse(fs.readFileSync(${JSON.stringify(payloadPath)}, "utf8")).recoveryRegistryEntry
 	  : null;
+	let recoveryRegistryEntry = retainedRegistryEntry;
 	const registryMutationCalls = [];
   let checkpointReadCalls = 0;
 	if (!recoveryReentry) {
@@ -389,6 +390,13 @@ runner.run = (command, opts = {}) => {
 	  setDefault: (name) => { registryMutationCalls.push({ operation: "set-default", name }); },
 	  removeSandbox: (name) => { registryMutationCalls.push({ operation: "remove", name }); },
 	});
+	const recordPendingSandboxCreateIdentity =
+	  registry.recordPendingSandboxCreateIdentity.bind(registry);
+	registry.recordPendingSandboxCreateIdentity = (...args) => {
+	  const entry = recordPendingSandboxCreateIdentity(...args);
+	  recoveryRegistryEntry = structuredClone(entry);
+	  return entry;
+	};
 if (postCreateRunnerRefusal) {
   const requireCurrentCheckpoint = registry.requireCurrentPendingSandboxCreateIdentity;
   registry.requireCurrentPendingSandboxCreateIdentity = (...args) => {
@@ -509,7 +517,7 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
     checkpointReadCalls,
     registryMutationCalls,
     currentRegistryEntry: cancelAfterCreate ? registry.getSandbox("my-assistant") : null,
-    recoveryRegistryEntry: registry.getSandbox("my-assistant"),
+    recoveryRegistryEntry,
     savedSession:
       cancelAfterCreate ||
       postCreateRunnerRefusal ||
