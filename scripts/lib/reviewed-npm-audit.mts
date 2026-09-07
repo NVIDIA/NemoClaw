@@ -316,21 +316,21 @@ function valueShape(value: unknown): string {
 }
 
 function firstInvalidAuditField(value: unknown): string | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
     return `report:${valueShape(value)}`;
   }
   const report = value as Record<string, unknown>;
   if (
-    typeof report.metadata !== "object" ||
     report.metadata === null ||
+    typeof report.metadata !== "object" ||
     Array.isArray(report.metadata)
   ) {
     return `metadata:${valueShape(report.metadata)}`;
   }
   const metadata = report.metadata as Record<string, unknown>;
   if (
-    typeof metadata.vulnerabilities !== "object" ||
     metadata.vulnerabilities === null ||
+    typeof metadata.vulnerabilities !== "object" ||
     Array.isArray(metadata.vulnerabilities)
   ) {
     return `metadata.vulnerabilities:${valueShape(metadata.vulnerabilities)}`;
@@ -401,7 +401,7 @@ export function classifyNpmAuditResponse(result: {
     return rejectedAuditResponse(result, "invalid-json", true);
   }
 
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
     return rejectedAuditResponse(result, "incomplete-report", false, [
       `required-field=report:${valueShape(value)}`,
     ]);
