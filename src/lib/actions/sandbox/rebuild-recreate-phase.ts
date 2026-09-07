@@ -4,6 +4,7 @@
 import { CLI_NAME } from "../../cli/branding";
 import { RD as _RD, R } from "../../cli/terminal-style";
 import { normalizeProcessExitCode } from "../../core/process-exit";
+import { isN1xManagedVllmProviderModel } from "../../domain/sandbox/n1x-managed-vllm-rebuild";
 import { MessagingSetupApplier, type SandboxMessagingPlan } from "../../messaging";
 import { markLastStartedStepFailed } from "../../onboard/exit-step-failure";
 import { gatewayOwnerFromCheckpoint } from "../../onboard/gateway-authority-checkpoint";
@@ -241,6 +242,18 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
   let onboardFailed = false;
   let onboardExitCode = 1;
   const restoreAmbientRecreateEnv = isolateAmbientRecreateEnv();
+  if (recreateOptions.reinstallDeferredN1xManagedVllm === true) {
+    if (
+      recreateOptions.allowDeferredN1xManagedVllm !== true ||
+      !isN1xManagedVllmProviderModel(resumeConfig.provider, resumeConfig.model) ||
+      sb.openshellDriver !== "docker" ||
+      Boolean(sb.nimContainer)
+    ) {
+      restoreAmbientRecreateEnv();
+      return bail("Deferred N1x managed-vLLM replacement authority is invalid.");
+    }
+    process.env.NEMOCLAW_PROVIDER = "install-vllm";
+  }
   const previousSandboxName = process.env.NEMOCLAW_SANDBOX_NAME;
   const previousRecreateWithoutBackup = process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP;
   const previousRestoreLatestBackup = process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE;

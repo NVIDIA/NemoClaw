@@ -589,7 +589,7 @@ describe("vllm model registry", () => {
     expect(qwen35b!.gated).toBe(false);
   });
 
-  it("uses the physically exercised N1x serving envelope (#10552)", () => {
+  it("configures two sequences within the N1x serving envelope (#10955)", () => {
     const qwen35b = VLLM_MODELS.find((model) => model.envValue === "qwen3.6-35b-a3b-nvfp4");
     const n1xProfile = detectVllmProfile({ platform: "n1x", type: "nvidia" })!;
     const n1xModel = resolveVllmModelRuntime(n1xProfile, qwen35b!, "arm64").model;
@@ -597,7 +597,7 @@ describe("vllm model registry", () => {
 
     expect(command).toContain("--gpu-memory-utilization 0.6");
     expect(command).toContain("--max-model-len 32768");
-    expect(command).toContain("--max-num-seqs 1");
+    expect(command).toContain("--max-num-seqs 2");
     expect(command).toContain("--max-num-batched-tokens 4096");
     expect(command).not.toContain("--gpu-memory-utilization 0.4");
     expect(command).not.toContain("--max-model-len 262144");
