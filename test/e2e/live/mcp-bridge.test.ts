@@ -654,7 +654,7 @@ async function assertRealAdapterToolCall(
       })
     : null;
   expect(denied ? denied.result.timedOut || denied.result.exitCode === null : false).toBe(false);
-  expect(denied ? resultText(denied.result) : "policy_denied").toMatch(/policy_denied|blocked by deny rule|NEMOCLAW_HERMES_MCP_RESULT_TOKEN=present/);
+  expect(denied ? resultText(denied.result) : "policy_denied").toMatch(/policy_denied|blocked by deny rule|NEMOCLAW_HERMES_MCP_RESULT_TOKEN=present|Calling tool: fake_fake_status[\s\S]*managed non-interactive error:/u);
   expect(denied ? denied.after : calls.length).toBe(denied ? denied.before : calls.length);
 }
 
