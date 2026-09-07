@@ -78,6 +78,7 @@ interface DefaultRunEntryState {
 type PendingCreateRecoverySession = {
   readonly sessionId?: string;
   readonly status: string;
+  readonly sandboxName?: string | null;
   readonly cancellationRecovery?: { readonly sandboxName: string } | null;
 };
 
@@ -102,9 +103,7 @@ export function reconstructUnownedPendingCreateRecoveries<Entry extends PendingC
     const matchingSessionId =
       entry.reservationSessionId !== undefined &&
       entry.reservationSessionId === persistedSession?.sessionId;
-    const sessionAlreadyOwnsRecovery =
-      matchingSessionId && entry.name === persistedSession?.cancellationRecovery?.sandboxName;
-    if (sessionAlreadyOwnsRecovery || (preservesPendingCreateSession && matchingSessionId)) {
+    if (preservesPendingCreateSession && matchingSessionId) {
       continue;
     }
     reconstruct(entry);
@@ -121,15 +120,36 @@ export function resolveEntryOptions<Entry extends PendingCreateRecoveryEntry>(
   registryState: { listSandboxes(): { sandboxes: readonly Entry[] } },
 ) {
   const persistedSession = state.loadSession();
-  const entryOptions = readOptions(options, validateSandboxName, state);
+  // Reconstruct the independent record before recovery-only admission reads it.
+  const targetOptions = resolveDefaultRunEntryOptions(
+    options,
+    persistedSession?.status === "recovery_required"
+      ? { ...persistedSession, status: "failed" }
+      : persistedSession,
+    validateSandboxName,
+  );
   const targetSandboxName =
-    entryOptions.requestedSandboxName ?? persistedSession?.sandboxName?.trim();
+    targetOptions.requestedSandboxName ?? persistedSession?.sandboxName?.trim() ?? null;
+  const recoverySandboxName =
+    persistedSession?.status === "recovery_required"
+      ? persistedSession.cancellationRecovery?.sandboxName.trim()
+      : null;
+  const targetSandboxNames = new Set(
+    [targetSandboxName, recoverySandboxName].filter((name): name is string => Boolean(name)),
+  );
+  const retainedRecoverySandboxNames = new Set(
+    state.listRetainedSandboxRecoveryRecords().map((record) => record.sandboxName),
+  );
   reconstructUnownedPendingCreateRecoveries(
     options,
     persistedSession,
     registryState
       .listSandboxes()
-      .sandboxes.filter((entry) => !targetSandboxName || entry.name === targetSandboxName),
+      .sandboxes.filter(
+        (entry) =>
+          (targetSandboxNames.size === 0 || targetSandboxNames.has(entry.name)) &&
+          !retainedRecoverySandboxNames.has(entry.name),
+      ),
     state.reconstructRetainedSandboxRecoveryFromPendingCreate,
   );
   return readOptions(options, validateSandboxName, state);
@@ -286,6 +306,25 @@ export function resolveDefaultRunEntryOptionsFromState(
 }
 
 export const readOptions = resolveDefaultRunEntryOptionsFromState;
+
+/** Resolve lock metadata after the recovery reader verifies writer ownership. */
+export function resolvePreLockOptions(
+  options: OnboardOptions,
+  validateSandboxName: OnboardEntryOptionsDeps["validateName"],
+  state: DefaultRunEntryState,
+  env: NodeJS.ProcessEnv = process.env,
+) {
+  const persistedSession = state.loadSession();
+  state.listRetainedSandboxRecoveryRecords();
+  return resolveDefaultRunEntryOptions(
+    options,
+    persistedSession?.status === "recovery_required"
+      ? { ...persistedSession, status: "failed" }
+      : persistedSession,
+    validateSandboxName,
+    env,
+  );
+}
 
 export function assertDefaultSandboxNameAllowed(sandboxName: string): void {
   if (!RESERVED_SANDBOX_NAMES.has(sandboxName)) return;

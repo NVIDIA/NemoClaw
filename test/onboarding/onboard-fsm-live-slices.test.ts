@@ -493,15 +493,15 @@ if (scenario.mode === "stale-recovery-admission") {
 }
 
 if (scenario.mode === "stale-session-decision") {
-  const resolveEntryOptions = onboardEntryOptions.readOptions;
+  const loadSession = onboardSession.loadSession;
   let optionReads = 0;
-  onboardEntryOptions.readOptions = (...args) => {
+  onboardSession.loadSession = () => {
     optionReads += 1;
-    const resolved = resolveEntryOptions(...args);
+    const session = loadSession();
     if (optionReads === 1) {
       seedResumeSession("preflight", false);
     }
-    return resolved;
+    return session;
   };
   lockedRuntime.prepare = async (_opts, resume) => {
     called.push("locked-resume:" + String(resume));

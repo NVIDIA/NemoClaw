@@ -2654,15 +2654,15 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   AUTO_YES = opts.autoYes === true || process.env.NEMOCLAW_YES === "1";
   const resolveEntryOptions = () =>
     onboardEntryOptions.resolveEntryOptions(opts, validateName, onboardSession, registry);
-  const initialEntryOptions = onboardEntryOptions.readOptions(opts, validateName, onboardSession);
-  NON_INTERACTIVE = initialEntryOptions.nonInteractive;
+  const entryHints = onboardEntryOptions.resolvePreLockOptions(opts, validateName, onboardSession);
+  NON_INTERACTIVE = entryHints.nonInteractive;
   RECREATE_SANDBOX = opts.recreateSandbox || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
   _preflightDashboardPort =
     opts.controlUiPort ?? (process.env.NEMOCLAW_DASHBOARD_PORT != null ? DASHBOARD_PORT : null);
   onboardRuntimeBoundary.reset();
   const portableRetirementEntry = portableRetirementAuthority.beginPortableOnboardRetirementEntry({
     alreadyHeld: opts.onboardLockAlreadyHeld === true,
-    command: `nemoclaw onboard${initialEntryOptions.resume ? " --resume" : ""}${initialEntryOptions.fresh ? " --fresh" : ""}${initialEntryOptions.nonInteractive ? " --non-interactive" : ""}${initialEntryOptions.requestedFromDockerfile ? ` --from ${initialEntryOptions.requestedFromDockerfile}` : ""}`,
+    command: `nemoclaw onboard${entryHints.resume ? " --resume" : ""}${entryHints.fresh ? " --fresh" : ""}${entryHints.nonInteractive ? " --non-interactive" : ""}${entryHints.requestedFromDockerfile ? ` --from ${entryHints.requestedFromDockerfile}` : ""}`,
     displayName: cliDisplayName(),
     homeDir: process.env.HOME || os.homedir(),
     loadRegistry: registry.load,

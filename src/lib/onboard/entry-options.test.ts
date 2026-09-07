@@ -9,6 +9,7 @@ import {
   resolveEntryOptions,
   resolveOnboardEntryOptions,
   resolveOnboardRunOptions,
+  resolvePreLockOptions,
   withNonInteractiveEnvironment,
 } from "./entry-options";
 
@@ -112,27 +113,36 @@ describe("pending create recovery admission", () => {
     expect(reconstruct).toHaveBeenCalledExactlyOnceWith(foreign);
   });
 
-  it("leaves an existing recovery-only session authoritative when its writer stays unavailable (#11096)", () => {
-    const reconstruct = vi.fn();
-
-    reconstructUnownedPendingCreateRecoveries(
-      { fresh: true },
-      {
+  it("reconstructs recovery-only evidence before admitting a different sandbox (#11096)", () => {
+    let recoveryRecords: Array<{ sandboxName: string }> = [];
+    const entry = {
+      name: "alpha",
+      pendingCreateIdentity: {},
+      reservationSessionId: "failed-create-session",
+    };
+    const reconstruct = vi.fn(() => {
+      recoveryRecords = [{ sandboxName: "alpha" }];
+    });
+    const state = {
+      loadSession: () => ({
         sessionId: "failed-create-session",
         status: "recovery_required",
+        sandboxName: "alpha",
         cancellationRecovery: { sandboxName: "alpha" },
-      },
-      [
-        {
-          name: "alpha",
-          pendingCreateIdentity: {},
-          reservationSessionId: "failed-create-session",
-        },
-      ],
-      reconstruct,
-    );
+      }),
+      listRetainedSandboxRecoveryRecords: () => recoveryRecords,
+      reconstructRetainedSandboxRecoveryFromPendingCreate: reconstruct,
+    };
 
-    expect(reconstruct).not.toHaveBeenCalled();
+    expect(resolvePreLockOptions({ sandboxName: "bravo" }, (name) => name, state)).toMatchObject({
+      requestedSandboxName: "bravo",
+    });
+    const resolved = resolveEntryOptions({ sandboxName: "bravo" }, (name) => name, state, {
+      listSandboxes: () => ({ sandboxes: [entry] }),
+    });
+
+    expect(resolved).toMatchObject({ fresh: true, requestedSandboxName: "bravo" });
+    expect(reconstruct).toHaveBeenCalledExactlyOnceWith(entry);
   });
 });
 
