@@ -4,8 +4,6 @@
 import { isDeepStrictEqual } from "node:util";
 import fs from "node:fs";
 
-import YAML from "yaml";
-
 import { createHermesCredentialEnvReconciliationRuntime } from "../../actions/sandbox/runtime/hermes-lifecycle";
 import type { SandboxCreateOrchestrationRuntime } from "../../onboard";
 import { HERMES_PORTABLE_OPENSHELL_VERSION } from "../../adapters/openshell/resolve-shared";
@@ -80,7 +78,10 @@ import {
   publishAttachedProvidersBeforeDockerSandboxCreation,
   validateAttachedMessagingProvidersBeforeSandboxCreation,
 } from "./provider-publication";
-import { materializeRebuildPolicyHandoff } from "./rebuild-policy-handoff";
+import {
+  materializeRebuildPolicyHandoff,
+  parseAndValidateSandboxPolicy,
+} from "./rebuild-policy-handoff";
 
 function cancelRecoveryIdentity(
   liveExists: boolean,
@@ -123,10 +124,10 @@ export function bindRebuildPolicyProvidersToCreateArgs(
  */
 function parseRebuildPolicyProviderNames(policyDocument: string): string[] {
   const providers = new Set<string>();
-  const parsed = YAML.parse(policyDocument) as {
+  const parsed = parseAndValidateSandboxPolicy(policyDocument) as {
     network_policies?: Record<string, { endpoints?: unknown[] }>;
-  } | null;
-  for (const policy of Object.values(parsed?.network_policies ?? {})) {
+  };
+  for (const policy of Object.values(parsed.network_policies ?? {})) {
     for (const endpoint of Array.isArray(policy?.endpoints) ? policy.endpoints : []) {
       if (!endpoint || typeof endpoint !== "object" || Array.isArray(endpoint)) continue;
       const value = endpoint as {

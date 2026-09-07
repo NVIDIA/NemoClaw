@@ -42,7 +42,6 @@ import {
 } from "./rebuild-flow-helpers";
 import {
   hydrateMcpStateForRebuild,
-  mcpRebuildRequiresRuntimeSelection,
   observeMcpStateForRebuild,
 } from "./rebuild-mcp-phase";
 import { stageMessagingManifestPlanForRebuild } from "./rebuild-messaging-phase";
@@ -267,7 +266,7 @@ async function rebuildSandboxUnlocked(
           recreateOptions.runtimeSelection,
           Boolean(activeRecoveryTransaction),
         );
-      const mcpRuntimeSelectionRequired = mcpRebuildRequiresRuntimeSelection(sandboxEntry);
+      const mcpRuntimeSelectionRequired = mcpEntries.length > 0;
       const mcpRuntimeSelection = mcpRuntimeSelectionRequired
         ? (retainedMcpHandoff?.runtimeSelection ?? recreateOptions.runtimeSelection)
         : undefined;
@@ -587,7 +586,8 @@ async function rebuildSandboxUnlocked(
           );
         }
         if (
-          backup.backupManifest?.rebuildPolicyHandoff &&
+          (backup.backupManifest?.rebuildPolicyHandoff ||
+            backup.backupManifest?.rebuildMcpHandoff) &&
           backup.backupManifest.backupPath !== recoveryBackup.backupPath &&
           (!clearRebuildPolicyHandoff(backup.backupManifest) ||
             !clearRebuildMcpHandoff(backup.backupManifest))

@@ -5,7 +5,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { vi } from "vitest";
 import { makePreparedRecoveryManifest } from "../../src/lib/actions/sandbox/rebuild-flow-test-fixtures";
-import { bridgeState } from "../../src/lib/actions/sandbox/mcp-bridge-state";
 import type { RebuildRecreateOnboardOpts } from "../../src/lib/actions/sandbox/rebuild-gpu-opt-out";
 import {
   agentDefs,
@@ -973,10 +972,9 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const defaultMcpPreparation = (
     runtimeSelection?: Parameters<typeof mcpBridge.prepareMcpBridgesForRebuild>[1],
   ) => {
-    const entries = Object.values(bridgeState({ name: "alpha" } as never));
     return {
-      entries,
-      detachedProviderEntries: entries,
+      entries: [],
+      detachedProviderEntries: [],
       scrubbedAdapterEntries: [],
       ...(runtimeSelection ? { runtimeSelection } : {}),
     };

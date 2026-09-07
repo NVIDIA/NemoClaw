@@ -452,16 +452,6 @@ describe("credentials oclif commands", () => {
           },
         },
         {
-          args: ["provider", "list", "-g", "nemoclaw", "--names"],
-          opts: {
-            env: expect.any(Object),
-            ignoreError: true,
-            replaceEnv: true,
-            stdio: ["ignore", "pipe", "pipe"],
-            timeout: 30_000,
-          },
-        },
-        {
           args: [
             "provider",
             "create",
@@ -484,9 +474,9 @@ describe("credentials oclif commands", () => {
         },
       ]);
       expect(calls[0]?.opts?.env?.TAVILY_API_KEY).toBeUndefined();
-      expect(calls[2]?.opts?.env?.UNRELATED_API_KEY).toBeUndefined();
-      expect(calls[2]?.opts?.env?.TAVILY_API_KEY).toBe("tvly-test-12345");
-      expect(calls[2]?.args).not.toContain("tvly-test-12345");
+      expect(calls[1]?.opts?.env?.UNRELATED_API_KEY).toBeUndefined();
+      expect(calls[1]?.opts?.env?.TAVILY_API_KEY).toBe("tvly-test-12345");
+      expect(calls[1]?.args).not.toContain("tvly-test-12345");
       expect(extraProviderCalls).toEqual(["tavily-search"]);
       expect(output.stdout).toContain("Registered provider 'tavily-search'");
       expect(output.stdout).toContain("rebuild");

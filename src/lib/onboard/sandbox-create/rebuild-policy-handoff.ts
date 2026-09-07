@@ -5,6 +5,8 @@ import fs from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 
+export { parseAndValidateSandboxPolicy } from "../../policy/sandbox-policy-validation";
+
 import {
   parseOpenShellPolicy,
   stripProviderComposedPolicies,

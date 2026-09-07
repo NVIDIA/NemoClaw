@@ -432,7 +432,30 @@ describe("rebuild policy provider handoff", () => {
             },
           ],
         },
-        policyDocument: `network_policies:\n  mcp_bridge_github:\n    endpoints:\n      - protocol: mcp\n        credential_binding:\n          provider: alpha-mcp-github\n`,
+        policyDocument: YAML.stringify({
+          version: 1,
+          network_policies: {
+            mcp_bridge_github: {
+              name: "mcp_bridge_github",
+              endpoints: [
+                {
+                  host: "api.githubcopilot.com",
+                  port: 443,
+                  path: "/mcp/",
+                  protocol: "mcp",
+                  credential_binding: { provider: "alpha-mcp-github" },
+                  mcp: {
+                    max_body_bytes: 131_072,
+                    strict_tool_names: true,
+                    allow_all_known_mcp_methods: false,
+                  },
+                  rules: [{ allow: { method: "tools/list" } }],
+                },
+              ],
+              binaries: [{ path: "/usr/bin/node" }],
+            },
+          },
+        }),
       }),
     ).toEqual(["inference-provider", "alpha-telegram-bridge", "alpha-mcp-github"]);
   });
@@ -442,7 +465,23 @@ describe("rebuild policy provider handoff", () => {
       resolveRebuildPolicyProviderAuthority({
         createArgs: [],
         messagingPlan: null,
-        policyDocument: "network_policies: {}\n",
+        policyDocument: YAML.stringify({
+          version: 1,
+          network_policies: {
+            host_preserved: {
+              name: "host_preserved",
+              endpoints: [
+                {
+                  host: "example.com",
+                  port: 443,
+                  protocol: "rest",
+                  rules: [{ allow: { method: "GET", path: "/**" } }],
+                },
+              ],
+              binaries: [{ path: "/usr/bin/curl" }],
+            },
+          },
+        }),
       }),
     ).toEqual([]);
   });
@@ -457,8 +496,15 @@ describe("rebuild policy provider handoff", () => {
     ).toThrow();
   });
 
-  it("rejects malformed rebuild policy before the delete boundary", () => {
-    const policyPath = tempPolicy("network_policies:\n  broken: [\n");
+  it.each([
+    ["malformed YAML", "network_policies:\n  broken: [\n", /malformed/iu],
+    [
+      "invalid policy shape",
+      "version: 1\nnetwork_policies:\n  broken:\n    name: broken\n    endpoints: []\n",
+      /schema/iu,
+    ],
+  ])("rejects %s before the delete boundary", (_case, document, expected) => {
+    const policyPath = tempPolicy(document);
     const beginDelete = vi.fn();
 
     expect(() => {
@@ -466,7 +512,7 @@ describe("rebuild policy provider handoff", () => {
         capturePolicySource: () => readValidatedRebuildPolicySource(policyPath),
         beginDelete,
       });
-    }).toThrow();
+    }).toThrow(expected);
     expect(beginDelete).not.toHaveBeenCalled();
   });
 

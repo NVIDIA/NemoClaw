@@ -42,10 +42,6 @@ import {
   type RebuildSandboxEntry,
 } from "./rebuild-flow-helpers";
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
-import {
-  getMcpPreparationRuntimeSelection,
-  mcpRebuildRequiresRuntimeSelection,
-} from "./rebuild-mcp-phase";
 import { preflightRebuildMessagingConflicts } from "./rebuild-messaging-conflict-preflight";
 import { stageRebuildMessagingPlanOrBail } from "./rebuild-messaging-phase";
 import {
@@ -101,17 +97,13 @@ export interface RebuildPreparedTarget {
 
 /** Freeze the MCP-bearing rebuild on the recorded OpenShell target before live probes. */
 export function resolveRebuildMcpRuntimeSelection(
-  sandboxEntry: RebuildSandboxEntry,
-  bail: RebuildBail,
+  _sandboxEntry: RebuildSandboxEntry,
+  _bail: RebuildBail,
 ): OpenShellRuntimeSelection | undefined {
-  if (!mcpRebuildRequiresRuntimeSelection(sandboxEntry)) return undefined;
-  try {
-    return getMcpPreparationRuntimeSelection(sandboxEntry);
-  } catch (error) {
-    return bail(
-      `Could not bind MCP rebuild preflight to the recorded OpenShell target: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
+  // Completed MCP intent lives in the agent source, not the registry. Runtime
+  // authority is resolved when source inspection or a recovery handoff proves
+  // that MCP entries exist.
+  return undefined;
 }
 
 /** Pin read-only rebuild probes without selecting, starting, or repairing a gateway. */

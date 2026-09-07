@@ -29,17 +29,12 @@ export function getMcpPreparationRuntimeSelection(
   return getMcpProviderInspectionRuntimeSelection(sandbox);
 }
 
-/** Prepared-only MCP adds own no external runtime state and need no target authority. */
-export function mcpRebuildRequiresRuntimeSelection(sandbox: RebuildSandboxEntry): boolean {
-  return Object.keys(bridgeState(sandbox)).length > 0;
-}
-
 export function observeMcpStateForRebuild(
   sandbox: RebuildSandboxEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection | undefined,
   inspectCurrentSource: boolean,
 ): McpSourceEntry[] {
-  if (!inspectCurrentSource || !runtimeSelection) return Object.values(bridgeState(sandbox));
+  if (!inspectCurrentSource || !runtimeSelection) return [];
   const bridges = inspectSourceBridgeState(sandbox, runtimeSelection).bridges;
   hydrateBridgeState(sandbox.name, bridges);
   return Object.values(bridges);

@@ -971,8 +971,8 @@ test("mcp-bridge", {
   expect(fakeMcp.requests.length).toBe(requestCountAfterAllowedNodeProof);
 
   const registryRaw = fs.existsSync(REGISTRY_FILE) ? fs.readFileSync(REGISTRY_FILE, "utf8") : "";
-  expect(registryRaw).toContain(mcpUrl);
-  expect(registryRaw).toContain(providerName);
+  expect(registryRaw).not.toContain(mcpUrl);
+  expect(registryRaw).not.toContain(providerName);
   expect(registryRaw).not.toContain("enc:v1:");
   expect(registryRaw).not.toContain("proxy.pid");
   expect(registryRaw).not.toContain(HOST_SECRET);

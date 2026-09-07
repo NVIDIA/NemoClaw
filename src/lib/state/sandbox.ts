@@ -430,7 +430,13 @@ function isRebuildMcpHandoffEntry(value: unknown): value is RebuildMcpHandoffEnt
   }
   try {
     const url = new URL(value.url);
-    return url.protocol === "https:" && !url.username && !url.password;
+    return (
+      url.protocol === "https:" &&
+      !url.username &&
+      !url.password &&
+      !url.search &&
+      !url.hash
+    );
   } catch {
     return false;
   }

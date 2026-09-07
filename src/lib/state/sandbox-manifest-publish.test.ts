@@ -255,4 +255,22 @@ describe("bounded rebuild MCP handoff", () => {
     ).toThrow("invalid rebuild MCP recovery handoff");
     expect(published).not.toHaveProperty("rebuildMcpHandoff");
   });
+
+  it.each(["https://api.githubcopilot.com/mcp/?token=opaque", "https://api.githubcopilot.com/mcp/#opaque"])(
+    "rejects an MCP URL with non-authoritative query or fragment state: %s",
+    (url) => {
+      const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-url-"));
+      tempDirs.push(backupPath);
+      const published = manifest(backupPath);
+      __test.writeManifest(backupPath, published);
+      const manifestPath = path.join(backupPath, "rebuild-manifest.json");
+      const originalManifest = fs.readFileSync(manifestPath, "utf8");
+
+      expect(() =>
+        writeRebuildMcpHandoff(published, [{ ...entry, url }], runtimeSelection),
+      ).toThrow("invalid rebuild MCP recovery handoff");
+      expect(fs.readFileSync(manifestPath, "utf8")).toBe(originalManifest);
+      expect(published).not.toHaveProperty("rebuildMcpHandoff");
+    },
+  );
 });
