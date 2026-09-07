@@ -343,7 +343,7 @@ describe("stateless sandbox skill orchestration", () => {
     expect(error).toHaveBeenCalledWith(expect.stringContaining(" exec -- rm -rf -- /sandbox/"));
   });
 
-  it("cleans private staging after an interrupted upload and reports failed cleanup", async () => {
+  it("retains private staging after an interrupted upload", async () => {
     selectAgent("hermes", "/usr/local/bin/hermes", HERMES);
     const source = localSkill();
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -354,36 +354,52 @@ describe("stateless sandbox skill orchestration", () => {
       stdout: "",
       stderr: "",
     });
-    sdkCommandExecutor.runStreaming
-      .mockResolvedValueOnce({
-        outcome: { kind: "completed", exitCode: 0 },
-        release: vi.fn(),
-      })
-      .mockResolvedValueOnce({
-        outcome: { kind: "completed", exitCode: 1 },
-        release: vi.fn(),
-      });
+    sdkCommandExecutor.runStreaming.mockResolvedValueOnce({
+      outcome: { kind: "completed", exitCode: 0 },
+      release: vi.fn(),
+    });
 
     await installSandboxSkill("alpha", { command: "install", path: source });
 
     expect(process.exitCode).toBe(1);
-    expect(sdkCommandExecutor.runStreaming).toHaveBeenCalledTimes(2);
+    expect(sdkCommandExecutor.runStreaming).toHaveBeenCalledOnce();
     expect(error).toHaveBeenCalledWith(
-      expect.stringMatching(/^  Private skill staging cleanup failed: \/sandbox\//u),
+      expect.stringMatching(/^  Private skill stage retained .*: \/sandbox\//u),
     );
-    expect(error).toHaveBeenCalledWith(expect.stringContaining(" skill list"));
-    expect(error).toHaveBeenCalledWith(expect.stringContaining(" exec -- rm -rf -- /sandbox/"));
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("confirm that no skill command"));
   });
 
-  it("attempts cleanup when stage preparation is interrupted after remote creation", async () => {
+  it("retains a possible stage when preparation termination is not confirmed", async () => {
     selectAgent("hermes", "/usr/local/bin/hermes", HERMES);
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    sdkCommandExecutor.runStreaming.mockResolvedValueOnce({
+      outcome: { kind: "completed", exitCode: 143, signal: "SIGTERM" },
+      release: vi.fn(),
+    });
+
+    await installSandboxSkill("alpha", { command: "install", path: localSkill() });
+
+    expect(process.exitCode).toBe(143);
+    expect(sdkCommandExecutor.runStreaming).toHaveBeenCalledOnce();
+    expect(captureOpenshellAsync).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(
+      expect.stringMatching(/^  Private skill stage retained .*: \/sandbox\//u),
+    );
+  });
+
+  it("retains the private stage when native add termination is not confirmed", async () => {
+    selectAgent("openclaw", "/usr/local/bin/openclaw", OPENCLAW);
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     sdkCommandExecutor.runStreaming
       .mockResolvedValueOnce({
-        outcome: { kind: "completed", exitCode: 143, signal: "SIGTERM" },
+        outcome: { kind: "completed", exitCode: 0 },
         release: vi.fn(),
       })
       .mockResolvedValueOnce({
-        outcome: { kind: "completed", exitCode: 0 },
+        outcome: {
+          kind: "failed",
+          error: { kind: "timeout", message: "deadline" },
+        },
         release: vi.fn(),
       });
 
@@ -391,7 +407,10 @@ describe("stateless sandbox skill orchestration", () => {
 
     expect(process.exitCode).toBe(1);
     expect(sdkCommandExecutor.runStreaming).toHaveBeenCalledTimes(2);
-    expect(captureOpenshellAsync).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(
+      expect.stringMatching(/^  Private skill stage retained .*: \/sandbox\//u),
+    );
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("confirm that no skill command"));
   });
 
   it("does not upload, publish, or clean up through a changed gateway binding", async () => {
@@ -406,6 +425,10 @@ describe("stateless sandbox skill orchestration", () => {
 
     await installSandboxSkill("alpha", { command: "install", path: localSkill() });
 
+    expect(ensureLiveSandboxOrExit).toHaveBeenCalledWith("alpha", {
+      selectOwningGateway: false,
+      targetGatewayName: "nemoclaw",
+    });
     expect(sdkCommandExecutor.runStreaming).toHaveBeenCalledOnce();
     expect(sdkCommandExecutor.runStreaming.mock.calls[0]?.[0].target).toEqual({
       kind: "named",

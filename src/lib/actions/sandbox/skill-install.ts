@@ -190,7 +190,7 @@ async function runSandboxCommandRetained(
   sandboxName: string,
   gatewayName: string,
   command: readonly string[],
-): Promise<{ exitCode: number; release: () => void }> {
+): Promise<{ exitCode: number; release: () => void; terminationConfirmed: boolean }> {
   const request = {
     sandboxName,
     target: { kind: "named", gatewayName },
@@ -203,27 +203,35 @@ async function runSandboxCommandRetained(
     useCli = mustUseGatewayScopedCli();
   } catch (error) {
     console.error(`  ${error instanceof Error ? error.message : String(error)}`);
-    return { exitCode: 1, release: () => {} };
+    return { exitCode: 1, release: () => {}, terminationConfirmed: false };
   }
   let completion = await (useCli ? skillCommandFallbackExecutor : skillCommandExecutor).runStreaming(
     request,
   );
   if (useCli) {
     if (completion.outcome.kind === "completed") {
-      return { exitCode: completion.outcome.exitCode, release: completion.release };
+      return {
+        exitCode: completion.outcome.exitCode,
+        release: completion.release,
+        terminationConfirmed: !completion.outcome.signal,
+      };
     }
     console.error(`  OpenShell CLI execution failed: ${completion.outcome.error.message}`);
-    return { exitCode: 1, release: completion.release };
+    return { exitCode: 1, release: completion.release, terminationConfirmed: false };
   }
   if (completion.outcome.kind === "failed" && completion.outcome.error.kind === "unavailable") {
     completion.release();
     completion = await skillCommandFallbackExecutor.runStreaming(request);
   }
   if (completion.outcome.kind === "completed") {
-    return { exitCode: completion.outcome.exitCode, release: completion.release };
+    return {
+      exitCode: completion.outcome.exitCode,
+      release: completion.release,
+      terminationConfirmed: !completion.outcome.signal,
+    };
   }
   console.error(`  OpenShell SDK execution failed: ${completion.outcome.error.message}`);
-  return { exitCode: 1, release: completion.release };
+  return { exitCode: 1, release: completion.release, terminationConfirmed: false };
 }
 
 async function runSandboxCommand(
@@ -286,6 +294,19 @@ function runAgentSkillCommandRetained(
   );
 }
 
+function reportRetainedRemoteStage(
+  sandboxName: string,
+  gatewayName: string,
+  stageDirectory: string,
+): void {
+  console.error(
+    `  Private skill stage retained because remote command termination was not confirmed: ${stageDirectory}`,
+  );
+  console.error(
+    `  Inspect sandbox '${sandboxName}' on gateway '${gatewayName}', confirm that no skill command is still running, then remove only this private stage.`,
+  );
+}
+
 async function runSkillCommandWithStageCleanup(
   sandboxName: string,
   gatewayName: string,
@@ -294,6 +315,11 @@ async function runSkillCommandWithStageCleanup(
 ): Promise<boolean> {
   const completion = await runAgentSkillCommandRetained(sandboxName, gatewayName, command);
   try {
+    if (!completion.terminationConfirmed) {
+      reportRetainedRemoteStage(sandboxName, gatewayName, stageDirectory);
+      process.exitCode = completion.exitCode;
+      return true;
+    }
     const cleaned = await cleanupRemoteStage(sandboxName, gatewayName, stageDirectory);
     process.exitCode = cleaned || completion.exitCode !== 0 ? completion.exitCode : 1;
     return cleaned;
@@ -309,7 +335,10 @@ export async function listSandboxSkills(
 ): Promise<void> {
   const gatewayName = resolveSkillGatewayBinding(sandboxName);
   if (!gatewayName) return;
-  await ensureLiveSandboxOrExit(sandboxName, { selectOwningGateway: false });
+  await ensureLiveSandboxOrExit(sandboxName, {
+    selectOwningGateway: false,
+    targetGatewayName: gatewayName,
+  });
   if (!requireCurrentSkillGatewayBinding(sandboxName, gatewayName)) return;
   const selected = resolveSelectedSkillAgent(sandboxName);
   if (!selected) return;
@@ -346,7 +375,10 @@ export async function removeSandboxSkill(
 
   const gatewayName = resolveSkillGatewayBinding(sandboxName);
   if (!gatewayName) return;
-  await ensureLiveSandboxOrExit(sandboxName, { selectOwningGateway: false });
+  await ensureLiveSandboxOrExit(sandboxName, {
+    selectOwningGateway: false,
+    targetGatewayName: gatewayName,
+  });
   if (!requireCurrentSkillGatewayBinding(sandboxName, gatewayName)) return;
   const selected = resolveSelectedSkillAgent(sandboxName);
   if (!selected) return;
@@ -493,20 +525,33 @@ export async function installSandboxSkill(
   try {
     gatewayName = resolveSkillGatewayBinding(sandboxName) ?? "";
     if (!gatewayName) return;
-    await ensureLiveSandboxOrExit(sandboxName, { selectOwningGateway: false });
+    await ensureLiveSandboxOrExit(sandboxName, {
+      selectOwningGateway: false,
+      targetGatewayName: gatewayName,
+    });
     if (!requireCurrentSkillGatewayBinding(sandboxName, gatewayName)) return;
     const selected = resolveSelectedSkillAgent(sandboxName);
     if (!selected) return;
     stageCreated = true;
-    const prepareExit = await runSandboxCommand(sandboxName, gatewayName, [
+    const prepare = await runSandboxCommandRetained(sandboxName, gatewayName, [
       "/bin/sh",
       "-c",
       skillInstall.buildPrepareSkillStageCommand(stageDirectory),
     ]);
-    if (prepareExit !== 0) {
-      console.error("  Private skill staging failed.");
-      process.exitCode = 1;
-      return;
+    try {
+      if (!prepare.terminationConfirmed) {
+        reportRetainedRemoteStage(sandboxName, gatewayName, stageDirectory);
+        stageCreated = false;
+        process.exitCode = prepare.exitCode;
+        return;
+      }
+      if (prepare.exitCode !== 0) {
+        console.error("  Private skill staging failed.");
+        process.exitCode = 1;
+        return;
+      }
+    } finally {
+      prepare.release();
     }
     if (!requireCurrentSkillGatewayBinding(sandboxName, gatewayName)) return;
     const upload = await captureOpenshellAsync(
@@ -532,6 +577,11 @@ export async function installSandboxSkill(
     if (upload.status !== 0 || upload.error) {
       const detail = (upload.output || upload.error?.message || "").trim();
       console.error(`  Skill snapshot upload failed${detail ? `: ${detail}` : "."}`);
+      const errorCode = (upload.error as NodeJS.ErrnoException | undefined)?.code;
+      if (upload.signal || errorCode === "ETIMEDOUT") {
+        reportRetainedRemoteStage(sandboxName, gatewayName, stageDirectory);
+        stageCreated = false;
+      }
       process.exitCode = 1;
       return;
     }
