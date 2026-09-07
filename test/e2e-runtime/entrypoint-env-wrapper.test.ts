@@ -151,6 +151,117 @@ describe("OCI entrypoint env-wrapper normalization", () => {
     expect(result.stdout).toBe("");
   });
 
+  it.each([
+    {
+      name: "an infinite poll count",
+      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS=Infinity",
+    },
+    {
+      name: "a lowercase infinite poll count",
+      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS=inf",
+    },
+    {
+      name: "a poll count that overflows to infinity",
+      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS=1e309",
+    },
+    {
+      name: "a poll count past the safe integer range",
+      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS=9007199254740993",
+    },
+    { name: "a zero poll count", assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS=0" },
+    { name: "a negative poll count", assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS=-1" },
+    { name: "a fractional poll count", assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS=0.5" },
+    {
+      name: "a poll count in exponent form",
+      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS=3e0",
+    },
+    {
+      name: "an infinite fast-reentry interval",
+      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=Infinity",
+    },
+    {
+      name: "a zero fast-reentry interval",
+      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=0",
+    },
+    {
+      name: "a negative fast-reentry interval",
+      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=-1",
+    },
+    {
+      name: "a not-a-number fast-reentry interval",
+      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=nan",
+    },
+    {
+      name: "an infinite slow interval",
+      assignment: "NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS=Infinity",
+    },
+    { name: "a suffixed slow interval", assignment: "NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS=5s" },
+    {
+      name: "a slow interval with an underscore separator",
+      assignment: "NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS=1_000",
+    },
+    { name: "an infinite run timeout", assignment: "NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS=inf" },
+    {
+      name: "an infinite watcher deadline",
+      assignment: "NEMOCLAW_AUTO_PAIR_DEADLINE_SECS=Infinity",
+    },
+    {
+      name: "an infinite fast deadline",
+      assignment: "NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS=Infinity",
+    },
+  ])("fails closed for an out-of-range auto-pair control: $name (#11161)", ({ assignment }) => {
+    const result = runNormalizer(["env", assignment, "nemoclaw-start", "/bin/sh", "-c", ":"]);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "[SECURITY] Managed startup env wrapper contains an out-of-range assignment.",
+    );
+    expect(result.stdout).toBe("");
+  });
+
+  it.each([
+    {
+      name: "a sub-second interval",
+      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=0.05",
+      probe: "FAST_REENTRY_INTERVAL=0.05",
+    },
+    {
+      name: "a leading-zero interval",
+      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=03.5",
+      probe: "FAST_REENTRY_INTERVAL=03.5",
+    },
+    {
+      name: "an interval in exponent form",
+      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=6e2",
+      probe: "FAST_REENTRY_INTERVAL=6e2",
+    },
+    {
+      name: "a month-long interval",
+      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=2592000",
+      probe: "FAST_REENTRY_INTERVAL=2592000",
+    },
+    {
+      name: "an empty value that defers to the built-in default",
+      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=",
+      probe: "FAST_REENTRY_INTERVAL=",
+    },
+    {
+      name: "a poll count at the safe integer boundary",
+      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS=9007199254740991",
+      probe: "FAST_REENTRY_POLLS=9007199254740991",
+    },
+    {
+      name: "a two-digit poll count",
+      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS=99",
+      probe: "FAST_REENTRY_POLLS=99",
+    },
+  ])("promotes an in-range auto-pair control: $name (#11161)", ({ assignment, probe }) => {
+    const result = runNormalizer(["env", assignment, "nemoclaw-start", "/bin/sh", "-c", ":"]);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain(probe);
+  });
+
   it("unwraps the sandbox-create env self-wrapper and applies dashboard port defaults", () => {
     const normalizer = fs.readFileSync(
       path.join(import.meta.dirname, "..", "..", "scripts", "lib", "entrypoint-env-wrapper.sh"),

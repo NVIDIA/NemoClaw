@@ -74,6 +74,7 @@ fi
 unset NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGC NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGV \
   _NEMOCLAW_ENTRYPOINT_ENV_WRAPPER
 unset -f nemoclaw_normalize_entrypoint_env_wrapper
+unset -f _nemoclaw_bounded_seconds_value _nemoclaw_bounded_polls_value
 # managed-entrypoint-env-wrapper end
 
 # Reject an invalid explicit dashboard port before installing the tee/fd startup
@@ -2667,7 +2668,24 @@ approval_request_decision, gateway_approval_env, policy_allowed_scopes = load_ap
 OPENCLAW = os.environ.get('OPENCLAW_BIN', 'openclaw')
 
 
-def _env_seconds(name, default):
+# The watcher inherits these names straight from PID 1's environment: a plain
+# `docker run -e NAME=Infinity` never passes through the entrypoint env-wrapper
+# that rejects them, so every value is re-bounded here rather than assumed.
+# 'Infinity'/'inf'/'1e309' all parse to float inf, and each consumer overflows
+# differently: int() at FAST_REENTRY_POLLS, time.sleep() above ~9.3e9, and
+# subprocess timeouts at or above 2147484. Each maximum below sits under the
+# limit of the API that value actually reaches, so a knob is never capped by a
+# limit that does not apply to it -- DEADLINE_SECS is only ever compared against
+# time.time(), so a month-long deadline stays honoured. Out-of-range input falls
+# back to the default, preserving the fail-soft contract this helper has always
+# had for unparseable input (#11161).
+_ENV_SLEEP_MAX = 1000000000.0
+_ENV_TIMEOUT_MAX = 2147483.0
+_ENV_DEADLINE_MAX = 1000000000000.0
+_ENV_POLLS_MAX = 9007199254740991
+
+
+def _env_seconds(name, default, maximum):
     raw = os.environ.get(name, '').strip()
     if not raw:
         return default
@@ -2675,7 +2693,13 @@ def _env_seconds(name, default):
         value = float(raw)
     except ValueError:
         return default
-    return value if value > 0 else default
+    if not (value > 0) or value > maximum:
+        return default
+    return value
+
+
+def _env_polls(name, default):
+    return int(_env_seconds(name, default, _ENV_POLLS_MAX))
 
 
 # Total runtime cap. After convergence the watcher polls at a slow cadence,
@@ -2684,7 +2708,7 @@ def _env_seconds(name, default):
 # scopes that the gateway holds as pending until something approves them; an
 # exited watcher leaves those upgrades stuck and the agent falls back to
 # embedded mode. Defaults: 8h total, 5s slow-mode cadence.
-DEADLINE = time.time() + _env_seconds('NEMOCLAW_AUTO_PAIR_DEADLINE_SECS', 28800)
+DEADLINE = time.time() + _env_seconds('NEMOCLAW_AUTO_PAIR_DEADLINE_SECS', 28800, _ENV_DEADLINE_MAX)
 # After convergence the watcher polls at SLOW_INTERVAL. A late allowlisted
 # scope upgrade — e.g. `openclaw tui` or `openclaw agent` invoked after the
 # watcher entered slow mode — can wait up to SLOW_INTERVAL before being
@@ -2704,11 +2728,11 @@ DEADLINE = time.time() + _env_seconds('NEMOCLAW_AUTO_PAIR_DEADLINE_SECS', 28800)
 # 1s cadence by design. This is a polling-cadence fix only. Non-allowlisted scopes such
 # as `operator.admin` are still rejected by the device approval policy, and
 # requests that need them must be approved through a separate operator path.
-SLOW_INTERVAL = _env_seconds('NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS', 5)
+SLOW_INTERVAL = _env_seconds('NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS', 5, _ENV_SLEEP_MAX)
 # Fast reentry temporarily restores 1s polling after a fresh allowlisted
 # request; canonical settlement and approval policy remain unchanged.
-FAST_REENTRY_POLLS = int(_env_seconds('NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS', 5))
-FAST_REENTRY_INTERVAL = _env_seconds('NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS', 1)
+FAST_REENTRY_POLLS = _env_polls('NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS', 5)
+FAST_REENTRY_INTERVAL = _env_seconds('NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS', 1, _ENV_SLEEP_MAX)
 FAST_REENTRY_REMAINING = 0
 FAST_REENTRY_BUMPED_REQUEST_IDS = set()
 APPROVED = 0
@@ -2727,7 +2751,7 @@ MALFORMED_REQUEST_ID_REPORTED = False
 # exit, timeout reduction, and token cleanup for a more comprehensive fix.
 # The approval_request_decision helper is shared with connect-time approvals.
 
-RUN_TIMEOUT_SECS = _env_seconds('NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS', 10)
+RUN_TIMEOUT_SECS = _env_seconds('NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS', 10, _ENV_TIMEOUT_MAX)
 
 
 def _read_json_object(path):

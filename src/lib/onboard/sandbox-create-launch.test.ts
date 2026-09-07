@@ -419,6 +419,92 @@ describe("prepareSandboxCreateLaunch", () => {
     expect(result.sandboxStartupCommand.join(" ")).not.toContain("NEMOCLAW_PROVIDER_KEY");
   });
 
+  it.each([
+    {
+      name: "an infinite poll count",
+      key: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS",
+      value: "Infinity",
+    },
+    {
+      name: "a poll count past the safe integer range",
+      key: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS",
+      value: "9007199254740993",
+    },
+    { name: "a zero poll count", key: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS", value: "0" },
+    {
+      name: "a fractional poll count",
+      key: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS",
+      value: "0.5",
+    },
+    {
+      name: "a zero fast-reentry interval",
+      key: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS",
+      value: "0",
+    },
+    {
+      name: "a negative fast-reentry interval",
+      key: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS",
+      value: "-1",
+    },
+    {
+      name: "an interval that overflows to infinity",
+      key: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS",
+      value: "1e309",
+    },
+    { name: "a suffixed slow interval", key: "NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS", value: "5s" },
+    {
+      name: "a slow interval with an underscore separator",
+      key: "NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS",
+      value: "1_000",
+    },
+    { name: "an infinite watcher deadline", key: "NEMOCLAW_AUTO_PAIR_DEADLINE_SECS", value: "inf" },
+  ])(
+    "refuses to render an out-of-range OpenClaw auto-pair control: $name (#11161)",
+    ({ key, value }) => {
+      expect(() =>
+        prepareSandboxCreateLaunch({
+          agent: { name: "openclaw" } as any,
+          chatUiUrl: "",
+          createArgs: [],
+          env: { [key]: value },
+          extraPlaceholderKeys: [],
+          getDashboardForwardPort: vi.fn(() => {
+            throw new Error("dashboard port should not be resolved");
+          }),
+          hermesDashboardState: disabledHermesDashboardState,
+          manageDashboard: false,
+          openshellShellCommand: (args) => args.join(" "),
+          buildEnv: () => ({}),
+        }),
+      ).toThrow(new RegExp(`^${key} must be a positive`, "u"));
+    },
+  );
+
+  it("renders long-lived and exponent-form OpenClaw auto-pair controls (#11161)", () => {
+    const result = prepareSandboxCreateLaunch({
+      agent: { name: "openclaw" } as any,
+      chatUiUrl: "",
+      createArgs: [],
+      env: {
+        NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "2592000",
+        NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: "6e2",
+        NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "9007199254740991",
+      },
+      extraPlaceholderKeys: [],
+      getDashboardForwardPort: vi.fn(() => {
+        throw new Error("dashboard port should not be resolved");
+      }),
+      hermesDashboardState: disabledHermesDashboardState,
+      manageDashboard: false,
+      openshellShellCommand: (args) => args.join(" "),
+      buildEnv: () => ({}),
+    });
+
+    expect(result.envArgs).toContain("NEMOCLAW_AUTO_PAIR_DEADLINE_SECS=2592000");
+    expect(result.envArgs).toContain("NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=6e2");
+    expect(result.envArgs).toContain("NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS=9007199254740991");
+  });
+
   it("adds Hermes dashboard env and skips OpenClaw env for non-OpenClaw agents", () => {
     const result = prepareSandboxCreateLaunch({
       agent: loadAgent("hermes"),

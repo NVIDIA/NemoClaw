@@ -48,6 +48,7 @@ fi
 unset NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGC NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGV \
   _NEMOCLAW_ENTRYPOINT_ENV_WRAPPER
 unset -f nemoclaw_normalize_entrypoint_env_wrapper
+unset -f _nemoclaw_bounded_seconds_value _nemoclaw_bounded_polls_value
 # managed-entrypoint-env-wrapper end
 
 # The published managed image uses uid 0 as its OCI entry user so every start

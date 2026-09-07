@@ -2,6 +2,64 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+# Bounded numeric grammars for the OpenClaw auto-pair scheduler knobs. These
+# names are forwarded verbatim from the operator's environment, so the value,
+# not just the name, has to be admitted deliberately. The contract matches the
+# launch renderer's: strictly positive, and finite once parsed as a double.
+#
+# Bash has no floating-point arithmetic, and bc/awk/python are unavailable to a
+# PID 1 entrypoint in a minimal image, so both properties are decided
+# structurally. The grammar admits no sign, so a value is greater than zero
+# exactly when a non-zero digit survives deleting the separators and zeros. The
+# magnitude is the significant-integer-digit count plus the decimal exponent;
+# capping it at 308 keeps the value below 1e308, so it can never parse to
+# infinity. Digit ranges are enumerated rather than written [0-9] so the match
+# does not depend on an inherited LC_COLLATE.
+#
+# An empty value is admitted: the watcher reads it as "use the built-in
+# default", which is what an unset name already does.
+_nemoclaw_bounded_seconds_value() {
+  local _nemoclaw_value
+  local _nemoclaw_mantissa
+  local _nemoclaw_integer
+  local _nemoclaw_exponent
+  [ -n "${1-}" ] || return 0
+  _nemoclaw_value="${1#+}"
+  if [[ ! "$_nemoclaw_value" =~ ^([0123456789]+(\.[0123456789]*)?|\.[0123456789]+)([eE][+-]?[0123456789]{1,3})?$ ]]; then
+    return 1
+  fi
+  _nemoclaw_mantissa="${_nemoclaw_value%%[eE]*}"
+  case "${_nemoclaw_mantissa//[.0]/}" in
+    '') return 1 ;;
+  esac
+  _nemoclaw_integer="${_nemoclaw_mantissa%%.*}"
+  _nemoclaw_integer="${_nemoclaw_integer#"${_nemoclaw_integer%%[!0]*}"}"
+  _nemoclaw_exponent=0
+  case "$_nemoclaw_value" in
+    *[eE]*)
+      _nemoclaw_exponent="${_nemoclaw_value##*[eE]}"
+      case "$_nemoclaw_exponent" in
+        -*) _nemoclaw_exponent="-$((10#${_nemoclaw_exponent#-}))" ;;
+        *) _nemoclaw_exponent="$((10#${_nemoclaw_exponent#+}))" ;;
+      esac
+      ;;
+  esac
+  [ "$((${#_nemoclaw_integer} + _nemoclaw_exponent))" -le 308 ]
+}
+
+# The fast-reentry counter is an integer, so it carries the launch renderer's
+# safe-integer bound instead of the seconds grammar. The digit-count guard runs
+# first so the comparison below cannot overflow Bash's 64-bit arithmetic.
+_nemoclaw_bounded_polls_value() {
+  local _nemoclaw_polls
+  [ -n "${1-}" ] || return 0
+  _nemoclaw_polls="${1#+}"
+  [[ "$_nemoclaw_polls" =~ ^[0123456789]+$ ]] || return 1
+  _nemoclaw_polls="${_nemoclaw_polls#"${_nemoclaw_polls%%[!0]*}"}"
+  [ -n "$_nemoclaw_polls" ] || return 1
+  [ "${#_nemoclaw_polls}" -le 16 ] && [ "$_nemoclaw_polls" -le 9007199254740991 ]
+}
+
 # Normalize OpenShell's sandbox-create command when an OCI runtime invokes the
 # image ENTRYPOINT with the literal argv:
 #
@@ -137,6 +195,26 @@ nemoclaw_normalize_entrypoint_env_wrapper() {
         printf '%s\n' \
           "[SECURITY] Managed startup env wrapper repeats variable '${_nemoclaw_name}'." >&2
         return 1
+        ;;
+    esac
+    case "$_nemoclaw_name" in
+      NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS)
+        if ! _nemoclaw_bounded_polls_value "${_nemoclaw_token#*=}"; then
+          printf '%s\n' \
+            '[SECURITY] Managed startup env wrapper contains an out-of-range assignment.' >&2
+          return 1
+        fi
+        ;;
+      NEMOCLAW_AUTO_PAIR_DEADLINE_SECS | \
+        NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS | \
+        NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS | \
+        NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS | \
+        NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS)
+        if ! _nemoclaw_bounded_seconds_value "${_nemoclaw_token#*=}"; then
+          printf '%s\n' \
+            '[SECURITY] Managed startup env wrapper contains an out-of-range assignment.' >&2
+          return 1
+        fi
         ;;
     esac
     _nemoclaw_assignments+=("$_nemoclaw_token")
