@@ -119,9 +119,18 @@ describe("fresh sandbox executable readiness", () => {
     const deps = createDeps();
     await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow("process.exit:1");
 
-    expect(order).toEqual(["rollback", "diagnostics"]);
-    expect(mocks.printSandboxCreateFailureDiagnostics).toHaveBeenCalledWith("alpha", {
-      backupPath: null,
+    expect({
+      diagnosticCall: mocks.printSandboxCreateFailureDiagnostics.mock.calls[0],
+      diagnosticUnavailable: vi
+        .mocked(console.error)
+        .mock.calls.flat()
+        .join("\n")
+        .includes("Sandbox failure diagnostics were unavailable; continuing rollback."),
+      order,
+    }).toEqual({
+      diagnosticCall: ["alpha", { backupPath: null }],
+      diagnosticUnavailable: true,
+      order: ["rollback", "diagnostics"],
     });
   });
 
