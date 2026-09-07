@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { McpBridgeEntry, SandboxEntry } from "../../state/registry";
 
 const mocks = vi.hoisted(() => ({
+  assertGeneratedPolicyRegistrationMutationSafe: vi.fn(),
   assertMcpDestroyNotPending: vi.fn(),
   bridgeState: vi.fn(),
   discardSafeIncompleteMcpAdds: vi.fn(),
@@ -61,7 +62,8 @@ vi.mock("./mcp-bridge-destroy-preflight", () => ({
 
 vi.mock("./mcp-bridge-policy", () => ({
   assertGeneratedPolicyMutationSafe: vi.fn(),
-  assertGeneratedPolicyRegistrationMutationSafe: vi.fn(),
+  assertGeneratedPolicyRegistrationMutationSafe:
+    mocks.assertGeneratedPolicyRegistrationMutationSafe,
   buildMcpBridgePolicyKey: vi.fn(() => "mcp_bridge_github"),
   removeGeneratedPolicy: mocks.removeGeneratedPolicy,
 }));
@@ -119,6 +121,9 @@ const entry: McpBridgeEntry = {
 
 describe("MCP adapter teardown rollback", () => {
   beforeEach(() => {
+    mocks.assertGeneratedPolicyRegistrationMutationSafe.mockReset().mockReturnValue({
+      content: "version: 1\nnetwork_policies:\n  mcp_bridge_github: {}\n",
+    });
     mocks.bridgeState.mockReset().mockReturnValue({ github: entry });
     mocks.discardSafeIncompleteMcpAdds.mockReset().mockResolvedValue(sandbox);
     mocks.ensureSandboxGatewaySelected.mockReset().mockResolvedValue(undefined);
@@ -272,5 +277,18 @@ describe("MCP adapter teardown rollback", () => {
 
     expect(mocks.getMcpProviderInspectionRuntimeSelection).not.toHaveBeenCalled();
     expect(mocks.ensureSandboxGatewaySelected).not.toHaveBeenCalled();
+  });
+
+  it("rejects rebuild when live policy differs from persisted denied-tool intent (#11115)", async () => {
+    mocks.assertGeneratedPolicyRegistrationMutationSafe.mockReturnValue({
+      content:
+        "version: 1\nnetwork_policies:\n  mcp_bridge_github:\n    endpoints:\n      - deny_rules:\n          - method: tools/call\n            tool: delete_*\n",
+    });
+
+    await expect(prepareMcpBridgesForRebuild("alpha")).rejects.toThrow(
+      /generated policy does not match.*mcp restart github/,
+    );
+    expect(mocks.unregisterAgentAdapter).not.toHaveBeenCalled();
+    expect(mocks.removeGeneratedPolicy).not.toHaveBeenCalled();
   });
 });

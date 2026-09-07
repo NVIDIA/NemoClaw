@@ -51,6 +51,23 @@ OpenShell resolves the placeholder at egress.
 After `mcp add` commits, NemoClaw performs a fresh status inspection and runs the gated credential-resolution probe once unless you pass `--no-probe`.
 If readiness is inconclusive, the command reports a probe skip without failing the committed add.
 
+Pass `--deny-tool` once for each exact tool name or OpenShell glob pattern to block at the MCP proxy:
+
+```bash
+export DOORDASH_MCP_TOKEN='replace-with-secret-manager-value'
+$$nemoclaw my-sandbox mcp add doordash \
+  --url https://mcp.example.test/mcp \
+  --env DOORDASH_MCP_TOKEN \
+  --deny-tool doordash_submit_order \
+  --deny-tool 'admin_*'
+unset DOORDASH_MCP_TOKEN
+```
+
+NemoClaw records the denied-tool list and includes it in every generated policy comparison.
+Restart and rebuild preserve the deny rules without a manual policy edit.
+The option matches tool names only and does not inspect tool arguments.
+Use `mcp update` to replace or clear the list after registration.
+
 ## Add a Trusted Private Server
 
 Use a trusted private host when the MCP endpoint must remain on an operator-controlled private network.
@@ -195,7 +212,8 @@ The generated policy permits these client-to-server method groups:
 
 Those methods remain bounded to the configured endpoint path, selected agent adapter binaries, pinned addresses, and a 131,072-byte request body.
 
-`tools/call` currently permits every tool exposed by that server.
+Without `--deny-tool`, `tools/call` permits every tool exposed by that server.
+Each `--deny-tool` value adds a higher-priority `tools/call` deny rule for one exact name or glob.
 `strict_tool_names` validates tool name syntax and is not a tool authorization allowlist.
 
 OpenShell also handles the protocol-required empty receive-stream `GET` and client response frames for server-originated MCP requests.

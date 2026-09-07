@@ -25,10 +25,16 @@ export interface ParsedMcpAddArgs {
   server: string;
   url: string;
   env: ParsedEnvReference[];
+  denyTools?: string[];
   trustedPrivateHosts?: string[];
 }
 
 export interface McpBridgeAddOptions extends ParsedMcpAddArgs {}
+
+export interface ParsedMcpUpdateArgs {
+  server: string;
+  denyTools: string[];
+}
 
 export interface McpBridgeStatus {
   server: string;
@@ -76,6 +82,7 @@ export interface McpBridgeStatus {
     name?: string;
     registryPresent: boolean;
     gatewayPresent: boolean | null;
+    state?: "drift";
   };
   adapter: {
     registered: boolean | null;

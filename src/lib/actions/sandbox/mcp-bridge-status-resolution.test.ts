@@ -32,6 +32,15 @@ afterEach(() => {
 // per test so both the 401 (auth-shaped) and 400 (validation-ambiguous)
 // warnings are exercised end-to-end.
 const harnessPreludeTemplate = String.raw`
+const fs = require("node:fs");
+const path = require("node:path");
+const gatewayManagementPath = path.join(process.env.HOME, "gateway-management.json");
+fs.writeFileSync(gatewayManagementPath, JSON.stringify({
+  version: 1,
+  mode: "nemoclaw-managed",
+  requiredCapabilities: [],
+}));
+process.env.NEMOCLAW_GATEWAY_MANAGEMENT = gatewayManagementPath;
 const registry = require("./src/lib/state/registry.js");
 const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
@@ -635,6 +644,7 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
   const [wrongProvider] = await bridge.statusMcpBridge("alpha", "github", {
     probeCredentialResolution: true,
   });
+
   outcomes.push({
     case: "provider:wrong-shape",
     resolution: wrongProvider.provider.credentialResolution,
@@ -660,6 +670,28 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
       expect(outcome.resolution.ok, outcome.case).toBeNull();
       expect(outcome.resolution.detail, outcome.case).toContain("probe skipped");
     });
+  });
+
+  it("reports generated policy drift with restart recovery (#11115)", () => {
+    const home = createTempHome("nemoclaw-mcp-policy-drift-");
+    const { stdout } = runHarness(
+      home,
+      String.raw`
+  activePolicyState = "drift";
+  const [status] = await bridge.statusMcpBridge("alpha", "github");
+  logLines.length = 0;
+  await bridge.dispatchMcpBridgeCommand("alpha", ["status", "github", "--no-probe"]);
+  writeHarnessResult(JSON.stringify({ status, text: logLines.join("\n") }));
+`,
+    );
+    const payload = JSON.parse(stdout) as {
+      status: { policy: { gatewayPresent: null; state: string }; warnings: string[] };
+      text: string;
+    };
+
+    expect(payload.status.policy).toMatchObject({ gatewayPresent: null, state: "drift" });
+    expect(payload.status.warnings).toEqual([expect.stringMatching(/mcp restart github/)]);
+    expect(payload.text).toMatch(/policy: drift[\s\S]*mcp restart github/);
   });
 
   it("renders the identical-rejection probe in the human-readable status output (#6379)", () => {

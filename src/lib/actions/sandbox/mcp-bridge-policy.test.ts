@@ -11,6 +11,8 @@ import {
   applyGeneratedPolicy,
   buildMcpBridgePolicyName,
   buildMcpBridgePolicyYaml,
+  getPolicyGatewayState,
+  getPolicyPresence,
   getRegisteredGeneratedPolicy,
   MCP_BRIDGE_ALLOWED_METHODS,
   MCP_BRIDGE_POLICY_MAX_BODY_BYTES,
@@ -44,6 +46,70 @@ describe("generated MCP policy", () => {
         content: expect.stringContaining("allowed_ips"),
       }),
     );
+  });
+
+  it("renders denied tool names and globs as tools/call deny rules (#11115)", () => {
+    const managed = getRegisteredGeneratedPolicy("alpha", {
+      ...entry,
+      denyTools: ["delete_*", "doordash_submit_order"],
+    });
+    const parsed = YAML.parse(managed?.content ?? "") as {
+      network_policies: Record<
+        string,
+        { endpoints: Array<{ deny_rules?: Array<{ method: string; tool: string }> }> }
+      >;
+    };
+
+    expect(managed?.name).toBe("mcp-bridge-github");
+    expect(parsed.network_policies.mcp_bridge_github.endpoints[0].deny_rules).toEqual([
+      { method: "tools/call", tool: "delete_*" },
+      { method: "tools/call", tool: "doordash_submit_order" },
+    ]);
+  });
+
+  it("matches live policy against persisted denied-tool intent (#11115)", () => {
+    const stateSpy = vi.spyOn(policies, "getPresetContentGatewayState").mockImplementation(
+      (_sandboxName, content) => {
+        const parsed = YAML.parse(content) as {
+          network_policies: Record<
+            string,
+            { endpoints: Array<{ deny_rules?: Array<{ method: string; tool: string }> }> }
+          >;
+        };
+        return parsed.network_policies.mcp_bridge_github.endpoints[0].deny_rules?.[0]?.tool ===
+          "delete_*"
+          ? "match"
+          : "drift";
+      },
+    );
+
+    expect(getPolicyPresence("alpha", { ...entry, denyTools: ["delete_*"] }, runtimeSelection)).toBe(
+      true,
+    );
+    expect(stateSpy).toHaveBeenCalledOnce();
+  });
+
+  it("keeps policy drift distinct from unavailable inspection (#11115)", () => {
+    vi.spyOn(policies, "getPresetContentGatewayState").mockReturnValue("drift");
+
+    expect(
+      getPolicyGatewayState("alpha", { ...entry, denyTools: ["delete_*"] }, runtimeSelection),
+    ).toBe("drift");
+    expect(getPolicyPresence("alpha", entry, runtimeSelection)).toBeNull();
+  });
+
+  it("omits deny_rules when the bridge has no denied tools (#11115)", () => {
+    const parsed = YAML.parse(
+      buildMcpBridgePolicyYaml(
+        entry.server,
+        entry.url,
+        "mcporter",
+        { addresses: ["8.8.8.8"] },
+        "mcp-github",
+      ),
+    ) as { network_policies: Record<string, { endpoints: Array<Record<string, unknown>> }> };
+
+    expect(parsed.network_policies.mcp_bridge_github.endpoints[0]).not.toHaveProperty("deny_rules");
   });
 
   it("applies directly to live OpenShell policy without a custom-policy registry row", () => {

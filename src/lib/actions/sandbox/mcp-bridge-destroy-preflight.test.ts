@@ -40,7 +40,7 @@ vi.mock("./mcp-bridge-validation", () => ({
   validateSandboxName: vi.fn(),
 }));
 
-import { discardSafeIncompleteMcpAdds } from "./mcp-bridge-destroy-preflight";
+import { cloneMcpBridgeEntry, discardSafeIncompleteMcpAdds } from "./mcp-bridge-destroy-preflight";
 
 const preparedEntry: McpBridgeEntry = {
   server: "github",
@@ -88,5 +88,17 @@ describe("incomplete MCP add discard", () => {
     expect(mocks.inspectMcpProvider).not.toHaveBeenCalled();
     expect(mocks.removeGeneratedPolicy).not.toHaveBeenCalled();
     expect(mocks.assertGeneratedPolicyRegistrationMutationSafe).not.toHaveBeenCalled();
+  });
+});
+
+describe("MCP lifecycle snapshots", () => {
+  it("clones denied-tool intent without sharing its mutable list (#11115)", () => {
+    const source = { ...preparedEntry, denyTools: ["delete_*"] };
+    const cloned = cloneMcpBridgeEntry(source);
+
+    cloned.denyTools?.push("submit_*");
+
+    expect(source.denyTools).toEqual(["delete_*"]);
+    expect(cloned.denyTools).toEqual(["delete_*", "submit_*"]);
   });
 });
