@@ -26,8 +26,7 @@ vi.mock("../../adapters/openshell/sandbox-command-sdk", () => ({
   createSdkOpenShellSandboxCommandExecutor: () => sdkCommandExecutor,
 }));
 vi.mock("../../agent/runtime", () => ({ getSessionAgent, resolveSessionAgentDefinition }));
-vi.mock("./gateway-state", () => ({ ensureLiveSandboxOrExit }));
-vi.mock("./gateway-target", () => ({ getSandboxTargetGatewayName }));
+vi.mock("./gateway-state", () => ({ ensureLiveSandboxOrExit, getSandboxTargetGatewayName }));
 
 import { installSandboxSkill, listSandboxSkills, removeSandboxSkill } from "./skill-install";
 import type { AgentSkillIntegration } from "../../agent/skill-integration";

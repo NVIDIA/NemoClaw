@@ -29,6 +29,7 @@ import {
   getPersistedSandboxTargetGatewayName,
   getSandboxTargetGatewayName,
 } from "./gateway-target";
+export { getSandboxTargetGatewayName };
 
 const { pruneKnownHostsEntries } = require("../../onboard/known-hosts") as {
   pruneKnownHostsEntries: (contents: string) => string;
