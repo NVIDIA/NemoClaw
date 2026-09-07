@@ -358,6 +358,68 @@ describe("OpenShell forward service", () => {
     expect(spawnDetached).toHaveBeenCalledTimes(2);
   });
 
+  it("waits for the bounded output drain before classifying an exited service (#11084)", () => {
+    const diagnostic =
+      "sandbox 'demo' is no longer ready (phase: creating); stopping service forward";
+    let capturedOutput = "";
+    const waitForOutput = vi.fn(() => {
+      capturedOutput = diagnostic;
+      return true;
+    });
+    const spawnDetached = vi
+      .fn()
+      .mockReturnValueOnce({
+        pid: 55,
+        readOutput: () => capturedOutput,
+        removeOutput: vi.fn(),
+        unref: vi.fn(),
+        waitForOutput,
+      })
+      .mockReturnValueOnce({ pid: 56, removeOutput: vi.fn(), unref: vi.fn() });
+
+    launchForwardService(target, {
+      getProcessIdentity: stableProcessIdentity,
+      isListenerOwned: (pid) => pid === 56,
+      isProcessRunning: (pid) => pid === 56,
+      isReachable: vi
+        .fn()
+        .mockReturnValueOnce(false)
+        .mockReturnValueOnce(false)
+        .mockReturnValueOnce(true),
+      maxSandboxCreatingRetries: 1,
+      onSandboxCreatingRetry: () => {},
+      sleep: () => {},
+      spawnDetached,
+      timeoutMs: 10_000,
+    });
+
+    expect(waitForOutput).toHaveBeenCalledOnce();
+    expect(spawnDetached).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry when an exited service diagnostic cannot be completed (#11084)", () => {
+    const spawnDetached = vi.fn(() => ({
+      pid: 57,
+      readOutput: () =>
+        "sandbox 'demo' is no longer ready (phase: creating); stopping service forward",
+      removeOutput: vi.fn(),
+      unref: vi.fn(),
+      waitForOutput: () => false,
+    }));
+
+    expect(() =>
+      launchForwardService(target, {
+        getProcessIdentity: stableProcessIdentity,
+        isProcessRunning: () => false,
+        isReachable: () => false,
+        maxSandboxCreatingRetries: 1,
+        sleep: () => {},
+        spawnDetached,
+      }),
+    ).toThrow(/diagnostic-incomplete/u);
+    expect(spawnDetached).toHaveBeenCalledOnce();
+  });
+
   it.each([
     [
       "terminal phase",
@@ -518,16 +580,16 @@ describe("OpenShell forward service", () => {
         );
         await new Promise((resolve) => setTimeout(resolve, 100));
         expect(child.readOutput?.()).toHaveLength(forwardServiceInternals.startOutputLimitBytes);
-        child.removeOutput?.();
-        expect(child.readOutput?.()).toBe("");
       } finally {
-        child.removeOutput?.();
         expect(child.pid).toBeTypeOf("number");
         try {
           process.kill(child.pid as number, "SIGTERM");
         } catch {
           // The fixture may already have stopped after a failed assertion.
         }
+        expect(child.waitForOutput?.()).toBe(true);
+        child.removeOutput?.();
+        expect(child.readOutput?.()).toBe("");
       }
     },
   );
@@ -543,6 +605,7 @@ describe("OpenShell forward service", () => {
       try {
         const address = server.address() as AddressInfo;
         expect(getForwardListenerOwnership(process.pid, address.port)).toBe(true);
+        expect(getForwardListenerOwnership(process.ppid, address.port)).toBe(false);
       } finally {
         await new Promise<void>((resolve) => server.close(() => resolve()));
       }
@@ -560,6 +623,7 @@ describe("OpenShell forward service", () => {
       try {
         const address = server.address() as AddressInfo;
         expect(getForwardListenerOwnership(process.pid, address.port)).toBe(true);
+        expect(getForwardListenerOwnership(process.ppid, address.port)).toBe(false);
       } finally {
         await new Promise<void>((resolve) => server.close(() => resolve()));
       }

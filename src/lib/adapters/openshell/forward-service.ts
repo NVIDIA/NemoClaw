@@ -18,6 +18,9 @@ const SANDBOX_CREATING_MAX_RETRIES = START_TIMEOUT_MS / SANDBOX_CREATING_RETRY_I
 const STOP_TIMEOUT_MS = 5_000;
 const POLL_INTERVAL_MS = 100;
 const START_OUTPUT_LIMIT_BYTES = 16 * 1_024;
+// After the service PID exits, allow the local pipe drainer at most one second
+// to publish its completion receipt. Missing completion is terminal, not retryable.
+const START_OUTPUT_DRAIN_TIMEOUT_MS = 1_000;
 // OpenShell 0.0.106 rechecks sandbox readiness every two seconds after it
 // binds. Re-prove exact listener ownership after the next complete check.
 const LISTENER_RECHECK_DELAY_MS = SANDBOX_CREATING_RETRY_INTERVAL_MS + POLL_INTERVAL_MS;
@@ -25,14 +28,16 @@ const FORWARD_INSTANCE_ENV = "NEMOCLAW_FORWARD_INSTANCE_ID";
 const sleepBuffer = new Int32Array(new SharedArrayBuffer(4));
 const boundedOutputWrapper = [
   "capture_path=$1",
-  "shift",
-  `exec \"$@\" > >({ /usr/bin/head -c ${String(START_OUTPUT_LIMIT_BYTES)} > \"$capture_path\"; /bin/cat >/dev/null; }) 2>&1`,
+  "capture_done_path=$2",
+  "shift 2",
+  `exec \"$@\" > >({ /usr/bin/head -c ${String(START_OUTPUT_LIMIT_BYTES)} > \"$capture_path\"; /bin/cat >/dev/null; : > \"$capture_done_path\"; }) 2>&1`,
 ].join("\n");
 
 type ForwardServiceChild = {
   readonly pid?: number;
   readonly readOutput?: () => string;
   readonly removeOutput?: () => void;
+  readonly waitForOutput?: () => boolean;
   unref(): void;
 };
 
@@ -228,14 +233,25 @@ function spawnForwardService(
   const outputDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-forward-service-"));
   fs.chmodSync(outputDirectory, 0o700);
   const outputPath = path.join(outputDirectory, "start.log");
+  const outputDonePath = path.join(outputDirectory, "start.done");
   const outputDescriptor = fs.openSync(outputPath, "wx", 0o600);
   let child: ReturnType<typeof spawn>;
   try {
     // Bash exec preserves the launch PID while the process substitution keeps
-    // only a bounded startup prefix and drains all later output to /dev/null.
+    // only a bounded startup prefix, drains all later output to /dev/null, and
+    // records when the pipe has closed so an exited service is classified only
+    // after its complete bounded diagnostic is available.
     child = spawn(
       "/bin/bash",
-      ["-c", boundedOutputWrapper, "nemoclaw-forward-service", outputPath, executable, ...args],
+      [
+        "-c",
+        boundedOutputWrapper,
+        "nemoclaw-forward-service",
+        outputPath,
+        outputDonePath,
+        executable,
+        ...args,
+      ],
       {
         detached: true,
         env: environment,
@@ -269,6 +285,15 @@ function spawnForwardService(
       } catch {
         return "";
       }
+    },
+    waitForOutput: () => {
+      const deadline = Date.now() + START_OUTPUT_DRAIN_TIMEOUT_MS;
+      while (!fs.existsSync(outputDonePath)) {
+        const remainingMs = deadline - Date.now();
+        if (remainingMs <= 0) return false;
+        Atomics.wait(sleepBuffer, 0, 0, Math.min(POLL_INTERVAL_MS, remainingMs));
+      }
+      return true;
     },
     removeOutput: () => {
       try {
@@ -311,16 +336,19 @@ function classifyStartOutput(
   child: ForwardServiceChild,
   target: ForwardServiceTarget,
 ): { readonly category: string; readonly sandboxCreating: boolean } {
+  const outputComplete = child.waitForOutput?.() ?? true;
   const output = child.readOutput?.() ?? "";
-  const sandboxCreating = isSandboxCreatingHandoff(output, target.sandboxName);
+  const sandboxCreating = outputComplete && isSandboxCreatingHandoff(output, target.sandboxName);
   return {
-    category: sandboxCreating
-      ? "sandbox-creating"
-      : isForwardingAnnounced(output, target)
-        ? "forwarding-announced"
-        : output.trim()
-          ? "non-readiness-diagnostic"
-          : "empty-diagnostic",
+    category: !outputComplete
+      ? "diagnostic-incomplete"
+      : sandboxCreating
+        ? "sandbox-creating"
+        : isForwardingAnnounced(output, target)
+          ? "forwarding-announced"
+          : output.trim()
+            ? "non-readiness-diagnostic"
+            : "empty-diagnostic",
     sandboxCreating,
   };
 }
