@@ -238,21 +238,14 @@ function completeRecordedInferenceRoute(
 }
 
 export function createProviderRecoveryHelpers(deps: ProviderRecoveryDeps): ProviderRecoveryHelpers {
-  const isManagedLlamaCppState = (value: {
-    provider?: string | null;
-    servingProfileProvenance?: { recipe: { backend: string; id?: string } } | null;
-    hostLocalInferenceProvenance?: unknown;
-  }): boolean =>
-    value.provider === "llama-cpp-local" &&
-    (value.servingProfileProvenance?.recipe.backend === "install-llama-cpp" ||
-      value.hostLocalInferenceProvenance != null);
-
-  const managedLlamaCppRecipeId = (value: {
+  type ManagedLlamaCppRecoveryState = {
     provider?: string | null;
     servingProfileProvenance?: { recipe: { backend: string; id?: string } } | null;
     hostLocalInferenceReceipt?: string | null;
     hostLocalInferenceProvenance?: unknown;
-  }): string | null => {
+  };
+
+  const managedLlamaCppRecipeId = (value: ManagedLlamaCppRecoveryState): string | null => {
     const recipe = value.servingProfileProvenance?.recipe;
     if (
       value.provider === "llama-cpp-local" &&
@@ -286,6 +279,9 @@ export function createProviderRecoveryHelpers(deps: ProviderRecoveryDeps): Provi
       return null;
     }
   };
+
+  const isManagedLlamaCppState = (value: ManagedLlamaCppRecoveryState): boolean =>
+    managedLlamaCppRecipeId(value) !== null;
 
   function refuseRecoveryAfterRegistryError(sandboxName: string, error: unknown): null {
     const detail = error instanceof Error ? error.message : String(error);

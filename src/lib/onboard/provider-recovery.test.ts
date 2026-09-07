@@ -281,6 +281,47 @@ describe("provider recovery persisted routing state", () => {
     expect(recovery.readRecordedManagedLlamaCppRecipeId("alpha")).toBe(recipeId);
   });
 
+  it("rejects managed recovery when host-local receipt provenance does not match", () => {
+    const originalReceipt = managedLlamaCppReceipt("llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1");
+    const tamperedReceipt = managedLlamaCppReceipt("llama-cpp.untrusted.v1");
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "alpha",
+      provider: "llama-cpp-local",
+      model: "qwen3.6-35b-a3b",
+      hostLocalInferenceReceipt: tamperedReceipt,
+      hostLocalInferenceProvenance: createSandboxHostLocalInferenceProvenance(
+        "alpha",
+        originalReceipt,
+      ),
+    });
+    const recovery = helpers();
+
+    expect(recovery.readRecordedManagedLlamaCpp("alpha")).toBe(false);
+    expect(recovery.readRecordedManagedLlamaCppRecipeId("alpha")).toBeNull();
+    expect(
+      resolveRequestedProviderSelection({
+        options: [
+          { key: "llama-cpp", label: "Local llama.cpp" },
+          { key: "install-llama-cpp", label: "Managed llama.cpp" },
+        ],
+        requestedProvider: null,
+        sandboxName: "alpha",
+        remoteProviderConfig: {},
+        isWsl: false,
+        isWindowsHostOllama: false,
+        windowsHostOllamaSupported: false,
+        windowsHostOllamaReachable: false,
+        hermesProviderAvailable: false,
+        ollamaRunning: false,
+        ...recovery.providerSelectionReaders,
+      }),
+    ).toMatchObject({
+      kind: "selected",
+      selected: { key: "llama-cpp" },
+      recoveredFromSandbox: true,
+    });
+  });
+
   it.each([
     [
       "managed",
