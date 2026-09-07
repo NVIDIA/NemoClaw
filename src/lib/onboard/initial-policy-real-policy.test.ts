@@ -628,12 +628,7 @@ describe("initial sandbox policy real preset merge", () => {
     );
 
     expect(prepared.appliedPresets).toContain("observability-otlp-local");
-    expect(endpoint?.allowed_ips).toEqual([
-      "10.0.0.0/8",
-      "172.16.0.0/12",
-      "192.168.0.0/16",
-      "169.254.2.2/32",
-    ]);
+    expect(endpoint).not.toHaveProperty("allowed_ips");
   });
 
   it.each([

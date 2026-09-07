@@ -67,13 +67,9 @@ network_policies:
         port: 4318
         protocol: rest
         enforcement: enforce
-        # Keep one static agent policy for every supported runtime. Docker
-        # uses an RFC1918 bridge; native Podman owns the exact link-local /32.
-        allowed_ips:
-          - 10.0.0.0/8
-          - 172.16.0.0/12
-          - 192.168.0.0/16
-          - 169.254.2.2/32
+        # OpenShell owns this reserved sandbox-to-host alias for every compute
+        # driver. Do not pin a driver address here: current native Podman uses
+        # a trusted link-local gateway, while Docker gateways use RFC1918.
         rules:
           - allow: { method: POST, path: "/v1/traces" }
     binaries:
