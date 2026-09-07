@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { vi } from "vitest";
 import { makePreparedRecoveryManifest } from "../../src/lib/actions/sandbox/rebuild-flow-test-fixtures";
+import { bridgeState } from "../../src/lib/actions/sandbox/mcp-bridge-state";
 import type { RebuildRecreateOnboardOpts } from "../../src/lib/actions/sandbox/rebuild-gpu-opt-out";
 import {
   agentDefs,
@@ -87,6 +88,7 @@ function expectPolicyCaptureOptions() {
 
 export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): RebuildFlowHarness {
   purgeRebuildModule();
+  mcpBridge.resetMcpBridgeTransientStateForTest();
 
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -948,22 +950,46 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const ensureMessagingHostForwardAfterRebuildSpy = vi
     .spyOn(messagingHostForwardLifecycle, "ensureMessagingHostForwardAfterRebuild")
     .mockReturnValue(true);
+  const defaultMcpAdapter =
+    agentName === "hermes"
+      ? "hermes-config"
+      : agentName === "langchain-deepagents-code"
+        ? "deepagents-config"
+        : "openclaw-config";
+  for (const entry of overrides.mcpPreparation?.entries ?? []) {
+    if (!entry || typeof entry !== "object") continue;
+    for (const retiredField of ["addState", "addedAt", "createdAt", "updatedAt"]) {
+      delete (entry as Record<string, unknown>)[retiredField];
+    }
+    Object.assign(entry, {
+      agent: "agent" in entry ? entry.agent : agentName,
+      adapter: "adapter" in entry ? entry.adapter : defaultMcpAdapter,
+      url: "url" in entry ? entry.url : "https://mcp.example.test/mcp",
+      env: "env" in entry ? entry.env : ["GITHUB_TOKEN"],
+      policyName:
+        "policyName" in entry ? entry.policyName : `mcp-bridge-${String(entry.server)}`,
+    });
+  }
+  const defaultMcpPreparation = (
+    runtimeSelection?: Parameters<typeof mcpBridge.prepareMcpBridgesForRebuild>[1],
+  ) => {
+    const entries = Object.values(bridgeState({ name: "alpha" } as never));
+    return {
+      entries,
+      detachedProviderEntries: entries,
+      scrubbedAdapterEntries: [],
+      ...(runtimeSelection ? { runtimeSelection } : {}),
+    };
+  };
   const prepareMcpBridgesForRebuildSpy = vi
     .spyOn(mcpBridge, "prepareMcpBridgesForRebuild")
-    .mockResolvedValue(
-      overrides.mcpPreparation ?? {
-        entries: [],
-        detachedProviderEntries: [],
-      },
+    .mockImplementation(async (_sandboxName, runtimeSelection) =>
+      overrides.mcpPreparation ?? defaultMcpPreparation(runtimeSelection),
     );
   const prepareMcpBridgesForAbsentSandboxRebuildSpy = vi
     .spyOn(mcpBridge, "prepareMcpBridgesForAbsentSandboxRebuild")
-    .mockResolvedValue(
-      overrides.mcpPreparation ?? {
-        entries: [],
-        detachedProviderEntries: [],
-        scrubbedAdapterEntries: [],
-      },
+    .mockImplementation(async (_sandboxName, runtimeSelection) =>
+      overrides.mcpPreparation ?? defaultMcpPreparation(runtimeSelection),
     );
   const reattachMcpProvidersAfterRebuildAbortSpy = vi
     .spyOn(mcpBridge, "reattachMcpProvidersAfterRebuildAbort")

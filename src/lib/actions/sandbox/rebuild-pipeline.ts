@@ -24,9 +24,12 @@ import * as onboardSession from "../../state/onboard-session";
 import { load as loadRegistry, REGISTRY_FILE } from "../../state/registry/persistence";
 import {
   captureRebuildPolicyDocument,
+  clearRebuildMcpHandoff,
   clearRebuildPolicyHandoff,
+  readRebuildMcpHandoff,
   type RebuildBackupManifest,
   runRebuildBackupPhase,
+  writeRebuildMcpHandoff,
   writeRebuildPolicyHandoff,
 } from "./rebuild-backup-phase";
 import { buildRefreshMutableOpenClawConfigHashCommand } from "./rebuild-config-hash";
@@ -38,6 +41,7 @@ import {
   snapshotOpenShellEnv,
 } from "./rebuild-flow-helpers";
 import {
+  hydrateMcpStateForRebuild,
   mcpRebuildRequiresRuntimeSelection,
   observeMcpStateForRebuild,
 } from "./rebuild-mcp-phase";
@@ -243,14 +247,29 @@ async function rebuildSandboxUnlocked(
       recoveryManifest = preDeleteRecovery.manifest;
       recoveryRegistrySnapshot = preDeleteRecovery.registrySnapshot;
       const activeRecoveryTransaction = onboardSession.loadSession()?.checkpoint?.sandboxRecreate;
-      const mcpEntries = observeMcpStateForRebuild(
-        sandboxEntry,
-        recreateOptions.runtimeSelection,
-        Boolean(activeRecoveryTransaction),
-      );
+      const retainedMcpHandoff = recoveryManifest
+        ? readRebuildMcpHandoff(recoveryManifest)
+        : null;
+      if (
+        recoveryManifest?.rebuildMcpHandoff &&
+        recoveryManifest.rebuildMcpHandoff.retired !== true &&
+        !retainedMcpHandoff
+      ) {
+        return bail("The retained rebuild MCP recovery handoff is invalid.");
+      }
+      if (retainedMcpHandoff) {
+        hydrateMcpStateForRebuild(sandboxName, retainedMcpHandoff.entries);
+      }
+      const mcpEntries =
+        retainedMcpHandoff?.entries ??
+        observeMcpStateForRebuild(
+          sandboxEntry,
+          recreateOptions.runtimeSelection,
+          Boolean(activeRecoveryTransaction),
+        );
       const mcpRuntimeSelectionRequired = mcpRebuildRequiresRuntimeSelection(sandboxEntry);
       const mcpRuntimeSelection = mcpRuntimeSelectionRequired
-        ? recreateOptions.runtimeSelection
+        ? (retainedMcpHandoff?.runtimeSelection ?? recreateOptions.runtimeSelection)
         : undefined;
       if (mcpRuntimeSelectionRequired && !mcpRuntimeSelection) {
         bail("MCP rebuild preflight did not retain its recorded OpenShell runtime target.");
@@ -331,6 +350,15 @@ async function rebuildSandboxUnlocked(
             "The rebuild policy handoff could not enter cleanup-only state.",
           );
         }
+        if (
+          backupManifest.rebuildMcpHandoff &&
+          !clearRebuildMcpHandoff(backupManifest, { retainRetirement: true })
+        ) {
+          return reportIncompletePolicyHandoffCleanup(
+            backupManifest,
+            "The rebuild MCP recovery handoff could not enter cleanup-only state.",
+          );
+        }
         try {
           markRebuildRecoveryCleanupOnly({
             sandboxName,
@@ -344,10 +372,14 @@ async function rebuildSandboxUnlocked(
             `The rebuild policy cleanup record could not be updated: ${rebuildFailureDetail(error)}`,
           );
         }
-        if (clearRebuildPolicyHandoff(backupManifest)) return true;
+        if (
+          clearRebuildPolicyHandoff(backupManifest) &&
+          clearRebuildMcpHandoff(backupManifest)
+        )
+          return true;
         return reportIncompletePolicyHandoffCleanup(
           backupManifest,
-          "The retired rebuild policy handoff artifact or metadata could not be removed.",
+          "The retired rebuild recovery handoff artifact or metadata could not be removed.",
         );
       };
 
@@ -364,7 +396,9 @@ async function rebuildSandboxUnlocked(
         : false;
       if (
         recoveryManifest &&
-        (recoveryCleanupOnly || recoveryManifest.rebuildPolicyHandoff?.retired === true)
+        (recoveryCleanupOnly ||
+          recoveryManifest.rebuildPolicyHandoff?.retired === true ||
+          recoveryManifest.rebuildMcpHandoff?.retired === true)
       ) {
         const cleanupManifest = recoveryManifest;
         const cleanupJournal = openRecreateJournal();
@@ -555,7 +589,8 @@ async function rebuildSandboxUnlocked(
         if (
           backup.backupManifest?.rebuildPolicyHandoff &&
           backup.backupManifest.backupPath !== recoveryBackup.backupPath &&
-          !clearRebuildPolicyHandoff(backup.backupManifest)
+          (!clearRebuildPolicyHandoff(backup.backupManifest) ||
+            !clearRebuildMcpHandoff(backup.backupManifest))
         ) {
           return bail(
             "The unused current-run rebuild policy handoff could not be retired during recovery.",
@@ -658,6 +693,23 @@ async function rebuildSandboxUnlocked(
         log,
         bail,
         validateAfterMcpPreparation: async (preparation) => {
+          if (backup.backupManifest && preparation.entries.length > 0) {
+            try {
+              writeRebuildMcpHandoff(
+                backup.backupManifest,
+                preparation.entries,
+                preparation.runtimeSelection ?? {
+                  gatewayName: recreateOptions.targetGatewayName,
+                  workspace: "default",
+                },
+              );
+            } catch (error) {
+              return {
+                ok: false,
+                message: `The source-derived MCP recovery handoff could not be retained: ${rebuildFailureDetail(error)}`,
+              };
+            }
+          }
           if (preparation.policyHandoff !== undefined) {
             try {
               if (!publishPolicyHandoff(preparation.policyHandoff)) {
@@ -851,10 +903,16 @@ async function rebuildSandboxUnlocked(
       retainPolicyHandoffForRecovery = false;
     } finally {
       const handoffManifest = rebuildPolicyHandoffManifest;
-      if (handoffManifest?.rebuildPolicyHandoff && !retainPolicyHandoffForRecovery) {
+      if (
+        handoffManifest &&
+        (handoffManifest.rebuildPolicyHandoff || handoffManifest.rebuildMcpHandoff) &&
+        !retainPolicyHandoffForRecovery
+      ) {
         runBestEffortRebuildCleanup(
-          () => clearRebuildPolicyHandoff(handoffManifest),
-          "  Warning: bounded rebuild policy handoff could not be removed.",
+          () =>
+            clearRebuildPolicyHandoff(handoffManifest) &&
+            clearRebuildMcpHandoff(handoffManifest),
+          "  Warning: bounded rebuild recovery handoff could not be removed.",
         );
       } else if (rebuildPolicySourcePath && rebuildPolicySourceIsEphemeral) {
         const retainedPolicySourcePath = rebuildPolicySourcePath;

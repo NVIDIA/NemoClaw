@@ -390,7 +390,7 @@ alpha-mcp-slack   generic  1                 0
         }),
       }),
     ).toThrow(
-      "Credential key 'TEST_DIR1_TOKEN' is already supplied by registered provider 'test-dir1'",
+      "Credential key 'TEST_DIR1_TOKEN' is already supplied by configured extra provider 'test-dir1'",
     );
   });
 
@@ -478,7 +478,7 @@ alpha-mcp-slack   generic  1                 0
         listExtraProviders: () => ["foreign-provider"],
         runtimeSelection,
       }),
-    ).toThrow("Credential key 'GITHUB_TOKEN' is already supplied by registered provider");
+    ).toThrow("Credential key 'GITHUB_TOKEN' is already supplied by configured extra provider");
     expect(run).toHaveBeenCalledWith(
       ["provider", "get", "foreign-provider"],
       expect.objectContaining({ runtimeSelection }),

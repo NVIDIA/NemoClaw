@@ -230,8 +230,24 @@ describe("rebuildSandbox flow: recovery", () => {
 
   it("retains the exact policy handoff across a failed recreate and consumes it on retry", async () => {
     const policyDocument = "version: 1\nnetwork_policies:\n  host_preserved: {}";
+    const mcpEntry = {
+      server: "github",
+      agent: "openclaw",
+      adapter: "openclaw-config" as const,
+      url: "https://api.githubcopilot.com/mcp/",
+      env: ["GITHUB_TOKEN"],
+      providerName: "alpha-mcp-github",
+      providerId: "11111111-2222-4333-8444-555555555555",
+      policyName: "mcp-bridge-github",
+      source: "native" as const,
+    };
     const interrupted = createRebuildFlowHarness({
       captureOpenshell: sandboxGetProbes([SOURCE_PROBE, null]),
+      mcpPreparation: {
+        entries: [mcpEntry],
+        detachedProviderEntries: [mcpEntry],
+        scrubbedAdapterEntries: [],
+      },
       onboard: () => {
         throw new Error("replacement create failed");
       },
@@ -242,12 +258,16 @@ describe("rebuildSandbox flow: recovery", () => {
 
     const persistedManifest = JSON.parse(
       fs.readFileSync(path.join(interrupted.backupPath, "rebuild-manifest.json"), "utf8"),
-    ) as { rebuildPolicyHandoff: { file: string } } & Record<string, unknown>;
+    ) as {
+      rebuildPolicyHandoff: { file: string };
+      rebuildMcpHandoff: { entries: unknown[] };
+    } & Record<string, unknown>;
     const handoffPath = path.join(
       interrupted.backupPath,
       persistedManifest.rebuildPolicyHandoff.file,
     );
     expect(fs.readFileSync(handoffPath, "utf8")).toBe(policyDocument);
+    expect(persistedManifest.rebuildMcpHandoff.entries).toEqual([mcpEntry]);
     expect(
       fs.existsSync(path.join(interrupted.backupPath, ".nemoclaw-rebuild-recovery.json")),
     ).toBe(true);
@@ -255,6 +275,12 @@ describe("rebuildSandbox flow: recovery", () => {
     const restarted = createRebuildFlowHarness({
       staleRecovery: true,
       captureOpenshell: sandboxGetProbes([null]),
+      mcpPreparation: {
+        entries: [mcpEntry],
+        detachedProviderEntries: [mcpEntry],
+        scrubbedAdapterEntries: [],
+        runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
+      },
       onboard: (_session, options) => {
         recreatedPolicy = fs.readFileSync(String(options.rebuildPolicySourcePath), "utf8");
       },
@@ -268,7 +294,15 @@ describe("rebuildSandbox flow: recovery", () => {
     ).resolves.toBeUndefined();
 
     expect(recreatedPolicy).toBe(policyDocument);
+    expect(restarted.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith(
+      "alpha",
+      [mcpEntry],
+      { gatewayName: "nemoclaw", workspace: "default" },
+    );
     expect(fs.existsSync(handoffPath)).toBe(false);
+    expect(
+      JSON.parse(fs.readFileSync(path.join(interrupted.backupPath, "rebuild-manifest.json"), "utf8")),
+    ).not.toHaveProperty("rebuildMcpHandoff");
     expect(
       fs.existsSync(path.join(interrupted.backupPath, ".nemoclaw-rebuild-recovery.json")),
     ).toBe(false);

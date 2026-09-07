@@ -61,47 +61,6 @@ function fail(failureLines: readonly string[], exitCode = 1): CredentialsAddResu
   return { exitCode, successLines: [], failureLines };
 }
 
-async function liveMcpCollisionFailure(
-  provider: string,
-  credentialKeys: readonly string[],
-  target: OpenShellGatewayTarget,
-  providerAdapter: OpenShellProviderAdapter,
-): Promise<CredentialsAddResult | null> {
-  const inventory = await providerAdapter.listProviders({
-    target,
-    timeoutMs: OPENSHELL_OPERATION_TIMEOUT_MS,
-  });
-  if (!inventory.ok) {
-    return fail([
-      "  Could not inspect current OpenShell providers before checking credential-key collisions.",
-      `  ${inventory.error.message}`,
-    ]);
-  }
-  for (const providerName of inventory.value.names) {
-    if (providerName === provider) continue;
-    const inspection = await providerAdapter.getProvider({
-      target,
-      providerName,
-      timeoutMs: OPENSHELL_OPERATION_TIMEOUT_MS,
-    });
-    if (!inspection.ok) {
-      return fail([
-        `  Could not inspect OpenShell provider '${providerName}' before checking credential-key collisions.`,
-        `  ${inspection.error.message}`,
-      ]);
-    }
-    if (inspection.value.type !== "nemoclaw-mcp-v1") continue;
-    const credential = credentialKeys.find((key) => inspection.value.credentialKeys.includes(key));
-    if (!credential) continue;
-    return fail([
-      `  Credential key '${credential}' is already held by managed MCP provider '${providerName}'.`,
-      `  Refusing to register provider '${provider}' because registered providers attach during sandbox rebuild.`,
-      "  Use a different credential key, or remove the managed MCP server before retrying.",
-    ]);
-  }
-  return null;
-}
-
 function typedProviderConfigFailure(type: string, key: string, value: string): string[] | null {
   if (type.toLowerCase() !== "openai" || key !== "OPENAI_BASE_URL") {
     return [
@@ -387,7 +346,6 @@ export async function runCredentialsAddAction(
   );
   if (providerProfileFailure) return providerProfileFailure;
 
-  let importedCredentialKeys: string[] | null = null;
   if (fromExisting) {
     const inspection = await providerAdapter.inspectProviderProfile({
       target,
@@ -401,19 +359,12 @@ export async function runCredentialsAddAction(
         ...(inspection.error.message ? [`  ${inspection.error.message}`] : []),
       ]);
     }
-    importedCredentialKeys = [...inspection.value.credentialKeys];
   }
 
   return withMcpCredentialOwnershipLock(async () => {
-    const providerCredentialKeys = importedCredentialKeys ?? credentials;
-    const collision = await liveMcpCollisionFailure(
-      provider,
-      providerCredentialKeys,
-      target,
-      providerAdapter,
-    );
-    if (collision) return collision;
-
+    // Registration records this provider as an explicit extra-provider intent.
+    // Rebuild validates that intent against current source-backed MCP entries;
+    // orphaned providers retained by conservative MCP removal are not intent.
     const recordedReservation = recordExtraProvider(provider);
     let keepReservation = false;
     try {

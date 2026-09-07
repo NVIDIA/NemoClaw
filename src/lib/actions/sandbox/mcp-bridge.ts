@@ -13,7 +13,6 @@ import {
 import {
   finalizeMcpBridgesAfterSandboxDelete as finalizeMcpBridgesAfterSandboxDeleteLifecycle,
   prepareMcpBridgesForAbsentSandboxDestroy as prepareMcpBridgesForAbsentSandboxDestroyLifecycle,
-  prepareMcpBridgesForDestroy as prepareMcpBridgesForDestroyLifecycle,
   restoreMcpBridgesAfterDestroyAbort as restoreMcpBridgesAfterDestroyAbortLifecycle,
 } from "./mcp-bridge-destroy";
 import type { McpDestroyPreparation } from "./mcp-bridge-destroy-preflight";
@@ -35,6 +34,7 @@ import { inspectSourceBridgeState, joinMcpEntriesToOpenShell } from "./mcp-bridg
 import { getSandboxAgent, getSandboxOrThrow, hydrateBridgeState } from "./mcp-bridge-state";
 import { buildJsonSummary, statusMcpBridge } from "./mcp-bridge-status";
 import { parseMcpAddArgs } from "./mcp-bridge-validation";
+import { clearTransientBridgeState } from "./mcp-bridge/transient-state";
 
 export {
   buildDeepAgentsMcpRegisterCommand,
@@ -88,6 +88,10 @@ export {
 export type { McpDestroyPreparation } from "./mcp-bridge-destroy-preflight";
 export type { McpRebuildPreparation };
 export { statusMcpBridge };
+
+export function resetMcpBridgeTransientStateForTest(): void {
+  clearTransientBridgeState();
+}
 
 function hydrateCurrentBridgeState(
   sandboxName: string,
@@ -155,7 +159,11 @@ export async function prepareMcpBridgesForDestroy(
     runtimeSelection?: McpProviderInspectionRuntimeSelection;
   } = {},
 ): Promise<McpDestroyPreparation> {
-  return prepareMcpBridgesForDestroyLifecycle(sandboxName, options);
+  void sandboxName;
+  return {
+    entries: [],
+    ...(options.runtimeSelection ? { runtimeSelection: options.runtimeSelection } : {}),
+  };
 }
 
 export async function restoreMcpBridgesAfterDestroyAbort(

@@ -26,6 +26,7 @@ import {
 
 import {
   bindRebuildPolicyProvidersToCreateArgs,
+  beginRecreateDeleteAfterPolicyPreflight,
   resolveRebuildMessagingPolicyDeltas,
   resolveRebuildObservabilityPolicyDelta,
   resolveRebuildPolicyProviderAuthority,
@@ -461,8 +462,10 @@ describe("rebuild policy provider handoff", () => {
     const beginDelete = vi.fn();
 
     expect(() => {
-      readValidatedRebuildPolicySource(policyPath);
-      beginDelete();
+      beginRecreateDeleteAfterPolicyPreflight({
+        capturePolicySource: () => readValidatedRebuildPolicySource(policyPath),
+        beginDelete,
+      });
     }).toThrow();
     expect(beginDelete).not.toHaveBeenCalled();
   });

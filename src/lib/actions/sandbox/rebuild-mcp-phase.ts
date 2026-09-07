@@ -45,6 +45,16 @@ export function observeMcpStateForRebuild(
   return Object.values(bridges);
 }
 
+export function hydrateMcpStateForRebuild(
+  sandboxName: string,
+  entries: readonly McpSourceEntry[],
+): void {
+  hydrateBridgeState(
+    sandboxName,
+    Object.fromEntries(entries.map((entry) => [entry.server, entry])),
+  );
+}
+
 export function resolveMcpPreparationRuntimeSelection(
   sandboxName: string,
 ): ReturnType<typeof getMcpProviderInspectionRuntimeSelection> | undefined {

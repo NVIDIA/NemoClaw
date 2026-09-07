@@ -90,10 +90,6 @@ export function expectMcpFinalizeAfterDelete(harness: DestroyHarness): void {
   // plain destroys, so the flag must be threaded through as false.
   expect(harness.prepareMcpBridgesForDestroySpy).toHaveBeenCalledWith("alpha", {
     force: false,
-    runtimeSelection: expect.objectContaining({
-      gatewayName: "nemoclaw-19080",
-      workspace: "default",
-    }),
   });
   expect(harness.gatewayPinsAtMcpPrepare).toEqual(["nemoclaw-19080"]);
   const deleteCall = harness.runOpenshellSpy.mock.calls.findIndex(
@@ -183,10 +179,6 @@ export function expectAbsentSandboxMcpFinalize(harness: DestroyHarness): void {
   expect(harness.prepareMcpBridgesForDestroySpy).not.toHaveBeenCalled();
   expect(harness.prepareMcpBridgesForAbsentSandboxDestroySpy).toHaveBeenCalledWith("alpha", {
     force: false,
-    runtimeSelection: expect.objectContaining({
-      gatewayName: "nemoclaw-19080",
-      workspace: "default",
-    }),
   });
   expect(harness.gatewayPinsAtMcpPrepare).toEqual(["nemoclaw-19080"]);
   expect(harness.restoreMcpBridgesAfterDestroyAbortSpy).not.toHaveBeenCalled();

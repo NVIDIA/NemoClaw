@@ -8,9 +8,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   __test,
+  clearRebuildMcpHandoff,
   clearRebuildPolicyHandoff,
+  readRebuildMcpHandoff,
   readRebuildPolicyHandoff,
   type RebuildManifest,
+  writeRebuildMcpHandoff,
   writeRebuildPolicyHandoff,
 } from "./sandbox.js";
 
@@ -202,5 +205,54 @@ describe("bounded rebuild policy handoff", () => {
 
     expect(clearRebuildPolicyHandoff(withHandoff)).toBe(true);
     expect(withHandoff).not.toHaveProperty("rebuildPolicyHandoff");
+  });
+});
+
+describe("bounded rebuild MCP handoff", () => {
+  const entry = {
+    server: "github",
+    agent: "openclaw",
+    adapter: "openclaw-config" as const,
+    url: "https://api.githubcopilot.com/mcp/",
+    env: ["GITHUB_TOKEN"],
+    providerName: "alpha-mcp-github",
+    providerId: "11111111-2222-4333-8444-555555555555",
+    policyName: "mcp-bridge-github",
+    source: "native" as const,
+  };
+  const runtimeSelection = { gatewayName: "nemoclaw", workspace: "default" as const };
+
+  it("persists exact source-derived state for retry and removes it after recovery", () => {
+    const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-handoff-"));
+    tempDirs.push(backupPath);
+    const published = manifest(backupPath);
+    __test.writeManifest(backupPath, published);
+
+    const withHandoff = writeRebuildMcpHandoff(published, [entry], runtimeSelection);
+    expect(readRebuildMcpHandoff(withHandoff)).toEqual({
+      entries: [entry],
+      runtimeSelection,
+    });
+    expect(clearRebuildMcpHandoff(withHandoff, { retainRetirement: true })).toBe(true);
+    expect(readRebuildMcpHandoff(withHandoff)).toBeNull();
+    expect(withHandoff.rebuildMcpHandoff).toMatchObject({ retired: true });
+    expect(clearRebuildMcpHandoff(withHandoff)).toBe(true);
+    expect(withHandoff).not.toHaveProperty("rebuildMcpHandoff");
+  });
+
+  it("rejects fields that could persist credential material", () => {
+    const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-invalid-"));
+    tempDirs.push(backupPath);
+    const published = manifest(backupPath);
+    __test.writeManifest(backupPath, published);
+
+    expect(() =>
+      writeRebuildMcpHandoff(
+        published,
+        [{ ...entry, headers: { Authorization: "host-secret" } } as never],
+        runtimeSelection,
+      ),
+    ).toThrow("invalid rebuild MCP recovery handoff");
+    expect(published).not.toHaveProperty("rebuildMcpHandoff");
   });
 });

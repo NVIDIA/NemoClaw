@@ -21,7 +21,8 @@ import {
   type GatewayOwner,
 } from "../../onboard/gateway-ownership";
 import { replayTrustedPrivateEndpoint } from "../../security/trusted-private-endpoint";
-import type { SandboxEntry } from "../../state/registry";
+import { listExtraProviders } from "../../state/registry/extra-providers";
+import type { SandboxEntry } from "../../state/registry/types";
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import { getPersistedSandboxTargetGateway } from "./gateway-target";
 import { McpBridgeError } from "./mcp-bridge-contracts";
@@ -294,35 +295,10 @@ export function assertNoRegisteredProviderCredentialCollisions(
 ): void {
   if (entries.length === 0) return;
   for (const entry of entries) assertAuthenticatedBridgeEntry(entry);
-  const queryExtraProviders =
-    deps.listExtraProviders ??
-    (() => {
-      const result = runOpenshellProviderCommand(["provider", "list", "--output", "json"], {
-        ignoreError: true,
-        runtimeSelection: deps.runtimeSelection,
-        stdio: ["ignore", "pipe", "pipe"],
-      }) as OpenShellCommandResult;
-      if (result.status !== 0) {
-        throw new McpBridgeError(
-          commandOutput(result) || "Could not list current OpenShell providers.",
-        );
-      }
-      let value: unknown;
-      try {
-        value = JSON.parse(String(result.stdout ?? ""));
-      } catch {
-        throw new McpBridgeError("OpenShell returned invalid provider inventory JSON.");
-      }
-      if (!Array.isArray(value)) {
-        throw new McpBridgeError("OpenShell returned invalid provider inventory JSON.");
-      }
-      return value.flatMap((entry): string[] =>
-        entry && typeof entry === "object" && !Array.isArray(entry) &&
-        typeof (entry as { name?: unknown }).name === "string"
-          ? [(entry as { name: string }).name]
-          : [],
-      );
-    });
+  // Only registry-configured extra providers are guaranteed to attach during
+  // rebuild. A conservatively retained MCP provider is inert once its native
+  // agent source is removed and must not reserve its credential key forever.
+  const queryExtraProviders = deps.listExtraProviders ?? listExtraProviders;
   const inspectProvider =
     deps.inspectProvider ??
     ((providerName: string) => inspectMcpProvider(providerName, deps.runtimeSelection));
@@ -342,7 +318,7 @@ export function assertNoRegisteredProviderCredentialCollisions(
         !(providerName === entry.providerName && provider.id === entry.providerId)
       ) {
         throw new McpBridgeError(
-          `Credential key '${credentialKey}' is already supplied by registered provider '${providerName}' with ID '${provider.id}'. Refusing to continue managed MCP because this provider will attach during sandbox rebuild.`,
+          `Credential key '${credentialKey}' is already supplied by configured extra provider '${providerName}' with ID '${provider.id}'. Refusing to continue managed MCP because this provider will attach during sandbox rebuild.`,
         );
       }
     }

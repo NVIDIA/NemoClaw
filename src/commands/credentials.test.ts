@@ -183,9 +183,7 @@ describe("credentials oclif adapter source coverage", () => {
   it("releases a provider reservation when credential registration fails (#9388)", async () => {
     vi.stubEnv("CUSTOM_TOKEN", "host-only-secret");
     mocks.recordExtraProvider.mockReturnValueOnce(true);
-    mocks.runOpenshellProviderCommand
-      .mockReturnValueOnce({ status: 0, stdout: "nvidia-prod\n", stderr: "" })
-      .mockReturnValueOnce({
+    mocks.runOpenshellProviderCommand.mockReturnValueOnce({
         status: 1,
         stdout: "",
         stderr: "provider creation failed",
@@ -203,7 +201,7 @@ describe("credentials oclif adapter source coverage", () => {
     expect(mocks.recordExtraProvider).toHaveBeenCalledWith("custom-provider");
     expect(mocks.forgetExtraProvider).toHaveBeenCalledWith("custom-provider");
     expect(mocks.recordExtraProvider.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.runOpenshellProviderCommand.mock.invocationCallOrder[1],
+      mocks.runOpenshellProviderCommand.mock.invocationCallOrder[0],
     );
   });
 
@@ -287,7 +285,6 @@ describe("credentials oclif adapter source coverage", () => {
       })
       .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" })
       .mockReturnValueOnce({ status: 0, stdout: EXACT_OPENAI_PROFILE, stderr: "" })
-      .mockReturnValueOnce({ status: 0, stdout: "nvidia-prod\n", stderr: "" })
       .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" });
 
     const result = await runCredentialsAddAction({
@@ -311,7 +308,6 @@ describe("credentials oclif adapter source coverage", () => {
         expect.stringMatching(/provider-profiles\/openai\.yaml$/u),
       ],
       ["provider", "profile", "-g", "nemoclaw", "export", "openai", "--output", "json"],
-      ["provider", "list", "-g", "nemoclaw", "--names"],
       [
         "provider",
         "create",

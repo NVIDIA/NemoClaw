@@ -150,6 +150,14 @@ export function readValidatedRebuildPolicySource(policySourcePath: string): {
   return { document, providers: parseRebuildPolicyProviderNames(document) };
 }
 
+export function beginRecreateDeleteAfterPolicyPreflight<T>(input: {
+  readonly capturePolicySource: () => unknown;
+  readonly beginDelete: () => T;
+}): T {
+  input.capturePolicySource();
+  return input.beginDelete();
+}
+
 export function resolveRebuildPolicyProviderAuthority(input: {
   readonly createArgs: readonly string[];
   readonly messagingPlan:
@@ -2065,12 +2073,16 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
 
       // Parse and freeze the rebuild policy while the source sandbox is still
       // intact. A malformed or raced policy must not fail after deletion.
-      captureRebuildPolicySource();
       managedStateVolumeLifecycle = prepareManagedStateVolumeLifecycle(preparedSandboxWorkload);
       note(`  Deleting and recreating sandbox '${sandboxName}'...`);
 
       revalidateSandboxIdentity(true, `recreating sandbox '${sandboxName}'`);
-      if (recreateRuntime.beginDelete() === "source") {
+      if (
+        beginRecreateDeleteAfterPolicyPreflight({
+          capturePolicySource: captureRebuildPolicySource,
+          beginDelete: recreateRuntime.beginDelete,
+        }) === "source"
+      ) {
         runAuthorityBoundProviderCleanup({
           sandboxName,
           revalidateSandboxIdentity: (operation) => revalidateSandboxIdentity(true, operation),

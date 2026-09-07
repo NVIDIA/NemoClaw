@@ -427,7 +427,6 @@ describe("credential actions use typed OpenShell provider results", () => {
     });
     const listProviders = vi
       .fn<OpenShellProviderAdapter["listProviders"]>()
-      .mockResolvedValueOnce({ ok: true, value: { names: [] } })
       .mockResolvedValue(testCase.inventory);
     const adapter = providerAdapter({
       createProvider: vi.fn(createProvider),
@@ -655,10 +654,12 @@ describe("credential actions use typed OpenShell provider results", () => {
 
     expect(result.exitCode).toBe(0);
     expect(adapter.inspectProviderProfile).toHaveBeenCalledOnce();
+    expect(adapter.listProviders).not.toHaveBeenCalled();
+    expect(adapter.getProvider).not.toHaveBeenCalled();
     expect(adapter.createProvider).toHaveBeenCalledOnce();
   });
 
-  it("rejects an overlapping key by managed type even without an MCP name marker (#9806)", async () => {
+  it("defers overlapping retained-provider checks until an actual sandbox attachment (#9806)", async () => {
     const inspectProviderProfile = vi.fn<OpenShellProviderAdapter["inspectProviderProfile"]>(
       async () => ({ ok: true, value: { credentialKeys: ["MAAS_GLEAN_TOKEN"] } }),
     );
@@ -690,12 +691,11 @@ describe("credential actions use typed OpenShell provider results", () => {
       { providerAdapter: adapter },
     );
 
-    expect(result.exitCode).toBe(1);
-    expect(result.failureLines.join("\n")).toContain(
-      "Credential key 'MAAS_GLEAN_TOKEN' is already held by managed MCP provider 'destination-telegram-bridge'",
-    );
+    expect(result.exitCode).toBe(0);
     expect(adapter.inspectProviderProfile).toHaveBeenCalledOnce();
-    expect(adapter.createProvider).not.toHaveBeenCalled();
+    expect(adapter.listProviders).not.toHaveBeenCalled();
+    expect(adapter.getProvider).not.toHaveBeenCalled();
+    expect(adapter.createProvider).toHaveBeenCalledOnce();
   });
 
   it("lists credentials separately from messaging bridge providers (#9806)", async () => {

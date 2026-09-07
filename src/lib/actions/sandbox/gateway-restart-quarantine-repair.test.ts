@@ -8,6 +8,7 @@ import {
   isGatewayTerminalRepairLayer,
   printGatewayRestartFailure,
 } from "./gateway-restart";
+import { printGatewayTerminalRepairGuidance } from "./connect-boundary-refusal";
 
 // The exact lines the in-sandbox Hermes supervisor emits when it stops
 // attempting relaunch. `scripts/managed-gateway-control.py` allowlists these
@@ -112,6 +113,15 @@ describe("terminal restart repair guidance (#7801)", () => {
     expect(lines).toContain("nemoclaw alpha mcp status --json");
     expect(lines).toContain("nemoclaw alpha mcp migrate --apply");
     expect(lines).toContain("remove and add");
+    expect(lines).not.toContain("mcp restart");
+  });
+
+  it("preserves MCP-specific guidance through the connect recovery wrapper", () => {
+    const lines = captureStderr(() =>
+      printGatewayTerminalRepairGuidance("alpha", "mcp configuration drift"),
+    ).join("\n");
+    expect(lines).toContain("nemoclaw alpha mcp status --json");
+    expect(lines).toContain("nemoclaw alpha mcp migrate --apply");
     expect(lines).not.toContain("mcp restart");
   });
 });

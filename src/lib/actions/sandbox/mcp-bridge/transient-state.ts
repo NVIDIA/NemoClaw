@@ -5,6 +5,10 @@ import type { McpSourceEntry } from "../mcp-bridge-contracts";
 
 const states = new Map<string, Record<string, McpSourceEntry>>();
 
+export function clearTransientBridgeState(): void {
+  states.clear();
+}
+
 export function hydrateTransientBridgeState(
   sandboxName: string,
   bridges: Record<string, McpSourceEntry>,
