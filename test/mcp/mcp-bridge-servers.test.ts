@@ -1027,7 +1027,7 @@ describe("authenticated MCP live fixtures", () => {
         {
           role: "tool",
           tool_call_id: "call_denied_tool_bridge",
-          content: "blocked by deny rule",
+          content: JSON.stringify({ error: "MCP call failed: transport rejected" }),
         },
       ],
       ["tool_call"],

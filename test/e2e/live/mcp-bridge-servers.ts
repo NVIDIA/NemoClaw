@@ -553,6 +553,15 @@ export async function startCompatibleMock(options: {
           return undefined;
         }
       };
+      const isDeniedBridgeToolResult = (index: number, toolCallId: string) => {
+        const message = toolResults[index];
+        if (message?.tool_call_id !== toolCallId) return false;
+        if (/policy_denied|blocked by deny rule/iu.test(JSON.stringify(message.content))) {
+          return true;
+        }
+        const parsed = parsedToolResult(index, toolCallId);
+        return typeof parsed?.error === "string" && parsed.error.startsWith("MCP call failed:");
+      };
       const classifyHermesSearchResult = (
         index: number,
         toolName: string,
@@ -645,10 +654,7 @@ export async function startCompatibleMock(options: {
             };
           } else if (toolResultCount === 1) {
             deniedToolProbeComplete =
-              toolResults[0]?.tool_call_id === "call_denied_tool_bridge" &&
-              /policy_denied|blocked by deny rule/iu.test(
-                JSON.stringify(toolResults[0]?.content),
-              );
+              isDeniedBridgeToolResult(0, "call_denied_tool_bridge");
             if (!deniedToolProbeComplete) {
               protocolError = "denied-tool bridge call did not report a policy denial";
             }

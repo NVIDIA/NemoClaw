@@ -51,7 +51,7 @@ export const HERMES_MCP_DENIED_TOOL_PROBE = {
 export const DEEPAGENTS_MCP_DENIED_TOOL_PROBE = {
   mode: "progressive" as const,
   promptMarker: MCP_BRIDGE_DENIED_TOOL_PROMPT,
-  query: "Denied MCP status",
+  query: MCP_BRIDGE_DENIED_TOOL_NAME,
   resultToken: MCP_BRIDGE_DENIED_TOOL_RESULT,
   toolName: `fake_${MCP_BRIDGE_DENIED_TOOL_NAME}`,
 };
