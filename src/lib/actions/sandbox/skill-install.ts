@@ -7,10 +7,7 @@ import path from "node:path";
 
 import { createSdkOpenShellSandboxCommandExecutor } from "../../adapters/openshell/sandbox-command-sdk";
 import { createCliOpenShellSandboxCommandExecutor } from "../../adapters/openshell/sandbox-command-cli";
-import {
-  captureOpenshellAsync,
-  OPENSHELL_OPERATION_TIMEOUT_MS,
-} from "../../adapters/openshell/runtime";
+import { captureOpenshell, OPENSHELL_OPERATION_TIMEOUT_MS } from "../../adapters/openshell/runtime";
 import * as agentRuntime from "../../agent/runtime";
 import { renderAgentSkillCommand } from "../../agent/skill-integration";
 import { CLI_NAME } from "../../cli/branding";
@@ -22,10 +19,7 @@ import {
 import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
 import * as skillInstall from "../../skill-install";
 import { ensureLiveSandboxOrExit } from "./gateway-state";
-import {
-  getKnownSandboxTarget,
-  getPersistedSandboxTargetGatewayName,
-} from "./gateway-target";
+import { getKnownSandboxTarget, getPersistedSandboxTargetGatewayName } from "./gateway-target";
 import { wrapExecCommandWithRuntimeEnv } from "./runtime-env";
 
 const SKILL_COMMAND_TIMEOUT_SECONDS = 120;
@@ -205,9 +199,9 @@ async function runSandboxCommandRetained(
     console.error(`  ${error instanceof Error ? error.message : String(error)}`);
     return { exitCode: 1, release: () => {}, terminationConfirmed: false };
   }
-  let completion = await (useCli ? skillCommandFallbackExecutor : skillCommandExecutor).runStreaming(
-    request,
-  );
+  let completion = await (
+    useCli ? skillCommandFallbackExecutor : skillCommandExecutor
+  ).runStreaming(request);
   if (useCli) {
     if (completion.outcome.kind === "completed") {
       return {
@@ -554,7 +548,7 @@ export async function installSandboxSkill(
       prepare.release();
     }
     if (!requireCurrentSkillGatewayBinding(sandboxName, gatewayName)) return;
-    const upload = await captureOpenshellAsync(
+    const upload = captureOpenshell(
       // OpenShell SDK 0.0.106 has sandbox exec but no upload/sync API. Keep
       // only this bounded transfer on the existing provider-neutral CLI path.
       [

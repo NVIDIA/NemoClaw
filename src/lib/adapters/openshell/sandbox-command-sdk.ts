@@ -59,10 +59,6 @@ export type SdkOpenShellSandboxCommandExecutorDeps = Readonly<{
   env?: NodeJS.ProcessEnv;
   homeDir?: string;
   loadSdk?: () => Promise<OpenShellSdkModule>;
-  signalSource?: {
-    add(signal: "SIGINT" | "SIGTERM", listener: () => void): void;
-    remove(signal: "SIGINT" | "SIGTERM", listener: () => void): void;
-  };
   stderr?: (data: Buffer) => void;
   stdout?: (data: Buffer) => void;
 }>;
@@ -166,34 +162,9 @@ export function createSdkOpenShellSandboxCommandExecutor(
 ): Readonly<{
   runStreaming(request: OpenShellSandboxCommandRequest): Promise<OpenShellSandboxCommandCompletion>;
 }> {
-  const clients = new Map<string, Promise<SdkClient>>();
-  const clientKey = (target: OpenShellGatewayTarget): string =>
-    target.kind === "named" ? target.gatewayName : "";
-  const connect = (target: OpenShellGatewayTarget): Promise<SdkClient> => {
-    const key = clientKey(target);
-    let client = clients.get(key);
-    if (!client) {
-      client = (deps.connect ?? ((selected) => connectManagedOpenShellSdk(selected, deps)))(target);
-      void client.catch(() => {
-        if (clients.get(key) === client) clients.delete(key);
-      });
-      clients.set(key, client);
-    }
-    return client;
-  };
-  const forgetPendingConnection = (
-    target: OpenShellGatewayTarget,
-    connection: Promise<SdkClient>,
-  ): void => {
-    const key = clientKey(target);
-    if (clients.get(key) === connection) clients.delete(key);
-  };
+  const connect = deps.connect ?? ((target) => connectManagedOpenShellSdk(target, deps));
   const stdout = deps.stdout ?? ((data: Buffer) => process.stdout.write(data));
   const stderr = deps.stderr ?? ((data: Buffer) => process.stderr.write(data));
-  const signalSource = deps.signalSource ?? {
-    add: (signal: "SIGINT" | "SIGTERM", listener: () => void) => process.on(signal, listener),
-    remove: (signal: "SIGINT" | "SIGTERM", listener: () => void) => process.off(signal, listener),
-  };
 
   return {
     runStreaming: async (request): Promise<OpenShellSandboxCommandCompletion> => {
@@ -214,45 +185,11 @@ export function createSdkOpenShellSandboxCommandExecutor(
       }
 
       const controller = new AbortController();
-      type StopReason =
-        | Readonly<{ kind: "timeout" }>
-        | Readonly<{ kind: "signal"; signal: "SIGINT" | "SIGTERM" }>;
-      let stop: ((reason: StopReason) => void) | undefined;
-      const stopped = new Promise<StopReason>((resolve) => {
-        stop = resolve;
-      });
-      const timeout =
-        request.timeoutSeconds !== undefined && request.timeoutSeconds > 0
-          ? setTimeout(() => {
-              stop?.({ kind: "timeout" });
-              controller.abort();
-            }, request.timeoutSeconds * 1000)
-          : null;
-      const forward = (signal: "SIGINT" | "SIGTERM") => () => {
-        stop?.({ kind: "signal", signal });
-        controller.abort();
-      };
-      const forwardInt = forward("SIGINT");
-      const forwardTerm = forward("SIGTERM");
-      signalSource.add("SIGINT", forwardInt);
-      signalSource.add("SIGTERM", forwardTerm);
-      let released = false;
-      const release = () => {
-        if (released) return;
-        released = true;
-        signalSource.remove("SIGINT", forwardInt);
-        signalSource.remove("SIGTERM", forwardTerm);
-      };
-
-      let connection: Promise<SdkClient> | null = null;
+      let timer: NodeJS.Timeout | undefined;
       try {
-        const execute = async (): Promise<
-          | Readonly<{ kind: "completed"; exitCode: number }>
-          | Readonly<{ kind: "failed"; error: unknown }>
-        > => {
+        const execute = async (): Promise<OpenShellSandboxCommandOutcome> => {
           try {
-            connection = connect(request.target);
-            const client = await connection;
+            const client = await connect(request.target);
             if (controller.signal.aborted) {
               throw new Error("OpenShell SDK connection cancelled");
             }
@@ -277,42 +214,31 @@ export function createSdkOpenShellSandboxCommandExecutor(
               throw new Error("OpenShell SDK exec stream ended without an exit event");
             return { kind: "completed", exitCode };
           } catch (error) {
-            return { kind: "failed", error };
+            return commandFailure(error);
           }
         };
-        const result = await Promise.race([
-          execute(),
-          stopped.then((reason) => ({ kind: "stopped" as const, reason })),
-        ]);
-        if (result.kind === "stopped") {
-          if (connection) forgetPendingConnection(request.target, connection);
-          if (result.reason.kind === "signal") {
-            const signal = result.reason.signal;
-            return {
-              outcome: {
-                kind: "completed",
-                exitCode: signal === "SIGINT" ? 130 : 143,
-                signal,
-              },
-              release,
-            };
-          }
-          return {
-            outcome: {
-              kind: "failed",
-              error: {
-                kind: "timeout",
-                message: `OpenShell SDK command timed out after ${String(request.timeoutSeconds)} seconds`,
-              },
-            },
-            release,
-          };
+        let outcome: OpenShellSandboxCommandOutcome;
+        const timeoutSeconds = request.timeoutSeconds;
+        if (timeoutSeconds !== undefined && timeoutSeconds > 0) {
+          const timedOut = new Promise<OpenShellSandboxCommandOutcome>((resolve) => {
+            timer = setTimeout(() => {
+              controller.abort();
+              resolve({
+                kind: "failed",
+                error: {
+                  kind: "timeout",
+                  message: `OpenShell SDK command timed out after ${String(timeoutSeconds)} seconds`,
+                },
+              });
+            }, timeoutSeconds * 1000);
+          });
+          outcome = await Promise.race([execute(), timedOut]);
+        } else {
+          outcome = await execute();
         }
-        return result.kind === "completed"
-          ? { outcome: { kind: "completed", exitCode: result.exitCode }, release }
-          : { outcome: commandFailure(result.error), release };
+        return { outcome, release: () => {} };
       } finally {
-        if (timeout) clearTimeout(timeout);
+        if (timer) clearTimeout(timer);
       }
     },
   };

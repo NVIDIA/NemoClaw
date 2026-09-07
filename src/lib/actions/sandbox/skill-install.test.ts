@@ -7,7 +7,7 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const captureOpenshellAsync = vi.hoisted(() => vi.fn());
+const captureOpenshell = vi.hoisted(() => vi.fn());
 const sdkCommandExecutor = vi.hoisted(() => ({
   probeDirectory: vi.fn(),
   runStreaming: vi.fn(),
@@ -25,7 +25,7 @@ const loadGatewayManagementDeclaration = vi.hoisted(() => vi.fn());
 
 vi.mock("../../adapters/openshell/runtime", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../adapters/openshell/runtime")>()),
-  captureOpenshellAsync,
+  captureOpenshell,
 }));
 vi.mock("../../adapters/openshell/sandbox-command-sdk", () => ({
   createSdkOpenShellSandboxCommandExecutor: () => sdkCommandExecutor,
@@ -99,7 +99,7 @@ describe("stateless sandbox skill orchestration", () => {
     previousExitCode = process.exitCode;
     process.exitCode = undefined;
     vi.clearAllMocks();
-    captureOpenshellAsync.mockResolvedValue({
+    captureOpenshell.mockReturnValue({
       status: 0,
       output: "",
       stdout: "",
@@ -163,7 +163,7 @@ describe("stateless sandbox skill orchestration", () => {
       timeoutSeconds: 120,
     });
     expect(request.command.slice(-command.length)).toEqual(command);
-    expect(captureOpenshellAsync).not.toHaveBeenCalled();
+    expect(captureOpenshell).not.toHaveBeenCalled();
   });
 
   it("forwards the native list exit status", async () => {
@@ -277,7 +277,7 @@ describe("stateless sandbox skill orchestration", () => {
 
     await installSandboxSkill("alpha", { command: "install", path: source });
 
-    const upload = captureOpenshellAsync.mock.calls.find((call) => call[0]?.[1] === "upload");
+    const upload = captureOpenshell.mock.calls.find((call) => call[0]?.[1] === "upload");
     expect(upload?.[0].slice(0, 5)).toEqual(["sandbox", "upload", "-g", "nemoclaw", "alpha"]);
     expect(fs.existsSync(path.dirname(upload?.[0]?.[5] as string))).toBe(false);
     const command = sdkCommandExecutor.runStreaming.mock.calls[1]?.[0].command as string[];
@@ -297,7 +297,7 @@ describe("stateless sandbox skill orchestration", () => {
     const command = sdkCommandExecutor.runStreaming.mock.calls[1]?.[0].command as string[];
     expect(command.slice(-3, -1)).toEqual(["/bin/sh", "-c"]);
     expect(command.at(-1)).toContain(integration.writableRoot);
-    expect(JSON.stringify(captureOpenshellAsync.mock.calls)).not.toMatch(
+    expect(JSON.stringify(captureOpenshell.mock.calls)).not.toMatch(
       /docker|podman|receipt|provenance/u,
     );
     expect(process.exitCode).toBe(0);
@@ -347,7 +347,7 @@ describe("stateless sandbox skill orchestration", () => {
     selectAgent("hermes", "/usr/local/bin/hermes", HERMES);
     const source = localSkill();
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    captureOpenshellAsync.mockResolvedValue({
+    captureOpenshell.mockReturnValue({
       status: 143,
       signal: "SIGTERM",
       output: "",
@@ -381,7 +381,7 @@ describe("stateless sandbox skill orchestration", () => {
 
     expect(process.exitCode).toBe(143);
     expect(sdkCommandExecutor.runStreaming).toHaveBeenCalledOnce();
-    expect(captureOpenshellAsync).not.toHaveBeenCalled();
+    expect(captureOpenshell).not.toHaveBeenCalled();
     expect(error).toHaveBeenCalledWith(
       expect.stringMatching(/^  Private skill stage retained .*: \/sandbox\//u),
     );
@@ -434,7 +434,7 @@ describe("stateless sandbox skill orchestration", () => {
       kind: "named",
       gatewayName: "nemoclaw",
     });
-    expect(captureOpenshellAsync).not.toHaveBeenCalled();
+    expect(captureOpenshell).not.toHaveBeenCalled();
     expect(error).toHaveBeenCalledWith(
       expect.stringContaining("changed gateway binding during the skill operation"),
     );
@@ -451,7 +451,7 @@ describe("stateless sandbox skill orchestration", () => {
       installSandboxSkill("alpha", { command: "install", path: localSkill() }),
     ).rejects.toThrow(/may bypass the gateway recorded for this sandbox/u);
     expect(sdkCommandExecutor.runStreaming).not.toHaveBeenCalled();
-    expect(captureOpenshellAsync).not.toHaveBeenCalled();
+    expect(captureOpenshell).not.toHaveBeenCalled();
   });
 
   it("fails clearly when the selected agent declares no safe skill integration", async () => {

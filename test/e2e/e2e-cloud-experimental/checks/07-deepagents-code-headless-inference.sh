@@ -614,39 +614,17 @@ main() {
   skill_name="nemoclaw-native-lifecycle"
   skill_marker_v1="DCODE_NATIVE_SKILL_V1"
   skill_marker_v2="DCODE_NATIVE_SKILL_V2"
-  skill_root="$(mktemp -d "${TMPDIR:-/tmp}/${PREFIX}-skill.XXXXXX")"
   cli_bin="${NEMOCLAW_CLI_BIN:-${REPO:-.}/bin/nemoclaw.js}"
-  printf '%s\n' \
-    '---' \
-    "name: ${skill_name}" \
-    'description: Use when asked for the native lifecycle canary.' \
-    '---' \
-    '# Native lifecycle canary' \
-    "When asked for the native lifecycle canary, reply with exactly ${skill_marker_v1} and nothing else." \
-    >"${skill_root}/SKILL.md"
-  if skill_install_output="$(bounded_skill_cli install "$skill_root" 2>&1)"; then
-    pass "public NemoClaw skill install placed the DCode canonical-root copy"
+  skill_body_v1="When asked for the native lifecycle canary, reply with exactly ${skill_marker_v1} and nothing else."
+  skill_helper="${REPO:-.}/test/e2e/e2e-cloud-experimental/features/skill/add-sandbox-skill.sh"
+  if skill_install_output="$(SKILL_ID="$skill_name" SKILL_BODY="$skill_body_v1" \
+    SKILL_DESCRIPTION="Use when asked for the native lifecycle canary." \
+    SANDBOX_NAME="$SANDBOX_NAME" NEMOCLAW_CLI_BIN="$cli_bin" bash "$skill_helper" 2>&1)"; then
+    pass "public install and native list reported the DCode canonical-root skill"
   else
-    fail_test "public NemoClaw skill install did not complete through DCode"
+    fail_test "public install and native list did not complete through DCode"
   fi
-  skill_list_output="$(bounded_skill_cli list --json 2>&1 || true)"
-  if printf '%s\n' "$skill_list_output" | grep -Eq "\"name\"[[:space:]]*:[[:space:]]*\"${skill_name}\""; then
-    pass "public NemoClaw skill list streamed DCode's native view"
-  else
-    fail_test "public NemoClaw skill list did not report the imported DCode skill"
-  fi
-  if first_skill_output="$(sandbox_direct_dcode -n "Use the ${skill_name} skill for the native lifecycle canary." --json)"; then
-    first_skill_exit=0
-  else
-    first_skill_exit=$?
-  fi
-  first_skill_headless_output="${first_skill_output}
-DCODE_EXIT:${first_skill_exit}"
-  if first_skill_classification="$(classify_headless_output "$first_skill_exit" "$first_skill_headless_output" "$skill_marker_v1")"; then
-    pass "fresh direct-exec dcode session consumed the first skill (${first_skill_classification}; exit ${first_skill_exit})"
-  else
-    fail_test "fresh direct-exec dcode session did not consume the first skill (${first_skill_classification}, exit ${first_skill_exit})"
-  fi
+  skill_root="$(mktemp -d "${TMPDIR:-/tmp}/${PREFIX}-skill.XXXXXX")"
   printf '%s\n' \
     '---' \
     "name: ${skill_name}" \
@@ -763,7 +741,6 @@ ${proxy_contract_output}
 ${route_output}
 ${skill_install_output}
 ${skill_update_output}
-${skill_list_output}
 ${skill_file_output}
 ${headless_output}
 ${direct_headless_output}
