@@ -433,7 +433,9 @@ export function buildForwardServiceArgs(target: ForwardServiceTarget): string[] 
 
 type ForwardAttemptResult = {
   readonly category: string;
+  readonly listenerObservation: ForwardListenerObservation;
   readonly processId: number;
+  readonly reachabilityObservation: "not-checked" | "refused";
   readonly sandboxCreating: boolean;
 };
 
@@ -464,6 +466,7 @@ function startForwardServiceAttempt(input: {
   const stop =
     input.options.stopProcess ??
     ((pid: number, signal: NodeJS.Signals) => process.kill(pid, signal));
+  const reachable = input.options.isReachable ?? probeLocalForwardListener;
   const instanceId = randomUUID();
   const child = spawnDetached(input.target.executable, input.args, {
     ...input.environment,
@@ -485,13 +488,14 @@ function startForwardServiceAttempt(input: {
   child.unref();
   let firstOwnedListenerAt: number | undefined;
   let listenerObservation: ForwardListenerObservation = "absent";
+  let reachabilityObservation: "not-checked" | "refused" = "not-checked";
 
   while (true) {
     const identity = processIdentityStatus(pid, expectedIdentity, readIdentity);
     if (identity === "exited" || !running(pid)) {
       const start = classifyStartOutput(child, input.target);
       child.removeOutput?.();
-      return { ...start, processId: pid };
+      return { ...start, listenerObservation, processId: pid, reachabilityObservation };
     }
     if (identity === "unverified") {
       const start = classifyStartOutput(child, input.target);
@@ -505,8 +509,11 @@ function startForwardServiceAttempt(input: {
     if (listenerObservation === "owned") {
       firstOwnedListenerAt ??= now;
       if (now - firstOwnedListenerAt >= LISTENER_RECHECK_DELAY_MS) {
-        child.removeOutput?.();
-        return null;
+        if (reachable(input.target.localPort)) {
+          child.removeOutput?.();
+          return null;
+        }
+        reachabilityObservation = "refused";
       }
     }
     const observationDeadline =
@@ -535,14 +542,13 @@ function startForwardServiceAttempt(input: {
       `OpenShell forward service process ${String(pid)} did not become ready and ${stopped === "unverified" ? "could not be verified as owned" : "could not be stopped"}; refusing to retry; listener: ${listenerObservation}; forward start: ${start.category}`,
     );
   }
-  const reachable = input.options.isReachable ?? probeLocalForwardListener;
   if (reachable(input.target.localPort)) {
     throw new Error(
       `Host port ${String(input.target.localPort)} remained reachable after the launched process stopped; refusing to adopt its listener or retry; listener: ${listenerObservation}; forward start: ${start.category}`,
     );
   }
   throw new Error(
-    `OpenShell forward service did not become ready at ${input.target.localHost}:${String(input.target.localPort)}; listener: ${listenerObservation}; forward start: ${start.category}`,
+    `OpenShell forward service did not become ready at ${input.target.localHost}:${String(input.target.localPort)}; listener: ${listenerObservation}; reachability: ${reachabilityObservation}; forward start: ${start.category}`,
   );
 }
 
@@ -594,7 +600,9 @@ export function launchForwardService(
     });
     if (result === null) return;
     const attempt = retries + 1;
-    evidence.push(`${String(attempt)}=pid-${String(result.processId)}:${result.category}`);
+    evidence.push(
+      `${String(attempt)}=pid-${String(result.processId)}:${result.category}:listener-${result.listenerObservation}:reachability-${result.reachabilityObservation}`,
+    );
     const remainingMs = Math.max(0, readyDeadline - Date.now());
     if (
       !result.sandboxCreating ||

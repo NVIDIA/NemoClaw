@@ -52,7 +52,7 @@ describe("OpenShell forward service", () => {
   it("detaches the OpenShell child and waits for its owned local listener (#11084)", () => {
     const unref = vi.fn();
     const spawnDetached = vi.fn(() => ({ pid: 41, unref }));
-    const isReachable = vi.fn(() => false);
+    const isReachable = vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true);
 
     launchForwardService(target, {
       getProcessIdentity: stableProcessIdentity,
@@ -70,7 +70,7 @@ describe("OpenShell forward service", () => {
       expect.any(Object),
     );
     expect(unref).toHaveBeenCalledOnce();
-    expect(isReachable).toHaveBeenCalledOnce();
+    expect(isReachable).toHaveBeenCalledTimes(2);
   });
 
   it("uses the selected OpenShell configuration without exposing credentials (#11084)", () => {
@@ -86,7 +86,7 @@ describe("OpenShell forward service", () => {
       getProcessIdentity: stableProcessIdentity,
       isListenerOwned: () => true,
       isProcessRunning: () => true,
-      isReachable: () => false,
+      isReachable: vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true),
       sleep: () => {},
       sourceEnvironment: {
         HOME: "/tmp/isolated-home",
@@ -144,7 +144,7 @@ describe("OpenShell forward service", () => {
       getProcessIdentity: stableProcessIdentity,
       isListenerOwned: () => ++ownershipChecks >= 3,
       isProcessRunning: () => true,
-      isReachable: () => false,
+      isReachable: vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true),
       sleep: (milliseconds) => {
         now += milliseconds;
       },
@@ -165,7 +165,7 @@ describe("OpenShell forward service", () => {
       getProcessIdentity: stableProcessIdentity,
       isListenerOwned: () => ++ownershipChecks % 10 === 1,
       isProcessRunning: () => true,
-      isReachable: () => false,
+      isReachable: vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true),
       sleep: (milliseconds) => {
         now += milliseconds;
       },
@@ -175,6 +175,59 @@ describe("OpenShell forward service", () => {
 
     expect(ownershipChecks).toBe(31);
     expect(now).toBe(3_000);
+  });
+
+  it("does not accept an unowned listener at the completion observation (#11084)", () => {
+    let now = 0;
+    let running = true;
+    let ownershipChecks = 0;
+    const stopProcess = vi.fn(() => {
+      running = false;
+    });
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+
+    expect(() =>
+      launchForwardService(target, {
+        getProcessIdentity: stableProcessIdentity,
+        isListenerOwned: () => ++ownershipChecks === 1,
+        isProcessRunning: () => running,
+        isReachable: () => false,
+        sleep: (milliseconds) => {
+          now += milliseconds;
+        },
+        spawnDetached: () => ({ pid: 45, unref: vi.fn() }),
+        stopProcess,
+        timeoutMs: 2_100,
+      }),
+    ).toThrow(/listener: absent/u);
+    expect(stopProcess).toHaveBeenCalledWith(45, "SIGTERM");
+  });
+
+  it("does not accept an owned listener that still refuses connections (#11084)", () => {
+    let now = 0;
+    let running = true;
+    const isReachable = vi.fn(() => false);
+    const stopProcess = vi.fn(() => {
+      running = false;
+    });
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+
+    expect(() =>
+      launchForwardService(target, {
+        getProcessIdentity: stableProcessIdentity,
+        isListenerOwned: () => true,
+        isProcessRunning: () => running,
+        isReachable,
+        sleep: (milliseconds) => {
+          now += milliseconds;
+        },
+        spawnDetached: () => ({ pid: 46, unref: vi.fn() }),
+        stopProcess,
+        timeoutMs: 2_100,
+      }),
+    ).toThrow(/listener: owned; reachability: refused/u);
+    expect(isReachable).toHaveBeenCalledTimes(3);
+    expect(stopProcess).toHaveBeenCalledWith(46, "SIGTERM");
   });
 
   it("does not signal a process whose launch identity changed (#11084)", () => {
@@ -250,7 +303,11 @@ describe("OpenShell forward service", () => {
       getProcessIdentity: stableProcessIdentity,
       isListenerOwned: (pid) => pid === 52,
       isProcessRunning: (pid) => pid === 52,
-      isReachable: () => false,
+      isReachable: vi
+        .fn()
+        .mockReturnValueOnce(false)
+        .mockReturnValueOnce(false)
+        .mockReturnValueOnce(true),
       maxSandboxCreatingRetries: 1,
       onSandboxCreatingRetry,
       sleep,
@@ -341,9 +398,7 @@ describe("OpenShell forward service", () => {
         spawnDetached,
         timeoutMs: 10_000,
       }),
-    ).toThrow(
-      /attempts: 1=pid-72:sandbox-creating, 2=pid-72:sandbox-creating, 3=pid-72:sandbox-creating/u,
-    );
+    ).toThrow(/attempts: 1=pid-72:sandbox-creating:listener-absent:reachability-not-checked/u);
     expect(spawnDetached).toHaveBeenCalledTimes(3);
   });
 
