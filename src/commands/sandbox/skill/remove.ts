@@ -3,9 +3,9 @@
 
 import { Args } from "@oclif/core";
 import { removeSandboxSkill } from "../../../lib/actions/sandbox/skill-install";
-import { NemoClawSkillCommand } from "../../../lib/cli/nemoclaw-skill-command";
+import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
 
-export default class SkillRemoveCliCommand extends NemoClawSkillCommand {
+export default class SkillRemoveCliCommand extends NemoClawCommand {
   static id = "sandbox:skill:remove";
   static strict = true;
   static summary = "Remove a named skill through the selected agent integration";

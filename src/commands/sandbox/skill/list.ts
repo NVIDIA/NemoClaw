@@ -5,9 +5,9 @@ import {
   listSandboxSkills,
   printSkillInstallUsage,
 } from "../../../lib/actions/sandbox/skill-install";
-import { NemoClawSkillCommand } from "../../../lib/cli/nemoclaw-skill-command";
+import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
 
-export default class SkillListCliCommand extends NemoClawSkillCommand {
+export default class SkillListCliCommand extends NemoClawCommand {
   static id = "sandbox:skill:list";
   static customHelp = true;
   static strict = false;

@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { installSandboxSkill } from "../../lib/actions/sandbox/skill-install";
-import { NemoClawSkillCommand } from "../../lib/cli/nemoclaw-skill-command";
+import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
 
-export default class SkillCliCommand extends NemoClawSkillCommand {
+export default class SkillCliCommand extends NemoClawCommand {
   static id = "sandbox:skill";
   static strict = false;
   static summary = "Show skill command usage";

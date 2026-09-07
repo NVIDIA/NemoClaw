@@ -3,9 +3,9 @@
 
 import { Args } from "@oclif/core";
 import { installSandboxSkill } from "../../../lib/actions/sandbox/skill-install";
-import { NemoClawSkillCommand } from "../../../lib/cli/nemoclaw-skill-command";
+import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
 
-export default class SkillInstallCliCommand extends NemoClawSkillCommand {
+export default class SkillInstallCliCommand extends NemoClawCommand {
   static id = "sandbox:skill:install";
   static strict = true;
   static summary = "Deploy a skill directory to the sandbox";
