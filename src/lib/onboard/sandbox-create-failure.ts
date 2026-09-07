@@ -98,6 +98,9 @@ function readBoundedFileTail(
       offset += bytesRead;
     }
     let contents = buffer.subarray(0, offset);
+    while (contents.length > 0 && (contents[0]! & 0xc0) === 0x80) {
+      contents = contents.subarray(1);
+    }
     if (start > 0 && dropPartialFirstLine) {
       const firstNewline = contents.indexOf(0x0a);
       contents = firstNewline < 0 ? Buffer.alloc(0) : contents.subarray(firstNewline + 1);
@@ -133,7 +136,11 @@ function redactAndBoundText(
   if (redacted.length <= maxBytes) {
     return { contents: redacted.toString("utf8"), truncated: false };
   }
-  let contents = redacted.subarray(redacted.length - maxBytes);
+  let start = redacted.length - maxBytes;
+  while (start < redacted.length && (redacted[start]! & 0xc0) === 0x80) {
+    start += 1;
+  }
+  let contents = redacted.subarray(start);
   if (dropPartialFirstLine) {
     const firstNewline = contents.indexOf(0x0a);
     contents = firstNewline < 0 ? Buffer.alloc(0) : contents.subarray(firstNewline + 1);

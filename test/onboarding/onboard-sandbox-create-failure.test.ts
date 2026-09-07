@@ -308,7 +308,7 @@ describe("sandbox create failure diagnostics", () => {
     Array.from({ length: 201 }, (_, index) =>
       fs.writeFileSync(path.join(stateDir, `entry-${String(index).padStart(3, "0")}`), ""),
     );
-    fs.writeFileSync(consolePath, `${"old console output\n".repeat(30_000)}final console failure\n`);
+    fs.writeFileSync(consolePath, `${"😀".repeat(100_000)}final console failure\n`);
     fs.writeFileSync(
       gatewayLogPath,
       `create_sandbox received sandbox_id=${sandboxId} sandbox_name=my-assistant\n${"old gateway output\n".repeat(100_000)}${[
@@ -330,6 +330,7 @@ describe("sandbox create failure diagnostics", () => {
     expect({
       consoleBounded: consoleEvidence.byteLength <= 256 * 1024,
       consoleEndsWithFailure: consoleEvidence.toString("utf8").endsWith("final console failure\n"),
+      consoleHasInvalidUtf8: consoleEvidence.toString("utf8").includes("�"),
       consoleOutputTruncated: diagnostics?.consoleOutputTruncated,
       gatewayBounded: gatewayEvidence.byteLength <= 1024 * 1024,
       gatewayContainsFailure: gatewayEvidence.toString("utf8").includes("reason=ProcessExited"),
@@ -343,6 +344,7 @@ describe("sandbox create failure diagnostics", () => {
     }).toEqual({
       consoleBounded: true,
       consoleEndsWithFailure: true,
+      consoleHasInvalidUtf8: false,
       consoleOutputTruncated: true,
       gatewayBounded: true,
       gatewayContainsFailure: true,
