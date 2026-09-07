@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
 
@@ -151,6 +152,14 @@ describe("fresh create identity", () => {
     async ({ agent, apfInterceptorRequested, expectedOutcome, model, provider }) => {
       const repoRoot = path.join(import.meta.dirname, "../..");
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-create-ready-"));
+      const portReservation = createServer();
+      await new Promise<void>((resolve, reject) => {
+        portReservation.once("error", reject);
+        portReservation.listen(0, "127.0.0.1", resolve);
+      });
+      const gatewayPort = (portReservation.address() as { port: number }).port;
+      await new Promise<void>((resolve) => portReservation.close(() => resolve()));
+      const gatewayName = `nemoclaw-${gatewayPort}`;
       const fakeBin = path.join(tmpDir, "bin");
       const scriptPath = path.join(tmpDir, "create-sandbox-ready-check.js");
       const payloadPath = path.join(tmpDir, "payload.json");
@@ -207,7 +216,7 @@ const lifecycleObservationCommands = [];
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
   sandboxName: "my-assistant",
   sandboxId: "sbx-fresh-create",
-  gatewayName: "nemoclaw-18080",
+  gatewayName: ${JSON.stringify(gatewayName)},
 });
 const mismatchedSandboxId = createdSandbox.state.sandboxId + "-mismatch";
 let sandboxListCalls = 0;
@@ -267,7 +276,7 @@ runner.run = (command, opts = {}) => {
   commands.push({ command: cmd, env: opts.env || null });
   const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
   if (profileResult !== null) return profileResult;
-  const providerResult = require(${onboardScriptMocksPath}).mockNvidiaProviderGetRun(command, "nemoclaw-18080");
+  const providerResult = require(${onboardScriptMocksPath}).mockNvidiaProviderGetRun(command, ${JSON.stringify(gatewayName)});
   if (providerResult !== null) return providerResult;
   if (cmd.includes("sandbox delete") && createdSandbox.state.lifecycleState === "created") {
     createdSandbox.delete();
@@ -277,7 +286,7 @@ runner.run = (command, opts = {}) => {
 };
 	runner.runCapture = (command) => {
 	  const cmd = _n(command);
-	  if (cmd.includes("gateway info")) return "Gateway endpoint: http://127.0.0.1:18080";
+	  if (cmd.includes("gateway info")) return ${JSON.stringify(`Gateway endpoint: http://127.0.0.1:${gatewayPort}`)};
 	  if (cmd.includes("policy get") && cmd.includes("--output json")) {
 	    if (postCreatePolicyChange && registeredSandbox) {
 	      throw new Error("final onboarding policy check failed");
@@ -332,8 +341,8 @@ runner.run = (command, opts = {}) => {
 	    sandboxes: {
 	      "my-assistant": {
 	        name: "my-assistant",
-	        gatewayName: "nemoclaw-18080",
-	        gatewayPort: 18080,
+	        gatewayName: ${JSON.stringify(gatewayName)},
+	        gatewayPort: ${String(gatewayPort)},
 	        provider,
 	        model,
 	        endpointUrl: null,
@@ -348,8 +357,8 @@ runner.run = (command, opts = {}) => {
 	  recreateJournal.openOnboardRecreateJournal({
 	    target: {
 	      sandboxName: "my-assistant",
-	      gatewayName: "nemoclaw-18080",
-	      gatewayPort: 18080,
+	      gatewayName: ${JSON.stringify(gatewayName)},
+	      gatewayPort: ${String(gatewayPort)},
 	    },
 	    agentName: agent?.name ?? "openclaw",
 	    note: () => {},
@@ -361,8 +370,8 @@ runner.run = (command, opts = {}) => {
 	      model,
 	      preferredInferenceApi: null,
 	      sandboxGpuConfig: null,
-	      gatewayName: "nemoclaw-18080",
-	      gatewayPort: 18080,
+	      gatewayName: ${JSON.stringify(gatewayName)},
+	      gatewayPort: ${String(gatewayPort)},
 	      toolDisclosure: "progressive",
 	      dcodeAutoApprovalMode: null,
 	      observabilityEnabled: false,
@@ -372,8 +381,8 @@ runner.run = (command, opts = {}) => {
 	const durableGetSandbox = registry.getSandbox.bind(registry);
 	const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
 	  sandboxName: "my-assistant",
-	  gatewayName: "nemoclaw-18080",
-	  gatewayPort: 18080,
+	  gatewayName: ${JSON.stringify(gatewayName)},
+	  gatewayPort: ${String(gatewayPort)},
 	  provider,
 	  model,
 	  sessionId: "session-owner",
@@ -485,7 +494,7 @@ if (cancelAfterCreate && !recoveryReentry) {
   if (!session) throw new Error("missing seeded onboarding session");
   session.mode = "interactive";
   session.sandboxName = "my-assistant";
-  session.metadata = { gatewayName: "nemoclaw-18080", fromDockerfile: null };
+  session.metadata = { gatewayName: ${JSON.stringify(gatewayName)}, fromDockerfile: null };
   onboardModule.onboardSession.saveSession(session);
   onboardModule.registerIncompleteOnboardExitHandlerForSession(
     onboardModule.onboardSession,
@@ -540,7 +549,7 @@ if (${JSON.stringify(
 }
 
 (async () => {
-  process.env.OPENSHELL_GATEWAY = "nemoclaw-18080";
+  process.env.OPENSHELL_GATEWAY = ${JSON.stringify(gatewayName)};
 	  if (recoveryReentry) {
 	    if (recoveryReentry === "fresh-different-no-journal") {
 	      try {
@@ -576,7 +585,7 @@ if (${JSON.stringify(
 	        onboardModule.onboardSession.createSession({
 	          mode: resolved.nonInteractive ? "non-interactive" : "interactive",
 	          sandboxName: resolved.requestedSandboxName,
-	          metadata: { gatewayName: "nemoclaw-18080", fromDockerfile: null },
+	          metadata: { gatewayName: ${JSON.stringify(gatewayName)}, fromDockerfile: null },
 	        }),
 	      );
 	      writePayload("replacement-sb", null, 0);
@@ -685,7 +694,7 @@ if (${JSON.stringify(
         HOME: tmpDir,
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
         NEMOCLAW_NON_INTERACTIVE: expectedOutcome.startsWith("cancel-after-create-") ? "" : "1",
-        NEMOCLAW_GATEWAY_PORT: "18080",
+        NEMOCLAW_GATEWAY_PORT: String(gatewayPort),
         OPENSHELL_DRIVERS: "docker",
         NEMOCLAW_MESSAGING_PLAN_B64:
           expectedOutcome === "staged-messaging-refusal"
@@ -717,8 +726,8 @@ if (${JSON.stringify(
       );
       const identityFingerprint = createHash("sha256").update(payload.sandboxId).digest("hex");
       const assertRecoveryTuple = (record: Record<string, unknown>) => {
-        assert.equal(record.gatewayName, "nemoclaw-18080");
-        assert.equal(record.gatewayPort, 18080);
+        assert.equal(record.gatewayName, gatewayName);
+        assert.equal(record.gatewayPort, gatewayPort);
         assert.equal(record.sandboxIdentityFingerprint, identityFingerprint);
         assert.equal(record.lifecycleGeneration, payload.recoveryRegistryEntry.lifecycleGeneration);
       };
@@ -784,7 +793,7 @@ if (${JSON.stringify(
           /--label ai\.nvidia\.nemoclaw\.create-attempt=[0-9a-f]{62}/u,
         );
         const ownerScopedObservations = payload.lifecycleObservationCommands.filter(
-          (command: string) => command.includes("-g nemoclaw-18080"),
+          (command: string) => command.includes(`-g ${gatewayName}`),
         );
         assert.ok(
           ownerScopedObservations.length >= 6,
@@ -793,8 +802,8 @@ if (${JSON.stringify(
         assert.ok(
           ownerScopedObservations.every(
             (command: string) =>
-              command.includes("sandbox get -g nemoclaw-18080 my-assistant") ||
-              command.includes("sandbox list -g nemoclaw-18080"),
+              command.includes(`sandbox get -g ${gatewayName} my-assistant`) ||
+              command.includes(`sandbox list -g ${gatewayName}`),
           ),
           `fresh identity observations must remain scoped to the owning gateway: ${JSON.stringify(ownerScopedObservations)}`,
         );
