@@ -73,6 +73,38 @@ describe("OpenShell forward service", () => {
     expect(isReachable).toHaveBeenCalledOnce();
   });
 
+  it("uses the selected OpenShell configuration without exposing credentials (#11084)", () => {
+    let launchedEnvironment: NodeJS.ProcessEnv | undefined;
+    const spawnDetached = vi.fn(
+      (_executable: string, _args: readonly string[], environment: NodeJS.ProcessEnv) => {
+        launchedEnvironment = environment;
+        return { pid: 42, unref: vi.fn() };
+      },
+    );
+
+    launchForwardService(target, {
+      getProcessIdentity: stableProcessIdentity,
+      isListenerOwned: () => true,
+      isProcessRunning: () => true,
+      isReachable: () => false,
+      sleep: () => {},
+      sourceEnvironment: {
+        HOME: "/tmp/isolated-home",
+        NVIDIA_INFERENCE_API_KEY: "secret-value",
+        PATH: "/usr/bin",
+        XDG_CONFIG_HOME: "/tmp/selected-openshell-config",
+      },
+      spawnDetached,
+    });
+
+    expect(launchedEnvironment).toMatchObject({
+      HOME: "/tmp/isolated-home",
+      PATH: "/usr/bin",
+      XDG_CONFIG_HOME: "/tmp/selected-openshell-config",
+    });
+    expect(launchedEnvironment).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
+  });
+
   it("refuses an occupied port without launching or adopting its listener", () => {
     const spawnDetached = vi.fn();
 
