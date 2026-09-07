@@ -10,7 +10,11 @@ import {
   type HermesCronRestorePlan,
   validateHermesCronRestoreBackup,
 } from "../../state/rebuild/hermes-cron-restore-backup";
-import { readRebuildPolicyHandoff, type RebuildManifest } from "../../state/sandbox";
+import {
+  readRebuildMcpHandoff,
+  readRebuildPolicyHandoff,
+  type RebuildManifest,
+} from "../../state/sandbox";
 import {
   preflightRebuildCredentials,
   type RebuildBail,
@@ -52,7 +56,6 @@ import {
 import {
   pinRebuildTargetGatewayForReadiness,
   prepareRebuildTargetPreflights,
-  resolveRebuildMcpRuntimeSelection,
 } from "./rebuild-preflight-target-phase";
 import { disposePreparedBuildContext } from "./rebuild-prepared-image-context";
 import {
@@ -187,7 +190,9 @@ export async function runRebuildPreflightPhase(
     return null;
   }
   const agentName = getRebuildAgentDisplayName(sandboxName);
-  const mcpRuntimeSelection = resolveRebuildMcpRuntimeSelection(sandboxEntry, bail);
+  const mcpRuntimeSelection = recoveryManifest
+    ? (readRebuildMcpHandoff(recoveryManifest)?.runtimeSelection ?? undefined)
+    : undefined;
   if (mcpRuntimeSelection) {
     pinRebuildTargetGatewayForReadiness(sandboxName, sandboxEntry, log, mcpRuntimeSelection);
   }

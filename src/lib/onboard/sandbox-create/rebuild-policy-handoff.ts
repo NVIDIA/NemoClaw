@@ -5,20 +5,48 @@ import fs from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 
-export { parseAndValidateSandboxPolicy } from "../../policy/sandbox-policy-validation";
-
 import {
   parseOpenShellPolicy,
   stripProviderComposedPolicies,
 } from "../../adapters/openshell/policy-boundary";
 import { isReviewedMessagingChannelPolicyUpgrade } from "../../messaging/channels/policy";
 import { reconcileTeamsOutlookLoginCredentialBinding } from "../../policy/microsoft-login-credential-binding";
+import { parseAndValidateSandboxPolicy } from "../../policy/sandbox-policy-validation";
 import { getCredentialBindingProviders, type InitialSandboxPolicy } from "../initial-policy";
 import { cleanupTempDir, createExactTempFileCleanup, secureTempFile } from "../temp-files";
 
 const REBUILD_POLICY_HANDOFF_PREFIX = "nemoclaw-rebuild-policy-handoff";
 
 type PolicyMapping = Record<string, unknown>;
+
+export function parseRebuildPolicyProviderNames(policyDocument: string): string[] {
+  const providers = new Set<string>();
+  const parsed = parseAndValidateSandboxPolicy(policyDocument) as {
+    network_policies?: Record<string, { endpoints?: unknown[] }>;
+  };
+  for (const policy of Object.values(parsed.network_policies ?? {})) {
+    for (const endpoint of Array.isArray(policy?.endpoints) ? policy.endpoints : []) {
+      if (!endpoint || typeof endpoint !== "object" || Array.isArray(endpoint)) continue;
+      const value = endpoint as {
+        protocol?: unknown;
+        credential_binding?: { provider?: unknown };
+      };
+      const provider = value.credential_binding?.provider;
+      if (value.protocol === "mcp" && typeof provider === "string" && provider) {
+        providers.add(provider);
+      }
+    }
+  }
+  return [...providers];
+}
+
+export function readValidatedRebuildPolicySource(policySourcePath: string): {
+  readonly document: string;
+  readonly providers: readonly string[];
+} {
+  const document = fs.readFileSync(policySourcePath, "utf8");
+  return { document, providers: parseRebuildPolicyProviderNames(document) };
+}
 
 function authorizedCredentialBindingProviders(
   source: string,

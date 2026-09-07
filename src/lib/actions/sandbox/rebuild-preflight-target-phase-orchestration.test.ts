@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   bail: vi.fn(),
-  getMcpPreparationRuntimeSelection: vi.fn(),
   preflightAuthoritativeOnboardRuntime: vi.fn(async (..._args: unknown[]) => false),
   prepareManagedWorkloadRebuildHandoff: vi.fn(),
   prepareSandboxWorkloadSourceFromRebuildHandoff: vi.fn(),
@@ -14,11 +13,6 @@ const mocks = vi.hoisted(() => ({
   resolveContextWindowForModel: vi.fn(() => 131_072),
   resolveManagedStartupInferenceRoute: vi.fn(),
   stageManagedWorkloadRebuildProfile: vi.fn(),
-}));
-
-vi.mock("./rebuild-mcp-phase", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("./rebuild-mcp-phase")>()),
-  getMcpPreparationRuntimeSelection: mocks.getMcpPreparationRuntimeSelection,
 }));
 
 vi.mock("../../onboard/workload/rebuild", async (importOriginal) => ({
@@ -63,11 +57,6 @@ describe("prepareRebuildTargetPreflights", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.getMcpPreparationRuntimeSelection.mockReturnValue({
-      gatewayName: "nemoclaw",
-      localTlsDir: "/authority/tls",
-      workspace: "default",
-    });
     mocks.prepareManagedWorkloadRebuildHandoff.mockResolvedValue(null);
     mocks.preflightAuthoritativeOnboardRuntime.mockResolvedValue(false);
   });
@@ -290,18 +279,10 @@ describe("prepareRebuildTargetPreflights", () => {
   });
 
   it("does not derive runtime authority from retired registry MCP fields (#11134)", async () => {
-    const runtimeSelection = {
-      gatewayName: "nemoclaw",
-      localTlsDir: "/authority/tls",
-      workspace: "default",
-    };
-    mocks.getMcpPreparationRuntimeSelection.mockReturnValue(runtimeSelection);
-
     const readinessOptions = await prepareN1xTarget("onboard", {
       bridges: { github: { server: "github" } },
     });
 
-    expect(mocks.getMcpPreparationRuntimeSelection).not.toHaveBeenCalled();
     expect(readinessOptions).not.toHaveProperty("runtimeSelection");
   });
 });

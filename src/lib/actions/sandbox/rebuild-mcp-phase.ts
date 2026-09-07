@@ -5,7 +5,6 @@ import { CLI_NAME } from "../../cli/branding";
 import { G, R, YW } from "../../cli/terminal-style";
 import type { DcodeAutoApprovalMode } from "../../onboard/dcode-auto-approval";
 import { explicitObservabilityFlag } from "../../onboard/observability-command-flag";
-import * as registry from "../../state/registry";
 import type { ToolDisclosure } from "../../tool-disclosure";
 import {
   prepareMcpBridgesForAbsentSandboxRebuild,
@@ -13,21 +12,14 @@ import {
   reattachMcpProvidersAfterRebuildAbort,
   restoreMcpBridgesAfterRebuild,
 } from "./mcp-bridge";
-import { getMcpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider";
 import type { RebuildBail } from "./rebuild-credential-preflight";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
-import { bridgeState, hydrateBridgeState } from "./mcp-bridge-state";
+import { hydrateBridgeState } from "./mcp-bridge-state";
 import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider";
 import { inspectSourceBridgeState } from "./mcp-bridge-source";
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
 
 export type McpRebuildPreparation = Awaited<ReturnType<typeof prepareMcpBridgesForRebuild>>;
-
-export function getMcpPreparationRuntimeSelection(
-  sandbox: RebuildSandboxEntry,
-): ReturnType<typeof getMcpProviderInspectionRuntimeSelection> {
-  return getMcpProviderInspectionRuntimeSelection(sandbox);
-}
 
 export function observeMcpStateForRebuild(
   sandbox: RebuildSandboxEntry,
@@ -50,28 +42,15 @@ export function hydrateMcpStateForRebuild(
   );
 }
 
-export function resolveMcpPreparationRuntimeSelection(
-  sandboxName: string,
-): ReturnType<typeof getMcpProviderInspectionRuntimeSelection> | undefined {
-  const sandbox = registry.getSandbox(sandboxName);
-  if (!sandbox) return undefined;
-  try {
-    return getMcpPreparationRuntimeSelection(sandbox);
-  } catch {
-    return undefined;
-  }
-}
-
 export async function prepareMcpForRebuild(
   sandboxName: string,
   staleRecovery: boolean,
   bail: RebuildBail,
   frozenRuntimeSelection?: McpProviderInspectionRuntimeSelection,
 ): Promise<McpRebuildPreparation | null> {
-  const sandbox = staleRecovery ? undefined : registry.getSandbox(sandboxName);
-  const runtimeSelection =
-    frozenRuntimeSelection ??
-    (staleRecovery ? undefined : resolveMcpPreparationRuntimeSelection(sandboxName));
+  // Source inspection resolves OpenShell authority lazily only after it finds
+  // MCP intent. A retained recovery handoff is the sole eager authority input.
+  const runtimeSelection = frozenRuntimeSelection;
   try {
     return await (staleRecovery
       ? runtimeSelection

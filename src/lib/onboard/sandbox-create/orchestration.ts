@@ -80,7 +80,8 @@ import {
 } from "./provider-publication";
 import {
   materializeRebuildPolicyHandoff,
-  parseAndValidateSandboxPolicy,
+  parseRebuildPolicyProviderNames,
+  readValidatedRebuildPolicySource,
 } from "./rebuild-policy-handoff";
 
 function cancelRecoveryIdentity(
@@ -113,42 +114,6 @@ export function bindRebuildPolicyProvidersToCreateArgs(
     attached.add(provider);
   }
   return result;
-}
-
-/**
- * Admit credential providers only from replacement inputs that were validated
- * independently of the live policy document. The live policy remains the
- * policy source of truth; this list only proves that each provider attachment
- * it references already belongs to the exact create, messaging, or managed MCP
- * replacement transaction.
- */
-function parseRebuildPolicyProviderNames(policyDocument: string): string[] {
-  const providers = new Set<string>();
-  const parsed = parseAndValidateSandboxPolicy(policyDocument) as {
-    network_policies?: Record<string, { endpoints?: unknown[] }>;
-  };
-  for (const policy of Object.values(parsed.network_policies ?? {})) {
-    for (const endpoint of Array.isArray(policy?.endpoints) ? policy.endpoints : []) {
-      if (!endpoint || typeof endpoint !== "object" || Array.isArray(endpoint)) continue;
-      const value = endpoint as {
-        protocol?: unknown;
-        credential_binding?: { provider?: unknown };
-      };
-      const provider = value.credential_binding?.provider;
-      if (value.protocol === "mcp" && typeof provider === "string" && provider) {
-        providers.add(provider);
-      }
-    }
-  }
-  return [...providers];
-}
-
-export function readValidatedRebuildPolicySource(policySourcePath: string): {
-  readonly document: string;
-  readonly providers: readonly string[];
-} {
-  const document = fs.readFileSync(policySourcePath, "utf8");
-  return { document, providers: parseRebuildPolicyProviderNames(document) };
 }
 
 export function beginRecreateDeleteAfterPolicyPreflight<T>(input: {

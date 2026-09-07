@@ -30,9 +30,9 @@ import {
   resolveRebuildMessagingPolicyDeltas,
   resolveRebuildObservabilityPolicyDelta,
   resolveRebuildPolicyProviderAuthority,
-  readValidatedRebuildPolicySource,
   selectRebuildCreatePolicy,
 } from "./orchestration";
+import { readValidatedRebuildPolicySource } from "./rebuild-policy-handoff";
 
 const tempRoots: string[] = [];
 

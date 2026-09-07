@@ -95,17 +95,6 @@ export interface RebuildPreparedTarget {
   routePreflightReceipt: RebuildRoutePreflightReceipt;
 }
 
-/** Freeze the MCP-bearing rebuild on the recorded OpenShell target before live probes. */
-export function resolveRebuildMcpRuntimeSelection(
-  _sandboxEntry: RebuildSandboxEntry,
-  _bail: RebuildBail,
-): OpenShellRuntimeSelection | undefined {
-  // Completed MCP intent lives in the agent source, not the registry. Runtime
-  // authority is resolved when source inspection or a recovery handoff proves
-  // that MCP entries exist.
-  return undefined;
-}
-
 /** Pin read-only rebuild probes without selecting, starting, or repairing a gateway. */
 export function pinRebuildTargetGatewayForReadiness(
   sandboxName: string,
@@ -192,8 +181,7 @@ export async function prepareRebuildTargetPreflights(args: {
     log,
     bail,
   } = args;
-  const mcpRuntimeSelection =
-    frozenMcpRuntimeSelection ?? resolveRebuildMcpRuntimeSelection(sandboxEntry, bail);
+  const mcpRuntimeSelection = frozenMcpRuntimeSelection;
   hydrateMessagingConfigForRebuild(sandboxName, log);
   pinRebuildTargetGatewayForReadiness(sandboxName, sandboxEntry, log, mcpRuntimeSelection);
 
