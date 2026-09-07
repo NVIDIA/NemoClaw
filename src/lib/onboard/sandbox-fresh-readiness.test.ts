@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -58,6 +62,13 @@ type OpenShellResult = ReturnType<SandboxGpuCreateFlowDeps["runOpenshell"]>;
 const SANDBOX_NOT_READY_OUTPUT =
   `Error:   × code: 'The system is not in a state required for the operation's\n` +
   '  │ execution\', message: "sandbox is not ready"\n';
+const tempDirs: string[] = [];
+
+function makeTempDir(prefix: string): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
 
 function readySandboxGetResult(): OpenShellResult {
   return {
@@ -94,7 +105,10 @@ function timedOutOpenShellResult(stderr = ""): OpenShellResult {
 }
 
 beforeEach(() => setupGpuFlowMocks(mocks));
-afterEach(resetGpuFlowMocks);
+afterEach(() => {
+  resetGpuFlowMocks();
+  tempDirs.splice(0).forEach((dir) => fs.rmSync(dir, { recursive: true, force: true }));
+});
 
 describe("fresh sandbox executable readiness", () => {
   it("does not collect name-scoped diagnostics after an unverified hard failure (#10412)", async () => {
@@ -204,10 +218,85 @@ describe("fresh sandbox executable readiness", () => {
         ([args]) => args.join(" ") === "sandbox delete alpha",
       ),
     }).toEqual({
-      diagnosticCall: ["alpha", { backupPath: null, sandboxId: "alpha-sandbox-id" }],
+      diagnosticCall: [
+        "alpha",
+        { backupPath: null, gatewayPort: 8080, sandboxId: "alpha-sandbox-id" },
+      ],
       diagnosticUnavailable: true,
       rollbackCalls: 1,
       sandboxDeletedByName: false,
+    });
+  });
+
+  it("saves verified readiness evidence before rollback (#10412)", async () => {
+    const homeDir = makeTempDir("nemoclaw-readiness-diagnostics-");
+    const sandboxId = "alpha-sandbox-id";
+    const replacementId = "replacement-sandbox-id";
+    const logDir = path.join(homeDir, ".local", "state", "nemoclaw", "openshell-docker-gateway");
+    const stateDir = path.join(logDir, "vm-driver", "sandboxes", sandboxId);
+    const consolePath = path.join(stateDir, "rootfs-console.log");
+    const bundleRoot = path.join(homeDir, ".nemoclaw", "onboard-failures");
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(consolePath, "verified console failure\n");
+    fs.writeFileSync(
+      path.join(logDir, "openshell-gateway.log"),
+      [
+        `create_sandbox received sandbox_id=${sandboxId} sandbox_name=alpha`,
+        `sandbox_id=${sandboxId} state_dir=${stateDir} console_output=${consolePath}`,
+        `ERROR krun sandbox_id=${sandboxId} reason=ProcessExited`,
+        `create_sandbox received sandbox_id=${replacementId} sandbox_name=alpha`,
+        `ERROR krun sandbox_id=${replacementId} reason=replacement-failure`,
+      ].join("\n"),
+    );
+    vi.spyOn(os, "homedir").mockReturnValue(homeDir);
+    const actualDiagnostics = await vi.importActual<
+      typeof import("./sandbox-create-failure")
+    >("./sandbox-create-failure");
+    mocks.printSandboxCreateFailureDiagnostics.mockImplementation(
+      actualDiagnostics.printSandboxCreateFailureDiagnostics,
+    );
+    const patch = createGpuPatchFixture();
+    let bundleExistedBeforeRollback = false;
+    patch.rollbackManagedStartupAfterCreateFailure.mockImplementation(() => {
+      const bundleName = fs.readdirSync(bundleRoot)[0];
+      bundleExistedBeforeRollback = Boolean(
+        bundleName &&
+        fs.existsSync(path.join(bundleRoot, bundleName, "openshell-gateway-relevant.log")),
+      );
+    });
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
+    const deps = createDeps();
+    vi.mocked(deps.runOpenshell).mockImplementation(
+      createSequencedOpenShellRunner([
+        ["sandbox get -g nemoclaw alpha", [readySandboxGetResult()]],
+        [
+          "sandbox exec -g nemoclaw --name alpha -- true",
+          [{ status: 1, stdout: "", stderr: "permission denied" }],
+        ],
+      ]),
+    );
+    mockExit();
+
+    await expect(runSandboxGpuCreateFlow(createInput(), deps)).rejects.toThrow("process.exit:1");
+
+    const bundlePath = path.join(bundleRoot, fs.readdirSync(bundleRoot)[0]!);
+    const gatewayEvidence = fs.readFileSync(
+      path.join(bundlePath, "openshell-gateway-relevant.log"),
+      "utf8",
+    );
+    const consoleEvidence = fs.readFileSync(path.join(bundlePath, "rootfs-console.log"), "utf8");
+    expect({
+      bundleExistedBeforeRollback,
+      consoleEvidence,
+      gatewayHasReplacement: gatewayEvidence.includes(replacementId),
+      gatewayHasVerifiedId: gatewayEvidence.includes(sandboxId),
+      rollbackCalls: patch.rollbackManagedStartupAfterCreateFailure.mock.calls.length,
+    }).toEqual({
+      bundleExistedBeforeRollback: true,
+      consoleEvidence: "verified console failure\n",
+      gatewayHasReplacement: false,
+      gatewayHasVerifiedId: true,
+      rollbackCalls: 1,
     });
   });
 
@@ -300,6 +389,7 @@ describe("fresh sandbox executable readiness", () => {
     );
     expect(mocks.printSandboxCreateFailureDiagnostics).toHaveBeenCalledWith("alpha", {
       backupPath: null,
+      gatewayPort: 8080,
       sandboxId: "alpha-sandbox-id",
     });
   });

@@ -8,6 +8,7 @@ import path from "node:path";
 import { GATEWAY_PORT } from "../core/ports";
 import { rejectSymlinksOnPath } from "../state/config-io";
 import { nemoclawStateRoot } from "../state/state-root";
+import { createDockerGpuDiagnosticRedactor } from "./docker-gpu-diagnostic-redaction";
 import { resolveGatewayLogPathForPort } from "./gateway/state-dir";
 
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
@@ -17,6 +18,7 @@ const MAX_GATEWAY_TAIL_LINES = 240;
 const MAX_GATEWAY_LOG_BYTES = 1024 * 1024;
 const MAX_CONSOLE_OUTPUT_BYTES = 256 * 1024;
 const MAX_STATE_DIR_ENTRIES = 200;
+const diagnosticRedactor = createDockerGpuDiagnosticRedactor();
 
 type BoundedFileTail = {
   contents: Buffer;
@@ -109,10 +111,32 @@ function readBoundedFileTail(
 function readLogLines(filePath: string): { lines: string[]; truncated: boolean } | null {
   const tail = readBoundedFileTail(filePath, MAX_GATEWAY_LOG_BYTES, true);
   if (!tail) return null;
+  const redacted = redactAndBoundText(
+    stripAnsi(tail.contents.toString("utf8")),
+    MAX_GATEWAY_LOG_BYTES,
+    true,
+  );
   return {
-    lines: stripAnsi(tail.contents.toString("utf8")).split(/\r?\n/),
-    truncated: tail.truncated,
+    lines: redacted.contents.split(/\r?\n/),
+    truncated: tail.truncated || redacted.truncated,
   };
+}
+
+function redactAndBoundText(
+  value: string,
+  maxBytes: number,
+  dropPartialFirstLine = false,
+): { contents: string; truncated: boolean } {
+  const redacted = Buffer.from(diagnosticRedactor.redactText(value), "utf8");
+  if (redacted.length <= maxBytes) {
+    return { contents: redacted.toString("utf8"), truncated: false };
+  }
+  let contents = redacted.subarray(redacted.length - maxBytes);
+  if (dropPartialFirstLine) {
+    const firstNewline = contents.indexOf(0x0a);
+    contents = firstNewline < 0 ? Buffer.alloc(0) : contents.subarray(firstNewline + 1);
+  }
+  return { contents: contents.toString("utf8"), truncated: true };
 }
 
 function extractField(line: string, field: string): string | null {
@@ -198,8 +222,9 @@ function copyFileTailIfPresent(
   try {
     const tail = readBoundedFileTail(src, MAX_CONSOLE_OUTPUT_BYTES);
     if (!tail) return { path: null, truncated: false };
-    fs.writeFileSync(dst, tail.contents, { mode: 0o600 });
-    return { path: dst, truncated: tail.truncated };
+    const redacted = redactAndBoundText(tail.contents.toString("utf8"), MAX_CONSOLE_OUTPUT_BYTES);
+    fs.writeFileSync(dst, redacted.contents, { mode: 0o600 });
+    return { path: dst, truncated: tail.truncated || redacted.truncated };
   } catch {
     return { path: null, truncated: false };
   }
@@ -233,8 +258,9 @@ export function collectSandboxCreateFailureDiagnostics(
 ): SandboxCreateFailureDiagnostics | null {
   const homeDir = options.homeDir ?? os.homedir();
   const now = options.now ?? new Date();
+  const gatewayPort = options.gatewayPort ?? GATEWAY_PORT;
   const dir = path.join(
-    nemoclawStateRoot(homeDir, GATEWAY_PORT),
+    nemoclawStateRoot(homeDir, gatewayPort),
     "onboard-failures",
     `${timestampForPath(now)}-${sanitizePathPart(sandboxName)}`,
   );
@@ -243,7 +269,7 @@ export function collectSandboxCreateFailureDiagnostics(
     options.gatewayLogPath ??
     gatewayLogCandidates(
       homeDir,
-      options.gatewayPort ?? GATEWAY_PORT,
+      gatewayPort,
       options.gatewayStateDir ?? process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
     ).find((candidate) => fs.existsSync(candidate)) ??
     null;

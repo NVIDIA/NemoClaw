@@ -305,7 +305,11 @@ export interface SandboxGpuCreateFlowDeps {
   verifyDirectSandboxGpu(sandboxName: string): SandboxGpuProofResult;
   printCreateFailureDiagnostics?: (
     sandboxName: string,
-    options: { readonly backupPath?: string | null; readonly sandboxId?: string },
+    options: {
+      readonly backupPath?: string | null;
+      readonly gatewayPort?: number;
+      readonly sandboxId?: string;
+    },
   ) => SandboxCreateFailureDiagnostics | null | void;
   /** Production callers configure the hidden portable lifecycle through the default implementation. */
   installPortableDemoLifecycle?: typeof installPortableDemoSandboxLifecycle;

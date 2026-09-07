@@ -460,6 +460,7 @@ function printIdentityBoundCreateFailureDiagnostics(
   printDiagnostics: PrintCreateFailureDiagnostics,
   sandboxName: string,
   backupPath: string | null,
+  gatewayPort: number,
   sandboxId: string | null,
 ): void {
   if (!sandboxId) {
@@ -468,7 +469,7 @@ function printIdentityBoundCreateFailureDiagnostics(
     );
     return;
   }
-  printDiagnostics(sandboxName, { backupPath, sandboxId });
+  printDiagnostics(sandboxName, { backupPath, gatewayPort, sandboxId });
 }
 
 export function createSandboxGpuCreateAttemptRunner(
@@ -1200,6 +1201,7 @@ export function createSandboxGpuCreateAttemptRunner(
         printCreateFailureDiagnosticsBeforeRollback,
         input.sandboxName,
         input.restoreBackupPath,
+        input.gatewayPort,
         diagnosticSandboxId,
       );
       await runtimePatch.rollbackManagedStartupAfterCreateFailure();

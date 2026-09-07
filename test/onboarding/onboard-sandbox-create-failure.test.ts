@@ -36,10 +36,23 @@ describe("sandbox create failure diagnostics", () => {
         now: new Date("2026-05-12T20:35:00.000Z"),
       });
 
-      expect(diagnostics?.gatewayLogPath).toBe(gatewayLogPath);
-      expect(diagnostics?.summaryLines).toContain(
-        "selected gateway exited before sandbox creation",
-      );
+      const selectedStateRoot =
+        gatewayPort === 8080
+          ? path.join(homeDir, ".nemoclaw")
+          : path.join(homeDir, ".nemoclaw", "gateways", String(gatewayPort));
+      expect({
+        bundleUsesSelectedPort: diagnostics?.dir.startsWith(
+          path.join(selectedStateRoot, "onboard-failures"),
+        ),
+        gatewayLogPath: diagnostics?.gatewayLogPath,
+        summaryIncludesFailure: diagnostics?.summaryLines.includes(
+          "selected gateway exited before sandbox creation",
+        ),
+      }).toEqual({
+        bundleUsesSelectedPort: true,
+        gatewayLogPath,
+        summaryIncludesFailure: true,
+      });
     },
   );
 
@@ -54,10 +67,15 @@ describe("sandbox create failure diagnostics", () => {
     const consolePath = path.join(stateDir, "rootfs-console.log");
     const replacementConsolePath = path.join(replacementStateDir, "rootfs-console.log");
     const gatewayLogPath = path.join(logDir, "openshell-gateway.log");
+    const gatewaySecret = "sk-abcdefghijklmnopqrstuvwxyz1234567890";
+    const consoleSecret = "console-secret-token";
 
     fs.mkdirSync(stateDir, { recursive: true });
     fs.mkdirSync(replacementStateDir, { recursive: true });
-    fs.writeFileSync(consolePath, "vm console detail\n");
+    fs.writeFileSync(
+      consolePath,
+      `vm console detail Authorization: Bearer ${consoleSecret}\n`,
+    );
     fs.writeFileSync(replacementConsolePath, "replacement console detail\n");
     fs.writeFileSync(
       gatewayLogPath,
@@ -66,7 +84,7 @@ describe("sandbox create failure diagnostics", () => {
         `2026-05-12T20:30:56Z INFO vm driver: create_sandbox received sandbox_id=${sandboxId} sandbox_name=my-assistant`,
         `2026-05-12T20:30:56Z INFO vm driver: resolved image ref, preparing rootfs sandbox_id=${sandboxId} state_dir=${stateDir}`,
         `2026-05-12T20:34:28Z INFO vm driver: spawning VM launcher sandbox_id=${sandboxId} console_output=${consolePath}`,
-        `[2026-05-12T20:34:29Z ERROR krun] sandbox_id=${sandboxId} Building the microVM failed: Internal(Vm(VmSetup(VmCreate)))`,
+        `[2026-05-12T20:34:29Z ERROR krun] sandbox_id=${sandboxId} api_key=${gatewaySecret} Building the microVM failed: Internal(Vm(VmSetup(VmCreate)))`,
         `2026-05-12T20:34:29Z WARN Sandbox failed to become ready sandbox_id=${sandboxId} sandbox_name=my-assistant reason=ProcessExited`,
         `[2026-05-12T20:34:29Z ERROR krun] console_output=${replacementConsolePath} reason=ProcessExited`,
         `2026-05-12T20:34:30Z INFO vm driver: create_sandbox received sandbox_id=${replacementId} sandbox_name=my-assistant`,
@@ -85,9 +103,11 @@ describe("sandbox create failure diagnostics", () => {
     expect(diagnostics?.copiedConsoleOutput).toBe(
       path.join(diagnostics!.dir, "rootfs-console.log"),
     );
-    expect(fs.readFileSync(path.join(diagnostics!.dir, "rootfs-console.log"), "utf-8")).toContain(
-      "vm console detail",
+    const consoleOutput = fs.readFileSync(
+      path.join(diagnostics!.dir, "rootfs-console.log"),
+      "utf-8",
     );
+    expect(consoleOutput).toContain("vm console detail");
     const relevant = fs.readFileSync(
       path.join(diagnostics!.dir, "openshell-gateway-relevant.log"),
       "utf-8",
@@ -96,6 +116,11 @@ describe("sandbox create failure diagnostics", () => {
     expect(relevant).toContain("sandbox_name=my-assistant");
     expect(relevant).not.toContain(replacementId);
     expect(relevant).not.toContain(replacementConsolePath);
+    const capturedOutput = `${relevant}\n${consoleOutput}\n${diagnostics?.summaryLines.join("\n")}`;
+    expect({
+      consoleSecretPresent: capturedOutput.includes(consoleSecret),
+      gatewaySecretPresent: capturedOutput.includes(gatewaySecret),
+    }).toEqual({ consoleSecretPresent: false, gatewaySecretPresent: false });
     expect(fs.readFileSync(path.join(diagnostics!.dir, "summary.txt"), "utf-8")).toContain(
       "backup_path=/tmp/pre-upgrade-backup",
     );
