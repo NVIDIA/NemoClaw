@@ -246,17 +246,21 @@ export function createProviderRecoveryHelpers(deps: ProviderRecoveryDeps): Provi
   };
 
   const managedLlamaCppRecipeId = (value: ManagedLlamaCppRecoveryState): string | null => {
+    if (value.provider !== "llama-cpp-local") return null;
     const recipe = value.servingProfileProvenance?.recipe;
-    if (
-      value.provider === "llama-cpp-local" &&
+    const hasProfile = value.servingProfileProvenance != null;
+    const profileRecipeId =
       recipe?.backend === "install-llama-cpp" &&
       typeof recipe.id === "string" &&
       SAFE_MANAGED_LLAMA_CPP_RECIPE_ID.test(recipe.id)
-    ) {
-      return recipe.id;
-    }
+        ? recipe.id
+        : null;
+    if (hasProfile && profileRecipeId === null) return null;
+
+    const hasReceiptAuthority =
+      value.hostLocalInferenceReceipt != null || value.hostLocalInferenceProvenance != null;
+    if (!hasReceiptAuthority) return profileRecipeId;
     if (
-      value.provider !== "llama-cpp-local" ||
       typeof value.hostLocalInferenceReceipt !== "string" ||
       value.hostLocalInferenceProvenance == null
     ) {
@@ -268,13 +272,17 @@ export function createProviderRecoveryHelpers(deps: ProviderRecoveryDeps): Provi
         value.hostLocalInferenceReceipt,
       );
       const receipt = parseHostLocalInferenceReceipt(value.hostLocalInferenceReceipt);
-      const recipeId =
+      const receiptRecipeId =
         receipt.runtime.kind === "container" ? receipt.runtime.model?.recipeId : null;
-      return receipt.service === "llama-cpp" &&
-        typeof recipeId === "string" &&
-        SAFE_MANAGED_LLAMA_CPP_RECIPE_ID.test(recipeId)
-        ? recipeId
-        : null;
+      if (
+        receipt.service !== "llama-cpp" ||
+        typeof receiptRecipeId !== "string" ||
+        !SAFE_MANAGED_LLAMA_CPP_RECIPE_ID.test(receiptRecipeId) ||
+        (profileRecipeId !== null && profileRecipeId !== receiptRecipeId)
+      ) {
+        return null;
+      }
+      return receiptRecipeId;
     } catch {
       return null;
     }

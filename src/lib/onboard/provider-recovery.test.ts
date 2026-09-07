@@ -322,6 +322,45 @@ describe("provider recovery persisted routing state", () => {
     });
   });
 
+  it("rejects conflicting managed recipe authorities", () => {
+    const hostLocalInferenceReceipt = managedLlamaCppReceipt("llama-cpp.runtime-recipe.v1");
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "alpha",
+      provider: "llama-cpp-local",
+      model: "recorded-model",
+      servingProfileProvenance: {
+        recipe: { backend: "install-llama-cpp", id: "llama-cpp.profile-recipe.v1" },
+      } as never,
+      hostLocalInferenceReceipt,
+      hostLocalInferenceProvenance: createSandboxHostLocalInferenceProvenance(
+        "alpha",
+        hostLocalInferenceReceipt,
+      ),
+    });
+    const recovery = helpers();
+
+    expect(recovery.readRecordedManagedLlamaCpp("alpha")).toBe(false);
+    expect(recovery.readRecordedManagedLlamaCppRecipeId("alpha")).toBeNull();
+    expect(
+      resolveRequestedProviderSelection({
+        options: [
+          { key: "llama-cpp", label: "Local llama.cpp" },
+          { key: "install-llama-cpp", label: "Managed llama.cpp" },
+        ],
+        requestedProvider: null,
+        sandboxName: "alpha",
+        remoteProviderConfig: {},
+        isWsl: false,
+        isWindowsHostOllama: false,
+        windowsHostOllamaSupported: false,
+        windowsHostOllamaReachable: false,
+        hermesProviderAvailable: false,
+        ollamaRunning: false,
+        ...recovery.providerSelectionReaders,
+      }),
+    ).toMatchObject({ selected: { key: "llama-cpp" } });
+  });
+
   it.each([
     [
       "managed",
