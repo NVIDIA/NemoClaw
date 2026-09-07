@@ -36,7 +36,6 @@ import {
   ensureMcpBridgeProviderProfile,
   getMcpProviderInspectionRuntimeSelection,
   inspectMcpProvider,
-  MCP_BRIDGE_PROVIDER_TYPE,
   type McpCredentialRevisionObservation,
   observeMcpCredentialRevision,
   providerMatchesCredential,
@@ -292,29 +291,6 @@ async function addMcpBridgeUnlocked(
     policyName,
     recoveryPhase: existingEntry?.recoveryPhase ?? "prepared",
   };
-
-  if (!existingEntry && providerName) {
-    const observedProvider = inspectMcpProvider(
-      providerName,
-      getMcpProviderInspectionRuntimeSelection(sandbox),
-    );
-    if (
-      observedProvider.exists === true &&
-      observedProvider.id &&
-      observedProvider.type === MCP_BRIDGE_PROVIDER_TYPE &&
-      observedProvider.credentialKeys?.length === 1 &&
-      observedProvider.credentialKeys[0] === envNames[0]
-    ) {
-      // The deterministic provider name plus its current OpenShell shape is
-      // source evidence of an interrupted add. Resume from the live object;
-      // no host-side journal is needed.
-      existingEntry = {
-        ...requestedEntry,
-        providerId: observedProvider.id,
-        recoveryPhase: "preflighted",
-      };
-    }
-  }
 
   if (existingEntry && !sameMcpAddIntent(existingEntry, requestedEntry)) {
     throw new McpBridgeError(

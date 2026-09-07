@@ -58,7 +58,9 @@ describe("supervisor relaunch quarantine classification (#7801)", () => {
 
   it("keeps the pre-existing layers for output without a quarantine line", () => {
     expect(classify("GATEWAY_HEALTH_TIMEOUT")).toMatchObject({ layer: "health timeout" });
-    expect(classify("HERMES_MCP_CONFIG_DRIFT")).toMatchObject({ layer: "launch failure" });
+    expect(classify("HERMES_MCP_CONFIG_DRIFT")).toMatchObject({
+      layer: "mcp configuration drift",
+    });
     expect(classify("GATEWAY_CONFIG_HASH_MISMATCH")).toMatchObject({
       layer: "config hash mismatch",
     });
@@ -76,6 +78,7 @@ describe("terminal restart repair guidance (#7801)", () => {
   it("recognizes the terminal repair layers", () => {
     expect(isGatewayTerminalRepairLayer("relaunch quarantined")).toBe(true);
     expect(isGatewayTerminalRepairLayer("config hash mismatch")).toBe(true);
+    expect(isGatewayTerminalRepairLayer("mcp configuration drift")).toBe(true);
     expect(isGatewayTerminalRepairLayer("health timeout")).toBe(false);
     expect(isGatewayTerminalRepairLayer("launch failure")).toBe(false);
     expect(isGatewayTerminalRepairLayer(null)).toBe(false);
@@ -102,6 +105,14 @@ describe("terminal restart repair guidance (#7801)", () => {
     const lines = gatewayTerminalRepairLines("alpha", "config hash mismatch").join("\n");
     expect(lines).toContain("integrity metadata");
     expect(lines).not.toContain("nemoclaw alpha stop");
+  });
+
+  it("gives source-specific repair guidance for Hermes MCP drift", () => {
+    const lines = gatewayTerminalRepairLines("alpha", "mcp configuration drift").join("\n");
+    expect(lines).toContain("nemoclaw alpha mcp status --json");
+    expect(lines).toContain("nemoclaw alpha mcp migrate --apply");
+    expect(lines).toContain("remove and add");
+    expect(lines).not.toContain("mcp restart");
   });
 });
 

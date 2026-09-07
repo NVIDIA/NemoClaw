@@ -64,6 +64,7 @@ export type GatewayRestartFailureLayer =
   | "secret-boundary refusal"
   | "unsafe config path"
   | "config hash mismatch"
+  | "mcp configuration drift"
   | "relaunch quarantined"
   | "launch failure"
   | "health timeout"
@@ -254,6 +255,12 @@ export function classifyGatewayRestartFailure(result: GatewayRestartCommandResul
       detail: detail || "the in-sandbox supervisor quarantined gateway relaunch",
     };
   }
+  if (output.includes("HERMES_MCP_CONFIG_DRIFT")) {
+    return {
+      layer: "mcp configuration drift",
+      detail: detail || "Hermes MCP configuration integrity check failed",
+    };
+  }
   if (
     output.includes(MARKERS.GATEWAY_CONFIG_HASH_MISMATCH) ||
     output.includes("HERMES_LOCKED_HASH_MISMATCH") ||
@@ -272,14 +279,18 @@ export function classifyGatewayRestartFailure(result: GatewayRestartCommandResul
 
 export function isGatewayTerminalRepairLayer(
   layer: GatewayRestartFailureLayer | null | undefined,
-): layer is "config hash mismatch" | "relaunch quarantined" {
-  return layer === "config hash mismatch" || layer === "relaunch quarantined";
+): layer is "config hash mismatch" | "mcp configuration drift" | "relaunch quarantined" {
+  return (
+    layer === "config hash mismatch" ||
+    layer === "mcp configuration drift" ||
+    layer === "relaunch quarantined"
+  );
 }
 
 /** Report terminal restart repair without treating process quarantine as config drift. */
 export function gatewayTerminalRepairLines(
   sandboxName: string,
-  layer: "config hash mismatch" | "relaunch quarantined",
+  layer: "config hash mismatch" | "mcp configuration drift" | "relaunch quarantined",
 ): readonly string[] {
   if (layer === "relaunch quarantined") {
     return [
@@ -287,6 +298,14 @@ export function gatewayTerminalRepairLines(
       `Inspect the Hermes failure with \`nemoclaw ${sandboxName} logs --tail 50\`.`,
       `After correcting the cause, reset the supervisor with \`nemoclaw ${sandboxName} stop\`, then \`nemoclaw ${sandboxName} start\`.`,
       `If the sandbox still cannot start, rebuild it with \`nemoclaw ${sandboxName} rebuild --yes\`.`,
+    ];
+  }
+  if (layer === "mcp configuration drift") {
+    return [
+      "Hermes refused the gateway restart because its native MCP configuration is missing, conflicting, or not reconciled.",
+      `Inspect the source-backed state with \`nemoclaw ${sandboxName} mcp status --json\`.`,
+      `Migrate legacy entries with \`nemoclaw ${sandboxName} mcp migrate --apply\`; repair a missing or conflicting entry explicitly, or remove and add it again.`,
+      "Retry the gateway restart only after MCP status reports configured policy and provider sources.",
     ];
   }
   return [

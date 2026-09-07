@@ -34,12 +34,12 @@ export default class SandboxMcpCommand extends NemoClawCommand {
       );
       return;
     }
-    const [{ dispatchMcpBridgeCommand }, { rebuildSandbox }] = await Promise.all([
-      import("../../lib/actions/sandbox/mcp-bridge"),
-      import("../../lib/actions/sandbox/rebuild"),
-    ]);
+    const { dispatchMcpBridgeCommand } = await import("../../lib/actions/sandbox/mcp-bridge");
     await dispatchMcpBridgeCommand(sandboxName, actionArgs, {
-      rebuildForMigration: (name) => rebuildSandbox(name, ["--yes"], { throwOnError: true }),
+      rebuildForMigration: async (name) => {
+        const { rebuildSandbox } = await import("../../lib/actions/sandbox/rebuild");
+        await rebuildSandbox(name, { yes: true }, { throwOnError: true });
+      },
     });
   }
 }

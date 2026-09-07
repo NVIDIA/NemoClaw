@@ -161,9 +161,13 @@ const sourceEntry = {
     providerId: "11111111-2222-4333-8444-555555555555",
     policyName: "mcp-bridge-github",
 };
+let legacySourceEnabled = false;
 sourceState.inspectSourceBridgeState = () => ({
   bridges: { github: sourceEntry },
-  sources: { native: { github: sourceEntry }, legacy: {} },
+  sources: {
+    native: legacySourceEnabled ? {} : { github: sourceEntry },
+    legacy: legacySourceEnabled ? { github: { ...sourceEntry, source: "legacy" } } : {},
+  },
 });
 registry.registerSandbox({ name: "alpha", agent: "openclaw" });
 const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
@@ -208,6 +212,23 @@ ${body}
 }
 
 describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 }, () => {
+  it("refuses status while a legacy source still requires explicit migration", () => {
+    const home = createTempHome("nemoclaw-mcp-resolution-legacy-");
+    const { stdout } = runHarness(
+      home,
+      String.raw`
+  legacySourceEnabled = true;
+  await bridge.dispatchMcpBridgeCommand("alpha", ["status", "github"]);
+  const exitCode = process.exitCode ?? 0;
+  process.exitCode = 0;
+  writeHarnessResult(JSON.stringify({ errorLines, exitCode }));
+`,
+    );
+    const payload = JSON.parse(stdout) as { errorLines: string[]; exitCode: number };
+    expect(payload.exitCode).toBe(2);
+    expect(payload.errorLines.join("\n")).toContain("mcp migrate");
+  });
+
   it("probes by default for a single named server and surfaces the wire failure (#6379)", () => {
     const home = createTempHome("nemoclaw-mcp-resolution-single-");
     const { stdout } = runHarness(

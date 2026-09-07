@@ -275,6 +275,70 @@ require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
     },
   );
 
+  it("does not adopt a retained same-name provider after remove then add", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-retained-provider-"));
+    const sourceRequireHook = path.resolve("test/helpers/onboard-script-mocks.cjs");
+    const script = `
+process.env.HOME = ${JSON.stringify(home)};
+process.env.GITHUB_TOKEN = "replacement-host-only-secret";
+require("node:dns/promises").lookup = async () => [{ address: "8.8.8.8", family: 4 }];
+const replace = (module, name, value) => Object.defineProperty(module, name, {
+  configurable: true, enumerable: true, value, writable: true,
+});
+const registry = require("./src/lib/state/registry.js");
+const adapters = require("./src/lib/actions/sandbox/mcp-bridge-adapters.js");
+const provider = require("./src/lib/actions/sandbox/mcp-bridge-provider.js");
+const state = require("./src/lib/actions/sandbox/mcp-bridge-state.js");
+const sourceState = require("./src/lib/actions/sandbox/mcp-bridge-source.js");
+const validation = require("./src/lib/actions/sandbox/mcp-bridge-validation.js");
+replace(adapters, "assertAgentMcpMutationRuntimeCapability", () => {});
+replace(adapters, "inspectAgentAdapterRegistration", () => ({ state: "absent" }));
+replace(state, "ensureSandboxGatewaySelected", async () => {});
+replace(validation, "assertMcpCredentialBoundaryRuntimeVersion", () => {});
+replace(provider, "assertNoProviderCredentialCollisions", () => {});
+replace(provider, "getMcpProviderInspectionRuntimeSelection", () => ({
+  gatewayName: "nemoclaw-9090", workspace: "default",
+}));
+replace(provider, "inspectMcpProvider", () => ({
+  credentialKeys: ["GITHUB_TOKEN"], exists: true,
+  id: "11111111-2222-4333-8444-555555555555", resourceVersion: 7,
+  type: "nemoclaw-mcp-v1",
+}));
+replace(sourceState, "inspectSourceBridgeState", () => ({
+  bridges: {}, sources: { native: {}, legacy: {} },
+}));
+registry.registerSandbox({
+  name: "alpha", agent: "openclaw", gatewayName: "nemoclaw-9090", gatewayPort: 9090,
+});
+require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
+  server: "github",
+  url: "https://8.8.8.8/mcp",
+  env: [{ name: "GITHUB_TOKEN" }],
+}).then(() => process.exit(2), (error) => {
+  process.stdout.write(String(error && error.message ? error.message : error), () => process.exit(0));
+});
+`;
+    try {
+      const result = spawnSync(process.execPath, ["-e", script], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          HOME: home,
+          NODE_OPTIONS: [process.env.NODE_OPTIONS, `--require=${sourceRequireHook}`]
+            .filter(Boolean)
+            .join(" "),
+        },
+        timeout: 30_000,
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("could not prove provider 'alpha-mcp-github' absent");
+      expect(result.stdout).toContain("No source was changed");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("rejects mixed answers and an unused trusted-private option (#8267)", async () => {
     const lookup = vi.spyOn(dns, "lookup");
     try {

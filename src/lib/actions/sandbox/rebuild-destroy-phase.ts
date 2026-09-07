@@ -299,7 +299,6 @@ export async function runRebuildDestroyPhase(
       const preparation = await prepareMcpForRebuild(
         sandboxName,
         staleRecovery,
-        input.force === true,
         bail,
         input.runtimeSelection,
       );

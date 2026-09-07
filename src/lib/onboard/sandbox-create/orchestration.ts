@@ -121,6 +121,35 @@ export function bindRebuildPolicyProvidersToCreateArgs(
  * it references already belongs to the exact create, messaging, or managed MCP
  * replacement transaction.
  */
+function parseRebuildPolicyProviderNames(policyDocument: string): string[] {
+  const providers = new Set<string>();
+  const parsed = YAML.parse(policyDocument) as {
+    network_policies?: Record<string, { endpoints?: unknown[] }>;
+  } | null;
+  for (const policy of Object.values(parsed?.network_policies ?? {})) {
+    for (const endpoint of Array.isArray(policy?.endpoints) ? policy.endpoints : []) {
+      if (!endpoint || typeof endpoint !== "object" || Array.isArray(endpoint)) continue;
+      const value = endpoint as {
+        protocol?: unknown;
+        credential_binding?: { provider?: unknown };
+      };
+      const provider = value.credential_binding?.provider;
+      if (value.protocol === "mcp" && typeof provider === "string" && provider) {
+        providers.add(provider);
+      }
+    }
+  }
+  return [...providers];
+}
+
+export function readValidatedRebuildPolicySource(policySourcePath: string): {
+  readonly document: string;
+  readonly providers: readonly string[];
+} {
+  const document = fs.readFileSync(policySourcePath, "utf8");
+  return { document, providers: parseRebuildPolicyProviderNames(document) };
+}
+
 export function resolveRebuildPolicyProviderAuthority(input: {
   readonly createArgs: readonly string[];
   readonly messagingPlan:
@@ -128,6 +157,7 @@ export function resolveRebuildPolicyProviderAuthority(input: {
     | null
     | undefined;
   readonly policyDocument?: string | null;
+  readonly policyProviders?: readonly string[];
 }): string[] {
   const providers = new Set(
     input.createArgs.flatMap((value, index, args) =>
@@ -139,24 +169,9 @@ export function resolveRebuildPolicyProviderAuthority(input: {
     if (disabledChannels.has(binding.channelId)) continue;
     providers.add(binding.providerName);
   }
-  if (input.policyDocument) {
-    const parsed = YAML.parse(input.policyDocument) as {
-      network_policies?: Record<string, { endpoints?: unknown[] }>;
-    } | null;
-    for (const policy of Object.values(parsed?.network_policies ?? {})) {
-      for (const endpoint of Array.isArray(policy?.endpoints) ? policy.endpoints : []) {
-        if (!endpoint || typeof endpoint !== "object" || Array.isArray(endpoint)) continue;
-        const value = endpoint as {
-          protocol?: unknown;
-          credential_binding?: { provider?: unknown };
-        };
-        const provider = value.credential_binding?.provider;
-        if (value.protocol === "mcp" && typeof provider === "string" && provider) {
-          providers.add(provider);
-        }
-      }
-    }
-  }
+  for (const provider of input.policyProviders ??
+    (input.policyDocument ? parseRebuildPolicyProviderNames(input.policyDocument) : []))
+    providers.add(provider);
   return [...providers];
 }
 
@@ -269,6 +284,7 @@ export function selectRebuildCreatePolicy(
   messagingConfig: MessagingChannelConfig | null | undefined,
   sandboxName: string,
   authorizedCredentialBindingProviders: readonly string[],
+  policySource?: string,
 ): import("../initial-policy").InitialSandboxPolicy {
   const requiredNetworkPolicySources = requiredNetworkPolicyPresetNames.map((presetName) => {
     const source = loadMessagingChannelPolicyPreset(presetName, {
@@ -286,6 +302,7 @@ export function selectRebuildCreatePolicy(
   return materializeRebuildPolicyHandoff({
     sandboxName,
     livePolicyPath: policySourcePath,
+    ...(policySource === undefined ? {} : { livePolicySource: policySource }),
     replacementPolicy: generatedPolicy,
     requiredNetworkPolicyKeys,
     removedNetworkPolicyKeys,
@@ -1646,6 +1663,21 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       prepareWorkload: ensurePreparedSandboxWorkload,
     });
     const apfInterceptorRequested = createIntent?.apfInterceptorRequested === true;
+    let capturedRebuildPolicySource:
+      | { readonly document: string; readonly providers: readonly string[] }
+      | null
+      | undefined;
+    const captureRebuildPolicySource = () => {
+      if (capturedRebuildPolicySource !== undefined) return capturedRebuildPolicySource;
+      if (!createIntent?.rebuildPolicySourcePath) {
+        capturedRebuildPolicySource = null;
+        return capturedRebuildPolicySource;
+      }
+      capturedRebuildPolicySource = readValidatedRebuildPolicySource(
+        createIntent.rebuildPolicySourcePath,
+      );
+      return capturedRebuildPolicySource;
+    };
     let verifiedCreateBoundary: VerifiedSandboxCreateBoundary | null = null;
     let pendingCreateIdentity: PendingSandboxCreateIdentity | null = null;
     let admittedCreateReservation: QualifiedPendingSandboxCreateReservation | null = null;
@@ -2031,6 +2063,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         pendingStateRestore = result.backup;
       }
 
+      // Parse and freeze the rebuild policy while the source sandbox is still
+      // intact. A malformed or raced policy must not fail after deletion.
+      captureRebuildPolicySource();
       managedStateVolumeLifecycle = prepareManagedStateVolumeLifecycle(preparedSandboxWorkload);
       note(`  Deleting and recreating sandbox '${sandboxName}'...`);
 
@@ -2293,13 +2328,17 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       explicitlyRequested: createIntent?.observabilityRequestedExplicitly,
       tierName: createIntent?.policyTier,
     });
+    const rebuildPolicySource = captureRebuildPolicySource();
+    const rebuildPolicyDocument =
+      rebuildPolicySource?.document ??
+      materializedInitialSandboxPolicy.sourceBytes?.toString("utf8") ??
+      fs.readFileSync(materializedInitialSandboxPolicy.policyPath, "utf8");
     const rebuildPolicyProviderAuthority = resolveRebuildPolicyProviderAuthority({
       createArgs: materializedCreateArgv,
       messagingPlan: plannedMessagingState?.plan,
-      policyDocument: createIntent?.rebuildPolicySourcePath
-        ? fs.readFileSync(createIntent.rebuildPolicySourcePath, "utf8")
-        : (materializedInitialSandboxPolicy.sourceBytes?.toString("utf8") ??
-          fs.readFileSync(materializedInitialSandboxPolicy.policyPath, "utf8")),
+      ...(rebuildPolicySource
+        ? { policyProviders: rebuildPolicySource.providers }
+        : { policyDocument: rebuildPolicyDocument }),
     });
     const initialSandboxPolicy = createIntent?.rebuildPolicySourcePath
       ? selectRebuildCreatePolicy(
@@ -2318,6 +2357,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           effectiveMessagingConfig,
           sandboxName,
           rebuildPolicyProviderAuthority,
+          rebuildPolicySource?.document,
         )
       : materializedInitialSandboxPolicy;
     const createArgv = createIntent?.rebuildPolicySourcePath

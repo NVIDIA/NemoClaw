@@ -115,25 +115,28 @@ The bare `mcp list` and `mcp status` forms never probe, so they stay fast. Endpo
 
 ## Rotate a Credential
 
-Export the replacement under the same host environment name used by `mcp add`, then restart that server:
+Export the replacement under the same host environment name used by `mcp add`, remove the native registration, and add it again so NemoClaw creates a fresh provider binding:
 
 ```bash
 export GITHUB_MCP_TOKEN='replacement-value'
-$$nemoclaw my-sandbox mcp restart github
+$$nemoclaw my-sandbox mcp remove github
+$$nemoclaw my-sandbox mcp add github \
+  --url https://api.githubcopilot.com/mcp/ \
+  --env GITHUB_MCP_TOKEN
 unset GITHUB_MCP_TOKEN
 ```
 
-`restart` imports or verifies the endpointless `nemoclaw-mcp-v1` profile, applies the generated policy without a credential binding, updates or reuses the provider, and attaches it. It then applies the endpoint-bound policy, waits for credential readiness, and refreshes the adapter. An ambiguous or failed update is not treated as successful merely because another writer advanced the provider revision.
+`remove` deletes the agent-native registration and detaches the exact managed provider, but conservatively preserves the provider object. Remove that preserved provider explicitly after confirming no sandbox uses it; then `add` creates a new provider with the replacement credential and reconnects the native registration.
 
-For a trusted-private entry, restart replays the exact address pins recorded by `mcp add`. It does not resolve that endpoint again or widen its policy from ambient DNS. For a public entry, restart resolves the hostname again and refreshes the generated policy with the current validated public addresses.
+For a trusted-private entry, pass the same reviewed `--trusted-private-host` value to `add`; NemoClaw resolves and records the replacement pins again. For a public entry, `add` resolves the hostname and creates a policy for the current validated public addresses.
 
-The raw value passes only through the OpenShell provider command's process environment and is not added to argv, NemoClaw state, or sandbox config. Revoke the old credential upstream after restart succeeds.
+The raw value passes only through the OpenShell provider command's process environment and is not added to argv, NemoClaw state, or sandbox config. Revoke the old credential upstream after the new add succeeds.
 
 If the provider was deleted, restart reports the source as unbound. Remove and add the server again when you intend to create a replacement provider.
 
 Restart follows the live policy credential binding and reloads only when the current provider ID, type, attachment, and credential-key metadata agree with the agent registration. It does not recreate or update the provider and does not reapply policy. If a source is missing or conflicting, repair it explicitly or remove and add the server again.
 
-Running restart without a server name refreshes every managed server. Export only the variables whose credentials you intend to replace.
+Running restart without a server name validates and reloads every managed server at its current credential revision. It does not rotate credentials.
 
 ## Change Endpoint Pins
 

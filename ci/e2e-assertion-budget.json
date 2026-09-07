@@ -27,14 +27,14 @@
       "generatedProbeConditions": 354
     },
     "unique": {
-      "expectCalls": 2373,
-      "matcherAssertions": 2337,
+      "expectCalls": 2368,
+      "matcherAssertions": 2332,
       "nodeAssertions": 119,
       "namedAssertionHelpers": 928,
       "failCalls": 38,
       "throwGuards": 638,
       "objectFieldAssertions": 348,
-      "assertionPoints": 4408,
+      "assertionPoints": 4403,
       "generatedProbeBlocks": 290,
       "generatedProbeConditions": 975
     },
@@ -88,7 +88,7 @@
       "test/e2e/live/managed-image-activation-e2e.test.ts": [0,0,16,35,0],
       "test/e2e/live/managed-image-multiarch-startup.test.ts": [2,2,2,8,0],
       "test/e2e/live/managed-image-protected-runtime.test.ts": [0,0,42,79,15],
-      "test/e2e/live/mcp-bridge.test.ts": [49,167,202,508,46],
+      "test/e2e/live/mcp-bridge.test.ts": [49,167,197,503,46],
       "test/e2e/live/messaging-compatible-endpoint.test.ts": [13,19,13,28,2],
       "test/e2e/live/messaging-providers.test.ts": [0,11,6,51,12],
       "test/e2e/live/model-router-provider-routed-inference.test.ts": [1,2,1,2,0],

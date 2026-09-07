@@ -26,6 +26,10 @@ describe("sandbox MCP oclif command", () => {
     await SandboxMcpCommand.run(["alpha", "list"], rootDir);
 
     expect(mocks.moduleLoaded).toHaveBeenCalledOnce();
-    expect(mocks.dispatchMcpBridgeCommand).toHaveBeenCalledWith("alpha", ["list"]);
+    expect(mocks.dispatchMcpBridgeCommand).toHaveBeenCalledWith(
+      "alpha",
+      ["list"],
+      expect.objectContaining({ rebuildForMigration: expect.any(Function) }),
+    );
   });
 });

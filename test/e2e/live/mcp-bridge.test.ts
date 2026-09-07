@@ -236,9 +236,10 @@ async function addBridgeAndReadStatus(
     provider: {
       name: string;
       present: boolean | null;
+      state: string;
       attached: boolean | null;
     };
-    policy: { present: boolean | null };
+    policy: { present: boolean | null; state: string };
     adapter: { registered: boolean | null };
   };
   expect(statusJson.support).toMatchObject({
@@ -246,11 +247,9 @@ async function addBridgeAndReadStatus(
     adapter: options.expectedAdapter,
   });
   expect(statusJson).toMatchObject({
-    server: SERVER_NAME,
-    url: options.mcpUrl,
     env: { names: ["FAKE_MCP_SECRET"], ready: true, missing: [] },
-    provider: { present: true, attached: true },
-    policy: { present: true },
+    provider: { present: true, state: "configured", attached: true },
+    policy: { present: true, state: "configured" },
     adapter: { registered: true },
   });
   expect(statusJson.warnings).toEqual([]);

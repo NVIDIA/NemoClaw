@@ -113,6 +113,10 @@ const HERMES_RESTART_SETTLEMENT_FIELD_MISMATCHES: Array<
     "provider source is incomplete",
     (payload) => Object.assign(payload.provider, { present: false }),
   ],
+  [
+    "provider source is not configured",
+    (payload) => Object.assign(payload.provider, { state: "conflict" }),
+  ],
   ["provider is detached", (payload) => Object.assign(payload.provider, { attached: false })],
   [
     "provider credential is not ready",
@@ -133,6 +137,10 @@ const HERMES_RESTART_SETTLEMENT_FIELD_MISMATCHES: Array<
   [
     "policy source is incomplete",
     (payload) => Object.assign(payload.policy, { present: false }),
+  ],
+  [
+    "policy source is not configured",
+    (payload) => Object.assign(payload.policy, { state: "conflict" }),
   ],
   [
     "adapter registration is resolved",

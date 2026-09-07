@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { AgentMcpAdapter } from "../../agent/defs";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import { assertHermesPortableCommandUnavailable } from "../../onboard/experimental/portable-agent-lifecycle";
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
@@ -136,7 +135,7 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
         `MCP server '${name}' does not expose a revision-scoped OpenShell credential to the running agent.`,
       );
     }
-    const entryAdapter = (entry.adapter as AgentMcpAdapter | undefined) ?? adapter;
+    const entryAdapter = entry.adapter ?? adapter;
     registerAgentAdapterAtCurrentCredentialRevision(
       sandboxName,
       entryAdapter,
@@ -218,7 +217,7 @@ export async function restoreExistingMcpBridgeRuntime(
         runtimeSelection: providerRuntimeSelection,
       });
     }
-    const adapter = (entry.adapter as AgentMcpAdapter | undefined) ?? defaultAdapter;
+    const adapter = entry.adapter ?? defaultAdapter;
     refreshMcpProviderEnvironment(entry, providerRuntimeSelection);
     const credentialRevision = waitForAttachedMcpCredential(
       sandboxName,

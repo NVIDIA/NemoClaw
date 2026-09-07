@@ -39,10 +39,8 @@ export function observeMcpStateForRebuild(
   runtimeSelection: McpProviderInspectionRuntimeSelection | undefined,
   inspectCurrentSource: boolean,
 ): McpSourceEntry[] {
-  const bridges =
-    inspectCurrentSource && runtimeSelection
-      ? inspectSourceBridgeState(sandbox, runtimeSelection).bridges
-      : {};
+  if (!inspectCurrentSource || !runtimeSelection) return Object.values(bridgeState(sandbox));
+  const bridges = inspectSourceBridgeState(sandbox, runtimeSelection).bridges;
   hydrateBridgeState(sandbox.name, bridges);
   return Object.values(bridges);
 }
@@ -62,12 +60,10 @@ export function resolveMcpPreparationRuntimeSelection(
 export async function prepareMcpForRebuild(
   sandboxName: string,
   staleRecovery: boolean,
-  force: boolean,
   bail: RebuildBail,
   frozenRuntimeSelection?: McpProviderInspectionRuntimeSelection,
 ): Promise<McpRebuildPreparation | null> {
   const sandbox = staleRecovery ? undefined : registry.getSandbox(sandboxName);
-  void force;
   const runtimeSelection =
     frozenRuntimeSelection ??
     (staleRecovery ? undefined : resolveMcpPreparationRuntimeSelection(sandboxName));
@@ -104,18 +100,6 @@ export async function reattachMcpAfterDeleteFailure(
   } catch (error) {
     return error instanceof Error ? error.message : String(error);
   }
-}
-
-export function retainMcpHandoffForRebuildRetry(
-  staleRecovery: boolean,
-  entries: McpRebuildPreparation["entries"],
-  original: RebuildSandboxEntry,
-  log: (message: string) => void,
-): void {
-  void staleRecovery;
-  void entries;
-  void original;
-  log("Recreate failed: preserved source-derived MCP handoff for retry");
 }
 
 export function printMcpRebuildRetryCommand(

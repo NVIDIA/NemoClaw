@@ -12,13 +12,10 @@ import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import {
   buildOpenClawMcpRegisterCommand,
   buildOpenClawMcpRemoveCommand,
+  buildStrictOpenClawMcpInspectCommand,
   MCPORTER_VERSION,
 } from "./mcp-bridge-adapter-openclaw";
-import {
-  buildOpenClawMcpInspectCommand,
-  entryHeaders,
-  openClawHeadersMatchExpected,
-} from "./mcp-bridge-adapter-status";
+import { entryHeaders, openClawHeadersMatchExpected } from "./mcp-bridge-adapter-status";
 
 const entry: McpSourceEntry = {
   server: "github",
@@ -53,9 +50,13 @@ describe("OpenClaw native MCP adapter", () => {
           },
         },
       });
-      const inspection = run(buildOpenClawMcpInspectCommand(entry, true, root));
+      const inspection = run(buildStrictOpenClawMcpInspectCommand(entry, true, root));
       expect(inspection.status).toBe(0);
       expect(inspection.stdout.trim()).toBe("registered");
+      const revisioned = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      revisioned.mcp.servers.github.headers.Authorization =
+        "Bearer openshell:resolve:env:v12_GITHUB_TOKEN";
+      fs.writeFileSync(configPath, JSON.stringify(revisioned), { mode: 0o600 });
       expect(run(buildOpenClawMcpRemoveCommand(entry, false, root)).status).toBe(0);
       expect(JSON.parse(fs.readFileSync(configPath, "utf8"))).toEqual({
         preserved: true,

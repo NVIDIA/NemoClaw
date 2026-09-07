@@ -75,7 +75,12 @@ function readCommittedLegacyRegistryEntries(
   if (!isObjectRecord(rawState.bridges)) return {};
   const entries: Record<string, McpSourceEntry> = {};
   for (const [server, raw] of Object.entries(rawState.bridges)) {
-    if (!/^[A-Za-z][A-Za-z0-9_-]{0,63}$/u.test(server) || !isObjectRecord(raw)) continue;
+    if (!/^[A-Za-z][A-Za-z0-9_-]{0,63}$/u.test(server) || !isObjectRecord(raw)) {
+      throw new McpBridgeError(
+        `Legacy MCP registry server '${server}' is not a valid committed registration. No source was changed.`,
+        2,
+      );
+    }
     if (raw.addState !== undefined) {
       throw new McpBridgeError(
         `Legacy MCP registry server '${server}' contains an incomplete add transaction. No source was changed.`,
@@ -114,7 +119,7 @@ function readCommittedLegacyRegistryEntries(
         2,
       );
     }
-    if ((url.protocol !== "http:" && url.protocol !== "https:") || url.username || url.password) {
+    if (url.protocol !== "https:" || url.username || url.password) {
       throw new McpBridgeError(
         `Legacy MCP registry server '${server}' has an unsupported URL. No source was changed.`,
         2,
@@ -178,20 +183,23 @@ export async function migrateMcpBridges(
         2,
       );
     }
-    const items = entries.map((entry): McpMigrationItem => ({
-      server: entry.server,
-      agent: entry.agent,
-      source: entry.source === "legacy-registry" ? "legacy-registry" : "legacy-agent",
-      destination: "native",
-      url: entry.url,
-      credentialEnv: entry.env[0] ?? null,
-      policyName: entry.policyName,
-      policyPresent: getPolicyPresence(sandboxName, entry, runtimeSelection),
-      providerName: entry.providerName ?? null,
-      providerAttached: providerAttached(sandboxName, entry.providerName, runtimeSelection),
-      activationChanges: adapter === "openclaw-config",
-      action: observed.sources.native[entry.server] ? "already-migrated" : "migrate",
-    }));
+    const items = entries.map((entry): McpMigrationItem => {
+      const action = observed.sources.native[entry.server] ? "already-migrated" : "migrate";
+      return {
+        server: entry.server,
+        agent: entry.agent,
+        source: entry.source === "legacy-registry" ? "legacy-registry" : "legacy-agent",
+        destination: "native",
+        url: entry.url,
+        credentialEnv: entry.env[0] ?? null,
+        policyName: entry.policyName,
+        policyPresent: getPolicyPresence(sandboxName, entry, runtimeSelection),
+        providerName: entry.providerName ?? null,
+        providerAttached: providerAttached(sandboxName, entry.providerName, runtimeSelection),
+        activationChanges: adapter === "openclaw-config" && action === "migrate",
+        action,
+      };
+    });
     if (!options.apply || entries.length === 0) {
       return { sandbox: sandboxName, items, applied: false };
     }
@@ -251,6 +259,7 @@ export async function migrateMcpBridges(
     }
 
     const created: McpSourceEntry[] = [];
+    let cleanupStarted = false;
     try {
       for (const entry of entries) {
         if (!observed.sources.native[entry.server]) {
@@ -273,6 +282,7 @@ export async function migrateMcpBridges(
           );
         }
         if (observed.sources.legacy[entry.server]) {
+          cleanupStarted = true;
           removeLegacyAgentMcpEntry(sandbox, entry, runtimeSelection);
         }
       }
@@ -281,15 +291,17 @@ export async function migrateMcpBridges(
       registry.updateSandbox(sandboxName, {});
       return { sandbox: sandboxName, items, applied: true };
     } catch (error) {
-      for (const entry of created.reverse()) {
-        try {
-          unregisterAgentAdapter(sandboxName, adapter, entry, runtimeSelection, {
-            force: true,
-            bestEffort: true,
-          });
-        } catch {
-          // The original legacy source is retained; a rerun reports the exact
-          // native/legacy conflict instead of guessing at cleanup authority.
+      if (!cleanupStarted) {
+        for (const entry of created.reverse()) {
+          try {
+            unregisterAgentAdapter(sandboxName, adapter, entry, runtimeSelection, {
+              force: true,
+              bestEffort: true,
+            });
+          } catch {
+            // The original legacy source is retained; a rerun reports the exact
+            // native/legacy conflict instead of guessing at cleanup authority.
+          }
         }
       }
       throw error;

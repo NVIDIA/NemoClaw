@@ -36,7 +36,7 @@ export interface ParsedMcpAddArgs {
 export interface McpSourceEntry {
   server: string;
   agent: string;
-  adapter?: string;
+  adapter?: AgentMcpAdapter;
   url: string;
   env: string[];
   trustedPrivateHost?: string;

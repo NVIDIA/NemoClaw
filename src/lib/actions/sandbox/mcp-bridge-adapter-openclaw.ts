@@ -10,9 +10,9 @@ import {
   inspectAdapterRegistrationCommand,
 } from "./mcp-bridge-adapter-inspection";
 import {
-  buildOpenClawMcpInspectCommand,
   DEFAULT_OPENCLAW_CONFIG_DIR,
   entryHeaders,
+  openClawHeaderMatcherSource,
   OPENCLAW_MCP_CONFIG_DIR,
   openClawConfigDir,
   pythonJsonLiteral,
@@ -59,6 +59,34 @@ function atomicOpenClawConfigHelpers(): string[] {
   ];
 }
 
+export function buildStrictOpenClawMcpInspectCommand(
+  entry: McpSourceEntry,
+  failOnMismatch: boolean,
+  root = OPENCLAW_MCP_CONFIG_DIR,
+  credentialRevision?: McpAttachedCredentialRevision,
+): string {
+  const payload = {
+    server: entry.server,
+    url: entry.url,
+    headers: entryHeaders(entry, credentialRevision),
+    failOnMismatch,
+    configPath: openClawConfigPath(root),
+  };
+  return [
+    "node - <<'NODE'",
+    ...atomicOpenClawConfigHelpers(),
+    `const expected = JSON.parse(${pythonJsonLiteral(payload)});`,
+    "let actual; try { const current = readConfig(expected.configPath); actual = current.data && current.data.mcp && current.data.mcp.servers && current.data.mcp.servers[expected.server]; } catch (error) { console.error(error instanceof Error ? error.message : String(error)); process.exit(3); }",
+    "if (!actual) { console.log('absent'); process.exit(0); }",
+    'const headers = actual.headers && typeof actual.headers === "object" ? actual.headers : {};',
+    openClawHeaderMatcherSource(),
+    'const registered = actual.url === expected.url && openClawHeadersMatchExpected(headers, expected.headers);',
+    'console.log(registered ? "registered" : "mismatch");',
+    "if (!registered && expected.failOnMismatch) process.exit(2);",
+    "NODE",
+  ].join("\n");
+}
+
 export function buildOpenClawMcpRegisterCommand(
   entry: McpSourceEntry,
   replaceExisting = false,
@@ -79,7 +107,7 @@ export function buildOpenClawMcpRegisterCommand(
     "const current = readConfig(payload.configPath);",
     "if (current.data.mcp !== undefined && (!current.data.mcp || typeof current.data.mcp !== 'object' || Array.isArray(current.data.mcp))) throw new Error('OpenClaw mcp configuration must be an object');",
     "const mcp = current.data.mcp || {}; if (mcp.servers !== undefined && (!mcp.servers || typeof mcp.servers !== 'object' || Array.isArray(mcp.servers))) throw new Error('OpenClaw mcp.servers configuration must be an object');",
-    "const servers = { ...(mcp.servers || {}) }; if (Object.hasOwn(servers, payload.server) && !payload.replaceExisting) { console.error(`MCP server '${payload.server}' already exists in OpenClaw configuration.`); process.exit(2); }",
+    'const servers = { ...(mcp.servers || {}) }; if (Object.hasOwn(servers, payload.server) && !payload.replaceExisting) { console.error("MCP server \'" + payload.server + "\' already exists in OpenClaw configuration."); process.exit(2); }',
     "servers[payload.server] = payload.value; current.data.mcp = { ...mcp, servers }; writeConfig(payload.configPath, current.data, current.identity);",
     "NODE",
   ].join("\n");
@@ -101,8 +129,9 @@ export function buildOpenClawMcpRemoveCommand(
     "node - <<'NODE'",
     ...atomicOpenClawConfigHelpers(),
     `const expected = JSON.parse(${pythonJsonLiteral(payload)});`,
+    openClawHeaderMatcherSource(),
     "const current = readConfig(expected.configPath); const mcp = current.data.mcp; const servers = mcp && mcp.servers; if (!servers || typeof servers !== 'object' || Array.isArray(servers) || !Object.hasOwn(servers, expected.server)) process.exit(0);",
-    "const actual = servers[expected.server]; const exact = actual && typeof actual === 'object' && actual.url === expected.url && JSON.stringify(actual.headers || {}) === JSON.stringify(expected.headers || {}); if (!exact && !expected.force) { console.error(`Refusing to remove modified OpenClaw MCP server '${expected.server}'. Use --force to remove it.`); process.exit(2); }",
+    'const actual = servers[expected.server]; const exact = actual && typeof actual === "object" && actual.url === expected.url && openClawHeadersMatchExpected(actual.headers || {}, expected.headers || {}); if (!exact && !expected.force) { console.error("Refusing to remove modified OpenClaw MCP server \'" + expected.server + "\'. Use --force to remove it."); process.exit(2); }',
     "delete servers[expected.server]; current.data.mcp = { ...mcp, servers }; writeConfig(expected.configPath, current.data, current.identity);",
     "NODE",
   ].join("\n");
@@ -117,7 +146,7 @@ export function inspectOpenClawAdapterRegistration(
   return inspectAdapterRegistrationCommand(
     sandboxName,
     entry,
-    buildOpenClawMcpInspectCommand(entry, false, root),
+    buildStrictOpenClawMcpInspectCommand(entry, false, root),
     runtimeSelection,
   );
 }
@@ -150,7 +179,7 @@ export function registerOpenClawAdapter(
   // opaque OpenShell placeholder NemoClaw intended.
   const verification = executeSandboxCommand(
     sandboxName,
-    buildOpenClawMcpInspectCommand(entry, true, root, credentialRevision),
+    buildStrictOpenClawMcpInspectCommand(entry, true, root, credentialRevision),
     { runtimeSelection },
   );
   const verificationOutput = redactBridgeSecretsForDisplay(

@@ -112,9 +112,11 @@ export async function removeMcpBridge(
           `Provider '${entry.providerName}' could not be proven as the current exact MCP provider and was preserved.`,
         );
       }
-      console.warn(
-        `  Preserved OpenShell provider '${entry.providerName}'. Remove it explicitly after confirming no sandbox uses it.`,
-      );
+      if (provider.exists !== false) {
+        console.warn(
+          `  Preserved OpenShell provider '${entry.providerName}'. Remove it explicitly after confirming no sandbox uses it.`,
+        );
+      }
     }
 
     removeBridgeEntry(sandboxName, server);

@@ -31,7 +31,7 @@ import { renderMcpBridgeList, renderMcpBridgeStatus } from "./mcp-bridge-render"
 import { credentialResolutionWarning } from "./mcp-bridge-resolution-probe";
 import { restartMcpBridge as restartMcpBridgeLifecycle } from "./mcp-bridge-restart";
 import { getMcpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider";
-import { inspectLegacyBridgeState, inspectSourceBridgeState } from "./mcp-bridge-source";
+import { inspectSourceBridgeState, joinMcpEntriesToOpenShell } from "./mcp-bridge-source";
 import { getSandboxAgent, getSandboxOrThrow, hydrateBridgeState } from "./mcp-bridge-state";
 import { buildJsonSummary, statusMcpBridge } from "./mcp-bridge-status";
 import { parseMcpAddArgs } from "./mcp-bridge-validation";
@@ -106,7 +106,12 @@ function hydrateCurrentBridgeState(
   }
   const bridges = options.allowLegacyHandoff
     ? {
-        ...inspectLegacyBridgeState(sandbox, selected).bridges,
+        ...joinMcpEntriesToOpenShell(
+          sandbox,
+          observed.sources.legacy,
+          selected,
+          "inspect legacy MCP migration state",
+        ),
         ...observed.bridges,
       }
     : observed.bridges;
@@ -140,8 +145,6 @@ export async function prepareMcpBridgesForAbsentSandboxDestroy(
     runtimeSelection?: McpProviderInspectionRuntimeSelection;
   } = {},
 ): Promise<McpDestroyPreparation> {
-  if (options.runtimeSelection)
-    hydrateCurrentBridgeState(sandboxName, options.runtimeSelection, { allowLegacyHandoff: true });
   return prepareMcpBridgesForAbsentSandboxDestroyLifecycle(sandboxName, options);
 }
 
@@ -152,7 +155,6 @@ export async function prepareMcpBridgesForDestroy(
     runtimeSelection?: McpProviderInspectionRuntimeSelection;
   } = {},
 ): Promise<McpDestroyPreparation> {
-  hydrateCurrentBridgeState(sandboxName, options.runtimeSelection, { allowLegacyHandoff: true });
   return prepareMcpBridgesForDestroyLifecycle(sandboxName, options);
 }
 
@@ -175,8 +177,6 @@ export async function prepareMcpBridgesForAbsentSandboxRebuild(
   sandboxName: string,
   runtimeSelection?: McpProviderInspectionRuntimeSelection,
 ): Promise<McpRebuildPreparation> {
-  if (runtimeSelection)
-    hydrateCurrentBridgeState(sandboxName, runtimeSelection, { allowLegacyHandoff: true });
   return prepareMcpBridgesForAbsentSandboxRebuildLifecycle(sandboxName, runtimeSelection);
 }
 

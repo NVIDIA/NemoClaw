@@ -95,6 +95,20 @@ describe("explicit MCP migration", () => {
     expect(mocks.removeLegacy).not.toHaveBeenCalled();
   });
 
+  it("does not report activation for an already-native OpenClaw entry", async () => {
+    mocks.inspectLegacy.mockReturnValue({
+      bridges: { github: entry },
+      sources: {
+        native: { github: { ...entry, source: "native" } },
+        legacy: { github: entry },
+      },
+    });
+
+    await expect(migrateMcpBridges("alpha")).resolves.toMatchObject({
+      items: [{ server: "github", action: "already-migrated", activationChanges: false }],
+    });
+  });
+
   it("materializes native config, verifies it, then retires legacy state", async () => {
     await expect(migrateMcpBridges("alpha", { apply: true })).resolves.toMatchObject({
       applied: true,
@@ -145,5 +159,43 @@ describe("explicit MCP migration", () => {
       items: [{ server: "github", source: "legacy-registry", action: "migrate" }],
     });
     expect(mocks.register).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["invalid server name", "not valid!", entry.url],
+    ["cleartext URL", "github", "http://api.githubcopilot.com/mcp/"],
+  ])("rejects a committed registry row with an %s", async (_label, server, url) => {
+    mocks.inspectLegacy.mockReturnValue({
+      bridges: {},
+      sources: { native: {}, legacy: {} },
+    });
+    mocks.readConfig.mockReturnValue({
+      sandboxes: {
+        alpha: {
+          mcp: {
+            bridges: {
+              [server]: { ...entry, server, url, adapter: "mcporter", source: undefined },
+            },
+          },
+        },
+      },
+    });
+
+    await expect(migrateMcpBridges("alpha", { apply: true })).rejects.toThrow(
+      /not a valid committed registration|unsupported URL/i,
+    );
+    expect(mocks.register).not.toHaveBeenCalled();
+  });
+
+  it("preserves a verified native entry once legacy cleanup has started", async () => {
+    mocks.removeLegacy.mockImplementationOnce(() => {
+      throw new Error("legacy cleanup failed");
+    });
+
+    await expect(migrateMcpBridges("alpha", { apply: true })).rejects.toThrow(
+      "legacy cleanup failed",
+    );
+    expect(mocks.register).toHaveBeenCalledOnce();
+    expect(mocks.unregister).not.toHaveBeenCalled();
   });
 });

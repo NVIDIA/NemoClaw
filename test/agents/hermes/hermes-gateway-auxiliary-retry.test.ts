@@ -62,7 +62,6 @@ describe("Hermes gateway auxiliary retry", () => {
       'hermes_gateway_healthy() { trace "health:$1"; return 0; }',
       'ensure_hermes_supervised_auxiliaries() { auxiliary_calls=$((auxiliary_calls + 1)); trace "auxiliary:$auxiliary_calls"; [ "$auxiliary_calls" -ge 3 ]; }',
       "finalize_tirith_marker_retry() { trace tirith-finalize; }",
-      "commit_hermes_mcp_applied_if_pending() { trace commit-applied; return 0; }",
       "refresh_hermes_supervised_child_pids() { trace refresh; }",
       'hermes_stop_tracked_role() { trace "unexpected-stop:$2"; return 1; }',
       "mark_hermes_gateway_stopped() { trace unexpected-mark; }",
@@ -94,7 +93,6 @@ describe("Hermes gateway auxiliary retry", () => {
       "identity:6001",
       "health:6001",
       "tirith-finalize",
-      "commit-applied",
       "refresh",
       "launch-count:1",
     ]);

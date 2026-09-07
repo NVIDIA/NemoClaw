@@ -78,7 +78,7 @@ async function liveMcpCollisionFailure(
     ]);
   }
   for (const providerName of inventory.value.names) {
-    if (providerName === provider || !providerName.includes("-mcp-")) continue;
+    if (providerName === provider) continue;
     const inspection = await providerAdapter.getProvider({
       target,
       providerName,

@@ -286,13 +286,14 @@ export function mergeReplacementPolicyAccess(
 export function materializeRebuildPolicyHandoff(input: {
   readonly sandboxName?: string;
   readonly livePolicyPath: string;
+  readonly livePolicySource?: string;
   readonly replacementPolicy: InitialSandboxPolicy;
   readonly requiredNetworkPolicyKeys?: readonly string[];
   readonly removedNetworkPolicyKeys?: readonly string[];
   readonly requiredNetworkPolicySources?: readonly string[];
   readonly authorizedCredentialBindingProviders?: readonly string[];
 }): InitialSandboxPolicy {
-  const liveSource = fs.readFileSync(input.livePolicyPath, "utf8");
+  const liveSource = input.livePolicySource ?? fs.readFileSync(input.livePolicyPath, "utf8");
   const replacementSource =
     input.replacementPolicy.sourceBytes?.toString("utf8") ??
     fs.readFileSync(input.replacementPolicy.policyPath, "utf8");

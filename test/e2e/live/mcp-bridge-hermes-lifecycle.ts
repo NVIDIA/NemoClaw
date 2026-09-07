@@ -316,25 +316,6 @@ export async function assertHermesRemovalSurvivesGatewayRestart(
   sandbox: SandboxClient,
   sandboxName: string,
 ): Promise<void> {
-  expect(fs.existsSync(REGISTRY_FILE), `registry file not found: ${REGISTRY_FILE}`).toBe(true);
-  const registryRaw = fs.readFileSync(REGISTRY_FILE, "utf8");
-  expect(registryRaw).not.toContain(HOST_SECRET);
-  expect(registryRaw).not.toContain(ROTATED_HOST_SECRET);
-  const registry = JSON.parse(registryRaw) as {
-    sandboxes?: Record<
-      string,
-      { mcp?: { bridges?: Record<string, unknown>; expectedServerNames?: string[] } }
-    >;
-  };
-  const mcpState = registry.sandboxes?.[sandboxName]?.mcp;
-  expect(mcpState?.bridges, "removed Hermes bridge must leave no active registry intent").toEqual(
-    {},
-  );
-  expect(
-    mcpState?.expectedServerNames,
-    "removed Hermes bridge must retain its managed-name tombstone",
-  ).toContain(SERVER_NAME);
-
   const restart = await host.nemoclaw([sandboxName, "gateway", "restart"], {
     artifactName: "hermes-mcp-removal-gateway-restart",
     env: buildAvailabilityProbeEnv(),

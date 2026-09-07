@@ -11,7 +11,6 @@ import {
   validateHermesCronRestoreBackup,
 } from "../../state/rebuild/hermes-cron-restore-backup";
 import { readRebuildPolicyHandoff, type RebuildManifest } from "../../state/sandbox";
-import { assertMcpDestroyNotPending } from "./mcp-bridge-state";
 import {
   preflightRebuildCredentials,
   type RebuildBail,
@@ -142,24 +141,6 @@ export async function runRebuildPreflightPhase(
   const sandboxEntry = getRebuildSandboxEntryOrBail(sandboxName, bail);
   if (!sandboxEntry) return null;
   if (blockRebuildOnRetainedSandboxRecovery(sandboxEntry, bail)) return null;
-  // #6376: refuse a stuck MCP destroy transaction up front — before backup,
-  // image prep, or the old-sandbox delete. The only MCP marker check used to
-  // live inside the destroy phase, which runs AFTER the backup phase, so a
-  // stuck sandbox paid destructive/backup cost before the guard fired. Moving
-  // it here fails closed before any destructive work; the guard's message is
-  // phase-aware (prepared -> non-destructive `mcp remove --force`; pending ->
-  // finish the destroy).
-  try {
-    assertMcpDestroyNotPending(sandboxEntry);
-  } catch (error) {
-    printRebuildPreflightFailure(
-      "a pending MCP destroy transaction blocks rebuild.",
-      "Resolve the pending MCP state before retrying rebuild.",
-      error instanceof Error ? error.message : String(error),
-      bail,
-    );
-    return null;
-  }
   const confirmedEntrySnapshot = JSON.stringify(sandboxEntry);
   const allowLegacyManagedImageRecovery =
     opts.recoveryManifest !== undefined && opts.allowLegacyManagedImageRecovery === true;

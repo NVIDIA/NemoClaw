@@ -658,7 +658,7 @@ describe("credential actions use typed OpenShell provider results", () => {
     expect(adapter.createProvider).toHaveBeenCalledOnce();
   });
 
-  it("rejects existing credentials whose inspected key overlaps a live MCP provider (#9806)", async () => {
+  it("rejects an overlapping key by managed type even without an MCP name marker (#9806)", async () => {
     const inspectProviderProfile = vi.fn<OpenShellProviderAdapter["inspectProviderProfile"]>(
       async () => ({ ok: true, value: { credentialKeys: ["MAAS_GLEAN_TOKEN"] } }),
     );
@@ -666,12 +666,12 @@ describe("credential actions use typed OpenShell provider results", () => {
       inspectProviderProfile,
       listProviders: vi.fn<OpenShellProviderAdapter["listProviders"]>(async () => ({
         ok: true,
-        value: { names: ["hermes-mcp-maas"] },
+        value: { names: ["destination-telegram-bridge"] },
       })),
       getProvider: vi.fn<OpenShellProviderAdapter["getProvider"]>(async () => ({
         ok: true,
         value: {
-          name: "hermes-mcp-maas",
+          name: "destination-telegram-bridge",
           type: "nemoclaw-mcp-v1",
           credentialKeys: ["MAAS_GLEAN_TOKEN"],
           configKeys: [],
@@ -692,7 +692,7 @@ describe("credential actions use typed OpenShell provider results", () => {
 
     expect(result.exitCode).toBe(1);
     expect(result.failureLines.join("\n")).toContain(
-      "Credential key 'MAAS_GLEAN_TOKEN' is already held by managed MCP provider 'hermes-mcp-maas'",
+      "Credential key 'MAAS_GLEAN_TOKEN' is already held by managed MCP provider 'destination-telegram-bridge'",
     );
     expect(adapter.inspectProviderProfile).toHaveBeenCalledOnce();
     expect(adapter.createProvider).not.toHaveBeenCalled();

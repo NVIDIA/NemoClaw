@@ -86,6 +86,8 @@ Do not recursively download `/sandbox/.deepagents/.state/`.
 That directory can contain upstream credential state such as `auth.json` and `chatgpt-auth.json`, which can copy secrets to the host and restore state that the managed launcher refuses.
 Use `$$nemoclaw <name> snapshot create` when you need NemoClaw's built-in sanitizer for Deep Agents runtime state.
 
+Do not manually transfer `/sandbox/.deepagents/.mcp.json`. Entries in that shared native file have entry-level ownership: user-authored credential-free entries belong to the workspace, while NemoClaw-managed entries contain OpenShell provider and policy bindings that are valid only for their source sandbox. Use a NemoClaw snapshot or the managed rebuild flow to preserve both classes safely. Run `$$nemoclaw <name> mcp migrate --apply` first if the sandbox still has legacy MCP state.
+
 </AgentOnly>
 
 ## Upload State
@@ -136,8 +138,8 @@ openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/skills/" /sandbox/.deepagents/s
 openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/agent-skills/" /sandbox/.deepagents/agent/skills/
 ```
 
-Do not upload saved `.deepagents/.state` contents during manual restore.
-Restore safe Deep Agents files only, including the credential-free native `.mcp.json`, then run the managed rebuild or onboarding flow so NemoClaw regenerates route metadata and reconnects MCP entries to live OpenShell policy and provider state.
+Do not upload saved `.deepagents/.state` or `.deepagents/.mcp.json` contents during manual restore.
+Restore only the safe files listed above. Use a NemoClaw snapshot or managed rebuild when native MCP entries must survive replacement, so NemoClaw can preserve user-owned entries and reconnect managed entries to live OpenShell policy and provider state.
 
 Treat downloaded `config.toml` as inspection context.
 Do not upload an old `config.toml` over a rebuilt sandbox unless you are intentionally replacing NemoClaw's generated route metadata.

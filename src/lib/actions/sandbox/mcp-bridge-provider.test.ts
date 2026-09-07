@@ -135,7 +135,7 @@ Provider:
     const entry: McpSourceEntry = {
       server: "github",
       agent: "openclaw",
-      adapter: "openclaw-config",
+      adapter: "openclaw-config" as const,
       url: "https://api.githubcopilot.com/mcp",
       env: ["GITHUB_TOKEN"],
       providerName: "alpha-mcp-github",
@@ -877,7 +877,7 @@ alpha-mcp-slack   generic  1                 0
     const entry = {
       server: "github",
       agent: "openclaw",
-      adapter: "openclaw-config",
+      adapter: "openclaw-config" as const,
       url: "https://mcp.example.test/mcp",
       env: ["GITHUB_TOKEN"],
       providerName: "alpha-mcp-github-0123456789abcdef",

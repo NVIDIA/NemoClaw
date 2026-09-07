@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
 import {
@@ -29,6 +29,7 @@ import {
   resolveRebuildMessagingPolicyDeltas,
   resolveRebuildObservabilityPolicyDelta,
   resolveRebuildPolicyProviderAuthority,
+  readValidatedRebuildPolicySource,
   selectRebuildCreatePolicy,
 } from "./orchestration";
 
@@ -443,6 +444,27 @@ describe("rebuild policy provider handoff", () => {
         policyDocument: "network_policies: {}\n",
       }),
     ).toEqual([]);
+  });
+
+  it("rejects malformed policy before any provider authority can be used", () => {
+    expect(() =>
+      resolveRebuildPolicyProviderAuthority({
+        createArgs: [],
+        messagingPlan: null,
+        policyDocument: "network_policies:\n  broken: [\n",
+      }),
+    ).toThrow();
+  });
+
+  it("rejects malformed rebuild policy before the delete boundary", () => {
+    const policyPath = tempPolicy("network_policies:\n  broken: [\n");
+    const beginDelete = vi.fn();
+
+    expect(() => {
+      readValidatedRebuildPolicySource(policyPath);
+      beginDelete();
+    }).toThrow();
+    expect(beginDelete).not.toHaveBeenCalled();
   });
 
 });
