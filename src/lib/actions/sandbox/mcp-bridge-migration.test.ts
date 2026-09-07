@@ -16,6 +16,7 @@ const entry = {
 };
 
 const mocks = vi.hoisted(() => ({
+  applyPolicy: vi.fn(),
   getSandbox: vi.fn(),
   updateSandbox: vi.fn(),
   inspectLegacy: vi.fn(),
@@ -24,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   register: vi.fn(),
   unregister: vi.fn(),
   selectGateway: vi.fn(),
+  preflightTargets: vi.fn().mockResolvedValue(new Map([["github", { addresses: ["8.8.8.8"] }]])),
   readConfig: vi.fn(),
 }));
 
@@ -47,6 +49,7 @@ vi.mock("./mcp-bridge-provider", () => ({
     workspace: "default",
   }),
   providerAttached: () => false,
+  preflightMcpEntryTargets: mocks.preflightTargets,
 }));
 vi.mock("./mcp-bridge-source", () => ({
   inspectLegacyBridgeState: mocks.inspectLegacy,
@@ -56,6 +59,7 @@ vi.mock("./mcp-bridge-source", () => ({
 }));
 vi.mock("./mcp-bridge-policy", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./mcp-bridge-policy")>()),
+  applyGeneratedPolicy: mocks.applyPolicy,
   getPolicyPresence: () => false,
 }));
 vi.mock("./mcp-bridge-state", () => ({
@@ -159,6 +163,42 @@ describe("explicit MCP migration", () => {
       items: [{ server: "github", source: "legacy-registry", action: "migrate" }],
     });
     expect(mocks.register).not.toHaveBeenCalled();
+  });
+
+  it("converges pending registry denied tools into live policy before retirement (#11115)", async () => {
+    mocks.inspectLegacy.mockReturnValue({
+      bridges: {},
+      sources: { native: {}, legacy: {} },
+    });
+    mocks.readConfig.mockReturnValue({
+      sandboxes: {
+        alpha: {
+          mcp: {
+            bridges: {
+              github: {
+                ...entry,
+                adapter: "mcporter",
+                source: undefined,
+                denyTools: ["old_tool"],
+                pendingDenyTools: ["replacement_*"],
+              },
+            },
+          },
+        },
+      },
+    });
+
+    await expect(migrateMcpBridges("alpha", { apply: true })).resolves.toMatchObject({
+      applied: true,
+      items: [{ deniedTools: ["replacement_*"] }],
+    });
+    expect(mocks.applyPolicy).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ denyTools: ["replacement_*"], source: "legacy-registry" }),
+      { addresses: ["8.8.8.8"] },
+      expect.objectContaining({ runtimeSelection: expect.any(Object) }),
+    );
+    expect(mocks.updateSandbox).toHaveBeenCalledWith("alpha", {});
   });
 
   it.each([

@@ -196,6 +196,8 @@ describe("registry", () => {
             adapter: "openclaw-config",
             url: "https://api.githubcopilot.com/mcp/",
             env: ["GITHUB_TOKEN"],
+            denyTools: ["delete_*", "doordash_submit_order"],
+            pendingDenyTools: ["replacement_*"],
             providerName: "alpha-mcp-github",
             providerId: "11111111-2222-4333-8444-555555555555",
             policyName: "mcp-bridge-github",

@@ -29,6 +29,8 @@ import {
   verifyHermesGatewayAfterStateRestore,
   verifyHermesGatewayAfterStateRestoreForCronGate,
 } from "./rebuild-hermes-post-restore";
+import { getPersistedSandboxTargetGatewayName } from "./gateway-target";
+import { executeGatewaySupervisorAction } from "./runtime/hermes-lifecycle";
 import {
   type McpRebuildPreparation,
   postRestoreCompleted,
@@ -143,7 +145,10 @@ export async function runRebuildPostRestorePhase(
   if (
     !recreatedEntry ||
     recreatedRegistryAgentName !== targetAgentName ||
-    recreatedRuntimeAgentName !== targetAgentName
+    recreatedRuntimeAgentName !== targetAgentName ||
+    (targetAgentName === "hermes" &&
+      mcpRuntimeSelection &&
+      getPersistedSandboxTargetGatewayName(recreatedEntry) !== mcpRuntimeSelection.gatewayName)
   ) {
     console.error(
       `  ${YW}\u26a0${R} Recreated sandbox agent identity could not be verified against the rebuild target.`,
@@ -168,6 +173,19 @@ export async function runRebuildPostRestorePhase(
   let finalMutableConfigHashUnverified = false;
   let messagingHostForwardUnverified = false;
   let effectiveMessagingPlan = messagingPlan;
+  // Rebuild freezes the OpenShell target before deletion and revalidates the
+  // recreated registry binding above. That exact binding can safely authorize
+  // the provider-scoped root controller while every OpenShell operation stays
+  // pinned to the selected runtime. The ordinary gateway restart command keeps
+  // its fail-closed selected-runtime fence.
+  const hermesPostRestoreGatewayDeps = mcpRuntimeSelection
+    ? {
+        ...(targetAgentName === "hermes"
+          ? { frozenTargetGatewaySupervisorAction: executeGatewaySupervisorAction }
+          : {}),
+        runtimeSelection: mcpRuntimeSelection,
+      }
+    : {};
 
   if (targetAgentName === "openclaw") {
     log("Running openclaw doctor --fix inside sandbox for post-upgrade structure repair");
@@ -272,7 +290,7 @@ export async function runRebuildPostRestorePhase(
   const hermesGatewayRestartState = restartHermesGatewayAfterStateRestore(
     sandboxName,
     targetAgentName,
-    mcpRuntimeSelection ? { runtimeSelection: mcpRuntimeSelection } : {},
+    hermesPostRestoreGatewayDeps,
   );
   const mcpBridgeRestoreUnverified = !(await restoreMcpAfterRebuild(
     sandboxName,
@@ -297,14 +315,14 @@ export async function runRebuildPostRestorePhase(
         targetAgentName,
         hermesGatewayRestartState,
         hermesCronRestoreIdentity,
-        mcpRuntimeSelection ? { runtimeSelection: mcpRuntimeSelection } : {},
+        hermesPostRestoreGatewayDeps,
       )
     : {
         state: verifyHermesGatewayAfterStateRestore(
           sandboxName,
           targetAgentName,
           hermesGatewayRestartState,
-          mcpRuntimeSelection ? { runtimeSelection: mcpRuntimeSelection } : {},
+          hermesPostRestoreGatewayDeps,
         ),
         replacementIdentity: undefined,
       };

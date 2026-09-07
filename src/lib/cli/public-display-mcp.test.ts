@@ -12,12 +12,13 @@ describe("sandbox MCP public display layout", () => {
     expect(SANDBOX_MCP_DISPLAY_LAYOUT["sandbox:mcp"]?.map((entry) => entry.usage)).toEqual([
       "nemoclaw <name> mcp list",
       "nemoclaw <name> mcp add",
+      "nemoclaw <name> mcp update",
       "nemoclaw <name> mcp status",
       "nemoclaw <name> mcp restart",
       "nemoclaw <name> mcp remove",
       "nemoclaw <name> mcp migrate",
     ]);
-    expect(PUBLIC_DISPLAY_ENTRIES["sandbox:mcp"]).toHaveLength(6);
+    expect(PUBLIC_DISPLAY_ENTRIES["sandbox:mcp"]).toHaveLength(7);
     expect(PUBLIC_DISPLAY_ENTRIES["sandbox:mcp"]?.map((entry) => entry.group)).toEqual([
       "MCP Servers",
       "MCP Servers",
@@ -25,8 +26,9 @@ describe("sandbox MCP public display layout", () => {
       "MCP Servers",
       "MCP Servers",
       "MCP Servers",
+      "MCP Servers",
     ]);
-    expect(SANDBOX_MCP_DISPLAY_LAYOUT["sandbox:mcp"]?.[2]).toMatchObject({
+    expect(SANDBOX_MCP_DISPLAY_LAYOUT["sandbox:mcp"]?.[3]).toMatchObject({
       description: "Inspect MCP server health and advertised tools",
       flags: "[server] [--json] [--probe|--no-probe] [--tools]",
     });

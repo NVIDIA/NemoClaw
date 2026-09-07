@@ -9,6 +9,7 @@ import type { AgentMcpAdapter } from "../../agent/defs";
 import { loadAgent } from "../../agent/defs";
 import { isObjectRecord } from "../../core/json-types";
 import { captureRecordedSandboxBasePolicy } from "../../policy";
+import { inspectMcpDeniedToolSelectors } from "../../security/mcp-denied-tool-selector";
 import { isBlockedMcpUrlTargetHost } from "../../security/mcp-url-target";
 import type { SandboxEntry } from "../../state/registry";
 import { buildMcpBridgePolicyKey, buildMcpBridgePolicyName } from "./mcp-bridge-policy-render";
@@ -20,6 +21,7 @@ import {
 } from "./mcp-bridge-provider-inspection";
 import { executeSandboxCommand } from "./process-recovery";
 import { quoteMcpBridgeShellArg } from "./mcp-bridge-runtime-command";
+import { buildMcpBridgeProviderName } from "./mcp-bridge-validation";
 
 export interface AgentMcpSourceSnapshot {
   native: Record<string, McpSourceEntry>;
@@ -278,6 +280,7 @@ function policyEntryForServer(
 }
 
 function enrichFromPolicy(
+  sandboxName: string,
   entry: McpSourceEntry,
   policy: Record<string, unknown> | null,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
@@ -289,7 +292,18 @@ function enrichFromPolicy(
     trustedPrivateHost: _legacyTrustedPrivateHost,
     ...sourceEntry
   } = entry;
-  if (!policy || !Array.isArray(policy.endpoints)) return sourceEntry;
+  if (!policy || !Array.isArray(policy.endpoints)) {
+    const providerName =
+      entry.providerName ?? buildMcpBridgeProviderName(sandboxName, entry.server);
+    const provider = inspectMcpProvider(providerName, runtimeSelection);
+    return provider.exists === true
+      ? {
+          ...entry,
+          providerName,
+          ...(provider.id ? { providerId: provider.id } : {}),
+        }
+      : entry;
+  }
   const endpoints = policy.endpoints.filter(isObjectRecord);
   const endpoint = endpoints.find((candidate) => candidate.protocol === "mcp");
   if (!endpoint) return sourceEntry;
@@ -308,12 +322,24 @@ function enrichFromPolicy(
     10,
   );
   const sourcePath = sourceUrl.pathname || "/";
-  const policyConflict =
+  const endpointConflict =
     host !== sourceUrl.hostname.toLowerCase() ||
     endpoint.port !== sourcePort ||
     endpoint.path !== sourcePath
       ? `Agent URL '${entry.url}' differs from live policy endpoint '${host}:${String(endpoint.port ?? "unknown")}${String(endpoint.path ?? "")}'.`
       : undefined;
+  const rawDenyTools = Array.isArray(endpoint.deny_rules)
+    ? endpoint.deny_rules.flatMap((rule): string[] =>
+        isObjectRecord(rule) && rule.method === "tools/call" && typeof rule.tool === "string"
+          ? [rule.tool]
+          : [],
+      )
+    : [];
+  const deniedToolInspection = inspectMcpDeniedToolSelectors(rawDenyTools);
+  const denyTools = deniedToolInspection.ok ? deniedToolInspection.selectors : [];
+  const policyConflict = !deniedToolInspection.ok
+    ? "Live policy contains invalid denied-tool selectors."
+    : endpointConflict;
   const trustedPrivateHost =
     allowedIps?.some((address) => isBlockedMcpUrlTargetHost(address)) &&
     host === new URL(entry.url).hostname.toLowerCase()
@@ -325,6 +351,7 @@ function enrichFromPolicy(
     ...(trustedPrivateHost ? { trustedPrivateHost } : {}),
     ...(providerName ? { providerName } : {}),
     ...(provider.exists === true && provider.id ? { providerId: provider.id } : {}),
+    ...(denyTools.length > 0 && entry.source !== "legacy-registry" ? { denyTools } : {}),
     ...(policyConflict ? { policyConflict } : {}),
   };
 }
@@ -343,7 +370,12 @@ export function joinMcpEntriesToOpenShell(
   return Object.fromEntries(
     Object.entries(entries).map(([server, entry]) => [
       server,
-      enrichFromPolicy(entry, policyEntryForServer(policyDocument, server), runtimeSelection),
+      enrichFromPolicy(
+        sandbox.name,
+        entry,
+        policyEntryForServer(policyDocument, server),
+        runtimeSelection,
+      ),
     ]),
   );
 }
@@ -388,6 +420,7 @@ export function inspectPolicyOnlyMcpEntry(
       ? [provider.credentialKeys[0]]
       : [];
   return enrichFromPolicy(
+    sandbox.name,
     {
       server,
       agent: agentName,

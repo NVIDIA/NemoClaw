@@ -25,6 +25,7 @@ export interface ParsedMcpAddArgs {
   server: string;
   url: string;
   env: ParsedEnvReference[];
+  denyTools?: string[];
   trustedPrivateHosts?: string[];
 }
 
@@ -44,6 +45,8 @@ export interface McpSourceEntry {
   providerName?: string;
   providerId?: string;
   policyName: string;
+  /** Denied tool selectors observed from the live OpenShell policy. */
+  denyTools?: string[];
   /** Where the current agent registration was observed. */
   source?: "native" | "legacy" | "legacy-registry" | "policy";
   /** Live policy endpoint differs from the agent-native URL. */
@@ -51,6 +54,11 @@ export interface McpSourceEntry {
 }
 
 export interface McpBridgeAddOptions extends ParsedMcpAddArgs {}
+
+export interface ParsedMcpUpdateArgs {
+  server: string;
+  denyTools: string[];
+}
 
 export interface McpBridgeStatus {
   server: string;

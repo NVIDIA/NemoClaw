@@ -8,10 +8,18 @@ import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import * as registry from "../../state/registry";
 import { REGISTRY_FILE } from "../../state/registry/persistence";
 import { registerAgentAdapter, unregisterAgentAdapter } from "./mcp-bridge-adapters";
-import { buildMcpBridgePolicyName, getPolicyPresence } from "./mcp-bridge-policy";
+import {
+  applyGeneratedPolicy,
+  buildMcpBridgePolicyName,
+  getPolicyPresence,
+} from "./mcp-bridge-policy";
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import { McpBridgeError } from "./mcp-bridge-contracts";
-import { getMcpProviderInspectionRuntimeSelection, providerAttached } from "./mcp-bridge-provider";
+import {
+  getMcpProviderInspectionRuntimeSelection,
+  preflightMcpEntryTargets,
+  providerAttached,
+} from "./mcp-bridge-provider";
 import {
   inspectAgentMcpSources,
   inspectLegacyBridgeState,
@@ -23,7 +31,7 @@ import {
   getBridgeAdapter,
   getSandboxAgent,
 } from "./mcp-bridge-state";
-import { validateSandboxName } from "./mcp-bridge-validation";
+import { normalizeMcpDenyTools, validateSandboxName } from "./mcp-bridge-validation";
 
 export type McpMigrationItem = {
   server: string;
@@ -36,6 +44,7 @@ export type McpMigrationItem = {
   policyPresent: boolean | null;
   providerName: string | null;
   providerAttached: boolean | null;
+  deniedTools: string[];
   activationChanges: boolean;
   action: "migrate" | "already-migrated";
 };
@@ -125,17 +134,63 @@ function readCommittedLegacyRegistryEntries(
         2,
       );
     }
+    const requestedDenyTools = raw.pendingDenyTools ?? raw.denyTools ?? [];
+    if (
+      !Array.isArray(requestedDenyTools) ||
+      requestedDenyTools.some((tool) => typeof tool !== "string")
+    ) {
+      throw new McpBridgeError(
+        `Legacy MCP registry server '${server}' has invalid denied-tool intent. No source was changed.`,
+        2,
+      );
+    }
+    const denyTools = normalizeMcpDenyTools(requestedDenyTools as string[]);
+    const allowedIps = Array.isArray(raw.allowedIps)
+      ? raw.allowedIps.filter((address): address is string => typeof address === "string")
+      : undefined;
     entries[server] = {
       server,
       agent,
       adapter,
       url: url.toString(),
       env: [raw.env[0]],
+      denyTools,
+      ...(allowedIps?.length ? { allowedIps } : {}),
+      ...(typeof raw.trustedPrivateHost === "string" && raw.trustedPrivateHost
+        ? { trustedPrivateHost: raw.trustedPrivateHost }
+        : {}),
+      ...(typeof raw.providerName === "string" && raw.providerName
+        ? { providerName: raw.providerName }
+        : {}),
+      ...(typeof raw.providerId === "string" && raw.providerId
+        ? { providerId: raw.providerId }
+        : {}),
       policyName: buildMcpBridgePolicyName(server),
       source: "legacy-registry",
     };
   }
   return entries;
+}
+
+async function convergeLegacyRegistryPolicies(
+  sandboxName: string,
+  entries: readonly McpSourceEntry[],
+  runtimeSelection: ReturnType<typeof getMcpProviderInspectionRuntimeSelection>,
+): Promise<void> {
+  const registryEntries = entries.filter(
+    (entry) => entry.source === "legacy-registry" && entry.denyTools !== undefined,
+  );
+  if (registryEntries.length === 0) return;
+  const targets = await preflightMcpEntryTargets(registryEntries);
+  for (const entry of registryEntries) {
+    const target = targets.get(entry.server);
+    if (!target) {
+      throw new McpBridgeError(
+        `Legacy MCP registry server '${entry.server}' has no validated policy target. No legacy source was removed.`,
+      );
+    }
+    applyGeneratedPolicy(sandboxName, entry, target, { runtimeSelection });
+  }
 }
 
 export async function migrateMcpBridges(
@@ -169,7 +224,7 @@ export async function migrateMcpBridges(
         );
       }
     }
-    const legacyEntries = { ...rawRegistryEntries, ...observed.bridges };
+    const legacyEntries = { ...observed.bridges, ...rawRegistryEntries };
     const entries = Object.values(legacyEntries).sort((left, right) =>
       left.server.localeCompare(right.server),
     );
@@ -196,6 +251,7 @@ export async function migrateMcpBridges(
         policyPresent: getPolicyPresence(sandboxName, entry, runtimeSelection),
         providerName: entry.providerName ?? null,
         providerAttached: providerAttached(sandboxName, entry.providerName, runtimeSelection),
+        deniedTools: [...(entry.denyTools ?? [])],
         activationChanges: adapter === "openclaw-config" && action === "migrate",
         action,
       };
@@ -241,6 +297,7 @@ export async function migrateMcpBridges(
             `Deep Agents rebuild did not verify native MCP server${missing.length === 1 ? "" : "s"}: ${missing.map((entry) => entry.server).join(", ")}.`,
           );
         }
+        await convergeLegacyRegistryPolicies(sandboxName, entries, rebuiltRuntimeSelection);
       } catch (error) {
         for (const entry of created.reverse()) {
           try {
@@ -281,6 +338,7 @@ export async function migrateMcpBridges(
             `Native MCP verification failed after migrating '${entry.server}'.`,
           );
         }
+        await convergeLegacyRegistryPolicies(sandboxName, [entry], runtimeSelection);
         if (observed.sources.legacy[entry.server]) {
           cleanupStarted = true;
           removeLegacyAgentMcpEntry(sandbox, entry, runtimeSelection);

@@ -236,6 +236,7 @@ describe("rebuildSandbox flow: recovery", () => {
       adapter: "openclaw-config" as const,
       url: "https://api.githubcopilot.com/mcp/",
       env: ["GITHUB_TOKEN"],
+      denyTools: ["delete_*", "repo.destroy"],
       providerName: "alpha-mcp-github",
       providerId: "11111111-2222-4333-8444-555555555555",
       policyName: "mcp-bridge-github",

@@ -23,6 +23,7 @@ export function cloneMcpSourceEntry(entry: McpSourceEntry): McpSourceEntry {
   return {
     ...entry,
     env: [...entry.env],
+    ...(entry.denyTools ? { denyTools: [...entry.denyTools] } : {}),
     ...(entry.allowedIps ? { allowedIps: [...entry.allowedIps] } : {}),
   };
 }

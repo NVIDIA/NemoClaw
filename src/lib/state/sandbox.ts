@@ -57,6 +57,7 @@ import {
   SnapshotSanitizerPrerequisiteError,
   sanitizeSnapshotDirectory,
 } from "../security/snapshot-sanitizer.js";
+import { inspectMcpDeniedToolSelectors } from "../security/mcp-denied-tool-selector.js";
 import {
   buildRestoreCleanupCommand,
   buildRestoreTarArgs,
@@ -175,6 +176,7 @@ export interface RebuildMcpHandoffEntry {
   adapter?: AgentMcpAdapter;
   url: string;
   env: string[];
+  denyTools?: string[];
   trustedPrivateHost?: string;
   allowedIps?: string[];
   providerName?: string;
@@ -371,6 +373,7 @@ const REBUILD_MCP_ENTRY_KEYS = new Set([
   "adapter",
   "agent",
   "allowedIps",
+  "denyTools",
   "env",
   "policyName",
   "providerId",
@@ -401,6 +404,11 @@ function isRebuildMcpHandoffEntry(value: unknown): value is RebuildMcpHandoffEnt
     !value.env.every(
       (name) => typeof name === "string" && /^[A-Z][A-Z0-9_]{0,127}$/u.test(name),
     ) ||
+    (value.denyTools !== undefined &&
+      (() => {
+        const inspection = inspectMcpDeniedToolSelectors(value.denyTools);
+        return !inspection.ok || !inspection.canonical;
+      })()) ||
     typeof value.policyName !== "string" ||
     !REBUILD_MCP_NAME_PATTERN.test(value.policyName) ||
     (value.trustedPrivateHost !== undefined &&
@@ -2791,6 +2799,7 @@ function cloneRebuildMcpHandoff(
     entries: handoff.entries.map((entry) => ({
       ...entry,
       env: [...entry.env],
+      ...(entry.denyTools ? { denyTools: [...entry.denyTools] } : {}),
       ...(entry.allowedIps ? { allowedIps: [...entry.allowedIps] } : {}),
     })),
     runtimeSelection: { ...handoff.runtimeSelection },

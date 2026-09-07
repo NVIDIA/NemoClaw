@@ -35,6 +35,42 @@ const runtimeSelection = {
 beforeEach(() => vi.restoreAllMocks());
 
 describe("generated MCP policy", () => {
+  it("renders denied tool names and globs as tools/call deny rules (#11115)", () => {
+    const parsed = YAML.parse(
+      buildMcpBridgePolicyYaml(
+        entry.server,
+        entry.url,
+        "openclaw-config",
+        { addresses: ["8.8.8.8"] },
+        "mcp-github",
+        ["delete_*", "doordash_submit_order"],
+      ),
+    ) as {
+      network_policies: Record<
+        string,
+        { endpoints: Array<{ deny_rules?: Array<{ method: string; tool: string }> }> }
+      >;
+    };
+
+    expect(parsed.network_policies.mcp_bridge_github.endpoints[0].deny_rules).toEqual([
+      { method: "tools/call", tool: "delete_*" },
+      { method: "tools/call", tool: "doordash_submit_order" },
+    ]);
+  });
+
+  it("omits deny_rules when the bridge has no denied tools (#11115)", () => {
+    const parsed = YAML.parse(
+      buildMcpBridgePolicyYaml(
+        entry.server,
+        entry.url,
+        "openclaw-config",
+        { addresses: ["8.8.8.8"] },
+        "mcp-github",
+      ),
+    ) as { network_policies: Record<string, { endpoints: Array<Record<string, unknown>> }> };
+
+    expect(parsed.network_policies.mcp_bridge_github.endpoints[0]).not.toHaveProperty("deny_rules");
+  });
   it("applies directly to live OpenShell policy without a custom-policy registry row", () => {
     const livePolicy: { network_policies: Record<string, unknown> } = { network_policies: {} };
     const applySpy = vi.spyOn(policies, "applyPresetContent").mockImplementation(

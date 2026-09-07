@@ -71,6 +71,9 @@ network_policies:
         allowed_ips: ["8.8.8.8"]
         credential_binding:
           provider: alpha-mcp-github
+        deny_rules:
+          - method: tools/call
+            tool: delete_*
 `);
     mocks.inspectProvider.mockReturnValue({
       exists: true,
@@ -104,6 +107,7 @@ network_policies:
       providerName: "alpha-mcp-github",
       providerId: "provider-id",
       allowedIps: ["8.8.8.8"],
+      denyTools: ["delete_*"],
     });
   });
 
@@ -126,6 +130,28 @@ network_policies:
     expect(observed.bridges.github).toMatchObject({
       source: "legacy",
       providerName: "alpha-mcp-github",
+    });
+  });
+
+  it("recovers the deterministic live provider when the policy route is missing", () => {
+    mocks.capturePolicy.mockReturnValue("network_policies: {}\n");
+    mocks.executeSandboxCommand.mockReturnValue({
+      status: 0,
+      stdout: JSON.stringify([
+        {
+          server: "github",
+          url: "https://api.githubcopilot.com/mcp/",
+          env: "GITHUB_TOKEN",
+          source: "native",
+        },
+      ]),
+      stderr: "",
+    });
+
+    expect(inspectSourceBridgeState(sandbox, runtimeSelection).bridges.github).toMatchObject({
+      providerName: "alpha-mcp-github",
+      providerId: "provider-id",
+      source: "native",
     });
   });
 

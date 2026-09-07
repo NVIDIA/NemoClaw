@@ -7,6 +7,7 @@
  * staging remain independently reviewable.
  */
 export { printRebuildPreflightFailure } from "./rebuild-preflight-error";
+export { hasValidDeferredN1xManagedVllmReplacementAuthority } from "../../domain/sandbox/n1x-managed-vllm-rebuild";
 export { prepareRebuildTargetConfig, type RebuildTargetConfig } from "./rebuild-target-config";
 export {
   preflightAuthoritativeOnboardRuntime,

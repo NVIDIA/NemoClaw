@@ -3,13 +3,14 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "Manage MCP Servers"
 sidebar-title: "Manage MCP Servers"
-description: "Inspect advertised tools and DNS pins, probe, rotate, restart, remove, rebuild, and destroy NemoClaw-managed MCP servers."
-description-agent: "Explains managed MCP status, DNS pin drift, advertised tool discovery, credential-resolution probes, credential rotation, restart, removal, rebuild restoration, destroy recovery, and lifecycle locking. Use after an MCP server is registered."
+description: "Inspect advertised tools and DNS pins, change denied tools, probe, rotate, restart, remove, rebuild, and destroy NemoClaw-managed MCP servers."
+description-agent: "Explains managed MCP status, denied-tool policy updates, DNS pin drift, advertised tool discovery, credential-resolution probes, credential rotation, restart, removal, rebuild restoration, destroy recovery, and lifecycle locking. Use after an MCP server is registered."
 keywords:
   [
     "nemoclaw mcp status",
     "mcp dns pin drift",
     "mcp tool discovery",
+    "nemoclaw mcp update",
     "nemoclaw mcp restart",
     "nemoclaw mcp remove",
     "mcp credential rotation",
@@ -138,6 +139,29 @@ Restart follows the live policy credential binding and reloads only when the cur
 
 Running restart without a server name validates and reloads every managed server at its current credential revision. It does not rotate credentials.
 
+## Change Denied Tools
+
+Replace the complete denied-tool list with repeated `--deny-tool` options:
+
+```bash
+$$nemoclaw my-sandbox mcp update doordash \
+  --deny-tool doordash_submit_order \
+  --deny-tool 'admin_*'
+```
+
+The command changes only the live OpenShell policy. It does not change the agent-native endpoint, credential reference, provider, attachment, or agent adapter. Live policy is the enforcement source of truth; NemoClaw does not retain a second denied-tool intent record.
+
+NemoClaw validates the current source entry and endpoint pins, removes the existing route, and then applies the replacement. This keeps an interrupted stricter update fail-closed. If replacement activation fails, the MCP route remains blocked and the error prints the exact `mcp update` command to retry. Rebuild snapshots and restores the complete live policy, including denied-tool rules, without regenerating it from registry state.
+
+Clear every denied-tool rule explicitly:
+
+```bash
+$$nemoclaw my-sandbox mcp update doordash --clear-deny-tools
+```
+
+The update command requires either one or more `--deny-tool` options or `--clear-deny-tools`.
+It rejects both modes in one command.
+
 ## Change Endpoint Pins
 
 For a trusted-private server, review every destination change before NemoClaw records new pins. Neither status, restart, rebuild, nor restore changes the recorded address set.
@@ -178,7 +202,7 @@ If cleanup leaves a residual, the command reports the exact policy or attachment
 
 If rebuild instead reports a retained credential-bearing policy handoff, do not edit that handoff or retry rebuild. Follow the [unsafe retained policy handoff recovery](../operate-sandboxes/recover-and-rebuild-sandboxes#continue-an-interrupted-replacement).
 
-After this check, rebuild removes adapter entries and exact owned policies, then detaches providers before replacing the sandbox. Before changing each managed adapter, a fresh sandbox process must expose a revision-scoped OpenShell credential placeholder for that adapter. If an observation is absent, unscoped, or unavailable, NemoClaw leaves the affected adapter and every provider unchanged. It attempts to restore adapter entries prepared earlier in the operation and reports rollback failures. It does not substitute the provider resource version for the credential revision. Follow the reported [credential-revision recovery](../../reference/troubleshoot-mcp-servers#rebuild-or-destroy-cannot-prove-a-credential-revision), then retry rebuild. Restoration applies the credential-free policy, reattaches each provider, applies the endpoint-bound policy, waits for credential readiness, and restores adapters. For a trusted-private entry, the restored policy uses the recorded exact address pins and does not widen them from current DNS answers. Public entries continue to resolve and validate their endpoint addresses during restoration.
+After this check, rebuild removes adapter entries and exact owned policies, then detaches providers before replacing the sandbox. Before changing each managed adapter, a fresh sandbox process must expose a revision-scoped OpenShell credential placeholder for that adapter. If an observation is absent, unscoped, or unavailable, NemoClaw leaves the affected adapter and every provider unchanged. It attempts to restore adapter entries prepared earlier in the operation and reports rollback failures. It does not substitute the provider resource version for the credential revision. Follow the reported [credential-revision recovery](../../reference/troubleshoot-mcp-servers#rebuild-or-destroy-cannot-prove-a-credential-revision), then retry rebuild. The rebuild handoff preserves the complete live policy, including denied-tool rules and exact address pins, while provider and adapter recovery uses the source-derived MCP entries. It does not reconstruct policy from registry MCP state.
 
 <AgentOnly variant="deepagents">
 NemoClaw revalidates the prepared Deep Agents replacement after MCP preparation and before stopping inference or deleting the old sandbox.

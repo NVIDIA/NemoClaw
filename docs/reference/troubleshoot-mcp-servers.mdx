@@ -63,22 +63,22 @@ $$nemoclaw <sandbox> mcp status <server> --json
 ```
 
 If status cannot reach the sandbox, repair the reported gateway condition first.
-Export the recorded environment variable, then restart the server to publish and verify a fresh credential revision:
+Export the replacement under the same environment-variable name, then remove and re-add the server so a fresh provider binding and agent placeholder are created:
 
 ```bash
 export <CREDENTIAL_ENV>='replacement-value'
-$$nemoclaw <sandbox> mcp restart <server>
+$$nemoclaw <sandbox> mcp remove <server>
+$$nemoclaw <sandbox> mcp add <server> --url <HTTPS_MCP_URL> --env <CREDENTIAL_ENV>
 unset <CREDENTIAL_ENV>
 ```
 
 Run status again.
 Retry rebuild or destroy only after `provider.credentialReady` and `adapter.registered` are both `true`.
-If restart still cannot prove the revision, repair the reported OpenShell provider, policy, or adapter condition before retrying teardown.
+If the re-add still cannot prove the revision, repair the reported OpenShell provider, policy, or adapter condition before retrying teardown.
 
 ## Add Transaction Is Incomplete
 
-If status reports an incomplete add transaction, rerun the original `mcp add` command with the same URL and environment-variable name.
-Re-export the value if the provider still needs to be created.
+If `mcp add` is interrupted, inspect the native source and live status first. If no native registration exists, rerun the original command with the same URL, environment-variable name, and any `--deny-tool` options. If the native registration exists, remove it and then re-add it after re-exporting the credential.
 
 To abandon the transaction, run `mcp remove <server> --force`.
 NemoClaw disables the native agent entry first and cleans only live resources whose ownership it can prove. It preserves the workspace provider and reports any residual policy or attachment cleanup.
@@ -392,7 +392,7 @@ Do not treat matching DNS pins as evidence that the path, method, adapter identi
 
 ## Lifecycle Lock Times Out
 
-Confirm that no `mcp add`, `mcp restart`, `mcp remove`, `rebuild`, or `destroy` command for the sandbox is still running, then retry the original command.
+Confirm that no `mcp add`, `mcp update`, `mcp restart`, `mcp remove`, `rebuild`, or `destroy` command for the sandbox is still running, then retry the original command.
 NemoClaw recovers a lock only when its local process is provably dead or its PID has a different process-start identity.
 
 It does not expose a force-unlock flag.

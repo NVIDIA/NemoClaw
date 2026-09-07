@@ -47,6 +47,23 @@ OpenShell resolves the placeholder at egress.
 After `mcp add` commits, NemoClaw performs a fresh status inspection and runs the gated credential-resolution probe once unless you pass `--no-probe`.
 If readiness is inconclusive, the command reports a probe skip without failing the committed add.
 
+Pass `--deny-tool` once for each exact tool name or OpenShell glob pattern to block at the MCP proxy:
+
+```bash
+export DOORDASH_MCP_TOKEN='replace-with-secret-manager-value'
+$$nemoclaw my-sandbox mcp add doordash \
+  --url https://mcp.example.test/mcp \
+  --env DOORDASH_MCP_TOKEN \
+  --deny-tool doordash_submit_order \
+  --deny-tool 'admin_*'
+unset DOORDASH_MCP_TOKEN
+```
+
+NemoClaw writes the denied-tool list into the live OpenShell policy; it does not retain a duplicate registry copy.
+Restart leaves that policy unchanged, and rebuild snapshots and restores the complete live policy.
+The option matches tool names only and does not inspect tool arguments.
+Use `mcp update` to replace or clear the list after registration.
+
 ## Add a Trusted Private Server
 
 Use a trusted private host when the MCP endpoint must remain on an operator-controlled private network.
@@ -103,7 +120,7 @@ NemoClaw records the normalized host and every validated address as OpenShell po
 The raw bearer value passes transiently to the OpenShell provider and remains absent from NemoClaw state, sandbox configuration, command arguments, and logs.
 The sandbox configuration contains only an OpenShell resolver placeholder for `LOCAL_MCP_TOKEN`, not the raw bearer value.
 You can unset the host variable after `mcp add` returns because OpenShell retains the credential.
-An exported replacement updates it during restart. `mcp remove` detaches the provider, and sandbox destroy may leave the detached provider for explicit operator cleanup.
+To replace it, remove and re-add the server with the replacement exported under the same host variable name. `mcp remove` detaches the provider, and sandbox destroy may leave the detached provider for explicit operator cleanup.
 
 Inspect the registration after the add returns:
 
@@ -190,7 +207,8 @@ The generated policy permits these client-to-server method groups:
 
 Those methods remain bounded to the configured endpoint path, selected agent adapter binaries, pinned addresses, and a 131,072-byte request body.
 
-`tools/call` currently permits every tool exposed by that server.
+Without `--deny-tool`, `tools/call` permits every tool exposed by that server.
+Each `--deny-tool` value adds a higher-priority `tools/call` deny rule for one exact name or glob.
 `strict_tool_names` validates tool name syntax and is not a tool authorization allowlist.
 
 OpenShell also handles the protocol-required empty receive-stream `GET` and client response frames for server-originated MCP requests.
