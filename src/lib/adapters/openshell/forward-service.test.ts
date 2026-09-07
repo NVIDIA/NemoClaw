@@ -39,6 +39,12 @@ describe("OpenShell forward service", () => {
     ]);
   });
 
+  it("builds the direct ForwardTcp command for a selected non-default workspace", () => {
+    expect(buildForwardServiceArgs({ ...target, workspace: "review-workspace" })).toContain(
+      "review-workspace",
+    );
+  });
+
   it("detaches the OpenShell child and waits for its local port", () => {
     const unref = vi.fn();
     const spawnDetached = vi.fn(() => ({ unref }));
@@ -57,6 +63,28 @@ describe("OpenShell forward service", () => {
       expect.any(Object),
     );
     expect(unref).toHaveBeenCalledOnce();
+  });
+
+  it("uses the selected OpenShell configuration without exposing credentials (#11084)", () => {
+    const spawnDetached = vi.fn(() => ({ unref: vi.fn() }));
+
+    launchForwardService(target, {
+      isReachable: vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true),
+      sleep: () => {},
+      sourceEnvironment: {
+        HOME: "/tmp/isolated-home",
+        NVIDIA_INFERENCE_API_KEY: "secret-value",
+        PATH: "/usr/bin",
+        XDG_CONFIG_HOME: "/tmp/selected-openshell-config",
+      },
+      spawnDetached,
+    });
+
+    expect(spawnDetached).toHaveBeenCalledWith(target.executable, buildForwardServiceArgs(target), {
+      HOME: "/tmp/isolated-home",
+      PATH: "/usr/bin",
+      XDG_CONFIG_HOME: "/tmp/selected-openshell-config",
+    });
   });
 
   it("refuses an occupied port without launching or adopting its listener", () => {

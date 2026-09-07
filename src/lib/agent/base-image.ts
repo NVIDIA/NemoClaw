@@ -84,6 +84,7 @@ export interface EnsureAgentBaseImageOptions {
   forceBaseImageRebuild?: boolean;
   resolutionHint?: SandboxBaseImageResolutionMetadata | null;
   forceBaseImageRefresh?: boolean;
+  allowLocalFallback?: boolean;
 }
 
 export interface CreateAgentSandboxOptions extends EnsureAgentBaseImageOptions {
@@ -316,7 +317,7 @@ export function hermesBaseImageSupportsMcp(imageRef: string): boolean {
       imageRef,
       "-I",
       "-c",
-      `import importlib.metadata as metadata; import sys; import acp; import mcp; from acp_adapter.server import HermesACPAgent; from tools import mcp_tool; metadata.version("agent-client-protocol") == "0.9.0" or sys.exit(1); getattr(mcp_tool, "_MCP_AVAILABLE", False) or sys.exit(1); getattr(mcp_tool, "_MCP_HTTP_AVAILABLE", False) or sys.exit(1); print("${HERMES_MCP_RUNTIME_PROBE_OK}")`,
+      `import importlib.metadata as metadata; import sys; import acp; import mcp; from acp_adapter.server import HermesACPAgent; from tools import mcp_tool; metadata.version("agent-client-protocol") == "0.9.0" or sys.exit(1); mcp_tool._ensure_mcp_sdk() or sys.exit(1); getattr(mcp_tool, "_MCP_AVAILABLE", False) or sys.exit(1); getattr(mcp_tool, "_MCP_HTTP_AVAILABLE", False) or sys.exit(1); print("${HERMES_MCP_RUNTIME_PROBE_OK}")`,
     ],
     { ignoreError: true, timeout: 20_000 },
   );
@@ -358,6 +359,7 @@ function createAgentBaseImageResolutionOptions(
     rootDir: ROOT,
     pinnedRemoteRef,
     requirePinnedRemoteRef: agent.name === "hermes" && pinnedRemoteRef !== undefined,
+    allowLocalFallback: options.allowLocalFallback,
     ...validationOptions,
   };
 }

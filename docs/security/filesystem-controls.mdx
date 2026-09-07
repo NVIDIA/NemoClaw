@@ -70,13 +70,16 @@ Messaging sessions such as WhatsApp pairing can remain mutable by design so they
 
 The Hermes config and state tree remains mutable after provisioning.
 NemoClaw does not prevent the sandbox identity from changing paths that its Unix permissions allow.
+Hermes startup and restart adopt a stable config snapshot after validating its paths and secret boundary.
+A direct MCP change becomes applied only after the replacement gateway passes its health checks.
+A host-managed MCP operation can report a registry mismatch without preventing Hermes from running.
 
 | Aspect | Detail |
 |---|---|
 | Default | The Hermes config tree contains NemoClaw-generated config plus mutable runtime state. |
-| What you can change | Use host-side NemoClaw commands for durable model, provider, messaging, and policy changes; inspect files directly only for debugging. |
-| Risk of direct edits | Direct edits to generated config can drift from the host registry and may be lost on rebuild. |
-| Recommendation | For sensitive workloads, keep generated config under NemoClaw control and back up Hermes state before destructive operations. |
+| What you can change | Hermes and the sandbox user can change mutable runtime config. Use host-side NemoClaw commands for settings that must match the host registry. |
+| Risk of direct edits | Invalid config can prevent Hermes from starting. Changes to host-managed settings can drift from the registry and may be lost on rebuild. |
+| Recommendation | Keep credentials in OpenShell providers. Back up Hermes state before destructive operations. |
 
 </AgentOnly>
 <AgentOnly variant="deepagents">

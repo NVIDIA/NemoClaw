@@ -39,7 +39,9 @@ import {
   isOpenShellSandboxPolicyCredentialFree,
   resolveOpenshellSandboxSshHost,
 } from "../adapters/openshell/client.js";
+import { buildSelectedOpenShellSubprocessEnv } from "../adapters/openshell/command-argv.js";
 import { resolveOpenshell } from "../adapters/openshell/resolve.js";
+import type { OpenShellRuntimeSelection } from "../adapters/openshell/runtime-selection.js";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts.js";
 import type { AgentStateFile } from "../agent/defs.js";
 import { loadAgent } from "../agent/defs.js";
@@ -271,6 +273,8 @@ export interface RecreatedSandboxRestoreOptions extends SnapshotRestoreOptions {
   allowCustomImageWholeStateFileRestore?: true;
   /** Pre-captured baseline avoids a second remote read during onboarding finalization. */
   freshOpenClawImagePluginInstalls?: readonly OpenClawImagePluginInstall[];
+  /** Exact OpenShell target frozen by the enclosing rebuild transaction. */
+  runtimeSelection?: OpenShellRuntimeSelection;
 }
 
 interface InternalRestoreOptions {
@@ -278,6 +282,7 @@ interface InternalRestoreOptions {
   allowCustomImageWholeStateFileRestore?: true;
   discoverFreshOpenClawImagePluginInstalls?: true;
   freshOpenClawImagePluginInstalls?: readonly OpenClawImagePluginInstall[];
+  runtimeSelection?: OpenShellRuntimeSelection;
   authority?: SnapshotRestoreAuthority;
   validateBeforeMutation?: () => void;
 }
@@ -714,6 +719,18 @@ export function getSshConfig(
   });
   if (result.status !== 0) return null;
   return result.output;
+}
+
+function selectedSshConfigOptions(
+  runtimeSelection?: OpenShellRuntimeSelection,
+): Parameters<typeof getSshConfig>[1] {
+  return runtimeSelection
+    ? {
+        env: buildSelectedOpenShellSubprocessEnv(runtimeSelection),
+        gatewayName: runtimeSelection.gatewayName,
+        replaceEnv: true,
+      }
+    : undefined;
 }
 
 export function sshArgs(configFile: string, sandboxName: string): string[] {
@@ -2052,6 +2069,7 @@ export function restoreRecreatedSandboxState(
       ? { discoverFreshOpenClawImagePluginInstalls: true }
       : {}),
     freshOpenClawImagePluginInstalls: options.freshOpenClawImagePluginInstalls,
+    ...(options.runtimeSelection ? { runtimeSelection: options.runtimeSelection } : {}),
     ...(options.authority ? { authority: options.authority } : {}),
     ...(options.validateBeforeMutation
       ? { validateBeforeMutation: options.validateBeforeMutation }
@@ -2065,6 +2083,9 @@ function restoreSandboxStateInternal(
   options: InternalRestoreOptions,
 ): RestoreResult {
   _log(`restoreSandboxState: sandbox=${sandboxName}, backupPath=${backupPath}`);
+  const selectedSshEnv = options.runtimeSelection
+    ? buildSelectedOpenShellSubprocessEnv(options.runtimeSelection)
+    : undefined;
   const manifest = readManifest(backupPath);
   if (!manifest) {
     _log("FAILED: Could not read rebuild-manifest.json");
@@ -2238,7 +2259,12 @@ function restoreSandboxStateInternal(
   } else if (options.discoverFreshOpenClawImagePluginInstalls === true) {
     const discovery = discoverFreshOpenClawImagePluginInstalls(
       sandboxName,
-      { getSshConfig, sshArgs },
+      {
+        ...(selectedSshEnv ? { env: selectedSshEnv } : {}),
+        getSshConfig: (name) =>
+          getSshConfig(name, selectedSshConfigOptions(options.runtimeSelection)),
+        sshArgs,
+      },
       targetAgent.configPaths.dir,
     );
     if (!discovery.ok) {
@@ -2261,7 +2287,10 @@ function restoreSandboxStateInternal(
   }
 
   _log("Getting SSH config for restore");
-  const sshConfig = getSshConfig(sandboxName);
+  const sshConfig = getSshConfig(
+    sandboxName,
+    selectedSshConfigOptions(options.runtimeSelection),
+  );
   if (!sshConfig) {
     _log("FAILED: Could not get SSH config for restore");
     return {
@@ -2367,6 +2396,7 @@ function restoreSandboxStateInternal(
       );
       _log(`Cleaning target dirs before restore: ${rmCmd}`);
       const rmResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), rmCmd], {
+        ...(selectedSshEnv ? { env: selectedSshEnv } : {}),
         stdio: ["ignore", "pipe", "pipe"],
         timeout: 30000,
       });
@@ -2390,6 +2420,7 @@ function restoreSandboxStateInternal(
     if (restoreTar !== undefined) {
       const extractCmd = `tar --no-same-owner -xf - -C ${shellQuote(dir)}`;
       const sshResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), extractCmd], {
+        ...(selectedSshEnv ? { env: selectedSshEnv } : {}),
         input: restoreTar,
         stdio: ["pipe", "pipe", "pipe"],
         timeout: 120000,
@@ -2405,6 +2436,7 @@ function restoreSandboxStateInternal(
         const chownCmd = `chown -R sandbox:sandbox -- ${restoredPaths.map(shellQuote).join(" ")} 2>/dev/null || true`;
         _log(`Best-effort ownership repair: ${chownCmd}`);
         const chownResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), chownCmd], {
+          ...(selectedSshEnv ? { env: selectedSshEnv } : {}),
           stdio: ["ignore", "pipe", "pipe"],
           timeout: 30000,
         });
@@ -2428,6 +2460,7 @@ function restoreSandboxStateInternal(
           "ssh",
           [...sshArgs(configFile, sandboxName), usabilityCmd],
           {
+            ...(selectedSshEnv ? { env: selectedSshEnv } : {}),
             stdio: ["ignore", "pipe", "pipe"],
             timeout: 30000,
           },
@@ -2464,6 +2497,7 @@ function restoreSandboxStateInternal(
           _log,
           configFreshOpenClawImagePluginInstalls,
           previousOpenClawImagePluginInstalls,
+          selectedSshEnv,
         )
       ) {
         restoredFiles.push(spec.path);

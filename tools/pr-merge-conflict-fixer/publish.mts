@@ -12,6 +12,7 @@ import { type ConflictMatrixEntry, parseConflictMatrixEntry } from "./discover.m
 import {
   applyResolutionPatch,
   ConflictFixerError,
+  hasTreeChanges,
   prepareMerge,
   replaceWithTree,
   requireSha,
@@ -100,6 +101,9 @@ export function validateResolutionPatch(input: {
   replaceWithTree(merge.repository, merge.conflictTree);
   applyResolutionPatch(merge.repository, input.patchPath);
   const finalTree = writeTree(merge.repository);
+  if (hasTreeChanges(merge.repository, merge.conflictTree, finalTree, ".github/workflows")) {
+    throw new ConflictFixerError("The resolution patch changes GitHub workflows");
+  }
   return { finalTree, repository: merge.repository };
 }
 

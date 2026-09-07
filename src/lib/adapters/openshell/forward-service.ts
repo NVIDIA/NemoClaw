@@ -15,7 +15,7 @@ const sleepBuffer = new Int32Array(new SharedArrayBuffer(4));
 export interface ForwardServiceTarget {
   readonly executable: string;
   readonly gatewayName: string;
-  readonly workspace: "default";
+  readonly workspace: string;
   readonly sandboxName: string;
   readonly localHost: "127.0.0.1" | "0.0.0.0";
   readonly localPort: number;
@@ -56,8 +56,8 @@ export function validateForwardServiceTarget(target: ForwardServiceTarget): Forw
   if (!isCanonicalNemoClawGatewayName(target.gatewayName)) {
     throw new Error("OpenShell forward service gateway must be a canonical NemoClaw gateway");
   }
-  if (target.workspace !== "default") {
-    throw new Error("OpenShell forward service workspace must be default");
+  if (!isValidName(target.workspace)) {
+    throw new Error("OpenShell forward service workspace is invalid");
   }
   if (!isValidName(target.sandboxName)) {
     throw new Error("OpenShell forward service sandbox name is invalid");

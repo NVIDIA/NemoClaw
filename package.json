@@ -142,6 +142,7 @@
     "nemoclaw-blueprint/",
     "managed-inference/",
     "schemas/network-policy.schema.json",
+    "schemas/nemoclaw-config-v1.schema.json",
     "schemas/sandbox-policy.schema.json",
     "scripts/",
     "docs/resources/local-credential-form.html",

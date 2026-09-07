@@ -18,11 +18,13 @@ vi.mock("../../adapters/openshell/forward-service", async (importOriginal) => ({
   launchForwardService: mocks.launchForwardService,
 }));
 
-vi.mock("../../adapters/openshell/resolve", () => ({
+vi.mock("../../adapters/openshell/resolve", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../adapters/openshell/resolve")>()),
   resolveOpenshell: () => "/usr/local/bin/openshell",
 }));
 
-vi.mock("../../adapters/openshell/runtime", () => ({
+vi.mock("../../adapters/openshell/runtime", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../adapters/openshell/runtime")>()),
   captureOpenshell: mocks.captureOpenshell,
   runOpenshell: mocks.runOpenshell,
   isCommandTimeout: () => false,
@@ -68,7 +70,7 @@ beforeEach(() => {
   mocks.getSessionAgent.mockReturnValue(HERMES_AGENT);
 });
 
-describe("ensureDeclaredAgentForwardPortsHealthy", () => {
+describe("ensureDeclaredAgentForwardPortsHealthy", { timeout: 30_000 }, () => {
   it("accepts an already-reachable remote direct service during gateway recovery", async () => {
     vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
     mocks.getSandbox.mockReturnValue({
@@ -111,7 +113,66 @@ describe("ensureDeclaredAgentForwardPortsHealthy", () => {
     expect(ensureDeclaredAgentForwardPortsHealthy("beta", 18790)).toBe(true);
     expect(mocks.launchForwardService).toHaveBeenCalledWith(
       expect.objectContaining({ localPort: 8643, targetPort: 8643 }),
+      {},
     );
+  });
+
+  it("pins declared forward inspection and recovery to the selected OpenShell target (#10514)", async () => {
+    vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");
+    vi.stubEnv("OPENSHELL_GATEWAY", "hostile-gateway");
+    vi.stubEnv("OPENSHELL_WORKSPACE", "hostile-workspace");
+    vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/hostile/tls");
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://hostile.invalid");
+    vi.stubEnv("OPENSHELL_TOKEN", "hostile-token");
+    mocks.isLocalForwardReachable.mockReturnValue(false);
+    mocks.getSandbox.mockReturnValue({
+      agent: "hermes",
+      dashboardPort: 18790,
+      hermesApiPort: 8643,
+    });
+    mocks.captureOpenshell.mockReturnValue(forwardList([]));
+    const runtimeSelection = {
+      gatewayName: "nemoclaw-19080",
+      workspace: "review-workspace",
+      localTlsDir: "/authority/tls",
+    };
+    const selectedOptions = expect.objectContaining({
+      env: expect.objectContaining({
+        OPENSHELL_GATEWAY: runtimeSelection.gatewayName,
+        OPENSHELL_WORKSPACE: runtimeSelection.workspace,
+        OPENSHELL_LOCAL_TLS_DIR: runtimeSelection.localTlsDir,
+      }),
+      replaceEnv: true,
+    });
+    const { ensureDeclaredAgentForwardPortsHealthy } = await import("./forward-recovery");
+
+    expect(ensureDeclaredAgentForwardPortsHealthy("beta", 18790, runtimeSelection)).toBe(true);
+    expect(mocks.captureOpenshell).toHaveBeenCalledWith(
+      ["forward", "list", "--gateway", runtimeSelection.gatewayName],
+      selectedOptions,
+    );
+    expect(mocks.launchForwardService).toHaveBeenCalledWith(
+      expect.objectContaining({
+        gatewayName: runtimeSelection.gatewayName,
+        localPort: 8643,
+        sandboxName: "beta",
+        targetPort: 8643,
+        workspace: runtimeSelection.workspace,
+      }),
+      {
+        sourceEnvironment: expect.objectContaining({
+          OPENSHELL_GATEWAY: runtimeSelection.gatewayName,
+          OPENSHELL_WORKSPACE: runtimeSelection.workspace,
+          OPENSHELL_LOCAL_TLS_DIR: runtimeSelection.localTlsDir,
+        }),
+      },
+    );
+    const captureEnv = mocks.captureOpenshell.mock.calls[0]?.[1]?.env;
+    expect(captureEnv).not.toHaveProperty("OPENSHELL_GATEWAY_ENDPOINT");
+    expect(captureEnv).not.toHaveProperty("OPENSHELL_TOKEN");
+    const sourceEnvironment = mocks.launchForwardService.mock.calls[0]?.[1]?.sourceEnvironment;
+    expect(sourceEnvironment).not.toHaveProperty("OPENSHELL_GATEWAY_ENDPOINT");
+    expect(sourceEnvironment).not.toHaveProperty("OPENSHELL_TOKEN");
   });
 
   it("keeps the default API port for a sandbox registered without one (#8543)", async () => {
