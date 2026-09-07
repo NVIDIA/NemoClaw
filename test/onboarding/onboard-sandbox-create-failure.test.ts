@@ -147,6 +147,70 @@ describe("sandbox create failure diagnostics", () => {
     }).toEqual({ failureRootExists: false, result: null });
   });
 
+  it("rejects an identity-bound console path outside the sandbox state directory", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-create-failure-outside-"));
+    const homeDir = path.join(tmp, "home");
+    const logDir = path.join(homeDir, ".local", "state", "nemoclaw", "openshell-docker-gateway");
+    const sandboxId = "691344ae-f514-41c1-b29e-db7f2f7ef257";
+    const stateDir = path.join(logDir, "vm-driver", "sandboxes", sandboxId);
+    const outsidePath = path.join(tmp, "outside-secret.txt");
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(outsidePath, "outside-secret-value\n");
+    fs.writeFileSync(
+      path.join(logDir, "openshell-gateway.log"),
+      [
+        `create_sandbox received sandbox_id=${sandboxId} sandbox_name=my-assistant`,
+        `sandbox_id=${sandboxId} state_dir=${stateDir} console_output=${outsidePath}`,
+      ].join("\n"),
+    );
+
+    const result = collectSandboxCreateFailureDiagnostics("my-assistant", {
+      homeDir,
+      sandboxId,
+    });
+
+    expect({
+      failureRootExists: fs.existsSync(path.join(homeDir, ".nemoclaw", "onboard-failures")),
+      outsideContent: fs.readFileSync(outsidePath, "utf8"),
+      result,
+    }).toEqual({
+      failureRootExists: false,
+      outsideContent: "outside-secret-value\n",
+      result: null,
+    });
+  });
+
+  it("retains only the ten newest failure bundles", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-create-failure-retention-"));
+    const homeDir = path.join(tmp, "home");
+    const failureRoot = path.join(homeDir, ".nemoclaw", "onboard-failures");
+    fs.mkdirSync(failureRoot, { recursive: true });
+    const oldBundles = Array.from(
+      { length: 12 },
+      (_, index) =>
+        `2026-01-01T00-00-${String(index).padStart(2, "0")}-000Z-old-${String(index)}`,
+    );
+    oldBundles.forEach((name) => fs.mkdirSync(path.join(failureRoot, name)));
+
+    const diagnostics = collectSandboxCreateFailureDiagnostics("my-assistant", {
+      homeDir,
+      now: new Date("2026-05-12T20:35:00.000Z"),
+    });
+    const retained = fs.readdirSync(failureRoot).sort();
+
+    expect({
+      currentRetained: retained.includes(path.basename(diagnostics!.dir)),
+      oldestRemoved: !retained.includes(oldBundles[0]!),
+      retainedCount: retained.length,
+      retentionPruned: diagnostics?.retentionPruned,
+    }).toEqual({
+      currentRetained: true,
+      oldestRemoved: true,
+      retainedCount: 10,
+      retentionPruned: true,
+    });
+  });
+
   it("prints saved diagnostics and retained backup details", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-create-failure-print-"));
     const homeDir = path.join(tmp, "home");
@@ -210,7 +274,7 @@ describe("sandbox create failure diagnostics", () => {
     const logDir = path.join(homeDir, ".local", "state", "nemoclaw", "openshell-docker-gateway");
     const sandboxId = "691344ae-f514-41c1-b29e-db7f2f7ef257";
     const stateDir = path.join(logDir, "vm-driver", "sandboxes", sandboxId);
-    const consolePath = path.join(logDir, "rootfs-console.log");
+    const consolePath = path.join(stateDir, "rootfs-console.log");
     const gatewayLogPath = path.join(logDir, "openshell-gateway.log");
     fs.mkdirSync(stateDir, { recursive: true });
     Array.from({ length: 201 }, (_, index) =>
@@ -244,7 +308,7 @@ describe("sandbox create failure diagnostics", () => {
       gatewayLogTruncated: diagnostics?.gatewayLogTruncated,
       printedTruncationNotices: diagnostics?.summaryLines.slice(0, 2),
       stateEntriesOmitted: summary.includes("<additional entries omitted>"),
-      stateEntryCount: (summary.match(/^  entry-\d+$/gmu) ?? []).length,
+      listedStateEntries: (summary.match(/^  (?:entry-\d+|rootfs-console\.log)$/gmu) ?? []).length,
       summaryRecordsBounds:
         summary.includes("gateway_log_truncated=true") &&
         summary.includes("console_output_truncated=true"),
@@ -260,7 +324,7 @@ describe("sandbox create failure diagnostics", () => {
         "rootfs console: earlier content omitted",
       ],
       stateEntriesOmitted: true,
-      stateEntryCount: 200,
+      listedStateEntries: 200,
       summaryRecordsBounds: true,
     });
   });

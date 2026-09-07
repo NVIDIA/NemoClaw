@@ -18,6 +18,7 @@ const MAX_GATEWAY_TAIL_LINES = 240;
 const MAX_GATEWAY_LOG_BYTES = 1024 * 1024;
 const MAX_CONSOLE_OUTPUT_BYTES = 256 * 1024;
 const MAX_STATE_DIR_ENTRIES = 200;
+const MAX_FAILURE_BUNDLES = 10;
 const diagnosticRedactor = createDockerGpuDiagnosticRedactor();
 
 type BoundedFileTail = {
@@ -35,6 +36,7 @@ export type SandboxCreateFailureDiagnostics = {
   gatewayTailPath: string | null;
   gatewayLogTruncated: boolean;
   consoleOutputTruncated: boolean;
+  retentionPruned: boolean;
   backupPath: string | null;
   summaryLines: string[];
 };
@@ -84,7 +86,7 @@ function readBoundedFileTail(
   let fd: number | null = null;
   try {
     if (!fs.existsSync(filePath)) return null;
-    fd = fs.openSync(filePath, "r");
+    fd = fs.openSync(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
     const stat = fs.fstatSync(fd);
     if (!stat.isFile()) return null;
     const start = Math.max(0, stat.size - maxBytes);
@@ -214,6 +216,39 @@ function latestFieldValue(lines: string[], field: string): string | null {
   return null;
 }
 
+function isPathWithin(parent: string, child: string): boolean {
+  return child.startsWith(`${parent}${path.sep}`);
+}
+
+function validateIdentityBoundEvidencePaths(
+  gatewayLogPath: string | null,
+  sandboxId: string,
+  stateDir: string | null,
+  consoleOutput: string | null,
+): { stateDir: string; consoleOutput: string } | null {
+  if (!gatewayLogPath || !stateDir || !consoleOutput) return null;
+  try {
+    const gatewayStateDir = path.resolve(path.dirname(gatewayLogPath));
+    const resolvedStateDir = path.resolve(stateDir);
+    const resolvedConsoleOutput = path.resolve(consoleOutput);
+    if (
+      !isPathWithin(gatewayStateDir, resolvedStateDir) ||
+      path.basename(resolvedStateDir) !== sandboxId ||
+      !isPathWithin(resolvedStateDir, resolvedConsoleOutput)
+    ) {
+      return null;
+    }
+    rejectSymlinksOnPath(resolvedStateDir);
+    rejectSymlinksOnPath(resolvedConsoleOutput);
+    if (!fs.lstatSync(resolvedStateDir).isDirectory()) return null;
+    const consoleStat = fs.lstatSync(resolvedConsoleOutput);
+    if (!consoleStat.isFile() || consoleStat.isSymbolicLink()) return null;
+    return { stateDir: resolvedStateDir, consoleOutput: resolvedConsoleOutput };
+  } catch {
+    return null;
+  }
+}
+
 function copyFileTailIfPresent(
   src: string | null,
   dst: string,
@@ -249,6 +284,39 @@ function listStateDir(stateDir: string | null): string[] {
     return [];
   } finally {
     dir?.closeSync();
+  }
+}
+
+function pruneFailureBundles(root: string, currentBundleName: string): boolean {
+  let directory: fs.Dir | null = null;
+  try {
+    directory = fs.opendirSync(root);
+    const retained = [currentBundleName];
+    for (;;) {
+      const entry = directory.readSync();
+      if (!entry) break;
+      if (
+        entry.name === currentBundleName ||
+        !entry.isDirectory() ||
+        !/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-/u.test(entry.name)
+      ) {
+        continue;
+      }
+      retained.push(entry.name);
+      retained.sort().reverse();
+      if (retained.length <= MAX_FAILURE_BUNDLES) continue;
+      const oldest = retained.pop();
+      if (!oldest || oldest === currentBundleName) return false;
+      const target = path.join(root, oldest);
+      rejectSymlinksOnPath(target);
+      if (!fs.lstatSync(target).isDirectory()) return false;
+      fs.rmSync(target, { recursive: true });
+    }
+    return true;
+  } catch {
+    return false;
+  } finally {
+    directory?.closeSync();
   }
 }
 
@@ -290,10 +358,21 @@ export function collectSandboxCreateFailureDiagnostics(
     rawLines && !options.sandboxId && relevantLines.length === 0
       ? rawLines.filter((line) => line.trim()).slice(-MAX_GATEWAY_TAIL_LINES)
       : [];
-  const stateDir = latestFieldValue(relevantLines, "state_dir");
-  const consoleOutput =
+  const recordedStateDir = latestFieldValue(relevantLines, "state_dir");
+  const recordedConsoleOutput =
     latestFieldValue(relevantLines, "console_output") ??
-    (stateDir ? path.join(stateDir, "rootfs-console.log") : null);
+    (recordedStateDir ? path.join(recordedStateDir, "rootfs-console.log") : null);
+  const validatedPaths = options.sandboxId
+    ? validateIdentityBoundEvidencePaths(
+        gatewayLogPath,
+        options.sandboxId,
+        recordedStateDir,
+        recordedConsoleOutput,
+      )
+    : null;
+  if (options.sandboxId && !validatedPaths) return null;
+  const stateDir = validatedPaths?.stateDir ?? recordedStateDir;
+  const consoleOutput = validatedPaths?.consoleOutput ?? recordedConsoleOutput;
 
   try {
     rejectSymlinksOnPath(dir);
@@ -324,6 +403,7 @@ export function collectSandboxCreateFailureDiagnostics(
   if (gatewayTailPath) {
     fs.writeFileSync(gatewayTailPath, `${gatewayTailLines.join("\n")}\n`, { mode: 0o600 });
   }
+  const retentionPruned = pruneFailureBundles(path.dirname(dir), path.basename(dir));
   const summaryLines = [
     `created_at=${now.toISOString()}`,
     `sandbox_name=${sandboxName}`,
@@ -335,6 +415,7 @@ export function collectSandboxCreateFailureDiagnostics(
     `copied_console_output=${copiedConsoleOutput.path ?? "not-copied"}`,
     `gateway_log_truncated=${String(gatewayLog?.truncated ?? false)}`,
     `console_output_truncated=${String(copiedConsoleOutput.truncated)}`,
+    `retention_status=${retentionPruned ? "complete" : "incomplete"}`,
     `backup_path=${backupPath ?? "none"}`,
   ];
   if (stateEntries.length > 0) {
@@ -360,6 +441,7 @@ export function collectSandboxCreateFailureDiagnostics(
     gatewayTailPath,
     gatewayLogTruncated: gatewayLog?.truncated ?? false,
     consoleOutputTruncated: copiedConsoleOutput.truncated,
+    retentionPruned,
     backupPath,
     summaryLines: [
       ...truncationNotices,
@@ -384,6 +466,9 @@ export function printSandboxCreateFailureDiagnostics(
   }
   if (diagnostics.backupPath) {
     console.error(`  State backup retained: ${diagnostics.backupPath}`);
+  }
+  if (!diagnostics.retentionPruned) {
+    console.error("  Sandbox failure diagnostic retention cleanup was incomplete.");
   }
   return diagnostics;
 }
