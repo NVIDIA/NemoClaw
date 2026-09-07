@@ -54,6 +54,7 @@ export interface PrepareSandboxWorkloadSourceInput {
   readonly catalogRevision?: string | null;
   /** Contract from the repository-accepted candidate qualification receipt. */
   readonly acceptedCandidateContract?: ManagedImageContractV1 | null;
+  readonly environment?: NodeJS.ProcessEnv;
 }
 
 export function liveE2eManagedImageRevision(environment: NodeJS.ProcessEnv): string | null {
@@ -428,7 +429,6 @@ export async function prepareSandboxWorkloadSource(
       fallbackDiagnostic: null,
     };
   }
-
   if (input.catalog && input.catalogPath) {
     throw new SandboxWorkloadPreparationError(
       "managed image catalog has conflicting content authorities",
@@ -525,6 +525,7 @@ export async function prepareSandboxWorkloadSource(
       catalog,
       policy,
       candidateAgentsEnabled: candidateSelection,
+      environment: input.environment,
     }),
     release,
     fallbackDiagnostic: null,

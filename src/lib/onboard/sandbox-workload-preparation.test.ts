@@ -487,6 +487,63 @@ describe("sandbox workload preparation", () => {
     });
   });
 
+  it("fails closed when a base-image override is set but the managed image workload cannot honor it (#11138)", async () => {
+    const resolveCatalog = vi.fn(async () => CATALOG);
+    await expect(
+      prepareSandboxWorkloadSource(
+        {
+          ...input("openclaw"),
+          environment: {
+            NEMOCLAW_SANDBOX_BASE_IMAGE_REF: "ghcr.io/nvidia/nemoclaw/sandbox-base:local-only-no-push",
+          },
+        },
+        { resolveCatalog },
+      ),
+    ).rejects.toThrow(/'NEMOCLAW_SANDBOX_BASE_IMAGE_REF' is set .* does not consult this override/);
+  });
+
+  it("fails closed on the agent-specific override env var, not just the openclaw default (#11138)", async () => {
+    const resolveCatalog = vi.fn(async () => CATALOG);
+    await expect(
+      prepareSandboxWorkloadSource(
+        { ...input("hermes"), environment: { NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF: "evil:tag" } },
+        { resolveCatalog },
+      ),
+    ).rejects.toThrow(/NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF/);
+  });
+
+  it("still onboards the managed image when no base-image override is set (#11138)", async () => {
+    const resolveCatalog = vi.fn(async () => CATALOG);
+    const prepared = await prepareSandboxWorkloadSource(
+      { ...input("openclaw"), environment: {} },
+      { resolveCatalog },
+    );
+
+    expect(prepared.source.kind).toBe("managed-image");
+    expect(resolveCatalog).toHaveBeenCalledOnce();
+  });
+
+  it("still honors a base-image override on the legacy custom-Dockerfile path (#11138)", async () => {
+    const resolveCatalog = vi.fn(async () => CATALOG);
+    const prepared = await prepareSandboxWorkloadSource(
+      {
+        ...input("openclaw"),
+        customDockerfilePath: "/workspace/CustomDockerfile",
+        environment: {
+          NEMOCLAW_SANDBOX_BASE_IMAGE_REF: "ghcr.io/nvidia/nemoclaw/sandbox-base:local-only-no-push",
+        },
+      },
+      { resolveCatalog },
+    );
+
+    expect(resolveCatalog).not.toHaveBeenCalled();
+    expect(prepared.source).toEqual({
+      kind: "legacy-dockerfile",
+      dockerfilePath: "/workspace/CustomDockerfile",
+      reason: "custom-dockerfile",
+    });
+  });
+
   it("does not fetch for a runtime that has not registered managed-image capabilities (#7744)", async () => {
     const resolveCatalog = vi.fn(async () => CATALOG);
     const prepared = await prepareSandboxWorkloadSource(
@@ -775,6 +832,25 @@ describe("sandbox workload preparation", () => {
       kind: "managed-image",
       reference: piContract.reference,
     });
+  });
+
+  it("fails closed for a candidate agent's base-image override too, not just shipped agents (#11138)", async () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-candidate-override-"));
+    const catalogPath = path.join(fixtureRoot, "catalog.json");
+    const piContract = contract("pi", 3);
+    fs.writeFileSync(catalogPath, JSON.stringify({ pi: piContract }), { mode: 0o600 });
+
+    await expect(
+      prepareSandboxWorkloadSource(
+        {
+          ...input("pi"),
+          acceptedCandidateContract: piContract,
+          catalogPath,
+          environment: { NEMOCLAW_PI_SANDBOX_BASE_IMAGE_REF: "evil:tag" },
+        },
+        { resolveCatalog: async () => CATALOG },
+      ),
+    ).rejects.toThrow(/NEMOCLAW_PI_SANDBOX_BASE_IMAGE_REF/);
   });
 
   it("refuses a candidate catalog that differs from the accepted receipt (#7927)", async () => {

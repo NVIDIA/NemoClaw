@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { getAgentSandboxBaseImageEnvVar } from "../../agent/base-image";
+import { OPENCLAW_SANDBOX_BASE_IMAGE_REF_ENV_VAR } from "../base-image";
 import {
   isCandidateManagedImageAgent,
   isManagedImageAgent,
@@ -13,6 +15,16 @@ import {
   type ManagedImagePlatform,
   parseManagedImageContractV1,
 } from "../managed-image/contract";
+
+/**
+ * OpenClaw predates the multi-agent `NEMOCLAW_<AGENT>_SANDBOX_BASE_IMAGE_REF`
+ * naming scheme and keeps its original, documented env var name.
+ */
+function sandboxBaseImageOverrideEnvVar(agentName: string): string {
+  return agentName === "openclaw"
+    ? OPENCLAW_SANDBOX_BASE_IMAGE_REF_ENV_VAR
+    : getAgentSandboxBaseImageEnvVar(agentName);
+}
 
 export type ManagedImageSelectionPolicy = "prefer-managed" | "require-managed";
 
@@ -66,6 +78,7 @@ export interface ResolveSandboxWorkloadSourceOptions {
   readonly catalog: ManagedImageContractCatalog;
   readonly policy?: ManagedImageSelectionPolicy;
   readonly candidateAgentsEnabled?: boolean;
+  readonly environment?: NodeJS.ProcessEnv;
 }
 
 export class SandboxWorkloadSourceError extends Error {
@@ -204,6 +217,18 @@ export function resolveSandboxWorkloadSource(
       options,
       "contract-unavailable",
       "the catalog has no exact contract for that agent",
+    );
+  }
+
+  // The managed-image workload installs an exact, pre-verified digest from the
+  // release catalog and never reads a base-image override. Silently ignoring
+  // an operator-supplied override would accept it without ever resolving it to
+  // a trusted digest, so fail closed instead of proceeding (#11138).
+  const overrideEnvVar = sandboxBaseImageOverrideEnvVar(agentName);
+  const requestedOverride = (options.environment ?? process.env)[overrideEnvVar]?.trim();
+  if (requestedOverride) {
+    throw new SandboxWorkloadSourceError(
+      `'${overrideEnvVar}' is set to '${requestedOverride}', but the managed image workload for '${agentName}' installs an exact, pre-verified digest and does not consult this override. To use a locally overridden base image, onboard with '--from <Dockerfile>'; otherwise unset '${overrideEnvVar}' to onboard the managed image.`,
     );
   }
 
