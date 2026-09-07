@@ -655,8 +655,11 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     input.gpuRoutePlan = "none";
     input.initialGpuRoute = "none";
     input.createArgv = ["openshell", "sandbox", "create"];
-    input.hostEnv = { CUSTOM_PROVIDER_CREDENTIAL: "z7!" };
     input.persistStartupCommand = true;
+    input.requiredUlimits = [
+      { name: "nproc", soft: 512, hard: 512 },
+      { name: "nofile", soft: 65_536, hard: 65_536 },
+    ];
 
     const flow = runSandboxGpuCreateFlow(input, createDeps());
     await vi.waitFor(() => expect(createHandoff).toEqual(["poll"]));
@@ -731,9 +734,6 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     );
     expect(mocks.printSandboxCreateFailureDiagnostics).toHaveBeenCalledWith("alpha", {
       backupPath: null,
-      env: input.hostEnv,
-      gatewayName: "nemoclaw",
-      runCaptureOpenshell: deps.runCaptureOpenshell,
     });
     expect(mocks.printSandboxCreateFailureDiagnostics.mock.invocationCallOrder[0]).toBeLessThan(
       patch.rollbackManagedStartupAfterCreateFailure.mock.invocationCallOrder[0]!,

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { redactFullWithUrls } from "../security/redact";
+import { redact, redactFull } from "../security/redact";
 import type { DockerContainerInspect } from "./docker-gpu-patch-types";
 
 const SENSITIVE_ENV_KEY =
@@ -49,11 +49,6 @@ export type DockerGpuDiagnosticRedactor = {
   sanitizeInspect(inspect: DockerContainerInspect): DockerContainerInspect;
 };
 
-export type DockerGpuDiagnosticSensitiveBinding = Readonly<{
-  key: string;
-  value: string;
-}>;
-
 export function discoverDockerGpuDiagnosticSensitiveValues(
   inspect: DockerContainerInspect,
 ): string[] {
@@ -73,25 +68,6 @@ export function discoverDockerGpuDiagnosticSensitiveValues(
     .map(([, value]) => value);
 }
 
-/** Return staged credential values that a failed sandbox can echo into its logs. */
-export function discoverDockerGpuDiagnosticSensitiveValuesFromEnv(
-  env: NodeJS.ProcessEnv,
-): DockerGpuDiagnosticSensitiveBinding[] {
-  const extraPlaceholderKeys = new Set(
-    String(env[EXTRA_PLACEHOLDER_KEYS_ENV] ?? "")
-      .split(/[\s,]+/u)
-      .filter(Boolean),
-  );
-  return Object.entries(env)
-    .filter(
-      ([key, value]) =>
-        typeof value === "string" &&
-        value.length > 0 &&
-        (SENSITIVE_ENV_KEY.test(key) || extraPlaceholderKeys.has(key)),
-    )
-    .map(([key, value]) => ({ key, value: value as string }));
-}
-
 /**
  * SOURCE_OF_TRUTH_REVIEW (shared Docker GPU diagnostic redaction; #6110):
  * invalidState: inspect, network, log, or startup-command credentials reach an artifact sink.
@@ -102,34 +78,15 @@ export function discoverDockerGpuDiagnosticSensitiveValuesFromEnv(
  */
 export function createDockerGpuDiagnosticRedactor(
   initialSensitiveValues: Iterable<string> = [],
-  initialSensitiveBindings: Iterable<DockerGpuDiagnosticSensitiveBinding> = [],
 ): DockerGpuDiagnosticRedactor {
   const sensitiveValues = new Set([...initialSensitiveValues].filter((value) => value.length > 0));
-  const sensitiveBindings = [...initialSensitiveBindings].filter(
-    ({ key, value }) => key.length > 0 && value.length > 0,
-  );
   const redactText = (text: string): string => {
-    let redacted = redactFullWithUrls(text);
+    // `redactFull` covers known secret shapes, while `redact` additionally
+    // parses credential-bearing URLs such as proxy values. Apply both before
+    // replacing opaque values learned from Docker inspect records.
+    let redacted = redactFull(redact(text));
     for (const value of [...sensitiveValues].sort((left, right) => right.length - left.length)) {
       redacted = redacted.split(value).join("<REDACTED>");
-    }
-    for (const { key, value } of sensitiveBindings.sort(
-      (left, right) => right.value.length - left.value.length,
-    )) {
-      const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-      const escapedValue = value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-      redacted = redacted.replace(
-        new RegExp(`(?<![A-Za-z0-9_])(${escapedKey}[ \\t]*[=:][ \\t]*)${escapedValue}`, "gu"),
-        "$1<REDACTED>",
-      );
-      if (value.length >= 8) {
-        redacted = redacted.split(value).join("<REDACTED>");
-        continue;
-      }
-      redacted = redacted.replace(
-        new RegExp(`(?<![A-Za-z0-9])${escapedValue}(?![A-Za-z0-9])`, "gu"),
-        "<REDACTED>",
-      );
     }
     return redacted;
   };

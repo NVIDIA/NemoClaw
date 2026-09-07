@@ -123,10 +123,6 @@ describe("fresh sandbox executable readiness", () => {
     expect(mocks.printSandboxCreateFailureDiagnostics).toHaveBeenCalledWith("alpha", {
       backupPath: null,
     });
-    expect(deps.runCaptureOpenshell).not.toHaveBeenCalledWith(
-      expect.arrayContaining(["logs"]),
-      expect.anything(),
-    );
   });
 
   it("keeps a transient executable not-ready response inside the bounded wait (#9050)", async () => {
