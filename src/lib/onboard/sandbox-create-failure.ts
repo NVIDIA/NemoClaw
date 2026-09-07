@@ -42,6 +42,7 @@ export type SandboxCreateFailureDiagnosticOptions = {
   gatewayPort?: number;
   gatewayLogPath?: string | null;
   gatewayStateDir?: string;
+  sandboxId?: string;
   backupPath?: string | null;
   now?: Date;
 };
@@ -119,21 +120,34 @@ function extractField(line: string, field: string): string | null {
   return match?.[1] ?? null;
 }
 
-function findLatestSandboxBlock(lines: string[], sandboxName: string): string[] {
+function findLatestSandboxBlock(
+  lines: string[],
+  sandboxName: string,
+  requiredSandboxId?: string,
+): string[] {
   let startIndex = -1;
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i] || "";
-    if (line.includes("create_sandbox received") && line.includes(`sandbox_name=${sandboxName}`)) {
+    if (
+      line.includes("create_sandbox received") &&
+      extractField(line, "sandbox_name") === sandboxName &&
+      (!requiredSandboxId || extractField(line, "sandbox_id") === requiredSandboxId)
+    ) {
       startIndex = i;
       break;
     }
   }
-  if (startIndex < 0) return lines.slice(-MAX_RELEVANT_LOG_LINES);
+  if (startIndex < 0) {
+    return requiredSandboxId ? [] : lines.slice(-MAX_RELEVANT_LOG_LINES);
+  }
 
   let endIndex = lines.length;
   for (let i = startIndex + 1; i < lines.length; i++) {
     const line = lines[i] || "";
-    if (line.includes("DeleteSandbox") && line.includes(`sandbox_name=${sandboxName}`)) {
+    if (
+      (line.includes("create_sandbox received") || line.includes("DeleteSandbox")) &&
+      extractField(line, "sandbox_name") === sandboxName
+    ) {
       endIndex = i + 1;
       break;
     }
@@ -143,7 +157,7 @@ function findLatestSandboxBlock(lines: string[], sandboxName: string): string[] 
 
 function getLatestSandboxId(block: string[], sandboxName: string): string | null {
   for (const line of block) {
-    if (!line.includes(`sandbox_name=${sandboxName}`)) continue;
+    if (extractField(line, "sandbox_name") !== sandboxName) continue;
     const field = extractField(line, "sandbox_id");
     if (field && UUID_RE.test(field)) return field;
   }
@@ -154,11 +168,15 @@ function filterRelevantLines(
   block: string[],
   sandboxName: string,
   sandboxId: string | null,
+  requireExactIdentity: boolean,
 ): string[] {
   const relevant = block.filter((line) => {
     if (!line.trim()) return false;
-    if (line.includes(`sandbox_name=${sandboxName}`)) return true;
-    if (sandboxId && line.includes(`sandbox_id=${sandboxId}`)) return true;
+    if (requireExactIdentity) {
+      return Boolean(sandboxId && extractField(line, "sandbox_id") === sandboxId);
+    }
+    if (extractField(line, "sandbox_name") === sandboxName) return true;
+    if (sandboxId && extractField(line, "sandbox_id") === sandboxId) return true;
     return /ERROR krun|VmCreate|ProcessExited|console_output=|state_dir=/.test(line);
   });
   return relevant.slice(-MAX_RELEVANT_LOG_LINES);
@@ -239,11 +257,19 @@ export function collectSandboxCreateFailureDiagnostics(
     null;
   const gatewayLog = gatewayLogPath ? readLogLines(gatewayLogPath) : null;
   const rawLines = gatewayLog?.lines ?? null;
-  const block = rawLines ? findLatestSandboxBlock(rawLines, sandboxName) : [];
-  const sandboxId = getLatestSandboxId(block, sandboxName);
-  const relevantLines = filterRelevantLines(block, sandboxName, sandboxId);
+  const block = rawLines
+    ? findLatestSandboxBlock(rawLines, sandboxName, options.sandboxId)
+    : [];
+  if (options.sandboxId && block.length === 0) return null;
+  const sandboxId = options.sandboxId ?? getLatestSandboxId(block, sandboxName);
+  const relevantLines = filterRelevantLines(
+    block,
+    sandboxName,
+    sandboxId,
+    options.sandboxId !== undefined,
+  );
   const gatewayTailLines =
-    rawLines && relevantLines.length === 0
+    rawLines && !options.sandboxId && relevantLines.length === 0
       ? rawLines.filter((line) => line.trim()).slice(-MAX_GATEWAY_TAIL_LINES)
       : [];
   const stateDir = latestFieldValue(relevantLines, "state_dir");

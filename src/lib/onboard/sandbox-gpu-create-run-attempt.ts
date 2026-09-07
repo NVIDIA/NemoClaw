@@ -346,10 +346,12 @@ function checkCreatedSandboxReadyIdentity(
   gatewayName: string,
   deps: SandboxGpuCreateFlowDeps,
   getRemainingMs: () => number,
+  onIdentified: (sandboxId: string) => void,
 ): ReturnType<CreatedSandboxReadyIdentityCheck> {
   const identity = probeExactOpenShellSandboxId(sandboxName, gatewayName, deps, getRemainingMs);
   if (identity.state === "not_ready") return "not_ready";
   if (identity.state === "failed") return "probe_failed";
+  onIdentified(identity.sandboxId);
   return checkSandboxExecutableReadiness(sandboxName, gatewayName, deps, getRemainingMs);
 }
 
@@ -452,6 +454,21 @@ function containCreateFailureDiagnostics(
       return null;
     }
   };
+}
+
+function printIdentityBoundCreateFailureDiagnostics(
+  printDiagnostics: PrintCreateFailureDiagnostics,
+  sandboxName: string,
+  backupPath: string | null,
+  sandboxId: string | null,
+): void {
+  if (!sandboxId) {
+    console.error(
+      "  Sandbox failure diagnostics were not collected because no durable sandbox identity was verified.",
+    );
+    return;
+  }
+  printDiagnostics(sandboxName, { backupPath, sandboxId });
 }
 
 export function createSandboxGpuCreateAttemptRunner(
@@ -816,6 +833,7 @@ export function createSandboxGpuCreateAttemptRunner(
     let managedCreatedSandboxId: string | null = null;
     let managedIncompleteCreateRecovered = false;
     let createdSandboxVerified = false;
+    let verifiedCreatedSandboxId: string | null = null;
     const failAfterCreatedSandboxVerification = (message: string, status: number): never => {
       if (createdSandboxVerified) throw new Error(message);
       return process.exit(status);
@@ -844,6 +862,7 @@ export function createSandboxGpuCreateAttemptRunner(
         input,
       );
       createdSandboxVerified = true;
+      verifiedCreatedSandboxId = identity.sandboxId;
       if (deferPostCreateEffects) {
         revalidatePostCreateEffect(`activate managed sandbox network for '${input.sandboxName}'`);
         await managedLifecycle?.prepareNetwork();
@@ -958,6 +977,7 @@ export function createSandboxGpuCreateAttemptRunner(
           revalidatePostCreateEffect,
         });
         createdSandboxVerified = true;
+        verifiedCreatedSandboxId = managedCreatedSandboxId;
       } catch (error) {
         if (!(error instanceof ManagedBootstrapCreateStreamFailure)) throw error;
         createResult = error.result;
@@ -1072,6 +1092,7 @@ export function createSandboxGpuCreateAttemptRunner(
       waitForCreatedSandboxPublication(sandboxId);
       await verifyCreatedSandboxBeforeEffects(sandboxId, createAttemptNonce!, route, input);
       createdSandboxVerified = true;
+      verifiedCreatedSandboxId = sandboxId;
     }
     if (deferPostCreateEffects) {
       revalidatePostCreateEffect(`validate runtime patch for sandbox '${input.sandboxName}'`);
@@ -1089,9 +1110,9 @@ export function createSandboxGpuCreateAttemptRunner(
       console.error(
         `  Sandbox '${input.sandboxName}' reached Ready, but OpenShell did not return one exact durable sandbox ID before runtime recreation.`,
       );
-      printCreateFailureDiagnostics(input.sandboxName, {
-        backupPath: input.restoreBackupPath,
-      });
+      console.error(
+        "  Sandbox failure diagnostics were not collected because no durable sandbox identity was verified.",
+      );
       failAfterCreatedSandboxVerification(
         `Sandbox '${input.sandboxName}' did not return one exact durable sandbox ID before runtime recreation after verified creation.`,
         createResult?.status === 0 ? 1 : (createResult?.status ?? 1),
@@ -1130,6 +1151,9 @@ export function createSandboxGpuCreateAttemptRunner(
                 input.gatewayName,
                 deps,
                 getRemainingMs,
+                (sandboxId) => {
+                  verifiedCreatedSandboxId = sandboxId;
+                },
               ),
       sleep: deps.sleep,
     });
@@ -1175,9 +1199,13 @@ export function createSandboxGpuCreateAttemptRunner(
           ...nativeCleanup,
         } as const;
       }
-      printCreateFailureDiagnosticsBeforeRollback(input.sandboxName, {
-        backupPath: input.restoreBackupPath,
-      });
+      const diagnosticSandboxId = expectedRecreatedSandboxId ?? verifiedCreatedSandboxId;
+      printIdentityBoundCreateFailureDiagnostics(
+        printCreateFailureDiagnosticsBeforeRollback,
+        input.sandboxName,
+        input.restoreBackupPath,
+        diagnosticSandboxId,
+      );
       await runtimePatch.rollbackManagedStartupAfterCreateFailure();
       if (compatibility) runtimePatch.printReadinessFailureIfEnabled();
       else if (expectedRecreatedSandboxId) {

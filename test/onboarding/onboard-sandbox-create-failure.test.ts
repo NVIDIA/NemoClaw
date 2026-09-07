@@ -43,17 +43,22 @@ describe("sandbox create failure diagnostics", () => {
     },
   );
 
-  it("preserves gateway failure lines and VM console output before cleanup", () => {
+  it("preserves only the verified sandbox evidence before cleanup", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-create-failure-"));
     const homeDir = path.join(tmp, "home");
     const logDir = path.join(homeDir, ".local", "state", "nemoclaw", "openshell-docker-gateway");
     const sandboxId = "691344ae-f514-41c1-b29e-db7f2f7ef257";
+    const replacementId = "828d0e10-b2dc-4e64-86c6-8a9b1f352f02";
     const stateDir = path.join(logDir, "vm-driver", "sandboxes", sandboxId);
+    const replacementStateDir = path.join(logDir, "vm-driver", "sandboxes", replacementId);
     const consolePath = path.join(stateDir, "rootfs-console.log");
+    const replacementConsolePath = path.join(replacementStateDir, "rootfs-console.log");
     const gatewayLogPath = path.join(logDir, "openshell-gateway.log");
 
     fs.mkdirSync(stateDir, { recursive: true });
+    fs.mkdirSync(replacementStateDir, { recursive: true });
     fs.writeFileSync(consolePath, "vm console detail\n");
+    fs.writeFileSync(replacementConsolePath, "replacement console detail\n");
     fs.writeFileSync(
       gatewayLogPath,
       [
@@ -61,13 +66,16 @@ describe("sandbox create failure diagnostics", () => {
         `2026-05-12T20:30:56Z INFO vm driver: create_sandbox received sandbox_id=${sandboxId} sandbox_name=my-assistant`,
         `2026-05-12T20:30:56Z INFO vm driver: resolved image ref, preparing rootfs sandbox_id=${sandboxId} state_dir=${stateDir}`,
         `2026-05-12T20:34:28Z INFO vm driver: spawning VM launcher sandbox_id=${sandboxId} console_output=${consolePath}`,
-        "[2026-05-12T20:34:29Z ERROR krun] Building the microVM failed: Internal(Vm(VmSetup(VmCreate)))",
+        `[2026-05-12T20:34:29Z ERROR krun] sandbox_id=${sandboxId} Building the microVM failed: Internal(Vm(VmSetup(VmCreate)))`,
         `2026-05-12T20:34:29Z WARN Sandbox failed to become ready sandbox_id=${sandboxId} sandbox_name=my-assistant reason=ProcessExited`,
+        `2026-05-12T20:34:30Z INFO vm driver: create_sandbox received sandbox_id=${replacementId} sandbox_name=my-assistant`,
+        `2026-05-12T20:34:30Z INFO vm driver: spawning VM launcher sandbox_id=${replacementId} console_output=${replacementConsolePath}`,
       ].join("\n"),
     );
 
     const diagnostics = collectSandboxCreateFailureDiagnostics("my-assistant", {
       homeDir,
+      sandboxId,
       backupPath: "/tmp/pre-upgrade-backup",
       now: new Date("2026-05-12T20:35:00.000Z"),
     });
@@ -85,9 +93,28 @@ describe("sandbox create failure diagnostics", () => {
     );
     expect(relevant).toContain("VmCreate");
     expect(relevant).toContain("sandbox_name=my-assistant");
+    expect(relevant).not.toContain(replacementId);
     expect(fs.readFileSync(path.join(diagnostics!.dir, "summary.txt"), "utf-8")).toContain(
       "backup_path=/tmp/pre-upgrade-backup",
     );
+  });
+
+  it("does not fall back to same-name evidence when the verified ID is absent", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-create-failure-identity-miss-"));
+    const homeDir = path.join(tmp, "home");
+    const logDir = path.join(homeDir, ".local", "state", "nemoclaw", "openshell-docker-gateway");
+    fs.mkdirSync(logDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(logDir, "openshell-gateway.log"),
+      "create_sandbox received sandbox_id=828d0e10-b2dc-4e64-86c6-8a9b1f352f02 sandbox_name=my-assistant\n",
+    );
+
+    expect(
+      collectSandboxCreateFailureDiagnostics("my-assistant", {
+        homeDir,
+        sandboxId: "691344ae-f514-41c1-b29e-db7f2f7ef257",
+      }),
+    ).toBeNull();
   });
 
   it("prints saved diagnostics and retained backup details", () => {
@@ -166,7 +193,10 @@ describe("sandbox create failure diagnostics", () => {
       ].join("\n")}\n`,
     );
 
-    const diagnostics = collectSandboxCreateFailureDiagnostics("my-assistant", { homeDir });
+    const diagnostics = collectSandboxCreateFailureDiagnostics("my-assistant", {
+      homeDir,
+      sandboxId,
+    });
     const gatewayEvidence = fs.readFileSync(
       path.join(diagnostics!.dir, "openshell-gateway-relevant.log"),
     );

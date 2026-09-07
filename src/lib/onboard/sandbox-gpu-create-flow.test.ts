@@ -734,6 +734,7 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     );
     expect(mocks.printSandboxCreateFailureDiagnostics).toHaveBeenCalledWith("alpha", {
       backupPath: null,
+      sandboxId: "alpha-sandbox-id",
     });
     expect(mocks.printSandboxCreateFailureDiagnostics.mock.invocationCallOrder[0]).toBeLessThan(
       patch.rollbackManagedStartupAfterCreateFailure.mock.invocationCallOrder[0]!,

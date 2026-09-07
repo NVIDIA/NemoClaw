@@ -204,7 +204,7 @@ describe("fresh sandbox executable readiness", () => {
         ([args]) => args.join(" ") === "sandbox delete alpha",
       ),
     }).toEqual({
-      diagnosticCall: ["alpha", { backupPath: null }],
+      diagnosticCall: ["alpha", { backupPath: null, sandboxId: "alpha-sandbox-id" }],
       diagnosticUnavailable: true,
       rollbackCalls: 1,
       sandboxDeletedByName: false,
@@ -236,9 +236,10 @@ describe("fresh sandbox executable readiness", () => {
     expect(console.error).toHaveBeenCalledWith(
       "  NemoClaw could not verify that sandbox 'alpha' returned a durable ID and accepted commands.",
     );
-    expect(mocks.printSandboxCreateFailureDiagnostics).toHaveBeenCalledWith("alpha", {
-      backupPath: null,
-    });
+    expect(mocks.printSandboxCreateFailureDiagnostics).not.toHaveBeenCalled();
+    expect(console.error).toHaveBeenCalledWith(
+      "  Sandbox failure diagnostics were not collected because no durable sandbox identity was verified.",
+    );
   });
 
   it("fails when the identity probe times out after emitting not-ready output (#9050)", async () => {
@@ -299,6 +300,7 @@ describe("fresh sandbox executable readiness", () => {
     );
     expect(mocks.printSandboxCreateFailureDiagnostics).toHaveBeenCalledWith("alpha", {
       backupPath: null,
+      sandboxId: "alpha-sandbox-id",
     });
   });
 });
