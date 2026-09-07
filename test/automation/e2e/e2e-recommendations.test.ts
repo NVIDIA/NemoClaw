@@ -127,6 +127,7 @@ describe("E2E recommendation normalizer", () => {
         "tools/e2e/execution-coverage.mts",
         "tools/e2e/gateway-runtime.mts",
         "tools/e2e/onboard-timeout-contract.mts",
+        "tools/e2e/openshell-gateway-upgrade-fixture.mts",
         "tools/e2e/selector-aliases.mts",
         "tools/e2e/target-catalogue.mts",
         "scripts/checks/llama-cpp-dgx-spark-qualification-paths.mts",

@@ -22,6 +22,7 @@ import {
   ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES,
   ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES,
 } from "./onboard-timeout-contract.mts";
+import { REVIEWED_GATEWAY_UPGRADE_FIXTURE } from "./openshell-gateway-upgrade-fixture.mts";
 import { normalizeE2eSelectorId } from "./selector-aliases.mts";
 
 export const E2E_EXECUTION_PROFILES = [
@@ -324,122 +325,37 @@ function commonEgressTarget(options: {
   });
 }
 
-interface GatewayUpgradeTargetOptions {
-  commit: string;
-  currentOpenClawVersion?: string;
-  displayName: string;
-  installerSha256: string;
-  nemoclawRef: string;
-  openClawVersion: string;
-  openShellVersion: string;
-  runner?: string;
-  sandboxBaseImageRef: string;
-  shard: string;
-  stateUpgrade?: boolean;
-}
-
-function gatewayUpgradeTarget(options: GatewayUpgradeTargetOptions): E2eCatalogueTarget {
-  return dockerOnlyTarget(`openshell-gateway-upgrade-${options.shard}`, {
-    targetId: "openshell-gateway-upgrade",
-    displayName: options.displayName,
-    agentRuntime: "openclaw",
-    environmentOrInferenceEndpoint:
-      options.runner === "ubuntu-24.04-arm"
-        ? "Arm64 Ubuntu; GitHub release artifacts; no inference endpoint"
-        : "x86-64 Ubuntu; GitHub release artifacts; no inference endpoint",
-    profile: "github-read",
-    runner: options.runner ?? "ubuntu-latest",
-    testFile: "test/e2e/live/openshell-gateway-upgrade.test.ts",
-    timeoutMinutes: 70,
-    installMode: "none",
-    restoreCli: true,
-    exposeCliBin: true,
-    shard: options.shard,
-    owningPaths: [
-      "test/e2e/live/openshell-gateway-upgrade-helpers.ts",
-      "test/e2e/live/openshell-gateway-upgrade-old-installer.ts",
-    ],
-    environment: {
-      ...nonInteractive,
-      NEMOCLAW_GATEWAY_UPGRADE_SURVIVOR_NAME: "e2e-gw-survivor",
-      NEMOCLAW_OLD_NEMOCLAW_REF: options.nemoclawRef,
-      NEMOCLAW_OLD_NEMOCLAW_COMMIT: options.commit,
-      NEMOCLAW_OLD_INSTALLER_SHA256: options.installerSha256,
-      NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF: options.sandboxBaseImageRef,
-      NEMOCLAW_OLD_OPENSHELL_VERSION: options.openShellVersion,
-      NEMOCLAW_OLD_OPENCLAW_VERSION: options.openClawVersion,
-      NEMOCLAW_CURRENT_OPENCLAW_VERSION: options.currentOpenClawVersion ?? "",
-      NEMOCLAW_OPENCLAW_STATE_UPGRADE_PROOF: options.stateUpgrade ? "1" : "",
-      OPENSHELL_GATEWAY: "nemoclaw",
-    },
-  });
-}
-
-const GATEWAY_UPGRADE_FIXTURES = [
-  {
-    displayName: "Upgrade: preserves v0.0.36 state on x86-64",
-    shard: "v0-0-36-x86-64",
-    nemoclawRef: "v0.0.36",
-    commit: "3351fbdd4eb7d9b80ec471545083956327da2b10",
-    installerSha256: "0c42400a0d3867739f1d75d612e069967be4506e169974bbbebf14b7af39144f",
-    sandboxBaseImageRef:
-      "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:104151ffadc2ff0b6c815e3c95c2783ced61aee0d0f83fc327cc02be9b7e14e6",
-    openShellVersion: "0.0.36",
-    openClawVersion: "2026.4.24",
+const GATEWAY_UPGRADE_TARGET = dockerOnlyTarget("openshell-gateway-upgrade-v0-0-89-x86-64", {
+  targetId: "openshell-gateway-upgrade",
+  displayName: `Upgrade: preserves a ${REVIEWED_GATEWAY_UPGRADE_FIXTURE.nemoclawRef} sandbox on x86-64`,
+  agentRuntime: "openclaw",
+  environmentOrInferenceEndpoint:
+    "x86-64 Ubuntu; GitHub release artifacts; host-local compatible inference endpoint",
+  profile: "github-read",
+  runner: "ubuntu-latest",
+  testFile: "test/e2e/live/openshell-gateway-upgrade.test.ts",
+  timeoutMinutes: 70,
+  installMode: "none",
+  restoreCli: true,
+  exposeCliBin: true,
+  shard: "v0-0-89-x86-64",
+  owningPaths: [
+    "tools/e2e/openshell-gateway-upgrade-fixture.mts",
+    "test/e2e/live/openshell-gateway-upgrade-helpers.ts",
+    "test/e2e/live/openshell-gateway-upgrade-old-installer.ts",
+  ],
+  environment: {
+    ...nonInteractive,
+    NEMOCLAW_GATEWAY_UPGRADE_SURVIVOR_NAME: "e2e-gw-survivor",
+    NEMOCLAW_OLD_NEMOCLAW_REF: REVIEWED_GATEWAY_UPGRADE_FIXTURE.nemoclawRef,
+    NEMOCLAW_OLD_NEMOCLAW_COMMIT: REVIEWED_GATEWAY_UPGRADE_FIXTURE.nemoclawCommit,
+    NEMOCLAW_OLD_INSTALLER_SHA256: REVIEWED_GATEWAY_UPGRADE_FIXTURE.installerSha256,
+    NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF: REVIEWED_GATEWAY_UPGRADE_FIXTURE.sandboxBaseImageRef,
+    NEMOCLAW_OLD_OPENSHELL_VERSION: REVIEWED_GATEWAY_UPGRADE_FIXTURE.openShellVersion,
+    NEMOCLAW_OLD_OPENCLAW_VERSION: REVIEWED_GATEWAY_UPGRADE_FIXTURE.openclawVersion,
+    OPENSHELL_GATEWAY: "nemoclaw",
   },
-  {
-    displayName: "Upgrade: preserves v0.0.55 state on x86-64",
-    shard: "v0-0-55-x86-64",
-    nemoclawRef: "v0.0.55",
-    commit: "95d483fe2b6569d68e59493c60f19df09a068e8f",
-    installerSha256: "ff8cf448e4d17b00421545a1f333262b615b1b0aa236d0cc5aeaf4e2cae2d897",
-    sandboxBaseImageRef:
-      "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:10433a8cd2f2b809dd0fdf983514679e04c0f8aa1ff5bbff675029046033b108",
-    openShellVersion: "0.0.44",
-    openClawVersion: "2026.5.22",
-  },
-  {
-    displayName: "Upgrade: preserves v0.0.55 state on Arm64",
-    runner: "ubuntu-24.04-arm",
-    shard: "v0-0-55-aarch64",
-    nemoclawRef: "v0.0.55",
-    commit: "95d483fe2b6569d68e59493c60f19df09a068e8f",
-    installerSha256: "ff8cf448e4d17b00421545a1f333262b615b1b0aa236d0cc5aeaf4e2cae2d897",
-    sandboxBaseImageRef:
-      "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:10433a8cd2f2b809dd0fdf983514679e04c0f8aa1ff5bbff675029046033b108",
-    openShellVersion: "0.0.44",
-    openClawVersion: "2026.5.22",
-  },
-  {
-    displayName: "Upgrade: preserves v0.0.74 state on x86-64",
-    shard: "v0-0-74-x86-64",
-    nemoclawRef: "v0.0.74",
-    commit: "3a05b54e8ec3e1d5550ec5c728de54af872bffe3",
-    installerSha256: "a0cd3feca488d247e53d59d7d8246d2b86e75e95acb5e7d78504b3c0c60fd7db",
-    sandboxBaseImageRef:
-      "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:104151ffadc2ff0b6c815e3c95c2783ced61aee0d0f83fc327cc02be9b7e14e6",
-    openShellVersion: "0.0.72",
-    openClawVersion: "2026.5.27",
-  },
-  {
-    displayName: "Upgrade: migrates v0.0.89 state on x86-64",
-    shard: "v0-0-89-x86-64",
-    nemoclawRef: "v0.0.89",
-    commit: "1143aa5cce77f3bad1b3b5588bd7fddbe438237e",
-    installerSha256: "00f24959e5ca68104fe91221c0a015dab6a4154618497fa36b969b661f418cc2",
-    sandboxBaseImageRef:
-      "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:3265d482f67c9d81ee3a59b0bbad5eb5ea6c705fea81ece8ae888ed12794f7f1",
-    openShellVersion: "0.0.85",
-    openClawVersion: "2026.6.10",
-    currentOpenClawVersion: "2026.7.1",
-    stateUpgrade: true,
-  },
-] as const satisfies readonly GatewayUpgradeTargetOptions[];
-
-const GATEWAY_UPGRADE_TARGETS = GATEWAY_UPGRADE_FIXTURES.map(gatewayUpgradeTarget);
-const GATEWAY_UPGRADE_TARGET_BY_ID = new Map(
-  GATEWAY_UPGRADE_TARGETS.map((entry) => [entry.id, entry]),
-);
+});
 
 export const E2E_CATALOGUE_EXCLUSION_REASONS = {
   "issue-4434-tui-unreachable-inference":
@@ -1228,10 +1144,9 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       OPENSHELL_GATEWAY: "nemoclaw",
     },
   }),
-  ...GATEWAY_UPGRADE_TARGETS,
+  GATEWAY_UPGRADE_TARGET,
   dockerOnlyTarget("shields-retirement-upgrade", {
-    displayName:
-      "Upgrade: migrates a v0.0.115 Shields sandbox to the candidate image",
+    displayName: "Upgrade: migrates a v0.0.115 Shields sandbox to the candidate image",
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint:
       "x86-64 Ubuntu; pinned v0.0.115 install and candidate managed image; local compatible endpoint",
@@ -1254,8 +1169,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       ...nonInteractive,
       NEMOCLAW_AGENT: "openclaw",
       NEMOCLAW_OLD_NEMOCLAW_REF: "v0.0.115",
-      NEMOCLAW_OLD_NEMOCLAW_TAG_OBJECT:
-        "7503e700808655df1303ddc51888bb596c9afa34",
+      NEMOCLAW_OLD_NEMOCLAW_TAG_OBJECT: "7503e700808655df1303ddc51888bb596c9afa34",
       NEMOCLAW_OLD_NEMOCLAW_COMMIT: "324a886fd05b01f6756bae0371ea503c651fbd11",
       NEMOCLAW_OLD_INSTALLER_SHA256:
         "0ed77ba8cf176641bd3b22cfd89b4977b3d9a6f47b76da8b03bf4091a20d1251",
@@ -1724,8 +1638,10 @@ export function validateE2eTargetCatalogue(
       entry.targetId === "openshell-gateway-upgrade" ||
       entry.id.startsWith("openshell-gateway-upgrade-")
     ) {
-      const expected = GATEWAY_UPGRADE_TARGET_BY_ID.get(entry.id);
-      if (!expected || !isDeepStrictEqual(entry, expected)) {
+      if (
+        entry.id !== GATEWAY_UPGRADE_TARGET.id ||
+        !isDeepStrictEqual(entry, GATEWAY_UPGRADE_TARGET)
+      ) {
         throw new Error(
           `E2E target ${entry.id} must match the exact reviewed gateway-upgrade fixture`,
         );

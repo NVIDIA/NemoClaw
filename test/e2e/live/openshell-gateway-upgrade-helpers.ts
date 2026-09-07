@@ -2,17 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { shellQuote } from "../fixtures/clients/command.ts";
+import { REVIEWED_GATEWAY_UPGRADE_FIXTURE } from "../../../tools/e2e/openshell-gateway-upgrade-fixture.mts";
 import { reviewedOldInstallerProfile } from "./openshell-gateway-upgrade-old-installer.ts";
 
 const NON_INTERACTIVE_INSTALLER_ARGS = ["--non-interactive", "--yes-i-accept-third-party-software"];
 const GATEWAY_VOLUME_PREFIX = "openshell-cluster-nemoclaw";
-const LEGACY_GATEWAY_DOCKER_NETWORK = "openshell-cluster-nemoclaw";
 export const GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS = 35 * 60_000;
 
 export interface LegacyGatewayUpgradeFixture {
   nemoclawRef: string;
   nemoclawCommit: string;
   installerSha256: string;
+  openShellVersion: string;
   openclawVersion: string;
   sandboxBaseImageRef: string;
 }
@@ -28,23 +29,33 @@ export function validateLegacyGatewayUpgradeFixture(fixture: LegacyGatewayUpgrad
       `NEMOCLAW_OLD_NEMOCLAW_COMMIT must be a full lowercase commit SHA; got ${fixture.nemoclawCommit}`,
     );
   }
-  if (!/^[0-9a-f]{64}$/.test(fixture.installerSha256)) {
+  if (
+    !/^[0-9a-f]{64}$/.test(fixture.installerSha256) ||
+    fixture.installerSha256 !== REVIEWED_GATEWAY_UPGRADE_FIXTURE.installerSha256
+  ) {
     throw new Error(
-      `NEMOCLAW_OLD_INSTALLER_SHA256 must be a lowercase SHA-256 digest; got ${fixture.installerSha256}`,
+      `NEMOCLAW_OLD_INSTALLER_SHA256 must match the reviewed descriptor's lowercase SHA-256 digest; got ${fixture.installerSha256}`,
     );
   }
-  if (!/^\d{4}\.\d{1,2}\.\d{1,2}$/.test(fixture.openclawVersion)) {
+  if (
+    !/^\d{4}\.\d{1,2}\.\d{1,2}$/.test(fixture.openclawVersion) ||
+    !/^\d+\.\d+\.\d+$/.test(fixture.openShellVersion) ||
+    fixture.openShellVersion !== REVIEWED_GATEWAY_UPGRADE_FIXTURE.openShellVersion
+  ) {
     throw new Error(
-      `NEMOCLAW_OLD_OPENCLAW_VERSION must use the YYYY.M.D release format; got ${fixture.openclawVersion}`,
+      `NEMOCLAW_OLD_OPENCLAW_VERSION and NEMOCLAW_OLD_OPENSHELL_VERSION must match the reviewed descriptor; got ${fixture.openclawVersion}/${fixture.openShellVersion}`,
     );
   }
   reviewedOldInstallerProfile(fixture);
   const sandboxBaseDigest = fixture.sandboxBaseImageRef.match(
     /^[^@\s]+@sha256:([0-9a-f]{64})$/,
   )?.[1];
-  if (!sandboxBaseDigest) {
+  if (
+    !sandboxBaseDigest ||
+    fixture.sandboxBaseImageRef !== REVIEWED_GATEWAY_UPGRADE_FIXTURE.sandboxBaseImageRef
+  ) {
     throw new Error(
-      `NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF must be digest-pinned; got ${fixture.sandboxBaseImageRef}`,
+      `NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF must match the reviewed descriptor and use a digest pin; got ${fixture.sandboxBaseImageRef}`,
     );
   }
   return { sandboxBaseDigest };
@@ -54,11 +65,8 @@ export function oldGatewayUpgradeInstallerArgs(installer: string): string[] {
   return [installer, ...NON_INTERACTIVE_INSTALLER_ARGS, "--fresh"];
 }
 
-export function currentGatewayUpgradeInstallerArgs(
-  installer: string,
-  options: { interactive?: boolean } = {},
-): string[] {
-  return options.interactive ? [installer] : [installer, ...NON_INTERACTIVE_INSTALLER_ARGS];
+export function currentGatewayUpgradeInstallerArgs(installer: string): string[] {
+  return [installer, ...NON_INTERACTIVE_INSTALLER_ARGS];
 }
 
 export function currentNemoclawUpgradeRef(env: NodeJS.ProcessEnv): string {
@@ -72,29 +80,13 @@ export function currentNemoclawUpgradeRef(env: NodeJS.ProcessEnv): string {
   return "HEAD";
 }
 
-export function legacyGatewayUpgradeHostFirewallOptions(nemoclawRef: string): {
+export function legacyGatewayUpgradeHostFirewallOptions(): {
   networkName: string | undefined;
   waitForNetworkMs: number;
 } {
-  let networkName: string | undefined;
-  switch (nemoclawRef) {
-    case "v0.0.36":
-      // This cluster-era gateway names its bridge after the gateway; newer
-      // Docker gateways use the host fixture's openshell-docker default.
-      networkName = LEGACY_GATEWAY_DOCKER_NETWORK;
-      break;
-    case "v0.0.55":
-    case "v0.0.74":
-    case "v0.0.89":
-    case "v0.0.115":
-      networkName = undefined;
-      break;
-    default:
-      throw new Error(`Unsupported gateway-upgrade network fixture: ${nemoclawRef}`);
-  }
   // The historical install creates its network after fetching and building
   // its payload, so keep the parallel probe alive for the full install budget.
-  return { networkName, waitForNetworkMs: GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS };
+  return { networkName: undefined, waitForNetworkMs: GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS };
 }
 
 export function throwGatewayUpgradeSetupFailures(
@@ -106,23 +98,6 @@ export function throwGatewayUpgradeSetupFailures(
   if (failures.length === 1) throw failures[0];
   if (failures.length > 1) {
     throw new AggregateError(failures, "legacy install and host mock firewall setup failed");
-  }
-}
-
-export function expectedLegacyRegistryMetadata(nemoclawRef: string): {
-  nemoclawVersion: string | undefined;
-  fromDockerfile: null | undefined;
-} {
-  switch (nemoclawRef) {
-    case "v0.0.36":
-    case "v0.0.55":
-      return { nemoclawVersion: undefined, fromDockerfile: undefined };
-    case "v0.0.74":
-      return { nemoclawVersion: "0.0.74", fromDockerfile: null };
-    case "v0.0.89":
-      return { nemoclawVersion: "0.0.89", fromDockerfile: null };
-    default:
-      throw new Error(`Unsupported gateway-upgrade registry fixture: ${nemoclawRef}`);
   }
 }
 
