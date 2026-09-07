@@ -11,7 +11,6 @@ import { isCredentialField } from "../../src/lib/security/credential-filter.ts";
 const EXPORTED_DIAGNOSTIC_FILES = new Set([
   "openshell-gateway-relevant.log",
   "openshell-gateway-tail.log",
-  "openshell-logs.txt",
   "rootfs-console.log",
   "summary.txt",
 ]);

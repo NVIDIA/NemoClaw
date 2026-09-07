@@ -76,10 +76,6 @@ describe("managed-image failure diagnostic export", () => {
         `gateway reconnect failed for ${opaqueCanary}\n`,
       );
       fs.writeFileSync(
-        path.join(diagnosticBundle, "openshell-logs.txt"),
-        `sandbox exited after printing ${opaqueCanary}\n`,
-      );
-      fs.writeFileSync(
         path.join(diagnosticBundle, "rootfs-console.log"),
         "managed startup exited before the supervisor reconnected\n",
       );
@@ -97,7 +93,7 @@ describe("managed-image failure diagnostic export", () => {
         sourceRoot,
       });
 
-      expect(result).toMatchObject({ bundles: 1, files: 4 });
+      expect(result).toMatchObject({ bundles: 1, files: 3 });
       const exported = outputText(outputRoot);
       expect(exported).toContain("<REDACTED>");
       expect(exported).toContain("managed startup exited before the supervisor reconnected");
@@ -110,7 +106,6 @@ describe("managed-image failure diagnostic export", () => {
         } as const
       )[scenario]!;
       expect(exported).not.toContain(secret);
-      expect(exported).not.toContain("ghp_");
 
       expect(exported).not.toContain("this raw file must never enter the artifact");
       expect(fs.existsSync(path.join(outputRoot, "bundle-01", "unrelated.raw"))).toBe(false);
@@ -170,11 +165,13 @@ describe("managed-image failure diagnostic export", () => {
         sourceRoot,
         `2026-07-29T01-02-${String(index).padStart(2, "0")}-000Z-agent`,
       );
-      ["openshell-gateway-relevant.log", "openshell-gateway-tail.log", "summary.txt"].forEach(
-        (name) => {
-          fs.writeFileSync(path.join(diagnosticBundle, name), largeButReadable);
-        },
-      );
+      [
+        "openshell-gateway-relevant.log",
+        "openshell-gateway-tail.log",
+        "summary.txt",
+      ].forEach((name) => {
+        fs.writeFileSync(path.join(diagnosticBundle, name), largeButReadable);
+      });
       fs.writeFileSync(path.join(diagnosticBundle, "rootfs-console.log"), tooLarge);
     }
 

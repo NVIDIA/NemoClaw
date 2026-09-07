@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import {
   collectSandboxCreateFailureDiagnostics,
@@ -104,12 +104,10 @@ describe("sandbox create failure diagnostics", () => {
         homeDir,
         backupPath: "/tmp/pre-upgrade-backup",
         now: new Date("2026-05-12T20:35:00.000Z"),
-        runCaptureOpenshell: () => "sandbox startup failed\n",
       });
 
       expect(diagnostics?.dir).toContain(path.join(homeDir, ".nemoclaw", "onboard-failures"));
       expect(messages).toContain(`  Diagnostics saved: ${diagnostics!.dir}`);
-      expect(messages).toContain("  Recent OpenShell failure diagnostics:");
       expect(messages).toContain("  State backup retained: /tmp/pre-upgrade-backup");
     } finally {
       console.error = originalError;
@@ -147,107 +145,5 @@ describe("sandbox create failure diagnostics", () => {
     expect(fs.readFileSync(path.join(diagnostics!.dir, "summary.txt"), "utf-8")).toContain(
       "gateway_tail=",
     );
-  });
-
-  it("captures bounded redacted OpenShell failure evidence before WSL ARM cleanup (#10412)", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-create-failure-openshell-"));
-    const homeDir = path.join(tmp, "home");
-    const token = "z7!";
-    const logLines = [
-      "x".repeat(64 * 1024),
-      ...Array.from({ length: 119 }, (_, index) => `earlier log ${String(index)}`),
-      `custom provider output ${token}`,
-      "[sandbox] /usr/local/bin/hermes: Exec format error",
-    ];
-    const runCaptureOpenshell = vi.fn(
-      (
-        _args: string[],
-        _options?: {
-          ignoreError?: boolean;
-          killProcessTreeOnTimeout?: boolean;
-          timeout?: number;
-        },
-      ) => `${logLines.join("\n")}\n`,
-    );
-
-    const diagnostics = collectSandboxCreateFailureDiagnostics("my-assistant", {
-      gatewayName: "nemoclaw",
-      homeDir,
-      now: new Date("2026-08-26T16:02:46.000Z"),
-      runCaptureOpenshell,
-      env: {
-        CUSTOM_PROVIDER_CREDENTIAL: token,
-        NEMOCLAW_EXTRA_PLACEHOLDER_KEYS: "CUSTOM_PROVIDER_CREDENTIAL",
-      },
-    });
-    const captured = fs.readFileSync(diagnostics!.openshellLogsPath!, "utf8");
-
-    expect({
-      calls: runCaptureOpenshell.mock.calls.map(([args, options]) => ({ args, options })),
-      firstLine: captured.trim().split("\n").at(0),
-      lineCount: captured.trim().split("\n").length,
-      lastLine: captured.trim().split("\n").at(-1),
-      summaryLines: diagnostics?.summaryLines,
-      tokenPresent: captured.includes(token),
-      withinByteLimit: Buffer.byteLength(captured, "utf8") <= 64 * 1024,
-    }).toEqual({
-      calls: [
-        {
-          args: ["logs", "-g", "nemoclaw", "my-assistant", "-n", "120", "--source", "all"],
-          options: {
-            ignoreError: true,
-            killProcessTreeOnTimeout: true,
-            timeout: 10_000,
-          },
-        },
-      ],
-      firstLine: "earlier log 1",
-      lineCount: 120,
-      lastLine: "[sandbox] /usr/local/bin/hermes: Exec format error",
-      summaryLines: [
-        "sandbox logs: custom provider output <REDACTED>",
-        "sandbox logs: [sandbox] /usr/local/bin/hermes: Exec format error",
-      ],
-      tokenPresent: false,
-      withinByteLimit: true,
-    });
-  });
-
-  it("preserves the diagnostic bundle when OpenShell log capture fails (#10412)", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-create-failure-capture-error-"));
-    const diagnostics = collectSandboxCreateFailureDiagnostics("my-assistant", {
-      homeDir: path.join(tmp, "home"),
-      runCaptureOpenshell: () => {
-        throw new Error("OpenShell unavailable");
-      },
-    });
-
-    expect({
-      logsPath: diagnostics?.openshellLogsPath,
-      recordsMissingLog: fs
-        .readFileSync(path.join(diagnostics!.dir, "summary.txt"), "utf8")
-        .includes("openshell_logs=not-written"),
-    }).toEqual({ logsPath: null, recordsMissingLog: true });
-  });
-
-  it("bounds serialized output after short credential redaction expands it (#10412)", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-create-failure-expanded-"));
-    const token = "z7!";
-    const repeatedTokens = Array.from({ length: 100 }, () => token).join(" ");
-    const diagnostics = collectSandboxCreateFailureDiagnostics("my-assistant", {
-      env: { NEMOCLAW_PROVIDER_KEY: token },
-      homeDir: path.join(tmp, "home"),
-      runCaptureOpenshell: () =>
-        `${Array.from({ length: 120 }, (_, index) => `line ${String(index)} ${repeatedTokens}`).join("\n")}\n`,
-    });
-    const captured = fs.readFileSync(diagnostics!.openshellLogsPath!, "utf8");
-
-    expect({
-      endsWithLastLine: captured
-        .trimEnd()
-        .endsWith(`line 119 ${Array.from({ length: 100 }, () => "<REDACTED>").join(" ")}`),
-      tokenPresent: captured.includes(token),
-      withinByteLimit: Buffer.byteLength(captured, "utf8") <= 64 * 1024,
-    }).toEqual({ endsWithLastLine: true, tokenPresent: false, withinByteLimit: true });
   });
 });

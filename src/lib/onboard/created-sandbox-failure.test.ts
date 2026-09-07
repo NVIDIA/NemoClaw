@@ -83,25 +83,27 @@ describe("reportSandboxCreateFailure", () => {
     expect(deps.warn).not.toHaveBeenCalled();
   });
 
-  it("waits for rollback before recovery hints and exit", async () => {
+  it("waits for rollback before diagnostics, recovery hints, and exit", async () => {
     let settleRollback = (): void => {};
     const rollback = new Promise<void>((resolve) => {
       settleRollback = resolve;
     });
     const deps = createFailureDeps({ rollbackCreateFailure: vi.fn(() => rollback) });
     const reporting = reportSandboxCreateFailure(createFailureOptions(), deps);
-    await vi.waitFor(() => expect(deps.printCreateFailureDiagnostics).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(deps.rollbackCreateFailure).toHaveBeenCalledOnce());
 
     expect({
+      diagnostics: vi.mocked(deps.printCreateFailureDiagnostics).mock.calls,
       hints: vi.mocked(deps.printRecoveryHints).mock.calls,
       exit: vi.mocked(deps.exitProcess).mock.calls,
-    }).toEqual({ hints: [], exit: [] });
+    }).toEqual({ diagnostics: [], hints: [], exit: [] });
     settleRollback();
     await expect(reporting).rejects.toThrow(ExitSignal);
     expect({
+      diagnostics: vi.mocked(deps.printCreateFailureDiagnostics).mock.calls.length,
       hints: vi.mocked(deps.printRecoveryHints).mock.calls.length,
       exit: vi.mocked(deps.exitProcess).mock.calls[0],
-    }).toEqual({ hints: 1, exit: [3] });
+    }).toEqual({ diagnostics: 1, hints: 1, exit: [3] });
   });
 
   it("preserves the create status when rollback fails", async () => {

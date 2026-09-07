@@ -83,9 +83,6 @@ export async function reportSandboxCreateFailure(
     deps.error("");
     deps.error(redactedCreateOutput);
   }
-  deps.printCreateFailureDiagnostics(options.sandboxName, {
-    backupPath: options.restoreBackupPath,
-  });
   try {
     await deps.rollbackCreateFailure();
   } catch (error) {
@@ -93,6 +90,9 @@ export async function reportSandboxCreateFailure(
       `  Sandbox failure rollback did not complete: ${redact(error instanceof Error ? error.message : String(error))}`,
     );
   }
+  deps.printCreateFailureDiagnostics(options.sandboxName, {
+    backupPath: options.restoreBackupPath,
+  });
   deps.error("  Try:  openshell sandbox list        # check gateway state");
   deps.printRecoveryHints(redactedCreateOutput, { createArgs: options.createArgs });
   deps.exitProcess(options.createStatus === 0 ? 1 : options.createStatus);

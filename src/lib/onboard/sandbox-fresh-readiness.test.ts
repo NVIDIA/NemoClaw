@@ -97,7 +97,7 @@ beforeEach(() => setupGpuFlowMocks(mocks));
 afterEach(resetGpuFlowMocks);
 
 describe("fresh sandbox executable readiness", () => {
-  it("captures a hard create failure before rollback (#10412)", async () => {
+  it("rolls back an unverified hard create failure before diagnostics (#10412)", async () => {
     const order: string[] = [];
     const patch = createGpuPatchFixture();
     patch.rollbackManagedStartupAfterCreateFailure.mockImplementation(() => {
@@ -119,14 +119,10 @@ describe("fresh sandbox executable readiness", () => {
     const deps = createDeps();
     await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow("process.exit:1");
 
-    expect(order).toEqual(["diagnostics", "rollback"]);
+    expect(order).toEqual(["rollback", "diagnostics"]);
     expect(mocks.printSandboxCreateFailureDiagnostics).toHaveBeenCalledWith("alpha", {
       backupPath: null,
     });
-    expect(deps.runCaptureOpenshell).not.toHaveBeenCalledWith(
-      expect.arrayContaining(["logs"]),
-      expect.anything(),
-    );
   });
 
   it("keeps a transient executable not-ready response inside the bounded wait (#9050)", async () => {

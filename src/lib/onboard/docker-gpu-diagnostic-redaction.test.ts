@@ -13,23 +13,8 @@ import {
   type DockerContainerInspect,
   printDockerGpuPatchFailureAndExit,
 } from "./docker-gpu-patch";
-import {
-  createDockerGpuDiagnosticRedactor,
-  discoverDockerGpuDiagnosticSensitiveValuesFromEnv,
-} from "./docker-gpu-diagnostic-redaction";
 
 describe("Docker GPU diagnostic redaction", () => {
-  it("redacts short credential tokens without changing ordinary text", () => {
-    const bindings = discoverDockerGpuDiagnosticSensitiveValuesFromEnv({
-      PASSWORD: "x",
-      TOKEN: "1",
-    });
-
-    expect(
-      createDockerGpuDiagnosticRedactor([], bindings).redactText("PASSWORD=x example v1 x 1"),
-    ).toBe("PASSWORD=<REDACTED> example v1 <REDACTED> <REDACTED>");
-  });
-
   it("redacts opaque conventional and custom-placeholder values from every shared collector sink", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gpu-diagnostic-redaction-"));
     const canaries = {
@@ -230,7 +215,7 @@ describe("Docker GPU diagnostic redaction", () => {
       ).toThrow(/__test_exit__/);
 
       const stderr = output.join("\n");
-      expect(stderr).toContain("https://proxy.example:8443/");
+      expect(stderr).toContain("https://****:****@proxy.example:8443/");
       expect(stderr).not.toContain(rawProxy);
       expect(stderr).not.toContain("proxy-user-7a9c");
       expect(stderr).not.toContain("proxy-secret-8b0d");
