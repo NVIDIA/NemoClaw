@@ -43,7 +43,7 @@ function metadata(overrides: Partial<OpenShellProviderMetadata> = {}): OpenShell
 function providerAdapter(
   overrides: Partial<OpenShellProviderAdapter> = {},
 ): OpenShellProviderAdapter {
-  return {
+  const adapter: OpenShellProviderAdapter = {
     listProviders: vi.fn(async () => ({ ok: true, value: { names: [] } }) as const),
     createProvider: vi.fn(async () => ({ ok: true }) as const),
     getProvider: vi.fn(
@@ -60,8 +60,13 @@ function providerAdapter(
     ),
     deleteProvider: vi.fn(async () => ({ ok: true }) as const),
     detachProvider: vi.fn(async () => ({ ok: true }) as const),
-    ...overrides,
+    attachProvider: vi.fn(async () => ({ ok: true }) as const),
+    configureProviderRefresh: vi.fn(async () => ({ ok: true }) as const),
+    getProviderRefreshStatus: vi.fn(
+      async () => ({ ok: true, value: { status: "refreshed" } }) as const,
+    ),
   };
+  return { ...adapter, ...overrides };
 }
 
 describe("inference set provider binding", () => {
