@@ -69,6 +69,7 @@ import {
   type RecordRetainedSandboxRecoveryInput,
   type RetainedSandboxRecoveryRecord,
   type RetainedSandboxRecoveryReason,
+  validSafeEvidence,
 } from "./onboard-session/retained-sandbox-recovery";
 import type { SandboxEntry, SandboxHostMount } from "./registry/types";
 import { hasUnsafeHostMountTerminalText } from "./registry/host-mount";
@@ -1993,10 +1994,8 @@ export function listRetainedSandboxRecoveryRecords(): readonly RetainedSandboxRe
   });
 }
 
-const SAFE_RECOVERY_EVIDENCE = /^[A-Za-z0-9._:@/-]{1,256}$/u;
-
 const safeRecoveryEvidence = (value: unknown): string[] =>
-  typeof value === "string" && SAFE_RECOVERY_EVIDENCE.test(value) ? [value] : [];
+  validSafeEvidence(value) ? [value] : [];
 
 function pendingCreateRecoveryResources(
   entry: SandboxEntry,
