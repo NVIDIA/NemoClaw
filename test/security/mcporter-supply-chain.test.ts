@@ -47,6 +47,10 @@ const reviewedAuditDriver = fs.readFileSync(
   path.join(repoRoot, "scripts", "audit-reviewed-npm-graph.mts"),
   "utf8",
 );
+const mcporterAuditHelper = fs.readFileSync(
+  path.join(repoRoot, "scripts", "lib", "verify-mcporter-audit.sh"),
+  "utf8",
+);
 
 function extractIntegrityGate(contents: string): string {
   const startMarker = 'MCPORTER_EXPECTED_INTEGRITY=""';
@@ -189,17 +193,18 @@ describe("mcporter image supply-chain controls", () => {
     expect(unpinned.stdout).not.toContain("gate-passed");
   });
 
-  it.each(dockerfiles)("audits the committed dependency graph in $name", ({ contents }) => {
-    const flattenedContents = contents.replace(/\\\s*\n/g, " ").replace(/\s+/g, " ");
-    const auditReceiptInvocation = extractAuditReceiptInvocation(contents);
-    expect(contents).toContain(
+  it.each(dockerfiles)("audits the committed dependency graph in $name", ({ name, contents }) => {
+    const auditContents = name === "Dockerfile" ? `${contents}\n${mcporterAuditHelper}` : contents;
+    const flattenedContents = auditContents.replace(/\\\s*\n/g, " ").replace(/\s+/g, " ");
+    const auditReceiptInvocation = extractAuditReceiptInvocation(auditContents);
+    expect(auditContents).toContain(
       "COPY ci/npm-audit-exceptions.json ci/reviewed-npm-audit.json /scripts/",
     );
     expect(
       flattenedContents.includes(
         "COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/bundled-npm-package.mts scripts/lib/reviewed-npm-audit.mts scripts/lib/openclaw-npm-remediation.mts /scripts/lib/",
       ) ||
-        contents.includes(
+        auditContents.includes(
           "COPY scripts/lib/reviewed-npm-audit.mts /scripts/lib/reviewed-npm-audit.mts",
         ),
     ).toBe(true);
@@ -224,7 +229,7 @@ describe("mcporter image supply-chain controls", () => {
     );
     expect(expectedReviewedNpmVersion).toMatch(/^[0-9]+\.[0-9]+\.[0-9]+$/);
     expect(auditReceiptInvocation).not.toContain("--npm-version");
-    expect(contents).not.toContain("--raw-copy");
+    expect(auditContents).not.toContain("--raw-copy");
     expect(auditReceiptInvocation).not.toMatch(/\bnpm\s+--version\b/);
     expect(auditReceiptInvocation).not.toMatch(/\$\(|`/);
     expect(contents).not.toContain(`${runtimePrefix} audit --omit=dev --audit-level=low`);
@@ -233,6 +238,35 @@ describe("mcporter image supply-chain controls", () => {
       `${runtimePrefix} ls --omit=dev --all @hono/node-server @modelcontextprotocol/sdk hono mcporter`,
     );
     expect(contents).toContain("StreamableHTTPServerTransport");
+  });
+
+  it("carries a networked reviewed audit into the offline protected OpenClaw build", () => {
+    const contents = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
+    const producer = fs.readFileSync(
+      path.join(repoRoot, "Dockerfile.protected-npm-audit"),
+      "utf8",
+    );
+    const flattenedProducer = producer.replace(/\\\s*\n/g, " ").replace(/\s+/g, " ");
+
+    expect(producer).toContain(
+      `FROM node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c AS protected-mcporter-audit`,
+    );
+    expect(flattenedProducer).toContain(
+      "NEMOCLAW_REVIEWED_NPM_AUDIT_LOCKED_GRAPH=mcporter-runtime NEMOCLAW_REVIEWED_NPM_AUDIT_REPORT_DIR=artifacts/reviewed-npm-audit",
+    );
+    expect(producer).toContain("FROM scratch AS protected-mcporter-audit-evidence");
+    expect(contents).toContain("FROM scratch AS protected-mcporter-audit-cache");
+    expect(contents).toContain(
+      "--mount=type=bind,from=protected-mcporter-audit-cache,source=/seed,target=/run/nemoclaw-mcporter-audit-cache",
+    );
+    expect(contents).toContain("bash /scripts/lib/verify-mcporter-audit.sh");
+    expect(mcporterAuditHelper).toContain("seed-cached mcporter audit evidence is incomplete");
+    expect(mcporterAuditHelper).toContain(
+      "seed-cached mcporter audit receipt SHA-256 is invalid",
+    );
+    expect(mcporterAuditHelper.replace(/\\\s*\n/g, " ").replace(/\s+/g, " ")).toContain(
+      `printf '%s %s\\n' "$receipt_sha256" "$receipt" | sha256sum --check --status -`,
+    );
   });
 
   it("copies the cached base-image audit report only after receipt verification succeeds", () => {

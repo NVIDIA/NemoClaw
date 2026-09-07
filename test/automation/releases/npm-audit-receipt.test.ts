@@ -152,6 +152,12 @@ describe("reviewed npm audit receipt", () => {
         packageLock: "changed",
       }),
     ).toThrow(/packageLockSha256/);
+    expect(() =>
+      parseAndVerifyAuditReceipt(canonicalAuditReceipt(receipt()), {
+        ...inputs,
+        rawResponse: `${inputs.rawResponse}\n`,
+      }),
+    ).toThrow(/rawResponseSha256/);
   });
 
   it.each([

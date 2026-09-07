@@ -133,7 +133,34 @@ type NpmAuditCommandResult = Readonly<{
   stdout: string;
 }>;
 
-type NpmAuditRetryReason = "empty-output" | "incomplete-report" | "invalid-json" | "timeout";
+export type NpmAuditFailureReason =
+  | "empty-output"
+  | "incomplete-report"
+  | "invalid-exit-status"
+  | "invalid-json"
+  | "npm-error-document"
+  | "registry-network-error"
+  | "timeout";
+
+export type NpmAuditFailureClassification = Readonly<{
+  diagnostic: string;
+  reason: NpmAuditFailureReason;
+  retryable: boolean;
+}>;
+
+export type NpmAuditResponseClassification =
+  | Readonly<{ failure: NpmAuditFailureClassification }>
+  | Readonly<{ report: Record<string, unknown> }>;
+
+const TRANSIENT_TRANSPORT_CODES = [
+  "EAI_AGAIN",
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "ENOTFOUND",
+  "ETIMEDOUT",
+] as const;
 
 function asRecord(value: unknown, label: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -276,55 +303,175 @@ export function assertExceptionGraphs(
     throw new Error(`npm audit exceptions use unknown graphs: ${unknown.join(", ")}`);
 }
 
+function valueShape(value: unknown): string {
+  if (value === undefined) return "missing";
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "array";
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return "non-finite-number";
+    if (!Number.isSafeInteger(value)) return "non-integer-number";
+    if (value < 0) return "negative-number";
+  }
+  return typeof value;
+}
+
+function firstInvalidAuditField(value: unknown): string | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return `report:${valueShape(value)}`;
+  }
+  const report = value as Record<string, unknown>;
+  if (
+    typeof report.metadata !== "object" ||
+    report.metadata === null ||
+    Array.isArray(report.metadata)
+  ) {
+    return `metadata:${valueShape(report.metadata)}`;
+  }
+  const metadata = report.metadata as Record<string, unknown>;
+  if (
+    typeof metadata.vulnerabilities !== "object" ||
+    metadata.vulnerabilities === null ||
+    Array.isArray(metadata.vulnerabilities)
+  ) {
+    return `metadata.vulnerabilities:${valueShape(metadata.vulnerabilities)}`;
+  }
+  const vulnerabilities = metadata.vulnerabilities as Record<string, unknown>;
+  for (const severity of SEVERITIES) {
+    const count = vulnerabilities[severity];
+    if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0) {
+      return `metadata.vulnerabilities.${severity}:${valueShape(count)}`;
+    }
+  }
+  return undefined;
+}
+
+function transportCode(report: Record<string, unknown>, stderr: string): string | undefined {
+  const error =
+    typeof report.error === "object" && report.error !== null && !Array.isArray(report.error)
+      ? (report.error as Record<string, unknown>)
+      : {};
+  const evidence = [report.message, error.code, error.summary, error.detail, stderr]
+    .filter((value): value is string => typeof value === "string")
+    .join("\n");
+  return TRANSIENT_TRANSPORT_CODES.find((code) =>
+    new RegExp(`(?:^|[^A-Z0-9_])${code}(?:$|[^A-Z0-9_])`, "u").test(evidence),
+  );
+}
+
+function responseEvidence(
+  result: Readonly<{ status: number | null; stdout: string }>,
+  fields: readonly string[],
+): string {
+  const status = result.status === null ? "null" : String(result.status);
+  return [
+    `exit=${status}`,
+    `stdout-bytes=${Buffer.byteLength(result.stdout)}`,
+    `stdout-sha256=${sha256(result.stdout)}`,
+    ...fields,
+  ].join(" ");
+}
+
+/** Classify one npm response without retaining payload text or unbounded field names. */
+export function classifyNpmAuditResponse(result: {
+  status: number | null;
+  stderr: string;
+  stdout: string;
+}): NpmAuditResponseClassification {
+  if (!result.stdout.trim()) {
+    return {
+      failure: {
+        diagnostic: responseEvidence(result, ["condition=empty-output"]),
+        reason: "empty-output",
+        retryable: true,
+      },
+    };
+  }
+
+  let value: unknown;
+  try {
+    value = JSON.parse(result.stdout);
+  } catch {
+    return {
+      failure: {
+        diagnostic: responseEvidence(result, ["condition=invalid-json"]),
+        reason: "invalid-json",
+        retryable: true,
+      },
+    };
+  }
+
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return {
+      failure: {
+        diagnostic: responseEvidence(result, [
+          "condition=incomplete-report",
+          `required-field=report:${valueShape(value)}`,
+        ]),
+        reason: "incomplete-report",
+        retryable: false,
+      },
+    };
+  }
+  const report = value as Record<string, unknown>;
+  const invalidField = firstInvalidAuditField(report);
+  if (report.error !== undefined) {
+    const code = transportCode(report, result.stderr);
+    const reason = code ? "registry-network-error" : "npm-error-document";
+    return {
+      failure: {
+        diagnostic: responseEvidence(result, [
+          `condition=${reason}`,
+          ...(code ? [`transport=${code}`] : []),
+          ...(invalidField ? [`required-field=${invalidField}`] : []),
+        ]),
+        reason,
+        retryable: code !== undefined,
+      },
+    };
+  }
+  if (invalidField) {
+    return {
+      failure: {
+        diagnostic: responseEvidence(result, [
+          "condition=incomplete-report",
+          `required-field=${invalidField}`,
+        ]),
+        reason: "incomplete-report",
+        retryable: false,
+      },
+    };
+  }
+
+  const counts = vulnerabilityCounts(report);
+  const findingCount = SEVERITIES.reduce((total, severity) => total + counts[severity], 0);
+  if (result.status === null || result.status > 1 || (result.status !== 0 && findingCount === 0)) {
+    return {
+      failure: {
+        diagnostic: responseEvidence(result, ["condition=invalid-exit-status"]),
+        reason: "invalid-exit-status",
+        retryable: false,
+      },
+    };
+  }
+  return { report };
+}
+
 export function parseAuditReport(result: {
   status: number | null;
   stderr: string;
   stdout: string;
 }): Record<string, unknown> {
-  if (!result.stdout.trim()) throw new Error(`npm audit did not produce JSON: ${result.stderr}`);
-  let report: Record<string, unknown>;
-  try {
-    report = JSON.parse(result.stdout) as Record<string, unknown>;
-  } catch (error) {
-    throw new Error(`npm audit returned invalid JSON: ${String(error)}`);
-  }
-  let counts: Record<Severity, number>;
-  try {
-    counts = vulnerabilityCounts(report);
-  } catch (error) {
-    const detail = report.error === undefined ? result.stderr : JSON.stringify(report.error);
+  const classified = classifyNpmAuditResponse(result);
+  if ("failure" in classified) {
     throw new Error(
-      `npm audit failed without a complete vulnerability report: ${error instanceof Error ? error.message : String(error)}${detail ? `; ${detail}` : ""}`,
+      `npm audit response rejected (reason=${classified.failure.reason}; ${classified.failure.diagnostic})`,
     );
   }
-  const findingCount = SEVERITIES.reduce((total, severity) => total + counts[severity], 0);
-  if (
-    report.error !== undefined ||
-    result.status === null ||
-    result.status > 1 ||
-    (result.status !== 0 && findingCount === 0)
-  ) {
-    const detail = report.error === undefined ? result.stderr : JSON.stringify(report.error);
-    throw new Error(
-      `npm audit failed without vulnerability findings${detail ? `: ${detail}` : ""}`,
-    );
-  }
-  return report;
+  return classified.report;
 }
 
 function waitSynchronously(delayMs: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs);
-}
-
-function npmAuditRetryReason(result: NpmAuditCommandResult): NpmAuditRetryReason {
-  if (result.error) return "timeout";
-  if (!result.stdout.trim()) return "empty-output";
-  try {
-    JSON.parse(result.stdout);
-  } catch {
-    return "invalid-json";
-  }
-  return "incomplete-report";
 }
 
 export function runNpmAuditWithRetry(
@@ -334,6 +481,7 @@ export function runNpmAuditWithRetry(
     warn?: (message: string) => void;
   }>,
 ): Readonly<{
+  classification?: NpmAuditFailureClassification;
   failure?: Error;
   report?: Record<string, unknown>;
   result: NpmAuditCommandResult;
@@ -342,6 +490,7 @@ export function runNpmAuditWithRetry(
   const warn = input.warn ?? console.warn;
   const attemptCount = NPM_AUDIT_RETRY_DELAYS_MS.length + 1;
   let lastResult: NpmAuditCommandResult | undefined;
+  let lastFailure: NpmAuditFailureClassification | undefined;
 
   for (let attempt = 1; attempt <= attemptCount; attempt += 1) {
     const result = input.run();
@@ -349,25 +498,42 @@ export function runNpmAuditWithRetry(
       throw result.error;
     }
     lastResult = result;
-    try {
-      if (result.error) {
-        throw new Error(`npm audit exceeded its ${NPM_AUDIT_ATTEMPT_TIMEOUT_MS} ms timeout`);
-      }
-      return { report: parseAuditReport(result), result };
-    } catch {
-      const delayMs = NPM_AUDIT_RETRY_DELAYS_MS[attempt - 1];
-      if (delayMs === undefined) break;
-      warn(
-        `npm audit scan incomplete on attempt ${attempt}/${attemptCount}; retrying in ${delayMs} ms (reason=${npmAuditRetryReason(result)})`,
-      );
-      wait(delayMs);
+    const classified: NpmAuditResponseClassification = result.error
+      ? {
+          failure: {
+            diagnostic: responseEvidence(result, [
+              `condition=timeout timeout-ms=${NPM_AUDIT_ATTEMPT_TIMEOUT_MS}`,
+            ]),
+            reason: "timeout",
+            retryable: true,
+          },
+        }
+      : classifyNpmAuditResponse(result);
+    if ("report" in classified) return { report: classified.report, result };
+    lastFailure = classified.failure;
+    if (!lastFailure.retryable) {
+      return {
+        classification: lastFailure,
+        failure: new Error(
+          `npm audit scan failed closed on attempt ${attempt}/${attemptCount} without retry (reason=${lastFailure.reason}; ${lastFailure.diagnostic})`,
+        ),
+        result,
+      };
     }
+    const delayMs = NPM_AUDIT_RETRY_DELAYS_MS[attempt - 1];
+    if (delayMs === undefined) break;
+    warn(
+      `npm audit scan failed on attempt ${attempt}/${attemptCount}; retrying in ${delayMs} ms (reason=${lastFailure.reason}; ${lastFailure.diagnostic})`,
+    );
+    wait(delayMs);
   }
 
-  if (!lastResult) throw new Error("npm audit retry loop completed without running the scanner");
+  if (!lastResult || !lastFailure)
+    throw new Error("npm audit retry loop completed without running the scanner");
   return {
+    classification: lastFailure,
     failure: new Error(
-      `npm audit scan remained incomplete after ${attemptCount} attempts (reason=${npmAuditRetryReason(lastResult)})`,
+      `npm audit scan failed after ${attemptCount} attempts (reason=${lastFailure.reason}; ${lastFailure.diagnostic})`,
     ),
     result: lastResult,
   };
@@ -906,7 +1072,20 @@ export function runReviewedNpmAudit(
       : undefined);
   const auditFailure = audit.failure;
   const report = audit.report ?? {};
-  if (options.reportFile) fs.writeFileSync(options.reportFile, audit.result.stdout);
+  if (options.reportFile) {
+    const retainedReport = audit.classification
+      ? `${JSON.stringify(
+          {
+            schemaVersion: 1,
+            status: "failed",
+            failure: audit.classification,
+          },
+          null,
+          2,
+        )}\n`
+      : audit.result.stdout;
+    fs.writeFileSync(options.reportFile, retainedReport);
+  }
   if (options.provenance && options.reportFile) {
     const provenance = buildAuditProvenance({
       cache: cacheEvidence,

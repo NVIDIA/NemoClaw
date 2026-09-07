@@ -15,6 +15,7 @@ import {
   assertExceptionGraphs,
   buildAuditCacheInput,
   buildAuditProvenance,
+  classifyNpmAuditResponse,
   deriveAuditEndpoints,
   evaluateAuditPolicy,
   exceedsAuditThreshold,
@@ -30,6 +31,10 @@ import {
   vulnerabilityCounts,
 } from "../../../scripts/lib/reviewed-npm-audit.mts";
 import { reviewedNpmAuditWorkflowDeadlines } from "../../helpers/reviewed-npm-audit-workflow";
+import {
+  parseAuditConfig,
+  selectLockedGraph,
+} from "../../../scripts/audit-reviewed-npm-graph.mts";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const CONFIG = JSON.parse(
@@ -128,6 +133,21 @@ function exceptionPolicy(
 }
 
 describe("reviewed npm audit gate", () => {
+  it("selects only a configured locked graph for dedicated evidence production (#11088)", () => {
+    const auditConfig = parseAuditConfig(
+      fs.readFileSync(path.join(REPO_ROOT, "ci", "reviewed-npm-audit.json"), "utf8"),
+    );
+
+    expect(selectLockedGraph(auditConfig, "mcporter-runtime")).toMatchObject({
+      graph: { id: "mcporter-runtime" },
+      index: auditConfig.lockedGraphs.findIndex(({ id }) => id === "mcporter-runtime"),
+    });
+    expect(selectLockedGraph(auditConfig, undefined)).toBeUndefined();
+    expect(() => selectLockedGraph(auditConfig, "unknown-graph")).toThrow(
+      "reviewed npm audit locked graph is not configured",
+    );
+  });
+
   it("removes the checked-in brace-expansion exception after remediation (#8116)", () => {
     expect(CHECKED_IN_POLICY).toEqual(EMPTY_POLICY);
   });
@@ -154,6 +174,19 @@ describe("reviewed npm audit gate", () => {
     );
   });
 
+  it("accepts a complete clean npm audit report", () => {
+    const report = {
+      vulnerabilities: {},
+      metadata: {
+        vulnerabilities: { info: 0, low: 0, moderate: 0, high: 0, critical: 0 },
+      },
+    };
+
+    expect(
+      classifyNpmAuditResponse({ status: 0, stderr: "", stdout: JSON.stringify(report) }),
+    ).toEqual({ report });
+  });
+
   it("rejects a parseable npm transport failure instead of treating it as clean", () => {
     expect(() =>
       parseAuditReport({
@@ -163,7 +196,33 @@ describe("reviewed npm audit gate", () => {
           error: { code: "ECONNREFUSED", summary: "request to registry failed" },
         }),
       }),
-    ).toThrow(/ECONNREFUSED/);
+    ).toThrow(/registry-network-error.*ECONNREFUSED/);
+  });
+
+  it("classifies npm 11.18.0's observed registry error document without exposing its message (#11088)", () => {
+    const secret = "https://audit-user:registry-secret@registry.example/private";
+    const classified = classifyNpmAuditResponse({
+      status: 1,
+      stderr: `authorization: Bearer stderr-secret for ${secret}`,
+      stdout: JSON.stringify({
+        message: `request to ${secret} failed, reason: connect ECONNREFUSED 127.0.0.1:9`,
+        error: { summary: "", detail: "" },
+      }),
+    });
+
+    expect(classified).toEqual({
+      failure: {
+        diagnostic: expect.stringMatching(
+          /^exit=1 stdout-bytes=\d+ stdout-sha256=[a-f0-9]{64} condition=registry-network-error transport=ECONNREFUSED required-field=metadata:missing$/,
+        ),
+        reason: "registry-network-error",
+        retryable: true,
+      },
+    });
+    expect(JSON.stringify(classified)).not.toContain("audit-user");
+    expect(JSON.stringify(classified)).not.toContain("registry-secret");
+    expect(JSON.stringify(classified)).not.toContain("stderr-secret");
+    expect(JSON.stringify(classified)).not.toContain("registry.example");
   });
 
   it.each([
@@ -175,7 +234,20 @@ describe("reviewed npm audit gate", () => {
   ])("rejects %s", (_label, report) => {
     expect(() =>
       parseAuditReport({ status: 0, stderr: "", stdout: JSON.stringify(report) }),
-    ).toThrow(/vulnerability report|vulnerability count/);
+    ).toThrow(/incomplete-report.*required-field=metadata/);
+  });
+
+  it.each([
+    ["empty output", "", "empty-output"],
+    ["truncated JSON", '{"metadata":{"vulnerabilities":', "invalid-json"],
+  ])("classifies %s for the bounded retry policy", (_label, stdout, reason) => {
+    expect(classifyNpmAuditResponse({ status: 1, stderr: "", stdout })).toEqual({
+      failure: {
+        diagnostic: expect.stringContaining(`condition=${reason}`),
+        reason,
+        retryable: true,
+      },
+    });
   });
 
   it("retries scan-incomplete npm responses with bounded backoff", () => {
@@ -203,7 +275,9 @@ describe("reviewed npm audit gate", () => {
     expect(attempt).toBe(2);
     expect(delays).toEqual([1_000]);
     expect(warnings).toEqual([
-      "npm audit scan incomplete on attempt 1/2; retrying in 1000 ms (reason=empty-output)",
+      expect.stringMatching(
+        /^npm audit scan failed on attempt 1\/2; retrying in 1000 ms \(reason=empty-output; exit=1 stdout-bytes=0 stdout-sha256=[a-f0-9]{64} condition=empty-output\)$/,
+      ),
     ]);
     const warningOutput = warnings.join("\n");
     expect(warningOutput).not.toContain("audit-user");
@@ -331,7 +405,7 @@ describe("reviewed npm audit gate", () => {
     expect(warnings).toEqual([]);
   });
 
-  it("fails closed after the scan-incomplete retry budget is exhausted", () => {
+  it("fails closed after the bounded registry-network retry budget is exhausted (#11088)", () => {
     const delays: number[] = [];
     let attempts = 0;
 
@@ -342,6 +416,7 @@ describe("reviewed npm audit gate", () => {
           status: 1,
           stderr: "registry-token=terminal-stderr-secret",
           stdout: JSON.stringify({
+            message: "request failed with EAI_AGAIN and terminal-message-secret",
             error: {
               summary: "registry-token=terminal-summary-secret",
               detail: "authorization: bearer terminal-detail-secret",
@@ -356,12 +431,41 @@ describe("reviewed npm audit gate", () => {
     expect(attempts).toBe(2);
     expect(delays).toEqual([1_000]);
     expect(audit.report).toBeUndefined();
-    expect(audit.failure?.message).toBe(
-      "npm audit scan remained incomplete after 2 attempts (reason=incomplete-report)",
+    expect(audit.failure?.message).toMatch(
+      /^npm audit scan failed after 2 attempts \(reason=registry-network-error; exit=1 stdout-bytes=\d+ stdout-sha256=[a-f0-9]{64} condition=registry-network-error transport=EAI_AGAIN required-field=metadata:missing\)$/,
     );
     expect(audit.failure?.message).not.toContain("terminal-stderr-secret");
     expect(audit.failure?.message).not.toContain("terminal-summary-secret");
     expect(audit.failure?.message).not.toContain("terminal-detail-secret");
+    expect(audit.failure?.message).not.toContain("terminal-message-secret");
+  });
+
+  it.each([
+    ["missing metadata", {}],
+    [
+      "malformed severity count",
+      { metadata: { vulnerabilities: { info: 0, low: 0, moderate: 0, high: [], critical: 0 } } },
+    ],
+    ["unknown npm error document", { error: { summary: "unsupported response" } }],
+  ])("does not retry deterministic %s responses (#11088)", (_label, report) => {
+    const delays: number[] = [];
+    const warnings: string[] = [];
+    let attempts = 0;
+
+    const audit = runNpmAuditWithRetry({
+      run: () => {
+        attempts += 1;
+        return { status: 1, stderr: "", stdout: JSON.stringify(report) };
+      },
+      wait: (delayMs) => delays.push(delayMs),
+      warn: (message) => warnings.push(message),
+    });
+
+    expect(attempts).toBe(1);
+    expect(delays).toEqual([]);
+    expect(warnings).toEqual([]);
+    expect(audit.report).toBeUndefined();
+    expect(audit.failure?.message).toMatch(/failed closed on attempt 1\/2 without retry/);
   });
 
   it("accepts one exact blocking advisory and its propagated meta-vulnerability", () => {
@@ -714,7 +818,7 @@ describe("reviewed npm audit provenance", () => {
         [
           "#!/bin/sh",
           'test "$1" = "audit" && {',
-          '  echo \'{"error":{"code":"ECONNREFUSED","summary":"registry unreachable"}}\'',
+          '  echo \'{"message":"request to https://audit-user:secret-token@registry.example failed: ECONNREFUSED","error":{"code":"ECONNREFUSED","summary":"registry unreachable"}}\'',
           "  exit 1",
           "}",
           "exit 7",
@@ -738,18 +842,25 @@ describe("reviewed npm audit provenance", () => {
           reportFile: reportPath,
           threshold: "high",
         }),
-      ).toThrow("npm audit scan remained incomplete after 2 attempts (reason=incomplete-report)");
+      ).toThrow(/failed after 2 attempts.*registry-network-error.*transport=ECONNREFUSED/);
       const sidecar = JSON.parse(
         fs.readFileSync(path.join(tempRoot, "graph.provenance.json"), "utf-8"),
       ) as Record<string, unknown>;
-      expect(sidecar.failure).toBe(
-        "npm audit scan remained incomplete after 2 attempts (reason=incomplete-report)",
+      expect(sidecar.failure).toMatch(
+        /^npm audit scan failed after 2 attempts \(reason=registry-network-error; exit=1 stdout-bytes=\d+ stdout-sha256=[a-f0-9]{64} condition=registry-network-error transport=ECONNREFUSED required-field=metadata:missing\)$/,
       );
-      expect(sidecar.failure).not.toContain("ECONNREFUSED");
+      expect(sidecar.failure).toContain("ECONNREFUSED");
       expect(sidecar.failure).not.toContain("registry unreachable");
       expect(sidecar.advisoryIds).toEqual([]);
       expect(sidecar.rawReportPath).toBe("graph.json");
       expect(sidecar.registry).toEqual(deriveAuditEndpoints("https://registry.yarnpkg.com"));
+      const retainedFailure = fs.readFileSync(reportPath, "utf8");
+      expect(retainedFailure).toMatch(/"reason": "registry-network-error"/);
+      expect(retainedFailure).toContain("transport=ECONNREFUSED");
+      expect(retainedFailure).not.toContain("audit-user");
+      expect(retainedFailure).not.toContain("secret-token");
+      expect(retainedFailure).not.toContain("registry.example");
+      expect(retainedFailure).not.toContain("registry unreachable");
     } finally {
       process.env.PATH = originalPath;
       fs.rmSync(tempRoot, { recursive: true, force: true });

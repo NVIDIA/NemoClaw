@@ -7,6 +7,7 @@ import {
   chmod,
   copyFile,
   lstat,
+  mkdir,
   mkdtemp,
   open,
   readdir,
@@ -22,6 +23,15 @@ const MANIFEST_KIND = "nemoclaw-locked-npm-cache-seed-v1";
 const MANIFEST_NAME = "manifest.json";
 const REGISTRY_ORIGIN = "https://registry.npmjs.org";
 const MAX_ARCHIVE_BYTES = 32 * 1024 * 1024;
+const MAX_AUDIT_RAW_REPORT_BYTES = 64 * 1024 * 1024;
+const MAX_AUDIT_RECEIPT_BYTES = 64 * 1024;
+const MAX_AUDIT_RECEIPT_SHA256_BYTES = 65;
+const REVIEWED_AUDIT_DIRECTORY = "reviewed-npm-audit";
+const REVIEWED_AUDIT_FILES = [
+  "mcporter-runtime.raw.json",
+  "mcporter-runtime.receipt.json",
+  "mcporter-runtime.receipt.sha256",
+] as const;
 const DOWNLOAD_CONCURRENCY = 6;
 const DOWNLOAD_ATTEMPTS = 4;
 const DOWNLOAD_TIMEOUT_MS = 30_000;
@@ -91,6 +101,71 @@ function archiveName(resolved: string): string {
 
 function lockSha256(source: Uint8Array): string {
   return crypto.createHash("sha256").update(source).digest("hex");
+}
+
+type ReviewedAuditEvidence = Readonly<{
+  rawReport: Buffer;
+  receipt: Buffer;
+  receiptSha256: Buffer;
+}>;
+
+async function reviewedAuditEvidence(seed: string): Promise<ReviewedAuditEvidence | undefined> {
+  const directory = path.join(seed, REVIEWED_AUDIT_DIRECTORY);
+  let status;
+  try {
+    status = await lstat(directory);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+  if (!status.isDirectory() || status.isSymbolicLink()) {
+    throw new Error("reviewed npm audit evidence must be one non-symlink directory");
+  }
+  const entries = await readdir(directory, { withFileTypes: true });
+  if (
+    entries.some((entry) => !entry.isFile() || entry.isSymbolicLink()) ||
+    JSON.stringify(entries.map(({ name }) => name).sort()) !==
+      JSON.stringify([...REVIEWED_AUDIT_FILES].sort())
+  ) {
+    throw new Error("reviewed npm audit evidence contains missing or unexpected files");
+  }
+  const rawReport = await exactFileSource(
+    path.join(directory, REVIEWED_AUDIT_FILES[0]),
+    "reviewed npm audit raw report",
+    MAX_AUDIT_RAW_REPORT_BYTES,
+  );
+  const receipt = await exactFileSource(
+    path.join(directory, REVIEWED_AUDIT_FILES[1]),
+    "reviewed npm audit receipt",
+    MAX_AUDIT_RECEIPT_BYTES,
+  );
+  const receiptSha256 = await exactFileSource(
+    path.join(directory, REVIEWED_AUDIT_FILES[2]),
+    "reviewed npm audit receipt hash",
+    MAX_AUDIT_RECEIPT_SHA256_BYTES,
+  );
+  if (rawReport.byteLength < 1 || receipt.byteLength < 1) {
+    throw new Error("reviewed npm audit evidence size is invalid");
+  }
+  const recordedReceiptSha256 = receiptSha256.toString("utf8");
+  const actualReceiptSha256 = `${lockSha256(receipt)}\n`;
+  if (recordedReceiptSha256 !== actualReceiptSha256) {
+    throw new Error("reviewed npm audit receipt hash does not match");
+  }
+  let parsedReceipt: JsonRecord;
+  try {
+    parsedReceipt = record(JSON.parse(receipt.toString("utf8")), "reviewed npm audit receipt");
+  } catch {
+    throw new Error("reviewed npm audit receipt is not valid JSON");
+  }
+  if (
+    typeof parsedReceipt.rawResponseSha256 !== "string" ||
+    !/^[a-f0-9]{64}$/u.test(parsedReceipt.rawResponseSha256) ||
+    parsedReceipt.rawResponseSha256 !== lockSha256(rawReport)
+  ) {
+    throw new Error("reviewed npm audit raw report hash does not match its receipt");
+  }
+  return { rawReport, receipt, receiptSha256 };
 }
 
 function archiveIntegrity(source: Uint8Array): string {
@@ -251,7 +326,7 @@ export function lockedArchives(
   return [...byArchive.values()].sort((left, right) => left.archive.localeCompare(right.archive));
 }
 
-async function exactFileSource(file: string, label: string): Promise<Buffer> {
+async function exactFileSource(file: string, label: string, maxBytes?: number): Promise<Buffer> {
   if (!path.isAbsolute(file) || file.includes("\n")) {
     throw new Error(`${label} must be an absolute path`);
   }
@@ -260,7 +335,7 @@ async function exactFileSource(file: string, label: string): Promise<Buffer> {
   });
   try {
     const status = await handle.stat();
-    if (!status.isFile()) {
+    if (!status.isFile() || (maxBytes !== undefined && status.size > maxBytes)) {
       throw new Error(`${label} must be one regular non-symlink file`);
     }
     return await handle.readFile();
@@ -461,6 +536,7 @@ export async function verifyAndCopyLockedNpmCacheSeed(options: {
   const target = exactTarget(options.target);
   const expected = lockedArchives(lockSource.toString("utf8"), target);
   const seed = await exactDirectory(options.seed, "seed directory");
+  const auditEvidence = await reviewedAuditEvidence(seed);
   const manifestSource = await exactFileSource(path.join(seed, MANIFEST_NAME), "seed manifest");
   const manifest = parseManifest(manifestSource.toString("utf8"));
   if (manifest.lockSha256 !== lockSha256(lockSource)) {
@@ -477,7 +553,11 @@ export async function verifyAndCopyLockedNpmCacheSeed(options: {
     throw new Error("npm cache seed manifest does not contain the complete locked archive set");
   }
   const entries = await readdir(seed, { withFileTypes: true });
-  const expectedNames = [...expected.map(({ archive }) => archive), MANIFEST_NAME].sort();
+  const expectedNames = [
+    ...expected.map(({ archive }) => archive),
+    MANIFEST_NAME,
+    ...(auditEvidence ? [REVIEWED_AUDIT_DIRECTORY] : []),
+  ].sort();
   const actualNames = entries.map(({ name }) => name).sort();
   if (JSON.stringify(actualNames) !== JSON.stringify(expectedNames)) {
     throw new Error("npm cache seed directory contains missing or unexpected files");
@@ -501,6 +581,20 @@ export async function verifyAndCopyLockedNpmCacheSeed(options: {
         const destination = path.join(directory.temporary, archive.archive);
         await copyFile(path.join(seed, archive.archive), destination);
         await chmod(destination, 0o444);
+      }
+      if (auditEvidence) {
+        const auditDirectory = path.join(directory.temporary, REVIEWED_AUDIT_DIRECTORY);
+        await mkdir(auditDirectory, { mode: 0o700 });
+        for (const [name, contents] of [
+          [REVIEWED_AUDIT_FILES[0], auditEvidence.rawReport],
+          [REVIEWED_AUDIT_FILES[1], auditEvidence.receipt],
+          [REVIEWED_AUDIT_FILES[2], auditEvidence.receiptSha256],
+        ] as const) {
+          await writeFile(path.join(auditDirectory, name), contents, {
+            flag: "wx",
+            mode: 0o400,
+          });
+        }
       }
       await directory.commit();
     } catch (error) {

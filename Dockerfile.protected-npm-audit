@@ -1,0 +1,31 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Produce reviewed mcporter audit evidence on the networked managed-image
+# builder so the protected rebuild can stay fully offline.
+FROM node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c AS protected-mcporter-audit
+ENV RUNNER_TEMP=/tmp
+WORKDIR /opt/nemoclaw-audit
+COPY .github/actions/ci-reviewed-npm-audit/verify-and-install-npm.sh .github/actions/ci-reviewed-npm-audit/verify-and-install-npm.sh
+COPY ci/npm-audit-exceptions.json ci/reviewed-npm-audit.json ci/
+COPY scripts/audit-reviewed-npm-graph.mts scripts/audit-reviewed-npm-graph.mts
+COPY scripts/lib/npm-audit-receipt.mts scripts/lib/openclaw-npm-remediation.mts scripts/lib/repository-input-path.mts scripts/lib/reviewed-npm-archive.mts scripts/lib/reviewed-npm-audit.mts scripts/lib/
+COPY agents/openclaw/mcporter-runtime/package.json agents/openclaw/mcporter-runtime/package-lock.json agents/openclaw/mcporter-runtime/
+# hadolint ignore=DL3016,DL4006,SC2155
+RUN --network=default set -eu; \
+    export NEMOCLAW_REVIEWED_NPM_VERSION="$(node -p "require('./ci/reviewed-npm-audit.json').npmVersion")"; \
+    export NEMOCLAW_REVIEWED_NPM_INTEGRITY="$(node -p "require('./ci/reviewed-npm-audit.json').npmIntegrity")"; \
+    env -u NODE_AUTH_TOKEN -u NPM_TOKEN -u NPM_CONFIG__AUTH_TOKEN \
+        bash .github/actions/ci-reviewed-npm-audit/verify-and-install-npm.sh; \
+    test "$(npm --version)" = "$NEMOCLAW_REVIEWED_NPM_VERSION"
+RUN --network=default env \
+    -u NODE_AUTH_TOKEN -u NPM_TOKEN -u NPM_CONFIG__AUTH_TOKEN \
+    NEMOCLAW_REVIEWED_NPM_AUDIT_LOCKED_GRAPH=mcporter-runtime \
+    NEMOCLAW_REVIEWED_NPM_AUDIT_REPORT_DIR=artifacts/reviewed-npm-audit \
+    NPM_CONFIG_REGISTRY=https://registry.npmjs.org/ \
+    NPM_CONFIG_USERCONFIG=/dev/null \
+    node --experimental-strip-types scripts/audit-reviewed-npm-graph.mts
+
+FROM scratch AS protected-mcporter-audit-evidence
+COPY --from=protected-mcporter-audit --chmod=0400 /opt/nemoclaw-audit/artifacts/reviewed-npm-audit/mcporter-runtime.receipt.json /mcporter-runtime.receipt.json
+COPY --from=protected-mcporter-audit --chmod=0400 /opt/nemoclaw-audit/artifacts/reviewed-npm-audit/mcporter-runtime.raw.json /mcporter-runtime.raw.json
