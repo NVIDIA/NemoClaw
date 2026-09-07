@@ -77,6 +77,7 @@ type DockerFinalHandoffDeps = Required<
   Pick<DockerGpuSupervisorReconnectDeps, "runCaptureOpenshell" | "runOpenshell">
 > &
   Pick<DockerGpuSupervisorReconnectDeps, "sleep"> & {
+    now?: () => Date;
     /**
      * Prove that the transaction-owned replacement is the sole labeled
      * container and is still running. The callback must fail closed and keep
@@ -119,17 +120,21 @@ function exactReplacementIsRunning(
  */
 export function waitForOpenShellFinalHandoff(
   sandboxName: string,
-  timeoutSecs: number,
+  deadlineMs: number,
   deps: DockerFinalHandoffDeps,
 ): DockerFinalHandoffAcknowledgement {
   const sleep = deps.sleep ?? defaultSleep;
-  const boundedTimeoutSecs = Math.max(1, Math.round(timeoutSecs));
-  const deadline = Date.now() + boundedTimeoutSecs * 1000;
-  const maxAttempts = Math.max(1, Math.ceil(boundedTimeoutSecs / 2) + 1);
+  const now = deps.now ?? (() => new Date());
+  const startedAtMs = now().getTime();
+  const boundedDeadlineMs = Number.isFinite(deadlineMs) ? Math.round(deadlineMs) : startedAtMs;
+  const maxAttempts = Math.max(
+    1,
+    Math.ceil(Math.max(0, boundedDeadlineMs - startedAtMs) / 2000) + 1,
+  );
   let lastSandboxPhase: string | null = null;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const remainingBeforeListMs = deadline - Date.now();
+    const remainingBeforeListMs = boundedDeadlineMs - now().getTime();
     if (remainingBeforeListMs <= 0) break;
     let listOutput = "";
     try {
@@ -149,7 +154,7 @@ export function waitForOpenShellFinalHandoff(
       return { acknowledged: false, lastSandboxPhase };
     }
 
-    const remainingBeforeRuntimeProofMs = deadline - Date.now();
+    const remainingBeforeRuntimeProofMs = boundedDeadlineMs - now().getTime();
     if (
       currentPhase === "Error" &&
       !exactReplacementIsRunning(deps.replacementIsExactAndRunning, remainingBeforeRuntimeProofMs)
@@ -158,7 +163,7 @@ export function waitForOpenShellFinalHandoff(
     }
 
     if (currentPhase === "Ready") {
-      const remainingBeforeExecMs = deadline - Date.now();
+      const remainingBeforeExecMs = boundedDeadlineMs - now().getTime();
       if (remainingBeforeExecMs <= 0) break;
       const execResult = deps.runOpenshell(["sandbox", "exec", "-n", sandboxName, "--", "true"], {
         ignoreError: true,
@@ -166,7 +171,7 @@ export function waitForOpenShellFinalHandoff(
         suppressOutput: true,
         timeout: Math.min(DOCKER_GPU_PATCH_TIMEOUT_MS, remainingBeforeExecMs),
       });
-      const remainingAfterExecMs = deadline - Date.now();
+      const remainingAfterExecMs = boundedDeadlineMs - now().getTime();
       const replacementIsRunning = exactReplacementIsRunning(
         deps.replacementIsExactAndRunning,
         remainingAfterExecMs,
@@ -177,12 +182,15 @@ export function waitForOpenShellFinalHandoff(
       if (!replacementIsRunning) return { acknowledged: false, lastSandboxPhase };
     } else if (
       currentPhase !== "Error" &&
-      !exactReplacementIsRunning(deps.replacementIsExactAndRunning, deadline - Date.now())
+      !exactReplacementIsRunning(
+        deps.replacementIsExactAndRunning,
+        boundedDeadlineMs - now().getTime(),
+      )
     ) {
       return { acknowledged: false, lastSandboxPhase };
     }
 
-    const remainingBeforeSleepMs = deadline - Date.now();
+    const remainingBeforeSleepMs = boundedDeadlineMs - now().getTime();
     if (attempt < maxAttempts && remainingBeforeSleepMs > 0) {
       sleep(Math.min(2, remainingBeforeSleepMs / 1000));
     }
