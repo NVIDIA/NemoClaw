@@ -3246,7 +3246,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
               selectedAgent,
               undefined,
               hermesApiPortReservationScope,
-              resume,
             ),
           persistDashboardPort: (name, port) =>
             registry.updateSandbox(name, { dashboardPort: port }),

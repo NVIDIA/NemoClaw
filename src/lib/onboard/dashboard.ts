@@ -159,7 +159,6 @@ export interface OnboardDashboardHelpers {
   ensureFinalizationDashboardForward(
     sandboxName: string,
     revalidateSandboxIdentity?: (operation: string) => void,
-    reuseExistingOpenClawForward?: boolean,
   ): Promise<number>;
   ensureFinalizationAgentDashboardForward(
     sandboxName: string,
@@ -168,7 +167,6 @@ export interface OnboardDashboardHelpers {
     portReservation?: {
       releaseBeforeForward(agentName: string, port: number): Promise<void> | void;
     },
-    reuseExistingOpenClawForward?: boolean,
   ): Promise<number>;
   reconcileOpenClawDashboardForwardReuse(
     sandboxName: string,
@@ -306,12 +304,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
   ): boolean {
     return (
       forwardService?.owns?.(
-        forwardTarget(
-          sandboxName,
-          gatewayName,
-          port,
-          getDashboardForwardTarget(chatUiUrl),
-        ),
+        forwardTarget(sandboxName, gatewayName, port, getDashboardForwardTarget(chatUiUrl)),
       ) === true
     );
   }
@@ -679,10 +672,10 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
 
   /**
    * Reconcile the dashboard forward for the agent-less OpenClaw finalization
-   * branch. The resume path skips sandbox creation, so `CHAT_UI_URL` does not
-   * carry the port the in-sandbox gateway listens on; the registry entry
-   * persisted by onboarding is the only record of that port. The forward and
-   * the in-sandbox gateway must share one port number (`openshell forward`
+   * branch. A resumed or repeated onboarding can skip sandbox creation, so
+   * `CHAT_UI_URL` may not carry the port the in-sandbox gateway listens on;
+   * the registry entry persisted by onboarding is the only record of that
+   * port. The forward and the in-sandbox gateway must share one port number (`openshell forward`
    * binds the same port on both sides), so when the persisted port cannot be
    * forwarded this throws instead of reallocating: the resumed gateway only
    * listens on the persisted port, and a forward on any other port serves
@@ -693,22 +686,19 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
   async function ensureFinalizationDashboardForward(
     sandboxName: string,
     revalidateSandboxIdentity?: (operation: string) => void,
-    reuseExistingOpenClawForward = false,
   ): Promise<number> {
     const envUrl = process.env.CHAT_UI_URL;
     const persistedPort = envUrl ? null : getPersistedDashboardPort(sandboxName, listSandboxes);
     const requestedUrl =
       envUrl || (persistedPort === null ? undefined : `http://127.0.0.1:${String(persistedPort)}`);
-    if (reuseExistingOpenClawForward) {
-      await reconcileOpenClawDashboardForwardReuse(
-        sandboxName,
-        requestedUrl || `http://127.0.0.1:${CONTROL_UI_PORT}`,
-        revalidateSandboxIdentity,
-      );
-    }
+    await reconcileOpenClawDashboardForwardReuse(
+      sandboxName,
+      requestedUrl || `http://127.0.0.1:${CONTROL_UI_PORT}`,
+      revalidateSandboxIdentity,
+    );
     const actualPort = ensureDashboardForward(sandboxName, requestedUrl, {
       allowPortReallocation: false,
-      ...(reuseExistingOpenClawForward ? { reuseExistingOpenClawForward: true } : {}),
+      reuseExistingOpenClawForward: true,
       ...(revalidateSandboxIdentity ? { revalidateSandboxIdentity } : {}),
     });
     revalidateSandboxIdentity?.(`publish the dashboard URL for sandbox '${sandboxName}'`);
@@ -749,17 +739,11 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     portReservation?: {
       releaseBeforeForward(agentName: string, port: number): Promise<void> | void;
     },
-    reuseExistingOpenClawForward = false,
   ): Promise<number> {
     if (!agent) {
-      return ensureFinalizationDashboardForward(
-        sandboxName,
-        revalidateSandboxIdentity,
-        reuseExistingOpenClawForward,
-      );
+      return ensureFinalizationDashboardForward(sandboxName, revalidateSandboxIdentity);
     }
-    const mayReuseOpenClawForward =
-      agent.name === "openclaw" && reuseExistingOpenClawForward;
+    const mayReuseOpenClawForward = agent.name === "openclaw";
     if (mayReuseOpenClawForward) {
       const registeredPort = getPersistedDashboardPort(sandboxName, listSandboxes);
       const requestedUrl =

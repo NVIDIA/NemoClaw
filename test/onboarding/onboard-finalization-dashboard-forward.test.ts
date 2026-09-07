@@ -105,10 +105,10 @@ describe("finalization dashboard ForwardTcp launch", () => {
     });
 
     await expect(helpers.ensureFinalizationDashboardForward("reonboard-test")).rejects.toThrow(
-      /cannot be reallocated/u,
+      /cannot be adopted/u,
     );
     expect(launch).not.toHaveBeenCalled();
-    expect(stopSandbox).not.toHaveBeenCalled();
+    expect(stopSandbox).toHaveBeenCalledOnce();
     expect(startSandbox).not.toHaveBeenCalled();
   });
 
@@ -122,9 +122,9 @@ describe("finalization dashboard ForwardTcp launch", () => {
       ownsForward: () => true,
     });
 
-    await expect(
-      helpers.ensureFinalizationDashboardForward("reonboard-test", undefined, true),
-    ).resolves.toBe(18_790);
+    await expect(helpers.ensureFinalizationDashboardForward("reonboard-test")).resolves.toBe(
+      18_790,
+    );
     expect(stopSandbox).not.toHaveBeenCalled();
     expect(startSandbox).not.toHaveBeenCalled();
     expect(launch).not.toHaveBeenCalled();
@@ -145,7 +145,7 @@ describe("finalization dashboard ForwardTcp launch", () => {
       "reonboard-test",
       "http://127.0.0.1:18790",
     );
-    await helpers.ensureFinalizationDashboardForward("reonboard-test", undefined, true);
+    await helpers.ensureFinalizationDashboardForward("reonboard-test");
 
     expect(stopSandbox).not.toHaveBeenCalled();
     expect(startSandbox).not.toHaveBeenCalled();
@@ -168,9 +168,9 @@ describe("finalization dashboard ForwardTcp launch", () => {
     );
     owned = false;
 
-    await expect(
-      helpers.ensureFinalizationDashboardForward("reonboard-test", undefined, true),
-    ).rejects.toThrow(/remained occupied/u);
+    await expect(helpers.ensureFinalizationDashboardForward("reonboard-test")).rejects.toThrow(
+      /remained occupied/u,
+    );
     expect(stopSandbox).toHaveBeenCalledOnce();
     expect(startSandbox).not.toHaveBeenCalled();
   });
@@ -184,9 +184,9 @@ describe("finalization dashboard ForwardTcp launch", () => {
       isPortBound: (port) => port === 18_790,
     });
 
-    await expect(
-      helpers.ensureFinalizationDashboardForward("reonboard-test", undefined, true),
-    ).rejects.toThrow(/remained occupied.*run 'nemoclaw reonboard-test start'/u);
+    await expect(helpers.ensureFinalizationDashboardForward("reonboard-test")).rejects.toThrow(
+      /remained occupied.*run 'nemoclaw reonboard-test start'/u,
+    );
     expect(stopSandbox).toHaveBeenCalledWith("reonboard-test", expect.any(Function));
     expect(startSandbox).not.toHaveBeenCalled();
     expect(launch).not.toHaveBeenCalled();
@@ -209,9 +209,9 @@ describe("finalization dashboard ForwardTcp launch", () => {
       },
     });
 
-    await expect(
-      helpers.ensureFinalizationDashboardForward("reonboard-test", undefined, true),
-    ).rejects.toThrow(/identity changed.*may remain stopped/u);
+    await expect(helpers.ensureFinalizationDashboardForward("reonboard-test")).rejects.toThrow(
+      /identity changed.*may remain stopped/u,
+    );
     expect(stopSandbox).toHaveBeenCalledWith("reonboard-test", expect.any(Function));
     expect(startSandbox).toHaveBeenCalledWith("reonboard-test", expect.any(Function));
     expect(startSandboxOperation).not.toHaveBeenCalled();
@@ -228,9 +228,9 @@ describe("finalization dashboard ForwardTcp launch", () => {
       registeredIdentity: false,
     });
 
-    await expect(
-      helpers.ensureFinalizationDashboardForward("reonboard-test", undefined, true),
-    ).rejects.toThrow(/Could not verify sandbox/u);
+    await expect(helpers.ensureFinalizationDashboardForward("reonboard-test")).rejects.toThrow(
+      /Could not verify sandbox/u,
+    );
     expect(stopSandbox).not.toHaveBeenCalled();
     expect(startSandbox).not.toHaveBeenCalled();
     expect(launch).not.toHaveBeenCalled();
@@ -261,14 +261,14 @@ describe("finalization dashboard ForwardTcp launch", () => {
       startSandbox: async () => await startOutcomes.shift()!(),
     });
 
-    await expect(
-      helpers.ensureFinalizationDashboardForward("reonboard-test", undefined, true),
-    ).rejects.toThrow(/did not restore dashboard port.*restart failed/u);
+    await expect(helpers.ensureFinalizationDashboardForward("reonboard-test")).rejects.toThrow(
+      /did not restore dashboard port.*restart failed/u,
+    );
 
     bound = true;
-    await expect(
-      helpers.ensureFinalizationDashboardForward("reonboard-test", undefined, true),
-    ).resolves.toBe(18_790);
+    await expect(helpers.ensureFinalizationDashboardForward("reonboard-test")).resolves.toBe(
+      18_790,
+    );
     expect(stopSandbox).toHaveBeenCalledTimes(2);
     expect(startSandbox).toHaveBeenCalledTimes(2);
     expect(launch).not.toHaveBeenCalled();
@@ -295,9 +295,9 @@ describe("finalization dashboard ForwardTcp launch", () => {
       },
     });
 
-    await expect(
-      helpers.ensureFinalizationDashboardForward("reonboard-test", undefined, true),
-    ).rejects.toThrow(/was restored.*Ollama cleanup failed/u);
+    await expect(helpers.ensureFinalizationDashboardForward("reonboard-test")).rejects.toThrow(
+      /was restored.*Ollama cleanup failed/u,
+    );
     expect(stopSandbox).toHaveBeenCalledOnce();
     expect(startSandbox).toHaveBeenCalledOnce();
     expect(launch).not.toHaveBeenCalled();
@@ -315,14 +315,14 @@ describe("finalization dashboard ForwardTcp launch", () => {
       isPortBound: (port) => port === 18_790,
     });
 
-    await expect(
-      helpers.ensureFinalizationDashboardForward("reonboard-test", undefined, true),
-    ).rejects.toThrow(/cannot be reallocated/u);
+    await expect(helpers.ensureFinalizationDashboardForward("reonboard-test")).rejects.toThrow(
+      /cannot be reallocated/u,
+    );
     expect(stopSandbox).not.toHaveBeenCalled();
     expect(launch).not.toHaveBeenCalled();
   });
 
-  it("enables owned-forward reuse only for OpenClaw agents", async () => {
+  it("enables owned-forward reuse only for OpenClaw agents during ordinary finalization", async () => {
     vi.stubEnv("CHAT_UI_URL", undefined);
     const openClaw = harness({
       listSandboxes: () => ({
@@ -338,7 +338,6 @@ describe("finalization dashboard ForwardTcp launch", () => {
         { name: "openclaw", forwardPort: 18_790 },
         undefined,
         undefined,
-        true,
       ),
     ).resolves.toBe(18_790);
 
@@ -355,7 +354,6 @@ describe("finalization dashboard ForwardTcp launch", () => {
         { name: "hermes", forwardPort: 18_790 },
         undefined,
         undefined,
-        true,
       ),
     ).rejects.toThrow(/cannot be reallocated/u);
     expect(hermes.stopSandbox).not.toHaveBeenCalled();

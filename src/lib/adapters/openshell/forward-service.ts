@@ -110,21 +110,8 @@ function captureProcess(executable: string, args: readonly string[]) {
 
 function listenerPids(port: number, probe: ForwardServiceOwnerProbe): string[] {
   const result = probe("lsof", ["-ti", `:${String(port)}`, "-sTCP:LISTEN"]);
-  if (result.status === 0) {
-    return [
-      ...new Set(
-        result.stdout
-          .split(/\r?\n/u)
-          .map((line) => line.trim())
-          .filter(Boolean),
-      ),
-    ];
-  }
-  if (result.status !== null) return [];
-
-  const fallback = probe("ss", ["-H", "-ltnp", `sport = :${String(port)}`]);
-  if (fallback.status !== 0) return [];
-  return [...new Set([...fallback.stdout.matchAll(/\bpid=(\d+)\b/gu)].map((match) => match[1]!))];
+  if (result.status !== 0) return [];
+  return [...new Set(result.stdout.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean))];
 }
 
 /** Prove that the current listener is the exact direct ForwardTcp command. */
