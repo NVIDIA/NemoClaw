@@ -65,8 +65,6 @@ export async function assertHermesSkillLifecycle({
     return result;
   };
 
-  expect(HERMES_SKILL_PROMPT).not.toContain(E2E_MOCK_REQUEST_CANARY);
-
   const skillInstall = await host.command(
     "nemohermes",
     [sandboxName, "skill", "install", HERMES_SKILL_FIXTURE],
@@ -94,12 +92,15 @@ export async function assertHermesSkillLifecycle({
     "phase-4-hermes-skill-sessions-before",
   );
   const requestOffset = inference.requestSummaries()?.length;
-  await exec(
+  const skillChat = await exec(
     ["hermes", "chat", "--skills", HERMES_SKILL_ID, "--query", HERMES_SKILL_PROMPT, "--quiet"],
     "phase-4-hermes-skill-chat",
     360,
     420_000,
   );
+  const skillChatText = stripAnsi(resultText(skillChat));
+  expect(skillChatText).toMatch(/\bPONG\b/i);
+  expect(skillChatText).not.toContain(E2E_MOCK_REQUEST_CANARY);
   const sessionsAfterSkill = await exec(
     ["hermes", "sessions", "list"],
     "phase-4-hermes-skill-sessions-after",
@@ -157,10 +158,10 @@ export async function assertHermesSkillLifecycle({
   const postRemoveRequests = (inference.requestSummaries() ?? [])
     .slice(postRemoveRequestOffset ?? Number.MAX_SAFE_INTEGER)
     .filter((request) => request.method === "POST" && INFERENCE_REQUEST_PATHS.has(request.path));
-  expect(postRemoveRequestOffset === undefined || postRemoveRequests.length > 0).toBe(true);
   expect(
     postRemoveRequestOffset === undefined ||
-      postRemoveRequests.every((request) => request.requestCanaryPresent !== true),
+      (postRemoveRequests.length > 0 &&
+        postRemoveRequests.every((request) => request.requestCanaryPresent !== true)),
     "removed Hermes skill canary still reached a fresh mock inference request",
   ).toBe(true);
 }

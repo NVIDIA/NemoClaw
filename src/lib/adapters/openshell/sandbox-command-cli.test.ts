@@ -137,6 +137,55 @@ describe("CLI OpenShell sandbox command executor", () => {
     });
   });
 
+  it("terminates a hung child at the host deadline and retains signal cleanup", async () => {
+    vi.useFakeTimers();
+    try {
+      const childEvents = new EventEmitter();
+      const signalEvents = new EventEmitter();
+      const child: OpenShellCommandChild = {
+        exitCode: null,
+        signalCode: null,
+        kill: vi.fn((signal) => {
+          child.signalCode = signal;
+          queueMicrotask(() => childEvents.emit("close", null, signal));
+          return true;
+        }),
+        once: ((event: string, listener: (...args: unknown[]) => void) =>
+          childEvents.once(event, listener)) as OpenShellCommandChild["once"],
+      };
+      const signalSource: OpenShellCommandSignalSource = {
+        add: (signal, listener) => signalEvents.on(signal, listener),
+        remove: (signal, listener) => signalEvents.off(signal, listener),
+      };
+      const executor = createCliOpenShellSandboxCommandExecutor({
+        resolveBinary: () => "/usr/bin/openshell",
+        spawnChild: () => child,
+        signalSource,
+      });
+
+      const pending = executor.runStreaming({
+        sandboxName: "alpha",
+        target: selectedOpenShellGateway(),
+        command: ["sleep", "30"],
+        timeoutSeconds: 1,
+      });
+      await vi.advanceTimersByTimeAsync(1000);
+      const completed = await pending;
+
+      expect(completed.outcome).toMatchObject({
+        kind: "failed",
+        error: { kind: "timeout" },
+      });
+      expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+      expect(signalEvents.listenerCount("SIGTERM")).toBe(1);
+      completed.release();
+      expect(signalEvents.listenerCount("SIGTERM")).toBe(0);
+      expect(signalEvents.listenerCount("SIGINT")).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it.each([
     ["an unavailable executable", "ENOENT", "unavailable"],
     ["an unclassified transport failure", undefined, "invocation"],
