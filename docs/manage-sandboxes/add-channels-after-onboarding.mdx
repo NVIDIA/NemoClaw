@@ -82,6 +82,13 @@ If you defer the rebuild, apply the change later:
 $$nemoclaw my-assistant rebuild
 ```
 
+For an affected v0.0.119 N1x sandbox whose registry records both `endpointUrl` and `endpointSource` as `null` without durable preview acceptance, repeat the one-time recovery choice described in [Set Up vLLM](../../inference/local-inference/set-up-vllm#use-n1x-express):
+
+```bash
+NEMOCLAW_PROVIDER=install-vllm \
+  $$nemoclaw my-assistant rebuild
+```
+
 ## Add a Channel Non-Interactively
 
 Set required environment variables before running `channels add`.

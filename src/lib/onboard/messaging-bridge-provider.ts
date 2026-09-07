@@ -493,7 +493,7 @@ function buildRefreshMaterial(
 ):
   | { ok: true; material: { key: string; value: string }[]; secretKeys: string[] }
   | { ok: false; reason: string } {
-  if (profile.strategy === "google-service-account-jwt") {
+  if (profile.strategy === "google_service_account_jwt") {
     let parsed: Record<string, unknown>;
     try {
       parsed = JSON.parse(secret) as Record<string, unknown>;
@@ -684,7 +684,8 @@ export function configureMessagingBridgeRefreshes(
           "--credential-key",
           profile.credentialKey,
           "--strategy",
-          profile.strategy,
+          // Provider profile documents use snake_case; the CLI flag uses kebab-case.
+          profile.strategy.replaceAll("_", "-"),
           ...materialArgs,
           bridge.name,
         ],
