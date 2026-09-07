@@ -17,7 +17,8 @@ const cliCommandExecutor = vi.hoisted(() => ({
   runStreaming: vi.fn(),
 }));
 const ensureLiveSandboxOrExit = vi.hoisted(() => vi.fn());
-const getSandboxTargetGatewayName = vi.hoisted(() => vi.fn());
+const getKnownSandboxTarget = vi.hoisted(() => vi.fn());
+const getPersistedSandboxTargetGatewayName = vi.hoisted(() => vi.fn());
 const getSessionAgent = vi.hoisted(() => vi.fn());
 const resolveSessionAgentDefinition = vi.hoisted(() => vi.fn());
 const loadGatewayManagementDeclaration = vi.hoisted(() => vi.fn());
@@ -38,7 +39,10 @@ vi.mock("../../onboard/gateway-management", async (importOriginal) => ({
   loadGatewayManagementDeclaration,
 }));
 vi.mock("./gateway-state", () => ({ ensureLiveSandboxOrExit }));
-vi.mock("./gateway-target", () => ({ getSandboxTargetGatewayName }));
+vi.mock("./gateway-target", () => ({
+  getKnownSandboxTarget,
+  getPersistedSandboxTargetGatewayName,
+}));
 
 import { installSandboxSkill, listSandboxSkills, removeSandboxSkill } from "./skill-install";
 import type { AgentSkillIntegration } from "../../agent/skill-integration";
@@ -110,7 +114,10 @@ describe("stateless sandbox skill orchestration", () => {
       release: vi.fn(),
     });
     ensureLiveSandboxOrExit.mockResolvedValue(undefined);
-    getSandboxTargetGatewayName.mockReturnValue("nemoclaw");
+    getKnownSandboxTarget.mockReturnValue({ name: "alpha", gatewayName: "nemoclaw" });
+    getPersistedSandboxTargetGatewayName.mockImplementation(
+      (sandbox: { gatewayName: string }) => sandbox.gatewayName,
+    );
     getSessionAgent.mockReturnValue(null);
     loadGatewayManagementDeclaration.mockReturnValue({
       ok: true,
@@ -385,6 +392,32 @@ describe("stateless sandbox skill orchestration", () => {
     expect(process.exitCode).toBe(1);
     expect(sdkCommandExecutor.runStreaming).toHaveBeenCalledTimes(2);
     expect(captureOpenshellAsync).not.toHaveBeenCalled();
+  });
+
+  it("does not upload, publish, or clean up through a changed gateway binding", async () => {
+    selectAgent("hermes", "/usr/local/bin/hermes", HERMES);
+    const original = { name: "alpha", gatewayName: "nemoclaw" };
+    const replacement = { name: "alpha", gatewayName: "nemoclaw-9090" };
+    getKnownSandboxTarget
+      .mockReturnValueOnce(original)
+      .mockReturnValueOnce(original)
+      .mockReturnValue(replacement);
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await installSandboxSkill("alpha", { command: "install", path: localSkill() });
+
+    expect(sdkCommandExecutor.runStreaming).toHaveBeenCalledOnce();
+    expect(sdkCommandExecutor.runStreaming.mock.calls[0]?.[0].target).toEqual({
+      kind: "named",
+      gatewayName: "nemoclaw",
+    });
+    expect(captureOpenshellAsync).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("changed gateway binding during the skill operation"),
+    );
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("Private skill stage was not removed"),
+    );
   });
 
   it("rejects an endpoint override before any sandbox command or upload", async () => {

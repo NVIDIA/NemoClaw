@@ -135,43 +135,6 @@ describe("OpenShell SDK sandbox command executor", () => {
     expect(Buffer.concat(stderr).toString()).toBe("native err\n");
   });
 
-  it("uses the SDK for directory probes", async () => {
-    const exec = vi.fn().mockResolvedValue({ exitCode: 1 });
-    const executor = createSdkOpenShellSandboxCommandExecutor({
-      connect: async () => ({ sandbox: { exec, execStream: vi.fn() } }),
-    });
-
-    await expect(
-      executor.probeDirectory({
-        sandboxName: "alpha",
-        target: { kind: "named", gatewayName: "nemoclaw" },
-        path: "/sandbox/missing",
-      }),
-    ).resolves.toEqual({ state: "missing" });
-    expect(exec).toHaveBeenCalledWith("alpha", ["test", "-d", "/sandbox/missing"], {
-      noLoginShell: true,
-      timeoutSecs: 30,
-    });
-  });
-
-  it("reconnects after a transient connection failure", async () => {
-    const exec = vi.fn().mockResolvedValue({ exitCode: 0 });
-    const client = { sandbox: { exec, execStream: vi.fn() } };
-    const connect = vi.fn().mockRejectedValueOnce(new Error("offline")).mockResolvedValue(client);
-    const executor = createSdkOpenShellSandboxCommandExecutor({ connect });
-    const request = {
-      sandboxName: "alpha",
-      target: { kind: "named" as const, gatewayName: "nemoclaw" },
-      path: "/sandbox",
-    };
-
-    await expect(executor.probeDirectory(request)).resolves.toMatchObject({
-      state: "unobservable",
-    });
-    await expect(executor.probeDirectory(request)).resolves.toEqual({ state: "present" });
-    expect(connect).toHaveBeenCalledTimes(2);
-  });
-
   it("classifies a missing optional SDK package as unavailable", async () => {
     const executor = createSdkOpenShellSandboxCommandExecutor({
       connect: vi
@@ -251,8 +214,7 @@ describe("OpenShell SDK sandbox command executor", () => {
     const executor = createSdkOpenShellSandboxCommandExecutor({
       connect: () =>
         new Promise((resolve) => {
-          resolveConnection = () =>
-            resolve({ sandbox: { exec: vi.fn().mockResolvedValue({ exitCode: 0 }), execStream } });
+          resolveConnection = () => resolve({ sandbox: { execStream } });
         }),
       signalSource: { add, remove },
     });
@@ -287,7 +249,7 @@ describe("OpenShell SDK sandbox command executor", () => {
       const connect = vi
         .fn()
         .mockImplementationOnce(() => new Promise(() => {}))
-        .mockResolvedValueOnce({ sandbox: { exec: vi.fn(), execStream } });
+        .mockResolvedValueOnce({ sandbox: { execStream } });
       const executor = createSdkOpenShellSandboxCommandExecutor({ connect });
       const request = {
         sandboxName: "alpha",
@@ -309,6 +271,46 @@ describe("OpenShell SDK sandbox command executor", () => {
       retry.release();
       expect(retry.outcome).toEqual({ kind: "completed", exitCode: 0 });
       expect(connect).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("settles at the deadline when an SDK stream ignores abort", async () => {
+    vi.useFakeTimers();
+    try {
+      const listeners = new Map<NodeJS.Signals, () => void>();
+      const remove = vi.fn((signal: NodeJS.Signals) => listeners.delete(signal));
+      const executor = createSdkOpenShellSandboxCommandExecutor({
+        connect: async () => ({
+          sandbox: {
+            execStream: async function* () {
+              await new Promise(() => {});
+            },
+          },
+        }),
+        signalSource: {
+          add: (signal, listener) => listeners.set(signal, listener),
+          remove,
+        },
+      });
+
+      const pending = executor.runStreaming({
+        sandboxName: "alpha",
+        target: { kind: "named", gatewayName: "nemoclaw" },
+        command: ["true"],
+        timeoutSeconds: 1,
+      });
+      await vi.advanceTimersByTimeAsync(1000);
+      const completion = await pending;
+
+      expect(completion.outcome).toMatchObject({
+        kind: "failed",
+        error: { kind: "timeout" },
+      });
+      expect(remove).toHaveBeenCalledTimes(2);
+      completion.release();
+      expect(remove).toHaveBeenCalledTimes(2);
     } finally {
       vi.useRealTimers();
     }
