@@ -39,6 +39,7 @@ const BASE_SHA = "b".repeat(40);
 const REQUIRED_RUNTIME_AUTHORITY_PATHS = [
   "src/lib/inference/nim.ts",
   "src/lib/onboard/provider-selection.ts",
+  "src/lib/onboard/setup-nim-provider-discovery.ts",
   "src/lib/onboard/runtime-provider/configured-runtime.ts",
   "src/lib/onboard/runtime-provider/current.ts",
   "src/lib/onboard/setup-nim-flow.ts",
