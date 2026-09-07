@@ -310,8 +310,8 @@ describe("messaging OpenShell provider application", () => {
   it.each([
     { checkpoint: 1, deletes: 0, detaches: 0, creates: 0, attaches: 0, mutated: false },
     { checkpoint: 2, deletes: 1, detaches: 0, creates: 0, attaches: 0, mutated: false },
-    { checkpoint: 3, deletes: 1, detaches: 1, creates: 0, attaches: 0, mutated: true },
-    { checkpoint: 4, deletes: 1, detaches: 1, creates: 0, attaches: 0, mutated: true },
+    { checkpoint: 3, deletes: 1, detaches: 1, creates: 0, attaches: 1, mutated: true },
+    { checkpoint: 4, deletes: 1, detaches: 1, creates: 0, attaches: 1, mutated: true },
     { checkpoint: 5, deletes: 2, detaches: 1, creates: 0, attaches: 0, mutated: true },
     { checkpoint: 6, deletes: 2, detaches: 1, creates: 1, attaches: 0, mutated: true },
     { checkpoint: 7, deletes: 2, detaches: 1, creates: 1, attaches: 0, mutated: true },
@@ -382,6 +382,100 @@ describe("messaging OpenShell provider application", () => {
       expect(adapter.attachProvider).toHaveBeenCalledTimes(attaches);
     },
   );
+
+  it("restores the prior attachment when replacement deletion fails (#9806)", async () => {
+    const expected = definition();
+    const adapter = providerAdapter({
+      getProvider: vi.fn<OpenShellProviderAdapter["getProvider"]>().mockResolvedValue({
+        ok: true,
+        value: { ...metadata(expected), type: "generic" },
+      }),
+      deleteProvider: vi
+        .fn<OpenShellProviderAdapter["deleteProvider"]>()
+        .mockResolvedValueOnce({
+          ok: false,
+          error: {
+            kind: "command",
+            reason: "attached",
+            message: "provider is attached",
+            attachedSandboxes: ["alpha"],
+          },
+        })
+        .mockResolvedValueOnce({
+          ok: false,
+          error: { kind: "transport", reason: "unreachable", message: "delete unavailable" },
+        }),
+    });
+
+    const failure = await applyCredentialsAtOpenShell(plan, {
+      providerAdapter: adapter,
+      target,
+      definitions: [expected],
+      replaceExisting: true,
+      allowedSandboxes: ["alpha"],
+    }).catch((error: unknown) => error);
+
+    expect(failure).toMatchObject({
+      message: "Could not replace messaging provider 'alpha-telegram-bridge': delete unavailable",
+      mutatedProviderNames: [expected.providerName],
+      createdProviderNames: [],
+      replacedProviderNames: [],
+    });
+    expect(adapter.attachProvider).toHaveBeenCalledExactlyOnceWith({
+      target,
+      providerName: expected.providerName,
+      sandboxName: "alpha",
+    });
+    expect(adapter.createProvider).not.toHaveBeenCalled();
+  });
+
+  it("redacts failed replacement attachment recovery (#9806)", async () => {
+    const expected = definition();
+    const secret = "nvapi-replacement-recovery-secret-do-not-leak";
+    const adapter = providerAdapter({
+      getProvider: vi.fn<OpenShellProviderAdapter["getProvider"]>().mockResolvedValue({
+        ok: true,
+        value: { ...metadata(expected), type: "generic" },
+      }),
+      deleteProvider: vi
+        .fn<OpenShellProviderAdapter["deleteProvider"]>()
+        .mockResolvedValueOnce({
+          ok: false,
+          error: {
+            kind: "command",
+            reason: "attached",
+            message: "provider is attached",
+            attachedSandboxes: ["alpha"],
+          },
+        })
+        .mockResolvedValueOnce({
+          ok: false,
+          error: { kind: "transport", reason: "unreachable", message: "delete unavailable" },
+        }),
+      attachProvider: vi
+        .fn<OpenShellProviderAdapter["attachProvider"]>()
+        .mockRejectedValue(new Error(`NVIDIA_API_KEY=${secret}`)),
+    });
+
+    const failure = await applyCredentialsAtOpenShell(plan, {
+      providerAdapter: adapter,
+      target,
+      definitions: [expected],
+      replaceExisting: true,
+      allowedSandboxes: ["alpha"],
+    }).catch((error: unknown) => error);
+
+    expect(failure).toMatchObject({
+      mutatedProviderNames: [expected.providerName],
+      createdProviderNames: [],
+      replacedProviderNames: [],
+    });
+    expect((failure as Error).message).toContain(
+      'Automatic attachment recovery failed for provider "alpha-telegram-bridge" on sandbox "alpha":',
+    );
+    expect((failure as Error).message).toContain("<REDACTED>");
+    expect(JSON.stringify(failure)).not.toContain(secret);
+  });
 
   it("returns created-provider evidence when attachment fails (#9806)", async () => {
     const expected = definition();

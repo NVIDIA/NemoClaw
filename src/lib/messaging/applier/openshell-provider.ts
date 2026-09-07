@@ -380,6 +380,7 @@ export async function cleanupProvidersAtOpenShell(
           providerDetachedAttachments,
           detachFailed,
           options,
+          options.providerAdapter,
           target,
         ),
       });
@@ -395,6 +396,7 @@ export async function cleanupProvidersAtOpenShell(
           providerDetachedAttachments,
           retryIdentityError,
           options,
+          options.providerAdapter,
           target,
         ),
       });
@@ -412,6 +414,7 @@ export async function cleanupProvidersAtOpenShell(
           providerDetachedAttachments,
           retried.error,
           options,
+          options.providerAdapter,
           target,
         ),
       });
@@ -430,7 +433,8 @@ async function restoreCleanupAttachments(
   providerName: string,
   attachments: readonly Readonly<{ providerName: string; sandboxName: string }>[],
   cleanupError: OpenShellProviderError,
-  options: MessagingProviderCleanupOptions,
+  options: Pick<MessagingProviderCleanupOptions, "revalidateSandboxIdentity">,
+  providerAdapter: OpenShellProviderAdapter,
   target: OpenShellGatewayTarget,
 ): Promise<OpenShellProviderError> {
   const failures: Array<{ sandboxName: string; error: OpenShellProviderError }> = [];
@@ -442,7 +446,7 @@ async function restoreCleanupAttachments(
     }
     let restored: Awaited<ReturnType<OpenShellProviderAdapter["attachProvider"]>>;
     try {
-      restored = await options.providerAdapter.attachProvider({
+      restored = await providerAdapter.attachProvider({
         target,
         providerName,
         sandboxName,
@@ -450,13 +454,7 @@ async function restoreCleanupAttachments(
     } catch (error) {
       failures.push({
         sandboxName,
-        error: {
-          kind: "command",
-          reason: "failed",
-          message: redactStandaloneSecretsFull(
-            error instanceof Error ? error.message : String(error),
-          ),
-        },
+        error: rejectedProviderOperationError(error),
       });
       continue;
     }
@@ -485,7 +483,7 @@ async function restoreCleanupAttachments(
 }
 
 function cleanupIdentityError(
-  options: MessagingProviderCleanupOptions,
+  options: Pick<MessagingProviderCleanupOptions, "revalidateSandboxIdentity">,
   providerName: string,
   action: string,
 ): OpenShellProviderError | null {
@@ -715,7 +713,7 @@ async function deleteProviderForReplacement(
     });
   }
 
-  let detached = false;
+  const detachedAttachments: Array<{ providerName: string; sandboxName: string }> = [];
   for (const sandboxName of result.error.attachedSandboxes ?? []) {
     try {
       options.revalidateSandboxIdentity?.(
@@ -730,15 +728,27 @@ async function deleteProviderForReplacement(
         throw new MessagingProviderApplyError({
           message: `Could not detach messaging provider '${providerName}' from sandbox '${sandboxName}': ${providerErrorMessage(detachResult.error)}`,
           mutatedProviderNames:
-            detached || mutationOutcomeUncertain(detachResult.error) ? [providerName] : [],
+            detachedAttachments.length > 0 || mutationOutcomeUncertain(detachResult.error)
+              ? [providerName]
+              : [],
         });
       }
-      detached = true;
+      detachedAttachments.push({ providerName, sandboxName });
       options.revalidateSandboxIdentity?.(
         `confirm messaging provider ${JSON.stringify(providerName)} detach from sandbox ${JSON.stringify(sandboxName)}`,
       );
     } catch (error) {
-      throw withMutationEvidence(error, detached ? [providerName] : [], []);
+      if (detachedAttachments.length > 0) {
+        await throwReplacementFailureAfterAttachmentRecovery(
+          providerName,
+          detachedAttachments,
+          error,
+          options,
+          providerAdapter,
+          target,
+        );
+      }
+      throw withMutationEvidence(error, [], []);
     }
   }
   try {
@@ -747,15 +757,62 @@ async function deleteProviderForReplacement(
     );
     result = await providerAdapter.deleteProvider({ target, providerName });
   } catch (error) {
-    throw withMutationEvidence(error, detached ? [providerName] : [], []);
+    await throwReplacementFailureAfterAttachmentRecovery(
+      providerName,
+      detachedAttachments,
+      error,
+      options,
+      providerAdapter,
+      target,
+    );
   }
   if (!result.ok) {
-    throw new MessagingProviderApplyError({
+    const error = new MessagingProviderApplyError({
       message: `Could not replace messaging provider '${providerName}': ${providerErrorMessage(result.error)}`,
       mutatedProviderNames:
-        detached || mutationOutcomeUncertain(result.error) ? [providerName] : [],
+        detachedAttachments.length > 0 || mutationOutcomeUncertain(result.error)
+          ? [providerName]
+          : [],
     });
+    await throwReplacementFailureAfterAttachmentRecovery(
+      providerName,
+      detachedAttachments,
+      error,
+      options,
+      providerAdapter,
+      target,
+    );
   }
+}
+
+async function throwReplacementFailureAfterAttachmentRecovery(
+  providerName: string,
+  attachments: readonly Readonly<{ providerName: string; sandboxName: string }>[],
+  error: unknown,
+  options: Pick<MessagingProviderCleanupOptions, "revalidateSandboxIdentity">,
+  providerAdapter: OpenShellProviderAdapter,
+  target: OpenShellGatewayTarget,
+): Promise<never> {
+  const failure = await restoreCleanupAttachments(
+    providerName,
+    attachments,
+    rejectedProviderOperationError(error),
+    options,
+    providerAdapter,
+    target,
+  );
+  throw new MessagingProviderApplyError({
+    message: failure.message,
+    mutatedProviderNames: [providerName],
+  });
+}
+
+function rejectedProviderOperationError(error: unknown): OpenShellProviderError {
+  return {
+    kind: "command",
+    reason: "failed",
+    message: redactStandaloneSecretsFull(error instanceof Error ? error.message : String(error)),
+  };
 }
 
 function mutationOutcomeUncertain(error: OpenShellProviderError): boolean {
@@ -942,8 +999,6 @@ function withMutationEvidence(
     createdProviderNames: [...existingCreated, ...createdProviderNames],
     replacedProviderNames: [...existingReplaced, ...replacedProviderNames],
     cause:
-      error instanceof MessagingProviderApplyError && error.cause === undefined
-        ? undefined
-        : error,
+      error instanceof MessagingProviderApplyError && error.cause === undefined ? undefined : error,
   });
 }
