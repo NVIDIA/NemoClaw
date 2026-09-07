@@ -186,6 +186,50 @@ describe("CLI OpenShell sandbox command executor", () => {
     }
   });
 
+  it("force-terminates a timed-out child that ignores SIGTERM", async () => {
+    vi.useFakeTimers();
+    try {
+      const childEvents = new EventEmitter();
+      const child: OpenShellCommandChild = {
+        exitCode: null,
+        signalCode: null,
+        kill: vi.fn((signal) => {
+          if (signal === "SIGKILL") {
+            child.signalCode = signal;
+            queueMicrotask(() => childEvents.emit("close", null, signal));
+          }
+          return true;
+        }),
+        once: ((event: string, listener: (...args: unknown[]) => void) =>
+          childEvents.once(event, listener)) as OpenShellCommandChild["once"],
+      };
+      const executor = createCliOpenShellSandboxCommandExecutor({
+        resolveBinary: () => "/usr/bin/openshell",
+        spawnChild: () => child,
+      });
+
+      const pending = executor.runStreaming({
+        sandboxName: "alpha",
+        target: selectedOpenShellGateway(),
+        command: ["sleep", "30"],
+        timeoutSeconds: 1,
+      });
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+      await vi.advanceTimersByTimeAsync(5000);
+      const completed = await pending;
+
+      expect(child.kill).toHaveBeenCalledWith("SIGKILL");
+      expect(completed.outcome).toMatchObject({
+        kind: "failed",
+        error: { kind: "timeout" },
+      });
+      completed.release();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it.each([
     ["an unavailable executable", "ENOENT", "unavailable"],
     ["an unclassified transport failure", undefined, "invocation"],

@@ -16,6 +16,8 @@ import {
 import { buildSandboxCommandStdio } from "./sandbox-command-stdio";
 import type { OpenShellGatewayTarget } from "./sandbox-observer";
 
+const TIMEOUT_TERMINATION_GRACE_MS = 5_000;
+
 export type OpenShellCommandChild = {
   exitCode: number | null;
   signalCode: NodeJS.Signals | null;
@@ -143,6 +145,7 @@ export async function runCliOpenShellStreamingCommand(
 
   return new Promise((resolve) => {
     let spawnError: Error | undefined;
+    let forceTermination: NodeJS.Timeout | null = null;
     const timeout =
       options.timeoutSeconds !== undefined && options.timeoutSeconds > 0
         ? setTimeout(() => {
@@ -150,7 +153,12 @@ export async function runCliOpenShellStreamingCommand(
               new Error(`OpenShell command timed out after ${String(options.timeoutSeconds)} seconds`),
               { code: "ETIMEDOUT" },
             );
-            if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+            if (child.exitCode === null && child.signalCode === null) {
+              child.kill("SIGTERM");
+              forceTermination = setTimeout(() => {
+                if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+              }, TIMEOUT_TERMINATION_GRACE_MS);
+            }
           }, options.timeoutSeconds * 1000)
         : null;
     const forwardTerm = () => {
@@ -166,6 +174,7 @@ export async function runCliOpenShellStreamingCommand(
     });
     child.once("close", (status, signal) => {
       if (timeout) clearTimeout(timeout);
+      if (forceTermination) clearTimeout(forceTermination);
       resolve({
         status,
         signal,
