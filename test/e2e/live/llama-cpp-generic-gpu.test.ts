@@ -184,7 +184,7 @@ test(
       cwd: REPO_ROOT,
       env: env({
         NEMOCLAW_E2E_FAILURE_INJECTION: "1",
-        NEMOCLAW_E2E_FORCE_FAIL_AT_STEP: "policies",
+        NEMOCLAW_E2E_FORCE_FAIL_AT_STEP: "sandbox",
       }),
       timeoutMs: 75 * 60_000,
     });
@@ -241,7 +241,7 @@ test(
     );
     expect(
       install.exitCode === 1 &&
-        resultText(install).includes("Forced onboarding failure at step 'policies'") &&
+        resultText(install).includes("Forced onboarding failure at step 'sandbox'") &&
         stopRuntime.status === 0 &&
         stopRuntime.error === undefined &&
         resume.exitCode === 0,
