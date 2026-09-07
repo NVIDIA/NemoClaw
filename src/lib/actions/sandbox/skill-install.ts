@@ -187,6 +187,10 @@ async function cleanupRemoteStage(
   ]);
   if (exitCode !== 0) {
     console.error(`  Private skill staging cleanup failed: ${stageDirectory}`);
+    console.error(`  Inspect agent state with: ${CLI_NAME} ${sandboxName} skill list`);
+    console.error(
+      `  Remove only the reported private stage with: ${CLI_NAME} ${sandboxName} exec -- rm -rf -- ${stageDirectory}`,
+    );
   }
   return exitCode === 0;
 }
@@ -220,14 +224,6 @@ async function runSkillCommandWithStageCleanup(
   const completion = await runAgentSkillCommandRetained(sandboxName, gatewayName, command);
   try {
     const cleaned = await cleanupRemoteStage(sandboxName, gatewayName, stageDirectory);
-    if (!cleaned && completion.exitCode === 0) {
-      console.error(
-        `  Skill add completed, but staging cleanup did not. Inspect agent state with: ${CLI_NAME} ${sandboxName} skill list`,
-      );
-      console.error(
-        `  Remove only the reported private stage with: ${CLI_NAME} ${sandboxName} exec -- rm -rf -- ${stageDirectory}`,
-      );
-    }
     process.exitCode = cleaned || completion.exitCode !== 0 ? completion.exitCode : 1;
     return cleaned;
   } finally {

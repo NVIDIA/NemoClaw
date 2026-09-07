@@ -333,6 +333,8 @@ describe("stateless sandbox skill orchestration", () => {
     expect(error).toHaveBeenCalledWith(
       expect.stringMatching(/^  Private skill staging cleanup failed: \/sandbox\//u),
     );
+    expect(error).toHaveBeenCalledWith(expect.stringContaining(" skill list"));
+    expect(error).toHaveBeenCalledWith(expect.stringContaining(" exec -- rm -rf -- /sandbox/"));
   });
 
   it("attempts cleanup when stage preparation is interrupted after remote creation", async () => {
