@@ -187,6 +187,7 @@ describe("waitForManagedGatewaySupervisor", () => {
         status: 1,
         stdout: "",
         stderr: "PRIVILEGED_CONTROL_UNAVAILABLE",
+        managedContainerDiscoveryUnavailable: true,
       })
       .mockReturnValueOnce({
         status: 0,
@@ -283,6 +284,61 @@ describe("waitForManagedGatewaySupervisor", () => {
     ).toBe(false);
     expect(sleepImpl).not.toHaveBeenCalled();
   });
+
+  it("does not treat an untyped helper refusal as pending container discovery", () => {
+    const sleepImpl = vi.fn();
+    const requestGatewaySupervisorActionImpl = vi.fn(() => ({
+      status: 1,
+      stdout: "",
+      stderr: "PRIVILEGED_CONTROL_UNAVAILABLE",
+    }));
+
+    expect(
+      waitForManagedGatewaySupervisor("new-clone", {
+        maxAttempts: 2,
+        requestGatewaySupervisorActionImpl,
+        sleepImpl,
+      }),
+    ).toBe(false);
+    expect(requestGatewaySupervisorActionImpl).toHaveBeenCalledOnce();
+    expect(sleepImpl).not.toHaveBeenCalled();
+  });
+
+  it("shares one deadline across managed probe attempts", () => {
+    let now = 0;
+    const requestGatewaySupervisorActionImpl = vi.fn(
+      (_sandboxName: string, _action: "restart" | "recover" | "probe", timeout = 210_000) => {
+        now += timeout;
+        return {
+          status: 1,
+          stdout: "",
+          stderr: "SUPERVISOR_DISCOVERY_PENDING",
+        };
+      },
+    );
+
+    expect(
+      waitForManagedGatewaySupervisor("new-clone", {
+        nowImpl: () => now,
+        requestGatewaySupervisorActionImpl,
+        sleepImpl: vi.fn(),
+        totalTimeoutMs: 20_000,
+      }),
+    ).toBe(false);
+    expect(requestGatewaySupervisorActionImpl).toHaveBeenCalledTimes(2);
+    expect(requestGatewaySupervisorActionImpl).toHaveBeenNthCalledWith(
+      1,
+      "new-clone",
+      "probe",
+      15_000,
+    );
+    expect(requestGatewaySupervisorActionImpl).toHaveBeenNthCalledWith(
+      2,
+      "new-clone",
+      "probe",
+      5_000,
+    );
+  });
 });
 
 describe("executeGatewaySupervisorAction", () => {
@@ -299,6 +355,7 @@ describe("executeGatewaySupervisorAction", () => {
       status: 1,
       stdout: "",
       stderr: "PRIVILEGED_CONTROL_UNAVAILABLE",
+      managedContainerDiscoveryUnavailable: true,
     });
   });
 

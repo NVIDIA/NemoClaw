@@ -51,6 +51,7 @@ import {
   resolveSandboxHealthProbeUrl,
   verifyHermesPortableLaunchForwards,
   type HermesPortableForwardRecoveryFailure,
+  type HermesPortableForwardRecoveryContext,
   type HermesPortableForwardRecoveryInput,
   type HermesPortableForwardRecoveryResult,
   type HermesPortableForwardRecoveryTimingEvidence,
@@ -96,6 +97,7 @@ export {
   verifyHermesPortableLaunchForwards,
 };
 export type {
+  HermesPortableForwardRecoveryContext,
   HermesPortableForwardRecoveryFailure,
   HermesPortableForwardRecoveryInput,
   HermesPortableForwardRecoveryResult,
@@ -153,12 +155,14 @@ type AuxiliaryRecoveryResult = {
 };
 
 type ManagedGatewaySupervisorActionResult = SandboxCommandResult & {
+  readonly managedContainerDiscoveryUnavailable?: true;
   readonly managedControlRestartingContainerId?: string;
 };
 
 const MANAGED_GATEWAY_CONTROL_PATH = "/usr/local/bin/nemoclaw-gateway-control";
 const MANAGED_CONTROL_TRANSITION_MAX_ATTEMPTS = 11;
 const MANAGED_CONTAINER_DISCOVERY_MAX_ATTEMPTS = 21;
+const MANAGED_CONTROL_RECOVERY_DEADLINE_MS = 210_000;
 const DOCKER_CONTAINER_RESTARTING_ERROR =
   /^Error response from daemon: Container ([0-9a-f]{64}) is restarting, wait until the container is running$/;
 
@@ -314,6 +318,7 @@ function executeGatewaySupervisorActionPinned(
         status: 1,
         stdout: "",
         stderr: "PRIVILEGED_CONTROL_UNAVAILABLE",
+        managedContainerDiscoveryUnavailable: true,
       };
     }
     const detail = error instanceof Error ? error.message : "privileged container unavailable";
@@ -466,6 +471,31 @@ function isExactlyManagedControlMarker(
   return lines.length === 1 && lines[0] === marker;
 }
 
+function isManagedContainerDiscoveryUnavailable(
+  result: ManagedGatewaySupervisorActionResult | null,
+): boolean {
+  return (
+    result?.managedContainerDiscoveryUnavailable === true &&
+    isExactlyManagedControlMarker(result, "PRIVILEGED_CONTROL_UNAVAILABLE")
+  );
+}
+
+function managedControlDeadlineRemaining(
+  deadline: number,
+  now: () => number,
+  previous: { value: number },
+): number {
+  let current: number;
+  try {
+    current = now();
+  } catch {
+    return 0;
+  }
+  if (!Number.isFinite(current) || current < previous.value) return 0;
+  previous.value = current;
+  return Math.max(0, Math.floor(deadline - current));
+}
+
 /**
  * Creates independent retry counters for delayed container discovery and
  * managed-controller startup without allowing either class to authorize
@@ -483,7 +513,7 @@ function managedControlTransitionRetryBudget(): ManagedControlTransitionRetryBud
     maxAttempts:
       MANAGED_CONTAINER_DISCOVERY_MAX_ATTEMPTS + MANAGED_CONTROL_TRANSITION_MAX_ATTEMPTS - 1,
     canRetry(result) {
-      if (isExactlyManagedControlMarker(result, "PRIVILEGED_CONTROL_UNAVAILABLE")) {
+      if (isManagedContainerDiscoveryUnavailable(result)) {
         return ++discoveryAttempts < MANAGED_CONTAINER_DISCOVERY_MAX_ATTEMPTS;
       }
       return ++transitionAttempts < MANAGED_CONTROL_TRANSITION_MAX_ATTEMPTS;
@@ -502,12 +532,11 @@ function isExactlyManagedGatewayStartupTransition(
   // supervisor, so it can delay recovery but cannot authorize relaunch or
   // accept an identity. The health timeout is likewise a read-only startup
   // observation. Any diagnostic beside an exact marker remains terminal.
-  return [
-    "SUPERVISOR_NOT_RUNNING",
-    "PRIVILEGED_CONTROL_UNAVAILABLE",
-    "SUPERVISOR_DISCOVERY_PENDING",
-    "GATEWAY_HEALTH_TIMEOUT",
-  ].some((marker) => isExactlyManagedControlMarker(result, marker));
+  return (
+    ["SUPERVISOR_NOT_RUNNING", "SUPERVISOR_DISCOVERY_PENDING", "GATEWAY_HEALTH_TIMEOUT"].some(
+      (marker) => isExactlyManagedControlMarker(result, marker),
+    ) || isManagedContainerDiscoveryUnavailable(result)
+  );
 }
 
 function isExactlyRetryableManagedControlTransition(
@@ -530,8 +559,10 @@ export function waitForManagedGatewaySupervisor(
   options: {
     intervalSeconds?: number;
     maxAttempts?: number;
+    nowImpl?: () => number;
     requestGatewaySupervisorActionImpl?: typeof executeGatewaySupervisorAction;
     sleepImpl?: (seconds: number) => void;
+    totalTimeoutMs?: number;
   } = {},
 ): boolean {
   const requestGatewaySupervisorAction =
@@ -540,9 +571,31 @@ export function waitForManagedGatewaySupervisor(
   const intervalSeconds = options.intervalSeconds ?? 3;
   const transitionRetryBudget = managedControlTransitionRetryBudget();
   const maxAttempts = options.maxAttempts ?? transitionRetryBudget.maxAttempts;
+  const now = options.nowImpl ?? (() => performance.now());
+  const totalTimeoutMs = options.totalTimeoutMs ?? MANAGED_CONTROL_RECOVERY_DEADLINE_MS;
+  let startedAt: number;
+  try {
+    startedAt = now();
+  } catch {
+    return false;
+  }
+  if (!Number.isFinite(startedAt) || !Number.isFinite(totalTimeoutMs) || totalTimeoutMs <= 0) {
+    return false;
+  }
+  const deadline = startedAt + totalTimeoutMs;
+  if (!Number.isFinite(deadline)) return false;
+  const previousNow = { value: startedAt };
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const result = requestGatewaySupervisorAction(sandboxName, "probe", OPENSHELL_PROBE_TIMEOUT_MS);
+    const remaining = managedControlDeadlineRemaining(deadline, now, previousNow);
+    if (remaining <= 0) break;
+    const result = requestGatewaySupervisorAction(
+      sandboxName,
+      "probe",
+      Math.max(1, Math.min(OPENSHELL_PROBE_TIMEOUT_MS, remaining)),
+    );
+    const remainingAfterRequest = managedControlDeadlineRemaining(deadline, now, previousNow);
+    if (remainingAfterRequest <= 0) break;
     if (hasGatewayRecoveryMarker(result)) return true;
     if (
       !isExactlyManagedGatewayStartupTransition(result) &&
@@ -552,7 +605,9 @@ export function waitForManagedGatewaySupervisor(
       return false;
     }
     if (options.maxAttempts === undefined && !transitionRetryBudget.canRetry(result)) break;
-    if (attempt < maxAttempts) sleep(intervalSeconds);
+    if (attempt < maxAttempts) {
+      sleep(Math.min(intervalSeconds, remainingAfterRequest / 1000));
+    }
   }
   return false;
 }
@@ -796,6 +851,8 @@ function recoverSandboxProcesses(
     requestGatewaySupervisorAction = executeGatewaySupervisorAction,
     requestPinnedGatewaySupervisorAction = executeGatewaySupervisorActionPinned,
     relaunchManagedSupervisorSessionImpl = relaunchManagedSupervisorSession,
+    managedControlNowImpl = () => performance.now(),
+    managedControlTimeoutMs = MANAGED_CONTROL_RECOVERY_DEADLINE_MS,
     onFailureLayer,
     runtimeSelection,
   }: {
@@ -803,6 +860,8 @@ function recoverSandboxProcesses(
     requestGatewaySupervisorAction?: typeof executeGatewaySupervisorAction;
     requestPinnedGatewaySupervisorAction?: RequestPinnedGatewaySupervisorAction;
     relaunchManagedSupervisorSessionImpl?: typeof relaunchManagedSupervisorSession;
+    managedControlNowImpl?: () => number;
+    managedControlTimeoutMs?: number;
     onFailureLayer?: (layer: GatewayRestartFailureLayer, detail: string) => void;
     runtimeSelection?: OpenShellRuntimeSelection;
   } = {},
@@ -852,8 +911,38 @@ function recoverSandboxProcesses(
     );
     let execResult: ManagedGatewaySupervisorActionResult | null = null;
     let busyAttempts = 0;
+    let startedAt: number;
+    try {
+      startedAt = managedControlNowImpl();
+    } catch {
+      startedAt = Number.NaN;
+    }
+    const deadline = startedAt + managedControlTimeoutMs;
+    const deadlineIsValid =
+      Number.isFinite(startedAt) &&
+      Number.isFinite(managedControlTimeoutMs) &&
+      managedControlTimeoutMs > 0 &&
+      Number.isFinite(deadline);
+    const previousNow = { value: startedAt };
+    let deadlineExceeded = !deadlineIsValid;
     for (let attempt = 1; attempt <= transitionRetryBudget.maxAttempts; attempt += 1) {
-      execResult = effectiveGatewaySupervisorAction(sandboxName, "recover");
+      const remaining = deadlineIsValid
+        ? managedControlDeadlineRemaining(deadline, managedControlNowImpl, previousNow)
+        : 0;
+      if (remaining <= 0) {
+        deadlineExceeded = true;
+        break;
+      }
+      execResult = effectiveGatewaySupervisorAction(sandboxName, "recover", remaining);
+      const remainingAfterRequest = managedControlDeadlineRemaining(
+        deadline,
+        managedControlNowImpl,
+        previousNow,
+      );
+      if (remainingAfterRequest <= 0) {
+        deadlineExceeded = true;
+        break;
+      }
       const managedControlCompletion = parseManagedGatewayControlCompletion(execResult);
       if (managedControlCompletion) return { kind: "managed", managedControlCompletion };
       if (hasGatewayRecoveryMarker(execResult)) return { kind: "managed" };
@@ -873,9 +962,16 @@ function recoverSandboxProcesses(
         break;
       }
       if (!transitionRetryBudget.canRetry(execResult)) break;
-      sleepSeconds(retryIntervalSeconds);
+      if (attempt < transitionRetryBudget.maxAttempts) {
+        sleepSeconds(Math.min(retryIntervalSeconds, remainingAfterRequest / 1000));
+      }
     }
-    const failure = classifyGatewayRestartFailure(execResult);
+    const failure = deadlineExceeded
+      ? {
+          layer: "health timeout" as const,
+          detail: `managed gateway recovery exceeded its ${String(managedControlTimeoutMs / 1000)}-second total deadline`,
+        }
+      : classifyGatewayRestartFailure(execResult);
     onFailureLayer?.(failure.layer, failure.detail);
     if (
       failure.layer === "supervisor not running" &&
@@ -1550,6 +1646,8 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     relaunchManagedSupervisorSessionImpl = relaunchManagedSupervisorSession,
     isSandboxGatewayRunningImpl = isSandboxGatewayRunning,
     waitForRecreatedSandboxOpenShellReadyImpl = waitForRecreatedSandboxOpenShellReady,
+    managedControlNowImpl,
+    managedControlTimeoutMs,
     isWsl: isWslOverride,
     onRecoveryFailureLayer,
     probeTiming,
@@ -1561,6 +1659,8 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     relaunchManagedSupervisorSessionImpl?: typeof relaunchManagedSupervisorSession;
     isSandboxGatewayRunningImpl?: typeof isSandboxGatewayRunning;
     waitForRecreatedSandboxOpenShellReadyImpl?: typeof waitForRecreatedSandboxOpenShellReady;
+    managedControlNowImpl?: () => number;
+    managedControlTimeoutMs?: number;
     isWsl?: boolean;
     onRecoveryFailureLayer?: (layer: GatewayRestartFailureLayer | null, detail?: string) => void;
     probeTiming?: ProcessRecoveryProbeTiming;
@@ -1748,6 +1848,8 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
       requestGatewaySupervisorAction: effectiveGatewaySupervisorAction,
       requestPinnedGatewaySupervisorAction: effectivePinnedGatewaySupervisorAction,
       relaunchManagedSupervisorSessionImpl,
+      managedControlNowImpl,
+      managedControlTimeoutMs,
       runtimeSelection,
       onFailureLayer: (layer, detail) => {
         managedRecoveryFailureLayer = layer;
@@ -2034,6 +2136,8 @@ export function checkAndRecoverSandboxProcesses(
     relaunchManagedSupervisorSessionImpl?: typeof relaunchManagedSupervisorSession;
     isSandboxGatewayRunningImpl?: typeof isSandboxGatewayRunning;
     waitForRecreatedSandboxOpenShellReadyImpl?: typeof waitForRecreatedSandboxOpenShellReady;
+    managedControlNowImpl?: () => number;
+    managedControlTimeoutMs?: number;
     isWsl?: boolean;
     onRecoveryFailureLayer?: (layer: GatewayRestartFailureLayer | null, detail?: string) => void;
     probeTiming?: ProcessRecoveryProbeTiming;

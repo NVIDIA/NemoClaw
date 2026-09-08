@@ -21,6 +21,13 @@ const ACCEPTED_MANAGED_RECOVERY = {
   stderr: "",
 } as const;
 
+const PENDING_MANAGED_CONTAINER_DISCOVERY = {
+  status: 1,
+  stdout: "",
+  stderr: "PRIVILEGED_CONTROL_UNAVAILABLE",
+  managedContainerDiscoveryUnavailable: true,
+} as const;
+
 function mockGatewaySandbox(sandboxName: string, agent: "openclaw" | "hermes" = "openclaw"): void {
   const port = agent === "hermes" ? 8642 : 18789;
   vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({
@@ -58,39 +65,47 @@ afterEach(() => {
 
 describe("checkAndRecoverSandboxProcesses managed startup", () => {
   it.each([
-    "SUPERVISOR_NOT_RUNNING",
-    "SUPERVISOR_DISCOVERY_PENDING",
-    "PRIVILEGED_CONTROL_UNAVAILABLE",
-    "GATEWAY_HEALTH_TIMEOUT",
-  ])("waits through the exact %s startup transition (#9466)", (startupMarker) => {
-    const sandboxName = "startup-box";
-    mockGatewaySandbox(sandboxName);
-    mockRecoveredForward(sandboxName);
-    vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS", "0");
-    vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS", "0");
-    const requestGatewaySupervisorAction = vi
-      .fn()
-      .mockReturnValueOnce({ status: 1, stdout: "", stderr: startupMarker })
-      .mockReturnValueOnce(ACCEPTED_MANAGED_RECOVERY);
-    const relaunchManagedSupervisorSessionImpl = vi.fn(() => null);
+    ["SUPERVISOR_NOT_RUNNING", false],
+    ["SUPERVISOR_DISCOVERY_PENDING", false],
+    ["PRIVILEGED_CONTROL_UNAVAILABLE", true],
+    ["GATEWAY_HEALTH_TIMEOUT", false],
+  ] as const)(
+    "waits through the exact %s startup transition (#9466)",
+    (startupMarker, discovery) => {
+      const sandboxName = "startup-box";
+      mockGatewaySandbox(sandboxName);
+      mockRecoveredForward(sandboxName);
+      vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS", "0");
+      vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS", "0");
+      const requestGatewaySupervisorAction = vi
+        .fn()
+        .mockReturnValueOnce({
+          status: 1,
+          stdout: "",
+          stderr: startupMarker,
+          ...(discovery ? { managedContainerDiscoveryUnavailable: true as const } : {}),
+        })
+        .mockReturnValueOnce(ACCEPTED_MANAGED_RECOVERY);
+      const relaunchManagedSupervisorSessionImpl = vi.fn(() => null);
 
-    const result = checkAndRecoverSandboxProcesses(sandboxName, {
-      quiet: true,
-      isSandboxGatewayRunningImpl: () => false,
-      requestGatewaySupervisorAction,
-      relaunchManagedSupervisorSessionImpl,
-      waitForRecreatedSandboxOpenShellReadyImpl: () => true,
-    });
+      const result = checkAndRecoverSandboxProcesses(sandboxName, {
+        quiet: true,
+        isSandboxGatewayRunningImpl: () => false,
+        requestGatewaySupervisorAction,
+        relaunchManagedSupervisorSessionImpl,
+        waitForRecreatedSandboxOpenShellReadyImpl: () => true,
+      });
 
-    expect(result).toMatchObject({
-      checked: true,
-      wasRunning: false,
-      recovered: true,
-      forwardRecovered: true,
-    });
-    expect(requestGatewaySupervisorAction).toHaveBeenCalledTimes(2);
-    expect(relaunchManagedSupervisorSessionImpl).not.toHaveBeenCalled();
-  });
+      expect(result).toMatchObject({
+        checked: true,
+        wasRunning: false,
+        recovered: true,
+        forwardRecovered: true,
+      });
+      expect(requestGatewaySupervisorAction).toHaveBeenCalledTimes(2);
+      expect(relaunchManagedSupervisorSessionImpl).not.toHaveBeenCalled();
+    },
+  );
 
   it("does not retry a diagnostic-bearing supervisor-discovery result", () => {
     const sandboxName = "diagnostic-start";
@@ -149,6 +164,41 @@ describe("checkAndRecoverSandboxProcesses managed startup", () => {
     expect(requestGatewaySupervisorAction).toHaveBeenCalledOnce();
     expect(relaunchManagedSupervisorSessionImpl).not.toHaveBeenCalled();
   });
+
+  it("shares one deadline across managed recovery controller calls", () => {
+    const sandboxName = "deadline-box";
+    mockGatewaySandbox(sandboxName);
+    vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS", "3");
+    let now = 0;
+    vi.spyOn(wait, "sleepSeconds").mockImplementation((seconds) => {
+      now += seconds * 1000;
+    });
+    const timeouts: number[] = [];
+    const requestGatewaySupervisorAction = vi.fn(
+      (_name: string, _action: "restart" | "recover" | "probe", timeout = 210_000) => {
+        timeouts.push(timeout);
+        now += Math.min(timeout, 12_000);
+        return PENDING_MANAGED_CONTAINER_DISCOVERY;
+      },
+    );
+    const onRecoveryFailureLayer = vi.fn();
+
+    const result = checkAndRecoverSandboxProcesses(sandboxName, {
+      quiet: true,
+      isSandboxGatewayRunningImpl: () => false,
+      managedControlNowImpl: () => now,
+      managedControlTimeoutMs: 20_000,
+      onRecoveryFailureLayer,
+      requestGatewaySupervisorAction,
+    });
+
+    expect(result.recovered).toBe(false);
+    expect(timeouts).toEqual([20_000, 5_000]);
+    expect(onRecoveryFailureLayer).toHaveBeenCalledWith(
+      "health timeout",
+      "managed gateway recovery exceeded its 20-second total deadline",
+    );
+  });
 });
 
 describe("managed container discovery settlement", () => {
@@ -166,15 +216,14 @@ describe("managed container discovery settlement", () => {
           seconds += duration;
         },
         requestGatewaySupervisorActionImpl: () =>
-          seconds >= readyAt
-            ? ACCEPTED_MANAGED_RECOVERY
-            : { status: 1, stdout: "", stderr: "PRIVILEGED_CONTROL_UNAVAILABLE" },
+          seconds >= readyAt ? ACCEPTED_MANAGED_RECOVERY : PENDING_MANAGED_CONTAINER_DISCOVERY,
       });
       expect({ ready: result, elapsed: seconds }).toEqual({ ready, elapsed });
     },
   );
 
   it.each([
+    { stdout: "", stderr: "PRIVILEGED_CONTROL_UNAVAILABLE" },
     { stdout: "", stderr: "PRIVILEGED_CONTROL_UNAVAILABLE: identity mismatch" },
     { stdout: "", stderr: "PRIVILEGED_CONTROL_UNAVAILABLE\nunexpected diagnostic" },
     { stdout: "unexpected output", stderr: "PRIVILEGED_CONTROL_UNAVAILABLE" },
@@ -216,8 +265,9 @@ describe("managed container discovery settlement", () => {
       stdout: "",
       stderr:
         seconds < 42
-          ? "PRIVILEGED_CONTROL_UNAVAILABLE"
+          ? PENDING_MANAGED_CONTAINER_DISCOVERY.stderr
           : "PRIVILEGED_CONTROL_UNAVAILABLE: container identity changed",
+      ...(seconds < 42 ? { managedContainerDiscoveryUnavailable: true as const } : {}),
     }));
     expect(
       waitForManagedGatewaySupervisor("discovery-box", {
@@ -244,7 +294,11 @@ describe("managed container discovery settlement", () => {
             : {
                 status: 1,
                 stdout: "",
-                stderr: seconds < 36 ? "PRIVILEGED_CONTROL_UNAVAILABLE" : "GATEWAY_HEALTH_TIMEOUT",
+                stderr:
+                  seconds < 36
+                    ? PENDING_MANAGED_CONTAINER_DISCOVERY.stderr
+                    : "GATEWAY_HEALTH_TIMEOUT",
+                ...(seconds < 36 ? { managedContainerDiscoveryUnavailable: true as const } : {}),
               },
       }),
     ).toBe(true);
@@ -262,7 +316,11 @@ describe("managed container discovery settlement", () => {
         requestGatewaySupervisorActionImpl: () => ({
           status: 1,
           stdout: "",
-          stderr: ++calls % 3 === 0 ? "GATEWAY_HEALTH_TIMEOUT" : "PRIVILEGED_CONTROL_UNAVAILABLE",
+          stderr:
+            ++calls % 3 === 0
+              ? "GATEWAY_HEALTH_TIMEOUT"
+              : PENDING_MANAGED_CONTAINER_DISCOVERY.stderr,
+          ...(calls % 3 === 0 ? {} : { managedContainerDiscoveryUnavailable: true as const }),
         }),
       }),
     ).toBe(false);
@@ -287,7 +345,9 @@ describe("managed container discovery settlement", () => {
       requestGatewaySupervisorAction: () => ({
         status: 1,
         stdout: "",
-        stderr: seconds < 36 ? "PRIVILEGED_CONTROL_UNAVAILABLE" : "SUPERVISOR_NOT_RUNNING",
+        stderr:
+          seconds < 36 ? PENDING_MANAGED_CONTAINER_DISCOVERY.stderr : "SUPERVISOR_NOT_RUNNING",
+        ...(seconds < 36 ? { managedContainerDiscoveryUnavailable: true as const } : {}),
       }),
       relaunchManagedSupervisorSessionImpl: relaunch,
     });
@@ -297,9 +357,7 @@ describe("managed container discovery settlement", () => {
 
   it("honors an explicit shorter discovery bound (#11107)", () => {
     const request = vi.fn(() => ({
-      status: 1,
-      stdout: "",
-      stderr: "PRIVILEGED_CONTROL_UNAVAILABLE",
+      ...PENDING_MANAGED_CONTAINER_DISCOVERY,
     }));
     expect(
       waitForManagedGatewaySupervisor("discovery-box", {
@@ -331,9 +389,7 @@ describe("managed container discovery settlement", () => {
         quiet: true,
         isSandboxGatewayRunningImpl: () => false,
         requestGatewaySupervisorAction: () =>
-          seconds >= readyAt
-            ? ACCEPTED_MANAGED_RECOVERY
-            : { status: 1, stdout: "", stderr: "PRIVILEGED_CONTROL_UNAVAILABLE" },
+          seconds >= readyAt ? ACCEPTED_MANAGED_RECOVERY : PENDING_MANAGED_CONTAINER_DISCOVERY,
         relaunchManagedSupervisorSessionImpl: relaunch,
         waitForRecreatedSandboxOpenShellReadyImpl: () => true,
       });

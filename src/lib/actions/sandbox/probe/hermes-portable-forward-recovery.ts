@@ -46,8 +46,24 @@ export type HermesPortableForwardRecoveryFailure =
   | "recovery-failed"
   | "restoration-unproved";
 
+export type HermesPortableForwardRecoveryContext =
+  | { readonly cause: "forward-list-failed" }
+  | { readonly cause: "forward-list-invalid" }
+  | { readonly cause: "forward-port-resolution-failed" }
+  | { readonly cause: "forward-reachability-failed"; readonly port: number }
+  | { readonly cause: "forward-settlement-timed-out" }
+  | {
+      readonly cause: "forward-mutation-failed";
+      readonly operation: "start" | "stop";
+      readonly port: number;
+    }
+  | { readonly cause: "port-occupied"; readonly port: number };
+
 export class HermesPortableForwardRecoveryError extends Error {
-  constructor(readonly failure: HermesPortableForwardRecoveryFailure) {
+  constructor(
+    readonly failure: HermesPortableForwardRecoveryFailure,
+    readonly context?: HermesPortableForwardRecoveryContext,
+  ) {
     super(`Hermes Portable forward recovery failed: ${failure}`);
   }
 }
@@ -89,8 +105,11 @@ export interface PreparedHermesPortableForwardRecovery {
   readonly rollback: () => void;
 }
 
-function failure(failureClass: HermesPortableForwardRecoveryFailure): never {
-  throw new HermesPortableForwardRecoveryError(failureClass);
+function failure(
+  failureClass: HermesPortableForwardRecoveryFailure,
+  context?: HermesPortableForwardRecoveryContext,
+): never {
+  throw new HermesPortableForwardRecoveryError(failureClass, context);
 }
 
 function normalizeFailure(error: unknown): HermesPortableForwardRecoveryError {
@@ -245,10 +264,15 @@ function requireCurrent(input: HermesPortableForwardRecoveryInput, rollback: boo
   }
 }
 
-function remainingBudget(deadline: number | undefined, now: () => number, limit: number): number {
+function remainingBudget(
+  deadline: number | undefined,
+  now: () => number,
+  limit: number,
+  timeoutContext?: HermesPortableForwardRecoveryContext,
+): number {
   if (deadline === undefined) return limit;
   const remaining = Math.floor(deadline - readClock(now));
-  if (remaining <= 0) failure("recovery-failed");
+  if (remaining <= 0) failure("recovery-failed", timeoutContext);
   return Math.min(limit, remaining);
 }
 
@@ -266,19 +290,35 @@ function captureForwardEntries(
     const operation = () =>
       capture(
         ["forward", "list", "--gateway", input.gatewayName],
-        remainingBudget(deadline, now, input.probeTimeoutMs),
+        remainingBudget(
+          deadline,
+          now,
+          input.probeTimeoutMs,
+          rollback ? undefined : { cause: "forward-settlement-timed-out" },
+        ),
       );
     result = timing ? timing.measure("list", operation) : operation();
   } catch (error) {
     if (error instanceof HermesPortableForwardRecoveryError) throw error;
-    failure(rollback ? "restoration-unproved" : "forward-state-unavailable");
+    failure(
+      rollback ? "restoration-unproved" : "forward-state-unavailable",
+      rollback ? undefined : { cause: "forward-list-failed" },
+    );
   }
   requireCurrent(input, rollback);
   if (result.error || result.status !== 0) {
-    failure(rollback ? "restoration-unproved" : "forward-state-unavailable");
+    failure(
+      rollback ? "restoration-unproved" : "forward-state-unavailable",
+      rollback ? undefined : { cause: "forward-list-failed" },
+    );
   }
   const entries = parseStrictForwardList(result.output, new Set(input.ports));
-  if (!entries) failure(rollback ? "restoration-unproved" : "forward-state-unavailable");
+  if (!entries) {
+    failure(
+      rollback ? "restoration-unproved" : "forward-state-unavailable",
+      rollback ? undefined : { cause: "forward-list-invalid" },
+    );
+  }
   return entries;
 }
 
@@ -300,16 +340,31 @@ function observeForwards(
       continue;
     }
     if (portEntries.length > 1) {
-      failure(rollback ? "restoration-unproved" : "forward-state-unavailable");
+      failure(
+        rollback ? "restoration-unproved" : "forward-state-unavailable",
+        rollback ? undefined : { cause: "forward-list-invalid" },
+      );
     }
     const entry = portEntries[0];
     if (entry) entries.set(port, entry);
     requireCurrent(input, rollback);
     let portReachable: boolean;
     try {
-      portReachable = reachable(port, remainingBudget(deadline, now, input.probeTimeoutMs));
-    } catch {
-      failure(rollback ? "restoration-unproved" : "forward-state-unavailable");
+      portReachable = reachable(
+        port,
+        remainingBudget(
+          deadline,
+          now,
+          input.probeTimeoutMs,
+          rollback ? undefined : { cause: "forward-settlement-timed-out" },
+        ),
+      );
+    } catch (error) {
+      if (error instanceof HermesPortableForwardRecoveryError) throw error;
+      failure(
+        rollback ? "restoration-unproved" : "forward-state-unavailable",
+        rollback ? undefined : { cause: "forward-reachability-failed", port },
+      );
     }
     requireCurrent(input, rollback);
     if (entry) {
@@ -344,12 +399,16 @@ function validatePorts(input: HermesPortableForwardRecoveryInput): void {
 }
 
 function requireNoOccupied(states: Map<number, ForwardState>): void {
-  if ([...states.values()].includes("occupied")) failure("forward-occupied");
+  const occupiedPort = [...states.entries()].find(([, state]) => state === "occupied")?.[0];
+  if (occupiedPort !== undefined) {
+    failure("forward-occupied", { cause: "port-occupied", port: occupiedPort });
+  }
 }
 
 function invokeMutation(
   input: HermesPortableForwardRecoveryInput,
   stage: "start" | "stop",
+  port: number,
   args: readonly string[],
   timing: ReturnType<typeof createForwardTimingRecorder>,
 ): void {
@@ -357,7 +416,8 @@ function invokeMutation(
   try {
     timing.measure(stage, () => input.deps.runCurrentMutation(args, input.operationTimeoutMs));
   } catch (error) {
-    throw normalizeFailure(error);
+    if (error instanceof HermesPortableForwardRecoveryError) throw error;
+    failure("recovery-failed", { cause: "forward-mutation-failed", operation: stage, port });
   }
   requireCurrent(input, false);
 }
@@ -394,7 +454,7 @@ function settleTouchedPorts(
       if (current >= deadline) break;
       sleep(Math.min(FORWARD_SETTLEMENT_INTERVAL_MS, deadline - current));
     }
-    failure("recovery-failed");
+    failure("recovery-failed", { cause: "forward-settlement-timed-out" });
   });
 }
 
@@ -469,6 +529,7 @@ export function prepareHermesPortableLaunchForwards(
         invokeMutation(
           input,
           "stop",
+          port,
           ["forward", "stop", String(port), input.sandboxName, "--gateway", input.gatewayName],
           timing,
         );
@@ -476,6 +537,7 @@ export function prepareHermesPortableLaunchForwards(
       invokeMutation(
         input,
         "start",
+        port,
         [
           "forward",
           "start",

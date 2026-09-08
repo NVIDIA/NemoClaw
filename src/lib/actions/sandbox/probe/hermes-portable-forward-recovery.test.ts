@@ -181,7 +181,10 @@ describe("Hermes Portable probe-only forward recovery", () => {
     });
 
     expect(() => recoverHermesPortableLaunchForwards(fixture.input)).toThrow(
-      expect.objectContaining({ failure: "forward-occupied" }),
+      expect.objectContaining({
+        context: { cause: "port-occupied", port: 18_789 },
+        failure: "forward-occupied",
+      }),
     );
     expect(fixture.currentCalls.some((args) => ["start", "stop"].includes(args[1]!))).toBe(false);
   });
@@ -191,7 +194,27 @@ describe("Hermes Portable probe-only forward recovery", () => {
     Object.assign(fixture.input.deps, { isPortReachable: () => true });
 
     expect(() => recoverHermesPortableLaunchForwards(fixture.input)).toThrow(
-      expect.objectContaining({ failure: "forward-occupied" }),
+      expect.objectContaining({
+        context: { cause: "port-occupied", port: 18_789 },
+        failure: "forward-occupied",
+      }),
+    );
+    expect(fixture.currentCalls.some((args) => ["start", "stop"].includes(args[1]!))).toBe(false);
+  });
+
+  it("identifies the port whose reachability check failed", () => {
+    const fixture = createRecoveryFixture({ active: [18_789] });
+    Object.assign(fixture.input.deps, {
+      isPortReachable: () => {
+        throw new Error("reachability canary");
+      },
+    });
+
+    expect(() => recoverHermesPortableLaunchForwards(fixture.input)).toThrow(
+      expect.objectContaining({
+        context: { cause: "forward-reachability-failed", port: 18_789 },
+        failure: "forward-state-unavailable",
+      }),
     );
     expect(fixture.currentCalls.some((args) => ["start", "stop"].includes(args[1]!))).toBe(false);
   });
@@ -289,7 +312,10 @@ describe("Hermes Portable probe-only forward recovery", () => {
     const fixture = createRecoveryFixture({ startStatus: 1, startUpdatesState: false });
 
     expect(() => recoverHermesPortableLaunchForwards(fixture.input)).toThrow(
-      expect.objectContaining({ failure: "recovery-failed" }),
+      expect.objectContaining({
+        context: { cause: "forward-settlement-timed-out" },
+        failure: "recovery-failed",
+      }),
     );
     expect(fixture.records.has(18_789)).toBe(false);
     expect(fixture.elapsedMs()).toBe(3_000);
@@ -315,14 +341,14 @@ describe("Hermes Portable probe-only forward recovery", () => {
   });
 
   it.each([
-    ["foreign occupied", { occupied: [18_789] }, "forward-occupied"],
-    ["unavailable", { listStatus: 1 }, "forward-state-unavailable"],
-    ["malformed", { malformedList: true }, "forward-state-unavailable"],
-  ] as const)("rejects %s forward state before mutation", (_label, options, failure) => {
+    ["foreign occupied", { occupied: [18_789] }, "forward-occupied", "port-occupied"],
+    ["unavailable", { listStatus: 1 }, "forward-state-unavailable", "forward-list-failed"],
+    ["malformed", { malformedList: true }, "forward-state-unavailable", "forward-list-invalid"],
+  ] as const)("rejects %s forward state before mutation", (_label, options, failure, cause) => {
     const fixture = createRecoveryFixture(options);
 
     expect(() => recoverHermesPortableLaunchForwards(fixture.input)).toThrow(
-      expect.objectContaining({ failure }),
+      expect.objectContaining({ context: expect.objectContaining({ cause }), failure }),
     );
     expect(fixture.currentCalls.some((args) => ["start", "stop"].includes(args[1]!))).toBe(false);
     expect(fixture.rollbackCalls).toEqual([]);
@@ -433,7 +459,10 @@ describe("Hermes Portable probe-only forward recovery", () => {
     });
 
     expect(() => recoverHermesPortableLaunchForwards(fixture.input)).toThrow(
-      expect.objectContaining({ failure: "forward-occupied" }),
+      expect.objectContaining({
+        context: { cause: "port-occupied", port: 18_789 },
+        failure: "forward-occupied",
+      }),
     );
     expect(fixture.currentCalls.some((args) => ["start", "stop"].includes(args[1]!))).toBe(false);
     expect(fixture.rollbackCalls).toEqual([]);
@@ -944,16 +973,24 @@ describe("Hermes Portable connect composition", () => {
     [
       "occupied",
       "SANDBOX BIND PORT PID STATUS\nbeta 127.0.0.1 18789 12345 running",
-      "A required recorded host port is occupied by another sandbox or listener",
+      0,
+      "Recorded host port 18789 is occupied by another sandbox or listener",
     ],
     [
       "unavailable",
       "malformed canary",
-      "NemoClaw could not read and prove one unambiguous OpenShell host-forward state",
+      0,
+      "OpenShell `forward list` returned malformed or ambiguous state",
+    ],
+    [
+      "list failure",
+      "list command canary",
+      1,
+      "The OpenShell `forward list` command failed, so NemoClaw could not prove the recorded forward state",
     ],
   ] as const)(
     "stops before publication when the owning gateway forward state is %s",
-    async (_state, listOutput, expectedDetail) => {
+    async (_state, listOutput, listStatus, expectedDetail) => {
       const harness = createConnectHarness({
         agentName: "hermes",
         sessionAgent: { name: "hermes" },
@@ -964,7 +1001,7 @@ describe("Hermes Portable connect composition", () => {
       harness.captureResolvedOpenshellSpy.mockImplementation(((args: unknown, options: unknown) => {
         const argv = Array.isArray(args) ? args : [];
         return argv[0] === "forward" && argv[1] === "list"
-          ? { status: 0, output: listOutput }
+          ? { status: listStatus, output: listOutput }
           : captureResolved(args, options);
       }) as never);
 
