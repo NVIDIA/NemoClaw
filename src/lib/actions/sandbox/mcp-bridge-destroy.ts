@@ -148,11 +148,11 @@ export async function prepareMcpBridgesForDestroy(
       removedPolicies.push(entry);
     }
     for (const entry of entries) {
-      inspectExactMcpDestroyProvider(entry, {
+      await inspectExactMcpDestroyProvider(entry, {
         allowMissing: false,
         runtimeSelection: providerRuntimeSelection,
       });
-      const detachOutcome = detachProvider(sandboxName, entry, {
+      const detachOutcome = await detachProvider(sandboxName, entry, {
         allowLegacyGeneric: true,
         runtimeSelection: providerRuntimeSelection,
       });
@@ -357,27 +357,29 @@ export async function finalizeMcpBridgesAfterSandboxDelete(
   // Inspect every provider before deleting any so ownership drift cannot
   // produce a predictable partial cleanup. Missing is safe only now that the
   // durable pending marker proves the sandbox was already deleted.
-  const inspections = entries.map((entry) =>
-    inspectExactMcpDestroyProvider(entry, {
-      allowMissing: true,
-      force: options.force,
-      runtimeSelection: providerRuntimeSelection,
-    }),
+  const inspections = await Promise.all(
+    entries.map((entry) =>
+      inspectExactMcpDestroyProvider(entry, {
+        allowMissing: true,
+        force: options.force,
+        runtimeSelection: providerRuntimeSelection,
+      }),
+    ),
   );
   for (const [index, entry] of entries.entries()) {
     if (!inspections[index]?.exists) continue;
-    const beforeDelete = inspectExactMcpDestroyProvider(entry, {
+    const beforeDelete = await inspectExactMcpDestroyProvider(entry, {
       allowMissing: true,
       force: options.force,
       runtimeSelection: providerRuntimeSelection,
     });
     if (!beforeDelete.exists) continue;
-    deleteProvider(entry, {
+    await deleteProvider(entry, {
       allowLegacyGeneric: true,
       allowMissing: true,
       runtimeSelection: providerRuntimeSelection,
     });
-    const after = inspectMcpProvider(entry.providerName, providerRuntimeSelection);
+    const after = await inspectMcpProvider(entry.providerName, providerRuntimeSelection);
     if (after.exists !== false) {
       throw new McpBridgeError(
         after.error ??

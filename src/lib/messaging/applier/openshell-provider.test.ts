@@ -91,10 +91,13 @@ function providerAdapter(
       .mockResolvedValue({ ok: true }),
     detachProvider: vi
       .fn<OpenShellProviderAdapter["detachProvider"]>()
-      .mockResolvedValue({ ok: true }),
+      .mockResolvedValue({ ok: true, value: { changed: true } }),
     attachProvider: vi
       .fn<OpenShellProviderAdapter["attachProvider"]>()
       .mockResolvedValue({ ok: true }),
+    listProviderAttachments: vi
+      .fn<OpenShellProviderAdapter["listProviderAttachments"]>()
+      .mockResolvedValue({ ok: true, value: { names: [] } }),
     configureProviderRefresh: vi
       .fn<OpenShellProviderAdapter["configureProviderRefresh"]>()
       .mockResolvedValue({ ok: true }),
@@ -235,19 +238,23 @@ describe("messaging OpenShell provider application", () => {
       },
     ];
     const warnings: string[] = [];
-    const acceptedKeys = registerExtraPlaceholderProviders(tokenDefs, (message) => {
-      warnings.push(message);
-    }, {
-      env: {
-        [EXTRA_PLACEHOLDER_KEYS_ENV]:
-          "TELEGRAM_BOT_TOKEN_AGENT_A TELEGRAM_BOT_TOKEN_AGENT_MISSING GITHUB_TOKEN",
-        TELEGRAM_BOT_TOKEN_AGENT_A: "telegram-agent-a-secret",
-        TELEGRAM_BOT_TOKEN_AGENT_MISSING: undefined,
-        GITHUB_TOKEN: "arbitrary-host-secret",
+    const acceptedKeys = registerExtraPlaceholderProviders(
+      tokenDefs,
+      (message) => {
+        warnings.push(message);
       },
-      getCredential: () => null,
-      normalizeCredentialValue: (value) => value?.trim() ?? "",
-    });
+      {
+        env: {
+          [EXTRA_PLACEHOLDER_KEYS_ENV]:
+            "TELEGRAM_BOT_TOKEN_AGENT_A TELEGRAM_BOT_TOKEN_AGENT_MISSING GITHUB_TOKEN",
+          TELEGRAM_BOT_TOKEN_AGENT_A: "telegram-agent-a-secret",
+          TELEGRAM_BOT_TOKEN_AGENT_MISSING: undefined,
+          GITHUB_TOKEN: "arbitrary-host-secret",
+        },
+        getCredential: () => null,
+        normalizeCredentialValue: (value) => value?.trim() ?? "",
+      },
+    );
     const application = buildMessagingProviderApplication({
       tokenDefs,
       root: "/repo",

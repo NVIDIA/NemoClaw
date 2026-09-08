@@ -64,7 +64,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
     }
     return {
       status: 0,
-      stdout: "Id: 11111111-2222-4333-8444-555555555555\nType: nemoclaw-mcp-v1\nResource version: 4\nCredential keys: " + providerCredentialKey + "\n",
+      stdout: "Name: alpha-mcp-github\nId: 11111111-2222-4333-8444-555555555555\nType: nemoclaw-mcp-v1\nResource version: 4\nCredential keys: " + providerCredentialKey + "\nConfig keys: <none>\n",
       stderr: "",
     };
   }
