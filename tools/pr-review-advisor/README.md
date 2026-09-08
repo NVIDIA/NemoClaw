@@ -12,7 +12,8 @@ For each configured pull-request event, it runs every specialist prompt in `tool
 
 Specialists inspect their assigned concern and recommend the smallest direct correction. They run independently and publish separate reports. The advisor does not select, aggregate, or summarize their findings.
 
-It intentionally does not report GitHub mergeability, branch protection, CI status, reviewer state, CodeRabbit state, or E2E pass/fail status; those are handled elsewhere in the PR UI.
+Ordinary analysis intentionally does not report GitHub mergeability, branch protection, CI status,
+reviewer state, CodeRabbit state, or E2E pass/fail status; those are handled elsewhere in the PR UI.
 
 ## Workflow
 
@@ -35,8 +36,9 @@ used by the merge-conflict fixer.
 
 Provider failures, timeouts, and missing specialist artifacts fail closed. Workflow logs retain orchestration diagnostics.
 
-The workflow is advisory and must not be configured as an E2E-required status check. Its comment
-links to the specialist reviews and does not dispatch or report pass/fail for E2E jobs.
+The ordinary `pull_request_target` workflow is advisory and must not be configured as an
+E2E-required status check. Its comment links to the specialist reviews and does not dispatch or
+report pass/fail for E2E jobs.
 Model availability must not become the authority
 for whether a pull request can merge.
 For PRs from this repository, the PR E2E controller separately rebuilds the plan from GitHub's
@@ -60,6 +62,14 @@ failed command produces neither file. Generated-head validation also dispatches 
 credential-bearing SDK packager from trusted `main`; `CI / Pull Request` accepts its artifact only
 when the workflow-dispatch identity, attempt key, generated SHA, and artifact name match the repair
 being checked.
+
+The generated-head request carries the sealed validation receipt, and reconciliation requires its
+attempt, workflow, source head, base, finding IDs, and selected paths to match the trusted selection.
+The reporter rebuilds the checked-in risk plan from the receipt's changed paths and the generated
+SHA. When that plan requires E2E jobs, it dispatches only those jobs through the trusted `main`
+workflow and requires the exact run to succeed. The version 2 generated-head receipt records the
+risk plan, optional E2E evidence, workflow evidence, and published checks. Required E2E evidence is
+represented by one `advisor-repair-risk-plan-e2e` aggregate check on the generated commit.
 
 Trusted selection accepts a finding only when its specialist and path match one of these pairs and
 its exclusion list is empty:
