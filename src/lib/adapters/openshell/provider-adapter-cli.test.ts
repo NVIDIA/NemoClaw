@@ -83,6 +83,7 @@ describe("CLI OpenShell provider adapter", () => {
     const credentialValue = "host-only-value";
     const operations = [
       adapter.listProviders({ target }),
+      adapter.listProviderAttachments({ target, sandboxName: "alpha" }),
       adapter.createProvider({
         target,
         name: "search-prod",
@@ -129,6 +130,7 @@ describe("CLI OpenShell provider adapter", () => {
       },
     };
     expect(results).toEqual([
+      expectedFailure,
       expectedFailure,
       expectedFailure,
       expectedFailure,
