@@ -152,7 +152,7 @@ export type NpmAuditResponseClassification =
   | Readonly<{ failure: NpmAuditFailureClassification }>
   | Readonly<{ report: Record<string, unknown> }>;
 
-const RETRYABLE_TRANSPORT_CODES = ["EAI_AGAIN", "ECONNRESET"] as const;
+const RETRYABLE_TRANSPORT_CODES = ["EAI_AGAIN", "ECONNRESET", "ECONNREFUSED"] as const;
 type RetryableTransportCode = (typeof RETRYABLE_TRANSPORT_CODES)[number];
 
 function asRecord(value: unknown, label: string): Record<string, unknown> {
@@ -345,11 +345,7 @@ function retryableTransportCode(
     (value): value is string => typeof value === "string",
   );
   return RETRYABLE_TRANSPORT_CODES.find((code) =>
-    values.some((value) =>
-      code === "EAI_AGAIN"
-        ? /(?:^|[^A-Z0-9_])EAI_AGAIN(?:$|[^A-Z0-9_])/u.test(value)
-        : /(?:^|[^A-Z0-9_])ECONNRESET(?:$|[^A-Z0-9_])/u.test(value),
-    ),
+    values.some((value) => new RegExp(`(?:^|[^A-Z0-9_])${code}(?:$|[^A-Z0-9_])`, "u").test(value)),
   );
 }
 

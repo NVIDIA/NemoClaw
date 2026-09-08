@@ -187,7 +187,7 @@ describe("reviewed npm audit gate", () => {
     ).toEqual({ report });
   });
 
-  it.each(["EAI_AGAIN", "ECONNRESET"])(
+  it.each(["EAI_AGAIN", "ECONNRESET", "ECONNREFUSED"])(
     "classifies the %s registry error without exposing its message (#11088)",
     (transport) => {
       const secret = "https://audit-user:registry-secret@registry.example/private";
@@ -255,7 +255,7 @@ describe("reviewed npm audit gate", () => {
       {
         status: 1,
         stderr: sensitiveStderr,
-        stdout: JSON.stringify({ message: "getaddrinfo EAI_AGAIN", error: { summary: "" } }),
+        stdout: JSON.stringify({ message: "connect ECONNREFUSED", error: { summary: "" } }),
       },
       { status: 0, stderr: "", stdout: JSON.stringify(completeReport) },
     ];
@@ -273,7 +273,7 @@ describe("reviewed npm audit gate", () => {
     expect(delays).toEqual([1_000]);
     expect(warnings).toEqual([
       expect.stringMatching(
-        /^npm audit scan failed on attempt 1\/2; retrying in 1000 ms \(reason=registry-network-error; exit=1 stdout-bytes=\d+ stdout-sha256=[a-f0-9]{64} condition=registry-network-error transport=EAI_AGAIN required-field=metadata:missing\)$/,
+        /^npm audit scan failed on attempt 1\/2; retrying in 1000 ms \(reason=registry-network-error; exit=1 stdout-bytes=\d+ stdout-sha256=[a-f0-9]{64} condition=registry-network-error transport=ECONNREFUSED required-field=metadata:missing\)$/,
       ),
     ]);
     const warningOutput = warnings.join("\n");
