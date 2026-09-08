@@ -76,6 +76,31 @@ describe("global doctor command", () => {
     expect(JSON.stringify(report)).not.toContain("sk-abc123DEF456ghi789");
   });
 
+  it("rejects --text with --json before any check runs and says so on both streams (#11150)", async () => {
+    const out: string[] = [];
+    const err: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((...parts: unknown[]) => {
+      out.push(parts.map(String).join(" "));
+    });
+    vi.spyOn(console, "error").mockImplementation((...parts: unknown[]) => {
+      err.push(parts.map(String).join(" "));
+    });
+
+    await DoctorCommand.run(["--text", "--json"], rootDir);
+
+    expect(mocks.runGlobalDoctor).not.toHaveBeenCalled();
+    // Parsing the whole of stdout is the assertion: a second document or any
+    // stray text after the envelope makes it throw.
+    expect(JSON.parse(out.join("\n"))).toEqual({
+      error: {
+        message: expect.stringContaining("--json and --text are mutually exclusive"),
+        exit: 2,
+      },
+    });
+    expect(err.join("\n")).toContain("--json and --text are mutually exclusive");
+    expect(process.exitCode).toBeGreaterThan(0);
+  });
+
   it("rejects global --fix before running health checks (#10212)", async () => {
     await expect(DoctorCommand.run(["--fix"], rootDir)).rejects.toThrow(/fix/i);
 
