@@ -5,6 +5,10 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
 import { namedOpenShellGateway } from "../../adapters/openshell/sandbox-observer";
+import {
+  EXTRA_PLACEHOLDER_KEYS_ENV,
+  registerExtraPlaceholderProviders,
+} from "../../onboard/extra-placeholder-keys";
 import type { MessagingBridgeProfile } from "../../onboard/messaging-bridge-provider";
 import type { SandboxMessagingPlan } from "../manifest";
 import {
@@ -162,6 +166,7 @@ describe("messaging OpenShell provider application", () => {
   it.each([
     ["provider type", { type: "generic" }],
     ["configuration keys", { configKeys: ["BASE_URL"] }],
+    ["undeclared credential keys", { credentialKeys: ["TELEGRAM_BOT_TOKEN", "UNDECLARED"] }],
   ])(
     "rejects a %s collision before profile or provider mutation (#9806)",
     async (_field, conflictingMetadata) => {
@@ -220,6 +225,165 @@ describe("messaging OpenShell provider application", () => {
     expect(adapter.updateProvider).not.toHaveBeenCalled();
   });
 
+  it("omits an absent optional credential when creating a provider (#11190)", async () => {
+    const tokenDefs = [
+      {
+        name: "alpha-telegram-bridge",
+        envKey: "TELEGRAM_BOT_TOKEN",
+        token: "telegram-secret",
+        providerType: "nemoclaw-mcp-v1",
+      },
+    ];
+    const warnings: string[] = [];
+    const acceptedKeys = registerExtraPlaceholderProviders(tokenDefs, (message) => {
+      warnings.push(message);
+    }, {
+      env: {
+        [EXTRA_PLACEHOLDER_KEYS_ENV]:
+          "TELEGRAM_BOT_TOKEN_AGENT_A TELEGRAM_BOT_TOKEN_AGENT_MISSING GITHUB_TOKEN",
+        TELEGRAM_BOT_TOKEN_AGENT_A: "telegram-agent-a-secret",
+        TELEGRAM_BOT_TOKEN_AGENT_MISSING: undefined,
+        GITHUB_TOKEN: "arbitrary-host-secret",
+      },
+      getCredential: () => null,
+      normalizeCredentialValue: (value) => value?.trim() ?? "",
+    });
+    const application = buildMessagingProviderApplication({
+      tokenDefs,
+      root: "/repo",
+      agent: "openclaw",
+      getCredential: () => null,
+      profiles: [],
+    });
+    const builtDefinition = application.definitions[0]!;
+    const expected = {
+      ...builtDefinition,
+      credentials: [
+        builtDefinition.credentials[2]!,
+        builtDefinition.credentials[0]!,
+        builtDefinition.credentials[1]!,
+      ],
+    };
+    const createdCredentials = expected.credentials.filter(({ value }) => value !== null);
+    const adapter = providerAdapter({
+      getProvider: vi
+        .fn<OpenShellProviderAdapter["getProvider"]>()
+        .mockResolvedValueOnce({
+          ok: false,
+          error: { kind: "command", reason: "not_found", message: "provider not found" },
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          value: metadata({ ...expected, credentials: createdCredentials }),
+        }),
+    });
+
+    await applyCredentialsAtOpenShell(plan, {
+      providerAdapter: adapter,
+      target,
+      definitions: [expected],
+      requireCompleteBindings: true,
+    });
+
+    expect(adapter.createProvider).toHaveBeenCalledWith({
+      target,
+      name: expected.providerName,
+      type: expected.providerType,
+      credentials: createdCredentials,
+      config: [],
+      fromExisting: false,
+    });
+    expect(acceptedKeys).toEqual([
+      "TELEGRAM_BOT_TOKEN_AGENT_A",
+      "TELEGRAM_BOT_TOKEN_AGENT_MISSING",
+    ]);
+    expect(warnings.some((warning) => warning.includes('"GITHUB_TOKEN"'))).toBe(true);
+    expect(JSON.stringify(application)).not.toContain("arbitrary-host-secret");
+
+    vi.mocked(adapter.getProvider).mockResolvedValue({
+      ok: true,
+      value: metadata({ ...expected, credentials: createdCredentials }),
+    });
+    vi.mocked(adapter.createProvider).mockClear();
+    const retryDefinition = {
+      ...expected,
+      credentials: expected.credentials.map(({ name }) => ({ name, value: null })),
+    };
+
+    const retry = await applyCredentialsAtOpenShell(plan, {
+      providerAdapter: adapter,
+      target,
+      definitions: [retryDefinition],
+      requireCompleteBindings: true,
+    });
+
+    expect(retry.reused).toEqual([
+      expect.objectContaining({ providerName: expected.providerName }),
+    ]);
+    expect(adapter.createProvider).not.toHaveBeenCalled();
+    expect(adapter.updateProvider).not.toHaveBeenCalled();
+    expect(adapter.deleteProvider).not.toHaveBeenCalled();
+
+    const expandedCredentials = expected.credentials.map((credential) =>
+      credential.name === "TELEGRAM_BOT_TOKEN_AGENT_MISSING"
+        ? { ...credential, value: "telegram-agent-missing-secret" }
+        : credential,
+    );
+    vi.mocked(adapter.getProvider)
+      .mockReset()
+      .mockResolvedValueOnce({
+        ok: true,
+        value: metadata({ ...expected, credentials: createdCredentials }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        value: metadata({ ...expected, credentials: expandedCredentials }),
+      });
+
+    await applyCredentialsAtOpenShell(plan, {
+      providerAdapter: adapter,
+      target,
+      definitions: [{ ...expected, credentials: expandedCredentials }],
+      requireCompleteBindings: true,
+    });
+
+    expect(adapter.updateProvider).toHaveBeenCalledWith({
+      target,
+      providerName: expected.providerName,
+      credentials: expandedCredentials,
+      config: [],
+    });
+    expect(adapter.createProvider).not.toHaveBeenCalled();
+    expect(adapter.deleteProvider).not.toHaveBeenCalled();
+  });
+
+  it("rejects provider creation when only an optional credential is present (#11190)", async () => {
+    const expected = definition({
+      credentials: [
+        { name: "TELEGRAM_BOT_TOKEN", value: null },
+        { name: "TELEGRAM_BOT_TOKEN_AGENT_A", value: "telegram-agent-a-secret" },
+      ],
+    });
+    const adapter = providerAdapter();
+
+    const failure = await applyCredentialsAtOpenShell(plan, {
+      providerAdapter: adapter,
+      target,
+      definitions: [expected],
+      requireCompleteBindings: true,
+    }).catch((error: unknown) => error);
+
+    expect(failure).toMatchObject({
+      message:
+        "Messaging provider 'alpha-telegram-bridge' is missing required credential 'TELEGRAM_BOT_TOKEN' for creation.",
+    });
+    expect((failure as Error).message).not.toContain("telegram-agent-a-secret");
+    expect(adapter.importProviderProfile).not.toHaveBeenCalled();
+    expect(adapter.createProvider).not.toHaveBeenCalled();
+    expect(adapter.updateProvider).not.toHaveBeenCalled();
+    expect(adapter.deleteProvider).not.toHaveBeenCalled();
+  });
+
   it("rejects replacement when any attachment is outside the authorized sandbox (#9806)", async () => {
     const expected = definition();
     const adapter = providerAdapter({
@@ -252,14 +416,23 @@ describe("messaging OpenShell provider application", () => {
   });
 
   it("replaces an authorized provider and attaches the recreated provider (#9806)", async () => {
-    const expected = definition();
+    const expected = definition({
+      credentials: [
+        { name: "TELEGRAM_BOT_TOKEN", value: "telegram-secret" },
+        { name: "TELEGRAM_BOT_TOKEN_AGENT_MISSING", value: null },
+      ],
+    });
+    const createdCredentials = expected.credentials.filter(({ value }) => value !== null);
     const getProvider = vi
       .fn<OpenShellProviderAdapter["getProvider"]>()
       .mockResolvedValueOnce({
         ok: true,
         value: { ...metadata(expected), type: "generic" },
       })
-      .mockResolvedValueOnce({ ok: true, value: metadata(expected) });
+      .mockResolvedValueOnce({
+        ok: true,
+        value: metadata({ ...expected, credentials: createdCredentials }),
+      });
     const deleteProvider = vi
       .fn<OpenShellProviderAdapter["deleteProvider"]>()
       .mockResolvedValueOnce({
@@ -294,7 +467,7 @@ describe("messaging OpenShell provider application", () => {
       target,
       name: expected.providerName,
       type: expected.providerType,
-      credentials: expected.credentials,
+      credentials: createdCredentials,
       config: [],
       fromExisting: false,
     });
