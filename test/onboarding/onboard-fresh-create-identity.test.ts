@@ -749,7 +749,7 @@ if (${JSON.stringify(
   console.error(error);
   process.exit(1);
 });
-`;
+`.replaceAll("18080", String(gatewayPort));
       fs.writeFileSync(scriptPath, script);
 
       const childEnv = {

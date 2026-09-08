@@ -219,6 +219,20 @@ It pulls missing models through the Ollama HTTP API without requiring an Ollama 
   NemoClaw rejects a reachable Windows daemon when it accepts the untrusted `Host` probe.
 </Warning>
 
+### Recover After Unconfirmed Installer Cancellation
+
+If NemoClaw cannot confirm that the Windows installer stopped, it does not restore the previous Windows Ollama state because the installer might still change it.
+Complete these steps before you rerun onboarding:
+
+1. In Windows PowerShell, stop the installer and every Ollama process.
+2. Restore the previous User-scope `OLLAMA_HOST` value.
+   If the value was previously unset, remove it from User scope.
+3. From WSL, rerun onboarding:
+
+```bash
+$$nemoclaw onboard
+```
+
 If the endpoint is not reachable, NemoClaw also checks the Windows `ollama.exe` process through PowerShell interop.
 When the daemon does not become reachable, onboarding prints PowerShell commands for inspecting the Windows process and port state.
 Choose the WSL-local Ollama install when Docker Desktop cannot reach the protected Windows loopback route.
@@ -351,10 +365,13 @@ If no installed known tag fits, NemoClaw displays starter choices and warns when
 After a model fails validation, NemoClaw excludes it from the next installed-model menu.
 
 On Windows on Arm N1X systems with a Snapdragon X processor, automatic selection omits the 30B and 35B starter models and selects `qwen3.5:9b`.
+On a WSL RTX Spark N1x, NemoClaw can select an installed `qwen3.6:35b` only when the Windows product identity qualifies and the selected Docker or Podman provider's CUDA proof reports at least 30,000 MiB available.
+The proof runs one pinned CUDA workload and capacity query through the provider abstraction; Docker supplies its GPU flag and Podman supplies its NVIDIA CDI device without a separate model-selection path.
+Missing, malformed, or insufficient proof capacity retains the `qwen3.5:9b` fallback.
 This safeguard only changes automatic selection.
 
 <AgentOnly variant="openclaw">
-It does not make the larger models usable on N1X, reject an explicitly selected large model, or resolve the OpenClaw `1006` disconnect, embedded fallback, and model-timeout behavior tracked in [issue #3707](https://github.com/NVIDIA/NemoClaw/issues/3707).
+It does not make the larger models usable on Snapdragon X N1X systems, reject an explicitly selected large model, or resolve the OpenClaw `1006` disconnect, embedded fallback, and model-timeout behavior tracked in [issue #3707](https://github.com/NVIDIA/NemoClaw/issues/3707).
 </AgentOnly>
 
 <AgentOnly variant="openclaw">
@@ -370,6 +387,9 @@ When the runtime value cannot be verified, onboarding shows the required `OLLAMA
 
 If the initial validation times out during a cold load, NemoClaw retries once with a 300-second probe budget.
 This retry also applies to tight-VRAM hosts where model warm-up can spill from GPU to CPU.
+If the retry also times out against a local Ollama daemon on Linux, stale runners may still be holding GPU memory.
+NemoClaw recommends `sudo systemctl restart ollama` only when the host has an active Ollama systemd unit; otherwise, restart Ollama and rerun onboarding.
+Windows-host Ollama does not receive this Linux recovery guidance.
 
 ## Release GPU Memory
 

@@ -19,6 +19,9 @@ const { ensureSandboxPortForwardForPort } = requireSource(
 const { createProbeTimingRecorder } = requireSource(
   "../../src/lib/actions/sandbox/probe/timing.ts",
 ) as typeof import("../../src/lib/actions/sandbox/probe/timing.js");
+const forwardService = requireSource(
+  "../../src/lib/adapters/openshell/forward-service.ts",
+) as typeof import("../../src/lib/adapters/openshell/forward-service.js");
 
 function checkAndRecoverSandboxProcesses(
   sandboxName: string,
@@ -172,6 +175,7 @@ hermes-box  127.0.0.1  18789  12345  running`;
         dashboardPort: 18789,
       });
       vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
+      vi.spyOn(forwardService, "isForwardServiceListenerOwner").mockReturnValue(true);
       vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
         status: 0,
         output: runningForward,
@@ -336,6 +340,7 @@ hermes-box  127.0.0.1  18789  12345  running`;
         hermesDashboardInternalPort: 19119,
       });
       vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
+      vi.spyOn(forwardService, "isForwardServiceListenerOwner").mockReturnValue(true);
       vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
         status: 0,
         output: "SANDBOX  BIND  PORT  PID  STATUS",
@@ -574,6 +579,7 @@ hermes-box  127.0.0.1  18789  12345  running`;
         dashboardPort: 18789,
       });
       vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
+      vi.spyOn(forwardService, "isForwardServiceListenerOwner").mockReturnValue(true);
       vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
         status: 0,
         output: "SANDBOX  BIND  PORT  PID  STATUS",
@@ -634,6 +640,7 @@ hermes-box  127.0.0.1  18789  12345  running`;
       dashboardPort: 18789,
     });
     vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
+    vi.spyOn(forwardService, "isForwardServiceListenerOwner").mockReturnValue(true);
     vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
       status: 0,
       output: `SANDBOX  BIND  PORT  PID  STATUS\nhermes-box  127.0.0.1  18789  12345  running`,
@@ -684,6 +691,7 @@ hermes-box  127.0.0.1  18789  12345  running`;
       dashboardPort: 18789,
     });
     vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
+    vi.spyOn(forwardService, "isForwardServiceListenerOwner").mockReturnValue(true);
     vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
       status: 0,
       output: `SANDBOX  BIND  PORT  PID  STATUS\nbeta  127.0.0.1  18789  12345  running`,

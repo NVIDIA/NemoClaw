@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { getBuildIdentity } from "../core/version";
-import { detectGpu, type GpuDetection } from "../inference/nim";
+import { detectGpu, type DetectGpuDeps, type GpuDetection } from "../inference/nim";
+import { isWsl as detectWsl } from "../platform";
 import {
   collectGatewayObservations,
   type GatewayObservationSnapshot,
@@ -15,6 +16,7 @@ import {
 } from "../readiness/gateway-production";
 import {
   collectHostObservations,
+  collectN1xWslProductObservation,
   type HostObservationSnapshot,
   projectHostReadiness,
 } from "../readiness/host";
@@ -29,7 +31,7 @@ import {
   isLinuxDockerDriverGatewayEnabled,
   isPortableExperimentalProfile,
 } from "./docker-driver-platform";
-import { configuredRuntimeProviderOwnsHostReadiness } from "./docker-driver-gateway-env";
+import { configuredRuntimeProviderReadinessAuthority } from "./docker-driver-gateway-env";
 import { warnIfHostProxyMissesLoopback } from "./http-proxy-preflight";
 import { assertConfiguredRuntimeProviderHealthy } from "./machine/runtime-effectful-preflight";
 import { assessHost, type HostAssessment, planHostAdvisories } from "./preflight";
@@ -39,6 +41,8 @@ import {
   printUnsupportedRuntimeError,
 } from "./preflight-messages";
 import { printRemediationActions } from "./remediation";
+import type { RuntimeProviderBundle } from "./runtime-provider/contract";
+import { createArm64ContainerGpuProver } from "./runtime-provider/nvidia-container-proof";
 import { resolveSandboxGpuConfig, type SandboxGpuConfig } from "./sandbox-gpu-mode";
 import {
   exitOnSandboxGpuConfigErrors,
@@ -67,9 +71,12 @@ export interface FatalRuntimePreflightContext {
   /**
    * GPU detector used in both phases. Readiness collection passes an explicit
    * null WSL prover; the post-admission runtime phase calls it without that
-   * override so the bounded Docker proof can run when needed.
+   * override so the provider-owned bounded proof can run when needed.
    */
   detectGpu?: typeof detectGpu;
+  createArm64ContainerGpuProver?: typeof createArm64ContainerGpuProver;
+  runCaptureImpl?: DetectGpuDeps["runCaptureImpl"];
+  collectN1xWslProduct?: NonNullable<Parameters<typeof collectN1xWslProductObservation>[1]>;
   warnIfHostProxyMissesLoopback?: typeof warnIfHostProxyMissesLoopback;
   assertRuntimeProviderHealthy?: typeof assertConfiguredRuntimeProviderHealthy;
   validateSandboxGpuPreflight?: typeof validateSandboxGpuPreflight;
@@ -81,6 +88,8 @@ export interface FatalRuntimePreflightResult {
   host: HostAssessment;
   readinessReport: SystemReadinessReport;
   sandboxGpuConfig: SandboxGpuConfig;
+  /** One immutable product observation shared by GPU and readiness classification. */
+  n1xWslProduct: boolean | null;
   // Which trust-gate check rejected the newest GPU detection, so preflight can
   // name the failed check instead of the bare "no GPU detected" (#9000).
   // Absent when detection found a GPU or did not reject an nvidia-smi report.
@@ -114,8 +123,9 @@ const JETSON_INAPPLICABLE_CDI_ADVISORY_IDS = new Set([
 
 export interface OnboardHostReadinessOptions {
   explicitlyOptedOutGpuPassthrough: boolean;
-  /** Preserve the outcome of a bounded WSL Docker Desktop GPU proof. */
-  wslDockerDesktopGpuProofPassed?: boolean;
+  /** Preserve provider-bound proof state across readiness collection phases. */
+  containerGpuProof?: GpuDetection["containerGpuProof"];
+  n1xWslProduct?: boolean | null;
   resuming?: boolean;
   allowStorageRemediation?: boolean;
   allowPortableHostPreparation?: boolean;
@@ -126,6 +136,51 @@ export interface OnboardHostReadinessOptions {
   exitProcess?: (code: number) => never;
   observedAt?: string;
   now?: () => Date;
+}
+
+function runtimeProviderReadinessAuthority(host: HostAssessment) {
+  const managedLocalGatewayEnabled =
+    host.platform === "linux" && isLinuxDockerDriverGatewayEnabled("linux");
+  return managedLocalGatewayEnabled
+    ? configuredRuntimeProviderReadinessAuthority({
+        environment: process.env,
+        platform: "linux",
+      })
+    : null;
+}
+
+function detectGpuWithBoundProviderProof(
+  deps: Omit<DetectGpuDeps, "proveArm64ContainerGpu"> = {},
+  runtimeProvider?: RuntimeProviderBundle,
+): GpuDetection | null {
+  const n1xWslProduct = Object.prototype.hasOwnProperty.call(deps, "n1xWslProduct")
+    ? (deps.n1xWslProduct ?? null)
+    : collectN1xWslProductObservation(deps.isWsl ?? detectWsl());
+  return detectGpu({
+    ...deps,
+    n1xWslProduct,
+    proveArm64ContainerGpu: createArm64ContainerGpuProver({
+      ...(runtimeProvider ? { resolveRuntimeProvider: () => runtimeProvider } : {}),
+    }),
+  });
+}
+
+/** Effectful GPU detection with the selected provider's bounded proof wired. */
+export function detectGpuWithRuntimeProviderProof(
+  deps: Omit<DetectGpuDeps, "proveArm64ContainerGpu"> = {},
+): GpuDetection | null {
+  return detectGpuWithBoundProviderProof(deps);
+}
+
+/** Effectful GPU detection bound to one recorded runtime-provider identity. */
+export function detectGpuWithRuntimeProviderProofForProvider(
+  providerId: string | null | undefined,
+  deps: Omit<DetectGpuDeps, "proveArm64ContainerGpu"> = {},
+): GpuDetection | null {
+  const provider = (
+    require("./runtime-provider/selection") as typeof import("./runtime-provider/selection")
+  ).resolveRegisteredRuntimeProvider(providerId);
+  return provider ? detectGpuWithBoundProviderProof(deps, provider) : null;
 }
 
 function printReadinessFailure(
@@ -165,14 +220,9 @@ export function assertOnboardSystemReadiness(
 ): SystemReadinessReport {
   const exitProcess = options.exitProcess ?? exitProcessByDefault;
   const portable = isPortableExperimentalProfile();
-  const managedLocalGatewayEnabled =
-    host.platform === "linux" && isLinuxDockerDriverGatewayEnabled("linux");
-  const selectedRuntimeOwnsHostReadiness = managedLocalGatewayEnabled
-    ? configuredRuntimeProviderOwnsHostReadiness({
-        environment: process.env,
-        platform: "linux",
-      })
-    : false;
+  const providerAuthority = runtimeProviderReadinessAuthority(host);
+  const managedLocalGatewayEnabled = providerAuthority !== null;
+  const selectedRuntimeOwnsHostReadiness = providerAuthority?.ownsHostReadiness === true;
   const admission = evaluateOnboardReadinessAdmission(readinessReport, {
     explicitlyOptedOutGpuPassthrough: options.explicitlyOptedOutGpuPassthrough,
     allowUnsupportedRuntime: portable || !managedLocalGatewayEnabled,
@@ -258,10 +308,8 @@ function requiresRuntimeGpuProof(
 ): boolean {
   return (
     result.host.isWsl &&
-    result.host.runtime === "docker-desktop" &&
-    result.host.dockerReachable &&
     result.host.hasNvidiaGpu &&
-    result.gpu?.wslDockerDesktopGpuProofPassed !== true &&
+    result.gpu?.containerGpuProof?.passed !== true &&
     result.sandboxGpuConfig.mode !== "0" &&
     options.optedOutGpuPassthrough !== true
   );
@@ -269,7 +317,8 @@ function requiresRuntimeGpuProof(
 
 interface RuntimeGpuReadiness {
   value: GpuDetection | null;
-  wslDockerDesktopGpuProofPassed?: boolean;
+  containerGpuProof?: GpuDetection["containerGpuProof"];
+  n1xWslProduct: boolean | null;
   gpuTrustGateRejection?: string;
 }
 
@@ -283,14 +332,23 @@ function collectOnboardHostReadiness(
   context: FatalRuntimePreflightContext,
   allowStorageRemediation: boolean,
   runtimeGpu?: RuntimeGpuReadiness,
+  identity?: Readonly<{ n1xWslProduct: boolean | null }>,
 ): CollectedOnboardHostReadiness {
   const now = context.now ?? (() => new Date());
   const host = (context.assessHost ?? assessHost)();
+  const runtimeProvider = runtimeProviderReadinessAuthority(host);
+  const n1xWslProduct = runtimeGpu
+    ? runtimeGpu.n1xWslProduct
+    : identity
+      ? identity.n1xWslProduct
+      : collectN1xWslProductObservation(host.isWsl, context.collectN1xWslProduct);
   let gpuTrustGateRejection: string | undefined;
   const gpu = runtimeGpu
     ? runtimeGpu.value
     : (context.detectGpu ?? detectGpu)({
-        proveArm64WslDockerDesktopGpu: null,
+        proveArm64ContainerGpu: null,
+        n1xWslProduct,
+        runCaptureImpl: context.runCaptureImpl,
         onTrustGateRejection: (reason) => {
           gpuTrustGateRejection = reason;
         },
@@ -302,7 +360,9 @@ function collectOnboardHostReadiness(
   const snapshot = collectHostObservations({
     assess: () => host,
     detectGpu: () => gpu,
-    wslDockerDesktopGpuProofPassed: runtimeGpu?.wslDockerDesktopGpuProofPassed,
+    runtimeProvider: runtimeProvider ?? undefined,
+    containerGpuProof: runtimeGpu?.containerGpuProof,
+    platformIdentityOptions: { n1xWslProductObservation: n1xWslProduct },
     now,
   });
   const readinessReport = projectHostReadiness(snapshot, {
@@ -312,7 +372,7 @@ function collectOnboardHostReadiness(
   assertOnboardSystemReadiness(readinessReport, host, {
     explicitlyOptedOutGpuPassthrough:
       sandboxGpuConfig.mode === "0" || options.optedOutGpuPassthrough === true,
-    wslDockerDesktopGpuProofPassed: runtimeGpu?.wslDockerDesktopGpuProofPassed,
+    containerGpuProof: runtimeGpu?.containerGpuProof,
     resuming: context.resuming,
     allowStorageRemediation,
     allowDeferredN1xOnboarding: options.allowDeferredN1xManagedVllm,
@@ -326,6 +386,7 @@ function collectOnboardHostReadiness(
       host,
       readinessReport,
       sandboxGpuConfig,
+      n1xWslProduct,
       ...(runtimeGpu?.gpuTrustGateRejection || gpuTrustGateRejection
         ? {
             gpuTrustGateRejection: runtimeGpu?.gpuTrustGateRejection ?? gpuTrustGateRejection,
@@ -393,6 +454,7 @@ async function collectAdmittedReadinessPair(
       context,
       isManagedGatewayReadiness(gateway),
       runtimeGpu,
+      { n1xWslProduct: collectedHost.result.n1xWslProduct },
     );
     collectedGateway = await context.collectGatewayReadiness();
     assertOnboardGatewayReadiness(collectedGateway.projection, exitProcess);
@@ -422,12 +484,26 @@ function resolveRuntimeGpuProof(
   result: FatalRuntimePreflightResult,
   options: FatalRuntimePreflightOptions,
   context: FatalRuntimePreflightContext,
-): { result: FatalRuntimePreflightResult; proofRan: boolean } {
+): {
+  result: FatalRuntimePreflightResult;
+  proofRan: boolean;
+  containerGpuProof?: GpuDetection["containerGpuProof"];
+} {
   if (!requiresRuntimeGpuProof(result, options)) return { result, proofRan: false };
   let gpuTrustGateRejection: string | undefined;
+  let containerGpuProof: GpuDetection["containerGpuProof"];
+  const n1xWslProduct = result.n1xWslProduct;
   const gpu = (context.detectGpu ?? detectGpu)({
+    proveArm64ContainerGpu: (
+      context.createArm64ContainerGpuProver ?? createArm64ContainerGpuProver
+    )(),
+    n1xWslProduct,
+    runCaptureImpl: context.runCaptureImpl,
     onTrustGateRejection: (reason) => {
       gpuTrustGateRejection = reason;
+    },
+    onContainerGpuProof: (proof) => {
+      containerGpuProof = proof;
     },
   });
   const sandboxGpuConfig = resolveSandboxGpuConfig(gpu, {
@@ -439,6 +515,7 @@ function resolveRuntimeGpuProof(
   // observation-phase reason too.
   return {
     result: { ...result, gpu, sandboxGpuConfig, gpuTrustGateRejection },
+    containerGpuProof,
     proofRan: true,
   };
 }
@@ -451,10 +528,20 @@ export function assertOnboardHostReadiness(
 ): SystemReadinessReport {
   const now = options.now ?? (() => new Date());
   const observedAt = options.observedAt;
+  const hasN1xWslProductObservation =
+    Object.prototype.hasOwnProperty.call(options, "n1xWslProduct") ||
+    Boolean(gpu && Object.prototype.hasOwnProperty.call(gpu, "n1xWslProduct"));
+  const n1xWslProductObservation = Object.prototype.hasOwnProperty.call(options, "n1xWslProduct")
+    ? (options.n1xWslProduct ?? null)
+    : (gpu?.n1xWslProduct ?? null);
   const snapshot = collectHostObservations({
     assess: () => host,
     detectGpu: () => gpu,
-    wslDockerDesktopGpuProofPassed: options.wslDockerDesktopGpuProofPassed,
+    runtimeProvider: runtimeProviderReadinessAuthority(host) ?? undefined,
+    containerGpuProof: options.containerGpuProof,
+    ...(hasN1xWslProductObservation
+      ? { platformIdentityOptions: { n1xWslProductObservation } }
+      : {}),
     now: observedAt ? () => new Date(observedAt) : now,
   });
   const readinessReport = projectHostReadiness(snapshot, {
@@ -506,7 +593,7 @@ export async function runReadinessGatedRuntimePreflight(
   const exitProcess = context.exitProcess ?? exitProcessByDefault;
   const gatewayBeforePreparation = (await context.collectGatewayReadiness()).projection;
   assertOnboardGatewayReadiness(gatewayBeforePreparation, exitProcess);
-  runFatalOnboardRuntimePreflight(options, {
+  const initialHost = runFatalOnboardRuntimePreflight(options, {
     ...context,
     allowStorageRemediation: isManagedGatewayReadiness(gatewayBeforePreparation),
     deferEffectfulChecks: true,
@@ -514,7 +601,13 @@ export async function runReadinessGatedRuntimePreflight(
   let gatewayReadiness = (await context.collectGatewayReadiness()).projection;
   assertOnboardGatewayReadiness(gatewayReadiness, exitProcess);
   let managedGatewayReadiness = isManagedGatewayReadiness(gatewayReadiness);
-  let collectedHost = collectOnboardHostReadiness(options, context, managedGatewayReadiness);
+  let collectedHost = collectOnboardHostReadiness(
+    options,
+    context,
+    managedGatewayReadiness,
+    undefined,
+    { n1xWslProduct: initialHost.n1xWslProduct },
+  );
   let admitted = await collectAdmittedReadinessPair(collectedHost, options, context);
   collectedHost = admitted.host;
   let refreshedResult = collectedHost.result;
@@ -538,10 +631,8 @@ export async function runReadinessGatedRuntimePreflight(
       // that negative outcome distinct from the observation-only phase's
       // intentionally unknown result. A normal trusted WSL GPU has no proof
       // marker and remains unknown because no bounded proof was necessary.
-      wslDockerDesktopGpuProofPassed:
-        runtimeGpu.result.gpu === null
-          ? false
-          : runtimeGpu.result.gpu.wslDockerDesktopGpuProofPassed,
+      containerGpuProof: runtimeGpu.containerGpuProof ?? runtimeGpu.result.gpu?.containerGpuProof,
+      n1xWslProduct: runtimeGpu.result.n1xWslProduct,
       gpuTrustGateRejection: runtimeGpu.result.gpuTrustGateRejection,
     };
     collectedHost = collectOnboardHostReadiness(
@@ -581,7 +672,12 @@ export function runFatalOnboardRuntimePreflight(
   const now = context.now ?? (() => new Date());
   let observedAt = now().toISOString();
   let host = assess();
-  let gpu = detect({ proveArm64WslDockerDesktopGpu: null });
+  const n1xWslProduct = collectN1xWslProductObservation(host.isWsl, context.collectN1xWslProduct);
+  let gpu = detect({
+    proveArm64ContainerGpu: null,
+    n1xWslProduct,
+    runCaptureImpl: context.runCaptureImpl,
+  });
   let sandboxGpuConfig = resolveSandboxGpuConfig(gpu, {
     flag: resolveSandboxGpuFlagFromOptions(options),
     device: options.sandboxGpuDevice ?? null,
@@ -597,8 +693,9 @@ export function runFatalOnboardRuntimePreflight(
     exitProcess,
     observedAt,
     now,
+    n1xWslProduct,
   });
-  let result = { gpu, host, readinessReport, sandboxGpuConfig };
+  let result = { gpu, host, readinessReport, sandboxGpuConfig, n1xWslProduct };
   if (!context.deferEffectfulChecks) {
     const runtimeGpu = resolveRuntimeGpuProof(result, options, context);
     if (runtimeGpu.proofRan) {
@@ -610,10 +707,9 @@ export function runFatalOnboardRuntimePreflight(
     result = runtimeGpu.proofRan
       ? refreshOnboardHostReadiness(options, context, context.allowStorageRemediation === true, {
           value: runtimeGpu.result.gpu,
-          wslDockerDesktopGpuProofPassed:
-            runtimeGpu.result.gpu === null
-              ? false
-              : runtimeGpu.result.gpu.wslDockerDesktopGpuProofPassed,
+          containerGpuProof:
+            runtimeGpu.containerGpuProof ?? runtimeGpu.result.gpu?.containerGpuProof,
+          n1xWslProduct: runtimeGpu.result.n1xWslProduct,
         })
       : runtimeGpu.result;
     runOnboardRuntimeEffectfulPreflightChecks(result, context);

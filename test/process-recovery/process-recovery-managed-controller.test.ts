@@ -13,6 +13,9 @@ const requireSource = createRequire(import.meta.url);
 const { checkAndRecoverSandboxProcesses: checkAndRecoverSandboxProcessesImpl } = requireSource(
   "../../src/lib/actions/sandbox/process-recovery.ts",
 ) as typeof import("../../src/lib/actions/sandbox/process-recovery.js");
+const forwardService = requireSource(
+  "../../src/lib/adapters/openshell/forward-service.ts",
+) as typeof import("../../src/lib/adapters/openshell/forward-service.js");
 
 function checkAndRecoverSandboxProcesses(
   sandboxName: string,
@@ -411,6 +414,7 @@ describe("managed gateway recovery controller", () => {
         );
         vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue(null);
         vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
+        vi.spyOn(forwardService, "isForwardServiceListenerOwner").mockReturnValue(true);
         vi.spyOn(registry, "getSandbox").mockReturnValue({
           name: "beta",
           agent: "openclaw",
