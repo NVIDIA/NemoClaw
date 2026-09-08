@@ -17,13 +17,14 @@ describe("rebuild onboarding GPU dependency", () => {
       platform: "linux",
       containerGpuProof: { providerId: "docker", passed: true },
     } as const;
-    const detectGpuWithRuntimeProviderProof = vi.fn(() => gpu);
+    const detectGpuWithRuntimeProviderProofForProvider = vi.fn(() => gpu);
 
     expect(
-      detectGpuWithRuntimeProviderProofForRebuild(() => ({
-        detectGpuWithRuntimeProviderProof,
+      detectGpuWithRuntimeProviderProofForRebuild("docker", () => ({
+        detectGpuWithRuntimeProviderProofForProvider,
       })),
     ).toBe(gpu);
+    expect(detectGpuWithRuntimeProviderProofForProvider).toHaveBeenCalledExactlyOnceWith("docker");
   });
 
   it("preserves the null fallback when lazy runtime preflight fails", () => {
@@ -31,6 +32,25 @@ describe("rebuild onboarding GPU dependency", () => {
       throw new Error("runtime preflight unavailable");
     });
 
-    expect(detectGpuWithRuntimeProviderProofForRebuild(loadRuntimePreflight)).toBeNull();
+    expect(detectGpuWithRuntimeProviderProofForRebuild("podman", loadRuntimePreflight)).toBeNull();
+  });
+
+  it("rejects proof from a provider other than the recorded sandbox provider", () => {
+    const detectGpuWithRuntimeProviderProofForProvider = vi.fn(() => ({
+      type: "nvidia" as const,
+      name: "NVIDIA test GPU",
+      count: 1,
+      totalMemoryMB: 24_576,
+      perGpuMB: 24_576,
+      nimCapable: true,
+      platform: "linux" as const,
+      containerGpuProof: { providerId: "podman", passed: true },
+    }));
+
+    expect(
+      detectGpuWithRuntimeProviderProofForRebuild("docker", () => ({
+        detectGpuWithRuntimeProviderProofForProvider,
+      })),
+    ).toBeNull();
   });
 });

@@ -165,7 +165,7 @@ export async function preflightRebuildTargetRuntime(
   delete gpuEnv.NEMOCLAW_SANDBOX_GPU;
   delete gpuEnv.NEMOCLAW_SANDBOX_GPU_DEVICE;
   const sandboxGpuConfig = resolveSandboxGpuConfig(
-    rebuildOnboardDependencies.detectGpuWithRuntimeProviderProof(),
+    rebuildOnboardDependencies.detectGpuWithRuntimeProviderProof(sb.openshellDriver),
     {
       flag: recreateOptions.sandboxGpu,
       device: recreateOptions.sandboxGpuDevice,

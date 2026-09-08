@@ -251,11 +251,14 @@ function getRecordedGpuConfig(
     entry,
     session?.sandboxName === sandboxName ? session.gpuPassthrough : undefined,
   );
-  return resolveSandboxGpuConfig(rebuildOnboardDependencies.detectGpuWithRuntimeProviderProof(), {
-    flag: overrides.flag,
-    device: overrides.device,
-    env: {},
-  });
+  return resolveSandboxGpuConfig(
+    rebuildOnboardDependencies.detectGpuWithRuntimeProviderProof(entry.openshellDriver),
+    {
+      flag: overrides.flag,
+      device: overrides.device,
+      env: {},
+    },
+  );
 }
 
 function inspectLocalImageId(imageRef: string): string {

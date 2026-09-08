@@ -77,7 +77,7 @@ const TARGET = {
   fromDockerfile: null,
   agentDefinition: null,
 } as unknown as RebuildTargetConfig;
-const ENTRY = { mcp: null } as unknown as RebuildSandboxEntry;
+const ENTRY = { mcp: null, openshellDriver: "docker" } as unknown as RebuildSandboxEntry;
 const RECREATE_OPTIONS = {
   sandboxGpu: "enable",
   sandboxGpuDevice: null,
@@ -135,7 +135,7 @@ describe("preflightRebuildTargetRuntime GPU route", () => {
     });
 
     expect(mocks.enforceDockerGpuPatchPreserveNetwork).toHaveBeenCalledOnce();
-    expect(mocks.detectGpuWithRuntimeProviderProof).toHaveBeenCalledOnce();
+    expect(mocks.detectGpuWithRuntimeProviderProof).toHaveBeenCalledExactlyOnceWith("docker");
     expect(mocks.detectGpu).not.toHaveBeenCalled();
     expect(mocks.enforceDockerGpuPatchPreserveNetwork).toHaveBeenCalledWith(
       "ollama-local",

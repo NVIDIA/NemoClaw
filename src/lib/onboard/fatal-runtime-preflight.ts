@@ -41,6 +41,7 @@ import {
   printUnsupportedRuntimeError,
 } from "./preflight-messages";
 import { printRemediationActions } from "./remediation";
+import type { RuntimeProviderBundle } from "./runtime-provider/contract";
 import { createArm64ContainerGpuProver } from "./runtime-provider/nvidia-container-proof";
 import { resolveSandboxGpuConfig, type SandboxGpuConfig } from "./sandbox-gpu-mode";
 import {
@@ -148,9 +149,9 @@ function runtimeProviderReadinessAuthority(host: HostAssessment) {
     : null;
 }
 
-/** Effectful GPU detection with the selected provider's bounded proof wired. */
-export function detectGpuWithRuntimeProviderProof(
+function detectGpuWithBoundProviderProof(
   deps: Omit<DetectGpuDeps, "proveArm64ContainerGpu"> = {},
+  runtimeProvider?: RuntimeProviderBundle,
 ): GpuDetection | null {
   const n1xWslProduct = Object.prototype.hasOwnProperty.call(deps, "n1xWslProduct")
     ? (deps.n1xWslProduct ?? null)
@@ -158,8 +159,28 @@ export function detectGpuWithRuntimeProviderProof(
   return detectGpu({
     ...deps,
     n1xWslProduct,
-    proveArm64ContainerGpu: createArm64ContainerGpuProver(),
+    proveArm64ContainerGpu: createArm64ContainerGpuProver({
+      ...(runtimeProvider ? { resolveRuntimeProvider: () => runtimeProvider } : {}),
+    }),
   });
+}
+
+/** Effectful GPU detection with the selected provider's bounded proof wired. */
+export function detectGpuWithRuntimeProviderProof(
+  deps: Omit<DetectGpuDeps, "proveArm64ContainerGpu"> = {},
+): GpuDetection | null {
+  return detectGpuWithBoundProviderProof(deps);
+}
+
+/** Effectful GPU detection bound to one recorded runtime-provider identity. */
+export function detectGpuWithRuntimeProviderProofForProvider(
+  providerId: string | null | undefined,
+  deps: Omit<DetectGpuDeps, "proveArm64ContainerGpu"> = {},
+): GpuDetection | null {
+  const provider = (
+    require("./runtime-provider/selection") as typeof import("./runtime-provider/selection")
+  ).resolveRegisteredRuntimeProvider(providerId);
+  return provider ? detectGpuWithBoundProviderProof(deps, provider) : null;
 }
 
 function printReadinessFailure(

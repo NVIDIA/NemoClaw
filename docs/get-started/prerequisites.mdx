@@ -33,20 +33,20 @@ If you cannot add memory, configure at least 8 GB of swap to work around the iss
 | npm        | 10 or later |
 | SHA-256 tool | `sha256sum` or `shasum`, required only when the installer must install or upgrade Node.js through nvm |
 | Python     | Python 3 at a trusted system location, with POSIX descriptor-relative filesystem support |
-| Container runtime | Docker Engine, Docker Desktop, or Colima on a tested platform (default), or native rootless Podman on qualified Linux |
+| Container runtime | Docker Engine, Docker Desktop, or Colima on a tested platform (default), or rootless Podman on qualified native Linux and Windows WSL2 paths |
 | Platform   | Refer to [Platforms](#platforms) below |
 
 Docker is the default runtime provider and the primary onboarding path.
-On Linux, the installer checks Docker before it installs the NemoClaw CLI unless you explicitly select native rootless Podman with `NEMOCLAW_GATEWAY_RUNTIME=podman`.
+On native Linux or inside WSL2, the installer checks Docker before it installs the NemoClaw CLI unless you explicitly select rootless Podman with `NEMOCLAW_GATEWAY_RUNTIME=podman`.
 The installer can install Docker, start the Docker service, and add your user to the `docker` group.
 When Docker is missing, the installer downloads Docker's official convenience script, prompts for `sudo`, and starts the service when systemd is available.
 In a non-interactive run, the installer can reactivate the group through `sg docker` and continue onboarding.
 If that path is unavailable or does not restore Docker access, the installer exits with `newgrp docker` guidance before it starts onboarding.
 
-Native rootless Podman is an explicit Linux path and does not require the Docker CLI or daemon.
+Rootless Podman is an explicit provider choice and does not require the Docker CLI or daemon. It is qualified for standard onboarding on supported native Linux hosts and for WSL-local Ollama on the documented Windows WSL2 path.
 Start standard onboarding with `NEMOCLAW_GATEWAY_RUNTIME=podman $$nemoclaw onboard`.
 Before selecting it, review its qualified host requirements and limitations in [Platform Support](../reference/platform-support#deployment-paths) and the [Podman troubleshooting guide](../reference/troubleshooting#podman).
-Managed local vLLM install/start remains Docker-backed and is unavailable when Docker is absent; attaching an already-running local vLLM server remains a separate path.
+Managed llama.cpp and Windows-host Ollama remain Docker Desktop-only on WSL. Managed local vLLM install/start remains Docker-backed and is unavailable when Docker is absent; attaching an already-running local vLLM server remains a separate path.
 The portable experimental profile is separate and still requires a Docker-compatible `docker` command.
 
 NemoClaw uses an isolated `python3` helper for descriptor-relative migration snapshot sanitization and deletion.
