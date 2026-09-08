@@ -85,6 +85,14 @@ describe("nemoclaw-start auto-pair scheduler environment bounds", () => {
       input: { NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "NaN" },
     },
     {
+      name: "a fractional poll count that would truncate to zero",
+      input: { NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "0.5" },
+    },
+    {
+      name: "a fractional poll count that would truncate down",
+      input: { NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "2.7" },
+    },
+    {
       name: "a poll count past the safe integer range",
       input: { NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "9007199254740993" },
     },

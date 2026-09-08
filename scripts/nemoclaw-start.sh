@@ -2699,7 +2699,13 @@ def _env_seconds(name, default, maximum):
 
 
 def _env_polls(name, default):
-    return int(_env_seconds(name, default, _ENV_POLLS_MAX))
+    # The launch renderer and the entrypoint wrapper both admit this counter as
+    # an integer only. A direct `docker run -e` reaches neither, and truncating
+    # a fraction here would turn 0.5 into 0 and silently disable fast reentry at
+    # the `FAST_REENTRY_POLLS > 0` gate, so a non-integer falls back to the
+    # default like any other value this helper cannot use.
+    value = _env_seconds(name, default, _ENV_POLLS_MAX)
+    return int(value) if float(value).is_integer() else default
 
 
 # Total runtime cap. After convergence the watcher polls at a slow cadence,
