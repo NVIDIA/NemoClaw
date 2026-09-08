@@ -1524,7 +1524,7 @@ RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/runtime)" = "gateway:sandbox 277
         /sandbox/.hermes/gateway/discord_message_recovery.db-shm \
     && rm -f /opt/nemoclaw-hermes-config/image-build-probes.py
 
-# Pin config and environment hashes at build time for integrity verification at startup.
+# Pin config hash at build time for config and environment integrity verification at startup.
 RUN mkdir -p /etc/nemoclaw \
     && sha256sum /sandbox/.hermes/config.yaml /sandbox/.hermes/.env \
     > /etc/nemoclaw/hermes.config-hash \
