@@ -287,12 +287,10 @@ describe("created sandbox identity gate", () => {
     expect(mocks.streamSandboxCreate).not.toHaveBeenCalled();
   });
 
-  it("ends the Hermes create-client handoff after a nonce-owned ID appears and settles metadata before effects (#10412, #10769)", async () => {
+  it("ends the shared non-terminal handoff used by standard Hermes after a nonce-owned ID appears (#10412, #10769)", async () => {
     const events: string[] = [];
     let nonce = "";
     const input = noGpuInput();
-    input.createArgv = ["openshell", "sandbox", "create", "--name", "alpha", "--", "hermes"];
-    input.terminalAgent = false;
     const patch = createGpuPatchFixture();
     input.verifyCreatedSandboxBeforeEffects = vi.fn(async (identity) => {
       events.push("verify-created");
