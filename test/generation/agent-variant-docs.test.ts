@@ -105,6 +105,24 @@ describe("agent variant docs", () => {
     expect(rendered).not.toContain("<AgentOnly");
   });
 
+  it("publishes Deep Agents forward recovery scope only for Deep Agents (#11176)", () => {
+    const sourcePath = "manage-sandboxes/recover-rebuild-sandboxes.mdx";
+    const pageSource = readFileSync(path.join(repoRoot, "docs", sourcePath), "utf8");
+    const render = (variant: "openclaw" | "hermes" | "deepagents") =>
+      renderAgentVariantPage(pageSource, variant, { sourcePath });
+    const terminalRuntimeScope =
+      "Deep Agents sandboxes are terminal runtimes and do not expose an in-sandbox agent gateway or host-side forward.";
+    const forwardPrerequisites =
+      "The OpenShell ownership and local endpoint reachability prerequisites for an already active forward do not apply.";
+
+    expect(render("deepagents")).toContain(terminalRuntimeScope);
+    expect(render("deepagents")).toContain(forwardPrerequisites);
+    expect(render("openclaw")).not.toContain(terminalRuntimeScope);
+    expect(render("openclaw")).not.toContain(forwardPrerequisites);
+    expect(render("hermes")).not.toContain(terminalRuntimeScope);
+    expect(render("hermes")).not.toContain(forwardPrerequisites);
+  });
+
   it("renders Pi placeholder code and content", () => {
     const rendered = renderAgentVariantPage(source, "pi");
 
