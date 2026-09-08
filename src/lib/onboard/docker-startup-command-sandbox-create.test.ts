@@ -173,6 +173,7 @@ describe("Docker startup-command sandbox creation", () => {
       deps,
     });
     patch.attachManagedBootstrapCutover({
+      replacementRuntimeId: "a".repeat(64),
       selectedMode: {
         kind: "startup-command",
         label: "managed bootstrap",
@@ -207,6 +208,7 @@ describe("Docker startup-command sandbox creation", () => {
       deps: makeDeps(),
     });
     patch.attachManagedBootstrapCutover({
+      replacementRuntimeId: "b".repeat(64),
       selectedMode: {
         kind: "startup-command",
         label: "managed bootstrap",
@@ -252,6 +254,7 @@ describe("Docker startup-command sandbox creation", () => {
       overrides: { onPatchFailureExit },
     });
     patch.attachManagedBootstrapCutover({
+      replacementRuntimeId: "c".repeat(64),
       selectedMode: {
         kind: "startup-command",
         label: "managed bootstrap",

@@ -72,6 +72,7 @@ import type {
 import * as sandboxCreatePlanMaterialization from "../sandbox-create-plan-materialization";
 import {
   pendingSandboxCreateIdentityForBoundary,
+  resolveLegacyCompatibilityFinalHandoffRuntime,
   sandboxCreateBoundaryFromPendingIdentity,
 } from "./identity-boundary";
 import {
@@ -371,17 +372,35 @@ export function persistRecoveredFinalHandoffAcknowledgement(input: {
 /** Persist the replacement commit fence before the handoff becomes irreversible. */
 export function persistExactFinalHandoffCommitStarted(input: {
   readonly checkpoint: PendingSandboxCreateIdentity;
+  readonly replacementRuntimeId: string | null;
   readonly persist: (
     started: PendingSandboxCreateIdentity,
     expected: PendingSandboxCreateIdentity,
   ) => void;
 }): PendingSandboxCreateIdentity {
+  if (input.replacementRuntimeId !== null && !/^[a-f0-9]{64}$/u.test(input.replacementRuntimeId)) {
+    throw new Error("Cannot persist a final handoff with an invalid replacement runtime ID.");
+  }
+  if (input.checkpoint.route === "compatibility" && input.replacementRuntimeId === null) {
+    throw new Error(
+      "Cannot begin a compatibility final handoff without an exact replacement runtime ID.",
+    );
+  }
   if (input.checkpoint.exactFinalHandoffCommitStarted === true) {
+    if (
+      input.replacementRuntimeId !== null &&
+      input.checkpoint.exactFinalHandoffRuntimeId !== input.replacementRuntimeId
+    ) {
+      throw new Error("Final handoff replacement runtime authority changed after commit started.");
+    }
     return input.checkpoint;
   }
   const started: PendingSandboxCreateIdentity = {
     ...input.checkpoint,
     exactFinalHandoffCommitStarted: true,
+    ...(input.replacementRuntimeId
+      ? { exactFinalHandoffRuntimeId: input.replacementRuntimeId }
+      : {}),
   };
   input.persist(started, input.checkpoint);
   return started;
@@ -409,9 +428,13 @@ export function createFinalHandoffCheckpointPersistence(input: {
         }),
       );
     },
-    persistFinalHandoffCommitStarted(): void {
+    persistFinalHandoffCommitStarted(replacementRuntimeId: string | null): void {
       update((checkpoint) =>
-        persistExactFinalHandoffCommitStarted({ checkpoint, persist: input.persist }),
+        persistExactFinalHandoffCommitStarted({
+          checkpoint,
+          replacementRuntimeId,
+          persist: input.persist,
+        }),
       );
     },
     persistResumedFinalHandoffAcknowledgement(): void {
@@ -455,11 +478,12 @@ export function allowsNotReadyCreatedSandboxReconciliation(input: {
   return input.managedBootstrapCreateFinished;
 }
 
-/** Begin, but do not acknowledge, recovery for a pre-receipt compatibility checkpoint. */
+/** Upgrade legacy compatibility recovery only from exact Docker runtime authority. */
 export function prepareResumedFinalHandoffCheckpoint(input: {
   readonly checkpoint: PendingSandboxCreateIdentity;
   readonly revalidateLegacyCompatibilityIdentity: () => void;
-  readonly persistFinalHandoffCommitStarted: () => void;
+  readonly resolveLegacyCompatibilityRuntimeId: () => string;
+  readonly persistFinalHandoffCommitStarted: (replacementRuntimeId: string) => void;
   readonly getCheckpoint: () => PendingSandboxCreateIdentity;
 }): PendingSandboxCreateIdentity {
   if (
@@ -467,7 +491,7 @@ export function prepareResumedFinalHandoffCheckpoint(input: {
     input.checkpoint.exactFinalHandoffCommitStarted !== true
   ) {
     input.revalidateLegacyCompatibilityIdentity();
-    input.persistFinalHandoffCommitStarted();
+    input.persistFinalHandoffCommitStarted(input.resolveLegacyCompatibilityRuntimeId());
   }
   return input.getCheckpoint();
 }
@@ -2701,13 +2725,13 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             getSandboxRecreateObservation,
             { allowNotReadyWithMatchingIdentity: true },
           ),
+        resolveLegacyCompatibilityRuntimeId: () =>
+          resolveLegacyCompatibilityFinalHandoffRuntime({
+            checkpoint,
+          }),
         persistFinalHandoffCommitStarted,
         getCheckpoint: requirePendingCreateIdentity,
       });
-      revalidateCreatedSandboxIdentity(
-        resumedCheckpoint.sandboxIdentityFingerprint,
-        `resuming sandbox creation for '${sandboxName}'`,
-      );
       revalidateCreatedSandboxIdentity(
         resumedCheckpoint.sandboxIdentityFingerprint,
         `resuming sandbox creation for '${sandboxName}'`,
@@ -2721,6 +2745,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         liveIdentityFingerprint: resumedCheckpoint.sandboxIdentityFingerprint,
         ...(resumedCheckpoint.exactFinalHandoffCommitStarted
           ? { finalHandoffCommitStarted: true as const }
+          : {}),
+        ...(resumedCheckpoint.exactFinalHandoffRuntimeId
+          ? { finalHandoffRuntimeId: resumedCheckpoint.exactFinalHandoffRuntimeId }
           : {}),
         ...(resumedCheckpoint.createAttemptNonce
           ? { createAttemptNonce: resumedCheckpoint.createAttemptNonce }

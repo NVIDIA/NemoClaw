@@ -1227,6 +1227,7 @@ describe("created sandbox completion actions", () => {
             ? {}
             : {
                 exactFinalHandoffCommitStarted: true as const,
+                exactFinalHandoffRuntimeId: "b".repeat(64),
                 exactFinalHandoffAcknowledged: true as const,
               }),
         },

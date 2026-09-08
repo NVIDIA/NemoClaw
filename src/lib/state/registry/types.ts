@@ -24,6 +24,8 @@ export interface PendingSandboxCreateIdentity {
   readonly route: "none" | "native" | "compatibility";
   /** The exact final handoff crossed its durable commit fence. */
   readonly exactFinalHandoffCommitStarted?: true;
+  /** Exact Docker replacement ID authorized before compatibility handoff commit. */
+  readonly exactFinalHandoffRuntimeId?: string;
   /** OpenShell acknowledged the exact replacement handoff for this identity. */
   readonly exactFinalHandoffAcknowledged?: true;
 }

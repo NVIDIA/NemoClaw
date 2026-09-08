@@ -220,6 +220,7 @@ export interface SandboxGpuCreateFlowInput {
     readonly liveIdentityFingerprint: string;
     readonly createAttemptNonce?: string;
     readonly finalHandoffCommitStarted?: true;
+    readonly finalHandoffRuntimeId?: string;
   };
   /** Reject every initial or fallback create attempt that carries a caller policy. */
   requirePolicylessCreate?: true;
@@ -277,7 +278,7 @@ export interface SandboxGpuCreateFlowInput {
   /** Re-read the exact pending create identity before each post-create effect. */
   revalidateVerifiedSandboxBeforeEffect?: (operation: string) => void;
   /** Persist the commit fence before the exact final handoff starts. */
-  persistFinalHandoffCommitStarted?: () => void;
+  persistFinalHandoffCommitStarted?: (replacementRuntimeId: string | null) => void;
   /** Persist acknowledgement after resume reconfirms exact identity and Ready. */
   persistResumedFinalHandoffAcknowledgement?: () => void;
 }
@@ -307,6 +308,12 @@ export interface SandboxGpuCreateFlowDeps {
   sleep: Sleep;
   openshellArgv(args: string[]): string[];
   verifyDirectSandboxGpu(sandboxName: string): SandboxGpuProofResult;
+  /** Test seam for the exact Docker runtime proof used only during handoff resume. */
+  verifyExactFinalHandoffRuntime?: (
+    sandboxName: string,
+    replacementRuntimeId: string,
+    requireRunning: boolean,
+  ) => boolean;
   printCreateFailureDiagnostics?: (
     sandboxName: string,
     options: { readonly backupPath?: string | null },

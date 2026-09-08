@@ -10,6 +10,7 @@ const KEYS = new Set([
   "lifecycleGeneration",
   "createAttemptNonce",
   "exactFinalHandoffCommitStarted",
+  "exactFinalHandoffRuntimeId",
   "exactFinalHandoffAcknowledged",
   "route",
   "sandboxIdentityFingerprint",
@@ -57,6 +58,14 @@ export function normalizePendingSandboxCreateIdentity(
       value.exactFinalHandoffAcknowledged !== true) ||
     (value.exactFinalHandoffCommitStarted !== undefined &&
       value.exactFinalHandoffCommitStarted !== true) ||
+    (value.exactFinalHandoffRuntimeId !== undefined &&
+      (typeof value.exactFinalHandoffRuntimeId !== "string" ||
+        !SHA256_DIGEST_PATTERN.test(value.exactFinalHandoffRuntimeId))) ||
+    (value.exactFinalHandoffRuntimeId !== undefined &&
+      value.exactFinalHandoffCommitStarted !== true) ||
+    (value.route === "compatibility" &&
+      value.exactFinalHandoffCommitStarted === true &&
+      value.exactFinalHandoffRuntimeId === undefined) ||
     (value.exactFinalHandoffAcknowledged === true &&
       value.exactFinalHandoffCommitStarted !== true) ||
     (value.route !== "none" && value.route !== "native" && value.route !== "compatibility")
@@ -77,6 +86,9 @@ export function normalizePendingSandboxCreateIdentity(
     route: value.route,
     ...(value.exactFinalHandoffCommitStarted === true
       ? { exactFinalHandoffCommitStarted: true as const }
+      : {}),
+    ...(typeof value.exactFinalHandoffRuntimeId === "string"
+      ? { exactFinalHandoffRuntimeId: value.exactFinalHandoffRuntimeId }
       : {}),
     ...(value.exactFinalHandoffAcknowledged === true
       ? { exactFinalHandoffAcknowledged: true as const }

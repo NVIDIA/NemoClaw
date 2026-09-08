@@ -68,11 +68,61 @@ import {
   createOnboardCreatedSandboxRegistrationWithManagedLifecycle,
   prepareResumedFinalHandoffCheckpoint,
 } from "./orchestration";
+import { resolveLegacyCompatibilityFinalHandoffRuntime } from "./identity-boundary";
 
 beforeEach(() => setupGpuFlowMocks(mocks));
 afterEach(resetGpuFlowMocks);
 
 describe("durable final-handoff publication", () => {
+  it("derives legacy recovery authority only from one identity-bound OpenShell runtime", () => {
+    const sandboxId = "legacy-openshell-sandbox-id";
+    const checkpoint: PendingSandboxCreateIdentity = {
+      schemaVersion: 1,
+      state: "verified-create",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      sandboxName: "e2e-gw-survivor",
+      lifecycleGeneration: "v0.0.55-upgrade-generation",
+      sandboxIdentityFingerprint: fingerprintSandboxRecreateValue(sandboxId),
+      route: "compatibility",
+    };
+
+    expect(
+      resolveLegacyCompatibilityFinalHandoffRuntime({
+        checkpoint,
+        observation: {
+          status: "observed",
+          malformedRows: 0,
+          rows: [
+            {
+              id: "b".repeat(64),
+              managedBy: "openshell",
+              workspace: "alpha",
+              sandboxId,
+            },
+          ],
+        },
+      }),
+    ).toBe("b".repeat(64));
+    expect(() =>
+      resolveLegacyCompatibilityFinalHandoffRuntime({
+        checkpoint,
+        observation: {
+          status: "observed",
+          malformedRows: 0,
+          rows: [
+            {
+              id: "b".repeat(64),
+              managedBy: "openshell",
+              workspace: "alpha",
+              sandboxId: "foreign-sandbox-id",
+            },
+          ],
+        },
+      }),
+    ).toThrow(/does not match its durable sandbox checkpoint/u);
+  });
+
   it("does not migrate a legacy compatibility checkpoint after identity drift (#10560)", () => {
     const checkpoint: PendingSandboxCreateIdentity = {
       schemaVersion: 1,
@@ -84,24 +134,52 @@ describe("durable final-handoff publication", () => {
       sandboxIdentityFingerprint: "a".repeat(64),
       route: "compatibility",
     };
-    const persistFinalHandoffCommitStarted = vi.fn();
-
     expect(() =>
       prepareResumedFinalHandoffCheckpoint({
         checkpoint,
         revalidateLegacyCompatibilityIdentity: () => {
           throw new Error("live identity changed before registry publication");
         },
-        persistFinalHandoffCommitStarted,
+        resolveLegacyCompatibilityRuntimeId: vi.fn(),
+        persistFinalHandoffCommitStarted: vi.fn(),
         getCheckpoint: () => checkpoint,
       }),
     ).toThrow(/live identity changed/u);
-    expect(persistFinalHandoffCommitStarted).not.toHaveBeenCalled();
     expect(checkpoint).not.toHaveProperty("exactFinalHandoffCommitStarted");
     expect(checkpoint).not.toHaveProperty("exactFinalHandoffAcknowledged");
   });
 
-  it("migrates a v0.0.55-shaped checkpoint and publishes only after acknowledgement (#10560)", async () => {
+  it("refuses to infer runtime authority for a stable legacy compatibility checkpoint (#10560)", () => {
+    const checkpoint: PendingSandboxCreateIdentity = {
+      schemaVersion: 1,
+      state: "verified-create",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      sandboxName: "e2e-gw-survivor",
+      lifecycleGeneration: "v0.0.55-upgrade-generation",
+      sandboxIdentityFingerprint: "a".repeat(64),
+      route: "compatibility",
+    };
+    const revalidateLegacyCompatibilityIdentity = vi.fn();
+    const persistFinalHandoffCommitStarted = vi.fn();
+
+    expect(() =>
+      prepareResumedFinalHandoffCheckpoint({
+        checkpoint,
+        revalidateLegacyCompatibilityIdentity,
+        resolveLegacyCompatibilityRuntimeId: () => {
+          throw new Error("could not prove one exact Docker replacement runtime");
+        },
+        persistFinalHandoffCommitStarted,
+        getCheckpoint: () => checkpoint,
+      }),
+    ).toThrow(/could not prove one exact Docker replacement runtime/u);
+    expect(revalidateLegacyCompatibilityIdentity).toHaveBeenCalledOnce();
+    expect(persistFinalHandoffCommitStarted).not.toHaveBeenCalled();
+    expect(checkpoint).not.toHaveProperty("exactFinalHandoffCommitStarted");
+  });
+
+  it("publishes a resumed compatibility checkpoint only after exact runtime acknowledgement (#10560)", async () => {
     const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-final-handoff-"));
     vi.stubEnv("HOME", tempHome);
     vi.resetModules();
@@ -167,6 +245,8 @@ describe("durable final-handoff publication", () => {
       expect(registry.getSandbox(authority.sandboxName)?.pendingCreateIdentity).toEqual(checkpoint);
       expect(checkpoint).not.toHaveProperty("exactFinalHandoffCommitStarted");
       expect(checkpoint).not.toHaveProperty("exactFinalHandoffAcknowledged");
+
+      const replacementRuntimeId = "b".repeat(64);
 
       const lifecycle = createCreatedSandboxLifecycle(
         {
@@ -254,6 +334,7 @@ describe("durable final-handoff publication", () => {
             { allowNotReadyWithMatchingIdentity: true },
           );
         },
+        resolveLegacyCompatibilityRuntimeId: () => replacementRuntimeId,
         persistFinalHandoffCommitStarted: checkpointPersistence.persistFinalHandoffCommitStarted,
         getCheckpoint: () => checkpoint,
       });
@@ -267,6 +348,7 @@ describe("durable final-handoff publication", () => {
         sandboxIdentityFingerprint: liveIdentityFingerprint,
         route: "compatibility",
         exactFinalHandoffCommitStarted: true,
+        exactFinalHandoffRuntimeId: replacementRuntimeId,
       });
       expect(resumedCheckpoint).not.toHaveProperty("exactFinalHandoffAcknowledged");
 
@@ -288,6 +370,7 @@ describe("durable final-handoff publication", () => {
         liveIdentityFingerprint: resumedCheckpoint.sandboxIdentityFingerprint,
         createAttemptNonce: "a".repeat(62),
         finalHandoffCommitStarted: true,
+        finalHandoffRuntimeId: replacementRuntimeId,
       };
       flowInput.verifyCreatedSandboxBeforeEffects = vi.fn();
       flowInput.revalidateVerifiedSandboxBeforeEffect = vi.fn();

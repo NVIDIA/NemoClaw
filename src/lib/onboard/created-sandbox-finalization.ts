@@ -142,7 +142,7 @@ export interface CreatedSandboxCompletionOptions {
     readonly persistFinalHandoffAcknowledgement: (
       runtimePatch: SandboxGpuCreateFlowResult["runtimePatch"],
     ) => void;
-    readonly persistFinalHandoffCommitStarted: () => void;
+    readonly persistFinalHandoffCommitStarted: (replacementRuntimeId: string | null) => void;
   };
   readonly dashboard: {
     readonly chatUiUrl: string;
@@ -548,6 +548,7 @@ function assertVerifiedCreateMatchesCreateBoundary(
 ): void {
   const {
     exactFinalHandoffCommitStarted: _commitStarted,
+    exactFinalHandoffRuntimeId: _runtimeId,
     exactFinalHandoffAcknowledged: _acknowledged,
     ...identity
   } = verifiedCreate.checkpoint;
@@ -629,7 +630,7 @@ type OnboardPreparedPolicy = Pick<
   readonly persistFinalHandoffAcknowledgement: (
     runtimePatch: SandboxGpuCreateFlowResult["runtimePatch"],
   ) => void;
-  readonly persistFinalHandoffCommitStarted: () => void;
+  readonly persistFinalHandoffCommitStarted: (replacementRuntimeId: string | null) => void;
 };
 
 type CurrentRestoreSnapshotDependencies = {

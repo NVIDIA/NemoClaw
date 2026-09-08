@@ -92,7 +92,9 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     expect(waitForSupervisor).toHaveBeenCalledTimes(1);
     expect(finalizeBackup).not.toHaveBeenCalled();
 
-    await patch.commitAfterReady();
+    const beforeFinalHandoff = vi.fn();
+    await patch.commitAfterReady({ beforeFinalHandoff });
+    expect(beforeFinalHandoff).toHaveBeenCalledExactlyOnceWith(result.newContainerId);
     expect(patch.allowsNotReadyLifecycleRevalidation()).toBe(true);
     expect(finalizeBackup).toHaveBeenCalledTimes(1);
     expect(finalizeBackup).toHaveBeenCalledWith(

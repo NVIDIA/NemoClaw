@@ -105,7 +105,11 @@ describe("managed bootstrap sandbox registration", () => {
     const persist = vi.fn((acknowledged: PendingSandboxCreateIdentity) => {
       checkpoint = acknowledged;
     });
-    checkpoint = persistExactFinalHandoffCommitStarted({ checkpoint, persist });
+    checkpoint = persistExactFinalHandoffCommitStarted({
+      checkpoint,
+      replacementRuntimeId: "b".repeat(64),
+      persist,
+    });
     checkpoint = persistExactFinalHandoffAcknowledgement({
       runtimePatch: { allowsNotReadyLifecycleRevalidation: () => true } as never,
       checkpoint,
@@ -121,6 +125,7 @@ describe("managed bootstrap sandbox registration", () => {
     expect(persist).toHaveBeenCalledTimes(2);
     expect(persist.mock.calls[0]?.[0]).toMatchObject({
       exactFinalHandoffCommitStarted: true,
+      exactFinalHandoffRuntimeId: "b".repeat(64),
     });
     expect(persist.mock.calls[1]?.[0]).toMatchObject({
       exactFinalHandoffCommitStarted: true,
@@ -140,6 +145,7 @@ describe("managed bootstrap sandbox registration", () => {
       sandboxIdentityFingerprint: durableIdentity,
       route: "native",
       exactFinalHandoffCommitStarted: true,
+      exactFinalHandoffRuntimeId: "b".repeat(64),
       exactFinalHandoffAcknowledged: true,
     };
 

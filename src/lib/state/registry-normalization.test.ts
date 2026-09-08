@@ -387,6 +387,7 @@ describe("sandbox registry normalization", () => {
       sandboxIdentityFingerprint: "a".repeat(64),
       route: "compatibility" as const,
       exactFinalHandoffCommitStarted: true as const,
+      exactFinalHandoffRuntimeId: "b".repeat(64),
       exactFinalHandoffAcknowledged: true as const,
       policyHash: "legacy",
     };
@@ -410,6 +411,7 @@ describe("sandbox registry normalization", () => {
       sandboxIdentityFingerprint: "a".repeat(64),
       route: "compatibility",
       exactFinalHandoffCommitStarted: true,
+      exactFinalHandoffRuntimeId: "b".repeat(64),
       exactFinalHandoffAcknowledged: true,
     });
   });
@@ -418,6 +420,15 @@ describe("sandbox registry normalization", () => {
     ["an acknowledgement without a commit fence", { exactFinalHandoffAcknowledged: true }],
     ["a false commit fence", { exactFinalHandoffCommitStarted: false }],
     ["a false acknowledgement", { exactFinalHandoffAcknowledged: false }],
+    [
+      "a compatibility fence without exact runtime authority",
+      { exactFinalHandoffCommitStarted: true },
+    ],
+    ["runtime authority without a commit fence", { exactFinalHandoffRuntimeId: "b".repeat(64) }],
+    [
+      "malformed runtime authority",
+      { exactFinalHandoffCommitStarted: true, exactFinalHandoffRuntimeId: "short" },
+    ],
   ])("rejects %s in a pending create checkpoint", async (_case, receipt) => {
     const registry = await loadRegistryWith({
       alpha: {

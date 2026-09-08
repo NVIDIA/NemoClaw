@@ -242,6 +242,7 @@ describe("created sandbox identity gate", () => {
       liveIdentityFingerprint: fingerprintSandboxRecreateValue(sandboxId),
       createAttemptNonce: "a".repeat(62),
       finalHandoffCommitStarted: true,
+      finalHandoffRuntimeId: "b".repeat(64),
     };
     input.verifyCreatedSandboxBeforeEffects = vi.fn();
     input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
@@ -273,7 +274,63 @@ describe("created sandbox identity gate", () => {
     });
 
     expect(input.persistResumedFinalHandoffAcknowledgement).toHaveBeenCalledOnce();
+    expect(deps.verifyExactFinalHandoffRuntime).toHaveBeenNthCalledWith(
+      1,
+      "alpha",
+      "b".repeat(64),
+      false,
+    );
+    expect(deps.verifyExactFinalHandoffRuntime).toHaveBeenNthCalledWith(
+      2,
+      "alpha",
+      "b".repeat(64),
+      true,
+    );
     expect(patch.ensureApplied).not.toHaveBeenCalled();
+    expect(mocks.streamSandboxCreate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      name: "before restart",
+      verify: (_sandboxName: string, _runtimeId: string, requireRunning: boolean) => requireRunning,
+      expected: "sole Docker runtime before restart",
+      startCount: 0,
+    },
+    {
+      name: "after Ready",
+      verify: (_sandboxName: string, _runtimeId: string, requireRunning: boolean) =>
+        !requireRunning,
+      expected: "sole running Docker runtime",
+      startCount: 1,
+    },
+  ])("does not acknowledge when exact runtime proof fails $name (#10560)", async (testCase) => {
+    const sandboxId = "alpha-sandbox-id";
+    const gatewayName = "nemoclaw-18080";
+    const input = noGpuInput();
+    input.gatewayName = gatewayName;
+    input.resumeVerifiedCreate = {
+      route: "compatibility",
+      liveIdentityFingerprint: fingerprintSandboxRecreateValue(sandboxId),
+      createAttemptNonce: "a".repeat(62),
+      finalHandoffCommitStarted: true,
+      finalHandoffRuntimeId: "b".repeat(64),
+    };
+    input.verifyCreatedSandboxBeforeEffects = vi.fn();
+    input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
+    input.persistResumedFinalHandoffAcknowledgement = vi.fn();
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(createGpuPatchFixture());
+    const deps = createGpuFlowDeps();
+    vi.mocked(deps.verifyExactFinalHandoffRuntime!).mockImplementation(testCase.verify);
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(testCase.expected);
+
+    expect(input.persistResumedFinalHandoffAcknowledgement).not.toHaveBeenCalled();
+    expect(
+      vi
+        .mocked(deps.runOpenshell)
+        .mock.calls.filter(([args]) => args[0] === "sandbox" && args[1] === "start"),
+    ).toHaveLength(testCase.startCount);
     expect(mocks.streamSandboxCreate).not.toHaveBeenCalled();
   });
 
@@ -306,6 +363,7 @@ describe("created sandbox identity gate", () => {
         liveIdentityFingerprint: fingerprintSandboxRecreateValue(sandboxId),
         createAttemptNonce: "a".repeat(62),
         finalHandoffCommitStarted: true,
+        finalHandoffRuntimeId: "b".repeat(64),
       };
       input.verifyCreatedSandboxBeforeEffects = vi.fn();
       input.revalidateVerifiedSandboxBeforeEffect = vi.fn();

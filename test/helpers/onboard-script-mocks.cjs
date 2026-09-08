@@ -902,6 +902,11 @@ function installVerifiedSandboxCreateFixture(registry, options) {
     const recreate = require(
       path.resolve(__dirname, "../../src/lib/onboard/sandbox-recreate-transaction.ts"),
     );
+    const runner = require(path.resolve(__dirname, "../../src/lib/runner.ts"));
+    if (runner.run.__nemoclawDockerLifecycleState) {
+      runner.run.__nemoclawDockerLifecycleState.sandboxId = sandboxId;
+      runner.run.__nemoclawDockerLifecycleState.legacyRecoverySandboxId = sandboxId;
+    }
     sourceEntry = publishedEntry || sourceEntry;
     publishedEntry = null;
     const session = onboardSession.createSession({
@@ -1221,7 +1226,17 @@ function mockDockerSandboxLifecycleReleaseFromRunner() {
   };
   const captureOutput = (normalized) => {
     if (
-      state.finalCommitReleased &&
+      normalized.startsWith("docker ps -a --no-trunc ") &&
+      normalized.includes("label=openshell.ai/sandbox-name=my-assistant") &&
+      normalized.includes("openshell.ai/sandbox-id")
+    ) {
+      const row = `${ONBOARD_SANDBOX_NEW_CONTAINER_ID}\topenshell\talpha\t${state.sandboxId || ONBOARD_READY_SANDBOX_ID}\n`;
+      return state.finalCommitReleased || state.legacyRecoverySandboxId
+        ? row
+        : `${ONBOARD_SANDBOX_OLD_CONTAINER_ID}\topenshell\talpha\t${state.sandboxId || ONBOARD_READY_SANDBOX_ID}\n${row}`;
+    }
+    if (
+      (state.finalCommitReleased || state.legacyRecoverySandboxId) &&
       normalized.startsWith("docker ps -a --no-trunc ") &&
       normalized.includes("label=openshell.ai/sandbox-name=my-assistant") &&
       normalized.endsWith("--format {{.ID}}")
@@ -1229,14 +1244,14 @@ function mockDockerSandboxLifecycleReleaseFromRunner() {
       return `${ONBOARD_SANDBOX_NEW_CONTAINER_ID}\n`;
     }
     if (
-      state.finalCommitReleased &&
+      (state.finalCommitReleased || state.legacyRecoverySandboxId) &&
       normalized ===
         `docker inspect --type container --format {{ index .Config.Labels "openshell.ai/sandbox-namespace" }} ${ONBOARD_SANDBOX_NEW_CONTAINER_ID}`
     ) {
       return "test-gateway\n";
     }
     if (
-      state.finalCommitReleased &&
+      (state.finalCommitReleased || state.legacyRecoverySandboxId) &&
       normalized ===
         `docker inspect --type container --format {{json .State.Running}} ${ONBOARD_SANDBOX_NEW_CONTAINER_ID}`
     ) {
