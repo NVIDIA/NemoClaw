@@ -73,6 +73,37 @@ describe("platform evidence workflow", () => {
     expect(steps[installIndex]?.if).toContain("matrix.shard == 1");
   });
 
+  it.each(["docker", "gnu-tar", "iproute2mac", "podman"])(
+    "installs the %s host tool resolved by macOS platform fixtures",
+    (formula) => {
+      const install = step("macos-vitest", "Install macOS test dependencies").run ?? "";
+      expect(install).toContain(formula);
+    },
+  );
+
+  it("puts GNU tar first on the macOS fixture path", () => {
+    const install = step("macos-vitest", "Install macOS test dependencies").run ?? "";
+    expect(install).toContain('"$(brew --prefix gnu-tar)/libexec/gnubin"');
+  });
+
+  it("starts Docker and qualifies both WSL container clients before the suite", () => {
+    const steps = job("wsl-vitest").steps ?? [];
+    const install = step("wsl-vitest", "Install Ubuntu dependencies").run ?? "";
+    const runtime = step("wsl-vitest", "Start the WSL container runtime").run ?? "";
+    const runtimeIndex = steps.findIndex(
+      (entry) => entry.name === "Start the WSL container runtime",
+    );
+    const suiteIndex = steps.findIndex((entry) => entry.name === "Run full Vitest suite in WSL");
+    expect(install).toContain("'docker.io'");
+    expect(install).toContain("'podman'");
+    expect(runtime).toContain("service docker start");
+    expect(runtime).toContain("docker info");
+    expect(runtime).toContain("podman --version");
+    expect(runtime).toContain("ip -Version");
+    expect(runtimeIndex).toBeGreaterThanOrEqual(0);
+    expect(suiteIndex).toBeGreaterThan(runtimeIndex);
+  });
+
   it("scopes WSL live-E2E settings to the credentialed live step", () => {
     const wsl = job("wsl-vitest");
     const live = step("wsl-vitest", "Run WSL live E2E");

@@ -8,6 +8,7 @@ import path from "node:path";
 
 import { isPortableExperimentalProfile, PORTABLE_HOST_GATEWAY_IP } from "./docker-driver-platform";
 import { resolveConfiguredRuntimeProvider } from "./runtime-provider/selection";
+import type { RuntimeProviderGatewayHostRuntime } from "./runtime-provider/contract";
 
 // See docs/security/gateway-authentication-controls.mdx for the public compatibility boundary.
 export const DOCKER_DRIVER_GATEWAY_LOCAL_TLS_DIR_NAME = "tls";
@@ -29,6 +30,7 @@ export interface EnsureDockerDriverGatewayLocalTlsBundleOptions {
   env?: NodeJS.ProcessEnv;
   gatewayBin: string;
   platform?: NodeJS.Platform;
+  gatewayHostRuntime?: RuntimeProviderGatewayHostRuntime;
   spawnSyncImpl?: typeof spawnSync;
   stateDir: string;
 }
@@ -192,6 +194,7 @@ function normalizeDockerDriverGatewayLocalTlsBundlePermissions(
 export function ensureDockerDriverGatewayLocalTlsBundle({
   env = process.env,
   gatewayBin,
+  gatewayHostRuntime,
   platform = process.platform,
   spawnSyncImpl = spawnSync,
   stateDir,
@@ -205,10 +208,13 @@ export function ensureDockerDriverGatewayLocalTlsBundle({
         if (!provider.gateway.supported) {
           throw new Error("The selected runtime provider does not support a host-managed gateway.");
         }
-        return provider.gateway.prepareHostRuntime({
-          environment: env,
-          platform,
-        }).requiredServerIpSans;
+        return (
+          gatewayHostRuntime ??
+          provider.gateway.prepareHostRuntime({
+            environment: env,
+            platform,
+          })
+        ).requiredServerIpSans;
       })();
   const requiredServerIpSans = [...REQUIRED_SERVER_IP_SANS, ...requiredProviderIpSans];
   fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });

@@ -120,11 +120,12 @@ jobs:
       - name: Install macOS test dependencies
         run: |
           set -euo pipefail
-          brew install bash coreutils fd gawk ripgrep
+          brew install bash coreutils docker fd gawk gnu-tar iproute2mac podman ripgrep
           printf '%s\n' \
             "$(brew --prefix bash)/bin" \
             "$(brew --prefix coreutils)/libexec/gnubin" \
             "$(brew --prefix gawk)/libexec/gnubin" \
+            "$(brew --prefix gnu-tar)/libexec/gnubin" \
             >>"$GITHUB_PATH"
           python -m pip install \
             --only-binary=:all: \
@@ -291,10 +292,25 @@ jobs:
           . "$env:TRUSTED_WSL_HELPER"
           $packages = @(
             'bash', 'ca-certificates', 'curl', 'git', 'jq', 'lsb-release', 'make',
-            'docker.io', 'iproute2', 'procps', 'python3', 'python3-pip', 'python3-venv',
+            'docker.io', 'iproute2', 'podman', 'procps', 'python3', 'python3-pip', 'python3-venv',
             'ripgrep', 'rsync', 'tar', 'unzip', 'xz-utils'
           )
           Install-WslUbuntuDependencies -Distro $env:WSL_DISTRO -Packages $packages -TestUser $env:WSL_TEST_USER
+
+      - name: Start the WSL container runtime
+        shell: powershell
+        run: |
+          . "$env:TRUSTED_WSL_HELPER"
+          $testUser = ConvertTo-BashLiteral -Value $env:WSL_TEST_USER
+          $script = @"
+          set -euo pipefail
+          usermod -aG docker $testUser
+          service docker start
+          docker info
+          podman --version
+          ip -Version
+          "@
+          Invoke-WslScript -Distro $env:WSL_DISTRO -User root -Script $script
 
       - name: Install Node.js 22 in WSL
         shell: powershell

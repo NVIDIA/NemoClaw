@@ -13,6 +13,7 @@ import {
   getDockerDriverGatewayLocalTlsBundle,
 } from "./docker-driver-gateway-local-tls";
 import { PORTABLE_HOST_GATEWAY_IP } from "./experimental/portable-profile";
+import { prepareNativePodmanGatewayHostRuntime } from "./runtime-provider/podman-runtime-surfaces";
 
 const TEST_CERT_VALID_AT = new Date("2026-06-27T00:00:00.000Z");
 const TEST_CERT_SKEW_BOUNDARY_NOT_YET_VALID_AT = new Date("2026-06-26T20:38:47.000Z");
@@ -272,6 +273,11 @@ describe("docker-driver-gateway-local-tls", () => {
         ensureDockerDriverGatewayLocalTlsBundle({
           env: { NEMOCLAW_GATEWAY_RUNTIME: "podman" },
           gatewayBin: "/opt/openshell/openshell-gateway",
+          gatewayHostRuntime: prepareNativePodmanGatewayHostRuntime({
+            environment: {},
+            platform: "linux",
+            socketPath: "/run/user/1001/podman/podman.sock",
+          }),
           platform: "linux",
           stateDir,
           spawnSyncImpl: ((_command: string, args: string[]) => {

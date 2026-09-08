@@ -79,22 +79,36 @@ describe("config export command", () => {
     expect(mocks.observeLiveExportSource).not.toHaveBeenCalled();
   });
 
-  it("composes live observation through file publication and JSON result (#10938)", async () => {
-    await expect(
-      ConfigExportCommand.run(["alpha", "--output", "/tmp/alpha.yaml", "--json"], process.cwd()),
-    ).resolves.toMatchObject({
-      status: "succeeded",
-      sourceSandbox: "alpha",
-      outputPath: "/tmp/alpha.yaml",
-      documentDigest: "sha256:document",
-      specDigest: "sha256:spec",
-    });
-    expect(mocks.publishExportFile).toHaveBeenCalledWith(
-      "/tmp/alpha.yaml",
-      "kind: NemoClawConfig\n",
-      false,
-    );
-  });
+  it.runIf(process.platform === "linux")(
+    "composes live observation through file publication and JSON result (#10938)",
+    async () => {
+      await expect(
+        ConfigExportCommand.run(["alpha", "--output", "/tmp/alpha.yaml", "--json"], process.cwd()),
+      ).resolves.toMatchObject({
+        status: "succeeded",
+        sourceSandbox: "alpha",
+        outputPath: "/tmp/alpha.yaml",
+        documentDigest: "sha256:document",
+        specDigest: "sha256:spec",
+      });
+      expect(mocks.publishExportFile).toHaveBeenCalledWith(
+        "/tmp/alpha.yaml",
+        "kind: NemoClawConfig\n",
+        false,
+      );
+    },
+  );
+
+  it.runIf(process.platform !== "linux")(
+    "rejects file publication before reading source state (#10938)",
+    async () => {
+      await expect(
+        ConfigExportCommand.run(["alpha", "--output", "/tmp/alpha.yaml", "--json"], process.cwd()),
+      ).resolves.toBeUndefined();
+      expect(mocks.observeLiveExportSource).not.toHaveBeenCalled();
+      expect(mocks.publishExportFile).not.toHaveBeenCalled();
+    },
+  );
 
   it("declares the required output and safe replacement flags (#10938)", () => {
     expect(ConfigExportCommand.flags).toMatchObject({
