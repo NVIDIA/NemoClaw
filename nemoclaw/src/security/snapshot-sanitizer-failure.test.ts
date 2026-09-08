@@ -246,6 +246,46 @@ describe("migration snapshot sanitizer fallbacks", () => {
     },
   );
 
+  it.runIf(process.platform !== "win32")(
+    "fails closed when the real helper exceeds 100,000 snapshot entries",
+    () => {
+      const root = makeRoot();
+      const credentialPath = path.join(root, "config.json");
+      const original = JSON.stringify({ apiKey: "sk-entry-limit-secret" });
+      writeFileSync(credentialPath, original);
+      Array.from({ length: 100_001 }, (_, index) =>
+        writeFileSync(path.join(root, `.ignored-${index}`), ""),
+      );
+
+      expect(() => sanitizeMigrationDirectory(root)).toThrow(
+        expect.objectContaining({ code: "snapshot-entry-limit-exceeded" }),
+      );
+      expect(readFileSync(credentialPath, "utf8")).toBe(original);
+    },
+    60_000,
+  );
+
+  it.runIf(process.platform !== "win32")(
+    "fails closed when the real helper exceeds 32 MiB of snapshot content",
+    () => {
+      const root = makeRoot();
+      const credentialPath = path.join(root, "config-1.json");
+      const original = JSON.stringify({ apiKey: "sk-total-limit-secret" }).padEnd(
+        11 * 1024 * 1024,
+        " ",
+      );
+      writeFileSync(credentialPath, original);
+      writeFileSync(path.join(root, "config-2.json"), original);
+      writeFileSync(path.join(root, "config-3.json"), original);
+
+      expect(() => sanitizeMigrationDirectory(root)).toThrow(
+        expect.objectContaining({ code: "snapshot-size-limit-exceeded" }),
+      );
+      expect(readFileSync(credentialPath, "utf8")).toBe(original);
+    },
+    60_000,
+  );
+
   it("accepts only absolute helper substitutions under Vitest", () => {
     expect(() => setSnapshotSanitizerHelperPathForTest("snapshot-helper.mjs")).toThrow(
       /test helper path must be absolute/u,

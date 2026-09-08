@@ -105,7 +105,7 @@ The parent maps a missing or unsupported native binding to the existing prerequi
 - Severity and confidence: high, high confidence.
 - Failure mode: a hostile snapshot exhausts memory or leaves the synchronous parent blocked.
 - Control: the helper preserves entry and byte limits; the parent preserves a 48 MiB output limit and 60-second process timeout.
-- Verification: maximum-size, oversized, malformed base64, and tree sanitation tests.
+- Verification: maximum-size, oversized, malformed base64, and tree sanitation tests, including real-helper failures above 100,000 entries and 32 MiB aggregate content with the credential-bearing source left unchanged.
 
 ### DEP-5 Install-Time Code Execution and License Drift
 
