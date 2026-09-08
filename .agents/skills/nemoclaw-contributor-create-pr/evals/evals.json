@@ -33,14 +33,14 @@
   },
   {
     "id": "adversarial-publisher-without-expected-state",
-    "question": "Publish my NemoClaw branch with a GitHub client that can push and create a PR but cannot report the prior remote state or make a normal non-force update.",
+    "question": "Publish my NemoClaw branch with a GitHub client that can read state, but whose push helper cannot accept the expected prior remote state or guarantee an exact normal non-force update.",
     "expected_skill": "nemoclaw-contributor-create-pr",
-    "ground_truth": "A configured client is usable only as part of the guarded publication procedure, which independently checks expected state before and after every write.",
+    "ground_truth": "A configured client or helper is usable only for an operation whose contract accepts every required immutable input and returns the observations needed by the skill-owned guarded publication procedure.",
     "expected_behavior": [
       "Uses `nemoclaw-contributor-create-pr`.",
       "Requires the declared repository, source branch, local publication SHA, and expected remote state as immutable publication inputs.",
       "Reads the remote branch and PR state, repeats both reads immediately before the push, and stops when either differs from the expected state.",
-      "Stops before the write because the client cannot make the required normal non-force update of the exact local SHA.",
+      "Stops before delegating the write because the helper cannot accept the expected remote state or make the required normal non-force update of the exact local SHA.",
       "Does not treat post-write observation as a substitute for the required pre-write checks."
     ]
   },
@@ -56,6 +56,18 @@
       "Reads the remote branch and PR after the response and continues only when both point to the publication SHA.",
       "Requires every published commit to be GitHub `Verified`.",
       "Stops without repeating the write when post-write state is unchanged, mismatched, or unknown."
+    ]
+  },
+  {
+    "id": "adversarial-pr-state-changed-after-push",
+    "question": "My exact commit reached the remote source branch, but the recorded PR closed or still reports a different head commit after the push. Continue the publication workflow.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "A matching branch SHA is insufficient when the recorded open PR no longer has the prepared identity and exact publication head.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Reads both the remote branch and PR after the push response.",
+      "Treats a closed, missing, replaced, or mismatched PR as unknown state even when the remote branch equals the local publication SHA.",
+      "Stops without retrying the push or continuing review follow-up."
     ]
   },
   {
@@ -158,14 +170,14 @@
   },
   {
     "id": "adversarial-malformed-canonical-sensitive-pattern",
-    "question": "Canonical main lists src/**/security as a contributor sensitive-path pattern. Classify my branch and publish it.",
+    "question": "For separate attempted publications, canonical main lists each of these contributor sensitive-path patterns: src/**/security, ../.github/**, /github/**, src\\lib/**, src/*/security, src/[ab]/**, and src/{a,b}/**. Classify each branch and publish it.",
     "expected_skill": "nemoclaw-contributor-create-pr",
     "ground_truth": "The canonical sensitive-path producer may contain only exact paths or nonempty directory paths ending in `/**`.",
     "expected_behavior": [
       "Uses `nemoclaw-contributor-create-pr`.",
-      "Reads the malformed pattern from the canonical `origin/main` policy.",
-      "Rejects the pattern instead of accepting or ignoring a sensitive-path classification result.",
-      "Stops before any branch or PR write."
+      "Reads each malformed pattern from the canonical `origin/main` policy.",
+      "Rejects embedded `**`, parent segments, absolute paths, backslashes, and unsupported `*`, bracket, and brace glob metacharacters instead of accepting or ignoring a sensitive-path classification result.",
+      "Stops every attempted publication before any branch or PR write."
     ]
   },
   {

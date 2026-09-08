@@ -43,7 +43,7 @@ Normal `pre-commit`, `commit-msg`, and `pre-push` hooks provide early feedback, 
 
 Select review evidence for the publication state before every agent-managed push:
 
-- For an initial publication, use the implementation handoff's self-review and any other available pre-publication review evidence. Do not query PR state or follow the open-PR workflow because the PR does not exist.
+- For an initial publication, use the implementation handoff's self-review and any other available pre-publication review evidence. Perform the guarded publication's read-only check that no open PR uses the source branch, but do not follow the open-PR review workflow because the PR does not exist.
 - Before updating an open PR:
 
   1. Follow [Stabilize](../_shared/pr-follow-up.md#stabilize-the-candidate), [Collect](../_shared/pr-follow-up.md#collect), and [Decide](../_shared/pr-follow-up.md#decide) for the recorded remote `headRefOid`.
@@ -91,7 +91,10 @@ Stop if the declaration is missing, any commit is unverified, or compliant histo
 ### Guarded publication
 
 Use a configured GitHub method allowed by the access hard stop. This skill owns the publication
-procedure. A harness helper may assist, but verify every required input and result independently.
+procedure. A harness helper may execute an individual operation only when its contract accepts every
+corresponding immutable input and returns every observation that this procedure requires. Do not use
+a helper that lacks the expected remote state as an input or cannot make the exact normal non-force
+update. Verify every required input and result independently.
 
 Provide these immutable inputs before a branch publication:
 
@@ -109,11 +112,15 @@ Apply these steps before every branch publication:
    state.
 4. Push only the local publication SHA to the declared branch. Use a normal non-force update. A
    concurrent additive branch update makes this push fail instead of replacing that update.
-5. Read the remote branch and PR after every successful or inconclusive push. Classify the result as
-   the expected commit, unchanged prior state, or unknown state.
-6. Continue only when the expected commit exists. When the prior state is unchanged, stop, report the
-   observed branch and PR SHAs, and do not retry the push in this invocation. Stop without retrying
-   from an unknown state.
+5. Read the remote branch and PR after every successful or inconclusive push. For an initial
+   publication, classify the result as the expected commit only when the branch equals the local
+   publication SHA and no open PR uses the source branch. For an open-PR update, require the same open
+   PR identity and source branch, and require both its `headRefOid` and the remote branch to equal the
+   local publication SHA. Classify an unchanged prior branch and PR state separately. Treat every
+   other combination, including a missing, closed, replaced, or mismatched PR, as unknown.
+6. Continue only from the expected-commit classification. From unchanged prior state, stop, report
+   the observed branch and PR SHAs, and do not retry the push in this invocation. Stop without
+   retrying from an unknown state.
 7. Read GitHub verification for every published commit. Continue only when every commit is
    `Verified`.
 
