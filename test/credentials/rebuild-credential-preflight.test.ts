@@ -216,7 +216,11 @@ if (a[0] === "gateway" && a[1] === "select") process.exit(0);
 if (a[0] === "inference" && a[1] === "get") { process.stdout.write("Gateway inference:\\n  Provider: ${provider}\\n  Model: meta/llama-3.3-70b-instruct\\n"); process.exit(0); }
 if (a[0] === "inference" && a[1] === "set") process.exit(0);
 if (a[0] === "provider" && a[1] === "get") {
-  if (!${providerRegistered ? "true" : "false"}) process.exit(1);
+  if (!${providerRegistered ? "true" : "false"}) {
+    process.stderr.write("Error: provider '${provider}' not found\\n");
+    process.exit(1);
+  }
+  process.stdout.write("Name: ${provider}\\nType: openai\\nCredential keys: ${credentialEnv}\\nConfig keys: OPENAI_BASE_URL\\n");
   process.exit(0);
 }
 if (a[0] === "provider") process.exit(0);

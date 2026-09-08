@@ -5,6 +5,7 @@ import { randomBytes } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 
 import type { OpenShellProviderAdapter } from "../../../adapters/openshell/provider-adapter";
+import { isValidOpenShellProviderCredentialName } from "../../../adapters/openshell/provider-adapter-cli";
 import { endpointlessProviderProfilePath } from "../../../adapters/openshell/provider-profile";
 import {
   createManagedProviderAdapter,
@@ -36,7 +37,6 @@ const PROVIDER_PROBE_DIAGNOSTIC_LIMIT = 64 * 1024;
 export const MANAGED_CLONE_PROVIDER_CREATE_TIMEOUT_MS = 30_000;
 const PROVIDER_PROBE_TIMEOUT_MS = 5_000;
 const PROVIDER_TYPE_PATTERN = /^[A-Za-z0-9._:-]{1,64}$/u;
-const PROVIDER_ENV_KEY_PATTERN = /^[A-Z_][A-Z0-9_]{0,127}$/u;
 const TRANSACTION_ID_PATTERN = /^[a-f0-9]{32}$/u;
 
 export type ManagedCloneProviderCommandResult = {
@@ -157,6 +157,11 @@ type ProviderInspection =
   | { readonly kind: "exact" }
   | { readonly kind: "missing" };
 
+/**
+ * TODO(#9806, Slice 8): retire this raw-runner bridge when cleanup inspection and deletion use
+ * the typed provider adapter. Exit when both cleanup call sites below use typed get/delete
+ * operations and this helper has no callers.
+ */
 function inspectProviderForCleanup(
   binding: ManagedCloneProviderBinding,
   runOpenshell: ManagedCloneProviderRunner,
@@ -230,7 +235,10 @@ function validatedBinding(binding: ManagedCloneProviderBinding): ManagedClonePro
   if (!PROVIDER_TYPE_PATTERN.test(binding.providerType)) {
     fail(`provider '${binding.providerName}' has an invalid type`);
   }
-  if (!PROVIDER_ENV_KEY_PATTERN.test(binding.providerEnvKey)) {
+  if (
+    !isValidOpenShellProviderCredentialName(binding.providerEnvKey) ||
+    binding.providerEnvKey.length > 128
+  ) {
     fail(`provider '${binding.providerName}' has an invalid credential binding`);
   }
   if (

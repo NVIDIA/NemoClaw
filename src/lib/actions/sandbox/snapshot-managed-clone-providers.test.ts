@@ -6,6 +6,7 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 import { managedStartupE2eProfile } from "../../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
+import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
 import type { SandboxMessagingPlan } from "../../messaging/manifest";
 import {
@@ -252,6 +253,7 @@ async function prepareWithBinding(input: {
   readonly binding?: ManagedCloneProviderBinding;
   readonly destination?: SandboxEntry | null;
   readonly environment?: NodeJS.ProcessEnv;
+  readonly providerAdapter?: OpenShellProviderAdapter;
   readonly runner?: ReturnType<typeof providerRunner>;
 }) {
   const profile = managedStartupE2eProfile(input.agent ?? "openclaw");
@@ -263,6 +265,7 @@ async function prepareWithBinding(input: {
     destination,
     additionalBindings: [input.binding ?? TOKEN_BINDING],
     environment: input.environment ?? { RUNTIME_TOKEN: "test-only-runtime-token" },
+    providerAdapter: input.providerAdapter,
     runOpenshell: runner.run,
     transactionId: "1".repeat(32),
   });
@@ -289,6 +292,36 @@ describe("managed clone provider transaction", () => {
       expect(Object.isFrozen(prepared.providers[0]?.binding)).toBe(true);
     },
   );
+
+  it("routes preparation inspection through the injected provider adapter", async () => {
+    const runner = providerRunner();
+    const getProvider: OpenShellProviderAdapter["getProvider"] = vi.fn(async () => ({
+      ok: false,
+      error: { kind: "command", reason: "not_found", message: "Provider was not found." },
+    }));
+
+    const { prepared } = await prepareWithBinding({
+      providerAdapter: { getProvider } as OpenShellProviderAdapter,
+      runner,
+    });
+
+    expect(prepared.providers[0]?.action).toBe("create");
+    expect(getProvider).toHaveBeenCalledWith({
+      providerName: TOKEN_BINDING.providerName,
+      target: { kind: "selected" },
+      timeoutMs: 5_000,
+    });
+    expect(runner.commands.some((command) => command.startsWith("provider get"))).toBe(false);
+  });
+
+  it("rejects credential keys outside the provider adapter contract during preflight", async () => {
+    await expect(
+      prepareWithBinding({
+        binding: { ...TOKEN_BINDING, providerEnvKey: "_RUNTIME_TOKEN" },
+        environment: { _RUNTIME_TOKEN: "test-only-runtime-token" },
+      }),
+    ).rejects.toThrow(/invalid credential binding/u);
+  });
 
   it("resolves active messaging providers from the handoff", async () => {
     const profile = managedStartupE2eProfile("openclaw");
