@@ -29,6 +29,8 @@ import {
 import { createPodmanRuntimeProviderBundle } from "./runtime-provider/podman";
 
 const PROOF_WORKLOAD_PROFILE = createDockerRuntimeProviderBundle().workload.profile;
+const GPU_PROOF_NAME_PATTERN =
+  /^nemoclaw-gpu-proof-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 
 function proofProvider(providerId: "docker" | "podman") {
   return createInMemoryRuntimeProviderBundle({
@@ -349,7 +351,7 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
     expect(cleanupNvidiaContainer).toHaveBeenCalledWith(
       "host-local-inference",
       expect.objectContaining({
-        name: expect.stringMatching(/^nemoclaw-gpu-proof-[0-9]+$/u),
+        name: expect.stringMatching(GPU_PROOF_NAME_PATTERN),
         ownership: { label: "com.nvidia.nemoclaw.gpu-proof", value: "true" },
       }),
       15_000,
@@ -389,9 +391,44 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
     });
     expect(cleanupNvidiaContainer).toHaveBeenCalledWith(
       "host-local-inference",
-      expect.objectContaining({ name: expect.stringMatching(/^nemoclaw-gpu-proof-[0-9]+$/u) }),
+      expect.objectContaining({ name: expect.stringMatching(GPU_PROOF_NAME_PATTERN) }),
       15_000,
     );
+  });
+
+  it("uses an unpredictable per-proof resource before cleaning a name collision", () => {
+    const base = proofProvider("docker");
+    const cleanupNvidiaContainer = vi.fn(() => ({ status: "absent" as const }));
+    const uuid = "123e4567-e89b-42d3-a456-426614174000";
+    const prover = createArm64ContainerGpuProver({
+      platform: "linux",
+      arch: "arm64",
+      randomUUID: () => uuid,
+      resolveRuntimeProvider: () => ({
+        ...base,
+        containerEngine: {
+          ...base.containerEngine,
+          captureNvidiaContainer: () => ({
+            status: 125,
+            stdout: "",
+            stderr: "container name is already in use",
+          }),
+          cleanupNvidiaContainer,
+        },
+      }),
+      log: () => undefined,
+    });
+
+    expect(prover(["JMJWOA-Generic-GPU"])).toMatchObject({
+      passed: false,
+      cleanup: { resourceName: `nemoclaw-gpu-proof-${uuid}`, status: "absent" },
+    });
+    expect(cleanupNvidiaContainer).toHaveBeenCalledWith(
+      "host-local-inference",
+      expect.objectContaining({ name: `nemoclaw-gpu-proof-${uuid}` }),
+      15_000,
+    );
+    expect(`nemoclaw-gpu-proof-${uuid}`).not.toBe(`nemoclaw-gpu-proof-${String(process.pid)}`);
   });
 
   it("parses one capacity row from the container-bound CUDA proof", () => {

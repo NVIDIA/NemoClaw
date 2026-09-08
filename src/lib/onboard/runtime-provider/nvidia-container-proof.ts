@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { randomUUID } from "node:crypto";
 import {
   escapeGpuNameForTerminal,
   NVIDIA_CONTAINER_GPU_PROOF_IMAGE,
@@ -40,6 +41,7 @@ export interface Arm64ContainerGpuProverDeps {
   resolveRuntimeProvider?: () => RuntimeProviderBundle;
   runProof?: (provider: RuntimeProviderBundle, timeoutMs: number) => ContainerGpuProofResult;
   log?: (message: string) => void;
+  randomUUID?: () => string;
 }
 
 function resolveRuntimeProvider(): RuntimeProviderBundle {
@@ -79,9 +81,10 @@ export function isExecFormatErrorDiagnostic(diagnostic: string | null | undefine
 function runRuntimeProviderGpuProof(
   provider: RuntimeProviderBundle,
   timeoutMs: number,
+  randomUUIDImpl: () => string = randomUUID,
 ): ContainerGpuProofResult {
   const resource = {
-    name: `nemoclaw-gpu-proof-${String(process.pid)}`,
+    name: `nemoclaw-gpu-proof-${randomUUIDImpl()}`,
     ownership: NVIDIA_CONTAINER_GPU_PROOF_OWNERSHIP,
   };
   const containerEngine = provider.containerEngine;
@@ -157,7 +160,10 @@ export function createArm64ContainerGpuProver(
 ): Arm64ContainerGpuProver {
   const log = deps.log ?? ((message: string) => console.log(message));
   const resolveProvider = deps.resolveRuntimeProvider ?? resolveRuntimeProvider;
-  const runProof = deps.runProof ?? runRuntimeProviderGpuProof;
+  const runProof =
+    deps.runProof ??
+    ((provider, timeoutMs) =>
+      runRuntimeProviderGpuProof(provider, timeoutMs, deps.randomUUID ?? randomUUID));
   return function proveArm64ContainerGpu(gpuNames: string[]): ContainerGpuProofResult | null {
     const platform = deps.platform ?? process.platform;
     const arch = deps.arch ?? process.arch;
