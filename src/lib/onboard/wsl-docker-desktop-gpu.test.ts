@@ -391,6 +391,43 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
     expect(logs.join("\n")).toContain(result?.cleanup?.resourceName ?? "missing-resource");
   });
 
+  it("removes a proof container that appears after the first absent cleanup observation", () => {
+    const uuid = "123e4567-e89b-42d3-a456-426614174001";
+    const resourceName = `nemoclaw-gpu-proof-${uuid}`;
+    const containerId = "c".repeat(64);
+    const timeout = Object.assign(new Error("proof timed out"), { code: "ETIMEDOUT" });
+    const captureHostCommand = vi
+      .fn()
+      .mockReturnValueOnce({ status: 1, stdout: "", stderr: "", error: timeout })
+      .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: `${containerId}\t${resourceName}\n`,
+        stderr: "",
+      })
+      .mockReturnValueOnce({ status: 0, stdout: containerId, stderr: "" });
+    const provider = createDockerRuntimeProviderBundle({ captureHostCommand });
+    const prover = createArm64ContainerGpuProver({
+      platform: "linux",
+      arch: "arm64",
+      randomUUID: () => uuid,
+      resolveRuntimeProvider: () => provider,
+      log: () => undefined,
+    });
+
+    expect(prover(["JMJWOA-Generic-GPU"])).toMatchObject({
+      passed: false,
+      timedOut: true,
+      cleanup: { resourceName, status: "removed" },
+    });
+    expect(captureHostCommand).toHaveBeenNthCalledWith(
+      4,
+      "docker",
+      ["rm", "-f", containerId],
+      expect.any(Number),
+    );
+  });
+
   it("cleans the exact provider-owned container after an interrupted non-timeout capture", () => {
     const base = proofProvider("docker");
     const interrupted = Object.assign(new Error("proof interrupted"), { code: "EINTR" });

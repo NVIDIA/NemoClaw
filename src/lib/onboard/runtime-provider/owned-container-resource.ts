@@ -11,6 +11,14 @@ const CONTAINER_NAME = /^[a-z0-9][a-z0-9_.-]{0,127}$/u;
 const OWNERSHIP_LABEL = /^[a-z0-9][a-z0-9_.-]{0,127}$/u;
 const OWNERSHIP_VALUE = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/u;
 const FULL_CONTAINER_ID = /^[a-f0-9]{64}$/u;
+const CLEANUP_DEFAULT_TIMEOUT_MS = 15_000;
+const CLEANUP_ABSENCE_CONFIRMATIONS = 5;
+const CLEANUP_OBSERVATION_INTERVAL_MS = 100;
+const cleanupWaitArray = new Int32Array(new SharedArrayBuffer(4));
+
+function waitForCleanupObservation(milliseconds: number): void {
+  Atomics.wait(cleanupWaitArray, 0, 0, milliseconds);
+}
 
 function validateOwnedContainerResource(resource: RuntimeProviderOwnedContainerResource): void {
   if (!CONTAINER_NAME.test(resource.name)) {
@@ -44,33 +52,45 @@ export function cleanupOwnedContainer(
   timeoutMs?: number,
 ): RuntimeProviderOwnedContainerCleanupResult {
   validateOwnedContainerResource(resource);
-  const discovery = capture(
-    [
-      "ps",
-      "--all",
-      "--no-trunc",
-      "--filter",
-      `name=${exactNameFilter}`,
-      "--filter",
-      `label=${resource.ownership.label}=${resource.ownership.value}`,
-      "--format",
-      "{{.ID}}\t{{.Names}}",
-    ],
-    timeoutMs,
-  );
-  if (discovery.status !== 0) return { status: "failed" };
-  const rows = discovery.stdout.trim() ? discovery.stdout.trim().split(/\r?\n/u) : [];
-  if (rows.length === 0) return { status: "absent" };
-  const fields = rows.length === 1 ? rows[0]!.split("\t") : [];
-  const [containerId, observedName] = fields;
-  if (
-    fields.length !== 2 ||
-    observedName !== resource.name ||
-    !FULL_CONTAINER_ID.test(containerId ?? "")
-  ) {
-    return { status: "failed" };
+  const deadline = Date.now() + (timeoutMs ?? CLEANUP_DEFAULT_TIMEOUT_MS);
+  for (let attempt = 0; attempt < CLEANUP_ABSENCE_CONFIRMATIONS; attempt += 1) {
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) return { status: "failed" };
+    const discovery = capture(
+      [
+        "ps",
+        "--all",
+        "--no-trunc",
+        "--filter",
+        `name=${exactNameFilter}`,
+        "--filter",
+        `label=${resource.ownership.label}=${resource.ownership.value}`,
+        "--format",
+        "{{.ID}}\t{{.Names}}",
+      ],
+      remainingMs,
+    );
+    if (discovery.status !== 0) return { status: "failed" };
+    const rows = discovery.stdout.trim() ? discovery.stdout.trim().split(/\r?\n/u) : [];
+    if (rows.length > 0) {
+      const fields = rows.length === 1 ? rows[0]!.split("\t") : [];
+      const [containerId, observedName] = fields;
+      if (
+        fields.length !== 2 ||
+        observedName !== resource.name ||
+        !FULL_CONTAINER_ID.test(containerId ?? "")
+      ) {
+        return { status: "failed" };
+      }
+      return capture(["rm", "-f", containerId!], Math.max(1, deadline - Date.now())).status === 0
+        ? { status: "removed" }
+        : { status: "failed" };
+    }
+    if (attempt + 1 < CLEANUP_ABSENCE_CONFIRMATIONS) {
+      waitForCleanupObservation(
+        Math.min(CLEANUP_OBSERVATION_INTERVAL_MS, Math.max(1, deadline - Date.now())),
+      );
+    }
   }
-  return capture(["rm", "-f", containerId!], timeoutMs).status === 0
-    ? { status: "removed" }
-    : { status: "failed" };
+  return { status: "absent" };
 }

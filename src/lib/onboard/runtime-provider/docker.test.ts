@@ -155,6 +155,7 @@ describe("Docker runtime provider NVIDIA container capture", () => {
     const containerId = "a".repeat(64);
     const captureHostCommand = vi
       .fn()
+      .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" })
       .mockReturnValueOnce({
         status: 0,
         stdout: `${containerId}\t${GPU_PROOF_RESOURCE.name}\n`,
@@ -180,13 +181,25 @@ describe("Docker runtime provider NVIDIA container capture", () => {
         "--format",
         "{{.ID}}\t{{.Names}}",
       ],
-      15_000,
+      expect.any(Number),
     );
     expect(captureHostCommand).toHaveBeenNthCalledWith(
       2,
       "docker",
+      expect.arrayContaining([
+        "ps",
+        "--filter",
+        `name=^/${GPU_PROOF_RESOURCE.name}$`,
+        "--filter",
+        "label=com.nvidia.nemoclaw.gpu-proof=true",
+      ]),
+      expect.any(Number),
+    );
+    expect(captureHostCommand).toHaveBeenNthCalledWith(
+      3,
+      "docker",
       ["rm", "-f", containerId],
-      15_000,
+      expect.any(Number),
     );
   });
 });

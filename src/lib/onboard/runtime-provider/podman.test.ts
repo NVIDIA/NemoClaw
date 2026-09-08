@@ -674,6 +674,7 @@ describe("managed Podman runtime provider", () => {
     const containerId = "b".repeat(64);
     const capture = vi
       .fn()
+      .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" })
       .mockReturnValueOnce({
         status: 0,
         stdout: `${containerId}\t${GPU_PROOF_RESOURCE.name}\n`,
@@ -711,13 +712,25 @@ describe("managed Podman runtime provider", () => {
         "--format",
         "{{.ID}}\t{{.Names}}",
       ],
-      15_000,
+      expect.any(Number),
     );
     expect(capture).toHaveBeenNthCalledWith(
       2,
       "/usr/bin/podman",
+      expect.arrayContaining([
+        "ps",
+        "--filter",
+        `name=^${GPU_PROOF_RESOURCE.name}$`,
+        "--filter",
+        "label=com.nvidia.nemoclaw.gpu-proof=true",
+      ]),
+      expect.any(Number),
+    );
+    expect(capture).toHaveBeenNthCalledWith(
+      3,
+      "/usr/bin/podman",
       ["--url", `unix://${REAL_SOCKET_AUTHORITY.socketPath}`, "rm", "-f", containerId],
-      15_000,
+      expect.any(Number),
     );
   });
 
