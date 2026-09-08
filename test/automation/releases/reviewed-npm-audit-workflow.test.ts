@@ -55,12 +55,6 @@ const REVIEWED_AUDIT_CONFIG_SOURCE = fs.readFileSync(
 const REVIEWED_AUDIT_CONFIG = parseAuditConfig(REVIEWED_AUDIT_CONFIG_SOURCE);
 
 type ConsolidatedAuditFixture = Readonly<{
-  handoff?: Readonly<{
-    accepted: ReturnType<typeof spawnSync>;
-    rejected: ReturnType<typeof spawnSync>;
-    retainedReport?: string;
-    retainedResult?: Record<string, unknown>;
-  }>;
   npmCalls: readonly string[];
   lockedReceipt?: string;
   lockedRawReport?: Buffer;
@@ -80,7 +74,6 @@ function runConsolidatedAuditFixture(
   auditStatus = 0,
   offlinePackStatus = 0,
   observedNpmVersion = REVIEWED_AUDIT_CONFIG.npmVersion,
-  verifyMcporterHandoff = false,
 ): ConsolidatedAuditFixture {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-audit-entry-"));
   const trustedRoot = path.join(root, "trusted");
@@ -89,22 +82,11 @@ function runConsolidatedAuditFixture(
   const cacheModesFile = path.join(root, "cache-modes");
   const callsFile = path.join(root, "npm-calls");
   const artifactDirectory = path.join(targetRoot, "artifacts", "reviewed-npm-audit");
-  const selectedMcporterGraph = REVIEWED_AUDIT_CONFIG.lockedGraphs.find(
-    ({ id }) => id === "mcporter-runtime",
-  );
-  if (verifyMcporterHandoff && !selectedMcporterGraph) {
-    throw new Error("reviewed mcporter graph is missing");
-  }
   try {
     fs.mkdirSync(path.join(trustedRoot, "ci"), { recursive: true });
     fs.mkdirSync(path.join(targetRoot, "agents", "openclaw", "wechat-runtime"), {
       recursive: true,
     });
-    if (verifyMcporterHandoff) {
-      fs.mkdirSync(path.join(targetRoot, "agents", "openclaw", "mcporter-runtime"), {
-        recursive: true,
-      });
-    }
     fs.mkdirSync(bin);
     fs.cpSync(path.join(REPO_ROOT, "scripts"), path.join(trustedRoot, "scripts"), {
       recursive: true,
@@ -134,24 +116,22 @@ function runConsolidatedAuditFixture(
         archiveTarVersion: "7.5.21",
         artifactDirectory: "artifacts/reviewed-npm-audit",
         exceptionFile: "ci/npm-audit-exceptions.json",
-        lockedGraphs: verifyMcporterHandoff
-          ? [selectedMcporterGraph!]
-          : [
-              {
-                directory: "agents/openclaw/wechat-runtime",
-                id: "wechat-runtime",
-                inputValidation: "wechat-runtime",
-                installMode: "legacy-peer-deps",
-                integrity,
-                label: "WeChat fixture",
-                lockSha256: createHash("sha256").update(runtimeLock).digest("hex"),
-                packageSpec: "@tencent-weixin/openclaw-weixin@2.4.3",
-                severityThreshold: "low",
-                signatureAudit: "retry-download-failures",
-                tarballUrl:
-                  "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.3.tgz",
-              },
-            ],
+        lockedGraphs: [
+          {
+            directory: "agents/openclaw/wechat-runtime",
+            id: "wechat-runtime",
+            inputValidation: "wechat-runtime",
+            installMode: "legacy-peer-deps",
+            integrity,
+            label: "WeChat fixture",
+            lockSha256: createHash("sha256").update(runtimeLock).digest("hex"),
+            packageSpec: "@tencent-weixin/openclaw-weixin@2.4.3",
+            severityThreshold: "low",
+            signatureAudit: "retry-download-failures",
+            tarballUrl:
+              "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.3.tgz",
+          },
+        ],
         nodeVersion: process.version.slice(1),
         npmIntegrity: REVIEWED_AUDIT_CONFIG.npmIntegrity,
         npmVersion: REVIEWED_AUDIT_CONFIG.npmVersion,
@@ -183,14 +163,6 @@ function runConsolidatedAuditFixture(
       path.join(targetRoot, "agents/openclaw/wechat-runtime/package-lock.json"),
       runtimeLock,
     );
-    if (verifyMcporterHandoff) {
-      for (const file of ["package.json", "package-lock.json"]) {
-        fs.copyFileSync(
-          path.join(REPO_ROOT, "agents", "openclaw", "mcporter-runtime", file),
-          path.join(targetRoot, "agents", "openclaw", "mcporter-runtime", file),
-        );
-      }
-    }
     mutateTarget(targetRoot);
     fs.writeFileSync(
       path.join(bin, "npm"),
@@ -264,9 +236,6 @@ process.exit(0);
         encoding: "utf-8",
         env: {
           ...process.env,
-          ...(verifyMcporterHandoff
-            ? { NEMOCLAW_REVIEWED_NPM_AUDIT_LOCKED_GRAPH: "mcporter-runtime" }
-            : {}),
           NEMOCLAW_REVIEWED_NPM_AUDIT_REPORT_DIR: "artifacts/reviewed-npm-audit",
           NEMOCLAW_REVIEWED_NPM_AUDIT_TARGET_ROOT: targetRoot,
           NEMOCLAW_TEST_AUDIT_OUTPUT: auditOutput,
@@ -275,81 +244,18 @@ process.exit(0);
           NEMOCLAW_TEST_NPM_CALLS: callsFile,
           NEMOCLAW_TEST_NPM_VERSION: observedNpmVersion,
           NEMOCLAW_TEST_OFFLINE_PACK_STATUS: String(offlinePackStatus),
-          NEMOCLAW_TEST_REVIEWED_INTEGRITY: verifyMcporterHandoff
-            ? selectedMcporterGraph!.integrity
-            : integrity,
-          NEMOCLAW_TEST_REVIEWED_TARBALL: verifyMcporterHandoff
-            ? selectedMcporterGraph!.tarballUrl
-            : "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.3.tgz",
+          NEMOCLAW_TEST_REVIEWED_INTEGRITY: integrity,
+          NEMOCLAW_TEST_REVIEWED_TARBALL:
+            "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.3.tgz",
           PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
         },
       },
     );
     const provenanceFile = path.join(artifactDirectory, "source-graph.provenance.json");
-    const lockedGraph = verifyMcporterHandoff ? "mcporter-runtime" : "wechat-runtime";
-    const receiptFile = path.join(artifactDirectory, `${lockedGraph}.receipt.json`);
-    const rawReportFile = path.join(artifactDirectory, `${lockedGraph}.raw.json`);
-    const lockedDirectory = path.join(targetRoot, "agents", "openclaw", lockedGraph);
-    let handoff: ConsolidatedAuditFixture["handoff"];
-    if (verifyMcporterHandoff && result.status === 0) {
-      const rawReport = fs.readFileSync(rawReportFile);
-      const retainedReport = path.join(root, "retained-report.json");
-      const retainedResult = path.join(root, "retained-result.json");
-      const helper = path.join(root, "verify-mcporter-audit.sh");
-      const exceptionFile = path.join(trustedRoot, "ci", "npm-audit-exceptions.json");
-      const auditConfigFile = path.join(trustedRoot, "ci", "reviewed-npm-audit.json");
-      const helperSource = fs
-        .readFileSync(path.join(trustedRoot, "scripts/lib/verify-mcporter-audit.sh"), "utf8")
-        .replaceAll("/run/secrets/nemoclaw-mcporter-audit-receipt", receiptFile)
-        .replaceAll("/run/secrets/nemoclaw-mcporter-audit-raw-report", rawReportFile)
-        .replaceAll(
-          "/run/nemoclaw-mcporter-audit-cache/reviewed-npm-audit",
-          path.join(root, "no-seed"),
-        )
-        .replaceAll(
-          "/scripts/lib/npm-audit-receipt.mts",
-          path.join(trustedRoot, "scripts/lib/npm-audit-receipt.mts"),
-        )
-        .replaceAll(
-          "/usr/local/lib/nemoclaw/mcporter-runtime/package.json",
-          path.join(lockedDirectory, "package.json"),
-        )
-        .replaceAll(
-          "/usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json",
-          path.join(lockedDirectory, "package-lock.json"),
-        )
-        .replaceAll("/scripts/npm-audit-exceptions.json", exceptionFile)
-        .replaceAll("/scripts/reviewed-npm-audit.json", auditConfigFile);
-      fs.writeFileSync(helper, helperSource, { mode: 0o755 });
-      const runHelper = () =>
-        spawnSync("bash", [helper], {
-          encoding: "utf8",
-          env: {
-            ...process.env,
-            NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256: createHash("sha256")
-              .update(fs.readFileSync(receiptFile))
-              .digest("hex"),
-            NEMOCLAW_MCPORTER_AUDIT_REPORT_PATH: retainedReport,
-            NEMOCLAW_MCPORTER_AUDIT_RESULT_PATH: retainedResult,
-          },
-        });
-      fs.writeFileSync(rawReportFile, "{}\n");
-      const rejected = runHelper();
-      fs.writeFileSync(rawReportFile, rawReport);
-      const accepted = runHelper();
-      handoff = {
-        accepted,
-        rejected,
-        retainedReport: fs.existsSync(retainedReport)
-          ? fs.readFileSync(retainedReport, "utf8")
-          : undefined,
-        retainedResult: fs.existsSync(retainedResult)
-          ? (JSON.parse(fs.readFileSync(retainedResult, "utf8")) as Record<string, unknown>)
-          : undefined,
-      };
-    }
+    const receiptFile = path.join(artifactDirectory, "wechat-runtime.receipt.json");
+    const rawReportFile = path.join(artifactDirectory, "wechat-runtime.raw.json");
+    const lockedDirectory = path.join(targetRoot, "agents", "openclaw", "wechat-runtime");
     return {
-      handoff,
       lockedReceipt: fs.existsSync(receiptFile) ? fs.readFileSync(receiptFile, "utf-8") : undefined,
       lockedRawReport: fs.existsSync(rawReportFile) ? fs.readFileSync(rawReportFile) : undefined,
       lockedPackageJson: fs.readFileSync(path.join(lockedDirectory, "package.json")),
@@ -446,29 +352,6 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
       `reviewed npm audit requires npm ${REVIEWED_AUDIT_CONFIG.npmVersion}; running npm 11.18.0`,
     );
     expect(fixture.lockedReceipt).toBeUndefined();
-  });
-
-  it("passes the selected mcporter producer evidence through the protected handoff", () => {
-    const fixture = runConsolidatedAuditFixture(
-      () => {},
-      undefined,
-      0,
-      0,
-      REVIEWED_AUDIT_CONFIG.npmVersion,
-      true,
-    );
-
-    expect(fixture.result.status, fixture.result.stderr).toBe(0);
-    expect(fixture.lockedReceipt).toBeDefined();
-    expect(fixture.npmCalls.some((call) => call.includes('"pack"'))).toBe(false);
-    expect(fixture.handoff?.rejected.status).not.toBe(0);
-    expect(fixture.handoff?.rejected.stderr).toContain("receipt rawResponseSha256 does not match");
-    expect(fixture.handoff?.accepted.status, fixture.handoff?.accepted.stderr).toBe(0);
-    expect(fixture.handoff?.retainedReport).toBe(fixture.lockedRawReport?.toString());
-    expect(fixture.handoff?.retainedResult).toMatchObject({
-      graph: "mcporter-runtime",
-      status: "clean",
-    });
   });
 
   it("restores the read-only trusted cache after offline packing fails", () => {

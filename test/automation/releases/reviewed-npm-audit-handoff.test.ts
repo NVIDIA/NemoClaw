@@ -9,7 +9,6 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
-import { emitAuditReceipt } from "../../../scripts/audit-reviewed-npm-graph.mts";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const TRUSTED_WORKFLOWS = [
@@ -92,52 +91,89 @@ describe("reviewed npm audit handoff", () => {
 
   it("passes producer output through protected audit handoffs and rejects forged reports", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "reviewed-audit-receipt-handoff-"));
-    const packageJsonFile = path.join(root, "package.json");
-    const packageLockFile = path.join(root, "package-lock.json");
-    const rawReportFile = path.join(root, "report.json");
-    const runtime = path.join(REPO_ROOT, "agents/openclaw/mcporter-runtime");
-    const exceptionFile = path.join(REPO_ROOT, "ci/npm-audit-exceptions.json");
-    const auditConfigFile = path.join(REPO_ROOT, "ci/reviewed-npm-audit.json");
-    const packageJson = fs.readFileSync(path.join(runtime, "package.json"));
-    const packageLock = fs.readFileSync(path.join(runtime, "package-lock.json"));
-    const exceptionPolicy = fs.readFileSync(exceptionFile, "utf8");
-    const npmVersion = JSON.parse(fs.readFileSync(auditConfigFile, "utf8")).npmVersion as string;
+    const trustedRoot = path.join(root, "trusted");
+    const targetRoot = path.join(root, "target");
+    const runtime = path.join(targetRoot, "agents/openclaw/mcporter-runtime");
+    const artifactDirectory = path.join(targetRoot, "artifacts/reviewed-npm-audit");
+    const producerBin = path.join(root, "producer-bin");
+    const exceptionFile = path.join(trustedRoot, "ci/npm-audit-exceptions.json");
+    const auditConfigFile = path.join(trustedRoot, "ci/reviewed-npm-audit.json");
+    const auditConfig = JSON.parse(
+      fs.readFileSync(path.join(REPO_ROOT, "ci/reviewed-npm-audit.json"), "utf8"),
+    );
+    const npmVersion = auditConfig.npmVersion as string;
+    const reviewedMcporter = auditConfig.lockedGraphs.find(
+      ({ id }: { id: string }) => id === "mcporter-runtime",
+    );
     const rawReport =
       '{"vulnerabilities":{},"metadata":{"vulnerabilities":{"info":0,"low":0,"moderate":0,"high":0,"critical":0}}}\n';
     try {
-      fs.writeFileSync(packageJsonFile, packageJson);
-      fs.writeFileSync(packageLockFile, packageLock);
-      fs.writeFileSync(rawReportFile, rawReport);
-      fs.writeFileSync(
-        path.join(root, "report.provenance.json"),
-        JSON.stringify({ run: { startedAt: new Date().toISOString() } }),
-      );
-      const receiptFile = emitAuditReceipt({
-        artifactDirectory: root,
-        graphId: "mcporter-runtime",
-        npmVersion,
-        packageJsonFile,
-        packageLockFile,
-        preserveInputs: true,
-        rawReportFile,
-        registryOrigin: "https://registry.yarnpkg.com",
-        result: {
-          acceptedAdvisories: [],
-          blockingThreshold: "high",
-          exceptionPolicySha256: createHash("sha256").update(exceptionPolicy).digest("hex"),
-          graph: "mcporter-runtime",
-          reported: { info: 0, low: 0, moderate: 0, high: 0, critical: 0 },
-          schemaVersion: 1,
-          status: "clean",
-          unacceptedBlockingAdvisories: [],
-        },
-        threshold: "high",
+      fs.mkdirSync(runtime, { recursive: true });
+      fs.mkdirSync(path.join(trustedRoot, "ci"), { recursive: true });
+      fs.mkdirSync(producerBin);
+      fs.cpSync(path.join(REPO_ROOT, "scripts"), path.join(trustedRoot, "scripts"), {
+        recursive: true,
       });
+      fs.cpSync(path.join(REPO_ROOT, "agents/openclaw/mcporter-runtime"), runtime, {
+        recursive: true,
+      });
+      fs.copyFileSync(path.join(REPO_ROOT, "ci/npm-audit-exceptions.json"), exceptionFile);
+      fs.copyFileSync(path.join(REPO_ROOT, "ci/reviewed-npm-audit.json"), auditConfigFile);
+      fs.writeFileSync(
+        path.join(producerBin, "npm"),
+        `#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+if (args[0] === "--version") console.log(process.env.NEMOCLAW_TEST_NPM_VERSION);
+else if (args[0] === "config") console.log("https://registry.npmjs.org/");
+else if (args[0] === "view") console.log(args.includes("dist.tarball") ? process.env.NEMOCLAW_TEST_TARBALL : process.env.NEMOCLAW_TEST_INTEGRITY);
+else if (args[0] === "audit" && args[1] !== "signatures") process.stdout.write(process.env.NEMOCLAW_TEST_AUDIT_OUTPUT);
+else if (args[0] === "ci") {
+  const lock = JSON.parse(fs.readFileSync("package-lock.json", "utf8"));
+  for (const [location, entry] of Object.entries(lock.packages)) {
+    if (!location) continue;
+    fs.mkdirSync(location, { recursive: true });
+    fs.writeFileSync(location + "/package.json", JSON.stringify({
+      name: location.slice(location.lastIndexOf("node_modules/") + 13),
+      version: entry.version,
+      dependencies: entry.dependencies,
+      peerDependencies: entry.peerDependencies,
+      peerDependenciesMeta: entry.peerDependenciesMeta,
+    }));
+  }
+}
+`,
+        { mode: 0o755 },
+      );
+      const producer = spawnSync(
+        process.execPath,
+        [
+          "--experimental-strip-types",
+          path.join(trustedRoot, "scripts/audit-reviewed-npm-graph.mts"),
+        ],
+        {
+          cwd: trustedRoot,
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            NEMOCLAW_REVIEWED_NPM_AUDIT_LOCKED_GRAPH: "mcporter-runtime",
+            NEMOCLAW_REVIEWED_NPM_AUDIT_REPORT_DIR: "artifacts/reviewed-npm-audit",
+            NEMOCLAW_REVIEWED_NPM_AUDIT_TARGET_ROOT: targetRoot,
+            NEMOCLAW_TEST_AUDIT_OUTPUT: rawReport,
+            NEMOCLAW_TEST_INTEGRITY: reviewedMcporter.integrity,
+            NEMOCLAW_TEST_NPM_VERSION: npmVersion,
+            NEMOCLAW_TEST_TARBALL: reviewedMcporter.tarballUrl,
+            PATH: `${producerBin}:${process.env.PATH ?? ""}`,
+          },
+        },
+      );
+      expect(producer.status, producer.stderr).toBe(0);
 
-      const retainedPackageJson = path.join(root, "mcporter-runtime.package.json");
-      const retainedPackageLock = path.join(root, "mcporter-runtime.package-lock.json");
-      const transportRawReport = path.join(root, "mcporter-runtime.raw.json");
-      const receiptVerifier = path.join(REPO_ROOT, "scripts", "lib", "npm-audit-receipt.mts");
+      const receiptFile = path.join(artifactDirectory, "mcporter-runtime.receipt.json");
+      const retainedPackageJson = path.join(runtime, "package.json");
+      const retainedPackageLock = path.join(runtime, "package-lock.json");
+      const transportRawReport = path.join(artifactDirectory, "mcporter-runtime.raw.json");
+      const receiptVerifier = path.join(trustedRoot, "scripts", "lib", "npm-audit-receipt.mts");
       const retainedReport = path.join(root, "retained-report.json");
       const retainedResult = path.join(root, "retained-result.json");
       const verifierArgs = [
