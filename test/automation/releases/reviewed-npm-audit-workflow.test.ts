@@ -323,7 +323,7 @@ function writeProductionSourceGraph(
   return { sourceLock, sourcePackage };
 }
 
-describe("trusted reviewed npm audit workflow (#5896)", () => {
+describe("trusted npm audit workflow (#5896)", () => {
   // source-shape-contract: security -- Composite audit inputs must cross into executable shell only through the step environment
   it("passes the cache identity target root without interpolating it into shell source", () => {
     const action = YAML.parse(
@@ -332,7 +332,7 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
         "utf8",
       ),
     ) as CompositeAction;
-    const cacheBucketStep = requiredStep(action.runs, "Resolve reviewed npm audit cache buckets");
+    const cacheBucketStep = requiredStep(action.runs, "Resolve npm audit cache buckets");
 
     expect(cacheBucketStep.env).toEqual({
       NEMOCLAW_REVIEWED_NPM_AUDIT_CACHE_DIRECTORY: "${{ inputs.cache-directory }}",
@@ -350,7 +350,7 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
 
     expect(fixture.result.status).not.toBe(0);
     expect(fixture.result.stderr).toContain(
-      `reviewed npm audit requires npm ${REVIEWED_AUDIT_CONFIG.npmVersion}; running npm 11.18.0`,
+      `npm audit requires npm ${REVIEWED_AUDIT_CONFIG.npmVersion}; running npm 11.18.0`,
     );
     expect(fixture.lockedReceipt).toBeUndefined();
   });
@@ -1289,7 +1289,7 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
         "high",
       ),
     ).toThrow(
-      "reviewed npm audit threshold failed\nNemoClaw CLI locked production graph: 1 unaccepted at or above high",
+      "npm audit threshold failed\nNemoClaw CLI locked production graph: 1 unaccepted at or above high",
     );
   });
 

@@ -113,7 +113,7 @@ export function resolveTrustedAuditConfigPath(trustedRoot: string): string {
   return resolvePathWithinRoot(
     trustedRoot,
     "ci/reviewed-npm-audit.json",
-    "trusted reviewed npm audit configuration",
+    "trusted npm audit configuration",
   );
 }
 
@@ -129,7 +129,7 @@ function graphCacheFile(graphId: string): string | undefined {
   const configuredDirectory = process.env.NEMOCLAW_REVIEWED_NPM_AUDIT_CACHE_DIR;
   if (!configuredDirectory) return undefined;
   if (!path.isAbsolute(configuredDirectory)) {
-    throw new Error("reviewed npm audit cache directory must be absolute");
+    throw new Error("npm audit cache directory must be absolute");
   }
   if (!/^[a-z0-9][a-z0-9._-]*$/.test(graphId)) {
     throw new Error(`npm audit cache graph ID is unsafe: ${graphId}`);
@@ -140,13 +140,13 @@ function graphCacheFile(graphId: string): string | undefined {
     if (!component) continue;
     current = path.join(current, component);
     const stat = fs.lstatSync(current, { throwIfNoEntry: false });
-    if (!stat) throw new Error("reviewed npm audit cache directory must exist");
+    if (!stat) throw new Error("npm audit cache directory must exist");
     if (stat.isSymbolicLink()) {
-      throw new Error("reviewed npm audit cache directory must not contain symbolic links");
+      throw new Error("npm audit cache directory must not contain symbolic links");
     }
   }
   if (!fs.statSync(directory).isDirectory()) {
-    throw new Error("reviewed npm audit cache directory must be a directory");
+    throw new Error("npm audit cache directory must be a directory");
   }
   return path.join(directory, `${graphId}.json`);
 }
@@ -865,14 +865,14 @@ export function assertReviewedAuditReportsPass(
         `${label}: ${result.unacceptedBlockingAdvisories.length} unaccepted at or above ${reportThreshold ?? threshold}`,
     );
   if (failures.length > 0)
-    throw new Error(`reviewed npm audit threshold failed\n${failures.join("\n")}`);
+    throw new Error(`npm audit threshold failed\n${failures.join("\n")}`);
 }
 
 function main(): void {
   const config = readConfig();
   const expectedNode = `v${config.nodeVersion}`;
   if (process.version !== expectedNode) {
-    throw new Error(`reviewed npm audit requires Node ${expectedNode}; running ${process.version}`);
+    throw new Error(`npm audit requires Node ${expectedNode}; running ${process.version}`);
   }
   const artifactDirectory = targetRepositoryPath(
     process.env.NEMOCLAW_REVIEWED_NPM_AUDIT_REPORT_DIR ?? config.artifactDirectory,
@@ -893,7 +893,7 @@ function main(): void {
   const npmVersion = run("npm", ["--version"], TRUSTED_REPO_ROOT).stdout.trim();
   if (npmVersion !== config.npmVersion) {
     throw new Error(
-      `reviewed npm audit requires npm ${config.npmVersion}; running npm ${npmVersion}`,
+      `npm audit requires npm ${config.npmVersion}; running npm ${npmVersion}`,
     );
   }
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-npm-audit-"));

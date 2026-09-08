@@ -28,21 +28,21 @@ export function parseReviewedNpmIdentity(value: unknown): ReviewedNpmIdentity {
     !/^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/.test(npmVersion) ||
     /[\r\n]/.test(npmVersion)
   ) {
-    throw new Error("reviewed npm audit configuration has an invalid npmVersion");
+    throw new Error("npm audit configuration has an invalid npmVersion");
   }
   if (
     typeof npmIntegrity !== "string" ||
     !/^sha512-[A-Za-z0-9+/]+={0,2}$/.test(npmIntegrity) ||
     /[\r\n]/.test(npmIntegrity)
   ) {
-    throw new Error("reviewed npm audit configuration has an invalid npmIntegrity");
+    throw new Error("npm audit configuration has an invalid npmIntegrity");
   }
   if (
     typeof npmArchiveSha256 !== "string" ||
     !/^[a-f0-9]{64}$/.test(npmArchiveSha256) ||
     /[\r\n]/.test(npmArchiveSha256)
   ) {
-    throw new Error("reviewed npm audit configuration has an invalid npmArchiveSha256");
+    throw new Error("npm audit configuration has an invalid npmArchiveSha256");
   }
   return { npmArchiveSha256, npmIntegrity, npmVersion };
 }
@@ -52,7 +52,7 @@ export function parseReviewedNpmIdentityConfig(contents: string): ReviewedNpmIde
   try {
     parsed = JSON.parse(contents);
   } catch {
-    throw new Error("reviewed npm audit configuration is not valid JSON");
+    throw new Error("npm audit configuration is not valid JSON");
   }
   return parseReviewedNpmIdentity(parsed);
 }
@@ -905,7 +905,7 @@ export function runReviewedNpmAudit(
   }>,
 ): AuditPolicyResult {
   if (options.provenance && !options.reportFile) {
-    throw new Error("reviewed npm audit provenance requires a report file");
+    throw new Error("npm audit provenance requires a report file");
   }
   const exceptionRegistry = readAuditExceptionRegistry(options.exceptionFile);
   const startedAt = new Date().toISOString();
@@ -1008,8 +1008,8 @@ function parseCliArgs(args: readonly string[]): {
     const key = args[index];
     const value = args[index + 1];
     if (!key?.startsWith("--") || value === undefined)
-      throw new Error("invalid reviewed npm audit arguments");
-    if (values.has(key)) throw new Error(`duplicate reviewed npm audit argument: ${key}`);
+      throw new Error("invalid npm audit arguments");
+    if (values.has(key)) throw new Error(`duplicate npm audit argument: ${key}`);
     values.set(key, value);
   }
   const allowed = new Set([
@@ -1023,18 +1023,18 @@ function parseCliArgs(args: readonly string[]): {
   ]);
   const unknown = [...values.keys()].filter((key) => !allowed.has(key));
   if (unknown.length > 0)
-    throw new Error(`unknown reviewed npm audit arguments: ${unknown.join(", ")}`);
+    throw new Error(`unknown npm audit arguments: ${unknown.join(", ")}`);
   const directory = values.get("--directory");
   const exceptionFile = values.get("--exceptions");
   const graph = values.get("--graph");
   const threshold = values.get("--threshold");
   if (!directory || !exceptionFile || !graph || !threshold) {
     throw new Error(
-      "reviewed npm audit requires --directory, --exceptions, --graph, and --threshold",
+      "npm audit requires --directory, --exceptions, --graph, and --threshold",
     );
   }
   if (!SEVERITIES.includes(threshold as Severity))
-    throw new Error("reviewed npm audit threshold is invalid");
+    throw new Error("npm audit threshold is invalid");
   return {
     ...(values.has("--cache") ? { cacheFile: values.get("--cache") } : {}),
     directory,

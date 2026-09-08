@@ -279,7 +279,7 @@ function cli(args: readonly string[]): void {
     );
   if (values.has("--result"))
     fs.writeFileSync(values.get("--result")!, `${JSON.stringify(policyResult, null, 2)}\n`);
-  console.log("reviewed npm audit receipt and current policy verified");
+  console.log("npm audit receipt and current policy verified");
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {

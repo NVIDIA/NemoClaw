@@ -77,7 +77,7 @@ export default async function e2e_root_cause_correlator(input: {
     if (text.includes("sandbox_phase=deleting") || text.includes("sandbox in deleting"))
       return "openshell/lifecycle/sandbox-deleting";
     if (
-      text.includes("reviewed npm audit") ||
+      text.includes("npm audit") ||
       text.includes("unaccepted at or above high") ||
       text.includes("advisory")
     )

@@ -49,7 +49,7 @@ function receipt(createdAt = NOW) {
   });
 }
 
-describe("reviewed npm audit receipt", () => {
+describe("npm audit receipt", () => {
   it("canonically binds all receipt inputs and verifies a fresh passing result", () => {
     const parsed = parseAndVerifyAuditReceipt(canonicalAuditReceipt(receipt()), inputs);
     expect(parsed.acceptedAdvisoryIds).toEqual(["GHSA-a", "GHSA-b"]);

@@ -149,7 +149,7 @@ describe("reviewed npm bootstrap", () => {
     try {
       expect(fixture.result.status).toBe(1);
       expect(fixture.result.stderr).toContain(
-        "reviewed npm audit configuration has an invalid npmArchiveSha256",
+        "npm audit configuration has an invalid npmArchiveSha256",
       );
       expect(fixture.npmInvocations).toEqual([]);
       expect(fixture.installCalled).toBe(false);

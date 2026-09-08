@@ -166,7 +166,7 @@ printf '{"version":"12.0.2"}\\n'
   };
 }
 
-describe("reviewed npm audit handoff", () => {
+describe("npm audit handoff", () => {
   it.each(TRUSTED_AUDIT_SPARSE_CHECKOUTS)(
     "loads the audit producer from the $name trusted sparse checkout",
     ({ sparseCheckout }) => {

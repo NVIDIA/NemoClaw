@@ -127,7 +127,7 @@ function exceptionPolicy(
   );
 }
 
-describe("reviewed npm audit gate", () => {
+describe("npm audit gate", () => {
   it("removes the checked-in brace-expansion exception after remediation (#8116)", () => {
     expect(CHECKED_IN_POLICY).toEqual(EMPTY_POLICY);
   });
@@ -468,7 +468,7 @@ describe("reviewed npm audit gate", () => {
   });
 });
 
-describe("reviewed npm audit raw cache", () => {
+describe("npm audit raw cache", () => {
   function fixture() {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-audit-cache-"));
     fs.writeFileSync(path.join(directory, "package.json"), '{"name":"fixture"}\n');
@@ -574,7 +574,7 @@ describe("reviewed npm audit raw cache", () => {
   });
 });
 
-describe("reviewed npm audit provenance", () => {
+describe("npm audit provenance", () => {
   const detectionReport = {
     metadata: {
       vulnerabilities: { info: 0, low: 0, moderate: 0, high: 1, critical: 0 },

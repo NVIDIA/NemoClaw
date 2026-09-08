@@ -1081,12 +1081,12 @@ async function classifyCiFailureWithRuntime(
     );
   if (
     /reviewed-npm-audit/i.test(job.name) ||
-    /reviewed npm audit|npm audit report|audit-reviewed-npm-graph/i.test(text)
+    /\bnpm audit\b|audit-reviewed-npm-graph/i.test(text)
   )
     add(
       "reviewed-npm-audit",
-      "The reviewed npm audit check reported advisory drift.",
-      "Determine whether this is live advisory drift or update the reviewed baseline through the security process.",
+      "The npm audit check reported advisory drift.",
+      "Determine whether this is live advisory drift or update the accepted baseline through the security process.",
     );
   if (/docs-review|Documentation writer review/i.test(text))
     add(
