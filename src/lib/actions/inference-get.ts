@@ -10,8 +10,7 @@ import {
 } from "../inference/config";
 import { getLiveGatewayInference } from "../inference/live";
 import { inspectManagedLlamaCppOwnership } from "../inference/llama-cpp/managed-state";
-import * as registry from "../state/registry";
-import { getSandboxTargetGatewayName } from "./sandbox/gateway-target";
+import { getKnownSandboxTarget, getSandboxTargetGatewayName } from "./sandbox/gateway-target";
 
 export interface InferenceGetOptions {
   cliName?: string;
@@ -28,7 +27,7 @@ export interface InferenceGetResult {
 
 export interface InferenceGetDeps {
   captureOpenshell: typeof captureOpenshell;
-  getSandbox?: typeof registry.getSandbox;
+  getSandbox?: typeof getKnownSandboxTarget;
   getSandboxTargetGatewayName: typeof getSandboxTargetGatewayName;
   log: (message?: string) => void;
   inspectManagedLlamaCppOwnership?: typeof inspectManagedLlamaCppOwnership;
@@ -80,7 +79,7 @@ export async function runInferenceGet(
   }
 
   const sandbox = options.sandboxName
-    ? (deps.getSandbox ?? registry.getSandbox)(options.sandboxName)
+    ? (deps.getSandbox ?? getKnownSandboxTarget)(options.sandboxName)
     : null;
   const llamaCpp =
     sandbox?.provider === result.inference.provider && sandbox.model === result.inference.model
