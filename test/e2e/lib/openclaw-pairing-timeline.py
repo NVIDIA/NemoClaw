@@ -81,6 +81,8 @@ AUTO_PAIR_MARKERS = {
 }
 GATEWAY_TITLES = {"openclaw", "openclaw-gateway"}
 GATEWAY_COMMAND_RE = re.compile(r"openclaw(?:\.mjs)? gateway run\b")
+# nemoclaw-start.sh launches the auto-pair watcher as the only `python3 -u -` process.
+WATCHER_COMMAND = "python3 -u -"
 POLL_INTERVAL_MS = 2000
 MAX_WAIT_SECONDS = 600
 MAX_ENTRY_BYTES = 512 * 1024
@@ -308,8 +310,16 @@ def is_gateway(command):
 def find_process(proc_root, pids, predicate, boot_ms):
     pid = next((candidate for candidate in pids if predicate(candidate)), None)
     if pid is None:
-        return {"running": False, "startedAtMs": None}
-    return {"running": True, "startedAtMs": process_start_ms(proc_root, pid, boot_ms)}
+        return None, {"running": False, "startedAtMs": None}
+    return pid, {"running": True, "startedAtMs": process_start_ms(proc_root, pid, boot_ms)}
+
+
+def stdout_is_auto_pair_log(proc_root, pid, auto_pair_log_path):
+    # /proc/<pid>/fd needs the same uid or CAP_SYS_PTRACE; report None when unreadable.
+    if pid is None:
+        return None
+    target = stdout_target(proc_root, pid)
+    return None if target == "" else target == auto_pair_log_path
 
 
 def project_processes(proc_root, auto_pair_log_path):
@@ -318,16 +328,17 @@ def project_processes(proc_root, auto_pair_log_path):
         pids = sorted(int(name) for name in os.listdir(proc_root) if name.isdigit())
     except OSError:
         pids = []
+    _gateway_pid, gateway = find_process(
+        proc_root, pids, lambda pid: is_gateway(command_line(proc_root, pid)), boot_ms
+    )
+    watcher_pid, watcher = find_process(
+        proc_root, pids, lambda pid: command_line(proc_root, pid) == WATCHER_COMMAND, boot_ms
+    )
+    watcher["stdoutIsAutoPairLog"] = stdout_is_auto_pair_log(proc_root, watcher_pid, auto_pair_log_path)
     return {
         "containerStartedAtMs": process_start_ms(proc_root, 1, boot_ms) if 1 in pids else None,
-        "gateway": find_process(proc_root, pids, lambda pid: is_gateway(command_line(proc_root, pid)), boot_ms),
-        "autoPairWatcher": find_process(
-            proc_root,
-            pids,
-            lambda pid: command_line(proc_root, pid).startswith("python3")
-            and stdout_target(proc_root, pid) == auto_pair_log_path,
-            boot_ms,
-        ),
+        "gateway": gateway,
+        "autoPairWatcher": watcher,
     }
 
 
