@@ -257,6 +257,31 @@ describe("MCP tool discovery host boundary (#6901)", () => {
     });
   });
 
+  it("directs an older discovery runtime to rebuild the sandbox (#10944)", () => {
+    expect(
+      classifyMcpToolDiscoveryResult(
+        framedResult({
+          protocol: 1,
+          ok: true,
+          count: 1,
+          tools: ["must-not-pass"],
+          truncated: false,
+        }),
+        entry,
+        marker,
+      ),
+    ).toEqual({
+      ok: false,
+      count: 0,
+      tools: [],
+      truncated: false,
+      commandStatus: 0,
+      detail: "tool discovery runtime is incompatible with this CLI; rebuild the sandbox",
+      failedStage: "runtime",
+      failureClass: "runtime",
+    });
+  });
+
   it.each([
     framedResult({
       protocol: MCP_TOOL_DISCOVERY_RESULT_PROTOCOL,

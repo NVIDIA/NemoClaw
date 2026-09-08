@@ -71,7 +71,7 @@ JSON output adds a per-server `toolDiscovery` object without changing the existi
 
 Discovery is opt-in and sends authenticated network traffic to the configured endpoint. `--tools` requires one server name and suppresses the named-server credential-resolution probe that would otherwise run by default. Pass `--probe --tools` when you intentionally want both live checks.
 
-An older sandbox image that does not contain the shared discovery client reports that a rebuild is required. Run `$$nemoclaw my-sandbox rebuild` and retry the command.
+An older sandbox image that does not contain the shared discovery client or uses an incompatible discovery protocol reports that a rebuild is required. Run `$$nemoclaw my-sandbox rebuild` and retry the command.
 
 A discovery failure sets `toolDiscovery.ok` to `false`, exits non-zero, and leaves the ordinary provider, policy, environment, and adapter status available. The result records `commandStatus` when the sandbox command ran. A zero command status does not override a failure reported by the discovery runtime, and a non-zero command status is always a failure. `failedStage` identifies `preflight`, `runtime`, `initialization`, or `tool-discovery`; `failureClass` identifies `precondition`, `runtime`, `connection`, `authentication`, `protocol`, or `tool-operation`. Bounded partial results set `truncated` to `true`. Failure details are redacted and never include credential values or response bodies.
 

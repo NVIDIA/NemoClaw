@@ -197,8 +197,15 @@ export function classifyMcpToolDiscoveryResult(
     return failure("tool discovery returned an invalid result", "runtime", "runtime", 0);
   }
   const value = parsed as Record<string, unknown>;
+  if (value.protocol !== MCP_TOOL_DISCOVERY_RESULT_PROTOCOL) {
+    return failure(
+      "tool discovery runtime is incompatible with this CLI; rebuild the sandbox",
+      "runtime",
+      "runtime",
+      0,
+    );
+  }
   if (
-    value.protocol !== MCP_TOOL_DISCOVERY_RESULT_PROTOCOL ||
     typeof value.ok !== "boolean" ||
     typeof value.count !== "number" ||
     !Number.isSafeInteger(value.count) ||
