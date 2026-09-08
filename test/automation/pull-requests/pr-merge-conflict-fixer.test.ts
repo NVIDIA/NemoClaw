@@ -1170,6 +1170,19 @@ describe("PR merge conflict fixer", () => {
         commands: repairValidationPlan(selection).map(({ command }) => ({ command, exitCode: 0 })),
       }),
     ).toThrow("validation changed");
+    const failedOutput = path.join(temporaryDirectory(), "failed-seal");
+    expect(() =>
+      validateAndSealRepair({
+        selection,
+        candidate,
+        candidateDirectory: candidate.repository,
+        patchFile,
+        outputDirectory: failedOutput,
+        run: () => 1,
+      }),
+    ).toThrow("repair validation failed");
+    expect(fs.existsSync(path.join(failedOutput, "repair.patch"))).toBe(false);
+    expect(fs.existsSync(path.join(failedOutput, "validation.json"))).toBe(false);
   });
   it("reconstructs only selected allowlisted files from a mixed-scope pull request (#10791)", () => {
     const fixture = createRepairFixture();

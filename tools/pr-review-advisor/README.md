@@ -54,11 +54,12 @@ explicitly requested, the protected deterministic publisher rechecks the live st
 one verified, non-force, compare-and-swap branch update. A trusted-main reporter then runs and
 records the approved exact-generated-SHA checks without starting another repair attempt.
 
-`repair-contract.mts` owns the fixed validation plan, and `repair-validate.mts` executes that plan
-and creates its receipt from the observed successful commands. Generated-head validation also
-dispatches the credential-bearing SDK packager from trusted `main`; `CI / Pull Request` accepts its
-artifact only when the workflow-dispatch identity, attempt key, generated SHA, and artifact name
-match the repair being checked.
+`repair-contract.mts` owns the fixed validation plan, and `repair-validate.mts` executes that plan.
+It seals the repair patch and validation receipt only after every required command succeeds; a
+failed command produces neither file. Generated-head validation also dispatches the
+credential-bearing SDK packager from trusted `main`; `CI / Pull Request` accepts its artifact only
+when the workflow-dispatch identity, attempt key, generated SHA, and artifact name match the repair
+being checked.
 
 Trusted selection accepts a finding only when its specialist and path match one of these pairs and
 its exclusion list is empty:
@@ -82,8 +83,10 @@ change only the selected allowlisted paths, and validation rejects any other rep
 initial workflow actor (`github.actor`) and workflow-run initiator (`github.triggering_actor`) must
 each have `maintain` or `admin` permission. Selection checks both identities, and publication
 rechecks their current permissions before updating the branch. A rerun of one repair workflow run
-is rejected. A new exact-head manual dispatch creates a new repair attempt, including when it names
-the same PR head. If automatic generated-head observation is missed, dispatch `Automation / PR
+is rejected. A repeat manual dispatch that resolves to the same repository, PR, source and base
+SHAs, Advisor run and attempt, and selected finding IDs is also rejected because it has the same
+attempt key. A later PR head or a different bound Advisor run and finding set creates a distinct
+eligible attempt. If automatic generated-head observation is missed, dispatch `Automation / PR
 Review Advisor Generated Head` from `main` with the successful source `source_run_id` and exact
 `source_run_attempt`; reconciliation revalidates and reuses that run's content-addressed request
 without creating another repair attempt.
