@@ -38,24 +38,20 @@ describe("Ollama probe timeout retry", () => {
   });
 
   it.each([
-    { platform: "linux" as const, systemdUnit: true, activeUnit: true, recovery: "systemctl" },
-    { platform: "linux" as const, systemdUnit: true, activeUnit: false, recovery: "generic" },
-    { platform: "darwin" as const, systemdUnit: true, activeUnit: true, recovery: null },
-    { platform: "linux" as const, systemdUnit: false, activeUnit: false, recovery: "generic" },
+    { platform: "linux" as const, activeUnit: true, recovery: "systemctl" },
+    { platform: "linux" as const, activeUnit: false, recovery: "generic" },
+    { platform: "darwin" as const, activeUnit: true, recovery: null },
   ])(
-    "selects recovery for $platform with systemd unit $systemdUnit active $activeUnit",
-    ({ platform, systemdUnit, activeUnit, recovery }) => {
+    "selects recovery for $platform with active systemd unit $activeUnit",
+    ({ platform, activeUnit, recovery }) => {
       vi.spyOn(process, "platform", "get").mockReturnValue(platform);
+      const systemdCalls: Array<{ command: string; options: unknown }> = [];
       const result = validateOllamaModel(
         "nemotron-3-nano:30b",
-        (command) =>
-          command.includes("is-active")
-            ? activeUnit
-              ? "active"
-              : "inactive"
-            : systemdUnit && command.some((argument) => argument.includes("systemctl"))
-            ? "ollama.service enabled"
-            : "",
+        (command, options) => {
+          systemdCalls.push({ command: command.join(" "), options });
+          return activeUnit ? "active" : "inactive";
+        },
         () => false,
         () => ({ stdout: "", exitCode: 28, timedOut: true }),
       );
@@ -66,12 +62,22 @@ describe("Ollama probe timeout retry", () => {
         generic: message.includes("Restart Ollama and rerun onboarding"),
         ok: result.ok,
         staleRunner: message.includes("Stale runner processes from a previous model"),
+        systemdCalls,
         systemctl: message.includes("systemctl"),
       }).toEqual({
         daemonFailure: recovery !== null,
         generic: recovery === "generic",
         ok: false,
         staleRunner: recovery !== null,
+        systemdCalls:
+          platform === "linux"
+            ? [
+                {
+                  command: "systemctl is-active ollama.service",
+                  options: { ignoreError: true, timeout: 5_000 },
+                },
+              ]
+            : [],
         systemctl: recovery === "systemctl",
       });
     },

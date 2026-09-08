@@ -75,7 +75,6 @@ import {
   resetOllamaRuntimeContextWindowAutoState,
   resolveOllamaRuntimeContextWindow as resolveOllamaRuntimeContextWindowWithHost,
 } from "./ollama-runtime-context";
-import { hasOllamaSystemdUnit } from "./ollama-version";
 import {
   type RecoveredManagedClusterVllmEndpoint,
   recoverInstalledManagedClusterVllmEndpoint,
@@ -2394,7 +2393,6 @@ export function validateOllamaModel(
     const staleRunnerTimeout = timedOut && localDaemon && process.platform === "linux";
     const activeSystemdUnit =
       staleRunnerTimeout &&
-      hasOllamaSystemdUnit(capture) &&
       capture(["systemctl", "is-active", "ollama.service"], {
         ignoreError: true,
         timeout: 5_000,

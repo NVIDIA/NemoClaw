@@ -13,28 +13,8 @@ import { runCapture } from "../runner";
 
 export type OllamaVersionRunCapture = (
   cmd: readonly string[],
-  opts?: { ignoreError?: boolean; timeout?: number },
+  opts?: { ignoreError?: boolean },
 ) => string;
-
-const SYSTEMD_UNIT_PROBE_TIMEOUT_MS = 5_000;
-
-/** Return true only when this Linux host has an installed systemd Ollama unit. */
-export function hasOllamaSystemdUnit(
-  capture: OllamaVersionRunCapture,
-  platform: NodeJS.Platform = process.platform,
-): boolean {
-  if (platform !== "linux") return false;
-  return Boolean(
-    capture(
-      [
-        "sh",
-        "-c",
-        "command -v systemctl >/dev/null && [ -d /run/systemd/system ] && systemctl list-unit-files ollama.service --no-legend 2>/dev/null | head -n1",
-      ],
-      { ignoreError: true, timeout: SYSTEMD_UNIT_PROBE_TIMEOUT_MS },
-    ).trim(),
-  );
-}
 
 /**
  * Minimum Ollama version NemoClaw expects when reusing an existing host

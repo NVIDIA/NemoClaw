@@ -6,29 +6,11 @@ import { describe, expect, it } from "vitest";
 import {
   getInstalledOllamaVersion,
   getRunningOllamaDaemonVersion,
-  hasOllamaSystemdUnit,
   isOllamaVersionAtLeast,
   MIN_OLLAMA_VERSION,
 } from "./ollama-version";
 
 describe("Ollama version detection", () => {
-  it("skips systemd unit detection outside Linux", () => {
-    let captureCalled = false;
-    const detected = hasOllamaSystemdUnit(() => {
-      captureCalled = true;
-      return "ollama.service enabled";
-    }, "darwin");
-
-    expect({ captureCalled, detected }).toEqual({ captureCalled: false, detected: false });
-  });
-
-  it.each([
-    { output: "", detected: false },
-    { output: "ollama.service enabled", detected: true },
-  ])("detects a Linux systemd unit from %j", ({ output, detected }) => {
-    expect(hasOllamaSystemdUnit(() => output, "linux")).toBe(detected);
-  });
-
   it("parses 'ollama version is X.Y.Z' output", () => {
     const capture = () => "ollama version is 0.6.2";
     expect(getInstalledOllamaVersion(capture)).toBe("0.6.2");

@@ -7,7 +7,6 @@ import nodePath from "node:path";
 import { OLLAMA_PORT } from "../core/ports";
 import { sleepSeconds } from "../core/wait";
 import { resolveOllamaContextWindowFloor } from "../inference/ollama-runtime-context";
-import { hasOllamaSystemdUnit } from "../inference/ollama-version";
 import {
   proveOllamaSystemdServiceExecutable,
   type OllamaServiceExecutableProof,
@@ -208,9 +207,17 @@ export function ensureOllamaLoopbackSystemdOverride(
   const platform = (options.platformImpl ?? (() => process.platform))();
   if (platform !== "linux") return "not-applicable";
 
-  const systemdUnitPresent =
-    options.hasOllamaSystemdUnitImpl?.() ?? hasOllamaSystemdUnit(runCapture, platform);
-  if (!systemdUnitPresent) return "not-applicable";
+  const hasOllamaSystemdUnit =
+    options.hasOllamaSystemdUnitImpl?.() ??
+    !!runCapture(
+      [
+        "sh",
+        "-c",
+        "command -v systemctl >/dev/null && [ -d /run/systemd/system ] && systemctl list-unit-files ollama.service --no-legend 2>/dev/null | head -n1",
+      ],
+      { ignoreError: true },
+    ).trim();
+  if (!hasOllamaSystemdUnit) return "not-applicable";
 
   // #5716: detect missing non-interactive sudo before attempting any override
   // command. Continuing is safe only when runtime listener evidence proves
