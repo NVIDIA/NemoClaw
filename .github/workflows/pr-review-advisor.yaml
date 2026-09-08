@@ -1015,7 +1015,6 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Write bounded redacted receipt
-        continue-on-error: true
         env:
           TARGET_PR: ${{ inputs.target_pr }}
           RESOLVE_RESULT: ${{ needs.repair-resolve.result }}
@@ -1039,7 +1038,6 @@ jobs:
             > "$RUNNER_TEMP/advisor-repair-audit/attempt.json"
 
       - name: Upload audit receipt
-        continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: advisor-repair-audit-${{ github.run_id }}-${{ github.run_attempt }}

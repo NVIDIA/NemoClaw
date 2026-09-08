@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -18,7 +18,9 @@ export type { GitHubRequest, GraphqlRequest } from "../pull-requests/publication
 
 import { githubApiWithResponse } from "../advisors/github.mts";
 import { buildRiskPlan, riskPlanRequiredJobIds, type RiskPlan } from "../advisors/risk-plan.mts";
+import { e2eEvidenceJobNamesForSelectors } from "../e2e/workflow-plan.mts";
 import { dispatchWorkflowWithReconciliation } from "../e2e/pr-e2e-dispatch-reconciliation.mts";
+import { readValidatedArtifactZipEntries } from "../../scripts/lib/read-artifact-zip.mts";
 
 import {
   assertLiveRepairState,
@@ -62,59 +64,8 @@ export const ADVISOR_REPAIR_PREREQUISITE_WORKFLOWS = ["openshell-sdk-package-pr.
 
 const ADVISOR_REPAIR_E2E_WORKFLOW = "e2e.yaml";
 const ADVISOR_REPAIR_E2E_CHECK = "advisor-repair-risk-plan-e2e";
-
-// GitHub exposes resolved job display names, not workflow job IDs. Keep the
-// Phase 1 repair allowlist bound to the exact trusted E2E executions that each
-// current risk-plan ID selects. An unknown future ID fails closed until this
-// evidence map and its regression coverage are deliberately extended.
-export const ADVISOR_REPAIR_E2E_JOB_NAMES = {
-  "channels-add-remove": [
-    "Messaging: adds and removes Telegram configuration (docker) / no provider credential",
-  ],
-  "channels-stop-start": [
-    "Messaging: OpenClaw preserves channels across stop and start (docker) / NVIDIA inference API key",
-    "Messaging: Hermes preserves channels across stop and start (docker) / NVIDIA inference API key",
-  ],
-  "cloud-inference": [
-    "Inference: OpenClaw uses hosted inference (docker) / NVIDIA inference API key",
-  ],
-  "cloud-onboard": ["Cloud onboard (docker)"],
-  "full-e2e": [
-    "OpenClaw: installs, onboards, and completes an agent turn (docker) / NVIDIA inference API key",
-  ],
-  "hermes-e2e": ["Hermes E2E (docker)"],
-  "hermes-inference-switch": [
-    "Inference: Hermes switches to an Anthropic-compatible endpoint (docker) / no provider credential",
-  ],
-  "inference-routing": [
-    "Inference: rejects unsafe routes and proves runtime identities (docker) / no provider credential",
-  ],
-  "llama-cpp-dgx-spark-qualification": ["Protected llama.cpp on NVIDIA DGX Spark"],
-  "managed-image-multiarch-startup": [
-    "Protected managed-image startup (linux/amd64)",
-    "Protected managed-image startup (linux/arm64)",
-  ],
-  "managed-image-protected-runtime": ["Protected managed-image GPU and local inference"],
-  "network-policy": [
-    "Network policy: enforces restricted allow and deny rules (docker) / NVIDIA inference API key",
-  ],
-  "onboard-repair": [
-    "Onboarding: repairs a missing sandbox and rejects conflicting resume input (docker) / no provider credential",
-  ],
-  "onboard-resume": [
-    "Onboarding: resumes interrupted setup from recorded progress (docker) / no provider credential",
-  ],
-  "rebuild-openclaw": [
-    "Rebuild: preserves OpenClaw state and rotates the gateway token (docker) / NVIDIA inference API key",
-  ],
-  "security-posture": [
-    "Security: OpenClaw retains the required sandbox posture (docker) / NVIDIA inference API key",
-    "Security: Hermes retains the required sandbox posture (docker) / NVIDIA inference API key",
-  ],
-  "state-backup-restore": [
-    "Backup: restores workspace files and memory (docker) / NVIDIA inference API key",
-  ],
-} as const satisfies Record<string, readonly string[]>;
+const MAX_E2E_RECEIPT_ARCHIVE_BYTES = 256 * 1024;
+const MAX_E2E_RECEIPT_BYTES = 16 * 1024;
 
 type WorkflowRun = {
   id?: unknown;
@@ -138,6 +89,36 @@ type WorkflowJob = {
   run_attempt?: unknown;
 };
 
+type WorkflowArtifact = {
+  id?: unknown;
+  name?: unknown;
+  size_in_bytes?: unknown;
+  expired?: unknown;
+  digest?: unknown;
+  archive_download_url?: unknown;
+  workflow_run?: { id?: unknown };
+};
+
+type E2eDispatchReceipt = {
+  kind?: unknown;
+  repository?: unknown;
+  prNumber?: unknown;
+  candidateRepository?: unknown;
+  candidateSha?: unknown;
+  baseSha?: unknown;
+  workflowSha?: unknown;
+  workflowRunId?: unknown;
+  workflowRunAttempt?: unknown;
+  eventName?: unknown;
+  jobs?: unknown;
+  targets?: unknown;
+  allowDgxSparkRunnerQueue?: unknown;
+  allowJetsonDispatch?: unknown;
+  allowJetsonRunnerQueue?: unknown;
+  includeStagingBrevLaunchable?: unknown;
+  emptySelectors?: unknown;
+};
+
 type PublishedCheck = {
   id: number;
   name: string;
@@ -153,7 +134,7 @@ type AdvisorRepairE2eDispatch = {
 type AdvisorRepairE2eEvidence = AdvisorRepairE2eDispatch & {
   runAttempt: number;
   url: string;
-  receipt: { name: string; url: string };
+  receipt: { id: number; name: string; digest: string; url: string };
   generateMatrix: { name: "generate-matrix"; url: string };
   requiredJobs: string[];
   jobs: Array<{ name: string; url: string }>;
@@ -165,6 +146,8 @@ type AdvisorRepairRiskPlan = {
   changedPaths: string[];
   requiredJobs: string[];
 };
+
+type ArtifactArchiveRequest = (artifactId: number, maxBytes: number) => Promise<Buffer>;
 
 export type AdvisorRepairHeadReceipt = {
   version: 2;
@@ -453,6 +436,7 @@ async function completedWorkflowEvidence(
   requiredJobs: readonly string[],
   runName: string,
   receiptName: string,
+  workflowSha: string,
   request: GitHubRequest,
 ): Promise<AdvisorRepairHeadReceipt["workflows"][number] | null> {
   const run = (await request(
@@ -466,8 +450,7 @@ async function completedWorkflowEvidence(
     run.head_branch !== "main" ||
     run.display_title !== runName ||
     run.html_url !== dispatch.url ||
-    typeof run.head_sha !== "string" ||
-    !/^[0-9a-f]{40}$/u.test(run.head_sha) ||
+    run.head_sha !== workflowSha ||
     !Number.isSafeInteger(run.run_attempt) ||
     Number(run.run_attempt) < 1
   )
@@ -542,15 +525,14 @@ function requiredE2eJobEvidence(
 ): Array<{ name: string; url: string }> {
   if (new Set(requiredJobs).size !== requiredJobs.length)
     throw new RepairError("generated-head E2E required job list is invalid");
-  const expectedNames = requiredJobs.flatMap((requiredJob) => {
-    const names =
-      ADVISOR_REPAIR_E2E_JOB_NAMES[requiredJob as keyof typeof ADVISOR_REPAIR_E2E_JOB_NAMES];
-    if (!names)
-      throw new RepairError(
-        `generated-head E2E job ${requiredJob} has no trusted evidence mapping`,
-      );
-    return [...names];
-  });
+  let expectedNames: string[];
+  try {
+    expectedNames = e2eEvidenceJobNamesForSelectors(requiredJobs);
+  } catch (error) {
+    throw new RepairError(
+      `generated-head E2E evidence plan is invalid: ${sanitizeDiagnostic(error)}`,
+    );
+  }
   if (new Set(expectedNames).size !== expectedNames.length)
     throw new RepairError("generated-head E2E evidence mapping is ambiguous");
   return expectedNames.map((name) => {
@@ -571,13 +553,169 @@ function requiredE2eJobEvidence(
   });
 }
 
+async function listE2eArtifacts(
+  runId: number,
+  request: GitHubRequest,
+): Promise<WorkflowArtifact[]> {
+  const artifacts: WorkflowArtifact[] = [];
+  const ids = new Set<number>();
+  let totalCount: number | undefined;
+  for (let page = 1; page <= 10; page += 1) {
+    const response = (await request(
+      "GET",
+      `/repos/${REPAIR_REPOSITORY}/actions/runs/${runId}/artifacts?per_page=100&page=${page}`,
+    )) as { total_count?: unknown; artifacts?: unknown };
+    if (
+      !Number.isSafeInteger(response.total_count) ||
+      Number(response.total_count) < 0 ||
+      Number(response.total_count) > 1_000 ||
+      !Array.isArray(response.artifacts) ||
+      response.artifacts.length > 100 ||
+      (totalCount !== undefined && response.total_count !== totalCount)
+    ) {
+      throw new RepairError("generated-head E2E artifact listing is invalid");
+    }
+    totalCount ??= Number(response.total_count);
+    for (const artifact of response.artifacts as WorkflowArtifact[]) {
+      if (
+        !Number.isSafeInteger(artifact.id) ||
+        Number(artifact.id) < 1 ||
+        ids.has(Number(artifact.id))
+      ) {
+        throw new RepairError("generated-head E2E artifact listing is invalid");
+      }
+      ids.add(Number(artifact.id));
+      artifacts.push(artifact);
+    }
+    if (artifacts.length === totalCount) return artifacts;
+    if (artifacts.length > totalCount || response.artifacts.length < 100) {
+      throw new RepairError("generated-head E2E artifact listing is incomplete");
+    }
+  }
+  throw new RepairError("generated-head E2E artifact listing exceeds one thousand artifacts");
+}
+
+async function githubArtifactArchive(
+  artifactId: number,
+  maxBytes: number,
+  token: string,
+): Promise<Buffer> {
+  const response = await fetch(
+    `https://api.github.com/repos/${REPAIR_REPOSITORY}/actions/artifacts/${artifactId}/zip`,
+    {
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${token}`,
+        "X-GitHub-Api-Version": "2026-03-10",
+      },
+    },
+  );
+  if (!response.ok) {
+    throw new RepairError(`generated-head E2E receipt download failed: HTTP ${response.status}`);
+  }
+  const contentLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    throw new RepairError("generated-head E2E receipt archive is oversized");
+  }
+  const archive = Buffer.from(await response.arrayBuffer());
+  if (archive.length < 1 || archive.length > maxBytes) {
+    throw new RepairError("generated-head E2E receipt archive is oversized");
+  }
+  return archive;
+}
+
+async function verifiedE2eDispatchReceipt(
+  runId: number,
+  input: {
+    prNumber: number;
+    generatedHeadSha: string;
+    baseSha: string;
+    workflowSha: string;
+    requiredJobs: readonly string[];
+    request: GitHubRequest;
+    requestArchive: ArtifactArchiveRequest;
+  },
+): Promise<AdvisorRepairE2eEvidence["receipt"]> {
+  const artifactName = `e2e-dispatch-${runId}-1`;
+  const matches = (await listE2eArtifacts(runId, input.request)).filter(
+    (artifact) => artifact.name === artifactName,
+  );
+  if (matches.length !== 1) {
+    throw new RepairError("generated-head E2E dispatch receipt is missing or ambiguous");
+  }
+  const [artifact] = matches;
+  const artifactId = Number(artifact.id);
+  const digest = artifact.digest;
+  const archiveUrl = artifact.archive_download_url;
+  if (
+    artifact.expired !== false ||
+    !Number.isSafeInteger(artifact.size_in_bytes) ||
+    Number(artifact.size_in_bytes) < 1 ||
+    Number(artifact.size_in_bytes) > MAX_E2E_RECEIPT_ARCHIVE_BYTES ||
+    typeof digest !== "string" ||
+    !/^sha256:[0-9a-f]{64}$/u.test(digest) ||
+    archiveUrl !==
+      `https://api.github.com/repos/${REPAIR_REPOSITORY}/actions/artifacts/${artifactId}/zip` ||
+    artifact.workflow_run?.id !== runId
+  ) {
+    throw new RepairError("generated-head E2E dispatch receipt identity is invalid");
+  }
+  const archive = await input.requestArchive(artifactId, MAX_E2E_RECEIPT_ARCHIVE_BYTES);
+  if (`sha256:${createHash("sha256").update(archive).digest("hex")}` !== digest) {
+    throw new RepairError("generated-head E2E dispatch receipt digest is invalid");
+  }
+  const entries = readValidatedArtifactZipEntries(archive, {
+    maxEntries: 1,
+    maxTotalUncompressedBytes: MAX_E2E_RECEIPT_BYTES,
+  });
+  if (entries?.length !== 1 || entries[0]?.name !== "dispatch.json") {
+    throw new RepairError("generated-head E2E dispatch receipt archive is invalid");
+  }
+  let receipt: E2eDispatchReceipt;
+  try {
+    receipt = JSON.parse(entries[0].bytes.toString("utf8")) as E2eDispatchReceipt;
+  } catch {
+    throw new RepairError("generated-head E2E dispatch receipt is invalid JSON");
+  }
+  if (
+    receipt.kind !== "nemoclaw-e2e-dispatch-v2" ||
+    receipt.repository !== REPAIR_REPOSITORY ||
+    receipt.prNumber !== input.prNumber ||
+    receipt.candidateRepository !== REPAIR_REPOSITORY ||
+    receipt.candidateSha !== input.generatedHeadSha ||
+    receipt.baseSha !== input.baseSha ||
+    receipt.workflowSha !== input.workflowSha ||
+    receipt.workflowRunId !== String(runId) ||
+    receipt.workflowRunAttempt !== 1 ||
+    receipt.eventName !== "workflow_dispatch" ||
+    receipt.jobs !== input.requiredJobs.join(",") ||
+    receipt.targets !== "" ||
+    receipt.allowDgxSparkRunnerQueue !== false ||
+    receipt.allowJetsonDispatch !== false ||
+    receipt.allowJetsonRunnerQueue !== false ||
+    receipt.includeStagingBrevLaunchable !== false ||
+    receipt.emptySelectors !== false
+  ) {
+    throw new RepairError("generated-head E2E dispatch receipt content is invalid");
+  }
+  return {
+    id: artifactId,
+    name: artifactName,
+    digest,
+    url: `https://github.com/${REPAIR_REPOSITORY}/actions/runs/${runId}#artifacts`,
+  };
+}
+
 async function completedE2eEvidence(
   dispatch: AdvisorRepairE2eDispatch,
   input: {
     prNumber: number;
+    generatedHeadSha: string;
+    baseSha: string;
     workflowSha: string;
     requiredJobs: readonly string[];
     request: GitHubRequest;
+    requestArchive: ArtifactArchiveRequest;
   },
 ): Promise<AdvisorRepairE2eEvidence | null> {
   const url = `https://github.com/${REPAIR_REPOSITORY}/actions/runs/${dispatch.runId}`;
@@ -614,12 +752,12 @@ async function completedE2eEvidence(
   )
     throw new RepairError("generated-head E2E generate-matrix job did not succeed");
   const requiredJobEvidence = requiredE2eJobEvidence(jobs, input.requiredJobs, url);
-  const artifactName = `e2e-dispatch-${dispatch.runId}-1`;
+  const receipt = await verifiedE2eDispatchReceipt(dispatch.runId, input);
   return {
     ...dispatch,
     runAttempt: 1,
     url,
-    receipt: { name: artifactName, url },
+    receipt,
     generateMatrix: { name: "generate-matrix", url: generateMatrixJob.html_url },
     requiredJobs: [...input.requiredJobs],
     jobs: requiredJobEvidence,
@@ -698,6 +836,7 @@ export async function waitForAdvisorRepairHead(input: {
   request: GitHubRequest;
   token?: string;
   dispatchE2e?: DispatchAdvisorRepairE2e;
+  requestArchive?: ArtifactArchiveRequest;
   correlationId?: () => string;
   wait?: (milliseconds: number) => Promise<void>;
   attempts?: number;
@@ -762,6 +901,7 @@ export async function waitForAdvisorRepairHead(input: {
         specification.checks,
         runName,
         receiptName,
+        input.workflowSha,
         input.request,
       );
       if (evidence) workflows.push(evidence);
@@ -769,9 +909,15 @@ export async function waitForAdvisorRepairHead(input: {
     if (e2eDispatch && !e2e)
       e2e = await completedE2eEvidence(e2eDispatch, {
         prNumber: input.prNumber,
+        generatedHeadSha: input.generatedHeadSha,
+        baseSha: input.baseSha,
         workflowSha: input.workflowSha,
         requiredJobs: riskPlan.requiredJobs,
         request: input.request,
+        requestArchive:
+          input.requestArchive ??
+          ((artifactId, maxBytes) =>
+            githubArtifactArchive(artifactId, maxBytes, required(input.token, "GITHUB_TOKEN"))),
       });
     if (workflows.length === ADVISOR_REPAIR_HEAD_WORKFLOWS.length && (!e2eDispatch || e2e)) {
       const checks = await publishRepairChecks(
@@ -841,7 +987,10 @@ async function main(): Promise<void> {
         sourceHeadSha: selection.sourceHeadSha,
         baseSha: selection.baseSha,
         generatedHeadSha,
-        workflowSha: selection.workflowSha,
+        workflowSha: fullSha(
+          required(process.env.VALIDATION_WORKFLOW_SHA, "VALIDATION_WORKFLOW_SHA"),
+          "validation workflow SHA",
+        ),
         changedPaths,
         attemptKey: selection.attemptKey,
         request: githubClient(token).request,

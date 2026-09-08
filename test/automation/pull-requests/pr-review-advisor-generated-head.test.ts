@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,13 +10,17 @@ import { describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
 import {
-  ADVISOR_REPAIR_E2E_JOB_NAMES,
   ADVISOR_REPAIR_HEAD_WORKFLOWS,
   ADVISOR_REPAIR_PREREQUISITE_WORKFLOWS,
   advisorRepairE2eDispatchRequest,
   type GitHubRequest,
   waitForAdvisorRepairHead,
 } from "../../../tools/pr-review-advisor/repair-publish.mts";
+import {
+  buildE2eWorkflowPlan,
+  e2eEvidenceJobNames,
+  e2eEvidenceJobNamesForSelectors,
+} from "../../../tools/e2e/workflow-plan.mts";
 
 type LocatorStep = {
   env?: Record<string, string>;
@@ -43,6 +48,26 @@ const sourceArtifact = {
   expired: false,
   workflow_run: { id: 77 },
 };
+const validationWorkflowSha = "b".repeat(40);
+
+function zipEntries(entries: Record<string, string>): Buffer {
+  const root = mkdtempSync(join(tmpdir(), "nemoclaw-advisor-e2e-receipt-"));
+  const archive = join(root, "artifact.zip");
+  const result = spawnSync(
+    "python3",
+    [
+      "-c",
+      "import json,sys,zipfile; entries=json.loads(sys.argv[2]); z=zipfile.ZipFile(sys.argv[1], 'w', compression=zipfile.ZIP_DEFLATED); [z.writestr(name, text) for name, text in entries.items()]; z.close()",
+      archive,
+      JSON.stringify(entries),
+    ],
+    { encoding: "utf8" },
+  );
+  expect(result.status, result.stderr).toBe(0);
+  const bytes = readFileSync(archive);
+  rmSync(root, { recursive: true, force: true });
+  return bytes;
+}
 
 function locatorStep(): LocatorStep {
   const workflow = YAML.parse(
@@ -58,6 +83,7 @@ function locatorStep(): LocatorStep {
 function runLocator(
   input: {
     artifacts?: unknown[];
+    mainRef?: Record<string, unknown>;
     run?: Record<string, unknown>;
     workflow?: Record<string, unknown>;
   } = {},
@@ -73,6 +99,7 @@ function runLocator(
       "#!/usr/bin/env node",
       'const endpoint = process.argv.find((value) => value.startsWith("repos/")) ?? "";',
       'if (endpoint.includes("/artifacts?")) process.stdout.write(process.env.FAKE_ARTIFACT_PAGES);',
+      'else if (endpoint.includes("/git/ref/heads/main")) process.stdout.write(process.env.FAKE_MAIN_REF);',
       'else if (endpoint.includes("/actions/runs/")) process.stdout.write(process.env.FAKE_RUN);',
       'else if (endpoint.includes("/actions/workflows/")) process.stdout.write(process.env.FAKE_WORKFLOW);',
       "else process.exit(64);",
@@ -89,6 +116,7 @@ function runLocator(
       EVENT_SOURCE_RUN_ATTEMPT: "",
       EVENT_SOURCE_RUN_ID: "",
       EVENT_SOURCE_WORKFLOW_SHA: "",
+      VALIDATION_WORKFLOW_SHA: validationWorkflowSha,
       INPUT_SOURCE_RUN_ATTEMPT: "2",
       INPUT_SOURCE_RUN_ID: "77",
       GITHUB_OUTPUT: output,
@@ -96,6 +124,9 @@ function runLocator(
       RUNNER_TEMP: root,
       FAKE_RUN: JSON.stringify({ ...sourceRun, ...input.run }),
       FAKE_WORKFLOW: JSON.stringify({ ...sourceWorkflow, ...input.workflow }),
+      FAKE_MAIN_REF: JSON.stringify(
+        input.mainRef ?? { object: { type: "commit", sha: validationWorkflowSha } },
+      ),
       FAKE_ARTIFACT_PAGES: JSON.stringify([{ artifacts: input.artifacts ?? [sourceArtifact] }]),
     },
   });
@@ -138,6 +169,7 @@ describe("PR Review Advisor generated-head evidence", () => {
       "source-run-attempt=2",
       "source-run-id=77",
       `source-workflow-sha=${"a".repeat(40)}`,
+      `validation-workflow-sha=${validationWorkflowSha}`,
     ]);
   });
 
@@ -148,6 +180,7 @@ describe("PR Review Advisor generated-head evidence", () => {
     ["wrong event", { run: { event: "pull_request_target" } }],
     ["wrong attempt", { run: { run_attempt: 3 } }],
     ["invalid workflow SHA", { run: { head_sha: "not-a-sha" } }],
+    ["changed trusted main", { mainRef: { object: { type: "commit", sha: "c".repeat(40) } } }],
     ["expired artifact", { artifacts: [{ ...sourceArtifact, expired: true }] }],
     ["artifact from another run", { artifacts: [{ ...sourceArtifact, workflow_run: { id: 78 } }] }],
     ["missing artifact", { artifacts: [] }],
@@ -186,15 +219,24 @@ describe("PR Review Advisor generated-head evidence", () => {
     const runName = `Repair validation ${selection.attemptKey} head ${generatedHeadSha}`;
     const receiptName = `Repair receipt ${selection.attemptKey} PR ${selection.prNumber} head ${generatedHeadSha} base ${selection.baseSha}`;
     let failedWorkflow: string | undefined;
+    let workflowHeadSha = "5".repeat(40);
     let correlationMode: "one" | "zero" | "ambiguous" = "one";
     let mismatchedReceipt = false;
     let changedPaths: string[] = [];
     let e2eConclusion = "success";
     let e2eMatrixConclusion = "success";
     let e2eJobMode: "duplicate" | "failure" | "missing" | "skipped" | "success" = "success";
+    let e2eArtifactMode: "duplicate" | "expired" | "missing" | "success" | "wrong-run" = "success";
+    let e2eReceiptOverrides: Record<string, unknown> = {};
+    let e2eArchive: Buffer<ArrayBufferLike> = Buffer.alloc(0);
     const e2eRunId = 99;
     const e2eCorrelationId = "01234567-89ab-4cde-8fab-0123456789ab";
     const e2eUrl = `https://github.com/${selection.repository}/actions/runs/${e2eRunId}`;
+    const e2eArtifactId = 990;
+    const expectedE2eJobNames = e2eEvidenceJobNamesForSelectors([
+      "onboard-repair",
+      "onboard-resume",
+    ]);
     const dispatchedWorkflows = new Set<string>();
     const dispatchE2e = vi.fn(async () => ({
       runId: e2eRunId,
@@ -265,11 +307,26 @@ describe("PR Review Advisor generated-head evidence", () => {
               html_url: e2eUrl,
               run_attempt: 1,
             };
+          case method === "GET" && apiPath.includes(`/actions/runs/${e2eRunId}/artifacts?`): {
+            const artifact = {
+              id: e2eArtifactId,
+              name: `e2e-dispatch-${e2eRunId}-1`,
+              size_in_bytes: e2eArchive.length,
+              expired: e2eArtifactMode === "expired",
+              digest: `sha256:${createHash("sha256").update(e2eArchive).digest("hex")}`,
+              archive_download_url: `https://api.github.com/repos/${selection.repository}/actions/artifacts/${e2eArtifactId}/zip`,
+              workflow_run: { id: e2eArtifactMode === "wrong-run" ? e2eRunId + 1 : e2eRunId },
+            };
+            const artifacts =
+              e2eArtifactMode === "missing"
+                ? []
+                : e2eArtifactMode === "duplicate"
+                  ? [artifact, { ...artifact, id: e2eArtifactId + 1 }]
+                  : [artifact];
+            return { total_count: artifacts.length, artifacts };
+          }
           case method === "GET" && apiPath.includes(`/actions/runs/${e2eRunId}/attempts/1/jobs`): {
-            const successfulRequiredE2eJobs = [
-              ...ADVISOR_REPAIR_E2E_JOB_NAMES["onboard-repair"],
-              ...ADVISOR_REPAIR_E2E_JOB_NAMES["onboard-resume"],
-            ].map((name, index) => ({
+            const successfulRequiredE2eJobs = expectedE2eJobNames.map((name, index) => ({
               id: 992 + index,
               name,
               status: "completed",
@@ -318,7 +375,7 @@ describe("PR Review Advisor generated-head evidence", () => {
               conclusion: specification?.workflow === failedWorkflow ? "failure" : "success",
               display_title: runName,
               head_branch: "main",
-              head_sha: "5".repeat(40),
+              head_sha: workflowHeadSha,
               html_url: `https://github.com/${selection.repository}/actions/runs/${runId}`,
               run_attempt: 1,
             };
@@ -367,8 +424,30 @@ describe("PR Review Advisor generated-head evidence", () => {
         }
       },
     );
-    const verify = () =>
-      waitForAdvisorRepairHead({
+    const verify = () => {
+      e2eArchive = zipEntries({
+        "dispatch.json": JSON.stringify({
+          kind: "nemoclaw-e2e-dispatch-v2",
+          repository: selection.repository,
+          prNumber: selection.prNumber,
+          candidateRepository: selection.repository,
+          candidateSha: generatedHeadSha,
+          baseSha: selection.baseSha,
+          workflowSha: "5".repeat(40),
+          workflowRunId: String(e2eRunId),
+          workflowRunAttempt: 1,
+          eventName: "workflow_dispatch",
+          jobs: "onboard-repair,onboard-resume",
+          targets: "",
+          allowDgxSparkRunnerQueue: false,
+          allowJetsonDispatch: false,
+          allowJetsonRunnerQueue: false,
+          includeStagingBrevLaunchable: false,
+          emptySelectors: false,
+          ...e2eReceiptOverrides,
+        }),
+      });
+      return waitForAdvisorRepairHead({
         prNumber: selection.prNumber,
         sourceHeadSha: selection.sourceHeadSha,
         baseSha: selection.baseSha,
@@ -377,11 +456,17 @@ describe("PR Review Advisor generated-head evidence", () => {
         changedPaths,
         attemptKey: selection.attemptKey,
         request: request as GitHubRequest,
+        requestArchive: async (artifactId, maxBytes) => {
+          expect(artifactId).toBe(e2eArtifactId);
+          expect(e2eArchive.length).toBeLessThanOrEqual(maxBytes);
+          return e2eArchive;
+        },
         token: "token",
         dispatchE2e,
         correlationId: () => e2eCorrelationId,
         attempts: 1,
       });
+    };
 
     await expect(verify()).resolves.toMatchObject({
       version: 2,
@@ -393,6 +478,10 @@ describe("PR Review Advisor generated-head evidence", () => {
     });
     expect(dispatchE2e).not.toHaveBeenCalled();
     expect(dispatchedWorkflows).toContain("openshell-sdk-package-pr.yaml");
+    workflowHeadSha = "6".repeat(40);
+    dispatchedWorkflows.clear();
+    await expect(verify()).rejects.toThrow("run evidence is invalid");
+    workflowHeadSha = "5".repeat(40);
     failedWorkflow = "pr.yaml";
     dispatchedWorkflows.clear();
     await expect(verify()).rejects.toThrow("generated-head pr.yaml run failed");
@@ -419,10 +508,7 @@ describe("PR Review Advisor generated-head evidence", () => {
         runId: e2eRunId,
         receipt: { name: `e2e-dispatch-${e2eRunId}-1` },
         requiredJobs: ["onboard-repair", "onboard-resume"],
-        jobs: [
-          { name: ADVISOR_REPAIR_E2E_JOB_NAMES["onboard-repair"][0] },
-          { name: ADVISOR_REPAIR_E2E_JOB_NAMES["onboard-resume"][0] },
-        ],
+        jobs: expectedE2eJobNames.map((name) => ({ name })),
       },
       checks: { length: 6 },
     });
@@ -455,6 +541,33 @@ describe("PR Review Advisor generated-head evidence", () => {
     e2eJobMode = "duplicate";
     dispatchedWorkflows.clear();
     await expect(verify()).rejects.toThrow("generated-head E2E job");
+    e2eJobMode = "success";
+    e2eArtifactMode = "missing";
+    dispatchedWorkflows.clear();
+    await expect(verify()).rejects.toThrow("dispatch receipt is missing or ambiguous");
+    e2eArtifactMode = "duplicate";
+    dispatchedWorkflows.clear();
+    await expect(verify()).rejects.toThrow("dispatch receipt is missing or ambiguous");
+    e2eArtifactMode = "expired";
+    dispatchedWorkflows.clear();
+    await expect(verify()).rejects.toThrow("dispatch receipt identity is invalid");
+    e2eArtifactMode = "wrong-run";
+    dispatchedWorkflows.clear();
+    await expect(verify()).rejects.toThrow("dispatch receipt identity is invalid");
+    e2eArtifactMode = "success";
+    e2eReceiptOverrides = { candidateSha: "6".repeat(40) };
+    dispatchedWorkflows.clear();
+    await expect(verify()).rejects.toThrow("dispatch receipt content is invalid");
+    e2eReceiptOverrides = { jobs: "onboard-repair" };
+    dispatchedWorkflows.clear();
+    await expect(verify()).rejects.toThrow("dispatch receipt content is invalid");
+  });
+
+  it("derives E2E evidence names from the trusted plan rather than a repair map (#10791)", () => {
+    const plan = buildE2eWorkflowPlan({ jobs: "onboard-repair" }, { gatewayRuntimes: ["docker"] });
+    const changed = structuredClone(plan);
+    changed.catalogueMatrices.standard[0]!.display_name = "Renamed onboarding repair evidence";
+    expect(e2eEvidenceJobNames(changed)).toContain("Renamed onboarding repair evidence (docker)");
   });
 
   it("dispatches only the trusted exact generated-head E2E selection (#10791)", () => {

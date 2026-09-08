@@ -785,6 +785,61 @@ export function readFreeStandingJobsInventory(
   return inventory;
 }
 
+export function readE2eWorkflowJobEvidenceNames(
+  input: {
+    jobIds: readonly string[];
+    runtimeProvidersByJob: Readonly<Record<string, readonly string[]>>;
+  },
+  workflowPath = DEFAULT_E2E_WORKFLOW_PATH,
+): string[] {
+  const jobs = asRecord(readWorkflowRecord(workflowPath).jobs);
+  const names: string[] = [];
+  for (const jobId of input.jobIds) {
+    const job = asRecord(jobs[jobId]);
+    if (Object.keys(job).length === 0) {
+      throw new Error(`E2E workflow evidence job is missing: ${jobId}`);
+    }
+    const template = typeof job.name === "string" ? job.name : jobId;
+    const runtimeToken = "${{ matrix.runtime_provider }}";
+    const platformToken = "${{ matrix.platform }}";
+    if (template.includes(runtimeToken)) {
+      const providers = input.runtimeProvidersByJob[jobId] ?? [];
+      if (providers.length === 0) {
+        throw new Error(`E2E workflow evidence job has no runtime providers: ${jobId}`);
+      }
+      for (const provider of providers) names.push(template.replaceAll(runtimeToken, provider));
+      continue;
+    }
+    if (template.includes(platformToken)) {
+      const strategy = asRecord(job.strategy);
+      const matrix = asRecord(strategy.matrix);
+      const include = matrix.include;
+      if (!Array.isArray(include)) {
+        throw new Error(`E2E workflow evidence job has no platform matrix: ${jobId}`);
+      }
+      const platforms = include.map((row) => asRecord(row).platform);
+      if (
+        platforms.length === 0 ||
+        platforms.some((platform) => typeof platform !== "string" || platform.length === 0)
+      ) {
+        throw new Error(`E2E workflow evidence job has an invalid platform matrix: ${jobId}`);
+      }
+      for (const platform of platforms as string[]) {
+        names.push(template.replaceAll(platformToken, platform));
+      }
+      continue;
+    }
+    if (template.includes("${{")) {
+      throw new Error(`E2E workflow evidence job has an unsupported dynamic name: ${jobId}`);
+    }
+    names.push(template);
+  }
+  if (new Set(names).size !== names.length) {
+    throw new Error("E2E workflow evidence job names are ambiguous");
+  }
+  return names;
+}
+
 const RESTORED_GATEWAY_PAIRING_RUNTIME_FILES = new Set([
   "src/lib/actions/sandbox/auto-pair-approval.ts",
   "src/lib/actions/sandbox/restore-gateway-pairing.ts",

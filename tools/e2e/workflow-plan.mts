@@ -44,6 +44,7 @@ import {
 } from "./target-catalogue.mts";
 import {
   focusedE2eJobsForChangedFiles,
+  readE2eWorkflowJobEvidenceNames,
   readFreeStandingJobsInventory,
 } from "./workflow-boundary.mts";
 import {
@@ -693,6 +694,38 @@ export function selectedWorkflowJobs(plan: E2eWorkflowPlan): string[] {
     }
   }
   return [...jobs].sort();
+}
+
+export function e2eEvidenceJobNames(
+  plan: E2eWorkflowPlan,
+  workflowPath?: string,
+): string[] {
+  const names = [
+    ...plan.testMatrix.map((row) => `Shared E2E (${row.execution_id})`),
+    ...Object.values(plan.catalogueMatrices).flatMap((rows) =>
+      rows.map((row) => `${row.display_name} (${row.runtime_provider})`),
+    ),
+    ...readE2eWorkflowJobEvidenceNames(
+      {
+        jobIds: plan.selectedJobs.filter((job) => job !== SHARED_E2E_JOB_ID),
+        runtimeProvidersByJob: plan.runtimeProvidersByJob,
+      },
+      workflowPath,
+    ),
+  ];
+  if (new Set(names).size !== names.length) {
+    throw new Error("E2E evidence job names are ambiguous");
+  }
+  return names;
+}
+
+export function e2eEvidenceJobNamesForSelectors(requiredJobs: readonly string[]): string[] {
+  return e2eEvidenceJobNames(
+    buildE2eWorkflowPlan(
+      { jobs: requiredJobs.join(",") },
+      { gatewayRuntimes: ["docker"] },
+    ),
+  );
 }
 
 export function buildE2eWorkflowPlan(

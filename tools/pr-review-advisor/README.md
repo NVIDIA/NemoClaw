@@ -65,13 +65,18 @@ being checked.
 
 The generated-head request carries the sealed validation receipt, and reconciliation requires its
 attempt, workflow, source head, base, finding IDs, and selected paths to match the trusted selection.
-The reporter rebuilds the checked-in risk plan from the receipt's changed paths and the generated
-SHA. When that plan requires E2E jobs, it dispatches only those jobs through the trusted `main`
-workflow. Every job name mapped from a selected risk-plan job must have one successful, completed
-job record in that run. Missing, skipped, failed, duplicate, or unmapped job evidence fails closed.
-The version 2 generated-head receipt records the risk plan, each required job URL, workflow evidence,
-and published checks. One `advisor-repair-risk-plan-e2e` check represents the complete successful
-E2E set on the generated commit.
+The reporter binds its generated-head code and every workflow it dispatches to one revision that it
+first verifies as the current trusted `main`. It rebuilds the checked-in risk plan from the receipt's
+changed paths and the generated SHA. When that plan requires E2E jobs, it dispatches only those jobs
+through the trusted `main` workflow. The authoritative E2E planner and workflow metadata determine
+the expected job names. Each name must have one job record with completed status and a successful
+conclusion.
+Missing, skipped, failed, duplicate, or unmapped job evidence fails closed. The reporter also
+downloads the sole dispatch receipt, verifies its artifact digest, and requires its PR, commit,
+workflow, run, and selector fields to match the request. The version 2 generated-head receipt records
+the risk plan, verified dispatch receipt, each required job URL, workflow evidence, and published
+checks. One `advisor-repair-risk-plan-e2e` check represents the complete successful E2E set on the
+generated commit.
 
 Trusted selection accepts a finding only when its specialist and path match one of these pairs and
 its exclusion list is empty:
@@ -104,7 +109,8 @@ Review Advisor Generated Head` from `main` with the successful source `source_ru
 without creating another repair attempt.
 
 The repair path retains bounded proposal, validation, publication, generated-head, and diagnostic
-artifacts. The resolver runs on an ephemeral GitHub-hosted `ubuntu-24.04` runner: its `always()`
+artifacts. The workflow fails visibly when it cannot write or upload the redacted audit receipt. The
+resolver runs on an ephemeral GitHub-hosted `ubuntu-24.04` runner: its `always()`
 step deletes the run-named sandbox after ordinary failures, while cancellation or job timeout
 retires the runner-local gateway and sandbox with the runner. Moving this job to a persistent or
 self-hosted runner requires a separate external reconciliation design.
@@ -154,7 +160,8 @@ Authors and coding agents should follow the shared [PR CI and Review Follow-Up](
   update and trusted exact-SHA validation, but never approves or merges the PR.
 - The checked-in risk plan is deterministic and additive. PR Review Advisor reviews every listed invariant and required job for missing evidence. The PR E2E controller separately dispatches every listed job without consuming advisor output.
 
-Risk plan version 20 selects the `gateway-topology` family for the production paths in the canonical `GATEWAY_TOPOLOGY_FILES` inventory in `tools/advisors/risk-plan.mts`.
+The current checked-in risk plan selects the `gateway-topology` family for the production paths in
+the canonical `GATEWAY_TOPOLOGY_FILES` inventory in `tools/advisors/risk-plan.mts`.
 
 The family requires PR Review Advisor to check this invariant against the diff, sibling consumers,
 and checked-in evidence:

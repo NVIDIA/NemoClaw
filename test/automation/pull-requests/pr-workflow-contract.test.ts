@@ -491,9 +491,6 @@ describe("pull request and main workflow contracts", () => {
     ".github/actions/ci-installer-hash-check/action.yaml",
   );
   const prekConfig = readYaml<PrekConfig>(".pre-commit-config.yaml");
-  const packageJson = JSON.parse(readFileSync("package.json", "utf8")) as {
-    scripts: Record<string, string>;
-  };
   const cliTypeScriptConfig = JSON.parse(
     readFileSync("tsconfig.cli.json", "utf8"),
   ) as TypeScriptConfig;
@@ -601,7 +598,14 @@ describe("pull request and main workflow contracts", () => {
       repairPublishText.indexOf("Compare-and-swap the prepared repair commit"),
     );
     const auditSteps = advisorWorkflow.jobs["repair-audit"]?.steps ?? [];
-    expect(auditSteps.every((step) => step["continue-on-error"] === true)).toBe(true);
+    const writeAuditStep = auditSteps.find(
+      (candidate) => candidate.name === "Write bounded redacted receipt",
+    );
+    expect(writeAuditStep, "Write bounded redacted receipt must remain present").toBeDefined();
+    expect(writeAuditStep?.["continue-on-error"]).not.toBe(true);
+    const uploadAuditStep = auditSteps.find((candidate) => candidate.name === "Upload audit receipt");
+    expect(uploadAuditStep, "Upload audit receipt must remain present").toBeDefined();
+    expect(uploadAuditStep?.["continue-on-error"]).not.toBe(true);
     expect(repairPublishText).not.toMatch(/secrets[.]|OPENAI_API_KEY|PR_REVIEW_ADVISOR_API_KEY/u);
     expect(repairRequestText).toContain("github.event.workflow_run.id");
     expect(repairRequestText).toContain("pr-review-advisor.yaml");
