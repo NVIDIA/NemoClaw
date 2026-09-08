@@ -161,6 +161,13 @@ export function runDashboardUrlCommand(
       );
       return;
     }
+    if (bindAddress === null && sandbox?.dashboardPort) {
+      // A row from before the bind was recorded: say so rather than assert
+      // loopback. The next forward launch for this sandbox records it.
+      log(
+        `  Bind not recorded for this dashboard forward; it was created before NemoClaw recorded binds and is recorded the next time the forward is created. Until then, check the host's listening sockets for port ${String(port)}.`,
+      );
+    }
     const hint = buildSshForwardHintLines({
       port,
       accessUrl: bindAddress ? `http://${bindAddress}:${String(port)}` : accessUrl,

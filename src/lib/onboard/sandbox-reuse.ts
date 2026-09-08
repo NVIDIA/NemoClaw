@@ -105,7 +105,10 @@ export interface ReusedSandboxDashboardStateInput {
   ensureDashboardForward(
     sandboxName: string,
     chatUiUrl: string,
-    options?: { revalidateSandboxIdentity?: (operation: string) => void },
+    options?: {
+      revalidateSandboxIdentity?: (operation: string) => void;
+      onForwardFailure?: (diagnostic: string) => void;
+    },
   ): number;
   hermesDashboardForwarding: ReusedSandboxDashboardForwarding;
   updateSandbox?(sandboxName: string, updates: Partial<SandboxEntry>): unknown;
@@ -131,7 +134,7 @@ export interface ReusedSandboxDashboardStateResult {
 /** A registry write fails when it returns false or throws. */
 function recordReusedDashboardBind(
   input: ReusedSandboxDashboardStateInput,
-  dashboardBindAddress: string,
+  dashboardBindAddress: string | null,
 ): boolean {
   try {
     return (
@@ -169,6 +172,9 @@ export function applyReusedSandboxDashboardState(
   const dashboardBindAddress = manageDashboard
     ? buildDashboardChain(input.chatUiUrl, { env: input.env }).bindAddress
     : null;
+  const previousBind = manageDashboard
+    ? ((input.getSandbox ?? registry.getSandbox)(input.sandboxName)?.dashboardBindAddress ?? null)
+    : null;
   if (dashboardBindAddress === "0.0.0.0") {
     input.revalidateSandboxIdentity?.(
       `record the dashboard bind for sandbox '${input.sandboxName}'`,
@@ -179,13 +185,26 @@ export function applyReusedSandboxDashboardState(
       );
     }
   }
+  // The launcher warns and still returns the port when the forward does not
+  // start, so it reports that here. A record written for a forward that
+  // never came up goes back to what it was: no command may claim a listener
+  // that does not exist.
+  let forwardFailure: string | null = null;
+  const onForwardFailure = (diagnostic: string): void => {
+    forwardFailure = diagnostic;
+  };
   const dashboardPort = manageDashboard
     ? input.revalidateSandboxIdentity
       ? input.ensureDashboardForward(input.sandboxName, input.chatUiUrl, {
           revalidateSandboxIdentity: input.revalidateSandboxIdentity,
+          onForwardFailure,
         })
-      : input.ensureDashboardForward(input.sandboxName, input.chatUiUrl)
+      : input.ensureDashboardForward(input.sandboxName, input.chatUiUrl, { onForwardFailure })
     : 0;
+  const recordedBind = forwardFailure === null ? dashboardBindAddress : previousBind;
+  if (forwardFailure !== null && dashboardBindAddress === "0.0.0.0") {
+    recordReusedDashboardBind(input, previousBind);
+  }
   const chatUiUrl = manageDashboard ? `http://127.0.0.1:${dashboardPort}` : input.chatUiUrl;
   if (manageDashboard) {
     input.revalidateSandboxIdentity?.(`record dashboard URL for sandbox '${input.sandboxName}'`);
@@ -222,7 +241,7 @@ export function applyReusedSandboxDashboardState(
   (input.updateSandbox ?? registry.updateSandbox)(input.sandboxName, {
     ...getHermesDashboardRegistryFields(hermesDashboardState),
     // With no managed forward nothing was started, so the existing record stands.
-    ...(dashboardBindAddress === null ? {} : { dashboardBindAddress }),
+    ...(manageDashboard ? { dashboardBindAddress: recordedBind } : {}),
     gatewayName: input.gatewayName,
     gatewayPort: input.gatewayPort,
   });

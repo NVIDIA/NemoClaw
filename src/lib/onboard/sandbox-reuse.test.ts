@@ -111,7 +111,11 @@ describe("applyReusedSandboxDashboardState", () => {
         updateReusedSandboxMetadata: vi.fn(),
       });
 
-      expect(ensureDashboardForward).toHaveBeenCalledWith("reuse-me", chatUiUrl);
+      expect(ensureDashboardForward).toHaveBeenCalledWith(
+        "reuse-me",
+        chatUiUrl,
+        expect.objectContaining({ onForwardFailure: expect.any(Function) }),
+      );
       expect(updateSandbox).toHaveBeenCalledWith(
         "reuse-me",
         expect.objectContaining({ dashboardBindAddress }),
@@ -121,13 +125,18 @@ describe("applyReusedSandboxDashboardState", () => {
 
   function reusedWideDashboard(
     updateSandbox: NonNullable<ReusedSandboxDashboardStateInput["updateSandbox"]>,
+    options: {
+      previousBind?: string | null;
+      ensureDashboardForward?: ReusedSandboxDashboardStateInput["ensureDashboardForward"];
+    } = {},
   ) {
-    const ensureDashboardForward = vi.fn(() => 18789);
+    const ensureDashboardForward = vi.fn(options.ensureDashboardForward ?? (() => 18789));
     const restore = () =>
       applyReusedSandboxDashboardState({
         sandboxName: "reuse-me",
         chatUiUrl: "https://dashboard.example.test:18789",
         env: {},
+        getSandbox: () => ({ name: "reuse-me", dashboardBindAddress: options.previousBind ?? null }),
         agent: null,
         model: "test-model",
         provider: "openai-compatible",
@@ -183,6 +192,42 @@ describe("applyReusedSandboxDashboardState", () => {
     );
     expect(ensureDashboardForward).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["a loopback record", "127.0.0.1"],
+    ["no record", null],
+  ])(
+    "puts back %s when the wide forward does not start after its bind was recorded (#10861)",
+    (_label, previousBind) => {
+      const updateSandbox = vi.fn(
+        (_sandboxName: string, _updates: { dashboardBindAddress?: string | null }) => true,
+      );
+      const { restore } = reusedWideDashboard(updateSandbox, {
+        previousBind,
+        ensureDashboardForward: (_sandboxName, _chatUiUrl, options) => {
+          options?.onForwardFailure?.("forward service exited");
+          return 18789;
+        },
+      });
+
+      restore();
+
+      expect(updateSandbox).toHaveBeenNthCalledWith(1, "reuse-me", {
+        dashboardBindAddress: "0.0.0.0",
+      });
+      expect(updateSandbox).toHaveBeenNthCalledWith(2, "reuse-me", {
+        dashboardBindAddress: previousBind,
+      });
+      expect(updateSandbox).toHaveBeenLastCalledWith(
+        "reuse-me",
+        expect.objectContaining({ dashboardBindAddress: previousBind }),
+      );
+      const bindsAfterRestore = updateSandbox.mock.calls
+        .slice(1)
+        .map(([, updates]) => updates.dashboardBindAddress);
+      expect(bindsAfterRestore).not.toContain("0.0.0.0");
+    },
+  );
 
   it("skips dashboard forwarding while preserving reuse metadata for terminal agents", () => {
     const updateSandbox = vi.fn();

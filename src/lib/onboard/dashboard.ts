@@ -465,6 +465,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
         );
         rollbackSandboxAndExit(sandboxName, err, options.gatewayName);
       }
+      options.onForwardFailure?.(fwdDiagnostic);
       if (looksLikePortConflict) {
         console.warn(
           `! Port ${actualPort} forward did not start — port may be in use by another process.`,
