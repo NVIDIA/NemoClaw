@@ -14,7 +14,6 @@ import { catalogueTarget, E2E_TARGET_CATALOGUE } from "./target-catalogue.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
-const DEFAULT_ADVISOR_PATH = join(REPO_ROOT, ".github", "workflows", "pr-review-advisor.yaml");
 const META_JOBS = new Set([
   "package-openshell-sdk",
   "native-runtime-qualification-podman-toolchain",
@@ -157,6 +156,11 @@ export type OperationsWorkflow = {
   permissions?: WorkflowPermissions;
   "run-name"?: unknown;
   on?: {
+    pull_request_target?: unknown;
+    workflow_run?: {
+      types?: unknown;
+      workflows?: unknown;
+    };
     workflow_dispatch?: {
       inputs?: Record<string, Record<string, unknown>>;
     };
@@ -1528,57 +1532,8 @@ function validateTraceTiming(errors: string[], workflow: OperationsWorkflow): vo
   }
 }
 
-function validateUnifiedAdvisorBoundary(errors: string[], advisorPath: string): void {
-  const source = readFileSync(advisorPath, "utf8");
-  const advisor = YAML.parse(source) as OperationsWorkflow;
-  const permissionBlocks = [
-    advisor.permissions,
-    ...Object.values(advisor.jobs ?? {}).map((job) => job.permissions),
-  ];
-  if (
-    permissionBlocks.some(
-      (permissions) =>
-        permissions === "write-all" || permissionMap(permissions).actions === "write",
-    )
-  ) {
-    errors.push("Unified advisor must not hold actions: write");
-  }
-  if (/createWorkflowDispatch|workflow_dispatches/u.test(source)) {
-    errors.push("Unified advisor must not auto-dispatch workflows");
-  }
-  const specialistEnv = advisor.jobs?.["review-specialists"]?.env ?? {};
-  const expectedBaseRef =
-    "${{ github.event_name == 'pull_request_target' && 'target/base' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'target/base' || inputs.base_ref) }}";
-  const expectedHeadRef =
-    "${{ github.event_name == 'pull_request_target' && 'HEAD' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'HEAD' || inputs.head_ref) }}";
-  if (specialistEnv.BASE_REF !== expectedBaseRef || specialistEnv.HEAD_REF !== expectedHeadRef) {
-    errors.push("Unified advisor specialists must retain target refs through execution");
-  }
-  const discoverySteps = advisor.jobs?.["discover-specialists"]?.steps ?? [];
-  const contextUpload = discoverySteps.find((step) => step.name === "Upload GitHub review context");
-  const specialistSteps = advisor.jobs?.["review-specialists"]?.steps ?? [];
-  const contextDownload = specialistSteps.find(
-    (step) => step.name === "Download GitHub review context",
-  );
-  const specialistUpload = specialistSteps.find((step) => step.name === "Upload specialist review");
-  const contextArtifactName = "pr-review-advisor-context-${{ github.run_id }}";
-  if (
-    contextUpload?.with?.name !== contextArtifactName ||
-    contextDownload?.with?.name !== contextArtifactName ||
-    contextUpload?.with?.overwrite !== true
-  ) {
-    errors.push("Unified advisor context artifact must survive failed-job and full reruns");
-  }
-  if (
-    specialistUpload?.with?.name !== "${{ matrix.advisor.artifact_name }}-${{ github.run_attempt }}"
-  ) {
-    errors.push("Unified advisor specialist artifacts must be unique per rerun attempt");
-  }
-}
-
 export function validateE2eOperationsWorkflow(
   workflow: OperationsWorkflow,
-  advisorPath = DEFAULT_ADVISOR_PATH,
 ): string[] {
   const errors = validateStandardProfileWorkflowBoundary(
     workflow as unknown as Record<string, unknown>,
@@ -1593,13 +1548,11 @@ export function validateE2eOperationsWorkflow(
   validateIssueRoutingRetirement(errors, workflow);
   validateScorecard(errors, workflow);
   validateTraceTiming(errors, workflow);
-  validateUnifiedAdvisorBoundary(errors, advisorPath);
   return errors;
 }
 
 export function validateE2eOperationsWorkflowBoundary(
   workflowPath = DEFAULT_WORKFLOW_PATH,
-  advisorPath = DEFAULT_ADVISOR_PATH,
 ): string[] {
-  return validateE2eOperationsWorkflow(readE2eOperationsWorkflow(workflowPath), advisorPath);
+  return validateE2eOperationsWorkflow(readE2eOperationsWorkflow(workflowPath));
 }

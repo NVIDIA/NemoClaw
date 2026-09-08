@@ -229,8 +229,11 @@ async function showLegacySandboxStatus(sandboxName: string): Promise<void> {
     statusAgent,
   };
   const textOutcome = printSandboxDetails(textContext);
-  if (textOutcome.exitCode && (!process.exitCode || process.exitCode === 0)) {
-    process.exitCode = textOutcome.exitCode;
+  if (
+    (textOutcome.exitCode || llamaCpp?.kind === "unavailable") &&
+    (!process.exitCode || process.exitCode === 0)
+  ) {
+    process.exitCode = textOutcome.exitCode || 1;
   }
 
   await printSandboxGatewayLookupStatus({
