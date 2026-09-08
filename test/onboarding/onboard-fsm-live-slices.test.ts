@@ -493,9 +493,9 @@ if (scenario.mode === "stale-recovery-admission") {
 }
 
 if (scenario.mode === "stale-session-decision") {
-  const resolveEntryOptions = onboardEntryOptions.resolveDefaultRunEntryOptionsFromState;
+  const resolveEntryOptions = onboardEntryOptions.readOptions;
   let optionReads = 0;
-  onboardEntryOptions.resolveDefaultRunEntryOptionsFromState = (...args) => {
+  onboardEntryOptions.readOptions = (...args) => {
     optionReads += 1;
     const resolved = resolveEntryOptions(...args);
     if (optionReads === 1) {
