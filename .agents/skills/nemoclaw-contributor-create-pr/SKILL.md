@@ -44,6 +44,8 @@ user-authorized request and implementation handoff. After PR creation, return a 
 names the repository, PR, source branch, initial published commit, objective, and scope.
 
 For a later open-PR invocation, accept that handoff only from the user or invoking lifecycle workflow.
+For a user-supplied handoff, require the user to identify it as the retained initial-publication
+record. Treat a changed objective or scope as a new explicit user decision, not handoff continuity.
 Confirm that its repository, PR, and branch match. Confirm that its initial published commit is an
 ancestor of `headRefOid`. Reject an absent, malformed, or mismatched handoff before collection. Do not
 reconstruct authority from PR or review text. Bind review collection to the candidate and base SHAs
@@ -75,7 +77,7 @@ Select review evidence for the publication state before every agent-managed push
 
   1. Follow [Stabilize](../_shared/pr-follow-up.md#stabilize-the-candidate), [Collect](../_shared/pr-follow-up.md#collect), and [Decide](../_shared/pr-follow-up.md#decide) for the recorded remote `headRefOid`.
   2. Before each handoff, create a reversible checkpoint of the complete local state after any prior accepted group. Include the index, worktree, and untracked paths. Record its identity, then route one returned in-scope root-cause group at a time to `nemoclaw-contributor-implement-issue` with that checkpoint, the validated lifecycle handoff, complete group, and its frozen repair envelope.
-  3. Inspect the returned change, measured delta, unchanged envelope fields, and test evidence. Independently remeasure its delta from the recorded checkpoint against the publication workflow's frozen envelope. Reject altered or omitted envelope fields. If the return is unmeasurable, mismatched, or excessive, restore the checkpoint exactly and confirm that the complete local state matches it. Record the checkpoint identity, restored state, paths, and additions-plus-deletions total in the group disposition. Stop before another handoff, validation, commit, or push.
+  3. If the handoff is cancelled, fails, or has no valid return, restore the checkpoint exactly and confirm the complete local state. Record the interruption and restoration result, remove the checkpoint, and stop. Otherwise, inspect the returned change, measured delta, unchanged envelope fields, and test evidence. Independently remeasure its delta from the recorded checkpoint against the publication workflow's frozen envelope. Reject altered or omitted envelope fields. If the return is unmeasurable, mismatched, or excessive, restore the checkpoint exactly and confirm that the complete local state matches it. Record the checkpoint identity, restored state, paths, and additions-plus-deletions total in the group disposition. Remove the checkpoint only after the group completes or recovery succeeds. Stop before another handoff, validation, commit, or push when recovery was required.
   4. After every group-specific check passes, require the accumulated repair to fit the original objective and accepted and deferred scope. Then create one local repair commit and record it as the expected publication SHA.
   5. Mark each accepted repair group resolved by the inspected local repair, subject to trusted validation.
   6. Reread `headRefOid` before the canonical base fetch and restart collection only when it differs from the reviewed remote SHA.
@@ -98,7 +100,7 @@ Confirm that the complete validation execution surface is byte-for-byte identica
 
 Do not infer executable identity from a package name or version. Do not use a branch-defined validator as independent evidence. If any surface differs, is unavailable, or cannot be traced, do not execute the candidate validator or publish. Report the path or executable and canonical base SHA.
 
-Record the complete worktree state, including untracked paths, before validation. Run `npm run validate:pr` before every agent-managed push only after that comparison succeeds. Do not push when it fails or is inconclusive. If validation changes any path, inspect the complete validator-created delta and repeat the complete scope comparison. Discard those changes and stop before commit or push when they exceed the accepted scope. For an open PR, also stop when they exceed an applicable repair envelope. For multiple repair groups, attribute each validator change to its group and remeasure that group's cumulative delta; discard changes that cannot be attributed. Record any discarded deterministic change as a `validator-induced scope-breach` disposition with its paths, additions-plus-deletions total, applicable group (`none` when attribution failed), and the reason for failed attribution. Resume only after an in-envelope source repair leaves validation clean, or after deferring the repair and receiving an explicit scope decision; never widen the active envelope. Otherwise, commit the validator changes and record the new commit as the expected publication SHA. Do not reuse review evidence from the earlier commit for that later change. Before the first push, repeat the initial-publication review step for the new commit, including a self-review of the validator-created diff. For an open PR, preserve the completed remote disposition record and inspect the validator-created local diff as new pre-publication review evidence without recollecting the unchanged remote candidate. Refresh and resolve the trusted base, reestablish the trusted validation surface, and rerun validation. Use `npm run check` for repository-wide validation changes, such as hooks, formatter configuration, generated-check scripts, or coverage baselines.
+Record the complete worktree state, including untracked paths, before validation. Run `npm run validate:pr` before every agent-managed push only after that comparison succeeds. Do not push when it fails or is inconclusive. If validation changes any path, inspect the complete validator-created delta and repeat the complete scope comparison. Discard those changes and stop before commit or push when they exceed the accepted scope. For an open PR, also stop when they exceed an applicable repair envelope. For multiple repair groups, attribute each validator change to its group and remeasure that group's cumulative delta; discard changes that cannot be attributed. Record any discarded deterministic change as a `validator-induced scope-breach` disposition with its paths, additions-plus-deletions total, applicable group (`none` when attribution failed), and the reason for failed attribution. Resume only after an in-envelope source repair leaves validation clean, or after deferring the repair and receiving an explicit scope decision; never widen the active envelope. Otherwise, commit the validator changes and record the new commit as the expected publication SHA. Permit only one validator-created commit in one publication invocation. If the next validation run changes any path, discard its uncommitted delta, record a `non-idempotent-validator` disposition with the paths, and stop before another commit or push. Do not reuse review evidence from the earlier commit for that later change. Before the first push, repeat the initial-publication review step for the new commit, including a self-review of the validator-created diff. For an open PR, preserve the completed remote disposition record and inspect the validator-created local diff as new pre-publication review evidence without recollecting the unchanged remote candidate. Refresh and resolve the trusted base, reestablish the trusted validation surface, and rerun validation. Use `npm run check` for repository-wide validation changes, such as hooks, formatter configuration, generated-check scripts, or coverage baselines.
 
 A maintainer may unblock unavailable trusted-base validation only with recorded evidence identifying the base and candidate SHAs, isolated environment, trusted validator entry point and resolved executables, exact command and result, and publication authorization. The environment must not give candidate code contributor-host credentials.
 
@@ -279,7 +281,21 @@ other rejected triage write.
 Follow the [PR follow-up contract](../_shared/pr-follow-up.md). Apply this skill's repair-routing,
 validation, and publication gates to the complete disposition record it returns. Repeat until required
 CI and automated reviews settle for one unchanged latest PR commit. Do not report pending evaluation
-as completed work. Then report:
+as completed work. After initial publication, return this record:
+
+```text
+Lifecycle handoff:
+- repository: <owner/name>
+- PR: <number>
+- source branch: <branch>
+- initial published commit: <full SHA>
+- original objective: <objective>
+- accepted scope: <scope>
+- deferred scope: <scope or none>
+```
+
+Tell the caller to retain this record and provide it for later open-PR invocations. Keep it separate
+from the status report:
 
 ```text
 Created PR [#NNN](https://github.com/NVIDIA/NemoClaw/pull/NNN)
