@@ -334,6 +334,7 @@ describe("Hermes Discord E2E policy binding", () => {
         "      - path: /opt/hermes/.venv/bin/python",
         "      - path: /usr/bin/python3",
         "      - path: /usr/local/bin/python3",
+        "      - path: /usr/local/bin/node",
         "",
       ].join("\n"),
     );
@@ -343,6 +344,7 @@ describe("Hermes Discord E2E policy binding", () => {
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("/usr/bin/python3");
     expect(result.stderr).toContain("/usr/local/bin/python3");
+    expect(result.stderr).toContain("/usr/local/bin/node");
   });
 
   it("accepts only the Hermes venv interpreter for the fake Discord endpoint", () => {
