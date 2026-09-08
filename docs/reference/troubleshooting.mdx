@@ -611,9 +611,33 @@ On Linux, an OpenShell package can install `/usr/lib/systemd/user/openshell-gate
 Failed to connect to bus: No medium found
 ```
 
-The installer accepts only recognized user-manager-unavailable diagnostics for the standalone gateway fallback. It checks `.wants`, `.requires`, and `.upholds` links in the standard systemd user unit paths. The installer keeps the standalone lifecycle only when neither gateway service has an activation path that can later claim port `8080`. The installer also stops when `SYSTEMD_UNIT_PATH` overrides the standard paths. The installer does not parse, modify, or remove a package or foreign unit to make this decision.
+The installer accepts only recognized user-manager-unavailable diagnostics for the standalone gateway fallback.
+It checks `.wants`, `.requires`, and `.upholds` links in the standard systemd user unit paths.
+When `NEMOCLAW_GATEWAY_PORT` selects port `8080` and no activation path exists, the installer keeps the standalone gateway on port `8080`.
 
-If an activation path exists, the installer stops because the service can start later and compete for port `8080`. Restore the systemd user manager, then inspect both possible services:
+When `NEMOCLAW_GATEWAY_PORT` is unset, the installer can continue with one qualified `openshell-gateway.service` activation.
+The activation must point to a trusted package unit without drop-ins, and its environment must set `OPENSHELL_SERVER_PORT=8080` exactly once.
+The installer selects the first nonreserved and unconfigured port from `8990` through `9005` that has no listener, gateway registration, or port-scoped NemoClaw state.
+A supported listener probe must conclusively confirm that the port is unused.
+Installation stops if no candidate passes, including when listener inspection is unavailable or inconclusive for every remaining candidate.
+It does not modify the existing service or activation link.
+
+The completion output prints the selected value.
+Run the printed export command in every later terminal session that targets this gateway.
+If the installer selects port `8990`, it prints this command:
+
+```bash
+export NEMOCLAW_GATEWAY_PORT=8990
+```
+
+Later `list`, `status`, `connect`, `stop`, `rebuild`, and `uninstall` commands use the state root selected by this variable.
+A command without the export uses port `8080` instead.
+
+The installer does not replace a supported explicit non-default gateway port.
+It uses that port's detached lifecycle without automatic selection.
+The installer stops when port `8080` is explicit, the activation evidence is ambiguous, the activation is not an `openshell-gateway.service` symlink to an accepted package-unit path, or the effective service port is not proven to be `8080`.
+It also stops when `SYSTEMD_UNIT_PATH` overrides the standard paths.
+Restore the systemd user manager, then inspect both possible services:
 
 ```bash
 systemctl --user status openshell-gateway.service
@@ -622,7 +646,9 @@ systemctl --user status nemoclaw-openshell-gateway.service
 systemctl --user is-enabled nemoclaw-openshell-gateway.service
 ```
 
-Resolve the competing service through its package or platform owner. Do not delete an activation link or edit a unit file by hand. Rerun the installer only after the owner confirms that no enabled user service can claim port `8080`.
+Resolve an unqualified service through its package or platform owner.
+Do not delete an activation link or edit a unit file by hand.
+Rerun the installer after the owner confirms the effective port and activation state.
 
 Unknown service query errors remain fatal. The installer also stops for malformed effective metadata, an untrusted unit or executable path, an executable failure, or a gateway version mismatch. Follow the reported condition instead of forcing the standalone fallback.
 

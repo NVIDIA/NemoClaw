@@ -283,45 +283,12 @@ is_explicit_nemoclaw_gateway_port() {
 }
 
 validate_gateway_port_candidate() {
-  local port="${1:-}"
-  port="${port#"${port%%[![:space:]]*}"}"
-  port="${port%"${port##*[![:space:]]}"}"
-  if [[ ! "$port" =~ ^0*([0-9]{1,5})$ ]]; then
-    return 1
-  fi
-  port="$((10#${BASH_REMATCH[1]}))"
-  if [ "$port" -lt 1024 ] || [ "$port" -gt 65535 ]; then
-    return 1
-  fi
-  if [ "$port" -ge 18789 ] && [ "$port" -le 18799 ]; then
-    return 1
-  fi
-  case "$port" in
-    8000 | 8080 | 8081 | 11434 | 11435 | 11436 | 11437 | 11438)
-      return 1
-      ;;
-  esac
+  local port
+  port="$(NEMOCLAW_GATEWAY_PORT="${1:-}" resolve_nemoclaw_gateway_port 2>/dev/null)" || return 1
+  [ "$port" -eq 8080 ] && return 1
   if [ "$port" -ge 8642 ] && [ "$port" -le 8652 ]; then
     return 1
   fi
-  local -a configured_ports=(
-    "${NEMOCLAW_DASHBOARD_PORT:-18789}"
-    "${NEMOCLAW_VLLM_PORT:-8000}"
-    "${NEMOCLAW_OLLAMA_PORT:-11434}"
-    "${NEMOCLAW_OLLAMA_PROXY_PORT:-11435}"
-    "${NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT:-11436}"
-    "${NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT:-11437}"
-    "${NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT:-11438}"
-  )
-  local i configured_port
-  for i in "${!configured_ports[@]}"; do
-    configured_port="${configured_ports[$i]}"
-    configured_port="${configured_port#"${configured_port%%[![:space:]]*}"}"
-    configured_port="${configured_port%"${configured_port##*[![:space:]]}"}"
-    if [[ "$configured_port" =~ ^[0-9]+$ ]] && [ "$port" -eq "$configured_port" ]; then
-      return 1
-    fi
-  done
   return 0
 }
 
@@ -333,46 +300,41 @@ candidate_gateway_port_is_available() {
   state_root="$(nemoclaw_state_root 2>/dev/null || true)"
   if [[ -n "$state_root" ]]; then
     state_dir="${state_root}/gateways/${port}"
-    if [[ -d "$state_dir" ]]; then
+    if [[ -e "$state_dir" || -L "$state_dir" ]]; then
       # Reject any existing per-port gateway state directory, including state
       # with a missing or stale PID, so fallback selection cannot reuse ambiguous state.
       return 1
     fi
   fi
+  local config_home
+  config_home="$(openshell_user_config_home)"
+  local gateway_registration="${config_home%/}/openshell/gateways/nemoclaw-${port}"
+  if [[ -e "$gateway_registration" || -L "$gateway_registration" ]]; then return 1; fi
 
   local probe_output probe_status
   if command_exists lsof; then
-    probe_output="$(lsof -nP -iTCP:"${port}" -sTCP:LISTEN -t 2>/dev/null)"
+    probe_output="$(lsof -nP -iTCP:"${port}" -sTCP:LISTEN -t 2>&1)"
     probe_status=$?
     if [ "$probe_status" -eq 0 ]; then
       # A listener is confirmed present.
       return 1
-    elif [ "$probe_status" -ne 1 ]; then
+    elif [ "$probe_status" -ne 1 ] || [[ -n "$probe_output" ]]; then
       # Probe command failed with an unexpected error. Fail closed.
       return 1
     fi
-    if [[ -n "$probe_output" ]]; then
-      return 1
-    fi
   elif command_exists ss; then
-    probe_output="$(ss -H -t -l -n "sport = :${port}" 2>/dev/null)"
+    probe_output="$(ss -H -t -l -n "sport = :${port}" 2>&1)"
     probe_status=$?
-    if [ "$probe_status" -ne 0 ]; then
+    if [ "$probe_status" -ne 0 ] || [[ -n "$probe_output" ]]; then
       # ss failed or returned an error. Fail closed.
       return 1
     fi
-    if [[ -n "$probe_output" ]]; then
-      return 1
-    fi
   elif command_exists fuser; then
-    probe_output="$(fuser "${port}/tcp" 2>/dev/null)"
+    probe_output="$(fuser "${port}/tcp" 2>&1)"
     probe_status=$?
     if [ "$probe_status" -eq 0 ]; then
       return 1
-    elif [ "$probe_status" -ne 1 ]; then
-      return 1
-    fi
-    if [[ -n "$probe_output" ]]; then
+    elif [ "$probe_status" -ne 1 ] || [[ -n "$probe_output" ]]; then
       return 1
     fi
   else
@@ -1723,7 +1685,9 @@ openshell_user_config_home() {
 }
 
 enabled_openshell_gateway_user_service_activation_path() {
-  local user_config_home user_data_home runtime_dir unit_root activation_dir service_name activation_path
+  local mode="${1:-observe}" user_config_home user_data_home runtime_dir unit_root activation_dir
+  local service_name activation_path="" candidate_path unit_path dropin_dir dropin exec_start gateway_bin
+  local activation_count=0 exec_start_count environment_file_count port_line_count port_setting_count
   local config_dirs data_dirs directory
   local -a unit_roots=()
   if [[ -n "${SYSTEMD_UNIT_PATH:-}" ]]; then
@@ -1790,15 +1754,55 @@ enabled_openshell_gateway_user_service_activation_path() {
         return 2
       fi
       for service_name in openshell-gateway "${NEMOCLAW_GATEWAY_SERVICE_NAME}"; do
-        activation_path="${activation_dir}/${service_name}.service"
-        if [[ -e "$activation_path" || -L "$activation_path" ]]; then
-          printf '%s\n' "$activation_path"
-          return 0
+        candidate_path="${activation_dir}/${service_name}.service"
+        if [[ -e "$candidate_path" || -L "$candidate_path" ]]; then
+          if [[ "$activation_count" -ne 0 && "$candidate_path" != "$activation_path" ]]; then
+            printf '%s\n' "$candidate_path"
+            return 2
+          fi
+          activation_path="$candidate_path"
+          activation_count=1
         fi
       done
     done
   done
-  return 1
+  [[ "$activation_count" -eq 1 ]] || return 1
+  if [[ "$mode" == "qualified-default" ]]; then
+    [[ "${activation_path##*/}" == "openshell-gateway.service" && -L "$activation_path" ]] || return 2
+    unit_path="$(readlink "$activation_path" 2>/dev/null)" || return 2
+    [[ "$unit_path" == /* ]] || return 2
+    trusted_upstream_openshell_gateway_unit_for_service "$unit_path" || return 2
+    [[ -f "$unit_path" && -r "$unit_path" ]] || return 2
+    for unit_root in "${unit_roots[@]}"; do
+      candidate_path="${unit_root}/openshell-gateway.service"
+      if [[ -e "$candidate_path" || -L "$candidate_path" ]]; then
+        trusted_upstream_openshell_gateway_unit_for_service "$candidate_path" || return 2
+      fi
+      dropin_dir="${unit_root}/openshell-gateway.service.d"
+      if [[ -e "$dropin_dir" || -L "$dropin_dir" ]]; then
+        [[ ! -L "$dropin_dir" && -d "$dropin_dir" && -r "$dropin_dir" && -x "$dropin_dir" ]] || return 2
+        for dropin in "$dropin_dir"/*.conf; do
+          if [[ -e "$dropin" || -L "$dropin" ]]; then return 2; fi
+        done
+      fi
+    done
+    exec_start_count="$(grep -c '^ExecStart=' "$unit_path" 2>/dev/null || true)"
+    environment_file_count="$(grep -c '^EnvironmentFile=' "$unit_path" 2>/dev/null || true)"
+    [[ "$exec_start_count" -eq 1 && "$environment_file_count" -eq 1 ]] || return 2
+    exec_start="$(sed -n 's/^ExecStart=//p' "$unit_path")"
+    [[ "$exec_start" != *[[:space:]]* ]] || return 2
+    gateway_bin="$exec_start"
+    trusted_upstream_openshell_gateway_bin_for_service "$gateway_bin" || return 2
+    [[ "$(grep -Fxc 'EnvironmentFile=-%E/openshell/gateway.env' "$unit_path" 2>/dev/null || true)" -eq 1 ]] || return 2
+    if grep -Eq '^[^#]*(OPENSHELL_SERVER_PORT|--port([=[:space:]]|$))' "$unit_path"; then return 2; fi
+    local gateway_env
+    gateway_env="$(openshell_user_config_home)/openshell/gateway.env"
+    [[ -f "$gateway_env" && ! -L "$gateway_env" && -r "$gateway_env" ]] || return 2
+    port_line_count="$(grep -Fxc 'OPENSHELL_SERVER_PORT=8080' "$gateway_env" 2>/dev/null || true)"
+    port_setting_count="$(grep -Ec '^[[:space:]]*OPENSHELL_SERVER_PORT[[:space:]]*=' "$gateway_env" 2>/dev/null || true)"
+    [[ "$port_line_count" -eq 1 && "$port_setting_count" -eq 1 ]] || return 2
+  fi
+  printf '%s\n' "$activation_path"
 }
 
 install_nemoclaw_openshell_gateway_user_service() {
@@ -1831,6 +1835,9 @@ install_nemoclaw_openshell_gateway_user_service() {
     if activation_path="$(enabled_openshell_gateway_user_service_activation_path)"; then
       if is_explicit_nemoclaw_gateway_port; then
         error "The systemd user manager is unavailable, but $activation_path can activate a gateway user service that can later claim port 8080. Restore the systemd user manager and inspect or disable that service before rerunning NemoClaw. The installer did not change the unit or activation path."
+      fi
+      if ! enabled_openshell_gateway_user_service_activation_path qualified-default >/dev/null; then
+        error "The systemd user manager is unavailable, and $activation_path can activate a gateway user service whose effective port is not proven to be limited to 8080. Restore the systemd user manager and inspect or disable that service before rerunning NemoClaw. The installer did not change the unit or activation path."
       fi
       local alternate_port
       if alternate_port="$(find_safe_alternate_gateway_port)"; then
