@@ -311,7 +311,8 @@
         "test/onboarding/onboard-extra-provider-reconciliation.test.ts",
         "test/e2e/support/corporate-ca-workload-kind.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/openclaw-pairing-timeline.test.ts"
       ]
     },
     {
