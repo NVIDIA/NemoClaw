@@ -631,6 +631,11 @@ async function rebuildSandboxUnlocked(
           }
           retireRemovedImmutabilityStateRecord(sandboxName, "mutable-rebuild");
         }
+        if (!registry.recordSandboxStopIntent(sandboxName, false, registry.updateSandbox)) {
+          return bail(
+            `Sandbox '${sandboxName}' was recovered, but NemoClaw could not clear its intentional-stop record. Retry 'nemoclaw ${sandboxName} rebuild --yes' before another lifecycle command.`,
+          );
+        }
         if (!completePolicyHandoffCleanup(recreateJournal.id, recoveryBackup)) return;
         if (!clearRecoveryMarker(recreateJournal.id, recoveryBackup)) return;
         recreateJournal.completeAcceptedTarget();
