@@ -6,8 +6,10 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { ModuleKind, ScriptTarget, transpileModule } from "typescript";
 import { describe, expect, it } from "vitest";
 
+const REPOSITORY_ROOT = path.join(import.meta.dirname, "..", "..", "..");
 const CANDIDATE_SHA = execFileSync("git", ["rev-parse", "HEAD"], {
   encoding: "utf8",
 }).trim();
@@ -56,6 +58,7 @@ type RestoreFixtureOptions = {
   archive?:
     | "valid"
     | "cli-directory"
+    | "functional-snapshot-sanitizer"
     | "missing-snapshot-helper"
     | "missing-shared"
     | "non-dist"
@@ -135,6 +138,48 @@ function writeCliArchive(
 
 function writeValidArchive(context: ArchiveFixtureContext): void {
   writeCliArchive(context, () => undefined);
+}
+
+function transpileArtifactModule(source: string, destination: string, module: ModuleKind): void {
+  const output = transpileModule(fs.readFileSync(path.join(REPOSITORY_ROOT, source), "utf8"), {
+    compilerOptions: {
+      esModuleInterop: true,
+      module,
+      target: ScriptTarget.ES2022,
+    },
+    fileName: source,
+  });
+  fs.mkdirSync(path.dirname(destination), { recursive: true });
+  fs.writeFileSync(destination, output.outputText);
+}
+
+function writeFunctionalSnapshotSanitizerArchive(context: ArchiveFixtureContext): void {
+  writeCliArchive(
+    context,
+    (dist) => {
+      for (const module of ["credential-filter", "snapshot-sanitizer"]) {
+        transpileArtifactModule(
+          `src/lib/security/${module}.ts`,
+          path.join(dist, "lib", "security", `${module}.js`),
+          ModuleKind.CommonJS,
+        );
+      }
+    },
+    (shared) => {
+      for (const module of ["credential-filter-boundary", "snapshot-sanitizer-boundary"]) {
+        transpileArtifactModule(
+          `nemoclaw/src/shared/${module}.cts`,
+          path.join(shared, `${module}.cjs`),
+          ModuleKind.CommonJS,
+        );
+      }
+      transpileArtifactModule(
+        "nemoclaw/src/shared/snapshot-sanitizer-helper.mts",
+        path.join(shared, "snapshot-sanitizer-helper.mjs"),
+        ModuleKind.ES2022,
+      );
+    },
+  );
 }
 
 function writeLinkArchive(context: ArchiveFixtureContext): void {
@@ -218,6 +263,7 @@ function writeTraversalArchive(context: ArchiveFixtureContext): void {
 
 const ARCHIVE_FIXTURE_WRITERS = {
   "cli-directory": writeCliDirectoryArchive,
+  "functional-snapshot-sanitizer": writeFunctionalSnapshotSanitizerArchive,
   link: writeLinkArchive,
   "managed-catalog": writeManagedCatalogArchive,
   "missing-snapshot-helper": writeMissingSnapshotHelperArchive,
@@ -599,6 +645,43 @@ describe("exact-commit CLI artifact restore", () => {
           .readdirSync(fixture.runnerTemp)
           .filter((entry) => entry.startsWith("nemoclaw-cli-restore.")),
       ).toEqual([]);
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it("runs snapshot sanitization through the restored artifact helper", () => {
+    const fixture = runRestoreValidation({ archive: "functional-snapshot-sanitizer" });
+    try {
+      expect(fixture.result.status, fixture.output).toBe(0);
+      fs.symlinkSync(
+        path.join(REPOSITORY_ROOT, "node_modules"),
+        path.join(fixture.workspace, "node_modules"),
+        "dir",
+      );
+      const snapshot = path.join(fixture.workspace, "snapshot");
+      const config = path.join(snapshot, "config.json");
+      const secret = "sk-restored-artifact-secret";
+      fs.mkdirSync(snapshot);
+      fs.writeFileSync(config, JSON.stringify({ apiKey: secret, label: "safe" }), { mode: 0o600 });
+
+      const result = spawnSync(
+        process.execPath,
+        [
+          "--eval",
+          "require(process.argv[1]).sanitizeSnapshotDirectory(process.argv[2]);",
+          path.join(fixture.workspace, "dist", "lib", "security", "snapshot-sanitizer.js"),
+          snapshot,
+        ],
+        { cwd: fixture.workspace, encoding: "utf8" },
+      );
+
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+      expect(fs.readFileSync(config, "utf8")).not.toContain(secret);
+      expect(JSON.parse(fs.readFileSync(config, "utf8"))).toEqual({
+        apiKey: "[STRIPPED_BY_MIGRATION]",
+        label: "safe",
+      });
     } finally {
       fixture.cleanup();
     }
