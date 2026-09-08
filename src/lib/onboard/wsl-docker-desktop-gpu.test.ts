@@ -209,6 +209,32 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
     );
   });
 
+  it("maps a nonzero provider-owned container capture to a failed proof", () => {
+    const base = proofProvider("docker");
+    const captureNvidiaContainer = vi.fn(() => ({
+      status: 1,
+      stdout: "",
+      stderr: "no CUDA-capable device is detected",
+    }));
+    const prover = createArm64ContainerGpuProver({
+      platform: "linux",
+      arch: "arm64",
+      resolveRuntimeProvider: () => ({
+        ...base,
+        containerEngine: { ...base.containerEngine, captureNvidiaContainer },
+      }),
+      log: () => undefined,
+    });
+
+    expect(prover(["JMJWOA-Generic-GPU"])).toMatchObject({
+      providerId: "docker",
+      passed: false,
+      timedOut: false,
+      exitCode: 1,
+      diagnostic: "no CUDA-capable device is detected",
+    });
+  });
+
   it("parses one capacity row from the container-bound CUDA proof", () => {
     expect(
       parseContainerGpuProofCapacity("Test PASSED\nNEMOCLAW_GPU_MEMORY_MIB=63936, 60000\n"),
@@ -303,6 +329,9 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
     expect(containerGpuProofTimeoutMs({})).toBeGreaterThan(0);
     expect(containerGpuProofTimeoutMs({ NEMOCLAW_WSL_GPU_PROOF_TIMEOUT_MS: "-1" })).toBeGreaterThan(
       0,
+    );
+    expect(containerGpuProofTimeoutMs({ NEMOCLAW_WSL_GPU_PROOF_TIMEOUT_MS: "864000000" })).toBe(
+      900_000,
     );
   });
 

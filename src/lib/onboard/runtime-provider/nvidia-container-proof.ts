@@ -19,10 +19,13 @@ const NVIDIA_CONTAINER_GPU_CAPACITY_MARKER = "NEMOCLAW_GPU_MEMORY_MIB=";
 // The proof may pull the image on first use. Keep the historical environment
 // variable as a compatibility surface while the execution owner is provider-neutral.
 const NVIDIA_CONTAINER_GPU_PROOF_DEFAULT_TIMEOUT_MS = 180_000;
+const NVIDIA_CONTAINER_GPU_PROOF_MAX_TIMEOUT_MS = 900_000;
 
 export function containerGpuProofTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
   const raw = Number(env.NEMOCLAW_WSL_GPU_PROOF_TIMEOUT_MS);
-  return Number.isFinite(raw) && raw > 0 ? raw : NVIDIA_CONTAINER_GPU_PROOF_DEFAULT_TIMEOUT_MS;
+  return Number.isSafeInteger(raw) && raw > 0
+    ? Math.min(raw, NVIDIA_CONTAINER_GPU_PROOF_MAX_TIMEOUT_MS)
+    : NVIDIA_CONTAINER_GPU_PROOF_DEFAULT_TIMEOUT_MS;
 }
 
 export interface Arm64ContainerGpuProverDeps {

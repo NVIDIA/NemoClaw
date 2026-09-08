@@ -4045,7 +4045,7 @@ The following variables tune how long internal probes wait before giving up. Def
 | `NEMOCLAW_PORTABLE_PODMAN_STARTUP_TIMEOUT_MS` | `60000` | Maximum cold-start time for portable rootless Podman socket activation and the first real API response. Set an integer from `15000` through `300000` milliseconds. This setting does not change the fixed 10,000 ms steady-state API deadline. |
 | `NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS` | per call site (typically `15000`) | Overrides the default timeout for `openshell sandbox exec` calls issued by recovery and lifecycle helpers. Integer milliseconds; non-positive or non-numeric values fall back to the per-call-site default. |
 | `NEMOCLAW_STATUS_PROBE_TIMEOUT_MS` | built-in default | Overrides the timeout for the OpenShell status probe used by `$$nemoclaw <name> status`. Integer milliseconds; non-positive or non-numeric values fall back to the default. |
-| `NEMOCLAW_WSL_GPU_PROOF_TIMEOUT_MS` | `180000` | Maximum time for the bounded Docker CUDA workload on an eligible ARM64 Linux host. A positive finite number of milliseconds overrides the default. Invalid, infinite, zero, and negative values use the default. |
+| `NEMOCLAW_WSL_GPU_PROOF_TIMEOUT_MS` | `180000` | Maximum time for the selected provider's bounded CUDA workload on an eligible ARM64 Linux host. A positive integer overrides the default and is capped at `900000` (15 minutes). Invalid, infinite, zero, and negative values use the default. |
 
 ### Onboard and Sandbox Readiness Timeouts
 
