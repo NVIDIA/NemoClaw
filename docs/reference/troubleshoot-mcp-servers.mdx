@@ -108,6 +108,22 @@ If a Hermes sandbox is alive but its gateway is not running after a supervisor o
 Recovery re-establishes the managed service lifecycle, API forwarding, and the exit-75 reload loop used for transactional MCP configuration changes.
 </AgentOnly>
 
+## Collect Sandbox Logs
+
+Read recent sandbox logs while you reproduce an MCP failure:
+
+```bash
+$$nemoclaw <sandbox> logs --tail 200
+```
+
+<AgentOnly variant="openclaw,hermes">
+The command reads agent gateway output and OpenShell audit events, so policy denials appear beside gateway logs.
+</AgentOnly>
+<AgentOnly variant="deepagents">
+The command reads OpenShell logs, including audit events, so policy denials appear with other OpenShell log entries.
+</AgentOnly>
+If NemoClaw cannot enable OpenShell audit logs, it prints a warning and the policy denial events can be missing.
+
 <AgentOnly variant="openclaw">
 
 ## Remote MCP Tools Are Missing for One Agent Turn
@@ -245,14 +261,7 @@ $$nemoclaw <sandbox> rebuild
 Verify that later successful MCP requests emit no `managed_transport_shadow` line groups.
 
 To find the matching sandbox audit record, read the sandbox log for the same endpoint around the failure time.
-The `logs` command reads both OpenClaw gateway output and OpenShell audit events, so it needs no separate audit flag.
-
-```bash
-$$nemoclaw <sandbox> logs --tail 200
-```
-
 Match on `target` and the timestamp.
-If NemoClaw cannot enable OpenShell audit logs, it prints a warning and the policy denial events can be missing from the output.
 `diagnostic_id` is a local identifier created for one line group when identifier generation succeeds.
 NemoClaw attempts to create it before the request starts, but does not add it to the request.
 It is not a distributed trace identifier and does not appear in OpenShell audit events.
