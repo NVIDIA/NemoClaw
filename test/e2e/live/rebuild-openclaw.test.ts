@@ -782,6 +782,7 @@ print(json.dumps({'seeded': saved == os.environ['PRE_REBUILD_GATEWAY_TOKEN'], 'h
       env: dockerContextEnv(),
       timeoutMs: 30_000,
     });
+    expectExitZero(markerRead, "read workspace marker after rebuild");
     expect(markerRead.stdout).toBe(MARKER_CONTENT);
 
     const newVersion = await sandbox.exec(SANDBOX_NAME, ["openclaw", "--version"], {
