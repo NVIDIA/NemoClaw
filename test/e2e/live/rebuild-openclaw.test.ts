@@ -62,7 +62,10 @@ const ONBOARD_TIMEOUT_MS = 20 * 60_000;
 const LOCAL_ONBOARD_COMMAND_TIMEOUT_MS = execTimeout(ONBOARD_TIMEOUT_MS);
 const DOCKER_BUILD_TIMEOUT_MS = 35 * 60_000;
 const REBUILD_TIMEOUT_MS = 30 * 60_000;
+const AGENT_TURN_TIMEOUT_MS = 120_000;
 const OPENSHELL_TIMEOUT_MS = 2 * 60_000;
+const REBUILD_E2E_TIMEOUT_MS =
+  REBUILD_TIMEOUT_MS + 2 * DOCKER_BUILD_TIMEOUT_MS + ONBOARD_TIMEOUT_MS + AGENT_TURN_TIMEOUT_MS;
 
 interface SeedGatewayTokenResult {
   seeded: boolean;
@@ -340,7 +343,7 @@ function backupCredentialLeakPaths(backupDir: string, oldGatewayToken: string): 
 test(
   "rebuild-openclaw: old OpenClaw sandbox rebuild preserves state and leaves the agent usable",
   {
-    timeout: REBUILD_TIMEOUT_MS + 2 * DOCKER_BUILD_TIMEOUT_MS + ONBOARD_TIMEOUT_MS,
+    timeout: REBUILD_E2E_TIMEOUT_MS,
     meta: {
       e2ePhases: [
         "confirm Docker and prepare OpenClaw rebuild resources",
@@ -769,7 +772,7 @@ print(json.dumps({'seeded': saved == os.environ['PRE_REBUILD_GATEWAY_TOKEN'], 'h
         artifactName: "phase-7-agent-inference-after-rebuild",
         env: cliEnv(apiKey),
         redactionValues: [apiKey],
-        timeoutMs: 120_000,
+        timeoutMs: AGENT_TURN_TIMEOUT_MS,
       },
     );
     expectExitZero(agentTurn, "OpenClaw agent inference after rebuild");
