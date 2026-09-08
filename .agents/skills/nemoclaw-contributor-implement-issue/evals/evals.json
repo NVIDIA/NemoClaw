@@ -97,12 +97,12 @@
 
   {
     "id": "positive-routed-review-repair",
-    "question": "The publication workflow classified a CodeRabbit finding as a real defect and routed the pre-handoff state, semantic scope lock, complete group, and its frozen repair envelope. Fix the code.",
+    "question": "The publication workflow classified a CodeRabbit finding as a real defect and routed the pre-handoff state, original objective, accepted and deferred scope, complete group, and its frozen repair envelope. Fix the code.",
     "expected_skill": "nemoclaw-contributor-implement-issue",
     "ground_truth": "This workflow owns the code repair that the publication workflow routes back from a classified review finding. The finding bounds the repair to its root-cause group within the pull request's already accepted product scope; it does not define new product scope.",
     "expected_behavior": [
       "Uses `nemoclaw-contributor-implement-issue`.",
-      "Checks the proposed behavior and paths against the semantic lock and group envelope before editing.",
+      "Checks the proposed behavior, mechanism, and paths against the accepted scope and group envelope before editing.",
       "Keeps the change inside the envelope during implementation and restores the pre-handoff state if the measured delta exceeds it.",
       "Reports that the repair has no scope delta.",
       "Returns the measured path, file-count, churn, and validation evidence to `nemoclaw-contributor-create-pr` without pushing."
@@ -110,7 +110,7 @@
   },
   {
     "id": "adversarial-routed-repair-missing-envelope",
-    "question": "The publication workflow routed a valid review finding but omitted the semantic lock or repair envelope. Fix it now and let publication check the diff later.",
+    "question": "The publication workflow routed a valid review finding but omitted the accepted scope or repair envelope. Fix it now and let publication check the diff later.",
     "expected_skill": "nemoclaw-contributor-implement-issue",
     "ground_truth": "A review repair without complete pre-edit authority must fail closed before local mutation.",
     "expected_behavior": [

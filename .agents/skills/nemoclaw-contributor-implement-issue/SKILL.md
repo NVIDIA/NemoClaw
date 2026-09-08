@@ -17,8 +17,8 @@ Use this workflow when the user asks to implement, fix, code, or test a named is
 This workflow owns the code repair that `nemoclaw-contributor-create-pr` routes from a classified PR finding. The finding must stay in the accepted product scope and its root-cause group. Return the change and evidence to the publication workflow.
 
 For a review repair, require the recorded pre-handoff local state, original PR objective, accepted and
-deferred scope, semantic scope lock, complete root-cause group, and that group's frozen repair
-envelope. Return without editing when any record is missing or malformed.
+deferred scope, complete root-cause group, and that group's frozen repair envelope. Return without
+editing when any input is missing or malformed.
 
 Do not use this workflow to plan an issue; publish a PR; collect, classify, or answer pull request review feedback; perform an independent security review; or do maintainer work.
 
@@ -37,7 +37,7 @@ the valid finding proves that the accepted design cannot be correct within its c
 
 Before the first review-repair edit, require every proposed path to equal an envelope path or match an
 envelope path rule, require the planned behavior to meet the group's required behavior, and require
-its mechanism to fit the semantic lock. Enforce
+its mechanism to fit the original objective and accepted and deferred scope. Enforce
 the envelope's additional-file and additions-plus-deletions limits during implementation. If the
 complete measured delta is unmeasurable or exceeds an envelope limit, restore only that handoff's
 delta to the recorded pre-handoff state and return the rejected paths and diff total. The publication
