@@ -114,6 +114,7 @@ describe("global doctor command", () => {
     await DoctorCommand.run(["--bogus", "--text", "--json"], rootDir);
 
     expect(mocks.runGlobalDoctor).not.toHaveBeenCalled();
+    expect(out.join("\n")).toContain("--bogus");
     expect(out.join("\n")).not.toContain("mutually exclusive");
     expect(err.join("\n")).not.toContain("mutually exclusive");
     expect(process.exitCode).toBeGreaterThan(0);
