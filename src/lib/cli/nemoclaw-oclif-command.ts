@@ -11,7 +11,7 @@ import {
 } from "../onboard/experimental/portable-agent-lifecycle";
 import { hasHermesPortableReceiptCandidate } from "../onboard/experimental/hermes-portable-receipt";
 import { defaultPortableDemoStateDir } from "../onboard/experimental/portable-runtime-receipt-readiness";
-import { redactForLog } from "../security/redact";
+import { redactForLog, redactFullWithUrls } from "../security/redact";
 import {
   assertNoHermesPortableHostAuthority,
   withCurrentPortableHostFence,
@@ -228,6 +228,17 @@ export abstract class NemoClawCommand extends Command {
     });
 
     return parsed;
+  }
+
+  protected override async catch(error: Interfaces.CommandError): Promise<unknown> {
+    // Until parsing succeeds, JSON mode must not serialize parser internals
+    // instead of letting the CLI runner render the argument error.
+    if (!this.parsed && this.jsonEnabled()) {
+      error.message = redactFullWithUrls(error.message);
+      error.stack = error.stack && redactFullWithUrls(error.stack);
+      throw error;
+    }
+    return super.catch(error);
   }
 
   protected logJson(json: unknown): void {

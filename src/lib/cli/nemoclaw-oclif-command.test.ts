@@ -48,6 +48,7 @@ class ParsingTestCommand extends NemoClawCommand {
 
 class PlainFailureCommand extends NemoClawCommand {
   static id = "plain-failure-test";
+  static enableJsonFlag = true;
   static flags = {};
 
   public async run(): Promise<void> {
@@ -210,6 +211,17 @@ describe("NemoClawCommand", () => {
 
     expect(process.exitCode).toBe(9);
     expect(error.mock.calls).toEqual([["line 1"], ["line 2"]]);
+  });
+
+  it("keeps JSON error handling after successful parsing (#11150)", async () => {
+    const output = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await expect(PlainFailureCommand.run(["--json"], process.cwd())).resolves.toBeUndefined();
+
+    expect(process.exitCode).toBe(7);
+    expect(JSON.parse(String(output.mock.calls[0]?.[0]))).toMatchObject({
+      error: { exitCode: 7 },
+    });
   });
 
   it("redacts sensitive JSON output before logging", () => {
