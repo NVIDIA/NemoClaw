@@ -100,7 +100,10 @@ export function stageRebuildHermesDashboardConfig(
 
 /** Stage a validated recorded N1x provider decision for authoritative rebuild readiness. */
 export function stageRecordedDeferredN1xIntent(
-  recreateOptions: Pick<RebuildRecreateOnboardOpts, "allowDeferredN1xManagedVllm">,
+  recreateOptions: Pick<
+    RebuildRecreateOnboardOpts,
+    "allowDeferredN1xManagedVllm" | "reinstallDeferredN1xManagedVllm"
+  >,
   sandboxEntry: Pick<
     RebuildSandboxEntry,
     | "provider"
@@ -109,6 +112,7 @@ export function stageRecordedDeferredN1xIntent(
     | "endpointSource"
     | "openshellDriver"
     | "hostLocalInferenceReceipt"
+    | "deferredN1xManagedVllmAccepted"
     | "nimContainer"
   >,
   rebuildSelection: {
@@ -117,7 +121,9 @@ export function stageRecordedDeferredN1xIntent(
     pinEndpoint: boolean;
     endpointUrl: string | null;
   },
+  env: Readonly<Record<string, string | undefined>> = process.env,
 ): void {
+  const explicitPreviewIntent = String(env.NEMOCLAW_PROVIDER ?? "").trim() === "install-vllm";
   const selectionMatchesRecord =
     rebuildSelection.provider === sandboxEntry.provider &&
     rebuildSelection.model === sandboxEntry.model;
@@ -141,9 +147,15 @@ export function stageRecordedDeferredN1xIntent(
       sandboxEntry,
       rebuildSelection,
       parseHostLocalInferenceReceipt,
+      {
+        explicitPreviewIntent,
+      },
     );
   if (recordedStandardProviderIsEligible || recordedManagedVllmIsEligible) {
     recreateOptions.allowDeferredN1xManagedVllm = true;
+  }
+  if (recordedManagedVllmIsEligible && explicitPreviewIntent) {
+    recreateOptions.reinstallDeferredN1xManagedVllm = true;
   }
 }
 

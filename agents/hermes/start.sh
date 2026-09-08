@@ -11,9 +11,10 @@
 #   - Gateway listens on internal port 18642, socat forwards the API to 8642
 #   - Dashboard listens on a private loopback port, socat forwards it to 18789
 #
-# SECURITY: The gateway runs as a separate user so the sandboxed agent cannot
-# kill it or restart it with a tampered config. Config hash is verified at
-# startup to detect tampering.
+# SECURITY: The direct-root gateway runs as a separate user so the sandboxed
+# agent cannot control its process lifecycle. Hermes config remains mutable;
+# restart transactions validate its paths, secret boundary, and managed MCP
+# state before a replacement consumes it.
 
 set -euo pipefail
 
@@ -336,7 +337,6 @@ HERMES_RESTART_SEALED=0
 HERMES_RESTART_UNSEALING=0
 HERMES_RESTART_SIGNAL_PENDING=0
 HERMES_MCP_RECONCILE_PENDING=0
-HERMES_MCP_INTEGRITY_FAILED=0
 
 # A same-container PID 1 restart can retain /run. Revoke the prior readiness
 # lease before any startup migration or mutable config read; host mutations are
@@ -554,12 +554,13 @@ hermes_fatal_unproven_child() {
   # In managed OpenShell, exiting this non-root supervisor would leave PID 1
   # and the unproven child alive. Bash's job table can still wait for the exact
   # `$!` child without treating a reused numeric PID as authority to signal it.
-  # Quarantine the supervisor after that child exits; only sandbox destruction
-  # may tear down a process tree whose identities could not be established.
+  # Quarantine this supervisor after that child exits. A sandbox stop/start
+  # replaces the supervisor through the sandbox lifecycle without asking this
+  # process to signal a child whose identity it could not establish.
   echo "[CRITICAL] Newly launched Hermes ${role} pid ${pid} failed exact role identity capture; quarantining the managed startup supervisor without signaling the unproven child" >&2
   trap ':' TERM INT
   wait "$pid" 2>/dev/null || true
-  echo "[CRITICAL] Unproven Hermes ${role} child exited; managed supervisor remains quarantined until sandbox recreation" >&2
+  echo "[CRITICAL] Unproven Hermes ${role} child exited; relaunch is stopped for this supervisor instance; correct the reported failure, then stop and start the sandbox" >&2
   while :; do
     sleep 60 || true
   done
@@ -2018,11 +2019,13 @@ refresh_hermes_provider_placeholders() {
 
 refresh_hermes_runtime_config_hashes() {
   local mode="${1:-strict}"
+  local mcp_transition="${2:-preserve}"
   local cmd=(
     "$_HERMES_PYTHON" -I "$_HERMES_RUNTIME_CONFIG_GUARD" refresh-hashes
     --hermes-dir "$HERMES_DIR"
     --hash-file "$HERMES_HASH_FILE"
     --mode "$mode"
+    --mcp-transition "$mcp_transition"
     --startup-owner
   )
   if [ "$mode" = "compat" ] && [ "$(id -u)" -eq 0 ]; then
@@ -2070,12 +2073,10 @@ inspect_hermes_mcp_integrity() {
     0) HERMES_MCP_RECONCILE_PENDING=0 ;;
     10) HERMES_MCP_RECONCILE_PENDING=1 ;;
     *)
-      HERMES_MCP_INTEGRITY_FAILED=1
       echo "[SECURITY] HERMES_MCP_CONFIG_DRIFT: MCP intent cannot be matched to the persisted gateway state; rebuild the sandbox from its NemoClaw registry state" >&2
       return 1
       ;;
   esac
-  HERMES_MCP_INTEGRITY_FAILED=0
 }
 
 commit_hermes_mcp_applied_if_pending() {
@@ -2204,13 +2205,14 @@ prepare_hermes_gateway_restart() {
     return 1
   fi
 
-  # A restart is a lifecycle action, not authority to bless arbitrary bytes
-  # written by the sandbox user. Supported host config commands refresh the
-  # root-owned strict hash when they make a change; direct in-sandbox edits do
-  # not. Require that trusted anchor instead of chowning attacker-controlled
-  # paths or adopting a new hash here.
+  # Hermes owns its mutable config. Adopt one stable snapshot before sealing
+  # restart inputs. A direct MCP change becomes pending and is committed only
+  # after replacement health. Host reconciliation reports any registry mismatch
+  # without making that host state a precondition for Hermes to run.
   HERMES_RESTART_FAILURE_CODE=hash-mismatch
-  verify_hermes_config_integrity || return 1
+  refresh_hermes_runtime_config_hashes both adopt || return 1
+  HERMES_RESTART_FAILURE_CODE=mcp-integrity
+  inspect_hermes_mcp_integrity "$HERMES_HASH_FILE" || return 1
   prepare_hermes_lazy_dependencies
 }
 
@@ -2638,12 +2640,10 @@ handle_hermes_gateway_control_request() {
   local failure_code
 
   if [ "$GATEWAY_CONTROL_ACTION" = "probe" ]; then
-    if ! prepare_hermes_gateway_restart; then
+    # Probe verifies the running process and credential boundary. It does not
+    # adopt mutable config or change MCP transaction state.
+    if ! validate_running_hermes_boundary; then
       gateway_control_fail "$HERMES_RESTART_FAILURE_CODE" "$old_pid"
-      return 1
-    fi
-    if [ "$HERMES_MCP_RECONCILE_PENDING" -eq 1 ]; then
-      gateway_control_fail mcp-reconcile-required "$old_pid"
       return 1
     fi
     if ! gateway_control_pid_is_live "$old_pid" \
@@ -2660,8 +2660,8 @@ handle_hermes_gateway_control_request() {
     && gateway_control_pid_is_live "$old_pid" \
     && hermes_gateway_healthy "$old_pid"; then
     # Recovery may also recreate the dashboard from the shared Hermes config.
-    # Verify the root-owned trust anchor before any auxiliary consumes it; a
-    # healthy gateway is not authority to bless direct sandbox config drift.
+    # Adopt one stable snapshot before any auxiliary consumes current config;
+    # the old gateway's health does not prove that snapshot stayed unchanged.
     if ! prepare_hermes_gateway_restart; then
       if hermes_restart_failure_revokes_gateway "$HERMES_RESTART_FAILURE_CODE"; then
         stop_hermes_gateway_fail_closed
@@ -2809,10 +2809,9 @@ prepare_hermes_nonroot_runtime() {
   # startup mutations below so their outputs remain covered as well.
   validate_hermes_env_secret_boundary || return 1
   # The non-root Hermes runtime can persist safe config/env changes while it is
-  # running. Reconcile that mutable compatibility anchor only after the secret
-  # boundary is valid; refresh-hashes still requires the recorded MCP intent to
-  # match exactly before it advances the anchor.
-  refresh_hermes_runtime_config_hashes compat || return 1
+  # running. Adopt one stable snapshot only after the secret boundary is valid.
+  # Direct MCP drift becomes pending until the replacement gateway is healthy.
+  refresh_hermes_runtime_config_hashes compat adopt || return 1
   inspect_hermes_mcp_integrity "${HERMES_DIR}/.config-hash" || return 1
   prepare_hermes_lazy_dependencies || return 1
   ensure_hermes_runtime_api_server_key compat || return 1
@@ -2920,7 +2919,10 @@ publish_hermes_root_runtime_marker() {
 }
 
 prepare_hermes_root_runtime() {
-  verify_hermes_config_integrity || return 1
+  validate_hermes_env_secret_boundary || return 1
+  validate_hermes_runtime_env_secret_boundary || return 1
+  refresh_hermes_runtime_config_hashes both adopt || return 1
+  inspect_hermes_mcp_integrity "$HERMES_HASH_FILE" || return 1
   prepare_hermes_lazy_dependencies || return 1
   ensure_hermes_config_root_mode || return 1
   ensure_hermes_runtime_api_server_key both || return 1
@@ -3075,26 +3077,27 @@ record_hermes_managed_gateway_exit() {
   HERMES_MANAGED_GATEWAY_EXIT_TIMES=("${retained[@]+"${retained[@]}"}")
   HERMES_MANAGED_GATEWAY_EXIT_COUNT=${#HERMES_MANAGED_GATEWAY_EXIT_TIMES[@]}
   if [ "$HERMES_MANAGED_GATEWAY_EXIT_COUNT" -ge 5 ]; then
-    echo "[gateway] CRITICAL: $HERMES_MANAGED_GATEWAY_EXIT_COUNT exits in 60s window — Hermes relaunch is quarantined until sandbox recreation; check /tmp/gateway.log" >&2
+    echo "[gateway] CRITICAL: $HERMES_MANAGED_GATEWAY_EXIT_COUNT exits in 60s window — Hermes relaunch is stopped for this supervisor instance; correct the reported failure, then stop and start the sandbox; check /tmp/gateway.log" >&2
     quarantine_hermes_managed_gateway_relaunch
     return 1
   fi
 }
 
 recover_hermes_gateway_current_user() {
-  local replacement_reached_internal_health
+  local replacement_reached_internal_health preparation_failures=0 preparation_failure_limit=5
 
   while :; do
     replacement_reached_internal_health=0
     until prepare_hermes_nonroot_runtime; do
-      if [ "$HERMES_MCP_INTEGRITY_FAILED" -eq 1 ]; then
-        echo "[SECURITY] Hermes automatic respawn is quarantined until MCP integrity is restored by rebuilding the sandbox" >&2
-        quarantine_hermes_managed_gateway_relaunch
+      preparation_failures=$((preparation_failures + 1))
+      if [ "$preparation_failures" -ge "$preparation_failure_limit" ]; then
+        echo "[gateway] Hermes runtime preparation failed after ${preparation_failures} consecutive attempts; supervisor exiting without launching a gateway; correct the reported failure, then stop and start the sandbox" >&2
         return 1
       fi
       echo "[gateway] Hermes runtime preparation refused automatic respawn; retrying in 5s" >&2
       sleep 5 || true
     done
+    preparation_failures=0
     if ! launch_hermes_gateway_current_user; then
       echo "[gateway] Hermes gateway launch failed; retrying under the same supervisor" >&2
       sleep 5 || true
