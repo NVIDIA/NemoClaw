@@ -674,6 +674,7 @@ describe("sandbox image workflow boundary", () => {
       expect(job.steps!.map((step) => step.name)).not.toContain(
         "Remove swap after Hermes image export",
       );
+      expect(job.steps!.map((step) => step.run ?? "").join("\n")).not.toContain("swapoff");
       const swap = job.steps!.find((step) => step.name === "Add swap for Hermes image export")!;
       swap.run = swap.run!.replace('sudo swapon "$swap_file"', 'echo "swap omitted"');
 

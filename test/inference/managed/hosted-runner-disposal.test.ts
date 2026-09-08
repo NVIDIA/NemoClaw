@@ -32,14 +32,26 @@ describe("hosted managed-image runner disposal", () => {
     expect(pi.steps?.map((step) => step.name)).not.toContain(
       "Remove Pi anonymous Docker configuration",
     );
+    expect(pi.steps?.map((step) => step.run ?? "").join("\n")).not.toContain(
+      'rm -rf -- "$ANONYMOUS_CONFIG"',
+    );
+    expect(piPublisher.steps?.map((step) => step.run ?? "").join("\n")).not.toContain(
+      'rm -rf -- "$ANONYMOUS_CONFIG"',
+    );
     expect(publisher["runs-on"]).toBe("${{ matrix.runner }}");
+    const publisherMatrix = required(
+      publisher.strategy?.matrix?.include,
+      "missing publisher runner matrix",
+    );
+    expect(publisherMatrix).not.toHaveLength(0);
     expect(
-      publisher.strategy?.matrix?.include?.every(({ runner }) =>
-        /^ubuntu-(?:24\.04|24\.04-arm)$/u.test(String(runner)),
-      ),
+      publisherMatrix.every(({ runner }) => /^ubuntu-(?:24\.04|24\.04-arm)$/u.test(String(runner))),
     ).toBe(true);
     expect(publisher.steps?.map((step) => step.name)).not.toContain(
       "Remove anonymous Docker configuration",
+    );
+    expect(publisher.steps?.map((step) => step.run ?? "").join("\n")).not.toContain(
+      'rm -rf -- "$ANONYMOUS_CONFIG"',
     );
   });
 });
