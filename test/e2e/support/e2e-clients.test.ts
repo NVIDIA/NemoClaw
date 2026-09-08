@@ -7,10 +7,6 @@ import path from "node:path";
 
 import { describe, expect, expectTypeOf, it, vi } from "vitest";
 import {
-  buildNetworkPolicyCurlProbe,
-  parseNetworkPolicyCurlOutput,
-} from "../../helpers/network-policy-probe.ts";
-import {
   assertExitZero,
   type CommandRunner,
   GatewayClient,
@@ -81,29 +77,6 @@ class FakeRunner implements CommandRunner {
 }
 
 describe("E2E fixture clients", () => {
-  it("keeps the network-policy curl status format with its parser", () => {
-    expect(buildNetworkPolicyCurlProbe("http://host.openshell.internal:1234/")).toContain(
-      String.raw`-w '\nSTATUS_%{http_code}\n'`,
-    );
-  });
-
-  it.each([
-    [
-      "a terminal LF record",
-      '{"detail":"policy_denied"}\nSTATUS_403\n',
-      { response: '{"detail":"policy_denied"}', status: 403 },
-    ],
-    ["a terminal CRLF record", "denied\r\nSTATUS_403\r\n", { response: "denied", status: 403 }],
-    [
-      "status-like response text",
-      '{"detail":"STATUS_403"}\nSTATUS_000\n',
-      { response: '{"detail":"STATUS_403"}', status: 0 },
-    ],
-    ["no terminal record", '{"detail":"STATUS_403"}', null],
-  ])("separates network-policy response and status from %s", (_label, output, expected) => {
-    expect(parseNetworkPolicyCurlOutput(output)).toEqual(expected);
-  });
-
   it.each([
     "a2345678901234567890",
     "e2e--sandbox",

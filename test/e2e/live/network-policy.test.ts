@@ -98,7 +98,7 @@ async function probeUrl(
   artifactName: string,
 ): Promise<string> {
   const result = await sandboxBash(sandbox, buildNetworkPolicyCurlProbe(url), artifactName);
-  return text(result).trim();
+  return text(result);
 }
 
 async function startMarkerServer(
