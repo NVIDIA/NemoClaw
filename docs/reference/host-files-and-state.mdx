@@ -133,7 +133,8 @@ An integration that invokes the direct runner can use `snapshots list` first to 
 `snapshots delete` accepts only one timestamped directory directly under `~/.nemoclaw/snapshots/`.
 Both deletion commands are irreversible: they do not modify a running sandbox, but they remove host state that could otherwise be used for rollback or restore.
 
-Snapshot sanitization and deletion do not require a host Python installation.
+Snapshot sanitization does not require a host Python installation.
+Direct blueprint-runner `snapshots prune` and `snapshots delete` operations still require Python 3 on POSIX hosts.
 Listing works on native Windows, but migration snapshot creation and deletion do not; use WSL for those operations on Windows.
 
 ## Uninstall Behavior

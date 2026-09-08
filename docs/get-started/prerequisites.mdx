@@ -31,6 +31,7 @@ If you cannot add memory, configure at least 8 GB of swap to work around the iss
 |------------|----------------------------------|
 | Node.js    | 22.19 or later |
 | npm        | 10 or later |
+| Python     | Python 3, required only for direct blueprint-runner `snapshots prune` and `snapshots delete` operations on POSIX hosts |
 | SHA-256 tool | `sha256sum` or `shasum`, required only when the installer must install or upgrade Node.js through nvm |
 | Container runtime | Docker Engine, Docker Desktop, or Colima on a tested platform (default), or native rootless Podman on qualified Linux |
 | Platform   | Refer to [Platforms](#platforms) below |
@@ -48,9 +49,10 @@ Before selecting it, review its qualified host requirements and limitations in [
 Managed local vLLM install/start remains Docker-backed and is unavailable when Docker is absent; attaching an already-running local vLLM server remains a separate path.
 The portable experimental profile is separate and still requires a Docker-compatible `docker` command.
 
-NemoClaw uses the native filesystem support installed with its Node.js package for migration snapshot sanitization and deletion.
+NemoClaw uses the native filesystem support installed with its Node.js package for migration snapshot sanitization.
 The sanitizer fails closed if that platform package is missing or cannot load.
-You do not need a host Python installation for snapshot operations.
+Snapshot creation and rebuild sanitization do not require a host Python installation.
+Direct blueprint-runner snapshot deletion and pruning still require Python 3 on POSIX hosts.
 Native Windows is not a supported execution path; use WSL.
 
 If you choose the native Linux Ollama install path, the onboard wizard also requires `zstd` for Ollama archive extraction.

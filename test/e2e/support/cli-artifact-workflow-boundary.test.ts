@@ -15,6 +15,7 @@ const CANDIDATE_SHA = execFileSync("git", ["rev-parse", "HEAD"], {
 }).trim();
 const PAYLOAD_SHA256 = "b".repeat(64);
 const IDENTITY_SCRIPT = path.resolve("scripts/e2e/validate-cli-artifact-identity.sh");
+const PACKAGE_SCRIPT = path.resolve("scripts/e2e/package-cli-artifact.sh");
 const RESTORE_SCRIPT = path.resolve("scripts/e2e/restore-cli-artifact.sh");
 
 function runIdentityValidation(overrides: Record<string, unknown> = {}, consumerAttempt = "1") {
@@ -363,51 +364,82 @@ function runRestoreValidation(options: RestoreFixtureOptions = {}) {
     encoding: "utf8",
   }).trim();
 
-  const payload = path.join(artifactDirectory, "nemoclaw-cli.tar");
-  ARCHIVE_FIXTURE_WRITERS[options.archive ?? "valid"]({
-    buildIdentitySha: options.buildIdentitySha ?? candidateSha,
-    payload,
-    payloadRoot,
-  });
-
-  const actualPayloadSha256 = sha256File(payload);
-  const expectedPayloadSha256 = options.expectedPayloadSha256 ?? actualPayloadSha256;
-  const artifactName = `nemoclaw-cli-${candidateSha}-${expectedPayloadSha256}`;
-  const producerRunAttempt = options.producerRunAttempt ?? "1";
-  const workflowSha = "d".repeat(40);
-  fs.writeFileSync(
-    path.join(artifactDirectory, "manifest.json"),
-    `${JSON.stringify({
-      kind: "nemoclaw-e2e-cli-artifact-v1",
-      artifactName,
-      candidate: {
-        repository: "NVIDIA/NemoClaw",
-        sha: options.manifestCandidateSha ?? candidateSha,
-        sourceTree,
-        lockfileSha256: sha256File(path.join(workspace, "package-lock.json")),
-      },
-      workflow: {
-        sha: workflowSha,
-        runId: "98765",
-        runAttempt: options.manifestRunAttempt ?? options.producerRunAttempt ?? "1",
-      },
-      toolchain: {
-        node: "v22.23.1",
-        npm: "10.9.2",
-        runnerOs: "Linux",
-        runnerArch: "X64",
-      },
-      build: { command: "npm run build:cli", sourceRevision: candidateSha },
-      payload: { file: "nemoclaw-cli.tar", sha256: expectedPayloadSha256 },
-    })}\n`,
-  );
-
   const nodeWrapper = path.join(toolDirectory, "node");
   fs.writeFileSync(
     nodeWrapper,
     `#!/usr/bin/env bash\nset -euo pipefail\nif [[ "$#" -eq 1 && "$1" == "--version" ]]; then\n  echo v22.23.1\n  exit 0\nfi\nexec ${JSON.stringify(process.execPath)} "$@"\n`,
     { mode: 0o755 },
   );
+  const archive = options.archive ?? "valid";
+  const usesProducerArtifact = archive === "functional-snapshot-sanitizer";
+  const payload = path.join(artifactDirectory, "nemoclaw-cli.tar");
+  const producerRunAttempt = options.producerRunAttempt ?? "1";
+  const workflowSha = "d".repeat(40);
+  ARCHIVE_FIXTURE_WRITERS[archive]({
+    buildIdentitySha: options.buildIdentitySha ?? candidateSha,
+    payload,
+    payloadRoot: usesProducerArtifact ? workspace : payloadRoot,
+  });
+  const packageProducerArtifact = () => {
+    const packageOutput = path.join(root, "package-output");
+    const packageResult = spawnSync(PACKAGE_SCRIPT, [], {
+      cwd: workspace,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        CANDIDATE_REPOSITORY: "NVIDIA/NemoClaw",
+        CANDIDATE_SHA: candidateSha,
+        GITHUB_OUTPUT: packageOutput,
+        MANAGED_IMAGE_CATALOG: "",
+        MANAGED_IMAGE_CATALOG_SHA256: "",
+        PATH: `${toolDirectory}:${process.env.PATH ?? ""}`,
+        RUN_ATTEMPT: producerRunAttempt,
+        RUN_ID: "98765",
+        RUNNER_ARCH: "X64",
+        RUNNER_OS: "Linux",
+        RUNNER_TEMP: runnerTemp,
+        WORKFLOW_SHA: workflowSha,
+      },
+    });
+    expect(packageResult.status, `${packageResult.stdout}${packageResult.stderr}`).toBe(0);
+    fs.rmSync(path.join(workspace, "dist"), { recursive: true });
+    fs.rmSync(path.join(workspace, "nemoclaw", "dist"), { recursive: true });
+  };
+  (usesProducerArtifact ? packageProducerArtifact : () => undefined)();
+
+  const actualPayloadSha256 = sha256File(payload);
+  const expectedPayloadSha256 = options.expectedPayloadSha256 ?? actualPayloadSha256;
+  const artifactName = `nemoclaw-cli-${candidateSha}-${expectedPayloadSha256}`;
+  const writeFixtureManifest = () => {
+    fs.writeFileSync(
+      path.join(artifactDirectory, "manifest.json"),
+      `${JSON.stringify({
+        kind: "nemoclaw-e2e-cli-artifact-v1",
+        artifactName,
+        candidate: {
+          repository: "NVIDIA/NemoClaw",
+          sha: options.manifestCandidateSha ?? candidateSha,
+          sourceTree,
+          lockfileSha256: sha256File(path.join(workspace, "package-lock.json")),
+        },
+        workflow: {
+          sha: workflowSha,
+          runId: "98765",
+          runAttempt: options.manifestRunAttempt ?? options.producerRunAttempt ?? "1",
+        },
+        toolchain: {
+          node: "v22.23.1",
+          npm: "10.9.2",
+          runnerOs: "Linux",
+          runnerArch: "X64",
+        },
+        build: { command: "npm run build:cli", sourceRevision: candidateSha },
+        payload: { file: "nemoclaw-cli.tar", sha256: expectedPayloadSha256 },
+      })}\n`,
+    );
+  };
+  (usesProducerArtifact ? () => undefined : writeFixtureManifest)();
+
   const lockfileSha256 = sha256File(path.join(workspace, "package-lock.json"));
   fs.writeFileSync(
     path.join(toolDirectory, "sha256sum"),
@@ -650,7 +682,7 @@ describe("exact-commit CLI artifact restore", () => {
     }
   });
 
-  it("runs snapshot sanitization through the restored artifact helper", () => {
+  it("packages and restores snapshot sanitization through the artifact helper", () => {
     const fixture = runRestoreValidation({ archive: "functional-snapshot-sanitizer" });
     try {
       expect(fixture.result.status, fixture.output).toBe(0);
