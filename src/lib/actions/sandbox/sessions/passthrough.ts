@@ -1,8 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { captureOpenshell } from "../../../adapters/openshell/runtime";
+import type { OpenShellSandboxBufferedCommandCompletion } from "../../../adapters/openshell/sandbox-command";
+import { createCliOpenShellSandboxCommandExecutor } from "../../../adapters/openshell/sandbox-command-cli";
 import { CLI_NAME } from "../../../cli/branding";
+import { REPOSITORY_ROOT } from "../../../core/repository-root";
 import {
   deferSandboxLifecycleExit,
   runWithDeferredSandboxLifecycleExit,
@@ -10,12 +12,15 @@ import {
 import { assertHermesPortableCommandUnavailable } from "../../../onboard/experimental/portable-agent-lifecycle";
 import { withMcpLifecycleLock } from "../../../state/mcp-lifecycle-lock-acquisition";
 import * as registry from "../../../state/registry";
-import { buildOpenshellExecArgs, computeExitCode, execSandbox } from "../exec";
+import { execSandbox } from "../exec";
 import { ensureLiveSandboxOrExit } from "../gateway-state";
 import { isWarmupSessionId, WARMUP_SESSION_ID_PREFIX } from "../warmup-session";
 import { balancedJsonCandidates, parseSessionIndex } from "./session-index";
 
 const SESSIONS_LIST_CAPTURE_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
+const sandboxCommandExecutor = createCliOpenShellSandboxCommandExecutor({
+  hostCwd: REPOSITORY_ROOT,
+});
 
 export type SessionsPassthroughVerb = "list";
 
@@ -138,14 +143,6 @@ function writeWithTrailingNewline(stream: NodeJS.WriteStream, value: string | un
   stream.write(value.endsWith("\n") ? value : `${value}\n`);
 }
 
-function capturedStdout(result: { output: string; stdout?: string }): string {
-  return typeof result.stdout === "string" ? result.stdout.trim() : result.output;
-}
-
-function capturedStderr(result: { stderr?: string }): string {
-  return typeof result.stderr === "string" ? result.stderr.trim() : "";
-}
-
 function printJsonParseFailure(): void {
   console.error(
     "  Could not parse `openclaw sessions list --json` output as a session index. Check the OpenClaw version pinned in agents/openclaw/manifest.yaml.",
@@ -160,8 +157,8 @@ function printSessionsListCaptureBufferFailure(): void {
   );
 }
 
-function isCaptureBufferFailure(result: { error?: Error }): boolean {
-  return (result.error as NodeJS.ErrnoException | undefined)?.code === "ENOBUFS";
+function isCaptureBufferFailure(result: OpenShellSandboxBufferedCommandCompletion): boolean {
+  return result.outcome.kind === "failed" && result.outcome.error.kind === "capture";
 }
 
 export function filterWarmupSessionsListJson(output: string): string | null {
@@ -251,14 +248,24 @@ async function runSessionsPassthroughUnlocked(
   else if (inSandboxBinary === "hermes") command.push("list");
   for (const arg of extraArgs) command.push(arg);
   if (isFilterableListPassthrough(verb) && inSandboxBinary === "openclaw") {
-    const result = captureOpenshell(buildOpenshellExecArgs(sandboxName, command), {
-      ignoreError: true,
-      includeStreams: true,
-      maxBuffer: SESSIONS_LIST_CAPTURE_MAX_BUFFER_BYTES,
-    });
-    const { code, errorMessage } = computeExitCode(result);
-    const capturedOutput = capturedStdout(result);
-    const capturedError = capturedStderr(result);
+    let result: OpenShellSandboxBufferedCommandCompletion;
+    try {
+      result = await sandboxCommandExecutor.runBuffered({
+        sandboxName,
+        target: { kind: "selected" },
+        command,
+        outputLimitBytes: SESSIONS_LIST_CAPTURE_MAX_BUFFER_BYTES,
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      console.error(`  Failed to invoke openshell: ${detail}`);
+      deferSandboxLifecycleExit(1);
+    }
+    const code = result.outcome.kind === "completed" ? result.outcome.exitCode : 1;
+    const errorMessage =
+      result.outcome.kind === "failed" ? result.outcome.error.message : undefined;
+    const capturedOutput = result.stdout.trim();
+    const capturedError = result.stderr.trim();
     if (code !== 0) {
       writeWithTrailingNewline(process.stdout, capturedOutput);
       writeWithTrailingNewline(process.stderr, capturedError);

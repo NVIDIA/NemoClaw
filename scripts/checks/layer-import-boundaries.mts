@@ -62,7 +62,6 @@ const INTERACTIVE_EXEC_HELPER_IMPORTERS = new Set([
   "src/lib/actions/sandbox/agent/passthrough-json.ts",
   "src/lib/actions/sandbox/agent/passthrough.ts",
   "src/lib/actions/sandbox/launch.ts",
-  "src/lib/actions/sandbox/sessions/passthrough.ts",
 ]);
 const MANAGED_AGENT_IDS = new Set(["openclaw", "hermes", "langchain-deepagents-code", "pi"]);
 
