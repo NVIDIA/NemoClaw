@@ -261,6 +261,19 @@ describe("startSandbox", () => {
     expect(h.getSandbox("my-sandbox")?.stopped).toBe(false);
   });
 
+  it("clears stop intent before startup-state recovery fails (#11025)", async () => {
+    const h = harness();
+    h.restoreStartupState.mockReturnValue(FAILED_RECOVERY);
+
+    await expect(startSandbox("my-sandbox", h.deps)).rejects.toThrow("gateway did not recover");
+
+    expect(h.updateSandbox).toHaveBeenCalledWith("my-sandbox", { stopped: false });
+    expect(h.getSandbox("my-sandbox")?.stopped).toBe(false);
+    expect(h.updateSandbox.mock.invocationCallOrder[0]).toBeLessThan(
+      h.restoreStartupState.mock.invocationCallOrder[0],
+    );
+  });
+
   it("does not require a registry write when no intentional stop is recorded (#11025)", async () => {
     const h = harness();
     h.getSandbox.mockReturnValue(sandbox());
@@ -276,6 +289,7 @@ describe("startSandbox", () => {
     await expect(startSandbox("my-sandbox", h.deps)).rejects.toThrow(
       "started, but NemoClaw could not clear its intentional-stop record",
     );
+    expect(h.restoreStartupState).not.toHaveBeenCalled();
   });
 
   it(

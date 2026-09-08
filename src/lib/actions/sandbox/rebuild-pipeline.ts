@@ -562,6 +562,11 @@ async function rebuildSandboxUnlocked(
         }
         rebuildPolicyHandoffManifest = recoveryBackup;
         retainPolicyHandoffForRecovery = true;
+        if (!registry.recordSandboxStopIntent(sandboxName, false, registry.updateSandbox)) {
+          return bail(
+            `Sandbox '${sandboxName}' was recovered, but NemoClaw could not clear its intentional-stop record. Retry 'nemoclaw ${sandboxName} rebuild --yes' before another lifecycle command.`,
+          );
+        }
         const restored = runRebuildRestorePhase({
           sandboxName,
           targetAgentType: rebuildAgent || "openclaw",
@@ -630,11 +635,6 @@ async function rebuildSandboxUnlocked(
             );
           }
           retireRemovedImmutabilityStateRecord(sandboxName, "mutable-rebuild");
-        }
-        if (!registry.recordSandboxStopIntent(sandboxName, false, registry.updateSandbox)) {
-          return bail(
-            `Sandbox '${sandboxName}' was recovered, but NemoClaw could not clear its intentional-stop record. Retry 'nemoclaw ${sandboxName} rebuild --yes' before another lifecycle command.`,
-          );
         }
         if (!completePolicyHandoffCleanup(recreateJournal.id, recoveryBackup)) return;
         if (!clearRecoveryMarker(recreateJournal.id, recoveryBackup)) return;
@@ -786,6 +786,11 @@ async function rebuildSandboxUnlocked(
         restoreDcodeGpuPatchNetwork();
       }
       if (!recreated) return;
+      if (!registry.recordSandboxStopIntent(sandboxName, false, registry.updateSandbox)) {
+        return bail(
+          `Sandbox '${sandboxName}' was rebuilt, but NemoClaw could not clear its intentional-stop record. Run 'nemoclaw ${sandboxName} status' before another lifecycle command.`,
+        );
+      }
 
       const restore = () =>
         runRebuildRestorePhase({
@@ -847,11 +852,6 @@ async function rebuildSandboxUnlocked(
           );
         }
         retireRemovedImmutabilityStateRecord(sandboxName, "mutable-rebuild");
-      }
-      if (!registry.recordSandboxStopIntent(sandboxName, false, registry.updateSandbox)) {
-        return bail(
-          `Sandbox '${sandboxName}' was rebuilt, but NemoClaw could not clear its intentional-stop record. Run 'nemoclaw ${sandboxName} status' before another lifecycle command.`,
-        );
       }
       if (backup.backupManifest) {
         if (!completePolicyHandoffCleanup(recreateJournal.id, backup.backupManifest)) return;

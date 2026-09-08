@@ -195,6 +195,18 @@ async function startSandboxWithinLifecycleFence(
   if ("hermesPortableVerified" in result && result.hermesPortableVerified === true) {
     return { exitCode: 0 };
   }
+  if (
+    resolved.sandbox.stopped === true &&
+    !registry.recordSandboxStopIntent(
+      sandboxName,
+      false,
+      deps.updateSandbox ?? registry.updateSandbox,
+    )
+  ) {
+    throw new Error(
+      `Sandbox '${sandboxName}' started, but NemoClaw could not clear its intentional-stop record. Run '${cliName()} ${sandboxName} status' before another lifecycle command.`,
+    );
+  }
 
   const readiness: { inference: SandboxInferenceInvocationResult | null } = { inference: null };
   await resolved.lifecycle.verifyStarted(input, async (name) => {
@@ -239,18 +251,6 @@ async function startSandboxWithinLifecycleFence(
     await (deps.verifyGateway ?? verifyGateway)(name);
     readiness.inference = checkStartedSandboxInference(name, resolved.sandbox, deps, log);
   });
-  if (
-    resolved.sandbox.stopped === true &&
-    !registry.recordSandboxStopIntent(
-      sandboxName,
-      false,
-      deps.updateSandbox ?? registry.updateSandbox,
-    )
-  ) {
-    throw new Error(
-      `Sandbox '${sandboxName}' started, but NemoClaw could not clear its intentional-stop record. Run '${cliName()} ${sandboxName} status' before another lifecycle command.`,
-    );
-  }
   if (readiness.inference && !readiness.inference.ok) {
     log(`  The sandbox started but inference is not usable: ${readiness.inference.detail}.`);
     log(`  Run the sandbox doctor command for '${sandboxName}' to identify the failing hop.`);

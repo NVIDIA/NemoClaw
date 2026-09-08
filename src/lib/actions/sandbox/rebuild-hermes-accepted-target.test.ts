@@ -273,6 +273,7 @@ describe("Hermes accepted replacement recovery", () => {
     expect(bail).toHaveBeenCalledWith(
       "Sandbox 'alpha' was recovered, but NemoClaw could not clear its intentional-stop record. Retry 'nemoclaw alpha rebuild --yes' before another lifecycle command.",
     );
+    expect(phaseMocks.runRestore).not.toHaveBeenCalled();
     expect(completeAcceptedTarget).not.toHaveBeenCalled();
 
     await expect(
@@ -280,6 +281,7 @@ describe("Hermes accepted replacement recovery", () => {
     ).resolves.toBeUndefined();
 
     expect(phaseMocks.recordSandboxStopIntent).toHaveBeenCalledTimes(2);
+    expect(phaseMocks.runRestore).toHaveBeenCalledOnce();
     expect(completeAcceptedTarget).toHaveBeenCalledOnce();
   });
 

@@ -203,7 +203,26 @@ describe("connectSandbox probe-only observe mode", () => {
 
     expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", { stopped: false });
     expect(harness.registryEntries[0]?.stopped).toBe(true);
+    expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
     expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
+  });
+
+  it("clears stop intent before probe-only process recovery fails", async () => {
+    const harness = createConnectHarness({
+      registryEntry: { stopped: true },
+      dockerRuntime: { containerName: "openshell-alpha", running: false, paused: false },
+      listOutputs: ["alpha Error", "alpha Provisioning", "alpha Ready"],
+      processCheck: { checked: false, wasRunning: false, recovered: false },
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.registryEntries[0]?.stopped).toBe(false);
+    expect(harness.registryUpdateSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.checkAndRecoverSpy.mock.invocationCallOrder[0],
+    );
   });
 
   it.each([

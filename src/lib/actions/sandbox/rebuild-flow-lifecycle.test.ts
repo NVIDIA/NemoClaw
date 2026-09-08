@@ -343,7 +343,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
 
   it("retains removed Shields state when a Pi terminal-agent restore fails", async () => {
     const harness = createRebuildFlowHarness({
-      sandboxEntry: { agent: "pi" },
+      sandboxEntry: { agent: "pi", stopped: true },
       restoreSandboxState: () => ({
         success: false,
         restoredDirs: [],
@@ -362,6 +362,13 @@ describe("rebuildSandbox flow: lifecycle", () => {
     ).rejects.toThrow(/State restore remained incomplete/u);
 
     expect(harness.retireRemovedImmutabilityStateRecordSpy).not.toHaveBeenCalled();
+    expect(harness.getSandboxEntry().stopped).toBe(false);
+    const stopIntentUpdateIndex = harness.registryUpdateSpy.mock.calls.findIndex(
+      ([, updates]) => updates?.stopped === false,
+    );
+    expect(harness.registryUpdateSpy.mock.invocationCallOrder[stopIntentUpdateIndex]).toBeLessThan(
+      harness.restoreSandboxStateSpy.mock.invocationCallOrder[0],
+    );
   });
 
   it("publishes the delete-edge policy recapture without a transient source file", async () => {
