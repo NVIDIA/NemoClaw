@@ -101,6 +101,26 @@ function mockLocalFallback(
   dockerMocks.pull.mockReturnValue({ status: 1 });
 }
 
+function localResolutionHint(
+  options: ReturnType<typeof resolutionOptions>,
+  key = createSandboxBaseImageResolutionKey(options),
+): SandboxBaseImageResolutionMetadata {
+  return {
+    schema: 1,
+    key,
+    imageName: IMAGE_NAME,
+    ref: options.localTag,
+    digest: null,
+    source: "local",
+    imageId: IMAGE_ID,
+    os: "linux",
+    architecture: "amd64",
+    glibcVersion: null,
+    requireOpenshellSandboxAbi: false,
+    minGlibcVersion: OPENSHELL_SANDBOX_MIN_GLIBC,
+  };
+}
+
 describe("sandbox base-image warm resolution", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -839,6 +859,124 @@ describe("sandbox base-image warm resolution", () => {
       [options.localTag, dockerOptions],
     ]);
     expect(dockerMocks.build).not.toHaveBeenCalled();
+  });
+
+  it("reuses a validated local hint when new fallback is disabled (#11072)", () => {
+    const options = resolutionOptions();
+    const requestOptions = {
+      ...options,
+      pinnedRemoteRef: REF,
+      requirePinnedRemoteRef: true,
+      allowLocalFallback: false,
+    };
+    const metadata = localResolutionHint(
+      options,
+      createSandboxBaseImageResolutionKey(requestOptions),
+    );
+
+    const resolved = resolveSandboxBaseImage({
+      ...requestOptions,
+      resolutionHint: metadata,
+    });
+
+    expect(resolved).toMatchObject({ ref: options.localTag, source: "local", metadata });
+    expect(dockerMocks.imageInspectFormat).toHaveBeenCalledWith("{{json .}}", options.localTag, {
+      ignoreError: true,
+    });
+    expect(dockerMocks.imageInspect).not.toHaveBeenCalled();
+    expect(dockerMocks.pull).not.toHaveBeenCalled();
+    expect(dockerMocks.build).not.toHaveBeenCalled();
+  });
+
+  it("rejects local fallback after a stale resolution key fails validation (#11072)", () => {
+    const options = resolutionOptions();
+    const requestOptions = {
+      ...options,
+      pinnedRemoteRef: REF,
+      requirePinnedRemoteRef: true,
+      allowLocalFallback: false,
+    };
+    const metadata = localResolutionHint(options, "stale-resolution-key");
+    dockerMocks.imageInspect.mockReturnValue({ status: 1 });
+    dockerMocks.pull.mockReturnValue({ status: 1 });
+
+    expect(() => resolveSandboxBaseImage({ ...requestOptions, resolutionHint: metadata })).toThrow(
+      "Local base image fallback is disabled for this operation.",
+    );
+
+    expect(dockerMocks.imageInspect).toHaveBeenCalledTimes(1);
+    expect(dockerMocks.imageInspect).toHaveBeenCalledWith(REF, {
+      ignoreError: true,
+      suppressOutput: true,
+    });
+    expect(dockerMocks.imageInspectFormat).not.toHaveBeenCalled();
+    expect(dockerMocks.build).not.toHaveBeenCalled();
+    expect(traceMocks.add).toHaveBeenCalledWith("nemoclaw.sandbox_base_image.cache_stale", {
+      reason: "key_mismatch",
+    });
+  });
+
+  it("rejects local fallback after the recorded local image changes (#11072)", () => {
+    const options = resolutionOptions();
+    const requestOptions = {
+      ...options,
+      pinnedRemoteRef: REF,
+      requirePinnedRemoteRef: true,
+      allowLocalFallback: false,
+    };
+    const metadata = {
+      ...localResolutionHint(options, createSandboxBaseImageResolutionKey(requestOptions)),
+      imageId: `sha256:${"c".repeat(64)}`,
+    };
+    dockerMocks.imageInspect.mockReturnValue({ status: 1 });
+    dockerMocks.pull.mockReturnValue({ status: 1 });
+
+    expect(() => resolveSandboxBaseImage({ ...requestOptions, resolutionHint: metadata })).toThrow(
+      "Local base image fallback is disabled for this operation.",
+    );
+
+    expect(dockerMocks.imageInspect).toHaveBeenCalledTimes(1);
+    expect(dockerMocks.imageInspect).toHaveBeenCalledWith(REF, {
+      ignoreError: true,
+      suppressOutput: true,
+    });
+    expect(dockerMocks.build).not.toHaveBeenCalled();
+    expect(traceMocks.add).toHaveBeenCalledWith("nemoclaw.sandbox_base_image.cache_stale", {
+      reason: "local_image_changed",
+    });
+  });
+
+  it("rejects local fallback when forced refresh bypasses a valid hint (#11072)", () => {
+    const options = resolutionOptions();
+    const requestOptions = {
+      ...options,
+      pinnedRemoteRef: REF,
+      requirePinnedRemoteRef: true,
+      allowLocalFallback: false,
+    };
+    const metadata = localResolutionHint(
+      options,
+      createSandboxBaseImageResolutionKey(requestOptions),
+    );
+    dockerMocks.imageInspect.mockReturnValue({ status: 1 });
+    dockerMocks.pull.mockReturnValue({ status: 1 });
+
+    expect(() =>
+      resolveSandboxBaseImage({
+        ...requestOptions,
+        resolutionHint: metadata,
+        forceRefresh: true,
+      }),
+    ).toThrow("Local base image fallback is disabled for this operation.");
+
+    expect(dockerMocks.imageInspectFormat).not.toHaveBeenCalled();
+    expect(dockerMocks.imageInspect).toHaveBeenCalledTimes(1);
+    expect(dockerMocks.imageInspect).toHaveBeenCalledWith(REF, {
+      ignoreError: true,
+      suppressOutput: true,
+    });
+    expect(dockerMocks.build).not.toHaveBeenCalled();
+    expect(traceMocks.add).toHaveBeenCalledWith("nemoclaw.sandbox_base_image.force_refresh");
   });
 
   it("rejects a local fallback when a rebuild requires the pinned image (#10903)", () => {

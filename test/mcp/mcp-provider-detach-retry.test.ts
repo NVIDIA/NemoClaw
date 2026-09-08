@@ -32,7 +32,7 @@ providerCommands.runOpenshellProviderCommand = (args, options) => {
   if (args[0] === "provider" && args[1] === "get") {
     return {
       status: 0,
-      stdout: "Id: " + liveId + "\nType: nemoclaw-mcp-v1\nResource version: 4\nCredential keys: EXPECTED_TOKEN\n",
+      stdout: "Name: " + args[2] + "\nId: " + liveId + "\nType: nemoclaw-mcp-v1\nResource version: 4\nCredential keys: EXPECTED_TOKEN\nConfig keys: <none>\n",
       stderr: "",
     };
   }
@@ -68,12 +68,17 @@ const entry = {
 };
 let outcome = null;
 let message = null;
-try {
-  outcome = providerActions.detachProvider("alpha", entry, { runtimeSelection });
-} catch (error) {
-  message = error.message;
-}
-process.stdout.write(JSON.stringify({ outcome, message, detachCalls, attached, liveId }));
+(async () => {
+  try {
+    outcome = await providerActions.detachProvider("alpha", entry, { runtimeSelection });
+  } catch (error) {
+    message = error.message;
+  }
+  process.stdout.write(JSON.stringify({ outcome, message, detachCalls, attached, liveId }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
 `;
   const result = spawnSync(process.execPath, ["-e", script], {
     cwd: process.cwd(),
@@ -118,7 +123,7 @@ describe("MCP provider detach retry", () => {
   it("does not retry unrelated detach failures", () => {
     const result = runDetachScenario("other-error");
     expect(result.outcome).toBeNull();
-    expect(result.message).toContain("permission denied");
+    expect(result.message).toBe("OpenShell could not authenticate the provider operation.");
     expect(result.detachCalls).toBe(1);
     expect(result.attached).toBe(true);
   });

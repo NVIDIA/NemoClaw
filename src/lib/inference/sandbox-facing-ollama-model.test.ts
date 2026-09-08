@@ -4,6 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OLLAMA_PORT, OLLAMA_PROXY_PORT } from "../core/ports";
 import {
+  describeModelInventory,
   getOllamaContainerPort,
   getLocalProviderContainerReachabilityCheck,
   ollamaInventoryContainsModel,
@@ -100,11 +101,20 @@ describe("sandbox-facing Ollama model validation", () => {
 
 describe("Ollama model inventory", () => {
   it("queries the given daemon for its inventory", () => {
-    const capture = vi.fn((_command: readonly string[]) => tagsBody("llama3.2:1b"));
+    const capture = vi.fn(
+      (
+        _command: readonly string[],
+        _options?: { ignoreError?: boolean; env?: NodeJS.ProcessEnv; timeout?: number },
+      ) => tagsBody("llama3.2:1b"),
+    );
 
-    const inventory = probeOllamaEndpointInventory("127.0.0.1", capture);
+    const inventory = probeOllamaEndpointInventory("127.0.0.1", capture, 1_200);
 
     expect(commandUrl(capture.mock.calls[0][0])).toBe(`http://127.0.0.1:${OLLAMA_PORT}/api/tags`);
+    expect(capture.mock.calls[0][0]).toEqual(
+      expect.arrayContaining(["--connect-timeout", "1.2", "--max-time", "1.2"]),
+    );
+    expect(capture.mock.calls[0][1]).toMatchObject({ ignoreError: true, timeout: 1_200 });
     expect(inventory).toEqual(["llama3.2:1b"]);
     expect(ollamaInventoryContainsModel(inventory ?? [], "gemma4:26b")).toBe(false);
   });
@@ -120,5 +130,19 @@ describe("Ollama model inventory", () => {
 
   it("keeps a valid empty inventory authoritative", () => {
     expect(probeOllamaEndpointInventory("127.0.0.1", () => tagsBody())).toEqual([]);
+  });
+
+  it("removes directional controls from inventory labels and validation messages", () => {
+    const controls =
+      "\u061c\u200e\u200f\u2028\u2029\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069";
+    const model = `qwen3.6${controls}:35b`;
+
+    expect(describeModelInventory([model])).toBe("qwen3.6:35b");
+
+    setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
+    const result = validateSandboxFacingOllamaModel("llama3.2:1b", () => tagsBody(model));
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("reported models: qwen3.6:35b");
+    expect(result.message).not.toMatch(/[\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/u);
   });
 });
