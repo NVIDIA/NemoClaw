@@ -531,6 +531,7 @@ describe("inventory commands", () => {
     });
 
     expect(lines).toContain("      agent: hermes  phase: active");
+    expect(lines).toContain("      Inference (configured): ollama / qwen3-vl:4b");
     expect(Object.values(effects).every((effect) => effect.mock.calls.length === 0)).toBe(true);
   });
 
@@ -1481,4 +1482,5 @@ describe("inventory commands", () => {
       process.exitCode = previousExitCode;
     }
   });
+
 });

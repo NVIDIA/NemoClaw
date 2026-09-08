@@ -3143,11 +3143,11 @@ This command runs no inference health probe, so the line never reports reachabil
 It appends the stored upstream endpoint as `Inference (configured): <provider> / <model> (<endpoint>)` when that endpoint belongs to the provider shown on the row, and reports the same value as `endpointUrl` on each JSON sandbox row.
 Credentials embedded in that endpoint are redacted before it is reported.
 Terminal and bidirectional control characters in malformed legacy endpoint values are shown as escaped Unicode sequences.
-The endpoint is omitted (and `endpointUrl` is `null`) when the registry records none, when no configured provider owns it, and for the default sandbox when the live gateway route has drifted to a different provider than the stored one, because the stored endpoint no longer describes the route in use.
+The endpoint is omitted (and `endpointUrl` is `null`) when it exceeds 2,048 characters, when the registry records none, when no configured provider owns it, and for the default sandbox when the live gateway route has drifted to a different provider than the stored one, because the stored endpoint no longer describes the route in use.
 For a live `Inference: healthy (<endpoint>)` reachability result on a gateway-based sandbox, run `$$nemoclaw <name> status`, which probes the sandbox's inference route and reports the probe endpoint rather than the configured upstream.
 
 <AgentOnly variant="hermes">
-Experimental portable Hermes reports its portable lifecycle phase instead and does not probe an inference route.
+Experimental portable Hermes also reports its portable lifecycle phase and does not probe an inference route.
 </AgentOnly>
 
 Host-service PID lookup honors `NEMOCLAW_SANDBOX_NAME`, then `NEMOCLAW_SANDBOX`, then `SANDBOX_NAME`, then the registry default.

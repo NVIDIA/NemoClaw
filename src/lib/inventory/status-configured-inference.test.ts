@@ -129,6 +129,38 @@ describe("bare status configured-inference line (#10221)", () => {
     );
   });
 
+  it("omits an oversized legacy endpoint from text and JSON status (#10221)", () => {
+    const endpointUrl = `https://inference.example/${"a".repeat(2_049)}`;
+    const listSandboxes = () => ({
+      sandboxes: [
+        {
+          name: "alpha",
+          model: "m",
+          provider: "compatible-endpoint",
+          endpointUrl,
+        },
+      ],
+      defaultSandbox: "alpha",
+    });
+    const lines: string[] = [];
+
+    showStatusCommand({
+      listSandboxes,
+      getLiveInference: () => null,
+      showServiceStatus: vi.fn(),
+      log: (message = "") => lines.push(message),
+    });
+    const report = getStatusReport({
+      listSandboxes,
+      getLiveInference: () => null,
+      showServiceStatus: vi.fn(),
+    });
+
+    expect(lines).toContain("      Inference (configured): compatible-endpoint / m");
+    expect(lines.some((line) => line.includes(endpointUrl))).toBe(false);
+    expect(report.sandboxes[0]?.endpointUrl).toBeNull();
+  });
+
   // The stored endpoint belongs to the stored provider. The default sandbox's
   // row prefers the live gateway provider (#2369), so when that has drifted,
   // reporting the stored endpoint would name an upstream this sandbox is no

@@ -220,12 +220,20 @@ export interface StatusSandboxRow {
  * that case rather than report a stale one. Always redact: a legacy or custom
  * route may carry credentials in userinfo or a query parameter.
  */
+const MAX_STATUS_ENDPOINT_LENGTH = 2_048;
+
 function resolveConfiguredEndpoint(
   sandbox: SandboxEntry,
   displayedProvider: string | null,
 ): string | null {
   const storedProvider = getSandboxEntryDisplayInference(sandbox).provider;
   if (!storedProvider || !displayedProvider || displayedProvider !== storedProvider) return null;
+  if (
+    typeof sandbox.endpointUrl !== "string" ||
+    sandbox.endpointUrl.length > MAX_STATUS_ENDPOINT_LENGTH
+  ) {
+    return null;
+  }
   return safeStatusString(redactUrl(sandbox.endpointUrl));
 }
 
