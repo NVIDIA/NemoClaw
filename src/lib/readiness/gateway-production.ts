@@ -138,15 +138,7 @@ function normalizeExecutablePath(value: string): string | null {
   }
 }
 
-function resolveManagedGatewayProbeTlsDir(
-  gatewayPort: number,
-  source: NodeJS.ProcessEnv,
-): string | undefined {
-  const stateDir = resolveGatewayStateDirForPort({
-    configured: source.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
-    home: source.HOME || os.homedir(),
-    port: gatewayPort,
-  });
+function resolveManagedGatewayProbeTlsDir(stateDir: string): string | undefined {
   const localTlsDir = getDockerDriverGatewayLocalTlsDir(stateDir);
   return ["ca.crt", "client/tls.crt", "client/tls.key"].every((relativePath) =>
     fs.existsSync(path.join(localTlsDir, relativePath)),
@@ -619,9 +611,14 @@ export function createProductionGatewayReadinessDependencies(
       options.resolveRuntimeProviderGateway !== undefined
         ? resolveRuntimeProviderGateway().observeHostRuntime({ environment, platform })
         : observeConfiguredGatewayHostRuntime({ architecture, environment, platform }));
+  const gatewayStateDir = resolveGatewayStateDirForPort({
+    configured: environment.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
+    home: environment.HOME || os.homedir(),
+    port: gatewayPort,
+  });
   const probeEnv = buildGatewayReadinessProbeEnv(environment, {
     gatewayName,
-    localTlsDir: resolveManagedGatewayProbeTlsDir(gatewayPort, environment),
+    localTlsDir: resolveManagedGatewayProbeTlsDir(gatewayStateDir),
   });
   const openshellBin = resolveTrustedOpenshellBinary(probeEnv);
   const trustedGatewayBin = resolveTrustedGatewayBinary(openshellBin, environment);
@@ -827,11 +824,7 @@ export function createProductionGatewayReadinessDependencies(
       ? providerGateway.observeOwnedGateway({
           environment: {
             ...probeEnv,
-            NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: resolveGatewayStateDirForPort({
-              configured: environment.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
-              home: environment.HOME || os.homedir(),
-              port: gatewayPort,
-            }),
+            NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: gatewayStateDir,
           },
           platform,
           architecture,

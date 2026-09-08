@@ -104,7 +104,10 @@ function runRestoreFixture(
     `  "$NODE_BINARY" -e 'const fs=require("fs"),c=require("crypto"),p=process.argv[1];process.stdout.write(c.createHash("sha256").update(fs.readFileSync(p)).digest("hex")+"  "+p+"\\\\n")' "$1"`,
     "}",
     "find() {",
-    "  printf 'docker\\nmetadata\\nruntime.json\\n'",
+    '  local target=""',
+    '  for value in "$@"; do [[ "$value" == /* ]] && target="$value" && break; done',
+    '  [[ -n "$target" ]]',
+    `  "$NODE_BINARY" -e 'const fs=require("fs"),p=process.argv[1];for(const name of fs.readdirSync(p).sort())process.stdout.write(name+"\\n")' "$target"`,
     "}",
     "systemctl() {",
     '  printf \'%s\\n\' "$*" >>"$SYSTEMCTL_LOG"',
@@ -290,7 +293,12 @@ esac
     '  if [[ "${1:-}" == "--" ]]; then shift; fi',
     `  "$NODE_BINARY" -e 'const fs=require("fs"),c=require("crypto"),p=process.argv[1];process.stdout.write(c.createHash("sha256").update(fs.readFileSync(p)).digest("hex")+"  "+p+"\\n")' "$1"`,
     "}",
-    "find() { printf 'docker\\nmetadata\\nruntime.json\\n'; }",
+    "find() {",
+    '  local target=""',
+    '  for value in "$@"; do [[ "$value" == /* ]] && target="$value" && break; done',
+    '  [[ -n "$target" ]]',
+    `  "$NODE_BINARY" -e 'const fs=require("fs"),p=process.argv[1];for(const name of fs.readdirSync(p).sort())process.stdout.write(name+"\\n")' "$target"`,
+    "}",
     "rm() {",
     "  local filtered=()",
     '  for value in "$@"; do [[ "$value" == "--one-file-system" ]] || filtered+=("$value"); done',
@@ -408,6 +416,23 @@ describe("native Podman E2E setup boundary", () => {
     try {
       expect(validateNativePodmanRestoreAction(mutatedAction)).toContain(
         "native Podman restore action must verify and restore its root-owned Docker runtime state",
+      );
+    } finally {
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects restore logic that never invokes native Podman cleanup (#11014)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-podman-cleanup-invocation-"));
+    const mutatedAction = path.join(root, "action.yaml");
+    const source = fs
+      .readFileSync(RESTORE_ACTION, "utf8")
+      .replace("        (set -e; cleanup_native_podman_runtime)\n", "");
+    fs.writeFileSync(mutatedAction, source);
+
+    try {
+      expect(validateNativePodmanRestoreAction(mutatedAction)).toContain(
+        "native Podman restore action must remove recorded runner resources before restoring Docker",
       );
     } finally {
       fs.rmSync(root, { force: true, recursive: true });
