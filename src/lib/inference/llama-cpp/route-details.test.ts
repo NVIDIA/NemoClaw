@@ -44,6 +44,18 @@ describe("getLlamaCppRouteDetails", () => {
     ).toEqual({ kind: "managed" });
   });
 
+  it.each([
+    { servingProfileProvenance: { recipe: { backend: "install-llama-cpp" } } },
+    { hostLocalInferenceProvenance: {} },
+  ])("does not let persisted provenance bypass unreadable ownership %#", (provenance) => {
+    expect(
+      getLlamaCppRouteDetails(
+        { name: "managed", provider: "llama-cpp-local", ...provenance } as never,
+        () => "unknown",
+      ),
+    ).toMatchObject({ kind: "unavailable" });
+  });
+
   it("reports unavailable ownership without exposing the endpoint", () => {
     expect(
       getLlamaCppRouteDetails(
@@ -57,7 +69,8 @@ describe("getLlamaCppRouteDetails", () => {
     ).toEqual({
       kind: "unavailable",
       diagnostic: "Managed llama.cpp ownership state is unavailable.",
-      recovery: "Run nemoclaw doctor and correct the reported state before retrying.",
+      recovery:
+        "Run nemoclaw managed doctor. Rerun onboarding for that sandbox if the managed llama.cpp runtime check fails.",
     });
   });
 

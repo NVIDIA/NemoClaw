@@ -61,7 +61,7 @@ describe("sandbox status DCode auto-approval (#6478)", () => {
     expect(report.servingProfileProvenance).toEqual(provenance);
   });
 
-  it("projects an attached llama.cpp route without exposing another endpoint (#10256)", async () => {
+  it("omits an attached llama.cpp route when the sandbox is missing (#10256)", async () => {
     const report = await getSandboxStatusReport("attached", {
       getSandbox: () =>
         ({
@@ -73,10 +73,7 @@ describe("sandbox status DCode auto-approval (#6478)", () => {
       reconcile: async () => ({ state: "missing" as const, output: "not found" }),
     });
 
-    expect(report.llamaCpp).toEqual({
-      kind: "attached",
-      endpointUrl: "http://127.0.0.1:8081/v1",
-    });
+    expect(report.llamaCpp).toBeNull();
   });
 
   it("projects effective DCode mode into JSON while using null for other agents", async () => {
