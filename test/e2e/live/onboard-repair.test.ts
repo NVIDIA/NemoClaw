@@ -22,7 +22,6 @@ import {
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { readExtraProviders, updateExtraProviders } from "../fixtures/extra-providers-registry.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
-import { captureOpenClawPairingTimeline } from "../fixtures/openclaw-pairing-timeline.ts";
 import {
   expectSandboxProviderAttachment,
   upsertGenericGatewayProvider,
@@ -38,11 +37,6 @@ const LIVE_EXTRA_PROVIDER = "e2e-live-extra-provider";
 const EXTRA_PROVIDER_TOKEN_ENV = "NEMOCLAW_E2E_EXTRA_PROVIDER_TOKEN";
 const EXTRA_PROVIDER_TOKEN = "e2e-extra-provider-token";
 const LIVE_TIMEOUT_MS = testTimeout(70 * 60_000);
-// Pairing-appearance evidence for #11085. The phase-1 snapshot must not wait:
-// it records the state at the instant before the sandbox is deleted without
-// moving that deletion. The 240 s repair budget exceeds the host's 60 s wait.
-const PAIRING_TIMELINE_BASELINE_WAIT_SECONDS = 0;
-const PAIRING_TIMELINE_REPAIR_WAIT_SECONDS = 240;
 
 validateSandboxName(SANDBOX_NAME);
 validateSandboxName(OTHER_SANDBOX_NAME);
@@ -313,16 +307,6 @@ test(
     timeoutMs: 60_000,
   });
   expect(sandboxAfterFailure.exitCode, resultText(sandboxAfterFailure)).toBe(0);
-  await artifacts.writeJson(
-    "phase-1-pairing-timeline.json",
-    await captureOpenClawPairingTimeline(sandbox, {
-      artifactName: "phase-1-pairing-timeline",
-      env: env(),
-      redactionValues: [EXTRA_PROVIDER_TOKEN],
-      sandboxName: SANDBOX_NAME,
-      waitSeconds: PAIRING_TIMELINE_BASELINE_WAIT_SECONDS,
-    }),
-  );
 
   await upsertGenericGatewayProvider(host, LIVE_EXTRA_PROVIDER, {
     artifactName: "phase-1-live-extra-provider-upsert",
@@ -339,6 +323,11 @@ test(
     expect.arrayContaining([LIVE_EXTRA_PROVIDER, STALE_EXTRA_PROVIDER]),
   );
 
+  await sandbox.waitForInitialOpenClawPairing(SANDBOX_NAME, {
+    artifactName: "phase-1-wait-for-initial-pairing",
+    env: env(),
+  });
+
   progress.phase("remove the recorded sandbox and resume repair");
   await sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
     artifactName: "phase-2-delete-recorded-sandbox",
@@ -347,7 +336,6 @@ test(
   });
   await waitSandboxAbsent(sandbox, SANDBOX_NAME);
 
-  const repairStartedAtMs = Date.now();
   const repair = await nemoclaw(
     host,
     ["onboard", "--resume", "--non-interactive"],
@@ -358,19 +346,6 @@ test(
     }),
     execTimeout(20 * 60_000),
   );
-  const repairFinishedAtMs = Date.now();
-  await artifacts.writeJson("phase-2-pairing-timeline.json", {
-    hostResumeStartedAtMs: repairStartedAtMs,
-    hostResumeFinishedAtMs: repairFinishedAtMs,
-    hostResumeExitCode: repair.exitCode,
-    timeline: await captureOpenClawPairingTimeline(sandbox, {
-      artifactName: "phase-2-pairing-timeline",
-      env: env(),
-      redactionValues: [EXTRA_PROVIDER_TOKEN],
-      sandboxName: SANDBOX_NAME,
-      waitSeconds: PAIRING_TIMELINE_REPAIR_WAIT_SECONDS,
-    }),
-  });
   expect(repair.exitCode, resultText(repair)).toBe(0);
   expect(resultText(repair)).toContain("[resume] Skipping preflight (cached)");
   expect(resultText(repair)).toContain("Recorded sandbox state is unavailable; recreating it");

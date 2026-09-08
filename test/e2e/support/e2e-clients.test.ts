@@ -531,17 +531,28 @@ describe("E2E fixture clients", () => {
     ).expectOpenshellStatusConnected();
   });
 
-  it("sandbox client builds OpenShell sandbox commands", async () => {
+  it("sandbox client builds the bounded initial OpenClaw pairing wait", async () => {
     const runner = new FakeRunner();
     const sandbox = new SandboxClient(runner, { openshellPath: "openshell" });
 
-    await sandbox.exec("assistant", ["echo", "ok"]);
+    await sandbox.waitForInitialOpenClawPairing("assistant");
 
     expect(runner.calls[0]).toEqual({
       command: "openshell",
-      args: ["sandbox", "exec", "-n", "assistant", "--", "echo", "ok"],
+      args: [
+        "sandbox",
+        "exec",
+        "-n",
+        "assistant",
+        "--",
+        "node",
+        "-e",
+        expect.stringContaining("identity/device-auth.json"),
+        "60000",
+      ],
       options: {
-        artifactName: "sandbox-exec-assistant",
+        artifactName: "wait-for-initial-openclaw-pairing",
+        timeoutMs: 70_000,
       },
     });
   });
