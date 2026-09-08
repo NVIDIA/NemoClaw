@@ -78,7 +78,7 @@ const {
     allowHostedInferenceStaging?: boolean,
   ) => string | null;
   isProviderKeyCredentialCandidate: (value: string | null | undefined) => boolean;
-  providerExistsInGateway: (name: string, runOpenshell: RunOpenshell) => boolean;
+  providerExistsInGateway: (name: string, runOpenshell: RunOpenshell) => Promise<boolean>;
   stageHostedInferenceSourceSecretEnv: () => boolean;
   upsertProvider: (
     name: string,
@@ -94,7 +94,7 @@ const {
       requireExactBinding?: boolean;
       revalidateSandboxIdentity?(operation: string): void;
     },
-  ) => { ok: boolean; status?: number; message?: string; reason?: string };
+  ) => Promise<{ ok: boolean; status?: number; message?: string; reason?: string }>;
 };
 
 function withProviderEnv(next: Record<string, string | undefined>, testBody: () => void): void {
@@ -198,6 +198,15 @@ describe("onboard provider helpers", () => {
     ).rejects.toThrow("OpenShell returned invalid provider metadata");
   });
 
+  it("treats an operational provider inspection failure as unavailable", async () => {
+    await expect(
+      providerExistsInGateway("discord-bridge", () => ({
+        status: 1,
+        stderr: "gateway temporarily unavailable",
+      })),
+    ).resolves.toBe(false);
+  });
+
   it("creates a new provider and returns ok on success", async () => {
     const commands: string[] = [];
     const result = await upsertProvider(
@@ -293,6 +302,26 @@ describe("onboard provider helpers", () => {
     // dropping the flag turns the call into a no-op merge that succeeds.
     expect(commands[1]).not.toMatch(/--credential/);
     expect(commands[1]).toMatch(/OPENAI_BASE_URL=https:\/\/integrate\.api\.nvidia\.com\/v1/);
+  });
+
+  it("does not apply an OpenAI base URL config to native NVIDIA providers", async () => {
+    const commands: string[] = [];
+    const result = await upsertProvider(
+      "nvidia",
+      "nvidia",
+      "NVIDIA_INFERENCE_API_KEY",
+      "https://integrate.api.nvidia.com/v1",
+      { NVIDIA_INFERENCE_API_KEY: "nvapi-staged" },
+      (command) => {
+        commands.push(command.join(" "));
+        return command.includes("get")
+          ? providerMetadata("nvidia", "nvidia", "NVIDIA_INFERENCE_API_KEY")
+          : { status: 0, stdout: "", stderr: "" };
+      },
+    );
+
+    expect(result).toEqual({ ok: true });
+    expect(commands[1]).not.toContain("--config");
   });
 
   it("fails before create when the credential value is empty", async () => {

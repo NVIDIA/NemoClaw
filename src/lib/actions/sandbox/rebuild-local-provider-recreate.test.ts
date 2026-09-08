@@ -34,19 +34,19 @@ const onboardProviders = requireDist("../../onboard/providers.js") as {
     baseUrl: string | null,
     env: NodeJS.ProcessEnv,
     runOpenshell: typeof openshellRuntime.runOpenshell,
-  ): { ok: boolean; status?: number; message?: string };
+  ): Promise<{ ok: boolean; status?: number; message?: string }>;
 };
 
 type SetupResult = { done: true; result: unknown } | { done: false };
 
-function upsertLocalProvider(
+async function upsertLocalProvider(
   name: string,
   type: string,
   credentialEnv: string,
   baseUrl: string | null,
   env: NodeJS.ProcessEnv = {},
 ) {
-  return onboardProviders.upsertProvider(
+  return await onboardProviders.upsertProvider(
     name,
     type,
     credentialEnv,

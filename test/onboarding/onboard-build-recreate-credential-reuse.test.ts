@@ -52,6 +52,12 @@ EOF
   exit 0
 fi
 if [ "$1" = "provider" ] && [ "$2" = "get" ]; then
+  cat <<'EOF'
+Name: nvidia-prod
+Type: nvidia
+Credential keys: NVIDIA_INFERENCE_API_KEY
+Config keys: <none>
+EOF
   exit 0
 fi
 exit 0
@@ -195,6 +201,12 @@ const { setupNim, setupInference } = require(${onboardPath});
         path.join(fakeBin, "openshell"),
         `#!/usr/bin/env bash
 if [ "$1" = "provider" ] && [ "$2" = "get" ]; then
+  cat <<'EOF'
+Name: nvidia-prod
+Type: nvidia
+Credential keys: NVIDIA_INFERENCE_API_KEY
+Config keys: <none>
+EOF
   exit 0
 fi
 exit 0

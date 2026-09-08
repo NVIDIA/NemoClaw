@@ -82,7 +82,7 @@ describe("resolveRoutedCredentialEnv (#4564)", () => {
 
 describe("upsertRoutedProvider (#4564)", () => {
   it("upserts the provider with the normalized host alias base URL", async () => {
-    const upsertProvider = vi.fn(() => ({ ok: true }));
+    const upsertProvider = vi.fn(async () => ({ ok: true }));
     const hydrateCredentialEnv = vi.fn(() => "nvapi-secret");
 
     const result = await upsertRoutedProvider(
@@ -108,7 +108,7 @@ describe("upsertRoutedProvider (#4564)", () => {
   });
 
   it("defaults the credential env and omits an empty credential from the env block", async () => {
-    const upsertProvider = vi.fn(() => ({ ok: true }));
+    const upsertProvider = vi.fn(async () => ({ ok: true }));
     const hydrateCredentialEnv = vi.fn(() => undefined);
 
     const result = await upsertRoutedProvider("nvidia-router", "http://localhost:4000/v1", null, {
@@ -127,7 +127,7 @@ describe("upsertRoutedProvider (#4564)", () => {
   });
 
   it("propagates a failed upsert result", async () => {
-    const upsertProvider = vi.fn(() => ({ ok: false, message: "boom", status: 3 }));
+    const upsertProvider = vi.fn(async () => ({ ok: false, message: "boom", status: 3 }));
     const hydrateCredentialEnv = vi.fn(() => "nvapi-secret");
 
     const result = await upsertRoutedProvider(
@@ -143,5 +143,30 @@ describe("upsertRoutedProvider (#4564)", () => {
     expect(result.ok).toBe(false);
     expect(result.result.message).toBe("boom");
     expect(result.result.status).toBe(3);
+  });
+
+  it("waits for provider registration before resolving", async () => {
+    let release: ((value: { ok: true }) => void) | undefined;
+    const upsertProvider = vi.fn(
+      () =>
+        new Promise<{ ok: true }>((resolve) => {
+          release = resolve;
+        }),
+    );
+    let settled = false;
+    const resultPromise = upsertRoutedProvider(
+      "nvidia-router",
+      "http://localhost:4000/v1",
+      "NVIDIA_INFERENCE_API_KEY",
+      { upsertProvider, hydrateCredentialEnv: () => "nvapi-secret" },
+    ).then((result) => {
+      settled = true;
+      return result;
+    });
+
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    release?.({ ok: true });
+    await expect(resultPromise).resolves.toMatchObject({ ok: true });
   });
 });

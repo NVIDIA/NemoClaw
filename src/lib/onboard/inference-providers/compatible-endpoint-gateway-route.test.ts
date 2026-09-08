@@ -143,7 +143,7 @@ describe("recovered provider reuse and the openai provider profile (#9895)", () 
     const { commands, runOpenshell } = createRunOpenshell([
       { status: 0, stdout: OPENAI_ENDPOINTLESS_PROFILE },
     ]);
-    const upsertProvider = vi.fn(() => ({ ok: true }));
+    const upsertProvider = vi.fn(async () => ({ ok: true }));
 
     expect(
       await reuseRegisteredProviderWithGatewayEndpoint({
@@ -165,7 +165,7 @@ describe("recovered provider reuse and the openai provider profile (#9895)", () 
       { status: 1, stderr: "provider profile not found" },
       { status: 1, stderr: "import refused" },
     ]);
-    const upsertProvider = vi.fn(() => ({ ok: true }));
+    const upsertProvider = vi.fn(async () => ({ ok: true }));
 
     const result = await reuseRegisteredProviderWithGatewayEndpoint({
       ...reuseArgs,
@@ -184,7 +184,7 @@ describe("recovered provider reuse and the openai provider profile (#9895)", () 
 
   it("leaves a non-openai recovered provider untouched", async () => {
     const { commands, runOpenshell } = createRunOpenshell([]);
-    const upsertProvider = vi.fn(() => ({ ok: true }));
+    const upsertProvider = vi.fn(async () => ({ ok: true }));
 
     expect(
       await reuseRegisteredProviderWithGatewayEndpoint({

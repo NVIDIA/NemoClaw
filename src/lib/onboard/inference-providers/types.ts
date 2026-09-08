@@ -45,7 +45,7 @@ export type UpsertProvider = (
   credentialEnv: any,
   baseUrl: any,
   env?: NodeJS.ProcessEnv,
-) => UpsertProviderResult | Promise<UpsertProviderResult>;
+) => Promise<UpsertProviderResult>;
 
 export type RemoteProviderConfigEntry = {
   label: string;
@@ -176,7 +176,7 @@ export type HermesDeps = CommonDeps & {
   lookup?: LookupFn;
   hermesProviderAuth: {
     HERMES_PROVIDER_NAME: string;
-    isHermesProviderRegistered(runOpenshell: any): boolean;
+    isHermesProviderRegistered(runOpenshell: any): Promise<boolean>;
     ensureHermesProviderApiKeyCredentials(
       sandboxName: string,
       opts: { apiKey: unknown; runOpenshell: any; baseUrl?: string | undefined },
@@ -194,7 +194,7 @@ export type HermesDeps = CommonDeps & {
   getHermesToolGatewayBroker: () => {
     getHermesToolGatewayProviderName(sandboxName: string): string;
   };
-  providerExistsInGateway: (name: string) => boolean | Promise<boolean>;
+  providerExistsInGateway: (name: string) => Promise<boolean>;
   normalizeHermesAuthMethod: (m: HermesAuthMethod | string | null) => HermesAuthMethod | null;
   resolveHermesNousApiKey: () => any;
   checkHermesProviderStoreReachable: (

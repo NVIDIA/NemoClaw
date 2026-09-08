@@ -377,7 +377,7 @@ async function providerExistsInGateway(name, runOpenshell) {
     providerName: name,
   });
   if (result.ok) return true;
-  if (result.error.kind === "command" && result.error.reason === "not_found") return false;
+  if (result.error.kind !== "schema" && result.error.kind !== "validation") return false;
   throw new Error(result.error.message);
 }
 
@@ -526,7 +526,7 @@ async function upsertProvider(
     const value = env[envKey];
     return typeof value === "string" && value.length > 0 ? [{ name: envKey, value }] : [];
   });
-  const config = baseUrl
+  const config = baseUrl && (type === "openai" || type === "anthropic")
     ? [
         {
           key: type === "anthropic" ? "ANTHROPIC_BASE_URL" : "OPENAI_BASE_URL",

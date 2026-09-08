@@ -148,7 +148,7 @@ describe("onboarding inference gateway scope", () => {
       const providerUpdate = harness.commands.find(({ command }) =>
         command.startsWith("provider update "),
       );
-      expect(providerUpdate?.env).toEqual({});
+      expect(providerUpdate?.env).toBeUndefined();
       expect(harness.commands.every(({ env }) => env?.COMPATIBLE_API_KEY === undefined)).toBe(true);
       expect(harness.verifyOnboardInferenceSmoke).not.toHaveBeenCalled();
       expect(harness.verifyInferenceRoute).toHaveBeenCalledWith(

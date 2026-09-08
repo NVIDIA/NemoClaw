@@ -111,7 +111,7 @@ export async function setupHermesProviderInference(
     if (isNonInteractive()) return exitProcess(1);
     return { retry: "selection" };
   }
-  const providerRegistered = hermesProviderAuth.isHermesProviderRegistered(runOpenshell);
+  const providerRegistered = await hermesProviderAuth.isHermesProviderRegistered(runOpenshell);
   const toolGatewayProviderRegistered =
     hermesToolGateways.length === 0
       ? true

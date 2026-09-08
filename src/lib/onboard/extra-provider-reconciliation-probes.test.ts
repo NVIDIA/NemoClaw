@@ -15,7 +15,7 @@ afterEach(() => {
 });
 
 describe("reconcileRegisteredExtraProviders probe outcomes", () => {
-  it("preserves providers for thrown, timed-out, process-error, and nonstandard probes (#6501)", async () => {
+  it("preserves providers when raw probe failures lack classifiable adapter diagnostics (#6501)", async () => {
     const warn = vi.fn();
     const recorded = [
       "thrown-provider",

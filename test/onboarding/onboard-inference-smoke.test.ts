@@ -72,8 +72,12 @@ runner.run = (command) => {
   calls.push(["run", text]);
   const profileResult = require(${onboardScriptMocksPath}).mockManagedEndpointlessProviderProfileRun(command);
   if (profileResult !== null) return profileResult;
-  if (text.includes("provider") && text.includes("upsert")) {
-    return { status: 0, stdout: "Created provider compatible-endpoint\n", stderr: "" };
+  if (text.includes("provider get") && text.includes("compatible-endpoint")) {
+    return {
+      status: 1,
+      stdout: "",
+      stderr: "provider 'compatible-endpoint' not found",
+    };
   }
   if (text.includes("inference") && text.includes("set")) {
     return { status: 0, stdout: "Inference configured\n", stderr: "" };

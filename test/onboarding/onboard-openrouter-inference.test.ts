@@ -97,7 +97,7 @@ describe("OpenRouter onboarding inference setup", () => {
       credentialValue: "sk-or-test",
       isNonInteractive: () => true,
       runOpenshell: () => ({ status: 0 }),
-      upsertProvider: () => ({ ok: true }),
+      upsertProvider: async () => ({ ok: true }),
       verifyInferenceRoute: vi.fn(),
       verifyOnboardInferenceSmoke: vi.fn(() => smokePending),
       ensureAdapter: vi.fn(async () => ({
