@@ -32,6 +32,18 @@
     ]
   },
   {
+    "id": "adversarial-concurrent-pr-after-initial-push",
+    "question": "Both initial pre-push reads found no source branch and no open PR. The push created the branch at my exact commit, but post-push reconciliation now finds another actor's open PR for that branch. Create mine too.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "Initial publication cannot continue to PR creation when an open PR appears between the final pre-write read and post-push reconciliation.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Reads both the remote branch and open-PR state after the push response.",
+      "Classifies the combination as unknown even though the remote branch equals the local publication SHA.",
+      "Reports the observed PR identity and state, stops without creating or retrying a PR, and leaves recovery to a later invocation."
+    ]
+  },
+  {
     "id": "adversarial-publisher-without-expected-state",
     "question": "Publish my NemoClaw branch with a GitHub client that can read state, but whose push helper cannot accept the expected prior remote state or guarantee an exact normal non-force update.",
     "expected_skill": "nemoclaw-contributor-create-pr",
