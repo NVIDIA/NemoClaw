@@ -85,9 +85,13 @@ describe("Ollama probe timeout retry", () => {
 
   it("reports a fast retry failure from the final probe result", () => {
     let callCount = 0;
+    const systemdCalls: string[] = [];
     const result = validateOllamaModel(
       "nemotron-3-nano:30b",
-      () => "",
+      (command) => {
+        systemdCalls.push(command.join(" "));
+        return "";
+      },
       () => false,
       () => {
         callCount += 1;
@@ -97,9 +101,19 @@ describe("Ollama probe timeout retry", () => {
       },
     );
 
-    expect({ daemonFailure: result.daemonFailure, message: result.message }).toEqual({
+    const message = result.message ?? "";
+    expect({
+      daemonFailure: result.daemonFailure,
+      genericRecovery: message.includes("Restart Ollama and rerun onboarding"),
+      message,
+      staleRunner: message.includes("Stale runner processes"),
+      systemdCalls,
+    }).toEqual({
       daemonFailure: undefined,
+      genericRecovery: false,
       message: expect.stringMatching(/^Selected Ollama model .* failed the local probe/),
+      staleRunner: false,
+      systemdCalls: [],
     });
   });
 });
