@@ -199,6 +199,30 @@ describe("E2E fixture clients", () => {
     expect(host.openshellCommandPath).toBe("openshell");
   });
 
+  it.each([
+    { actualExecutable: "/opt/openshell", expected: true },
+    { actualExecutable: "/usr/bin/python3", expected: false },
+  ])(
+    "host client verifies an exact ForwardTcp listener executable [expected=$expected]",
+    async ({ actualExecutable, expected }) => {
+      const runner = new FakeRunner();
+      runner.enqueue({ stdout: "4321\n" });
+      runner.enqueue({ stdout: "/usr/local/bin/openshell\n" });
+      runner.enqueue({ stdout: `${actualExecutable}\n` });
+      runner.enqueue({ stdout: "/opt/openshell\n" });
+      runner.enqueue({
+        stdout:
+          "/usr/local/bin/openshell --gateway nemoclaw --workspace default forward service alpha --target-port 18789 --target-host 127.0.0.1 --local 127.0.0.1:18789\n",
+      });
+      runner.enqueue({ stdout: "4321\n" });
+      const host = new HostCliClient(runner);
+
+      await expect(
+        host.inspectOpenShellForwardListener("18789", "alpha"),
+      ).resolves.toMatchObject({ valid: expected });
+    },
+  );
+
   it("composes installation, OpenShell resolution, and launch in authority order", async () => {
     const runner = new FakeRunner();
     runner.enqueue({ stdout: "installation complete\n" });
