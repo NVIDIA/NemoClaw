@@ -932,6 +932,48 @@ export function restoreSnapshotToHost(
     return false;
   }
 
+  const externalRestores: Array<{
+    root: MigrationExternalRoot;
+    snapshotPath: string;
+  }> = [];
+  const externalTargets = new Set<string>();
+  for (const root of manifest.externalRoots) {
+    const expectedRelativePath = path.join("external", root.id);
+    const snapshotPath = path.join(snapshotDir, root.snapshotRelativePath);
+    const normalizedTarget = normalizeHostPath(root.sourcePath);
+    if (
+      root.snapshotRelativePath !== expectedRelativePath ||
+      !isWithinRoot(snapshotPath, snapshotDir) ||
+      !existsSync(snapshotPath) ||
+      !lstatSync(snapshotPath).isDirectory()
+    ) {
+      logger.error(`Snapshot external root is missing or invalid: ${root.snapshotRelativePath}`);
+      return false;
+    }
+    if (
+      !path.isAbsolute(root.sourcePath) ||
+      normalizedTarget === normalizeHostPath(trustedRoot) ||
+      !isWithinRoot(root.sourcePath, trustedRoot) ||
+      isWithinRoot(root.sourcePath, manifest.stateDir) ||
+      isWithinRoot(manifest.stateDir, root.sourcePath)
+    ) {
+      logger.error(
+        `Snapshot external root is outside the trusted host root or overlaps OpenClaw state. ` +
+          `Refusing to restore. sourcePath=${root.sourcePath}, trustedRoot=${trustedRoot}`,
+      );
+      return false;
+    }
+    if (externalTargets.has(normalizedTarget)) {
+      logger.error(`Snapshot external root target is duplicated: ${root.sourcePath}`);
+      return false;
+    }
+    externalTargets.add(normalizedTarget);
+    externalRestores.push({ root, snapshotPath });
+  }
+  externalRestores.sort(
+    (left, right) => right.root.sourcePath.length - left.root.sourcePath.length,
+  );
+
   if (manifest.hasExternalConfig) {
     // Validate configPath type — fail closed when hasExternalConfig is true
     // but configPath is null/empty (partial restore would silently skip config).
@@ -1004,6 +1046,17 @@ export function restoreSnapshotToHost(
 
     mkdirSync(path.dirname(manifest.stateDir), { recursive: true });
     copyDirectory(snapshotStateDir, manifest.stateDir);
+
+    for (const { root, snapshotPath } of externalRestores) {
+      if (existsSync(root.sourcePath)) {
+        const archiveName = `${root.sourcePath}.nemoclaw-archived-${String(Date.now())}`;
+        renameSync(root.sourcePath, archiveName);
+        logger.info(`Archived current ${root.label} to ${archiveName}`);
+      }
+      mkdirSync(path.dirname(root.sourcePath), { recursive: true });
+      copyDirectory(snapshotPath, root.sourcePath);
+      logger.info(`Restored ${root.label} to ${root.sourcePath}`);
+    }
 
     if (manifest.hasExternalConfig && manifest.configPath) {
       const configSnapshotPath = path.join(snapshotDir, "config", "openclaw.json");

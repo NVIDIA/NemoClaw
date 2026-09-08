@@ -100,12 +100,18 @@ test("packaged migration converts and restores external OpenClaw state", async (
       .isSymbolicLink(),
   ).toBe(true);
   fs.writeFileSync(path.join(state, "state-marker"), "after");
+  fs.writeFileSync(path.join(workspace, "workspace-marker"), "after");
+  fs.writeFileSync(path.join(agentDir, "agent-marker"), "after");
+  fs.unlinkSync(path.join(skillsDir, "skill-link"));
   fs.writeFileSync(config, "{}");
   expect(restoreSnapshotToHost(bundle!.snapshotDir, logger)).toBe(true);
   expect(fs.readFileSync(path.join(state, "state-marker"), "utf8")).toBe("before");
+  expect(fs.readFileSync(path.join(workspace, "workspace-marker"), "utf8")).toBe("before");
+  expect(fs.readFileSync(path.join(agentDir, "agent-marker"), "utf8")).toBe("before");
   const restored = JSON.parse(fs.readFileSync(config, "utf8"));
   expect(restored.agents.defaults.workspace).toBe(workspace);
   expect(restored.agents.list[0].agentDir).toBe(agentDir);
   expect(restored.skills.load.extraDirs).toEqual([skillsDir]);
   expect(fs.lstatSync(path.join(skillsDir, "skill-link")).isSymbolicLink()).toBe(true);
+  expect(fs.readFileSync(path.join(skillsDir, "skill-link"), "utf8")).toBe("before");
 });

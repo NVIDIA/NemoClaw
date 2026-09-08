@@ -1611,6 +1611,10 @@ during Docker layer export. Apart from those rebuild and export paths, E2E jobs
 add swap only through the trusted Hermes main-workflow fallback described in
 [Larger-runner routing](#larger-runner-routing).
 
+Each exporting job disables and deletes that swap after its last Hermes image
+operation. Cleanup runs after earlier failures and fails if the swap remains
+active or the file remains present.
+
 These assertions run inside the existing `full-e2e` lifecycle instead of a
 second standalone onboarding run. This keeps the measurement on the job's first
 sandbox build, avoids warming Docker layers before a duplicate performance

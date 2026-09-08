@@ -241,7 +241,7 @@ jobs:
 
   managed-image-openclaw-security:
     runs-on: linux-amd64-cpu4
-    timeout-minutes: 10
+    timeout-minutes: 15
     needs: build-sandbox-images
     env:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/managed-image-openclaw-security

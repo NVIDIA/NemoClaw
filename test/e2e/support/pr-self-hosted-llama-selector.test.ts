@@ -190,6 +190,7 @@ describe("OpenClaw managed-image copied-PR qualification", () => {
         NEMOCLAW_TEST_IMAGE: "nemoclaw-production",
       },
       needs: "build-sandbox-images",
+      "timeout-minutes": 15,
     });
     expect(
       job.steps?.find((step) => step.name === "Bind managed-image risk signal identity"),

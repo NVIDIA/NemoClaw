@@ -679,6 +679,25 @@ describe("sandbox image workflow boundary", () => {
     },
   );
 
+  it.each(["build-hermes-sandbox-image", "messaging-plan-image-boundary"])(
+    "rejects incomplete Hermes export swap cleanup in %s",
+    (jobName) => {
+      const { imageWorkflow, mainWorkflow } = readWorkflows();
+      const cleanup = imageWorkflow.jobs[jobName].steps!.find(
+        (step) => step.name === "Remove swap after Hermes image export",
+      );
+      expect(cleanup).toBeDefined();
+      cleanup!.run = cleanup!.run!.replace(
+        'sudo swapoff "$swap_file"',
+        'echo "swap retained"',
+      );
+
+      expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
+        `${jobName} Hermes export swap cleanup must include sudo swapoff "$swap_file"`,
+      );
+    },
+  );
+
   it("rejects coupling, rebuilding, or failing to reuse the OpenClaw image artifact", () => {
     const { imageWorkflow, mainWorkflow } = readWorkflows();
     const producer = imageWorkflow.jobs["build-sandbox-images"];
