@@ -392,7 +392,7 @@ test(
       "network-policy-denied-host-gateway-port",
     );
     expect(denied).not.toContain(deniedMarker);
-    expect(denied).toMatch(/\b403\b/);
+    expect(denied).toContain("STATUS_403");
 
     progress.phase("prove the installed OpenClaw web_fetch path obeys the host-gateway policy");
     const webFetch = await sandboxBash(
