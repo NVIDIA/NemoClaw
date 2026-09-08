@@ -320,6 +320,28 @@ describe("publishDownloadArtifact", () => {
     expect(fs.readFileSync(outside, "utf8")).toBe("outside");
   });
 
+  it.runIf(process.platform !== "win32")(
+    "leaves a fresh destination absent when a nested member is a FIFO (#10636)",
+    () => {
+      const staged = path.join(dir, "staged");
+      const destination = path.join(dir, "destination");
+      const fifo = path.join(staged, "nested", "input");
+      fs.mkdirSync(path.dirname(fifo), { recursive: true });
+      fs.writeFileSync(path.join(staged, "keep.txt"), "keep");
+      const created = actualChildProcess.spawnSync("mkfifo", [fifo], {
+        encoding: "utf8",
+        timeout: 5_000,
+      });
+      expect(created.status, created.stderr).toBe(0);
+      expect(fs.lstatSync(fifo).isFIFO()).toBe(true);
+
+      expect(() => publishDownloadArtifact(staged, destination, "dir")).toThrow(
+        /Refusing to publish unsupported staged artifact/,
+      );
+      expect(fs.existsSync(destination)).toBe(false);
+    },
+  );
+
   it("replaces an existing regular file", () => {
     const staged = path.join(dir, "staged.txt");
     const destination = path.join(dir, "destination.txt");

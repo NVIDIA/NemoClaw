@@ -236,6 +236,44 @@ describe("downloadFromSandbox", () => {
     },
   );
 
+  it.runIf(process.platform !== "win32")(
+    "rejects a FIFO directory member before download (#10636)",
+    async () => {
+      const probeRoot = await fs.promises.mkdtemp(
+        path.join(os.tmpdir(), "nemoclaw-download-fifo-probe-"),
+      );
+      try {
+        const source = path.join(probeRoot, "payload");
+        const fifo = path.join(source, "input");
+        await fs.promises.mkdir(source);
+        const created = childProcess.spawnSync("mkfifo", [fifo], {
+          encoding: "utf8",
+          timeout: 5_000,
+        });
+        expect(created.status, created.stderr).toBe(0);
+        expect(fs.lstatSync(fifo).isFIFO()).toBe(true);
+
+        captureMock.mockImplementation((args: string[]) => {
+          const separator = args.indexOf("--");
+          const command = args.slice(separator + 1);
+          const probe = childProcess.spawnSync(command[0], command.slice(1), {
+            cwd: probeRoot,
+            encoding: "utf8",
+          });
+          return { status: probe.status, output: probe.stdout };
+        });
+
+        await expect(
+          downloadFromSandbox({ sandboxName: "alpha", sandboxPath: "payload", hostDest: "./o" }),
+        ).rejects.toThrow(/directory contains an entry that is not a regular file or directory/);
+        expect(runMock).not.toHaveBeenCalled();
+        expect(publishMock).not.toHaveBeenCalled();
+      } finally {
+        await fs.promises.rm(probeRoot, { recursive: true, force: true });
+      }
+    },
+  );
+
   it.runIf(process.platform !== "win32").each(["linked/", "linked/.", "linked/nested"])(
     "rejects a source path with a link component written as %s before download (#10636)",
     async (sandboxPath) => {
