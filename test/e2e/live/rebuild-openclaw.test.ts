@@ -25,6 +25,8 @@ import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { createOldBaseBuildContext } from "./rebuild-openclaw-old-base-context.ts";
 
+process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
+
 // The contract stays intentionally local to this live test: build an older
 // OpenClaw base image, create a sandbox from it through the real OpenShell CLI,
 // seed workspace/policy/gateway-token state, run the real `nemoclaw rebuild`,
