@@ -287,7 +287,7 @@ describe("created sandbox identity gate", () => {
     expect(mocks.streamSandboxCreate).not.toHaveBeenCalled();
   });
 
-  it("ends the create-client handoff after a nonce-owned ID appears and settles metadata before effects (#10769)", async () => {
+  it("ends the create-client handoff after a nonce-owned ID appears and settles metadata before effects (#10412, #10769)", async () => {
     const events: string[] = [];
     let nonce = "";
     const input = noGpuInput();
@@ -314,15 +314,16 @@ describe("created sandbox identity gate", () => {
     mocks.streamSandboxCreate.mockImplementation(async (_command, args, _env, options) => {
       events.push("create");
       expect(options.onPoll).toBeUndefined();
-      expect(options.waitForReadyTermination).toBe(true);
       expect(args.indexOf("--label")).toBeGreaterThan(0);
       expect(args.indexOf("--label")).toBeLessThan(args.indexOf("--"));
       nonce = createAttemptNonce(args);
       expect(nonce).toMatch(/^[0-9a-f]{62}$/u);
       expect(nonce).toHaveLength(NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH);
       expect(nonce.length).toBeLessThanOrEqual(63);
-      expect(options.readyCheck?.()).toBe(true);
-      return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
+      const endedAtReady = options.waitForReadyTermination && options.readyCheck?.() === true;
+      return endedAtReady
+        ? { status: 0, output: "Created sandbox: alpha", sawProgress: true }
+        : { status: 1, output: "Sandbox entered Error phase after Ready", sawProgress: true };
     });
     mocks.waitForCreatedSandboxReadyWithTrace.mockImplementation(() => {
       events.push("readiness");
