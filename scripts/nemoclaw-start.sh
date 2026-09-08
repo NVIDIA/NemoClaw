@@ -5825,6 +5825,7 @@ handle_openclaw_gateway_control_request() {
   # PID reuse could otherwise terminate an unrelated process. A still-running
   # prior refresh is harmless and will exit on its own.
   start_plugin_registry_refresh
+  refresh_openclaw_supervised_child_pids
   if ! wait_for_plugin_registry_refresh; then
     refresh_openclaw_supervised_child_pids
     gateway_control_fail unsafe-config "$old_pid"
@@ -5972,6 +5973,7 @@ if [ "$(id -u)" -ne 0 ]; then
   start_persistent_gateway_log_mirror || exit 1
   start_auto_pair
   start_plugin_registry_refresh
+  refresh_openclaw_supervised_child_pids
   wait_for_plugin_registry_refresh || exit 1
   start_gateway_serving_watchdog
   # NOTE: PIDs are collected after launch; a signal arriving between trap
@@ -6222,6 +6224,7 @@ start_auto_pair
 # workaround after openclaw/openclaw#89606 ships and the full onboard E2E still
 # proves /nemoclaw registration without the refresh.
 start_plugin_registry_refresh
+refresh_openclaw_supervised_child_pids
 wait_for_plugin_registry_refresh || exit 1
 
 start_gateway_serving_watchdog

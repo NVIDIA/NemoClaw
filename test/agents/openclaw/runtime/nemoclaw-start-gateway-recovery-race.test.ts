@@ -77,6 +77,7 @@ describe("OpenClaw gateway recovery during respawn races", () => {
         "wait:202:new-start",
         "restore",
         "plugin-refresh",
+        "refresh-children",
         "wait-plugin-refresh",
         "refresh-children",
         `complete:ok:${oldPid}:202`,

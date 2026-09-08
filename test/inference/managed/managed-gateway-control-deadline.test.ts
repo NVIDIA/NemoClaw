@@ -25,7 +25,8 @@ control.time.sleep = lambda seconds: (sleeps.append(seconds), clock.__setitem__(
 control._validate_trusted_regular = lambda _path: None
 control._system_path = lambda path: path
 refusal = subprocess.CompletedProcess([], 1, b'{"type":"issue","code":"config-not-mutable"}\n{"type":"result","status":"failed"}\n')
-responses = [refusal] * 26 + [subprocess.CompletedProcess([], 0, b'{"type":"result","status":"ok"}\n')]
+startup_refusal = subprocess.CompletedProcess([], 1, b'{"type":"issue","code":"startup-not-ready"}\n')
+responses = [startup_refusal] + [refusal] * 26 + [subprocess.CompletedProcess([], 0, b'{"type":"result","status":"ok"}\n')]
 calls = []
 control.subprocess.run = lambda *args, **kwargs: (calls.append(kwargs), responses.pop(0))[1]
 control._openclaw_preflight(10.0)
@@ -498,8 +499,8 @@ describe("managed gateway recovery deadline", () => {
         sleeps: [0.2],
       },
       settled: {
-        calls: 27,
-        elapsed: 5.2,
+        calls: 28,
+        elapsed: 5.4,
       },
     });
   });
