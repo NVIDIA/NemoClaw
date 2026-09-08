@@ -162,6 +162,7 @@ describe("messaging OpenShell provider application", () => {
   it.each([
     ["provider type", { type: "generic" }],
     ["configuration keys", { configKeys: ["BASE_URL"] }],
+    ["undeclared credential keys", { credentialKeys: ["TELEGRAM_BOT_TOKEN", "UNDECLARED"] }],
   ])(
     "rejects a %s collision before profile or provider mutation (#9806)",
     async (_field, conflictingMetadata) => {
@@ -257,6 +258,30 @@ describe("messaging OpenShell provider application", () => {
       config: [],
       fromExisting: false,
     });
+
+    vi.mocked(adapter.getProvider).mockResolvedValue({
+      ok: true,
+      value: metadata({ ...expected, credentials: createdCredentials }),
+    });
+    vi.mocked(adapter.createProvider).mockClear();
+    const retryDefinition = {
+      ...expected,
+      credentials: expected.credentials.map(({ name }) => ({ name, value: null })),
+    };
+
+    const retry = await applyCredentialsAtOpenShell(plan, {
+      providerAdapter: adapter,
+      target,
+      definitions: [retryDefinition],
+      requireCompleteBindings: true,
+    });
+
+    expect(retry.reused).toEqual([
+      expect.objectContaining({ providerName: expected.providerName }),
+    ]);
+    expect(adapter.createProvider).not.toHaveBeenCalled();
+    expect(adapter.updateProvider).not.toHaveBeenCalled();
+    expect(adapter.deleteProvider).not.toHaveBeenCalled();
   });
 
   it("rejects provider creation when only an optional credential is present (#11190)", async () => {

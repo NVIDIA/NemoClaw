@@ -112,9 +112,7 @@ export async function applyCredentialsAtOpenShell(
     const credentialAvailability = definition.credentials.map(({ value }) => Boolean(value));
     const hasAnyCredential = credentialAvailability.some(Boolean);
     const hasEveryCredential = credentialAvailability.every(Boolean);
-    const hasRequiredCredential = definition.credentials.some(
-      ({ name, value }) => name === definition.credentialId && Boolean(value),
-    );
+    const hasPrimaryCredential = Boolean(definition.credentials[0]?.value);
     states.set(definition.providerName, state);
     if (state === "indeterminate") {
       throw new MessagingProviderApplyError({
@@ -124,7 +122,7 @@ export async function applyCredentialsAtOpenShell(
     if (state === "collision" && (!options.replaceExisting || !hasEveryCredential)) {
       throw bindingConflict(definition);
     }
-    if (state === "missing" && hasAnyCredential && !hasRequiredCredential) {
+    if (state === "missing" && hasAnyCredential && !hasPrimaryCredential) {
       throw new MessagingProviderApplyError({
         message: `Messaging provider '${definition.providerName}' is missing required credential material for creation.`,
       });
@@ -657,13 +655,19 @@ function classifyProviderDefinition(
       ? "missing"
       : "indeterminate";
   }
-  const expectedCredentialKeys = definition.credentials.map(({ name }) => name).sort();
-  const actualCredentialKeys = [...result.value.credentialKeys].sort();
+  const declaredCredentialKeys = new Set(definition.credentials.map(({ name }) => name));
+  const requiredCredentialKeys = new Set(
+    definition.credentials
+      .filter(({ value }, index) => index === 0 || Boolean(value))
+      .map(({ name }) => name),
+  );
+  const actualCredentialKeys = new Set(result.value.credentialKeys);
   return result.value.name === definition.providerName &&
     result.value.type === definition.providerType &&
     result.value.configKeys.length === 0 &&
-    actualCredentialKeys.length === expectedCredentialKeys.length &&
-    actualCredentialKeys.every((key, index) => key === expectedCredentialKeys[index])
+    actualCredentialKeys.size === result.value.credentialKeys.length &&
+    [...actualCredentialKeys].every((key) => declaredCredentialKeys.has(key)) &&
+    [...requiredCredentialKeys].every((key) => actualCredentialKeys.has(key))
     ? "exact"
     : "collision";
 }
