@@ -21,7 +21,7 @@ import {
 
 const ADVISOR_WORKFLOW_NAME = "Automation / PR Review Advisor";
 const ADVISOR_WORKFLOW_PATH = ".github/workflows/pr-review-advisor.yaml";
-const NEMOTRON_ADVISOR_JOB = "PR review advisor (Nemotron 3 Ultra)";
+const ADVISOR_SPECIALIST_JOB = "Specialist / Behavior";
 
 interface AdvisorCheckOptions {
   name?: string;
@@ -48,7 +48,7 @@ interface AdvisorRunOptions {
 function advisorCheck(runId: number, jobId: number, options: AdvisorCheckOptions = {}) {
   return {
     __typename: "CheckRun",
-    name: NEMOTRON_ADVISOR_JOB,
+    name: ADVISOR_SPECIALIST_JOB,
     workflowName: ADVISOR_WORKFLOW_NAME,
     detailsUrl: `https://github.com/NVIDIA/NemoClaw/actions/runs/${runId}/job/${jobId}`,
     startedAt: "2026-01-01T00:00:00Z",
@@ -73,7 +73,7 @@ function advisorRun(jobId: number, options: AdvisorRunOptions = {}) {
     jobs: [
       {
         id: jobId,
-        name: options.jobName ?? NEMOTRON_ADVISOR_JOB,
+        name: options.jobName ?? ADVISOR_SPECIALIST_JOB,
         status: options.jobStatus ?? "completed",
         conclusion: options.jobConclusion === undefined ? "failure" : options.jobConclusion,
       },
@@ -119,7 +119,7 @@ describe("maintainer merge-gate contributor compliance", () => {
   it.each([
     {
       state: "failed",
-      name: "PR review advisor (GPT-5.6 Terra)",
+      name: "Discover review specialists and collect GitHub context",
       runId: 9001,
       status: "COMPLETED",
       conclusion: "FAILURE",
@@ -128,7 +128,7 @@ describe("maintainer merge-gate contributor compliance", () => {
     },
     {
       state: "pending",
-      name: NEMOTRON_ADVISOR_JOB,
+      name: "Publish advisor link",
       runId: 9002,
       status: "IN_PROGRESS",
       conclusion: undefined,

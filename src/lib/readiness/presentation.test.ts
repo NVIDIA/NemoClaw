@@ -272,6 +272,24 @@ describe("public readiness presentation (#7412)", () => {
     expect(String(publicReport.evidence[0]?.details?.stderr).length).toBeLessThanOrEqual(1024);
   });
 
+  it.each([
+    { label: "single quote", quote: "'" },
+    { label: "double quote", quote: '"' },
+  ])("redacts URL credentials split by a $label at the public boundary", ({ quote }) => {
+    const publicReport = createPublicReadinessReport(
+      report({
+        evidence: [
+          {
+            id: "host.probe.output",
+            summary: `https://service-user:service-password${quote}opaque@example.test/path`,
+          },
+        ],
+      }),
+    );
+
+    expect(publicReport.evidence[0]?.summary).toBe("https://example.test/path");
+  });
+
   it("neutralizes terminal and bidirectional controls across the public report", () => {
     const unsafe = "trusted\n\u001b[31mforged\u202efailure";
     const publicReport = createPublicReadinessReport(

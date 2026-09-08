@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { G, R, YW } from "../../cli/terminal-style";
 import * as sandboxConfig from "../../sandbox/config";
 import { load as loadRegistry } from "../../state/registry/persistence";
@@ -14,6 +15,7 @@ export interface RebuildRestorePhaseInput {
   targetImageIsCustom: boolean;
   backupManifest: RebuildBackupManifest;
   reconcileManagedDcodeObservability?: boolean;
+  runtimeSelection?: OpenShellRuntimeSelection;
   log: RebuildLog;
 }
 
@@ -23,7 +25,14 @@ export interface RebuildRestorePhaseResult {
 
 /** Restore sandbox files. The replacement already received the captured live OpenShell policy. */
 export function runRebuildRestorePhase(input: RebuildRestorePhaseInput): RebuildRestorePhaseResult {
-  const { sandboxName, targetAgentType, targetImageIsCustom, backupManifest, log } = input;
+  const {
+    sandboxName,
+    targetAgentType,
+    targetImageIsCustom,
+    backupManifest,
+    runtimeSelection,
+    log,
+  } = input;
   let restoreSucceeded = true;
   if (backupManifest) {
     console.log("");
@@ -34,6 +43,7 @@ export function runRebuildRestorePhase(input: RebuildRestorePhaseInput): Rebuild
       {
         targetAgentType,
         ...(targetImageIsCustom ? { allowCustomImageWholeStateFileRestore: true } : {}),
+        ...(runtimeSelection ? { runtimeSelection } : {}),
       },
       { getSandbox: (name) => loadRegistry().sandboxes[name] ?? null },
     );

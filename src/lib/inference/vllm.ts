@@ -25,9 +25,8 @@ import { CLI_NAME } from "../cli/branding";
 import { warnLine } from "../cli/terminal-style";
 import { markPhaseActivity } from "../core/phase-activity";
 import { VLLM_PORT } from "../core/vllm-port";
-import { shellQuote } from "../core/shell-quote";
 import { isAffirmativeAnswer } from "../onboard/prompt-helpers";
-import { redact, redactFull, runCapture } from "../runner";
+import { redact, redactFull, runCapture, shellQuote } from "../runner";
 import { isSafeModelId } from "../validation";
 import {
   acquireHuggingFaceModel,

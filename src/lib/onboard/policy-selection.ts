@@ -40,6 +40,7 @@ import {
   type PreparedPolicyResumeSelection,
   preparePolicyPresetResumeSelection,
 } from "./policy-resume-selection";
+import type { SandboxReadyWaitResult } from "./sandbox-readiness-tracing";
 import {
   createPolicySelectionPromptHelpers,
   type PolicySelectionPromptDeps,
@@ -63,7 +64,7 @@ export type OnboardPolicyApplicationDeps = Omit<
   step: (number: number, total: number, title: string) => void;
   localInferenceProviders: readonly string[];
   withSandboxMutationLock: typeof import("../state/mcp-lifecycle-lock").withSandboxMutationLock;
-  waitForSandboxReady(sandboxName: string): boolean;
+  waitForSandboxReady(sandboxName: string): Promise<SandboxReadyWaitResult>;
   waitForSandboxControlPlaneReady(sandboxName: string): boolean;
   parsePolicyPresetEnv(raw: string): string[];
   env: NodeJS.ProcessEnv;
@@ -129,7 +130,7 @@ export type SetupPolicySelectionDeps = {
   step: (number: number, total: number, title: string) => void;
   note: (message: string) => void;
   isNonInteractive: () => boolean;
-  waitForSandboxReady: (sandboxName: string) => boolean;
+  waitForSandboxReady: (sandboxName: string) => Promise<SandboxReadyWaitResult>;
   waitForSandboxControlPlaneReady: (sandboxName: string) => boolean;
   syncPresetSelection: (
     sandboxName: string,
@@ -342,12 +343,20 @@ export async function setupPoliciesWithSelection(
   return chosen;
 }
 
-function requireSandboxReady(
+async function requireSandboxReady(
   deps: SetupPolicySelectionDeps,
   sandboxName: string,
   stage: "before" | "after",
-): void {
-  if (!deps.waitForSandboxReady(sandboxName)) {
+): Promise<void> {
+  const readiness = await deps.waitForSandboxReady(sandboxName);
+  if (!readiness.ready) {
+    if (readiness.reason === "observation_failed") {
+      console.error(
+        `  NemoClaw could not observe sandbox '${sandboxName}' ${stage} policy application.`,
+      );
+      console.error(`  ${readiness.error.message}`);
+      process.exit(1);
+    }
     console.error(`  Sandbox '${sandboxName}' was not ready ${stage} policy application.`);
     process.exit(1);
   }
@@ -485,13 +494,13 @@ async function setupPoliciesWithSelectionInner(
   if (selectedPresets !== null) {
     const resumeSelection = chosen || [];
     refuseInPlacePersonalRemoval(personalAlreadyActive, resumeSelection);
-    requireSandboxReady(deps, sandboxName, "before");
+    await requireSandboxReady(deps, sandboxName, "before");
     deps.note(`  [resume] Reapplying policy presets: ${resumeSelection.join(", ")}`);
     options.revalidateSandboxIdentity?.(
       `reapply selected policy presets to sandbox '${sandboxName}'`,
     );
     deps.syncPresetSelection(sandboxName, currentAppliedPresets, resumeSelection);
-    requireSandboxReady(deps, sandboxName, "after");
+    await requireSandboxReady(deps, sandboxName, "after");
     if (onSelection) onSelection(resumeSelection);
     return resumeSelection;
   }
@@ -561,7 +570,7 @@ async function setupPoliciesWithSelectionInner(
         retainedPresets.some((name, index) => name !== currentAppliedPresets[index]);
       if (selectionChanged) {
         refuseInPlacePersonalRemoval(personalAlreadyActive, retainedPresets);
-        requireSandboxReady(deps, sandboxName, "before");
+        await requireSandboxReady(deps, sandboxName, "before");
         deps.note(
           personalTier
             ? "  [non-interactive] Applying the Personal tier requirement while skipping optional policy presets."
@@ -571,7 +580,7 @@ async function setupPoliciesWithSelectionInner(
           `apply retained policy presets to sandbox '${sandboxName}'`,
         );
         deps.syncPresetSelection(sandboxName, currentAppliedPresets, retainedPresets);
-        requireSandboxReady(deps, sandboxName, "after");
+        await requireSandboxReady(deps, sandboxName, "after");
         if (onSelection) onSelection(retainedPresets);
         return retainedPresets;
       }
@@ -652,13 +661,13 @@ async function setupPoliciesWithSelectionInner(
     }
 
     refuseInPlacePersonalRemoval(personalAlreadyActive, chosen);
-    requireSandboxReady(deps, sandboxName, "before");
+    await requireSandboxReady(deps, sandboxName, "before");
     deps.note(`  [non-interactive] Applying policy presets: ${chosen.join(", ")}`);
     options.revalidateSandboxIdentity?.(
       `apply non-interactive policy presets to sandbox '${sandboxName}'`,
     );
     deps.syncPresetSelection(sandboxName, currentAppliedPresets, chosen);
-    requireSandboxReady(deps, sandboxName, "after");
+    await requireSandboxReady(deps, sandboxName, "after");
     if (onSelection) onSelection(chosen);
     return chosen;
   }
@@ -698,7 +707,7 @@ async function setupPoliciesWithSelectionInner(
   );
 
   refuseInPlacePersonalRemoval(personalAlreadyActive, interactiveChoice);
-  requireSandboxReady(deps, sandboxName, "before");
+  await requireSandboxReady(deps, sandboxName, "before");
 
   const accessByName: Record<string, string> = {};
   const interactiveChoiceNames = new Set(interactiveChoice);
@@ -707,7 +716,7 @@ async function setupPoliciesWithSelectionInner(
   }
   options.revalidateSandboxIdentity?.(`apply policy presets to sandbox '${sandboxName}'`);
   deps.syncPresetSelection(sandboxName, currentAppliedPresets, interactiveChoice, accessByName);
-  requireSandboxReady(deps, sandboxName, "after");
+  await requireSandboxReady(deps, sandboxName, "after");
   if (onSelection) onSelection(interactiveChoice);
   return interactiveChoice;
 }

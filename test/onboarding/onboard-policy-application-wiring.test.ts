@@ -39,9 +39,9 @@ describe("onboarding policy application production wiring", () => {
       return { policyTier: "restricted" };
     });
     const updateSandbox = vi.fn();
-    const waitForSandboxReady = vi.fn(() => {
+    const waitForSandboxReady = vi.fn(async () => {
       events.push("sandbox ready");
-      return true;
+      return { ready: true as const, reason: "ready" as const, error: null };
     });
     const waitForSandboxControlPlaneReady = vi.fn(() => {
       events.push("control plane ready");
@@ -108,7 +108,7 @@ describe("onboarding policy application production wiring", () => {
       const readiness = require(readinessPath) as Record<string, unknown>;
       replaceCachedExports(readinessPath, {
         ...readiness,
-        createSandboxReadyWaiter: vi.fn(() => waitForSandboxReady),
+        createCliSandboxReadyWaiter: vi.fn(() => waitForSandboxReady),
       });
       const finalFlow = require(finalFlowPath) as {
         finalizationHandlerDeps: Record<string, unknown>;

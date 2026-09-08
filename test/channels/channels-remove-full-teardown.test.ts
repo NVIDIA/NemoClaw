@@ -73,7 +73,7 @@ function buildPreamble({
   sshFallbackResult = null as { status: number; stdout: string; stderr: string } | null,
   stoppedDockerCleanupResult = {
     cleared: false,
-    failure: "sandbox-volume-unavailable",
+    failure: "state-resource-unavailable",
   } as { cleared: true } | { cleared: false; failure: string; cleanupHelperName?: string },
 }: {
   presetNamesApplied?: string[];
@@ -176,6 +176,9 @@ const registryUpdates = [];
 registry.getSandbox = () => ({
   name: "test-sb",
   agent: ${JSON.stringify(sandboxAgent)},
+  gatewayName: "nemoclaw",
+  lifecycleGeneration: "generation-1",
+  lifecycleLiveIdentityFingerprint: "fingerprint-1",
   messaging: { schemaVersion: 1, plan: ${messagingPlanLiteral()} },
 });
 registry.updateSandbox = (name, updates) => {
@@ -195,7 +198,9 @@ policies.removePreset = (sandboxName, presetName) => {
 const callOrder = [];
 const stoppedDockerCleanupCalls = [];
 const policyChannelDeps = require(${j("actions/sandbox/policy-channel-dependencies.js")});
-policyChannelDeps.policyChannelDependencies.clearStoppedDockerSandboxChannelState = (sandboxName, paths) => {
+policyChannelDeps.policyChannelDependencies.inspectMessagingProviderAttachmentTarget = () =>
+  "fingerprint-1";
+policyChannelDeps.policyChannelDependencies.clearStoppedSandboxStateRoots = (sandboxName, paths) => {
   stoppedDockerCleanupCalls.push({ sandboxName, paths });
   return ${JSON.stringify(stoppedDockerCleanupResult)};
 };
@@ -364,7 +369,7 @@ const ctx = module.exports;
     {
       failure: "cleanup-helper-failed",
       cleanup: { cleared: false, failure: "cleanup-helper-failed" },
-      guidance: "Inspect the stopped sandbox and Docker daemon.",
+      guidance: "Inspect the stopped sandbox and selected runtime provider.",
     },
     {
       failure: "cleanup-helper-ownership-invalid",
@@ -427,7 +432,7 @@ const ctx = module.exports;
       assert.deepEqual(payload.removedPresets, []);
       assert.deepEqual(payload.registryUpdates, []);
       assert.ok(!payload.callOrder.includes("promptAndRebuild"));
-      assert.ok(result.stderr.includes(`Stopped-Docker cleanup failed (${failure}).`));
+      assert.ok(result.stderr.includes(`Stopped-runtime cleanup failed (${failure}).`));
       assert.ok(result.stderr.includes(guidance));
     },
   );

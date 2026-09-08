@@ -93,7 +93,7 @@ describe("CLI dispatch", () => {
       const shouldCleanupGateway = process.platform === "darwin";
       expect(openshellOutput).toContain("sandbox delete alpha");
       expect(openshellOutput).toContain("NAME STATUS");
-      expect(openshellOutput.includes("forward stop 18789")).toBe(shouldCleanupGateway);
+      expect(openshellOutput).not.toContain("forward stop 18789");
       expect(openshellOutput.includes("gateway remove nemoclaw")).toBe(shouldCleanupGateway);
       expect(dockerOutput.includes("volume ls -q --filter name=openshell-cluster-nemoclaw")).toBe(
         shouldCleanupGateway,
@@ -173,7 +173,7 @@ describe("CLI dispatch", () => {
       expect(r.code, r.out).toBe(0);
       const openshellOutput = fs.readFileSync(openshellLog, "utf8");
       expect(openshellOutput).toContain("sandbox delete alpha");
-      expect(openshellOutput).toContain("forward stop 18789");
+      expect(openshellOutput).not.toContain("forward stop 18789");
       // `gateway remove` is the modern subcommand on every platform (#6569).
       expect(openshellOutput).toContain("gateway remove nemoclaw-8081");
       expect(openshellOutput).toContain("gateway destroy -g nemoclaw-8081");
@@ -251,7 +251,7 @@ describe("CLI dispatch", () => {
 
       expect(r.code, r.out).toBe(0);
       const openshellOutput = fs.readFileSync(openshellLog, "utf8");
-      expect(openshellOutput).toContain("forward stop 18789");
+      expect(openshellOutput).not.toContain("forward stop 18789");
       // `gateway remove` is the modern subcommand on every platform (#6569).
       expect(openshellOutput).toContain("gateway remove nemoclaw");
       expect(openshellOutput).not.toContain("gateway destroy -g nemoclaw");
@@ -851,7 +851,7 @@ describe("CLI dispatch", () => {
       const openshellOutput = fs.readFileSync(openshellLog, "utf8");
       const dockerOutput = fs.readFileSync(bashLog, "utf8");
       const shouldCleanupGateway = process.platform === "darwin";
-      expect(openshellOutput.includes("forward stop 18789")).toBe(shouldCleanupGateway);
+      expect(openshellOutput).not.toContain("forward stop 18789");
       expect(openshellOutput.includes("gateway remove nemoclaw")).toBe(shouldCleanupGateway);
       expect(dockerOutput.includes("volume ls -q --filter name=openshell-cluster-nemoclaw")).toBe(
         shouldCleanupGateway,

@@ -38,12 +38,10 @@ For a compatible custom endpoint, pass the complete route metadata described bel
 
 Pass the target provider and model together.
 Target a non-default sandbox by name.
-The `shields` commands take a positional name. `inference set` takes `--sandbox <name>`.
+`inference set` takes `--sandbox <name>`.
 
 ```bash
-$$nemoclaw <name> shields down
 $$nemoclaw inference set --provider <provider> --model <model> --sandbox <name>
-$$nemoclaw <name> shields up
 ```
 
 </AgentOnly>
@@ -106,7 +104,7 @@ $$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox
 
 When moving from another provider family to `compatible-endpoint` or `compatible-anthropic-endpoint`, provide the trusted endpoint URL and enough API metadata to record the complete route identity.
 Export the canonical credential environment variable for the target provider.
-Run this command within the shields-down window shown in the runtime switching workflow.
+Run this command from the host that owns the sandbox.
 
 ```bash
 export COMPATIBLE_API_KEY="<api-key>"

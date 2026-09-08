@@ -29,7 +29,9 @@ const ACTION_USES =
   "NVIDIA/NemoClaw/.github/actions/host-dependency-setup@4def1501b34ce586f83b91af50a66b5d22b31d75";
 
 interface WorkflowStep {
+  if?: string;
   name?: string;
+  run?: string;
   uses?: string;
   with?: Record<string, unknown>;
   "continue-on-error"?: boolean;
@@ -116,6 +118,20 @@ describe("E2E host dependency action boundary (#6961)", () => {
     )!;
     install["continue-on-error"] = true;
     expect(validateE2eWorkflow(workflow)).toContain("live host dependency setup must fail closed");
+  });
+
+  it("keeps DCode TUI dependencies available on every selected runtime", () => {
+    const workflow = readWorkflow();
+    const install = workflow.jobs.live?.steps.find(
+      (step) => step.name === "Install Deep Agents Code TUI host dependencies",
+    )!;
+    const expectedError =
+      "live DCode TUI host dependencies must be scoped to the typed DCode target";
+    expect(validateE2eWorkflow(workflow)).not.toContain(expectedError);
+    install.if =
+      "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' && matrix.runtime_provider == 'docker' }}";
+
+    expect(validateE2eWorkflow(workflow)).toContain(expectedError);
   });
 
   it.each(["", "   ", "expect\ncurl", "curl"])(
@@ -207,6 +223,51 @@ exit 64
     steps.splice(prepareIndex + 1, 0, install);
     expect(validateE2eWorkflow(workflow)).toContain(
       "cloud-onboard DCode TUI host dependencies must precede workspace prep",
+    );
+  });
+
+  it("keeps Docker absent for the native Podman cloud-onboard test", () => {
+    const workflow = readWorkflow();
+    const steps = workflow.jobs["cloud-onboard"].steps;
+    const hide =
+      steps[requireStepIndex(steps, "Hide Docker CLI from native Podman public install")]!;
+    const restore =
+      steps[requireStepIndex(steps, "Restore Docker CLI after native Podman public install")]!;
+    hide.run = hide.run?.replace(
+      "if command -v docker >/dev/null 2>&1",
+      "if command -v docker-does-not-exist >/dev/null 2>&1",
+    );
+    hide.run = hide.run?.replace(
+      "NEMOCLAW_E2E_DISABLED_DOCKER_CLI=%s",
+      "NEMOCLAW_E2E_DISABLED_DOCKER_CLI_MISSING=%s",
+    );
+    restore.run = restore.run?.replace(
+      'sudo mv -- "${disabled_path}" "${restore_path}"',
+      'sudo mv -- "${disabled_path}" "${restore_path}.wrong"',
+    );
+
+    expect(validateE2eWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "step 'Hide Docker CLI from native Podman public install' run script must include if command -v docker >/dev/null 2>&1",
+        "step 'Hide Docker CLI from native Podman public install' run script must include NEMOCLAW_E2E_DISABLED_DOCKER_CLI=%s",
+        'step \'Restore Docker CLI after native Podman public install\' run script must include sudo mv -- "${disabled_path}" "${restore_path}"',
+      ]),
+    );
+  });
+
+  it("records Docker CLI recovery state before moving the executable", () => {
+    const workflow = readWorkflow();
+    const steps = workflow.jobs["cloud-onboard"].steps;
+    const hide =
+      steps[requireStepIndex(steps, "Hide Docker CLI from native Podman public install")]!;
+    const moveDockerCli = 'sudo mv -- "${docker_cli}" "${disabled_path}"';
+    hide.run = `${moveDockerCli}\n${hide.run ?? ""}`;
+
+    expect(validateE2eWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        'step \'Hide Docker CLI from native Podman public install\' run script must include NEMOCLAW_E2E_DISABLED_DOCKER_CLI=%s before sudo mv -- "${docker_cli}" "${disabled_path}"',
+        'step \'Hide Docker CLI from native Podman public install\' run script must include NEMOCLAW_E2E_DOCKER_CLI_RESTORE_PATH=%s before sudo mv -- "${docker_cli}" "${disabled_path}"',
+      ]),
     );
   });
 });

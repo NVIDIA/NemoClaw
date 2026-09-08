@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import YAML from "yaml";
 
 import type { McpBridgeEntry } from "../../src/lib/state/registry";
 import { findObservedCredentialRevision } from "../helpers/mcp-provider-revision";
@@ -32,7 +33,7 @@ const testState = vi.hoisted(() => {
     executeSandboxExecCommand: vi.fn(),
     failProviderDelete: null as string | null,
     failProviderDetach: null as string | null,
-    getSandboxPolicy: vi.fn(),
+    captureRecordedSandboxBasePolicy: vi.fn(),
     getLiveSandboxPolicyEntryDigest: vi.fn(),
     getPresetContentGatewayState: vi.fn(),
     home,
@@ -49,6 +50,7 @@ const testState = vi.hoisted(() => {
     removePreset: vi.fn(),
     runOpenshell: vi.fn(),
     runOpenshellProviderCommand: vi.fn(),
+    runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
     stopNimContainer: vi.fn(),
     stopNimContainerByName: vi.fn(),
     warnUnpreservedUserManagedFiles: vi.fn(),
@@ -63,6 +65,16 @@ vi.mock("../../src/lib/adapters/dns/resolve", () => ({
   resolveHostAddresses: testState.resolveHostAddresses,
 }));
 
+vi.mock(
+  "../../src/lib/actions/sandbox/mcp-bridge-provider-inspection",
+  async (importOriginal) => ({
+    ...(await importOriginal<
+      typeof import("../../src/lib/actions/sandbox/mcp-bridge-provider-inspection")
+    >()),
+    getMcpProviderInspectionRuntimeSelection: () => testState.runtimeSelection,
+  }),
+);
+
 vi.mock("../../src/lib/adapters/openshell/runtime", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../src/lib/adapters/openshell/runtime")>()),
   captureOpenshell: testState.captureOpenshell,
@@ -71,11 +83,14 @@ vi.mock("../../src/lib/adapters/openshell/runtime", async (importOriginal) => ({
 
 vi.mock("../../src/lib/gateway-runtime-action", () => ({
   recoverNamedGatewayRuntime: testState.recoverNamedGatewayRuntime,
+  replaceOpenShellRuntimeSelectionEnv: () => undefined,
+  snapshotOpenShellEnv: () => () => undefined,
 }));
 
 vi.mock("../../src/lib/policy", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../src/lib/policy")>()),
   applyPresetContent: testState.applyPresetContent,
+  captureRecordedSandboxBasePolicy: testState.captureRecordedSandboxBasePolicy,
   getLiveSandboxPolicyEntryDigest: testState.getLiveSandboxPolicyEntryDigest,
   getPresetContentGatewayState: testState.getPresetContentGatewayState,
   removePreset: testState.removePreset,
@@ -85,10 +100,6 @@ vi.mock("../../src/lib/actions/sandbox/process-recovery", () => ({
   executeGatewaySupervisorAction: testState.executeGatewaySupervisorAction,
   executeSandboxCommand: testState.executeSandboxCommand,
   executeSandboxExecCommand: testState.executeSandboxExecCommand,
-}));
-
-vi.mock("../../src/lib/actions/sandbox/policy-get", () => ({
-  getSandboxPolicy: testState.getSandboxPolicy,
 }));
 
 vi.mock("../../src/lib/actions/sandbox/rebuild-flow-helpers", async (importOriginal) => ({
@@ -123,8 +134,7 @@ function stubRecreateJournal(): RebuildRecreateJournal {
     },
     targetGeneration: "generation-1",
     targetIntentFingerprint: "intent-1",
-    markDeleting: vi.fn(),
-    observeSourceForDelete: vi.fn(() => "source" as const),
+    beginDelete: vi.fn(() => "source" as const),
     confirmDeleted: vi.fn(),
     completeAcceptedTarget: vi.fn(),
   };
@@ -236,17 +246,27 @@ beforeEach(() => {
     testState.removedPolicyKeys.add(policyName.replaceAll("-", "_"));
     return true;
   });
-  testState.getSandboxPolicy.mockImplementation(() => {
-    const entries = ["mcp_bridge_github", "mcp_bridge_slack"].filter(
-      (key) => !testState.removedPolicyKeys.has(key),
+  testState.captureRecordedSandboxBasePolicy.mockImplementation(() => {
+    const entries = Object.values(bridgeEntries).filter(
+      (entry) => !testState.removedPolicyKeys.has(`mcp_bridge_${entry.server}`),
     );
-    return {
-      raw: "",
-      yaml:
-        entries.length === 0
-          ? "version: 1\nnetwork_policies: {}\n"
-          : `version: 1\nnetwork_policies:\n${entries.map((key) => `  ${key}: {}`).join("\n")}\n`,
-    };
+    const networkPolicies = Object.assign(
+      {},
+      ...entries.map(
+        (entry) =>
+          YAML.parse(
+            bridge.buildMcpBridgePolicyYaml(
+              entry.server,
+              entry.url,
+              "mcporter",
+              { addresses: entry.allowedIps ?? [] },
+              entry.providerName ?? "",
+              entry.denyTools,
+            ),
+          ).network_policies,
+      ),
+    );
+    return YAML.stringify({ version: 1, network_policies: networkPolicies });
   });
   testState.runOpenshell.mockReturnValue({ status: 0, stdout: "", stderr: "" });
   testState.resolveHostAddresses.mockImplementation(async (host: string) => [{ address: host }]);
@@ -982,7 +1002,6 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
       bail: vi.fn((message: string): never => {
         throw new Error(message);
       }),
-      relockShieldsIfNeeded: vi.fn(() => true),
       onDeleted,
     });
 
@@ -990,8 +1009,11 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
     expect(testState.executeSandboxExecCommand).toHaveBeenCalledOnce();
     expect(testState.executeSandboxExecCommand).toHaveBeenCalledWith("alpha", ":", undefined, {
       allowLocalDockerFallback: false,
+      runtimeSelection: testState.runtimeSelection,
     });
-    expect(testState.executeSandboxCommand).toHaveBeenCalledWith("alpha", ":");
+    expect(testState.executeSandboxCommand).toHaveBeenCalledWith("alpha", ":", {
+      runtimeSelection: testState.runtimeSelection,
+    });
     expect(testState.runOpenshell).toHaveBeenCalledWith(
       ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
       expect.any(Object),
@@ -1058,7 +1080,6 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
         bail: vi.fn((message: string): never => {
           throw new Error(message);
         }),
-        relockShieldsIfNeeded: vi.fn(() => true),
         onDeleted,
       }),
     ).rejects.toThrow("Failed to delete sandbox.");
@@ -1075,30 +1096,26 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
     expect(onDeleted).not.toHaveBeenCalled();
   });
 
-  it("removes the generated key during rebuild even when its live content was edited", async () => {
+  it("rejects rebuild when the generated key's live content was edited", async () => {
     registerAlphaGithubBridge();
-    testState.getPresetContentGatewayState.mockReturnValue("drift");
-
-    const preparation = await bridge.prepareMcpBridgesForRebuild("alpha");
-
-    expect(preparation.entries).toEqual([bridgeEntries.github]);
-    expect(preparation.policyHandoff).toContain("mcp_bridge_github");
-    expect(testState.removePreset).toHaveBeenCalledWith(
-      "alpha",
-      "mcp-bridge-github",
-      expect.objectContaining({ presetContent: expect.any(String) }),
+    testState.captureRecordedSandboxBasePolicy.mockReturnValue(
+      "version: 1\nnetwork_policies:\n  mcp_bridge_github:\n    endpoints: []\n",
     );
-    await expect(preparation.revalidateBeforeDelete?.()).resolves.toBeUndefined();
+
+    await expect(bridge.prepareMcpBridgesForRebuild("alpha")).rejects.toThrow(
+      /generated policy does not match.*mcp restart github/u,
+    );
+
+    expect(testState.removePreset).not.toHaveBeenCalled();
   });
 
   it("rejects a host policy edit that lands after the bounded rebuild handoff", async () => {
     registerAlphaGithubBridge();
 
     const preparation = await bridge.prepareMcpBridgesForRebuild("alpha");
-    testState.getSandboxPolicy.mockReturnValue({
-      raw: "",
-      yaml: "version: 1\nnetwork_policies:\n  concurrent_host_edit: {}\n",
-    });
+    testState.captureRecordedSandboxBasePolicy.mockReturnValue(
+      "version: 1\nnetwork_policies:\n  concurrent_host_edit: {}\n",
+    );
 
     await expect(preparation.revalidateBeforeDelete?.()).rejects.toThrow(
       /OpenShell policy changed while preparing MCP teardown/u,

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { stripAnsi } from "./adapters/openshell/client";
+import { withSelectedOpenShellCommandOptions } from "./adapters/openshell/command-argv";
 import * as openshellRuntime from "./adapters/openshell/runtime";
 import {
   classifyCliOpenShellCommandError,
@@ -20,9 +21,14 @@ import {
 
 export { resolveGatewayName, resolveSandboxGatewayName };
 
+export const replaceOpenShellRuntimeSelectionEnv =
+  openshellRuntime.replaceOpenShellRuntimeSelectionEnv;
+export const snapshotOpenShellEnv = openshellRuntime.snapshotOpenShellEnv;
+
 type StartGatewayForRecoveryOptions = {
   gatewayName?: string;
   gatewayPort?: number;
+  runtimeSelection?: openshellRuntime.OpenShellRuntimeSelection;
 };
 
 type LegacyOnboardModule = {
@@ -90,7 +96,10 @@ export type NamedGatewayLifecycleState = {
  */
 export function getNamedGatewayLifecycleState(
   gatewayName: string = resolveGatewayName(GATEWAY_PORT),
-  opts: { ignoreProbeErrors?: boolean } = {},
+  opts: {
+    ignoreProbeErrors?: boolean;
+    runtimeSelection?: openshellRuntime.OpenShellRuntimeSelection;
+  } = {},
 ): NamedGatewayLifecycleState {
   // #5714: callers that must stay non-fatal (e.g. plain `nemoclaw list`
   // recovery) opt into `ignoreProbeErrors` so a hung/timed-out `openshell
@@ -101,18 +110,27 @@ export function getNamedGatewayLifecycleState(
   // When ignoring probe errors we must still capture stderr — OpenShell writes
   // the `Status:`/`Gateway:` lines there, and `ignoreError` would otherwise
   // drop stderr and break the healthy/connected classification.
-  const status = gatewayRuntimeDependencies.captureOpenshell(["status"], {
-    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-    ignoreError,
-    includeStderr: ignoreError,
-  });
+  const status = gatewayRuntimeDependencies.captureOpenshell(
+    ["status"],
+    withSelectedOpenShellCommandOptions(
+      {
+        timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+        ignoreError,
+        includeStderr: ignoreError,
+      },
+      opts.runtimeSelection,
+    ),
+  );
   const gatewayInfo = gatewayRuntimeDependencies.captureOpenshell(
     ["gateway", "info", "-g", gatewayName],
-    {
-      timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-      ignoreError,
-      includeStderr: ignoreError,
-    },
+    withSelectedOpenShellCommandOptions(
+      {
+        timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+        ignoreError,
+        includeStderr: ignoreError,
+      },
+      opts.runtimeSelection,
+    ),
   );
   const cleanStatus = stripAnsi(status.output);
   const activeGateway = getActiveGatewayName(status.output);
@@ -170,11 +188,20 @@ type NamedGatewayLifecycleStateName = NamedGatewayLifecycleState["state"];
 export type RecoverNamedGatewayRuntimeOptions = {
   recoverableStates?: readonly NamedGatewayLifecycleStateName[];
   gatewayName?: string;
+  runtimeSelection?: openshellRuntime.OpenShellRuntimeSelection;
 };
 
 /** Attempt to recover the named NemoClaw gateway after a restart or connectivity loss. */
 export async function recoverNamedGatewayRuntime(options: RecoverNamedGatewayRuntimeOptions = {}) {
   const gatewayName = options.gatewayName ?? resolveGatewayName(GATEWAY_PORT);
+  if (options.runtimeSelection && options.runtimeSelection.gatewayName !== gatewayName) {
+    throw new Error(
+      `Gateway recovery target '${gatewayName}' does not match runtime selection '${options.runtimeSelection.gatewayName}'`,
+    );
+  }
+  const lifecycleOptions = options.runtimeSelection
+    ? { runtimeSelection: options.runtimeSelection }
+    : {};
   const recoverableStates = new Set<NamedGatewayLifecycleStateName>(
     options.recoverableStates ?? [
       "missing_named",
@@ -183,7 +210,7 @@ export async function recoverNamedGatewayRuntime(options: RecoverNamedGatewayRun
       "connected_other",
     ],
   );
-  const before = getNamedGatewayLifecycleState(gatewayName);
+  const before = getNamedGatewayLifecycleState(gatewayName, lifecycleOptions);
   if (before.recoveryBlocked) {
     return { recovered: false, before, after: before, attempted: false };
   }
@@ -194,12 +221,18 @@ export async function recoverNamedGatewayRuntime(options: RecoverNamedGatewayRun
     return { recovered: false, before, after: before, attempted: false };
   }
 
-  gatewayRuntimeDependencies.runOpenshell(["gateway", "select", gatewayName], {
-    ignoreError: true,
-    stdio: "ignore",
-    timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
-  });
-  let after = getNamedGatewayLifecycleState(gatewayName);
+  gatewayRuntimeDependencies.runOpenshell(
+    ["gateway", "select", gatewayName],
+    withSelectedOpenShellCommandOptions(
+      {
+        ignoreError: true,
+        stdio: "ignore",
+        timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
+      },
+      options.runtimeSelection,
+    ),
+  );
+  let after = getNamedGatewayLifecycleState(gatewayName, lifecycleOptions);
   if (after.recoveryBlocked) {
     return { recovered: false, before, after, attempted: true };
   }
@@ -217,17 +250,24 @@ export async function recoverNamedGatewayRuntime(options: RecoverNamedGatewayRun
       await gatewayRuntimeDependencies.startGatewayForRecovery({
         gatewayName,
         gatewayPort: resolveGatewayPortFromName(gatewayName) ?? undefined,
+        ...(options.runtimeSelection ? { runtimeSelection: options.runtimeSelection } : {}),
       });
     } catch {
       // Fall through to the lifecycle re-check below so we preserve the
       // existing recovery result shape and emit the correct classification.
     }
-    gatewayRuntimeDependencies.runOpenshell(["gateway", "select", gatewayName], {
-      ignoreError: true,
-      stdio: "ignore",
-      timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
-    });
-    after = getNamedGatewayLifecycleState(gatewayName);
+    gatewayRuntimeDependencies.runOpenshell(
+      ["gateway", "select", gatewayName],
+      withSelectedOpenShellCommandOptions(
+        {
+          ignoreError: true,
+          stdio: "ignore",
+          timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
+        },
+        options.runtimeSelection,
+      ),
+    );
+    after = getNamedGatewayLifecycleState(gatewayName, lifecycleOptions);
     if (after.state === "healthy_named") {
       process.env.OPENSHELL_GATEWAY = gatewayName;
       return { recovered: true, before, after, attempted: true, via: "start" };

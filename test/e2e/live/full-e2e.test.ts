@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { GATEWAY_STOP_SCRIPT } from "../../../src/lib/tunnel/gateway-stop-script.ts";
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
@@ -31,6 +32,7 @@ import {
 } from "../fixtures/onboard-performance.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import { pollUntil } from "../fixtures/polling.ts";
+import { ensureConfiguredRuntimeProviderAvailable } from "../fixtures/runtime-provider.ts";
 import {
   assertSecurityPosture,
   securityPostureEnabled,
@@ -54,7 +56,8 @@ const FULL_E2E_TARGET_ID = process.env.E2E_TARGET_ID ?? "full-e2e";
 const SETUP_MODE = process.env.NEMOCLAW_E2E_SETUP_MODE ?? "source-install";
 const USE_PREINSTALLED_LAUNCHABLE = SETUP_MODE === "preinstalled-launchable";
 const PORTABLE_PROFILE = process.env.NEMOCLAW_EXPERIMENTAL_PROFILE === "portable";
-const LIVE_TIMEOUT_MS = 50 * 60_000;
+const LIVE_TIMEOUT_MS = testTimeout(50 * 60_000);
+const INSTALL_TIMEOUT_MS = execTimeout(25 * 60_000);
 const FIRST_TURN_TIMEOUT_MS = 240_000;
 const MAX_SILENCE_SECS = 60;
 const EXPECTED_FIRST_REPLY = "NEMOCLAW_E2E_READY_6002";
@@ -425,15 +428,12 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
     ],
   });
 
-  const docker = await host.command("docker", ["info"], {
-    artifactName: "phase-0-docker-info",
-    env: env(),
-    timeoutMs: 30_000,
+  await ensureConfiguredRuntimeProviderAvailable({
+    artifactName: "phase-0-runtime-provider-info",
+    host,
+    scenarioLabel: FULL_E2E_TARGET_ID,
+    skip,
   });
-  if (docker.exitCode !== 0) {
-    if (process.env.GITHUB_ACTIONS === "true") throw new Error(resultText(docker));
-    skip(`Docker is required: ${resultText(docker)}`);
-  }
 
   cleanupRegistry.trackGateway(host, "nemoclaw", {
     artifactName: "cleanup-openshell-gateway-destroy",
@@ -470,12 +470,10 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
         artifactName: "phase-1-brev-launchable-quickstart",
         env: env({
           ...hosted.env,
-          NVIDIA_API_KEY: hosted.apiKey,
           NEMOCLAW_AGENT: "openclaw",
-          NEMOCLAW_PROVIDER: "build",
         }),
         redactionValues,
-        timeoutMs: 25 * 60_000,
+        timeoutMs: INSTALL_TIMEOUT_MS,
       })
     : await host.command("bash", ["install.sh", "--non-interactive", "--fresh"], {
         artifactName: "phase-1-install-sh",
@@ -489,7 +487,7 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
           ? { onOutput: (event: ShellProbeOutputEvent) => coldOnboard.outputEvents.push(event) }
           : {}),
         redactionValues,
-        timeoutMs: 25 * 60_000,
+        timeoutMs: INSTALL_TIMEOUT_MS,
       });
   const installCompletedAtMs = Date.now();
   expect(install.exitCode, resultText(install)).toBe(0);

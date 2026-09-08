@@ -4,8 +4,8 @@
 //
 // Provider metadata, lookup helpers, and gateway provider CRUD.
 
-const { redact, ROOT } = require("../runner");
-const { normalizeCredentialValue, getCredential } = require("../credentials/store");
+const { redact } = require("../runner");
+const { normalizeCredentialValue } = require("../credentials/store");
 const {
   DEFAULT_CLOUD_MODEL,
   DEFAULT_HERMES_PROVIDER_MODEL,
@@ -22,71 +22,17 @@ const {
   LLAMA_CPP_PROVIDER_NAME,
 } = require("../inference/llama-cpp/contract");
 const {
-  inspectGatewayCredentialFamilyProviderBinding,
   matchesGatewayCredentialFamilyProviderBinding,
   matchesGatewayCredentialOnlyProviderBinding,
   readGatewayProviderMetadata,
 } = require("./gateway-provider-metadata");
 const {
-  ensureMessagingCredentialProviderProfile,
-  MESSAGING_CREDENTIAL_PROVIDER_TYPE,
-} = require("../messaging/provider-profile");
-const { ensureWebSearchProviderProfiles } = require("./brave-provider-profile");
-
-const MESSAGING_PROVIDER_BINDING_CONFLICT = "NEMOCLAW_MESSAGING_PROVIDER_BINDING_CONFLICT";
-const MESSAGING_PROVIDER_MUTATION_FAILURE = "NEMOCLAW_MESSAGING_PROVIDER_MUTATION_FAILURE";
-
-class MessagingProviderMutationError extends Error {
-  constructor(error, mutatedProviderNames, createdProviderNames) {
-    super(error.message, { cause: error });
-    this.name = "MessagingProviderMutationError";
-    this.code = MESSAGING_PROVIDER_MUTATION_FAILURE;
-    this.mutatedProviderNames = mutatedProviderNames;
-    this.createdProviderNames = createdProviderNames;
-  }
-}
-
-class MessagingProviderBindingConflictError extends Error {
-  constructor(message, mutatedProviderNames = [], createdProviderNames = []) {
-    super(message);
-    this.name = "MessagingProviderBindingConflictError";
-    this.code = MESSAGING_PROVIDER_BINDING_CONFLICT;
-    this.mutatedProviderNames = mutatedProviderNames;
-    this.createdProviderNames = createdProviderNames;
-  }
-}
-
-function isMessagingProviderBindingConflict(error) {
-  return error instanceof Error && error.code === MESSAGING_PROVIDER_BINDING_CONFLICT;
-}
-
-function isMessagingProviderMutationFailure(error) {
-  return (
-    error instanceof Error &&
-    error.code === MESSAGING_PROVIDER_MUTATION_FAILURE &&
-    Array.isArray(error.mutatedProviderNames) &&
-    Array.isArray(error.createdProviderNames)
-  );
-}
-
-function attachMutatedProviderNames(error, names, createdNames = []) {
-  if (names.length === 0) return error;
-  const original = error instanceof Error ? error : new Error(String(error));
-  const failure =
-    isMessagingProviderBindingConflict(original) || isMessagingProviderMutationFailure(original)
-      ? original
-      : new MessagingProviderMutationError(original, [], []);
-  const existing = Array.isArray(failure.mutatedProviderNames) ? failure.mutatedProviderNames : [];
-  failure.mutatedProviderNames = [...new Set([...existing, ...names])];
-  const existingCreated = Array.isArray(failure.createdProviderNames)
-    ? failure.createdProviderNames
-    : [];
-  failure.createdProviderNames = [...new Set([...existingCreated, ...createdNames])];
-  const providerNames = failure.mutatedProviderNames.map((name) => JSON.stringify(name)).join(", ");
-  const diagnostic = `Provider registration changed gateway state for ${providerNames} before the operation stopped. Inspect those providers before retrying.`;
-  if (!failure.message.includes(diagnostic)) failure.message = `${failure.message} ${diagnostic}`;
-  return failure;
-}
+  NON_INTERACTIVE_PROVIDER_ALIASES,
+  NON_INTERACTIVE_PROVIDER_KEYS,
+  NON_INTERACTIVE_PROVIDER_VALID_VALUES,
+  normalizeNonInteractiveProviderKey,
+} = require("./inference-providers/provider-selection-keys");
+const { HERMES_PROVIDER_NAME } = require("./inference-providers/hermes-provider-identity");
 
 // ── Constants ────────────────────────────────────────────────────
 
@@ -107,41 +53,6 @@ const PROVIDER_MODEL_ENV = "NEMOCLAW_PROVIDER_MODEL";
 // provider/namespace/model convention. This endpoint is staged as a custom
 // OpenAI-compatible provider, not as the public build.nvidia.com provider.
 const HOSTED_INFERENCE_MODEL = "nvidia/nvidia/nemotron-3-ultra";
-const NON_INTERACTIVE_PROVIDER_ALIASES = {
-  cloud: "build",
-  nim: "nim-local",
-  vllm: "vllm",
-  "open-router": "openrouter",
-  openrouterai: "openrouter",
-  anthropiccompatible: "anthropicCompatible",
-  hermes: "hermesProvider",
-  "hermes-provider": "hermesProvider",
-  hermesprovider: "hermesProvider",
-  nous: "hermesProvider",
-  "nous-portal": "hermesProvider",
-};
-const NON_INTERACTIVE_PROVIDER_KEYS = new Set([
-  "build",
-  "openrouter",
-  "openai",
-  "anthropic",
-  "anthropicCompatible",
-  "gemini",
-  "hermesProvider",
-  "ollama",
-  "llama-cpp",
-  "install-llama-cpp",
-  "custom",
-  "nim-local",
-  "vllm",
-  "routed",
-  "install-vllm",
-  "install-ollama",
-  "install-windows-ollama",
-  "start-windows-ollama",
-]);
-const NON_INTERACTIVE_PROVIDER_VALID_VALUES =
-  "Valid values: build, openrouter, openai, anthropic, anthropicCompatible, gemini, hermes-provider, ollama, llama-cpp, install-llama-cpp, custom, nim-local, vllm, routed, install-vllm, install-ollama, install-windows-ollama, start-windows-ollama";
 const PROVIDER_KEY_ROUTE_VALUES = new Set(
   [
     "inference",
@@ -224,7 +135,7 @@ const REMOTE_PROVIDER_CONFIG = {
   // without first selecting the entry.
   hermesProvider: {
     label: "Hermes Provider (Moonshot, Z-AI, MiniMax, Qwen, Xiaomi, Tencent, StepFun, xAI, Arcee)",
-    providerName: "hermes-provider",
+    providerName: HERMES_PROVIDER_NAME,
     providerType: "openai",
     credentialEnv: "OPENAI_API_KEY",
     endpointUrl: HERMES_INFERENCE_ENDPOINT_URL,
@@ -327,8 +238,8 @@ function getNonInteractiveProvider(allowHostedInferenceStaging = true) {
   if (allowHostedInferenceStaging) stageHostedInferenceSourceSecretEnv();
   const providerKey = (process.env.NEMOCLAW_PROVIDER || "").trim().toLowerCase();
   if (!providerKey) return null;
-  const normalized = NON_INTERACTIVE_PROVIDER_ALIASES[providerKey] || providerKey;
-  if (!NON_INTERACTIVE_PROVIDER_KEYS.has(normalized)) {
+  const normalized = normalizeNonInteractiveProviderKey(providerKey);
+  if (!normalized) {
     console.error(`  Unsupported NEMOCLAW_PROVIDER: ${providerKey}`);
     console.error(`  ${NON_INTERACTIVE_PROVIDER_VALID_VALUES}`);
     process.exit(1);
@@ -626,315 +537,7 @@ function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, 
   return { ok: true };
 }
 
-function plannedMessagingCredentialKeys(tokenDef) {
-  return [
-    tokenDef.envKey,
-    ...(tokenDef.additionalCredentials ?? [])
-      .filter(({ token }) => Boolean(token))
-      .map(({ envKey }) => envKey),
-  ];
-}
-
-function containsPlannedMessagingCredentialKeys(metadata, plannedKeys) {
-  if (!metadata) return false;
-  const observed = new Set(metadata.credentialKeys);
-  return plannedKeys.every((key) => observed.has(key));
-}
-
-function requiresCredentialFamilyBinding(tokenDef) {
-  return (
-    tokenDef.providerType === MESSAGING_CREDENTIAL_PROVIDER_TYPE ||
-    (tokenDef.additionalCredentials ?? []).length > 0
-  );
-}
-
-function preflightCredentialFamilyProviderBindings(tokenDefs, runOpenshell, options = {}) {
-  const failures = [];
-  for (const tokenDef of tokenDefs) {
-    if (
-      !requiresCredentialFamilyBinding(tokenDef) &&
-      !(options.requireExactBindings && tokenDef.providerType)
-    ) {
-      continue;
-    }
-    const { name, envKey, providerType } = tokenDef;
-    const requiredProviderType = providerType || "generic";
-    const inspection = inspectGatewayCredentialFamilyProviderBinding(
-      {
-        name,
-        type: requiredProviderType,
-        credentialKey: envKey,
-      },
-      runOpenshell,
-    );
-    if (inspection.kind === "missing") continue;
-    let exactMetadata = null;
-    if (inspection.kind === "exact") {
-      if (!options.requireExactBindings || options.replaceExisting) continue;
-      exactMetadata = readGatewayProviderMetadata(name, runOpenshell);
-      if (
-        containsPlannedMessagingCredentialKeys(
-          exactMetadata,
-          plannedMessagingCredentialKeys(tokenDef),
-        )
-      ) {
-        continue;
-      }
-    }
-    failures.push({
-      name,
-      message:
-        inspection.kind === "indeterminate" || (inspection.kind === "exact" && !exactMetadata)
-          ? `Could not inspect messaging provider '${name}'; no provider mutation was attempted.`
-          : requiredProviderType === MESSAGING_CREDENTIAL_PROVIDER_TYPE
-            ? `Messaging provider '${name}' does not match the required endpointless credential binding.`
-            : `Messaging provider '${name}' does not match the required '${requiredProviderType}' credential binding.`,
-    });
-  }
-  return failures;
-}
-
-function assertCredentialFamilyProviderBindings(tokenDefs, runOpenshell, options = {}) {
-  const failures = preflightCredentialFamilyProviderBindings(tokenDefs, runOpenshell, options);
-  if (failures.length === 0 || options.replaceExisting) return;
-  const message = failures.map(({ name, message: failure }) => `${name}: ${failure}`).join("; ");
-  if (options.bestEffort) throw new MessagingProviderBindingConflictError(message);
-  console.error(`\n  ✗ Failed to create messaging provider: ${message}`);
-  process.exit(1);
-}
-
-/**
- * Upsert all messaging providers that have tokens configured.
- * Returns the list of provider names that were successfully created/updated.
- * Exits the process if any upsert fails unless `options.bestEffort` is true.
- *
- * Pass `options.replaceExisting` true only when every entry is guaranteed
- * detached from any live sandbox (post-sandbox-delete on the recreate path);
- * reuse paths must omit it because `provider delete` fails for attached
- * providers. Pass `options.bestEffort` only from rollback paths that must
- * continue restoring registry state and report residual gateway work instead
- * of terminating the CLI.
- * @param {Array<{name: string, envKey: string, token: string|null, providerType?: string, additionalCredentials?: Array<{envKey: string, token: string|null}>}>} tokenDefs
- * @param {Function} _runOpenshell - Injected runOpenshell from onboard.ts.
- * @param {{replaceExisting?: boolean, bestEffort?: boolean, allowedSandboxes?: readonly string[], requireExactBindings?: boolean, revalidateSandboxIdentity?: (operation: string) => void}} options - Forwarded to every upsertProvider call.
- * @returns {string[]} Provider names that were upserted.
- */
-function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
-  const runMessagingBridgeOpenshell = identityCheckedRunner(
-    _runOpenshell,
-    options.revalidateSandboxIdentity,
-    "inspect or change a messaging bridge provider",
-  );
-  assertCredentialFamilyProviderBindings(tokenDefs, runMessagingBridgeOpenshell, options);
-  ensureWebSearchProviderProfiles(tokenDefs, {
-    root: ROOT,
-    runOpenshell: runMessagingBridgeOpenshell,
-    redact,
-  });
-
-  // Provider creation order. Bridges (e.g. Google Chat) need two steps bracketing
-  // the uniform create loop, ordered around `provider create`:
-  //
-  //   ensureMessagingBridgeProfiles      <- BEFORE loop: import the profile
-  //      provider profile import            (must exist before `provider create`)
-  //          |
-  //     +----v-------------------------------------------------+
-  //     |  for (tokenDef of tokenDefs)   <- THE LOOP           |
-  //     |     upsertProvider(name, providerType || "generic")  |  bridge created
-  //     |       . slack       -> --type nemoclaw-mcp-v1        |  with a sentinel
-  //     |       . googlechat  -> --type google-chat-bridge     |  token
-  //     +----+-------------------------------------------------+
-  //          |
-  //   configureMessagingBridgeRefreshes  <- AFTER loop: refresh mints the real
-  //      provider refresh configure         token, overwriting the sentinel
-  //
-  // A channel is a bridge by the PRESENCE of a co-located
-  // channels/<channel>/provider-profile/<agent>.yaml (not a flag inside it); both
-  // bracket steps self-gate when no bridge token def is present.
-  const messagingBridgeProvider = require("./messaging-bridge-provider");
-  if (tokenDefs.some(({ providerType }) => providerType === MESSAGING_CREDENTIAL_PROVIDER_TYPE)) {
-    try {
-      ensureMessagingCredentialProviderProfile({
-        root: ROOT,
-        runOpenshell: runMessagingBridgeOpenshell,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (options.bestEffort) throw new Error(message);
-      console.error(`\n  ✗ ${message}`);
-      process.exit(1);
-    }
-  }
-  messagingBridgeProvider.ensureMessagingBridgeProfiles(tokenDefs, {
-    root: ROOT,
-    runOpenshell: runMessagingBridgeOpenshell,
-    redact,
-  });
-  const upserted = [];
-  const mutatedProviderNames = [];
-  const createdProviderNames = [];
-  const failures = [];
-  for (const { name, envKey, token, providerType, additionalCredentials = [] } of tokenDefs) {
-    if (!token && !additionalCredentials.some((credential) => Boolean(credential.token))) continue;
-    const requiresFamilyBinding = requiresCredentialFamilyBinding({
-      providerType,
-      additionalCredentials,
-    });
-    let knownExists;
-    let result;
-    if (requiresFamilyBinding) {
-      const requiredProviderType = providerType || "generic";
-      const inspection = inspectGatewayCredentialFamilyProviderBinding(
-        {
-          name,
-          type: requiredProviderType,
-          credentialKey: envKey,
-        },
-        runMessagingBridgeOpenshell,
-      );
-      if (inspection.kind === "indeterminate") {
-        result = {
-          ok: false,
-          status: 1,
-          message: `Could not inspect messaging provider '${name}'; no provider mutation was attempted.`,
-        };
-      } else if (inspection.kind === "collision" && !options.replaceExisting) {
-        result = {
-          ok: false,
-          status: 1,
-          reason: "binding-conflict",
-          message:
-            requiredProviderType === MESSAGING_CREDENTIAL_PROVIDER_TYPE
-              ? `Messaging provider '${name}' does not match the required endpointless credential binding.`
-              : `Messaging provider '${name}' does not match the required '${requiredProviderType}' credential binding.`,
-        };
-      } else {
-        knownExists = inspection.kind !== "missing";
-      }
-    } else {
-      knownExists = providerExistsInGateway(name, runMessagingBridgeOpenshell);
-    }
-    try {
-      result ??= upsertProvider(
-        name,
-        providerType || "generic",
-        envKey,
-        null,
-        Object.fromEntries(
-          [{ envKey, token }, ...additionalCredentials]
-            .filter((credential) => Boolean(credential.token))
-            .map((credential) => [credential.envKey, credential.token]),
-        ),
-        _runOpenshell,
-        {
-          replaceExisting: Boolean(options.replaceExisting),
-          knownExists,
-          allowedSandboxes: options.allowedSandboxes,
-          revalidateSandboxIdentity: options.revalidateSandboxIdentity,
-          requireExactBinding: Boolean(
-            requiresFamilyBinding || (options.requireExactBindings && providerType),
-          ),
-          credentialEnvs: [
-            envKey,
-            ...additionalCredentials
-              .filter(({ token }) => Boolean(token))
-              .map((credential) => credential.envKey),
-          ],
-          allowExtendedCredentialKeys: additionalCredentials.length > 0,
-        },
-      );
-      if (result.ok) {
-        mutatedProviderNames.push(name);
-        if (!knownExists) createdProviderNames.push(name);
-      }
-      if (result.ok && requiresFamilyBinding) {
-        const verifiedMetadata = readGatewayProviderMetadata(name, runMessagingBridgeOpenshell);
-        const plannedKeys = plannedMessagingCredentialKeys({ envKey, additionalCredentials });
-        const verified =
-          matchesGatewayCredentialFamilyProviderBinding(verifiedMetadata, {
-            name,
-            type: providerType || "generic",
-            credentialKey: envKey,
-          }) && containsPlannedMessagingCredentialKeys(verifiedMetadata, plannedKeys);
-        if (!verified) {
-          result = {
-            ok: false,
-            status: 1,
-            message: `OpenShell did not confirm messaging provider '${name}' after mutation.`,
-          };
-        }
-      }
-    } catch (error) {
-      throw attachMutatedProviderNames(error, mutatedProviderNames, createdProviderNames);
-    }
-    if (!result.ok) {
-      if (options.bestEffort) {
-        failures.push({ name, message: result.message, reason: result.reason });
-        continue;
-      }
-      const failure = attachMutatedProviderNames(
-        new Error(result.message),
-        mutatedProviderNames,
-        createdProviderNames,
-      );
-      console.error(`\n  ✗ Failed to create messaging provider '${name}': ${failure.message}`);
-      process.exit(1);
-    }
-    upserted.push(name);
-  }
-  if (failures.length > 0) {
-    const message = failures.map(({ name, message }) => `${name}: ${message}`).join("; ");
-    if (failures.every(({ reason }) => reason === "binding-conflict")) {
-      throw new MessagingProviderBindingConflictError(
-        message,
-        mutatedProviderNames,
-        createdProviderNames,
-      );
-    }
-    throw attachMutatedProviderNames(
-      new Error(message),
-      mutatedProviderNames,
-      createdProviderNames,
-    );
-  }
-  // Gateway-side token minting is configured AFTER the providers exist (best-effort,
-  // self-gates without a bridge token def). Secret material stays gateway-side —
-  // never written into the sandbox.
-  let refreshResult;
-  try {
-    refreshResult = messagingBridgeProvider.configureMessagingBridgeRefreshes(tokenDefs, {
-      runOpenshell: runMessagingBridgeOpenshell,
-      redact,
-      getCredential,
-      env: process.env,
-      normalizeCredentialValue,
-    });
-  } catch (error) {
-    throw attachMutatedProviderNames(error, mutatedProviderNames, createdProviderNames);
-  }
-  // Fail-closed: an active bridge channel whose gateway token minting was not
-  // configured can receive webhooks but cannot authenticate outbound replies.
-  // Surface it instead of reporting a fully-configured channel (bestEffort/rollback
-  // paths report residual work by throwing; the normal path exits like a failed
-  // provider upsert above).
-  if (refreshResult && !refreshResult.ok) {
-    const failure = attachMutatedProviderNames(
-      new Error("Failed to configure gateway token minting for a messaging bridge."),
-      mutatedProviderNames,
-      createdProviderNames,
-    );
-    if (options.bestEffort) {
-      throw failure;
-    }
-    console.error(`\n  ✗ ${failure.message}`);
-    process.exit(1);
-  }
-  return upserted;
-}
-
 module.exports = {
-  isMessagingProviderBindingConflict,
-  isMessagingProviderMutationFailure,
   BUILD_ENDPOINT_URL,
   OPENAI_ENDPOINT_URL,
   ANTHROPIC_ENDPOINT_URL,
@@ -964,6 +567,5 @@ module.exports = {
   upsertProvider,
   providerExistsInGateway,
   readGatewayProviderMetadata,
-  upsertMessagingProviders,
   getSandboxInferenceConfig,
 };

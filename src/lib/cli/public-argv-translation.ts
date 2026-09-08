@@ -79,6 +79,20 @@ function startsWithTokens(tokens: readonly string[], prefix: readonly string[]):
   return prefix.every((token, index) => tokens[index] === token);
 }
 
+function matchRegisteredSandboxRoute(tokens: readonly string[]): SandboxRoute | null {
+  return sandboxRoutes().find((route) => startsWithTokens(tokens, route.publicTokens)) ?? null;
+}
+
+/**
+ * Return the longest registered sandbox route that prefixes the public input.
+ *
+ * Diagnostics use these registered tokens so untrusted action arguments never
+ * reach terminal or log output (#10212).
+ */
+export function matchSandboxRoute(tokens: readonly string[]): string[] | null {
+  return matchRegisteredSandboxRoute(tokens)?.publicTokens ?? null;
+}
+
 function nativeArgv(commandId: string, args: string[], argv?: string[]): NativeArgvTranslation {
   return { kind: "nativeArgv", commandId, args, argv: argv ?? [...commandId.split(":"), ...args] };
 }
@@ -162,8 +176,8 @@ export function translatePublicSandboxArgv(
   }
 
   const inputTokens = [action, ...actionArgs];
-  for (const route of sandboxRoutes()) {
-    if (!startsWithTokens(inputTokens, route.publicTokens)) continue;
+  const route = matchRegisteredSandboxRoute(inputTokens);
+  if (route) {
     const remainingArgs = inputTokens.slice(route.publicTokens.length);
     return nativeArgv(route.commandId, [sandboxName, ...remainingArgs]);
   }

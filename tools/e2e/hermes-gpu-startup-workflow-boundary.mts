@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 
 import YAML from "yaml";
 import { CLI_ARTIFACT_RESTORE_STEP } from "./cli-artifact-workflow-boundary.mts";
+import { E2E_ACTION_PROVENANCE } from "./workflow-boundary-policy.mts";
 
 /**
  * SOURCE_OF_TRUTH_REVIEW
@@ -44,6 +45,8 @@ type WorkflowRecord = Record<string, unknown>;
 type WorkflowStep = WorkflowRecord & {
   name?: string;
   run?: string;
+  uses?: string;
+  with?: WorkflowRecord;
 };
 
 function asRecord(value: unknown): WorkflowRecord {
@@ -136,44 +139,36 @@ export function validateHermesGpuStartupWorkflow(
   const matrix = asRecord(strategy.matrix);
   if (
     strategy["fail-fast"] !== false ||
-    strategy["max-parallel"] !== 1 ||
-    JSON.stringify(matrix.include) !==
+    strategy["max-parallel"] !== 2 ||
+    JSON.stringify(matrix.scenario) !==
+      JSON.stringify(["native", "fallback", "compatibility-only"]) ||
+    matrix.runtime_provider !==
+      "${{ fromJSON(needs.generate-matrix.outputs.runtime_providers_by_job)['hermes-gpu-startup'] }}" ||
+    matrix.include !== undefined ||
+    JSON.stringify(matrix.exclude) !==
       JSON.stringify([
-        {
-          scenario: "native",
-          sandbox_name: "e2e-hgpu-native",
-          observable_outcome: "Native GPU startup reaches the stable Ready route",
-          coverage_variant: "native",
-        },
-        {
-          scenario: "fallback",
-          sandbox_name: "e2e-hgpu-fallback",
-          observable_outcome: "Fallback GPU startup reaches the stable Ready route",
-          coverage_variant: "fallback",
-        },
-        {
-          scenario: "compatibility-only",
-          sandbox_name: "e2e-hgpu-compat",
-          observable_outcome: "Compatibility-only GPU startup reaches the stable Ready route",
-          coverage_variant: "compatibility-only",
-        },
+        { scenario: "fallback", runtime_provider: "podman" },
+        { scenario: "compatibility-only", runtime_provider: "podman" },
       ])
   ) {
-    errors.push(`${JOB_NAME} must serialize GPU scenarios`);
+    errors.push(`${JOB_NAME} must expand reviewed GPU scenarios by supported runtime`);
   }
 
   const jobEnv = asRecord(job.env);
   const requiredEnv = {
     E2E_ARTIFACT_DIR:
-      "${{ github.workspace }}/e2e-artifacts/live/hermes-gpu-startup/${{ matrix.scenario }}",
+      "${{ github.workspace }}/e2e-artifacts/live/hermes-gpu-startup/${{ matrix.scenario }}/${{ matrix.runtime_provider }}",
+    E2E_GATEWAY_RUNTIMES: "docker,podman",
     E2E_HERMES_GPU_STARTUP_SCENARIO: "${{ matrix.scenario }}",
     E2E_JOB: "1",
+    E2E_OBSERVABLE_OUTCOME: "Hermes GPU startup reaches the stable Ready route",
     E2E_TARGET_ID: JOB_NAME,
     NEMOCLAW_AGENT: "hermes",
     NEMOCLAW_E2E_SHARD: "${{ matrix.scenario }}",
+    NEMOCLAW_GATEWAY_RUNTIME: "${{ matrix.runtime_provider }}",
     NEMOCLAW_RUN_LIVE_E2E: "1",
     NEMOCLAW_SANDBOX_GPU: "1",
-    NEMOCLAW_SANDBOX_NAME: "${{ matrix.sandbox_name }}",
+    NEMOCLAW_SANDBOX_NAME: "${{ matrix.scenario }}",
   } as const;
   for (const [name, expected] of Object.entries(requiredEnv)) {
     if (jobEnv[name] !== expected) {
@@ -279,17 +274,22 @@ if ! @run restore`;
   const restoreI = steps.findIndex((step) => step.name === CLI_ARTIFACT_RESTORE_STEP);
   const ni = steps.findIndex((step) => step.name === "Reassert trusted Node runtime");
   const node = steps[ni];
+  const nativePodmanRuntime = steps[ni + 1];
   if (
     runStep.shell !== BASH ||
     !trustedEnv(runStep) ||
     pi < 0 ||
     restoreI <= pi ||
     ni !== restoreI + 1 ||
-    ni + 1 !== steps.indexOf(runStep) ||
+    ni + 2 !== steps.indexOf(runStep) ||
     node?.uses !== "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020" ||
     asRecord(node?.with)["node-version"] !== "22" ||
     !trustedEnv(node) ||
     asRecord(node?.env).NODE_OPTIONS !== "" ||
+    nativePodmanRuntime?.name !== "Prepare native Podman E2E runtime" ||
+    nativePodmanRuntime?.uses !== E2E_ACTION_PROVENANCE.nativePodmanRuntime.reference ||
+    asRecord(nativePodmanRuntime?.with).enabled !==
+      "${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}" ||
     run.includes(SOURCE) ||
     !hasProof(
       runStep.run,
@@ -440,8 +440,10 @@ rm -rf -- @state`,
     steps.find((step) => step.name === "Upload Hermes GPU startup artifacts")?.with,
   );
   if (
-    upload.name !== "e2e-hermes-gpu-startup-${{ matrix.scenario }}" ||
-    upload.path !== "e2e-artifacts/live/hermes-gpu-startup/${{ matrix.scenario }}/"
+    upload.name !==
+      "e2e-hermes-gpu-startup-${{ matrix.scenario }}-${{ matrix.runtime_provider }}" ||
+    upload.path !==
+      "e2e-artifacts/live/hermes-gpu-startup/${{ matrix.scenario }}/${{ matrix.runtime_provider }}/"
   ) {
     errors.push(`${JOB_NAME} upload needs a scenario artifact path`);
   }

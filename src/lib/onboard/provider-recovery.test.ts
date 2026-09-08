@@ -5,16 +5,46 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import * as onboardSession from "../state/onboard-session";
 import * as registry from "../state/registry";
+import { persistedProviderNameToSelectionKey } from "./inference-providers/provider-selection-keys";
 import {
   classifySandboxRecoveryAuthority,
   createProviderRecoveryHelpers,
   getSandboxRecoveryAuthority,
+  providerNameToOptionKey,
   shouldRecoverRecordedProvider,
   validateLiveGatewayInference,
 } from "./provider-recovery";
 
+const { REMOTE_PROVIDER_CONFIG } = require("./providers") as {
+  REMOTE_PROVIDER_CONFIG: Record<string, { providerName?: string }>;
+};
+
 afterEach(() => {
   vi.restoreAllMocks();
+});
+
+describe("persisted provider selection", () => {
+  it.each([
+    ["Model Router", "nvidia-router", false],
+    ["Ollama", "ollama-local", false],
+    ["vLLM", "vllm-local", false],
+    ["Local NVIDIA NIM", "vllm-local", true],
+    ["legacy NVIDIA Endpoints", "nvidia-nim", false],
+    ["OpenAI", "openai-api", false],
+    ["OpenRouter", "openrouter-api", false],
+    ["Anthropic", "anthropic-prod", false],
+    ["Anthropic-compatible", "compatible-anthropic-endpoint", false],
+    ["Gemini", "gemini-api", false],
+    ["OpenAI-compatible", "compatible-endpoint", false],
+    ["llama.cpp", "llama-cpp-local", false],
+    ["Hermes Provider", "hermes-provider", false],
+    ["an unknown provider", "unknown-provider", false],
+  ] as const)("uses the shared mapping for %s (#11041)", (_label, provider, hasNimContainer) => {
+    const options = { hasNimContainer };
+    expect(providerNameToOptionKey(REMOTE_PROVIDER_CONFIG, provider, options)).toBe(
+      persistedProviderNameToSelectionKey(provider, options, REMOTE_PROVIDER_CONFIG),
+    );
+  });
 });
 
 describe("validateLiveGatewayInference", () => {
@@ -97,22 +127,19 @@ describe("shouldRecoverRecordedProvider", () => {
       sessionSandboxName: "dc-after",
       expected: false,
     },
-  ] as const)("$label", ({
-    fresh,
-    sandboxName,
-    sandboxRecoveryAuthority,
-    sessionSandboxName,
-    expected,
-  }) => {
-    expect(
-      shouldRecoverRecordedProvider({
-        fresh,
-        sandboxName,
-        sandboxRecoveryAuthority,
-        sessionSandboxName,
-      }),
-    ).toBe(expected);
-  });
+  ] as const)(
+    "$label",
+    ({ fresh, sandboxName, sandboxRecoveryAuthority, sessionSandboxName, expected }) => {
+      expect(
+        shouldRecoverRecordedProvider({
+          fresh,
+          sandboxName,
+          sandboxRecoveryAuthority,
+          sessionSandboxName,
+        }),
+      ).toBe(expected);
+    },
+  );
 });
 
 describe("sandbox recovery authority", () => {
@@ -183,8 +210,8 @@ describe("sandbox recovery authority", () => {
 describe("provider recovery persisted routing state", () => {
   function helpers() {
     return createProviderRecoveryHelpers({
-      parseGatewayInference: () => ({ provider: "nvidia-prod", model: null }),
-      runCaptureOpenshell: () => "Gateway inference:",
+      captureOpenshell: () => ({ status: 0, output: "Gateway inference:" }),
+      selectedGatewayName: () => "nemoclaw",
     });
   }
 
@@ -195,6 +222,57 @@ describe("provider recovery persisted routing state", () => {
     });
 
     expect(helpers().readLiveInference("alpha")).toBeNull();
+  });
+
+  it("reads provider recovery from the selected sandbox gateway (#10671)", () => {
+    vi.spyOn(registry, "listSandboxes").mockReturnValue({
+      defaultSandbox: "alpha",
+      sandboxes: [{ name: "alpha", gatewayPort: 19_090, gatewayName: "nemoclaw-19090" }],
+    });
+    const captureOpenshell = vi.fn(() => ({
+      status: 0,
+      output: "Gateway inference:\n  Provider: nvidia-prod\n  Model: selected-model\n",
+    }));
+    const recovery = createProviderRecoveryHelpers({
+      captureOpenshell,
+      selectedGatewayName: () => "nemoclaw",
+    });
+
+    expect(recovery.readLiveInference("alpha")).toEqual({
+      provider: "nvidia-prod",
+      model: "selected-model",
+    });
+    expect(captureOpenshell).toHaveBeenCalledExactlyOnceWith(
+      ["inference", "get", "-g", "nemoclaw-19090"],
+      { ignoreError: true, timeout: undefined },
+    );
+  });
+
+  it("reads the current selected gateway when rebuilding an empty registry (#10671)", () => {
+    vi.spyOn(registry, "listSandboxes").mockReturnValue({
+      defaultSandbox: null,
+      sandboxes: [],
+    });
+    let selectedGatewayName = "nemoclaw";
+    const captureOpenshell = vi.fn(() => ({
+      status: 0,
+      output: "Gateway inference:\n  Provider: nvidia-prod\n  Model: selected-model\n",
+    }));
+    const recovery = createProviderRecoveryHelpers({
+      captureOpenshell,
+      selectedGatewayName: () => selectedGatewayName,
+    });
+
+    selectedGatewayName = "nemoclaw-19090";
+
+    expect(recovery.readLiveInference("alpha")).toEqual({
+      provider: "nvidia-prod",
+      model: "selected-model",
+    });
+    expect(captureOpenshell).toHaveBeenCalledExactlyOnceWith(
+      ["inference", "get", "-g", "nemoclaw-19090"],
+      { ignoreError: true, timeout: undefined },
+    );
   });
 
   it("prefers the selected sandbox registry endpoint over session state", () => {
@@ -254,39 +332,40 @@ describe("provider recovery persisted routing state", () => {
   it.each([
     { label: "ownerless", reservationSessionId: undefined },
     { label: "foreign-owned", reservationSessionId: "session-other" },
-  ])("rejects every $label pending route reader before session fallback", ({
-    reservationSessionId,
-  }) => {
-    vi.spyOn(registry, "getSandbox").mockReturnValue({
-      name: "alpha",
-      pendingRouteReservation: true,
-      ...(reservationSessionId ? { reservationSessionId } : {}),
-      provider: "compatible-endpoint",
-      model: "registry-model",
-      endpointUrl: "https://registry.example/v1",
-      endpointSource: null,
-      preferredInferenceApi: "openai-completions",
-      nimContainer: "registry-container",
-    });
-    vi.spyOn(onboardSession, "loadSession").mockReturnValue(
-      onboardSession.createSession({
-        sessionId: "session-current",
-        sandboxName: "alpha",
+  ])(
+    "rejects every $label pending route reader before session fallback",
+    ({ reservationSessionId }) => {
+      vi.spyOn(registry, "getSandbox").mockReturnValue({
+        name: "alpha",
+        pendingRouteReservation: true,
+        ...(reservationSessionId ? { reservationSessionId } : {}),
         provider: "compatible-endpoint",
-        model: "session-model",
-        endpointUrl: "https://session.example/v1",
-        preferredInferenceApi: "openai-responses",
-        nimContainer: "session-container",
-      }),
-    );
-    const recovery = helpers();
+        model: "registry-model",
+        endpointUrl: "https://registry.example/v1",
+        endpointSource: null,
+        preferredInferenceApi: "openai-completions",
+        nimContainer: "registry-container",
+      });
+      vi.spyOn(onboardSession, "loadSession").mockReturnValue(
+        onboardSession.createSession({
+          sessionId: "session-current",
+          sandboxName: "alpha",
+          provider: "compatible-endpoint",
+          model: "session-model",
+          endpointUrl: "https://session.example/v1",
+          preferredInferenceApi: "openai-responses",
+          nimContainer: "session-container",
+        }),
+      );
+      const recovery = helpers();
 
-    expect(recovery.readRecordedProvider("alpha", "session-current")).toBeNull();
-    expect(recovery.readRecordedModel("alpha", "session-current")).toBeNull();
-    expect(recovery.readRecordedEndpointUrl("alpha", "session-current")).toBeNull();
-    expect(recovery.readRecordedNimContainer("alpha", "session-current")).toBeNull();
-    expect(recovery.readRecordedInferenceRoute("alpha", "session-current")).toBeNull();
-  });
+      expect(recovery.readRecordedProvider("alpha", "session-current")).toBeNull();
+      expect(recovery.readRecordedModel("alpha", "session-current")).toBeNull();
+      expect(recovery.readRecordedEndpointUrl("alpha", "session-current")).toBeNull();
+      expect(recovery.readRecordedNimContainer("alpha", "session-current")).toBeNull();
+      expect(recovery.readRecordedInferenceRoute("alpha", "session-current")).toBeNull();
+    },
+  );
 
   it("allows the current session to read its pending route", () => {
     vi.spyOn(registry, "getSandbox").mockReturnValue({
@@ -351,8 +430,8 @@ describe("provider recovery persisted routing state", () => {
     );
     const warn = vi.fn();
     const recovery = createProviderRecoveryHelpers({
-      parseGatewayInference: () => ({ provider: "compatible-endpoint", model: "live-model" }),
-      runCaptureOpenshell: () => "Gateway inference:",
+      captureOpenshell: () => ({ status: 0, output: "Gateway inference:" }),
+      selectedGatewayName: () => "nemoclaw",
       warn,
     });
 
@@ -397,21 +476,17 @@ describe("provider recovery persisted routing state", () => {
       defaultSandbox: "alpha",
       sandboxes: [{ name: "alpha", provider: "compatible-endpoint" }],
     });
-    const parseGatewayInference = vi.fn(() => ({
-      provider: "compatible-endpoint",
-      model: "gateway-model",
+    const captureOpenshell = vi.fn(() => ({
+      status: 0,
+      output: "Gateway inference:\n  Provider: compatible-endpoint\n  Model: gateway-model\n",
     }));
-    const runCaptureOpenshell = vi.fn(() =>
-      JSON.stringify({ provider: "compatible-endpoint", model: "gateway-model" }),
-    );
     const recovery = createProviderRecoveryHelpers({
-      parseGatewayInference,
-      runCaptureOpenshell,
+      captureOpenshell,
+      selectedGatewayName: () => "nemoclaw",
     });
 
     expect(recovery.readRecordedInferenceRoute("alpha")).toBeNull();
-    expect(runCaptureOpenshell).not.toHaveBeenCalled();
-    expect(parseGatewayInference).not.toHaveBeenCalled();
+    expect(captureOpenshell).not.toHaveBeenCalled();
   });
 
   it("reports every other recorded endpoint for the same global provider", () => {

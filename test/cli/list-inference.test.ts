@@ -166,6 +166,116 @@ describe("CLI dispatch", () => {
     }
   });
 
+  it("inference get --json queries the selected non-default gateway (#10671)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-inference-get-port-"));
+    const localBin = path.join(home, "bin");
+    const openshellArgs = path.join(home, "openshell-args.txt");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        `printf '%s\\n' "$*" > ${JSON.stringify(openshellArgs)}`,
+        'if [ "$1" = "inference" ] && [ "$2" = "get" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw-19090" ]; then',
+        "  echo 'Gateway inference:'",
+        "  echo '  Provider: compatible-endpoint'",
+        "  echo '  Model: custom/model'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "inference" ] && [ "$2" = "get" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ]; then',
+        "  echo 'Gateway inference:'",
+        "  echo '  Provider: nvidia-prod'",
+        "  echo '  Model: wrong/default-model'",
+        "  exit 0",
+        "fi",
+        "exit 1",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      const result = runWithEnv("inference get --json", {
+        HOME: home,
+        NEMOCLAW_GATEWAY_PORT: "19090",
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      });
+
+      expect(result.code, result.out).toBe(0);
+      expect(JSON.parse(result.out)).toEqual({
+        provider: "compatible-endpoint",
+        model: "custom/model",
+      });
+      expect(fs.readFileSync(openshellArgs, "utf8").trim()).toBe("inference get -g nemoclaw-19090");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("sandbox inference get --json queries the recorded gateway binding (#10671)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sandbox-inference-get-"));
+    const localBin = path.join(home, "bin");
+    const registryDir = path.join(home, ".nemoclaw");
+    const openshellArgs = path.join(home, "openshell-args.txt");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(registryDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(registryDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          beta: {
+            name: "beta",
+            agent: "openclaw",
+            provider: "compatible-endpoint",
+            model: "custom/model",
+            gatewayPort: 19_090,
+            gatewayName: "nemoclaw-19090",
+          },
+        },
+        defaultSandbox: "beta",
+      }),
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        `printf '%s\\n' "$*" > ${JSON.stringify(openshellArgs)}`,
+        'if [ "$1" = "inference" ] && [ "$2" = "get" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw-19090" ]; then',
+        "  echo 'Gateway inference:'",
+        "  echo '  Provider: compatible-endpoint'",
+        "  echo '  Model: custom/model'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "inference" ] && [ "$2" = "get" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ]; then',
+        "  echo 'Gateway inference:'",
+        "  echo '  Provider: nvidia-prod'",
+        "  echo '  Model: wrong/default-model'",
+        "  exit 0",
+        "fi",
+        "exit 1",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      const result = runWithEnv("beta inference get --json", {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      });
+
+      expect(result.code, result.out).toBe(0);
+      expect(JSON.parse(result.out)).toEqual({
+        provider: "compatible-endpoint",
+        model: "custom/model",
+      });
+      expect(fs.readFileSync(openshellArgs, "utf8").trim()).toBe(
+        "inference get -g nemoclaw-19090",
+      );
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("list --json emits structured empty inventory", () => {
     const r = run("list --json");
     expect(r.code).toBe(0);

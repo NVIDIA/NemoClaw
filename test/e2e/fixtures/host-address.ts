@@ -3,12 +3,15 @@
 
 import { isIP } from "node:net";
 
+import { prepareConfiguredGatewayHostRuntime } from "../../../src/lib/onboard/docker-driver-gateway-env.ts";
+import { isPortableExperimentalProfile } from "../../../src/lib/onboard/docker-driver-platform.ts";
 import { buildAvailabilityProbeEnv } from "./availability-env.ts";
 import { assertExitZero } from "./clients/command.ts";
 import type { HostCliClient } from "./clients/host.ts";
 import type { ShellProbeResult } from "./shell-probe.ts";
 
 export type HostAddressSource =
+  | "runtime-provider"
   | "route"
   | "hostname"
   | "darwin-interface"
@@ -17,7 +20,17 @@ export type HostAddressSource =
 export interface HostAddressResult {
   address: string;
   source: HostAddressSource;
-  probe: ShellProbeResult;
+  probe: ShellProbeResult | null;
+}
+
+export function configuredRuntimeProviderHostAddress(
+  environment: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): string | null {
+  if (!environment.NEMOCLAW_GATEWAY_RUNTIME || isPortableExperimentalProfile(environment)) {
+    return null;
+  }
+  return prepareConfiguredGatewayHostRuntime({ environment, platform }).sandboxHostAddress;
 }
 
 export function parseHostAddressProbe(
@@ -46,7 +59,16 @@ export function parseHostAddressProbe(
 export async function discoverHostAddress(
   host: HostCliClient,
   artifactName = "host-address-for-sandbox",
+  environment: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
 ): Promise<HostAddressResult> {
+  const runtimeProviderAddress = configuredRuntimeProviderHostAddress(environment, platform);
+  if (runtimeProviderAddress !== null) {
+    if (isIP(runtimeProviderAddress) !== 4) {
+      throw new Error(`runtime provider returned invalid sandbox host address: ${runtimeProviderAddress}`);
+    }
+    return { source: "runtime-provider", address: runtimeProviderAddress, probe: null };
+  }
   const probe = await host.command(
     "bash",
     [

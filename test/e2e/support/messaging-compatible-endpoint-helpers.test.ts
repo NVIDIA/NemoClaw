@@ -48,7 +48,7 @@ describe("messaging compatible endpoint helper coverage", () => {
         await expect(
           cleanupOwnedGatewayRuntimeStrict(host, "strict-invalid-gateway-pid"),
         ).rejects.toThrow(/PID file is invalid or unreadable/u);
-        expect(command).toHaveBeenCalledTimes(1);
+        expect(command).toHaveBeenCalledTimes(4);
       } finally {
         vi.unstubAllEnvs();
         process.kill(pid!, "SIGKILL");
@@ -117,7 +117,7 @@ describe("messaging compatible endpoint helper coverage", () => {
       })(),
     ).rejects.toThrow(/HTTP 429/);
 
-    expect(calls).toHaveLength(3);
+    expect(calls).toHaveLength(6);
     expect(calls[0]?.command).toBe("node");
     expect(calls[0]?.args[0]).toMatch(/bin\/nemoclaw\.js$/);
     expect(calls[0]?.args.slice(1)).toEqual(["e2e-msg-compat-missing", "destroy", "--yes"]);
@@ -125,10 +125,26 @@ describe("messaging compatible endpoint helper coverage", () => {
       command: "openshell",
       args: ["sandbox", "delete", "e2e-msg-compat-missing"],
     });
-    expect(calls[2]?.command).toBe("bash");
-    expect(calls[2]?.args[0]).toBe("-lc");
-    expect(calls[2]?.args[1]).toContain('"$openshell_bin" gateway destroy -g nemoclaw');
-    expect(calls[2]?.args.at(-1)).toBe("openshell");
+    expect(calls[2]).toEqual({
+      command: "openshell",
+      args: ["forward", "stop", "18789"],
+    });
+    expect(calls[3]).toEqual({
+      command: "openshell",
+      args: ["gateway", "stop", "-g", "nemoclaw"],
+    });
+    expect(calls[4]?.args).toEqual([
+      "container",
+      "ps",
+      "--filter",
+      "name=^openshell-cluster-nemoclaw$",
+      "--format",
+      "{{.Names}}",
+    ]);
+    expect(calls[5]).toEqual({
+      command: "openshell",
+      args: ["gateway", "destroy", "-g", "nemoclaw"],
+    });
   });
 
 });

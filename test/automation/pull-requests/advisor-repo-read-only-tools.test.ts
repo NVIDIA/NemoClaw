@@ -66,6 +66,35 @@ afterEach(() => {
 });
 
 describe("repo-confined advisor read-only tools", () => {
+  it("reads an explicitly trusted additional root while retaining confinement", async () => {
+    const diffPath = path.join(outside, "diff.patch");
+    fs.writeFileSync(diffPath, "trusted diff\n", "utf8");
+    const read = new Map(
+      createRepoConfinedReadOnlyTools(workspace, undefined, [outside]).map((tool) => [tool.name, tool]),
+    ).get("read")!;
+
+    const result = await read.execute(
+      "test-call",
+      { path: diffPath } as never,
+      undefined,
+      undefined,
+      undefined as never,
+    );
+
+    expect(result.content).toEqual(
+      expect.arrayContaining([expect.objectContaining({ text: "trusted diff\n" })]),
+    );
+    await expect(
+      read.execute(
+        "test-call",
+        { path: "/proc/self/environ" } as never,
+        undefined,
+        undefined,
+        undefined as never,
+      ),
+    ).rejects.toThrow("outside the workspace");
+  });
+
   it.each([
     "read",
     "grep",

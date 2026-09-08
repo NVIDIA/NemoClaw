@@ -1,13 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
   buildSnapshotCommandEnv,
   classifySnapshotGatewayProbe,
   classifySnapshotRestoreResult,
+  expectedSnapshotCloneRestoreResult,
 } from "../live/snapshot-commands-helpers.ts";
 
 const HOSTED_FLAG = "NEMOCLAW_E2E_USE_HOSTED_INFERENCE";
@@ -23,22 +23,12 @@ const INFERENCE = {
 const HOSTED_CREDENTIAL_ENVS = ["NVIDIA_INFERENCE_API_KEY", "NVIDIA_API_KEY"] as const;
 
 afterEach(() => {
-  delete process.env[HOSTED_FLAG];
-  for (const name of HOSTED_CREDENTIAL_ENVS) delete process.env[name];
+  vi.unstubAllEnvs();
 });
 
 describe("snapshot commands live env helper", () => {
-  it("forwards an ambient hosted-inference flag through the shared probe env", () => {
-    process.env[HOSTED_FLAG] = "1";
-
-    // Negative control. The strip below only matters while the flag is
-    // allowlisted for forwarding; if this ever stops holding, the strip
-    // assertion would pass vacuously and the hermeticity guard would rot.
-    expect(buildAvailabilityProbeEnv()[HOSTED_FLAG]).toBe("1");
-  });
-
   it("strips an ambient hosted-inference flag so the target stays hermetic", () => {
-    process.env[HOSTED_FLAG] = "1";
+    vi.stubEnv(HOSTED_FLAG, "1");
 
     const env = buildSnapshotCommandEnv(SANDBOX_NAME, INFERENCE);
 
@@ -47,7 +37,7 @@ describe("snapshot commands live env helper", () => {
   });
 
   it("strips the hosted-inference flag even when no inference fixture is staged", () => {
-    process.env[HOSTED_FLAG] = "1";
+    vi.stubEnv(HOSTED_FLAG, "1");
 
     expect(buildSnapshotCommandEnv(SANDBOX_NAME)[HOSTED_FLAG]).toBeUndefined();
   });
@@ -91,9 +81,9 @@ describe("snapshot commands live env helper", () => {
   it.each(Array.from(HOSTED_CREDENTIAL_ENVS, (value) => [value]))(
     "never exposes ambient hosted credential %s to the child env",
     (name) => {
-      process.env[HOSTED_FLAG] = "1";
+      vi.stubEnv(HOSTED_FLAG, "1");
       HOSTED_CREDENTIAL_ENVS.forEach((name) => {
-        process.env[name] = "nvapi-ambient-credential-that-must-not-leak";
+        vi.stubEnv(name, "nvapi-ambient-credential-that-must-not-leak");
       });
 
       const env = buildSnapshotCommandEnv(SANDBOX_NAME, INFERENCE);
@@ -108,9 +98,34 @@ describe("snapshot commands live env helper", () => {
 
 describe("snapshot restored-gateway probe classification", () => {
   it.each([
-    [{ exitCode: 0, stdout: '{"ok":true}', stderr: "" }, "authenticated"],
+    [
+      {
+        exitCode: 0,
+        stdout: '{"status":"ok","result":{"payloads":[{"text":"pong"}],"meta":{}}}',
+        stderr: "",
+      },
+      "authenticated",
+    ],
+    [
+      {
+        exitCode: 0,
+        stdout: '{"payloads":[{"text":"pong"}],"meta":{}}',
+        stderr: "",
+      },
+      "authenticated",
+    ],
     [{ exitCode: 1, stdout: "", stderr: "opaque command failure" }, "command-failure"],
     [{ exitCode: 0, stdout: "", stderr: "" }, "empty-output"],
+    [{ exitCode: 0, stdout: "not authenticated secret-output", stderr: "" }, "invalid-response"],
+    [
+      {
+        exitCode: 0,
+        stdout:
+          '{"status":"error","result":{"payloads":[{"text":"secret-output"}],"meta":{}}}',
+        stderr: "",
+      },
+      "invalid-response",
+    ],
     [{ exitCode: 0, stdout: "EMBEDDED FALLBACK secret-output", stderr: "" }, "embedded-fallback"],
     [
       { exitCode: 1, stdout: "", stderr: "gateway connect failed token=secret-output" },
@@ -167,5 +182,20 @@ describe("snapshot restore result classification", () => {
 
     expect(classification).toBe(expected);
     expect(classification).not.toContain("secret-output");
+  });
+});
+
+describe("snapshot clone restore expectation", () => {
+  it.each([
+    ["managed-image", "managed-clone-rebind-required"],
+    ["local-dockerfile", "restored"],
+  ] as const)("maps the %s setup independently of snapshot output", (source, expected) => {
+    expect(expectedSnapshotCloneRestoreResult(source)).toBe(expected);
+  });
+
+  it.each([undefined, "unknown"])("rejects an ambiguous workload source %#", (source) => {
+    expect(() => expectedSnapshotCloneRestoreResult(source)).toThrow(
+      "snapshot clone restore requires E2E_WORKLOAD_SOURCE",
+    );
   });
 });

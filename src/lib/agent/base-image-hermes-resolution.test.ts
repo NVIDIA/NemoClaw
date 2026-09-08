@@ -12,6 +12,7 @@ import { makeAgent } from "../../../test/helpers/base-image-test-harness";
 const dockerMocks = vi.hoisted(() => ({
   build: vi.fn(),
   capture: vi.fn(),
+  forceRm: vi.fn(),
   imageInspect: vi.fn(),
   imageInspectFormat: vi.fn(),
   infoFormat: vi.fn(),
@@ -28,6 +29,7 @@ const sourceMocks = vi.hoisted(() => ({
 vi.mock("../adapters/docker", () => ({
   dockerBuild: dockerMocks.build,
   dockerCapture: dockerMocks.capture,
+  dockerForceRm: dockerMocks.forceRm,
   dockerImageInspect: dockerMocks.imageInspect,
   dockerImageInspectFormat: dockerMocks.imageInspectFormat,
   dockerInfoFormat: dockerMocks.infoFormat,
@@ -72,6 +74,7 @@ describe("Hermes base-image resolver integration", () => {
     sourceMocks.nearestTags.mockReturnValue([]);
     dockerMocks.infoFormat.mockReturnValue("linux/aarch64\n");
     dockerMocks.pull.mockReturnValue({ status: 1 });
+    dockerMocks.forceRm.mockReturnValue({ status: 0 });
     testRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-resolution-test-"));
 
     const dockerfile = fs.readFileSync(makeAgent().dockerfilePath ?? "", "utf8");
@@ -147,6 +150,62 @@ describe("Hermes base-image resolver integration", () => {
       { ignoreError: true },
     );
   }, 15_000);
+
+  it("stops before a release fallback when the tracked Hermes base fails qualification (#10826)", () => {
+    const platform = vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    const versionRef = "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:v0.0.118";
+    const fallbackDigest = `sha256:${"c".repeat(64)}`;
+    const fallbackRef = `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${fallbackDigest}`;
+    vi.stubEnv("NEMOCLAW_SANDBOX_BASE_VERSION_TAG", "v0.0.118");
+
+    const inspectStatusByRef = new Map([
+      [trackedRef, 0],
+      [versionRef, 0],
+      [fallbackRef, 0],
+    ]);
+    const inspectOutputByKey = new Map([
+      [`{{json .RepoDigests}}\0${versionRef}`, JSON.stringify([fallbackRef])],
+      [
+        `{{json .}}\0${fallbackRef}`,
+        JSON.stringify({
+          Architecture: "arm64",
+          Id: imageId,
+          Os: "linux",
+          RepoDigests: [fallbackRef],
+        }),
+      ],
+    ]);
+    dockerMocks.imageInspect.mockImplementation((ref: string) => ({
+      status: inspectStatusByRef.get(ref) ?? 1,
+    }));
+    dockerMocks.imageInspectFormat.mockImplementation((format: string, ref: string) =>
+      (inspectOutputByKey.get(`${format}\0${ref}`) ?? "").trim(),
+    );
+    const captureByEntrypointAndRef = new Map([
+      [`/opt/hermes/.venv/bin/python\0${trackedRef}`, ""],
+      [`/opt/hermes/.venv/bin/python\0${fallbackRef}`, "nemoclaw-hermes-mcp-runtime-ok"],
+      [`/bin/sh\0${fallbackRef}`, "nemoclaw-security-inventory-ok"],
+    ]);
+    dockerMocks.capture.mockImplementation((args: string[]) => {
+      const entrypointIndex = args.indexOf("--entrypoint");
+      return (
+        captureByEntrypointAndRef.get(
+          `${args[entrypointIndex + 1]}\0${args[entrypointIndex + 2]}`,
+        ) ?? ""
+      );
+    });
+
+    try {
+      expect(() => stageHermesSandbox()).toThrow(
+        `Hermes Agent sandbox base image '${trackedRef}' is required but could not be pulled or did not pass the required MCP Streamable HTTP and ACP runtimes and the immutable security package inventory. No compatible local base image could be produced.`,
+      );
+      expect(dockerMocks.imageInspect).not.toHaveBeenCalledWith(versionRef, expect.anything());
+      expect(dockerMocks.forceRm).toHaveBeenCalledTimes(2);
+      expect(dockerMocks.build).not.toHaveBeenCalled();
+    } finally {
+      platform.mockRestore();
+    }
+  });
 
   it("rejects an explicit platform digest override without pinned provenance", () => {
     vi.stubEnv("NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF", platformRef);

@@ -146,8 +146,7 @@ describe("checkAndRecoverSandboxProcesses custom agent recovery", () => {
     vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
     vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
       status: 0,
-      output: `SANDBOX  BIND  PORT  PID  STATUS
-custom-box  127.0.0.1  19000  12345  running`,
+      output: "SANDBOX  BIND  PORT  PID  STATUS",
     });
 
     expect(
@@ -169,8 +168,7 @@ custom-box  127.0.0.1  19000  12345  running`,
     const registry = requireSource("../../src/lib/state/registry.ts");
     const forwardHealth = requireSource("../../src/lib/actions/sandbox/forward-health.ts");
     const childProcess = requireSource("node:child_process");
-    const runningForward = `SANDBOX  BIND  PORT  PID  STATUS
-custom-box  127.0.0.1  19000  12345  running`;
+    const runningForward = "SANDBOX  BIND  PORT  PID  STATUS";
     const sshCommands: string[] = [];
     const previousWaitSeconds = process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS;
     const previousPollInterval = process.env.NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS;
