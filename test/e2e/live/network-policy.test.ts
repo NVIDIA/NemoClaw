@@ -6,10 +6,6 @@ import { createServer, type Server } from "node:http";
 import path from "node:path";
 
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
-import {
-  buildNetworkPolicyCurlProbe,
-  parseNetworkPolicyCurlOutput,
-} from "../../helpers/network-policy-probe.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -22,6 +18,10 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import { ensureConfiguredRuntimeProviderAvailable } from "../fixtures/runtime-provider.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import {
+  buildNetworkPolicyCurlProbe,
+  parseNetworkPolicyCurlOutput,
+} from "../support/network-policy-probe.ts";
 import { runRestrictedOnboardWithRetry } from "./restricted-onboard-helpers.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-net-policy";
@@ -392,7 +392,7 @@ test(
       "network-policy-denied-host-gateway-port",
     );
     const deniedResult = parseNetworkPolicyCurlOutput(denied);
-    const deniedEvidence = "network-policy-denied-host-gateway-result.json";
+    const deniedEvidence = "shell/network-policy-denied-host-gateway-result.json";
     await artifacts.writeJson(deniedEvidence, deniedResult ?? { response: denied, status: null });
     expect(denied).not.toContain(deniedMarker);
     expect(deniedResult?.status, denied).toBe(403);

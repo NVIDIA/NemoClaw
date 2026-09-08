@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { shellQuote } from "../e2e/fixtures/clients/command.ts";
+import { shellQuote } from "../fixtures/clients/command.ts";
 
 const CURL_STATUS_FORMAT = String.raw`\nSTATUS_%{http_code}\n`;
 const CURL_STATUS_RECORD = /(?:^|\r?\n)STATUS_(\d{3})\r?\n?$/u;

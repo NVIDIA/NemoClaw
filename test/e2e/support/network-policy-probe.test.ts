@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildNetworkPolicyCurlProbe,
   parseNetworkPolicyCurlOutput,
-} from "../../helpers/network-policy-probe.ts";
+} from "./network-policy-probe.ts";
 
 describe("network-policy curl probe", () => {
   it("keeps the status format with its parser", () => {
