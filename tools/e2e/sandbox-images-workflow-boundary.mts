@@ -18,7 +18,6 @@ const HERMES_SECRET_BOUNDARY_STEP_ID = "hermes-secret-boundary";
 const HERMES_ROOT_AFTER_SECRET_CONDITION =
   "${{ !cancelled() && (steps.hermes-secret-boundary.outcome == 'success' || steps.hermes-secret-boundary.outcome == 'failure') }}";
 const HERMES_EXPORT_SWAP_STEP_NAME = "Add swap for Hermes image export";
-const HERMES_EXPORT_SWAP_CLEANUP_STEP_NAME = "Remove swap after Hermes image export";
 const HERMES_SETUP_BUILDX_ACTION =
   "docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c";
 const HERMES_BUILD_PUSH_ACTION =
@@ -687,42 +686,6 @@ function validateHermesExportSwap(errors: string[], workflow: SandboxImagesWorkf
     }
     if (stepIndex(job, HERMES_EXPORT_SWAP_STEP_NAME) >= stepIndex(job, buildStepName)) {
       errors.push(`${jobName} must provision swap before the Hermes image build`);
-    }
-
-    const cleanupSteps = steps(job).filter(
-      (step) => step.name === HERMES_EXPORT_SWAP_CLEANUP_STEP_NAME,
-    );
-    if (cleanupSteps.length !== 1) {
-      errors.push(`${jobName} must remove Hermes export swap exactly once`);
-      continue;
-    }
-    const cleanup = cleanupSteps[0];
-    const cleanupRun = cleanup?.run ?? "";
-    if (
-      cleanup?.if !== "always()" ||
-      cleanup.shell !== "bash" ||
-      cleanup["continue-on-error"] !== undefined
-    ) {
-      errors.push(`${jobName} Hermes export swap cleanup must always run and fail on error`);
-    }
-    for (const fragment of [
-      "swap_file=/mnt/nemoclaw-hermes-image-export.swap",
-      'sudo swapoff "$swap_file"',
-      'sudo rm -f "$swap_file"',
-      "swapon --show",
-      "free -h",
-      "df -h / /mnt",
-      "cleanup_failed",
-    ]) {
-      if (!cleanupRun.includes(fragment)) {
-        errors.push(`${jobName} Hermes export swap cleanup must include ${fragment}`);
-      }
-    }
-    if (stepIndex(job, buildStepName) >= stepIndex(job, HERMES_EXPORT_SWAP_CLEANUP_STEP_NAME)) {
-      errors.push(`${jobName} must remove swap after the Hermes image build`);
-    }
-    if (stepIndex(job, HERMES_EXPORT_SWAP_CLEANUP_STEP_NAME) >= stepIndex(job, CLEANUP_STEP_NAME)) {
-      errors.push(`${jobName} must remove swap before Docker Hub auth cleanup`);
     }
   }
 }

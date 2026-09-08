@@ -670,30 +670,15 @@ describe("sandbox image workflow boundary", () => {
       const { imageWorkflow, mainWorkflow } = readWorkflows();
 
       const job = imageWorkflow.jobs[jobName];
+      expect(job["runs-on"]).toBe("ubuntu-latest");
+      expect(job.steps!.map((step) => step.name)).not.toContain(
+        "Remove swap after Hermes image export",
+      );
       const swap = job.steps!.find((step) => step.name === "Add swap for Hermes image export")!;
       swap.run = swap.run!.replace('sudo swapon "$swap_file"', 'echo "swap omitted"');
 
       expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
         `${jobName} Hermes export swap must include sudo swapon "$swap_file"`,
-      );
-    },
-  );
-
-  it.each(["build-hermes-sandbox-image", "messaging-plan-image-boundary"])(
-    "rejects incomplete Hermes export swap cleanup in %s",
-    (jobName) => {
-      const { imageWorkflow, mainWorkflow } = readWorkflows();
-      const cleanup = imageWorkflow.jobs[jobName].steps!.find(
-        (step) => step.name === "Remove swap after Hermes image export",
-      );
-      expect(cleanup).toBeDefined();
-      cleanup!.run = cleanup!.run!.replace(
-        'sudo swapoff "$swap_file"',
-        'echo "swap retained"',
-      );
-
-      expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
-        `${jobName} Hermes export swap cleanup must include sudo swapoff "$swap_file"`,
       );
     },
   );
