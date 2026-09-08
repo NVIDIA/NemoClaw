@@ -5,14 +5,18 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { stripAnsi } from "../../adapters/openshell/client";
+import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
+import {
+  createCliOpenShellProviderAdapter,
+  type RunProviderCommand,
+} from "../../adapters/openshell/provider-adapter-cli";
 import {
   type OpenShellRuntimeSelection,
   runOpenshellProviderCommand,
 } from "../../adapters/openshell/provider-command";
+import { selectedOpenShellGateway } from "../../adapters/openshell/sandbox-observer";
 import { OPENSHELL_DEFAULT_WORKSPACE } from "../../adapters/openshell/sandbox-ssh-host";
 import { getDockerDriverGatewayLocalTlsDir } from "../../onboard/docker-driver-gateway-local-tls";
-import { reportsExactProviderNotFound } from "../../adapters/openshell/provider-diagnostic-cli";
 import { resolveGatewayStateDirForPort } from "../../onboard/gateway/state-dir";
 import { resolveGatewayCredentialMutationAuthority } from "../../onboard/gateway-teardown-authority";
 import {
@@ -24,7 +28,6 @@ import { replayTrustedPrivateEndpoint } from "../../security/trusted-private-end
 import { listExtraProviders, type McpBridgeEntry, type SandboxEntry } from "../../state/registry";
 import { getPersistedSandboxTargetGateway } from "./gateway-target";
 import { McpBridgeError } from "./mcp-bridge-contracts";
-import { commandOutput, type OpenShellCommandResult } from "./mcp-bridge-output";
 import type { McpBridgeTargetValidation } from "./mcp-bridge-url-validation";
 import {
   assertAuthenticatedBridgeEntry,
@@ -58,6 +61,29 @@ export type McpProviderInspectionRuntimeSelection = OpenShellRuntimeSelection;
 
 const GATEWAY_CLIENT_TLS_FILES = ["ca.crt", "client/tls.crt", "client/tls.key"] as const;
 
+export function createMcpProviderAdapterBoundary(
+  runtimeSelection: OpenShellRuntimeSelection,
+  adapter?: OpenShellProviderAdapter,
+): Readonly<{
+  adapter: OpenShellProviderAdapter;
+  target: ReturnType<typeof selectedOpenShellGateway>;
+}> {
+  return {
+    adapter:
+      adapter ??
+      createCliOpenShellProviderAdapter({
+        run: ((args, options) =>
+          runOpenshellProviderCommand(args, {
+            ...options,
+            runtimeSelection,
+          })) as RunProviderCommand,
+      }),
+    // The command runner owns the exact gateway, workspace, and TLS
+    // selection, so the CLI adapter must not add a second selector.
+    target: selectedOpenShellGateway(),
+  };
+}
+
 function readableGatewayClientTlsDir(localTlsDir: string, required: boolean): string | undefined {
   const observations = GATEWAY_CLIENT_TLS_FILES.map((relativePath) => {
     const filePath = path.join(localTlsDir, relativePath);
@@ -74,10 +100,7 @@ function readableGatewayClientTlsDir(localTlsDir: string, required: boolean): st
     return undefined;
   }
   const unreadable = observations.find(({ readable }) => !readable)?.filePath ?? localTlsDir;
-  throw new McpBridgeError(
-    `OpenShell gateway TLS file is missing or unreadable: ${unreadable}`,
-    1,
-  );
+  throw new McpBridgeError(`OpenShell gateway TLS file is missing or unreadable: ${unreadable}`, 1);
 }
 
 function providerRuntimeLocalTlsDir(
@@ -89,7 +112,10 @@ function providerRuntimeLocalTlsDir(
     if (!configuration.ok) throw new McpBridgeError(configuration.message, 1);
     if (!owner.endpoint || new URL(owner.endpoint).protocol !== "https:") return undefined;
     if (!owner.stateDir) {
-      throw new McpBridgeError("Externally supervised HTTPS gateway requires a state directory.", 1);
+      throw new McpBridgeError(
+        "Externally supervised HTTPS gateway requires a state directory.",
+        1,
+      );
     }
     return readableGatewayClientTlsDir(path.join(owner.stateDir, "tls"), true);
   }
@@ -119,39 +145,11 @@ export function getMcpProviderInspectionRuntimeSelection(
   };
 }
 
-const MCP_PROVIDER_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
-
-export function parseMcpProviderMetadata(output: string): Omit<McpProviderInspection, "exists"> {
-  const clean = stripAnsi(output).replace(/\r/g, "");
-  const idMatch = clean.match(/^\s*Id:\s*(\S.*?)\s*$/m);
-  const resourceVersionMatch = clean.match(/^\s*Resource version:\s*(\d+)\s*$/m);
-  const typeMatch = clean.match(/^\s*Type:\s*(\S.*?)\s*$/m);
-  const credentialMatch = clean.match(/^\s*Credential keys:\s*(.*?)\s*$/m);
-  const rawId = idMatch?.[1]?.trim();
-  const parsedResourceVersion = resourceVersionMatch
-    ? Number.parseInt(resourceVersionMatch[1] ?? "", 10)
-    : null;
-  const rawKeys = credentialMatch?.[1]?.trim();
-  return {
-    id: rawId && MCP_PROVIDER_ID_RE.test(rawId) ? rawId : null,
-    resourceVersion:
-      parsedResourceVersion !== null && Number.isSafeInteger(parsedResourceVersion)
-        ? parsedResourceVersion
-        : null,
-    type: typeMatch?.[1]?.trim() || null,
-    credentialKeys:
-      rawKeys === undefined
-        ? null
-        : rawKeys === "<none>" || rawKeys === ""
-          ? []
-          : rawKeys.split(",").map((key) => key.trim()),
-  };
-}
-
-export function inspectMcpProvider(
+export async function inspectMcpProvider(
   providerName: string | undefined,
   runtimeSelection?: McpProviderInspectionRuntimeSelection,
-): McpProviderInspection {
+  providerAdapter?: OpenShellProviderAdapter,
+): Promise<McpProviderInspection> {
   if (!providerName) {
     return {
       exists: false,
@@ -161,14 +159,13 @@ export function inspectMcpProvider(
       credentialKeys: null,
     };
   }
-  const result = runOpenshellProviderCommand(["provider", "get", providerName], {
-    ignoreError: true,
-    runtimeSelection,
-    stdio: ["ignore", "pipe", "pipe"],
-  }) as OpenShellCommandResult;
-  if (result.status !== 0) {
-    const output = commandOutput(result);
-    if (result.status === 1 && reportsExactProviderNotFound(output, providerName, output.length)) {
+  if (!runtimeSelection) {
+    throw new McpBridgeError("MCP provider inspection requires an OpenShell runtime target.");
+  }
+  const { adapter, target } = createMcpProviderAdapterBoundary(runtimeSelection, providerAdapter);
+  const result = await adapter.getProvider({ providerName, target });
+  if (!result.ok) {
+    if (result.error.kind === "command" && result.error.reason === "not_found") {
       return {
         exists: false,
         id: null,
@@ -183,69 +180,54 @@ export function inspectMcpProvider(
       resourceVersion: null,
       type: null,
       credentialKeys: null,
-      error: output || `Could not inspect OpenShell provider '${providerName}'.`,
+      error: result.error.message,
     };
   }
   return {
     exists: true,
-    ...parseMcpProviderMetadata(commandOutput(result)),
+    id: result.value.revision?.id ?? null,
+    resourceVersion: result.value.revision?.resourceVersion ?? null,
+    type: result.value.type,
+    credentialKeys: [...result.value.credentialKeys],
   };
 }
 
-export function parseMcpProviderAttachmentNames(output: string): string[] {
-  const clean = stripAnsi(output).replace(/\r/g, "").trim();
-  if (/^No providers attached to sandbox\b/m.test(clean)) return [];
-  const lines = clean
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-  const headerIndex = lines.findIndex((line) =>
-    /^NAME\s+TYPE\s+CREDENTIAL_KEYS\s+CONFIG_KEYS$/.test(line),
-  );
-  if (headerIndex < 0) throw new Error("missing provider attachment table header");
-  return lines.slice(headerIndex + 1).map((line) => {
-    const match = line.match(/^(\S+)\s+(\S+)\s+(\d+)\s+(\d+)$/);
-    if (!match?.[1]) throw new Error("invalid provider attachment table row");
-    return match[1];
-  });
-}
-
-export function inspectMcpProviderAttachments(
+export async function inspectMcpProviderAttachments(
   sandboxName: string,
   runtimeSelection?: McpProviderInspectionRuntimeSelection,
-): McpProviderAttachmentInspection {
-  const result = runOpenshellProviderCommand(["sandbox", "provider", "list", sandboxName], {
-    ignoreError: true,
-    runtimeSelection,
-    stdio: ["ignore", "pipe", "pipe"],
-  }) as OpenShellCommandResult;
-  const output = commandOutput(result);
-  if (result.status !== 0) {
-    return { attachments: null, error: output || "provider attachment inspection failed" };
+  providerAdapter?: OpenShellProviderAdapter,
+): Promise<McpProviderAttachmentInspection> {
+  if (!runtimeSelection) {
+    return {
+      attachments: null,
+      error: "MCP provider inspection requires an OpenShell runtime target.",
+    };
   }
+  const { adapter, target } = createMcpProviderAdapterBoundary(runtimeSelection, providerAdapter);
+  const result = await adapter.listProviderAttachments({ sandboxName, target });
+  if (!result.ok) return { attachments: null, error: result.error.message };
   try {
-    const clean = stripAnsi(output).replace(/\r/g, "").trim();
-    if (/^No providers attached to sandbox\b/m.test(clean)) return { attachments: [] };
-    const names = parseMcpProviderAttachmentNames(clean);
-    const attachments = names.map((name) => {
-      const provider = inspectMcpProvider(name, runtimeSelection);
-      if (
-        provider.exists !== true ||
-        !provider.id ||
-        !provider.resourceVersion ||
-        !provider.type ||
-        !provider.credentialKeys
-      ) {
-        throw new Error(
-          provider.error ?? `attached provider '${name}' disappeared or has incomplete metadata`,
-        );
-      }
-      return {
-        name,
-        providerId: provider.id,
-        credentialKeys: provider.credentialKeys,
-      };
-    });
+    const attachments = await Promise.all(
+      result.value.names.map(async (name) => {
+        const provider = await inspectMcpProvider(name, runtimeSelection, adapter);
+        if (
+          provider.exists !== true ||
+          !provider.id ||
+          !provider.resourceVersion ||
+          !provider.type ||
+          !provider.credentialKeys
+        ) {
+          throw new Error(
+            provider.error ?? `attached provider '${name}' disappeared or has incomplete metadata`,
+          );
+        }
+        return {
+          name,
+          providerId: provider.id,
+          credentialKeys: provider.credentialKeys,
+        };
+      }),
+    );
     return { attachments };
   } catch (error) {
     return {
@@ -255,14 +237,14 @@ export function inspectMcpProviderAttachments(
   }
 }
 
-export function assertNoAttachedProviderCredentialCollisions(
+export async function assertNoAttachedProviderCredentialCollisions(
   sandboxName: string,
   entries: readonly McpBridgeEntry[],
   runtimeSelection: McpProviderInspectionRuntimeSelection,
-): void {
+): Promise<void> {
   if (entries.length === 0) return;
   for (const entry of entries) assertAuthenticatedBridgeEntry(entry);
-  const inspection = inspectMcpProviderAttachments(sandboxName, runtimeSelection);
+  const inspection = await inspectMcpProviderAttachments(sandboxName, runtimeSelection);
   if (!inspection.attachments) {
     throw new McpBridgeError(
       inspection.error ?? `Could not inspect providers attached to sandbox '${sandboxName}'.`,
@@ -283,14 +265,14 @@ export function assertNoAttachedProviderCredentialCollisions(
   }
 }
 
-export function assertNoRegisteredProviderCredentialCollisions(
+export async function assertNoRegisteredProviderCredentialCollisions(
   entries: readonly McpBridgeEntry[],
   deps: {
     listExtraProviders?: () => string[];
-    inspectProvider?: (providerName: string) => McpProviderInspection;
+    inspectProvider?: (providerName: string) => Promise<McpProviderInspection>;
     runtimeSelection?: McpProviderInspectionRuntimeSelection;
   } = {},
-): void {
+): Promise<void> {
   if (entries.length === 0) return;
   for (const entry of entries) assertAuthenticatedBridgeEntry(entry);
   const queryExtraProviders = deps.listExtraProviders ?? listExtraProviders;
@@ -298,7 +280,7 @@ export function assertNoRegisteredProviderCredentialCollisions(
     deps.inspectProvider ??
     ((providerName: string) => inspectMcpProvider(providerName, deps.runtimeSelection));
   for (const providerName of queryExtraProviders()) {
-    const provider = inspectProvider(providerName);
+    const provider = await inspectProvider(providerName);
     if (provider.exists === false) continue;
     if (provider.exists !== true || !provider.id || !provider.credentialKeys) {
       throw new McpBridgeError(
@@ -320,13 +302,13 @@ export function assertNoRegisteredProviderCredentialCollisions(
   }
 }
 
-export function assertNoProviderCredentialCollisions(
+export async function assertNoProviderCredentialCollisions(
   sandboxName: string,
   entries: readonly McpBridgeEntry[],
   runtimeSelection: McpProviderInspectionRuntimeSelection,
-): void {
-  assertNoAttachedProviderCredentialCollisions(sandboxName, entries, runtimeSelection);
-  assertNoRegisteredProviderCredentialCollisions(entries, { runtimeSelection });
+): Promise<void> {
+  await assertNoAttachedProviderCredentialCollisions(sandboxName, entries, runtimeSelection);
+  await assertNoRegisteredProviderCredentialCollisions(entries, { runtimeSelection });
 }
 
 export function providerMatchesCredential(
@@ -400,10 +382,10 @@ export function providerShapeDetail(
   return `Expected ${MCP_BRIDGE_PROVIDER_TYPE} provider with only credential key '${expectedCredential ?? "<missing>"}', found type '${type}' with keys '${keys}'.`;
 }
 
-export function assertMcpProviderRecoverable(
+export async function assertMcpProviderRecoverable(
   entry: McpBridgeEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
-): McpProviderInspection {
+): Promise<McpProviderInspection> {
   assertAuthenticatedBridgeEntry(entry);
   if (!entry.providerId) {
     throw new McpBridgeError(
@@ -411,7 +393,7 @@ export function assertMcpProviderRecoverable(
     );
   }
   const expectedCredential = entry.env[0];
-  const inspection = inspectMcpProvider(entry.providerName, runtimeSelection);
+  const inspection = await inspectMcpProvider(entry.providerName, runtimeSelection);
   if (inspection.exists === null) {
     throw new McpBridgeError(
       inspection.error ?? `Could not inspect OpenShell provider '${entry.providerName}'.`,
@@ -500,13 +482,13 @@ export async function preflightMcpEntryTargets(
   return new Map(results);
 }
 
-export function providerAttached(
+export async function providerAttached(
   sandboxName: string,
   providerName: string | undefined,
   runtimeSelection?: McpProviderInspectionRuntimeSelection,
-): boolean | null {
+): Promise<boolean | null> {
   if (!providerName) return null;
-  const inspection = inspectMcpProviderAttachments(sandboxName, runtimeSelection);
+  const inspection = await inspectMcpProviderAttachments(sandboxName, runtimeSelection);
   if (!inspection.attachments) return null;
   return inspection.attachments.some((attachment) => attachment.name === providerName);
 }

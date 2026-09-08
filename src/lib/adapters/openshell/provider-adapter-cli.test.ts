@@ -83,6 +83,7 @@ describe("CLI OpenShell provider adapter", () => {
     const credentialValue = "host-only-value";
     const operations = [
       adapter.listProviders({ target }),
+      adapter.listProviderAttachments({ target, sandboxName: "alpha" }),
       adapter.createProvider({
         target,
         name: "search-prod",
@@ -134,6 +135,7 @@ describe("CLI OpenShell provider adapter", () => {
       expectedFailure,
       expectedFailure,
       expectedFailure,
+      { ...expectedFailure, operation: "inspect" },
       expectedFailure,
       expectedFailure,
       expectedFailure,
@@ -1037,6 +1039,7 @@ describe("CLI OpenShell provider adapter", () => {
         message:
           "The OpenShell provider profile does not match the checked-in credential boundary.",
       },
+      operation: "verify",
     });
     expect(run).toHaveBeenCalledTimes(1);
   });
@@ -1105,6 +1108,7 @@ describe("CLI OpenShell provider adapter", () => {
         kind: "validation",
         message: "The checked-in OpenShell provider profile is invalid or unreadable.",
       },
+      operation: "read",
     });
     expect(run).not.toHaveBeenCalled();
   });
@@ -1198,7 +1202,7 @@ describe("CLI OpenShell provider adapter", () => {
         providerName: "search-prod",
         sandboxName: "alpha",
       }),
-    ).resolves.toEqual({ ok: true });
+    ).resolves.toEqual({ ok: true, value: { changed: true } });
     expect(run.mock.calls[1]?.[0]).toEqual([
       "sandbox",
       "provider",
@@ -1264,7 +1268,7 @@ describe("CLI OpenShell provider adapter", () => {
         providerName: "search-prod",
         sandboxName: "alpha",
       }),
-    ).resolves.toEqual({ ok: true });
+    ).resolves.toEqual({ ok: true, value: { changed: true } });
     expect(run).toHaveBeenCalledWith(
       ["sandbox", "provider", "detach", "-g", "nemoclaw-18080", "alpha", "search-prod"],
       expect.objectContaining({ ignoreError: true, timeout: 30_000 }),
@@ -1284,9 +1288,88 @@ describe("CLI OpenShell provider adapter", () => {
           providerName: "search-prod",
           sandboxName: "alpha",
         }),
-      ).resolves.toEqual({ ok: true });
+      ).resolves.toEqual({ ok: true, value: { changed: false } });
     },
   );
+
+  it("classifies the exact provider-detach resource-version race (#9806)", async () => {
+    const diagnostic =
+      "Failed to detach provider: sandbox was modified by another operation. Please retry the command.";
+    const adapter = createCliOpenShellProviderAdapter({
+      run: () => captured(1, "", diagnostic),
+    });
+
+    await expect(
+      adapter.detachProvider({
+        target: selectedOpenShellGateway(),
+        providerName: "search-prod",
+        sandboxName: "alpha",
+      }),
+    ).resolves.toEqual({
+      ok: false,
+      error: { kind: "command", reason: "conflict", message: diagnostic },
+    });
+  });
+
+  it("returns typed provider attachments from a named gateway (#9806)", async () => {
+    const run = vi.fn(() =>
+      captured(
+        0,
+        [
+          "NAME              TYPE              CREDENTIAL_KEYS   CONFIG_KEYS",
+          "alpha-mcp-github  nemoclaw-mcp-v1  1                 0",
+          "alpha-mcp-slack   nemoclaw-mcp-v1  1                 0",
+        ].join("\n"),
+      ),
+    );
+    const adapter = createCliOpenShellProviderAdapter({ run });
+
+    await expect(
+      adapter.listProviderAttachments({
+        target: namedOpenShellGateway("nemoclaw-18080"),
+        sandboxName: "alpha",
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      value: { names: ["alpha-mcp-github", "alpha-mcp-slack"] },
+    });
+    expect(run).toHaveBeenCalledWith(
+      ["sandbox", "provider", "list", "-g", "nemoclaw-18080", "alpha"],
+      expect.objectContaining({ suppressOutput: true }),
+    );
+  });
+
+  it("returns an empty typed attachment inventory for an unattached sandbox (#9806)", async () => {
+    const adapter = createCliOpenShellProviderAdapter({
+      run: () => captured(0, "No providers attached to sandbox alpha."),
+    });
+
+    await expect(
+      adapter.listProviderAttachments({
+        target: selectedOpenShellGateway(),
+        sandboxName: "alpha",
+      }),
+    ).resolves.toEqual({ ok: true, value: { names: [] } });
+  });
+
+  it("rejects malformed provider attachment output at the CLI adapter boundary (#9806)", async () => {
+    const adapter = createCliOpenShellProviderAdapter({
+      run: () => captured(0, "unexpected output"),
+    });
+
+    await expect(
+      adapter.listProviderAttachments({
+        target: selectedOpenShellGateway(),
+        sandboxName: "alpha",
+      }),
+    ).resolves.toEqual({
+      ok: false,
+      error: {
+        kind: "schema",
+        message: "OpenShell returned invalid provider attachment metadata.",
+      },
+    });
+  });
 
   it.each(["provider search-prod NotFound", "provider search-prod not found"])(
     "does not report a missing provider as detached: %s (#9806)",
