@@ -43,6 +43,7 @@ import {
   type RuntimeProviderCommandCapture,
   type RuntimeProviderContainerEngineOperation,
   type RuntimeProviderNvidiaContainerInput,
+  type RuntimeProviderOwnedContainerCleanupOptions,
   type RuntimeProviderDoctorCheck,
   type RuntimeProviderLifecycleInput,
   type RuntimeProviderLifecycleResult,
@@ -189,14 +190,14 @@ function cleanupDockerNvidiaContainer(
   supportedOperations: ReadonlySet<RuntimeProviderContainerEngineOperation>,
   operation: RuntimeProviderContainerEngineOperation,
   resource: RuntimeProviderNvidiaContainerInput["resource"],
-  timeoutMs?: number,
+  options: RuntimeProviderOwnedContainerCleanupOptions,
 ) {
   return cleanupOwnedContainer(
     resource,
     `^/${resource.name}$`,
     (args, timeout) =>
       captureDockerContainerEngineOperation(deps, supportedOperations, operation, args, timeout),
-    timeoutMs,
+    options,
   );
 }
 
@@ -704,13 +705,13 @@ export function createDockerRuntimeProviderBundle(
             input,
             timeoutMs,
           ),
-        cleanup: (operation, resource, timeoutMs) =>
+        cleanup: (operation, resource, options) =>
           cleanupDockerNvidiaContainer(
             deps,
             containerEngineOperations,
             operation,
             resource,
-            timeoutMs,
+            options,
           ),
       },
     },

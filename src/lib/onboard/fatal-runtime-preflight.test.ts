@@ -880,11 +880,14 @@ describe("readiness-gated runtime preflight", () => {
   });
 
   it("carries a real provider capture through real GPU detection to Ollama selection", async () => {
-    const captureHostCommand = vi.fn(() => ({
-      status: 0,
-      stdout: "Test PASSED\nNEMOCLAW_GPU_MEMORY_MIB=63936, 60000\n",
-      stderr: "",
-    }));
+    const captureHostCommand = vi
+      .fn()
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: "Test PASSED\nNEMOCLAW_GPU_MEMORY_MIB=63936, 60000\n",
+        stderr: "",
+      })
+      .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" });
     const provider = createDockerRuntimeProviderBundle({ captureHostCommand });
     const gpuName = "NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)";
     const runCaptureImpl = vi.fn((command: readonly string[]) =>
@@ -916,7 +919,13 @@ describe("readiness-gated runtime preflight", () => {
       ),
     );
 
-    expect(captureHostCommand).toHaveBeenCalledOnce();
+    expect(captureHostCommand).toHaveBeenCalledTimes(2);
+    expect(captureHostCommand).toHaveBeenNthCalledWith(
+      2,
+      "docker",
+      expect.arrayContaining(["ps", "--all", "--no-trunc"]),
+      expect.any(Number),
+    );
     expect(result.gpu).toMatchObject({
       containerGpuProof: { providerId: "docker", passed: true },
       n1xWslProduct: true,

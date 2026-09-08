@@ -100,17 +100,16 @@ function runRuntimeProviderGpuProof(
   }
   const cleanupContainer = (
     target: RuntimeProviderOwnedContainerResource,
-    absenceIsUnresolved: boolean,
+    observation: "immediate" | "until-deadline",
   ): NonNullable<ContainerGpuProofResult["cleanup"]> => {
     try {
-      const cleanup = nvidiaContainer.cleanup(
-        "host-local-inference",
-        target,
-        NVIDIA_CONTAINER_GPU_PROOF_CLEANUP_TIMEOUT_MS,
-      );
+      const cleanup = nvidiaContainer.cleanup("host-local-inference", target, {
+        timeoutMs: NVIDIA_CONTAINER_GPU_PROOF_CLEANUP_TIMEOUT_MS,
+        observation,
+      });
       return {
         resourceName: target.name,
-        ...(absenceIsUnresolved && cleanup.status === "absent"
+        ...(observation === "until-deadline" && cleanup.status === "absent"
           ? { status: "failed" as const }
           : cleanup),
       };
@@ -133,9 +132,10 @@ function runRuntimeProviderGpuProof(
     const diagnosticSource = result.stderr || result.stdout;
     const passed = result.status === 0 && !timedOut && result.error === undefined;
     const verifiedCapacity = passed ? parseContainerGpuProofCapacity(result.stdout) : null;
-    const cleanup = passed
-      ? undefined
-      : cleanupContainer(resource, timedOut || result.error !== undefined);
+    const cleanup = cleanupContainer(
+      resource,
+      timedOut || result.error !== undefined ? "until-deadline" : "immediate",
+    );
     return {
       providerId: provider.identity.id,
       passed,
@@ -153,7 +153,7 @@ function runRuntimeProviderGpuProof(
       exitCode: null,
       diagnostic:
         error instanceof Error ? error.message.slice(0, 300) : String(error).slice(0, 300),
-      cleanup: cleanupContainer(resource, true),
+      cleanup: cleanupContainer(resource, "until-deadline"),
     };
   }
 }

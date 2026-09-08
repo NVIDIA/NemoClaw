@@ -693,9 +693,12 @@ describe("managed Podman runtime provider", () => {
       }),
     );
 
-    expect(capability.cleanup("host-local-inference", GPU_PROOF_RESOURCE, 15_000)).toEqual({
-      status: "removed",
-    });
+    expect(
+      capability.cleanup("host-local-inference", GPU_PROOF_RESOURCE, {
+        timeoutMs: 15_000,
+        observation: "until-deadline",
+      }),
+    ).toEqual({ status: "removed" });
     expect(capture).toHaveBeenNthCalledWith(
       1,
       "/usr/bin/podman",

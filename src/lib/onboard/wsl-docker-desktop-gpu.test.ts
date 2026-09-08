@@ -268,15 +268,27 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
   });
 
   it("carries a real Podman capture through GPU detection to Ollama selection", () => {
-    const capture = vi.fn(() => ({
-      status: 0,
-      stdout: "Test PASSED\nNEMOCLAW_GPU_MEMORY_MIB=63936, 60000\n",
-      stderr: "",
-    }));
+    const uuid = "123e4567-e89b-42d3-a456-426614174010";
+    const resourceName = `nemoclaw-gpu-proof-${uuid}`;
+    const containerId = "d".repeat(64);
+    const capture = vi
+      .fn()
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: "Test PASSED\nNEMOCLAW_GPU_MEMORY_MIB=63936, 60000\n",
+        stderr: "",
+      })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: `${containerId}\t${resourceName}\n`,
+        stderr: "",
+      })
+      .mockReturnValueOnce({ status: 0, stdout: containerId, stderr: "" });
     const provider = podmanProofProvider(capture);
     const prover = createArm64ContainerGpuProver({
       platform: "linux",
       arch: "arm64",
+      randomUUID: () => uuid,
       resolveRuntimeProvider: () => provider,
       log: () => undefined,
     });
@@ -306,6 +318,10 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
         expect.arrayContaining(["--device", "nvidia.com/gpu=all"]),
         expect.any(Number),
       );
+      expect(capture).toHaveBeenCalledWith(
+        expect.arrayContaining(["rm", "-f", containerId]),
+        expect.any(Number),
+      );
     } finally {
       Object.defineProperty(process, "platform", platform);
       Object.defineProperty(process, "arch", arch);
@@ -313,15 +329,27 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
   });
 
   it("carries a real Docker capture through GPU detection to Ollama selection", () => {
-    const captureHostCommand = vi.fn(() => ({
-      status: 0,
-      stdout: "Test PASSED\nNEMOCLAW_GPU_MEMORY_MIB=63936, 60000\n",
-      stderr: "",
-    }));
+    const uuid = "123e4567-e89b-42d3-a456-426614174011";
+    const resourceName = `nemoclaw-gpu-proof-${uuid}`;
+    const containerId = "e".repeat(64);
+    const captureHostCommand = vi
+      .fn()
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: "Test PASSED\nNEMOCLAW_GPU_MEMORY_MIB=63936, 60000\n",
+        stderr: "",
+      })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: `${containerId}\t${resourceName}\n`,
+        stderr: "",
+      })
+      .mockReturnValueOnce({ status: 0, stdout: containerId, stderr: "" });
     const provider = createDockerRuntimeProviderBundle({ captureHostCommand });
     const prover = createArm64ContainerGpuProver({
       platform: "linux",
       arch: "arm64",
+      randomUUID: () => uuid,
       resolveRuntimeProvider: () => provider,
       log: () => undefined,
     });
@@ -350,6 +378,11 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
       expect(captureHostCommand).toHaveBeenCalledWith(
         "docker",
         expect.arrayContaining(["--gpus", "all"]),
+        expect.any(Number),
+      );
+      expect(captureHostCommand).toHaveBeenCalledWith(
+        "docker",
+        ["rm", "-f", containerId],
         expect.any(Number),
       );
     } finally {
@@ -388,6 +421,40 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
       exitCode: 1,
       diagnostic: "no CUDA-capable device is detected",
     });
+  });
+
+  it("reports failed reconciliation after a successful proof capture", () => {
+    const base = proofProvider("docker");
+    const uuid = "123e4567-e89b-42d3-a456-426614174012";
+    const resourceName = `nemoclaw-gpu-proof-${uuid}`;
+    const logs: string[] = [];
+    const prover = createArm64ContainerGpuProver({
+      platform: "linux",
+      arch: "arm64",
+      randomUUID: () => uuid,
+      resolveRuntimeProvider: () => ({
+        ...base,
+        containerEngine: {
+          ...base.containerEngine,
+          nvidiaContainer: {
+            capture: () => ({
+              status: 0,
+              stdout: "Test PASSED\nNEMOCLAW_GPU_MEMORY_MIB=63936, 60000\n",
+              stderr: "",
+            }),
+            cleanup: () => ({ status: "failed" }),
+          },
+        },
+      }),
+      log: (message) => logs.push(message),
+    });
+
+    expect(prover(["JMJWOA-Generic-GPU"])).toMatchObject({
+      passed: true,
+      cleanup: { resourceName, status: "failed" },
+    });
+    expect(logs.join("\n")).toContain("could not prove absence or removal");
+    expect(logs.join("\n")).toContain(resourceName);
   });
 
   it("fails closed and cleans the exact provider-owned container after timeout", () => {
@@ -431,7 +498,7 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
         name: expect.stringMatching(GPU_PROOF_NAME_PATTERN),
         ownership: { label: "com.nvidia.nemoclaw.gpu-proof", value: "true" },
       }),
-      15_000,
+      { timeoutMs: 15_000, observation: "until-deadline" },
     );
     expect(logs.join("\n")).toContain("timed out");
     expect(logs.join("\n")).toContain(result?.cleanup?.resourceName ?? "missing-resource");
@@ -550,7 +617,7 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
     expect(cleanupNvidiaContainer).toHaveBeenCalledWith(
       "host-local-inference",
       expect.objectContaining({ name: expect.stringMatching(GPU_PROOF_NAME_PATTERN) }),
-      15_000,
+      { timeoutMs: 15_000, observation: "until-deadline" },
     );
   });
 
@@ -586,7 +653,7 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
     expect(cleanupNvidiaContainer).toHaveBeenCalledWith(
       "host-local-inference",
       expect.objectContaining({ name: `nemoclaw-gpu-proof-${uuid}` }),
-      15_000,
+      { timeoutMs: 15_000, observation: "immediate" },
     );
     expect(`nemoclaw-gpu-proof-${uuid}`).not.toBe(`nemoclaw-gpu-proof-${String(process.pid)}`);
   });

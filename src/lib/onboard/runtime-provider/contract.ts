@@ -708,6 +708,11 @@ export interface RuntimeProviderOwnedContainerCleanupResult {
   readonly status: "absent" | "removed" | "failed";
 }
 
+export interface RuntimeProviderOwnedContainerCleanupOptions {
+  readonly timeoutMs?: number;
+  readonly observation: "immediate" | "until-deadline";
+}
+
 export interface RuntimeProviderNvidiaContainerSurface {
   capture(
     operation: RuntimeProviderContainerEngineOperation,
@@ -717,7 +722,7 @@ export interface RuntimeProviderNvidiaContainerSurface {
   cleanup(
     operation: RuntimeProviderContainerEngineOperation,
     resource: RuntimeProviderOwnedContainerResource,
-    timeoutMs?: number,
+    options: RuntimeProviderOwnedContainerCleanupOptions,
   ): RuntimeProviderOwnedContainerCleanupResult;
 }
 

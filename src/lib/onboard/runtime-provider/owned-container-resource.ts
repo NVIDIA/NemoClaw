@@ -3,6 +3,7 @@
 
 import type {
   RuntimeProviderCommandCapture,
+  RuntimeProviderOwnedContainerCleanupOptions,
   RuntimeProviderOwnedContainerCleanupResult,
   RuntimeProviderOwnedContainerResource,
 } from "./contract";
@@ -48,10 +49,10 @@ export function cleanupOwnedContainer(
   resource: RuntimeProviderOwnedContainerResource,
   exactNameFilter: string,
   capture: (args: readonly string[], timeoutMs?: number) => RuntimeProviderCommandCapture,
-  timeoutMs?: number,
+  options: RuntimeProviderOwnedContainerCleanupOptions,
 ): RuntimeProviderOwnedContainerCleanupResult {
   validateOwnedContainerResource(resource);
-  const deadline = performance.now() + (timeoutMs ?? CLEANUP_DEFAULT_TIMEOUT_MS);
+  const deadline = performance.now() + (options.timeoutMs ?? CLEANUP_DEFAULT_TIMEOUT_MS);
   for (;;) {
     const remainingMs = Math.floor(deadline - performance.now());
     if (remainingMs <= 0) return { status: "absent" };
@@ -71,6 +72,7 @@ export function cleanupOwnedContainer(
     );
     if (discovery.status !== 0) return { status: "failed" };
     const rows = discovery.stdout.trim() ? discovery.stdout.trim().split(/\r?\n/u) : [];
+    if (rows.length === 0 && options.observation === "immediate") return { status: "absent" };
     if (rows.length > 0) {
       const fields = rows.length === 1 ? rows[0]!.split("\t") : [];
       const [containerId, observedName] = fields;

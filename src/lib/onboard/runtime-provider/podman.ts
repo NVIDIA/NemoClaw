@@ -485,7 +485,7 @@ export function createPodmanRuntimeProviderBundle(
                 timeoutMs,
               );
             },
-            cleanup: (operation, resource, timeoutMs) => {
+            cleanup: (operation, resource, options) => {
               const engine = containerEngineOperations.get(operation);
               if (!engine) {
                 throw new Error(
@@ -496,7 +496,7 @@ export function createPodmanRuntimeProviderBundle(
                 resource,
                 `^${resource.name}$`,
                 (args, timeout) => engine.capture(args, timeout),
-                timeoutMs,
+                options,
               );
             },
           }

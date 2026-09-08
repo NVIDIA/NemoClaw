@@ -164,9 +164,12 @@ describe("Docker runtime provider NVIDIA container capture", () => {
       .mockReturnValueOnce({ status: 0, stdout: containerId, stderr: "" });
     const capability = nvidiaContainer(createDockerRuntimeProviderBundle({ captureHostCommand }));
 
-    expect(capability.cleanup("host-local-inference", GPU_PROOF_RESOURCE, 15_000)).toEqual({
-      status: "removed",
-    });
+    expect(
+      capability.cleanup("host-local-inference", GPU_PROOF_RESOURCE, {
+        timeoutMs: 15_000,
+        observation: "until-deadline",
+      }),
+    ).toEqual({ status: "removed" });
     expect(captureHostCommand).toHaveBeenNthCalledWith(
       1,
       "docker",
