@@ -6,6 +6,10 @@ import { createServer, type Server } from "node:http";
 import path from "node:path";
 
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
+import {
+  buildNetworkPolicyCurlProbe,
+  parseNetworkPolicyCurlStatus,
+} from "../../helpers/network-policy-probe.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -15,10 +19,6 @@ import {
   validateSandboxName,
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
-import {
-  buildNetworkPolicyCurlProbe,
-  parseNetworkPolicyCurlStatus,
-} from "../fixtures/network-policy-probe.ts";
 import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import { ensureConfiguredRuntimeProviderAvailable } from "../fixtures/runtime-provider.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";

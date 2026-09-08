@@ -7,6 +7,10 @@ import path from "node:path";
 
 import { describe, expect, expectTypeOf, it, vi } from "vitest";
 import {
+  buildNetworkPolicyCurlProbe,
+  parseNetworkPolicyCurlStatus,
+} from "../../helpers/network-policy-probe.ts";
+import {
   assertExitZero,
   type CommandRunner,
   GatewayClient,
@@ -25,10 +29,6 @@ import type {
   ShellProbeRunOptions,
   TrustedShellCommand,
 } from "../fixtures/shell-probe.ts";
-import {
-  buildNetworkPolicyCurlProbe,
-  parseNetworkPolicyCurlStatus,
-} from "../fixtures/network-policy-probe.ts";
 import { LAUNCH_TURN_SCRIPT, runOpenClawLaunchSession } from "../live/launch-agent-turn.ts";
 import { sandboxShWithArgs } from "../live/phase6-messaging-helpers.ts";
 
