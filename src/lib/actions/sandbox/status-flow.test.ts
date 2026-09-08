@@ -832,6 +832,11 @@ describe("showSandboxStatus flow", () => {
       chatUiUrl: "",
       sandboxEntry: { dashboardRemoteBindPrepared: true },
     },
+    {
+      caseLabel: "a recorded wide bind (#10861)",
+      chatUiUrl: "",
+      sandboxEntry: { dashboardBindAddress: "0.0.0.0" },
+    },
   ])("omits port forward guidance for $caseLabel (#8465)", async ({ chatUiUrl, sandboxEntry }) => {
     vi.stubEnv("SSH_CONNECTION", "203.0.113.9 51000 198.51.100.2 22");
     vi.stubEnv("CHAT_UI_URL", chatUiUrl);
@@ -842,6 +847,20 @@ describe("showSandboxStatus flow", () => {
     const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
     expect(output).toContain("running");
     expect(output).not.toContain("Remote access: run");
+  });
+
+  it("keeps the port forward guidance when the recorded bind is loopback despite a prepared remote bind (#10861)", async () => {
+    vi.stubEnv("SSH_CONNECTION", "203.0.113.9 51000 198.51.100.2 22");
+    vi.stubEnv("CHAT_UI_URL", "");
+    const harness = createStatusFlowHarness({
+      gatewayRunning: true,
+      sandboxEntry: { dashboardRemoteBindPrepared: true, dashboardBindAddress: "127.0.0.1" },
+    });
+
+    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+
+    const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).toContain("Remote access: run");
   });
 
   it("omits dashboard guidance over SSH when the gateway is stopped (#8465)", async () => {

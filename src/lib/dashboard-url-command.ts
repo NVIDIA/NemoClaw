@@ -59,18 +59,15 @@ function dashboardUrlFail(lines: string | readonly string[], exitCode = 1): neve
 }
 
 /**
- * Prefer the bind this sandbox was created with over one recomputed here.
- * `CHAT_UI_URL` decides the bind at onboard time and is rarely set for later
- * commands, so recomputing reports a loopback address for a dashboard that is
- * listening on every interface (#10861). Rows written before the field was
- * recorded keep the recomputed answer.
+ * The bind recorded when this sandbox's dashboard forward was started, or null
+ * for rows written before it was recorded. `CHAT_UI_URL` decides the bind at
+ * onboard time and is rarely set for later commands, so recomputing it here
+ * reports loopback for a dashboard listening on every interface (#10861).
  */
-function recordedAccessUrl(
+function recordedBindAddress(
   sandbox: Pick<SandboxEntry, "dashboardBindAddress"> | null,
-  port: number,
 ): string | null {
-  const bindAddress = sandbox?.dashboardBindAddress;
-  return bindAddress ? `http://${bindAddress}:${String(port)}` : null;
+  return sandbox?.dashboardBindAddress || null;
 }
 
 function resolveDashboardPort(sandbox: Pick<SandboxEntry, "dashboardPort"> | null): number {
@@ -149,8 +146,26 @@ export function runDashboardUrlCommand(
   const log = deps.log ?? ((m: string) => console.log(m));
   const error = deps.error ?? ((m: string) => console.error(m));
 
-  const printSshForwardHint = (port: number, accessUrl: string | null): void => {
-    const hint = buildSshForwardHintLines({ port, accessUrl, env: deps.env });
+  // The printed URL stays the browser-usable one: a wildcard bind is not a
+  // browser destination. The recorded bind decides what follows it. A wide
+  // bind is disclosed and needs no SSH forward; a loopback bind keeps the
+  // forward hint; a row with no record falls back to the access URL alone.
+  const printDashboardReach = (
+    port: number,
+    accessUrl: string | null,
+    bindAddress: string | null,
+  ): void => {
+    if (bindAddress === "0.0.0.0") {
+      log(
+        `  Bound on all interfaces (0.0.0.0:${String(port)}): reachable from other hosts at this host's address.`,
+      );
+      return;
+    }
+    const hint = buildSshForwardHintLines({
+      port,
+      accessUrl: bindAddress ? `http://${bindAddress}:${String(port)}` : accessUrl,
+      env: deps.env,
+    });
     if (!hint) return;
     log("");
     for (const line of hint) log(line);
@@ -185,7 +200,7 @@ export function runDashboardUrlCommand(
   }
   if (dashboardAuth === "session" || dashboardAuth === "none") {
     const port = resolveDashboardPort(sandbox);
-    const accessUrl = recordedAccessUrl(sandbox, port) ?? deps.getAccessUrl?.(port) ?? null;
+    const accessUrl = deps.getAccessUrl?.(port) ?? null;
     const url = buildPlainDashboardUrl(port, accessUrl ?? undefined);
     if (options.quiet) {
       log(url);
@@ -193,7 +208,7 @@ export function runDashboardUrlCommand(
     }
     log("  Dashboard URL:");
     log(`  ${url}`);
-    printSshForwardHint(port, accessUrl);
+    printDashboardReach(port, accessUrl, recordedBindAddress(sandbox));
     return;
   }
 
@@ -212,7 +227,7 @@ export function runDashboardUrlCommand(
   }
 
   const port = resolveDashboardPort(sandbox);
-  const accessUrl = recordedAccessUrl(sandbox, port) ?? deps.getAccessUrl?.(port) ?? null;
+  const accessUrl = deps.getAccessUrl?.(port) ?? null;
   const url = buildDashboardUrl(token, port, accessUrl ?? undefined);
   if (options.quiet) {
     log(url);
@@ -221,6 +236,6 @@ export function runDashboardUrlCommand(
 
   log("  Dashboard URL:");
   log(`  ${url}`);
-  printSshForwardHint(port, accessUrl);
+  printDashboardReach(port, accessUrl, recordedBindAddress(sandbox));
   error(SECURITY_WARNING);
 }

@@ -68,7 +68,86 @@ describe("dashboard-url command helpers", () => {
     expect(sinks.out).toEqual(["http://172.22.1.1:19000/#token=secret-token"]);
   });
 
-  it("prefers the recorded bind over an access URL recomputed without CHAT_UI_URL", () => {
+  it("keeps the URL usable and discloses a recorded wide bind instead of printing 0.0.0.0 (#10861)", () => {
+    const sinks = makeSinks();
+
+    runDashboardUrlCommand(
+      "alpha",
+      { quiet: false },
+      {
+        fetchToken: () => "secret-token",
+        getSandbox: () => ({
+          agent: "openclaw",
+          dashboardPort: 19000,
+          dashboardBindAddress: "0.0.0.0",
+        }),
+        getAccessUrl: () => "http://127.0.0.1:19000",
+        env: { SSH_CONNECTION: "10.0.0.9 51000 10.6.76.40 22", USER: "spark" },
+        log: sinks.log,
+        error: sinks.error,
+      },
+    );
+
+    expect(sinks.out).toEqual([
+      "  Dashboard URL:",
+      "  http://127.0.0.1:19000/#token=secret-token",
+      "  Bound on all interfaces (0.0.0.0:19000): reachable from other hosts at this host's address.",
+    ]);
+  });
+
+  it("discloses a recorded wide bind in the session-auth branch too (#10861)", () => {
+    const sinks = makeSinks();
+
+    runDashboardUrlCommand(
+      "alpha",
+      { quiet: false },
+      {
+        fetchToken: () => "secret-token",
+        getSandbox: () => ({
+          agent: "hermes",
+          dashboardPort: 18790,
+          dashboardBindAddress: "0.0.0.0",
+        }),
+        getAgentDashboardAuth: () => "session",
+        getAccessUrl: () => "http://127.0.0.1:18790",
+        env: { SSH_CONNECTION: "10.0.0.9 51000 10.6.76.40 22", USER: "spark" },
+        log: sinks.log,
+        error: sinks.error,
+      },
+    );
+
+    expect(sinks.out).toEqual([
+      "  Dashboard URL:",
+      "  http://127.0.0.1:18790/",
+      "  Bound on all interfaces (0.0.0.0:18790): reachable from other hosts at this host's address.",
+    ]);
+  });
+
+  it("keeps the SSH forward hint for a recorded loopback bind (#10861)", () => {
+    const sinks = makeSinks();
+
+    runDashboardUrlCommand(
+      "alpha",
+      { quiet: false },
+      {
+        fetchToken: () => "secret-token",
+        getSandbox: () => ({
+          agent: "openclaw",
+          dashboardPort: 19000,
+          dashboardBindAddress: "127.0.0.1",
+        }),
+        getAccessUrl: () => "http://127.0.0.1:19000",
+        env: { SSH_CONNECTION: "10.0.0.9 51000 10.6.76.40 22", USER: "spark" },
+        log: sinks.log,
+        error: sinks.error,
+      },
+    );
+
+    expect(sinks.out).toContain("      ssh -L 19000:127.0.0.1:19000 spark@<host>");
+    expect(sinks.out.join("\n")).not.toContain("Bound on all interfaces");
+  });
+
+  it("prints only the usable URL in quiet mode for a recorded wide bind (#10861)", () => {
     const sinks = makeSinks();
 
     runDashboardUrlCommand(
@@ -82,35 +161,13 @@ describe("dashboard-url command helpers", () => {
           dashboardBindAddress: "0.0.0.0",
         }),
         getAccessUrl: () => "http://127.0.0.1:19000",
+        env: { SSH_CONNECTION: "10.0.0.9 51000 10.6.76.40 22", USER: "spark" },
         log: sinks.log,
         error: sinks.error,
       },
     );
 
-    expect(sinks.out).toEqual(["http://0.0.0.0:19000/#token=secret-token"]);
-  });
-
-  it("prefers the recorded bind in the session-auth branch too", () => {
-    const sinks = makeSinks();
-
-    runDashboardUrlCommand(
-      "alpha",
-      { quiet: true },
-      {
-        fetchToken: () => "secret-token",
-        getSandbox: () => ({
-          agent: "hermes",
-          dashboardPort: 18790,
-          dashboardBindAddress: "0.0.0.0",
-        }),
-        getAgentDashboardAuth: () => "session",
-        getAccessUrl: () => "http://127.0.0.1:18790",
-        log: sinks.log,
-        error: sinks.error,
-      },
-    );
-
-    expect(sinks.out).toEqual(["http://0.0.0.0:18790/"]);
+    expect(sinks.out).toEqual(["http://127.0.0.1:19000/#token=secret-token"]);
   });
 
   it("keeps the recomputed access URL for a row with no recorded bind", () => {

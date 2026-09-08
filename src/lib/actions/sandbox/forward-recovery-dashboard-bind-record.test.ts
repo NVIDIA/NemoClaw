@@ -103,4 +103,15 @@ describe("the recorded dashboard bind follows the forward (#10861)", () => {
 
     expect(stderr).toHaveBeenCalledWith(expect.stringContaining("could not be recorded"));
   });
+
+  it("keeps the forward up and warns when recording the bind throws", () => {
+    const stderr = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mocks.updateSandbox.mockImplementation(() => {
+      throw new Error("disk full");
+    });
+
+    expect(ensureSandboxPortForward("hm", { isWsl: false })).toBe(true);
+
+    expect(stderr).toHaveBeenCalledWith(expect.stringContaining("recording it for 'hm' failed"));
+  });
 });

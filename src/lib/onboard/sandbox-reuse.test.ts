@@ -67,11 +67,54 @@ describe("applyReusedSandboxDashboardState", () => {
       hermesDashboardPort: undefined,
       hermesDashboardInternalPort: undefined,
       hermesDashboardTui: undefined,
+      dashboardBindAddress: "127.0.0.1",
       gatewayName: "nemoclaw",
       gatewayPort: 8080,
     });
     expect(result.hermesDashboardState).toBe(hermesDashboardState);
   });
+
+  it.each([
+    ["a loopback dashboard URL", "http://127.0.0.1:18789", "127.0.0.1"],
+    ["a remote-origin dashboard URL", "https://dashboard.example.test:18789", "0.0.0.0"],
+  ])(
+    "records the bind the reused dashboard forward was started with for %s (#10861)",
+    (_label, chatUiUrl, dashboardBindAddress) => {
+      const updateSandbox = vi.fn();
+
+      applyReusedSandboxDashboardState({
+        sandboxName: "reuse-me",
+        chatUiUrl,
+        env: {},
+        agent: null,
+        model: "test-model",
+        provider: "openai-compatible",
+        selectionVerified: true,
+        sandboxGpuConfig: {
+          hostGpuDetected: false,
+          hostGpuPlatform: null,
+          sandboxGpuEnabled: false,
+          mode: "auto",
+          sandboxGpuDevice: null,
+          errors: [],
+        },
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        ensureDashboardForward: vi.fn(() => 18789),
+        hermesDashboardForwarding: {
+          resolveStateForPort: vi.fn(() => ({ enabled: false, config: null })),
+          ensureForState: vi.fn(),
+        },
+        updateSandbox,
+        updateReusedSandboxMetadata: vi.fn(),
+      });
+
+      expect(updateSandbox).toHaveBeenCalledWith(
+        "reuse-me",
+        expect.objectContaining({ dashboardBindAddress }),
+      );
+    },
+  );
 
   it("skips dashboard forwarding while preserving reuse metadata for terminal agents", () => {
     const updateSandbox = vi.fn();

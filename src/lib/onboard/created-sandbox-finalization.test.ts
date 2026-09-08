@@ -29,6 +29,7 @@ const fixtures: string[] = [];
 
 afterEach(() => {
   delete process.env.NEMOCLAW_OPENSHELL_BIN;
+  delete process.env.CHAT_UI_URL;
   for (const fixture of fixtures.splice(0)) fs.rmSync(fixture, { recursive: true, force: true });
   vi.restoreAllMocks();
 });
@@ -983,11 +984,12 @@ describe("created OpenClaw sandbox finalization", () => {
 
 describe("created sandbox completion actions", () => {
   it.each([
-    ["ordinary", true, false],
-    ["schema-5", false, true],
+    ["ordinary", true, false, "http://127.0.0.1:8643", "127.0.0.1"],
+    ["schema-5", false, true, "http://127.0.0.1:8643", null],
+    ["remote-origin", true, false, "https://dashboard.example.test:8643", "0.0.0.0"],
   ] as const)(
-    "keeps %s dashboard completion ordered and bounded (#9203)",
-    async (_route, manageDashboard, schema5) => {
+    "keeps %s dashboard completion ordered and bounded, recording the bind it started with (#9203, #10861)",
+    async (_route, manageDashboard, schema5, chatUiUrl, dashboardBindAddress) => {
       const order: string[] = [];
       const gpuProof = {
         status: "verified" as const,
@@ -1096,7 +1098,7 @@ describe("created sandbox completion actions", () => {
             runCaptureOpenshell: vi.fn(),
           },
           dashboard: {
-            chatUiUrl: "http://127.0.0.1:8643",
+            chatUiUrl,
             initialHermesState: { config: null, enabled: false },
             releasePort: async () => {
               order.push("dashboard-release");
@@ -1200,6 +1202,7 @@ describe("created sandbox completion actions", () => {
           imageTag: "hermes:test",
           hermesPortableLifecycle: schema5,
           dashboardPort: manageDashboard ? 8643 : 0,
+          dashboardBindAddress,
           lifecycleGeneration: "generation-1",
           lifecycleLiveIdentityFingerprint: "a".repeat(64),
           inferenceSelection: inferenceRouteReservation.authority.selection,

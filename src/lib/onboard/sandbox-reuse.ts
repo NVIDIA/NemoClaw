@@ -4,6 +4,7 @@
 import type { AgentDefinition } from "../agent/defs";
 import type { SandboxEntry } from "../state/registry";
 import * as registry from "../state/registry";
+import { buildDashboardChain } from "./dashboard-access";
 import {
   getHermesDashboardRegistryFields,
   type HermesDashboardOnboardState,
@@ -186,6 +187,16 @@ export function applyReusedSandboxDashboardState(
   );
   (input.updateSandbox ?? registry.updateSandbox)(input.sandboxName, {
     ...getHermesDashboardRegistryFields(hermesDashboardState),
+    // The forward above was started from `input.chatUiUrl` in this environment.
+    // Record the bind that decision produced so `dashboard-url` and `status`
+    // report the listener rather than a bind recomputed later (#10861). With
+    // no managed forward nothing was started, so the existing record stands.
+    ...(manageDashboard
+      ? {
+          dashboardBindAddress: buildDashboardChain(input.chatUiUrl, { env: input.env })
+            .bindAddress,
+        }
+      : {}),
     gatewayName: input.gatewayName,
     gatewayPort: input.gatewayPort,
   });
