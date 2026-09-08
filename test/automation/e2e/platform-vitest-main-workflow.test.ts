@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
+import { FULL_E2E_TARGET_TIMEOUT_MINUTES } from "../../../tools/e2e/full-e2e-timeout-contract.mts";
 import {
   readRepoText,
   readYaml,
@@ -12,13 +13,9 @@ import {
 } from "../../helpers/e2e-workflow-contract";
 
 const WORKFLOW_PATH = ".github/workflows/platform-vitest-main.yaml";
-const FULL_E2E_PATH = "test/e2e/live/full-e2e.test.ts";
 const WSL_HELPER_PATH = "tools/wsl/ci-helper.ps1";
 const MACOS_REQUIREMENTS_PATH = "ci/platform-vitest-macos-requirements.lock";
 const workflow = readYaml<Workflow>(WORKFLOW_PATH);
-const fullE2eTimeoutMinutes = Number(
-  readRepoText(FULL_E2E_PATH).match(/testTimeout\((\d+) \* 60_000\)/u)?.[1],
-);
 const wslHelperSource = readRepoText(WSL_HELPER_PATH);
 
 function job(name: string): WorkflowJob {
@@ -71,6 +68,6 @@ describe("platform evidence workflow", () => {
     }>;
     const firstShard = macosShards.find(({ shard }) => shard === 1);
 
-    expect(firstShard?.timeout_minutes).toBe(fullE2eTimeoutMinutes + 25);
+    expect(firstShard?.timeout_minutes).toBe(FULL_E2E_TARGET_TIMEOUT_MINUTES);
   });
 });

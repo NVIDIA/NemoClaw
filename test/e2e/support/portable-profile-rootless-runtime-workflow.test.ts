@@ -6,6 +6,7 @@ import fs from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
+import { FULL_E2E_TARGET_TIMEOUT_MINUTES } from "../../../tools/e2e/full-e2e-timeout-contract.mts";
 import { readRepoText, readYaml, type Workflow } from "../../helpers/e2e-workflow-contract";
 
 type PortableProfileWorkflow = Workflow & {
@@ -256,9 +257,6 @@ ${serviceIdentityCheck}`,
       (step) => step.name === "Upload portable profile E2E artifacts",
     );
     const liveSource = readRepoText("test/e2e/live/portable-profile-rootless-linux.test.ts");
-    const fullE2eTimeoutMinutes = Number(
-      readRepoText("test/e2e/live/full-e2e.test.ts").match(/testTimeout\((\d+) \* 60_000\)/u)?.[1],
-    );
     const revisionExpression = "${{ github.event.pull_request.head.sha || github.sha }}";
 
     expect(workflow.on.pull_request.types).toEqual(["opened", "synchronize", "reopened"]);
@@ -277,7 +275,9 @@ ${serviceIdentityCheck}`,
     expect(upload?.if).toBe("always()");
     expect(upload?.with?.name).toContain(revisionExpression);
     expect(workflow.jobs["portable-launch"]?.if).toBe("${{ github.ref == 'refs/heads/main' }}");
-    expect(workflow.jobs["portable-launch"]?.["timeout-minutes"]).toBe(fullE2eTimeoutMinutes + 25);
+    expect(workflow.jobs["portable-launch"]?.["timeout-minutes"]).toBe(
+      FULL_E2E_TARGET_TIMEOUT_MINUTES,
+    );
     expect(liveSource).toContain('run("git", ["rev-parse", "HEAD"])');
     expect(liveSource).toContain('"network", "rm", disposableNetworkId');
     expect(liveSource).not.toContain('"network", "rm", "--force"');
