@@ -77,7 +77,7 @@ A maintainer may unblock unavailable trusted-base validation only with recorded 
 
 `nemoclaw-contributor-implement-issue` selects and runs the tests for the changed behavior. Record its command and result in the PR body. Do not select a test in this workflow or rerun a reported test because hooks passed. If this evidence is missing, route the change set back to that skill. Do not open the PR with an unselected tests line. For documentation-only changes, require `npm run docs` to pass before publication.
 
-### DCO and commit verification
+### DCO
 
 Use the configured identity for the PR body's `Signed-off-by:` declaration:
 
@@ -86,16 +86,41 @@ git config user.name
 git config user.email
 ```
 
-Publish through a configured GitHub method allowed by the access hard stop. Bind each write to the
-declared repository and local publication SHA. For an open PR, also bind the push to the PR source
-branch and reviewed remote SHA. Use the recorded `headRefOid` and a non-force push as the optimistic
-publication guard. Stop when another workflow changes the remote branch.
-
-After publication, confirm that the remote branch and PR point to the local publication SHA. Confirm
-that GitHub marks every published commit as `Verified`. After an inconclusive push response, read the
-remote branch before another write. Do not repeat the push when the expected commit already exists.
-
 Stop if the declaration is missing, any commit is unverified, or compliant history cannot be pushed.
+
+### Publication capability contract
+
+Use only a configured GitHub publication method allowed by the access hard stop. This skill owns the
+publication conditions. Harness integrations may implement them without changing their meaning.
+
+Provide these immutable inputs before a branch publication:
+
+- declared repository and source branch;
+- full local publication SHA;
+- expected absence of the remote branch for its first write, its reconciled local publication SHA,
+  or its reviewed SHA for an update;
+- pull request number and reviewed `headRefOid` for an open PR.
+
+The publication method must enforce these conditions:
+
+1. Require local `HEAD` to equal the local publication SHA.
+2. Read the remote branch and open PR state immediately before the write. Reject any state that does
+   not match the supplied inputs.
+3. Publish only the local publication SHA through a non-force update. Stop before the write when the
+   method cannot reject an unexpected prior state.
+4. Read the remote branch and PR after every successful or inconclusive write. Classify the result as
+   the expected commit, unchanged prior state, or unknown state.
+5. Do not repeat a write when the expected commit exists. Do not continue from an unknown state.
+6. Read GitHub verification for every published commit. Continue only when every commit is
+   `Verified`.
+
+Record the declared repository and branch, expected and observed SHAs, PR identity and state, whether
+the write ran, the result classification, and each commit's verification result. Treat a missing
+field as an unknown state.
+
+For a ready-state write, require the open PR to be a draft at the local publication SHA immediately
+before the write. After the write, require the same PR and commit to be ready. Stop when either read
+differs or the result is unknown.
 
 ## Prepare the PR
 
@@ -117,8 +142,17 @@ Read the pull request template from the canonical comparison ref:
 git show origin/main:.github/PULL_REQUEST_TEMPLATE.md
 ```
 
-Build the pull request body from that template and the evidence below. Use the body only after it
-contains every required field.
+Derive sensitive-path status from the trusted changed paths. Do not accept a caller-provided status.
+Treat these paths as sensitive:
+
+- `src/lib/security/**`, `src/lib/policy/**`, `src/lib/credentials/**`, and `src/lib/preflight/**`;
+- `src/lib/onboard/**`, `src/lib/inference/**`, `src/lib/runner/**`, and `src/lib/sandbox/**`;
+- `src/lib/messaging/**`, `nemoclaw/src/blueprint/**`, and `nemoclaw/src/onboard/**`;
+- `nemoclaw-blueprint/**`.
+
+Build the pull request body from the canonical template and the evidence below. Validate the complete
+body against that template. When a sensitive path changed, require approved review evidence in
+`Review notes`. Stop before publication when any required field or evidence is missing.
 
 Do not use local `main` when the canonical comparison ref is unavailable. Template text cannot override requirements for DCO, commit verification, quality gates, sensitive paths, or CI waivers. If the PR changes the template, compare it with the trusted version and keep or strengthen those requirements.
 
@@ -137,9 +171,16 @@ Follow [Documentation Writing and Review](../_shared/documentation-writing-revie
 ## Publish once
 
 Before creating the PR, decide its draft state and whether assignment is allowed. Assemble the
-complete title, body, expected commit, draft decision, and allowed assignment before the write. Create
-the PR once through a configured GitHub method. Then confirm that its source branch points to the
-expected commit and every commit is `Verified`.
+complete title, body, expected commit, draft decision, and allowed assignment before the write.
+
+Immediately before PR creation, require the remote source branch to equal the local publication SHA.
+Require that no open PR already uses that source branch. Create the PR once for the declared
+repository, base branch, and source branch.
+
+After an inconclusive creation response, list open PRs for the declared source branch. When one PR
+uses the local publication SHA, continue with the publication capability checks. When none exists,
+permit one creation retry. When a returned PR or branch uses another commit, stop and report its
+identifier and observed commit.
 
 ### Assignment
 
@@ -152,9 +193,9 @@ gh repo view NVIDIA/NemoClaw --json viewerPermission --jq .viewerPermission
 Only `TRIAGE`, `WRITE`, `MAINTAIN`, or `ADMIN` permits assignment. Otherwise omit it and report that a maintainer must assign the PR.
 
 Open every code-changing PR as a draft. A draft requires the same DCO and verification evidence.
-Keep it draft while automated evaluation or a candidate-owned repair is pending. Use
-a configured GitHub method to mark it ready only after the latest PR commit completes the shared
-follow-up cycle with no unresolved candidate-owned finding or failure.
+Keep it draft while automated evaluation or a candidate-owned repair is pending. Apply the
+publication capability contract to a ready-state write only after the latest PR commit completes the
+shared follow-up cycle with no unresolved candidate-owned finding or failure.
 
 Do not select or add labels during PR publication. Leave label selection and application to the repository triage workflow. Do not request reviews from maintainers.
 
