@@ -217,9 +217,9 @@ describe("E2E fixture clients", () => {
       runner.enqueue({ stdout: "4321\n" });
       const host = new HostCliClient(runner);
 
-      await expect(
-        host.inspectOpenShellForwardListener("18789", "alpha"),
-      ).resolves.toMatchObject({ valid: expected });
+      await expect(host.inspectOpenShellForwardListener("18789", "alpha")).resolves.toMatchObject({
+        valid: expected,
+      });
     },
   );
 
