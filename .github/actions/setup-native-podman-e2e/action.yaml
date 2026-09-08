@@ -183,11 +183,31 @@ runs:
         sudo chmod 0600 "$cleanup_state_path"
         [[ "$(sudo stat -c '%u:%g:%a' "$cleanup_state_path")" == "0:0:600" ]]
 
-        sudo env DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get update
-        sudo env DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get install \
-          --yes --no-install-recommends \
-          apparmor btrfs-progs conmon fuse-overlayfs \
-          golang-github-containers-common iptables nftables runc slirp4netns uidmap
+        required_host_commands=(
+          conmon
+          fuse-overlayfs
+          iptables
+          newgidmap
+          newuidmap
+          nft
+          runc
+          slirp4netns
+        )
+        if [[ -r /sys/module/apparmor/parameters/enabled ]] && grep -q '^Y' /sys/module/apparmor/parameters/enabled; then
+          required_host_commands+=(aa-exec apparmor_parser)
+        fi
+        for command_name in "${required_host_commands[@]}"; do
+          command_path="$(command -v -- "$command_name" || true)"
+          if [[ -z "$command_path" ]]; then
+            echo "::error::Native Podman E2E requires the preinstalled host command '$command_name'; refusing mutable privileged package acquisition" >&2
+            exit 1
+          fi
+          command_path="$(realpath "$command_path")"
+          command_mode="$(stat -c '%a' "$command_path")"
+          [[ -f "$command_path" && ! -L "$command_path" ]]
+          [[ "$(stat -c '%u' "$command_path")" == "0" ]]
+          (( (8#$command_mode & 022) == 0 ))
+        done
 
         sudo install -d --owner=root --group=root --mode=0755 \
           "$toolchain_install_root" "$toolchain_install_root/bin"

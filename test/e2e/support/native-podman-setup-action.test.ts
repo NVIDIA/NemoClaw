@@ -377,6 +377,26 @@ describe("native Podman E2E setup boundary", () => {
     }
   });
 
+  it("rejects mutable privileged dependency acquisition for native Podman (#11014)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-podman-setup-dependencies-"));
+    const mutatedAction = path.join(root, "action.yaml");
+    const source = fs
+      .readFileSync(SETUP_ACTION, "utf8")
+      .replace(
+        "        required_host_commands=(\n",
+        "        sudo apt-get update\n        sudo apt-get install --yes conmon\n        required_host_commands=(\n",
+      );
+    fs.writeFileSync(mutatedAction, source);
+
+    try {
+      expect(validateNativePodmanSetupAction(mutatedAction)).toContain(
+        "native Podman setup must use trusted preinstalled host dependencies without mutable privileged acquisition",
+      );
+    } finally {
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   it("rejects restore logic that omits Docker service recovery (#11014)", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-podman-restore-mutation-"));
     const mutatedAction = path.join(root, "action.yaml");

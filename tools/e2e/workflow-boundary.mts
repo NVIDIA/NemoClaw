@@ -3672,9 +3672,26 @@ export function validateNativePodmanSetupAction(
     !run.includes("subuidRange") ||
     !run.includes("subgidRange") ||
     !run.includes('sudo tee "$cleanup_state_path"') ||
-    run.indexOf('sudo tee "$cleanup_state_path"') > run.indexOf("/usr/bin/apt-get update")
+    run.indexOf('sudo tee "$cleanup_state_path"') >
+      run.indexOf('sudo systemctl start "user-runtime-dir@${uid}.service"')
   ) {
     errors.push("native Podman setup must record cleanup authority before runner mutation");
+  }
+  if (
+    run.includes("apt-get") ||
+    !run.includes("required_host_commands=(") ||
+    !run.includes("conmon") ||
+    !run.includes("fuse-overlayfs") ||
+    !run.includes("newgidmap") ||
+    !run.includes("newuidmap") ||
+    !run.includes("runc") ||
+    !run.includes("slirp4netns") ||
+    !run.includes("refusing mutable privileged package acquisition") ||
+    !run.includes("(( (8#$command_mode & 022) == 0 ))")
+  ) {
+    errors.push(
+      "native Podman setup must use trusted preinstalled host dependencies without mutable privileged acquisition",
+    );
   }
   const isolationRun = stringValue(isolate?.run);
   if (
