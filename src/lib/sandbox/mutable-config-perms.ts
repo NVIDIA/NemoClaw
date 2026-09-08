@@ -1,11 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { dockerExecFileSync } from "../adapters/docker/exec";
 import { validateName } from "../runner";
 import { withMcpLifecycleLockSync } from "../state/mcp-lifecycle-lock-acquisition";
 import { resolveAgentConfig, type AgentConfigTarget } from "./agent-config";
-import { privilegedSandboxExecArgv } from "./privileged-exec";
+import { capturePrivilegedSandboxCommand } from "./privileged-exec";
 
 export const MUTABLE_OPENCLAW_DIR_MODE = "2770";
 export const MUTABLE_OPENCLAW_FILE_MODE = "660";
@@ -240,10 +239,12 @@ export function verifyMutableHermesConfigForTarget(
 }
 
 function privilegedExecCapture(sandboxName: string, command: string[]): string {
-  return dockerExecFileSync(privilegedSandboxExecArgv(sandboxName, command, false, true), {
-    stdio: ["ignore", "pipe", "pipe"],
+  return capturePrivilegedSandboxCommand(sandboxName, command, {
+    sanitizeEnvironment: true,
     timeout: 15_000,
-  }).trim();
+  })
+    .toString("utf8")
+    .trim();
 }
 
 function sandboxIdentityId(sandboxName: string, flag: "-u" | "-g"): string {
@@ -257,23 +258,19 @@ function sandboxIdentityId(sandboxName: string, flag: "-u" | "-g"): string {
 function normalizeMutableOpenClawConfig(sandboxName: string, configDir: string): void {
   const sandboxUid = sandboxIdentityId(sandboxName, "-u");
   const sandboxGid = sandboxIdentityId(sandboxName, "-g");
-  dockerExecFileSync(
-    privilegedSandboxExecArgv(
-      sandboxName,
-      [
-        ...MUTABLE_CONFIG_NORMALIZER_WATCHDOG,
-        "/usr/bin/python3",
-        "-I",
-        MUTABLE_CONFIG_NORMALIZER,
-        configDir,
-        sandboxUid,
-        sandboxGid,
-      ],
-      false,
-      true,
-    ),
+  capturePrivilegedSandboxCommand(
+    sandboxName,
+    [
+      ...MUTABLE_CONFIG_NORMALIZER_WATCHDOG,
+      "/usr/bin/python3",
+      "-I",
+      MUTABLE_CONFIG_NORMALIZER,
+      configDir,
+      sandboxUid,
+      sandboxGid,
+    ],
     {
-      stdio: ["ignore", "pipe", "pipe"],
+      sanitizeEnvironment: true,
       timeout: MUTABLE_CONFIG_NORMALIZER_HOST_TIMEOUT_MS,
     },
   );
@@ -306,8 +303,8 @@ export function inspectMutableHermesConfigPerms(
   return withMcpLifecycleLockSync(sandboxName, () => {
     const target = resolveAgentConfig(sandboxName);
     return verifyMutableHermesConfigForTarget(target, (command) => {
-      dockerExecFileSync(privilegedSandboxExecArgv(sandboxName, [...command], false, true), {
-        stdio: ["ignore", "pipe", "pipe"],
+      capturePrivilegedSandboxCommand(sandboxName, command, {
+        sanitizeEnvironment: true,
         timeout: MUTABLE_HERMES_CONFIG_PROBE_TIMEOUT_MS,
       });
     });
