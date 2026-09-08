@@ -14,9 +14,9 @@ function runHermesApiPortBootstrap(apiPort: string) {
   try {
     const scriptPath = path.join(tmpDir, "run.sh");
     const source = fs.readFileSync(START_SCRIPT, "utf-8");
-    const start = source.indexOf('HERMES_DASHBOARD_EXTERNAL_HOST=""');
+    const start = source.indexOf('NEMOCLAW_CMD=("$@")');
     const end = source.indexOf('\nHERMES="$(command -v hermes)"', start);
-    expect(start, "Hermes dashboard validation boundary").toBeGreaterThanOrEqual(0);
+    expect(start, "Hermes startup command boundary").toBeGreaterThanOrEqual(0);
     expect(end, "Hermes startup command boundary").toBeGreaterThan(start);
     fs.writeFileSync(
       scriptPath,
@@ -24,6 +24,7 @@ function runHermesApiPortBootstrap(apiPort: string) {
         "#!/usr/bin/env bash",
         "set -euo pipefail",
         "set -- true",
+        '_chat_ui_port=""',
         source.slice(start, end).trimEnd(),
         'printf "PUBLIC_PORT=%s\\n" "$PUBLIC_PORT"',
       ].join("\n"),
