@@ -38,10 +38,9 @@ const LIVE_EXTRA_PROVIDER = "e2e-live-extra-provider";
 const EXTRA_PROVIDER_TOKEN_ENV = "NEMOCLAW_E2E_EXTRA_PROVIDER_TOKEN";
 const EXTRA_PROVIDER_TOKEN = "e2e-extra-provider-token";
 const LIVE_TIMEOUT_MS = testTimeout(70 * 60_000);
-// Pairing-appearance evidence for #11085. The phase-1 snapshot must not wait:
-// it records the state at the instant before the sandbox is deleted without
-// moving that deletion. The 240 s repair budget exceeds the host's 60 s wait.
-const PAIRING_TIMELINE_BASELINE_WAIT_SECONDS = 0;
+// Pairing-appearance evidence for #11085, captured only after the repair resume
+// returns so nothing runs against the sandbox before it is deleted. The 240 s
+// budget exceeds the host's 60 s pairing wait so a late appearance is recorded.
 const PAIRING_TIMELINE_REPAIR_WAIT_SECONDS = 240;
 
 validateSandboxName(SANDBOX_NAME);
@@ -313,16 +312,6 @@ test(
     timeoutMs: 60_000,
   });
   expect(sandboxAfterFailure.exitCode, resultText(sandboxAfterFailure)).toBe(0);
-  await artifacts.writeJson(
-    "phase-1-pairing-timeline.json",
-    await captureOpenClawPairingTimeline(sandbox, {
-      artifactName: "phase-1-pairing-timeline",
-      env: env(),
-      redactionValues: [EXTRA_PROVIDER_TOKEN],
-      sandboxName: SANDBOX_NAME,
-      waitSeconds: PAIRING_TIMELINE_BASELINE_WAIT_SECONDS,
-    }),
-  );
 
   await upsertGenericGatewayProvider(host, LIVE_EXTRA_PROVIDER, {
     artifactName: "phase-1-live-extra-provider-upsert",
