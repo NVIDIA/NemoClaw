@@ -546,7 +546,7 @@ export function createSandboxGpuCreateAttemptRunner(
         const persistenceFailureMessage =
           "NemoClaw could not save the retained sandbox recovery record for this create attempt.";
         console.error(
-          `  ${persistenceFailureMessage} Preserve the terminal output for an OpenShell administrator.`,
+          `  ${persistenceFailureMessage} Preserve the registry entry and terminal output; do not delete the sandbox by mutable name.`,
         );
         throw new Error(persistenceFailureMessage, { cause: persistenceCause });
       }
@@ -774,7 +774,7 @@ export function createSandboxGpuCreateAttemptRunner(
         throw new Error(
           createAttemptNonce
             ? `OpenShell create client did not exit after Ready for sandbox '${input.sandboxName}'. NemoClaw retained the sandbox and blocked post-create effects. Follow the retained recovery action above.`
-            : `OpenShell create client did not exit after Ready for sandbox '${input.sandboxName}'. NemoClaw blocked post-create effects. No create-attempt identity was available for retained recovery. Preserve the sandbox for identity-bound OpenShell administrator recovery; do not delete it by mutable name.`,
+            : `OpenShell create client did not exit after Ready for sandbox '${input.sandboxName}'. NemoClaw blocked post-create effects. No create-attempt identity was available for retained recovery. Preserve the registry entry and terminal output; do not delete the sandbox by mutable name.`,
         );
       }
       return createResult;
@@ -1158,7 +1158,9 @@ export function createSandboxGpuCreateAttemptRunner(
         console.error(
           `  NemoClaw left sandbox '${input.sandboxName}' in place because OpenShell can delete it only by mutable name.`,
         );
-        console.error("  Verify the sandbox identity before manual cleanup.");
+        console.error(
+          `  Recovery remains blocked while this sandbox exists. Do not delete it by mutable name; run 'nemoclaw ${input.sandboxName} destroy' to check for authoritative absence.`,
+        );
       }
       failAfterCreatedSandboxVerification(
         `Sandbox '${input.sandboxName}' did not become ready after verified creation.`,

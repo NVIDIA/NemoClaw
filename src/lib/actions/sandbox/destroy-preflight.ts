@@ -4,7 +4,6 @@
 import os from "node:os";
 
 import { buildSelectedOpenShellSubprocessEnv } from "../../adapters/openshell/command-argv";
-import { observeOpenShellSandboxIdentity } from "../../adapters/openshell/sandbox-presence";
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { withModelRouterPortLifecycleLock } from "../../inference/gateway-route-mutation-lock";
@@ -26,6 +25,10 @@ import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import { type DestroyRunOpenshell, selectGatewayForSandboxDestroy } from "./destroy-gateway";
 import {
+  classifyDestroySandboxPresence,
+  type DestroySandboxPresence,
+} from "./destroy-presence";
+import {
   getPersistedSandboxTargetGatewayName,
   getSandboxTargetGatewayName,
 } from "./gateway-target";
@@ -40,6 +43,7 @@ export type SandboxDestroyPreflight = {
   selectedRunOpenshell: DestroyRunOpenshell;
   sandbox: SandboxEntry | null;
   sandboxConfirmedAbsent: boolean;
+  sandboxPresence?: DestroySandboxPresence;
 };
 
 export function resolveSandboxDestroyRuntimeSelection(
@@ -342,7 +346,7 @@ export function prepareSandboxDestroy(
   selectGatewayForSandboxDestroy(sandboxName, cleanupGatewayName, selectedRunOpenshell);
   process.env.OPENSHELL_GATEWAY = cleanupGatewayName;
 
-  const sandboxIdentityObservation = observeOpenShellSandboxIdentity(
+  const sandboxPresence = classifyDestroySandboxPresence(
     sandboxName,
     selectedRunOpenshell(["sandbox", "list", "-o", "json"], {
       ignoreError: true,
@@ -350,14 +354,14 @@ export function prepareSandboxDestroy(
       timeout: OPENSHELL_PROBE_TIMEOUT_MS,
     }),
   );
-  const sandboxConfirmedAbsent = sandboxIdentityObservation.kind === "absent";
 
   return {
     cleanupGatewayName,
     runOpenshell,
     selectedRunOpenshell,
     sandbox,
-    sandboxConfirmedAbsent,
+    sandboxConfirmedAbsent: sandboxPresence === "absent",
+    sandboxPresence,
     ...(selectedCaptureOpenshell ? { selectedCaptureOpenshell } : {}),
     ...(runtimeSelection ? { runtimeSelection } : {}),
   };
