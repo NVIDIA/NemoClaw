@@ -8,7 +8,7 @@ import path from "node:path";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import {
   buildNetworkPolicyCurlProbe,
-  parseNetworkPolicyCurlStatus,
+  parseNetworkPolicyCurlOutput,
 } from "../../helpers/network-policy-probe.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -391,8 +391,11 @@ test(
       `http://host.openshell.internal:${deniedServer.port}/`,
       "network-policy-denied-host-gateway-port",
     );
+    const deniedResult = parseNetworkPolicyCurlOutput(denied);
+    const deniedEvidence = "network-policy-denied-host-gateway-result.json";
+    await artifacts.writeJson(deniedEvidence, deniedResult ?? { response: denied, status: null });
     expect(denied).not.toContain(deniedMarker);
-    expect(parseNetworkPolicyCurlStatus(denied), denied).toBe(403);
+    expect(deniedResult?.status, denied).toBe(403);
 
     progress.phase("prove the installed OpenClaw web_fetch path obeys the host-gateway policy");
     const webFetch = await sandboxBash(
@@ -415,6 +418,7 @@ NEMOCLAW_WEB_FETCH_PROBE`,
     await artifacts.target.complete({
       id: "network-policy",
       sandboxName: SANDBOX_NAME,
+      evidence: { deniedHostGateway: deniedEvidence },
       assertions: {
         defaultDeny: true,
         hotReloadWithoutRestart: true,

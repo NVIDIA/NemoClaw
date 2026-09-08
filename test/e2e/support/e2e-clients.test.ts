@@ -8,7 +8,7 @@ import path from "node:path";
 import { describe, expect, expectTypeOf, it, vi } from "vitest";
 import {
   buildNetworkPolicyCurlProbe,
-  parseNetworkPolicyCurlStatus,
+  parseNetworkPolicyCurlOutput,
 } from "../../helpers/network-policy-probe.ts";
 import {
   assertExitZero,
@@ -88,12 +88,20 @@ describe("E2E fixture clients", () => {
   });
 
   it.each([
-    ["a terminal LF record", '{"detail":"policy_denied"}\nSTATUS_403\n', 403],
-    ["a terminal CRLF record", "denied\r\nSTATUS_403\r\n", 403],
-    ["status-like response text", '{"detail":"STATUS_403"}\nSTATUS_000\n', 0],
+    [
+      "a terminal LF record",
+      '{"detail":"policy_denied"}\nSTATUS_403\n',
+      { response: '{"detail":"policy_denied"}', status: 403 },
+    ],
+    ["a terminal CRLF record", "denied\r\nSTATUS_403\r\n", { response: "denied", status: 403 }],
+    [
+      "status-like response text",
+      '{"detail":"STATUS_403"}\nSTATUS_000\n',
+      { response: '{"detail":"STATUS_403"}', status: 0 },
+    ],
     ["no terminal record", '{"detail":"STATUS_403"}', null],
-  ])("parses network-policy curl status from %s", (_label, output, expected) => {
-    expect(parseNetworkPolicyCurlStatus(output)).toBe(expected);
+  ])("separates network-policy response and status from %s", (_label, output, expected) => {
+    expect(parseNetworkPolicyCurlOutput(output)).toEqual(expected);
   });
 
   it.each([
