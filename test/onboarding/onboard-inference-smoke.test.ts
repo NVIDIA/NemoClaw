@@ -16,6 +16,13 @@ import { testTimeoutOptions } from "../helpers/timeouts";
 // bash or the scenario framework. Refs #5098, #4349.
 const REPO_ROOT = path.join(import.meta.dirname, "../..");
 
+function hasTokenSequence(command: string, sequence: readonly string[]): boolean {
+  const tokens = command.trim().split(/\s+/);
+  return tokens.some((_, index) =>
+    sequence.every((expected, offset) => tokens[index + offset] === expected),
+  );
+}
+
 describe("onboard inference smoke guard (#3253)", () => {
   it(
     "rejects a configured OpenAI-compatible route when chat/completions returns 503",
@@ -171,11 +178,15 @@ const setupInference = createSetupInference({
         const commands = fs.readFileSync(commandLogPath, "utf8").trim().split("\n");
         const providerCreateIndex = commands.findIndex(
           (command) =>
-            command.includes("provider create -g nemoclaw") &&
-            command.includes("--name compatible-endpoint"),
+            hasTokenSequence(command, ["provider", "create"]) &&
+            hasTokenSequence(command, ["-g", "nemoclaw"]) &&
+            hasTokenSequence(command, ["--name", "compatible-endpoint"]),
         );
-        const inferenceSetIndex = commands.findIndex((command) =>
-          command.includes("inference set -g nemoclaw"),
+        const inferenceSetIndex = commands.findIndex(
+          (command) =>
+            hasTokenSequence(command, ["inference", "set"]) &&
+            hasTokenSequence(command, ["-g", "nemoclaw"]) &&
+            hasTokenSequence(command, ["--provider", "compatible-endpoint"]),
         );
         assert.ok(providerCreateIndex >= 0, "setupInference did not create compatible-endpoint");
         assert.ok(inferenceSetIndex >= 0, "setupInference did not configure inference");
