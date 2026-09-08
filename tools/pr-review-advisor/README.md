@@ -83,7 +83,13 @@ Review Advisor Generated Head` from `main` with the successful source `source_ru
 without creating another repair attempt.
 
 The repair path retains bounded proposal, validation, publication, generated-head, and diagnostic
-artifacts. Ordinary `pull_request_target` review runs remain advisory-only and read-only.
+artifacts. The resolver runs on an ephemeral GitHub-hosted `ubuntu-24.04` runner: its `always()`
+step deletes the run-named sandbox after ordinary failures, while cancellation or job timeout
+retires the runner-local gateway and sandbox with the runner. Moving this job to a persistent or
+self-hosted runner requires a separate external reconciliation design.
+
+Ordinary `pull_request_target` analysis jobs remain advisory-only and read-only. The
+advisory-comment publisher can update only its sticky workflow-link comment.
 
 The Advisor owns eligibility, finding identity, resolution, publication, and lifecycle orchestration
 in `repair-contract.mts`, `repair-resolve.mts`, `repair-publish.mts`, and the two Advisor workflows.

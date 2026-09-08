@@ -577,6 +577,9 @@ describe("pull request and main workflow contracts", () => {
     expect(resolveText).toContain("assertRepairArtifactDirectory");
     expect(resolveText.match(/repair-resolve[.]mts[^\n]* export/gu)).toHaveLength(1);
     expect(resolveText).toContain('if":"always()"');
+    expect(resolve["runs-on"]).toBe("ubuntu-24.04");
+    expect(resolve["timeout-minutes"]).toBe(35);
+    expect(resolveText).toContain("advisor-repair-${{ github.run_id }}");
     expect(validateText).toContain("needs.repair-select.outputs.context-artifact-id");
     expect(validateText).toContain("needs.repair-resolve.outputs.candidate-artifact-id");
     expect(validateText).toContain("run check:diff");

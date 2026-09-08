@@ -88,7 +88,11 @@ jobs:
           jq -c '[.[].artifacts[] | select(.name == $name)]' --arg name "$name" \
             "$RUNNER_TEMP/source-artifact-pages.json" > "$RUNNER_TEMP/request-artifacts.json"
           count="$(jq length "$RUNNER_TEMP/request-artifacts.json")"
-          [[ "$count" == 0 ]] && exit 0
+          if [[ "$count" == 0 ]]; then
+            [[ -n "$EVENT_SOURCE_RUN_ID" ]] && exit 0
+            echo "Manual reconciliation source run has no generated-head request artifact" >&2
+            exit 1
+          fi
           [[ "$count" == 1 ]]
           jq -e --argjson run "$SOURCE_RUN_ID" '.[0].expired == false and .[0].workflow_run.id == $run' \
             "$RUNNER_TEMP/request-artifacts.json" >/dev/null
