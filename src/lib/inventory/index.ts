@@ -469,7 +469,11 @@ export function renderSandboxInventoryText(
       // Say when the recorded bind means the forward also listens on every
       // interface, so `list` no longer contradicts the listener (#10861).
       const reach =
-        sandbox.dashboardBindAddress === "0.0.0.0" ? "  (bound on all interfaces)" : "";
+        sandbox.dashboardBindAddress === "0.0.0.0"
+          ? "  (bound on all interfaces)"
+          : sandbox.dashboardBindAddress
+            ? ""
+            : "  (bind not recorded)";
       log(`      dashboard: http://127.0.0.1:${sandbox.dashboardPort}/${reach}`);
     }
   }

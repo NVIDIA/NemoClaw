@@ -392,13 +392,16 @@ function dashboardBindRefusal(
 
 /** Put back the record of the last forward that did start, after a launch failed. */
 function restoreDashboardBindAddress(sandboxName: string, previousBind: string | null): void {
+  let restored = false;
   try {
-    registry.updateSandbox(sandboxName, { dashboardBindAddress: previousBind });
+    restored = registry.updateSandbox(sandboxName, { dashboardBindAddress: previousBind });
   } catch {
-    console.error(
-      `  Warning: the recorded dashboard bind for '${sandboxName}' could not be restored after the forward failed to start; \`dashboard-url\` may report a listener that does not exist.`,
-    );
+    restored = false;
   }
+  if (restored) return;
+  console.error(
+    `  Warning: the recorded dashboard bind for '${sandboxName}' could not be restored after the forward failed to start; \`dashboard-url\` may report a listener that does not exist until the next forward launch.`,
+  );
 }
 
 export function ensureSandboxPortForwardForPort(

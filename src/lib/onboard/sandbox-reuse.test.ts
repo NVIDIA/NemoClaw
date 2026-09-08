@@ -127,6 +127,7 @@ describe("applyReusedSandboxDashboardState", () => {
     updateSandbox: NonNullable<ReusedSandboxDashboardStateInput["updateSandbox"]>,
     options: {
       previousBind?: string | null;
+      chatUiUrl?: string;
       ensureDashboardForward?: ReusedSandboxDashboardStateInput["ensureDashboardForward"];
     } = {},
   ) {
@@ -134,7 +135,7 @@ describe("applyReusedSandboxDashboardState", () => {
     const restore = () =>
       applyReusedSandboxDashboardState({
         sandboxName: "reuse-me",
-        chatUiUrl: "https://dashboard.example.test:18789",
+        chatUiUrl: options.chatUiUrl ?? "https://dashboard.example.test:18789",
         env: {},
         getSandbox: () => ({ name: "reuse-me", dashboardBindAddress: options.previousBind ?? null }),
         agent: null,
@@ -228,6 +229,57 @@ describe("applyReusedSandboxDashboardState", () => {
       expect(bindsAfterRestore).not.toContain("0.0.0.0");
     },
   );
+
+  it("records a loopback bind before restoring the forward when it replaces a recorded wide bind (#10861)", () => {
+    const updateSandbox = vi.fn(() => true);
+    const { ensureDashboardForward, restore } = reusedWideDashboard(updateSandbox, {
+      previousBind: "0.0.0.0",
+      chatUiUrl: "http://127.0.0.1:18789",
+    });
+
+    restore();
+
+    expect(updateSandbox).toHaveBeenNthCalledWith(1, "reuse-me", {
+      dashboardBindAddress: "127.0.0.1",
+    });
+    expect(updateSandbox.mock.invocationCallOrder[0]).toBeLessThan(
+      ensureDashboardForward.mock.invocationCallOrder[0],
+    );
+  });
+
+  it.each([
+    ["the write is rejected", () => false],
+    [
+      "the write throws",
+      () => {
+        throw new Error("disk full");
+      },
+    ],
+  ])("refuses to restore a loopback forward over a stale wide record when %s", (_case, write) => {
+    const { ensureDashboardForward, restore } = reusedWideDashboard(vi.fn(write), {
+      previousBind: "0.0.0.0",
+      chatUiUrl: "http://127.0.0.1:18789",
+    });
+
+    expect(restore).toThrow(/on loopback: the registry still records a bind on 0\.0\.0\.0/u);
+    expect(ensureDashboardForward).not.toHaveBeenCalled();
+  });
+
+  it("warns when the previous record cannot be put back after the wide forward does not start (#10861)", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const updateSandbox = vi.fn(() => true).mockReturnValueOnce(true).mockReturnValue(false);
+    const { restore } = reusedWideDashboard(updateSandbox, {
+      previousBind: "127.0.0.1",
+      ensureDashboardForward: (_sandboxName, _chatUiUrl, options) => {
+        options?.onForwardFailure?.("forward service exited");
+        return 18789;
+      },
+    });
+
+    restore();
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("could not be restored"));
+  });
 
   it("skips dashboard forwarding while preserving reuse metadata for terminal agents", () => {
     const updateSandbox = vi.fn();

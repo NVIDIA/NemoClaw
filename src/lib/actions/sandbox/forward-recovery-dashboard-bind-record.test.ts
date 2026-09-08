@@ -220,4 +220,22 @@ describe("the recorded dashboard bind follows the forward (#10861)", () => {
       });
     },
   );
+
+  it("warns when the previous record cannot be put back after the wide forward fails to start", () => {
+    const stderr = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
+    mocks.getSandbox.mockReturnValue({
+      ...SANDBOX,
+      dashboardRemoteBindPrepared: true,
+      dashboardBindAddress: "127.0.0.1",
+    });
+    mocks.updateSandbox.mockReturnValueOnce(true).mockReturnValue(false);
+    mocks.launchForwardService.mockImplementation(() => {
+      throw new Error("forward service exited");
+    });
+
+    expect(ensureSandboxPortForward("hm", { isWsl: false })).toBe(false);
+
+    expect(stderr).toHaveBeenCalledWith(expect.stringContaining("could not be restored"));
+  });
 });

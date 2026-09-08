@@ -147,6 +147,17 @@ function recordReusedDashboardBind(
   }
 }
 
+/** Explain a refused reused-dashboard restore whose record would misdescribe it. */
+function reusedDashboardBindRefusal(
+  sandboxName: string,
+  bindAddress: string,
+  previousBind: string | null,
+): string {
+  return bindAddress === "0.0.0.0"
+    ? `Refusing to restore the dashboard forward for '${sandboxName}' on all interfaces: its exposure could not be recorded, so \`dashboard-url\` and \`status\` would not disclose it. Repair the sandbox registry and re-run onboarding.`
+    : `Refusing to restore the dashboard forward for '${sandboxName}' on loopback: the registry still records a bind on ${String(previousBind)} and could not be updated, so \`dashboard-url\` and \`status\` would report exposure that no longer exists. Repair the sandbox registry and re-run onboarding.`;
+}
+
 export function applyReusedSandboxDashboardState(
   input: ReusedSandboxDashboardStateInput,
 ): ReusedSandboxDashboardStateResult {
@@ -165,23 +176,29 @@ export function applyReusedSandboxDashboardState(
     `restore dashboard state for sandbox '${input.sandboxName}'`,
   );
   // The bind the restored forward will have, from the same URL and
-  // environment `ensureDashboardForward` decides it from (#10861). A wide
-  // bind is recorded before the forward exists and refused when it cannot
-  // be, so a listener on every interface is never started undisclosed; a
-  // loopback bind is recorded with the rest of the dashboard state below.
+  // environment `ensureDashboardForward` decides it from (#10861). It is
+  // recorded before the forward exists whenever the record would otherwise
+  // misdescribe exposure: a wide bind must never be started undisclosed, and
+  // a loopback bind replacing a recorded wide one must not leave that record
+  // standing if a later step fails. Either is refused when the write fails.
+  // A loopback bind over a loopback or absent record is recorded with the
+  // rest of the dashboard state below.
   const dashboardBindAddress = manageDashboard
     ? buildDashboardChain(input.chatUiUrl, { env: input.env }).bindAddress
     : null;
   const previousBind = manageDashboard
     ? ((input.getSandbox ?? registry.getSandbox)(input.sandboxName)?.dashboardBindAddress ?? null)
     : null;
-  if (dashboardBindAddress === "0.0.0.0") {
+  const recordBeforeLaunch =
+    dashboardBindAddress !== null &&
+    (dashboardBindAddress === "0.0.0.0" || previousBind === "0.0.0.0");
+  if (recordBeforeLaunch) {
     input.revalidateSandboxIdentity?.(
       `record the dashboard bind for sandbox '${input.sandboxName}'`,
     );
     if (!recordReusedDashboardBind(input, dashboardBindAddress)) {
       throw new Error(
-        `Refusing to restore the dashboard forward for '${input.sandboxName}' on all interfaces: its exposure could not be recorded, so \`dashboard-url\` and \`status\` would not disclose it. Repair the sandbox registry and re-run onboarding.`,
+        reusedDashboardBindRefusal(input.sandboxName, dashboardBindAddress, previousBind),
       );
     }
   }
@@ -202,8 +219,14 @@ export function applyReusedSandboxDashboardState(
       : input.ensureDashboardForward(input.sandboxName, input.chatUiUrl, { onForwardFailure })
     : 0;
   const recordedBind = forwardFailure === null ? dashboardBindAddress : previousBind;
-  if (forwardFailure !== null && dashboardBindAddress === "0.0.0.0") {
-    recordReusedDashboardBind(input, previousBind);
+  if (
+    forwardFailure !== null &&
+    recordBeforeLaunch &&
+    !recordReusedDashboardBind(input, previousBind)
+  ) {
+    console.warn(
+      `  Warning: the recorded dashboard bind for '${input.sandboxName}' could not be restored after the forward failed to start; \`dashboard-url\` may report a listener that does not exist until the next forward launch.`,
+    );
   }
   const chatUiUrl = manageDashboard ? `http://127.0.0.1:${dashboardPort}` : input.chatUiUrl;
   if (manageDashboard) {

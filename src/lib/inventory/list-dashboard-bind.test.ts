@@ -33,12 +33,13 @@ describe("the dashboard line in list follows the recorded bind (#10861)", () => 
 
     expect(body).toContain("dashboard: http://127.0.0.1:18792/");
     expect(body).not.toContain("bound on all interfaces");
+    expect(body).not.toContain("bind not recorded");
   });
 
-  it("prints the plain loopback URL for a row written before the bind was recorded", async () => {
+  it("says the bind is not recorded for a row written before NemoClaw recorded binds", async () => {
     const body = await renderedListFor({});
 
-    expect(body).toContain("dashboard: http://127.0.0.1:18792/");
+    expect(body).toContain("dashboard: http://127.0.0.1:18792/  (bind not recorded)");
     expect(body).not.toContain("bound on all interfaces");
   });
 });
