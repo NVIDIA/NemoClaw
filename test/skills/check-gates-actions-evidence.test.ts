@@ -66,7 +66,7 @@ function advisorRun(jobId: number, options: AdvisorRunOptions = {}) {
     headRepository: "NVIDIA/NemoClaw",
     pullRequestHeadSha: HEAD_SHA,
     baseSha: BASE_SHA,
-    event: "pull_request_target",
+    event: "workflow_run",
     path: ADVISOR_WORKFLOW_PATH,
     status: "completed",
     conclusion: "failure",
@@ -125,6 +125,7 @@ describe("maintainer merge-gate contributor compliance", () => {
       conclusion: "FAILURE",
       runStatus: "completed",
       runConclusion: "failure",
+      event: "workflow_run",
     },
     {
       state: "pending",
@@ -134,6 +135,7 @@ describe("maintainer merge-gate contributor compliance", () => {
       conclusion: undefined,
       runStatus: "in_progress",
       runConclusion: null,
+      event: "pull_request_target",
     },
   ])("keeps an authenticated $state PR Review Advisor lane advisory", ({
     name,
@@ -142,6 +144,7 @@ describe("maintainer merge-gate contributor compliance", () => {
     conclusion,
     runStatus,
     runConclusion,
+    event,
   }) => {
     const jobId = runId + 100;
     const result = runGate({
@@ -158,6 +161,7 @@ describe("maintainer merge-gate contributor compliance", () => {
           conclusion: runConclusion,
           jobStatus: runStatus,
           jobConclusion: runConclusion,
+          event,
         }),
       },
     });

@@ -62,9 +62,9 @@ it.each([
   ],
   [
     "source base binding",
-    "github.event.workflow_run.pull_requests[0].base.sha",
-    "github.event.workflow_run.head_sha",
-    "Unified advisor green checks gate must resolve the source run PR",
+    ".base.sha == $base_sha",
+    ".base.sha != $base_sha",
+    "Unified advisor green checks gate must retain .base.sha == $base_sha",
   ],
   [
     "analysis commit binding",

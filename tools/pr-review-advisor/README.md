@@ -8,7 +8,7 @@ model-backed analysis in OpenShell sandboxes from trusted GitHub Actions jobs an
 read-only data. It posts a sticky comment that links to the complete specialist reviews in the
 workflow run.
 
-After a required `CI / Pull Request` run succeeds, it runs every specialist prompt in `tools/pr-review-advisor/specialists`. Each prompt owns a distinct review concern and defines its purpose, investigation method, evidence expectations, and finding threshold.
+After a required `CI / Pull Request` run whose name ends in `gate true` succeeds, it runs every specialist prompt in `tools/pr-review-advisor/specialists`. Other completed CI runs do not schedule the Advisor. Each prompt owns a distinct review concern and defines its purpose, investigation method, evidence expectations, and finding threshold.
 
 Specialists inspect their assigned concern and recommend the smallest direct correction. They run independently and publish separate reports. The advisor does not select, aggregate, or summarize their findings.
 

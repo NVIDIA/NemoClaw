@@ -1871,7 +1871,9 @@ function currentCheckRollup(
   ): "current" | "other" | "unknown" => {
     if (
       metadata.hasPullRequests !== false ||
-      (metadata.event !== "pull_request" && metadata.event !== "pull_request_target")
+      (metadata.event !== "pull_request" &&
+        metadata.event !== "pull_request_target" &&
+        metadata.event !== "workflow_run")
     ) {
       return "unknown";
     }
@@ -1916,7 +1918,7 @@ function currentCheckRollup(
     return Boolean(
       run &&
         job &&
-        run.event === "pull_request_target" &&
+        (run.event === "pull_request_target" || run.event === "workflow_run") &&
         run.path === PR_REVIEW_ADVISOR_WORKFLOW_PATH &&
         currentPrBinding &&
         job.name === checkName &&

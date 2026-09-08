@@ -86,7 +86,8 @@ jobs:
             --arg branch "$RUN_HEAD_BRANCH" \
             --arg sha "$RUN_HEAD_SHA" \
             --arg base "$GITHUB_REPOSITORY" \
-            '[.[] | select(.head.repo.full_name == $repo and .head.ref == $branch and .head.sha == $sha and .base.repo.full_name == $base)] |
+            --arg base_sha "$run_base_sha" \
+            '[.[] | select(.head.repo.full_name == $repo and .head.ref == $branch and .head.sha == $sha and .base.repo.full_name == $base and .base.sha == $base_sha)] |
              if length == 1 then .[0] else error("CI run must identify one open PR") end' \
             <<< "$pulls")"
           jq -r --arg base_sha "$run_base_sha" \

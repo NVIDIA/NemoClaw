@@ -1602,6 +1602,7 @@ function validateUnifiedAdvisorBoundary(errors: string[], advisorPath: string): 
     ".head.ref == $branch",
     ".head.sha == $sha",
     ".base.repo.full_name == $base",
+    ".base.sha == $base_sha",
     'if length == 1 then .[0] else error("CI run must identify one open PR") end',
     'run_base_sha="${RUN_BASE_SHA:-}"',
     "sed -En 's/^.* base ([0-9a-f]{40}) gate true$/\\1/p'",
