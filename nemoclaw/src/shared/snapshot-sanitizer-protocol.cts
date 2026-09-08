@@ -67,6 +67,7 @@ export type SnapshotSanitizerHelperResponse =
       readonly ok: false;
       readonly prerequisite?: boolean;
       readonly code?: SnapshotSanitizerFailureCode;
+      readonly retainedPath?: string;
     };
 
 export const SNAPSHOT_SANITIZER_FAILURE_CODES: ReadonlySet<SnapshotSanitizerFailureCode> = new Set([

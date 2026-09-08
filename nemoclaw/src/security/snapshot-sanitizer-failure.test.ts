@@ -9,10 +9,12 @@ import {
   mkdtempSync,
   openSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -348,6 +350,67 @@ describe("migration snapshot sanitizer fallbacks", () => {
       message: "Native snapshot sanitization failed: snapshot-size-limit-exceeded",
       snapshotPath: root.canonicalPath,
     });
+  });
+
+  it("reports the exact retained native probe when its cleanup fails", () => {
+    const retainedPath = path.join(realpathSync(tmpdir()), ".nemoclaw-native-probe-retained");
+    const probeTestPath = path.join(makeRoot(), "native-probe-cleanup.mts");
+    writeFileSync(
+      probeTestPath,
+      [
+        `import { assertNativeSupport } from ${JSON.stringify(resolveSnapshotSanitizerHelperPath())};`,
+        "try {",
+        "  await assertNativeSupport(async () => ({",
+        `    receipt: { directory: { realPath: ${JSON.stringify(path.dirname(retainedPath))} }, temporaryBasename: ${JSON.stringify(path.basename(retainedPath))} },`,
+        '    cleanup: async () => ({ status: "preserved" }),',
+        "  }));",
+        "} catch (error) {",
+        "  process.stdout.write(JSON.stringify({ message: error.message, retainedPath: error.retainedPath }));",
+        "}",
+      ].join("\n"),
+    );
+    const probeTest = spawnSync(process.execPath, ["--import", "tsx", probeTestPath], {
+      encoding: "utf8",
+      env: {},
+    });
+
+    expect(probeTest.status, probeTest.stderr).toBe(0);
+    expect(JSON.parse(probeTest.stdout)).toMatchObject({
+      message: "native support probe cleanup failed",
+      retainedPath,
+    });
+
+    const root = { canonicalPath: makeRoot(), identity };
+    writeRawNodeHelper([
+      `process.stdout.write(${JSON.stringify(
+        JSON.stringify({ ok: false, code: "native-probe-failed", retainedPath }),
+      )});`,
+    ]);
+
+    expect(() => scanDescriptorSnapshot(root, new Set())).toThrow(
+      expect.objectContaining({
+        code: "native-probe-failed",
+        message: `Native snapshot sanitization failed: native-probe-failed; remove retained temporary file and retry: ${retainedPath}`,
+        retainedPath,
+      }),
+    );
+
+    writeRawNodeHelper([
+      `process.stdout.write(${JSON.stringify(
+        JSON.stringify({
+          ok: false,
+          code: "native-probe-failed",
+          retainedPath: path.join(realpathSync(tmpdir()), "nested", "untrusted-probe"),
+        }),
+      )});`,
+    ]);
+    expect(() => scanDescriptorSnapshot(root, new Set())).toThrow(
+      expect.objectContaining({
+        code: "native-probe-failed",
+        message: "Native snapshot sanitization failed: native-probe-failed",
+        retainedPath: undefined,
+      }),
+    );
   });
 
   it("omits scanned content from the descriptor apply request", () => {

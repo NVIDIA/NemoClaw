@@ -3,6 +3,7 @@
 
 import { spawnSync } from "node:child_process";
 import { lstatSync, realpathSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 import {
@@ -68,6 +69,19 @@ function parseScanResult(value: unknown): DescriptorSnapshotScan | null {
   return { root: value.root, files };
 }
 
+function validatedRetainedProbePath(value: unknown): string | undefined {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > 4096 ||
+    !path.isAbsolute(value) ||
+    /[\u0000-\u001f\u007f]/u.test(value)
+  ) {
+    return undefined;
+  }
+  return path.dirname(value) === realpathSync(tmpdir()) ? value : undefined;
+}
+
 /** Resolve the packaged Node helper beside this source or compiled boundary. */
 export function resolveSnapshotSanitizerHelperPath(): string {
   const extension = __filename.endsWith(".cts") ? ".mts" : ".mjs";
@@ -108,12 +122,18 @@ export class SnapshotSanitizerPrerequisiteError extends Error {
 /** A bounded failure class from the native helper, without sensitive exception text. */
 export class SnapshotSanitizerOperationError extends Error {
   readonly code: SnapshotSanitizerFailureCode;
+  readonly retainedPath?: string;
   readonly snapshotPath: string;
 
-  constructor(snapshotPath: string, code: SnapshotSanitizerFailureCode) {
-    super(`Native snapshot sanitization failed: ${code}`);
+  constructor(snapshotPath: string, code: SnapshotSanitizerFailureCode, retainedPath?: string) {
+    super(
+      retainedPath === undefined
+        ? `Native snapshot sanitization failed: ${code}`
+        : `Native snapshot sanitization failed: ${code}; remove retained temporary file and retry: ${retainedPath}`,
+    );
     this.name = "SnapshotSanitizerOperationError";
     this.code = code;
+    this.retainedPath = retainedPath;
     this.snapshotPath = snapshotPath;
   }
 }
@@ -158,7 +178,11 @@ function invokeSnapshotSanitizerHelper(
         throw new SnapshotSanitizerPrerequisiteError(root.canonicalPath);
       }
       if (isSnapshotSanitizerFailureCode(parsed.code)) {
-        throw new SnapshotSanitizerOperationError(root.canonicalPath, parsed.code);
+        const retainedPath =
+          parsed.code === "native-probe-failed"
+            ? validatedRetainedProbePath(parsed.retainedPath)
+            : undefined;
+        throw new SnapshotSanitizerOperationError(root.canonicalPath, parsed.code, retainedPath);
       }
       return { ok: false };
     }

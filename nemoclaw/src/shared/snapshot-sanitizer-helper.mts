@@ -378,10 +378,36 @@ function classifyFailure(mode: string, error: unknown): SnapshotSanitizerFailure
     : "snapshot-scan-failed";
 }
 
-async function assertNativeSupport(): Promise<void> {
-  const probe = await stageFileInDirectory({ directory: tmpdir(), content: Buffer.alloc(0) });
+interface NativeSupportProbe {
+  readonly receipt: {
+    readonly directory: { readonly realPath: string };
+    readonly temporaryBasename: string;
+  };
+  cleanup(): Promise<{ readonly status: string }>;
+}
+
+class NativeProbeCleanupError extends Error {
+  readonly retainedPath: string;
+
+  constructor(retainedPath: string) {
+    super("native support probe cleanup failed");
+    this.name = "NativeProbeCleanupError";
+    this.retainedPath = retainedPath;
+  }
+}
+
+/** @visibleForTesting Verify native staging and report an exact retained probe when cleanup fails. */
+export async function assertNativeSupport(
+  createProbe: () => Promise<NativeSupportProbe> = () =>
+    stageFileInDirectory({ directory: tmpdir(), content: Buffer.alloc(0) }),
+): Promise<void> {
+  const probe = await createProbe();
   const cleanup = await probe.cleanup();
-  if (cleanup.status !== "removed") throw new Error("native support probe cleanup failed");
+  if (cleanup.status !== "removed") {
+    throw new NativeProbeCleanupError(
+      path.join(probe.receipt.directory.realPath, probe.receipt.temporaryBasename),
+    );
+  }
 }
 
 async function main(): Promise<void> {
@@ -400,6 +426,7 @@ async function main(): Promise<void> {
         ok: false,
         prerequisite,
         ...(prerequisite ? {} : { code: classifyFailure(process.argv[2] ?? "", error) }),
+        ...(error instanceof NativeProbeCleanupError ? { retainedPath: error.retainedPath } : {}),
       }),
     );
   }

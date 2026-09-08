@@ -1509,6 +1509,8 @@ NemoClaw removes credentials from copied state with native filesystem operations
 
 Reinstall NemoClaw without an option such as `--omit=optional` that excludes platform packages. Then rerun the complete command. For the supported Node.js and host requirements, refer to [Prerequisites](../get-started/prerequisites).
 
+If the error reports `native-probe-failed` and a retained temporary file, remove only the exact file path in that error. Confirm that the file is absent before you rerun the complete command.
+
 If cleanup fails, treat the reported directory as retained until you confirm that it is absent.
 
 <Warning title="Retained Incomplete Snapshot">

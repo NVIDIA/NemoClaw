@@ -73,6 +73,7 @@ Removal uses the package's root-contained removal operation after the same ident
 
 The helper returns only a structured success or failure envelope.
 It does not return dependency paths, native loader details, snapshot content, or exception text.
+When native-probe cleanup retains its empty staged file, the envelope includes only that validated direct-child path under the system temporary directory so the operator can remove it before retrying.
 The shared protocol module owns the per-file limit, request and response types, and accepted failure-code set used by both processes.
 The parent maps a missing or unsupported native binding to the existing prerequisite error class with a fixed remediation message and maps other helper or process failures to fixed, non-sensitive operation codes.
 
@@ -117,7 +118,7 @@ The parent maps a missing or unsupported native binding to the existing prerequi
 
 - Severity and confidence: high, high confidence.
 - Failure mode: the root CLI works from a source checkout but the standalone plugin image or published package cannot resolve the native helper.
-- Control: the dependency is direct in both manifests; the shared compiler emits both sanitizer modules; CLI artifact packaging requires both modules; the locked Linux x64 glibc npm cache seed contains the complete target-specific graph.
+- Control: the dependency is direct in both manifests; the shared compiler emits the boundary, helper, and protocol modules; CLI artifact packaging and restoration require all three modules; the locked Linux x64 glibc npm cache seed contains the complete target-specific graph.
 - Verification: clean shared-boundary build, plugin build, package contract, E2E artifact packaging tests, cache-seed integrity contract, and native amd64/arm64 PR CI.
 
 ## Verification Evidence

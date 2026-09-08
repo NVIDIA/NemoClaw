@@ -61,6 +61,7 @@ type RestoreFixtureOptions = {
     | "cli-directory"
     | "functional-snapshot-sanitizer"
     | "missing-snapshot-helper"
+    | "missing-snapshot-protocol"
     | "missing-shared"
     | "non-dist"
     | "link"
@@ -233,6 +234,14 @@ function writeMissingSnapshotHelperArchive(context: ArchiveFixtureContext): void
   );
 }
 
+function writeMissingSnapshotProtocolArchive(context: ArchiveFixtureContext): void {
+  writeCliArchive(
+    context,
+    () => undefined,
+    (shared) => fs.rmSync(path.join(shared, "snapshot-sanitizer-protocol.cjs")),
+  );
+}
+
 function writeSharedModuleDirectoryArchive(context: ArchiveFixtureContext): void {
   writeCliArchive(
     context,
@@ -273,8 +282,8 @@ const ARCHIVE_FIXTURE_WRITERS = {
   link: writeLinkArchive,
   "managed-catalog": writeManagedCatalogArchive,
   "missing-snapshot-helper": writeMissingSnapshotHelperArchive,
+  "missing-snapshot-protocol": writeMissingSnapshotProtocolArchive,
   "missing-shared": writeMissingSharedArchive,
-
   "non-dist": writeNonDistArchive,
   "shared-module-directory": writeSharedModuleDirectoryArchive,
   traversal: writeTraversalArchive,
@@ -772,6 +781,13 @@ describe("exact-commit CLI artifact restore", () => {
     expectRestoreFailure(
       { archive: "missing-snapshot-helper" },
       "restored CLI artifact shared module is missing or is not a nonempty regular file: snapshot-sanitizer-helper.mjs",
+    );
+  });
+
+  it("rejects a payload missing the snapshot sanitizer protocol before activation", () => {
+    expectRestoreFailure(
+      { archive: "missing-snapshot-protocol" },
+      "restored CLI artifact shared module is missing or is not a nonempty regular file: snapshot-sanitizer-protocol.cjs",
     );
   });
 
