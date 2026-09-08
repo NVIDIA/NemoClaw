@@ -32,7 +32,6 @@ function runInstall(
   const bin = path.join(root, "bin");
   const payloadMarker = path.join(root, "payload-ran");
   const lookupPid = path.join(root, "lookup.pid");
-  const interruptSent = path.join(root, "interrupt-sent");
   const cliName =
     extraEnvironment.NEMOCLAW_AGENT === "hermes"
       ? "nemohermes"
@@ -46,8 +45,8 @@ function runInstall(
 case "${installedVersion}" in
   hang) /bin/sleep 60 ;;
   ignore-term) trap '' TERM; while :; do :; done ;;
-  interrupt) printf '%s' "$$" >"\${LOOKUP_PID:?}"; /bin/sleep 60 ;;
-  terminate) printf '%s' "$$" >"\${LOOKUP_PID:?}"; /bin/sleep 60 ;;
+  interrupt) printf '%s' "$$" >"\${LOOKUP_PID:?}"; kill -INT "$PPID"; exec /bin/sleep 60 ;;
+  terminate) printf '%s' "$$" >"\${LOOKUP_PID:?}"; kill -TERM "$PPID"; exec /bin/sleep 60 ;;
   trap-race) printf '%s' "$$" >"\${LOOKUP_PID:?}"; /bin/sleep 60 ;;
   descendant-ignore-term) (trap '' TERM; printf '%s' "\${BASHPID}" >"\${LOOKUP_PID:?}"; while :; do :; done) & exit 0 ;;
   signaled) kill -KILL "$$" ;;
@@ -94,14 +93,10 @@ esac
   );
   const sleepBody = options.useRealSleep
     ? '#!/usr/bin/env bash\nexec /bin/sleep "$@"\n'
-    : installedVersion === "interrupt" || installedVersion === "terminate"
-      ? `#!/usr/bin/env bash
-if [[ -e "\${LOOKUP_PID:?}" && ! -e "\${INTERRUPT_SENT:?}" ]]; then touch "$INTERRUPT_SENT"; kill -${installedVersion === "terminate" ? "TERM" : "INT"} "$PPID"; fi
-`
-      : ["hang", "ignore-term", "descendant-ignore-term"].includes(installedVersion) ||
-          targetVersion === "hang"
-        ? "#!/usr/bin/env bash\nexit 0\n"
-        : '#!/usr/bin/env bash\nexec /bin/sleep "$@"\n';
+    : ["hang", "ignore-term", "descendant-ignore-term"].includes(installedVersion) ||
+        targetVersion === "hang"
+      ? "#!/usr/bin/env bash\nexit 0\n"
+      : '#!/usr/bin/env bash\nexec /bin/sleep "$@"\n';
   writeExecutable(path.join(bin, "sleep"), sleepBody);
 
   let installerSource = fs
@@ -125,7 +120,6 @@ if [[ -e "\${LOOKUP_PID:?}" && ! -e "\${INTERRUPT_SENT:?}" ]]; then touch "$INTE
       HOME: root,
       PATH: `${bin}:/usr/bin:/bin`,
       EXECUTION_MARKER: payloadMarker,
-      INTERRUPT_SENT: interruptSent,
       LOOKUP_PID: lookupPid,
       TMPDIR: root,
       ...extraEnvironment,
