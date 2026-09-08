@@ -7,12 +7,22 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
+
+const { capturePrivilegedSandboxCommand, resolveAgentConfig } = vi.hoisted(() => ({
+  capturePrivilegedSandboxCommand: vi.fn(),
+  resolveAgentConfig: vi.fn(),
+}));
+
+vi.mock("./privileged-exec", () => ({ capturePrivilegedSandboxCommand }));
+vi.mock("./agent-config", () => ({ resolveAgentConfig }));
+
 import type { AgentConfigTarget } from "./agent-config";
 import {
   dirSatisfiesMutableContract,
   fileSatisfiesMutableContract,
   inspectMutableConfigPermsForTarget,
   parseStatModeOwner,
+  repairMutableConfigPerms,
   repairMutableConfigPermsForTarget,
   verifyMutableHermesConfigForTarget,
 } from "./mutable-config-perms";
@@ -135,6 +145,53 @@ describe("mutable OpenClaw config permissions", () => {
       throw new Error("chmod failed");
     });
     expect(failed).toEqual({ applied: true, verified: false, errors: ["chmod failed"] });
+  });
+
+  it("routes mutable config repair through provider-neutral privileged commands", () => {
+    resolveAgentConfig.mockReset().mockReturnValue(target);
+    capturePrivilegedSandboxCommand
+      .mockReset()
+      .mockReturnValueOnce(Buffer.from("1000\n"))
+      .mockReturnValueOnce(Buffer.from("1001\n"))
+      .mockReturnValueOnce(Buffer.alloc(0));
+
+    expect(repairMutableConfigPerms("alpha")).toEqual({
+      applied: true,
+      verified: true,
+      errors: [],
+    });
+    expect(capturePrivilegedSandboxCommand).toHaveBeenNthCalledWith(
+      1,
+      "alpha",
+      ["/usr/bin/id", "-u", "sandbox"],
+      { sanitizeEnvironment: true, timeout: 15_000 },
+    );
+    expect(capturePrivilegedSandboxCommand).toHaveBeenNthCalledWith(
+      2,
+      "alpha",
+      ["/usr/bin/id", "-g", "sandbox"],
+      { sanitizeEnvironment: true, timeout: 15_000 },
+    );
+    expect(capturePrivilegedSandboxCommand).toHaveBeenNthCalledWith(
+      3,
+      "alpha",
+      expect.arrayContaining([
+        "/usr/local/lib/nemoclaw/normalize_mutable_config_perms.py",
+        target.configDir,
+        "1000",
+        "1001",
+      ]),
+      { sanitizeEnvironment: true, timeout: 25_000 },
+    );
+
+    capturePrivilegedSandboxCommand.mockReset().mockImplementationOnce(() => {
+      throw new Error("provider command failed");
+    });
+    expect(repairMutableConfigPerms("alpha")).toEqual({
+      applied: true,
+      verified: false,
+      errors: ["provider command failed"],
+    });
   });
 
   it("does not normalize another agent's config", () => {
