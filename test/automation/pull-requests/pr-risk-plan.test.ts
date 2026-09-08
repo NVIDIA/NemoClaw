@@ -464,6 +464,20 @@ describe("deterministic PR risk plan", () => {
     ]);
   });
 
+  it.each([
+    "src/lib/acp/main.ts",
+    "src/lib/acp/command.ts",
+    "src/lib/adapters/openshell/hermes-acp-ssh-cli.ts",
+    "src/lib/adapters/openshell/hermes-acp-ssh.ts",
+  ])("maps Hermes ACP adapter changes to its lifecycle and rebuild jobs for %s", (changedFile) => {
+    expect(focusedE2eJobsForChangedFiles([changedFile])).toEqual([
+      { id: "hermes-e2e", matchedFiles: [changedFile] },
+    ]);
+    expect(catalogueTargetsForChangedFiles([changedFile]).map(({ id }) => id)).toContain(
+      "rebuild-hermes",
+    );
+  });
+
   it("maps a shared gateway live test to every catalogue fixture (#7921)", () => {
     const changedFiles = ["test/e2e/live/openshell-gateway-upgrade.test.ts"];
     const focusedE2eJobs = catalogueTargetsForChangedFiles(changedFiles).map((target) => ({
