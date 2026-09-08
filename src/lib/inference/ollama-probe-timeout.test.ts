@@ -38,17 +38,22 @@ describe("Ollama probe timeout retry", () => {
   });
 
   it.each([
-    { platform: "linux" as const, systemdUnit: true, recovery: "systemctl" },
-    { platform: "darwin" as const, systemdUnit: true, recovery: null },
-    { platform: "linux" as const, systemdUnit: false, recovery: "generic" },
+    { platform: "linux" as const, systemdUnit: true, activeUnit: true, recovery: "systemctl" },
+    { platform: "linux" as const, systemdUnit: true, activeUnit: false, recovery: "generic" },
+    { platform: "darwin" as const, systemdUnit: true, activeUnit: true, recovery: null },
+    { platform: "linux" as const, systemdUnit: false, activeUnit: false, recovery: "generic" },
   ])(
-    "selects recovery for $platform with systemd unit $systemdUnit",
-    ({ platform, systemdUnit, recovery }) => {
+    "selects recovery for $platform with systemd unit $systemdUnit active $activeUnit",
+    ({ platform, systemdUnit, activeUnit, recovery }) => {
       vi.spyOn(process, "platform", "get").mockReturnValue(platform);
       const result = validateOllamaModel(
         "nemotron-3-nano:30b",
         (command) =>
-          systemdUnit && command.some((argument) => argument.includes("systemctl"))
+          command.includes("is-active")
+            ? activeUnit
+              ? "active"
+              : "inactive"
+            : systemdUnit && command.some((argument) => argument.includes("systemctl"))
             ? "ollama.service enabled"
             : "",
         () => false,

@@ -2391,10 +2391,18 @@ export function validateOllamaModel(
   }
   if (!output) {
     const localDaemon = getResolvedOllamaHost() === OLLAMA_LOCALHOST;
+    const staleRunnerTimeout = timedOut && localDaemon && process.platform === "linux";
+    const activeSystemdUnit =
+      staleRunnerTimeout &&
+      hasOllamaSystemdUnit(capture) &&
+      capture(["systemctl", "is-active", "ollama.service"], {
+        ignoreError: true,
+        timeout: 5_000,
+      }).trim() === "active";
     const staleRunnerRecovery =
-      timedOut && localDaemon && process.platform === "linux"
+      staleRunnerTimeout
         ? " Stale runner processes from a previous model may be holding GPU memory. " +
-          (hasOllamaSystemdUnit(capture)
+          (activeSystemdUnit
             ? "Run 'sudo systemctl restart ollama' and rerun onboarding."
             : "Restart Ollama and rerun onboarding.")
         : "";
