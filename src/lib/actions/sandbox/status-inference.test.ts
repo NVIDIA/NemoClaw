@@ -16,6 +16,7 @@ describe("sandbox status inference.local route health (#6192)", () => {
     confirmedStopped?: boolean;
     stopped?: boolean;
     lookupState?: "present" | "missing";
+    lookupPhase?: "Ready" | "Running";
     provider?: string;
     liveProvider?: string;
     liveModel?: string;
@@ -52,8 +53,8 @@ describe("sandbox status inference.local route health (#6192)", () => {
           ? { state: "missing" as const, output: "sandbox alpha not found" }
           : {
               state: "present" as const,
-              phase: "Ready",
-              output: "Name: alpha\nPhase: Ready\n",
+              phase: options.lookupPhase ?? "Ready",
+              output: `Name: alpha\nPhase: ${options.lookupPhase ?? "Ready"}\n`,
             },
       ),
       captureOpenshellForStatusImpl: vi.fn(
@@ -184,9 +185,10 @@ describe("sandbox status inference.local route health (#6192)", () => {
     expect(deps.probeSandboxInferenceGatewayHealthImpl).not.toHaveBeenCalled();
   });
 
-  it("revokes a stale stop marker before a later unexpected stop (#11025)", async () => {
+  it("revokes a stale stop marker observed Running before a later unexpected stop (#11025)", async () => {
     const deps = snapshotDeps({
       stopped: true,
+      lookupPhase: "Running",
       routeHealth: {
         ok: true,
         endpoint: "https://inference.local/v1/models",
@@ -197,7 +199,7 @@ describe("sandbox status inference.local route health (#6192)", () => {
 
     const running = await getSandboxStatusReport("alpha", deps);
 
-    expect(running.phase).toBe("Ready");
+    expect(running.phase).toBe("Running");
     expect(deps.updateSandbox).toHaveBeenCalledWith("alpha", { stopped: false });
     expect(deps.probeSandboxInferenceGatewayHealthImpl).toHaveBeenCalled();
 

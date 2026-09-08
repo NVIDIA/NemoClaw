@@ -458,7 +458,7 @@ export async function collectSandboxStatusSnapshot(
   if (
     sb?.stopped === true &&
     lookup.state === "present" &&
-    lookup.phase === "Ready" &&
+    (lookup.phase === "Ready" || lookup.phase === "Running") &&
     !initialPreflight?.failure &&
     !initialPreflight?.intentionalStopConfirmed &&
     !registry.recordSandboxStopIntent(
