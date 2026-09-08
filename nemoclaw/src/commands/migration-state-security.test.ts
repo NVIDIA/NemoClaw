@@ -27,6 +27,7 @@ import {
   cleanupSnapshotBundle,
   createSnapshotBundle,
   type HostOpenClawState,
+  type MigrationExternalRoot,
   restoreSnapshotToHost,
   setConfigValue,
 } from "./migration-state.js";
@@ -100,14 +101,14 @@ function expectSnapshotFailure(
 
 function writeExternalRestoreSnapshot(
   home: string,
-  sourcePath: string,
-  snapshotRelativePath: string,
-): { externalSnapshotDir: string; snapshotDir: string; stateDir: string } {
+  externalRoots: MigrationExternalRoot[],
+): { snapshotDir: string; stateDir: string } {
   const snapshotDir = path.join(home, "snapshot");
   const stateDir = path.join(home, ".openclaw");
-  const externalSnapshotDir = path.join(snapshotDir, snapshotRelativePath);
   mkdirSync(path.join(snapshotDir, "openclaw"), { recursive: true });
-  mkdirSync(externalSnapshotDir, { recursive: true });
+  for (const root of externalRoots) {
+    mkdirSync(path.join(snapshotDir, root.snapshotRelativePath), { recursive: true });
+  }
   mkdirSync(stateDir, { recursive: true });
   writeFileSync(
     path.join(snapshotDir, "snapshot.json"),
@@ -115,22 +116,24 @@ function writeExternalRestoreSnapshot(
       makeSnapshotManifest({
         homeDir: home,
         stateDir,
-        externalRoots: [
-          {
-            id: "workspaces-default-workspace",
-            kind: "workspace",
-            label: "default-workspace",
-            sourcePath,
-            snapshotRelativePath,
-            sandboxPath: "/sandbox/.nemoclaw/migration/workspaces/workspaces-default-workspace",
-            symlinkPaths: [],
-            bindings: [{ configPath: "agents.defaults.workspace" }],
-          },
-        ],
+        externalRoots,
       }),
     ),
   );
-  return { externalSnapshotDir, snapshotDir, stateDir };
+  return { snapshotDir, stateDir };
+}
+
+function externalRoot(sourcePath: string, id: string): MigrationExternalRoot {
+  return {
+    id,
+    kind: "workspace",
+    label: id,
+    sourcePath,
+    snapshotRelativePath: path.join("external", id),
+    sandboxPath: path.posix.join("/sandbox/.nemoclaw/migration/workspaces", id),
+    symlinkPaths: [],
+    bindings: [{ configPath: "agents.defaults.workspace" }],
+  };
 }
 
 afterEach(() => {
@@ -145,33 +148,31 @@ afterEach(() => {
 describe("migration-state external restore security", () => {
   it("restores an external root inside the trusted host root", () => {
     const home = makeHome();
-    const sourcePath = path.join(home, "workspace");
-    const { externalSnapshotDir, snapshotDir } = writeExternalRestoreSnapshot(
-      home,
-      sourcePath,
-      "external/workspaces-default-workspace",
-    );
-    mkdirSync(sourcePath, { recursive: true });
-    writeFileSync(path.join(sourcePath, "marker"), "after");
-    writeFileSync(path.join(externalSnapshotDir, "marker"), "before");
+    const workspacePath = path.join(home, "workspace");
+    const skillsPath = path.join(home, "skills-extra");
+    const workspace = externalRoot(workspacePath, "workspaces-default-workspace");
+    const skills = externalRoot(skillsPath, "skills-extra-1");
+    const { snapshotDir } = writeExternalRestoreSnapshot(home, [workspace, skills]);
+    mkdirSync(workspacePath, { recursive: true });
+    mkdirSync(skillsPath, { recursive: true });
+    writeFileSync(path.join(workspacePath, "marker"), "after");
+    writeFileSync(path.join(skillsPath, "marker"), "after");
+    writeFileSync(path.join(snapshotDir, workspace.snapshotRelativePath, "marker"), "before");
+    writeFileSync(path.join(snapshotDir, skills.snapshotRelativePath, "marker"), "before");
     vi.stubEnv("HOME", home);
     const logger = makeLogger();
 
     expect(restoreSnapshotToHost(snapshotDir, logger)).toBe(true);
-    expect(readFileSync(path.join(sourcePath, "marker"), "utf8")).toBe("before");
-    expect(logger.info).toHaveBeenCalledWith(
-      expect.stringContaining("Restored default-workspace"),
-    );
+    expect(readFileSync(path.join(workspacePath, "marker"), "utf8")).toBe("before");
+    expect(readFileSync(path.join(skillsPath, "marker"), "utf8")).toBe("before");
+    expect(logger.info).toHaveBeenCalledWith(expect.stringContaining(`Restored ${workspace.id}`));
   });
 
   it("rejects an external root outside the trusted host root", () => {
     const home = makeHome();
     const outsideHome = makeHome();
-    const { snapshotDir, stateDir } = writeExternalRestoreSnapshot(
-      home,
-      path.join(outsideHome, "workspace"),
-      "external/workspaces-default-workspace",
-    );
+    const root = externalRoot(path.join(outsideHome, "workspace"), "workspaces-default-workspace");
+    const { snapshotDir, stateDir } = writeExternalRestoreSnapshot(home, [root]);
     vi.stubEnv("HOME", home);
     const logger = makeLogger();
 
@@ -184,17 +185,30 @@ describe("migration-state external restore security", () => {
 
   it("rejects an external root snapshot path that does not match its ID", () => {
     const home = makeHome();
-    const { snapshotDir } = writeExternalRestoreSnapshot(
-      home,
-      path.join(home, "workspace"),
-      "external/another-workspace",
-    );
+    const root = externalRoot(path.join(home, "workspace"), "workspaces-default-workspace");
+    root.snapshotRelativePath = "external/another-workspace";
+    const { snapshotDir } = writeExternalRestoreSnapshot(home, [root]);
     vi.stubEnv("HOME", home);
     const logger = makeLogger();
 
     expect(restoreSnapshotToHost(snapshotDir, logger)).toBe(false);
     expect(logger.error).toHaveBeenCalledWith(
       expect.stringContaining("external root is missing or invalid"),
+    );
+  });
+
+  it("rejects duplicate external root targets", () => {
+    const home = makeHome();
+    const sourcePath = path.join(home, "workspace");
+    const first = externalRoot(sourcePath, "workspaces-default-workspace");
+    const second = externalRoot(sourcePath, "workspaces-second-workspace");
+    const { snapshotDir } = writeExternalRestoreSnapshot(home, [first, second]);
+    vi.stubEnv("HOME", home);
+    const logger = makeLogger();
+
+    expect(restoreSnapshotToHost(snapshotDir, logger)).toBe(false);
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining("external root target is duplicated"),
     );
   });
 });
