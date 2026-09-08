@@ -51,6 +51,10 @@ const SUCCESSFUL_RECOVERY = {
   recovered: false,
   forwardRecovered: false,
 } as const;
+const GPU_PROOF_RESOURCE = {
+  name: "nemoclaw-gpu-proof-1234",
+  ownership: { label: "com.nvidia.nemoclaw.gpu-proof", value: "true" },
+} as const;
 
 function podmanExecutableAuthorityDeps(): PodmanExecutableAuthorityDeps {
   const stat: PodmanExecutableStat = {
@@ -631,6 +635,7 @@ describe("managed Podman runtime provider", () => {
           image: "registry.example/proof@sha256:" + "a".repeat(64),
           entrypoint: "/bin/sh",
           command: ["-c", "proof"],
+          resource: GPU_PROOF_RESOURCE,
         },
         12_000,
       ),
@@ -642,6 +647,10 @@ describe("managed Podman runtime provider", () => {
         `unix://${REAL_SOCKET_AUTHORITY.socketPath}`,
         "run",
         "--rm",
+        "--name",
+        GPU_PROOF_RESOURCE.name,
+        "--label",
+        "com.nvidia.nemoclaw.gpu-proof=true",
         "--device",
         "nvidia.com/gpu=all",
         "--entrypoint",
@@ -651,6 +660,58 @@ describe("managed Podman runtime provider", () => {
         "proof",
       ],
       12_000,
+    );
+  });
+
+  it("removes only the exact owned proof container after timeout", () => {
+    const inference = createPodmanHostLocalInferenceTestHarness();
+    const containerId = "b".repeat(64);
+    const capture = vi
+      .fn()
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: `${containerId}\t${GPU_PROOF_RESOURCE.name}\n`,
+        stderr: "",
+      })
+      .mockReturnValueOnce({ status: 0, stdout: containerId, stderr: "" });
+    const containerEngine = supportedContainerEngine(
+      createPodmanRuntimeProviderBundle({
+        engines: realOperationEngines(REAL_SOCKET_AUTHORITY, capture),
+        hostLocalInference: {
+          authorityStore: inference.authorityStore,
+          routeAuthorityStore: inference.routeAuthorityStore,
+          onFailureEvidence: inference.onFailureEvidence,
+          redactSensitive: inference.redactSensitive,
+        },
+      }),
+    );
+
+    expect(
+      containerEngine.cleanupNvidiaContainer("host-local-inference", GPU_PROOF_RESOURCE, 15_000),
+    ).toEqual({ status: "removed" });
+    expect(capture).toHaveBeenNthCalledWith(
+      1,
+      "/usr/bin/podman",
+      [
+        "--url",
+        `unix://${REAL_SOCKET_AUTHORITY.socketPath}`,
+        "ps",
+        "--all",
+        "--no-trunc",
+        "--filter",
+        `name=^${GPU_PROOF_RESOURCE.name}$`,
+        "--filter",
+        "label=com.nvidia.nemoclaw.gpu-proof=true",
+        "--format",
+        "{{.ID}}\t{{.Names}}",
+      ],
+      15_000,
+    );
+    expect(capture).toHaveBeenNthCalledWith(
+      2,
+      "/usr/bin/podman",
+      ["--url", `unix://${REAL_SOCKET_AUTHORITY.socketPath}`, "rm", "-f", containerId],
+      15_000,
     );
   });
 

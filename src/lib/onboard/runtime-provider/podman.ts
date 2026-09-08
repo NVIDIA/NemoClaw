@@ -61,6 +61,7 @@ import {
   resolveNativePodmanSocketPath,
 } from "./podman-runtime-surfaces";
 import { resolvePodmanStateRoot } from "./podman-state-root";
+import { cleanupOwnedContainer, ownedContainerRunArguments } from "./owned-container-resource";
 
 export interface PodmanRuntimeProviderEngines {
   readonly hostDoctor: PodmanContainerEngine;
@@ -469,6 +470,7 @@ export function createPodmanRuntimeProviderBundle(
           [
             "run",
             "--rm",
+            ...ownedContainerRunArguments(input.resource),
             "--device",
             "nvidia.com/gpu=all",
             "--entrypoint",
@@ -476,6 +478,18 @@ export function createPodmanRuntimeProviderBundle(
             input.image,
             ...input.command,
           ],
+          timeoutMs,
+        );
+      },
+      cleanupNvidiaContainer: (operation, resource, timeoutMs) => {
+        const engine = containerEngineOperations.get(operation);
+        if (!engine) {
+          throw new Error(`Podman provider does not register the '${operation}' engine operation.`);
+        }
+        return cleanupOwnedContainer(
+          resource,
+          `^${resource.name}$`,
+          (args, timeout) => engine.capture(args, timeout),
           timeoutMs,
         );
       },

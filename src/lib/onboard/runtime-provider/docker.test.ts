@@ -6,6 +6,11 @@ import { describe, expect, it, vi } from "vitest";
 import { createDockerRuntimeProviderBundle } from "./docker";
 import type { RuntimeProviderLifecycleInput } from "./contract";
 
+const GPU_PROOF_RESOURCE = {
+  name: "nemoclaw-gpu-proof-1234",
+  ownership: { label: "com.nvidia.nemoclaw.gpu-proof", value: "true" },
+} as const;
+
 function lifecycleInput(): RuntimeProviderLifecycleInput {
   return {
     environment: {},
@@ -114,6 +119,7 @@ describe("Docker runtime provider NVIDIA container capture", () => {
           image: "registry.example/proof@sha256:" + "a".repeat(64),
           entrypoint: "/bin/sh",
           command: ["-c", "proof"],
+          resource: GPU_PROOF_RESOURCE,
         },
         12_000,
       ),
@@ -123,6 +129,10 @@ describe("Docker runtime provider NVIDIA container capture", () => {
       [
         "run",
         "--rm",
+        "--name",
+        GPU_PROOF_RESOURCE.name,
+        "--label",
+        "com.nvidia.nemoclaw.gpu-proof=true",
         "--gpus",
         "all",
         "--entrypoint",
@@ -132,6 +142,47 @@ describe("Docker runtime provider NVIDIA container capture", () => {
         "proof",
       ],
       12_000,
+    );
+  });
+
+  it("removes only the exact owned proof container after timeout", () => {
+    const containerId = "a".repeat(64);
+    const captureHostCommand = vi
+      .fn()
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: `${containerId}\t${GPU_PROOF_RESOURCE.name}\n`,
+        stderr: "",
+      })
+      .mockReturnValueOnce({ status: 0, stdout: containerId, stderr: "" });
+    const containerEngine = supportedContainerEngine(
+      createDockerRuntimeProviderBundle({ captureHostCommand }),
+    );
+
+    expect(
+      containerEngine.cleanupNvidiaContainer("host-local-inference", GPU_PROOF_RESOURCE, 15_000),
+    ).toEqual({ status: "removed" });
+    expect(captureHostCommand).toHaveBeenNthCalledWith(
+      1,
+      "docker",
+      [
+        "ps",
+        "--all",
+        "--no-trunc",
+        "--filter",
+        `name=^/${GPU_PROOF_RESOURCE.name}$`,
+        "--filter",
+        "label=com.nvidia.nemoclaw.gpu-proof=true",
+        "--format",
+        "{{.ID}}\t{{.Names}}",
+      ],
+      15_000,
+    );
+    expect(captureHostCommand).toHaveBeenNthCalledWith(
+      2,
+      "docker",
+      ["rm", "-f", containerId],
+      15_000,
     );
   });
 });

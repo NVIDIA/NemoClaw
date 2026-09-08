@@ -612,7 +612,9 @@ describe("runFatalOnboardRuntimePreflight", () => {
     );
 
     expect(detect).toHaveBeenCalledOnce();
-    expect(detect).toHaveBeenCalledWith({ proveArm64ContainerGpu: null });
+    expect(detect).toHaveBeenCalledWith(
+      expect.objectContaining({ proveArm64ContainerGpu: null, n1xWslProduct: null }),
+    );
   });
 
   it("rejects known GPU configuration errors before bridge or GPU container probes (#7411)", () => {
@@ -817,6 +819,47 @@ describe("readiness-gated runtime preflight", () => {
     expect(result.gpu).toMatchObject({
       containerGpuProof: { providerId: "docker", passed: true },
     });
+  });
+
+  it("reuses one N1x WSL product observation across GPU and readiness classification", async () => {
+    const collectN1xWslProduct = vi.fn().mockReturnValueOnce(true).mockReturnValue(false);
+    const detectGpu = vi.fn((deps?: DetectGpuDeps): GpuDetection | null => {
+      const isObservation = deps?.proveArm64ContainerGpu === null;
+      !isObservation && deps?.onContainerGpuProof?.({ providerId: "docker", passed: true });
+      return isObservation
+        ? null
+        : {
+            type: "nvidia",
+            count: 1,
+            totalMemoryMB: 63_936,
+            availableMemoryMB: 60_000,
+            perGpuMB: 63_936,
+            nimCapable: true,
+            containerGpuProof: { providerId: "docker", passed: true },
+            n1xWslProduct: deps?.n1xWslProduct ?? null,
+          };
+    });
+
+    const result = await runReadinessGatedRuntimePreflight(
+      {},
+      {
+        nonInteractive: true,
+        collectGatewayReadiness: async () => collectedGatewayReadiness(),
+        assessHost: wslDockerDesktopHost,
+        detectGpu,
+        collectN1xWslProduct,
+        warnIfHostProxyMissesLoopback: vi.fn(),
+        assertRuntimeProviderHealthy: vi.fn(),
+        validateSandboxGpuPreflight: vi.fn(),
+      },
+    );
+
+    expect(collectN1xWslProduct).toHaveBeenCalledOnce();
+    expect(new Set(detectGpu.mock.calls.map(([deps]) => deps?.n1xWslProduct))).toEqual(
+      new Set([true]),
+    );
+    expect(result.n1xWslProduct).toBe(true);
+    expect(result.gpu?.n1xWslProduct).toBe(true);
   });
 
   it("preserves a failed bounded WSL GPU proof as an absent readiness capability (#7411)", async () => {

@@ -271,6 +271,7 @@ export function createInMemoryRuntimeProviderBundle({
       ],
       capture: () => ({ status: 0, stdout: "", stderr: "" }),
       captureNvidiaContainer: () => ({ status: 0, stdout: "", stderr: "" }),
+      cleanupNvidiaContainer: () => ({ status: "absent" }),
     },
   };
 }

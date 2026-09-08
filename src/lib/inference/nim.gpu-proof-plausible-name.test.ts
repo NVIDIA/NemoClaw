@@ -16,14 +16,8 @@ const PLAUSIBLE_NAME = "NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)";
 const isNvidiaSmiMemoryQuery = (command: readonly string[]): boolean =>
   command[0] === "nvidia-smi" && command.some((arg) => arg.includes("name,memory.total"));
 
-const makeRunCapture = (smiOutput: string, windowsProduct = "") =>
-  vi.fn((command: readonly string[]) =>
-    isNvidiaSmiMemoryQuery(command)
-      ? smiOutput
-      : command[0] === "powershell.exe"
-        ? windowsProduct
-        : "",
-  );
+const makeRunCapture = (smiOutput: string) =>
+  vi.fn((command: readonly string[]) => (isNvidiaSmiMemoryQuery(command) ? smiOutput : ""));
 
 const passingProver = (
   verifiedCapacity?: { totalMemoryMB: number; availableMemoryMB: number },
@@ -124,10 +118,7 @@ describe("detectGpu CUDA proof for a plausible, non-placeholder NVIDIA GPU name 
     "selects the largest installed Ollama model on a %s-proven WSL RTX Spark N1X (#10954)",
     (providerId) => {
       onWsl2Arm64WithoutKernelInterface(() => {
-        const runCaptureImpl = makeRunCapture(
-          `${PLAUSIBLE_NAME}, 999999, 999999\n`,
-          "RTX Spark N1X",
-        );
+        const runCaptureImpl = makeRunCapture(`${PLAUSIBLE_NAME}, 999999, 999999\n`);
         const gpu = detectGpu({
           proveArm64ContainerGpu: passingProver(
             {
@@ -138,6 +129,7 @@ describe("detectGpu CUDA proof for a plausible, non-placeholder NVIDIA GPU name 
           ),
           runCaptureImpl,
           isWsl: true,
+          n1xWslProduct: true,
         });
         expect(gpu).toMatchObject({
           totalMemoryMB: 63_936,
@@ -146,15 +138,9 @@ describe("detectGpu CUDA proof for a plausible, non-placeholder NVIDIA GPU name 
         });
         expect(gpu).not.toHaveProperty("computeConstrained");
         expect(selectDefaultOllamaModel(["qwen3.5:9b", "qwen3.6:35b"], gpu)).toBe("qwen3.6:35b");
-        expect(runCaptureImpl).toHaveBeenCalledWith(
-          [
-            "powershell.exe",
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            "(Get-CimInstance Win32_ComputerSystem).Model",
-          ],
-          { ignoreError: true, timeout: 10_000 },
+        expect(runCaptureImpl).not.toHaveBeenCalledWith(
+          expect.arrayContaining(["powershell.exe"]),
+          expect.anything(),
         );
       });
     },
@@ -167,8 +153,9 @@ describe("detectGpu CUDA proof for a plausible, non-placeholder NVIDIA GPU name 
           totalMemoryMB: 63_936,
           availableMemoryMB: 60_000,
         }),
-        runCaptureImpl: makeRunCapture(`${PLAUSIBLE_NAME}, 63936, 60000\n`, "SKU 1"),
+        runCaptureImpl: makeRunCapture(`${PLAUSIBLE_NAME}, 63936, 60000\n`),
         isWsl: true,
+        n1xWslProduct: false,
       });
       expect(gpu).toMatchObject({ computeConstrained: true });
       expect(selectDefaultOllamaModel(["qwen3.5:9b", "qwen3.6:35b"], gpu)).toBe("qwen3.5:9b");
@@ -182,8 +169,9 @@ describe("detectGpu CUDA proof for a plausible, non-placeholder NVIDIA GPU name 
           totalMemoryMB: 63_936,
           availableMemoryMB: 29_999,
         }),
-        runCaptureImpl: makeRunCapture(`${PLAUSIBLE_NAME}, 63936, 60000\n`, "RTX Spark N1X"),
+        runCaptureImpl: makeRunCapture(`${PLAUSIBLE_NAME}, 63936, 60000\n`),
         isWsl: true,
+        n1xWslProduct: true,
       });
       expect(gpu).toMatchObject({ computeConstrained: true });
       expect(selectDefaultOllamaModel(["qwen3.5:9b", "qwen3.6:35b"], gpu)).toBe("qwen3.5:9b");
@@ -197,8 +185,9 @@ describe("detectGpu CUDA proof for a plausible, non-placeholder NVIDIA GPU name 
           totalMemoryMB: 63_936,
           availableMemoryMB: 30_000,
         }),
-        runCaptureImpl: makeRunCapture(`${PLAUSIBLE_NAME}, 8128, 7000\n`, "RTX Spark N1X"),
+        runCaptureImpl: makeRunCapture(`${PLAUSIBLE_NAME}, 8128, 7000\n`),
         isWsl: true,
+        n1xWslProduct: true,
       });
       expect(gpu).toMatchObject({ totalMemoryMB: 63_936, availableMemoryMB: 30_000 });
       expect(gpu).not.toHaveProperty("computeConstrained");
@@ -210,8 +199,9 @@ describe("detectGpu CUDA proof for a plausible, non-placeholder NVIDIA GPU name 
     onWsl2Arm64WithoutKernelInterface(() => {
       const gpu = detectGpu({
         proveArm64ContainerGpu: passingProver(),
-        runCaptureImpl: makeRunCapture(`${PLAUSIBLE_NAME}, 999999, 999999\n`, "RTX Spark N1X"),
+        runCaptureImpl: makeRunCapture(`${PLAUSIBLE_NAME}, 999999, 999999\n`),
         isWsl: true,
+        n1xWslProduct: true,
       });
       expect(gpu).toMatchObject({ computeConstrained: true });
       expect(selectDefaultOllamaModel(["qwen3.5:9b", "qwen3.6:35b"], gpu)).toBe("qwen3.5:9b");

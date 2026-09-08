@@ -54,6 +54,7 @@ import {
 } from "./contract";
 import { createDockerLlamaCppHostLocalOperation } from "./docker-llama-cpp-operation";
 import { createDockerPrivilegedSandboxControl } from "./docker-privileged-sandbox-control";
+import { cleanupOwnedContainer, ownedContainerRunArguments } from "./owned-container-resource";
 import { createDockerRuntimeProviderSnapshotSurface } from "./snapshot";
 
 type DockerOpResult = { status?: number | null };
@@ -171,6 +172,7 @@ function captureDockerNvidiaContainer(
     [
       "run",
       "--rm",
+      ...ownedContainerRunArguments(input.resource),
       "--gpus",
       "all",
       "--entrypoint",
@@ -178,6 +180,22 @@ function captureDockerNvidiaContainer(
       input.image,
       ...input.command,
     ],
+    timeoutMs,
+  );
+}
+
+function cleanupDockerNvidiaContainer(
+  deps: DockerRuntimeProviderDependencies,
+  supportedOperations: ReadonlySet<RuntimeProviderContainerEngineOperation>,
+  operation: RuntimeProviderContainerEngineOperation,
+  resource: RuntimeProviderNvidiaContainerInput["resource"],
+  timeoutMs?: number,
+) {
+  return cleanupOwnedContainer(
+    resource,
+    `^/${resource.name}$`,
+    (args, timeout) =>
+      captureDockerContainerEngineOperation(deps, supportedOperations, operation, args, timeout),
     timeoutMs,
   );
 }
@@ -679,6 +697,14 @@ export function createDockerRuntimeProviderBundle(
         ),
       captureNvidiaContainer: (operation, input, timeoutMs) =>
         captureDockerNvidiaContainer(deps, containerEngineOperations, operation, input, timeoutMs),
+      cleanupNvidiaContainer: (operation, resource, timeoutMs) =>
+        cleanupDockerNvidiaContainer(
+          deps,
+          containerEngineOperations,
+          operation,
+          resource,
+          timeoutMs,
+        ),
     },
   };
 }
@@ -795,6 +821,14 @@ export function createKubernetesRuntimeProviderBundle(
         ),
       captureNvidiaContainer: (operation, input, timeoutMs) =>
         captureDockerNvidiaContainer(deps, containerEngineOperations, operation, input, timeoutMs),
+      cleanupNvidiaContainer: (operation, resource, timeoutMs) =>
+        cleanupDockerNvidiaContainer(
+          deps,
+          containerEngineOperations,
+          operation,
+          resource,
+          timeoutMs,
+        ),
     },
   };
 }

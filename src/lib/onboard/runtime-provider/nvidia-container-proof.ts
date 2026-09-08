@@ -20,6 +20,11 @@ const NVIDIA_CONTAINER_GPU_CAPACITY_MARKER = "NEMOCLAW_GPU_MEMORY_MIB=";
 // variable as a compatibility surface while the execution owner is provider-neutral.
 const NVIDIA_CONTAINER_GPU_PROOF_DEFAULT_TIMEOUT_MS = 180_000;
 const NVIDIA_CONTAINER_GPU_PROOF_MAX_TIMEOUT_MS = 900_000;
+const NVIDIA_CONTAINER_GPU_PROOF_CLEANUP_TIMEOUT_MS = 15_000;
+const NVIDIA_CONTAINER_GPU_PROOF_OWNERSHIP = Object.freeze({
+  label: "com.nvidia.nemoclaw.gpu-proof",
+  value: "true",
+});
 
 export function containerGpuProofTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
   const raw = Number(env.NEMOCLAW_WSL_GPU_PROOF_TIMEOUT_MS);
@@ -76,6 +81,10 @@ function runRuntimeProviderGpuProof(
   timeoutMs: number,
 ): ContainerGpuProofResult {
   try {
+    const resource = {
+      name: `nemoclaw-gpu-proof-${String(process.pid)}`,
+      ownership: NVIDIA_CONTAINER_GPU_PROOF_OWNERSHIP,
+    };
     if (!provider.containerEngine.supported) {
       return {
         providerId: provider.identity.id,
@@ -91,6 +100,7 @@ function runRuntimeProviderGpuProof(
         image: NVIDIA_CONTAINER_GPU_PROOF_IMAGE,
         entrypoint: "/bin/sh",
         command: ["-c", NVIDIA_CONTAINER_GPU_PROOF_SCRIPT],
+        resource,
       },
       timeoutMs,
     );
@@ -98,6 +108,21 @@ function runRuntimeProviderGpuProof(
     const diagnosticSource = result.stderr || result.stdout;
     const passed = result.status === 0 && !timedOut;
     const verifiedCapacity = passed ? parseContainerGpuProofCapacity(result.stdout) : null;
+    let cleanup: ContainerGpuProofResult["cleanup"];
+    if (timedOut) {
+      try {
+        cleanup = {
+          resourceName: resource.name,
+          ...provider.containerEngine.cleanupNvidiaContainer(
+            "host-local-inference",
+            resource,
+            NVIDIA_CONTAINER_GPU_PROOF_CLEANUP_TIMEOUT_MS,
+          ),
+        };
+      } catch {
+        cleanup = { resourceName: resource.name, status: "failed" };
+      }
+    }
     return {
       providerId: provider.identity.id,
       passed,
@@ -105,6 +130,7 @@ function runRuntimeProviderGpuProof(
       exitCode: result.status,
       diagnostic: diagnosticSource.slice(0, 300),
       ...(verifiedCapacity ? { verifiedCapacity } : {}),
+      ...(cleanup ? { cleanup } : {}),
     };
   } catch (error) {
     return {
@@ -166,6 +192,11 @@ export function createArm64ContainerGpuProver(
       log(
         "    Rerun with --no-gpu to skip GPU passthrough, or raise NEMOCLAW_WSL_GPU_PROOF_TIMEOUT_MS.",
       );
+      if (result.cleanup?.status === "failed") {
+        log(
+          `    Cleanup failed for provider-owned container ${result.cleanup.resourceName}; remove that exact container before retrying.`,
+        );
+      }
     } else if (isExecFormatErrorDiagnostic(result.diagnostic)) {
       log(
         `  ✗ ${provider.identity.displayName} GPU proof could not run: CUDA sample image architecture does not`,

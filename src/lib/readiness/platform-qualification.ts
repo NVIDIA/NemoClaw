@@ -69,6 +69,8 @@ export interface CollectPlatformIdentityOptions extends N1xIdentityOptions {
   stationReleasePath?: string;
   osReleasePath?: string;
   isWsl?: boolean;
+  /** Pre-collected boundary observation; null means the probe was inconclusive. */
+  n1xWslProductObservation?: boolean | null;
   runCaptureImpl?: (
     command: readonly string[],
     options?: { ignoreError?: boolean; timeout?: number },
@@ -243,7 +245,9 @@ export function collectPlatformIdentity(
     readFile,
     options.productNamePath ?? "/sys/class/dmi/id/product_name",
   );
-  const n1xWslProduct = collectN1xWslProduct(options);
+  const n1xWslProduct = Object.prototype.hasOwnProperty.call(options, "n1xWslProductObservation")
+    ? options.n1xWslProductObservation
+    : collectN1xWslProduct(options);
   const wslIdentity = options.isWsl ? { n1xWslProduct } : {};
   let nvidiaPlatform = nvidiaPlatformFromProduct(productName);
   if (nvidiaPlatform === undefined) {

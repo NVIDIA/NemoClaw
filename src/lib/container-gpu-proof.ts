@@ -32,6 +32,10 @@ export interface ContainerGpuProofResult {
     totalMemoryMB: number;
     availableMemoryMB: number;
   };
+  cleanup?: {
+    readonly resourceName: string;
+    readonly status: "absent" | "removed" | "failed";
+  };
 }
 
 /** Minimal provider-bound proof state safe to project into readiness reports. */

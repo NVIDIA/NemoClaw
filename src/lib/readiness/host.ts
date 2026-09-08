@@ -11,6 +11,7 @@ import {
 import type { ContainerGpuProofStatus } from "../container-gpu-proof.js";
 import type { HostAssessment } from "../onboard/preflight.js";
 import { assessHost } from "../onboard/preflight.js";
+import { collectN1xWslProduct } from "../inference/platform-identity/n1x-wsl.js";
 import { resolveOpenshell } from "./openshell-resolver.js";
 import {
   type CollectPlatformIdentityOptions,
@@ -88,7 +89,7 @@ export interface CollectHostObservationsOptions {
   assess?: () => HostAssessment;
   architecture?: string;
   detectGpu?: () =>
-    | (Pick<GpuDetection, "count" | "containerGpuProof"> &
+    | (Pick<GpuDetection, "count" | "containerGpuProof" | "n1xWslProduct"> &
         Partial<
           Pick<
             GpuDetection,
@@ -120,6 +121,20 @@ export interface CreateHostReadinessReportOptions {
   sourceRevision: string;
   now?: () => Date;
   maxObservationAgeMs?: number;
+}
+
+/** Collect the Windows product once with the same bounded readiness transport. */
+export function collectN1xWslProductObservation(
+  isWsl: boolean,
+  collector: typeof collectN1xWslProduct = collectN1xWslProduct,
+): boolean | null {
+  const probeEnv = buildSystemReadinessProbeEnv();
+  return (
+    collector({
+      isWsl,
+      runCaptureImpl: createSystemReadinessCapture(probeEnv),
+    }) ?? null
+  );
 }
 
 function safeReportText(value: string): string {
@@ -233,6 +248,14 @@ function observeHost(
     const hasNvidiaGpu =
       assessment.hasNvidiaGpu || gpu?.type === "nvidia" || gpu?.platform === "jetson";
     const containerGpuProof = options.containerGpuProof ?? gpu?.containerGpuProof;
+    const platformIdentityOptions = { ...options.platformIdentityOptions };
+    if (
+      !Object.prototype.hasOwnProperty.call(platformIdentityOptions, "n1xWslProductObservation") &&
+      gpu &&
+      Object.prototype.hasOwnProperty.call(gpu, "n1xWslProduct")
+    ) {
+      platformIdentityOptions.n1xWslProductObservation = gpu.n1xWslProduct ?? null;
+    }
     return {
       observedAt,
       observations: adaptHostAssessment(
@@ -253,7 +276,7 @@ function observeHost(
           options.collectPlatformIdentity ??
           (() =>
             collectPlatformIdentity({
-              ...options.platformIdentityOptions,
+              ...platformIdentityOptions,
               isWsl: assessment.isWsl,
               runCaptureImpl,
             }))

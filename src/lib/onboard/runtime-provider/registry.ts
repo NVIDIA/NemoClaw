@@ -531,6 +531,7 @@ function validateContainerEngineSurface(
   if (surface.supported === true) {
     requireFunction(surface, "capture", "containerEngine");
     requireFunction(surface, "captureNvidiaContainer", "containerEngine");
+    requireFunction(surface, "cleanupNvidiaContainer", "containerEngine");
     const identities = surface.identities;
     if (!Array.isArray(identities)) {
       throw new RuntimeProviderRegistrationError(

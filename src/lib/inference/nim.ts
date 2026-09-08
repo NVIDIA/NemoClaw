@@ -21,7 +21,6 @@ import {
 import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import { VLLM_PORT } from "../core/ports";
 import { sleepSeconds } from "../core/wait";
-import { isWsl } from "../platform";
 import { runCapture } from "../runner";
 import { isSafeModelId } from "../validation";
 import { isDgxStationGb300Product } from "./dgx-station-identity";
@@ -38,7 +37,6 @@ import {
   nvidiaHostLooksGenuine,
 } from "./gpu-trust";
 import { collectN1xIdentity } from "./platform-identity/n1x";
-import { collectN1xWslProduct } from "./platform-identity/n1x-wsl";
 
 const UNIFIED_MEMORY_GPU_TAGS = ["GB10", "Thor", "Orin", "Xavier", "Jetson", "Tegra"];
 const NIM_UNIFIED_MEMORY_UTILIZATION = 0.5;
@@ -97,6 +95,8 @@ export interface GpuDetection {
   // ARM64 Linux. The provider identity prevents readiness from attributing a
   // proof from one runtime to another.
   containerGpuProof?: ContainerGpuProofStatus;
+  /** Immutable Windows product observation used by the N1x WSL classification. */
+  n1xWslProduct?: boolean | null;
 }
 
 export interface DetectGpuDeps {
@@ -108,6 +108,8 @@ export interface DetectGpuDeps {
   proveArm64ContainerGpu?: Arm64ContainerGpuProver | null;
   /** Observe attempted proof state even when failed proof makes detection return null. */
   onContainerGpuProof?: (proof: ContainerGpuProofStatus) => void;
+  /** Product observation collected once by the effectful preflight boundary. */
+  n1xWslProduct?: boolean | null;
   /** Read-only command transport used by observation-only readiness callers. */
   runCaptureImpl?: typeof runCapture;
   /** Override WSL detection for deterministic tests. */
@@ -117,6 +119,14 @@ export interface DetectGpuDeps {
   // failed instead of the bare "no GPU detected" (#9000). The reason is built
   // from fixed text only — never from nvidia-smi output, which is untrusted.
   onTrustGateRejection?: (reason: string) => void;
+}
+
+function n1xWslProductObservationFromDeps(
+  deps: DetectGpuDeps,
+): Pick<GpuDetection, "n1xWslProduct"> {
+  return Object.prototype.hasOwnProperty.call(deps, "n1xWslProduct")
+    ? { n1xWslProduct: deps.n1xWslProduct ?? null }
+    : {};
 }
 
 // Group GPUs by their nvidia-smi model name, preserving first-appearance order.
@@ -592,10 +602,7 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
           containerGpuProofPassed &&
           verifiedCapacity !== undefined &&
           verifiedCapacity.availableMemoryMB >= 30_000 &&
-          collectN1xWslProduct({
-            isWsl: deps.isWsl ?? isWsl(),
-            runCaptureImpl,
-          }) === true;
+          deps.n1xWslProduct === true;
         // Keep the 30B/35B timeout protection except for the planned
         // identity-qualified WSL RTX Spark N1X path (#10954).
         const computeConstrained =
@@ -635,6 +642,7 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
                 },
               }
             : {}),
+          ...n1xWslProductObservationFromDeps(deps),
         };
       }
     }

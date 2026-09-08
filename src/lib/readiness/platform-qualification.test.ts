@@ -251,6 +251,23 @@ describe("platform readiness qualification (#7410)", () => {
     expect(result.evidence[0]?.details).toMatchObject({ n1xWslProduct: true });
   });
 
+  it("reuses a pre-collected N1x WSL product observation without probing again", () => {
+    const runCaptureImpl = vi.fn(() => {
+      throw new Error("product identity must not be recollected");
+    });
+
+    expect(
+      collectPlatformIdentity({
+        isWsl: true,
+        n1xWslProductObservation: true,
+        runCaptureImpl,
+        readFile: () => "Virtual Machine\n",
+        openFile: unexpectedFixturePath,
+      }),
+    ).toMatchObject({ n1xWslProduct: true });
+    expect(runCaptureImpl).not.toHaveBeenCalled();
+  });
+
   it.each([
     [false, "absent"],
     [undefined, "absent"],

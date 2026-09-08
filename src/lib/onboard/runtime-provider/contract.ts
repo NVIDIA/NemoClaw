@@ -693,6 +693,19 @@ export interface RuntimeProviderNvidiaContainerInput {
   readonly image: string;
   readonly entrypoint: string;
   readonly command: readonly string[];
+  readonly resource: RuntimeProviderOwnedContainerResource;
+}
+
+export interface RuntimeProviderOwnedContainerResource {
+  readonly name: string;
+  readonly ownership: {
+    readonly label: string;
+    readonly value: string;
+  };
+}
+
+export interface RuntimeProviderOwnedContainerCleanupResult {
+  readonly status: "absent" | "removed" | "failed";
 }
 
 export type RuntimeProviderContainerEngineSurface =
@@ -712,6 +725,11 @@ export type RuntimeProviderContainerEngineSurface =
         input: RuntimeProviderNvidiaContainerInput,
         timeoutMs?: number,
       ): RuntimeProviderCommandCapture;
+      cleanupNvidiaContainer(
+        operation: RuntimeProviderContainerEngineOperation,
+        resource: RuntimeProviderOwnedContainerResource,
+        timeoutMs?: number,
+      ): RuntimeProviderOwnedContainerCleanupResult;
     }>
   | RuntimeProviderUnsupportedSurface;
 

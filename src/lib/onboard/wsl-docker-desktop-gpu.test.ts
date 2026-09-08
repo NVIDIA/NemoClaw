@@ -235,6 +235,51 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
     });
   });
 
+  it("fails closed and cleans the exact provider-owned container after timeout", () => {
+    const base = proofProvider("podman");
+    const timeout = Object.assign(new Error("proof timed out"), { code: "ETIMEDOUT" });
+    const cleanupNvidiaContainer = vi.fn(() => ({ status: "failed" as const }));
+    const logs: string[] = [];
+    const prover = createArm64ContainerGpuProver({
+      platform: "linux",
+      arch: "arm64",
+      resolveRuntimeProvider: () => ({
+        ...base,
+        containerEngine: {
+          ...base.containerEngine,
+          captureNvidiaContainer: () => ({
+            status: 1,
+            stdout: "NEMOCLAW_GPU_MEMORY_MIB=63936, 60000\n",
+            stderr: "",
+            error: timeout,
+          }),
+          cleanupNvidiaContainer,
+        },
+      }),
+      log: (message) => logs.push(message),
+    });
+
+    const result = prover(["JMJWOA-Generic-GPU"]);
+    expect(result).toMatchObject({
+      providerId: "podman",
+      passed: false,
+      timedOut: true,
+      exitCode: 1,
+      cleanup: { status: "failed" },
+    });
+    expect(result).not.toHaveProperty("verifiedCapacity");
+    expect(cleanupNvidiaContainer).toHaveBeenCalledWith(
+      "host-local-inference",
+      expect.objectContaining({
+        name: expect.stringMatching(/^nemoclaw-gpu-proof-[0-9]+$/u),
+        ownership: { label: "com.nvidia.nemoclaw.gpu-proof", value: "true" },
+      }),
+      15_000,
+    );
+    expect(logs.join("\n")).toContain("timed out");
+    expect(logs.join("\n")).toContain(result?.cleanup?.resourceName ?? "missing-resource");
+  });
+
   it("parses one capacity row from the container-bound CUDA proof", () => {
     expect(
       parseContainerGpuProofCapacity("Test PASSED\nNEMOCLAW_GPU_MEMORY_MIB=63936, 60000\n"),
