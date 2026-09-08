@@ -224,7 +224,19 @@ error() { error_with_status 1 "$@"; }
 ok() { printf "  ${C_GREEN}✓${C_RESET}  %s\n" "$*"; }
 
 resolve_nemoclaw_gateway_port() {
-  local port="${NEMOCLAW_GATEWAY_PORT:-8080}"
+  local port="${NEMOCLAW_GATEWAY_PORT:-}" persisted_port persisted_status
+  if [[ -z "$port" ]]; then
+    if persisted_port="$(resolve_persisted_automatic_gateway_port)"; then
+      port="$persisted_port"
+    else
+      persisted_status=$?
+      if [[ "$persisted_status" -eq 1 ]]; then
+        port=8080
+      else
+        error "Could not safely resolve the automatically selected NemoClaw gateway port. Remove invalid automatic-gateway-port markers or set NEMOCLAW_GATEWAY_PORT explicitly."
+      fi
+    fi
+  fi
   port="${port#"${port%%[![:space:]]*}"}"
   port="${port%"${port##*[![:space:]]}"}"
   if [[ ! "$port" =~ ^0*([0-9]{1,5})$ ]]; then
@@ -273,6 +285,38 @@ resolve_nemoclaw_gateway_port() {
     fi
   done
   printf "%s" "$port"
+}
+
+resolve_persisted_automatic_gateway_port() {
+  local root gateways_dir marker state_dir port marker_value selected_port="" marker_count=0
+  root="$(nemoclaw_state_root)" || return 2
+  if [[ ! -e "$root" && ! -L "$root" ]]; then return 1; fi
+  if [[ -L "$root" || ! -d "$root" || ! -r "$root" || ! -x "$root" ]]; then return 2; fi
+  gateways_dir="${root}/gateways"
+  if [[ ! -e "$gateways_dir" && ! -L "$gateways_dir" ]]; then return 1; fi
+  if [[ -L "$gateways_dir" || ! -d "$gateways_dir" || ! -r "$gateways_dir" || ! -x "$gateways_dir" ]]; then
+    return 2
+  fi
+  for marker in "$gateways_dir"/*/automatic-gateway-port; do
+    if [[ ! -e "$marker" && ! -L "$marker" ]]; then continue; fi
+    state_dir="${marker%/automatic-gateway-port}"
+    port="${state_dir##*/}"
+    if [[ -L "$state_dir" || ! -d "$state_dir" || ! -r "$state_dir" || ! -x "$state_dir" ]]; then
+      return 2
+    fi
+    case "$port" in
+      899[0-9] | 900[0-5]) ;;
+      *) return 2 ;;
+    esac
+    if [[ -L "$marker" || ! -f "$marker" || ! -r "$marker" ]]; then return 2; fi
+    marker_value="$(<"$marker")" || return 2
+    [[ "$marker_value" == "$port" ]] || return 2
+    marker_count=$((marker_count + 1))
+    if [[ "$marker_count" -ne 1 ]]; then return 2; fi
+    selected_port="$port"
+  done
+  [[ "$marker_count" -eq 1 ]] || return 1
+  printf '%s' "$selected_port"
 }
 
 is_explicit_nemoclaw_gateway_port() {
@@ -417,6 +461,32 @@ ensure_nemoclaw_state_dir() {
       || error "Could not secure gateway-scoped NemoClaw state directory: ${state_dir}"
   fi
   printf "%s" "$state_dir"
+}
+
+persist_automatic_gateway_port_selection() {
+  local port state_dir marker
+  port="$(resolve_nemoclaw_gateway_port)" || return 1
+  validate_gateway_port_candidate "$port" || error "Refusing to persist an invalid automatic NemoClaw gateway port."
+  state_dir="$(ensure_nemoclaw_state_dir)" || return 1
+  marker="${state_dir}/automatic-gateway-port"
+  node - "$marker" "$port" <<'NODE' || error "Could not persist the automatically selected NemoClaw gateway port."
+const fs = require("node:fs");
+
+const [marker, port] = process.argv.slice(2);
+const noFollow = fs.constants.O_NOFOLLOW;
+if (typeof noFollow !== "number") process.exit(1);
+const fd = fs.openSync(
+  marker,
+  fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | noFollow,
+  0o600,
+);
+try {
+  fs.writeFileSync(fd, `${port}\n`, "utf8");
+  fs.fsyncSync(fd);
+} finally {
+  fs.closeSync(fd);
+}
+NODE
 }
 
 nemoclaw_gateway_name() {
@@ -1686,9 +1756,11 @@ openshell_user_config_home() {
 
 enabled_openshell_gateway_user_service_activation_path() {
   local mode="${1:-observe}" user_config_home user_data_home runtime_dir unit_root activation_dir
-  local service_name activation_path="" candidate_path unit_path dropin_dir dropin exec_start gateway_bin
+  local service_name activation_path="" activation_physical="" candidate_path candidate_physical
+  local unit_path="" unit_physical activation_unit_physical dropin_dir dropin exec_start gateway_bin
   local activation_count=0 exec_start_count environment_file_count port_line_count port_setting_count
   local config_dirs data_dirs directory
+  local -a config_unit_roots=() data_unit_roots=()
   local -a unit_roots=()
   if [[ -n "${SYSTEMD_UNIT_PATH:-}" ]]; then
     printf 'SYSTEMD_UNIT_PATH=%q\n' "$SYSTEMD_UNIT_PATH"
@@ -1700,41 +1772,37 @@ enabled_openshell_gateway_user_service_activation_path() {
     printf '%s\n' "$user_data_home"
     return 2
   fi
-  unit_roots+=(
-    "${user_config_home}/systemd/user"
-    "${user_config_home}/systemd/user.control"
-    "${user_data_home%/}/systemd/user"
-    "/etc/systemd/user"
-    "/run/systemd/user"
-    "/usr/local/lib/systemd/user"
-    "/usr/lib/systemd/user"
-    "/lib/systemd/user"
-  )
   config_dirs="${XDG_CONFIG_DIRS:-/etc/xdg}"
   data_dirs="${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
   local IFS=:
-  for directory in $config_dirs $data_dirs; do
+  for directory in $config_dirs; do
     [[ -n "$directory" ]] || continue
     if [[ "$directory" != /* ]]; then
       printf '%s\n' "$directory"
       return 2
     fi
-    unit_roots+=("${directory%/}/systemd/user")
+    config_unit_roots+=("${directory%/}/systemd/user")
+  done
+  for directory in $data_dirs; do
+    [[ -n "$directory" ]] || continue
+    if [[ "$directory" != /* ]]; then
+      printf '%s\n' "$directory"
+      return 2
+    fi
+    data_unit_roots+=("${directory%/}/systemd/user")
   done
   runtime_dir="${XDG_RUNTIME_DIR:-}"
   if [[ "$runtime_dir" != /* && "${UID:-}" =~ ^[0-9]+$ ]]; then
     runtime_dir="/run/user/${UID}"
   fi
-  if [[ "$runtime_dir" == /* ]]; then
-    unit_roots+=(
-      "${runtime_dir%/}/systemd/user.control"
-      "${runtime_dir%/}/systemd/transient"
-      "${runtime_dir%/}/systemd/generator.early"
-      "${runtime_dir%/}/systemd/user"
-      "${runtime_dir%/}/systemd/generator"
-      "${runtime_dir%/}/systemd/generator.late"
-    )
-  fi
+  unit_roots+=("${user_config_home}/systemd/user.control")
+  if [[ "$runtime_dir" == /* ]]; then unit_roots+=("${runtime_dir%/}/systemd/user.control" "${runtime_dir%/}/systemd/transient" "${runtime_dir%/}/systemd/generator.early"); fi
+  unit_roots+=("${user_config_home}/systemd/user" "${config_unit_roots[@]}" "/etc/systemd/user")
+  if [[ "$runtime_dir" == /* ]]; then unit_roots+=("${runtime_dir%/}/systemd/user"); fi
+  unit_roots+=("/run/systemd/user")
+  if [[ "$runtime_dir" == /* ]]; then unit_roots+=("${runtime_dir%/}/systemd/generator"); fi
+  unit_roots+=("${user_data_home%/}/systemd/user" "${data_unit_roots[@]}" "/usr/local/lib/systemd/user" "/usr/lib/systemd/user" "/lib/systemd/user")
+  if [[ "$runtime_dir" == /* ]]; then unit_roots+=("${runtime_dir%/}/systemd/generator.late"); fi
 
   for unit_root in "${unit_roots[@]}"; do
     if [[ -e "$unit_root" || -L "$unit_root" ]]; then
@@ -1756,12 +1824,16 @@ enabled_openshell_gateway_user_service_activation_path() {
       for service_name in openshell-gateway "${NEMOCLAW_GATEWAY_SERVICE_NAME}"; do
         candidate_path="${activation_dir}/${service_name}.service"
         if [[ -e "$candidate_path" || -L "$candidate_path" ]]; then
-          if [[ "$activation_count" -ne 0 && "$candidate_path" != "$activation_path" ]]; then
+          candidate_physical="$(cd -P -- "$activation_dir" 2>/dev/null && printf '%s/%s.service' "$PWD" "$service_name")" || return 2
+          if [[ "$activation_count" -ne 0 && "$candidate_physical" != "$activation_physical" ]]; then
             printf '%s\n' "$candidate_path"
             return 2
           fi
-          activation_path="$candidate_path"
-          activation_count=1
+          if [[ "$activation_count" -eq 0 ]]; then
+            activation_path="$candidate_path"
+            activation_physical="$candidate_physical"
+            activation_count=1
+          fi
         fi
       done
     done
@@ -1769,23 +1841,24 @@ enabled_openshell_gateway_user_service_activation_path() {
   [[ "$activation_count" -eq 1 ]] || return 1
   if [[ "$mode" == "qualified-default" ]]; then
     [[ "${activation_path##*/}" == "openshell-gateway.service" && -L "$activation_path" ]] || return 2
-    unit_path="$(readlink "$activation_path" 2>/dev/null)" || return 2
-    [[ "$unit_path" == /* ]] || return 2
-    trusted_upstream_openshell_gateway_unit_for_service "$unit_path" || return 2
-    [[ -f "$unit_path" && -r "$unit_path" ]] || return 2
     for unit_root in "${unit_roots[@]}"; do
       candidate_path="${unit_root}/openshell-gateway.service"
-      if [[ -e "$candidate_path" || -L "$candidate_path" ]]; then
-        trusted_upstream_openshell_gateway_unit_for_service "$candidate_path" || return 2
-      fi
-      dropin_dir="${unit_root}/openshell-gateway.service.d"
-      if [[ -e "$dropin_dir" || -L "$dropin_dir" ]]; then
-        [[ ! -L "$dropin_dir" && -d "$dropin_dir" && -r "$dropin_dir" && -x "$dropin_dir" ]] || return 2
-        for dropin in "$dropin_dir"/*.conf; do
-          if [[ -e "$dropin" || -L "$dropin" ]]; then return 2; fi
-        done
-      fi
+      if [[ -z "$unit_path" && (-e "$candidate_path" || -L "$candidate_path") ]]; then unit_path="$candidate_path"; fi
+      for dropin_dir in "${unit_root}/service.d" "${unit_root}/openshell-.service.d" "${unit_root}/openshell-gateway.service.d"; do
+        if [[ -e "$dropin_dir" || -L "$dropin_dir" ]]; then
+          [[ ! -L "$dropin_dir" && -d "$dropin_dir" && -r "$dropin_dir" && -x "$dropin_dir" ]] || return 2
+          for dropin in "$dropin_dir"/*.conf; do
+            if [[ -e "$dropin" || -L "$dropin" ]]; then return 2; fi
+          done
+        fi
+      done
     done
+    [[ -n "$unit_path" ]] || return 2
+    trusted_upstream_openshell_gateway_unit_for_service "$unit_path" || return 2
+    [[ -f "$unit_path" && -r "$unit_path" ]] || return 2
+    unit_physical="$(node -e 'process.stdout.write(require("node:fs").realpathSync(process.argv[1]))' "$unit_path" 2>/dev/null)" || return 2
+    activation_unit_physical="$(node -e 'process.stdout.write(require("node:fs").realpathSync(process.argv[1]))' "$activation_path" 2>/dev/null)" || return 2
+    [[ "$activation_unit_physical" == "$unit_physical" ]] || return 2
     exec_start_count="$(grep -c '^ExecStart=' "$unit_path" 2>/dev/null || true)"
     environment_file_count="$(grep -c '^EnvironmentFile=' "$unit_path" 2>/dev/null || true)"
     [[ "$exec_start_count" -eq 1 && "$environment_file_count" -eq 1 ]] || return 2
@@ -1843,6 +1916,7 @@ install_nemoclaw_openshell_gateway_user_service() {
       if alternate_port="$(find_safe_alternate_gateway_port)"; then
         NEMOCLAW_GATEWAY_PORT="$alternate_port"
         export NEMOCLAW_GATEWAY_PORT
+        persist_automatic_gateway_port_selection
         warn "The systemd user manager is unavailable, but $activation_path can activate a gateway user service that can later claim port 8080. Automatically selected safe alternate gateway port ${alternate_port} to isolate the gateway environment without modifying the existing service."
         return 0
       fi

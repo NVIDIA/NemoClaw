@@ -55,9 +55,78 @@ function handleTopLevelError(error) {
   }
 }
 
+function applyPersistedAutomaticGatewayPort() {
+  if (process.env.NEMOCLAW_GATEWAY_PORT) return;
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const home = process.env.HOME;
+  if (!home) return;
+  const stateRoot = path.join(home, ".nemoclaw");
+  const gatewaysDir = path.join(stateRoot, "gateways");
+  let entries;
+  try {
+    const rootStat = fs.lstatSync(stateRoot);
+    const stat = fs.lstatSync(gatewaysDir);
+    if (
+      rootStat.isSymbolicLink() ||
+      !rootStat.isDirectory() ||
+      stat.isSymbolicLink() ||
+      !stat.isDirectory()
+    ) {
+      throw new Error("unsafe gateways root");
+    }
+    entries = fs.readdirSync(gatewaysDir, { withFileTypes: true });
+  } catch (error) {
+    if (error && error.code === "ENOENT") return;
+    throw new Error(
+      "Could not safely resolve the automatically selected NemoClaw gateway port. " +
+        "Remove invalid automatic-gateway-port markers or set NEMOCLAW_GATEWAY_PORT explicitly.",
+    );
+  }
+  const selectedPorts = [];
+  for (const entry of entries) {
+    const stateDir = path.join(gatewaysDir, entry.name);
+    const marker = path.join(stateDir, "automatic-gateway-port");
+    try {
+      const stateStat = fs.lstatSync(stateDir);
+      const markerStat = fs.lstatSync(marker);
+      if (
+        !/^(?:899[0-9]|900[0-5])$/.test(entry.name) ||
+        stateStat.isSymbolicLink() ||
+        !stateStat.isDirectory() ||
+        markerStat.isSymbolicLink() ||
+        !markerStat.isFile() ||
+        ![entry.name, `${entry.name}\n`].includes(fs.readFileSync(marker, "utf8"))
+      ) {
+        throw new Error("unsafe automatic gateway port marker");
+      }
+      selectedPorts.push(entry.name);
+    } catch (error) {
+      if (error && error.code === "ENOENT") continue;
+      throw new Error(
+        "Could not safely resolve the automatically selected NemoClaw gateway port. " +
+          "Remove invalid automatic-gateway-port markers or set NEMOCLAW_GATEWAY_PORT explicitly.",
+      );
+    }
+  }
+  if (selectedPorts.length > 1) {
+    throw new Error(
+      "Could not safely resolve the automatically selected NemoClaw gateway port. " +
+        "Remove invalid automatic-gateway-port markers or set NEMOCLAW_GATEWAY_PORT explicitly.",
+    );
+  }
+  if (selectedPorts.length === 1) process.env.NEMOCLAW_GATEWAY_PORT = selectedPorts[0];
+}
+
+try {
+  applyPersistedAutomaticGatewayPort();
+} catch (error) {
+  handleTopLevelError(error);
+}
+
 let compiledCliPath;
 try {
-  compiledCliPath = require.resolve("../dist/nemoclaw");
+  if (!process.exitCode) compiledCliPath = require.resolve("../dist/nemoclaw");
 } catch (error) {
   // Resolving the entrypoint does not execute it, so MODULE_NOT_FOUND here
   // identifies the incomplete-install case without hiding a nested dependency failure.

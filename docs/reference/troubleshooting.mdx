@@ -424,7 +424,7 @@ $$nemoclaw list
 
 A gateway port that keeps listening after you uninstall, or that keeps serving after you re-onboard without `NEMOCLAW_GATEWAY_PORT` set, can belong to a second environment.
 
-Onboarding under a non-default `NEMOCLAW_GATEWAY_PORT` registers the sandbox on gateway `nemoclaw-<port>` and stores its registry and state under `~/.nemoclaw/gateways/<port>/`. Every later command reads the state root that its own `NEMOCLAW_GATEWAY_PORT` selects, so a command run without that variable operates on port `8080` and neither reuses nor stops the other environment. Clearing the variable does not move an existing sandbox back to the default port.
+Onboarding under a non-default `NEMOCLAW_GATEWAY_PORT` registers the sandbox on gateway `nemoclaw-<port>` and stores its registry and state under `~/.nemoclaw/gateways/<port>/`. Every later command reads the state root that its own `NEMOCLAW_GATEWAY_PORT` selects. A command without that variable uses port `8080` unless the installer recorded an automatic alternate-port selection; in that case, the CLI restores the recorded port. Clearing an explicitly supplied variable does not move an existing sandbox back to the default port.
 
 List the gateways the host still has:
 
@@ -622,16 +622,16 @@ A supported listener probe must conclusively confirm that the port is unused.
 Installation stops if no candidate passes, including when listener inspection is unavailable or inconclusive for every remaining candidate.
 It does not modify the existing service or activation link.
 
-The completion output prints the selected value.
-Run the printed export command in every later terminal session that targets this gateway.
+The completion output prints the selected value and records it under `~/.nemoclaw/gateways/<port>/automatic-gateway-port`.
+Later NemoClaw commands restore that recorded selection when `NEMOCLAW_GATEWAY_PORT` is unset.
+You can still use the printed export command when a script or surrounding process must carry the same scope explicitly.
 If the installer selects port `8990`, it prints this command:
 
 ```bash
 export NEMOCLAW_GATEWAY_PORT=8990
 ```
 
-Later `list`, `status`, `connect`, `stop`, `rebuild`, and `uninstall` commands use the state root selected by this variable.
-A command without the export uses port `8080` instead.
+Later `list`, `status`, `connect`, `stop`, `rebuild`, and `uninstall` commands use the recorded automatic port unless this variable explicitly selects another supported port.
 
 The installer does not replace a supported explicit non-default gateway port.
 It uses that port's detached lifecycle without automatic selection.

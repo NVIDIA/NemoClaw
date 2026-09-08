@@ -41,7 +41,8 @@ Qualification requires one canonical `openshell-gateway.service` link, a trusted
 The installer rejects reserved or configured service ports, existing listeners, gateway registrations, and port-scoped NemoClaw state.
 It also rejects a candidate when no supported listener probe can conclusively confirm that the port is unused.
 Installation stops when no candidate passes.
-It exports the selected port for onboarding and prints the export required by later terminal sessions.
+It exports the selected port for onboarding and records it in the selected port's state directory.
+Later NemoClaw commands restore that recorded port when `NEMOCLAW_GATEWAY_PORT` is unset, while an explicit supported value remains authoritative.
 A supported explicit non-default port remains authoritative and uses its detached lifecycle without automatic selection.
 An explicit port of `8080`, an ambiguous activation, or an unqualified service still stops installation until you restore the user manager or resolve the service through its owner.
 Other service query errors, malformed metadata, untrusted paths, executable failures, and version mismatches stop installation.

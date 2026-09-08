@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -173,6 +175,34 @@ require(cliPath);`,
   );
 }
 
+function runWithCapturedGatewayPort(home: string, explicitPort?: string): SpawnSyncReturns<string> {
+  const env = {
+    ...process.env,
+    HOME: home,
+    NEMOCLAW_GATEWAY_PORT: explicitPort ?? "",
+  };
+  return spawnSync(
+    process.execPath,
+    [
+      "--eval",
+      `const Module = require("node:module");
+const cliPath = ${cliPath};
+const mainPath = ${mainPath};
+const originalLoad = Module._load;
+Module._load = function(request, parent, isMain) {
+  const resolved = Module._resolveFilename(request, parent, isMain);
+  if (resolved === mainPath) {
+    process.stdout.write(String(process.env.NEMOCLAW_GATEWAY_PORT || ""));
+    return { mainPromise: Promise.resolve() };
+  }
+  return originalLoad.apply(this, arguments);
+};
+require(cliPath);`,
+    ],
+    { cwd: REPO_ROOT, encoding: "utf-8", env },
+  );
+}
+
 describe("compiled CLI top-level errors", () => {
   it("prints an Error rejection as one line without a Node.js stack (#8202)", () => {
     expectTopLevelError('new Error("Command failed.")', "Error: Command failed.\n");
@@ -253,5 +283,39 @@ describe("compiled CLI top-level errors", () => {
     expect(result.stderr).not.toContain("/private/nemoclaw-secret-dependency");
     expect(result.stderr).not.toContain("Cannot find module");
     expect(result.stderr).not.toContain("An install or upgrade did not finish.");
+  });
+
+  it("restores an automatically selected gateway port for later CLI commands (#10824)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-automatic-port-"));
+    try {
+      const marker = path.join(home, ".nemoclaw", "gateways", "8990", "automatic-gateway-port");
+      fs.mkdirSync(path.dirname(marker), { recursive: true });
+      fs.writeFileSync(marker, "8990\n");
+
+      const result = runWithCapturedGatewayPort(home);
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toBe("8990");
+      expect(result.stderr).toBe("");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves an explicit gateway port over an automatic marker (#10824)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-explicit-port-"));
+    try {
+      const marker = path.join(home, ".nemoclaw", "gateways", "8990", "automatic-gateway-port");
+      fs.mkdirSync(path.dirname(marker), { recursive: true });
+      fs.writeFileSync(marker, "8990\n");
+
+      const result = runWithCapturedGatewayPort(home, "9123");
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toBe("9123");
+      expect(result.stderr).toBe("");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 });
