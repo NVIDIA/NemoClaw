@@ -46,6 +46,7 @@
       "fast": [
         "test/e2e/support/base-image-publication.test.ts",
         "test/e2e/support/managed-image-multiarch-startup-helpers.test.ts",
+        "test/e2e/support/sandbox-images-workflow-boundary.test.ts",
         "test/inference/managed/managed-image-publication-workflow.test.ts",
         "test/automation/pull-requests/pr-risk-plan.test.ts",
         "test/platform/images/protected-managed-image-contract.test.ts"
@@ -421,6 +422,7 @@
         "test/e2e/support/managed-image-cohort-contract.test.ts",
         "test/e2e/support/managed-image-receipt.test.ts",
         "test/e2e/support/stock-managed-image-workflow-boundary.test.ts",
+        "test/e2e/support/sandbox-images-workflow-boundary.test.ts",
         "test/e2e/support/e2e-host-dependency-workflow-boundary.test.ts",
         "test/e2e/support/corporate-ca-workload-kind.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
@@ -794,6 +796,7 @@
         "test/e2e/live/rebuild-hermes-host-policy.ts"
       ],
       "fast": [
+        "src/lib/sandbox-base-image-resolution.test.ts",
         "src/lib/actions/sandbox/rebuild-flow-lifecycle.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
@@ -860,6 +863,8 @@
     {
       "live": "test/e2e/live/state-backup-restore.test.ts",
       "fast": [
+        "src/lib/actions/sandbox/download.test.ts",
+        "test/scripts/backup-workspace.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]

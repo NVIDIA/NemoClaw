@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, test } from "vitest";
 import YAML from "yaml";
 
 import { validateManagedImageMultiarchWorkflow } from "../../../tools/e2e/managed-image-multiarch-workflow-boundary.mts";
@@ -52,6 +52,35 @@ function namedMultiarchStep(value: WorkflowRecord, name: string): Record<string,
 describe("protected managed-image runtime workflow", () => {
   it("accepts the checked-in protected runtime job", () => {
     expect(validateManagedImageProtectedRuntimeWorkflow(workflow())).toEqual([]);
+  });
+
+  // source-shape-contract: security -- The isolated registry must be gone before reporter-backed validations can publish passing risk evidence
+  test("cleans the protected registry before passing risk evidence", () => {
+    const steps = multiarchJob(workflow()).steps as Array<Record<string, unknown>>;
+    const names = steps.map((step) => String(step.name));
+    const cleanup = names.indexOf("Remove isolated protected managed-image registry");
+    const cohortCleanup = names.indexOf("Remove protected managed-image cohort resources");
+    const security = names.indexOf("Validate OpenClaw managed-image security boundary");
+    const glibc = names.indexOf("Validate managed-image glibc probe lifecycle");
+    expect(cleanup).toBeLessThan(names.indexOf("Validate protected managed-image evidence"));
+    expect(cleanup).toBeLessThan(security);
+    expect(cleanup).toBeLessThan(glibc);
+    expect(cohortCleanup).toBeGreaterThan(security);
+    expect(cohortCleanup).toBeGreaterThan(glibc);
+    expect(steps[cleanup]).toMatchObject({
+      if: "always()",
+      run: expect.stringMatching(
+        /if docker container inspect[\s\S]*owner=.*docker container inspect/u,
+      ),
+    });
+    expect(steps[security]).toMatchObject({
+      run: expect.stringContaining("env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN"),
+    });
+    expect(steps[glibc]).toMatchObject({
+      if: "${{ !cancelled() }}",
+      run: expect.stringContaining("env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN"),
+    });
+    expect(steps[cohortCleanup]).toMatchObject({ if: "always()" });
   });
 
   it("accepts the hosted build-cache handoff to the protected runtime job", () => {
@@ -171,14 +200,26 @@ describe("protected managed-image runtime workflow", () => {
     );
   });
 
-  it("does not record manual PR risk signals on main pushes", () => {
+  it("records protected risk signals on main pushes", () => {
     const value = workflow();
     const jobEnv = multiarchJob(value).env as Record<string, unknown>;
-    jobEnv.NEMOCLAW_E2E_EXPECTED_SHA = "${{ inputs.checkout_sha || github.sha }}";
+    jobEnv.NEMOCLAW_E2E_EXPECTED_SHA = "${{ inputs.checkout_sha }}";
 
     expect(validateManagedImageMultiarchWorkflow(value)).toContain(
-      "managed-image-multiarch-startup env must bind NEMOCLAW_E2E_EXPECTED_SHA to ${{ inputs.checkout_sha }}",
+      "managed-image-multiarch-startup env must bind NEMOCLAW_E2E_EXPECTED_SHA to ${{ inputs.checkout_sha || github.sha }}",
     );
+  });
+
+  // source-shape-contract: compatibility -- Main-push qualification must create the UUID consumed by reporter-backed risk evidence when workflow_dispatch inputs do not exist.
+  it("binds a correlation identity for main pushes without an input", () => {
+    const step = namedMultiarchStep(workflow(), "Bind protected E2E correlation identity");
+
+    expect(step).toMatchObject({
+      env: { REQUESTED_CORRELATION_ID: "${{ inputs.correlation_id }}" },
+      run: expect.stringMatching(
+        /if \[\[ -z "\$correlation_id" \]\][\s\S]*randomUUID[\s\S]*NEMOCLAW_E2E_CORRELATION_ID/u,
+      ),
+    });
   });
 
   it("uses github.sha for main pushes", () => {
@@ -408,6 +449,18 @@ describe("protected managed-image runtime workflow", () => {
     expect(validateManagedImageMultiarchWorkflow(value)).toContain(
       "managed-image-multiarch-startup must not resolve the DCode base from a mutable alias",
     );
+  });
+
+  it.each([
+    ["Validate OpenClaw managed-image security boundary", "run", "true"],
+    ["Validate OpenClaw managed-image security boundary", "continue-on-error", true],
+    ["Validate managed-image glibc probe lifecycle", "if", "always()"],
+    ["Validate managed-image glibc probe lifecycle", "continue-on-error", true],
+  ] as const)("rejects weakened protected consumer step %s %s", (name, key, value) => {
+    const candidate = workflow();
+    namedMultiarchStep(candidate, name)[key] = value;
+
+    expect(validateManagedImageMultiarchWorkflow(candidate)).not.toEqual([]);
   });
 
   it("requires one amd64 build-cache upload", () => {

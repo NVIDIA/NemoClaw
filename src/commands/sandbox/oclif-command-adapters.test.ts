@@ -37,6 +37,8 @@ const mocks = vi.hoisted(() => {
     runSandboxDoctor: vi.fn().mockResolvedValue(undefined),
     showSandboxLogs: vi.fn(),
     showSandboxStatus: vi.fn().mockResolvedValue(undefined),
+    getSandboxStatusReport: vi.fn(),
+    isInferenceHealthFailing: vi.fn().mockReturnValue(false),
     addSandboxHostAlias: vi.fn(),
     listSandboxHostAliases: vi.fn(),
     removeSandboxHostAlias: vi.fn(),
@@ -66,6 +68,8 @@ vi.mock("../../lib/actions/sandbox/process-recovery", () => ({
 
 vi.mock("../../lib/actions/sandbox/status", () => ({
   showSandboxStatus: mocks.showSandboxStatus,
+  getSandboxStatusReport: mocks.getSandboxStatusReport,
+  isInferenceHealthFailing: mocks.isInferenceHealthFailing,
 }));
 
 vi.mock("../../lib/actions/sandbox/logs", () => ({
@@ -245,6 +249,27 @@ describe("sandbox oclif command adapters", () => {
         process.env.NEMOCLAW_CLEANUP_GATEWAY = originalCleanupGatewayEnv;
       }
     }
+  });
+
+  it("sets a nonzero JSON status exit when llama.cpp ownership is unavailable (#10256)", async () => {
+    mocks.getSandboxStatusReport.mockResolvedValue({
+      found: true,
+      gatewayState: "present",
+      rpcIssue: null,
+      failureLayer: null,
+      inferenceHealth: null,
+      terminalRuntimeHealth: null,
+      llamaCpp: {
+        kind: "unavailable",
+        diagnostic: "Managed llama.cpp ownership state is unavailable.",
+        recovery:
+          "Run nemoclaw alpha doctor. Rerun onboarding for that sandbox if the managed llama.cpp runtime check fails.",
+      },
+    });
+
+    await SandboxStatusCommand.run(["alpha", "--json"], rootDir);
+
+    expect(process.exitCode).toBe(1);
   });
 
   it("maps inspection commands to their action helpers", async () => {
