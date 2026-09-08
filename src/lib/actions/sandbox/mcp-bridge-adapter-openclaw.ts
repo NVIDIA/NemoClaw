@@ -29,6 +29,7 @@ import { executeSandboxCommand, restartSandboxGateway } from "./process-recovery
 
 export const MCPORTER_VERSION = "0.7.3";
 const OPENCLAW_NATIVE_MCP_PLUGIN_ID = "bundle-mcp";
+const OPENCLAW_NATIVE_MCP_TRANSPORT = "streamable-http";
 export { OPENCLAW_MCP_CONFIG_DIR } from "./mcp-bridge-adapter-status";
 
 /** Resolve the OpenClaw agent configuration directory. */
@@ -72,6 +73,7 @@ export function buildStrictOpenClawMcpInspectCommand(
   const payload = {
     server: entry.server,
     url: entry.url,
+    transport: OPENCLAW_NATIVE_MCP_TRANSPORT,
     headers: entryHeaders(entry, credentialRevision),
     failOnMismatch,
     configPath: openClawConfigPath(root),
@@ -84,7 +86,7 @@ export function buildStrictOpenClawMcpInspectCommand(
     "if (!actual) { console.log('absent'); process.exit(0); }",
     'const headers = actual.headers && typeof actual.headers === "object" ? actual.headers : {};',
     openClawHeaderMatcherSource(),
-    "const registered = actual.url === expected.url && openClawHeadersMatchExpected(headers, expected.headers);",
+    "const registered = actual.url === expected.url && actual.transport === expected.transport && openClawHeadersMatchExpected(headers, expected.headers);",
     'console.log(registered ? "registered" : "mismatch");',
     "if (!registered && expected.failOnMismatch) process.exit(2);",
     "NODE",
@@ -101,7 +103,11 @@ export function buildOpenClawMcpRegisterCommand(
   const payload = {
     configPath: openClawConfigPath(root),
     server: entry.server,
-    value: { url: entry.url, ...(Object.keys(headers).length > 0 ? { headers } : {}) },
+    value: {
+      transport: OPENCLAW_NATIVE_MCP_TRANSPORT,
+      url: entry.url,
+      ...(Object.keys(headers).length > 0 ? { headers } : {}),
+    },
     replaceExisting,
   };
   return [
@@ -126,6 +132,7 @@ export function buildOpenClawMcpRemoveCommand(
     configPath: openClawConfigPath(root),
     server: entry.server,
     url: entry.url,
+    transport: OPENCLAW_NATIVE_MCP_TRANSPORT,
     headers: entryHeaders(entry),
     force,
   };
@@ -135,7 +142,7 @@ export function buildOpenClawMcpRemoveCommand(
     `const expected = JSON.parse(${pythonJsonLiteral(payload)});`,
     openClawHeaderMatcherSource(),
     "const current = readConfig(expected.configPath); const mcp = current.data.mcp; const servers = mcp && mcp.servers; if (!servers || typeof servers !== 'object' || Array.isArray(servers) || !Object.hasOwn(servers, expected.server)) process.exit(0);",
-    'const actual = servers[expected.server]; const exact = actual && typeof actual === "object" && actual.url === expected.url && openClawHeadersMatchExpected(actual.headers || {}, expected.headers || {}); if (!exact && !expected.force) { console.error("Refusing to remove modified OpenClaw MCP server \'" + expected.server + "\'. Use --force to remove it."); process.exit(2); }',
+    'const actual = servers[expected.server]; const exact = actual && typeof actual === "object" && actual.url === expected.url && actual.transport === expected.transport && openClawHeadersMatchExpected(actual.headers || {}, expected.headers || {}); if (!exact && !expected.force) { console.error("Refusing to remove modified OpenClaw MCP server \'" + expected.server + "\'. Use --force to remove it."); process.exit(2); }',
     "delete servers[expected.server]; current.data.mcp = { ...mcp, servers }; writeConfig(expected.configPath, current.data, current.identity);",
     "NODE",
   ].join("\n");
@@ -189,6 +196,7 @@ export function registerOpenClawAdapter(
     }
     const headers = entryHeaders(entry, credentialRevision);
     servers[entry.server] = {
+      transport: OPENCLAW_NATIVE_MCP_TRANSPORT,
       url: entry.url,
       ...(Object.keys(headers).length > 0 ? { headers } : {}),
     };
@@ -290,6 +298,7 @@ export function unregisterOpenClawAdapter(
         : {};
     const exact =
       actualRecord?.url === entry.url &&
+      actualRecord.transport === OPENCLAW_NATIVE_MCP_TRANSPORT &&
       openClawHeadersMatchExpected(headers, entryHeaders(entry));
     if (!exact && options.force !== true) {
       throw new Error(

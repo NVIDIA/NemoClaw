@@ -297,6 +297,7 @@ describe("OpenClaw MCP adapter registration", () => {
         mcp: {
           servers: {
             github: {
+              transport: "streamable-http",
               url: entry.url,
               headers: { Authorization: "Bearer openshell:resolve:env:v12_GITHUB_TOKEN" },
             },
@@ -321,6 +322,7 @@ describe("OpenClaw MCP adapter registration", () => {
       mcp: {
         servers: {
           github: {
+            transport: "streamable-http",
             url: entry.url,
             headers: { Authorization: "Bearer openshell:resolve:env:v12_GITHUB_TOKEN" },
           },

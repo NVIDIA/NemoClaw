@@ -44,6 +44,7 @@ describe("OpenClaw native MCP adapter", () => {
         mcp: {
           servers: {
             github: {
+              transport: "streamable-http",
               url: entry.url,
               headers: { Authorization: "Bearer openshell:resolve:env:GITHUB_TOKEN" },
             },
@@ -69,6 +70,7 @@ describe("OpenClaw native MCP adapter", () => {
 
   it("projects the exact OpenShell credential revision into native headers", () => {
     const command = buildOpenClawMcpRegisterCommand(entry, false, "/sandbox/.openclaw", "v12");
+    expect(command).toContain('\\"transport\\":\\"streamable-http\\"');
     expect(command).toContain("Bearer openshell:resolve:env:v12_GITHUB_TOKEN");
     expect(openClawHeadersMatchExpected(
       { Authorization: "Bearer openshell:resolve:env:v12_GITHUB_TOKEN" },
@@ -88,6 +90,33 @@ describe("OpenClaw native MCP adapter", () => {
       );
       expect(run(buildOpenClawMcpRemoveCommand(entry, false, root)).status).toBe(2);
       expect(run(buildOpenClawMcpRemoveCommand(entry, true, root)).status).toBe(0);
+    } finally {
+      fs.rmSync(temp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a URL-only entry that OpenClaw would otherwise treat as legacy SSE", () => {
+    const temp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-mcp-transport-"));
+    const configPath = path.join(temp, "openclaw.json");
+    try {
+      fs.writeFileSync(
+        configPath,
+        JSON.stringify({
+          mcp: {
+            servers: {
+              github: {
+                url: entry.url,
+                headers: { Authorization: "Bearer openshell:resolve:env:GITHUB_TOKEN" },
+              },
+            },
+          },
+        }),
+        { mode: 0o600 },
+      );
+
+      const inspection = run(buildStrictOpenClawMcpInspectCommand(entry, true, temp));
+      expect(inspection.status).toBe(2);
+      expect(inspection.stdout.trim()).toBe("mismatch");
     } finally {
       fs.rmSync(temp, { recursive: true, force: true });
     }
