@@ -1,16 +1,46 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   getInstalledOllamaVersion,
   getRunningOllamaDaemonVersion,
+  hasOllamaSystemdUnit,
   isOllamaVersionAtLeast,
   MIN_OLLAMA_VERSION,
 } from "./ollama-version";
 
+const OLLAMA_SYSTEMD_UNIT_PROBE = [
+  "sh",
+  "-c",
+  "command -v systemctl >/dev/null && [ -d /run/systemd/system ] && systemctl list-unit-files ollama.service --no-legend 2>/dev/null | head -n1",
+] as const;
+
 describe("Ollama version detection", () => {
+  it("skips systemd unit detection outside Linux", () => {
+    const capture = vi.fn(() => "ollama.service enabled");
+
+    expect({ detected: hasOllamaSystemdUnit(capture, "darwin"), calls: capture.mock.calls }).toEqual(
+      { detected: false, calls: [] },
+    );
+  });
+
+  it.each([
+    { output: "", detected: false },
+    { output: "ollama.service enabled", detected: true },
+  ])("detects a Linux systemd unit from %j", ({ output, detected }) => {
+    const capture = vi.fn(() => output);
+
+    expect({
+      detected: hasOllamaSystemdUnit(capture, "linux"),
+      calls: capture.mock.calls,
+    }).toEqual({
+      detected,
+      calls: [[OLLAMA_SYSTEMD_UNIT_PROBE, { ignoreError: true, timeout: 5_000 }]],
+    });
+  });
+
   it("parses 'ollama version is X.Y.Z' output", () => {
     const capture = () => "ollama version is 0.6.2";
     expect(getInstalledOllamaVersion(capture)).toBe("0.6.2");
