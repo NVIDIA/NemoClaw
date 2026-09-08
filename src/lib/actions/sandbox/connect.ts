@@ -543,18 +543,32 @@ function failHermesPortableInferenceRecovery(
   process.exit(1);
 }
 
+/** Returns a sanitized operator action for each fail-closed forward-recovery boundary. */
+function describeHermesPortableForwardRecoveryFailure(
+  failure: HermesPortableForwardRecoveryFailure,
+): string {
+  switch (failure) {
+    case "forward-occupied":
+      return "A required recorded host port is occupied by another sandbox or listener. NemoClaw did not stop that owner or change the recorded forwards. Inspect the port owner before retrying.";
+    case "forward-state-unavailable":
+      return "NemoClaw could not read and prove one unambiguous OpenShell host-forward state. It made no forward changes. Inspect `openshell forward list` before retrying.";
+    case "recovery-failed":
+      return "NemoClaw could not establish the required recorded host forwards within the recovery bound. Inspect the recorded forward state before retrying.";
+    case "restoration-unproved":
+      return "NemoClaw could not prove that the recovered host forwards returned to a stopped state. Do not run another probe or launch until the recorded forward state is inspected.";
+    case "authority-drift":
+      return "Hermes Portable authority changed during host-forward recovery. Do not run another probe or launch until the current Portable state is inspected.";
+  }
+}
+
+/** Prints the sanitized forward-recovery diagnosis and prevents readiness publication. */
 function failHermesPortableForwardRecovery(
   sandboxName: string,
   failure: HermesPortableForwardRecoveryFailure,
 ): never {
-  const detail =
-    failure === "restoration-unproved"
-      ? "NemoClaw could not prove that the recovered host forwards returned to a stopped state. Do not run another probe or launch until the recorded forward state is inspected."
-      : failure === "authority-drift"
-        ? "Hermes Portable authority changed during host-forward recovery. Do not run another probe or launch until the current Portable state is inspected."
-        : "The required recorded host forwards could not be restored. No launch-readiness evidence was published.";
+  const detail = describeHermesPortableForwardRecoveryFailure(failure);
   console.error(
-    `  Error: Hermes Portable host-forward recovery for '${sandboxName}' failed. ${detail}`,
+    `  Error: Hermes Portable host-forward recovery for '${sandboxName}' failed. ${detail} No launch-readiness evidence was published.`,
   );
   process.exit(1);
 }

@@ -940,35 +940,50 @@ describe("Hermes Portable connect composition", () => {
     expect(output).not.toContain("rollback authority canary");
   });
 
-  it("stops before publication when the owning gateway forward list is malformed", async () => {
-    const harness = createConnectHarness({
-      agentName: "hermes",
-      sessionAgent: { name: "hermes" },
-      portableReceiptDisposition: { kind: "hermes", phase: "active" },
-      portableRecoveryResult: { kind: "already-running" },
-    });
-    const captureResolved = harness.captureResolvedOpenshellSpy.getMockImplementation()!;
-    harness.captureResolvedOpenshellSpy.mockImplementation(((args: unknown, options: unknown) => {
-      const argv = Array.isArray(args) ? args : [];
-      return argv[0] === "forward" && argv[1] === "list"
-        ? { status: 0, output: "malformed canary" }
-        : captureResolved(args, options);
-    }) as never);
+  it.each([
+    [
+      "occupied",
+      "SANDBOX BIND PORT PID STATUS\nbeta 127.0.0.1 18789 12345 running",
+      "A required recorded host port is occupied by another sandbox or listener",
+    ],
+    [
+      "unavailable",
+      "malformed canary",
+      "NemoClaw could not read and prove one unambiguous OpenShell host-forward state",
+    ],
+  ] as const)(
+    "stops before publication when the owning gateway forward state is %s",
+    async (_state, listOutput, expectedDetail) => {
+      const harness = createConnectHarness({
+        agentName: "hermes",
+        sessionAgent: { name: "hermes" },
+        portableReceiptDisposition: { kind: "hermes", phase: "active" },
+        portableRecoveryResult: { kind: "already-running" },
+      });
+      const captureResolved = harness.captureResolvedOpenshellSpy.getMockImplementation()!;
+      harness.captureResolvedOpenshellSpy.mockImplementation(((args: unknown, options: unknown) => {
+        const argv = Array.isArray(args) ? args : [];
+        return argv[0] === "forward" && argv[1] === "list"
+          ? { status: 0, output: listOutput }
+          : captureResolved(args, options);
+      }) as never);
 
-    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
-      "process.exit(1)",
-    );
+      await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+        "process.exit(1)",
+      );
 
-    expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
-    expect(
-      harness.runOpenshellSpy.mock.calls.some(
-        ([args]) => Array.isArray(args) && ["start", "stop"].includes(String(args[1])),
-      ),
-    ).toBe(false);
-    const output = harness.errorSpy.mock.calls.flat().join("\n");
-    expect(output).toContain("Hermes Portable host-forward recovery");
-    expect(output).not.toContain("malformed canary");
-  });
+      expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
+      expect(
+        harness.runOpenshellSpy.mock.calls.some(
+          ([args]) => Array.isArray(args) && ["start", "stop"].includes(String(args[1])),
+        ),
+      ).toBe(false);
+      const output = harness.errorSpy.mock.calls.flat().join("\n");
+      expect(output).toContain("Hermes Portable host-forward recovery");
+      expect(output).toContain(expectedDetail);
+      expect(output).not.toContain("malformed canary");
+    },
+  );
 
   it("rejects a same-path executable generation change before forward mutation", async () => {
     const harness = createConnectHarness({

@@ -158,6 +158,7 @@ type ManagedGatewaySupervisorActionResult = SandboxCommandResult & {
 
 const MANAGED_GATEWAY_CONTROL_PATH = "/usr/local/bin/nemoclaw-gateway-control";
 const MANAGED_CONTROL_TRANSITION_MAX_ATTEMPTS = 11;
+const MANAGED_CONTAINER_DISCOVERY_MAX_ATTEMPTS = 21;
 const DOCKER_CONTAINER_RESTARTING_ERROR =
   /^Error response from daemon: Container ([0-9a-f]{64}) is restarting, wait until the container is running$/;
 
@@ -465,6 +466,31 @@ function isExactlyManagedControlMarker(
   return lines.length === 1 && lines[0] === marker;
 }
 
+/**
+ * Creates independent retry counters for delayed container discovery and
+ * managed-controller startup without allowing either class to authorize
+ * supervisor identity or recreation.
+ */
+interface ManagedControlTransitionRetryBudget {
+  readonly maxAttempts: number;
+  canRetry(result: SandboxCommandResult | null): boolean;
+}
+
+function managedControlTransitionRetryBudget(): ManagedControlTransitionRetryBudget {
+  let discoveryAttempts = 0;
+  let transitionAttempts = 0;
+  return {
+    maxAttempts:
+      MANAGED_CONTAINER_DISCOVERY_MAX_ATTEMPTS + MANAGED_CONTROL_TRANSITION_MAX_ATTEMPTS - 1,
+    canRetry(result) {
+      if (isExactlyManagedControlMarker(result, "PRIVILEGED_CONTROL_UNAVAILABLE")) {
+        return ++discoveryAttempts < MANAGED_CONTAINER_DISCOVERY_MAX_ATTEMPTS;
+      }
+      return ++transitionAttempts < MANAGED_CONTROL_TRANSITION_MAX_ATTEMPTS;
+    },
+  };
+}
+
 function isExactlyRetryableManagedRecoveryFailure(result: SandboxCommandResult | null): boolean {
   return isExactlyManagedControlMarker(result, "SUPERVISOR_BUSY");
 }
@@ -512,7 +538,8 @@ export function waitForManagedGatewaySupervisor(
     options.requestGatewaySupervisorActionImpl ?? executeGatewaySupervisorAction;
   const sleep = options.sleepImpl ?? sleepSeconds;
   const intervalSeconds = options.intervalSeconds ?? 3;
-  const maxAttempts = options.maxAttempts ?? MANAGED_CONTROL_TRANSITION_MAX_ATTEMPTS;
+  const transitionRetryBudget = managedControlTransitionRetryBudget();
+  const maxAttempts = options.maxAttempts ?? transitionRetryBudget.maxAttempts;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const result = requestGatewaySupervisorAction(sandboxName, "probe", OPENSHELL_PROBE_TIMEOUT_MS);
@@ -524,6 +551,7 @@ export function waitForManagedGatewaySupervisor(
     ) {
       return false;
     }
+    if (options.maxAttempts === undefined && !transitionRetryBudget.canRetry(result)) break;
     if (attempt < maxAttempts) sleep(intervalSeconds);
   }
   return false;
@@ -816,7 +844,7 @@ function recoverSandboxProcesses(
   const recoveredSsh = (result: SandboxCommandResult | null): SandboxProcessRecovery | null =>
     result && result.status === 0 && hasGatewayRecoveryMarker(result) ? { kind: "custom" } : null;
   const recoverManagedGateway = (): SandboxProcessRecovery | null => {
-    const maxAttempts = MANAGED_CONTROL_TRANSITION_MAX_ATTEMPTS;
+    const transitionRetryBudget = managedControlTransitionRetryBudget();
     const maxBusyAttempts = 3;
     const retryIntervalSeconds = readNonNegativeNumberEnv(
       "NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS",
@@ -824,7 +852,7 @@ function recoverSandboxProcesses(
     );
     let execResult: ManagedGatewaySupervisorActionResult | null = null;
     let busyAttempts = 0;
-    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    for (let attempt = 1; attempt <= transitionRetryBudget.maxAttempts; attempt += 1) {
       execResult = effectiveGatewaySupervisorAction(sandboxName, "recover");
       const managedControlCompletion = parseManagedGatewayControlCompletion(execResult);
       if (managedControlCompletion) return { kind: "managed", managedControlCompletion };
@@ -844,7 +872,7 @@ function recoverSandboxProcesses(
       ) {
         break;
       }
-      if (attempt === maxAttempts) break;
+      if (!transitionRetryBudget.canRetry(execResult)) break;
       sleepSeconds(retryIntervalSeconds);
     }
     const failure = classifyGatewayRestartFailure(execResult);
