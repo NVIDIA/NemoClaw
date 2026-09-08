@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
+
 export const MCP_TOOL_DISCOVERY_PROTOCOL = 2;
 
 export const MCP_TOOL_DISCOVERY_LIMITS = {
@@ -125,6 +127,12 @@ export class ToolDiscoveryRuntimeError extends Error {
     this.code = code;
     this.httpStatus = httpStatus;
   }
+}
+
+function normalizeMcpToolDiscoveryError(error: unknown): unknown {
+  return error instanceof McpError && error.code === ErrorCode.RequestTimeout
+    ? new ToolDiscoveryRuntimeError("timeout")
+    : error;
 }
 
 function utf8Bytes(value: string): number {
@@ -269,10 +277,7 @@ function combinedSignal(left: AbortSignal | null | undefined, right: AbortSignal
   return left ? AbortSignal.any([left, right]) : right;
 }
 
-function boundedFetchError(
-  error: unknown,
-  deadlineSignal: AbortSignal,
-): ToolDiscoveryRuntimeError {
+function boundedFetchError(error: unknown, deadlineSignal: AbortSignal): ToolDiscoveryRuntimeError {
   return deadlineSignal.aborted || (error instanceof Error && error.name === "AbortError")
     ? new ToolDiscoveryRuntimeError("timeout")
     : new ToolDiscoveryRuntimeError("connection");
@@ -351,13 +356,14 @@ export function createBoundedMcpFetch(
 }
 
 export function safeToolDiscoveryErrorDetail(error: unknown): string {
-  if (error instanceof ToolDiscoveryRuntimeError) {
-    switch (error.code) {
+  const normalizedError = normalizeMcpToolDiscoveryError(error);
+  if (normalizedError instanceof ToolDiscoveryRuntimeError) {
+    switch (normalizedError.code) {
       case "connection":
         return "MCP endpoint connection failed";
       case "http-error":
-        return typeof error.httpStatus === "number"
-          ? `MCP endpoint rejected the request (HTTP ${error.httpStatus})`
+        return typeof normalizedError.httpStatus === "number"
+          ? `MCP endpoint rejected the request (HTTP ${normalizedError.httpStatus})`
           : "MCP endpoint rejected the request";
       case "invalid-response":
         return "MCP endpoint returned an invalid tool-list response";
@@ -369,16 +375,6 @@ export function safeToolDiscoveryErrorDetail(error: unknown): string {
         return `MCP request timed out after ${MCP_TOOL_DISCOVERY_LIMITS.maxTotalTimeMs / 1_000}s`;
     }
   }
-
-  if (error instanceof Error) {
-    if (
-      error.name === "AbortError" ||
-      /(?:request|maximum total) timeout|timed out/iu.test(error.message)
-    ) {
-      return `MCP request timed out after ${MCP_TOOL_DISCOVERY_LIMITS.maxTotalTimeMs / 1_000}s`;
-    }
-  }
-
   return "MCP request failed";
 }
 
@@ -386,24 +382,19 @@ export function mcpToolDiscoveryFailure(
   error: unknown,
   failedStage: Extract<McpToolDiscoveryFailedStage, "initialization" | "tool-discovery">,
 ): McpToolDiscoveryFailureResult {
+  const normalizedError = normalizeMcpToolDiscoveryError(error);
   let failureClass: McpToolDiscoveryFailureClass;
-  if (error instanceof ToolDiscoveryRuntimeError) {
-    if (error.code === "connection" || error.code === "timeout") {
+  if (normalizedError instanceof ToolDiscoveryRuntimeError) {
+    if (normalizedError.code === "connection" || normalizedError.code === "timeout") {
       failureClass = "connection";
     } else if (
-      error.code === "http-error" &&
-      (error.httpStatus === 401 || error.httpStatus === 403)
+      normalizedError.code === "http-error" &&
+      (normalizedError.httpStatus === 401 || normalizedError.httpStatus === 403)
     ) {
       failureClass = "authentication";
     } else {
       failureClass = "protocol";
     }
-  } else if (
-    error instanceof Error &&
-    (error.name === "AbortError" ||
-      /(?:request|maximum total) timeout|timed out/iu.test(error.message))
-  ) {
-    failureClass = "connection";
   } else {
     failureClass = failedStage === "initialization" ? "protocol" : "tool-operation";
   }
@@ -412,7 +403,7 @@ export function mcpToolDiscoveryFailure(
     count: 0,
     tools: [],
     truncated: false,
-    detail: safeToolDiscoveryErrorDetail(error),
+    detail: safeToolDiscoveryErrorDetail(normalizedError),
     failedStage,
     failureClass,
   };

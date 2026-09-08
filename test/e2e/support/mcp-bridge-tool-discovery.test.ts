@@ -458,7 +458,7 @@ describe("authenticated MCP tool discovery transport retry", () => {
     },
   );
 
-  it("writes redacted boundary diagnostics before a discovery failure (#8746)", async () => {
+  it("writes redacted diagnostics before rejecting an exit-zero failed discovery (#8746)", async () => {
     const statusJson = {
       provider: {
         registryPresent: true,

@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
+
 import { expect } from "vitest";
 
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
@@ -647,7 +649,19 @@ export async function assertAuthenticatedMcpToolDiscovery(
     `${options.artifactPrefix}-mcp-tool-discovery-diagnostics.json`,
     buildMcpToolDiscoveryDiagnostics(statusJson, discoveryRequests, options.hostSecret),
   );
-  expect(completedStatus.stdout).not.toContain(options.hostSecret);
+  assert.deepStrictEqual({
+    toolDiscovery: statusJson.toolDiscovery,
+    hostSecretRedacted: !completedStatus.stdout.includes(options.hostSecret),
+  }, {
+    toolDiscovery: {
+      ok: true,
+      count: 2,
+      tools: ["fake_echo", "fake_status"],
+      truncated: false,
+      commandStatus: 0,
+    },
+    hostSecretRedacted: true,
+  });
   const discoveryProtocolRequests = discoveryRequests.filter(
     (request) =>
       (request.method === "POST" || request.method === "DELETE") && request.path === "/mcp",
@@ -759,7 +773,16 @@ export async function assertAuthenticatedMcpToolDiscovery(
       `${options.artifactPrefix}-mcp-tool-discovery-denied-auth.json`,
       buildMcpToolDiscoveryDiagnostics(deniedStatusJson, deniedRequests, options.hostSecret),
     );
-    expect(deniedStatusJson.toolDiscovery.failureClass).toBe("authentication");
+    assert.deepStrictEqual(deniedStatusJson.toolDiscovery, {
+      ok: false,
+      count: 0,
+      tools: [],
+      truncated: false,
+      commandStatus: 0,
+      detail: "MCP endpoint rejected the request (HTTP 401)",
+      failedStage: "initialization",
+      failureClass: "authentication",
+    });
     expect(
       deniedRequests.some(
         (request) =>

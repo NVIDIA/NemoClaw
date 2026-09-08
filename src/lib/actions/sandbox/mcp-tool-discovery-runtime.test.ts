@@ -429,6 +429,12 @@ describe("shared MCP tool discovery runtime", () => {
       "tool-discovery",
       "tool-operation",
     ],
+    [
+      "tool operation with timeout-like text",
+      new Error("remote operation timed out with untrusted operation failure"),
+      "tool-discovery",
+      "tool-operation",
+    ],
   ] as const)(
     "classifies %s failures without returning untrusted error text (#10944)",
     (_label, error, failedStage, failureClass) => {

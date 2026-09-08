@@ -377,7 +377,7 @@ async function rebuildSandboxUnlocked(
         return;
       }
 
-      const backup = runRebuildBackupPhase({
+      const backup = await runRebuildBackupPhase({
         sandboxName,
         gatewayName: recreateOptions.targetGatewayName,
         gatewayPort: recreateOptions.targetGatewayPort,
