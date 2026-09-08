@@ -339,7 +339,7 @@ export function blockRebuildOnRetainedSandboxRecovery(
     `  Rebuild cannot use retained sandbox '${sandboxName}' while recovery record '${retainedRecovery.recordId}' is unresolved. No sandbox or Docker resources were removed.`,
   );
   console.error(
-    `  Run '${CLI_NAME} ${sandboxName} destroy --yes'. If OpenShell still reports the sandbox present, follow destroy's create-attempt label guidance for identity-bound administrator removal.`,
+    `  Run '${CLI_NAME} ${sandboxName} destroy --yes'. If the owning gateway reports the sandbox present or cannot determine presence, destroy removes nothing and preserves the recovery record.`,
   );
   bail(`Retained sandbox recovery blocks rebuild for '${sandboxName}'.`, 1);
   return true;

@@ -2148,7 +2148,7 @@ export function markCancellationRecovery(
       session.failure = {
         step: session.lastStepStarted,
         message:
-          "Onboarding was cancelled after sandbox creation; administrator recovery is required.",
+          "Onboarding was cancelled after sandbox creation; retained recovery blocks this sandbox name until destroy confirms absence and completes cleanup.",
         recordedAt,
         interrupted: true,
       };

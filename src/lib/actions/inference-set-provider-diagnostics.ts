@@ -1,33 +1,33 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { CaptureOpenshellOptions, CaptureOpenshellResult } from "../adapters/openshell/client";
-import { parseGatewayProviderNames } from "../credentials/provider-list";
+import type { CaptureOpenshellResult } from "../adapters/openshell/client";
+import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
+import { namedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
+import { classifyGatewayProviderNames } from "../credentials/provider-list";
 import {
   buildOpenshellInferenceSetFailureMessage,
-  OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER,
   openshellReportsProviderNotFound,
 } from "./inference-set-error";
 
 const OPEN_SHELL_DIAGNOSTIC_TIMEOUT_MS = 5_000;
 
 interface ProviderDiagnosticDeps {
-  captureOpenshell: (
-    args: string[],
-    opts?: Pick<CaptureOpenshellOptions, "ignoreError" | "maxBuffer" | "timeout">,
-  ) => CaptureOpenshellResult;
+  providerAdapter: OpenShellProviderAdapter;
   log: (message: string) => void;
 }
 
-export function queryRegisteredGatewayProviders(deps: ProviderDiagnosticDeps): string[] | undefined {
+export async function queryRegisteredGatewayProviders(
+  gatewayName: string,
+  deps: ProviderDiagnosticDeps,
+): Promise<string[] | undefined> {
   try {
-    const result = deps.captureOpenshell(["provider", "list", "--names"], {
-      ignoreError: true,
-      maxBuffer: OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER,
-      timeout: OPEN_SHELL_DIAGNOSTIC_TIMEOUT_MS,
+    const result = await deps.providerAdapter.listProviders({
+      target: namedOpenShellGateway(gatewayName),
+      timeoutMs: OPEN_SHELL_DIAGNOSTIC_TIMEOUT_MS,
     });
-    if (result.status === 0) {
-      return parseGatewayProviderNames(result.output).credentialNames;
+    if (result.ok) {
+      return classifyGatewayProviderNames(result.value.names).credentialNames;
     }
   } catch (_error: unknown) {
     // #5924: intentionally treat every thrown query or parsing error identically.
@@ -38,11 +38,12 @@ export function queryRegisteredGatewayProviders(deps: ProviderDiagnosticDeps): s
   return undefined;
 }
 
-export function buildInferenceSetFailure(
+export async function buildInferenceSetFailure(
   setResult: CaptureOpenshellResult,
   provider: string,
+  gatewayName: string,
   deps: ProviderDiagnosticDeps,
-): { exitCode: number; message: string } {
+): Promise<{ exitCode: number; message: string }> {
   const stderr = typeof setResult.stderr === "string" ? setResult.stderr : "";
   const stdout = typeof setResult.stdout === "string" ? setResult.stdout : "";
   const providerNotFound = openshellReportsProviderNotFound(`${stderr}\n${stdout}`, provider);
@@ -52,7 +53,9 @@ export function buildInferenceSetFailure(
     message: buildOpenshellInferenceSetFailureMessage({
       exitCode,
       providerNotFound,
-      registeredProviders: providerNotFound ? queryRegisteredGatewayProviders(deps) : undefined,
+      registeredProviders: providerNotFound
+        ? await queryRegisteredGatewayProviders(gatewayName, deps)
+        : undefined,
       stderr,
       stdout,
     }),
