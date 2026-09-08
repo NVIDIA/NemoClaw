@@ -28,6 +28,8 @@ const DIGEST = "b".repeat(64);
 let testRoot = "";
 let stubBin = "";
 let dockerLog = "";
+let dockerAuditBuildCount = "";
+let dockerAuditBuildFailureMode = "";
 let dockerBuildCount = "";
 let dockerBuildFailureMode = "";
 let seedLog = "";
@@ -61,6 +63,18 @@ case "$*" in
       destination="\${output_spec#type=local,dest=}"
       [[ -n "$destination" && "$destination" != "$output_spec" ]]
       mkdir -p "$destination"
+      audit_build_count=0
+      if [[ -f "$NEMOCLAW_TEST_DOCKER_AUDIT_BUILD_COUNT" ]]; then
+        read -r audit_build_count <"$NEMOCLAW_TEST_DOCKER_AUDIT_BUILD_COUNT"
+      fi
+      audit_build_count=$((audit_build_count + 1))
+      printf '%s\n' "$audit_build_count" >"$NEMOCLAW_TEST_DOCKER_AUDIT_BUILD_COUNT"
+      if [[ "$NEMOCLAW_TEST_DOCKER_AUDIT_BUILD_FAILURE_MODE:$audit_build_count" == "exact-once:1" ]]; then
+        printf 'partial\n' >"$destination/partial"
+        printf '%s\n' 'ERROR: failed to build: failed to solve: stream error: stream ID 71; INTERNAL_ERROR; received from peer' >&2
+        exit 42
+      fi
+      [[ ! -e "$destination/partial" ]]
       printf '{"result":"pass"}\n' >"$destination/mcporter-runtime.receipt.json"
       printf '{"metadata":{"vulnerabilities":{"info":0,"low":0,"moderate":0,"high":0,"critical":0}}}\n' >"$destination/mcporter-runtime.raw.json"
       exit 0
@@ -283,6 +297,8 @@ function runBuild(
       encoding: "utf8",
       env: {
         ...process.env,
+        NEMOCLAW_TEST_DOCKER_AUDIT_BUILD_COUNT: dockerAuditBuildCount,
+        NEMOCLAW_TEST_DOCKER_AUDIT_BUILD_FAILURE_MODE: dockerAuditBuildFailureMode,
         NEMOCLAW_TEST_DOCKER_BUILD_COUNT: dockerBuildCount,
         NEMOCLAW_TEST_DOCKER_BUILD_FAILURE_MODE: dockerBuildFailureMode,
         NEMOCLAW_TEST_DOCKER_LOG: dockerLog,
@@ -303,6 +319,8 @@ beforeEach(() => {
   testRoot = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-protected-build-"));
   stubBin = path.join(testRoot, "bin");
   dockerLog = path.join(testRoot, "docker.log");
+  dockerAuditBuildCount = path.join(testRoot, "docker-audit-build-count");
+  dockerAuditBuildFailureMode = "";
   dockerBuildCount = path.join(testRoot, "docker-build-count");
   dockerBuildFailureMode = "";
   seedLog = path.join(testRoot, "seed.log");
@@ -505,6 +523,25 @@ describe("protected managed-image build-cache boundary", () => {
     const retried = runBuild(REPO_ROOT, ["--cache-to", cacheRoot]);
 
     expect(retried.status, retried.stderr).toBe(0);
+  });
+
+  it("retries a transient reviewed audit build from clean evidence", () => {
+    const cacheRoot = path.join(testRoot, "export-cache");
+    stubBuildInvocation();
+    dockerAuditBuildFailureMode = "exact-once";
+
+    const result = runBuild(REPO_ROOT, ["--cache-to", cacheRoot]);
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.status, output).toBe(0);
+    expect(recordedAuditBuildInvocations()).toHaveLength(2);
+    expect(existsSync(path.join(cacheRoot, "reviewed-npm-audit", "partial"))).toBe(false);
+    expect(output).toContain(
+      "outcome=transient-external agent=reviewed-npm-audit attempt=1/2 retry-in=2s failure=buildkit-http2-internal-error",
+    );
+    expect(output).toContain(
+      "outcome=passed-after-retry agent=reviewed-npm-audit attempt=2/2",
+    );
   });
 
   it.each([

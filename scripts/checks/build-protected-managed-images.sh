@@ -223,28 +223,8 @@ validate_audit_evidence() {
   }
 }
 
-if [[ -n "$cache_to" ]]; then
-  audit_evidence_dir="$cache_to/reviewed-npm-audit"
-  docker buildx build \
-    --file "$source_root/Dockerfile.protected-npm-audit" \
-    --platform "$platform" \
-    --target protected-mcporter-audit-evidence \
-    --output "type=local,dest=${audit_evidence_dir}" \
-    --provenance=false \
-    --sbom=false \
-    "$source_root"
-  [[ -f "$audit_evidence_dir/mcporter-runtime.receipt.json" && ! -L "$audit_evidence_dir/mcporter-runtime.receipt.json" ]] || {
-    echo "ERROR: protected managed-image reviewed audit receipt is missing or unsafe" >&2
-    exit 1
-  }
-  sha256sum "$audit_evidence_dir/mcporter-runtime.receipt.json" | awk '{print $1}' \
-    >"$audit_evidence_dir/mcporter-runtime.receipt.sha256"
-  chmod 0400 "$audit_evidence_dir/mcporter-runtime.receipt.sha256"
-elif [[ -n "$cache_from" ]]; then
+if [[ -n "$cache_from" ]]; then
   audit_evidence_dir="$cache_from/reviewed-npm-audit"
-fi
-
-if [[ -n "$audit_evidence_dir" ]]; then
   validate_audit_evidence "$audit_evidence_dir"
 fi
 
@@ -333,7 +313,8 @@ confirm_build_retry_state() {
 run_build_with_retry() {
   local agent="$1"
   local image_repository="$2"
-  shift 2
+  local retry_cleanup="$3"
+  shift 3
   local -a build_command=("$@")
   local attempt_log="$work_dir/${agent}-build-attempt.log"
   local max_attempts=2
@@ -381,7 +362,9 @@ run_build_with_retry() {
       return "$build_status"
     fi
 
-    if ! confirm_build_retry_state "$agent" "$image_repository"; then
+    if [[ -n "$retry_cleanup" ]]; then
+      rm -rf -- "$retry_cleanup"
+    elif ! confirm_build_retry_state "$agent" "$image_repository"; then
       echo "::error::Protected managed-image build outcome=failed-no-retry agent=${agent} attempt=${attempt}/${max_attempts} failure=state-check" >&2
       return "$build_status"
     fi
@@ -467,7 +450,7 @@ build_agent() {
     --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root"
     --build-arg "TARGETARCH=${target_arch}"
     "$source_root")
-  run_build_with_retry "$agent" "$image_repository" "${build_command[@]}"
+  run_build_with_retry "$agent" "$image_repository" "" "${build_command[@]}"
 
   local digest
   digest="$(jq -er '."containerimage.digest"' "$metadata")"
@@ -530,6 +513,27 @@ build_agent() {
       baseReference: $baseReference
     }' >>"$contracts"
 }
+
+if [[ -n "$cache_to" ]]; then
+  audit_evidence_dir="$cache_to/reviewed-npm-audit"
+  audit_build_command=(docker buildx build
+    --file "$source_root/Dockerfile.protected-npm-audit"
+    --platform "$platform"
+    --target protected-mcporter-audit-evidence
+    --output "type=local,dest=${audit_evidence_dir}"
+    --provenance=false
+    --sbom=false
+    "$source_root")
+  run_build_with_retry "reviewed-npm-audit" "" "$audit_evidence_dir" "${audit_build_command[@]}"
+  [[ -f "$audit_evidence_dir/mcporter-runtime.receipt.json" && ! -L "$audit_evidence_dir/mcporter-runtime.receipt.json" ]] || {
+    echo "ERROR: protected managed-image reviewed audit receipt is missing or unsafe" >&2
+    exit 1
+  }
+  sha256sum "$audit_evidence_dir/mcporter-runtime.receipt.json" | awk '{print $1}' \
+    >"$audit_evidence_dir/mcporter-runtime.receipt.sha256"
+  chmod 0400 "$audit_evidence_dir/mcporter-runtime.receipt.sha256"
+  validate_audit_evidence "$audit_evidence_dir"
+fi
 
 build_agent \
   openclaw \
