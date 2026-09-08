@@ -8,6 +8,8 @@ import {
   stripAnsi,
 } from "../adapters/openshell/client";
 import { captureOpenshell } from "../adapters/openshell/runtime";
+import { buildSelectedOpenShellSubprocessEnv } from "../adapters/openshell/command-argv";
+import type { OpenShellRuntimeSelection } from "../adapters/openshell/runtime-selection";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import { parseSandboxPhase } from "../state/gateway";
 import {
@@ -97,12 +99,24 @@ export function observeSandboxPresenceOnGateway(
 export function observeSandboxOnGateway(
   target: SandboxRecreateTarget,
   capture: SandboxRecreateCapture = captureOpenshell,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): SandboxRecreateObservation {
+  if (runtimeSelection && runtimeSelection.gatewayName !== target.gatewayName) {
+    throw new Error(
+      `Cannot journal sandbox '${target.sandboxName}' replacement: selected gateway does not match the recorded target.`,
+    );
+  }
   const probe = capture(["sandbox", "get", "-g", target.gatewayName, target.sandboxName], {
     ignoreError: true,
     includeStderr: true,
     includeStreams: true,
     timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+    ...(runtimeSelection
+      ? {
+          env: buildSelectedOpenShellSubprocessEnv(runtimeSelection),
+          replaceEnv: true,
+        }
+      : {}),
   });
   const stdout = String(probe.stdout ?? (probe.status === 0 ? probe.output : "")).trim();
   const combined = `${stdout}\n${String(probe.stderr ?? probe.output ?? "")}`.trim();

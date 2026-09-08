@@ -94,7 +94,7 @@ function freeMemoryRunner(freeOutput: string): Mock {
 }
 
 // #3707: the Windows-ARM N1X iGPU (the denylisted JMJWOA-Generic placeholder
-// that clears the bounded Docker CUDA proof) is memory-shared like Jetson and
+// that clears the bounded provider-owned CUDA proof) is memory-shared like Jetson and
 // cannot serve a computeIntensive model in-loop, so detectGpu tags it
 // computeConstrained and the Ollama bootstrap-model selector skips the
 // computeIntensive 30B/35B entries. A genuine discrete NVIDIA GPU never reaches
@@ -141,7 +141,8 @@ describe("detectGpu computeConstrained tagging (#3707)", () => {
     const { nimModule, restore } = loadNimWithMockedRunner(
       nvidiaSmiRunner("JMJWOA-Generic-GPU, 65471, 65000\n"),
     );
-    const proveArm64WslDockerDesktopGpu = vi.fn(() => ({
+    const proveArm64ContainerGpu = vi.fn(() => ({
+      providerId: "docker",
       passed: true,
       timedOut: false,
       exitCode: 0,
@@ -149,10 +150,10 @@ describe("detectGpu computeConstrained tagging (#3707)", () => {
     }));
     try {
       withFirmwareModel("Microsoft Corporation Virtual Machine", () => {
-        expect(nimModule.detectGpu({ proveArm64WslDockerDesktopGpu })).toMatchObject({
+        expect(nimModule.detectGpu({ proveArm64ContainerGpu })).toMatchObject({
           type: "nvidia",
           name: "JMJWOA-Generic-GPU",
-          wslDockerDesktopGpuProofPassed: true,
+          containerGpuProof: { providerId: "docker", passed: true },
           computeConstrained: true,
         });
       });
@@ -165,7 +166,8 @@ describe("detectGpu computeConstrained tagging (#3707)", () => {
     const { nimModule, restore } = loadNimWithMockedRunner(
       nvidiaSmiRunner("JMJWOA-Generic-GPU, 65471, 65000\n"),
     );
-    const proveArm64WslDockerDesktopGpu = vi.fn(() => ({
+    const proveArm64ContainerGpu = vi.fn(() => ({
+      providerId: "docker",
       passed: true,
       timedOut: false,
       exitCode: 0,
@@ -173,7 +175,7 @@ describe("detectGpu computeConstrained tagging (#3707)", () => {
     }));
     try {
       withFirmwareModel("Microsoft Corporation Virtual Machine", () => {
-        const gpu = nimModule.detectGpu({ proveArm64WslDockerDesktopGpu });
+        const gpu = nimModule.detectGpu({ proveArm64ContainerGpu });
         const fittable = fittableOllamaModelTags(gpu);
         expect(fittable).not.toContain("qwen3.6:35b");
         expect(fittable).not.toContain("nemotron-3-nano:30b");
@@ -211,7 +213,7 @@ describe("detectGpu computeConstrained tagging (#3707)", () => {
       const gpu = nimModule.detectGpu();
       expect(gpu).toMatchObject({ type: "nvidia", name: "NVIDIA H100 80GB HBM3" });
       expect(gpu).not.toHaveProperty("computeConstrained");
-      expect(gpu).not.toHaveProperty("wslDockerDesktopGpuProofPassed");
+      expect(gpu).not.toHaveProperty("containerGpuProof");
     } finally {
       restore();
     }

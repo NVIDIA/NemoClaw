@@ -74,7 +74,6 @@ import {
   sandboxCreateBoundaryFromPendingIdentity,
 } from "./identity-boundary";
 import {
-  attachProvidersAfterSandboxCreation,
   publishAttachedProvidersBeforeDockerSandboxCreation,
   validateAttachedMessagingProvidersBeforeSandboxCreation,
 } from "./provider-publication";
@@ -993,8 +992,8 @@ type ProviderPreparationDeps = Parameters<
 >[1];
 
 type ProviderEffectBoundary = {
-  readonly validateBeforeCreate: () => void;
-  readonly publishBeforeCreate: () => void;
+  readonly validateBeforeCreate: () => Promise<void>;
+  readonly publishBeforeCreate: () => Promise<void>;
   readonly runAfterVerifiedCreate:
     | ((context: VerifiedSandboxCreateEffectsContext) => Promise<void>)
     | undefined;
@@ -1008,16 +1007,16 @@ export function createProviderEffectBoundary(input: {
   readonly preparationDeps: ProviderPreparationDeps;
   readonly runVerifiedSandboxCreateEffects: import("../types").VerifiedSandboxCreateEffects | null;
   readonly activateDeferredProviderEffects:
-    | ((revalidateSandboxIdentity: (operation: string) => void) => readonly string[])
+    | ((revalidateSandboxIdentity: (operation: string) => void) => Promise<readonly string[]>)
     | null;
   readonly revalidateSandboxIdentityBeforeCreate: () => void;
 }): ProviderEffectBoundary {
-  const validate = () =>
+  const validate = async () =>
     validateAttachedMessagingProvidersBeforeSandboxCreation(
       input.preparationInput,
       input.preparationDeps,
     );
-  const publish = () =>
+  const publish = async () =>
     publishAttachedProvidersBeforeDockerSandboxCreation(
       input.preparationInput,
       input.preparationDeps,
@@ -1025,16 +1024,16 @@ export function createProviderEffectBoundary(input: {
   if (!input.deferred) {
     return {
       validateBeforeCreate: validate,
-      publishBeforeCreate: () => {
+      publishBeforeCreate: async () => {
         input.revalidateSandboxIdentityBeforeCreate();
-        publish();
+        await publish();
       },
       runAfterVerifiedCreate: undefined,
     };
   }
   return {
-    validateBeforeCreate: () => undefined,
-    publishBeforeCreate: () => undefined,
+    validateBeforeCreate: async () => undefined,
+    publishBeforeCreate: async () => undefined,
     runAfterVerifiedCreate: async (context) => {
       context.revalidateSandboxIdentity(
         `starting deferred provider effects for sandbox '${input.sandboxName}'`,
@@ -1044,20 +1043,22 @@ export function createProviderEffectBoundary(input: {
         `activating deferred providers for sandbox '${input.sandboxName}'`,
       );
       const providerNames =
-        input.activateDeferredProviderEffects?.(context.revalidateSandboxIdentity) ?? [];
-      validate();
+        (await input.activateDeferredProviderEffects?.(context.revalidateSandboxIdentity)) ?? [];
+      await validate();
       context.revalidateSandboxIdentity(
         `publishing deferred providers for sandbox '${input.sandboxName}'`,
       );
-      publish();
+      await publish();
       context.revalidateSandboxIdentity(
         `attaching deferred providers to sandbox '${input.sandboxName}'`,
       );
-      attachProvidersAfterSandboxCreation({
-        sandboxName: input.sandboxName,
-        gatewayName: input.gatewayName,
-        providerNames,
-      });
+      if (providerNames.length === 0) return;
+      throw new Error(
+        `OpenShell cannot attach providers to the immutable identity of sandbox '${input.sandboxName}'. ` +
+          `NemoClaw retained the incomplete sandbox on gateway '${input.gatewayName}'. ` +
+          `Do not delete it by mutable sandbox name. Ask an OpenShell administrator to remove the retained sandbox through an identity-bound procedure. ` +
+          `After OpenShell confirms the retained sandbox is absent, run '${cliName()} ${input.sandboxName} destroy --yes' to reconcile its verified Docker containers and recovery record.`,
+      );
     },
   };
 }
@@ -1175,6 +1176,29 @@ function readAcceptedPendingVerifiedCreate(input: {
 
 function runForNewSandboxCreate(resuming: boolean, operation: () => void): void {
   if (!resuming) operation();
+}
+
+async function runForNewSandboxCreateAsync(
+  resuming: boolean,
+  operation: () => Promise<void>,
+): Promise<void> {
+  if (!resuming) await operation();
+}
+
+export async function runSandboxCreateWithProviderEffects<T>(input: {
+  readonly resumingVerifiedCreate: boolean;
+  readonly providerEffectBoundary: Pick<
+    ProviderEffectBoundary,
+    "publishBeforeCreate" | "runAfterVerifiedCreate"
+  >;
+  readonly create: (
+    runAfterVerifiedCreate: ProviderEffectBoundary["runAfterVerifiedCreate"],
+  ) => Promise<T>;
+}): Promise<T> {
+  await runForNewSandboxCreateAsync(input.resumingVerifiedCreate, () =>
+    input.providerEffectBoundary.publishBeforeCreate(),
+  );
+  return input.create(input.providerEffectBoundary.runAfterVerifiedCreate);
 }
 
 function assertCreateLifecycleJournal(input: {
@@ -1364,7 +1388,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       step,
       stringSetsEqual,
       toolDisclosureFlow,
-      upsertMessagingProviders,
+      applyMessagingProviders,
       usesManagedDcodeIdentity,
       validateName,
       verifyDirectSandboxGpu,
@@ -1873,9 +1897,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               note("  [non-interactive] Recreating sandbox due to provider/model drift.");
             } else {
               revalidateSandboxIdentity(true, `reusing sandbox '${sandboxName}'`);
-              // Upsert messaging providers even on reuse so credential changes take
+              // Apply messaging providers even on reuse so credential changes take
               // effect without requiring a full sandbox recreation.
-              upsertMessagingProviders(messagingTokenDefs, {
+              await applyMessagingProviders(messagingTokenDefs, {
                 revalidateSandboxIdentity: (operation) =>
                   revalidateSandboxIdentity(true, operation),
               });
@@ -1923,7 +1947,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             console.log("  Choosing 'n' will delete the existing sandbox and create a new one.");
             if (await promptYesNoOrDefault("  Reuse existing sandbox?", null, true)) {
               revalidateSandboxIdentity(true, `reusing sandbox '${sandboxName}'`);
-              upsertMessagingProviders(messagingTokenDefs, {
+              await applyMessagingProviders(messagingTokenDefs, {
                 revalidateSandboxIdentity: (operation) =>
                   revalidateSandboxIdentity(true, operation),
               });
@@ -2168,6 +2192,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               policylessCreate: apfInterceptorRequested,
               deferSandboxEffectsUntilIdentityVerification:
                 createIntent?.deferSandboxEffectsUntilIdentityVerification === true,
+              skipProviderEffects: resumingVerifiedCreate,
               rebindMessagingTokenDefs: async () => {
                 revalidateSandboxIdentity(
                   false,
@@ -2206,7 +2231,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                 });
               },
               upsertMessagingProviders: (tokenDefs, options) =>
-                upsertMessagingProviders(tokenDefs, {
+                applyMessagingProviders(tokenDefs, {
                   ...options,
                   revalidateSandboxIdentity: (operation) =>
                     (
@@ -2812,12 +2837,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       gatewayName: GATEWAY_NAME,
     };
     const providerPreparationDeps = {
-      providerExistsInGateway,
       runOpenshell,
-      cleanupCreateSources: () => {
-        cleanupInitialCreateSource();
-        cleanupBuildContext();
-      },
+      cleanupCreateSources: cleanupSandboxCreateSources,
     };
     const providerEffectBoundary = createProviderEffectBoundary({
       deferred: createIntent?.deferSandboxEffectsUntilIdentityVerification === true,
@@ -2833,7 +2854,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           `publishing providers before creating sandbox gateway '${GATEWAY_NAME}'`,
         ),
     });
-    providerEffectBoundary.validateBeforeCreate();
+    await providerEffectBoundary.validateBeforeCreate();
 
     if (hermesPortableAuthority) {
       if (!portableRuntimeContext?.environmentScope) {
@@ -2878,13 +2899,19 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           buildContextPath,
           effectivePolicySourcePath,
         ) =>
-          runCreateFlow(
-            [...attemptArgv],
-            readyCapture,
-            readyRunner,
-            buildContextPath,
-            effectivePolicySourcePath,
-          ),
+          runSandboxCreateWithProviderEffects({
+            resumingVerifiedCreate: Boolean(resumeVerifiedCreateInput),
+            providerEffectBoundary,
+            create: (runAfterVerifiedCreate) =>
+              runCreateFlow(
+                [...attemptArgv],
+                readyCapture,
+                readyRunner,
+                buildContextPath,
+                effectivePolicySourcePath,
+                runAfterVerifiedCreate,
+              ),
+          }),
         readRegistry: () => registry.getSandbox(sandboxName),
         revalidatePendingCreateRegistry: () =>
           revalidateVerifiedCreateIdentity(
@@ -2923,17 +2950,19 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       });
       cleanupBuildContext();
     } else {
-      runForNewSandboxCreate(Boolean(resumeVerifiedCreateInput), () =>
-        providerEffectBoundary.publishBeforeCreate(),
-      );
-      const created = await runCreateFlow(
-        createArgv,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        providerEffectBoundary.runAfterVerifiedCreate,
-      );
+      const created = await runSandboxCreateWithProviderEffects({
+        resumingVerifiedCreate: Boolean(resumeVerifiedCreateInput),
+        providerEffectBoundary,
+        create: (runAfterVerifiedCreate) =>
+          runCreateFlow(
+            createArgv,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            runAfterVerifiedCreate,
+          ),
+      });
       try {
         await finalizeCreatedSandboxBeforeHermesCredentialReconciliation(
           async () => {

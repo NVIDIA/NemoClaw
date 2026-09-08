@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -41,19 +41,26 @@ describe("managed image registry transport package contract", () => {
       prefix: "nemoclaw-managed-registry-pack-",
       entries: ["dist"],
     });
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-registry-package-"));
+    const archiveRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-managed-registry-archive-"),
+    );
+    const consumerRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-managed-registry-consumer-"),
+    );
     try {
       const packed = spawnSync(
         "npm",
-        ["pack", "--ignore-scripts", "--silent", "--pack-destination", tempDir],
+        ["pack", "--ignore-scripts", "--silent", "--pack-destination", archiveRoot],
         { cwd: fixtureRoot, encoding: "utf8", timeout: 120_000 },
       );
       expect(packed.status, `${packed.stdout}${packed.stderr}`).toBe(0);
-      const archives = fs.readdirSync(tempDir).filter((entry) => entry.endsWith(".tgz"));
+      const archives = fs.readdirSync(archiveRoot).filter((entry) => entry.endsWith(".tgz"));
       expect(archives).toHaveLength(1);
-      execFileSync("tar", ["-xzf", path.join(tempDir, archives[0]!), "-C", tempDir]);
 
-      const installedRoot = path.join(tempDir, "package");
+      fs.writeFileSync(
+        path.join(consumerRoot, "package.json"),
+        `${JSON.stringify({ name: "managed-image-registry-consumer", private: true })}\n`,
+      );
       const installed = spawnSync(
         "npm",
         [
@@ -63,10 +70,12 @@ describe("managed image registry transport package contract", () => {
           "--no-audit",
           "--no-fund",
           "--no-package-lock",
+          "--no-save",
           "--prefer-offline",
+          path.join(archiveRoot, archives[0]!),
         ],
         {
-          cwd: installedRoot,
+          cwd: consumerRoot,
           encoding: "utf8",
           timeout: 120_000,
           env: { ...process.env, npm_config_update_notifier: "false" },
@@ -77,7 +86,7 @@ describe("managed image registry transport package contract", () => {
       const installedProductionTree = spawnSync(
         "npm",
         ["ls", "undici", "--omit=dev", "--all", "--json"],
-        { cwd: installedRoot, encoding: "utf8" },
+        { cwd: consumerRoot, encoding: "utf8" },
       );
       expect(
         installedProductionTree.status,
@@ -106,13 +115,18 @@ session.close().then(
 );
 `,
         ],
-        { cwd: installedRoot, encoding: "utf8", timeout: 10_000 },
+        {
+          cwd: path.join(consumerRoot, "node_modules", "nemoclaw"),
+          encoding: "utf8",
+          timeout: 10_000,
+        },
       );
       expect(probe.status, `${probe.stdout}${probe.stderr}`).toBe(0);
       expect(probe.stdout).toBe("constructed");
     } finally {
       fs.rmSync(fixtureRoot, { recursive: true, force: true });
-      fs.rmSync(tempDir, { recursive: true, force: true });
+      fs.rmSync(archiveRoot, { recursive: true, force: true });
+      fs.rmSync(consumerRoot, { recursive: true, force: true });
     }
   });
 });

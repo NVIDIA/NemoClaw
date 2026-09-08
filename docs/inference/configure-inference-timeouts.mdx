@@ -19,6 +19,7 @@ Use the error location to select the correct setting.
 | Setting | Applies to | Default |
 |---|---|---|
 | `NEMOCLAW_AGENT_TIMEOUT` | OpenClaw per-request inference | `600` seconds |
+| `NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS` | Applicable OpenAI-compatible provider validation during onboarding, including DeepSeek V4 Pro streaming validation | Probe-specific; the standard WSL2 profile uses a `20`-second connection and `30`-second total floor, while extended NVIDIA validation uses `30` and `300` seconds on WSL2 or `10` and `300` seconds elsewhere |
 | `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` | Ollama, vLLM, NIM, and compatible-endpoint onboarding validation paths that read this setting | `180` seconds |
 | `NEMOCLAW_SANDBOX_READY_TIMEOUT` | Image build, gateway upload, and in-sandbox boot after creation | `180` seconds |
 | `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` | OpenShell command re-registration after policy application, plus gateway health and re-registration during managed OpenClaw or Hermes recovery | `30`, `90`, or `120` seconds, depending on the recovery phase |
@@ -26,6 +27,7 @@ Use the error location to select the correct setting.
 The readiness timeout does not govern inference requests or provider validation.
 
 `NEMOCLAW_AGENT_TIMEOUT` requires a positive integer; onboarding rejects any other value.
+`NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS` accepts positive finite seconds, rounds fractional values up, and caps higher values at `600` seconds. An unset or invalid value preserves the probe defaults. NemoClaw raises each connection or total deadline only when the value exceeds that deadline.
 `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` and `NEMOCLAW_SANDBOX_READY_TIMEOUT` accept finite, nonnegative seconds, round fractional values, and use their defaults for invalid or negative values.
 `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` accepts finite, nonnegative seconds and preserves fractional values.
 A valid value overrides the internal budget for the current recovery phase.
@@ -70,6 +72,17 @@ Hermes does not consume the OpenClaw-only `NEMOCLAW_AGENT_TIMEOUT` setting.
 Deep Agents does not consume the OpenClaw-only `NEMOCLAW_AGENT_TIMEOUT` setting.
 
 </AgentOnly>
+
+## Increase the Provider Validation Timeout
+
+On any platform, increase `NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS` when an applicable OpenAI-compatible provider validation request times out before the provider replies.
+NemoClaw automatically prints this recovery advice after WSL2 transport failures.
+
+```bash
+NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS=360 $$nemoclaw onboard
+```
+
+This setting only raises applicable provider-validation connection and total deadlines, up to `600` seconds. It includes the dedicated DeepSeek V4 Pro streaming validation profile, but it does not extend the separate fixed five-second streaming-event probe. Standard WSL2 validation starts with a `20`-second connection and `30`-second total floor. Extended NVIDIA validation starts with `30` and `300` seconds on WSL2 or `10` and `300` seconds elsewhere, so an override must exceed each existing deadline to raise it.
 
 ## Increase the Local Validation Timeout
 

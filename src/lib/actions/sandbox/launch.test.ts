@@ -38,7 +38,6 @@ vi.mock("./connect", () => ({
 }));
 vi.mock("./exec", () => ({
   execSandbox: mocks.execSandbox,
-  resolveSandboxExecBinary: () => "openshell",
   runSandboxExecChild: mocks.runSandboxExecChild,
   buildOpenshellExecArgs: (
     sandboxName: string,

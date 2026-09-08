@@ -4,7 +4,7 @@
 """Patch SessionDB for SQLite temp storage and NemoClaw's shared state ledger.
 
 Source-of-truth note for this localized Hermes runtime patch:
-  - Invalid state: Hermes v0.19.0 SessionDB does not set PRAGMA temp_store=MEMORY,
+  - Invalid state: Hermes v0.20.6 SessionDB does not set PRAGMA temp_store=MEMORY,
     so SQLite falls back to file-based temp storage when processing FK constraints
     (for example, the ON DELETE CASCADE on session_model_usage -> sessions). When
     `hermes sessions delete` is invoked through OpenShell sandbox execution —
@@ -39,7 +39,7 @@ Source-of-truth note for this localized Hermes runtime patch:
     SessionDB as gateway then sandbox and require exact state.db metadata plus a
     persisted cross-identity append. They require exact WAL/SHM metadata when
     SQLite retains WAL mode and require those sidecars absent when Hermes'
-    `apply_wal_with_fallback` selects DELETE mode on a WAL-incompatible filesystem.
+    selected journal mode is DELETE on a WAL-incompatible filesystem.
   - Removal condition: delete this patch when the pinned Hermes runtime natively
     sets `PRAGMA temp_store=MEMORY` (or equivalent) in `SessionDB.__init__`.
 """
@@ -49,21 +49,16 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-IMPORTS_OLD = """import logging
-import random
-import re
+IMPORTS_OLD = """import re
 import sqlite3
 import sys"""
-IMPORTS_NEW = """import logging
-import os
-import random
-import re
+IMPORTS_NEW = """import re
 import sqlite3
 import stat
 import sys"""
 HELPER_ANCHOR_OLD = """DEFAULT_DB_PATH = get_hermes_home() / "state.db"
 
-SCHEMA_VERSION = 22"""
+# How long SessionDB stops attempting read-only opens"""
 HELPER = '''_NEMOCLAW_SHARED_STATE_LINK = Path("/sandbox/.hermes/state.db")
 _NEMOCLAW_SHARED_STATE_DIRECTORY = Path("/sandbox/.hermes/runtime")
 _NEMOCLAW_SHARED_STATE_NAMES = ("state.db", "state.db-wal", "state.db-shm")
@@ -151,21 +146,21 @@ HELPER_ANCHOR_NEW = f'''DEFAULT_DB_PATH = get_hermes_home() / "state.db"
 
 {HELPER}
 
-SCHEMA_VERSION = 22'''
+# How long SessionDB stops attempting read-only opens'''
 CONNECT_ANCHOR_OLD = """            def _connect_and_init():
-                self._conn = sqlite3.connect("""
+                self._conn = _connect_tracked_db("""
 CONNECT_ANCHOR_NEW = """            def _connect_and_init():
                 _nemoclaw_normalize_shared_state_permissions(self.db_path)
-                self._conn = sqlite3.connect("""
+                self._conn = _connect_tracked_db("""
 INIT_ANCHOR_OLD = """                self._init_schema()"""
 INIT_ANCHOR_NEW = """                self._init_schema()
                 _nemoclaw_normalize_shared_state_permissions(self.db_path)"""
 CONNECTION_OLD = (
-    'apply_wal_with_fallback(self._conn, db_label="state.db")\n'
+    'apply_database_pragmas(self._conn, db_label="state.db")\n'
     '                self._conn.execute("PRAGMA foreign_keys=ON")'
 )
 CONNECTION_TEMP_ONLY = (
-    'apply_wal_with_fallback(self._conn, db_label="state.db")\n'
+    'apply_database_pragmas(self._conn, db_label="state.db")\n'
     '                self._conn.execute("PRAGMA temp_store=MEMORY")\n'
     '                self._conn.execute("PRAGMA foreign_keys=ON")'
 )

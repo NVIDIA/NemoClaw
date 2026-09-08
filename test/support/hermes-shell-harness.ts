@@ -40,7 +40,6 @@ export function runHermesBashHarness(
       "#!/usr/bin/env bash",
       "set -uo pipefail",
       "HERMES_MCP_RECONCILE_PENDING=0",
-      "HERMES_MCP_INTEGRITY_FAILED=0",
       ...lines,
     ].join("\n"),
     { mode: 0o700 },

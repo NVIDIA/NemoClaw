@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { delimiter, join } from "node:path";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { OLLAMA_PORT, OLLAMA_PROXY_PORT } from "../../../core/ports";
 import { prepareOllamaApiExecution } from "../../../inference/local";
 import {
@@ -32,7 +35,44 @@ function getCommandBody(command: readonly string[]): Record<string, unknown> {
   return JSON.parse(command[dataIndex + 1] ?? "null") as Record<string, unknown>;
 }
 
+function windowsRouteProtectionCapture(command: readonly string[]): string {
+  const rendered = command.join(" ");
+  return rendered.includes("Get-NetTCPConnection")
+    ? "127.0.0.1"
+    : command.includes("Host: rebinding.invalid")
+      ? "403"
+      : JSON.stringify({ models: [] });
+}
+
 describe("maybeWarmOllamaAfterDaemonRestart", () => {
+  const originalPath = process.env.PATH;
+  let fakeDockerDir: string;
+
+  beforeAll(() => {
+    fakeDockerDir = mkdtempSync(join(tmpdir(), "nemoclaw-restart-recovery-docker-"));
+    const fakeDockerPath = join(fakeDockerDir, "docker");
+    writeFileSync(fakeDockerPath, "#!/bin/sh\nprintf '%s\\n' 'Operating System: Docker Desktop'\n");
+    chmodSync(fakeDockerPath, 0o755);
+    process.env.PATH = `${fakeDockerDir}${delimiter}${originalPath ?? ""}`;
+  });
+
+  afterAll(() => {
+    Reflect.deleteProperty(process.env, "PATH");
+    Object.assign(process.env, originalPath === undefined ? {} : { PATH: originalPath });
+    rmSync(fakeDockerDir, { recursive: true, force: true });
+  });
+
+  beforeEach(() => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    vi.stubEnv("DOCKER_CONTEXT", "default");
+    vi.stubEnv("WSL_DISTRO_NAME", "Ubuntu");
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+  });
+
   it("skips routes that are not local Ollama", () => {
     expect(
       maybeWarmOllamaAfterDaemonRestart({ provider: "vllm-local", model: "meta/llama" }),
@@ -54,10 +94,14 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
       cleanup,
     });
     const runCaptureImpl = vi.fn(
-      (_command: readonly string[], options?: { env?: NodeJS.ProcessEnv }) =>
-        options?.env?.DOCKER_CONFIG === "/tmp/credential-free-docker"
-          ? JSON.stringify({ models: [] })
-          : "",
+      (command: readonly string[], options?: { env?: NodeJS.ProcessEnv }) => {
+        const protection = windowsRouteProtectionCapture(command);
+        return protection !== JSON.stringify({ models: [] })
+          ? protection
+          : options?.env?.DOCKER_CONFIG === "/tmp/credential-free-docker"
+            ? protection
+            : "";
+      },
     );
     const runCaptureExImpl = vi.fn((_command: string[], options?: { env?: NodeJS.ProcessEnv }) =>
       options?.env?.DOCKER_CONFIG === "/tmp/credential-free-docker"
@@ -75,20 +119,25 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
         {
           runCaptureImpl,
           runCaptureExImpl,
+          revalidateOllamaHost: () => "host.docker.internal",
           prepareDockerEnvironment,
           prepareOllamaApiExecution: (command, host, options) =>
             prepareOllamaApiExecution(command, host, {
               ...options,
               prepareDockerEnvironment,
+              runCaptureImpl,
             }),
         },
       ),
     ).toEqual({ kind: "warmed", ok: true, timedOut: false });
 
-    expect(getCommandUrl(runCaptureImpl.mock.calls[0][0])).toBe(
+    const modelProbe = runCaptureImpl.mock.calls.find(([command]) =>
+      getCommandUrl(command).endsWith("/api/ps"),
+    );
+    expect(getCommandUrl(modelProbe?.[0] ?? [])).toBe(
       `http://host.docker.internal:${OLLAMA_PORT}/api/ps`,
     );
-    expect(runCaptureImpl.mock.calls[0][0][0]).toBe("docker");
+    expect(modelProbe?.[0][0]).toBe("docker");
     expect(getCommandUrl(runCaptureExImpl.mock.calls[0][0])).toBe(
       `http://host.docker.internal:${OLLAMA_PORT}/api/generate`,
     );
@@ -98,11 +147,11 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
       stream: false,
       think: false,
     });
-    expect(runCaptureImpl.mock.calls[0][1]?.env?.DOCKER_CONFIG).toBe("/tmp/credential-free-docker");
+    expect(modelProbe?.[1]?.env?.DOCKER_CONFIG).toBe("/tmp/credential-free-docker");
     expect(runCaptureExImpl.mock.calls[0][1]?.env?.DOCKER_CONFIG).toBe(
       "/tmp/credential-free-docker",
     );
-    expect(cleanup).toHaveBeenCalledTimes(2);
+    expect(cleanup).toHaveBeenCalledTimes(6);
   });
 
   it("maps an auth-proxy route back to host loopback", () => {
@@ -128,6 +177,28 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
     expect(runCaptureExImpl.mock.calls[0][0][0]).toBe("curl");
   });
 
+  it("skips a stale raw Windows route before model probes or warm-up", () => {
+    const probeRuntimeModelStatus = vi.fn(() => unloadedStatus);
+    const runCaptureExImpl = vi.fn(() => successfulWarmResult());
+
+    expect(
+      maybeWarmOllamaAfterDaemonRestart(
+        {
+          provider: "ollama-local",
+          model: "qwen3.6:35b",
+          endpointUrl: `http://host.openshell.internal:${OLLAMA_PORT}/v1`,
+        },
+        {
+          revalidateOllamaHost: () => null,
+          probeRuntimeModelStatus,
+          runCaptureExImpl,
+        },
+      ),
+    ).toEqual({ kind: "skipped", reason: "unreachable" });
+    expect(probeRuntimeModelStatus).not.toHaveBeenCalled();
+    expect(runCaptureExImpl).not.toHaveBeenCalled();
+  });
+
   it("falls back to an allowlisted host instead of probing an arbitrary registry URL", () => {
     const runCaptureImpl = vi.fn((_command: readonly string[]) => JSON.stringify({ models: [] }));
     const runCaptureExImpl = vi.fn((_command: string[]) => successfulWarmResult());
@@ -150,7 +221,7 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
   });
 
   it("does not map an unrecognized proxy-port host to host loopback (#6039)", () => {
-    const runCaptureImpl = vi.fn((_command: readonly string[]) => JSON.stringify({ models: [] }));
+    const runCaptureImpl = vi.fn(windowsRouteProtectionCapture);
     const runCaptureExImpl = vi.fn((_command: string[]) => successfulWarmResult());
 
     maybeWarmOllamaAfterDaemonRestart(
@@ -161,12 +232,18 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
       },
       {
         getOllamaHost: () => "host.docker.internal",
+        revalidateOllamaHost: () => "host.docker.internal",
         runCaptureImpl,
         runCaptureExImpl,
+        prepareOllamaApiExecution: (command, host, options) =>
+          prepareOllamaApiExecution(command, host, { ...options, runCaptureImpl }),
       },
     );
 
-    expect(getCommandUrl(runCaptureImpl.mock.calls[0][0])).toBe(
+    const modelProbe = runCaptureImpl.mock.calls.find(([command]) =>
+      getCommandUrl(command).endsWith("/api/ps"),
+    );
+    expect(getCommandUrl(modelProbe?.[0] ?? [])).toBe(
       `http://host.docker.internal:${OLLAMA_PORT}/api/ps`,
     );
     expect(getCommandUrl(runCaptureExImpl.mock.calls[0][0])).toBe(
@@ -252,6 +329,7 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
 
   it("reports an endpoint that no longer holds the model instead of a warm failure (#9455)", () => {
     const probeModelInventory = vi.fn(() => ["llama3.2:1b"]);
+    const runCaptureImpl = vi.fn(windowsRouteProtectionCapture);
 
     expect(
       maybeWarmOllamaAfterDaemonRestart(
@@ -261,8 +339,12 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
           endpointUrl: `http://host.openshell.internal:${OLLAMA_PORT}/v1`,
         },
         {
+          revalidateOllamaHost: () => "host.docker.internal",
           probeRuntimeModelStatus: () => unloadedStatus,
           probeModelInventory,
+          runCaptureImpl,
+          prepareOllamaApiExecution: (command, host, options) =>
+            prepareOllamaApiExecution(command, host, { ...options, runCaptureImpl }),
           runCaptureExImpl: () => ({
             stdout: JSON.stringify({ error: "model not found" }),
             exitCode: 0,

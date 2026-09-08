@@ -35,7 +35,9 @@ if (process.env.NEMOCLAW_TEST_FORWARD_SERVICE_FIXTURE === "1") {
       return loaded;
     }
     if (
-      resolved.includes(`${path.sep}adapters${path.sep}openshell${path.sep}local-forward-listener.`) &&
+      resolved.includes(
+        `${path.sep}adapters${path.sep}openshell${path.sep}local-forward-listener.`,
+      ) &&
       typeof loaded?.probeLocalForwardListener === "function"
     ) {
       loaded.probeLocalForwardListener = () => {
@@ -43,6 +45,12 @@ if (process.env.NEMOCLAW_TEST_FORWARD_SERVICE_FIXTURE === "1") {
         detachedForwardReady = false;
         return ready;
       };
+    }
+    if (
+      resolved.includes(`${path.sep}adapters${path.sep}openshell${path.sep}forward-service.`) &&
+      typeof loaded?.isForwardServiceListenerOwner === "function"
+    ) {
+      loaded.isForwardServiceListenerOwner = () => true;
     }
     return loaded;
   };
@@ -160,6 +168,43 @@ function providerNameAfterAction(args, providerIndex) {
   return args[firstArgument] === "-g" ? args[firstArgument + 2] : args[firstArgument];
 }
 
+function parseNamedProviderGet(command, gatewayName) {
+  const args = normalizeCommand(command).split(/\s+/);
+  const providerIndex = args.indexOf("provider");
+  if (providerIndex < 0 || args[providerIndex + 1] !== "get") return null;
+  const getArgs = args.slice(providerIndex + 2);
+  if (getArgs.length !== 3 || getArgs[0] !== "-g" || getArgs[1] !== gatewayName) {
+    return {
+      error: { status: 1, stderr: `provider get must target named gateway '${gatewayName}'` },
+    };
+  }
+  return { providerName: getArgs[2] };
+}
+
+function mockNvidiaProviderGetRun(command, gatewayName) {
+  const request = parseNamedProviderGet(command, gatewayName);
+  if (request === null) return null;
+  if (request.error) return request.error;
+  if (request.providerName !== "nvidia-prod") return null;
+  return {
+    status: 0,
+    stdout:
+      "Name: nvidia-prod\nType: nvidia\nCredential keys: NVIDIA_INFERENCE_API_KEY\nConfig keys: <none>\n",
+  };
+}
+
+function mockNvidiaOrMissingProviderGetRun(command, gatewayName) {
+  const request = parseNamedProviderGet(command, gatewayName);
+  if (request === null) return null;
+  if (request.error) return request.error;
+  return (
+    mockNvidiaProviderGetRun(command, gatewayName) ?? {
+      status: 1,
+      stderr: `provider '${request.providerName}' not found`,
+    }
+  );
+}
+
 function mockEndpointlessProviderProfileRun(command, profileId, inferenceCapable) {
   const args = normalizeCommand(command).split(/\s+/);
   const providerIndex = args.indexOf("provider");
@@ -198,6 +243,20 @@ function mockManagedEndpointlessProviderProfileRun(command) {
   return (
     mockEndpointlessProviderProfileRun(command, "openai", true) ??
     mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false)
+  );
+}
+
+function mockProviderPreparationRun(command, gatewayName, profileId, inferenceCapable) {
+  return (
+    mockEndpointlessProviderProfileRun(command, profileId, inferenceCapable) ??
+    mockNvidiaOrMissingProviderGetRun(command, gatewayName)
+  );
+}
+
+function mockManagedProviderPreparationRun(command, gatewayName) {
+  return (
+    mockManagedEndpointlessProviderProfileRun(command) ??
+    mockNvidiaOrMissingProviderGetRun(command, gatewayName)
   );
 }
 
@@ -722,6 +781,7 @@ function installVerifiedSandboxCreateFixture(registry, options) {
   const reservationEntry = {
     name: sandboxName,
     gatewayName,
+    gatewayPort,
     pendingRouteReservation: true,
     reservationSessionId: sessionId,
     ...selection,
@@ -1059,6 +1119,23 @@ function mockStandaloneGatewayTeardownAuthority() {
   });
 }
 
+function mockManagedStateVolumeOnboardLifecycle() {
+  const managedWorkloadOnboard = require(
+    path.resolve(__dirname, "../../src/lib/onboard/managed-workload/onboard-orchestration.ts"),
+  );
+  managedWorkloadOnboard.createManagedStateVolumeOnboardLifecycle = ({ roots }) => ({
+    roots,
+    materializeSandboxCreatePlan: (input, materialize) => materialize(input),
+    commit: () => {},
+  });
+}
+
+function mockIsolatedDockerSandboxLifecycleFromRunner() {
+  mockStandaloneGatewayTeardownAuthority();
+  mockManagedStateVolumeOnboardLifecycle();
+  mockDockerSandboxLifecycleReleaseFromRunner();
+}
+
 function mockDockerSandboxLifecycleReleaseFromRunner() {
   const runner = require(path.resolve(__dirname, "../../src/lib/runner.ts"));
   const state = runner.run.__nemoclawDockerLifecycleState ?? {
@@ -1355,6 +1432,10 @@ module.exports = {
   installForwardServiceReachabilityFixture,
   mockEndpointlessProviderProfileRun,
   mockManagedEndpointlessProviderProfileRun,
+  mockManagedProviderPreparationRun,
+  mockNvidiaProviderGetRun,
+  mockNvidiaOrMissingProviderGetRun,
+  mockProviderPreparationRun,
   createStatefulMessagingProviderRunner,
   isOpenClawSecurityInventoryProbe,
   mockDockerSandboxLifecycleReleaseFromRunner,
@@ -1365,6 +1446,8 @@ module.exports = {
   sandboxLifecycleFixture,
   mockOnboardRunCapture,
   mockStandaloneGatewayTeardownAuthority,
+  mockManagedStateVolumeOnboardLifecycle,
+  mockIsolatedDockerSandboxLifecycleFromRunner,
   normalizeCommand,
   sandboxCreateArgsWithVerifiedReservation,
 };

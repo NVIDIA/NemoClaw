@@ -33,20 +33,20 @@ If you cannot add memory, configure at least 8 GB of swap to work around the iss
 | npm        | 10 or later |
 | SHA-256 tool | `sha256sum` or `shasum`, required only when the installer must install or upgrade Node.js through nvm |
 | Python     | Python 3 at a trusted system location, with POSIX descriptor-relative filesystem support |
-| Container runtime | Docker Engine, Docker Desktop, or Colima on a tested platform (default), or native rootless Podman on qualified Linux |
+| Container runtime | Docker Engine, Docker Desktop, or Colima on a tested platform (default), or rootless Podman on qualified native Linux and Windows WSL2 paths |
 | Platform   | Refer to [Platforms](#platforms) below |
 
 Docker is the default runtime provider and the primary onboarding path.
-On Linux, the installer checks Docker before it installs the NemoClaw CLI unless you explicitly select native rootless Podman with `NEMOCLAW_GATEWAY_RUNTIME=podman`.
+On native Linux or inside WSL2, the installer checks Docker before it installs the NemoClaw CLI unless you explicitly select rootless Podman with `NEMOCLAW_GATEWAY_RUNTIME=podman`.
 The installer can install Docker, start the Docker service, and add your user to the `docker` group.
 When Docker is missing, the installer downloads Docker's official convenience script, prompts for `sudo`, and starts the service when systemd is available.
 In a non-interactive run, the installer can reactivate the group through `sg docker` and continue onboarding.
 If that path is unavailable or does not restore Docker access, the installer exits with `newgrp docker` guidance before it starts onboarding.
 
-Native rootless Podman is an explicit Linux path and does not require the Docker CLI or daemon.
+Rootless Podman is an explicit provider choice and does not require the Docker CLI or daemon. It is qualified for standard onboarding on supported native Linux hosts and for WSL-local Ollama on the documented Windows WSL2 path.
 Start standard onboarding with `NEMOCLAW_GATEWAY_RUNTIME=podman $$nemoclaw onboard`.
 Before selecting it, review its qualified host requirements and limitations in [Platform Support](../reference/platform-support#deployment-paths) and the [Podman troubleshooting guide](../reference/troubleshooting#podman).
-Managed local vLLM install/start remains Docker-backed and is unavailable when Docker is absent; attaching an already-running local vLLM server remains a separate path.
+Managed llama.cpp and Windows-host Ollama remain Docker Desktop-only on WSL. Managed local vLLM install/start remains Docker-backed and is unavailable when Docker is absent; attaching an already-running local vLLM server remains a separate path.
 The portable experimental profile is separate and still requires a Docker-compatible `docker` command.
 
 NemoClaw uses an isolated `python3` helper for descriptor-relative migration snapshot sanitization and deletion.
@@ -115,7 +115,7 @@ The table comes from [`ci/platform-matrix.json`](https://github.com/NVIDIA/NemoC
 | Linux | Docker | Tested | Primary tested path. Ubuntu 24.04 has host-level onboarding validation. A digest-pinned Ubuntu 26.04 userspace lane builds the CLI and runs preflight, installer, and platform contracts on eligible main pushes; Docker-host, AppArmor, Landlock, and live onboarding validation on 26.04 remain pending. Other distros (Ubuntu 22.04, Fedora, Rocky, Alma, NixOS, Arch) may work but are not validated. |
 | macOS (Apple Silicon) | Colima, Docker Desktop | Tested with limitations | Start the container runtime (Colima or Docker Desktop) before installing; NemoClaw verifies the pinned official OpenShell formula and grants formula-scoped trust only around each Homebrew install, inspection, start, or stop operation, requires a legacy or changed formula to be repaired by rerunning the pinned installer, uses the standalone gateway only when Homebrew is absent or both the staged formula and installed keg are absent, requires Homebrew Colima users to install both Colima and the Docker CLI (`brew install colima docker`) before `docker info` can work, and recommends Xcode Command Line Tools (`xcode-select --install`) for Node native modules. |
 | N1x FASTOS | Docker | Deferred | N1x Express remains Deferred until a physical NemoClaw Express E2E test passes. Host identity requires Linux `arm64`, a trusted `/etc/fastos-release` marker with `NAME="N1x FASTOS"`, and NVIDIA vendor ID `10de` on a display-class PCI device. CUDA and Container Device Interface (CDI) readiness are still required. |
-| Windows WSL2 | Docker Desktop (WSL backend) | Tested with limitations | Requires WSL2 with Docker Desktop backend. See [Additional Setup for Windows Machines](additional-setup/windows-preparation) before the Quickstart. |
+| Windows WSL2 | Docker Desktop (WSL backend), Qualified rootless Podman | Tested with limitations | Requires WSL2 with either the Docker Desktop backend or the qualification-backed rootless Podman provider. See [Additional Setup for Windows Machines](additional-setup/windows-preparation) before the Quickstart. |
 
 For the complete platform support matrix, including all deferred platforms and CI coverage, refer to [Platform Support](../reference/platform-support).
 {/* platform-matrix:end */}

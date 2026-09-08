@@ -124,6 +124,10 @@ assembles one exact candidate catalog from the workflow's published contracts, u
 and sandbox, records the authenticated discovery diagnostics, scans the evidence for fixture
 credentials, and must pass.
 These are two required acceptance executions, not retries; either failure remains a failed check.
+The workflow records one publication cohort before its PR producer matrix runs. Failed-job reruns
+reuse that cohort and replace only the stable run-scoped artifact owned by each retried agent.
+Consumers accept one complete cohort from the same run at the current or an earlier attempt. They
+reject mixed cohorts, another run, a future attempt, and another candidate revision.
 The managed-image scope does not claim trusted-private DNS-rebinding coverage: host and sandbox
 `/etc/hosts` fixtures do not control the OpenShell supervisor's egress resolver. Full MCP bridge E2E
 coverage retains that assertion for environments with supervisor-authoritative DNS.
@@ -134,6 +138,11 @@ local image, removes registry credentials, validates the anonymously pullable di
 `managed-pr-contract-*` all-agent catalog pattern and every release alias. The checked-in Pi
 qualification receipts may consume these candidate contracts only when the recorded image-source
 paths are unchanged through the receipt commit.
+
+Pi full lifecycle qualification runs on Linux AMD64. Linux ARM64 remains release-gated by its native
+managed-image build, startup, publication, and checked-in receipt. The receipt refresh check requires
+the Linux AMD64 and Linux ARM64 receipts to identify one source revision, release, and publication
+cohort.
 
 #### Timing Baseline
 
@@ -168,13 +177,23 @@ The historical fixtures retain these version boundaries:
 
 | Fixture | Required boundary |
 | --- | --- |
-| `openshell-gateway-upgrade` | Retain the historical installer commit and SHA-256 digest, sandbox image digest, and reviewed OpenClaw npm URL and SHA-512 integrity. Install the historical package before testing the candidate upgrade path. |
+| `openshell-gateway-upgrade` | Retain one v0.0.89 fixture with a pinned installer commit and digest, sandbox image digest, and reviewed OpenClaw archive. Prove that the current gateway upgrade leaves its sandbox Ready, preserves a workspace marker, keeps the raw gateway credential out of the sandbox environment, `/sandbox/.openclaw/openclaw.json`, and recursive `auth-profiles.json` files below `/sandbox/.openclaw/agents`, and supports authenticated agent turns before and after the upgrade. |
 | `rebuild-openclaw` | Retain the reviewed old-base build in the target. Build and create the old sandbox before testing the candidate rebuild path. |
 
 These targets may restore the shared artifact for the candidate CLI.
 They must not replace a historical installer, package, image, or version boundary with that artifact.
 The gateway fixture already binds its remote historical inputs to immutable commits and cryptographic digests.
 The workflow does not republish those inputs as artifacts.
+Deterministic tests own installer identity, OpenShell release asset selection,
+NemoClaw restore behavior, and Dockerfile patch behavior. The live target does not
+assert OpenClaw database tables, migration checkpoints, or other third-party
+storage details.
+
+The retained live target owns the released-gateway upgrade and usable-survivor
+boundary. Deterministic rebuild-flow tests own post-backup recreate failure,
+preserved backup and registry state, recovery-journal retention, and successful
+retry; stale-recovery tests own fail-closed behavior when no authoritative live
+policy remains.
 
 ### Hermes Sandbox Image Artifact
 
