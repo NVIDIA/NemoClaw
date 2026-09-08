@@ -3854,7 +3854,7 @@ Entries are split on whitespace and commas and must match `^[A-Z][A-Z0-9_]{0,127
 When NemoClaw creates the canonical provider, it omits an extension whose credential is unavailable from both the credential store and its environment variable.
 The primary credential is required to create that provider.
 An extension already stored in an existing provider remains available until that provider is replaced or removed.
-Export the extension credential before onboarding when that profile requires it.
+If the extension credential is absent from the credential store, export it before onboarding.
 
 </AgentOnly>
 

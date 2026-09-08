@@ -337,7 +337,10 @@ describe("messaging OpenShell provider application", () => {
         "Messaging provider 'alpha-telegram-bridge' is missing required credential 'TELEGRAM_BOT_TOKEN' for creation.",
     });
     expect((failure as Error).message).not.toContain("telegram-agent-a-secret");
+    expect(adapter.importProviderProfile).not.toHaveBeenCalled();
     expect(adapter.createProvider).not.toHaveBeenCalled();
+    expect(adapter.updateProvider).not.toHaveBeenCalled();
+    expect(adapter.deleteProvider).not.toHaveBeenCalled();
   });
 
   it("rejects replacement when any attachment is outside the authorized sandbox (#9806)", async () => {
