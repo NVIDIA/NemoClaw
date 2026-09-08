@@ -157,6 +157,10 @@ describe("bare status configured-inference line (#10221)", () => {
     });
 
     expect(lines).toContain("      Inference (configured): compatible-endpoint / m");
+    expect(lines).toContain(
+      "      configured endpoint omitted: stored endpoint exceeds 2,048 characters; " +
+        "update the sandbox route with `nemoclaw alpha inference set`.",
+    );
     expect(lines.some((line) => line.includes(endpointUrl))).toBe(false);
     expect(report.sandboxes[0]?.endpointUrl).toBeNull();
   });

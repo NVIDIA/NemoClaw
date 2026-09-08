@@ -237,6 +237,22 @@ function resolveConfiguredEndpoint(
   return safeStatusString(redactUrl(sandbox.endpointUrl));
 }
 
+function configuredEndpointOmissionReason(
+  sandbox: SandboxEntry,
+  displayedProvider: string | null,
+): string | null {
+  const storedProvider = getSandboxEntryDisplayInference(sandbox).provider;
+  if (
+    storedProvider &&
+    displayedProvider === storedProvider &&
+    typeof sandbox.endpointUrl === "string" &&
+    sandbox.endpointUrl.length > MAX_STATUS_ENDPOINT_LENGTH
+  ) {
+    return `configured endpoint omitted: stored endpoint exceeds ${MAX_STATUS_ENDPOINT_LENGTH.toLocaleString("en-US")} characters; update the sandbox route with \`nemoclaw ${sandbox.name} inference set\`.`;
+  }
+  return null;
+}
+
 export interface StatusServiceRow {
   name: string;
   running: boolean;
@@ -731,6 +747,8 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
         const parts = [provider, model].filter(Boolean).join(" / ");
         const endpoint = resolveConfiguredEndpoint(sb, provider);
         log(`      Inference (configured): ${parts}${endpoint ? ` (${endpoint})` : ""}`);
+        const omissionReason = configuredEndpointOmissionReason(sb, provider);
+        if (omissionReason) log(`      ${omissionReason}`);
       }
       if (deps.getActiveSessionCount && !portablePhase) {
         const count = deps.getActiveSessionCount(sb.name);

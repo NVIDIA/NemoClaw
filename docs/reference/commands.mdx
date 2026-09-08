@@ -3144,6 +3144,7 @@ It appends the stored upstream endpoint as `Inference (configured): <provider> /
 Credentials embedded in that endpoint are redacted before it is reported.
 Terminal and bidirectional control characters in malformed legacy endpoint values are shown as escaped Unicode sequences.
 The endpoint is omitted (and `endpointUrl` is `null`) when it exceeds 2,048 characters, when the registry records none, when no configured provider owns it, and for the default sandbox when the live gateway route has drifted to a different provider than the stored one, because the stored endpoint no longer describes the route in use.
+For an oversized stored endpoint, text output reports the omission and directs you to update the sandbox route with `$$nemoclaw <name> inference set`.
 For a live `Inference: healthy (<endpoint>)` reachability result on a gateway-based sandbox, run `$$nemoclaw <name> status`, which probes the sandbox's inference route and reports the probe endpoint rather than the configured upstream.
 
 <AgentOnly variant="hermes">
