@@ -298,7 +298,7 @@ describe("managed clone provider transaction", () => {
     const getProvider: OpenShellProviderAdapter["getProvider"] = vi.fn(async () => ({
       ok: false,
       error: { kind: "command", reason: "not_found", message: "Provider was not found." },
-    }));
+    }) as const);
 
     const { prepared } = await prepareWithBinding({
       providerAdapter: { getProvider } as OpenShellProviderAdapter,
