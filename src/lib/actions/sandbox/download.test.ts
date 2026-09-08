@@ -30,7 +30,6 @@ vi.mock("./sessions/download-verify", async (importOriginal) => {
 
 import {
   captureOpenshell,
-  OPENSHELL_DOWNLOAD_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
   runOpenshell,
 } from "../../adapters/openshell/runtime";
@@ -82,7 +81,6 @@ describe("downloadFromSandbox", () => {
       expect.objectContaining({
         ignoreError: true,
         stdio: "inherit",
-        timeout: OPENSHELL_DOWNLOAD_TIMEOUT_MS,
       }),
     );
     expect(publishMock).toHaveBeenCalledWith(stagedArtifact, expectedHostDest, "file");
@@ -93,21 +91,16 @@ describe("downloadFromSandbox", () => {
     expect(fs.rmSync).toHaveBeenCalledWith(stagingDir, { recursive: true, force: true });
   });
 
-  it("removes the staged artifact when the download times out (#10636)", async () => {
-    runMock.mockReturnValue({
-      status: null,
-      error: Object.assign(new Error("timed out"), { code: "ETIMEDOUT" }),
+  it("does not apply a fixed timeout to a valid staged download (#10636)", async () => {
+    await downloadFromSandbox({
+      sandboxName: "alpha",
+      sandboxPath: "/sandbox/.openclaw/workspace/SOUL.md",
+      hostDest: "./out",
     });
 
-    await expect(
-      downloadFromSandbox({
-        sandboxName: "alpha",
-        sandboxPath: "/sandbox/.openclaw/workspace/SOUL.md",
-        hostDest: "./out",
-      }),
-    ).rejects.toThrow(/transfer timed out/);
-    expect(publishMock).not.toHaveBeenCalled();
-    expect(fs.rmSync).toHaveBeenCalledWith(stagingDir, { recursive: true, force: true });
+    const options = runMock.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(options).toEqual({ ignoreError: true, stdio: "inherit" });
+    expect(options).not.toHaveProperty("timeout");
   });
 
   it("defaults the host destination to the caller cwd when omitted", async () => {

@@ -30,6 +30,12 @@ $$nemoclaw "$SANDBOX" download /sandbox/.openclaw/workspace/SOUL.md "$BACKUP_DIR
 $$nemoclaw "$SANDBOX" download /sandbox/.openclaw/workspace/USER.md "$BACKUP_DIR/"
 $$nemoclaw "$SANDBOX" download /sandbox/.openclaw/workspace/IDENTITY.md "$BACKUP_DIR/"
 $$nemoclaw "$SANDBOX" download /sandbox/.openclaw/workspace/AGENTS.md "$BACKUP_DIR/"
+```
+
+OpenClaw creates `MEMORY.md` and `memory/` only after it stores memory.
+Run each applicable command only when that sandbox path exists:
+
+```bash
 $$nemoclaw "$SANDBOX" download /sandbox/.openclaw/workspace/MEMORY.md "$BACKUP_DIR/"
 $$nemoclaw "$SANDBOX" download /sandbox/.openclaw/workspace/memory/ "$BACKUP_DIR/memory/"
 ```
@@ -102,6 +108,11 @@ $$nemoclaw "$SANDBOX" upload "$BACKUP_DIR/SOUL.md" /sandbox/.openclaw/workspace/
 $$nemoclaw "$SANDBOX" upload "$BACKUP_DIR/USER.md" /sandbox/.openclaw/workspace/
 $$nemoclaw "$SANDBOX" upload "$BACKUP_DIR/IDENTITY.md" /sandbox/.openclaw/workspace/
 $$nemoclaw "$SANDBOX" upload "$BACKUP_DIR/AGENTS.md" /sandbox/.openclaw/workspace/
+```
+
+Upload each optional memory path only when the backup contains it:
+
+```bash
 $$nemoclaw "$SANDBOX" upload "$BACKUP_DIR/MEMORY.md" /sandbox/.openclaw/workspace/
 $$nemoclaw "$SANDBOX" upload "$BACKUP_DIR/memory/" /sandbox/.openclaw/workspace/memory/
 ```
