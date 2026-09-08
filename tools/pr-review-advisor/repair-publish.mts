@@ -72,6 +72,7 @@ type WorkflowJob = {
   status?: unknown;
   conclusion?: unknown;
   html_url?: unknown;
+  run_attempt?: unknown;
 };
 
 type PublishedCheck = {
@@ -91,7 +92,9 @@ export type AdvisorRepairHeadReceipt = {
   workflows: Array<{
     workflow: string;
     runId: number;
+    runAttempt: number;
     url: string;
+    receipt: { name: string; url: string };
     jobs: Array<{ name: string; url: string }>;
   }>;
   checks: PublishedCheck[];
@@ -169,6 +172,15 @@ export async function publishPreparedAdvisorRepair(input: {
 
 function repairValidationRunName(attemptKey: string, generatedHeadSha: string): string {
   return `Repair validation ${attemptKey} head ${generatedHeadSha}`;
+}
+
+function repairValidationReceiptName(input: {
+  attemptKey: string;
+  prNumber: number;
+  generatedHeadSha: string;
+  baseSha: string;
+}): string {
+  return `Repair receipt ${input.attemptKey} PR ${input.prNumber} head ${input.generatedHeadSha} base ${input.baseSha}`;
 }
 
 function repairValidationInputs(
@@ -260,7 +272,7 @@ async function completedWorkflowEvidence(
   dispatch: { workflow: string; runId: number; url: string },
   requiredJobs: readonly string[],
   runName: string,
-  generatedHeadSha: string,
+  receiptName: string,
   request: GitHubRequest,
 ): Promise<AdvisorRepairHeadReceipt["workflows"][number] | null> {
   const run = (await request(
@@ -285,11 +297,11 @@ async function completedWorkflowEvidence(
     throw new RepairError(`generated-head ${dispatch.workflow} run failed`);
   const response = (await request(
     "GET",
-    `/repos/${REPAIR_REPOSITORY}/actions/runs/${dispatch.runId}/jobs?per_page=100`,
+    `/repos/${REPAIR_REPOSITORY}/actions/runs/${dispatch.runId}/attempts/${run.run_attempt}/jobs?per_page=100`,
   )) as { jobs?: unknown };
   if (!Array.isArray(response.jobs) || response.jobs.length > 100)
     throw new RepairError(`generated-head ${dispatch.workflow} job listing is invalid`);
-  const jobs = requiredJobs.map((name) => {
+  const requireSuccessfulJob = (name: string): { name: string; url: string } => {
     const matches = (response.jobs as WorkflowJob[]).filter((job) => job.name === name);
     if (matches.length !== 1)
       throw new RepairError(`generated-head ${dispatch.workflow} job ${name} is ambiguous`);
@@ -297,6 +309,7 @@ async function completedWorkflowEvidence(
     if (
       job.status !== "completed" ||
       job.conclusion !== "success" ||
+      job.run_attempt !== run.run_attempt ||
       !Number.isSafeInteger(job.id) ||
       Number(job.id) < 1 ||
       typeof job.html_url !== "string" ||
@@ -304,8 +317,10 @@ async function completedWorkflowEvidence(
     )
       throw new RepairError(`generated-head ${dispatch.workflow} job ${name} did not succeed`);
     return { name, url: job.html_url };
-  });
-  return { ...dispatch, jobs };
+  };
+  const receipt = requireSuccessfulJob(receiptName);
+  const jobs = requiredJobs.map(requireSuccessfulJob);
+  return { ...dispatch, runAttempt: Number(run.run_attempt), receipt, jobs };
 }
 
 async function publishRepairChecks(
@@ -378,6 +393,7 @@ export async function waitForAdvisorRepairHead(input: {
     input.wait ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
   const attempts = input.attempts ?? 120;
   const runName = repairValidationRunName(input.attemptKey, input.generatedHeadSha);
+  const receiptName = repairValidationReceiptName(input);
   const pendingDispatches = await Promise.all(
     ADVISOR_REPAIR_HEAD_WORKFLOWS.map(({ workflow }) =>
       dispatchRepairValidation(workflow, input, runName, input.request),
@@ -413,7 +429,7 @@ export async function waitForAdvisorRepairHead(input: {
         dispatch,
         specification.checks,
         runName,
-        input.generatedHeadSha,
+        receiptName,
         input.request,
       );
       if (evidence) workflows.push(evidence);

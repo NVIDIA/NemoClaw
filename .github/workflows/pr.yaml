@@ -1026,6 +1026,17 @@ jobs:
 
           [ "$failed" -eq 0 ]
 
+  repair-receipt:
+    name: ${{ format('Repair receipt {0} PR {1} head {2} base {3}', inputs.repair_attempt_key, inputs.repair_pr_number, inputs.repair_head_sha, inputs.repair_base_sha) }}
+    needs: checks
+    if: ${{ inputs.repair_attempt_key != '' && needs.checks.result == 'success' }}
+    permissions: {}
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Record exact validation receipt
+        run: echo 'Trusted validation completed for the exact repair inputs.'
+
   # Sandbox image builds and E2E tests have moved to pr-self-hosted.yaml,
   # which runs on NVIDIA self-hosted runners via copy-pr-bot.
   # See: .github/workflows/pr-self-hosted.yaml

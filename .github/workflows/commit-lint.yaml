@@ -92,3 +92,14 @@ jobs:
           else
             printf '%s\n' "$PR_TITLE" | npx commitlint --verbose
           fi
+
+  repair-receipt:
+    name: ${{ format('Repair receipt {0} PR {1} head {2} base {3}', inputs.repair_attempt_key, inputs.repair_pr_number, inputs.repair_head_sha, inputs.repair_base_sha) }}
+    needs: commit-lint
+    if: ${{ inputs.repair_attempt_key != '' && needs.commit-lint.result == 'success' }}
+    permissions: {}
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Record exact validation receipt
+        run: echo 'Trusted validation completed for the exact repair inputs.'

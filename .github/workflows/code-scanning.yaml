@@ -65,13 +65,13 @@ jobs:
           [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$REPAIR_ATTEMPT_KEY" =~ ^sha256:[0-9a-f]{64}$ ]]
-          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" |
-            jq -e --arg head "$HEAD_SHA" --arg base "$BASE_SHA" '
-              .state == "open" and .draft == false and
-              .head.sha == $head and .head.repo.full_name == "NVIDIA/NemoClaw" and
-              .base.sha == $base and .base.ref == "main" and
-              .base.repo.full_name == "NVIDIA/NemoClaw"
-            ' >/dev/null
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$RUNNER_TEMP/repair-pr.json"
+          jq -e --arg head "$HEAD_SHA" --arg base "$BASE_SHA" '
+            .state == "open" and .draft == false and
+            .head.sha == $head and .head.repo.full_name == "NVIDIA/NemoClaw" and
+            .base.sha == $base and .base.ref == "main" and
+            .base.repo.full_name == "NVIDIA/NemoClaw"
+          ' "$RUNNER_TEMP/repair-pr.json" >/dev/null
 
   codeql:
     needs: validate-repair-target
@@ -237,3 +237,14 @@ jobs:
           checkout_path: source
           ref: ${{ inputs.repair_attempt_key != '' && format('refs/pull/{0}/head', inputs.repair_pr_number) || '' }}
           sha: ${{ inputs.repair_attempt_key != '' && inputs.repair_head_sha || '' }}
+
+  repair-receipt:
+    name: ${{ format('Repair receipt {0} PR {1} head {2} base {3}', inputs.repair_attempt_key, inputs.repair_pr_number, inputs.repair_head_sha, inputs.repair_base_sha) }}
+    needs: [codeql, shellcheck]
+    if: ${{ inputs.repair_attempt_key != '' && needs.codeql.result == 'success' && needs.shellcheck.result == 'success' }}
+    permissions: {}
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Record exact validation receipt
+        run: echo 'Trusted validation completed for the exact repair inputs.'

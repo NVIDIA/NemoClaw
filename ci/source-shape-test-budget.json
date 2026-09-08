@@ -152,6 +152,11 @@
       "category": "security"
     },
     {
+      "file": "test/automation/pull-requests/pr-repair-dispatch-guard.test.ts",
+      "test": "rejects a %s generated-head parent set",
+      "category": "security"
+    },
+    {
       "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
       "test": "keeps Phase 0 Advisor repair manual, credential-separated, and non-publishing (#10791)",
       "category": "security"

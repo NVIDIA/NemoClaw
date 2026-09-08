@@ -126,3 +126,14 @@ jobs:
         uses: ./.github/actions/ci-installer-hash-check
         with:
           repo-root: ${{ github.workspace }}
+
+  repair-receipt:
+    name: ${{ format('Repair receipt {0} PR {1} head {2} base {3}', inputs.repair_attempt_key, inputs.repair_pr_number, inputs.repair_head_sha, inputs.repair_base_sha) }}
+    needs: check-hash
+    if: ${{ inputs.repair_attempt_key != '' && needs.check-hash.result == 'success' }}
+    permissions: {}
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Record exact validation receipt
+        run: echo 'Trusted validation completed for the exact repair inputs.'

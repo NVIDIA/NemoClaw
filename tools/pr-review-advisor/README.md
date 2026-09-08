@@ -54,12 +54,17 @@ explicitly requested, the protected deterministic publisher rechecks the live st
 one verified, non-force, compare-and-swap branch update. A trusted-main reporter then runs and
 records the approved exact-generated-SHA checks without starting another repair attempt.
 
-Before dispatch, set the repository variable `PR_REVIEW_ADVISOR_REPAIR_ENABLED=true`. Dispatch the
-workflow from `main` with `target_repo`, `target_pr`, `target_base`, the exact
+Before dispatch, configure the `advisor-repair-publish` environment with required reviewers limited
+to users or teams that hold `maintain` or `admin` permission, plus the intended self-review policy,
+and set the repository variable `PR_REVIEW_ADVISOR_REPAIR_ENABLED=true`. Dispatch the workflow from
+`main` with `target_repo`, `target_pr`, `target_base`, the exact
 `repair_head_sha` and `repair_base_sha`, `repair_finding_ids_json`, and explicit
 `repair_egress_authorized=true`; set `repair_publish=true` only for Phase 1. Selection requires a
 maintainer-triggered, open, same-repository, non-draft PR whose exact head is current and whose
-`maintainer_can_modify` value is true.
+`maintainer_can_modify` value is true. The initial workflow actor (`github.actor`) and workflow-run
+initiator (`github.triggering_actor`) must each have `maintain` or `admin` permission. Selection
+checks both identities, and publication rechecks their current permissions before updating the
+branch. Repair reruns are rejected; start a new exact-head dispatch instead.
 
 The repair path retains bounded proposal, validation, publication, generated-head, and diagnostic
 artifacts. Ordinary `pull_request_target` review runs remain advisory-only and read-only.
