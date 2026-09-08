@@ -194,24 +194,25 @@ export function registerOpenClawAdapter(
     };
     current.mcp = { ...mcp, servers };
     if (
-      current.plugins !== undefined &&
-      (!current.plugins || typeof current.plugins !== "object" || Array.isArray(current.plugins))
+      current.tools !== undefined &&
+      (!current.tools || typeof current.tools !== "object" || Array.isArray(current.tools))
     ) {
-      throw new Error("OpenClaw plugins configuration must be an object");
+      throw new Error("OpenClaw tools configuration must be an object");
     }
-    const plugins = current.plugins as ConfigObject | undefined;
-    if (plugins?.allow !== undefined) {
-      if (
-        !Array.isArray(plugins.allow) ||
-        !plugins.allow.every((plugin): plugin is string => typeof plugin === "string")
-      ) {
-        throw new Error("OpenClaw plugins.allow configuration must be a string array");
-      }
-      current.plugins = {
-        ...plugins,
-        allow: [...new Set([...plugins.allow, OPENCLAW_NATIVE_MCP_PLUGIN_ID])],
-      };
+    const tools = (current.tools ?? {}) as ConfigObject;
+    if (
+      tools.alsoAllow !== undefined &&
+      (!Array.isArray(tools.alsoAllow) ||
+        !tools.alsoAllow.every((tool): tool is string => typeof tool === "string"))
+    ) {
+      throw new Error("OpenClaw tools.alsoAllow configuration must be a string array");
     }
+    current.tools = {
+      ...tools,
+      alsoAllow: [
+        ...new Set([...(tools.alsoAllow as string[] | undefined ?? []), OPENCLAW_NATIVE_MCP_PLUGIN_ID]),
+      ],
+    };
     writeSandboxConfig(sandboxName, target, current);
   } catch (error) {
     const output = redactBridgeSecretsForDisplay(

@@ -90,6 +90,7 @@ const runtimeSelection = { gatewayName: "nemoclaw-8091", workspace: "default" };
 function resetOpenClawConfigMocks(): void {
     mocks.readSandboxConfig.mockReset().mockReturnValue({
       plugins: { allow: ["nemoclaw"] },
+      tools: { toolSearch: { mode: "tools" } },
     });
   mocks.resolveAgentConfig.mockReset().mockReturnValue({
     agentName: "openclaw",
@@ -301,7 +302,8 @@ describe("OpenClaw MCP adapter registration", () => {
             },
           },
         },
-        plugins: { allow: ["nemoclaw", "bundle-mcp"] },
+        plugins: { allow: ["nemoclaw"] },
+        tools: { alsoAllow: ["bundle-mcp"], toolSearch: { mode: "tools" } },
       }),
     );
   });
@@ -314,7 +316,8 @@ describe("OpenClaw MCP adapter registration", () => {
     };
     mocks.readSandboxConfig.mockReturnValue({
       preserved: true,
-      plugins: { allow: ["nemoclaw", "bundle-mcp"] },
+      plugins: { allow: ["nemoclaw"] },
+      tools: { alsoAllow: ["bundle-mcp"], toolSearch: { mode: "tools" } },
       mcp: {
         servers: {
           github: {
@@ -334,12 +337,13 @@ describe("OpenClaw MCP adapter registration", () => {
       {
         preserved: true,
         mcp: { servers: {} },
-        plugins: { allow: ["nemoclaw", "bundle-mcp"] },
+        plugins: { allow: ["nemoclaw"] },
+        tools: { alsoAllow: ["bundle-mcp"], toolSearch: { mode: "tools" } },
       },
     );
   });
 
-  it("does not create a restrictive plugin allowlist when none exists", () => {
+  it("adds a non-restrictive tool-policy extension when no tools block exists", () => {
     const entry: McpSourceEntry = {
       ...baseEntry,
       agent: "openclaw",
@@ -350,6 +354,9 @@ describe("OpenClaw MCP adapter registration", () => {
 
     registerOpenClawAdapter("alpha", entry, runtimeSelection, {}, false, "v12");
 
+    expect(mocks.writeSandboxConfig.mock.calls[0]?.[2]).toMatchObject({
+      tools: { alsoAllow: ["bundle-mcp"] },
+    });
     expect(mocks.writeSandboxConfig.mock.calls[0]?.[2]).not.toHaveProperty("plugins");
   });
 });
