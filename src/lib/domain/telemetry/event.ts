@@ -1,0 +1,39 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+export const INSTALL_COMPLETED_EVENT_NAME = "nemoclaw_install_completed" as const;
+export const TELEMETRY_OPERATIONS = ["install", "update"] as const;
+
+export type TelemetryOperation = (typeof TELEMETRY_OPERATIONS)[number];
+
+export interface InstallCompletedEvent {
+  event: typeof INSTALL_COMPLETED_EVENT_NAME;
+  operation: TelemetryOperation;
+}
+
+export function isTelemetryOperation(value: unknown): value is TelemetryOperation {
+  return TELEMETRY_OPERATIONS.some((operation) => operation === value);
+}
+
+export function parseInstallCompletedEvent(value: unknown): InstallCompletedEvent | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record);
+  if (keys.length !== 2 || !keys.includes("event") || !keys.includes("operation")) return null;
+
+  const event = record.event;
+  const operation = record.operation;
+  if (event !== INSTALL_COMPLETED_EVENT_NAME || !isTelemetryOperation(operation)) return null;
+
+  return Object.freeze({ event: INSTALL_COMPLETED_EVENT_NAME, operation });
+}
+
+export function buildInstallCompletedEvent(operation: TelemetryOperation): InstallCompletedEvent {
+  const event = parseInstallCompletedEvent({
+    event: INSTALL_COMPLETED_EVENT_NAME,
+    operation,
+  });
+  if (!event) throw new TypeError("Invalid install-completed telemetry event");
+  return event;
+}
