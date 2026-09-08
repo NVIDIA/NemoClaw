@@ -301,6 +301,24 @@ describe("migration snapshot sanitizer fallbacks", () => {
     );
   });
 
+  it("omits scanned content from the descriptor apply request", () => {
+    const root = { canonicalPath: makeRoot(), identity };
+    writeRawNodeHelper([
+      'import { readFileSync } from "node:fs";',
+      'const request = JSON.parse(readFileSync(0, "utf8"));',
+      'const metadataOnly = request.scan.files.every((file) => !Object.hasOwn(file, "content"));',
+      "process.stdout.write(JSON.stringify({ ok: true, result: metadataOnly }));",
+    ]);
+
+    expect(
+      applyDescriptorSnapshotActions(
+        root,
+        { root: identity, files: [{ path: "config.json", metadata: identity, content: "e30=" }] },
+        [{ kind: "remove", path: "config.json", metadata: identity }],
+      ),
+    ).toBe(true);
+  });
+
   it.each(malformedDescriptorOutputs)(
     "rejects a malformed descriptor with $label",
     ({ output }) => {

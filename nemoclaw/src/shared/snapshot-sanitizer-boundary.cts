@@ -223,7 +223,14 @@ export function applyDescriptorSnapshotActions(
   actions: readonly SnapshotSanitizationAction[],
 ): boolean {
   if (actions.length === 0) return true;
-  const response = invokeSnapshotSanitizerHelper(root, "apply", { root, scan, actions });
+  const response = invokeSnapshotSanitizerHelper(root, "apply", {
+    root,
+    scan: {
+      root: scan.root,
+      files: scan.files.map((file) => ({ path: file.path, metadata: file.metadata })),
+    },
+    actions,
+  });
   return response?.ok === true && response.result === true;
 }
 

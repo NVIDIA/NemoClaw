@@ -46,6 +46,8 @@ The root and plugin locks bind these packages to the public npm registry and the
 The packages declare no install lifecycle scripts.
 The native packages are MIT licensed.
 The optional archive graph is not imported by the sanitizer and resolves to MIT, ISC, Zlib, and dual MIT or GPL-3.0-or-later licensed packages.
+The checked-in Linux x64 glibc npm cache seed was regenerated from the plugin lock.
+Its 100-archive manifest binds lock SHA-256 `3a3eab9fc8062d0073b132b4d4c2994308497410d37fe1170899642a97451add` and includes the exact `fs-safe` package, selected native package, and reachable optional archive graph for offline image builds.
 
 ## Adjacent Release Audit
 
@@ -114,8 +116,8 @@ The parent maps a missing or unsupported native binding to the existing prerequi
 
 - Severity and confidence: high, high confidence.
 - Failure mode: the root CLI works from a source checkout but the standalone plugin image or published package cannot resolve the native helper.
-- Control: the dependency is direct in both manifests, and CLI artifact packaging requires both the boundary and helper.
-- Verification: plugin build, package contract, E2E artifact packaging tests, and image CI.
+- Control: the dependency is direct in both manifests; the shared compiler emits both sanitizer modules; CLI artifact packaging requires both modules; the locked Linux x64 glibc npm cache seed contains the complete target-specific graph.
+- Verification: clean shared-boundary build, plugin build, package contract, E2E artifact packaging tests, cache-seed integrity contract, and image CI.
 
 ## Verification Evidence
 
@@ -125,6 +127,7 @@ On September 7, 2026:
 - `npm --prefix nemoclaw audit --omit=dev` reported zero vulnerabilities in the plugin production graph.
 - `npm audit signatures --omit=dev` reported no missing or invalid registry signatures.
 - A Linux arm64 glibc host loaded the locked native package and passed the focused sanitizer suite.
+- The cache-seed exporter validated 100 lock-pinned Linux x64 glibc archives, including `fs-safe-0.8.6.tgz` and `fs-safe-linux-x64-gnu-0.8.6.tgz`.
 
 ## Remaining Gates
 
