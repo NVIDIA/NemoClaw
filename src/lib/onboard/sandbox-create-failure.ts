@@ -14,25 +14,6 @@ const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 const MAX_RELEVANT_LOG_LINES = 120;
 const MAX_GATEWAY_TAIL_LINES = 240;
-const MAX_GATEWAY_LOG_BYTES = 1024 * 1024;
-const MAX_CONSOLE_OUTPUT_BYTES = 256 * 1024;
-const MAX_STATE_DIR_ENTRIES = 200;
-const MAX_FAILURE_BUNDLES = 10;
-const FAILURE_SIGNATURES = [
-  ["exec-format-error", /exec format error/iu],
-  ["vm-create-failed", /VmCreate/u],
-  ["process-exited", /ProcessExited/u],
-  ["permission-denied", /permission denied/iu],
-  ["out-of-memory", /out of memory|\bOOM\b/iu],
-  ["missing-executable", /no such file or directory|command not found/iu],
-  ["create-stream-exited-before-sandbox", /exited before sandbox creation/iu],
-  ["gateway-exited-before-dispatch", /gateway exited before request dispatch/iu],
-] as const;
-
-type BoundedFileTail = {
-  contents: Buffer;
-  truncated: boolean;
-};
 
 export type SandboxCreateFailureDiagnostics = {
   dir: string;
@@ -42,9 +23,6 @@ export type SandboxCreateFailureDiagnostics = {
   consoleOutput: string | null;
   copiedConsoleOutput: string | null;
   gatewayTailPath: string | null;
-  gatewayLogTruncated: boolean;
-  consoleOutputTruncated: boolean;
-  retentionPruned: boolean;
   backupPath: string | null;
   summaryLines: string[];
 };
@@ -54,7 +32,6 @@ export type SandboxCreateFailureDiagnosticOptions = {
   gatewayPort?: number;
   gatewayLogPath?: string | null;
   gatewayStateDir?: string;
-  sandboxId?: string;
   backupPath?: string | null;
   now?: Date;
 };
@@ -86,59 +63,13 @@ function gatewayLogCandidates(
   ];
 }
 
-function readBoundedFileTail(
-  filePath: string,
-  maxBytes: number,
-  dropPartialFirstLine = false,
-): BoundedFileTail | null {
-  let fd: number | null = null;
+function readLogLines(filePath: string): string[] | null {
   try {
     if (!fs.existsSync(filePath)) return null;
-    fd = fs.openSync(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
-    const stat = fs.fstatSync(fd);
-    if (!stat.isFile()) return null;
-    const start = Math.max(0, stat.size - maxBytes);
-    const buffer = Buffer.alloc(stat.size - start);
-    let offset = 0;
-    while (offset < buffer.length) {
-      const bytesRead = fs.readSync(fd, buffer, offset, buffer.length - offset, start + offset);
-      if (bytesRead === 0) break;
-      offset += bytesRead;
-    }
-    let contents = buffer.subarray(0, offset);
-    while (contents.length > 0 && (contents[0]! & 0xc0) === 0x80) {
-      contents = contents.subarray(1);
-    }
-    if (start > 0 && dropPartialFirstLine) {
-      const firstNewline = contents.indexOf(0x0a);
-      contents = firstNewline < 0 ? Buffer.alloc(0) : contents.subarray(firstNewline + 1);
-    }
-    return { contents, truncated: start > 0 };
+    return stripAnsi(fs.readFileSync(filePath, "utf-8")).split(/\r?\n/);
   } catch {
     return null;
-  } finally {
-    if (fd !== null) fs.closeSync(fd);
   }
-}
-
-function readLogLines(filePath: string): { lines: string[]; truncated: boolean } | null {
-  const tail = readBoundedFileTail(filePath, MAX_GATEWAY_LOG_BYTES, true);
-  if (!tail) return null;
-  return {
-    lines: stripAnsi(tail.contents.toString("utf8")).split(/\r?\n/),
-    truncated: tail.truncated,
-  };
-}
-
-function diagnosticSignatureLines(
-  value: string,
-  source: "gateway" | "rootfs-console",
-  sandboxId: string | null,
-): string[] {
-  const identity = sandboxId ? ` sandbox_id=${sandboxId}` : "";
-  return FAILURE_SIGNATURES.filter(([, pattern]) => pattern.test(value)).map(
-    ([label]) => `${source} signature=${label}${identity}`,
-  );
 }
 
 function extractField(line: string, field: string): string | null {
@@ -146,34 +77,21 @@ function extractField(line: string, field: string): string | null {
   return match?.[1] ?? null;
 }
 
-function findLatestSandboxBlock(
-  lines: string[],
-  sandboxName: string,
-  requiredSandboxId?: string,
-): string[] {
+function findLatestSandboxBlock(lines: string[], sandboxName: string): string[] {
   let startIndex = -1;
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i] || "";
-    if (
-      line.includes("create_sandbox received") &&
-      extractField(line, "sandbox_name") === sandboxName &&
-      (!requiredSandboxId || extractField(line, "sandbox_id") === requiredSandboxId)
-    ) {
+    if (line.includes("create_sandbox received") && line.includes(`sandbox_name=${sandboxName}`)) {
       startIndex = i;
       break;
     }
   }
-  if (startIndex < 0) {
-    return requiredSandboxId ? lines : lines.slice(-MAX_RELEVANT_LOG_LINES);
-  }
+  if (startIndex < 0) return lines.slice(-MAX_RELEVANT_LOG_LINES);
 
   let endIndex = lines.length;
   for (let i = startIndex + 1; i < lines.length; i++) {
     const line = lines[i] || "";
-    if (
-      (line.includes("create_sandbox received") || line.includes("DeleteSandbox")) &&
-      extractField(line, "sandbox_name") === sandboxName
-    ) {
+    if (line.includes("DeleteSandbox") && line.includes(`sandbox_name=${sandboxName}`)) {
       endIndex = i + 1;
       break;
     }
@@ -183,7 +101,7 @@ function findLatestSandboxBlock(
 
 function getLatestSandboxId(block: string[], sandboxName: string): string | null {
   for (const line of block) {
-    if (extractField(line, "sandbox_name") !== sandboxName) continue;
+    if (!line.includes(`sandbox_name=${sandboxName}`)) continue;
     const field = extractField(line, "sandbox_id");
     if (field && UUID_RE.test(field)) return field;
   }
@@ -194,15 +112,11 @@ function filterRelevantLines(
   block: string[],
   sandboxName: string,
   sandboxId: string | null,
-  requireExactIdentity: boolean,
 ): string[] {
   const relevant = block.filter((line) => {
     if (!line.trim()) return false;
-    if (requireExactIdentity) {
-      return Boolean(sandboxId && extractField(line, "sandbox_id") === sandboxId);
-    }
-    if (extractField(line, "sandbox_name") === sandboxName) return true;
-    if (sandboxId && extractField(line, "sandbox_id") === sandboxId) return true;
+    if (line.includes(`sandbox_name=${sandboxName}`)) return true;
+    if (sandboxId && line.includes(`sandbox_id=${sandboxId}`)) return true;
     return /ERROR krun|VmCreate|ProcessExited|console_output=|state_dir=/.test(line);
   });
   return relevant.slice(-MAX_RELEVANT_LOG_LINES);
@@ -216,116 +130,27 @@ function latestFieldValue(lines: string[], field: string): string | null {
   return null;
 }
 
-function isPathWithin(parent: string, child: string): boolean {
-  return child.startsWith(`${parent}${path.sep}`);
-}
-
-function validateIdentityBoundEvidencePaths(
-  gatewayLogPath: string | null,
-  sandboxId: string,
-  stateDir: string | null,
-  consoleOutput: string | null,
-): { stateDir: string; consoleOutput: string } | null {
-  if (!gatewayLogPath || !stateDir || !consoleOutput) return null;
+function copyFileIfPresent(src: string | null, dst: string): string | null {
+  if (!src) return null;
   try {
-    const gatewayStateDir = path.resolve(path.dirname(gatewayLogPath));
-    const resolvedStateDir = path.resolve(stateDir);
-    const resolvedConsoleOutput = path.resolve(consoleOutput);
-    if (
-      !isPathWithin(gatewayStateDir, resolvedStateDir) ||
-      path.basename(resolvedStateDir) !== sandboxId ||
-      !isPathWithin(resolvedStateDir, resolvedConsoleOutput)
-    ) {
-      return null;
-    }
-    rejectSymlinksOnPath(resolvedStateDir);
-    rejectSymlinksOnPath(resolvedConsoleOutput);
-    if (!fs.lstatSync(resolvedStateDir).isDirectory()) return null;
-    const consoleStat = fs.lstatSync(resolvedConsoleOutput);
-    if (!consoleStat.isFile() || consoleStat.isSymbolicLink()) return null;
-    return { stateDir: resolvedStateDir, consoleOutput: resolvedConsoleOutput };
+    if (!fs.existsSync(src)) return null;
+    fs.copyFileSync(src, dst);
+    return dst;
   } catch {
     return null;
   }
 }
 
-function copyFileTailIfPresent(
-  src: string | null,
-  dst: string,
-  sandboxId: string | null,
-): { path: string | null; summaryLines: string[]; truncated: boolean } {
-  if (!src) return { path: null, summaryLines: [], truncated: false };
-  try {
-    const tail = readBoundedFileTail(src, MAX_CONSOLE_OUTPUT_BYTES);
-    if (!tail) return { path: null, summaryLines: [], truncated: false };
-    const summaryLines = diagnosticSignatureLines(
-      tail.contents.toString("utf8"),
-      "rootfs-console",
-      sandboxId,
-    );
-    if (summaryLines.length === 0) {
-      return { path: null, summaryLines, truncated: tail.truncated };
-    }
-    fs.writeFileSync(dst, `${summaryLines.join("\n")}\n`, { mode: 0o600 });
-    return { path: dst, summaryLines, truncated: tail.truncated };
-  } catch {
-    return { path: null, summaryLines: [], truncated: false };
-  }
-}
-
 function listStateDir(stateDir: string | null): string[] {
   if (!stateDir) return [];
-  let dir: fs.Dir | null = null;
   try {
     if (!fs.existsSync(stateDir)) return [];
-    dir = fs.opendirSync(stateDir);
-    const entries: string[] = [];
-    for (let index = 0; index < MAX_STATE_DIR_ENTRIES; index += 1) {
-      const entry = dir.readSync();
-      if (!entry) return entries;
+    return fs.readdirSync(stateDir, { withFileTypes: true }).map((entry) => {
       const suffix = entry.isDirectory() ? "/" : "";
-      entries.push(`${entry.name}${suffix}`);
-    }
-    if (dir.readSync()) entries.push("<additional entries omitted>");
-    return entries;
+      return `${entry.name}${suffix}`;
+    });
   } catch {
     return [];
-  } finally {
-    dir?.closeSync();
-  }
-}
-
-function pruneFailureBundles(root: string, currentBundleName: string): boolean {
-  let directory: fs.Dir | null = null;
-  try {
-    directory = fs.opendirSync(root);
-    const retained = [currentBundleName];
-    for (;;) {
-      const entry = directory.readSync();
-      if (!entry) break;
-      if (
-        entry.name === currentBundleName ||
-        !entry.isDirectory() ||
-        !/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-/u.test(entry.name)
-      ) {
-        continue;
-      }
-      retained.push(entry.name);
-      retained.sort().reverse();
-      if (retained.length <= MAX_FAILURE_BUNDLES) continue;
-      const oldest = [...retained].reverse().find((name) => name !== currentBundleName);
-      if (!oldest) return false;
-      retained.splice(retained.indexOf(oldest), 1);
-      const target = path.join(root, oldest);
-      rejectSymlinksOnPath(target);
-      if (!fs.lstatSync(target).isDirectory()) return false;
-      fs.rmSync(target, { recursive: true });
-    }
-    return true;
-  } catch {
-    return false;
-  } finally {
-    directory?.closeSync();
   }
 }
 
@@ -335,54 +160,11 @@ export function collectSandboxCreateFailureDiagnostics(
 ): SandboxCreateFailureDiagnostics | null {
   const homeDir = options.homeDir ?? os.homedir();
   const now = options.now ?? new Date();
-  const gatewayPort = options.gatewayPort ?? GATEWAY_PORT;
   const dir = path.join(
-    nemoclawStateRoot(homeDir, gatewayPort),
+    nemoclawStateRoot(homeDir, GATEWAY_PORT),
     "onboard-failures",
     `${timestampForPath(now)}-${sanitizePathPart(sandboxName)}`,
   );
-
-  const gatewayLogPath =
-    options.gatewayLogPath ??
-    gatewayLogCandidates(
-      homeDir,
-      gatewayPort,
-      options.gatewayStateDir ?? process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
-    ).find((candidate) => fs.existsSync(candidate)) ??
-    null;
-  const gatewayLog = gatewayLogPath ? readLogLines(gatewayLogPath) : null;
-  const rawLines = gatewayLog?.lines ?? null;
-  const block = rawLines
-    ? findLatestSandboxBlock(rawLines, sandboxName, options.sandboxId)
-    : [];
-  const sandboxId = options.sandboxId ?? getLatestSandboxId(block, sandboxName);
-  const relevantLines = filterRelevantLines(
-    block,
-    sandboxName,
-    sandboxId,
-    options.sandboxId !== undefined,
-  );
-  if (options.sandboxId && relevantLines.length === 0) return null;
-  const gatewayTailLines =
-    rawLines && !options.sandboxId && relevantLines.length === 0
-      ? rawLines.filter((line) => line.trim()).slice(-MAX_GATEWAY_TAIL_LINES)
-      : [];
-  const recordedStateDir = latestFieldValue(relevantLines, "state_dir");
-  const recordedConsoleOutput =
-    latestFieldValue(relevantLines, "console_output") ??
-    (recordedStateDir ? path.join(recordedStateDir, "rootfs-console.log") : null);
-  const validatedPaths = options.sandboxId
-    ? validateIdentityBoundEvidencePaths(
-        gatewayLogPath,
-        options.sandboxId,
-        recordedStateDir,
-        recordedConsoleOutput,
-      )
-    : null;
-  const stateDir = options.sandboxId ? (validatedPaths?.stateDir ?? null) : recordedStateDir;
-  const consoleOutput = options.sandboxId
-    ? (validatedPaths?.consoleOutput ?? null)
-    : recordedConsoleOutput;
 
   try {
     rejectSymlinksOnPath(dir);
@@ -392,36 +174,47 @@ export function collectSandboxCreateFailureDiagnostics(
     return null;
   }
 
-  const copiedConsoleOutput = copyFileTailIfPresent(
+  const gatewayLogPath =
+    options.gatewayLogPath ??
+    gatewayLogCandidates(
+      homeDir,
+      options.gatewayPort ?? GATEWAY_PORT,
+      options.gatewayStateDir ?? process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
+    ).find((candidate) => fs.existsSync(candidate)) ??
+    null;
+  const rawLines = gatewayLogPath ? readLogLines(gatewayLogPath) : null;
+  const block = rawLines ? findLatestSandboxBlock(rawLines, sandboxName) : [];
+  const sandboxId = getLatestSandboxId(block, sandboxName);
+  const relevantLines = filterRelevantLines(block, sandboxName, sandboxId);
+  const gatewayTailLines =
+    rawLines && relevantLines.length === 0
+      ? rawLines.filter((line) => line.trim()).slice(-MAX_GATEWAY_TAIL_LINES)
+      : [];
+  const stateDir = latestFieldValue(relevantLines, "state_dir");
+  const consoleOutput =
+    latestFieldValue(relevantLines, "console_output") ??
+    (stateDir ? path.join(stateDir, "rootfs-console.log") : null);
+  const copiedConsoleOutput = copyFileIfPresent(
     consoleOutput,
     path.join(dir, "rootfs-console.log"),
-    sandboxId,
   );
   const stateEntries = listStateDir(stateDir);
   const backupPath = options.backupPath ?? null;
 
-  const gatewayDiagnosticLines = diagnosticSignatureLines(
-    (relevantLines.length > 0 ? relevantLines : gatewayTailLines).join("\n"),
-    "gateway",
-    sandboxId,
-  );
-  if (relevantLines.length > 0 && gatewayDiagnosticLines.length > 0) {
+  if (relevantLines.length > 0) {
     fs.writeFileSync(
       path.join(dir, "openshell-gateway-relevant.log"),
-      `${gatewayDiagnosticLines.join("\n")}\n`,
+      `${relevantLines.join("\n")}\n`,
       {
         mode: 0o600,
       },
     );
   }
   const gatewayTailPath =
-    gatewayTailLines.length > 0 && gatewayDiagnosticLines.length > 0
-      ? path.join(dir, "openshell-gateway-tail.log")
-      : null;
+    gatewayTailLines.length > 0 ? path.join(dir, "openshell-gateway-tail.log") : null;
   if (gatewayTailPath) {
-    fs.writeFileSync(gatewayTailPath, `${gatewayDiagnosticLines.join("\n")}\n`, { mode: 0o600 });
+    fs.writeFileSync(gatewayTailPath, `${gatewayTailLines.join("\n")}\n`, { mode: 0o600 });
   }
-  const retentionPruned = pruneFailureBundles(path.dirname(dir), path.basename(dir));
   const summaryLines = [
     `created_at=${now.toISOString()}`,
     `sandbox_name=${sandboxName}`,
@@ -430,10 +223,7 @@ export function collectSandboxCreateFailureDiagnostics(
     `gateway_tail=${gatewayTailPath ?? "not-written"}`,
     `state_dir=${stateDir ?? "unknown"}`,
     `console_output=${consoleOutput ?? "unknown"}`,
-    `copied_console_output=${copiedConsoleOutput.path ?? "not-copied"}`,
-    `gateway_log_truncated=${String(gatewayLog?.truncated ?? false)}`,
-    `console_output_truncated=${String(copiedConsoleOutput.truncated)}`,
-    `retention_status=${retentionPruned ? "complete" : "incomplete"}`,
+    `copied_console_output=${copiedConsoleOutput ?? "not-copied"}`,
     `backup_path=${backupPath ?? "none"}`,
   ];
   if (stateEntries.length > 0) {
@@ -443,11 +233,6 @@ export function collectSandboxCreateFailureDiagnostics(
   fs.writeFileSync(path.join(dir, "summary.txt"), `${summaryLines.join("\n")}\n`, {
     mode: 0o600,
   });
-  const truncationNotices = [
-    ...(gatewayLog?.truncated ? ["gateway log: earlier content omitted"] : []),
-    ...(copiedConsoleOutput.truncated ? ["rootfs console: earlier content omitted"] : []),
-  ];
-  const diagnosticLines = [...gatewayDiagnosticLines, ...copiedConsoleOutput.summaryLines];
 
   return {
     dir,
@@ -455,16 +240,10 @@ export function collectSandboxCreateFailureDiagnostics(
     sandboxId,
     stateDir,
     consoleOutput,
-    copiedConsoleOutput: copiedConsoleOutput.path,
+    copiedConsoleOutput,
     gatewayTailPath,
-    gatewayLogTruncated: gatewayLog?.truncated ?? false,
-    consoleOutputTruncated: copiedConsoleOutput.truncated,
-    retentionPruned,
     backupPath,
-    summaryLines: [
-      ...truncationNotices,
-      ...diagnosticLines.slice(-(8 - truncationNotices.length)),
-    ],
+    summaryLines: relevantLines.length > 0 ? relevantLines.slice(-8) : gatewayTailLines.slice(-8),
   };
 }
 
@@ -484,9 +263,6 @@ export function printSandboxCreateFailureDiagnostics(
   }
   if (diagnostics.backupPath) {
     console.error(`  State backup retained: ${diagnostics.backupPath}`);
-  }
-  if (!diagnostics.retentionPruned) {
-    console.error("  Sandbox failure diagnostic retention cleanup was incomplete.");
   }
   return diagnostics;
 }

@@ -2730,16 +2730,20 @@ Automatic GPU onboarding uses the compatibility path directly; it does not make 
 
 #### Common compatibility-path recovery
 
-After compatibility recreation starts, onboarding keeps the pre-patch container as a rollback backup until the replacement passes the Ready, direct GPU, and applicable local-inference checks. A readiness failure attempts identity-bound diagnostics before rollback and reports when diagnostics are unavailable; a local-inference failure prints its own failure output before rollback. A hard create failure without a durable identity rolls back first, reports that sandbox-scoped diagnostics were not collected, and directs you to the create-stream output and recovery hints. When rollback succeeds, the pre-patch sandbox remains available. If the failed replacement may remain and NemoClaw retains its validated exact container ID, it prints only an exact-container `docker rm -f` command. When a replacement is not stably running, the failure diagnostic includes its exact runtime ID, inspected state, and a bounded redacted log tail when available. If replacement cleanup cannot be confirmed without a validated exact ID, onboarding reports cleanup as unknown and prints no deletion command. When rollback fails, onboarding reports that the sandbox and container state is uncertain and prints no deletion command. A diagnostic bundle captured before rollback records cleanup as pending and contains no deletion command. Inspect the diagnostics, the sandbox, and its labeled Docker containers before removing anything.
-
-Sandbox-create failure bundles contain fixed structural failure signatures derived from bounded gateway and rootfs-console tails when available for the verified sandbox ID. Raw runtime output is not persisted or printed.
+After compatibility recreation starts, onboarding keeps the pre-patch container as a rollback backup until the replacement passes the Ready, direct GPU, and applicable local-inference checks. If a later check fails, onboarding prints failure diagnostics and attempts to restore the pre-patch container before it exits. When rollback succeeds, the pre-patch sandbox remains available. If the failed replacement may remain and NemoClaw retains its validated exact container ID, it prints only an exact-container `docker rm -f` command. When a replacement is not stably running, the failure diagnostic includes its exact runtime ID, inspected state, and a bounded redacted log tail when available. If replacement cleanup cannot be confirmed without a validated exact ID, onboarding reports cleanup as unknown and prints no deletion command. When rollback fails, onboarding reports that the sandbox and container state is uncertain and prints no deletion command. A diagnostic bundle captured before rollback records cleanup as pending and contains no deletion command. Inspect the diagnostics, the sandbox, and its labeled Docker containers before removing anything.
 
 <Note>
 Starting with NemoClaw v0.0.43, the standard installer handles the `/proc/<pid>/task/<tid>/comm` permission case during this patch path.
 If an older release fails direct GPU proof with that path and `Permission denied`, upgrade NemoClaw and rerun onboarding.
 </Note>
 
-Do not delete a failed sandbox by mutable name. Follow the retained-sandbox recovery output and require NemoClaw to validate the durable sandbox identity before removal. If NemoClaw retains an exact validated replacement-container ID and prints a `docker rm -f <container-id>` command, use only that exact command after confirming that the pre-patch sandbox was not restored. Fix the NVIDIA Container Toolkit or CDI configuration reported in the diagnostics, then rerun onboarding. If you do not need GPU access inside the sandbox, rerun with `--no-sandbox-gpu`.
+When inspection confirms that the failed sandbox remains, delete it with a command such as:
+
+```bash
+openshell sandbox delete <sandbox-name>
+```
+
+Fix the NVIDIA Container Toolkit or CDI configuration reported in the diagnostics. Run the deletion command only after confirming that the pre-patch sandbox was not restored, then rerun onboarding. If you do not need GPU access inside the sandbox, rerun with `--no-sandbox-gpu`.
 
 If sandbox creation fails with `CDI device injection failed: unresolvable CDI devices nvidia.com/gpu=all`, the OpenShell gateway tried `docker create --device nvidia.com/gpu=all` and Docker could not resolve the CDI spec. This injection happens inside the gateway, so `NEMOCLAW_DOCKER_GPU_PATCH=0` does not bypass it. Rerun with `--no-gpu`, or set `NEMOCLAW_SANDBOX_GPU=0` and resume onboarding.
 

@@ -36,48 +36,24 @@ describe("sandbox create failure diagnostics", () => {
         now: new Date("2026-05-12T20:35:00.000Z"),
       });
 
-      const selectedStateRoot =
-        gatewayPort === 8080
-          ? path.join(homeDir, ".nemoclaw")
-          : path.join(homeDir, ".nemoclaw", "gateways", String(gatewayPort));
-      expect({
-        bundleUsesSelectedPort: diagnostics?.dir.startsWith(
-          path.join(selectedStateRoot, "onboard-failures"),
-        ),
-        gatewayLogPath: diagnostics?.gatewayLogPath,
-        summaryIncludesFailure: diagnostics?.summaryLines.includes(
-          "gateway signature=create-stream-exited-before-sandbox",
-        ),
-      }).toEqual({
-        bundleUsesSelectedPort: true,
-        gatewayLogPath,
-        summaryIncludesFailure: true,
-      });
+      expect(diagnostics?.gatewayLogPath).toBe(gatewayLogPath);
+      expect(diagnostics?.summaryLines).toContain(
+        "selected gateway exited before sandbox creation",
+      );
     },
   );
 
-  it("preserves only the verified sandbox evidence before cleanup", () => {
+  it("preserves gateway failure lines and VM console output before cleanup", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-create-failure-"));
     const homeDir = path.join(tmp, "home");
     const logDir = path.join(homeDir, ".local", "state", "nemoclaw", "openshell-docker-gateway");
     const sandboxId = "691344ae-f514-41c1-b29e-db7f2f7ef257";
-    const replacementId = "828d0e10-b2dc-4e64-86c6-8a9b1f352f02";
     const stateDir = path.join(logDir, "vm-driver", "sandboxes", sandboxId);
-    const replacementStateDir = path.join(logDir, "vm-driver", "sandboxes", replacementId);
     const consolePath = path.join(stateDir, "rootfs-console.log");
-    const replacementConsolePath = path.join(replacementStateDir, "rootfs-console.log");
     const gatewayLogPath = path.join(logDir, "openshell-gateway.log");
-    const gatewaySecret = "sk-abcdefghijklmnopqrstuvwxyz1234567890";
-    const consoleSecret = "zxqv-console-secret-token";
-    const opaqueSecret = "opaque-runtime-canary-7f31";
 
     fs.mkdirSync(stateDir, { recursive: true });
-    fs.mkdirSync(replacementStateDir, { recursive: true });
-    fs.writeFileSync(
-      consolePath,
-      `Exec format error Authorization: Bearer ${consoleSecret} ${opaqueSecret}\n`,
-    );
-    fs.writeFileSync(replacementConsolePath, "replacement console detail\n");
+    fs.writeFileSync(consolePath, "vm console detail\n");
     fs.writeFileSync(
       gatewayLogPath,
       [
@@ -85,17 +61,13 @@ describe("sandbox create failure diagnostics", () => {
         `2026-05-12T20:30:56Z INFO vm driver: create_sandbox received sandbox_id=${sandboxId} sandbox_name=my-assistant`,
         `2026-05-12T20:30:56Z INFO vm driver: resolved image ref, preparing rootfs sandbox_id=${sandboxId} state_dir=${stateDir}`,
         `2026-05-12T20:34:28Z INFO vm driver: spawning VM launcher sandbox_id=${sandboxId} console_output=${consolePath}`,
-        `[2026-05-12T20:34:29Z ERROR krun] sandbox_id=${sandboxId} api_key=${gatewaySecret} ${opaqueSecret} Building the microVM failed: Internal(Vm(VmSetup(VmCreate)))`,
+        "[2026-05-12T20:34:29Z ERROR krun] Building the microVM failed: Internal(Vm(VmSetup(VmCreate)))",
         `2026-05-12T20:34:29Z WARN Sandbox failed to become ready sandbox_id=${sandboxId} sandbox_name=my-assistant reason=ProcessExited`,
-        `[2026-05-12T20:34:29Z ERROR krun] console_output=${replacementConsolePath} reason=ProcessExited`,
-        `2026-05-12T20:34:30Z INFO vm driver: create_sandbox received sandbox_id=${replacementId} sandbox_name=my-assistant`,
-        `2026-05-12T20:34:30Z INFO vm driver: spawning VM launcher sandbox_id=${replacementId} console_output=${replacementConsolePath}`,
       ].join("\n"),
     );
 
     const diagnostics = collectSandboxCreateFailureDiagnostics("my-assistant", {
       homeDir,
-      sandboxId,
       backupPath: "/tmp/pre-upgrade-backup",
       now: new Date("2026-05-12T20:35:00.000Z"),
     });
@@ -104,146 +76,18 @@ describe("sandbox create failure diagnostics", () => {
     expect(diagnostics?.copiedConsoleOutput).toBe(
       path.join(diagnostics!.dir, "rootfs-console.log"),
     );
-    const consoleOutput = fs.readFileSync(
-      path.join(diagnostics!.dir, "rootfs-console.log"),
-      "utf-8",
+    expect(fs.readFileSync(path.join(diagnostics!.dir, "rootfs-console.log"), "utf-8")).toContain(
+      "vm console detail",
     );
-    expect(consoleOutput).toContain("rootfs-console signature=exec-format-error");
     const relevant = fs.readFileSync(
       path.join(diagnostics!.dir, "openshell-gateway-relevant.log"),
       "utf-8",
     );
-    expect(relevant).toContain("gateway signature=vm-create-failed");
-    expect(relevant).toContain(`sandbox_id=${sandboxId}`);
-    expect(relevant).not.toContain(replacementId);
-    expect(relevant).not.toContain(replacementConsolePath);
-    const capturedOutput = `${relevant}\n${consoleOutput}\n${diagnostics?.summaryLines.join("\n")}`;
-    expect({
-      consolePrefixPresent: capturedOutput.includes("zxqv"),
-      consoleSecretPresent: capturedOutput.includes(consoleSecret),
-      gatewayPrefixPresent: capturedOutput.includes("sk-a"),
-      gatewaySecretPresent: capturedOutput.includes(gatewaySecret),
-      opaqueSecretPresent: capturedOutput.includes(opaqueSecret),
-    }).toEqual({
-      consolePrefixPresent: false,
-      consoleSecretPresent: false,
-      gatewayPrefixPresent: false,
-      gatewaySecretPresent: false,
-      opaqueSecretPresent: false,
-    });
+    expect(relevant).toContain("VmCreate");
+    expect(relevant).toContain("sandbox_name=my-assistant");
     expect(fs.readFileSync(path.join(diagnostics!.dir, "summary.txt"), "utf-8")).toContain(
       "backup_path=/tmp/pre-upgrade-backup",
     );
-  });
-
-  it("does not fall back to same-name evidence when the verified ID is absent", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-create-failure-identity-miss-"));
-    const homeDir = path.join(tmp, "home");
-    const logDir = path.join(homeDir, ".local", "state", "nemoclaw", "openshell-docker-gateway");
-    fs.mkdirSync(logDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(logDir, "openshell-gateway.log"),
-      "create_sandbox received sandbox_id=828d0e10-b2dc-4e64-86c6-8a9b1f352f02 sandbox_name=my-assistant\n",
-    );
-
-    const result = collectSandboxCreateFailureDiagnostics("my-assistant", {
-        homeDir,
-        sandboxId: "691344ae-f514-41c1-b29e-db7f2f7ef257",
-      });
-
-    expect({
-      failureRootExists: fs.existsSync(path.join(homeDir, ".nemoclaw", "onboard-failures")),
-      result,
-    }).toEqual({ failureRootExists: false, result: null });
-  });
-
-  it("rejects an identity-bound console path outside the sandbox state directory", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-create-failure-outside-"));
-    const homeDir = path.join(tmp, "home");
-    const logDir = path.join(homeDir, ".local", "state", "nemoclaw", "openshell-docker-gateway");
-    const sandboxId = "691344ae-f514-41c1-b29e-db7f2f7ef257";
-    const stateDir = path.join(logDir, "vm-driver", "sandboxes", sandboxId);
-    const outsidePath = path.join(tmp, "outside-secret.txt");
-    fs.mkdirSync(stateDir, { recursive: true });
-    fs.writeFileSync(outsidePath, "outside-secret-value\n");
-    fs.writeFileSync(
-      path.join(logDir, "openshell-gateway.log"),
-      [
-        `create_sandbox received sandbox_id=${sandboxId} sandbox_name=my-assistant`,
-        `sandbox_id=${sandboxId} state_dir=${stateDir} console_output=${outsidePath}`,
-      ].join("\n"),
-    );
-
-    const result = collectSandboxCreateFailureDiagnostics("my-assistant", {
-      homeDir,
-      sandboxId,
-    });
-
-    const bundleContents = fs
-      .readdirSync(result!.dir)
-      .map((name) => fs.readFileSync(path.join(result!.dir, name), "utf8"))
-      .join("\n");
-    expect({
-      copiedConsoleOutput: result?.copiedConsoleOutput,
-      gatewayEvidenceRetained: bundleContents.includes(`sandbox_id=${sandboxId}`),
-      outsideContentCopied: bundleContents.includes("outside-secret-value"),
-    }).toEqual({
-      copiedConsoleOutput: null,
-      gatewayEvidenceRetained: true,
-      outsideContentCopied: false,
-    });
-  });
-
-  it("retains verified gateway evidence when console metadata is unavailable", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-create-failure-gateway-only-"));
-    const homeDir = path.join(tmp, "home");
-    const logDir = path.join(homeDir, ".local", "state", "nemoclaw", "openshell-docker-gateway");
-    const sandboxId = "691344ae-f514-41c1-b29e-db7f2f7ef257";
-    fs.mkdirSync(logDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(logDir, "openshell-gateway.log"),
-      `create_sandbox received sandbox_id=${sandboxId} sandbox_name=my-assistant\nERROR krun sandbox_id=${sandboxId} reason=ProcessExited\n`,
-    );
-
-    const diagnostics = collectSandboxCreateFailureDiagnostics("my-assistant", {
-      homeDir,
-      sandboxId,
-    });
-
-    expect({
-      consoleCopy: diagnostics?.copiedConsoleOutput,
-      gatewayFailure: fs
-        .readFileSync(path.join(diagnostics!.dir, "openshell-gateway-relevant.log"), "utf8")
-        .includes("gateway signature=process-exited"),
-    }).toEqual({ consoleCopy: null, gatewayFailure: true });
-  });
-
-  it("retains only the ten newest failure bundles", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-create-failure-retention-"));
-    const homeDir = path.join(tmp, "home");
-    const failureRoot = path.join(homeDir, ".nemoclaw", "onboard-failures");
-    fs.mkdirSync(failureRoot, { recursive: true });
-    const oldBundles = Array.from(
-      { length: 12 },
-      (_, index) =>
-        `2027-01-01T00-00-${String(index).padStart(2, "0")}-000Z-old-${String(index)}`,
-    );
-    oldBundles.forEach((name) => fs.mkdirSync(path.join(failureRoot, name)));
-
-    const diagnostics = collectSandboxCreateFailureDiagnostics("my-assistant", {
-      homeDir,
-      now: new Date("2026-05-12T20:35:00.000Z"),
-    });
-    const retained = fs.readdirSync(failureRoot).sort();
-    const expectedRetained = [path.basename(diagnostics!.dir), ...oldBundles.slice(-9)].sort();
-
-    expect({
-      retained,
-      retentionPruned: diagnostics?.retentionPruned,
-    }).toEqual({
-      retained: expectedRetained,
-      retentionPruned: true,
-    });
   });
 
   it("prints saved diagnostics and retained backup details", () => {
@@ -293,80 +137,13 @@ describe("sandbox create failure diagnostics", () => {
       path.join(diagnostics!.dir, "openshell-gateway-tail.log"),
     );
     expect(fs.readFileSync(diagnostics!.gatewayTailPath!, "utf-8")).toContain(
-      "gateway signature=gateway-exited-before-dispatch",
+      "gateway exited before request dispatch",
     );
     expect(diagnostics?.summaryLines).toContain(
-      "gateway signature=gateway-exited-before-dispatch",
+      "2026-05-12T20:30:01Z WARN gateway exited before request dispatch",
     );
     expect(fs.readFileSync(path.join(diagnostics!.dir, "summary.txt"), "utf-8")).toContain(
       "gateway_tail=",
     );
-  });
-
-  it("bounds gateway and console evidence captured before rollback (#10412)", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-create-failure-bounded-"));
-    const homeDir = path.join(tmp, "home");
-    const logDir = path.join(homeDir, ".local", "state", "nemoclaw", "openshell-docker-gateway");
-    const sandboxId = "691344ae-f514-41c1-b29e-db7f2f7ef257";
-    const stateDir = path.join(logDir, "vm-driver", "sandboxes", sandboxId);
-    const consolePath = path.join(stateDir, "rootfs-console.log");
-    const gatewayLogPath = path.join(logDir, "openshell-gateway.log");
-    fs.mkdirSync(stateDir, { recursive: true });
-    Array.from({ length: 201 }, (_, index) =>
-      fs.writeFileSync(path.join(stateDir, `entry-${String(index).padStart(3, "0")}`), ""),
-    );
-    fs.writeFileSync(consolePath, `${"😀".repeat(100_000)}Exec format error\n`);
-    fs.writeFileSync(
-      gatewayLogPath,
-      `create_sandbox received sandbox_id=${sandboxId} sandbox_name=my-assistant\n${"old gateway output\n".repeat(100_000)}${[
-        `sandbox_id=${sandboxId} state_dir=${stateDir} console_output=${consolePath}`,
-        `ERROR krun sandbox_id=${sandboxId} sandbox_name=my-assistant reason=ProcessExited`,
-      ].join("\n")}\n`,
-    );
-
-    const diagnostics = collectSandboxCreateFailureDiagnostics("my-assistant", {
-      homeDir,
-      sandboxId,
-    });
-    const gatewayEvidence = fs.readFileSync(
-      path.join(diagnostics!.dir, "openshell-gateway-relevant.log"),
-    );
-    const consoleEvidence = fs.readFileSync(diagnostics!.copiedConsoleOutput!);
-    const summary = fs.readFileSync(path.join(diagnostics!.dir, "summary.txt"), "utf8");
-
-    expect({
-      consoleBounded: consoleEvidence.byteLength <= 256 * 1024,
-      consoleEndsWithFailure: consoleEvidence
-        .toString("utf8")
-        .endsWith(`rootfs-console signature=exec-format-error sandbox_id=${sandboxId}\n`),
-      consoleHasInvalidUtf8: consoleEvidence.toString("utf8").includes("�"),
-      consoleOutputTruncated: diagnostics?.consoleOutputTruncated,
-      gatewayBounded: gatewayEvidence.byteLength <= 1024 * 1024,
-      gatewayContainsFailure: gatewayEvidence
-        .toString("utf8")
-        .includes("gateway signature=process-exited"),
-      gatewayLogTruncated: diagnostics?.gatewayLogTruncated,
-      printedTruncationNotices: diagnostics?.summaryLines.slice(0, 2),
-      stateEntriesOmitted: summary.includes("<additional entries omitted>"),
-      listedStateEntries: (summary.match(/^  (?:entry-\d+|rootfs-console\.log)$/gmu) ?? []).length,
-      summaryRecordsBounds:
-        summary.includes("gateway_log_truncated=true") &&
-        summary.includes("console_output_truncated=true"),
-    }).toEqual({
-      consoleBounded: true,
-      consoleEndsWithFailure: true,
-      consoleHasInvalidUtf8: false,
-      consoleOutputTruncated: true,
-      gatewayBounded: true,
-      gatewayContainsFailure: true,
-      gatewayLogTruncated: true,
-      printedTruncationNotices: [
-        "gateway log: earlier content omitted",
-        "rootfs console: earlier content omitted",
-      ],
-      stateEntriesOmitted: true,
-      listedStateEntries: 200,
-      summaryRecordsBounds: true,
-    });
   });
 });

@@ -25,7 +25,6 @@ function createFailureDeps(
   return {
     classifyCreateFailure: vi.fn(() => ({ kind: "unknown" })),
     printCreateFailureDiagnostics: vi.fn(),
-    rollbackCreateFailure: vi.fn(async () => {}),
     printRecoveryHints: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
@@ -50,87 +49,46 @@ function createFailureOptions(
 }
 
 describe("reportSandboxCreateFailure", () => {
-  it("warns and returns (does not exit) when the create is merely incomplete", async () => {
+  it("warns and returns (does not exit) when the create is merely incomplete", () => {
     const deps = createFailureDeps({
       classifyCreateFailure: vi.fn(() => ({ kind: "sandbox_create_incomplete" })),
     });
-    await expect(reportSandboxCreateFailure(createFailureOptions(), deps)).resolves.toBeUndefined();
+    expect(() => reportSandboxCreateFailure(createFailureOptions(), deps)).not.toThrow();
     expect(deps.warn).toHaveBeenCalledWith(
       "  Create stream exited with code 3 after sandbox was created.",
     );
     expect(deps.printCreateFailureDiagnostics).not.toHaveBeenCalled();
-    expect(deps.rollbackCreateFailure).not.toHaveBeenCalled();
     expect(deps.printRecoveryHints).not.toHaveBeenCalled();
     expect(deps.exitProcess).not.toHaveBeenCalled();
   });
 
-  it("prints diagnostics + recovery hints and exits with the create status on a hard failure", async () => {
+  it("prints diagnostics + recovery hints and exits with the create status on a hard failure", () => {
     const deps = createFailureDeps();
-    await expect(
+    expect(() =>
       reportSandboxCreateFailure(
         createFailureOptions({ createStatus: 42, restoreBackupPath: "/tmp/backup" }),
         deps,
       ),
-    ).rejects.toThrow(ExitSignal);
+    ).toThrow(ExitSignal);
     expect(deps.printCreateFailureDiagnostics).toHaveBeenCalledWith("alpha", {
       backupPath: "/tmp/backup",
     });
     expect(deps.printRecoveryHints).toHaveBeenCalledWith("boom", {
       createArgs: ["sandbox", "create", "alpha"],
     });
-    expect(deps.rollbackCreateFailure).toHaveBeenCalledOnce();
     expect(deps.exitProcess).toHaveBeenCalledWith(42);
     expect(deps.warn).not.toHaveBeenCalled();
   });
 
-  it("waits for rollback before diagnostics, recovery hints, and exit", async () => {
-    let settleRollback = (): void => {};
-    const rollback = new Promise<void>((resolve) => {
-      settleRollback = resolve;
-    });
-    const deps = createFailureDeps({ rollbackCreateFailure: vi.fn(() => rollback) });
-    const reporting = reportSandboxCreateFailure(createFailureOptions(), deps);
-    await vi.waitFor(() => expect(deps.rollbackCreateFailure).toHaveBeenCalledOnce());
-
-    expect({
-      diagnostics: vi.mocked(deps.printCreateFailureDiagnostics).mock.calls,
-      hints: vi.mocked(deps.printRecoveryHints).mock.calls,
-      exit: vi.mocked(deps.exitProcess).mock.calls,
-    }).toEqual({ diagnostics: [], hints: [], exit: [] });
-    settleRollback();
-    await expect(reporting).rejects.toThrow(ExitSignal);
-    expect({
-      diagnostics: vi.mocked(deps.printCreateFailureDiagnostics).mock.calls.length,
-      hints: vi.mocked(deps.printRecoveryHints).mock.calls.length,
-      exit: vi.mocked(deps.exitProcess).mock.calls[0],
-    }).toEqual({ diagnostics: 1, hints: 1, exit: [3] });
-  });
-
-  it("preserves the create status when rollback fails", async () => {
-    const deps = createFailureDeps({
-      rollbackCreateFailure: vi.fn(async () => {
-        throw new Error("rollback unavailable");
-      }),
-    });
-
-    await expect(
-      reportSandboxCreateFailure(createFailureOptions({ createStatus: 42 }), deps),
-    ).rejects.toThrow("exit:42");
-    expect(deps.error).toHaveBeenCalledWith(
-      "  Sandbox failure rollback did not complete: rollback unavailable",
-    );
-    expect(deps.exitProcess).toHaveBeenCalledWith(42);
-  });
-
-  it("redacts create output before classification and echoing", async () => {
+  it("redacts create output before classification and echoing", () => {
     // With output: leading blank + headline + blank + output echo + "Try:" hint = 5 error() calls.
     const withOutput = createFailureDeps();
-    await expect(
+    expect(() =>
       reportSandboxCreateFailure(
         createFailureOptions({ createOutput: "failed with Authorization: Bearer secret-token" }),
         withOutput,
       ),
-    ).rejects.toThrow(ExitSignal);
+    ).toThrow(ExitSignal);
     expect(withOutput.classifyCreateFailure).toHaveBeenCalledWith(
       "failed with Authorization: Bearer secr********",
     );
@@ -146,15 +104,15 @@ describe("reportSandboxCreateFailure", () => {
 
     // Without output: the echo block is skipped, so only 3 error() calls remain.
     const noOutput = createFailureDeps();
-    await expect(
+    expect(() =>
       reportSandboxCreateFailure(createFailureOptions({ createOutput: "" }), noOutput),
-    ).rejects.toThrow(ExitSignal);
+    ).toThrow(ExitSignal);
     expect(noOutput.error).toHaveBeenCalledTimes(3);
     // still exits (createStatus || 1)
     expect(noOutput.exitProcess).toHaveBeenCalledWith(3);
   });
 
-  it("redacts multiple known token formats in create output", async () => {
+  it("redacts multiple known token formats in create output", () => {
     const deps = createFailureDeps();
     const createOutput = [
       "Authorization: Bearer secret-token",
@@ -163,9 +121,9 @@ describe("reportSandboxCreateFailure", () => {
       "aws AKIAABCDEFGHIJKLMNOP", // gitleaks:allow
     ].join("\n");
 
-    await expect(
-      reportSandboxCreateFailure(createFailureOptions({ createOutput }), deps),
-    ).rejects.toThrow(ExitSignal);
+    expect(() => reportSandboxCreateFailure(createFailureOptions({ createOutput }), deps)).toThrow(
+      ExitSignal,
+    );
 
     const echoed = (deps.error as ReturnType<typeof vi.fn>).mock.calls
       .map((call) => String(call[0]))
@@ -183,11 +141,11 @@ describe("reportSandboxCreateFailure", () => {
     expect(hinted).not.toContain("AKIAABCDEFGHIJKLMNOP"); // gitleaks:allow
   });
 
-  it("falls back to exit code 1 when the create status is zero", async () => {
+  it("falls back to exit code 1 when the create status is zero", () => {
     const deps = createFailureDeps();
-    await expect(
+    expect(() =>
       reportSandboxCreateFailure(createFailureOptions({ createStatus: 0 }), deps),
-    ).rejects.toThrow(ExitSignal);
+    ).toThrow(ExitSignal);
     expect(deps.exitProcess).toHaveBeenCalledWith(1);
   });
 });
@@ -359,34 +317,34 @@ describe("reportSandboxReadinessFailure", () => {
     ]);
   });
 
-  it.each([null, ""])(
-    "falls back to a stable terminal readiness gate for missing phase %s",
-    (failurePhase) => {
-      const deps = readinessDeps();
-      expect(() =>
-        reportSandboxReadinessFailure(
-          readinessOptions({
-            readiness: {
-              ready: false,
-              reason: "terminal_failure_phase",
-              failurePhase,
-            },
-          }),
-          deps,
-        ),
-      ).toThrow(ExitSignal);
-      expectReceiptBlock(deps, [
-        "  Sandbox lifecycle receipt:",
-        "    state: created_but_not_ready",
-        "    sandbox: alpha",
-        "    readiness_gate: sandbox_list:terminal_failure",
-        "    readiness_reason: terminal_failure_phase",
-        "    create_stream_status: 0",
-        "    timeout_seconds: 300",
-        "    terminal_resolution: terminal_failure_deleted",
-      ]);
-    },
-  );
+  it.each([
+    null,
+    "",
+  ])("falls back to a stable terminal readiness gate for missing phase %s", (failurePhase) => {
+    const deps = readinessDeps();
+    expect(() =>
+      reportSandboxReadinessFailure(
+        readinessOptions({
+          readiness: {
+            ready: false,
+            reason: "terminal_failure_phase",
+            failurePhase,
+          },
+        }),
+        deps,
+      ),
+    ).toThrow(ExitSignal);
+    expectReceiptBlock(deps, [
+      "  Sandbox lifecycle receipt:",
+      "    state: created_but_not_ready",
+      "    sandbox: alpha",
+      "    readiness_gate: sandbox_list:terminal_failure",
+      "    readiness_reason: terminal_failure_phase",
+      "    create_stream_status: 0",
+      "    timeout_seconds: 300",
+      "    terminal_resolution: terminal_failure_deleted",
+    ]);
+  });
 
   it("preserves a non-zero create-stream status when readiness later fails", () => {
     const deps = readinessDeps();

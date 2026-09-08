@@ -59,7 +59,6 @@ import {
   createSandboxGpuCreateAttemptRunner,
   verifySelectedSandboxBridgeReachability,
 } from "./sandbox-gpu-create-run-attempt";
-import type { SandboxCreateFailureDiagnostics } from "./sandbox-create-failure";
 import { managedBootstrapCreateArgs } from "./sandbox-create-launch";
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 import {
@@ -305,12 +304,8 @@ export interface SandboxGpuCreateFlowDeps {
   verifyDirectSandboxGpu(sandboxName: string): SandboxGpuProofResult;
   printCreateFailureDiagnostics?: (
     sandboxName: string,
-    options: {
-      readonly backupPath?: string | null;
-      readonly gatewayPort?: number;
-      readonly sandboxId?: string;
-    },
-  ) => SandboxCreateFailureDiagnostics | null | void;
+    options: { readonly backupPath?: string | null },
+  ) => void;
   /** Production callers configure the hidden portable lifecycle through the default implementation. */
   installPortableDemoLifecycle?: typeof installPortableDemoSandboxLifecycle;
   /** Production callers omit this factory and use the runtime provider's adapter. */

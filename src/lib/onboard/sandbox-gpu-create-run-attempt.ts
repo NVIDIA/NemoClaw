@@ -23,7 +23,6 @@ import { getReadyCheckOutputPatternsForAgent } from "../sandbox/create-stream-re
 import type { SandboxGpuProofResult } from "../state/registry";
 import { classifySandboxCreateFailure } from "../validation";
 import {
-  formatSandboxCreateRollbackFailure,
   formatRetainedSandboxRecoveryMessage,
   reportSandboxCreateFailure,
 } from "./created-sandbox-failure";
@@ -55,10 +54,7 @@ import type {
 import { fingerprintSandboxRecreateValue } from "./sandbox-recreate-transaction";
 import * as sandboxGpuPreflight from "./sandbox-gpu-preflight";
 import { SANDBOX_RECREATE_PROBE_TIMEOUT_MS } from "./sandbox-recreate-probe";
-import type {
-  CreatedSandboxReadinessResult,
-  CreatedSandboxReadyIdentityCheck,
-} from "./sandbox-readiness-tracing";
+import type { CreatedSandboxReadyIdentityCheck } from "./sandbox-readiness-tracing";
 import * as sandboxReadinessTracing from "./sandbox-readiness-tracing";
 import { addTraceEvent } from "./tracing";
 
@@ -438,86 +434,20 @@ async function verifyActivatedManagedCreateBeforeEffects(input: {
   }
 }
 
-type PrintCreateFailureDiagnostics = NonNullable<
-  SandboxGpuCreateFlowDeps["printCreateFailureDiagnostics"]
->;
-
-function containCreateFailureDiagnostics(
-  printDiagnostics: PrintCreateFailureDiagnostics,
-  unavailableMessage: string,
-): PrintCreateFailureDiagnostics {
-  return (sandboxName, options) => {
-    try {
-      const result = printDiagnostics(sandboxName, options);
-      if (result === null) console.error(unavailableMessage);
-      return result;
-    } catch {
-      console.error(unavailableMessage);
-      return null;
-    }
-  };
-}
-
-function printIdentityBoundCreateFailureDiagnostics(
-  printDiagnostics: PrintCreateFailureDiagnostics,
-  sandboxName: string,
-  backupPath: string | null,
-  gatewayPort: number,
-  sandboxId: string | null,
-): void {
-  if (!sandboxId) {
-    console.error(
-      "  Sandbox failure diagnostics were not collected because no durable sandbox identity was verified.",
-    );
-    return;
-  }
-  printDiagnostics(sandboxName, { backupPath, gatewayPort, sandboxId });
-}
-
-async function rollbackReadinessFailure(
-  rollback: () => unknown,
-): Promise<void> {
-  try {
-    await rollback();
-  } catch (error) {
-    console.error(formatSandboxCreateRollbackFailure(error));
-  }
-}
-
-function readinessDiagnosticSandboxId(
-  readiness: CreatedSandboxReadinessResult,
-  expectedRecreatedSandboxId: string | null,
-  verifiedCreatedSandboxId: string | null,
-): string | null {
-  if (readiness.reason === "identity_changed") return null;
-  return expectedRecreatedSandboxId ?? verifiedCreatedSandboxId;
-}
-
 export function createSandboxGpuCreateAttemptRunner(
   input: SandboxGpuCreateFlowInput,
   deps: SandboxGpuCreateFlowDeps,
   reverifyManagedBridgeReachability: () => Promise<void>,
 ) {
   const portableLifecycle = input.portableLifecycle === true;
-  const printHermesPortableCreateFailureNotice = (sandboxName: string) =>
-    console.error(
-      `  Hermes portable sandbox '${sandboxName}' did not complete receipt-owned creation. Preserve its lifecycle receipt and resume onboarding after correcting the reported failure.`,
-    );
-  const basePrintCreateFailureDiagnostics =
+  const printCreateFailureDiagnostics =
     deps.printCreateFailureDiagnostics ??
     (input.hermesPortableLifecycle
-      ? printHermesPortableCreateFailureNotice
+      ? (sandboxName: string) =>
+          console.error(
+            `  Hermes portable sandbox '${sandboxName}' did not complete receipt-owned creation. Preserve its lifecycle receipt and resume onboarding after correcting the reported failure.`,
+          )
       : printSandboxCreateFailureDiagnostics);
-  const printCreateFailureDiagnosticsBeforeRollback = containCreateFailureDiagnostics(
-    basePrintCreateFailureDiagnostics,
-    "  Sandbox failure diagnostics were unavailable; continuing rollback.",
-  );
-  const reportUnverifiedCreateFailureDiagnostics = input.hermesPortableLifecycle
-    ? printHermesPortableCreateFailureNotice
-    : () =>
-        console.error(
-          "  Sandbox failure diagnostics were not collected after rollback because no durable sandbox identity was verified.",
-        );
   if (
     portableLifecycle &&
     (input.gpuRoutePlan === "compatibility-only" ||
@@ -854,7 +784,6 @@ export function createSandboxGpuCreateAttemptRunner(
     let managedCreatedSandboxId: string | null = null;
     let managedIncompleteCreateRecovered = false;
     let createdSandboxVerified = false;
-    let verifiedCreatedSandboxId: string | null = null;
     const failAfterCreatedSandboxVerification = (message: string, status: number): never => {
       if (createdSandboxVerified) throw new Error(message);
       return process.exit(status);
@@ -883,7 +812,6 @@ export function createSandboxGpuCreateAttemptRunner(
         input,
       );
       createdSandboxVerified = true;
-      verifiedCreatedSandboxId = identity.sandboxId;
       if (deferPostCreateEffects) {
         revalidatePostCreateEffect(`activate managed sandbox network for '${input.sandboxName}'`);
         await managedLifecycle?.prepareNetwork();
@@ -998,7 +926,6 @@ export function createSandboxGpuCreateAttemptRunner(
           revalidatePostCreateEffect,
         });
         createdSandboxVerified = true;
-        verifiedCreatedSandboxId = managedCreatedSandboxId;
       } catch (error) {
         if (!(error instanceof ManagedBootstrapCreateStreamFailure)) throw error;
         createResult = error.result;
@@ -1074,7 +1001,8 @@ export function createSandboxGpuCreateAttemptRunner(
           ...nativeCleanup,
         } as const;
       } else {
-        await reportSandboxCreateFailure(
+        await runtimePatch.rollbackManagedStartupAfterCreateFailure();
+        reportSandboxCreateFailure(
           {
             sandboxName: input.sandboxName,
             createStatus: createResult.status,
@@ -1084,10 +1012,7 @@ export function createSandboxGpuCreateAttemptRunner(
           },
           {
             classifyCreateFailure: classifySandboxCreateFailure,
-            printCreateFailureDiagnostics: reportUnverifiedCreateFailureDiagnostics,
-            rollbackCreateFailure: async () => {
-              await runtimePatch.rollbackManagedStartupAfterCreateFailure();
-            },
+            printCreateFailureDiagnostics,
             printRecoveryHints: printSandboxCreateRecoveryHints,
             warn: (message) => console.warn(message),
             error: (message) => console.error(message),
@@ -1113,7 +1038,6 @@ export function createSandboxGpuCreateAttemptRunner(
       waitForCreatedSandboxPublication(sandboxId);
       await verifyCreatedSandboxBeforeEffects(sandboxId, createAttemptNonce!, route, input);
       createdSandboxVerified = true;
-      verifiedCreatedSandboxId = sandboxId;
     }
     if (deferPostCreateEffects) {
       revalidatePostCreateEffect(`validate runtime patch for sandbox '${input.sandboxName}'`);
@@ -1131,9 +1055,9 @@ export function createSandboxGpuCreateAttemptRunner(
       console.error(
         `  Sandbox '${input.sandboxName}' reached Ready, but OpenShell did not return one exact durable sandbox ID before runtime recreation.`,
       );
-      console.error(
-        "  Sandbox failure diagnostics were not collected because no durable sandbox identity was verified.",
-      );
+      printCreateFailureDiagnostics(input.sandboxName, {
+        backupPath: input.restoreBackupPath,
+      });
       failAfterCreatedSandboxVerification(
         `Sandbox '${input.sandboxName}' did not return one exact durable sandbox ID before runtime recreation after verified creation.`,
         createResult?.status === 0 ? 1 : (createResult?.status ?? 1),
@@ -1217,21 +1141,10 @@ export function createSandboxGpuCreateAttemptRunner(
           ...nativeCleanup,
         } as const;
       }
-      const diagnosticSandboxId = readinessDiagnosticSandboxId(
-        readiness,
-        expectedRecreatedSandboxId,
-        verifiedCreatedSandboxId,
-      );
-      printIdentityBoundCreateFailureDiagnostics(
-        printCreateFailureDiagnosticsBeforeRollback,
-        input.sandboxName,
-        input.restoreBackupPath,
-        input.gatewayPort,
-        diagnosticSandboxId,
-      );
-      await rollbackReadinessFailure(() =>
-        runtimePatch.rollbackManagedStartupAfterCreateFailure(),
-      );
+      await runtimePatch.rollbackManagedStartupAfterCreateFailure();
+      printCreateFailureDiagnostics(input.sandboxName, {
+        backupPath: input.restoreBackupPath,
+      });
       if (compatibility) runtimePatch.printReadinessFailureIfEnabled();
       else if (expectedRecreatedSandboxId) {
         console.error(

@@ -691,7 +691,7 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     );
   });
 
-  it("does not collect stale diagnostics when recreated identity changes (#9050)", async () => {
+  it("does not delete a recreated sandbox when the exact readiness probe fails (#9050)", async () => {
     const input = createInput();
     const patch = createPatch();
     mocks.createDockerGpuSandboxCreatePatch.mockReturnValueOnce(patch);
@@ -711,31 +711,33 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     const deps = createDeps();
     vi.mocked(deps.runOpenshell).mockImplementation(
       createSequencedOpenShellRunner([
+        ["sandbox get -g nemoclaw alpha", [readySandboxGetResult(), readySandboxGetResult()]],
         [
-          "sandbox get -g nemoclaw alpha",
-          [readySandboxGetResult(), readySandboxGetResult("replacement-sandbox-id")],
+          "sandbox exec -g nemoclaw --name alpha -- true",
+          [{ status: 1, stdout: "", stderr: "permission denied" }],
         ],
       ]),
     );
     mocks.waitForCreatedSandboxReadyWithTrace.mockImplementationOnce((options) => {
-      expect(options.checkReadyIdentity?.()).toBe("identity_changed");
+      expect(options.checkReadyIdentity?.()).toBe("probe_failed");
       return {
         ready: false,
-        reason: "identity_changed",
+        reason: "identity_probe_failed",
         failurePhase: null,
       };
     });
     mockExit();
+
     await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow("process.exit:1");
+
+    expect(patch.rollbackManagedStartupAfterCreateFailure).toHaveBeenCalledOnce();
     expect(deps.runOpenshell).not.toHaveBeenCalledWith(
       ["sandbox", "delete", "alpha"],
       expect.anything(),
     );
-    expect(mocks.printSandboxCreateFailureDiagnostics).not.toHaveBeenCalled();
-    expect(patch.rollbackManagedStartupAfterCreateFailure).toHaveBeenCalledOnce();
-    expect(errorOutput()).toContain(
-      "Sandbox failure diagnostics were not collected because no durable sandbox identity was verified",
-    );
+    expect(mocks.printSandboxCreateFailureDiagnostics).toHaveBeenCalledWith("alpha", {
+      backupPath: null,
+    });
     expect(errorOutput()).toContain(
       "NemoClaw left the sandbox in place for inspection and recovery",
     );

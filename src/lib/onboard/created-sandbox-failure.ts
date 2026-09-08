@@ -47,16 +47,11 @@ export type SandboxCreateFailureReportOptions = {
 export type SandboxCreateFailureReportDeps = {
   classifyCreateFailure(output: string): { kind: string };
   printCreateFailureDiagnostics(sandboxName: string, options: { backupPath: string | null }): void;
-  rollbackCreateFailure(): Promise<void>;
   printRecoveryHints(output: string, options: { createArgs: readonly string[] }): void;
   warn(message: string): void;
   error(message: string): void;
   exitProcess(code: number): never;
 };
-
-export function formatSandboxCreateRollbackFailure(error: unknown): string {
-  return `  Sandbox failure rollback did not complete: ${redact(error instanceof Error ? error.message : String(error))}`;
-}
 
 /**
  * Report a non-zero sandbox create-stream exit. A mere "create incomplete"
@@ -64,10 +59,10 @@ export function formatSandboxCreateRollbackFailure(error: unknown): string {
  * 255) warns and returns so the caller can fall through to the ready-wait loop;
  * any other failure prints diagnostics + recovery hints and exits.
  */
-export async function reportSandboxCreateFailure(
+export function reportSandboxCreateFailure(
   options: SandboxCreateFailureReportOptions,
   deps: SandboxCreateFailureReportDeps,
-): Promise<void> {
+): void {
   const redactedCreateOutput = redact(options.createOutput);
   const failure = deps.classifyCreateFailure(redactedCreateOutput);
   if (failure.kind === "sandbox_create_incomplete") {
@@ -87,17 +82,12 @@ export async function reportSandboxCreateFailure(
     deps.error("");
     deps.error(redactedCreateOutput);
   }
-  try {
-    await deps.rollbackCreateFailure();
-  } catch (error) {
-    deps.error(formatSandboxCreateRollbackFailure(error));
-  }
   deps.printCreateFailureDiagnostics(options.sandboxName, {
     backupPath: options.restoreBackupPath,
   });
   deps.error("  Try:  openshell sandbox list        # check gateway state");
   deps.printRecoveryHints(redactedCreateOutput, { createArgs: options.createArgs });
-  deps.exitProcess(options.createStatus === 0 ? 1 : options.createStatus);
+  return deps.exitProcess(options.createStatus === 0 ? 1 : options.createStatus);
 }
 
 export type SandboxReadinessFailureReportOptions = {
