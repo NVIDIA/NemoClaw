@@ -30,6 +30,7 @@ vi.mock("../../onboard/gateway-provider-metadata", async (importOriginal) => {
 
 vi.mock("./rebuild-onboard-dependencies", () => ({
   rebuildOnboardDependencies: {
+    detectGpuWithRuntimeProviderProof: mocks.detectGpu,
     ensureValidatedWebSearchCredential: mocks.ensureValidatedWebSearchCredential,
     preflightAuthoritativeRebuildTarget: mocks.preflightAuthoritativeRebuildTarget,
   },

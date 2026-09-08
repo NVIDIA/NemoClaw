@@ -154,6 +154,10 @@ docker info
 `docker info` prints server information.
 If you see "Cannot connect to the Docker daemon", confirm that Docker Desktop is running and that Docker Desktop enables WSL integration.
 
+For WSL-local Ollama, a qualified rootless Podman provider is also supported.
+Set `NEMOCLAW_GATEWAY_RUNTIME=podman` before onboarding and make sure the current-user Podman service and NVIDIA CDI device are available.
+The Podman path does not enable the Docker-specific managed llama.cpp or Windows-host Ollama routes described below.
+
 ## Set Up Local Inference (Optional)
 
 If the installer offers Express on WSL, a qualifying N1x WSL host uses managed llama.cpp with Qwen 3.6 35B-A3B.
@@ -190,7 +194,8 @@ A direct request from WSL can fail because Docker Desktop defines this hostname 
 Do not set Windows `OLLAMA_HOST` to `0.0.0.0:11434`; the wildcard listener is unauthenticated and disables the loopback-only HTTP `Host` validation that NemoClaw requires.
 Do not run both the Windows and WSL Ollama instances on port `11434` at the same time.
 Use one instance, or move one of them to a different port before running `$$nemoclaw onboard`.
-A WSL host whose Windows product reports RTX Spark N1x uses capacity from the same Docker CUDA proof to rank installed Ollama models.
+A WSL host whose Windows product reports RTX Spark N1x uses capacity from the selected Docker or Podman provider's CUDA proof to rank installed Ollama models.
+Both providers run the same pinned CUDA workload and capacity query; their provider implementation owns the GPU injection arguments.
 When `qwen3.6:35b` is installed and that proof reports at least 30,000 MiB available, NemoClaw selects it before `qwen3.5:9b`.
 Other Windows on Arm GPUs remain compute-constrained and select `qwen3.5:9b` instead of the 30B and 35B starter models.
 <AgentOnly variant="openclaw">

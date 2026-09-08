@@ -140,6 +140,7 @@ function completeBundle(providerId: string): RuntimeProviderBundle {
         displayName: "Contract fixture",
       })),
       capture: () => ({ status: 0, stdout: "", stderr: "" }),
+      captureNvidiaContainer: () => ({ status: 0, stdout: "", stderr: "" }),
     },
   };
 }

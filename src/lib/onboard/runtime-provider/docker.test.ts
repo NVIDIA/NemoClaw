@@ -30,6 +30,11 @@ function supportedLifecycle(provider: ReturnType<typeof createDockerRuntimeProvi
   return provider.lifecycle as Extract<typeof provider.lifecycle, { supported: true }>;
 }
 
+function supportedContainerEngine(provider: ReturnType<typeof createDockerRuntimeProviderBundle>) {
+  expect(provider.containerEngine.supported).toBe(true);
+  return provider.containerEngine as Extract<typeof provider.containerEngine, { supported: true }>;
+}
+
 function inspectDockerHost(stdout: string, status = 0, stderr = "") {
   const captureHostCommand = vi.fn(() => ({ status, stdout, stderr }));
   const provider = createDockerRuntimeProviderBundle({ captureHostCommand });
@@ -93,6 +98,41 @@ describe("Docker runtime provider host doctor", () => {
       detail: "Cannot connect to the Docker daemon",
       hint: "start Docker and verify your user can access the daemon",
     });
+  });
+});
+
+describe("Docker runtime provider NVIDIA container capture", () => {
+  it("maps one provider-neutral NVIDIA run to Docker GPU arguments", () => {
+    const captureHostCommand = vi.fn(() => ({ status: 0, stdout: "proof", stderr: "" }));
+    const provider = createDockerRuntimeProviderBundle({ captureHostCommand });
+    const containerEngine = supportedContainerEngine(provider);
+
+    expect(
+      containerEngine.captureNvidiaContainer(
+        "host-local-inference",
+        {
+          image: "registry.example/proof@sha256:" + "a".repeat(64),
+          entrypoint: "/bin/sh",
+          command: ["-c", "proof"],
+        },
+        12_000,
+      ),
+    ).toMatchObject({ status: 0, stdout: "proof" });
+    expect(captureHostCommand).toHaveBeenCalledWith(
+      "docker",
+      [
+        "run",
+        "--rm",
+        "--gpus",
+        "all",
+        "--entrypoint",
+        "/bin/sh",
+        "registry.example/proof@sha256:" + "a".repeat(64),
+        "-c",
+        "proof",
+      ],
+      12_000,
+    );
   });
 });
 

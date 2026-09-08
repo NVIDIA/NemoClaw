@@ -95,9 +95,7 @@ export type { OllamaRuntimeModelStatus } from "./ollama-runtime-context";
  * WSL-local and other host-local daemons use the auth proxy.
  */
 export function getOllamaContainerPort(): number {
-  return getResolvedOllamaHost() === OLLAMA_HOST_DOCKER_INTERNAL
-    ? OLLAMA_PORT
-    : OLLAMA_PROXY_PORT;
+  return getResolvedOllamaHost() === OLLAMA_HOST_DOCKER_INTERNAL ? OLLAMA_PORT : OLLAMA_PROXY_PORT;
 }
 
 /** Keep proxy lifecycle and sandbox-facing port selection under the route owner. */
@@ -694,7 +692,7 @@ export interface GpuInfo {
    * is too low to clear agent-loop timeouts on 30B-class models, even when
    * advertised memory ostensibly fits. Populated for Jetson (Tegra/Thor/Orin)
    * platforms and the Windows-ARM N1X integrated GPU (the JMJWOA-Generic
-   * placeholder that clears the bounded Docker CUDA proof). Drives the
+   * placeholder that clears the bounded provider-owned CUDA proof). Drives the
    * `computeIntensive` exclusion in the bootstrap-model selector so
    * compute-constrained hosts are not steered onto 30B+ tags.
    */

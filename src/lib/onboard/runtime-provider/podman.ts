@@ -460,6 +460,25 @@ export function createPodmanRuntimeProviderBundle(
         }
         return engine.capture(args, timeoutMs);
       },
+      captureNvidiaContainer: (operation, input, timeoutMs) => {
+        const engine = containerEngineOperations.get(operation);
+        if (!engine) {
+          throw new Error(`Podman provider does not register the '${operation}' engine operation.`);
+        }
+        return engine.capture(
+          [
+            "run",
+            "--rm",
+            "--device",
+            "nvidia.com/gpu=all",
+            "--entrypoint",
+            input.entrypoint,
+            input.image,
+            ...input.command,
+          ],
+          timeoutMs,
+        );
+      },
     },
   };
 }

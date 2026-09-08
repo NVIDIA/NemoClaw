@@ -81,12 +81,15 @@ function podmanExecutableAuthorityDeps(): PodmanExecutableAuthorityDeps {
   };
 }
 
-function realOperationEngines(socketAuthority: PodmanSocketAuthority = REAL_SOCKET_AUTHORITY) {
+function realOperationEngines(
+  socketAuthority: PodmanSocketAuthority = REAL_SOCKET_AUTHORITY,
+  capture = vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+) {
   const common = {
     socketAuthority,
     executable: "/usr/bin/podman",
     assertAuthority: vi.fn(),
-    capture: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+    capture,
   } as const;
   return {
     hostDoctor: createPodmanContainerEngine({ ...common, operation: "host-doctor" }),
@@ -100,6 +103,11 @@ function realOperationEngines(socketAuthority: PodmanSocketAuthority = REAL_SOCK
       operation: "sandbox-lifecycle",
     }),
   };
+}
+
+function supportedContainerEngine(provider: ReturnType<typeof createPodmanRuntimeProviderBundle>) {
+  expect(provider.containerEngine.supported).toBe(true);
+  return provider.containerEngine as Extract<typeof provider.containerEngine, { supported: true }>;
 }
 
 function hostDoctorEngine(authorityId = AUTHORITY_ID): PodmanContainerEngine {
@@ -600,6 +608,50 @@ describe("managed Podman runtime provider", () => {
       },
     });
     expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.podman?.identity.id).toBe("podman");
+  });
+
+  it("maps one provider-neutral NVIDIA run to Podman CDI arguments", () => {
+    const inference = createPodmanHostLocalInferenceTestHarness();
+    const capture = vi.fn(() => ({ status: 0, stdout: "proof", stderr: "" }));
+    const bundle = createPodmanRuntimeProviderBundle({
+      engines: realOperationEngines(REAL_SOCKET_AUTHORITY, capture),
+      hostLocalInference: {
+        authorityStore: inference.authorityStore,
+        routeAuthorityStore: inference.routeAuthorityStore,
+        onFailureEvidence: inference.onFailureEvidence,
+        redactSensitive: inference.redactSensitive,
+      },
+    });
+    const containerEngine = supportedContainerEngine(bundle);
+
+    expect(
+      containerEngine.captureNvidiaContainer(
+        "host-local-inference",
+        {
+          image: "registry.example/proof@sha256:" + "a".repeat(64),
+          entrypoint: "/bin/sh",
+          command: ["-c", "proof"],
+        },
+        12_000,
+      ),
+    ).toMatchObject({ status: 0, stdout: "proof" });
+    expect(capture).toHaveBeenCalledWith(
+      "/usr/bin/podman",
+      [
+        "--url",
+        `unix://${REAL_SOCKET_AUTHORITY.socketPath}`,
+        "run",
+        "--rm",
+        "--device",
+        "nvidia.com/gpu=all",
+        "--entrypoint",
+        "/bin/sh",
+        "registry.example/proof@sha256:" + "a".repeat(64),
+        "-c",
+        "proof",
+      ],
+      12_000,
+    );
   });
 
   it("rejects real operation engines when one socket endpoint drifts", () => {

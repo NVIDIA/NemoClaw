@@ -8,6 +8,7 @@ import {
   type GpuDetection,
   type NvidiaPlatform,
 } from "../inference/nim.js";
+import type { ContainerGpuProofStatus } from "../container-gpu-proof.js";
 import type { HostAssessment } from "../onboard/preflight.js";
 import { assessHost } from "../onboard/preflight.js";
 import { resolveOpenshell } from "./openshell-resolver.js";
@@ -70,6 +71,9 @@ export interface HostObservations {
   cdiNvidiaGpuSpecMissing: boolean;
   cdiNvidiaGpuSpecStale?: boolean;
   cdiNvidiaGpuSpecNeedsRepair?: boolean;
+  runtimeProviderId?: string;
+  runtimeProviderOwnsHostReadiness?: boolean;
+  containerGpuProof?: ContainerGpuProofStatus;
   platformIdentity?: PlatformIdentity;
 }
 
@@ -84,7 +88,7 @@ export interface CollectHostObservationsOptions {
   assess?: () => HostAssessment;
   architecture?: string;
   detectGpu?: () =>
-    | (Pick<GpuDetection, "count" | "wslDockerDesktopGpuProofPassed"> &
+    | (Pick<GpuDetection, "count" | "containerGpuProof"> &
         Partial<
           Pick<
             GpuDetection,
@@ -101,7 +105,11 @@ export interface CollectHostObservationsOptions {
     | null;
   detectNvidiaDriverVersion?: () => string | undefined;
   detectHostGpuPlatform?: () => NvidiaPlatform;
-  wslDockerDesktopGpuProofPassed?: boolean;
+  runtimeProvider?: Readonly<{
+    providerId: string;
+    ownsHostReadiness: boolean;
+  }>;
+  containerGpuProof?: ContainerGpuProofStatus;
   collectPlatformIdentity?: () => PlatformIdentity;
   platformIdentityOptions?: CollectPlatformIdentityOptions;
   now?: () => Date;
@@ -127,7 +135,8 @@ function adaptHostAssessment(
   nvidiaDriverVersion?: string,
   gpu?: ReturnType<NonNullable<CollectHostObservationsOptions["detectGpu"]>>,
   platformIdentity?: PlatformIdentity,
-  wslDockerDesktopGpuProofPassed?: boolean,
+  runtimeProvider?: CollectHostObservationsOptions["runtimeProvider"],
+  containerGpuProof?: ContainerGpuProofStatus,
 ): HostObservations {
   return {
     platform: host.platform,
@@ -157,12 +166,11 @@ function adaptHostAssessment(
       gpu?.totalMemoryMB === undefined ? undefined : gpu.totalMemoryMB * 1024 * 1024,
     nvidiaGpuMemoryAvailableBytes:
       gpu?.availableMemoryMB === undefined ? undefined : gpu.availableMemoryMB * 1024 * 1024,
-    nvidiaGpuMemoryPerDeviceBytes:
-      gpu?.gpus?.length
-        ? Math.min(...gpu.gpus.map(({ memoryMB }) => memoryMB)) * 1024 * 1024
-        : gpu?.perGpuMB === undefined
-          ? undefined
-          : gpu.perGpuMB * 1024 * 1024,
+    nvidiaGpuMemoryPerDeviceBytes: gpu?.gpus?.length
+      ? Math.min(...gpu.gpus.map(({ memoryMB }) => memoryMB)) * 1024 * 1024
+      : gpu?.perGpuMB === undefined
+        ? undefined
+        : gpu.perGpuMB * 1024 * 1024,
     nvidiaGpuUnifiedMemory: gpu?.unifiedMemory,
     nvidiaGpuComputeConstrained: gpu?.computeConstrained,
     hostGpuPlatform,
@@ -171,9 +179,10 @@ function adaptHostAssessment(
     cdiNvidiaGpuSpecMissing: host.cdiNvidiaGpuSpecMissing,
     cdiNvidiaGpuSpecStale: host.cdiNvidiaGpuSpecStale,
     cdiNvidiaGpuSpecNeedsRepair: host.cdiNvidiaGpuSpecNeedsRepair,
-    platformIdentity: platformIdentity
-      ? { ...platformIdentity, wslDockerDesktopGpuProofPassed }
-      : { wslDockerDesktopGpuProofPassed },
+    runtimeProviderId: runtimeProvider?.providerId,
+    runtimeProviderOwnsHostReadiness: runtimeProvider?.ownsHostReadiness,
+    containerGpuProof,
+    platformIdentity,
   };
 }
 
@@ -219,18 +228,11 @@ function observeHost(
     const gpu = gpuProbeAllowed
       ? options.detectGpu
         ? options.detectGpu()
-        : detectGpu({ proveArm64WslDockerDesktopGpu: null, runCaptureImpl })
+        : detectGpu({ proveArm64ContainerGpu: null, runCaptureImpl })
       : null;
     const hasNvidiaGpu =
       assessment.hasNvidiaGpu || gpu?.type === "nvidia" || gpu?.platform === "jetson";
-    const wslDockerDesktopGpuProofPassed =
-      options.wslDockerDesktopGpuProofPassed ??
-      (assessment.isWsl &&
-      assessment.runtime === "docker-desktop" &&
-      assessment.dockerReachable &&
-      hasNvidiaGpu
-        ? gpu?.wslDockerDesktopGpuProofPassed
-        : undefined);
+    const containerGpuProof = options.containerGpuProof ?? gpu?.containerGpuProof;
     return {
       observedAt,
       observations: adaptHostAssessment(
@@ -256,7 +258,8 @@ function observeHost(
               runCaptureImpl,
             }))
         )(),
-        wslDockerDesktopGpuProofPassed,
+        options.runtimeProvider,
+        containerGpuProof,
       ),
     };
   } catch (error) {
@@ -305,6 +308,7 @@ function unknownProjection(evidenceIds: readonly string[]): {
     "host.docker.reachable",
     "host.docker.host_invalid",
     "host.docker.runtime",
+    "host.runtime.provider",
     "host.docker.cpus",
     "host.docker.memory_bytes",
     "host.docker.cgroup_version",
@@ -321,6 +325,8 @@ function unknownProjection(evidenceIds: readonly string[]): {
     "host.gpu.memory_per_device_bytes",
     "host.gpu.unified_memory",
     "host.gpu.compute_constrained",
+    "host.gpu.container_proof_provider",
+    "host.gpu.container_proof",
     "host.gpu.container_toolkit",
     "host.gpu.nvidia_runtime",
     "host.gpu.cdi",
@@ -429,6 +435,7 @@ export function projectHostReadiness(
       observation("host.docker.reachable", dockerHostBlocks ? undefined : host.dockerReachable),
       observation("host.docker.host_invalid", host.dockerHostInvalid),
       observation("host.docker.runtime", dockerEvidenceUsable ? host.runtime : undefined),
+      observation("host.runtime.provider", host.runtimeProviderId),
       observation("host.docker.cpus", dockerEvidenceUsable ? host.dockerCpus : undefined),
       observation(
         "host.docker.memory_bytes",
@@ -478,6 +485,8 @@ export function projectHostReadiness(
         "host.gpu.compute_constrained",
         host.hasNvidiaGpu ? host.nvidiaGpuComputeConstrained : undefined,
       ),
+      observation("host.gpu.container_proof_provider", host.containerGpuProof?.providerId),
+      observation("host.gpu.container_proof", host.containerGpuProof?.passed),
       observation(
         "host.gpu.container_toolkit",
         host.hasNvidiaGpu ? host.nvidiaContainerToolkitInstalled : false,
@@ -497,6 +506,9 @@ export function projectHostReadiness(
       dockerReachable: dockerEvidenceUsable,
       runtime: host.runtime,
       hasNvidiaGpu: host.hasNvidiaGpu,
+      runtimeProviderId: host.runtimeProviderId,
+      runtimeProviderOwnsHostReadiness: host.runtimeProviderOwnsHostReadiness,
+      containerGpuProof: host.containerGpuProof,
       ...host.platformIdentity,
     });
     evidence.push(...platform.evidence);

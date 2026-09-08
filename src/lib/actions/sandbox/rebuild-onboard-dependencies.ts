@@ -24,6 +24,12 @@ type RebuildOnboardModule = {
   ) => Promise<CheckpointGatewayAuthority>;
 };
 
+function detectGpuWithRuntimeProviderProof(): import("../../inference/nim").GpuDetection | null {
+  const runtimePreflight =
+    require("../../onboard/fatal-runtime-preflight") as typeof import("../../onboard/fatal-runtime-preflight");
+  return runtimePreflight.detectGpuWithRuntimeProviderProof();
+}
+
 function loadOnboardModule(): RebuildOnboardModule {
   return require("../../onboard") as RebuildOnboardModule;
 }
@@ -35,6 +41,9 @@ function loadOnboardModule(): RebuildOnboardModule {
  * the onboarding APIs are side-effect-free named imports.
  */
 export const rebuildOnboardDependencies = {
+  detectGpuWithRuntimeProviderProof(): import("../../inference/nim").GpuDetection | null {
+    return detectGpuWithRuntimeProviderProof();
+  },
   ensureValidatedWebSearchCredential(
     config: NonNullable<RebuildDurableConfig["webSearchConfig"]>,
     nonInteractive?: boolean,

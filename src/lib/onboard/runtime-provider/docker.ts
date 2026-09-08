@@ -42,6 +42,7 @@ import {
   type RuntimeProviderCleanupInput,
   type RuntimeProviderCommandCapture,
   type RuntimeProviderContainerEngineOperation,
+  type RuntimeProviderNvidiaContainerInput,
   type RuntimeProviderDoctorCheck,
   type RuntimeProviderLifecycleInput,
   type RuntimeProviderLifecycleResult,
@@ -154,6 +155,31 @@ function captureDockerContainerEngineOperation(
     throw new Error(`Docker provider does not register the '${operation}' engine operation.`);
   }
   return deps.captureHostCommand("docker", [...args], timeoutMs);
+}
+
+function captureDockerNvidiaContainer(
+  deps: DockerRuntimeProviderDependencies,
+  supportedOperations: ReadonlySet<RuntimeProviderContainerEngineOperation>,
+  operation: RuntimeProviderContainerEngineOperation,
+  input: RuntimeProviderNvidiaContainerInput,
+  timeoutMs?: number,
+): RuntimeProviderCommandCapture {
+  return captureDockerContainerEngineOperation(
+    deps,
+    supportedOperations,
+    operation,
+    [
+      "run",
+      "--rm",
+      "--gpus",
+      "all",
+      "--entrypoint",
+      input.entrypoint,
+      input.image,
+      ...input.command,
+    ],
+    timeoutMs,
+  );
 }
 
 function loadDockerStop(): DockerStop {
@@ -651,6 +677,8 @@ export function createDockerRuntimeProviderBundle(
           args,
           timeoutMs,
         ),
+      captureNvidiaContainer: (operation, input, timeoutMs) =>
+        captureDockerNvidiaContainer(deps, containerEngineOperations, operation, input, timeoutMs),
     },
   };
 }
@@ -765,6 +793,8 @@ export function createKubernetesRuntimeProviderBundle(
           args,
           timeoutMs,
         ),
+      captureNvidiaContainer: (operation, input, timeoutMs) =>
+        captureDockerNvidiaContainer(deps, containerEngineOperations, operation, input, timeoutMs),
     },
   };
 }

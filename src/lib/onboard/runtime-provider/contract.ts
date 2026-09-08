@@ -688,6 +688,13 @@ export type RuntimeProviderCleanupSurface =
     }>
   | RuntimeProviderUnsupportedSurface;
 
+/** Provider-neutral request for a bounded NVIDIA container workload. */
+export interface RuntimeProviderNvidiaContainerInput {
+  readonly image: string;
+  readonly entrypoint: string;
+  readonly command: readonly string[];
+}
+
 export type RuntimeProviderContainerEngineSurface =
   | RuntimeProviderSupportedSurface<{
       readonly identities: readonly {
@@ -698,6 +705,11 @@ export type RuntimeProviderContainerEngineSurface =
       capture(
         operation: RuntimeProviderContainerEngineOperation,
         args: readonly string[],
+        timeoutMs?: number,
+      ): RuntimeProviderCommandCapture;
+      captureNvidiaContainer(
+        operation: RuntimeProviderContainerEngineOperation,
+        input: RuntimeProviderNvidiaContainerInput,
         timeoutMs?: number,
       ): RuntimeProviderCommandCapture;
     }>
