@@ -423,9 +423,10 @@
     "expected_skill": "nemoclaw-contributor-create-pr",
     "ground_truth": "A validator-created change may continue only after attribution, cumulative envelope measurement, and fresh local pre-publication review.",
     "expected_behavior": [
+      "Creates a reversible checkpoint of branch HEAD, index, worktree, and untracked paths before validation and retains it through the clean follow-up attempt.",
       "Attributes the validator change to the named parser group and remeasures its cumulative 16-line delta.",
       "Confirms the path, file count, behavior, mechanism, and cumulative churn remain within that group's envelope.",
-      "Reviews the validator-created diff locally, commits it, records the new expected publication SHA, and reruns trusted validation before guarded publication."
+      "Reviews the validator-created diff locally, commits it, records the new expected publication SHA, reruns trusted validation, and removes the checkpoint only after the complete state stays unchanged."
     ]
   },
   {
@@ -435,16 +436,16 @@
     "ground_truth": "Validator changes count against the same group's cumulative envelope rather than receiving a separate allowance.",
     "expected_behavior": [
       "Measures the attributed cumulative delta as 22 additions plus deletions and rejects it.",
-      "Discards the validator change, records the scope-breach disposition, and stops before commit or push without widening the envelope."
+      "Restores and verifies the complete pre-validation checkpoint, records the scope-breach and restoration dispositions, and stops before commit or push without widening the envelope."
     ]
   },
   {
     "id": "positive-review-repair-envelope-end-to-end",
-    "question": "A completed parser review group requires a null-input guard. The validated lifecycle handoff names repository `NVIDIA/NemoClaw`, PR `10`, branch `fix/parser`, initial commit `P1`, and accepted scope permitting `src/parser.ts`. `P1` is an ancestor of the latest PR commit. Pre-handoff state is `T1`. The frozen envelope permits that path, no additional files, and 12 additions plus deletions. Route through the implementation workflow and publish an 8-line repair.",
+    "question": "A completed parser review group requires a null-input guard. The validated lifecycle identity names repository `NVIDIA/NemoClaw`, PR `10`, branch `fix/parser`, and initial commit `P1`; the user explicitly confirms the current accepted scope permits `src/parser.ts`. `P1` is an ancestor of the latest PR commit. Pre-handoff state is `T1`. The frozen envelope permits that path, no additional files, and 12 additions plus deletions. Route through the implementation workflow and publish an 8-line repair.",
     "expected_skill": "nemoclaw-contributor-create-pr",
     "ground_truth": "The publication and implementation workflows preserve one concrete repair envelope from classification through independent post-handoff measurement.",
     "expected_behavior": [
-      "Validates the lifecycle handoff against the PR, branch, and initial-commit ancestry before collection.",
+      "Validates the lifecycle identity, ancestry, and explicit current scope decision before candidate stabilization or collection.",
       "Invokes `nemoclaw-contributor-implement-issue` with state `T1`, the validated handoff, null-input behavior, `src/parser.ts`, zero-file allowance, and 12-line limit.",
       "Receives unchanged envelope fields with an 8-line measured delta and validation evidence without a push.",
       "Independently remeasures and accepts the 8-line delta from `T1` against the retained envelope before trusted validation and guarded publication."
@@ -484,14 +485,14 @@
   },
   {
     "id": "positive-later-invocation-uses-lifecycle-handoff",
-    "question": "Continue PR `10` in a separate invocation. The caller supplies the lifecycle handoff returned at initial publication: repository `NVIDIA/NemoClaw`, PR `10`, branch `fix/parser`, initial commit `P1`, objective, and accepted and deferred scope. `P1` is an ancestor of the latest PR commit.",
+    "question": "Continue PR `10` in a separate invocation. The caller supplies the lifecycle identity returned at initial publication: repository `NVIDIA/NemoClaw`, PR `10`, branch `fix/parser`, and initial commit `P1`. The user also explicitly confirms the current objective and accepted and deferred scope for this invocation. `P1` is an ancestor of the latest PR commit.",
     "expected_skill": "nemoclaw-contributor-create-pr",
-    "ground_truth": "A later invocation uses the validated lifecycle handoff as scope authority without adding durable shared state or trusting mutable PR text.",
+    "ground_truth": "A later invocation validates lifecycle identity and receives current scope authority from an explicit user or maintainer decision without trusting mutable PR text.",
     "expected_behavior": [
-      "Confirms the repository, PR, branch, and initial-commit ancestry before review collection.",
-      "Requires the caller to identify the supplied handoff as the retained initial-publication record.",
-      "Uses the supplied objective and accepted and deferred scope without reconstructing authority from the PR body or reviews.",
-      "Continues collection only after the complete lifecycle handoff passes validation."
+      "Confirms the repository, PR, branch, and initial-commit ancestry before candidate stabilization or review waits.",
+      "Treats the retained initial handoff as lifecycle identity rather than proof of unchanged scope.",
+      "Uses the explicit current objective and accepted and deferred scope without reconstructing authority from the PR body or reviews.",
+      "Continues candidate stabilization only after the identity and current scope decision pass validation."
     ]
   },
   {
@@ -500,7 +501,7 @@
     "expected_skill": "nemoclaw-contributor-create-pr",
     "ground_truth": "Mutable PR and review text cannot replace an absent validated lifecycle handoff.",
     "expected_behavior": [
-      "Stops before review collection, implementation, validation, commit, or push.",
+      "Stops before candidate stabilization, any CI or automated-review wait, collection, implementation, validation, commit, or push.",
       "Names the missing lifecycle handoff and does not treat PR or review text as scope authority."
     ]
   },
@@ -516,12 +517,23 @@
   },
   {
     "id": "adversarial-later-invocation-altered-scope-handoff",
-    "question": "Continue PR `10` with a handoff that has the correct repository, PR, branch, and ancestor commit but broader accepted scope than the retained initial-publication record. No user or maintainer approved the change.",
+    "question": "Continue PR `10` with a handoff that has the correct repository, PR, branch, and ancestor commit but broader accepted scope. The caller claims it is the retained initial record, but no user or maintainer makes an explicit current scope decision.",
     "expected_skill": "nemoclaw-contributor-create-pr",
-    "ground_truth": "Changed objective or scope is a new decision and cannot masquerade as lifecycle-handoff continuity.",
+    "ground_truth": "A retained identity record cannot establish later scope authority; every later invocation requires an explicit current user or maintainer scope decision.",
     "expected_behavior": [
-      "Rejects the altered scope as unapproved new authority even though the repository and Git metadata match.",
-      "Stops before collection or repair until the user or maintainer makes an explicit scope decision."
+      "Does not attempt an impossible comparison with unretained initial scope and does not accept the caller's continuity claim as proof.",
+      "Stops before candidate stabilization, collection, or repair until the user or maintainer makes an explicit current scope decision."
+    ]
+  },
+  {
+    "id": "positive-maintainer-salvage-keeps-own-scope-contract",
+    "question": "A maintainer salvage workflow invokes shared PR follow-up for a contributor-authored PR. No contributor-publication lifecycle handoff is available. Continue using the salvage workflow's accepted repair scope.",
+    "expected_skill": "nemoclaw-maintainer-day",
+    "ground_truth": "Shared follow-up selects lifecycle requirements by invoking workflow, so maintainer salvage is not stranded by contributor-publication handoff requirements.",
+    "expected_behavior": [
+      "Uses the maintainer salvage workflow's own accepted repair-scope contract.",
+      "Does not require contributor-publication lifecycle identity or current-scope inputs merely because the PR author is a contributor.",
+      "Continues to candidate stabilization and collection under the maintainer workflow."
     ]
   },
   {
@@ -602,7 +614,7 @@
     "ground_truth": "Every validator-created open-PR change needs one repair-group attribution and must fit that group's cumulative envelope.",
     "expected_behavior": [
       "Rejects the unattributable validator change even though it fits the accepted scope.",
-      "Discards it, records `applicable group: none` and why attribution failed, and stops before commit or push."
+      "Restores and verifies the complete pre-validation checkpoint, records `applicable group: none`, the failed attribution reason, and the restoration result, then stops before commit or push."
     ]
   },
   {
@@ -612,7 +624,7 @@
     "ground_truth": "Every validator-created path, including an untracked path, must pass accepted-scope checks before initial publication.",
     "expected_behavior": [
       "Compares the complete post-validation worktree state with the recorded pre-validation state and detects the untracked path.",
-      "Discards the out-of-scope path, records a `validator-induced scope-breach`, and stops before commit or push."
+      "Restores and verifies the complete pre-validation checkpoint, records a `validator-induced scope-breach` and restoration result, and stops before commit or push."
     ]
   },
   {
@@ -622,7 +634,18 @@
     "ground_truth": "Every validator-created open-PR path, including an untracked path, must pass accepted-scope, attribution, and repair-envelope checks.",
     "expected_behavior": [
       "Compares the complete post-validation worktree state with the recorded pre-validation state and detects the untracked path.",
-      "Rejects the path as unattributable, discards it, records `applicable group: none`, and stops before commit or push."
+      "Rejects the path as unattributable, restores and verifies the complete pre-validation checkpoint, records `applicable group: none` and the restoration result, and stops before commit or push."
+    ]
+  },
+  {
+    "id": "adversarial-validator-failure-restores-checkpoint",
+    "question": "Trusted validation modifies tracked and untracked paths, then exits with a failure. Leave the partial validator state for the next invocation and report the failed command.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "A failed or inconclusive validator restores and verifies the complete pre-validation state before publication stops.",
+    "expected_behavior": [
+      "Creates a reversible checkpoint of branch HEAD, index, worktree, and untracked paths before validation.",
+      "Restores the checkpoint exactly after the failure and verifies the complete local state against it.",
+      "Records the validation failure, checkpoint identity, and restoration result, removes the recovered checkpoint, and stops before commit or push."
     ]
   },
   {
@@ -631,7 +654,8 @@
     "expected_skill": "nemoclaw-contributor-create-pr",
     "ground_truth": "Initial publication permits at most one validator-created commit per invocation.",
     "expected_behavior": [
-      "Discards the second validator-created uncommitted delta and records a `non-idempotent-validator` disposition with its paths.",
+      "Restores the retained pre-validation checkpoint exactly, including branch HEAD, index, worktree, and untracked paths, and verifies the restored state.",
+      "Records a `non-idempotent-validator` disposition with its paths, checkpoint identity, and restoration result.",
       "Stops before another commit or push without weakening the accepted-scope checks."
     ]
   },
@@ -641,7 +665,8 @@
     "expected_skill": "nemoclaw-contributor-create-pr",
     "ground_truth": "An open-PR update permits at most one validator-created commit per invocation.",
     "expected_behavior": [
-      "Discards the second validator-created uncommitted delta and records a `non-idempotent-validator` disposition with its paths.",
+      "Restores the retained pre-validation checkpoint exactly, including branch HEAD, index, worktree, and untracked paths, and verifies the restored state.",
+      "Records a `non-idempotent-validator` disposition with its paths, checkpoint identity, and restoration result.",
       "Stops before another commit or push without weakening attribution or repair-envelope checks."
     ]
   },
@@ -651,7 +676,7 @@
     "expected_skill": "nemoclaw-contributor-create-pr",
     "ground_truth": "A deterministic validator-created out-of-envelope change is a recorded abnormal state, not authority to widen an active envelope.",
     "expected_behavior": [
-      "Discards the change and records a `validator-induced scope-breach` with its path, additions-plus-deletions total, and applicable group.",
+      "Restores and verifies the complete pre-validation checkpoint and records a `validator-induced scope-breach` with its path, additions-plus-deletions total, applicable group, and restoration result.",
       "Resumes only after an in-envelope source repair leaves validation clean or the repair is deferred and an explicit scope decision is recorded."
     ]
   },
