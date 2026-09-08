@@ -14,6 +14,12 @@ describe("native snapshot sanitizer workflow", () => {
     );
     const steps = candidate.steps ?? [];
 
+    expect(workflow.on?.pull_request?.paths).toEqual(
+      expect.arrayContaining([
+        "src/lib/security/credential-filter.ts",
+        "src/lib/security/snapshot-sanitizer.ts",
+      ]),
+    );
     expect(candidate.strategy?.matrix?.include).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ platform: "linux/amd64", runner: "ubuntu-24.04" }),
