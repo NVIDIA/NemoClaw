@@ -121,7 +121,7 @@
       "test/e2e/live/sandbox-rlimits-connect.test.ts": [1,1,1,1,0],
       "test/e2e/live/sandbox-survival.test.ts": [10,27,10,27,1],
       "test/e2e/live/sessions-agents-cli.test.ts": [20,29,20,31,0],
-      "test/e2e/live/shields-retirement-upgrade.test.ts": [14,29,14,41,5],
+      "test/e2e/live/shields-retirement-upgrade.test.ts": [14,29,14,39,5],
       "test/e2e/live/skill-agent.test.ts": [8,10,8,10,0],
       "test/e2e/live/snapshot-commands.test.ts": [26,39,26,41,3],
       "test/e2e/live/spark-express-vllm.test.ts": [35,45,47,65,4],
