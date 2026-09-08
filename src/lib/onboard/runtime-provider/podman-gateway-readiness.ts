@@ -9,6 +9,7 @@ import path from "node:path";
 import {
   getDockerDriverGatewayRuntimeMarkerPath,
   parseDockerDriverGatewayRuntimeMarker,
+  readOwnedDockerDriverGatewayRuntimeFile,
   resolveDockerDriverGatewayStateDir,
 } from "../docker-driver-gateway-runtime-marker";
 import {
@@ -57,23 +58,6 @@ function runHost(
   };
 }
 
-function readOwnedFile(filePath: string, uid: number): string | null {
-  if (typeof fs.constants.O_NOFOLLOW !== "number") return null;
-  let descriptor: number | undefined;
-  try {
-    descriptor = fs.openSync(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-    const stat = fs.fstatSync(descriptor);
-    if (!stat.isFile() || stat.nlink !== 1 || stat.uid !== uid || stat.size > 64 * 1024) {
-      return null;
-    }
-    return fs.readFileSync(descriptor, "utf8");
-  } catch {
-    return null;
-  } finally {
-    if (descriptor !== undefined) fs.closeSync(descriptor);
-  }
-}
-
 function readProcessArguments(pid: number, environment: NodeJS.ProcessEnv): string | null {
   try {
     const value = fs.readFileSync(`/proc/${String(pid)}/cmdline`, "utf8").replaceAll("\0", " ");
@@ -95,7 +79,7 @@ function readProcessExecutable(pid: number): string | null {
 
 const DEFAULT_DEPS: PodmanGatewayReadinessDeps = {
   currentUid: () => (typeof process.getuid === "function" ? process.getuid() : -1),
-  readOwnedFile,
+  readOwnedFile: readOwnedDockerDriverGatewayRuntimeFile,
   readProcessArguments,
   readProcessExecutable,
   runHost,

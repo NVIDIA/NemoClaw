@@ -15,6 +15,7 @@ import {
   clearDockerDriverGatewayRuntimeMarker,
   getDockerDriverGatewayRuntimeMarkerPath,
   parseDockerDriverGatewayRuntimeMarker,
+  readOwnedDockerDriverGatewayRuntimeFile,
   resolveDockerDriverGatewayPidFile,
   resolveDockerDriverGatewayStateDir,
 } from "./docker-driver-gateway-runtime-marker";
@@ -222,22 +223,6 @@ function warnForeignUserGateway(pid: number, deps: HostGatewayProcessDeps): void
   );
 }
 
-function readOwnedRuntimeFile(filePath: string, uid: number): string | null {
-  if (typeof fs.constants.O_NOFOLLOW !== "number") return null;
-  let descriptor: number | undefined;
-  try {
-    descriptor = fs.openSync(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-    const stat = fs.fstatSync(descriptor);
-    if (!stat.isFile() || stat.nlink !== 1 || stat.uid !== uid || stat.size > 64 * 1024)
-      return null;
-    return fs.readFileSync(descriptor, "utf-8");
-  } catch {
-    return null;
-  } finally {
-    if (descriptor !== undefined) fs.closeSync(descriptor);
-  }
-}
-
 /** Recover provider identity only from the selected gateway's owned runtime marker. */
 export function resolveOwnedHostGatewayRuntimeProviderId(options: {
   gatewayName: string;
@@ -253,7 +238,7 @@ export function resolveOwnedHostGatewayRuntimeProviderId(options: {
   if (uid < 0 || !canonicalGatewayTargetMatches(options.gatewayName, options.gatewayPort)) {
     return null;
   }
-  const markerText = readOwnedRuntimeFile(
+  const markerText = readOwnedDockerDriverGatewayRuntimeFile(
     getDockerDriverGatewayRuntimeMarkerPath(options.stateDir),
     uid,
   );
@@ -377,8 +362,11 @@ function scopedGatewayOwnershipFailure(
   target: { name: string; port: number },
 ): string | null {
   const uid = typeof process.getuid === "function" ? process.getuid() : -1;
-  const pidText = readOwnedRuntimeFile(pidFile, uid);
-  const markerText = readOwnedRuntimeFile(getDockerDriverGatewayRuntimeMarkerPath(stateDir), uid);
+  const pidText = readOwnedDockerDriverGatewayRuntimeFile(pidFile, uid);
+  const markerText = readOwnedDockerDriverGatewayRuntimeFile(
+    getDockerDriverGatewayRuntimeMarkerPath(stateDir),
+    uid,
+  );
   const marker = markerText ? parseDockerDriverGatewayRuntimeMarker(markerText) : null;
   if (Number(pidText?.trim()) !== pid || marker?.pid !== pid) {
     return "PID file and runtime marker do not identify the same process";
