@@ -672,8 +672,8 @@ describe("pull request and main workflow contracts", () => {
       prWorkflow.jobs["openshell-sdk-package"],
       "Locate exact base-controlled SDK package run",
     );
-    expect(packageLookup.env?.HEAD_SHA).toContain("inputs.repair_head_sha");
     expect(packageLookup.env?.PACKAGE_EVENT).toContain("workflow_dispatch");
+    expect(packageLookup.env?.REPAIR_ATTEMPT_KEY).toBe("${{ inputs.repair_attempt_key }}");
     expect(packageLookup.run).toContain('.display_title == ("Repair validation " + $attempt');
     expect(
       requiredWorkflowStep(

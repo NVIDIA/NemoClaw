@@ -284,6 +284,7 @@ jobs:
           HEAD_REPOSITORY: NVIDIA/NemoClaw
           PACKAGE_EVENT: ${{ inputs.repair_attempt_key != '' && 'workflow_dispatch' || 'pull_request_target' }}
           PR_NUMBER: ${{ inputs.repair_attempt_key != '' && inputs.repair_pr_number || github.event.pull_request.number }}
+          REPAIR_ATTEMPT_KEY: ${{ inputs.repair_attempt_key }}
         run: |
           set -euo pipefail
 
