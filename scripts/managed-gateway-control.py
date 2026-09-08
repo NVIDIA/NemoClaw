@@ -115,7 +115,9 @@ MAX_START_LOG_DIAGNOSTIC_BYTES = 16 * 1024
 MAX_START_LOG_DIAGNOSTIC_LINES = 6
 MAX_START_LOG_DIAGNOSTIC_LINE_CHARS = 512
 MAX_OPENCLAW_PREFLIGHT_OUTPUT_BYTES = 16 * 1024
-OPENCLAW_PREFLIGHT_SETTLE_SECONDS = 5.0
+# Covers the entrypoint's gateway probe, 30-second registry refresh, five-second
+# termination grace, and the permission/hash postconditions that follow it.
+OPENCLAW_PREFLIGHT_SETTLE_SECONDS = 50.0
 TRANSIENT_OPENCLAW_PREFLIGHT_CODES = frozenset(
     {"config-not-mutable", "startup-not-ready"}
 )
