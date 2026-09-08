@@ -270,8 +270,12 @@ export function createInMemoryRuntimeProviderBundle({
         { operation: "workload-cleanup", engineId: "memory", displayName: "In-memory" },
       ],
       capture: () => ({ status: 0, stdout: "", stderr: "" }),
-      captureNvidiaContainer: () => ({ status: 0, stdout: "", stderr: "" }),
-      cleanupNvidiaContainer: () => ({ status: "absent" }),
+      nvidiaContainer: hostLocalInference
+        ? {
+            capture: () => ({ status: 0, stdout: "", stderr: "" }),
+            cleanup: () => ({ status: "absent" }),
+          }
+        : undefined,
     },
   };
 }

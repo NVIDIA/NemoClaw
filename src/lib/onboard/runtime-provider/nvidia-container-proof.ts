@@ -88,13 +88,14 @@ function runRuntimeProviderGpuProof(
     ownership: NVIDIA_CONTAINER_GPU_PROOF_OWNERSHIP,
   };
   const containerEngine = provider.containerEngine;
-  if (!containerEngine.supported) {
+  const nvidiaContainer = containerEngine.supported ? containerEngine.nvidiaContainer : undefined;
+  if (!containerEngine.supported || !nvidiaContainer) {
     return {
       providerId: provider.identity.id,
       passed: false,
       timedOut: false,
       exitCode: null,
-      diagnostic: "configured runtime provider has no container engine",
+      diagnostic: "configured runtime provider has no NVIDIA container proof capability",
     };
   }
   const cleanupContainer = (
@@ -103,7 +104,7 @@ function runRuntimeProviderGpuProof(
     try {
       return {
         resourceName: target.name,
-        ...containerEngine.cleanupNvidiaContainer(
+        ...nvidiaContainer.cleanup(
           "host-local-inference",
           target,
           NVIDIA_CONTAINER_GPU_PROOF_CLEANUP_TIMEOUT_MS,
@@ -114,7 +115,7 @@ function runRuntimeProviderGpuProof(
     }
   };
   try {
-    const result = containerEngine.captureNvidiaContainer(
+    const result = nvidiaContainer.capture(
       "host-local-inference",
       {
         image: NVIDIA_CONTAINER_GPU_PROOF_IMAGE,

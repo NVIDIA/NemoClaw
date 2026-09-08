@@ -708,6 +708,19 @@ export interface RuntimeProviderOwnedContainerCleanupResult {
   readonly status: "absent" | "removed" | "failed";
 }
 
+export interface RuntimeProviderNvidiaContainerSurface {
+  capture(
+    operation: RuntimeProviderContainerEngineOperation,
+    input: RuntimeProviderNvidiaContainerInput,
+    timeoutMs?: number,
+  ): RuntimeProviderCommandCapture;
+  cleanup(
+    operation: RuntimeProviderContainerEngineOperation,
+    resource: RuntimeProviderOwnedContainerResource,
+    timeoutMs?: number,
+  ): RuntimeProviderOwnedContainerCleanupResult;
+}
+
 export type RuntimeProviderContainerEngineSurface =
   | RuntimeProviderSupportedSurface<{
       readonly identities: readonly {
@@ -720,16 +733,7 @@ export type RuntimeProviderContainerEngineSurface =
         args: readonly string[],
         timeoutMs?: number,
       ): RuntimeProviderCommandCapture;
-      captureNvidiaContainer(
-        operation: RuntimeProviderContainerEngineOperation,
-        input: RuntimeProviderNvidiaContainerInput,
-        timeoutMs?: number,
-      ): RuntimeProviderCommandCapture;
-      cleanupNvidiaContainer(
-        operation: RuntimeProviderContainerEngineOperation,
-        resource: RuntimeProviderOwnedContainerResource,
-        timeoutMs?: number,
-      ): RuntimeProviderOwnedContainerCleanupResult;
+      readonly nvidiaContainer?: RuntimeProviderNvidiaContainerSurface;
     }>
   | RuntimeProviderUnsupportedSurface;
 

@@ -695,16 +695,24 @@ export function createDockerRuntimeProviderBundle(
           args,
           timeoutMs,
         ),
-      captureNvidiaContainer: (operation, input, timeoutMs) =>
-        captureDockerNvidiaContainer(deps, containerEngineOperations, operation, input, timeoutMs),
-      cleanupNvidiaContainer: (operation, resource, timeoutMs) =>
-        cleanupDockerNvidiaContainer(
-          deps,
-          containerEngineOperations,
-          operation,
-          resource,
-          timeoutMs,
-        ),
+      nvidiaContainer: {
+        capture: (operation, input, timeoutMs) =>
+          captureDockerNvidiaContainer(
+            deps,
+            containerEngineOperations,
+            operation,
+            input,
+            timeoutMs,
+          ),
+        cleanup: (operation, resource, timeoutMs) =>
+          cleanupDockerNvidiaContainer(
+            deps,
+            containerEngineOperations,
+            operation,
+            resource,
+            timeoutMs,
+          ),
+      },
     },
   };
 }
@@ -817,16 +825,6 @@ export function createKubernetesRuntimeProviderBundle(
           containerEngineOperations,
           operation,
           args,
-          timeoutMs,
-        ),
-      captureNvidiaContainer: (operation, input, timeoutMs) =>
-        captureDockerNvidiaContainer(deps, containerEngineOperations, operation, input, timeoutMs),
-      cleanupNvidiaContainer: (operation, resource, timeoutMs) =>
-        cleanupDockerNvidiaContainer(
-          deps,
-          containerEngineOperations,
-          operation,
-          resource,
           timeoutMs,
         ),
     },

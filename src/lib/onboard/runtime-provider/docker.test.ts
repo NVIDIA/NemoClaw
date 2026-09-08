@@ -40,6 +40,12 @@ function supportedContainerEngine(provider: ReturnType<typeof createDockerRuntim
   return provider.containerEngine as Extract<typeof provider.containerEngine, { supported: true }>;
 }
 
+function nvidiaContainer(provider: ReturnType<typeof createDockerRuntimeProviderBundle>) {
+  const capability = supportedContainerEngine(provider).nvidiaContainer;
+  expect(capability).toBeDefined();
+  return capability!;
+}
+
 function inspectDockerHost(stdout: string, status = 0, stderr = "") {
   const captureHostCommand = vi.fn(() => ({ status, stdout, stderr }));
   const provider = createDockerRuntimeProviderBundle({ captureHostCommand });
@@ -110,10 +116,10 @@ describe("Docker runtime provider NVIDIA container capture", () => {
   it("maps one provider-neutral NVIDIA run to Docker GPU arguments", () => {
     const captureHostCommand = vi.fn(() => ({ status: 0, stdout: "proof", stderr: "" }));
     const provider = createDockerRuntimeProviderBundle({ captureHostCommand });
-    const containerEngine = supportedContainerEngine(provider);
+    const capability = nvidiaContainer(provider);
 
     expect(
-      containerEngine.captureNvidiaContainer(
+      capability.capture(
         "host-local-inference",
         {
           image: "registry.example/proof@sha256:" + "a".repeat(64),
@@ -155,13 +161,11 @@ describe("Docker runtime provider NVIDIA container capture", () => {
         stderr: "",
       })
       .mockReturnValueOnce({ status: 0, stdout: containerId, stderr: "" });
-    const containerEngine = supportedContainerEngine(
-      createDockerRuntimeProviderBundle({ captureHostCommand }),
-    );
+    const capability = nvidiaContainer(createDockerRuntimeProviderBundle({ captureHostCommand }));
 
-    expect(
-      containerEngine.cleanupNvidiaContainer("host-local-inference", GPU_PROOF_RESOURCE, 15_000),
-    ).toEqual({ status: "removed" });
+    expect(capability.cleanup("host-local-inference", GPU_PROOF_RESOURCE, 15_000)).toEqual({
+      status: "removed",
+    });
     expect(captureHostCommand).toHaveBeenNthCalledWith(
       1,
       "docker",

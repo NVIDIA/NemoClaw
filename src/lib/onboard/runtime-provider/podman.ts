@@ -461,38 +461,46 @@ export function createPodmanRuntimeProviderBundle(
         }
         return engine.capture(args, timeoutMs);
       },
-      captureNvidiaContainer: (operation, input, timeoutMs) => {
-        const engine = containerEngineOperations.get(operation);
-        if (!engine) {
-          throw new Error(`Podman provider does not register the '${operation}' engine operation.`);
-        }
-        return engine.capture(
-          [
-            "run",
-            "--rm",
-            ...ownedContainerRunArguments(input.resource),
-            "--device",
-            "nvidia.com/gpu=all",
-            "--entrypoint",
-            input.entrypoint,
-            input.image,
-            ...input.command,
-          ],
-          timeoutMs,
-        );
-      },
-      cleanupNvidiaContainer: (operation, resource, timeoutMs) => {
-        const engine = containerEngineOperations.get(operation);
-        if (!engine) {
-          throw new Error(`Podman provider does not register the '${operation}' engine operation.`);
-        }
-        return cleanupOwnedContainer(
-          resource,
-          `^${resource.name}$`,
-          (args, timeout) => engine.capture(args, timeout),
-          timeoutMs,
-        );
-      },
+      nvidiaContainer: inferenceEngine
+        ? {
+            capture: (operation, input, timeoutMs) => {
+              const engine = containerEngineOperations.get(operation);
+              if (!engine) {
+                throw new Error(
+                  `Podman provider does not register the '${operation}' engine operation.`,
+                );
+              }
+              return engine.capture(
+                [
+                  "run",
+                  "--rm",
+                  ...ownedContainerRunArguments(input.resource),
+                  "--device",
+                  "nvidia.com/gpu=all",
+                  "--entrypoint",
+                  input.entrypoint,
+                  input.image,
+                  ...input.command,
+                ],
+                timeoutMs,
+              );
+            },
+            cleanup: (operation, resource, timeoutMs) => {
+              const engine = containerEngineOperations.get(operation);
+              if (!engine) {
+                throw new Error(
+                  `Podman provider does not register the '${operation}' engine operation.`,
+                );
+              }
+              return cleanupOwnedContainer(
+                resource,
+                `^${resource.name}$`,
+                (args, timeout) => engine.capture(args, timeout),
+                timeoutMs,
+              );
+            },
+          }
+        : undefined,
     },
   };
 }

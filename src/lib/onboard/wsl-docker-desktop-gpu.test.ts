@@ -146,6 +146,23 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
     expect(runProof).not.toHaveBeenCalled();
   });
 
+  it("fails closed when the selected provider has no NVIDIA container capability", () => {
+    const base = proofProvider("docker");
+    const { nvidiaContainer: _capability, ...containerEngine } = base.containerEngine;
+    const prover = createArm64ContainerGpuProver({
+      platform: "linux",
+      arch: "arm64",
+      resolveRuntimeProvider: () => ({ ...base, containerEngine }),
+      log: () => undefined,
+    });
+
+    expect(prover(["JMJWOA-Generic-GPU"])).toMatchObject({
+      providerId: "docker",
+      passed: false,
+      diagnostic: "configured runtime provider has no NVIDIA container proof capability",
+    });
+  });
+
   it("proves a denylisted GPU name on native Linux ARM64 (#8096)", () => {
     // A native Linux ARM64 host reports a genuine GPU as `JMJWOA-Generic-GPU`.
     // Gating the proof on Docker Desktop left no way to verify that GPU, so
@@ -218,7 +235,13 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
     }));
     const provider = {
       ...base,
-      containerEngine: { ...base.containerEngine, captureNvidiaContainer },
+      containerEngine: {
+        ...base.containerEngine,
+        nvidiaContainer: {
+          ...base.containerEngine.nvidiaContainer!,
+          capture: captureNvidiaContainer,
+        },
+      },
     };
     const prover = createArm64ContainerGpuProver({
       platform: "linux",
@@ -301,7 +324,13 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
       arch: "arm64",
       resolveRuntimeProvider: () => ({
         ...base,
-        containerEngine: { ...base.containerEngine, captureNvidiaContainer },
+        containerEngine: {
+          ...base.containerEngine,
+          nvidiaContainer: {
+            ...base.containerEngine.nvidiaContainer!,
+            capture: captureNvidiaContainer,
+          },
+        },
       }),
       log: () => undefined,
     });
@@ -327,13 +356,15 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
         ...base,
         containerEngine: {
           ...base.containerEngine,
-          captureNvidiaContainer: () => ({
-            status: 1,
-            stdout: "NEMOCLAW_GPU_MEMORY_MIB=63936, 60000\n",
-            stderr: "",
-            error: timeout,
-          }),
-          cleanupNvidiaContainer,
+          nvidiaContainer: {
+            capture: () => ({
+              status: 1,
+              stdout: "NEMOCLAW_GPU_MEMORY_MIB=63936, 60000\n",
+              stderr: "",
+              error: timeout,
+            }),
+            cleanup: cleanupNvidiaContainer,
+          },
         },
       }),
       log: (message) => logs.push(message),
@@ -371,13 +402,15 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
         ...base,
         containerEngine: {
           ...base.containerEngine,
-          captureNvidiaContainer: () => ({
-            status: 1,
-            stdout: "",
-            stderr: "proof interrupted",
-            error: interrupted,
-          }),
-          cleanupNvidiaContainer,
+          nvidiaContainer: {
+            capture: () => ({
+              status: 1,
+              stdout: "",
+              stderr: "proof interrupted",
+              error: interrupted,
+            }),
+            cleanup: cleanupNvidiaContainer,
+          },
         },
       }),
       log: () => undefined,
@@ -408,12 +441,14 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
         ...base,
         containerEngine: {
           ...base.containerEngine,
-          captureNvidiaContainer: () => ({
-            status: 125,
-            stdout: "",
-            stderr: "container name is already in use",
-          }),
-          cleanupNvidiaContainer,
+          nvidiaContainer: {
+            capture: () => ({
+              status: 125,
+              stdout: "",
+              stderr: "container name is already in use",
+            }),
+            cleanup: cleanupNvidiaContainer,
+          },
         },
       }),
       log: () => undefined,

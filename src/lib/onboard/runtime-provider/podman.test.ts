@@ -114,6 +114,12 @@ function supportedContainerEngine(provider: ReturnType<typeof createPodmanRuntim
   return provider.containerEngine as Extract<typeof provider.containerEngine, { supported: true }>;
 }
 
+function nvidiaContainer(provider: ReturnType<typeof createPodmanRuntimeProviderBundle>) {
+  const capability = supportedContainerEngine(provider).nvidiaContainer;
+  expect(capability).toBeDefined();
+  return capability!;
+}
+
 function hostDoctorEngine(authorityId = AUTHORITY_ID): PodmanContainerEngine {
   return {
     operation: "host-doctor",
@@ -626,10 +632,10 @@ describe("managed Podman runtime provider", () => {
         redactSensitive: inference.redactSensitive,
       },
     });
-    const containerEngine = supportedContainerEngine(bundle);
+    const capability = nvidiaContainer(bundle);
 
     expect(
-      containerEngine.captureNvidiaContainer(
+      capability.capture(
         "host-local-inference",
         {
           image: "registry.example/proof@sha256:" + "a".repeat(64),
@@ -674,7 +680,7 @@ describe("managed Podman runtime provider", () => {
         stderr: "",
       })
       .mockReturnValueOnce({ status: 0, stdout: containerId, stderr: "" });
-    const containerEngine = supportedContainerEngine(
+    const capability = nvidiaContainer(
       createPodmanRuntimeProviderBundle({
         engines: realOperationEngines(REAL_SOCKET_AUTHORITY, capture),
         hostLocalInference: {
@@ -686,9 +692,9 @@ describe("managed Podman runtime provider", () => {
       }),
     );
 
-    expect(
-      containerEngine.cleanupNvidiaContainer("host-local-inference", GPU_PROOF_RESOURCE, 15_000),
-    ).toEqual({ status: "removed" });
+    expect(capability.cleanup("host-local-inference", GPU_PROOF_RESOURCE, 15_000)).toEqual({
+      status: "removed",
+    });
     expect(capture).toHaveBeenNthCalledWith(
       1,
       "/usr/bin/podman",
