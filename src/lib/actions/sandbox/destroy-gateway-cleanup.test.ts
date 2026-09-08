@@ -105,7 +105,7 @@ describe("shouldCleanupGatewayAfterConfirmedFinalDestroy", () => {
     expect(dockerCapture).not.toHaveBeenCalled();
   });
 
-  it("reconciles a terminal Podman row after its owned resource is absent", () => {
+  it("preserves the gateway for an unclassified terminal row after a Podman destroy", () => {
     const captureDestroyIdentityByName = vi.fn(() => ({
       schemaVersion: 1 as const,
       providerId: "podman",
@@ -139,15 +139,14 @@ describe("shouldCleanupGatewayAfterConfirmedFinalDestroy", () => {
             }) as never,
         },
       ),
-    ).toBe(true);
-    expect(captureDestroyIdentityByName).toHaveBeenCalledExactlyOnceWith("alpha");
+    ).toBe(false);
+    expect(captureDestroyIdentityByName).not.toHaveBeenCalled();
     expect(dockerCapture).not.toHaveBeenCalled();
   });
 
-  it("preserves the gateway when a terminal Podman resource probe fails", () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  it("does not attribute an unclassified terminal Docker row to Podman", () => {
     const captureDestroyIdentityByName = vi.fn(() => {
-      throw new Error("podman unavailable");
+      throw new Error("provider-specific attribution must not run");
     });
 
     expect(
@@ -176,9 +175,7 @@ describe("shouldCleanupGatewayAfterConfirmedFinalDestroy", () => {
         },
       ),
     ).toBe(false);
-    expect(warn).toHaveBeenCalledWith(
-      "Runtime provider resource probe failed for sandbox 'alpha'; preserving shared gateway.",
-    );
+    expect(captureDestroyIdentityByName).not.toHaveBeenCalled();
   });
 
   it("preserves the gateway when a live sandbox appears after the empty-registry check", () => {

@@ -14,8 +14,8 @@ function runHermesApiPortBootstrap(apiPort: string) {
   try {
     const scriptPath = path.join(tmpDir, "run.sh");
     const source = fs.readFileSync(START_SCRIPT, "utf-8");
-    const start = source.indexOf('NEMOCLAW_CMD=("$@")');
-    const end = source.indexOf('\nHERMES="$(command -v hermes)"', start);
+    const start = source.indexOf("HERMES_DEFAULT_API_PORT=8642");
+    const end = source.indexOf('\nif [ "$_dashboard_port" -eq "$PUBLIC_PORT" ]', start);
     fs.writeFileSync(
       scriptPath,
       [

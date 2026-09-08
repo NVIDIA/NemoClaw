@@ -68,6 +68,22 @@ runs:
               XDG_RUNTIME_DIR="$runtime_directory" \
               /usr/bin/systemctl --user stop "$service_name.socket" "$service_name.service" \
               2>/dev/null || true
+            socket_active_state="$(
+              env \
+                DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime_directory/bus" \
+                XDG_RUNTIME_DIR="$runtime_directory" \
+                /usr/bin/systemctl --user is-active "$service_name.socket" 2>/dev/null || true
+            )"
+            service_active_state="$(
+              env \
+                DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime_directory/bus" \
+                XDG_RUNTIME_DIR="$runtime_directory" \
+                /usr/bin/systemctl --user is-active "$service_name.service" 2>/dev/null || true
+            )"
+            if [[ "$socket_active_state" != "inactive" || "$service_active_state" != "inactive" ]]; then
+              echo "::error::Native Podman cleanup could not prove $service_name.socket and $service_name.service inactive (socket=${socket_active_state:-unknown}, service=${service_active_state:-unknown}). Run: systemctl --user status $service_name.socket $service_name.service" >&2
+              return 1
+            fi
           fi
           remove_user_file() {
             local target="$1"

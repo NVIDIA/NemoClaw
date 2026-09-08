@@ -825,7 +825,14 @@ export function createProductionGatewayReadinessDependencies(
     };
     const providerObservation = providerGateway.ownsHostReadiness
       ? providerGateway.observeOwnedGateway({
-          environment: probeEnv,
+          environment: {
+            ...probeEnv,
+            NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: resolveGatewayStateDirForPort({
+              configured: environment.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
+              home: environment.HOME || os.homedir(),
+              port: gatewayPort,
+            }),
+          },
           platform,
           architecture,
           gatewayName,

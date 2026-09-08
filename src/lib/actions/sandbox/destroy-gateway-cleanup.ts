@@ -6,11 +6,9 @@ import {
   type DockerSandboxContainerSnapshot,
   getLiveSandboxNames,
   hasNoLiveSandboxes,
-  hasNoLiveSandboxesWithResourceObservation,
   type LiveSandboxListSnapshot,
   shouldCleanupGatewayAfterDestroy,
 } from "../../domain/sandbox/destroy";
-import type { RuntimeProviderBundle } from "../../onboard/runtime-provider/contract";
 import { resolveRegisteredRuntimeProvider } from "../../onboard/runtime-provider/selection";
 import * as registry from "../../state/registry";
 
@@ -105,34 +103,18 @@ function hasNoLiveSandboxesFromHost(deps?: Parameters<LiveSandboxProbe>[0]): boo
 
 function hasNoLiveSandboxesWithoutDocker(
   timeoutMs: number,
-  provider: RuntimeProviderBundle,
   captureOpenshell: LiveSandboxListProbe = captureLiveSandboxes,
 ): boolean {
   const liveList = captureOpenshell(["sandbox", "list"], {
     ignoreError: true,
     timeout: timeoutMs,
   });
-  return hasNoLiveSandboxesWithResourceObservation(liveList, (sandboxName) => {
-    const capture =
-      provider.cleanup.supported === true
-        ? provider.cleanup.captureDestroyIdentityByName
-        : undefined;
-    if (!capture) return true;
-    try {
-      const identity = capture(sandboxName);
-      const confirmedAbsent =
-        identity.schemaVersion === 1 &&
-        identity.providerId === provider.identity.id &&
-        identity.resourceHandle === null &&
-        identity.ownershipSha256 === null;
-      return !confirmedAbsent;
-    } catch {
-      console.warn(
-        `Runtime provider resource probe failed for sandbox '${sandboxName}'; preserving shared gateway.`,
-      );
-      return true;
-    }
-  });
+  // OpenShell terminal rows do not record their backing runtime. A Podman
+  // absence proof therefore cannot establish that a same-named Docker
+  // resource is absent. Preserve the shared gateway whenever any unclassified
+  // row remains; an empty successful OpenShell snapshot is the only
+  // cross-runtime absence proof available without invoking Docker.
+  return liveList.status === 0 && getLiveSandboxNames(liveList).length === 0;
 }
 
 export function shouldCleanupGatewayAfterConfirmedFinalDestroy(
@@ -158,7 +140,7 @@ export function shouldCleanupGatewayAfterConfirmedFinalDestroy(
     (deps.liveSandboxProbe
       ? liveSandboxProbe(liveProbeDeps)
       : provider?.gateway.ownsHostReadiness === true
-        ? hasNoLiveSandboxesWithoutDocker(timeoutMs, provider, deps.captureOpenshell)
+        ? hasNoLiveSandboxesWithoutDocker(timeoutMs, deps.captureOpenshell)
         : liveSandboxProbe(liveProbeDeps));
 
   return shouldCleanupGatewayAfterDestroy({

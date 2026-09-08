@@ -159,7 +159,7 @@ function writeExecutable(filePath: string, source: string): void {
   fs.writeFileSync(filePath, source, { mode: 0o700 });
 }
 
-function runPodmanCleanupFixture(withDockerState: boolean) {
+function runPodmanCleanupFixture(withDockerState: boolean, podmanStopFails = false) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-podman-cleanup-"));
   const runnerTemp = path.join(root, "runner-temp");
   const home = path.join(root, "home");
@@ -172,6 +172,7 @@ function runPodmanCleanupFixture(withDockerState: boolean) {
   const restoreRoot = path.join(toolchainRoot, "docker-cli-restore");
   const destination = path.join(root, "docker-bin", "docker");
   const systemctlLog = path.join(root, "systemctl.log");
+  const podmanServiceState = path.join(root, "podman-service.state");
   const loopbackState = path.join(root, "loopback-present");
   const uid = process.getuid?.() ?? 0;
   fs.mkdirSync(runnerTemp, { recursive: true });
@@ -202,6 +203,7 @@ function runPodmanCleanupFixture(withDockerState: boolean) {
   fs.writeFileSync(path.join(runnerTemp, "native-podman-e2e-containers.conf"), "owned\n");
   fs.writeFileSync(path.join(runnerTemp, "native-podman-e2e-info.json"), "owned\n");
   fs.writeFileSync(loopbackState, "present\n");
+  fs.writeFileSync(podmanServiceState, "active\n");
   fs.writeFileSync(
     path.join(toolchainRoot, "cleanup.json"),
     `${JSON.stringify({
@@ -243,6 +245,15 @@ function runPodmanCleanupFixture(withDockerState: boolean) {
     `#!/bin/sh
 printf '%s\\n' "$*" >>"$SYSTEMCTL_LOG"
 case "$*" in
+  'is-active user@${String(uid)}.service') printf 'active\\n' ;;
+  '--user stop nemoclaw-native-podman-e2e.socket nemoclaw-native-podman-e2e.service')
+    if [ "$PODMAN_STOP_FAILS" = true ]; then exit 1; fi
+    printf 'inactive\\n' >"$PODMAN_SERVICE_STATE"
+    ;;
+  '--user is-active nemoclaw-native-podman-e2e.socket'|'--user is-active nemoclaw-native-podman-e2e.service')
+    cat "$PODMAN_SERVICE_STATE"
+    [ "$(cat "$PODMAN_SERVICE_STATE")" = active ]
+    ;;
   *is-active*) printf 'active\\n' ;;
   *is-enabled*) printf 'enabled\\n' ;;
   *show*) printf 'loaded\\n' ;;
@@ -313,6 +324,8 @@ esac
       LOOPBACK_STATE: loopbackState,
       NODE_BINARY: process.execPath,
       PATH: `${fakeBin}:${path.dirname(destination)}:${process.env.PATH ?? "/usr/bin:/bin"}`,
+      PODMAN_SERVICE_STATE: podmanServiceState,
+      PODMAN_STOP_FAILS: podmanStopFails ? "true" : "false",
       RUNNER_TEMP: runnerTemp,
       SYSTEMCTL_LOG: systemctlLog,
     },
@@ -322,6 +335,7 @@ esac
     expectedSha256,
     helperRoot,
     loopbackState,
+    podmanServiceState,
     result,
     root,
     runnerTemp,
@@ -479,6 +493,24 @@ describe("native Podman E2E setup boundary", () => {
       expect(fs.readFileSync(fixture.systemctlLog, "utf8")).toContain(
         "--user stop nemoclaw-native-podman-e2e.socket nemoclaw-native-podman-e2e.service",
       );
+    } finally {
+      fs.rmSync(fixture.root, { force: true, recursive: true });
+    }
+  });
+
+  it("preserves recovery authority when the native Podman service survives stop (#11014)", () => {
+    const fixture = runPodmanCleanupFixture(true, true);
+
+    try {
+      expect(fixture.result.status).not.toBe(0);
+      expect(fixture.result.stderr).toContain(
+        "systemctl --user status nemoclaw-native-podman-e2e.socket nemoclaw-native-podman-e2e.service",
+      );
+      expect(fs.existsSync(path.join(fixture.toolchainRoot, "cleanup.json"))).toBe(true);
+      expect(fs.existsSync(path.join(fixture.toolchainRoot, "bin", "podman"))).toBe(true);
+      expect(fs.existsSync(fixture.storageDirectory)).toBe(true);
+      expect(fs.existsSync(fixture.serviceUnitDirectory)).toBe(true);
+      expect(fs.existsSync(fixture.destination)).toBe(true);
     } finally {
       fs.rmSync(fixture.root, { force: true, recursive: true });
     }

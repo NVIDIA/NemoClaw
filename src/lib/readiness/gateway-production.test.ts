@@ -11,6 +11,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { isDockerDriverGatewayProcessIdentity } from "../onboard/docker-driver-gateway-process-identity";
 import {
+  resolveDockerDriverGatewayStateDir,
   writeDockerDriverGatewayPidFile,
   writeDockerDriverGatewayRuntimeMarkerForStateDir,
 } from "../onboard/docker-driver-gateway-runtime-marker";
@@ -812,6 +813,13 @@ describe("managed gateway port readiness (#7411)", () => {
       );
       expect(observeOwnedGateway).toHaveBeenCalledWith(
         expect.objectContaining({
+          environment: expect.objectContaining({
+            NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: resolveDockerDriverGatewayStateDir(
+              environment,
+              root,
+              gatewayPort,
+            ),
+          }),
           gatewayName,
           gatewayPort,
           expectedEndpoint: endpoint,
