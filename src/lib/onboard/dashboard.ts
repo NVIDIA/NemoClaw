@@ -314,13 +314,13 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     sandboxName: string,
     agent: VerifyChainAgent | null | undefined,
   ): ReturnType<typeof buildChain> {
-    // Resolve WSL once: `buildChain` and the host-address lookup must agree, or
-    // the chain can claim WSL while dropping the fallback URL that pairs with it.
-    const isWsl = deps.isWsl();
+    // One resolver for the host hints, so this chain and the forward's chain
+    // cannot disagree about WSL or the bind override (#10861). The WSL host
+    // address is not looked up here — no `runCapture` — which matches what
+    // this call did before; the verify chain never reads it.
     return buildChain({
       chatUiUrl,
-      isWsl,
-      wslHostAddress: getWslHostAddress({ isWsl }),
+      ...dashboardAccess.resolveDashboardPlatformHints({ isWsl: deps.isWsl() }),
       dashboardHealthEndpoint: agent?.dashboard?.healthPath,
       gatewayPort: resolveVerifyAgentApiPort(sandboxName, agent, {
         getSandbox,
@@ -682,8 +682,10 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     const chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`;
     const chain = buildChain({
       chatUiUrl,
-      isWsl: deps.isWsl(),
-      wslHostAddress: getWslHostAddress({ isWsl: deps.isWsl(), runCapture: deps.runCapture }),
+      ...dashboardAccess.resolveDashboardPlatformHints({
+        isWsl: deps.isWsl(),
+        runCapture: deps.runCapture,
+      }),
     });
     const dashboardBaseUrl = `${chain.accessUrl.replace(/\/$/, "")}/`;
     const dashboardUrl = dashboardUrlForDisplay(
