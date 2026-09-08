@@ -883,6 +883,87 @@ function installVerifiedSandboxCreateFixture(registry, options) {
     require.cache[registryPath].exports = registry;
   }
 
+  const fixtureTargetIntentFingerprint = () => {
+    const recreate = require(
+      path.resolve(__dirname, "../../src/lib/onboard/sandbox-recreate-transaction.ts"),
+    );
+    return recreate.fingerprintSandboxRecreateValue({
+      fixture: "verified-sandbox-create",
+      gatewayName,
+      sandboxName,
+      selection,
+    });
+  };
+
+  const seedLegacyCompatibilityCreate = ({ sandboxId, createAttemptNonce }) => {
+    const onboardSession = require(
+      path.resolve(__dirname, "../../src/lib/state/onboard-session.ts"),
+    );
+    const recreate = require(
+      path.resolve(__dirname, "../../src/lib/onboard/sandbox-recreate-transaction.ts"),
+    );
+    sourceEntry = publishedEntry || sourceEntry;
+    publishedEntry = null;
+    const session = onboardSession.createSession({
+      sessionId,
+      sandboxName,
+      agent: options.agentName || "openclaw",
+    });
+    const transaction = recreate.beginSandboxRecreateTransaction(session, {
+      sandboxName,
+      gatewayName,
+      gatewayPort,
+      sourceEntry,
+      observation: { state: "missing", liveIdentityFingerprint: null },
+      targetIntentFingerprint: fixtureTargetIntentFingerprint(),
+    });
+    recreate.advanceSandboxRecreateTransaction(session, transaction.id, "creating");
+    const sandboxIdentityFingerprint = recreate.fingerprintSandboxRecreateValue(sandboxId);
+    recreate.recordSandboxRecreateTargetCreated(session, transaction.id, {
+      state: "ready",
+      liveIdentityFingerprint: sandboxIdentityFingerprint,
+    });
+    session.checkpoint = {
+      ...session.checkpoint,
+      sandboxIdentity: {
+        kind: "selected",
+        value: { name: sandboxName, agent: options.agentName || "openclaw" },
+      },
+      gatewayAuthority: {
+        kind: "selected",
+        value: {
+          gatewayName,
+          gatewayPort,
+          mode: "nemoclaw-managed",
+          source: "standalone",
+          endpoint: null,
+          stateDir: null,
+          supervisor: null,
+          requiredCapabilities: [],
+        },
+      },
+    };
+    onboardSession.saveSession(session);
+    pendingCheckpoint = {
+      schemaVersion: 1,
+      state: "verified-create",
+      gatewayName,
+      gatewayPort,
+      sandboxName,
+      lifecycleGeneration: transaction.targetGeneration,
+      sandboxIdentityFingerprint,
+      createAttemptNonce,
+      route: "compatibility",
+    };
+    pendingEntry = {
+      ...structuredClone(reservationEntry),
+      lifecycleGeneration: transaction.targetGeneration,
+      lifecycleLiveIdentityFingerprint: sandboxIdentityFingerprint,
+      pendingCreateIdentity: structuredClone(pendingCheckpoint),
+    };
+    return structuredClone(pendingCheckpoint);
+  };
+
   const prepareCreateIntent = () => {
     const onboardSession = require(
       path.resolve(__dirname, "../../src/lib/state/onboard-session.ts"),
@@ -922,12 +1003,7 @@ function installVerifiedSandboxCreateFixture(registry, options) {
         observation: sourceIdentity
           ? { state: "ready", liveIdentityFingerprint: sourceIdentity }
           : { state: "missing", liveIdentityFingerprint: null },
-        targetIntentFingerprint: recreate.fingerprintSandboxRecreateValue({
-          fixture: "verified-sandbox-create",
-          gatewayName,
-          sandboxName,
-          selection,
-        }),
+        targetIntentFingerprint: fixtureTargetIntentFingerprint(),
       });
       session.checkpoint = {
         ...session.checkpoint,
@@ -962,7 +1038,7 @@ function installVerifiedSandboxCreateFixture(registry, options) {
       },
     };
   };
-  return { sessionId, selection, prepareCreateIntent };
+  return { sessionId, selection, prepareCreateIntent, seedLegacyCompatibilityCreate };
 }
 
 function sandboxCreateArgsWithVerifiedReservation(args, fixture) {
