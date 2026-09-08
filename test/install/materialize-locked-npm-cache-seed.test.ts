@@ -6,13 +6,11 @@ import {
   appendFileSync,
   chmodSync,
   existsSync,
-  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
   symlinkSync,
-  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -71,22 +69,6 @@ function writeLock(root: string, archives: readonly LockedArchive[]): string {
     )}\n`,
   );
   return lockfile;
-}
-
-function writeReviewedAuditEvidence(seed: string): { directory: string; rawReport: Buffer } {
-  const directory = path.join(seed, "reviewed-npm-audit");
-  const rawReport = Buffer.from('{"metadata":{"vulnerabilities":{"high":0}}}\n');
-  const receipt = Buffer.from(
-    `${JSON.stringify({ rawResponseSha256: crypto.createHash("sha256").update(rawReport).digest("hex") })}\n`,
-  );
-  mkdirSync(directory);
-  writeFileSync(path.join(directory, "mcporter-runtime.raw.json"), rawReport);
-  writeFileSync(path.join(directory, "mcporter-runtime.receipt.json"), receipt);
-  writeFileSync(
-    path.join(directory, "mcporter-runtime.receipt.sha256"),
-    `${crypto.createHash("sha256").update(receipt).digest("hex")}\n`,
-  );
-  return { directory, rawReport };
 }
 
 let testRoot = "";
@@ -278,68 +260,6 @@ describe("locked npm cache seed materialization", () => {
     await expect(
       verifyAndCopyLockedNpmCacheSeed({ lockfile, seed, target: TARGET }),
     ).rejects.toThrow("npm cache seed directory contains missing or unexpected files");
-  });
-
-  it("copies reviewed audit evidence after bounded integrity validation (#11088)", async () => {
-    const alpha = archive("alpha", "alpha archive");
-    const lockfile = writeLock(testRoot, [alpha.locked]);
-    const seed = path.join(testRoot, "seed");
-    const copied = path.join(testRoot, "copied");
-    await materializeLockedNpmCacheSeed({
-      downloadArchive: async () => alpha.bytes,
-      lockfile,
-      output: seed,
-      target: TARGET,
-    });
-    const evidence = writeReviewedAuditEvidence(seed);
-
-    await verifyAndCopyLockedNpmCacheSeed({ lockfile, output: copied, seed, target: TARGET });
-
-    const copiedEvidence = path.join(copied, "reviewed-npm-audit");
-    expect(readFileSync(path.join(copiedEvidence, "mcporter-runtime.raw.json"))).toEqual(
-      evidence.rawReport,
-    );
-    expect(statSync(copiedEvidence).mode & 0o777).toBe(0o700);
-    expect(statSync(path.join(copiedEvidence, "mcporter-runtime.raw.json")).mode & 0o777).toBe(
-      0o400,
-    );
-  });
-
-  it.each([
-    [
-      "raw report",
-      "raw-report",
-      (directory: string) =>
-        appendFileSync(path.join(directory, "mcporter-runtime.raw.json"), "changed"),
-    ],
-    [
-      "receipt",
-      "receipt",
-      (directory: string) =>
-        appendFileSync(path.join(directory, "mcporter-runtime.receipt.json"), "changed"),
-    ],
-    [
-      "oversized hash",
-      "regular non-symlink file",
-      (directory: string) =>
-        writeFileSync(path.join(directory, "mcporter-runtime.receipt.sha256"), "x".repeat(66)),
-    ],
-  ])("rejects changed reviewed audit %s evidence", async (_name, expected, mutate) => {
-    const alpha = archive("alpha", "alpha archive");
-    const lockfile = writeLock(testRoot, [alpha.locked]);
-    const seed = path.join(testRoot, "seed");
-    await materializeLockedNpmCacheSeed({
-      downloadArchive: async () => alpha.bytes,
-      lockfile,
-      output: seed,
-      target: TARGET,
-    });
-    const { directory } = writeReviewedAuditEvidence(seed);
-    mutate(directory);
-
-    await expect(
-      verifyAndCopyLockedNpmCacheSeed({ lockfile, seed, target: TARGET }),
-    ).rejects.toThrow(expected);
   });
 
   it.skipIf(process.platform === "win32")(

@@ -47,11 +47,6 @@ const reviewedAuditDriver = fs.readFileSync(
   path.join(repoRoot, "scripts", "audit-reviewed-npm-graph.mts"),
   "utf8",
 );
-const mcporterAuditHelper = fs.readFileSync(
-  path.join(repoRoot, "scripts", "lib", "verify-mcporter-audit.sh"),
-  "utf8",
-);
-
 function extractIntegrityGate(contents: string): string {
   const startMarker = 'MCPORTER_EXPECTED_INTEGRITY=""';
   const start = contents.indexOf(startMarker);
@@ -193,18 +188,17 @@ describe("mcporter image supply-chain controls", () => {
     expect(unpinned.stdout).not.toContain("gate-passed");
   });
 
-  it.each(dockerfiles)("audits the committed dependency graph in $name", ({ name, contents }) => {
-    const auditContents = name === "Dockerfile" ? `${contents}\n${mcporterAuditHelper}` : contents;
-    const flattenedContents = auditContents.replace(/\\\s*\n/g, " ").replace(/\s+/g, " ");
-    const auditReceiptInvocation = extractAuditReceiptInvocation(auditContents);
-    expect(auditContents).toContain(
+  it.each(dockerfiles)("audits the committed dependency graph in $name", ({ contents }) => {
+    const flattenedContents = contents.replace(/\\\s*\n/g, " ").replace(/\s+/g, " ");
+    const auditReceiptInvocation = extractAuditReceiptInvocation(contents);
+    expect(contents).toContain(
       "COPY ci/npm-audit-exceptions.json ci/reviewed-npm-audit.json /scripts/",
     );
     expect(
       flattenedContents.includes(
         "COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/bundled-npm-package.mts scripts/lib/reviewed-npm-audit.mts scripts/lib/openclaw-npm-remediation.mts /scripts/lib/",
       ) ||
-        auditContents.includes(
+        contents.includes(
           "COPY scripts/lib/reviewed-npm-audit.mts /scripts/lib/reviewed-npm-audit.mts",
         ),
     ).toBe(true);
@@ -229,7 +223,7 @@ describe("mcporter image supply-chain controls", () => {
     );
     expect(expectedReviewedNpmVersion).toMatch(/^[0-9]+\.[0-9]+\.[0-9]+$/);
     expect(auditReceiptInvocation).not.toContain("--npm-version");
-    expect(auditContents).not.toContain("--raw-copy");
+    expect(contents).not.toContain("--raw-copy");
     expect(auditReceiptInvocation).not.toMatch(/\bnpm\s+--version\b/);
     expect(auditReceiptInvocation).not.toMatch(/\$\(|`/);
     expect(contents).not.toContain(`${runtimePrefix} audit --omit=dev --audit-level=low`);
@@ -252,24 +246,11 @@ describe("mcporter image supply-chain controls", () => {
       "NEMOCLAW_REVIEWED_NPM_AUDIT_LOCKED_GRAPH=mcporter-runtime NEMOCLAW_REVIEWED_NPM_AUDIT_REPORT_DIR=artifacts/reviewed-npm-audit",
     );
     expect(producer).toContain("FROM scratch AS protected-mcporter-audit-evidence");
-    expect(contents).toContain("FROM scratch AS protected-mcporter-audit-cache");
     expect(contents).toContain(
       "--mount=type=secret,id=nemoclaw-mcporter-audit-receipt,required=false",
     );
-    expect(contents).toContain("from=protected-mcporter-audit-cache");
-    expect(contents).toContain("bash /scripts/lib/verify-mcporter-audit.sh");
-    expect(mcporterAuditHelper).toContain('secret_root="/run/secrets"');
-    expect(mcporterAuditHelper).toContain(
-      'seed_root="/run/nemoclaw-mcporter-audit-cache/reviewed-npm-audit"',
-    );
-    expect(mcporterAuditHelper).not.toContain("NEMOCLAW_MCPORTER_AUDIT_SECRET_ROOT");
-    expect(mcporterAuditHelper).not.toContain("NEMOCLAW_MCPORTER_AUDIT_SEED_ROOT");
-    expect(mcporterAuditHelper).toContain(
+    expect(contents).toContain(
       "cached mcporter audit requires paired receipt, raw report, and receipt SHA-256",
-    );
-    expect(mcporterAuditHelper).toContain("seed-cached mcporter audit evidence is incomplete");
-    expect(mcporterAuditHelper.replace(/\\\s*\n/g, " ").replace(/\s+/g, " ")).toContain(
-      `printf '%s %s\\n' "$receipt_sha256" "$receipt" | sha256sum --check --status -`,
     );
   });
 

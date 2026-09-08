@@ -250,7 +250,11 @@ function recordedBuildInvocation(agent: string): string {
   return invocation!;
 }
 
-function runBuild(sourceRoot: string, extraArgs: readonly string[] = [], platform = "linux/amd64") {
+function runBuild(
+  sourceRoot: string,
+  extraArgs: readonly string[] = [],
+  platform = "linux/amd64",
+) {
   const output = path.join(testRoot, "contracts.json");
   return spawnSync(
     "bash",
@@ -363,9 +367,7 @@ describe("protected managed-image build-cache boundary", () => {
     expect(recordedBuildInvocation("openclaw")).toContain("--build-arg TARGETARCH=arm64");
     expect(recordedBuildInvocation("hermes")).toContain("--platform linux/arm64");
     expect(recordedBuildInvocation("hermes")).toContain("--build-arg TARGETARCH=arm64");
-    expect(recordedBuildInvocation("langchain-deepagents-code")).toContain(
-      "--platform linux/arm64",
-    );
+    expect(recordedBuildInvocation("langchain-deepagents-code")).toContain("--platform linux/arm64");
     expect(recordedBuildInvocation("langchain-deepagents-code")).toContain(
       "--build-arg TARGETARCH=arm64",
     );
@@ -404,12 +406,8 @@ describe("protected managed-image build-cache boundary", () => {
     expect(recordedBuildInvocation("openclaw")).toContain("--build-arg TARGETARCH=arm64");
     expect(recordedBuildInvocation("hermes")).toContain("--platform linux/arm64");
     expect(recordedBuildInvocation("hermes")).toContain("--build-arg TARGETARCH=arm64");
-    expect(recordedBuildInvocation("langchain-deepagents-code")).toContain(
-      "--platform linux/arm64",
-    );
-    expect(recordedBuildInvocation("langchain-deepagents-code")).toContain(
-      "--build-arg TARGETARCH=arm64",
-    );
+    expect(recordedBuildInvocation("langchain-deepagents-code")).toContain("--platform linux/arm64");
+    expect(recordedBuildInvocation("langchain-deepagents-code")).toContain("--build-arg TARGETARCH=arm64");
   });
 
   it("passes each agent one empty absolute cache export root", () => {
@@ -466,17 +464,6 @@ describe("protected managed-image build-cache boundary", () => {
     expect(
       readFileSync(
         path.join(cacheRoot, "reviewed-npm-audit", "mcporter-runtime.receipt.sha256"),
-        "utf8",
-      ),
-    ).toBe(`${DIGEST}\n`);
-    expect(
-      readFileSync(
-        path.join(
-          cacheRoot,
-          "npm-cache-seed",
-          "reviewed-npm-audit",
-          "mcporter-runtime.receipt.sha256",
-        ),
         "utf8",
       ),
     ).toBe(`${DIGEST}\n`);

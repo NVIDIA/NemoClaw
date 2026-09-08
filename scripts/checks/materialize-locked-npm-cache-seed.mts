@@ -7,7 +7,6 @@ import {
   chmod,
   copyFile,
   lstat,
-  mkdir,
   mkdtemp,
   open,
   readdir,
@@ -23,12 +22,6 @@ const MANIFEST_KIND = "nemoclaw-locked-npm-cache-seed-v1";
 const MANIFEST_NAME = "manifest.json";
 const REGISTRY_ORIGIN = "https://registry.npmjs.org";
 const MAX_ARCHIVE_BYTES = 32 * 1024 * 1024;
-const REVIEWED_AUDIT_DIRECTORY = "reviewed-npm-audit";
-const REVIEWED_AUDIT_FILES = [
-  { maxBytes: 64 * 1024 * 1024, name: "mcporter-runtime.raw.json" },
-  { maxBytes: 64 * 1024, name: "mcporter-runtime.receipt.json" },
-  { maxBytes: 65, name: "mcporter-runtime.receipt.sha256" },
-] as const;
 const DOWNLOAD_CONCURRENCY = 6;
 const DOWNLOAD_ATTEMPTS = 4;
 const DOWNLOAD_TIMEOUT_MS = 30_000;
@@ -98,46 +91,6 @@ function archiveName(resolved: string): string {
 
 function lockSha256(source: Uint8Array): string {
   return crypto.createHash("sha256").update(source).digest("hex");
-}
-
-async function reviewedAuditEvidence(seed: string): Promise<readonly Buffer[] | undefined> {
-  const directory = path.join(seed, REVIEWED_AUDIT_DIRECTORY);
-  let status;
-  try {
-    status = await lstat(directory);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    throw error;
-  }
-  if (!status.isDirectory() || status.isSymbolicLink()) {
-    throw new Error("reviewed npm audit evidence must be one non-symlink directory");
-  }
-  const entries = await readdir(directory, { withFileTypes: true });
-  if (
-    entries.some((entry) => !entry.isFile() || entry.isSymbolicLink()) ||
-    JSON.stringify(entries.map(({ name }) => name).sort()) !==
-      JSON.stringify(REVIEWED_AUDIT_FILES.map(({ name }) => name).sort())
-  ) {
-    throw new Error("reviewed npm audit evidence contains missing or unexpected files");
-  }
-  const evidence = await Promise.all(
-    REVIEWED_AUDIT_FILES.map(({ maxBytes, name }) =>
-      exactFileSource(path.join(directory, name), `reviewed npm audit ${name}`, maxBytes),
-    ),
-  );
-  const [rawReport, receipt, receiptHash] = evidence;
-  if (
-    !rawReport?.length ||
-    !receipt?.length ||
-    receiptHash?.toString("utf8") !== `${lockSha256(receipt)}\n`
-  ) {
-    throw new Error("reviewed npm audit evidence failed receipt integrity validation");
-  }
-  const parsedReceipt = record(JSON.parse(receipt.toString("utf8")), "reviewed npm audit receipt");
-  if (parsedReceipt.rawResponseSha256 !== lockSha256(rawReport)) {
-    throw new Error("reviewed npm audit evidence failed raw-report integrity validation");
-  }
-  return evidence;
 }
 
 function archiveIntegrity(source: Uint8Array): string {
@@ -298,7 +251,7 @@ export function lockedArchives(
   return [...byArchive.values()].sort((left, right) => left.archive.localeCompare(right.archive));
 }
 
-async function exactFileSource(file: string, label: string, maxBytes?: number): Promise<Buffer> {
+async function exactFileSource(file: string, label: string): Promise<Buffer> {
   if (!path.isAbsolute(file) || file.includes("\n")) {
     throw new Error(`${label} must be an absolute path`);
   }
@@ -307,7 +260,7 @@ async function exactFileSource(file: string, label: string, maxBytes?: number): 
   });
   try {
     const status = await handle.stat();
-    if (!status.isFile() || (maxBytes !== undefined && status.size > maxBytes)) {
+    if (!status.isFile()) {
       throw new Error(`${label} must be one regular non-symlink file`);
     }
     return await handle.readFile();
@@ -508,7 +461,6 @@ export async function verifyAndCopyLockedNpmCacheSeed(options: {
   const target = exactTarget(options.target);
   const expected = lockedArchives(lockSource.toString("utf8"), target);
   const seed = await exactDirectory(options.seed, "seed directory");
-  const auditEvidence = await reviewedAuditEvidence(seed);
   const manifestSource = await exactFileSource(path.join(seed, MANIFEST_NAME), "seed manifest");
   const manifest = parseManifest(manifestSource.toString("utf8"));
   if (manifest.lockSha256 !== lockSha256(lockSource)) {
@@ -525,11 +477,7 @@ export async function verifyAndCopyLockedNpmCacheSeed(options: {
     throw new Error("npm cache seed manifest does not contain the complete locked archive set");
   }
   const entries = await readdir(seed, { withFileTypes: true });
-  const expectedNames = [
-    ...expected.map(({ archive }) => archive),
-    MANIFEST_NAME,
-    ...(auditEvidence ? [REVIEWED_AUDIT_DIRECTORY] : []),
-  ].sort();
+  const expectedNames = [...expected.map(({ archive }) => archive), MANIFEST_NAME].sort();
   const actualNames = entries.map(({ name }) => name).sort();
   if (JSON.stringify(actualNames) !== JSON.stringify(expectedNames)) {
     throw new Error("npm cache seed directory contains missing or unexpected files");
@@ -553,18 +501,6 @@ export async function verifyAndCopyLockedNpmCacheSeed(options: {
         const destination = path.join(directory.temporary, archive.archive);
         await copyFile(path.join(seed, archive.archive), destination);
         await chmod(destination, 0o444);
-      }
-      if (auditEvidence) {
-        const auditDirectory = path.join(directory.temporary, REVIEWED_AUDIT_DIRECTORY);
-        await mkdir(auditDirectory, { mode: 0o700 });
-        await Promise.all(
-          REVIEWED_AUDIT_FILES.map(({ name }, index) =>
-            writeFile(path.join(auditDirectory, name), auditEvidence[index], {
-              flag: "wx",
-              mode: 0o400,
-            }),
-          ),
-        );
       }
       await directory.commit();
     } catch (error) {

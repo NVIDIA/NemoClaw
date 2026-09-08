@@ -28,6 +28,7 @@ Update it and `agents/openclaw/mcporter-runtime/package*.json` together whenever
 
 Both image paths install the committed graph with `npm ci --ignore-scripts --omit=dev` because the published package declares no install-time lifecycle script and NemoClaw needs only its already-built CLI.
 The reviewed audit wrapper reports lower-severity production findings and blocks unaccepted high or critical advisories. The default `ci/npm-audit-exceptions.json` registry is empty. Any future exception must match one advisory, graph, package, installed version, and severity; identify an owner and NemoClaw tracking issue; state a decision, rationale, and expiry no more than 30 days away; and include compensating controls for temporary risk acceptance. Missing, malformed, expired, overlong, mismatched, or unused exceptions fail closed. The repository-wide audit also rejects exceptions for unknown graph IDs. Registry signature verification remains a separate control.
+Managed image publication supplies the mcporter receipt and raw report as BuildKit secrets. Protected qualification produces the same evidence during its networked cache export and carries it alongside that cache into the offline rebuild. A build without either evidence source runs the reviewed audit directly and fails closed if completeness cannot be established.
 
 ## WeChat plugin runtime graph
 

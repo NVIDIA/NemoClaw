@@ -152,15 +152,7 @@ export type NpmAuditResponseClassification =
   | Readonly<{ failure: NpmAuditFailureClassification }>
   | Readonly<{ report: Record<string, unknown> }>;
 
-const TRANSIENT_TRANSPORT_CODES = [
-  "EAI_AGAIN",
-  "ECONNREFUSED",
-  "ECONNRESET",
-  "EHOSTUNREACH",
-  "ENETUNREACH",
-  "ENOTFOUND",
-  "ETIMEDOUT",
-] as const;
+const RETRYABLE_TRANSPORT_CODE = "ECONNRESET";
 
 function asRecord(value: unknown, label: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -307,11 +299,6 @@ function valueShape(value: unknown): string {
   if (value === undefined) return "missing";
   if (value === null) return "null";
   if (Array.isArray(value)) return "array";
-  if (typeof value === "number") {
-    if (!Number.isFinite(value)) return "non-finite-number";
-    if (!Number.isSafeInteger(value)) return "non-integer-number";
-    if (value < 0) return "negative-number";
-  }
   return typeof value;
 }
 
@@ -339,36 +326,20 @@ function firstInvalidAuditField(value: unknown): string | undefined {
   for (const severity of SEVERITIES) {
     const count = vulnerabilities[severity];
     if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0) {
-      return `metadata.vulnerabilities.${severity}:${valueShape(count)}`;
+      return `metadata.vulnerabilities.${severity}:${typeof count === "number" ? "invalid-number" : valueShape(count)}`;
     }
   }
   return undefined;
 }
 
-function transportCode(report: Record<string, unknown>, stderr: string): string | undefined {
+function hasRetryableTransportError(report: Record<string, unknown>, stderr: string): boolean {
   const error =
     typeof report.error === "object" && report.error !== null && !Array.isArray(report.error)
       ? (report.error as Record<string, unknown>)
       : {};
-  const evidence = [report.message, error.code, error.summary, error.detail, stderr]
+  return [report.message, error.code, error.summary, error.detail, stderr]
     .filter((value): value is string => typeof value === "string")
-    .join("\n");
-  return TRANSIENT_TRANSPORT_CODES.find((code) =>
-    new RegExp(`(?:^|[^A-Z0-9_])${code}(?:$|[^A-Z0-9_])`, "u").test(evidence),
-  );
-}
-
-function responseEvidence(
-  result: Readonly<{ status: number | null; stdout: string }>,
-  fields: readonly string[],
-): string {
-  const status = result.status === null ? "null" : String(result.status);
-  return [
-    `exit=${status}`,
-    `stdout-bytes=${Buffer.byteLength(result.stdout)}`,
-    `stdout-sha256=${sha256(result.stdout)}`,
-    ...fields,
-  ].join(" ");
+    .some((value) => /(?:^|[^A-Z0-9_])ECONNRESET(?:$|[^A-Z0-9_])/u.test(value));
 }
 
 function rejectedAuditResponse(
@@ -377,9 +348,16 @@ function rejectedAuditResponse(
   retryable: boolean,
   fields: readonly string[] = [],
 ): NpmAuditResponseClassification {
+  const status = result.status === null ? "null" : String(result.status);
   return {
     failure: {
-      diagnostic: responseEvidence(result, [`condition=${reason}`, ...fields]),
+      diagnostic: [
+        `exit=${status}`,
+        `stdout-bytes=${Buffer.byteLength(result.stdout)}`,
+        `stdout-sha256=${sha256(result.stdout)}`,
+        `condition=${reason}`,
+        ...fields,
+      ].join(" "),
       reason,
       retryable,
     },
@@ -392,13 +370,13 @@ export function classifyNpmAuditResponse(result: {
   stderr: string;
   stdout: string;
 }): NpmAuditResponseClassification {
-  if (!result.stdout.trim()) return rejectedAuditResponse(result, "empty-output", true);
+  if (!result.stdout.trim()) return rejectedAuditResponse(result, "empty-output", false);
 
   let value: unknown;
   try {
     value = JSON.parse(result.stdout);
   } catch {
-    return rejectedAuditResponse(result, "invalid-json", true);
+    return rejectedAuditResponse(result, "invalid-json", false);
   }
 
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
@@ -409,10 +387,10 @@ export function classifyNpmAuditResponse(result: {
   const report = value as Record<string, unknown>;
   const invalidField = firstInvalidAuditField(report);
   if (report.error !== undefined) {
-    const code = transportCode(report, result.stderr);
-    const reason = code ? "registry-network-error" : "npm-error-document";
-    return rejectedAuditResponse(result, reason, code !== undefined, [
-      ...(code ? [`transport=${code}`] : []),
+    const retryable = hasRetryableTransportError(report, result.stderr);
+    const reason = retryable ? "registry-network-error" : "npm-error-document";
+    return rejectedAuditResponse(result, reason, retryable, [
+      ...(retryable ? [`transport=${RETRYABLE_TRANSPORT_CODE}`] : []),
       ...(invalidField ? [`required-field=${invalidField}`] : []),
     ]);
   }

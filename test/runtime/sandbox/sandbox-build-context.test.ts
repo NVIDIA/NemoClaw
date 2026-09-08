@@ -291,7 +291,6 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "lib", "reviewed-npm-audit.mts"), "fixture\n", 0o700);
     writeFixture(path.join("scripts", "lib", "npm-audit-receipt.mts"), "fixture\n", 0o700);
     writeFixture(path.join("scripts", "lib", "openclaw-npm-remediation.mts"), "fixture\n", 0o700);
-    writeFixture(path.join("scripts", "lib", "verify-mcporter-audit.sh"), "fixture\n", 0o700);
     fs.chmodSync(path.join(sourceRoot, "scripts"), 0o700);
     fs.chmodSync(path.join(sourceRoot, "scripts", "lib"), 0o700);
   }
@@ -549,11 +548,6 @@ describe("sandbox build context staging", () => {
         fs.readFileSync(path.join(sourceRoot, "ci", fileName), "utf8"),
       );
       expect((fs.statSync(stagedFile).mode & 0o777).toString(8)).toBe("644");
-    }
-    for (const relativePath of [path.join("scripts", "lib", "verify-mcporter-audit.sh")]) {
-      expect(fs.readFileSync(path.join(buildCtx, relativePath), "utf8")).toBe(
-        fs.readFileSync(path.join(sourceRoot, relativePath), "utf8"),
-      );
     }
   }
 
