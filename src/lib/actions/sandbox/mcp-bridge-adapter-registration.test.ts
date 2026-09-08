@@ -88,7 +88,9 @@ const sandbox = { name: "alpha", agent: "hermes", gatewayName: "nemoclaw-8091" }
 const runtimeSelection = { gatewayName: "nemoclaw-8091", workspace: "default" };
 
 function resetOpenClawConfigMocks(): void {
-  mocks.readSandboxConfig.mockReset().mockReturnValue({});
+    mocks.readSandboxConfig.mockReset().mockReturnValue({
+      plugins: { allow: ["nemoclaw"] },
+    });
   mocks.resolveAgentConfig.mockReset().mockReturnValue({
     agentName: "openclaw",
     configPath: "/sandbox/.openclaw/openclaw.json",
@@ -299,6 +301,7 @@ describe("OpenClaw MCP adapter registration", () => {
             },
           },
         },
+        plugins: { allow: ["nemoclaw", "bundle-mcp"] },
       }),
     );
   });
@@ -311,6 +314,7 @@ describe("OpenClaw MCP adapter registration", () => {
     };
     mocks.readSandboxConfig.mockReturnValue({
       preserved: true,
+      plugins: { allow: ["nemoclaw", "bundle-mcp"] },
       mcp: {
         servers: {
           github: {
@@ -327,8 +331,26 @@ describe("OpenClaw MCP adapter registration", () => {
     expect(mocks.writeSandboxConfig).toHaveBeenCalledWith(
       "alpha",
       expect.objectContaining({ configPath: "/sandbox/.openclaw/openclaw.json" }),
-      { preserved: true, mcp: { servers: {} } },
+      {
+        preserved: true,
+        mcp: { servers: {} },
+        plugins: { allow: ["nemoclaw", "bundle-mcp"] },
+      },
     );
+  });
+
+  it("does not create a restrictive plugin allowlist when none exists", () => {
+    const entry: McpSourceEntry = {
+      ...baseEntry,
+      agent: "openclaw",
+      adapter: "openclaw-config",
+    };
+    mocks.readSandboxConfig.mockReturnValue({});
+    mocks.executeSandboxCommand.mockReturnValue(registered);
+
+    registerOpenClawAdapter("alpha", entry, runtimeSelection, {}, false, "v12");
+
+    expect(mocks.writeSandboxConfig.mock.calls[0]?.[2]).not.toHaveProperty("plugins");
   });
 });
 

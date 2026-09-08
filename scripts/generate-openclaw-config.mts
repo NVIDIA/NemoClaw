@@ -1436,6 +1436,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
   const plugins: JsonObject = {
     allow: unique([
       "nemoclaw",
+      "bundle-mcp",
       ...openclawPlugins.map((plugin) => plugin.id),
       ...(openclawOtel ? ["diagnostics-otel"] : []),
       ...(webSearchProvider ? [webSearchProvider] : []),

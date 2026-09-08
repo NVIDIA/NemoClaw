@@ -28,6 +28,7 @@ import { getAgentConfigDir } from "./mcp-bridge-state";
 import { executeSandboxCommand, restartSandboxGateway } from "./process-recovery";
 
 export const MCPORTER_VERSION = "0.7.3";
+const OPENCLAW_NATIVE_MCP_PLUGIN_ID = "bundle-mcp";
 export { OPENCLAW_MCP_CONFIG_DIR } from "./mcp-bridge-adapter-status";
 
 /** Resolve the OpenClaw agent configuration directory. */
@@ -192,6 +193,25 @@ export function registerOpenClawAdapter(
       ...(Object.keys(headers).length > 0 ? { headers } : {}),
     };
     current.mcp = { ...mcp, servers };
+    if (
+      current.plugins !== undefined &&
+      (!current.plugins || typeof current.plugins !== "object" || Array.isArray(current.plugins))
+    ) {
+      throw new Error("OpenClaw plugins configuration must be an object");
+    }
+    const plugins = current.plugins as ConfigObject | undefined;
+    if (plugins?.allow !== undefined) {
+      if (
+        !Array.isArray(plugins.allow) ||
+        !plugins.allow.every((plugin): plugin is string => typeof plugin === "string")
+      ) {
+        throw new Error("OpenClaw plugins.allow configuration must be a string array");
+      }
+      current.plugins = {
+        ...plugins,
+        allow: [...new Set([...plugins.allow, OPENCLAW_NATIVE_MCP_PLUGIN_ID])],
+      };
+    }
     writeSandboxConfig(sandboxName, target, current);
   } catch (error) {
     const output = redactBridgeSecretsForDisplay(
