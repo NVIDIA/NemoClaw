@@ -16,6 +16,7 @@ const dispatchPath = JSON.stringify(
 const loggerPath = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "cli", "logger.js"));
 const mainPath = JSON.stringify(path.join(REPO_ROOT, "dist", "nemoclaw.js"));
 const redactorPath = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "security", "redact.js"));
+const uninstallPath = path.join(REPO_ROOT, "uninstall.sh");
 
 function expectTopLevelError(rejection: string, expectedStderr: string): void {
   const result = spawnSync(
@@ -482,6 +483,63 @@ complete_automatic_gateway_port_selection`,
       expect(fs.existsSync(sentinel)).toBe(false);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("restores an automatic gateway port through the direct uninstall wrapper (#10824)", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-direct-uninstall-port-"));
+    try {
+      const packageRoot = path.join(tmp, "package");
+      const home = path.join(tmp, "home");
+      const capture = path.join(tmp, "uninstall-capture");
+      const marker = path.join(
+        home,
+        ".nemoclaw",
+        "gateways",
+        "8990",
+        "automatic-gateway-port",
+      );
+      fs.mkdirSync(path.join(packageRoot, "bin"), { recursive: true });
+      fs.mkdirSync(path.join(packageRoot, "scripts"), { recursive: true });
+      fs.mkdirSync(path.join(packageRoot, "dist"), { recursive: true });
+      fs.mkdirSync(path.dirname(marker), { recursive: true, mode: 0o700 });
+      fs.copyFileSync(uninstallPath, path.join(packageRoot, "uninstall.sh"));
+      fs.copyFileSync(path.join(REPO_ROOT, "bin", "nemoclaw.js"), path.join(packageRoot, "bin", "nemoclaw.js"));
+      fs.copyFileSync(path.join(REPO_ROOT, "scripts", "install.sh"), path.join(packageRoot, "scripts", "install.sh"));
+      fs.writeFileSync(marker, "8990\n", { mode: 0o600 });
+      fs.writeFileSync(
+        path.join(packageRoot, "dist", "nemoclaw.js"),
+        `const fs = require("node:fs");
+fs.writeFileSync(
+  process.env.UNINSTALL_CAPTURE,
+  [
+    process.env.NEMOCLAW_GATEWAY_PORT || "",
+    process.env._NEMOCLAW_AUTOMATIC_GATEWAY_PORT || "",
+    process.argv.slice(2).join(" "),
+  ].join(":"),
+);
+exports.mainPromise = Promise.resolve();
+`,
+      );
+      const cleanEnv = Object.fromEntries(
+        Object.entries(process.env).filter(([key]) => !key.startsWith("NEMOCLAW_")),
+      );
+
+      const result = spawnSync("bash", [path.join(packageRoot, "uninstall.sh"), "--yes"], {
+        encoding: "utf8",
+        env: {
+          ...cleanEnv,
+          HOME: home,
+          PATH: "/usr/bin:/bin",
+          NEMOCLAW_NODE: process.execPath,
+          UNINSTALL_CAPTURE: capture,
+        },
+      });
+
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+      expect(fs.readFileSync(capture, "utf8")).toBe("8990:1:internal uninstall run-plan --yes");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
 });

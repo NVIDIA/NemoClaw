@@ -65,6 +65,7 @@ function applyPersistedAutomaticGatewayPort() {
   const resolver = path.join(__dirname, "..", "scripts", "install.sh");
   const configuredPortNames = [
     "NEMOCLAW_DASHBOARD_PORT",
+    "NEMOCLAW_HERMES_DASHBOARD_PORT",
     "NEMOCLAW_VLLM_PORT",
     "NEMOCLAW_OLLAMA_PORT",
     "NEMOCLAW_OLLAMA_PROXY_PORT",

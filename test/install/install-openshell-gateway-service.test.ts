@@ -690,7 +690,7 @@ describe("install.sh OpenShell gateway service", () => {
     expect(result.stdout).not.toContain("Automatically selected");
   });
 
-  it("selects next available candidate port 8991 when 8990 is occupied (#10824)", () => {
+  it("selects port 8991 when the Hermes dashboard uses candidate port 8990 (#10824)", () => {
     const home = makeTempRoot();
     const fixture = writeQualifiedDefaultPortActivation(home);
     const systemctl = writeUnavailableUserManagerStub(home);
@@ -698,11 +698,13 @@ describe("install.sh OpenShell gateway service", () => {
     const result = runInstallHelper(
       home,
       qualifiedInstallBody(fixture, [
-        'candidate_gateway_port_is_available() { case "$1" in 8990) return 1 ;; *) return 0 ;; esac; }',
         "install_nemoclaw_openshell_gateway_user_service",
         'printf "SELECTED_PORT=%s\\n" "$NEMOCLAW_GATEWAY_PORT"',
       ]),
-      { PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}` },
+      {
+        NEMOCLAW_HERMES_DASHBOARD_PORT: "8990",
+        PATH: `${systemctl.bin}:${fixture.probeBin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}`,
+      },
     );
 
     expect(result.status).toBe(0);

@@ -256,6 +256,7 @@ resolve_nemoclaw_gateway_port() {
   esac
   local -a configured_names=(
     NEMOCLAW_DASHBOARD_PORT
+    NEMOCLAW_HERMES_DASHBOARD_PORT
     NEMOCLAW_VLLM_PORT
     NEMOCLAW_OLLAMA_PORT
     NEMOCLAW_OLLAMA_PROXY_PORT
@@ -265,6 +266,7 @@ resolve_nemoclaw_gateway_port() {
   )
   local -a configured_ports=(
     "${NEMOCLAW_DASHBOARD_PORT:-18789}"
+    "${NEMOCLAW_HERMES_DASHBOARD_PORT:-}"
     "${NEMOCLAW_VLLM_PORT:-8000}"
     "${NEMOCLAW_OLLAMA_PORT:-11434}"
     "${NEMOCLAW_OLLAMA_PROXY_PORT:-11435}"
