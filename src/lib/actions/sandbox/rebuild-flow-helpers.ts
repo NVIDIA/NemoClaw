@@ -55,6 +55,7 @@ import * as snapshotBackup from "./snapshot/backup-authority";
 
 export { removeStaleRebuildDockerOrphan };
 export { replaceOpenShellRuntimeSelectionEnv, snapshotOpenShellEnv };
+export { resolveSandboxGatewayName };
 
 export type RebuildSandboxEntry = SandboxEntry & { agents?: unknown[] };
 

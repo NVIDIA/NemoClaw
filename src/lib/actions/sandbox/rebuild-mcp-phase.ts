@@ -3,6 +3,7 @@
 
 import { CLI_NAME } from "../../cli/branding";
 import { G, R, YW } from "../../cli/terminal-style";
+import { OPENSHELL_DEFAULT_WORKSPACE } from "../../adapters/openshell/sandbox-ssh-host";
 import type { DcodeAutoApprovalMode } from "../../onboard/dcode-auto-approval";
 import { explicitObservabilityFlag } from "../../onboard/observability-command-flag";
 import type { ToolDisclosure } from "../../tool-disclosure";
@@ -13,9 +14,10 @@ import {
   restoreMcpBridgesAfterRebuild,
 } from "./mcp-bridge";
 import type { RebuildBail } from "./rebuild-credential-preflight";
-import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
+import { type RebuildSandboxEntry, resolveSandboxGatewayName } from "./rebuild-flow-helpers";
 import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider";
-import { inspectSourceBridgeState } from "./mcp-bridge-source";
+import { getMcpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider";
+import { inspectAgentMcpSources, joinMcpEntriesToOpenShell } from "./mcp-bridge-source";
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
 
 export type McpRebuildPreparation = Awaited<ReturnType<typeof prepareMcpBridgesForRebuild>>;
@@ -24,10 +26,23 @@ export function observeMcpStateForRebuild(
   sandbox: RebuildSandboxEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection | undefined,
   inspectCurrentSource: boolean,
-): McpSourceEntry[] {
-  if (!inspectCurrentSource || !runtimeSelection) return [];
-  const bridges = inspectSourceBridgeState(sandbox, runtimeSelection).bridges;
-  return Object.values(bridges);
+): {
+  entries: McpSourceEntry[];
+  runtimeSelection?: McpProviderInspectionRuntimeSelection;
+} {
+  if (!inspectCurrentSource) return { entries: [] };
+  const sourceRuntime = runtimeSelection ?? {
+    gatewayName: resolveSandboxGatewayName(sandbox),
+    workspace: OPENSHELL_DEFAULT_WORKSPACE,
+  };
+  const sources = inspectAgentMcpSources(sandbox, sourceRuntime);
+  if (Object.keys(sources.native).length === 0) return { entries: [] };
+  const selectedRuntime = runtimeSelection ?? getMcpProviderInspectionRuntimeSelection(sandbox);
+  const entries = Object.values(joinMcpEntriesToOpenShell(sandbox, sources.native, selectedRuntime));
+  return {
+    entries,
+    ...(entries.length > 0 ? { runtimeSelection: selectedRuntime } : {}),
+  };
 }
 
 export async function prepareMcpForRebuild(

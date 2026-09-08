@@ -545,7 +545,7 @@ describe("rebuildSandbox flow: recovery", () => {
       "alpha",
       [attached],
       undefined,
-      undefined,
+      { gatewayName: "nemoclaw", workspace: "default" },
     );
     expect(harness.onboardSpy).not.toHaveBeenCalled();
   });

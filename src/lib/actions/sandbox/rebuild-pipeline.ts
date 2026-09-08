@@ -253,16 +253,16 @@ async function rebuildSandboxUnlocked(
       ) {
         return bail("The retained rebuild MCP recovery handoff is invalid.");
       }
-      const mcpEntries =
-        retainedMcpHandoff?.entries ??
+      const observedMcp = retainedMcpHandoff ??
         observeMcpStateForRebuild(
           sandboxEntry,
           recreateOptions.runtimeSelection,
-          Boolean(activeRecoveryTransaction),
+          !activeRecoveryTransaction,
         );
+      const mcpEntries = observedMcp.entries;
       const mcpRuntimeSelectionRequired = mcpEntries.length > 0;
       const mcpRuntimeSelection = mcpRuntimeSelectionRequired
-        ? (retainedMcpHandoff?.runtimeSelection ?? recreateOptions.runtimeSelection)
+        ? (observedMcp.runtimeSelection ?? recreateOptions.runtimeSelection)
         : undefined;
       if (mcpRuntimeSelectionRequired && !mcpRuntimeSelection) {
         bail("MCP rebuild preflight did not retain its recorded OpenShell runtime target.");

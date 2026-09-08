@@ -10,6 +10,7 @@ const phaseMocks = vi.hoisted(() => ({
   findRecoveryBackup: vi.fn(),
   isRecoveryCleanupOnly: vi.fn(),
   markRecoveryCleanupOnly: vi.fn(),
+  observeMcpStateForRebuild: vi.fn(() => ({ entries: [] })),
   openRecreateJournal: vi.fn(),
   recoverCronRestore: vi.fn(),
   enforceRemovedImmutabilityMigrationBoundary: vi.fn(),
@@ -84,6 +85,11 @@ vi.mock("./rebuild-prepared-recovery", async (importOriginal) => ({
 }));
 vi.mock("./rebuild-restore-phase", () => ({
   runRebuildRestorePhase: phaseMocks.runRestore,
+}));
+
+vi.mock("./rebuild-mcp-phase", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./rebuild-mcp-phase")>()),
+  observeMcpStateForRebuild: phaseMocks.observeMcpStateForRebuild,
 }));
 
 vi.mock("./rebuild-post-restore-phase", async (importOriginal) => ({

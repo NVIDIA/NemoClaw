@@ -171,7 +171,11 @@ describe("Hermes rebuild post-restore verification", () => {
     expect(output).toContain("Hermes gateway health was not verified after state restore");
     expect(output).not.toContain("MCP bridge definitions were preserved but not fully refreshed");
     expect(output).not.toContain("rebuilt successfully");
-    expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry]);
+    expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith(
+      "alpha",
+      [mcpEntry],
+      { gatewayName: "nemoclaw", workspace: "default" },
+    );
   });
 
   it("restores MCP after gateway restart and before final health verification (#7084)", async () => {
@@ -199,7 +203,11 @@ describe("Hermes rebuild post-restore verification", () => {
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
     ).resolves.toBeUndefined();
 
-    expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry]);
+    expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith(
+      "alpha",
+      [mcpEntry],
+      { gatewayName: "nemoclaw", workspace: "default" },
+    );
     expect(harness.restartSandboxGatewaySpy.mock.invocationCallOrder[0]).toBeLessThan(
       harness.restoreMcpBridgesAfterRebuildSpy.mock.invocationCallOrder[0],
     );
