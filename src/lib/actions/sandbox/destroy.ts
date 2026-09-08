@@ -676,6 +676,16 @@ async function destroySandboxUnlocked(
   if (initialIdentity === false) {
     requestSandboxDestroyExit(1);
   }
+  if (
+    retainedRecoveryAuthority?.sandboxIdentityFingerprint === null &&
+    initialIdentity?.identities !== undefined &&
+    initialIdentity.identities.length > 0
+  ) {
+    console.error(
+      `  Refusing to destroy retained sandbox '${sandboxName}': the recovery record has no durable sandbox identity, so NemoClaw cannot qualify a residual container for deletion. No sandbox resources were removed. Preserve the recovery record and resolve the container identity conflict before retrying.`,
+    );
+    requestSandboxDestroyExit(1);
+  }
   const initialContainerIdentities = initialIdentity?.identities;
 
   let preparedManagedLlamaCppCleanup: ReturnType<

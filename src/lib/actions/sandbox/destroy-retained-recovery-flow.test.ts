@@ -394,6 +394,40 @@ describe("destroySandbox retained recovery flow", () => {
   );
 
   it(
+    "preserves a recovery record without identity when a residual container exists (#10863)",
+    { timeout: 30_000 },
+    async () => {
+      const recovery = retainedRecoveryRecordWithoutIdentity();
+      const containerId = "a".repeat(64);
+      const harness = createDestroyHarness({
+        sandboxPresent: false,
+        dockerRunResult: {
+          status: 0,
+          stdout: `${containerId}\topenshell\tdefault\tsb-alpha`,
+        },
+        registryEntryOverrides: {
+          lifecycleGeneration: recovery.lifecycleGeneration!,
+        },
+        retainedRecoveryRecords: [recovery],
+      });
+
+      await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow(
+        "process.exit(1)",
+      );
+
+      expect(harness.errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("has no durable sandbox identity"),
+      );
+      expect(harness.dockerRunSpy).not.toHaveBeenCalledWith(
+        ["rm", "-f", containerId],
+        expect.anything(),
+      );
+      expect(harness.resolveRetainedSandboxRecoverySpy).not.toHaveBeenCalled();
+      expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+    },
+  );
+
+  it(
     "finishes retained cleanup after OpenShell already removed the sandbox (#10547)",
     { timeout: 30_000 },
     async () => {

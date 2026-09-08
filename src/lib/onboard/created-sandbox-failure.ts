@@ -116,20 +116,16 @@ export type SandboxReadinessFailureReportDeps = {
 
 export type SandboxReadinessTerminalResolution =
   | "deferred_to_docker_gpu_patch"
-  | "terminal_failure_deleted"
   | "terminal_failure_retained"
-  | "timed_out_deleted"
   | "timed_out_retained";
 
-/** Map the readiness reason and cleanup outcome into the receipt terminal state. */
+/** Map the readiness reason into the retained receipt terminal state. */
 function readinessTerminalResolution(
   readiness: CreatedSandboxReadinessResult,
-  deleted: boolean,
 ): SandboxReadinessTerminalResolution {
-  if (readiness.reason === "terminal_failure_phase") {
-    return deleted ? "terminal_failure_deleted" : "terminal_failure_retained";
-  }
-  return deleted ? "timed_out_deleted" : "timed_out_retained";
+  return readiness.reason === "terminal_failure_phase"
+    ? "terminal_failure_retained"
+    : "timed_out_retained";
 }
 
 /** Name the readiness gate that blocked the created sandbox from becoming Ready. */
@@ -199,7 +195,7 @@ export function reportSandboxReadinessFailure(
       readiness: options.readiness,
       createStatus: options.createStatus,
       timeoutSecs: options.timeoutSecs,
-      terminalResolution: readinessTerminalResolution(options.readiness, false),
+      terminalResolution: readinessTerminalResolution(options.readiness),
     })) {
       deps.error(line);
     }
