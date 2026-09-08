@@ -1187,6 +1187,7 @@ fi
     expect(identity?.outputs).toEqual({ cohort: "${{ steps.identity.outputs.cohort }}" });
     expect(publisher.needs).toEqual(["publication-identity", "reviewed-npm-audit"]);
     expect(publisher.outputs).toBeUndefined();
+    expect(JSON.stringify(workflow)).not.toContain('rm -rf -- "$ANONYMOUS_CONFIG"');
     expect(publisher.steps?.map((candidate) => candidate.name)).not.toContain(
       "Export validated managed image candidate output",
     );

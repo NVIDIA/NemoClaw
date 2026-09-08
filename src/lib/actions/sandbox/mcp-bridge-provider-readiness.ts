@@ -169,7 +169,7 @@ export async function waitForAttachedMcpCredential(
   runtimeSelection: McpProviderInspectionRuntimeSelection,
   options: {
     previousRevision?: McpCredentialRevisionObservation;
-    refreshAfterObservedAbsence?: () => Promise<void>;
+    refreshAfterObservedAbsence?: () => void | Promise<void>;
   } = {},
 ): Promise<McpAttachedCredentialRevision> {
   assertAuthenticatedBridgeEntry(entry);

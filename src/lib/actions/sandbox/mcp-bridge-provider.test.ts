@@ -6,13 +6,7 @@ import { spawnSync } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as providerCommand from "../../adapters/openshell/provider-command";
 import type { McpBridgeEntry } from "../../state/registry";
-import {
-  buildMcpCredentialRevisionObservationCommand,
-  parseMcpProviderAttachmentNames,
-  parseMcpProviderMetadata,
-  providerDetachChangedState,
-} from "./mcp-bridge";
-import { commandOutput } from "./mcp-bridge-output";
+import { buildMcpCredentialRevisionObservationCommand } from "./mcp-bridge";
 import {
   assertNoAttachedProviderCredentialCollisions,
   assertNoRegisteredProviderCredentialCollisions,
@@ -41,60 +35,28 @@ const runtimeSelection = {
   workspace: "default",
 } as const;
 
+function providerMetadataOutput(
+  name: string,
+  type: string,
+  id: string,
+  resourceVersion: number,
+  credentialKey: string,
+): string {
+  return [
+    `Name: ${name}`,
+    `Id: ${id}`,
+    `Type: ${type}`,
+    `Resource version: ${resourceVersion}`,
+    `Credential keys: ${credentialKey}`,
+    "Config keys: <none>",
+  ].join("\n");
+}
+
 describe("OpenShell MCP provider state", () => {
   afterEach(() => {
     providerCommand.setProviderCommandRuntimeHooksForTest({});
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
-  });
-
-  it("parses provider type and credential keys without values", () => {
-    expect(
-      parseMcpProviderMetadata(`
-Provider:
-
-  Id: 11111111-2222-4333-8444-555555555555
-  Name: alpha-mcp-github
-  Type: nemoclaw-mcp-v1
-  Resource version: 7
-  Credential keys: GITHUB_TOKEN
-  Config keys: <none>
-`),
-    ).toEqual({
-      id: "11111111-2222-4333-8444-555555555555",
-      resourceVersion: 7,
-      type: "nemoclaw-mcp-v1",
-      credentialKeys: ["GITHUB_TOKEN"],
-    });
-    expect(parseMcpProviderMetadata("Type: nemoclaw-mcp-v1\nCredential keys: <none>\n")).toEqual({
-      id: null,
-      resourceVersion: null,
-      type: "nemoclaw-mcp-v1",
-      credentialKeys: [],
-    });
-  });
-
-  it("parses ANSI-decorated OpenShell provider metadata after redaction", () => {
-    const output = commandOutput({
-      status: 0,
-      stdout: [
-        "\u001b[2mProvider:\u001b[0m",
-        "\u001b[2m  Id:\u001b[0m 11111111-2222-4333-8444-555555555555",
-        "\u001b[2m  Type:\u001b[0m nemoclaw-mcp-v1",
-        "\u001b[2m  Resource version:\u001b[0m 7",
-        "\u001b[2m  Credential keys:\u001b[0m GITHUB_TOKEN",
-      ].join("\n"),
-      stderr: "",
-    });
-
-    expect(parseMcpProviderMetadata(output)).toEqual({
-      id: "11111111-2222-4333-8444-555555555555",
-      resourceVersion: 7,
-      type: "nemoclaw-mcp-v1",
-      credentialKeys: ["GITHUB_TOKEN"],
-    });
-    expect(output).not.toContain("\u001b");
-    expect(output).not.toMatch(/\[[0-9;]*m/);
   });
 
   it("accepts an exact legacy generic provider only for cleanup", () => {
@@ -119,18 +81,29 @@ Provider:
     ).toBe(true);
   });
 
-  it("rejects a legacy generic provider before active MCP reconciliation", () => {
+  it("rejects a legacy generic provider before active MCP reconciliation", async () => {
     vi.spyOn(providerCommand, "runOpenshellProviderCommand").mockReturnValue({
       pid: 1234,
       status: 0,
       signal: null,
       output: [
         null,
-        "Id: 11111111-2222-4333-8444-555555555555\nType: generic\nResource version: 7\nCredential keys: GITHUB_TOKEN\n",
+        providerMetadataOutput(
+          "alpha-mcp-github",
+          "generic",
+          "11111111-2222-4333-8444-555555555555",
+          7,
+          "GITHUB_TOKEN",
+        ),
         "",
       ],
-      stdout:
-        "Id: 11111111-2222-4333-8444-555555555555\nType: generic\nResource version: 7\nCredential keys: GITHUB_TOKEN\n",
+      stdout: providerMetadataOutput(
+        "alpha-mcp-github",
+        "generic",
+        "11111111-2222-4333-8444-555555555555",
+        7,
+        "GITHUB_TOKEN",
+      ),
       stderr: "",
     });
     const entry: McpBridgeEntry = {
@@ -145,12 +118,12 @@ Provider:
       addedAt: "2026-08-19T00:00:00.000Z",
     };
 
-    expect(() => assertMcpProviderRecoverable(entry, runtimeSelection)).toThrow(
+    await expect(assertMcpProviderRecoverable(entry, runtimeSelection)).rejects.toThrow(
       /legacy generic profile.*cannot bind to an MCP endpoint/,
     );
   });
 
-  it("republishes an exact provider only after policy binding without reading its credential", () => {
+  it("republishes an exact provider only after policy binding without reading its credential", async () => {
     const id = "11111111-2222-4333-8444-555555555555";
     const providerResult = (resourceVersion: number) => ({
       pid: 1234,
@@ -158,10 +131,22 @@ Provider:
       signal: null,
       output: [
         null,
-        `Id: ${id}\nType: nemoclaw-mcp-v1\nResource version: ${resourceVersion}\nCredential keys: GITHUB_TOKEN\n`,
+        providerMetadataOutput(
+          "alpha-mcp-github",
+          "nemoclaw-mcp-v1",
+          id,
+          resourceVersion,
+          "GITHUB_TOKEN",
+        ),
         "",
       ],
-      stdout: `Id: ${id}\nType: nemoclaw-mcp-v1\nResource version: ${resourceVersion}\nCredential keys: GITHUB_TOKEN\n`,
+      stdout: providerMetadataOutput(
+        "alpha-mcp-github",
+        "nemoclaw-mcp-v1",
+        id,
+        resourceVersion,
+        "GITHUB_TOKEN",
+      ),
       stderr: "",
     });
     const run = vi
@@ -177,7 +162,7 @@ Provider:
       })
       .mockReturnValueOnce(providerResult(8));
 
-    expect(
+    await expect(
       refreshMcpProviderEnvironment(
         {
           server: "github",
@@ -195,7 +180,7 @@ Provider:
           workspace: "default",
         },
       ),
-    ).toMatchObject({ resourceVersion: 8 });
+    ).resolves.toMatchObject({ resourceVersion: 8 });
     expect(run.mock.calls[1]?.[0]).toEqual(["provider", "update", "alpha-mcp-github"]);
     expect(run.mock.calls[1]?.[0]).not.toContain("--credential");
   });
@@ -214,12 +199,13 @@ Provider:
     let providerAttached = false;
     let resourceVersion = 0;
     const providerOutput = () =>
-      [
-        `Id: ${providerId}`,
-        `Type: ${MCP_BRIDGE_PROVIDER_TYPE}`,
-        `Resource version: ${resourceVersion}`,
-        "Credential keys: EXPECTED_TOKEN",
-      ].join("\n");
+      providerMetadataOutput(
+        "alpha-mcp-fake",
+        MCP_BRIDGE_PROVIDER_TYPE,
+        providerId,
+        resourceVersion,
+        "EXPECTED_TOKEN",
+      );
     const profileOutput = (id: string, inferenceCapable: boolean) =>
       JSON.stringify({
         id,
@@ -301,7 +287,7 @@ Provider:
     });
     providerCommand.setProviderCommandRuntimeHooksForTest({ runOpenshell: runOpenshell as never });
 
-    ensureMcpBridgeProviderProfile(runtimeSelection);
+    await ensureMcpBridgeProviderProfile(runtimeSelection);
     const created = await upsertMcpProvider("alpha-mcp-fake", [{ name: "EXPECTED_TOKEN" }], {
       allowExisting: false,
       runtimeSelection,
@@ -317,11 +303,13 @@ Provider:
       policyName: "mcp-bridge-fake",
       addedAt: "2026-06-01T00:00:00.000Z",
     };
-    attachProvider("alpha", entry, runtimeSelection);
-    refreshMcpProviderEnvironment(entry, runtimeSelection);
-    expect(detachProvider("alpha", entry, { runtimeSelection })).toBe("detached");
-    deleteProvider(entry, { runtimeSelection });
-    expect(detachMissingProviderReference("alpha", entry, runtimeSelection)).toBe("absent");
+    await attachProvider("alpha", entry, runtimeSelection);
+    await refreshMcpProviderEnvironment(entry, runtimeSelection);
+    await expect(detachProvider("alpha", entry, { runtimeSelection })).resolves.toBe("detached");
+    await deleteProvider(entry, { runtimeSelection });
+    await expect(detachMissingProviderReference("alpha", entry, runtimeSelection)).resolves.toBe(
+      "absent",
+    );
 
     expect(commandFamilies).toEqual(
       new Set(["profile", "get", "create", "attach", "list", "update", "detach", "delete"]),
@@ -334,7 +322,7 @@ Provider:
     'status: NotFound, message: "gateway nemoclaw-8091 not found"',
   ])(
     "rejects ambiguous provider-delete output %s while cleanup is retryable (#10514)",
-    (diagnostic) => {
+    async (diagnostic) => {
       const id = "11111111-2222-4333-8444-555555555555";
       const runtimeSelection = { gatewayName: "nemoclaw-8091", workspace: "default" };
       const run = vi
@@ -345,10 +333,16 @@ Provider:
           signal: null,
           output: [
             null,
-            `Id: ${id}\nType: nemoclaw-mcp-v1\nResource version: 7\nCredential keys: GITHUB_TOKEN\n`,
+            providerMetadataOutput("alpha-mcp-github", "nemoclaw-mcp-v1", id, 7, "GITHUB_TOKEN"),
             "",
           ],
-          stdout: `Id: ${id}\nType: nemoclaw-mcp-v1\nResource version: 7\nCredential keys: GITHUB_TOKEN\n`,
+          stdout: providerMetadataOutput(
+            "alpha-mcp-github",
+            "nemoclaw-mcp-v1",
+            id,
+            7,
+            "GITHUB_TOKEN",
+          ),
           stderr: "",
         })
         .mockReturnValueOnce({
@@ -371,14 +365,14 @@ Provider:
         addedAt: "2026-08-19T00:00:00.000Z",
       };
 
-      expect(() => deleteProvider(entry, { allowMissing: true, runtimeSelection })).toThrow(
+      await expect(deleteProvider(entry, { allowMissing: true, runtimeSelection })).rejects.toThrow(
         diagnostic,
       );
       expect(run).toHaveBeenCalledTimes(2);
     },
   );
 
-  it("accepts an exact provider-delete absence while cleanup is retryable (#10514)", () => {
+  it("accepts an exact provider-delete absence while cleanup is retryable (#10514)", async () => {
     const id = "11111111-2222-4333-8444-555555555555";
     const runtimeSelection = { gatewayName: "nemoclaw-8091", workspace: "default" };
     const run = vi
@@ -389,10 +383,16 @@ Provider:
         signal: null,
         output: [
           null,
-          `Id: ${id}\nType: nemoclaw-mcp-v1\nResource version: 7\nCredential keys: GITHUB_TOKEN\n`,
+          providerMetadataOutput("alpha-mcp-github", "nemoclaw-mcp-v1", id, 7, "GITHUB_TOKEN"),
           "",
         ],
-        stdout: `Id: ${id}\nType: nemoclaw-mcp-v1\nResource version: 7\nCredential keys: GITHUB_TOKEN\n`,
+        stdout: providerMetadataOutput(
+          "alpha-mcp-github",
+          "nemoclaw-mcp-v1",
+          id,
+          7,
+          "GITHUB_TOKEN",
+        ),
         stderr: "",
       })
       .mockReturnValueOnce({
@@ -415,36 +415,13 @@ Provider:
       addedAt: "2026-08-19T00:00:00.000Z",
     };
 
-    expect(() => deleteProvider(entry, { allowMissing: true, runtimeSelection })).not.toThrow();
+    await expect(
+      deleteProvider(entry, { allowMissing: true, runtimeSelection }),
+    ).resolves.toBeUndefined();
     expect(run).toHaveBeenCalledTimes(2);
   });
 
-  it("distinguishes a real detach from OpenShell's idempotent success", () => {
-    expect(
-      providerDetachChangedState(0, "✓ Detached provider alpha-mcp-github from sandbox alpha"),
-    ).toBe(true);
-    expect(
-      providerDetachChangedState(0, "Provider alpha-mcp-github was not attached to sandbox alpha."),
-    ).toBe(false);
-  });
-
-  it("parses the stock OpenShell sandbox provider table", () => {
-    expect(
-      parseMcpProviderAttachmentNames(`
-NAME              TYPE     CREDENTIAL_KEYS   CONFIG_KEYS
-alpha-mcp-github  generic  1                 0
-alpha-mcp-slack   generic  1                 0
-`),
-    ).toEqual(["alpha-mcp-github", "alpha-mcp-slack"]);
-    expect(parseMcpProviderAttachmentNames("No providers attached to sandbox alpha.\n")).toEqual(
-      [],
-    );
-    expect(() => parseMcpProviderAttachmentNames("unexpected output\n")).toThrow(
-      /attachment table header/,
-    );
-  });
-
-  it("rejects a multi-key bridge before provider collision inspection", () => {
+  it("rejects a multi-key bridge before provider collision inspection", async () => {
     const providerCommandRun = vi.spyOn(providerCommand, "runOpenshellProviderCommand");
     const entry: McpBridgeEntry = {
       server: "example",
@@ -458,18 +435,18 @@ alpha-mcp-slack   generic  1                 0
       addedAt: "2026-06-01T00:00:00.000Z",
     };
 
-    expect(() =>
+    await expect(
       assertNoAttachedProviderCredentialCollisions("alpha", [entry], runtimeSelection),
-    ).toThrow("MCP server 'example' has no complete authenticated credential binding");
-    expect(() =>
+    ).rejects.toThrow("MCP server 'example' has no complete authenticated credential binding");
+    await expect(
       assertNoRegisteredProviderCredentialCollisions([entry], {
         listExtraProviders: () => ["foreign-registered"],
       }),
-    ).toThrow("MCP server 'example' has no complete authenticated credential binding");
+    ).rejects.toThrow("MCP server 'example' has no complete authenticated credential binding");
     expect(providerCommandRun).not.toHaveBeenCalled();
   });
 
-  it("rejects a registered provider that will collide on the next rebuild (#9388)", () => {
+  it("rejects a registered provider that will collide on the next rebuild (#9388)", async () => {
     const entry: McpBridgeEntry = {
       server: "test-dir1",
       agent: "hermes",
@@ -481,10 +458,10 @@ alpha-mcp-slack   generic  1                 0
       addedAt: "2026-08-18T00:00:00.000Z",
     };
 
-    expect(() =>
+    await expect(
       assertNoRegisteredProviderCredentialCollisions([entry], {
         listExtraProviders: () => ["test-dir1"],
-        inspectProvider: () => ({
+        inspectProvider: async () => ({
           exists: true,
           id: "99999999-8888-4777-8666-555555555555",
           resourceVersion: 1,
@@ -492,12 +469,12 @@ alpha-mcp-slack   generic  1                 0
           credentialKeys: ["TEST_DIR1_TOKEN"],
         }),
       }),
-    ).toThrow(
+    ).rejects.toThrow(
       "Credential key 'TEST_DIR1_TOKEN' is already supplied by registered provider 'test-dir1'",
     );
   });
 
-  it("pins attachment collision inspection to the recorded runtime target (#10514)", () => {
+  it("pins attachment collision inspection to the recorded runtime target (#10514)", async () => {
     const runtimeSelection = { gatewayName: "nemoclaw-9090", workspace: "default" };
     const run = vi
       .spyOn(providerCommand, "runOpenshellProviderCommand")
@@ -519,11 +496,22 @@ alpha-mcp-slack   generic  1                 0
         signal: null,
         output: [
           null,
-          "Id: 99999999-8888-4777-8666-555555555555\nType: nemoclaw-mcp-v1\nResource version: 1\nCredential keys: GITHUB_TOKEN\n",
+          providerMetadataOutput(
+            "foreign-provider",
+            "nemoclaw-mcp-v1",
+            "99999999-8888-4777-8666-555555555555",
+            1,
+            "GITHUB_TOKEN",
+          ),
           "",
         ],
-        stdout:
-          "Id: 99999999-8888-4777-8666-555555555555\nType: nemoclaw-mcp-v1\nResource version: 1\nCredential keys: GITHUB_TOKEN\n",
+        stdout: providerMetadataOutput(
+          "foreign-provider",
+          "nemoclaw-mcp-v1",
+          "99999999-8888-4777-8666-555555555555",
+          1,
+          "GITHUB_TOKEN",
+        ),
         stderr: "",
       });
     const entry: McpBridgeEntry = {
@@ -538,9 +526,9 @@ alpha-mcp-slack   generic  1                 0
       addedAt: "2026-08-19T00:00:00.000Z",
     };
 
-    expect(() =>
+    await expect(
       assertNoAttachedProviderCredentialCollisions("alpha", [entry], runtimeSelection),
-    ).toThrow("Credential key 'GITHUB_TOKEN' is already supplied by attached provider");
+    ).rejects.toThrow("Credential key 'GITHUB_TOKEN' is already supplied by attached provider");
     expect(run).toHaveBeenCalledTimes(2);
     expect(
       run.mock.calls.every(
@@ -551,7 +539,7 @@ alpha-mcp-slack   generic  1                 0
     ).toBe(true);
   });
 
-  it("pins registered collision inspection to the recorded runtime target (#10514)", () => {
+  it("pins registered collision inspection to the recorded runtime target (#10514)", async () => {
     const runtimeSelection = { gatewayName: "nemoclaw-9090", workspace: "default" };
     const run = vi.spyOn(providerCommand, "runOpenshellProviderCommand").mockReturnValue({
       pid: 1234,
@@ -559,11 +547,22 @@ alpha-mcp-slack   generic  1                 0
       signal: null,
       output: [
         null,
-        "Id: 99999999-8888-4777-8666-555555555555\nType: nemoclaw-mcp-v1\nResource version: 1\nCredential keys: GITHUB_TOKEN\n",
+        providerMetadataOutput(
+          "foreign-provider",
+          "nemoclaw-mcp-v1",
+          "99999999-8888-4777-8666-555555555555",
+          1,
+          "GITHUB_TOKEN",
+        ),
         "",
       ],
-      stdout:
-        "Id: 99999999-8888-4777-8666-555555555555\nType: nemoclaw-mcp-v1\nResource version: 1\nCredential keys: GITHUB_TOKEN\n",
+      stdout: providerMetadataOutput(
+        "foreign-provider",
+        "nemoclaw-mcp-v1",
+        "99999999-8888-4777-8666-555555555555",
+        1,
+        "GITHUB_TOKEN",
+      ),
       stderr: "",
     });
     const entry: McpBridgeEntry = {
@@ -578,12 +577,12 @@ alpha-mcp-slack   generic  1                 0
       addedAt: "2026-08-19T00:00:00.000Z",
     };
 
-    expect(() =>
+    await expect(
       assertNoRegisteredProviderCredentialCollisions([entry], {
         listExtraProviders: () => ["foreign-provider"],
         runtimeSelection,
       }),
-    ).toThrow("Credential key 'GITHUB_TOKEN' is already supplied by registered provider");
+    ).rejects.toThrow("Credential key 'GITHUB_TOKEN' is already supplied by registered provider");
     expect(run).toHaveBeenCalledWith(
       ["provider", "get", "foreign-provider"],
       expect.objectContaining({ runtimeSelection }),

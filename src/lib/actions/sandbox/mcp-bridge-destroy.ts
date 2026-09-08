@@ -97,7 +97,7 @@ export async function prepareMcpBridgesForDestroy(
   // retry, a provider may therefore already be absent due to partial cleanup;
   // the retained entries are the durable, idempotent cleanup manifest.
   for (const entry of entries) {
-    inspectExactMcpDestroyProvider(entry, {
+    await inspectExactMcpDestroyProvider(entry, {
       allowMissing: destroyAlreadyPending,
       runtimeSelection: providerRuntimeSelection,
     });
@@ -148,11 +148,11 @@ export async function prepareMcpBridgesForDestroy(
       removedPolicies.push(entry);
     }
     for (const entry of entries) {
-      inspectExactMcpDestroyProvider(entry, {
+      await inspectExactMcpDestroyProvider(entry, {
         allowMissing: false,
         runtimeSelection: providerRuntimeSelection,
       });
-      const detachOutcome = detachProvider(sandboxName, entry, {
+      const detachOutcome = await detachProvider(sandboxName, entry, {
         allowLegacyGeneric: true,
         runtimeSelection: providerRuntimeSelection,
       });
@@ -280,11 +280,12 @@ export async function restoreMcpBridgesAfterDestroyAbort(
   try {
     // Reattach only the exact existing providers. This restoration path never
     // reads host secret values and therefore cannot rotate preserved credentials.
-    for (const entry of preparation.entries)
-      inspectExactMcpDestroyProvider(entry, {
+    for (const entry of preparation.entries) {
+      await inspectExactMcpDestroyProvider(entry, {
         allowMissing: false,
         runtimeSelection: providerRuntimeSelection,
       });
+    }
     await restoreExistingMcpBridgeRuntime(sandboxName, preparation.entries, {
       lifecyclePhase: "teardown-rollback",
       runtimeSelection: providerRuntimeSelection,
@@ -357,27 +358,29 @@ export async function finalizeMcpBridgesAfterSandboxDelete(
   // Inspect every provider before deleting any so ownership drift cannot
   // produce a predictable partial cleanup. Missing is safe only now that the
   // durable pending marker proves the sandbox was already deleted.
-  const inspections = entries.map((entry) =>
-    inspectExactMcpDestroyProvider(entry, {
-      allowMissing: true,
-      force: options.force,
-      runtimeSelection: providerRuntimeSelection,
-    }),
+  const inspections = await Promise.all(
+    entries.map((entry) =>
+      inspectExactMcpDestroyProvider(entry, {
+        allowMissing: true,
+        force: options.force,
+        runtimeSelection: providerRuntimeSelection,
+      }),
+    ),
   );
   for (const [index, entry] of entries.entries()) {
     if (!inspections[index]?.exists) continue;
-    const beforeDelete = inspectExactMcpDestroyProvider(entry, {
+    const beforeDelete = await inspectExactMcpDestroyProvider(entry, {
       allowMissing: true,
       force: options.force,
       runtimeSelection: providerRuntimeSelection,
     });
     if (!beforeDelete.exists) continue;
-    deleteProvider(entry, {
+    await deleteProvider(entry, {
       allowLegacyGeneric: true,
       allowMissing: true,
       runtimeSelection: providerRuntimeSelection,
     });
-    const after = inspectMcpProvider(entry.providerName, providerRuntimeSelection);
+    const after = await inspectMcpProvider(entry.providerName, providerRuntimeSelection);
     if (after.exists !== false) {
       throw new McpBridgeError(
         after.error ??

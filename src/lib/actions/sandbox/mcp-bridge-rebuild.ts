@@ -221,8 +221,8 @@ export async function prepareMcpBridgesForAbsentSandboxRebuild(
   for (const entry of entries) {
     assertGeneratedPolicyRegistrationMutationSafe(sandboxName, entry);
   }
-  for (const entry of entries) assertMcpProviderRecoverable(entry, providerRuntimeSelection);
-  assertNoRegisteredProviderCredentialCollisions(entries, {
+  for (const entry of entries) await assertMcpProviderRecoverable(entry, providerRuntimeSelection);
+  await assertNoRegisteredProviderCredentialCollisions(entries, {
     runtimeSelection: providerRuntimeSelection,
   });
   return {
@@ -261,8 +261,8 @@ export async function prepareMcpBridgesForRebuild(
     entries,
     providerRuntimeSelection,
   );
-  for (const entry of entries) assertMcpProviderRecoverable(entry, providerRuntimeSelection);
-  assertNoProviderCredentialCollisions(sandboxName, entries, providerRuntimeSelection);
+  for (const entry of entries) await assertMcpProviderRecoverable(entry, providerRuntimeSelection);
+  await assertNoProviderCredentialCollisions(sandboxName, entries, providerRuntimeSelection);
   // This is the bounded replacement handoff, not a durable NemoClaw policy
   // record. Capture OpenShell immediately before the internal teardown
   // mutations so the replacement receives the complete operator-owned
@@ -309,11 +309,11 @@ export async function prepareMcpBridgesForRebuild(
     for (const entry of entries) {
       // Keep the provider and its host-only credentials for the replacement
       // sandbox, but detach it before OpenShell deletes the old attachment.
-      inspectExactMcpDestroyProvider(entry, {
+      await inspectExactMcpDestroyProvider(entry, {
         allowMissing: false,
         runtimeSelection: providerRuntimeSelection,
       });
-      const detachOutcome = detachProvider(sandboxName, entry, {
+      const detachOutcome = await detachProvider(sandboxName, entry, {
         runtimeSelection: providerRuntimeSelection,
       });
       if (detachOutcome === "unknown") {

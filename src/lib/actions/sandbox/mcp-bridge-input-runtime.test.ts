@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import { createCliOpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter-cli";
+import { selectedOpenShellGateway } from "../../adapters/openshell/sandbox-observer";
 import * as portableAgentLifecycle from "../../onboard/experimental/portable-agent-lifecycle";
 
 import {
   addMcpBridge,
-  buildMcpBridgeProviderArgs,
   dispatchMcpBridgeCommand,
   redactCredentialValuesForDisplay,
   removeMcpBridge,
@@ -33,9 +34,7 @@ describe("MCP input runtime boundaries", () => {
         env: [{ name: "TOKEN" }],
       }),
     ).rejects.toThrow("schema-5 rejected");
-    await expect(removeMcpBridge("missing-sandbox", "github")).rejects.toThrow(
-      "schema-5 rejected",
-    );
+    await expect(removeMcpBridge("missing-sandbox", "github")).rejects.toThrow("schema-5 rejected");
     await expect(restartMcpBridge("missing-sandbox", "github")).rejects.toThrow(
       "schema-5 rejected",
     );
@@ -91,14 +90,20 @@ describe("MCP input runtime boundaries", () => {
     expect(output).not.toContain("inline-secret-value");
   });
 
-  it("passes MCP provider credentials by environment name, not argv value", () => {
-    const args = buildMcpBridgeProviderArgs(
-      "create",
-      "alpha-mcp-github",
-      [{ name: "TOKEN", value: "inline-secret-value" }],
-      { TOKEN: "inline-secret-value" },
-    );
+  it("passes MCP provider credentials by environment name, not argv value", async () => {
+    const run = vi.fn((_args: string[]) => ({ status: 0, stdout: "", stderr: "" }));
+    const adapter = createCliOpenShellProviderAdapter({ run });
 
+    await adapter.createProvider({
+      name: "alpha-mcp-github",
+      type: "nemoclaw-mcp-v1",
+      credentials: [{ name: "TOKEN", value: "inline-secret-value" }],
+      config: [],
+      fromExisting: false,
+      target: selectedOpenShellGateway(),
+    });
+
+    const args = run.mock.calls[0]?.[0] ?? [];
     expect(args).toEqual([
       "provider",
       "create",
