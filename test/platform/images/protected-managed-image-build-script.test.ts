@@ -644,6 +644,32 @@ describe("protected managed-image build-cache boundary", () => {
     },
   );
 
+  it("rejects a changed imported audit receipt before invoking Docker (#11088)", () => {
+    const cacheRoot = path.join(testRoot, "imported-cache");
+    completeImportedCache(cacheRoot);
+    stubBuildInvocation();
+    writeExecutable(
+      "sha256sum",
+      `#!/usr/bin/env bash
+if [[ "$(<"$1")" == '{"result":"pass"}' ]]; then
+  printf '%s  %s\\n' '${DIGEST}' "$1"
+else
+  printf '%s  %s\\n' '${"c".repeat(64)}' "$1"
+fi
+`,
+    );
+    writeFileSync(
+      path.join(cacheRoot, "reviewed-npm-audit", "mcporter-runtime.receipt.json"),
+      '{"result":"changed"}\n',
+    );
+
+    const result = runBuild(REPO_ROOT, ["--cache-from", cacheRoot]);
+
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain("reviewed audit receipt hash does not match");
+    expect(existsSync(dockerLog)).toBe(false);
+  });
+
   it("imports locked seeds, reuses safe agent caches, and disables RUN network access", () => {
     const cacheRoot = path.join(testRoot, "imported-cache");
     const sourceSeed = path.join(REPO_ROOT, "tools/mcp-tool-discovery-runtime/npm-cache-seed");
