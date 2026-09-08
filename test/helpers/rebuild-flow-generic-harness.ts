@@ -87,7 +87,6 @@ function expectPolicyCaptureOptions() {
 
 export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): RebuildFlowHarness {
   purgeRebuildModule();
-  mcpBridge.resetMcpBridgeTransientStateForTest();
 
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);

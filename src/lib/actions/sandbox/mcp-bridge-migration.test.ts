@@ -16,13 +16,19 @@ const entry = {
 };
 
 const mocks = vi.hoisted(() => ({
-  applyPolicy: vi.fn(),
+  assertProviderRecoverable: vi.fn(),
   getSandbox: vi.fn(),
+  getPolicyPresence: vi.fn(() => true),
+  getPolicyState: vi.fn(() => "match"),
+  getAgent: vi.fn(),
+  getAdapter: vi.fn(),
   updateSandbox: vi.fn(),
   inspectLegacy: vi.fn(),
   inspectSources: vi.fn(),
+  joinEntries: vi.fn((_sandbox: unknown, entries: unknown) => entries),
   removeLegacy: vi.fn(),
   register: vi.fn(),
+  reloadOpenClaw: vi.fn(),
   unregister: vi.fn(),
   selectGateway: vi.fn(),
   preflightTargets: vi.fn().mockResolvedValue(new Map([["github", { addresses: ["8.8.8.8"] }]])),
@@ -41,35 +47,35 @@ vi.mock("../../state/config-io", () => ({
 }));
 vi.mock("./mcp-bridge-adapters", () => ({
   registerAgentAdapter: mocks.register,
+  reloadOpenClawGatewayAfterMcpMutation: mocks.reloadOpenClaw,
   unregisterAgentAdapter: mocks.unregister,
 }));
 vi.mock("./mcp-bridge-provider", () => ({
+  assertMcpProviderRecoverable: mocks.assertProviderRecoverable,
   getMcpProviderInspectionRuntimeSelection: () => ({
     gatewayName: "nemoclaw",
     workspace: "default",
   }),
-  providerAttached: () => false,
+  providerAttached: () => true,
   preflightMcpEntryTargets: mocks.preflightTargets,
 }));
 vi.mock("./mcp-bridge-source", () => ({
   inspectLegacyBridgeState: mocks.inspectLegacy,
   inspectAgentMcpSources: mocks.inspectSources,
   removeLegacyAgentMcpEntry: mocks.removeLegacy,
-  joinMcpEntriesToOpenShell: (_sandbox: unknown, entries: unknown) => entries,
+  joinMcpEntriesToOpenShell: mocks.joinEntries,
 }));
 vi.mock("./mcp-bridge-policy", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./mcp-bridge-policy")>()),
-  applyGeneratedPolicy: mocks.applyPolicy,
-  getPolicyPresence: () => false,
+  getPolicyPresence: mocks.getPolicyPresence,
+}));
+vi.mock("../../policy", () => ({
+  getPresetContentGatewayState: mocks.getPolicyState,
 }));
 vi.mock("./mcp-bridge-state", () => ({
   ensureSandboxGatewaySelected: mocks.selectGateway,
-  getSandboxAgent: () => ({
-    name: "openclaw",
-    displayName: "OpenClaw",
-    mcpCapability: { support: "bridge", adapter: "openclaw-config" },
-  }),
-  getBridgeAdapter: () => "openclaw-config",
+  getSandboxAgent: mocks.getAgent,
+  getBridgeAdapter: mocks.getAdapter,
 }));
 
 import { migrateMcpBridges } from "./mcp-bridge-migration";
@@ -78,8 +84,17 @@ describe("explicit MCP migration", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.getSandbox.mockReturnValue({ name: "alpha", agent: "openclaw" });
+    mocks.getAgent.mockReturnValue({
+      name: "openclaw",
+      displayName: "OpenClaw",
+      mcpCapability: { support: "bridge", adapter: "openclaw-config" },
+    });
+    mocks.getAdapter.mockReturnValue("openclaw-config");
     mocks.updateSandbox.mockReturnValue(true);
     mocks.readConfig.mockReturnValue({});
+    mocks.getPolicyPresence.mockReturnValue(true);
+    mocks.getPolicyState.mockReturnValue("match");
+    mocks.joinEntries.mockImplementation((_sandbox: unknown, entries: unknown) => entries);
     mocks.inspectLegacy.mockReturnValue({
       bridges: { github: entry },
       sources: { native: {}, legacy: { github: entry } },
@@ -119,8 +134,107 @@ describe("explicit MCP migration", () => {
     });
     expect(mocks.register).toHaveBeenCalledOnce();
     expect(mocks.inspectSources).toHaveBeenCalledOnce();
+    expect(mocks.reloadOpenClaw).toHaveBeenCalledWith("alpha", ["openclaw-config"]);
     expect(mocks.removeLegacy).toHaveBeenCalledOnce();
+    expect(mocks.reloadOpenClaw.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.removeLegacy.mock.invocationCallOrder[0],
+    );
     expect(mocks.updateSandbox).toHaveBeenCalledWith("alpha", {});
+  });
+
+  it("validates restrictive live policy before the first native write", async () => {
+    mocks.getPolicyState.mockReturnValue("drift");
+
+    await expect(migrateMcpBridges("alpha", { apply: true })).rejects.toThrow(
+      /does not match the current restrictive OpenShell policy/,
+    );
+    expect(mocks.register).not.toHaveBeenCalled();
+    expect(mocks.removeLegacy).not.toHaveBeenCalled();
+  });
+
+  it("retains legacy state when OpenClaw activation fails", async () => {
+    mocks.reloadOpenClaw.mockImplementationOnce(() => {
+      throw new Error("activation failed");
+    });
+
+    await expect(migrateMcpBridges("alpha", { apply: true })).rejects.toThrow("activation failed");
+    expect(mocks.unregister).toHaveBeenCalledOnce();
+    expect(mocks.removeLegacy).not.toHaveBeenCalled();
+    expect(mocks.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("removes the Deep Agents legacy projection after verified native migration", async () => {
+    const deepEntry = {
+      ...entry,
+      agent: "langchain-deepagents-code",
+      adapter: "deepagents-config" as const,
+    };
+    mocks.getSandbox.mockReturnValue({ name: "alpha", agent: deepEntry.agent });
+    mocks.getAgent.mockReturnValue({
+      name: deepEntry.agent,
+      displayName: "Deep Agents Code",
+      mcpCapability: { support: "bridge", adapter: deepEntry.adapter },
+    });
+    mocks.getAdapter.mockReturnValue(deepEntry.adapter);
+    mocks.inspectLegacy.mockReturnValue({
+      bridges: { github: deepEntry },
+      sources: { native: {}, legacy: { github: deepEntry } },
+    });
+    mocks.inspectSources
+      .mockReturnValueOnce({ native: {}, legacy: { github: deepEntry } })
+      .mockReturnValue({
+        native: { github: { ...deepEntry, source: "native" } },
+        legacy: { github: deepEntry },
+      });
+    const rebuildSandbox = vi.fn().mockResolvedValue(undefined);
+
+    await expect(
+      migrateMcpBridges("alpha", { apply: true, rebuildSandbox }),
+    ).resolves.toMatchObject({ applied: true });
+    expect(rebuildSandbox).toHaveBeenCalledWith("alpha");
+    expect(mocks.removeLegacy).toHaveBeenCalledWith(
+      expect.objectContaining({ agent: deepEntry.agent }),
+      deepEntry,
+      expect.any(Object),
+    );
+    expect(mocks.updateSandbox).toHaveBeenCalledWith("alpha", {});
+  });
+
+  it("does not report Deep Agents migration success when legacy cleanup fails", async () => {
+    const deepEntry = {
+      ...entry,
+      agent: "langchain-deepagents-code",
+      adapter: "deepagents-config" as const,
+    };
+    mocks.getSandbox.mockReturnValue({ name: "alpha", agent: deepEntry.agent });
+    mocks.getAgent.mockReturnValue({
+      name: deepEntry.agent,
+      displayName: "Deep Agents Code",
+      mcpCapability: { support: "bridge", adapter: deepEntry.adapter },
+    });
+    mocks.getAdapter.mockReturnValue(deepEntry.adapter);
+    mocks.inspectLegacy.mockReturnValue({
+      bridges: { github: deepEntry },
+      sources: { native: {}, legacy: { github: deepEntry } },
+    });
+    mocks.inspectSources
+      .mockReturnValueOnce({ native: {}, legacy: { github: deepEntry } })
+      .mockReturnValue({
+        native: { github: { ...deepEntry, source: "native" } },
+        legacy: { github: deepEntry },
+      });
+    mocks.removeLegacy.mockImplementationOnce(() => {
+      throw new Error("legacy cleanup failed");
+    });
+
+    await expect(
+      migrateMcpBridges("alpha", {
+        apply: true,
+        rebuildSandbox: vi.fn().mockResolvedValue(undefined),
+      }),
+    ).rejects.toThrow("legacy cleanup failed");
+    expect(mocks.unregister).toHaveBeenCalledOnce();
+    expect(mocks.updateSandbox).not.toHaveBeenCalled();
   });
 
   it("rejects a conflicting native definition before mutation", async () => {
@@ -157,7 +271,6 @@ describe("explicit MCP migration", () => {
         },
       },
     });
-
     await expect(migrateMcpBridges("alpha")).resolves.toMatchObject({
       applied: false,
       items: [{ server: "github", source: "legacy-registry", action: "migrate" }],
@@ -165,7 +278,7 @@ describe("explicit MCP migration", () => {
     expect(mocks.register).not.toHaveBeenCalled();
   });
 
-  it("converges pending registry denied tools into live policy before retirement (#11115)", async () => {
+  it("rejects stale registry denied tools when live policy is authoritative (#11115)", async () => {
     mocks.inspectLegacy.mockReturnValue({
       bridges: {},
       sources: { native: {}, legacy: {} },
@@ -187,18 +300,21 @@ describe("explicit MCP migration", () => {
         },
       },
     });
-
-    await expect(migrateMcpBridges("alpha", { apply: true })).resolves.toMatchObject({
-      applied: true,
-      items: [{ deniedTools: ["replacement_*"] }],
+    mocks.joinEntries.mockImplementation((_sandbox: unknown, entries: unknown) => {
+      const map = entries as Record<string, { source?: string; denyTools?: string[] }>;
+      return Object.fromEntries(
+        Object.entries(map).map(([server, value]) => [
+          server,
+          value.source === "legacy-registry" ? { ...value, denyTools: ["live_tool"] } : value,
+        ]),
+      );
     });
-    expect(mocks.applyPolicy).toHaveBeenCalledWith(
-      "alpha",
-      expect.objectContaining({ denyTools: ["replacement_*"], source: "legacy-registry" }),
-      { addresses: ["8.8.8.8"] },
-      expect.objectContaining({ runtimeSelection: expect.any(Object) }),
+
+    await expect(migrateMcpBridges("alpha", { apply: true })).rejects.toThrow(
+      /denied-tool intent conflicts with the current OpenShell policy/,
     );
-    expect(mocks.updateSandbox).toHaveBeenCalledWith("alpha", {});
+    expect(mocks.register).not.toHaveBeenCalled();
+    expect(mocks.updateSandbox).not.toHaveBeenCalled();
   });
 
   it.each([

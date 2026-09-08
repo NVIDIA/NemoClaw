@@ -2341,7 +2341,7 @@ unset LOCAL_MCP_TOKEN
 
 Preview or apply the one-time conversion from the retired host-registry representation and legacy agent adapter file to the agent's native MCP configuration. The preview is read-only and is the default. Pass `--apply` to authorize native materialization and legacy cleanup only after the native result verifies successfully. Native state wins: when the native and legacy definitions conflict, migration stops before any mutation and requires you to resolve the conflict explicitly.
 
-OpenClaw converts managed Mcporter entries into `openclaw.json` `mcp.servers`. Deep Agents carries legacy `.deepagents/.nemoclaw-mcp.json` entries through a normal rebuild into `.deepagents/.mcp.json`. Hermes already uses native `config.yaml` and ordinarily requires no file conversion. Existing OpenShell policy, provider, attachment, and credential state are reused; migration never copies a raw credential into agent configuration.
+OpenClaw converts managed Mcporter entries into `openclaw.json` `mcp.servers`. Deep Agents carries legacy `.deepagents/.nemoclaw-mcp.json` entries through a normal rebuild into `.deepagents/.mcp.json`, then removes the verified legacy projection. Hermes already uses native `config.yaml` and ordinarily requires no file conversion. Existing OpenShell policy, provider, attachment, and credential state are reused; migration never copies a raw credential into agent configuration. The live OpenShell policy owns denied-tool selectors, and a conflicting legacy-registry selector stops before mutation. OpenClaw migration reloads and verifies the running gateway before legacy cleanup.
 
 ```bash
 $$nemoclaw my-assistant mcp migrate

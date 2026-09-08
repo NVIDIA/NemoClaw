@@ -16,7 +16,6 @@ import {
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import {
   cloneMcpSourceEntry,
-  discardSafeIncompleteMcpAdds,
   inspectExactMcpDestroyProvider,
 } from "./mcp-bridge-destroy";
 import {
@@ -37,10 +36,8 @@ import {
 import { restoreExistingMcpBridgeRuntime } from "./mcp-bridge-restart";
 import { assertMcpAdapterTeardownRuntimeCapabilities } from "./mcp-bridge-runtime-capabilities";
 import {
-  bridgeState,
   ensureSandboxGatewaySelected,
   getSandboxOrThrow,
-  setBridgeState,
 } from "./mcp-bridge-state";
 import { assertAuthenticatedBridgeEntry, validateSandboxName } from "./mcp-bridge-validation";
 
@@ -97,6 +94,7 @@ function assertMcpTeardownPolicyUnchanged(
 
 async function getCompleteMcpRebuildEntries(
   sandboxName: string,
+  sourceEntries: readonly McpSourceEntry[],
   options: {
     runtimeSelection?: McpProviderInspectionRuntimeSelection;
     sandboxAbsent?: boolean;
@@ -107,18 +105,10 @@ async function getCompleteMcpRebuildEntries(
 }> {
   validateSandboxName(sandboxName);
   const currentSandbox = getSandboxOrThrow(sandboxName);
-  const entriesRequiringExternalCleanup = Object.values(bridgeState(currentSandbox));
   let runtimeSelection = options.runtimeSelection;
-  if (entriesRequiringExternalCleanup.length > 0) {
-    runtimeSelection ??= getMcpProviderInspectionRuntimeSelection(currentSandbox);
-  }
-  const sandbox = await discardSafeIncompleteMcpAdds(sandboxName, currentSandbox, {
-    ...options,
-    runtimeSelection,
-  });
-  const entries = Object.values(bridgeState(sandbox)).map(cloneMcpSourceEntry);
+  const entries = sourceEntries.map(cloneMcpSourceEntry);
   if (entries.length > 0) {
-    runtimeSelection ??= getMcpProviderInspectionRuntimeSelection(sandbox);
+    runtimeSelection ??= getMcpProviderInspectionRuntimeSelection(currentSandbox);
   }
   return { entries, runtimeSelection };
 }
@@ -131,10 +121,14 @@ async function getCompleteMcpRebuildEntries(
  */
 export async function prepareMcpBridgesForAbsentSandboxRebuild(
   sandboxName: string,
+  sourceEntries: readonly McpSourceEntry[],
   runtimeSelection?: McpProviderInspectionRuntimeSelection,
 ): Promise<McpRebuildPreparation> {
   const { entries, runtimeSelection: providerRuntimeSelection } =
-    await getCompleteMcpRebuildEntries(sandboxName, { sandboxAbsent: true, runtimeSelection });
+    await getCompleteMcpRebuildEntries(sandboxName, sourceEntries, {
+      sandboxAbsent: true,
+      runtimeSelection,
+    });
   if (entries.length === 0) {
     return {
       entries: [],
@@ -165,11 +159,12 @@ export async function prepareMcpBridgesForAbsentSandboxRebuild(
 
 export async function prepareMcpBridgesForRebuild(
   sandboxName: string,
+  sourceEntries: readonly McpSourceEntry[],
   runtimeSelection?: McpProviderInspectionRuntimeSelection,
 ): Promise<McpRebuildPreparation> {
   const sandbox = getSandboxOrThrow(sandboxName);
   const { entries, runtimeSelection: providerRuntimeSelection } =
-    await getCompleteMcpRebuildEntries(sandboxName, { runtimeSelection });
+    await getCompleteMcpRebuildEntries(sandboxName, sourceEntries, { runtimeSelection });
   if (entries.length === 0) {
     return {
       entries: [],
@@ -358,12 +353,6 @@ export async function restoreMcpBridgesAfterRebuild(
 ): Promise<void> {
   if (entries.length === 0) return;
   for (const entry of entries) assertAuthenticatedBridgeEntry(entry);
-  const bridges = Object.fromEntries(
-    entries.map((entry) => [entry.server, cloneMcpSourceEntry(entry)]),
-  );
-  // Persist the recovery contract before touching the gateway. If refresh
-  // fails, `mcp restart` remains retryable after the operator fixes the cause.
-  setBridgeState(sandboxName, bridges);
   // Sandbox creation already received the complete pre-rebuild OpenShell
   // policy. Restore providers and adapters without regenerating or overwriting
   // policy entries that an operator may have edited independently.

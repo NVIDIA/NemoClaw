@@ -17,13 +17,10 @@ import {
   waitForDetachedMcpCredential,
 } from "./mcp-bridge-provider";
 import {
-  bridgeState,
   ensureSandboxGatewaySelected,
   getBridgeAdapter,
   getSandboxAgent,
   getSandboxOrThrow,
-  hydrateBridgeState,
-  removeBridgeEntry,
 } from "./mcp-bridge-state";
 import { inspectSourceBridgeState } from "./mcp-bridge-source";
 import {
@@ -50,8 +47,7 @@ export async function removeMcpBridge(
         2,
       );
     }
-    hydrateBridgeState(sandboxName, observed.bridges);
-    const entry = bridgeState(sandbox)[server];
+    const entry = observed.bridges[server];
     if (!entry) {
       if (!options.force) {
         throw new McpBridgeError(
@@ -119,7 +115,6 @@ export async function removeMcpBridge(
       }
     }
 
-    removeBridgeEntry(sandboxName, server);
     console.log(`  Removed MCP server '${server}' from the agent configuration on '${sandboxName}'.`);
     for (const warning of warnings) console.warn(`  MCP cleanup warning: ${warning}`);
     if (warnings.length > 0 && !options.allowResidual && !options.force) {

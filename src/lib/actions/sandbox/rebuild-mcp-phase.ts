@@ -14,7 +14,6 @@ import {
 } from "./mcp-bridge";
 import type { RebuildBail } from "./rebuild-credential-preflight";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
-import { hydrateBridgeState } from "./mcp-bridge-state";
 import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider";
 import { inspectSourceBridgeState } from "./mcp-bridge-source";
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
@@ -28,18 +27,7 @@ export function observeMcpStateForRebuild(
 ): McpSourceEntry[] {
   if (!inspectCurrentSource || !runtimeSelection) return [];
   const bridges = inspectSourceBridgeState(sandbox, runtimeSelection).bridges;
-  hydrateBridgeState(sandbox.name, bridges);
   return Object.values(bridges);
-}
-
-export function hydrateMcpStateForRebuild(
-  sandboxName: string,
-  entries: readonly McpSourceEntry[],
-): void {
-  hydrateBridgeState(
-    sandboxName,
-    Object.fromEntries(entries.map((entry) => [entry.server, entry])),
-  );
 }
 
 export async function prepareMcpForRebuild(
@@ -47,6 +35,7 @@ export async function prepareMcpForRebuild(
   staleRecovery: boolean,
   bail: RebuildBail,
   frozenRuntimeSelection?: McpProviderInspectionRuntimeSelection,
+  sourceEntries: readonly McpSourceEntry[] = [],
 ): Promise<McpRebuildPreparation | null> {
   // Source inspection resolves OpenShell authority lazily only after it finds
   // MCP intent. A retained recovery handoff is the sole eager authority input.
@@ -54,11 +43,11 @@ export async function prepareMcpForRebuild(
   try {
     return await (staleRecovery
       ? runtimeSelection
-        ? prepareMcpBridgesForAbsentSandboxRebuild(sandboxName, runtimeSelection)
-        : prepareMcpBridgesForAbsentSandboxRebuild(sandboxName)
+        ? prepareMcpBridgesForAbsentSandboxRebuild(sandboxName, runtimeSelection, sourceEntries)
+        : prepareMcpBridgesForAbsentSandboxRebuild(sandboxName, undefined, sourceEntries)
       : runtimeSelection
-        ? prepareMcpBridgesForRebuild(sandboxName, runtimeSelection)
-        : prepareMcpBridgesForRebuild(sandboxName));
+        ? prepareMcpBridgesForRebuild(sandboxName, runtimeSelection, sourceEntries)
+        : prepareMcpBridgesForRebuild(sandboxName, undefined, sourceEntries));
   } catch (error) {
     bail(
       `Failed to preserve MCP bridges before rebuild: ${error instanceof Error ? error.message : String(error)}`,

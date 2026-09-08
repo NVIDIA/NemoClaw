@@ -6,10 +6,15 @@ import { isDeepStrictEqual } from "node:util";
 import { readConfigFile } from "../../state/config-io";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import * as registry from "../../state/registry";
+import * as policies from "../../policy";
 import { REGISTRY_FILE } from "../../state/registry/persistence";
-import { registerAgentAdapter, unregisterAgentAdapter } from "./mcp-bridge-adapters";
 import {
-  applyGeneratedPolicy,
+  registerAgentAdapter,
+  reloadOpenClawGatewayAfterMcpMutation,
+  unregisterAgentAdapter,
+} from "./mcp-bridge-adapters";
+import {
+  buildMcpBridgePolicyYaml,
   buildMcpBridgePolicyName,
   getPolicyPresence,
 } from "./mcp-bridge-policy";
@@ -17,6 +22,7 @@ import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import {
   getMcpProviderInspectionRuntimeSelection,
+  assertMcpProviderRecoverable,
   preflightMcpEntryTargets,
   providerAttached,
 } from "./mcp-bridge-provider";
@@ -172,24 +178,45 @@ function readCommittedLegacyRegistryEntries(
   return entries;
 }
 
-async function convergeLegacyRegistryPolicies(
+async function preflightMigrationOpenShellState(
   sandboxName: string,
   entries: readonly McpSourceEntry[],
   runtimeSelection: ReturnType<typeof getMcpProviderInspectionRuntimeSelection>,
 ): Promise<void> {
-  const registryEntries = entries.filter(
-    (entry) => entry.source === "legacy-registry" && entry.denyTools !== undefined,
-  );
-  if (registryEntries.length === 0) return;
-  const targets = await preflightMcpEntryTargets(registryEntries);
-  for (const entry of registryEntries) {
+  const targets = await preflightMcpEntryTargets(entries);
+  for (const entry of entries) {
     const target = targets.get(entry.server);
     if (!target) {
       throw new McpBridgeError(
-        `Legacy MCP registry server '${entry.server}' has no validated policy target. No legacy source was removed.`,
+        `Legacy MCP server '${entry.server}' has no validated policy target. No source was changed.`,
       );
     }
-    applyGeneratedPolicy(sandboxName, entry, target, { runtimeSelection });
+    assertMcpProviderRecoverable(entry, runtimeSelection);
+    if (providerAttached(sandboxName, entry.providerName, runtimeSelection) !== true) {
+      throw new McpBridgeError(
+        `Legacy MCP server '${entry.server}' does not have its exact provider attached. No source was changed.`,
+      );
+    }
+    const expectedPolicy = buildMcpBridgePolicyYaml(
+      entry.server,
+      entry.url,
+      entry.adapter ?? "openclaw-config",
+      target,
+      entry.providerName ?? "",
+      entry.denyTools,
+    );
+    if (
+      policies.getPresetContentGatewayState(
+        sandboxName,
+        expectedPolicy,
+        undefined,
+        runtimeSelection,
+      ) !== "match"
+    ) {
+      throw new McpBridgeError(
+        `Legacy MCP server '${entry.server}' does not match the current restrictive OpenShell policy. No source was changed.`,
+      );
+    }
   }
 }
 
@@ -209,12 +236,31 @@ export async function migrateMcpBridges(
     const observed = inspectLegacyBridgeState(sandbox, runtimeSelection);
     const agent = getSandboxAgent(sandbox);
     const adapter = getBridgeAdapter(agent);
+    const committedRegistryEntries = readCommittedLegacyRegistryEntries(
+      sandboxName,
+      agent.name,
+      adapter,
+    );
     const rawRegistryEntries = joinMcpEntriesToOpenShell(
       sandbox,
-      readCommittedLegacyRegistryEntries(sandboxName, agent.name, adapter),
+      committedRegistryEntries,
       runtimeSelection,
       "inspect legacy MCP registry migration state",
     );
+    for (const [server, committedEntry] of Object.entries(committedRegistryEntries)) {
+      if (
+        getPolicyPresence(sandboxName, committedEntry, runtimeSelection) === true &&
+        !isDeepStrictEqual(
+          committedEntry.denyTools ?? [],
+          rawRegistryEntries[server]?.denyTools ?? [],
+        )
+      ) {
+        throw new McpBridgeError(
+          `Legacy MCP registry denied-tool intent conflicts with the current OpenShell policy for '${server}'. The live policy remains authoritative and no source was changed.`,
+          2,
+        );
+      }
+    }
     for (const [server, registryEntry] of Object.entries(rawRegistryEntries)) {
       const agentLegacy = observed.bridges[server];
       if (agentLegacy && !sameRegistration(agentLegacy, registryEntry)) {
@@ -259,6 +305,7 @@ export async function migrateMcpBridges(
     if (!options.apply || entries.length === 0) {
       return { sandbox: sandboxName, items, applied: false };
     }
+    await preflightMigrationOpenShellState(sandboxName, entries, runtimeSelection);
 
     if (adapter === "deepagents-config") {
       if (!options.rebuildSandbox) {
@@ -272,6 +319,7 @@ export async function migrateMcpBridges(
         );
       }
       const rebuiltRuntimeSelection = getMcpProviderInspectionRuntimeSelection(rebuilt);
+      await preflightMigrationOpenShellState(sandboxName, entries, rebuiltRuntimeSelection);
       const created: McpSourceEntry[] = [];
       try {
         let native = inspectAgentMcpSources(rebuilt, rebuiltRuntimeSelection).native;
@@ -297,7 +345,11 @@ export async function migrateMcpBridges(
             `Deep Agents rebuild did not verify native MCP server${missing.length === 1 ? "" : "s"}: ${missing.map((entry) => entry.server).join(", ")}.`,
           );
         }
-        await convergeLegacyRegistryPolicies(sandboxName, entries, rebuiltRuntimeSelection);
+        for (const entry of entries) {
+          if (observed.sources.legacy[entry.server]) {
+            removeLegacyAgentMcpEntry(rebuilt, entry, rebuiltRuntimeSelection);
+          }
+        }
       } catch (error) {
         for (const entry of created.reverse()) {
           try {
@@ -338,7 +390,9 @@ export async function migrateMcpBridges(
             `Native MCP verification failed after migrating '${entry.server}'.`,
           );
         }
-        await convergeLegacyRegistryPolicies(sandboxName, [entry], runtimeSelection);
+      }
+      reloadOpenClawGatewayAfterMcpMutation(sandboxName, [adapter]);
+      for (const entry of entries) {
         if (observed.sources.legacy[entry.server]) {
           cleanupStarted = true;
           removeLegacyAgentMcpEntry(sandbox, entry, runtimeSelection);

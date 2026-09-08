@@ -17,11 +17,6 @@ import {
   McpBridgeError,
 } from "./mcp-bridge-contracts";
 import { validateSandboxName } from "./mcp-bridge-validation";
-import {
-  getTransientBridgeState,
-  hydrateTransientBridgeState,
-  setTransientBridgeState,
-} from "./mcp-bridge/transient-state";
 
 export function getSandboxOrThrow(sandboxName: string): SandboxEntry {
   const sandbox = registry.getSandbox(sandboxName);
@@ -83,32 +78,13 @@ export function getEntryAdapter(
     : null;
 }
 
-/**
- * Seed one command's in-memory working set from the current agent and
- * OpenShell observations. The working set is never serialized.
- */
-export function hydrateBridgeState(
-  sandboxName: string,
-  bridges: Record<string, McpSourceEntry>,
-): void {
-  hydrateTransientBridgeState(sandboxName, bridges);
-}
-
-export function bridgeState(sandbox: SandboxEntry): Record<string, McpSourceEntry> {
-  return getTransientBridgeState(sandbox.name);
-}
-
-export function setBridgeState(sandboxName: string, bridges: Record<string, McpSourceEntry>): void {
-  setTransientBridgeState(sandboxName, bridges);
-}
-
 export function assertNoDerivedResourceCollision(
-  sandbox: SandboxEntry,
+  bridges: Readonly<Record<string, McpSourceEntry>>,
   server: string,
   providerName: string | undefined,
   policyName: string,
 ): void {
-  for (const entry of Object.values(bridgeState(sandbox))) {
+  for (const entry of Object.values(bridges)) {
     if (entry.server === server) continue;
     const providerCollision =
       providerName !== undefined &&
@@ -121,19 +97,6 @@ export function assertNoDerivedResourceCollision(
       );
     }
   }
-}
-
-export function writeBridgeEntry(sandboxName: string, entry: McpSourceEntry): void {
-  const sandbox = getSandboxOrThrow(sandboxName);
-  const bridges = { ...bridgeState(sandbox), [entry.server]: entry };
-  setBridgeState(sandboxName, bridges);
-}
-
-export function removeBridgeEntry(sandboxName: string, server: string): void {
-  const sandbox = getSandboxOrThrow(sandboxName);
-  const bridges = { ...bridgeState(sandbox) };
-  delete bridges[server];
-  setBridgeState(sandboxName, bridges);
 }
 
 export async function ensureSandboxGatewaySelected(

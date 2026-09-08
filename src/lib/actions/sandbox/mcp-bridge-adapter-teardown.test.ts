@@ -7,8 +7,6 @@ import type { SandboxEntry } from "../../state/registry";
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
 
 const mocks = vi.hoisted(() => ({
-  bridgeState: vi.fn(),
-  discardSafeIncompleteMcpAdds: vi.fn(),
   ensureSandboxGatewaySelected: vi.fn(),
   getMcpProviderInspectionRuntimeSelection: vi.fn(() => ({
     gatewayName: "nemoclaw-8091",
@@ -51,7 +49,6 @@ vi.mock("./mcp-bridge-destroy-preflight", () => ({
     ...candidate,
     env: [...candidate.env],
   })),
-  discardSafeIncompleteMcpAdds: mocks.discardSafeIncompleteMcpAdds,
   inspectExactMcpDestroyProvider: mocks.inspectExactMcpDestroyProvider,
 }));
 vi.mock("./mcp-bridge-policy", () => ({
@@ -70,7 +67,6 @@ vi.mock("./mcp-bridge-runtime-capabilities", () => ({
   assertMcpAdapterTeardownRuntimeCapabilities: vi.fn(),
 }));
 vi.mock("./mcp-bridge-state", () => ({
-  bridgeState: mocks.bridgeState,
   ensureSandboxGatewaySelected: mocks.ensureSandboxGatewaySelected,
   getBridgeAdapter: mocks.getBridgeAdapter,
   getSandboxAgent: mocks.getSandboxAgent,
@@ -99,8 +95,6 @@ const entry: McpSourceEntry = {
 
 describe("MCP adapter teardown rollback", () => {
   beforeEach(() => {
-    mocks.bridgeState.mockReset().mockReturnValue({ github: entry });
-    mocks.discardSafeIncompleteMcpAdds.mockReset().mockResolvedValue(sandbox);
     mocks.ensureSandboxGatewaySelected.mockReset().mockResolvedValue(undefined);
     mocks.getMcpProviderInspectionRuntimeSelection.mockReset().mockReturnValue(runtimeSelection);
     mocks.getBridgeAdapter.mockReset().mockReturnValue("hermes-config");
@@ -133,7 +127,7 @@ describe("MCP adapter teardown rollback", () => {
       .mockReturnValueOnce("v13")
       .mockReturnValue("v13");
 
-    await expect(prepareMcpBridgesForRebuild("alpha")).rejects.toThrow(
+    await expect(prepareMcpBridgesForRebuild("alpha", [entry])).rejects.toThrow(
       "forced lifecycle failure after adapter scrub",
     );
     expect(mocks.unregisterAgentAdapter).toHaveBeenCalledOnce();

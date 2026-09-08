@@ -295,6 +295,11 @@ describe("rebuildSandbox flow: recovery", () => {
     ).resolves.toBeUndefined();
 
     expect(recreatedPolicy).toBe(policyDocument);
+    expect(restarted.prepareMcpBridgesForAbsentSandboxRebuildSpy).toHaveBeenCalledWith(
+      "alpha",
+      { gatewayName: "nemoclaw", workspace: "default" },
+      [mcpEntry],
+    );
     expect(restarted.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith(
       "alpha",
       [mcpEntry],

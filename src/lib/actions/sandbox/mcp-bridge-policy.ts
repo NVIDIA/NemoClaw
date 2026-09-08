@@ -23,6 +23,7 @@ import type { McpBridgeTargetValidation } from "./mcp-bridge-url-validation";
 
 export { MCP_BRIDGE_POLICY_SOURCE } from "./mcp-bridge-contracts";
 export {
+  buildMcpBridgeCapabilityPolicyYaml,
   buildMcpBridgePolicyKey,
   buildMcpBridgePolicyName,
   buildMcpBridgePolicyYaml,

@@ -54,7 +54,9 @@ $$nemoclaw my-sandbox mcp migrate --apply
 
 OpenClaw translates the managed Mcporter `baseUrl` entry into `openclaw.json` `mcp.servers.url`. Deep Agents rebuilds onto a native-MCP-capable image and moves the legacy `mcpServers` entries into `.deepagents/.mcp.json`. Hermes already uses native `config.yaml` and normally has nothing to translate.
 
-Migration writes the native configuration atomically, reloads or rebuilds the agent, verifies native enumeration, and only then retires the legacy adapter or projection. Failure restores newly created native entries and leaves the legacy configuration, OpenShell policy, provider, and attachment available for retry.
+Migration treats the current OpenShell policy as authoritative, including its denied-tool selectors. A stale registry selector that differs from the live policy stops before mutation. Apply also requires the existing restrictive policy, exact provider identity, and attachment to verify before it writes native configuration.
+
+Migration writes the native configuration atomically, reloads or rebuilds the agent, verifies native enumeration, and only then retires the legacy adapter or projection. OpenClaw must activate the new Tool Search catalog before legacy cleanup, and Deep Agents removes the migrated entry from `.deepagents/.nemoclaw-mcp.json` before reporting success. Failure restores newly created native entries and leaves the legacy configuration, OpenShell policy, provider, and attachment available for retry.
 
 For a trusted private server, status resolves the endpoint without changing managed state. Text output reports `private address pins: match`, `drift`, or `unresolved`. JSON output reports the same value in `trustedPrivateTarget.state` and includes the recorded pins. Status never adds a new address to the policy.
 

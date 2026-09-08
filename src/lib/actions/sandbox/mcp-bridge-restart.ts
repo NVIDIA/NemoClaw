@@ -34,13 +34,10 @@ import {
   assertMcpAdapterTeardownRuntimeCapabilities,
 } from "./mcp-bridge-runtime-capabilities";
 import {
-  bridgeState,
   ensureSandboxGatewaySelected,
   getBridgeAdapter,
   getSandboxAgent,
   getSandboxOrThrow,
-  hydrateBridgeState,
-  writeBridgeEntry,
 } from "./mcp-bridge-state";
 import { inspectSourceBridgeState } from "./mcp-bridge-source";
 import { statusMcpBridge } from "./mcp-bridge-status";
@@ -83,10 +80,9 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
       2,
     );
   }
-  hydrateBridgeState(sandboxName, observed.bridges);
   const agent = getSandboxAgent(sandbox);
   const adapter = getBridgeAdapter(agent);
-  const bridges = bridgeState(sandbox);
+  const bridges = observed.bridges;
   const targets = server ? [[server, bridges[server]] as const] : Object.entries(bridges);
   if (targets.length === 0) {
     console.log(`  No MCP servers for sandbox '${sandboxName}'.`);
@@ -245,7 +241,6 @@ export async function restoreExistingMcpBridgeRuntime(
       },
     );
     restoredAdapters.push(adapter);
-    writeBridgeEntry(sandboxName, { ...entry, adapter });
   }
   reloadOpenClawGatewayAfterMcpMutation(sandboxName, restoredAdapters);
 }

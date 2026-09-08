@@ -219,4 +219,16 @@ network_policies:
       inspectSourceBridgeState(sandbox, runtimeSelection).bridges.github.policyConflict,
     ).toContain("differs from live policy endpoint");
   });
+
+  it("redacts credentials and strips terminal controls from source-read failures", () => {
+    mocks.executeSandboxCommand.mockReturnValue({
+      status: 2,
+      stdout: "",
+      stderr: "Authorization: Bearer source-secret\u001b[31m\n\u0007forged",
+    });
+
+    expect(() => inspectSourceBridgeState(sandbox, runtimeSelection)).toThrow(
+      "Could not inspect OpenClaw MCP configuration: Authorization: Bearer <REDACTED>\nforged",
+    );
+  });
 });

@@ -21,6 +21,7 @@ import {
 } from "./mcp-bridge-provider-inspection";
 import { executeSandboxCommand } from "./process-recovery";
 import { quoteMcpBridgeShellArg } from "./mcp-bridge-runtime-command";
+import { redactBridgeFailureForDisplay } from "./mcp-bridge-output";
 import { buildMcpBridgeProviderName } from "./mcp-bridge-validation";
 
 export interface AgentMcpSourceSnapshot {
@@ -250,9 +251,8 @@ function inspectAgentMcpSourcesForAgent(
   );
   if (!result) throw new McpBridgeError(`Sandbox '${sandbox.name}' is unreachable.`);
   if (result.status !== 0) {
-    throw new McpBridgeError(
-      `Could not inspect ${agent.displayName} MCP configuration: ${result.stderr.trim() || "source read failed"}`,
-    );
+    const detail = redactBridgeFailureForDisplay(result.stderr.trim() || "source read failed");
+    throw new McpBridgeError(`Could not inspect ${agent.displayName} MCP configuration: ${detail}`);
   }
   const native: Record<string, McpSourceEntry> = {};
   const legacy: Record<string, McpSourceEntry> = {};
@@ -290,6 +290,7 @@ function enrichFromPolicy(
     providerId: _legacyProviderId,
     allowedIps: _legacyAllowedIps,
     trustedPrivateHost: _legacyTrustedPrivateHost,
+    denyTools: _legacyDenyTools,
     ...sourceEntry
   } = entry;
   if (!policy || !Array.isArray(policy.endpoints)) {

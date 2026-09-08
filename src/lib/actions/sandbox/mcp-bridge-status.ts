@@ -36,7 +36,6 @@ import {
   getAgentConfigDir,
   getSandboxAgent,
   getSandboxOrThrow,
-  hydrateBridgeState,
 } from "./mcp-bridge-state";
 import { inspectPolicyOnlyMcpEntry, inspectSourceBridgeState } from "./mcp-bridge-source";
 import { discoverMcpTools } from "./mcp-bridge-tool-discovery";
@@ -206,7 +205,6 @@ export async function statusMcpBridge(
   const providerRuntimeSelection =
     options.runtimeSelection ?? getMcpProviderInspectionRuntimeSelection(sandbox);
   const observed = inspectSourceBridgeState(sandbox, providerRuntimeSelection);
-  hydrateBridgeState(sandboxName, observed.bridges);
   const bridges = observed.bridges;
   const legacyNames = Object.keys(observed.sources.legacy).sort();
   if (legacyNames.length > 0) {

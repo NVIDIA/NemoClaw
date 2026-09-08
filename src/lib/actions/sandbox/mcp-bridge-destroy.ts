@@ -4,19 +4,18 @@
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import {
   cloneMcpSourceEntry,
-  discardSafeIncompleteMcpAdds,
   inspectExactMcpDestroyProvider,
   prepareMcpBridgesForAbsentSandboxDestroy,
   type McpDestroyPreparation,
 } from "./mcp-bridge-destroy-preflight";
 import { getMcpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider";
-import { bridgeState, getSandboxOrThrow, setBridgeState } from "./mcp-bridge-state";
+import { getSandboxOrThrow } from "./mcp-bridge-state";
+import { inspectLegacyBridgeState, inspectSourceBridgeState } from "./mcp-bridge-source";
 import { validateSandboxName } from "./mcp-bridge-validation";
 
 export type { McpDestroyPreparation } from "./mcp-bridge-destroy-preflight";
 export {
   cloneMcpSourceEntry,
-  discardSafeIncompleteMcpAdds,
   inspectExactMcpDestroyProvider,
   prepareMcpBridgesForAbsentSandboxDestroy,
 };
@@ -35,12 +34,17 @@ export async function prepareMcpBridgesForDestroy(
 ): Promise<McpDestroyPreparation> {
   validateSandboxName(sandboxName);
   const sandbox = getSandboxOrThrow(sandboxName);
-  const entries = Object.values(bridgeState(sandbox)).map(cloneMcpSourceEntry);
+  const runtimeSelection =
+    options.runtimeSelection ?? getMcpProviderInspectionRuntimeSelection(sandbox);
+  const observed = inspectSourceBridgeState(sandbox, runtimeSelection);
+  const legacy =
+    Object.keys(observed.sources.legacy).length > 0
+      ? inspectLegacyBridgeState(sandbox, runtimeSelection).bridges
+      : {};
+  const entries = Object.values({ ...legacy, ...observed.bridges }).map(cloneMcpSourceEntry);
   return {
     entries,
-    runtimeSelection:
-      options.runtimeSelection ??
-      (entries.length > 0 ? getMcpProviderInspectionRuntimeSelection(sandbox) : undefined),
+    runtimeSelection,
   };
 }
 
@@ -72,9 +76,4 @@ export async function finalizeMcpBridgesAfterSandboxDelete(
     );
     console.warn("  Inspect and remove unused providers explicitly after confirming no sandbox uses them.");
   }
-  setBridgeState(sandboxName, {});
-}
-
-export function currentMcpEntriesForDestroy(sandboxName: string): McpSourceEntry[] {
-  return Object.values(bridgeState(getSandboxOrThrow(sandboxName))).map(cloneMcpSourceEntry);
 }

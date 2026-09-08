@@ -177,9 +177,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
       "alpha",
       expect.objectContaining({ captureStateFile: expect.any(Function) }),
     );
-    expect(harness.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledWith(
-      "alpha",
-    );
+    expect(harness.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledWith("alpha", undefined, []);
     expect(
       harness.prepareMcpBridgesForRebuildSpy.mock.invocationCallOrder[0],
     ).toBeLessThan(
@@ -659,9 +657,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
       harness.rebuildSandbox("alpha", ["--yes", "--force"], { throwOnError: true }),
     ).resolves.toBeUndefined();
 
-    expect(harness.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledWith(
-      "alpha",
-    );
+    expect(harness.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledWith("alpha", undefined, []);
     expect(harness.onboardSpy).toHaveBeenCalledOnce();
   });
 

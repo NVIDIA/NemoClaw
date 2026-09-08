@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
-import { getTransientBridgeState } from "./mcp-bridge/transient-state";
 import { assertDeepAgentsMcpMutationRuntimeCapability } from "./mcp-bridge-adapter-deepagents-capability";
 import { runDeepAgentsAdapterCommand } from "./mcp-bridge-adapter-deepagents-command";
 import { inspectDeepAgentsAdapterRegistration } from "./mcp-bridge-adapter-deepagents-inspection";
@@ -181,6 +180,8 @@ export function buildDeepAgentsMcpRegisterCommand(
     "    data = {'mcpServers': dict(payload['expectedServers'])}",
     "elif payload['server'] is not None:",
     "    servers[payload['server']] = payload['expected']",
+    `if len(servers) > ${String(DEEPAGENTS_MCP_MAX_SERVERS)}:`,
+    `    fail_registration(f'Deep Agents managed MCP supports at most ${String(DEEPAGENTS_MCP_MAX_SERVERS)} servers; refusing to publish {len(servers)} servers.')`,
     "if not payload['resetNativeConfig']:",
     "    config_path.parent.mkdir(parents=True, exist_ok=True)",
     "try:",
@@ -192,17 +193,6 @@ export function buildDeepAgentsMcpRegisterCommand(
     `    fail_registration(f'Could not publish ${DEEPAGENTS_MCP_CONFIG_PATH}: {exc}')`,
     "PY",
   ].join("\n");
-}
-
-function observedDeepAgentsEntries(
-  sandboxName: string,
-  entry: McpSourceEntry,
-): McpSourceEntry[] {
-  const entries = new Map<string, McpSourceEntry>();
-  const bridges = getTransientBridgeState(sandboxName);
-  for (const bridge of Object.values(bridges)) entries.set(bridge.server, bridge);
-  entries.set(entry.server, entry);
-  return [...entries.values()];
 }
 
 function verifyDeepAgentsAdapterRegistration(
@@ -239,7 +229,7 @@ export function registerDeepAgentsAdapter(
     buildDeepAgentsMcpRegisterCommand(
       entry,
       replaceExisting,
-      observedDeepAgentsEntries(sandboxName, entry),
+      [entry],
       teardownRollback,
       credentialRevision,
     ),

@@ -40,10 +40,7 @@ import {
   removeStaleRebuildDockerOrphan,
   snapshotOpenShellEnv,
 } from "./rebuild-flow-helpers";
-import {
-  hydrateMcpStateForRebuild,
-  observeMcpStateForRebuild,
-} from "./rebuild-mcp-phase";
+import { observeMcpStateForRebuild } from "./rebuild-mcp-phase";
 import { stageMessagingManifestPlanForRebuild } from "./rebuild-messaging-phase";
 import {
   type HermesCronRestoreIdentity,
@@ -255,9 +252,6 @@ async function rebuildSandboxUnlocked(
         !retainedMcpHandoff
       ) {
         return bail("The retained rebuild MCP recovery handoff is invalid.");
-      }
-      if (retainedMcpHandoff) {
-        hydrateMcpStateForRebuild(sandboxName, retainedMcpHandoff.entries);
       }
       const mcpEntries =
         retainedMcpHandoff?.entries ??
@@ -686,6 +680,7 @@ async function rebuildSandboxUnlocked(
         staleRecovery,
         recreateJournal,
         backupManifest: backup.backupManifest,
+        mcpEntries,
         force: normalized.force,
         ...(recreateJournal.runtimeSelection
           ? { runtimeSelection: recreateJournal.runtimeSelection }

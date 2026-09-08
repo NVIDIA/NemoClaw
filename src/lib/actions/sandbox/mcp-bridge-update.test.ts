@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({
     .fn()
     .mockResolvedValue(new Map([["github", { addresses: ["8.8.8.8"] }]])),
   removeGeneratedPolicy: vi.fn(),
-  writeBridgeEntry: vi.fn(),
+  inspectSourceBridgeState: vi.fn(),
 }));
 
 vi.mock("../../onboard/experimental/portable-agent-lifecycle", () => ({
@@ -39,23 +39,17 @@ vi.mock("./mcp-bridge-provider", async (importOriginal) => ({
 }));
 vi.mock("./mcp-bridge-state", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./mcp-bridge-state")>()),
-  bridgeState: vi.fn(() => ({ github: entry })),
   ensureSandboxGatewaySelected: mocks.ensureSandboxGatewaySelected,
   getSandboxOrThrow: vi.fn(() => ({ name: "alpha", agent: "openclaw" })),
-  writeBridgeEntry: mocks.writeBridgeEntry,
 }));
 vi.mock("./mcp-bridge-source", () => ({
-  inspectSourceBridgeState: vi.fn(() => ({
-    bridges: { github: entry },
-    sources: { native: { github: entry }, legacy: {} },
-  })),
+  inspectSourceBridgeState: mocks.inspectSourceBridgeState,
 }));
 vi.mock("./mcp-bridge-validation", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./mcp-bridge-validation")>()),
   assertMcpCredentialBoundaryRuntimeVersion: vi.fn(),
 }));
 
-import * as state from "./mcp-bridge-state";
 import { updateMcpBridgeDenyTools } from "./mcp-bridge-add-restart";
 
 const entry: McpSourceEntry = {
@@ -70,7 +64,13 @@ const entry: McpSourceEntry = {
   policyName: "mcp-bridge-github",
 };
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  mocks.inspectSourceBridgeState.mockReturnValue({
+    bridges: { github: entry },
+    sources: { native: { github: entry }, legacy: {} },
+  });
+});
 
 describe("source-backed MCP denied-tool policy updates", () => {
   it("removes the old route before applying and publishing the live replacement (#11115)", async () => {
@@ -86,21 +86,23 @@ describe("source-backed MCP denied-tool policy updates", () => {
       { addresses: ["8.8.8.8"] },
       { runtimeSelection: { gatewayName: "nemoclaw-9090", workspace: "default" } },
     );
-    expect(mocks.writeBridgeEntry).toHaveBeenCalledWith("alpha", updated);
     expect(mocks.removeGeneratedPolicy.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.applyGeneratedPolicy.mock.invocationCallOrder[0],
     );
   });
 
   it("clears denied tools from the live policy without writing durable intent (#11115)", async () => {
-    vi.mocked(state.bridgeState).mockReturnValueOnce({
-      github: { ...entry, denyTools: ["delete_repo"] },
+    mocks.inspectSourceBridgeState.mockReturnValueOnce({
+      bridges: { github: { ...entry, denyTools: ["delete_repo"] } },
+      sources: {
+        native: { github: { ...entry, denyTools: ["delete_repo"] } },
+        legacy: {},
+      },
     });
 
     await updateMcpBridgeDenyTools("alpha", "github", []);
 
     expect(mocks.applyGeneratedPolicy.mock.calls[0]?.[1]).not.toHaveProperty("denyTools");
-    expect(mocks.writeBridgeEntry.mock.calls[0]?.[1]).not.toHaveProperty("denyTools");
   });
 
   it("leaves the route blocked with an exact retry command after activation failure (#11115)", async () => {
@@ -111,7 +113,6 @@ describe("source-backed MCP denied-tool policy updates", () => {
     await expect(updateMcpBridgeDenyTools("alpha", "github", ["delete_repo"])).rejects.toThrow(
       /route remains blocked.*mcp update github --deny-tool delete_repo/,
     );
-    expect(mocks.writeBridgeEntry).not.toHaveBeenCalled();
   });
 
   it("does not mutate policy when gateway selection fails (#11115)", async () => {

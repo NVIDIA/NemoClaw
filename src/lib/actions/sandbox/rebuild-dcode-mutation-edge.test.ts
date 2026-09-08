@@ -159,7 +159,7 @@ describe("rebuildSandbox DCode flow: mutation edge", () => {
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
     ).rejects.toThrow("the prepared DCode replacement inputs changed before deletion");
 
-    expect(harness.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledWith("alpha");
+    expect(harness.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledWith("alpha", undefined, []);
     expect(harness.reattachMcpProvidersAfterRebuildAbortSpy).toHaveBeenCalledWith(
       "alpha",
       [detached],

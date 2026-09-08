@@ -15,6 +15,7 @@ import {
 } from "./mcp-bridge-contracts";
 import {
   finalizeMcpBridgesAfterSandboxDelete as finalizeMcpBridgesAfterSandboxDeleteLifecycle,
+  prepareMcpBridgesForDestroy as prepareMcpBridgesForDestroyLifecycle,
   prepareMcpBridgesForAbsentSandboxDestroy as prepareMcpBridgesForAbsentSandboxDestroyLifecycle,
   restoreMcpBridgesAfterDestroyAbort as restoreMcpBridgesAfterDestroyAbortLifecycle,
 } from "./mcp-bridge-destroy";
@@ -34,10 +35,9 @@ import { credentialResolutionWarning } from "./mcp-bridge-resolution-probe";
 import { restartMcpBridge as restartMcpBridgeLifecycle } from "./mcp-bridge-restart";
 import { getMcpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider";
 import { inspectSourceBridgeState, joinMcpEntriesToOpenShell } from "./mcp-bridge-source";
-import { getSandboxAgent, getSandboxOrThrow, hydrateBridgeState } from "./mcp-bridge-state";
+import { getSandboxAgent, getSandboxOrThrow } from "./mcp-bridge-state";
 import { buildJsonSummary, statusMcpBridge } from "./mcp-bridge-status";
 import { parseMcpAddArgs, parseMcpUpdateArgs } from "./mcp-bridge-validation";
-import { clearTransientBridgeState } from "./mcp-bridge/transient-state";
 
 export {
   buildDeepAgentsMcpRegisterCommand,
@@ -95,15 +95,11 @@ export type { McpDestroyPreparation } from "./mcp-bridge-destroy-preflight";
 export type { McpRebuildPreparation };
 export { statusMcpBridge };
 
-export function resetMcpBridgeTransientStateForTest(): void {
-  clearTransientBridgeState();
-}
-
-function hydrateCurrentBridgeState(
+function inspectCurrentBridgeEntries(
   sandboxName: string,
   runtimeSelection?: McpProviderInspectionRuntimeSelection,
   options: { allowLegacyHandoff?: boolean } = {},
-): McpProviderInspectionRuntimeSelection {
+): { entries: McpSourceEntry[]; runtimeSelection: McpProviderInspectionRuntimeSelection } {
   const sandbox = getSandboxOrThrow(sandboxName);
   const selected = runtimeSelection ?? getMcpProviderInspectionRuntimeSelection(sandbox);
   const observed = inspectSourceBridgeState(sandbox, selected);
@@ -125,8 +121,7 @@ function hydrateCurrentBridgeState(
         ...observed.bridges,
       }
     : observed.bridges;
-  hydrateBridgeState(sandboxName, bridges);
-  return selected;
+  return { entries: Object.values(bridges), runtimeSelection: selected };
 }
 
 export async function addMcpBridge(
@@ -173,11 +168,7 @@ export async function prepareMcpBridgesForDestroy(
     runtimeSelection?: McpProviderInspectionRuntimeSelection;
   } = {},
 ): Promise<McpDestroyPreparation> {
-  void sandboxName;
-  return {
-    entries: [],
-    ...(options.runtimeSelection ? { runtimeSelection: options.runtimeSelection } : {}),
-  };
+  return prepareMcpBridgesForDestroyLifecycle(sandboxName, options);
 }
 
 export async function restoreMcpBridgesAfterDestroyAbort(
@@ -198,16 +189,31 @@ export async function finalizeMcpBridgesAfterSandboxDelete(
 export async function prepareMcpBridgesForAbsentSandboxRebuild(
   sandboxName: string,
   runtimeSelection?: McpProviderInspectionRuntimeSelection,
+  entries: readonly McpSourceEntry[] = [],
 ): Promise<McpRebuildPreparation> {
-  return prepareMcpBridgesForAbsentSandboxRebuildLifecycle(sandboxName, runtimeSelection);
+  return prepareMcpBridgesForAbsentSandboxRebuildLifecycle(
+    sandboxName,
+    entries,
+    runtimeSelection,
+  );
 }
 
 export async function prepareMcpBridgesForRebuild(
   sandboxName: string,
   runtimeSelection?: McpProviderInspectionRuntimeSelection,
+  entries?: readonly McpSourceEntry[],
 ): Promise<McpRebuildPreparation> {
-  hydrateCurrentBridgeState(sandboxName, runtimeSelection, { allowLegacyHandoff: true });
-  return prepareMcpBridgesForRebuildLifecycle(sandboxName, runtimeSelection);
+  if (entries) {
+    return prepareMcpBridgesForRebuildLifecycle(sandboxName, entries, runtimeSelection);
+  }
+  const observed = inspectCurrentBridgeEntries(sandboxName, runtimeSelection, {
+    allowLegacyHandoff: true,
+  });
+  return prepareMcpBridgesForRebuildLifecycle(
+    sandboxName,
+    observed.entries,
+    observed.runtimeSelection,
+  );
 }
 
 export async function reattachMcpProvidersAfterRebuildAbort(

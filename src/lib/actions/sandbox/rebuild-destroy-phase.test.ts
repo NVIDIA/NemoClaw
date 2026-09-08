@@ -225,6 +225,7 @@ describe("rebuild destroy phase", () => {
       false,
       expect.any(Function),
       undefined,
+      [],
     );
   });
 

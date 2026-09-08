@@ -27,7 +27,7 @@ Hermes stores MCP servers in its native `config.yaml`. Registration and inspecti
 OpenClaw stores MCP servers in `openclaw.json` under `mcp.servers`. Existing Mcporter entries require the explicit migration described in [Manage MCP Servers](manage-mcp-servers#migrate-an-existing-registration).
 </AgentOnly>
 
-An interrupted add is retried from the current agent and OpenShell sources. A deterministic provider name lets the retry recognize a partially created provider without a host-side transaction marker.
+An interrupted add is retried from the current agent and OpenShell sources. A deterministic provider name lets the retry recognize a partially created provider without a host-side transaction marker. The retry resumes only when the native entry, generated policy, provider identity and credential key, and sandbox attachment form an exact prefix of the requested add; conflicting or ambiguous resources remain unchanged and stop the command.
 
 ## Add the Server
 

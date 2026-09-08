@@ -40,6 +40,7 @@ export interface RebuildDestroyPhaseInput {
   staleRecovery: boolean;
   recreateJournal: RebuildRecreateJournal;
   backupManifest: RebuildBackupManifest;
+  mcpEntries?: readonly McpRebuildPreparation["entries"][number][];
   log: RebuildLog;
   bail: RebuildBail;
   force?: boolean;
@@ -301,6 +302,7 @@ export async function runRebuildDestroyPhase(
         staleRecovery,
         bail,
         input.runtimeSelection,
+        input.mcpEntries ?? [],
       );
       return preparation;
     },
