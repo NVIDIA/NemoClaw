@@ -300,10 +300,7 @@ describe("managed workload onboard orchestration", () => {
       "'NEMOCLAW_SANDBOX_BASE_IMAGE_REF' is set",
     );
     expect(prepareSandboxWorkloadSource).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({
-        environment,
-        rejectUnsupportedBaseImageOverride: true,
-      }),
+      expect.objectContaining({ environment }),
     );
   });
 

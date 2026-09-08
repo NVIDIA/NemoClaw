@@ -55,13 +55,8 @@ export interface PrepareSandboxWorkloadSourceInput {
   readonly catalogRevision?: string | null;
   /** Contract from the repository-accepted candidate qualification receipt. */
   readonly acceptedCandidateContract?: ManagedImageContractV1 | null;
+  /** Effective environment captured by the lifecycle authority. */
   readonly environment?: NodeJS.ProcessEnv;
-  /**
-   * Reject an agent base-image override that a managed-image workload cannot
-   * honor. Fresh onboarding sets this; managed rebuild applies the same check
-   * after it verifies the recorded managed-workload authority (#11138).
-   */
-  readonly rejectUnsupportedBaseImageOverride?: boolean;
 }
 
 export function liveE2eManagedImageRevision(environment: NodeJS.ProcessEnv): string | null {
@@ -453,11 +448,9 @@ export async function prepareSandboxWorkloadSource(
   // without ever resolving it to a trusted digest (#11138). The check runs
   // before catalog resolution so a catalog outage cannot turn the rejection
   // into a legacy Dockerfile build that consumes the override instead.
-  // Managed rebuild performs the same rejection after it verifies the recorded
-  // managed-workload authority. Legacy rebuild retains its base-image preflight.
-  if (input.rejectUnsupportedBaseImageOverride) {
-    rejectManagedWorkloadBaseImageOverride(input.agentName, input.environment);
-  }
+  // Every managed workload rejects an override before catalog resolution.
+  // Legacy Dockerfile selection returns above and retains its base-image preflight.
+  rejectManagedWorkloadBaseImageOverride(input.agentName, input.environment);
   if (input.catalog && input.catalogPath) {
     throw new SandboxWorkloadPreparationError(
       "managed image catalog has conflicting content authorities",

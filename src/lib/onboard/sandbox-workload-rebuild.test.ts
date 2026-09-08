@@ -320,9 +320,14 @@ describe("managed workload rebuild preflight", () => {
   it("rejects a Hermes base-image override before managed rebuild catalog resolution (#11138)", async () => {
     const credentialBearingOverride =
       "https://registry-user:registry-password@registry.example.test/hermes-base:latest";
-    const prepare = vi.fn(async () => replacement("hermes"));
-    managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource = prepare;
+    const catalog = Object.fromEntries(
+      AGENTS.map((agent) => [agent, managedContract(agent, "new")]),
+    );
+    managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource = ORIGINAL_PREPARE;
     vi.stubEnv("NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF", credentialBearingOverride);
+    vi.stubEnv("GITHUB_ACTIONS", "true");
+    vi.stubEnv("NEMOCLAW_RUN_LIVE_E2E", "1");
+    vi.stubEnv("NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON", JSON.stringify(catalog));
 
     let rejection: Error | null = null;
     try {
@@ -338,7 +343,6 @@ describe("managed workload rebuild preflight", () => {
     expect(rejection?.message).toContain("'NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF' is set");
     expect(rejection?.message).not.toContain(credentialBearingOverride);
     expect(rejection?.message).not.toContain("registry-password");
-    expect(prepare).not.toHaveBeenCalled();
   });
 
   it("retains the live qualification revision during rebuild preflight (#9385)", async () => {

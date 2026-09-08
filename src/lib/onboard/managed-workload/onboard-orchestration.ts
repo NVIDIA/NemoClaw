@@ -303,7 +303,6 @@ export function createManagedWorkloadOnboardRuntime(
           // Same environment authority the catalog selection above reads, so
           // both onboarding decisions observe one set of values (#11138).
           environment: input.startupProfile.environment,
-          rejectUnsupportedBaseImageOverride: true,
           ...(!input.tempManagedRuntimeCatalog && liveCatalog?.catalog
             ? { catalog: liveCatalog.catalog }
             : {}),
