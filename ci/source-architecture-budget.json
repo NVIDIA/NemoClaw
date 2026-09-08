@@ -25,7 +25,7 @@
       "src/lib/inference/config.ts": 30,
       "src/lib/messaging/channels/index.ts": 25,
       "src/lib/onboard/gateway-binding.ts": 53,
-      "src/lib/runner.ts": 84,
+      "src/lib/runner.ts": 83,
       "src/lib/security/redact.ts": 52,
       "src/lib/state/mcp-lifecycle-lock.ts": 21,
       "src/lib/state/onboard-session.ts": 35,

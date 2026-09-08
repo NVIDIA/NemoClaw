@@ -2911,8 +2911,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         preflightDeps: {
           getSandbox: registry.getSandbox.bind(registry),
           getResumeSandboxGpuOverrides,
-          detectGpuForReadiness: () => nim.detectGpu({ proveArm64WslDockerDesktopGpu: null }),
-          detectGpu: nim.detectGpu,
+          detectGpuForReadiness: () => nim.detectGpu({ proveArm64ContainerGpu: null }),
+          detectGpu: fatalRuntimePreflight.detectGpuWithRuntimeProviderProof,
           runPreflight: (preflightOptions) => preflight({ ...opts, ...preflightOptions }),
           assessHost,
           providerNameToOptionKey: providerKey,
