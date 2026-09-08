@@ -47,3 +47,5 @@ secrets.json
 secrets.yaml
 service-account*.json
 token.json
+
+# #11085 evidence branch: inert change so the managed-image PR build runs on the merged head.
