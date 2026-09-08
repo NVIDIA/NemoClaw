@@ -464,6 +464,10 @@ function runInstallBlock(
       .replaceAll("/usr/local/bin", path.join(tmp, "usr-local-bin"))
       .replaceAll("/scripts/lib/reviewed-npm-archive.mts", REVIEWED_NPM_ARCHIVE_HELPER)
       .replaceAll("/scripts/lib/openclaw-npm-remediation.mts", remediationHelper)
+      .replaceAll(
+        "bash /scripts/lib/verify-mcporter-audit.sh",
+        `node --experimental-strip-types ${auditHelper} --directory ${mcporterRuntime} --exceptions ${auditExceptionFile} --graph mcporter-runtime --threshold high`,
+      )
       .replaceAll("/scripts/lib/reviewed-npm-audit.mts", auditHelper)
       .replaceAll("/scripts/npm-audit-exceptions.json", auditExceptionFile),
   ].join("\n");
@@ -694,7 +698,9 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         expect(reviewNote).toContain(
           "The long-term source of truth for these behaviors remains upstream OpenClaw",
         );
-        expect(reviewNote).toContain("test/agents/openclaw/openclaw-real-patched-dist-harness.test.ts");
+        expect(reviewNote).toContain(
+          "test/agents/openclaw/openclaw-real-patched-dist-harness.test.ts",
+        );
         expect(reviewNote).toContain("NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS=1");
         expect(reviewNote).toContain("not a substitute for focused nightly E2E proof");
         expect(reviewNote).toContain("OpenClaw Diagnostics OTEL Host Gateway Boundary");
