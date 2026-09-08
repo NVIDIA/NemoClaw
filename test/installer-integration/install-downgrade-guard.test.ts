@@ -28,10 +28,12 @@ function runInstall(
   writeExecutable(
     path.join(bin, "nemoclaw"),
     `#!/usr/bin/env bash
-if [[ "${installedVersion}" == 'hang' ]]; then
-  /bin/sleep 60
-fi
-printf 'nemoclaw v%s\n' "${installedVersion}"
+case "${installedVersion}" in
+  hang) /bin/sleep 60 ;;
+  ignore-term) trap '' TERM; while :; do :; done ;;
+  invalid) printf 'not a NemoClaw version\n' ;;
+  *) printf 'nemoclaw v%s\n' "${installedVersion}" ;;
+esac
 `,
   );
   writeExecutable(
@@ -71,7 +73,7 @@ esac
 `,
   );
   const sleepBody =
-    installedVersion === "hang" || targetVersion === "hang"
+    ["hang", "ignore-term"].includes(installedVersion) || targetVersion === "hang"
       ? "#!/usr/bin/env bash\nexit 0\n"
       : '#!/usr/bin/env bash\nexec /bin/sleep "$@"\n';
   writeExecutable(path.join(bin, "sleep"), sleepBody);
@@ -154,6 +156,25 @@ describe("public installer downgrade guard", () => {
     expect(fs.existsSync(payloadMarker)).toBe(false);
   });
 
+  it("keeps the installed CLI when the fully qualified lkg tag is selected", () => {
+    const { result, payloadMarker } = runInstall("0.0.118", "0.0.109", {
+      NEMOCLAW_INSTALL_TAG: "refs/tags/lkg",
+    });
+
+    expect(result.status).toBe(1);
+    expect(fs.existsSync(payloadMarker)).toBe(false);
+  });
+
+  it("fails closed when the installed CLI reports an invalid version", () => {
+    const { result, payloadMarker } = runInstall("invalid", "0.0.109");
+
+    expect(result.status).toBe(1);
+    expect(`${result.stdout}${result.stderr}`).toContain(
+      "Cannot verify the installed NemoClaw version",
+    );
+    expect(fs.existsSync(payloadMarker)).toBe(false);
+  });
+
   it("keeps the installed CLI when the implicit lkg version cannot be verified", () => {
     const { result, payloadMarker } = runInstall("0.0.118", "unknown");
 
@@ -166,13 +187,18 @@ describe("public installer downgrade guard", () => {
 
   it.each([
     ["installed NemoClaw version lookup", "hang", "0.0.109"],
+    ["installed NemoClaw version lookup", "ignore-term", "0.0.109"],
     ["maintained release tag lookup", "0.0.108", "hang"],
-  ])("bounds the %s", (label, installedVersion, targetVersion) => {
-    const { result, payloadMarker } = runInstall(installedVersion, targetVersion);
+  ])(
+    "bounds the %s",
+    (label, installedVersion, targetVersion) => {
+      const { result, payloadMarker } = runInstall(installedVersion, targetVersion);
 
-    expect(result.status).toBe(1);
-    expect(`${result.stdout}${result.stderr}`).toContain(`Timed out during ${label}`);
-    expect(`${result.stdout}${result.stderr}`).toContain("The installed CLI was not changed.");
-    expect(fs.existsSync(payloadMarker)).toBe(false);
-  });
+      expect(result.status).toBe(1);
+      expect(`${result.stdout}${result.stderr}`).toContain(`Timed out during ${label}`);
+      expect(`${result.stdout}${result.stderr}`).toContain("The installed CLI was not changed.");
+      expect(fs.existsSync(payloadMarker)).toBe(false);
+    },
+    15_000,
+  );
 });

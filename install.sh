@@ -83,15 +83,17 @@ clone_nemoclaw_ref() {
 installed_nemoclaw_release_version() {
   local cli_path output status
   cli_path="$(command -v nemoclaw 2>/dev/null || true)"
-  [[ -n "$cli_path" ]] || return 0
+  [[ -n "$cli_path" ]] || return 3
   output="$(run_bounded_bootstrap_lookup "installed NemoClaw version lookup" "$cli_path" --version)" || {
     status=$?
-    ((status == 124)) && exit 1
-    return 0
+    ((status == 124)) && return 124
+    return 2
   }
   if [[ "$output" =~ ^nemoclaw[[:space:]]+v([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?)$ ]]; then
     printf '%s' "${BASH_REMATCH[1]}"
+    return 0
   fi
+  return 2
 }
 
 checkout_release_version() {
@@ -128,14 +130,23 @@ release_version_is_newer() {
 }
 
 run_bounded_bootstrap_lookup() {
-  local label="$1" output_file command_pid status ticks=0
+  local label="$1" output_file command_pid status ticks=0 grace_ticks
   shift
   output_file="$(mktemp "${TMPDIR:-/tmp}/nemoclaw-bootstrap-lookup.XXXXXX")"
+  set -m
   "$@" >"$output_file" 2>/dev/null &
   command_pid=$!
+  set +m
   while kill -0 "$command_pid" 2>/dev/null; do
     if ((ticks >= BOOTSTRAP_LOOKUP_TIMEOUT_SECONDS * 10)); then
-      kill -TERM "$command_pid" 2>/dev/null || true
+      kill -TERM -- "-$command_pid" 2>/dev/null || kill -TERM "$command_pid" 2>/dev/null || true
+      for ((grace_ticks = 0; grace_ticks < 10; grace_ticks++)); do
+        kill -0 "$command_pid" 2>/dev/null || break
+        sleep 0.1
+      done
+      if kill -0 "$command_pid" 2>/dev/null; then
+        kill -KILL -- "-$command_pid" 2>/dev/null || kill -KILL "$command_pid" 2>/dev/null || true
+      fi
       wait "$command_pid" 2>/dev/null || true
       rm -f "$output_file"
       printf '[ERROR] Timed out during %s after %s seconds.\n' "$label" "$BOOTSTRAP_LOOKUP_TIMEOUT_SECONDS" >&2
@@ -158,13 +169,19 @@ run_bounded_bootstrap_lookup() {
 }
 
 guard_implicit_maintained_downgrade() {
-  local source_root="$1" selected_ref="$2" installed_version target_version
+  local source_root="$1" selected_ref="$2" installed_version target_version status
   case "$selected_ref" in
     lkg | refs/tags/lkg) ;;
     *) return 0 ;;
   esac
-  installed_version="$(installed_nemoclaw_release_version)"
-  [[ -n "$installed_version" ]] || return 0
+  installed_version="$(installed_nemoclaw_release_version)" || {
+    status=$?
+    ((status == 3)) && return 0
+    ((status == 124)) && exit 1
+    printf '[ERROR] Cannot verify the installed NemoClaw version before selecting maintained lkg.\n' >&2
+    printf '        The installed CLI was not changed. Repair it or select an explicit immutable release tag.\n' >&2
+    exit 1
+  }
   target_version="$(checkout_release_version "$source_root")"
   if [[ -z "$target_version" ]]; then
     printf "[ERROR] Cannot verify the maintained lkg version before replacing installed NemoClaw v%s.\n" "$installed_version" >&2
