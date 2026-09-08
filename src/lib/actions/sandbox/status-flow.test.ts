@@ -694,7 +694,8 @@ describe("showSandboxStatus flow", () => {
       llamaCpp: {
         kind: "unavailable",
         diagnostic: "Managed llama.cpp ownership state is unavailable.",
-        recovery: "Run nemoclaw doctor and correct the reported state before retrying.",
+        recovery:
+          "Run nemoclaw alpha doctor. Rerun onboarding for that sandbox if the managed llama.cpp runtime check fails.",
       },
     });
 
@@ -702,7 +703,9 @@ describe("showSandboxStatus flow", () => {
 
     const output = harness.logSpy.mock.calls.flat().join("\n");
     expect(output).toContain("Llama.cpp: unavailable");
-    expect(output).toContain("Run nemoclaw doctor and correct the reported state before retrying.");
+    expect(output).toContain(
+      "Run nemoclaw alpha doctor. Rerun onboarding for that sandbox if the managed llama.cpp runtime check fails.",
+    );
     expect(process.exitCode).toBe(1);
   });
 

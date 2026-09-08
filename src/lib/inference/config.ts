@@ -111,7 +111,7 @@ export type LlamaCppRouteDetails =
   | {
       kind: "unavailable";
       diagnostic: "Managed llama.cpp ownership state is unavailable.";
-      recovery: "Run nemoclaw doctor and correct the reported state before retrying.";
+      recovery: string;
     };
 
 type LlamaCppRouteSelection = {
@@ -155,7 +155,7 @@ export function getLlamaCppRouteDetails(
     return {
       kind: "unavailable",
       diagnostic: "Managed llama.cpp ownership state is unavailable.",
-      recovery: "Run nemoclaw doctor and correct the reported state before retrying.",
+      recovery: `Run nemoclaw ${route.name} doctor. Rerun onboarding for that sandbox if the managed llama.cpp runtime check fails.`,
     };
   }
   if (route.endpointUrl === LLAMA_CPP_HOST_OPENAI_BASE_URL) {

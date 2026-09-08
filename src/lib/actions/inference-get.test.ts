@@ -107,10 +107,11 @@ describe("runInferenceGet", () => {
     expect(result.llamaCpp).toEqual({
       kind: "unavailable",
       diagnostic: "Managed llama.cpp ownership state is unavailable.",
-      recovery: "Run nemoclaw doctor and correct the reported state before retrying.",
+      recovery:
+        "Run nemoclaw llamacpp-env doctor. Rerun onboarding for that sandbox if the managed llama.cpp runtime check fails.",
     });
     expect(deps.log.mock.calls.map(([line]) => line)).toContain(
-      "Recovery:  Run nemoclaw doctor and correct the reported state before retrying.",
+      "Recovery:  Run nemoclaw llamacpp-env doctor. Rerun onboarding for that sandbox if the managed llama.cpp runtime check fails.",
     );
     expect(JSON.stringify(result)).not.toContain("endpointUrl");
   });

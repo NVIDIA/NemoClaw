@@ -57,7 +57,8 @@ describe("getLlamaCppRouteDetails", () => {
     ).toEqual({
       kind: "unavailable",
       diagnostic: "Managed llama.cpp ownership state is unavailable.",
-      recovery: "Run nemoclaw doctor and correct the reported state before retrying.",
+      recovery:
+        "Run nemoclaw managed doctor. Rerun onboarding for that sandbox if the managed llama.cpp runtime check fails.",
     });
   });
 

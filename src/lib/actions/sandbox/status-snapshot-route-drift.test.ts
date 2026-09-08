@@ -230,6 +230,27 @@ describe("getSandboxStatusReport llama.cpp attribution on drift (#10256)", () =>
     expect(report.llamaCpp).toBeNull();
   });
 
+  it("reports unavailable ownership from an aligned live route (#10256)", async () => {
+    liveGatewayInference("llama-cpp-local", "muse-glimmer");
+    const options = snapshotDeps({
+      provider: "llama-cpp-local",
+      model: "muse-glimmer",
+      endpointUrl: "http://127.0.0.1:8081/v1",
+    });
+
+    const report = await getSandboxStatusReport("alpha", {
+      ...options.deps,
+      inspectManagedLlamaCppOwnership: () => "unknown",
+    });
+
+    expect(report.llamaCpp).toEqual({
+      kind: "unavailable",
+      diagnostic: "Managed llama.cpp ownership state is unavailable.",
+      recovery:
+        "Run nemoclaw alpha doctor. Rerun onboarding for that sandbox if the managed llama.cpp runtime check fails.",
+    });
+  });
+
   it("classifies llama.cpp once in the snapshot consumed by the JSON report", async () => {
     liveGatewayInference("llama-cpp-local", "muse-glimmer");
     const options = snapshotDeps({
