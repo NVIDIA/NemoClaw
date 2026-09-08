@@ -444,7 +444,6 @@ describe("handlePreflightState", () => {
       null,
       expect.objectContaining({
         explicitlyOptedOutGpuPassthrough: false,
-        wslDockerDesktopGpuProofPassed: false,
         resuming: true,
       }),
     );

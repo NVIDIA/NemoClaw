@@ -20,7 +20,7 @@ function n1xProofHarness(proofPassed: boolean) {
     },
   } as never;
   const resolveManagedLlamaCppSelection = vi.fn((_env?: NodeJS.ProcessEnv, gpu?: SetupNimGpu) =>
-    gpu?.wslDockerDesktopGpuProofPassed === true
+    gpu?.containerGpuProof?.passed === true
       ? { kind: "selected" as const, selection }
       : { kind: "rejected" as const, reason: "WSL GPU proof is unavailable" },
   );
@@ -38,7 +38,10 @@ function n1xProofHarness(proofPassed: boolean) {
     },
   );
   return {
-    gpu: { platform: "n1x", wslDockerDesktopGpuProofPassed: proofPassed } as never,
+    gpu: {
+      platform: "n1x",
+      containerGpuProof: { providerId: "docker", passed: proofPassed },
+    } as never,
     installManagedLlamaCpp,
     resolveManagedLlamaCppSelection,
     setupNim: createSetupNim(
@@ -157,7 +160,7 @@ describe("managed llama.cpp profile onboarding", () => {
     expect(harness.installManagedLlamaCpp).toHaveBeenCalledOnce();
     expect(harness.resolveManagedLlamaCppSelection).toHaveBeenCalledWith(
       undefined,
-      expect.objectContaining({ wslDockerDesktopGpuProofPassed: true }),
+      expect.objectContaining({ containerGpuProof: { providerId: "docker", passed: true } }),
     );
   });
 
@@ -170,7 +173,7 @@ describe("managed llama.cpp profile onboarding", () => {
     expect(harness.installManagedLlamaCpp).not.toHaveBeenCalled();
     expect(harness.resolveManagedLlamaCppSelection).toHaveBeenCalledWith(
       undefined,
-      expect.objectContaining({ wslDockerDesktopGpuProofPassed: false }),
+      expect.objectContaining({ containerGpuProof: { providerId: "docker", passed: false } }),
     );
   });
 
@@ -188,7 +191,10 @@ describe("managed llama.cpp profile onboarding", () => {
     );
 
     await expect(
-      setupNim({ platform: "n1x", wslDockerDesktopGpuProofPassed: true } as never, "n1x-agent"),
+      setupNim(
+        { platform: "n1x", containerGpuProof: { providerId: "docker", passed: true } } as never,
+        "n1x-agent",
+      ),
     ).rejects.toThrow("effective Docker context");
     expect(installManagedLlamaCpp).not.toHaveBeenCalled();
   });
