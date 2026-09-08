@@ -444,7 +444,7 @@ test(
       );
       await artifacts.writeJson("gpu-fallback-wrapper.json", {
         behavior:
-          "reject the exact native --gpu create before progress, then delegate one compatibility create and GPU proof",
+          "reject the exact native --gpu create before progress, delegate the compatibility create and GPU proof, then replace the wrapper path with a link to the real OpenShell CLI",
         eventVocabulary: HERMES_GPU_FALLBACK_EVENTS,
       });
       return wrapper;

@@ -124,7 +124,7 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
     ]);
   });
 
-  it("retires fault injection before ForwardTcp restore after one compatibility attempt (#11239)", () => {
+  it("replaces the wrapper with the real OpenShell CLI after the fallback GPU proof (#11239)", () => {
     const { realOpenshell, root, wrapper } = createWrapperFixture("hermes-gpu-fallback-test-", {
       openshell: [
         "#!/usr/bin/env bash",
@@ -216,6 +216,36 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
       "create-without-gpu",
       "delegated",
       "delegated",
+    ]);
+  });
+
+  it("keeps native fault injection when the exact proof precedes compatibility create (#11239)", () => {
+    const { wrapper } = createWrapperFixture("hermes-gpu-fallback-order-test-");
+    const env = { ...process.env, ...wrapper.componentEnv };
+
+    const firstNativeCreate = runWrapper(
+      wrapper.wrapperPath,
+      ["sandbox", "create", "--from", "image", "--gpu"],
+      env,
+    );
+    expect(firstNativeCreate.status).toBe(2);
+
+    const prematureProof = runWrapper(
+      wrapper.wrapperPath,
+      ["sandbox", "exec", "-n", "alpha", "--", "sh", "-lc", HERMES_GPU_NATIVE_NVIDIA_SMI_PROOF],
+      env,
+    );
+    expect(prematureProof.status, prematureProof.stderr).toBe(0);
+    expect(fs.lstatSync(wrapper.wrapperPath).isFile()).toBe(true);
+
+    const secondNativeCreate = runWrapper(
+      wrapper.wrapperPath,
+      ["sandbox", "create", "--from", "image", "--gpu"],
+      env,
+    );
+    expect(secondNativeCreate.status).toBe(2);
+    expect(readHermesGpuFallbackEvents(wrapper.eventsPath)).toEqual([
+      HERMES_GPU_FALLBACK_EVENTS.rejectNativeCreateBeforeProgress,
     ]);
   });
 
