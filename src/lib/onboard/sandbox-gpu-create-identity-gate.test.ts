@@ -515,9 +515,11 @@ describe("created sandbox identity gate", () => {
     expect(output).toContain(`Durable sandbox identity fingerprint: ${fingerprint}`);
     expect(output).toContain("Run 'nemoclaw alpha destroy'");
     expect(output).toContain("the command removes nothing and preserves the recovery record");
-    expect(output).toContain("Give the create-attempt label to an OpenShell administrator");
-    expect(output).toContain("After OpenShell confirms removal");
+    expect(output).toContain("Inspection is diagnostic only");
+    expect(output).toContain("Recovery remains blocked while the sandbox is present");
+    expect(output).toContain("after the owning gateway reports absence");
     expect(output).toContain("run 'nemoclaw alpha destroy --yes'");
+    expect(output).not.toContain("administrator");
     expect(output).not.toContain("alpha-sandbox-id");
     expect(output).not.toContain("Recovery:");
     expect(output).not.toContain("Or:      nemoclaw onboard");
@@ -1171,7 +1173,7 @@ describe("created sandbox identity gate", () => {
     expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith(
       expect.stringMatching(
         new RegExp(
-          `^Create-attempt label: ${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}\\..*Recovery is blocked until an OpenShell administrator resolves the create-attempt label`,
+          `^Create-attempt label: ${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}\\..*Do not delete the sandbox by mutable name.*can clear retained recovery only after OpenShell confirms absence`,
           "u",
         ),
       ),
@@ -1180,7 +1182,8 @@ describe("created sandbox identity gate", () => {
     );
     const output = vi.mocked(console.error).mock.calls.flat().join("\n");
     expect(output).toContain(`${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}`);
-    expect(output).toContain("Recovery is blocked");
+    expect(output).toContain("can clear retained recovery only after OpenShell confirms absence");
+    expect(output).not.toContain("administrator");
     expect(deps.runOpenshell).not.toHaveBeenCalledWith(
       ["sandbox", "delete", "alpha"],
       expect.anything(),
