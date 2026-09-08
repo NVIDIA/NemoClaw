@@ -280,6 +280,42 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
     expect(logs.join("\n")).toContain(result?.cleanup?.resourceName ?? "missing-resource");
   });
 
+  it("cleans the exact provider-owned container after an interrupted non-timeout capture", () => {
+    const base = proofProvider("docker");
+    const interrupted = Object.assign(new Error("proof interrupted"), { code: "EINTR" });
+    const cleanupNvidiaContainer = vi.fn(() => ({ status: "removed" as const }));
+    const prover = createArm64ContainerGpuProver({
+      platform: "linux",
+      arch: "arm64",
+      resolveRuntimeProvider: () => ({
+        ...base,
+        containerEngine: {
+          ...base.containerEngine,
+          captureNvidiaContainer: () => ({
+            status: 1,
+            stdout: "",
+            stderr: "proof interrupted",
+            error: interrupted,
+          }),
+          cleanupNvidiaContainer,
+        },
+      }),
+      log: () => undefined,
+    });
+
+    expect(prover(["JMJWOA-Generic-GPU"])).toMatchObject({
+      providerId: "docker",
+      passed: false,
+      timedOut: false,
+      cleanup: { status: "removed" },
+    });
+    expect(cleanupNvidiaContainer).toHaveBeenCalledWith(
+      "host-local-inference",
+      expect.objectContaining({ name: expect.stringMatching(/^nemoclaw-gpu-proof-[0-9]+$/u) }),
+      15_000,
+    );
+  });
+
   it("parses one capacity row from the container-bound CUDA proof", () => {
     expect(
       parseContainerGpuProofCapacity("Test PASSED\nNEMOCLAW_GPU_MEMORY_MIB=63936, 60000\n"),

@@ -22,6 +22,7 @@ vi.mock("./runtime-provider/selection", () => ({
   ) => ({
     identity: {
       id: environment.NEMOCLAW_GATEWAY_RUNTIME === "podman" ? "podman" : "docker",
+      displayName: environment.NEMOCLAW_GATEWAY_RUNTIME === "podman" ? "Podman" : "Docker",
     },
     gateway: {
       supported: true,
@@ -31,6 +32,7 @@ vi.mock("./runtime-provider/selection", () => ({
   }),
 }));
 
+import { selectDefaultOllamaModel } from "../inference/local";
 import type { DetectGpuDeps, GpuDetection } from "../inference/nim";
 import type { GatewayObservationSnapshot, GatewayReadinessProjection } from "../readiness/gateway";
 import type { SystemReadinessReport } from "../readiness/types";
@@ -46,6 +48,8 @@ import {
 } from "./fatal-runtime-preflight";
 import type { HostAssessment } from "./preflight";
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
+import { createDockerRuntimeProviderBundle } from "./runtime-provider/docker";
+import { createArm64ContainerGpuProver } from "./runtime-provider/nvidia-container-proof";
 
 function hostWithRuntime(runtime: HostAssessment["runtime"]): HostAssessment {
   return {
@@ -156,6 +160,19 @@ function collectedGatewayReadiness(
   completedAt?: string,
 ): CollectedGatewayReadiness {
   return { projection, snapshot: managedGatewaySnapshot(completedAt) };
+}
+
+async function withLinuxArm64<T>(operation: () => Promise<T>): Promise<T> {
+  const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+  const arch = Object.getOwnPropertyDescriptor(process, "arch")!;
+  Object.defineProperty(process, "platform", { ...platform, value: "linux" });
+  Object.defineProperty(process, "arch", { ...arch, value: "arm64" });
+  try {
+    return await operation();
+  } finally {
+    Object.defineProperty(process, "platform", platform);
+    Object.defineProperty(process, "arch", arch);
+  }
 }
 
 afterEach(() => {
@@ -860,6 +877,53 @@ describe("readiness-gated runtime preflight", () => {
     );
     expect(result.n1xWslProduct).toBe(true);
     expect(result.gpu?.n1xWslProduct).toBe(true);
+  });
+
+  it("carries a real provider capture through real GPU detection to Ollama selection", async () => {
+    const captureHostCommand = vi.fn(() => ({
+      status: 0,
+      stdout: "Test PASSED\nNEMOCLAW_GPU_MEMORY_MIB=63936, 60000\n",
+      stderr: "",
+    }));
+    const provider = createDockerRuntimeProviderBundle({ captureHostCommand });
+    const gpuName = "NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)";
+    const runCaptureImpl = vi.fn((command: readonly string[]) =>
+      command[0] === "nvidia-smi" && command.some((arg) => arg.includes("name,memory.total"))
+        ? `${gpuName}, 999999, 999999\n`
+        : "",
+    );
+
+    const result = await withLinuxArm64(() =>
+      runReadinessGatedRuntimePreflight(
+        {},
+        {
+          nonInteractive: true,
+          collectGatewayReadiness: async () => collectedGatewayReadiness(),
+          assessHost: wslDockerDesktopHost,
+          runCaptureImpl,
+          collectN1xWslProduct: vi.fn(() => true),
+          createArm64ContainerGpuProver: () =>
+            createArm64ContainerGpuProver({
+              platform: "linux",
+              arch: "arm64",
+              resolveRuntimeProvider: () => provider,
+              log: () => undefined,
+            }),
+          warnIfHostProxyMissesLoopback: vi.fn(),
+          assertRuntimeProviderHealthy: vi.fn(),
+          validateSandboxGpuPreflight: vi.fn(),
+        },
+      ),
+    );
+
+    expect(captureHostCommand).toHaveBeenCalledOnce();
+    expect(result.gpu).toMatchObject({
+      containerGpuProof: { providerId: "docker", passed: true },
+      n1xWslProduct: true,
+      totalMemoryMB: 63_936,
+      availableMemoryMB: 60_000,
+    });
+    expect(selectDefaultOllamaModel(["qwen3.5:9b", "qwen3.6:35b"], result.gpu)).toBe("qwen3.6:35b");
   });
 
   it("preserves a failed bounded WSL GPU proof as an absent readiness capability (#7411)", async () => {

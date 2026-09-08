@@ -73,6 +73,8 @@ export interface FatalRuntimePreflightContext {
    * override so the provider-owned bounded proof can run when needed.
    */
   detectGpu?: typeof detectGpu;
+  createArm64ContainerGpuProver?: typeof createArm64ContainerGpuProver;
+  runCaptureImpl?: DetectGpuDeps["runCaptureImpl"];
   collectN1xWslProduct?: NonNullable<Parameters<typeof collectN1xWslProductObservation>[1]>;
   warnIfHostProxyMissesLoopback?: typeof warnIfHostProxyMissesLoopback;
   assertRuntimeProviderHealthy?: typeof assertConfiguredRuntimeProviderHealthy;
@@ -325,6 +327,7 @@ function collectOnboardHostReadiness(
     : (context.detectGpu ?? detectGpu)({
         proveArm64ContainerGpu: null,
         n1xWslProduct,
+        runCaptureImpl: context.runCaptureImpl,
         onTrustGateRejection: (reason) => {
           gpuTrustGateRejection = reason;
         },
@@ -470,8 +473,11 @@ function resolveRuntimeGpuProof(
   let containerGpuProof: GpuDetection["containerGpuProof"];
   const n1xWslProduct = result.n1xWslProduct;
   const gpu = (context.detectGpu ?? detectGpu)({
-    proveArm64ContainerGpu: createArm64ContainerGpuProver(),
+    proveArm64ContainerGpu: (
+      context.createArm64ContainerGpuProver ?? createArm64ContainerGpuProver
+    )(),
     n1xWslProduct,
+    runCaptureImpl: context.runCaptureImpl,
     onTrustGateRejection: (reason) => {
       gpuTrustGateRejection = reason;
     },
@@ -646,7 +652,11 @@ export function runFatalOnboardRuntimePreflight(
   let observedAt = now().toISOString();
   let host = assess();
   const n1xWslProduct = collectN1xWslProductObservation(host.isWsl, context.collectN1xWslProduct);
-  let gpu = detect({ proveArm64ContainerGpu: null, n1xWslProduct });
+  let gpu = detect({
+    proveArm64ContainerGpu: null,
+    n1xWslProduct,
+    runCaptureImpl: context.runCaptureImpl,
+  });
   let sandboxGpuConfig = resolveSandboxGpuConfig(gpu, {
     flag: resolveSandboxGpuFlagFromOptions(options),
     device: options.sandboxGpuDevice ?? null,

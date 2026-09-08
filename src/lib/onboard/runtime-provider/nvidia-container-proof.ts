@@ -8,7 +8,7 @@ import {
   type Arm64ContainerGpuProver,
   type ContainerGpuProofResult,
 } from "../../container-gpu-proof";
-import type { RuntimeProviderBundle } from "./contract";
+import type { RuntimeProviderBundle, RuntimeProviderOwnedContainerResource } from "./contract";
 
 // This prover only runs on ARM64. The immutable vectorAdd manifest contains
 // both linux/amd64 and linux/arm64 images, and its ARM64 image ships a genuine
@@ -80,21 +80,38 @@ function runRuntimeProviderGpuProof(
   provider: RuntimeProviderBundle,
   timeoutMs: number,
 ): ContainerGpuProofResult {
-  try {
-    const resource = {
-      name: `nemoclaw-gpu-proof-${String(process.pid)}`,
-      ownership: NVIDIA_CONTAINER_GPU_PROOF_OWNERSHIP,
+  const resource = {
+    name: `nemoclaw-gpu-proof-${String(process.pid)}`,
+    ownership: NVIDIA_CONTAINER_GPU_PROOF_OWNERSHIP,
+  };
+  const containerEngine = provider.containerEngine;
+  if (!containerEngine.supported) {
+    return {
+      providerId: provider.identity.id,
+      passed: false,
+      timedOut: false,
+      exitCode: null,
+      diagnostic: "configured runtime provider has no container engine",
     };
-    if (!provider.containerEngine.supported) {
+  }
+  const cleanupContainer = (
+    target: RuntimeProviderOwnedContainerResource,
+  ): NonNullable<ContainerGpuProofResult["cleanup"]> => {
+    try {
       return {
-        providerId: provider.identity.id,
-        passed: false,
-        timedOut: false,
-        exitCode: null,
-        diagnostic: "configured runtime provider has no container engine",
+        resourceName: target.name,
+        ...containerEngine.cleanupNvidiaContainer(
+          "host-local-inference",
+          target,
+          NVIDIA_CONTAINER_GPU_PROOF_CLEANUP_TIMEOUT_MS,
+        ),
       };
+    } catch {
+      return { resourceName: target.name, status: "failed" };
     }
-    const result = provider.containerEngine.captureNvidiaContainer(
+  };
+  try {
+    const result = containerEngine.captureNvidiaContainer(
       "host-local-inference",
       {
         image: NVIDIA_CONTAINER_GPU_PROOF_IMAGE,
@@ -106,23 +123,9 @@ function runRuntimeProviderGpuProof(
     );
     const timedOut = (result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT";
     const diagnosticSource = result.stderr || result.stdout;
-    const passed = result.status === 0 && !timedOut;
+    const passed = result.status === 0 && !timedOut && result.error === undefined;
     const verifiedCapacity = passed ? parseContainerGpuProofCapacity(result.stdout) : null;
-    let cleanup: ContainerGpuProofResult["cleanup"];
-    if (timedOut) {
-      try {
-        cleanup = {
-          resourceName: resource.name,
-          ...provider.containerEngine.cleanupNvidiaContainer(
-            "host-local-inference",
-            resource,
-            NVIDIA_CONTAINER_GPU_PROOF_CLEANUP_TIMEOUT_MS,
-          ),
-        };
-      } catch {
-        cleanup = { resourceName: resource.name, status: "failed" };
-      }
-    }
+    const cleanup = passed ? undefined : cleanupContainer(resource);
     return {
       providerId: provider.identity.id,
       passed,
@@ -140,6 +143,7 @@ function runRuntimeProviderGpuProof(
       exitCode: null,
       diagnostic:
         error instanceof Error ? error.message.slice(0, 300) : String(error).slice(0, 300),
+      cleanup: cleanupContainer(resource),
     };
   }
 }
@@ -192,11 +196,6 @@ export function createArm64ContainerGpuProver(
       log(
         "    Rerun with --no-gpu to skip GPU passthrough, or raise NEMOCLAW_WSL_GPU_PROOF_TIMEOUT_MS.",
       );
-      if (result.cleanup?.status === "failed") {
-        log(
-          `    Cleanup failed for provider-owned container ${result.cleanup.resourceName}; remove that exact container before retrying.`,
-        );
-      }
     } else if (isExecFormatErrorDiagnostic(result.diagnostic)) {
       log(
         `  ✗ ${provider.identity.displayName} GPU proof could not run: CUDA sample image architecture does not`,
@@ -212,6 +211,11 @@ export function createArm64ContainerGpuProver(
         `  ✗ ${provider.identity.displayName} GPU proof failed; treating GPU as unproven (CPU fallback).`,
       );
       log("    Rerun with --no-gpu to skip GPU passthrough.");
+    }
+    if (result.cleanup?.status === "failed") {
+      log(
+        `    Cleanup failed for provider-owned container ${result.cleanup.resourceName}; remove that exact container before retrying.`,
+      );
     }
     return result;
   };
