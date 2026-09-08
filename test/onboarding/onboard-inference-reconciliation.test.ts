@@ -44,6 +44,14 @@ const HERMES_API_KEY_PROVIDER_METADATA = [
   "",
 ].join("\n");
 
+const OPENAI_API_PROVIDER_METADATA = [
+  "Name: openai-api",
+  "Type: openai",
+  "Credential keys: OPENAI_API_KEY",
+  "Config keys: OPENAI_BASE_URL",
+  "",
+].join("\n");
+
 describe("onboard helpers", () => {
   it("reuses a registered Hermes Provider without re-collecting host credentials", async () => {
     await withProcessEnv(
@@ -927,7 +935,7 @@ console.log(JSON.stringify({
       const harness = createDirectSetupInferenceHarness({
         runOpenshell: (args) =>
           args.slice(0, 2).join(" ") === "provider get"
-            ? { status: 0, stdout: "", stderr: "" }
+            ? { status: 0, stdout: OPENAI_API_PROVIDER_METADATA, stderr: "" }
             : undefined,
       });
 
@@ -954,7 +962,10 @@ console.log(JSON.stringify({
         {
           name: "provider-get",
           matches: (command) => command.startsWith("provider get"),
-          results: [{ status: 0, stdout: "", stderr: "" }],
+          results: [
+            { status: 0, stdout: OPENAI_API_PROVIDER_METADATA, stderr: "" },
+            { status: 0, stdout: OPENAI_API_PROVIDER_METADATA, stderr: "" },
+          ],
         },
         {
           name: "inference-set",
@@ -999,7 +1010,7 @@ console.log(JSON.stringify({
         {
           name: "provider-get",
           matches: (command) => command.startsWith("provider get"),
-          results: [{ status: 0, stdout: "", stderr: "" }],
+          results: [{ status: 0, stdout: OPENAI_API_PROVIDER_METADATA, stderr: "" }],
         },
         {
           name: "inference-set",

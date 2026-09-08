@@ -51,7 +51,7 @@ Gateway inference:
 EOF
   exit 0
 fi
-if [ "$1" = "provider" ] && [ "$2" = "get" ]; then
+if [ "$1" = "provider" ] && [ "$2" = "get" ] && [ "$5" = "nvidia-prod" ]; then
   cat <<'EOF'
 Name: nvidia-prod
 Type: nvidia
@@ -59,6 +59,10 @@ Credential keys: NVIDIA_INFERENCE_API_KEY
 Config keys: <none>
 EOF
   exit 0
+fi
+if [ "$1" = "provider" ] && [ "$2" = "get" ]; then
+  printf "provider '%s' not found\n" "$5" >&2
+  exit 1
 fi
 exit 0
 `,
@@ -200,7 +204,7 @@ const { setupNim, setupInference } = require(${onboardPath});
       fs.writeFileSync(
         path.join(fakeBin, "openshell"),
         `#!/usr/bin/env bash
-if [ "$1" = "provider" ] && [ "$2" = "get" ]; then
+if [ "$1" = "provider" ] && [ "$2" = "get" ] && [ "$5" = "nvidia-prod" ]; then
   cat <<'EOF'
 Name: nvidia-prod
 Type: nvidia
@@ -208,6 +212,10 @@ Credential keys: NVIDIA_INFERENCE_API_KEY
 Config keys: <none>
 EOF
   exit 0
+fi
+if [ "$1" = "provider" ] && [ "$2" = "get" ]; then
+  printf "provider '%s' not found\n" "$5" >&2
+  exit 1
 fi
 exit 0
 `,

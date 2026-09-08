@@ -309,18 +309,6 @@ export function createDirectSetupInferenceHarnessFactory(
               stderr: `provider '${providerName}' not found`,
             });
           }
-          if (routed.status === 0 && !routed.stdout && !routed.stderr) {
-            return directRunResult({
-              ...routed,
-              stdout: [
-                `Name: ${providerName}`,
-                "Type: openai",
-                "Credential keys: COMPATIBLE_API_KEY",
-                "Config keys: OPENAI_BASE_URL",
-                "",
-              ].join("\n"),
-            });
-          }
         }
         return directRunResult(routed);
       }
@@ -335,14 +323,8 @@ export function createDirectSetupInferenceHarnessFactory(
       if (args[0] === "provider" && args[1] === "get") {
         const providerName = args.at(-1) ?? "provider";
         return directRunResult({
-          status: 0,
-          stdout: [
-            `Name: ${providerName}`,
-            "Type: openai",
-            "Credential keys: COMPATIBLE_API_KEY",
-            "Config keys: OPENAI_BASE_URL",
-            "",
-          ].join("\n"),
+          status: 1,
+          stderr: `provider '${providerName}' not found`,
         });
       }
       return directRunResult();

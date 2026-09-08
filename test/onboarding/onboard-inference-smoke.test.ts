@@ -25,6 +25,7 @@ describe("onboard inference smoke guard (#3253)", () => {
       const fakeBin = path.join(tmpDir, "bin");
       const scriptPath = path.join(tmpDir, "setup-inference-smoke-check.cjs");
       const curlLogPath = path.join(tmpDir, "curl-probes.log");
+      const commandLogPath = path.join(tmpDir, "openshell-commands.log");
       const onboardPath = JSON.stringify(path.join(REPO_ROOT, "src", "lib", "onboard.ts"));
       const runnerPath = JSON.stringify(path.join(REPO_ROOT, "src", "lib", "runner.ts"));
       const registryPath = JSON.stringify(
@@ -70,6 +71,7 @@ const normalize = (command) => (Array.isArray(command) ? command.join(" ") : Str
 runner.run = (command) => {
   const text = normalize(command);
   calls.push(["run", text]);
+  require("node:fs").appendFileSync(process.env.NEMOCLAW_FAKE_COMMAND_LOG, text + "\n");
   const profileResult = require(${onboardScriptMocksPath}).mockManagedEndpointlessProviderProfileRun(command);
   if (profileResult !== null) return profileResult;
   if (text.includes("provider get") && text.includes("compatible-endpoint")) {
@@ -153,6 +155,7 @@ const setupInference = createSetupInference({
             VITEST: "false",
             NEMOCLAW_TEST_NO_SLEEP: "1",
             NEMOCLAW_FAKE_CURL_LOG: curlLogPath,
+            NEMOCLAW_FAKE_COMMAND_LOG: commandLogPath,
             BROKEN_API_KEY: "test-key",
           },
           timeout: 80_000,
@@ -163,6 +166,22 @@ const setupInference = createSetupInference({
           result.status,
           0,
           `setupInference accepted a configured route without proving chat/completions; output:\n${output}`,
+        );
+
+        const commands = fs.readFileSync(commandLogPath, "utf8").trim().split("\n");
+        const providerCreateIndex = commands.findIndex(
+          (command) =>
+            command.includes("provider create -g nemoclaw") &&
+            command.includes("--name compatible-endpoint"),
+        );
+        const inferenceSetIndex = commands.findIndex((command) =>
+          command.includes("inference set -g nemoclaw"),
+        );
+        assert.ok(providerCreateIndex >= 0, "setupInference did not create compatible-endpoint");
+        assert.ok(inferenceSetIndex >= 0, "setupInference did not configure inference");
+        assert.ok(
+          providerCreateIndex < inferenceSetIndex,
+          "setupInference configured inference before creating compatible-endpoint",
         );
 
         const expectedDiagnostics = [

@@ -789,7 +789,12 @@ const { createSandbox } = require(${onboardPath});
       const harness = createDirectSetupInferenceHarness({
         runOpenshell: (args) =>
           args.slice(0, 2).join(" ") === "provider get"
-            ? { status: 0, stdout: "", stderr: "" }
+            ? {
+                status: 0,
+                stdout:
+                  "Name: openai-api\nType: openai\nCredential keys: OPENAI_API_KEY\nConfig keys: OPENAI_BASE_URL\n",
+                stderr: "",
+              }
             : undefined,
         overrides: { verifyInferenceRoute: route.verifyInferenceRoute },
       });
@@ -828,7 +833,12 @@ const { createSandbox } = require(${onboardPath});
       const harness = createDirectSetupInferenceHarness({
         runOpenshell: (args) =>
           args.slice(0, 2).join(" ") === "provider get"
-            ? { status: 0, stdout: "", stderr: "" }
+            ? {
+                status: 0,
+                stdout:
+                  "Name: openai-api\nType: openai\nCredential keys: OPENAI_API_KEY\nConfig keys: OPENAI_BASE_URL\n",
+                stderr: "",
+              }
             : undefined,
         overrides: { verifyInferenceRoute: route.verifyInferenceRoute },
       });
