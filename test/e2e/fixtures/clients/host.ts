@@ -24,6 +24,12 @@ export interface HostClientOptions {
   openshellPath?: string;
 }
 
+export interface ForwardListenerEvidence {
+  valid: boolean;
+  identity: string;
+  output: string;
+}
+
 const GATEWAY_ALREADY_ABSENT =
   /gateway[^\n]*(?:does not exist|not found)|No (?:active )?gateway|No gateway metadata found/i;
 const GATEWAY_REMOVE_UNSUPPORTED =
@@ -175,6 +181,69 @@ export class HostCliClient {
     });
     assertExitZero(result, `nemoclaw ${sandboxName} status`);
     return result;
+  }
+
+  async inspectOpenShellForwardListener(
+    port: string,
+    sandboxName: string,
+    options: ShellProbeRunOptions = {},
+  ): Promise<ForwardListenerEvidence> {
+    const artifactName = options.artifactName ?? `forward-listener-${port}`;
+    const probeOptions = { ...options, timeoutMs: options.timeoutMs ?? 15_000 };
+    const [before, command] = await Promise.all([
+      this.command("lsof", ["-ti", `:${port}`, "-sTCP:LISTEN"], {
+        ...probeOptions,
+        artifactName: `${artifactName}-listener-before`,
+      }),
+      this.command("which", [this.openshellPath], {
+        ...probeOptions,
+        artifactName: `${artifactName}-command`,
+      }),
+    ]);
+    const pids = [
+      ...new Set(before.stdout.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean)),
+    ];
+    const pid = pids.length === 1 && /^[1-9]\d*$/u.test(pids[0]!) ? pids[0]! : "";
+    const commandPath = command.stdout.trim();
+    if (!pid || !commandPath) {
+      return { valid: false, identity: "", output: `${resultText(before)}\n${resultText(command)}` };
+    }
+
+    const [actualExecutable, expectedExecutable, commandLine, after] = await Promise.all([
+      this.command("readlink", ["-f", `/proc/${pid}/exe`], {
+        ...probeOptions,
+        artifactName: `${artifactName}-actual-executable`,
+      }),
+      this.command("readlink", ["-f", commandPath], {
+        ...probeOptions,
+        artifactName: `${artifactName}-expected-executable`,
+      }),
+      this.command("ps", ["-ww", "-p", pid, "-o", "args="], {
+        ...probeOptions,
+        artifactName: `${artifactName}-command-line`,
+      }),
+      this.command("lsof", ["-ti", `:${port}`, "-sTCP:LISTEN"], {
+        ...probeOptions,
+        artifactName: `${artifactName}-listener-after`,
+      }),
+    ]);
+    const expectedCommandLine = `${commandPath} --gateway nemoclaw --workspace default forward service ${sandboxName} --target-port ${port} --target-host 127.0.0.1 --local 127.0.0.1:${port}`;
+    const afterPids = [
+      ...new Set(after.stdout.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean)),
+    ];
+    const probes = [before, command, actualExecutable, expectedExecutable, commandLine, after];
+    const identity = `${pid}\t${actualExecutable.stdout.trim()}\t${commandLine.stdout.trim()}`;
+    const valid =
+      probes.every((probe) => probe.exitCode === 0 && !probe.timedOut) &&
+      actualExecutable.stdout.trim() === expectedExecutable.stdout.trim() &&
+      commandLine.stdout.trim() === expectedCommandLine &&
+      afterPids.length === 1 &&
+      afterPids[0] === pid;
+    return {
+      valid,
+      identity,
+      output: probes.map(resultText).filter(Boolean).join("\n"),
+    };
   }
 
   async destroySandbox(
