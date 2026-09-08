@@ -6,7 +6,6 @@ import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { HERMES_LIFECYCLE_DEFINITION } from "../../domain/lifecycle/hermes-definition";
 import {
   assertPodmanExecutableAuthority,
-
   capturePodmanExecutableAuthority,
   type PodmanExecutableAuthority,
   type PodmanExecutableAuthorityDeps,

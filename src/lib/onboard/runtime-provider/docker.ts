@@ -42,6 +42,8 @@ import {
   type RuntimeProviderCleanupInput,
   type RuntimeProviderCommandCapture,
   type RuntimeProviderContainerEngineOperation,
+  type RuntimeProviderNvidiaContainerInput,
+  type RuntimeProviderOwnedContainerCleanupOptions,
   type RuntimeProviderDoctorCheck,
   type RuntimeProviderLifecycleInput,
   type RuntimeProviderLifecycleResult,
@@ -53,6 +55,7 @@ import {
 } from "./contract";
 import { createDockerLlamaCppHostLocalOperation } from "./docker-llama-cpp-operation";
 import { createDockerPrivilegedSandboxControl } from "./docker-privileged-sandbox-control";
+import { cleanupOwnedContainer, ownedContainerRunArguments } from "./owned-container-resource";
 import { createDockerRuntimeProviderSnapshotSurface } from "./snapshot";
 
 type DockerOpResult = { status?: number | null };
@@ -154,6 +157,48 @@ function captureDockerContainerEngineOperation(
     throw new Error(`Docker provider does not register the '${operation}' engine operation.`);
   }
   return deps.captureHostCommand("docker", [...args], timeoutMs);
+}
+
+function captureDockerNvidiaContainer(
+  deps: DockerRuntimeProviderDependencies,
+  supportedOperations: ReadonlySet<RuntimeProviderContainerEngineOperation>,
+  operation: RuntimeProviderContainerEngineOperation,
+  input: RuntimeProviderNvidiaContainerInput,
+  timeoutMs?: number,
+): RuntimeProviderCommandCapture {
+  return captureDockerContainerEngineOperation(
+    deps,
+    supportedOperations,
+    operation,
+    [
+      "run",
+      "--rm",
+      ...ownedContainerRunArguments(input.resource),
+      "--gpus",
+      "all",
+      "--entrypoint",
+      input.entrypoint,
+      input.image,
+      ...input.command,
+    ],
+    timeoutMs,
+  );
+}
+
+function cleanupDockerNvidiaContainer(
+  deps: DockerRuntimeProviderDependencies,
+  supportedOperations: ReadonlySet<RuntimeProviderContainerEngineOperation>,
+  operation: RuntimeProviderContainerEngineOperation,
+  resource: RuntimeProviderNvidiaContainerInput["resource"],
+  options: RuntimeProviderOwnedContainerCleanupOptions,
+) {
+  return cleanupOwnedContainer(
+    resource,
+    `^/${resource.name}$`,
+    (args, timeout) =>
+      captureDockerContainerEngineOperation(deps, supportedOperations, operation, args, timeout),
+    options,
+  );
 }
 
 function loadDockerStop(): DockerStop {
@@ -651,6 +696,24 @@ export function createDockerRuntimeProviderBundle(
           args,
           timeoutMs,
         ),
+      nvidiaContainer: {
+        capture: (operation, input, timeoutMs) =>
+          captureDockerNvidiaContainer(
+            deps,
+            containerEngineOperations,
+            operation,
+            input,
+            timeoutMs,
+          ),
+        cleanup: (operation, resource, options) =>
+          cleanupDockerNvidiaContainer(
+            deps,
+            containerEngineOperations,
+            operation,
+            resource,
+            options,
+          ),
+      },
     },
   };
 }

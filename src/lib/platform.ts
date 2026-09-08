@@ -44,6 +44,47 @@ export interface DockerHostProbeResult {
 
 export type DockerHostProbe = (dockerHost: string | undefined) => DockerHostProbeResult;
 
+type WindowsInteropCapture = (
+  command: readonly string[],
+  options?: { ignoreError?: boolean; timeout?: number },
+) => string;
+
+export interface WindowsProcessTcpListenerProbe {
+  processName: string;
+  port: number;
+  timeoutMs: number;
+}
+
+/** Require every matching Windows process listener on a TCP port to use loopback. */
+export function windowsProcessListensOnlyOnLoopback(
+  runCaptureImpl: WindowsInteropCapture,
+  probe: WindowsProcessTcpListenerProbe,
+): boolean {
+  const processName = probe.processName.trim();
+  if (!processName || !Number.isInteger(probe.port) || probe.port < 1 || probe.port > 65_535) {
+    return false;
+  }
+  const quotedProcessName = `'${processName.replace(/'/g, "''")}'`;
+  const script =
+    `$processPids = @(Get-Process ${quotedProcessName} -ErrorAction SilentlyContinue | ` +
+    "Select-Object -ExpandProperty Id); " +
+    "if ($processPids.Count -gt 0) { " +
+    `Get-NetTCPConnection -LocalPort ${probe.port} -State Listen -ErrorAction SilentlyContinue | ` +
+    "Where-Object { $processPids -contains $_.OwningProcess } | " +
+    "Select-Object -ExpandProperty LocalAddress }";
+  const addresses = runCaptureImpl(["powershell.exe", "-Command", script], {
+    ignoreError: true,
+    timeout: probe.timeoutMs,
+  })
+    .split(/\r?\n/)
+    .map((address) => address.trim())
+    .filter(Boolean);
+  return (
+    addresses.length > 0 &&
+    addresses.every((address) => address === "127.0.0.1" || address === "::1")
+  );
+}
+
 const DOCKER_PROBE_TIMEOUT_MS = 3_000;
 const DOCKER_PROBE_MAX_BUFFER_BYTES = 1024 * 1024;
 const DOCKER_PROBE_ENV_NAMES = ["HOME", "USER", "LOGNAME", "PATH"] as const;

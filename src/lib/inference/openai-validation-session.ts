@@ -18,7 +18,10 @@ import {
   STRICT_TOOL_PROBE_RETRY_TOKEN_LADDER,
   strictToolProbeReasoningRetryMessage,
 } from "./openai-probe-models";
-import { STREAMING_EVENT_PROBE_MAX_SECONDS } from "./probe-http-helpers";
+import {
+  MAX_ONBOARD_VALIDATION_TIMEOUT_SECONDS,
+  STREAMING_EVENT_PROBE_MAX_SECONDS,
+} from "./probe-http-helpers";
 import { RETRIABLE_HTTP_PROBE_STATUSES } from "./probe/transient-http-policy";
 
 const RETRY_DELAYS_MS = [5_000, 15_000, 30_000];
@@ -346,7 +349,10 @@ export async function probeOpenAiLikeEndpointWithValidationSession(
                 body: requireToolCall
                   ? chatToolPayload(model, maxTokens)
                   : JSON.stringify(deps.getChatPayload(model, options)),
-                timeoutMs: deps.getChatTimeoutMs(model, options) * timeoutMultiplier,
+                timeoutMs: Math.min(
+                  deps.getChatTimeoutMs(model, options) * timeoutMultiplier,
+                  MAX_ONBOARD_VALIDATION_TIMEOUT_SECONDS * 1000,
+                ),
               }),
             retryTransientHttp,
           );

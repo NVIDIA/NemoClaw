@@ -277,7 +277,6 @@ RUN groupadd -r -g 999 sandbox \
     && usermod -a -G sandbox root \
     && mkdir -p /sandbox/.nemoclaw \
         /sandbox/.deepagents/.state \
-        /sandbox/.deepagents/skills \
     # Deep Agents Code owns the optional-name onboarding state, but managed
     # terminals cannot answer that upstream first-run prompt before becoming
     # usable. Preseed it here; the TUI startup E2E rejects pending onboarding
@@ -286,7 +285,7 @@ RUN groupadd -r -g 999 sandbox \
     && printf '1\n' > /sandbox/.deepagents/.state/onboarding_complete \
     && chown -R sandbox:sandbox /sandbox \
     && chmod 2770 /sandbox/.deepagents \
-    && chmod 770 /sandbox/.deepagents/.state /sandbox/.deepagents/skills \
+    && chmod 770 /sandbox/.deepagents/.state \
     && test "$(id -u sandbox):$(id -g sandbox)" = "999:999" \
     && test "$(getent passwd sandbox)" = "sandbox:x:999:999::/sandbox:/bin/bash"
 

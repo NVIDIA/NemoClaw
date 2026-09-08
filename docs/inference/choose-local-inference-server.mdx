@@ -56,7 +56,7 @@ NVIDIA NIM filters its available models by detected GPU VRAM.
 ## Choose Ollama
 
 Choose Ollama when you want the default local setup path.
-The wizard can detect a running daemon, install or upgrade Ollama on supported macOS and Linux hosts, and work with Windows-host Ollama from WSL when Docker Desktop integration is available.
+The wizard can detect a running daemon, install or upgrade Ollama on supported macOS and Linux hosts, and work with Windows-host Ollama from WSL when Docker Desktop integration is available, `DOCKER_HOST` is unset, and Docker uses its local `default` context.
 
 Some model and template combinations can return tool calls as plain text under realistic agent load.
 OpenClaw onboarding validates structured tool calls and stops when the selected model does not provide the required behavior.

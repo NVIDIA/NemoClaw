@@ -14,6 +14,7 @@ import {
   SandboxClient,
 } from "../fixtures/clients/index.ts";
 import type { E2ETargetFixtures } from "../fixtures/e2e-test.ts";
+import { RuntimeProviderPrerequisite } from "../fixtures/runtime-provider.ts";
 import type { NemoClawInstance } from "../fixtures/phases/index.ts";
 import {
   buildBackupContainerName,
@@ -102,10 +103,21 @@ function instance(overrides: Partial<NemoClawInstance> = {}): NemoClawInstance {
   };
 }
 
-function fixture(runner: FakeRunner, cleanup: FakeCleanup): LifecyclePhaseFixture {
+function fixture(
+  runner: FakeRunner,
+  cleanup: FakeCleanup,
+  runtimeEnvironment?: NodeJS.ProcessEnv,
+): LifecyclePhaseFixture {
   const host = new HostCliClient(runner);
   const sandbox = new SandboxClient(runner);
-  return new LifecyclePhaseFixture(host, sandbox, cleanup);
+  const runtimeProvider = new RuntimeProviderPrerequisite(
+    host,
+    (reason) => {
+      throw new Error(reason);
+    },
+    runtimeEnvironment,
+  );
+  return new LifecyclePhaseFixture(host, sandbox, cleanup, undefined, runtimeProvider);
 }
 
 async function preparedPostRebootFixture(
@@ -556,7 +568,23 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
     runner.enqueue(shellResult(0, "200"));
   }
 
-  it("proves 2xx→401→rejected rebuild without mutation, then restores 2xx", async () => {
+  it.each([
+    ["Docker", { NEMOCLAW_GATEWAY_RUNTIME: "docker" }, "docker", ["ps"]],
+    [
+      "Podman",
+      {
+        HOME: "/home/runner",
+        PATH: "/usr/bin",
+        NEMOCLAW_GATEWAY_RUNTIME: "podman",
+        OPENSHELL_PODMAN_SOCKET: "/run/user/1001/podman/podman.sock",
+        XDG_RUNTIME_DIR: "/run/user/1001",
+      },
+      "podman",
+      ["--url", "unix:///run/user/1001/podman/podman.sock", "ps"],
+    ],
+  ] as const)(
+    "proves 2xx→401→rejected rebuild without mutation through %s, then restores 2xx",
+    async (_displayName, runtimeEnvironment, runtimeCommand, runtimeArgsPrefix) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "dcode-lifecycle-home-"));
     const previousHome = process.env.HOME;
     process.env.HOME = home;
@@ -581,7 +609,7 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
       runner.enqueue(shellResult(0, "200"));
       const cleanup = new FakeCleanup();
 
-      const result = await fixture(runner, cleanup).simulate(
+      const result = await fixture(runner, cleanup, runtimeEnvironment).simulate(
         "dcode-rebuild-invalid-credential",
         dcodeInstance(),
         options,
@@ -613,6 +641,11 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
         (call) => call.command === "nemoclaw" && call.args.includes("rebuild"),
       );
       expect(rebuild?.options?.env).not.toHaveProperty("COMPATIBLE_API_KEY");
+      const containerIds = runner.calls.find(
+        (call) => call.options?.artifactName === "lifecycle-dcode-container-ids-before",
+      );
+      expect(containerIds?.command).toBe(runtimeCommand);
+      expect(containerIds?.args.slice(0, runtimeArgsPrefix.length)).toEqual(runtimeArgsPrefix);
       expect(cleanup.calls).toHaveLength(1);
 
       const callCount = runner.calls.length;
@@ -622,7 +655,8 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
       restoreEnv("HOME", previousHome);
       fs.rmSync(home, { force: true, recursive: true });
     }
-  });
+    },
+  );
 
   it("refuses to rotate a gateway provider shared by another sandbox", async () => {
     const runner = new FakeRunner();
