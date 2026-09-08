@@ -38,10 +38,7 @@ const CANDIDATE_SHA = "a".repeat(40);
 const BASE_SHA = "b".repeat(40);
 const REQUIRED_RUNTIME_AUTHORITY_PATHS = [
   "src/lib/inference/nim.ts",
-  "src/lib/inference/serving/profile-provenance.ts",
-  "src/lib/onboard/machine/handlers/provider-inference.ts",
   "src/lib/onboard/provider-selection.ts",
-  "src/lib/onboard/setup-nim-provider-discovery.ts",
   "src/lib/onboard/runtime-provider/configured-runtime.ts",
   "src/lib/onboard/runtime-provider/current.ts",
   "src/lib/onboard/setup-nim-flow.ts",
@@ -189,7 +186,6 @@ describe("generic NVIDIA GPU PR selection", () => {
     expect(selector?.permissions).toEqual({ actions: "read", contents: "read" });
     expect(selector?.outputs).toMatchObject({
       base_sha: "${{ steps.changed.outputs.base_sha }}",
-      llama_cpp_runtime_image: "${{ steps.llama_cpp_runtime_image.outputs.reference }}",
       managed_image_revision: "${{ steps.publication.outputs.head_sha }}",
     });
 
@@ -223,27 +219,8 @@ describe("generic NVIDIA GPU PR selection", () => {
       "node --experimental-strip-types --no-warnings tools/e2e/base-image-publication.mts --wait-seconds 3000 --poll-seconds 30",
     );
 
-    const runtimeImage = selector?.steps?.find(
-      (step) => step.name === "Resolve base llama.cpp runtime image",
-    );
-    expect(runtimeImage).toMatchObject({
-      id: "llama_cpp_runtime_image",
-      if: "${{ steps.changed.outputs.selected == 'true' }}",
-    });
-    expect(runtimeImage?.run).toContain(
-      "managed-inference/recipes/llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1.yaml",
-    );
-    expect(runtimeImage?.run).toContain("fs.appendFileSync(process.env.GITHUB_OUTPUT");
-
     expect(value.jobs["llama-cpp-generic-gpu"]?.env?.E2E_MANAGED_IMAGE_REVISION).toBe(
       "${{ needs.select-llama-cpp-generic-gpu.outputs.managed_image_revision }}",
     );
-    expect(value.jobs["llama-cpp-generic-gpu"]?.env).toMatchObject({
-      NEMOCLAW_LLAMA_CPP_RUNTIME_IMAGE:
-        "${{ needs.select-llama-cpp-generic-gpu.outputs.llama_cpp_runtime_image }}",
-      NEMOCLAW_LLAMA_CPP_RUNTIME_IMAGE_SOURCE_REVISION:
-        "${{ needs.select-llama-cpp-generic-gpu.outputs.base_sha }}",
-      NEMOCLAW_LLAMA_CPP_RUNTIME_IMAGE_SCOPE: "published-base",
-    });
   });
 });

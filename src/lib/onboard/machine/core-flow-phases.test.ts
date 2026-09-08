@@ -222,8 +222,6 @@ function createPhases(
       }) as (code: number) => never,
       deleteEnv: vi.fn(),
       ...overrides.providerDeps,
-      revalidateManagedLlamaCppResumeSandboxIdentity:
-        overrides.providerDeps?.revalidateManagedLlamaCppResumeSandboxIdentity ?? vi.fn(),
     },
   });
   const sandbox = createSandboxOnboardFlowPhase<CoreContext>({

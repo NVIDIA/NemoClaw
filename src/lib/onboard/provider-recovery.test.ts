@@ -5,19 +5,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import * as onboardSession from "../state/onboard-session";
 import * as registry from "../state/registry";
-import { createSandboxHostLocalInferenceProvenance } from "../state/registry/host-local-inference";
 import { persistedProviderNameToSelectionKey } from "./inference-providers/provider-selection-keys";
 import {
   classifySandboxRecoveryAuthority,
   createProviderRecoveryHelpers,
   getSandboxRecoveryAuthority,
-  INVALID_MANAGED_LLAMA_CPP_RECOVERY,
   providerNameToOptionKey,
   shouldRecoverRecordedProvider,
   validateLiveGatewayInference,
 } from "./provider-recovery";
 import { resolveRequestedProviderSelection } from "./provider-selection";
-import { serializeHostLocalInferenceReceipt } from "./runtime-provider/host-local-inference";
 import { prepareProviderDiscovery } from "./setup-nim-provider-discovery";
 
 const { REMOTE_PROVIDER_CONFIG } = require("./providers") as {
@@ -27,43 +24,6 @@ const { REMOTE_PROVIDER_CONFIG } = require("./providers") as {
 afterEach(() => {
   vi.restoreAllMocks();
 });
-
-function managedLlamaCppReceipt(recipeId: string): string {
-  return serializeHostLocalInferenceReceipt({
-    schemaVersion: 1,
-    providerId: "docker",
-    service: "llama-cpp",
-    engineAuthority: {
-      schemaVersion: 1,
-      providerId: "docker",
-      operation: "host-local-inference",
-      engineId: "docker",
-      authorityId: `docker-endpoint:${"a".repeat(64)}`,
-      bindingSha256: "b".repeat(64),
-    },
-    endpoint: {
-      host: "host.openshell.internal",
-      port: 8081,
-      networkName: "openshell",
-    },
-    runtime: {
-      kind: "container",
-      runtimeId: "docker-runtime:alpha",
-      name: "nemoclaw-llama-cpp-alpha",
-      imageRef: `nvcr.io/nvidia/llama-cpp@sha256:${"c".repeat(64)}`,
-      probeImageRef: `quay.io/curl/curl@sha256:${"d".repeat(64)}`,
-      specSha256: "e".repeat(64),
-      model: {
-        planDigest: `sha256:${"f".repeat(64)}`,
-        recipeId,
-        generation: "9".repeat(64),
-        digest: `sha256:${"8".repeat(64)}`,
-        sizeBytes: 1,
-      },
-      gpu: { vendor: "nvidia", count: 1 },
-    },
-  });
-}
 
 describe("persisted provider selection", () => {
   it.each([
@@ -75,7 +35,13 @@ describe("persisted provider selection", () => {
     ["OpenAI", "openai-api", false, false, "openai"],
     ["OpenRouter", "openrouter-api", false, false, "openrouter"],
     ["Anthropic", "anthropic-prod", false, false, "anthropic"],
-    ["Anthropic-compatible", "compatible-anthropic-endpoint", false, false, "anthropicCompatible"],
+    [
+      "Anthropic-compatible",
+      "compatible-anthropic-endpoint",
+      false,
+      false,
+      "anthropicCompatible",
+    ],
     ["Gemini", "gemini-api", false, false, "gemini"],
     ["OpenAI-compatible", "compatible-endpoint", false, false, "custom"],
     ["operator llama.cpp", "llama-cpp-local", false, false, "llama-cpp"],
@@ -262,160 +228,12 @@ describe("provider recovery persisted routing state", () => {
     });
   }
 
-  it("recovers the exact managed recipe from a provenance-bound host-local receipt", () => {
-    const recipeId = "llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1";
-    const hostLocalInferenceReceipt = managedLlamaCppReceipt(recipeId);
-    vi.spyOn(registry, "getSandbox").mockReturnValue({
-      name: "alpha",
-      provider: "llama-cpp-local",
-      model: "qwen3.6-35b-a3b",
-      hostLocalInferenceReceipt,
-      hostLocalInferenceProvenance: createSandboxHostLocalInferenceProvenance(
-        "alpha",
-        hostLocalInferenceReceipt,
-      ),
-    });
-
-    const recovery = helpers();
-
-    expect(recovery.readRecordedManagedLlamaCppRecipeId("alpha")).toBe(recipeId);
-  });
-
-  it("rejects managed recovery when host-local receipt provenance does not match", () => {
-    const originalReceipt = managedLlamaCppReceipt("llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1");
-    const tamperedReceipt = managedLlamaCppReceipt("llama-cpp.untrusted.v1");
-    vi.spyOn(registry, "getSandbox").mockReturnValue({
-      name: "alpha",
-      provider: "llama-cpp-local",
-      model: "qwen3.6-35b-a3b",
-      hostLocalInferenceReceipt: tamperedReceipt,
-      hostLocalInferenceProvenance: createSandboxHostLocalInferenceProvenance(
-        "alpha",
-        originalReceipt,
-      ),
-    });
-    const recovery = helpers();
-
-    expect(recovery.readRecordedManagedLlamaCppRecipeId("alpha")).toBe(
-      INVALID_MANAGED_LLAMA_CPP_RECOVERY,
-    );
-    expect(
-      resolveRequestedProviderSelection({
-        options: [
-          { key: "llama-cpp", label: "Local llama.cpp" },
-          { key: "install-llama-cpp", label: "Managed llama.cpp" },
-        ],
-        requestedProvider: null,
-        sandboxName: "alpha",
-        remoteProviderConfig: {},
-        isWsl: false,
-        isWindowsHostOllama: false,
-        windowsHostOllamaSupported: false,
-        windowsHostOllamaReachable: false,
-        hermesProviderAvailable: false,
-        ollamaRunning: false,
-        ...recovery.providerSelectionReaders,
-      }),
-    ).toMatchObject({
-      kind: "failure",
-      reason: { kind: "invalid-managed-llama-cpp-recovery", sandboxName: "alpha" },
-    });
-  });
-
-  it("rejects conflicting managed recipe authorities", () => {
-    const hostLocalInferenceReceipt = managedLlamaCppReceipt("llama-cpp.runtime-recipe.v1");
-    vi.spyOn(registry, "getSandbox").mockReturnValue({
-      name: "alpha",
-      provider: "llama-cpp-local",
-      model: "recorded-model",
-      servingProfileProvenance: {
-        recipe: { backend: "install-llama-cpp", id: "llama-cpp.profile-recipe.v1" },
-      } as never,
-      hostLocalInferenceReceipt,
-      hostLocalInferenceProvenance: createSandboxHostLocalInferenceProvenance(
-        "alpha",
-        hostLocalInferenceReceipt,
-      ),
-    });
-    const recovery = helpers();
-
-    expect(recovery.readRecordedManagedLlamaCppRecipeId("alpha")).toBe(
-      INVALID_MANAGED_LLAMA_CPP_RECOVERY,
-    );
-    expect(
-      resolveRequestedProviderSelection({
-        options: [
-          { key: "llama-cpp", label: "Local llama.cpp" },
-          { key: "install-llama-cpp", label: "Managed llama.cpp" },
-        ],
-        requestedProvider: null,
-        sandboxName: "alpha",
-        remoteProviderConfig: {},
-        isWsl: false,
-        isWindowsHostOllama: false,
-        windowsHostOllamaSupported: false,
-        windowsHostOllamaReachable: false,
-        hermesProviderAvailable: false,
-        ollamaRunning: false,
-        ...recovery.providerSelectionReaders,
-      }),
-    ).toMatchObject({
-      kind: "failure",
-      reason: { kind: "invalid-managed-llama-cpp-recovery", sandboxName: "alpha" },
-    });
-  });
-
-  it("rejects managed recovery when authority becomes unreadable after provider lookup", () => {
-    vi.spyOn(registry, "getSandbox")
-      .mockReturnValueOnce({
-        name: "alpha",
-        provider: "llama-cpp-local",
-        model: "recorded-model",
-      })
-      .mockImplementation(() => {
-        throw new Error("registry became unreadable");
-      });
-    const recovery = helpers();
-
-    expect(
-      resolveRequestedProviderSelection({
-        options: [
-          { key: "llama-cpp", label: "Local llama.cpp" },
-          { key: "install-llama-cpp", label: "Managed llama.cpp" },
-        ],
-        requestedProvider: null,
-        sandboxName: "alpha",
-        remoteProviderConfig: {},
-        isWsl: false,
-        isWindowsHostOllama: false,
-        windowsHostOllamaSupported: false,
-        windowsHostOllamaReachable: false,
-        hermesProviderAvailable: false,
-        ollamaRunning: false,
-        ...recovery.providerSelectionReaders,
-      }),
-    ).toMatchObject({
-      kind: "failure",
-      reason: { kind: "invalid-managed-llama-cpp-recovery", sandboxName: "alpha" },
-    });
-  });
-
   it.each([
-    [
-      "managed",
-      {
-        recipe: {
-          backend: "install-llama-cpp",
-          id: "llama-cpp.muse-glimmer-30b.spark-single.v1",
-        },
-      },
-      "install-llama-cpp",
-      "llama-cpp.muse-glimmer-30b.spark-single.v1",
-    ],
-    ["operator-attached", null, "llama-cpp", null],
+    ["managed", { recipe: { backend: "install-llama-cpp" } }, "install-llama-cpp"],
+    ["operator-attached", null, "llama-cpp"],
   ] as const)(
     "routes a %s llama.cpp registry record through its exact recovery key",
-    (_label, recipeProvenance, expectedKey, expectedRecipeId) => {
+    (_label, recipeProvenance, expectedKey) => {
       vi.spyOn(registry, "getSandbox").mockReturnValue({
         name: "alpha",
         provider: "llama-cpp-local",
@@ -466,9 +284,6 @@ describe("provider recovery persisted routing state", () => {
         recoveredFromSandbox: true,
         recoveredModel: "recorded-model",
       });
-      expect(
-        result.kind === "selected" ? (result.recoveredManagedLlamaCppRecipeId ?? null) : null,
-      ).toBe(expectedRecipeId);
     },
   );
 

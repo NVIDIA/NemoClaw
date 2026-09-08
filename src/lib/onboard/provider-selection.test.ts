@@ -32,7 +32,7 @@ function resolve(overrides: Partial<Parameters<typeof resolveRequestedProviderSe
     ollamaRunning: false,
     readRecordedProvider: () => null,
     readRecordedNimContainer: () => null,
-    readRecordedManagedLlamaCppRecipeId: () => null,
+    readRecordedManagedLlamaCpp: () => false,
     readRecordedModel: () => null,
     ...overrides,
   });
@@ -160,7 +160,7 @@ describe("resolveRequestedProviderSelection", () => {
       options: [option("build"), option("install-llama-cpp"), option("install-ollama")],
       platformDefaultProviderKey: "install-ollama",
       readRecordedProvider: () => "llama-cpp-local",
-      readRecordedManagedLlamaCppRecipeId: () => "llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1",
+      readRecordedManagedLlamaCpp: () => true,
       readRecordedModel: () => "qwen3.6-35b-a3b",
     });
 
@@ -169,7 +169,6 @@ describe("resolveRequestedProviderSelection", () => {
       selected: option("install-llama-cpp"),
       recoveredFromSandbox: true,
       recoveredModel: "qwen3.6-35b-a3b",
-      recoveredManagedLlamaCppRecipeId: "llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1",
     });
   });
 
@@ -178,6 +177,7 @@ describe("resolveRequestedProviderSelection", () => {
       options: [option("build"), option("llama-cpp"), option("install-llama-cpp")],
       platformDefaultProviderKey: "install-llama-cpp",
       readRecordedProvider: () => "llama-cpp-local",
+      readRecordedManagedLlamaCpp: () => false,
       readRecordedModel: () => "operator-model",
     });
 

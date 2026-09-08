@@ -737,13 +737,14 @@ const { refreshDockerDriverGatewayReuseState } =
     runDockerNetworkInspect: docker.dockerRun,
   });
 
-const sandboxReuseHelpers = sandboxReuse.createSandboxReuseHelpers({
-  runCaptureOpenshell,
-  captureOpenshell,
-  getSandboxStateFromOutputs,
-  getGatewayName: () => GATEWAY_NAME,
-  waitUntil,
-});
+const { getSandboxReuseState, getSandboxRecreateObservation, waitForSandboxRecreateDeleteAbsence } =
+  sandboxReuse.createSandboxReuseHelpers({
+    runCaptureOpenshell,
+    captureOpenshell,
+    getSandboxStateFromOutputs,
+    getGatewayName: () => GATEWAY_NAME,
+    waitUntil,
+  });
 const {
   executeSandboxCommandForVerification,
 }: typeof import("./onboard/sandbox-verification-exec") = require("./onboard/sandbox-verification-exec");
@@ -1520,8 +1521,8 @@ const sandboxCreateOrchestrationRuntime = {
   getHermesToolGatewayBroker,
   getRequestedSandboxAgentName,
   getSandboxAgentDrift,
-  getSandboxRecreateObservation: sandboxReuseHelpers.getSandboxRecreateObservation,
-  getSandboxReuseState: sandboxReuseHelpers.getSandboxReuseState,
+  getSandboxRecreateObservation,
+  getSandboxReuseState,
   getSandboxRuntimeRegistryFields,
   getSelectionDrift,
   hasSandboxGpuDrift,
@@ -1579,7 +1580,7 @@ const sandboxCreateOrchestrationRuntime = {
   usesManagedDcodeIdentity,
   validateName,
   verifyDirectSandboxGpu,
-  waitForSandboxRecreateDeleteAbsence: sandboxReuseHelpers.waitForSandboxRecreateDeleteAbsence,
+  waitForSandboxRecreateDeleteAbsence,
   wasSandboxDefault,
   updateReusedSandboxMetadata,
   getSandboxInferenceConfig,
@@ -3025,8 +3026,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             checkGatewayRouteCompatibility,
             preflightGatewayRouteDiscovery,
             getSandboxRecoveryAuthority: providerRecovery.getSandboxRecoveryAuthority,
-            revalidateManagedLlamaCppResumeSandboxIdentity:
-              sandboxReuseHelpers.revalidateRecordedSandboxLiveIdentity,
             withGatewayRouteMutationLock: gatewayRouteMutationLock.withGatewayRouteMutationLock,
             normalizeHermesAuthMethod,
             setupNim: (
@@ -3135,8 +3134,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             getStoredMessagingChannelConfig,
             hydrateMessagingChannelConfig,
             messagingChannelConfigsEqual,
-            getSandboxReuseState: sandboxReuseHelpers.getSandboxReuseState,
-            getSandboxRecreateObservation: sandboxReuseHelpers.getSandboxRecreateObservation,
+            getSandboxReuseState,
+            getSandboxRecreateObservation,
             getDcodeSelectionDrift: sandboxCreateOrchestrationRuntime.readDcodeSelectionDrift,
             hasSandboxGpuDrift,
             getSandboxHermesToolGateways: (name) => registry.getSandbox(name)?.hermesToolGateways,
@@ -3447,7 +3446,7 @@ module.exports = {
   getRequestedSandboxNameHint,
   getResumeSandboxConflict,
   clearAgentScopedResumeState: runtimeControlFlow.clearAgentScopedResumeState,
-  getSandboxReuseState: sandboxReuseHelpers.getSandboxReuseState,
+  getSandboxReuseState,
   getSandboxStateFromOutputs,
   getPortConflictServiceHints,
   classifyValidationFailure,

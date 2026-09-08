@@ -638,11 +638,6 @@ describe("E2E workflow plan", () => {
     expect(plan.catalogueMatrices.standard.find((row) => row.id === "gpu-e2e")).not.toHaveProperty(
       "selector",
     );
-    const llamaCpp = catalogueTarget("llama-cpp-generic-gpu");
-    expect(llamaCpp.environment).toMatchObject({
-      NEMOCLAW_LLAMA_CPP_RUNTIME_IMAGE_SCOPE: "catalogue",
-    });
-    expect(llamaCpp.environment).not.toHaveProperty("NEMOCLAW_LLAMA_CPP_RUNTIME_IMAGE");
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-standard"]);
   });
 

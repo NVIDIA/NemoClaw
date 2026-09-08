@@ -34,17 +34,6 @@ export function reportProviderSelectionFailure(input: ReportProviderSelectionFai
         );
       }
       break;
-    case "invalid-managed-llama-cpp-recovery":
-      input.writeError(
-        `  Recorded managed llama.cpp authority for sandbox '${input.reason.sandboxName}' is invalid or conflicting.`,
-      );
-      input.writeError(
-        "  Destroy removes the sandbox and persistent state. Create a snapshot or download required workspace files first.",
-      );
-      input.writeError(
-        `  Run \`nemoclaw ${input.reason.sandboxName} destroy\` to reconcile the managed runtime. If ownership cannot be verified, preserve the recorded state and follow the reported remediation.`,
-      );
-      break;
     case "unsupported-windows-host-ollama":
       input.rejectWindowsHostOllama(input.reason.providerKey, input.isWindowsHostOllama);
       break;

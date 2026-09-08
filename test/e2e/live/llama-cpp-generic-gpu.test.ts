@@ -30,23 +30,10 @@ import {
 const TIMEOUT_MS = 110 * 60_000;
 const RECIPE_ID =
   process.env.NEMOCLAW_LLAMACPP_RECIPE ?? "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1";
-const RUNTIME_IMAGE_SCOPE =
-  process.env.NEMOCLAW_LLAMA_CPP_RUNTIME_IMAGE_SCOPE ??
-  (process.env.NEMOCLAW_E2E_PHASE_COLLECTION === "1" ? "catalogue" : "");
-const RUNTIME_IMAGE = process.env.NEMOCLAW_LLAMA_CPP_RUNTIME_IMAGE ?? "";
 const TARGET_ID = process.env.E2E_TARGET_ID ?? "llama-cpp-generic-gpu";
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-llamacpp-gpu";
 validateSandboxName(SANDBOX_NAME);
-assert(
-  /^[a-z0-9][a-z0-9._-]{0,159}$/u.test(RECIPE_ID) &&
-    (RUNTIME_IMAGE_SCOPE === "catalogue"
-      ? RUNTIME_IMAGE === ""
-      : RUNTIME_IMAGE_SCOPE === "published-base" &&
-        /^(?:[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?\/)?(?:[a-z0-9]+(?:[._-][a-z0-9]+)*\/)*[a-z0-9]+(?:[._-][a-z0-9]+)*@sha256:[0-9a-f]{64}$/u.test(
-          RUNTIME_IMAGE,
-        )),
-  "invalid llama.cpp recipe ID or runtime-image evidence mode",
-);
+assert.match(RECIPE_ID, /^[a-z0-9][a-z0-9._-]{0,159}$/u, "invalid llama.cpp recipe ID");
 assert.match(TARGET_ID, /^[a-z0-9][a-z0-9-]{0,63}$/u, "invalid E2E target ID");
 
 function llamaGpuApplications(output: string): string[][] {
@@ -77,42 +64,10 @@ function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
 function loadGpuSetting() {
   const catalog = loadManagedInferenceCatalog();
   const recipe = catalog.recipes.find(({ metadata }) => metadata.id === RECIPE_ID);
-  const runtimeImage =
-    RUNTIME_IMAGE_SCOPE === "published-base" ? RUNTIME_IMAGE : recipe?.spec.runtime.image;
-  assert(
-    recipe &&
-      isLlamaCppServingRecipe(recipe) &&
-      typeof runtimeImage === "string" &&
-      recipe.spec.runtime.image === runtimeImage,
-    "GPU E2E llama.cpp recipe is missing or disagrees with its declared image authority",
-  );
+  assert(recipe && isLlamaCppServingRecipe(recipe), "GPU E2E llama.cpp recipe is missing");
   const modelFile = recipe.spec.model.files[0];
   assert(modelFile && "sizeBytes" in modelFile, "generic GPU E2E GGUF identity is incomplete");
-  return { modelFile, recipe, runtimeImage };
-}
-
-type ManagedContainerReceipt = NonNullable<ReturnType<typeof loadManagedLlamaCppReceipt>> & {
-  runtime: Extract<
-    NonNullable<ReturnType<typeof loadManagedLlamaCppReceipt>>["runtime"],
-    { kind: "container" }
-  >;
-};
-
-function requireExpectedManagedReceipt(
-  receipt: ReturnType<typeof loadManagedLlamaCppReceipt>,
-  expectedImage: string,
-  expectedRuntimeId?: string,
-): ManagedContainerReceipt {
-  assert(
-    receipt?.service === "llama-cpp" &&
-      receipt.runtime.kind === "container" &&
-      receipt.providerId === resolveNemoClawGatewayRuntime(env()) &&
-      receipt.runtime.imageRef === expectedImage &&
-      receipt.runtime.model?.recipeId === RECIPE_ID &&
-      (expectedRuntimeId === undefined || receipt.runtime.runtimeId === expectedRuntimeId),
-    "managed llama.cpp receipt does not match the selected recipe, runtime provider, image, or recovered runtime identity",
-  );
-  return receipt as ManagedContainerReceipt;
+  return { modelFile, recipe };
 }
 
 test(
@@ -123,7 +78,6 @@ test(
       e2ePhases: [
         "validate exact source and NVIDIA GPU host",
         "run the declarative managed llama.cpp installer",
-        "interrupt and recover the recorded managed runtime",
         "verify full GPU offload",
         "verify authenticated host and sandbox inference",
         "verify OpenClaw agent inference and owned cleanup",
@@ -134,17 +88,11 @@ test(
     await artifacts.target.declare({
       id: TARGET_ID,
       boundary:
-        RUNTIME_IMAGE_SCOPE === "published-base"
-          ? "Exact NemoClaw source + published-base llama.cpp image on a Linux AMD64 RTX runner + Docker-qualified managed runtime + OpenShell sandbox route"
-          : "Exact NemoClaw source + catalogue-selected llama.cpp image on a Linux AMD64 RTX runner + Docker-qualified managed runtime + OpenShell sandbox route",
+        "Linux AMD64 RTX runner + Docker-qualified managed llama.cpp target + OpenShell sandbox route",
       configurationAuthority:
-        RUNTIME_IMAGE_SCOPE === "published-base"
-          ? "The exact source candidate owns orchestration; the trusted base recipe supplies the runtime image while the candidate recipe must match it. The artifact does not qualify a PR-built llama.cpp image."
-          : "The exact source and its catalogue own orchestration and pinned image selection. The artifact does not qualify a PR-built llama.cpp image.",
+        "The repository-owned serving recipe supplies every model and serving value; the selected runtime-provider bundle owns materialization, and the artifact records the provider this lane exercised.",
       credentialBoundary:
         "The generated llama.cpp API key remains in owner-only host state and enters commands only through redacted process input.",
-      prBuiltLlamaCppImageRuntimeQualified: false,
-      runtimeImageScope: RUNTIME_IMAGE_SCOPE,
     });
 
     const cleanupEnv = env();
@@ -183,88 +131,19 @@ test(
       resultText(architecture),
     );
 
-    const { modelFile, recipe, runtimeImage } = loadGpuSetting();
+    const { modelFile, recipe } = loadGpuSetting();
 
     progress.phase("run the declarative managed llama.cpp installer");
     const install = await host.command("bash", ["install.sh", "--non-interactive"], {
       artifactName: "install-managed-llama-cpp",
       cwd: REPO_ROOT,
-      env: env({
-        NEMOCLAW_E2E_FAILURE_INJECTION: "1",
-        NEMOCLAW_E2E_FORCE_FAIL_AT_STEP: "sandbox",
-      }),
+      env: env(),
       timeoutMs: 75 * 60_000,
     });
-
-    progress.phase("interrupt and recover the recorded managed runtime");
-    const paths = managedLlamaCppStatePaths(os.homedir());
-    const interruptedReceipt = requireExpectedManagedReceipt(
-      loadManagedLlamaCppReceipt(paths),
-      runtimeImage,
-    );
-    const interruptedRuntimeId = interruptedReceipt.runtime.runtimeId;
-    const runtimeProvider = resolveRegisteredRuntimeProviderBundle(interruptedReceipt.providerId);
-    assert(
-      runtimeProvider?.hostLocalInference.supported === true &&
-        runtimeProvider.hostLocalInference.services.includes("llama-cpp"),
-      "receipt runtime provider does not expose managed llama.cpp authority",
-    );
-    const runtimeOperation = runtimeProvider.hostLocalInference.createOperation({ env: env() });
-    runtimeOperation.assertAuthority();
-    const stopRuntime = runtimeOperation.engine.capture(
-      ["container", "stop", interruptedRuntimeId],
-      60_000,
-    );
-    await artifacts.writeJson("stop-managed-llama-cpp-before-resume.json", {
-      providerId: interruptedReceipt.providerId,
-      runtimeId: interruptedRuntimeId,
-      status: stopRuntime.status,
-      error: stopRuntime.error?.message ?? null,
-      stdout: stopRuntime.stdout,
-      stderr: stopRuntime.stderr,
-    });
-    const resumeEnv = env();
-    delete resumeEnv.NEMOCLAW_E2E_FAILURE_INJECTION;
-    delete resumeEnv.NEMOCLAW_E2E_FORCE_FAIL_AT_STEP;
-    delete resumeEnv.NEMOCLAW_LLAMACPP_RECIPE;
-    delete resumeEnv.NEMOCLAW_PROVIDER;
-    delete resumeEnv.NEMOCLAW_RECREATE_SANDBOX;
-    const resume = await host.command(
-      "node",
-      [
-        CLI_ENTRYPOINT,
-        "onboard",
-        "--resume",
-        "--non-interactive",
-        "--yes",
-        "--yes-i-accept-third-party-software",
-      ],
-      {
-        artifactName: "resume-managed-llama-cpp-after-runtime-stop",
-        cwd: REPO_ROOT,
-        env: resumeEnv,
-        timeoutMs: 75 * 60_000,
-      },
-    );
-    expect(
-      install.exitCode === 1 &&
-        resultText(install).includes("Forced onboarding failure at step 'sandbox'") &&
-        stopRuntime.status === 0 &&
-        stopRuntime.error === undefined &&
-        resume.exitCode === 0,
-      [
-        resultText(install),
-        JSON.stringify({
-          error: stopRuntime.error?.message ?? null,
-          status: stopRuntime.status,
-          stderr: stopRuntime.stderr,
-          stdout: stopRuntime.stdout,
-        }),
-        resultText(resume),
-      ].join("\n"),
-    ).toBe(true);
+    expect(install.exitCode, resultText(install)).toBe(0);
 
     progress.phase("verify full GPU offload");
+    const paths = managedLlamaCppStatePaths(os.homedir());
     const modelCacheEntry = path.join(
       os.homedir(),
       ".cache",
@@ -275,14 +154,24 @@ test(
       recipe.spec.model.revision,
       modelFile.path,
     );
-    const receipt = requireExpectedManagedReceipt(
-      loadManagedLlamaCppReceipt(paths),
-      runtimeImage,
-      interruptedRuntimeId,
+    const receipt = loadManagedLlamaCppReceipt(paths);
+    assert(
+      receipt?.service === "llama-cpp" &&
+        receipt.runtime.kind === "container" &&
+        receipt.providerId === resolveNemoClawGatewayRuntime(env()),
+      "managed llama.cpp container receipt does not match the target-selected runtime provider",
+    );
+    const runtimeProvider = resolveRegisteredRuntimeProviderBundle(receipt.providerId);
+    assert(
+      runtimeProvider?.hostLocalInference.supported === true &&
+        runtimeProvider.hostLocalInference.services.includes("llama-cpp"),
+      "receipt runtime provider does not expose managed llama.cpp authority",
     );
     const apiKey = loadManagedLlamaCppApiKey(managedLlamaCppStatePaths(os.homedir()));
     assert(apiKey, "managed llama.cpp API key is missing");
     artifacts.addRedactionValues([apiKey]);
+    const runtimeOperation = runtimeProvider.hostLocalInference.createOperation({ env: env() });
+    runtimeOperation.assertAuthority();
     const runtimeLogs = runtimeOperation.engine.capture(
       ["container", "logs", "--tail", "20000", receipt.runtime.runtimeId],
       30_000,
@@ -515,15 +404,8 @@ test(
     expect(cleanupProof.status).toBe("already-absent");
 
     await artifacts.writeJson("qualification-evidence.json", {
-      sourceCandidateSha: qualificationHeadSha,
+      candidateSha: qualificationHeadSha,
       recipe: RECIPE_ID,
-      runtimeImage: {
-        reference: receipt.runtime.imageRef,
-        sourceRevision:
-          process.env.NEMOCLAW_LLAMA_CPP_RUNTIME_IMAGE_SOURCE_REVISION ?? qualificationHeadSha,
-        scope: RUNTIME_IMAGE_SCOPE,
-        prBuiltCandidateTested: false,
-      },
       runtimeProvider: {
         providerId: receipt.providerId,
         authorityId: receipt.engineAuthority.authorityId,
@@ -553,15 +435,8 @@ test(
       id: TARGET_ID,
       status: "passed",
       candidateSha: qualificationHeadSha,
-      candidateScope:
-        RUNTIME_IMAGE_SCOPE === "published-base"
-          ? "NemoClaw source only"
-          : "NemoClaw source and catalogue image selection",
       fullGpuOffload: true,
       model: recipe.spec.model.servedName,
-      prBuiltLlamaCppImageRuntimeQualified: false,
-      runtimeImageReference: receipt.runtime.imageRef,
-      runtimeImageScope: RUNTIME_IMAGE_SCOPE,
     });
   },
 );

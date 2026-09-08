@@ -3,12 +3,7 @@
 
 import { isBedrockRuntimeEndpoint } from "../inference/bedrock-runtime";
 import { type ProviderOption, resolveProviderKeyFallback } from "./provider-key-fallback";
-import {
-  INVALID_MANAGED_LLAMA_CPP_RECOVERY,
-  providerNameToOptionKey,
-  type ProviderSelectionRecoveryReaderBundle,
-  type RemoteProviderConfigEntryLike,
-} from "./provider-recovery";
+import { providerNameToOptionKey, type RemoteProviderConfigEntryLike } from "./provider-recovery";
 
 export {
   applyVllmInstallResumeDefaults,
@@ -28,10 +23,6 @@ export type ProviderSelectionFailureReason =
       windowsHostKey: string | null;
     }
   | {
-      kind: "invalid-managed-llama-cpp-recovery";
-      sandboxName: string;
-    }
-  | {
       kind: "unsupported-windows-host-ollama";
       providerKey: string;
     }
@@ -48,7 +39,6 @@ export interface ProviderSelectionSuccess<T extends ProviderOption> {
   selected: T;
   recoveredFromSandbox: boolean;
   recoveredModel: string | null;
-  recoveredManagedLlamaCppRecipeId?: string;
 }
 
 export interface ProviderSelectionFailure {
@@ -71,11 +61,15 @@ export function resolveSelectedEndpointSource(input: {
   return isBedrockRuntimeEndpoint(input.endpointUrl) ? "onboard" : null;
 }
 
-export type ProviderSelectionRecoveryReaders = ProviderSelectionRecoveryReaderBundle;
+export interface ProviderSelectionRecoveryReaders {
+  readRecordedProvider(sandboxName: string | null | undefined): string | null;
+  readRecordedNimContainer(sandboxName: string | null | undefined): string | null;
+  readRecordedManagedLlamaCpp?(sandboxName: string | null | undefined): boolean;
+  readRecordedModel(sandboxName: string | null | undefined): string | null;
+}
 
-export interface ResolveRequestedProviderSelectionInput<
-  T extends ProviderOption,
-> extends ProviderSelectionRecoveryReaders {
+export interface ResolveRequestedProviderSelectionInput<T extends ProviderOption>
+  extends ProviderSelectionRecoveryReaders {
   options: T[];
   requestedProvider: string | null;
   sandboxName: string | null;
@@ -146,39 +140,16 @@ export function resolveRequestedProviderSelection<T extends ProviderOption>(
   let providerKey = input.requestedProvider;
   let recoveredFromSandbox = false;
   let recoveredModel: string | null = null;
-  let recoveredManagedLlamaCppRecipeId: string | null = null;
   const canUseWindowsHostOllama =
     input.isWindowsHostOllama &&
     input.windowsHostOllamaSupported &&
     input.windowsHostOllamaReachable === true;
-  const selectedResult = (selected: T): ProviderSelectionSuccess<T> => ({
-    kind: "selected",
-    selected,
-    recoveredFromSandbox,
-    recoveredModel,
-    ...(recoveredManagedLlamaCppRecipeId ? { recoveredManagedLlamaCppRecipeId } : {}),
-  });
 
   if (!providerKey) {
     const recordedProvider = input.readRecordedProvider(input.sandboxName);
     const hasNimContainer = !!input.readRecordedNimContainer(input.sandboxName);
-    const recordedManagedLlamaCppRecovery =
-      recordedProvider === "llama-cpp-local"
-        ? (input.readRecordedManagedLlamaCppRecipeId?.(input.sandboxName) ?? null)
-        : null;
-    if (recordedManagedLlamaCppRecovery === INVALID_MANAGED_LLAMA_CPP_RECOVERY) {
-      return {
-        kind: "failure",
-        reason: {
-          kind: "invalid-managed-llama-cpp-recovery",
-          sandboxName: input.sandboxName ?? "unknown",
-        },
-      };
-    }
-    const recordedManagedLlamaCppRecipeId =
-      typeof recordedManagedLlamaCppRecovery === "string" ? recordedManagedLlamaCppRecovery : null;
     const recoveredKey = providerNameToOptionKey(input.remoteProviderConfig, recordedProvider, {
-      hasManagedLlamaCpp: recordedManagedLlamaCppRecipeId !== null,
+      hasManagedLlamaCpp: input.readRecordedManagedLlamaCpp?.(input.sandboxName) ?? false,
       hasNimContainer,
     });
 
@@ -213,8 +184,6 @@ export function resolveRequestedProviderSelection<T extends ProviderOption>(
       providerKey = recoveredKey;
       recoveredFromSandbox = true;
       recoveredModel = input.readRecordedModel(input.sandboxName);
-      recoveredManagedLlamaCppRecipeId =
-        recoveredKey === "install-llama-cpp" ? recordedManagedLlamaCppRecipeId : null;
     } else {
       const platformDefault = input.platformDefaultProviderKey;
       providerKey =
@@ -240,7 +209,7 @@ export function resolveRequestedProviderSelection<T extends ProviderOption>(
     }
     const restart = findOption(input.options, "start-windows-ollama");
     if (restart) {
-      return selectedResult(restart);
+      return { kind: "selected", selected: restart, recoveredFromSandbox, recoveredModel };
     }
     return {
       kind: "failure",
@@ -250,12 +219,12 @@ export function resolveRequestedProviderSelection<T extends ProviderOption>(
 
   const runningDaemon = collapseWindowsInstallToRunningDaemon(input, providerKey);
   if (runningDaemon) {
-    return selectedResult(runningDaemon);
+    return { kind: "selected", selected: runningDaemon, recoveredFromSandbox, recoveredModel };
   }
 
   const selected = findOption(input.options, providerKey);
   if (selected) {
-    return selectedResult(selected);
+    return { kind: "selected", selected, recoveredFromSandbox, recoveredModel };
   }
 
   if (
@@ -276,7 +245,12 @@ export function resolveRequestedProviderSelection<T extends ProviderOption>(
     canUseWindowsHostOllama,
   });
   if (fallback) {
-    return selectedResult(fallback);
+    return {
+      kind: "selected",
+      selected: fallback,
+      recoveredFromSandbox,
+      recoveredModel,
+    };
   }
 
   if (providerKey === "hermesProvider" && !input.hermesProviderAvailable) {

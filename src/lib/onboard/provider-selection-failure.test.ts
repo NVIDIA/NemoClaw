@@ -62,19 +62,6 @@ describe("reportProviderSelectionFailure", () => {
     ]);
   });
 
-  it("stops invalid managed llama.cpp recovery before provider attachment", () => {
-    const { errors, rejected } = report({
-      reason: { kind: "invalid-managed-llama-cpp-recovery", sandboxName: "alpha" },
-    });
-
-    assert.deepEqual(rejected, []);
-    assert.deepEqual(errors, [
-      "  Recorded managed llama.cpp authority for sandbox 'alpha' is invalid or conflicting.",
-      "  Destroy removes the sandbox and persistent state. Create a snapshot or download required workspace files first.",
-      "  Run `nemoclaw alpha destroy` to reconcile the managed runtime. If ownership cannot be verified, preserve the recorded state and follow the reported remediation.",
-    ]);
-  });
-
   it("delegates unsupported Windows-host Ollama failures to the rejection helper", () => {
     const { errors, rejected } = report({
       reason: { kind: "unsupported-windows-host-ollama", providerKey: "start-windows-ollama" },

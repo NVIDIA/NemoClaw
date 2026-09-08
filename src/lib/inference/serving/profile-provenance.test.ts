@@ -7,7 +7,6 @@ import { loadServingCatalog } from "./catalog-loader";
 import {
   assertServingProfileProvenanceCurrent,
   parseServingProfileProvenance,
-  resolvedLlamaCppServingProfileProvenance,
   servingProfileProvenance,
 } from "./profile-provenance";
 
@@ -38,26 +37,5 @@ describe("serving profile provenance", () => {
         catalogDigest: `sha256:${"f".repeat(64)}`,
       }),
     ).toThrow("changed since onboarding started");
-  });
-
-  it("captures provenance directly from a resolved managed llama.cpp selection", () => {
-    const catalog = loadServingCatalog();
-    const preset = catalog.presets.find(({ spec }) => spec.plan.backend === "install-llama-cpp")!;
-    const recipe = catalog.recipes.find(
-      ({ metadata }) => metadata.id === preset.spec.plan.recipeRef,
-    )!;
-    const expected = servingProfileProvenance(catalog, preset.metadata.id);
-
-    expect(
-      resolvedLlamaCppServingProfileProvenance({
-        outcome: "selected",
-        selection: "automatic",
-        catalogDigest: catalog.catalogDigest,
-        presetDigest: expected.preset.digest,
-        recipeDigest: expected.recipe.digest,
-        preset,
-        recipe,
-      } as never),
-    ).toEqual(expected);
   });
 });

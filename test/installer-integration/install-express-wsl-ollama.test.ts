@@ -120,15 +120,13 @@ sys.exit(exit_code)
     );
   });
 
-  it("clears the Windows WSL provider and preserves an explicit recipe (#10962)", () => {
-    const recipe = "llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1";
+  it("does not set a Windows WSL provider or recipe in the installer (#10962)", () => {
     const { result, output } = runInstallerSourced(
-      `export NEMOCLAW_LLAMACPP_RECIPE=${recipe}\n` +
-        `activate_express_install "Windows WSL"\n` +
+      `activate_express_install "Windows WSL"\n` +
         `printf 'PROVIDER=%s RECIPE=%s\\n' "\${NEMOCLAW_PROVIDER:-}" "\${NEMOCLAW_LLAMACPP_RECIPE:-}"\n`,
     );
 
     expect(result.status, output).toBe(0);
-    expect(output).toContain(`PROVIDER= RECIPE=${recipe}`);
+    expect(output).toContain("PROVIDER= RECIPE=");
   });
 });

@@ -47,7 +47,6 @@ export interface PlatformQualificationInput extends PlatformIdentity {
   dockerReachable: boolean;
   runtime: string;
   hasNvidiaGpu: boolean;
-  nvidiaGpuCount?: number;
 }
 
 export interface PlatformQualificationProjection {
@@ -346,7 +345,6 @@ function deriveN1xWslQualification(
     input.runtime === "docker-desktop" &&
     input.dockerReachable &&
     input.hasNvidiaGpu &&
-    input.nvidiaGpuCount === 1 &&
     input.wslDockerDesktopGpuProofPassed === true
     ? "qualified"
     : "unqualified";
@@ -464,7 +462,11 @@ export function projectPlatformQualification(
     capability("host.platform.wsl_gpu_passthrough", wslGpuPassthrough),
     capability(
       "host.platform.n1x_wsl",
-      !input.isWsl ? "absent" : n1xWslStatus === "qualified" ? "present" : "absent",
+      !input.isWsl
+        ? "absent"
+        : n1xWslStatus === "qualified"
+          ? "present"
+          : "absent",
     ),
     capability("host.platform.dgx_spark", sparkQualified ? "present" : "absent"),
     capability(

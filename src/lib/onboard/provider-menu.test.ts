@@ -143,7 +143,7 @@ describe("buildInferenceProviderMenu", () => {
         hermesProviderAvailable: false,
         readRecordedProvider: () => null,
         readRecordedNimContainer: () => null,
-        readRecordedManagedLlamaCppRecipeId: () => null,
+        readRecordedManagedLlamaCpp: () => false,
         readRecordedModel: () => null,
       }),
     ).toEqual({

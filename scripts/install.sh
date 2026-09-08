@@ -5301,7 +5301,7 @@ activate_express_install() {
       configure_station_express_model
       ;;
     "Windows WSL")
-      unset NEMOCLAW_PROVIDER
+      unset NEMOCLAW_PROVIDER NEMOCLAW_LLAMACPP_RECIPE
       ;;
   esac
 }

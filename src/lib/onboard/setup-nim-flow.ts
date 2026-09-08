@@ -23,7 +23,6 @@ import {
   type ManagedLlamaCppSelectionChoice,
   type ManagedLlamaCppSelectionResult,
   discoverManagedLlamaCppSelectionsForGpu,
-  resolvedLlamaCppServingProfileProvenance,
 } from "../inference/llama-cpp/managed-selection";
 import { getOllamaContextWindowFloorForAgent } from "../inference/ollama-runtime-context";
 import {
@@ -54,7 +53,6 @@ import {
   resolveRequestedProviderSelection,
   vllmInstallRecoveryOptions,
 } from "./provider-selection";
-import type { ProviderSelectionRecoveryReaderBundle } from "./provider-recovery";
 import { reportProviderSelectionFailure } from "./provider-selection-failure";
 import { promptForInferenceProviderSelection } from "./provider-selection-prompt";
 import type { RebuildRouteHandoff, RegistryInferenceRoute } from "./rebuild-route-handoff";
@@ -117,7 +115,7 @@ export type SetupNim = (
   revalidateSandboxIdentity?: (route: ProviderInferenceProbeRoute, operation: string) => void,
 ) => Promise<ProviderSelectionResult>;
 
-export interface SetupNimFlowDeps extends ProviderSelectionRecoveryReaderBundle {
+export interface SetupNimFlowDeps {
   remoteProviderConfig: Record<string, SetupNimRemoteProviderConfigEntry>;
   experimental: boolean;
   ollamaPort: number;
@@ -143,6 +141,22 @@ export interface SetupNimFlowDeps extends ProviderSelectionRecoveryReaderBundle 
   }): InferenceProviderHostState;
   getAgentInferenceProviderOptions(agent: AgentDefinition | null | undefined): string[];
   loadRoutedProfile(): { router?: { enabled?: boolean } } | null | undefined;
+  readRecordedProvider(
+    sandboxName: string | null | undefined,
+    recoverySessionId?: string | null,
+  ): string | null;
+  readRecordedNimContainer(
+    sandboxName: string | null | undefined,
+    recoverySessionId?: string | null,
+  ): string | null;
+  readRecordedManagedLlamaCpp?(
+    sandboxName: string | null | undefined,
+    recoverySessionId?: string | null,
+  ): boolean;
+  readRecordedModel(
+    sandboxName: string | null | undefined,
+    recoverySessionId?: string | null,
+  ): string | null;
   rejectWindowsHostOllama(
     requirement: InferenceProviderHostState["windowsHostOllamaDockerRequirement"],
     providerKey: string,
@@ -525,32 +539,28 @@ function platformDefaultProviderKey(input: {
   return undefined;
 }
 
-function selectedManagedLlamaCppRecipeId(input: {
-  selectedFromInteractiveMenu: boolean;
-  menuRecipeId: string | undefined;
-  recoveredRecipeId: string | null;
-}): string | undefined {
-  return input.selectedFromInteractiveMenu
-    ? input.menuRecipeId
-    : (input.recoveredRecipeId ?? undefined);
-}
-
 function resolveSelectedManagedLlamaCpp(input: {
   deps: SetupNimFlowDeps;
   gpu: SetupNimGpu;
+  selectedFromInteractiveMenu: boolean;
   selectedRecipeId: string | undefined;
 }): {
   resolution: ManagedLlamaCppSelectionResult;
   runtimeProvider: RuntimeProviderBundle;
 } {
-  const { deps, gpu, selectedRecipeId } = input;
-  const env = selectedRecipeId
-    ? { ...process.env, [LLAMA_CPP_RECIPE_ENV]: selectedRecipeId }
-    : undefined;
+  const { deps, gpu, selectedFromInteractiveMenu, selectedRecipeId } = input;
+  const env =
+    selectedFromInteractiveMenu && selectedRecipeId
+      ? { ...process.env, [LLAMA_CPP_RECIPE_ENV]: selectedRecipeId }
+      : undefined;
   const runtimeProvider = deps.getRuntimeProvider();
   return {
-    resolution: discoverManagedLlamaCppSafely(deps, env, gpu, runtimeProvider.identity.id)
-      .resolution,
+    resolution: discoverManagedLlamaCppSafely(
+      deps,
+      env,
+      gpu,
+      runtimeProvider.identity.id,
+    ).resolution,
     runtimeProvider,
   };
 }
@@ -850,7 +860,6 @@ export function createSetupNim(
     let endpointPinnedAddresses: string[] | undefined;
     let endpointTrustedPrivateCapability: TrustedPrivateEndpointCapability | undefined;
     let vllmModelIdentity: string | undefined;
-    let selectedServingProfileProvenance: ProviderSelectionResult["servingProfileProvenance"];
     const inferenceCapabilityCache = new OnboardInferenceCapabilityCache();
     const nvidiaFeaturedModels = deps.createNvidiaFeaturedModelSession({
       defaultModel: resolveAgentDefaultCloudModel(agent),
@@ -959,12 +968,14 @@ export function createSetupNim(
       gpuNimCapable,
     } = providerHostState;
     const agentProviderOptions = deps.getAgentInferenceProviderOptions(agent);
-    const { resolution: managedLlamaCppResolution, options: managedLlamaCppOptions } =
-      prepareManagedLlamaCppMenu({
-        deps,
-        gpu,
-        requestedProvider,
-      });
+    const {
+      resolution: managedLlamaCppResolution,
+      options: managedLlamaCppOptions,
+    } = prepareManagedLlamaCppMenu({
+      deps,
+      gpu,
+      requestedProvider,
+    });
 
     const blueprintRouterCfg = deps.loadRoutedProfile();
     const { options, hermesProviderAvailable } = buildInferenceProviderMenu({
@@ -1037,7 +1048,6 @@ export function createSetupNim(
         let selectedFromInteractiveMenu = false;
         recoveredFromSandbox = false;
         let recoveredModel: string | null = null;
-        let recoveredManagedLlamaCppRecipeId: string | null = null;
         let preparedVllmState: SetupNimSelectionState | null = null;
         hermesAuthMethod = null;
 
@@ -1074,8 +1084,6 @@ export function createSetupNim(
           selected = providerSelection.selected;
           recoveredFromSandbox = providerSelection.recoveredFromSandbox;
           recoveredModel = providerSelection.recoveredModel;
-          recoveredManagedLlamaCppRecipeId =
-            providerSelection.recoveredManagedLlamaCppRecipeId ?? null;
           deps.note(
             recoveredFromSandbox
               ? `  [non-interactive] Provider: ${selected.key} (recovered from sandbox '${sandboxName}')`
@@ -1152,14 +1160,11 @@ export function createSetupNim(
           // Menu discovery is advisory. Re-read the canonical readiness/catalog
           // inputs immediately before any install effect so a delayed interactive
           // choice cannot activate against stale host state.
-          const selectedRecipeId = selectedManagedLlamaCppRecipeId({
-            selectedFromInteractiveMenu,
-            menuRecipeId: selected.managedLlamaCppRecipeId,
-            recoveredRecipeId: recoveredManagedLlamaCppRecipeId,
-          });
+          const selectedRecipeId = selected.managedLlamaCppRecipeId;
           const { resolution: resolved, runtimeProvider } = resolveSelectedManagedLlamaCpp({
             deps,
             gpu,
+            selectedFromInteractiveMenu,
             selectedRecipeId,
           });
           if (resolved.kind === "rejected") {
@@ -1200,9 +1205,6 @@ export function createSetupNim(
             allowToolsIncompatible,
           } = state);
           if (result === "retry-selection") continue selectionLoop;
-          selectedServingProfileProvenance = resolvedLlamaCppServingProfileProvenance(
-            resolved.selection,
-          );
           break;
         } else if (selected.key === "nim-local") {
           const state = createSelectionState();
@@ -1439,9 +1441,6 @@ export function createSetupNim(
       ...(endpointPinnedAddresses ? { endpointPinnedAddresses } : {}),
       ...(endpointTrustedPrivateCapability ? { endpointTrustedPrivateCapability } : {}),
       ...(provider === "vllm-local" && vllmModelIdentity ? { vllmModelIdentity } : {}),
-      ...(selectedServingProfileProvenance
-        ? { servingProfileProvenance: selectedServingProfileProvenance }
-        : {}),
       inferenceCapabilityCache,
     };
   };

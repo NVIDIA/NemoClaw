@@ -137,24 +137,21 @@ describe("platform readiness qualification (#7410)", () => {
     ["native Docker", true, true, "docker", "absent", "present"],
     ["unavailable Docker", false, false, "unknown", "absent", "absent"],
     ["inconclusive runtime", true, true, "unknown", "absent", "absent"],
-  ] as const)(
-    "distinguishes WSL %s",
-    (_scenario, dockerInstalled, dockerReachable, runtime, desktop, native) => {
-      const result = projectPlatformQualification(
-        input({ isWsl: true, dockerInstalled, dockerReachable, runtime }),
-      );
+  ] as const)("distinguishes WSL %s", (_scenario, dockerInstalled, dockerReachable, runtime, desktop, native) => {
+    const result = projectPlatformQualification(
+      input({ isWsl: true, dockerInstalled, dockerReachable, runtime }),
+    );
 
-      expect(capability(result, "host.platform.wsl_docker_desktop")).toBe(desktop);
-      expect(capability(result, "host.platform.wsl_native_docker")).toBe(native);
-      expect(capability(result, "host.platform.wsl_runtime_available")).toBe(
-        !dockerInstalled || !dockerReachable
-          ? "absent"
-          : runtime === "unknown"
-            ? "unknown"
-            : "present",
-      );
-    },
-  );
+    expect(capability(result, "host.platform.wsl_docker_desktop")).toBe(desktop);
+    expect(capability(result, "host.platform.wsl_native_docker")).toBe(native);
+    expect(capability(result, "host.platform.wsl_runtime_available")).toBe(
+      !dockerInstalled || !dockerReachable
+        ? "absent"
+        : runtime === "unknown"
+          ? "unknown"
+          : "present",
+    );
+  });
 
   it.each([
     [true, "present"],
@@ -180,7 +177,6 @@ describe("platform readiness qualification (#7410)", () => {
         isWsl: true,
         runtime: "docker-desktop",
         hasNvidiaGpu: true,
-        nvidiaGpuCount: 1,
         productName: "83N7",
         n1xWslGpu: true,
         wslDockerDesktopGpuProofPassed: true,
@@ -190,23 +186,6 @@ describe("platform readiness qualification (#7410)", () => {
     expect(capability(result, "host.platform.n1x_wsl")).toBe("present");
     expect(qualification(result, "host.platform.n1x_wsl")).toBe("qualified");
     expect(result.evidence[0]?.details).toMatchObject({ product: "83N7", n1xWslGpu: true });
-  });
-
-  it("rejects an N1x WSL qualification with more than one GPU (#10962)", () => {
-    const result = projectPlatformQualification(
-      input({
-        architecture: "arm64",
-        isWsl: true,
-        runtime: "docker-desktop",
-        hasNvidiaGpu: true,
-        nvidiaGpuCount: 2,
-        n1xWslGpu: true,
-        wslDockerDesktopGpuProofPassed: true,
-      }),
-    );
-
-    expect(capability(result, "host.platform.n1x_wsl")).toBe("absent");
-    expect(qualification(result, "host.platform.n1x_wsl")).toBe("unqualified");
   });
 
   it.each([
@@ -430,25 +409,22 @@ describe("platform readiness qualification (#7410)", () => {
   it.each([
     ["untrusted", false, "unqualified", "absent", "host.platform.n1x_unqualified"],
     ["unreadable", undefined, "unknown", "unknown", "host.platform.n1x_inconclusive"],
-  ] as const)(
-    "fails closed for an %s N1x FastOS marker (#8574)",
-    (_scenario, n1xFastOsMarker, expectedStatus, expectedCapability, expectedFinding) => {
-      const result = projectPlatformQualification(
-        input({
-          architecture: "arm64",
-          hasNvidiaGpu: true,
-          n1xCandidate: true,
-          n1xFastOsMarker,
-          n1xPciGpu: undefined,
-        }),
-      );
+  ] as const)("fails closed for an %s N1x FastOS marker (#8574)", (_scenario, n1xFastOsMarker, expectedStatus, expectedCapability, expectedFinding) => {
+    const result = projectPlatformQualification(
+      input({
+        architecture: "arm64",
+        hasNvidiaGpu: true,
+        n1xCandidate: true,
+        n1xFastOsMarker,
+        n1xPciGpu: undefined,
+      }),
+    );
 
-      expect(capability(result, "host.platform.n1x")).toBe(expectedCapability);
-      expect(capability(result, "host.platform.supported")).toBe("absent");
-      expect(qualification(result, "host.platform.n1x")).toBe(expectedStatus);
-      expect(result.findings.map(({ id }) => id)).toContain(expectedFinding);
-    },
-  );
+    expect(capability(result, "host.platform.n1x")).toBe(expectedCapability);
+    expect(capability(result, "host.platform.supported")).toBe("absent");
+    expect(qualification(result, "host.platform.n1x")).toBe(expectedStatus);
+    expect(result.findings.map(({ id }) => id)).toContain(expectedFinding);
+  });
 
   it.each([
     ["generic-ubuntu", "qualified"],
@@ -549,38 +525,33 @@ describe("platform readiness qualification (#7410)", () => {
         throw Object.assign(new Error("unreadable PCI identity"), { code: "EIO" });
       },
     ],
-  ] as const)(
-    "keeps Station qualification inconclusive with %s evidence",
-    (_scenario, field, readFault) => {
-      const pciFaults = new Map([[`/fixtures/pci/0000:01:00.0/${field}`, readFault]]);
-      const identity = collectPlatformIdentity({
-        productNamePath: "/fixtures/product_name",
-        osReleasePath: "/fixtures/os-release",
-        stationReleasePath: "/fixtures/dgx-release",
-        pciDevicesPath: "/fixtures/pci",
-        readFile: (filePath) => pciFaults.get(filePath)?.() ?? stationFixtureReadFile(filePath),
-        readdir: () => ["0000:01:00.0"],
-        openFile: () => 17,
-        statFileDescriptor: () => trustedMarkerStat(),
-        readFileDescriptor: () => noOtaStationRelease(),
-        closeFileDescriptor: () => undefined,
-      });
-      const result = projectPlatformQualification(
-        input({
-          architecture: "arm64",
-          hasNvidiaGpu: true,
-          ...identity,
-        }),
-      );
+  ] as const)("keeps Station qualification inconclusive with %s evidence", (_scenario, field, readFault) => {
+    const pciFaults = new Map([[`/fixtures/pci/0000:01:00.0/${field}`, readFault]]);
+    const identity = collectPlatformIdentity({
+      productNamePath: "/fixtures/product_name",
+      osReleasePath: "/fixtures/os-release",
+      stationReleasePath: "/fixtures/dgx-release",
+      pciDevicesPath: "/fixtures/pci",
+      readFile: (filePath) => pciFaults.get(filePath)?.() ?? stationFixtureReadFile(filePath),
+      readdir: () => ["0000:01:00.0"],
+      openFile: () => 17,
+      statFileDescriptor: () => trustedMarkerStat(),
+      readFileDescriptor: () => noOtaStationRelease(),
+      closeFileDescriptor: () => undefined,
+    });
+    const result = projectPlatformQualification(
+      input({
+        architecture: "arm64",
+        hasNvidiaGpu: true,
+        ...identity,
+      }),
+    );
 
-      expect(identity.stationGb300PciGpu).toBeUndefined();
-      expect(qualification(result, "host.platform.dgx_station")).toBe("unknown");
-      expect(capability(result, "host.platform.dgx_station")).toBe("unknown");
-      expect(result.findings.map(({ id }) => id)).toContain(
-        "host.platform.dgx_station_inconclusive",
-      );
-    },
-  );
+    expect(identity.stationGb300PciGpu).toBeUndefined();
+    expect(qualification(result, "host.platform.dgx_station")).toBe("unknown");
+    expect(capability(result, "host.platform.dgx_station")).toBe("unknown");
+    expect(result.findings.map(({ id }) => id)).toContain("host.platform.dgx_station_inconclusive");
+  });
 
   it("keeps a truncated PCI scan inconclusive when a matching device may be outside the bound", () => {
     const entries = [
@@ -783,29 +754,29 @@ describe("platform readiness qualification (#7410)", () => {
     expect(readFile).not.toHaveBeenCalledWith("/fixtures/dgx-release");
   });
 
-  it.each(["unsupported-dgx-os", "unknown"] as const)(
-    "keeps %s Station readiness and direct-GPU preparation fail-closed",
-    (stationProfile) => {
-      const readiness = projectPlatformQualification(
-        input({
-          nvidiaPlatform: "station",
-          productName: "NVIDIA DGX Station GB300",
-          stationProfile,
-          stationGb300PciGpu: true,
-          hasNvidiaGpu: true,
-        }),
-      );
+  it.each([
+    "unsupported-dgx-os",
+    "unknown",
+  ] as const)("keeps %s Station readiness and direct-GPU preparation fail-closed", (stationProfile) => {
+    const readiness = projectPlatformQualification(
+      input({
+        nvidiaPlatform: "station",
+        productName: "NVIDIA DGX Station GB300",
+        stationProfile,
+        stationGb300PciGpu: true,
+        hasNvidiaGpu: true,
+      }),
+    );
 
-      expect(qualification(readiness, "host.platform.dgx_station")).not.toBe("qualified");
-      expect(() =>
-        discoverStationGb300SysfsReadOnlyPaths(
-          "NVIDIA DGX Station GB300",
-          "/fixtures/pci",
-          stationProfile,
-        ),
-      ).toThrow("software profile is unsupported or unknown");
-    },
-  );
+    expect(qualification(readiness, "host.platform.dgx_station")).not.toBe("qualified");
+    expect(() =>
+      discoverStationGb300SysfsReadOnlyPaths(
+        "NVIDIA DGX Station GB300",
+        "/fixtures/pci",
+        stationProfile,
+      ),
+    ).toThrow("software profile is unsupported or unknown");
+  });
 
   it.each([
     [["0000:01:00.0"], "one"],
@@ -866,8 +837,9 @@ describe("platform readiness qualification (#7410)", () => {
     const identity = collectPlatformIdentity({
       productNamePath: "/fixtures/product_name",
       readFile: (filePath) =>
-        new Map([["/fixtures/product_name", "NVIDIA DGX Spark".padEnd(5000, "x")]]).get(filePath) ??
-        unexpectedFixturePath(filePath),
+        new Map([["/fixtures/product_name", "NVIDIA DGX Spark".padEnd(5000, "x")]]).get(
+          filePath,
+        ) ?? unexpectedFixturePath(filePath),
       openFile: () => 17,
       statFileDescriptor: () => trustedMarkerStat({ uid: 1000 }),
       closeFileDescriptor: () => undefined,

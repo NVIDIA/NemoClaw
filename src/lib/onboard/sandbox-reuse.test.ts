@@ -3,7 +3,6 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { waitUntil } from "../core/wait";
-import * as registry from "../state/registry";
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 import { SANDBOX_RECREATE_PROBE_TIMEOUT_MS } from "./sandbox-recreate-probe";
 import { fingerprintSandboxRecreateValue } from "./sandbox-recreate-transaction";
@@ -251,10 +250,6 @@ describe("applyReusedSandboxDashboardState", () => {
 });
 
 describe("createSandboxReuseHelpers", () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
   it("observes state and a stable OpenShell identity together for recreate recovery", () => {
     const getOutput = "Name: alpha\n\u001b[32mId: openshell-source-id\u001b[0m\nState: Ready\n";
     const runCaptureOpenshell = vi.fn(() => "alpha Ready\n");
@@ -312,31 +307,6 @@ describe("createSandboxReuseHelpers", () => {
     expect(runCaptureOpenshell).toHaveBeenCalledWith(["sandbox", "list", "-g", "nemoclaw-9090"], {
       ignoreError: true,
     });
-  });
-
-  it("revalidates a recorded sandbox against its current live identity", () => {
-    let liveId = "openshell-source-id";
-    const expectedIdentity = fingerprintSandboxRecreateValue(liveId);
-    vi.spyOn(registry, "getSandbox").mockReturnValue({
-      name: "alpha",
-      gatewayName: "nemoclaw-9090",
-      lifecycleLiveIdentityFingerprint: expectedIdentity,
-    });
-    const helpers = createSandboxReuseHelpers({
-      runCaptureOpenshell: vi.fn(() => "alpha Ready\n"),
-      captureOpenshell: vi.fn(() =>
-        successfulCapture(`Name: alpha\nId: ${liveId}\nState: Ready\n`),
-      ),
-      getSandboxStateFromOutputs: vi.fn(() => "ready"),
-    });
-
-    expect(() =>
-      helpers.revalidateRecordedSandboxLiveIdentity("alpha", "resume managed runtime"),
-    ).not.toThrow();
-    liveId = "replacement-source-id";
-    expect(() =>
-      helpers.revalidateRecordedSandboxLiveIdentity("alpha", "resume managed runtime"),
-    ).toThrow("sandbox 'alpha' live identity changed");
   });
 
   it("preserves an unknown reuse state but rejects it for recreate recovery", () => {

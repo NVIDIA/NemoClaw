@@ -439,17 +439,6 @@ function resolveResumedServingProfile(
       `  --profile ${requested.preset.id} does not match resumed profile ${current.preset.id}.`,
     );
   }
-  const requestedLlamaCppRecipe = String(deps.env.NEMOCLAW_LLAMACPP_RECIPE ?? "").trim();
-  if (
-    requestedLlamaCppRecipe &&
-    (current.recipe.backend !== "install-llama-cpp" ||
-      requestedLlamaCppRecipe !== current.recipe.id)
-  ) {
-    fail(
-      deps,
-      `  NEMOCLAW_LLAMACPP_RECIPE=${requestedLlamaCppRecipe} does not match resumed recipe ${current.recipe.id}. Start fresh to select another recipe.`,
-    );
-  }
   validateServingProfileConflicts(current.preset.id, deps);
   return current;
 }
@@ -594,15 +583,14 @@ function applyServingProfileEnvironment(
   if (!options.servingProfile) return () => {};
   const previous = env[NEMOCLAW_SERVING_PRESET_ENV];
   env[NEMOCLAW_SERVING_PRESET_ENV] = options.servingProfile;
-  // On a fresh run the profile backend selects the provider. A resume keeps
-  // the recorded runtime provider authoritative: mapping `llama-cpp-local`
-  // back to its installer key would create a false resume conflict.
+  // The preset selects the model once a provider is chosen; the profile's
+  // backend is what selects the provider. Setting only the former left the
+  // provider unresolved and onboarding fell back to the menu (#9313).
   // `validateServingProfileConflicts` already rejected an operator-supplied
   // NEMOCLAW_PROVIDER, so nothing of the caller's is being overwritten here.
-  const providerKey =
-    !options.resume && options.servingProfileProvenance
-      ? servingProfileProviderKey(options.servingProfileProvenance)
-      : null;
+  const providerKey = options.servingProfileProvenance
+    ? servingProfileProviderKey(options.servingProfileProvenance)
+    : null;
   const previousProvider = env.NEMOCLAW_PROVIDER;
   if (providerKey) env.NEMOCLAW_PROVIDER = providerKey;
   return () => {

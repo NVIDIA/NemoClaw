@@ -3,13 +3,10 @@
 
 import type { GatewayRouteDiscoveryConstraints } from "../inference/gateway-route-compatibility";
 import type { ProviderInferenceProbeRoute } from "./machine/handlers/provider-inference-route-containment";
-import {
-  providerNameToOptionKey,
-  type ProviderSelectionRecoveryReaderBundle,
-} from "./provider-recovery";
+import { providerNameToOptionKey } from "./provider-recovery";
 import type { RebuildRouteHandoff, RegistryInferenceRoute } from "./rebuild-route-handoff";
 
-interface ProviderDiscoveryDeps extends ProviderSelectionRecoveryReaderBundle {
+interface ProviderDiscoveryDeps {
   remoteProviderConfig: Record<string, { providerName: string }>;
   isNonInteractive(): boolean;
   getNonInteractiveProvider(): string | null;
@@ -17,9 +14,30 @@ interface ProviderDiscoveryDeps extends ProviderSelectionRecoveryReaderBundle {
     providerKey: string,
     options?: { allowProviderModelFallback?: boolean },
   ): string | null;
+  readRecordedProvider(
+    sandboxName: string | null | undefined,
+    recoverySessionId?: string | null,
+  ): string | null;
+  readRecordedNimContainer(
+    sandboxName: string | null | undefined,
+    recoverySessionId?: string | null,
+  ): string | null;
+  readRecordedManagedLlamaCpp?(
+    sandboxName: string | null | undefined,
+    recoverySessionId?: string | null,
+  ): boolean;
+  readRecordedModel(
+    sandboxName: string | null | undefined,
+    recoverySessionId?: string | null,
+  ): string | null;
 }
 
-type RecordedProviderReaders = Required<ProviderSelectionRecoveryReaderBundle>;
+interface RecordedProviderReaders {
+  readRecordedProvider(sandboxName: string | null | undefined): string | null;
+  readRecordedNimContainer(sandboxName: string | null | undefined): string | null;
+  readRecordedManagedLlamaCpp(sandboxName: string | null | undefined): boolean;
+  readRecordedModel(sandboxName: string | null | undefined): string | null;
+}
 
 const OLLAMA_PROBE_PROVIDER_KEYS = new Set([
   "ollama",
@@ -57,7 +75,7 @@ function bindRecordedProviderReaders(
     return {
       readRecordedProvider: () => null,
       readRecordedNimContainer: () => null,
-      readRecordedManagedLlamaCppRecipeId: () => null,
+      readRecordedManagedLlamaCpp: () => false,
       readRecordedModel: () => null,
     };
   }
@@ -65,8 +83,8 @@ function bindRecordedProviderReaders(
     readRecordedProvider: (name) =>
       recoveredRegistryRoute?.provider ?? deps.readRecordedProvider(name, recoverySessionId),
     readRecordedNimContainer: (name) => deps.readRecordedNimContainer(name, recoverySessionId),
-    readRecordedManagedLlamaCppRecipeId: (name) =>
-      deps.readRecordedManagedLlamaCppRecipeId?.(name, recoverySessionId) ?? null,
+    readRecordedManagedLlamaCpp: (name) =>
+      deps.readRecordedManagedLlamaCpp?.(name, recoverySessionId) ?? false,
     readRecordedModel: (name) =>
       recoveredRegistryRoute?.model ?? deps.readRecordedModel(name, recoverySessionId),
   };
@@ -110,23 +128,20 @@ export function prepareProviderDiscovery(options: {
   );
   const nonInteractive = deps.isNonInteractive();
   const requestedProvider = deps.getNonInteractiveProvider();
-  const recordedProviderName = recoverProvider
-    ? recordedProviderReaders.readRecordedProvider(sandboxName)
-    : null;
-  const recordedManagedLlamaCppRecipeId =
-    recordedProviderName === "llama-cpp-local"
-      ? recordedProviderReaders.readRecordedManagedLlamaCppRecipeId(sandboxName)
-      : null;
   let providerChanged = false;
   if (nonInteractive && requestedProvider && recoverProvider) {
+    const recordedProviderName = recordedProviderReaders.readRecordedProvider(sandboxName);
     const hasRecordedNimContainer =
       recordedProviderName === "vllm-local" &&
       Boolean(recordedProviderReaders.readRecordedNimContainer(sandboxName));
+    const hasRecordedManagedLlamaCpp =
+      recordedProviderName === "llama-cpp-local" &&
+      recordedProviderReaders.readRecordedManagedLlamaCpp(sandboxName);
     const recordedProviderKey = providerNameToOptionKey(
       deps.remoteProviderConfig,
       recordedProviderName,
       {
-        hasManagedLlamaCpp: typeof recordedManagedLlamaCppRecipeId === "string",
+        hasManagedLlamaCpp: hasRecordedManagedLlamaCpp,
         hasNimContainer: hasRecordedNimContainer,
       },
     );
@@ -140,12 +155,15 @@ export function prepareProviderDiscovery(options: {
         allowProviderModelFallback: !providerChanged,
       })
     : null;
-  const recoveredProbeProvider = nonInteractive && !requestedProvider ? recordedProviderName : null;
+  const recoveredProbeProvider =
+    nonInteractive && !requestedProvider
+      ? recordedProviderReaders.readRecordedProvider(sandboxName)
+      : null;
   const recoveredProbeKey = providerNameToOptionKey(
     deps.remoteProviderConfig,
     recoveredProbeProvider,
     {
-      hasManagedLlamaCpp: typeof recordedManagedLlamaCppRecipeId === "string",
+      hasManagedLlamaCpp: recordedProviderReaders.readRecordedManagedLlamaCpp(sandboxName),
       hasNimContainer:
         recoveredProbeProvider === "vllm-local" &&
         Boolean(recordedProviderReaders.readRecordedNimContainer(sandboxName)),

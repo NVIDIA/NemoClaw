@@ -113,16 +113,6 @@ export interface ProviderSelectionResult {
   inferenceCapabilityCache?: OnboardInferenceCapabilityCache;
   /** Checkpoint identity proven while validating a local vLLM served alias. */
   vllmModelIdentity?: string;
-  /** Immutable profile identity selected by automatic managed-serving discovery. */
-  servingProfileProvenance?: ServingProfileProvenance;
-}
-
-function selectedServingProfileSessionUpdate(
-  provenance: ServingProfileProvenance | null | undefined,
-): {
-  servingProfileProvenance?: ServingProfileProvenance | null;
-} {
-  return provenance === undefined ? {} : { servingProfileProvenance: provenance };
 }
 
 export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
@@ -193,7 +183,10 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       ) => GatewayRouteDiscoveryConstraints,
       canProbeRoute?: (provider: string) => boolean,
       recoverySessionId?: string | null,
-      revalidateSandboxIdentity?: (route: ProviderInferenceProbeRoute, operation: string) => void,
+      revalidateSandboxIdentity?: (
+        route: ProviderInferenceProbeRoute,
+        operation: string,
+      ) => void,
     ): Promise<ProviderSelectionResult>;
     setupInference(
       sandboxName: string | null,
@@ -226,7 +219,6 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       sandboxName: string | null | undefined,
       revalidateSandboxIdentity?: (operation: string) => void,
     ): Promise<boolean>;
-    revalidateManagedLlamaCppResumeSandboxIdentity(sandboxName: string, operation: string): void;
     isResumeProviderSurfaceReady(
       gatewayName: string,
       provider: string | null | undefined,
@@ -691,20 +683,10 @@ async function ensureLegacyManagedLlamaCppResumeReady(
   ensure: (
     provider: string | null | undefined,
     sandboxName: string | null | undefined,
-    revalidateSandboxIdentity?: (operation: string) => void,
   ) => Promise<boolean>,
-  revalidateSandboxIdentity?: (operation: string) => void,
 ): Promise<void> {
   if (selection?.setupOptions.hostLocalInference) return;
-  await ensure(provider, sandboxName, revalidateSandboxIdentity);
-}
-
-function bindManagedLlamaCppResumeIdentityRevalidation(
-  sandboxName: string | null,
-  revalidate: (sandboxName: string, operation: string) => void,
-): ((operation: string) => void) | undefined {
-  if (!sandboxName) return undefined;
-  return (operation) => revalidate(sandboxName, operation);
+  await ensure(provider, sandboxName);
 }
 
 function endpointSourceForCurrentUrl(
@@ -1333,7 +1315,6 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       resolver: resolveHostLocalInferenceStartupSelection,
     });
     let shouldRecordProviderSelection = false;
-    let selectedServingProfileProvenance: ServingProfileProvenance | null | undefined;
     // A review interruption selected a provider but did not configure its
     // route. Do not let a coincidentally ready gateway route skip setup.
     forceInferenceSetup ||=
@@ -1357,12 +1338,12 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         provider,
         sandboxName,
         deps.ensureManagedLlamaCppResumeReady,
-        bindManagedLlamaCppResumeIdentityRevalidation(
-          sandboxName,
-          deps.revalidateManagedLlamaCppResumeSandboxIdentity,
-        ),
       );
-      const recovery = await deps.ensureResumeProviderReady(gatewayName, provider, credentialEnv);
+      const recovery = await deps.ensureResumeProviderReady(
+        gatewayName,
+        provider,
+        credentialEnv,
+      );
       forceInferenceSetup ||= recovery.forceInferenceSetup;
       credentialEnv = recovery.credentialEnv;
       // Rebuild may be resuming a legacy session whose step marker was never
@@ -1518,7 +1499,6 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       endpointTrustedPrivateCapability = selection.endpointTrustedPrivateCapability;
       inferenceCapabilityCache = selection.inferenceCapabilityCache;
       vllmModelIdentity = selection.vllmModelIdentity;
-      selectedServingProfileProvenance = selection.servingProfileProvenance ?? null;
       shouldRecordProviderSelection = true;
       if (
         reuseGatewayCredentialWithoutLocalKey &&
@@ -1586,7 +1566,6 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           compatibleEndpointReasoning,
           compatibleEndpointReasoningEffort,
           nimContainer,
-          ...selectedServingProfileSessionUpdate(selectedServingProfileProvenance),
           stationExpressModelIdentity: vllmModelIdentity,
         }),
       );
@@ -1919,7 +1898,6 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
             compatibleEndpointReasoning,
             compatibleEndpointReasoningEffort,
             nimContainer,
-            ...selectedServingProfileSessionUpdate(selectedServingProfileProvenance),
             stationExpressModelIdentity: vllmModelIdentity,
           }),
         );
@@ -2012,7 +1990,6 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           compatibleEndpointReasoning,
           compatibleEndpointReasoningEffort,
           nimContainer,
-          ...selectedServingProfileSessionUpdate(selectedServingProfileProvenance),
           stationExpressModelIdentity: vllmModelIdentity,
         }),
       );

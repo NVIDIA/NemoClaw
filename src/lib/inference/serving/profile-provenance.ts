@@ -4,9 +4,7 @@
 import { isDeepStrictEqual } from "node:util";
 import type {
   CompiledServingCatalog,
-  ResolvedLlamaCppInferenceSelection,
   ServingProfileProvenance,
-  ServingPreset,
   ServingRecipe,
   ServingSupportState,
 } from "./types";
@@ -72,36 +70,19 @@ export function servingProfileProvenance(
   if (recipe.spec.backend !== preset.spec.plan.backend) {
     throw new Error(`Serving profile ${presetId} does not match its recipe backend.`);
   }
-  return buildServingProfileProvenance({
-    catalogDigest: catalog.catalogDigest,
-    presetDigest: definitionDigest(catalog, "ServingPreset", preset.metadata.id),
-    recipeDigest: definitionDigest(catalog, "ServingRecipe", recipe.metadata.id),
-    preset,
-    recipe,
-  });
-}
-
-function buildServingProfileProvenance(input: {
-  catalogDigest: string;
-  presetDigest: string;
-  recipeDigest: string;
-  preset: ServingPreset;
-  recipe: ServingRecipe;
-}): ServingProfileProvenance {
-  const { catalogDigest, presetDigest, recipeDigest, preset, recipe } = input;
   const runtime = recipe.spec.runtime;
   return {
     schemaVersion: 1,
-    catalogDigest,
+    catalogDigest: catalog.catalogDigest,
     preset: {
       id: preset.metadata.id,
-      digest: presetDigest,
+      digest: definitionDigest(catalog, "ServingPreset", preset.metadata.id),
       displayName: preset.metadata.displayName ?? preset.metadata.id,
       supportState: supportState(preset.spec.selection, preset.metadata.supportState),
     },
     recipe: {
       id: recipe.metadata.id,
-      digest: recipeDigest,
+      digest: definitionDigest(catalog, "ServingRecipe", recipe.metadata.id),
       backend: recipe.spec.backend,
     },
     model: { id: recipe.spec.model.id, revision: recipe.spec.model.revision },
@@ -115,19 +96,6 @@ function buildServingProfileProvenance(input: {
         : null,
     estimatedModelDownloadBytes: modelDownloadBytes(recipe),
   };
-}
-
-/** Preserve the immutable profile identity that authorized a resolved managed llama.cpp install. */
-export function resolvedLlamaCppServingProfileProvenance(
-  selection: ResolvedLlamaCppInferenceSelection,
-): ServingProfileProvenance {
-  return buildServingProfileProvenance({
-    catalogDigest: selection.catalogDigest,
-    presetDigest: selection.presetDigest,
-    recipeDigest: selection.recipeDigest,
-    preset: selection.preset,
-    recipe: selection.recipe,
-  });
 }
 
 export function parseServingProfileProvenance(value: unknown): ServingProfileProvenance | null {
