@@ -286,7 +286,7 @@ export interface SandboxGpuCreateFlowInput {
 export interface CreatedSandboxIdentity {
   readonly sandboxId: string;
   readonly liveIdentityFingerprint: string;
-  readonly createAttemptNonce: string;
+  readonly createAttemptNonce?: string;
   readonly route: SelectedDockerGpuRoute;
 }
 

@@ -363,12 +363,12 @@ describe("durable final-handoff publication", () => {
       };
       flowInput.gpuRoutePlan = "none";
       flowInput.initialGpuRoute = "none";
+      flowInput.sandboxName = authority.sandboxName;
       flowInput.gatewayName = authority.gatewayName;
       flowInput.lifecycleGeneration = lifecycleGeneration;
       flowInput.resumeVerifiedCreate = {
         route: resumedCheckpoint.route,
         liveIdentityFingerprint: resumedCheckpoint.sandboxIdentityFingerprint,
-        createAttemptNonce: "a".repeat(62),
         finalHandoffCommitStarted: true,
         finalHandoffRuntimeId: replacementRuntimeId,
       };
@@ -378,11 +378,51 @@ describe("durable final-handoff publication", () => {
       flowInput.persistResumedFinalHandoffAcknowledgement =
         checkpointPersistence.persistResumedFinalHandoffAcknowledgement;
       const runtimePatch = createGpuPatchFixture();
-      mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(runtimePatch);
-      const created = await runSandboxGpuCreateFlow(flowInput, createGpuFlowDeps(sandboxId));
+      flowInput.managedBootstrap = {
+        bootstrapIdentity: "managed-bootstrap-identity",
+        stateRoot: path.join(tempHome, "managed-bootstrap"),
+        runtimeProvider: {
+          identity: { id: "docker" },
+          bootstrap: {
+            createOnboardRouting: () => null,
+            createLifecycle: (options: { readonly launchArgv: readonly string[] }) => ({
+              launchArgv: options.launchArgv,
+              patch: runtimePatch,
+              recoverUnfinished: async () => null,
+              prepareNetwork: async () => undefined,
+              runCreate: async () => {
+                throw new Error("resumed handoff must not create another sandbox");
+              },
+            }),
+          },
+        },
+        authorityStore: {},
+        request: {},
+        image: {},
+        agentIdentity: {},
+        workspaceRoot: {},
+        managedStateRoots: [],
+        intendedWorkloadArgv: flowInput.sandboxStartupCommand,
+        expectedSupervisorArgv: [],
+      } as never;
+      const deps = createGpuFlowDeps(sandboxId);
+      const created = await runSandboxGpuCreateFlow(flowInput, deps);
 
       expect(registry.getSandbox(authority.sandboxName)?.pendingCreateIdentity).toEqual(checkpoint);
       expect(checkpoint.exactFinalHandoffAcknowledged).toBe(true);
+      expect(deps.verifyExactFinalHandoffRuntime).toHaveBeenNthCalledWith(
+        1,
+        authority.sandboxName,
+        replacementRuntimeId,
+        false,
+      );
+      expect(deps.verifyExactFinalHandoffRuntime).toHaveBeenNthCalledWith(
+        2,
+        authority.sandboxName,
+        replacementRuntimeId,
+        true,
+      );
+      expect(mocks.streamSandboxCreate).not.toHaveBeenCalled();
       await expect(completeRegistration(created, null)).resolves.toBeUndefined();
       expect(registry.getSandbox(authority.sandboxName)).toMatchObject({
         name: authority.sandboxName,

@@ -246,7 +246,7 @@ function probeExactOpenShellSandboxId(
 
 async function verifyCreatedSandboxBeforeEffects(
   sandboxId: string,
-  createAttemptNonce: string,
+  createAttemptNonce: string | undefined,
   route: SelectedDockerGpuRoute,
   input: SandboxGpuCreateFlowInput,
 ): Promise<void> {
@@ -268,6 +268,14 @@ function resolveCreateAttemptNonce(
     return deferPostCreateEffects
       ? randomBytes(NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH / 2).toString("hex")
       : null;
+  }
+  if (
+    !resumedCreateAttemptNonce &&
+    input.resumeVerifiedCreate.route === "compatibility" &&
+    input.resumeVerifiedCreate.finalHandoffCommitStarted === true &&
+    /^[0-9a-f]{64}$/u.test(input.resumeVerifiedCreate.finalHandoffRuntimeId ?? "")
+  ) {
+    return null;
   }
   if (
     !resumedCreateAttemptNonce ||
@@ -437,24 +445,21 @@ async function verifyActivatedManagedCreateBeforeEffects(input: {
 
 function restartInterruptedFinalHandoff(
   input: Pick<SandboxGpuCreateFlowInput, "gatewayName" | "resumeVerifiedCreate" | "sandboxName">,
-  managedLifecycle: ManagedBootstrapRuntimeCreateLifecycle | null,
   deps: Pick<SandboxGpuCreateFlowDeps, "runOpenshell" | "verifyExactFinalHandoffRuntime">,
 ): void {
   if (input.resumeVerifiedCreate?.finalHandoffCommitStarted !== true) return;
   const replacementRuntimeId = input.resumeVerifiedCreate.finalHandoffRuntimeId;
-  if (managedLifecycle === null) {
-    if (!replacementRuntimeId) {
-      throw new Error(
-        "Interrupted Docker final handoff has no durable replacement runtime authority.",
-      );
-    }
-    const verifyExactRuntime =
-      deps.verifyExactFinalHandoffRuntime ?? isExactOpenShellDockerSandboxReplacement;
-    if (!verifyExactRuntime(input.sandboxName, replacementRuntimeId, false)) {
-      throw new Error(
-        "Interrupted Docker final handoff could not prove the exact replacement as the sole Docker runtime before restart.",
-      );
-    }
+  if (!replacementRuntimeId) {
+    throw new Error(
+      "Interrupted Docker final handoff has no durable replacement runtime authority.",
+    );
+  }
+  const verifyExactRuntime =
+    deps.verifyExactFinalHandoffRuntime ?? isExactOpenShellDockerSandboxReplacement;
+  if (!verifyExactRuntime(input.sandboxName, replacementRuntimeId, false)) {
+    throw new Error(
+      "Interrupted Docker final handoff could not prove the exact replacement as the sole Docker runtime before restart.",
+    );
   }
   deps.runOpenshell(["sandbox", "start", "-g", input.gatewayName, input.sandboxName], {
     ignoreError: true,
@@ -469,24 +474,21 @@ function acknowledgeInterruptedFinalHandoff(
     SandboxGpuCreateFlowInput,
     "persistResumedFinalHandoffAcknowledgement" | "resumeVerifiedCreate" | "sandboxName"
   >,
-  managedLifecycle: ManagedBootstrapRuntimeCreateLifecycle | null,
   deps: Pick<SandboxGpuCreateFlowDeps, "verifyExactFinalHandoffRuntime">,
 ): void {
   if (input.resumeVerifiedCreate?.finalHandoffCommitStarted !== true) return;
   const replacementRuntimeId = input.resumeVerifiedCreate.finalHandoffRuntimeId;
-  if (managedLifecycle === null) {
-    if (!replacementRuntimeId) {
-      throw new Error(
-        "Interrupted Docker final handoff has no durable replacement runtime authority.",
-      );
-    }
-    const verifyExactRuntime =
-      deps.verifyExactFinalHandoffRuntime ?? isExactOpenShellDockerSandboxReplacement;
-    if (!verifyExactRuntime(input.sandboxName, replacementRuntimeId, true)) {
-      throw new Error(
-        "Interrupted Docker final handoff did not prove the exact replacement as the sole running Docker runtime.",
-      );
-    }
+  if (!replacementRuntimeId) {
+    throw new Error(
+      "Interrupted Docker final handoff has no durable replacement runtime authority.",
+    );
+  }
+  const verifyExactRuntime =
+    deps.verifyExactFinalHandoffRuntime ?? isExactOpenShellDockerSandboxReplacement;
+  if (!verifyExactRuntime(input.sandboxName, replacementRuntimeId, true)) {
+    throw new Error(
+      "Interrupted Docker final handoff did not prove the exact replacement as the sole running Docker runtime.",
+    );
   }
   input.persistResumedFinalHandoffAcknowledgement?.();
 }
@@ -873,7 +875,7 @@ export function createSandboxGpuCreateAttemptRunner(
       resumedSandboxId = identity.sandboxId;
       await verifyCreatedSandboxBeforeEffects(
         identity.sandboxId,
-        createAttemptNonce!,
+        createAttemptNonce ?? undefined,
         route,
         input,
       );
@@ -1141,7 +1143,7 @@ export function createSandboxGpuCreateAttemptRunner(
     }
     await runtimePatch.waitForSupervisorReconnectIfNeeded();
     revalidatePostCreateEffect(`reconnect sandbox supervisor for '${input.sandboxName}'`);
-    restartInterruptedFinalHandoff(input, managedLifecycle, deps);
+    restartInterruptedFinalHandoff(input, deps);
     console.log("  Waiting for sandbox to become ready...");
     const readiness = await sandboxReadinessTracing.waitForCreatedSandboxReadyWithTrace({
       sandboxName: input.sandboxName,
@@ -1240,7 +1242,7 @@ export function createSandboxGpuCreateAttemptRunner(
         createResult?.status === 0 ? 1 : (createResult?.status ?? 1),
       );
     }
-    acknowledgeInterruptedFinalHandoff(input, managedLifecycle, deps);
+    acknowledgeInterruptedFinalHandoff(input, deps);
     if (input.sandboxGpuConfig.sandboxGpuEnabled) {
       revalidatePostCreateEffect(`verify GPU access for sandbox '${input.sandboxName}'`);
       const deferNativeProofFailure =

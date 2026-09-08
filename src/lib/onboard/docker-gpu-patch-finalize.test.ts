@@ -110,6 +110,29 @@ describe("isExactOpenShellDockerSandboxReplacement", () => {
       }),
     ).toBe(false);
   });
+
+  it.each([
+    { running: "true", expected: true },
+    { running: "false", expected: false },
+  ])("requires the exact replacement to be running when requested", ({ running, expected }) => {
+    const replacementRuntimeId = "b".repeat(64);
+    const dockerRun = vi.fn((args: readonly string[]) => ({
+      status: 0,
+      stdout:
+        args[0] === "ps"
+          ? `${replacementRuntimeId}\n`
+          : args.includes("{{json .State.Running}}")
+            ? `${running}\n`
+            : "current-gateway\n",
+    }));
+
+    expect(
+      isExactOpenShellDockerSandboxReplacement("alpha", replacementRuntimeId, true, {
+        dockerRun,
+      }),
+    ).toBe(expected);
+    expect(dockerRun).toHaveBeenCalledTimes(3);
+  });
 });
 
 describe("finalizeDockerGpuPatchBackup", () => {
