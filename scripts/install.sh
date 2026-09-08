@@ -145,8 +145,12 @@ canonical_agent_name() {
 }
 
 # Resolve which Git ref to install from.
-# Priority: NEMOCLAW_INSTALL_TAG env var > lkg tag.
+# Priority: bootstrap fetch pin > NEMOCLAW_INSTALL_REF > NEMOCLAW_INSTALL_TAG > lkg tag.
 resolve_release_tag() {
+  if [[ -n "${NEMOCLAW_BOOTSTRAP_FETCH_REF:-}" ]]; then
+    printf "%s" "${NEMOCLAW_BOOTSTRAP_FETCH_REF}"
+    return
+  fi
   if [[ -n "${NEMOCLAW_INSTALL_REF:-}" ]]; then
     printf "%s" "${NEMOCLAW_INSTALL_REF}"
     return

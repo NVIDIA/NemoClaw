@@ -35,6 +35,7 @@ case "${installedVersion}" in
   hang) /bin/sleep 60 ;;
   ignore-term) trap '' TERM; while :; do :; done ;;
   interrupt) printf '%s' "$$" >"\${LOOKUP_PID:?}"; /bin/sleep 60 ;;
+  descendant-ignore-term) (trap '' TERM; printf '%s' "\${BASHPID}" >"\${LOOKUP_PID:?}"; while :; do :; done) & exit 0 ;;
   signaled) kill -KILL "$$" ;;
   invalid) printf 'not a NemoClaw version\n' ;;
   *) printf 'nemoclaw v%s\n' "${installedVersion}" ;;
@@ -56,7 +57,7 @@ case "\${1:-}" in
     cat >"$target/scripts/install.sh" <<'PAYLOAD'
 #!/usr/bin/env bash
 # NEMOCLAW_VERSIONED_INSTALLER_PAYLOAD=1
-printf '%s' "\${NEMOCLAW_INSTALL_REF:-}" >"\${EXECUTION_MARKER:?}"
+printf '%s|%s|%s' "\${NEMOCLAW_BOOTSTRAP_FETCH_REF:-}" "\${NEMOCLAW_INSTALL_REF:-}" "\${NEMOCLAW_INSTALL_TAG:-}" >"\${EXECUTION_MARKER:?}"
 PAYLOAD
     chmod +x "$target/scripts/install.sh"
     ;;
@@ -81,7 +82,8 @@ esac
     ? '#!/usr/bin/env bash\nexec /bin/sleep "$@"\n'
     : installedVersion === "interrupt"
       ? '#!/usr/bin/env bash\nif [[ -e "${LOOKUP_PID:?}" && ! -e "${INTERRUPT_SENT:?}" ]]; then touch "$INTERRUPT_SENT"; kill -INT "$PPID"; fi\n'
-      : ["hang", "ignore-term"].includes(installedVersion) || targetVersion === "hang"
+      : ["hang", "ignore-term", "descendant-ignore-term"].includes(installedVersion) ||
+          targetVersion === "hang"
         ? "#!/usr/bin/env bash\nexit 0\n"
         : '#!/usr/bin/env bash\nexec /bin/sleep "$@"\n';
   writeExecutable(path.join(bin, "sleep"), sleepBody);
@@ -133,7 +135,7 @@ describe("public installer downgrade guard", () => {
 
     expect(result.status).toBe(0);
     expect(fs.existsSync(payloadMarker)).toBe(true);
-    expect(fs.readFileSync(payloadMarker, "utf8")).toBe("target-commit");
+    expect(fs.readFileSync(payloadMarker, "utf8")).toBe("target-commit|v0.0.109|lkg");
     expect(
       fs
         .readdirSync(root, { withFileTypes: true })
@@ -281,5 +283,20 @@ describe("public installer downgrade guard", () => {
     ).toEqual(["bin"]);
     const pid = Number(fs.readFileSync(lookupPid, "utf8"));
     expect(() => process.kill(pid, 0)).toThrow();
+  });
+
+  it("kills a lookup descendant after its process-group leader exits", () => {
+    const { lookupPid, payloadMarker, result } = runInstall("descendant-ignore-term", "0.0.109");
+
+    expect(result.status).toBe(1);
+    expect(`${result.stdout}${result.stderr}`).toContain(
+      "Timed out during installed NemoClaw version lookup",
+    );
+    expect(fs.existsSync(payloadMarker)).toBe(false);
+    const pid = Number(fs.readFileSync(lookupPid, "utf8"));
+    const processState = spawnSync("ps", ["-o", "stat=", "-p", String(pid)], {
+      encoding: "utf8",
+    });
+    expect(processState.status === 1 || processState.stdout.trim().startsWith("Z")).toBe(true);
   });
 });

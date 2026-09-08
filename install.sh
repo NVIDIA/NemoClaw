@@ -20,6 +20,7 @@ PAYLOAD_MARKER="NEMOCLAW_VERSIONED_INSTALLER_PAYLOAD=1"
 DEFAULT_INSTALL_REF="lkg"
 INSTALL_TAG_EXAMPLE="vX.Y.Z"
 BOOTSTRAP_LOOKUP_TIMEOUT_SECONDS=30
+SELECTED_PAYLOAD_IDENTITY_REF=""
 
 resolve_release_tag() {
   if [[ -n "${NEMOCLAW_INSTALL_REF:-}" ]]; then
@@ -142,7 +143,7 @@ run_bounded_bootstrap_lookup() (
   trap 'trap - INT TERM EXIT; terminate_bootstrap_lookup_group "$command_pid"; rm -f "$output_file"; exit 130' INT
   trap 'trap - INT TERM EXIT; terminate_bootstrap_lookup_group "$command_pid"; rm -f "$output_file"; exit 143' TERM
   trap 'status=$?; trap - INT TERM EXIT; terminate_bootstrap_lookup_group "$command_pid"; rm -f "$output_file"; exit "$status"' EXIT
-  while kill -0 "$command_pid" 2>/dev/null; do
+  while bootstrap_lookup_group_is_alive "$command_pid"; do
     if ((ticks >= BOOTSTRAP_LOOKUP_TIMEOUT_SECONDS * 10)); then
       trap - INT TERM EXIT
       terminate_bootstrap_lookup_group "$command_pid"
@@ -169,18 +170,23 @@ run_bounded_bootstrap_lookup() (
   return "$status"
 )
 
+bootstrap_lookup_group_is_alive() {
+  local command_pid="$1"
+  kill -0 -- "-$command_pid" 2>/dev/null || kill -0 "$command_pid" 2>/dev/null
+}
+
 terminate_bootstrap_lookup_group() {
   local command_pid="$1" grace_ticks
-  kill -0 "$command_pid" 2>/dev/null || {
+  bootstrap_lookup_group_is_alive "$command_pid" || {
     wait "$command_pid" 2>/dev/null || true
     return
   }
   kill -TERM -- "-$command_pid" 2>/dev/null || kill -TERM "$command_pid" 2>/dev/null || true
   for ((grace_ticks = 0; grace_ticks < 10; grace_ticks++)); do
-    kill -0 "$command_pid" 2>/dev/null || break
+    bootstrap_lookup_group_is_alive "$command_pid" || break
     sleep 0.1
   done
-  if kill -0 "$command_pid" 2>/dev/null; then
+  if bootstrap_lookup_group_is_alive "$command_pid"; then
     kill -KILL -- "-$command_pid" 2>/dev/null || kill -KILL "$command_pid" 2>/dev/null || true
   fi
   wait "$command_pid" 2>/dev/null || true
@@ -207,6 +213,7 @@ guard_implicit_maintained_downgrade() {
     printf "        The installed CLI was not changed. Set NEMOCLAW_INSTALL_TAG=v%s to reinstall this release.\n" "$installed_version" >&2
     exit 1
   fi
+  SELECTED_PAYLOAD_IDENTITY_REF="v${target_version}"
   if release_version_is_newer "$installed_version" "$target_version"; then
     printf "[ERROR] Refusing to replace installed NemoClaw v%s with maintained lkg v%s.\n" "$installed_version" "$target_version" >&2
     printf "        The installed CLI was not changed. Set NEMOCLAW_INSTALL_TAG=v%s to reinstall this release.\n" "$installed_version" >&2
@@ -238,7 +245,9 @@ exec_installer_from_ref() {
     # helpers beside scripts/install.sh (including DGX Station preparation)
     # are therefore staged from the same ref before payload execution.
     verify_downloaded_script "$payload_script" "versioned installer"
-    NEMOCLAW_INSTALL_REF="$selected_commit" NEMOCLAW_INSTALL_TAG="$ref" NEMOCLAW_BOOTSTRAP_PAYLOAD=1 \
+    NEMOCLAW_BOOTSTRAP_FETCH_REF="$selected_commit" \
+      NEMOCLAW_INSTALL_REF="${SELECTED_PAYLOAD_IDENTITY_REF:-$ref}" \
+      NEMOCLAW_INSTALL_TAG="$ref" NEMOCLAW_BOOTSTRAP_PAYLOAD=1 \
       bash "$payload_script" "$@"
     return
   fi
