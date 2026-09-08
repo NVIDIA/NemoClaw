@@ -65,6 +65,7 @@ function runRefreshBlock(
   opts: {
     gatewayReadyAfter: number;
     normalizationFails?: boolean;
+    refreshTimesOut?: boolean;
     rootMode?: boolean;
     rewriteConfigMode?: boolean;
   } = {
@@ -163,6 +164,10 @@ function runRefreshBlock(
       ? 'id() { if [ "${1:-}" = "-u" ]; then printf "0"; else command id "$@"; fi; }'
       : 'id() { if [ "${1:-}" = "-u" ]; then printf "1000"; else command id "$@"; fi; }',
     "sleep() { :; }",
+    opts.refreshTimesOut
+      ? "timeout() { return 124; }"
+      : 'timeout() { shift 3; "$@"; }',
+    'PLUGIN_REFRESH_TIMEOUT_DURATION="30s"',
     "STEP_DOWN_PREFIX_SANDBOX=(env STEP_DOWN_USER=sandbox)",
     // Stubs for variables the extracted block references that are set
     // earlier in the production script.
@@ -414,6 +419,21 @@ describe("plugin registry refresh workaround for openclaw/openclaw#89606 (#2021)
       expect(result.status).not.toBe(0);
       expect(fs.existsSync(hashRefreshState)).toBe(false);
       expect(fs.existsSync(startupContinueState)).toBe(false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("continues from a bounded registry timeout after restoring config postconditions", () => {
+    const { result, hashRefreshState, startupContinueState, tmpDir } = runRefreshBlock({
+      gatewayReadyAfter: 1,
+      refreshTimesOut: true,
+    });
+    try {
+      expect(result.status).toBe(0);
+      expect(fs.existsSync(hashRefreshState)).toBe(true);
+      expect(fs.readFileSync(startupContinueState, "utf-8")).toBe("stable");
+      expect(result.stderr).toContain("registry refresh timed out after 30s");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

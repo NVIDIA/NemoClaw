@@ -4768,6 +4768,7 @@ setup_auth_profile_as_sandbox() {
 }
 
 PLUGIN_REFRESH_LOG="/tmp/nemoclaw-plugin-refresh.log"
+PLUGIN_REFRESH_TIMEOUT_DURATION="30s"
 
 prepare_plugin_refresh_log() {
   local dir base tmp
@@ -4820,14 +4821,20 @@ start_plugin_registry_refresh() {
       echo "[plugin-refresh] gateway did not become ready; skipping registry refresh" >&2
       exit 0
     fi
+    local refresh_rc=0
     if [ "$(id -u)" -eq 0 ]; then
-      "${STEP_DOWN_PREFIX_SANDBOX[@]}" env HOME=/sandbox PLUGIN_REFRESH_LOG="$PLUGIN_REFRESH_LOG" \
+      timeout --signal=TERM --kill-after=5s "$PLUGIN_REFRESH_TIMEOUT_DURATION" \
+        "${STEP_DOWN_PREFIX_SANDBOX[@]}" env HOME=/sandbox PLUGIN_REFRESH_LOG="$PLUGIN_REFRESH_LOG" \
         sh -c "exec \"\$@\" >\"\$PLUGIN_REFRESH_LOG\" 2>&1" sh \
-        "$OPENCLAW" plugins registry --refresh || true
+        "$OPENCLAW" plugins registry --refresh || refresh_rc=$?
     else
-      env HOME=/sandbox PLUGIN_REFRESH_LOG="$PLUGIN_REFRESH_LOG" \
+      timeout --signal=TERM --kill-after=5s "$PLUGIN_REFRESH_TIMEOUT_DURATION" \
+        env HOME=/sandbox PLUGIN_REFRESH_LOG="$PLUGIN_REFRESH_LOG" \
         sh -c "exec \"\$@\" >\"\$PLUGIN_REFRESH_LOG\" 2>&1" sh \
-        "$OPENCLAW" plugins registry --refresh || true
+        "$OPENCLAW" plugins registry --refresh || refresh_rc=$?
+    fi
+    if [ "$refresh_rc" -eq 124 ]; then
+      echo "[plugin-refresh] registry refresh timed out after $PLUGIN_REFRESH_TIMEOUT_DURATION" >&2
     fi
 
     if ! normalize_mutable_config_perms; then

@@ -31,7 +31,22 @@ responses = [
 calls = []
 control.subprocess.run = lambda *args, **kwargs: (calls.append(kwargs), responses.pop(0))[1]
 control._openclaw_preflight(10.0)
-print(json.dumps({"calls": len(calls), "sleeps": sleeps}))
+settled = {"calls": len(calls), "sleeps": list(sleeps)}
+
+clock[0] = 0.0
+sleeps.clear()
+calls.clear()
+control.OPENCLAW_PREFLIGHT_SETTLE_SECONDS = 0.2
+refusal = subprocess.CompletedProcess([], 1, b'{"type":"issue","code":"config-not-mutable"}\n')
+control.subprocess.run = lambda *args, **kwargs: (calls.append(kwargs), refusal)[1]
+try:
+    control._openclaw_preflight(10.0)
+except control.ControlError as error:
+    persistent = {"code": error.code, "calls": len(calls), "sleeps": list(sleeps)}
+else:
+    persistent = {"code": "accepted", "calls": len(calls), "sleeps": list(sleeps)}
+
+print(json.dumps({"persistent": persistent, "settled": settled}))
 `;
 
 const CONTROL_DEADLINE_HARNESS = String.raw`
@@ -480,8 +495,15 @@ function runHarness(source: string): unknown {
 describe("managed gateway recovery deadline", () => {
   it("settles the startup registry refresh before OpenClaw preflight (#10681)", () => {
     expect(runHarness(OPENCLAW_PREFLIGHT_SETTLE_HARNESS)).toEqual({
-      calls: 2,
-      sleeps: [0.2],
+      persistent: {
+        calls: 2,
+        code: "GATEWAY_UNSAFE_CONFIG_PATH",
+        sleeps: [0.2],
+      },
+      settled: {
+        calls: 2,
+        sleeps: [0.2],
+      },
     });
   });
 
