@@ -61,6 +61,11 @@ const OFFICIAL_UNEXPECTED_BREV_ASSET = "openshell-driver-vm-aarch64-unknown-linu
 const OFFICIAL_UNEXPECTED_BREV_DIGEST =
   "5e6ba04030938e7be21b8b83af9a34b888deffb4c65e7e70dd6845c3bc7e264f";
 const SYMLINK_INPUT_MARKER = "LEAK565";
+const STABLE_GNU_SANDBOX_SELECTOR = `    SANDBOX_LIBC="gnu"
+    if [ "$RESOLVED_CHANNEL" = "dev" ]; then
+      SANDBOX_LIBC="musl"
+    fi`;
+const STABLE_MUSL_SANDBOX_SELECTOR = '    SANDBOX_LIBC="musl"';
 type FixtureMode =
   | "allowlisted-alternate-version"
   | "brev-bypassed-comparison"
@@ -128,6 +133,7 @@ type FixtureMode =
   | "reviewed-release-cohorts"
   | "reviewed-release-cohorts-url-drift"
   | "secondary-installer-version-mismatch"
+  | "stable-gnu-v00116"
   | "symlink-installer-input"
   | "symlink-scripts-parent"
   | "duplicate-trusted-release"
@@ -341,6 +347,8 @@ const INSTALLER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => strin
     source.replace(ASSETS.at(-1) ?? "missing", UNPUBLISHED_ASSET),
   "runtime-consumers-newer-than-tables": (source) =>
     source.replace('MAX_VERSION="0.0.72"', 'MAX_VERSION="0.0.85"'),
+  "stable-gnu-v00116": (source) =>
+    source.replace(STABLE_MUSL_SANDBOX_SELECTOR, STABLE_GNU_SANDBOX_SELECTOR),
 };
 
 function addInstallerReleaseTable(
@@ -683,14 +691,21 @@ function renderInstallerTemplate(openshellVersion: string, pinFunction: string):
         ? withPinFunction
         : addV00106OperationalTrust(withPinFunction)
       : removeV00106OperationalTrust(withPinFunction);
-  const sandboxFunctionStart = operationalTemplate.indexOf("pinned_sandbox_build_version() {");
-  const sandboxFunctionEnd = operationalTemplate.indexOf(
+  const releaseTemplate =
+    openshellVersion === "0.0.116"
+      ? operationalTemplate.replace(
+          STABLE_GNU_SANDBOX_SELECTOR,
+          STABLE_MUSL_SANDBOX_SELECTOR,
+        )
+      : operationalTemplate;
+  const sandboxFunctionStart = releaseTemplate.indexOf("pinned_sandbox_build_version() {");
+  const sandboxFunctionEnd = releaseTemplate.indexOf(
     "\ncomponent_build_version() {",
     sandboxFunctionStart,
   );
   expect(sandboxFunctionStart, "sandbox build map template start").not.toBe(-1);
   expect(sandboxFunctionEnd, "sandbox build map template end").not.toBe(-1);
-  const sandboxFunction = operationalTemplate.slice(sandboxFunctionStart, sandboxFunctionEnd);
+  const sandboxFunction = releaseTemplate.slice(sandboxFunctionStart, sandboxFunctionEnd);
   const hasSandboxBuild = sandboxFunction.includes(`printf '%s\\n' "${openshellVersion}"`);
   const selectedDigests =
     openshellVersion === "0.0.101"
@@ -706,8 +721,8 @@ function renderInstallerTemplate(openshellVersion: string, pinFunction: string):
               : undefined;
   expect(hasSandboxBuild || selectedDigests, `sandbox fixture ${openshellVersion}`).toBeTruthy();
   return hasSandboxBuild
-    ? operationalTemplate
-    : addSandboxBuildPins(operationalTemplate, openshellVersion, selectedDigests!);
+    ? releaseTemplate
+    : addSandboxBuildPins(releaseTemplate, openshellVersion, selectedDigests!);
 }
 
 function renderBrevTemplate(openshellVersion: string, pinFunction: string): string {
@@ -1104,6 +1119,14 @@ describe("installer hash verification", () => {
       expectTrustedRelease(runFixture("complete", version, true), version, manifests, assets);
     },
   );
+
+  it("rejects v0.0.116 pins when the stable selector requests a GNU sandbox (#10790)", () => {
+    const result = runFixture("stable-gnu-v00116", "0.0.116", true);
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("installer operational template is not base-trusted");
+    expect(result.stdout).not.toContain("All installer hashes are current");
+  });
 
   it("accepts a base-trusted release with non-default consumer cardinality", () => {
     const result = runFixture("allowlisted-alternate-version", "9.9.9", true);
