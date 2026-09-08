@@ -10,7 +10,6 @@ import { REQUIRED_OPENSHELL_MCP_FEATURES } from "../../../src/lib/onboard/opensh
 export const HERMES_GPU_FALLBACK_EVENTS = {
   rejectNativeCreateBeforeProgress: "reject-native-create-before-progress",
   delegateCompatibilityCreate: "delegate-compatibility-create",
-  delegateNvidiaSmiProofAfterFallback: "delegate-nvidia-smi-proof-after-fallback",
 } as const;
 
 export const HERMES_GPU_NATIVE_NVIDIA_SMI_PROOF = [
@@ -81,11 +80,10 @@ function quoteShellLiteral(value: string): string {
 
 /**
  * Create an E2E-only OpenShell CLI wrapper that rejects the exact native
- * `--gpu` create before build or sandbox progress. The compatibility create
- * and its GPU proof delegate to the real CLI. After the proof, the wrapper
- * replaces itself with a link to the real CLI so later ForwardTcp ownership
- * checks see the executable that owns each listener. Every other invocation
- * also transparently delegates its original argv. This
+ * `--gpu` create before build or sandbox progress. After the compatibility
+ * create succeeds, the wrapper replaces itself with a link to the real CLI so
+ * GPU proof and later ForwardTcp ownership checks see the executable that owns
+ * each listener. Every other invocation transparently delegates its original argv. This
  * test-only wrapper never logs argv: its sole artifact is an event log made of
  * fixed labels, so sandbox-create environment arguments never enter artifacts.
  * This interception pattern is specific to the #6110 fallback proof and must
@@ -118,9 +116,7 @@ export function createHermesGpuFallbackWrapper(
     ...REQUIRED_OPENSHELL_MCP_FEATURES.map((marker) => `# capability: ${marker}`),
     `REAL_OPENSHELL=${quoteShellLiteral(realOpenshellPath)}`,
     `FALLBACK_STATE_DIR=${quoteShellLiteral(stateDir)}`,
-    `NATIVE_NVIDIA_SMI_PROOF=${quoteShellLiteral(HERMES_GPU_NATIVE_NVIDIA_SMI_PROOF)}`,
     'NATIVE_CREATE_REJECTED="$FALLBACK_STATE_DIR/native-create-rejected"',
-    'COMPATIBILITY_CREATE_COMPLETED="$FALLBACK_STATE_DIR/compatibility-create-completed"',
     "",
     "is_sandbox_create=0",
     "has_gpu_flag=0",
@@ -143,38 +139,16 @@ export function createHermesGpuFallbackWrapper(
     "    exit 2",
     "  else",
     `    printf '%s\\n' '${HERMES_GPU_FALLBACK_EVENTS.delegateCompatibilityCreate}' >>"$FALLBACK_STATE_DIR/events.log"`,
-    "    set +e",
-    '    "$REAL_OPENSHELL" "$@"',
-    "    compatibility_status=$?",
-    "    set -e",
-    '    case "$compatibility_status" in',
-    "    0)",
-    '      mkdir "$COMPATIBILITY_CREATE_COMPLETED"',
-    "      exit 0;;",
-    '    *) exit "$compatibility_status";;',
-    "    esac",
+    '    if "$REAL_OPENSHELL" "$@"; then',
+    '      REAL_OPENSHELL_LINK="$FALLBACK_STATE_DIR/openshell-real.$$"',
+    '      ln -s "$REAL_OPENSHELL" "$REAL_OPENSHELL_LINK"',
+    '      mv -f "$REAL_OPENSHELL_LINK" "$0"',
+    "      exit 0",
+    "    else",
+    "      compatibility_status=$?",
+    '      exit "$compatibility_status"',
+    "    fi",
     "  fi",
-    "fi",
-    "",
-    "is_native_nvidia_smi_proof=0",
-    'if [[ "$#" -eq 8 && "${1:-}" == "sandbox" && "${2:-}" == "exec" && "${3:-}" == "-n" && -n "${4:-}" && "${5:-}" == "--" && "${6:-}" == "sh" && "${7:-}" == "-lc" && "${8:-}" == "$NATIVE_NVIDIA_SMI_PROOF" ]]; then',
-    "  is_native_nvidia_smi_proof=1",
-    "fi",
-    "",
-    'if [[ "$is_native_nvidia_smi_proof" == "1" && -d "$NATIVE_CREATE_REJECTED" && -d "$COMPATIBILITY_CREATE_COMPLETED" ]]; then',
-    `  printf '%s\\n' '${HERMES_GPU_FALLBACK_EVENTS.delegateNvidiaSmiProofAfterFallback}' >>"$FALLBACK_STATE_DIR/events.log"`,
-    "  set +e",
-    '  "$REAL_OPENSHELL" "$@"',
-    "  proof_status=$?",
-    "  set -e",
-    '  case "$proof_status" in',
-    "  0)",
-    '    REAL_OPENSHELL_LINK="$FALLBACK_STATE_DIR/openshell-real.$$"',
-    '    ln -s "$REAL_OPENSHELL" "$REAL_OPENSHELL_LINK"',
-    '    mv -f "$REAL_OPENSHELL_LINK" "$0"',
-    "    exit 0;;",
-    '  *) exit "$proof_status";;',
-    "  esac",
     "fi",
     "",
     "# Transparent test-only delegation: argv is never written by this wrapper.",

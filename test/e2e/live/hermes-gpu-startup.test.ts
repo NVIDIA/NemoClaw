@@ -444,7 +444,7 @@ test(
       );
       await artifacts.writeJson("gpu-fallback-wrapper.json", {
         behavior:
-          "reject the exact native --gpu create before progress, delegate the compatibility create and GPU proof, then replace the wrapper path with a link to the real OpenShell CLI",
+          "reject the exact native --gpu create before progress, then replace the wrapper path with a link to the real OpenShell CLI after the compatibility create succeeds",
         eventVocabulary: HERMES_GPU_FALLBACK_EVENTS,
       });
       return wrapper;
@@ -487,7 +487,6 @@ test(
       expect(fallbackEvents).toEqual([
         HERMES_GPU_FALLBACK_EVENTS.rejectNativeCreateBeforeProgress,
         HERMES_GPU_FALLBACK_EVENTS.delegateCompatibilityCreate,
-        HERMES_GPU_FALLBACK_EVENTS.delegateNvidiaSmiProofAfterFallback,
       ]);
       expect(resultText(install)).toContain("Native GPU diagnostics saved:");
       expect(
