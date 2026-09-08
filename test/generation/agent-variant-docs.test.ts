@@ -517,6 +517,35 @@ Real content.
     expect(() => renderAgentVariantPage(mixed, "openclaw")).not.toThrow();
   });
 
+  it("points OpenClaw enterprise readiness at the OpenClaw OTEL command fragment (#11145)", () => {
+    const sourcePath = path.join(repoRoot, "docs/reference/enterprise-readiness.mdx");
+    const rendered = renderAgentVariantPage(readFileSync(sourcePath, "utf8"), "openclaw", {
+      sourcePath,
+    });
+
+    expect(rendered).toContain("#openclaw-conversation-otel-diagnostics");
+    expect(rendered).not.toContain("#deep-agents-code-otlp-traces");
+  });
+
+  it("does not send Hermes enterprise readiness to the Deep Agents OTLP command fragment (#11145)", () => {
+    const sourcePath = path.join(repoRoot, "docs/reference/enterprise-readiness.mdx");
+    const rendered = renderAgentVariantPage(readFileSync(sourcePath, "utf8"), "hermes", {
+      sourcePath,
+    });
+
+    expect(rendered).not.toContain("#deep-agents-code-otlp-traces");
+    expect(rendered).toContain("#messaging-bridge-appears-running-but-no-messages-arrive");
+  });
+
+  it("keeps the messaging-bridge heading on the Hermes troubleshooting page (#11145)", () => {
+    const sourcePath = path.join(repoRoot, "docs/reference/troubleshooting.mdx");
+    const rendered = renderAgentVariantPage(readFileSync(sourcePath, "utf8"), "hermes", {
+      sourcePath,
+    });
+
+    expect(rendered).toContain("### Messaging bridge appears running but no messages arrive");
+  });
+
   it("leaves no shared page section heading without content in any published variant (#9731)", () => {
     const pages = sharedVariantPages();
     const renderEveryPublishedVariant = () =>
