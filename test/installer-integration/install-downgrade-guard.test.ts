@@ -47,6 +47,7 @@ case "${installedVersion}" in
   hang) /bin/sleep 60 ;;
   ignore-term) trap '' TERM; while :; do :; done ;;
   interrupt) printf '%s' "$$" >"\${LOOKUP_PID:?}"; /bin/sleep 60 ;;
+  terminate) printf '%s' "$$" >"\${LOOKUP_PID:?}"; /bin/sleep 60 ;;
   trap-race) printf '%s' "$$" >"\${LOOKUP_PID:?}"; /bin/sleep 60 ;;
   descendant-ignore-term) (trap '' TERM; printf '%s' "\${BASHPID}" >"\${LOOKUP_PID:?}"; while :; do :; done) & exit 0 ;;
   signaled) kill -KILL "$$" ;;
@@ -93,8 +94,10 @@ esac
   );
   const sleepBody = options.useRealSleep
     ? '#!/usr/bin/env bash\nexec /bin/sleep "$@"\n'
-    : installedVersion === "interrupt"
-      ? '#!/usr/bin/env bash\nif [[ -e "${LOOKUP_PID:?}" && ! -e "${INTERRUPT_SENT:?}" ]]; then touch "$INTERRUPT_SENT"; kill -INT "$PPID"; fi\n'
+    : installedVersion === "interrupt" || installedVersion === "terminate"
+      ? `#!/usr/bin/env bash
+if [[ -e "\${LOOKUP_PID:?}" && ! -e "\${INTERRUPT_SENT:?}" ]]; then touch "$INTERRUPT_SENT"; kill -${installedVersion === "terminate" ? "TERM" : "INT"} "$PPID"; fi
+`
       : ["hang", "ignore-term", "descendant-ignore-term"].includes(installedVersion) ||
           targetVersion === "hang"
         ? "#!/usr/bin/env bash\nexit 0\n"
@@ -189,6 +192,16 @@ describe("public installer downgrade guard", () => {
     const { result, payloadMarker } = runInstall("0.0.119-rc.1", "0.0.118");
 
     expect(result.status).toBe(1);
+    expect(fs.existsSync(payloadMarker)).toBe(false);
+  });
+
+  it("keeps a stable install when lkg resolves only to the same-core prerelease", () => {
+    const { result, payloadMarker } = runInstall("0.0.109", "0.0.109-rc.1");
+
+    expect(result.status).toBe(1);
+    expect(`${result.stdout}${result.stderr}`).toContain(
+      "Cannot verify the maintained lkg version before replacing installed NemoClaw v0.0.109.",
+    );
     expect(fs.existsSync(payloadMarker)).toBe(false);
   });
 
@@ -301,10 +314,13 @@ describe("public installer downgrade guard", () => {
     expect(fs.existsSync(payloadMarker)).toBe(false);
   }, 15_000);
 
-  it("cleans up an active lookup when the installer is interrupted", () => {
-    const { lookupPid, payloadMarker, result, root } = runInstall("interrupt", "0.0.109");
+  it.each([
+    ["interrupted", "interrupt", 130],
+    ["terminated", "terminate", 143],
+  ])("cleans up an active lookup when the installer is %s", (_label, signal, status) => {
+    const { lookupPid, payloadMarker, result, root } = runInstall(signal, "0.0.109");
 
-    expect(result.status).toBe(130);
+    expect(result.status).toBe(status);
     expect(fs.existsSync(payloadMarker)).toBe(false);
     expect(
       fs.readdirSync(root).filter((name) => name.startsWith("nemoclaw-bootstrap-lookup.")),
@@ -327,7 +343,7 @@ describe("public installer downgrade guard", () => {
       { interruptBeforeLookupTrap: true },
     );
 
-    expect(result.status).not.toBe(0);
+    expect(result.status).toBe(130);
     expect(fs.existsSync(payloadMarker)).toBe(false);
     expect(
       fs.readdirSync(root).filter((name) => name.startsWith("nemoclaw-bootstrap-lookup.")),

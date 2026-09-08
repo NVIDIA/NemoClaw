@@ -117,6 +117,8 @@ checkout_release_version() {
     [[ "$commit" == "$target_commit" ]] || continue
     ref="${ref%\^\{\}}"
     version="${ref#refs/tags/v}"
+    # The maintained lkg must resolve to a stable release. Rejecting prerelease
+    # tags also prevents replacing a stable install with the same core version.
     if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
       printf '%s' "$version"
       return 0
