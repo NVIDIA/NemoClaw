@@ -1761,9 +1761,9 @@ def _openclaw_preflight(recovery_deadline: float | None = None) -> None:
     _validate_trusted_regular(guard)
     # OpenShell can report the container Ready while nemoclaw-start's bounded
     # registry refresh is still restoring OpenClaw's 0660 mutable-file mode.
-    # Settle only the guard's typed startup postures; every other refusal stays
-    # immediate, and every accepted result still comes from a fresh read-only
-    # guard execution.
+    # Settle only the guard's typed startup postures for both probe and
+    # recovery; every other refusal stays immediate, and every accepted result
+    # still comes from a fresh read-only guard execution.
     settle_deadline = time.monotonic() + OPENCLAW_PREFLIGHT_SETTLE_SECONDS
     if recovery_deadline is not None:
         settle_deadline = min(settle_deadline, recovery_deadline)
@@ -1793,11 +1793,7 @@ def _openclaw_preflight(recovery_deadline: float | None = None) -> None:
             return
         issue_code = _openclaw_preflight_issue_code(result.stdout)
         remaining = settle_deadline - time.monotonic()
-        if (
-            recovery_deadline is None
-            or issue_code not in TRANSIENT_OPENCLAW_PREFLIGHT_CODES
-            or remaining <= 0
-        ):
+        if issue_code not in TRANSIENT_OPENCLAW_PREFLIGHT_CODES or remaining <= 0:
             raise ControlError("GATEWAY_UNSAFE_CONFIG_PATH")
         time.sleep(min(POLL_SECONDS, remaining))
 

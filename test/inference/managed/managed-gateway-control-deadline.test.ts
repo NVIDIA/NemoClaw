@@ -35,16 +35,25 @@ settled = {"calls": len(calls), "elapsed": round(clock[0], 1)}
 clock[0] = 0.0
 sleeps.clear()
 calls.clear()
+responses = [startup_refusal, refusal, subprocess.CompletedProcess([], 0, b'{"type":"result","status":"ok"}\n')]
+control.subprocess.run = lambda *args, **kwargs: (calls.append(kwargs), responses.pop(0))[1]
+# _control("probe") invokes OpenClaw preflight without a recovery deadline.
+control._openclaw_preflight()
+probe_settled = {"calls": len(calls), "elapsed": round(clock[0], 1)}
+
+clock[0] = 0.0
+sleeps.clear()
+calls.clear()
 control.OPENCLAW_PREFLIGHT_SETTLE_SECONDS = 0.2
 control.subprocess.run = lambda *args, **kwargs: (calls.append(kwargs), refusal)[1]
 try:
-    control._openclaw_preflight(10.0)
+    control._openclaw_preflight()
 except control.ControlError as error:
     persistent = {"code": error.code, "calls": len(calls), "sleeps": list(sleeps)}
 else:
     persistent = {"code": "accepted", "calls": len(calls), "sleeps": list(sleeps)}
 
-print(json.dumps({"persistent": persistent, "settled": settled}))
+print(json.dumps({"persistent": persistent, "probeSettled": probe_settled, "settled": settled}))
 `;
 
 const CONTROL_DEADLINE_HARNESS = String.raw`
@@ -491,12 +500,16 @@ function runHarness(source: string): unknown {
 }
 
 describe("managed gateway recovery deadline", () => {
-  it("settles the startup registry refresh before OpenClaw preflight (#10681)", () => {
+  it("settles the startup registry refresh for recovery and probe preflight (#10681)", () => {
     expect(runHarness(OPENCLAW_PREFLIGHT_SETTLE_HARNESS)).toEqual({
       persistent: {
         calls: 2,
         code: "GATEWAY_UNSAFE_CONFIG_PATH",
         sleeps: [0.2],
+      },
+      probeSettled: {
+        calls: 3,
+        elapsed: 0.4,
       },
       settled: {
         calls: 28,
