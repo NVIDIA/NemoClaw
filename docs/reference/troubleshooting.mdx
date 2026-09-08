@@ -627,6 +627,7 @@ After installer-driven or direct CLI onboarding succeeds, it promotes that file 
 Deferred, failed, or cancelled onboarding keeps the pending identity so a later installer or CLI process restores the same port and reaches its onboarding or cleanup path instead of creating another environment.
 Later NemoClaw commands restore either recorded identity when `NEMOCLAW_GATEWAY_PORT` is unset.
 You can still use the printed export command when a script or surrounding process must carry the same scope explicitly.
+Exporting it makes that port an explicit operator selection, including authority for a no-name gateway stop.
 If the installer selects port `8990`, it prints this command:
 
 ```bash

@@ -1023,8 +1023,10 @@ print_done() {
   if [ "$_gateway_port" -ne 8080 ]; then
     printf "\n"
     printf "  ${C_CYAN}Gateway environment:${C_RESET}\n"
+    printf "  ${C_DIM}Ordinary CLI commands restore recorded port %s automatically.${C_RESET}\n" "$_gateway_port"
+    printf "  ${C_DIM}For a script or another process that intentionally needs explicit gateway scope:${C_RESET}\n"
     printf "    %sexport NEMOCLAW_GATEWAY_PORT=%s%s\n" "$C_GREEN" "$_gateway_port" "$C_RESET"
-    printf "  ${C_DIM}Run this export in other terminal sessions before CLI commands targeting this gateway.${C_RESET}\n"
+    printf "  ${C_DIM}This export makes the port an explicit operator selection, including for no-name gateway stop authorization.${C_RESET}\n"
   fi
   printf "\n"
   printf "  ${C_BOLD}GitHub${C_RESET}  ${C_DIM}https://github.com/nvidia/nemoclaw${C_RESET}\n"
