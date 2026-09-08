@@ -660,32 +660,51 @@ describe("pull request value-stream analysis", () => {
     await expect(stat(candidate)).rejects.toThrow();
   });
 
-  test("reclaims stale publication locks but preserves active locks (#10542)", async () => {
-    const publicationRoot = await mkdtemp(path.join(tmpdir(), "value-stream-lock-"));
+  test.runIf(process.platform === "linux")(
+    "reclaims stale publication locks but preserves active locks (#10542)",
+    async () => {
+      const publicationRoot = await mkdtemp(path.join(tmpdir(), "value-stream-lock-"));
+      temporaryDirectories.push(publicationRoot);
+      const lock = path.join(publicationRoot, "pr-42.lock");
+      await mkdir(lock);
+      const liveStart = await readFile("/proc/" + process.pid + "/stat", "utf8");
+      const liveIdentity =
+        liveStart
+          .slice(liveStart.lastIndexOf(")") + 2)
+          .trim()
+          .split(/\s+/u)[19] ?? null;
+      await writeFile(
+        path.join(lock, "owner.json"),
+        JSON.stringify({ pid: process.pid, startIdentity: liveIdentity }),
+      );
+      expect(await reclaimStalePublicationLock(lock)).toBe(false);
+      const stale = new Date(Date.now() - 6 * 60 * 1_000);
+      await utimes(lock, stale, stale);
+      expect(await reclaimStalePublicationLock(lock)).toBe(false);
+      await writeFile(path.join(lock, "owner.json"), JSON.stringify({ pid: process.pid }));
+      expect(await reclaimStalePublicationLock(lock)).toBe(false);
+      await writeFile(
+        path.join(lock, "owner.json"),
+        JSON.stringify({ pid: process.pid, startIdentity: "reused-owner" }),
+      );
+      expect(await reclaimStalePublicationLock(lock)).toBe(true);
+      await mkdir(lock);
+      await utimes(lock, stale, stale);
+      expect(await reclaimStalePublicationLock(lock)).toBe(true);
+      await expect(stat(lock)).rejects.toThrow();
+    },
+  );
+
+  test("preserves active locks without a Linux start identity", async () => {
+    const publicationRoot = await mkdtemp(path.join(tmpdir(), "value-stream-portable-lock-"));
     temporaryDirectories.push(publicationRoot);
     const lock = path.join(publicationRoot, "pr-42.lock");
     await mkdir(lock);
-    const liveStart = await readFile("/proc/" + process.pid + "/stat", "utf8");
-    const liveIdentity = liveStart
-      .slice(liveStart.lastIndexOf(")") + 2)
-      .trim()
-      .split(/\s+/u)[19];
-    await writeFile(
-      path.join(lock, "owner.json"),
-      JSON.stringify({ pid: process.pid, startIdentity: liveIdentity }),
-    );
-    expect(await reclaimStalePublicationLock(lock)).toBe(false);
     const stale = new Date(Date.now() - 6 * 60 * 1_000);
+    await writeFile(path.join(lock, "owner.json"), JSON.stringify({ pid: process.pid }));
     await utimes(lock, stale, stale);
     expect(await reclaimStalePublicationLock(lock)).toBe(false);
-    await writeFile(path.join(lock, "owner.json"), JSON.stringify({ pid: process.pid }));
-    expect(await reclaimStalePublicationLock(lock)).toBe(false);
-    await writeFile(
-      path.join(lock, "owner.json"),
-      JSON.stringify({ pid: process.pid, startIdentity: "reused-owner" }),
-    );
-    expect(await reclaimStalePublicationLock(lock)).toBe(true);
-    await mkdir(lock);
+    await writeFile(path.join(lock, "owner.json"), "{}\n");
     await utimes(lock, stale, stale);
     expect(await reclaimStalePublicationLock(lock)).toBe(true);
     await expect(stat(lock)).rejects.toThrow();

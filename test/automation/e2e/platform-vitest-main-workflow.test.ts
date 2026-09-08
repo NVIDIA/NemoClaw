@@ -57,4 +57,44 @@ describe("platform evidence workflow", () => {
       NVIDIA_INFERENCE_API_KEY: "${{ secrets.NVIDIA_INFERENCE_API_KEY }}",
     });
   });
+
+  it("keeps real macOS OpenShell state out of the non-live suite", () => {
+    const steps = job("macos-vitest").steps ?? [];
+    const nonLiveIndex = steps.findIndex(
+      (entry) => entry.name === "Run full Vitest suite on macOS",
+    );
+    const installIndex = steps.findIndex(
+      (entry) => entry.name === "Install pinned OpenShell for macOS E2E",
+    );
+    expect(nonLiveIndex).toBeGreaterThanOrEqual(0);
+    expect(installIndex).toBeGreaterThan(nonLiveIndex);
+    expect(steps[installIndex]?.if).toContain("matrix.shard == 1");
+  });
+
+  it("scopes WSL live-E2E settings to the credentialed live step", () => {
+    const wsl = job("wsl-vitest");
+    const live = step("wsl-vitest", "Run WSL live E2E");
+    const liveOnlyEnvironment = {
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+      NEMOCLAW_NON_INTERACTIVE: "1",
+      NEMOCLAW_RECREATE_SANDBOX: "1",
+      NEMOCLAW_SANDBOX_NAME: "e2e-wsl",
+    };
+    expect(wsl.env).not.toMatchObject(liveOnlyEnvironment);
+    expect(live.env).toMatchObject(liveOnlyEnvironment);
+  });
+
+  it.each(["macos-vitest", "wsl-vitest"])(
+    "stages the approved OpenShell SDK for %s dependencies",
+    (jobName) => {
+      const install = step(
+        jobName,
+        jobName === "macos-vitest"
+          ? "Install dependencies"
+          : "Install dependencies and build in WSL",
+      );
+      expect(install.env).toMatchObject({ NODE_AUTH_TOKEN: "${{ github.token }}" });
+      expect(install.run).toContain(".github/actions/ci-install-dependencies.sh");
+    },
+  );
 });

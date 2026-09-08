@@ -17,6 +17,7 @@ on:
 
 permissions:
   contents: read
+  packages: read
 
 concurrency:
   group: platform-evidence-${{ github.ref }}
@@ -147,16 +148,10 @@ jobs:
           stat --version | head -n 1
           awk --version | head -n 1
 
-      - name: Install pinned OpenShell
-        env:
-          NEMOCLAW_NON_INTERACTIVE: "1"
-        run: env -u GH_TOKEN -u GITHUB_TOKEN bash scripts/install-openshell.sh
-
       - name: Install dependencies
-        run: |
-          npm ci --ignore-scripts
-          cd nemoclaw
-          npm ci --ignore-scripts
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
+        run: bash .github/actions/ci-install-dependencies.sh
 
       - name: Build CLI and plugin
         run: |
@@ -166,6 +161,12 @@ jobs:
 
       - name: Run full Vitest suite on macOS
         run: npx vitest run --testTimeout 60000 --shard="${{ matrix.shard }}/4"
+
+      - name: Install pinned OpenShell for macOS E2E
+        if: ${{ matrix.shard == 1 }}
+        env:
+          NEMOCLAW_NON_INTERACTIVE: "1"
+        run: env -u GH_TOKEN -u GITHUB_TOKEN bash scripts/install-openshell.sh
 
       - id: macos_docker
         name: Detect Docker availability for macOS E2E
@@ -239,10 +240,6 @@ jobs:
       WSL_DISTRO: Ubuntu
       WSL_TEST_USER: nemoclaw-ci
       TRUSTED_WSL_HELPER: ${{ github.workspace }}\trusted-wsl-ci\tools\wsl\ci-helper.ps1
-      NEMOCLAW_NON_INTERACTIVE: "1"
-      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-      NEMOCLAW_RECREATE_SANDBOX: "1"
-      NEMOCLAW_SANDBOX_NAME: "e2e-wsl"
     steps:
       - name: Force LF line endings for checkout
         shell: powershell
@@ -288,7 +285,8 @@ jobs:
           . "$env:TRUSTED_WSL_HELPER"
           $packages = @(
             'bash', 'ca-certificates', 'curl', 'git', 'jq', 'lsb-release', 'make',
-            'python3', 'python3-pip', 'python3-venv', 'ripgrep', 'rsync', 'tar', 'unzip', 'xz-utils'
+            'docker.io', 'iproute2', 'procps', 'python3', 'python3-pip', 'python3-venv',
+            'ripgrep', 'rsync', 'tar', 'unzip', 'xz-utils'
           )
           Install-WslUbuntuDependencies -Distro $env:WSL_DISTRO -Packages $packages -TestUser $env:WSL_TEST_USER
 
@@ -310,18 +308,23 @@ jobs:
 
       - name: Install dependencies and build in WSL
         shell: powershell
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
         run: |
           . "$env:TRUSTED_WSL_HELPER"
           $testUser = ConvertTo-BashLiteral -Value $env:WSL_TEST_USER
           $workdir = ConvertTo-BashLiteral -Value $env:WSL_WORKDIR
+          $nodeAuthToken = ConvertTo-BashLiteral -Value ([string]$env:NODE_AUTH_TOKEN)
           $script = @"
           set -euo pipefail
           id -un | grep -Fxq $testUser
           cd $workdir
-          npm ci --ignore-scripts
+          export NODE_AUTH_TOKEN=$nodeAuthToken
+          export GITHUB_EVENT_NAME=push
+          bash .github/actions/ci-install-dependencies.sh
+          unset NODE_AUTH_TOKEN
           npm run build:cli
           cd nemoclaw
-          npm ci --ignore-scripts
           npm run build
           "@
           Invoke-WslScript -Distro $env:WSL_DISTRO -User $env:WSL_TEST_USER -Script $script
@@ -401,6 +404,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_RECREATE_SANDBOX: "1"
+          NEMOCLAW_SANDBOX_NAME: "e2e-wsl"
         run: |
           . "$env:TRUSTED_WSL_HELPER"
           $workdir = ConvertTo-BashLiteral -Value $env:WSL_WORKDIR
