@@ -65,7 +65,7 @@ describe("Ollama probe timeout retry", () => {
         systemdCalls,
         systemctl: message.includes("systemctl"),
       }).toEqual({
-        daemonFailure: recovery !== null,
+        daemonFailure: false,
         generic: recovery === "generic",
         ok: false,
         staleRunner: recovery !== null,

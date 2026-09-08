@@ -2411,7 +2411,6 @@ export function validateOllamaModel(
     return {
       ok: false,
       message: failure + staleRunnerRecovery,
-      ...(staleRunnerRecovery ? { daemonFailure: true } : {}),
     };
   }
 

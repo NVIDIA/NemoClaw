@@ -6,9 +6,6 @@ import { createRequire } from "node:module";
 import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { handleOllamaProbeFailure } from "../../onboard/ollama-probe-failure";
-import type { ValidationResult } from "../local";
-
 beforeEach(() => {
   vi.stubEnv("DOCKER_CONTEXT", "default");
 });
@@ -28,7 +25,6 @@ interface MockSetup {
   installed: string[] | (() => string[]);
   promptValues: string[];
   pullStatus?: number;
-  validationResult?: ValidationResult;
 }
 
 function loadProxyWithMocks(setup: MockSetup): {
@@ -86,7 +82,7 @@ function loadProxyWithMocks(setup: MockSetup): {
   };
   local.validateOllamaModel = (...args: unknown[]) => {
     validateCalls.push(args);
-    return setup.validationResult ?? { ok: true };
+    return { ok: true };
   };
   runner.run = (command: readonly string[], options: unknown) => {
     runCalls.push({ command, options });
@@ -321,7 +317,6 @@ describe("prepareOllamaModel post-pull discovery", () => {
     vi.unstubAllEnvs();
     active?.restore();
     active = null;
-    vi.restoreAllMocks();
   });
 
   it("warms and validates after a pulled model appears in discovery (#6038)", async () => {
@@ -358,46 +353,6 @@ describe("prepareOllamaModel post-pull discovery", () => {
     expect(setup.validateCalls).toEqual([
       ["qwen3.5:9b", undefined, undefined, undefined, { allowToolsIncompatible: false }],
     ]);
-  });
-
-  it.each([
-    { nonInteractive: false, outcome: "back-to-selection" },
-    { nonInteractive: true, outcome: "process.exit:1" },
-  ])("preserves daemon failure through onboarding ($outcome)", async ({ nonInteractive, outcome }) => {
-    vi.stubEnv("NEMOCLAW_PROVIDER", "");
-    const setup = loadProxyWithMocks({
-      installed: ["qwen3.5:9b"],
-      promptValues: [],
-      validationResult: {
-        ok: false,
-        message: "Stale runner processes may be holding GPU memory.",
-        daemonFailure: true,
-      },
-    });
-    active = setup;
-    vi.spyOn(console, "error").mockImplementation(() => {});
-    vi.spyOn(console, "log").mockImplementation(() => {});
-    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
-      throw new Error(`process.exit:${code ?? 0}`);
-    }) as never);
-
-    const result = await setup.proxy.prepareOllamaModel("qwen3.5:9b", ["qwen3.5:9b"]);
-    let action: string;
-    try {
-      action = handleOllamaProbeFailure(result, "qwen3.5:9b", () => nonInteractive);
-    } catch (error) {
-      action = error instanceof Error ? error.message : String(error);
-    }
-
-    expect({ action, result }).toEqual({
-      action: outcome,
-      result: {
-        ok: false,
-        message: "Stale runner processes may be holding GPU memory.",
-        daemonFailure: true,
-        allowToolsIncompatible: false,
-      },
-    });
   });
 
   it("rejects a zero-exit pull that never appears in discovery (#6038)", async () => {
