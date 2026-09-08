@@ -8,7 +8,6 @@ import path from "node:path";
 import { GATEWAY_PORT } from "../core/ports";
 import { rejectSymlinksOnPath } from "../state/config-io";
 import { nemoclawStateRoot } from "../state/state-root";
-import { createDockerGpuDiagnosticRedactor } from "./docker-gpu-diagnostic-redaction";
 import { resolveGatewayLogPathForPort } from "./gateway/state-dir";
 
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
@@ -19,7 +18,16 @@ const MAX_GATEWAY_LOG_BYTES = 1024 * 1024;
 const MAX_CONSOLE_OUTPUT_BYTES = 256 * 1024;
 const MAX_STATE_DIR_ENTRIES = 200;
 const MAX_FAILURE_BUNDLES = 10;
-const diagnosticRedactor = createDockerGpuDiagnosticRedactor();
+const FAILURE_SIGNATURES = [
+  ["exec-format-error", /exec format error/iu],
+  ["vm-create-failed", /VmCreate/u],
+  ["process-exited", /ProcessExited/u],
+  ["permission-denied", /permission denied/iu],
+  ["out-of-memory", /out of memory|\bOOM\b/iu],
+  ["missing-executable", /no such file or directory|command not found/iu],
+  ["create-stream-exited-before-sandbox", /exited before sandbox creation/iu],
+  ["gateway-exited-before-dispatch", /gateway exited before request dispatch/iu],
+] as const;
 
 type BoundedFileTail = {
   contents: Buffer;
@@ -116,36 +124,21 @@ function readBoundedFileTail(
 function readLogLines(filePath: string): { lines: string[]; truncated: boolean } | null {
   const tail = readBoundedFileTail(filePath, MAX_GATEWAY_LOG_BYTES, true);
   if (!tail) return null;
-  const redacted = redactAndBoundText(
-    stripAnsi(tail.contents.toString("utf8")),
-    MAX_GATEWAY_LOG_BYTES,
-    true,
-  );
   return {
-    lines: redacted.contents.split(/\r?\n/),
-    truncated: tail.truncated || redacted.truncated,
+    lines: stripAnsi(tail.contents.toString("utf8")).split(/\r?\n/),
+    truncated: tail.truncated,
   };
 }
 
-function redactAndBoundText(
+function diagnosticSignatureLines(
   value: string,
-  maxBytes: number,
-  dropPartialFirstLine = false,
-): { contents: string; truncated: boolean } {
-  const redacted = Buffer.from(diagnosticRedactor.redactText(value), "utf8");
-  if (redacted.length <= maxBytes) {
-    return { contents: redacted.toString("utf8"), truncated: false };
-  }
-  let start = redacted.length - maxBytes;
-  while (start < redacted.length && (redacted[start]! & 0xc0) === 0x80) {
-    start += 1;
-  }
-  let contents = redacted.subarray(start);
-  if (dropPartialFirstLine) {
-    const firstNewline = contents.indexOf(0x0a);
-    contents = firstNewline < 0 ? Buffer.alloc(0) : contents.subarray(firstNewline + 1);
-  }
-  return { contents: contents.toString("utf8"), truncated: true };
+  source: "gateway" | "rootfs-console",
+  sandboxId: string | null,
+): string[] {
+  const identity = sandboxId ? ` sandbox_id=${sandboxId}` : "";
+  return FAILURE_SIGNATURES.filter(([, pattern]) => pattern.test(value)).map(
+    ([label]) => `${source} signature=${label}${identity}`,
+  );
 }
 
 function extractField(line: string, field: string): string | null {
@@ -259,16 +252,24 @@ function validateIdentityBoundEvidencePaths(
 function copyFileTailIfPresent(
   src: string | null,
   dst: string,
-): { path: string | null; truncated: boolean } {
-  if (!src) return { path: null, truncated: false };
+  sandboxId: string | null,
+): { path: string | null; summaryLines: string[]; truncated: boolean } {
+  if (!src) return { path: null, summaryLines: [], truncated: false };
   try {
     const tail = readBoundedFileTail(src, MAX_CONSOLE_OUTPUT_BYTES);
-    if (!tail) return { path: null, truncated: false };
-    const redacted = redactAndBoundText(tail.contents.toString("utf8"), MAX_CONSOLE_OUTPUT_BYTES);
-    fs.writeFileSync(dst, redacted.contents, { mode: 0o600 });
-    return { path: dst, truncated: tail.truncated || redacted.truncated };
+    if (!tail) return { path: null, summaryLines: [], truncated: false };
+    const summaryLines = diagnosticSignatureLines(
+      tail.contents.toString("utf8"),
+      "rootfs-console",
+      sandboxId,
+    );
+    if (summaryLines.length === 0) {
+      return { path: null, summaryLines, truncated: tail.truncated };
+    }
+    fs.writeFileSync(dst, `${summaryLines.join("\n")}\n`, { mode: 0o600 });
+    return { path: dst, summaryLines, truncated: tail.truncated };
   } catch {
-    return { path: null, truncated: false };
+    return { path: null, summaryLines: [], truncated: false };
   }
 }
 
@@ -394,29 +395,31 @@ export function collectSandboxCreateFailureDiagnostics(
   const copiedConsoleOutput = copyFileTailIfPresent(
     consoleOutput,
     path.join(dir, "rootfs-console.log"),
+    sandboxId,
   );
   const stateEntries = listStateDir(stateDir);
   const backupPath = options.backupPath ?? null;
 
-  if (relevantLines.length > 0) {
-    const serializedGatewayEvidence = redactAndBoundText(
-      `${relevantLines.join("\n")}\n`,
-      MAX_GATEWAY_LOG_BYTES,
-      true,
-    );
+  const gatewayDiagnosticLines = diagnosticSignatureLines(
+    (relevantLines.length > 0 ? relevantLines : gatewayTailLines).join("\n"),
+    "gateway",
+    sandboxId,
+  );
+  if (relevantLines.length > 0 && gatewayDiagnosticLines.length > 0) {
     fs.writeFileSync(
       path.join(dir, "openshell-gateway-relevant.log"),
-      serializedGatewayEvidence.contents,
+      `${gatewayDiagnosticLines.join("\n")}\n`,
       {
         mode: 0o600,
       },
     );
-    if (serializedGatewayEvidence.truncated) gatewayLog!.truncated = true;
   }
   const gatewayTailPath =
-    gatewayTailLines.length > 0 ? path.join(dir, "openshell-gateway-tail.log") : null;
+    gatewayTailLines.length > 0 && gatewayDiagnosticLines.length > 0
+      ? path.join(dir, "openshell-gateway-tail.log")
+      : null;
   if (gatewayTailPath) {
-    fs.writeFileSync(gatewayTailPath, `${gatewayTailLines.join("\n")}\n`, { mode: 0o600 });
+    fs.writeFileSync(gatewayTailPath, `${gatewayDiagnosticLines.join("\n")}\n`, { mode: 0o600 });
   }
   const retentionPruned = pruneFailureBundles(path.dirname(dir), path.basename(dir));
   const summaryLines = [
@@ -444,7 +447,7 @@ export function collectSandboxCreateFailureDiagnostics(
     ...(gatewayLog?.truncated ? ["gateway log: earlier content omitted"] : []),
     ...(copiedConsoleOutput.truncated ? ["rootfs console: earlier content omitted"] : []),
   ];
-  const diagnosticLines = relevantLines.length > 0 ? relevantLines : gatewayTailLines;
+  const diagnosticLines = [...gatewayDiagnosticLines, ...copiedConsoleOutput.summaryLines];
 
   return {
     dir,

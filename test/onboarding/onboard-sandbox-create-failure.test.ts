@@ -46,7 +46,7 @@ describe("sandbox create failure diagnostics", () => {
         ),
         gatewayLogPath: diagnostics?.gatewayLogPath,
         summaryIncludesFailure: diagnostics?.summaryLines.includes(
-          "selected gateway exited before sandbox creation",
+          "gateway signature=create-stream-exited-before-sandbox",
         ),
       }).toEqual({
         bundleUsesSelectedPort: true,
@@ -69,12 +69,13 @@ describe("sandbox create failure diagnostics", () => {
     const gatewayLogPath = path.join(logDir, "openshell-gateway.log");
     const gatewaySecret = "sk-abcdefghijklmnopqrstuvwxyz1234567890";
     const consoleSecret = "zxqv-console-secret-token";
+    const opaqueSecret = "opaque-runtime-canary-7f31";
 
     fs.mkdirSync(stateDir, { recursive: true });
     fs.mkdirSync(replacementStateDir, { recursive: true });
     fs.writeFileSync(
       consolePath,
-      `vm console detail Authorization: Bearer ${consoleSecret}\n`,
+      `Exec format error Authorization: Bearer ${consoleSecret} ${opaqueSecret}\n`,
     );
     fs.writeFileSync(replacementConsolePath, "replacement console detail\n");
     fs.writeFileSync(
@@ -84,7 +85,7 @@ describe("sandbox create failure diagnostics", () => {
         `2026-05-12T20:30:56Z INFO vm driver: create_sandbox received sandbox_id=${sandboxId} sandbox_name=my-assistant`,
         `2026-05-12T20:30:56Z INFO vm driver: resolved image ref, preparing rootfs sandbox_id=${sandboxId} state_dir=${stateDir}`,
         `2026-05-12T20:34:28Z INFO vm driver: spawning VM launcher sandbox_id=${sandboxId} console_output=${consolePath}`,
-        `[2026-05-12T20:34:29Z ERROR krun] sandbox_id=${sandboxId} api_key=${gatewaySecret} Building the microVM failed: Internal(Vm(VmSetup(VmCreate)))`,
+        `[2026-05-12T20:34:29Z ERROR krun] sandbox_id=${sandboxId} api_key=${gatewaySecret} ${opaqueSecret} Building the microVM failed: Internal(Vm(VmSetup(VmCreate)))`,
         `2026-05-12T20:34:29Z WARN Sandbox failed to become ready sandbox_id=${sandboxId} sandbox_name=my-assistant reason=ProcessExited`,
         `[2026-05-12T20:34:29Z ERROR krun] console_output=${replacementConsolePath} reason=ProcessExited`,
         `2026-05-12T20:34:30Z INFO vm driver: create_sandbox received sandbox_id=${replacementId} sandbox_name=my-assistant`,
@@ -107,13 +108,13 @@ describe("sandbox create failure diagnostics", () => {
       path.join(diagnostics!.dir, "rootfs-console.log"),
       "utf-8",
     );
-    expect(consoleOutput).toContain("vm console detail");
+    expect(consoleOutput).toContain("rootfs-console signature=exec-format-error");
     const relevant = fs.readFileSync(
       path.join(diagnostics!.dir, "openshell-gateway-relevant.log"),
       "utf-8",
     );
-    expect(relevant).toContain("VmCreate");
-    expect(relevant).toContain("sandbox_name=my-assistant");
+    expect(relevant).toContain("gateway signature=vm-create-failed");
+    expect(relevant).toContain(`sandbox_id=${sandboxId}`);
     expect(relevant).not.toContain(replacementId);
     expect(relevant).not.toContain(replacementConsolePath);
     const capturedOutput = `${relevant}\n${consoleOutput}\n${diagnostics?.summaryLines.join("\n")}`;
@@ -122,11 +123,13 @@ describe("sandbox create failure diagnostics", () => {
       consoleSecretPresent: capturedOutput.includes(consoleSecret),
       gatewayPrefixPresent: capturedOutput.includes("sk-a"),
       gatewaySecretPresent: capturedOutput.includes(gatewaySecret),
+      opaqueSecretPresent: capturedOutput.includes(opaqueSecret),
     }).toEqual({
       consolePrefixPresent: false,
       consoleSecretPresent: false,
       gatewayPrefixPresent: false,
       gatewaySecretPresent: false,
+      opaqueSecretPresent: false,
     });
     expect(fs.readFileSync(path.join(diagnostics!.dir, "summary.txt"), "utf-8")).toContain(
       "backup_path=/tmp/pre-upgrade-backup",
@@ -211,7 +214,7 @@ describe("sandbox create failure diagnostics", () => {
       consoleCopy: diagnostics?.copiedConsoleOutput,
       gatewayFailure: fs
         .readFileSync(path.join(diagnostics!.dir, "openshell-gateway-relevant.log"), "utf8")
-        .includes("reason=ProcessExited"),
+        .includes("gateway signature=process-exited"),
     }).toEqual({ consoleCopy: null, gatewayFailure: true });
   });
 
@@ -290,10 +293,10 @@ describe("sandbox create failure diagnostics", () => {
       path.join(diagnostics!.dir, "openshell-gateway-tail.log"),
     );
     expect(fs.readFileSync(diagnostics!.gatewayTailPath!, "utf-8")).toContain(
-      "gateway exited before request dispatch",
+      "gateway signature=gateway-exited-before-dispatch",
     );
     expect(diagnostics?.summaryLines).toContain(
-      "2026-05-12T20:30:01Z WARN gateway exited before request dispatch",
+      "gateway signature=gateway-exited-before-dispatch",
     );
     expect(fs.readFileSync(path.join(diagnostics!.dir, "summary.txt"), "utf-8")).toContain(
       "gateway_tail=",
@@ -312,7 +315,7 @@ describe("sandbox create failure diagnostics", () => {
     Array.from({ length: 201 }, (_, index) =>
       fs.writeFileSync(path.join(stateDir, `entry-${String(index).padStart(3, "0")}`), ""),
     );
-    fs.writeFileSync(consolePath, `${"😀".repeat(100_000)}final console failure\n`);
+    fs.writeFileSync(consolePath, `${"😀".repeat(100_000)}Exec format error\n`);
     fs.writeFileSync(
       gatewayLogPath,
       `create_sandbox received sandbox_id=${sandboxId} sandbox_name=my-assistant\n${"old gateway output\n".repeat(100_000)}${[
@@ -333,11 +336,15 @@ describe("sandbox create failure diagnostics", () => {
 
     expect({
       consoleBounded: consoleEvidence.byteLength <= 256 * 1024,
-      consoleEndsWithFailure: consoleEvidence.toString("utf8").endsWith("final console failure\n"),
+      consoleEndsWithFailure: consoleEvidence
+        .toString("utf8")
+        .endsWith(`rootfs-console signature=exec-format-error sandbox_id=${sandboxId}\n`),
       consoleHasInvalidUtf8: consoleEvidence.toString("utf8").includes("�"),
       consoleOutputTruncated: diagnostics?.consoleOutputTruncated,
       gatewayBounded: gatewayEvidence.byteLength <= 1024 * 1024,
-      gatewayContainsFailure: gatewayEvidence.toString("utf8").includes("reason=ProcessExited"),
+      gatewayContainsFailure: gatewayEvidence
+        .toString("utf8")
+        .includes("gateway signature=process-exited"),
       gatewayLogTruncated: diagnostics?.gatewayLogTruncated,
       printedTruncationNotices: diagnostics?.summaryLines.slice(0, 2),
       stateEntriesOmitted: summary.includes("<additional entries omitted>"),

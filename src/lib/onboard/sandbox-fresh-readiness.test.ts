@@ -288,7 +288,7 @@ describe("fresh sandbox executable readiness", () => {
     const consolePath = path.join(stateDir, "rootfs-console.log");
     const bundleRoot = path.join(homeDir, ".nemoclaw", "onboard-failures");
     fs.mkdirSync(stateDir, { recursive: true });
-    fs.writeFileSync(consolePath, "verified console failure\n");
+    fs.writeFileSync(consolePath, "Exec format error opaque-runtime-canary-7f31\n");
     fs.writeFileSync(
       path.join(logDir, "openshell-gateway.log"),
       [
@@ -352,7 +352,7 @@ describe("fresh sandbox executable readiness", () => {
       rollbackCalls: patch.rollbackManagedStartupAfterCreateFailure.mock.calls.length,
     }).toEqual({
       bundleExistedBeforeRollback: true,
-      consoleEvidence: "verified console failure\n",
+      consoleEvidence: `rootfs-console signature=exec-format-error sandbox_id=${sandboxId}\n`,
       gatewayHasReplacement: false,
       gatewayHasVerifiedId: true,
       rollbackCalls: 1,
