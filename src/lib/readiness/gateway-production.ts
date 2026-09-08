@@ -318,14 +318,28 @@ function observeReuseState(
   gatewayPort: number,
   openshell: string | null,
   env: NodeJS.ProcessEnv,
-): { endpointBinding: ManagedGatewayEndpointBinding; reuseState: GatewayReuseState | "unknown" } {
-  if (!openshell) return { endpointBinding: "not-applicable", reuseState: "missing" };
+): {
+  endpointBinding: ManagedGatewayEndpointBinding;
+  managedGatewayOutputs: string[];
+  reuseState: GatewayReuseState | "unknown";
+} {
+  if (!openshell) {
+    return { endpointBinding: "not-applicable", managedGatewayOutputs: [], reuseState: "missing" };
+  }
 
   const status = captureReadonly([openshell, "status", "-g", gatewayName], env);
   const named = captureReadonly([openshell, "gateway", "info", "-g", gatewayName], env);
   const active = captureReadonly([openshell, "gateway", "info"], env);
   if ([status, named, active].some(({ exitCode, timedOut }) => timedOut || exitCode === null)) {
-    return { endpointBinding: "unknown", reuseState: "unknown" };
+    return {
+      endpointBinding: "unknown",
+      managedGatewayOutputs: [
+        combinedOutput(active),
+        combinedOutput(status),
+        combinedOutput(named),
+      ],
+      reuseState: "unknown",
+    };
   }
 
   const statusOutput = combinedOutput(status);
@@ -344,6 +358,7 @@ function observeReuseState(
   const liveManagedState = reuseState === "healthy" || reuseState === "active-unnamed";
   return {
     reuseState,
+    managedGatewayOutputs: [combinedOutput(active), statusOutput, combinedOutput(named)],
     endpointBinding: liveManagedState
       ? classifyManagedGatewayEndpointBinding(
           [combinedOutput(active), statusOutput, combinedOutput(named)],
@@ -791,7 +806,7 @@ export function createProductionGatewayReadinessDependencies(
   });
 
   async function collectManagedGatewayObservations(): Promise<ManagedGatewayObservations> {
-    const { endpointBinding, reuseState } = observeReuseState(
+    const { endpointBinding, managedGatewayOutputs, reuseState } = observeReuseState(
       gatewayName,
       gatewayPort,
       openshellBin,
@@ -800,16 +815,38 @@ export function createProductionGatewayReadinessDependencies(
     const portCheck = await checkGatewayPortAvailable();
     trustedVersionBinaryByPid.clear();
     trustedTargetBoundPids.clear();
-    const listenerScan = listenerHelpers.getDockerDriverGatewayPortListenerScan(portCheck, {
-      gatewayBin: trustedGatewayBin,
-    });
+    const providerGateway = resolveRuntimeProviderGateway();
+    const installedOpenShellVersion = observeInstalledOpenshellVersion(openshellBin, probeEnv);
+    const providerObservation = providerGateway.ownsHostReadiness
+      ? providerGateway.observeOwnedGateway({
+          environment: probeEnv,
+          platform,
+          architecture,
+          gatewayName,
+          gatewayPort,
+          expectedEndpoint: `https://${observeGatewayHostRuntime().grpcHost}:${String(gatewayPort)}`,
+          managedGatewayOutputs,
+          portAvailable: portCheck.ok,
+          installedOpenShellVersion,
+          trustedGatewayBin,
+        })
+      : null;
+    const listenerScan = providerObservation
+      ? {
+          pids: [...providerObservation.listenerScan.pids],
+          unverifiedPids: [...providerObservation.listenerScan.unverifiedPids],
+          complete: providerObservation.listenerScan.complete,
+        }
+      : listenerHelpers.getDockerDriverGatewayPortListenerScan(portCheck, {
+          gatewayBin: trustedGatewayBin,
+        });
     const managedGatewayCanBeRunning =
       reuseState === "healthy" || reuseState === "stale" || reuseState === "active-unnamed";
     let legacyClusterBound = false;
     let legacyClusterImageRef: string | null = null;
     if (!portCheck.ok && managedGatewayCanBeRunning) {
       try {
-        if (resolveRuntimeProviderGateway().ownsHostReadiness) {
+        if (providerGateway.ownsHostReadiness) {
           legacyClusterBound = false;
         } else if (options.isLegacyClusterBound) {
           legacyClusterBound = options.isLegacyClusterBound();
@@ -827,8 +864,9 @@ export function createProductionGatewayReadinessDependencies(
         legacyClusterBound = false;
       }
     }
-    let compatibility: GatewayVersionCompatibility | null = null;
-    if (!portCheck.ok) {
+    let compatibility: GatewayVersionCompatibility | null =
+      providerObservation?.versionCompatibility ?? null;
+    if (!portCheck.ok && !providerObservation) {
       const source = classifyManagedGatewayVersionSource(
         legacyClusterBound,
         listenerScan,
@@ -837,7 +875,6 @@ export function createProductionGatewayReadinessDependencies(
       try {
         if (source) {
           const hostProcessPid = source === "host-process" ? listenerScan.pids[0] : null;
-          const installedVersion = observeInstalledOpenshellVersion(openshellBin, probeEnv);
           compatibility =
             options.observeVersionCompatibility?.(source, hostProcessPid) ??
             observeOpenShellGatewayVersionCompatibility({
@@ -846,12 +883,12 @@ export function createProductionGatewayReadinessDependencies(
               deps:
                 source === "legacy-cluster"
                   ? {
-                      getInstalledOpenshellVersion: () => installedVersion,
+                      getInstalledOpenshellVersion: () => installedOpenShellVersion,
                       getGatewayClusterImageRef: () => legacyClusterImageRef,
                       isGatewayClusterActive: () => true,
                     }
                   : {
-                      getInstalledOpenshellVersion: () => installedVersion,
+                      getInstalledOpenshellVersion: () => installedOpenShellVersion,
                       getGatewayClusterImageRef: () => null,
                       getHostProcessGatewayRuntime: () =>
                         hostProcessPid === null
@@ -868,13 +905,17 @@ export function createProductionGatewayReadinessDependencies(
       }
     }
     const driftState = classifyManagedGatewayVersionDrift(portCheck.ok, reuseState, compatibility);
+    const effectiveEndpointBinding = providerObservation?.endpointBinding ?? endpointBinding;
     const portConflictState = classifyManagedGatewayPortConflict(
       portCheck.ok,
       listenerScan,
       reuseState,
       legacyClusterBound,
-      endpointBinding,
-      listenerScan.pids.length === 1 && trustedTargetBoundPids.has(listenerScan.pids[0] ?? -1),
+      effectiveEndpointBinding,
+      listenerScan.pids.length === 1 &&
+        (providerObservation
+          ? providerObservation.targetBoundListenerPids.includes(listenerScan.pids[0] ?? -1)
+          : trustedTargetBoundPids.has(listenerScan.pids[0] ?? -1)),
     );
     const portConflictOwners =
       portConflictState === "none"

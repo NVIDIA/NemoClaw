@@ -32,6 +32,7 @@ import {
   type PodmanPublishedResumeTiming,
   type PodmanInferenceRedactor,
 } from "./podman-host-local-inference";
+import { observeNativePodmanGatewayReadiness } from "./podman-gateway-readiness";
 import type {
   PodmanInferenceAuthorityReceipt,
   PodmanInferenceQualificationOptions,
@@ -301,6 +302,7 @@ export function createPodmanRuntimeProviderBundle(
       launcher: "nemoclaw",
       inspectLegacyContainer: false,
       ownsHostReadiness: true,
+      observeOwnedGateway: observeNativePodmanGatewayReadiness,
       observeHostRuntime: (input) => projectGatewayHostRuntime(input),
       prepareHostRuntime: (input) =>
         projectGatewayHostRuntime(input, options.gatewayHostPreparation),

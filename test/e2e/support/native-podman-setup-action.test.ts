@@ -16,6 +16,7 @@ import {
 } from "../../../tools/e2e/workflow-boundary.mts";
 
 const RESTORE_ACTION = path.resolve(".github/actions/restore-native-podman-e2e/action.yaml");
+const SETUP_ACTION = path.resolve(".github/actions/setup-native-podman-e2e/action.yaml");
 const FIXED_RESTORE_ROOT = "/usr/lib/nemoclaw-native-podman-e2e/docker-cli-restore";
 
 function shellQuote(value: string): string {
@@ -35,7 +36,11 @@ function restoreRunScript(): string {
 
 type RestoreFixtureKind = "valid" | "regular-file" | "symlink";
 
-function runRestoreFixture(kind: RestoreFixtureKind) {
+function runRestoreFixture(
+  kind: RestoreFixtureKind,
+  serviceActiveState = "active",
+  socketActiveState = "active",
+) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-podman-restore-"));
   const restoreRoot = path.join(root, "authority");
   const destination = path.join(root, "bin", "docker");
@@ -47,6 +52,23 @@ function runRestoreFixture(kind: RestoreFixtureKind) {
   fs.writeFileSync(path.join(restoreRoot, "metadata"), `${destination}\n${expectedSha256}\n`, {
     mode: 0o600,
   });
+  fs.writeFileSync(
+    path.join(restoreRoot, "runtime.json"),
+    `${JSON.stringify({
+      schemaVersion: 1,
+      dockerService: {
+        loadState: "loaded",
+        activeState: serviceActiveState,
+        unitFileState: "enabled",
+      },
+      dockerSocket: {
+        loadState: "loaded",
+        activeState: socketActiveState,
+        unitFileState: "enabled",
+      },
+    })}\n`,
+    { mode: 0o600 },
+  );
   const prepareSource = {
     valid: () => fs.writeFileSync(disabled, original, { mode: 0o755 }),
     "regular-file": () => fs.writeFileSync(disabled, "#!/bin/sh\necho tampered\n", { mode: 0o755 }),
@@ -57,6 +79,11 @@ function runRestoreFixture(kind: RestoreFixtureKind) {
     },
   } satisfies Record<RestoreFixtureKind, () => void>;
   prepareSource[kind]();
+  const serviceState = path.join(root, "docker-service.state");
+  const socketState = path.join(root, "docker-socket.state");
+  const systemctlLog = path.join(root, "systemctl.log");
+  fs.writeFileSync(serviceState, "inactive\n");
+  fs.writeFileSync(socketState, "inactive\n");
 
   const commandShims = [
     "sudo() {",
@@ -65,7 +92,7 @@ function runRestoreFixture(kind: RestoreFixtureKind) {
     "}",
     "stat() {",
     '  case "${2:-}" in',
-    "    %u:%g:%a) printf '0:0:700\\n' ;;",
+    "    %u:%g:%a) [[ \"${3:-}\" == *runtime.json ]] && printf '0:0:600\\n' || printf '0:0:700\\n' ;;",
     "    %u:%g) printf '0:0\\n' ;;",
     "    *) return 64 ;;",
     "  esac",
@@ -75,7 +102,24 @@ function runRestoreFixture(kind: RestoreFixtureKind) {
     `  "$NODE_BINARY" -e 'const fs=require("fs"),c=require("crypto"),p=process.argv[1];process.stdout.write(c.createHash("sha256").update(fs.readFileSync(p)).digest("hex")+"  "+p+"\\\\n")' "$1"`,
     "}",
     "find() {",
-    "  printf 'docker\\nmetadata\\n'",
+    "  printf 'docker\\nmetadata\\nruntime.json\\n'",
+    "}",
+    "systemctl() {",
+    '  printf \'%s\\n\' "$*" >>"$SYSTEMCTL_LOG"',
+    '  local operation="${1:-}"',
+    "  shift || true",
+    '  local unit="${*: -1}"',
+    '  local state_file="$DOCKER_SERVICE_STATE"',
+    '  [[ "$unit" == "docker.socket" ]] && state_file="$DOCKER_SOCKET_STATE"',
+    '  case "$operation" in',
+    "    show) printf 'loaded\\n' ;;",
+    '    is-active) cat "$state_file"; [[ "$(cat "$state_file")" == "active" ]] ;;',
+    "    is-enabled) printf 'enabled\\n' ;;",
+    "    unmask) return 0 ;;",
+    "    start) printf 'active\\n' >\"$state_file\" ;;",
+    "    stop) printf 'inactive\\n' >\"$state_file\" ;;",
+    "    *) return 64 ;;",
+    "  esac",
     "}",
   ].join("\n");
   const script = restoreRunScript()
@@ -89,10 +133,22 @@ function runRestoreFixture(kind: RestoreFixtureKind) {
     env: {
       ...process.env,
       NODE_BINARY: process.execPath,
+      DOCKER_SERVICE_STATE: serviceState,
+      DOCKER_SOCKET_STATE: socketState,
       PATH: `${path.dirname(destination)}:${process.env.PATH ?? "/usr/bin:/bin"}`,
+      SYSTEMCTL_LOG: systemctlLog,
     },
   });
-  return { destination, expectedSha256, restoreRoot, result, root };
+  return {
+    destination,
+    expectedSha256,
+    restoreRoot,
+    result,
+    root,
+    serviceState,
+    socketState,
+    systemctlLog,
+  };
 }
 
 describe("native Podman E2E setup boundary", () => {
@@ -100,12 +156,58 @@ describe("native Podman E2E setup boundary", () => {
     expect(validateNativePodmanSetupAction()).toEqual([]);
   });
 
-  it("restores Docker only from the immutable root-owned authority", () => {
+  it("restores Docker state only from the immutable root-owned authority (#11014)", () => {
     expect(validateNativePodmanRestoreAction()).toEqual([]);
   });
 
-  it("restores an unchanged Docker CLI and retires its authority", () => {
-    const { destination, expectedSha256, restoreRoot, result, root } = runRestoreFixture("valid");
+  it("rejects Docker isolation before runtime recovery state is recorded (#11014)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-podman-setup-mutation-"));
+    const mutatedAction = path.join(root, "action.yaml");
+    const source = fs
+      .readFileSync(SETUP_ACTION, "utf8")
+      .replace(
+        '        docker_service_state="$(capture_unit_state docker.service)"',
+        '        systemctl stop docker.service docker.socket\n        docker_service_state="$(capture_unit_state docker.service)"',
+      );
+    fs.writeFileSync(mutatedAction, source);
+
+    try {
+      expect(validateNativePodmanSetupAction(mutatedAction)).toContain(
+        "native Podman setup must make Docker unavailable before qualification",
+      );
+    } finally {
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects restore logic that omits Docker service recovery (#11014)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-podman-restore-mutation-"));
+    const mutatedAction = path.join(root, "action.yaml");
+    const source = fs
+      .readFileSync(RESTORE_ACTION, "utf8")
+      .replace("        apply_unit_activity docker.service dockerService\n", "");
+    fs.writeFileSync(mutatedAction, source);
+
+    try {
+      expect(validateNativePodmanRestoreAction(mutatedAction)).toContain(
+        "native Podman restore action must verify and restore its root-owned Docker runtime state",
+      );
+    } finally {
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it("restores unchanged Docker runtime state and retires its authority (#11014)", () => {
+    const {
+      destination,
+      expectedSha256,
+      restoreRoot,
+      result,
+      root,
+      serviceState,
+      socketState,
+      systemctlLog,
+    } = runRestoreFixture("valid");
 
     try {
       expect(result.status, result.stderr).toBe(0);
@@ -119,6 +221,9 @@ describe("native Podman E2E setup boundary", () => {
         }).stdout.trim(),
       ).toBe(destination);
       expect(fs.existsSync(restoreRoot)).toBe(false);
+      expect(fs.readFileSync(serviceState, "utf8").trim()).toBe("active");
+      expect(fs.readFileSync(socketState, "utf8").trim()).toBe("active");
+      expect(fs.readFileSync(systemctlLog, "utf8")).toContain("unmask --runtime docker.service");
     } finally {
       fs.rmSync(root, { force: true, recursive: true });
     }
@@ -137,4 +242,27 @@ describe("native Podman E2E setup boundary", () => {
       }
     },
   );
+
+  it("keeps Docker services inactive when they were inactive before isolation (#11014)", () => {
+    const fixture = runRestoreFixture("valid", "inactive", "inactive");
+
+    try {
+      expect(fixture.result.status, fixture.result.stderr).toBe(0);
+      expect(fs.readFileSync(fixture.serviceState, "utf8").trim()).toBe("inactive");
+      expect(fs.readFileSync(fixture.socketState, "utf8").trim()).toBe("inactive");
+    } finally {
+      fs.rmSync(fixture.root, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects a restore record that cannot prove the prior Docker service state (#11014)", () => {
+    const fixture = runRestoreFixture("valid", "activating");
+
+    try {
+      expect(fixture.result.status).not.toBe(0);
+      expect(fs.existsSync(fixture.destination)).toBe(false);
+    } finally {
+      fs.rmSync(fixture.root, { force: true, recursive: true });
+    }
+  });
 });

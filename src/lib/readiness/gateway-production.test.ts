@@ -377,7 +377,8 @@ describe("managed gateway port readiness (#7411)", () => {
 
       failManagedObservation = true;
       await expect(collectGatewayObservations(deps)).resolves.toMatchObject({
-        failure: "Managed gateway observations could not be collected safely.",
+        failure:
+          "Managed gateway observations could not be collected safely: synthetic managed observation failure",
       });
       expect(formulaCalls()).toEqual([...expectedFormulaCalls, ...expectedFormulaCalls]);
       expect(launchctlCalls()).toEqual([
@@ -718,11 +719,11 @@ describe("managed gateway port readiness (#7411)", () => {
     }
   });
 
-  it("skips Docker inspection for an occupied native Podman gateway (#10984)", async () => {
+  it("recognizes an occupied native Podman gateway through provider-owned evidence (#10984)", async () => {
     const gatewayListener = net.createServer();
     await new Promise<void>((resolve, reject) => {
       gatewayListener.once("error", reject);
-      gatewayListener.listen(0, "127.0.0.1", resolve);
+      gatewayListener.listen(0, "0.0.0.0", resolve);
     });
     const gatewayPort = (gatewayListener.address() as AddressInfo).port;
     const gatewayName = `nemoclaw-${String(gatewayPort)}`;
@@ -738,7 +739,19 @@ describe("managed gateway port readiness (#7411)", () => {
       NEMOCLAW_OPENSHELL_GATEWAY_BIN: process.execPath,
       OPENSHELL_PODMAN_SOCKET: "/nonexistent/run/podman/podman.sock",
     };
-    const gateway = createCurrentPodmanRuntimeProviderBundle(environment).gateway;
+    const currentGateway = createCurrentPodmanRuntimeProviderBundle(environment).gateway;
+    expect(currentGateway.ownsHostReadiness).toBe(true);
+    const observeOwnedGateway = vi.fn(() => ({
+      endpointBinding: "match" as const,
+      listenerScan: {
+        pids: [process.pid],
+        unverifiedPids: [],
+        complete: true,
+      },
+      targetBoundListenerPids: [process.pid],
+      versionCompatibility: "compatible" as const,
+    }));
+    const gateway = { ...currentGateway, ownsHostReadiness: true as const, observeOwnedGateway };
     const statusOutput = [
       "Server Status",
       `Gateway: ${gatewayName}`,
@@ -758,7 +771,6 @@ describe("managed gateway port readiness (#7411)", () => {
       [[openshell, "status", "-g", gatewayName].join("\0"), commandResult(statusOutput, 0)],
       [[openshell, "gateway", "info", "-g", gatewayName].join("\0"), commandResult(gatewayInfo, 0)],
       [[openshell, "gateway", "info"].join("\0"), commandResult(gatewayInfo, 0)],
-      [["lsof", "-ti", `:${String(gatewayPort)}`, "-sTCP:LISTEN"].join("\0"), commandResult("", 1)],
     ]);
     subprocess.spawnSync.mockImplementation(
       (command: string, args: readonly string[] = []) =>
@@ -783,14 +795,26 @@ describe("managed gateway port readiness (#7411)", () => {
       const projection = projectGatewayReadiness(snapshot, { now: () => now });
 
       expect(snapshot.failure).toBeUndefined();
+      expect(observeOwnedGateway).toHaveBeenCalledOnce();
       expect(projection.capabilities).toEqual(
         expect.arrayContaining(
           [
             ["gateway.reuse.ready", "present"],
-            ["gateway.version.compatible", "unknown"],
-            ["gateway.port.uncontested", "absent"],
+            ["gateway.version.compatible", "present"],
+            ["gateway.port.uncontested", "present"],
           ].map(([id, state]) => expect.objectContaining({ id, state })),
         ),
+      );
+      expect(observeOwnedGateway).toHaveBeenCalledWith(
+        expect.objectContaining({
+          gatewayName,
+          gatewayPort,
+          expectedEndpoint: endpoint,
+          managedGatewayOutputs: expect.arrayContaining([
+            expect.stringContaining(`Server: ${endpoint}/`),
+          ]),
+          portAvailable: false,
+        }),
       );
       expect(isLegacyClusterBound).not.toHaveBeenCalled();
       expect(subprocess.spawnSync.mock.calls.some(([command]) => command === "docker")).toBe(false);

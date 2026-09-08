@@ -2809,8 +2809,7 @@ function validateNativePodmanDockerIsolationWorkflow(workflow: WorkflowRecord): 
     }
     if (
       resultUploads.length === 0 ||
-      (postSetupRestores.length === 1 &&
-        postSetupRestores[0]!.index <= finalResultUploadIndex)
+      (postSetupRestores.length === 1 && postSetupRestores[0]!.index <= finalResultUploadIndex)
     ) {
       errors.push(`${jobName} must keep Docker unavailable through result artifact upload`);
     }
@@ -3628,8 +3627,21 @@ export function validateNativePodmanSetupAction(
     errors.push("native Podman setup must not expose its API socket as Docker");
   }
   if (
+    !run.includes("restore_root=/usr/lib/nemoclaw-native-podman-e2e/docker-cli-restore") ||
+    !run.includes('runtime_state_path="$restore_root/runtime.json"') ||
+    !run.includes("capture_unit_state docker.service") ||
+    !run.includes("capture_unit_state docker.socket") ||
+    !run.includes("sudo -n install -d --owner=root --group=root --mode=0700") ||
+    !run.includes(
+      "{schemaVersion: 1, dockerService: $dockerService, dockerSocket: $dockerSocket}",
+    ) ||
+    run.indexOf("capture_unit_state docker.service") >
+      run.indexOf("systemctl stop docker.service docker.socket") ||
     !run.includes("systemctl stop docker.service docker.socket") ||
     !run.includes("systemctl mask --runtime docker.service docker.socket") ||
+    !run.includes(
+      '[[ "$unit_file_state" == "masked" || "$unit_file_state" == "masked-runtime" ]]',
+    ) ||
     !run.includes("! pgrep -x dockerd >/dev/null") ||
     !run.includes("docker info >/dev/null 2>&1")
   ) {
@@ -3654,7 +3666,8 @@ export function validateNativePodmanSetupAction(
     isolate?.if !== "${{ inputs.enabled == 'true' }}" ||
     steps.at(-1) !== isolate ||
     !isolationRun.includes("restore_root=/usr/lib/nemoclaw-native-podman-e2e/docker-cli-restore") ||
-    !isolationRun.includes("sudo -n install -d --owner=root --group=root --mode=0700") ||
+    !isolationRun.includes('runtime_state_path="$restore_root/runtime.json"') ||
+    !isolationRun.includes('[[ "${restore_files[*]}" == "runtime.json" ]]') ||
     !isolationRun.includes('sudo -n test ! -L "$docker_cli"') ||
     !isolationRun.includes('docker_sha256="$(sudo -n sha256sum -- "$docker_cli"') ||
     !isolationRun.includes('sudo -n tee "$metadata_path"') ||
@@ -3692,7 +3705,14 @@ export function validateNativePodmanRestoreAction(
     restore?.if !== "${{ inputs.enabled == 'true' }}" ||
     !run.includes("restore_root=/usr/lib/nemoclaw-native-podman-e2e/docker-cli-restore") ||
     !run.includes('[[ "$(sudo -n stat -c \'%u:%g:%a\' "$restore_root")" == "0:0:700" ]]') ||
-    !run.includes('[[ "${restore_files[*]}" == "docker metadata" ]]') ||
+    !run.includes('runtime_state_path="$restore_root/runtime.json"') ||
+    !run.includes('"docker metadata runtime.json"') ||
+    !run.includes("restore_unit_mask docker.service dockerService") ||
+    !run.includes("restore_unit_mask docker.socket dockerSocket") ||
+    !run.includes("apply_unit_activity docker.service dockerService") ||
+    !run.includes("apply_unit_activity docker.socket dockerSocket") ||
+    !run.includes("verify_unit_state docker.service dockerService") ||
+    !run.includes("verify_unit_state docker.socket dockerSocket") ||
     !run.includes('sudo -n test ! -L "$disabled_path"') ||
     !run.includes('sha256sum -- "$disabled_path"') ||
     !run.includes("/usr/bin/docker | /usr/local/bin/docker | /snap/bin/docker") ||
@@ -3701,7 +3721,7 @@ export function validateNativePodmanRestoreAction(
     !run.includes('test "$(command -v docker)" = "$restore_path"')
   ) {
     errors.push(
-      "native Podman restore action must verify and restore only its root-owned Docker CLI",
+      "native Podman restore action must verify and restore its root-owned Docker runtime state",
     );
   }
   return errors;

@@ -281,10 +281,53 @@ runs:
         # satisfy an accidental legacy probe or resource operation. Keep this
         # enforcement at the reusable runtime-setup boundary, never in an E2E
         # scenario, so every Podman row proves the same provider isolation.
+        restore_root=/usr/lib/nemoclaw-native-podman-e2e/docker-cli-restore
+        runtime_state_path="$restore_root/runtime.json"
+        if sudo -n test -e "$restore_root" || sudo -n test -L "$restore_root"; then
+          echo "::error::Docker runtime restore authority already exists" >&2
+          exit 1
+        fi
+        capture_unit_state() {
+          local unit="$1"
+          local load_state
+          local active_state
+          local unit_file_state
+          load_state="$(systemctl show "$unit" --property=LoadState --value 2>/dev/null || true)"
+          active_state="$(systemctl is-active "$unit" 2>/dev/null || true)"
+          unit_file_state="$(systemctl is-enabled "$unit" 2>/dev/null || true)"
+          if [[ "$load_state" == "not-found" && -z "$unit_file_state" ]]; then
+            unit_file_state=not-found
+          fi
+          [[ "$load_state" =~ ^(loaded|masked|not-found)$ ]]
+          [[ "$active_state" =~ ^(active|inactive)$ ]]
+          [[ "$unit_file_state" =~ ^[a-z-]+$ ]]
+          jq -n \
+            --arg loadState "$load_state" \
+            --arg activeState "$active_state" \
+            --arg unitFileState "$unit_file_state" \
+            '{loadState: $loadState, activeState: $activeState, unitFileState: $unitFileState}'
+        }
+        docker_service_state="$(capture_unit_state docker.service)"
+        docker_socket_state="$(capture_unit_state docker.socket)"
+        sudo -n install -d --owner=root --group=root --mode=0700 "$restore_root"
+        jq -n \
+          --argjson dockerService "$docker_service_state" \
+          --argjson dockerSocket "$docker_socket_state" \
+          '{schemaVersion: 1, dockerService: $dockerService, dockerSocket: $dockerSocket}' |
+          sudo -n tee "$runtime_state_path" >/dev/null
+        sudo -n chmod 0600 "$runtime_state_path"
+        sudo -n test -f "$runtime_state_path"
+        sudo -n test ! -L "$runtime_state_path"
+        [[ "$(sudo -n stat -c '%u:%g:%a' "$runtime_state_path")" == "0:0:600" ]]
+
         sudo systemctl stop docker.service docker.socket 2>/dev/null || true
         sudo systemctl mask --runtime docker.service docker.socket 2>/dev/null || true
         sudo pkill -TERM -x dockerd 2>/dev/null || true
         sudo rm -f /var/run/docker.sock /run/docker.sock
+        for unit in docker.service docker.socket; do
+          unit_file_state="$(systemctl is-enabled "$unit" 2>/dev/null || true)"
+          [[ "$unit_file_state" == "masked" || "$unit_file_state" == "masked-runtime" ]]
+        done
         ! systemctl is-active --quiet docker.service
         ! systemctl is-active --quiet docker.socket
         ! pgrep -x dockerd >/dev/null
@@ -313,6 +356,18 @@ runs:
         restore_root=/usr/lib/nemoclaw-native-podman-e2e/docker-cli-restore
         disabled_path="$restore_root/docker"
         metadata_path="$restore_root/metadata"
+        runtime_state_path="$restore_root/runtime.json"
+        if ! sudo -n test -d "$restore_root" || sudo -n test -L "$restore_root"; then
+          echo "::error::Docker runtime restore authority is missing or unsafe" >&2
+          exit 1
+        fi
+        [[ "$(sudo -n stat -c '%u:%g:%a' "$restore_root")" == "0:0:700" ]]
+        mapfile -t restore_files < <(
+          sudo -n find -P "$restore_root" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort
+        )
+        [[ "${restore_files[*]}" == "runtime.json" ]]
+        sudo -n test -f "$runtime_state_path"
+        sudo -n test ! -L "$runtime_state_path"
         docker_cli="$(command -v docker || true)"
         if [[ -z "$docker_cli" ]]; then
           exit 0
@@ -324,16 +379,11 @@ runs:
             exit 1
             ;;
         esac
-        if sudo -n test -e "$restore_root" || sudo -n test -L "$restore_root"; then
-          echo "::error::Docker CLI isolation authority already exists" >&2
-          exit 1
-        fi
         sudo -n test -f "$docker_cli"
         sudo -n test ! -L "$docker_cli"
         [[ "$(sudo -n stat -c '%u:%g' "$docker_cli")" == "0:0" ]]
         docker_sha256="$(sudo -n sha256sum -- "$docker_cli" | awk '{print $1}')"
         [[ "$docker_sha256" =~ ^[a-f0-9]{64}$ ]]
-        sudo -n install -d --owner=root --group=root --mode=0700 "$restore_root"
         printf '%s\n%s\n' "$docker_cli" "$docker_sha256" |
           sudo -n tee "$metadata_path" >/dev/null
         sudo -n chmod 0600 "$metadata_path"

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 name: restore-native-podman-e2e
-description: Restore the exact Docker CLI moved by native Podman E2E isolation.
+description: Restore the Docker runtime state changed by native Podman E2E isolation.
 
 inputs:
   enabled:
@@ -21,6 +21,7 @@ runs:
         restore_root=/usr/lib/nemoclaw-native-podman-e2e/docker-cli-restore
         disabled_path="$restore_root/docker"
         metadata_path="$restore_root/metadata"
+        runtime_state_path="$restore_root/runtime.json"
         if ! sudo -n test -e "$restore_root" && ! sudo -n test -L "$restore_root"; then
           exit 0
         fi
@@ -32,30 +33,96 @@ runs:
         mapfile -t restore_files < <(
           sudo -n find -P "$restore_root" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort
         )
-        [[ "${restore_files[*]}" == "docker metadata" ]]
-        restore_path="$(sudo -n sed -n '1p' "$metadata_path")"
-        expected_sha256="$(sudo -n sed -n '2p' "$metadata_path")"
-        [[ "$expected_sha256" =~ ^[a-f0-9]{64}$ ]]
-        case "$restore_path" in
-          /usr/bin/docker | /usr/local/bin/docker | /snap/bin/docker) ;;
+        case "${restore_files[*]}" in
+          "runtime.json") restore_cli=false ;;
+          "docker metadata runtime.json") restore_cli=true ;;
           *)
-            echo "::error::Refusing unsafe Docker CLI restore destination" >&2
+            echo "::error::Refusing incomplete Docker runtime restore authority" >&2
             exit 1
             ;;
         esac
-        sudo -n test -f "$disabled_path"
-        sudo -n test ! -L "$disabled_path"
-        [[ "$(sudo -n stat -c '%u:%g' "$disabled_path")" == "0:0" ]]
-        [[ "$(sudo -n sha256sum -- "$disabled_path" | awk '{print $1}')" == "$expected_sha256" ]]
-        if [[ -e "$restore_path" || -L "$restore_path" ]]; then
-          echo "::error::Docker CLI restore destination is already occupied" >&2
-          exit 1
+        sudo -n test -f "$runtime_state_path"
+        sudo -n test ! -L "$runtime_state_path"
+        [[ "$(sudo -n stat -c '%u:%g:%a' "$runtime_state_path")" == "0:0:600" ]]
+        sudo -n jq -e '
+          (.schemaVersion == 1) and
+          ((keys | sort) == ["dockerService", "dockerSocket", "schemaVersion"]) and
+          ([.dockerService, .dockerSocket] | all(
+            ((keys | sort) == ["activeState", "loadState", "unitFileState"]) and
+            (.loadState | test("^(loaded|masked|not-found)$")) and
+            (.activeState | test("^(active|inactive)$")) and
+            (.unitFileState | test("^[a-z-]+$"))
+          ))
+        ' "$runtime_state_path" >/dev/null
+
+        restore_unit_mask() {
+          local unit="$1"
+          local field="$2"
+          local load_state
+          local unit_file_state
+          load_state="$(sudo -n jq -r ".${field}.loadState" "$runtime_state_path")"
+          unit_file_state="$(sudo -n jq -r ".${field}.unitFileState" "$runtime_state_path")"
+          if [[ "$unit_file_state" != "masked-runtime" ]]; then
+            sudo -n systemctl unmask --runtime "$unit" >/dev/null
+          fi
+          if [[ "$load_state" == "not-found" ]]; then
+            [[ "$(systemctl show "$unit" --property=LoadState --value 2>/dev/null || true)" == "not-found" ]]
+          fi
+        }
+        apply_unit_activity() {
+          local unit="$1"
+          local field="$2"
+          local active_state
+          active_state="$(sudo -n jq -r ".${field}.activeState" "$runtime_state_path")"
+          if [[ "$active_state" == "active" ]]; then
+            sudo -n systemctl start "$unit"
+          else
+            sudo -n systemctl stop "$unit" 2>/dev/null || true
+          fi
+        }
+        verify_unit_state() {
+          local unit="$1"
+          local field="$2"
+          local expected_active
+          local expected_unit_file
+          expected_active="$(sudo -n jq -r ".${field}.activeState" "$runtime_state_path")"
+          expected_unit_file="$(sudo -n jq -r ".${field}.unitFileState" "$runtime_state_path")"
+          [[ "$(systemctl is-active "$unit" 2>/dev/null || true)" == "$expected_active" ]]
+          [[ "$(systemctl is-enabled "$unit" 2>/dev/null || true)" == "$expected_unit_file" ]]
+        }
+        restore_unit_mask docker.service dockerService
+        restore_unit_mask docker.socket dockerSocket
+        apply_unit_activity docker.service dockerService
+        apply_unit_activity docker.socket dockerSocket
+        verify_unit_state docker.service dockerService
+        verify_unit_state docker.socket dockerSocket
+
+        if [[ "$restore_cli" == true ]]; then
+          restore_path="$(sudo -n sed -n '1p' "$metadata_path")"
+          expected_sha256="$(sudo -n sed -n '2p' "$metadata_path")"
+          [[ "$expected_sha256" =~ ^[a-f0-9]{64}$ ]]
+          case "$restore_path" in
+            /usr/bin/docker | /usr/local/bin/docker | /snap/bin/docker) ;;
+            *)
+              echo "::error::Refusing unsafe Docker CLI restore destination" >&2
+              exit 1
+              ;;
+          esac
+          sudo -n test -f "$disabled_path"
+          sudo -n test ! -L "$disabled_path"
+          [[ "$(sudo -n stat -c '%u:%g' "$disabled_path")" == "0:0" ]]
+          [[ "$(sudo -n sha256sum -- "$disabled_path" | awk '{print $1}')" == "$expected_sha256" ]]
+          if [[ -e "$restore_path" || -L "$restore_path" ]]; then
+            echo "::error::Docker CLI restore destination is already occupied" >&2
+            exit 1
+          fi
+          sudo -n mv -- "$disabled_path" "$restore_path"
+          sudo -n test -f "$restore_path"
+          sudo -n test ! -L "$restore_path"
+          [[ "$(sudo -n stat -c '%u:%g' "$restore_path")" == "0:0" ]]
+          [[ "$(sudo -n sha256sum -- "$restore_path" | awk '{print $1}')" == "$expected_sha256" ]]
+          sudo -n rm -f -- "$metadata_path"
+          test "$(command -v docker)" = "$restore_path"
         fi
-        sudo -n mv -- "$disabled_path" "$restore_path"
-        sudo -n test -f "$restore_path"
-        sudo -n test ! -L "$restore_path"
-        [[ "$(sudo -n stat -c '%u:%g' "$restore_path")" == "0:0" ]]
-        [[ "$(sudo -n sha256sum -- "$restore_path" | awk '{print $1}')" == "$expected_sha256" ]]
-        sudo -n rm -f -- "$metadata_path"
+        sudo -n rm -f -- "$runtime_state_path"
         sudo -n rmdir -- "$restore_root"
-        test "$(command -v docker)" = "$restore_path"
