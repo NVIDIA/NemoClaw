@@ -136,6 +136,8 @@ export type DockerGpuSandboxCreatePatch = {
    * local-inference checks pass.
    */
   commitAfterReady: () => Promise<void>;
+  /** True only after OpenShell acknowledged the exact replacement's final handoff. */
+  allowsNotReadyLifecycleRevalidation: () => boolean;
   selectedMode: () => DockerGpuPatchMode | null;
   /**
    * Print the Docker GPU readiness-failure block (including the Error-phase
@@ -167,6 +169,7 @@ export function createDockerGpuSandboxCreatePatch(
   let cutoverFinalization: Promise<void> | null = null;
   let cutoverFinalizationOutcome: "commit" | "rollback" | null = null;
   let cutoverFinalizationFailure: Error | null = null;
+  let exactFinalHandoffAcknowledged = false;
 
   const findContainerIds =
     options.overrides?.findContainerIds ?? findOpenShellDockerSandboxContainerIds;
@@ -514,6 +517,7 @@ export function createDockerGpuSandboxCreatePatch(
           finalizeOutcome.replacementRestarted &&
           finalizeOutcome.finalHandoffAcknowledged === true
         ) {
+          exactFinalHandoffAcknowledged = true;
           return;
         }
         const failure = new Error(
@@ -550,6 +554,10 @@ export function createDockerGpuSandboxCreatePatch(
           cutoverFinalizationOutcome = null;
         }
       }
+    },
+
+    allowsNotReadyLifecycleRevalidation() {
+      return exactFinalHandoffAcknowledged;
     },
 
     selectedMode() {

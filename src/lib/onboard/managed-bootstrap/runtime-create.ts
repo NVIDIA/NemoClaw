@@ -75,6 +75,8 @@ export interface ManagedBootstrapRuntimePatch {
   ensureApplied(): void | Promise<void>;
   waitForSupervisorReconnectIfNeeded(): void | Promise<void>;
   commitAfterReady(): void | Promise<void>;
+  /** True only after an exact replacement completed its owner-scoped final handoff. */
+  allowsNotReadyLifecycleRevalidation?(): boolean;
   selectedMode(): {
     readonly kind: string;
     readonly label: string;

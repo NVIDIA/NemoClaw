@@ -55,6 +55,7 @@ import {
   managedStartupStateRoots,
   MANAGED_HERMES_STATE_ROOT,
 } from "../managed-startup/state-roots";
+import type { ManagedBootstrapRuntimePatch } from "../managed-bootstrap/runtime-create";
 import type { SandboxGpuConfig } from "../sandbox-gpu-mode";
 import { cliName } from "../branding";
 import type {
@@ -283,6 +284,7 @@ export function selectRebuildCreatePolicy(
 export function createOnboardCreatedSandboxRegistrationWithManagedLifecycle(input: {
   readonly sandboxName: string;
   readonly managedBootstrap: boolean;
+  readonly allowNotReadyWithMatchingIdentity?: () => boolean;
   readonly sandboxGpuEnabled: boolean;
   readonly createdLifecycle: CreatedSandboxLifecycle;
   readonly getRecordedRegistration: () => CreatedSandboxLifecycleRegistration;
@@ -293,24 +295,28 @@ export function createOnboardCreatedSandboxRegistrationWithManagedLifecycle(inpu
   >;
 }) {
   let createdLifecycle = input.createdLifecycle;
-  if (input.managedBootstrap) {
-    const capture = input.sandboxGpuEnabled
-      ? input.createdLifecycle.capture
-      : ({ lifecycleGeneration }: Pick<SandboxEntry, "lifecycleGeneration">) => {
-          const recordedRegistration = input.getRecordedRegistration();
-          if (lifecycleGeneration !== recordedRegistration.lifecycleGeneration) {
-            throw new Error(
-              `Cannot register sandbox '${input.sandboxName}': lifecycle setup did not preserve its generation.`,
-            );
-          }
-          return recordedRegistration;
-        };
+  if (input.managedBootstrap || input.allowNotReadyWithMatchingIdentity) {
+    const allowNotReadyWithMatchingIdentity = () =>
+      input.managedBootstrap || input.allowNotReadyWithMatchingIdentity?.() === true;
+    const capture = (fields: Pick<SandboxEntry, "lifecycleGeneration">) => {
+      if (input.sandboxGpuEnabled || !allowNotReadyWithMatchingIdentity()) {
+        return input.createdLifecycle.capture(fields);
+      }
+      const { lifecycleGeneration } = fields;
+      const recordedRegistration = input.getRecordedRegistration();
+      if (lifecycleGeneration !== recordedRegistration.lifecycleGeneration) {
+        throw new Error(
+          `Cannot register sandbox '${input.sandboxName}': lifecycle setup did not preserve its generation.`,
+        );
+      }
+      return recordedRegistration;
+    };
     createdLifecycle = {
       ...input.createdLifecycle,
       capture,
       revalidate: (registration) =>
         input.createdLifecycle.revalidate(registration, {
-          allowNotReadyWithMatchingIdentity: true,
+          allowNotReadyWithMatchingIdentity: allowNotReadyWithMatchingIdentity(),
         }),
     };
   }
@@ -2397,6 +2403,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     const createFlowEnvironment = hermesGpuAuthority?.env ?? sandboxEnv;
     const createGpuVerifier = hermesGpuAuthority?.verify ?? verifyDirectSandboxGpu;
     let managedBootstrapCreateFinished = false;
+    let completedRuntimePatch: ManagedBootstrapRuntimePatch | null = null;
+    const allowNotReadyWithMatchingIdentity = (): boolean =>
+      managedBootstrapCreateFinished ||
+      completedRuntimePatch?.allowsNotReadyLifecycleRevalidation?.() === true;
     const revalidateCreatedSandboxIdentity = (
       expectedIdentity: string,
       operation: string,
@@ -2408,7 +2418,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           lifecycleLiveIdentityFingerprint: expectedIdentity,
         },
         getSandboxRecreateObservation,
-        { allowNotReadyWithMatchingIdentity: managedBootstrapCreateFinished },
+        { allowNotReadyWithMatchingIdentity: allowNotReadyWithMatchingIdentity() },
       );
     };
     const requireVerifiedCreateBoundary = (): NonNullable<typeof verifiedCreateBoundary> => {
@@ -2718,6 +2728,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               verifyDirectSandboxGpu: createGpuVerifier,
             },
           );
+          completedRuntimePatch = created.runtimePatch;
           return created;
         },
       });
@@ -2813,6 +2824,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       createOnboardCreatedSandboxRegistrationWithManagedLifecycle({
         sandboxName,
         managedBootstrap: managedBootstrap !== null,
+        allowNotReadyWithMatchingIdentity,
         sandboxGpuEnabled: effectiveSandboxGpuConfig.sandboxGpuEnabled,
         createdLifecycle: createdSandboxLifecycle,
         getRecordedRegistration: () =>

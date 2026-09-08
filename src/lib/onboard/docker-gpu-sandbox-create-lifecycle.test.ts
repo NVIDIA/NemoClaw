@@ -74,6 +74,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     });
 
     expect(patch.replacementRuntimeId()).toBeNull();
+    expect(patch.allowsNotReadyLifecycleRevalidation()).toBe(false);
     patch.maybeApplyDuringCreate();
     expect(patch.replacementRuntimeId()).toBe(result.newContainerId);
     expect(recreatePatch).toHaveBeenCalledWith(
@@ -92,6 +93,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     expect(finalizeBackup).not.toHaveBeenCalled();
 
     await patch.commitAfterReady();
+    expect(patch.allowsNotReadyLifecycleRevalidation()).toBe(true);
     expect(finalizeBackup).toHaveBeenCalledTimes(1);
     expect(finalizeBackup).toHaveBeenCalledWith(
       {
@@ -172,6 +174,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     patch.maybeApplyDuringCreate();
     patch.waitForSupervisorReconnectIfNeeded();
     await expect(patch.commitAfterReady()).rejects.toThrow("automatic rollback is unavailable");
+    expect(patch.allowsNotReadyLifecycleRevalidation()).toBe(false);
     expect(onPatchFailureExit).toHaveBeenCalledOnce();
     expect(onPatchFailureExit.mock.calls[0]?.[2]?.context).toMatchObject({
       backupRemoved: true,

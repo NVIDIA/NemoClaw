@@ -18,7 +18,11 @@ describe("managed bootstrap sandbox registration", () => {
     lifecycleLiveIdentityFingerprint: durableIdentity,
   };
 
-  function registrationFixture(managedBootstrap: boolean, observation: SandboxRecreateObservation) {
+  function registrationFixture(
+    managedBootstrap: boolean,
+    observation: SandboxRecreateObservation,
+    finalHandoffAcknowledged = false,
+  ) {
     const publish = vi.fn();
     const runtime = {
       targetGeneration: undefined,
@@ -28,6 +32,7 @@ describe("managed bootstrap sandbox registration", () => {
     const completeRegistration = createOnboardCreatedSandboxRegistrationWithManagedLifecycle({
       sandboxName: "alpha",
       managedBootstrap,
+      allowNotReadyWithMatchingIdentity: () => finalHandoffAcknowledged,
       sandboxGpuEnabled: false,
       createdLifecycle: createCreatedSandboxLifecycle(
         runtime,
@@ -78,6 +83,17 @@ describe("managed bootstrap sandbox registration", () => {
     expect(fixture.publish).toHaveBeenCalledExactlyOnceWith(recordedRegistration);
   });
 
+  it("publishes an explicitly recreated sandbox after its exact final handoff (#10560)", async () => {
+    const fixture = registrationFixture(
+      false,
+      { state: "not_ready", liveIdentityFingerprint: durableIdentity },
+      true,
+    );
+
+    await expect(fixture.complete()).resolves.toBeUndefined();
+    expect(fixture.publish).toHaveBeenCalledExactlyOnceWith(recordedRegistration);
+  });
+
   it.each([
     ["ordinary", false, { state: "not_ready" as const, liveIdentityFingerprint: durableIdentity }],
     ["missing", true, { state: "not_ready" as const, liveIdentityFingerprint: null }],
@@ -96,4 +112,15 @@ describe("managed bootstrap sandbox registration", () => {
       expect(fixture.publish).not.toHaveBeenCalled();
     },
   );
+
+  it("rejects an identity change after an exact final handoff (#10560)", async () => {
+    const fixture = registrationFixture(
+      false,
+      { state: "not_ready", liveIdentityFingerprint: "b".repeat(64) },
+      true,
+    );
+
+    await expect(fixture.complete()).rejects.toThrow(/identity changed/u);
+    expect(fixture.publish).not.toHaveBeenCalled();
+  });
 });
