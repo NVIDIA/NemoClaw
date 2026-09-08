@@ -18,6 +18,8 @@ PRs touching these areas need tests before approval.
 The contributor PR workflow uses only the patterns below to decide whether the pull request
 template's sensitive-path `Review notes` requirement applies. Match repository-relative paths.
 An exact file matches only that file; a path ending in `/**` matches every file below that directory.
+A valid pattern is a nonempty exact path or a nonempty directory path followed by `/**`. Reject
+absolute paths, `.` or `..` segments, backslashes, and every other glob metacharacter.
 
 - Repository workflow: `AGENTS.md`, `.agents/**`, `.dsh/**`, `.github/**`,
   `.pre-commit-config.yaml`, and `commitlint.config.js`.
