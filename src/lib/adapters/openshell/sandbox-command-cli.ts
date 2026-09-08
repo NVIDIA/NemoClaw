@@ -173,9 +173,9 @@ export const runCliOpenShellBufferedCommand: OpenShellBufferedCommandRunner = as
     const result = await captureOpenshellCommandAsyncResult(binary, args, {
       cwd: options.hostCwd,
       environment: options.environment,
-      // Every buffered command must receive EOF, including when the caller
-      // supplies no input.
-      input: options.input ?? "",
+      // Ignored stdin supplies immediate EOF without opening a writable pipe
+      // that can race a short-lived child with EPIPE.
+      input: options.input,
       outputLimitBytes: options.outputLimitBytes ?? DEFAULT_BUFFERED_OUTPUT_LIMIT_BYTES,
       signalSource: options.signalSource ?? defaultSignalSource,
       timeoutKillSignal: options.timeoutKillSignal,

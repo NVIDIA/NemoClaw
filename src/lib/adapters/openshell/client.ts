@@ -39,7 +39,7 @@ export type OpenshellAsyncCaptureSignalSource = {
 export type OpenshellAsyncCaptureLifecycleOptions = Readonly<{
   cwd?: string;
   environment?: NodeJS.ProcessEnv;
-  /** Defined input selects a pipe and is always ended, including for the empty string. */
+  /** Nonempty input selects a pipe and is always ended. Empty input uses an ignored stdin. */
   input?: string;
   killGraceMs?: number;
   outputLimitBytes?: number;
@@ -384,11 +384,12 @@ export function captureOpenshellCommandAsyncResult(
 ): Promise<OpenshellAsyncCaptureLifecycleResult> {
   const spawnImpl = opts.spawnImpl ?? spawn;
   return new Promise((resolve) => {
+    const hasInput = opts.input !== undefined && opts.input.length > 0;
     const child = spawnImpl(binary, [...args], {
       cwd: opts.cwd,
       env: opts.environment,
       detached: process.platform !== "win32",
-      stdio: [opts.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
+      stdio: [hasInput ? "pipe" : "ignore", "pipe", "pipe"],
     }) as ChildProcess;
 
     let settled = false;
@@ -528,11 +529,13 @@ export function captureOpenshellCommandAsyncResult(
       }
       settle({ status, signal, ...captured() });
     });
-    child.stdin?.once("error", (error) => {
-      if (settled) return;
-      signalProcessTree(child, "SIGKILL");
-      settle({ status: null, signal: child.signalCode, ...captured(), error });
-    });
+    if (hasInput) {
+      child.stdin?.once("error", (error) => {
+        if (settled) return;
+        signalProcessTree(child, "SIGKILL");
+        settle({ status: null, signal: child.signalCode, ...captured(), error });
+      });
+    }
 
     if (
       opts.timeoutMilliseconds !== undefined &&
@@ -577,7 +580,7 @@ export function captureOpenshellCommandAsyncResult(
         }, killGraceMs);
       }, opts.timeoutMilliseconds);
     }
-    child.stdin?.end(opts.input);
+    if (hasInput) child.stdin?.end(opts.input);
   });
 }
 

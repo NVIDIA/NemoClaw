@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { SpawnSyncReturns } from "node:child_process";
+import type { ChildProcess, SpawnSyncReturns } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +13,7 @@ import { withStdoutRedirectedToStderr } from "../../cli/stdout-guard";
 import {
   captureOpenshellCommand,
   captureOpenshellCommandAsync,
+  captureOpenshellCommandAsyncResult,
   captureSandboxSshConfigCommand,
   getInstalledOpenshellVersion,
   type OpenshellSpawnSync,
@@ -446,6 +448,48 @@ describe("openshell helpers", () => {
     expect(result.status).toBeNull();
     expect(result.error).toEqual(expect.objectContaining({ code: "ETIMEDOUT" }));
     expect(result.signal).toBeTruthy();
+  });
+
+  it("ignores empty async input so EPIPE cannot replace a successful close", async () => {
+    const child = new EventEmitter() as EventEmitter & ChildProcess;
+    const stdin = new EventEmitter() as EventEmitter & {
+      end: ReturnType<typeof vi.fn>;
+    };
+    const stdout = new EventEmitter();
+    const stderr = new EventEmitter();
+    const observedStdio: unknown[] = [];
+    stdin.on("error", () => {});
+    stdin.end = vi.fn();
+    Object.assign(child, {
+      exitCode: null,
+      signalCode: null,
+      stdin,
+      stdout,
+      stderr,
+      kill: vi.fn(() => true),
+    });
+
+    const resultPromise = captureOpenshellCommandAsyncResult("openshell", ["status"], {
+      input: "",
+      spawnImpl: ((_binary: string, _args: readonly string[], options: { stdio?: unknown }) => {
+        observedStdio.push(options.stdio);
+        queueMicrotask(() => {
+          stdout.emit("data", "READY");
+          stdin.emit("error", Object.assign(new Error("write EPIPE"), { code: "EPIPE" }));
+          child.emit("close", 0, null);
+        });
+        return child;
+      }) as never,
+    });
+
+    await expect(resultPromise).resolves.toEqual({
+      status: 0,
+      signal: null,
+      stdout: "READY",
+      stderr: "",
+    });
+    expect(observedStdio).toEqual([["ignore", "pipe", "pipe"]]);
+    expect(stdin.end).not.toHaveBeenCalled();
   });
 
   it("preserves a concrete async close status after its deadline", async () => {

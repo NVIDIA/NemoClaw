@@ -122,18 +122,23 @@ describe("checkAndRecoverSandboxProcesses", () => {
     const agentRuntime = requireSource("../../src/lib/agent/runtime.js");
     const registry = requireSource("../../src/lib/state/registry.js");
     const forwardHealth = requireSource("../../src/lib/actions/sandbox/forward-health.js");
-    const childProcess = requireSource("node:child_process");
     const runningForward = `SANDBOX  BIND  PORT  PID  STATUS
 hermes-box  127.0.0.1  18789  12345  running`;
     const previousWaitSeconds = process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS;
     const previousPollInterval = process.env.NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS;
     const previousSettleSeconds = process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS;
-    const commands: string[] = [];
-    let restarted = false;
-    const requestGatewaySupervisorAction = vi.fn(() => {
-      restarted = true;
-      return { status: 0, stdout: "GATEWAY_PID=4242\n", stderr: "" };
-    });
+    const requestGatewaySupervisorAction = vi.fn(() => ({
+      status: 0,
+      stdout: "GATEWAY_PID=4242\n",
+      stderr: "",
+    }));
+    const commandExecutor = {
+      runBuffered: vi.fn(async () => ({
+        outcome: { kind: "completed" as const, exitCode: 0 },
+        stdout: "",
+        stderr: "",
+      })),
+    };
 
     // The gateway retry is under test; host-forward readiness is fully mocked.
     vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");
@@ -142,18 +147,6 @@ hermes-box  127.0.0.1  18789  12345  running`;
     process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS = "0";
 
     try {
-      vi.spyOn(childProcess, "spawnSync").mockImplementation(
-        (command: unknown, rawArgs: unknown) => {
-          const shellCommand = getSandboxExecShellCommand(rawArgs);
-          const isHealthProbe = shellCommand.includes("HTTP_CODE=$(curl");
-          const probeStatus = restarted ? "RUNNING" : "STOPPED";
-          const stdout = isHealthProbe
-            ? `__NEMOCLAW_SANDBOX_EXEC_STARTED__\n${probeStatus}\n`
-            : "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nRUNNING\n";
-          commands.push(String(command));
-          return { status: 0, stdout, stderr: "" } as never;
-        },
-      );
       vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({
         name: "hermes",
         displayName: "Hermes Agent",
@@ -187,11 +180,19 @@ hermes-box  127.0.0.1  18789  12345  running`;
           quiet: true,
           requestGatewaySupervisorAction,
           isSandboxGatewayRunningImpl: async () => false,
+          commandExecutor,
         }),
       );
       expect(result.recovered).toBe(true);
       expect(result.wasRunning).toBe(false);
-      expect(commands).not.toContain("ssh");
+      expect(commandExecutor.runBuffered).toHaveBeenCalledOnce();
+      expect(commandExecutor.runBuffered).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sandboxName: "hermes-box",
+          target: { kind: "selected" },
+          command: ["true"],
+        }),
+      );
       expect(requestGatewaySupervisorAction).toHaveBeenCalledOnce();
       expect(requestGatewaySupervisorAction).toHaveBeenCalledWith("hermes-box", "recover");
     } finally {

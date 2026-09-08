@@ -434,6 +434,7 @@ describe("managed gateway recovery controller", () => {
               healthProbeCalls += 1;
               return false;
             },
+            waitForRecreatedSandboxOpenShellReadyImpl: async () => true,
           }),
         );
         expect(result).toEqual(expectedResult);
