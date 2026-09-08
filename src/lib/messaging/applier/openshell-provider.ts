@@ -108,22 +108,24 @@ export async function applyCredentialsAtOpenShell(
       target,
       providerName: definition.providerName,
     });
-    const state = classifyProviderDefinition(observed, definition);
-    const credentialAvailability = definition.credentials.map(({ value }) => Boolean(value));
-    const hasAnyCredential = credentialAvailability.some(Boolean);
-    const hasEveryCredential = credentialAvailability.every(Boolean);
+    const state = classifyProviderDefinition(observed, definition, true);
+    const primaryCredentialKey = requiredCredentialKey(definition)!;
+    const hasAnyCredential = definition.credentials.some(({ value }) => Boolean(value));
+    const hasPrimaryCredential = definition.credentials.some(
+      ({ name, value }) => name === primaryCredentialKey && Boolean(value),
+    );
     states.set(definition.providerName, state);
     if (state === "indeterminate") {
       throw new MessagingProviderApplyError({
         message: `Could not inspect messaging provider '${definition.providerName}': ${providerFailureMessage(observed)}`,
       });
     }
-    if (state === "collision" && (!options.replaceExisting || !hasEveryCredential)) {
+    if (state === "collision" && (!options.replaceExisting || !hasPrimaryCredential)) {
       throw bindingConflict(definition);
     }
-    if (state === "missing" && hasAnyCredential && !hasEveryCredential) {
+    if (state === "missing" && hasAnyCredential && !hasPrimaryCredential) {
       throw new MessagingProviderApplyError({
-        message: `Messaging provider '${definition.providerName}' is missing required credential material for creation.`,
+        message: `Messaging provider '${definition.providerName}' is missing required credential '${primaryCredentialKey}' for creation.`,
       });
     }
   }
@@ -242,7 +244,8 @@ export async function applyCredentialsAtOpenShell(
       target,
       providerName: definition.providerName,
     });
-    if (classifyProviderDefinition(verification, definition) !== "exact") {
+    const appliedDefinition = action === "create" ? { ...definition, credentials } : definition;
+    if (classifyProviderDefinition(verification, appliedDefinition) !== "exact") {
       throw withMutationEvidence(
         `OpenShell did not confirm messaging provider '${definition.providerName}' after ${action}.`,
         mutatedProviderNames,
@@ -535,6 +538,7 @@ function assertUniqueDefinitions(
     if (
       (definition.profile && definition.profile.profileType !== definition.providerType) ||
       definition.credentials.length === 0 ||
+      !requiredCredentialKey(definition) ||
       new Set(definition.credentials.map(({ name }) => name)).size !== definition.credentials.length
     ) {
       throw new MessagingProviderApplyError({
@@ -550,6 +554,15 @@ function assertUniqueDefinitions(
     }
     profilePaths.set(definition.profile.profileType, definition.profile.profilePath);
   }
+}
+
+function requiredCredentialKey(
+  definition: MessagingCredentialProviderEphemeralInput,
+): string | null {
+  if (definition.credentials.some(({ name }) => name === definition.credentialId)) {
+    return definition.credentialId;
+  }
+  return definition.credentials.length === 1 ? (definition.credentials[0]?.name ?? null) : null;
 }
 
 function assertRefreshDefinitions(
@@ -647,19 +660,34 @@ function toMissingEntry(
 function classifyProviderDefinition(
   result: OpenShellProviderResult<OpenShellProviderMetadata>,
   definition: MessagingCredentialProviderEphemeralInput,
+  allowMissingPresentCredentials = false,
 ): ProviderBindingState {
   if (!result.ok) {
     return result.error.kind === "command" && result.error.reason === "not_found"
       ? "missing"
       : "indeterminate";
   }
-  const expectedCredentialKeys = definition.credentials.map(({ name }) => name).sort();
-  const actualCredentialKeys = [...result.value.credentialKeys].sort();
+  const declaredCredentialKeys = new Set(definition.credentials.map(({ name }) => name));
+  const primaryCredentialKey = requiredCredentialKey(definition);
+  if (!primaryCredentialKey) return "collision";
+  const requiredCredentialKeys = new Set([
+    primaryCredentialKey,
+    ...definition.credentials
+      .filter(
+        ({ name, value }) =>
+          name !== primaryCredentialKey &&
+          !allowMissingPresentCredentials &&
+          Boolean(value),
+      )
+      .map(({ name }) => name),
+  ]);
+  const actualCredentialKeys = new Set(result.value.credentialKeys);
   return result.value.name === definition.providerName &&
     result.value.type === definition.providerType &&
     result.value.configKeys.length === 0 &&
-    actualCredentialKeys.length === expectedCredentialKeys.length &&
-    actualCredentialKeys.every((key, index) => key === expectedCredentialKeys[index])
+    actualCredentialKeys.size === result.value.credentialKeys.length &&
+    [...actualCredentialKeys].every((key) => declaredCredentialKeys.has(key)) &&
+    [...requiredCredentialKeys].every((key) => actualCredentialKeys.has(key))
     ? "exact"
     : "collision";
 }
