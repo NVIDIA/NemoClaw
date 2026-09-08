@@ -1603,7 +1603,9 @@ function validateUnifiedAdvisorBoundary(errors: string[], advisorPath: string): 
     ".head.sha == $sha",
     ".base.repo.full_name == $base",
     'if length == 1 then .[0] else error("CI run must identify one open PR") end',
-    '"pr_number=\\(.number)\\nhead_sha=\\(.head.sha)\\nbase_sha=\\(.base.sha)"',
+    'run_base_sha="${RUN_BASE_SHA:-}"',
+    "sed -En 's/^.* base ([0-9a-f]{40}) gate true$/\\1/p'",
+    '"pr_number=\\(.number)\\nhead_sha=\\(.head.sha)\\nbase_sha=\\($base_sha)"',
   ]) {
     if (!String(targetStep?.run ?? "").includes(fragment)) {
       errors.push(`Unified advisor green checks gate must retain ${fragment}`);
@@ -1614,7 +1616,10 @@ function validateUnifiedAdvisorBoundary(errors: string[], advisorPath: string): 
     targetStep.env?.RUN_HEAD_BRANCH !== "${{ github.event.workflow_run.head_branch }}" ||
     targetStep.env?.RUN_HEAD_REPOSITORY !==
       "${{ github.event.workflow_run.head_repository.full_name }}" ||
-    targetStep.env?.RUN_HEAD_SHA !== "${{ github.event.workflow_run.head_sha }}"
+    targetStep.env?.RUN_HEAD_SHA !== "${{ github.event.workflow_run.head_sha }}" ||
+    targetStep.env?.RUN_BASE_SHA !==
+      "${{ github.event.workflow_run.pull_requests[0].base.sha }}" ||
+    targetStep.env?.RUN_DISPLAY_TITLE !== "${{ github.event.workflow_run.display_title }}"
   ) {
     errors.push("Unified advisor green checks gate must resolve the source run PR");
   }

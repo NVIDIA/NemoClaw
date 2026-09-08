@@ -70,8 +70,15 @@ jobs:
           RUN_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
           RUN_HEAD_REPOSITORY: ${{ github.event.workflow_run.head_repository.full_name }}
           RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_BASE_SHA: ${{ github.event.workflow_run.pull_requests[0].base.sha }}
+          RUN_DISPLAY_TITLE: ${{ github.event.workflow_run.display_title }}
         run: |
           head_owner="${RUN_HEAD_REPOSITORY%%/*}"
+          run_base_sha="${RUN_BASE_SHA:-}"
+          if [[ ! "$run_base_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            run_base_sha="$(sed -En 's/^.* base ([0-9a-f]{40}) gate true$/\1/p' <<< "$RUN_DISPLAY_TITLE")"
+          fi
+          [[ "$run_base_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "CI run has no valid base SHA" >&2; exit 1; }
           pulls="$(gh api --method GET "repos/$GITHUB_REPOSITORY/pulls" \
             -f state=open -f "head=${head_owner}:${RUN_HEAD_BRANCH}" -f per_page=100)"
           target="$(jq -cer \
@@ -82,7 +89,8 @@ jobs:
             '[.[] | select(.head.repo.full_name == $repo and .head.ref == $branch and .head.sha == $sha and .base.repo.full_name == $base)] |
              if length == 1 then .[0] else error("CI run must identify one open PR") end' \
             <<< "$pulls")"
-          jq -r '"pr_number=\(.number)\nhead_sha=\(.head.sha)\nbase_sha=\(.base.sha)"' \
+          jq -r --arg base_sha "$run_base_sha" \
+            '"pr_number=\(.number)\nhead_sha=\(.head.sha)\nbase_sha=\($base_sha)"' \
             <<< "$target" >> "$GITHUB_OUTPUT"
       - name: Accept manual dispatch
         if: ${{ github.event_name == 'workflow_dispatch' }}
