@@ -448,6 +448,25 @@ describe("openshell helpers", () => {
     expect(result.signal).toBeTruthy();
   });
 
+  it("preserves a concrete async close status after its deadline", async () => {
+    const result = await captureOpenshellCommandAsync(
+      process.execPath,
+      ["-e", "process.on('SIGTERM', () => process.exit(0)); setInterval(() => {}, 1000)"],
+      {
+        ignoreError: true,
+        timeout: 100,
+        killGraceMs: 10,
+      },
+    );
+
+    expect(result).toEqual({
+      status: 0,
+      output: "",
+      error: expect.objectContaining({ code: "ETIMEDOUT" }),
+      signal: null,
+    });
+  });
+
   it("includes stderr in async capture output when requested", async () => {
     const result = await captureOpenshellCommandAsync(
       process.execPath,
@@ -478,6 +497,16 @@ describe("openshell helpers", () => {
       stderr: "boom\n",
       signal: null,
     });
+  });
+
+  it("preserves the legacy unbounded async capture when maxBuffer is supplied", async () => {
+    const result = await captureOpenshellCommandAsync(
+      process.execPath,
+      ["-e", "process.stdout.write('x'.repeat(64))"],
+      { ignoreError: true, maxBuffer: 8 },
+    );
+
+    expect(result).toEqual({ status: 0, output: "x".repeat(64), signal: null });
   });
 
   it("uses the injected exit handler on failure", () => {

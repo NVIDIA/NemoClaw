@@ -255,6 +255,23 @@ describe("CLI OpenShell sandbox command executor", () => {
     expect(Buffer.byteLength(result[stream])).toBe(8);
   });
 
+  it.each([Number.NaN, Number.NEGATIVE_INFINITY])(
+    "fails closed for an invalid explicit buffered output limit of %s",
+    async (outputLimitBytes) => {
+      const result = await runCliOpenShellBufferedCommand(
+        process.execPath,
+        ["-e", "process.stdout.write('x')"],
+        { outputLimitBytes, timeoutMilliseconds: 1000 },
+      );
+
+      expect(result.status).toBeNull();
+      expect((result.error as NodeJS.ErrnoException | undefined)?.code).toBe(
+        "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
+      );
+      expect(result.stdout).toBe("");
+    },
+  );
+
   it.runIf(process.platform !== "win32")(
     "forwards host cancellation to the buffered process group and releases handlers",
     async () => {

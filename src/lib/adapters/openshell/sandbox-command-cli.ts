@@ -1,12 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn, spawnSync, type ChildProcess, type SpawnSyncReturns } from "node:child_process";
+import { spawn, spawnSync, type SpawnSyncReturns } from "node:child_process";
 
 import { spawnExitCode } from "../../core/process-exit";
 import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
 import { isValidName } from "../../sandbox-name-contract";
 import { buildSubprocessEnv } from "../../subprocess-env";
+import {
+  captureOpenshellCommandAsyncResult,
+  type OpenshellAsyncCaptureSignalSource,
+} from "./client";
 import { resolveOpenshellBinaryOrNull } from "./resolve-shared";
 import {
   type OpenShellSandboxBufferedCommandCompletion,
@@ -39,10 +43,7 @@ export type OpenShellCommandSpawner = (
   options: OpenShellCommandChildOptions,
 ) => OpenShellCommandChild;
 
-export type OpenShellCommandSignalSource = {
-  add: (signal: "SIGTERM" | "SIGINT", listener: () => void) => void;
-  remove: (signal: "SIGTERM" | "SIGINT", listener: () => void) => void;
-};
+export type OpenShellCommandSignalSource = OpenshellAsyncCaptureSignalSource;
 
 export type OpenShellCommandChildOptions = Readonly<{
   stdin?: boolean;
@@ -162,196 +163,44 @@ const defaultSignalSource: OpenShellCommandSignalSource = {
 };
 
 const DEFAULT_BUFFERED_OUTPUT_LIMIT_BYTES = 1024 * 1024;
-const DEFAULT_BUFFERED_KILL_GRACE_MS = 1_000;
 
-function signalBufferedProcessTree(child: ChildProcess, signal: NodeJS.Signals): void {
-  if (!child.pid) return;
-  try {
-    if (process.platform !== "win32") {
-      process.kill(-child.pid, signal);
-    } else {
-      child.kill(signal);
-    }
-  } catch {
-    try {
-      child.kill(signal);
-    } catch {
-      // The process may have exited between the deadline and signal delivery.
-    }
-  }
-}
-
-export const runCliOpenShellBufferedCommand: OpenShellBufferedCommandRunner = (
+export const runCliOpenShellBufferedCommand: OpenShellBufferedCommandRunner = async (
   binary,
   args,
   options,
-) =>
-  new Promise((resolve) => {
-    let child: ChildProcess;
-    let settled = false;
-    let timedOut = false;
-    let interruptedBy: "SIGTERM" | "SIGINT" | null = null;
-    let timeoutSignal: NodeJS.Signals | null = null;
-    let stdoutBytes = 0;
-    let stderrBytes = 0;
-    const stdoutChunks: Buffer[] = [];
-    const stderrChunks: Buffer[] = [];
-    const outputLimitBytes = options.outputLimitBytes ?? DEFAULT_BUFFERED_OUTPUT_LIMIT_BYTES;
-    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-    let killHandle: ReturnType<typeof setTimeout> | undefined;
-    let forceHandle: ReturnType<typeof setTimeout> | undefined;
-    let releaseSignals = () => {};
-    const clearTimers = () => {
-      if (timeoutHandle) clearTimeout(timeoutHandle);
-      if (killHandle) clearTimeout(killHandle);
-      if (forceHandle) clearTimeout(forceHandle);
-    };
-    const settle = (result: OpenShellBufferedCommandRunResult) => {
-      if (settled) return;
-      settled = true;
-      clearTimers();
-      releaseSignals();
-      resolve(result);
-    };
-    const captured = () => ({
-      stdout: Buffer.concat(stdoutChunks).toString("utf8"),
-      stderr: Buffer.concat(stderrChunks).toString("utf8"),
+) => {
+  try {
+    const result = await captureOpenshellCommandAsyncResult(binary, args, {
+      cwd: options.hostCwd,
+      environment: options.environment,
+      // Every buffered command must receive EOF, including when the caller
+      // supplies no input.
+      input: options.input ?? "",
+      outputLimitBytes: options.outputLimitBytes ?? DEFAULT_BUFFERED_OUTPUT_LIMIT_BYTES,
+      signalSource: options.signalSource ?? defaultSignalSource,
+      timeoutKillSignal: options.timeoutKillSignal,
+      timeoutMilliseconds: options.timeoutMilliseconds,
     });
-    const capture = (stream: "stdout" | "stderr", chunk: Buffer | string) => {
-      if (settled) return;
-      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      const currentBytes = stream === "stdout" ? stdoutBytes : stderrBytes;
-      const chunks = stream === "stdout" ? stdoutChunks : stderrChunks;
-      const available = Math.max(0, outputLimitBytes - currentBytes);
-      if (available > 0) chunks.push(bytes.subarray(0, available));
-      if (stream === "stdout") stdoutBytes += bytes.length;
-      else stderrBytes += bytes.length;
-      if (bytes.length <= available) return;
-      const error = Object.assign(new Error(`${stream} exceeded the buffered output limit`), {
-        code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
-      });
-      signalBufferedProcessTree(child, "SIGKILL");
-      settle({ status: null, ...captured(), error });
+    return {
+      status: result.error ? null : result.status,
+      signal: result.signal ?? result.timeoutSignal ?? null,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      ...(result.timedOut
+        ? { timedOut: true }
+        : result.error
+          ? { error: result.error, timedOut: false }
+          : {}),
     };
-    try {
-      child = spawn(binary, [...args], {
-        detached: process.platform !== "win32",
-        stdio: ["pipe", "pipe", "pipe"],
-        ...(options.hostCwd ? { cwd: options.hostCwd } : {}),
-        ...(options.environment ? { env: options.environment } : {}),
-      });
-    } catch (error) {
-      settle({
-        status: null,
-        stdout: "",
-        stderr: "",
-        error: error instanceof Error ? error : new Error(String(error)),
-      });
-      return;
-    }
-    const signalSource = options.signalSource ?? defaultSignalSource;
-    const interruptionError = (signal: "SIGTERM" | "SIGINT") =>
-      Object.assign(new Error(`OpenShell command cancelled by ${signal}`), { code: "ECANCELED" });
-    const beginInterruption = (signal: "SIGTERM" | "SIGINT") => {
-      if (settled || timedOut || interruptedBy) return;
-      interruptedBy = signal;
-      if (timeoutHandle) clearTimeout(timeoutHandle);
-      signalBufferedProcessTree(child, signal);
-      killHandle = setTimeout(() => {
-        signalBufferedProcessTree(child, "SIGKILL");
-        forceHandle = setTimeout(() => {
-          child.stdout?.destroy();
-          child.stderr?.destroy();
-          settle({
-            status: null,
-            signal: "SIGKILL",
-            ...captured(),
-            error: interruptionError(signal),
-          });
-        }, DEFAULT_BUFFERED_KILL_GRACE_MS);
-      }, DEFAULT_BUFFERED_KILL_GRACE_MS);
+  } catch (error) {
+    return {
+      status: null,
+      stdout: "",
+      stderr: "",
+      error: error instanceof Error ? error : new Error(String(error)),
     };
-    const forwardTerm = () => beginInterruption("SIGTERM");
-    const forwardInt = () => beginInterruption("SIGINT");
-    releaseSignals = () => {
-      signalSource.remove("SIGTERM", forwardTerm);
-      signalSource.remove("SIGINT", forwardInt);
-    };
-    signalSource.add("SIGTERM", forwardTerm);
-    signalSource.add("SIGINT", forwardInt);
-    child.stdout?.on("data", (chunk: Buffer | string) => capture("stdout", chunk));
-    child.stderr?.on("data", (chunk: Buffer | string) => capture("stderr", chunk));
-    child.once("error", (error) => {
-      if (interruptedBy) {
-        signalBufferedProcessTree(child, "SIGKILL");
-        settle({
-          status: null,
-          signal: child.signalCode ?? interruptedBy,
-          ...captured(),
-          error: interruptionError(interruptedBy),
-        });
-        return;
-      }
-      settle({ status: null, signal: child.signalCode, ...captured(), error, timedOut });
-    });
-    child.once("close", (status, signal) => {
-      if (timedOut) {
-        const completionSignal = signal ?? timeoutSignal;
-        signalBufferedProcessTree(child, "SIGKILL");
-        settle({
-          status: null,
-          signal: completionSignal,
-          ...captured(),
-          timedOut: true,
-        });
-        return;
-      }
-      if (interruptedBy) {
-        signalBufferedProcessTree(child, "SIGKILL");
-        settle({
-          status: null,
-          signal: signal ?? interruptedBy,
-          ...captured(),
-          error: interruptionError(interruptedBy),
-        });
-        return;
-      }
-      settle({ status, signal, ...captured() });
-    });
-    child.stdin?.once("error", (error) => {
-      signalBufferedProcessTree(child, "SIGKILL");
-      settle({ status: null, signal: child.signalCode, ...captured(), error, timedOut });
-    });
-    if (
-      options.timeoutMilliseconds !== undefined &&
-      Number.isFinite(options.timeoutMilliseconds) &&
-      options.timeoutMilliseconds > 0
-    ) {
-      timeoutHandle = setTimeout(() => {
-        timedOut = true;
-        timeoutSignal = options.timeoutKillSignal ?? "SIGTERM";
-        signalBufferedProcessTree(child, timeoutSignal);
-        if (timeoutSignal === "SIGKILL") {
-          forceHandle = setTimeout(() => {
-            child.stdout?.destroy();
-            child.stderr?.destroy();
-            settle({ status: null, signal: "SIGKILL", ...captured(), timedOut: true });
-          }, DEFAULT_BUFFERED_KILL_GRACE_MS);
-          return;
-        }
-        killHandle = setTimeout(() => {
-          timeoutSignal = "SIGKILL";
-          signalBufferedProcessTree(child, "SIGKILL");
-          forceHandle = setTimeout(() => {
-            child.stdout?.destroy();
-            child.stderr?.destroy();
-            settle({ status: null, signal: "SIGKILL", ...captured(), timedOut: true });
-          }, DEFAULT_BUFFERED_KILL_GRACE_MS);
-        }, DEFAULT_BUFFERED_KILL_GRACE_MS);
-      }, options.timeoutMilliseconds);
-    }
-    child.stdin?.end(options.input);
-  });
+  }
+};
 
 export async function runCliOpenShellStreamingCommand(
   binary: string,
