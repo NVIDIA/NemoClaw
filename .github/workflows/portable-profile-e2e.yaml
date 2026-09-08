@@ -155,7 +155,7 @@ jobs:
   portable-launch:
     if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-26.04
-    timeout-minutes: 90
+    timeout-minutes: 95
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: portable-launch

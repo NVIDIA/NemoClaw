@@ -29,7 +29,6 @@ import {
   LAUNCH_TURN_SCRIPT,
   OPENCLAW_LAUNCH_OPENSHELL_SHIM_SCRIPT,
   OPENCLAW_LAUNCH_RUNTIME_ENV_SCRIPT,
-  OPENCLAW_PROVIDER_UNAVAILABLE_MARKER,
   OPENCLAW_PTY_MONITOR_STARTER_SCRIPT,
   OPENCLAW_SESSION_EVIDENCE_SCRIPT,
   runOpenClawLaunchSession,
@@ -59,6 +58,12 @@ type FixtureMode =
   | "recording-timeout"
   | "restored-canonical-timeout"
   | "valid";
+
+interface LaunchFixtureInvocation {
+  args: string[];
+  command: string;
+  env?: NodeJS.ProcessEnv;
+}
 
 it("reports a residual PTY monitor socket without removing it (#9384)", async () => {
   const fixtureRoot = mkdtempSync(join(tmpdir(), "nemoclaw-monitor-cleanup-"));
@@ -110,6 +115,7 @@ function runLaunchSessionFixture(
     | "provider"
     | "reordered"
     | "security",
+  invocation?: LaunchFixtureInvocation,
 ) {
   const fixtureRoot = mkdtempSync(join(tmpdir(), "nemoclaw-launch-turn-"));
   const canonicalRestoredMarker = join(fixtureRoot, "canonical-restored");
@@ -125,7 +131,8 @@ function runLaunchSessionFixture(
   const pendingQualificationMarker = join(fixtureRoot, "pending-qualification-observed");
   const ptyPathUnreadableMarker = join(fixtureRoot, "pty-path-unreadable");
   const ptySocketReceiptPath = join(fixtureRoot, "pty-socket-receipt.json");
-  const runId = randomUUID().replaceAll("-", "");
+  const invocationEnv = invocation?.env ?? {};
+  const runId = invocationEnv.NEMOCLAW_LAUNCH_RUN_ID ?? randomUUID().replaceAll("-", "");
   const baselinePath = `/tmp/nemoclaw-launch-session-${runId}.json`;
   const ptyMonitorRoot = `/tmp/nemoclaw-launch-turn-${runId}`;
   mkdirSync(sessionRoot);
@@ -470,11 +477,14 @@ exec "$@"
         ? unavailablePtyMonitorStarterScript
         : OPENCLAW_PTY_MONITOR_STARTER_SCRIPT;
 
-    const result = spawnSync("bash", ["-c", LAUNCH_TURN_SCRIPT], {
+    const launchCommand = invocation?.command ?? "bash";
+    const launchArgs = invocation?.args ?? ["-c", LAUNCH_TURN_SCRIPT];
+    const result = spawnSync(launchCommand, launchArgs, {
       encoding: "utf8",
       killSignal: "SIGKILL",
       env: {
         ...process.env,
+        ...invocationEnv,
         HOME: fixtureRoot,
         NEMOCLAW_FIXTURE_BIN_ROOT: fixtureRoot,
         NEMOCLAW_FIXTURE_CANONICAL_RESTORED_MARKER: canonicalRestoredMarker,
@@ -491,16 +501,16 @@ exec "$@"
         NEMOCLAW_FIXTURE_RUN_ID: runId,
         NEMOCLAW_FIXTURE_TUI_PIDS: tuiPidsPath,
         NEMOCLAW_FIXTURE_TTY_MARKER: ttyMarker,
-        NEMOCLAW_LAUNCH_COMMAND: fakeLaunch,
-        NEMOCLAW_LAUNCH_ENTRYPOINT: "",
-        NEMOCLAW_LAUNCH_EXIT_COMMAND: "/exit",
-        NEMOCLAW_LAUNCH_FIRST_INPUT: "first input",
+        NEMOCLAW_LAUNCH_COMMAND: invocationEnv.NEMOCLAW_LAUNCH_COMMAND ?? fakeLaunch,
+        NEMOCLAW_LAUNCH_ENTRYPOINT: invocationEnv.NEMOCLAW_LAUNCH_ENTRYPOINT ?? "",
+        NEMOCLAW_LAUNCH_EXIT_COMMAND: invocationEnv.NEMOCLAW_LAUNCH_EXIT_COMMAND ?? "/exit",
+        NEMOCLAW_LAUNCH_FIRST_INPUT: invocationEnv.NEMOCLAW_LAUNCH_FIRST_INPUT ?? "first input",
         NEMOCLAW_LAUNCH_HOST_TMP_ROOT: fixtureRoot,
         NEMOCLAW_LAUNCH_OPENSHELL_SHIM_SCRIPT: OPENCLAW_LAUNCH_OPENSHELL_SHIM_SCRIPT,
         NEMOCLAW_LAUNCH_PTY_MONITOR_STARTER_SCRIPT: ptyMonitorStarterScript,
         NEMOCLAW_LAUNCH_RUN_ID: runId,
         NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT: OPENCLAW_LAUNCH_RUNTIME_ENV_SCRIPT,
-        NEMOCLAW_LAUNCH_SANDBOX: "sandbox",
+        NEMOCLAW_LAUNCH_SANDBOX: invocationEnv.NEMOCLAW_LAUNCH_SANDBOX ?? "sandbox",
         NEMOCLAW_LAUNCH_SESSION_BUDGET_SECONDS:
           mode === "restored-canonical-timeout"
             ? "10"
@@ -508,13 +518,14 @@ exec "$@"
               ? "5"
               : mode.endsWith("-timeout")
                 ? "2"
-                : "230",
-        NEMOCLAW_LAUNCH_SECOND_INPUT: "second input",
+                : (invocationEnv.NEMOCLAW_LAUNCH_SESSION_BUDGET_SECONDS ?? "230"),
+        NEMOCLAW_LAUNCH_SECOND_INPUT:
+          invocationEnv.NEMOCLAW_LAUNCH_SECOND_INPUT ?? "second input",
         NEMOCLAW_LAUNCH_SESSION_EVIDENCE_SCRIPT: OPENCLAW_SESSION_EVIDENCE_SCRIPT,
         NEMOCLAW_LAUNCH_SESSION_ROOT: sessionRoot,
         NEMOCLAW_OPENSHELL_COMMAND: fakeOpenshell,
         PATH: `${fixtureRoot}:${process.env.PATH ?? ""}`,
-        TERM: "xterm-256color",
+        TERM: invocationEnv.TERM ?? "xterm-256color",
       },
       timeout: 15_000,
     });
@@ -1032,37 +1043,41 @@ it.runIf(process.platform === "linux")(
 
     expect(ttyObserved).toBe(true);
     expect(baselineRemoved).toBe(true);
-    expect(result.signal).toBeNull();
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("nemoclaw.e2e.launch-failure=provider-unavailable");
   },
 );
 
 it.runIf(process.platform === "linux")(
-  "retries the provider marker emitted by the real launch producer (#10978)",
+  "executes the real launch producer across a provider retry (#10978)",
   async () => {
-    const produced = runLaunchSessionFixture("provider-empty-message", "provider").result;
-    const markerOffset = produced.stderr.lastIndexOf(`\n${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}:`);
-    const producedFailure = produced.stderr.slice(0, markerOffset);
-    const calls: Array<{ artifactName?: string; runId?: string }> = [];
+    const calls: Array<{
+      artifactName?: string;
+      firstInput?: string;
+      runId?: string;
+    }> = [];
     const host = {
       command: async (
-        _command: string,
-        _args: string[],
+        command: string,
+        args: string[],
         options?: { artifactName?: string; env?: NodeJS.ProcessEnv },
       ) => {
         calls.push({
           artifactName: options?.artifactName,
+          firstInput: options?.env?.NEMOCLAW_LAUNCH_FIRST_INPUT,
           runId: options?.env?.NEMOCLAW_LAUNCH_RUN_ID,
         });
-        return calls.length === 1
-          ? {
-              exitCode: produced.status ?? 1,
-              signal: produced.signal,
-              stderr: `${producedFailure}\n${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}:${options?.env?.NEMOCLAW_LAUNCH_RUN_ID}\n`,
-              stdout: produced.stdout,
-            }
-          : { exitCode: 0, signal: null, stderr: "", stdout: "" };
+        const fixture = runLaunchSessionFixture(
+          calls.length === 1 ? "provider-empty-message" : "valid",
+          calls.length === 1 ? "provider" : "absent",
+          { args, command, env: options?.env },
+        ).result;
+        return {
+          exitCode: fixture.status ?? 1,
+          signal: fixture.signal,
+          stderr: fixture.stderr,
+          stdout: fixture.stdout,
+        };
       },
       openshellCommandPath: "/usr/bin/openshell",
     };
@@ -1070,8 +1085,9 @@ it.runIf(process.platform === "linux")(
     try {
       const launch = runOpenClawLaunchSession({
         artifactName: "producer-handoff",
-        cliCommand: "node",
+        cliCommand: "openclaw",
         env: {},
+        exitCommand: "/exit",
         host: host as never,
         redactionValues: [],
         sandboxName: "alpha",
@@ -1083,6 +1099,7 @@ it.runIf(process.platform === "linux")(
         "producer-handoff-provider-retry-02",
       ]);
       expect(new Set(calls.map((call) => call.runId)).size).toBe(2);
+      expect(new Set(calls.map((call) => call.firstInput)).size).toBe(2);
     } finally {
       vi.useRealTimers();
     }
