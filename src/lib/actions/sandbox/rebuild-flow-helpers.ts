@@ -523,17 +523,24 @@ export async function backupSandboxStateForRebuild(
           log(`Could not return '${sandboxName}' container to its stopped state after backup retry`);
         }
       }
-      // A successful backup is not itself safe to proceed on if the container
-      // it required starting could not be returned to stopped: the sandbox
-      // would now be running when it was stopped before rebuild started, and
-      // a later rebuild bail (e.g. an unsafe policy handoff) would strand it
-      // that way with no data-loss warning attached (#11137 review).
-      if (backup.success && !returnedToStopped) {
-        console.error("  Backed up sandbox state after starting its stopped container, but could not");
-        console.error(`  return container '${started.containerName}' to its stopped state.`);
+      // A container this recovery started must be reported whenever it cannot
+      // be returned to stopped, whether or not the retried backup succeeded.
+      // The sandbox was stopped before rebuild started, so leaving it running
+      // is an unrequested lifecycle change; reporting it only on the success
+      // path would let the ordinary backup-failure diagnostic imply the
+      // original stopped state was restored (#11137 review).
+      if (!returnedToStopped) {
         console.error(
-          "  The sandbox was stopped before rebuild started; stop the container manually, then retry rebuild.",
+          `  Started container '${started.containerName}' to back up sandbox state before rebuild,`,
         );
+        console.error("  but could not return it to its stopped state.");
+        if (!backup.success) {
+          console.error("  The retried backup also failed, so no sandbox state was preserved.");
+        }
+        console.error(
+          `  The sandbox was stopped before rebuild started and container '${started.containerName}' may still be running.`,
+        );
+        console.error("  Inspect and stop that container manually, then retry rebuild.");
         bail("Could not return the sandbox's recovered container to its stopped state.");
       }
     }

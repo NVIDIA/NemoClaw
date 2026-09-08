@@ -1122,6 +1122,42 @@ describe("backupSandboxStateForRebuild stopped-container recovery (#11137)", () 
     expect(returnStoppedSpy).toHaveBeenCalledWith(startedForBackup);
   });
 
+  it("reports the still-running container when the retry and the return to stopped both fail", async () => {
+    backupSpy.mockReturnValue({
+      success: false,
+      backedUpDirs: [],
+      backedUpFiles: [],
+      failedDirs: [".state"],
+      failedFiles: [],
+      manifest: null,
+      unreachable: true,
+    });
+    startSpy.mockReturnValue(startedForBackup);
+    backupStartedSpy.mockResolvedValue({
+      success: false,
+      backedUpDirs: [],
+      backedUpFiles: [],
+      failedDirs: [".state"],
+      failedFiles: [],
+      manifest: null,
+      unreachable: true,
+    });
+    returnStoppedSpy.mockReturnValue(false);
+
+    await expect(
+      backupSandboxStateForRebuild("alpha", makeSandboxEntry(), false, () => undefined, makeBail()),
+    ).rejects.toThrow(
+      "bail: Could not return the sandbox's recovered container to its stopped state.",
+    );
+    const reported = vi.mocked(console.error).mock.calls.flat().join("\n");
+    expect(reported).toContain("openshell-alpha");
+    expect(reported).toContain("may still be running");
+    expect(reported).toContain("The retried backup also failed");
+    // The ordinary backup-failure diagnostic must not run: it would imply the
+    // sandbox was left in its original stopped state.
+    expect(reported).not.toContain("Failed to back up sandbox state.");
+  });
+
   it("aborts a successful recovered backup when the container cannot return to stopped", async () => {
     backupSpy.mockReturnValue({
       success: false,
