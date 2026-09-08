@@ -38,10 +38,10 @@ const LIVE_EXTRA_PROVIDER = "e2e-live-extra-provider";
 const EXTRA_PROVIDER_TOKEN_ENV = "NEMOCLAW_E2E_EXTRA_PROVIDER_TOKEN";
 const EXTRA_PROVIDER_TOKEN = "e2e-extra-provider-token";
 const LIVE_TIMEOUT_MS = testTimeout(70 * 60_000);
-// Pairing-appearance evidence for #11085. The 60 s baseline captures the fresh
-// phase-1 sandbox for a same-run comparison. The 240 s repair budget exceeds the
-// host's 60 s pairing wait so a late appearance is still recorded.
-const PAIRING_TIMELINE_BASELINE_WAIT_SECONDS = 60;
+// Pairing-appearance evidence for #11085. The phase-1 snapshot must not wait:
+// it records the state at the instant before the sandbox is deleted without
+// moving that deletion. The 240 s repair budget exceeds the host's 60 s wait.
+const PAIRING_TIMELINE_BASELINE_WAIT_SECONDS = 0;
 const PAIRING_TIMELINE_REPAIR_WAIT_SECONDS = 240;
 
 validateSandboxName(SANDBOX_NAME);

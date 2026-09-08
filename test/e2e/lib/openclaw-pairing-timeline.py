@@ -170,6 +170,32 @@ def project_token(tokens):
     return projection
 
 
+def project_device_auth(entry, device_id, paired_token_digest):
+    if not entry["readable"] or not is_record(entry["value"]):
+        return {"readable": False, "mtimeMs": None, "deviceIdMatchesIdentity": None, "tokenMatchesPaired": None}
+    value = entry["value"]
+    tokens = value.get("tokens")
+    operator = tokens.get("operator") if is_record(tokens) else None
+    token = operator.get("token") if is_record(operator) else None
+    token_digest = sha256_hex(token) if isinstance(token, str) and token else None
+    return {
+        "readable": True,
+        "mtimeMs": entry["mtimeMs"],
+        "deviceIdMatchesIdentity": None if device_id is None else value.get("deviceId") == device_id,
+        "tokenMatchesPaired": None if token_digest is None or paired_token_digest is None else token_digest == paired_token_digest,
+    }
+
+
+def paired_token_digest(entry, device_id):
+    if not entry["readable"] or not is_record(entry["value"]) or device_id is None:
+        return None
+    device = entry["value"].get(device_id)
+    tokens = device.get("tokens") if is_record(device) else None
+    operator = tokens.get("operator") if is_record(tokens) else None
+    token = operator.get("token") if is_record(operator) else None
+    return sha256_hex(token) if isinstance(token, str) and token else None
+
+
 def local_device_id(entry):
     value = entry["value"].get("deviceId") if entry["readable"] and is_record(entry["value"]) else None
     return value if isinstance(value, str) and value else None
@@ -345,9 +371,12 @@ def project_processes(proc_root, auto_pair_log_path):
 def snapshot(state_dir, status_path):
     identity_entry = read_json_entry(os.path.join(state_dir, "identity", "device.json"))
     device_id = local_device_id(identity_entry)
+    paired_entry = read_json_entry(os.path.join(state_dir, "devices", "paired.json"))
+    auth_entry = read_json_entry(os.path.join(state_dir, "identity", "device-auth.json"))
     return {
         "identity": project_identity(identity_entry, device_id),
-        "paired": project_paired(read_json_entry(os.path.join(state_dir, "devices", "paired.json")), device_id),
+        "deviceAuth": project_device_auth(auth_entry, device_id, paired_token_digest(paired_entry, device_id)),
+        "paired": project_paired(paired_entry, device_id),
         "pending": project_pending(read_json_entry(os.path.join(state_dir, "devices", "pending.json")), device_id),
         "status": project_status(read_json_entry(status_path)),
     }

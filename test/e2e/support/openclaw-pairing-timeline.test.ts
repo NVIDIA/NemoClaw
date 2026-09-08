@@ -84,6 +84,11 @@ function writeStateTree(root: string) {
     publicKey: PUBLIC_KEY,
     publicKeyPem: `-----BEGIN PUBLIC KEY-----\n${PEM_BODY}\n-----END PUBLIC KEY-----\n`,
   });
+  writeJson(join(inputs.stateDir, "identity", "device-auth.json"), {
+    version: 1,
+    deviceId: DEVICE_ID,
+    tokens: { operator: { role: "operator", token: TOKEN, scopes: ["operator.pairing"] } },
+  });
   writeJson(join(inputs.stateDir, "devices", "paired.json"), {
     [DEVICE_ID]: localDevice(),
     [OTHER_DEVICE_ID]: {
@@ -219,6 +224,12 @@ describe("OpenClaw pairing timeline evidence", () => {
           deviceIdSha256: createHash("sha256").update(DEVICE_ID).digest("hex"),
           mtimeMs: expect.any(Number),
         },
+        deviceAuth: {
+          readable: true,
+          mtimeMs: expect.any(Number),
+          deviceIdMatchesIdentity: true,
+          tokenMatchesPaired: true,
+        },
         paired: {
           readable: true,
           mtimeMs: expect.any(Number),
@@ -316,6 +327,12 @@ describe("OpenClaw pairing timeline evidence", () => {
           present: false,
         },
         identity: { readable: false, deviceIdSha256: null, mtimeMs: null },
+        deviceAuth: {
+          readable: false,
+          mtimeMs: null,
+          deviceIdMatchesIdentity: null,
+          tokenMatchesPaired: null,
+        },
         paired: {
           readable: false,
           mtimeMs: null,
