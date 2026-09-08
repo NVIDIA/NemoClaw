@@ -455,6 +455,15 @@ function acknowledgeInterruptedFinalHandoff(
   input.persistResumedFinalHandoffAcknowledgement?.();
 }
 
+function requiresRuntimePatchApplication(input: {
+  readonly managedLifecycle: ManagedBootstrapRuntimeCreateLifecycle | null;
+  readonly portableLifecycle: boolean;
+  readonly resumedFinalHandoff: boolean;
+}): boolean {
+  if (input.resumedFinalHandoff && !input.managedLifecycle) return false;
+  return !input.portableLifecycle || input.managedLifecycle !== null;
+}
+
 export function createSandboxGpuCreateAttemptRunner(
   input: SandboxGpuCreateFlowInput,
   deps: SandboxGpuCreateFlowDeps,
@@ -1084,7 +1093,13 @@ export function createSandboxGpuCreateAttemptRunner(
         createResult?.status === 0 ? 1 : (createResult?.status ?? 1),
       );
     }
-    if (!portableLifecycle || managedLifecycle) {
+    if (
+      requiresRuntimePatchApplication({
+        managedLifecycle,
+        portableLifecycle,
+        resumedFinalHandoff: input.resumeVerifiedCreate?.finalHandoffCommitStarted === true,
+      })
+    ) {
       revalidatePostCreateEffect(`apply runtime patch for sandbox '${input.sandboxName}'`);
       await runtimePatch.ensureApplied();
     }

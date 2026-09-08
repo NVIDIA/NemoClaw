@@ -238,7 +238,7 @@ describe("created sandbox identity gate", () => {
     const input = noGpuInput();
     input.gatewayName = gatewayName;
     input.resumeVerifiedCreate = {
-      route: "none",
+      route: "compatibility",
       liveIdentityFingerprint: fingerprintSandboxRecreateValue(sandboxId),
       createAttemptNonce: "a".repeat(62),
       finalHandoffCommitStarted: true,
@@ -246,7 +246,8 @@ describe("created sandbox identity gate", () => {
     input.verifyCreatedSandboxBeforeEffects = vi.fn();
     input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
     input.persistResumedFinalHandoffAcknowledgement = vi.fn();
-    mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(createGpuPatchFixture());
+    const patch = createGpuPatchFixture();
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
     const deps = createGpuFlowDeps();
     vi.mocked(deps.runOpenshell).mockImplementation((args) =>
       args.join(" ") === `sandbox get -g ${gatewayName} alpha`
@@ -263,10 +264,12 @@ describe("created sandbox identity gate", () => {
 
     await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({
       origin: "resumed",
-      route: "none",
+      route: "compatibility",
     });
 
     expect(input.persistResumedFinalHandoffAcknowledgement).toHaveBeenCalledOnce();
+    expect(patch.ensureApplied).not.toHaveBeenCalled();
+    expect(mocks.streamSandboxCreate).not.toHaveBeenCalled();
   });
 
   it("refuses a changed live identity before resumed effects (#9833)", async () => {
