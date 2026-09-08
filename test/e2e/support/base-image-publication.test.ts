@@ -1101,6 +1101,11 @@ describe("base-image publication evidence", () => {
 
   it("aborts an in-flight GitHub request at the caller's request budget", async () => {
     vi.useFakeTimers();
+    const timeoutSignal = vi.spyOn(AbortSignal, "timeout").mockImplementation((milliseconds) => {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(), milliseconds);
+      return controller.signal;
+    });
     let observedAbort = false;
 
     try {
@@ -1131,8 +1136,10 @@ describe("base-image publication evidence", () => {
 
       await vi.advanceTimersByTimeAsync(100);
       await rejection;
+      expect(timeoutSignal).toHaveBeenCalledWith(100);
       expect(observedAbort).toBe(true);
     } finally {
+      timeoutSignal.mockRestore();
       vi.useRealTimers();
     }
   }, 2_000);
