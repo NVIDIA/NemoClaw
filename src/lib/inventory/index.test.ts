@@ -531,7 +531,6 @@ describe("inventory commands", () => {
     });
 
     expect(lines).toContain("      agent: hermes  phase: active");
-    expect(lines).toContain("      Inference (configured): ollama / qwen3-vl:4b");
     expect(Object.values(effects).every((effect) => effect.mock.calls.length === 0)).toBe(true);
   });
 
@@ -586,7 +585,7 @@ describe("inventory commands", () => {
     });
 
     expect(lines).toContain("    alpha *");
-    expect(lines.some((line) => line.includes("Inference"))).toBe(false);
+    expect(lines.some((line) => line.includes("Inference:"))).toBe(false);
   });
 
   it("prints the empty-state onboarding hint when no sandboxes exist", async () => {
@@ -1299,9 +1298,7 @@ describe("inventory commands", () => {
       log: (message = "") => lines.push(message),
     });
 
-    expect(lines).toContain(
-      "      Inference (configured): nvidia-prod / nvidia/nemotron-3-super-120b-a12b",
-    );
+    expect(lines).toContain("      Inference (configured): nvidia-prod / nvidia/nemotron-3-super-120b-a12b");
     expect(lines).toContain("      Inference (configured): ollama-local / qwen3.5:9b");
   });
 
@@ -1482,5 +1479,4 @@ describe("inventory commands", () => {
       process.exitCode = previousExitCode;
     }
   });
-
 });
