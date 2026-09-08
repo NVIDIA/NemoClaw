@@ -373,7 +373,7 @@ export function installPostCreateRecoveryRetryOwner(
     } catch (error) {
       if (propagateFailure) throw error;
       log(
-        "  NemoClaw still could not save the retained sandbox recovery record; the recovery-only session remains blocked for administrator recovery.",
+        "  NemoClaw still could not save the retained sandbox recovery record. Preserve the registry entry and terminal output; do not delete the sandbox by mutable name.",
       );
     }
   };
@@ -427,7 +427,7 @@ export function persistPostCreateRecovery(input: {
     `Create-attempt label: ${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${input.recoveryContext.createAttemptNonce}. ` +
     `Sandbox '${input.sandboxName}' was retained after ${input.stage} failed. ` +
     `Gateway '${input.gatewayName}'. Lifecycle generation '${input.lifecycleGeneration}'. ` +
-    "Do not delete the sandbox by mutable name; preserve it for identity-bound administrator recovery.";
+    `Do not delete the sandbox by mutable name. Run '${cliName()} ${input.sandboxName} destroy'; it can clear retained recovery only after OpenShell confirms absence.`;
   console.error(`  ${message}`);
   let persisted = false;
   try {
@@ -849,8 +849,8 @@ export async function runSandboxCreateWithIdentityVerification<
       createAttemptGuidance +
       `NemoClaw left sandbox '${input.sandboxName}' in place after post-create verification or finalization failed. ` +
       `${identityGuidance} NemoClaw did not run OpenShell's mutable-name deletion command because the name may now identify a replacement sandbox. ` +
-      `Do not delete the sandbox by mutable sandbox name. Run '${cliName()} ${input.sandboxName} destroy' to use the retained identity. ` +
-      "If destroy cannot prove that identity, stop. Ask the OpenShell administrator to inspect the surviving sandbox and use an identity-bound recovery or removal procedure.";
+      `Do not delete the sandbox by mutable sandbox name. Run '${cliName()} ${input.sandboxName} destroy'. ` +
+      "If OpenShell reports the sandbox present or cannot determine presence, destroy removes nothing and preserves the recovery record. Inspection is diagnostic only and does not authorize deletion.";
     const compensationErrors: unknown[] = [];
     if (input.persistRetainedSandboxRecovery) {
       try {
@@ -1056,8 +1056,8 @@ export function createProviderEffectBoundary(input: {
       throw new Error(
         `OpenShell cannot attach providers to the immutable identity of sandbox '${input.sandboxName}'. ` +
           `NemoClaw retained the incomplete sandbox on gateway '${input.gatewayName}'. ` +
-          `Do not delete it by mutable sandbox name. Ask an OpenShell administrator to remove the retained sandbox through an identity-bound procedure. ` +
-          `After OpenShell confirms the retained sandbox is absent, run '${cliName()} ${input.sandboxName} destroy --yes' to reconcile its verified Docker containers and recovery record.`,
+          `Do not delete it by mutable sandbox name. Run '${cliName()} ${input.sandboxName} destroy'. ` +
+          `The command preserves a present or unknown sandbox and can reconcile verified residual resources and the recovery record only after OpenShell confirms absence.`,
       );
     },
   };
