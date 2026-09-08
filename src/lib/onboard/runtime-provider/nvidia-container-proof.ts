@@ -100,15 +100,19 @@ function runRuntimeProviderGpuProof(
   }
   const cleanupContainer = (
     target: RuntimeProviderOwnedContainerResource,
+    absenceIsUnresolved: boolean,
   ): NonNullable<ContainerGpuProofResult["cleanup"]> => {
     try {
+      const cleanup = nvidiaContainer.cleanup(
+        "host-local-inference",
+        target,
+        NVIDIA_CONTAINER_GPU_PROOF_CLEANUP_TIMEOUT_MS,
+      );
       return {
         resourceName: target.name,
-        ...nvidiaContainer.cleanup(
-          "host-local-inference",
-          target,
-          NVIDIA_CONTAINER_GPU_PROOF_CLEANUP_TIMEOUT_MS,
-        ),
+        ...(absenceIsUnresolved && cleanup.status === "absent"
+          ? { status: "failed" as const }
+          : cleanup),
       };
     } catch {
       return { resourceName: target.name, status: "failed" };
@@ -129,7 +133,9 @@ function runRuntimeProviderGpuProof(
     const diagnosticSource = result.stderr || result.stdout;
     const passed = result.status === 0 && !timedOut && result.error === undefined;
     const verifiedCapacity = passed ? parseContainerGpuProofCapacity(result.stdout) : null;
-    const cleanup = passed ? undefined : cleanupContainer(resource);
+    const cleanup = passed
+      ? undefined
+      : cleanupContainer(resource, timedOut || result.error !== undefined);
     return {
       providerId: provider.identity.id,
       passed,
@@ -147,7 +153,7 @@ function runRuntimeProviderGpuProof(
       exitCode: null,
       diagnostic:
         error instanceof Error ? error.message.slice(0, 300) : String(error).slice(0, 300),
-      cleanup: cleanupContainer(resource),
+      cleanup: cleanupContainer(resource, true),
     };
   }
 }
@@ -221,7 +227,7 @@ export function createArm64ContainerGpuProver(
     }
     if (result.cleanup?.status === "failed") {
       log(
-        `    Cleanup failed for provider-owned container ${result.cleanup.resourceName}; remove that exact container before retrying.`,
+        `    Cleanup could not prove absence or removal of provider-owned container ${result.cleanup.resourceName}; verify that exact container is absent, or remove it before retrying.`,
       );
     }
     return result;

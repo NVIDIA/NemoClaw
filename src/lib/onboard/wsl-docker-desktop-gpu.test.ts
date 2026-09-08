@@ -312,6 +312,52 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
     }
   });
 
+  it("carries a real Docker capture through GPU detection to Ollama selection", () => {
+    const captureHostCommand = vi.fn(() => ({
+      status: 0,
+      stdout: "Test PASSED\nNEMOCLAW_GPU_MEMORY_MIB=63936, 60000\n",
+      stderr: "",
+    }));
+    const provider = createDockerRuntimeProviderBundle({ captureHostCommand });
+    const prover = createArm64ContainerGpuProver({
+      platform: "linux",
+      arch: "arm64",
+      resolveRuntimeProvider: () => provider,
+      log: () => undefined,
+    });
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    const arch = Object.getOwnPropertyDescriptor(process, "arch")!;
+    Object.defineProperty(process, "platform", { ...platform, value: "linux" });
+    Object.defineProperty(process, "arch", { ...arch, value: "arm64" });
+    try {
+      const gpu = detectGpu({
+        proveArm64ContainerGpu: prover,
+        runCaptureImpl: vi.fn((command: readonly string[]) =>
+          command[0] === "nvidia-smi"
+            ? "NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU), 999999, 999999\n"
+            : "",
+        ),
+        isWsl: true,
+        n1xWslProduct: true,
+      });
+
+      expect(gpu).toMatchObject({
+        containerGpuProof: { providerId: "docker", passed: true },
+        totalMemoryMB: 63_936,
+        availableMemoryMB: 60_000,
+      });
+      expect(selectDefaultOllamaModel(["qwen3.5:9b", "qwen3.6:35b"], gpu)).toBe("qwen3.6:35b");
+      expect(captureHostCommand).toHaveBeenCalledWith(
+        "docker",
+        expect.arrayContaining(["--gpus", "all"]),
+        expect.any(Number),
+      );
+    } finally {
+      Object.defineProperty(process, "platform", platform);
+      Object.defineProperty(process, "arch", arch);
+    }
+  });
+
   it("maps a nonzero provider-owned container capture to a failed proof", () => {
     const base = proofProvider("docker");
     const captureNvidiaContainer = vi.fn(() => ({
@@ -431,6 +477,43 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
       ["rm", "-f", containerId],
       expect.any(Number),
     );
+  });
+
+  it("reports unresolved cleanup when an interrupted launch stays absent through its deadline", () => {
+    const uuid = "123e4567-e89b-42d3-a456-426614174002";
+    const resourceName = `nemoclaw-gpu-proof-${uuid}`;
+    const timeout = Object.assign(new Error("proof timed out"), { code: "ETIMEDOUT" });
+    const captureHostCommand = vi
+      .fn()
+      .mockReturnValueOnce({ status: 1, stdout: "", stderr: "", error: timeout })
+      .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" });
+    const provider = createDockerRuntimeProviderBundle({ captureHostCommand });
+    const logs: string[] = [];
+    let clockReads = 0;
+    const performanceNow = vi.spyOn(performance, "now").mockImplementation(() => {
+      clockReads += 1;
+      return clockReads < 3 ? 0 : 15_000;
+    });
+    try {
+      const prover = createArm64ContainerGpuProver({
+        platform: "linux",
+        arch: "arm64",
+        randomUUID: () => uuid,
+        resolveRuntimeProvider: () => provider,
+        log: (message) => logs.push(message),
+      });
+
+      expect(prover(["JMJWOA-Generic-GPU"])).toMatchObject({
+        passed: false,
+        timedOut: true,
+        cleanup: { resourceName, status: "failed" },
+      });
+    } finally {
+      performanceNow.mockRestore();
+    }
+    expect(captureHostCommand).toHaveBeenCalledTimes(2);
+    expect(logs.join("\n")).toContain("could not prove absence or removal");
+    expect(logs.join("\n")).toContain(resourceName);
   });
 
   it("cleans the exact provider-owned container after an interrupted non-timeout capture", () => {
