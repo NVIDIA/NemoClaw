@@ -249,11 +249,13 @@ function commandError(error: Error) {
     kind:
       code === "ENOENT"
         ? "unavailable"
-        : code === "ETIMEDOUT"
-          ? "timeout"
-          : code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"
-            ? "capture"
-            : "invocation",
+        : code === "ECANCELED"
+          ? "cancelled"
+          : code === "ETIMEDOUT"
+            ? "timeout"
+            : code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"
+              ? "capture"
+              : "invocation",
     message: error.message,
   } as const;
 }

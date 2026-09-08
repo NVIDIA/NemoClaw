@@ -163,6 +163,10 @@ describe("policy channel remove/enable flows", () => {
       "/sandbox/.hermes/profiles/dashboard-home/platforms/whatsapp/session",
     );
     expect(clearCommand).toContain("/sandbox/.hermes/dashboard-home/platforms/whatsapp/session");
+    expect(vi.mocked(processRecovery.executeSandboxExecCommand).mock.calls[0]?.slice(2)).toEqual([
+      undefined,
+      { localDockerFallbackPolicy: "reconciled" },
+    ]);
     expect(updateSandbox).toHaveBeenCalled();
     expect(
       vi.mocked(processRecovery.executeSandboxExecCommand).mock.invocationCallOrder[0],

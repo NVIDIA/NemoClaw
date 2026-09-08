@@ -933,7 +933,8 @@ async function applyChannelAddToGatewayAndRegistry(
         () => revalidateMessagingProviderAttachmentTarget(sandboxName, gatewayName),
       );
       const updatedProviderNames = err.mutatedProviderNames.filter(
-        (providerName) => !createdProviders.has(providerName) || replacedProviders.has(providerName),
+        (providerName) =>
+          !createdProviders.has(providerName) || replacedProviders.has(providerName),
       );
       const originalFailure = redactFullWithUrls(err instanceof Error ? err.message : String(err))
         .replace(/\s+/gu, " ")
@@ -1109,7 +1110,9 @@ async function runMessagingHealthChecksAfterRebuild(
     openclawBridgeHealth: {
       sandboxName,
       executeSandboxCommand: (command, timeoutMs) =>
-        executeSandboxExecCommand(sandboxName, command, timeoutMs),
+        executeSandboxExecCommand(sandboxName, command, timeoutMs, {
+          localDockerFallbackPolicy: "read-only",
+        }),
     },
   });
   try {
@@ -1786,7 +1789,9 @@ async function clearSandboxChannelDurableState(
   const sentinelSeen = (result: { stdout?: string | null } | null): boolean =>
     !!result && typeof result.stdout === "string" && result.stdout.includes(CHANNEL_CLEAR_SENTINEL);
 
-  let result = await executeSandboxExecCommand(sandboxName, cmd);
+  let result = await executeSandboxExecCommand(sandboxName, cmd, undefined, {
+    localDockerFallbackPolicy: "reconciled",
+  });
   if (!sentinelSeen(result)) {
     result = executeSandboxCommand(sandboxName, cmd);
   }

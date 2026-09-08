@@ -55,7 +55,7 @@ async function canExecuteMcpPreparation(
   // that the OpenShell transport itself can run.
   const sshProbe = executeSandboxCommand(sandboxName, ":", { runtimeSelection });
   const execProbe = await executeSandboxExecCommand(sandboxName, ":", undefined, {
-    allowLocalDockerFallback: false,
+    localDockerFallbackPolicy: "never",
     runtimeSelection,
   });
   return sshProbe !== null && sshProbe.status === 0 && execProbe !== null && execProbe.status === 0;

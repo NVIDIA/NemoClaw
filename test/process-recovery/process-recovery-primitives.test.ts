@@ -575,7 +575,7 @@ describe("executeSandboxExecCommand", () => {
         `printf '%s\n' "$@" > '${captureFile}'\nexit 1`,
         () =>
           executeSandboxExecCommand("hermes-box", '[ -z "${FAKE_MCP_SECRET+x}" ]', undefined, {
-            allowLocalDockerFallback: false,
+            localDockerFallbackPolicy: "never",
           }),
       );
 

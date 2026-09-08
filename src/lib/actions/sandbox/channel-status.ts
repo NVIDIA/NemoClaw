@@ -154,7 +154,9 @@ async function defaultExec(
   command: string,
   timeoutMs?: number,
 ): Promise<{ status: number; stdout: string; stderr: string } | null> {
-  return loadProcessRecovery().executeSandboxExecCommand(sandboxName, command, timeoutMs);
+  return loadProcessRecovery().executeSandboxExecCommand(sandboxName, command, timeoutMs, {
+    localDockerFallbackPolicy: "read-only",
+  });
 }
 
 function defaultDeps(deps: StatusDeps | undefined): Required<StatusDeps> {

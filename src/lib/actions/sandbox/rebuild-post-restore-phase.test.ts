@@ -170,7 +170,7 @@ describe("rebuild post-restore phase", () => {
       "alpha",
       "openclaw doctor --fix",
       300_000,
-      { allowLocalDockerFallback: false },
+      { localDockerFallbackPolicy: "never" },
     );
   });
 
@@ -253,7 +253,7 @@ describe("rebuild post-restore phase", () => {
       "alpha",
       "openclaw doctor --fix",
       300_000,
-      { allowLocalDockerFallback: false, runtimeSelection },
+      { localDockerFallbackPolicy: "never", runtimeSelection },
     );
     expect(rebuildMessaging.reapplyMessagingManifestAfterOpenClawDoctor).toHaveBeenCalledWith(
       "alpha",
@@ -296,9 +296,7 @@ describe("rebuild post-restore phase", () => {
     expect(args.bail).toHaveBeenCalledWith(
       "Recreated sandbox agent identity did not match the authoritative rebuild target.",
     );
-    expect(
-      rebuildHermesPostRestore.restartHermesGatewayAfterStateRestore,
-    ).not.toHaveBeenCalled();
+    expect(rebuildHermesPostRestore.restartHermesGatewayAfterStateRestore).not.toHaveBeenCalled();
   });
 
   it("does not record a final hash without trusted doctor completion (#9946)", async () => {

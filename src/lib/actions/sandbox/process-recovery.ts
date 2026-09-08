@@ -259,7 +259,7 @@ export async function executeSandboxExecCommand(
       ...transportOptions,
       ...(runtimeSelection
         ? {
-            allowLocalDockerFallback: false,
+            localDockerFallbackPolicy: "never",
             gatewayName: runtimeSelection.gatewayName,
           }
         : {}),
@@ -415,7 +415,7 @@ async function isSandboxGatewayRunning(
       sandboxName,
       command,
       DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
-      runtimeSelection ? { runtimeSelection } : {},
+      runtimeSelection ? { runtimeSelection } : { localDockerFallbackPolicy: "read-only" },
     ),
   );
   if (execProbe !== null) return execProbe;
@@ -987,7 +987,7 @@ export async function restartSandboxGateway(
               name,
               command,
               timeout,
-              runtimeSelection ? { runtimeSelection } : {},
+              runtimeSelection ? { runtimeSelection } : { localDockerFallbackPolicy: "read-only" },
             ),
           waitForRecoveredSandboxGateway: (name, options) =>
             waitForRecoveredSandboxGateway(name, {
@@ -1865,7 +1865,7 @@ async function checkAndRecoverSandboxProcessesWithoutHostLock(
             name,
             command,
             DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
-            runtimeSelection ? { runtimeSelection } : {},
+            runtimeSelection ? { runtimeSelection } : { localDockerFallbackPolicy: "read-only" },
           ),
         );
         console.error("  Check /tmp/gateway.log inside the sandbox for details.");

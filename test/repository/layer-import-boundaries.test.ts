@@ -73,16 +73,40 @@ describe("CLI layer import boundaries (#6245)", () => {
       'import legacy = require("../actions/sandbox/exec");\nexport const value = legacy.buildOpenshellExecArgs;\n',
     ],
     [
+      "namespace import computed property",
+      'import * as legacy from "../actions/sandbox/exec";\nexport const value = legacy["buildOpenshellExecArgs"];\n',
+    ],
+    [
+      "static require namespace computed property",
+      'const legacy = require("../actions/sandbox/exec");\nexport const value = legacy["buildOpenshellExecArgs"];\n',
+    ],
+    [
       "nested static require destructuring",
       'export function value() {\n  const { buildOpenshellExecArgs } = require("../actions/sandbox/exec");\n  return buildOpenshellExecArgs;\n}\n',
+    ],
+    [
+      "static require computed destructuring",
+      'const { ["buildOpenshellExecArgs"]: value } = require("../actions/sandbox/exec");\nexport { value };\n',
+    ],
+    [
+      "static require quoted destructuring",
+      'const { "buildOpenshellExecArgs": value } = require("../actions/sandbox/exec");\nexport { value };\n',
     ],
     [
       "direct require property",
       'export const value = require("../actions/sandbox/exec").buildOpenshellExecArgs;\n',
     ],
     [
+      "direct require computed property",
+      'export const value = require("../actions/sandbox/exec")["buildOpenshellExecArgs"];\n',
+    ],
+    [
       "dynamic import property",
       'export async function value() {\n  return (await import("../actions/sandbox/exec")).buildOpenshellExecArgs;\n}\n',
+    ],
+    [
+      "awaited dynamic import computed property",
+      'export async function value() {\n  return (await import("../actions/sandbox/exec"))["buildOpenshellExecArgs"];\n}\n',
     ],
     [
       "awaited dynamic import binding",

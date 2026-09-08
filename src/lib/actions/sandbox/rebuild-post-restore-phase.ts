@@ -223,7 +223,7 @@ export async function runRebuildPostRestorePhase(
       "openclaw doctor --fix",
       OPENCLAW_DOCTOR_TIMEOUT_MS,
       {
-        allowLocalDockerFallback: false,
+        localDockerFallbackPolicy: "never",
         ...(mcpRuntimeSelection ? { runtimeSelection: mcpRuntimeSelection } : {}),
       },
     );

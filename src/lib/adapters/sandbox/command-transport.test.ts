@@ -174,7 +174,7 @@ describe("sandbox command transport", () => {
     await expect(
       executeSandboxExecCommandTransport(deps, "alpha", "id", 9000, {
         gatewayName: "recorded-gateway",
-        allowLocalDockerFallback: false,
+        localDockerFallbackPolicy: "never",
       }),
     ).resolves.toBeNull();
     expect(deps.executePrivilegedSandboxCommand).not.toHaveBeenCalled();
@@ -218,7 +218,71 @@ describe("sandbox command transport", () => {
     expect(deps.executePrivilegedSandboxCommand).not.toHaveBeenCalled();
   });
 
-  it("uses the local fallback when the OpenShell executable is unavailable", async () => {
+  it.each(["read-only", "reconciled"] as const)(
+    "uses the %s fallback after an inconclusive completed result",
+    async (localDockerFallbackPolicy) => {
+      const deps = createDependencies({
+        extractSandboxExecCommandStdout: vi.fn((output: string) =>
+          output === "fallback-output" ? "fallback-ok" : null,
+        ),
+        commandExecutor: {
+          runBuffered: vi.fn(async () => ({
+            outcome: { kind: "completed" as const, exitCode: 1 },
+            stdout: "unmarked-output",
+            stderr: "",
+          })),
+        },
+      });
+
+      await expect(
+        executeSandboxExecCommandTransport(deps, "alpha", "id", 9000, {
+          localDockerFallbackPolicy,
+        }),
+      ).resolves.toEqual({ status: 0, stdout: "fallback-ok", stderr: "" });
+      expect(deps.executePrivilegedSandboxCommand).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each(["read-only", "reconciled"] as const)(
+    "keeps a marked remote result final under the %s policy",
+    async (localDockerFallbackPolicy) => {
+      const deps = createDependencies();
+
+      await expect(
+        executeSandboxExecCommandTransport(deps, "alpha", "id", 9000, {
+          localDockerFallbackPolicy,
+        }),
+      ).resolves.toEqual({ status: 0, stdout: "ok", stderr: "" });
+      expect(deps.executePrivilegedSandboxCommand).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([undefined, "unavailable-only", "read-only", "reconciled"] as const)(
+    "uses the %s policy fallback when the OpenShell executable is unavailable",
+    async (localDockerFallbackPolicy) => {
+      const deps = createDependencies({
+        commandExecutor: {
+          runBuffered: vi.fn(async () => ({
+            outcome: {
+              kind: "failed" as const,
+              error: { kind: "unavailable" as const, message: "OpenShell binary not found" },
+            },
+            stdout: "",
+            stderr: "",
+          })),
+        },
+      });
+
+      await expect(
+        executeSandboxExecCommandTransport(deps, "alpha", "id", 9000, {
+          ...(localDockerFallbackPolicy ? { localDockerFallbackPolicy } : {}),
+        }),
+      ).resolves.toEqual({ status: 0, stdout: "fallback-output", stderr: "" });
+      expect(deps.executePrivilegedSandboxCommand).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("does not use the never policy fallback when OpenShell is unavailable", async () => {
     const deps = createDependencies({
       commandExecutor: {
         runBuffered: vi.fn(async () => ({
@@ -233,12 +297,14 @@ describe("sandbox command transport", () => {
     });
 
     await expect(
-      executeSandboxExecCommandTransport(deps, "alpha", "id", 9000, {}),
-    ).resolves.toEqual({ status: 0, stdout: "fallback-output", stderr: "" });
-    expect(deps.executePrivilegedSandboxCommand).toHaveBeenCalledOnce();
+      executeSandboxExecCommandTransport(deps, "alpha", "id", 9000, {
+        localDockerFallbackPolicy: "never",
+      }),
+    ).resolves.toBeNull();
+    expect(deps.executePrivilegedSandboxCommand).not.toHaveBeenCalled();
   });
 
-  it.each(["timeout", "capture", "invocation"] as const)(
+  it.each(["cancelled", "timeout", "capture", "invocation"] as const)(
     "does not retry a typed %s failure through local Docker",
     async (kind) => {
       const deps = createDependencies({
@@ -258,6 +324,60 @@ describe("sandbox command transport", () => {
     },
   );
 
+  it.each([
+    ["read-only", "timeout"],
+    ["read-only", "capture"],
+    ["read-only", "invocation"],
+    ["reconciled", "timeout"],
+    ["reconciled", "capture"],
+    ["reconciled", "invocation"],
+  ] as const)(
+    "uses the %s fallback after a typed %s failure with an unknown outcome",
+    async (localDockerFallbackPolicy, kind) => {
+      const deps = createDependencies({
+        commandExecutor: {
+          runBuffered: vi.fn(async () => ({
+            outcome: { kind: "failed" as const, error: { kind, message: `${kind} failure` } },
+            stdout: "partial",
+            stderr: "detail",
+          })),
+        },
+      });
+
+      await expect(
+        executeSandboxExecCommandTransport(deps, "alpha", "id", 9000, {
+          localDockerFallbackPolicy,
+        }),
+      ).resolves.toEqual({ status: 0, stdout: "fallback-output", stderr: "" });
+      expect(deps.executePrivilegedSandboxCommand).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each(["read-only", "reconciled"] as const)(
+    "does not use the %s fallback after cancellation",
+    async (localDockerFallbackPolicy) => {
+      const deps = createDependencies({
+        commandExecutor: {
+          runBuffered: vi.fn(async () => ({
+            outcome: {
+              kind: "failed" as const,
+              error: { kind: "cancelled" as const, message: "cancelled by SIGINT" },
+            },
+            stdout: "partial",
+            stderr: "",
+          })),
+        },
+      });
+
+      await expect(
+        executeSandboxExecCommandTransport(deps, "alpha", "id", 9000, {
+          localDockerFallbackPolicy,
+        }),
+      ).resolves.toBeNull();
+      expect(deps.executePrivilegedSandboxCommand).not.toHaveBeenCalled();
+    },
+  );
+
   it("does not catch validation or security refusals and retry through local Docker", async () => {
     const refusal = new Error("gateway authority refused");
     const deps = createDependencies({
@@ -268,9 +388,37 @@ describe("sandbox command transport", () => {
       },
     });
 
-    await expect(executeSandboxExecCommandTransport(deps, "alpha", "id", 9000, {})).rejects.toBe(
-      refusal,
-    );
+    await expect(
+      executeSandboxExecCommandTransport(deps, "alpha", "id", 9000, {
+        localDockerFallbackPolicy: "read-only",
+      }),
+    ).rejects.toBe(refusal);
     expect(deps.executePrivilegedSandboxCommand).not.toHaveBeenCalled();
+  });
+
+  it("propagates a local Docker identity refusal after an eligible fallback", async () => {
+    const refusal = new Error("sandbox identity changed");
+    const deps = createDependencies({
+      executePrivilegedSandboxCommand: vi.fn(() => {
+        throw refusal;
+      }),
+      commandExecutor: {
+        runBuffered: vi.fn(async () => ({
+          outcome: {
+            kind: "failed" as const,
+            error: { kind: "timeout" as const, message: "OpenShell command timed out" },
+          },
+          stdout: "",
+          stderr: "",
+        })),
+      },
+    });
+
+    await expect(
+      executeSandboxExecCommandTransport(deps, "alpha", "id", 9000, {
+        localDockerFallbackPolicy: "read-only",
+      }),
+    ).rejects.toBe(refusal);
+    expect(deps.isDirectSandboxFallbackUnavailableError).toHaveBeenCalledWith(refusal);
   });
 });

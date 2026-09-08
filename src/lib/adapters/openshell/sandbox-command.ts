@@ -30,7 +30,7 @@ export type OpenShellSandboxBufferedCommandRequest = Readonly<{
 }>;
 
 export type OpenShellSandboxCommandError = Readonly<{
-  kind: "capture" | "invocation" | "timeout" | "unavailable";
+  kind: "cancelled" | "capture" | "invocation" | "timeout" | "unavailable";
   message: string;
 }>;
 

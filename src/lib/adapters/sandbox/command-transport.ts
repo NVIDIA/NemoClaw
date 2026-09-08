@@ -13,8 +13,15 @@ export type SandboxCommandResult = {
   stderr: string;
 };
 
+/**
+ * Declares when a command is safe to repeat through the pinned local runtime.
+ * `read-only` commands cannot leave a mutation to reconcile. `reconciled`
+ * commands are idempotent and verify their postcondition before continuing.
+ */
+export type LocalDockerFallbackPolicy = "never" | "unavailable-only" | "read-only" | "reconciled";
+
 export type SandboxExecCommandOptions = {
-  allowLocalDockerFallback?: boolean;
+  localDockerFallbackPolicy?: LocalDockerFallbackPolicy;
   gatewayName?: string;
   runtimeEnv?: NodeJS.ProcessEnv;
 };
@@ -58,6 +65,10 @@ export const DEFAULT_SANDBOX_EXEC_TIMEOUT_MS = 15000;
 function resolveSandboxExecTimeout(timeout: number): number {
   const timeoutOverride = Number(process.env.NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS || "");
   return Number.isFinite(timeoutOverride) && timeoutOverride > 0 ? timeoutOverride : timeout;
+}
+
+function permitsUnknownOutcomeFallback(policy: LocalDockerFallbackPolicy): boolean {
+  return policy === "read-only" || policy === "reconciled";
 }
 
 export function executeSandboxCommandTransport(
@@ -168,6 +179,7 @@ export async function executeSandboxExecCommandTransport(
 ): Promise<SandboxCommandResult | null> {
   const markedCommand = deps.buildSandboxExecMarkedCommand(command);
   const effectiveTimeout = resolveSandboxExecTimeout(timeout);
+  const fallbackPolicy = options.localDockerFallbackPolicy ?? "unavailable-only";
   const completed = await deps.commandExecutor.runBuffered({
     sandboxName,
     target: options.gatewayName
@@ -178,15 +190,22 @@ export async function executeSandboxExecCommandTransport(
     timeoutMilliseconds: effectiveTimeout,
   });
   if (completed.outcome.kind === "completed") {
-    return parseSandboxCommandResult(deps, {
+    const parsed = parseSandboxCommandResult(deps, {
       status: completed.outcome.exitCode,
       stdout: completed.stdout,
       stderr: completed.stderr,
     });
-  } else if (completed.outcome.error.kind !== "unavailable") {
+    if (parsed !== null) return parsed;
+    if (!permitsUnknownOutcomeFallback(fallbackPolicy)) return null;
+  } else if (completed.outcome.error.kind === "cancelled") {
+    return null;
+  } else if (
+    completed.outcome.error.kind !== "unavailable" &&
+    !permitsUnknownOutcomeFallback(fallbackPolicy)
+  ) {
     return null;
   }
-  if (options.allowLocalDockerFallback === false) return null;
+  if (fallbackPolicy === "never") return null;
   // Keep the fallback outside the OpenShell try/catch so a fail-closed identity
   // refusal cannot be caught and retried against changing container state.
   return executeLocalSandboxCommand(deps, sandboxName, markedCommand, effectiveTimeout);

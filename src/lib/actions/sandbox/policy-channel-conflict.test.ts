@@ -1228,6 +1228,11 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
     const execCommands = vi
       .mocked(processRecovery.executeSandboxExecCommand)
       .mock.calls.map((call: unknown[]) => String(call[1]));
+    expect(
+      vi
+        .mocked(processRecovery.executeSandboxExecCommand)
+        .mock.calls.every((call) => call[3]?.localDockerFallbackPolicy === "read-only"),
+    ).toBe(true);
     expect(execCommands.some((cmd: string) => cmd.includes("grep"))).toBe(false);
     expect(
       execCommands.some(

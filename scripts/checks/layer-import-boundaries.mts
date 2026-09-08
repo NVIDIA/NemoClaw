@@ -420,6 +420,13 @@ function checkBufferedExecHelperImport(
     }
     return current;
   };
+  const staticPropertyName = (node: ts.Node): string | null => {
+    if (ts.isIdentifier(node) || ts.isStringLiteralLike(node)) return node.text;
+    if (ts.isComputedPropertyName(node) && ts.isStringLiteralLike(node.expression)) {
+      return node.expression.text;
+    }
+    return null;
+  };
   for (const statement of sourceFile.statements) {
     if (ts.isImportDeclaration(statement) && ts.isStringLiteralLike(statement.moduleSpecifier)) {
       if (
@@ -461,8 +468,10 @@ function checkBufferedExecHelperImport(
           namespaceImports.add(node.name.text);
         } else if (ts.isObjectBindingPattern(node.name)) {
           for (const binding of node.name.elements) {
-            const importedName = binding.propertyName ?? binding.name;
-            if (ts.isIdentifier(importedName) && importedName.text === "buildOpenshellExecArgs") {
+            const importedName = binding.propertyName
+              ? staticPropertyName(binding.propertyName)
+              : staticPropertyName(binding.name);
+            if (importedName === "buildOpenshellExecArgs") {
               addNamedBindingViolation(binding);
             }
           }
@@ -472,12 +481,23 @@ function checkBufferedExecHelperImport(
     ts.forEachChild(node, collectRequireBindings);
   };
   collectRequireBindings(sourceFile);
+  const isLegacyHelperAccess = (
+    node: ts.PropertyAccessExpression | ts.ElementAccessExpression,
+  ): boolean => {
+    const accessedName = ts.isPropertyAccessExpression(node)
+      ? node.name.text
+      : staticPropertyName(node.argumentExpression);
+    if (accessedName !== "buildOpenshellExecArgs") return false;
+    const moduleExpression = unwrapModuleExpression(node.expression);
+    return (
+      (ts.isIdentifier(moduleExpression) && namespaceImports.has(moduleExpression.text)) ||
+      isLegacyModuleLoaderCall(moduleExpression)
+    );
+  };
   const visit = (node: ts.Node): void => {
     if (
-      ts.isPropertyAccessExpression(node) &&
-      node.name.text === "buildOpenshellExecArgs" &&
-      ((ts.isIdentifier(node.expression) && namespaceImports.has(node.expression.text)) ||
-        isLegacyModuleLoaderCall(unwrapModuleExpression(node.expression)))
+      (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
+      isLegacyHelperAccess(node)
     ) {
       const pos = position(sourceFile, node);
       addViolation(

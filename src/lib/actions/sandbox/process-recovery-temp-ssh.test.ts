@@ -183,7 +183,7 @@ describe("executeSandboxCommand temp SSH config", () => {
 
     await expect(
       executeSandboxExecCommand("alpha", "printf selected", undefined, {
-        allowLocalDockerFallback: true,
+        localDockerFallbackPolicy: "read-only",
         runtimeSelection: {
           gatewayName: "recorded-gateway",
           localTlsDir: "/authority/tls",

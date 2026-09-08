@@ -470,6 +470,7 @@ describe("CLI OpenShell sandbox command executor", () => {
 
   it.each([
     ["an unavailable executable", "ENOENT", "unavailable"],
+    ["a host cancellation", "ECANCELED", "cancelled"],
     ["a capture limit", "ERR_CHILD_PROCESS_STDIO_MAXBUFFER", "capture"],
     ["an unclassified transport failure", undefined, "invocation"],
   ] as const)("maps %s for buffered execution", async (_label, code, kind) => {
@@ -592,6 +593,7 @@ describe("CLI OpenShell sandbox command executor", () => {
 
   it.each([
     ["an unavailable executable", "ENOENT", "unavailable"],
+    ["a host cancellation", "ECANCELED", "cancelled"],
     ["an unclassified transport failure", undefined, "invocation"],
   ] as const)("maps an asynchronous child error from %s", async (_label, code, kind) => {
     const events = new EventEmitter();
