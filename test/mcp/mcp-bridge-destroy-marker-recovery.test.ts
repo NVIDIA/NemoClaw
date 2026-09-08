@@ -245,7 +245,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
     return providerExists
       ? {
           status: 0,
-          stdout: "Id: " + expectedId + "\nType: nemoclaw-mcp-v1\nResource version: 4\nCredential keys: EXPECTED_TOKEN\n",
+          stdout: "Name: " + providerName + "\nId: " + expectedId + "\nType: nemoclaw-mcp-v1\nResource version: 4\nCredential keys: EXPECTED_TOKEN\nConfig keys: <none>\n",
           stderr: "",
         }
       : { status: 1, stdout: "", stderr: "provider '" + args[2] + "' not found" };

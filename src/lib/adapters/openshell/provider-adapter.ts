@@ -6,6 +6,7 @@ import type { OpenShellGatewayTarget } from "./sandbox-observer";
 export type OpenShellProviderCommandReason =
   | "already_exists"
   | "attached"
+  | "conflict"
   | "failed"
   | "invalid_request"
   | "not_found"
@@ -43,6 +44,16 @@ export type OpenShellProviderMutationResult =
   | Readonly<{ ok: true }>
   | Readonly<{ ok: false; error: OpenShellProviderError }>;
 
+export type OpenShellProviderProfileOperation = "read" | "inspect" | "import" | "verify";
+
+export type OpenShellProviderProfileMutationResult =
+  | Readonly<{ ok: true }>
+  | Readonly<{
+      ok: false;
+      error: OpenShellProviderError;
+      operation?: OpenShellProviderProfileOperation;
+    }>;
+
 export type OpenShellProviderRequest = Readonly<{
   target: OpenShellGatewayTarget;
   timeoutMs?: number;
@@ -50,6 +61,14 @@ export type OpenShellProviderRequest = Readonly<{
 
 export type OpenShellProviderInventory = Readonly<{
   names: readonly string[];
+}>;
+
+export type OpenShellProviderAttachmentInventory = Readonly<{
+  names: readonly string[];
+}>;
+
+export type OpenShellProviderDetach = Readonly<{
+  changed: boolean;
 }>;
 
 export type OpenShellProviderMetadata = Readonly<{
@@ -109,6 +128,11 @@ export type DetachOpenShellProviderRequest = DeleteOpenShellProviderRequest &
 
 export type AttachOpenShellProviderRequest = DetachOpenShellProviderRequest;
 
+export type ListOpenShellProviderAttachmentsRequest = OpenShellProviderRequest &
+  Readonly<{
+    sandboxName: string;
+  }>;
+
 export type ConfigureOpenShellProviderRefreshRequest = GetOpenShellProviderRequest &
   Readonly<{
     credentialKey: string;
@@ -142,7 +166,7 @@ export interface OpenShellProviderAdapter {
 
   importProviderProfile(
     request: ImportOpenShellProviderProfileRequest,
-  ): OpenShellProviderMutationResult | Promise<OpenShellProviderMutationResult>;
+  ): OpenShellProviderProfileMutationResult | Promise<OpenShellProviderProfileMutationResult>;
 
   inspectProviderProfile(
     request: InspectOpenShellProviderProfileRequest,
@@ -150,9 +174,15 @@ export interface OpenShellProviderAdapter {
 
   deleteProvider(request: DeleteOpenShellProviderRequest): Promise<OpenShellProviderMutationResult>;
 
-  detachProvider(request: DetachOpenShellProviderRequest): Promise<OpenShellProviderMutationResult>;
+  detachProvider(
+    request: DetachOpenShellProviderRequest,
+  ): Promise<OpenShellProviderResult<OpenShellProviderDetach>>;
 
   attachProvider(request: AttachOpenShellProviderRequest): Promise<OpenShellProviderMutationResult>;
+
+  listProviderAttachments(
+    request: ListOpenShellProviderAttachmentsRequest,
+  ): Promise<OpenShellProviderResult<OpenShellProviderAttachmentInventory>>;
 
   configureProviderRefresh(
     request: ConfigureOpenShellProviderRefreshRequest,
