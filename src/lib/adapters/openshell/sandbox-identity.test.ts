@@ -48,6 +48,22 @@ describe("OpenShell sandbox identity parsing", () => {
     );
   });
 
+  it("preserves the durable ID across mutable sandbox state (#10404)", () => {
+    const beforeReuse = parseOpenShellSandboxId(
+      "Name: alpha\nId: sandbox-alpha\nPhase: Ready\nPolicy version: 6\n",
+    );
+    const afterReuse = parseOpenShellSandboxId(
+      "Name: alpha\nId: sandbox-alpha\nPhase: Ready\nPolicy version: 7\n",
+    );
+    const replacement = parseOpenShellSandboxId(
+      "Name: alpha\nId: sandbox-bravo\nPhase: Ready\nPolicy version: 7\n",
+    );
+
+    expect(beforeReuse).toBe("sandbox-alpha");
+    expect(afterReuse).toBe(beforeReuse);
+    expect(replacement).not.toBe(beforeReuse);
+  });
+
   it("rejects ambiguous or non-canonical IDs", () => {
     expect(parseOpenShellSandboxId("ID: first\nID: second\n")).toBeNull();
     expect(parseOpenShellSandboxId("ID: sandbox/alpha\n")).toBeNull();

@@ -6,13 +6,13 @@
 // from the NemoClaw contract (setgid + group-writable 2770/660) back to single-
 // user 700/600 — which blocks the gateway UID from persisting config edits.
 //
-// The orchestration is parameterized over shields' inspect/repair helpers so it
-// can be unit-tested without the heavy host-probing imports in ./doctor.ts.
+// The orchestration is parameterized over inspect/repair helpers so it can be
+// unit-tested without the heavy host-probing imports in ./doctor.ts.
 
 import type {
   MutableConfigPermsInspection,
   MutableConfigRepairResult,
-} from "../../shields/mutable-config-perms";
+} from "../../sandbox/mutable-config-perms";
 import type { DoctorCheck } from "./doctor";
 
 export interface ConfigPermsCheckDeps {
@@ -45,8 +45,8 @@ export function buildConfigPermsCheck(
       hint: `re-run \`${cliName} ${sandboxName} doctor\`, or rebuild with \`${cliName} ${sandboxName} rebuild\``,
     };
   }
-  // `applies: false` is a deliberate skip (non-OpenClaw agent, shields-up, or
-  // container not running) — not a probe failure — so render nothing.
+  // `applies: false` is a deliberate skip (non-OpenClaw agent or container not
+  // running), not a probe failure, so render nothing.
   if (!inspection.applies) return null;
 
   if (inspection.ok) {

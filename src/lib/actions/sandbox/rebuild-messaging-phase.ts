@@ -1,8 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { runOpenshell } from "../../adapters/openshell/runtime";
-import { RD as _RD, D, G, R } from "../../cli/terminal-style";
+import {
+  buildSelectedOpenShellSubprocessEnv,
+  type OpenShellRuntimeSelection,
+  runOpenshell,
+} from "../../adapters/openshell/runtime";
+import { RD as _RD, G, R } from "../../cli/terminal-style";
 import { MessagingSetupApplier } from "../../messaging/applier/setup-applier";
 import type {
   MessagingHookApplyRequest,
@@ -10,6 +14,7 @@ import type {
 } from "../../messaging/applier/types";
 import type { MessagingHookOutputMap } from "../../messaging/hooks";
 import type { SandboxMessagingPlan } from "../../messaging/manifest";
+import { retirePendingRemovalMessagingPlanChannels } from "../../messaging/compiler/workflow-planner";
 import type { SandboxEntry } from "../../state/registry";
 import type { RebuildBail } from "./rebuild-credential-preflight";
 import { stageMessagingManifestPlanForRebuild } from "./rebuild-messaging-stage";
@@ -44,13 +49,46 @@ export async function stageRebuildMessagingPlanOrBail(
   }
 }
 
-const runMessagingOpenshell: MessagingOpenShellRunner = (args, options = {}) =>
-  runOpenshell([...args], {
-    env: options.env as NodeJS.ProcessEnv | undefined,
-    ignoreError: options.ignoreError,
-    input: options.input,
-    stdio: options.stdio as never,
-  });
+function createRunMessagingOpenshell(
+  runtimeSelection?: OpenShellRuntimeSelection,
+): MessagingOpenShellRunner {
+  return (args, options = {}) =>
+    runOpenshell([...args], {
+      env: runtimeSelection
+        ? buildSelectedOpenShellSubprocessEnv(
+            runtimeSelection,
+            options.env ? { ...options.env } : undefined,
+          )
+        : (options.env as NodeJS.ProcessEnv | undefined),
+      replaceEnv: runtimeSelection ? true : undefined,
+      ignoreError: options.ignoreError,
+      input: options.input,
+      stdio: options.stdio as never,
+    });
+}
+
+export function finalizePendingMessagingRemovalsAfterRestore(
+  plan: SandboxMessagingPlan | null,
+  log: (message: string) => void,
+  runtimeSelection?: OpenShellRuntimeSelection,
+): SandboxMessagingPlan | null {
+  if (!plan) return null;
+  const runMessagingOpenshell = createRunMessagingOpenshell(runtimeSelection);
+  const pendingRemovals = plan.channels.filter(
+    (channel) => channel.pendingRemoval === true,
+  );
+  for (const channel of pendingRemovals) {
+    const result = MessagingSetupApplier.removeDisabledChannelAgentConfigAtOpenShell(
+      plan,
+      channel.channelId,
+      { runOpenshell: runMessagingOpenshell },
+    );
+    log(
+      `Retired messaging config for '${channel.channelId}' after restore: ${result.appliedTargets.join(",") || "no config target"}`,
+    );
+  }
+  return pendingRemovals.length > 0 ? retirePendingRemovalMessagingPlanChannels(plan) : plan;
+}
 
 function hookOutputsFromBuildSteps(
   plan: SandboxMessagingPlan,
@@ -75,27 +113,23 @@ export async function reapplyMessagingManifestAfterOpenClawDoctor(
   sandboxName: string,
   plan: SandboxMessagingPlan | null,
   log: (message: string) => void,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): Promise<void> {
   if (!plan || plan.agent !== "openclaw") {
     log("Messaging manifest reapply skipped: no OpenClaw messaging plan");
     return;
   }
 
-  try {
-    log("Reapplying messaging manifest render and post-agent-install hooks after doctor");
-    const result = await MessagingSetupApplier.applyAgentConfigAtOpenShell(plan, {
-      runOpenshell: runMessagingOpenshell,
-      runHook: (request) => hookOutputsFromBuildSteps(plan, request),
-    });
-    log(
-      `messaging manifest reapply: targets=${result.appliedTargets.join(",")}, hooks=${result.appliedHooks.join(",")}`,
-    );
-    if (result.appliedTargets.length > 0 || result.appliedHooks.length > 0) {
-      console.log(`  ${G}\u2713${R} Messaging manifest config reapplied`);
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    log(`Messaging manifest reapply failed: ${message}`);
-    console.log(`  ${D}Messaging manifest config reapply skipped (${message})${R}`);
+  log("Reapplying messaging manifest render and post-agent-install hooks after doctor");
+  const runMessagingOpenshell = createRunMessagingOpenshell(runtimeSelection);
+  const result = await MessagingSetupApplier.applyAgentConfigAtOpenShell(plan, {
+    runOpenshell: runMessagingOpenshell,
+    runHook: (request) => hookOutputsFromBuildSteps(plan, request),
+  });
+  log(
+    `messaging manifest reapply: targets=${result.appliedTargets.join(",")}, hooks=${result.appliedHooks.join(",")}`,
+  );
+  if (result.appliedTargets.length > 0 || result.appliedHooks.length > 0) {
+    console.log(`  ${G}\u2713${R} Messaging manifest config reapplied`);
   }
 }

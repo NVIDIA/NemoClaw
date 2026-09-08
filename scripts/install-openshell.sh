@@ -168,6 +168,21 @@ fi
 
 HOMEBREW_TAP="nvidia/openshell"
 HOMEBREW_FORMULA_NAME="openshell"
+MACOS_INSTALL_METHOD="${_NEMOCLAW_OPENSHELL_INSTALL_METHOD:-auto}"
+case "$MACOS_INSTALL_METHOD" in
+  auto) ;;
+  homebrew)
+    [ "$OS" = "Darwin" ] || fail "The Homebrew OpenShell installation method is valid only on macOS."
+    command -v brew >/dev/null 2>&1 \
+      || fail "The selected Homebrew OpenShell installation method became unavailable before installation."
+    ;;
+  standalone)
+    [ "$OS" = "Darwin" ] || fail "The standalone macOS OpenShell installation method is valid only on macOS."
+    ! command -v brew >/dev/null 2>&1 \
+      || fail "Homebrew appeared after standalone OpenShell installation was selected; refusing an ambiguous installation method."
+    ;;
+  *) fail "The internal macOS OpenShell installation method is invalid." ;;
+esac
 
 # Honour the TS installer's blueprint-derived env overrides only on the stable
 # channel — the dev channel installs from the `dev` tag and uses DEV_MIN_VERSION

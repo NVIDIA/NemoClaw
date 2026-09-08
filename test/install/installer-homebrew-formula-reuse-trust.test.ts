@@ -56,6 +56,14 @@ esac`;
   return source.replace(marker, methodBinding);
 }
 
+function unbindMacosInstallMethod(source: string): string {
+  const marker = `HOMEBREW_TAP="nvidia/openshell"
+HOMEBREW_FORMULA_NAME="openshell"`;
+  const boundMarker = bindMacosInstallMethod(marker);
+  expect(source.split(boundMarker), "bound Homebrew install-method marker").toHaveLength(2);
+  return source.replace(boundMarker, marker);
+}
+
 function runTrustCheck(source: string) {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-homebrew-reuse-trust-"));
   const installer = path.join(tempDir, "install-openshell.sh");
@@ -98,20 +106,20 @@ function expectTrustedTemplate(source: string, digest: string): void {
 }
 
 describe("installer Homebrew formula reuse trust", () => {
-  const methodBoundTemplate = bindMacosInstallMethod(INSTALLER_SOURCE);
+  const unboundTemplate = unbindMacosInstallMethod(INSTALLER_SOURCE);
   const trustedTemplates = [
-    ["dev MUSL sandbox", INSTALLER_SOURCE, TRUSTED_V00106_TEMPLATE_DIGESTS[0]],
+    ["dev MUSL sandbox", unboundTemplate, TRUSTED_V00106_TEMPLATE_DIGESTS[0]],
     [
       "dev MUSL sandbox with flat test paths",
-      restoreFlatInstallTestPaths(INSTALLER_SOURCE),
+      restoreFlatInstallTestPaths(unboundTemplate),
       TRUSTED_V00106_TEMPLATE_DIGESTS[1],
     ],
-    ["method-bound dev MUSL sandbox", methodBoundTemplate, TRUSTED_V00106_TEMPLATE_DIGESTS[2]],
+    ["method-bound dev MUSL sandbox", INSTALLER_SOURCE, TRUSTED_V00106_TEMPLATE_DIGESTS[2]],
   ] as const;
   const untrustedTemplates = [
     [
       "method-bound dev MUSL sandbox with flat test paths",
-      bindMacosInstallMethod(restoreFlatInstallTestPaths(INSTALLER_SOURCE)),
+      bindMacosInstallMethod(restoreFlatInstallTestPaths(unboundTemplate)),
     ],
     [
       "mutated dev MUSL sandbox",

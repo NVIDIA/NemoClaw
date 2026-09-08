@@ -6,6 +6,7 @@ import { shellQuote } from "../../core/shell-quote";
 import type { McpBridgeEntry } from "../../state/registry";
 import type { McpBridgeStatus } from "./mcp-bridge-contracts";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
+import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
 import type { CredentialResolutionProbeReadiness } from "./mcp-bridge-resolution-readiness";
 import {
   MCP_RUNTIME_SANITIZED_ENV_VARS,
@@ -136,8 +137,14 @@ export function classifyMcpToolDiscoveryResult(
 ): NonNullable<McpBridgeStatus["toolDiscovery"]> {
   if (result === null) return failure("sandbox unreachable");
   if (result.status !== 0) {
+    const safeFailure = `${result.stderr}\n${result.stdout}`
+      .split(/\r?\n/u)
+      .filter((line) => /^(?:\[SECURITY\] |Managed startup )/u.test(line))
+      .map((line) => redactBridgeSecretsForDisplay(line, entry))
+      .reverse()
+      .find((line) => safeString(line, MCP_TOOL_DISCOVERY_MAX_DETAIL_BYTES));
     return failure(
-      "MCP tool discovery runtime failed to start; rebuild the sandbox if the image predates this diagnostic",
+      `MCP tool discovery runtime failed to start (exit ${String(result.status)})${safeFailure ? `: ${safeFailure}` : ""}; rebuild the sandbox if the image predates this diagnostic`,
     );
   }
   const output = extractSandboxExecCommandStdoutFromStreams(
@@ -220,6 +227,7 @@ export function discoverMcpTools(
   entry: McpBridgeEntry,
   adapter: AgentMcpAdapter | undefined,
   readiness: McpToolDiscoveryReadiness,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
 ): NonNullable<McpBridgeStatus["toolDiscovery"]> {
   if (!adapter) return failure("tool discovery skipped: MCP adapter is not declared");
   if (entry.addState) return failure("tool discovery skipped: add transaction is incomplete");
@@ -230,7 +238,7 @@ export function discoverMcpTools(
     return failure("tool discovery skipped: no valid managed endpoint is available");
   }
   return classifyMcpToolDiscoveryResult(
-    executeSandboxCommand(sandboxName, discoveryCommand.command),
+    executeSandboxCommand(sandboxName, discoveryCommand.command, { runtimeSelection }),
     entry,
     discoveryCommand.resultMarker,
   );

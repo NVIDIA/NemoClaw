@@ -14,10 +14,6 @@ type CommandEntry = {
   env?: Record<string, string | undefined> | null;
 };
 
-function writeExecutable(target: string, contents: string) {
-  fs.writeFileSync(target, contents, { mode: 0o755 });
-}
-
 function parseStdoutJson<T>(stdout: string): T {
   const line = stdout
     .trim()
@@ -132,6 +128,8 @@ runner.run = (command, opts = {}) => {
   if (profileResult !== null) return profileResult;
   const providerResult = managedProviderResult(normalized);
   if (providerResult !== null) return providerResult;
+  const inferenceProviderResult = fixtureMocks.mockNvidiaProviderGetRun(command, "nemoclaw");
+  if (inferenceProviderResult !== null) return inferenceProviderResult;
   const sandboxResult = createdSandbox.run(command);
   return sandboxResult ?? { status: 0 };
 };
@@ -158,13 +156,13 @@ runner.runCapture = (command) => {
       "Endpoint: https://inference.local/v1",
     ].join("\n");
   }
-  if (normalized.includes("forward list")) return sandboxName + " 127.0.0.1 18789 12345 running";
+  if (normalized.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   return "";
 };
 
 registry.getSandbox = () =>
   scenario === "reuse"
-    ? fixtureMocks.managedSandboxPolicyReceiptFixture({
+    ? fixtureMocks.sandboxLifecycleFixture({
         name: sandboxName,
         gpuEnabled: false,
         agent: "langchain-deepagents-code",

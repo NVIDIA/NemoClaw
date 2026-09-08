@@ -432,6 +432,7 @@ function runnerTools(
   };
   const tools: OpenShellTools = {
     run: vi.fn(run),
+    runAsync: vi.fn(() => ({ cancel: vi.fn(), completion: Promise.resolve() })),
     start: () => undefined,
     wait: async () => undefined,
   };
@@ -801,6 +802,7 @@ describe("post-merge documentation runner", () => {
     const responses = new Map([["which", "/trusted/bin/openshell-sandbox"]]);
     const tools: OpenShellTools = {
       run: vi.fn((command) => responses.get(command) ?? ""),
+      runAsync: vi.fn(() => ({ cancel: vi.fn(), completion: Promise.resolve() })),
       start: vi.fn(),
       wait: async () => undefined,
     };

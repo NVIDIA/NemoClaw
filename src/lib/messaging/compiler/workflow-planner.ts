@@ -113,6 +113,13 @@ export class MessagingWorkflowPlanner {
     return plan ? removePlanChannel(plan, context.channelId, "remove-channel") : null;
   }
 
+  async buildChannelRemovalTombstonePlanFromSandboxEntry(
+    context: MessagingWorkflowPlannerChannelMutationContext,
+  ): Promise<SandboxMessagingPlan | null> {
+    const plan = await this.planForSandboxEntryMutation(context, "remove-channel");
+    return plan ? markPlanChannelPendingRemoval(plan, context.channelId) : null;
+  }
+
   async buildRebuildPlanFromSandboxEntry(
     context: MessagingWorkflowPlannerSandboxRebuildContext,
   ): Promise<SandboxMessagingPlan | null> {
@@ -423,6 +430,57 @@ function removePlanChannel(
     stateUpdates: plan.stateUpdates.filter(keepEntry),
     healthChecks: plan.healthChecks.filter(keepEntry),
   });
+}
+
+export function markPlanChannelPendingRemoval(
+  plan: SandboxMessagingPlan,
+  channelId: MessagingChannelId,
+): SandboxMessagingPlan {
+  if (!plan.channels.some((channel) => channel.channelId === channelId)) {
+    return removePlanChannel(plan, channelId, "remove-channel");
+  }
+  const channels = plan.channels.map((channel) =>
+    channel.channelId === channelId
+      ? {
+          ...channel,
+          active: false,
+          selected: false,
+          configured: false,
+          disabled: true,
+          pendingRemoval: true,
+        }
+      : channel,
+  );
+  const keepEntry = <T extends { readonly channelId: MessagingChannelId }>(entry: T) =>
+    entry.channelId !== channelId;
+  const networkEntries = plan.networkPolicy.entries.filter(keepEntry);
+  return clonePlan({
+    ...plan,
+    workflow: "remove-channel",
+    channels,
+    disabledChannels: uniqueSortedStrings([...plan.disabledChannels, channelId]),
+    credentialBindings: plan.credentialBindings.filter(keepEntry),
+    networkPolicy: {
+      presets: uniqueSortedStrings(networkEntries.map((entry) => entry.presetName)),
+      entries: networkEntries,
+    },
+    buildSteps: plan.buildSteps.filter(keepEntry),
+    runtimeSetup: filterRuntimeSetup(plan.runtimeSetup, keepEntry),
+    stateUpdates: plan.stateUpdates.filter(keepEntry),
+    healthChecks: plan.healthChecks.filter(keepEntry),
+  });
+}
+
+export function retirePendingRemovalMessagingPlanChannels(
+  plan: SandboxMessagingPlan,
+): SandboxMessagingPlan {
+  if (!Array.isArray(plan.channels)) return plan;
+  return plan.channels
+    .filter((channel) => channel.pendingRemoval === true)
+    .reduce(
+      (current, channel) => removePlanChannel(current, channel.channelId, current.workflow),
+      plan,
+    );
 }
 
 function mergeRuntimeSetup(

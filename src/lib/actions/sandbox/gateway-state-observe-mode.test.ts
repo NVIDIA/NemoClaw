@@ -4,11 +4,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as gatewayRuntime from "../../gateway-runtime-action";
+import * as openshellRuntime from "../../adapters/openshell/runtime";
+import * as portableAgentLifecycle from "../../onboard/experimental/portable-agent-lifecycle";
 import * as registry from "../../state/registry";
 import * as gatewaySelect from "./gateway-select";
 import {
   captureHermesPortableInferenceRecoveryGateway,
   getReconciledSandboxGatewayState,
+  recoverPortableDemoSandboxLifecycleForConnect,
 } from "./gateway-state";
 
 describe("getReconciledSandboxGatewayState observe mode", () => {
@@ -124,5 +127,100 @@ describe("Hermes Portable inference recovery gateway", () => {
         timeout: 1_000,
       }),
     ).toThrow("rejected command environment drift");
+  });
+});
+
+describe("Hermes Portable lifecycle recovery command authority", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("uses transaction currentness for intermediate captures and full currentness at recovery boundaries", () => {
+    const assertCurrent = vi.fn();
+    const assertTransactionCurrent = vi.fn();
+    const capture = vi.spyOn(openshellRuntime, "captureResolvedOpenshell").mockReturnValue({
+      status: 0,
+      output: "",
+      stdout: "",
+      stderr: "",
+    } as never);
+    const recover = vi
+      .spyOn(portableAgentLifecycle, "recoverPortableAgentSandboxLifecycle")
+      .mockImplementation((_sandboxName, _context, deps) => {
+        const recoveryDeps = deps!;
+        recoveryDeps.assertOpenShellExecutableAuthority?.({} as never, {}, {});
+        recoveryDeps.captureOpenshell?.(["sandbox", "exec", "--", "true"], 1_000);
+        recoveryDeps.captureOpenshell?.(["sandbox", "exec", "--", "health"], 1_000);
+        recoveryDeps.assertOpenShellExecutableAuthority?.({} as never, {}, {});
+        return { kind: "recovered" };
+      });
+
+    expect(
+      recoverPortableDemoSandboxLifecycleForConnect(
+        "alpha",
+        {
+          name: "alpha",
+          agent: "hermes",
+          gatewayName: "nemoclaw",
+          openshellDriver: "docker",
+        } as never,
+        "nemoclaw",
+        {
+          assertCurrent,
+          assertTransactionCurrent,
+          receipt: {} as never,
+          env: { HOME: "/home/test" },
+          executablePath: "/usr/bin/openshell",
+        },
+      ),
+    ).toEqual({ kind: "recovered" });
+
+    expect(recover).toHaveBeenCalledOnce();
+    expect(capture).toHaveBeenCalledTimes(2);
+    expect(assertCurrent).toHaveBeenCalledTimes(4);
+    expect(assertTransactionCurrent).toHaveBeenCalledTimes(4);
+  });
+
+  it("rejects transaction drift around an intermediate capture", () => {
+    const assertCurrent = vi.fn();
+    const assertTransactionCurrent = vi
+      .fn()
+      .mockImplementationOnce(() => undefined)
+      .mockImplementation(() => {
+        throw new Error("transaction authority changed");
+      });
+    vi.spyOn(openshellRuntime, "captureResolvedOpenshell").mockReturnValue({
+      status: 0,
+      output: "",
+      stdout: "",
+      stderr: "",
+    } as never);
+    vi.spyOn(portableAgentLifecycle, "recoverPortableAgentSandboxLifecycle").mockImplementation(
+      (_sandboxName, _context, deps) => {
+        deps!.captureOpenshell?.(["sandbox", "exec", "--", "true"], 1_000);
+        return { kind: "recovered" };
+      },
+    );
+
+    expect(() =>
+      recoverPortableDemoSandboxLifecycleForConnect(
+        "alpha",
+        {
+          name: "alpha",
+          agent: "hermes",
+          gatewayName: "nemoclaw",
+          openshellDriver: "docker",
+        } as never,
+        "nemoclaw",
+        {
+          assertCurrent,
+          assertTransactionCurrent,
+          receipt: {} as never,
+          env: { HOME: "/home/test" },
+          executablePath: "/usr/bin/openshell",
+        },
+      ),
+    ).toThrow("transaction authority changed");
+    expect(assertCurrent).toHaveBeenCalledTimes(2);
   });
 });

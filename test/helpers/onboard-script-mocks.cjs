@@ -7,6 +7,55 @@
 const Module = require("node:module");
 const path = require("node:path");
 
+if (process.env.NEMOCLAW_TEST_FORWARD_SERVICE_FIXTURE === "1") {
+  let detachedForwardReady = false;
+  const childProcess = require("node:child_process");
+  let fixtureSpawn = childProcess.spawn;
+  const forwardAwareSpawn = (...args) => {
+    const argv = Array.isArray(args[1]) ? args[1] : [];
+    const forwardIndex = argv.indexOf("forward");
+    if (forwardIndex >= 0 && argv[forwardIndex + 1] === "service") detachedForwardReady = true;
+    return fixtureSpawn(...args);
+  };
+  Object.defineProperty(childProcess, "spawn", {
+    configurable: true,
+    get: () => forwardAwareSpawn,
+    set: (value) => {
+      fixtureSpawn = value;
+    },
+  });
+
+  const originalModuleLoad = Module._load;
+  Module._load = function loadForwardFixture(request, parent, isMain) {
+    const loaded = originalModuleLoad.call(this, request, parent, isMain);
+    let resolved = "";
+    try {
+      resolved = Module._resolveFilename(request, parent, isMain);
+    } catch {
+      return loaded;
+    }
+    if (
+      resolved.includes(
+        `${path.sep}adapters${path.sep}openshell${path.sep}local-forward-listener.`,
+      ) &&
+      typeof loaded?.probeLocalForwardListener === "function"
+    ) {
+      loaded.probeLocalForwardListener = () => {
+        const ready = detachedForwardReady;
+        detachedForwardReady = false;
+        return ready;
+      };
+    }
+    if (
+      resolved.includes(`${path.sep}adapters${path.sep}openshell${path.sep}forward-service.`) &&
+      typeof loaded?.isForwardServiceListenerOwner === "function"
+    ) {
+      loaded.isForwardServiceListenerOwner = () => true;
+    }
+    return loaded;
+  };
+}
+
 function registerSourceRequire() {
   const fs = require("node:fs");
   const ts = require("typescript");
@@ -41,6 +90,26 @@ function registerSourceRequire() {
     targetModule._compile(outputText, filename);
   };
   require(sourceLoader);
+}
+
+function installForwardServiceReachabilityFixture(initiallyReachable = false) {
+  const listener = require(
+    path.resolve(__dirname, "../../src/lib/adapters/openshell/local-forward-listener.ts"),
+  );
+  let reachable = initiallyReachable;
+  listener.probeLocalForwardListener = () => reachable;
+  return {
+    recordSpawn(args) {
+      const argv = Array.isArray(args[1]) ? args[1] : [];
+      const forwardIndex = argv.indexOf("forward");
+      if (forwardIndex < 0 || argv[forwardIndex + 1] !== "service") return false;
+      reachable = true;
+      return true;
+    },
+    release() {
+      reachable = false;
+    },
+  };
 }
 
 // Most Vitest workers use native source imports and never need the CommonJS
@@ -99,6 +168,43 @@ function providerNameAfterAction(args, providerIndex) {
   return args[firstArgument] === "-g" ? args[firstArgument + 2] : args[firstArgument];
 }
 
+function parseNamedProviderGet(command, gatewayName) {
+  const args = normalizeCommand(command).split(/\s+/);
+  const providerIndex = args.indexOf("provider");
+  if (providerIndex < 0 || args[providerIndex + 1] !== "get") return null;
+  const getArgs = args.slice(providerIndex + 2);
+  if (getArgs.length !== 3 || getArgs[0] !== "-g" || getArgs[1] !== gatewayName) {
+    return {
+      error: { status: 1, stderr: `provider get must target named gateway '${gatewayName}'` },
+    };
+  }
+  return { providerName: getArgs[2] };
+}
+
+function mockNvidiaProviderGetRun(command, gatewayName) {
+  const request = parseNamedProviderGet(command, gatewayName);
+  if (request === null) return null;
+  if (request.error) return request.error;
+  if (request.providerName !== "nvidia-prod") return null;
+  return {
+    status: 0,
+    stdout:
+      "Name: nvidia-prod\nType: nvidia\nCredential keys: NVIDIA_INFERENCE_API_KEY\nConfig keys: <none>\n",
+  };
+}
+
+function mockNvidiaOrMissingProviderGetRun(command, gatewayName) {
+  const request = parseNamedProviderGet(command, gatewayName);
+  if (request === null) return null;
+  if (request.error) return request.error;
+  return (
+    mockNvidiaProviderGetRun(command, gatewayName) ?? {
+      status: 1,
+      stderr: `provider '${request.providerName}' not found`,
+    }
+  );
+}
+
 function mockEndpointlessProviderProfileRun(command, profileId, inferenceCapable) {
   const args = normalizeCommand(command).split(/\s+/);
   const providerIndex = args.indexOf("provider");
@@ -137,6 +243,20 @@ function mockManagedEndpointlessProviderProfileRun(command) {
   return (
     mockEndpointlessProviderProfileRun(command, "openai", true) ??
     mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false)
+  );
+}
+
+function mockProviderPreparationRun(command, gatewayName, profileId, inferenceCapable) {
+  return (
+    mockEndpointlessProviderProfileRun(command, profileId, inferenceCapable) ??
+    mockNvidiaOrMissingProviderGetRun(command, gatewayName)
+  );
+}
+
+function mockManagedProviderPreparationRun(command, gatewayName) {
+  return (
+    mockManagedEndpointlessProviderProfileRun(command) ??
+    mockNvidiaOrMissingProviderGetRun(command, gatewayName)
   );
 }
 
@@ -661,6 +781,7 @@ function installVerifiedSandboxCreateFixture(registry, options) {
   const reservationEntry = {
     name: sandboxName,
     gatewayName,
+    gatewayPort,
     pendingRouteReservation: true,
     reservationSessionId: sessionId,
     ...selection,
@@ -691,17 +812,17 @@ function installVerifiedSandboxCreateFixture(registry, options) {
       entry: structuredClone(reservationEntry),
     };
   };
-  const recordPendingSandboxPolicyVerification = (reservation, checkpoint) => {
+  const recordPendingSandboxCreateIdentity = (reservation, checkpoint) => {
     pendingCheckpoint = structuredClone(checkpoint);
     pendingEntry = {
       ...structuredClone(reservation.entry),
       lifecycleGeneration: checkpoint.lifecycleGeneration,
       lifecycleLiveIdentityFingerprint: checkpoint.sandboxIdentityFingerprint,
-      pendingPolicyVerification: structuredClone(checkpoint),
+      pendingCreateIdentity: structuredClone(checkpoint),
     };
     return structuredClone(pendingEntry);
   };
-  const requireCurrentPendingSandboxPolicyVerification = (reservation, checkpoint) => {
+  const requireCurrentPendingSandboxCreateIdentity = (reservation, checkpoint) => {
     if (
       reservation.authority.sessionId !== sessionId ||
       pendingCheckpoint === null ||
@@ -716,8 +837,8 @@ function installVerifiedSandboxCreateFixture(registry, options) {
   const registryFixture = {
     ...registry,
     qualifyPendingSandboxCreateReservation,
-    recordPendingSandboxPolicyVerification,
-    requireCurrentPendingSandboxPolicyVerification,
+    recordPendingSandboxCreateIdentity,
+    requireCurrentPendingSandboxCreateIdentity,
     getSandbox: (name) =>
       name === sandboxName
         ? structuredClone(publishedEntry || pendingEntry || sourceEntry)
@@ -762,65 +883,6 @@ function installVerifiedSandboxCreateFixture(registry, options) {
     require.cache[registryPath].exports = registry;
   }
 
-  const receiptPath = require.resolve(
-    path.resolve(__dirname, "../../src/lib/onboard/sandbox-create/policy-creation-receipt.ts"),
-  );
-  const receipt = require(receiptPath);
-  const apfPolicyRegistration = (input) => {
-    if (options.apfInterceptorRequested !== true) {
-      throw new Error("integration fixture received unexpected APF policy verification");
-    }
-    options.onVerifyCreatedPolicy?.(input);
-    return {
-      policyAuthority: "externally-managed",
-      observedPolicyAuthority: "owner-unknown",
-      policyCreationReceipt: null,
-      policyIdentity: {
-        hash: "fixture-policy",
-        activeVersion: 1,
-      },
-    };
-  };
-  Object.defineProperties(receipt, {
-    verifyCreatedApfInterceptorPolicyRegistration: {
-      configurable: true,
-      enumerable: true,
-      writable: true,
-      value: apfPolicyRegistration,
-    },
-    verifyCreatedSandboxPolicyRegistration: {
-      configurable: true,
-      enumerable: true,
-      writable: true,
-      value: (input) => {
-        if (input.plannedAuthority !== "nemoclaw-managed") {
-          throw new Error("integration fixture supports only managed sandbox creation");
-        }
-        return {
-          policyAuthority: "nemoclaw-managed",
-          observedPolicyAuthority: "owner-unknown",
-          policyCreationReceipt: {
-            schemaVersion: 1,
-            origin: "sandbox-create",
-            gatewayName: input.gatewayName,
-            gatewayPort: input.gatewayPort,
-            sandboxName: input.sandboxName,
-            lifecycleGeneration: input.lifecycleGeneration,
-            sandboxIdentityFingerprint: input.lifecycleLiveIdentityFingerprint,
-            policyHash: "fixture-policy",
-            policyVersion: 1,
-          },
-        };
-      },
-    },
-    revalidateCreatedSandboxPolicyRegistration: {
-      configurable: true,
-      enumerable: true,
-      writable: true,
-      value: (input) => input.registration,
-    },
-  });
-  require.cache[receiptPath].exports = receipt;
   const prepareCreateIntent = () => {
     const onboardSession = require(
       path.resolve(__dirname, "../../src/lib/state/onboard-session.ts"),
@@ -836,7 +898,7 @@ function installVerifiedSandboxCreateFixture(registry, options) {
         : registryFixture.getSandbox(sandboxName);
     const recoverPendingCreate =
       currentEntry?.pendingRouteReservation === true &&
-      currentEntry.pendingPolicyVerification !== undefined;
+      currentEntry.pendingCreateIdentity !== undefined;
     let transaction =
       currentTransaction && (currentTransaction.phase !== "created" || recoverPendingCreate)
         ? currentTransaction
@@ -921,8 +983,7 @@ function sandboxCreateArgsWithVerifiedReservation(args, fixture) {
   return createArgs;
 }
 
-function managedSandboxPolicyReceiptFixture(entry, options = {}) {
-  const sandboxName = options.sandboxName || entry.name;
+function sandboxLifecycleFixture(entry, options = {}) {
   const gatewayName = options.gatewayName || "nemoclaw";
   const gatewayPort = options.gatewayPort || 8080;
   const lifecycleGeneration = options.lifecycleGeneration || "123e4567-e89b-42d3-a456-426614174983";
@@ -931,26 +992,12 @@ function managedSandboxPolicyReceiptFixture(entry, options = {}) {
     .createHash("sha256")
     .update(sandboxId)
     .digest("hex");
-  const policyHash = options.policyHash || "fixture-policy";
-  const policyVersion = options.policyVersion || 1;
   return {
     ...entry,
     gatewayName,
     gatewayPort,
     lifecycleGeneration,
     lifecycleLiveIdentityFingerprint: sandboxIdentityFingerprint,
-    policyAuthority: "nemoclaw-managed",
-    policyCreationReceipt: {
-      schemaVersion: 1,
-      origin: "sandbox-create",
-      gatewayName,
-      gatewayPort,
-      sandboxName,
-      lifecycleGeneration,
-      sandboxIdentityFingerprint,
-      policyHash,
-      policyVersion,
-    },
   };
 }
 
@@ -1070,6 +1117,23 @@ function mockStandaloneGatewayTeardownAuthority() {
     supervisor: null,
     requiredCapabilities: [],
   });
+}
+
+function mockManagedStateVolumeOnboardLifecycle() {
+  const managedWorkloadOnboard = require(
+    path.resolve(__dirname, "../../src/lib/onboard/managed-workload/onboard-orchestration.ts"),
+  );
+  managedWorkloadOnboard.createManagedStateVolumeOnboardLifecycle = ({ roots }) => ({
+    roots,
+    materializeSandboxCreatePlan: (input, materialize) => materialize(input),
+    commit: () => {},
+  });
+}
+
+function mockIsolatedDockerSandboxLifecycleFromRunner() {
+  mockStandaloneGatewayTeardownAuthority();
+  mockManagedStateVolumeOnboardLifecycle();
+  mockDockerSandboxLifecycleReleaseFromRunner();
 }
 
 function mockDockerSandboxLifecycleReleaseFromRunner() {
@@ -1365,8 +1429,13 @@ if (process.env.NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG === "1") {
 }
 
 module.exports = {
+  installForwardServiceReachabilityFixture,
   mockEndpointlessProviderProfileRun,
   mockManagedEndpointlessProviderProfileRun,
+  mockManagedProviderPreparationRun,
+  mockNvidiaProviderGetRun,
+  mockNvidiaOrMissingProviderGetRun,
+  mockProviderPreparationRun,
   createStatefulMessagingProviderRunner,
   isOpenClawSecurityInventoryProbe,
   mockDockerSandboxLifecycleReleaseFromRunner,
@@ -1374,9 +1443,11 @@ module.exports = {
   createCreatedSandboxFixture,
   mockStructuredOpenShellCaptureFromRunner,
   installVerifiedSandboxCreateFixture,
-  managedSandboxPolicyReceiptFixture,
+  sandboxLifecycleFixture,
   mockOnboardRunCapture,
   mockStandaloneGatewayTeardownAuthority,
+  mockManagedStateVolumeOnboardLifecycle,
+  mockIsolatedDockerSandboxLifecycleFromRunner,
   normalizeCommand,
   sandboxCreateArgsWithVerifiedReservation,
 };

@@ -20,7 +20,6 @@ function makeManifest(
     },
     inputs: [],
     credentials: [],
-    policyPresets: [id],
     render: [],
     hooks: [],
   };

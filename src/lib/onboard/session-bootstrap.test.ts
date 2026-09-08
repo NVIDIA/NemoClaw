@@ -92,10 +92,10 @@ function createDeps(
 }
 
 describe("prepareOnboardSession", () => {
-  it("stops resume before side effects when saved policy authority is invalid (#9833)", async () => {
+  it("stops resume before side effects when saved sandbox identity is invalid (#9833)", async () => {
     const loadSession = vi.fn((): Session | null => {
       throw new Error(
-        "Refusing to load the onboarding session: the saved policy authority is invalid.",
+        "Refusing to load the onboarding session: the saved sandbox identity is invalid.",
       );
     });
     const { deps } = createDeps(null, { loadSession });
@@ -112,7 +112,7 @@ describe("prepareOnboardSession", () => {
         },
         deps,
       ),
-    ).rejects.toThrow(/saved policy authority is invalid/u);
+    ).rejects.toThrow(/saved sandbox identity is invalid/u);
 
     expect(loadSession).toHaveBeenCalledOnce();
     expect(deps.requireHostMountRuntimeSupport).not.toHaveBeenCalled();

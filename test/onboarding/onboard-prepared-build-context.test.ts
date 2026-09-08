@@ -94,9 +94,6 @@ const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry,
 });
 const runner = require(${runnerPath});
 const preflight = require(${preflightPath});
-const policyAuthorityPreflight = require(${JSON.stringify(
-    path.join(repoRoot, "src", "lib", "onboard", "policy-authority", "preflight.ts"),
-  )});
 const credentials = require(${credentialsPath});
 const buildContextStage = require(${buildContextStagePath});
 const dockerfilePatchFlow = require(${dockerfilePatchFlowPath});
@@ -154,7 +151,7 @@ const normalize = (command) =>
 runner.run = (command) => {
   const normalized = normalize(command);
   commands.push(normalized);
-  const profileResult = require(${onboardScriptMocksPath}).mockManagedEndpointlessProviderProfileRun(command);
+  const profileResult = require(${onboardScriptMocksPath}).mockManagedProviderPreparationRun(command, "nemoclaw");
   if (profileResult !== null) return profileResult;
   const sandboxResult = createdSandbox.run(command);
   return sandboxResult ?? { status: 0 };
@@ -186,9 +183,6 @@ runner.runCapture = (command) => {
 registry.getDefault = () => null;
 registry.listExtraProviders = () => [];
 preflight.checkPortAvailable = async () => ({ ok: true });
-policyAuthorityPreflight.qualifySandboxPolicyAuthority = () => ({
-  authority: "nemoclaw-managed",
-});
 credentials.prompt = async () => "";
 
 childProcess.spawn = (...args) => {

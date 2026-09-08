@@ -86,7 +86,7 @@ async function runPolicyScenario({
     step: () => undefined,
     note: () => undefined,
     isNonInteractive: () => true,
-    waitForSandboxReady: () => true,
+    waitForSandboxReady: async () => ({ ready: true, reason: "ready", error: null }),
     waitForSandboxControlPlaneReady: () => true,
     syncPresetSelection: (_sandboxName, current, selected) => {
       const currentSet = new Set(current);
@@ -155,17 +155,19 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
       `expected chosen to preserve local-inference, got ${JSON.stringify(payload.chosen)}`,
     );
 
-    // User-added extras stay additive, but built-in Brave is no longer
-    // preserved after Brave search was declined.
+    // User-added extras stay additive, and built-in Brave stays too: it is the
+    // Balanced tier's own egress default, not a stale web-search leftover, so
+    // declining Brave search does not narrow it (#10404).
     assert.deepEqual(
       payload.removedCalls,
-      ["brave"],
-      `expected only stale built-in Brave to be removed, got ${JSON.stringify(payload.removedCalls)}`,
+      [],
+      `expected no preset to be removed, got ${JSON.stringify(payload.removedCalls)}`,
     );
 
-    // Final state should still contain every non-Brave previously-applied preset.
+    // Final state should still contain every previously-applied preset.
     const finalSorted = payload.finalApplied.slice().sort();
     assert.deepEqual(finalSorted, [
+      "brave",
       "brew",
       "huggingface",
       "local-inference",
@@ -193,8 +195,8 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
     );
     assert.deepEqual(
       payload.removedCalls,
-      ["brave"],
-      `expected only stale built-in Brave to be removed, got ${JSON.stringify(payload.removedCalls)}`,
+      [],
+      `expected no preset to be removed, got ${JSON.stringify(payload.removedCalls)}`,
     );
   });
 

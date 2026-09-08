@@ -16,7 +16,7 @@ import { runCapture } from "../runner";
 
 export type OllamaRuntimeRunCaptureFn = (
   cmd: readonly string[],
-  opts?: { ignoreError?: boolean },
+  opts?: { ignoreError?: boolean; timeout?: number },
 ) => string;
 
 export interface OllamaRuntimeModelStatus {
@@ -140,28 +140,45 @@ export function probeOllamaRuntimeModelStatus(
   model: string,
   getOllamaHost: () => string,
   runCaptureImpl?: OllamaRuntimeRunCaptureFn,
+  timeoutMilliseconds = 5_000,
 ): OllamaRuntimeModelStatus {
   const capture = runCaptureImpl ?? runCapture;
   const host = getOllamaHost();
+  const normalizedTimeoutMilliseconds =
+    Number.isFinite(timeoutMilliseconds) && timeoutMilliseconds > 0
+      ? Math.floor(timeoutMilliseconds)
+      : 5_000;
+  const boundedTimeoutMilliseconds = Math.max(1, Math.min(5_000, normalizedTimeoutMilliseconds));
   const output = capture(
     [
       "curl",
       ...buildValidatedCurlCommandArgs([
         "-sf",
         "--connect-timeout",
-        "3",
+        String(Math.min(3, boundedTimeoutMilliseconds / 1000)),
         "--max-time",
-        "5",
+        String(boundedTimeoutMilliseconds / 1000),
         `http://${host}:${OLLAMA_PORT}/api/ps`,
       ]),
     ],
-    { ignoreError: true },
+    { ignoreError: true, timeout: boundedTimeoutMilliseconds },
   );
+  return parseOllamaRuntimeModelStatus(model, output);
+}
+
+/** Parse one completed Ollama `/api/ps` response without performing I/O. */
+export function parseOllamaRuntimeModelStatus(
+  model: string,
+  output: string,
+): OllamaRuntimeModelStatus {
   if (!output) return { probed: false, loaded: false, cpuOnly: false };
 
   try {
-    const parsed = JSON.parse(String(output || ""));
-    const models = Array.isArray(parsed?.models) ? parsed.models : [];
+    const parsed = JSON.parse(output) as { models?: unknown } | null;
+    if (!parsed || !Array.isArray(parsed.models)) {
+      return { probed: false, loaded: false, cpuOnly: false };
+    }
+    const models = parsed.models;
     const target = normalizeOllamaModelName(model);
     const loaded = models.find((entry: { name?: unknown; model?: unknown }) => {
       return (
@@ -193,7 +210,7 @@ export function probeOllamaRuntimeModelStatus(
       ...(hasSizeVram ? { sizeVram: rawSizeVram } : {}),
     };
   } catch {
-    return { probed: true, loaded: false, cpuOnly: false };
+    return { probed: false, loaded: false, cpuOnly: false };
   }
 }
 

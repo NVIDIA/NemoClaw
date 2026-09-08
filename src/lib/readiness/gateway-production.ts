@@ -35,8 +35,10 @@ import {
 } from "../onboard/docker-driver-gateway-process-identity";
 import { resolveDockerDriverGatewayName } from "../onboard/docker-driver-gateway-runtime";
 import {
+  createOpenShellHomebrewFormulaOperation,
   getTrustedActiveOpenShellGatewayUserServiceIdentity,
   hasOpenShellGatewayUserService,
+  OPENSHELL_GATEWAY_HOMEBREW_SERVICE,
 } from "../onboard/docker-driver-gateway-service";
 import { createGatewayHostRuntime } from "../onboard/gateway-host-runtime";
 import { loadGatewayManagementDeclaration } from "../onboard/gateway-management";
@@ -200,7 +202,7 @@ function resolveTrustedGatewayBinary(openshell: string | null): string | null {
   return null;
 }
 
-/** Require the trusted Linux executable plus a trusted path or owned target tag. */
+/** Require the trusted executable plus a trusted path or owned target tag. */
 export function gatewayProcessIdentityMatchesTrustedBinary(
   identity: string,
   trustedGatewayBin: string | null,
@@ -209,10 +211,9 @@ export function gatewayProcessIdentityMatchesTrustedBinary(
   actualExecutablePath: string | null = null,
   platform: NodeJS.Platform = process.platform,
 ): boolean {
-  // Linux procfs supplies a kernel-backed executable identity for direct
-  // processes. On macOS, argv0 is user-controlled, so direct listeners remain
-  // untrusted and only the positively identified Homebrew service is eligible.
-  if (!trustedGatewayBin || platform !== "linux") return false;
+  // Linux procfs and the first macOS lsof text vnode supply independent,
+  // kernel-backed executable identity. argv0 alone never establishes trust.
+  if (!trustedGatewayBin || (platform !== "linux" && platform !== "darwin")) return false;
   const argv0 = cleanGatewayProcessToken(identity.trim().split(/\s+/, 1)[0] ?? "");
   const expected = normalizeExecutablePath(trustedGatewayBin);
   if (
@@ -586,11 +587,39 @@ export function createProductionGatewayReadinessDependencies(
   const trustedGatewayBin = resolveTrustedGatewayBinary(openshellBin);
   const trustedVersionBinaryByPid = new Map<number, string>();
   const trustedTargetBoundPids = new Set<number>();
+  const homebrewFormulaOperation = createOpenShellHomebrewFormulaOperation({ env: probeEnv });
+  let cachedHomebrewFormulaInfo: ReturnType<typeof homebrewFormulaOperation> | null = null;
+  const homebrewFormulaInfoOperation = [
+    "info",
+    "--json=v2",
+    OPENSHELL_GATEWAY_HOMEBREW_SERVICE,
+  ].join("\0");
+
+  function resetGatewayServiceObservation(): void {
+    cachedHomebrewFormulaInfo = null;
+  }
+
+  function runObservedHomebrewFormulaOperation(args: string[]) {
+    const key = args.join("\0");
+    if (key === homebrewFormulaInfoOperation && cachedHomebrewFormulaInfo) {
+      return cachedHomebrewFormulaInfo;
+    }
+    const result = homebrewFormulaOperation(args);
+    if (result.status === 0 && key === homebrewFormulaInfoOperation) {
+      cachedHomebrewFormulaInfo = result;
+    }
+    return result;
+  }
 
   function observeDirectGatewayBinary(pid: number): string | null {
-    if (process.platform !== "linux" || !trustedGatewayBin) return null;
-    const generationBefore = readLinuxProcessStartTime(pid);
-    const executableBefore = readLinuxProcessExecutable(pid);
+    if ((process.platform !== "linux" && process.platform !== "darwin") || !trustedGatewayBin) {
+      return null;
+    }
+    const generationBefore = process.platform === "linux" ? readLinuxProcessStartTime(pid) : null;
+    const executableBefore =
+      process.platform === "linux"
+        ? readLinuxProcessExecutable(pid)
+        : readDarwinProcessExecutable(pid, probeEnv);
     let targetBoundIdentity = false;
     const exactTrustedBinary = isDockerDriverGatewayProcessIdentity({
       pid,
@@ -615,24 +644,33 @@ export function createProductionGatewayReadinessDependencies(
         }
         return matches;
       },
-      requireDockerDriverEnv: true,
+      requireDockerDriverEnv: process.platform === "linux",
       hasDockerDriverGatewayEnv: (candidatePid) =>
         hasDockerDriverGatewayEnvironment(
           readDockerDriverGatewayProcessEnvironment(candidatePid),
           getDockerDriverGatewayEndpoint(gatewayPort),
         ),
     });
-    const executableAfter = readLinuxProcessExecutable(pid);
-    const generationAfter = readLinuxProcessStartTime(pid);
+    const executableAfter =
+      process.platform === "linux"
+        ? readLinuxProcessExecutable(pid)
+        : readDarwinProcessExecutable(pid, probeEnv);
+    const generationAfter = process.platform === "linux" ? readLinuxProcessStartTime(pid) : null;
     const stableTrustedBinary =
       exactTrustedBinary &&
-      gatewayProcessSamplesMatchTrustedBinary(
-        generationBefore,
-        generationAfter,
-        executableBefore,
-        executableAfter,
-        trustedGatewayBin,
-      );
+      (process.platform === "linux"
+        ? gatewayProcessSamplesMatchTrustedBinary(
+            generationBefore,
+            generationAfter,
+            executableBefore,
+            executableAfter,
+            trustedGatewayBin,
+          )
+        : gatewayExecutableSamplesMatchTrustedBinary(
+            executableBefore,
+            executableAfter,
+            trustedGatewayBin,
+          ));
     if (!stableTrustedBinary) return null;
     if (targetBoundIdentity) trustedTargetBoundPids.add(pid);
     return trustedGatewayBin;
@@ -642,6 +680,7 @@ export function createProductionGatewayReadinessDependencies(
     if (process.platform !== "linux" && process.platform !== "darwin") return null;
     const serviceBefore = getTrustedActiveOpenShellGatewayUserServiceIdentity({
       env: probeEnv,
+      homebrewFormulaOperation: runObservedHomebrewFormulaOperation,
       suppressUnsupportedVersionWarning: true,
     });
     if (serviceBefore?.pid !== pid || !serviceBefore.executablePath) return null;
@@ -652,6 +691,7 @@ export function createProductionGatewayReadinessDependencies(
         : readDarwinProcessExecutable(pid, probeEnv);
     const serviceAfter = getTrustedActiveOpenShellGatewayUserServiceIdentity({
       env: probeEnv,
+      homebrewFormulaOperation: runObservedHomebrewFormulaOperation,
       suppressUnsupportedVersionWarning: true,
     });
     // Bracket the complete service-identity probe so PID reuse or re-exec
@@ -713,6 +753,7 @@ export function createProductionGatewayReadinessDependencies(
     hasOpenShellGatewayUserService: () =>
       hasOpenShellGatewayUserService({
         env: probeEnv,
+        homebrewFormulaOperation: runObservedHomebrewFormulaOperation,
         suppressUnsupportedVersionWarning: true,
       }),
     loadGatewayManagementDeclaration,
@@ -725,7 +766,7 @@ export function createProductionGatewayReadinessDependencies(
     supervisorProbeEnv: probeEnv,
   });
 
-  async function observeManagedGateway(): Promise<ManagedGatewayObservations> {
+  async function collectManagedGatewayObservations(): Promise<ManagedGatewayObservations> {
     const { endpointBinding, reuseState } = observeReuseState(
       gatewayName,
       gatewayPort,
@@ -826,9 +867,26 @@ export function createProductionGatewayReadinessDependencies(
     };
   }
 
+  async function observeManagedGateway(): Promise<ManagedGatewayObservations> {
+    try {
+      return await collectManagedGatewayObservations();
+    } finally {
+      resetGatewayServiceObservation();
+    }
+  }
+
   return {
-    resolveOwner: options.resolveOwner ?? runtime.getGatewayOwner,
-    probeAttachment: options.probeAttachment ?? runtime.probeGatewayAttachment,
+    resolveOwner: () => {
+      resetGatewayServiceObservation();
+      return (options.resolveOwner ?? runtime.getGatewayOwner)();
+    },
+    probeAttachment: async (owner) => {
+      try {
+        return await (options.probeAttachment ?? runtime.probeGatewayAttachment)(owner);
+      } finally {
+        resetGatewayServiceObservation();
+      }
+    },
     observeManagedGateway,
   };
 }

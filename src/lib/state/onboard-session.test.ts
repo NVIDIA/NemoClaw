@@ -428,7 +428,6 @@ describe("onboard session", () => {
       preferredInferenceApi: "openai-completions",
       compatibleEndpointReasoning: "true",
       nimContainer: "nim-123",
-      policyPresets: ["pypi", "npm"],
       apiKey: "nvapi-secret",
       metadata: {
         gatewayName: "nemoclaw",
@@ -446,7 +445,6 @@ describe("onboard session", () => {
     expect(loaded.preferredInferenceApi).toBe("openai-completions");
     expect(loaded.compatibleEndpointReasoning).toBe("true");
     expect(loaded.nimContainer).toBe("nim-123");
-    expect(loaded.policyPresets).toEqual(["pypi", "npm"]);
     expect(requireDebugSummary(session.summarizeForDebug()).compatibleEndpointReasoning).toBe(
       "true",
     );
@@ -750,7 +748,7 @@ describe("onboard session", () => {
     session.saveSession(created);
 
     const raw = JSON.parse(fs.readFileSync(session.SESSION_FILE, "utf-8"));
-    expect(raw.messagingPlan.networkPolicy).toEqual({ presets: [], entries: [] });
+    expect(raw.messagingPlan.networkPolicy).toBeUndefined();
     expect(raw.messagingPlan.agentRender).toBeUndefined();
     expect(raw.messagingPlan.buildSteps).toBeUndefined();
     expect(raw.messagingPlan.runtimeSetup).toBeUndefined();
@@ -1435,14 +1433,6 @@ describe("onboard session", () => {
     const created = session.createSession({ messagingPlan: plan });
     expect(created.messagingPlan).toEqual(plan);
     expect(created.provider).toBeNull();
-  });
-
-  it("filters non-string array entries in createSession overrides", () => {
-    const created = session.createSession({
-      policyPresets: ["pypi", 7, null, "npm"] as unknown as string[],
-    });
-
-    expect(created.policyPresets).toEqual(["pypi", "npm"]);
   });
 
   it("summarizes the session for debug output", () => {

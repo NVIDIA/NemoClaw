@@ -50,7 +50,6 @@ function writeOpenClawRegistry(sandboxName: string): void {
           model: "m",
           provider: "p",
           gpuEnabled: false,
-          policies: [],
           agent: null,
         },
       },

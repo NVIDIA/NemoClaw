@@ -3,6 +3,8 @@
 
 import { isNonInteractiveEnv } from "../core/non-interactive";
 import { getNameValidationGuidance } from "../name-validation";
+export { enforceRemovedImmutabilityMigrationBoundary } from "../state/migrations/removed-immutability";
+import { beginAuthoritativeRebuildRuntimeSelectionScope } from "./authoritative-rebuild-target";
 import { cliDisplayName } from "./branding";
 import {
   canonicalPlaceholderKeys,
@@ -10,6 +12,7 @@ import {
   parseExtraPlaceholderKeys,
 } from "./extra-placeholder-keys";
 import { RESERVED_SANDBOX_NAMES } from "./sandbox-agent";
+import type { OnboardOptions } from "./types";
 import {
   requireStationExpressResumeIntent,
   type StationExpressSessionLike,
@@ -72,12 +75,80 @@ interface DefaultRunEntryState {
   listRetainedSandboxRecoveryRecords(): readonly { readonly sandboxName: string }[];
 }
 
-type NonInteractiveEntryOptions = { nonInteractive?: boolean };
-type ResumableEntryOptions = NonInteractiveEntryOptions & {
-  resume?: boolean;
-  fresh?: boolean;
-  apfInterceptorRequested?: boolean | null;
+type PendingCreateRecoverySession = {
+  readonly sessionId?: string;
+  readonly status: string;
+  readonly cancellationRecovery?: { readonly sandboxName: string } | null;
 };
+
+type PendingCreateRecoveryEntry = {
+  readonly name: string;
+  readonly pendingCreateIdentity?: unknown;
+  readonly reservationSessionId?: string;
+};
+
+/** Restore missing independent recovery before a new session can replace its owner. */
+export function reconstructUnownedPendingCreateRecoveries<Entry extends PendingCreateRecoveryEntry>(
+  options: Pick<OnboardEntryOptionsInput["opts"], "fresh" | "resume">,
+  persistedSession: PendingCreateRecoverySession | null,
+  entries: readonly Entry[],
+  reconstruct: (entry: Entry) => unknown,
+): void {
+  const preservesPendingCreateSession =
+    options.resume === true ||
+    (options.fresh !== true && persistedSession?.status === "in_progress");
+  for (const entry of entries) {
+    if (!entry.pendingCreateIdentity) continue;
+    const matchingSessionId =
+      entry.reservationSessionId !== undefined &&
+      entry.reservationSessionId === persistedSession?.sessionId;
+    const sessionAlreadyOwnsRecovery =
+      matchingSessionId && entry.name === persistedSession?.cancellationRecovery?.sandboxName;
+    if (sessionAlreadyOwnsRecovery || (preservesPendingCreateSession && matchingSessionId)) {
+      continue;
+    }
+    reconstruct(entry);
+  }
+}
+
+/** Restore orphaned create authority before onboarding can replace its session owner. */
+export function resolveEntryOptions<Entry extends PendingCreateRecoveryEntry>(
+  options: OnboardOptions,
+  validateSandboxName: OnboardEntryOptionsDeps["validateName"],
+  state: DefaultRunEntryState & {
+    reconstructRetainedSandboxRecoveryFromPendingCreate(entry: Entry): unknown;
+  },
+  registryState: { listSandboxes(): { sandboxes: readonly Entry[] } },
+) {
+  const persistedSession = state.loadSession();
+  const entryOptions = readOptions(options, validateSandboxName, state);
+  const targetSandboxName =
+    entryOptions.requestedSandboxName ?? persistedSession?.sandboxName?.trim();
+  reconstructUnownedPendingCreateRecoveries(
+    options,
+    persistedSession,
+    registryState
+      .listSandboxes()
+      .sandboxes.filter((entry) => !targetSandboxName || entry.name === targetSandboxName),
+    state.reconstructRetainedSandboxRecoveryFromPendingCreate,
+  );
+  return readOptions(options, validateSandboxName, state);
+}
+
+type NonInteractiveEntryOptions = { nonInteractive?: boolean };
+type ResumableEntryOptions = Pick<
+  OnboardOptions,
+  | "apfInterceptorRequested"
+  | "authoritativeResumeConfig"
+  | "fresh"
+  | "nonInteractive"
+  | "onboardLockAlreadyHeld"
+  | "recreateSandbox"
+  | "resume"
+  | "runtimeSelection"
+  | "targetGatewayName"
+  | "targetGatewayPort"
+>;
 
 const PROVIDER_INTENT_ENV_KEYS = [
   "NEMOCLAW_PROVIDER",
@@ -214,6 +285,8 @@ export function resolveDefaultRunEntryOptionsFromState(
   );
 }
 
+export const readOptions = resolveDefaultRunEntryOptionsFromState;
+
 export function assertDefaultSandboxNameAllowed(sandboxName: string): void {
   if (!RESERVED_SANDBOX_NAMES.has(sandboxName)) return;
   console.error(
@@ -255,7 +328,12 @@ export function wrapOnboard<Options extends ResumableEntryOptions>(
       options?.apfInterceptorRequested === true,
       process.env,
     );
-    await run(options);
+    const restoreRuntimeSelection = beginAuthoritativeRebuildRuntimeSelectionScope(options ?? {});
+    try {
+      await run(options);
+    } finally {
+      restoreRuntimeSelection();
+    }
   };
   return wrapStationExpressOnboard(
     withNonInteractiveEnvironment(guardProviderlessInput),
@@ -282,7 +360,7 @@ export function resolveOnboardEntryOptions(
   deps: OnboardEntryOptionsDeps,
 ): ResolvedOnboardEntryOptions {
   const explicitResume = input.opts.resume === true;
-  const fresh = input.opts.fresh === true;
+  let fresh = input.opts.fresh === true;
   // The mutual-exclusion error applies only to the explicit flags — a leftover
   // in_progress session combined with an explicit `--fresh` is not a conflict
   // (fresh wins, see below), so it must not trip this guard.
@@ -347,9 +425,7 @@ export function resolveOnboardEntryOptions(
       deps.error(
         "  Onboarding cannot continue while a retained sandbox recovery record is unresolved without an explicit different sandbox name.",
       );
-      deps.error(
-        "  Use --fresh --name <new-name>; the retained sandbox recovery record stays unresolved.",
-      );
+      deps.error("  Use --name <new-name>; the retained sandbox recovery record stays unresolved.");
       deps.exitProcess(1);
     }
     if (retainedRecoverySandboxNames.has(recoveryEntryName)) {
@@ -357,13 +433,20 @@ export function resolveOnboardEntryOptions(
         `  Onboarding cannot use retained sandbox '${recoveryEntryName}' while its identity-bound recovery record is unresolved.`,
       );
       deps.error(
-        "  Automatic and explicit resume, reuse, recreation, and same-name fresh onboarding remain disabled; NemoClaw has no supported operation to clear this recovery record.",
+        `  Run the destroy command for retained sandbox '${recoveryEntryName}' to remove the verified failed attempt; resume, reuse, recreation, and same-name fresh onboarding remain disabled until destroy completes.`,
       );
       deps.exitProcess(1);
     }
   }
   if (input.persistedSessionStatus === "recovery_required") {
     const recoverySandboxName = input.persistedRecoverySandboxName?.trim() || null;
+    const canStartDifferentSandbox =
+      !explicitResume &&
+      recoverySandboxName !== null &&
+      requestedSandboxName !== null &&
+      requestedSandboxName !== recoverySandboxName &&
+      retainedRecoverySandboxNames.has(recoverySandboxName);
+    if (!fresh && canStartDifferentSandbox) fresh = true;
     if (!fresh) {
       deps.error(
         `  Onboarding cannot continue because cancellation preserved sandbox '${recoverySandboxName ?? "unknown"}' in recovery-only state.`,
@@ -372,7 +455,7 @@ export function resolveOnboardEntryOptions(
         "  Automatic and explicit resume, reuse, and recreation are disabled to protect the retained sandbox.",
       );
       deps.error(
-        "  Use --fresh --name <new-name>; the retained sandbox recovery record stays unresolved.",
+        "  Use --name <new-name> to start another sandbox. The retained sandbox recovery record stays unresolved.",
       );
       deps.exitProcess(1);
     }
@@ -394,7 +477,7 @@ export function resolveOnboardEntryOptions(
         "  Onboarding cannot replace the recovery-only session because its independent retained sandbox recovery record is unavailable.",
       );
       deps.error(
-        "  Preserve the session and registry state for identity-bound administrator recovery.",
+        "  Preserve the session, registry state, and terminal output. Do not delete the sandbox by mutable name.",
       );
       deps.exitProcess(1);
     }

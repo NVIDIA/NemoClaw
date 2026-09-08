@@ -6,10 +6,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
+import * as policy from "../../../src/lib/policy";
 import { testTimeout } from "../../helpers/timeouts";
+import { ArtifactSink } from "../fixtures/artifacts.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
   assertManagedMcpPolicySurvivedRemoval,
@@ -20,6 +22,7 @@ import {
   restoreDnsRebindingHostsFixture,
 } from "../live/mcp-bridge-sandbox.ts";
 import {
+  assertRawOpenShellAllowedIpsRebindingDenied,
   buildRawOpenShellAllowedIpsRebindingPolicy,
   buildRawOpenShellAllowedIpsRebindingProbeScript,
   parseRawOpenShellAllowedIpsRebindingEndpoint,
@@ -66,11 +69,13 @@ function denialResult(
   };
 }
 
-async function captureRestoreScript(hostBackupPath: string, sandboxBackupPath: string) {
+async function captureRestoreCommand(hostBackupPath: string, sandboxBackupPath: string) {
+  let restoreArgs: string[] = [];
   let restoreScript = "";
   const host = {
     command: async (_command: string, args: string[]) => {
       restoreScript = args[1] ?? "";
+      restoreArgs = args.slice(2);
       return denialResult();
     },
   } as unknown as HostCliClient;
@@ -80,7 +85,7 @@ async function captureRestoreScript(hostBackupPath: string, sandboxBackupPath: s
     hostBackupPath,
     sandboxBackupPath,
   });
-  return restoreScript;
+  return { restoreArgs, restoreScript };
 }
 
 describe("MCP curl policy denial classification", SUITE_OPTIONS, () => {
@@ -89,7 +94,7 @@ describe("MCP curl policy denial classification", SUITE_OPTIONS, () => {
     const host = {
       command: async (_command: string, args: string[]) => {
         probeScript = args[1] ?? "";
-        return { ...denialResult(), stdout: "10.20.30.40\n" };
+        return { ...denialResult(), stdout: "route 10.20.30.40\n" };
       },
     } as unknown as HostCliClient;
 
@@ -275,31 +280,63 @@ network_policies:
     expect(transportFailure.status).toBe(7);
   });
 
-  it("runs the raw proof in both MCP lanes without calling an adapter and restores policy", () => {
-    const mcpBridgeSource = fs.readFileSync("test/e2e/live/mcp-bridge.test.ts", "utf8");
-    const networkPolicySource = fs.readFileSync("test/e2e/live/network-policy.test.ts", "utf8");
-    const contractSource = fs.readFileSync(
-      "test/e2e/live/openshell-allowed-ips-rebinding.ts",
-      "utf8",
+  it("applies and restores the raw proof through live OpenShell policy authority", async () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-raw-policy-proof-"));
+    tempDirs.push(rootDir);
+    const artifacts = new ArtifactSink(path.join(rootDir, "artifacts"));
+    await artifacts.ensureRoot();
+    const basePolicy = "version: 1\nnetwork_policies: {}\n";
+    let currentPolicy = basePolicy;
+    const policyMutations: Array<{ document: string; operation: string | undefined }> = [];
+    const setPolicy = vi
+      .spyOn(policy, "setPolicyDocument")
+      .mockImplementation((_sandboxName, document, options) => {
+        currentPolicy = document;
+        policyMutations.push({ document, operation: options?.operation });
+        return true;
+      });
+    const host = {
+      command: async (_command: string, _args: string[], options?: { artifactName?: string }) => ({
+        ...denialResult(),
+        stdout: options?.artifactName === "host-address-for-sandbox" ? "route 10.20.30.40\n" : "",
+      }),
+    } as unknown as HostCliClient;
+    const openshellCalls: string[][] = [];
+    const sandbox = {
+      openshell: async (args: string[]) => {
+        openshellCalls.push(args);
+        return {
+          ...denialResult(),
+          stdout: args.includes("--full") ? currentPolicy : basePolicy,
+        };
+      },
+      execShell: async () => ({
+        ...denialResult(),
+        stdout: `${RAW_OPENSHELL_REBIND_HTTP_CODE_MARKER}403\n`,
+      }),
+    } as never;
+
+    try {
+      await assertRawOpenShellAllowedIpsRebindingDenied({
+        artifacts,
+        host,
+        policySettleMs: 0,
+        sandbox,
+        sandboxName: "raw-proof",
+        timeoutMs: 1_000,
+      });
+    } finally {
+      setPolicy.mockRestore();
+    }
+
+    expect(policyMutations).toHaveLength(2);
+    expect(policyMutations[0]?.document).toContain(RAW_OPENSHELL_REBIND_POLICY_KEY);
+    expect(policyMutations[0]?.operation).toBe("run the raw OpenShell allowed_ips rebinding proof");
+    expect(policyMutations[1]?.document).toBe(basePolicy.trim());
+    expect(policyMutations[1]?.operation).toBe(
+      "restore the raw OpenShell allowed_ips rebinding proof policy",
     );
-    expect(
-      mcpBridgeSource.match(
-        /await runFullMcpBridgeE2eCoverage\(\s*mcpBridgeE2eScope,\s*\(\) =>\s*assertRawOpenShellAllowedIpsRebindingDenied\(/gu,
-      ),
-    ).toHaveLength(1);
-    expect(networkPolicySource).not.toContain("assertRawOpenShellAllowedIpsRebindingDenied");
-    expect(contractSource).toContain('["policy", "set", "--policy"');
-    expect(contractSource).toContain("server.requestCount()");
-    expect(contractSource).toContain("raw-openshell-rebinding-policy-restore");
-    expect(contractSource).toContain("raw-openshell-rebinding-policy-verify-restored");
-    expect(contractSource.indexOf("raw-openshell-rebinding-policy-restore")).toBeGreaterThan(
-      contractSource.indexOf("} finally {"),
-    );
-    expect(contractSource).toContain(
-      "https://github.com/NVIDIA/OpenShell/blob/3dee5570a46076a57a3b056f35f35ebc0861ac85/",
-    );
-    expect(contractSource).not.toContain("host.nemoclaw");
-    expect(contractSource).not.toContain("assertAdapterDnsRebindingDenied");
+    expect(openshellCalls.some((args) => args[0] === "policy" && args[1] === "set")).toBe(false);
   });
 
   it("accepts an unchanged surviving policy only after the unrelated policy is absent", () => {
@@ -351,7 +388,10 @@ network_policies:
   });
 
   it("restores host DNS strictly while treating the ephemeral sandbox as best effort", async () => {
-    const restoreScript = await captureRestoreScript("/tmp/host-backup", "/tmp/sandbox-backup");
+    const { restoreScript } = await captureRestoreCommand(
+      "/tmp/host-backup",
+      "/tmp/sandbox-backup",
+    );
 
     expect(restoreScript).toContain("set -uo pipefail");
     expect(restoreScript).not.toContain("set -euo pipefail");
@@ -360,7 +400,10 @@ network_policies:
     expect(restoreScript).toContain("host_restore_failed=1");
     expect(restoreScript).toContain('if [ "$host_restore_failed" -ne 0 ]; then exit 1; fi');
     expect(restoreScript).toContain("for attempt in 1 2 3; do");
-    expect(restoreScript).toContain('docker exec --user 0 -i "$container_id"');
+    expect(restoreScript).toContain('runtime_command=("$@")');
+    expect(restoreScript).toContain(
+      '"${runtime_command[@]}" container exec --user 0 --interactive "$container_id"',
+    );
     expect(restoreScript).toContain(
       "::warning::could not restore ephemeral sandbox /etc/hosts; cleanup will destroy the sandbox",
     );
@@ -383,16 +426,20 @@ network_policies:
       '#!/bin/sh\n[ "${FAKE_SUDO_STATUS:-0}" -eq 0 ] || exit "$FAKE_SUDO_STATUS"\ncat > "$FAKE_HOSTS_PATH"\n',
     );
     writeExecutable("cmp", '#!/bin/sh\nexit "${FAKE_CMP_STATUS:-0}"\n');
-    writeExecutable(
-      "docker",
-      '#!/bin/sh\nif [ "$1" = ps ]; then echo fake-container; exit 0; fi\nif [ "$1" = exec ]; then cat >/dev/null; exit "${FAKE_DOCKER_EXEC_STATUS:-0}"; fi\nexit 64\n',
-    );
     writeExecutable("sleep", "#!/bin/sh\nexit 0\n");
 
     try {
-      const restoreScript = await captureRestoreScript(hostBackupPath, sandboxBackupPath);
+      const { restoreArgs, restoreScript } = await captureRestoreCommand(
+        hostBackupPath,
+        sandboxBackupPath,
+      );
+      const runtimeCommand = restoreArgs[1] ?? "missing-runtime-command";
+      writeExecutable(
+        runtimeCommand,
+        '#!/bin/sh\nif [ "$1" = container ] && [ "$2" = ps ]; then echo fake-container; exit 0; fi\nif [ "$1" = container ] && [ "$2" = exec ]; then cat >/dev/null; exit "${FAKE_RUNTIME_EXEC_STATUS:-0}"; fi\nexit 64\n',
+      );
       const runRestore = (extraEnv: Record<string, string> = {}) =>
-        spawnSync("/bin/bash", ["-c", restoreScript], {
+        spawnSync("/bin/bash", ["-c", restoreScript, ...restoreArgs], {
           encoding: "utf8",
           env: {
             ...process.env,
@@ -423,7 +470,7 @@ network_policies:
       expect(fs.existsSync(sandboxBackupPath)).toBe(true);
 
       resetBackups();
-      const sandboxFailure = runRestore({ FAKE_DOCKER_EXEC_STATUS: "1" });
+      const sandboxFailure = runRestore({ FAKE_RUNTIME_EXEC_STATUS: "1" });
       expect(sandboxFailure.status, sandboxFailure.stderr).toBe(0);
       expect(sandboxFailure.stderr).toContain(
         "::warning::could not restore ephemeral sandbox /etc/hosts; cleanup will destroy the sandbox",

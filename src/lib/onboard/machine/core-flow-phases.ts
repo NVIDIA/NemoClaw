@@ -6,6 +6,7 @@ import {
   normalizeInferenceEndpointSource,
 } from "../../inference/selection";
 import type { WebSearchConfig } from "../../inference/web-search";
+import { isN1xManagedVllmProviderModel } from "../../domain/sandbox/n1x-managed-vllm-rebuild";
 import type { DcodeAutoApprovalMode } from "../dcode-auto-approval";
 import { assertProviderlessInterceptorEnvironment } from "../entry-options";
 import type {
@@ -75,14 +76,13 @@ export interface SandboxOnboardFlowPhaseOptions<
   hermesPortableLifecycle?: boolean;
   apfInterceptorRequested?: boolean;
   authoritativeResumeConfig?: boolean;
-  authoritativePolicyTier?: string | null;
 
   recreateJournalTargetIntentFingerprint?: string | null;
   resumeAgentChanged: boolean;
   requestedObservabilityEnabled?: boolean | null;
   requestedDcodeAutoApprovalMode?: DcodeAutoApprovalMode | null;
   rebuildPreservedEnv?: readonly import("../../state/preserved-env").PreservedEnvFile[];
-  rebuildPolicyPresets?: readonly string[];
+  rebuildPolicySourcePath?: string;
   hostMounts?: readonly import("../../state/registry/types").SandboxHostMount[];
   endpointProvenance: EndpointProvenanceOptions;
   recreateSandbox: (requested?: boolean) => boolean;
@@ -334,8 +334,10 @@ export function createSandboxOnboardFlowPhase<
       hermesPortableLifecycle: options.hermesPortableLifecycle === true,
       apfInterceptorRequested: options.apfInterceptorRequested === true,
       authoritativeResumeConfig: options.authoritativeResumeConfig,
-      authoritativePolicyTier: options.authoritativePolicyTier,
-      deferSandboxEffectsUntilPolicyVerification: options.apfInterceptorRequested === true,
+      deferredN1xManagedVllmPreviewIntent:
+        context.deferredN1xManagedVllmPreviewAccepted === true &&
+        isN1xManagedVllmProviderModel(context.provider, context.model),
+      deferSandboxEffectsUntilIdentityVerification: options.apfInterceptorRequested === true,
 
       recreateJournalTargetIntentFingerprint: options.recreateJournalTargetIntentFingerprint,
       endpointSource: endpointProvenance.endpointSource,
@@ -343,7 +345,7 @@ export function createSandboxOnboardFlowPhase<
       requestedObservabilityEnabled: options.requestedObservabilityEnabled,
       requestedDcodeAutoApprovalMode: options.requestedDcodeAutoApprovalMode,
       rebuildPreservedEnv: options.rebuildPreservedEnv,
-      rebuildPolicyPresets: options.rebuildPolicyPresets,
+      rebuildPolicySourcePath: options.rebuildPolicySourcePath,
       hostMounts: options.hostMounts,
       recreateSandbox: options.recreateSandbox,
       session: context.session,

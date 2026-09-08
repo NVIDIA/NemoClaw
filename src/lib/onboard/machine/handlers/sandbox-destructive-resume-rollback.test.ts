@@ -35,9 +35,6 @@ describe("handleSandboxState journaled replacement failure", () => {
       preferredInferenceApi: "openai-completions",
       toolDisclosure: "progressive",
       webSearchEnabled: true,
-      baselineExclusions: [
-        { version: 1 as const, agent: "openclaw", key: "nous_research", digest: "abc" },
-      ],
     } satisfies SandboxEntry;
     const journal = bindJournaledRecreate(session);
     const getSandboxRegistryEntry = vi.fn(() => sourceEntry);

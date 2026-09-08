@@ -234,17 +234,64 @@ describe("Deep Agents Code published base runtime evidence", () => {
     ).toBeUndefined();
   });
 
+  it("allows GitHub local-Dockerfile execution without published base authority", () => {
+    expect(
+      loadDcodeBaseImagePublicationEvidence(
+        DCODE_BASE_IMAGE_TARGET_ID,
+        `/missing-dcode-base-evidence-${process.pid}.json`,
+        {
+          E2E_WORKLOAD_SOURCE: "local-dockerfile",
+          GITHUB_ACTIONS: "true",
+          [DCODE_BASE_IMAGE_ENV]: "",
+        },
+      ),
+    ).toBeUndefined();
+  });
+
+  it.each([
+    [
+      "an official base override",
+      `/missing-dcode-base-evidence-${process.pid}.json`,
+      DCODE_BASE_IMAGE_AMD64_REFERENCE,
+    ],
+    ["a published evidence file", import.meta.filename, ""],
+  ])("rejects %s in local-Dockerfile mode", (_authority, evidencePath, baseImageRef) => {
+    expect(() =>
+      loadDcodeBaseImagePublicationEvidence(DCODE_BASE_IMAGE_TARGET_ID, evidencePath, {
+        E2E_WORKLOAD_SOURCE: "local-dockerfile",
+        GITHUB_ACTIONS: "true",
+        [DCODE_BASE_IMAGE_ENV]: baseImageRef,
+      }),
+    ).toThrow(/cannot consume published base-image authority/);
+  });
+
   it("requires publication evidence for the GitHub Actions target", () => {
     expect(() =>
       loadDcodeBaseImagePublicationEvidence(
         DCODE_BASE_IMAGE_TARGET_ID,
         `/missing-dcode-base-evidence-${process.pid}.json`,
         {
+          E2E_WORKLOAD_SOURCE: "managed-image",
           GITHUB_ACTIONS: "true",
           [DCODE_BASE_IMAGE_ENV]: DCODE_BASE_IMAGE_AMD64_REFERENCE,
         },
       ),
     ).toThrow(/GitHub Actions run is missing published base evidence/);
+  });
+
+  it("uses an exact candidate managed-image catalog without mixing base authority", () => {
+    expect(
+      loadDcodeBaseImagePublicationEvidence(
+        DCODE_BASE_IMAGE_TARGET_ID,
+        `/missing-dcode-base-evidence-${process.pid}.json`,
+        {
+          E2E_WORKLOAD_SOURCE: "managed-image",
+          GITHUB_ACTIONS: "true",
+          NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: '{"langchain-deepagents-code":{}}',
+          [DCODE_BASE_IMAGE_ENV]: "",
+        },
+      ),
+    ).toBeUndefined();
   });
 
   it.each([

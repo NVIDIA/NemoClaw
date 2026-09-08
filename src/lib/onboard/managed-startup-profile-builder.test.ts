@@ -91,6 +91,7 @@ function hermesInput(
       agent: "hermes",
       mode: "disabled",
       url: "http://127.0.0.1:18789",
+      browserUrl: "http://127.0.0.1:18789",
       publicPort: null,
       internalPort: null,
       tuiEnabled: false,
@@ -105,6 +106,20 @@ function hermesInput(
     corporateCa: null,
     ...overrides,
   };
+}
+
+function hermesInputWithBrowserUrl(browserUrl: string): ManagedStartupProfileBuilderInput {
+  return hermesInput({
+    dashboard: {
+      agent: "hermes",
+      mode: "disabled",
+      url: "http://127.0.0.1:18789",
+      browserUrl,
+      publicPort: null,
+      internalPort: null,
+      tuiEnabled: false,
+    },
+  });
 }
 
 function dcodeInput(
@@ -467,6 +482,7 @@ describe("buildManagedStartupProfile", () => {
           agent: "hermes",
           mode: "loopback-forwarded",
           url: "http://127.0.0.1:19189",
+          browserUrl: "https://hermes.example.test:19189",
           publicPort: 19_189,
           internalPort: 29_189,
           tuiEnabled: true,
@@ -488,7 +504,7 @@ describe("buildManagedStartupProfile", () => {
           NEMOCLAW_WEB_SEARCH_ENABLED: "1",
           NEMOCLAW_WEB_SEARCH_PROVIDER: "tavily",
           NEMOCLAW_MESSAGING_PLAN_B64: encodeJson(plan),
-          CHAT_UI_URL: "http://127.0.0.1:19189",
+          CHAT_UI_URL: "https://hermes.example.test:19189",
           NEMOCLAW_DASHBOARD_PORT: "19189",
           NEMOCLAW_HERMES_DASHBOARD: "true",
           NEMOCLAW_HERMES_DASHBOARD_PORT: "19189",
@@ -518,6 +534,7 @@ describe("buildManagedStartupProfile", () => {
       agent: "hermes",
       mode: "loopback-forwarded",
       url: "http://127.0.0.1:19189",
+      browserUrl: "https://hermes.example.test:19189",
       publicPort: 19_189,
       internalPort: 29_189,
       tuiEnabled: true,
@@ -534,6 +551,26 @@ describe("buildManagedStartupProfile", () => {
     });
     expect(decodeManagedStartupProfile(built.encodedProfile)).toEqual(built.profile);
   });
+
+  it("rejects an external HTTP Hermes browser URL before persisting the profile", () => {
+    expect(() =>
+      buildManagedStartupProfile(hermesInputWithBrowserUrl("http://hermes.example.test:18789")),
+    ).toThrow(/must use HTTPS unless it is loopback/);
+  });
+
+  it.each([
+    ["https://hermes.example.test:18789", "https://hermes.example.test:18789"],
+    ["https://secure-link.example/", "https://secure-link.example"],
+    ["http://127.0.0.1:18789", "http://127.0.0.1:18789"],
+    ["http://127.0.0.2:18789", "http://127.0.0.2:18789"],
+  ])(
+    "accepts the Hermes browser URL %s at the durable profile boundary",
+    (browserUrl, expectedBrowserUrl) => {
+      expect(
+        buildManagedStartupProfile(hermesInputWithBrowserUrl(browserUrl)).profile.dashboard,
+      ).toMatchObject({ agent: "hermes", browserUrl: expectedBrowserUrl });
+    },
+  );
 
   it("builds DCode with its direct upstream, approval, and observability contract", () => {
     const built = buildManagedStartupProfile(
@@ -787,17 +824,20 @@ describe("buildManagedStartupProfile", () => {
       "agentConfig.extraAgents.agents[0].api_key",
       "sk-secret-material-1234567890",
     ],
-  ] as const)("rejects %s with a precise non-secret-bearing domain error", (_label, input, field, secret) => {
-    let thrown: unknown;
-    try {
-      buildManagedStartupProfile(input);
-    } catch (error) {
-      thrown = error;
-    }
-    expect(thrown).toBeInstanceOf(ManagedStartupProfileBuilderError);
-    expect(thrown).toHaveProperty("message", expect.stringContaining(field));
-    expect(thrown).toHaveProperty("message", expect.not.stringContaining(secret));
-  });
+  ] as const)(
+    "rejects %s with a precise non-secret-bearing domain error",
+    (_label, input, field, secret) => {
+      let thrown: unknown;
+      try {
+        buildManagedStartupProfile(input);
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(ManagedStartupProfileBuilderError);
+      expect(thrown).toHaveProperty("message", expect.stringContaining(field));
+      expect(thrown).toHaveProperty("message", expect.not.stringContaining(secret));
+    },
+  );
 
   it.each([
     ["null", "[null]", /NEMOCLAW_EXTRA_AGENTS_JSON\[0\] must be an object/u],

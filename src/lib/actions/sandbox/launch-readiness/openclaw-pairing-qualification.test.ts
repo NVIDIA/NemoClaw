@@ -223,7 +223,6 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
         requiredScopes: ["operator.pairing", "operator.read", "operator.write"],
         deviceIdentitySha256: expect.stringMatching(/^[a-f0-9]{64}$/),
         pairingStateSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
-        policySha256: expect.stringMatching(/^[a-f0-9]{64}$/),
       });
       expect(serialized).not.toContain(TOKEN);
       expect(serialized).not.toContain(PRIVATE_KEY);

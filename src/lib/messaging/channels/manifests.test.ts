@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { readFileSync } from "node:fs";
-
 import { describe, expect, it } from "vitest";
 
 import { knownChannelNames } from "../../sandbox/channels";
@@ -71,52 +69,4 @@ describe("built-in channel manifests", () => {
       }),
     ).toEqual([]);
   });
-
-  it.each([
-    "src/lib/messaging/channels/telegram/manifest.ts",
-    "src/lib/messaging/channels/telegram/hooks/gateway-conflict-status.ts",
-    "src/lib/messaging/channels/telegram/hooks/openclaw-bridge-health.ts",
-    "src/lib/messaging/channels/discord/manifest.ts",
-    "src/lib/messaging/channels/discord/hooks/index.ts",
-    "src/lib/messaging/channels/discord/hooks/openclaw-bridge-health.ts",
-    "src/lib/messaging/channels/wechat/manifest.ts",
-    "src/lib/messaging/channels/wechat/hooks/health-check.ts",
-    "src/lib/messaging/channels/wechat/hooks/ilink-login.ts",
-    "src/lib/messaging/channels/wechat/hooks/index.ts",
-    "src/lib/messaging/channels/wechat/hooks/seed-openclaw-account.ts",
-    "src/lib/messaging/channels/openclaw-bridge-health.ts",
-    "src/lib/messaging/channels/slack/manifest.ts",
-    "src/lib/messaging/channels/slack/hooks/openclaw-bridge-health.ts",
-    "src/lib/messaging/channels/slack/hooks/socket-mode-gateway-conflict.ts",
-    "src/lib/messaging/channels/slack/hooks/socket-mode-gateway-status.ts",
-    "src/lib/messaging/channels/slack/hooks/validate-credentials.ts",
-    "src/lib/messaging/channels/whatsapp/manifest.ts",
-    "src/lib/messaging/channels/whatsapp/hooks/index.ts",
-    "src/lib/messaging/channels/whatsapp/hooks/status-health.ts",
-    "src/lib/messaging/channels/whatsapp/hooks/status-health-eval.ts",
-    "src/lib/messaging/channels/teams/manifest.ts",
-    "src/lib/messaging/channels/teams/hooks/host-forward-port-conflict.ts",
-    "src/lib/messaging/channels/googlechat/manifest.ts",
-    "src/lib/messaging/channels/googlechat/hooks/index.ts",
-    "src/lib/messaging/channels/googlechat/hooks/tunnel-audience-gate.ts",
-    "src/lib/messaging/channels/googlechat/template-resolver.ts",
-    "src/lib/messaging/hooks/common/config-prompt.ts",
-    "src/lib/messaging/hooks/common/token-paste.ts",
-  ])(
-    "keeps manifest and hook files free of production side-effect imports [%s]",
-    (manifestPath) => {
-      const forbiddenImports = [
-        "credentials/store",
-        "state/registry",
-        "adapters/openshell",
-        "host-qr-handlers",
-        "../ext/",
-        "node:fs",
-        "node:child_process",
-      ];
-
-      const source = readFileSync(manifestPath, "utf8");
-      expect(forbiddenImports.every((forbiddenImport) => !source.includes(forbiddenImport))).toBe(true);
-    },
-  );
 });

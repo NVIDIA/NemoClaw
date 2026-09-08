@@ -321,452 +321,92 @@ async function runFreshRequest(
   }>(result.stdout);
 }
 
-test("openshell-credential-generation-window", {
-  timeout: 60 * 60_000,
-  meta: {
-    e2ePhases: [
-      "start endpoints and onboard the credential-window sandbox",
-      "attach the MCP provider and observe its initial generation",
-      "prove a retained credential generation expires",
-      "rotate beyond the retained generation window",
-      "prove key and bridge removal revoke access",
-      "re-add the bridge and keep the old process revoked",
-      "rebuild the sandbox and confirm credential reuse",
-      "remove the MCP bridge and audit denied requests",
-    ],
+test(
+  "openshell-credential-generation-window",
+  {
+    timeout: 60 * 60_000,
+    meta: {
+      e2ePhases: [
+        "start endpoints and onboard the credential-window sandbox",
+        "attach the MCP provider and observe its initial generation",
+        "prove a retained credential generation expires",
+        "rotate beyond the retained generation window",
+        "prove key and bridge removal revoke access",
+        "re-add the bridge and keep the old process revoked",
+        "rebuild the sandbox and confirm credential reuse",
+        "remove the MCP bridge and audit denied requests",
+      ],
+    },
   },
-}, async ({ artifacts, cleanup, host, progress, sandbox }) => {
-  expect(process.env.NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF).toBe("1");
-  expect(CREDENTIAL_WINDOW_ROTATION_COUNT).toBeGreaterThan(
-    OPENSHELL_RETAINED_CREDENTIAL_GENERATIONS,
-  );
-
-  const allSecrets = credentialWindowSecrets();
-  const initialSecret = allSecrets[0]!;
-  const rotationSecrets = allSecrets.slice(1, CREDENTIAL_WINDOW_ROTATION_COUNT + 1);
-  const expirySecret = allSecrets.at(-2)!;
-  const restartSecret = allSecrets.at(-1)!;
-  artifacts.addRedactionValues([COMPATIBLE_KEY, ...allSecrets]);
-  await artifacts.target.declare({
-    id: "openshell-credential-generation-window",
-    contracts: [
-      "OpenShell f27ff150 retained credential generations",
-      "NemoClaw MCP detach, restart, and rebuild lifecycle",
-    ],
-    sourceRevision: "3dee5570a46076a57a3b056f35f35ebc0861ac85",
-  });
-
-  const compatibleMock = await startCompatibleMock({
-    apiKey: COMPATIBLE_KEY,
-    model: COMPATIBLE_MODEL,
-  });
-  cleanup.add("stop credential-window compatible endpoint", () => compatibleMock.close());
-  const fakeMcp = await startFakeMcpHttpsServer({ secret: initialSecret });
-  cleanup.add("stop credential-window MCP endpoint", () => fakeMcp.close());
-  const tunnel = await startPublicMcpHttpsTunnel({
-    cleanup,
-    label: "credential-window MCP endpoint",
-    progress,
-    server: fakeMcp,
-  });
-  const hostAddress = await hostAddressForSandbox(host);
-  const endpointUrl = `http://${hostAddress}:${compatibleMock.port}/v1`;
-  await host.cleanupSandbox(SANDBOX_NAME, {
-    artifactName: "precleanup-credential-window-sandbox",
-    timeoutMs: 15 * 60_000,
-  });
-  cleanup.trackSandbox(host, SANDBOX_NAME, {
-    artifactName: "cleanup-credential-window-sandbox",
-    timeoutMs: 15 * 60_000,
-  });
-  const onboard = await host.nemoclaw(
-    ["onboard", "--non-interactive", "--yes", "--yes-i-accept-third-party-software"],
-    {
-      artifactName: "onboard-credential-window-sandbox",
-      env: {
-        ...buildAvailabilityProbeEnv(),
-        COMPATIBLE_API_KEY: COMPATIBLE_KEY,
-        NVIDIA_INFERENCE_API_KEY: COMPATIBLE_KEY,
-        NEMOCLAW_AGENT: "openclaw",
-        NEMOCLAW_ENDPOINT_URL: endpointUrl,
-        NEMOCLAW_MODEL: COMPATIBLE_MODEL,
-        NEMOCLAW_COMPAT_MODEL: COMPATIBLE_MODEL,
-        NEMOCLAW_PREFERRED_API: "openai-completions",
-        NEMOCLAW_PROVIDER: "custom",
-        NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
-        NEMOCLAW_RECREATE_SANDBOX: "1",
-      },
-      redactionValues: [COMPATIBLE_KEY, ...allSecrets],
-      timeoutMs: 20 * 60_000,
-    },
-  );
-  expectExitZero(onboard, "onboard credential-window sandbox");
-
-  progress.phase("attach the MCP provider and observe its initial generation");
-  const add = await host.nemoclaw(
-    [
-      SANDBOX_NAME,
-      "mcp",
-      "add",
-      SERVER_NAME,
-      "--url",
-      tunnel.url,
-      "--env",
-      CREDENTIAL_WINDOW_ENV_NAME,
-    ],
-    {
-      artifactName: "credential-window-mcp-add",
-      env: {
-        ...buildAvailabilityProbeEnv(),
-        [CREDENTIAL_WINDOW_ENV_NAME]: initialSecret,
-      },
-      redactionValues: [COMPATIBLE_KEY, ...allSecrets],
-      timeoutMs: 4 * 60_000,
-    },
-  );
-  expectExitZero(add, "add credential-window MCP bridge");
-  cleanup.add("remove credential-window MCP bridge", () => cleanupBridge(host));
-
-  const status = await host.nemoclaw([SANDBOX_NAME, "mcp", "status", SERVER_NAME, "--json"], {
-    artifactName: "credential-window-mcp-status",
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 60_000,
-  });
-  expectExitZero(status, "inspect credential-window MCP bridge");
-  const providerName = (JSON.parse(status.stdout) as { provider: { name: string } }).provider.name;
-  expect(providerName).toMatch(/^e2e-cred-window-mcp-fake-[a-f0-9]{16}$/u);
-
-  const originalRevision = await observeFreshRevision(
-    sandbox,
-    "credential-window-initial-fresh-revision",
-  );
-  const resetControl = await sandbox.exec(
-    SANDBOX_NAME,
-    [
-      "rm",
-      "-f",
-      CREDENTIAL_WINDOW_PATHS.control,
-      CREDENTIAL_WINDOW_PATHS.ready,
-      CREDENTIAL_WINDOW_PATHS.acknowledgement,
-    ],
-    {
-      artifactName: "credential-window-reset-control-files",
-      env: openshellEnv(),
-      timeoutMs: 60_000,
-    },
-  );
-  expectExitZero(resetControl, "reset credential-window control files");
-
-  progress.phase("prove a retained credential generation expires");
-  const expiryAtMs = Date.now() + CREDENTIAL_WINDOW_EXPIRY_DELAY_MS;
-  fakeMcp.setSecret(expirySecret);
-  await updateProviderCredential(
-    sandbox,
-    providerName,
-    expirySecret,
-    expiryAtMs,
-    allSecrets,
-    "credential-window-install-expiring-generation",
-  );
-  const expiryRevision = await observeDistinctFreshRevision(
-    sandbox,
-    originalRevision,
-    "credential-window-expiring-fresh-revision",
-  );
-
-  const expiryChildPromise = sandbox.exec(
-    SANDBOX_NAME,
-    ["nemoclaw-start", "node", "-e", buildCredentialWindowChildScript({ mcpUrl: tunnel.url })],
-    {
-      artifactName: "credential-window-expiry-child",
-      env: openshellEnv(),
-      redactionValues: [...allSecrets],
-      timeoutMs: 6 * 60_000,
-    },
-  );
-  let expiryChildRevision = "";
-  let expiryChildResult: ShellProbeResult | undefined;
-  let restoredRevision = "";
-  try {
-    expiryChildRevision = await waitForReadyRevision(sandbox);
-    expect(expiryChildRevision).toBe(expiryRevision);
-    await writeControl(
-      sandbox,
-      CREDENTIAL_WINDOW_STEPS.allowedBeforeExpiry,
-      "credential-window-signal-before-expiry",
+  async ({ artifacts, cleanup, host, progress, sandbox }) => {
+    expect(process.env.NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF).toBe("1");
+    expect(CREDENTIAL_WINDOW_ROTATION_COUNT).toBeGreaterThan(
+      OPENSHELL_RETAINED_CREDENTIAL_GENERATIONS,
     );
-    await waitForAcknowledgement(sandbox, CREDENTIAL_WINDOW_STEPS.allowedBeforeExpiry, "allowed");
-    expect(
-      requestEvidence(
-        fakeMcp,
-        credentialWindowRequestId(CREDENTIAL_WINDOW_STEPS.allowedBeforeExpiry),
-        expirySecret,
-      ),
-    ).toEqual({
-      seen: true,
-      credentialRewritten: true,
-      placeholderAbsent: true,
+
+    const allSecrets = credentialWindowSecrets();
+    const initialSecret = allSecrets[0]!;
+    const rotationSecrets = allSecrets.slice(1, CREDENTIAL_WINDOW_ROTATION_COUNT + 1);
+    const expirySecret = allSecrets.at(-2)!;
+    const restartSecret = allSecrets.at(-1)!;
+    artifacts.addRedactionValues([COMPATIBLE_KEY, ...allSecrets]);
+    await artifacts.target.declare({
+      id: "openshell-credential-generation-window",
+      contracts: [
+        "OpenShell f27ff150 retained credential generations",
+        "NemoClaw MCP detach, restart, and rebuild lifecycle",
+      ],
+      sourceRevision: "3dee5570a46076a57a3b056f35f35ebc0861ac85",
     });
 
-    fakeMcp.setSecret(initialSecret);
-    await updateProviderCredential(
-      sandbox,
-      providerName,
-      initialSecret,
-      0,
-      allSecrets,
-      "credential-window-clear-expiry-with-current-generation",
-    );
-    restoredRevision = await observeDistinctFreshRevision(
-      sandbox,
-      expiryRevision,
-      "credential-window-current-revision-before-expiry",
-    );
-    const currentDuringExpiryId = `${CREDENTIAL_WINDOW_REQUEST_PREFIX}:fresh-current-during-expiry`;
-    const currentDuringExpiry = await runFreshRequest(
-      sandbox,
-      tunnel.url,
-      currentDuringExpiryId,
-      allSecrets,
-      "credential-window-fresh-current-during-expiry",
-    );
-    expect(currentDuringExpiry).toEqual({
-      revision: restoredRevision,
-      status: 200,
+    const compatibleMock = await startCompatibleMock({
+      apiKey: COMPATIBLE_KEY,
+      model: COMPATIBLE_MODEL,
     });
-    expect(requestEvidence(fakeMcp, currentDuringExpiryId, initialSecret)).toEqual({
-      seen: true,
-      credentialRewritten: true,
-      placeholderAbsent: true,
+    cleanup.add("stop credential-window compatible endpoint", () => compatibleMock.close());
+    const fakeMcp = await startFakeMcpHttpsServer({ secret: initialSecret });
+    cleanup.add("stop credential-window MCP endpoint", () => fakeMcp.close());
+    const tunnel = await startPublicMcpHttpsTunnel({
+      cleanup,
+      label: "credential-window MCP endpoint",
+      progress,
+      server: fakeMcp,
     });
-
-    await expect
-      .poll(() => Date.now(), {
-        interval: 500,
-        timeout: CREDENTIAL_WINDOW_EXPIRY_DELAY_MS + 30_000,
-        message: "retained credential generation expiry deadline",
-      })
-      .toBeGreaterThan(expiryAtMs);
-    await writeControl(
-      sandbox,
-      CREDENTIAL_WINDOW_STEPS.deniedAfterExpiry,
-      "credential-window-signal-after-expiry",
-    );
-    await waitForAcknowledgement(sandbox, CREDENTIAL_WINDOW_STEPS.deniedAfterExpiry, "denied");
-    expect(
-      requestEvidence(
-        fakeMcp,
-        credentialWindowRequestId(CREDENTIAL_WINDOW_STEPS.deniedAfterExpiry),
-        initialSecret,
-      ).seen,
-    ).toBe(false);
-  } finally {
-    await writeControl(
-      sandbox,
-      CREDENTIAL_WINDOW_STEPS.stop,
-      "credential-window-stop-expiry-child",
-    ).catch(() =>
-      host.bestEffortCleanupSandbox(SANDBOX_NAME, {
-        artifactName: "credential-window-expiry-stop-fallback-destroy",
-        timeoutMs: 15 * 60_000,
-      }),
-    );
-    expiryChildResult = await expiryChildPromise;
-  }
-
-  expect(expiryChildResult).toBeDefined();
-  expectExitZero(expiryChildResult!, "retained-expiry credential-window child");
-  expect(parseLastJsonLine<CredentialWindowChildResult>(expiryChildResult!.stdout)).toEqual({
-    revision: expiryChildRevision,
-    outcomes: [
+    const hostAddress = await hostAddressForSandbox(host);
+    const endpointUrl = `http://${hostAddress}:${compatibleMock.port}/v1`;
+    await host.cleanupSandbox(SANDBOX_NAME, {
+      artifactName: "precleanup-credential-window-sandbox",
+      timeoutMs: 15 * 60_000,
+    });
+    cleanup.trackSandbox(host, SANDBOX_NAME, {
+      artifactName: "cleanup-credential-window-sandbox",
+      timeoutMs: 15 * 60_000,
+    });
+    const onboard = await host.nemoclaw(
+      ["onboard", "--non-interactive", "--yes", "--yes-i-accept-third-party-software"],
       {
-        step: CREDENTIAL_WINDOW_STEPS.allowedBeforeExpiry,
-        outcome: "allowed",
-      },
-      {
-        step: CREDENTIAL_WINDOW_STEPS.deniedAfterExpiry,
-        outcome: "denied",
-      },
-    ],
-  });
-
-  progress.phase("rotate beyond the retained generation window");
-  const clearExpiryControl = await sandbox.exec(
-    SANDBOX_NAME,
-    [
-      "rm",
-      "-f",
-      CREDENTIAL_WINDOW_PATHS.control,
-      CREDENTIAL_WINDOW_PATHS.ready,
-      CREDENTIAL_WINDOW_PATHS.acknowledgement,
-    ],
-    {
-      artifactName: "credential-window-reset-after-expiry",
-      env: openshellEnv(),
-      timeoutMs: 60_000,
-    },
-  );
-  expectExitZero(clearExpiryControl, "reset credential-window controls after expiry proof");
-
-  const oldChildPromise = sandbox.exec(
-    SANDBOX_NAME,
-    ["nemoclaw-start", "node", "-e", buildCredentialWindowChildScript({ mcpUrl: tunnel.url })],
-    {
-      artifactName: "credential-window-old-child",
-      env: openshellEnv(),
-      redactionValues: [...allSecrets],
-      timeoutMs: 42 * 60_000,
-    },
-  );
-  let oldChildRevision = "";
-  let oldChildResult: ShellProbeResult | undefined;
-  let restartedRevision = "";
-  const observedRevisions = [restoredRevision];
-  try {
-    oldChildRevision = await waitForReadyRevision(sandbox);
-    expect(oldChildRevision).toBe(restoredRevision);
-    for (const [index, secret] of rotationSecrets.entries()) {
-      await rotateCredential(host, fakeMcp, secret, index + 1, allSecrets);
-      observedRevisions.push(
-        await observeFreshRevision(sandbox, `credential-window-fresh-revision-${index + 1}`),
-      );
-    }
-    expect(new Set(observedRevisions).size).toBe(CREDENTIAL_WINDOW_ROTATION_COUNT + 1);
-    const currentRevision = observedRevisions.at(-1)!;
-    expect(currentRevision).not.toBe(oldChildRevision);
-    await artifacts.writeJson("credential-window-revisions.json", {
-      expiryAtMs,
-      expiryRevision,
-      oldChildRevision,
-      observedRevisions,
-      restoredRevision,
-      retainedGenerations: OPENSHELL_RETAINED_CREDENTIAL_GENERATIONS,
-      rotations: CREDENTIAL_WINDOW_ROTATION_COUNT,
-    });
-
-    const rotatedSecret = rotationSecrets.at(-1)!;
-    await writeControl(
-      sandbox,
-      CREDENTIAL_WINDOW_STEPS.fallbackAfterEviction,
-      "credential-window-signal-fallback-after-eviction",
-    );
-    await waitForAcknowledgement(sandbox, CREDENTIAL_WINDOW_STEPS.fallbackAfterEviction, "denied");
-    expect(
-      requestEvidence(
-        fakeMcp,
-        credentialWindowRequestId(CREDENTIAL_WINDOW_STEPS.fallbackAfterEviction),
-        rotatedSecret,
-      ).seen,
-    ).toBe(false);
-
-    const freshAfterEvictionId = `${CREDENTIAL_WINDOW_REQUEST_PREFIX}:fresh-after-eviction`;
-    const freshAfterEviction = await runFreshRequest(
-      sandbox,
-      tunnel.url,
-      freshAfterEvictionId,
-      allSecrets,
-      "credential-window-fresh-request-after-eviction",
-    );
-    expect(freshAfterEviction).toEqual({
-      revision: currentRevision,
-      status: 200,
-    });
-    expect(requestEvidence(fakeMcp, freshAfterEvictionId, rotatedSecret)).toEqual({
-      seen: true,
-      credentialRewritten: true,
-      placeholderAbsent: true,
-    });
-
-    progress.phase("prove key and bridge removal revoke access");
-    await updateProviderCredential(
-      sandbox,
-      providerName,
-      "",
-      0,
-      allSecrets,
-      "credential-window-remove-current-key",
-    );
-    await expectFreshCredentialAbsent(
-      sandbox,
-      "credential-window-fresh-credential-absent-after-key-removal",
-    );
-    await writeControl(
-      sandbox,
-      CREDENTIAL_WINDOW_STEPS.deniedAfterKeyRemoval,
-      "credential-window-signal-after-key-removal",
-    );
-    await waitForAcknowledgement(sandbox, CREDENTIAL_WINDOW_STEPS.deniedAfterKeyRemoval, "denied");
-    expect(
-      requestEvidence(
-        fakeMcp,
-        credentialWindowRequestId(CREDENTIAL_WINDOW_STEPS.deniedAfterKeyRemoval),
-        rotatedSecret,
-      ).seen,
-    ).toBe(false);
-
-    fakeMcp.setSecret(restartSecret);
-    await updateProviderCredential(
-      sandbox,
-      providerName,
-      restartSecret,
-      0,
-      allSecrets,
-      "credential-window-restore-current-key-before-detach",
-    );
-    const restoredKeyRevision = await observeDistinctFreshRevision(
-      sandbox,
-      currentRevision,
-      "credential-window-fresh-revision-after-key-restore",
-    );
-    const freshAfterKeyRestoreId = `${CREDENTIAL_WINDOW_REQUEST_PREFIX}:fresh-after-key-restore`;
-    const freshAfterKeyRestore = await runFreshRequest(
-      sandbox,
-      tunnel.url,
-      freshAfterKeyRestoreId,
-      allSecrets,
-      "credential-window-fresh-request-after-key-restore",
-    );
-    expect(freshAfterKeyRestore).toEqual({
-      revision: restoredKeyRevision,
-      status: 200,
-    });
-    expect(requestEvidence(fakeMcp, freshAfterKeyRestoreId, restartSecret)).toEqual({
-      seen: true,
-      credentialRewritten: true,
-      placeholderAbsent: true,
-    });
-
-    const removeBeforeReadd = await host.nemoclaw(
-      [SANDBOX_NAME, "mcp", "remove", SERVER_NAME],
-      {
-        artifactName: "credential-window-remove-before-readd",
-        env: buildAvailabilityProbeEnv(),
-        timeoutMs: 4 * 60_000,
+        artifactName: "onboard-credential-window-sandbox",
+        env: {
+          ...buildAvailabilityProbeEnv(),
+          COMPATIBLE_API_KEY: COMPATIBLE_KEY,
+          NVIDIA_INFERENCE_API_KEY: COMPATIBLE_KEY,
+          NEMOCLAW_AGENT: "openclaw",
+          NEMOCLAW_ENDPOINT_URL: endpointUrl,
+          NEMOCLAW_MODEL: COMPATIBLE_MODEL,
+          NEMOCLAW_COMPAT_MODEL: COMPATIBLE_MODEL,
+          NEMOCLAW_PREFERRED_API: "openai-completions",
+          NEMOCLAW_PROVIDER: "custom",
+          NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
+          NEMOCLAW_RECREATE_SANDBOX: "1",
+        },
+        redactionValues: [COMPATIBLE_KEY, ...allSecrets],
+        timeoutMs: 20 * 60_000,
       },
     );
-    expectExitZero(removeBeforeReadd, "remove credential-window bridge before re-add");
-    await expectFreshCredentialAbsent(
-      sandbox,
-      "credential-window-fresh-credential-absent-after-detach",
-    );
+    expectExitZero(onboard, "onboard credential-window sandbox");
 
-    await writeControl(
-      sandbox,
-      CREDENTIAL_WINDOW_STEPS.deniedAfterDetach,
-      "credential-window-signal-after-detach",
-    );
-    await waitForAcknowledgement(sandbox, CREDENTIAL_WINDOW_STEPS.deniedAfterDetach, "denied");
-    expect(
-      requestEvidence(
-        fakeMcp,
-        credentialWindowRequestId(CREDENTIAL_WINDOW_STEPS.deniedAfterDetach),
-        restartSecret,
-      ).seen,
-    ).toBe(false);
-
-    progress.phase("re-add the bridge and keep the old process revoked");
-    fakeMcp.setSecret(restartSecret);
-    const readd = await host.nemoclaw(
+    progress.phase("attach the MCP provider and observe its initial generation");
+    const add = await host.nemoclaw(
       [
         SANDBOX_NAME,
         "mcp",
@@ -778,168 +418,538 @@ test("openshell-credential-generation-window", {
         CREDENTIAL_WINDOW_ENV_NAME,
       ],
       {
-        artifactName: "credential-window-readd-after-removal",
+        artifactName: "credential-window-mcp-add",
         env: {
           ...buildAvailabilityProbeEnv(),
-          [CREDENTIAL_WINDOW_ENV_NAME]: restartSecret,
+          [CREDENTIAL_WINDOW_ENV_NAME]: initialSecret,
         },
-        redactionValues: [...allSecrets],
+        redactionValues: [COMPATIBLE_KEY, ...allSecrets],
         timeoutMs: 4 * 60_000,
       },
     );
-    expectExitZero(readd, "re-add credential-window bridge");
-    restartedRevision = await observeFreshRevision(
+    expectExitZero(add, "add credential-window MCP bridge");
+    cleanup.add("remove credential-window MCP bridge", () => cleanupBridge(host));
+
+    const status = await host.nemoclaw([SANDBOX_NAME, "mcp", "status", SERVER_NAME, "--json"], {
+      artifactName: "credential-window-mcp-status",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 60_000,
+    });
+    expectExitZero(status, "inspect credential-window MCP bridge");
+    const providerName = (JSON.parse(status.stdout) as { provider: { name: string } }).provider
+      .name;
+    expect(providerName).toMatch(/^e2e-cred-window-mcp-fake-[a-f0-9]{16}$/u);
+
+    const originalRevision = await observeFreshRevision(
       sandbox,
-      "credential-window-fresh-revision-after-restart",
+      "credential-window-initial-fresh-revision",
     );
-    expect(restartedRevision).not.toBe(currentRevision);
-    expect(restartedRevision).not.toBe(restoredKeyRevision);
-    const freshAfterReaddId = `${CREDENTIAL_WINDOW_REQUEST_PREFIX}:fresh-after-readd`;
-    const freshAfterReadd = await runFreshRequest(
+    const resetControl = await sandbox.exec(
+      SANDBOX_NAME,
+      [
+        "rm",
+        "-f",
+        CREDENTIAL_WINDOW_PATHS.control,
+        CREDENTIAL_WINDOW_PATHS.ready,
+        CREDENTIAL_WINDOW_PATHS.acknowledgement,
+      ],
+      {
+        artifactName: "credential-window-reset-control-files",
+        env: openshellEnv(),
+        timeoutMs: 60_000,
+      },
+    );
+    expectExitZero(resetControl, "reset credential-window control files");
+
+    progress.phase("prove a retained credential generation expires");
+    const expiryAtMs = Date.now() + CREDENTIAL_WINDOW_EXPIRY_DELAY_MS;
+    fakeMcp.setSecret(expirySecret);
+    await updateProviderCredential(
+      sandbox,
+      providerName,
+      expirySecret,
+      expiryAtMs,
+      allSecrets,
+      "credential-window-install-expiring-generation",
+    );
+    const expiryRevision = await observeDistinctFreshRevision(
+      sandbox,
+      originalRevision,
+      "credential-window-expiring-fresh-revision",
+    );
+
+    const expiryChildPromise = sandbox.exec(
+      SANDBOX_NAME,
+      ["nemoclaw-start", "node", "-e", buildCredentialWindowChildScript({ mcpUrl: tunnel.url })],
+      {
+        artifactName: "credential-window-expiry-child",
+        env: openshellEnv(),
+        redactionValues: [...allSecrets],
+        timeoutMs: 6 * 60_000,
+      },
+    );
+    let expiryChildRevision = "";
+    let expiryChildResult: ShellProbeResult | undefined;
+    let restoredRevision = "";
+    try {
+      expiryChildRevision = await waitForReadyRevision(sandbox);
+      expect(expiryChildRevision).toBe(expiryRevision);
+      await writeControl(
+        sandbox,
+        CREDENTIAL_WINDOW_STEPS.allowedBeforeExpiry,
+        "credential-window-signal-before-expiry",
+      );
+      await waitForAcknowledgement(sandbox, CREDENTIAL_WINDOW_STEPS.allowedBeforeExpiry, "allowed");
+      expect(
+        requestEvidence(
+          fakeMcp,
+          credentialWindowRequestId(CREDENTIAL_WINDOW_STEPS.allowedBeforeExpiry),
+          expirySecret,
+        ),
+      ).toEqual({
+        seen: true,
+        credentialRewritten: true,
+        placeholderAbsent: true,
+      });
+
+      fakeMcp.setSecret(initialSecret);
+      await updateProviderCredential(
+        sandbox,
+        providerName,
+        initialSecret,
+        0,
+        allSecrets,
+        "credential-window-clear-expiry-with-current-generation",
+      );
+      restoredRevision = await observeDistinctFreshRevision(
+        sandbox,
+        expiryRevision,
+        "credential-window-current-revision-before-expiry",
+      );
+      const currentDuringExpiryId = `${CREDENTIAL_WINDOW_REQUEST_PREFIX}:fresh-current-during-expiry`;
+      const currentDuringExpiry = await runFreshRequest(
+        sandbox,
+        tunnel.url,
+        currentDuringExpiryId,
+        allSecrets,
+        "credential-window-fresh-current-during-expiry",
+      );
+      expect(currentDuringExpiry).toEqual({
+        revision: restoredRevision,
+        status: 200,
+      });
+      expect(requestEvidence(fakeMcp, currentDuringExpiryId, initialSecret)).toEqual({
+        seen: true,
+        credentialRewritten: true,
+        placeholderAbsent: true,
+      });
+
+      await expect
+        .poll(() => Date.now(), {
+          interval: 500,
+          timeout: CREDENTIAL_WINDOW_EXPIRY_DELAY_MS + 30_000,
+          message: "retained credential generation expiry deadline",
+        })
+        .toBeGreaterThan(expiryAtMs);
+      await writeControl(
+        sandbox,
+        CREDENTIAL_WINDOW_STEPS.deniedAfterExpiry,
+        "credential-window-signal-after-expiry",
+      );
+      await waitForAcknowledgement(sandbox, CREDENTIAL_WINDOW_STEPS.deniedAfterExpiry, "denied");
+      expect(
+        requestEvidence(
+          fakeMcp,
+          credentialWindowRequestId(CREDENTIAL_WINDOW_STEPS.deniedAfterExpiry),
+          initialSecret,
+        ).seen,
+      ).toBe(false);
+    } finally {
+      await writeControl(
+        sandbox,
+        CREDENTIAL_WINDOW_STEPS.stop,
+        "credential-window-stop-expiry-child",
+      ).catch(() =>
+        host.bestEffortCleanupSandbox(SANDBOX_NAME, {
+          artifactName: "credential-window-expiry-stop-fallback-destroy",
+          timeoutMs: 15 * 60_000,
+        }),
+      );
+      expiryChildResult = await expiryChildPromise;
+    }
+
+    expect(expiryChildResult).toBeDefined();
+    expectExitZero(expiryChildResult!, "retained-expiry credential-window child");
+    expect(parseLastJsonLine<CredentialWindowChildResult>(expiryChildResult!.stdout)).toEqual({
+      revision: expiryChildRevision,
+      outcomes: [
+        {
+          step: CREDENTIAL_WINDOW_STEPS.allowedBeforeExpiry,
+          outcome: "allowed",
+        },
+        {
+          step: CREDENTIAL_WINDOW_STEPS.deniedAfterExpiry,
+          outcome: "denied",
+        },
+      ],
+    });
+
+    progress.phase("rotate beyond the retained generation window");
+    const clearExpiryControl = await sandbox.exec(
+      SANDBOX_NAME,
+      [
+        "rm",
+        "-f",
+        CREDENTIAL_WINDOW_PATHS.control,
+        CREDENTIAL_WINDOW_PATHS.ready,
+        CREDENTIAL_WINDOW_PATHS.acknowledgement,
+      ],
+      {
+        artifactName: "credential-window-reset-after-expiry",
+        env: openshellEnv(),
+        timeoutMs: 60_000,
+      },
+    );
+    expectExitZero(clearExpiryControl, "reset credential-window controls after expiry proof");
+
+    const oldChildPromise = sandbox.exec(
+      SANDBOX_NAME,
+      ["nemoclaw-start", "node", "-e", buildCredentialWindowChildScript({ mcpUrl: tunnel.url })],
+      {
+        artifactName: "credential-window-old-child",
+        env: openshellEnv(),
+        redactionValues: [...allSecrets],
+        timeoutMs: 42 * 60_000,
+      },
+    );
+    let oldChildRevision = "";
+    let oldChildResult: ShellProbeResult | undefined;
+    let restartedRevision = "";
+    const observedRevisions = [restoredRevision];
+    try {
+      oldChildRevision = await waitForReadyRevision(sandbox);
+      expect(oldChildRevision).toBe(restoredRevision);
+      for (const [index, secret] of rotationSecrets.entries()) {
+        await rotateCredential(host, fakeMcp, secret, index + 1, allSecrets);
+        observedRevisions.push(
+          await observeFreshRevision(sandbox, `credential-window-fresh-revision-${index + 1}`),
+        );
+      }
+      expect(new Set(observedRevisions).size).toBe(CREDENTIAL_WINDOW_ROTATION_COUNT + 1);
+      const currentRevision = observedRevisions.at(-1)!;
+      expect(currentRevision).not.toBe(oldChildRevision);
+      await artifacts.writeJson("credential-window-revisions.json", {
+        expiryAtMs,
+        expiryRevision,
+        oldChildRevision,
+        observedRevisions,
+        restoredRevision,
+        retainedGenerations: OPENSHELL_RETAINED_CREDENTIAL_GENERATIONS,
+        rotations: CREDENTIAL_WINDOW_ROTATION_COUNT,
+      });
+
+      const rotatedSecret = rotationSecrets.at(-1)!;
+      await writeControl(
+        sandbox,
+        CREDENTIAL_WINDOW_STEPS.fallbackAfterEviction,
+        "credential-window-signal-fallback-after-eviction",
+      );
+      await waitForAcknowledgement(
+        sandbox,
+        CREDENTIAL_WINDOW_STEPS.fallbackAfterEviction,
+        "denied",
+      );
+      expect(
+        requestEvidence(
+          fakeMcp,
+          credentialWindowRequestId(CREDENTIAL_WINDOW_STEPS.fallbackAfterEviction),
+          rotatedSecret,
+        ).seen,
+      ).toBe(false);
+
+      const freshAfterEvictionId = `${CREDENTIAL_WINDOW_REQUEST_PREFIX}:fresh-after-eviction`;
+      const freshAfterEviction = await runFreshRequest(
+        sandbox,
+        tunnel.url,
+        freshAfterEvictionId,
+        allSecrets,
+        "credential-window-fresh-request-after-eviction",
+      );
+      expect(freshAfterEviction).toEqual({
+        revision: currentRevision,
+        status: 200,
+      });
+      expect(requestEvidence(fakeMcp, freshAfterEvictionId, rotatedSecret)).toEqual({
+        seen: true,
+        credentialRewritten: true,
+        placeholderAbsent: true,
+      });
+
+      progress.phase("prove key and bridge removal revoke access");
+      await updateProviderCredential(
+        sandbox,
+        providerName,
+        "",
+        0,
+        allSecrets,
+        "credential-window-remove-current-key",
+      );
+      await expectFreshCredentialAbsent(
+        sandbox,
+        "credential-window-fresh-credential-absent-after-key-removal",
+      );
+      await writeControl(
+        sandbox,
+        CREDENTIAL_WINDOW_STEPS.deniedAfterKeyRemoval,
+        "credential-window-signal-after-key-removal",
+      );
+      await waitForAcknowledgement(
+        sandbox,
+        CREDENTIAL_WINDOW_STEPS.deniedAfterKeyRemoval,
+        "denied",
+      );
+      expect(
+        requestEvidence(
+          fakeMcp,
+          credentialWindowRequestId(CREDENTIAL_WINDOW_STEPS.deniedAfterKeyRemoval),
+          rotatedSecret,
+        ).seen,
+      ).toBe(false);
+
+      fakeMcp.setSecret(restartSecret);
+      await updateProviderCredential(
+        sandbox,
+        providerName,
+        restartSecret,
+        0,
+        allSecrets,
+        "credential-window-restore-current-key-before-detach",
+      );
+      const restoredKeyRevision = await observeDistinctFreshRevision(
+        sandbox,
+        currentRevision,
+        "credential-window-fresh-revision-after-key-restore",
+      );
+      const freshAfterKeyRestoreId = `${CREDENTIAL_WINDOW_REQUEST_PREFIX}:fresh-after-key-restore`;
+      const freshAfterKeyRestore = await runFreshRequest(
+        sandbox,
+        tunnel.url,
+        freshAfterKeyRestoreId,
+        allSecrets,
+        "credential-window-fresh-request-after-key-restore",
+      );
+      expect(freshAfterKeyRestore).toEqual({
+        revision: restoredKeyRevision,
+        status: 200,
+      });
+      expect(requestEvidence(fakeMcp, freshAfterKeyRestoreId, restartSecret)).toEqual({
+        seen: true,
+        credentialRewritten: true,
+        placeholderAbsent: true,
+      });
+
+      const removeBeforeReadd = await host.nemoclaw([SANDBOX_NAME, "mcp", "remove", SERVER_NAME], {
+        artifactName: "credential-window-remove-before-readd",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 4 * 60_000,
+      });
+      expectExitZero(removeBeforeReadd, "remove credential-window bridge before re-add");
+      await expectFreshCredentialAbsent(
+        sandbox,
+        "credential-window-fresh-credential-absent-after-detach",
+      );
+
+      await writeControl(
+        sandbox,
+        CREDENTIAL_WINDOW_STEPS.deniedAfterDetach,
+        "credential-window-signal-after-detach",
+      );
+      await waitForAcknowledgement(sandbox, CREDENTIAL_WINDOW_STEPS.deniedAfterDetach, "denied");
+      expect(
+        requestEvidence(
+          fakeMcp,
+          credentialWindowRequestId(CREDENTIAL_WINDOW_STEPS.deniedAfterDetach),
+          restartSecret,
+        ).seen,
+      ).toBe(false);
+
+      progress.phase("re-add the bridge and keep the old process revoked");
+      fakeMcp.setSecret(restartSecret);
+      const readd = await host.nemoclaw(
+        [
+          SANDBOX_NAME,
+          "mcp",
+          "add",
+          SERVER_NAME,
+          "--url",
+          tunnel.url,
+          "--env",
+          CREDENTIAL_WINDOW_ENV_NAME,
+        ],
+        {
+          artifactName: "credential-window-readd-after-removal",
+          env: {
+            ...buildAvailabilityProbeEnv(),
+            [CREDENTIAL_WINDOW_ENV_NAME]: restartSecret,
+          },
+          redactionValues: [...allSecrets],
+          timeoutMs: 4 * 60_000,
+        },
+      );
+      expectExitZero(readd, "re-add credential-window bridge");
+      restartedRevision = await observeFreshRevision(
+        sandbox,
+        "credential-window-fresh-revision-after-restart",
+      );
+      expect(restartedRevision).not.toBe(currentRevision);
+      expect(restartedRevision).not.toBe(restoredKeyRevision);
+      const freshAfterReaddId = `${CREDENTIAL_WINDOW_REQUEST_PREFIX}:fresh-after-readd`;
+      const freshAfterReadd = await runFreshRequest(
+        sandbox,
+        tunnel.url,
+        freshAfterReaddId,
+        allSecrets,
+        "credential-window-fresh-request-after-readd",
+      );
+      expect(freshAfterReadd).toEqual({
+        revision: restartedRevision,
+        status: 200,
+      });
+      expect(requestEvidence(fakeMcp, freshAfterReaddId, restartSecret)).toEqual({
+        seen: true,
+        credentialRewritten: true,
+        placeholderAbsent: true,
+      });
+      await writeControl(
+        sandbox,
+        CREDENTIAL_WINDOW_STEPS.deniedAfterReadd,
+        "credential-window-signal-denied-after-readd",
+      );
+      await waitForAcknowledgement(sandbox, CREDENTIAL_WINDOW_STEPS.deniedAfterReadd, "denied");
+      expect(
+        requestEvidence(
+          fakeMcp,
+          credentialWindowRequestId(CREDENTIAL_WINDOW_STEPS.deniedAfterReadd),
+          restartSecret,
+        ).seen,
+      ).toBe(false);
+    } finally {
+      await writeControl(
+        sandbox,
+        CREDENTIAL_WINDOW_STEPS.stop,
+        "credential-window-stop-old-child",
+      ).catch(() =>
+        host.bestEffortCleanupSandbox(SANDBOX_NAME, {
+          artifactName: "credential-window-stop-fallback-destroy",
+          timeoutMs: 15 * 60_000,
+        }),
+      );
+      oldChildResult = await oldChildPromise;
+    }
+
+    expect(oldChildResult).toBeDefined();
+    expectExitZero(oldChildResult!, "old credential-window child");
+    const childSummary = parseLastJsonLine<CredentialWindowChildResult>(oldChildResult!.stdout);
+    expect(childSummary).toEqual({
+      revision: oldChildRevision,
+      outcomes: [
+        {
+          step: CREDENTIAL_WINDOW_STEPS.fallbackAfterEviction,
+          outcome: "denied",
+        },
+        { step: CREDENTIAL_WINDOW_STEPS.deniedAfterKeyRemoval, outcome: "denied" },
+        { step: CREDENTIAL_WINDOW_STEPS.deniedAfterDetach, outcome: "denied" },
+        {
+          step: CREDENTIAL_WINDOW_STEPS.deniedAfterReadd,
+          outcome: "denied",
+        },
+      ],
+    });
+
+    progress.phase("rebuild the sandbox and confirm credential reuse");
+    const rebuild = await host.nemoclaw([SANDBOX_NAME, "rebuild", "--yes"], {
+      artifactName: "credential-window-rebuild-with-provider-reuse",
+      env: {
+        ...buildAvailabilityProbeEnv(),
+        COMPATIBLE_API_KEY: COMPATIBLE_KEY,
+        NVIDIA_INFERENCE_API_KEY: COMPATIBLE_KEY,
+      },
+      redactionValues: [COMPATIBLE_KEY, ...allSecrets],
+      timeoutMs: 25 * 60_000,
+    });
+    expectExitZero(rebuild, "rebuild credential-window sandbox without MCP host secret");
+    const rebuiltRevision = await observeFreshRevision(
+      sandbox,
+      "credential-window-fresh-revision-after-rebuild",
+    );
+    const freshAfterRebuildId = `${CREDENTIAL_WINDOW_REQUEST_PREFIX}:fresh-after-rebuild`;
+    const freshAfterRebuild = await runFreshRequest(
       sandbox,
       tunnel.url,
-      freshAfterReaddId,
+      freshAfterRebuildId,
       allSecrets,
-      "credential-window-fresh-request-after-readd",
+      "credential-window-fresh-request-after-rebuild",
     );
-    expect(freshAfterReadd).toEqual({
-      revision: restartedRevision,
+    expect(freshAfterRebuild).toEqual({
+      revision: rebuiltRevision,
       status: 200,
     });
-    expect(requestEvidence(fakeMcp, freshAfterReaddId, restartSecret)).toEqual({
+    expect(requestEvidence(fakeMcp, freshAfterRebuildId, restartSecret)).toEqual({
       seen: true,
       credentialRewritten: true,
       placeholderAbsent: true,
     });
-    await writeControl(
+
+    progress.phase("remove the MCP bridge and audit denied requests");
+    const remove = await host.nemoclaw([SANDBOX_NAME, "mcp", "remove", SERVER_NAME], {
+      artifactName: "credential-window-mcp-remove",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 4 * 60_000,
+    });
+    expectExitZero(remove, "remove credential-window MCP bridge");
+    await expectFreshCredentialAbsent(
       sandbox,
-      CREDENTIAL_WINDOW_STEPS.deniedAfterReadd,
-      "credential-window-signal-denied-after-readd",
+      "credential-window-fresh-credential-absent-after-remove",
     );
-    await waitForAcknowledgement(sandbox, CREDENTIAL_WINDOW_STEPS.deniedAfterReadd, "denied");
+    const providerAfterRemove = await host.command(
+      host.openshellCommandPath,
+      ["provider", "get", providerName],
+      {
+        artifactName: "credential-window-provider-absent-after-remove",
+        env: openshellEnv(),
+        timeoutMs: 60_000,
+      },
+    );
+    expect(providerAfterRemove.exitCode).not.toBe(0);
+    expect(resultText(providerAfterRemove)).toMatch(/not found/iu);
+    const upstreamRequestIds = fakeMcp.requests.map((request) => requestId(request.body));
+    expect(upstreamRequestIds).not.toContain(
+      credentialWindowRequestId(CREDENTIAL_WINDOW_STEPS.deniedAfterExpiry),
+    );
+    expect(upstreamRequestIds).not.toContain(
+      credentialWindowRequestId(CREDENTIAL_WINDOW_STEPS.fallbackAfterEviction),
+    );
+    expect(upstreamRequestIds).not.toContain(
+      credentialWindowRequestId(CREDENTIAL_WINDOW_STEPS.deniedAfterKeyRemoval),
+    );
+    expect(upstreamRequestIds).not.toContain(
+      credentialWindowRequestId(CREDENTIAL_WINDOW_STEPS.deniedAfterDetach),
+    );
+    expect(upstreamRequestIds).not.toContain(
+      credentialWindowRequestId(CREDENTIAL_WINDOW_STEPS.deniedAfterReadd),
+    );
     expect(
-      requestEvidence(
-        fakeMcp,
-        credentialWindowRequestId(CREDENTIAL_WINDOW_STEPS.deniedAfterReadd),
-        restartSecret,
-      ).seen,
-    ).toBe(false);
-  } finally {
-    await writeControl(
-      sandbox,
-      CREDENTIAL_WINDOW_STEPS.stop,
-      "credential-window-stop-old-child",
-    ).catch(() =>
-      host.bestEffortCleanupSandbox(SANDBOX_NAME, {
-        artifactName: "credential-window-stop-fallback-destroy",
-        timeoutMs: 15 * 60_000,
-      }),
-    );
-    oldChildResult = await oldChildPromise;
-  }
-
-  expect(oldChildResult).toBeDefined();
-  expectExitZero(oldChildResult!, "old credential-window child");
-  const childSummary = parseLastJsonLine<CredentialWindowChildResult>(oldChildResult!.stdout);
-  expect(childSummary).toEqual({
-    revision: oldChildRevision,
-    outcomes: [
-      {
-        step: CREDENTIAL_WINDOW_STEPS.fallbackAfterEviction,
-        outcome: "denied",
-      },
-      { step: CREDENTIAL_WINDOW_STEPS.deniedAfterKeyRemoval, outcome: "denied" },
-      { step: CREDENTIAL_WINDOW_STEPS.deniedAfterDetach, outcome: "denied" },
-      {
-        step: CREDENTIAL_WINDOW_STEPS.deniedAfterReadd,
-        outcome: "denied",
-      },
-    ],
-  });
-
-  progress.phase("rebuild the sandbox and confirm credential reuse");
-  const rebuild = await host.nemoclaw([SANDBOX_NAME, "rebuild", "--yes"], {
-    artifactName: "credential-window-rebuild-with-provider-reuse",
-    env: {
-      ...buildAvailabilityProbeEnv(),
-      COMPATIBLE_API_KEY: COMPATIBLE_KEY,
-      NVIDIA_INFERENCE_API_KEY: COMPATIBLE_KEY,
-    },
-    redactionValues: [COMPATIBLE_KEY, ...allSecrets],
-    timeoutMs: 25 * 60_000,
-  });
-  expectExitZero(rebuild, "rebuild credential-window sandbox without MCP host secret");
-  const rebuiltRevision = await observeFreshRevision(
-    sandbox,
-    "credential-window-fresh-revision-after-rebuild",
-  );
-  const freshAfterRebuildId = `${CREDENTIAL_WINDOW_REQUEST_PREFIX}:fresh-after-rebuild`;
-  const freshAfterRebuild = await runFreshRequest(
-    sandbox,
-    tunnel.url,
-    freshAfterRebuildId,
-    allSecrets,
-    "credential-window-fresh-request-after-rebuild",
-  );
-  expect(freshAfterRebuild).toEqual({
-    revision: rebuiltRevision,
-    status: 200,
-  });
-  expect(requestEvidence(fakeMcp, freshAfterRebuildId, restartSecret)).toEqual({
-    seen: true,
-    credentialRewritten: true,
-    placeholderAbsent: true,
-  });
-
-  progress.phase("remove the MCP bridge and audit denied requests");
-  const remove = await host.nemoclaw([SANDBOX_NAME, "mcp", "remove", SERVER_NAME], {
-    artifactName: "credential-window-mcp-remove",
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 4 * 60_000,
-  });
-  expectExitZero(remove, "remove credential-window MCP bridge");
-  await expectFreshCredentialAbsent(
-    sandbox,
-    "credential-window-fresh-credential-absent-after-remove",
-  );
-  const providerAfterRemove = await host.command(
-    host.openshellCommandPath,
-    ["provider", "get", providerName],
-    {
-      artifactName: "credential-window-provider-absent-after-remove",
-      env: openshellEnv(),
-      timeoutMs: 60_000,
-    },
-  );
-  expect(providerAfterRemove.exitCode).not.toBe(0);
-  expect(resultText(providerAfterRemove)).toMatch(/not found/iu);
-  const upstreamRequestIds = fakeMcp.requests.map((request) => requestId(request.body));
-  expect(upstreamRequestIds).not.toContain(
-    credentialWindowRequestId(CREDENTIAL_WINDOW_STEPS.deniedAfterExpiry),
-  );
-  expect(upstreamRequestIds).not.toContain(
-    credentialWindowRequestId(CREDENTIAL_WINDOW_STEPS.fallbackAfterEviction),
-  );
-  expect(upstreamRequestIds).not.toContain(
-    credentialWindowRequestId(CREDENTIAL_WINDOW_STEPS.deniedAfterKeyRemoval),
-  );
-  expect(upstreamRequestIds).not.toContain(
-    credentialWindowRequestId(CREDENTIAL_WINDOW_STEPS.deniedAfterDetach),
-  );
-  expect(upstreamRequestIds).not.toContain(
-    credentialWindowRequestId(CREDENTIAL_WINDOW_STEPS.deniedAfterReadd),
-  );
-  expect(
-    fakeMcp.requests.every(
-      (request: CredentialWindowRequest) => !request.auth.includes("openshell:resolve:env"),
-    ),
-  ).toBe(true);
-  await artifacts.target.complete({
-    id: "openshell-credential-generation-window",
-    expiryRevision,
-    oldChildRevision,
-    rebuiltRevision,
-    restartedRevision,
-    rotations: CREDENTIAL_WINDOW_ROTATION_COUNT,
-  });
-});
+      fakeMcp.requests.every(
+        (request: CredentialWindowRequest) => !request.auth.includes("openshell:resolve:env"),
+      ),
+    ).toBe(true);
+    await artifacts.target.complete({
+      id: "openshell-credential-generation-window",
+      expiryRevision,
+      oldChildRevision,
+      rebuiltRevision,
+      restartedRevision,
+      rotations: CREDENTIAL_WINDOW_ROTATION_COUNT,
+    });
+  },
+);

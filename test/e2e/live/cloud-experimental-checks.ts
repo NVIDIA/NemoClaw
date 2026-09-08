@@ -68,11 +68,11 @@ export function buildCloudExperimentalCommandEnv(
   base: NodeJS.ProcessEnv = process.env,
   options: { dcodeBaseImageReference?: string; forwardDcodeBaseImage?: boolean } = {},
 ): NodeJS.ProcessEnv {
-  const dcodeBaseImage = options.forwardDcodeBaseImage
+  const candidateDcodeBaseImage =
+    options.dcodeBaseImageReference ?? base[DCODE_BASE_IMAGE_ENV]?.trim();
+  const dcodeBaseImage = options.forwardDcodeBaseImage && candidateDcodeBaseImage
     ? requireDcodeBaseImageReference(
-        options.dcodeBaseImageReference === undefined
-          ? base
-          : { [DCODE_BASE_IMAGE_ENV]: options.dcodeBaseImageReference },
+        { [DCODE_BASE_IMAGE_ENV]: candidateDcodeBaseImage },
       )
     : undefined;
   return {

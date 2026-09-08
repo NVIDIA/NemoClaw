@@ -18,9 +18,10 @@
  * sandbox was absent — which is precisely the stale-recovery state. That left
  * the recommended recovery path dead-ended.
  *
- * This suite asserts that `rebuild --yes` now treats a registered-but-not-live
- * sandbox as a recovery rebuild: it skips the (impossible) backup, reports the
- * stale state, and proceeds to recreate from the preserved registry metadata.
+ * OpenShell is now the sole policy authority, so a missing live sandbox also
+ * means there is no authoritative policy to carry into its replacement. This
+ * suite asserts that `rebuild --yes` reports that condition and preserves the
+ * registry state instead of reconstructing policy from NemoClaw metadata.
  */
 
 import { describe, expect, it } from "vitest";
@@ -32,7 +33,7 @@ import {
 
 installRebuildFlowTestHooks();
 
-describe("stale sandbox rebuild recovery (#4497)", () => {
+describe("stale sandbox rebuild safety (#4497)", () => {
   it("still backs up normally when the live sandbox IS present (control case)", async () => {
     const harness = createRebuildFlowHarness();
 
@@ -48,7 +49,7 @@ describe("stale sandbox rebuild recovery (#4497)", () => {
     expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
   });
 
-  it("recreates an absent sandbox from its preserved registry metadata", async () => {
+  it("refuses to recreate an absent sandbox without its authoritative live policy", async () => {
     const harness = createRebuildFlowHarness({
       staleRecovery: true,
       onboard: () => undefined,
@@ -56,33 +57,23 @@ describe("stale sandbox rebuild recovery (#4497)", () => {
 
     await expect(
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).resolves.toBeUndefined();
+    ).rejects.toThrow("Cannot rebuild an absent sandbox without its authoritative OpenShell policy");
 
-    const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    const output = [...harness.logSpy.mock.calls, ...harness.errorSpy.mock.calls]
+      .map((call) => String(call[0]))
+      .join("\n");
 
     expect(output).toContain("absent from the live OpenShell gateway");
-    expect(output).toContain("No live workspace state to back up");
-    expect(output).toContain("Creating new sandbox with current image");
-    expect(output).toContain("rebuilt successfully");
-    expect(output).toContain("Recovered from a stale registry entry");
+    expect(output).toContain("Rebuild cannot recover its missing OpenShell policy");
+    expect(output).toContain("nemoclaw alpha destroy --yes");
+    expect(output).toContain("nemoclaw onboard");
+    expect(output).not.toContain("Creating new sandbox with current image");
+    expect(output).not.toContain("rebuilt successfully");
     expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
     expect(harness.restoreSandboxStateSpy).not.toHaveBeenCalled();
-    expect(harness.prepareMcpBridgesForAbsentSandboxRebuildSpy).toHaveBeenCalledWith("alpha");
-    expect(harness.onboardSpy).toHaveBeenCalledOnce();
-    expect(harness.onboardSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        resume: true,
-        nonInteractive: true,
-        recreateSandbox: true,
-        authoritativeResumeConfig: true,
-        autoYes: true,
-        controlUiPort: 18789,
-        targetGatewayName: "nemoclaw",
-        targetGatewayPort: 8080,
-      }),
-    );
-    // The journaled source row is the durable replacement contract, so it is
-    // preserved until replacement registration commits (#7734).
+    expect(harness.prepareMcpBridgesForAbsentSandboxRebuildSpy).not.toHaveBeenCalled();
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+    expectNoSandboxDelete(harness.runOpenshellSpy);
     expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
     expect(harness.restoreSandboxEntrySpy).not.toHaveBeenCalled();
     expect(harness.restoreSandboxEntryIfMissingSpy).not.toHaveBeenCalled();
@@ -153,7 +144,7 @@ describe("stale sandbox rebuild recovery (#4497)", () => {
     expect(harness.onboardSpy).not.toHaveBeenCalled();
   });
 
-  it("preserves retryable metadata when stale recovery recreate fails (#4497)", async () => {
+  it("preserves retryable metadata when stale recovery is refused (#4497)", async () => {
     const harness = createRebuildFlowHarness({
       defaultSandbox: "alpha",
       staleRecovery: true,
@@ -164,7 +155,7 @@ describe("stale sandbox rebuild recovery (#4497)", () => {
 
     await expect(
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).rejects.toThrow("Recreate failed");
+    ).rejects.toThrow("Cannot rebuild an absent sandbox without its authoritative OpenShell policy");
 
     const output = [...harness.logSpy.mock.calls, ...harness.errorSpy.mock.calls]
       .map((call) => String(call[0]))
@@ -172,25 +163,18 @@ describe("stale sandbox rebuild recovery (#4497)", () => {
 
     expect(output).not.toContain("Cannot back up state");
     expect(output).toContain("absent from the live OpenShell gateway");
-    expect(output).toContain("No live workspace state to back up");
+    expect(output).toContain("Rebuild cannot recover its missing OpenShell policy");
+    expect(output).toContain("nemoclaw alpha destroy --yes");
     expect(output).not.toContain("Backing up sandbox state");
-    expect(output).toContain("Creating new sandbox with current image");
-    expect(output).toContain("Recovery recreate failed");
+    expect(output).not.toContain("Creating new sandbox with current image");
     expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
-    expect(harness.onboardSpy).toHaveBeenCalledOnce();
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+    expectNoSandboxDelete(harness.runOpenshellSpy);
 
-    // Rollback restores the journaled source snapshot without the ordinary
-    // removal receipt, so the same rebuild command remains retryable.
+    // The command stops before mutating either the sandbox or its registry row,
+    // so the same recovery command remains retryable if live policy returns.
     expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
-    expect(harness.restoreSandboxEntrySpy).toHaveBeenCalledOnce();
-    expect(harness.restoreSandboxEntrySpy).toHaveBeenCalledWith(
-      expect.objectContaining({ name: "alpha" }),
-      {},
-    );
-    const [restoredEntry] = harness.restoreSandboxEntrySpy.mock.calls[0] as [
-      Record<string, unknown>,
-    ];
-    expect(restoredEntry.imageTag ?? null).toBeNull();
+    expect(harness.restoreSandboxEntrySpy).not.toHaveBeenCalled();
     expect(harness.restoreSandboxEntryIfMissingSpy).not.toHaveBeenCalled();
     expect(harness.getDefaultSelectionState()).toEqual({
       defaultSandbox: "alpha",

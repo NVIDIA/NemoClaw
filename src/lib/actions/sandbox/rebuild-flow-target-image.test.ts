@@ -138,6 +138,21 @@ describe("rebuildSandbox flow: target image", () => {
     expect(harness.onboardSpy).not.toHaveBeenCalled();
   });
 
+  it("stops before sandbox mutation when Hermes base-image preflight fails (#11072)", async () => {
+    const harness = createRebuildFlowHarness({
+      sandboxEntry: { agent: "hermes" },
+      baseImagePreflight: { ok: false, imageRef: null, overrideEnvVar: null },
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+    expectNoSandboxDelete(harness.runOpenshellSpy);
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+  });
+
   it("finalizes the retained Hermes image from backup before sandbox deletion (#7803)", async () => {
     const preservedEnv = [
       {
@@ -413,7 +428,6 @@ describe("rebuildSandbox flow: target image", () => {
         fromDockerfile: "/tmp/unrelated.Dockerfile",
       };
       harness.session.webSearchConfig = { fetchEnabled: true };
-      harness.session.policyPresets = ["foreign-preset"];
       harness.session.gpuPassthrough = true;
 
       await expect(
@@ -431,7 +445,7 @@ describe("rebuildSandbox flow: target image", () => {
       expect(harness.session.endpointUrl).not.toBe(staleEndpoint);
       expect(harness.session.metadata).toMatchObject({ fromDockerfile: null });
       expect(harness.session.webSearchConfig).toBeNull();
-      expect(harness.session.policyPresets).toEqual(["npm", "bad", "throw"]);
+      expect(harness.session).not.toHaveProperty("policyPresets");
       expect(harness.session.gpuPassthrough).toBe(false);
       expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
         ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
@@ -504,17 +518,11 @@ describe("rebuildSandbox flow: target image", () => {
         machine: { state: "failed" },
         steps: { sandbox: { status: "failed", error: "Rebuild recreate failed" } },
       });
-      expect(harness.relockSpy).toHaveBeenCalledWith(
-        "alpha",
-        expect.any(Object),
-        false,
-        "nemoclaw",
-      );
       expect(process.env.NEMOCLAW_SANDBOX_NAME).toBe(originalSandboxName);
 
       const errors = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
       expect(errors).toContain("Recreate failed after sandbox was destroyed");
-      expect(errors).toContain("Backup is preserved at: /tmp/nemoclaw-rebuild-backup");
+      expect(errors).toContain(`Backup is preserved at: ${harness.backupPath}`);
       expect(errors).toContain("onboard --resume");
     } finally {
       restoreEnv();

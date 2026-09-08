@@ -102,7 +102,6 @@ wait();`,
           gatewayPort,
           dashboardPort: agent === "langchain-deepagents-code" ? 0 : 18789,
           fromDockerfile: null,
-          policies: [],
           agent,
           ...(agent === "langchain-deepagents-code"
             ? {
@@ -140,7 +139,6 @@ wait();`,
       preferredInferenceApi: null,
       nimContainer: null,
       webSearchConfig: null,
-      policyPresets: [],
       messagingPlan: null,
       metadata: { gatewayName, fromDockerfile: null },
       steps: {

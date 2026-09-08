@@ -18,7 +18,6 @@ import * as registry from "../state/registry";
 export const RESERVED_SANDBOX_NAMES = new Set([
   "onboard",
   "list",
-  "deploy",
   "setup",
   "setup-spark",
   "start",

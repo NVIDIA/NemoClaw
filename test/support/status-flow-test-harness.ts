@@ -11,9 +11,9 @@ import type {
   SandboxStatusRouteDrift,
   ServingProcessHealth,
 } from "../../src/lib/actions/sandbox/status-snapshot";
+import type { LlamaCppRouteDetails } from "../../src/lib/inference/config";
 import type { ProviderHealthStatus } from "../../src/lib/inference/health";
-import type { BaselineExclusionRuntimeStatus } from "../../src/lib/policy/baseline-exclusion";
-import type { BaselineExclusionTransition, SandboxHostMount } from "../../src/lib/state/registry";
+import type { SandboxHostMount } from "../../src/lib/state/registry";
 
 type ShowSandboxStatus =
   (typeof import("../../src/lib/actions/sandbox/status"))["showSandboxStatus"];
@@ -51,7 +51,6 @@ const baseSandboxEntry = {
   name: "alpha",
   model: "nvidia/nemotron",
   provider: "ollama-local",
-  policies: ["npm", "telegram"],
   hostGpuDetected: true,
   gpuEnabled: true,
   sandboxGpuEnabled: true,
@@ -74,7 +73,9 @@ const baseSandboxEntry = {
 export type StatusFlowHarnessOptions = {
   currentModel?: string;
   currentProvider?: string;
+  gatewayPresets?: string[] | null;
   routeDrift?: SandboxStatusRouteDrift | null;
+  llamaCpp?: LlamaCppRouteDetails | null;
   inferenceHealth?: ProviderHealthStatus | null;
   servingProcessHealth?: ServingProcessHealth | null;
   portableDisposition?:
@@ -83,7 +84,6 @@ export type StatusFlowHarnessOptions = {
     | (() => PortableAgentReceiptDisposition | Error);
   registryEntry?: "present" | "missing";
   withMcpLifecycleLock?: WithMcpLifecycleLock;
-  baselineExclusionStatus?: BaselineExclusionRuntimeStatus;
   lookup?: SandboxGatewayState;
   lookupState?: "present" | "missing";
   gatewayRunning?: boolean;
@@ -95,18 +95,12 @@ export type StatusFlowHarnessOptions = {
         agent?: string | null;
         agentVersion?: string | null;
         dcodeAutoApprovalMode?: "disabled" | "thread-opt-in";
-        baselineExclusions?: Array<{ version: 1; agent: string; key: string; digest: string }>;
-        baselineExclusionTransition?: BaselineExclusionTransition;
         preferredInferenceApi?: string | null;
         compatibleEndpointReasoningEffort?: "low" | "medium" | "high" | null;
         hostMounts?: SandboxHostMount[];
         dashboardRemoteBindPrepared?: boolean;
       })
     | null;
-  shieldsPosture?: {
-    mode: "locked" | "mutable_default" | "mutable";
-    detail: string;
-  };
   versionCheck?: {
     sandboxVersion?: string | null;
     expectedVersion?: string | null;
@@ -142,7 +136,6 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
   const nim = requireDist("../../src/lib/inference/nim.js");
   const policy = requireDist("../../src/lib/policy/index.js");
   const sandboxVersion = requireDist("../../src/lib/sandbox/version.js");
-  const shields = requireDist("../../src/lib/shields/index.js");
   const registry = requireDist("../../src/lib/state/registry.js");
   const sandboxSession = requireDist("../../src/lib/state/sandbox-session.js");
 
@@ -218,6 +211,7 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
         model: options.currentModel ?? sandboxEntry?.model,
       },
       routeDrift: options.routeDrift ?? null,
+      llamaCpp: options.llamaCpp ?? null,
       inferenceHealth:
         options.inferenceHealth === undefined
           ? {
@@ -275,8 +269,8 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
     container: null,
   });
   vi.spyOn(nim, "shouldShowNimLine").mockReturnValue(true);
-  vi.spyOn(policy, "getBaselineExclusionRuntimeStatus").mockReturnValue(
-    options.baselineExclusionStatus ?? "excluded",
+  vi.spyOn(policy, "getGatewayPresets").mockReturnValue(
+    options.gatewayPresets === undefined ? ["npm", "telegram"] : options.gatewayPresets,
   );
   const checkAgentVersionSpy = vi.spyOn(sandboxVersion, "checkAgentVersion").mockReturnValue(
     options.versionCheck ?? {
@@ -284,12 +278,6 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
       expectedVersion: "0.2.0",
       isStale: true,
       detectionMethod: "runtime",
-    },
-  );
-  vi.spyOn(shields, "getShieldsPosture").mockReturnValue(
-    options.shieldsPosture ?? {
-      mode: "mutable_default",
-      detail: "mutable default",
     },
   );
   const getActiveSandboxSessionsSpy = vi

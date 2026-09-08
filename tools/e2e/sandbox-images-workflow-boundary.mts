@@ -8,12 +8,7 @@ import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const DEFAULT_WORKFLOW_PATH = join(
-  REPO_ROOT,
-  ".github",
-  "workflows",
-  "sandbox-images-and-e2e.yaml",
-);
+const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "sandbox-images.yaml");
 const DEFAULT_MAIN_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "main.yaml");
 
 const AUTH_STEP_NAME = "Authenticate to Docker Hub";
@@ -23,6 +18,7 @@ const HERMES_SECRET_BOUNDARY_STEP_ID = "hermes-secret-boundary";
 const HERMES_ROOT_AFTER_SECRET_CONDITION =
   "${{ !cancelled() && (steps.hermes-secret-boundary.outcome == 'success' || steps.hermes-secret-boundary.outcome == 'failure') }}";
 const HERMES_EXPORT_SWAP_STEP_NAME = "Add swap for Hermes image export";
+const HERMES_EXPORT_SWAP_CLEANUP_STEP_NAME = "Remove swap after Hermes image export";
 const HERMES_SETUP_BUILDX_ACTION =
   "docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c";
 const HERMES_BUILD_PUSH_ACTION =
@@ -37,12 +33,6 @@ const HERMES_CACHE_FROM = "type=gha,scope=hermes-production-${{ runner.os }}-${{
 const HERMES_CACHE_TO =
   "type=gha,mode=max,scope=hermes-production-${{ runner.os }}-${{ runner.arch }}";
 const MESSAGING_PLAN_IMAGE_BOUNDARY_JOB = "messaging-plan-image-boundary";
-const GLIBC_PROBE_STEP_NAME = "Run glibc probe lifecycle regression";
-const GLIBC_PROBE_RUN =
-  "npx vitest run --project integration test/e2e-runtime/image-compatibility-docker-lifecycle.test.ts --silent=false --reporter=default";
-const GLIBC_PROBE_ENABLE_ENV = "NEMOCLAW_RUN_GLIBC_PROBE_DOCKER_E2E";
-const GLIBC_PROBE_IMAGE_ENV = "NEMOCLAW_TEST_IMAGE";
-const REMOVED_GLIBC_PROBE_TEST_PATH = "test/image-compatibility-docker-lifecycle.test.ts";
 const IMAGE_BUILD_JOBS = [
   "build-sandbox-images",
   "build-hermes-sandbox-image",
@@ -51,9 +41,8 @@ const IMAGE_BUILD_JOBS = [
 ] as const;
 const OPENCLAW_IMAGE_CONSUMER_JOBS = [
   "runtime-overrides",
-  "test-e2e-sandbox",
-  "test-e2e-gateway-isolation",
-  "test-e2e-port-overrides",
+  "managed-image-openclaw-security",
+  "port-override-image-contract",
 ] as const;
 const DOCKERHUB_SECRETS = ["DOCKERHUB_USERNAME", "DOCKERHUB_TOKEN"] as const;
 const FORBIDDEN_RUNTIME_SECRETS = [
@@ -104,7 +93,6 @@ const GUARDED_PRODUCTION_BUILD_CONTRACTS: readonly GuardedProductionBuildContrac
     label: "OpenClaw production image",
     stepName: "Build production image",
     target: "nemoclaw-production",
-    testImageDockerfile: "-f test/Dockerfile.sandbox",
   },
   {
     args: '-f agents/hermes/Dockerfile --build-arg "BASE_IMAGE=${HERMES_BASE_IMAGE}"',
@@ -121,7 +109,6 @@ const GUARDED_PRODUCTION_BUILD_CONTRACTS: readonly GuardedProductionBuildContrac
     label: "OpenClaw arm64 production image",
     stepName: "Build production image on arm64",
     target: "nemoclaw-production-arm64",
-    testImageDockerfile: "-f test/Dockerfile.sandbox",
   },
 ];
 
@@ -204,8 +191,8 @@ function validateTriggersAndPermissions(errors: string[], workflow: SandboxImage
 }
 
 function validateMainCaller(errors: string[], mainWorkflow: SandboxImagesWorkflow): void {
-  const caller = record(record(mainWorkflow.jobs)["sandbox-images-and-e2e"]);
-  if (caller.uses !== "./.github/workflows/sandbox-images-and-e2e.yaml") {
+  const caller = record(record(mainWorkflow.jobs)["sandbox-image-contracts"]);
+  if (caller.uses !== "./.github/workflows/sandbox-images.yaml") {
     errors.push("main workflow must call the local sandbox image workflow");
   }
   if (!isDeepStrictEqual(caller.needs, ["static-checks", "build-typecheck"])) {
@@ -223,15 +210,15 @@ function validateMainCaller(errors: string[], mainWorkflow: SandboxImagesWorkflo
   }
 
   const checks = record(record(mainWorkflow.jobs).checks);
-  if (!Array.isArray(checks.needs) || !checks.needs.includes("sandbox-images-and-e2e")) {
+  if (!Array.isArray(checks.needs) || !checks.needs.includes("sandbox-image-contracts")) {
     errors.push("main checks must wait for the sandbox image workflow");
   }
   const gate = requireStep(errors, "main checks", checks, "Verify required main checks");
   if (
-    record(gate.env).SANDBOX_IMAGES_E2E_RESULT !==
-      "${{ needs['sandbox-images-and-e2e'].result }}" ||
+    record(gate.env).SANDBOX_IMAGE_CONTRACTS_RESULT !==
+      "${{ needs['sandbox-image-contracts'].result }}" ||
     !(gate.run ?? "").includes(
-      'require_success "sandbox-images-and-e2e" "$SANDBOX_IMAGES_E2E_RESULT"',
+      'require_success "sandbox-image-contracts" "$SANDBOX_IMAGE_CONTRACTS_RESULT"',
     )
   ) {
     errors.push("main checks must require the sandbox image workflow result");
@@ -265,7 +252,7 @@ function validateCanonicalAuth(errors: string[], auth: SandboxImagesWorkflowStep
     `if printf '%s' "\${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "\${DOCKERHUB_USERNAME}" --password-stdin; then`,
     "if ((attempt < login_attempts)); then",
     'sleep "${retry_seconds}"',
-    'Docker Hub login failed after ${login_attempts} attempts',
+    "Docker Hub login failed after ${login_attempts} attempts",
   ];
   for (const fragment of requiredFragments) {
     if (!run.includes(fragment)) {
@@ -701,6 +688,42 @@ function validateHermesExportSwap(errors: string[], workflow: SandboxImagesWorkf
     if (stepIndex(job, HERMES_EXPORT_SWAP_STEP_NAME) >= stepIndex(job, buildStepName)) {
       errors.push(`${jobName} must provision swap before the Hermes image build`);
     }
+
+    const cleanupSteps = steps(job).filter(
+      (step) => step.name === HERMES_EXPORT_SWAP_CLEANUP_STEP_NAME,
+    );
+    if (cleanupSteps.length !== 1) {
+      errors.push(`${jobName} must remove Hermes export swap exactly once`);
+      continue;
+    }
+    const cleanup = cleanupSteps[0];
+    const cleanupRun = cleanup?.run ?? "";
+    if (
+      cleanup?.if !== "always()" ||
+      cleanup.shell !== "bash" ||
+      cleanup["continue-on-error"] !== undefined
+    ) {
+      errors.push(`${jobName} Hermes export swap cleanup must always run and fail on error`);
+    }
+    for (const fragment of [
+      "swap_file=/mnt/nemoclaw-hermes-image-export.swap",
+      'sudo swapoff "$swap_file"',
+      'sudo rm -f "$swap_file"',
+      "swapon --show",
+      "free -h",
+      "df -h / /mnt",
+      "cleanup_failed",
+    ]) {
+      if (!cleanupRun.includes(fragment)) {
+        errors.push(`${jobName} Hermes export swap cleanup must include ${fragment}`);
+      }
+    }
+    if (stepIndex(job, buildStepName) >= stepIndex(job, HERMES_EXPORT_SWAP_CLEANUP_STEP_NAME)) {
+      errors.push(`${jobName} must remove swap after the Hermes image build`);
+    }
+    if (stepIndex(job, HERMES_EXPORT_SWAP_CLEANUP_STEP_NAME) >= stepIndex(job, CLEANUP_STEP_NAME)) {
+      errors.push(`${jobName} must remove swap before Docker Hub auth cleanup`);
+    }
   }
 }
 
@@ -746,9 +769,10 @@ function validateRuntimeImageReuse(errors: string[], workflow: SandboxImagesWork
       errors.push(`runtime-overrides must run '${stepName}' exactly once`);
     }
   }
-  const save = requireStep(errors, producerName, producer, "Save images to tarballs");
+  const save = requireStep(errors, producerName, producer, "Save production image");
   if (
-    steps(producer).filter((step) => step.name === "Save images to tarballs").length !== 1 ||
+    steps(producer).filter((step) => step.name === "Save production image").length !== 1 ||
+    !(save.run ?? "").includes("set -euo pipefail") ||
     !(save.run ?? "").includes(
       "docker save nemoclaw-production | gzip > /tmp/isolation-image.tar.gz",
     )
@@ -832,6 +856,71 @@ function validateRuntimeImageReuse(errors: string[], workflow: SandboxImagesWork
     stepIndex(runtimeJob, runtime.name ?? "") >= stepIndex(runtimeJob, upload.name ?? "")
   ) {
     errors.push("runtime overrides image handoff and artifact upload steps are out of order");
+  }
+  const securityName = "managed-image-openclaw-security";
+  const securityJob = workflow.jobs[securityName] ?? {};
+  if (securityJob["timeout-minutes"] !== 15) {
+    errors.push(`${securityName} must retain its 15-minute job budget`);
+  }
+  const securityStep = requireStep(
+    errors,
+    securityName,
+    securityJob,
+    "Validate OpenClaw managed-image security boundary",
+  );
+  const securityRun = securityStep.run ?? "";
+  for (const fragment of [
+    "npx vitest run --project integration",
+    "test/e2e-runtime/managed-image-openclaw-security.test.ts",
+    "--reporter=test/e2e/risk-signal-reporter.ts",
+  ]) {
+    if (!securityRun.includes(fragment))
+      errors.push(`${securityName} test must include ${fragment}`);
+  }
+  if (securityStep["continue-on-error"] !== undefined) {
+    errors.push(`${securityName} test must not continue on error`);
+  }
+  const cleanup = requireStep(
+    errors,
+    securityName,
+    securityJob,
+    "Remove managed-image security resources",
+  );
+  const cleanupRun = cleanup.run ?? "";
+  if (cleanup.if !== "${{ always() }}" || cleanup["continue-on-error"] !== undefined) {
+    errors.push(`${securityName} cleanup must always run and fail on residual resources`);
+  }
+  for (const fragment of [
+    "docker ps -aq",
+    "docker rm -f",
+    "docker volume rm -f",
+    "cleanup_failed",
+  ]) {
+    if (!cleanupRun.includes(fragment))
+      errors.push(`${securityName} cleanup must include ${fragment}`);
+  }
+  const securityUpload = requireStep(
+    errors,
+    securityName,
+    securityJob,
+    "Upload OpenClaw managed-image security evidence",
+  );
+  if (
+    securityUpload.if !== "${{ always() }}" ||
+    securityUpload.uses !== "./.github/actions/upload-e2e-artifacts" ||
+    !isDeepStrictEqual(record(securityUpload.with), {
+      name: "managed-image-openclaw-security-evidence",
+      path: "${{ env.E2E_ARTIFACT_DIR }}",
+    }) ||
+    securityUpload["continue-on-error"] !== undefined
+  ) {
+    errors.push(`${securityName} must always upload evidence with the shared action`);
+  }
+  if (
+    stepIndex(securityJob, securityStep.name ?? "") >= stepIndex(securityJob, cleanup.name ?? "") ||
+    stepIndex(securityJob, cleanup.name ?? "") >= stepIndex(securityJob, securityUpload.name ?? "")
+  ) {
+    errors.push(`${securityName} test, cleanup, and evidence upload are out of order`);
   }
 }
 
@@ -1005,151 +1094,10 @@ function validateHermesImageReuse(errors: string[], workflow: SandboxImagesWorkf
   }
 }
 
-function validateStateDirGuardMetadataImageReuse(
-  errors: string[],
-  workflow: SandboxImagesWorkflow,
-): void {
-  const jobName = "state-dir-guard-metadata";
-  const job = workflow.jobs[jobName] ?? {};
-  const expectedNeeds = ["build-sandbox-images", "build-hermes-sandbox-image"];
-  if (!isDeepStrictEqual(job.needs, expectedNeeds)) {
-    errors.push("state-dir guard metadata must depend on both production image producers");
-  }
-  if (job["timeout-minutes"] !== 30) {
-    errors.push("state-dir guard metadata job must retain its 30-minute budget");
-  }
-
-  const expectedEnv = {
-    E2E_ARTIFACT_DIR: "${{ github.workspace }}/e2e-artifacts/live/state-dir-guard-metadata",
-    E2E_TARGET_ID: "state-dir-guard-metadata",
-    NEMOCLAW_RUN_LIVE_E2E: "1",
-    NEMOCLAW_OPENCLAW_TEST_IMAGE: "nemoclaw-production",
-    NEMOCLAW_HERMES_TEST_IMAGE: "nemoclaw-hermes-production",
-  };
-  if (!isDeepStrictEqual(record(job.env), expectedEnv)) {
-    errors.push("state-dir guard metadata must consume both named prebuilt production images");
-  }
-  for (const stepName of ["Set up Node", "Install root dependencies"]) {
-    if (steps(job).filter((step) => step.name === stepName).length !== 1) {
-      errors.push(`${jobName} must run '${stepName}' exactly once`);
-    }
-  }
-  if (findStep(job, AUTH_STEP_NAME)) {
-    errors.push("state-dir guard metadata must not authenticate to Docker Hub");
-  }
-  const allRuns = steps(job)
-    .map((step) => step.run ?? "")
-    .join("\n");
-  if (/\bdocker\s+build\b/u.test(allRuns)) {
-    errors.push("state-dir guard metadata must not rebuild either production image");
-  }
-  for (const producerName of expectedNeeds) {
-    const producerRuns = steps(workflow.jobs[producerName] ?? {})
-      .map((step) => step.run ?? "")
-      .join("\n");
-    if (producerRuns.includes("test/e2e/live/state-dir-guard-metadata.test.ts")) {
-      errors.push(`${producerName} must not run the failure-isolated state-dir guard probe`);
-    }
-  }
-
-  const openclawDownload = requireStep(errors, jobName, job, "Download OpenClaw production image");
-  const hermesDownload = requireStep(errors, jobName, job, "Download Hermes production image");
-  for (const [label, step, expectedWith] of [
-    ["OpenClaw", openclawDownload, { name: "isolation-image", path: "/tmp" }],
-    ["Hermes", hermesDownload, { name: "hermes-isolation-image", path: "/tmp" }],
-  ] as const) {
-    if (
-      step.uses !== HERMES_DOWNLOAD_ARTIFACT_ACTION ||
-      !isDeepStrictEqual(record(step.with), expectedWith)
-    ) {
-      errors.push(`state-dir guard metadata must download the saved ${label} production image`);
-    }
-  }
-
-  const load = requireStep(errors, jobName, job, "Load production images");
-  for (const fragment of [
-    "/tmp/isolation-image.tar.gz | docker load",
-    "/tmp/hermes-isolation-image.tar.gz | docker load",
-    "docker image inspect nemoclaw-production",
-    "docker image inspect nemoclaw-hermes-production",
-  ]) {
-    if (!(load.run ?? "").includes(fragment)) {
-      errors.push(`state-dir guard metadata image load must include ${fragment}`);
-    }
-  }
-  const tools = requireStep(errors, jobName, job, "Install filesystem metadata tools");
-  for (const fragment of [
-    "sudo apt-get install --yes --no-install-recommends acl attr",
-    "command -v setfacl getfacl setfattr getfattr",
-  ]) {
-    if (!(tools.run ?? "").includes(fragment)) {
-      errors.push(`state-dir guard metadata tool setup must include ${fragment}`);
-    }
-  }
-  const probe = requireStep(errors, jobName, job, "Run installed state-dir guard metadata test");
-  if (probe["timeout-minutes"] !== 15) {
-    errors.push("state-dir guard metadata probe must retain its 15-minute budget");
-  }
-  if (!(probe.run ?? "").includes("test/e2e/live/state-dir-guard-metadata.test.ts")) {
-    errors.push("state-dir guard metadata step must run its focused live Vitest target");
-  }
-  const upload = requireStep(errors, jobName, job, "Upload state-dir guard metadata artifacts");
-  if (upload.if !== "always()" || upload.uses !== "./.github/actions/upload-e2e-artifacts") {
-    errors.push("state-dir guard metadata must always use the shared E2E artifact uploader");
-  }
-  if (
-    stepIndex(job, openclawDownload.name ?? "") >= stepIndex(job, load.name ?? "") ||
-    stepIndex(job, hermesDownload.name ?? "") >= stepIndex(job, load.name ?? "") ||
-    stepIndex(job, load.name ?? "") >= stepIndex(job, tools.name ?? "") ||
-    stepIndex(job, tools.name ?? "") >= stepIndex(job, probe.name ?? "") ||
-    stepIndex(job, probe.name ?? "") >= stepIndex(job, upload.name ?? "")
-  ) {
-    errors.push("state-dir guard metadata image handoff and evidence steps are out of order");
-  }
-}
-
 export function readSandboxImagesWorkflow(
   workflowPath = DEFAULT_WORKFLOW_PATH,
 ): SandboxImagesWorkflow {
   return YAML.parse(readFileSync(workflowPath, "utf8")) as SandboxImagesWorkflow;
-}
-
-export function validateGlibcProbeLifecycleWorkflowPaths(
-  prWorkflow: SandboxImagesWorkflow,
-  imageWorkflow: SandboxImagesWorkflow,
-): string[] {
-  const errors: string[] = [];
-  for (const [label, workflow] of [
-    ["PR self-hosted workflow", prWorkflow],
-    ["sandbox image workflow", imageWorkflow],
-  ] as const) {
-    const job = workflow.jobs["test-e2e-gateway-isolation"] ?? {};
-    const jobSteps = steps(job);
-    const matchingSteps = jobSteps.filter((step) => step.name === GLIBC_PROBE_STEP_NAME);
-    const workflowSteps = Object.values(workflow.jobs).flatMap((candidate) => steps(candidate));
-    const matchingRuns = workflowSteps.filter((step) => step.run === GLIBC_PROBE_RUN);
-    const containsRemovedRun = workflowSteps.some((step) =>
-      step.run?.includes(REMOVED_GLIBC_PROBE_TEST_PATH),
-    );
-    if (
-      matchingSteps.length !== 1 ||
-      matchingSteps[0]?.run !== GLIBC_PROBE_RUN ||
-      matchingRuns.length !== 1 ||
-      containsRemovedRun
-    ) {
-      errors.push(`${label} must run the grouped glibc probe lifecycle test exactly once`);
-    }
-    if (
-      matchingSteps.length === 1 &&
-      (matchingSteps[0]?.env?.[GLIBC_PROBE_ENABLE_ENV] !== "1" ||
-        matchingSteps[0]?.env?.[GLIBC_PROBE_IMAGE_ENV] !== "nemoclaw-production")
-    ) {
-      errors.push(
-        `${label} glibc probe lifecycle step must enable the Docker E2E against nemoclaw-production`,
-      );
-    }
-  }
-  return errors;
 }
 
 export function validateSandboxImagesWorkflow(
@@ -1177,7 +1125,6 @@ export function validateSandboxImagesWorkflow(
   validateMessagingPlanImageBoundary(errors, workflow);
   validateRuntimeImageReuse(errors, workflow);
   validateHermesImageReuse(errors, workflow);
-  validateStateDirGuardMetadataImageReuse(errors, workflow);
   return errors;
 }
 

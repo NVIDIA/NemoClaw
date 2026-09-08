@@ -228,7 +228,6 @@ describe("CLI debug command", () => {
             model: "test-model",
             provider: "nvidia-prod",
             gpuEnabled: false,
-            policies: [],
           },
         },
         defaultSandbox: "ghost",

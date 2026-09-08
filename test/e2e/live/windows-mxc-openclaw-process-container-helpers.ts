@@ -26,6 +26,7 @@ import {
   type ChildProcessProgress,
   spawnObservedChild,
 } from "../fixtures/observed-child-process.ts";
+import { isExactOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import { PollingError, pollUntil } from "../fixtures/polling.ts";
 
 type QualificationProgress = ChildProcessProgress & {
@@ -1740,29 +1741,7 @@ export async function observeWindowsMxcForwardHealthReadiness(input: {
 }
 
 export function parseOpenClawExactChatReply(output: string): boolean {
-  const value = parseEmbeddedJson(output, "OpenClaw agent output");
-  if (
-    typeof value !== "object" ||
-    value === null ||
-    !("status" in value) ||
-    value.status !== "ok" ||
-    !("result" in value) ||
-    typeof value.result !== "object" ||
-    value.result === null ||
-    !("payloads" in value.result) ||
-    !Array.isArray(value.result.payloads) ||
-    value.result.payloads.length !== 1
-  ) {
-    return false;
-  }
-  const [payload] = value.result.payloads;
-  return (
-    typeof payload === "object" &&
-    payload !== null &&
-    "text" in payload &&
-    typeof payload.text === "string" &&
-    payload.text === "CHAT_OK"
-  );
+  return isExactOpenClawAgentText(output, "CHAT_OK");
 }
 
 export function assertCleanCheckoutIdentity(input: {

@@ -126,7 +126,7 @@ const { setupNim, setupInference } = require(${onboardPath});
     selected.hermesToolGateways,
     {
       preferredInferenceApi: selected.preferredInferenceApi,
-      revalidatePolicyRequirements: () => {},
+      revalidateSandboxIdentity: () => {},
       skipHostInferenceSmoke: selected.skipHostInferenceSmoke,
       reuseGatewayCredentialWithoutLocalKey:
         process.env.NEMOCLAW_TEST_OMIT_REUSE_AUTHORIZATION === "1"

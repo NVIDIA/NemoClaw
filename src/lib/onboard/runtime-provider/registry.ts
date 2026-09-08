@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SandboxEntry } from "../../state/registry/types";
+import { PORTABLE_AGENT_RUNTIME_PLATFORMS } from "../workload/portable-agent-runtime";
 import {
   RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION,
   RUNTIME_PROVIDER_NATIVE_ARTIFACT_BOOTSTRAP_CONTRACT_VERSION,
   RUNTIME_PROVIDER_SNAPSHOT_CONTRACT_VERSION,
   RUNTIME_PROVIDER_SNAPSHOT_PREFLIGHT_SCHEMA_VERSION,
-  RUNTIME_PROVIDER_STATE_MUTATION_CONTRACT_VERSION,
   type RuntimeProviderBundle,
   type RuntimeProviderBundleRegistry,
   type RuntimeProviderChannelStopTransport,
@@ -37,7 +37,6 @@ const BUNDLE_SURFACES = [
   "hostLocalInference",
   "lifecycle",
   "mutationAuthority",
-  "stateMutation",
   "bootstrap",
   "snapshot",
   "recovery",
@@ -64,6 +63,10 @@ const MANAGED_IMAGE_SELECTION_POLICIES = new Set(["prefer-managed", "require-man
 const MANAGED_IMAGE_PLATFORMS = new Set(["linux/amd64", "linux/arm64"]);
 const NATIVE_ARTIFACT_PLATFORMS = new Set(["windows/x64"]);
 const NATIVE_ARTIFACT_AGENTS = new Set(["openclaw"]);
+const PORTABLE_AGENT_RUNTIME_PLATFORM_SET: ReadonlySet<string> = new Set(
+  PORTABLE_AGENT_RUNTIME_PLATFORMS,
+);
+const PORTABLE_AGENT_PATTERN = /^[a-z][a-z0-9-]{0,127}$/u;
 const HOST_PLATFORMS = new Set<NodeJS.Platform>([
   "aix",
   "android",
@@ -93,7 +96,6 @@ const CONTAINER_ENGINE_OPERATIONS = new Set<RuntimeProviderContainerEngineOperat
   "gateway-inspection",
   "host-local-inference",
   "sandbox-lifecycle",
-  "state-mutation",
   "workload-cleanup",
 ]);
 const HOST_LOCAL_INFERENCE_SERVICES = new Set<HostLocalInferenceService>([
@@ -257,6 +259,62 @@ function validateWorkloadProfile(providerId: string, surface: Record<string, unk
       `workload profile for '${providerId}' has invalid host architectures`,
     );
   }
+  if (
+    profile.portableAgentRuntimeSupport !== undefined &&
+    profile.portableAgentRuntimeSupport !== null
+  ) {
+    if (!isPlainRecord(profile.portableAgentRuntimeSupport)) {
+      throw new RuntimeProviderRegistrationError(
+        `workload profile for '${providerId}' has invalid portable agent runtime support`,
+      );
+    }
+    const portableSupport = profile.portableAgentRuntimeSupport;
+    if (
+      typeof portableSupport.exactDigestReferences !== "boolean" ||
+      !Array.isArray(portableSupport.platforms) ||
+      portableSupport.platforms.length === 0 ||
+      portableSupport.platforms.some(
+        (platform) => !PORTABLE_AGENT_RUNTIME_PLATFORM_SET.has(String(platform)),
+      ) ||
+      new Set(portableSupport.platforms).size !== portableSupport.platforms.length ||
+      !Array.isArray(portableSupport.agents) ||
+      portableSupport.agents.length === 0 ||
+      portableSupport.agents.some(
+        (agent) => typeof agent !== "string" || !PORTABLE_AGENT_PATTERN.test(agent),
+      ) ||
+      new Set(portableSupport.agents).size !== portableSupport.agents.length
+    ) {
+      throw new RuntimeProviderRegistrationError(
+        `workload profile for '${providerId}' has invalid portable agent runtime identity`,
+      );
+    }
+    for (const field of ["contractVersions", "capabilityContractVersions"] as const) {
+      const versions = portableSupport[field];
+      if (
+        !Array.isArray(versions) ||
+        versions.length === 0 ||
+        versions.some((version) => !Number.isSafeInteger(version) || Number(version) <= 0) ||
+        new Set(versions).size !== versions.length
+      ) {
+        throw new RuntimeProviderRegistrationError(
+          `workload profile for '${providerId}' has invalid portable agent runtime ${field}`,
+        );
+      }
+    }
+    for (const field of [
+      "tokenizedStartupCommands",
+      "openshellSandboxCommand",
+      "openshellNonRootIdentity",
+      "openshellWorkspaceOwnership",
+      "ownerOnlyPrivateState",
+    ] as const) {
+      if (typeof portableSupport[field] !== "boolean") {
+        throw new RuntimeProviderRegistrationError(
+          `workload profile for '${providerId}' must declare portable agent runtime ${field}`,
+        );
+      }
+    }
+  }
   if (profile.nativeArtifactSupport !== undefined && profile.nativeArtifactSupport !== null) {
     if (!isPlainRecord(profile.nativeArtifactSupport)) {
       throw new RuntimeProviderRegistrationError(
@@ -375,6 +433,7 @@ function validateCapabilitiesSurface(surface: Record<string, unknown>): void {
 function validatePreflightDoctorSurface(surface: Record<string, unknown>): void {
   requireSupported("preflightDoctor", surface);
   requireFunction(surface, "inspectHost", "preflightDoctor");
+  requireFunction(surface, "validateSandboxGpu", "preflightDoctor");
   requireFunction(surface, "preflightLifecycle", "preflightDoctor");
 }
 
@@ -386,6 +445,7 @@ function validateGatewaySurface(providerId: string, surface: Record<string, unkn
     );
   }
   requireBoolean(surface, "inspectLegacyContainer", "gateway");
+  requireBoolean(surface, "ownsHostReadiness", "gateway");
 }
 
 function validateWorkloadSurface(providerId: string, surface: Record<string, unknown>): void {
@@ -423,6 +483,22 @@ function validateLifecycleSurface(providerId: string, surface: Record<string, un
     requireFunction(surface, "start", "lifecycle");
     requireFunction(surface, "verifyStarted", "lifecycle");
     requireFunction(surface, "stop", "lifecycle");
+    if (
+      surface.containerMutationTimeoutMs !== undefined &&
+      (!Number.isSafeInteger(surface.containerMutationTimeoutMs) ||
+        (surface.containerMutationTimeoutMs as number) < 1_000 ||
+        (surface.containerMutationTimeoutMs as number) > 5 * 60_000)
+    ) {
+      throw new RuntimeProviderRegistrationError(
+        `lifecycle for '${providerId}' has an invalid container mutation timeout`,
+      );
+    }
+    const control = requireOwnRecord(surface, "privilegedSandboxControl");
+    requireFunction(control, "resolveTarget", "lifecycle.privilegedSandboxControl");
+    requireFunction(control, "execute", "lifecycle.privilegedSandboxControl");
+    if (control.buildLegacyDockerArgv !== undefined) {
+      requireFunction(control, "buildLegacyDockerArgv", "lifecycle.privilegedSandboxControl");
+    }
   }
 }
 
@@ -442,26 +518,6 @@ function validateMutationAuthoritySurface(
         `mutationAuthority for '${providerId}' must list unique valid operations`,
       );
     }
-  }
-}
-
-function validateStateMutationSurface(providerId: string, surface: Record<string, unknown>): void {
-  if (surface.supported !== true) return;
-  if (surface.contractVersion !== RUNTIME_PROVIDER_STATE_MUTATION_CONTRACT_VERSION) {
-    throw new RuntimeProviderRegistrationError(
-      `stateMutation for '${providerId}' has an unsupported contract version`,
-    );
-  }
-  for (const operation of [
-    "acquire",
-    "assertFenced",
-    "publish",
-    "rollback",
-    "activate",
-    "release",
-    "recover",
-  ] as const) {
-    requireFunction(surface, operation, "stateMutation");
   }
 }
 
@@ -517,6 +573,12 @@ function validateRecoverySurface(surface: Record<string, unknown>): void {
 
 function validateCleanupSurface(surface: Record<string, unknown>): void {
   if (surface.supported === true) {
+    if (surface.captureDestroyIdentity !== undefined) {
+      requireFunction(surface, "captureDestroyIdentity", "cleanup");
+    }
+    if (surface.captureDestroyIdentityByName !== undefined) {
+      requireFunction(surface, "captureDestroyIdentityByName", "cleanup");
+    }
     requireFunction(surface, "prepareDestroy", "cleanup");
     requireFunction(surface, "planOwnedWorkloadCleanup", "cleanup");
     requireFunction(surface, "removeOwnedWorkload", "cleanup");
@@ -528,6 +590,17 @@ function validateContainerEngineSurface(
   surface: Record<string, unknown>,
 ): void {
   if (surface.supported === true) {
+    requireFunction(surface, "capture", "containerEngine");
+    const nvidiaContainer = surface.nvidiaContainer;
+    if (nvidiaContainer !== undefined) {
+      if (!isPlainRecord(nvidiaContainer)) {
+        throw new RuntimeProviderRegistrationError(
+          `containerEngine for '${providerId}' has an invalid NVIDIA container capability`,
+        );
+      }
+      requireFunction(nvidiaContainer, "capture", "containerEngine.nvidiaContainer");
+      requireFunction(nvidiaContainer, "cleanup", "containerEngine.nvidiaContainer");
+    }
     const identities = surface.identities;
     if (!Array.isArray(identities)) {
       throw new RuntimeProviderRegistrationError(
@@ -559,6 +632,11 @@ function validateContainerEngineSurface(
         `containerEngine for '${providerId}' has duplicate operation identities`,
       );
     }
+    if (nvidiaContainer !== undefined && !operations.includes("host-local-inference")) {
+      throw new RuntimeProviderRegistrationError(
+        `containerEngine for '${providerId}' cannot expose NVIDIA container proof without host-local-inference authority`,
+      );
+    }
   }
 }
 
@@ -574,7 +652,6 @@ function validateSupportedSurfaceSchemas(
   validateHostLocalInferenceSurface(providerId, surfaces.hostLocalInference);
   validateLifecycleSurface(providerId, surfaces.lifecycle);
   validateMutationAuthoritySurface(providerId, surfaces.mutationAuthority);
-  validateStateMutationSurface(providerId, surfaces.stateMutation);
   validateBootstrapSurface(surfaces.bootstrap);
   validateSnapshotSurface(providerId, surfaces.snapshot);
   validateRecoverySurface(surfaces.recovery);
@@ -711,18 +788,6 @@ export function requireRuntimeProviderMutationAuthority(
   }
 }
 
-export function requireRuntimeProviderStateMutationSurface(
-  bundle: RuntimeProviderBundle,
-): Extract<RuntimeProviderBundle["stateMutation"], { readonly supported: true }> {
-  const surface = bundle.stateMutation;
-  if (surface.supported !== true) {
-    throw new RuntimeProviderSelectionError(
-      `Runtime provider '${bundle.identity.id}' has no state-mutation implementation: ${surface.reason}`,
-    );
-  }
-  return surface;
-}
-
 export type RuntimeProviderDestructiveCleanupAuthority = {
   readonly provider: RuntimeProviderBundle & {
     readonly cleanup: Extract<RuntimeProviderBundle["cleanup"], { readonly supported: true }>;
@@ -744,7 +809,7 @@ export type RuntimeProviderDestructiveCleanupAuthority = {
  * receipts, and a provider may use a CLI, socket, API, or no container engine.
  * Regression proof: snapshot-restore-lifecycle.test.ts rejects unknown
  * providers and mismatched legacy workload receipts before any delete,
- * provider cleanup, shields cleanup, or replacement creation.
+ * provider cleanup or replacement creation.
  * Removal condition: this guard may be replaced only by a provider-native
  * atomic replace operation that returns authenticated rollback/cleanup
  * receipts for the exact prior runtime.
@@ -793,6 +858,20 @@ export function runtimeProviderContainerEngineIdentity(
     (candidate) => candidate.operation === operation,
   );
   return identity ? { engineId: identity.engineId, displayName: identity.displayName } : null;
+}
+
+/**
+ * Report whether the selected provider registered the operation-scoped engine
+ * authority required by generic orchestration. Provider identities stay
+ * opaque: adding a provider changes registration, not the caller's branches.
+ */
+export function runtimeProviderSupportsContainerEngineOperation(
+  driverName: string | null | undefined,
+  providers: RuntimeProviderBundleRegistry,
+  operation: RuntimeProviderContainerEngineOperation,
+): boolean {
+  const bundle = resolveRuntimeProviderBundle(driverName, providers);
+  return bundle !== null && runtimeProviderContainerEngineIdentity(bundle, operation) !== null;
 }
 
 export function requireRuntimeProviderHostLocalInferenceOperation(

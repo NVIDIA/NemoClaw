@@ -4,7 +4,9 @@
 import {
   HermesPortableOllamaRecoveryError,
   HermesPortableOllamaRecoveryPhaseError,
+  inspectHermesPortableOllamaReadinessRuntime,
   recoverHermesPortableOllamaInference,
+  type HermesPortableOllamaPreparedProbeDependency,
   type HermesPortableOllamaRecoveryFailure,
   type HermesPortableOllamaRecoveryPhase,
 } from "../../../onboard/experimental/hermes-portable-ollama-inference";
@@ -19,6 +21,10 @@ export interface HermesPortableInferenceConnectRecoveryInput {
   readonly authority: HermesPortableActiveLifecycleAuthority;
   readonly readRegistry: (sandboxName: string) => SandboxEntry | null;
   readonly verifyRoute: () => SandboxEntry;
+  readonly prepareProbeDependency?: () => HermesPortableOllamaPreparedProbeDependency;
+  readonly assertCallerTransactionCurrent?: () => void;
+  readonly assertCallerCurrent?: () => void;
+  readonly runGatewayOpenshell?: typeof captureHermesPortableInferenceRecoveryGateway;
 }
 
 export type HermesPortableInferenceConnectRecoveryFailure =
@@ -35,6 +41,13 @@ export function classifyHermesPortableInferenceConnectRecoveryFailure(
   return "recovery-failed";
 }
 
+/** Classify one exact published Ollama runtime without opening recovery authority. */
+export function inspectHermesPortableInferenceReadinessRuntimeForConnectProbe(
+  input: Parameters<typeof inspectHermesPortableOllamaReadinessRuntime>[0],
+) {
+  return inspectHermesPortableOllamaReadinessRuntime(input);
+}
+
 /** Resume exact published Ollama authority for one probe-only connect operation. */
 export function recoverHermesPortableInferenceForConnectProbe(
   input: HermesPortableInferenceConnectRecoveryInput,
@@ -44,8 +57,15 @@ export function recoverHermesPortableInferenceForConnectProbe(
     sandboxName: input.sandboxName,
     entry: input.authority.entry,
     runGatewayOpenshell: (args, options) =>
-      captureHermesPortableInferenceRecoveryGateway(input.sandboxName, args, options),
+      (input.runGatewayOpenshell ?? captureHermesPortableInferenceRecoveryGateway)(
+        input.sandboxName,
+        args,
+        options,
+      ),
     readRegistry: input.readRegistry,
     verifyRoute: input.verifyRoute,
+    prepareProbeDependency: input.prepareProbeDependency,
+    assertCallerTransactionCurrent: input.assertCallerTransactionCurrent,
+    assertCallerCurrent: input.assertCallerCurrent,
   });
 }

@@ -10,8 +10,8 @@ import {
   serializedHostLocalInferenceReceipt,
   serializedLlamaCppHostLocalInferenceReceipt,
 } from "../../../test/helpers/host-local-inference-receipt";
-import type { SandboxWorkloadReceipt } from "../state/registry/types";
 import { createSandboxHostLocalInferenceProvenance } from "../state/registry/host-local-inference";
+import type { SandboxWorkloadReceipt } from "../state/registry/types";
 import {
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
   MANAGED_IMAGE_REPOSITORIES,
@@ -23,11 +23,11 @@ import { encodeManagedStartupProfile } from "./managed-startup/profile";
 const requireDist = createRequire(import.meta.url);
 const onboardSession = requireDist("../state/onboard-session.js");
 const {
-  assertBaselineExclusionsMatchCreateIntent,
-  baselineExclusionsForCreate,
   buildCreatedSandboxRegistryEntry,
-  creationFidelity,
+  prepareCreatedSandboxRegistration,
   registerCreatedSandbox,
+  registerPreparedCreatedSandbox,
+  revalidatePreparedCreatedSandboxRegistration,
   selection,
 } = requireDist("./sandbox-registration.ts") as typeof import("./sandbox-registration");
 
@@ -82,7 +82,6 @@ function createdRegistryEntryInput(
     agent: null,
     agentVersionKnown: true,
     imageTag: null,
-    appliedPolicies: [],
     plannedMessagingState: undefined,
     hermesToolGateways: [],
     hermesDashboardState: { enabled: false, config: null },
@@ -94,14 +93,6 @@ function createdRegistryEntryInput(
 }
 
 describe("buildCreatedSandboxRegistryEntry", () => {
-  it("copies policy authority into completed sandbox registration (#9833)", () => {
-    const entry = buildCreatedSandboxRegistryEntry(
-      createdRegistryEntryInput({ policyAuthority: "externally-managed" }),
-    );
-
-    expect(entry.policyAuthority).toBe("externally-managed");
-  });
-
   it("records explicit OpenClaw identity for a managed workload receipt (#9356)", () => {
     const workload = managedWorkloadReceipt("openclaw");
     const entry = buildCreatedSandboxRegistryEntry(
@@ -187,7 +178,6 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       agent: null,
       agentVersionKnown: true,
       imageTag: null,
-      appliedPolicies: [],
       plannedMessagingState: undefined,
       hermesToolGateways: [],
       hermesDashboardState: { enabled: false, config: null },
@@ -200,64 +190,13 @@ describe("buildCreatedSandboxRegistryEntry", () => {
     loadSession.mockRestore();
   });
 
-  it("blocks create intent while a baseline policy transaction needs repair (#7178)", () => {
-    const registry = requireDist("../state/registry.js");
-    const transitionSpy = vi.spyOn(registry, "getBaselineExclusionTransition").mockReturnValue({
-      id: "tx-1",
-      operation: "exclude",
-      exclusion: {
-        version: 1,
-        agent: "openclaw",
-        key: "nous_research",
-        digest: "approved",
-      },
-      targetLiveDigest: null,
-      startedAt: "2026-07-19T00:00:00.000Z",
-    });
-
-    expect(() => baselineExclusionsForCreate("alpha")).toThrow(
-      /policy exclude.*needs repair before sandbox creation/i,
-    );
-
-    transitionSpy.mockRestore();
-  });
-
-  it("rejects a resolved create intent when durable baseline exclusions changed (#7194)", () => {
-    const registry = requireDist("../state/registry.js");
-    const transitionSpy = vi
-      .spyOn(registry, "getBaselineExclusionTransition")
-      .mockReturnValue(null);
-    const exclusionsSpy = vi.spyOn(registry, "getBaselineExclusions").mockReturnValue([
-      {
-        version: 1,
-        agent: "openclaw",
-        key: "nous_research",
-        digest: "b".repeat(64),
-        acknowledgedAt: "2026-07-19T00:00:00.000Z",
-      },
-    ]);
-    try {
-      expect(() =>
-        assertBaselineExclusionsMatchCreateIntent("alpha", [
-          {
-            version: 1,
-            agent: "openclaw",
-            key: "nous_research",
-            digest: "a".repeat(64),
-            acknowledgedAt: "2026-07-19T00:00:00.000Z",
-          },
-        ]),
-      ).toThrow(/changed while sandbox creation was being prepared/i);
-    } finally {
-      exclusionsSpy.mockRestore();
-      transitionSpy.mockRestore();
-    }
-  });
-
   it("records the final created sandbox metadata with configured messaging channels", () => {
     const plannedMessagingState = {
       schemaVersion: 1 as const,
-      plan: { sandboxName: "demo" },
+      plan: {
+        sandboxName: "demo",
+        channels: [{ channelId: "telegram", configured: false, pendingRemoval: true }],
+      },
     };
     const openclawImagePluginInstalls = [
       {
@@ -284,10 +223,8 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       agentVersionKnown: true,
       imageTag: "nemoclaw-demo:123",
       openclawImagePluginInstalls,
-      appliedPolicies: ["discord", "slack"],
       observabilityEnabled: true,
       dcodeAutoApprovalMode: "thread-opt-in",
-      policyTier: "restricted",
       webSearchEnabled: true,
       fromDockerfile: "/tmp/Dockerfile.custom",
       hermesAuthMethod: "api_key",
@@ -314,11 +251,9 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       preferredInferenceApi: "openai-completions",
       imageTag: "nemoclaw-demo:123",
       openclawImagePluginInstalls,
-      policies: ["discord", "slack"],
       toolDisclosure: "progressive",
       observabilityEnabled: true,
       dcodeAutoApprovalMode: "thread-opt-in",
-      policyTier: "restricted",
       webSearchEnabled: true,
       fromDockerfile: "/tmp/Dockerfile.custom",
       hermesAuthMethod: "api_key",
@@ -346,6 +281,10 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       openclawImagePluginInstalls[0]?.loadPaths,
     );
     expect(entry.messaging).toBe(plannedMessagingState);
+    expect(entry.messaging?.plan.channels[0]).toMatchObject({
+      channelId: "telegram",
+      pendingRemoval: true,
+    });
     const rawEntry = entry as unknown as Record<string, unknown>;
     expect(rawEntry.messagingChannels).toBeUndefined();
     expect(rawEntry.messagingChannelConfig).toBeUndefined();
@@ -369,7 +308,6 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       agent: null,
       agentVersionKnown: false,
       imageTag: null,
-      appliedPolicies: [],
       plannedMessagingState: {
         schemaVersion: 1 as const,
         plan: { sandboxName: "other" },
@@ -438,7 +376,6 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       agent: null,
       agentVersionKnown: true,
       imageTag: "nemoclaw-demo:replacement",
-      appliedPolicies: [],
       toolDisclosure: "direct",
       plannedMessagingState: undefined,
       preservedMcpState,
@@ -453,52 +390,6 @@ describe("buildCreatedSandboxRegistryEntry", () => {
     expect(entry.mcp?.bridges.github?.providerName).toBe("demo-mcp-github");
     expect(entry.compatibleEndpointReasoning).toBe("true");
     expect(entry.toolDisclosure).toBe("direct");
-  });
-
-  it("carries complete baseline exclusion records through consecutive registrations", () => {
-    const baselineExclusions = [
-      {
-        version: 1 as const,
-        agent: "openclaw",
-        key: "nous_research",
-        digest: "abc",
-        acknowledgedAt: "2026-07-19T00:00:00.000Z",
-        appliedAgentVersion: null,
-      },
-    ];
-    const fidelity = creationFidelity(null, null, null, false, baselineExclusions);
-    const common = {
-      sandboxName: "demo",
-      inferenceSelection: {
-        model: "llama",
-        provider: "compatible-endpoint",
-        endpointUrl: null,
-        credentialEnv: null,
-        preferredInferenceApi: null,
-        compatibleEndpointReasoning: null,
-        compatibleEndpointReasoningEffort: null,
-        nimContainer: null,
-      },
-      runtimeFields,
-      agent: null,
-      agentVersionKnown: true,
-      imageTag: null,
-      appliedPolicies: [],
-      plannedMessagingState: undefined,
-      hermesToolGateways: [],
-      hermesDashboardState: { enabled: false as const, config: null },
-      dashboardPort: 18789,
-      gatewayName: "nemoclaw",
-      gatewayPort: 8080,
-    };
-
-    const first = buildCreatedSandboxRegistryEntry({ ...common, ...fidelity });
-    const secondFidelity = creationFidelity(null, null, null, false, first.baselineExclusions);
-    const second = buildCreatedSandboxRegistryEntry({ ...common, ...secondFidelity });
-
-    expect(second.baselineExclusions).toEqual(baselineExclusions);
-    expect(second.baselineExclusions).not.toBe(first.baselineExclusions);
-    expect(second.baselineExclusions?.[0]).not.toBe(first.baselineExclusions?.[0]);
   });
 
   it("normalizes invalid preferred inference API values", () => {
@@ -518,7 +409,6 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       agent: null,
       agentVersionKnown: true,
       imageTag: null,
-      appliedPolicies: [],
       plannedMessagingState: undefined,
       hermesToolGateways: [],
       hermesDashboardState: { enabled: false, config: null },
@@ -547,7 +437,6 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       agent: null,
       agentVersionKnown: true,
       imageTag: null,
-      appliedPolicies: [],
       toolDisclosure: "direct",
       plannedMessagingState: undefined,
       hermesToolGateways: [],
@@ -633,6 +522,38 @@ describe("registerCreatedSandbox", () => {
     socketPath: "/run/user/1001/podman/podman.sock",
   };
 
+  it("publishes the exact prepared row only after revalidation (#10546)", () => {
+    const registerSandbox = vi.fn();
+    const input = {
+      ...createdRegistryEntryInput({ lifecycleGeneration: "generation-1" }),
+      registerSandbox,
+    };
+
+    const prepared = prepareCreatedSandboxRegistration(input);
+
+    expect(registerSandbox).not.toHaveBeenCalled();
+    expect(registerPreparedCreatedSandbox(input, prepared)).toBe(prepared);
+    expect(registerSandbox).toHaveBeenCalledExactlyOnceWith(prepared);
+  });
+
+  it("rejects changed registration authority before publishing a prepared row (#10546)", () => {
+    const registerSandbox = vi.fn();
+    const input = {
+      ...createdRegistryEntryInput({ lifecycleGeneration: "generation-1" }),
+      registerSandbox,
+    };
+    const prepared = prepareCreatedSandboxRegistration(input);
+    const changed = { ...input, lifecycleGeneration: "generation-2" };
+
+    expect(() => revalidatePreparedCreatedSandboxRegistration(changed, prepared)).toThrow(
+      /registration authority.*changed before publication/u,
+    );
+    expect(() => registerPreparedCreatedSandbox(changed, prepared)).toThrow(
+      /registration authority.*changed before publication/u,
+    );
+    expect(registerSandbox).not.toHaveBeenCalled();
+  });
+
   it("persists explicit OpenClaw identity for a matching Portable lifecycle receipt (#9207)", () => {
     const registerSandbox = vi.fn();
     const env = { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" };
@@ -667,23 +588,20 @@ describe("registerCreatedSandbox", () => {
       },
       "generation-1",
     ],
-  ])(
-    "rejects a Portable OpenClaw %s receipt before registry mutation (#9207)",
-    (_label, receipt, lifecycleGeneration) => {
-      const registerSandbox = vi.fn();
+  ])("rejects a Portable OpenClaw %s receipt before registry mutation (#9207)", (_label, receipt, lifecycleGeneration) => {
+    const registerSandbox = vi.fn();
 
-      expect(() =>
-        registerCreatedSandbox({
-          ...createdRegistryEntryInput({ lifecycleGeneration }),
-          portableLifecycle: true,
-          environment: { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
-          classifyPortableLifecycleReceipt: () => receipt,
-          registerSandbox,
-        }),
-      ).toThrow(/requires a current lifecycle receipt that matches the registry generation/u);
-      expect(registerSandbox).not.toHaveBeenCalled();
-    },
-  );
+    expect(() =>
+      registerCreatedSandbox({
+        ...createdRegistryEntryInput({ lifecycleGeneration }),
+        portableLifecycle: true,
+        environment: { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
+        classifyPortableLifecycleReceipt: () => receipt,
+        registerSandbox,
+      }),
+    ).toThrow(/requires a current lifecycle receipt that matches the registry generation/u);
+    expect(registerSandbox).not.toHaveBeenCalled();
+  });
 
   it("keeps ordinary OpenClaw registration agent-neutral (#9207)", () => {
     const classifyPortableLifecycleReceipt = vi.fn();
@@ -730,7 +648,6 @@ describe("registerCreatedSandbox", () => {
       agent: agentDefs.loadAgent("hermes"),
       agentVersionKnown: true,
       imageTag: null,
-      appliedPolicies: [],
       plannedMessagingState: undefined,
       hermesToolGateways: [],
       hermesDashboardState: { enabled: false, config: null },
@@ -775,7 +692,6 @@ describe("registerCreatedSandbox", () => {
       agent: agentDefs.loadAgent("hermes"),
       agentVersionKnown: true,
       imageTag: null,
-      appliedPolicies: [],
       plannedMessagingState: undefined,
       hermesToolGateways: [],
       hermesDashboardState: { enabled: false, config: null },
@@ -824,7 +740,6 @@ describe("registerCreatedSandbox", () => {
         shared: false,
       },
       openclawImagePluginInstalls: [],
-      appliedPolicies: [],
       plannedMessagingState: undefined,
       hermesToolGateways: [],
       hermesDashboardState: { enabled: false, config: null },
@@ -897,7 +812,6 @@ describe("registerCreatedSandbox", () => {
         agent: null,
         agentVersionKnown: true,
         imageTag: null,
-        appliedPolicies: [],
         plannedMessagingState: undefined,
         hermesToolGateways: [],
         hermesDashboardState: { enabled: false, config: null },
@@ -935,7 +849,6 @@ describe("registerCreatedSandbox", () => {
         agent: null,
         agentVersionKnown: true,
         imageTag: null,
-        appliedPolicies: [],
         plannedMessagingState: undefined,
         hermesToolGateways: [],
         hermesDashboardState: { enabled: false, config: null },

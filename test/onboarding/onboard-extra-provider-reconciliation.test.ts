@@ -48,6 +48,7 @@ describe("onboard extra-provider reconciliation", () => {
         const script = String.raw`
 const registry = require(${registryPath});
 const fixtureMocks = require(${onboardScriptMocksPath});
+const forwardService = fixtureMocks.installForwardServiceReachabilityFixture();
 registry.addExtraProvider("tavily-search");
 registry.addExtraProvider("brave-search");
 registry.addExtraProvider("custom-provider");
@@ -59,9 +60,6 @@ const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry,
 });
 const runner = require(${runnerPath});
 const preflight = require(${preflightPath});
-const policyAuthorityPreflight = require(${JSON.stringify(
-          path.join(repoRoot, "src", "lib", "onboard", "policy-authority", "preflight.ts"),
-        )});
 const credentials = require(${credentialsPath});
 const sandboxBaseImage = require(${sandboxBaseImagePath});
 const childProcess = require("node:child_process");
@@ -78,7 +76,12 @@ runner.run = (command, opts = {}) => {
   if (profileResult !== null) return profileResult;
   if (normalized.includes("sandbox delete") && normalized.includes("my-assistant")) {
     if (createdSandbox?.state.lifecycleState === "created") createdSandbox.delete();
+    forwardService.release();
   }
+  const sandboxResult = createdSandbox?.run(command) ?? null;
+  if (sandboxResult !== null) return sandboxResult;
+  const providerResult = require(${onboardScriptMocksPath}).mockNvidiaProviderGetRun(command, "nemoclaw");
+  if (providerResult !== null) return providerResult;
   if (normalized.includes("sandbox list")) return { status: 0, stdout: "No sandboxes found." };
   if (normalized.includes("provider get -g nemoclaw tavily-search")) {
     const stderr = Buffer.from("Error: provider 'tavily-search' not found");
@@ -92,8 +95,7 @@ runner.run = (command, opts = {}) => {
   if (normalized.includes("provider get -g nemoclaw ")) {
     return { status: 0, stdout: "" };
   }
-  const sandboxResult = createdSandbox?.run(command) ?? null;
-  return sandboxResult ?? { status: 0 };
+  return { status: 0 };
 };
 runner.runCapture = (command) => {
   const normalized = _n(command);
@@ -102,15 +104,12 @@ runner.runCapture = (command) => {
   const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
   if (mockedCapture !== null) return mockedCapture;
   if (normalized.includes("forward list")) {
-    return "my-assistant 127.0.0.1 18789 12345 running";
+    return "SANDBOX BIND PORT PID STATUS";
   }
   return "";
 };
 require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
 preflight.checkPortAvailable = async () => ({ ok: true });
-policyAuthorityPreflight.qualifySandboxPolicyAuthority = () => ({
-  authority: "nemoclaw-managed",
-});
 credentials.prompt = async () => "";
 sandboxBaseImage.resolveSandboxBaseImage = () => ({
   ref: "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -120,7 +119,7 @@ sandboxBaseImage.resolveSandboxBaseImage = () => ({
 });
 
 childProcess.spawn = (...args) => {
-  createdSandbox.create(args.flat());
+  if (!forwardService.recordSpawn(args)) createdSandbox.create(args.flat());
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -157,6 +156,7 @@ const createReservedSandbox = () => {
   const firstSandboxName = await createReservedSandbox();
   registry.removeSandbox("my-assistant");
   createdSandbox.delete();
+  forwardService.release();
   const sandboxNames = [
     firstSandboxName,
     await createReservedSandbox(),

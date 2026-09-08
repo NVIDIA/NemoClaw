@@ -532,7 +532,6 @@ startGateway(null).catch((error) => {
         messaging: true,
         resourceProfile: true,
       },
-      policyPresets: ["nous-web", "brave"],
       lastCompletedStep: "policies",
       lastStepStarted: "policies",
       steps: {
@@ -570,7 +569,6 @@ startGateway(null).catch((error) => {
       messaging: false,
       resourceProfile: true,
     });
-    expect(cleared.policyPresets).toBeNull();
     expect(cleared.steps.gateway.status).toBe("complete");
     expect(cleared.steps.provider_selection.status).toBe("pending");
     expect(cleared.steps.sandbox.status).toBe("pending");
@@ -690,6 +688,7 @@ const { EventEmitter } = require("node:events");
 
 const commands = [];
 const existingSandbox = fixtureMocks.createCreatedSandboxFixture({ lifecycleState: "created" });
+const forwardService = fixtureMocks.installForwardServiceReachabilityFixture();
 existingSandbox.installRuntimeObservation();
 const sandboxCommand = (command) => Array.isArray(command) ? command : _n(command).split(/\s+/u);
 runner.run = (command, opts = {}) => {
@@ -701,15 +700,16 @@ runner.run = (command, opts = {}) => {
 runner.runCapture = (command) => {
   const sandboxResult = existingSandbox.run(sandboxCommand(command));
   if (sandboxResult !== null) return sandboxResult.status === 0 ? sandboxResult.stdout.toString() : "";
-  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (_n(command).includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   return "";
 };
-	registry.getSandbox = () => fixtureMocks.managedSandboxPolicyReceiptFixture({
+	registry.getSandbox = () => fixtureMocks.sandboxLifecycleFixture({
 	  name: "my-assistant",
 	  toolDisclosure: "progressive",
 	}, { sandboxId: existingSandbox.state.sandboxId });
 
 childProcess.spawn = (...args) => {
+  forwardService.recordSpawn(args);
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -752,8 +752,11 @@ const { createSandbox } = require(${onboardPath});
     }>(result.stdout);
     assert.equal(payload.sandboxName, "my-assistant");
     assert.ok(
-      payload.commands.some((entry: CommandEntry) =>
-        entry.command.includes("forward start --background 0.0.0.0:18789 my-assistant"),
+      payload.commands.some(
+        (entry: CommandEntry) =>
+          entry.command.includes("forward service my-assistant") &&
+          entry.command.includes("--target-port 18789") &&
+          entry.command.includes("--local 0.0.0.0:18789"),
       ),
       "expected dashboard forward restore on sandbox reuse",
     );
@@ -1082,7 +1085,7 @@ runner.runCapture = (command) => {
     return "Name: my-assistant\nId: sbx-portable-source\n";
   }
   if (value.includes("sandbox list")) return "my-assistant Ready";
-  if (value.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (value.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   return require(${scriptMocksPath}).mockOnboardRunCapture(command, { defaultCurlOutput: "ok" }) || "";
 };
 

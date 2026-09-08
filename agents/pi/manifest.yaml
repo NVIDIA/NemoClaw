@@ -29,20 +29,14 @@ config:
   dir: /sandbox/.pi/agent
   config_file: models.json
   format: json
-state_lock_plan_in_image: false
 state_dirs:
   - path: sessions
-    shields: confidential
   - path: prompts
-    shields: read-only
   - path: themes
-    shields: read-only
   - path: tools
     backup: false
-    shields: read-only
   - path: bin
     backup: false
-    shields: read-only
 state_files:
   - path: settings.json
     restore:

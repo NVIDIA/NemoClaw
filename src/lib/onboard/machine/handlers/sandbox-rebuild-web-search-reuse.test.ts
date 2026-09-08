@@ -10,9 +10,11 @@ import {
   type CheckpointSandboxRecreateTransaction,
   type OnboardCheckpoint,
 } from "../../../state/onboard-checkpoint-types";
+import type { SandboxEntry } from "../../../state/registry";
 import { createSession, type Session } from "../../../state/onboard-session";
 import { detectMessagingChannelsFromEnv } from "../../messaging-channel-setup";
 import { handleSandboxState } from "./sandbox";
+import { fingerprintSandboxRegistryEntry } from "../../sandbox-recreate-transaction";
 import { baseOptions, createDeps } from "./sandbox-test-fixtures";
 
 vi.mock("../../messaging-channel-setup", () => ({
@@ -26,6 +28,22 @@ const PROVIDER_NAME = `${SANDBOX_NAME}-brave-search`;
 const AT = "2026-01-01T00:00:00.000Z";
 const TARGET_INTENT_FINGERPRINT = "target-intent";
 
+function sourceRegistryEntry(): SandboxEntry {
+  return {
+    name: SANDBOX_NAME,
+    provider: "provider",
+    model: "model",
+    endpointUrl: null,
+    preferredInferenceApi: "openai-completions",
+    gatewayName: "nemoclaw",
+    gatewayPort: 8080,
+    webSearchEnabled: false,
+    toolDisclosure: "progressive",
+    fromDockerfile: null,
+    hermesAuthMethod: null,
+  };
+}
+
 function recreateTransaction(
   overrides: Partial<CheckpointSandboxRecreateTransaction> = {},
 ): CheckpointSandboxRecreateTransaction {
@@ -36,7 +54,7 @@ function recreateTransaction(
     sandboxName: SANDBOX_NAME,
     gatewayName: "nemoclaw",
     gatewayPort: 8080,
-    sourceRegistryFingerprint: "source-registry",
+    sourceRegistryFingerprint: fingerprintSandboxRegistryEntry(sourceRegistryEntry()),
     sourceLiveIdentityFingerprint: null,
     sourceWorkload: null,
     targetIntentFingerprint: TARGET_INTENT_FINGERPRINT,
@@ -117,6 +135,7 @@ function recreateWebSearch(
   const { deps, calls } = createDeps(
     {
       getSandboxReuseState: () => "missing",
+      getSandboxRegistryEntry: sourceRegistryEntry,
       providerMatchesGatewayCredential:
         overrides.providerMatchesGatewayCredential ??
         ((name, type, credentialEnv) =>
@@ -152,16 +171,16 @@ describe("rebuild web-search credential reuse", () => {
     expect(calls.createSandbox).toHaveBeenCalledTimes(1);
   });
 
-  it.each<CheckpointSandboxRecreatePhase>([
-    "planned",
-    "deleting",
-  ])("revalidates while the recreate journal is still at phase %s", async (phase) => {
-    const { run, calls } = recreateWebSearch(rebuiltSession(recreateTransaction({ phase })));
+  it.each<CheckpointSandboxRecreatePhase>(["planned", "deleting"])(
+    "revalidates while the recreate journal is still at phase %s",
+    async (phase) => {
+      const { run, calls } = recreateWebSearch(rebuiltSession(recreateTransaction({ phase })));
 
-    await run;
+      await run;
 
-    expect(calls.validateBrave).toHaveBeenCalledTimes(1);
-  });
+      expect(calls.validateBrave).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it("never reuses on a recreate journal that names a different sandbox", async () => {
     const { run, calls } = recreateWebSearch(

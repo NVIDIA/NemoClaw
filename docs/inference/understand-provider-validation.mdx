@@ -104,6 +104,13 @@ NemoClaw sends another validation request in any of these cases:
 An endpoint that is reachable only through `http://host.openshell.internal:<port>` cannot receive the host-side API probe.
 Verify that route from inside the sandbox after onboarding.
 
+<AgentOnly variant="openclaw">
+
+For OpenClaw, the compatible endpoint check validates `inference.local` from inside the sandbox only when the selected provider is `compatible-endpoint`.
+The check runs whether or not you select a messaging channel and stops onboarding if the route fails.
+
+</AgentOnly>
+
 ## Related Topics
 
 - [Verify the Sandbox Inference Route](verify-inference-route) to test the route the agent uses.

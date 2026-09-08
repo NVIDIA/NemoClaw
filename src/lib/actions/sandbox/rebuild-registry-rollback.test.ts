@@ -10,7 +10,6 @@ function sandboxEntry(overrides: Partial<SandboxEntry> = {}): SandboxEntry {
   return {
     name: "alpha",
     imageTag: "nemoclaw/alpha:old",
-    policies: ["github"],
     ...overrides,
   };
 }
@@ -73,7 +72,7 @@ describe("createRebuildRegistryRollback", () => {
   });
 
   it("restores an ordinary removal receipt only when no replacement exists", () => {
-    const removed = sandboxEntry({ customPolicies: [{ name: "custom", content: "allow" }] });
+    const removed = sandboxEntry();
     const restoreSandboxEntryIfMissing = vi.fn(() => true);
     const log = vi.fn();
     const rollback = createRebuildRegistryRollback(

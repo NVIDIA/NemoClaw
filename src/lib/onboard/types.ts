@@ -56,8 +56,8 @@ export type ModelValidationResult = ModelValidationSuccess | ModelValidationFail
 export interface SandboxCreateIntent {
   /** Complete secret-free create plan resolved by the onboarding machine. */
   readonly resolved?: import("./sandbox-create-intent-types").SandboxCreateIntent;
-  /** Defer provider, credential, and attachment effects until the created sandbox is verified. */
-  readonly deferSandboxEffectsUntilPolicyVerification?: true;
+  /** Defer provider, credential, and attachment effects until the created sandbox identity is verified. */
+  readonly deferSandboxEffectsUntilIdentityVerification?: true;
   readonly recreate: boolean;
   /** Explicit fresh-create mode that lets APF supply the sandbox-scoped policy. */
   readonly apfInterceptorRequested?: true;
@@ -72,6 +72,8 @@ export interface SandboxCreateIntent {
   readonly compatibleEndpointReasoning?: "true" | "false";
   /** Provenance for the endpoint recorded with the created sandbox. */
   readonly endpointSource?: import("../inference/selection").InferenceEndpointSource | null;
+  /** Process-local Deferred N1x managed-vLLM choice awaiting final route validation. */
+  readonly deferredN1xManagedVllmPreviewIntent?: true;
   /** Internal authoritative rebuild tier used before replacement registration completes. */
   readonly policyTier?: string | null;
   /** Gateway-level extra providers reconciled immediately before sandbox creation. */
@@ -88,28 +90,12 @@ export interface SandboxCreateIntent {
   readonly recreateJournalTargetIntentFingerprint?: string;
   /** Validated non-secret Hermes environment assignments carried by a rebuild. */
   readonly rebuildPreservedEnv?: readonly import("../state/preserved-env").PreservedEnvFile[];
-  /** Built-in policy presets owned by the outer authoritative rebuild lifecycle. */
-  readonly rebuildPolicyPresets?: readonly string[];
+  /** Bounded live OpenShell policy handoff for one active rebuild. */
+  readonly rebuildPolicySourcePath?: string;
 }
 
-/** Policy authority proved inside one exact post-create sandbox identity gate. */
-export type VerifiedSandboxPolicyRegistration =
-  | {
-      readonly policyAuthority: "nemoclaw-managed";
-      readonly policyCreationReceipt: import("../policy/merge").NemoClawPolicyCreationReceipt;
-      readonly observedPolicyAuthority: "owner-unknown";
-    }
-  | {
-      readonly policyAuthority: "externally-managed";
-      readonly policyCreationReceipt: null;
-      /** Generic evidence seam; the default #10115 verifier produces only global authority. */
-      readonly observedPolicyAuthority: "externally-managed" | "owner-unknown";
-      readonly policyIdentity: import("../policy/merge").OpenShellPolicyIdentity;
-    };
-
-/** Exact sandbox and policy result retained from the immediate create gate. */
-export interface VerifiedSandboxPolicyBoundary {
-  readonly registration: VerifiedSandboxPolicyRegistration;
+/** Exact sandbox identity retained from the immediate create boundary. */
+export interface VerifiedSandboxCreateBoundary {
   readonly sandboxName: string;
   readonly gatewayName: string;
   readonly gatewayPort: number;
@@ -119,12 +105,12 @@ export interface VerifiedSandboxPolicyBoundary {
   readonly route: import("./docker-gpu-route").SelectedDockerGpuRoute;
 }
 
-/** Exact context made available only after effective-policy verification. */
-export interface VerifiedSandboxCreateEffectsContext extends VerifiedSandboxPolicyBoundary {
-  readonly revalidatePolicyRequirements: (operation: string) => void;
+/** Exact context made available after OpenShell confirms the created sandbox identity. */
+export interface VerifiedSandboxCreateEffectsContext extends VerifiedSandboxCreateBoundary {
+  readonly revalidateSandboxIdentity: (operation: string) => void;
 }
 
-/** Ephemeral effects that may run only inside the exact post-create policy gate. */
+/** Ephemeral effects that may run only after OpenShell confirms the created sandbox identity. */
 export type VerifiedSandboxCreateEffects = (
   context: VerifiedSandboxCreateEffectsContext,
 ) => Promise<void>;
@@ -148,12 +134,16 @@ export type OnboardOptions = {
     "prompt" | "sandboxName"
   >;
   authoritativeResumeConfig?: boolean;
+  /** Internal permission granted only by a validated prepared-backup rebuild. */
+  allowRemovedImmutabilityStateRecord?: true;
   /** Internal endpoint provenance preserved across an authoritative rebuild. */
   endpointSource?: import("../inference/selection").InferenceEndpointSource | null;
   /** Internal authoritative rebuild target; never exposed as a public CLI option. */
   targetGatewayName?: string | null;
   /** Internal authoritative rebuild target; must match targetGatewayName. */
   targetGatewayPort?: number | null;
+  /** Exact OpenShell client target frozen by the outer rebuild transaction. */
+  runtimeSelection?: import("../adapters/openshell/runtime-selection").OpenShellRuntimeSelection;
   /** Internal rebuild handoff: the outer destructive lifecycle owns the onboard lock. */
   onboardLockAlreadyHeld?: boolean;
   /** Internal command handoff: propagate an exit request after onboarding restores its scopes. */
@@ -168,7 +158,7 @@ export type OnboardOptions = {
   rebuildProviderReconfigure?: import("./rebuild-route-handoff").RebuildProviderReconfigureHandoff;
   /** Internal one-shot authority to recover the recorded provider during a locked rebuild resume. */
   providerRecoveryReceipt?: import("./rebuild-route-handoff").ProviderRecoveryReceipt;
-  /** Internal rebuild handoff for a recorded managed-vLLM N1x preview selection. */
+  /** Internal rebuild handoff for a recorded provider admitted by Deferred N1x readiness. */
   allowDeferredN1xManagedVllm?: true;
   /** Internal one-shot handoff for the exact image context validated before rebuild deletion. */
   preparedImageRebuild?: import("./prepared-dcode-rebuild").PreparedImageRebuildHandoff;
@@ -176,8 +166,8 @@ export type OnboardOptions = {
   managedWorkloadRebuild?: import("./workload/rebuild").ManagedWorkloadRebuildHandoff;
   /** Internal validated non-secret Hermes environment assignments carried by a rebuild. */
   rebuildPreservedEnv?: readonly import("../state/preserved-env").PreservedEnvFile[];
-  /** Internal authoritative policy selection carried across sandbox recreation. */
-  rebuildPolicyPresets?: readonly string[];
+  /** Bounded live OpenShell policy handoff for one active rebuild. */
+  rebuildPolicySourcePath?: string;
   /** Internal hint for resolving the sandbox base image without repeating remote discovery. */
   baseImageResolutionHint?:
     | import("../sandbox-base-image").SandboxBaseImageResolutionMetadata

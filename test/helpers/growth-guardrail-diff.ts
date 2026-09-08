@@ -61,11 +61,16 @@ function readWorktreeFile(file: string): string | null {
   return existsSync(absolute) ? readFileSync(absolute, "utf8") : null;
 }
 
-function readFiles(
+function readFilesCached(
   paths: readonly string[],
+  cache: Map<string, string | null>,
   read: (file: string) => string | null,
 ): ReadonlyMap<string, string | null> {
-  return new Map([...new Set(paths)].map((file) => [file, read(file)]));
+  const uniquePaths = [...new Set(paths)];
+  uniquePaths
+    .filter((file) => !cache.has(file))
+    .forEach((file) => cache.set(file, read(file)));
+  return new Map(uniquePaths.map((file) => [file, cache.get(file) ?? null]));
 }
 
 function selectLocalComparisonBase(
@@ -130,14 +135,16 @@ function loadLocalDiff(): GrowthGuardrailDiff {
   for (const filename of untracked.split("\0").filter(Boolean)) {
     if (!known.has(filename)) files.push({ filename, status: "added" });
   }
+  const baseCache = new Map<string, string | null>();
+  const headCache = new Map<string, string | null>();
 
   return {
     files,
     async readBase(paths) {
-      return readFiles(paths, (file) => readGitFile(comparisonBase, file));
+      return readFilesCached(paths, baseCache, (file) => readGitFile(comparisonBase, file));
     },
     async readHead(paths) {
-      return readFiles(paths, readWorktreeFile);
+      return readFilesCached(paths, headCache, readWorktreeFile);
     },
   };
 }
@@ -180,14 +187,16 @@ function loadPullRequestDiff(): GrowthGuardrailDiff {
     cwd: REPO_ROOT,
     encoding: "utf8",
   });
+  const baseCache = new Map<string, string | null>();
+  const headCache = new Map<string, string | null>();
 
   return {
     files: parseChangedFiles(changed),
     async readBase(paths) {
-      return readFiles(paths, (file) => readGitFile(baseSha, file));
+      return readFilesCached(paths, baseCache, (file) => readGitFile(baseSha, file));
     },
     async readHead(paths) {
-      return readFiles(paths, (file) => readGitFile(headSha, file));
+      return readFilesCached(paths, headCache, (file) => readGitFile(headSha, file));
     },
   };
 }
@@ -199,5 +208,6 @@ export function loadGrowthGuardrailDiff(): Promise<GrowthGuardrailDiff> {
 export const testOnly = {
   parseAncestorProbe,
   parseChangedFiles,
+  readFilesCached,
   selectLocalComparisonBase,
 };

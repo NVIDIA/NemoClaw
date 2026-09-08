@@ -78,9 +78,10 @@ During the automatic upgrade path, the installer prepares the current NemoClaw C
 If any sandbox is skipped or fails, the installer exits before it changes the gateway.
 After backup, the installer requires any existing OpenShell executable it will use to report a version, then compares that version with the supported range declared by the prepared current source.
 It retires the running gateway before replacing an out-of-range OpenShell installation, keeps the gateway when the installed version is supported, and stops without retiring it when the installed version or supported range cannot be validated.
-On Linux, failed OpenShell lifecycle commands cause the installer to check a verified NemoClaw-managed gateway PID file for any configured gateway port.
-For the default gateway on port `8080`, the installer first checks a verified active `nemoclaw-openshell-gateway.service`, then checks the PID file.
-The service path requires an active `nemoclaw-openshell-gateway.service` with a trusted unit path, NemoClaw-managed marker, file owner, and `ExecStart` binary.
+If OpenShell lifecycle commands cannot retire the gateway, the installer can use verified service or PID-file evidence on Linux and macOS.
+For the default gateway on port `8080`, Linux first checks verified systemd service evidence for `nemoclaw-openshell-gateway.service`, while macOS first checks verified Homebrew gateway service evidence.
+On either platform, the installer can then use a verified NemoClaw-managed gateway PID file for the configured gateway port.
+If macOS cannot obtain a conclusive `lsof` listener observation for a stale PID, the installer stops retirement and preserves the PID file, OpenShell registration, and every sandbox backup.
 After the service or PID-file check confirms the gateway process is stopped, the installer tries to remove the selected OpenShell registration.
 If registration removal fails, the installer warns that onboarding will replace the stale registration.
 If neither fallback can verify and stop the process, the installer stops after backup, preserves every sandbox backup, and reports the failed operation.

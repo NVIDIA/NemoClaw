@@ -8,12 +8,10 @@ const mocks = vi.hoisted(() => ({
   garbageCollectImages: vi.fn().mockResolvedValue(undefined),
   help: vi.fn(),
   recoverNamedGatewayRuntime: vi.fn().mockResolvedValue({ recovered: true }),
-  runDeployAction: vi.fn().mockResolvedValue(undefined),
   runOnboardAction: vi.fn().mockResolvedValue(undefined),
   version: vi.fn(),
 }));
 
-vi.mock("./deploy", () => ({ runDeployAction: mocks.runDeployAction }));
 vi.mock("../gateway-runtime-action", () => ({
   recoverNamedGatewayRuntime: mocks.recoverNamedGatewayRuntime,
 }));
@@ -30,7 +28,6 @@ import {
   listManagedMcpCredentialReservations,
   recoverNamedGatewayRuntime,
   runBackupAllAction,
-  runDeployAction,
   runGarbageCollectImagesAction,
   runOnboardAction,
   runUpgradeSandboxesAction,
@@ -45,17 +42,15 @@ describe("global cli action facade", () => {
     setGlobalCliActionRuntimeHooksForTest({});
   });
 
-  it("forwards onboarding, deploy, maintenance, and help actions", async () => {
+  it("forwards onboarding, maintenance, and help actions", async () => {
     const onboardRuntimeDeps = { googlechatTunnelRuntime: {} };
     await runOnboardAction({ resume: true }, onboardRuntimeDeps);
-    await runDeployAction("gpu-alpha");
     await runBackupAllAction();
     await runGarbageCollectImagesAction({ dryRun: true });
     showRootHelp();
     showVersion();
 
     expect(mocks.runOnboardAction).toHaveBeenCalledWith({ resume: true }, onboardRuntimeDeps);
-    expect(mocks.runDeployAction).toHaveBeenCalledWith("gpu-alpha");
     expect(mocks.backupAll).toHaveBeenCalledWith();
     expect(mocks.garbageCollectImages).toHaveBeenCalledWith({ dryRun: true });
     expect(mocks.help).toHaveBeenCalledWith();

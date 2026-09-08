@@ -40,6 +40,7 @@ import {
   liveE2eManagedImageRevision,
   type PreparedSandboxWorkloadSource,
   prepareSandboxWorkloadSource,
+  rejectManagedWorkloadBaseImageOverride,
   SandboxWorkloadPreparationError,
 } from "./preparation";
 import {
@@ -142,6 +143,16 @@ export async function prepareManagedWorkloadRebuildHandoff(
 
   let replacement: PreparedSandboxWorkloadSource;
   if (isCandidateManagedImageAgent(authority.agent)) {
+    try {
+      rejectManagedWorkloadBaseImageOverride(authority.agent);
+    } catch (error) {
+      throw new ManagedWorkloadRebuildError(
+        error instanceof Error
+          ? error.message
+          : "the managed workload base-image override is invalid",
+        { cause: error },
+      );
+    }
     // A candidate publishes outside the all-agent release cohort, so its
     // replacement comes from the protected qualification receipt rather than
     // the current release catalog.
@@ -181,15 +192,6 @@ export async function prepareManagedWorkloadRebuildHandoff(
         "live E2E managed-image revision and catalog authority conflict",
       );
     }
-    const qualificationSourceRevision = liveCatalog?.revision ?? qualificationRevision;
-    if (
-      qualificationSourceRevision !== null &&
-      qualificationSourceRevision !== authority.receipt.sourceRevision
-    ) {
-      throw new ManagedWorkloadRebuildError(
-        "the live qualification revision does not match the durable workload receipt",
-      );
-    }
     try {
       replacement = await managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource({
         agentName: authority.agent,
@@ -199,15 +201,18 @@ export async function prepareManagedWorkloadRebuildHandoff(
         policy: "require-managed",
         ...(liveCatalog
           ? {
+              ...(liveCatalog.catalog ? { catalog: liveCatalog.catalog } : {}),
               catalogPath: liveCatalog.path,
               expectedCatalogRevision: liveCatalog.revision,
             }
           : {}),
-        ...(qualificationRevision ? { catalogRevision: authority.receipt.sourceRevision } : {}),
+        ...(qualificationRevision ? { catalogRevision: qualificationRevision } : {}),
       });
     } catch (error) {
       throw new ManagedWorkloadRebuildError(
-        "the current release's complete managed-image catalog is unavailable or invalid",
+        error instanceof SandboxWorkloadPreparationError
+          ? error.message
+          : "the selected managed-image catalog is unavailable or invalid",
         { cause: error },
       );
     }
