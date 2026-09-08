@@ -524,7 +524,7 @@ describe("startSandbox", () => {
     expect(h.recoverDockerDriverSandbox).not.toHaveBeenCalled();
   });
 
-  it("keeps active Hermes start out of every Docker path (#9203)", async () => {
+  it("clears stop intent after verified Hermes portable start (#11025)", async () => {
     const probeInferenceInvocation = vi.fn(() => ({ ok: true }) as const);
     const h = harness({ probeInferenceInvocation });
     h.getSandbox.mockReturnValue(
@@ -534,6 +534,7 @@ describe("startSandbox", () => {
         lifecycleGeneration: "generation-alpha",
         lifecycleLiveIdentityFingerprint: "identity-alpha",
         openshellDriver: "docker",
+        stopped: true,
       }),
     );
     h.hasPortableLifecycleReceipt.mockReturnValue(true);
@@ -548,6 +549,10 @@ describe("startSandbox", () => {
     expect(h.restoreStartupState).not.toHaveBeenCalled();
     expect(h.verifyGateway).not.toHaveBeenCalled();
     expect(probeInferenceInvocation).not.toHaveBeenCalled();
+    expect(h.updateSandbox).toHaveBeenCalledWith("my-sandbox", { stopped: false });
+    expect(h.recoverPortableSandbox.mock.invocationCallOrder[0]).toBeLessThan(
+      h.updateSandbox.mock.invocationCallOrder[0],
+    );
   });
 
   it("still probes when the container was already running (#6026)", async () => {

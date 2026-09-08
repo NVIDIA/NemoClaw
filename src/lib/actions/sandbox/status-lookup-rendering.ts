@@ -38,7 +38,7 @@ export async function printSandboxGatewayLookupStatus(
       return;
     case "gateway_schema_mismatch":
       console.log(context.lookup.output);
-      deferSandboxLifecycleExit(1);
+      return deferSandboxLifecycleExit(1);
     case "missing":
       if (context.effectivePreflight.intentionalStopConfirmed) {
         printConfirmedStoppedSandboxStatus(context.sandboxName);

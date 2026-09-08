@@ -192,9 +192,6 @@ async function startSandboxWithinLifecycleFence(
   if (preflight) return preflight;
   const result = resolved.lifecycle.start(input);
   if (result.exitCode !== 0) return result;
-  if ("hermesPortableVerified" in result && result.hermesPortableVerified === true) {
-    return { exitCode: 0 };
-  }
   if (
     resolved.sandbox.stopped === true &&
     !registry.recordSandboxStopIntent(
@@ -206,6 +203,9 @@ async function startSandboxWithinLifecycleFence(
     throw new Error(
       `Sandbox '${sandboxName}' started, but NemoClaw could not clear its intentional-stop record. Run '${cliName()} ${sandboxName} status' before another lifecycle command.`,
     );
+  }
+  if ("hermesPortableVerified" in result && result.hermesPortableVerified === true) {
+    return { exitCode: 0 };
   }
 
   const readiness: { inference: SandboxInferenceInvocationResult | null } = { inference: null };

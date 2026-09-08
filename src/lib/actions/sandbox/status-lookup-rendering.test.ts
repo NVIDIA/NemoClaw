@@ -135,6 +135,32 @@ describe("printNonReadySandboxPhaseGuidance (#7222)", () => {
     expect(text).not.toContain("not present in the live OpenShell gateway");
   });
 
+  it("does not render a gateway schema mismatch as an intentional stop (#11025)", async () => {
+    const cap = captureConsoleLog();
+    await expect(
+      printSandboxGatewayLookupStatus({
+        sandboxName: "beta",
+        registered: true,
+        lookup: { state: "gateway_schema_mismatch", output: "gateway schema mismatch" },
+        phase: "Stopped",
+        dockerRuntime: null,
+        effectivePreflight: {
+          failure: null,
+          failureLayer: null,
+          intentionalStopConfirmed: true,
+          suppressInferenceProbe: true,
+          exitCode: 0,
+        },
+      }),
+    ).rejects.toMatchObject({ exitCode: 1 });
+    const text = cap.lines();
+    cap.restore();
+
+    expect(text).toContain("gateway schema mismatch");
+    expect(text).not.toContain("Phase: Stopped");
+    expect(text).not.toContain("Workspace state is preserved");
+  });
+
   it("keeps the unpause hint for a paused container and never suggests start/rebuild (#4495)", async () => {
     const cap = captureConsoleLog();
     await printGuidance({
