@@ -45,6 +45,14 @@ function getSandboxExecShellCommand(rawArgs: unknown): string {
   return decodeSandboxExecShellPayload(String(args.at(-1) ?? ""));
 }
 
+function expectBoundedGatewayRecoveryCall(request: unknown): void {
+  expect(request).toHaveBeenCalledOnce();
+  expect(request).toHaveBeenCalledWith("hermes-box", "recover", expect.any(Number));
+  const timeout = (request as { mock: { calls: unknown[][] } }).mock.calls[0]?.[2];
+  expect(timeout).toBeGreaterThan(0);
+  expect(timeout).toBeLessThanOrEqual(210_000);
+}
+
 async function withFakeOpenshellBinary<T>(fn: () => T | Promise<T>): Promise<T> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fake-openshell-"));
   const bin = path.join(dir, "openshell");
@@ -193,8 +201,7 @@ hermes-box  127.0.0.1  18789  12345  running`;
           command: ["true"],
         }),
       );
-      expect(requestGatewaySupervisorAction).toHaveBeenCalledOnce();
-      expect(requestGatewaySupervisorAction).toHaveBeenCalledWith("hermes-box", "recover");
+      expectBoundedGatewayRecoveryCall(requestGatewaySupervisorAction);
     } finally {
       previousWaitSeconds === undefined
         ? delete process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS
@@ -274,8 +281,7 @@ hermes-box  127.0.0.1  18789  12345  running`;
       recovered: false,
       forwardRecovered: false,
     });
-    expect(requestGatewaySupervisorAction).toHaveBeenCalledOnce();
-    expect(requestGatewaySupervisorAction).toHaveBeenCalledWith("hermes-box", "recover");
+    expectBoundedGatewayRecoveryCall(requestGatewaySupervisorAction);
   });
 
   it("leaves enabled Hermes dashboard recovery to the PID 1 supervisor", async () => {
@@ -363,8 +369,7 @@ hermes-box  127.0.0.1  18789  12345  running`;
         recovered: true,
         forwardRecovered: true,
       });
-      expect(requestGatewaySupervisorAction).toHaveBeenCalledOnce();
-      expect(requestGatewaySupervisorAction).toHaveBeenCalledWith("hermes-box", "recover");
+      expectBoundedGatewayRecoveryCall(requestGatewaySupervisorAction);
       expect(sshCommands).toHaveLength(0);
     } finally {
       previousWaitSeconds === undefined

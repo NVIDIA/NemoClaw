@@ -24,7 +24,7 @@ const MISSING_MANAGED_SUPERVISOR = {
   stderr: "SUPERVISOR_NOT_RUNNING",
 } as const;
 
-function missingSupervisorOnRecover(_name: string, action: string) {
+function missingSupervisorOnRecover(_name: string, action: string, _timeout?: number) {
   return action === "recover" ? MISSING_MANAGED_SUPERVISOR : null;
 }
 
@@ -423,7 +423,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     expect(finalize).toHaveBeenCalledWith(false);
   });
 
-  it("commits only after managed health accepts the recreated supervisor", async () => {
+  it("commits only after managed health accepts the recreated supervisor (#11107)", async () => {
     mockOpenClawSandbox("recovered-box");
     setImmediateRecoveryPolling();
     const order: string[] = [];
@@ -459,7 +459,17 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     });
 
     expect(result).toMatchObject({ checked: true, wasRunning: false, recovered: true });
-    expect(requestGatewaySupervisorAction).toHaveBeenCalledWith("recovered-box", "recover");
+    expect(requestGatewaySupervisorAction).toHaveBeenCalledWith(
+      "recovered-box",
+      "recover",
+      expect.any(Number),
+    );
+    expect(
+      requestGatewaySupervisorAction.mock.calls.every(
+        ([, , timeout]) =>
+          typeof timeout === "number" && timeout > 0 && timeout <= 210_000,
+      ),
+    ).toBe(true);
     expect(relaunchManagedSupervisorSessionImpl).toHaveBeenCalledWith(
       "recovered-box",
       expect.objectContaining({
