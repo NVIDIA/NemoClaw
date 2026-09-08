@@ -532,7 +532,13 @@ export async function collectSandboxStatusSnapshot(
     };
   }
   const live =
-    liveResult && !isCommandTimeout(liveResult) ? parseGatewayInference(liveResult.output) : null;
+    liveResult &&
+    liveResult.status === 0 &&
+    !liveResult.error &&
+    !liveResult.signal &&
+    !isCommandTimeout(liveResult)
+      ? parseGatewayInference(liveResult.output)
+      : null;
   const recordedRoute =
     sb?.provider && sb.model ? { provider: sb.provider, model: sb.model } : null;
   const liveRoute = live ? { provider: live.provider, model: live.model } : null;
@@ -685,14 +691,15 @@ export async function collectSandboxStatusSnapshot(
     });
   }
   // Classify once per snapshot so every renderer observes the same receipt state.
-  // Route drift suppresses attribution because the shared gateway route may belong
-  // to another sandbox or provider entirely (#10256).
-  const llamaCpp = routeDrift
-    ? null
-    : getLlamaCppRouteDetails(
+  // A complete matching live route is required because the shared gateway route
+  // may belong to another sandbox or provider entirely (#10256).
+  const llamaCpp =
+    routeDriftPlan?.kind === "aligned"
+      ? getLlamaCppRouteDetails(
         sb,
         opts.deps?.inspectManagedLlamaCppOwnership ?? inspectManagedLlamaCppOwnership,
-      );
+      )
+    : null;
   const statusAgent = resolveSandboxStatusAgent(sb?.agent || "openclaw");
   const terminalRuntimeHealth =
     lookup.state === "present" && statusAgent.agentRuntime === "terminal"
