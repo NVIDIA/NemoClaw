@@ -23,6 +23,8 @@ function runInstall(
   extraEnvironment: Record<string, string> = {},
   options: {
     interruptBeforeLookupTrap?: boolean;
+    lookupMaxOutputBytes?: number;
+    lookupSignal?: "INT" | "TERM";
     lookupTimeoutSeconds?: number;
     useRealSleep?: boolean;
   } = {},
@@ -45,11 +47,12 @@ function runInstall(
 case "${installedVersion}" in
   hang) /bin/sleep 60 ;;
   ignore-term) trap '' TERM; while :; do :; done ;;
-  interrupt) printf '%s' "$$" >"\${LOOKUP_PID:?}"; kill -INT "$PPID"; exec /bin/sleep 60 ;;
-  terminate) printf '%s' "$$" >"\${LOOKUP_PID:?}"; kill -TERM "$PPID"; exec /bin/sleep 60 ;;
+  interrupt) printf '%s' "$$" >"\${LOOKUP_PID:?}"; exec /bin/sleep 60 ;;
+  terminate) printf '%s' "$$" >"\${LOOKUP_PID:?}"; exec /bin/sleep 60 ;;
   trap-race) printf '%s' "$$" >"\${LOOKUP_PID:?}"; /bin/sleep 60 ;;
   descendant-ignore-term) (trap '' TERM; printf '%s' "\${BASHPID}" >"\${LOOKUP_PID:?}"; while :; do :; done) & exit 0 ;;
   signaled) kill -KILL "$$" ;;
+  oversized) printf 'nemoclaw v0.0.118'; printf '%0100d' 0 ;;
   invalid) printf 'not a NemoClaw version\n' ;;
   *) printf '${cliName} v%s\n' "${installedVersion}" ;;
 esac
@@ -104,11 +107,19 @@ esac
     .replace(
       "BOOTSTRAP_LOOKUP_TIMEOUT_SECONDS=30",
       `BOOTSTRAP_LOOKUP_TIMEOUT_SECONDS=${options.lookupTimeoutSeconds ?? 30}`,
+    )
+    .replace(
+      "BOOTSTRAP_LOOKUP_MAX_OUTPUT_BYTES=65536",
+      `BOOTSTRAP_LOOKUP_MAX_OUTPUT_BYTES=${options.lookupMaxOutputBytes ?? 65536}`,
     );
-  installerSource = options.interruptBeforeLookupTrap
+  const lookupSignal = options.lookupSignal ?? (options.interruptBeforeLookupTrap ? "INT" : "");
+  installerSource = lookupSignal
     ? installerSource.replace(
         "  command_pid=$!\n  set +m",
-        '  command_pid=$!\n  while [[ ! -s "${LOOKUP_PID:?}" ]]; do :; done\n  /bin/bash -c \'kill -INT "$PPID"\'\n  set +m',
+        `  command_pid=$!
+  while [[ ! -s "\${LOOKUP_PID:?}" ]]; do :; done
+  /bin/bash -c 'kill -${lookupSignal} "$PPID"'
+  set +m`,
       )
     : installerSource;
 
@@ -135,7 +146,7 @@ afterEach(() => {
 });
 
 describe("public installer downgrade guard", () => {
-  it("keeps the installed CLI when the implicit lkg release is older (#10948)", () => {
+  it("keeps the installed CLI when the implicit lkg release is older (#11160)", () => {
     const { result, payloadMarker } = runInstall("0.0.118", "0.0.109");
 
     expect(result.status).toBe(1);
@@ -242,6 +253,18 @@ describe("public installer downgrade guard", () => {
     expect(fs.existsSync(payloadMarker)).toBe(false);
   });
 
+  it.each(["lkg", "refs/tags/lkg"])(
+    "keeps the installed CLI when NEMOCLAW_INSTALL_REF selects %s",
+    (installRef) => {
+      const { result, payloadMarker } = runInstall("0.0.118", "0.0.109", {
+        NEMOCLAW_INSTALL_REF: installRef,
+      });
+
+      expect(result.status).toBe(1);
+      expect(fs.existsSync(payloadMarker)).toBe(false);
+    },
+  );
+
   it("fails closed when the installed CLI reports an invalid version", () => {
     const { result, payloadMarker } = runInstall("invalid", "0.0.109");
 
@@ -260,6 +283,26 @@ describe("public installer downgrade guard", () => {
       "Cannot verify the installed NemoClaw version",
     );
     expect(fs.existsSync(payloadMarker)).toBe(false);
+  });
+
+  it("fails closed and cleans up when installed CLI output exceeds the bound", () => {
+    const { result, payloadMarker, root } = runInstall(
+      "oversized",
+      "0.0.109",
+      {},
+      {
+        lookupMaxOutputBytes: 32,
+      },
+    );
+
+    expect(result.status).toBe(1);
+    expect(`${result.stdout}${result.stderr}`).toContain(
+      "Cannot verify the installed NemoClaw version",
+    );
+    expect(fs.existsSync(payloadMarker)).toBe(false);
+    expect(
+      fs.readdirSync(root).filter((name) => name.startsWith("nemoclaw-bootstrap-lookup.")),
+    ).toEqual([]);
   });
 
   it("keeps the installed CLI when the implicit lkg version cannot be verified", () => {
@@ -309,25 +352,35 @@ describe("public installer downgrade guard", () => {
   }, 15_000);
 
   it.each([
-    ["interrupted", "interrupt", 130],
-    ["terminated", "terminate", 143],
-  ])("cleans up an active lookup when the installer is %s", (_label, signal, status) => {
-    const { lookupPid, payloadMarker, result, root } = runInstall(signal, "0.0.109");
+    ["interrupted", "interrupt", "INT", 130],
+    ["terminated", "terminate", "TERM", 143],
+  ] as const)(
+    "cleans up an active lookup when the installer is %s",
+    (_label, mode, signal, status) => {
+      const { lookupPid, payloadMarker, result, root } = runInstall(
+        mode,
+        "0.0.109",
+        {},
+        {
+          lookupSignal: signal,
+        },
+      );
 
-    expect(result.status).toBe(status);
-    expect(fs.existsSync(payloadMarker)).toBe(false);
-    expect(
-      fs.readdirSync(root).filter((name) => name.startsWith("nemoclaw-bootstrap-lookup.")),
-    ).toEqual([]);
-    expect(
-      fs
-        .readdirSync(root, { withFileTypes: true })
-        .filter((entry) => entry.isDirectory())
-        .map((entry) => entry.name),
-    ).toEqual(["bin"]);
-    const pid = Number(fs.readFileSync(lookupPid, "utf8"));
-    expect(() => process.kill(pid, 0)).toThrow();
-  });
+      expect(result.status).toBe(status);
+      expect(fs.existsSync(payloadMarker)).toBe(false);
+      expect(
+        fs.readdirSync(root).filter((name) => name.startsWith("nemoclaw-bootstrap-lookup.")),
+      ).toEqual([]);
+      expect(
+        fs
+          .readdirSync(root, { withFileTypes: true })
+          .filter((entry) => entry.isDirectory())
+          .map((entry) => entry.name),
+      ).toEqual(["bin"]);
+      const pid = Number(fs.readFileSync(lookupPid, "utf8"));
+      expect(() => process.kill(pid, 0)).toThrow();
+    },
+  );
 
   it("registers cleanup before starting a version lookup", () => {
     const { lookupPid, payloadMarker, result, root } = runInstall(
@@ -359,7 +412,7 @@ describe("public installer downgrade guard", () => {
       encoding: "utf8",
     });
     expect(processState.status === 1 || processState.stdout.trim().startsWith("Z")).toBe(true);
-  });
+  }, 15_000);
 });
 
 describe("versioned installer payload ref selection", () => {

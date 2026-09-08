@@ -20,6 +20,7 @@ PAYLOAD_MARKER="NEMOCLAW_VERSIONED_INSTALLER_PAYLOAD=1"
 DEFAULT_INSTALL_REF="lkg"
 INSTALL_TAG_EXAMPLE="vX.Y.Z"
 BOOTSTRAP_LOOKUP_TIMEOUT_SECONDS=30
+BOOTSTRAP_LOOKUP_MAX_OUTPUT_BYTES=65536
 SELECTED_PAYLOAD_IDENTITY_REF=""
 
 resolve_release_tag() {
@@ -140,14 +141,17 @@ release_version_is_newer() {
 }
 
 run_bounded_bootstrap_lookup() (
-  local label="$1" output_file command_pid="" status ticks=0
+  local label="$1" output_file command_pid="" output_bytes status ticks=0
   shift
   output_file="$(mktemp "${TMPDIR:-/tmp}/nemoclaw-bootstrap-lookup.XXXXXX")"
   trap 'trap - INT TERM EXIT; [[ -z "$command_pid" ]] || terminate_bootstrap_lookup_group "$command_pid"; rm -f "$output_file"; exit 130' INT
   trap 'trap - INT TERM EXIT; [[ -z "$command_pid" ]] || terminate_bootstrap_lookup_group "$command_pid"; rm -f "$output_file"; exit 143' TERM
   trap 'status=$?; trap - INT TERM EXIT; [[ -z "$command_pid" ]] || terminate_bootstrap_lookup_group "$command_pid"; rm -f "$output_file"; exit "$status"' EXIT
   set -m
-  "$@" >"$output_file" 2>/dev/null </dev/null &
+  (
+    set -o pipefail
+    "$@" 2>/dev/null </dev/null | head -c "$((BOOTSTRAP_LOOKUP_MAX_OUTPUT_BYTES + 1))"
+  ) >"$output_file" 2>/dev/null &
   command_pid=$!
   set +m
   while bootstrap_lookup_group_is_alive "$command_pid"; do
@@ -167,7 +171,10 @@ run_bounded_bootstrap_lookup() (
   else
     status=$?
   fi
-  if ((status == 0)); then
+  output_bytes="$(wc -c <"$output_file")"
+  if ((output_bytes > BOOTSTRAP_LOOKUP_MAX_OUTPUT_BYTES)); then
+    status=2
+  elif ((status == 0)); then
     cat "$output_file"
   elif ((status >= 128)); then
     status=2
