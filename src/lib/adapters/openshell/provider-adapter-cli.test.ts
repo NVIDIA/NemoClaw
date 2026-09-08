@@ -1148,6 +1148,31 @@ describe("CLI OpenShell provider adapter", () => {
     });
   });
 
+  it("parses an attachment diagnostic wrapped at the terminal column boundary (#11186)", async () => {
+    const adapter = createCliOpenShellProviderAdapter({
+      run: () =>
+        captured(
+          1,
+          "",
+          "Error: × code: 'The system is not in a state required for the operation's │ execution', message: \"provider 'search-prod' is attached │ to sandbox(es): alpha\"",
+        ),
+    });
+
+    await expect(
+      adapter.deleteProvider({
+        target: selectedOpenShellGateway(),
+        providerName: "search-prod",
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: {
+        kind: "command",
+        reason: "attached",
+        attachedSandboxes: ["alpha"],
+      },
+    });
+  });
+
   it("places a named gateway flag before detach arguments (#9806)", async () => {
     const run = vi.fn(() => captured(0));
     const adapter = createCliOpenShellProviderAdapter({ run });
