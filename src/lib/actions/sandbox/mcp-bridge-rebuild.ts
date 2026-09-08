@@ -309,7 +309,7 @@ export async function prepareMcpBridgesForRebuild(
     for (const entry of entries) {
       // Keep the provider and its host-only credentials for the replacement
       // sandbox, but detach it before OpenShell deletes the old attachment.
-      inspectExactMcpDestroyProvider(entry, {
+      await inspectExactMcpDestroyProvider(entry, {
         allowMissing: false,
         runtimeSelection: providerRuntimeSelection,
       });

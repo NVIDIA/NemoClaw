@@ -642,7 +642,7 @@ export function createCliOpenShellProviderAdapter(
       return failure({
         kind: "command",
         reason: "not_found",
-        message: `OpenShell provider '${request.providerName}' was not found.`,
+        message: `OpenShell provider not found: '${request.providerName}'.`,
       });
     }
     const error = commandError(result);
@@ -667,10 +667,15 @@ export function createCliOpenShellProviderAdapter(
       3,
     );
     const output = commandOutput(result);
-    if (TOLERATED_DETACH_OUTPUT_RE.test(output)) {
+    const error = commandError(result);
+    const confirmedIdempotentDetach =
+      !result.error &&
+      !result.signal &&
+      result.status !== null &&
+      TOLERATED_DETACH_OUTPUT_RE.test(output);
+    if (confirmedIdempotentDetach) {
       return success({ changed: false });
     }
-    const error = commandError(result);
     return error ? failure(error) : success({ changed: true });
   };
 

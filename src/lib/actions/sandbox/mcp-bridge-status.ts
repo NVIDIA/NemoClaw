@@ -21,8 +21,8 @@ import { getPolicyGatewayState, getRegisteredGeneratedPolicy } from "./mcp-bridg
 import {
   getMcpProviderInspectionRuntimeSelection,
   inspectMcpProvider,
+  inspectMcpProviderAttachments,
   observeMcpCredentialRevision,
-  providerAttached,
   providerMatchesCredential,
   providerShapeDetail,
 } from "./mcp-bridge-provider";
@@ -322,6 +322,10 @@ export async function statusMcpBridge(
     }),
   );
 
+  const attachmentInspection = entries.some(([, entry]) => !!entry?.providerName)
+    ? await inspectMcpProviderAttachments(sandboxName, providerRuntimeSelection)
+    : undefined;
+
   return Promise.all(
     entries.map(async ([name, entry]) => {
       const support = entry ? getPersistedBridgeSupport(entry) : getSupportSummary(agent);
@@ -355,11 +359,13 @@ export async function statusMcpBridge(
         expectedCredential,
         entry?.providerId,
       );
-      const attached = await providerAttached(
-        sandboxName,
-        entry?.providerName,
-        providerRuntimeSelection,
-      );
+      const attached = !entry?.providerName
+        ? null
+        : !attachmentInspection?.attachments
+          ? null
+          : attachmentInspection.attachments.some(
+              (attachment) => attachment.name === entry.providerName,
+            );
       const warnings: string[] = [];
       let credentialWarning: string | undefined;
       if (entry) {

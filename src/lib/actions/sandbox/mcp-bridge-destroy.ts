@@ -97,7 +97,7 @@ export async function prepareMcpBridgesForDestroy(
   // retry, a provider may therefore already be absent due to partial cleanup;
   // the retained entries are the durable, idempotent cleanup manifest.
   for (const entry of entries) {
-    inspectExactMcpDestroyProvider(entry, {
+    await inspectExactMcpDestroyProvider(entry, {
       allowMissing: destroyAlreadyPending,
       runtimeSelection: providerRuntimeSelection,
     });
@@ -280,11 +280,12 @@ export async function restoreMcpBridgesAfterDestroyAbort(
   try {
     // Reattach only the exact existing providers. This restoration path never
     // reads host secret values and therefore cannot rotate preserved credentials.
-    for (const entry of preparation.entries)
-      inspectExactMcpDestroyProvider(entry, {
+    for (const entry of preparation.entries) {
+      await inspectExactMcpDestroyProvider(entry, {
         allowMissing: false,
         runtimeSelection: providerRuntimeSelection,
       });
+    }
     await restoreExistingMcpBridgeRuntime(sandboxName, preparation.entries, {
       lifecyclePhase: "teardown-rollback",
       runtimeSelection: providerRuntimeSelection,
