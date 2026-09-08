@@ -136,14 +136,14 @@ providerCommands.runOpenshellProviderCommand = (args) => {
   }
   if (args[0] === "provider" && args[1] === "get") {
     if (args[2] === "foreign-attached" || args[2] === "foreign-registered") {
-      return { status: 0, stdout: "Id: " + foreignProviderId + "\nType: nemoclaw-mcp-v1\nResource version: 1\nCredential keys: FAKE_MCP_SECRET\n", stderr: "" };
+      return { status: 0, stdout: "Name: " + args[2] + "\nId: " + foreignProviderId + "\nType: nemoclaw-mcp-v1\nResource version: 1\nCredential keys: FAKE_MCP_SECRET\nConfig keys: <none>\n", stderr: "" };
     }
     observedProviderName = args[2];
     providerGetCount += 1;
     if (crashAfter === "race" && providerGetCount === 2) mark("provider");
     if (crashAfter === "late-race" && providerGetCount === 3) mark("provider");
     return marked("provider")
-      ? { status: 0, stdout: "Id: " + (marked("foreign-provider") ? foreignProviderId : providerId) + "\nType: nemoclaw-mcp-v1\nResource version: " + providerVersion() + "\nCredential keys: FAKE_MCP_SECRET\n", stderr: "" }
+      ? { status: 0, stdout: "Name: " + args[2] + "\nId: " + (marked("foreign-provider") ? foreignProviderId : providerId) + "\nType: nemoclaw-mcp-v1\nResource version: " + providerVersion() + "\nCredential keys: FAKE_MCP_SECRET\nConfig keys: <none>\n", stderr: "" }
       : { status: 1, stdout: "", stderr: "provider '" + args[2] + "' not found" };
   }
   if (args[0] === "provider" && (args[1] === "create" || args[1] === "update")) {
@@ -578,7 +578,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
   if (args[0] === "provider" && args[1] === "get") {
     observedProviderName = args[2];
     return marked("provider")
-      ? { status: 0, stdout: "Id: " + providerId + "\nType: nemoclaw-mcp-v1\nResource version: 1\nCredential keys: FAKE_MCP_SECRET\n", stderr: "" }
+      ? { status: 0, stdout: "Name: " + args[2] + "\nId: " + providerId + "\nType: nemoclaw-mcp-v1\nResource version: 1\nCredential keys: FAKE_MCP_SECRET\nConfig keys: <none>\n", stderr: "" }
       : { status: 1, stdout: "", stderr: "provider '" + args[2] + "' not found" };
   }
   if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "detach") {
@@ -680,7 +680,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
   if (args[0] === "provider" && args[1] === "get") {
     return {
       status: 0,
-      stdout: "Type: nemoclaw-mcp-v1\nCredential keys: FAKE_MCP_SECRET\n",
+      stdout: "Name: alpha-mcp-fake\nType: nemoclaw-mcp-v1\nCredential keys: FAKE_MCP_SECRET\nConfig keys: <none>\n",
       stderr: "",
     };
   }

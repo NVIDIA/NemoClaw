@@ -5,7 +5,7 @@ import { shellQuote } from "../../runner";
 import type { McpBridgeEntry } from "../../state/registry";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
-import { waitForMcpBridgeCondition } from "./mcp-bridge/timing";
+import { waitForMcpBridgeCondition, waitForMcpBridgeConditionAsync } from "./mcp-bridge/timing";
 import {
   assertAuthenticatedBridgeEntry,
   assertPersistedAuthenticatedBridgeEntry,
@@ -159,15 +159,15 @@ export function observeMcpCredentialRevision(
   return attempt.observation;
 }
 
-export function waitForAttachedMcpCredential(
+export async function waitForAttachedMcpCredential(
   sandboxName: string,
   entry: McpBridgeEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
   options: {
     previousRevision?: McpCredentialRevisionObservation;
-    refreshAfterObservedAbsence?: () => void;
+    refreshAfterObservedAbsence?: () => void | Promise<void>;
   } = {},
-): McpAttachedCredentialRevision {
+): Promise<McpAttachedCredentialRevision> {
   assertAuthenticatedBridgeEntry(entry);
   const envName = entry.env[0];
   if (
@@ -184,8 +184,8 @@ export function waitForAttachedMcpCredential(
   let lastAttempt: McpCredentialRevisionAttempt = { kind: "transport-unavailable" };
   let candidateRevision: McpAttachedCredentialRevision | undefined;
   let attachedRevision: McpAttachedCredentialRevision | undefined;
-  const ready = waitForMcpBridgeCondition(
-    () => {
+  const ready = await waitForMcpBridgeConditionAsync(
+    async () => {
       // Each exec is a fresh OpenShell process. Only the bounded placeholder
       // classification crosses back to the host, where the comparison cannot
       // be influenced by a same-UID sandbox process rewriting a snapshot file.
@@ -198,7 +198,7 @@ export function waitForAttachedMcpCredential(
         options.refreshAfterObservedAbsence
       ) {
         refreshedAfterObservedAbsence = true;
-        options.refreshAfterObservedAbsence();
+        await options.refreshAfterObservedAbsence();
         attempt = tryObserveMcpCredentialRevision(sandboxName, envName, runtimeSelection);
         lastAttempt = attempt;
       }
@@ -273,8 +273,7 @@ export function waitForDetachedMcpCredential(
         sandboxName,
         buildMcpCredentialDetachedCommand(envName),
         runtimeSelection,
-      )
-        ?.status === 0,
+      )?.status === 0,
     Number.isFinite(timeoutSeconds) && timeoutSeconds > 0 ? timeoutSeconds : 30,
     1_000,
   );
