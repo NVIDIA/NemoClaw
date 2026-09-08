@@ -38,6 +38,7 @@ import {
   candidateDigest,
   digest,
   repairModelContext,
+  repairValidationPlan,
   type RepairSelection,
   validateRepairPatch,
   validationReceipt,
@@ -55,6 +56,7 @@ import {
   prepareAdvisorRepairInputs,
   runAdvisorRepairTask,
 } from "../../../tools/pr-review-advisor/repair-resolve.mts";
+import { validateAndSealRepair } from "../../../tools/pr-review-advisor/repair-validate.mts";
 import { ADVISOR_INTERESTS } from "../../../tools/pr-review-advisor/specialist-catalog.mts";
 
 const temporaryDirectories: string[] = [];
@@ -1133,25 +1135,39 @@ describe("PR merge conflict fixer", () => {
       patchFile,
       proposalFile,
     });
-    const commands = [
-      { command: "npm ci --ignore-scripts", exitCode: 0 as const },
-      { command: "npm run check:diff", exitCode: 0 as const },
-      { command: "npm run test:changed", exitCode: 0 as const },
-    ];
-    const receipt = validationReceipt({
+    const validationOutput = path.join(temporaryDirectory(), "sealed");
+    const executed: string[] = [];
+    validateAndSealRepair({
       selection,
       candidate,
-      candidateDigestAfter: candidate.candidateDigest,
-      commands,
+      candidateDirectory: candidate.repository,
+      patchFile,
+      outputDirectory: validationOutput,
+      run: (executable, arguments_) => {
+        executed.push([executable, ...arguments_].join(" "));
+        return 0;
+      },
     });
+    expect(executed).toEqual(repairValidationPlan(selection).map(({ command }) => command));
+    const receipt = JSON.parse(
+      fs.readFileSync(path.join(validationOutput, "validation.json"), "utf8"),
+    );
     expect(() => assertValidatedRepair(selection, receipt, candidate)).not.toThrow();
+    expect(() =>
+      validationReceipt({
+        selection,
+        candidate,
+        candidateDigestAfter: candidate.candidateDigest,
+        commands: [{ command: "npm run test:changed", exitCode: 0 }],
+      }),
+    ).toThrow("required trusted commands");
     write(candidate.repository, "src/lib/example.ts", "mutated after validation\n");
     expect(() =>
       validationReceipt({
         selection,
         candidate,
         candidateDigestAfter: candidateDigest(candidate.repository, selection.sourceHeadSha),
-        commands,
+        commands: repairValidationPlan(selection).map(({ command }) => ({ command, exitCode: 0 })),
       }),
     ).toThrow("validation changed");
   });
@@ -1205,11 +1221,7 @@ describe("PR merge conflict fixer", () => {
       selection,
       candidate,
       candidateDigestAfter: candidate.candidateDigest,
-      commands: [
-        { command: "npm ci --ignore-scripts", exitCode: 0 },
-        { command: "npm run check:diff", exitCode: 0 },
-        { command: "npm run test:changed", exitCode: 0 },
-      ],
+      commands: repairValidationPlan(selection).map(({ command }) => ({ command, exitCode: 0 })),
     });
     const inputs = temporaryDirectory();
     const selectionPath = path.join(inputs, "selection.json");

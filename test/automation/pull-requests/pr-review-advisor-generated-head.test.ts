@@ -10,6 +10,7 @@ import YAML from "yaml";
 
 import {
   ADVISOR_REPAIR_HEAD_WORKFLOWS,
+  ADVISOR_REPAIR_PREREQUISITE_WORKFLOWS,
   type GitHubRequest,
   waitForAdvisorRepairHead,
 } from "../../../tools/pr-review-advisor/repair-publish.mts";
@@ -186,107 +187,119 @@ describe("PR Review Advisor generated-head evidence", () => {
     let correlationMode: "one" | "zero" | "ambiguous" = "one";
     let mismatchedReceipt = false;
     const dispatchedWorkflows = new Set<string>();
-    const request = vi.fn(async (method: string, apiPath: string, body?: unknown) => {
-      const workflow = ADVISOR_REPAIR_HEAD_WORKFLOWS.find(({ workflow }) =>
-        apiPath.includes(`/workflows/${workflow}/dispatches`),
-      );
-      const workflowRunsMatch = apiPath.match(/\/actions\/workflows\/([^/]+)\/runs[?]/u);
-      const runMatch = apiPath.match(/\/actions\/runs\/(\d+)$/u);
-      const jobsMatch = apiPath.match(/\/actions\/runs\/(\d+)\/attempts\/(\d+)\/jobs/u);
-      switch (true) {
-        case apiPath.endsWith(`/pulls/${selection.prNumber}`):
-          return pull;
-        case method === "GET" && workflowRunsMatch !== null: {
-          const workflowName = workflowRunsMatch[1] as string;
-          const runId =
-            ADVISOR_REPAIR_HEAD_WORKFLOWS.findIndex((item) => item.workflow === workflowName) + 1;
-          const run = (await request(
-            "GET",
-            `/repos/${selection.repository}/actions/runs/${runId}`,
-          )) as Record<string, unknown>;
-          const runs =
-            dispatchedWorkflows.has(workflowName) && correlationMode !== "zero" ? [run] : [];
-          return {
-            workflow_runs:
-              correlationMode === "ambiguous" && runs.length === 1 ? [...runs, run] : runs,
-          };
+    const request = vi.fn(
+      async (method: string, apiPath: string, body?: unknown): Promise<unknown> => {
+        const workflow = [
+          ...ADVISOR_REPAIR_HEAD_WORKFLOWS.map(({ workflow }) => workflow),
+          ...ADVISOR_REPAIR_PREREQUISITE_WORKFLOWS,
+        ].find((candidate) => apiPath.includes(`/workflows/${candidate}/dispatches`));
+        const workflowRunsMatch = apiPath.match(/\/actions\/workflows\/([^/]+)\/runs[?]/u);
+        const runMatch = apiPath.match(/\/actions\/runs\/(\d+)$/u);
+        const jobsMatch = apiPath.match(/\/actions\/runs\/(\d+)\/attempts\/(\d+)\/jobs/u);
+        switch (true) {
+          case apiPath.endsWith(`/pulls/${selection.prNumber}`):
+            return pull;
+          case method === "GET" && workflowRunsMatch !== null: {
+            const workflowName = workflowRunsMatch[1] as string;
+            const prerequisite = ADVISOR_REPAIR_PREREQUISITE_WORKFLOWS.some(
+              (candidate) => candidate === workflowName,
+            );
+            const runId = prerequisite
+              ? 0
+              : ADVISOR_REPAIR_HEAD_WORKFLOWS.findIndex((item) => item.workflow === workflowName) +
+                1;
+            const run: Record<string, unknown> = prerequisite
+              ? {}
+              : ((await request(
+                  "GET",
+                  `/repos/${selection.repository}/actions/runs/${runId}`,
+                )) as Record<string, unknown>);
+            const runs: Record<string, unknown>[] =
+              !prerequisite && dispatchedWorkflows.has(workflowName) && correlationMode !== "zero"
+                ? [run]
+                : [];
+            return {
+              workflow_runs:
+                correlationMode === "ambiguous" && runs.length === 1 ? [...runs, run] : runs,
+            };
+          }
+          case method === "POST" && workflow !== undefined: {
+            const dispatch = body as { ref?: unknown; inputs?: Record<string, unknown> };
+            expect(dispatch.ref).toBe("main");
+            expect(dispatch.inputs).toMatchObject({
+              repair_head_sha: generatedHeadSha,
+              repair_base_sha: selection.baseSha,
+              repair_attempt_key: selection.attemptKey,
+            });
+            expect(
+              ["pr.yaml", "openshell-sdk-package-pr.yaml"].includes(workflow)
+                ? dispatch.inputs?.repair_source_head_sha
+                : selection.sourceHeadSha,
+            ).toBe(selection.sourceHeadSha);
+            dispatchedWorkflows.add(workflow);
+            return {};
+          }
+          case method === "GET" && runMatch !== null: {
+            const runId = Number(runMatch[1]);
+            const specification = ADVISOR_REPAIR_HEAD_WORKFLOWS[runId - 1];
+            expect(specification).toBeDefined();
+            return {
+              id: runId,
+              event: "workflow_dispatch",
+              path: `.github/workflows/${specification?.workflow}`,
+              status: "completed",
+              conclusion: specification?.workflow === failedWorkflow ? "failure" : "success",
+              display_title: runName,
+              head_branch: "main",
+              head_sha: "5".repeat(40),
+              html_url: `https://github.com/${selection.repository}/actions/runs/${runId}`,
+              run_attempt: 1,
+            };
+          }
+          case method === "GET" && jobsMatch !== null: {
+            const runId = Number(jobsMatch[1]);
+            const specification = ADVISOR_REPAIR_HEAD_WORKFLOWS[runId - 1];
+            expect(specification).toBeDefined();
+            expect(Number(jobsMatch[2])).toBe(1);
+            return {
+              jobs: [
+                {
+                  id: runId * 10,
+                  name: mismatchedReceipt ? `${receiptName}-mismatch` : receiptName,
+                  status: "completed",
+                  conclusion: "success",
+                  html_url: `https://github.com/${selection.repository}/actions/runs/${runId}/job/${runId * 10}`,
+                  run_attempt: 1,
+                },
+                ...(specification?.checks ?? []).map((name, index) => ({
+                  id: runId * 10 + index + 1,
+                  name,
+                  status: "completed",
+                  conclusion: "success",
+                  html_url: `https://github.com/${selection.repository}/actions/runs/${runId}/job/${runId * 10 + index + 1}`,
+                  run_attempt: 1,
+                })),
+              ],
+            };
+          }
+          case method === "GET" && apiPath.includes("/check-runs?"):
+            return { check_runs: [] };
+          case method === "POST" && apiPath.endsWith("/check-runs"): {
+            const check = body as { name: string; details_url: string; external_id: string };
+            return {
+              id: 100 + request.mock.calls.filter(([called]) => called === "POST").length,
+              name: check.name,
+              external_id: check.external_id,
+              conclusion: "success",
+              details_url: check.details_url,
+              html_url: `https://github.com/${selection.repository}/runs/check/${check.name}`,
+            };
+          }
+          default:
+            throw new Error(`unexpected request: ${method} ${apiPath}`);
         }
-        case method === "POST" && workflow !== undefined: {
-          const dispatch = body as { ref?: unknown; inputs?: Record<string, unknown> };
-          expect(dispatch.ref).toBe("main");
-          expect(dispatch.inputs).toMatchObject({
-            repair_head_sha: generatedHeadSha,
-            repair_base_sha: selection.baseSha,
-            repair_attempt_key: selection.attemptKey,
-          });
-          expect(
-            workflow.workflow === "pr.yaml"
-              ? dispatch.inputs?.repair_source_head_sha
-              : selection.sourceHeadSha,
-          ).toBe(selection.sourceHeadSha);
-          dispatchedWorkflows.add(workflow.workflow);
-          return {};
-        }
-        case method === "GET" && runMatch !== null: {
-          const runId = Number(runMatch[1]);
-          const specification = ADVISOR_REPAIR_HEAD_WORKFLOWS[runId - 1];
-          expect(specification).toBeDefined();
-          return {
-            id: runId,
-            event: "workflow_dispatch",
-            path: `.github/workflows/${specification?.workflow}`,
-            status: "completed",
-            conclusion: specification?.workflow === failedWorkflow ? "failure" : "success",
-            display_title: runName,
-            head_branch: "main",
-            head_sha: "5".repeat(40),
-            html_url: `https://github.com/${selection.repository}/actions/runs/${runId}`,
-            run_attempt: 1,
-          };
-        }
-        case method === "GET" && jobsMatch !== null: {
-          const runId = Number(jobsMatch[1]);
-          const specification = ADVISOR_REPAIR_HEAD_WORKFLOWS[runId - 1];
-          expect(specification).toBeDefined();
-          expect(Number(jobsMatch[2])).toBe(1);
-          return {
-            jobs: [
-              {
-                id: runId * 10,
-                name: mismatchedReceipt ? `${receiptName}-mismatch` : receiptName,
-                status: "completed",
-                conclusion: "success",
-                html_url: `https://github.com/${selection.repository}/actions/runs/${runId}/job/${runId * 10}`,
-                run_attempt: 1,
-              },
-              ...(specification?.checks ?? []).map((name, index) => ({
-                id: runId * 10 + index + 1,
-                name,
-                status: "completed",
-                conclusion: "success",
-                html_url: `https://github.com/${selection.repository}/actions/runs/${runId}/job/${runId * 10 + index + 1}`,
-                run_attempt: 1,
-              })),
-            ],
-          };
-        }
-        case method === "GET" && apiPath.includes("/check-runs?"):
-          return { check_runs: [] };
-        case method === "POST" && apiPath.endsWith("/check-runs"): {
-          const check = body as { name: string; details_url: string; external_id: string };
-          return {
-            id: 100 + request.mock.calls.filter(([called]) => called === "POST").length,
-            name: check.name,
-            external_id: check.external_id,
-            conclusion: "success",
-            details_url: check.details_url,
-            html_url: `https://github.com/${selection.repository}/runs/check/${check.name}`,
-          };
-        }
-        default:
-          throw new Error(`unexpected request: ${method} ${apiPath}`);
-      }
-    });
+      },
+    );
     const verify = () =>
       waitForAdvisorRepairHead({
         prNumber: selection.prNumber,
@@ -303,6 +316,7 @@ describe("PR Review Advisor generated-head evidence", () => {
       workflows: { length: 6 },
       checks: { length: 5 },
     });
+    expect(dispatchedWorkflows).toContain("openshell-sdk-package-pr.yaml");
     failedWorkflow = "pr.yaml";
     dispatchedWorkflows.clear();
     await expect(verify()).rejects.toThrow("generated-head pr.yaml run failed");

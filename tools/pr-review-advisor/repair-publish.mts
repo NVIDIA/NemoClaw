@@ -53,6 +53,8 @@ export const ADVISOR_REPAIR_HEAD_WORKFLOWS = [
   { workflow: "pr-review-advisor.yaml", checks: [] },
 ] as const;
 
+export const ADVISOR_REPAIR_PREREQUISITE_WORKFLOWS = ["openshell-sdk-package-pr.yaml"] as const;
+
 type WorkflowRun = {
   id?: unknown;
   event?: unknown;
@@ -207,7 +209,9 @@ function repairValidationInputs(
     };
   return {
     repair_pr_number: String(input.prNumber),
-    ...(workflow === "pr.yaml" ? { repair_source_head_sha: input.sourceHeadSha } : {}),
+    ...(["pr.yaml", "openshell-sdk-package-pr.yaml"].includes(workflow)
+      ? { repair_source_head_sha: input.sourceHeadSha }
+      : {}),
     repair_head_sha: input.generatedHeadSha,
     repair_base_sha: input.baseSha,
     repair_attempt_key: input.attemptKey,
@@ -394,6 +398,11 @@ export async function waitForAdvisorRepairHead(input: {
   const attempts = input.attempts ?? 120;
   const runName = repairValidationRunName(input.attemptKey, input.generatedHeadSha);
   const receiptName = repairValidationReceiptName(input);
+  await Promise.all(
+    ADVISOR_REPAIR_PREREQUISITE_WORKFLOWS.map((workflow) =>
+      dispatchRepairValidation(workflow, input, runName, input.request),
+    ),
+  );
   const pendingDispatches = await Promise.all(
     ADVISOR_REPAIR_HEAD_WORKFLOWS.map(({ workflow }) =>
       dispatchRepairValidation(workflow, input, runName, input.request),

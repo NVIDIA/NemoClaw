@@ -182,7 +182,7 @@
       "category": "security"
     },
     {
-      "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
+      "file": "test/automation/pull-requests/pr-sdk-package-credential.test.ts",
       "test": "keeps package access out of pull request controlled execution",
       "category": "security"
     },

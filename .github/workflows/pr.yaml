@@ -280,8 +280,9 @@ jobs:
         env:
           BASE_SHA: ${{ inputs.repair_attempt_key != '' && inputs.repair_base_sha || github.event.pull_request.base.sha }}
           GH_TOKEN: ${{ github.token }}
-          HEAD_SHA: ${{ inputs.repair_attempt_key != '' && inputs.repair_source_head_sha || github.event.pull_request.head.sha }}
+          HEAD_SHA: ${{ inputs.repair_attempt_key != '' && inputs.repair_head_sha || github.event.pull_request.head.sha }}
           HEAD_REPOSITORY: NVIDIA/NemoClaw
+          PACKAGE_EVENT: ${{ inputs.repair_attempt_key != '' && 'workflow_dispatch' || 'pull_request_target' }}
           PR_NUMBER: ${{ inputs.repair_attempt_key != '' && inputs.repair_pr_number || github.event.pull_request.number }}
         run: |
           set -euo pipefail
@@ -342,8 +343,9 @@ jobs:
           newest_matching_run_url=""
           newest_matching_run_status=""
           for attempt in $(seq 1 84); do
+            package_event="$PACKAGE_EVENT"
             if ! runs="$(gh api \
-              "repos/$GITHUB_REPOSITORY/actions/workflows/openshell-sdk-package-pr.yaml/runs?event=pull_request_target&per_page=100" \
+              "repos/$GITHUB_REPOSITORY/actions/workflows/openshell-sdk-package-pr.yaml/runs?event=$package_event&per_page=100" \
               2>/dev/null)"; then
               echo "::error title=SDK package workflow unavailable::Could not inspect reviewed SDK package workflow runs. After GitHub Actions access returns, rerun the failed openshell-sdk-package job in CI / Pull Request."
               exit 1
@@ -351,11 +353,20 @@ jobs:
             matches="$(jq -cer \
               --arg base "$BASE_SHA" \
               --arg head "$HEAD_SHA" \
+              --arg attempt "$REPAIR_ATTEMPT_KEY" \
+              --arg event "$package_event" \
               --argjson pr "$PR_NUMBER" '
                 [.workflow_runs[] |
-                  select(.event == "pull_request_target") |
-                  select(any(.pull_requests[]?;
-                    .number == $pr and .head.sha == $head and .base.sha == $base))] |
+                  select(.event == $event) |
+                  select(
+                    if $event == "workflow_dispatch" then
+                      .path == ".github/workflows/openshell-sdk-package-pr.yaml" and
+                      .head_branch == "main" and
+                      .display_title == ("Repair validation " + $attempt + " head " + $head)
+                    else
+                      any(.pull_requests[]?;
+                        .number == $pr and .head.sha == $head and .base.sha == $base)
+                    end)] |
                 sort_by(.created_at) | reverse
               ' <<<"$runs" 2>/dev/null || true)"
             if jq -e 'length > 0' <<<"$matches" >/dev/null 2>&1; then
@@ -412,7 +423,7 @@ jobs:
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
           run-id: ${{ steps.locate.outputs.run_id }}
-          name: openshell-sdk-${{ inputs.repair_attempt_key != '' && inputs.repair_source_head_sha || github.event.pull_request.head.sha }}
+          name: openshell-sdk-${{ inputs.repair_attempt_key != '' && inputs.repair_head_sha || github.event.pull_request.head.sha }}
           path: ${{ runner.temp }}/openshell-sdk
 
       - name: Publish SDK archive inside this CI run

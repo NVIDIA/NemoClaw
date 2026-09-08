@@ -30,6 +30,7 @@ const dco = workflow(".github/workflows/dco-check.yaml");
 const installerHash = workflow(".github/workflows/installer-hash-check.yaml");
 const codeScanning = workflow(".github/workflows/code-scanning.yaml");
 const advisor = workflow(".github/workflows/pr-review-advisor.yaml");
+const sdkPackage = workflow(".github/workflows/openshell-sdk-package-pr.yaml");
 const standardGuard = step(
   commitLint.jobs["commit-lint"],
   "Bind validation to the live generated head",
@@ -47,6 +48,10 @@ const prGuard = step(pr.jobs.changes, "Bind validation to the live generated hea
 const advisorGuard = step(
   advisor.jobs["discover-specialists"],
   "Bind validation to the live generated head",
+);
+const sdkPackageGuard = step(
+  sdkPackage.jobs["package-openshell-sdk"],
+  "Bind package production to the live generated head",
 );
 
 function runGuard(guard: WorkflowStep, overrides: Record<string, string> = {}) {
@@ -114,6 +119,7 @@ describe("generated-head repair workflow guards", () => {
     ["code scanning", codeScanningGuard],
     ["pull request", prGuard],
     ["advisor", advisorGuard],
+    ["SDK package", sdkPackageGuard],
   ])("accepts a valid %s exact-head dispatch", (_name, guard) => {
     expect(runGuard(guard)).toBe(0);
   });
@@ -125,6 +131,7 @@ describe("generated-head repair workflow guards", () => {
     ["code scanning", codeScanningGuard],
     ["pull request", prGuard],
     ["advisor", advisorGuard],
+    ["SDK package", sdkPackageGuard],
   ])("rejects a stale head in the %s guard", (_name, guard) => {
     expect(runGuard(guard, { FAKE_HEAD_SHA: "5".repeat(40) })).not.toBe(0);
   });
@@ -136,6 +143,7 @@ describe("generated-head repair workflow guards", () => {
     ["code scanning", codeScanningGuard],
     ["pull request", prGuard],
     ["advisor", advisorGuard],
+    ["SDK package", sdkPackageGuard],
   ])("rejects a changed base in the %s guard", (_name, guard) => {
     expect(runGuard(guard, { FAKE_BASE_SHA: "6".repeat(40) })).not.toBe(0);
   });
@@ -146,6 +154,7 @@ describe("generated-head repair workflow guards", () => {
     ["additional", JSON.stringify([{ sha: "2".repeat(40) }, { sha: "3".repeat(40) }])],
   ])("rejects a %s generated-head parent set", (_name, parents) => {
     expect(runGuard(prGuard, { FAKE_PARENTS: parents })).toBeTruthy();
+    expect(runGuard(sdkPackageGuard, { FAKE_PARENTS: parents })).toBeTruthy();
   });
 
   it.each([

@@ -669,6 +669,41 @@ export function parseValidationReceipt(value: unknown): ValidationReceipt {
   return value as ValidationReceipt;
 }
 
+export type RepairValidationCommand = {
+  command: string;
+  executable: "npm";
+  arguments: string[];
+};
+
+export function repairValidationPlan(selection: RepairSelection): RepairValidationCommand[] {
+  return [
+    {
+      command: "npm ci --ignore-scripts --no-audit --no-fund",
+      executable: "npm",
+      arguments: ["ci", "--ignore-scripts", "--no-audit", "--no-fund"],
+    },
+    {
+      command: "npm run check:diff",
+      executable: "npm",
+      arguments: ["run", "check:diff"],
+    },
+    {
+      command: "npm run test:changed",
+      executable: "npm",
+      arguments: ["run", "test:changed"],
+    },
+    ...(selection.selectedPaths.some((file) => file.startsWith("docs/"))
+      ? [
+          {
+            command: "npm run docs",
+            executable: "npm" as const,
+            arguments: ["run", "docs"],
+          },
+        ]
+      : []),
+  ];
+}
+
 export function validationReceipt(input: {
   selection: RepairSelection;
   candidate: ValidatedCandidate;
@@ -677,14 +712,10 @@ export function validationReceipt(input: {
 }): ValidationReceipt {
   if (input.candidate.candidateDigest !== input.candidateDigestAfter)
     fail("validation changed the approved candidate");
-  const expectedCommands = [
-    "npm ci --ignore-scripts",
-    "npm run check:diff",
-    "npm run test:changed",
-    ...(input.selection.selectedPaths.some((file) => file.startsWith("docs/"))
-      ? ["npm run docs"]
-      : []),
-  ].map((command) => ({ command, exitCode: 0 }));
+  const expectedCommands = repairValidationPlan(input.selection).map(({ command }) => ({
+    command,
+    exitCode: 0,
+  }));
   if (canonicalJson(input.commands) !== canonicalJson(expectedCommands))
     fail("validation receipt does not contain the required trusted commands");
   return parseValidationReceipt({

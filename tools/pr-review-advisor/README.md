@@ -54,6 +54,12 @@ explicitly requested, the protected deterministic publisher rechecks the live st
 one verified, non-force, compare-and-swap branch update. A trusted-main reporter then runs and
 records the approved exact-generated-SHA checks without starting another repair attempt.
 
+`repair-contract.mts` owns the fixed validation plan, and `repair-validate.mts` executes that plan
+and creates its receipt from the observed successful commands. Generated-head validation also
+dispatches the credential-bearing SDK packager from trusted `main`; `CI / Pull Request` accepts its
+artifact only when the workflow-dispatch identity, attempt key, generated SHA, and artifact name
+match the repair being checked.
+
 Trusted selection accepts a finding only when its specialist and path match one of these pairs and
 its exclusion list is empty:
 
@@ -92,7 +98,8 @@ Ordinary `pull_request_target` analysis jobs remain advisory-only and read-only.
 advisory-comment publisher can update only its sticky workflow-link comment.
 
 The Advisor owns eligibility, finding identity, resolution, publication, and lifecycle orchestration
-in `repair-contract.mts`, `repair-resolve.mts`, `repair-publish.mts`, and the two Advisor workflows.
+in `repair-contract.mts`, `repair-resolve.mts`, `repair-validate.mts`, `repair-publish.mts`, and the
+two Advisor workflows.
 It reuses the existing OpenShell runtime and the neutral pull-request Git publication primitives;
 the conflict fixer retains only conflict discovery, resolution, and publication commands.
 

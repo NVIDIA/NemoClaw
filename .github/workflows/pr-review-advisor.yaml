@@ -819,45 +819,12 @@ jobs:
             proposalFile: path.join(candidateArtifact, "proposal.json"),
           });
           fs.writeFileSync(path.join(process.env.INPUT_DIR, "candidate.json"), `${JSON.stringify(candidate)}\n`, { mode: 0o600 });
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, `docs=${selection.selectedPaths.some((file) => file.startsWith("docs/"))}\n`);
           NODE
 
-      - name: Install candidate dependencies without lifecycle scripts
-        run: npm --prefix "$CANDIDATE_DIR" ci --ignore-scripts --no-audit --no-fund
-
-      - name: Run trusted formatting, lint, type, architecture, and security checks
-        run: npm --prefix "$CANDIDATE_DIR" run check:diff
-
-      - name: Run trusted changed-file tests
-        run: npm --prefix "$CANDIDATE_DIR" run test:changed
-
-      - name: Validate selected documentation
-        if: ${{ steps.reconstruct.outputs.docs == 'true' }}
-        run: npm --prefix "$CANDIDATE_DIR" run docs
-
-      - name: Seal the unchanged validated candidate
+      - name: Run the trusted validation plan and seal the unchanged candidate
         env:
-          DOCS_VALIDATED: ${{ steps.reconstruct.outputs.docs }}
           OUTPUT_DIR: ${{ runner.temp }}/validated
-        run: |
-          node --experimental-strip-types --no-warnings --input-type=module <<'NODE'
-          import fs from "node:fs";
-          import path from "node:path";
-          import { candidateDigest, parseSelection, readJson, validationReceipt } from "./advisor/tools/pr-review-advisor/repair-contract.mts";
-          const selection = parseSelection(readJson(path.join(process.env.INPUT_DIR, "context", "selection.json")));
-          const candidate = readJson(path.join(process.env.INPUT_DIR, "candidate.json"));
-          const commands = ["npm ci --ignore-scripts", "npm run check:diff", "npm run test:changed"];
-          if (process.env.DOCS_VALIDATED === "true") commands.push("npm run docs");
-          const receipt = validationReceipt({
-            selection,
-            candidate,
-            candidateDigestAfter: candidateDigest(process.env.CANDIDATE_DIR, selection.sourceHeadSha),
-            commands: commands.map((command) => ({ command, exitCode: 0 })),
-          });
-          fs.mkdirSync(process.env.OUTPUT_DIR, { mode: 0o700 });
-          fs.copyFileSync(path.join(process.env.INPUT_DIR, "candidate", "repair.patch"), path.join(process.env.OUTPUT_DIR, "repair.patch"));
-          fs.writeFileSync(path.join(process.env.OUTPUT_DIR, "validation.json"), `${JSON.stringify(receipt)}\n`, { mode: 0o600 });
-          NODE
+        run: node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-validate.mts"
 
       - id: upload
         name: Upload trusted validation artifact

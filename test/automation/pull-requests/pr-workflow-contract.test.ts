@@ -177,6 +177,8 @@ type SdkPackageLocatorFixture = Readonly<{
   artifactsByRunId?: Readonly<Record<string, unknown>>;
   inspectorOutput?: string;
   inspectorRequired?: unknown;
+  packageEvent?: string;
+  repairAttemptKey?: string;
   runs: readonly unknown[];
   step: WorkflowStep;
   workflowRunFailure?: boolean;
@@ -247,9 +249,11 @@ function runSdkPackageLocator(fixture: SdkPackageLocatorFixture): Readonly<{
         GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
         GITHUB_WORKSPACE: tempRoot,
         HEAD_REPOSITORY: "NVIDIA/NemoClaw",
+        PACKAGE_EVENT: fixture.packageEvent ?? "pull_request_target",
         HEAD_SHA: "head-sha",
         PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
         PR_NUMBER: "10368",
+        REPAIR_ATTEMPT_KEY: fixture.repairAttemptKey ?? "",
       },
       tempRoot,
     );
@@ -267,6 +271,7 @@ function sdkPackageWorkflowRun(
   status: string,
   conclusion: string | null,
   createdAt: string,
+  overrides: Readonly<Record<string, unknown>> = {},
 ): Readonly<Record<string, unknown>> {
   return {
     conclusion,
@@ -276,6 +281,7 @@ function sdkPackageWorkflowRun(
     id,
     pull_requests: [{ base: { sha: "base-sha" }, head: { sha: "head-sha" }, number: 10368 }],
     status,
+    ...overrides,
   };
 }
 
@@ -520,6 +526,10 @@ describe("pull request and main workflow contracts", () => {
     const repairVerify = generatedHeadWorkflow.jobs.validate;
     const repairRequest = generatedHeadWorkflow.jobs.locate;
     const audit = advisorWorkflow.jobs["repair-audit"];
+    const validatorText = readFileSync(
+      "tools/pr-review-advisor/repair-validate.mts",
+      "utf8",
+    );
     expect(advisorWorkflow.permissions).toEqual({});
     expect(select.if).toContain("github.event_name == 'workflow_dispatch'");
     expect(select.if).toContain("vars.PR_REVIEW_ADVISOR_REPAIR_ENABLED == 'true'");
@@ -582,8 +592,10 @@ describe("pull request and main workflow contracts", () => {
     expect(resolveText).toContain("advisor-repair-${{ github.run_id }}");
     expect(validateText).toContain("needs.repair-select.outputs.context-artifact-id");
     expect(validateText).toContain("needs.repair-resolve.outputs.candidate-artifact-id");
-    expect(validateText).toContain("run check:diff");
-    expect(validateText).toContain("run test:changed");
+    expect(validateText).toContain("repair-validate.mts");
+    expect(validatorText).toContain("repairValidationPlan");
+    expect(validateText).not.toContain("run check:diff");
+    expect(validateText).not.toContain("run test:changed");
     expect(validateText).not.toContain("test:live-e2e");
     expect(validateText).not.toContain("publishAdvisorRepair");
     expect(repairPublishText).toContain("needs.repair-select.outputs.context-artifact-id");
@@ -660,13 +672,36 @@ describe("pull request and main workflow contracts", () => {
       prWorkflow.jobs["openshell-sdk-package"],
       "Locate exact base-controlled SDK package run",
     );
-    expect(packageLookup.env?.HEAD_SHA).toContain("inputs.repair_source_head_sha");
+    expect(packageLookup.env?.HEAD_SHA).toContain("inputs.repair_head_sha");
+    expect(packageLookup.env?.PACKAGE_EVENT).toContain("workflow_dispatch");
+    expect(packageLookup.run).toContain('.display_title == ("Repair validation " + $attempt');
     expect(
       requiredWorkflowStep(
         prWorkflow.jobs["openshell-sdk-package"],
         "Download exact base-controlled SDK archive",
       ).with?.name,
-    ).toContain("inputs.repair_source_head_sha");
+    ).toContain("inputs.repair_head_sha");
+    expect(
+      (
+        sdkPackageWorkflow.on?.workflow_dispatch as
+          | { inputs?: Record<string, unknown> }
+          | undefined
+      )?.inputs,
+    ).toEqual(
+      expect.objectContaining({
+        repair_attempt_key: expect.any(Object),
+        repair_base_sha: expect.any(Object),
+        repair_head_sha: expect.any(Object),
+        repair_pr_number: expect.any(Object),
+        repair_source_head_sha: expect.any(Object),
+      }),
+    );
+    const packageGuard = requiredWorkflowStep(
+      sdkPackageJob,
+      "Bind package production to the live generated head",
+    );
+    expect(packageGuard.run).toContain('commits/$HEAD_SHA');
+    expect(packageGuard.run).toContain('.parents[0].sha == $parent');
     expect(JSON.stringify(codeScanningWorkflow)).toContain(
       "inputs.repair_attempt_key != '' && inputs.repair_head_sha",
     );
@@ -795,6 +830,32 @@ describe("pull request and main workflow contracts", () => {
     expect(locate.run).toContain("available only to same-repository pull requests");
     expect(locate.run).not.toContain("@nvidia/openshell-sdk@0.0.106");
     expect(locate.run).not.toContain("nvidia-openshell-sdk-0.0.106.tgz");
+  });
+
+  it("binds generated-head SDK consumption to its trusted package dispatch (#10791)", () => {
+    const packageJob = prWorkflow.jobs["openshell-sdk-package"];
+    const step = requiredWorkflowStep(packageJob, "Locate exact base-controlled SDK package run");
+    const attemptKey = `sha256:${"a".repeat(64)}`;
+    const { githubOutput, result } = runSdkPackageLocator({
+      step,
+      packageEvent: "workflow_dispatch",
+      repairAttemptKey: attemptKey,
+      runs: [
+        sdkPackageWorkflowRun(321, "completed", "success", "2026-08-27T00:00:00Z", {
+          display_title: `Repair validation ${attemptKey} head head-sha`,
+          event: "workflow_dispatch",
+          head_branch: "main",
+          path: ".github/workflows/openshell-sdk-package-pr.yaml",
+          pull_requests: [],
+        }),
+      ],
+      artifactsByRunId: {
+        "321": { artifacts: [{ expired: false, name: "openshell-sdk-head-sha" }] },
+      },
+    });
+
+    expect(result).toMatchObject({ status: 0, stderr: "" });
+    expect(githubOutput).toContain("run_id=321\n");
   });
 
   // The one-time bootstrap may proceed only while both lockfiles use the public registry.
@@ -1073,66 +1134,6 @@ describe("pull request and main workflow contracts", () => {
     expect(download.with).toMatchObject({
       name: "openshell-sdk-package",
       path: "${{ runner.temp }}/openshell-sdk",
-    });
-  });
-
-  // source-shape-contract: security -- The package credential must remain in a base-loaded workflow that uploads only the verified SDK archive
-  it("keeps package access out of pull request controlled execution", () => {
-    expect(sdkPackageWorkflow.on).toEqual({
-      pull_request_target: { types: ["opened", "synchronize", "reopened", "edited"] },
-    });
-    expect(sdkPackageWorkflow.concurrency).toEqual({
-      group:
-        "openshell-sdk-package-${{ github.event.pull_request.number }}-${{ github.event.action != 'edited' || github.event.changes.base != null }}",
-      "cancel-in-progress": true,
-    });
-    expect(sdkPackageWorkflow.permissions).toEqual({ contents: "read" });
-    expect(sdkPackageJob.permissions).toEqual({ contents: "read", packages: "read" });
-    expect(sdkPackageJob.if).toBe(
-      "${{ github.event.pull_request.head.repo.full_name == github.repository && (github.event.action != 'edited' || github.event.changes.base != null) }}",
-    );
-    expect(sdkPackageJob["timeout-minutes"]).toBe(5);
-
-    const checkout = requiredWorkflowStep(
-      sdkPackageJob,
-      "Checkout base-controlled package verifier",
-    );
-    expect(checkout.uses).toBe(trustedCheckoutAction);
-    expect(checkout.with).toMatchObject({
-      ref: "${{ github.event.pull_request.base.sha }}",
-      "persist-credentials": false,
-    });
-    expect(String(checkout.with?.["sparse-checkout"])).not.toContain("pull_request.head");
-
-    const fetch = requiredWorkflowStep(
-      sdkPackageJob,
-      "Download and verify exact OpenShell SDK package",
-    );
-    expect(fetch.env).toEqual({
-      NEMOCLAW_OPEN_SHELL_SDK_OUTPUT_DIRECTORY: "${{ runner.temp }}/openshell-sdk",
-      NODE_AUTH_TOKEN: "${{ github.token }}",
-    });
-    expect(fetch.run).toContain(
-      "node --experimental-strip-types scripts/checks/package-openshell-sdk-for-pr.mts",
-    );
-    expect(fetch.run).toContain("artifact_path=");
-    expect(
-      (sdkPackageJob.steps ?? [])
-        .filter((candidate) => candidate.name !== fetch.name)
-        .map((candidate) => candidate.env?.NODE_AUTH_TOKEN),
-    ).toEqual(
-      (sdkPackageJob.steps ?? [])
-        .filter((candidate) => candidate.name !== fetch.name)
-        .map(() => undefined),
-    );
-
-    const upload = requiredWorkflowStep(sdkPackageJob, "Upload verified OpenShell SDK archive");
-    expect(upload.uses).toBe("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a");
-    expect(upload.with).toMatchObject({
-      name: "openshell-sdk-${{ github.event.pull_request.head.sha }}",
-      path: "${{ steps.package.outputs.artifact_path }}",
-      "if-no-files-found": "error",
-      "retention-days": 1,
     });
   });
 
