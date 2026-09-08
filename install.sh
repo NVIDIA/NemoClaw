@@ -87,6 +87,7 @@ installed_nemoclaw_release_version() {
   output="$(run_bounded_bootstrap_lookup "installed NemoClaw version lookup" "$cli_path" --version)" || {
     status=$?
     ((status == 124)) && return 124
+    ((status >= 128)) && return "$status"
     return 2
   }
   if [[ "$output" =~ ^nemoclaw[[:space:]]+v([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?)$ ]]; then
@@ -103,6 +104,7 @@ checkout_release_version() {
   refs="$(run_bounded_bootstrap_lookup "maintained release tag lookup" git -C "$source_root" ls-remote --tags origin 'refs/tags/v*')" || {
     status=$?
     ((status == 124)) && exit 1
+    ((status >= 128)) && exit "$status"
     return 0
   }
   while read -r commit ref; do
@@ -130,24 +132,20 @@ release_version_is_newer() {
 }
 
 run_bounded_bootstrap_lookup() {
-  local label="$1" output_file command_pid status ticks=0 grace_ticks
+  local label="$1" output_file command_pid status ticks=0
   shift
   output_file="$(mktemp "${TMPDIR:-/tmp}/nemoclaw-bootstrap-lookup.XXXXXX")"
   set -m
   "$@" >"$output_file" 2>/dev/null &
   command_pid=$!
   set +m
+  trap 'trap - INT TERM EXIT; terminate_bootstrap_lookup_group "$command_pid"; rm -f "$output_file"; exit 130' INT
+  trap 'trap - INT TERM EXIT; terminate_bootstrap_lookup_group "$command_pid"; rm -f "$output_file"; exit 143' TERM
+  trap 'status=$?; trap - INT TERM EXIT; terminate_bootstrap_lookup_group "$command_pid"; rm -f "$output_file"; exit "$status"' EXIT
   while kill -0 "$command_pid" 2>/dev/null; do
     if ((ticks >= BOOTSTRAP_LOOKUP_TIMEOUT_SECONDS * 10)); then
-      kill -TERM -- "-$command_pid" 2>/dev/null || kill -TERM "$command_pid" 2>/dev/null || true
-      for ((grace_ticks = 0; grace_ticks < 10; grace_ticks++)); do
-        kill -0 "$command_pid" 2>/dev/null || break
-        sleep 0.1
-      done
-      if kill -0 "$command_pid" 2>/dev/null; then
-        kill -KILL -- "-$command_pid" 2>/dev/null || kill -KILL "$command_pid" 2>/dev/null || true
-      fi
-      wait "$command_pid" 2>/dev/null || true
+      trap - INT TERM EXIT
+      terminate_bootstrap_lookup_group "$command_pid"
       rm -f "$output_file"
       printf '[ERROR] Timed out during %s after %s seconds.\n' "$label" "$BOOTSTRAP_LOOKUP_TIMEOUT_SECONDS" >&2
       printf '        The installed CLI was not changed. Retry or select an explicit immutable release tag.\n' >&2
@@ -164,8 +162,26 @@ run_bounded_bootstrap_lookup() {
   if ((status == 0)); then
     cat "$output_file"
   fi
+  trap - INT TERM EXIT
   rm -f "$output_file"
   return "$status"
+}
+
+terminate_bootstrap_lookup_group() {
+  local command_pid="$1" grace_ticks
+  kill -0 "$command_pid" 2>/dev/null || {
+    wait "$command_pid" 2>/dev/null || true
+    return
+  }
+  kill -TERM -- "-$command_pid" 2>/dev/null || kill -TERM "$command_pid" 2>/dev/null || true
+  for ((grace_ticks = 0; grace_ticks < 10; grace_ticks++)); do
+    kill -0 "$command_pid" 2>/dev/null || break
+    sleep 0.1
+  done
+  if kill -0 "$command_pid" 2>/dev/null; then
+    kill -KILL -- "-$command_pid" 2>/dev/null || kill -KILL "$command_pid" 2>/dev/null || true
+  fi
+  wait "$command_pid" 2>/dev/null || true
 }
 
 guard_implicit_maintained_downgrade() {
@@ -178,6 +194,7 @@ guard_implicit_maintained_downgrade() {
     status=$?
     ((status == 3)) && return 0
     ((status == 124)) && exit 1
+    ((status >= 128)) && exit "$status"
     printf '[ERROR] Cannot verify the installed NemoClaw version before selecting maintained lkg.\n' >&2
     printf '        The installed CLI was not changed. Repair it or select an explicit immutable release tag.\n' >&2
     exit 1

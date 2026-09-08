@@ -19,11 +19,14 @@ function runInstall(
   installedVersion: string,
   targetVersion: string,
   extraEnvironment: Record<string, string> = {},
+  options: { lookupTimeoutSeconds?: number; useRealSleep?: boolean } = {},
 ) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-downgrade-"));
   temporaryDirectories.push(root);
   const bin = path.join(root, "bin");
   const payloadMarker = path.join(root, "payload-ran");
+  const lookupPid = path.join(root, "lookup.pid");
+  const interruptSent = path.join(root, "interrupt-sent");
   fs.mkdirSync(bin);
   writeExecutable(
     path.join(bin, "nemoclaw"),
@@ -31,6 +34,7 @@ function runInstall(
 case "${installedVersion}" in
   hang) /bin/sleep 60 ;;
   ignore-term) trap '' TERM; while :; do :; done ;;
+  interrupt) printf '%s' "$$" >"\${LOOKUP_PID:?}"; /bin/sleep 60 ;;
   invalid) printf 'not a NemoClaw version\n' ;;
   *) printf 'nemoclaw v%s\n' "${installedVersion}" ;;
 esac
@@ -72,24 +76,37 @@ PAYLOAD
 esac
 `,
   );
-  const sleepBody =
-    ["hang", "ignore-term"].includes(installedVersion) || targetVersion === "hang"
-      ? "#!/usr/bin/env bash\nexit 0\n"
-      : '#!/usr/bin/env bash\nexec /bin/sleep "$@"\n';
+  const sleepBody = options.useRealSleep
+    ? '#!/usr/bin/env bash\nexec /bin/sleep "$@"\n'
+    : installedVersion === "interrupt"
+      ? '#!/usr/bin/env bash\nif [[ -e "${LOOKUP_PID:?}" && ! -e "${INTERRUPT_SENT:?}" ]]; then touch "$INTERRUPT_SENT"; kill -INT "$PPID"; fi\n'
+      : ["hang", "ignore-term"].includes(installedVersion) || targetVersion === "hang"
+        ? "#!/usr/bin/env bash\nexit 0\n"
+        : '#!/usr/bin/env bash\nexec /bin/sleep "$@"\n';
   writeExecutable(path.join(bin, "sleep"), sleepBody);
+
+  const installerSource = fs
+    .readFileSync(INSTALLER, "utf8")
+    .replace(
+      "BOOTSTRAP_LOOKUP_TIMEOUT_SECONDS=30",
+      `BOOTSTRAP_LOOKUP_TIMEOUT_SECONDS=${options.lookupTimeoutSeconds ?? 30}`,
+    );
 
   const result = spawnSync("bash", [], {
     cwd: root,
-    input: fs.readFileSync(INSTALLER),
+    input: installerSource,
     encoding: "utf8",
     env: {
       HOME: root,
       PATH: `${bin}:/usr/bin:/bin`,
       EXECUTION_MARKER: payloadMarker,
+      INTERRUPT_SENT: interruptSent,
+      LOOKUP_PID: lookupPid,
+      TMPDIR: root,
       ...extraEnvironment,
     },
   });
-  return { result, payloadMarker };
+  return { lookupPid, payloadMarker, result, root };
 }
 
 afterEach(() => {
@@ -141,6 +158,15 @@ describe("public installer downgrade guard", () => {
   it("runs an older release when the user selects its tag", () => {
     const { result, payloadMarker } = runInstall("0.0.118", "0.0.109", {
       NEMOCLAW_INSTALL_TAG: "v0.0.109",
+    });
+
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(payloadMarker)).toBe(true);
+  });
+
+  it("runs an older release when the user selects another explicit ref", () => {
+    const { result, payloadMarker } = runInstall("0.0.118", "0.0.109", {
+      NEMOCLAW_INSTALL_TAG: "latest",
     });
 
     expect(result.status).toBe(0);
@@ -201,4 +227,35 @@ describe("public installer downgrade guard", () => {
     },
     15_000,
   );
+
+  it("waits for the configured lookup deadline when real sleep is used", () => {
+    const startedAt = performance.now();
+    const { result, payloadMarker } = runInstall(
+      "hang",
+      "0.0.109",
+      {},
+      {
+        lookupTimeoutSeconds: 1,
+        useRealSleep: true,
+      },
+    );
+    const elapsedMs = performance.now() - startedAt;
+
+    expect(result.status).toBe(1);
+    expect(elapsedMs).toBeGreaterThanOrEqual(900);
+    expect(elapsedMs).toBeLessThan(5_000);
+    expect(fs.existsSync(payloadMarker)).toBe(false);
+  });
+
+  it("cleans up an active lookup when the installer is interrupted", () => {
+    const { lookupPid, payloadMarker, result, root } = runInstall("interrupt", "0.0.109");
+
+    expect(result.status).toBe(130);
+    expect(fs.existsSync(payloadMarker)).toBe(false);
+    expect(
+      fs.readdirSync(root).filter((name) => name.startsWith("nemoclaw-bootstrap-lookup.")),
+    ).toEqual([]);
+    const pid = Number(fs.readFileSync(lookupPid, "utf8"));
+    expect(() => process.kill(pid, 0)).toThrow();
+  });
 });
