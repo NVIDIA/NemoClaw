@@ -28,8 +28,9 @@ create another review event.
 For a contributor PR, use the semantic scope lock and candidate baseline that
 `nemoclaw-contributor-create-pr` provides before collection. The lock records the accepted outcome,
 delivered behavior, permitted mechanisms, deferred scope, and pre-authorized repair paths or path
-rules. The baseline records the candidate and base SHAs, actual changed paths, and total additions and
-deletions. A reviewer or bot finding cannot change either record. Only an explicit user or maintainer
+rules. The baseline records the candidate and base SHAs, actual changed paths, and the total of
+additions plus deletions. A reviewer or bot finding cannot change either record. Only an explicit user
+or maintainer
 decision can expand repair-path authority; record the added path, required behavior and mechanism, and
 why the existing authority is insufficient. This procedure does not add these records to maintainer
 workflows; they retain their existing repair-scope contracts until a separately accepted migration
