@@ -214,14 +214,21 @@ describe("docker-driver-gateway-launch", () => {
     const selectedEnv: NodeJS.ProcessEnv = {
       HOME: "/home/tester",
       PATH: "/usr/bin",
+      NEMOCLAW_GATEWAY_RUNTIME: "podman",
       OPENSHELL_GATEWAY: "nemoclaw-8090",
       OPENSHELL_LOCAL_TLS_DIR: "/recorded/tls",
       OPENSHELL_WORKSPACE: "default",
     };
+    const gatewayHostRuntime = prepareNativePodmanGatewayHostRuntime({
+      environment: selectedEnv,
+      platform: "linux",
+      socketPath: "/run/user/1001/podman/podman.sock",
+    });
     const ensureTls = vi
       .spyOn(dockerDriverGatewayLocalTls, "ensureDockerDriverGatewayLocalTlsBundle")
-      .mockImplementation(({ env, stateDir }) => {
+      .mockImplementation(({ env, gatewayHostRuntime: selectedRuntime, stateDir }) => {
         expect(env).toBe(selectedEnv);
+        expect(selectedRuntime).toBe(gatewayHostRuntime);
         return dockerDriverGatewayLocalTls.getDockerDriverGatewayLocalTlsBundle(stateDir);
       });
 
@@ -232,7 +239,11 @@ describe("docker-driver-gateway-launch", () => {
           ensureLocalTlsBundle: true,
           env: selectedEnv,
           gatewayBin,
-          gatewayEnv: { OPENSHELL_DRIVERS: "docker" },
+          gatewayEnv: {
+            OPENSHELL_DRIVERS: "podman",
+            OPENSHELL_PODMAN_SOCKET: gatewayHostRuntime.socketPath ?? "",
+          },
+          gatewayHostRuntime,
           hostGlibcVersion: "2.39",
           platform: "linux",
           requiredGlibcVersions: ["2.39"],
