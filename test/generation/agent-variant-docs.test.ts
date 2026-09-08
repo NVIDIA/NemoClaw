@@ -110,11 +110,16 @@ describe("agent variant docs", () => {
     const pageSource = readFileSync(path.join(repoRoot, "docs", sourcePath), "utf8");
     const render = (variant: "openclaw" | "hermes" | "deepagents") =>
       renderAgentVariantPage(pageSource, variant, { sourcePath });
+    const gatewayStartRepair =
+      "The `start` command repairs the agent runtime and host-side port forwards.";
     const terminalRuntimeScope =
-      "Deep Agents sandboxes are terminal runtimes and do not expose an in-sandbox agent gateway or host-side forward.";
+      "Deep Agents uses a terminal runtime without an in-sandbox agent gateway or host-side port forward.";
     const forwardPrerequisites =
-      "The OpenShell ownership and local endpoint reachability prerequisites for an already active forward do not apply.";
+      "The OpenShell ownership and local endpoint reachability prerequisites for an active port forward do not apply.";
 
+    expect(render("openclaw")).toContain(gatewayStartRepair);
+    expect(render("hermes")).toContain(gatewayStartRepair);
+    expect(render("deepagents")).not.toContain(gatewayStartRepair);
     expect(render("deepagents")).toContain(terminalRuntimeScope);
     expect(render("deepagents")).toContain(forwardPrerequisites);
     expect(render("openclaw")).not.toContain(terminalRuntimeScope);
