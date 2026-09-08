@@ -7,15 +7,16 @@ import { join } from "node:path";
 
 import { expect, it } from "vitest";
 
-import {
-  readE2eOperationsWorkflow,
-  validateE2eOperationsWorkflow,
-} from "../../../tools/e2e/operations-workflow-boundary.mts";
+import { validatePrReviewAdvisorWorkflow } from "../../../tools/pr-review-advisor/workflow-boundary.mts";
 
 const run = "${{ github.run_id }}";
 const attempt = "${{ github.run_attempt }}";
 const temp = "${{ runner.temp }}";
 const matrix = "${{ matrix.advisor.artifact_name }}";
+
+it("accepts the checked-in Advisor workflow", () => {
+  expect(validatePrReviewAdvisorWorkflow()).toEqual([]);
+});
 
 it.each([
   [
@@ -49,6 +50,18 @@ it.each([
     "Unified advisor green checks gate must require",
   ],
   [
+    "successful CI bypass",
+    "endsWith(github.event.workflow_run.display_title, ' gate true')))",
+    "(endsWith(github.event.workflow_run.display_title, ' gate true') || true)))",
+    "Unified advisor green checks gate must require",
+  ],
+  [
+    "dependent job bypass",
+    "if: ${{ github.repository == 'NVIDIA/NemoClaw' }}",
+    "if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' }}",
+    "Unified advisor entry jobs must retain fail-closed conditions",
+  ],
+  [
     "source run identity",
     "format('Advisor after {0}', github.event.workflow_run.display_title)",
     "'Advisor after an unknown run'",
@@ -79,7 +92,7 @@ it.each([
     "Unified advisor must prepare the PR revision from the successful checks run",
   ],
 ])("rejects an unsafe Advisor %s mutation", (_case, before, after, error) => {
-  const directory = mkdtempSync(join(tmpdir(), "nemoclaw-e2e-operations-"));
+  const directory = mkdtempSync(join(tmpdir(), "nemoclaw-pr-review-advisor-"));
   const advisorPath = join(directory, "advisor.yaml");
   try {
     const source = readFileSync(
@@ -87,7 +100,7 @@ it.each([
       "utf8",
     );
     writeFileSync(advisorPath, source.replace(before, after));
-    expect(validateE2eOperationsWorkflow(readE2eOperationsWorkflow(), advisorPath)).toEqual(
+    expect(validatePrReviewAdvisorWorkflow(advisorPath)).toEqual(
       expect.arrayContaining([expect.stringContaining(error)]),
     );
   } finally {

@@ -139,6 +139,16 @@ describe("maintainer merge-gate contributor compliance", () => {
       runConclusion: null,
       event: "pull_request_target",
     },
+    {
+      state: "green gate",
+      name: "Require green PR checks",
+      runId: 9006,
+      status: "COMPLETED",
+      conclusion: "SUCCESS",
+      runStatus: "completed",
+      runConclusion: "success",
+      event: "workflow_run",
+    },
   ])("keeps an authenticated $state PR Review Advisor lane advisory", ({
     name,
     runId,

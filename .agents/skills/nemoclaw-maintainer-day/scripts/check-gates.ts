@@ -1257,6 +1257,7 @@ const PR_METADATA_EDIT_JOB_NAMES = new Set([
 const PR_REVIEW_ADVISOR_WORKFLOW_NAME = "Automation / PR Review Advisor";
 const PR_REVIEW_ADVISOR_WORKFLOW_PATH = ".github/workflows/pr-review-advisor.yaml";
 const ADVISORY_PR_REVIEW_ADVISOR_JOB_NAMES = new Set([
+  "Require green PR checks",
   "Discover review specialists and collect GitHub context",
   "Publish advisor link",
 ]);
