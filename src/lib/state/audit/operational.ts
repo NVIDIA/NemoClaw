@@ -17,7 +17,8 @@ import { resolveNemoclawStateDir } from "../paths";
 
 const OPERATIONAL_AUDIT_DIR = resolveNemoclawStateDir();
 const OPERATIONAL_AUDIT_FILE = join(OPERATIONAL_AUDIT_DIR, "operational-audit.jsonl");
-const MAX_OPERATIONAL_AUDIT_READ_BYTES = 8 * 1024 * 1024;
+const OPERATIONAL_AUDIT_READ_CHUNK_BYTES = 64 * 1024;
+const MAX_OPERATIONAL_AUDIT_LINE_BYTES = 1024 * 1024;
 
 export interface OperationalAuditEntry {
   readonly action: "inference_set" | "config_set" | "rotate_token";
@@ -40,26 +41,53 @@ export function appendAuditEntry(entry: OperationalAuditEntry): void {
   });
 }
 
-/** Read one stable audit snapshot without following a replaced or linked file. */
-export function readStableOperationalAudit(filePath = OPERATIONAL_AUDIT_FILE): string {
+/** Visit every line in one stable audit snapshot with bounded read memory. */
+export function visitStableOperationalAuditLines(
+  visitor: (line: string) => void,
+  filePath = OPERATIONAL_AUDIT_FILE,
+): void {
   let descriptor: number | null = null;
   try {
     descriptor = openSync(filePath, constants.O_RDONLY | constants.O_NOFOLLOW);
     const before = fstatSync(descriptor, { bigint: true });
     if (!before.isFile()) throw new Error("audit path is not a regular file");
-    if (before.size > BigInt(MAX_OPERATIONAL_AUDIT_READ_BYTES)) {
-      throw new Error("config audit exceeds the bounded 8 MiB rebuild capture limit");
+    if (before.size > BigInt(Number.MAX_SAFE_INTEGER)) {
+      throw new Error("config audit exceeds the supported file-size range");
     }
-    const buffer = Buffer.alloc(Number(before.size));
+
+    const expectedSize = Number(before.size);
+    const chunk = Buffer.alloc(Math.min(OPERATIONAL_AUDIT_READ_CHUNK_BYTES, expectedSize || 1));
+    let pending = Buffer.alloc(0);
     let bytesRead = 0;
-    while (bytesRead < buffer.length) {
-      const count = readSync(descriptor, buffer, bytesRead, buffer.length - bytesRead, bytesRead);
+    while (bytesRead < expectedSize) {
+      const requested = Math.min(chunk.length, expectedSize - bytesRead);
+      const count = readSync(descriptor, chunk, 0, requested, bytesRead);
       if (count === 0) break;
       bytesRead += count;
+
+      const current =
+        pending.length === 0
+          ? chunk.subarray(0, count)
+          : Buffer.concat([pending, chunk.subarray(0, count)]);
+      let lineStart = 0;
+      for (let newline = current.indexOf(0x0a, lineStart); newline !== -1;) {
+        if (newline - lineStart > MAX_OPERATIONAL_AUDIT_LINE_BYTES) {
+          throw new Error("config audit line exceeds the bounded 1 MiB limit");
+        }
+        visitor(current.toString("utf8", lineStart, newline));
+        lineStart = newline + 1;
+        newline = current.indexOf(0x0a, lineStart);
+      }
+      pending = Buffer.from(current.subarray(lineStart));
+      if (pending.length > MAX_OPERATIONAL_AUDIT_LINE_BYTES) {
+        throw new Error("config audit line exceeds the bounded 1 MiB limit");
+      }
     }
+    if (pending.length > 0) visitor(pending.toString("utf8"));
+
     const after = fstatSync(descriptor, { bigint: true });
     if (
-      bytesRead !== Number(before.size) ||
+      bytesRead !== expectedSize ||
       before.dev !== after.dev ||
       before.ino !== after.ino ||
       before.size !== after.size ||
@@ -68,9 +96,8 @@ export function readStableOperationalAudit(filePath = OPERATIONAL_AUDIT_FILE): s
     ) {
       throw new Error("config audit changed during rebuild capture");
     }
-    return buffer.toString("utf8", 0, bytesRead);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
     throw error;
   } finally {
     if (descriptor !== null) closeSync(descriptor);

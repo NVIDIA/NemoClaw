@@ -521,6 +521,45 @@ describe("Hermes operator config rebuild handoff", () => {
     expect(JSON.stringify(snapshot)).not.toContain("managed-sentinel");
   });
 
+  it("drops complete operator keys before a credential can enter the rebuild handoff", () => {
+    const credential = "nvapi-abcdefghijklmnopqrstuvwxyz0123456789";
+    const config: ConfigObject = structuredClone(liveConfig);
+    config.custom_providers = [
+      ...(config.custom_providers as ConfigObject[]),
+      {
+        name: "operator-private",
+        base_url: "https://operator.example/v1",
+        api_key: credential,
+      },
+    ];
+    config.operator_issue_10495 = {
+      enabled: true,
+      transport: { authorization: `Bearer ${credential}` },
+    };
+
+    const snapshot = captureHermesOperatorConfigSnapshotFromConfig("hermes", config, [
+      "custom_providers",
+      "memory.provider",
+      "operator_issue_10495",
+    ]);
+    const document = serializeHermesOperatorConfigSnapshot(snapshot);
+
+    expect(snapshot.entries).toEqual([{ key: "memory.provider", value: "hindsight" }]);
+    expect(snapshot.droppedKeys).toEqual(["custom_providers", "operator_issue_10495"]);
+    expect(document).not.toContain(credential);
+    expect(
+      parseHermesOperatorConfigSnapshot(
+        JSON.stringify({
+          version: 1,
+          sandboxName: "hermes",
+          entries: [{ key: "operator_issue_10495", value: { api_key: credential } }],
+          droppedKeys: [],
+        }),
+        "hermes",
+      ),
+    ).toBeNull();
+  });
+
   it("merges operator values over a fresh route and verifies restored and dropped keys", () => {
     const snapshot = captureHermesOperatorConfigSnapshotFromConfig(
       "hermes",
@@ -631,6 +670,33 @@ describe("Hermes operator config rebuild handoff", () => {
       expect(parseHermesOperatorConfigSnapshot(document, "other")).toBeNull();
       expect(snapshot.entries).toEqual([{ key: "model.max_tokens", value: 24576 }]);
       expect(snapshot.droppedKeys).toEqual(["gateway.authToken"]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("scans an audit larger than 8 MiB without omitting an older operator key", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-10495-large-audit-"));
+    try {
+      const auditFile = path.join(dir, "operational-audit.jsonl");
+      const operatorEntry = `${JSON.stringify({
+        action: "config_set",
+        sandbox: "hermes",
+        reason: "config set hermes:model.max_tokens",
+      })}\n`;
+      const paddingLine = `${" ".repeat(1023)}\n`;
+      fs.writeFileSync(auditFile, operatorEntry, { mode: 0o600 });
+      fs.appendFileSync(auditFile, paddingLine.repeat(8193));
+
+      const snapshot = captureHermesOperatorConfigSnapshot("hermes", {
+        auditFile,
+        resolveConfig: () => ({ agentName: "hermes" }) as never,
+        readConfig: () => liveConfig,
+      });
+
+      expect(fs.statSync(auditFile).size).toBeGreaterThan(8 * 1024 * 1024);
+      expect(snapshot.entries).toEqual([{ key: "model.max_tokens", value: 24576 }]);
+      expect(snapshot.droppedKeys).toEqual([]);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

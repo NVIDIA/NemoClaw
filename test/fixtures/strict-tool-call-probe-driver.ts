@@ -298,7 +298,7 @@ runner.runCaptureEx = (command) => {
 };
 
 require("./src/lib/onboard/ollama-systemd.ts").ensureOllamaLoopbackSystemdOverride = () => "ready";
-require("./src/lib/onboard/local-inference-topology.ts").shouldFrontOllamaWithProxy = () => false;
+require("./src/lib/inference/local.ts").shouldFrontOllamaWithProxy = () => false;
 
 const credentials = require("./src/lib/credentials/store.ts");
 credentials.prompt = async (message) => {

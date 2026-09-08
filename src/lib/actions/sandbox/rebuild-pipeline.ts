@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import type { RebuildSandboxOptions } from "../../domain/lifecycle/options";
 import { normalizeRebuildSandboxOptions } from "../../domain/lifecycle/options";
 import { BRAVE_API_KEY_ENV, TAVILY_API_KEY_ENV } from "../../inference/web-search";
@@ -40,7 +41,9 @@ import {
 import {
   disposeRebuildAgentBaseImagePreflight,
   removeStaleRebuildDockerOrphan,
+  snapshotOpenShellEnv,
 } from "./rebuild-flow-helpers";
+import { mcpRebuildRequiresRuntimeSelection } from "./rebuild-mcp-phase";
 import { stageMessagingManifestPlanForRebuild } from "./rebuild-messaging-phase";
 import {
   type HermesCronRestoreIdentity,
@@ -126,11 +129,11 @@ export async function rebuildSandbox(
           },
         );
         assertSandboxRebuildCommandAvailable(sandboxName);
+        const restoreOpenShellEnv = snapshotOpenShellEnv();
         const scopedEnvKeys = [
           BRAVE_API_KEY_ENV,
           TAVILY_API_KEY_ENV,
           MESSAGING_SETUP_APPLIER_ENV_KEY,
-          "OPENSHELL_GATEWAY",
           DOCKER_GPU_PATCH_NETWORK_ENV,
           ...REBUILD_HERMES_DASHBOARD_ENV_KEYS,
           ...MESSAGING_CHANNEL_CONFIG_ENV_KEYS,
@@ -144,6 +147,7 @@ export async function rebuildSandbox(
             removedImmutabilityMigration.stateRecord !== null,
           );
         } finally {
+          restoreOpenShellEnv();
           for (const key of scopedEnvKeys) delete process.env[key];
           Object.assign(
             process.env,
@@ -244,6 +248,15 @@ async function rebuildSandboxUnlocked(
       recoveryManifest = preDeleteRecovery.manifest;
       recoveryRegistrySnapshot = preDeleteRecovery.registrySnapshot;
       const activeRecoveryTransaction = onboardSession.loadSession()?.checkpoint?.sandboxRecreate;
+      const mcpEntries = Object.values(sandboxEntry.mcp?.bridges ?? {});
+      const mcpRuntimeSelectionRequired = mcpRebuildRequiresRuntimeSelection(sandboxEntry);
+      const mcpRuntimeSelection = mcpRuntimeSelectionRequired
+        ? recreateOptions.runtimeSelection
+        : undefined;
+      if (mcpRuntimeSelectionRequired && !mcpRuntimeSelection) {
+        bail("MCP rebuild preflight did not retain its recorded OpenShell runtime target.");
+        return;
+      }
       const openRecreateJournal = () => {
         const expectedGatewayAuthority = recreateOptions.rebuildGatewayAuthority;
         if (!expectedGatewayAuthority) {
@@ -259,6 +272,7 @@ async function rebuildSandboxUnlocked(
           expectedGatewayAuthority,
           agentName: rebuildAgent || "openclaw",
           targetIntentFingerprint: fingerprintRebuildRecreateTargetIntent(recreateOptions),
+          ...(mcpRuntimeSelection ? { resolveRuntimeSelection: () => mcpRuntimeSelection } : {}),
           log,
           onAuthorityRefusal: (lines) => bail(lines.join("\n")),
         });
@@ -351,7 +365,9 @@ async function rebuildSandboxUnlocked(
         : false;
       if (
         recoveryManifest &&
-        (recoveryCleanupOnly || recoveryManifest.rebuildPolicyHandoff?.retired === true)
+        (recoveryCleanupOnly ||
+          recoveryManifest.rebuildPolicyHandoff?.retired === true ||
+          recoveryManifest.hermesOperatorConfigHandoff?.retired === true)
       ) {
         const cleanupManifest = recoveryManifest;
         const cleanupJournal = openRecreateJournal();
@@ -360,6 +376,16 @@ async function rebuildSandboxUnlocked(
           return bail(
             "A retired rebuild policy handoff cannot be cleaned up until the journaled replacement is accepted.",
           );
+        }
+        if (
+          cleanupManifest.hermesOperatorConfigHandoff &&
+          !clearHermesOperatorConfigHandoff(cleanupManifest)
+        ) {
+          reportIncompletePolicyHandoffCleanup(
+            cleanupManifest,
+            "The retired Hermes operator config handoff artifact or metadata could not be removed.",
+          );
+          return;
         }
         if (!completePolicyHandoffCleanup(cleanupJournal.id, cleanupManifest)) return;
         if (!clearRecoveryMarker(cleanupJournal.id, cleanupManifest)) return;
@@ -371,7 +397,7 @@ async function rebuildSandboxUnlocked(
         return;
       }
 
-      const backup = runRebuildBackupPhase({
+      const backup = await runRebuildBackupPhase({
         sandboxName,
         gatewayName: recreateOptions.targetGatewayName,
         gatewayPort: recreateOptions.targetGatewayPort,
@@ -391,6 +417,7 @@ async function rebuildSandboxUnlocked(
         webSearchConfig: durableConfig.webSearchConfig,
         log,
         bail,
+        ...(mcpRuntimeSelection ? { runtimeSelection: mcpRuntimeSelection } : {}),
       });
       if (!backup) return;
       rebuildPolicySourcePath = backup.policySourcePath;
@@ -419,9 +446,13 @@ async function rebuildSandboxUnlocked(
           return false;
         }
       };
-      const capturePolicyHandoff = (): boolean => {
+      const capturePolicyHandoff = (runtimeSelection?: OpenShellRuntimeSelection): boolean => {
         return publishPolicyHandoff(
-          captureRebuildPolicyDocument(sandboxName, recreateOptions.targetGatewayName),
+          captureRebuildPolicyDocument(
+            sandboxName,
+            recreateOptions.targetGatewayName,
+            runtimeSelection,
+          ),
         );
       };
 
@@ -509,6 +540,7 @@ async function rebuildSandboxUnlocked(
           durableConfig.dcodeAutoApprovalMode,
           recoveryRecreate,
           recreateOptions.targetGatewayPort,
+          recreateOptions.runtimeSelection,
         ))
       ) {
         return;
@@ -525,6 +557,10 @@ async function rebuildSandboxUnlocked(
 
       const recreateJournal = openRecreateJournal();
       if (!recreateJournal) return;
+      if (mcpRuntimeSelectionRequired && !recreateJournal.runtimeSelection) {
+        bail("The rebuild journal did not retain its recorded OpenShell runtime target.");
+        return;
+      }
       recreateOptions.rebuildGatewayAuthority = recreateJournal.gatewayAuthority;
       const rebuildRecoveryIdentity = {
         sandboxName,
@@ -574,9 +610,37 @@ async function rebuildSandboxUnlocked(
         }
         rebuildPolicyHandoffManifest = recoveryBackup;
         retainPolicyHandoffForRecovery = true;
-        // The accepted replacement belongs to an earlier run. Its persisted
-        // gate is independent of the current backup's cron plan, so probe every
-        // Hermes target before retiring the replacement journal.
+        const restored = runRebuildRestorePhase({
+          sandboxName,
+          targetAgentType: rebuildAgent || "openclaw",
+          targetImageIsCustom: Boolean(fromDockerfile),
+          backupManifest: recoveryBackup,
+          ...(recreateJournal.runtimeSelection
+            ? { runtimeSelection: recreateJournal.runtimeSelection }
+            : {}),
+          log,
+        });
+        const postRestoreVerification = await runRebuildPostRestorePhase({
+          sandboxName,
+          targetAgentName: rebuildAgent || "openclaw",
+          messagingPlan,
+          backupManifest: recoveryBackup,
+          mcpEntries,
+          ...(recreateJournal.runtimeSelection
+            ? { mcpRuntimeSelection: recreateJournal.runtimeSelection }
+            : {}),
+          restoreSucceeded: restored.restoreSucceeded,
+          hermesOperatorConfigRestore: restored.hermesOperatorConfigRestore,
+          preparedBackupRecovery: true,
+          versionCheck,
+          log,
+          bail,
+        });
+        if (!restored.restoreSucceeded) return;
+        // The accepted replacement belongs to an earlier run. Keep its
+        // persisted gate active until the backup and all post-restore state
+        // have been applied and verified, then validate the restored cron tree
+        // before reopening dispatch or retiring recovery records.
         if (rebuildAgent === "hermes") {
           try {
             const outcome = recoverHermesCronRestore(sandboxName);
@@ -608,26 +672,6 @@ async function rebuildSandboxUnlocked(
             );
           }
         }
-        const restored = runRebuildRestorePhase({
-          sandboxName,
-          targetAgentType: rebuildAgent || "openclaw",
-          targetImageIsCustom: Boolean(fromDockerfile),
-          backupManifest: recoveryBackup,
-          log,
-        });
-        const postRestoreVerification = await runRebuildPostRestorePhase({
-          sandboxName,
-          targetAgentName: rebuildAgent || "openclaw",
-          messagingPlan,
-          backupManifest: recoveryBackup,
-          mcpEntries: Object.values(sandboxEntry.mcp?.bridges ?? {}),
-          restoreSucceeded: restored.restoreSucceeded,
-          hermesOperatorConfigRestore: restored.hermesOperatorConfigRestore,
-          preparedBackupRecovery: true,
-          versionCheck,
-          log,
-          bail,
-        });
         if (
           recoveryBackup.hermesOperatorConfigHandoff &&
           !clearHermesOperatorConfigHandoff(recoveryBackup)
@@ -662,6 +706,9 @@ async function rebuildSandboxUnlocked(
         recreateJournal,
         backupManifest: backup.backupManifest,
         force: normalized.force,
+        ...(recreateJournal.runtimeSelection
+          ? { runtimeSelection: recreateJournal.runtimeSelection }
+          : {}),
         log,
         bail,
         validateAfterMcpPreparation: async (preparation) => {
@@ -691,6 +738,7 @@ async function rebuildSandboxUnlocked(
                 providerReconfigure.provider,
                 log,
                 "Delete-edge",
+                preparation.runtimeSelection,
               )
             : "missing";
           if (providerReconfigure && providerRegistration !== "missing") {
@@ -708,9 +756,10 @@ async function rebuildSandboxUnlocked(
             durableConfig.dcodeAutoApprovalMode,
             recoveryRecreate,
             recreateOptions.targetGatewayPort,
+            preparation.runtimeSelection,
           );
         },
-        validateAtDeleteEdge: () => {
+        validateAtDeleteEdge: (runtimeSelection) => {
           const validation =
             revalidateManagedWorkloadRebuildBeforeDelete(
               sandboxName,
@@ -728,7 +777,7 @@ async function rebuildSandboxUnlocked(
           // prepared recovery manifest, so there is no live policy to recapture.
           if (staleRecovery) return validation;
           try {
-            return capturePolicyHandoff()
+            return capturePolicyHandoff(runtimeSelection)
               ? validation
               : {
                   ok: false,
@@ -794,6 +843,9 @@ async function rebuildSandboxUnlocked(
           targetAgentType: rebuildAgent || "openclaw",
           targetImageIsCustom: Boolean(fromDockerfile),
           backupManifest: backup.backupManifest,
+          ...(mcpPreparation.runtimeSelection
+            ? { runtimeSelection: mcpPreparation.runtimeSelection }
+            : {}),
           log,
         });
       let hermesCronRestoreIdentity: HermesCronRestoreIdentity | undefined;
@@ -830,6 +882,7 @@ async function rebuildSandboxUnlocked(
         messagingPlan,
         backupManifest: backup.backupManifest,
         mcpEntries: mcpPreparation.entries,
+        mcpRuntimeSelection: mcpPreparation.runtimeSelection,
         restoreSucceeded: restored.restoreSucceeded,
         hermesOperatorConfigRestore: restored.hermesOperatorConfigRestore,
         hermesCronRestoreIdentity,

@@ -53,41 +53,37 @@ function events(...values: Record<string, unknown>[]): string {
 }
 
 describe("Pi qualification event oracle", () => {
-  it.each(["pi-agent-qualification-amd64", "pi-agent-qualification-arm64"])(
-    "%s keeps every real Pi image source in its PR target ownership boundary",
-    (targetId) => {
-      const imageSources = new Set([
-        ".dockerignore",
-        ...["agents/pi/Dockerfile", "agents/pi/Dockerfile.base"].flatMap((dockerfile) =>
-          directDockerfileCopySources(path.join(REPO_ROOT, dockerfile), dockerfile).map(
-            ({ source }) => {
-              const normalized = source.replace(/\/+$/u, "");
-              return normalized.startsWith("agents/pi/") ? "agents/pi" : normalized;
-            },
-          ),
+  it("keeps every Pi image source in the AMD64 lifecycle target ownership boundary (#7926)", () => {
+    const imageSources = new Set([
+      ".dockerignore",
+      ...["agents/pi/Dockerfile", "agents/pi/Dockerfile.base"].flatMap((dockerfile) =>
+        directDockerfileCopySources(path.join(REPO_ROOT, dockerfile), dockerfile).map(
+          ({ source }) => {
+            const normalized = source.replace(/\/+$/u, "");
+            return normalized.startsWith("agents/pi/") ? "agents/pi" : normalized;
+          },
         ),
-      ]);
-      const target = catalogueTarget(targetId);
-      const uncovered = [...imageSources].filter(
-        (source) =>
-          !target.owningPaths.some((owner) => {
-            const normalizedOwner = owner.replace(/\/$/u, "");
-            return source === normalizedOwner || source.startsWith(`${normalizedOwner}/`);
-          }),
-      );
-
-      expect(uncovered, `${target.id} must own every Pi Docker COPY input`).toEqual([]);
-    },
-  );
-
-  it("selects both Pi qualification targets for a copied blueprint source", () => {
-    expect(
-      catalogueTargetsForChangedFiles(["nemoclaw-blueprint/scripts/nemotron-inference-fix.js"]).map(
-        (target) => target.id,
       ),
-    ).toEqual(
-      expect.arrayContaining(["pi-agent-qualification-amd64", "pi-agent-qualification-arm64"]),
+    ]);
+    const target = catalogueTarget("pi-agent-qualification-amd64");
+    const uncovered = [...imageSources].filter(
+      (source) =>
+        !target.owningPaths.some((owner) => {
+          const normalizedOwner = owner.replace(/\/$/u, "");
+          return source === normalizedOwner || source.startsWith(`${normalizedOwner}/`);
+        }),
     );
+
+    expect(uncovered, `${target.id} must own every Pi Docker COPY input`).toEqual([]);
+  });
+
+  it("selects only AMD64 lifecycle qualification for a copied Pi image source (#7926)", () => {
+    const targetIds = catalogueTargetsForChangedFiles([
+      "nemoclaw-blueprint/scripts/nemotron-inference-fix.js",
+    ]).map((target) => target.id);
+
+    expect(targetIds).toContain("pi-agent-qualification-amd64");
+    expect(targetIds).not.toContain("pi-agent-qualification-arm64");
   });
 
   it("accepts one successful read and an exact final response", () => {

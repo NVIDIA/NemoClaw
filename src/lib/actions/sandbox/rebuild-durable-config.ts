@@ -3,11 +3,15 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import type { ConfigObject, ConfigValue } from "../../security/credential-filter";
-import { isConfigObject, isConfigValue } from "../../security/credential-filter";
+import { isConfigObject, isConfigValue, stripCredentials } from "../../security/credential-filter";
 import * as sandboxConfig from "../../sandbox/config";
 import { hermesProviderKey } from "../../hermes-managed-route";
-import { OPERATIONAL_AUDIT_FILE, readStableOperationalAudit } from "../../state/audit/operational";
+import {
+  OPERATIONAL_AUDIT_FILE,
+  visitStableOperationalAuditLines,
+} from "../../state/audit/operational";
 import {
   HERMES_DASHBOARD_ENABLE_ENV,
   HERMES_DASHBOARD_INTERNAL_PORT_ENV,
@@ -67,7 +71,8 @@ export type RebuildHermesDashboardEnv = Partial<
 >;
 
 export type RebuildHermesDashboardResolution =
-  { ok: true; env: RebuildHermesDashboardEnv } | { ok: false; reason: string };
+  | { ok: true; env: RebuildHermesDashboardEnv }
+  | { ok: false; reason: string };
 
 function validDashboardPort(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 1024 && value <= 65535;
@@ -403,31 +408,34 @@ function readHermesConfigSetKeys(
   sandboxName: string,
   auditFile: string = OPERATIONAL_AUDIT_FILE,
 ): { keys: string[]; droppedKeys: string[] } {
-  const text = readStableOperationalAudit(auditFile);
   const keys = new Set<string>();
   const droppedKeys = new Set<string>();
-  for (const line of text.split("\n")) {
-    if (!line.trim()) continue;
+  visitStableOperationalAuditLines((line) => {
+    if (!line.trim()) return;
     let entry: unknown;
     try {
       entry = JSON.parse(line);
     } catch {
-      continue;
+      return;
     }
     if (!isConfigObject(entry) || entry.action !== "config_set" || entry.sandbox !== sandboxName) {
-      continue;
+      return;
     }
-    if (typeof entry.reason !== "string") continue;
+    if (typeof entry.reason !== "string") return;
     const match = /^config set hermes:(.+)$/u.exec(entry.reason);
-    if (!match?.[1]) continue;
-    if (!isReportableHermesConfigKey(match[1])) continue;
+    if (!match?.[1]) return;
+    if (!isReportableHermesConfigKey(match[1])) return;
     if (!isSupportedHermesOperatorConfigKey(match[1])) {
       droppedKeys.add(match[1]);
-      continue;
+      return;
     }
     keys.add(match[1]);
-  }
+  }, auditFile);
   return { keys: [...keys].sort(), droppedKeys: [...droppedKeys].sort() };
+}
+
+function containsCredentialMaterial(value: ConfigValue): boolean {
+  return !isDeepStrictEqual(stripCredentials(value), value);
 }
 
 export function captureHermesOperatorConfigSnapshotFromConfig(
@@ -457,7 +465,7 @@ export function captureHermesOperatorConfigSnapshotFromConfig(
     setConfigDotpath(selected, key, value);
     stripHermesManagedRoute(selected, providerName, providerKey);
     const operatorValue = extractConfigDotpath(selected, key);
-    if (operatorValue === undefined) {
+    if (operatorValue === undefined || containsCredentialMaterial(operatorValue)) {
       droppedKeys.push(key);
     } else {
       entries.push({ key, value: cloneConfigValue(operatorValue) });
@@ -525,7 +533,8 @@ export function parseHermesOperatorConfigSnapshot(
       !isConfigObject(entry) ||
       typeof entry.key !== "string" ||
       !isSupportedHermesOperatorConfigKey(entry.key) ||
-      !isConfigValue(entry.value)
+      !isConfigValue(entry.value) ||
+      containsCredentialMaterial(entry.value)
     ) {
       return null;
     }

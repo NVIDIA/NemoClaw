@@ -9,6 +9,7 @@ import {
   isPolicyObservationError,
   PolicyObservationError,
 } from "../../adapters/openshell/policy-state";
+import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { formatOpenShellPolicyRecoveryAction } from "../../gateway-start-guidance";
 import type { WebSearchConfig } from "../../inference/web-search";
 import type { SandboxMessagingPlan } from "../../messaging";
@@ -33,7 +34,7 @@ export {
 } from "../../state/sandbox";
 
 export type RebuildBackupManifest = Exclude<
-  ReturnType<typeof backupSandboxStateForRebuild>,
+  Awaited<ReturnType<typeof backupSandboxStateForRebuild>>,
   undefined
 >;
 
@@ -49,6 +50,7 @@ export interface RebuildBackupPhaseInput {
   webSearchConfig: WebSearchConfig | null;
   log: RebuildLog;
   bail: RebuildBail;
+  runtimeSelection?: OpenShellRuntimeSelection;
 }
 
 export interface RebuildBackupPhaseResult {
@@ -67,12 +69,17 @@ function bailForUnsafeOpenClawPluginProvenance(input: RebuildBackupPhaseInput): 
   return input.bail("Custom-image OpenClaw plugin provenance is unavailable.");
 }
 
-export function captureRebuildPolicyDocument(sandboxName: string, gatewayName: string): string {
+export function captureRebuildPolicyDocument(
+  sandboxName: string,
+  gatewayName: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
+): string {
   let policy: string;
   try {
     policy = captureRecordedSandboxBasePolicy(
       sandboxName,
       "capture the live policy before sandbox replacement",
+      runtimeSelection,
     );
   } catch (error) {
     if (!isPolicyObservationError(error)) throw error;
@@ -107,10 +114,10 @@ function writeRebuildPolicySource(policy: string, policySourcePath?: string): st
   return resolvedPolicySourcePath;
 }
 
-export function runRebuildBackupPhase(
+export async function runRebuildBackupPhase(
   input: RebuildBackupPhaseInput,
   backupStateForRebuild: typeof backupSandboxStateForRebuild = backupSandboxStateForRebuild,
-): RebuildBackupPhaseResult | null {
+): Promise<RebuildBackupPhaseResult | null> {
   const customOpenClaw =
     Boolean(input.sandboxEntry.fromDockerfile) &&
     (!input.sandboxEntry.agent || input.sandboxEntry.agent === "openclaw");
@@ -141,16 +148,20 @@ export function runRebuildBackupPhase(
   const capturedPolicy =
     input.staleRecovery || preparedRetainedPolicy
       ? null
-      : captureRebuildPolicyDocument(input.sandboxName, input.gatewayName);
+      : captureRebuildPolicyDocument(
+          input.sandboxName,
+          input.gatewayName,
+          input.runtimeSelection,
+        );
   let backupManifest =
     preparedRecoveryManifest ??
-    backupStateForRebuild(
+    (await backupStateForRebuild(
       input.sandboxName,
       input.sandboxEntry,
       input.staleRecovery,
       input.log,
       input.bail,
-    );
+    ));
   if (backupManifest === undefined) return null;
   if (
     backupManifest &&
@@ -205,7 +216,8 @@ export function runRebuildBackupPhase(
     };
   }
   const policy =
-    capturedPolicy ?? captureRebuildPolicyDocument(input.sandboxName, input.gatewayName);
+    capturedPolicy ??
+    captureRebuildPolicyDocument(input.sandboxName, input.gatewayName, input.runtimeSelection);
   if (backupManifest && !retainedPolicy) {
     try {
       backupManifest = writeRebuildPolicyHandoff(backupManifest, policy);

@@ -116,6 +116,7 @@ export function createInMemoryRuntimeProviderBundle({
       supported: true,
       launcher: gatewayLauncher,
       inspectLegacyContainer: false,
+      ownsHostReadiness: false,
       prepareHostRuntime: () => ({
         providerId,
         openShellDriver: "memory",
@@ -269,6 +270,12 @@ export function createInMemoryRuntimeProviderBundle({
         { operation: "workload-cleanup", engineId: "memory", displayName: "In-memory" },
       ],
       capture: () => ({ status: 0, stdout: "", stderr: "" }),
+      nvidiaContainer: hostLocalInference
+        ? {
+            capture: () => ({ status: 0, stdout: "", stderr: "" }),
+            cleanup: () => ({ status: "absent" }),
+          }
+        : undefined,
     },
   };
 }

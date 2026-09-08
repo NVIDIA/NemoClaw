@@ -68,15 +68,19 @@ describe("operational audit", () => {
   });
 
   it("reads a stable regular audit file without following a symbolic link", async () => {
-    const { readStableOperationalAudit } = await import("./operational");
+    const { visitStableOperationalAuditLines } = await import("./operational");
     const auditFile = path.join(homeDir, "audit.jsonl");
     const linkedFile = path.join(homeDir, "audit-link.jsonl");
     fs.writeFileSync(auditFile, '{"action":"config_set"}\n', { mode: 0o600 });
     fs.symlinkSync(auditFile, linkedFile);
 
-    expect(readStableOperationalAudit(auditFile)).toBe('{"action":"config_set"}\n');
-    expect(() => readStableOperationalAudit(linkedFile)).toThrow();
-    expect(readStableOperationalAudit(path.join(homeDir, "missing.jsonl"))).toBe("");
+    const lines: string[] = [];
+    visitStableOperationalAuditLines((line) => lines.push(line), auditFile);
+    expect(lines).toEqual(['{"action":"config_set"}']);
+    expect(() => visitStableOperationalAuditLines(() => {}, linkedFile)).toThrow();
+    expect(() =>
+      visitStableOperationalAuditLines(() => {}, path.join(homeDir, "missing.jsonl")),
+    ).not.toThrow();
   });
 
   it("bounds a descriptor read to the size validated before the file grows", async () => {
@@ -102,12 +106,22 @@ describe("operational audit", () => {
       },
       readSync,
     }));
-    const { readStableOperationalAudit } = await import("./operational");
+    const { visitStableOperationalAuditLines } = await import("./operational");
 
-    expect(() => readStableOperationalAudit(auditFile)).toThrow(
+    expect(() => visitStableOperationalAuditLines(() => {}, auditFile)).toThrow(
       "config audit changed during rebuild capture",
     );
     expect(readSync).toHaveBeenCalledTimes(1);
     expect(requestedReadLength).toBe(1);
+  });
+
+  it("refuses an oversized audit row while scanning a large file incrementally", async () => {
+    const auditFile = path.join(homeDir, "oversized-row-audit.jsonl");
+    fs.writeFileSync(auditFile, Buffer.alloc(1024 * 1024 + 1, 0x20), { mode: 0o600 });
+    const { visitStableOperationalAuditLines } = await import("./operational");
+
+    expect(() => visitStableOperationalAuditLines(() => {}, auditFile)).toThrow(
+      "config audit line exceeds the bounded 1 MiB limit",
+    );
   });
 });

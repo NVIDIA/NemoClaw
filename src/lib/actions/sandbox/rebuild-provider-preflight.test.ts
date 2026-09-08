@@ -2,12 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import * as openshellRuntime from "../../adapters/openshell/runtime";
 import type { GatewayProviderMetadata } from "../../onboard/gateway-provider-metadata";
 import {
   canRecreateMissingRebuildGatewayProvider,
   checkRebuildGatewayCredentialReuseOrBail,
   checkRebuildGatewayProviderOrBail,
   classifyRebuildGatewayProviderRegistration,
+  inspectRebuildGatewayProviderRegistration,
   shouldVerifyRebuildGatewayProvider,
 } from "./rebuild-provider-preflight";
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
@@ -48,6 +50,7 @@ const throwingBail = (message: string): never => {
 };
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   vi.restoreAllMocks();
 });
 
@@ -189,6 +192,48 @@ describe("classifyRebuildGatewayProviderRegistration", () => {
     expect(classifyRebuildGatewayProviderRegistration({ status: 0 }, "compatible-endpoint")).toBe(
       "registered",
     );
+  });
+});
+
+describe("inspectRebuildGatewayProviderRegistration", () => {
+  it("pins the delete-edge lookup to the frozen target under hostile ambient selectors (#10514)", () => {
+    vi.stubEnv("OPENSHELL_GATEWAY", "hostile-gateway");
+    vi.stubEnv("OPENSHELL_WORKSPACE", "hostile-workspace");
+    vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/hostile/tls");
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://hostile.invalid");
+    const runOpenshell = vi.spyOn(openshellRuntime, "runOpenshell").mockReturnValue({
+      status: 1,
+      stdout: "",
+      stderr: "provider not found",
+    } as never);
+    const runtimeSelection = {
+      gatewayName: "recorded-gateway",
+      workspace: "default",
+      localTlsDir: "/authority/tls",
+    };
+
+    expect(
+      inspectRebuildGatewayProviderRegistration(
+        "compatible-endpoint",
+        vi.fn(),
+        "Delete-edge",
+        runtimeSelection,
+      ),
+    ).toBe("missing");
+
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["provider", "get", "compatible-endpoint"],
+      expect.objectContaining({
+        replaceEnv: true,
+        env: expect.objectContaining({
+          OPENSHELL_GATEWAY: "recorded-gateway",
+          OPENSHELL_WORKSPACE: "default",
+          OPENSHELL_LOCAL_TLS_DIR: "/authority/tls",
+        }),
+      }),
+    );
+    const env = runOpenshell.mock.calls[0]?.[1]?.env as Record<string, string>;
+    expect(env).not.toHaveProperty("OPENSHELL_GATEWAY_ENDPOINT");
   });
 });
 

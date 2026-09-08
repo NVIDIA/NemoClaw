@@ -3,6 +3,10 @@
 
 import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
 import {
+  buildSelectedOpenShellSubprocessEnv,
+  type OpenShellRuntimeSelection,
+} from "./command-argv";
+import {
   diagnosticPreview,
   isValidName,
   NAME_ALLOWED_FORMAT,
@@ -29,12 +33,15 @@ type CaptureSandboxIdentityCommand = (
     readonly includeStreams: true;
     readonly maxBuffer: number;
     readonly timeout: number;
+    readonly env?: Record<string, string>;
+    readonly replaceEnv?: true;
   },
 ) => CapturedOpenShellCommandResult;
 
 type InspectSandboxIdentityRequest = Readonly<{
   sandboxName: string;
   gatewayName: string;
+  runtimeSelection?: OpenShellRuntimeSelection;
   timeoutMs?: number;
 }>;
 
@@ -70,8 +77,22 @@ export function createSyncCliOpenShellSandboxIdentityInspector(deps: {
   return (request) => {
     const gatewayName = validateIdentityName(request.gatewayName, "gateway name");
     const sandboxName = validateIdentityName(request.sandboxName, "sandbox name");
-    assertNoOpenShellGatewayEndpointOverride();
+    if (
+      request.runtimeSelection?.gatewayName !== undefined &&
+      request.runtimeSelection.gatewayName !== gatewayName
+    ) {
+      throw new PolicyObservationError(
+        `OpenShell sandbox identity target '${request.runtimeSelection.gatewayName}' does not match gateway '${gatewayName}'.`,
+      );
+    }
+    if (!request.runtimeSelection) assertNoOpenShellGatewayEndpointOverride();
     const captured = deps.capture(["sandbox", "get", "-g", gatewayName, sandboxName], {
+      ...(request.runtimeSelection
+        ? {
+            env: buildSelectedOpenShellSubprocessEnv(request.runtimeSelection),
+            replaceEnv: true as const,
+          }
+        : {}),
       ignoreError: true,
       includeStderr: true,
       includeStreams: true,

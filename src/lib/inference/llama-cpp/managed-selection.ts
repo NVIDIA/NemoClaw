@@ -240,18 +240,13 @@ export function resolveManagedLlamaCppSelectionForGpu(
   env: NodeJS.ProcessEnv | undefined,
   gpu: GpuDetection | null,
   catalog: CompiledManagedInferenceCatalog = loadManagedInferenceCatalog(),
-  collectionOptions: Omit<
-    CollectHostObservationsOptions,
-    "detectGpu" | "wslDockerDesktopGpuProofPassed"
-  > = {},
+  collectionOptions: Omit<CollectHostObservationsOptions, "detectGpu" | "containerGpuProof"> = {},
   selectionOptions: ManagedLlamaCppSelectionOptions = {},
 ): ManagedLlamaCppSelectionResult {
   const report = createHostReadinessReport(getBuildIdentity(), {
     ...collectionOptions,
     ...(gpu ? { detectGpu: () => gpu } : {}),
-    ...(gpu?.wslDockerDesktopGpuProofPassed === undefined
-      ? {}
-      : { wslDockerDesktopGpuProofPassed: gpu.wslDockerDesktopGpuProofPassed }),
+    ...(gpu?.containerGpuProof === undefined ? {} : { containerGpuProof: gpu.containerGpuProof }),
   });
   return resolveManagedLlamaCppSelection(env, catalog, report, selectionOptions);
 }

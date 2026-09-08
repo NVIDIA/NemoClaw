@@ -143,7 +143,7 @@ describe("runAgentPassthrough", () => {
     ).rejects.toThrow("__exit:2");
     const stderr = writes.join("");
     expect(stderr).toMatch(/port 8643/);
-    expect(stderr).toMatch(/openshell forward start --background 8643 beta/);
+    expect(stderr).toMatch(/nemoclaw beta recover/);
     expect(stderr).toMatch(/http:\/\/127\.0\.0\.1:8643\/v1\/chat\/completions/);
     expect(stderr).not.toMatch(/8642/);
   });

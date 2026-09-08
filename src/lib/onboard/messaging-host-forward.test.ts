@@ -6,8 +6,21 @@ import { describe, expect, it, vi } from "vitest";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
 import {
   ensureMessagingHostForwardIfConfigured,
+  resolveProductionForwardServiceGatewayName,
   resolveMessagingHostForward,
 } from "./messaging-host-forward";
+
+describe("production ForwardTcp gateway binding", () => {
+  it.each([
+    [undefined, "nemoclaw"],
+    [{ gatewayName: "nemoclaw-18080" }, "nemoclaw-18080"],
+    [{ gatewayName: "wrong", gatewayPort: 18_080 }, "nemoclaw-18080"],
+    [{ gatewayPort: 8_080 }, "nemoclaw"],
+    [{ gatewayPort: 0 }, "invalid"],
+  ])("derives the canonical gateway from %j", (sandbox, expected) => {
+    expect(resolveProductionForwardServiceGatewayName(sandbox)).toBe(expected);
+  });
+});
 
 function makePlan(
   channel: Partial<SandboxMessagingPlan["channels"][number]> = {},
@@ -169,9 +182,8 @@ describe("ensureMessagingHostForwardIfConfigured", () => {
     expect(note).not.toHaveBeenCalled();
   });
 
-  it("rolls back and exits when the forward cannot be started", () => {
+  it("reports and exits when the forward cannot be started", () => {
     const ensureForward = vi.fn(() => false);
-    const runOpenshell = vi.fn(() => ({ status: 0 }));
     const errors: string[] = [];
 
     expect(() =>
@@ -181,9 +193,7 @@ describe("ensureMessagingHostForwardIfConfigured", () => {
         ensureForward,
         note: vi.fn(),
         rollbackOnFailure: {
-          runOpenshell,
           cliName: () => "nemoclaw",
-          forwardPortsToStop: ["18789", undefined, 3978],
           error: (message = "") => errors.push(message),
           exit: (code) => {
             throw new Error(`process.exit(${code})`);
@@ -196,17 +206,6 @@ describe("ensureMessagingHostForwardIfConfigured", () => {
       }),
     ).toThrow("process.exit(1)");
 
-    expect(runOpenshell).toHaveBeenCalledWith(["forward", "stop", "18789", "demo"], {
-      ignoreError: true,
-    });
-    expect(runOpenshell).toHaveBeenCalledWith(["forward", "stop", "3978", "demo"], {
-      ignoreError: true,
-    });
-    expect(runOpenshell).not.toHaveBeenCalledWith(
-      ["sandbox", "delete", "demo"],
-      expect.anything(),
-    );
-    expect(runOpenshell).toHaveBeenCalledTimes(2);
     expect(errors.join("\n")).toContain("rollback:manual");
     expect(errors.join("\n")).toContain(
       "Failed to start Microsoft Teams webhook forward on port 3978",

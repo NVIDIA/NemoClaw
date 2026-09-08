@@ -7,15 +7,12 @@ import { DASHBOARD_PORT } from "../core/ports";
 import { buildChain, buildControlUiUrls } from "../dashboard/contract";
 
 type RunCapture = (args: string[], options: { ignoreError: true }) => string;
-type OpenshellShellCommand = (args: string[], options?: { openshellBinary?: string }) => string;
 
 export type DashboardAccessOptions = WslDetectionOptions & {
   chatUiUrl?: string;
   token?: string | null;
   wslHostAddress?: string | null;
   runCapture?: RunCapture;
-  openshellBinary?: string;
-  openshellShellCommand?: OpenshellShellCommand;
   fetchGatewayAuthToken?: (sandboxName: string) => string | null;
   env?: NodeJS.ProcessEnv;
 };
@@ -96,21 +93,6 @@ export function getDashboardForwardTarget(
   options: DashboardAccessOptions = {},
 ): string {
   return buildDashboardChain(chatUiUrl, options).forwardTarget;
-}
-
-export function getDashboardForwardStartCommand(
-  sandboxName: string,
-  options: DashboardAccessOptions = {},
-): string {
-  if (!options.openshellShellCommand) {
-    throw new Error("getDashboardForwardStartCommand requires openshellShellCommand");
-  }
-  const chatUiUrl = defaultChatUiUrl(options);
-  const forwardTarget = getDashboardForwardTarget(chatUiUrl, options);
-  return `${options.openshellShellCommand(
-    ["forward", "start", "--background", forwardTarget, sandboxName],
-    options,
-  )}`;
 }
 
 export function buildAuthenticatedDashboardUrl(

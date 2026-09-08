@@ -6,7 +6,7 @@ import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { D, G, R, YW } from "../../cli/terminal-style";
 import type { SandboxMessagingPlan } from "../../messaging";
-import type * as sandboxVersion from "../../sandbox/version";
+import * as sandboxVersion from "../../sandbox/version";
 import {
   inspectMutableHermesConfigPerms,
   repairMutableConfigPerms,
@@ -30,6 +30,8 @@ import {
   verifyHermesGatewayAfterStateRestore,
   verifyHermesGatewayAfterStateRestoreForCronGate,
 } from "./rebuild-hermes-post-restore";
+import { getPersistedSandboxTargetGatewayName } from "./gateway-target";
+import { executeGatewaySupervisorAction } from "./runtime/hermes-lifecycle";
 import {
   type McpRebuildPreparation,
   postRestoreCompleted,
@@ -48,6 +50,13 @@ export {
   recoverHermesCronRestore,
   runHermesCronRestoreTransaction,
 } from "./rebuild-hermes-post-restore";
+
+/** Probe the recreated runtime instead of accepting its requested version metadata. */
+function probeRebuiltAgentVersion(
+  sandboxName: string,
+): ReturnType<typeof sandboxVersion.checkAgentVersion> {
+  return sandboxVersion.checkAgentVersion(sandboxName, { forceProbe: true });
+}
 
 const OPENCLAW_DOCTOR_TIMEOUT_MS = 5 * 60_000;
 
@@ -83,6 +92,7 @@ export interface RebuildPostRestorePhaseInput {
   messagingPlan: SandboxMessagingPlan | null;
   backupManifest: RebuildBackupManifest;
   mcpEntries: McpRebuildPreparation["entries"];
+  mcpRuntimeSelection?: McpRebuildPreparation["runtimeSelection"];
   restoreSucceeded: boolean;
   hermesOperatorConfigRestore?: HermesOperatorConfigRestoreReport;
   hermesCronRestoreIdentity?: HermesCronRestoreIdentity;
@@ -132,6 +142,7 @@ export async function runRebuildPostRestorePhase(
     messagingPlan,
     backupManifest,
     mcpEntries,
+    mcpRuntimeSelection,
     restoreSucceeded,
     hermesOperatorConfigRestore,
     hermesCronRestoreIdentity,
@@ -148,7 +159,10 @@ export async function runRebuildPostRestorePhase(
   if (
     !recreatedEntry ||
     recreatedRegistryAgentName !== targetAgentName ||
-    recreatedRuntimeAgentName !== targetAgentName
+    recreatedRuntimeAgentName !== targetAgentName ||
+    (targetAgentName === "hermes" &&
+      mcpRuntimeSelection &&
+      getPersistedSandboxTargetGatewayName(recreatedEntry) !== mcpRuntimeSelection.gatewayName)
   ) {
     console.error(
       `  ${YW}\u26a0${R} Recreated sandbox agent identity could not be verified against the rebuild target.`,
@@ -173,6 +187,19 @@ export async function runRebuildPostRestorePhase(
   let finalMutableConfigHashUnverified = false;
   let messagingHostForwardUnverified = false;
   let effectiveMessagingPlan = messagingPlan;
+  // Rebuild freezes the OpenShell target before deletion and revalidates the
+  // recreated registry binding above. That exact binding can safely authorize
+  // the provider-scoped root controller while every OpenShell operation stays
+  // pinned to the selected runtime. The ordinary gateway restart command keeps
+  // its fail-closed selected-runtime fence.
+  const hermesPostRestoreGatewayDeps = mcpRuntimeSelection
+    ? {
+        ...(targetAgentName === "hermes"
+          ? { frozenTargetGatewaySupervisorAction: executeGatewaySupervisorAction }
+          : {}),
+        runtimeSelection: mcpRuntimeSelection,
+      }
+    : {};
 
   if (targetAgentName === "openclaw") {
     log("Running openclaw doctor --fix inside sandbox for post-upgrade structure repair");
@@ -180,7 +207,10 @@ export async function runRebuildPostRestorePhase(
       sandboxName,
       "openclaw doctor --fix",
       OPENCLAW_DOCTOR_TIMEOUT_MS,
-      { allowLocalDockerFallback: false },
+      {
+        allowLocalDockerFallback: false,
+        ...(mcpRuntimeSelection ? { runtimeSelection: mcpRuntimeSelection } : {}),
+      },
     );
     log(`doctor --fix: exit=${doctorResult?.status ?? "unverified"}`);
     if (doctorResult === null) {
@@ -199,10 +229,15 @@ export async function runRebuildPostRestorePhase(
 
     // #7102: clear stale per-session pinned models left over from an
     // `inference set` before this rebuild, while the gateway is still down.
-    reconcileStalePinnedSessionModelsAfterRebuild(sandboxName, log);
+    reconcileStalePinnedSessionModelsAfterRebuild(sandboxName, log, mcpRuntimeSelection);
 
     try {
-      await reapplyMessagingManifestAfterOpenClawDoctor(sandboxName, messagingPlan, log);
+      await reapplyMessagingManifestAfterOpenClawDoctor(
+        sandboxName,
+        messagingPlan,
+        log,
+        mcpRuntimeSelection,
+      );
     } catch (error) {
       log(
         `Messaging manifest reapply failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -241,6 +276,7 @@ export async function runRebuildPostRestorePhase(
     const finalizedMessagingPlan = finalizePendingMessagingRemovalsAfterRestore(
       effectiveMessagingPlan,
       log,
+      mcpRuntimeSelection,
     );
     if (finalizedMessagingPlan !== effectiveMessagingPlan && finalizedMessagingPlan) {
       if (
@@ -268,15 +304,22 @@ export async function runRebuildPostRestorePhase(
   const hermesGatewayRestartState = restartHermesGatewayAfterStateRestore(
     sandboxName,
     targetAgentName,
+    hermesPostRestoreGatewayDeps,
   );
-  const mcpBridgeRestoreUnverified = !(await restoreMcpAfterRebuild(sandboxName, mcpEntries));
+  const mcpBridgeRestoreUnverified = !(await restoreMcpAfterRebuild(
+    sandboxName,
+    mcpEntries,
+    mcpRuntimeSelection,
+  ));
   if (targetAgentName === "openclaw" && mcpBridgeRestoreUnverified) {
     mutableConfigHashRefreshUnverified = true;
   } else if (targetAgentName === "openclaw") {
     log("Refreshing mutable OpenClaw config hash after MCP restoration");
-    if (!refreshMutableOpenClawConfigHashAfterPostRestoreWrites(sandboxName, log)) {
+    if (
+      !refreshMutableOpenClawConfigHashAfterPostRestoreWrites(sandboxName, log, mcpRuntimeSelection)
+    ) {
       mutableConfigHashRefreshUnverified = true;
-    } else if (!verifyFinalMutableOpenClawConfigHash(sandboxName, log)) {
+    } else if (!verifyFinalMutableOpenClawConfigHash(sandboxName, log, mcpRuntimeSelection)) {
       finalMutableConfigHashUnverified = true;
     }
   }
@@ -286,17 +329,51 @@ export async function runRebuildPostRestorePhase(
         targetAgentName,
         hermesGatewayRestartState,
         hermesCronRestoreIdentity,
+        hermesPostRestoreGatewayDeps,
       )
     : {
         state: verifyHermesGatewayAfterStateRestore(
           sandboxName,
           targetAgentName,
           hermesGatewayRestartState,
+          hermesPostRestoreGatewayDeps,
         ),
         replacementIdentity: undefined,
       };
   const hermesGatewayRestoreState = hermesGatewayVerification.state;
   const hermesGatewayRestoreUnverified = hermesGatewayRestoreState === "unverified";
+  let verifiedAgentVersion: string | null = null;
+  if (versionCheck.expectedVersion) {
+    // The replacement runtime is the only authority for the completed rebuild
+    // version. Clear create-time bookkeeping before the forced live probe so a
+    // failed probe cannot leave the requested version recorded as observed.
+    registry.updateSandbox(sandboxName, { agentVersion: null });
+    const rebuiltVersion = probeRebuiltAgentVersion(sandboxName);
+    if (
+      rebuiltVersion.verificationFailed ||
+      rebuiltVersion.sandboxVersion !== versionCheck.expectedVersion
+    ) {
+      // checkAgentVersion caches a successful probe. Do not retain metadata
+      // from a replacement that this rebuild rejects.
+      registry.updateSandbox(sandboxName, { agentVersion: null });
+      const observed = rebuiltVersion.sandboxVersion ?? "unverified";
+      const detail = `  Replacement agent version did not match the rebuild target (expected ${versionCheck.expectedVersion}, observed ${observed}).`;
+      if (hermesCronRestoreIdentity) {
+        return bailAfterHermesCronRestoreFailure(
+          sandboxName,
+          backupManifest,
+          `${detail} Hermes cron dispatch remains drained.`,
+          "Replacement agent version did not match the authoritative rebuild target.",
+          bail,
+          mcpBridgeRestoreUnverified ? () => printMcpRestoreRecovery(sandboxName, true) : undefined,
+        );
+      }
+      console.error(detail);
+      bail("Replacement agent version did not match the authoritative rebuild target.");
+      return;
+    }
+    verifiedAgentVersion = rebuiltVersion.sandboxVersion;
+  }
   if (
     targetAgentName === "hermes" &&
     (hermesGatewayRestoreState === "healthy" || hermesGatewayRestoreState === "recovered")
@@ -373,18 +450,24 @@ export async function runRebuildPostRestorePhase(
     console.log(`  ${G}\u2713${R} Hermes gateway recovered after state restore`);
   }
   registry.updateSandbox(sandboxName, {
-    agentVersion: agentDef.expectedVersion || null,
+    agentVersion: verifiedAgentVersion,
   });
   log(`Registry updated: agentVersion=${agentDef.expectedVersion}`);
 
-  if (!ensureMessagingHostForwardAfterRebuild(sandboxName, effectiveMessagingPlan)) {
+  if (
+    !ensureMessagingHostForwardAfterRebuild(
+      sandboxName,
+      effectiveMessagingPlan,
+      mcpRuntimeSelection,
+    )
+  ) {
     messagingHostForwardUnverified = true;
   }
   if (
     targetAgentName === "openclaw" &&
     !mcpBridgeRestoreUnverified &&
     !mutableConfigHashRefreshUnverified &&
-    !verifyFinalMutableOpenClawConfigHash(sandboxName, log)
+    !verifyFinalMutableOpenClawConfigHash(sandboxName, log, mcpRuntimeSelection)
   ) {
     finalMutableConfigHashUnverified = true;
   }
