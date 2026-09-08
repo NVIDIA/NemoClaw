@@ -228,6 +228,7 @@ type RemoteProviderConfig = {
   label: string;
   endpointUrl: string;
   helpUrl: string | null;
+  defaultModel?: string;
 };
 
 type ProbeAuthMode = "bearer" | "query-param" | undefined;
@@ -240,6 +241,7 @@ type ProbeOptions = {
   extraHeaders?: readonly string[];
   capabilityCache?: OnboardInferenceCapabilityCache;
   provider?: string;
+  providerDefaultModel?: string;
   revalidateSandboxIdentity?: (operation: string) => void;
 };
 
@@ -472,6 +474,9 @@ export function createRemoteModelValidator(deps: RemoteModelValidatorDeps): {
         remoteConfig.helpUrl,
         withCredentialMutationGuard(state, {
           provider: state.provider,
+          ...(remoteConfig.defaultModel
+            ? { providerDefaultModel: remoteConfig.defaultModel }
+            : {}),
           useNvidiaEndpointProbePayload: usesNvidiaEndpointProbePayload(state.provider),
           requireResponsesToolCalling: deps.shouldRequireResponsesToolCalling(state.provider),
           skipResponsesProbe: deps.shouldSkipResponsesProbe(state.provider),

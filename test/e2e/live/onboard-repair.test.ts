@@ -323,6 +323,11 @@ test(
     expect.arrayContaining([LIVE_EXTRA_PROVIDER, STALE_EXTRA_PROVIDER]),
   );
 
+  await sandbox.waitForInitialOpenClawPairing(SANDBOX_NAME, {
+    artifactName: "phase-1-wait-for-initial-pairing",
+    env: env(),
+  });
+
   progress.phase("remove the recorded sandbox and resume repair");
   await sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
     artifactName: "phase-2-delete-recorded-sandbox",

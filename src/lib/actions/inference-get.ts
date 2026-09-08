@@ -4,7 +4,11 @@
 import { captureOpenshell } from "../adapters/openshell/runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import { unsafeEndpointUrlViolation } from "../core/endpoint-url-safety";
-import { sanitizeRouteValueForDisplay } from "../inference/config";
+import {
+  getLlamaCppRouteDetails,
+  sanitizeRouteValueForDisplay,
+  type LlamaCppRouteDetails,
+} from "../inference/config";
 import {
   canonicalGatewayRouteEndpoint,
   gatewayRouteIdentityConflictReasons,
@@ -12,10 +16,12 @@ import {
 } from "../inference/gateway-route-compatibility";
 import { parseHttpsPinRouteId } from "../inference/https-pin-runtime";
 import { getLiveGatewayInference } from "../inference/live";
+import { inspectManagedLlamaCppOwnership } from "../inference/llama-cpp/managed-state";
 import { valueLooksLikeSecret } from "../security/credential-filter";
 import { ConfigCorruptError, ConfigPermissionError } from "../state/config-io";
 import { isPublishedSandboxRegistration } from "../state/registry/route-reservation";
 import {
+  getKnownSandboxTarget,
   getPersistedSandboxTargetGatewayName,
   getSandboxTargetGatewayName,
   listPersistedSandboxTargets,
@@ -36,6 +42,7 @@ export interface InferenceGetResult {
   endpointRecovery?: string;
   affectedSandboxes?: string[];
   affectedSandboxesTruncated?: boolean;
+  llamaCpp?: LlamaCppRouteDetails;
 }
 
 export type InferenceEndpointStatus =
@@ -49,9 +56,11 @@ export type InferenceEndpointStatus =
 
 export interface InferenceGetDeps {
   captureOpenshell: typeof captureOpenshell;
+  getSandbox?: typeof getKnownSandboxTarget;
   getSandboxTargetGatewayName: typeof getSandboxTargetGatewayName;
   listSandboxes: typeof listPersistedSandboxTargets;
   log: (message?: string) => void;
+  inspectManagedLlamaCppOwnership?: typeof inspectManagedLlamaCppOwnership;
 }
 
 export class InferenceGetError extends Error {
@@ -262,10 +271,7 @@ function getPersistedEndpoint(
       continue;
     }
     const reference = matchingEndpoints[0];
-    if (
-      reference &&
-      gatewayRouteIdentityConflictReasons(reference.route, sandbox).length > 0
-    ) {
+    if (reference && gatewayRouteIdentityConflictReasons(reference.route, sandbox).length > 0) {
       conflictingSandboxNames.add(reference.sandboxName);
       conflictingSandboxNames.add(sandbox.name);
       continue;
@@ -326,10 +332,22 @@ export async function runInferenceGet(
     options.sandboxName,
     deps,
   );
+  const sandbox =
+    options.sandboxName && result.inference.provider === "llama-cpp-local"
+      ? (deps.getSandbox ?? getKnownSandboxTarget)(options.sandboxName)
+      : null;
+  const llamaCpp =
+    sandbox?.provider === result.inference.provider && sandbox.model === result.inference.model
+      ? getLlamaCppRouteDetails(
+          sandbox,
+          deps.inspectManagedLlamaCppOwnership ?? inspectManagedLlamaCppOwnership,
+        )
+      : null;
   const payload: InferenceGetResult = {
     provider: result.inference.provider,
     model: result.inference.model,
     ...endpoint,
+    ...(llamaCpp ? { llamaCpp } : {}),
   };
   if (!options.quiet) {
     if (options.json) {
@@ -348,6 +366,15 @@ export async function runInferenceGet(
           deps.log(`Affected: ${payload.affectedSandboxes.join(", ")}${truncation}`);
         }
         deps.log(`Action:   ${payload.endpointRecovery}`);
+      }
+      if (payload.llamaCpp) {
+        deps.log(`Llama.cpp: ${payload.llamaCpp.kind}`);
+        if (payload.llamaCpp.kind === "attached") {
+          deps.log(`Endpoint:  ${payload.llamaCpp.endpointUrl}`);
+        } else if (payload.llamaCpp.kind === "unavailable") {
+          deps.log(`Ownership: ${payload.llamaCpp.diagnostic}`);
+          deps.log(`Recovery:  ${payload.llamaCpp.recovery}`);
+        }
       }
     }
   }

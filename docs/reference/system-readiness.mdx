@@ -135,11 +135,11 @@ Each capability uses `present`, `absent`, or `unknown`.
 | `host.platform.supported` | The combined host platform result. |
 | `host.platform.linux_supported` | Linux on `x64` or `arm64`. |
 | `host.platform.macos_apple_silicon` | Apple silicon with reachable Docker Desktop or Colima. |
-| `host.platform.wsl_runtime_available` | A reachable, recognized Docker runtime in WSL. |
+| `host.platform.wsl_runtime_available` | Reachable Docker Desktop or a qualification-backed provider that owns WSL runtime readiness. |
 | `host.platform.wsl_docker_desktop` | Docker Desktop integration in WSL. |
 | `host.platform.wsl_native_docker` | Native Docker Engine inside WSL. |
-| `host.platform.wsl_gpu_passthrough` | Docker Desktop GPU passthrough proof. |
-| `host.platform.n1x_wsl` | Windows N1x product identity qualified through WSL on Linux ARM64 with reachable Docker Desktop and an available NVIDIA GPU. |
+| `host.platform.wsl_gpu_passthrough` | A bounded CUDA proof from the selected Docker or provider-owned runtime. |
+| `host.platform.n1x_wsl` | Windows N1x product identity qualified through WSL on Linux ARM64 with an available NVIDIA GPU and a matching selected-provider CUDA proof. |
 | `host.platform.dgx_spark` | DGX Spark identity on ARM64 with an available NVIDIA GPU. |
 | `host.platform.n1x` | N1x identity from the trusted FastOS marker and NVIDIA display PCI device on Linux ARM64 with an available NVIDIA GPU. This capability does not promote the Deferred platform status. |
 | `host.platform.dgx_station` | Qualified DGX Station GB300 identity, Linux ARM64 runtime, Ubuntu 24.04, hardware, and software profile. |
@@ -147,17 +147,17 @@ Each capability uses `present`, `absent`, or `unknown`.
 If the combined platform capability is absent and no more specific platform qualification finding applies, the blocking `host.platform.unsupported` finding identifies an unsupported host and runtime combination.
 
 The report adds `host.platform.wsl`, `host.platform.n1x_wsl`, `host.platform.dgx_spark`, `host.platform.n1x`, or `host.platform.dgx_station` qualifications when those platforms apply.
-For WSL, Docker Desktop is `qualified`, native Docker is `unqualified`, and an unrecognized reachable runtime is `unknown`.
-The `host.platform.wsl_gpu_passthrough` capability is `present` only after the Docker Desktop proof passes.
+For WSL, Docker Desktop and a qualification-backed provider that owns host readiness are `qualified`, native Docker is `unqualified`, and an unrecognized reachable runtime is `unknown`.
+The `host.platform.wsl_gpu_passthrough` capability is `present` only after the selected provider's bounded CUDA proof passes.
 It is `absent` when the proof fails or the host has no NVIDIA GPU, and `unknown` when the proof cannot run conclusively.
 The read-only `host probe` command does not pull or start the container-backed WSL GPU proof, so a host that needs that proof reports this capability as `unknown`.
 Onboarding can run the bounded proof only after its current host and gateway readiness checks admit the run.
 
 The `host.platform.n1x_wsl` qualification applies when the bounded Windows product query identifies an N1x host through WSL.
-It is `qualified` only for Linux ARM64 WSL with reachable Docker Desktop and an available NVIDIA GPU.
+It is `qualified` only for Linux ARM64 WSL with an available NVIDIA GPU and a successful proof whose provider identity matches Docker Desktop or the selected provider-owned runtime.
 The capability is `present` only when that qualification passes.
-Managed llama.cpp admission also requires `host.platform.wsl_gpu_passthrough` to be `present`.
-The N1x WSL qualification does not replace the separate Docker Desktop GPU proof.
+Managed llama.cpp admission also requires `host.platform.wsl_gpu_passthrough` to be `present` and remains Docker Desktop-only.
+Windows-host Ollama also remains Docker Desktop-only; the provider-owned Podman path applies to WSL-local Ollama.
 
 DGX Station qualification fails closed.
 The `host.platform.dgx_station` capability is `present` only when the host runs Linux ARM64 on Ubuntu 24.04, reports an effective NVIDIA GPU, and the product identity, a display-class PCI device with NVIDIA vendor ID (`0x10de`) and GB300 device ID (`0x31c2` or `0x31c3`), and the software profile all qualify.

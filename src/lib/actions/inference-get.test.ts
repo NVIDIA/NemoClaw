@@ -1,8 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+
 import { describe, expect, it, vi } from "vitest";
 import { buildHttpsPinRouteBaseUrl } from "../inference/https-pin-runtime";
+import {
+  managedLlamaCppStatePaths,
+  reserveManagedLlamaCppOwner,
+} from "../inference/llama-cpp/managed-state";
 import { ConfigCorruptError, ConfigPermissionError } from "../state/config-io";
 
 vi.mock("../adapters/openshell/runtime", () => ({
@@ -765,6 +772,111 @@ describe("runInferenceGet", () => {
       expect(output).toContain(ENDPOINT_RECOVERY[expectedStatus]);
     },
   );
+
+  it("reports an attached llama.cpp endpoint for an aligned sandbox route", async () => {
+    const deps = {
+      ...createDeps("Gateway inference:\n  Provider: llama-cpp-local\n  Model: muse-glimmer\n"),
+      getSandbox: () =>
+        ({
+          name: "llamacpp-env",
+          provider: "llama-cpp-local",
+          model: "muse-glimmer",
+          endpointUrl: "http://127.0.0.1:8081/v1",
+        }) as never,
+    };
+
+    await expect(runInferenceGet({ sandboxName: "llamacpp-env" }, deps)).resolves.toEqual({
+      provider: "llama-cpp-local",
+      model: "muse-glimmer",
+      llamaCpp: { kind: "attached", endpointUrl: "http://127.0.0.1:8081/v1" },
+    });
+    expect(deps.log.mock.calls.map(([line]) => line)).toEqual([
+      "Provider: llama-cpp-local",
+      "Model:    muse-glimmer",
+      "Llama.cpp: attached",
+      "Endpoint:  http://127.0.0.1:8081/v1",
+    ]);
+  });
+
+  it("reports unavailable managed ownership with safe recovery output", async () => {
+    const deps = {
+      ...createDeps("Gateway inference:\n  Provider: llama-cpp-local\n  Model: muse-glimmer\n"),
+      getSandbox: () =>
+        ({
+          name: "llamacpp-env",
+          provider: "llama-cpp-local",
+          model: "muse-glimmer",
+          endpointUrl: "http://127.0.0.1:8081/v1",
+        }) as never,
+      inspectManagedLlamaCppOwnership: () => "unknown" as const,
+    };
+
+    const result = await runInferenceGet({ sandboxName: "llamacpp-env" }, deps);
+
+    expect(result.llamaCpp).toEqual({
+      kind: "unavailable",
+      diagnostic: "Managed llama.cpp ownership state is unavailable.",
+      recovery:
+        "Run nemoclaw llamacpp-env doctor. Rerun onboarding for that sandbox if the managed llama.cpp runtime check fails.",
+    });
+    expect(deps.log.mock.calls.map(([line]) => line)).toContain(
+      "Recovery:  Run nemoclaw llamacpp-env doctor. Rerun onboarding for that sandbox if the managed llama.cpp runtime check fails.",
+    );
+    expect(JSON.stringify(result)).not.toContain("endpointUrl");
+  });
+
+  it("reads a private owner receipt before reporting managed ownership (#10256)", async () => {
+    const home = fs.realpathSync(fs.mkdtempSync(`${os.tmpdir()}/nemoclaw-inference-get-owner-`));
+    vi.stubEnv("HOME", home);
+    try {
+      const paths = managedLlamaCppStatePaths(home);
+      fs.mkdirSync(paths.stateDir, { recursive: true, mode: 0o700 });
+      reserveManagedLlamaCppOwner(paths, {
+        schemaVersion: 1,
+        sandboxName: "llamacpp-managed",
+        catalogDigest: `sha256:${"1".repeat(64)}`,
+        presetDigest: `sha256:${"2".repeat(64)}`,
+        recipeDigest: `sha256:${"3".repeat(64)}`,
+        recipeId: "llama-cpp.managed",
+      });
+      const deps = createDeps(
+        "Gateway inference:\n  Provider: llama-cpp-local\n  Model: muse-glimmer\n",
+      );
+      deps.getSandbox = () =>
+        ({
+          name: "llamacpp-managed",
+          provider: "llama-cpp-local",
+          model: "muse-glimmer",
+        }) as never;
+
+      const result = await runInferenceGet({ sandboxName: "llamacpp-managed" }, deps);
+
+      expect(result.llamaCpp).toEqual({ kind: "managed" });
+    } finally {
+      vi.unstubAllEnvs();
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("does not attribute a sandbox route when the gateway route drifted", async () => {
+    const deps = {
+      ...createDeps("Gateway inference:\n  Provider: nvidia-prod\n  Model: nvidia/model\n"),
+      getSandbox: () =>
+        ({
+          name: "llamacpp-env",
+          provider: "llama-cpp-local",
+          model: "muse-glimmer",
+          endpointUrl: "http://127.0.0.1:8081/v1",
+        }) as never,
+    };
+
+    await expect(
+      runInferenceGet({ sandboxName: "llamacpp-env", quiet: true }, deps),
+    ).resolves.toEqual({
+      provider: "nvidia-prod",
+      model: "nvidia/model",
+    });
+  });
 
   it("queries the gateway recorded for the sandbox (#10671)", async () => {
     const deps = createDeps(

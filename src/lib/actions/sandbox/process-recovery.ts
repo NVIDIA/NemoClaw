@@ -62,8 +62,8 @@ import {
   type GatewayRestartDeps,
   type GatewayRestartFailureLayer,
   type GatewayRestartResult,
-  gatewayIntegrityRepairLines,
-  isGatewayIntegrityRepairLayer,
+  gatewayTerminalRepairLines,
+  isGatewayTerminalRepairLayer,
   MANAGED_CONTROL_IDENTITY_CHANGED_MARKER,
   type ManagedGatewayControlCompletion,
   parseManagedGatewayControlCompletion,
@@ -75,10 +75,6 @@ import {
 } from "./gateway-restart";
 import { printGatewayWedgeDiagnostics } from "./gateway-wedge-diagnostics";
 import { enforceHermesSecretBoundaryOnRunningGateway } from "./hermes-secret-boundary-recovery";
-import {
-  inspectHermesMcpReconciliationRefusal,
-  processRecoveryMcpReconciliationRefusal,
-} from "./mcp-bridge-recovery";
 import {
   buildSandboxExecMarkedCommand,
   extractSandboxExecCommandStdout,
@@ -1011,12 +1007,6 @@ export function restartSandboxGateway(
               runtimeSelection,
             }),
           printGatewayWedgeDiagnostics,
-          inspectHermesMcpReconciliationRefusal: (name) =>
-            inspectHermesMcpReconciliationRefusal(
-              name,
-              undefined,
-              runtimeSelection,
-            ),
           ...deps,
         },
       }),
@@ -1333,11 +1323,10 @@ function printHostManagedGatewayRecoveryHints(
     console.error("  If rebuild is blocked, destroy and re-onboard the sandbox to restore it.");
     return;
   }
-  // A drifted protected config and a quarantined supervisor both refuse every
-  // relaunch deterministically, so the generic "retry the managed restart" hint
-  // below would send the operator into a loop that cannot succeed (#7801).
-  if (isGatewayIntegrityRepairLayer(failureLayer)) {
-    for (const line of gatewayIntegrityRepairLines(quotedSandboxName, failureLayer)) {
+  // These terminal states need their specific repair before another managed
+  // restart. The generic hint below would otherwise repeat the same failure.
+  if (isGatewayTerminalRepairLayer(failureLayer)) {
+    for (const line of gatewayTerminalRepairLines(quotedSandboxName, failureLayer)) {
       console.error(`  ${line}`);
     }
     return;
@@ -1595,13 +1584,6 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
         secretBoundaryReason: enforcement.reason,
       };
     }
-    const mcpRefusal = processRecoveryMcpReconciliationRefusal(
-      sandboxName,
-      true,
-      undefined,
-      runtimeSelection,
-    );
-    if (mcpRefusal) return mcpRefusal;
   }
   if (running) {
     // Gateway is alive but the host-side forward can still be dead or
@@ -1929,13 +1911,6 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
       );
       if (finalizationFailure) return finalizationFailure;
     }
-    const mcpRefusal = processRecoveryMcpReconciliationRefusal(
-      sandboxName,
-      false,
-      undefined,
-      runtimeSelection,
-    );
-    if (mcpRefusal) return mcpRefusal;
     const forwardRecovered = measure("forward", () =>
       ensureSandboxPortForward(sandboxName, {
         afterSuccess: confirmRelaunchedManagedHealthForForward ?? undefined,

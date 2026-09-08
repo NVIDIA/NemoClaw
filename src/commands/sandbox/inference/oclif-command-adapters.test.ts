@@ -156,6 +156,23 @@ describe("sandbox inference oclif command adapters (#5977)", () => {
     }
   });
 
+  it("preserves llama.cpp details in sandbox inference get JSON output", async () => {
+    const expected = {
+      provider: "llama-cpp-local",
+      model: "muse-glimmer",
+      llamaCpp: { kind: "attached", endpointUrl: "http://127.0.0.1:8081/v1" },
+    };
+    mocks.runInferenceGet.mockResolvedValueOnce(expected);
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    try {
+      await SandboxInferenceGetCommand.run(["alpha", "--json"], rootDir);
+
+      expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toEqual(expected);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
   it("surfaces the 'route not configured' get failure with its message and exit code (#5977)", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const previousExitCode = process.exitCode;

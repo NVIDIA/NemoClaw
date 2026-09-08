@@ -1298,8 +1298,8 @@ describe("inventory commands", () => {
       log: (message = "") => lines.push(message),
     });
 
-    expect(lines).toContain("      Inference: nvidia-prod / nvidia/nemotron-3-super-120b-a12b");
-    expect(lines).toContain("      Inference: ollama-local / qwen3.5:9b");
+    expect(lines).toContain("      Inference (configured): nvidia-prod / nvidia/nemotron-3-super-120b-a12b");
+    expect(lines).toContain("      Inference (configured): ollama-local / qwen3.5:9b");
   });
 
   it("prefers live gateway provider for the default sandbox in the Inference line (#2604)", () => {
@@ -1314,7 +1314,7 @@ describe("inventory commands", () => {
       log: (message = "") => lines.push(message),
     });
 
-    expect(lines).toContain("      Inference: live-provider / live-model");
+    expect(lines).toContain("      Inference (configured): live-provider / live-model");
   });
 
   it("emits an SSH sessions line per sandbox when getActiveSessionCount is provided (#2604)", () => {

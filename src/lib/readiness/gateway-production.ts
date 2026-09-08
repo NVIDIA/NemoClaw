@@ -35,8 +35,10 @@ import {
 } from "../onboard/docker-driver-gateway-process-identity";
 import { resolveDockerDriverGatewayName } from "../onboard/docker-driver-gateway-runtime";
 import {
+  createOpenShellHomebrewFormulaOperation,
   getTrustedActiveOpenShellGatewayUserServiceIdentity,
   hasOpenShellGatewayUserService,
+  OPENSHELL_GATEWAY_HOMEBREW_SERVICE,
 } from "../onboard/docker-driver-gateway-service";
 import { createGatewayHostRuntime } from "../onboard/gateway-host-runtime";
 import { loadGatewayManagementDeclaration } from "../onboard/gateway-management";
@@ -585,6 +587,29 @@ export function createProductionGatewayReadinessDependencies(
   const trustedGatewayBin = resolveTrustedGatewayBinary(openshellBin);
   const trustedVersionBinaryByPid = new Map<number, string>();
   const trustedTargetBoundPids = new Set<number>();
+  const homebrewFormulaOperation = createOpenShellHomebrewFormulaOperation({ env: probeEnv });
+  let cachedHomebrewFormulaInfo: ReturnType<typeof homebrewFormulaOperation> | null = null;
+  const homebrewFormulaInfoOperation = [
+    "info",
+    "--json=v2",
+    OPENSHELL_GATEWAY_HOMEBREW_SERVICE,
+  ].join("\0");
+
+  function resetGatewayServiceObservation(): void {
+    cachedHomebrewFormulaInfo = null;
+  }
+
+  function runObservedHomebrewFormulaOperation(args: string[]) {
+    const key = args.join("\0");
+    if (key === homebrewFormulaInfoOperation && cachedHomebrewFormulaInfo) {
+      return cachedHomebrewFormulaInfo;
+    }
+    const result = homebrewFormulaOperation(args);
+    if (result.status === 0 && key === homebrewFormulaInfoOperation) {
+      cachedHomebrewFormulaInfo = result;
+    }
+    return result;
+  }
 
   function observeDirectGatewayBinary(pid: number): string | null {
     if ((process.platform !== "linux" && process.platform !== "darwin") || !trustedGatewayBin) {
@@ -655,6 +680,7 @@ export function createProductionGatewayReadinessDependencies(
     if (process.platform !== "linux" && process.platform !== "darwin") return null;
     const serviceBefore = getTrustedActiveOpenShellGatewayUserServiceIdentity({
       env: probeEnv,
+      homebrewFormulaOperation: runObservedHomebrewFormulaOperation,
       suppressUnsupportedVersionWarning: true,
     });
     if (serviceBefore?.pid !== pid || !serviceBefore.executablePath) return null;
@@ -665,6 +691,7 @@ export function createProductionGatewayReadinessDependencies(
         : readDarwinProcessExecutable(pid, probeEnv);
     const serviceAfter = getTrustedActiveOpenShellGatewayUserServiceIdentity({
       env: probeEnv,
+      homebrewFormulaOperation: runObservedHomebrewFormulaOperation,
       suppressUnsupportedVersionWarning: true,
     });
     // Bracket the complete service-identity probe so PID reuse or re-exec
@@ -726,6 +753,7 @@ export function createProductionGatewayReadinessDependencies(
     hasOpenShellGatewayUserService: () =>
       hasOpenShellGatewayUserService({
         env: probeEnv,
+        homebrewFormulaOperation: runObservedHomebrewFormulaOperation,
         suppressUnsupportedVersionWarning: true,
       }),
     loadGatewayManagementDeclaration,
@@ -738,7 +766,7 @@ export function createProductionGatewayReadinessDependencies(
     supervisorProbeEnv: probeEnv,
   });
 
-  async function observeManagedGateway(): Promise<ManagedGatewayObservations> {
+  async function collectManagedGatewayObservations(): Promise<ManagedGatewayObservations> {
     const { endpointBinding, reuseState } = observeReuseState(
       gatewayName,
       gatewayPort,
@@ -839,9 +867,26 @@ export function createProductionGatewayReadinessDependencies(
     };
   }
 
+  async function observeManagedGateway(): Promise<ManagedGatewayObservations> {
+    try {
+      return await collectManagedGatewayObservations();
+    } finally {
+      resetGatewayServiceObservation();
+    }
+  }
+
   return {
-    resolveOwner: options.resolveOwner ?? runtime.getGatewayOwner,
-    probeAttachment: options.probeAttachment ?? runtime.probeGatewayAttachment,
+    resolveOwner: () => {
+      resetGatewayServiceObservation();
+      return (options.resolveOwner ?? runtime.getGatewayOwner)();
+    },
+    probeAttachment: async (owner) => {
+      try {
+        return await (options.probeAttachment ?? runtime.probeGatewayAttachment)(owner);
+      } finally {
+        resetGatewayServiceObservation();
+      }
+    },
     observeManagedGateway,
   };
 }
