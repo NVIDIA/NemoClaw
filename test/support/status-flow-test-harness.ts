@@ -11,6 +11,7 @@ import type {
   SandboxStatusRouteDrift,
   ServingProcessHealth,
 } from "../../src/lib/actions/sandbox/status-snapshot";
+import type { LlamaCppRouteDetails } from "../../src/lib/inference/config";
 import type { ProviderHealthStatus } from "../../src/lib/inference/health";
 import type { SandboxHostMount } from "../../src/lib/state/registry";
 
@@ -74,6 +75,7 @@ export type StatusFlowHarnessOptions = {
   currentProvider?: string;
   gatewayPresets?: string[] | null;
   routeDrift?: SandboxStatusRouteDrift | null;
+  llamaCpp?: LlamaCppRouteDetails | null;
   inferenceHealth?: ProviderHealthStatus | null;
   servingProcessHealth?: ServingProcessHealth | null;
   portableDisposition?:
@@ -209,6 +211,7 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
         model: options.currentModel ?? sandboxEntry?.model,
       },
       routeDrift: options.routeDrift ?? null,
+      llamaCpp: options.llamaCpp ?? null,
       inferenceHealth:
         options.inferenceHealth === undefined
           ? {

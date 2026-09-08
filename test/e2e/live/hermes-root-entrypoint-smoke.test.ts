@@ -419,7 +419,7 @@ install -d -m 770 -o sandbox -g sandbox /sandbox/.hermes/dashboard-home
 printf "legacy dashboard memory\n" >/sandbox/.hermes/dashboard-home/MEMORY.md
 chown sandbox:sandbox /sandbox/.hermes/dashboard-home/MEMORY.md
 chmod 600 /sandbox/.hermes/dashboard-home/MEMORY.md
-chmod 750 /sandbox/.hermes
+chmod 00750 /sandbox/.hermes
 rm -rf /sandbox/.hermes/hooks /sandbox/.hermes/image_cache /sandbox/.hermes/audio_cache /sandbox/.hermes/logs/curator
 exec /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-start`;
 

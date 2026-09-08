@@ -15,7 +15,6 @@ import {
 } from "../../agent/onboard";
 import { RD as _RD, R } from "../../cli/terminal-style";
 import { snapshotOpenShellEnv } from "../../gateway-runtime-action";
-import * as nim from "../../inference/nim";
 import type { WebSearchConfig } from "../../inference/web-search";
 import type { DcodeAutoApprovalMode } from "../../onboard/dcode-auto-approval";
 import { isSandboxBaseImageRefreshRequested } from "../../onboard/base-image-resolution-flow";
@@ -34,6 +33,7 @@ import * as registry from "../../state/registry";
 import * as sandboxState from "../../state/sandbox";
 import type { ToolDisclosure } from "../../tool-disclosure";
 import { probeSandboxInferenceInvocation } from "./inference-invocation-probe";
+import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
 import {
   DCODE_AGENT_NAME,
   type ResolvedDcodeRebuildTarget,
@@ -251,11 +251,14 @@ function getRecordedGpuConfig(
     entry,
     session?.sandboxName === sandboxName ? session.gpuPassthrough : undefined,
   );
-  return resolveSandboxGpuConfig(nim.detectGpu(), {
-    flag: overrides.flag,
-    device: overrides.device,
-    env: {},
-  });
+  return resolveSandboxGpuConfig(
+    rebuildOnboardDependencies.detectGpuWithRuntimeProviderProof(entry.openshellDriver),
+    {
+      flag: overrides.flag,
+      device: overrides.device,
+      env: {},
+    },
+  );
 }
 
 function inspectLocalImageId(imageRef: string): string {
