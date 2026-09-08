@@ -11,6 +11,14 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 const OPENCLAW_LAUNCH_PROVIDER_ATTEMPTS = 2;
 const OPENCLAW_LAUNCH_PROVIDER_RETRY_DELAY_MS = 1_000;
+const OPENCLAW_LAUNCH_SESSION_TIMEOUT_MS = 280_000;
+const OPENCLAW_LAUNCH_READINESS_PROBE_TIMEOUT_MS = 360_000;
+export const OPENCLAW_LAUNCH_READINESS_LEASE_MAXIMUM_MS =
+  OPENCLAW_LAUNCH_READINESS_PROBE_TIMEOUT_MS +
+  2 *
+    (OPENCLAW_LAUNCH_PROVIDER_ATTEMPTS * OPENCLAW_LAUNCH_SESSION_TIMEOUT_MS +
+      (OPENCLAW_LAUNCH_PROVIDER_ATTEMPTS - 1) * OPENCLAW_LAUNCH_PROVIDER_RETRY_DELAY_MS);
+export const OPENCLAW_LAUNCH_READINESS_LEASE_ACCEPTANCE_TIMEOUT_MS = 30 * 60_000;
 export const OPENCLAW_PROVIDER_UNAVAILABLE_MARKER =
   "nemoclaw.e2e.launch-failure=provider-unavailable";
 const OPENCLAW_PROVIDER_UNAVAILABLE_FAILURE_PREFIX =
@@ -485,10 +493,10 @@ const replacement = [
 runRealOpenShell(replacement);
 `;
 
-// OpenClaw owns the JSONL session store and does not expose a structured
-// result from `nemoclaw launch`. This verifier records an in-sandbox baseline,
-// then qualifies only complete user and assistant records appended after that
-// baseline. Session content never moves to the host.
+// OpenClaw owns the JSONL session store and does not expose a structured result
+// from `nemoclaw launch`. This verifier records an in-sandbox baseline, then
+// qualifies complete turns and exact structured provider failures appended
+// after that baseline. Session content never moves to the host.
 export const OPENCLAW_SESSION_EVIDENCE_SCRIPT = String.raw`
 const crypto = require("node:crypto");
 const fs = require("node:fs");
@@ -963,6 +971,23 @@ function hasStructuredContent(message) {
   return Array.isArray(message.content) && message.content.length > 0;
 }
 
+const providerUnavailableCodes = new Set(["502", "503", "504", "529"]);
+
+function isStructuredProviderUnavailable(message) {
+  const identity = [
+    message.role,
+    hasStructuredContent(message),
+    message.stopReason,
+    message.api,
+    message.provider,
+  ].join("\n");
+  return (
+    identity === "assistant\nfalse\nerror\nopenai-completions\ninference" &&
+    typeof message.errorCode === "string" &&
+    providerUnavailableCodes.has(message.errorCode.trim())
+  );
+}
+
 function appendedMessages(fileName, baseline) {
   const { offset, complete, raw } = readCompleteSession(fileName);
   const prior = baseline[fileName];
@@ -987,7 +1012,11 @@ function appendedMessages(fileName, baseline) {
     if (!record || record.type !== "message" || !record.message) continue;
     const role = record.message.role;
     if (role !== "user" && role !== "assistant") continue;
-    messages.push({ role, hasStructuredContent: hasStructuredContent(record.message) });
+    messages.push({
+      role,
+      hasStructuredContent: hasStructuredContent(record.message),
+      providerUnavailable: isStructuredProviderUnavailable(record.message),
+    });
   }
   return messages;
 }
@@ -1022,7 +1051,13 @@ function qualifyTurns() {
     if (message.role !== expectedRoles[index]) {
       finish(2, "message_order_invalid", { sessionId });
     }
-    if (!message.hasStructuredContent) finish(2, "message_content_empty", { sessionId });
+    if (!message.hasStructuredContent) {
+      const emptyStatus = message.providerUnavailable ? 3 : 2;
+      const emptyReason = message.providerUnavailable
+        ? "provider_unavailable"
+        : "message_content_empty";
+      finish(emptyStatus, emptyReason, { sessionId });
+    }
   }
   if (messages.length < expectedRoles.length) finish(1);
   finish(0);
@@ -1133,24 +1168,6 @@ terminal_diagnostic() {
   fi
 }
 
-transient_provider_availability_failure() {
-  local diagnostic
-  grep -Eiq \
-    'authentication failed|authorization failed|unauthorized|forbidden|HTTP( status)?[:= ]+40[13]|invalid.*(api[_ -]?key|credential|JSON|response)|\b(egress|request|connection|certificate|TLS|network|route|routing|policy|proxy|transport)[^\r\n]*(blocked|denied|failed|invalid)\b|\b(blocked|denied|failed|invalid)[^\r\n]*(egress|request|connection|certificate|TLS|network|route|routing|policy|proxy|transport)\b|malformed' \
-    "$capture" && return 1
-  diagnostic="$(tail -c 4096 "$capture" 2>/dev/null || true)"
-  printf '%s\n' "$diagnostic" | grep -Fq \
-    'run error: litellm.ServiceUnavailableError: ServiceUnavailableError:' || return 1
-  printf '%s\n' "$diagnostic" | grep -Fq \
-    'OpenAIException - . Received Model Group=' || return 1
-  printf '%s\n' "$diagnostic" | grep -Fq \
-    'Available Model Group Fallbacks=' || return 1
-}
-
-provider_empty_message_evidence() {
-  grep -Eq '^\{"reason":"message_content_empty","sessionId":"[^"]+"\}$' "$evidence_error"
-}
-
 fail_launch_session() {
   echo "$1" >&2
   if [[ -s "$evidence_error" ]]; then
@@ -1199,11 +1216,9 @@ wait_for_turn_count() {
     fi
     if [[ "$evidence_status" != 1 ]]; then
       case "$evidence_status" in
-        2)
-          provider_empty_message_evidence && \
-            transient_provider_availability_failure && \
-            provider_unavailable_candidate=1 && \
-            fail_launch_session "launch did not record the required structured session turns"
+        3)
+          provider_unavailable_candidate=1
+          fail_launch_session "launch did not record the required structured session turns"
           ;;
       esac
       fail_launch_session \
@@ -1426,7 +1441,7 @@ export async function runOpenClawLaunchSession(
         TERM: "xterm-256color",
       },
       redactionValues: options.redactionValues,
-      timeoutMs: 280_000,
+      timeoutMs: OPENCLAW_LAUNCH_SESSION_TIMEOUT_MS,
     });
     if (result.exitCode === 0) return result;
     finalFailure = result;
@@ -1454,7 +1469,7 @@ export async function runOpenClawLaunchReadinessLeaseTurns(
     artifactName: `${options.artifactName}-probe`,
     env: options.env,
     redactionValues: options.redactionValues,
-    timeoutMs: 360_000,
+    timeoutMs: OPENCLAW_LAUNCH_READINESS_PROBE_TIMEOUT_MS,
   });
   if (probe.exitCode !== 0) {
     throw new Error(`launch readiness producer failed: ${resultText(probe)}`);

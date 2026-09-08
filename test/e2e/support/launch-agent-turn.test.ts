@@ -27,6 +27,8 @@ import {
 import { testTimeout } from "../../helpers/timeouts";
 import {
   LAUNCH_TURN_SCRIPT,
+  OPENCLAW_LAUNCH_READINESS_LEASE_ACCEPTANCE_TIMEOUT_MS,
+  OPENCLAW_LAUNCH_READINESS_LEASE_MAXIMUM_MS,
   OPENCLAW_LAUNCH_OPENSHELL_SHIM_SCRIPT,
   OPENCLAW_LAUNCH_RUNTIME_ENV_SCRIPT,
   OPENCLAW_PTY_MONITOR_STARTER_SCRIPT,
@@ -55,6 +57,9 @@ type FixtureMode =
   | "pty-termios-unavailable"
   | "provider-cleanup-failure"
   | "provider-empty-message"
+  | "provider-terminal-spoof"
+  | "provider-wrong-api"
+  | "provider-wrong-route"
   | "recording-timeout"
   | "restored-canonical-timeout"
   | "valid";
@@ -107,14 +112,7 @@ it("reports a residual PTY monitor socket without removing it (#9384)", async ()
 
 function runLaunchSessionFixture(
   mode: FixtureMode,
-  terminalCopy:
-    | "absent"
-    | "ansi"
-    | "long-policy"
-    | "policy"
-    | "provider"
-    | "reordered"
-    | "security",
+  terminalCopy: "absent" | "ansi" | "provider" | "reordered",
   invocation?: LaunchFixtureInvocation,
 ) {
   const fixtureRoot = mkdtempSync(join(tmpdir(), "nemoclaw-launch-turn-"));
@@ -307,9 +305,22 @@ if (process.argv[2] !== "tui") {
     sessionFile,
     JSON.stringify({ message: { content: [{ text: content, type: "text" }], role }, type: "message" }) + "\n",
   );
-  const appendEmpty = (role) => fs.appendFileSync(
+  const appendProviderError = (overrides = {}) => fs.appendFileSync(
     sessionFile,
-    JSON.stringify({ message: { content: [], role }, type: "message" }) + "\n",
+    JSON.stringify({
+      message: {
+        api: "openai-completions",
+        content: [],
+        errorCode: "503",
+        errorMessage: "litellm.ServiceUnavailableError: ServiceUnavailableError: OpenAIException - . Received Model Group=nvidia/model; Available Model Group Fallbacks=None",
+        model: "nvidia/model",
+        provider: "inference",
+        role: "assistant",
+        stopReason: "error",
+        ...overrides,
+      },
+      type: "message",
+    }) + "\n",
   );
   if (mode === "restored-canonical-timeout") {
     process.stdin.setRawMode(true);
@@ -346,23 +357,6 @@ if (process.argv[2] !== "tui") {
     process.stdout.write("\u001b[2KOpenAIException - . Received Model Group=nvidia/model\r\n");
     process.stdout.write("\u001b[2KAvailable Model Group Fallbacks=None\r");
   }
-  if (terminalCopy === "long-policy") {
-    process.stdout.write("denied by network policy\r\n");
-    process.stdout.write("x".repeat(5_000) + "\r\n");
-    process.stdout.write("run error: litellm.ServiceUnavailableError: ServiceUnavailableError:\r\n");
-    process.stdout.write("OpenAIException - . Received Model Group=nvidia/model\r\n");
-    process.stdout.write("Available Model Group Fallbacks=None\r");
-  }
-  if (terminalCopy === "policy") {
-    process.stdout.write("\u001b[2Krun error: litellm.ServiceUnavailableError: ServiceUnavailableError:\r\n");
-    process.stdout.write("\u001b[2KOpenAIException - . Received Model Group=nvidia/model\r\n");
-    process.stdout.write("\u001b[2KAvailable Model Group Fallbacks=None; denied by network policy\r");
-  }
-  if (terminalCopy === "security") {
-    process.stdout.write("\u001b[2Krun error: litellm.ServiceUnavailableError: ServiceUnavailableError:\r\n");
-    process.stdout.write("\u001b[2KOpenAIException - . Received Model Group=nvidia/model\r\n");
-    process.stdout.write("\u001b[2KAvailable Model Group Fallbacks=None; egress blocked by sandbox guard\r");
-  }
   if (terminalCopy === "reordered") process.stdout.write("idle | gateway connected\n");
 
   if (mode === "delayed-recording") {
@@ -378,7 +372,16 @@ if (process.argv[2] !== "tui") {
     append("user", firstInput);
   } else if (mode === "provider-empty-message" || mode === "provider-cleanup-failure") {
     append("user", firstInput);
-    appendEmpty("assistant");
+    appendProviderError();
+  } else if (mode === "provider-terminal-spoof") {
+    append("user", firstInput);
+    appendProviderError({ errorCode: "400" });
+  } else if (mode === "provider-wrong-api") {
+    append("user", firstInput);
+    appendProviderError({ api: "openai-responses" });
+  } else if (mode === "provider-wrong-route") {
+    append("user", firstInput);
+    appendProviderError({ provider: "attacker-controlled" });
   } else {
     append("user", firstInput);
     append("assistant", "first response");
@@ -519,8 +522,7 @@ exec "$@"
               : mode.endsWith("-timeout")
                 ? "2"
                 : (invocationEnv.NEMOCLAW_LAUNCH_SESSION_BUDGET_SECONDS ?? "230"),
-        NEMOCLAW_LAUNCH_SECOND_INPUT:
-          invocationEnv.NEMOCLAW_LAUNCH_SECOND_INPUT ?? "second input",
+        NEMOCLAW_LAUNCH_SECOND_INPUT: invocationEnv.NEMOCLAW_LAUNCH_SECOND_INPUT ?? "second input",
         NEMOCLAW_LAUNCH_SESSION_EVIDENCE_SCRIPT: OPENCLAW_SESSION_EVIDENCE_SCRIPT,
         NEMOCLAW_LAUNCH_SESSION_ROOT: sessionRoot,
         NEMOCLAW_OPENSHELL_COMMAND: fakeOpenshell,
@@ -1145,9 +1147,9 @@ it.runIf(process.platform === "linux")(
 );
 
 it.runIf(process.platform === "linux")(
-  "does not retry when a policy denial precedes the bounded provider diagnostic (#10978)",
+  "does not retry when terminal output mimics provider unavailability (#10978)",
   async () => {
-    const produced = runLaunchSessionFixture("provider-empty-message", "long-policy").result;
+    const produced = runLaunchSessionFixture("provider-terminal-spoof", "provider").result;
     let calls = 0;
     const host = {
       command: async () => {
@@ -1164,7 +1166,7 @@ it.runIf(process.platform === "linux")(
 
     expect(produced.stderr).not.toContain("nemoclaw.e2e.launch-failure=provider-unavailable");
     await runOpenClawLaunchSession({
-      artifactName: "producer-long-policy-handoff",
+      artifactName: "producer-terminal-spoof-handoff",
       cliCommand: "node",
       env: {},
       host: host as never,
@@ -1177,12 +1179,12 @@ it.runIf(process.platform === "linux")(
 );
 
 it.runIf(process.platform === "linux").each([
-  { denial: "egress blocked by sandbox guard", terminalCopy: "security" },
-  { denial: "denied by network policy", terminalCopy: "policy" },
+  { mismatch: "API", mode: "provider-wrong-api" },
+  { mismatch: "route", mode: "provider-wrong-route" },
 ] as const)(
-  "does not retry real provider output that reports $denial (#10978)",
-  async ({ denial, terminalCopy }) => {
-    const produced = runLaunchSessionFixture("provider-empty-message", terminalCopy).result;
+  "does not retry a structured provider error with the wrong $mismatch identity (#10978)",
+  async ({ mode }) => {
+    const produced = runLaunchSessionFixture(mode, "provider").result;
     const firstResult = {
       exitCode: produced.status ?? 1,
       signal: produced.signal,
@@ -1198,11 +1200,11 @@ it.runIf(process.platform === "linux").each([
       openshellCommandPath: "/usr/bin/openshell",
     };
 
-    expect(firstResult.stderr).toContain(denial);
+    expect(firstResult.stderr).toContain("ServiceUnavailableError");
     expect(firstResult.stderr).not.toContain("nemoclaw.e2e.launch-failure=provider-unavailable");
     await expect(
       runOpenClawLaunchSession({
-        artifactName: "producer-denial-handoff",
+        artifactName: "producer-identity-mismatch-handoff",
         cliCommand: "node",
         env: {},
         host: host as never,
@@ -1419,7 +1421,11 @@ it.runIf(process.platform === "linux")(
       },
     });
 
-    expect(launchPhaseStartedAtCallCount).toBe(1);
+    expect(
+      launchPhaseStartedAtCallCount === 1 &&
+        OPENCLAW_LAUNCH_READINESS_LEASE_ACCEPTANCE_TIMEOUT_MS >=
+          OPENCLAW_LAUNCH_READINESS_LEASE_MAXIMUM_MS + 5 * 60_000,
+    ).toBe(true);
     expect(calls).toHaveLength(3);
     expect(calls[0]).toMatchObject({
       command: "node",

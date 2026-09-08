@@ -37,6 +37,23 @@ function emptyMessage(role: "assistant" | "user"): string {
   return JSON.stringify({ message: { content: [], role }, type: "message" });
 }
 
+function providerUnavailableMessage(overrides: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    message: {
+      api: "openai-completions",
+      content: [],
+      errorCode: "503",
+      errorMessage: "litellm.ServiceUnavailableError: upstream unavailable",
+      model: "nvidia/model",
+      provider: "inference",
+      role: "assistant",
+      stopReason: "error",
+      ...overrides,
+    },
+    type: "message",
+  });
+}
+
 function writeSessionRecords(
   root: string,
   sessions: SessionRecords,
@@ -241,19 +258,41 @@ it("does not qualify structured turns recorded before the baseline (#9160)", () 
   expect(qualification.status).toBe(1);
 });
 
-it.each([
-  { "session-a": [message("assistant"), message("user")] },
-  { "session-a": [message("user"), message("user"), message("assistant")] },
-  { "session-a": [message("user"), message("assistant"), message("assistant")] },
-  { "session-a": [message("user"), "not-json", message("assistant")] },
-  { "session-a": [emptyMessage("user"), message("assistant")] },
-  { "session-a": [message("user"), message("assistant")], "session-b": [message("user")] },
-] as SessionRecords[])(
-  "rejects malformed, empty, duplicated, extra, out-of-order, or cross-session records [case %#] (#9160)",
-  (after) => {
+it.each<{ after: SessionRecords; status: number }>([
+  { after: { "session-a": [message("assistant"), message("user")] }, status: 2 },
+  {
+    after: { "session-a": [message("user"), message("user"), message("assistant")] },
+    status: 2,
+  },
+  {
+    after: { "session-a": [message("user"), message("assistant"), message("assistant")] },
+    status: 2,
+  },
+  { after: { "session-a": [message("user"), "not-json", message("assistant")] }, status: 2 },
+  { after: { "session-a": [emptyMessage("user"), message("assistant")] }, status: 2 },
+  {
+    after: {
+      "session-a": [message("user"), message("assistant")],
+      "session-b": [message("user")],
+    },
+    status: 2,
+  },
+  {
+    after: { "session-a": [message("user"), providerUnavailableMessage()] },
+    status: 3,
+  },
+  {
+    after: {
+      "session-a": [message("user"), providerUnavailableMessage({ errorCode: "400" })],
+    },
+    status: 2,
+  },
+])(
+  "rejects invalid evidence or classifies a structured provider 5xx [case %#] (#9160, #10978)",
+  ({ after, status }) => {
     const { baseline, qualification } = runEvidenceFixture({ after, expectedTurns: 1 });
     expect(baseline.status).toBe(0);
-    expect(qualification.status).toBe(2);
+    expect(qualification.status).toBe(status);
   },
 );
 
