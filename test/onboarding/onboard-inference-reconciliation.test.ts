@@ -28,6 +28,22 @@ import {
   withProcessEnv,
 } from "../support/setup-inference-test-harness.js";
 
+const HERMES_OAUTH_PROVIDER_METADATA = [
+  "Name: hermes-provider",
+  "Type: openai",
+  "Credential keys: OPENAI_API_KEY",
+  "Config keys: OPENAI_BASE_URL",
+  "",
+].join("\n");
+
+const HERMES_API_KEY_PROVIDER_METADATA = [
+  "Name: hermes-provider",
+  "Type: openai",
+  "Credential keys: NOUS_API_KEY",
+  "Config keys: OPENAI_BASE_URL",
+  "",
+].join("\n");
+
 describe("onboard helpers", () => {
   it("reuses a registered Hermes Provider without re-collecting host credentials", async () => {
     await withProcessEnv(
@@ -39,7 +55,7 @@ describe("onboard helpers", () => {
         const harness = createDirectSetupInferenceHarness({
           runOpenshell: (args) =>
             args.join(" ") === "provider get -g nemoclaw hermes-provider"
-              ? { status: 0, stdout: "Provider: hermes-provider", stderr: "" }
+              ? { status: 0, stdout: HERMES_OAUTH_PROVIDER_METADATA, stderr: "" }
               : undefined,
           overrides: { isNonInteractive: () => true },
         });
@@ -305,6 +321,9 @@ try {
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
+  if (normalized.includes("provider get") && normalized.includes("hermes-provider")) {
+    return { status: 0, stdout: ${JSON.stringify(HERMES_API_KEY_PROVIDER_METADATA)}, stderr: "" };
+  }
   return { status: 0, stdout: "", stderr: "" };
 };
 runner.runCapture = (command) => {
@@ -517,7 +536,7 @@ const { onboard } = require(${onboardPath});
         const harness = createDirectSetupInferenceHarness({
           runOpenshell: (args) =>
             args.join(" ") === "provider get -g nemoclaw hermes-provider"
-              ? { status: 0, stdout: "Provider: hermes-provider", stderr: "" }
+              ? { status: 0, stdout: HERMES_OAUTH_PROVIDER_METADATA, stderr: "" }
               : undefined,
           overrides: { isNonInteractive: () => true },
         });
