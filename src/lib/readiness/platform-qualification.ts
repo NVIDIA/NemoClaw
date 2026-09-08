@@ -6,10 +6,7 @@ import path from "node:path";
 import type { ContainerGpuProofStatus } from "../container-gpu-proof.js";
 import type { NvidiaPlatform } from "../inference/nim.js";
 import { collectN1xIdentity, type N1xIdentityOptions } from "../inference/platform-identity/n1x.js";
-import {
-  collectN1xWslProduct,
-  isN1xWslProductName,
-} from "../inference/platform-identity/n1x-wsl.js";
+import { collectN1xWslProduct } from "../inference/platform-identity/n1x-wsl.js";
 import {
   isQualifiedStationProfile,
   isQualifiedStationRuntime,
