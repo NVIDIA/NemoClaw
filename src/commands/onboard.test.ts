@@ -4,6 +4,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  completeAutomaticGatewayPortAfterOnboard: vi.fn(),
   createOnboardActionRuntimeDeps: vi.fn(),
   onboardRuntimeDeps: { googlechatTunnelRuntime: {} },
 }));
@@ -16,6 +17,9 @@ vi.mock("../lib/actions/global", () => ({
 }));
 vi.mock("../lib/cli/onboard-runtime-deps", () => ({
   createOnboardActionRuntimeDeps: mocks.createOnboardActionRuntimeDeps,
+}));
+vi.mock("../lib/onboard/gateway/automatic-port-completion", () => ({
+  completeAutomaticGatewayPortAfterOnboard: mocks.completeAutomaticGatewayPortAfterOnboard,
 }));
 
 const rootDir = process.cwd();
@@ -48,6 +52,14 @@ describe("onboard oclif command", () => {
       }),
       mocks.onboardRuntimeDeps,
     );
+    expect(mocks.completeAutomaticGatewayPortAfterOnboard).toHaveBeenCalledOnce();
+  });
+
+  it("does not promote automatic gateway state when direct onboarding fails", async () => {
+    vi.mocked(runOnboardAction).mockRejectedValueOnce(new Error("onboarding failed"));
+
+    await expect(OnboardCliCommand.run([], rootDir)).rejects.toThrow("onboarding failed");
+    expect(mocks.completeAutomaticGatewayPortAfterOnboard).not.toHaveBeenCalled();
   });
 
   it("accepts -y as the short form for --yes", async () => {

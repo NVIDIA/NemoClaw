@@ -559,11 +559,17 @@ automatic_gateway_port_selection_pending() {
 }
 
 complete_automatic_gateway_port_selection() {
-  local port state_dir pending_marker complete_marker
+  local port persisted_port state_dir pending_marker complete_marker
   port="$(resolve_nemoclaw_gateway_port)" || return 1
+  persisted_port="$(NEMOCLAW_GATEWAY_PORT="" resolve_persisted_automatic_gateway_port)" || return 1
+  [[ "$persisted_port" == "$port" ]] || return 1
   state_dir="$(nemoclaw_state_dir)" || return 1
   pending_marker="${state_dir}/automatic-gateway-port.pending"
   complete_marker="${state_dir}/automatic-gateway-port"
+  if [[ -f "$complete_marker" && ! -L "$complete_marker" &&
+    ! -e "$pending_marker" && ! -L "$pending_marker" ]]; then
+    return 0
+  fi
   node - "$pending_marker" "$complete_marker" "$port" <<'NODE' || error "Could not complete the automatically selected NemoClaw gateway port record."
 const fs = require("node:fs");
 
@@ -6754,6 +6760,9 @@ finalize_install() {
 if [[ "${BASH_SOURCE[0]:-}" == "$0" ]] || { [[ -z "${BASH_SOURCE[0]:-}" ]] && { [[ "$0" == "bash" ]] || [[ "$0" == "-bash" ]]; }; }; then
   if [[ "$#" -eq 1 && "${1:-}" == "--internal-resolve-automatic-gateway-port" ]]; then
     resolve_nemoclaw_gateway_port
+    exit 0
+  elif [[ "$#" -eq 1 && "${1:-}" == "--internal-complete-automatic-gateway-port" ]]; then
+    complete_automatic_gateway_port_selection
     exit 0
   fi
   # #4414: When invoked via `curl ... | bash`, BASH_SOURCE is empty and

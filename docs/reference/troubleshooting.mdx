@@ -623,8 +623,8 @@ Installation stops if no candidate passes, including when listener inspection is
 It does not modify the existing service or activation link.
 
 After selection and before onboarding runs or is deferred, the installer records the selected value under `~/.nemoclaw/gateways/<port>/automatic-gateway-port.pending`.
-After installer-driven onboarding succeeds, it promotes that file to `automatic-gateway-port`.
-Deferred, failed, cancelled, or later direct CLI onboarding keeps the pending identity so a later installer or CLI process restores the same port and reaches its onboarding or cleanup path instead of creating another environment.
+After installer-driven or direct CLI onboarding succeeds, it promotes that file to `automatic-gateway-port`.
+Deferred, failed, or cancelled onboarding keeps the pending identity so a later installer or CLI process restores the same port and reaches its onboarding or cleanup path instead of creating another environment.
 Later NemoClaw commands restore either recorded identity when `NEMOCLAW_GATEWAY_PORT` is unset.
 You can still use the printed export command when a script or surrounding process must carry the same scope explicitly.
 If the installer selects port `8990`, it prints this command:
