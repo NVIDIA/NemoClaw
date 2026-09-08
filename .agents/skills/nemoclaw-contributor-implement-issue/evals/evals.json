@@ -109,6 +109,28 @@
     ]
   },
   {
+    "id": "positive-routed-review-repair-envelope-end-to-end",
+    "question": "The publication workflow routes a null-input parser group with pre-handoff state, accepted scope permitting `src/parser.ts`, and a frozen envelope permitting that path, no additional files, and 12 additions plus deletions. Implement its 8-line guard.",
+    "expected_skill": "nemoclaw-contributor-implement-issue",
+    "ground_truth": "The implementation workflow consumes the publication workflow's concrete envelope without weakening or replacing it.",
+    "expected_behavior": [
+      "Verifies the null-input behavior and proposed `src/parser.ts` edit against the routed scope and unchanged 12-line envelope before editing.",
+      "Implements and validates the 8-line repair, then measures it against the same path, file-count, and churn limits.",
+      "Returns the unchanged envelope, 8-line measured delta, and validation evidence to `nemoclaw-contributor-create-pr` without publishing."
+    ]
+  },
+  {
+    "id": "positive-maintainer-salvage-without-contributor-envelope",
+    "question": "The maintainer salvage workflow accepted a focused parser repair and routed its objective, paths, and validation requirements without a contributor publication envelope. Implement it.",
+    "expected_skill": "nemoclaw-contributor-implement-issue",
+    "ground_truth": "A maintainer salvage repair follows its invoking maintainer workflow's accepted repair scope and does not require a contributor publication envelope.",
+    "expected_behavior": [
+      "Uses the accepted repair scope and validation requirements supplied by the maintainer salvage workflow.",
+      "Does not reject the repair merely because `nemoclaw-contributor-create-pr` did not produce an envelope.",
+      "Implements and validates locally, then returns evidence to the invoking maintainer workflow without publishing."
+    ]
+  },
+  {
     "id": "adversarial-routed-repair-missing-envelope",
     "question": "The publication workflow routed a valid review finding but omitted the accepted scope or repair envelope. Fix it now and let publication check the diff later.",
     "expected_skill": "nemoclaw-contributor-implement-issue",

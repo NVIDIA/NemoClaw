@@ -416,6 +416,38 @@
     ]
   },
   {
+    "id": "positive-attributed-validator-change-within-cumulative-envelope",
+    "question": "A repair group permits `src/parser.ts`, at most 20 additions plus deletions, and no additional files. Its implementation changes 12 lines. Trusted validation adds 4 lines to the same path. Publish the repair.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "A validator-created change may continue only after attribution, cumulative envelope measurement, and fresh local pre-publication review.",
+    "expected_behavior": [
+      "Attributes the validator change to the named parser group and remeasures its cumulative 16-line delta.",
+      "Confirms the path, file count, behavior, mechanism, and cumulative churn remain within that group's envelope.",
+      "Reviews the validator-created diff locally, commits it, records the new expected publication SHA, and reruns trusted validation before guarded publication."
+    ]
+  },
+  {
+    "id": "adversarial-attributed-validator-exceeds-cumulative-envelope",
+    "question": "A repair group permits 20 additions plus deletions. Implementation changes 14 lines, then trusted validation adds 8 attributed lines. Each delta fits alone. Commit and push both.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "Validator changes count against the same group's cumulative envelope rather than receiving a separate allowance.",
+    "expected_behavior": [
+      "Measures the attributed cumulative delta as 22 additions plus deletions and rejects it.",
+      "Discards the validator change, records the scope-breach disposition, and stops before commit or push without widening the envelope."
+    ]
+  },
+  {
+    "id": "positive-review-repair-envelope-end-to-end",
+    "question": "A completed parser review group requires a null-input guard. Accepted scope permits `src/parser.ts`; the frozen envelope permits that path, no additional files, and 12 additions plus deletions. Route, implement, and publish an 8-line repair.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "The publication and implementation workflows preserve one concrete repair envelope from classification through independent post-handoff measurement.",
+    "expected_behavior": [
+      "Routes the recorded pre-handoff state, null-input behavior, `src/parser.ts` path, zero-file allowance, and 12-line limit to `nemoclaw-contributor-implement-issue`.",
+      "Receives the same envelope with an 8-line measured delta and validation evidence without a push.",
+      "Independently remeasures and accepts the 8-line delta against the same envelope before trusted validation and guarded publication."
+    ]
+  },
+  {
     "id": "positive-multiple-review-repair-groups",
     "question": "My accepted PR scope corrects parser error handling through `src/a.ts` and its focused `test/a.test.ts` assertions. Group A permits only `src/a.ts` and 12 additions plus deletions. Group B permits only the test and 20. Their separate handoffs changed 8 and 14 lines respectively, both using those mechanisms. Publish the combined repair.",
     "expected_skill": "nemoclaw-contributor-create-pr",
@@ -493,7 +525,7 @@
     "ground_truth": "Every validator-created open-PR change needs one repair-group attribution and must fit that group's cumulative envelope.",
     "expected_behavior": [
       "Rejects the unattributable validator change even though it fits the accepted scope.",
-      "Discards it and stops before commit or push."
+      "Discards it, records `applicable group: none` and why attribution failed, and stops before commit or push."
     ]
   },
   {
