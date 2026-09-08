@@ -240,6 +240,7 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
         nvidiaContainer: {
           ...base.containerEngine.nvidiaContainer!,
           capture: captureNvidiaContainer,
+          cleanup: () => ({ status: "absent" as const }),
         },
       },
     };
@@ -449,12 +450,36 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
       log: (message) => logs.push(message),
     });
 
-    expect(prover(["JMJWOA-Generic-GPU"])).toMatchObject({
-      passed: true,
+    const result = prover(["JMJWOA-Generic-GPU"]);
+    expect(result).toMatchObject({
+      passed: false,
       cleanup: { resourceName, status: "failed" },
     });
+    expect(result).not.toHaveProperty("verifiedCapacity");
     expect(logs.join("\n")).toContain("could not prove absence or removal");
     expect(logs.join("\n")).toContain(resourceName);
+
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    const arch = Object.getOwnPropertyDescriptor(process, "arch")!;
+    Object.defineProperty(process, "platform", { ...platform, value: "linux" });
+    Object.defineProperty(process, "arch", { ...arch, value: "arm64" });
+    try {
+      expect(
+        detectGpu({
+          proveArm64ContainerGpu: () => result,
+          runCaptureImpl: vi.fn((command: readonly string[]) =>
+            command[0] === "nvidia-smi"
+            ? "NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU), 999999, 999999\n"
+            : "",
+        ),
+          isWsl: true,
+          n1xWslProduct: true,
+        }),
+      ).toBeNull();
+    } finally {
+      Object.defineProperty(process, "platform", platform);
+      Object.defineProperty(process, "arch", arch);
+    }
   });
 
   it("fails closed and cleans the exact provider-owned container after timeout", () => {

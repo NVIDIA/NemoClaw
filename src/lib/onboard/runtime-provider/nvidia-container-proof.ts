@@ -130,19 +130,20 @@ function runRuntimeProviderGpuProof(
     );
     const timedOut = (result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT";
     const diagnosticSource = result.stderr || result.stdout;
-    const passed = result.status === 0 && !timedOut && result.error === undefined;
-    const verifiedCapacity = passed ? parseContainerGpuProofCapacity(result.stdout) : null;
+    const workloadPassed = result.status === 0 && !timedOut && result.error === undefined;
+    const verifiedCapacity = workloadPassed ? parseContainerGpuProofCapacity(result.stdout) : null;
     const cleanup = cleanupContainer(
       resource,
       timedOut || result.error !== undefined ? "until-deadline" : "immediate",
     );
+    const passed = workloadPassed && cleanup.status !== "failed";
     return {
       providerId: provider.identity.id,
       passed,
       timedOut,
       exitCode: result.status,
       diagnostic: diagnosticSource.slice(0, 300),
-      ...(verifiedCapacity ? { verifiedCapacity } : {}),
+      ...(passed && verifiedCapacity ? { verifiedCapacity } : {}),
       ...(cleanup ? { cleanup } : {}),
     };
   } catch (error) {

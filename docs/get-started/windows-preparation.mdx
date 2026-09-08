@@ -51,7 +51,7 @@ Verify the following before you begin:
 Use Docker Desktop unless you specifically need the qualified rootless Podman path for WSL-local Ollama.
 
 - **Docker Desktop:** Follow the bootstrap-script route below. Docker Desktop is required for managed llama.cpp and Windows-host Ollama.
-- **Rootless Podman:** Skip the bootstrap script and the Docker Desktop section. Complete [Enable WSL 2](#enable-wsl-2) and [Install and Register Ubuntu](#install-and-register-ubuntu) manually, then follow the [native Podman prerequisites and recovery guidance](../../reference/troubleshooting#podman) inside WSL. Before onboarding, set `NEMOCLAW_GATEWAY_RUNTIME=podman` and confirm the current-user Podman socket and service, rootless engine, cgroups v2, bridge networking, DNS, and NVIDIA CDI device are available. This route supports WSL-local Ollama; it does not enable managed llama.cpp or Windows-host Ollama.
+- **Rootless Podman:** Skip the bootstrap script and the Docker Desktop section. Complete [Enable WSL 2](#enable-wsl-2) and [Install and Register Ubuntu](#install-and-register-ubuntu) manually, then follow the [native Podman prerequisites and recovery guidance](../../reference/troubleshooting#podman) inside WSL. Before onboarding, set `NEMOCLAW_GATEWAY_RUNTIME=podman` and confirm the current-user Podman socket and service, rootless engine, cgroups v2, bridge networking, and DNS are available. NVIDIA CDI is additionally required when you enable sandbox GPU passthrough or need the N1x CUDA capacity proof. This route supports WSL-local Ollama; it does not enable managed llama.cpp or Windows-host Ollama.
 
 ## Use the Bootstrap Script
 

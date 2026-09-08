@@ -16,7 +16,7 @@ Before selecting managed llama.cpp, unset `DOCKER_HOST` and select Docker's `def
 Managed N1x WSL selection rejects other Docker selectors.
 For other Windows WSL hosts, Express uses WSL-local Ollama with its memory-aware default model.
 WSL-local Ollama can use Docker Desktop or the qualification-backed rootless Podman provider.
-When the operator selects Podman, set `NEMOCLAW_GATEWAY_RUNTIME=podman` before onboarding and require the current-user Podman service and NVIDIA CDI device.
+When the operator selects Podman, set `NEMOCLAW_GATEWAY_RUNTIME=podman` before onboarding and require the current-user Podman service. Require the NVIDIA CDI device only when the operator enables sandbox GPU passthrough or needs the N1x CUDA capacity proof.
 Podman does not enable the Docker Desktop-only managed llama.cpp or Windows-host Ollama routes.
 Include the third-party-software notice, then ask: "Run Express install with these settings?"
 Choices:
