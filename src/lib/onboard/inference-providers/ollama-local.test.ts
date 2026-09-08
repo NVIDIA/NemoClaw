@@ -4,7 +4,17 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("../../adapters/docker", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../adapters/docker")>()),
+  detectContainerRuntimeFromDockerInfo: vi.fn(() => "docker-desktop"),
+}));
+vi.mock("../../platform", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../platform")>()),
+  containerCanReachHostLoopback: vi.fn(() => true),
+}));
+
 import {
   CONTAINER_REACHABILITY_IMAGE,
   loadPersistedOllamaHost,
@@ -19,7 +29,14 @@ import type { OllamaDeps } from "./types";
 
 const CREDENTIAL_ENV = "NEMOCLAW_OLLAMA_PROXY_TOKEN";
 
-afterEach(() => resetOllamaHostCache());
+beforeEach(() => {
+  vi.stubEnv("DOCKER_CONTEXT", "default");
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  resetOllamaHostCache();
+});
 
 const SANDBOX_ENDPOINT_MISMATCH =
   "Selected Ollama model 'llama3.2:1b' answers on http://127.0.0.1:11434, but the daemon the " +
@@ -152,6 +169,13 @@ describe("Ollama local provider sandbox-facing model gate", () => {
     setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
     const run = vi.fn((_command: unknown) => ({ status: 0 }));
     const cleanup = vi.fn(() => ({ ok: true as const }));
+    const protectionCapture = vi.fn((command: readonly string[]) =>
+      command.join(" ").includes("Get-NetTCPConnection")
+        ? "127.0.0.1"
+        : command.includes("Host: rebinding.invalid")
+          ? "403"
+          : JSON.stringify({ models: [] }),
+    );
 
     await expect(
       setupOllamaLocalInference(
@@ -162,11 +186,16 @@ describe("Ollama local provider sandbox-facing model gate", () => {
             validateOllamaModelWithToolsOverride: () => ({ ok: true }),
             validateSandboxFacingOllamaModel: () => ({ ok: true }),
             runOllamaWarmup: (model, runImpl) =>
-              runOllamaWarmup(model, runImpl, () => ({
-                env: { DOCKER_CONFIG: "/tmp/credential-free-docker" },
-                isolatedCredentialConfig: true,
-                cleanup,
-              })),
+              runOllamaWarmup(
+                model,
+                runImpl,
+                () => ({
+                  env: { DOCKER_CONFIG: "/tmp/credential-free-docker" },
+                  isolatedCredentialConfig: true,
+                  cleanup,
+                }),
+                protectionCapture,
+              ),
             persistResolvedOllamaHost: vi.fn(() => () => {}),
           },
         }),
@@ -183,10 +212,13 @@ describe("Ollama local provider sandbox-facing model gate", () => {
       ]),
       {
         ignoreError: true,
-        env: { DOCKER_CONFIG: "/tmp/credential-free-docker" },
+        env: expect.objectContaining({
+          DOCKER_CONFIG: "/tmp/credential-free-docker",
+          DOCKER_CONTEXT: "default",
+        }),
       },
     );
-    expect(cleanup).toHaveBeenCalledOnce();
+    expect(cleanup).toHaveBeenCalledTimes(3);
   });
 
   it("fails before provider registration when the cleanup route cannot be staged", async () => {

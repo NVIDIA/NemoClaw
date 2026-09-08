@@ -5,12 +5,14 @@ export type {
   McpProviderAttachment,
   McpProviderAttachmentInspection,
   McpProviderInspection,
+  McpProviderInspectionRuntimeSelection,
 } from "./mcp-bridge-provider-inspection";
 export {
   assertMcpProviderRecoverable,
   assertNoAttachedProviderCredentialCollisions,
   assertNoProviderCredentialCollisions,
   assertNoRegisteredProviderCredentialCollisions,
+  getMcpProviderInspectionRuntimeSelection,
   inspectMcpProvider,
   inspectMcpProviderAttachments,
   MCP_BRIDGE_PROVIDER_TYPE,

@@ -16,6 +16,7 @@ const forward = vi.hoisted(() => ({
 // only the OpenShell process boundary is stubbed.
 vi.mock("./adapters/openshell/forward-service", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./adapters/openshell/forward-service")>()),
+  isForwardServiceListenerOwner: () => true,
   launchForwardService: forward.launchForwardService,
 }));
 vi.mock("./adapters/openshell/resolve", () => ({
@@ -131,6 +132,7 @@ describe("a recovery launch records the bind that dashboard-url then reports (#1
 
     expect(forward.launchForwardService).toHaveBeenCalledWith(
       expect.objectContaining({ localHost: "0.0.0.0", localPort: 18789 }),
+      expect.anything(),
     );
     expect(registry.getSandbox("hm")?.dashboardBindAddress).toBe("0.0.0.0");
     const out: string[] = [];

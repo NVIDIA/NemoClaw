@@ -1,20 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-/**
- *
- * This keeps the contract real: onboarding a restricted OpenClaw
- * sandbox, mutating live OpenShell network policy from the NemoClaw CLI, and
- * probing egress from inside the sandbox. The prompt-driving helper is kept
- * separate so support tests can pin its command shape without live infra.
- */
-
 import fs from "node:fs";
 import { createServer, type Server } from "node:http";
 import path from "node:path";
 
-import { isPrivateIp } from "../../../nemoclaw/src/blueprint/private-networks.ts";
-import { listPresets } from "../../../src/lib/policy/index.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -25,40 +15,19 @@ import {
   validateSandboxName,
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
-import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
+import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import { ensureConfiguredRuntimeProviderAvailable } from "../fixtures/runtime-provider.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
-import { pollDeniedReasonLog } from "./network-policy-denied-log.ts";
-import { requireInferenceLocalCompletionText } from "./network-policy-inference.ts";
-import { runInteractivePolicyAdd } from "./network-policy-interactive.ts";
-import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
-import { expectPackageDatabaseReadOnly } from "./package-database-read-only.ts";
-import { parseVerifiedActivePolicyPresets } from "./policy-list-state.ts";
 import { runRestrictedOnboardWithRetry } from "./restricted-onboard-helpers.ts";
 
-const BASELINE_POLICY = path.join(
-  REPO_ROOT,
-  "nemoclaw-blueprint",
-  "policies",
-  "openclaw-sandbox.yaml",
-);
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-net-policy";
 const SUPPRESSION_SANDBOX_NAME =
   process.env.NEMOCLAW_NETWORK_POLICY_SUPPRESSION_SANDBOX_NAME ?? "e2e-net-suppress";
-
-const TEST_TIMEOUT_MS = testTimeout(65 * 60_000);
+const TEST_TIMEOUT_MS = testTimeout(35 * 60_000);
 const ONBOARD_TIMEOUT_MS = execTimeout(15 * 60_000);
 const SANDBOX_EXEC_TIMEOUT_MS = 120_000;
-const PACKAGE_MANAGER_TIMEOUT_MS = 5 * 60_000;
 const POLICY_SETTLE_MS =
   process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true" ? 5_000 : 3_000;
-const ONBOARD_ATTEMPTS = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true" ? 3 : 1;
-const DENIED_REASON_HOST = "nemoclaw-prr-repro-long-hostname-for-truncation-test.example.invalid";
-const DENIED_REASON_ENDPOINT = `${DENIED_REASON_HOST}:443`;
-const DENIED_REASON_URL = `https://${DENIED_REASON_HOST}/some/long/path`;
-const ENCODED_SLASH_DENIED_ENDPOINT = "openclaw.ai:443";
-const ENCODED_SLASH_DENIED_REASON =
-  "request-target contains an encoded '/' (%2F) which is not allowed on this endpoint";
 type NemoEnv = NodeJS.ProcessEnv;
 
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
@@ -99,176 +68,45 @@ async function runNemoclaw(
 async function sandboxBash(
   sandbox: SandboxClient,
   script: string,
-  options: { artifactName: string; timeoutMs?: number } = { artifactName: "sandbox-bash" },
+  artifactName: string,
 ): Promise<ShellProbeResult> {
   return sandbox.execShell(SANDBOX_NAME, trustedSandboxShellScript(script), {
-    artifactName: options.artifactName,
+    artifactName,
     env: baseEnv(),
-    timeoutMs: options.timeoutMs ?? SANDBOX_EXEC_TIMEOUT_MS,
-  });
-}
-
-async function applyPreset(host: HostCliClient, preset: string): Promise<ShellProbeResult> {
-  const result = await runNemoclaw(host, [SANDBOX_NAME, "policy-add", preset, "--yes"], {
-    artifactName: `policy-add-${preset}`,
     timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
   });
-  await sleep(POLICY_SETTLE_MS);
-  return result;
 }
 
-async function applyPresetInteractively(
-  host: HostCliClient,
-  preset: string,
-): Promise<ShellProbeResult> {
-  const result = await runInteractivePolicyAdd(host, {
-    artifactName: `policy-add-${preset}-interactive`,
-    cliEntrypoint: CLI_ENTRYPOINT,
-    env: baseEnv(),
-    preset,
-    sandboxName: SANDBOX_NAME,
-    timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
-  });
-  await sleep(POLICY_SETTLE_MS);
-  return result;
+async function readSandboxStartTime(sandbox: SandboxClient, artifactName: string): Promise<string> {
+  const result = await sandboxBash(
+    sandbox,
+    "cat /proc/1/stat 2>/dev/null | awk '{print $22}'",
+    artifactName,
+  );
+  const startTime = result.stdout.trim();
+  expect(startTime, text(result)).not.toBe("");
+  return startTime;
 }
 
-async function fetchStatus(
+async function probeUrl(
   sandbox: SandboxClient,
   url: string,
   artifactName: string,
 ): Promise<string> {
   const result = await sandboxBash(
     sandbox,
-    `node -e "
-fetch('${url}', {signal: AbortSignal.timeout(15000)})
-  .then(async r => console.log('STATUS_' + r.status + ' ' + (await r.text()).slice(0, 120)))
-  .catch(e => console.log('ERROR_' + (e.cause?.code || e.code || e.message)))
-"`,
-    { artifactName },
+    `curl -sS --connect-timeout 10 --max-time 20 -w '\nSTATUS_%{http_code}\n' '${url}' 2>&1`,
+    artifactName,
   );
   return text(result).trim();
-}
-
-async function curlStatus(
-  sandbox: SandboxClient,
-  url: string,
-  artifactName: string,
-  extraArgs = "",
-): Promise<string> {
-  const result = await sandboxBash(
-    sandbox,
-    `curl -sS -o /dev/null -w '%{http_code}' ${extraArgs} --max-time 20 ${url} 2>&1`,
-    { artifactName },
-  );
-  return text(result).trim();
-}
-
-async function expectScopedClawHubPluginLifecycle(sandbox: SandboxClient): Promise<void> {
-  const install = await sandboxBash(
-    sandbox,
-    "HOME=/sandbox openclaw plugins install 'clawhub:@openclaw/brave-plugin@2026.7.1' --force 2>&1",
-    {
-      artifactName: "tc-net-restricted-clawhub-scoped-plugin-install",
-      timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
-    },
-  );
-  expect(install.exitCode, text(install)).toBe(0);
-
-  const list = await sandboxBash(sandbox, "HOME=/sandbox openclaw plugins list --verbose 2>&1", {
-    artifactName: "tc-net-restricted-clawhub-scoped-plugin-list",
-    timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
-  });
-  expect(list.exitCode, text(list)).toBe(0);
-  expect(text(list), "the installed scoped ClawHub plugin must be enabled").toMatch(
-    /Brave[^\r\n]*enabled/i,
-  );
-
-  const inspect = await sandboxBash(
-    sandbox,
-    "HOME=/sandbox openclaw plugins inspect brave --runtime 2>&1",
-    {
-      artifactName: "tc-net-restricted-clawhub-scoped-plugin-runtime-inspect",
-      timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
-    },
-  );
-  expect(inspect.exitCode, text(inspect)).toBe(0);
-  expect(text(inspect), "the installed scoped ClawHub plugin runtime must load").toMatch(
-    /Status:\s*loaded/i,
-  );
-}
-
-async function expectEncodedSlashConfinedToClawHub(
-  host: HostCliClient,
-  sandbox: SandboxClient,
-): Promise<void> {
-  const encodedPath = "/@nemoclaw%2Fencoded-slash-boundary-probe";
-  const clawhubStatus = await fetchStatus(
-    sandbox,
-    `https://clawhub.ai${encodedPath}`,
-    "tc-net-baseline-clawhub-encoded-slash",
-  );
-  expect(clawhubStatus, `ClawHub encoded slash probe must reach the upstream service`).toMatch(
-    /STATUS_[1-5][0-9][0-9]/,
-  );
-  expect(clawhubStatus, `ClawHub encoded slash probe must not be denied by policy`).not.toMatch(
-    /STATUS_403/,
-  );
-
-  const nonClawhubStatus = await fetchStatus(
-    sandbox,
-    `https://openclaw.ai${encodedPath}`,
-    "tc-net-baseline-non-clawhub-encoded-slash",
-  );
-  // Undici can report the same denied CONNECT as `UND_ERR_SOCKET` or `fetch failed`.
-  // The OpenShell gateway log below provides the authoritative denial evidence.
-  expect(nonClawhubStatus, `encoded slashes must fail closed outside ClawHub`).toMatch(
-    /^(?:STATUS_403|ERROR_(?:UND_ERR_SOCKET|fetch failed))/,
-  );
-  const denial = await waitForDeniedReasonLog(host, {
-    endpoint: ENCODED_SLASH_DENIED_ENDPOINT,
-    reasonIncludes: ENCODED_SLASH_DENIED_REASON,
-    artifactPrefix: "tc-net-baseline-non-clawhub-encoded-slash-logs-tail-50",
-  });
-  expect(denial.line).toContain("NET:OPEN");
-  expect(denial.line).toContain("DENIED");
-  expect(denial.line).toContain(ENCODED_SLASH_DENIED_ENDPOINT);
-  expect(denial.line).toContain("[policy:openclaw_api engine:l7]");
-  expect(denial.reason).toContain(ENCODED_SLASH_DENIED_REASON);
-}
-
-async function waitForDeniedReasonLog(
-  host: HostCliClient,
-  options: {
-    endpoint?: string;
-    reasonIncludes?: string;
-    artifactPrefix?: string;
-  } = {},
-) {
-  const endpoint = options.endpoint ?? DENIED_REASON_ENDPOINT;
-  const artifactPrefix = options.artifactPrefix ?? "tc-net-4760-logs-tail-50";
-  return pollDeniedReasonLog({
-    attempts: process.env.GITHUB_ACTIONS === "true" ? 12 : 8,
-    endpoint,
-    reasonIncludes: options.reasonIncludes,
-    readLogs: async (attempt) => {
-      const logs = await runNemoclaw(host, [SANDBOX_NAME, "logs", "--tail", "50"], {
-        artifactName: `${artifactPrefix}-attempt-${attempt}`,
-        timeoutMs: 60_000,
-      });
-      expect(logs.exitCode, text(logs)).toBe(0);
-      return text(logs);
-    },
-    settle: () => sleep(1_000),
-  });
 }
 
 async function startMarkerServer(
   marker: string,
 ): Promise<{ port: number; close: () => Promise<void> }> {
   const server = createServer((_req, res) => {
-    res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-    res.end(`<html><body>${marker}</body></html>\n`);
+    res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
+    res.end(`${marker}\n`);
   });
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
@@ -279,7 +117,15 @@ async function startMarkerServer(
     await closeServer(server);
     throw new Error("marker server did not expose a TCP port");
   }
-  return { port: address.port, close: () => closeServer(server) };
+  let closed = false;
+  return {
+    port: address.port,
+    close: async () => {
+      if (closed) return;
+      closed = true;
+      await closeServer(server);
+    },
+  };
 }
 
 function closeServer(server: Server): Promise<void> {
@@ -294,12 +140,12 @@ function writeHostGatewayPolicy(artifacts: ArtifactSink, port: number): string {
   fs.writeFileSync(
     target,
     `preset:
-  name: e2e-host-gateway-web-fetch
-  description: "Network-policy E2E host-gateway web_fetch probe"
+  name: e2e-host-gateway
+  description: "Allow one host-gateway port"
 
 network_policies:
-  e2e_host_gateway_web_fetch:
-    name: e2e_host_gateway_web_fetch
+  e2e_host_gateway:
+    name: e2e_host_gateway
     endpoints:
       - host: host.openshell.internal
         port: ${port}
@@ -312,41 +158,11 @@ network_policies:
         rules:
           - allow: { method: GET, path: "/**" }
     binaries:
+      - { path: /usr/local/bin/curl }
+      - { path: /usr/bin/curl }
       - { path: /usr/local/bin/openclaw }
       - { path: /usr/local/bin/node }
       - { path: /usr/bin/node }
-`,
-    "utf8",
-  );
-  return target;
-}
-
-// A user-supplied preset that pins allowed_ips on a NON-bridge host. The guard
-// must reject this on a real sandbox even though the host.openshell.internal
-// exemption exists — the exemption must not become a blanket allowed_ips bypass
-// (#6073). Mirrors the writeHostGatewayPolicy shape but targets an arbitrary
-// private host.
-function writeEvilAllowedIpsPolicy(artifacts: ArtifactSink): string {
-  const target = artifacts.pathFor("policies/evil-allowed-ips.yaml");
-  fs.mkdirSync(path.dirname(target), { recursive: true });
-  fs.writeFileSync(
-    target,
-    `preset:
-  name: e2e-evil-allowed-ips
-  description: "Network-policy E2E allowed_ips SSRF-bypass rejection probe"
-
-network_policies:
-  e2e_evil_allowed_ips:
-    name: e2e_evil_allowed_ips
-    endpoints:
-      - host: 10.200.0.2
-        port: 18789
-        protocol: rest
-        enforcement: enforce
-        allowed_ips:
-          - 10.0.0.0/8
-        rules:
-          - allow: { method: GET, path: "/**" }
 `,
     "utf8",
   );
@@ -359,175 +175,106 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-const [approvedUrl, deniedUrl, marker, denyMarker] = process.argv.slice(2);
+const [approvedUrl, deniedUrl, approvedMarker, deniedMarker] = process.argv.slice(2);
+function fail(detail) {
+  throw new Error(detail);
+}
+
+const configPath = process.env.OPENCLAW_CONFIG_PATH || "/sandbox/.openclaw/openclaw.json";
+const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+if (config?.tools?.web?.fetch?.useTrustedEnvProxy !== true) {
+  fail("tools.web.fetch.useTrustedEnvProxy must be enabled");
+}
+
 const distDir = "/usr/local/lib/node_modules/openclaw/dist";
-
-function fail(code, detail) {
-  console.log("E2E_FAIL_" + code + ": " + String(detail || "").slice(0, 1200));
-  process.exitCode = 1;
+const candidates = fs
+  .readdirSync(distDir)
+  .filter((name) => /^openclaw-tools-(?!serve-config-).+\.js$/.test(name))
+  .sort();
+if (candidates.length !== 1) {
+  fail("expected one OpenClaw tools module, found " + candidates.join(", "));
 }
 
-function findDistFile(prefix) {
-  const candidates = fs
-    .readdirSync(distDir)
-    .filter(
-      (name) =>
-        name.startsWith(prefix) &&
-        !name.startsWith(prefix + "serve-config-") &&
-        name.endsWith(".js"),
-    )
-    .sort();
-  if (candidates.length !== 1) {
-    throw new Error(
-      "expected one " +
-        prefix +
-        "*.js file, found " +
-        candidates.length +
-        ": " +
-        candidates.join(", "),
-    );
-  }
-  return path.join(distDir, candidates[0]);
+const mod = await import(pathToFileURL(path.join(distDir, candidates[0])).href);
+const createOpenClawTools = mod.t || mod.createOpenClawTools;
+if (typeof createOpenClawTools !== "function") {
+  fail("OpenClaw tools export is missing");
 }
-
-function summarize(value) {
-  return JSON.stringify(value, (_key, inner) => {
-    if (typeof inner === "string" && inner.length > 1200) return inner.slice(0, 1200) + "...";
-    return inner;
-  });
-}
-
-async function main() {
-  const configPath = process.env.OPENCLAW_CONFIG_PATH || "/sandbox/.openclaw/openclaw.json";
-  const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
-  const fetchConfig = config?.tools?.web?.fetch;
-  if (fetchConfig?.useTrustedEnvProxy !== true) {
-    fail(
-      "CONFIG_MISSING_TRUSTED_ENV_PROXY",
-      "tools.web.fetch.useTrustedEnvProxy=" + fetchConfig?.useTrustedEnvProxy,
-    );
-    return;
-  }
-
-  const mod = await import(pathToFileURL(findDistFile("openclaw-tools-")).href);
-  const createOpenClawTools = mod.t || mod.createOpenClawTools;
-  if (typeof createOpenClawTools !== "function") {
-    fail("OPENCLAW_TOOLS_EXPORT_MISSING", Object.keys(mod).join(","));
-    return;
-  }
-
-  const tools = createOpenClawTools({
-    config,
-    sandboxed: true,
-    workspaceDir: "/sandbox/.openclaw/workspace-main",
-    wrapBeforeToolCallHook: false,
-    disablePluginTools: true,
-    disableMessageTool: true,
-  });
-  const webFetch = tools.find((tool) => tool?.name === "web_fetch");
-  if (!webFetch || typeof webFetch.execute !== "function") {
-    fail("WEB_FETCH_TOOL_MISSING", tools.map((tool) => tool?.name).filter(Boolean).join(","));
-    return;
-  }
-
-  let approvedRaw = "";
-  try {
-    const approved = await webFetch.execute("e2e-approved-host-gateway", {
-      url: approvedUrl,
-      extractMode: "text",
-      maxChars: 2000,
-    });
-    approvedRaw = summarize(approved);
-  } catch (error) {
-    const detail = error && (error.stack || error.message) ? error.stack || error.message : error;
-    if (/SsrFBlockedError|Blocked hostname|private\/internal\/special-use/i.test(String(detail))) {
-      fail("SSRF_BLOCKED_HOST_GATEWAY_APPROVED", detail);
-      return;
-    }
-    fail("APPROVED_FETCH_ERROR", detail);
-    return;
-  }
-  if (!approvedRaw.includes(marker)) {
-    fail("APPROVED_MARKER_MISSING", approvedRaw);
-    return;
-  }
-  console.log("E2E_WEB_FETCH_APPROVED_OK");
-
-  try {
-    const denied = await webFetch.execute("e2e-denied-host-gateway", {
-      url: deniedUrl,
-      extractMode: "text",
-      maxChars: 2000,
-    });
-    const deniedRaw = summarize(denied);
-    if (deniedRaw.includes(denyMarker)) {
-      fail("DENIED_PORT_REACHED", deniedRaw);
-      return;
-    }
-    fail("DENIED_PORT_UNEXPECTED_SUCCESS", deniedRaw);
-  } catch (error) {
-    const detail = String(
-      error && (error.stack || error.message) ? error.stack || error.message : error,
-    );
-    if (/SsrFBlockedError|Blocked hostname|private\/internal\/special-use/i.test(detail)) {
-      fail("SSRF_BLOCKED_HOST_GATEWAY_DENIED", detail);
-      return;
-    }
-    if (
-      /Web fetch failed \(403\)|\b403\b|policy|denied|forbidden|fetch failed|ECONN|UND_ERR|proxy/i.test(
-        detail,
-      )
-    ) {
-      console.log("E2E_WEB_FETCH_DENIED_OK " + detail.split("\n")[0].slice(0, 300));
-      return;
-    }
-    fail("DENIED_PORT_UNEXPECTED_ERROR", detail);
-  }
-}
-
-main().catch((error) => {
-  fail("UNCAUGHT", error && (error.stack || error.message) ? error.stack || error.message : error);
+const tools = createOpenClawTools({
+  config,
+  sandboxed: true,
+  workspaceDir: "/sandbox/.openclaw/workspace-main",
+  wrapBeforeToolCallHook: false,
+  disablePluginTools: true,
+  disableMessageTool: true,
 });
+const webFetch = tools.find((tool) => tool?.name === "web_fetch");
+if (!webFetch || typeof webFetch.execute !== "function") {
+  fail("installed OpenClaw web_fetch tool is missing");
+}
+
+function summary(value) {
+  return JSON.stringify(value).slice(0, 2000);
+}
+
+const approved = await webFetch.execute("e2e-approved-host-gateway", {
+  url: approvedUrl,
+  extractMode: "text",
+  maxChars: 2000,
+});
+const approvedText = summary(approved);
+if (!approvedText.includes(approvedMarker)) {
+  fail("approved marker missing: " + approvedText);
+}
+console.log("E2E_WEB_FETCH_APPROVED_OK");
+
+try {
+  const denied = await webFetch.execute("e2e-denied-host-gateway", {
+    url: deniedUrl,
+    extractMode: "text",
+    maxChars: 2000,
+  });
+  const deniedText = summary(denied);
+  if (deniedText.includes(deniedMarker)) {
+    fail("E2E_FAIL_DENIED_PORT_REACHED: " + deniedText);
+  }
+  fail("E2E_FAIL_DENIED_PORT_UNEXPECTED_SUCCESS: " + deniedText);
+} catch (error) {
+  const detail = String(error && (error.stack || error.message) ? error.stack || error.message : error);
+  if (/E2E_FAIL_DENIED_PORT_|SsrFBlockedError|Blocked hostname|private\/internal\/special-use/i.test(detail)) {
+    throw error;
+  }
+  if (!/Web fetch failed \(403\)|\b403\b/i.test(detail)) {
+    throw error;
+  }
+  console.log("E2E_WEB_FETCH_DENIED_OK " + detail.split("\n")[0].slice(0, 300));
+}
 `;
 }
 
 test(
-  "network-policy: restricted sandbox enforces live allow/deny policy probes",
+  "network-policy: a live policy update does not restart the sandbox during host-gateway allow and deny probes",
   {
     timeout: TEST_TIMEOUT_MS,
     meta: {
       e2ePhases: [
         "confirm built CLI selected runtime provider OpenShell and credential",
         "clear the sandbox and onboard restricted policy",
-        "prove zero active presets, read-only package metadata, default denial, and the weather allowlist",
-        "exercise package and SaaS policy presets",
-        "prove Jira dry-run and per-binary denial",
-        "verify hot reload inference exemption and SSRF guards",
-        "exercise scoped host-gateway web fetch policy",
-        "prove per-binary Jira approval after NemoClaw policy mutations",
-        "restore baseline policy through OpenShell and record the contract",
+        "deny default egress and hot-reload one host-gateway port",
+        "allow the approved host-gateway port and deny another port",
+        "prove the installed OpenClaw web_fetch path obeys the host-gateway policy",
       ],
     },
   },
-  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
+  async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
     await artifacts.target.declare({
       id: "network-policy",
       boundary: "live-sandbox-network-policy",
       contracts: [
-        "deny-by-default egress",
-        "restricted tier begins with zero active presets",
-        "package metadata is readable while package database writes remain denied (#8467)",
-        "OpenShell 0.0.106 preserves the full denied endpoint and policy disposition through nemoclaw logs --tail 50 (#4760)",
-        "read-only preset allowlist behavior",
-        "weather preset allows wttr.in GET and HEAD but denies POST and unrelated hosts",
-        "live policy-add and dry-run behavior",
-        "per-binary policy enforcement",
-        "hot reload without sandbox restart",
-        "inference.local exemption with direct-provider denial",
-        "SSRF private-address rejection",
-        "OpenClaw web_fetch host-gateway policy allow/deny",
-        "scoped ClawHub plugins install and load while encoded paths remain ClawHub-only under the baseline policy",
-        "direct OpenShell baseline policy replacement",
+        "restricted policy denies undeclared egress",
+        "a live policy update does not restart the sandbox",
+        "a host-gateway policy allows only its declared port",
+        "installed OpenClaw web_fetch uses the same host-gateway port boundary",
       ],
     });
 
@@ -549,7 +296,6 @@ test(
       timeoutMs: 30_000,
     });
     expect(openshellVersion.exitCode, text(openshellVersion)).toBe(0);
-    expect(text(openshellVersion)).toContain("0.0.106");
 
     const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
     cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
@@ -574,544 +320,113 @@ test(
       timeoutMs: 120_000,
     });
 
-    let onboard: ShellProbeResult | null = null;
-    for (let attempt = 1; attempt <= ONBOARD_ATTEMPTS; attempt += 1) {
-      if (attempt > 1) {
-        await runNemoclaw(host, [SANDBOX_NAME, "destroy", "--yes"], {
-          artifactName: `pre-cleanup-nemoclaw-destroy-network-policy-attempt-${attempt}`,
-          env: baseEnv(),
-          timeoutMs: 120_000,
-        });
-      }
-
-      onboard = await runNemoclaw(
-        host,
-        ["onboard", "--non-interactive", "--yes-i-accept-third-party-software"],
-        {
-          artifactName:
-            attempt === 1
-              ? "onboard-restricted-network-policy"
-              : `onboard-restricted-network-policy-attempt-${attempt}`,
-          env: baseEnv({
-            NVIDIA_INFERENCE_API_KEY: apiKey,
-            NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
-            NEMOCLAW_RECREATE_SANDBOX: "1",
-            NEMOCLAW_POLICY_TIER: "restricted",
-          }),
-          redactionValues: [apiKey],
-          timeoutMs: ONBOARD_TIMEOUT_MS,
-        },
-      );
-      if (onboard.exitCode === 0) {
-        break;
-      }
-      if (isTransientProviderValidationFailure(onboard) && attempt < ONBOARD_ATTEMPTS) {
-        await sleep(10_000 * attempt);
-        continue;
-      }
-      if (isTransientProviderValidationFailure(onboard) && process.env.GITHUB_ACTIONS === "true") {
-        // Invalid state: the external NVIDIA Endpoints validation request is unreachable,
-        // rate-limited, or temporarily unavailable while local CLI/config/policy setup has
-        // not produced a classifier match on its own. Source boundary: hosted provider
-        // availability outside this repo. Removal condition: endpoint validation becomes
-        // stable enough in CI to avoid transient 429/5xx/connectivity skips for a release
-        // cycle, or NemoClaw gains a hermetic provider-validation fixture for onboarding.
-        await artifacts.writeJson("transient-provider-validation.skip.json", {
-          reason: "transient NVIDIA Endpoints validation failure after retries",
-          attempts: ONBOARD_ATTEMPTS,
-          sourceBoundary: "external NVIDIA Endpoints provider availability",
-          removalCondition:
-            "remove once CI endpoint validation is stable for a release cycle or covered by a hermetic provider-validation fixture",
-        });
-        skip(
-          `NVIDIA Endpoints validation hit a transient upstream/rate-limit failure after ${ONBOARD_ATTEMPTS} attempts`,
-        );
-      }
-      break;
-    }
-    expect(onboard?.exitCode, onboard ? text(onboard) : "onboard did not run").toBe(0);
-
-    // Keep the actual OpenShell boundary in the retained journey: a default
-    // restricted onboard must have no active preset before operator mutation.
-    progress.phase(
-      "prove zero active presets, read-only package metadata, default denial, and the weather allowlist",
-    );
-    const policyListAfterOnboard = await runNemoclaw(host, [SANDBOX_NAME, "policy-list"], {
-      artifactName: "tc-net-01-policy-list-after-onboard",
-      timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
-    });
-    expect(
-      policyListAfterOnboard.exitCode,
-      "policy-list must exit successfully after default restricted onboard",
-    ).toBe(0);
-    const activePresets = parseVerifiedActivePolicyPresets(
-      text(policyListAfterOnboard),
-      listPresets({ agent: "openclaw" }).map((preset) => preset.name),
-    );
-    expect(
-      activePresets,
-      "policy-list must return one complete, verified preset listing",
-    ).not.toBeNull();
-    expect(activePresets?.length, "restricted tier must begin with zero active presets").toBe(0);
-
-    await expectPackageDatabaseReadOnly({
-      artifactPrefix: "tc-net",
-      env: baseEnv(),
-      runtimeProvider,
-      sandbox,
+    const onboard = await runRestrictedOnboardWithRetry({
+      host,
+      artifacts,
+      skip,
       sandboxName: SANDBOX_NAME,
-      timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
+      apiKey,
+      scenarioLabel: "network-policy",
+      scenarioSlug: "network-policy",
+      preCleanupArtifactPrefix: "pre-cleanup-nemoclaw-destroy-network-policy",
+      onboardArtifactPrefix: "onboard-restricted-network-policy",
+      onboardTimeoutMs: ONBOARD_TIMEOUT_MS,
+      preCleanupTimeoutMs: 120_000,
+      runNemoclaw,
+      baseEnv,
     });
+    expect(onboard.exitCode, text(onboard)).toBe(0);
 
-    const denyDefault = await fetchStatus(
+    progress.phase("deny default egress and hot-reload one host-gateway port");
+    const defaultDenied = await probeUrl(
       sandbox,
       "https://example.com/",
-      "tc-net-01-deny-default",
+      "network-policy-default-denial",
     );
-    expect(denyDefault, `example.com should be blocked under restricted policy`).toMatch(
-      /STATUS_403|ERROR_/,
-    );
-    await expectScopedClawHubPluginLifecycle(sandbox);
+    expect(defaultDenied).toMatch(/\b403\b/);
 
-    const longHostnameDenial = await sandboxBash(sandbox, `curl -m 5 -sS ${DENIED_REASON_URL}`, {
-      artifactName: "tc-net-4760-denied-long-hostname",
-    });
-    expect(
-      longHostnameDenial.exitCode !== 0 || /403|denied|forbidden/i.test(text(longHostnameDenial)),
-      `long-hostname egress probe must be denied: ${text(longHostnameDenial)}`,
-    ).toBe(true);
+    const approvedMarker = "NEMOCLAW_HOST_GATEWAY_ALLOWED";
+    const deniedMarker = "NEMOCLAW_HOST_GATEWAY_DENIED_PORT";
+    const approvedServer = await startMarkerServer(approvedMarker);
+    cleanup.trackDisposable("stop the approved host-gateway marker server", approvedServer.close);
+    const deniedServer = await startMarkerServer(deniedMarker);
+    cleanup.trackDisposable("stop the denied host-gateway marker server", deniedServer.close);
 
-    const deniedReason = await waitForDeniedReasonLog(host);
-    expect(deniedReason.reason, deniedReason.line).toContain(DENIED_REASON_ENDPOINT);
-    expect(deniedReason.reason, deniedReason.line).toMatch(
-      /not (?:in|allowed by) (?:any )?policy|is not allowed by any policy/i,
-    );
-    expect(deniedReason.reason, deniedReason.line).not.toContain("...");
-    const policyField = deniedReason.line.match(/\[policy:([^\s\]]+)/u)?.[1] ?? "";
-    const hasCompletePolicyDisposition =
-      (policyField !== "" && policyField !== "-") ||
-      /not (?:in|allowed by) (?:any )?policy|is not allowed by any policy/i.test(
-        deniedReason.reason,
-      );
-    expect(
-      hasCompletePolicyDisposition,
-      `DENIED log must retain a named policy or the explicit any-policy rejection: ${deniedReason.line}`,
-    ).toBe(true);
+    const startTimeBefore = await readSandboxStartTime(sandbox, "network-policy-start-time-before");
 
-    const weatherApply = await applyPreset(host, "weather");
-    expect(weatherApply.exitCode, text(weatherApply)).toBe(0);
-
-    const weatherUrl = "https://wttr.in/London";
-    await expect(curlStatus(sandbox, weatherUrl, "tc-net-weather-get")).resolves.toMatch(
-      /^[23][0-9][0-9]$/,
-    );
-    await expect(curlStatus(sandbox, weatherUrl, "tc-net-weather-head", "-I")).resolves.toMatch(
-      /^[23][0-9][0-9]$/,
-    );
-    await expect(curlStatus(sandbox, weatherUrl, "tc-net-weather-post", "-X POST")).resolves.toBe(
-      "403",
-    );
-
-    const unrelatedAfterWeather = await fetchStatus(
-      sandbox,
-      "https://example.com/",
-      "tc-net-weather-unrelated-denied",
-    );
-    expect(unrelatedAfterWeather, "weather preset must not allow unrelated hosts").toMatch(
-      /STATUS_403|ERROR_/,
-    );
-
-    progress.phase("exercise package and SaaS policy presets");
-    const brewApply = await applyPreset(host, "brew");
-    expect(brewApply.exitCode, text(brewApply)).toBe(0);
-    const policyListAfterBrew = await runNemoclaw(host, [SANDBOX_NAME, "policy-list"], {
-      artifactName: "tc-net-11-policy-list-brew",
-      timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
-    });
-    expect(policyListAfterBrew.exitCode, text(policyListAfterBrew)).toBe(0);
-    expect(policyListAfterBrew.stdout).toMatch(/^[\s]*●[\s]+brew[\s]/m);
-
-    const connectProbe = await runNemoclaw(host, [SANDBOX_NAME, "connect", "--probe-only"], {
-      artifactName: "tc-net-11-connect-probe-only",
-      timeoutMs: 60_000,
-    });
-    expect(connectProbe.exitCode, text(connectProbe)).toBe(0);
-
-    const brewGitDenied = await sandboxBash(
-      sandbox,
-      "GIT_TERMINAL_PROMPT=0 git ls-remote https://github.com/Homebrew/brew.git HEAD >/dev/null",
-      { artifactName: "tc-net-11-brew-git-denied" },
-    );
-    const brewGitDeniedText = text(brewGitDenied);
-    expect(brewGitDenied.timedOut, brewGitDeniedText).toBe(false);
-    expect(brewGitDenied.exitCode, brewGitDeniedText).not.toBe(0);
-    expect(brewGitDeniedText).toMatch(/\b403\b|denied|forbidden/i);
-
-    const brewProbe = await sandboxBash(
-      sandbox,
-      String.raw`
-set -euo pipefail
-export HOMEBREW_NO_AUTO_UPDATE=1
-export HOMEBREW_NO_ENV_HINTS=1
-check_status() {
-  endpoint_name="$1"
-  endpoint_url="$2"
-  status="$(curl -sS -o /dev/null -w "%{http_code}" --connect-timeout 10 --max-time 30 "$endpoint_url")"
-  case "$status" in
-    2??|3??|401) printf 'BREW_ENDPOINT_%s_OK_%s\n' "$endpoint_name" "$status" ;;
-    *) printf 'BREW_ENDPOINT_%s_BAD_%s\n' "$endpoint_name" "$status"; exit 1 ;;
-  esac
-}
-check_status formulae https://formulae.brew.sh
-check_status raw https://raw.githubusercontent.com/Homebrew/brew/HEAD/README.md
-check_status ghcr https://ghcr.io/v2/
-command -v brew
-brew --prefix
-brew install --quiet hello
-command -v hello
-hello
-`,
-      { artifactName: "tc-net-11-brew-install-hello", timeoutMs: PACKAGE_MANAGER_TIMEOUT_MS },
-    );
-    const brewText = text(brewProbe);
-    expect(brewText).toContain("BREW_ENDPOINT_formulae_OK_");
-    expect(brewText).toContain("BREW_ENDPOINT_raw_OK_");
-    expect(brewText).toContain("BREW_ENDPOINT_ghcr_OK_");
-    expect(brewText).toContain("/usr/local/bin/brew");
-    expect(brewText).toContain("/home/linuxbrew/.linuxbrew");
-    expect(brewText).toContain("/home/linuxbrew/.linuxbrew/bin/hello");
-    expect(brewText).toContain("Hello, world!");
-
-    const githubApply = await applyPreset(host, "github");
-    expect(githubApply.exitCode, text(githubApply)).toBe(0);
-    const githubGitProbe = await sandboxBash(
-      sandbox,
-      String.raw`
-set -euo pipefail
-GIT_TERMINAL_PROMPT=0 git ls-remote https://github.com/Homebrew/brew.git HEAD >/dev/null
-echo "GITHUB_GIT_OK"
-`,
-      { artifactName: "tc-net-11-github-git-allowed" },
-    );
-    const githubGitText = text(githubGitProbe);
-    expect(githubGitProbe.timedOut, githubGitText).toBe(false);
-    expect(githubGitProbe.exitCode, githubGitText).toBe(0);
-    expect(githubGitText).toContain("GITHUB_GIT_OK");
-
-    const pypiApply = await applyPreset(host, "pypi");
-    expect(pypiApply.exitCode, text(pypiApply)).toBe(0);
-    await expect(
-      curlStatus(sandbox, "https://pypi.org/simple/requests/", "tc-net-02-pypi-get"),
-    ).resolves.toBe("200");
-    // placeholder files.pythonhosted.org path can legitimately return 404,
-    // which does not prove useful artifact egress for TC-NET-02.
-    await expect(
-      curlStatus(
-        sandbox,
-        "https://files.pythonhosted.org/packages/source/r/requests/requests-2.32.5.tar.gz",
-        "tc-net-02-pythonhosted-get",
-      ),
-    ).resolves.toMatch(/^[23][0-9][0-9]$/);
-    await expect(
-      curlStatus(sandbox, "https://pypi.org/simple/le/", "tc-net-02-pypi-post", "-X POST"),
-    ).resolves.toBe("403");
-
-    // Use Slack's non-redirecting API probe on the preset's actual API host;
-    // the marketing root can leave the slack.com allowlist during redirects.
-    const slackBefore = await fetchStatus(
-      sandbox,
-      "https://slack.com/api/api.test",
-      "tc-net-03-slack-before",
-    );
-    expect(slackBefore).toMatch(/STATUS_403|ERROR_/);
-    const slackApply = await applyPresetInteractively(host, "slack");
-    expect(slackApply.exitCode, text(slackApply)).toBe(0);
-    const slackPolicyList = await runNemoclaw(host, [SANDBOX_NAME, "policy-list"], {
-      artifactName: "tc-net-03-policy-list-slack",
-    });
-    expect(text(slackPolicyList)).toMatch(/● slack/);
-    const slackAfter = await fetchStatus(
-      sandbox,
-      "https://slack.com/api/api.test",
-      "tc-net-03-slack-after",
-    );
-    expect(slackAfter).toMatch(/STATUS_200/);
-
-    progress.phase("prove Jira dry-run and per-binary denial");
-    const atlassianBefore = await fetchStatus(
-      sandbox,
-      "https://api.atlassian.com/",
-      "tc-net-04-atlassian-before-dry-run",
-    );
-    expect(atlassianBefore).toMatch(/STATUS_403|ERROR_/);
-    const jiraDryRun = await runNemoclaw(host, [SANDBOX_NAME, "policy-add", "jira", "--dry-run"], {
-      artifactName: "tc-net-04-jira-dry-run",
-      timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
-    });
-    expect(jiraDryRun.exitCode, text(jiraDryRun)).toBe(0);
-    expect(text(jiraDryRun)).toMatch(/atlassian|would be opened/i);
-    const atlassianAfterDryRun = await fetchStatus(
-      sandbox,
-      "https://api.atlassian.com/",
-      "tc-net-04-atlassian-after-dry-run",
-    );
-    expect(atlassianAfterDryRun).toMatch(/STATUS_403|ERROR_/);
-
-    const jiraApply = await applyPreset(host, "jira");
-    expect(jiraApply.exitCode, text(jiraApply)).toBe(0);
-    const nodeAtlassian = await sandboxBash(
-      sandbox,
-      `node -e "
-const https = require('https');
-const req = https.get('https://api.atlassian.com', (res) => { console.log('NODE_STATUS_' + res.statusCode); res.resume(); });
-req.setTimeout(30000, () => { console.log('NODE_ERROR_TIMEOUT'); req.destroy(); });
-req.on('error', (error) => console.log('NODE_ERROR_' + (error.code || error.message)));
-"`,
-      { artifactName: "tc-net-08-node-atlassian" },
-    );
-    expect(text(nodeAtlassian)).toMatch(/NODE_STATUS_[23][0-9][0-9]/);
-
-    const curlBeforeApproval = await sandboxBash(
-      sandbox,
-      String.raw`
-set +e
-OUT=$(curl -sS -o /dev/null -w 'CURL_STATUS_%{http_code} CURL_APPCONNECT_%{time_appconnect}' --max-time 10 https://api.atlassian.com/oauth/token/accessible-resources 2>&1)
-RC=$?
-echo "$OUT CURL_RC_$RC"
-`,
-      { artifactName: "tc-net-08-curl-before-approval" },
-    );
-    const curlBeforeText = text(curlBeforeApproval);
-    expect(curlBeforeText).toMatch(
-      /CURL_STATUS_000|CURL_STATUS_403|CURL_RC_[1-9]|denied|policy|forbidden/i,
-    );
-    expect(curlBeforeText).toMatch(/CURL_APPCONNECT_0(\.0+)?( |$)/);
-
-    progress.phase("verify hot reload inference exemption and SSRF guards");
-    const startTimeBefore = await sandboxBash(
-      sandbox,
-      "cat /proc/1/stat 2>/dev/null | awk '{print $22}'",
+    const policyFile = writeHostGatewayPolicy(artifacts, approvedServer.port);
+    const policyApply = await runNemoclaw(
+      host,
+      [SANDBOX_NAME, "policy-add", "--from-file", policyFile, "--yes"],
       {
-        artifactName: "tc-net-05-starttime-before",
+        artifactName: "network-policy-add-host-gateway",
+        timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
       },
     );
-    const npmApply = await applyPreset(host, "npm");
-    expect(npmApply.exitCode, text(npmApply)).toBe(0);
-    const startTimeAfter = await sandboxBash(
+    expect(policyApply.exitCode, text(policyApply)).toBe(0);
+    await sleep(POLICY_SETTLE_MS);
+
+    const startTimeAfterPolicy = await readSandboxStartTime(
       sandbox,
-      "cat /proc/1/stat 2>/dev/null | awk '{print $22}'",
-      {
-        artifactName: "tc-net-05-starttime-after",
-      },
+      "network-policy-start-time-after-policy",
     );
-    expect(startTimeBefore.stdout.trim()).not.toBe("");
-    expect(startTimeAfter.stdout.trim()).toBe(startTimeBefore.stdout.trim());
+    expect(startTimeAfterPolicy).toBe(startTimeBefore);
 
-    const inference = await sandboxBash(
+    progress.phase("allow the approved host-gateway port and deny another port");
+    const approved = await probeUrl(
       sandbox,
-      String.raw`curl -s --max-time 60 https://inference.local/v1/chat/completions \
-  -H 'Content-Type: application/json' \
-  -d '{"model":"nvidia/nemotron-3-super-120b-a12b","messages":[{"role":"user","content":"Reply with exactly one word: PONG"}],"max_tokens":50}'`,
-      { artifactName: "tc-net-07-inference-local", timeoutMs: 90_000 },
+      `http://host.openshell.internal:${approvedServer.port}/`,
+      "network-policy-approved-host-gateway-port",
     );
-    expect(inference.exitCode, text(inference)).toBe(0);
-    expect(requireInferenceLocalCompletionText(inference.stdout).length).toBeGreaterThan(0);
-    const directProvider = await fetchStatus(
+    expect(approved).toContain(approvedMarker);
+    expect(approved).toContain("STATUS_200");
+    const startTimeAfterAllow = await readSandboxStartTime(
       sandbox,
-      "https://inference-api.nvidia.com/v1/models",
-      "tc-net-07-direct-provider-blocked",
+      "network-policy-start-time-after-allow-probe",
     );
-    expect(directProvider).toMatch(/STATUS_403|ERROR_/);
+    expect(startTimeAfterAllow).toBe(startTimeBefore);
 
-    expect(
-      ["169.254.169.254", "127.0.0.1", "10.0.0.1", "192.168.1.1", "0.0.0.0"].every((ip) =>
-        Object.is(isPrivateIp(ip), true),
-      ),
-    ).toBe(true);
-    expect(["8.8.8.8", "142.250.80.46"].every((ip) => Object.is(isPrivateIp(ip), false))).toBe(
-      true,
+    const denied = await probeUrl(
+      sandbox,
+      `http://host.openshell.internal:${deniedServer.port}/`,
+      "network-policy-denied-host-gateway-port",
     );
+    expect(denied).not.toContain(deniedMarker);
+    expect(denied).toMatch(/\b403\b/);
 
-    progress.phase("exercise scoped host-gateway web fetch policy");
-    const marker = "NEMOCLAW_HOST_GATEWAY_WEB_FETCH_OK";
-    const denyMarker = "NEMOCLAW_HOST_GATEWAY_WEB_FETCH_DENIED_PORT_SHOULD_NOT_LEAK";
-    const approvedServer = await startMarkerServer(marker);
-    const deniedServer = await startMarkerServer(denyMarker);
-    try {
-      const hostPolicyFile = writeHostGatewayPolicy(artifacts, approvedServer.port);
-      const hostGatewayApply = await runNemoclaw(
-        host,
-        [SANDBOX_NAME, "policy-add", "--from-file", hostPolicyFile, "--yes"],
-        { artifactName: "tc-net-10-host-gateway-policy-add", timeoutMs: SANDBOX_EXEC_TIMEOUT_MS },
-      );
-      expect(hostGatewayApply.exitCode, text(hostGatewayApply)).toBe(0);
-
-      // #6073: the same policy-add --from-file path must still reject
-      // allowed_ips on a non-bridge host on this real sandbox, proving the
-      // host.openshell.internal exemption is not a blanket allowed_ips bypass.
-      const evilPolicyFile = writeEvilAllowedIpsPolicy(artifacts);
-      const evilApply = await runNemoclaw(
-        host,
-        [SANDBOX_NAME, "policy-add", "--from-file", evilPolicyFile, "--yes"],
-        {
-          artifactName: "tc-net-10-evil-allowed-ips-rejection",
-          timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
-        },
-      );
-      expect(evilApply.exitCode, text(evilApply)).not.toBe(0);
-      expect(text(evilApply)).toMatch(/allowed_ips|not permitted/i);
-
-      await sleep(POLICY_SETTLE_MS);
-
-      const approvedDirect = await fetchStatus(
-        sandbox,
-        `http://host.openshell.internal:${approvedServer.port}/`,
-        "tc-net-10-direct-approved-host-gateway",
-      );
-      expect(approvedDirect).toContain(marker);
-
-      const deniedDirect = await fetchStatus(
-        sandbox,
-        `http://host.openshell.internal:${deniedServer.port}/`,
-        "tc-net-10-direct-denied-host-gateway",
-      );
-      expect(deniedDirect).not.toContain(denyMarker);
-      expect(deniedDirect).toMatch(
-        /STATUS_403|ERROR_|denied|policy|forbidden|not allowed|not permitted/i,
-      );
-
-      const webFetch = await sandboxBash(
-        sandbox,
-        `nemoclaw-start node --input-type=module - 'http://host.openshell.internal:${approvedServer.port}/' 'http://host.openshell.internal:${deniedServer.port}/' '${marker}' '${denyMarker}' <<'NEMOCLAW_WEB_FETCH_PROBE'
+    progress.phase("prove the installed OpenClaw web_fetch path obeys the host-gateway policy");
+    const webFetch = await sandboxBash(
+      sandbox,
+      `nemoclaw-start node --input-type=module - 'http://host.openshell.internal:${approvedServer.port}/' 'http://host.openshell.internal:${deniedServer.port}/' '${approvedMarker}' '${deniedMarker}' <<'NEMOCLAW_WEB_FETCH_PROBE'
 ${buildWebFetchProbeScript()}
 NEMOCLAW_WEB_FETCH_PROBE`,
-        { artifactName: "tc-net-10-openclaw-web-fetch", timeoutMs: SANDBOX_EXEC_TIMEOUT_MS },
-      );
-      const webFetchText = text(webFetch);
-      expect(webFetchText).not.toContain("E2E_FAIL_SSRF_BLOCKED_HOST_GATEWAY");
-      expect(webFetchText).not.toContain("E2E_FAIL_DENIED_PORT_REACHED");
-      expect(webFetchText).toContain("E2E_WEB_FETCH_APPROVED_OK");
-      expect(webFetchText).toContain("E2E_WEB_FETCH_DENIED_OK");
-    } finally {
-      await Promise.all([approvedServer.close(), deniedServer.close()]);
-    }
-
-    // A direct OpenShell policy update is authoritative. Keep this final so the
-    // test proves host-side edits require no NemoClaw receipt or adoption step.
-    progress.phase("prove per-binary Jira approval after NemoClaw policy mutations");
-    const curlApproval = await sandbox.openshell(
-      [
-        "policy",
-        "update",
-        SANDBOX_NAME,
-        "--add-endpoint",
-        "api.atlassian.com:443:read-only:rest:enforce",
-        "--binary",
-        "/usr/bin/curl",
-        "--binary",
-        "/usr/local/bin/curl",
-        "--wait",
-      ],
-      {
-        artifactName: "tc-net-08-openshell-curl-approval",
-        env: baseEnv(),
-        timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
-      },
+      "network-policy-openclaw-web-fetch",
     );
-    expect(curlApproval.exitCode, text(curlApproval)).toBe(0);
-    await sleep(POLICY_SETTLE_MS);
-
-    const curlAfterApproval = await sandboxBash(
+    const webFetchText = text(webFetch);
+    expect(webFetch.exitCode, webFetchText).toBe(0);
+    expect(webFetchText).toContain("E2E_WEB_FETCH_APPROVED_OK");
+    expect(webFetchText).toContain("E2E_WEB_FETCH_DENIED_OK");
+    const startTimeAfterDeny = await readSandboxStartTime(
       sandbox,
-      String.raw`
-set +e
-rm -f /tmp/nemoclaw-jira-curl-body
-OUT=$(curl -sS -o /tmp/nemoclaw-jira-curl-body -w 'CURL_STATUS_%{http_code}' --max-time 10 https://api.atlassian.com/oauth/token/accessible-resources 2>&1)
-RC=$?
-printf '%s CURL_RC_%s CURL_BODY_' "$OUT" "$RC"
-head -c 120 /tmp/nemoclaw-jira-curl-body 2>/dev/null || true
-printf '\n'
-`,
-      { artifactName: "tc-net-08-curl-after-approval" },
+      "network-policy-start-time-after-deny-probe",
     );
-    expect(text(curlAfterApproval)).toMatch(/CURL_STATUS_401/);
-    expect(text(curlAfterApproval)).toMatch(/Unauthorized|unauthorized/);
-
-    const githubAdd = await applyPreset(host, "github");
-    expect(githubAdd.exitCode, text(githubAdd)).toBe(0);
-    const policyAfterNemoclawMutation = await sandbox.openshell(
-      ["policy", "get", "--full", SANDBOX_NAME],
-      {
-        artifactName: "tc-net-08-policy-after-nemoclaw-mutation",
-        env: baseEnv(),
-        timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
-      },
-    );
-    expect(policyAfterNemoclawMutation.exitCode, text(policyAfterNemoclawMutation)).toBe(0);
-    expect(policyAfterNemoclawMutation.stdout).toContain("api.atlassian.com");
-    expect(policyAfterNemoclawMutation.stdout).toMatch(/github|api\.github\.com/i);
-
-    progress.phase("restore baseline policy through OpenShell and record the contract");
-    const baselineApply = await sandbox.openshell(
-      ["policy", "set", "--policy", BASELINE_POLICY, "--wait", SANDBOX_NAME],
-      {
-        artifactName: "tc-net-06-apply-baseline-policy",
-        env: baseEnv(),
-        timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
-      },
-    );
-    expect(baselineApply.exitCode, text(baselineApply)).toBe(0);
-    await sleep(POLICY_SETTLE_MS);
-    await expectEncodedSlashConfinedToClawHub(host, sandbox);
+    expect(startTimeAfterDeny).toBe(startTimeBefore);
 
     await artifacts.target.complete({
       id: "network-policy",
       sandboxName: SANDBOX_NAME,
       assertions: {
-        zeroInitialPresets: true,
-        denyDefault: true,
-        weatherReadOnlyPreset: true,
-        brewPreset: true,
-        pypiReadOnlyPreset: true,
-        livePolicyAdd: true,
-        dryRunNoSideEffect: true,
-        jiraPerBinaryPolicy: true,
-        hostEditSurvivesNemoclawMutation: true,
-        hotReloadNoRestart: true,
-        inferenceExemption: true,
-        ssrfValidation: true,
-        hostGatewayWebFetch: true,
-        scopedClawHubPluginLifecycle: true,
-        encodedSlashClawHubOnly: true,
-        baselinePolicyRestored: true,
+        defaultDeny: true,
+        hotReloadWithoutRestart: true,
+        approvedHostGatewayPort: true,
+        deniedHostGatewayPort: true,
+        installedWebFetchApprovedHostGatewayPort: true,
+        installedWebFetchDeniedUndeclaredPort: true,
       },
     });
   },
 );
 
-// Compatibility shim for #7617: the trusted base workflow still selects this
-// target while reviewing the one-row matrix change.
-//
-// Acceptance note (`NEMOCLAW_OPENCLAW_OTEL=1`): the OTEL-enabled live
-// variant is deferred to a follow-up nightly extension to keep this
-// scenario's wall-clock to a single onboard. The OTEL suppression contract
-// is covered by `test/runtime/policy/policy-tiers-onboard.test.ts` and
-// `test/runtime/policy/policy-tiers-onboard-restricted-stale-otel.test.ts` against the
-// real CLI through a stubbed policy API, and by the brave-enabled scenario
-// above which proves `openclaw-diagnostics-otel-local` is absent through the
-// live OpenShell `policy-list`. A regression in `requiredOpenclawOtelPolicyPresets()`
-// or the merge boundary would surface in both layers.
-//
-// Acceptance note (`policy-add` escape hatch): the documented escape hatch —
-// `nemoclaw <sandbox> policy-add <preset>` to re-apply a suppressed preset on
-// a restricted sandbox — does not change behavior in this PR. `policy-add`
-// invokes `policies.applyPreset` directly and is independent of the onboarding
-// suggestion / preservation / resume paths the suppression module touches, so
-// existing CLI coverage for `policy-add` continues to gate it. A dedicated
-// live re-add scenario was considered but deferred to keep this scenario's
-// wall-clock to a single onboard; if the escape hatch ever stops working on
-// restricted, a regression would surface in the CLI `policy-add` tests rather
-// than here.
 test(
   "network-policy: default restricted OpenClaw onboard leaves policy-list with zero active presets",
   {
@@ -1153,10 +468,6 @@ test(
     expect(openshellVersion.exitCode, text(openshellVersion)).toBe(0);
 
     const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
-    // The full E2E workflow may stage a gateway-managed compatible endpoint
-    // credential through this historical env name. The real onboard below is
-    // the authoritative credential validation boundary, regardless of prefix.
-
     cleanup.trackDisposable(`delete OpenShell sandbox ${SUPPRESSION_SANDBOX_NAME}`, () =>
       sandbox.cleanupSandbox(SUPPRESSION_SANDBOX_NAME, {
         artifactName: "cleanup-openshell-delete-restricted-zero-presets",

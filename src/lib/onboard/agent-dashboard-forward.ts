@@ -21,6 +21,7 @@ export type EnsureDashboardForward = (
   chatUiUrl?: string,
   options?: {
     allowPortReallocation?: boolean;
+    reuseExistingOpenClawForward?: boolean;
     revalidateSandboxIdentity?: (operation: string) => void;
     onForwardFailure?: (diagnostic: string) => void;
   },
@@ -40,6 +41,7 @@ export async function ensureAgentDashboardForward(options: {
   /** Host port allocated to this sandbox's OpenAI-compatible API, when it has one. */
   hermesApiPort?: number | null;
   beforeForwardPort?: (port: number) => Promise<void> | void;
+  reuseExistingOpenClawForward?: boolean;
   revalidateSandboxIdentity?: (operation: string) => void;
   /**
    * Reports that the agent dashboard forward did not start. The launcher
@@ -58,6 +60,7 @@ export async function ensureAgentDashboardForward(options: {
     controlUiPort,
     hermesApiPort,
     beforeForwardPort,
+    reuseExistingOpenClawForward = false,
     revalidateSandboxIdentity,
     onForwardFailure,
     warn = (message: string) => console.warn(message),
@@ -113,6 +116,7 @@ export async function ensureAgentDashboardForward(options: {
     await beforeForwardPort?.(agentDashboardPort);
     const actualAgentDashboardPort = ensureDashboardForward(sandboxName, requestedDashboardUrl, {
       allowPortReallocation: false,
+      ...(reuseExistingOpenClawForward ? { reuseExistingOpenClawForward: true } : {}),
       ...(revalidateIdentity ? { revalidateSandboxIdentity: revalidateIdentity } : {}),
       ...(onForwardFailure ? { onForwardFailure } : {}),
     });

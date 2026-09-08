@@ -74,7 +74,7 @@ export function renderMcpBridgeStatus(
     );
     if (status.provider.detail) console.log(`    provider detail: ${status.provider.detail}`);
     console.log(
-      `    policy: ${status.policy.gatewayPresent === null ? "unknown" : status.policy.gatewayPresent ? "present" : "missing"}`,
+      `    policy: ${status.policy.state === "drift" ? "drift" : status.policy.gatewayPresent === null ? "unknown" : status.policy.gatewayPresent ? "present" : "missing"}`,
     );
     console.log(
       `    adapter: ${status.adapter.registered === null ? "unknown" : status.adapter.registered ? "registered" : "missing"}`,

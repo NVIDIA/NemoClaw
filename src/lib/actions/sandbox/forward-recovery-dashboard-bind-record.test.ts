@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("../../adapters/openshell/forward-service", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../adapters/openshell/forward-service")>()),
+  isForwardServiceListenerOwner: () => true,
   launchForwardService: mocks.launchForwardService,
 }));
 vi.mock("../../adapters/openshell/resolve", () => ({
@@ -69,6 +70,7 @@ describe("the recorded dashboard bind follows the forward (#10861)", () => {
     expect(mocks.launchForwardService).toHaveBeenCalledOnce();
     expect(mocks.launchForwardService).toHaveBeenCalledWith(
       expect.objectContaining({ localHost: "127.0.0.1", localPort: 18789 }),
+      expect.anything(),
     );
     expect(mocks.updateSandbox).toHaveBeenCalledWith("hm", { dashboardBindAddress: "127.0.0.1" });
   });
@@ -81,6 +83,7 @@ describe("the recorded dashboard bind follows the forward (#10861)", () => {
 
     expect(mocks.launchForwardService).toHaveBeenCalledWith(
       expect.objectContaining({ localHost: "0.0.0.0", localPort: 18789 }),
+      expect.anything(),
     );
     expect(mocks.updateSandbox).toHaveBeenCalledWith("hm", { dashboardBindAddress: "0.0.0.0" });
     expect(mocks.updateSandbox.mock.invocationCallOrder[0]).toBeLessThan(
@@ -93,6 +96,7 @@ describe("the recorded dashboard bind follows the forward (#10861)", () => {
 
     expect(mocks.launchForwardService).toHaveBeenCalledWith(
       expect.objectContaining({ localHost: "0.0.0.0", localPort: 18789 }),
+      expect.anything(),
     );
     expect(mocks.updateSandbox).toHaveBeenCalledWith("hm", { dashboardBindAddress: "0.0.0.0" });
   });

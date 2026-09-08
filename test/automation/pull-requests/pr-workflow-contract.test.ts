@@ -514,7 +514,7 @@ describe("pull request and main workflow contracts", () => {
     expect(stepUses(job)).toEqual([trustedCheckoutAction, trustedSetupNodeAction]);
     expect(requiredWorkflowStep(job, "Checkout").with?.["persist-credentials"]).toBe(false);
     expect(requiredWorkflowStep(job, "Install dependencies").run).toBe(
-      "npm ci --ignore-scripts",
+      "npm ci --ignore-scripts --no-audit --no-fund",
     );
     expect(requiredWorkflowStep(job, "Verify Hugging Face model references").run).toBe(
       "npm run catalog:verify-hugging-face",

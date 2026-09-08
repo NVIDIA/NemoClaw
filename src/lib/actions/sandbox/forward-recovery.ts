@@ -1,13 +1,24 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import {
+  buildSelectedOpenShellSubprocessEnv,
+  withSelectedOpenShellCommandOptions,
+} from "../../adapters/openshell/command-argv";
+import {
+  createForwardServiceTarget,
+  isForwardServiceListenerOwner,
   launchForwardService,
   type ForwardServiceTarget,
 } from "../../adapters/openshell/forward-service";
+import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import { isLegacySandboxForwardListed } from "../../adapters/openshell/forward-service-migration";
-import { captureOpenshell, runOpenshell } from "../../adapters/openshell/runtime";
+import {
+  captureOpenshell,
+  captureResolvedOpenshell,
+  type OpenShellRuntimeSelection,
+  runOpenshell,
+} from "../../adapters/openshell/runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import * as agentRuntime from "../../agent/runtime";
 import { DASHBOARD_PORT, HERMES_OPENAI_API_PORT } from "../../core/ports";
@@ -76,40 +87,34 @@ export function createHermesPortableForwardRecoveryInput(input: {
     deps: {
       assertCurrent: input.assertCurrent,
       assertRollbackCurrent: input.assertRollbackCurrent,
-      isReachable: isLocalForwardReachable,
-      launch: (port) =>
-        launchForwardService(
-          forwardServiceTarget(
-            input.commandAuthority.executablePath,
-            input.gatewayName,
-            input.sandboxName,
-            port,
-            "127.0.0.1",
-          ),
-          { sourceEnvironment: input.commandAuthority.env },
-        ),
-      migrateLegacy: (ports) =>
-        retireProductionLegacySandboxForwards(input.sandboxName, input.gatewayName, ports, {
-          capture: (gatewayName) =>
-            captureOpenshell(["forward", "list", "--gateway", gatewayName], {
-              env: input.commandAuthority.env,
-              openshellBinary: input.commandAuthority.executablePath,
-              replaceEnv: true,
-              ignoreError: true,
-              includeStreams: true,
-              timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-            }),
-          isReachable: isLocalForwardReachable,
-          run: (gatewayName, sandboxName, port) =>
-            runOpenshell(["forward", "stop", String(port), sandboxName, "--gateway", gatewayName], {
-              env: input.commandAuthority.env,
-              openshellBinary: input.commandAuthority.executablePath,
-              replaceEnv: true,
-              ignoreError: true,
-              stdio: "ignore",
-              timeout: 30_000,
-            }),
+      captureCurrentList: (args, timeout) =>
+        captureResolvedOpenshell([...args], {
+          env: input.commandAuthority.env,
+          openshellBinary: input.commandAuthority.executablePath,
+          replaceEnv: true,
+          ignoreError: true,
+          includeStreams: true,
+          timeout,
         }),
+      captureRollbackList: (args, timeout) =>
+        captureResolvedOpenshell([...args], {
+          env: input.commandAuthority.env,
+          openshellBinary: input.commandAuthority.executablePath,
+          replaceEnv: true,
+          ignoreError: true,
+          includeStreams: true,
+          timeout,
+        }),
+      runCurrentMutation: (args, timeout) =>
+        runOpenshell([...args], {
+          env: input.commandAuthority.env,
+          openshellBinary: input.commandAuthority.executablePath,
+          replaceEnv: true,
+          ignoreError: true,
+          stdio: "ignore",
+          timeout,
+        }),
+      isPortReachable: isLocalForwardReachable,
     },
   };
 }
@@ -129,27 +134,41 @@ type SandboxForwardRecoveryOptions = {
   afterSuccess?: () => boolean;
   beforeStart?: () => boolean;
   isWsl?: boolean;
+  runtimeSelection?: OpenShellRuntimeSelection;
 };
 
 function retireLegacyForwardServiceMigration(
   sandboxName: string,
   gatewayName: string,
   ports: readonly number[],
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): number {
   return retireProductionLegacySandboxForwards(sandboxName, gatewayName, ports, {
     capture: (gatewayName) =>
-      captureOpenshell(["forward", "list", "--gateway", gatewayName], {
-        ignoreError: true,
-        includeStreams: true,
-        timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-      }),
+      captureOpenshell(
+        ["forward", "list", "--gateway", gatewayName],
+        withSelectedOpenShellCommandOptions(
+          {
+            ignoreError: true,
+            includeStreams: true,
+            timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+          },
+          runtimeSelection,
+        ),
+      ),
     isReachable: isLocalForwardReachable,
     run: (gatewayName, sandboxName, port) =>
-      runOpenshell(["forward", "stop", String(port), sandboxName, "--gateway", gatewayName], {
-        ignoreError: true,
-        stdio: "ignore",
-        timeout: 30_000,
-      }),
+      runOpenshell(
+        ["forward", "stop", String(port), sandboxName, "--gateway", gatewayName],
+        withSelectedOpenShellCommandOptions(
+          {
+            ignoreError: true,
+            stdio: "ignore",
+            timeout: 30_000,
+          },
+          runtimeSelection,
+        ),
+      ),
   });
 }
 
@@ -159,17 +178,18 @@ function forwardServiceTarget(
   sandboxName: string,
   port: number,
   expectedBind = "127.0.0.1",
+  workspace = "default",
 ): ForwardServiceTarget {
-  return {
-    executable,
-    gatewayName,
-    workspace: "default",
-    sandboxName,
-    localHost: expectedBind === "0.0.0.0" ? ("0.0.0.0" as const) : ("127.0.0.1" as const),
-    localPort: port,
-    targetHost: "127.0.0.1",
-    targetPort: port,
-  };
+  return createForwardServiceTarget(
+    {
+      executable,
+      gatewayName,
+      workspace,
+      sandboxName,
+      localHost: expectedBind === "0.0.0.0" ? "0.0.0.0" : "127.0.0.1",
+    },
+    port,
+  );
 }
 
 function isValidPort(value: unknown): value is number {
@@ -310,13 +330,14 @@ export function ensureSandboxPortForward(
       (!remoteBindRequested ||
         registry.getSandbox(sandboxName)?.dashboardRemoteBindPrepared === true) &&
       (options.beforeStart?.() ?? true),
+    runtimeSelection: options.runtimeSelection,
   });
 }
 
 /** Probe local reachability for a registered sandbox port without claiming process ownership. */
 export function isSandboxForwardHealthy(
   sandboxName: string,
-  options: { isWsl?: boolean } = {},
+  options: { isWsl?: boolean; runtimeSelection?: OpenShellRuntimeSelection } = {},
 ): SandboxForwardHealth {
   const allInterfaceBindRequired =
     isRemoteDashboardBindRequested(process.env.NEMOCLAW_DASHBOARD_BIND) ||
@@ -325,23 +346,31 @@ export function isSandboxForwardHealthy(
     sandboxName,
     resolveSandboxDashboardPort(sandboxName),
     allInterfaceBindRequired ? "0.0.0.0" : "127.0.0.1",
+    options.runtimeSelection,
   );
 }
 
 export function isSandboxPortForwardHealthy(
   sandboxName: string,
   port: number,
-  _expectedBind?: string,
+  expectedBind?: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): SandboxForwardHealth {
   const sandbox = registry.getSandbox(sandboxName);
   if (!sandbox) return false;
   if (!isLocalForwardReachable(port)) return false;
-  const gatewayName = resolveSandboxGatewayName(sandbox);
-  const listed = captureOpenshell(["forward", "list", "--gateway", gatewayName], {
-    ignoreError: true,
-    includeStreams: true,
-    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-  });
+  const gatewayName = runtimeSelection?.gatewayName ?? resolveSandboxGatewayName(sandbox);
+  const listed = captureOpenshell(
+    ["forward", "list", "--gateway", gatewayName],
+    withSelectedOpenShellCommandOptions(
+      {
+        ignoreError: true,
+        includeStreams: true,
+        timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+      },
+      runtimeSelection,
+    ),
+  );
   if (
     !listed.error &&
     !listed.signal &&
@@ -350,7 +379,18 @@ export function isSandboxPortForwardHealthy(
   ) {
     return false;
   }
-  return true;
+  const executable = resolveOpenshell();
+  if (!executable) return false;
+  return isForwardServiceListenerOwner(
+    forwardServiceTarget(
+      executable,
+      gatewayName,
+      sandboxName,
+      port,
+      expectedBind ?? "127.0.0.1",
+      runtimeSelection?.workspace ?? "default",
+    ),
+  );
 }
 
 /**
@@ -418,6 +458,7 @@ export function ensureSandboxPortForwardForPort(
      * forwards share this function and must not overwrite that field.
      */
     recordDashboardBind?: boolean;
+    runtimeSelection?: OpenShellRuntimeSelection;
   } = {},
 ): boolean {
   const {
@@ -426,6 +467,7 @@ export function ensureSandboxPortForwardForPort(
     expectedBind,
     beforeStart = () => true,
     recordDashboardBind = false,
+    runtimeSelection,
   } = options;
   const bindAddress =
     expectedBind ?? (forwardTarget.startsWith("0.0.0.0:") ? "0.0.0.0" : "127.0.0.1");
@@ -438,7 +480,12 @@ export function ensureSandboxPortForwardForPort(
     }
     return accepted;
   };
-  const forwardHealth = isSandboxPortForwardHealthy(sandboxName, port, expectedBind);
+  const forwardHealth = isSandboxPortForwardHealthy(
+    sandboxName,
+    port,
+    expectedBind,
+    runtimeSelection,
+  );
   if (forwardHealth === true) return acceptSuccessfulForward();
   if (!beforeStart()) return false;
   let previousBind: string | null = null;
@@ -466,12 +513,22 @@ export function ensureSandboxPortForwardForPort(
         return false;
       }
     }
-    const gatewayName = resolveSandboxGatewayName(sandbox);
-    retireLegacyForwardServiceMigration(sandboxName, gatewayName, [port]);
+    const gatewayName = runtimeSelection?.gatewayName ?? resolveSandboxGatewayName(sandbox);
+    retireLegacyForwardServiceMigration(sandboxName, gatewayName, [port], runtimeSelection);
     const executable = resolveOpenshell();
     if (!executable) throw new Error("OpenShell is unavailable");
     launchForwardService(
-      forwardServiceTarget(executable, gatewayName, sandboxName, port, bindAddress),
+      forwardServiceTarget(
+        executable,
+        gatewayName,
+        sandboxName,
+        port,
+        bindAddress,
+        runtimeSelection?.workspace ?? "default",
+      ),
+      runtimeSelection
+        ? { sourceEnvironment: buildSelectedOpenShellSubprocessEnv(runtimeSelection) }
+        : {},
     );
     return acceptSuccessfulForward();
   } catch (error) {
@@ -488,10 +545,15 @@ export function ensureSandboxPortForwardForPort(
   }
 }
 
-export function ensureHermesDashboardPortForwardIfEnabled(sandboxName: string): boolean | null {
+export function ensureHermesDashboardPortForwardIfEnabled(
+  sandboxName: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
+): boolean | null {
   return ensureHermesDashboardPortForward(sandboxName, {
-    isPortForwardHealthy: isSandboxPortForwardHealthy,
-    ensurePortForward: ensureSandboxPortForwardForPort,
+    isPortForwardHealthy: (name, port) =>
+      isSandboxPortForwardHealthy(name, port, undefined, runtimeSelection),
+    ensurePortForward: (name, port) =>
+      ensureSandboxPortForwardForPort(name, port, { runtimeSelection }),
   });
 }
 
@@ -504,19 +566,27 @@ function getSandboxMessagingHostForward(
   return getActiveMessagingHostForward(plan);
 }
 
-export function ensureMessagingHostForwardHealthy(sandboxName: string): boolean | null {
+export function ensureMessagingHostForwardHealthy(
+  sandboxName: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
+): boolean | null {
   const forward = getSandboxMessagingHostForward(sandboxName);
   if (!forward) return null;
-  const health = isSandboxPortForwardHealthy(sandboxName, forward.port);
+  const health = isSandboxPortForwardHealthy(
+    sandboxName,
+    forward.port,
+    undefined,
+    runtimeSelection,
+  );
   if (health === true) return true;
-  return ensureSandboxPortForwardForPort(sandboxName, forward.port);
+  return ensureSandboxPortForwardForPort(sandboxName, forward.port, { runtimeSelection });
 }
 
 export function recoverMessagingHostForward(
   sandboxName: string,
-  { quiet }: { quiet: boolean },
+  { quiet, runtimeSelection }: { quiet: boolean; runtimeSelection?: OpenShellRuntimeSelection },
 ): boolean | null {
-  const recovered = ensureMessagingHostForwardHealthy(sandboxName);
+  const recovered = ensureMessagingHostForwardHealthy(sandboxName, runtimeSelection);
   if (!quiet && recovered === false) {
     console.error("  Messaging webhook port forward could not be re-established.");
   }
@@ -566,6 +636,7 @@ function resolveDeclaredAgentForwardPorts(
 export function ensureDeclaredAgentForwardPortsHealthy(
   sandboxName: string,
   primaryPort: number,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): boolean | null {
   const agent = agentRuntime.getSessionAgent(sandboxName);
   if (!agent) return null;
@@ -580,9 +651,9 @@ export function ensureDeclaredAgentForwardPortsHealthy(
   if (ports.length === 0) return null;
   let allHealthy = true;
   for (const port of ports) {
-    const health = isSandboxPortForwardHealthy(sandboxName, port);
+    const health = isSandboxPortForwardHealthy(sandboxName, port, undefined, runtimeSelection);
     if (health === true) continue;
-    if (!ensureSandboxPortForwardForPort(sandboxName, port)) {
+    if (!ensureSandboxPortForwardForPort(sandboxName, port, { runtimeSelection })) {
       allHealthy = false;
     }
   }
@@ -650,9 +721,13 @@ export function resolveSandboxLaunchForwardPorts(sandboxName: string): number[] 
 export function recoverDeclaredAgentForwardPorts(
   sandboxName: string,
   recoveryPort: number,
-  { quiet }: { quiet: boolean },
+  { quiet, runtimeSelection }: { quiet: boolean; runtimeSelection?: OpenShellRuntimeSelection },
 ): boolean | null {
-  const recovered = ensureDeclaredAgentForwardPortsHealthy(sandboxName, recoveryPort);
+  const recovered = ensureDeclaredAgentForwardPortsHealthy(
+    sandboxName,
+    recoveryPort,
+    runtimeSelection,
+  );
   if (!quiet && recovered === false) {
     console.error("  One or more agent-declared port forwards could not be re-established.");
   }

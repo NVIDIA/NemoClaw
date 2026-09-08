@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   gate:
-    name: Select documentation PR ownership
+    name: Docs / Select documentation PR ownership
     runs-on: ubuntu-24.04
     permissions:
       pull-requests: read
@@ -48,7 +48,7 @@ jobs:
           fi
 
   author:
-    name: Author and review documentation catch-up
+    name: Docs / Author and review documentation catch-up
     needs: gate
     if: ${{ github.repository == 'NVIDIA/NemoClaw' && needs.gate.outputs.automate == 'true' }}
     runs-on: ubuntu-24.04
@@ -151,7 +151,7 @@ jobs:
           retention-days: 3
 
   publish:
-    name: Publish documentation catch-up
+    name: Docs / Publish documentation catch-up
     needs: author
     runs-on: ubuntu-24.04
     timeout-minutes: 10

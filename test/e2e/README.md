@@ -124,6 +124,10 @@ assembles one exact candidate catalog from the workflow's published contracts, u
 and sandbox, records the authenticated discovery diagnostics, scans the evidence for fixture
 credentials, and must pass.
 These are two required acceptance executions, not retries; either failure remains a failed check.
+The workflow records one publication cohort before its PR producer matrix runs. Failed-job reruns
+reuse that cohort and replace only the stable run-scoped artifact owned by each retried agent.
+Consumers accept one complete cohort from the same run at the current or an earlier attempt. They
+reject mixed cohorts, another run, a future attempt, and another candidate revision.
 The managed-image scope does not claim trusted-private DNS-rebinding coverage: host and sandbox
 `/etc/hosts` fixtures do not control the OpenShell supervisor's egress resolver. Full MCP bridge E2E
 coverage retains that assertion for environments with supervisor-authoritative DNS.
@@ -134,6 +138,11 @@ local image, removes registry credentials, validates the anonymously pullable di
 `managed-pr-contract-*` all-agent catalog pattern and every release alias. The checked-in Pi
 qualification receipts may consume these candidate contracts only when the recorded image-source
 paths are unchanged through the receipt commit.
+
+Pi full lifecycle qualification runs on Linux AMD64. Linux ARM64 remains release-gated by its native
+managed-image build, startup, publication, and checked-in receipt. The receipt refresh check requires
+the Linux AMD64 and Linux ARM64 receipts to identify one source revision, release, and publication
+cohort.
 
 #### Timing Baseline
 

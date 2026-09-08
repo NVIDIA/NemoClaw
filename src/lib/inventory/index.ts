@@ -323,9 +323,7 @@ function buildSandboxInventoryRow(
     policies: getPolicyPresets?.(sandbox.name) ?? [],
     agent: resolveDisplayAgent(sandbox),
     ...(sandbox.dashboardPort != null ? { dashboardPort: sandbox.dashboardPort } : {}),
-    ...(sandbox.dashboardBindAddress
-      ? { dashboardBindAddress: sandbox.dashboardBindAddress }
-      : {}),
+    ...(sandbox.dashboardBindAddress ? { dashboardBindAddress: sandbox.dashboardBindAddress } : {}),
     isDefault: sandbox.name === defaultSandbox,
     activeSessionCount,
     ...(sandbox.recoveredFromGateway ? { recoveredFromGateway: true } : {}),

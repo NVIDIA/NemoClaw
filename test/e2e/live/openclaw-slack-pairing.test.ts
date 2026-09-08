@@ -5,8 +5,8 @@ import fs from "node:fs";
 
 import { testTimeout } from "../../helpers/timeouts.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { applyFixtureProviderPolicyEndpoint } from "../fixtures/gateway-providers.ts";
 import {
-  applyFakePolicy,
   approveAndAssertPairing,
   assertOpenClawStateRoot,
   assertSlackPresetPolicySemantics,
@@ -74,157 +74,158 @@ function assertSlackCapture(
   ).toBe(true);
 }
 
-test("OpenClaw Slack Socket Mode pairing request is shared with connect-shell approval", {
-  timeout: LIVE_TIMEOUT_MS,
-  meta: {
-    e2ePhases: [
-      "load Slack credentials and clear pairing state",
-      "install the Slack-enabled OpenClaw sandbox",
-      "inspect Slack providers and preset policy",
-      "route Slack API and websocket traffic through managed policies",
-      "issue a Slack pairing request",
-      "approve the Slack code through connect-shell",
-    ],
+test(
+  "OpenClaw Slack Socket Mode pairing request is shared with connect-shell approval",
+  {
+    timeout: LIVE_TIMEOUT_MS,
+    meta: {
+      e2ePhases: [
+        "load Slack credentials and clear pairing state",
+        "install the Slack-enabled OpenClaw sandbox",
+        "inspect Slack providers and preset policy",
+        "route Slack API and websocket traffic through managed policies",
+        "issue a Slack pairing request",
+        "approve the Slack code through connect-shell",
+      ],
+    },
   },
-}, async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
-  const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
-  const env = pairingEnv({
-    sandboxName: SANDBOX_NAME,
-    apiKey,
-    channel: "slack",
-    slackBot: SLACK_BOT_TOKEN,
-    slackApp: SLACK_APP_TOKEN,
-  });
-  const redactions = pairingRedactions({
-    apiKey,
-    slackBot: SLACK_BOT_TOKEN,
-    slackApp: SLACK_APP_TOKEN,
-  });
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
+    progress.phase("load Slack credentials and clear pairing state");
+    const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
+    const env = pairingEnv({
+      sandboxName: SANDBOX_NAME,
+      apiKey,
+      channel: "slack",
+      slackBot: SLACK_BOT_TOKEN,
+      slackApp: SLACK_APP_TOKEN,
+    });
+    const redactions = pairingRedactions({
+      apiKey,
+      slackBot: SLACK_BOT_TOKEN,
+      slackApp: SLACK_APP_TOKEN,
+    });
 
-  await artifacts.target.declare({
-    id: "openclaw-slack-pairing",
-    boundary:
-      "install.sh Slack OpenClaw sandbox + fake Slack REST/websocket token rewrite + runtime pairing request + connect-shell approval",
-    sandboxName: SANDBOX_NAME,
-    pairingUser: PAIRING_USER.slack,
-  });
+    await artifacts.target.declare({
+      id: "openclaw-slack-pairing",
+      boundary:
+        "install.sh Slack OpenClaw sandbox + fake Slack REST/websocket token rewrite + runtime pairing request + connect-shell approval",
+      sandboxName: SANDBOX_NAME,
+      pairingUser: PAIRING_USER.slack,
+    });
 
-  cleanup.trackGateway(host, "nemoclaw", {
-    artifactName: "cleanup-slack-pairing-openshell-gateway-destroy",
-    env,
-    redactionValues: redactions,
-    timeoutMs: 120_000,
-  });
-  trackSandboxCleanup(
-    cleanup,
-    host,
-    sandbox,
-    SANDBOX_NAME,
-    env,
-    redactions,
-    "cleanup-slack-pairing",
-  );
-  await cleanupPairingSandbox(host, SANDBOX_NAME, env, redactions, "preclean-slack-pairing");
-
-  await requirePhase6RuntimeProvider(runtimeProvider, "OpenClaw Slack pairing");
-
-  progress.phase("install the Slack-enabled OpenClaw sandbox");
-  const install = await installSandboxOrSkipOnRateLimit(
-    host,
-    env,
-    redactions,
-    "install-slack-pairing",
-    skip,
-    "NVIDIA endpoint validation was rate-limited before Slack pairing assertions ran",
-  );
-  expectExitZero(install, "install.sh --non-interactive with Slack");
-  await expectSandboxReady(host, SANDBOX_NAME, env, redactions, "sandbox-list-slack-pairing");
-
-  progress.phase("inspect Slack providers and preset policy");
-  for (const providerName of [`${SANDBOX_NAME}-slack-bridge`, `${SANDBOX_NAME}-slack-app`]) {
-    const provider = await host.command("openshell", ["provider", "get", providerName], {
-      artifactName: `provider-get-${providerName}`,
+    cleanup.trackGateway(host, "nemoclaw", {
+      artifactName: "cleanup-slack-pairing-openshell-gateway-destroy",
       env,
       redactionValues: redactions,
-      timeoutMs: 60_000,
+      timeoutMs: 120_000,
     });
-    expectExitZero(provider, `${providerName} exists`);
-  }
+    trackSandboxCleanup(
+      cleanup,
+      host,
+      sandbox,
+      SANDBOX_NAME,
+      env,
+      redactions,
+      "cleanup-slack-pairing",
+    );
+    await cleanupPairingSandbox(host, SANDBOX_NAME, env, redactions, "preclean-slack-pairing");
 
-  await assertOpenClawStateRoot(sandbox, SANDBOX_NAME, "slack", redactions);
-  await assertSlackPresetPolicySemantics({
-    host,
-    sandboxName: SANDBOX_NAME,
-    env,
-    redactions,
-  });
+    await requirePhase6RuntimeProvider(runtimeProvider, "OpenClaw Slack pairing");
 
-  progress.phase("route Slack API and websocket traffic through managed policies");
-  const fakeSlackRest = await startFakeSlackApi(
-    host,
-    cleanup,
-    env,
-    SLACK_BOT_TOKEN,
-    SLACK_APP_TOKEN,
-    redactions,
-    "rest",
-  );
-  const fakeSlackWebSocket = await startFakeSlackApi(
-    host,
-    cleanup,
-    env,
-    SLACK_BOT_TOKEN,
-    SLACK_APP_TOKEN,
-    redactions,
-    "websocket",
-  );
-  await applyFakePolicy({
-    host,
-    sandboxName: SANDBOX_NAME,
-    api: fakeSlackRest,
-    protocol: "rest",
-    rewrite: "request-body-credential-rewrite",
-    providerName: `${SANDBOX_NAME}-slack-bridge`,
-    env,
-    redactions,
-    artifactName: "apply-slack-rest-policy",
-  });
-  await applyFakePolicy({
-    host,
-    sandboxName: SANDBOX_NAME,
-    api: fakeSlackWebSocket,
-    protocol: "websocket",
-    rewrite: "websocket-credential-rewrite",
-    providerName: `${SANDBOX_NAME}-slack-app`,
-    env,
-    redactions,
-    artifactName: "apply-slack-websocket-policy",
-  });
+    progress.phase("install the Slack-enabled OpenClaw sandbox");
+    const install = await installSandboxOrSkipOnRateLimit(
+      host,
+      env,
+      redactions,
+      "install-slack-pairing",
+      skip,
+      "NVIDIA endpoint validation was rate-limited before Slack pairing assertions ran",
+    );
+    expectExitZero(install, "install.sh --non-interactive with Slack");
+    await expectSandboxReady(host, SANDBOX_NAME, env, redactions, "sandbox-list-slack-pairing");
 
-  progress.phase("issue a Slack pairing request");
-  const issue = await issuePairingRequest({
-    sandbox,
-    sandboxName: SANDBOX_NAME,
-    channel: "slack",
-    redactions,
-    fakeSlackPort: fakeSlackRest.port,
-    fakeSlackWebSocketPort: fakeSlackWebSocket.port,
-  });
-  expectExitZero(issue, "Slack pairing request creation");
-  const code = extractPairingCode(resultText(issue), "PAIRING_E2E_RESULT");
-  assertSlackCapture(
-    [fakeSlackRest.captureFile, fakeSlackWebSocket.captureFile],
-    code,
-    PAIRING_USER.slack,
-  );
-  await writePairingArtifacts(artifacts, "slack", { code, user: PAIRING_USER.slack });
+    progress.phase("inspect Slack providers and preset policy");
+    for (const providerName of [`${SANDBOX_NAME}-slack-bridge`, `${SANDBOX_NAME}-slack-app`]) {
+      const provider = await host.command("openshell", ["provider", "get", providerName], {
+        artifactName: `provider-get-${providerName}`,
+        env,
+        redactionValues: redactions,
+        timeoutMs: 60_000,
+      });
+      expectExitZero(provider, `${providerName} exists`);
+    }
 
-  progress.phase("approve the Slack code through connect-shell");
-  await approveAndAssertPairing({
-    sandbox,
-    sandboxName: SANDBOX_NAME,
-    channel: "slack",
-    code,
-    redactions,
-  });
-});
+    await assertOpenClawStateRoot(sandbox, SANDBOX_NAME, "slack", redactions);
+    await assertSlackPresetPolicySemantics({
+      host,
+      sandboxName: SANDBOX_NAME,
+      env,
+      redactions,
+    });
+
+    progress.phase("route Slack API and websocket traffic through managed policies");
+    const fakeSlackRest = await startFakeSlackApi(
+      host,
+      cleanup,
+      env,
+      SLACK_BOT_TOKEN,
+      SLACK_APP_TOKEN,
+      redactions,
+      "rest",
+    );
+    const fakeSlackWebSocket = await startFakeSlackApi(
+      host,
+      cleanup,
+      env,
+      SLACK_BOT_TOKEN,
+      SLACK_APP_TOKEN,
+      redactions,
+      "websocket",
+    );
+    await applyFixtureProviderPolicyEndpoint(host, SANDBOX_NAME, {
+      endpoint: fakeSlackRest,
+      protocol: "rest",
+      rewrite: "request-body-credential-rewrite",
+      providerName: `${SANDBOX_NAME}-slack-bridge`,
+      env,
+      redactionValues: redactions,
+      artifactName: "apply-slack-rest-policy",
+    });
+    await applyFixtureProviderPolicyEndpoint(host, SANDBOX_NAME, {
+      endpoint: fakeSlackWebSocket,
+      protocol: "websocket",
+      rewrite: "websocket-credential-rewrite",
+      providerName: `${SANDBOX_NAME}-slack-app`,
+      env,
+      redactionValues: redactions,
+      artifactName: "apply-slack-websocket-policy",
+    });
+
+    progress.phase("issue a Slack pairing request");
+    const issue = await issuePairingRequest({
+      sandbox,
+      sandboxName: SANDBOX_NAME,
+      channel: "slack",
+      redactions,
+      fakeSlackPort: fakeSlackRest.port,
+      fakeSlackWebSocketPort: fakeSlackWebSocket.port,
+    });
+    expectExitZero(issue, "Slack pairing request creation");
+    const code = extractPairingCode(resultText(issue), "PAIRING_E2E_RESULT");
+    assertSlackCapture(
+      [fakeSlackRest.captureFile, fakeSlackWebSocket.captureFile],
+      code,
+      PAIRING_USER.slack,
+    );
+    await writePairingArtifacts(artifacts, "slack", { code, user: PAIRING_USER.slack });
+
+    progress.phase("approve the Slack code through connect-shell");
+    await approveAndAssertPairing({
+      sandbox,
+      sandboxName: SANDBOX_NAME,
+      channel: "slack",
+      code,
+      redactions,
+    });
+  },
+);

@@ -65,6 +65,11 @@ Gateway and dashboard cleanup is scoped by sandbox name and port.
 A later onboarding run that uses a different `NEMOCLAW_GATEWAY_PORT` or `--control-ui-port` does not tear down the first sandbox's gateway or dashboard forward.
 </AgentOnly>
 
+<AgentOnly variant="openclaw">
+If re-onboarding finds the registered dashboard port already bound, NemoClaw verifies that the listener is the exact OpenShell forward for that sandbox and reuses it without restarting the sandbox.
+If ownership cannot be proved, onboarding fails closed and reports the listener conflict.
+</AgentOnly>
+
 <AgentOnly variant="deepagents">
 If you intentionally run separate OpenShell gateways on the same host, set a different `NEMOCLAW_GATEWAY_PORT` before each onboarding run.
 NemoClaw isolates the gateway name and local state by port so one port-specific gateway does not replace another.
