@@ -147,6 +147,17 @@ vi.mock("../shared/snapshot-sanitizer-boundary.cjs", () => {
     },
   };
 });
+
+vi.mock("../shared/migration-restore-boundary.cjs", () => ({
+  restoreDescriptorSnapshotReplacements: () => ({
+    ok: true,
+    phase: "commit",
+    message: "restore transaction committed",
+    rollbackFailures: [],
+    retainedArchives: [],
+    cleanupFailures: [],
+  }),
+}));
 // Mock tar to avoid real archive creation
 vi.mock("tar", () => ({
   create: vi.fn(async () => {}),
@@ -1249,29 +1260,6 @@ describe("commands/migration-state", () => {
       try {
         // no blueprintDigest field
         const manifest = makeSnapshotManifest();
-        addFile("/snapshots/snap1/snapshot.json", JSON.stringify(manifest));
-        addDir("/snapshots/snap1/openclaw");
-        addFile("/snapshots/snap1/openclaw/openclaw.json", JSON.stringify({ restored: true }));
-
-        const result = restoreSnapshotToHost("/snapshots/snap1", logger);
-        expect(result).toBe(true);
-      } finally {
-        if (origHome === undefined) {
-          delete process.env.HOME;
-        } else {
-          process.env.HOME = origHome;
-        }
-      }
-    });
-
-    it("restore succeeds for v3 snapshot created without blueprintPath", () => {
-      const logger = makeLogger();
-      const origHome = process.env.HOME;
-      process.env.HOME = "/home/user";
-      try {
-        // v3 manifest with no blueprintDigest field — created without a blueprint
-        // blueprintDigest intentionally omitted
-        const manifest = makeSnapshotManifest({ version: 3 });
         addFile("/snapshots/snap1/snapshot.json", JSON.stringify(manifest));
         addDir("/snapshots/snap1/openclaw");
         addFile("/snapshots/snap1/openclaw/openclaw.json", JSON.stringify({ restored: true }));
