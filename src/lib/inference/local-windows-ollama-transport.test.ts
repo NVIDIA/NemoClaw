@@ -668,7 +668,7 @@ describe("Windows-host Ollama transport", () => {
     expect(captureEx).toHaveBeenCalledOnce();
   });
 
-  it("omits local systemd guidance for Windows-host Ollama timeouts", () => {
+  it("omits stale-runner recovery guidance for Windows-host Ollama timeouts", () => {
     setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
     const capture = respondsOnlyThroughDockerDesktop("/api/show", "");
 
@@ -679,8 +679,13 @@ describe("Windows-host Ollama transport", () => {
       () => ({ stdout: "", exitCode: 28, timedOut: true }),
     );
 
-    expect(result.message).toContain("did not answer the local probe in time");
-    expect(result.message).not.toContain("systemctl");
+    const message = result.message ?? "";
+    expect({
+      genericRecovery: message.includes("Restart Ollama and rerun onboarding"),
+      staleRunner: message.includes("Stale runner processes"),
+      systemctl: message.includes("systemctl"),
+      timeout: message.includes("did not answer the local probe in time"),
+    }).toEqual({ genericRecovery: false, staleRunner: false, systemctl: false, timeout: true });
   });
 
   it("validates health and container reachability through Docker Desktop (#10553)", () => {
