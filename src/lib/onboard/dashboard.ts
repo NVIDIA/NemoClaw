@@ -373,8 +373,8 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     ];
     if (owningGateway) {
       lines.push(
-        "  Verify the sandbox identity, then clean up manually:",
-        `    openshell sandbox delete -g ${JSON.stringify(owningGateway)} ${JSON.stringify(sandboxName)}`,
+        `  Recovery remains blocked while gateway ${JSON.stringify(owningGateway)} reports this sandbox present.`,
+        `  Do not delete it by mutable name; run 'nemoclaw ${sandboxName} destroy' to check for authoritative absence.`,
       );
     } else {
       lines.push("  The owning OpenShell gateway is unknown. Do not delete a same-name sandbox.");
