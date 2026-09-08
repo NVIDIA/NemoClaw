@@ -369,7 +369,7 @@ test/e2e/
 
   For a PR revision run, leave `jobs` and
   `targets` empty. The run selects every default-selected free-standing workflow
-  E2E except `staging Brev Launchable`, every catalogue target in the
+  E2E except `Exact staging Brev Launchable`, every catalogue target in the
   `standard` profile, all shared credential-free tests, and these
   controller-selected registry targets:
   `ubuntu-policy-custom-missing-presets-negative`,

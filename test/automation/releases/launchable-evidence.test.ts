@@ -342,7 +342,9 @@ describe("Launchable evidence inspection", () => {
     expect(
       new Set(args.filter((arg) => arg !== "--hostname" && arg !== "github.com").slice(1)),
     ).toEqual(
-      new Set(["repos/NVIDIA/NemoClaw/actions/workflows/e2e.yaml/runs?per_page=100&page=1"]),
+      new Set([
+        "repos/NVIDIA/NemoClaw/actions/workflows/e2e.yaml/runs?branch=main&event=workflow_dispatch&status=completed&per_page=100&page=1",
+      ]),
     );
     expect(
       inspectLaunchableEvidence(
@@ -440,16 +442,41 @@ describe("Launchable evidence inspection", () => {
     expect(args[0]).toBe("api");
     expect(args.filter((arg) => arg === "--hostname")).toHaveLength(1);
     expect(args[args.indexOf("--hostname") + 1]).toBe("github.com");
-    expect(
-      new Set(args.filter((arg) => arg !== "--hostname" && arg !== "github.com").slice(1)),
-    ).toEqual(
-      new Set([
-        "--paginate",
-        "--slurp",
-        "repos/NVIDIA/NemoClaw/actions/runs/10/attempts/2/jobs?per_page=100",
-      ]),
+    expect(args.filter((arg) => arg !== "--hostname" && arg !== "github.com").slice(1)).toEqual([
+      "repos/NVIDIA/NemoClaw/actions/runs/10/attempts/2/jobs?per_page=100&page=1",
+    ]);
+    expect(workflowJobsApiArgs(10, 2, 2)).toContain(
+      "repos/NVIDIA/NemoClaw/actions/runs/10/attempts/2/jobs?per_page=100&page=2",
     );
   });
+  it("bounds eligible run inspection before historical artifact reads (#10798)", () => {
+    const runs = Array.from({ length: 11 }, (_, index) =>
+        run(index + 1, `2026-06-${String(index + 1).padStart(2, "0")}T00:00:00Z`, {
+          head_sha: IMAGE_SHA,
+        }),
+      ),
+      listJobs = vi.fn((id: number) => [job(id + 100)]),
+      readArtifact = vi.fn((id: number, name: string): ArtifactFiles => ({
+        "dispatch.json": JSON.stringify({
+          kind: "nemoclaw-e2e-dispatch-v2",
+          repository: "NVIDIA/NemoClaw",
+          eventName: "workflow_dispatch",
+          workflowRunId: String(id),
+          workflowRunAttempt: 2,
+          candidateSha: IMAGE_SHA,
+        }),
+      }));
+    expect(() =>
+      inspectLaunchableEvidence(
+        { candidate: SHA },
+        { listRuns: () => runs, listJobs, readArtifact },
+      ),
+    ).toThrow(`10-run limit for candidate=${SHA}; newest inspected run=11 attempt=2`);
+    expect(listJobs).toHaveBeenCalledTimes(10);
+    expect(readArtifact).toHaveBeenCalledTimes(10);
+    expect(listJobs).not.toHaveBeenCalledWith(1, 2, SHA);
+  });
+
   it("merges workflow-job pages before selecting evidence (#10798)", () => {
     expect(
       workflowJobsFromPages([{ jobs: [job(19, { name: "another job" })] }, { jobs: [job()] }]),

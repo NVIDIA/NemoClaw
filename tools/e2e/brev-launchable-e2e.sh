@@ -527,6 +527,13 @@ cleanup() {
         absent=0
         workspace_observed=1
         current_workspace_id="$(jq -r '.id // ""' <<<"$record")"
+        if [ -z "$workspace_id" ] && [ "$create_state" != reconciled ] && [ -n "$current_workspace_id" ]; then
+          workspace_id="$current_workspace_id"
+          if ! write_workspace_recovery "$workspace_id"; then
+            log "FAILED: cleanup could not record the reconciled workspace identity" >&2
+            return 1
+          fi
+        fi
         if [ -z "$workspace_id" ]; then
           log "FAILED: workspace recovery identity is missing; refusing deletion" >&2
           break

@@ -17,8 +17,9 @@ node --experimental-strip-types --no-warnings \
 ```
 
 The inspector reads only `NVIDIA/NemoClaw`; other repositories and forks are not supported.
-Run it once. It selects the newest eligible job, downloads its artifact, validates all
-bindings and cleanup evidence, and emits bounded handoff JSON.
+Run it once. It inspects at most the 10 newest eligible runs and two job pages per run, selects
+the newest candidate-bound job, downloads its artifact, validates all bindings and cleanup evidence,
+and emits bounded handoff JSON. If the candidate is outside that window, dispatch a newer trusted run.
 
 Accept the evidence only when the command exits zero. Use its JSON as the handoff.
 Do not reconstruct the checks manually.

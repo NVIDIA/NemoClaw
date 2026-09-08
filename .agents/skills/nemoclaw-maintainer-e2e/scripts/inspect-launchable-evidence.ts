@@ -14,7 +14,9 @@ const REPOSITORY = "NVIDIA/NemoClaw";
 const SENTINEL = "NEMOCLAW_FULL_E2E_PASSED";
 const WORKFLOW = ".github/workflows/e2e.yaml";
 const JOB = "Exact staging Brev Launchable";
-const MAX_WORKFLOW_RUN_PAGES = 100;
+const MAX_WORKFLOW_RUN_PAGES = 2;
+const MAX_ELIGIBLE_RUNS = 10;
+const MAX_WORKFLOW_JOB_PAGES = 2;
 type JsonRecord = Record<string, unknown>;
 
 export interface WorkflowRun {
@@ -45,7 +47,7 @@ export interface ArtifactFiles {
 }
 export interface EvidenceReader {
   listRuns(candidate: string): WorkflowRun[];
-  listJobs(runId: number, attempt: number): WorkflowJob[];
+  listJobs(runId: number, attempt: number, candidate?: string): WorkflowJob[];
   readArtifact(runId: number, name: string): ArtifactFiles;
 }
 export interface Options {
@@ -304,10 +306,12 @@ function earlyRecovery(
 }
 
 export function inspectLaunchableEvidence(options: Options, reader: EvidenceReader): Receipt {
-  const runs = reader.listRuns(options.candidate),
-    jobs = (run: WorkflowRun): WorkflowJob[] => reader.listJobs(run.id, run.run_attempt);
+  const runs = candidateRuns(reader.listRuns(options.candidate)),
+    inspectedRuns = runs.slice(0, MAX_ELIGIBLE_RUNS),
+    jobs = (run: WorkflowRun): WorkflowJob[] =>
+      reader.listJobs(run.id, run.run_attempt, options.candidate);
   let selection: Selection | undefined;
-  for (const candidateSelection of candidateSelections(runs, jobs)) {
+  for (const candidateSelection of candidateSelections(inspectedRuns, jobs)) {
     if (candidateSelection.run.head_sha === options.candidate) {
       selection = candidateSelection;
       break;
@@ -329,6 +333,12 @@ export function inspectLaunchableEvidence(options: Options, reader: EvidenceRead
       selection = candidateSelection;
       break;
     }
+  }
+  if (!selection && runs.length > MAX_ELIGIBLE_RUNS) {
+    const newest = runs[0];
+    fail(
+      `Launchable evidence inspection reached the ${MAX_ELIGIBLE_RUNS}-run limit for candidate=${options.candidate}; newest inspected run=${newest?.id ?? "<missing>"} attempt=${newest?.run_attempt ?? "<missing>"}; dispatch a newer trusted run`,
+    );
   }
   if (!selection) fail("no completed staging Brev Launchable job is bound to the candidate");
   const artifactName = `staging-brev-launchable-${options.candidate}-${selection.run.id}-${selection.run.run_attempt}`,
@@ -399,18 +409,18 @@ export function workflowRunsApiArgs(candidate: string, page = 1): string[] {
     "api",
     "--hostname",
     "github.com",
-    `repos/${REPOSITORY}/actions/workflows/e2e.yaml/runs?per_page=100&page=${page}`,
+    `repos/${REPOSITORY}/actions/workflows/e2e.yaml/runs?branch=main&event=workflow_dispatch&status=completed&per_page=100&page=${page}`,
   ];
 }
 
-export function workflowJobsApiArgs(runId: number, attempt: number): string[] {
+export function workflowJobsApiArgs(runId: number, attempt: number, page = 1): string[] {
+  if (!Number.isSafeInteger(page) || page <= 0)
+    fail("workflow job page must be a positive integer");
   return [
     "api",
     "--hostname",
     "github.com",
-    "--paginate",
-    "--slurp",
-    `repos/${REPOSITORY}/actions/runs/${runId}/attempts/${attempt}/jobs?per_page=100`,
+    `repos/${REPOSITORY}/actions/runs/${runId}/attempts/${attempt}/jobs?per_page=100&page=${page}`,
   ];
 }
 
@@ -425,10 +435,20 @@ export function createGitHubReader(): EvidenceReader {
         runs.push(...(pageRuns as WorkflowRun[]));
         if (pageRuns.length < 100) return runs;
       }
-      fail(`workflow run history exceeds the ${MAX_WORKFLOW_RUN_PAGES}-page inspection limit`);
+      return runs;
     },
-    listJobs(runId, attempt) {
-      return workflowJobsFromPages(gh(workflowJobsApiArgs(runId, attempt)));
+    listJobs(runId, attempt, candidate = "<unknown>") {
+      const jobs: WorkflowJob[] = [];
+      for (let page = 1; page <= MAX_WORKFLOW_JOB_PAGES; page += 1) {
+        const response = record(gh(workflowJobsApiArgs(runId, attempt, page)), "jobs response"),
+          pageJobs = response.jobs;
+        if (!Array.isArray(pageJobs)) fail("jobs response must contain an array");
+        jobs.push(...(pageJobs as WorkflowJob[]));
+        if (pageJobs.length < 100) return jobs;
+      }
+      fail(
+        `workflow job history exceeds the ${MAX_WORKFLOW_JOB_PAGES}-page inspection limit for candidate=${candidate} run=${runId} attempt=${attempt}; dispatch a newer trusted run`,
+      );
     },
     readArtifact(runId, name) {
       const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-launchable-evidence-"));

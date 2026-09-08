@@ -913,12 +913,12 @@ rm -rf -- "$evidence_dir"
 test ! -e "$evidence_dir"
 ```
 
-A manual run with `jobs=staging-brev-launchable` runs only `staging Brev Launchable`.
+A manual run with `jobs=staging-brev-launchable` runs only `Exact staging Brev Launchable`.
 Push runs do not select this job.
 
 A manual trusted-`main` run with
 `jobs=staging-brev-launchable-identity` and an empty `targets` selector runs
-only `staging Brev Launchable identity`. It builds the candidate
+only `Exact staging Brev Launchable identity`. It builds the candidate
 image, deploys the standing Launchable, waits for workspace and SSH readiness,
 checks the concrete boot image and baked runtime identity, and confirms two
 consecutive absent workspace observations during cleanup. A passing run uploads
@@ -976,7 +976,7 @@ without cancelling a running job. GitHub keeps at most one pending job in that
 group, so a newer job can replace an older pending job.
 
 For a full manual run dispatched against `main`, `Release qualification` waits
-for every E2E job that does not require a separate opt-in, including `staging Brev Launchable`. The strict aggregate reports whether that full run
+for every E2E job that does not require a separate opt-in, including `Exact staging Brev Launchable`. The strict aggregate reports whether that full run
 passed; it does not authorize or reject a tag. For a release decision, report
 the newest identifiable full run, its timestamps, tested commit SHA, workflow
 result, `Release qualification` result, and every job that did not succeed.
@@ -986,7 +986,7 @@ rerun focused jobs, or request another full run.
 The release-tag skill records only the general E2E decision and any reason for
 proceeding with exceptional status in the signed release brief.
 
-Separately, every release candidate requires a successful candidate `staging Brev Launchable` job. That evidence can come from a Launchable-only or
+Separately, every release candidate requires a successful candidate `Exact staging Brev Launchable` job. That evidence can come from a Launchable-only or
 full run and cannot be waived by the maintainer's general E2E decision. The job
 builds the candidate image, deploys the standing Launchable, verifies the
 booted image and baked runtime, runs the preinstalled full E2E suite with
@@ -1336,7 +1336,7 @@ A main push can queue repository-owned GPU runners or create external resources 
 The main-run observer records attempt evidence but does not request broad failed-job reruns.
 Each E2E test owns any bounded operation-level retry policy.
 
-`staging Brev Launchable` runs only for a trusted manual dispatch against `main`.
+`Exact staging Brev Launchable` runs only for a trusted manual dispatch against `main`.
 The job reads these credentials from repository Actions secrets:
 
 - `BREV_API_KEY` authenticates the trusted host-side Brev CLI for workspace
@@ -1381,7 +1381,7 @@ Before checkout, it verifies the open PR, target repository and `main` branch, c
 
 When the API reports that the PR source repository owner is the `NVIDIA` organization, empty `jobs` and `targets` select:
 
-- every default-selected free-standing workflow E2E except `staging Brev Launchable`;
+- every default-selected free-standing workflow E2E except `Exact staging Brev Launchable`;
 - every catalogue target across all credential profiles;
 - every shared credential-free test; and
 - every default registry target.

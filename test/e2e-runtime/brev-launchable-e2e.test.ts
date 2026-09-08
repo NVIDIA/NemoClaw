@@ -1307,13 +1307,17 @@ describe("focused staging Brev Launchable lane", () => {
       BREV_DELETE_TIMEOUT_SECONDS: "3",
       POLL_SECONDS: "1",
     });
-    expect(result.status).not.toBe(0);
-    expect(fs.existsSync(state)).toBe(true);
-    expect(fs.existsSync(calls) ? fs.readFileSync(calls, "utf8") : "").not.toContain("brev delete");
+    expect(result.status).toBe(17);
+    expect(fs.existsSync(state)).toBe(false);
+    expect(fs.readFileSync(calls, "utf8")).toContain("brev delete ws-1");
+    expect(JSON.parse(fs.readFileSync(path.join(workDir, "workspace-recovery.json"), "utf8"))).toMatchObject({
+      workspace: { name: "nclaw-e2e-test-1", id: "ws-1" },
+    });
     expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
       workspaceName: "nclaw-e2e-test-1",
-      workspaceId: "",
-      status: "PRESENT",
+      workspaceId: "ws-1",
+      deleteAttempts: 1,
+      status: "ABSENT",
     });
   });
 
