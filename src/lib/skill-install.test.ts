@@ -1,426 +1,159 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { describe, expect, it } from "vitest";
-// Import source directly so tests cannot pass against a stale build.
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { afterEach, describe, expect, it, vi } from "vitest";
+
 import {
-  collectFiles,
+  buildCanonicalSkillAddCommand,
+  buildCanonicalSkillRemoveCommand,
+  collectSkillFiles,
+  createStatelessSkillSnapshot,
   parseFrontmatter,
-  postInstall,
-  resolveSkillPaths,
+  SKILL_SNAPSHOT_MAX_BYTES,
   validateRelativePath,
-  verifyInstall,
 } from "./skill-install";
 
-describe("parseFrontmatter", () => {
-  it("extracts name from valid frontmatter", () => {
-    const result = parseFrontmatter("---\nname: my-skill\ndescription: test\n---\n# Body");
-    expect(result).toEqual({ name: "my-skill" });
-  });
+const roots: string[] = [];
 
-  it("handles quoted name values", () => {
-    expect(parseFrontmatter('---\nname: "my-tool"\n---\n').name).toBe("my-tool");
-    expect(parseFrontmatter("---\nname: 'demo.tool'\n---\n").name).toBe("demo.tool");
-  });
+function skill(name = "demo-skill"): string {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-stateless-skill-test-"));
+  roots.push(root);
+  fs.writeFileSync(path.join(root, "SKILL.md"), `---\nname: ${name}\n---\n# Demo\n`);
+  return root;
+}
 
-  it("handles name with dots, hyphens, and underscores", () => {
-    expect(parseFrontmatter("---\nname: my_skill.v2-beta\n---\n").name).toBe("my_skill.v2-beta");
-  });
-
-  it("parses complex YAML metadata beyond name", () => {
-    const fm = parseFrontmatter(
-      '---\nname: rich-skill\ndescription: "A skill"\nmetadata: { "openclaw": { "emoji": "🔧" } }\n---\n',
-    );
-    expect(fm.name).toBe("rich-skill");
-  });
-
-  it("rejects malformed YAML", () => {
-    expect(() => parseFrontmatter("---\nname: ok\ndescription: [broken\n---\n")).toThrow(
-      "not valid YAML",
-    );
-  });
-
-  it("rejects non-mapping frontmatter", () => {
-    expect(() => parseFrontmatter("---\n- just\n- a list\n---\n")).toThrow(
-      "must be a YAML mapping",
-    );
-  });
-
-  it("throws when frontmatter is missing entirely", () => {
-    expect(() => parseFrontmatter("# Just markdown\nNo frontmatter")).toThrow(
-      "missing YAML frontmatter",
-    );
-  });
-
-  it("throws when closing delimiter is missing", () => {
-    expect(() => parseFrontmatter("---\nname: broken\n# No closing")).toThrow(
-      "missing closing --- frontmatter delimiter",
-    );
-  });
-
-  it("throws when name field is absent", () => {
-    expect(() => parseFrontmatter("---\ndescription: no name here\n---\n")).toThrow(
-      "missing required 'name' field",
-    );
-  });
-
-  it("throws when name field is empty or null", () => {
-    expect(() => parseFrontmatter("---\nname:\n---\n")).toThrow("missing required 'name' field");
-    expect(() => parseFrontmatter('---\nname: ""\n---\n')).toThrow("missing required 'name' field");
-  });
-
-  it("rejects names with invalid characters", () => {
-    expect(() => parseFrontmatter("---\nname: my skill\n---\n")).toThrow("is invalid");
-    expect(() => parseFrontmatter("---\nname: ../escape\n---\n")).toThrow("is invalid");
-    expect(() => parseFrontmatter("---\nname: a/b\n---\n")).toThrow("is invalid");
-  });
-
-  it("rejects dot and double-dot as skill names in frontmatter", () => {
-    expect(() => parseFrontmatter("---\nname: .\n---\n")).toThrow("is invalid");
-    expect(() => parseFrontmatter("---\nname: ..\n---\n")).toThrow("is invalid");
-  });
+afterEach(() => {
+  vi.restoreAllMocks();
+  for (const root of roots.splice(0)) fs.rmSync(root, { force: true, recursive: true });
 });
 
-describe("validateRelativePath", () => {
-  it("accepts safe paths", () => {
-    expect(validateRelativePath("SKILL.md")).toBe(true);
-    expect(validateRelativePath("scripts/helper.js")).toBe(true);
-    expect(validateRelativePath("data/config-v2.yaml")).toBe(true);
+describe("stateless skill snapshots", () => {
+  it("parses the declared name and rejects traversal names", () => {
+    expect(parseFrontmatter("---\nname: demo-skill\n---\n")).toEqual({ name: "demo-skill" });
+    expect(() => parseFrontmatter("---\nname: ../escape\n---\n")).toThrow("invalid");
   });
 
-  it("rejects shell metacharacters", () => {
-    expect(validateRelativePath("$(touch /tmp/pwn).js")).toBe(false);
-    expect(validateRelativePath("a'b.txt")).toBe(false);
-    expect(validateRelativePath('a"b.txt')).toBe(false);
-    expect(validateRelativePath("a`b`.txt")).toBe(false);
-    expect(validateRelativePath("file name.txt")).toBe(false);
-    expect(validateRelativePath("a;rm -rf.txt")).toBe(false);
+  it.each(["nested/file.txt", "a_b-c.1"])("accepts safe relative path %s", (candidate) => {
+    expect(validateRelativePath(candidate)).toBe(true);
   });
 
-  it("rejects directory traversal", () => {
-    expect(validateRelativePath("../escape")).toBe(false);
-    expect(validateRelativePath("foo/../../etc/passwd")).toBe(false);
-    expect(validateRelativePath("./current")).toBe(false);
-  });
+  it.each(["../escape", "a/../b", "space name", "a//b", ""])(
+    "rejects unsafe relative path %j",
+    (candidate) => {
+      expect(validateRelativePath(candidate)).toBe(false);
+    },
+  );
 
-  it("rejects empty and degenerate paths", () => {
-    expect(validateRelativePath("")).toBe(false);
-    expect(validateRelativePath("/absolute")).toBe(false);
-    expect(validateRelativePath("foo//bar")).toBe(false);
-  });
-});
+  it("rejects symlinks and special files instead of following them", () => {
+    const root = skill();
+    fs.symlinkSync(path.join(root, "SKILL.md"), path.join(root, "link"));
 
-
-describe("collectFiles", () => {
-  let tmpDir: string;
-
-  function setup(files: Record<string, string>) {
-    tmpDir = mkdtempSync(join(tmpdir(), "skill-test-"));
-    for (const [rel, content] of Object.entries(files)) {
-      const full = join(tmpDir, rel);
-      mkdirSync(join(full, ".."), { recursive: true });
-      writeFileSync(full, content);
-    }
-  }
-
-  function cleanup() {
-    if (tmpDir) rmSync(tmpDir, { recursive: true, force: true });
-  }
-
-  it("collects a single SKILL.md", () => {
-    setup({ "SKILL.md": "---\nname: solo\n---\n" });
-    try {
-      const { files, skippedDotfiles, unsafePaths } = collectFiles(tmpDir);
-      expect(files).toEqual(["SKILL.md"]);
-      expect(skippedDotfiles).toEqual([]);
-      expect(unsafePaths).toEqual([]);
-    } finally {
-      cleanup();
-    }
-  });
-
-  it("collects SKILL.md plus nested scripts, skips dotfiles", () => {
-    setup({
-      "SKILL.md": "---\nname: rich\n---\n",
-      "scripts/helper.js": "console.log('hi')",
-      ".env": "KEY=val",
-    });
-    try {
-      const { files, skippedDotfiles } = collectFiles(tmpDir);
-      expect(files.sort()).toEqual(["SKILL.md", "scripts/helper.js"]);
-      expect(skippedDotfiles).toEqual([".env"]);
-    } finally {
-      cleanup();
-    }
-  });
-
-  it("reports hidden directories in skippedDotfiles", () => {
-    setup({
-      "SKILL.md": "---\nname: safe\n---\n",
-      ".secret/token.txt": "secret-value",
-      "scripts/visible.sh": "#!/bin/sh",
-      "scripts/.hidden.sh": "#!/bin/sh",
-    });
-    try {
-      const { files, skippedDotfiles } = collectFiles(tmpDir);
-      expect(files.sort()).toEqual(["SKILL.md", "scripts/visible.sh"]);
-      expect(skippedDotfiles.sort()).toEqual([".secret/", "scripts/.hidden.sh"]);
-    } finally {
-      cleanup();
-    }
-  });
-
-  it("flags files with unsafe characters", () => {
-    setup({
-      "SKILL.md": "---\nname: bad\n---\n",
-      "has space.txt": "content",
-    });
-    try {
-      const { files, unsafePaths } = collectFiles(tmpDir);
-      expect(files).toEqual(["SKILL.md"]);
-      expect(unsafePaths).toEqual(["has space.txt"]);
-    } finally {
-      cleanup();
-    }
-  });
-
-  it("rejects visible symlinks instead of following their targets", () => {
-    setup({ "SKILL.md": "---\nname: linked\n---\n" });
-    try {
-      symlinkSync("SKILL.md", join(tmpDir, "alias.md"));
-      const { files, unsupportedPaths } = collectFiles(tmpDir);
-      expect(files).toEqual(["SKILL.md"]);
-      expect(unsupportedPaths).toEqual(["alias.md"]);
-    } finally {
-      cleanup();
-    }
-  });
-});
-
-describe("resolveSkillPaths", () => {
-  it("returns OpenClaw defaults when agent is null", () => {
-    const paths = resolveSkillPaths(null, "weather");
-    expect(paths.stateDir).toBe("/sandbox/.openclaw");
-    expect(paths.uploadDir).toBe("/sandbox/.openclaw/skills/weather");
-    expect(paths.mirrorDir).toBe("$HOME/.openclaw/skills/weather");
-    expect(paths.uploadDirSharedWithAgent).toBe(false);
-    expect(paths.sessionFile).toBe("/sandbox/.openclaw/agents/main/sessions/sessions.json");
-    expect(paths.reloadsSkillsOnSessionStart).toBe(false);
-    expect(paths.isOpenClaw).toBe(true);
-  });
-
-  it("returns OpenClaw paths when agent.name is 'openclaw'", () => {
-    const agent = {
-      name: "openclaw",
-      configPaths: {
-        dir: "/sandbox/.openclaw",
-      },
-    };
-    const paths = resolveSkillPaths(agent, "my-skill");
-    expect(paths.stateDir).toBe("/sandbox/.openclaw");
-    expect(paths.uploadDir).toBe("/sandbox/.openclaw/skills/my-skill");
-    expect(paths.mirrorDir).toBe("$HOME/.openclaw/skills/my-skill");
-    expect(paths.uploadDirSharedWithAgent).toBe(false);
-    expect(paths.sessionFile).toBe("/sandbox/.openclaw/agents/main/sessions/sessions.json");
-    expect(paths.reloadsSkillsOnSessionStart).toBe(false);
-    expect(paths.isOpenClaw).toBe(true);
-  });
-
-  it("returns Hermes paths without session refresh", () => {
-    const agent = {
-      name: "hermes",
-      configPaths: {
-        dir: "/sandbox/.hermes",
-      },
-    };
-    const paths = resolveSkillPaths(agent, "demo-skill");
-    expect(paths.stateDir).toBe("/sandbox/.hermes");
-    expect(paths.uploadDir).toBe("/sandbox/.hermes/skills/demo-skill");
-    expect(paths.mirrorDir).toBeNull();
-    expect(paths.uploadDirSharedWithAgent).toBe(false);
-    expect(paths.sessionFile).toBeNull();
-    expect(paths.reloadsSkillsOnSessionStart).toBe(true);
-    expect(paths.isOpenClaw).toBe(false);
-  });
-
-  it("installs Deep Agents skills directly into the agent skills dir dcode loads (#7634)", () => {
-    // dcode's user skill dir is ~/.deepagents/{agent}/skills (HOME=/sandbox,
-    // DEFAULT_AGENT_NAME="agent"); it never scans ~/.deepagents/skills, so the
-    // upload dir alone leaves the skill installed but unloadable.
-    const agent = {
-      name: "langchain-deepagents-code",
-      configPaths: {
-        dir: "/sandbox/.deepagents",
-      },
-    };
-    const paths = resolveSkillPaths(agent, "note-summarizer");
-    expect(paths.stateDir).toBe("/sandbox/.deepagents");
-    expect(paths.uploadDir).toBe("/sandbox/.deepagents/agent/skills/note-summarizer");
-    expect(paths.mirrorDir).toBeNull();
-    expect(paths.uploadDirSharedWithAgent).toBe(true);
-    expect(paths.sessionFile).toBeNull();
-    expect(paths.reloadsSkillsOnSessionStart).toBe(false);
-    expect(paths.isOpenClaw).toBe(false);
-  });
-
-  it("returns generic paths for a hypothetical future agent", () => {
-    const agent = {
-      name: "future-agent",
-      configPaths: {
-        dir: "/sandbox/.future",
-      },
-    };
-    const paths = resolveSkillPaths(agent, "test-skill");
-    expect(paths.stateDir).toBe("/sandbox/.future");
-    expect(paths.uploadDir).toBe("/sandbox/.future/skills/test-skill");
-    expect(paths.mirrorDir).toBeNull();
-    expect(paths.uploadDirSharedWithAgent).toBe(false);
-    expect(paths.sessionFile).toBeNull();
-    expect(paths.reloadsSkillsOnSessionStart).toBe(false);
-    expect(paths.isOpenClaw).toBe(false);
-  });
-});
-
-describe("postInstall", () => {
-  it("tells Hermes users to start a fresh session without restarting the gateway", () => {
-    const paths = resolveSkillPaths(
-      { name: "hermes", configPaths: { dir: "/sandbox/.hermes" } },
-      "weather",
-    );
-    const result = postInstall(
-      { configFile: "/tmp/ssh-config", sandboxName: "alpha" },
-      paths,
-      "/unused",
-      {
-        sshExecImpl: () => {
-          throw new Error("Hermes activation must not require an SSH mutation");
-        },
-      },
-    );
-
-    expect(result).toEqual({
-      success: true,
-      messages: ["Start a new chat session to load the skill; a gateway restart is not required."],
+    expect(collectSkillFiles(root).unsupportedPaths).toEqual(["link"]);
+    const stat = fs.lstatSync(root);
+    expect(createStatelessSkillSnapshot(root, "demo-skill", stat)).toEqual({
+      success: false,
+      reason: "invalid-tree",
+      paths: ["link"],
     });
   });
 
-  it("refreshes OpenClaw sessions after installing an updated skill", () => {
-    const skillDir = mkdtempSync(join(tmpdir(), "skill-postinstall-"));
-    const commands: string[] = [];
-    try {
-      writeFileSync(skillDir + "/SKILL.md", "---\nname: weather\n---\n# Weather\n");
-      const result = postInstall(
-        { configFile: "/tmp/ssh-config", sandboxName: "alpha" },
-        resolveSkillPaths(null, "weather"),
-        skillDir,
-        {
-          sshExecImpl: (_ctx, command) => {
-            commands.push(command);
-            return { status: 0, stdout: "", stderr: "" };
-          },
-        },
-      );
+  it("creates a private regular-file snapshot and removes it on cleanup", () => {
+    const root = skill();
+    fs.mkdirSync(path.join(root, "nested"));
+    fs.writeFileSync(path.join(root, "nested", "tool.sh"), "#!/bin/sh\n", { mode: 0o755 });
+    fs.writeFileSync(path.join(root, ".secret"), "not transferred");
+    const stat = fs.lstatSync(root);
+    const result = createStatelessSkillSnapshot(root, "demo-skill", stat);
 
-      expect(result).toEqual({ success: true, messages: [] });
-      expect(commands).toContain(
-        "printf '{}' > '/sandbox/.openclaw/agents/main/sessions/sessions.json'",
-      );
-    } finally {
-      rmSync(skillDir, { recursive: true, force: true });
-    }
-  });
-
-  it("mirrors the uploaded skill into the OpenClaw home dir so the agent loads it", () => {
-    // Regression for #4819: on sandboxes whose agent $HOME differs from the
-    // OpenClaw state dir, `skills list` shows the upload dir while the agent
-    // loads skills from $HOME/.openclaw/skills. Install must populate that
-    // mirror — symmetric with `skill remove`, which deletes it.
-    const skillDir = mkdtempSync(join(tmpdir(), "skill-postinstall-mirror-"));
-    const commands: string[] = [];
-    try {
-      writeFileSync(skillDir + "/SKILL.md", "---\nname: report-writer\n---\n# Report\n");
-      const paths = resolveSkillPaths(null, "report-writer");
-      postInstall({ configFile: "/tmp/ssh-config", sandboxName: "alpha" }, paths, skillDir, {
-        sshExecImpl: (_ctx, command) => {
-          commands.push(command);
-          return { status: 0, stdout: "", stderr: "" };
-        },
-      });
-
-      // A command must copy the upload dir into the home mirror dir.
-      const mirrorCmd = commands.find(
-        (c) => c.includes(paths.uploadDir) && c.includes('"$HOME/.openclaw/skills/report-writer"'),
-      );
-      expect(
-        mirrorCmd,
-        "postInstall should mirror the skill into $HOME/.openclaw/skills",
-      ).toBeDefined();
-    } finally {
-      rmSync(skillDir, { recursive: true, force: true });
-    }
-  });
-
-  it("warns when the OpenClaw home mirror cannot be created", () => {
-    const skillDir = mkdtempSync(join(tmpdir(), "skill-postinstall-mirror-fail-"));
-    try {
-      writeFileSync(skillDir + "/SKILL.md", "---\nname: report-writer\n---\n# Report\n");
-      const paths = resolveSkillPaths(null, "report-writer");
-      const result = postInstall(
-        { configFile: "/tmp/ssh-config", sandboxName: "alpha" },
-        paths,
-        skillDir,
-        {
-          sshExecImpl: (_ctx, command) => ({
-            // Fail only the mirror command; session refresh still succeeds.
-            status: command.includes("$HOME/.openclaw/skills") ? 1 : 0,
-            stdout: "",
-            stderr: "",
-          }),
-        },
-      );
-
-      expect(result.success).toBe(true);
-      expect(result.messages.some((m) => m.startsWith("Warning:") && m.includes("mirror"))).toBe(
-        true,
-      );
-    } finally {
-      rmSync(skillDir, { recursive: true, force: true });
-    }
-  });
-});
-
-describe("verifyInstall", () => {
-  it("requires SKILL.md in the OpenClaw home mirror, not only the upload dir (#4819)", () => {
-    // The agent loads skills from the home mirror, so an install whose mirror
-    // copy failed must NOT verify as installed — otherwise the CLI reports
-    // success while the skill stays invisible to the agent.
-    const paths = resolveSkillPaths(null, "report-writer");
-    const commands: string[] = [];
-    const ok = verifyInstall({ configFile: "/tmp/ssh-config", sandboxName: "alpha" }, paths, {
-      sshExecImpl: (_ctx, command) => {
-        commands.push(command);
-        return { status: 0, stdout: "EXISTS", stderr: "" };
-      },
-    });
-
-    expect(ok).toBe(true);
-    // The verification command must cover the home mirror SKILL.md.
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.snapshot.files).toEqual(["SKILL.md", "nested/tool.sh"]);
+    expect(result.snapshot.skippedDotfiles).toEqual([".secret"]);
+    expect(fs.statSync(result.snapshot.hostDirectory).mode & 0o777).toBe(0o700);
     expect(
-      commands.some((c) => c.includes('"$HOME/.openclaw/skills/report-writer/SKILL.md"')),
+      fs.lstatSync(path.join(result.snapshot.skillDirectory, "nested", "tool.sh")).isFile(),
     ).toBe(true);
+    result.snapshot.cleanup();
+    expect(fs.existsSync(result.snapshot.hostDirectory)).toBe(false);
   });
 
-  it("returns false when the upload dir has SKILL.md but the home mirror does not", () => {
-    const paths = resolveSkillPaths(null, "report-writer");
-    const ok = verifyInstall({ configFile: "/tmp/ssh-config", sandboxName: "alpha" }, paths, {
-      // A combined `test -f A && test -f B` shell command fails (non-zero,
-      // no EXISTS) when the mirror file is absent.
-      sshExecImpl: () => ({ status: 1, stdout: "", stderr: "" }),
+  it("rejects a source that exceeds the byte bound before copying it", () => {
+    const root = skill();
+    fs.writeFileSync(path.join(root, "large.bin"), "");
+    fs.truncateSync(path.join(root, "large.bin"), SKILL_SNAPSHOT_MAX_BYTES + 1);
+
+    expect(createStatelessSkillSnapshot(root, "demo-skill", fs.lstatSync(root))).toEqual({
+      success: false,
+      reason: "limit-exceeded",
     });
-
-    expect(ok).toBe(false);
   });
+
+  it("rejects a regular file replaced after enumeration", () => {
+    const root = skill();
+    const skillFile = path.join(root, "SKILL.md");
+    const originalRealpath = fs.realpathSync;
+    vi.spyOn(fs, "realpathSync").mockImplementationOnce(((target: fs.PathLike) => {
+      const resolved = originalRealpath(target);
+      fs.renameSync(skillFile, path.join(root, "original.SKILL.md"));
+      fs.writeFileSync(skillFile, "---\nname: demo-skill\n---\n# Replaced\n");
+      return resolved;
+    }) as typeof fs.realpathSync);
+
+    expect(createStatelessSkillSnapshot(root, "demo-skill", fs.lstatSync(root))).toEqual({
+      success: false,
+      reason: "source-changed",
+    });
+  });
+});
+
+describe("canonical writable-root fallbacks", () => {
+  it("places only the named staged tree in the declared root", () => {
+    const command = buildCanonicalSkillAddCommand(
+      "/sandbox/.hermes/skills",
+      "demo-skill",
+      "/sandbox/.nemoclaw-skill-stage.0123456789abcdef0123456789abcdef/demo-skill",
+    );
+    const script = command[2] ?? "";
+
+    expect(command.slice(0, 2)).toEqual(["/bin/sh", "-c"]);
+    expect(script).toContain("/sandbox/.hermes/skills");
+    expect(script).toContain('destination="$name"');
+    expect(script).toContain("Refusing to replace existing %s");
+    expect(script).toContain('mv -T -- "$temporary" "$destination"');
+    expect(script).not.toContain('rm -rf -- "$destination"');
+    expect(script).toContain("Native skill list and new sessions remain authoritative");
+    expect(script).not.toContain("receipt");
+    expect(script).not.toContain("provenance");
+    expect(script).not.toContain("/sandbox/.openclaw");
+  });
+
+  it("removes only the named canonical-root copy and makes no global-absence claim", () => {
+    const command = buildCanonicalSkillRemoveCommand(
+      "/sandbox/.openclaw/workspace/skills",
+      "demo-skill",
+    );
+    const script = command[2] ?? "";
+
+    expect(script).toContain('cd -P -- "$root"');
+    expect(script).toContain('destination="$name"');
+    expect(script).toContain('expected_destination="$root/$name"');
+    expect(script).toContain('"$(realpath -e -- "$destination")" = "$expected_destination"');
+    expect(script).toContain("only from the canonical writable skill root");
+    expect(script).toContain("Native skill list remains authoritative");
+    expect(script).not.toContain("/sandbox/.openclaw/skills");
+    expect(script).not.toContain("find /sandbox");
+  });
+
+  it.each(["/tmp/skills", "/sandbox/a/../skills", "/sandbox/a b"])(
+    "rejects unsafe declared root %j",
+    (root) => {
+      expect(() => buildCanonicalSkillRemoveCommand(root, "demo-skill")).toThrow(
+        "Invalid canonical writable skill root",
+      );
+    },
+  );
 });
