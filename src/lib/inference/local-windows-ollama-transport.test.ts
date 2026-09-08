@@ -668,6 +668,26 @@ describe("Windows-host Ollama transport", () => {
     expect(captureEx).toHaveBeenCalledOnce();
   });
 
+  it("omits stale-runner recovery guidance for Windows-host Ollama timeouts", () => {
+    setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
+    const capture = respondsOnlyThroughDockerDesktop("/api/show", "");
+
+    const result = validateOllamaModel(
+      "nemotron-3-nano:30b",
+      capture,
+      () => false,
+      () => ({ stdout: "", exitCode: 28, timedOut: true }),
+    );
+
+    const message = result.message ?? "";
+    expect({
+      genericRecovery: message.includes("Restart Ollama and rerun onboarding"),
+      staleRunner: message.includes("Stale runner processes"),
+      systemctl: message.includes("systemctl"),
+      timeout: message.includes("did not answer the local probe in time"),
+    }).toEqual({ genericRecovery: false, staleRunner: false, systemctl: false, timeout: true });
+  });
+
   it("validates health and container reachability through Docker Desktop (#10553)", () => {
     setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
     const capture = vi.fn((command: readonly string[]) => {
@@ -915,23 +935,30 @@ describe("Windows-host Ollama transport", () => {
       protectionCapture,
     );
 
-    expect(run).toHaveBeenCalledWith(
-      expect.arrayContaining([
+    const [command, options] = run.mock.calls[0] ?? [];
+    expect({
+      cleanupCalls: cleanup.mock.calls.length,
+      commandPrefix: command?.slice(0, 5),
+      endpoint: command?.find((argument: string) => argument.endsWith("/api/generate")),
+      options,
+    }).toEqual({
+      cleanupCalls: 3,
+      commandPrefix: [
         "docker",
         "run",
         "--rm",
+        "-d",
         CONTAINER_REACHABILITY_IMAGE,
-        "http://host.docker.internal:11434/api/generate",
-      ]),
-      {
+      ],
+      endpoint: "http://host.docker.internal:11434/api/generate",
+      options: {
         ignoreError: true,
         env: expect.objectContaining({
           DOCKER_CONFIG: "/tmp/credential-free-docker",
           DOCKER_CONTEXT: "default",
         }),
       },
-    );
-    expect(cleanup).toHaveBeenCalledTimes(3);
+    });
   });
 
   it("keeps the Hermes context-window check fail-closed on an invalid Docker response (#10553)", () => {
