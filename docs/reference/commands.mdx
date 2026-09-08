@@ -76,7 +76,7 @@ The `/nemoclaw` slash command is available inside the OpenClaw chat interface fo
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-Hermes does not use the OpenClaw chat slash command. Use the host-side `nemohermes` commands for lifecycle, status, policy, and inference operations. The in-sandbox Hermes integration installs the NemoClaw Hermes plugin, which exposes tools for status, environment information, and skill reload support, plus an `on_session_start` hook.
+Hermes does not use the OpenClaw chat slash command. Use the host-side `nemohermes` commands for lifecycle, status, policy, and inference operations. The in-sandbox Hermes integration installs the NemoClaw Hermes plugin, which exposes tools for status and environment information, plus an `on_session_start` hook.
 
 </AgentOnly>
 <AgentOnly variant="deepagents">
@@ -394,7 +394,7 @@ Use the result from `destroy` to choose the next action:
 - If OpenShell confirms the sandbox is absent, `destroy` verifies one retained recovery record and its immutable runtime identity. For Docker-backed sandboxes, it also verifies the immutable Docker sandbox identity and removes only qualified residual containers. It clears the matching recovery record only after verified cleanup.
 - If the recovery record is ambiguous or immutable runtime-identity verification fails, cleanup stops and the record remains. For Docker-backed sandboxes, a foreign container, changed Docker identity, or failed Docker probe has the same fail-closed result.
 
-If OpenShell did not return a durable identity fingerprint, `destroy` cannot complete recovery. A create-attempt label can help an OpenShell administrator identify and remove the exact sandbox, but it does not let NemoClaw retire the record without immutable identity authority. If neither a fingerprint nor a label is available, preserve the terminal output and ask the administrator to identify the exact sandbox from gateway or controller evidence. If NemoClaw reports that it could not save recovery evidence, preserve the terminal output and follow the same escalation.
+If OpenShell did not return a durable identity fingerprint, `destroy` cannot complete recovery. A create-attempt label can help an OpenShell administrator identify and remove the exact sandbox, but it does not let NemoClaw retire the record without immutable identity authority. If neither a fingerprint nor a label is available, preserve the terminal output and ask the administrator to identify the exact sandbox from gateway or controller evidence. If NemoClaw reports that it could not save recovery evidence, rerun `$$nemoclaw <sandbox-name> destroy --yes`; if recovery remains blocked, preserve the terminal output and follow the same escalation.
 
 This fail-closed record keeps only the affected sandbox name unavailable. It is not retired from mutable-name absence alone, and this command does not accept administrator-supplied identity authority.
 To onboard another sandbox while the record remains unresolved, supply a different explicit name:
@@ -1304,7 +1304,17 @@ If a container or OpenShell identity check, reconnect check, or health check lat
 It then requires Podman to report the container as `exited` and OpenShell to report `Error` or `Stopped`.
 If NemoClaw cannot prove that rollback, the command reports both the recovery failure and the rollback failure.
 
-`recover` re-evaluates the documented Hermes secret boundary against `/sandbox/.hermes/.env` and the supervisor runtime environment on every run, including when the gateway is already healthy. If the file contains raw secret-shaped values (for example a pasted Telegram, Discord, or Slack bot token in place of the expected `openshell:resolve:env:<name>` placeholder), the command exits non-zero and prints the offending key. The direct root-entrypoint supervisor stops a running gateway after this refusal, while the managed controller refuses before signaling the observed child. Replace each flagged value with the `openshell:resolve:env:<name>` placeholder and re-run. The direct root-entrypoint supervisor verifies the strict root-owned config hash used by the managed transaction. Mutable config under the managed topology has no durable root-owned hash anchor and retains the same trust and time-of-check/time-of-use limits as managed cold start. If the boundary validator or supervisor helper is missing, recovery fails closed, names the sandbox, explains that `/sandbox/.hermes/.env` could not be re-evaluated, and leaves an otherwise healthy gateway untouched. Rebuild an older sandbox image with `$$nemoclaw <name> rebuild --yes` before retrying.
+`recover` re-evaluates the documented Hermes secret boundary against `/sandbox/.hermes/.env` and the supervisor runtime environment on every run, including when the gateway is already healthy.
+If the file contains raw secret-shaped values, the command exits non-zero and prints the offending key.
+Raw values include a pasted Telegram, Discord, or Slack bot token in place of the expected `openshell:resolve:env:<name>` placeholder.
+The direct root-entrypoint supervisor stops a running gateway after this refusal, while the managed controller refuses before signaling the observed child.
+Replace each flagged value with the `openshell:resolve:env:<name>` placeholder and re-run.
+Both supervisors adopt one stable mutable config snapshot after this boundary passes.
+A direct MCP change becomes pending, supersedes stale host-managed intent, and becomes applied only after gateway health passes.
+A host-managed MCP operation can report a registry mismatch after Hermes is healthy.
+If the boundary validator or supervisor helper is missing, recovery fails closed and names the sandbox.
+It explains that `/sandbox/.hermes/.env` could not be re-evaluated and leaves an otherwise healthy gateway untouched.
+Rebuild an older sandbox image with `$$nemoclaw <name> rebuild --yes` before retrying.
 
 While a NemoClaw cron restore gate exists, Hermes `recover` keeps the same lifecycle lock through restore validation and gate release. That controller call has a 130-second host timeout; the earlier 30-second limit applies only to lifecycle-lock acquisition.
 
@@ -1324,18 +1334,30 @@ Force-restart the supported in-sandbox gateway process through the controller fo
 $$nemoclaw my-assistant gateway restart [--quiet|-q]
 ```
 
-On success, the command reports that the gateway was restarted, health passed, and forwards were checked or recovered. It also checks the dashboard forward, messaging forward, and manifest-declared agent forwards. `--quiet` suppresses progress lines but still prints refusal diagnostics. In the direct root-entrypoint topology, PID 1 stops only the gateway child whose process ID and process start identity match the tracked child, applies the restart seal, and launches the replacement under the separate `gateway` UID. In the OpenShell-managed topology, the installed root controller verifies a stable OpenShell to `nemoclaw-start` to gateway process shape, holds a root-only lifecycle lock, publishes one root-owned exit authorization bound to the exact gateway process ID, kernel start identity, and live controller identity, pidfd-targets the observed child, waits for the nonroot entrypoint supervisor to respawn it under the sandbox UID, and proves the replacement listener and HTTP health. That managed process proof prevents PID reuse from redirecting the signal but cannot establish provenance against a malicious same-UID process or create gateway and agent UID isolation. For Hermes, the entrypoint supervisor also owns the dashboard process, internal API relay, dashboard relay, and gateway log stream. The managed nonroot supervisor continuously repairs those processes, stops an alive but deaf gateway after four consecutive failed health checks, and quarantines relaunch after five unexpected exits or failed replacement candidates within 60 seconds until sandbox recreation. That authorization keeps an authenticated host-requested exit out of the crash budget while its exact root controller remains live; it records host intent for the exit but does not claim that the host signal was the only possible cause in the shared-UID topology. The host repairs only the host-side OpenShell forwards after the supervisor reports a healthy gateway.
+On success, the command reports that the gateway was restarted, health passed, and forwards were checked or recovered.
+It also checks the dashboard forward, messaging forward, and manifest-declared agent forwards.
+`--quiet` suppresses progress lines but still prints refusal diagnostics.
+In the direct root-entrypoint topology, PID 1 stops only the gateway child whose process ID and process start identity match the tracked child, applies the restart seal, and launches the replacement under the separate `gateway` UID.
+In the OpenShell-managed topology, the installed root controller verifies a stable OpenShell to `nemoclaw-start` to gateway process shape, holds a root-only lifecycle lock, publishes one root-owned exit authorization bound to the exact gateway process ID, kernel start identity, and live controller identity, pidfd-targets the observed child, waits for the nonroot entrypoint supervisor to respawn it under the sandbox UID, and proves the replacement listener and HTTP health.
+That managed process proof prevents PID reuse from redirecting the signal but cannot establish provenance against a malicious same-UID process or create gateway and agent UID isolation.
+For Hermes, the entrypoint supervisor also owns the dashboard process, internal API relay, dashboard relay, and gateway log stream.
+The managed nonroot supervisor continuously repairs those processes, stops an alive but deaf gateway after four consecutive failed health checks, and stops relaunch for the current supervisor instance after five unexpected exits or failed replacement candidates within 60 seconds.
+That authorization keeps an authenticated host-requested exit out of the crash budget while its exact root controller remains live.
+It records host intent for the exit but does not claim that the host signal was the only possible cause in the shared-UID topology.
+The host repairs only the host-side OpenShell forwards after the supervisor reports a healthy gateway.
 
 </AgentOnly>
 
 <AgentOnly variant="hermes">
 
 For Hermes, both controllers validate `/sandbox/.hermes/.env` against the secret-boundary guard and validate the supervisor runtime environment before restart.
-The direct root-entrypoint supervisor verifies `/sandbox/.hermes/config.yaml` and `.env` against the strict hash and relaunches the process as the `gateway` user.
-Mutable managed config retains cold-start-equivalent trust and time-of-check/time-of-use limits.
-Neither controller recomputes a trusted strict hash to adopt direct in-sandbox edits.
-Use supported host commands such as `$$nemoclaw <name> config set` and `$$nemoclaw inference set` for intended runtime configuration changes because those commands update the managed config metadata together.
-When a strict hash is available and does not match, the command reports the `config hash mismatch` failure layer.
+Both supervisors adopt one stable snapshot of mutable `config.yaml` and `.env` after the secret boundary passes.
+A direct MCP change becomes pending and supersedes stale host-managed intent.
+The supervisor marks it as applied only after the replacement gateway passes its health checks.
+The host operation that owns a managed MCP transaction can report a registry mismatch after Hermes is healthy.
+The direct root-entrypoint supervisor relaunches the process as the `gateway` user.
+Use supported host commands such as `$$nemoclaw <name> config set` and `$$nemoclaw inference set` for settings that must match host registry state.
+The command reports `unsafe config path` when a config or metadata path is unsafe. It reports `config hash mismatch` when hash or restart transaction metadata is missing, malformed, mismatched, or changed during validation.
 Hermes host config writes and lifecycle seals share one root-only mutation lock.
 Config writes bind to the digest of the matching read and atomically refresh the strict and compatibility hashes before restoring mutable access.
 If a concurrent lifecycle request reports `SUPERVISOR_BUSY` or `Hermes config mutation is already in progress`, wait for the active operation to finish and retry.
@@ -1344,7 +1366,13 @@ If a concurrent lifecycle request reports `SUPERVISOR_BUSY` or `Hermes config mu
 
 <AgentOnly variant="openclaw,hermes">
 
-The command can fail at these layers: unsupported agent, privileged control unavailable, supervisor not running, secret-boundary refusal, unsafe config path, config hash mismatch when a strict hash is available, MCP reconciliation refusal, relaunch quarantined, launch failure, health timeout, or forward recovery failure. `relaunch quarantined` means the in-sandbox supervisor stopped attempting relaunch after a startup refusal or repeated gateway exits, so restart and recovery report the supported repair, `$$nemoclaw <name> rebuild --yes`, instead of a retry. An older direct-container image without the matching supervisor or managed controller helper reports `privileged control unavailable` and requires `$$nemoclaw <name> rebuild --yes`. Ordinary OpenShell exec and manual in-sandbox relaunch are not fallback paths. Terminal agents do not have a gateway runtime and fail as unsupported.
+The command can fail at these layers: unsupported agent, privileged control unavailable, supervisor not running, secret-boundary refusal, unsafe config path, config hash mismatch when transaction metadata cannot be validated, MCP reconciliation refusal, relaunch quarantined, launch failure, health timeout, or forward recovery failure.
+`relaunch quarantined` means the in-sandbox supervisor stopped attempting relaunch after repeated process or health failures.
+Correct the reported cause, then run `$$nemoclaw <name> stop` and `$$nemoclaw <name> start` to reset the supervisor.
+Rebuild only if the sandbox still cannot start.
+An older direct-container image without the matching supervisor or managed controller helper reports `privileged control unavailable` and requires `$$nemoclaw <name> rebuild --yes`.
+Ordinary OpenShell exec and manual in-sandbox relaunch are not fallback paths.
+Terminal agents do not have a gateway runtime and fail as unsupported.
 
 </AgentOnly>
 
@@ -2131,7 +2159,36 @@ Register a messaging channel with the sandbox and rebuild so the image picks up 
 
 Google Chat uses an experimental token-paste flow for the service-account JSON on both agents. OpenClaw also requires interactive public-webhook confirmation and prompts for optional app-principal configuration during enrollment. Hermes instead prompts for the Google Cloud project ID, complete Pub/Sub subscription name, and email sender allowlist. It pulls inbound events from Pub/Sub over REST and does not create a public webhook endpoint.
 
-After registering the channel, NemoClaw asks whether to rebuild immediately. Running `add` for an already-configured channel overwrites the stored credentials where applicable. The operation is idempotent. Static channel credentials use a validated endpointless OpenShell provider profile so the gateway can replace their sandbox placeholders. NemoClaw validates the existing profile, provider type, and credential keys before it reuses a provider. A missing, malformed, conflicting, or incompatible provider state stops the operation before reuse. Hermes Discord uses its dedicated static provider type because its policy binds the Discord API and Gateway endpoints. Channel names are trimmed and lowercased before NemoClaw stores credentials, names bridge providers, or prints rebuild messages. NemoClaw requires the matching built-in network policy preset YAML to be present. A missing or malformed preset YAML (no `network_policies:` section) aborts `channels add` before any token prompt, registry write, or rebuild prompt. After validating that preset, NemoClaw discloses its effect before prompting for credentials or changing gateway or registry state. It prints the exact effective egress scope when the preset would open or replace access, or reports that no new egress would be opened when the preset is already effective. The `--dry-run` path prints the same disclosure without collecting credentials or applying changes. With the preset file in place, NemoClaw applies it to the sandbox before the rebuild so the bridge has egress to its upstream API. When the apply step itself fails after the registry write on a fresh add, NemoClaw attempts to roll back the bridge providers, the `messagingChannels` entry, and any staged environment credentials, then exits without prompting for a rebuild; if any gateway-side step (provider detach or delete) fails the rollback continues and prints a `Rollback could not fully clean <surfaces>` warning so the operator can clean up manually. When the same failure happens on a re-add of an already-enabled channel, NemoClaw restores the prior `messagingChannels` entry, restores staged environment credentials when available, restores registry credential hashes, and attempts to re-upsert the prior bridge providers, but flags `gateway-providers` as residual because the in-flight upsert may have left the gateway with the new token; verify the gateway bridge before relying on the channel. Restore the preset YAML and re-run `$$nemoclaw <name> channels add <channel>`. For Telegram, Discord, and Slack, a rebuild triggered by `channels add` also verifies that the selected bridge starts and reports credential, startup, or plugin discovery warnings.
+After registering the channel, NemoClaw asks whether to rebuild immediately.
+Running `add` for an already-configured channel overwrites the stored credentials where applicable.
+Repeating a successful add with identical inputs is idempotent.
+A failed re-add can leave residual gateway-provider state when prior refresh material cannot be restored.
+Static channel credentials use a validated endpointless OpenShell provider profile so the gateway can replace their sandbox placeholders.
+NemoClaw validates the existing profile, provider type, and credential keys before it reuses a provider.
+A missing provider is created when complete credentials are available.
+OpenShell provider inspection uncertainty stops the operation before provider mutation.
+On a fresh add, NemoClaw may already have applied the credential-free policy preset and attempts to remove it before exiting.
+If that policy cleanup fails, rebuild the sandbox first, then run the `$$nemoclaw <name> policy remove <channel>` command printed by the CLI.
+With complete credentials, NemoClaw replaces a mismatched provider only when it is unattached or attached exclusively to the selected sandbox.
+An attachment to another sandbox stops replacement.
+The `--force` flag does not override this provider attachment authority.
+Hermes Discord uses its dedicated static provider type because its policy binds the Discord API and Gateway endpoints.
+Channel names are trimmed and lowercased before NemoClaw stores credentials, names bridge providers, or prints rebuild messages.
+NemoClaw requires the matching built-in network policy preset YAML to be present.
+A missing or malformed preset YAML (no `network_policies:` section) aborts `channels add` before any token prompt, registry write, or rebuild prompt.
+After validating that preset, NemoClaw discloses its effect before prompting for credentials or changing gateway or registry state.
+It prints the exact effective egress scope when the preset would open or replace access, or reports that no new egress would be opened when the preset is already effective.
+The `--dry-run` path prints the same disclosure without collecting credentials or applying changes.
+With the preset file in place, NemoClaw applies it to the sandbox before the rebuild so the bridge has egress to its upstream API.
+When final policy application fails after provider registration during a fresh add, NemoClaw attempts to roll back the bridge providers, preset, and staged environment credentials before registry state is written, then exits without prompting for a rebuild.
+If any gateway-side step fails, rollback continues and prints a `Rollback could not fully clean <surfaces>` warning so the operator can clean up manually.
+When the same failure happens on a re-add of an already-enabled channel, NemoClaw restores the prior `messagingChannels` entry, staged environment credentials when available, and registry credential hashes.
+An existing provider can be changed during re-add.
+NemoClaw attempts to restore stored provider credentials, but it cannot restore prior gateway refresh material that was available only during the earlier setup command.
+It flags `gateway-providers` as residual.
+Inspect the channel's gateway providers, restore the preset YAML, and correct the gateway failure.
+When the gateway is reachable, run the `$$nemoclaw <name> channels remove <channel>` command printed by the CLI, then rerun `$$nemoclaw <name> channels add <channel>`.
+For Telegram, Discord, and Slack, a rebuild triggered by `channels add` also verifies that the selected bridge starts and reports credential, startup, or plugin discovery warnings.
 
 ```bash
 $$nemoclaw my-assistant channels add telegram
@@ -2140,13 +2197,13 @@ $$nemoclaw my-assistant channels add telegram
 | Flag | Description |
 | --- | --- |
 | `--dry-run` | Validate the channel name and matching policy preset without prompting for credentials, contacting the gateway, or rebuilding |
-| `--force` | Add the channel despite a credential conflict, shared-resource conflict, or incomplete required check. This flag is the only conflict override. |
+| `--force` | Add the channel despite a credential conflict, shared-resource conflict, or another forceable check. This flag does not bypass missing or partial credentials or authorize replacing a provider attached to another sandbox. |
 
 Slack requires both `SLACK_BOT_TOKEN` (bot user OAuth) and `SLACK_APP_TOKEN` (app-level Socket Mode token); the command prompts for each in turn. The conflict check compares only sandboxes in the selected OpenShell gateway's sandbox registry. It cannot detect Slack token reuse across independent OpenShell gateways. Run only one active Slack sandbox on each OpenShell gateway, and use distinct Slack bot and app tokens across gateways. Optional Slack allowlists come from `SLACK_ALLOWED_USERS` and `SLACK_ALLOWED_CHANNELS` at rebuild time. Telegram and Discord mention mode default to `1` when no environment, session, or saved state value exists for that setting. Discord applies that default only when a server ID is configured. A run with `NEMOCLAW_NON_INTERACTIVE=1`, or a run without a terminal on stdin, fails fast on any missing token and shows no rebuild prompt. Instead, the change is queued and you are told to run `$$nemoclaw <name> rebuild` manually. An SSH command without `-t`, a service unit, or a CI job has no terminal on stdin, so it does not need `NEMOCLAW_NON_INTERACTIVE=1` to reach this path. If you omit the required `<channel>` argument, the CLI prints the `channels add <channel>` usage with the supported channel list instead of falling back to top-level help.
 
 ### `$$nemoclaw <name> channels remove <channel>`
 
-Clear the stored credentials for a messaging channel and rebuild the sandbox so the image drops the channel. Running `remove` for a channel that was never configured is a no-op against the credentials file and still triggers the rebuild prompt. When the bridge provider is attached to a live sandbox, NemoClaw detaches it before deleting the provider from the OpenShell gateway. If the matching built-in policy preset is applied, NemoClaw also removes that preset from the current OpenShell policy so the upstream API is no longer allow-listed after the channel is gone. No session preset list exists to synchronize.
+Clear the stored credentials for a messaging channel and rebuild the sandbox so the image drops the channel. Running `remove` for a channel that was never configured is a no-op against the credentials file and still triggers the rebuild prompt. When the bridge provider is attached to a live sandbox, NemoClaw detaches it before deleting the provider from the OpenShell gateway. If deletion fails, NemoClaw attempts to restore the attachment before returning the failure. If restoration also fails, the diagnostic names the provider and sandbox and warns that channel delivery may remain interrupted. If the matching built-in policy preset is applied, NemoClaw also removes that preset from the current OpenShell policy so the upstream API is no longer allow-listed after the channel is gone. No session preset list exists to synchronize.
 
 For QR-paired channels (today: WhatsApp), NemoClaw destructively clears the in-sandbox session directories before the rebuild so the `state_dirs` backup does not restore the auth blob and let the channel reconnect:
 
@@ -2256,7 +2313,7 @@ $$nemoclaw my-assistant mcp list [--json]
 
 ### `$$nemoclaw <name> mcp add`
 
-Add an MCP Streamable HTTP server to a sandbox. Pass `--url` for the MCP endpoint and the required single `--env KEY` bearer credential for the sandbox-side MCP client. Pass a repeatable `--trusted-private-host <exact-host-or-ip>` option to admit an exact RFC1918, CGNAT, or IPv6 unique local destination for the current command. The declaration must equal the normalized host from `--url`. For managed MCP, use a DNS hostname for an IPv6 unique local address because NemoClaw has not qualified direct IPv6-literal MCP URLs. You can supply exact hosts through `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` instead, and NemoClaw combines the variable with command options. NemoClaw records the resulting exact trust intent and address pins, so restart, rebuild, and restore do not depend on the ambient environment. NemoClaw registers that credential in an OpenShell provider, installs a generated OpenShell `protocol: mcp` policy for the target endpoint, attaches the provider to the running sandbox, and writes only an OpenShell resolver placeholder for the recorded key into the agent configuration. Inline `--env KEY=VALUE` is rejected because it would expose the value in NemoClaw process arguments. Load the variable from a secret manager or masked prompt, export it without recording the value in shell history, and pass only `--env KEY`. All endpoints must use HTTPS. The full URL and path are persisted and displayed, so URLs cannot contain userinfo, query strings, fragments, known secret-shaped path material, percent-escaped or glob-style paths, or port zero. Server names must start with a letter and contain at most 64 letters, digits, hyphens, or underscores, and endpoint hostnames must use canonical lowercase DNS labels. NemoClaw rejects invalid names and endpoints before it writes lifecycle state or changes OpenShell resources. NemoClaw generates a narrow `protocol: mcp` policy for the destination, literal path, adapter binaries, pinned addresses, explicit MCP methods, and a 131,072-byte request-body limit. OpenShell `0.0.106` evaluates that policy before replacing the attached provider placeholder in the allowed request header. NemoClaw imports the endpointless `nemoclaw-mcp-v1` profile and binds the dedicated provider to that endpoint with `credential_binding.provider`. OpenShell withholds the credential before the binding is active and outside the bound host, port, and path. The sandbox client connects directly through OpenShell's existing egress path, and NemoClaw does not run a host-side MCP data-plane bridge, proxy, relay, or listener. After the add commits, NemoClaw freshly verifies the exact generated policy, expected provider attachment, recorded provider ID, `nemoclaw-mcp-v1` type, valid resource version, and exactly one credential key matching the recorded key. If those readiness checks pass, it sends a differential pair of wire-level MCP `initialize` requests from inside the sandbox — one with the placeholder header and one with an unresolvable control bearer — to verify that OpenShell resolves the credential on egress; otherwise it reports an inconclusive `probe skipped` result and sends no request. Neither outcome fails the committed add, and `--no-probe` skips this check. For full setup details, see [Add an MCP Server](../manage-sandboxes/mcp-servers/add-an-mcp-server).
+Add an MCP Streamable HTTP server to a sandbox. Pass `--url` for the MCP endpoint and the required single `--env KEY` bearer credential for the sandbox-side MCP client. Pass repeatable `--deny-tool <name-or-glob>` options to block matching `tools/call` requests at the OpenShell proxy. The generated deny rules match tool names only and do not inspect arguments. Pass a repeatable `--trusted-private-host <exact-host-or-ip>` option to admit an exact RFC1918, CGNAT, or IPv6 unique local destination for the current command. The declaration must equal the normalized host from `--url`. For managed MCP, use a DNS hostname for an IPv6 unique local address because NemoClaw has not qualified direct IPv6-literal MCP URLs. You can supply exact hosts through `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` instead, and NemoClaw combines the variable with command options. NemoClaw records the resulting exact trust intent and address pins, so restart, rebuild, and restore do not depend on the ambient environment. NemoClaw registers that credential in an OpenShell provider, installs a generated OpenShell `protocol: mcp` policy for the target endpoint, attaches the provider to the running sandbox, and writes only an OpenShell resolver placeholder for the recorded key into the agent configuration. Inline `--env KEY=VALUE` is rejected because it would expose the value in NemoClaw process arguments. Load the variable from a secret manager or masked prompt, export it without recording the value in shell history, and pass only `--env KEY`. All endpoints must use HTTPS. The full URL and path are persisted and displayed, so URLs cannot contain userinfo, query strings, fragments, known secret-shaped path material, percent-escaped or glob-style paths, or port zero. Server names must start with a letter and contain at most 64 letters, digits, hyphens, or underscores, and endpoint hostnames must use canonical lowercase DNS labels. NemoClaw rejects invalid names and endpoints before it writes lifecycle state or changes OpenShell resources. NemoClaw generates a narrow `protocol: mcp` policy for the destination, literal path, adapter binaries, pinned addresses, explicit MCP methods, and a 131,072-byte request-body limit. OpenShell `0.0.106` evaluates that policy before replacing the attached provider placeholder in the allowed request header. NemoClaw imports the endpointless `nemoclaw-mcp-v1` profile and binds the dedicated provider to that endpoint with `credential_binding.provider`. OpenShell withholds the credential before the binding is active and outside the bound host, port, and path. The sandbox client connects directly through OpenShell's existing egress path, and NemoClaw does not run a host-side MCP data-plane bridge, proxy, relay, or listener. After the add commits, NemoClaw freshly verifies the exact generated policy, expected provider attachment, recorded provider ID, `nemoclaw-mcp-v1` type, valid resource version, and exactly one credential key matching the recorded key. If those readiness checks pass, it sends a differential pair of wire-level MCP `initialize` requests from inside the sandbox — one with the placeholder header and one with an unresolvable control bearer — to verify that OpenShell resolves the credential on egress; otherwise it reports an inconclusive `probe skipped` result and sends no request. Neither outcome fails the committed add, and `--no-probe` skips this check. For full setup details, see [Add an MCP Server](../manage-sandboxes/mcp-servers/add-an-mcp-server).
 
 <AgentOnly variant="hermes">
 
@@ -2265,7 +2322,7 @@ Hermes includes the credential revision from the readiness check in the resolver
 </AgentOnly>
 <AgentOnly variant="openclaw">
 
-OpenClaw MCP add, restart, and remove mutate the managed Mcporter config under the writable `workspace` state root.
+OpenClaw MCP add, update, restart, and remove mutate managed MCP state under the writable `workspace` state root.
 Use the host commands so provider, policy, attachment, and adapter state change in one serialized transaction.
 
 </AgentOnly>
@@ -2292,9 +2349,31 @@ $$nemoclaw my-assistant mcp add local-tools \
 unset LOCAL_MCP_TOKEN
 ```
 
+### `$$nemoclaw <name> mcp update`
+
+Replace the complete denied-tool list for one current managed MCP server without changing its endpoint, credential, address pins, provider, or agent adapter.
+For a legacy public registration without recorded address pins, the command also resolves and records the current validated pins.
+Pass one or more `--deny-tool <name-or-glob>` options, or pass `--clear-deny-tools` to remove every denied-tool rule.
+The two modes cannot be combined.
+NemoClaw journals the replacement intent, removes the current generated policy, commits the replacement, and then applies it.
+If the command reports that replacement intent was journaled or saved, or status reports an interrupted update, run `$$nemoclaw <name> mcp restart <server>` to commit the replacement and converge to the recorded intent.
+The MCP route remains blocked when replacement activation fails.
+If removal of the existing policy fails, NemoClaw restores the prior recorded list; resolve the removal failure and rerun `mcp update` instead.
+Rebuild rejects a generated policy that does not match the persisted intent.
+
+```bash
+$$nemoclaw my-assistant mcp update github --deny-tool 'delete_*' --deny-tool 'admin_*'
+$$nemoclaw my-assistant mcp update github --clear-deny-tools
+```
+
+| Flag | Description |
+| --- | --- |
+| `--deny-tool <name-or-glob>` | Replace the denied-tool list with repeatable exact names or OpenShell globs |
+| `--clear-deny-tools` | Remove every denied-tool rule |
+
 ### `$$nemoclaw <name> mcp status`
 
-Inspect MCP server state for one server or for all configured servers. Status includes OpenShell provider presence and credential-key shape, provider attachment, generated policy content match, adapter registration, current host-variable availability, and the selected agent's MCP support mode. For a trusted private endpoint, status also compares current DNS answers with recorded pins without changing the policy. Text output reports `private address pins: match`, `drift`, or `unresolved`. JSON output reports the same value in `trustedPrivateTarget.state` and includes the recorded pins. When a single server is named, status requests a differential wire-level credential-resolution probe. It sends no probe traffic unless the exact generated policy matches the effective gateway policy, the expected provider attachment is confirmed, and the live provider has the recorded ID, `nemoclaw-mcp-v1` type, a valid resource version, and exactly one credential key matching the recorded key; a readiness failure reports `unknown` with a `probe skipped` detail. When ready, the same MCP `initialize` is sent from inside the sandbox once with the recorded resolver placeholder header and once with a deliberately-unresolvable control bearer. Classification uses the two HTTP status codes plus curl exit codes for transport, timeout, and policy-denial outcomes; response bodies are never captured or printed. A `verified` verdict requires the placeholder request to be accepted (HTTP 2xx) while the control is rejected — the only outcome that proves a valid credential was on the wire. Identical HTTP 400, 401, or 403 rejections raise a warning that names the hypotheses — the placeholder forwarded verbatim, an expired or revoked credential that resolved correctly, or (for HTTP 400) endpoint request validation — and tells you to verify the stored credential first. For HTTP 401 or 403, a confirmed-valid credential means the host is not rewriting placeholders and agent runtimes receive the same auth failure and skip the server; HTTP 400 remains inconclusive because the endpoint may reject the probe request itself. Every other outcome — differing rejections (an endpoint may reject two different literal bearers differently), endpoints that skip authentication, endpoint outages, policy denials, and unreachable sandboxes — reports as `unknown` rather than blaming the credential rewrite, and a persisted URL that fails the current authenticated-endpoint boundary is never probed.
+Inspect MCP server state for one server or for all configured servers. Status includes OpenShell provider presence and credential-key shape, provider attachment, generated policy content match, adapter registration, current host-variable availability, and the selected agent's MCP support mode. A generated policy that differs from persisted intent reports `policy: drift`; a missing generated policy reports `policy: missing`. Both states include the affected `mcp restart <server>` recovery command, while unavailable inspection remains `unknown`. An interrupted denied-tool update reports the same restart recovery even when the old live policy still matches. For a trusted private endpoint, status also compares current DNS answers with recorded pins without changing the policy. Text output reports `private address pins: match`, `drift`, or `unresolved`. JSON output reports the same value in `trustedPrivateTarget.state` and includes the recorded pins. When a single server is named, status requests a differential wire-level credential-resolution probe. It sends no probe traffic unless the exact generated policy matches the effective gateway policy, the expected provider attachment is confirmed, and the live provider has the recorded ID, `nemoclaw-mcp-v1` type, a valid resource version, and exactly one credential key matching the recorded key; a readiness failure reports `unknown` with a `probe skipped` detail. When ready, the same MCP `initialize` is sent from inside the sandbox once with the recorded resolver placeholder header and once with a deliberately-unresolvable control bearer. Classification uses the two HTTP status codes plus curl exit codes for transport, timeout, and policy-denial outcomes; response bodies are never captured or printed. A `verified` verdict requires the placeholder request to be accepted (HTTP 2xx) while the control is rejected — the only outcome that proves a valid credential was on the wire. Identical HTTP 400, 401, or 403 rejections raise a warning that names the hypotheses — the placeholder forwarded verbatim, an expired or revoked credential that resolved correctly, or (for HTTP 400) endpoint request validation — and tells you to verify the stored credential first. For HTTP 401 or 403, a confirmed-valid credential means the host is not rewriting placeholders and agent runtimes receive the same auth failure and skip the server; HTTP 400 remains inconclusive because the endpoint may reject the probe request itself. Every other outcome — differing rejections (an endpoint may reject two different literal bearers differently), endpoints that skip authentication, endpoint outages, policy denials, and unreachable sandboxes — reports as `unknown` rather than blaming the credential rewrite, and a persisted URL that fails the current authenticated-endpoint boundary is never probed.
 
 Pass `--tools` with one server name to request a live tool inventory. The shared client runs through the managed registration's existing OpenShell credential provider and policy; OpenShell injects the credential at that boundary, and the runtime never accepts it as an argument, environment value, or authorization option. It performs `initialize`, `notifications/initialized`, and paginated `tools/list`, then attempts to close the MCP session and transport. Cleanup errors do not replace the bounded discovery result. It retains and returns deterministic tool names only, never prints the other tool-definition fields returned by `tools/list`, and never calls a tool. The operation is bounded by total and per-request timeouts plus response-byte, page, tool-count, cursor-length, and tool-name limits.
 
@@ -2361,7 +2440,7 @@ $$nemoclaw my-assistant mcp remove github [--force]
 
 ### `$$nemoclaw <name> skill install <path>`
 
-Deploy a skill directory to a running sandbox. The command validates the `SKILL.md` frontmatter, which requires a `name` field. It uploads selected non-dot regular files while preserving their subdirectory structure. It then performs agent-specific post-install steps.
+Add a local skill directory to a running sandbox. NemoClaw validates and privately stages the local regular-file tree, then invokes the selected agent's native add command when one exists. If the pinned agent has no native local-add command, NemoClaw places only a new named tree in the agent's manifest-declared canonical writable user-skill root. This fallback refuses to replace an existing same-name entry; remove that canonical-root copy explicitly before reinstalling it.
 
 ```bash
 $$nemoclaw my-assistant skill install ./my-skill/
@@ -2371,43 +2450,51 @@ The skill directory must contain a `SKILL.md` file with YAML frontmatter that in
 
 <AgentOnly variant="openclaw">
 
-OpenClaw plugins are a different kind of extension. To install an OpenClaw plugin, refer to [Install OpenClaw Plugins](../manage-sandboxes/install-openclaw-plugins). For OpenClaw, the command uploads the skill to the OpenClaw state directory and mirrors it into `$HOME/.openclaw/skills/<name>` when the agent home directory differs from the state directory. That mirror makes skills listed by `openclaw skills list` available at session startup. If mirror creation fails, NemoClaw prints a warning so you can reinstall or inspect the home directory permissions. OpenClaw caches skill content per session, so the command also refreshes the OpenClaw session index after every install and update to avoid stale `SKILL.md` data.
+OpenClaw plugins are a different kind of extension. To install an OpenClaw plugin, refer to [Install OpenClaw Plugins](../manage-sandboxes/install-openclaw-plugins). Skill installation invokes the unmodified `openclaw skills install <staged-path> --agent main --force` command. The pinned native command targets OpenClaw's `main` agent and allows OpenClaw to replace a same-name skill. OpenClaw owns discovery, precedence, and session activation.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-Hermes plugins are different from NemoClaw skills. `skill install` uploads agent skills, while Hermes plugin configuration is managed by the Hermes runtime and the NemoClaw Hermes plugin baked into the sandbox image. The NemoClaw Hermes plugin reloads installed skills when a new chat session starts. Start a new Hermes chat session after an install or update; a gateway restart is not required.
+Hermes plugins are different from agent skills. Because the pinned Hermes CLI has no native local-add verb, NemoClaw places the skill only at `/sandbox/.hermes/skills/<name>`. Hermes owns discovery and session activation; use `skill list` and a new Hermes session to observe the result.
 
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-For Deep Agents, the command installs a fresh skill directly into `/sandbox/.deepagents/agent/skills/<name>`, the directory Deep Agents Code loads at session start. Before upload, NemoClaw copies each selected regular file into a private host snapshot and rejects a path that changes identity during the copy. It creates the archive from that snapshot and records each path, normalized mode, and SHA-256 digest. It rejects symlinks and special files. Inside the sandbox, it stages the archive and verifies that its paths, normalized modes, and SHA-256 digests match the host snapshot. It then moves the staged directory into place only if the destination is still absent. On success, the command prints the content digest that the sandbox confirmed: one SHA-256 digest over the recorded paths, normalized modes, and file digests. Record that value to compare it with the digest printed by a later install of the same skill directory. Deep Agents Code and its built-in skill creator also write to this directory. The command therefore refuses any name whose file, directory, or symlink already exists. Updates are not automatic. Use `$$nemoclaw <name> connect` to inspect the existing directory. Update it manually only after confirming ownership. The legacy `/sandbox/.deepagents/skills/<name>` path is not written or treated as ownership proof. The managed `dcode` launchers discover newly installed skills on the next session without accepting executable hook configuration. Installation does not enable project hooks or unmanaged MCP files.
+Because the pinned Deep Agents Code CLI has no native local-add verb, NemoClaw places the skill only at `/sandbox/.deepagents/agent/skills/<name>`. It does not inspect, mirror, or remove same-name project or legacy copies. Deep Agents Code owns discovery, precedence, and session activation; use `skill list` and a new DCode session to observe the result.
 
 </AgentOnly>
 
 Run `$$nemoclaw <name> skill install --help` to print usage for this subcommand. If you pass a plugin-shaped directory to `skill install`, the CLI prints a plugin-specific hint instead of treating it as a missing skill file.
 
-Files with names starting with `.` (dotfiles) are skipped and listed in the output. Files with unsafe path characters are rejected to prevent shell injection. Symlinks and other non-regular paths are rejected rather than followed or copied.
+Before upload, NemoClaw snapshots at most 1,024 files and 64 MiB with no-follow reads. Files with names starting with `.` are skipped and listed. Unsafe paths, symlinks, and special files are rejected. Staging uses a private temporary directory for the current invocation and is cleaned up on the ordinary completion path. NemoClaw does not record, recover, or reconcile staging state.
 
-For OpenClaw and Hermes, an existing sandbox skill is updated in place and chat history is preserved. Deep Agents supports only fresh-name installs because its active skill directory is shared with agent-authored content. Follow the agent-specific activation guidance above after installation.
+NemoClaw creates no installed-skill inventory, receipt, provenance record, mirror, or ownership ledger. A successful filesystem placement says only that the named canonical-root copy was placed; it does not claim the skill is active.
+
+### `$$nemoclaw <name> skill list`
+
+Invoke the unmodified selected agent's native list command and stream its stdout, stderr, and exit status. Native flags can be appended except the option separator and lifecycle-bound agent-selection overrides, which NemoClaw refuses so the command remains bound to the sandbox-selected agent. This command is the authoritative view exposed by the selected agent; NemoClaw never reconstructs the result from host or sandbox state.
+
+```bash
+$$nemoclaw my-assistant skill list
+```
 
 ### `$$nemoclaw <name> skill remove <skill>`
 
-Remove an installed skill from a running sandbox by skill name when the selected agent supports automatic removal. The command validates the skill name before it applies the agent-specific removal behavior below.
+Remove a named skill through the selected agent's unmodified native remove command when one exists. Otherwise, delete only that name from the manifest-declared canonical writable user-skill root. NemoClaw does not search other roots and does not claim that the skill is globally absent afterward; `skill list` and a new agent session remain authoritative.
 
 <AgentOnly variant="openclaw">
 
-For OpenClaw, the command also removes the OpenClaw home-directory mirror when present and refreshes the OpenClaw session index.
+The pinned OpenClaw CLI has no native remove verb. NemoClaw deletes only `/sandbox/.openclaw/workspace/skills/<name>`. A same-name bundled, project, plugin, global, or higher-precedence copy is untouched.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-Start a new Hermes chat session for the removal to take effect. A gateway restart is not required.
+The pinned Hermes `skills uninstall` verb applies only to hub-installed skills and is not equivalent for a locally placed tree. NemoClaw therefore deletes only `/sandbox/.hermes/skills/<name>`.
 
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-For Deep Agents, automatic removal is refused before any sandbox files change. The active `/sandbox/.deepagents/agent/skills/<name>` directory is shared with agent-authored content, so its presence alone cannot prove NemoClaw owns it. Use `$$nemoclaw <name> connect` to inspect the existing directory. Remove it manually only after confirming ownership.
+Removal delegates to `dcode skills delete <name> --agent agent --force --json`.
 
 </AgentOnly>
 

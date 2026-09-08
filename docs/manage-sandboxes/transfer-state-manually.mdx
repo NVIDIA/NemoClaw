@@ -79,7 +79,6 @@ mkdir -p "$BACKUP_DIR"
 $$nemoclaw "$SANDBOX" download /sandbox/.deepagents/config.toml "$BACKUP_DIR/"
 $$nemoclaw "$SANDBOX" download /sandbox/.deepagents/agent/AGENTS.md "$BACKUP_DIR/agent/"
 $$nemoclaw "$SANDBOX" download /sandbox/.deepagents/agent/memories/ "$BACKUP_DIR/agent/memories/"
-$$nemoclaw "$SANDBOX" download /sandbox/.deepagents/skills/ "$BACKUP_DIR/skills/"
 $$nemoclaw "$SANDBOX" download /sandbox/.deepagents/agent/skills/ "$BACKUP_DIR/agent-skills/"
 ```
 
@@ -133,7 +132,6 @@ BACKUP_DIR=~/.nemoclaw/backups/20260320-120000  # pick a timestamp
 
 $$nemoclaw "$SANDBOX" upload "$BACKUP_DIR/agent/AGENTS.md" /sandbox/.deepagents/agent/
 $$nemoclaw "$SANDBOX" upload "$BACKUP_DIR/agent/memories/" /sandbox/.deepagents/agent/memories/
-$$nemoclaw "$SANDBOX" upload "$BACKUP_DIR/skills/" /sandbox/.deepagents/skills/
 $$nemoclaw "$SANDBOX" upload "$BACKUP_DIR/agent-skills/" /sandbox/.deepagents/agent/skills/
 ```
 
