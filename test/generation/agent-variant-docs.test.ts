@@ -546,6 +546,24 @@ Real content.
     expect(rendered).toContain("### Messaging bridge appears running but no messages arrive");
   });
 
+  it("omits the messaging-bridge fragment from Deep Agents pages (#11145)", () => {
+    const readinessPath = path.join(repoRoot, "docs/reference/enterprise-readiness.mdx");
+    const troubleshootingPath = path.join(repoRoot, "docs/reference/troubleshooting.mdx");
+    const readiness = renderAgentVariantPage(readFileSync(readinessPath, "utf8"), "deepagents", {
+      sourcePath: readinessPath,
+    });
+    const troubleshooting = renderAgentVariantPage(
+      readFileSync(troubleshootingPath, "utf8"),
+      "deepagents",
+      { sourcePath: troubleshootingPath },
+    );
+
+    expect(troubleshooting).not.toContain(
+      "### Messaging bridge appears running but no messages arrive",
+    );
+    expect(readiness).not.toContain("#messaging-bridge-appears-running-but-no-messages-arrive");
+  });
+
   it("leaves no shared page section heading without content in any published variant (#9731)", () => {
     const pages = sharedVariantPages();
     const renderEveryPublishedVariant = () =>

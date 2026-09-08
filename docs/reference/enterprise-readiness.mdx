@@ -119,7 +119,9 @@ Each one includes the current workaround or next step.
 |---|---|---|
 | Approved endpoints reset on sandbox recreation | One-off approvals do not survive a destroy and recreate. | Add durable endpoints to the baseline policy or a preset rather than relying on repeated approvals. Refer to [Customize the Network Policy](../network-policy/customize-network-policy). |
 | Controls bypassed outside the managed gateway path | Network policy and inference auth are not enforced if a runtime starts outside the NemoClaw-managed entrypoint. | Use NemoClaw-managed onboarding and sandbox entrypoints for production workflows. Refer to [Known Limitations](../security/best-practices#known-limitations). |
+<AgentOnly variant="openclaw,hermes">
 | One consumer per messaging bot token | Two sandboxes sharing a bot token disconnect each other and drop messages. | Use a distinct bot token per sandbox. Refer to the messaging troubleshooting in [Troubleshooting](troubleshooting#messaging-bridge-appears-running-but-no-messages-arrive). |
+</AgentOnly>
 | In-sandbox config edits do not persist | Direct edits to agent config inside the running sandbox do not survive rebuilds. | Make durable config changes from the host by re-running `$$nemoclaw onboard`, not inside the sandbox. Refer to [Troubleshooting](troubleshooting). |
 | Landlock filesystem enforcement degrades on old kernels | Filesystem restrictions fall back to container mounts below Linux kernel 5.13. | Run on kernel 5.13 or later for full enforcement. Refer to [Landlock LSM Enforcement](../security/security-controls/filesystem-controls#landlock-lsm-enforcement). |
 | Best-effort capability and resource limits | Capability drops and ulimits skip silently when the runtime blocks them. | Pass `--cap-drop=ALL` and `--ulimit` at the container runtime, or set `NEMOCLAW_REQUIRE_CAP_DROP=1` to fail closed. Refer to [Process Controls](../security/security-controls/process-controls). |
