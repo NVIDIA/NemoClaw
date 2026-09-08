@@ -14,8 +14,10 @@ function runHermesApiPortBootstrap(apiPort: string) {
   try {
     const scriptPath = path.join(tmpDir, "run.sh");
     const source = fs.readFileSync(START_SCRIPT, "utf-8");
-    const start = source.indexOf('NEMOCLAW_CMD=("$@")');
+    const start = source.indexOf('HERMES_DASHBOARD_EXTERNAL_HOST=""');
     const end = source.indexOf('\nHERMES="$(command -v hermes)"', start);
+    expect(start, "Hermes dashboard validation boundary").toBeGreaterThanOrEqual(0);
+    expect(end, "Hermes startup command boundary").toBeGreaterThan(start);
     fs.writeFileSync(
       scriptPath,
       [
@@ -49,14 +51,13 @@ describe("agents/hermes/start.sh API port allocation", () => {
     expect(run.stdout).toContain("PUBLIC_PORT=8645");
   });
 
-  it.each([
-    "8641",
-    "8653",
-    "9000",
-  ])("rejects Hermes API port %s outside the allocation range", (port) => {
-    const run = runHermesApiPortBootstrap(port);
+  it.each(["8641", "8653", "9000"])(
+    "rejects Hermes API port %s outside the allocation range",
+    (port) => {
+      const run = runHermesApiPortBootstrap(port);
 
-    expect(run.status).toBe(1);
-    expect(run.stderr).toContain("Invalid NEMOCLAW_HERMES_API_PORT");
-  });
+      expect(run.status).toBe(1);
+      expect(run.stderr).toContain("Invalid NEMOCLAW_HERMES_API_PORT");
+    },
+  );
 });
