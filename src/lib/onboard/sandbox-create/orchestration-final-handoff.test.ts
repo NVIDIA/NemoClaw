@@ -66,20 +66,49 @@ import { fingerprintSandboxRecreateValue } from "../sandbox-recreate-transaction
 import {
   createFinalHandoffCheckpointPersistence,
   createOnboardCreatedSandboxRegistrationWithManagedLifecycle,
+  prepareResumedFinalHandoffCheckpoint,
 } from "./orchestration";
 
 beforeEach(() => setupGpuFlowMocks(mocks));
 afterEach(resetGpuFlowMocks);
 
 describe("durable final-handoff publication", () => {
-  it("publishes only after the real pending-create checkpoint is acknowledged (#10560)", async () => {
+  it("does not migrate a legacy compatibility checkpoint after identity drift (#10560)", () => {
+    const checkpoint: PendingSandboxCreateIdentity = {
+      schemaVersion: 1,
+      state: "verified-create",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      sandboxName: "e2e-gw-survivor",
+      lifecycleGeneration: "v0.0.55-upgrade-generation",
+      sandboxIdentityFingerprint: "a".repeat(64),
+      route: "compatibility",
+    };
+    const persistFinalHandoffCommitStarted = vi.fn();
+
+    expect(() =>
+      prepareResumedFinalHandoffCheckpoint({
+        checkpoint,
+        revalidateLegacyCompatibilityIdentity: () => {
+          throw new Error("live identity changed before registry publication");
+        },
+        persistFinalHandoffCommitStarted,
+        getCheckpoint: () => checkpoint,
+      }),
+    ).toThrow(/live identity changed/u);
+    expect(persistFinalHandoffCommitStarted).not.toHaveBeenCalled();
+    expect(checkpoint).not.toHaveProperty("exactFinalHandoffCommitStarted");
+    expect(checkpoint).not.toHaveProperty("exactFinalHandoffAcknowledged");
+  });
+
+  it("migrates a v0.0.55-shaped checkpoint and publishes only after acknowledgement (#10560)", async () => {
     const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-final-handoff-"));
     vi.stubEnv("HOME", tempHome);
     vi.resetModules();
     try {
       const registry = await import("../../state/registry");
       const lifecycleGeneration = "generation-1";
-      const sandboxId = "alpha-sandbox-id";
+      const sandboxId = "v0-0-55-replacement-sandbox-id";
       const liveIdentityFingerprint = fingerprintSandboxRecreateValue(sandboxId);
       const selection = {
         provider: "ollama-local",
@@ -93,19 +122,19 @@ describe("durable final-handoff publication", () => {
         nimContainer: null,
       } as const;
       const authority = {
-        sandboxName: "alpha",
+        sandboxName: "e2e-gw-survivor",
         gatewayName: "nemoclaw",
         sessionId: "session-owner",
         selection,
       } as const;
-      registry.reserveSandboxInferenceRoute("alpha", {
+      registry.reserveSandboxInferenceRoute(authority.sandboxName, {
         ...selection,
         gatewayName: authority.gatewayName,
         reservationSessionId: authority.sessionId,
       });
       const routeDisposition = registry.classifySandboxInferenceRouteReservation(
         authority,
-        registry.getSandbox("alpha"),
+        registry.getSandbox(authority.sandboxName),
       );
       expect(routeDisposition.kind).toBe("owned");
       const routeReservation = (
@@ -113,7 +142,7 @@ describe("durable final-handoff publication", () => {
       ).reservation;
       const createReservation = registry.qualifyPendingSandboxCreateReservation(
         authority,
-        registry.getSandbox("alpha"),
+        registry.getSandbox(authority.sandboxName),
       );
       let checkpoint: PendingSandboxCreateIdentity = {
         schemaVersion: 1,
@@ -124,7 +153,6 @@ describe("durable final-handoff publication", () => {
         lifecycleGeneration,
         sandboxIdentityFingerprint: liveIdentityFingerprint,
         route: "compatibility",
-        exactFinalHandoffCommitStarted: true,
       };
       registry.recordPendingSandboxCreateIdentity(createReservation, checkpoint);
       const checkpointPersistence = createFinalHandoffCheckpointPersistence({
@@ -136,7 +164,8 @@ describe("durable final-handoff publication", () => {
           registry.recordPendingSandboxCreateIdentity(createReservation, next, { expected });
         },
       });
-      expect(registry.getSandbox("alpha")?.pendingCreateIdentity).toEqual(checkpoint);
+      expect(registry.getSandbox(authority.sandboxName)?.pendingCreateIdentity).toEqual(checkpoint);
+      expect(checkpoint).not.toHaveProperty("exactFinalHandoffCommitStarted");
       expect(checkpoint).not.toHaveProperty("exactFinalHandoffAcknowledged");
 
       const lifecycle = createCreatedSandboxLifecycle(
@@ -145,7 +174,7 @@ describe("durable final-handoff publication", () => {
           registrationFields: {},
           recordCreated: vi.fn(),
         } as never,
-        { sandboxName: "alpha", gatewayName: authority.gatewayName },
+        { sandboxName: authority.sandboxName, gatewayName: authority.gatewayName },
         () => ({ state: "not_ready", liveIdentityFingerprint }),
         lifecycleGeneration,
       );
@@ -153,8 +182,8 @@ describe("durable final-handoff publication", () => {
         sandboxName: authority.sandboxName,
         allowManagedBootstrapNotReady: () => false,
         allowNotReadyWithMatchingIdentity: () =>
-          registry.getSandbox("alpha")?.pendingCreateIdentity?.exactFinalHandoffAcknowledged ===
-          true,
+          registry.getSandbox(authority.sandboxName)?.pendingCreateIdentity
+            ?.exactFinalHandoffAcknowledged === true,
         sandboxGpuEnabled: false,
         createdLifecycle: lifecycle,
         getRecordedRegistration: () => ({
@@ -175,7 +204,9 @@ describe("durable final-handoff publication", () => {
               createdLifecycle.revalidate(
                 createdLifecycle.capture(resolveLifecycleRegistrationFields()),
               );
-              const verifiedCheckpoint = registry.getSandbox("alpha")?.pendingCreateIdentity;
+              const verifiedCheckpoint = registry.getSandbox(
+                authority.sandboxName,
+              )?.pendingCreateIdentity;
               expect(verifiedCheckpoint).toBeDefined();
               registry.registerSandbox(
                 {
@@ -210,7 +241,34 @@ describe("durable final-handoff publication", () => {
           null,
         ),
       ).rejects.toThrow(/not report it Ready/u);
-      expect(registry.getSandbox("alpha")?.pendingCreateIdentity).toEqual(checkpoint);
+      expect(registry.getSandbox(authority.sandboxName)?.pendingCreateIdentity).toEqual(checkpoint);
+
+      const resumedCheckpoint = prepareResumedFinalHandoffCheckpoint({
+        checkpoint,
+        revalidateLegacyCompatibilityIdentity: () => {
+          lifecycle.revalidate(
+            {
+              lifecycleGeneration,
+              lifecycleLiveIdentityFingerprint: liveIdentityFingerprint,
+            },
+            { allowNotReadyWithMatchingIdentity: true },
+          );
+        },
+        persistFinalHandoffCommitStarted: checkpointPersistence.persistFinalHandoffCommitStarted,
+        getCheckpoint: () => checkpoint,
+      });
+      expect(resumedCheckpoint).toEqual({
+        schemaVersion: 1,
+        state: "verified-create",
+        gatewayName: authority.gatewayName,
+        gatewayPort: 8080,
+        sandboxName: authority.sandboxName,
+        lifecycleGeneration,
+        sandboxIdentityFingerprint: liveIdentityFingerprint,
+        route: "compatibility",
+        exactFinalHandoffCommitStarted: true,
+      });
+      expect(resumedCheckpoint).not.toHaveProperty("exactFinalHandoffAcknowledged");
 
       const flowInput = createGpuFlowInput();
       flowInput.sandboxGpuConfig = {
@@ -226,8 +284,8 @@ describe("durable final-handoff publication", () => {
       flowInput.gatewayName = authority.gatewayName;
       flowInput.lifecycleGeneration = lifecycleGeneration;
       flowInput.resumeVerifiedCreate = {
-        route: "compatibility",
-        liveIdentityFingerprint,
+        route: resumedCheckpoint.route,
+        liveIdentityFingerprint: resumedCheckpoint.sandboxIdentityFingerprint,
         createAttemptNonce: "a".repeat(62),
         finalHandoffCommitStarted: true,
       };
@@ -240,16 +298,18 @@ describe("durable final-handoff publication", () => {
       mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(runtimePatch);
       const created = await runSandboxGpuCreateFlow(flowInput, createGpuFlowDeps(sandboxId));
 
-      expect(registry.getSandbox("alpha")?.pendingCreateIdentity).toEqual(checkpoint);
+      expect(registry.getSandbox(authority.sandboxName)?.pendingCreateIdentity).toEqual(checkpoint);
       expect(checkpoint.exactFinalHandoffAcknowledged).toBe(true);
       await expect(completeRegistration(created, null)).resolves.toBeUndefined();
-      expect(registry.getSandbox("alpha")).toMatchObject({
-        name: "alpha",
+      expect(registry.getSandbox(authority.sandboxName)).toMatchObject({
+        name: authority.sandboxName,
         agent: "openclaw",
+        gatewayName: authority.gatewayName,
+        gatewayPort: 8080,
         lifecycleGeneration,
         lifecycleLiveIdentityFingerprint: liveIdentityFingerprint,
       });
-      expect(registry.getSandbox("alpha")?.pendingCreateIdentity).toBeUndefined();
+      expect(registry.getSandbox(authority.sandboxName)?.pendingCreateIdentity).toBeUndefined();
     } finally {
       vi.unstubAllEnvs();
       vi.resetModules();

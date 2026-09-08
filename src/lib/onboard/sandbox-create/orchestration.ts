@@ -455,6 +455,23 @@ export function allowsNotReadyCreatedSandboxReconciliation(input: {
   return input.managedBootstrapCreateFinished;
 }
 
+/** Begin, but do not acknowledge, recovery for a pre-receipt compatibility checkpoint. */
+export function prepareResumedFinalHandoffCheckpoint(input: {
+  readonly checkpoint: PendingSandboxCreateIdentity;
+  readonly revalidateLegacyCompatibilityIdentity: () => void;
+  readonly persistFinalHandoffCommitStarted: () => void;
+  readonly getCheckpoint: () => PendingSandboxCreateIdentity;
+}): PendingSandboxCreateIdentity {
+  if (
+    input.checkpoint.route === "compatibility" &&
+    input.checkpoint.exactFinalHandoffCommitStarted !== true
+  ) {
+    input.revalidateLegacyCompatibilityIdentity();
+    input.persistFinalHandoffCommitStarted();
+  }
+  return input.getCheckpoint();
+}
+
 /** Preserve the legacy exception only when no durable final handoff began. */
 export function allowsManagedBootstrapNotReady(
   managedBootstrapActive: boolean,
@@ -2666,28 +2683,47 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       const boundary = sandboxCreateBoundaryFromPendingIdentity(checkpoint);
       admittedCreateReservation = admitCreateReservation();
       registry.requireCurrentPendingSandboxCreateIdentity(admittedCreateReservation, checkpoint);
+      pendingCreateIdentity = checkpoint;
+      verifiedCreateBoundary = boundary;
+      managedBootstrapCreateRoute = checkpoint.route;
       durableCreatedSandboxIdentity = createdSandboxLifecycle.recordExactIdentity(
         checkpoint.sandboxIdentityFingerprint,
       );
+      const resumedCheckpoint = prepareResumedFinalHandoffCheckpoint({
+        checkpoint,
+        revalidateLegacyCompatibilityIdentity: () =>
+          sandboxRecreateTransaction.revalidateCreatedSandboxLifecycleRegistration(
+            { sandboxName, gatewayName: GATEWAY_NAME },
+            {
+              lifecycleGeneration: createdSandboxLifecycle.generation,
+              lifecycleLiveIdentityFingerprint: checkpoint.sandboxIdentityFingerprint,
+            },
+            getSandboxRecreateObservation,
+            { allowNotReadyWithMatchingIdentity: true },
+          ),
+        persistFinalHandoffCommitStarted,
+        getCheckpoint: requirePendingCreateIdentity,
+      });
       revalidateCreatedSandboxIdentity(
-        checkpoint.sandboxIdentityFingerprint,
+        resumedCheckpoint.sandboxIdentityFingerprint,
         `resuming sandbox creation for '${sandboxName}'`,
       );
       revalidateCreatedSandboxIdentity(
-        checkpoint.sandboxIdentityFingerprint,
+        resumedCheckpoint.sandboxIdentityFingerprint,
         `resuming sandbox creation for '${sandboxName}'`,
       );
-      registry.requireCurrentPendingSandboxCreateIdentity(admittedCreateReservation, checkpoint);
-      pendingCreateIdentity = checkpoint;
-      verifiedCreateBoundary = boundary;
+      registry.requireCurrentPendingSandboxCreateIdentity(
+        admittedCreateReservation,
+        resumedCheckpoint,
+      );
       return {
-        route: checkpoint.route,
-        liveIdentityFingerprint: checkpoint.sandboxIdentityFingerprint,
-        ...(checkpoint.exactFinalHandoffCommitStarted
+        route: resumedCheckpoint.route,
+        liveIdentityFingerprint: resumedCheckpoint.sandboxIdentityFingerprint,
+        ...(resumedCheckpoint.exactFinalHandoffCommitStarted
           ? { finalHandoffCommitStarted: true as const }
           : {}),
-        ...(checkpoint.createAttemptNonce
-          ? { createAttemptNonce: checkpoint.createAttemptNonce }
+        ...(resumedCheckpoint.createAttemptNonce
+          ? { createAttemptNonce: resumedCheckpoint.createAttemptNonce }
           : {}),
       };
     })();
