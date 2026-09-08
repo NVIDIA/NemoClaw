@@ -141,6 +141,7 @@ export interface CreatedSandboxCompletionOptions {
     readonly persistFinalHandoffAcknowledgement: (
       runtimePatch: SandboxGpuCreateFlowResult["runtimePatch"],
     ) => void;
+    readonly persistFinalHandoffCommitStarted: () => void;
   };
   readonly dashboard: {
     readonly chatUiUrl: string;
@@ -377,6 +378,7 @@ export function createCreatedSandboxCompletionActions(
         deps.revalidateSandboxIdentity?.(
           `committing GPU capability for sandbox '${options.finalization.sandboxName}'`,
         ),
+      options.gpu.persistFinalHandoffCommitStarted,
       () => options.gpu.persistFinalHandoffAcknowledgement(created.runtimePatch),
     );
   }
@@ -543,9 +545,12 @@ function assertVerifiedCreateMatchesCreateBoundary(
   boundary: VerifiedSandboxCreateBoundary,
   verifiedCreate: NonNullable<CreatedSandboxRegistrationInput["verifiedCreate"]>,
 ): void {
-  if (
-    !isDeepStrictEqual(verifiedCreate.checkpoint, pendingSandboxCreateIdentityForBoundary(boundary))
-  ) {
+  const {
+    exactFinalHandoffCommitStarted: _commitStarted,
+    exactFinalHandoffAcknowledged: _acknowledged,
+    ...identity
+  } = verifiedCreate.checkpoint;
+  if (!isDeepStrictEqual(identity, pendingSandboxCreateIdentityForBoundary(boundary))) {
     throw new Error("Pending sandbox create identity does not match the final create boundary.");
   }
 }
@@ -623,6 +628,7 @@ type OnboardPreparedPolicy = Pick<
   readonly persistFinalHandoffAcknowledgement: (
     runtimePatch: SandboxGpuCreateFlowResult["runtimePatch"],
   ) => void;
+  readonly persistFinalHandoffCommitStarted: () => void;
 };
 
 type CurrentRestoreSnapshotDependencies = {
@@ -769,6 +775,7 @@ export function createOnboardCreatedSandboxCompletion(
         verifyDirectSandboxGpu,
         runCaptureOpenshell,
         persistFinalHandoffAcknowledgement: preparedPolicy.persistFinalHandoffAcknowledgement,
+        persistFinalHandoffCommitStarted: preparedPolicy.persistFinalHandoffCommitStarted,
       },
       dashboard: {
         chatUiUrl,

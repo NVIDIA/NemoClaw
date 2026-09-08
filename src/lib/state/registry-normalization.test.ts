@@ -386,6 +386,7 @@ describe("sandbox registry normalization", () => {
       lifecycleGeneration: "generation",
       sandboxIdentityFingerprint: "a".repeat(64),
       route: "compatibility" as const,
+      exactFinalHandoffCommitStarted: true as const,
       exactFinalHandoffAcknowledged: true as const,
       policyHash: "legacy",
     };
@@ -408,6 +409,7 @@ describe("sandbox registry normalization", () => {
       lifecycleGeneration: "generation",
       sandboxIdentityFingerprint: "a".repeat(64),
       route: "compatibility",
+      exactFinalHandoffCommitStarted: true,
       exactFinalHandoffAcknowledged: true,
     });
   });

@@ -22,6 +22,8 @@ export interface PendingSandboxCreateIdentity {
   readonly sandboxIdentityFingerprint: string;
   readonly createAttemptNonce?: string;
   readonly route: "none" | "native" | "compatibility";
+  /** The exact final handoff crossed its durable commit fence. */
+  readonly exactFinalHandoffCommitStarted?: true;
   /** OpenShell acknowledged the exact replacement handoff for this identity. */
   readonly exactFinalHandoffAcknowledged?: true;
 }

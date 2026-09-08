@@ -338,15 +338,59 @@ export function persistExactFinalHandoffAcknowledgement(input: {
   ) {
     return input.checkpoint;
   }
+  return persistAcknowledgedFinalHandoff(input.checkpoint, input.persist);
+}
+
+function persistAcknowledgedFinalHandoff(
+  checkpoint: PendingSandboxCreateIdentity,
+  persist: (
+    acknowledged: PendingSandboxCreateIdentity,
+    expected: PendingSandboxCreateIdentity,
+  ) => void,
+): PendingSandboxCreateIdentity {
   const acknowledged: PendingSandboxCreateIdentity = {
-    ...input.checkpoint,
+    ...checkpoint,
+    exactFinalHandoffCommitStarted: true,
     exactFinalHandoffAcknowledged: true,
   };
-  input.persist(acknowledged, input.checkpoint);
+  persist(acknowledged, checkpoint);
   return acknowledged;
 }
 
-/** Keep compatibility replacement recovery separate from managed-bootstrap recovery. */
+export function persistRecoveredFinalHandoffAcknowledgement(input: {
+  readonly checkpoint: PendingSandboxCreateIdentity;
+  readonly persist: (
+    acknowledged: PendingSandboxCreateIdentity,
+    expected: PendingSandboxCreateIdentity,
+  ) => void;
+}): PendingSandboxCreateIdentity {
+  if (input.checkpoint.exactFinalHandoffAcknowledged === true) return input.checkpoint;
+  if (input.checkpoint.exactFinalHandoffCommitStarted !== true) {
+    throw new Error("Cannot acknowledge a final handoff before its durable commit fence.");
+  }
+  return persistAcknowledgedFinalHandoff(input.checkpoint, input.persist);
+}
+
+/** Persist the replacement commit fence before the handoff becomes irreversible. */
+export function persistExactFinalHandoffCommitStarted(input: {
+  readonly checkpoint: PendingSandboxCreateIdentity;
+  readonly persist: (
+    started: PendingSandboxCreateIdentity,
+    expected: PendingSandboxCreateIdentity,
+  ) => void;
+}): PendingSandboxCreateIdentity {
+  if (input.checkpoint.exactFinalHandoffCommitStarted === true) {
+    return input.checkpoint;
+  }
+  const started: PendingSandboxCreateIdentity = {
+    ...input.checkpoint,
+    exactFinalHandoffCommitStarted: true,
+  };
+  input.persist(started, input.checkpoint);
+  return started;
+}
+
+/** Require an acknowledged handoff before a not-Ready sandbox can be published. */
 export function allowsNotReadyCreatedSandboxRevalidation(input: {
   readonly managedBootstrapCreateFinished: boolean;
   readonly createRoute: PendingSandboxCreateIdentity["route"] | null;
@@ -354,17 +398,42 @@ export function allowsNotReadyCreatedSandboxRevalidation(input: {
   readonly acceptedCheckpoint: PendingSandboxCreateIdentity | null;
 }): boolean {
   const checkpoint = input.currentCheckpoint ?? input.acceptedCheckpoint;
-  if (input.createRoute === "compatibility" || checkpoint?.route === "compatibility") {
+  if (
+    checkpoint?.exactFinalHandoffCommitStarted === true ||
+    input.createRoute === "compatibility"
+  ) {
     return checkpoint?.exactFinalHandoffAcknowledged === true;
   }
   return input.managedBootstrapCreateFinished;
 }
 
-function allowsManagedBootstrapNotReady(
+export function allowsNotReadyCreatedSandboxReconciliation(input: {
+  readonly managedBootstrapCreateFinished: boolean;
+  readonly createRoute: PendingSandboxCreateIdentity["route"] | null;
+  readonly currentCheckpoint: PendingSandboxCreateIdentity | null;
+  readonly acceptedCheckpoint: PendingSandboxCreateIdentity | null;
+}): boolean {
+  const checkpoint = input.currentCheckpoint ?? input.acceptedCheckpoint;
+  if (
+    checkpoint?.exactFinalHandoffCommitStarted === true ||
+    input.createRoute === "compatibility"
+  ) {
+    return checkpoint?.exactFinalHandoffCommitStarted === true;
+  }
+  return input.managedBootstrapCreateFinished;
+}
+
+/** Preserve the legacy exception only when no durable final handoff began. */
+export function allowsManagedBootstrapNotReady(
   managedBootstrapActive: boolean,
   route: PendingSandboxCreateIdentity["route"],
+  checkpoint: PendingSandboxCreateIdentity | null,
 ): boolean {
-  return managedBootstrapActive && route !== "compatibility";
+  return (
+    managedBootstrapActive &&
+    route !== "compatibility" &&
+    checkpoint?.exactFinalHandoffCommitStarted !== true
+  );
 }
 
 /** Persist one create-attempt recovery message through the onboard session owner. */
@@ -2448,8 +2517,15 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     const createGpuVerifier = hermesGpuAuthority?.verify ?? verifyDirectSandboxGpu;
     let managedBootstrapCreateFinished = false;
     let managedBootstrapCreateRoute: PendingSandboxCreateIdentity["route"] | null = null;
-    const allowNotReadyWithMatchingIdentity = (): boolean =>
+    const allowNotReadyAfterFinalHandoff = (): boolean =>
       allowsNotReadyCreatedSandboxRevalidation({
+        managedBootstrapCreateFinished,
+        createRoute: managedBootstrapCreateRoute,
+        currentCheckpoint: pendingCreateIdentity,
+        acceptedCheckpoint: acceptedTargetPendingIdentity,
+      });
+    const allowNotReadyDuringCreate = (): boolean =>
+      allowsNotReadyCreatedSandboxReconciliation({
         managedBootstrapCreateFinished,
         createRoute: managedBootstrapCreateRoute,
         currentCheckpoint: pendingCreateIdentity,
@@ -2466,7 +2542,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           lifecycleLiveIdentityFingerprint: expectedIdentity,
         },
         getSandboxRecreateObservation,
-        { allowNotReadyWithMatchingIdentity: allowNotReadyWithMatchingIdentity() },
+        { allowNotReadyWithMatchingIdentity: allowNotReadyDuringCreate() },
       );
     };
     const requireVerifiedCreateBoundary = (): NonNullable<typeof verifiedCreateBoundary> => {
@@ -2492,6 +2568,26 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     ): void => {
       pendingCreateIdentity = persistExactFinalHandoffAcknowledgement({
         runtimePatch,
+        checkpoint: requirePendingCreateIdentity(),
+        persist: (acknowledged, expected) => {
+          registry.recordPendingSandboxCreateIdentity(requireCreateReservation(), acknowledged, {
+            expected,
+          });
+        },
+      });
+    };
+    const persistFinalHandoffCommitStarted = (): void => {
+      pendingCreateIdentity = persistExactFinalHandoffCommitStarted({
+        checkpoint: requirePendingCreateIdentity(),
+        persist: (started, expected) => {
+          registry.recordPendingSandboxCreateIdentity(requireCreateReservation(), started, {
+            expected,
+          });
+        },
+      });
+    };
+    const persistResumedFinalHandoffAcknowledgement = (): void => {
+      pendingCreateIdentity = persistRecoveredFinalHandoffAcknowledgement({
         checkpoint: requirePendingCreateIdentity(),
         persist: (acknowledged, expected) => {
           registry.recordPendingSandboxCreateIdentity(requireCreateReservation(), acknowledged, {
@@ -2573,6 +2669,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       return {
         route: checkpoint.route,
         liveIdentityFingerprint: checkpoint.sandboxIdentityFingerprint,
+        ...(checkpoint.exactFinalHandoffCommitStarted
+          ? { finalHandoffCommitStarted: true as const }
+          : {}),
         ...(checkpoint.createAttemptNonce
           ? { createAttemptNonce: checkpoint.createAttemptNonce }
           : {}),
@@ -2695,7 +2794,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         },
         persistCreateIdentity: (_identity, _exactIdentity, boundary) => {
           requireDurableCreatedSandboxIdentity(boundary.lifecycleLiveIdentityFingerprint);
-          const checkpoint = pendingSandboxCreateIdentityForBoundary(boundary);
+          const checkpoint = pendingSandboxCreateIdentityForBoundary(
+            boundary,
+            pendingCreateIdentity,
+          );
           registry.recordPendingSandboxCreateIdentity(requireCreateReservation(), checkpoint, {
             ...(pendingCreateIdentity ? { expected: pendingCreateIdentity } : {}),
           });
@@ -2777,6 +2879,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               },
               revalidateVerifiedSandboxBeforeEffect: (operation) =>
                 revalidateVerifiedCreateIdentity(requireVerifiedCreateBoundary(), operation),
+              persistFinalHandoffCommitStarted,
+              persistResumedFinalHandoffAcknowledgement,
               ...agentCreateInput,
             },
             {
@@ -2863,6 +2967,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           revalidateVerifiedCreateIdentity(requireVerifiedCreateBoundary(), operation);
         },
         persistFinalHandoffAcknowledgement,
+        persistFinalHandoffCommitStarted,
         dashboardRemoteBindPrepared,
       },
       prebuild.imageRef,
@@ -2889,8 +2994,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         allowManagedBootstrapNotReady: allowsManagedBootstrapNotReady(
           managedBootstrap !== null,
           requireVerifiedCreateBoundary().route,
+          pendingCreateIdentity,
         ),
-        allowNotReadyWithMatchingIdentity,
+        allowNotReadyWithMatchingIdentity: allowNotReadyAfterFinalHandoff,
         sandboxGpuEnabled: effectiveSandboxGpuConfig.sandboxGpuEnabled,
         createdLifecycle: createdSandboxLifecycle,
         getRecordedRegistration: () =>

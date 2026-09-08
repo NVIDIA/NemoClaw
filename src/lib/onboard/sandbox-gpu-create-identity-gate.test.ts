@@ -232,6 +232,43 @@ describe("created sandbox identity gate", () => {
     ]);
   });
 
+  it("reconciles a started final handoff before acknowledging resume (#10560)", async () => {
+    const sandboxId = "alpha-sandbox-id";
+    const gatewayName = "nemoclaw-18080";
+    const input = noGpuInput();
+    input.gatewayName = gatewayName;
+    input.resumeVerifiedCreate = {
+      route: "none",
+      liveIdentityFingerprint: fingerprintSandboxRecreateValue(sandboxId),
+      createAttemptNonce: "a".repeat(62),
+      finalHandoffCommitStarted: true,
+    };
+    input.verifyCreatedSandboxBeforeEffects = vi.fn();
+    input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
+    input.persistResumedFinalHandoffAcknowledgement = vi.fn();
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(createGpuPatchFixture());
+    const deps = createGpuFlowDeps();
+    vi.mocked(deps.runOpenshell).mockImplementation((args) =>
+      args.join(" ") === `sandbox get -g ${gatewayName} alpha`
+        ? { status: 0, stdout: `Name: alpha\nId: ${sandboxId}\nState: Ready\n`, stderr: "" }
+        : { status: 0, stdout: "", stderr: "" },
+    );
+    mocks.waitForCreatedSandboxReadyWithTrace.mockImplementation(() => {
+      expect(deps.runOpenshell).toHaveBeenCalledWith(
+        ["sandbox", "start", "-g", gatewayName, "alpha"],
+        expect.objectContaining({ ignoreError: true }),
+      );
+      return { ready: true, reason: "ready", failurePhase: null };
+    });
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({
+      origin: "resumed",
+      route: "none",
+    });
+
+    expect(input.persistResumedFinalHandoffAcknowledgement).toHaveBeenCalledOnce();
+  });
+
   it("refuses a changed live identity before resumed effects (#9833)", async () => {
     const input = noGpuInput();
     input.resumeVerifiedCreate = {
@@ -564,9 +601,12 @@ describe("created sandbox identity gate", () => {
 
   it.each([
     ["returns false", (): boolean => false],
-    ["throws", (): boolean => {
-      throw new Error("recovery writer failed");
-    }],
+    [
+      "throws",
+      (): boolean => {
+        throw new Error("recovery writer failed");
+      },
+    ],
   ] as const)(
     "blocks the create after retained recovery persistence %s (#10769)",
     async (_failureMode, persistRecovery) => {

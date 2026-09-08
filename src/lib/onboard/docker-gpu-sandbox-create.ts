@@ -135,7 +135,7 @@ export type DockerGpuSandboxCreatePatch = {
    * Call only after authoritative Ready and the required GPU and applicable
    * local-inference checks pass.
    */
-  commitAfterReady: () => Promise<void>;
+  commitAfterReady: (options?: { readonly beforeFinalHandoff?: () => void }) => Promise<void>;
   /** True only after OpenShell acknowledged the exact replacement's final handoff. */
   allowsNotReadyLifecycleRevalidation: () => boolean;
   selectedMode: () => DockerGpuPatchMode | null;
@@ -434,7 +434,7 @@ export function createDockerGpuSandboxCreatePatch(
       });
     },
 
-    async commitAfterReady() {
+    async commitAfterReady(commitOptions) {
       if (cutoverFinalizationFailure) throw cutoverFinalizationFailure;
       if (cutoverFinalized || (!managedBootstrapCutover && !result)) return;
       if (needsSupervisorWait) {
@@ -461,9 +461,11 @@ export function createDockerGpuSandboxCreatePatch(
         return;
       }
       const finalization = (async () => {
+        commitOptions?.beforeFinalHandoff?.();
         if (managedBootstrapCutover) {
           try {
             await managedBootstrapCutover.commit();
+            exactFinalHandoffAcknowledged = true;
           } catch (error) {
             const failure = error instanceof Error ? error : new Error(String(error));
             let rollbackError: Error | null = null;

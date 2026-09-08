@@ -10,9 +10,12 @@ import {
   type SandboxRecreateObservation,
 } from "../sandbox-recreate-transaction";
 import {
+  allowsManagedBootstrapNotReady,
   createOnboardCreatedSandboxRegistrationWithManagedLifecycle,
   persistExactFinalHandoffAcknowledgement,
+  persistExactFinalHandoffCommitStarted,
 } from "./orchestration";
+import { pendingSandboxCreateIdentityForBoundary } from "./identity-boundary";
 
 describe("managed bootstrap sandbox registration", () => {
   const lifecycleGeneration = "generation-1";
@@ -102,6 +105,7 @@ describe("managed bootstrap sandbox registration", () => {
     const persist = vi.fn((acknowledged: PendingSandboxCreateIdentity) => {
       checkpoint = acknowledged;
     });
+    checkpoint = persistExactFinalHandoffCommitStarted({ checkpoint, persist });
     checkpoint = persistExactFinalHandoffAcknowledgement({
       runtimePatch: { allowsNotReadyLifecycleRevalidation: () => true } as never,
       checkpoint,
@@ -114,8 +118,44 @@ describe("managed bootstrap sandbox registration", () => {
     );
 
     await expect(fixture.complete()).resolves.toBeUndefined();
-    expect(persist).toHaveBeenCalledOnce();
+    expect(persist).toHaveBeenCalledTimes(2);
+    expect(persist.mock.calls[0]?.[0]).toMatchObject({
+      exactFinalHandoffCommitStarted: true,
+    });
+    expect(persist.mock.calls[1]?.[0]).toMatchObject({
+      exactFinalHandoffCommitStarted: true,
+      exactFinalHandoffAcknowledged: true,
+    });
     expect(fixture.publish).toHaveBeenCalledExactlyOnceWith(recordedRegistration);
+  });
+
+  it("preserves the durable handoff receipt when the verified boundary is persisted again", () => {
+    const checkpoint: PendingSandboxCreateIdentity = {
+      schemaVersion: 1,
+      state: "verified-create",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      sandboxName: "alpha",
+      lifecycleGeneration,
+      sandboxIdentityFingerprint: durableIdentity,
+      route: "native",
+      exactFinalHandoffCommitStarted: true,
+      exactFinalHandoffAcknowledged: true,
+    };
+
+    expect(
+      pendingSandboxCreateIdentityForBoundary(
+        {
+          sandboxName: "alpha",
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+          lifecycleGeneration,
+          lifecycleLiveIdentityFingerprint: durableIdentity,
+          route: "native",
+        },
+        checkpoint,
+      ),
+    ).toEqual(checkpoint);
   });
 
   it("does not publish a resumed recreation without a persisted final handoff (#10560)", async () => {
@@ -157,6 +197,22 @@ describe("managed bootstrap sandbox registration", () => {
 
     await expect(fixture.complete()).rejects.toThrow(/not report it Ready/u);
     expect(fixture.publish).not.toHaveBeenCalled();
+  });
+
+  it("does not let managed bootstrap bypass a fenced native handoff (#10560)", () => {
+    expect(
+      allowsManagedBootstrapNotReady(true, "native", {
+        schemaVersion: 1,
+        state: "verified-create",
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        sandboxName: "alpha",
+        lifecycleGeneration,
+        sandboxIdentityFingerprint: durableIdentity,
+        route: "native",
+        exactFinalHandoffCommitStarted: true,
+      }),
+    ).toBe(false);
   });
 
   it.each([
