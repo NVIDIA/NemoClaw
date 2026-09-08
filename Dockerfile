@@ -826,8 +826,7 @@ RUN command -v codex-acp >/dev/null
 # OPENCLAW_VERSION is the NemoClaw runtime build target and must meet the blueprint minimum.
 # Reviewed archives retain registry and packed-byte SRI, basename, local-only install, and cleanup gates.
 # hadolint ignore=DL3059,DL4006,DL3016,SC2015
-RUN \
-    --mount=type=secret,id=nemoclaw-mcporter-audit-receipt,required=false \
+RUN --mount=type=secret,id=nemoclaw-mcporter-audit-receipt,required=false \
     --mount=type=secret,id=nemoclaw-mcporter-audit-raw-report,required=false \
     --mount=type=bind,from=protected-mcporter-audit-cache,source=/seed,target=/run/nemoclaw-mcporter-audit-cache \
     set -eu; \
