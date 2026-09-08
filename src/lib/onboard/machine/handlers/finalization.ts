@@ -28,7 +28,6 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
   webSearchEnabled: boolean;
   webSearchProvider: WebSearchVerifyProvider | null;
   portableProfileSelected?: boolean;
-  recreateJournalHandoff?: boolean;
   deps: {
     /**
      * Mark this sandbox as the default. Called here (not at sandbox creation) so
@@ -226,7 +225,6 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
   webSearchEnabled,
   webSearchProvider,
   portableProfileSelected,
-  recreateJournalHandoff,
   deps,
 }: FinalizationStateOptions<
   Agent,
@@ -241,9 +239,7 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
     deps.readRegistryAgent,
   );
   const ordinaryOpenClawPairingRequired =
-    portableAgent === "ordinary" &&
-    selectedAgentName(agent) === "openclaw" &&
-    recreateJournalHandoff !== true;
+    portableAgent === "ordinary" && selectedAgentName(agent) === "openclaw";
   let verificationDiagnostics: string[] = [];
   let deploymentHealthy = true;
   if (portableAgent !== "ordinary") {
