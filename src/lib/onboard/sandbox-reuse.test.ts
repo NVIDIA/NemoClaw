@@ -137,7 +137,10 @@ describe("applyReusedSandboxDashboardState", () => {
         sandboxName: "reuse-me",
         chatUiUrl: options.chatUiUrl ?? "https://dashboard.example.test:18789",
         env: {},
-        getSandbox: () => ({ name: "reuse-me", dashboardBindAddress: options.previousBind ?? null }),
+        getSandbox: () => ({
+          name: "reuse-me",
+          dashboardBindAddress: options.previousBind ?? null,
+        }),
         agent: null,
         model: "test-model",
         provider: "openai-compatible",
@@ -185,14 +188,17 @@ describe("applyReusedSandboxDashboardState", () => {
         throw new Error("disk full");
       },
     ],
-  ])("refuses to restore a wide forward whose exposure cannot be recorded when %s", (_case, write) => {
-    const { ensureDashboardForward, restore } = reusedWideDashboard(vi.fn(write));
+  ])(
+    "refuses to restore a wide forward whose exposure cannot be recorded when %s",
+    (_case, write) => {
+      const { ensureDashboardForward, restore } = reusedWideDashboard(vi.fn(write));
 
-    expect(restore).toThrow(
-      /Refusing to restore the dashboard forward for 'reuse-me' on all interfaces/u,
-    );
-    expect(ensureDashboardForward).not.toHaveBeenCalled();
-  });
+      expect(restore).toThrow(
+        /Refusing to restore the dashboard forward for 'reuse-me' on all interfaces/u,
+      );
+      expect(ensureDashboardForward).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     ["a loopback record", "127.0.0.1"],
@@ -267,7 +273,10 @@ describe("applyReusedSandboxDashboardState", () => {
 
   it("warns when the previous record cannot be put back after the wide forward does not start (#10861)", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const updateSandbox = vi.fn(() => true).mockReturnValueOnce(true).mockReturnValue(false);
+    const updateSandbox = vi
+      .fn(() => true)
+      .mockReturnValueOnce(true)
+      .mockReturnValue(false);
     const { restore } = reusedWideDashboard(updateSandbox, {
       previousBind: "127.0.0.1",
       ensureDashboardForward: (_sandboxName, _chatUiUrl, options) => {
@@ -280,6 +289,33 @@ describe("applyReusedSandboxDashboardState", () => {
 
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("could not be restored"));
   });
+
+  it.each([
+    ["a loopback record", "127.0.0.1"],
+    ["no record", null],
+  ])(
+    "puts back %s when the launcher throws after the wide bind was recorded (#10861)",
+    (_label, previousBind) => {
+      const updateSandbox = vi.fn(
+        (_sandboxName: string, _updates: { dashboardBindAddress?: string | null }) => true,
+      );
+      const { restore } = reusedWideDashboard(updateSandbox, {
+        previousBind,
+        ensureDashboardForward: () => {
+          throw new Error(
+            "Registered dashboard port 18789 is already occupied; it cannot be reallocated or adopted.",
+          );
+        },
+      });
+
+      expect(restore).toThrow(/already occupied/u);
+
+      expect(updateSandbox.mock.calls.map(([, updates]) => updates.dashboardBindAddress)).toEqual([
+        "0.0.0.0",
+        previousBind,
+      ]);
+    },
+  );
 
   it("skips dashboard forwarding while preserving reuse metadata for terminal agents", () => {
     const updateSandbox = vi.fn();

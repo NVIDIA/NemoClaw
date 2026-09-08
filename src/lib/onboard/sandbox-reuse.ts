@@ -172,9 +172,7 @@ export function applyReusedSandboxDashboardState(
       `Sandbox '${input.sandboxName}' was created without remote dashboard exposure. Re-run onboarding with NEMOCLAW_DASHBOARD_BIND=0.0.0.0 and --recreate-sandbox before opening a remote bind.`,
     );
   }
-  input.revalidateSandboxIdentity?.(
-    `restore dashboard state for sandbox '${input.sandboxName}'`,
-  );
+  input.revalidateSandboxIdentity?.(`restore dashboard state for sandbox '${input.sandboxName}'`);
   // The bind the restored forward will have, from the same URL and
   // environment `ensureDashboardForward` decides it from (#10861). It is
   // recorded before the forward exists whenever the record would otherwise
@@ -210,24 +208,31 @@ export function applyReusedSandboxDashboardState(
   const onForwardFailure = (diagnostic: string): void => {
     forwardFailure = diagnostic;
   };
-  const dashboardPort = manageDashboard
-    ? input.revalidateSandboxIdentity
-      ? input.ensureDashboardForward(input.sandboxName, input.chatUiUrl, {
-          revalidateSandboxIdentity: input.revalidateSandboxIdentity,
-          onForwardFailure,
-        })
-      : input.ensureDashboardForward(input.sandboxName, input.chatUiUrl, { onForwardFailure })
-    : 0;
-  const recordedBind = forwardFailure === null ? dashboardBindAddress : previousBind;
-  if (
-    forwardFailure !== null &&
-    recordBeforeLaunch &&
-    !recordReusedDashboardBind(input, previousBind)
-  ) {
+  const restorePreLaunchRecord = (): void => {
+    if (!recordBeforeLaunch || recordReusedDashboardBind(input, previousBind)) return;
     console.warn(
       `  Warning: the recorded dashboard bind for '${input.sandboxName}' could not be restored after the forward failed to start; \`dashboard-url\` may report a listener that does not exist until the next forward launch.`,
     );
+  };
+  let dashboardPort = 0;
+  if (manageDashboard) {
+    try {
+      dashboardPort = input.revalidateSandboxIdentity
+        ? input.ensureDashboardForward(input.sandboxName, input.chatUiUrl, {
+            revalidateSandboxIdentity: input.revalidateSandboxIdentity,
+            onForwardFailure,
+          })
+        : input.ensureDashboardForward(input.sandboxName, input.chatUiUrl, { onForwardFailure });
+    } catch (error) {
+      // The launcher throws before it starts anything when the persisted
+      // port is occupied or no port can be allocated. A record written for
+      // that launch goes back too; the failure then propagates as before.
+      restorePreLaunchRecord();
+      throw error;
+    }
   }
+  const recordedBind = forwardFailure === null ? dashboardBindAddress : previousBind;
+  if (forwardFailure !== null) restorePreLaunchRecord();
   const chatUiUrl = manageDashboard ? `http://127.0.0.1:${dashboardPort}` : input.chatUiUrl;
   if (manageDashboard) {
     input.revalidateSandboxIdentity?.(`record dashboard URL for sandbox '${input.sandboxName}'`);

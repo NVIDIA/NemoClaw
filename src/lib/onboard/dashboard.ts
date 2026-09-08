@@ -84,6 +84,17 @@ export interface OnboardDashboardDeps {
       }
     | null
     | undefined;
+  /**
+   * Registry write for the bind recorded for a finalization forward.
+   * Finalization publishes the sandbox with the bind its forward will have
+   * before that forward starts; when the forward does not start, the record
+   * is cleared through this so no command describes a listener that does not
+   * exist (#10861). Tests inject a stub; production callers leave it unset
+   * and the helper writes through the production registry context. A
+   * missing writer, a `false` return and a throw all count as a failed write
+   * and are warned about.
+   */
+  recordDashboardBind?(sandboxName: string, bindAddress: string | null): boolean;
   /** Direct ForwardTcp launcher. */
   forwardService?: {
     executable(): string;
@@ -136,6 +147,7 @@ export interface OnboardDashboardHelpers {
     options?: {
       beforeForwardPort?: (port: number) => Promise<void> | void;
       revalidateSandboxIdentity?: (operation: string) => void;
+      onForwardFailure?: (diagnostic: string) => void;
     },
   ): Promise<number>;
   ensureFinalizationDashboardForward(
@@ -215,6 +227,12 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     : null;
   const getSandbox = deps.getSandbox ?? productionForwardService?.getSandbox;
   const listSandboxes = deps.listSandboxes ?? productionForwardService?.listSandboxes;
+  const recordDashboardBind =
+    deps.recordDashboardBind ??
+    (productionForwardService
+      ? (sandboxName: string, bindAddress: string | null) =>
+          productionForwardService.updateSandbox(sandboxName, { dashboardBindAddress: bindAddress })
+      : undefined);
   const forwardService: OnboardDashboardDeps["forwardService"] =
     deps.forwardService ??
     (productionForwardService
@@ -498,6 +516,26 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
   }
 
   /**
+   * Finalization records the bind its forward will have before the forward
+   * starts (#10861). When that forward does not start, the record is cleared
+   * so `dashboard-url`, `list` and `status` do not describe a listener that
+   * does not exist. A write that fails is warned about; the record then
+   * stands until the next forward launch replaces it.
+   */
+  function clearRecordedBindOnForwardFailure(sandboxName: string): void {
+    let cleared = false;
+    try {
+      cleared = recordDashboardBind?.(sandboxName, null) === true;
+    } catch {
+      cleared = false;
+    }
+    if (cleared) return;
+    console.warn(
+      `  Warning: the recorded dashboard bind for '${sandboxName}' could not be cleared after the forward failed to start; \`dashboard-url\` may report a listener that does not exist until the next forward launch.`,
+    );
+  }
+
+  /**
    * Reconcile the dashboard forward for the agent-less OpenClaw finalization
    * branch. The resume path skips sandbox creation, so `CHAT_UI_URL` does not
    * carry the port the in-sandbox gateway listens on; the registry entry
@@ -521,6 +559,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     const actualPort = ensureDashboardForward(sandboxName, requestedUrl, {
       allowPortReallocation: false,
       ...(revalidateSandboxIdentity ? { revalidateSandboxIdentity } : {}),
+      onForwardFailure: () => clearRecordedBindOnForwardFailure(sandboxName),
     });
     revalidateSandboxIdentity?.(`publish the dashboard URL for sandbox '${sandboxName}'`);
     process.env.CHAT_UI_URL = replaceUrlPort(
@@ -536,6 +575,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     options: {
       beforeForwardPort?: (port: number) => Promise<void> | void;
       revalidateSandboxIdentity?: (operation: string) => void;
+      onForwardFailure?: (diagnostic: string) => void;
     } = {},
   ): Promise<number> {
     const chatUiUrl = process.env.CHAT_UI_URL;
@@ -548,6 +588,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       hermesApiPort: getSandbox?.(sandboxName)?.hermesApiPort,
       beforeForwardPort: options.beforeForwardPort,
       revalidateSandboxIdentity: options.revalidateSandboxIdentity,
+      onForwardFailure: options.onForwardFailure,
     });
   }
 
@@ -565,6 +606,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
           beforeForwardPort: portReservation
             ? (port) => portReservation.releaseBeforeForward(agent.name, port)
             : undefined,
+          onForwardFailure: () => clearRecordedBindOnForwardFailure(sandboxName),
         })
       : ensureFinalizationDashboardForward(sandboxName, revalidateSandboxIdentity);
   }

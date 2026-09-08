@@ -17,7 +17,9 @@ export interface DashboardUrlCommandDeps {
   /** Pull gateway.auth.token from the sandbox config (host-side helper). */
   fetchToken: (sandboxName: string) => string | null;
   /** Read sandbox metadata such as agent name and recorded dashboard port. */
-  getSandbox?: (sandboxName: string) => Pick<SandboxEntry, "agent" | "dashboardPort" | "dashboardBindAddress"> | null;
+  getSandbox?: (
+    sandboxName: string,
+  ) => Pick<SandboxEntry, "agent" | "dashboardPort" | "dashboardBindAddress"> | null;
   /** Resolve the browser-facing dashboard base URL for this host, when known. */
   getAccessUrl?: (port: number) => string | null;
   /** Resolve a registered agent's dashboard auth contract. */
@@ -162,10 +164,12 @@ export function runDashboardUrlCommand(
       return;
     }
     if (bindAddress === null && sandbox?.dashboardPort) {
-      // A row from before the bind was recorded: say so rather than assert
-      // loopback. The next forward launch for this sandbox records it.
+      // No record: say so rather than assert loopback. A row from before
+      // binds were recorded, a launch whose registry write failed and a
+      // forward that never started all land here, so the note describes the
+      // state, not a cause. The next forward launch records the bind.
       log(
-        `  Bind not recorded for this dashboard forward; it was created before NemoClaw recorded binds and is recorded the next time the forward is created. Until then, check the host's listening sockets for port ${String(port)}.`,
+        `  NemoClaw has no recorded bind for this dashboard forward; it records the bind when it next creates the forward. Until then, check the host's listening sockets for port ${String(port)}.`,
       );
     }
     const hint = buildSshForwardHintLines({

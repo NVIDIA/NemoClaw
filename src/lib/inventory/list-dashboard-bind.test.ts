@@ -36,7 +36,7 @@ describe("the dashboard line in list follows the recorded bind (#10861)", () => 
     expect(body).not.toContain("bind not recorded");
   });
 
-  it("says the bind is not recorded for a row written before NemoClaw recorded binds", async () => {
+  it("says the bind is not recorded for a row that has none", async () => {
     const body = await renderedListFor({});
 
     expect(body).toContain("dashboard: http://127.0.0.1:18792/  (bind not recorded)");

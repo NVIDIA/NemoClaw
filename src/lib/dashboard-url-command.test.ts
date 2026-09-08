@@ -205,7 +205,7 @@ describe("dashboard-url command helpers", () => {
     expect(sinks.out).toEqual([
       "  Dashboard URL:",
       "  http://127.0.0.1:18789/#token=secret-token",
-      "  Bind not recorded for this dashboard forward; it was created before NemoClaw recorded binds and is recorded the next time the forward is created. Until then, check the host's listening sockets for port 18789.",
+      "  NemoClaw has no recorded bind for this dashboard forward; it records the bind when it next creates the forward. Until then, check the host's listening sockets for port 18789.",
     ]);
     expect(sinks.err.join("\n")).toContain("Treat this URL like a password");
   });

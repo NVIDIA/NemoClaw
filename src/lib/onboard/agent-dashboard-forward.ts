@@ -22,6 +22,7 @@ export type EnsureDashboardForward = (
   options?: {
     allowPortReallocation?: boolean;
     revalidateSandboxIdentity?: (operation: string) => void;
+    onForwardFailure?: (diagnostic: string) => void;
   },
 ) => number;
 
@@ -40,6 +41,13 @@ export async function ensureAgentDashboardForward(options: {
   hermesApiPort?: number | null;
   beforeForwardPort?: (port: number) => Promise<void> | void;
   revalidateSandboxIdentity?: (operation: string) => void;
+  /**
+   * Reports that the agent dashboard forward did not start. The launcher
+   * still returns the port then, so a caller that recorded a bind for this
+   * forward undoes it here (#10861). Optional agent port forwards are not
+   * recorded and do not report.
+   */
+  onForwardFailure?: (diagnostic: string) => void;
   warn?: (message: string) => void;
 }): Promise<number> {
   const {
@@ -51,6 +59,7 @@ export async function ensureAgentDashboardForward(options: {
     hermesApiPort,
     beforeForwardPort,
     revalidateSandboxIdentity,
+    onForwardFailure,
     warn = (message: string) => console.warn(message),
   } = options;
   if (!shouldManageDashboardForAgent(agent)) {
@@ -95,11 +104,7 @@ export async function ensureAgentDashboardForward(options: {
       .filter((port) => port !== declaredPrimaryPort || port === agentDashboardPort)
       .map(resolveDeclaredPort);
     const preservePorts = [
-      ...new Set([
-        agentDashboardPort,
-        ...declaredPorts,
-        optionalDashboardPort,
-      ]),
+      ...new Set([agentDashboardPort, ...declaredPorts, optionalDashboardPort]),
     ].filter(isValidForwardPort);
     const requestedDashboardUrl =
       !usesFixedApiPort && chatUiUrl
@@ -109,6 +114,7 @@ export async function ensureAgentDashboardForward(options: {
     const actualAgentDashboardPort = ensureDashboardForward(sandboxName, requestedDashboardUrl, {
       allowPortReallocation: false,
       ...(revalidateIdentity ? { revalidateSandboxIdentity: revalidateIdentity } : {}),
+      ...(onForwardFailure ? { onForwardFailure } : {}),
     });
     if (!usesFixedApiPort) {
       revalidateIdentity?.(`publish the dashboard URL for sandbox '${sandboxName}'`);
