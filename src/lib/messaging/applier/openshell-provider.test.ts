@@ -5,6 +5,10 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
 import { namedOpenShellGateway } from "../../adapters/openshell/sandbox-observer";
+import {
+  EXTRA_PLACEHOLDER_KEYS_ENV,
+  registerExtraPlaceholderProviders,
+} from "../../onboard/extra-placeholder-keys";
 import type { MessagingBridgeProfile } from "../../onboard/messaging-bridge-provider";
 import type { SandboxMessagingPlan } from "../manifest";
 import {
@@ -222,13 +226,44 @@ describe("messaging OpenShell provider application", () => {
   });
 
   it("omits an absent optional credential when creating a provider (#11190)", async () => {
-    const expected = definition({
-      credentials: [
-        { name: "TELEGRAM_BOT_TOKEN_AGENT_MISSING", value: null },
-        { name: "TELEGRAM_BOT_TOKEN", value: "telegram-secret" },
-        { name: "TELEGRAM_BOT_TOKEN_AGENT_A", value: "telegram-agent-a-secret" },
-      ],
+    const tokenDefs = [
+      {
+        name: "alpha-telegram-bridge",
+        envKey: "TELEGRAM_BOT_TOKEN",
+        token: "telegram-secret",
+        providerType: "nemoclaw-mcp-v1",
+      },
+    ];
+    const warnings: string[] = [];
+    const acceptedKeys = registerExtraPlaceholderProviders(tokenDefs, (message) => {
+      warnings.push(message);
+    }, {
+      env: {
+        [EXTRA_PLACEHOLDER_KEYS_ENV]:
+          "TELEGRAM_BOT_TOKEN_AGENT_A TELEGRAM_BOT_TOKEN_AGENT_MISSING GITHUB_TOKEN",
+        TELEGRAM_BOT_TOKEN_AGENT_A: "telegram-agent-a-secret",
+        TELEGRAM_BOT_TOKEN_AGENT_MISSING: undefined,
+        GITHUB_TOKEN: "arbitrary-host-secret",
+      },
+      getCredential: () => null,
+      normalizeCredentialValue: (value) => value?.trim() ?? "",
     });
+    const application = buildMessagingProviderApplication({
+      tokenDefs,
+      root: "/repo",
+      agent: "openclaw",
+      getCredential: () => null,
+      profiles: [],
+    });
+    const builtDefinition = application.definitions[0]!;
+    const expected = {
+      ...builtDefinition,
+      credentials: [
+        builtDefinition.credentials[2]!,
+        builtDefinition.credentials[0]!,
+        builtDefinition.credentials[1]!,
+      ],
+    };
     const createdCredentials = expected.credentials.filter(({ value }) => value !== null);
     const adapter = providerAdapter({
       getProvider: vi
@@ -258,6 +293,12 @@ describe("messaging OpenShell provider application", () => {
       config: [],
       fromExisting: false,
     });
+    expect(acceptedKeys).toEqual([
+      "TELEGRAM_BOT_TOKEN_AGENT_A",
+      "TELEGRAM_BOT_TOKEN_AGENT_MISSING",
+    ]);
+    expect(warnings.some((warning) => warning.includes('"GITHUB_TOKEN"'))).toBe(true);
+    expect(JSON.stringify(application)).not.toContain("arbitrary-host-secret");
 
     vi.mocked(adapter.getProvider).mockResolvedValue({
       ok: true,
