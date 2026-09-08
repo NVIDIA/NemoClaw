@@ -666,31 +666,26 @@ describe("Windows-host Ollama transport", () => {
     expect(capture).toHaveBeenCalledTimes(4);
   });
 
-  it(
-    "retries an invalid Windows-host inventory before returning installed models (#10259)",
-    () => {
-      setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
-      const capture = respondsWithOllamaInventorySequence([
-        "",
-        "<html>proxy response</html>",
-        JSON.stringify({ models: [{ name: "qwen3.5:9b" }] }),
-      ]);
-      const sleeps: number[] = [];
+  it("retries an invalid Windows-host inventory before returning installed models (#10259)", () => {
+    setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
+    const capture = respondsWithOllamaInventorySequence([
+      "",
+      "<html>proxy response</html>",
+      JSON.stringify({ models: [{ name: "qwen3.5:9b" }] }),
+    ]);
+    const sleeps: number[] = [];
 
-      expect(getOllamaModelOptions(capture, (milliseconds) => sleeps.push(milliseconds))).toEqual([
-        "qwen3.5:9b",
-      ]);
-      expect(
-        capture.mock.calls.filter(
-          ([command, options]) =>
-            command.some((argument) => argument.endsWith("/api/tags")) &&
-            options?.timeout !== 10_000,
-        ),
-      ).toHaveLength(3);
-      expect(sleeps).toEqual([500, 1_000]);
-    },
-    10_000,
-  );
+    expect(getOllamaModelOptions(capture, (milliseconds) => sleeps.push(milliseconds))).toEqual([
+      "qwen3.5:9b",
+    ]);
+    expect(
+      capture.mock.calls.filter(
+        ([command, options]) =>
+          command.some((argument) => argument.endsWith("/api/tags")) && options?.timeout !== 10_000,
+      ),
+    ).toHaveLength(3);
+    expect(sleeps).toEqual([500, 1_000]);
+  }, 10_000);
 
   it("rejects an invalid Windows-host inventory after bounded retries (#10259)", () => {
     setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
@@ -1006,18 +1001,14 @@ describe("Windows-host Ollama transport", () => {
     const [command, options] = run.mock.calls[0] ?? [];
     expect({
       cleanupCalls: cleanup.mock.calls.length,
-      commandPrefix: command?.slice(0, 5),
+      commandPrefix: command?.slice(0, 4),
+      image: command?.find((argument: string) => argument === CONTAINER_REACHABILITY_IMAGE),
       endpoint: command?.find((argument: string) => argument.endsWith("/api/generate")),
       options,
     }).toEqual({
       cleanupCalls: 3,
-      commandPrefix: [
-        "docker",
-        "run",
-        "--rm",
-        "-d",
-        CONTAINER_REACHABILITY_IMAGE,
-      ],
+      commandPrefix: ["docker", "run", "--rm", "-d"],
+      image: CONTAINER_REACHABILITY_IMAGE,
       endpoint: "http://host.docker.internal:11434/api/generate",
       options: {
         ignoreError: true,
