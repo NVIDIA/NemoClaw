@@ -13,5 +13,8 @@ PRs touching these areas need tests before approval.
 | Workflow / enforcement | `.github/workflows/`, prek hooks, DCO, signing, version/tag flows |
 | Credentials / inference / network | credential helpers, inference provider routing, approval flows |
 
+The contributor PR workflow uses this table to determine whether the PR template's sensitive-path
+`Review notes` requirement applies.
+
 Promote a PR in a risky area only when it is actionable.
 If risky code does not have sufficient tests, follow the test-gap or security-review workflow.

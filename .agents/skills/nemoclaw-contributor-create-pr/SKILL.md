@@ -88,30 +88,31 @@ git config user.email
 
 Stop if the declaration is missing, any commit is unverified, or compliant history cannot be pushed.
 
-### Publication capability contract
+### Guarded publication
 
-Use only a configured GitHub publication method allowed by the access hard stop. This skill owns the
-publication conditions. Harness integrations may implement them without changing their meaning.
+Use a configured GitHub method allowed by the access hard stop. This skill owns the publication
+procedure. A harness helper may assist, but verify every required input and result independently.
 
 Provide these immutable inputs before a branch publication:
 
 - declared repository and source branch;
 - full local publication SHA;
-- expected absence of the remote branch for its first write, its reconciled local publication SHA,
-  or its reviewed SHA for an update;
+- expected remote branch state: absent or the local publication SHA for an initial PR, or the reviewed
+  remote SHA for an update;
 - pull request number and reviewed `headRefOid` for an open PR.
 
-The publication method must enforce these conditions:
+Apply these steps before every branch publication:
 
 1. Require local `HEAD` to equal the local publication SHA.
-2. Read the remote branch and open PR state immediately before the write. Reject any state that does
-   not match the supplied inputs.
-3. Publish only the local publication SHA through a non-force update. Stop before the write when the
-   method cannot reject an unexpected prior state.
-4. Read the remote branch and PR after every successful or inconclusive write. Classify the result as
+2. Read the remote branch and open PR state. Stop when either state differs from the supplied inputs.
+3. Immediately before the push, repeat the remote and PR reads. Stop when another actor changed either
+   state.
+4. Push only the local publication SHA to the declared branch. Use a normal non-force update. A
+   concurrent additive branch update makes this push fail instead of replacing that update.
+5. Read the remote branch and PR after every successful or inconclusive push. Classify the result as
    the expected commit, unchanged prior state, or unknown state.
-5. Do not repeat a write when the expected commit exists. Do not continue from an unknown state.
-6. Read GitHub verification for every published commit. Continue only when every commit is
+6. Do not repeat a push when the expected commit exists. Do not continue from an unknown state.
+7. Read GitHub verification for every published commit. Continue only when every commit is
    `Verified`.
 
 Record the declared repository and branch, expected and observed SHAs, PR identity and state, whether
@@ -142,13 +143,8 @@ Read the pull request template from the canonical comparison ref:
 git show origin/main:.github/PULL_REQUEST_TEMPLATE.md
 ```
 
-Derive sensitive-path status from the trusted changed paths. Do not accept a caller-provided status.
-Treat these paths as sensitive:
-
-- `src/lib/security/**`, `src/lib/policy/**`, `src/lib/credentials/**`, and `src/lib/preflight/**`;
-- `src/lib/onboard/**`, `src/lib/inference/**`, `src/lib/runner/**`, and `src/lib/sandbox/**`;
-- `src/lib/messaging/**`, `nemoclaw/src/blueprint/**`, and `nemoclaw/src/onboard/**`;
-- `nemoclaw-blueprint/**`.
+Derive sensitive-path status from the trusted changed paths and
+[Risky Code Areas](../nemoclaw-maintainer-day/RISKY-AREAS.md). Do not accept a caller-provided status.
 
 Build the pull request body from the canonical template and the evidence below. Validate the complete
 body against that template. When a sensitive path changed, require approved review evidence in
@@ -174,13 +170,15 @@ Before creating the PR, decide its draft state and whether assignment is allowed
 complete title, body, expected commit, draft decision, and allowed assignment before the write.
 
 Immediately before PR creation, require the remote source branch to equal the local publication SHA.
-Require that no open PR already uses that source branch. Create the PR once for the declared
-repository, base branch, and source branch.
+Require that no open PR already uses that source branch. Create the PR once with the prepared
+repository, base branch, source branch, commit, title, body, draft decision, and assignment.
 
-After an inconclusive creation response, list open PRs for the declared source branch. When one PR
-uses the local publication SHA, continue with the publication capability checks. When none exists,
-permit one creation retry. When a returned PR or branch uses another commit, stop and report its
-identifier and observed commit.
+After every successful or inconclusive creation response, list open PRs for the declared source
+branch. Continue only when exactly one PR matches every prepared creation input. Stop and report all
+observed PR identifiers and commits when multiple PRs exist or any field differs.
+
+When no PR exists, repeat the remote-branch and open-PR checks immediately before one creation retry.
+Stop when either state changed or cannot be read. Do not make a second retry.
 
 ### Assignment
 
@@ -193,9 +191,14 @@ gh repo view NVIDIA/NemoClaw --json viewerPermission --jq .viewerPermission
 Only `TRIAGE`, `WRITE`, `MAINTAIN`, or `ADMIN` permits assignment. Otherwise omit it and report that a maintainer must assign the PR.
 
 Open every code-changing PR as a draft. A draft requires the same DCO and verification evidence.
-Keep it draft while automated evaluation or a candidate-owned repair is pending. Apply the
-publication capability contract to a ready-state write only after the latest PR commit completes the
-shared follow-up cycle with no unresolved candidate-owned finding or failure.
+Keep it draft while automated evaluation or a candidate-owned repair is pending.
+
+Before marking a PR ready, record its number, reviewed `headRefOid`, and expected draft state. Read the
+PR immediately before the write. Continue only when its identity and commit are unchanged, it is still
+draft, and the latest commit completed the shared follow-up cycle with no unresolved candidate-owned
+finding or failure. Request the ready-state change once. After a successful or inconclusive response,
+read the PR again. Continue only when the same PR and commit are no longer draft. Treat every other
+result as unknown state, stop, and do not repeat the write.
 
 Do not select or add labels during PR publication. Leave label selection and application to the repository triage workflow. Do not request reviews from maintainers.
 
