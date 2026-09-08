@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
+import { buildMessagingProviderApplication } from "../messaging/applier/provider-application";
 import {
   appendExtraPlaceholderKeysEnvArg,
   canonicalPlaceholderKeys,
@@ -200,44 +201,14 @@ describe("registerExtraPlaceholderProviders", () => {
     );
   });
 
-  it("records a missing extension without submitting a credential value", () => {
+  it("omits absent and refused extensions from the typed provider application (#11190)", () => {
     withEnv(
       {
-        [EXTRA_PLACEHOLDER_KEYS_ENV]: "TELEGRAM_BOT_TOKEN_AGENT_MISSING",
-        TELEGRAM_BOT_TOKEN_AGENT_MISSING: undefined,
-      },
-      () => {
-        const messagingTokenDefs = [
-          {
-            name: "my-sandbox-telegram-bridge",
-            envKey: "TELEGRAM_BOT_TOKEN",
-            token: "telegram-token",
-            providerType: "nemoclaw-mcp-v1",
-          },
-        ];
-        const extraKeys = registerExtraPlaceholderProviders(messagingTokenDefs);
-        expect(extraKeys).toEqual(["TELEGRAM_BOT_TOKEN_AGENT_MISSING"]);
-        expect(messagingTokenDefs).toEqual([
-          {
-            name: "my-sandbox-telegram-bridge",
-            envKey: "TELEGRAM_BOT_TOKEN",
-            token: "telegram-token",
-            providerType: "nemoclaw-mcp-v1",
-            additionalCredentials: [
-              { envKey: "TELEGRAM_BOT_TOKEN_AGENT_MISSING", token: null },
-            ],
-          },
-        ]);
-      },
-    );
-  });
-
-  it("logs the parser warning when the operator supplies a non-extending host secret name", () => {
-    withEnv(
-      {
-        [EXTRA_PLACEHOLDER_KEYS_ENV]: "GITHUB_TOKEN TELEGRAM_BOT_TOKEN_AGENT_A",
-        GITHUB_TOKEN: "would-leak-if-registered",
+        [EXTRA_PLACEHOLDER_KEYS_ENV]:
+          "TELEGRAM_BOT_TOKEN_AGENT_A TELEGRAM_BOT_TOKEN_AGENT_MISSING GITHUB_TOKEN",
         TELEGRAM_BOT_TOKEN_AGENT_A: "telegram-token-A",
+        TELEGRAM_BOT_TOKEN_AGENT_MISSING: undefined,
+        GITHUB_TOKEN: "would-leak-if-registered",
       },
       () => {
         const messagingTokenDefs = [
@@ -249,29 +220,40 @@ describe("registerExtraPlaceholderProviders", () => {
           },
         ];
         const warnings: string[] = [];
-        const extraKeys = registerExtraPlaceholderProviders(messagingTokenDefs, (m) =>
-          warnings.push(m),
+        const extraKeys = registerExtraPlaceholderProviders(messagingTokenDefs, (message) =>
+          warnings.push(message),
         );
+        const application = buildMessagingProviderApplication({
+          tokenDefs: messagingTokenDefs,
+          root: "/repo",
+          agent: "openclaw",
+          getCredential: () => null,
+          profiles: [],
+        });
+
         expect(extraKeys).toEqual(["TELEGRAM_BOT_TOKEN_AGENT_A"]);
-        expect(messagingTokenDefs).toEqual([
+        expect(application.definitions).toEqual([
           {
-            name: "my-sandbox-telegram-bridge",
-            envKey: "TELEGRAM_BOT_TOKEN",
-            token: "telegram-token",
+            channelId: "messaging",
+            credentialId: "TELEGRAM_BOT_TOKEN",
+            providerName: "my-sandbox-telegram-bridge",
             providerType: "nemoclaw-mcp-v1",
-            additionalCredentials: [
-              { envKey: "TELEGRAM_BOT_TOKEN_AGENT_A", token: "telegram-token-A" },
+            credentials: [
+              { name: "TELEGRAM_BOT_TOKEN", value: "telegram-token" },
+              { name: "TELEGRAM_BOT_TOKEN_AGENT_A", value: "telegram-token-A" },
             ],
+            profile: {
+              profilePath: "/repo/nemoclaw-blueprint/provider-profiles/nemoclaw-mcp-v1.yaml",
+              profileType: "nemoclaw-mcp-v1",
+            },
           },
         ]);
-        // The host secret never makes it onto a provider row, so the token
-        // value cannot leak into the sandbox gateway.
-        expect(JSON.stringify(messagingTokenDefs)).not.toContain("would-leak-if-registered");
-        expect(warnings.some((w) => w.includes('"GITHUB_TOKEN"'))).toBe(true);
+        expect(JSON.stringify(application)).not.toContain("TELEGRAM_BOT_TOKEN_AGENT_MISSING");
+        expect(JSON.stringify(application)).not.toContain("would-leak-if-registered");
+        expect(warnings.some((warning) => warning.includes('"GITHUB_TOKEN"'))).toBe(true);
       },
     );
   });
-
 });
 
 describe("appendExtraPlaceholderKeysEnvArg", () => {

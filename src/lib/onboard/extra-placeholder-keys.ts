@@ -123,6 +123,7 @@ export function registerExtraPlaceholderProviders(
       );
       continue;
     }
+    if (!token) continue;
     canonicalProvider.additionalCredentials ??= [];
     canonicalProvider.additionalCredentials.push({ envKey, token });
     acceptedKeys.push(envKey);
