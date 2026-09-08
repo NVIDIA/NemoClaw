@@ -56,19 +56,24 @@ let providerAttachmentState = "attached";
 let providerInspectionState = "present";
 let providerCredentialKey = "GITHUB_TOKEN";
 let persistedCredentialRevision = "v11";
+let includeSecondAttachment = false;
+let providerAttachmentInspectionCount = 0;
 const hermesIntentPayloads = [];
 providerCommands.runOpenshellProviderCommand = (args) => {
   if (args[0] === "provider" && args[1] === "get") {
     if (providerInspectionState === "absent") {
       return { status: 1, stdout: "", stderr: "provider not found" };
     }
+    const providerName = args[2];
+    const credentialKey = providerName === "alpha-mcp-slack" ? "SLACK_TOKEN" : providerCredentialKey;
     return {
       status: 0,
-      stdout: "Id: 11111111-2222-4333-8444-555555555555\nType: nemoclaw-mcp-v1\nResource version: 4\nCredential keys: " + providerCredentialKey + "\n",
+      stdout: "Name: " + providerName + "\nId: 11111111-2222-4333-8444-555555555555\nType: nemoclaw-mcp-v1\nResource version: 4\nCredential keys: " + credentialKey + "\nConfig keys: <none>\n",
       stderr: "",
     };
   }
   if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "list") {
+    providerAttachmentInspectionCount += 1;
     if (providerAttachmentState === "unknown") {
       return { status: 1, stdout: "", stderr: "attachment inspection failed" };
     }
@@ -77,7 +82,8 @@ providerCommands.runOpenshellProviderCommand = (args) => {
     }
     return {
       status: 0,
-      stdout: "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\nalpha-mcp-github nemoclaw-mcp-v1 1 0\n",
+      stdout: "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\nalpha-mcp-github nemoclaw-mcp-v1 1 0\n" +
+        (includeSecondAttachment ? "alpha-mcp-slack nemoclaw-mcp-v1 1 0\n" : ""),
       stderr: "",
     };
   }
@@ -205,6 +211,40 @@ ${body}
 }
 
 describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 }, () => {
+  it("inspects the attachment inventory once for a multi-server status read (#9806)", () => {
+    const home = createTempHome("nemoclaw-mcp-status-attachments-");
+    const { stdout } = runHarness(
+      home,
+      String.raw`
+  const current = registry.getSandbox("alpha");
+  registry.updateSandbox("alpha", {
+    mcp: { bridges: {
+      ...current.mcp.bridges,
+      slack: {
+        ...current.mcp.bridges.github,
+        server: "slack",
+        env: ["SLACK_TOKEN"],
+        providerName: "alpha-mcp-slack",
+        policyName: "mcp-bridge-slack",
+      },
+    } },
+  });
+  includeSecondAttachment = true;
+  providerAttachmentInspectionCount = 0;
+  const statuses = await bridge.statusMcpBridge("alpha");
+  writeHarnessResult(JSON.stringify({
+    attachmentInspections: providerAttachmentInspectionCount,
+    attached: statuses.map((status) => status.provider.attached),
+  }));
+`,
+    );
+
+    expect(JSON.parse(stdout)).toEqual({
+      attachmentInspections: 1,
+      attached: [true, true],
+    });
+  });
+
   it("probes by default for a single named server and surfaces the wire failure (#6379)", () => {
     const home = createTempHome("nemoclaw-mcp-resolution-single-");
     const { stdout } = runHarness(
