@@ -81,6 +81,15 @@ printf '%s|%s|%s' "\${NEMOCLAW_BOOTSTRAP_FETCH_REF:-}" "\${NEMOCLAW_INSTALL_REF:
 PAYLOAD
     chmod +x "$target/scripts/install.sh"
     ;;
+  remote)
+    [[ "$*" == 'remote add origin https://github.com/NVIDIA/NemoClaw.git' ]] || exit 91
+    ;;
+  fetch)
+    [[ "$2" == '--quiet' && "$3" == '--depth' && "$4" == '1' && "$5" == 'origin' && "$6" == +*:refs/nemoclaw-install/target ]] || exit 92
+    ;;
+  -c)
+    [[ "$*" == '-c advice.detachedHead=false checkout --quiet --detach refs/nemoclaw-install/target' ]] || exit 93
+    ;;
   rev-parse)
     printf 'target-commit\n'
     ;;
@@ -100,6 +109,7 @@ PAYLOAD
       printf 'target-commit\trefs/tags/v%s\n' "${targetVersion}"
     fi
     ;;
+  *) exit 94 ;;
 esac
 `,
   );
@@ -243,6 +253,27 @@ describe("public installer downgrade guard", () => {
 
     expect(result.status).toBe(0);
     expect(fs.existsSync(payloadMarker)).toBe(true);
+    expect(fs.readFileSync(payloadMarker, "utf8")).toBe("target-commit|v0.0.109|lkg");
+  });
+
+  it("fails closed and cleans up when release tag output exceeds its bound", () => {
+    const { result, payloadMarker, root } = runInstall(
+      "0.0.108",
+      "many-tags",
+      {},
+      {
+        tagLookupMaxOutputBytes: 32,
+      },
+    );
+
+    expect(result.status).toBe(1);
+    expect(`${result.stdout}${result.stderr}`).toContain(
+      "Cannot verify the maintained lkg version before replacing installed NemoClaw v0.0.108.",
+    );
+    expect(fs.existsSync(payloadMarker)).toBe(false);
+    expect(
+      fs.readdirSync(root).filter((name) => name.startsWith("nemoclaw-bootstrap-lookup.")),
+    ).toEqual([]);
   });
 
   it("runs an older release when the user selects its tag", () => {
@@ -430,32 +461,58 @@ describe("versioned installer payload ref selection", () => {
   it("passes the bootstrap commit to the managed clone boundary", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-payload-ref-"));
     temporaryDirectories.push(root);
-    const cloneMarker = path.join(root, "clone-ref");
+    const bin = path.join(root, "bin");
+    const fetchMarker = path.join(root, "fetch-ref");
+    fs.mkdirSync(bin);
+    writeExecutable(
+      path.join(bin, "git"),
+      `#!/usr/bin/env bash
+if [[ "\${1:-}" == '-C' ]]; then shift 2; fi
+case "\${1:-}" in
+  init)
+    [[ "$2" == '--quiet' && -n "\${3:-}" && -z "\${4:-}" ]] || exit 91
+    mkdir -p "$3"
+    ;;
+  remote)
+    [[ "$*" == 'remote add origin https://github.com/NVIDIA/NemoClaw.git' ]] || exit 92
+    ;;
+  fetch)
+    [[ "$2" == '--quiet' && "$3" == '--depth' && "$4" == '1' && "$5" == 'origin' && "$6" == '+target-commit:refs/nemoclaw-install/target' && -z "\${7:-}" ]] || exit 93
+    printf 'target-commit' >"\${FETCH_MARKER:?}"
+    ;;
+  -c)
+    [[ "$*" == '-c advice.detachedHead=false checkout --quiet --detach refs/nemoclaw-install/target' ]] || exit 94
+    exit 73
+    ;;
+  *) exit 95 ;;
+esac
+`,
+    );
     const result = spawnSync(
       "bash",
       [
         "-c",
         `source "$INSTALLER_PAYLOAD" >/dev/null
 resolve_repo_root() { printf '%s' "$NON_SOURCE_ROOT"; }
-clone_nemoclaw_ref() { printf '%s' "$1" >"$CLONE_MARKER"; return 73; }
 install_nemoclaw`,
       ],
       {
         encoding: "utf8",
         env: {
           ...process.env,
-          CLONE_MARKER: cloneMarker,
+          FETCH_MARKER: fetchMarker,
           HOME: root,
           INSTALLER_PAYLOAD,
-          NEMOCLAW_BOOTSTRAP_FETCH_REF: "bootstrap-commit",
+          NEMOCLAW_BOOTSTRAP_FETCH_REF: "target-commit",
           NEMOCLAW_INSTALL_REF: "v0.0.109",
           NEMOCLAW_INSTALL_TAG: "lkg",
           NON_SOURCE_ROOT: path.join(root, "not-a-checkout"),
+          PATH: `${bin}:/usr/bin:/bin`,
         },
       },
     );
 
     expect(result.status).toBe(73);
-    expect(fs.readFileSync(cloneMarker, "utf8")).toBe("bootstrap-commit");
+    expect(fs.readFileSync(fetchMarker, "utf8")).toBe("target-commit");
   });
 });
