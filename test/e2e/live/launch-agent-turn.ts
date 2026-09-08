@@ -1114,7 +1114,7 @@ cleanup() {
   fi
   if [[ "$original_status" != 0 ]]; then
     case "$provider_unavailable_candidate:$cleanup_status" in
-      1:0) echo "${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}:$NEMOCLAW_LAUNCH_RUN_ID" >&2 ;;
+      1:0) printf '\n%s\n' "${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}:$NEMOCLAW_LAUNCH_RUN_ID" >&2 ;;
     esac
     exit "$original_status"
   fi
