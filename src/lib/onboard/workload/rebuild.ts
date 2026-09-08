@@ -40,6 +40,7 @@ import {
   liveE2eManagedImageRevision,
   type PreparedSandboxWorkloadSource,
   prepareSandboxWorkloadSource,
+  rejectManagedWorkloadBaseImageOverride,
   SandboxWorkloadPreparationError,
 } from "./preparation";
 import {
@@ -139,6 +140,14 @@ export async function prepareManagedWorkloadRebuildHandoff(
   const authority = readManagedWorkloadAuthority(entry);
   if (!authority) return null;
   requireProviderBoundAuthority(authority, options.runtime, options.provider);
+  try {
+    rejectManagedWorkloadBaseImageOverride(authority.agent);
+  } catch (error) {
+    throw new ManagedWorkloadRebuildError(
+      error instanceof Error ? error.message : "the managed workload base-image override is invalid",
+      { cause: error },
+    );
+  }
 
   let replacement: PreparedSandboxWorkloadSource;
   if (isCandidateManagedImageAgent(authority.agent)) {

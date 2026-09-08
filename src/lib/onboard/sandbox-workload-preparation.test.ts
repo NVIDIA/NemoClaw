@@ -487,20 +487,27 @@ describe("sandbox workload preparation", () => {
     });
   });
 
-  it("fails closed when a base-image override is set but the managed image workload cannot honor it (#11138)", async () => {
+  it("fails closed without disclosing a base-image override that the managed workload cannot honor (#11138)", async () => {
     const resolveCatalog = vi.fn(async () => CATALOG);
-    await expect(
-      prepareSandboxWorkloadSource(
+    const credentialBearingOverride =
+      "https://registry-user:registry-password@registry.example.test/sandbox-base:latest";
+    let rejection: Error | null = null;
+    try {
+      await prepareSandboxWorkloadSource(
         {
           ...input("openclaw"),
           rejectUnsupportedBaseImageOverride: true,
-          environment: {
-            NEMOCLAW_SANDBOX_BASE_IMAGE_REF: "ghcr.io/nvidia/nemoclaw/sandbox-base:local-only-no-push",
-          },
+          environment: { NEMOCLAW_SANDBOX_BASE_IMAGE_REF: credentialBearingOverride },
         },
         { resolveCatalog },
-      ),
-    ).rejects.toThrow(/'NEMOCLAW_SANDBOX_BASE_IMAGE_REF' is set .* does not consult this override/);
+      );
+    } catch (error) {
+      rejection = error as Error;
+    }
+
+    expect(rejection?.message).toContain("'NEMOCLAW_SANDBOX_BASE_IMAGE_REF' is set");
+    expect(rejection?.message).not.toContain(credentialBearingOverride);
+    expect(rejection?.message).not.toContain("registry-password");
     // The rejection precedes catalog resolution, so a catalog outage cannot
     // turn it into a legacy Dockerfile build that consumes the override.
     expect(resolveCatalog).not.toHaveBeenCalled();
@@ -553,10 +560,9 @@ describe("sandbox workload preparation", () => {
     expect(resolveCatalog).not.toHaveBeenCalled();
   });
 
-  it("leaves a base-image override alone for a caller that is not onboarding (#11138)", async () => {
-    // Managed rebuild keeps its own base-image preflight and immutable handoff
-    // validation, and the documented per-agent override stays supported there,
-    // so it never opts into the onboarding-only rejection.
+  it("leaves a base-image override alone when the caller does not select rejection (#11138)", async () => {
+    // Fresh onboarding and managed rebuild each select the guard at their own
+    // authority boundary. Other callers retain the preparation default.
     const resolveCatalog = vi.fn(async () => CATALOG);
     const prepared = await prepareSandboxWorkloadSource(
       {

@@ -10,6 +10,7 @@ import {
   type SandboxBaseImageResolutionMetadata,
 } from "../sandbox-base-image";
 import { openClawSandboxBaseImageHasSecurityInventory } from "../sandbox-base-image/security-inventory";
+import { getAgentSandboxBaseImageEnvVar } from "../agent/base-image-env";
 import { getInstalledOpenshellVersion } from "./openshell-version";
 
 /**
@@ -19,13 +20,6 @@ import { getInstalledOpenshellVersion } from "./openshell-version";
  * after the expensive final image has already been built.
  */
 export const openClawBaseImageHasSecurityInventory = openClawSandboxBaseImageHasSecurityInventory;
-
-/**
- * OpenClaw predates the multi-agent `NEMOCLAW_<AGENT>_SANDBOX_BASE_IMAGE_REF`
- * naming scheme (see `getAgentSandboxBaseImageEnvVar`) and keeps its original,
- * documented name for backward compatibility.
- */
-export const OPENCLAW_SANDBOX_BASE_IMAGE_REF_ENV_VAR = "NEMOCLAW_SANDBOX_BASE_IMAGE_REF";
 
 /**
  * Resolve a compatible sandbox-base image and pin it to a repo digest when
@@ -51,7 +45,7 @@ export function pullAndResolveBaseImageDigest(
     imageName: SANDBOX_BASE_IMAGE,
     dockerfilePath: defaultOpenclawBaseDockerfile(ROOT),
     localTag: buildLocalBaseTag("nemoclaw-sandbox-base-local", ROOT),
-    envVar: OPENCLAW_SANDBOX_BASE_IMAGE_REF_ENV_VAR,
+    envVar: getAgentSandboxBaseImageEnvVar("openclaw"),
     label: "OpenClaw sandbox base image",
     requireOpenshellSandboxAbi: options.requireOpenshellSandboxAbi === true,
     validateImage: openClawBaseImageHasSecurityInventory,

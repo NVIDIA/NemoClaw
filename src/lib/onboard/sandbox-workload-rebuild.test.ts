@@ -317,26 +317,28 @@ describe("managed workload rebuild preflight", () => {
     expect(Object.isFrozen(handoff?.replacement.source.contract.source)).toBe(true);
   });
 
-  it("keeps a supported Hermes base-image override usable during managed rebuild (#11138)", async () => {
-    // `NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF` is documented as usable during
-    // onboarding *or* rebuild. Managed rebuild keeps its own base-image
-    // preflight and immutable handoff validation, so it must not opt into
-    // onboarding's managed-image override rejection.
-    vi.stubEnv("NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF", "ghcr.io/nvidia/x@sha256:abc");
+  it("rejects a Hermes base-image override before managed rebuild catalog resolution (#11138)", async () => {
+    const credentialBearingOverride =
+      "https://registry-user:registry-password@registry.example.test/hermes-base:latest";
     const prepare = vi.fn(async () => replacement("hermes"));
     managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource = prepare;
+    vi.stubEnv("NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF", credentialBearingOverride);
 
-    const handoff = await prepareManagedWorkloadRebuildHandoff(entry("hermes"), {
-      runtime: runtime(),
-      provider: provider(),
-      version: "0.0.100",
-    });
+    let rejection: Error | null = null;
+    try {
+      await prepareManagedWorkloadRebuildHandoff(entry("hermes"), {
+        runtime: runtime(),
+        provider: provider(),
+        version: "0.0.100",
+      });
+    } catch (error) {
+      rejection = error as Error;
+    }
 
-    expect(handoff?.replacement.source.kind).toBe("managed-image");
-    expect(prepare).toHaveBeenCalledOnce();
-    expect(prepare).toHaveBeenCalledWith(
-      expect.not.objectContaining({ rejectUnsupportedBaseImageOverride: expect.anything() }),
-    );
+    expect(rejection?.message).toContain("'NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF' is set");
+    expect(rejection?.message).not.toContain(credentialBearingOverride);
+    expect(rejection?.message).not.toContain("registry-password");
+    expect(prepare).not.toHaveBeenCalled();
   });
 
   it("retains the live qualification revision during rebuild preflight (#9385)", async () => {
