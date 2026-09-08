@@ -112,6 +112,10 @@ describe("agent variant docs", () => {
       renderAgentVariantPage(pageSource, variant, { sourcePath });
     const gatewayStartRepair =
       "The `start` command repairs the agent runtime and host-side port forwards.";
+    const gatewayStartSuccess =
+      "It returns success only after it authenticates the recovered agent runtime, OpenShell reports the sandbox ready, and host-side port forwards pass their checks.";
+    const gatewayStartFailure =
+      "If a check fails, the command exits nonzero, identifies the failure, and prints recovery guidance before you retry `start`.";
     const terminalRuntimeScope =
       "Deep Agents uses a terminal runtime without an in-sandbox agent gateway or host-side port forward.";
     const forwardPrerequisites =
@@ -120,6 +124,12 @@ describe("agent variant docs", () => {
     expect(render("openclaw")).toContain(gatewayStartRepair);
     expect(render("hermes")).toContain(gatewayStartRepair);
     expect(render("deepagents")).not.toContain(gatewayStartRepair);
+    expect(render("openclaw")).toContain(gatewayStartSuccess);
+    expect(render("hermes")).toContain(gatewayStartSuccess);
+    expect(render("deepagents")).not.toContain(gatewayStartSuccess);
+    expect(render("openclaw")).toContain(gatewayStartFailure);
+    expect(render("hermes")).toContain(gatewayStartFailure);
+    expect(render("deepagents")).not.toContain(gatewayStartFailure);
     expect(render("deepagents")).toContain(terminalRuntimeScope);
     expect(render("deepagents")).toContain(forwardPrerequisites);
     expect(render("openclaw")).not.toContain(terminalRuntimeScope);
