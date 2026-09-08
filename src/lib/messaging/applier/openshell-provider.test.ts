@@ -109,20 +109,11 @@ describe("messaging OpenShell provider application", () => {
   it("reuses an exact provider through typed adapter calls (#9806)", async () => {
     const expected = definition({
       credentials: [{ name: "TELEGRAM_BOT_TOKEN", value: null }],
-      optionalCredentialNames: ["TELEGRAM_BOT_TOKEN_AGENT_A", "TELEGRAM_BOT_TOKEN_AGENT_B"],
     });
     const adapter = providerAdapter({
-      getProvider: vi.fn<OpenShellProviderAdapter["getProvider"]>().mockResolvedValue({
-        ok: true,
-        value: {
-          ...metadata(expected),
-          credentialKeys: [
-            "TELEGRAM_BOT_TOKEN",
-            "TELEGRAM_BOT_TOKEN_AGENT_A",
-            "TELEGRAM_BOT_TOKEN_AGENT_B",
-          ],
-        },
-      }),
+      getProvider: vi
+        .fn<OpenShellProviderAdapter["getProvider"]>()
+        .mockResolvedValue({ ok: true, value: metadata(expected) }),
     });
 
     const result = await applyCredentialsAtOpenShell(plan, {
@@ -267,7 +258,11 @@ describe("messaging OpenShell provider application", () => {
     const builtDefinition = application.definitions[0]!;
     const expected = {
       ...builtDefinition,
-      credentials: [builtDefinition.credentials[1]!, builtDefinition.credentials[0]!],
+      credentials: [
+        builtDefinition.credentials[2]!,
+        builtDefinition.credentials[0]!,
+        builtDefinition.credentials[1]!,
+      ],
     };
     const createdCredentials = expected.credentials.filter(({ value }) => value !== null);
     const adapter = providerAdapter({
@@ -329,10 +324,11 @@ describe("messaging OpenShell provider application", () => {
     expect(adapter.updateProvider).not.toHaveBeenCalled();
     expect(adapter.deleteProvider).not.toHaveBeenCalled();
 
-    const expandedCredentials = [
-      ...expected.credentials,
-      { name: "TELEGRAM_BOT_TOKEN_AGENT_MISSING", value: "telegram-agent-missing-secret" },
-    ];
+    const expandedCredentials = expected.credentials.map((credential) =>
+      credential.name === "TELEGRAM_BOT_TOKEN_AGENT_MISSING"
+        ? { ...credential, value: "telegram-agent-missing-secret" }
+        : credential,
+    );
     vi.mocked(adapter.getProvider)
       .mockReset()
       .mockResolvedValueOnce({

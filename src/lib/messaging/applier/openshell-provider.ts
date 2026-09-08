@@ -667,13 +667,7 @@ function classifyProviderDefinition(
       ? "missing"
       : "indeterminate";
   }
-  // Optional bindings are declared separately when they are absent from the
-  // current credential material. They remain valid on an existing provider,
-  // but must not permit arbitrary stored credentials.
-  const declaredCredentialKeys = new Set([
-    ...definition.credentials.map(({ name }) => name),
-    ...(definition.optionalCredentialNames ?? []),
-  ]);
+  const declaredCredentialKeys = new Set(definition.credentials.map(({ name }) => name));
   const primaryCredentialKey = requiredCredentialKey(definition);
   if (!primaryCredentialKey) return "collision";
   const requiredCredentialKeys = new Set([

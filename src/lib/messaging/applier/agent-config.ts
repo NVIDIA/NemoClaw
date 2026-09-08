@@ -579,36 +579,18 @@ function applyHookBuildFileOutputs(
     if (output.kind !== "build-file") continue;
     const file = readHookBuildFile(output.value);
     const target = resolveHookBuildFileTarget(file.path, plan.agent);
-    const existing = readSandboxFile(plan.sandboxName, target, runOpenshell);
     const contents =
       file.merge !== undefined
-        ? applyStructuredMerge(existing, file.merge, target)
-        : serializeHookBuildFileContent(
-            preserveHookBuildFileCredentialPlaceholders(plan, file.content, existing, target),
+        ? applyStructuredMerge(
+            readSandboxFile(plan.sandboxName, target, runOpenshell),
+            file.merge,
             target,
-          );
+          )
+        : serializeHookBuildFileContent(file.content, target);
     writeSandboxFile(plan.sandboxName, target, contents, runOpenshell, file.mode);
     appliedTargets.push(target);
   }
   return appliedTargets;
-}
-
-function preserveHookBuildFileCredentialPlaceholders(
-  plan: SandboxMessagingPlan,
-  content: MessagingSerializableValue | undefined,
-  existing: string | undefined,
-  target: string,
-): MessagingSerializableValue | undefined {
-  if (content === undefined || existing === undefined) return content;
-  try {
-    const current =
-      target.endsWith(".yaml") || target.endsWith(".yml")
-        ? YAML.parse(existing)
-        : (JSON.parse(existing) as unknown);
-    return preserveCredentialPlaceholders(content, current, credentialPlaceholderRules(plan));
-  } catch {
-    return content;
-  }
 }
 
 function readHookBuildFile(value: MessagingSerializableValue): {

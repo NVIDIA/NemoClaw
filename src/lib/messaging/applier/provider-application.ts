@@ -60,9 +60,6 @@ export function buildMessagingProviderApplication(
       bridgeProfile?.channelId ??
       input.channelIdForCredential?.(tokenDef.envKey, tokenDef.name) ??
       "messaging";
-    const additionalCredentials = (tokenDef.additionalCredentials ?? []).map(
-      ({ envKey, token }) => ({ name: envKey, value: normalizeToken(token) }),
-    );
     definitions.push({
       channelId,
       credentialId: tokenDef.envKey,
@@ -70,13 +67,11 @@ export function buildMessagingProviderApplication(
       providerType,
       credentials: [
         { name: tokenDef.envKey, value: normalizeToken(tokenDef.token) },
-        ...additionalCredentials.filter(
-          (credential): credential is { name: string; value: string } => Boolean(credential.value),
-        ),
+        ...(tokenDef.additionalCredentials ?? []).map(({ envKey, token }) => ({
+          name: envKey,
+          value: normalizeToken(token),
+        })),
       ],
-      ...(additionalCredentials.length > 0
-        ? { optionalCredentialNames: additionalCredentials.map(({ name }) => name) }
-        : {}),
       ...(profile ? { profile } : {}),
     });
     if (bridgeProfile?.strategy) {

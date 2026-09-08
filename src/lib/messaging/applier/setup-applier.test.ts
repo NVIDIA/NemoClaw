@@ -1160,8 +1160,7 @@ describe("MessagingSetupApplier", () => {
     expect(openclawConfig.preserved).toBe(true);
   });
 
-  it("runs post-install hooks without replacing resolved build-file credentials", async () => {
-    const runtimeWechatPlaceholder = "openshell:resolve:env:v42_WECHAT_BOT_TOKEN";
+  it("runs post-install hook implementations and writes their build-file outputs", async () => {
     const plan = await buildOnboardPlan(
       {
         WECHAT_BOT_TOKEN: "wechat-token",
@@ -1192,10 +1191,6 @@ describe("MessagingSetupApplier", () => {
             },
           },
         },
-      }),
-      "/sandbox/.openclaw/openclaw-weixin/accounts/wechat-account.json": JSON.stringify({
-        token: runtimeWechatPlaceholder,
-        savedAt: "2025-12-31T00:00:00.000Z",
       }),
     };
 
@@ -1237,7 +1232,7 @@ describe("MessagingSetupApplier", () => {
     expect(
       JSON.parse(files["/sandbox/.openclaw/openclaw-weixin/accounts/wechat-account.json"] ?? "{}"),
     ).toMatchObject({
-      token: runtimeWechatPlaceholder,
+      token: "openshell:resolve:env:WECHAT_BOT_TOKEN",
       baseUrl: "https://ilinkai.wechat.com",
       userId: "wechat-user",
     });
