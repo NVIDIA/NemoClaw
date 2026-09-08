@@ -352,7 +352,7 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/generation/post-merge-docs.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/pr-review-advisor.yaml")).toEqual([
-      "test/e2e/support/e2e-operations-workflow-boundary.test.ts",
+      "test/e2e/support/pr-review-advisor-workflow-boundary.test.ts",
     ]);
     expect(triggeredBy("tools/pr-review-advisor/openshell-policy.yaml")).toEqual([
       "test/automation/pull-requests/pr-review-advisor-openshell.test.ts",
