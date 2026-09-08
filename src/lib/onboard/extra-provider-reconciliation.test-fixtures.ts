@@ -8,8 +8,8 @@ export type ProbeResult = {
   status: number | null;
   error?: Error;
   output?: unknown;
-  stdout?: unknown;
-  stderr?: unknown;
+  stdout?: string | Buffer | null;
+  stderr?: string | Buffer | null;
 };
 
 export const LIMIT = 64 * 1024;
@@ -25,7 +25,7 @@ export function reconcile(
   recorded: string[],
   responses: Record<string, ProbeResult | (() => ProbeResult)> = {},
   extra: Partial<Parameters<typeof reconcileRegisteredExtraProviders>[1]> = {},
-): string[] {
+): Promise<string[]> {
   return reconcileRegisteredExtraProviders("nemoclaw", {
     listExtraProviders: () => [...recorded],
     removeExtraProvider: () => true,

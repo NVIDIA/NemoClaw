@@ -72,13 +72,13 @@ describe("created sandbox registration authority", () => {
 });
 
 describe("new sandbox cancellation recovery", () => {
-  it("preserves recovery guidance when the durable identity is unavailable (#9833)", () => {
+  it("preserves recovery guidance when the durable identity is unavailable (#9833)", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const runFile = vi.fn();
     const armCancelRollback = vi.fn();
     const markCancellationRecovery = vi.fn();
 
-    expect(() =>
+    await expect(
       completeOrdinaryOnboardSandboxCreation(
         {
           sandboxName: "new-sandbox",
@@ -102,7 +102,7 @@ describe("new sandbox cancellation recovery", () => {
           applyVmDnsMonkeypatch: vi.fn(),
         },
       ),
-    ).toThrow("Sandbox 'new-sandbox' has no exact identity for cancel recovery.");
+    ).rejects.toThrow("Sandbox 'new-sandbox' has no exact identity for cancel recovery.");
 
     const guidance = error.mock.calls.flat().join("\n");
     expect(guidance).toContain("Sandbox 'new-sandbox' was created on gateway 'nemoclaw'");
@@ -650,7 +650,9 @@ describe("created DCode sandbox finalization", () => {
     expect(register).not.toHaveBeenCalled();
     expect(error).toHaveBeenCalledWith(expect.stringContaining("sandbox still exists"));
     expect(error).toHaveBeenCalledWith(expect.stringContaining("rebuild is unsafe"));
-    expect(error).toHaveBeenCalledWith(expect.stringContaining("Recovery remains blocked while this sandbox exists"));
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("Recovery remains blocked while this sandbox exists"),
+    );
     expect(error.mock.calls.flat().join("\n")).not.toContain("openshell sandbox delete");
     expect(error).toHaveBeenCalledWith(expect.stringContaining("nemoclaw onboard"));
   });
@@ -1055,7 +1057,9 @@ describe("created OpenClaw sandbox finalization", () => {
     expect(error).toHaveBeenCalledWith(
       "  State was not restored and registry metadata was not updated.",
     );
-    expect(error).toHaveBeenCalledWith(expect.stringContaining("Recovery remains blocked while this sandbox exists"));
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("Recovery remains blocked while this sandbox exists"),
+    );
     expect(error.mock.calls.flat().join("\n")).not.toContain("openshell sandbox delete");
     expect(error).toHaveBeenCalledWith("  Manual recovery: /tmp/managed-openclaw-backup");
   });
@@ -1102,7 +1106,9 @@ describe("created OpenClaw sandbox finalization", () => {
     expect(error).toHaveBeenCalledWith(
       "  State was not restored and registry metadata was not updated.",
     );
-    expect(error).toHaveBeenCalledWith(expect.stringContaining("Recovery remains blocked while this sandbox exists"));
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("Recovery remains blocked while this sandbox exists"),
+    );
     expect(error.mock.calls.flat().join("\n")).not.toContain("openshell sandbox delete");
     expect(error).toHaveBeenCalledWith(
       "  Then rerun the original `nemoclaw onboard --from <Dockerfile>` command.",
@@ -1158,7 +1164,9 @@ describe("created OpenClaw sandbox finalization", () => {
     expect(error).toHaveBeenCalledWith(
       expect.stringContaining(sandboxState.OPENCLAW_IMAGE_PLUGIN_PROVENANCE_RESTORE_ERROR),
     );
-    expect(error).toHaveBeenCalledWith(expect.stringContaining("Recovery remains blocked while this sandbox exists"));
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("Recovery remains blocked while this sandbox exists"),
+    );
     expect(error.mock.calls.flat().join("\n")).not.toContain("openshell sandbox delete");
     expect(error).toHaveBeenCalledWith(
       "  Then rerun the original `nemoclaw onboard --from <Dockerfile>` command.",

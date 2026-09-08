@@ -26,7 +26,9 @@ type UpsertProvider = (
   credentialEnv: string,
   baseUrl: string | null,
   env?: NodeJS.ProcessEnv,
-) => { ok: boolean; message?: string; status?: number };
+) =>
+  | { ok: boolean; message?: string; status?: number }
+  | Promise<{ ok: boolean; message?: string; status?: number }>;
 
 type SetupInferenceResult = { ok: true; retry?: undefined } | { retry: "selection" };
 
@@ -178,7 +180,7 @@ export async function setupBedrockRuntimeInference(
     return { handled: true, result: { retry: "selection" } };
   }
 
-  const providerResult = options.upsertProvider(
+  const providerResult = await options.upsertProvider(
     options.provider,
     "openai",
     adapter.credentialEnv,

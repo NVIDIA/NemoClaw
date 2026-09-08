@@ -295,13 +295,13 @@ export function createRoutedResumeProviderUpsert(deps: {
   error?: CommonDeps["error"];
   exitProcess?: CommonDeps["exitProcess"];
 }) {
-  return (
+  return async (
     gatewayName: string,
     provider: string,
     endpointUrl: string | null,
     credentialEnv: string | null,
   ) => {
-    const result = upsertRoutedInferenceProvider(provider, endpointUrl, credentialEnv, {
+    const result = await upsertRoutedInferenceProvider(provider, endpointUrl, credentialEnv, {
       upsertProvider: bindOpenAiProviderProfile(
         bindGatewayUpsertProvider(deps.upsertProvider, gatewayName),
         deps.runGatewayOpenshell,

@@ -15,7 +15,7 @@ afterEach(() => {
 });
 
 describe("reconcileRegisteredExtraProviders probe outcomes", () => {
-  it("preserves providers for thrown, timed-out, process-error, and nonstandard probes (#6501)", () => {
+  it("preserves providers for thrown, timed-out, process-error, and nonstandard probes (#6501)", async () => {
     const warn = vi.fn();
     const recorded = [
       "thrown-provider",
@@ -25,7 +25,7 @@ describe("reconcileRegisteredExtraProviders probe outcomes", () => {
     ];
 
     expect(
-      reconcile(
+      await reconcile(
         recorded,
         {
           "thrown-provider": () => {
@@ -50,11 +50,11 @@ describe("reconcileRegisteredExtraProviders probe outcomes", () => {
     ).toEqual(recorded);
     expect(warn).toHaveBeenCalledWith(
       "  Warning: extra-provider reconciliation preserved indeterminate attachments " +
-        "(providerCount=4; reasonClasses=probe-process-error,probe-threw,timeout-or-signal,unexpected-exit).",
+        "(providerCount=4; reasonClasses=ambiguous-diagnostic).",
     );
   });
 
-  it("bounds aggregate probe latency and preserves names left after the deadline (#6501)", () => {
+  it("bounds aggregate probe latency and preserves names left after the deadline (#6501)", async () => {
     let now = 0;
     const timeouts: number[] = [];
     const warn = vi.fn();
@@ -67,7 +67,7 @@ describe("reconcileRegisteredExtraProviders probe outcomes", () => {
     const recorded = ["provider-1", "provider-2", "provider-3", "provider-4", "provider-5"];
 
     expect(
-      reconcileRegisteredExtraProviders("nemoclaw", {
+      await reconcileRegisteredExtraProviders("nemoclaw", {
         listExtraProviders: () => [...recorded],
         nowMs: () => now,
         removeExtraProvider: () => true,
@@ -79,29 +79,29 @@ describe("reconcileRegisteredExtraProviders probe outcomes", () => {
     expect(timeouts).toEqual([5_000, 5_000, 5_000]);
     expect(warn).toHaveBeenCalledWith(
       "  Warning: extra-provider reconciliation preserved indeterminate attachments " +
-        "(providerCount=5; reasonClasses=aggregate-time-budget,timeout-or-signal).",
+        "(providerCount=5; reasonClasses=aggregate-time-budget,ambiguous-diagnostic).",
     );
   });
 
-  it("enforces gateway containment and requires a gateway name before probing (#6501)", () => {
+  it("enforces gateway containment and requires a gateway name before probing (#6501)", async () => {
     const runOpenshell = vi.fn((): ProbeResult => ok());
     vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://other.example.test");
 
-    expect(() =>
+    await expect(
       reconcileRegisteredExtraProviders("nemoclaw", {
         listExtraProviders: () => ["custom-provider"],
         removeExtraProvider: () => true,
         runOpenshell,
       }),
-    ).toThrow(/OPENSHELL_GATEWAY_ENDPOINT is set/);
+    ).rejects.toThrow(/OPENSHELL_GATEWAY_ENDPOINT is set/);
     vi.unstubAllEnvs();
-    expect(() =>
+    await expect(
       reconcileRegisteredExtraProviders("", {
         listExtraProviders: () => ["custom-provider"],
         removeExtraProvider: () => true,
         runOpenshell,
       }),
-    ).toThrow("OpenShell gateway name is required.");
+    ).rejects.toThrow("OpenShell gateway name is required.");
     expect(runOpenshell).not.toHaveBeenCalled();
   });
 });

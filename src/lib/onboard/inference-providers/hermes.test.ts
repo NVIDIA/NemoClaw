@@ -76,6 +76,7 @@ describe("setupHermesProviderInference smoke verification", () => {
     });
 
     const setup = setupHermesProviderInference(makeArgs(null), deps as never);
+    await Promise.resolve();
 
     expect(deps.verifyOnboardInferenceSmoke).toHaveBeenCalledOnce();
     expect(deps.registry.updateSandbox).not.toHaveBeenCalled();

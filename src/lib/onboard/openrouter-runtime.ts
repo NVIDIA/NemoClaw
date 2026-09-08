@@ -19,7 +19,9 @@ type UpsertProvider = (
   credentialEnv: string,
   baseUrl: string | null,
   env?: NodeJS.ProcessEnv,
-) => { ok: boolean; message?: string; status?: number };
+) =>
+  | { ok: boolean; message?: string; status?: number }
+  | Promise<{ ok: boolean; message?: string; status?: number }>;
 
 type SetupInferenceResult = { ok: true; retry?: undefined } | { retry: "selection" };
 
@@ -83,7 +85,7 @@ export async function setupOpenRouterRuntimeInference(
   }
 
   const env = options.credentialValue ? { [credentialEnv]: options.credentialValue } : {};
-  const providerResult = options.upsertProvider(
+  const providerResult = await options.upsertProvider(
     options.provider,
     "openai",
     credentialEnv,

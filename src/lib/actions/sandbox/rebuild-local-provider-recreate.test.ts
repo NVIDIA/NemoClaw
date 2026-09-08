@@ -174,7 +174,10 @@ describe("rebuild local-provider recreation", () => {
           : {
               status: args[0] === "provider" && args[1] === "get" ? 1 : 0,
               stdout: "",
-              stderr: "",
+              stderr:
+                args[0] === "provider" && args[1] === "get"
+                  ? `provider '${provider}' not found`
+                  : "",
             };
       });
       const liveSource = "Name: alpha\nId: sbx-alpha-source\nPhase: Ready\n";

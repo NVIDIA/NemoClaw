@@ -137,7 +137,7 @@ describe("gateway-scoped onboarding OpenShell commands", () => {
     );
   });
 
-  it("registers the OpenAI profile before a routed resume provider mutation (#10155)", () => {
+  it("registers the OpenAI profile before a routed resume provider mutation (#10155)", async () => {
     const events: string[] = [];
     const results = [
       {
@@ -177,7 +177,7 @@ describe("gateway-scoped onboarding OpenShell commands", () => {
     });
 
     expect(
-      reupsertRoutedProvider(
+      await reupsertRoutedProvider(
         GATEWAY,
         "nvidia-router",
         "http://host.openshell.internal:4000/v1",
@@ -206,7 +206,7 @@ describe("gateway-scoped onboarding OpenShell commands", () => {
     );
   });
 
-  it("blocks a routed resume provider mutation when OpenAI profile import fails (#10155)", () => {
+  it("blocks a routed resume provider mutation when OpenAI profile import fails (#10155)", async () => {
     const sensitiveDiagnostic = "unauthorized nvapi-TEST-NOT-A-REAL-VALUE";
     const results = [
       {
@@ -229,14 +229,14 @@ describe("gateway-scoped onboarding OpenShell commands", () => {
       },
     });
 
-    expect(() =>
+    await expect(
       reupsertRoutedProvider(
         GATEWAY,
         "nvidia-router",
         "http://host.openshell.internal:4000/v1",
         "NVIDIA_INFERENCE_API_KEY",
       ),
-    ).toThrow("exit 1");
+    ).rejects.toThrow("exit 1");
 
     expect(upsert).not.toHaveBeenCalled();
     expect(run).toHaveBeenCalledTimes(2);
