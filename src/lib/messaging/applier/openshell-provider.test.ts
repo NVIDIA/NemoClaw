@@ -224,12 +224,12 @@ describe("messaging OpenShell provider application", () => {
   it("omits an absent optional credential when creating a provider (#11190)", async () => {
     const expected = definition({
       credentials: [
+        { name: "TELEGRAM_BOT_TOKEN_AGENT_MISSING", value: null },
         { name: "TELEGRAM_BOT_TOKEN", value: "telegram-secret" },
         { name: "TELEGRAM_BOT_TOKEN_AGENT_A", value: "telegram-agent-a-secret" },
-        { name: "TELEGRAM_BOT_TOKEN_AGENT_MISSING", value: null },
       ],
     });
-    const createdCredentials = expected.credentials.slice(0, 2);
+    const createdCredentials = expected.credentials.filter(({ value }) => value !== null);
     const adapter = providerAdapter({
       getProvider: vi
         .fn<OpenShellProviderAdapter["getProvider"]>()
@@ -370,14 +370,23 @@ describe("messaging OpenShell provider application", () => {
   });
 
   it("replaces an authorized provider and attaches the recreated provider (#9806)", async () => {
-    const expected = definition();
+    const expected = definition({
+      credentials: [
+        { name: "TELEGRAM_BOT_TOKEN", value: "telegram-secret" },
+        { name: "TELEGRAM_BOT_TOKEN_AGENT_MISSING", value: null },
+      ],
+    });
+    const createdCredentials = expected.credentials.filter(({ value }) => value !== null);
     const getProvider = vi
       .fn<OpenShellProviderAdapter["getProvider"]>()
       .mockResolvedValueOnce({
         ok: true,
         value: { ...metadata(expected), type: "generic" },
       })
-      .mockResolvedValueOnce({ ok: true, value: metadata(expected) });
+      .mockResolvedValueOnce({
+        ok: true,
+        value: metadata({ ...expected, credentials: createdCredentials }),
+      });
     const deleteProvider = vi
       .fn<OpenShellProviderAdapter["deleteProvider"]>()
       .mockResolvedValueOnce({
@@ -412,7 +421,7 @@ describe("messaging OpenShell provider application", () => {
       target,
       name: expected.providerName,
       type: expected.providerType,
-      credentials: expected.credentials,
+      credentials: createdCredentials,
       config: [],
       fromExisting: false,
     });

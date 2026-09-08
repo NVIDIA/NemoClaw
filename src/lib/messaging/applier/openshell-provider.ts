@@ -109,17 +109,18 @@ export async function applyCredentialsAtOpenShell(
       providerName: definition.providerName,
     });
     const state = classifyProviderDefinition(observed, definition, true);
-    const credentialAvailability = definition.credentials.map(({ value }) => Boolean(value));
-    const hasAnyCredential = credentialAvailability.some(Boolean);
-    const hasEveryCredential = credentialAvailability.every(Boolean);
-    const hasPrimaryCredential = Boolean(definition.credentials[0]?.value);
+    const primaryCredentialKey = requiredCredentialKey(definition);
+    const hasAnyCredential = definition.credentials.some(({ value }) => Boolean(value));
+    const hasPrimaryCredential = definition.credentials.some(
+      ({ name, value }) => name === primaryCredentialKey && Boolean(value),
+    );
     states.set(definition.providerName, state);
     if (state === "indeterminate") {
       throw new MessagingProviderApplyError({
         message: `Could not inspect messaging provider '${definition.providerName}': ${providerFailureMessage(observed)}`,
       });
     }
-    if (state === "collision" && (!options.replaceExisting || !hasEveryCredential)) {
+    if (state === "collision" && (!options.replaceExisting || !hasPrimaryCredential)) {
       throw bindingConflict(definition);
     }
     if (state === "missing" && hasAnyCredential && !hasPrimaryCredential) {
@@ -537,6 +538,7 @@ function assertUniqueDefinitions(
     if (
       (definition.profile && definition.profile.profileType !== definition.providerType) ||
       definition.credentials.length === 0 ||
+      !requiredCredentialKey(definition) ||
       new Set(definition.credentials.map(({ name }) => name)).size !== definition.credentials.length
     ) {
       throw new MessagingProviderApplyError({
@@ -552,6 +554,15 @@ function assertUniqueDefinitions(
     }
     profilePaths.set(definition.profile.profileType, definition.profile.profilePath);
   }
+}
+
+function requiredCredentialKey(
+  definition: MessagingCredentialProviderEphemeralInput,
+): string | null {
+  if (definition.credentials.some(({ name }) => name === definition.credentialId)) {
+    return definition.credentialId;
+  }
+  return definition.credentials.length === 1 ? (definition.credentials[0]?.name ?? null) : null;
 }
 
 function assertRefreshDefinitions(
@@ -657,14 +668,19 @@ function classifyProviderDefinition(
       : "indeterminate";
   }
   const declaredCredentialKeys = new Set(definition.credentials.map(({ name }) => name));
-  const requiredCredentialKeys = new Set(
-    definition.credentials
+  const primaryCredentialKey = requiredCredentialKey(definition);
+  if (!primaryCredentialKey) return "collision";
+  const requiredCredentialKeys = new Set([
+    primaryCredentialKey,
+    ...definition.credentials
       .filter(
-        ({ value }, index) =>
-          index === 0 || (!allowMissingPresentCredentials && Boolean(value)),
+        ({ name, value }) =>
+          name !== primaryCredentialKey &&
+          !allowMissingPresentCredentials &&
+          Boolean(value),
       )
       .map(({ name }) => name),
-  );
+  ]);
   const actualCredentialKeys = new Set(result.value.credentialKeys);
   return result.value.name === definition.providerName &&
     result.value.type === definition.providerType &&
