@@ -46,6 +46,12 @@ if (process.env.NEMOCLAW_TEST_FORWARD_SERVICE_FIXTURE === "1") {
         return ready;
       };
     }
+    if (
+      resolved.includes(`${path.sep}adapters${path.sep}openshell${path.sep}forward-service.`) &&
+      typeof loaded?.isForwardServiceListenerOwner === "function"
+    ) {
+      loaded.isForwardServiceListenerOwner = () => true;
+    }
     return loaded;
   };
 }
