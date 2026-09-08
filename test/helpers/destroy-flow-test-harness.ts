@@ -129,6 +129,7 @@ type DestroyHarnessOptions = {
   replaceSessionAfterRegistryRemoval?: boolean;
   removeSandboxResult?: boolean;
   restoreMcpError?: string;
+  sandboxListResult?: { status: number | null; stdout?: string; stderr?: string };
   sandboxPresent?: boolean;
   sessionRouterPid?: number;
   stopInferenceError?: string;
@@ -477,11 +478,13 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
         };
       case "sandbox:list":
         gatewayPinsAtSandboxList.push(process.env.OPENSHELL_GATEWAY);
-        return {
-          status: 0,
-          stdout: sandboxListJson(sandboxPresent ? ["alpha"] : []),
-          stderr: "",
-        };
+        return (
+          options.sandboxListResult ?? {
+            status: 0,
+            stdout: sandboxListJson(sandboxPresent ? ["alpha"] : []),
+            stderr: "",
+          }
+        );
       case "sandbox:delete":
         events.push("delete");
         sandboxPresent = false;
