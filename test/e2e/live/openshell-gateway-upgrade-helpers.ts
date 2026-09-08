@@ -18,9 +18,7 @@ export interface LegacyGatewayUpgradeFixture {
   sandboxBaseImageRef: string;
 }
 
-export function validateLegacyGatewayUpgradeFixture(fixture: LegacyGatewayUpgradeFixture): {
-  sandboxBaseDigest: string;
-} {
+export function validateLegacyGatewayUpgradeFixture(fixture: LegacyGatewayUpgradeFixture): void {
   if (!/^v\d+\.\d+\.\d+$/.test(fixture.nemoclawRef)) {
     throw new Error(`NEMOCLAW_OLD_NEMOCLAW_REF must be a release tag; got ${fixture.nemoclawRef}`);
   }
@@ -58,7 +56,6 @@ export function validateLegacyGatewayUpgradeFixture(fixture: LegacyGatewayUpgrad
       `NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF must match the reviewed descriptor and use a digest pin; got ${fixture.sandboxBaseImageRef}`,
     );
   }
-  return { sandboxBaseDigest };
 }
 
 export function oldGatewayUpgradeInstallerArgs(installer: string): string[] {

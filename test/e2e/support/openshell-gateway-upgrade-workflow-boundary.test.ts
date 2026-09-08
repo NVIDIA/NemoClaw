@@ -181,9 +181,7 @@ describe("OpenShell gateway upgrade boundary", () => {
       sandboxBaseImageRef: REVIEWED_GATEWAY_UPGRADE_FIXTURE.sandboxBaseImageRef,
     };
 
-    expect(validateLegacyGatewayUpgradeFixture(fixture)).toEqual({
-      sandboxBaseDigest: REVIEWED_GATEWAY_UPGRADE_FIXTURE.sandboxBaseImageRef.split("@sha256:")[1],
-    });
+    validateLegacyGatewayUpgradeFixture(fixture);
     expect(() =>
       validateLegacyGatewayUpgradeFixture({
         ...fixture,
