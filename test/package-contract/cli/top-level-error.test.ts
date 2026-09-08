@@ -462,6 +462,49 @@ complete_automatic_gateway_port_selection`,
     }
   });
 
+  it("rejects an automatic gateway marker below a group-writable ancestor (#10824)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-writable-root-"));
+    try {
+      const gateways = path.join(home, ".nemoclaw", "gateways");
+      const marker = path.join(gateways, "8990", "automatic-gateway-port");
+      fs.mkdirSync(path.dirname(marker), { recursive: true, mode: 0o700 });
+      fs.writeFileSync(marker, "8990\n", { mode: 0o600 });
+      fs.chmodSync(gateways, 0o770);
+
+      const result = runWithCapturedGatewayPort(home);
+
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain(
+        "Could not safely resolve the automatically selected NemoClaw gateway port",
+      );
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a group-writable automatic gateway marker file (#10824)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-writable-marker-"));
+    try {
+      const marker = path.join(home, ".nemoclaw", "gateways", "8990", "automatic-gateway-port");
+      fs.mkdirSync(path.dirname(marker), { recursive: true, mode: 0o700 });
+      fs.writeFileSync(marker, "8990\n", { mode: 0o660 });
+      fs.chmodSync(marker, 0o660);
+
+      const result = runWithCapturedGatewayPort(home);
+
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain(
+        "Could not safely resolve the automatically selected NemoClaw gateway port",
+      );
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("ignores an inherited BASH_ENV while resolving an automatic marker (#10824)", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-bash-env-port-"));
     try {

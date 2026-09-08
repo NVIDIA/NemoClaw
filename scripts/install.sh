@@ -289,6 +289,23 @@ resolve_nemoclaw_gateway_port() {
   printf "%s" "$port"
 }
 
+automatic_gateway_port_path_is_trusted() {
+  local path="${1:-}" metadata owner mode current_uid mode_value
+  if metadata="$(stat -c '%u %a' -- "$path" 2>/dev/null)"; then
+    :
+  elif metadata="$(stat -f '%u %Lp' "$path" 2>/dev/null)"; then
+    :
+  else
+    return 1
+  fi
+  read -r owner mode <<<"$metadata"
+  current_uid="${UID:-$(id -u 2>/dev/null)}"
+  [[ "$owner" =~ ^[0-9]+$ && "$owner" == "$current_uid" ]] || return 1
+  [[ "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
+  mode_value=$((8#$mode))
+  (((mode_value & 18) == 0))
+}
+
 resolve_persisted_automatic_gateway_port() {
   local root gateways_dir marker state_dir port marker_value marker_size expected_size
   local selected_port="" marker_count=0
@@ -296,12 +313,14 @@ resolve_persisted_automatic_gateway_port() {
   if [[ ! -e "$root" && ! -L "$root" ]]; then return 1; fi
   if [[ -L "$root" ]]; then return 3; fi
   if [[ ! -d "$root" || ! -r "$root" || ! -x "$root" ]]; then return 2; fi
+  automatic_gateway_port_path_is_trusted "$root" || return 2
   gateways_dir="${root}/gateways"
   if [[ ! -e "$gateways_dir" && ! -L "$gateways_dir" ]]; then return 1; fi
   if [[ -L "$gateways_dir" ]]; then return 3; fi
   if [[ ! -d "$gateways_dir" || ! -r "$gateways_dir" || ! -x "$gateways_dir" ]]; then
     return 2
   fi
+  automatic_gateway_port_path_is_trusted "$gateways_dir" || return 2
   for marker in "$gateways_dir"/*/automatic-gateway-port "$gateways_dir"/*/automatic-gateway-port.pending; do
     if [[ ! -e "$marker" && ! -L "$marker" ]]; then continue; fi
     state_dir="${marker%/automatic-gateway-port*}"
@@ -310,11 +329,13 @@ resolve_persisted_automatic_gateway_port() {
     if [[ ! -d "$state_dir" || ! -r "$state_dir" || ! -x "$state_dir" ]]; then
       return 2
     fi
+    automatic_gateway_port_path_is_trusted "$state_dir" || return 2
     case "$port" in
       899[0-9] | 900[0-5]) ;;
       *) return 2 ;;
     esac
     if [[ -L "$marker" || ! -f "$marker" || ! -r "$marker" ]]; then return 2; fi
+    automatic_gateway_port_path_is_trusted "$marker" || return 2
     marker_size="$(LC_ALL=C wc -c <"$marker" 2>/dev/null)" || return 2
     marker_size="${marker_size//[[:space:]]/}"
     expected_size=$((${#port} + 1))
