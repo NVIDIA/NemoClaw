@@ -1161,9 +1161,13 @@ describe("destroySandbox flow", () => {
 
     await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
 
-    expect(harness.prepareMcpBridgesForDestroySpy).toHaveBeenCalledWith("alpha", {
-      force: false,
-    });
+    expect(harness.prepareMcpBridgesForDestroySpy).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        force: false,
+        sandbox: expect.objectContaining({ name: "alpha" }),
+      }),
+    );
     expect(harness.mcpRuntimeSelectionSpy).not.toHaveBeenCalled();
   });
 
