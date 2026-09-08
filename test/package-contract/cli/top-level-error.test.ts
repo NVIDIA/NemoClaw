@@ -387,6 +387,21 @@ complete_automatic_gateway_port_selection`,
     }
   });
 
+  it("clears reserved automatic provenance for an operator-provided gateway port (#10824)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-installer-port-"));
+    try {
+      const result = runWithCapturedGatewayPort(home, "8990", {
+        _NEMOCLAW_AUTOMATIC_GATEWAY_PORT: "1",
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toBe("8990:");
+      expect(result.stderr).toBe("");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("rejects ambiguous automatic gateway markers before loading the CLI (#10824)", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-ambiguous-port-"));
     try {

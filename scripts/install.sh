@@ -356,10 +356,15 @@ resolve_persisted_automatic_gateway_port() {
 
 apply_persisted_automatic_gateway_port() {
   local persisted_port persisted_status
-  [[ -z "${NEMOCLAW_GATEWAY_PORT:-}" ]] || return 0
+  if [[ -n "${NEMOCLAW_GATEWAY_PORT:-}" ]]; then
+    unset _NEMOCLAW_AUTOMATIC_GATEWAY_PORT
+    return 0
+  fi
+  unset _NEMOCLAW_AUTOMATIC_GATEWAY_PORT
   if persisted_port="$(resolve_persisted_automatic_gateway_port)"; then
     NEMOCLAW_GATEWAY_PORT="$persisted_port"
-    export NEMOCLAW_GATEWAY_PORT
+    _NEMOCLAW_AUTOMATIC_GATEWAY_PORT=1
+    export NEMOCLAW_GATEWAY_PORT _NEMOCLAW_AUTOMATIC_GATEWAY_PORT
     return 0
   else
     persisted_status=$?
@@ -375,6 +380,7 @@ is_explicit_nemoclaw_gateway_port() {
   local raw="${NEMOCLAW_GATEWAY_PORT:-}"
   raw="${raw#"${raw%%[![:space:]]*}"}"
   raw="${raw%"${raw##*[![:space:]]}"}"
+  [[ "${_NEMOCLAW_AUTOMATIC_GATEWAY_PORT:-}" == "1" ]] && return 1
   [[ -n "$raw" ]]
 }
 
@@ -2001,7 +2007,8 @@ install_nemoclaw_openshell_gateway_user_service() {
       local alternate_port
       if alternate_port="$(find_safe_alternate_gateway_port)"; then
         NEMOCLAW_GATEWAY_PORT="$alternate_port"
-        export NEMOCLAW_GATEWAY_PORT
+        _NEMOCLAW_AUTOMATIC_GATEWAY_PORT=1
+        export NEMOCLAW_GATEWAY_PORT _NEMOCLAW_AUTOMATIC_GATEWAY_PORT
         persist_pending_automatic_gateway_port_selection
         warn "The systemd user manager is unavailable, but $activation_path can activate a gateway user service that can later claim port 8080. Automatically selected safe alternate gateway port ${alternate_port} to isolate the gateway environment without modifying the existing service."
         return 0

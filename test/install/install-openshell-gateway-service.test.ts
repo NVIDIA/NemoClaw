@@ -612,12 +612,13 @@ describe("install.sh OpenShell gateway service", () => {
     const successfulCli = path.join(home, "successful-nemoclaw");
     writeExecutable(
       successfulCli,
-      '#!/usr/bin/env bash\nprintf "SELECTED_PORT=%s ARGS=%s\\n" "$NEMOCLAW_GATEWAY_PORT" "$*"\n',
+      '#!/usr/bin/env bash\nprintf "SELECTED_PORT=%s AUTOMATIC=%s ARGS=%s\\n" "$NEMOCLAW_GATEWAY_PORT" "$_NEMOCLAW_AUTOMATIC_GATEWAY_PORT" "$*"\n',
     );
     const retried = runInstallHelper(
       home,
       qualifiedInstallBody(fixture, [
         "apply_persisted_automatic_gateway_port",
+        'if is_explicit_nemoclaw_gateway_port; then printf "PORT_PROVENANCE=explicit\\n"; else printf "PORT_PROVENANCE=automatic\\n"; fi',
         "install_nemoclaw_openshell_gateway_user_service",
         "show_usage_notice() { :; }",
         `NON_INTERACTIVE=1 _CLI_PATH=${JSON.stringify(successfulCli)} run_onboard`,
@@ -628,8 +629,11 @@ describe("install.sh OpenShell gateway service", () => {
     );
 
     expect(retried.status, retried.stderr).toBe(0);
+    expect(retried.stdout).toContain("PORT_PROVENANCE=automatic");
     expect(retried.stdout).toContain("Found an interrupted onboarding session — resuming it");
-    expect(retried.stdout).toContain("SELECTED_PORT=8990 ARGS=onboard --resume");
+    expect(retried.stdout).toContain(
+      "SELECTED_PORT=8990 AUTOMATIC=1 ARGS=onboard --resume",
+    );
     expect(
       fs.readFileSync(
         path.join(home, ".nemoclaw", "gateways", "8990", "automatic-gateway-port"),
