@@ -63,6 +63,59 @@ export const ADVISOR_REPAIR_PREREQUISITE_WORKFLOWS = ["openshell-sdk-package-pr.
 const ADVISOR_REPAIR_E2E_WORKFLOW = "e2e.yaml";
 const ADVISOR_REPAIR_E2E_CHECK = "advisor-repair-risk-plan-e2e";
 
+// GitHub exposes resolved job display names, not workflow job IDs. Keep the
+// Phase 1 repair allowlist bound to the exact trusted E2E executions that each
+// current risk-plan ID selects. An unknown future ID fails closed until this
+// evidence map and its regression coverage are deliberately extended.
+export const ADVISOR_REPAIR_E2E_JOB_NAMES = {
+  "channels-add-remove": [
+    "Messaging: adds and removes Telegram configuration (docker) / no provider credential",
+  ],
+  "channels-stop-start": [
+    "Messaging: OpenClaw preserves channels across stop and start (docker) / NVIDIA inference API key",
+    "Messaging: Hermes preserves channels across stop and start (docker) / NVIDIA inference API key",
+  ],
+  "cloud-inference": [
+    "Inference: OpenClaw uses hosted inference (docker) / NVIDIA inference API key",
+  ],
+  "cloud-onboard": ["Cloud onboard (docker)"],
+  "full-e2e": [
+    "OpenClaw: installs, onboards, and completes an agent turn (docker) / NVIDIA inference API key",
+  ],
+  "hermes-e2e": ["Hermes E2E (docker)"],
+  "hermes-inference-switch": [
+    "Inference: Hermes switches to an Anthropic-compatible endpoint (docker) / no provider credential",
+  ],
+  "inference-routing": [
+    "Inference: rejects unsafe routes and proves runtime identities (docker) / no provider credential",
+  ],
+  "llama-cpp-dgx-spark-qualification": ["Protected llama.cpp on NVIDIA DGX Spark"],
+  "managed-image-multiarch-startup": [
+    "Protected managed-image startup (linux/amd64)",
+    "Protected managed-image startup (linux/arm64)",
+  ],
+  "managed-image-protected-runtime": ["Protected managed-image GPU and local inference"],
+  "network-policy": [
+    "Network policy: enforces restricted allow and deny rules (docker) / NVIDIA inference API key",
+  ],
+  "onboard-repair": [
+    "Onboarding: repairs a missing sandbox and rejects conflicting resume input (docker) / no provider credential",
+  ],
+  "onboard-resume": [
+    "Onboarding: resumes interrupted setup from recorded progress (docker) / no provider credential",
+  ],
+  "rebuild-openclaw": [
+    "Rebuild: preserves OpenClaw state and rotates the gateway token (docker) / NVIDIA inference API key",
+  ],
+  "security-posture": [
+    "Security: OpenClaw retains the required sandbox posture (docker) / NVIDIA inference API key",
+    "Security: Hermes retains the required sandbox posture (docker) / NVIDIA inference API key",
+  ],
+  "state-backup-restore": [
+    "Backup: restores workspace files and memory (docker) / NVIDIA inference API key",
+  ],
+} as const satisfies Record<string, readonly string[]>;
+
 type WorkflowRun = {
   id?: unknown;
   event?: unknown;
@@ -103,6 +156,7 @@ type AdvisorRepairE2eEvidence = AdvisorRepairE2eDispatch & {
   receipt: { name: string; url: string };
   generateMatrix: { name: "generate-matrix"; url: string };
   requiredJobs: string[];
+  jobs: Array<{ name: string; url: string }>;
 };
 
 type AdvisorRepairRiskPlan = {
@@ -481,6 +535,42 @@ async function listE2eJobs(runId: number, request: GitHubRequest): Promise<Workf
   throw new RepairError("generated-head E2E job listing exceeds one thousand jobs");
 }
 
+function requiredE2eJobEvidence(
+  jobs: readonly WorkflowJob[],
+  requiredJobs: readonly string[],
+  runUrl: string,
+): Array<{ name: string; url: string }> {
+  if (new Set(requiredJobs).size !== requiredJobs.length)
+    throw new RepairError("generated-head E2E required job list is invalid");
+  const expectedNames = requiredJobs.flatMap((requiredJob) => {
+    const names =
+      ADVISOR_REPAIR_E2E_JOB_NAMES[requiredJob as keyof typeof ADVISOR_REPAIR_E2E_JOB_NAMES];
+    if (!names)
+      throw new RepairError(
+        `generated-head E2E job ${requiredJob} has no trusted evidence mapping`,
+      );
+    return [...names];
+  });
+  if (new Set(expectedNames).size !== expectedNames.length)
+    throw new RepairError("generated-head E2E evidence mapping is ambiguous");
+  return expectedNames.map((name) => {
+    const matches = jobs.filter((job) => job.name === name);
+    if (matches.length !== 1) throw new RepairError(`generated-head E2E job ${name} is ambiguous`);
+    const [job] = matches;
+    if (
+      job.status !== "completed" ||
+      job.conclusion !== "success" ||
+      job.run_attempt !== 1 ||
+      !Number.isSafeInteger(job.id) ||
+      Number(job.id) < 1 ||
+      typeof job.html_url !== "string" ||
+      !job.html_url.startsWith(`${runUrl}/job/`)
+    )
+      throw new RepairError(`generated-head E2E job ${name} did not succeed`);
+    return { name, url: job.html_url };
+  });
+}
+
 async function completedE2eEvidence(
   dispatch: AdvisorRepairE2eDispatch,
   input: {
@@ -523,6 +613,7 @@ async function completedE2eEvidence(
     !generateMatrixJob.html_url.startsWith(`${url}/job/`)
   )
     throw new RepairError("generated-head E2E generate-matrix job did not succeed");
+  const requiredJobEvidence = requiredE2eJobEvidence(jobs, input.requiredJobs, url);
   const artifactName = `e2e-dispatch-${dispatch.runId}-1`;
   return {
     ...dispatch,
@@ -531,6 +622,7 @@ async function completedE2eEvidence(
     receipt: { name: artifactName, url },
     generateMatrix: { name: "generate-matrix", url: generateMatrixJob.html_url },
     requiredJobs: [...input.requiredJobs],
+    jobs: requiredJobEvidence,
   };
 }
 

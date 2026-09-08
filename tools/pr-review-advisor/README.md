@@ -67,9 +67,11 @@ The generated-head request carries the sealed validation receipt, and reconcilia
 attempt, workflow, source head, base, finding IDs, and selected paths to match the trusted selection.
 The reporter rebuilds the checked-in risk plan from the receipt's changed paths and the generated
 SHA. When that plan requires E2E jobs, it dispatches only those jobs through the trusted `main`
-workflow and requires the exact run to succeed. The version 2 generated-head receipt records the
-risk plan, optional E2E evidence, workflow evidence, and published checks. Required E2E evidence is
-represented by one `advisor-repair-risk-plan-e2e` aggregate check on the generated commit.
+workflow. Every job name mapped from a selected risk-plan job must have one successful, completed
+job record in that run. Missing, skipped, failed, duplicate, or unmapped job evidence fails closed.
+The version 2 generated-head receipt records the risk plan, each required job URL, workflow evidence,
+and published checks. One `advisor-repair-risk-plan-e2e` check represents the complete successful
+E2E set on the generated commit.
 
 Trusted selection accepts a finding only when its specialist and path match one of these pairs and
 its exclusion list is empty:

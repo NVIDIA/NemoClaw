@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
 import {
+  ADVISOR_REPAIR_E2E_JOB_NAMES,
   ADVISOR_REPAIR_HEAD_WORKFLOWS,
   ADVISOR_REPAIR_PREREQUISITE_WORKFLOWS,
   advisorRepairE2eDispatchRequest,
@@ -190,6 +191,7 @@ describe("PR Review Advisor generated-head evidence", () => {
     let changedPaths: string[] = [];
     let e2eConclusion = "success";
     let e2eMatrixConclusion = "success";
+    let e2eJobMode: "duplicate" | "failure" | "missing" | "skipped" | "success" = "success";
     const e2eRunId = 99;
     const e2eCorrelationId = "01234567-89ab-4cde-8fab-0123456789ab";
     const e2eUrl = `https://github.com/${selection.repository}/actions/runs/${e2eRunId}`;
@@ -263,9 +265,34 @@ describe("PR Review Advisor generated-head evidence", () => {
               html_url: e2eUrl,
               run_attempt: 1,
             };
-          case method === "GET" && apiPath.includes(`/actions/runs/${e2eRunId}/attempts/1/jobs`):
+          case method === "GET" && apiPath.includes(`/actions/runs/${e2eRunId}/attempts/1/jobs`): {
+            const successfulRequiredE2eJobs = [
+              ...ADVISOR_REPAIR_E2E_JOB_NAMES["onboard-repair"],
+              ...ADVISOR_REPAIR_E2E_JOB_NAMES["onboard-resume"],
+            ].map((name, index) => ({
+              id: 992 + index,
+              name,
+              status: "completed",
+              conclusion: "success",
+              html_url: `${e2eUrl}/job/${992 + index}`,
+              run_attempt: 1,
+            }));
+            const firstRequiredE2eJob = successfulRequiredE2eJobs[0]!;
+            const requiredE2eJobs = {
+              duplicate: [...successfulRequiredE2eJobs, { ...firstRequiredE2eJob }],
+              failure: [
+                { ...firstRequiredE2eJob, conclusion: "failure" },
+                ...successfulRequiredE2eJobs.slice(1),
+              ],
+              missing: successfulRequiredE2eJobs.slice(1),
+              skipped: [
+                { ...firstRequiredE2eJob, conclusion: "skipped" },
+                ...successfulRequiredE2eJobs.slice(1),
+              ],
+              success: successfulRequiredE2eJobs,
+            }[e2eJobMode];
             return {
-              total_count: 1,
+              total_count: 1 + requiredE2eJobs.length,
               jobs: [
                 {
                   id: 991,
@@ -275,8 +302,10 @@ describe("PR Review Advisor generated-head evidence", () => {
                   html_url: `${e2eUrl}/job/991`,
                   run_attempt: 1,
                 },
+                ...requiredE2eJobs,
               ],
             };
+          }
           case method === "GET" && runMatch !== null: {
             const runId = Number(runMatch[1]);
             const specification = ADVISOR_REPAIR_HEAD_WORKFLOWS[runId - 1];
@@ -390,6 +419,10 @@ describe("PR Review Advisor generated-head evidence", () => {
         runId: e2eRunId,
         receipt: { name: `e2e-dispatch-${e2eRunId}-1` },
         requiredJobs: ["onboard-repair", "onboard-resume"],
+        jobs: [
+          { name: ADVISOR_REPAIR_E2E_JOB_NAMES["onboard-repair"][0] },
+          { name: ADVISOR_REPAIR_E2E_JOB_NAMES["onboard-resume"][0] },
+        ],
       },
       checks: { length: 6 },
     });
@@ -409,6 +442,19 @@ describe("PR Review Advisor generated-head evidence", () => {
     await expect(verify()).rejects.toThrow(
       "generated-head E2E generate-matrix job did not succeed",
     );
+    e2eMatrixConclusion = "success";
+    e2eJobMode = "missing";
+    dispatchedWorkflows.clear();
+    await expect(verify()).rejects.toThrow("generated-head E2E job");
+    e2eJobMode = "skipped";
+    dispatchedWorkflows.clear();
+    await expect(verify()).rejects.toThrow("generated-head E2E job");
+    e2eJobMode = "failure";
+    dispatchedWorkflows.clear();
+    await expect(verify()).rejects.toThrow("generated-head E2E job");
+    e2eJobMode = "duplicate";
+    dispatchedWorkflows.clear();
+    await expect(verify()).rejects.toThrow("generated-head E2E job");
   });
 
   it("dispatches only the trusted exact generated-head E2E selection (#10791)", () => {
