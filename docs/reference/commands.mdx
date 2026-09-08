@@ -3276,6 +3276,9 @@ If a sandbox is named `doctor`, bare `$$nemoclaw doctor` connects to that sandbo
 $$nemoclaw doctor [--json | --text]
 ```
 
+Do not combine `--json` and `--text`.
+The command exits with status `2`, writes a JSON error to standard output, and writes the conflict to standard error.
+
 The command exits nonzero when a required check fails.
 Pass `--json` for a redacted, schema-versioned report with `scope: "global"` and no sandbox field.
 
