@@ -44,6 +44,18 @@ describe("getLlamaCppRouteDetails", () => {
     ).toEqual({ kind: "managed" });
   });
 
+  it.each([
+    { servingProfileProvenance: { recipe: { backend: "install-llama-cpp" } } },
+    { hostLocalInferenceProvenance: {} },
+  ])("does not let persisted provenance bypass unreadable ownership %#", (provenance) => {
+    expect(
+      getLlamaCppRouteDetails(
+        { name: "managed", provider: "llama-cpp-local", ...provenance } as never,
+        () => "unknown",
+      ),
+    ).toMatchObject({ kind: "unavailable" });
+  });
+
   it("reports unavailable ownership without exposing the endpoint", () => {
     expect(
       getLlamaCppRouteDetails(

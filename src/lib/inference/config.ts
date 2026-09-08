@@ -142,13 +142,6 @@ export function getLlamaCppRouteDetails(
   inspectOwnership: InspectManagedLlamaCppOwnership,
 ): LlamaCppRouteDetails | null {
   if (!route || route.provider !== LLAMA_CPP_PROVIDER_NAME) return null;
-  if (
-    route.servingProfileProvenance?.recipe?.backend === "install-llama-cpp" ||
-    route.hostLocalInferenceProvenance
-  ) {
-    return { kind: "managed" };
-  }
-
   const ownership = inspectOwnership(route.name, route.gatewayPort ?? undefined);
   if (ownership === "owned") return { kind: "managed" };
   if (ownership === "unknown") {
@@ -157,6 +150,12 @@ export function getLlamaCppRouteDetails(
       diagnostic: "Managed llama.cpp ownership state is unavailable.",
       recovery: `Run nemoclaw ${route.name} doctor. Rerun onboarding for that sandbox if the managed llama.cpp runtime check fails.`,
     };
+  }
+  if (
+    route.servingProfileProvenance?.recipe?.backend === "install-llama-cpp" ||
+    route.hostLocalInferenceProvenance
+  ) {
+    return { kind: "managed" };
   }
   if (route.endpointUrl === LLAMA_CPP_HOST_OPENAI_BASE_URL) {
     return { kind: "attached", endpointUrl: LLAMA_CPP_HOST_OPENAI_BASE_URL };

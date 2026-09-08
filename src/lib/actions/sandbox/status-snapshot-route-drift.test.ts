@@ -230,13 +230,18 @@ describe("getSandboxStatusReport llama.cpp attribution on drift (#10256)", () =>
     expect(report.llamaCpp).toBeNull();
   });
 
-  it("reports unavailable ownership from an aligned live route (#10256)", async () => {
+  it.each([
+    {},
+    { servingProfileProvenance: { recipe: { backend: "install-llama-cpp" } } },
+    { hostLocalInferenceProvenance: {} },
+  ])("reports unavailable ownership from an aligned live route %# (#10256)", async (provenance) => {
     liveGatewayInference("llama-cpp-local", "muse-glimmer");
     const options = snapshotDeps({
       provider: "llama-cpp-local",
       model: "muse-glimmer",
       endpointUrl: "http://127.0.0.1:8081/v1",
-    });
+      ...provenance,
+    } as Partial<SandboxEntry>);
 
     const report = await getSandboxStatusReport("alpha", {
       ...options.deps,
