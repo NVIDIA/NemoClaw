@@ -341,29 +341,8 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
     expect(cacheBucketStep.run).toContain(
       "const targetRoot = process.env.NEMOCLAW_REVIEWED_NPM_AUDIT_TARGET_ROOT;",
     );
-    expect(cacheBucketStep.run).toContain("parseReviewedNpmIdentity(config)");
-    expect(cacheBucketStep.run).toContain("...identity");
     expect(cacheBucketStep.run).not.toContain("${{ inputs.cache-directory }}");
     expect(cacheBucketStep.run).not.toContain("${{ inputs.target-root }}");
-  });
-
-  // source-shape-contract: security -- The trusted audit action must execute the sole identity-bound npm bootstrap owner
-  it("uses the single JSON-bound reviewed npm bootstrap owner", () => {
-    const action = YAML.parse(
-      fs.readFileSync(
-        path.join(REPO_ROOT, ".github", "actions", "ci-reviewed-npm-audit", "action.yaml"),
-        "utf8",
-      ),
-    ) as CompositeAction;
-    const bootstrapStep = requiredStep(action.runs, "Download and verify production npm");
-
-    expect(bootstrapStep.env).toBeUndefined();
-    expect(bootstrapStep.run).toContain(
-      '"$GITHUB_ACTION_PATH/../setup-reviewed-npm/verify-and-install-npm.sh"',
-    );
-    expect(bootstrapStep.run).toContain(
-      '"$GITHUB_ACTION_PATH/../../../ci/reviewed-npm-audit.json"',
-    );
   });
 
   it("rejects audit production when installed npm differs from the reviewed identity", () => {

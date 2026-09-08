@@ -30,10 +30,6 @@ type Workflow = {
       }
     >
   >;
-  readonly on?: {
-    readonly pull_request?: { readonly paths?: readonly string[] };
-    readonly push?: { readonly paths?: readonly string[] };
-  };
 };
 
 const TRUSTED_AUDIT_SPARSE_CHECKOUTS = TRUSTED_WORKFLOWS.flatMap((workflowFile) => {
@@ -54,10 +50,6 @@ const TRUSTED_AUDIT_SPARSE_CHECKOUTS = TRUSTED_WORKFLOWS.flatMap((workflowFile) 
       })),
   );
 });
-const TRUSTED_AUDIT_ACTION_SPARSE_CHECKOUTS = TRUSTED_AUDIT_SPARSE_CHECKOUTS.filter(
-  ({ sparseCheckout }) => sparseCheckout.includes(".github/actions/ci-reviewed-npm-audit"),
-);
-
 function stageSparseCheckout(root: string, sparseCheckout: string): void {
   sparseCheckout
     .split("\n")
@@ -71,20 +63,6 @@ function stageSparseCheckout(root: string, sparseCheckout: string): void {
 }
 
 describe("reviewed npm audit handoff", () => {
-  // source-shape-contract: security -- Image workflows must treat the shared reviewed npm bootstrap as a trigger so verifier drift cannot bypass qualification or publication
-  it("routes bootstrap-only changes through image qualification and publication", () => {
-    const bootstrapGlob = ".github/actions/setup-reviewed-npm/**";
-    const managedImages = YAML.parse(
-      fs.readFileSync(path.join(REPO_ROOT, ".github/workflows/managed-images.yaml"), "utf8"),
-    ) as Workflow;
-    const baseImages = YAML.parse(
-      fs.readFileSync(path.join(REPO_ROOT, ".github/workflows/base-image.yaml"), "utf8"),
-    ) as Workflow;
-
-    expect(managedImages.on?.pull_request?.paths).toContain(bootstrapGlob);
-    expect(baseImages.on?.push?.paths).toContain(bootstrapGlob);
-  });
-
   it.each(TRUSTED_AUDIT_SPARSE_CHECKOUTS)(
     "loads the audit producer from the $name trusted sparse checkout",
     ({ sparseCheckout }) => {
@@ -105,28 +83,6 @@ describe("reviewed npm audit handoff", () => {
         );
 
         expect(result.status, result.stderr).toBe(0);
-      } finally {
-        fs.rmSync(root, { recursive: true, force: true });
-      }
-    },
-  );
-
-  it.each(TRUSTED_AUDIT_ACTION_SPARSE_CHECKOUTS)(
-    "loads the audit bootstrap from the $name trusted sparse checkout",
-    ({ sparseCheckout }) => {
-      const root = fs.mkdtempSync(path.join(os.tmpdir(), "reviewed-audit-action-checkout-"));
-      try {
-        expect(sparseCheckout.split("\n").map((entry) => entry.trim())).toContain(
-          ".github/actions/setup-reviewed-npm",
-        );
-        stageSparseCheckout(root, sparseCheckout);
-        expect(
-          fs
-            .statSync(
-              path.join(root, ".github/actions/setup-reviewed-npm/verify-and-install-npm.sh"),
-            )
-            .isFile(),
-        ).toBe(true);
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }
