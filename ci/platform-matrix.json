@@ -51,13 +51,13 @@
     },
     {
       "name": "Windows WSL2",
-      "runtimes": ["Docker Desktop (WSL backend)"],
+      "runtimes": ["Docker Desktop (WSL backend)", "Qualified rootless Podman"],
       "status": "caveated",
       "prd_priority": "P1",
       "ci_tested": false,
       "_prd_note": "PRD tracks x86 and ARM (WOA) separately; treating as one entry until ARM is validated independently.",
-      "prerequisites_notes": "Requires WSL2 with Docker Desktop backend. See [Additional Setup for Windows Machines](additional-setup/windows-preparation) before the Quickstart.",
-      "notes": "Requires WSL2 with Docker Desktop backend. Qualifying Windows WSL N1x hosts can use the explicit Experimental managed llama.cpp Qwen 3.6 recipe after local-default Docker authority, N1x product identity, ARM64, 48,000 MiB Docker and GPU memory, driver, NVIDIA integration, and Docker Desktop GPU-passthrough checks pass. Other Windows WSL Express installs use WSL-local Ollama. Windows-host Ollama remains available through manual onboarding when Docker Desktop WSL integration, the local `default` Docker context, no `DOCKER_HOST` override, and the required route protections are present. Dedicated N1x WSL CI and physical end-to-end validation are pending."
+      "prerequisites_notes": "Requires WSL2 with either the Docker Desktop backend or the qualification-backed rootless Podman provider. See [Additional Setup for Windows Machines](additional-setup/windows-preparation) before the Quickstart.",
+      "notes": "Docker Desktop remains required for the explicit Experimental managed llama.cpp Qwen 3.6 recipe and Windows-host Ollama. WSL-local Ollama can use Docker Desktop or the qualified rootless Podman provider. On a Windows WSL N1x, the selected provider runs the same bounded CUDA workload and capacity query before the installed-model ranking can select qwen3.6:35b. Other Windows WSL Express installs use WSL-local Ollama. Dedicated N1x WSL CI and physical end-to-end validation are pending."
     },
     {
       "name": "DGX OS (Station)",
@@ -286,7 +286,7 @@
     {
       "name": "Other Windows-on-ARM GPU paths",
       "status": "unsupported",
-      "notes": "Windows-on-ARM CPU paths run under WSL2 'tested with limitations'. The qualifying Windows WSL N1x Experimental managed llama.cpp route is the only GPU exception and remains pending dedicated CI and physical end-to-end validation. Other Windows-on-ARM GPU routes remain Unsupported. Other WSL runtimes, multiple reported GPU rows, an implausible GPU name, or a failed bounded Docker CUDA proof remain rejected. See closed issue #4565."
+      "notes": "Windows-on-ARM CPU paths run under WSL2 'tested with limitations'. The qualifying Windows WSL N1x paths remain pending dedicated CI and physical end-to-end validation. Other Windows-on-ARM GPU routes remain Unsupported. An unqualified container provider, multiple reported GPU rows, an implausible GPU name, or a failed provider-owned bounded CUDA proof remains rejected. See closed issue #4565."
     },
     {
       "name": "Non-NVIDIA GPUs (AMD/ROCm, Intel Arc, Apple Metal)",
@@ -367,7 +367,7 @@
     {
       "name": "Native rootless Podman on Linux",
       "status": "caveated",
-      "notes": "Set `NEMOCLAW_GATEWAY_RUNTIME=podman` before standard onboarding. The provider requires a qualified current-user Podman socket, rootless service, cgroups v2, bridge networking and DNS, and exact managed-image receipts. Full native E2E qualification currently runs on Linux amd64; the managed-image contract accepts `linux/amd64` and `linux/arm64` receipts. Managed local vLLM install/start remains Docker-backed and is unavailable without Docker. Custom `--from` Dockerfiles and read-only host mounts are not qualified. The portable experimental profile remains separate."
+      "notes": "Set `NEMOCLAW_GATEWAY_RUNTIME=podman` before standard onboarding. The provider requires a qualified current-user Podman socket, rootless service, cgroups v2, bridge networking and DNS, NVIDIA CDI for GPU use, and exact managed-image receipts. Full native E2E qualification currently runs on Linux amd64; the managed-image contract accepts `linux/amd64` and `linux/arm64` receipts. The WSL Arm64 Ollama capacity proof is covered by provider-contract and onboarding tests; physical end-to-end validation remains pending. Managed local vLLM install/start remains Docker-backed and is unavailable without Docker. Custom `--from` Dockerfiles and read-only host mounts are not qualified. The portable experimental profile remains separate."
     },
     {
       "name": "Headless Linux server",
