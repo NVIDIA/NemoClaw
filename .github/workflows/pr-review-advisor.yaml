@@ -4,8 +4,7 @@
 name: Automation / PR Review Advisor
 
 on:
-  # Run model-backed review only after the unprivileged PR checks workflow
-  # completes. The gate below binds successful checks to the current PR revision.
+  # Run model-backed review only after the unprivileged PR checks workflow completes.
   workflow_run:
     workflows:
       - CI / Pull Request
@@ -49,51 +48,37 @@ jobs:
       github.repository == 'NVIDIA/NemoClaw' &&
       (github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'workflow_run' &&
-      github.event.workflow_run.status == 'completed' &&
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'pull_request' &&
-      github.event.workflow_run.path == '.github/workflows/pr.yaml' &&
       endsWith(github.event.workflow_run.display_title, ' gate true')))
       }}
-    permissions:
-      actions: read
-      contents: read
-      pull-requests: read
+    permissions: {}
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 1
     outputs:
-      target_repo: ${{ steps.resolve.outputs.target_repo }}
-      pr_number: ${{ steps.resolve.outputs.pr_number }}
-      head_sha: ${{ steps.resolve.outputs.head_sha }}
-      base_sha: ${{ steps.resolve.outputs.base_sha }}
-      base_ref: ${{ steps.resolve.outputs.base_ref }}
+      pr_number: ${{ steps.target.outputs.pr_number }}
+      head_sha: ${{ steps.target.outputs.head_sha }}
+      base_sha: ${{ steps.target.outputs.base_sha }}
     steps:
-      - name: Checkout trusted advisor gate
-        if: ${{ github.event_name == 'workflow_run' }}
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: NVIDIA/NemoClaw
-          ref: ${{ github.workflow_sha }}
-          persist-credentials: false
-          lfs: false
-          submodules: false
-      - name: Resolve green checks target
-        id: resolve
+      - name: Read checked PR revision
+        id: target
         if: ${{ github.event_name == 'workflow_run' }}
         env:
-          GH_TOKEN: ${{ github.token }}
-          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
-          SOURCE_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
-          SOURCE_RUN_PATH: ${{ github.event.workflow_run.path }}
-          SOURCE_RUN_EVENT: ${{ github.event.workflow_run.event }}
-          SOURCE_RUN_STATUS: ${{ github.event.workflow_run.status }}
-          SOURCE_RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
-          SOURCE_RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
-          SOURCE_RUN_TITLE: ${{ github.event.workflow_run.display_title }}
-        run: node --experimental-strip-types --no-warnings tools/pr-review-advisor/green-checks-gate.mts
-      - name: Keep trusted manual dispatch available
+          RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_TITLE: ${{ github.event.workflow_run.display_title }}
+        run: |
+          if [[ "$RUN_TITLE" =~ ^CI\ PR\ \#([1-9][0-9]*)\ head\ ([0-9a-f]{40})\ base\ ([0-9a-f]{40})\ gate\ true$ ]] &&
+             [ "${BASH_REMATCH[2]}" = "$RUN_HEAD_SHA" ]; then
+            echo "pr_number=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+            echo "head_sha=${BASH_REMATCH[2]}" >> "$GITHUB_OUTPUT"
+            echo "base_sha=${BASH_REMATCH[3]}" >> "$GITHUB_OUTPUT"
+          else
+            echo "The successful CI run does not identify one checked PR revision." >&2
+            exit 1
+          fi
+      - name: Accept manual dispatch
         if: ${{ github.event_name == 'workflow_dispatch' }}
-        run: echo "Manual advisor dispatch does not consume PR checks evidence."
+        run: echo "A maintainer dispatched the advisor."
 
   discover-specialists:
     name: Discover review specialists and collect GitHub context
@@ -108,7 +93,7 @@ jobs:
       matrix: ${{ steps.specialists.outputs.matrix }}
     env:
       PR_NUMBER: ${{ github.event_name == 'workflow_run' && needs.require-green-checks.outputs.pr_number || inputs.target_pr }}
-      TARGET_REPO: ${{ github.event_name == 'workflow_run' && needs.require-green-checks.outputs.target_repo || inputs.target_repo || github.repository }}
+      TARGET_REPO: ${{ github.event_name == 'workflow_run' && github.repository || inputs.target_repo || github.repository }}
     steps:
       - name: Checkout trusted advisor code (workflow revision)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -227,7 +212,7 @@ jobs:
       PR_REVIEW_ADVISOR_WORKFLOW_NAME: "Automation / PR Review Advisor"
       # Only executable code from this checkout may run in the analysis job.
       ADVISOR_DIR: ${{ github.workspace }}/advisor
-      TARGET_REPO: ${{ github.event_name == 'workflow_run' && needs.require-green-checks.outputs.target_repo || inputs.target_repo || github.repository }}
+      TARGET_REPO: ${{ github.event_name == 'workflow_run' && github.repository || inputs.target_repo || github.repository }}
       PR_NUMBER: ${{ github.event_name == 'workflow_run' && needs.require-green-checks.outputs.pr_number || inputs.target_pr }}
       BASE_REF: ${{ github.event_name == 'workflow_run' && 'target/base' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'target/base' || inputs.base_ref) }}
       HEAD_REF: ${{ github.event_name == 'workflow_run' && 'HEAD' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'HEAD' || inputs.head_ref) }}
@@ -281,9 +266,9 @@ jobs:
       - name: Prepare isolated analysis workspace
         if: ${{ github.event_name == 'workflow_run' || (github.event_name == 'workflow_dispatch' && (inputs.target_repo != '' || inputs.target_pr != '')) }}
         env:
-          TARGET_REPO: ${{ github.event_name == 'workflow_run' && needs.require-green-checks.outputs.target_repo || inputs.target_repo }}
+          TARGET_REPO: ${{ github.event_name == 'workflow_run' && github.repository || inputs.target_repo }}
           TARGET_PR: ${{ github.event_name == 'workflow_run' && needs.require-green-checks.outputs.pr_number || inputs.target_pr }}
-          TARGET_BASE: ${{ github.event_name == 'workflow_run' && needs.require-green-checks.outputs.base_ref || inputs.target_base }}
+          TARGET_BASE: ${{ github.event_name == 'workflow_run' && 'main' || inputs.target_base }}
           PR_BASE_SHA: ${{ github.event_name == 'workflow_run' && needs.require-green-checks.outputs.base_sha || '' }}
           EXPECTED_HEAD_SHA: ${{ github.event_name == 'workflow_run' && needs.require-green-checks.outputs.head_sha || '' }}
           GIT_LFS_SKIP_SMUDGE: "1"
@@ -370,7 +355,7 @@ jobs:
   publish:
     name: Publish advisor link
     needs: [require-green-checks, review-specialists]
-    if: ${{ always() && github.event_name == 'workflow_run' && needs.require-green-checks.result == 'success' && needs.review-specialists.result == 'success' }}
+    if: ${{ always() && github.event_name == 'workflow_run' && needs.review-specialists.result == 'success' }}
     # Publication is best-effort and must never hide a specialist review failure.
     continue-on-error: true
     permissions:

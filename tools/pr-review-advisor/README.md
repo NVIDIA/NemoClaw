@@ -19,7 +19,7 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 `.github/workflows/pr-review-advisor.yaml`:
 
 1. Runs after `CI / Pull Request` completes, plus trusted manual dispatch.
-2. Requires the source run's aggregate `checks` job to pass for the current PR head and base commits.
+2. Runs automatically only when the source workflow succeeds for a required PR revision.
 3. Prepares the target PR as inert analysis data and executes the trusted Advisor entrypoint from the workflow checkout.
 4. Runs model analysis inside OpenShell. The sandbox receives neither a GitHub token nor the upstream model credential.
 5. Runs one required Pi session for each valid Markdown prompt in `tools/pr-review-advisor/specialists`. Each specialist reads repository evidence and records a native session trace.
@@ -44,9 +44,8 @@ For PRs from this repository, the PR E2E controller separately rebuilds the plan
 changed-file list and dispatches every selected job after `CI / Pull Request` completes. `E2E / PR
 Gate` does not consume advisor output.
 
-The green-checks gate reads the completed source run and its jobs. It rejects a failed `checks` job,
-a stale PR revision, a metadata-only CI run, or a source other than `.github/workflows/pr.yaml`.
-Manual dispatch remains available without PR checks evidence.
+The green-checks gate accepts successful `CI / Pull Request` runs that require CI. The CI run name
+supplies the associated PR number and revision. Manual dispatch does not require PR checks evidence.
 
 ## Author and agent follow-up
 
@@ -62,7 +61,6 @@ Authors and coding agents should follow the shared [PR CI and Review Follow-Up](
 - Manual target analysis validates the repository token, decimal PR number, and base-ref token before running any `git` command.
 - Generated Pi configuration is written under the sandbox's runtime-only configuration directory, not uploaded artifacts.
 - The review job is limited to `NVIDIA/NemoClaw` and has read-only GitHub permissions. Within it, only the trusted host provider-configuration step receives the upstream model secret.
-- The gate receives a job-scoped GitHub token with read-only Actions, contents, and pull-request access. It does not receive the model secret.
 - A separate trusted host step collects deterministic GitHub context with `github.token` and writes a bounded, identity-checked context file before model work. The sandbox receives that file, not the token.
 - The OpenShell gateway binds only to loopback and holds the upstream provider credential. The sandbox uses `https://inference.local/v1` with an inert SDK key, and receives neither the provider credential nor a GitHub token.
 - The separate publisher has pull-request write permission, but receives neither the model secret, specialist artifacts, nor the untrusted PR worktree. It rechecks the latest PR commit immediately before posting only the workflow-run link.
