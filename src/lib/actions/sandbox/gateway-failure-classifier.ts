@@ -284,9 +284,9 @@ type SandboxDriverLookup = (name: string) => { openshellDriver?: string | null }
 const NON_DOCKER_DRIVERS = new Set(["podman", "vm"]);
 
 /**
- * Whether a sandbox's runtime depends on the local Docker daemon. Only the
- * explicit `vm` driver is excluded. The `docker` and `kubernetes` drivers are
- * Docker-backed, and legacy/recovered registry entries that predate
+ * Whether a sandbox's runtime depends on the local Docker daemon. Native
+ * Podman and VM drivers are excluded. The `docker` and `kubernetes` drivers
+ * are Docker-backed, and legacy/recovered registry entries that predate
  * `openshellDriver` metadata (field omitted/null) are also treated as
  * Docker-backed so the outage guard still protects the Linux/Docker sandboxes
  * #4428 targets — the historical default driver was Docker. The narrow cost is
@@ -304,9 +304,10 @@ function isDockerBackedSandbox(sandboxName: string, getSandbox: SandboxDriverLoo
  * `docker_unreachable` layer of {@link classifyGatewayFailure}). Sandbox
  * commands use this as a fast preflight so a transient Docker daemon outage is
  * classified as a host runtime problem rather than a stuck sandbox phase or a
- * connect timeout (#4428). Returns `false` for VM sandboxes so they are never
- * misclassified. `docker info` is a `spawnSync` call, so this stays synchronous
- * and can run from non-async call sites such as `logs` and `policy-list`.
+ * connect timeout (#4428). Returns `false` for native Podman and VM sandboxes
+ * so they are never misclassified. `docker info` is a `spawnSync` call, so this
+ * stays synchronous and can run from non-async call sites such as `logs` and
+ * `policy-list`.
  */
 export function isDockerRuntimeDown(
   sandboxName: string,

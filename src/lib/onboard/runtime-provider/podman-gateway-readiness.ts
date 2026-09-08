@@ -20,6 +20,8 @@ import type {
   RuntimeProviderOwnedGatewayReadinessObservation,
 } from "./contract";
 
+const PODMAN_GATEWAY_READINESS_COMMAND_TIMEOUT_MS = 10_000;
+
 interface PodmanGatewayHostCommandResult {
   readonly status: number | null;
   readonly stdout: string;
@@ -43,7 +45,11 @@ function runHost(
   args: readonly string[],
   environment: NodeJS.ProcessEnv,
 ): PodmanGatewayHostCommandResult {
-  const result = spawnSync(command, args, { encoding: "utf8", env: environment });
+  const result = spawnSync(command, args, {
+    encoding: "utf8",
+    env: environment,
+    timeout: PODMAN_GATEWAY_READINESS_COMMAND_TIMEOUT_MS,
+  });
   return {
     status: result.status,
     stdout: String(result.stdout ?? ""),
@@ -155,7 +161,7 @@ function isRunningProcess(
   const owner = deps.runHost("ps", ["-p", String(pid), "-o", "uid="], input.environment);
   if (owner.status !== 0 || Number(owner.stdout.trim()) !== uid) return false;
   const status = deps.runHost("ps", ["-p", String(pid), "-o", "stat="], input.environment);
-  return status.status === 0 && /^[DIKPRSTUWt]/u.test(status.stdout.trim());
+  return status.status === 0 && /^[DIKPRSUW]/u.test(status.stdout.trim());
 }
 
 function observeOwnedListener(

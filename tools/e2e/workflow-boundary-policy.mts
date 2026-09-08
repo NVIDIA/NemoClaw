@@ -15,7 +15,7 @@ export const E2E_ACTION_PROVENANCE = {
   restoreNativePodmanRuntime: {
     reference:
       "NVIDIA/NemoClaw/.github/actions/restore-native-podman-e2e@c22b2404269d73689be34f334a625c079feac9cc",
-    contentSha256: "9d4cd568634cf745a00dbada0818f5742d3edda205f7d203e05766b53006c62c",
+    contentSha256: "6250f93d97c421d2dee6400836a7412ef7bf66c68d98b98c154883b6564c88e3",
   },
   stageNativePodmanToolchains: {
     reference:

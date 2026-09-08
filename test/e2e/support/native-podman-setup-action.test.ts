@@ -40,6 +40,8 @@ function runRestoreFixture(
   kind: RestoreFixtureKind,
   serviceActiveState = "active",
   socketActiveState = "active",
+  loadState = "loaded",
+  unitFileState = "enabled",
 ) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-podman-restore-"));
   const restoreRoot = path.join(root, "authority");
@@ -57,14 +59,14 @@ function runRestoreFixture(
     `${JSON.stringify({
       schemaVersion: 1,
       dockerService: {
-        loadState: "loaded",
+        loadState,
         activeState: serviceActiveState,
-        unitFileState: "enabled",
+        unitFileState,
       },
       dockerSocket: {
-        loadState: "loaded",
+        loadState,
         activeState: socketActiveState,
-        unitFileState: "enabled",
+        unitFileState,
       },
     })}\n`,
     { mode: 0o600 },
@@ -112,9 +114,9 @@ function runRestoreFixture(
     '  local state_file="$DOCKER_SERVICE_STATE"',
     '  [[ "$unit" == "docker.socket" ]] && state_file="$DOCKER_SOCKET_STATE"',
     '  case "$operation" in',
-    "    show) printf 'loaded\\n' ;;",
+    "    show) printf '%s\\n' \"$DOCKER_LOAD_STATE\" ;;",
     '    is-active) cat "$state_file"; [[ "$(cat "$state_file")" == "active" ]] ;;',
-    "    is-enabled) printf 'enabled\\n' ;;",
+    '    is-enabled) [[ "$DOCKER_UNIT_FILE_STATE" == "not-found" ]] && return 1; printf \'%s\\n\' "$DOCKER_UNIT_FILE_STATE" ;;',
     "    unmask) return 0 ;;",
     "    start) printf 'active\\n' >\"$state_file\" ;;",
     "    stop) printf 'inactive\\n' >\"$state_file\" ;;",
@@ -135,6 +137,8 @@ function runRestoreFixture(
       NODE_BINARY: process.execPath,
       DOCKER_SERVICE_STATE: serviceState,
       DOCKER_SOCKET_STATE: socketState,
+      DOCKER_LOAD_STATE: loadState,
+      DOCKER_UNIT_FILE_STATE: unitFileState,
       PATH: `${path.dirname(destination)}:${process.env.PATH ?? "/usr/bin:/bin"}`,
       SYSTEMCTL_LOG: systemctlLog,
     },
@@ -250,6 +254,17 @@ describe("native Podman E2E setup boundary", () => {
       expect(fixture.result.status, fixture.result.stderr).toBe(0);
       expect(fs.readFileSync(fixture.serviceState, "utf8").trim()).toBe("inactive");
       expect(fs.readFileSync(fixture.socketState, "utf8").trim()).toBe("inactive");
+    } finally {
+      fs.rmSync(fixture.root, { force: true, recursive: true });
+    }
+  });
+
+  it("restores absent Docker units when is-enabled returns no text (#11014)", () => {
+    const fixture = runRestoreFixture("valid", "inactive", "inactive", "not-found", "not-found");
+
+    try {
+      expect(fixture.result.status, fixture.result.stderr).toBe(0);
+      expect(fs.existsSync(fixture.restoreRoot)).toBe(false);
     } finally {
       fs.rmSync(fixture.root, { force: true, recursive: true });
     }

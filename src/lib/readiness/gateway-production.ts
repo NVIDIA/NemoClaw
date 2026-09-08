@@ -816,7 +816,13 @@ export function createProductionGatewayReadinessDependencies(
     trustedVersionBinaryByPid.clear();
     trustedTargetBoundPids.clear();
     const providerGateway = resolveRuntimeProviderGateway();
-    const installedOpenShellVersion = observeInstalledOpenshellVersion(openshellBin, probeEnv);
+    let installedOpenShellVersion: string | null | undefined;
+    const getInstalledOpenShellVersion = () => {
+      if (installedOpenShellVersion === undefined) {
+        installedOpenShellVersion = observeInstalledOpenshellVersion(openshellBin, probeEnv);
+      }
+      return installedOpenShellVersion;
+    };
     const providerObservation = providerGateway.ownsHostReadiness
       ? providerGateway.observeOwnedGateway({
           environment: probeEnv,
@@ -827,7 +833,7 @@ export function createProductionGatewayReadinessDependencies(
           expectedEndpoint: `https://${observeGatewayHostRuntime().grpcHost}:${String(gatewayPort)}`,
           managedGatewayOutputs,
           portAvailable: portCheck.ok,
-          installedOpenShellVersion,
+          installedOpenShellVersion: getInstalledOpenShellVersion(),
           trustedGatewayBin,
         })
       : null;
@@ -883,12 +889,12 @@ export function createProductionGatewayReadinessDependencies(
               deps:
                 source === "legacy-cluster"
                   ? {
-                      getInstalledOpenshellVersion: () => installedOpenShellVersion,
+                      getInstalledOpenshellVersion: getInstalledOpenShellVersion,
                       getGatewayClusterImageRef: () => legacyClusterImageRef,
                       isGatewayClusterActive: () => true,
                     }
                   : {
-                      getInstalledOpenshellVersion: () => installedOpenShellVersion,
+                      getInstalledOpenshellVersion: getInstalledOpenShellVersion,
                       getGatewayClusterImageRef: () => null,
                       getHostProcessGatewayRuntime: () =>
                         hostProcessPid === null

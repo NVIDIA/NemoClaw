@@ -45,6 +45,7 @@ function input() {
 
 function readinessDeps(
   markerOverrides: Partial<ReturnType<typeof buildDockerDriverGatewayRuntimeMarker>> = {},
+  processState = "S",
 ): PodmanGatewayReadinessDeps {
   const marker = {
     ...buildDockerDriverGatewayRuntimeMarker({
@@ -72,7 +73,10 @@ function readinessDeps(
       ["ps", "-p", String(PID), "-o", "uid="].join("\0"),
       { status: 0, stdout: `${String(UID)}\n`, stderr: "" },
     ],
-    [["ps", "-p", String(PID), "-o", "stat="].join("\0"), { status: 0, stdout: "S\n", stderr: "" }],
+    [
+      ["ps", "-p", String(PID), "-o", "stat="].join("\0"),
+      { status: 0, stdout: `${processState}\n`, stderr: "" },
+    ],
   ]);
   return {
     currentUid: () => UID,
@@ -123,6 +127,15 @@ describe("native Podman gateway readiness", () => {
     ).toBe("drift");
   });
 
+  it.each(["T", "t"])("rejects a stopped process in state %s (#10984)", (processState) => {
+    expect(observeNativePodmanGatewayReadiness(input(), readinessDeps({}, processState))).toEqual({
+      endpointBinding: "match",
+      listenerScan: { pids: [], unverifiedPids: [PID], complete: true },
+      targetBoundListenerPids: [],
+      versionCompatibility: "unknown",
+    });
+  });
+
   it("rejects managed endpoint output outside the provider endpoint (#10984)", () => {
     const observation = observeNativePodmanGatewayReadiness(
       {
@@ -139,7 +152,7 @@ describe("native Podman gateway readiness", () => {
   it("fails closed when listener enumeration is inconclusive (#10984)", () => {
     const deps = {
       ...readinessDeps(),
-      runHost: vi.fn(() => ({ status: 1, stdout: "", stderr: "permission denied" })),
+      runHost: vi.fn(() => ({ status: null, stdout: "", stderr: "timed out" })),
     };
 
     expect(observeNativePodmanGatewayReadiness(input(), deps)).toEqual({

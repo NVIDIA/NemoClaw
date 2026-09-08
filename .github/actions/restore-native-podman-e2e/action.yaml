@@ -85,10 +85,15 @@ runs:
           local field="$2"
           local expected_active
           local expected_unit_file
+          local observed_unit_file
           expected_active="$(sudo -n jq -r ".${field}.activeState" "$runtime_state_path")"
           expected_unit_file="$(sudo -n jq -r ".${field}.unitFileState" "$runtime_state_path")"
+          observed_unit_file="$(systemctl is-enabled "$unit" 2>/dev/null || true)"
+          if [[ "$expected_unit_file" == "not-found" && -z "$observed_unit_file" ]]; then
+            observed_unit_file=not-found
+          fi
           [[ "$(systemctl is-active "$unit" 2>/dev/null || true)" == "$expected_active" ]]
-          [[ "$(systemctl is-enabled "$unit" 2>/dev/null || true)" == "$expected_unit_file" ]]
+          [[ "$observed_unit_file" == "$expected_unit_file" ]]
         }
         restore_unit_mask docker.service dockerService
         restore_unit_mask docker.socket dockerSocket
