@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 name: Automation / PR Review Advisor
+run-name: >-
+  ${{ github.event_name == 'workflow_run' && format('Advisor after {0}', github.event.workflow_run.display_title) || 'PR Review Advisor manual dispatch' }}
 
 on:
   # Run model-backed review only after the unprivileged PR checks workflow completes.

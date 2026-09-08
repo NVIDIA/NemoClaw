@@ -49,6 +49,12 @@ it.each([
     "Unified advisor green checks gate must require",
   ],
   [
+    "source run identity",
+    "format('Advisor after {0}', github.event.workflow_run.display_title)",
+    "'Advisor after an unknown run'",
+    "Unified advisor must retain completed CI / Pull Request identity",
+  ],
+  [
     "gate dependency",
     "needs: require-green-checks",
     "needs: []",

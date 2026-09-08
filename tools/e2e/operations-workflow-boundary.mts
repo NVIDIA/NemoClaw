@@ -1554,9 +1554,12 @@ function validateUnifiedAdvisorBoundary(errors: string[], advisorPath: string): 
   if (
     advisor.on?.pull_request_target !== undefined ||
     !isDeepStrictEqual(advisor.on?.workflow_run?.workflows, ["CI / Pull Request"]) ||
-    !isDeepStrictEqual(advisor.on?.workflow_run?.types, ["completed"])
+    !isDeepStrictEqual(advisor.on?.workflow_run?.types, ["completed"]) ||
+    !source.includes(
+      "format('Advisor after {0}', github.event.workflow_run.display_title)",
+    )
   ) {
-    errors.push("Unified advisor must start from completed CI / Pull Request runs");
+    errors.push("Unified advisor must retain completed CI / Pull Request identity");
   }
   const gate = advisor.jobs?.["require-green-checks"] ?? {};
   if (
