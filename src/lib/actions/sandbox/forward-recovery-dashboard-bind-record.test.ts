@@ -135,23 +135,35 @@ describe("the recorded dashboard bind follows the forward (#10861)", () => {
     expect(stderr).toHaveBeenCalledWith(expect.stringContaining("recording it for 'hm' failed"));
   });
 
+  it("still starts a loopback forward when the write fails but the record already says loopback", () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mocks.getSandbox.mockReturnValue({ ...SANDBOX, dashboardBindAddress: "127.0.0.1" });
+    mocks.updateSandbox.mockReturnValue(false);
+
+    expect(ensureSandboxPortForward("hm", { isWsl: false })).toBe(true);
+
+    expect(mocks.launchForwardService).toHaveBeenCalledOnce();
+  });
+
+  const rejectedWrite = () => false;
+  const throwingWrite = () => {
+    throw new Error("disk full");
+  };
+
   it.each([
-    ["the write is rejected", () => false],
-    [
-      "the write throws",
-      () => {
-        throw new Error("disk full");
-      },
-    ],
+    ["the opt-in", "the write is rejected", true, false, rejectedWrite],
+    ["the opt-in", "the write throws", true, false, throwingWrite],
+    ["WSL", "the write is rejected", false, true, rejectedWrite],
+    ["WSL", "the write throws", false, true, throwingWrite],
   ])(
-    "refuses to start a wide forward whose exposure cannot be recorded when %s",
-    (_case, write) => {
+    "refuses to start the wide forward %s requires when %s",
+    (_trigger, _case, optIn, isWsl, write) => {
       const stderr = vi.spyOn(console, "error").mockImplementation(() => undefined);
-      vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
+      vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", optIn ? "0.0.0.0" : "");
       mocks.getSandbox.mockReturnValue({ ...SANDBOX, dashboardRemoteBindPrepared: true });
       mocks.updateSandbox.mockImplementation(write);
 
-      expect(ensureSandboxPortForward("hm", { isWsl: false })).toBe(false);
+      expect(ensureSandboxPortForward("hm", { isWsl })).toBe(false);
 
       expect(mocks.launchForwardService).not.toHaveBeenCalled();
       expect(stderr).toHaveBeenCalledWith(
@@ -159,6 +171,53 @@ describe("the recorded dashboard bind follows the forward (#10861)", () => {
           "Refusing to start the dashboard forward for 'hm' on all interfaces",
         ),
       );
+    },
+  );
+
+  it.each([
+    ["the write is rejected", rejectedWrite],
+    ["the write throws", throwingWrite],
+  ])(
+    "refuses a loopback forward while the registry still records a wide bind and %s",
+    (_case, write) => {
+      const stderr = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      mocks.getSandbox.mockReturnValue({ ...SANDBOX, dashboardBindAddress: "0.0.0.0" });
+      mocks.updateSandbox.mockImplementation(write);
+
+      expect(ensureSandboxPortForward("hm", { isWsl: false })).toBe(false);
+
+      expect(mocks.launchForwardService).not.toHaveBeenCalled();
+      expect(stderr).toHaveBeenCalledWith(
+        expect.stringContaining("on loopback: the registry still records a bind on 0.0.0.0"),
+      );
+    },
+  );
+
+  it.each([
+    ["a loopback record", "127.0.0.1"],
+    ["no record", null],
+  ])(
+    "puts back %s when the wide forward fails to start after its bind was recorded",
+    (_label, previous) => {
+      vi.spyOn(console, "error").mockImplementation(() => undefined);
+      vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
+      mocks.getSandbox.mockReturnValue({
+        ...SANDBOX,
+        dashboardRemoteBindPrepared: true,
+        dashboardBindAddress: previous,
+      });
+      mocks.launchForwardService.mockImplementation(() => {
+        throw new Error("forward service exited");
+      });
+
+      expect(ensureSandboxPortForward("hm", { isWsl: false })).toBe(false);
+
+      expect(mocks.updateSandbox).toHaveBeenNthCalledWith(1, "hm", {
+        dashboardBindAddress: "0.0.0.0",
+      });
+      expect(mocks.updateSandbox).toHaveBeenLastCalledWith("hm", {
+        dashboardBindAddress: previous,
+      });
     },
   );
 });

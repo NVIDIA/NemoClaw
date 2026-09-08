@@ -376,6 +376,31 @@ function recordDashboardBindAddress(
   return false;
 }
 
+/** Explain a refused dashboard forward whose record would misdescribe it. */
+function dashboardBindRefusal(
+  sandboxName: string,
+  bindAddress: string,
+  previousBind: string | null,
+): string {
+  const where = bindAddress === "0.0.0.0" ? "all interfaces" : "loopback";
+  const why =
+    bindAddress === "0.0.0.0"
+      ? "its exposure could not be recorded, so `dashboard-url` and `status` would not disclose it"
+      : `the registry still records a bind on ${String(previousBind)} and could not be updated, so \`dashboard-url\` and \`status\` would report exposure that no longer exists and omit the SSH forward guidance`;
+  return `  Refusing to start the dashboard forward for '${sandboxName}' on ${where}: ${why}. Repair the sandbox registry and reconnect.`;
+}
+
+/** Put back the record of the last forward that did start, after a launch failed. */
+function restoreDashboardBindAddress(sandboxName: string, previousBind: string | null): void {
+  try {
+    registry.updateSandbox(sandboxName, { dashboardBindAddress: previousBind });
+  } catch {
+    console.error(
+      `  Warning: the recorded dashboard bind for '${sandboxName}' could not be restored after the forward failed to start; \`dashboard-url\` may report a listener that does not exist.`,
+    );
+  }
+}
+
 export function ensureSandboxPortForwardForPort(
   sandboxName: string,
   port: number,
@@ -413,29 +438,30 @@ export function ensureSandboxPortForwardForPort(
   const forwardHealth = isSandboxPortForwardHealthy(sandboxName, port, expectedBind);
   if (forwardHealth === true) return acceptSuccessfulForward();
   if (!beforeStart()) return false;
+  let previousBind: string | null = null;
+  let recordedBind = false;
   try {
     const sandbox = registry.getSandbox(sandboxName);
     if (!sandbox) throw new Error(`Sandbox '${sandboxName}' is not registered`);
+    previousBind = sandbox.dashboardBindAddress ?? null;
     // The record follows the forward, not the sandbox. Onboarding writes it
     // when it starts the first forward; every later re-creation — restart,
     // connect, gateway recovery — decides the bind again from the current
     // environment, and a record left from onboarding would report the bind
     // that used to be true (#10861). Only a launch writes: on the healthy
     // path above nothing was created, and the listener may not be ours.
-    // It is written before the launch so a wide listener can never exist
-    // undisclosed: when the write fails, a wide forward is not started while
-    // a loopback one still is. Should the launch then fail, the record is at
-    // worst ahead of a listener that does not exist, which over-reports
-    // exposure rather than hiding it.
-    if (
-      recordDashboardBind &&
-      !recordDashboardBindAddress(sandboxName, port, bindAddress) &&
-      bindAddress === "0.0.0.0"
-    ) {
-      console.error(
-        `  Refusing to start the dashboard forward for '${sandboxName}' on all interfaces: its exposure could not be recorded, so \`dashboard-url\` and \`status\` would not disclose it. Repair the sandbox registry and reconnect.`,
-      );
-      return false;
+    // It is written before the launch, and a forward starts only when the
+    // record will describe it: a wide forward never exists undisclosed, and
+    // a loopback forward never hides behind a stale wide record that would
+    // withhold the SSH forward guidance. A loopback forward for a row whose
+    // record is loopback or absent may still start when the write fails,
+    // because nothing an operator reads would change.
+    if (recordDashboardBind) {
+      recordedBind = recordDashboardBindAddress(sandboxName, port, bindAddress);
+      if (!recordedBind && (bindAddress === "0.0.0.0" || previousBind === "0.0.0.0")) {
+        console.error(dashboardBindRefusal(sandboxName, bindAddress, previousBind));
+        return false;
+      }
     }
     const gatewayName = resolveSandboxGatewayName(sandbox);
     retireLegacyForwardServiceMigration(sandboxName, gatewayName, [port]);
@@ -451,6 +477,10 @@ export function ensureSandboxPortForwardForPort(
         error instanceof Error ? error.message : String(error)
       }`,
     );
+    // The record described a forward that never came up; put back the one
+    // for the last forward that did, so no command reports a listener that
+    // does not exist.
+    if (recordedBind) restoreDashboardBindAddress(sandboxName, previousBind);
     return false;
   }
 }

@@ -91,7 +91,7 @@ describe("dashboard-url command helpers", () => {
     expect(sinks.out).toEqual([
       "  Dashboard URL:",
       "  http://127.0.0.1:19000/#token=secret-token",
-      "  Bound on all interfaces (0.0.0.0:19000): reachable from other hosts at this host's address.",
+      "  Bound on all interfaces (0.0.0.0:19000); other hosts may reach it at this host's address, subject to the host firewall.",
     ]);
   });
 
@@ -119,7 +119,7 @@ describe("dashboard-url command helpers", () => {
     expect(sinks.out).toEqual([
       "  Dashboard URL:",
       "  http://127.0.0.1:18790/",
-      "  Bound on all interfaces (0.0.0.0:18790): reachable from other hosts at this host's address.",
+      "  Bound on all interfaces (0.0.0.0:18790); other hosts may reach it at this host's address, subject to the host firewall.",
     ]);
   });
 

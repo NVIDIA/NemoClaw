@@ -157,7 +157,7 @@ export function runDashboardUrlCommand(
   ): void => {
     if (bindAddress === "0.0.0.0") {
       log(
-        `  Bound on all interfaces (0.0.0.0:${String(port)}): reachable from other hosts at this host's address.`,
+        `  Bound on all interfaces (0.0.0.0:${String(port)}); other hosts may reach it at this host's address, subject to the host firewall.`,
       );
       return;
     }

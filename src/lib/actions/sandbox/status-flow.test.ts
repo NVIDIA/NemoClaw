@@ -860,7 +860,10 @@ describe("showSandboxStatus flow", () => {
     await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
 
     const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
-    expect(output).toContain("Remote access: run");
+    expect(output).toContain(
+      "Remote access: run `nemoclaw 'alpha' dashboard-url` for SSH port forward instructions.",
+    );
+    expect(output).not.toContain("0.0.0.0");
   });
 
   it("omits dashboard guidance over SSH when the gateway is stopped (#8465)", async () => {

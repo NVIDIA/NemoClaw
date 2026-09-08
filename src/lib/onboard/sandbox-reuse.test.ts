@@ -10,6 +10,7 @@ import {
   applyReusedSandboxDashboardState,
   createSandboxReuseHelpers,
   restoreReusedSandboxDashboardState,
+  type ReusedSandboxDashboardStateInput,
   type SandboxReuseDeps,
 } from "./sandbox-reuse";
 
@@ -81,6 +82,7 @@ describe("applyReusedSandboxDashboardState", () => {
     "records the bind the reused dashboard forward was started with for %s (#10861)",
     (_label, chatUiUrl, dashboardBindAddress) => {
       const updateSandbox = vi.fn();
+      const ensureDashboardForward = vi.fn(() => 18789);
 
       applyReusedSandboxDashboardState({
         sandboxName: "reuse-me",
@@ -100,7 +102,7 @@ describe("applyReusedSandboxDashboardState", () => {
         },
         gatewayName: "nemoclaw",
         gatewayPort: 8080,
-        ensureDashboardForward: vi.fn(() => 18789),
+        ensureDashboardForward,
         hermesDashboardForwarding: {
           resolveStateForPort: vi.fn(() => ({ enabled: false, config: null })),
           ensureForState: vi.fn(),
@@ -109,12 +111,78 @@ describe("applyReusedSandboxDashboardState", () => {
         updateReusedSandboxMetadata: vi.fn(),
       });
 
+      expect(ensureDashboardForward).toHaveBeenCalledWith("reuse-me", chatUiUrl);
       expect(updateSandbox).toHaveBeenCalledWith(
         "reuse-me",
         expect.objectContaining({ dashboardBindAddress }),
       );
     },
   );
+
+  function reusedWideDashboard(
+    updateSandbox: NonNullable<ReusedSandboxDashboardStateInput["updateSandbox"]>,
+  ) {
+    const ensureDashboardForward = vi.fn(() => 18789);
+    const restore = () =>
+      applyReusedSandboxDashboardState({
+        sandboxName: "reuse-me",
+        chatUiUrl: "https://dashboard.example.test:18789",
+        env: {},
+        agent: null,
+        model: "test-model",
+        provider: "openai-compatible",
+        selectionVerified: true,
+        sandboxGpuConfig: {
+          hostGpuDetected: false,
+          hostGpuPlatform: null,
+          sandboxGpuEnabled: false,
+          mode: "auto",
+          sandboxGpuDevice: null,
+          errors: [],
+        },
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        ensureDashboardForward,
+        hermesDashboardForwarding: {
+          resolveStateForPort: vi.fn(() => ({ enabled: false, config: null })),
+          ensureForState: vi.fn(),
+        },
+        updateSandbox,
+        updateReusedSandboxMetadata: vi.fn(),
+      });
+    return { ensureDashboardForward, restore };
+  }
+
+  it("records a wide bind before restoring the forward (#10861)", () => {
+    const updateSandbox = vi.fn(() => true);
+    const { ensureDashboardForward, restore } = reusedWideDashboard(updateSandbox);
+
+    restore();
+
+    expect(updateSandbox).toHaveBeenNthCalledWith(1, "reuse-me", {
+      dashboardBindAddress: "0.0.0.0",
+    });
+    expect(updateSandbox.mock.invocationCallOrder[0]).toBeLessThan(
+      ensureDashboardForward.mock.invocationCallOrder[0],
+    );
+  });
+
+  it.each([
+    ["the write is rejected", () => false],
+    [
+      "the write throws",
+      () => {
+        throw new Error("disk full");
+      },
+    ],
+  ])("refuses to restore a wide forward whose exposure cannot be recorded when %s", (_case, write) => {
+    const { ensureDashboardForward, restore } = reusedWideDashboard(vi.fn(write));
+
+    expect(restore).toThrow(
+      /Refusing to restore the dashboard forward for 'reuse-me' on all interfaces/u,
+    );
+    expect(ensureDashboardForward).not.toHaveBeenCalled();
+  });
 
   it("skips dashboard forwarding while preserving reuse metadata for terminal agents", () => {
     const updateSandbox = vi.fn();

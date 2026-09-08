@@ -128,6 +128,22 @@ export interface ReusedSandboxDashboardStateResult {
   hermesDashboardState: HermesDashboardOnboardState;
 }
 
+/** A registry write fails when it returns false or throws. */
+function recordReusedDashboardBind(
+  input: ReusedSandboxDashboardStateInput,
+  dashboardBindAddress: string,
+): boolean {
+  try {
+    return (
+      (input.updateSandbox ?? registry.updateSandbox)(input.sandboxName, {
+        dashboardBindAddress,
+      }) !== false
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function applyReusedSandboxDashboardState(
   input: ReusedSandboxDashboardStateInput,
 ): ReusedSandboxDashboardStateResult {
@@ -145,6 +161,24 @@ export function applyReusedSandboxDashboardState(
   input.revalidateSandboxIdentity?.(
     `restore dashboard state for sandbox '${input.sandboxName}'`,
   );
+  // The bind the restored forward will have, from the same URL and
+  // environment `ensureDashboardForward` decides it from (#10861). A wide
+  // bind is recorded before the forward exists and refused when it cannot
+  // be, so a listener on every interface is never started undisclosed; a
+  // loopback bind is recorded with the rest of the dashboard state below.
+  const dashboardBindAddress = manageDashboard
+    ? buildDashboardChain(input.chatUiUrl, { env: input.env }).bindAddress
+    : null;
+  if (dashboardBindAddress === "0.0.0.0") {
+    input.revalidateSandboxIdentity?.(
+      `record the dashboard bind for sandbox '${input.sandboxName}'`,
+    );
+    if (!recordReusedDashboardBind(input, dashboardBindAddress)) {
+      throw new Error(
+        `Refusing to restore the dashboard forward for '${input.sandboxName}' on all interfaces: its exposure could not be recorded, so \`dashboard-url\` and \`status\` would not disclose it. Repair the sandbox registry and re-run onboarding.`,
+      );
+    }
+  }
   const dashboardPort = manageDashboard
     ? input.revalidateSandboxIdentity
       ? input.ensureDashboardForward(input.sandboxName, input.chatUiUrl, {
@@ -187,16 +221,8 @@ export function applyReusedSandboxDashboardState(
   );
   (input.updateSandbox ?? registry.updateSandbox)(input.sandboxName, {
     ...getHermesDashboardRegistryFields(hermesDashboardState),
-    // The forward above was started from `input.chatUiUrl` in this environment.
-    // Record the bind that decision produced so `dashboard-url` and `status`
-    // report the listener rather than a bind recomputed later (#10861). With
-    // no managed forward nothing was started, so the existing record stands.
-    ...(manageDashboard
-      ? {
-          dashboardBindAddress: buildDashboardChain(input.chatUiUrl, { env: input.env })
-            .bindAddress,
-        }
-      : {}),
+    // With no managed forward nothing was started, so the existing record stands.
+    ...(dashboardBindAddress === null ? {} : { dashboardBindAddress }),
     gatewayName: input.gatewayName,
     gatewayPort: input.gatewayPort,
   });

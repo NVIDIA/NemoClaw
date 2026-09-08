@@ -993,6 +993,7 @@ describe("created sandbox completion actions", () => {
     "keeps %s dashboard completion ordered and bounded, recording the bind it started with (#9203, #10861)",
     async (_route, manageDashboard, schema5, chatUiUrl, remoteBindOptIn, dashboardBindAddress) => {
       vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", remoteBindOptIn);
+      const getForwardPort = vi.fn(() => "8643");
       const order: string[] = [];
       const gpuProof = {
         status: "verified" as const,
@@ -1106,7 +1107,7 @@ describe("created sandbox completion actions", () => {
             releasePort: async () => {
               order.push("dashboard-release");
             },
-            getForwardPort: () => "8643",
+            getForwardPort,
             resolveHermesState: () => ({ config: null, enabled: false }),
           },
           workload: {
@@ -1200,6 +1201,8 @@ describe("created sandbox completion actions", () => {
         "registry",
       ]);
       expect(gpuConfig.sandboxGpuProof).toEqual(gpuProof);
+      // The bind is recorded from the same URL the forward was asked for.
+      expect(getForwardPort.mock.calls).toEqual(manageDashboard ? [[chatUiUrl]] : []);
       expect(registerCreatedSandbox).toHaveBeenCalledWith(
         expect.objectContaining({
           imageTag: "hermes:test",
