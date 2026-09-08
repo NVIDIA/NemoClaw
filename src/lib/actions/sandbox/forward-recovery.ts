@@ -304,6 +304,7 @@ export function ensureSandboxPortForward(
   return ensureSandboxPortForwardForPort(sandboxName, port, {
     forwardTarget: allInterfaceBindRequired ? `0.0.0.0:${port}` : String(port),
     expectedBind: allInterfaceBindRequired ? "0.0.0.0" : "127.0.0.1",
+    recordDashboardBind: true,
     afterSuccess: options.afterSuccess,
     beforeStart: () =>
       (!remoteBindRequested ||
@@ -352,6 +353,20 @@ export function isSandboxPortForwardHealthy(
   return true;
 }
 
+/** Persist the bind a dashboard forward was just started with; a failed write must not fail the forward. */
+function recordDashboardBindAddress(sandboxName: string, port: number, bindAddress: string): void {
+  try {
+    if (registry.updateSandbox(sandboxName, { dashboardBindAddress: bindAddress })) return;
+    console.error(
+      `  Warning: the dashboard forward for port ${String(port)} is bound on ${bindAddress}, but that could not be recorded for '${sandboxName}'; \`dashboard-url\` may report a stale address until the next onboard.`,
+    );
+  } catch (error) {
+    console.error(
+      `  Warning: the dashboard forward for port ${String(port)} is bound on ${bindAddress}, but recording it for '${sandboxName}' failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
 export function ensureSandboxPortForwardForPort(
   sandboxName: string,
   port: number,
@@ -360,6 +375,12 @@ export function ensureSandboxPortForwardForPort(
     forwardTarget?: string;
     expectedBind?: string;
     beforeStart?: () => boolean;
+    /**
+     * Record the bind this call establishes as the sandbox's dashboard bind.
+     * Only the dashboard caller sets this; messaging and declared-port
+     * forwards share this function and must not overwrite that field.
+     */
+    recordDashboardBind?: boolean;
   } = {},
 ): boolean {
   const {
@@ -367,7 +388,10 @@ export function ensureSandboxPortForwardForPort(
     forwardTarget = String(port),
     expectedBind,
     beforeStart = () => true,
+    recordDashboardBind = false,
   } = options;
+  const bindAddress =
+    expectedBind ?? (forwardTarget.startsWith("0.0.0.0:") ? "0.0.0.0" : "127.0.0.1");
   const acceptSuccessfulForward = () => {
     let accepted = false;
     try {
@@ -388,14 +412,15 @@ export function ensureSandboxPortForwardForPort(
     const executable = resolveOpenshell();
     if (!executable) throw new Error("OpenShell is unavailable");
     launchForwardService(
-      forwardServiceTarget(
-        executable,
-        gatewayName,
-        sandboxName,
-        port,
-        expectedBind ?? (forwardTarget.startsWith("0.0.0.0:") ? "0.0.0.0" : "127.0.0.1"),
-      ),
+      forwardServiceTarget(executable, gatewayName, sandboxName, port, bindAddress),
     );
+    // The record follows the forward, not the sandbox. Onboarding writes it
+    // when it starts the first forward; every later re-creation — restart,
+    // connect, gateway recovery — decides the bind again from the current
+    // environment, and a record left from onboarding would report the bind
+    // that used to be true (#10861). Only a launch writes: on the healthy
+    // path above nothing was created, and the listener may not be ours.
+    if (recordDashboardBind) recordDashboardBindAddress(sandboxName, port, bindAddress);
     return acceptSuccessfulForward();
   } catch (error) {
     console.error(
