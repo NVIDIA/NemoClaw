@@ -1131,6 +1131,7 @@ ONBOARD_RAN=false
 _CLI_PATH=""
 _NEMOCLAW_CLI_INSTALL_PREPARED=false
 _NEMOCLAW_CLI_INSTALL_MODE=""
+_NEMOCLAW_PRIOR_MANAGED_INSTALL=false
 _OPENSHELL_INSTALL_REQUIRED_BEFORE_RECOVERY=false
 _PREEXISTING_SANDBOX_COUNT=0
 _PREEXISTING_SANDBOX_RECOVERY_RAN=false
@@ -2337,16 +2338,35 @@ resolve_cli_runner_within_source() {
   return 1
 }
 
-is_reusable_managed_nemoclaw_install() {
-  local source_root="$1" expected_revision current_revision identity_file identity_revision
-  local identity_version cli_runner version_output
+is_recognized_managed_nemoclaw_install() {
+  local source_root="$1" state_root current_revision identity_file identity_revision
+  local identity_version
 
-  [[ "${NEMOCLAW_BOOTSTRAP_PAYLOAD:-}" == "1" ]] || return 1
-  ! truthy_env "${NEMOCLAW_REINSTALL_CLI:-}" || return 1
+  state_root="$(nemoclaw_state_root)" || return 1
+  [[ "$source_root" == "${state_root}/source" ]] || return 1
+  [[ -d "$state_root" && ! -L "$state_root" && -O "$state_root" ]] || return 1
   [[ -d "$source_root" && ! -L "$source_root" && -O "$source_root" ]] || return 1
   [[ -d "${source_root}/.git" && ! -L "${source_root}/.git" ]] || return 1
   grep -q '"name"[[:space:]]*:[[:space:]]*"nemoclaw"' "${source_root}/package.json" 2>/dev/null || return 1
 
+  current_revision="$(git -C "$source_root" rev-parse --verify 'HEAD^{commit}' 2>/dev/null)" || return 1
+  [[ "$current_revision" =~ ^[0-9a-f]{40,64}$ ]] || return 1
+
+  identity_file="${source_root}/dist/build-identity.json"
+  [[ -f "$identity_file" && -s "${source_root}/dist/lib/onboard/preflight.js" ]] || return 1
+  [[ -s "${source_root}/nemoclaw/dist/index.js" ]] || return 1
+  identity_revision="$(json_string_field "$identity_file" sourceRevision)"
+  identity_version="$(json_string_field "$identity_file" nemoclawVersion)"
+  [[ "$identity_revision" == "$current_revision" ]] || return 1
+  [[ "$identity_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?([+][0-9A-Za-z.-]+)?$ ]] || return 1
+}
+
+is_reusable_managed_nemoclaw_install() {
+  local source_root="$1" expected_revision current_revision identity_version cli_runner version_output
+
+  [[ "${NEMOCLAW_BOOTSTRAP_PAYLOAD:-}" == "1" ]] || return 1
+  ! truthy_env "${NEMOCLAW_REINSTALL_CLI:-}" || return 1
+  is_recognized_managed_nemoclaw_install "$source_root" || return 1
   expected_revision="$(installer_payload_revision)" || return 1
   current_revision="$(git -C "$source_root" rev-parse --verify 'HEAD^{commit}' 2>/dev/null)" || return 1
   [[ "$current_revision" == "$expected_revision" ]] || return 1
@@ -2354,17 +2374,21 @@ is_reusable_managed_nemoclaw_install() {
   git -C "$source_root" diff --cached --quiet --ignore-submodules -- || return 1
   [[ -d "${source_root}/node_modules" && -d "${source_root}/nemoclaw/node_modules" ]] || return 1
 
-  identity_file="${source_root}/dist/build-identity.json"
-  [[ -f "$identity_file" && -s "${source_root}/dist/lib/onboard/preflight.js" ]] || return 1
-  [[ -s "${source_root}/nemoclaw/dist/index.js" ]] || return 1
-  identity_revision="$(json_string_field "$identity_file" sourceRevision)"
-  identity_version="$(json_string_field "$identity_file" nemoclawVersion)"
-  [[ "$identity_revision" == "$expected_revision" ]] || return 1
-  [[ "$identity_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?([+][0-9A-Za-z.-]+)?$ ]] || return 1
-
+  identity_version="$(json_string_field "${source_root}/dist/build-identity.json" nemoclawVersion)"
   cli_runner="$(resolve_cli_runner_within_source "$source_root")" || return 1
   version_output="$("$cli_runner" --version 2>/dev/null)" || return 1
   [[ "$version_output" == "${_CLI_BIN} v${identity_version}" ]]
+}
+
+capture_prior_managed_install_for_telemetry() {
+  local managed_source
+  _NEMOCLAW_PRIOR_MANAGED_INSTALL=false
+  [[ "${NEMOCLAW_UPDATE_INVOKED:-}" == "1" ]] && return 0
+  managed_source="$(nemoclaw_state_root)/source" || return 0
+  if is_recognized_managed_nemoclaw_install "$managed_source"; then
+    _NEMOCLAW_PRIOR_MANAGED_INSTALL=true
+  fi
+  return 0
 }
 
 restore_managed_source_lockfile() {
@@ -6177,6 +6201,7 @@ install_nemoclaw_before_onboarding() {
   step 1 "Node.js"
   install_nodejs
   ensure_supported_runtime
+  capture_prior_managed_install_for_telemetry
   resolve_pending_express_wsl_provider
   ensure_station_express_pair
 
@@ -6423,7 +6448,8 @@ clear_station_resume_after_completed_onboarding() {
 # Delivery is best-effort and must never change the installer's exit status.
 send_install_telemetry() {
   local operation="install" telemetry_entry
-  if [[ "${NEMOCLAW_UPDATE_INVOKED:-}" == "1" ]]; then
+  if [[ "${NEMOCLAW_UPDATE_INVOKED:-}" == "1" ]] \
+    || [[ "${_NEMOCLAW_PRIOR_MANAGED_INSTALL:-false}" == true ]]; then
     operation="update"
   fi
 

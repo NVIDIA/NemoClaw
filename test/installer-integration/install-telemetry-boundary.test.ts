@@ -12,6 +12,8 @@ import { runInstallerSourcedBody } from "../helpers/installer-run-fixture";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../..");
 
+type PriorManagedInstall = "none" | "recognized" | "malformed";
+
 function runInstallerBody(body: string, extraEnv: Record<string, string> = {}) {
   const run = runInstallerSourcedBody(body, {
     homePrefix: "nemoclaw-install-telemetry-",
@@ -27,6 +29,7 @@ function runMainHarness(
   onboardStatus: 0 | 1,
   extraEnv: Record<string, string> = {},
   telemetryExitStatus = 0,
+  priorManagedInstall: PriorManagedInstall = "none",
 ) {
   const run = runInstallerBody(
     `
@@ -56,7 +59,14 @@ print_banner() { :; }
 preflight_usage_notice_prompt() { :; }
 prepare_installer_host() { :; }
 validate_deferred_hermes_onboarding_request() { :; }
-install_nemoclaw_before_onboarding() { record_order install; }
+is_recognized_managed_nemoclaw_install() {
+  [[ "$PRIOR_MANAGED_INSTALL" == "recognized" ]]
+}
+install_nemoclaw_before_onboarding() {
+  capture_prior_managed_install_for_telemetry
+  record_order install
+  rm -rf "$HOME/.nemoclaw/source"
+}
 command_exists() { return 0; }
 registered_sandbox_count() { printf '0\\n'; }
 should_defer_hermes_onboarding() { return 1; }
@@ -68,7 +78,11 @@ finalize_install() { record_order finalize; }
 clear_station_resume_after_completed_onboarding() { record_order cleanup; }
 main --non-interactive --yes-i-accept-third-party-software
 `,
-    { ONBOARD_STATUS: String(onboardStatus), ...extraEnv },
+    {
+      ONBOARD_STATUS: String(onboardStatus),
+      PRIOR_MANAGED_INSTALL: priorManagedInstall,
+      ...extraEnv,
+    },
   );
   const callsPath = path.join(run.home, "telemetry.calls");
   const orderPath = path.join(run.home, "order.trace");
@@ -108,13 +122,21 @@ describe("installer telemetry boundary", () => {
   });
 
   it.each([
-    ["a direct install", {}, "install"],
-    ["an update invocation", { NEMOCLAW_UPDATE_INVOKED: "1" }, "update"],
-    ["an unrecognized marker", { NEMOCLAW_UPDATE_INVOKED: "unexpected" }, "install"],
+    ["a direct install", {}, "none", "install"],
+    ["an update invocation", { NEMOCLAW_UPDATE_INVOKED: "1" }, "none", "update"],
+    ["a manual rerun over an older managed install", {}, "recognized", "update"],
+    ["a malformed prior install", {}, "malformed", "install"],
+    [
+      "an update invocation with malformed prior state",
+      { NEMOCLAW_UPDATE_INVOKED: "1" },
+      "malformed",
+      "update",
+    ],
+    ["an unrecognized marker", { NEMOCLAW_UPDATE_INVOKED: "unexpected" }, "none", "install"],
   ])(
     "passes only the closed operation after successful cleanup for %s (#10440)",
-    (_scenario, env, operation) => {
-      const run = runMainHarness(0, env);
+    (_scenario, env, priorManagedInstall, operation) => {
+      const run = runMainHarness(0, env, 0, priorManagedInstall as PriorManagedInstall);
 
       expect(run.result.status, run.output).toBe(0);
       expect(run.order).toBe("install\nonboard\nfinalize\ncleanup\ntelemetry\n");

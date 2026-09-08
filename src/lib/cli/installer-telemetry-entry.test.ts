@@ -21,7 +21,7 @@ describe("installer telemetry entry", () => {
     async (operation) => {
       await runInstallerTelemetryEntry([operation]);
 
-      expect(sendInstallerTelemetry).toHaveBeenCalledExactlyOnceWith(operation);
+      expect(sendInstallerTelemetry).toHaveBeenCalledExactlyOnceWith(operation, {});
     },
   );
 

@@ -55,7 +55,11 @@ function writeManagedSource(root: string, revision: string) {
   );
   writeExecutable(
     path.join(root, "bin", "nemoclaw.js"),
-    '#!/usr/bin/env bash\n[ "$1" = "--version" ] && echo "nemoclaw v0.0.99"\nexit 0\n',
+    `#!/usr/bin/env bash
+[ -z "\${CLI_EXECUTION_LOG:-}" ] || printf '%s\\n' "$*" >> "$CLI_EXECUTION_LOG"
+[ "$1" = "--version" ] && echo "nemoclaw v0.0.99"
+exit 0
+`,
   );
 }
 
@@ -70,6 +74,14 @@ type InitialStateSetup = (fixture: {
 function setupManagedSource({ fakeBin, sourceRoot, revision }: Parameters<InitialStateSetup>[0]) {
   writeManagedSource(sourceRoot, revision);
   fs.symlinkSync(path.join(sourceRoot, "bin", "nemoclaw.js"), path.join(fakeBin, "nemoclaw"));
+}
+
+function setupMalformedManagedSource(fixture: Parameters<InitialStateSetup>[0]) {
+  setupManagedSource(fixture);
+  fs.writeFileSync(
+    path.join(fixture.sourceRoot, "dist", "build-identity.json"),
+    JSON.stringify({ nemoclawVersion: "0.0.99", sourceRevision: "c".repeat(40) }, null, 2),
+  );
 }
 
 function setupCleanState(_fixture: Parameters<InitialStateSetup>[0]) {}
@@ -108,6 +120,7 @@ function runManagedCliInstallTwice({
   const payloadScripts = path.join(tmp, "payload", "scripts");
   const gitLogPath = path.join(tmp, "git.log");
   const npmLogPath = path.join(tmp, "npm.log");
+  const cliExecutionLogPath = path.join(tmp, "cli-execution.log");
 
   fs.mkdirSync(fakeBin, { recursive: true });
   fs.mkdirSync(path.join(prefix, "bin"), { recursive: true });
@@ -214,6 +227,16 @@ source "$INSTALLER_UNDER_TEST" >/dev/null 2>&1
 SCRIPT_DIR="$PAYLOAD_SCRIPTS"
 NEMOCLAW_BOOTSTRAP_PAYLOAD=1
 NEMOCLAW_DEFER_OPENSHELL_INSTALL=1
+prior_managed_install=false
+if is_recognized_managed_nemoclaw_install "$MANAGED_SOURCE"; then
+  prior_managed_install=true
+fi
+recognition_executed_cli=false
+if [ -s "$CLI_EXECUTION_LOG" ]; then
+  recognition_executed_cli=true
+fi
+printf 'RECOGNIZED_BEFORE=%s RECOGNITION_EXECUTED_CLI=%s\n' \
+  "$prior_managed_install" "$recognition_executed_cli"
 install_nemoclaw
 ${separateInstallerRuns ? "_NEMOCLAW_CLI_INSTALL_PREPARED=false" : ""}
 install_nemoclaw
@@ -225,6 +248,7 @@ printf 'PREPARED=%s MODE=%s SOURCE=%s\n' \
       env: {
         ...process.env,
         COMMITTED_LOCKFILE,
+        CLI_EXECUTION_LOG: cliExecutionLogPath,
         EXPECTED_REVISION: INSTALL_REUSE_REVISION,
         FAIL_LOCKFILE_RESTORE: failLockfileRestore ? "1" : "",
         GIT_LOG_PATH: gitLogPath,
@@ -260,6 +284,7 @@ describe("installer-managed CLI reuse", () => {
     });
 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.stdout).toContain("RECOGNIZED_BEFORE=false RECOGNITION_EXECUTED_CLI=false");
     expect(stateMode).toBe(0o700);
   });
 
@@ -302,6 +327,7 @@ describe("installer-managed CLI reuse", () => {
     });
 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.stdout).toContain("RECOGNIZED_BEFORE=true RECOGNITION_EXECUTED_CLI=false");
     expect(result.stdout).not.toContain(
       "Reusing the installed NemoClaw CLI at the selected revision",
     );
@@ -312,6 +338,15 @@ describe("installer-managed CLI reuse", () => {
     expect(npmLog.match(/\|ci --ignore-scripts$/gm)).toHaveLength(1);
     expect(npmLog.match(/\|run build$/gm)).toHaveLength(1);
     expect(npmLog.match(/\|link --ignore-scripts$/gm)).toHaveLength(1);
+  });
+
+  it("does not recognize a managed source whose build identity differs from Git (#10440)", () => {
+    const { result } = runManagedCliInstallTwice({
+      setupInitialState: setupMalformedManagedSource,
+    });
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.stdout).toContain("RECOGNIZED_BEFORE=false RECOGNITION_EXECUTED_CLI=false");
   });
 
   it("reuses the managed checkout on a later installer run after its own dependency install (#8305)", () => {
