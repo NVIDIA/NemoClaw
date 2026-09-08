@@ -27,6 +27,7 @@ const script = resolve(
 );
 const roots: string[] = [];
 const uid = process.getuid?.() ?? "unknown";
+const OPENAI_API_KEY = ["sk", "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMN"].join("-");
 const REDACTION_CASES = [
   [
     "Slack bot token",
@@ -38,11 +39,7 @@ const REDACTION_CASES = [
     ["xapp", "1", "A1234567890", "1234567890123", "abcdefghijklmnopqrstuvwx"].join("-"),
     ["xapp", "1", "A1234567890", "1234567890123", "abcdefghijklmnopqrstuvwx"].join("-"),
   ],
-  [
-    "OpenAI API key",
-    "sk-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMN",
-    "sk-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMN",
-  ],
+  ["OpenAI API key", OPENAI_API_KEY, OPENAI_API_KEY],
   [
     "OpenAI project API key",
     "sk-proj-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMN",
