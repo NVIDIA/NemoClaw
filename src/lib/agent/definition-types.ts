@@ -3,6 +3,7 @@
 
 import type { AgentDashboardUi } from "./dashboard-ui";
 import type { AgentRuntime } from "./runtime-manifest";
+import type { AgentSkillIntegration } from "./skill-integration";
 import type { AgentWebAuth } from "./web-auth";
 
 export type ManifestScalar = string | number | boolean | null | Date;
@@ -149,6 +150,7 @@ export interface AgentDefinition {
   readonly configPaths: AgentConfigPaths;
   readonly inferenceProviderOptions: string[];
   readonly mcpCapability: AgentMcpCapability;
+  readonly skillIntegration?: AgentSkillIntegration | null;
   readonly stateDirectories: AgentStateDirectory[];
   readonly stateDirs: string[];
   readonly stateDirPrefixes: string[];

@@ -53,16 +53,16 @@ describe("command-registry", () => {
   });
 
   describe("sandboxCommands()", () => {
-    it("returns exactly 61 entries", () => {
-      // 56 visible + 5 hidden (config get/set/rotate-token + inference get/set).
-      // 56 visible includes the sessions group (root + list + reset + delete +
+    it("returns exactly 62 entries", () => {
+      // 57 visible + 5 hidden (config get/set/rotate-token + inference get/set).
+      // 57 visible includes the skill list command, the sessions group (root + list + reset + delete +
       // export), the agents quartet (add + apply + delete + list), the
       // singular `agent` passthrough that forwards to `openclaw agent`, the
       // download + upload host-side openshell wrappers, the stop + start
       // container lifecycle pair (#6026), the policy baseline exclude + restore
       // pair, plus seven MCP bridge display entries under the `mcp` parent and
       // the gateway restart command under the `gateway` parent.
-      expect(sandboxCommands()).toHaveLength(61);
+      expect(sandboxCommands()).toHaveLength(62);
     });
 
     it.each(sandboxCommands())("$usage has sandbox scope", (cmd) => {
