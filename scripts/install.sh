@@ -288,7 +288,8 @@ resolve_nemoclaw_gateway_port() {
 }
 
 resolve_persisted_automatic_gateway_port() {
-  local root gateways_dir marker state_dir port marker_value selected_port="" marker_count=0
+  local root gateways_dir marker state_dir port marker_value marker_size expected_size
+  local selected_port="" marker_count=0
   root="$(nemoclaw_state_root)" || return 2
   if [[ ! -e "$root" && ! -L "$root" ]]; then return 1; fi
   if [[ -L "$root" ]]; then return 3; fi
@@ -312,6 +313,10 @@ resolve_persisted_automatic_gateway_port() {
       *) return 2 ;;
     esac
     if [[ -L "$marker" || ! -f "$marker" || ! -r "$marker" ]]; then return 2; fi
+    marker_size="$(LC_ALL=C wc -c <"$marker" 2>/dev/null)" || return 2
+    marker_size="${marker_size//[[:space:]]/}"
+    expected_size=$((${#port} + 1))
+    [[ "$marker_size" =~ ^[0-9]+$ && "$marker_size" -eq "$expected_size" ]] || return 2
     marker_value="$(<"$marker")" || return 2
     [[ "$marker_value" == "$port" ]] || return 2
     marker_count=$((marker_count + 1))
@@ -532,7 +537,7 @@ const fs = require("node:fs");
 const [pendingMarker, completeMarker, port] = process.argv.slice(2);
 const pendingStat = fs.lstatSync(pendingMarker);
 if (pendingStat.isSymbolicLink() || !pendingStat.isFile()) process.exit(1);
-if (![port, `${port}\n`].includes(fs.readFileSync(pendingMarker, "utf8"))) process.exit(1);
+if (fs.readFileSync(pendingMarker, "utf8") !== `${port}\n`) process.exit(1);
 try {
   fs.lstatSync(completeMarker);
   process.exit(1);
@@ -1971,6 +1976,7 @@ install_nemoclaw_openshell_gateway_user_service() {
         NEMOCLAW_GATEWAY_PORT="$alternate_port"
         export NEMOCLAW_GATEWAY_PORT
         _NEMOCLAW_AUTOMATIC_GATEWAY_PORT_SELECTED=true
+        persist_pending_automatic_gateway_port_selection
         warn "The systemd user manager is unavailable, but $activation_path can activate a gateway user service that can later claim port 8080. Automatically selected safe alternate gateway port ${alternate_port} to isolate the gateway environment without modifying the existing service."
         return 0
       fi
@@ -4421,10 +4427,6 @@ run_onboard() {
     invoke_args=(-u DOCKER_HOST "$cli_invoke" "${onboard_cmd[@]}")
   fi
 
-  if [[ "${_NEMOCLAW_AUTOMATIC_GATEWAY_PORT_SELECTED:-false}" == true ]]; then
-    persist_pending_automatic_gateway_port_selection
-  fi
-
   if [ "${NON_INTERACTIVE:-}" = "1" ]; then
     NEMOCLAW_INSTALLER_AUTO_FRESH_RECEIPT_GENERATION="$installer_auto_fresh_receipt_generation" \
       "$invoke_bin" "${invoke_args[@]}" || status=$?
@@ -6717,6 +6719,10 @@ finalize_install() {
 }
 
 if [[ "${BASH_SOURCE[0]:-}" == "$0" ]] || { [[ -z "${BASH_SOURCE[0]:-}" ]] && { [[ "$0" == "bash" ]] || [[ "$0" == "-bash" ]]; }; }; then
+  if [[ "$#" -eq 1 && "${1:-}" == "--internal-resolve-automatic-gateway-port" ]]; then
+    resolve_nemoclaw_gateway_port
+    exit 0
+  fi
   # #4414: When invoked via `curl ... | bash`, BASH_SOURCE is empty and
   # $0="bash". ensure_docker's sg(1) re-exec (#4419) needs a real script
   # file to point bash at; without one it falls back to the legacy

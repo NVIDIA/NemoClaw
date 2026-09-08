@@ -60,69 +60,30 @@ function applyPersistedAutomaticGatewayPort() {
     delete process.env._NEMOCLAW_AUTOMATIC_GATEWAY_PORT;
     return;
   }
-  const fs = require("node:fs");
+  const { spawnSync } = require("node:child_process");
   const path = require("node:path");
-  const home = process.env.HOME || "/";
-  const stateRoot = path.join(home, ".nemoclaw");
-  const gatewaysDir = path.join(stateRoot, "gateways");
-  let entries;
-  try {
-    const rootStat = fs.lstatSync(stateRoot);
-    const stat = fs.lstatSync(gatewaysDir);
-    if (
-      rootStat.isSymbolicLink() ||
-      !rootStat.isDirectory() ||
-      stat.isSymbolicLink() ||
-      !stat.isDirectory()
-    ) {
-      throw new Error("unsafe gateways root");
-    }
-    entries = fs.readdirSync(gatewaysDir, { withFileTypes: true });
-  } catch (error) {
-    if (error && error.code === "ENOENT") return;
+  const resolver = path.join(__dirname, "..", "scripts", "install.sh");
+  const result = spawnSync(
+    "/bin/bash",
+    [resolver, "--internal-resolve-automatic-gateway-port"],
+    {
+      encoding: "utf8",
+      env: { ...process.env, HOME: process.env.HOME || "/", NEMOCLAW_GATEWAY_PORT: "" },
+      maxBuffer: 64 * 1024,
+      timeout: 5_000,
+    },
+  );
+  if (result.error || result.status !== 0 || result.signal) {
     throw new Error(SAFE_AUTOMATIC_GATEWAY_PORT_DIAGNOSTIC);
   }
-  const selectedPorts = [];
-  const nonblock =
-    typeof fs.constants.O_NONBLOCK === "number" ? fs.constants.O_NONBLOCK : 0;
-  for (const entry of entries) {
-    const stateDir = path.join(gatewaysDir, entry.name);
-    for (const markerName of ["automatic-gateway-port", "automatic-gateway-port.pending"]) {
-      const marker = path.join(stateDir, markerName);
-      try {
-        const stateStat = fs.lstatSync(stateDir);
-        const markerFd = fs.openSync(
-          marker,
-          fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | nonblock,
-        );
-        try {
-          const markerStat = fs.fstatSync(markerFd);
-          if (
-            !/^(?:899[0-9]|900[0-5])$/.test(entry.name) ||
-            stateStat.isSymbolicLink() ||
-            !stateStat.isDirectory() ||
-            !markerStat.isFile() ||
-            ![entry.name, `${entry.name}\n`].includes(fs.readFileSync(markerFd, "utf8"))
-          ) {
-            throw new Error("unsafe automatic gateway port marker");
-          }
-        } finally {
-          fs.closeSync(markerFd);
-        }
-        selectedPorts.push(entry.name);
-      } catch (error) {
-        if (error && error.code === "ENOENT") continue;
-        throw new Error(SAFE_AUTOMATIC_GATEWAY_PORT_DIAGNOSTIC);
-      }
-    }
-  }
-  if (selectedPorts.length > 1) {
-    throw new Error(SAFE_AUTOMATIC_GATEWAY_PORT_DIAGNOSTIC);
-  }
-  if (selectedPorts.length === 1) {
-    process.env.NEMOCLAW_GATEWAY_PORT = selectedPorts[0];
+  const port = result.stdout;
+  if (port === "8080") return;
+  if (/^(?:899[0-9]|900[0-5])$/.test(port)) {
+    process.env.NEMOCLAW_GATEWAY_PORT = port;
     process.env._NEMOCLAW_AUTOMATIC_GATEWAY_PORT = "1";
+    return;
   }
+  throw new Error(SAFE_AUTOMATIC_GATEWAY_PORT_DIAGNOSTIC);
 }
 
 try {

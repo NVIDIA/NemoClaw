@@ -518,6 +518,35 @@ describe("install.sh OpenShell gateway service", () => {
     expect(fs.existsSync(servicePath(home))).toBe(false);
   });
 
+  it("retains an automatic port across deferred Hermes onboarding (#10824)", () => {
+    const home = makeTempRoot();
+    const fixture = writeQualifiedDefaultPortActivation(home);
+    const systemctl = writeUnavailableUserManagerStub(home);
+
+    const result = runInstallHelper(
+      home,
+      qualifiedInstallBody(fixture, [
+        "install_nemoclaw_openshell_gateway_user_service",
+        "DEFER_ONBOARDING=1 NEMOCLAW_AGENT=hermes should_defer_hermes_onboarding 0",
+        'printf "DEFERRED_PORT=%s\\n" "$NEMOCLAW_GATEWAY_PORT"',
+      ]),
+      {
+        PATH: `${systemctl.bin}:${fixture.probeBin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}`,
+        NVIDIA_API_KEY: "",
+        NVIDIA_INFERENCE_API_KEY: "",
+      },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("DEFERRED_PORT=8990");
+    expect(
+      fs.readFileSync(
+        path.join(home, ".nemoclaw", "gateways", "8990", "automatic-gateway-port.pending"),
+        "utf8",
+      ),
+    ).toBe("8990\n");
+  });
+
   it("retains a failed automatic selection for installer resume on the same port (#10824)", () => {
     const home = makeTempRoot();
     const fixture = writeQualifiedDefaultPortActivation(home);
@@ -777,6 +806,34 @@ describe("install.sh OpenShell gateway service", () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("UNAVAILABLE");
+  });
+
+  it("rejects a candidate that overlaps a configured service port (#10824)", () => {
+    const home = makeTempRoot();
+    const result = runCandidateCheck(home, { NEMOCLAW_VLLM_PORT: "8990" });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("UNAVAILABLE");
+  });
+
+  it("rejects a persisted automatic marker with extra trailing bytes (#10824)", () => {
+    const home = makeTempRoot();
+    const marker = path.join(
+      home,
+      ".nemoclaw",
+      "gateways",
+      "8990",
+      "automatic-gateway-port",
+    );
+    fs.mkdirSync(path.dirname(marker), { recursive: true });
+    fs.writeFileSync(marker, "8990\n\n");
+
+    const result = runInstallHelper(home, "resolve_nemoclaw_gateway_port");
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "Could not safely resolve the automatically selected NemoClaw gateway port",
+    );
   });
 
   it("rejects a candidate with an existing OpenShell gateway registration (#10824)", () => {

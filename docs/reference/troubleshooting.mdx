@@ -622,9 +622,9 @@ A supported listener probe must conclusively confirm that the port is unused.
 Installation stops if no candidate passes, including when listener inspection is unavailable or inconclusive for every remaining candidate.
 It does not modify the existing service or activation link.
 
-Before onboarding begins, the installer records the selected value under `~/.nemoclaw/gateways/<port>/automatic-gateway-port.pending`.
+After selection and before onboarding runs or is deferred, the installer records the selected value under `~/.nemoclaw/gateways/<port>/automatic-gateway-port.pending`.
 After onboarding succeeds, it promotes that file to `automatic-gateway-port`.
-Failed or cancelled onboarding keeps the pending identity so a new installer process restores the same port and reaches its existing onboarding session or cleanup path instead of creating another environment.
+Deferred, failed, or cancelled onboarding keeps the pending identity so a later installer or CLI process restores the same port and reaches its onboarding or cleanup path instead of creating another environment.
 Later NemoClaw commands restore either recorded identity when `NEMOCLAW_GATEWAY_PORT` is unset.
 You can still use the printed export command when a script or surrounding process must carry the same scope explicitly.
 If the installer selects port `8990`, it prints this command:

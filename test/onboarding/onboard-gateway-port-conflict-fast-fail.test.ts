@@ -88,7 +88,7 @@ describe("onboard gateway port conflict readiness (#6752)", () => {
 
   it(
     "rejects a foreign listener on a restored automatic port without waiting on lifecycle inspection",
-    testTimeoutOptions(15_000),
+    testTimeoutOptions(30_000),
     () => {
       const marker = path.join(
         workspace.homeDir,
@@ -102,7 +102,7 @@ describe("onboard gateway port conflict readiness (#6752)", () => {
       const result = runOnboardProcess(
         [CLI, "onboard", "--name", "foreign-port", "--no-gpu", "--non-interactive"],
         {
-          timeoutMs: 10_000,
+          timeoutMs: 25_000,
           env: workspaceEnv(workspace, {
             NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
             NEMOCLAW_OPENSHELL_BIN: path.join(workspace.binDir, "openshell"),

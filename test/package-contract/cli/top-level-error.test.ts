@@ -329,6 +329,41 @@ describe("compiled CLI top-level errors", () => {
     }
   });
 
+  it("consumes pending and completed markers produced by the installer (#10824)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-installer-marker-"));
+    try {
+      const pending = spawnSync(
+        "bash",
+        [
+          "-c",
+          `source ${JSON.stringify(path.join(REPO_ROOT, "scripts", "install.sh"))}
+NEMOCLAW_GATEWAY_PORT=8990
+export NEMOCLAW_GATEWAY_PORT
+persist_pending_automatic_gateway_port_selection`,
+        ],
+        { cwd: REPO_ROOT, encoding: "utf8", env: { ...process.env, HOME: home } },
+      );
+      expect(pending.status, pending.stderr).toBe(0);
+      expect(runWithCapturedGatewayPort(home).stdout).toBe("8990:1");
+
+      const completed = spawnSync(
+        "bash",
+        [
+          "-c",
+          `source ${JSON.stringify(path.join(REPO_ROOT, "scripts", "install.sh"))}
+NEMOCLAW_GATEWAY_PORT=8990
+export NEMOCLAW_GATEWAY_PORT
+complete_automatic_gateway_port_selection`,
+        ],
+        { cwd: REPO_ROOT, encoding: "utf8", env: { ...process.env, HOME: home } },
+      );
+      expect(completed.status, completed.stderr).toBe(0);
+      expect(runWithCapturedGatewayPort(home).stdout).toBe("8990:1");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("preserves an explicit gateway port over an automatic marker (#10824)", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-explicit-port-"));
     try {
@@ -387,6 +422,26 @@ describe("compiled CLI top-level errors", () => {
       fs.mkdirSync(path.dirname(marker), { recursive: true });
       const fifo = spawnSync("mkfifo", [marker], { encoding: "utf8" });
       expect(fifo.status, fifo.stderr).toBe(0);
+
+      const result = runWithCapturedGatewayPort(home);
+
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain(
+        "Could not safely resolve the automatically selected NemoClaw gateway port",
+      );
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an automatic gateway marker with extra trailing bytes (#10824)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-marker-bytes-"));
+    try {
+      const marker = path.join(home, ".nemoclaw", "gateways", "8990", "automatic-gateway-port");
+      fs.mkdirSync(path.dirname(marker), { recursive: true });
+      fs.writeFileSync(marker, "8990\n\n");
 
       const result = runWithCapturedGatewayPort(home);
 
