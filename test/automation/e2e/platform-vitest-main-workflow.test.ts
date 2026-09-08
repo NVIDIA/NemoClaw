@@ -94,6 +94,7 @@ describe("platform evidence workflow", () => {
     expect(runtime).toContain("podman --version");
     expect(runtime).toContain("ip -Version");
     expect(runtimeIndex).toBeGreaterThanOrEqual(0);
+    expect(suiteIndex).toBeGreaterThanOrEqual(0);
     expect(runtimeIndex).toBeGreaterThan(suiteIndex);
   });
 
