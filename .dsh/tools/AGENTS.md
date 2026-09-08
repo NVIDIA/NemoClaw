@@ -6,6 +6,8 @@
 These tools are internal team automation stored with NemoClaw so contributors share the same operations. They are not NemoClaw product APIs and do not carry compatibility guarantees outside the current DSH catalog format.
 
 Agent skills do not depend on this catalog. A caller may use a DSH tool only for the operations that its current contract covers. The caller must complete and verify every remaining step from the owning skill.
+Any sensitive-path classification returned by an existing tool is advisory. Publication workflows
+must classify paths from their canonical repository policy instead.
 
 ## Change workflow
 
