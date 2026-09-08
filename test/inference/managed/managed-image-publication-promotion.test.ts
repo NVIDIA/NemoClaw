@@ -186,4 +186,23 @@ describe("managed-image publication promotion", () => {
     );
     expect(foreignRunPromotion.cohortContract).toBeNull();
   });
+
+  it("rejects a successful pointer command that leaves stale alias bytes", () => {
+    const workflow = managedPromoter(readWorkflow("managed-images.yaml"));
+    const promotion = required(
+      step(workflow, "Stage validated multi-platform managed image cohort and contracts").run,
+      "managed image promotion script is missing",
+    );
+    const pointer = required(
+      step(workflow, "Promote durable managed image cohort pointers").run,
+      "managed image pointer script is missing",
+    );
+
+    const stalePointer = runManagedImagePromotion(promotion, "", pointer, {
+      retainStalePointerAliases: true,
+    });
+
+    expect(stalePointer.status).not.toBe(0);
+    expect(stalePointer.stderr).toContain("OpenClaw cohort pointer is not exact");
+  });
 });
