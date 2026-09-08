@@ -12,6 +12,7 @@ import type {
   RuntimeProviderPrivilegedSandboxTarget,
 } from "./contract";
 import {
+  DirectSandboxContainerNotFoundError,
   DirectSandboxFallbackUnavailableError,
   PinnedSandboxResourceIdentityChangedError,
 } from "./privileged-sandbox-control-errors";
@@ -107,7 +108,7 @@ function resolveDockerTarget(
   }
   const containerId = findDirectSandboxContainer(input.sandboxName, input.registeredSandboxNames);
   if (!containerId) {
-    throw new DirectSandboxFallbackUnavailableError(
+    throw new DirectSandboxContainerNotFoundError(
       `No running direct OpenShell sandbox container found for '${input.sandboxName}' ` +
         `(driver: ${input.sandbox.openshellDriver ?? "unspecified"}). Expected one ` +
         `OpenShell-managed container labeled '${OPENSHELL_SANDBOX_NAME_LABEL}=` +

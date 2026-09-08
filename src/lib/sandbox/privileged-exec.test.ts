@@ -1096,7 +1096,7 @@ describe("privileged sandbox exec routing", () => {
     expect(dockerPsCalls).toBe(0);
   });
 
-  it("surfaces docker discovery failures instead of reporting a missing container", () => {
+  it("keeps Docker discovery-command failures distinct from missing containers (#11107)", () => {
     withPrivilegedExecMocks(
       {
         getSandbox: () => ({ name: "alpha", openshellDriver: "vm" }),
@@ -1105,15 +1105,25 @@ describe("privileged sandbox exec routing", () => {
           throw new Error("docker daemon unavailable");
         },
       },
-      ({ privilegedSandboxExecArgv }) => {
-        expect(() => privilegedSandboxExecArgv("alpha", ["id"])).toThrow(
-          "docker daemon unavailable",
-        );
+      ({
+        isDirectSandboxContainerNotFoundError,
+        isDirectSandboxFallbackUnavailableError,
+        privilegedSandboxExecArgv,
+      }) => {
+        let refusal: unknown;
+        try {
+          privilegedSandboxExecArgv("alpha", ["id"]);
+        } catch (error) {
+          refusal = error;
+        }
+        expect(String(refusal)).toContain("docker daemon unavailable");
+        expect(isDirectSandboxFallbackUnavailableError(refusal)).toBe(true);
+        expect(isDirectSandboxContainerNotFoundError(refusal)).toBe(false);
       },
     );
   });
 
-  it("fails clearly when no matching direct sandbox container is running", () => {
+  it("classifies a successful Docker discovery with no container as pending (#11107)", () => {
     withPrivilegedExecMocks(
       {
         getSandbox: () => ({ name: "alpha", openshellDriver: "vm" }),
@@ -1123,7 +1133,11 @@ describe("privileged sandbox exec routing", () => {
         }),
         dockerCapture: () => "",
       },
-      ({ isDirectSandboxFallbackUnavailableError, privilegedSandboxExecArgv }) => {
+      ({
+        isDirectSandboxContainerNotFoundError,
+        isDirectSandboxFallbackUnavailableError,
+        privilegedSandboxExecArgv,
+      }) => {
         let refusal: unknown;
         try {
           privilegedSandboxExecArgv("alpha", ["id"]);
@@ -1135,6 +1149,7 @@ describe("privileged sandbox exec routing", () => {
           /No running direct OpenShell sandbox container found for 'alpha'/,
         );
         expect(isDirectSandboxFallbackUnavailableError(refusal)).toBe(true);
+        expect(isDirectSandboxContainerNotFoundError(refusal)).toBe(true);
       },
     );
   });
