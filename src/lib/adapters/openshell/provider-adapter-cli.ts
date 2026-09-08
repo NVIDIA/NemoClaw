@@ -519,7 +519,14 @@ export function createCliOpenShellProviderAdapter(
     const env = Object.fromEntries(
       request.credentials.map((credential) => [credential.name, credential.value]),
     );
-    const result = invoke(args, request, request.credentials.length > 0 ? env : undefined);
+    const result = invoke(
+      args,
+      request,
+      request.credentials.length > 0 ? env : undefined,
+      2,
+      true,
+      PROVIDER_GET_DIAGNOSTIC_LIMIT,
+    );
     const error = commandError(result, Object.values(env));
     if (request.fromExisting && error?.kind === "command") {
       return failure({
