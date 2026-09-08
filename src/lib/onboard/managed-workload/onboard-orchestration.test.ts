@@ -289,6 +289,21 @@ describe("managed workload onboard orchestration", () => {
     });
   });
 
+  it("transfers the onboarding environment to override rejection before catalog fallback (#11138)", async () => {
+    const environment = { NEMOCLAW_SANDBOX_BASE_IMAGE_REF: "credential-bearing-value" };
+    const { runtime } = createFreshOnboardingRuntime(environment, {
+      stockManagedRuntime: true,
+      unavailableCatalog: true,
+    });
+
+    await expect(runtime.ensurePreparedWorkload()).rejects.toThrow(
+      "'NEMOCLAW_SANDBOX_BASE_IMAGE_REF' is set",
+    );
+    expect(prepareSandboxWorkloadSource).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ environment }),
+    );
+  });
+
   it("rejects an unavailable catalog for explicit temporary managed-image onboarding", async () => {
     const { runtime } = createFreshOnboardingRuntime(
       {},

@@ -253,6 +253,8 @@ On WSL with Docker Desktop, a generated replacement image build uses a temporary
 
 Rebuild creates the replacement from the base image selected during preflight, even when the source sandbox records an older base-image hint.
 
+If the sandbox's container is stopped (for example, an out-of-band container kill left the sandbox in `Phase: Error`), rebuild starts the container for the duration of the pre-recreate state backup and returns it to its stopped state afterward, the same recovery `$$nemoclaw backup-all` uses for a stopped container. If no stopped container can be found for the sandbox, or the retried backup still fails, rebuild aborts without recreating the sandbox; it reports an incomplete-snapshot notice only when a partial snapshot was retained. If the backup itself succeeds but the started container cannot be returned to its stopped state, rebuild also aborts, so a sandbox that was stopped before rebuild started is never left running without a warning.
+
 <AgentOnly variant="hermes">
 
 For a legacy Hermes sandbox with no base-image hint or `NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF` override, rebuild requires the release-pinned immutable Hermes base image.
