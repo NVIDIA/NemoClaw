@@ -1214,14 +1214,18 @@ describe("created sandbox identity gate", () => {
     await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow("process.exit:1");
 
     expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith(
-      expect.stringMatching(
-        new RegExp(
-          `^Create-attempt label: ${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}\\..*Do not delete the sandbox by mutable name.*can clear retained recovery only after OpenShell confirms absence`,
-          "u",
-        ),
-      ),
+      expect.any(String),
       undefined,
       nonce,
+    );
+    const retainedRecoveryMessage = vi.mocked(input.persistRetainedSandboxRecovery).mock
+      .calls[0]?.[0];
+    expect(retainedRecoveryMessage).toContain(
+      `Create-attempt label: ${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}.`,
+    );
+    expect(retainedRecoveryMessage).toContain("Do not delete the sandbox by mutable name");
+    expect(retainedRecoveryMessage).toContain(
+      "can clear retained recovery only after OpenShell confirms absence",
     );
     const output = vi.mocked(console.error).mock.calls.flat().join("\n");
     expect(output).toContain(`${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}`);
