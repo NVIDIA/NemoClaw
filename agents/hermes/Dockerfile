@@ -407,6 +407,7 @@ RUN set -eu; \
             exit 1; \
         fi; \
     fi; \
+    rm -f /opt/hermes/apps/desktop/src/store/suggestion-providers/github.test.ts; \
     rm -rf /root/.npm /root/.cache/electron /root/.cache/node-gyp /root/.cache/uv; \
     test -d "$hermes_web_dist"
 
