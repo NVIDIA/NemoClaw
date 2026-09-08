@@ -240,6 +240,7 @@ async function startSandboxWithinLifecycleFence(
     readiness.inference = checkStartedSandboxInference(name, resolved.sandbox, deps, log);
   });
   if (
+    resolved.sandbox.stopped === true &&
     !registry.recordSandboxStopIntent(
       sandboxName,
       false,

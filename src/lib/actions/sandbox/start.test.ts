@@ -261,6 +261,15 @@ describe("startSandbox", () => {
     expect(h.getSandbox("my-sandbox")?.stopped).toBe(false);
   });
 
+  it("does not require a registry write when no intentional stop is recorded (#11025)", async () => {
+    const h = harness();
+    h.getSandbox.mockReturnValue(sandbox());
+
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
+
+    expect(h.updateSandbox).not.toHaveBeenCalled();
+  });
+
   it("reports a partial success when the running state cannot be recorded (#11025)", async () => {
     const h = harness({ updateSandbox: vi.fn(() => false) });
 
@@ -789,7 +798,7 @@ describe("startSandbox", () => {
     );
     const h = harness({ probeInferenceInvocation });
     h.getSandbox.mockReturnValue(
-      sandbox({ provider: "ollama-local", model: "nemotron-3-nano:30b" }),
+      sandbox({ stopped: true, provider: "ollama-local", model: "nemotron-3-nano:30b" }),
     );
 
     const result = await startSandbox("my-sandbox", h.deps);
