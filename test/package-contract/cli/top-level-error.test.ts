@@ -203,7 +203,7 @@ Module._load = function(request, parent, isMain) {
 };
 require(cliPath);`,
     ],
-    { cwd: REPO_ROOT, encoding: "utf-8", env },
+    { cwd: REPO_ROOT, encoding: "utf-8", env, timeout: 5_000 },
   );
 }
 
@@ -370,6 +370,27 @@ describe("compiled CLI top-level errors", () => {
 
       const result = runWithCapturedGatewayPort(home);
 
+      expect(result.status).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain(
+        "Could not safely resolve the automatically selected NemoClaw gateway port",
+      );
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a FIFO automatic gateway marker without blocking CLI startup (#10824)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-fifo-port-"));
+    try {
+      const marker = path.join(home, ".nemoclaw", "gateways", "8990", "automatic-gateway-port");
+      fs.mkdirSync(path.dirname(marker), { recursive: true });
+      const fifo = spawnSync("mkfifo", [marker], { encoding: "utf8" });
+      expect(fifo.status, fifo.stderr).toBe(0);
+
+      const result = runWithCapturedGatewayPort(home);
+
+      expect(result.error).toBeUndefined();
       expect(result.status).toBe(1);
       expect(result.stdout).toBe("");
       expect(result.stderr).toContain(

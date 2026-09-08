@@ -83,13 +83,18 @@ function applyPersistedAutomaticGatewayPort() {
     throw new Error(SAFE_AUTOMATIC_GATEWAY_PORT_DIAGNOSTIC);
   }
   const selectedPorts = [];
+  const nonblock =
+    typeof fs.constants.O_NONBLOCK === "number" ? fs.constants.O_NONBLOCK : 0;
   for (const entry of entries) {
     const stateDir = path.join(gatewaysDir, entry.name);
     for (const markerName of ["automatic-gateway-port", "automatic-gateway-port.pending"]) {
       const marker = path.join(stateDir, markerName);
       try {
         const stateStat = fs.lstatSync(stateDir);
-        const markerFd = fs.openSync(marker, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+        const markerFd = fs.openSync(
+          marker,
+          fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | nonblock,
+        );
         try {
           const markerStat = fs.fstatSync(markerFd);
           if (
