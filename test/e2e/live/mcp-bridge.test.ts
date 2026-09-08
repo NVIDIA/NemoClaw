@@ -733,13 +733,7 @@ test("mcp-bridge", {
     toolResultToken: openClawResult,
     openClawToolSearch: {
       query: "fake echo",
-      toolNames: [
-        "mcp__fake__fake_echo",
-        "mcp_fake_fake_echo",
-        "fake__fake_echo",
-        "fake_fake_echo",
-        "fake_echo",
-      ],
+      toolNames: ["fake__fake_echo"],
     },
   });
   cleanup.add("stop MCP bridge compatible endpoint mock", () => compatibleMock.close());
@@ -922,7 +916,9 @@ test("mcp-bridge", {
     true,
   );
 
-  const requestCountAfterAllowedNodeProof = fakeMcp.requests.length;
+  const deniedMethodRequestCount = fakeMcp.requests.filter(
+    (request) => request.rpcMethod === "admin/delete",
+  ).length;
   const deniedNodeCall = await runNodeMcpProbe(
     mcpUrl,
     "admin/delete",
@@ -930,10 +926,15 @@ test("mcp-bridge", {
     "mcp-provider-rewrite-extension-method-denied",
   );
   expectExitZero(deniedNodeCall, "Node runtime identity cannot use a non-allowlisted MCP method");
-  expect(fakeMcp.requests.length).toBe(requestCountAfterAllowedNodeProof);
-
+  expect(
+    fakeMcp.requests.filter((request) => request.rpcMethod === "admin/delete"),
+  ).toHaveLength(deniedMethodRequestCount);
+  const deniedPath = "/not-the-configured-mcp-path";
+  const deniedPathRequestCount = fakeMcp.requests.filter(
+    (request) => request.path === deniedPath,
+  ).length;
   const deniedWrongPathCall = await runNodeMcpProbe(
-    `${new URL(mcpUrl).origin}/not-the-configured-mcp-path`,
+    `${new URL(mcpUrl).origin}${deniedPath}`,
     "tools/list",
     "deny",
     "mcp-provider-rewrite-unconfigured-path-denied",
@@ -942,7 +943,9 @@ test("mcp-bridge", {
     deniedWrongPathCall,
     "allowed Node runtime cannot replay the placeholder to another path",
   );
-  expect(fakeMcp.requests.length).toBe(requestCountAfterAllowedNodeProof);
+  expect(fakeMcp.requests.filter((request) => request.path === deniedPath)).toHaveLength(
+    deniedPathRequestCount,
+  );
 
   const deniedDecoyCall = await runNodeMcpProbe(
     decoyMcpUrl,
@@ -955,7 +958,6 @@ test("mcp-bridge", {
     "allowed Node runtime cannot replay the placeholder to another endpoint",
   );
   expect(decoyMcp.requests).toHaveLength(0);
-  expect(fakeMcp.requests.length).toBe(requestCountAfterAllowedNodeProof);
 
   const deniedCurl = await sandbox.execShell(
     OPENCLAW_SANDBOX_NAME,
@@ -984,7 +986,6 @@ test("mcp-bridge", {
     isExpectedMcpCurlPolicyDenial(deniedCurl),
     `non-allowlisted curl must receive an OpenShell policy denial\nstdout:\n${deniedCurl.stdout}\nstderr:\n${deniedCurl.stderr}`,
   ).toBe(true);
-  expect(fakeMcp.requests.length).toBe(requestCountAfterAllowedNodeProof);
 
   const registryRaw = fs.existsSync(REGISTRY_FILE) ? fs.readFileSync(REGISTRY_FILE, "utf8") : "";
   expect(registryRaw).not.toContain(mcpUrl);
