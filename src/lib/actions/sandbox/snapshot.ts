@@ -94,7 +94,7 @@ import {
   confirmSandboxRuntimeRestore,
   fingerprintSandboxLiveIdentity,
   getMcpProviderInspectionRuntimeSelection,
-  inspectSourceBridgeState,
+  inspectAgentMcpSources,
   isSandboxPolicyCredentialFree,
   type PreparedHostLocalInferenceAuthority,
   type PreparedSandboxRuntimeRestore,
@@ -1493,10 +1493,10 @@ async function runSnapshotRestoreUnlocked(
       : null;
     const managedDeepAgentsEntries = sourceSandbox
       ? Object.values(
-          inspectSourceBridgeState(
+          inspectAgentMcpSources(
             sourceSandbox,
             getMcpProviderInspectionRuntimeSelection(sourceSandbox),
-          ).bridges,
+          ).native,
         ).filter(
           (entry) =>
             entry.agent === "langchain-deepagents-code" && entry.adapter === "deepagents-config",

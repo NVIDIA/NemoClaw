@@ -27,16 +27,16 @@ export function cloneMcpSourceEntry(entry: McpSourceEntry): McpSourceEntry {
 }
 
 /** Read-only exact-provider qualification retained for rebuild handoff checks. */
-export function inspectExactMcpDestroyProvider(
+export async function inspectExactMcpDestroyProvider(
   entry: McpSourceEntry,
   options: {
     allowMissing: boolean;
     force?: boolean;
     runtimeSelection: McpProviderInspectionRuntimeSelection;
   },
-): McpProviderInspection {
+): Promise<McpProviderInspection> {
   assertAuthenticatedBridgeEntry(entry);
-  const inspection = inspectMcpProvider(entry.providerName, options.runtimeSelection);
+  const inspection = await inspectMcpProvider(entry.providerName, options.runtimeSelection);
   if (inspection.exists === null) {
     throw new McpBridgeError(
       inspection.error ?? `Could not inspect OpenShell provider '${entry.providerName}'.`,

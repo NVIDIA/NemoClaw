@@ -8,7 +8,6 @@ import {
   SUBPROCESS_ENV_ALLOWED_PREFIXES,
 } from "../../subprocess-env";
 import {
-  buildMcpBridgeProviderArgs,
   MCP_SERVER_URL_MAX_LENGTH,
   normalizeMcpServerUrl,
   parseMcpAddArgs,
@@ -207,11 +206,6 @@ describe("MCP CLI input validation", () => {
       expect(() => resolveCredentialEnv([{ name, value: "host-only-secret" }])).toThrow(
         /would be skipped instead of attached/,
       );
-      expect(() =>
-        buildMcpBridgeProviderArgs("create", "provider", [{ name }], {
-          [name]: "host-only-secret",
-        }),
-      ).toThrow(/reserved for OpenShell credential revisions/);
     },
   );
 
@@ -231,11 +225,6 @@ describe("MCP CLI input validation", () => {
         parseMcpAddArgs(["github", "--url", "https://mcp.example.test/mcp", ...envArgs]),
       ).toThrow(error);
       expect(() => resolveCredentialEnv([{ name, value: "host-only-secret" }])).toThrow(error);
-      expect(() =>
-        buildMcpBridgeProviderArgs("create", "provider", [{ name }], {
-          [name]: "host-only-secret",
-        }),
-      ).toThrow(error);
     },
   );
 
@@ -273,11 +262,6 @@ describe("MCP CLI input validation", () => {
     expect(() => resolveCredentialEnv([{ name, value: "host-only-secret" }])).toThrow(
       /could alter or prevent agent commands/,
     );
-    expect(() =>
-      buildMcpBridgeProviderArgs("create", "provider", [{ name }], {
-        [name]: "host-only-secret",
-      }),
-    ).toThrow(/reserved for sandbox runtime control/);
   });
 
   it("rejects host stdio commands", () => {

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SandboxEntry } from "../../state/registry/types";
+import { PORTABLE_AGENT_RUNTIME_PLATFORMS } from "../workload/portable-agent-runtime";
 import {
   RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION,
   RUNTIME_PROVIDER_NATIVE_ARTIFACT_BOOTSTRAP_CONTRACT_VERSION,
@@ -62,6 +63,10 @@ const MANAGED_IMAGE_SELECTION_POLICIES = new Set(["prefer-managed", "require-man
 const MANAGED_IMAGE_PLATFORMS = new Set(["linux/amd64", "linux/arm64"]);
 const NATIVE_ARTIFACT_PLATFORMS = new Set(["windows/x64"]);
 const NATIVE_ARTIFACT_AGENTS = new Set(["openclaw"]);
+const PORTABLE_AGENT_RUNTIME_PLATFORM_SET: ReadonlySet<string> = new Set(
+  PORTABLE_AGENT_RUNTIME_PLATFORMS,
+);
+const PORTABLE_AGENT_PATTERN = /^[a-z][a-z0-9-]{0,127}$/u;
 const HOST_PLATFORMS = new Set<NodeJS.Platform>([
   "aix",
   "android",
@@ -253,6 +258,62 @@ function validateWorkloadProfile(providerId: string, surface: Record<string, unk
     throw new RuntimeProviderRegistrationError(
       `workload profile for '${providerId}' has invalid host architectures`,
     );
+  }
+  if (
+    profile.portableAgentRuntimeSupport !== undefined &&
+    profile.portableAgentRuntimeSupport !== null
+  ) {
+    if (!isPlainRecord(profile.portableAgentRuntimeSupport)) {
+      throw new RuntimeProviderRegistrationError(
+        `workload profile for '${providerId}' has invalid portable agent runtime support`,
+      );
+    }
+    const portableSupport = profile.portableAgentRuntimeSupport;
+    if (
+      typeof portableSupport.exactDigestReferences !== "boolean" ||
+      !Array.isArray(portableSupport.platforms) ||
+      portableSupport.platforms.length === 0 ||
+      portableSupport.platforms.some(
+        (platform) => !PORTABLE_AGENT_RUNTIME_PLATFORM_SET.has(String(platform)),
+      ) ||
+      new Set(portableSupport.platforms).size !== portableSupport.platforms.length ||
+      !Array.isArray(portableSupport.agents) ||
+      portableSupport.agents.length === 0 ||
+      portableSupport.agents.some(
+        (agent) => typeof agent !== "string" || !PORTABLE_AGENT_PATTERN.test(agent),
+      ) ||
+      new Set(portableSupport.agents).size !== portableSupport.agents.length
+    ) {
+      throw new RuntimeProviderRegistrationError(
+        `workload profile for '${providerId}' has invalid portable agent runtime identity`,
+      );
+    }
+    for (const field of ["contractVersions", "capabilityContractVersions"] as const) {
+      const versions = portableSupport[field];
+      if (
+        !Array.isArray(versions) ||
+        versions.length === 0 ||
+        versions.some((version) => !Number.isSafeInteger(version) || Number(version) <= 0) ||
+        new Set(versions).size !== versions.length
+      ) {
+        throw new RuntimeProviderRegistrationError(
+          `workload profile for '${providerId}' has invalid portable agent runtime ${field}`,
+        );
+      }
+    }
+    for (const field of [
+      "tokenizedStartupCommands",
+      "openshellSandboxCommand",
+      "openshellNonRootIdentity",
+      "openshellWorkspaceOwnership",
+      "ownerOnlyPrivateState",
+    ] as const) {
+      if (typeof portableSupport[field] !== "boolean") {
+        throw new RuntimeProviderRegistrationError(
+          `workload profile for '${providerId}' must declare portable agent runtime ${field}`,
+        );
+      }
+    }
   }
   if (profile.nativeArtifactSupport !== undefined && profile.nativeArtifactSupport !== null) {
     if (!isPlainRecord(profile.nativeArtifactSupport)) {

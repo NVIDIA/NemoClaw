@@ -253,11 +253,11 @@ async function rebuildSandboxUnlocked(
       }
       const observedMcp =
         retainedMcpHandoff ??
-        observeMcpStateForRebuild(
+        (await observeMcpStateForRebuild(
           sandboxEntry,
           recreateOptions.runtimeSelection,
           recoveryManifest === null && activeRecoveryTransaction?.sandboxName !== sandboxName,
-        );
+        ));
       const mcpEntries = observedMcp.entries;
       const mcpRuntimeSelectionRequired = mcpEntries.length > 0;
       const mcpRuntimeSelection = mcpRuntimeSelectionRequired

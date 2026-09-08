@@ -283,12 +283,12 @@ function policyEntryForServer(
   return isObjectRecord(value) ? value : null;
 }
 
-function enrichFromPolicy(
+async function enrichFromPolicy(
   sandboxName: string,
   entry: McpSourceEntry,
   policy: Record<string, unknown> | null,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
-): McpSourceEntry {
+): Promise<McpSourceEntry> {
   const {
     providerName: _legacyProviderName,
     providerId: _legacyProviderId,
@@ -300,7 +300,7 @@ function enrichFromPolicy(
   if (!policy || !Array.isArray(policy.endpoints)) {
     const providerName =
       entry.providerName ?? buildMcpBridgeProviderName(sandboxName, entry.server);
-    const provider = inspectMcpProvider(providerName, runtimeSelection);
+    const provider = await inspectMcpProvider(providerName, runtimeSelection);
     return provider.exists === true
       ? {
           ...entry,
@@ -319,7 +319,7 @@ function enrichFromPolicy(
     ? endpoint.credential_binding.provider
     : undefined;
   const providerName = typeof binding === "string" && binding ? binding : undefined;
-  const provider = inspectMcpProvider(providerName, runtimeSelection);
+  const provider = await inspectMcpProvider(providerName, runtimeSelection);
   const host = typeof endpoint.host === "string" ? endpoint.host.toLowerCase() : "";
   const sourceUrl = new URL(entry.url);
   const sourcePort = Number.parseInt(
@@ -361,37 +361,42 @@ function enrichFromPolicy(
   };
 }
 
-export function joinMcpEntriesToOpenShell(
+export async function joinMcpEntriesToOpenShell(
   sandbox: SandboxEntry,
   entries: Readonly<Record<string, McpSourceEntry>>,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
   operation = "inspect current MCP source state",
-): Record<string, McpSourceEntry> {
+): Promise<Record<string, McpSourceEntry>> {
   const policyDocument = captureRecordedSandboxBasePolicy(
     sandbox.name,
     operation,
     runtimeSelection,
   );
   return Object.fromEntries(
-    Object.entries(entries).map(([server, entry]) => [
-      server,
-      enrichFromPolicy(
-        sandbox.name,
-        entry,
-        policyEntryForServer(policyDocument, server),
-        runtimeSelection,
+    await Promise.all(
+      Object.entries(entries).map(
+        async ([server, entry]) =>
+          [
+            server,
+            await enrichFromPolicy(
+              sandbox.name,
+              entry,
+              policyEntryForServer(policyDocument, server),
+              runtimeSelection,
+            ),
+          ] as const,
       ),
-    ]),
+    ),
   );
 }
 
-export function inspectPolicyOnlyMcpEntry(
+export async function inspectPolicyOnlyMcpEntry(
   sandbox: SandboxEntry,
   server: string,
   agentName: string,
   adapter: AgentMcpAdapter,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
-): McpSourceEntry | null {
+): Promise<McpSourceEntry | null> {
   const policyDocument = captureRecordedSandboxBasePolicy(
     sandbox.name,
     "inspect orphaned MCP policy state",
@@ -419,12 +424,12 @@ export function inspectPolicyOnlyMcpEntry(
     ? endpoint.credential_binding.provider
     : undefined;
   const providerName = typeof binding === "string" && binding ? binding : undefined;
-  const provider = inspectMcpProvider(providerName, runtimeSelection);
+  const provider = await inspectMcpProvider(providerName, runtimeSelection);
   const env =
     provider.exists === true && provider.credentialKeys?.length === 1
       ? [provider.credentialKeys[0]]
       : [];
-  return enrichFromPolicy(
+  return await enrichFromPolicy(
     sandbox.name,
     {
       server,
@@ -440,21 +445,21 @@ export function inspectPolicyOnlyMcpEntry(
   );
 }
 
-export function inspectSourceBridgeState(
+export async function inspectSourceBridgeState(
   sandbox: SandboxEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
-): { bridges: Record<string, McpSourceEntry>; sources: AgentMcpSourceSnapshot } {
+): Promise<{ bridges: Record<string, McpSourceEntry>; sources: AgentMcpSourceSnapshot }> {
   const sources = inspectAgentMcpSources(sandbox, runtimeSelection);
-  const bridges = joinMcpEntriesToOpenShell(sandbox, sources.native, runtimeSelection);
+  const bridges = await joinMcpEntriesToOpenShell(sandbox, sources.native, runtimeSelection);
   return { bridges, sources };
 }
 
-export function inspectLegacyBridgeState(
+export async function inspectLegacyBridgeState(
   sandbox: SandboxEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
-): { bridges: Record<string, McpSourceEntry>; sources: AgentMcpSourceSnapshot } {
+): Promise<{ bridges: Record<string, McpSourceEntry>; sources: AgentMcpSourceSnapshot }> {
   const sources = inspectAgentMcpSources(sandbox, runtimeSelection);
-  const bridges = joinMcpEntriesToOpenShell(
+  const bridges = await joinMcpEntriesToOpenShell(
     sandbox,
     sources.legacy,
     runtimeSelection,

@@ -84,7 +84,7 @@ network_policies:
     });
   });
 
-  it("joins native agent configuration with live policy and provider state", () => {
+  it("joins native agent configuration with live policy and provider state", async () => {
     mocks.executeSandboxCommand.mockReturnValue({
       status: 0,
       stdout: JSON.stringify([
@@ -98,7 +98,9 @@ network_policies:
       stderr: "",
     });
 
-    expect(inspectSourceBridgeState(sandbox, runtimeSelection).bridges.github).toMatchObject({
+    expect(
+      (await inspectSourceBridgeState(sandbox, runtimeSelection)).bridges.github,
+    ).toMatchObject({
       source: "native",
       server: "github",
       url: "https://api.githubcopilot.com/mcp/",
@@ -111,7 +113,7 @@ network_policies:
     });
   });
 
-  it("keeps legacy configuration separate for explicit migration", () => {
+  it("keeps legacy configuration separate for explicit migration", async () => {
     mocks.executeSandboxCommand.mockReturnValue({
       status: 0,
       stdout: JSON.stringify([
@@ -125,7 +127,7 @@ network_policies:
       stderr: "",
     });
 
-    const observed = inspectLegacyBridgeState(sandbox, runtimeSelection);
+    const observed = await inspectLegacyBridgeState(sandbox, runtimeSelection);
     expect(observed.sources.native).toEqual({});
     expect(observed.bridges.github).toMatchObject({
       source: "legacy",
@@ -133,7 +135,7 @@ network_policies:
     });
   });
 
-  it("recovers the deterministic live provider when the policy route is missing", () => {
+  it("recovers the deterministic live provider when the policy route is missing", async () => {
     mocks.capturePolicy.mockReturnValue("network_policies: {}\n");
     mocks.executeSandboxCommand.mockReturnValue({
       status: 0,
@@ -148,14 +150,16 @@ network_policies:
       stderr: "",
     });
 
-    expect(inspectSourceBridgeState(sandbox, runtimeSelection).bridges.github).toMatchObject({
+    expect(
+      (await inspectSourceBridgeState(sandbox, runtimeSelection)).bridges.github,
+    ).toMatchObject({
       providerName: "alpha-mcp-github",
       providerId: "provider-id",
       source: "native",
     });
   });
 
-  it("detects the owning agent from native MCP state after local registry loss", () => {
+  it("detects the owning agent from native MCP state after local registry loss", async () => {
     const recovered = { ...sandbox, agent: null };
     mocks.executeSandboxCommand.mockImplementation((_name: string, command: string) => ({
       status: 0,
@@ -172,7 +176,7 @@ network_policies:
       stderr: "",
     }));
 
-    const observed = inspectSourceBridgeState(recovered, runtimeSelection);
+    const observed = await inspectSourceBridgeState(recovered, runtimeSelection);
     expect(recovered.agent).toBe("hermes");
     expect(observed.bridges.github).toMatchObject({
       agent: "hermes",
@@ -194,10 +198,10 @@ network_policies:
     );
   });
 
-  it("reports a policy/provider orphan without inventing an agent registration", () => {
-    expect(
+  it("reports a policy/provider orphan without inventing an agent registration", async () => {
+    await expect(
       inspectPolicyOnlyMcpEntry(sandbox, "github", "openclaw", "openclaw-config", runtimeSelection),
-    ).toMatchObject({
+    ).resolves.toMatchObject({
       source: "policy",
       url: "https://api.githubcopilot.com/mcp/",
       env: ["GITHUB_TOKEN"],
@@ -206,7 +210,7 @@ network_policies:
     });
   });
 
-  it("reports an agent URL that conflicts with the live policy endpoint", () => {
+  it("reports an agent URL that conflicts with the live policy endpoint", async () => {
     mocks.capturePolicy.mockReturnValue(`network_policies:
   mcp_bridge_github:
     endpoints:
@@ -229,18 +233,18 @@ network_policies:
     });
 
     expect(
-      inspectSourceBridgeState(sandbox, runtimeSelection).bridges.github.policyConflict,
+      (await inspectSourceBridgeState(sandbox, runtimeSelection)).bridges.github.policyConflict,
     ).toContain("differs from live policy endpoint");
   });
 
-  it("redacts credentials and strips terminal controls from source-read failures", () => {
+  it("redacts credentials and strips terminal controls from source-read failures", async () => {
     mocks.executeSandboxCommand.mockReturnValue({
       status: 2,
       stdout: "",
       stderr: "Authorization: Bearer source-secret\u001b[31m\n\u0007forged",
     });
 
-    expect(() => inspectSourceBridgeState(sandbox, runtimeSelection)).toThrow(
+    await expect(inspectSourceBridgeState(sandbox, runtimeSelection)).rejects.toThrow(
       "Could not inspect OpenClaw MCP configuration: Authorization: Bearer <REDACTED>\nforged",
     );
   });

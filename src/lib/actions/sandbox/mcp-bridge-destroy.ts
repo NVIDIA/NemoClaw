@@ -45,10 +45,10 @@ export async function prepareMcpBridgesForDestroy(
   let entries: McpSourceEntry[];
   try {
     runtimeSelection ??= getMcpProviderInspectionRuntimeSelection(sandbox);
-    const observed = inspectSourceBridgeState(sandbox, runtimeSelection);
+    const observed = await inspectSourceBridgeState(sandbox, runtimeSelection);
     const legacy =
       Object.keys(observed.sources.legacy).length > 0
-        ? joinMcpEntriesToOpenShell(
+        ? await joinMcpEntriesToOpenShell(
             sandbox,
             observed.sources.legacy,
             runtimeSelection,

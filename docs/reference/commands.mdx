@@ -1724,7 +1724,22 @@ NUL bytes are still rejected in command arguments. Line breaks are accepted only
 
 ### `$$nemoclaw <name> logs`
 
-View sandbox logs. Use `--follow` to stream output in real time. Use `--tail <lines>` or `-n <lines>` to limit the number of returned lines. Use `--since <duration>` to show recent logs only, such as `5m`, `1h`, or `30s`. The command reads both agent gateway output and OpenShell audit events, so policy denials appear alongside the gateway log stream. If one log source is unavailable, NemoClaw prints a warning and keeps reading the remaining source. NemoClaw's `--tail <lines>` flag is a line-count flag; the lower-level `openshell logs --tail` flag means follow live output, so use `openshell logs <sandbox> -n <lines>` when running OpenShell directly for a fixed line count.
+View sandbox logs.
+Use `--follow` to stream output in real time.
+Use `--tail <lines>` or `-n <lines>` to limit the number of returned lines.
+Use `--since <duration>` to show recent logs only, such as `5m`, `1h`, or `30s`.
+
+<AgentOnly variant="openclaw,hermes">
+When `--since` is not set, the command reads both agent gateway output and OpenShell audit events, so policy denials appear alongside the gateway log stream.
+With `--since`, the command reads only OpenShell logs.
+If one log source is unavailable, NemoClaw prints a warning and keeps reading the remaining source.
+</AgentOnly>
+<AgentOnly variant="deepagents">
+The command reads OpenShell logs, including audit events, so policy denials appear with other OpenShell log entries.
+</AgentOnly>
+If NemoClaw cannot enable OpenShell audit logs, it prints a warning and policy-denial events can be missing.
+
+NemoClaw's `--tail <lines>` flag is a line-count flag; the lower-level `openshell logs --tail` flag means follow live output, so use `openshell logs <sandbox> -n <lines>` when running OpenShell directly for a fixed line count.
 
 ```bash
 $$nemoclaw my-assistant logs [--follow] [--tail <lines>|-n <lines>] [--since <duration>]
@@ -3158,6 +3173,7 @@ When at least one sandbox is registered and the named NemoClaw gateway is unreac
 ### `$$nemoclaw inference get`
 
 Show the active live inference provider and model from the NemoClaw-managed OpenShell gateway that `NEMOCLAW_GATEWAY_PORT` selects.
+For a compatible custom provider, also show the persisted endpoint URL when the selected gateway's matching registry metadata is safe, unambiguous, and reusable.
 Use this command when you want the direct runtime route without the rest of the sandbox status output.
 It is also available in sandbox-first form as `$$nemoclaw <name> inference get`.
 
@@ -3165,6 +3181,8 @@ It is also available in sandbox-first form as `$$nemoclaw <name> inference get`.
 $$nemoclaw inference get
 $$nemoclaw inference get --json
 ```
+
+Managed providers keep the existing provider-and-model output. Compatible providers add the endpoint only when published same-gateway metadata matches the live route and is safe to display; otherwise the command keeps the live provider and model and returns credential-free recovery information. Refer to [View the Active Inference Route](../inference/manage-inference/view-active-inference-route) for the exact text and JSON fields, omission states, safety rules, and recovery procedures.
 
 For the sandbox-first grammar, `NEMOCLAW_GATEWAY_PORT` first selects the sandbox registry and fallback gateway.
 When that registry contains `<name>`, the command resolves the sandbox's recorded gateway and reads that gateway's live route.

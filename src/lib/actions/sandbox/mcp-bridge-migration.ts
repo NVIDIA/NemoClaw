@@ -191,8 +191,8 @@ async function preflightMigrationOpenShellState(
         `Legacy MCP server '${entry.server}' has no validated policy target. No source was changed.`,
       );
     }
-    assertMcpProviderRecoverable(entry, runtimeSelection);
-    if (providerAttached(sandboxName, entry.providerName, runtimeSelection) !== true) {
+    await assertMcpProviderRecoverable(entry, runtimeSelection);
+    if ((await providerAttached(sandboxName, entry.providerName, runtimeSelection)) !== true) {
       throw new McpBridgeError(
         `Legacy MCP server '${entry.server}' does not have its exact provider attached. No source was changed.`,
       );
@@ -233,7 +233,7 @@ export async function migrateMcpBridges(
     if (!sandbox) throw new McpBridgeError(`Sandbox '${sandboxName}' not found.`, 1);
     const runtimeSelection = getMcpProviderInspectionRuntimeSelection(sandbox);
     await ensureSandboxGatewaySelected(sandboxName, runtimeSelection);
-    const observed = inspectLegacyBridgeState(sandbox, runtimeSelection);
+    const observed = await inspectLegacyBridgeState(sandbox, runtimeSelection);
     const agent = getSandboxAgent(sandbox);
     const adapter = getBridgeAdapter(agent);
     const committedRegistryEntries = readCommittedLegacyRegistryEntries(
@@ -241,7 +241,7 @@ export async function migrateMcpBridges(
       agent.name,
       adapter,
     );
-    const rawRegistryEntries = joinMcpEntriesToOpenShell(
+    const rawRegistryEntries = await joinMcpEntriesToOpenShell(
       sandbox,
       committedRegistryEntries,
       runtimeSelection,
@@ -284,24 +284,30 @@ export async function migrateMcpBridges(
         2,
       );
     }
-    const items = entries.map((entry): McpMigrationItem => {
-      const action = observed.sources.native[entry.server] ? "already-migrated" : "migrate";
-      return {
-        server: entry.server,
-        agent: entry.agent,
-        source: entry.source === "legacy-registry" ? "legacy-registry" : "legacy-agent",
-        destination: "native",
-        url: entry.url,
-        credentialEnv: entry.env[0] ?? null,
-        policyName: entry.policyName,
-        policyPresent: getPolicyPresence(sandboxName, entry, runtimeSelection),
-        providerName: entry.providerName ?? null,
-        providerAttached: providerAttached(sandboxName, entry.providerName, runtimeSelection),
-        deniedTools: [...(entry.denyTools ?? [])],
-        activationChanges: adapter === "openclaw-config" && action === "migrate",
-        action,
-      };
-    });
+    const items = await Promise.all(
+      entries.map(async (entry): Promise<McpMigrationItem> => {
+        const action = observed.sources.native[entry.server] ? "already-migrated" : "migrate";
+        return {
+          server: entry.server,
+          agent: entry.agent,
+          source: entry.source === "legacy-registry" ? "legacy-registry" : "legacy-agent",
+          destination: "native",
+          url: entry.url,
+          credentialEnv: entry.env[0] ?? null,
+          policyName: entry.policyName,
+          policyPresent: getPolicyPresence(sandboxName, entry, runtimeSelection),
+          providerName: entry.providerName ?? null,
+          providerAttached: await providerAttached(
+            sandboxName,
+            entry.providerName,
+            runtimeSelection,
+          ),
+          deniedTools: [...(entry.denyTools ?? [])],
+          activationChanges: adapter === "openclaw-config" && action === "migrate",
+          action,
+        };
+      }),
+    );
     if (!options.apply || entries.length === 0) {
       return { sandbox: sandboxName, items, applied: false };
     }

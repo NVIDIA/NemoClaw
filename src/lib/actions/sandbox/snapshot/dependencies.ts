@@ -24,7 +24,7 @@ export { backupSandboxStateWithManagedAuthority } from "./backup-authority";
 export { createSnapshotCloneLifecycle, fingerprintSandboxLiveIdentity } from "./clone-lifecycle";
 export { restoreDeepAgentsNativeMcpConfig } from "../mcp-bridge-adapter-deepagents-registration";
 export { getMcpProviderInspectionRuntimeSelection } from "../mcp-bridge-provider-inspection";
-export { inspectSourceBridgeState } from "../mcp-bridge-source";
+export { inspectAgentMcpSources } from "../mcp-bridge-source";
 export type {
   ManagedCloneProviderBinding,
   ManagedCloneProviderCleanupResult,

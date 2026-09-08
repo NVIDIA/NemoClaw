@@ -104,49 +104,6 @@ if [ -f /opt/hermes/ui-tui/dist/entry.js ]; then
   export HERMES_TUI_DIR="/opt/hermes/ui-tui"
 fi
 
-# ── Early stderr/stdout capture ──────────────────────────────────
-# Capture all entrypoint output to /tmp/nemoclaw-start.log so startup
-# failures before /tmp/gateway.log exists are still diagnosable.
-prepare_restricted_log() {
-  local path="$1"
-  local owner="${2:-}"
-  local mode="${3:-600}"
-  local dir base tmp
-
-  dir="$(dirname "$path")"
-  base="$(basename "$path")"
-  tmp="$(mktemp "${dir}/.${base}.tmp.XXXXXX")" || return 1
-  : >"$tmp" || {
-    rm -f "$tmp"
-    return 1
-  }
-  if [ "$(id -u)" -eq 0 ] && [ -n "$owner" ] && ! chown "$owner" "$tmp"; then
-    rm -f "$tmp"
-    return 1
-  fi
-  if ! chmod "$mode" "$tmp"; then
-    rm -f "$tmp"
-    return 1
-  fi
-  if ! mv -f "$tmp" "$path"; then
-    rm -f "$tmp"
-    return 1
-  fi
-}
-
-_START_LOG="/tmp/nemoclaw-start.log"
-if [ "$(id -u)" -eq 0 ]; then
-  prepare_restricted_log "$_START_LOG" root:root 600
-else
-  prepare_restricted_log "$_START_LOG" "" 600
-fi
-exec > >(tee -a "$_START_LOG") 2> >(tee -a "$_START_LOG" >&2)
-
-# ── Drop unnecessary Linux capabilities (shared) ────────────────
-drop_capabilities /usr/local/bin/nemoclaw-start "$@"
-
-NEMOCLAW_CMD=("$@")
-
 _chat_ui_url_dashboard_settings() {
   [ -n "${CHAT_UI_URL:-}" ] || return 2
   python3 -I - "$CHAT_UI_URL" <<'PYPORT'
@@ -199,6 +156,8 @@ print(f"{dashboard_port}|{external_host}")
 PYPORT
 }
 
+# Reject invalid dashboard URLs before asynchronous startup-log capture. A
+# short-lived container can exit before tee forwards its final stderr line.
 HERMES_DASHBOARD_EXTERNAL_HOST=""
 _chat_ui_port=""
 if [ -n "${CHAT_UI_URL:-}" ]; then
@@ -212,6 +171,49 @@ if [ -n "${CHAT_UI_URL:-}" ]; then
   fi
 fi
 unset _chat_ui_settings
+
+# ── Early stderr/stdout capture ──────────────────────────────────
+# Capture entrypoint output after fail-fast input validation so later failures
+# remain diagnosable before /tmp/gateway.log exists.
+prepare_restricted_log() {
+  local path="$1"
+  local owner="${2:-}"
+  local mode="${3:-600}"
+  local dir base tmp
+
+  dir="$(dirname "$path")"
+  base="$(basename "$path")"
+  tmp="$(mktemp "${dir}/.${base}.tmp.XXXXXX")" || return 1
+  : >"$tmp" || {
+    rm -f "$tmp"
+    return 1
+  }
+  if [ "$(id -u)" -eq 0 ] && [ -n "$owner" ] && ! chown "$owner" "$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  if ! chmod "$mode" "$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  if ! mv -f "$tmp" "$path"; then
+    rm -f "$tmp"
+    return 1
+  fi
+}
+
+_START_LOG="/tmp/nemoclaw-start.log"
+if [ "$(id -u)" -eq 0 ]; then
+  prepare_restricted_log "$_START_LOG" root:root 600
+else
+  prepare_restricted_log "$_START_LOG" "" 600
+fi
+exec > >(tee -a "$_START_LOG") 2> >(tee -a "$_START_LOG" >&2)
+
+# ── Drop unnecessary Linux capabilities (shared) ────────────────
+drop_capabilities /usr/local/bin/nemoclaw-start "$@"
+
+NEMOCLAW_CMD=("$@")
 
 _dashboard_port_raw="${NEMOCLAW_DASHBOARD_PORT:-}"
 if [ -z "$_dashboard_port_raw" ]; then

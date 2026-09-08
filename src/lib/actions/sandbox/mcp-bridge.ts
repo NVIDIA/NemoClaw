@@ -74,12 +74,8 @@ export {
   MCP_BRIDGE_POLICY_MAX_BODY_BYTES,
 } from "./mcp-bridge-policy";
 export {
-  buildMcpBridgeProviderArgs,
   buildMcpCredentialRevisionObservationCommand,
   detachMissingProviderReference,
-  parseMcpProviderAttachmentNames,
-  parseMcpProviderMetadata,
-  providerDetachChangedState,
 } from "./mcp-bridge-provider";
 export {
   buildMcpBridgeProviderName,
@@ -96,14 +92,17 @@ export type { McpDestroyPreparation } from "./mcp-bridge-destroy-preflight";
 export type { McpRebuildPreparation };
 export { statusMcpBridge };
 
-function inspectCurrentBridgeEntries(
+async function inspectCurrentBridgeEntries(
   sandboxName: string,
   runtimeSelection?: McpProviderInspectionRuntimeSelection,
   options: { allowLegacyHandoff?: boolean } = {},
-): { entries: McpSourceEntry[]; runtimeSelection: McpProviderInspectionRuntimeSelection } {
+): Promise<{
+  entries: McpSourceEntry[];
+  runtimeSelection: McpProviderInspectionRuntimeSelection;
+}> {
   const sandbox = getSandboxOrThrow(sandboxName);
   const selected = runtimeSelection ?? getMcpProviderInspectionRuntimeSelection(sandbox);
-  const observed = inspectSourceBridgeState(sandbox, selected);
+  const observed = await inspectSourceBridgeState(sandbox, selected);
   const legacyNames = Object.keys(observed.sources.legacy).sort();
   if (legacyNames.length > 0 && !options.allowLegacyHandoff) {
     throw new McpBridgeError(
@@ -113,12 +112,12 @@ function inspectCurrentBridgeEntries(
   }
   const bridges = options.allowLegacyHandoff
     ? {
-        ...joinMcpEntriesToOpenShell(
+        ...(await joinMcpEntriesToOpenShell(
           sandbox,
           observed.sources.legacy,
           selected,
           "inspect legacy MCP migration state",
-        ),
+        )),
         ...observed.bridges,
       }
     : observed.bridges;
@@ -208,7 +207,7 @@ export async function prepareMcpBridgesForRebuild(
   if (entries) {
     return prepareMcpBridgesForRebuildLifecycle(sandboxName, entries, runtimeSelection);
   }
-  const observed = inspectCurrentBridgeEntries(sandboxName, runtimeSelection, {
+  const observed = await inspectCurrentBridgeEntries(sandboxName, runtimeSelection, {
     allowLegacyHandoff: true,
   });
   return prepareMcpBridgesForRebuildLifecycle(
@@ -431,7 +430,9 @@ export async function dispatchMcpBridgeCommand(
         const agent = getSandboxAgent(sandbox);
         const statuses = await statusMcpBridge(sandboxName);
         if (json)
-          process.stdout.write(`${JSON.stringify(buildJsonSummary(sandboxName, agent, statuses), null, 2)}\n`);
+          process.stdout.write(
+            `${JSON.stringify(buildJsonSummary(sandboxName, agent, statuses), null, 2)}\n`,
+          );
         else renderMcpBridgeList(sandboxName, statuses, agent);
         return;
       }

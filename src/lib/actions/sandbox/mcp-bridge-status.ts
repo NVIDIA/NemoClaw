@@ -17,8 +17,8 @@ import { getPolicyPresence } from "./mcp-bridge-policy";
 import {
   getMcpProviderInspectionRuntimeSelection,
   inspectMcpProvider,
+  inspectMcpProviderAttachments,
   observeMcpCredentialRevision,
-  providerAttached,
   providerMatchesCredential,
   providerShapeDetail,
 } from "./mcp-bridge-provider";
@@ -204,7 +204,7 @@ export async function statusMcpBridge(
   const agent = getSandboxAgent(sandbox);
   const providerRuntimeSelection =
     options.runtimeSelection ?? getMcpProviderInspectionRuntimeSelection(sandbox);
-  const observed = inspectSourceBridgeState(sandbox, providerRuntimeSelection);
+  const observed = await inspectSourceBridgeState(sandbox, providerRuntimeSelection);
   const bridges = observed.bridges;
   const legacyNames = Object.keys(observed.sources.legacy).sort();
   if (legacyNames.length > 0) {
@@ -213,18 +213,19 @@ export async function statusMcpBridge(
       2,
     );
   }
-  const selectedEntry =
-    server !== undefined && Object.hasOwn(bridges, server)
-      ? bridges[server]
-      : server !== undefined && agent.mcpCapability.adapter
-        ? (inspectPolicyOnlyMcpEntry(
-            sandbox,
-            server,
-            agent.name,
-            agent.mcpCapability.adapter,
-            providerRuntimeSelection,
-          ) ?? undefined)
-        : undefined;
+  let selectedEntry: McpSourceEntry | undefined;
+  if (server !== undefined && Object.hasOwn(bridges, server)) {
+    selectedEntry = bridges[server];
+  } else if (server !== undefined && agent.mcpCapability.adapter) {
+    selectedEntry =
+      (await inspectPolicyOnlyMcpEntry(
+        sandbox,
+        server,
+        agent.name,
+        agent.mcpCapability.adapter,
+        providerRuntimeSelection,
+      )) ?? undefined;
+  }
   const entries: Array<[string, McpSourceEntry | undefined]> =
     server !== undefined ? [[server, selectedEntry]] : Object.entries(bridges);
   if (server !== undefined && !selectedEntry) {
@@ -294,182 +295,197 @@ export async function statusMcpBridge(
     }),
   );
 
-  return entries.map(([name, entry]) => {
-    const support = entry ? getPersistedBridgeSupport(entry) : getSupportSummary(agent);
-    const policyPresence = getPolicyPresence(sandboxName, entry, providerRuntimeSelection);
-    const hasCredentialBinding =
-      !!entry &&
-      Array.isArray(entry.env) &&
-      entry.env.length === 1 &&
-      !!entry.providerName &&
-      !!entry.providerId;
-    const missingEnv = entry
-      ? entry.env.filter(
-          (envName: string) => process.env[envName] === undefined || process.env[envName] === "",
-        )
-      : [];
-    const expectedCredential = entry?.env.length === 1 ? entry.env[0] : undefined;
-    const providerInspection = inspectMcpProvider(entry?.providerName, providerRuntimeSelection);
-    const providerCredentialReady = providerMatchesCredential(
-      providerInspection,
-      expectedCredential,
-      entry?.providerId,
-    );
-    const providerDetail = providerShapeDetail(
-      providerInspection,
-      expectedCredential,
-      entry?.providerId,
-    );
-    const attached = providerAttached(sandboxName, entry?.providerName, providerRuntimeSelection);
-    const warnings: string[] = [];
-    let credentialWarning: string | undefined;
-    if (entry) {
-      const urlWarning = storedUrlWarning(entry);
-      if (urlWarning) warnings.push(urlWarning);
-      credentialWarning = storedCredentialWarning(entry);
-      if (credentialWarning) warnings.push(credentialWarning);
-      if (entry.policyConflict) warnings.push(entry.policyConflict);
-    }
-    const privatePinStatus = privatePinStatusByServer.get(name);
-    if (privatePinStatus?.state === "drift") {
-      warnings.push(
-        "Trusted-private DNS answers differ from the recorded pins. Remove and re-add this server to approve changed pins.",
+  const attachmentInspection = entries.some(([, entry]) => !!entry?.providerName)
+    ? await inspectMcpProviderAttachments(sandboxName, providerRuntimeSelection)
+    : undefined;
+
+  return Promise.all(
+    entries.map(async ([name, entry]) => {
+      const support = entry ? getPersistedBridgeSupport(entry) : getSupportSummary(agent);
+      const policyPresence = getPolicyPresence(sandboxName, entry, providerRuntimeSelection);
+      const hasCredentialBinding =
+        !!entry &&
+        Array.isArray(entry.env) &&
+        entry.env.length === 1 &&
+        !!entry.providerName &&
+        !!entry.providerId;
+      const missingEnv = entry
+        ? entry.env.filter(
+            (envName: string) => process.env[envName] === undefined || process.env[envName] === "",
+          )
+        : [];
+      const expectedCredential = entry?.env.length === 1 ? entry.env[0] : undefined;
+      const providerInspection = await inspectMcpProvider(
+        entry?.providerName,
+        providerRuntimeSelection,
       );
-    } else if (privatePinStatus?.state === "unresolved") {
-      warnings.push(
-        "Trusted-private DNS resolution is unavailable. The recorded policy pins were not changed.",
+      const providerCredentialReady = providerMatchesCredential(
+        providerInspection,
+        expectedCredential,
+        entry?.providerId,
       );
-    }
-    const unsafeCredentialMayBeAttached =
-      !!credentialWarning && !!entry?.providerName && attached !== false;
-    const credentialObservation = entry ? credentialObservations.get(name) : undefined;
-    const credentialRevision = attachedCredentialRevision(credentialObservation);
-    const observationDetail = credentialObservationDetail(credentialObservation);
-    const readiness = {
-      policyGatewayPresent: entry?.policyConflict ? false : policyPresence,
-      providerAttached: attached,
-      providerCredentialReady,
-    };
-    const adapterRegistration = getAdapterRegistration(
-      sandboxName,
-      support.adapter,
-      entry,
-      providerRuntimeSelection,
-      credentialRevision,
-      unsafeCredentialMayBeAttached ? UNSUPPORTED_ATTACHED_CREDENTIAL_DETAIL : observationDetail,
-    );
-    const agentRegistrationMissing =
-      entry?.source === "policy" && adapterRegistration.registered !== true;
-    const credentialResolution =
-      options.probeCredentialResolution && entry
-        ? unsafeCredentialMayBeAttached
-          ? {
-              ok: null,
-              detail: `probe skipped: ${UNSUPPORTED_ATTACHED_CREDENTIAL_DETAIL}`,
-            }
-          : observationDetail
-            ? { ok: null, detail: `probe skipped: ${observationDetail}` }
-            : adapterRegistration.registered !== true &&
-                options.allowCredentialProbeWithAdapterMismatch !== true
-              ? {
-                  ok: null,
-                  detail:
-                    "probe skipped: the managed agent adapter does not match the current credential revision",
-                }
-              : probeCredentialResolution(
-                  sandboxName,
-                  entry,
-                  support.adapter,
-                  readiness,
-                  providerRuntimeSelection,
-                  credentialRevision,
-                )
+      const providerDetail = providerShapeDetail(
+        providerInspection,
+        expectedCredential,
+        entry?.providerId,
+      );
+      const attached = !entry?.providerName
+        ? null
+        : !attachmentInspection?.attachments
+          ? null
+          : attachmentInspection.attachments.some(
+              (attachment) => attachment.name === entry.providerName,
+            );
+      const warnings: string[] = [];
+      let credentialWarning: string | undefined;
+      if (entry) {
+        const urlWarning = storedUrlWarning(entry);
+        if (urlWarning) warnings.push(urlWarning);
+        credentialWarning = storedCredentialWarning(entry);
+        if (credentialWarning) warnings.push(credentialWarning);
+        if (entry.policyConflict) warnings.push(entry.policyConflict);
+      }
+      const privatePinStatus = privatePinStatusByServer.get(name);
+      if (privatePinStatus?.state === "drift") {
+        warnings.push(
+          "Trusted-private DNS answers differ from the recorded pins. Remove and re-add this server to approve changed pins.",
+        );
+      } else if (privatePinStatus?.state === "unresolved") {
+        warnings.push(
+          "Trusted-private DNS resolution is unavailable. The recorded policy pins were not changed.",
+        );
+      }
+      const unsafeCredentialMayBeAttached =
+        !!credentialWarning && !!entry?.providerName && attached !== false;
+      const credentialObservation = entry ? credentialObservations.get(name) : undefined;
+      const credentialRevision = attachedCredentialRevision(credentialObservation);
+      const observationDetail = credentialObservationDetail(credentialObservation);
+      const readiness = {
+        policyGatewayPresent: entry?.policyConflict ? false : policyPresence,
+        providerAttached: attached,
+        providerCredentialReady,
+      };
+      const adapterRegistration = getAdapterRegistration(
+        sandboxName,
+        support.adapter,
+        entry,
+        providerRuntimeSelection,
+        credentialRevision,
+        unsafeCredentialMayBeAttached ? UNSUPPORTED_ATTACHED_CREDENTIAL_DETAIL : observationDetail,
+      );
+      const agentRegistrationMissing =
+        entry?.source === "policy" && adapterRegistration.registered !== true;
+      const credentialResolution =
+        options.probeCredentialResolution && entry
+          ? unsafeCredentialMayBeAttached
+            ? {
+                ok: null,
+                detail: `probe skipped: ${UNSUPPORTED_ATTACHED_CREDENTIAL_DETAIL}`,
+              }
+            : observationDetail
+              ? { ok: null, detail: `probe skipped: ${observationDetail}` }
+              : adapterRegistration.registered !== true &&
+                  options.allowCredentialProbeWithAdapterMismatch !== true
+                ? {
+                    ok: null,
+                    detail:
+                      "probe skipped: the managed agent adapter does not match the current credential revision",
+                  }
+                : probeCredentialResolution(
+                    sandboxName,
+                    entry,
+                    support.adapter,
+                    readiness,
+                    providerRuntimeSelection,
+                    credentialRevision,
+                  )
+          : undefined;
+      const resolutionWarning = credentialResolution
+        ? credentialResolutionWarning(entry?.env[0], credentialResolution)
         : undefined;
-    const resolutionWarning = credentialResolution
-      ? credentialResolutionWarning(entry?.env[0], credentialResolution)
-      : undefined;
-    if (resolutionWarning) warnings.push(resolutionWarning);
-    const toolDiscovery =
-      options.discoverTools && entry
-        ? unsafeCredentialMayBeAttached
+      if (resolutionWarning) warnings.push(resolutionWarning);
+      const toolDiscovery =
+        options.discoverTools && entry
+          ? unsafeCredentialMayBeAttached
+            ? {
+                ok: false,
+                count: 0,
+                tools: [],
+                truncated: false,
+                detail: `tool discovery skipped: ${UNSUPPORTED_ATTACHED_CREDENTIAL_DETAIL}`,
+              }
+            : discoverMcpTools(
+                sandboxName,
+                entry,
+                support.adapter,
+                readiness,
+                providerRuntimeSelection,
+              )
+          : undefined;
+      return {
+        server: name,
+        agent: entry?.agent ?? agent.name,
+        warnings,
+        support,
+        ...(entry ? { url: entry.url } : {}),
+        ...(entry?.trustedPrivateHost && entry.allowedIps && privatePinStatus
           ? {
-              ok: false,
-              count: 0,
-              tools: [],
-              truncated: false,
-              detail: `tool discovery skipped: ${UNSUPPORTED_ATTACHED_CREDENTIAL_DETAIL}`,
+              trustedPrivateTarget: {
+                host: entry.trustedPrivateHost,
+                recordedPins: [...entry.allowedIps],
+                ...(privatePinStatus.currentAddresses
+                  ? { currentPins: privatePinStatus.currentAddresses }
+                  : {}),
+                state: privatePinStatus.state,
+                ...(privatePinStatus.detail ? { detail: privatePinStatus.detail } : {}),
+              },
             }
-          : discoverMcpTools(
-              sandboxName,
-              entry,
-              support.adapter,
-              readiness,
-              providerRuntimeSelection,
-            )
-        : undefined;
-    return {
-      server: name,
-      agent: entry?.agent ?? agent.name,
-      warnings,
-      support,
-      ...(entry ? { url: entry.url } : {}),
-      ...(entry?.trustedPrivateHost && entry.allowedIps && privatePinStatus
-        ? {
-            trustedPrivateTarget: {
-              host: entry.trustedPrivateHost,
-              recordedPins: [...entry.allowedIps],
-              ...(privatePinStatus.currentAddresses
-                ? { currentPins: privatePinStatus.currentAddresses }
-                : {}),
-              state: privatePinStatus.state,
-              ...(privatePinStatus.detail ? { detail: privatePinStatus.detail } : {}),
-            },
-          }
-        : {}),
-      env: {
-        names: entry?.env ?? [],
-        missing: missingEnv,
-        ready:
-          hasCredentialBinding &&
-          (providerInspection.exists ? providerCredentialReady : missingEnv.length === 0),
-      },
-      provider: {
-        name: entry?.providerName,
-        present: entry?.providerName ? providerInspection.exists : null,
-        attached,
-        credentialReady: entry ? providerCredentialReady : null,
-        state:
-          providerInspection.exists === null
-            ? "unavailable"
-            : !entry?.providerName || providerInspection.exists === false || attached === false
-              ? "unbound"
-              : providerCredentialReady
-                ? agentRegistrationMissing
-                  ? "orphaned"
-                  : "configured"
-                : "conflict",
-        ...(providerDetail ? { detail: providerDetail } : {}),
-        ...(credentialResolution ? { credentialResolution } : {}),
-      },
-      policy: {
-        name: entry?.policyName,
-        present: policyPresence,
-        state:
-          policyPresence === null
-            ? "unavailable"
-            : entry?.policyConflict
-              ? "conflict"
-              : policyPresence
-                ? agentRegistrationMissing
-                  ? "orphaned"
-                  : "configured"
-                : "blocked",
-        ...(entry?.policyConflict ? { detail: entry.policyConflict } : {}),
-      },
-      adapter: adapterRegistration,
-      ...(toolDiscovery ? { toolDiscovery } : {}),
-    };
-  });
+          : {}),
+        env: {
+          names: entry?.env ?? [],
+          missing: missingEnv,
+          ready:
+            hasCredentialBinding &&
+            (providerInspection.exists ? providerCredentialReady : missingEnv.length === 0),
+        },
+        provider: {
+          name: entry?.providerName,
+          present: entry?.providerName ? providerInspection.exists : null,
+          attached,
+          credentialReady: entry ? providerCredentialReady : null,
+          state:
+            providerInspection.exists === null
+              ? "unavailable"
+              : !entry?.providerName || providerInspection.exists === false || attached === false
+                ? "unbound"
+                : providerCredentialReady
+                  ? agentRegistrationMissing
+                    ? "orphaned"
+                    : "configured"
+                  : "conflict",
+          ...(providerDetail ? { detail: providerDetail } : {}),
+          ...(credentialResolution ? { credentialResolution } : {}),
+        },
+        policy: {
+          name: entry?.policyName,
+          present: policyPresence,
+          state:
+            policyPresence === null
+              ? "unavailable"
+              : entry?.policyConflict
+                ? "conflict"
+                : policyPresence
+                  ? agentRegistrationMissing
+                    ? "orphaned"
+                    : "configured"
+                  : "blocked",
+          ...(entry?.policyConflict ? { detail: entry.policyConflict } : {}),
+        },
+        adapter: adapterRegistration,
+        ...(toolDiscovery ? { toolDiscovery } : {}),
+      };
+    }),
+  );
 }
 
 function getPersistedBridgeSupport(entry: McpSourceEntry): McpBridgeStatus["support"] {

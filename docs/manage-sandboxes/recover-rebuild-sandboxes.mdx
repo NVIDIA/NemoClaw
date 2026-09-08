@@ -43,13 +43,15 @@ If NemoClaw reports that a Docker-driver sandbox is stopped, restart the existin
 $$nemoclaw <sandbox-name> start
 ```
 
-This path preserves the sandbox workspace and repairs the agent runtime and host-side forwards after the container starts. If the container is paused, follow the printed `docker unpause` guidance instead. If Docker no longer has the container, destroy the stale NemoClaw entry and onboard a clean replacement. Restore a separately created snapshot afterward if one is available; rebuild cannot recover a workspace or live OpenShell policy that no longer exists.
+This path preserves the sandbox workspace after the container starts.
+If the container is paused, follow the printed `docker unpause` guidance instead.
+If Docker no longer has the container, destroy the stale NemoClaw entry and onboard a clean replacement.
+Restore a separately created snapshot afterward if one is available; rebuild cannot recover a workspace or live OpenShell policy that no longer exists.
 
 <AgentOnly variant="openclaw,hermes">
-  The `start` command returns success only after it authenticates the recovered agent runtime,
-  OpenShell reports the sandbox ready, and host-side port forwards pass their checks. If a check
-  fails, the command exits nonzero, identifies the failure, and prints recovery guidance before you
-  retry `start`.
+  The `start` command repairs the agent runtime and host-side port forwards.
+  It returns success only after it authenticates the recovered agent runtime, OpenShell reports the sandbox ready, and host-side port forwards pass their checks.
+  If a check fails, the command exits nonzero, identifies the failure, and prints recovery guidance before you retry `start`.
 </AgentOnly>
 
 ## Recover the Agent Runtime
@@ -158,7 +160,8 @@ For the controller topology, trust boundary, and fail-closed conditions, refer t
 
 </AgentOnly>
 <AgentOnly variant="deepagents">
-Deep Agents sandboxes are terminal runtimes and do not expose an OpenClaw or Hermes in-sandbox gateway.
+Deep Agents uses a terminal runtime without an in-sandbox agent gateway or host-side port forward.
+The OpenShell ownership and local endpoint reachability prerequisites for an active port forward do not apply.
 Use `nemo-deepagents <sandbox-name> status`, `logs`, `connect`, and `rebuild` for recovery.
 If the terminal runtime reports degraded health, rebuild the sandbox instead of using `recover` or `gateway restart`.
 </AgentOnly>

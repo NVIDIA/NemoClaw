@@ -40,7 +40,7 @@ export async function removeMcpBridge(
     validateMcpServerName(server);
     const sandbox = getSandboxOrThrow(sandboxName);
     const runtimeSelection = getMcpProviderInspectionRuntimeSelection(sandbox);
-    const observed = inspectSourceBridgeState(sandbox, runtimeSelection);
+    const observed = await inspectSourceBridgeState(sandbox, runtimeSelection);
     if (Object.keys(observed.sources.legacy).length > 0) {
       throw new McpBridgeError(
         `Legacy MCP agent configuration requires explicit migration. Run \`nemoclaw ${sandboxName} mcp migrate\` first.`,
@@ -83,7 +83,7 @@ export async function removeMcpBridge(
     }
 
     if (entry.providerName) {
-      const provider = inspectMcpProvider(entry.providerName, runtimeSelection);
+      const provider = await inspectMcpProvider(entry.providerName, runtimeSelection);
       const exact =
         !!entry.providerId &&
         providerMatchesManagedCredential(provider, entry.env[0], entry.providerId, {
@@ -91,7 +91,7 @@ export async function removeMcpBridge(
         });
       if (exact) {
         try {
-          const outcome = detachProvider(sandboxName, entry, {
+          const outcome = await detachProvider(sandboxName, entry, {
             allowLegacyGeneric: true,
             runtimeSelection,
           });
