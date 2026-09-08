@@ -1,8 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -24,8 +33,10 @@ afterEach(() => {
 });
 
 describe("snapshot sanitizer package boundary", () => {
-  it("emits both sanitizer modules from the shared boundary build owner", () => {
-    const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-snapshot-shared-build-"));
+  it("emits and runs both sanitizer modules from the shared boundary build owner", () => {
+    const root = mkdtempSync(
+      path.join(REPOSITORY_ROOT, "node_modules", ".nemoclaw-snapshot-shared-build-"),
+    );
     roots.push(root);
     const output = path.join(root, "dist");
     execFileSync(
@@ -42,8 +53,41 @@ describe("snapshot sanitizer package boundary", () => {
       { cwd: REPOSITORY_ROOT },
     );
 
-    expect(existsSync(path.join(output, "shared", "snapshot-sanitizer-boundary.cjs"))).toBe(true);
-    expect(existsSync(path.join(output, "shared", "snapshot-sanitizer-helper.mjs"))).toBe(true);
+    const boundaryPath = path.join(output, "shared", "snapshot-sanitizer-boundary.cjs");
+    const helperPath = path.join(output, "shared", "snapshot-sanitizer-helper.mjs");
+    expect(existsSync(boundaryPath)).toBe(true);
+    expect(existsSync(helperPath)).toBe(true);
+
+    const snapshotPath = path.join(root, "snapshot");
+    mkdirSync(snapshotPath);
+    const observed = lstatSync(snapshotPath, { bigint: true });
+    const request = {
+      root: {
+        canonicalPath: realpathSync(snapshotPath),
+        identity: {
+          dev: String(observed.dev),
+          ino: String(observed.ino),
+          mode: String(observed.mode),
+          nlink: String(observed.nlink),
+          size: String(observed.size),
+          mtimeNs: String(observed.mtimeNs),
+          ctimeNs: String(observed.ctimeNs),
+        },
+      },
+      name: "installed.txt",
+      content: Buffer.from("installed by emitted helper", "utf8").toString("base64"),
+    };
+    const result = spawnSync(process.execPath, [helperPath, "install"], {
+      encoding: "utf8",
+      env: {},
+      input: JSON.stringify(request),
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({ ok: true, result: true });
+    expect(readFileSync(path.join(snapshotPath, "installed.txt"), "utf8")).toBe(
+      "installed by emitted helper",
+    );
   });
 
   it("ships and runs the compiled native helper", () => {

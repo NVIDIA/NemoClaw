@@ -69,6 +69,13 @@ type HelperRequest = Readonly<{
   content?: string;
 }>;
 
+type SnapshotSanitizerFailureCode =
+  | "snapshot-entry-limit-exceeded"
+  | "snapshot-size-limit-exceeded"
+  | "snapshot-scan-failed"
+  | "snapshot-mutation-failed"
+  | "native-probe-failed";
+
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -385,6 +392,24 @@ function isPrerequisiteError(error: unknown): boolean {
   );
 }
 
+function classifyFailure(mode: string, error: unknown): SnapshotSanitizerFailureCode {
+  const message = error instanceof Error ? error.message : "";
+  if (message === "native support probe cleanup failed") return "native-probe-failed";
+  if (
+    message === "snapshot file exceeds the read limit" ||
+    message === "snapshot content exceeds the total read limit" ||
+    (error instanceof FsSafeError && error.code === "too-large" && !message.startsWith("root walk"))
+  ) {
+    return "snapshot-size-limit-exceeded";
+  }
+  if (error instanceof FsSafeError && error.code === "too-large") {
+    return "snapshot-entry-limit-exceeded";
+  }
+  return mode === "apply" || mode === "install"
+    ? "snapshot-mutation-failed"
+    : "snapshot-scan-failed";
+}
+
 async function assertNativeSupport(): Promise<void> {
   const probe = await stageFileInDirectory({ directory: tmpdir(), content: Buffer.alloc(0) });
   const cleanup = await probe.cleanup();
@@ -401,7 +426,14 @@ async function main(): Promise<void> {
     const result = await run(process.argv[2] ?? "", request);
     process.stdout.write(JSON.stringify({ ok: true, result }));
   } catch (error) {
-    process.stdout.write(JSON.stringify({ ok: false, prerequisite: isPrerequisiteError(error) }));
+    const prerequisite = isPrerequisiteError(error);
+    process.stdout.write(
+      JSON.stringify({
+        ok: false,
+        prerequisite,
+        ...(prerequisite ? {} : { code: classifyFailure(process.argv[2] ?? "", error) }),
+      }),
+    );
   }
 }
 

@@ -22,6 +22,7 @@ import {
   inspectDescriptorSnapshotRoot,
   installDescriptorSnapshotFile,
   resolveSnapshotSanitizerHelperPath,
+  SnapshotSanitizerOperationError,
   SnapshotSanitizerPrerequisiteError,
   type SnapshotFileIdentity,
   scanDescriptorSnapshot,
@@ -183,13 +184,13 @@ describe("migration snapshot sanitizer fallbacks", () => {
           "}",
         ]);
 
-        expect(
+        expect(() =>
           installDescriptorSnapshotFile(
             root as NonNullable<typeof root>,
             "openclaw.json",
             JSON.stringify({ installed: true }),
           ),
-        ).toBe(false);
+        ).toThrow(/snapshot-mutation-failed/u);
         expect(readFileSync(outsideConfigFd, "utf-8")).toBe(original);
         expect(fstatSync(outsideConfigFd).mode & 0o777).toBe(originalMode);
       } finally {
@@ -208,7 +209,7 @@ describe("migration snapshot sanitizer fallbacks", () => {
     const config = scan.files.find((file) => file.path === "auth.json")!;
     linkSync(targetPath, aliasPath);
 
-    expect(
+    expect(() =>
       applyDescriptorSnapshotActions(root, scan, [
         {
           kind: "remove",
@@ -216,7 +217,7 @@ describe("migration snapshot sanitizer fallbacks", () => {
           metadata: config.metadata,
         },
       ]),
-    ).toBe(false);
+    ).toThrow(/snapshot-mutation-failed/u);
     expect(readFileSync(targetPath, "utf8")).toBe("original");
     expect(readFileSync(aliasPath, "utf8")).toBe("original");
   });
@@ -230,7 +231,7 @@ describe("migration snapshot sanitizer fallbacks", () => {
       linkSync(targetPath, path.join(rootPath, "config-alias.json"));
       const root = inspectDescriptorSnapshotRoot(rootPath)!;
 
-      expect(scanDescriptorSnapshot(root, new Set())).toBeNull();
+      expect(() => scanDescriptorSnapshot(root, new Set())).toThrow(/snapshot-scan-failed/u);
     },
   );
 
@@ -299,6 +300,27 @@ describe("migration snapshot sanitizer fallbacks", () => {
     expect(() => scanDescriptorSnapshot(root, new Set())).toThrow(
       SnapshotSanitizerPrerequisiteError,
     );
+  });
+
+  it("surfaces only the bounded failure class reported by the helper (#11174)", () => {
+    const root = { canonicalPath: makeRoot(), identity };
+    writeRawNodeHelper([
+      'process.stdout.write(\'{"ok":false,"code":"snapshot-size-limit-exceeded"}\');',
+    ]);
+
+    let received: unknown;
+    try {
+      scanDescriptorSnapshot(root, new Set());
+    } catch (error) {
+      received = error;
+    }
+
+    expect(received).toBeInstanceOf(SnapshotSanitizerOperationError);
+    expect(received).toMatchObject({
+      code: "snapshot-size-limit-exceeded",
+      message: "Native snapshot sanitization failed: snapshot-size-limit-exceeded",
+      snapshotPath: root.canonicalPath,
+    });
   });
 
   it("omits scanned content from the descriptor apply request", () => {
@@ -388,11 +410,11 @@ describe("migration snapshot sanitizer fallbacks", () => {
       expect(scan).not.toBeNull();
       expect(config).toBeDefined();
 
-      expect(
+      expect(() =>
         applyDescriptorSnapshotActions(root, scan, [
           { kind: "replace", path: config.path, metadata: config.metadata, content },
         ]),
-      ).toBe(false);
+      ).toThrow(/snapshot-mutation-failed/u);
       expect(readFileSync(configPath, "utf-8")).toBe("original");
     },
   );
@@ -440,9 +462,7 @@ describe("migration snapshot sanitizer fallbacks", () => {
         "}",
       ]);
 
-      expect(() => sanitizeMigrationDirectory(root)).toThrow(
-        /Failed to inspect migration artifacts safely/u,
-      );
+      expect(() => sanitizeMigrationDirectory(root)).toThrow(/snapshot-scan-failed/u);
       expect(readFileSync(path.join(movedRoot, "config.json"), "utf-8")).toContain("raw");
     },
   );

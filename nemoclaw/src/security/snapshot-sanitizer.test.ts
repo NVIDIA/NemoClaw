@@ -207,9 +207,7 @@ describe("migration snapshot sanitizer", () => {
         "}",
       ]);
 
-      expect(() => sanitizeMigrationDirectory(root)).toThrow(
-        /Failed to sanitize migration artifacts safely/u,
-      );
+      expect(() => sanitizeMigrationDirectory(root)).toThrow(/snapshot-mutation-failed/u);
       expect(readFileSync(outsideConfig, "utf-8")).toBe(
         JSON.stringify({ apiKey: "outside-must-not-change" }),
       );

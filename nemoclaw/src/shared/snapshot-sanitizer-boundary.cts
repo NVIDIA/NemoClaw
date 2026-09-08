@@ -50,9 +50,28 @@ export type SnapshotSanitizationAction =
       readonly content: string;
     };
 
+export type SnapshotSanitizerFailureCode =
+  | "snapshot-entry-limit-exceeded"
+  | "snapshot-size-limit-exceeded"
+  | "snapshot-scan-failed"
+  | "snapshot-mutation-failed"
+  | "native-probe-failed";
+
 type HelperResponse =
   | { readonly ok: true; readonly result: unknown }
-  | { readonly ok: false; readonly prerequisite?: boolean };
+  | {
+      readonly ok: false;
+      readonly prerequisite?: boolean;
+      readonly code?: SnapshotSanitizerFailureCode;
+    };
+
+const SNAPSHOT_SANITIZER_FAILURE_CODES = new Set<SnapshotSanitizerFailureCode>([
+  "snapshot-entry-limit-exceeded",
+  "snapshot-size-limit-exceeded",
+  "snapshot-scan-failed",
+  "snapshot-mutation-failed",
+  "native-probe-failed",
+]);
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -126,6 +145,26 @@ export class SnapshotSanitizerPrerequisiteError extends Error {
   }
 }
 
+/** A bounded failure class from the native helper, without sensitive exception text. */
+export class SnapshotSanitizerOperationError extends Error {
+  readonly code: SnapshotSanitizerFailureCode;
+  readonly snapshotPath: string;
+
+  constructor(snapshotPath: string, code: SnapshotSanitizerFailureCode) {
+    super(`Native snapshot sanitization failed: ${code}`);
+    this.name = "SnapshotSanitizerOperationError";
+    this.code = code;
+    this.snapshotPath = snapshotPath;
+  }
+}
+
+function isSnapshotSanitizerFailureCode(value: unknown): value is SnapshotSanitizerFailureCode {
+  return (
+    typeof value === "string" &&
+    SNAPSHOT_SANITIZER_FAILURE_CODES.has(value as SnapshotSanitizerFailureCode)
+  );
+}
+
 function helperEnvironment(): NodeJS.ProcessEnv {
   const environment: NodeJS.ProcessEnv = {};
   for (const name of ["SYSTEMROOT", "WINDIR"] as const) {
@@ -160,11 +199,19 @@ function invokeSnapshotSanitizerHelper(
       if (parsed.prerequisite === true) {
         throw new SnapshotSanitizerPrerequisiteError(root.canonicalPath);
       }
+      if (isSnapshotSanitizerFailureCode(parsed.code)) {
+        throw new SnapshotSanitizerOperationError(root.canonicalPath, parsed.code);
+      }
       return { ok: false };
     }
     return null;
   } catch (error) {
-    if (error instanceof SnapshotSanitizerPrerequisiteError) throw error;
+    if (
+      error instanceof SnapshotSanitizerPrerequisiteError ||
+      error instanceof SnapshotSanitizerOperationError
+    ) {
+      throw error;
+    }
     return null;
   }
 }

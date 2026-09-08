@@ -23,8 +23,11 @@ import {
   valueLooksLikeSecret,
 } from "./credential-filter";
 
-/** Re-exported so CLI callers identify the prerequisite failure without importing the plugin boundary module. (#8202) */
-export { SnapshotSanitizerPrerequisiteError } from "../../../nemoclaw/dist/shared/snapshot-sanitizer-boundary.cjs";
+/** Re-exported so CLI callers identify helper failures without importing the plugin boundary module. (#8202) */
+export {
+  SnapshotSanitizerOperationError,
+  SnapshotSanitizerPrerequisiteError,
+} from "../../../nemoclaw/dist/shared/snapshot-sanitizer-boundary.cjs";
 
 const MAX_SANITIZATION_PASSES = 3;
 

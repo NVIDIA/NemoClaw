@@ -360,6 +360,24 @@ describe("rebuild backup credential sanitization", () => {
     expect(existsSync(backupPath)).toBe(false);
   });
 
+  it("reports a bounded helper failure and removes the incomplete backup (#11174)", () => {
+    const backupPath = createBackup();
+    writeFileSync(join(backupPath, "state", "config.json"), '{"apiKey":"sk-secret-value"}');
+    const wrapperRoot = mkdtempSync(join(tmpdir(), "nemoclaw-bounded-failure-helper-"));
+    testDirectories.push(wrapperRoot);
+    const helperWrapper = join(wrapperRoot, "snapshot-helper.mjs");
+    writeFileSync(
+      helperWrapper,
+      'process.stdout.write(\'{"ok":false,"code":"snapshot-size-limit-exceeded"}\');\n',
+    );
+    setSnapshotSanitizerHelperPathForTest(helperWrapper);
+
+    expect(() => sanitizeBackupDirectory(backupPath)).toThrow(
+      "Native snapshot sanitization failed: snapshot-size-limit-exceeded. Credential sanitization failed; removed the incomplete backup",
+    );
+    expect(existsSync(backupPath)).toBe(false);
+  });
+
   it("reports the validated directory when backup cleanup throws (#8202)", () => {
     const backupPath = createBackup();
     const validatedPath = realpathSync(backupPath);
