@@ -379,7 +379,7 @@ OpenClaw onboarding does not enter the `complete` state until NemoClaw proves th
 
 Before the configuration review, NemoClaw records the sandbox name and the selected provider and model as an incomplete choice. If onboarding stops at the review prompt, an interactive `--resume` run shows the prompt again. A non-interactive `--resume` run reuses the recorded choice and continues to inference setup. After you choose **Apply configuration**, NemoClaw records the choice before inference setup starts. If inference setup fails, `--resume` reuses the accepted provider, model, and sandbox name. If you choose **Exit onboarding**, onboarding exits with a nonzero status and clears those recorded choices. Run `$$nemoclaw onboard` to make new choices after exit. During a resume without terminal input, `--yes` or `NEMOCLAW_YES=1` also selects non-interactive resume behavior. For a new or fresh session, `--yes` and `NEMOCLAW_YES=1` accept supported confirmations but do not replace `--non-interactive`. If onboarding returns without reaching the final `complete` state, the command exits with status `1`. When that result is resumable, NemoClaw keeps the session `in_progress` at its last checkpoint instead of marking it failed, so correct the reported condition and run `$$nemoclaw onboard --resume`.
 
-#### Recover a retained sandbox
+#### Inspect retained sandbox recovery
 
 If onboarding cannot complete after sandbox creation, NemoClaw preserves the sandbox.
 When available, NemoClaw records and prints the create-attempt label as the exact `ai.nvidia.nemoclaw.create-attempt=<value>` selector.
@@ -389,7 +389,7 @@ Run `$$nemoclaw <sandbox-name> destroy` to check retained recovery and reconcile
 
 Use the result from `destroy` to choose the next action:
 
-- If OpenShell reports the sandbox present, `destroy` preserves the record and removes no resources. OpenShell exposes no atomic delete-by-identity primitive. Neither NemoClaw nor manual inspection can bind a later mutable-name delete to the durable identity fingerprint. You can inspect the owning gateway for diagnosis, but do not delete the sandbox by mutable name. Recovery remains blocked until the owning gateway reports the sandbox absent.
+- If OpenShell reports the sandbox present, `destroy` preserves the record and removes no resources. OpenShell exposes no atomic delete-by-identity primitive. Neither NemoClaw nor manual inspection can bind a later mutable-name delete to the durable identity fingerprint. You can inspect the owning gateway for diagnosis, but do not delete the sandbox by mutable name. Live retained-sandbox removal is not supported yet and remains tracked by the linked OpenShell capability issue. Use a different explicit sandbox name while this record remains blocked.
 - If OpenShell cannot determine whether the sandbox is present, `destroy` reports unknown presence, removes no resources, and preserves the recovery record. Correct the OpenShell gateway or list failure, then rerun `destroy`.
 - If OpenShell confirms the sandbox is absent, `destroy` selects one retained record from its registry generation, gateway, create-attempt evidence, and available identity fingerprint. Provider and Docker cleanup then apply their own immutable identity checks. `destroy` removes only qualified residual resources and clears the matching recovery record only after verified cleanup.
 - If the recovery record is ambiguous or immutable runtime-identity verification fails, cleanup stops and the record remains. For Docker-backed sandboxes, a foreign container, changed Docker identity, or failed Docker probe has the same fail-closed result.
@@ -443,7 +443,7 @@ $$nemoclaw onboard --fresh --apf-interceptor --name my-apf-sandbox
 
 <Warning title="Recover an Incomplete APF Creation">
 If post-create verification or native GPU fallback fails after OpenShell may have created the sandbox, NemoClaw preserves the incomplete sandbox because automatic deletion would use its mutable name.
-Follow the [retained-sandbox recovery procedure](#recover-a-retained-sandbox); its OpenShell-absence and immutable runtime-identity requirements also apply to APF creation. For Docker-backed APF creation, its Docker container-identity requirement also applies.
+Follow the [retained-sandbox recovery procedure](#inspect-retained-sandbox-recovery); its OpenShell-absence and immutable runtime-identity requirements also apply to APF creation. For Docker-backed APF creation, its Docker container-identity requirement also applies.
 This onboarding mode does not support `--resume` or `--recreate-sandbox`, regardless of whether sandbox creation began.
 After destroy completes, repeat the original command with `--fresh`.
 </Warning>
@@ -740,7 +740,7 @@ If you enable Telegram during onboarding, the wizard can also prompt for whether
 If you cancel a brand-new onboarding run at the policy-tier selector or either policy-preset selector after sandbox creation, NemoClaw preserves the incomplete sandbox, registry entry, and onboarding session for retained recovery.
 NemoClaw reports the durable sandbox identity fingerprint when it is available.
 It does not run OpenShell's mutable-name deletion command because the name may now identify a replacement sandbox.
-Follow the [retained-sandbox recovery procedure](#recover-a-retained-sandbox) to reconcile this cancellation.
+Follow the [retained-sandbox recovery procedure](#inspect-retained-sandbox-recovery) to reconcile this cancellation.
 A fresh run with a different explicit name can continue while the cancelled sandbox name remains blocked.
 
 If you run onboarding again with the same sandbox name and choose a different inference provider or model, NemoClaw detects the drift and recreates the sandbox so the running agent config matches your selection. In interactive mode, the wizard asks for confirmation before delete and recreate. In non-interactive mode, NemoClaw recreates automatically when the stored selection is readable and differs. For managed Deep Agents Code sandboxes, NemoClaw also recreates when the live `dcode identity` selection is unreadable; other agent paths continue to reuse by default when their stored selection cannot be read. Set `NEMOCLAW_RECREATE_SANDBOX=1` to force recreation even when no drift is detected.
