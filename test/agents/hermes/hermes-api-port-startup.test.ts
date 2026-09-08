@@ -22,6 +22,7 @@ function runHermesApiPortBootstrap(apiPort: string) {
         "#!/usr/bin/env bash",
         "set -euo pipefail",
         "set -- true",
+        '_chat_ui_port=""',
         source.slice(start, end).trimEnd(),
         'printf "PUBLIC_PORT=%s\\n" "$PUBLIC_PORT"',
       ].join("\n"),
