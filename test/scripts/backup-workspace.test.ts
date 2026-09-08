@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -133,6 +133,89 @@ exit 99
     expect(fs.existsSync(openshellCalls)).toBe(false);
   });
 
+  it("streams CLI output before removing a failed backup (#10636)", async () => {
+    const continueFile = path.join(root, "continue-download");
+    const streamEnd = "NEMOCLAW_TEST_DOWNLOAD_OUTPUT_END";
+    writeExecutable(
+      sourceCli,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "--version" ]; then
+  exit 0
+fi
+printf 'NEMOCLAW_TEST_DOWNLOAD_STARTED\n' >&2
+attempt=0
+while [ ! -f "$NEMOCLAW_TEST_CONTINUE" ]; do
+  if [ "$attempt" -ge 200 ]; then
+    printf 'NEMOCLAW_TEST_OUTPUT_WAS_BUFFERED\n' >&2
+    exit 1
+  fi
+  sleep 0.01
+  attempt=$((attempt + 1))
+done
+i=0
+while [ "$i" -lt 4096 ]; do
+  printf 'NEMOCLAW_TEST_DOWNLOAD_OUTPUT_%06d_abcdefghijklmnopqrstuvwxyz\n' "$i" >&2
+  i=$((i + 1))
+done
+printf '%s\n' '${streamEnd}' >&2
+exit 1
+`,
+    );
+    writeExecutable(
+      path.join(bin, "openshell"),
+      `#!/usr/bin/env bash
+exit 99
+`,
+    );
+
+    const child = spawn("bash", [sourceScript, "backup", "test-sandbox"], {
+      cwd: sourceRoot,
+      env: {
+        ...process.env,
+        HOME: home,
+        NEMOCLAW_TEST_CONTINUE: continueFile,
+        PATH: `${bin}:${process.env.PATH ?? ""}`,
+      },
+    });
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+
+    let stderr = "";
+    let outputStreamed = false;
+    const result = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+      (resolve, reject) => {
+        const timer = setTimeout(() => {
+          child.kill();
+          reject(new Error("The backup helper did not stream the CLI output before exit."));
+        }, 5_000);
+
+        child.stderr.once("data", () => {
+          outputStreamed = true;
+          fs.writeFileSync(continueFile, "continue\n");
+        });
+        child.stderr.on("data", (chunk: string) => {
+          stderr += chunk;
+        });
+        child.once("error", (error) => {
+          clearTimeout(timer);
+          reject(error);
+        });
+        child.once("close", (code, signal) => {
+          clearTimeout(timer);
+          resolve({ code, signal });
+        });
+      },
+    );
+
+    expect(outputStreamed).toBe(true);
+    expect(result).toEqual({ code: 1, signal: null });
+    expect(stderr).toContain(streamEnd);
+    expect(stderr).not.toContain("NEMOCLAW_TEST_OUTPUT_WAS_BUFFERED");
+    expect(stderr).toContain("because SOUL.md was not downloaded");
+    expect(fs.readdirSync(path.join(home, ".nemoclaw", "backups"))).toEqual([]);
+  });
+
   it("reports an incomplete backup when a directory is rejected (#10636)", () => {
     const calls = path.join(root, "nemoclaw-calls.txt");
     const openshellCalls = path.join(root, "openshell-calls.txt");
@@ -253,7 +336,7 @@ exit 99
     expect(result.stdout).toContain("Skipped memory/ (not found)");
     expect(result.stdout).toContain("Backup saved to ");
     expect(result.stdout).toContain("(4 items)");
-    expect(result.stderr).toBe("");
+    expect(result.stderr).toContain("NEMOCLAW_TEST_OPTIONAL_SOURCE_ABSENT");
     expect(fs.readFileSync(calls, "utf8").trim().split("\n")).toHaveLength(6);
 
     const backupRoot = path.join(home, ".nemoclaw", "backups");

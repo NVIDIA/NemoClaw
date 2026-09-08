@@ -52,11 +52,9 @@ download_backup_item() {
   local remote_path="$2"
   local host_dest="$3"
   local optional="$4"
-  local output
   local status
 
-  if output="$("$NEMOCLAW_CLI" "$sandbox" download "$remote_path" "$host_dest" 2>&1)"; then
-    [ -z "$output" ] || printf '%s\n' "$output"
+  if "$NEMOCLAW_CLI" "$sandbox" download "$remote_path" "$host_dest"; then
     return 0
   else
     status=$?
@@ -66,7 +64,6 @@ download_backup_item() {
     return 2
   fi
 
-  [ -z "$output" ] || printf '%s\n' "$output" >&2
   [ "$status" -ne 2 ] || return 1
   return "$status"
 }
