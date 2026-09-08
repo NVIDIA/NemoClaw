@@ -45,6 +45,56 @@ const REMOVED_IMMUTABILITY_REMEDIATION_COMMANDS = new Set([
   "sandbox:stop",
 ]);
 
+/** Compact, serializable description of a command failure reported under `--json`. */
+export type CommandErrorJson = {
+  message: string;
+  code?: string;
+  exit?: number;
+  suggestions?: string[];
+};
+
+function errorSuggestions(err: unknown): string[] | undefined {
+  const raw =
+    err !== null && typeof err === "object"
+      ? (err as { suggestions?: unknown }).suggestions
+      : undefined;
+  if (!Array.isArray(raw)) return undefined;
+  const suggestions = raw.filter((entry): entry is string => typeof entry === "string");
+  return suggestions.length > 0 ? suggestions : undefined;
+}
+
+/**
+ * Describe a command failure as data a `--json` caller can act on.
+ *
+ * The message is the whole point and it is the one field the default envelope
+ * loses: `Error.prototype.message` is not enumerable, so serializing the error
+ * drops it. Everything else is narrowed on purpose — see `toErrorJson`.
+ */
+export function describeCommandErrorForJson(err: unknown): CommandErrorJson {
+  const message =
+    err instanceof Error && err.message
+      ? err.message
+      : typeof err === "string" && err
+        ? err
+        : "The command failed without reporting a reason.";
+  // A thrown `undefined` still has to produce an envelope: the error path is
+  // the last thing standing between a caller and an unexplained exit code.
+  const detail: { code?: unknown; oclif?: { exit?: unknown } } =
+    err !== null && typeof err === "object" ? err : {};
+  const code = detail.code;
+  const exit = detail.oclif?.exit;
+  const suggestions = errorSuggestions(err);
+  return {
+    // A message can carry an inline credential flag from the argv it rejected.
+    message: String(redactForLog(message)),
+    ...(typeof code === "string" ? { code } : {}),
+    ...(typeof exit === "number" ? { exit } : {}),
+    ...(suggestions
+      ? { suggestions: suggestions.map((entry) => String(redactForLog(entry))) }
+      : {}),
+  };
+}
+
 /**
  * Shared oclif base for NemoClaw commands.
  *
@@ -77,6 +127,37 @@ export abstract class NemoClawCommand extends Command {
       exclusive: ["debug"],
     }),
   };
+
+  /**
+   * Report a failed `--json` invocation as a small envelope instead of the raw error.
+   *
+   * oclif's default is `toErrorJson(err) { return { error: err } }`, and
+   * `logJson` serializes that straight to stdout. Two things go wrong at once.
+   * `Error.prototype.message` is not enumerable, so the one field a caller
+   * needs is dropped. And a flag-validation failure carries `parse.input.
+   * context` — the command instance — which reaches `this.config` and pulls
+   * the plugin manifest and `package.json` in with it.
+   *
+   * `nemoclaw doctor --text --json` therefore wrote ~500 KB of structure to
+   * stdout, with no statement of what was rejected, and nothing on stderr. Any
+   * caller piping the command into a JSON parser got that payload instead of a
+   * report. The same held for every `--json` command with a mutually exclusive
+   * pair, including the hidden `--debug`/`--quiet` pair on this base (#11150).
+   */
+  protected override toErrorJson(err: unknown): unknown {
+    return { error: describeCommandErrorForJson(err) };
+  }
+
+  /**
+   * Keep the diagnostic on stderr while stdout stays parseable JSON.
+   *
+   * oclif's `catch` swallows the rethrow under `--json`, so nothing reached
+   * stderr at all and the exit code was the only signal the caller got.
+   */
+  protected override async catch(err: Interfaces.CommandError): Promise<unknown> {
+    if (this.jsonEnabled()) console.error(describeCommandErrorForJson(err).message);
+    return await super.catch(err);
+  }
 
   protected override async init(): Promise<void> {
     await super.init();
