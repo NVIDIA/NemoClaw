@@ -105,8 +105,10 @@ function buildHermesSourceCommand(configDir: string): string {
   const configPath = path.posix.join(configDir, "config.yaml");
   return [
     `if [ ! -e ${quoteMcpBridgeShellArg(configPath)} ] && [ ! -L ${quoteMcpBridgeShellArg(configPath)} ]; then printf '[]'; exit 0; fi`,
-    "/opt/hermes/.venv/bin/python3 -I - <<'PY'",
+    "/usr/bin/python3.13 -I -S - <<'PY'",
     ...commonPythonSourceReader(),
+    "import sys",
+    "sys.path.insert(0, '/opt/hermes/.venv/lib/python3.13/site-packages')",
     "import yaml",
     `config_path = pathlib.Path(${sourcePayload(configPath)})`,
     "try: data = yaml.safe_load(read_regular(config_path))",

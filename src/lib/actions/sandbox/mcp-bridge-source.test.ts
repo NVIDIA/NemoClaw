@@ -184,7 +184,10 @@ network_policies:
       "if [ ! -e '/sandbox/.hermes/config.yaml' ]",
     );
     expect(commands.find((command) => command.includes("/sandbox/.hermes/config.yaml"))).toContain(
-      "/opt/hermes/.venv/bin/python3 -I",
+      "/usr/bin/python3.13 -I -S",
+    );
+    expect(commands.find((command) => command.includes("/sandbox/.hermes/config.yaml"))).toContain(
+      "sys.path.insert(0, '/opt/hermes/.venv/lib/python3.13/site-packages')",
     );
     expect(commands.find((command) => command.includes("openclaw.json"))).toContain(
       "before.uid !== 0 && before.uid !== process.getuid()",

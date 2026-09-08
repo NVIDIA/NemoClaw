@@ -181,7 +181,7 @@ let gatewayRestarted = false;
 replace(policies, "getPresetContentGatewayState", () => "absent");
 replace(adapters, "assertAgentMcpMutationRuntimeCapability", () => {});
 replace(adapters, "inspectAgentAdapterRegistration", () => ({ state: "absent" }));
-replace(adapters, "registerAgentAdapter", (_sandbox, _adapter, entry) => { registeredEntry = entry; });
+replace(adapters, "registerAgentAdapterAtCurrentCredentialRevision", (_sandbox, _adapter, entry) => { registeredEntry = entry; return "v1"; });
 replace(policy, "applyGeneratedPolicy", (_sandbox, _entry, target) => { admittedTarget = target; });
 replace(state, "ensureSandboxGatewaySelected", async () => {});
 replace(validation, "assertMcpCredentialBoundaryRuntimeVersion", () => {});
@@ -304,8 +304,9 @@ const validation = require("./src/lib/actions/sandbox/mcp-bridge-validation.js")
 const nativeSourceState = {};
 replace(adapters, "assertAgentMcpMutationRuntimeCapability", () => {});
 replace(adapters, "inspectAgentAdapterRegistration", () => ({ state: "absent" }));
-replace(adapters, "registerAgentAdapter", (_sandbox, _adapter, entry) => {
+replace(adapters, "registerAgentAdapterAtCurrentCredentialRevision", (_sandbox, _adapter, entry) => {
   nativeSourceState[entry.server] = { ...entry, source: "native" };
+  return "v1";
 });
 replace(state, "ensureSandboxGatewaySelected", async () => {});
 replace(validation, "assertMcpCredentialBoundaryRuntimeVersion", () => {});
@@ -416,7 +417,7 @@ const entry = () => ({
 });
 replace(adapters, "assertAgentMcpMutationRuntimeCapability", () => {});
 replace(adapters, "inspectAgentAdapterRegistration", () => ({ state: state.adapter ? "registered" : "absent" }));
-replace(adapters, "registerAgentAdapter", () => { state.adapter = true; });
+replace(adapters, "registerAgentAdapterAtCurrentCredentialRevision", () => { state.adapter = true; return "v7"; });
 replace(adapters, "unregisterAgentAdapter", () => "removed");
 replace(bridgeState, "ensureSandboxGatewaySelected", async () => {});
 replace(validation, "assertMcpCredentialBoundaryRuntimeVersion", () => {});

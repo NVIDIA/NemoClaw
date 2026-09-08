@@ -25,7 +25,11 @@ import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
 import type { McpAttachedCredentialRevision } from "./mcp-bridge-provider-readiness";
 import { getAgentConfigDir } from "./mcp-bridge-state";
-import { executeSandboxCommand, restartSandboxGateway } from "./process-recovery";
+import {
+  executeSandboxCommand,
+  restartSandboxGateway,
+  waitForManagedGatewaySupervisor,
+} from "./process-recovery";
 
 export const MCPORTER_VERSION = "0.7.3";
 const OPENCLAW_NATIVE_MCP_PLUGIN_ID = "bundle-mcp";
@@ -172,6 +176,9 @@ export function registerOpenClawAdapter(
 ): void {
   const root = openClawConfigRootForEntry(entry);
   try {
+    if (!waitForManagedGatewaySupervisor(sandboxName)) {
+      throw new Error("OpenClaw managed gateway supervisor is not ready for config mutation");
+    }
     const target = resolveAgentConfig(sandboxName);
     if (target.agentName !== "openclaw" || target.configPath !== openClawConfigPath(root)) {
       throw new Error("OpenClaw MCP config target does not match the registered agent source");

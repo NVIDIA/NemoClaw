@@ -16,7 +16,7 @@ import {
   assertAgentMcpMutationRuntimeCapability,
   inspectAgentAdapterRegistration,
   reloadOpenClawGatewayAfterMcpMutation,
-  registerAgentAdapter,
+  registerAgentAdapterAtCurrentCredentialRevision,
   unregisterAgentAdapter,
 } from "./mcp-bridge-adapters";
 import { type McpBridgeAddOptions, McpBridgeError } from "./mcp-bridge-contracts";
@@ -690,15 +690,19 @@ async function addMcpBridgeUnlocked(
       );
     }
     adapterMutationAttempted = true;
-    registerAgentAdapter(sandboxName, adapter, entry, providerRuntimeSelection, adapterEnvValues, {
-      // An exact adapter entry is evidence of a post-commit process death.
-      // Replacing it is idempotent and, for Hermes, re-verifies runtime reload.
-      // The wait above already proved the same revision stable in consecutive
-      // fresh execs, so repeating reconciliation here can outlive the caller's
-      // bounded provider-synchronization contract.
-      replaceExisting: recovery.adapterRegistered,
+    registerAgentAdapterAtCurrentCredentialRevision(
+      sandboxName,
+      adapter,
+      entry,
+      providerRuntimeSelection,
+      adapterEnvValues,
       credentialRevision,
-    });
+      {
+        // An exact adapter entry is evidence of a post-commit process death.
+        // Replacing it is idempotent and, for Hermes, re-verifies runtime reload.
+        replaceExisting: recovery.adapterRegistered,
+      },
+    );
     reloadOpenClawGatewayAfterMcpMutation(sandboxName, [adapter]);
   } catch (error) {
     const rollbackProviderInspection =

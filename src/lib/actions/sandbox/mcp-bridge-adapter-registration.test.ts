@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   resolveAgentConfig: vi.fn(),
   restartSandboxGateway: vi.fn(),
   runOpenshellProviderCommand: vi.fn(),
+  waitForManagedGatewaySupervisor: vi.fn(),
   writeSandboxConfig: vi.fn(),
   waitForMcpBridgeCondition: vi.fn((condition: () => boolean) =>
     Array.from({ length: 12 }).some(() => condition()),
@@ -27,6 +28,7 @@ vi.mock("./process-recovery", () => ({
   executeSandboxExecCommand: mocks.executeSandboxExecCommand,
   executeGatewaySupervisorAction: mocks.executeGatewaySupervisorAction,
   restartSandboxGateway: mocks.restartSandboxGateway,
+  waitForManagedGatewaySupervisor: mocks.waitForManagedGatewaySupervisor,
 }));
 
 vi.mock("../../sandbox/config", () => ({
@@ -96,6 +98,7 @@ function resetOpenClawConfigMocks(): void {
     agentName: "openclaw",
     configPath: "/sandbox/.openclaw/openclaw.json",
   });
+  mocks.waitForManagedGatewaySupervisor.mockReset().mockReturnValue(true);
   mocks.writeSandboxConfig.mockReset();
 }
 
@@ -360,6 +363,23 @@ describe("OpenClaw MCP adapter registration", () => {
       tools: { alsoAllow: ["bundle-mcp"] },
     });
     expect(mocks.writeSandboxConfig.mock.calls[0]?.[2]).not.toHaveProperty("plugins");
+  });
+
+  it("waits for PID 1 config authority before reading or writing OpenClaw config", () => {
+    const entry: McpSourceEntry = {
+      ...baseEntry,
+      agent: "openclaw",
+      adapter: "openclaw-config",
+    };
+    mocks.waitForManagedGatewaySupervisor.mockReturnValue(false);
+
+    expect(() =>
+      registerOpenClawAdapter("alpha", entry, runtimeSelection, {}, false, "v12"),
+    ).toThrow("OpenClaw managed gateway supervisor is not ready for config mutation");
+
+    expect(mocks.waitForManagedGatewaySupervisor).toHaveBeenCalledExactlyOnceWith("alpha");
+    expect(mocks.readSandboxConfig).not.toHaveBeenCalled();
+    expect(mocks.writeSandboxConfig).not.toHaveBeenCalled();
   });
 });
 
