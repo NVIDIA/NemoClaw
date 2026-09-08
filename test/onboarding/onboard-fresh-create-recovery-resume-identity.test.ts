@@ -3,4 +3,4 @@
 
 import { registerFreshCreateIdentityTests } from "../helpers/onboard-fresh-create-identity-suite";
 
-registerFreshCreateIdentityTests("recovery");
+registerFreshCreateIdentityTests("recovery-policy");

@@ -1100,6 +1100,11 @@ describe("pull request and main workflow contracts", () => {
       stem: "scripts/check-coverage-ratchet",
     },
     {
+      action: sharedActions.cliCoverageMerge,
+      step: "Report CLI timing drift",
+      stem: "scripts/checks/report-cli-test-timing-drift",
+    },
+    {
       action: sharedActions.pluginCoverage,
       step: "Run plugin coverage",
       stem: "scripts/check-coverage-ratchet",
@@ -1129,7 +1134,7 @@ describe("pull request and main workflow contracts", () => {
       const fakeBin = join(temp, "bin");
       mkdirSync(fakeBin);
       mkdirSync(join(temp, "dist"));
-      mkdirSync(join(temp, "scripts"));
+      mkdirSync(join(temp, "scripts", "checks"), { recursive: true });
       writeFileSync(join(temp, "dist", ["nemoclaw", "js"].join(".")), "built\n");
       writeFileSync(join(fakeBin, "node"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
       writeFileSync(join(fakeBin, "npm"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
@@ -1138,7 +1143,7 @@ describe("pull request and main workflow contracts", () => {
         [
           "#!/usr/bin/env bash",
           "set -euo pipefail",
-          'if [ "${1:-}" = "tsx" ] && [[ "${2:-}" == scripts/check-* ]]; then',
+          'if [ "${1:-}" = "tsx" ] && [[ "${2:-}" == scripts/* ]]; then',
           '  test "${2}" = "${EXPECTED_ENTRYPOINT}"',
           '  test -f "${2}"',
           "fi",

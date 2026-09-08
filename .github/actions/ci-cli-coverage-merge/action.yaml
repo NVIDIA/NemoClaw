@@ -99,6 +99,10 @@ runs:
           --coverage.exclude="test/**/*.ts"
         npx tsx scripts/check-coverage-ratchet.mts coverage/cli/coverage-summary.json ci/coverage-threshold-cli.json "CLI coverage"
 
+    - name: Report CLI timing drift
+      shell: bash
+      run: npx tsx scripts/checks/report-cli-test-timing-drift.mts coverage/cli/vitest-results.json ci/cli-test-timing-hints.json
+
     - name: Upload CLI coverage report
       if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
       uses: actions/upload-code-coverage@abb5995db9e0199b0e2bb9dbd136fce4cb1ec4d3 # v1

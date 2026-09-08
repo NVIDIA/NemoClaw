@@ -161,7 +161,10 @@
       "fast": [
         "test/e2e/support/hosted-inference.test.ts",
         "test/e2e/support/full-e2e-inference-probe.test.ts",
-        "test/e2e/support/launch-agent-turn.test.ts",
+        "test/e2e/support/launch-agent-turn-failure-paths.test.ts",
+        "test/e2e/support/launch-agent-turn-readiness.test.ts",
+        "test/e2e/support/launch-agent-turn-session-evidence.test.ts",
+        "test/e2e/support/launch-agent-turn-termios.test.ts",
         "test/e2e/support/openclaw-agent-output.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
@@ -175,7 +178,10 @@
         "src/lib/actions/sandbox/launch-readiness-gateway-health.test.ts",
         "src/lib/actions/sandbox/launch-readiness.test.ts",
         "src/lib/state/launch-readiness-lease.test.ts",
-        "test/e2e/support/launch-agent-turn.test.ts",
+        "test/e2e/support/launch-agent-turn-failure-paths.test.ts",
+        "test/e2e/support/launch-agent-turn-readiness.test.ts",
+        "test/e2e/support/launch-agent-turn-session-evidence.test.ts",
+        "test/e2e/support/launch-agent-turn-termios.test.ts",
         "test/e2e-runtime/launch-readiness-forward-observation.test.ts"
       ]
     },
@@ -652,7 +658,9 @@
         "src/lib/onboard/providers.test.ts",
         "test/channels/channels-add-bridge-lifecycle.test.ts",
         "test/e2e/support/messaging-providers-runtime-proofs.test.ts",
-        "test/onboarding/onboard-messaging.test.ts",
+        "test/onboarding/onboard-messaging-image-configuration.test.ts",
+        "test/onboarding/onboard-messaging-provider.test.ts",
+        "test/onboarding/onboard-messaging-recreation.test.ts",
         "test/runtime/messaging/messaging-build-applier.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
@@ -733,7 +741,9 @@
         "src/lib/onboard/sandbox-create-plan.test.ts",
         "test/e2e/support/openclaw-discord-pairing-helpers.test.ts",
         "test/e2e/support/messaging-providers-runtime-proofs.test.ts",
-        "test/onboarding/onboard-messaging.test.ts",
+        "test/onboarding/onboard-messaging-image-configuration.test.ts",
+        "test/onboarding/onboard-messaging-provider.test.ts",
+        "test/onboarding/onboard-messaging-recreation.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]

@@ -8,13 +8,13 @@ import os from "node:os";
 import path from "node:path";
 
 import { beforeEach, describe, it, vi } from "vitest";
-import { writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
+import { writeOkOpenshell } from "./onboard-openshell-fixture";
 import {
   type CommandEntry,
   onboardScriptMocksPath,
   parseStdoutJson,
   stripMessagingEnv,
-} from "../helpers/onboard-split-context";
+} from "./onboard-split-context";
 
 beforeEach(() => {
   vi.stubEnv("NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG", "1");
@@ -22,33 +22,37 @@ beforeEach(() => {
   vi.stubEnv("NEMOCLAW_SANDBOX_PREBUILD", "1");
 });
 
-describe("onboard helpers", () => {
-  it(
-    "creates the stock managed sandbox without uploading an external OpenClaw config file",
-    {
-      timeout: 90_000,
-    },
-    async () => {
-      const repoRoot = path.join(import.meta.dirname, "../..");
-      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-create-sandbox-"));
-      const fakeBin = path.join(tmpDir, "bin");
-      const scriptPath = path.join(tmpDir, "create-sandbox-check.js");
-      const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-      const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-      const registryPath = JSON.stringify(
-        path.join(repoRoot, "src", "lib", "state", "registry.ts"),
-      );
-      const preflightPath = JSON.stringify(
-        path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"),
-      );
-      const credentialsPath = JSON.stringify(
-        path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-      );
+export type OnboardSandboxBuildGroup = "base" | "dashboard";
 
-      fs.mkdirSync(fakeBin, { recursive: true });
-      writeOkOpenshell(fakeBin);
+export function registerOnboardSandboxBuildTests(group: OnboardSandboxBuildGroup): void {
+  describe(`onboard helpers (${group})`, () => {
+    if (group === "base") {
+      it(
+        "creates the stock managed sandbox without uploading an external OpenClaw config file",
+        {
+          timeout: 90_000,
+        },
+        async () => {
+          const repoRoot = path.join(import.meta.dirname, "../..");
+          const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-create-sandbox-"));
+          const fakeBin = path.join(tmpDir, "bin");
+          const scriptPath = path.join(tmpDir, "create-sandbox-check.js");
+          const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+          const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+          const registryPath = JSON.stringify(
+            path.join(repoRoot, "src", "lib", "state", "registry.ts"),
+          );
+          const preflightPath = JSON.stringify(
+            path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"),
+          );
+          const credentialsPath = JSON.stringify(
+            path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
+          );
 
-      const script = String.raw`
+          fs.mkdirSync(fakeBin, { recursive: true });
+          writeOkOpenshell(fakeBin);
+
+          const script = String.raw`
 const runner = require(${runnerPath});
 const fixtureMocks = require(${onboardScriptMocksPath});
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
@@ -125,100 +129,102 @@ const { createSandbox } = require(${onboardPath});
   process.exit(1);
 });
 `;
-      fs.writeFileSync(scriptPath, script);
+          fs.writeFileSync(scriptPath, script);
 
-      const result = spawnSync(process.execPath, [scriptPath], {
-        cwd: repoRoot,
-        encoding: "utf-8",
-        env: {
-          ...process.env,
-          HOME: tmpDir,
-          PATH: `${fakeBin}:${process.env.PATH || ""}`,
-          NEMOCLAW_NON_INTERACTIVE: "1",
+          const result = spawnSync(process.execPath, [scriptPath], {
+            cwd: repoRoot,
+            encoding: "utf-8",
+            env: {
+              ...process.env,
+              HOME: tmpDir,
+              PATH: `${fakeBin}:${process.env.PATH || ""}`,
+              NEMOCLAW_NON_INTERACTIVE: "1",
+            },
+          });
+
+          assert.equal(result.status, 0, result.stderr);
+          const payloadLine = result.stdout
+            .trim()
+            .split("\n")
+            .slice()
+            .reverse()
+            .find((line) => line.startsWith("{") && line.endsWith("}"));
+          assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
+          const payload = JSON.parse(payloadLine);
+          assert.equal(payload.sandboxName, "my-assistant");
+          // createSandbox no longer marks the sandbox default — that is deferred to the
+          // finalization step so a cancel at policy presets can't leave an unconfigured
+          // sandbox as default (#4614).
+          assert.deepEqual(payload.defaultCalls, []);
+          assert.ok(
+            payload.registerCalls.some(
+              (entry: Record<string, unknown>) =>
+                entry.name === "my-assistant" &&
+                entry.model === "gpt-5.4" &&
+                Object.prototype.hasOwnProperty.call(entry, "agentVersion"),
+            ),
+            "expected registry metadata for created sandbox",
+          );
+          assert.ok(
+            payload.updateCalls.every(
+              (call: { name: string; updates: Record<string, unknown> }) =>
+                call.name === "my-assistant" && call.updates,
+            ),
+            "expected any registry metadata updates to target the created sandbox",
+          );
+          const createCommand = payload.commands.find((entry: CommandEntry) =>
+            entry.command.includes("sandbox create"),
+          );
+          assert.ok(createCommand, "expected sandbox create command");
+          assert.match(createCommand.command, /nemoclaw-managed-startup-hold/);
+          assert.match(
+            createCommand.command,
+            /--from ghcr\.io\/nvidia\/nemoclaw\/openclaw-sandbox@sha256:[0-9a-f]{64}/,
+          );
+          assert.doesNotMatch(createCommand.command, /--upload/);
+          assert.doesNotMatch(createCommand.command, /OPENCLAW_CONFIG_PATH/);
+          assert.doesNotMatch(createCommand.command, /NVIDIA_INFERENCE_API_KEY=/);
+          assert.doesNotMatch(createCommand.command, /DISCORD_BOT_TOKEN=/);
+          assert.doesNotMatch(createCommand.command, /SLACK_BOT_TOKEN=/);
+          assert.ok(
+            !payload.commands.some((entry: CommandEntry) =>
+              entry.command.includes("forward service my-assistant"),
+            ),
+            "sandbox creation must defer forwarding until agent setup or final recovery",
+          );
         },
-      });
+      );
 
-      assert.equal(result.status, 0, result.stderr);
-      const payloadLine = result.stdout
-        .trim()
-        .split("\n")
-        .slice()
-        .reverse()
-        .find((line) => line.startsWith("{") && line.endsWith("}"));
-      assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
-      const payload = JSON.parse(payloadLine);
-      assert.equal(payload.sandboxName, "my-assistant");
-      // createSandbox no longer marks the sandbox default — that is deferred to the
-      // finalization step so a cancel at policy presets can't leave an unconfigured
-      // sandbox as default (#4614).
-      assert.deepEqual(payload.defaultCalls, []);
-      assert.ok(
-        payload.registerCalls.some(
-          (entry: Record<string, unknown>) =>
-            entry.name === "my-assistant" &&
-            entry.model === "gpt-5.4" &&
-            Object.prototype.hasOwnProperty.call(entry, "agentVersion"),
-        ),
-        "expected registry metadata for created sandbox",
-      );
-      assert.ok(
-        payload.updateCalls.every(
-          (call: { name: string; updates: Record<string, unknown> }) =>
-            call.name === "my-assistant" && call.updates,
-        ),
-        "expected any registry metadata updates to target the created sandbox",
-      );
-      const createCommand = payload.commands.find((entry: CommandEntry) =>
-        entry.command.includes("sandbox create"),
-      );
-      assert.ok(createCommand, "expected sandbox create command");
-      assert.match(createCommand.command, /nemoclaw-managed-startup-hold/);
-      assert.match(
-        createCommand.command,
-        /--from ghcr\.io\/nvidia\/nemoclaw\/openclaw-sandbox@sha256:[0-9a-f]{64}/,
-      );
-      assert.doesNotMatch(createCommand.command, /--upload/);
-      assert.doesNotMatch(createCommand.command, /OPENCLAW_CONFIG_PATH/);
-      assert.doesNotMatch(createCommand.command, /NVIDIA_INFERENCE_API_KEY=/);
-      assert.doesNotMatch(createCommand.command, /DISCORD_BOT_TOKEN=/);
-      assert.doesNotMatch(createCommand.command, /SLACK_BOT_TOKEN=/);
-      assert.ok(
-        !payload.commands.some((entry: CommandEntry) =>
-          entry.command.includes("forward service my-assistant"),
-        ),
-        "sandbox creation must defer forwarding until agent setup or final recovery",
-      );
-    },
-  );
+      it("resolves the sandbox base for an explicit custom Dockerfile", async () => {
+        const repoRoot = path.join(import.meta.dirname, "../..");
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-agent-base-skip-"));
+        const fakeBin = path.join(tmpDir, "bin");
+        const scriptPath = path.join(tmpDir, "agent-base-skip.js");
+        const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+        const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+        const hermesPolicyPath = JSON.stringify(
+          path.join(repoRoot, "agents", "hermes", "policy-additions.yaml"),
+        );
+        const registryPath = JSON.stringify(
+          path.join(repoRoot, "src", "lib", "state", "registry.ts"),
+        );
+        const preflightPath = JSON.stringify(
+          path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"),
+        );
+        const credentialsPath = JSON.stringify(
+          path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
+        );
+        const agentOnboardPath = JSON.stringify(
+          path.join(repoRoot, "src", "lib", "agent", "onboard.ts"),
+        );
+        const sandboxBaseImagePath = JSON.stringify(
+          path.join(repoRoot, "src", "lib", "sandbox-base-image.ts"),
+        );
 
-  it("resolves the sandbox base for an explicit custom Dockerfile", async () => {
-    const repoRoot = path.join(import.meta.dirname, "../..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-agent-base-skip-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "agent-base-skip.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-    const hermesPolicyPath = JSON.stringify(
-      path.join(repoRoot, "agents", "hermes", "policy-additions.yaml"),
-    );
-    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
-    const preflightPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"),
-    );
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const agentOnboardPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "agent", "onboard.ts"),
-    );
-    const sandboxBaseImagePath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "sandbox-base-image.ts"),
-    );
+        fs.mkdirSync(fakeBin, { recursive: true });
+        writeOkOpenshell(fakeBin);
 
-    fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin);
-
-    const script = String.raw`
+        const script = String.raw`
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -376,76 +382,81 @@ const { createSandbox } = require(${onboardPath});
   process.exit(1);
 });
 `;
-    fs.writeFileSync(scriptPath, script);
+        fs.writeFileSync(scriptPath, script);
 
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...stripMessagingEnv(process.env),
-        HOME: tmpDir,
-        NEMOCLAW_HOME: path.join(tmpDir, ".nemoclaw"),
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-        NEMOCLAW_NON_INTERACTIVE: "1",
-      },
-    });
+        const result = spawnSync(process.execPath, [scriptPath], {
+          cwd: repoRoot,
+          encoding: "utf-8",
+          env: {
+            ...stripMessagingEnv(process.env),
+            HOME: tmpDir,
+            NEMOCLAW_HOME: path.join(tmpDir, ".nemoclaw"),
+            PATH: `${fakeBin}:${process.env.PATH || ""}`,
+            NEMOCLAW_NON_INTERACTIVE: "1",
+          },
+        });
 
-    assert.equal(result.status, 0, result.stderr);
-    const payload = parseStdoutJson<{
-      commands: CommandEntry[];
-      logs: string[];
-      warnings: string[];
-      baseResolutionCalls: Array<{ imageName?: string; dockerfilePath?: string }>;
-    }>(result.stdout);
-    assert.equal(payload.baseResolutionCalls.length, 1);
-    assert.equal(payload.baseResolutionCalls[0]?.imageName, "ghcr.io/nvidia/nemoclaw/sandbox-base");
-    assert.equal(
-      payload.baseResolutionCalls[0]?.dockerfilePath,
-      path.join(repoRoot, "Dockerfile.base"),
-    );
-    const createCommand = payload.commands.find((entry) =>
-      entry.command.includes("sandbox create"),
-    );
-    assert.ok(createCommand, "expected sandbox create command");
-    assert.match(createCommand.command, /--provider hermes-sandbox-hermes-tool-gateway/);
-    assert.doesNotMatch(createCommand.command, /TOOL_GATEWAY_USER_TOKEN=/);
-    assert.doesNotMatch(createCommand.command, /NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN=/);
-    assert.ok(
-      payload.logs.some((line) => line.includes("Pinning base image to sha256:aaaaaaaaaaaa")),
-      "explicit custom Dockerfile path should log sandbox-base pinning",
-    );
-    assert.ok(
-      !payload.warnings.some((line) => line.includes("base image")),
-      "resolved custom Dockerfile path should not warn about sandbox-base availability",
-    );
-  });
+        assert.equal(result.status, 0, result.stderr);
+        const payload = parseStdoutJson<{
+          commands: CommandEntry[];
+          logs: string[];
+          warnings: string[];
+          baseResolutionCalls: Array<{ imageName?: string; dockerfilePath?: string }>;
+        }>(result.stdout);
+        assert.equal(payload.baseResolutionCalls.length, 1);
+        assert.equal(
+          payload.baseResolutionCalls[0]?.imageName,
+          "ghcr.io/nvidia/nemoclaw/sandbox-base",
+        );
+        assert.equal(
+          payload.baseResolutionCalls[0]?.dockerfilePath,
+          path.join(repoRoot, "Dockerfile.base"),
+        );
+        const createCommand = payload.commands.find((entry) =>
+          entry.command.includes("sandbox create"),
+        );
+        assert.ok(createCommand, "expected sandbox create command");
+        assert.match(createCommand.command, /--provider hermes-sandbox-hermes-tool-gateway/);
+        assert.doesNotMatch(createCommand.command, /TOOL_GATEWAY_USER_TOKEN=/);
+        assert.doesNotMatch(createCommand.command, /NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN=/);
+        assert.ok(
+          payload.logs.some((line) => line.includes("Pinning base image to sha256:aaaaaaaaaaaa")),
+          "explicit custom Dockerfile path should log sandbox-base pinning",
+        );
+        assert.ok(
+          !payload.warnings.some((line) => line.includes("base image")),
+          "resolved custom Dockerfile path should not warn about sandbox-base availability",
+        );
+      });
 
-  it("skips OpenClaw sandbox-base resolution for the stock managed image path", async () => {
-    const repoRoot = path.join(import.meta.dirname, "../..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-base-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "openclaw-base-resolve.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
-    const preflightPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"),
-    );
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const buildContextPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "sandbox", "build-context.ts"),
-    );
-    const sandboxBaseImagePath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "sandbox-base-image.ts"),
-    );
-    const platformPath = JSON.stringify(path.join(repoRoot, "src", "lib", "platform.ts"));
+      it("skips OpenClaw sandbox-base resolution for the stock managed image path", async () => {
+        const repoRoot = path.join(import.meta.dirname, "../..");
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-base-"));
+        const fakeBin = path.join(tmpDir, "bin");
+        const scriptPath = path.join(tmpDir, "openclaw-base-resolve.js");
+        const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+        const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+        const registryPath = JSON.stringify(
+          path.join(repoRoot, "src", "lib", "state", "registry.ts"),
+        );
+        const preflightPath = JSON.stringify(
+          path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"),
+        );
+        const credentialsPath = JSON.stringify(
+          path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
+        );
+        const buildContextPath = JSON.stringify(
+          path.join(repoRoot, "src", "lib", "sandbox", "build-context.ts"),
+        );
+        const sandboxBaseImagePath = JSON.stringify(
+          path.join(repoRoot, "src", "lib", "sandbox-base-image.ts"),
+        );
+        const platformPath = JSON.stringify(path.join(repoRoot, "src", "lib", "platform.ts"));
 
-    fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin);
+        fs.mkdirSync(fakeBin, { recursive: true });
+        writeOkOpenshell(fakeBin);
 
-    const script = String.raw`
+        const script = String.raw`
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -569,51 +580,55 @@ const { createSandbox } = require(${onboardPath});
   process.exit(1);
 });
 `;
-    fs.writeFileSync(scriptPath, script);
+        fs.writeFileSync(scriptPath, script);
 
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...stripMessagingEnv(process.env),
-        HOME: tmpDir,
-        NEMOCLAW_HOME: path.join(tmpDir, ".nemoclaw"),
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-        NEMOCLAW_NON_INTERACTIVE: "1",
-      },
-    });
+        const result = spawnSync(process.execPath, [scriptPath], {
+          cwd: repoRoot,
+          encoding: "utf-8",
+          env: {
+            ...stripMessagingEnv(process.env),
+            HOME: tmpDir,
+            NEMOCLAW_HOME: path.join(tmpDir, ".nemoclaw"),
+            PATH: `${fakeBin}:${process.env.PATH || ""}`,
+            NEMOCLAW_NON_INTERACTIVE: "1",
+          },
+        });
 
-    assert.equal(result.status, 0, result.stderr);
-    const payload = parseStdoutJson<{
-      logs: string[];
-      baseResolutionCalls: Array<{ imageName?: string }>;
-    }>(result.stdout);
-    assert.equal(payload.baseResolutionCalls.length, 0);
-    assert.ok(
-      !payload.logs.some((line) => line.includes("Pinning base image")),
-      "stock managed-image onboarding must not enter sandbox-base resolution",
-    );
-  });
+        assert.equal(result.status, 0, result.stderr);
+        const payload = parseStdoutJson<{
+          logs: string[];
+          baseResolutionCalls: Array<{ imageName?: string }>;
+        }>(result.stdout);
+        assert.equal(payload.baseResolutionCalls.length, 0);
+        assert.ok(
+          !payload.logs.some((line) => line.includes("Pinning base image")),
+          "stock managed-image onboarding must not enter sandbox-base resolution",
+        );
+      });
+    }
 
-  it("defers a remote dashboard forward until post-create recovery", async () => {
-    const repoRoot = path.join(import.meta.dirname, "../..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-remote-forward-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "create-sandbox-remote-forward.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
-    const preflightPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"),
-    );
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
+    if (group === "dashboard") {
+      it("defers a remote dashboard forward until post-create recovery", async () => {
+        const repoRoot = path.join(import.meta.dirname, "../..");
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-remote-forward-"));
+        const fakeBin = path.join(tmpDir, "bin");
+        const scriptPath = path.join(tmpDir, "create-sandbox-remote-forward.js");
+        const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+        const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+        const registryPath = JSON.stringify(
+          path.join(repoRoot, "src", "lib", "state", "registry.ts"),
+        );
+        const preflightPath = JSON.stringify(
+          path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"),
+        );
+        const credentialsPath = JSON.stringify(
+          path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
+        );
 
-    fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin);
+        fs.mkdirSync(fakeBin, { recursive: true });
+        writeOkOpenshell(fakeBin);
 
-    const script = String.raw`
+        const script = String.raw`
 const runner = require(${runnerPath});
 const fixtureMocks = require(${onboardScriptMocksPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
@@ -685,48 +700,50 @@ const { createSandbox } = require(${onboardPath});
   process.exit(1);
 });
 `;
-    fs.writeFileSync(scriptPath, script);
+        fs.writeFileSync(scriptPath, script);
 
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-        NEMOCLAW_NON_INTERACTIVE: "1",
-      },
-    });
+        const result = spawnSync(process.execPath, [scriptPath], {
+          cwd: repoRoot,
+          encoding: "utf-8",
+          env: {
+            ...process.env,
+            HOME: tmpDir,
+            PATH: `${fakeBin}:${process.env.PATH || ""}`,
+            NEMOCLAW_NON_INTERACTIVE: "1",
+          },
+        });
 
-    assert.equal(result.status, 0, result.stderr);
-    const commands = parseStdoutJson<CommandEntry[]>(result.stdout);
-    assert.ok(
-      !commands.some((entry: CommandEntry) =>
-        entry.command.includes("forward service my-assistant"),
-      ),
-      "sandbox creation must not launch the remote forward before agent setup",
-    );
-  });
+        assert.equal(result.status, 0, result.stderr);
+        const commands = parseStdoutJson<CommandEntry[]>(result.stdout);
+        assert.ok(
+          !commands.some((entry: CommandEntry) =>
+            entry.command.includes("forward service my-assistant"),
+          ),
+          "sandbox creation must not launch the remote forward before agent setup",
+        );
+      });
 
-  it("injects NEMOCLAW_DASHBOARD_PORT into sandbox create envArgs when set (#1925)", async () => {
-    const repoRoot = path.join(import.meta.dirname, "../..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dashboard-port-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "dashboard-port-envargs.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
-    const preflightPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"),
-    );
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
+      it("injects NEMOCLAW_DASHBOARD_PORT into sandbox create envArgs when set (#1925)", async () => {
+        const repoRoot = path.join(import.meta.dirname, "../..");
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dashboard-port-"));
+        const fakeBin = path.join(tmpDir, "bin");
+        const scriptPath = path.join(tmpDir, "dashboard-port-envargs.js");
+        const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+        const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+        const registryPath = JSON.stringify(
+          path.join(repoRoot, "src", "lib", "state", "registry.ts"),
+        );
+        const preflightPath = JSON.stringify(
+          path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"),
+        );
+        const credentialsPath = JSON.stringify(
+          path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
+        );
 
-    fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin);
+        fs.mkdirSync(fakeBin, { recursive: true });
+        writeOkOpenshell(fakeBin);
 
-    const script = String.raw`
+        const script = String.raw`
 const runner = require(${runnerPath});
 const fixtureMocks = require(${onboardScriptMocksPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
@@ -802,82 +819,84 @@ const { createSandbox } = require(${onboardPath});
   process.exit(1);
 });
 `;
-    fs.writeFileSync(scriptPath, script);
+        fs.writeFileSync(scriptPath, script);
 
-    // Strip CHAT_UI_URL so createSandbox falls back to http://127.0.0.1:19000.
-    // Without this, a CHAT_UI_URL set in the developer's shell or CI would be
-    // inherited, causing chatUiUrl to use the wrong port and making the forward
-    // command assertion below fail spuriously.
-    const {
-      CHAT_UI_URL: _stripped,
-      HTTP_PROXY: _httpProxy,
-      HTTPS_PROXY: _httpsProxy,
-      NO_PROXY: _noProxy,
-      http_proxy: _lowerHttpProxy,
-      https_proxy: _lowerHttpsProxy,
-      no_proxy: _lowerNoProxy,
-      ...inheritedEnv
-    } = process.env;
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...inheritedEnv,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-        NEMOCLAW_NON_INTERACTIVE: "1",
-        NEMOCLAW_DASHBOARD_PORT: "19000",
-        HTTP_PROXY: "http://127.0.0.1:8888",
-        HTTPS_PROXY: "http://127.0.0.1:8888",
-        NO_PROXY: "corp.internal",
-      },
-    });
+        // Strip CHAT_UI_URL so createSandbox falls back to http://127.0.0.1:19000.
+        // Without this, a CHAT_UI_URL set in the developer's shell or CI would be
+        // inherited, causing chatUiUrl to use the wrong port and making the forward
+        // command assertion below fail spuriously.
+        const {
+          CHAT_UI_URL: _stripped,
+          HTTP_PROXY: _httpProxy,
+          HTTPS_PROXY: _httpsProxy,
+          NO_PROXY: _noProxy,
+          http_proxy: _lowerHttpProxy,
+          https_proxy: _lowerHttpsProxy,
+          no_proxy: _lowerNoProxy,
+          ...inheritedEnv
+        } = process.env;
+        const result = spawnSync(process.execPath, [scriptPath], {
+          cwd: repoRoot,
+          encoding: "utf-8",
+          env: {
+            ...inheritedEnv,
+            HOME: tmpDir,
+            PATH: `${fakeBin}:${process.env.PATH || ""}`,
+            NEMOCLAW_NON_INTERACTIVE: "1",
+            NEMOCLAW_DASHBOARD_PORT: "19000",
+            HTTP_PROXY: "http://127.0.0.1:8888",
+            HTTPS_PROXY: "http://127.0.0.1:8888",
+            NO_PROXY: "corp.internal",
+          },
+        });
 
-    assert.equal(result.status, 0, result.stderr);
-    const payloadLine = result.stdout
-      .trim()
-      .split("\n")
-      .slice()
-      .reverse()
-      .find((line) => line.startsWith("{") && line.endsWith("}"));
-    assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
-    const payload = JSON.parse(payloadLine);
-    const createCommand = payload.commands.find((entry: CommandEntry) =>
-      entry.command.includes("sandbox create"),
-    );
-    assert.ok(createCommand, "expected sandbox create command");
-    // Part 1 of fix (#1925): NEMOCLAW_DASHBOARD_PORT must be in envArgs so
-    // nemoclaw-start.sh can unconditionally override CHAT_UI_URL at runtime,
-    // overriding whatever value the Docker image had baked in.
-    assert.match(createCommand.command, /NEMOCLAW_DASHBOARD_PORT=19000/);
-    assert.match(createCommand.command, /HTTP_PROXY=http:\/\/127\.0\.0\.1:8888/);
-    assert.match(createCommand.command, /HTTPS_PROXY=http:\/\/127\.0\.0\.1:8888/);
-    // OpenClaw home/state/workspace dirs must be pinned in the sandbox env so
-    // `openclaw skills install` and `openclaw skills list` resolve the same
-    // paths. Without this, the upstream skill loader can fall back to a
-    // hardcoded DEFAULT_AGENT_WORKSPACE_DIR that drifts from the install path
-    // and hides workspace-installed skills from `skills list`.
-    assert.match(createCommand.command, /OPENCLAW_HOME=\/sandbox(?:\s|$)/);
-    assert.match(createCommand.command, /OPENCLAW_STATE_DIR=\/sandbox\/\.openclaw(?:\s|$)/);
-    assert.match(
-      createCommand.command,
-      /OPENCLAW_WORKSPACE_DIR=\/sandbox\/\.openclaw\/workspace(?:\s|$)/,
-    );
-    const noProxyMatch = createCommand.command.match(/(?:^|\s)NO_PROXY=([^\s]+)/);
-    assert.ok(
-      noProxyMatch,
-      `expected NO_PROXY in sandbox create command:\n${createCommand.command}`,
-    );
-    const noProxyEntries = noProxyMatch[1].split(",");
-    assert.ok(noProxyEntries.includes("corp.internal"));
-    assert.ok(noProxyEntries.includes("localhost"));
-    assert.ok(noProxyEntries.includes("127.0.0.1"));
-    assert.ok(noProxyEntries.includes("host.docker.internal"));
-    assert.ok(
-      !payload.commands.some((entry: CommandEntry) =>
-        entry.command.includes("forward service my-assistant"),
-      ),
-      "sandbox creation must defer the custom-port forward until agent setup or final recovery",
-    );
+        assert.equal(result.status, 0, result.stderr);
+        const payloadLine = result.stdout
+          .trim()
+          .split("\n")
+          .slice()
+          .reverse()
+          .find((line) => line.startsWith("{") && line.endsWith("}"));
+        assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
+        const payload = JSON.parse(payloadLine);
+        const createCommand = payload.commands.find((entry: CommandEntry) =>
+          entry.command.includes("sandbox create"),
+        );
+        assert.ok(createCommand, "expected sandbox create command");
+        // Part 1 of fix (#1925): NEMOCLAW_DASHBOARD_PORT must be in envArgs so
+        // nemoclaw-start.sh can unconditionally override CHAT_UI_URL at runtime,
+        // overriding whatever value the Docker image had baked in.
+        assert.match(createCommand.command, /NEMOCLAW_DASHBOARD_PORT=19000/);
+        assert.match(createCommand.command, /HTTP_PROXY=http:\/\/127\.0\.0\.1:8888/);
+        assert.match(createCommand.command, /HTTPS_PROXY=http:\/\/127\.0\.0\.1:8888/);
+        // OpenClaw home/state/workspace dirs must be pinned in the sandbox env so
+        // `openclaw skills install` and `openclaw skills list` resolve the same
+        // paths. Without this, the upstream skill loader can fall back to a
+        // hardcoded DEFAULT_AGENT_WORKSPACE_DIR that drifts from the install path
+        // and hides workspace-installed skills from `skills list`.
+        assert.match(createCommand.command, /OPENCLAW_HOME=\/sandbox(?:\s|$)/);
+        assert.match(createCommand.command, /OPENCLAW_STATE_DIR=\/sandbox\/\.openclaw(?:\s|$)/);
+        assert.match(
+          createCommand.command,
+          /OPENCLAW_WORKSPACE_DIR=\/sandbox\/\.openclaw\/workspace(?:\s|$)/,
+        );
+        const noProxyMatch = createCommand.command.match(/(?:^|\s)NO_PROXY=([^\s]+)/);
+        assert.ok(
+          noProxyMatch,
+          `expected NO_PROXY in sandbox create command:\n${createCommand.command}`,
+        );
+        const noProxyEntries = noProxyMatch[1].split(",");
+        assert.ok(noProxyEntries.includes("corp.internal"));
+        assert.ok(noProxyEntries.includes("localhost"));
+        assert.ok(noProxyEntries.includes("127.0.0.1"));
+        assert.ok(noProxyEntries.includes("host.docker.internal"));
+        assert.ok(
+          !payload.commands.some((entry: CommandEntry) =>
+            entry.command.includes("forward service my-assistant"),
+          ),
+          "sandbox creation must defer the custom-port forward until agent setup or final recovery",
+        );
+      });
+    }
   });
-});
+}

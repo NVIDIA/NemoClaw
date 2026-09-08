@@ -78,7 +78,7 @@ const freshCreateIdentityCases = [
     expectedOutcome: "identity-mismatch-refusal" as const,
   },
   {
-    group: "recovery" as const,
+    group: "recovery-state" as const,
     title: "retains recovery state when the create runner fails after verification (#9833)",
     apfInterceptorRequested: true,
     provider: null,
@@ -87,7 +87,7 @@ const freshCreateIdentityCases = [
     expectedOutcome: "post-create-runner-refusal" as const,
   },
   {
-    group: "recovery" as const,
+    group: "recovery-state" as const,
     title: "retains recovery state when registry publication fails after create (#9833)",
     apfInterceptorRequested: true,
     provider: null,
@@ -96,7 +96,7 @@ const freshCreateIdentityCases = [
     expectedOutcome: "post-create-registration-refusal" as const,
   },
   {
-    group: "recovery" as const,
+    group: "recovery-state" as const,
     title: "blocks every reentry when registry-failure recovery has no durable journal (#9833)",
     apfInterceptorRequested: true,
     provider: null,
@@ -105,7 +105,7 @@ const freshCreateIdentityCases = [
     expectedOutcome: "post-create-registration-recovery-readback-failure" as const,
   },
   {
-    group: "recovery" as const,
+    group: "recovery-policy" as const,
     title: "retries registry-failure recovery from the process-exit owner (#9833)",
     apfInterceptorRequested: true,
     provider: null,
@@ -114,7 +114,7 @@ const freshCreateIdentityCases = [
     expectedOutcome: "post-create-registration-recovery-retry" as const,
   },
   {
-    group: "recovery" as const,
+    group: "recovery-policy" as const,
     title: "accepts an external policy change after registration (#9833)",
     apfInterceptorRequested: true,
     provider: null,
@@ -167,7 +167,7 @@ export function registerFreshCreateIdentityTests(group: FreshCreateIdentityGroup
   const caseTimeoutMs =
     group === "cancellation"
       ? childProcessTimeoutMs * 6 + 15_000
-      : group === "recovery"
+      : group.startsWith("recovery-")
         ? childProcessTimeoutMs * 3 + 15_000
         : 45_000;
   describe(`fresh create identity (${group})`, () => {

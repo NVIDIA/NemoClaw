@@ -211,6 +211,12 @@ describe("stable CLI coverage sharding", () => {
         headSha: "5b74336486a8492ad87dd7eaba3d1bc06abbadf6",
         recordedAt: "2026-09-04T23:53:49Z",
       },
+      {
+        runId: 34013605812,
+        artifactId: 9983530478,
+        headSha: "be1452092af48f439531502870e826215b0d76f9",
+        recordedAt: "2026-09-06T05:43:35Z",
+      },
     ]);
     expect(files).toEqual([...files].sort());
     expect(files.length).toBeGreaterThan(50);
