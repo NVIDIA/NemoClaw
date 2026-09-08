@@ -169,6 +169,25 @@ describe("resolveRequestedProviderSelection", () => {
     }
   });
 
+  it("recovers recorded Ollama after the Windows-host route is revalidated", () => {
+    const result = resolve({
+      options: [option("build"), option("ollama")],
+      isWsl: true,
+      isWindowsHostOllama: true,
+      windowsHostOllamaSupported: true,
+      windowsHostOllamaReachable: true,
+      readRecordedProvider: () => "ollama-local",
+      readRecordedModel: () => "qwen3.5:9b",
+    });
+
+    assert.deepEqual(result, {
+      kind: "selected",
+      selected: option("ollama"),
+      recoveredFromSandbox: true,
+      recoveredModel: "qwen3.5:9b",
+    });
+  });
+
   it("returns a Windows-host hint when recorded Ollama is unavailable but a host action exists", () => {
     const result = resolve({
       options: [option("build"), option("start-windows-ollama")],

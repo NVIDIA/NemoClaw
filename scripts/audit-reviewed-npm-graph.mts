@@ -10,6 +10,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { remediateReviewedOpenClawPluginArchive } from "./lib/openclaw-npm-remediation.mts";
 import { canonicalAuditReceipt, createAuditReceipt } from "./lib/npm-audit-receipt.mts";
+import { resolvePathWithinRoot } from "./lib/repository-input-path.mts";
 import {
   packReviewedNpmArchive,
   verifyInstalledNpmLock,
@@ -56,6 +57,8 @@ type AuditConfig = Readonly<{
   exceptionFile: string;
   lockedGraphs: readonly LockedGraph[];
   nodeVersion: string;
+  npmIntegrity: string;
+  npmVersion: string;
   registryOrigin: string;
   schemaVersion: 2;
   severityThreshold: Severity;
@@ -102,31 +105,7 @@ const OPENCLAW_DOMEXCEPTION_ALIAS = {
   version: "1.0.28",
 } as const;
 
-export function resolvePathWithinRoot(root: string, relativePath: string, label: string): string {
-  if (!relativePath || path.isAbsolute(relativePath)) {
-    throw new Error(`${label} must be a nonempty relative path`);
-  }
-  const canonicalRoot = fs.realpathSync(path.resolve(root));
-  const resolved = path.resolve(canonicalRoot, relativePath);
-  if (!resolved.startsWith(`${canonicalRoot}${path.sep}`)) {
-    throw new Error(`${label} escapes its repository root: ${relativePath}`);
-  }
-  let current = canonicalRoot;
-  for (const component of path.relative(canonicalRoot, resolved).split(path.sep)) {
-    current = path.join(current, component);
-    let stat: fs.Stats;
-    try {
-      stat = fs.lstatSync(current);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") break;
-      throw error;
-    }
-    if (stat.isSymbolicLink()) {
-      throw new Error(`${label} contains a symbolic-link component: ${relativePath}`);
-    }
-  }
-  return resolved;
-}
+export { resolvePathWithinRoot } from "./lib/repository-input-path.mts";
 
 export function resolveTrustedAuditConfigPath(trustedRoot: string): string {
   return resolvePathWithinRoot(
@@ -195,6 +174,12 @@ export function parseAuditConfig(contents: string): AuditConfig {
     parsed.archiveTarVersion !== "7.5.21" ||
     typeof parsed.exceptionFile !== "string" ||
     !parsed.exceptionFile ||
+    typeof parsed.npmVersion !== "string" ||
+    !/^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/.test(parsed.npmVersion) ||
+    /[\r\n]/.test(parsed.npmVersion) ||
+    typeof parsed.npmIntegrity !== "string" ||
+    !/^sha512-[A-Za-z0-9+/]+={0,2}$/.test(parsed.npmIntegrity) ||
+    /[\r\n]/.test(parsed.npmIntegrity) ||
     typeof parsed.registryOrigin !== "string" ||
     !parsed.registryOrigin ||
     !Array.isArray(parsed.archivePackages) ||
@@ -909,6 +894,11 @@ function main(): void {
   fs.rmSync(artifactDirectory, { recursive: true, force: true });
   fs.mkdirSync(artifactDirectory, { recursive: true });
   const npmVersion = run("npm", ["--version"], TRUSTED_REPO_ROOT).stdout.trim();
+  if (npmVersion !== config.npmVersion) {
+    throw new Error(
+      `reviewed npm audit requires npm ${config.npmVersion}; running npm ${npmVersion}`,
+    );
+  }
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-npm-audit-"));
   try {
     const sourceResult = auditSourceGraph(

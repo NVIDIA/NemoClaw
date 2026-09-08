@@ -10,11 +10,13 @@ const mocks = vi.hoisted(() => ({
   getSandbox: vi.fn(),
   getHermesDashboardRecoveryConfig: vi.fn(() => null),
   isLocalForwardReachable: vi.fn(() => true),
+  isForwardServiceListenerOwner: vi.fn(() => true),
   launchForwardService: vi.fn(),
 }));
 
 vi.mock("../../adapters/openshell/forward-service", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../adapters/openshell/forward-service")>()),
+  isForwardServiceListenerOwner: mocks.isForwardServiceListenerOwner,
   launchForwardService: mocks.launchForwardService,
 }));
 
@@ -63,6 +65,7 @@ beforeEach(() => {
   vi.unstubAllEnvs();
   mocks.runOpenshell.mockReturnValue({ status: 0 });
   mocks.isLocalForwardReachable.mockReturnValue(true);
+  mocks.isForwardServiceListenerOwner.mockReturnValue(true);
   mocks.launchForwardService.mockImplementation(() => {
     mocks.isLocalForwardReachable.mockReturnValue(true);
   });
@@ -82,7 +85,31 @@ describe("ensureDeclaredAgentForwardPortsHealthy", { timeout: 30_000 }, () => {
     const { ensureSandboxPortForward } = await import("./forward-recovery");
 
     expect(ensureSandboxPortForward("remote-box")).toBe(true);
+    expect(mocks.isForwardServiceListenerOwner).toHaveBeenCalledWith({
+      executable: "/usr/local/bin/openshell",
+      gatewayName: "nemoclaw",
+      workspace: "default",
+      sandboxName: "remote-box",
+      localHost: "0.0.0.0",
+      localPort: 18_789,
+      targetHost: "127.0.0.1",
+      targetPort: 18_789,
+    });
     expect(mocks.launchForwardService).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when reachable direct service ownership cannot be proved", async () => {
+    mocks.getSandbox.mockReturnValue({ agent: "openclaw", dashboardPort: 18_789 });
+    mocks.captureOpenshell.mockReturnValue(forwardList([]));
+    mocks.isForwardServiceListenerOwner.mockReturnValue(false);
+    mocks.launchForwardService.mockImplementation(() => {
+      throw new Error("host port is occupied");
+    });
+    const { ensureSandboxPortForward } = await import("./forward-recovery");
+
+    expect(ensureSandboxPortForward("foreign-listener")).toBe(false);
+    expect(mocks.isForwardServiceListenerOwner).toHaveBeenCalledOnce();
+    expect(mocks.launchForwardService).toHaveBeenCalledOnce();
   });
 
   it("does not demand the manifest dashboard port from a sandbox that owns a different dashboard port (#8543)", async () => {

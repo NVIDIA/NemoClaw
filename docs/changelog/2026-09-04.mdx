@@ -1,0 +1,61 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.120
+
+NemoClaw v0.0.120 adds secret-free verified configuration export and a global host and gateway doctor.
+It updates the supported Hermes runtime to 0.20.6, retires Shields from NemoClaw core, and moves managed host forwarding to OpenShell service forwarding.
+It also hardens sandbox recovery, onboarding, inference validation, MCP lifecycle operations, mTLS selection, and credential-bound messaging policy.
+
+- `nemoclaw config export <sandbox> --output <path|->` now writes a canonical `nemoclaw.nvidia.com/v1` configuration document after cross-checking registry, lifecycle, gateway, workload, image, inference, policy, and credential-reference state.
+  The command keeps secrets out of YAML and JSON output and fails closed on inconsistent evidence.
+  On Linux, file output uses owner-only atomic publication; `--output -` writes YAML to standard output on another supported host or in a pipeline.
+  Related change: [PR #11015](https://github.com/NVIDIA/NemoClaw/pull/11015).
+  For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- `nemoclaw doctor` now runs read-only host and gateway checks before onboarding or without selecting a sandbox.
+  It supports human-readable and redacted JSON reports, leaves gateway and sandbox state unchanged, and returns a nonzero status when a required check fails.
+  Related change: [PR #11012](https://github.com/NVIDIA/NemoClaw/pull/11012).
+  For more information, refer to [System Readiness](/user-guide/openclaw/reference/system-readiness) and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- The managed Hermes runtime is now 0.20.6 with retargeted compatibility patches, reviewed lazy Hindsight dependencies, workspace-aware session previews, scheduled-task recovery, and the maintained managed-image security boundaries.
+  Gateway startup preserves the validated lazy-install target for both direct root-entrypoint and OpenShell-managed same-UID topologies.
+  Legacy rebuilds with no image hint now require the release-pinned immutable Hermes base and stop before mutation if it cannot be resolved and validated.
+  Related changes: [PR #10595](https://github.com/NVIDIA/NemoClaw/pull/10595), [PR #11071](https://github.com/NVIDIA/NemoClaw/pull/11071), and [PR #11024](https://github.com/NVIDIA/NemoClaw/pull/11024).
+  For more information, refer to [Install Hermes Plugins](/user-guide/hermes/manage-sandboxes/install-hermes-plugins) and [Recover and Rebuild Sandboxes](/user-guide/hermes/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes).
+- Hermes Portable stopped-runtime recovery now reuses validated Podman and executable evidence inside each qualified lifecycle transaction, performs one bounded readiness wait inside the sandbox, and retries only transient final readiness-publication failures.
+  Required host forwards settle together from a strict ownership snapshot with in-process TCP liveness checks, while full entry and final qualification, credential-bearing health, authority fences, and rollback remain enforced.
+  Related changes: [PR #10927](https://github.com/NVIDIA/NemoClaw/pull/10927), [PR #10983](https://github.com/NVIDIA/NemoClaw/pull/10983), [PR #10988](https://github.com/NVIDIA/NemoClaw/pull/10988), [PR #10999](https://github.com/NVIDIA/NemoClaw/pull/10999), and [PR #11019](https://github.com/NVIDIA/NemoClaw/pull/11019).
+  For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/hermes/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes).
+- Shields has been retired from NemoClaw core, including its commands, plugin status, timers, policies, state-lock plans, and runtime-provider mutation contract.
+  Upgrades preserve and report legacy Shields state instead of interpreting or deleting it, and affected installations must follow the printed fail-closed quarantine and rebuild guidance before ordinary mutation.
+  Legacy OpenClaw migration also preserves the prepared rebuild context and exact candidate managed-image selection across replacement creation.
+  Related changes: [PR #10722](https://github.com/NVIDIA/NemoClaw/pull/10722) and [PR #10996](https://github.com/NVIDIA/NemoClaw/pull/10996).
+  For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes) and [Security Best Practices](/user-guide/openclaw/security/best-practices).
+- NemoClaw now uses detached `openshell forward service` processes for managed dashboard, messaging, and MCP host forwards instead of owning SSH forwarding processes and receipt state.
+  The forward lifecycle follows sandbox and gateway availability, refuses an occupied host port, verifies reachability before success, and relaunches through normal recovery.
+  MCP lifecycle work and typed policy reads also retain the sandbox's recorded gateway, workspace, TLS, and mTLS authority instead of inheriting ambient selectors.
+  Related changes: [PR #10695](https://github.com/NVIDIA/NemoClaw/pull/10695), [PR #10814](https://github.com/NVIDIA/NemoClaw/pull/10814), [PR #10815](https://github.com/NVIDIA/NemoClaw/pull/10815), and [PR #10810](https://github.com/NVIDIA/NemoClaw/pull/10810).
+  For more information, refer to [Understand Gateway Lifecycle Control](/user-guide/openclaw/manage-sandboxes/configure-sandboxes/understand-gateway-lifecycle-control) and [About Managed MCP Servers](/user-guide/openclaw/manage-sandboxes/mcp-servers/about-managed-mcp-servers).
+- Onboarding can restore a validated managed snapshot into a replacement sandbox before it publishes the replacement registry entry, preserving the snapshot and leaving the replacement unregistered when restore or authority checks fail.
+  Native Podman providers can own their Docker-less readiness checks, qualified N1x users who decline the Deferred Express preview continue into ordinary provider selection, and managed vLLM preserves the catalog's served model when a resume checkpoint records a short alias.
+  Plain sandboxes without a Portable receipt also avoid the Hermes lifecycle-lock path when they use a non-default gateway port.
+  Related changes: [PR #10690](https://github.com/NVIDIA/NemoClaw/pull/10690), [PR #10900](https://github.com/NVIDIA/NemoClaw/pull/10900), [PR #11046](https://github.com/NVIDIA/NemoClaw/pull/11046), [PR #10882](https://github.com/NVIDIA/NemoClaw/pull/10882), and [PR #10864](https://github.com/NVIDIA/NemoClaw/pull/10864).
+  For more information, refer to the [NemoClaw Quickstart with OpenClaw](/user-guide/openclaw/get-started/quickstart), [Use vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm), and [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes).
+- Inference status retries transient HTTP `429`, `502`, `503`, and `504` results up to three total attempts while preserving redacted JSON stdout and the final unhealthy result when every attempt fails.
+  NVIDIA Nemotron 3 Super endpoint validation now sends its required sampling and chat-template parameters, and the default Model Router pool replaces the retired Nemotron Nano route with GPT-OSS 20B High.
+  Related changes: [PR #10956](https://github.com/NVIDIA/NemoClaw/pull/10956), [PR #10910](https://github.com/NVIDIA/NemoClaw/pull/10910), and [PR #11070](https://github.com/NVIDIA/NemoClaw/pull/11070).
+  For more information, refer to [Verify the Inference Route](/user-guide/openclaw/inference/validate-inference/verify-inference-route), [Set Up Model Router](/user-guide/openclaw/inference/hosted-inference/set-up-model-router), and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- Deep Agents MCP status now rejects symbolic links, dangling symbolic links, FIFOs, and other unsafe managed projection entries instead of reporting an ordinary adapter mismatch.
+  Snapshot restore can reconstruct the NemoClaw-owned projection through an atomic no-follow replacement while preserving directory targets for explicit operator recovery.
+  Related changes: [PR #10911](https://github.com/NVIDIA/NemoClaw/pull/10911) and [PR #10909](https://github.com/NVIDIA/NemoClaw/pull/10909).
+  For more information, refer to [Create and Restore Snapshots](/user-guide/deepagents/manage-sandboxes/state-and-backups/create-and-restore-snapshots) and [About Managed MCP Servers](/user-guide/deepagents/manage-sandboxes/mcp-servers/about-managed-mcp-servers).
+- Messaging and web-search provider setup now verifies the exact checked-in OpenShell profile before registration or Ready reuse.
+  An existing refreshing bridge keeps its working credential until replacement minting succeeds, and lookup, update, cleanup, and recovery failures remain distinct, redacted, and fail closed.
+  Named gateway operations also reject an ambient OpenShell endpoint that could redirect provider preparation.
+  Related changes: [PR #10884](https://github.com/NVIDIA/NemoClaw/pull/10884) and [PR #10895](https://github.com/NVIDIA/NemoClaw/pull/10895).
+  For more information, refer to [Manage Messaging Channels](/user-guide/openclaw/manage-sandboxes/messaging-channels/manage-messaging-channels) and [Credential Storage](/user-guide/openclaw/security/credential-storage).
+- Hermes Discord policy now authorizes only the Hermes and Python runtime binaries used for Discord traffic and removes the unused generic Node.js grant.
+  Existing Hermes Discord sandboxes can reapply the maintained preset to remove the durable old grant without changing unrelated policy entries.
+  Related change: [PR #10682](https://github.com/NVIDIA/NemoClaw/pull/10682).
+  For more information, refer to [Apply Policy Presets](/user-guide/hermes/network-policy/configure-policies/apply-policy-presets).

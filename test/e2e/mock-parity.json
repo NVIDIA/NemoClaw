@@ -242,6 +242,7 @@
         "test/channels/channels-add-preset.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/network-policy-probe.test.ts",
         "test/e2e/support/runtime-provider-fixture.test.ts",
         "test/onboarding/validate-blueprint.test.ts",
         "test/runtime/policy/policies.test.ts",
@@ -251,9 +252,7 @@
     },
     {
       "live": "test/e2e/live/openshell-gateway-auth-source-contract.test.ts",
-      "fast": [
-        "test/e2e/support/openshell-gateway-auth-source-contract-helpers.test.ts"
-      ]
+      "fast": ["test/e2e/support/openshell-gateway-auth-source-contract-helpers.test.ts"]
     },
     {
       "live": "test/e2e/live/external-gateway-health.test.ts",
@@ -328,6 +327,7 @@
         "src/lib/onboard/sandbox-gpu-create-flow.test.ts",
         "src/lib/onboard/sandbox-readiness-tracing.test.ts",
         "test/onboarding/onboard-extra-provider-reconciliation.test.ts",
+        "test/onboarding/onboard-finalization-dashboard-forward.test.ts",
         "test/e2e/support/corporate-ca-workload-kind.test.ts",
         "test/runtime/gateway/gateway-state.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
@@ -370,9 +370,7 @@
     },
     {
       "live": "test/e2e/live/bedrock-runtime-compatible-anthropic.test.ts",
-      "liveSources": [
-        "test/e2e/live/bedrock-runtime-compatible-anthropic-raw-command.ts"
-      ],
+      "liveSources": ["test/e2e/live/bedrock-runtime-compatible-anthropic-raw-command.ts"],
       "fast": [
         "test/e2e/support/bedrock-runtime-compatible-anthropic-progress.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
@@ -474,7 +472,8 @@
         "src/lib/onboard/machine/handlers/sandbox-route-publication.test.ts",
         "src/lib/onboard/sandbox-registration.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/onboarding/onboard-finalization-dashboard-forward.test.ts"
       ]
     },
     {
@@ -524,9 +523,12 @@
       "live": "test/e2e/live/hermes-e2e.test.ts",
       "liveSources": [
         "test/e2e/live/hermes-cli-adapter-live.ts",
-        "test/e2e/live/hermes-e2e-phases.ts"
+        "test/e2e/live/hermes-e2e-phases.ts",
+        "test/e2e/live/hermes-skill-lifecycle.ts"
       ],
       "fast": [
+        "src/lib/actions/sandbox/skill-install.test.ts",
+        "test/agents/hermes/hermes-image-build-probes.test.ts",
         "test/e2e/support/hermes-cli-adapter-live.test.ts",
         "test/e2e/support/managed-image-cohort-contract.test.ts",
         "test/e2e/support/managed-image-receipt.test.ts",
@@ -534,6 +536,7 @@
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/inference-adapter.test.ts",
+        "test/e2e/support/workflow-plan.test.ts",
         "test/helpers/e2e-answer-assertions.test.ts"
       ]
     },
@@ -636,6 +639,8 @@
       "liveSources": [
         "test/e2e/live/messaging-providers-helpers.ts",
         "test/e2e/live/phase6-messaging-helpers.ts",
+        "test/e2e/live/messaging-providers-slack-runtime-proof.ts",
+        "test/e2e/live/messaging-providers-telegram-runtime-proof.ts",
         "test/e2e/live/messaging-providers-wechat-runtime-proof.ts"
       ],
       "fast": [
@@ -655,9 +660,11 @@
     },
     {
       "live": "test/e2e/live/model-router-provider-routed-inference.test.ts",
+      "liveSources": ["test/e2e/live/model-router-provider-routed-inference-helpers.ts"],
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/model-router-provider-routed-inference.test.ts"
       ]
     },
     {
@@ -697,9 +704,7 @@
     },
     {
       "live": "test/e2e/live/openclaw-plugin-runtime-exdev.test.ts",
-      "liveSources": [
-        "test/e2e/live/openclaw-plugin-runtime-exdev-trusted-prebuild.ts"
-      ],
+      "liveSources": ["test/e2e/live/openclaw-plugin-runtime-exdev-trusted-prebuild.ts"],
       "fast": [
         "test/e2e/support/openclaw-plugin-runtime-exdev-trusted-prebuild.test.ts",
         "test/e2e/support/openclaw-plugin-runtime-exdev-workflow-boundary.test.ts",
@@ -711,6 +716,7 @@
     {
       "live": "test/e2e/live/openclaw-skill-cli.test.ts",
       "fast": [
+        "src/lib/actions/sandbox/skill-install.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -763,7 +769,11 @@
     },
     {
       "live": "test/e2e/live/rebuild-hermes.test.ts",
-      "liveSources": ["test/e2e/live/rebuild-hermes-host-policy.ts"],
+      "liveSources": [
+        "test/e2e/live/rebuild-hermes-base-identity.ts",
+        "test/e2e/live/rebuild-hermes-env.ts",
+        "test/e2e/live/rebuild-hermes-host-policy.ts"
+      ],
       "fast": [
         "src/lib/actions/sandbox/rebuild-flow-lifecycle.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
@@ -801,6 +811,8 @@
     {
       "live": "test/e2e/live/skill-agent.test.ts",
       "fast": [
+        "src/lib/skill-install.test.ts",
+        "test/e2e/support/skill-agent-classifiers.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -919,6 +931,8 @@
       "live": "test/e2e/live/registry-targets.test.ts",
       "liveSources": [
         "test/e2e/live/cloud-experimental-checks.ts",
+        "test/e2e/live/deepagents-observability-contract.ts",
+        "test/e2e/live/deepagents-otlp-capture-server.ts",
         "test/e2e/live/dcode-base-image-runtime-evidence.ts"
       ],
       "fast": [
@@ -927,7 +941,9 @@
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
         "test/e2e/support/e2e-semantic-phase-check.test.ts",
+        "test/e2e/support/deepagents-observability-contract.test.ts",
         "test/e2e/support/onboard-timeout-contract.test.ts",
+        "test/e2e/support/platform-parity-cloud-experimental.test.ts",
         "test/e2e/support/workflow-plan.test.ts",
         "test/e2e/support/workflow-e2e-progress.test.ts"
       ]

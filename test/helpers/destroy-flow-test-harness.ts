@@ -46,6 +46,7 @@ export type DestroyHarness = {
   promptSpy: MockInstance;
   removeManagedAgentStateVolumesSpy: MockInstance;
   removeSandboxSpy: MockInstance;
+  reconstructRetainedSandboxRecoverySpy: MockInstance;
   resolveRetainedSandboxRecoverySpy: MockInstance;
   retireRemovedImmutabilityStateRecordSpy: MockInstance;
   retirePortableLifecycleReceiptSpy: MockInstance;
@@ -124,6 +125,7 @@ type DestroyHarnessOptions = {
   registryEntryOverrides?: Partial<SandboxEntry>;
   registeredSandboxCount?: number;
   retainedRecoveryRecords?: RetainedSandboxRecoveryRecord[];
+  reconstructRetainedRecoveryRecord?: RetainedSandboxRecoveryRecord;
   replaceSessionAfterRegistryRemoval?: boolean;
   removeSandboxResult?: boolean;
   restoreMcpError?: string;
@@ -416,6 +418,16 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   vi.spyOn(onboardSession, "listRetainedSandboxRecoveryRecords").mockImplementation(
     () => retainedRecoveryRecords,
   );
+  const reconstructRetainedSandboxRecoverySpy = vi
+    .spyOn(onboardSession, "reconstructRetainedSandboxRecoveryFromPendingCreate")
+    .mockImplementation(() => {
+      const record = options.reconstructRetainedRecoveryRecord;
+      if (!record) return null;
+      if (!retainedRecoveryRecords.some((candidate) => candidate.recordId === record.recordId)) {
+        retainedRecoveryRecords.push(record);
+      }
+      return record;
+    });
   const resolveRetainedSandboxRecoverySpy = vi
     .spyOn(onboardSession, "resolveRetainedSandboxRecovery")
     .mockReturnValue(true);
@@ -683,6 +695,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     promptSpy,
     removeManagedAgentStateVolumesSpy,
     removeSandboxSpy,
+    reconstructRetainedSandboxRecoverySpy,
     resolveRetainedSandboxRecoverySpy,
     retireRemovedImmutabilityStateRecordSpy,
     retirePortableLifecycleReceiptSpy,

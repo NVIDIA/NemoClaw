@@ -18,7 +18,10 @@ import {
   STRICT_TOOL_PROBE_RETRY_TOKEN_LADDER,
   strictToolProbeReasoningRetryMessage,
 } from "./openai-probe-models";
-import { STREAMING_EVENT_PROBE_MAX_SECONDS } from "./probe-http-helpers";
+import {
+  MAX_ONBOARD_VALIDATION_TIMEOUT_SECONDS,
+  STREAMING_EVENT_PROBE_MAX_SECONDS,
+} from "./probe-http-helpers";
 import { RETRIABLE_HTTP_PROBE_STATUSES } from "./probe/transient-http-policy";
 
 const RETRY_DELAYS_MS = [5_000, 15_000, 30_000];
@@ -29,6 +32,7 @@ export interface OpenAiValidationOptions {
   requireResponsesToolCalling?: boolean;
   requireChatCompletionsToolCalling?: boolean;
   retryChatCompletionsToolReadiness?: boolean;
+  useNvidiaEndpointProbePayload?: boolean;
 
   skipResponsesProbe?: boolean;
   probeStreaming?: boolean;
@@ -56,7 +60,7 @@ export interface OpenAiValidationSessionDeps {
   hasResponsesToolCall(body: string): boolean;
   hasChatCompletionsToolCall(body: string): boolean;
   hasChatCompletionsToolCallLeak(body: string): boolean;
-  getChatPayload(model: string): Record<string, unknown>;
+  getChatPayload(model: string, options: OpenAiValidationOptions): Record<string, unknown>;
   getResponsesTimeoutMs(options: OpenAiValidationOptions): number;
   getChatTimeoutMs(model: string, options: OpenAiValidationOptions): number;
   sessionOptions?: ValidationSessionOptions;
@@ -344,8 +348,11 @@ export async function probeOpenAiLikeEndpointWithValidationSession(
                 ...auth,
                 body: requireToolCall
                   ? chatToolPayload(model, maxTokens)
-                  : JSON.stringify(deps.getChatPayload(model)),
-                timeoutMs: deps.getChatTimeoutMs(model, options) * timeoutMultiplier,
+                  : JSON.stringify(deps.getChatPayload(model, options)),
+                timeoutMs: Math.min(
+                  deps.getChatTimeoutMs(model, options) * timeoutMultiplier,
+                  MAX_ONBOARD_VALIDATION_TIMEOUT_SECONDS * 1000,
+                ),
               }),
             retryTransientHttp,
           );

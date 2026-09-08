@@ -35,8 +35,7 @@ privileged_dpkg_sentinel() {
     NEMOCLAW_E2E_DPKG_PROBE="$probe_path" \
     NEMOCLAW_E2E_SANDBOX_NAME="$SANDBOX_NAME" \
     node <<'NODE'
-const { spawnSync } = require("node:child_process");
-const { privilegedSandboxExecArgv } = require("./dist/lib/sandbox/privileged-exec.js");
+const { executePrivilegedSandboxCommand } = require("./dist/lib/sandbox/privileged-exec.js");
 
 const action = process.env.NEMOCLAW_E2E_DPKG_ACTION;
 const probe = process.env.NEMOCLAW_E2E_DPKG_PROBE;
@@ -53,11 +52,9 @@ const command =
         probe,
       ]
     : ["rm", "-f", "--", probe];
-const result = spawnSync(
-  "docker",
-  privilegedSandboxExecArgv(sandbox, command, false, true),
-  { stdio: ["ignore", "ignore", "ignore"] },
-);
+const result = executePrivilegedSandboxCommand(sandbox, command, {
+  sanitizeEnvironment: true,
+});
 process.exit(result.status ?? 1);
 NODE
 }

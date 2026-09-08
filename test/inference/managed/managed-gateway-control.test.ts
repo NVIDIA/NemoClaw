@@ -416,7 +416,6 @@ with tempfile.TemporaryDirectory() as root:
         # The preceding cases recreate fake PIDs 40 and 41, so refresh their
         # inode-bound identities before testing stable reads and signals.
         supervisor = control._discover_supervisor(reader)
-
         preflight_steps = []
         real_validator = control._run_fixed_validator
         real_runtime_validator = control._validate_managed_gateway_environment
@@ -429,6 +428,7 @@ with tempfile.TemporaryDirectory() as root:
             "script": script,
             "arguments": ["runtime-env"],
             "runtime_port": environment.get("NEMOCLAW_DASHBOARD_PORT"),
+            "managed_paths_present": any(key in environment for key in ("HERMES_LAZY_INSTALL_TARGET", "HERMES_HOME", "HERMES_BUNDLED_PLUGINS")),
         })
         control._verify_locked_hermes_hash = lambda: preflight_steps.append({"hash": "checked"})
         try:
@@ -495,9 +495,9 @@ with tempfile.TemporaryDirectory() as root:
                 reader.capture = real_capture
                 control.time.monotonic = real_monotonic
                 control.time.sleep = real_sleep
+            supervisor_environment_path = os.path.join(proc_root, "40", "environ")
             control._validate_managed_gateway_environment = real_runtime_validator
             control._hermes_preflight(reader, supervisor)
-            supervisor_environment_path = os.path.join(proc_root, "40", "environ")
             with open(supervisor_environment_path, "wb") as stream: stream.write(
                 b"PATH=/usr/bin\0HERMES_ENABLE_PROJECT_PLUGINS=1\0"
             )
@@ -515,7 +515,6 @@ with tempfile.TemporaryDirectory() as root:
             control._run_fixed_validator = real_validator
             control._validate_managed_gateway_environment = real_runtime_validator
             control._verify_locked_hermes_hash = real_hash_check
-
         write_process(
             proc_root,
             namespace_path,
@@ -1004,7 +1003,7 @@ with tempfile.TemporaryDirectory() as root:
         "[gateway] Hermes replacement gateway failed listener or health validation; stopping the exact child",
         "[gateway] Hermes replacement gateway lost its listener or health endpoint during auxiliary validation; stopping the exact child",
         "[gateway] CRITICAL: Hermes gateway lost its listener or health endpoint; stopping the exact child for recovery",
-        "[gateway] CRITICAL: 5 exits in 60s window — Hermes relaunch is quarantined until sandbox recreation; check /tmp/gateway.log",
+        "[gateway] CRITICAL: 5 exits in 60s window — Hermes relaunch is stopped for this supervisor instance; correct the reported failure, then stop and start the sandbox; check /tmp/gateway.log",
         "[CRITICAL] Newly launched Hermes gateway pid 5252 failed exact role identity capture; quarantining the managed startup supervisor without signaling the unproven child",
     ]
     supervisor_log_uid = 1000 if os.geteuid() == 0 else os.geteuid()
@@ -1337,6 +1336,7 @@ describe("managed gateway root control", () => {
           ),
           arguments: ["runtime-env"],
           runtime_port: "18789",
+          managed_paths_present: false,
         },
         { hash: "checked" },
       ],
@@ -1419,7 +1419,7 @@ describe("managed gateway root control", () => {
           "[gateway] Hermes replacement gateway failed listener or health validation; stopping the exact child",
           "[gateway] Hermes replacement gateway lost its listener or health endpoint during auxiliary validation; stopping the exact child",
           "[gateway] CRITICAL: Hermes gateway lost its listener or health endpoint; stopping the exact child for recovery",
-          "[gateway] CRITICAL: 5 exits in 60s window — Hermes relaunch is quarantined until sandbox recreation; check /tmp/gateway.log",
+          "[gateway] CRITICAL: 5 exits in 60s window — Hermes relaunch is stopped for this supervisor instance; correct the reported failure, then stop and start the sandbox; check /tmp/gateway.log",
           "[CRITICAL] Newly launched Hermes gateway pid 5252 failed exact role identity capture; quarantining the managed startup supervisor without signaling the unproven child",
         ],
         excerpt: [
@@ -1427,7 +1427,7 @@ describe("managed gateway root control", () => {
           "[gateway] Hermes replacement gateway failed listener or health validation; stopping the exact child",
           "[gateway] Hermes replacement gateway lost its listener or health endpoint during auxiliary validation; stopping the exact child",
           "[gateway] CRITICAL: Hermes gateway lost its listener or health endpoint; stopping the exact child for recovery",
-          "[gateway] CRITICAL: 5 exits in 60s window — Hermes relaunch is quarantined until sandbox recreation; check /tmp/gateway.log",
+          "[gateway] CRITICAL: 5 exits in 60s window — Hermes relaunch is stopped for this supervisor instance; correct the reported failure, then stop and start the sandbox; check /tmp/gateway.log",
           "[CRITICAL] Newly launched Hermes gateway pid 5252 failed exact role identity capture; quarantining the managed startup supervisor without signaling the unproven child",
         ],
         rejected_lines: [null, null, null, null, null],
