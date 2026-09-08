@@ -69,6 +69,9 @@ describe("platform evidence workflow", () => {
   it("uses the runner's preinstalled GNU tar without adding mutable formulae", () => {
     const install = step("macos-vitest", "Install macOS test dependencies").run ?? "";
     expect(install).toContain('test -x "$(command -v gtar)"');
+    expect(install.indexOf('test -x "$(command -v gtar)"')).toBeLessThan(
+      install.indexOf("brew install"),
+    );
     expect(install).toContain('ln -s "$(command -v gtar)" "$RUNNER_TEMP/nemoclaw-bin/tar"');
     expect(install).toContain('"$RUNNER_TEMP/nemoclaw-bin"');
     expect(install).not.toMatch(/brew install[^\n]*(?:docker|gnu-tar|iproute2mac|podman)/u);

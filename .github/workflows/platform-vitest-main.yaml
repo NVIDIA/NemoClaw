@@ -120,8 +120,8 @@ jobs:
       - name: Install macOS test dependencies
         run: |
           set -euo pipefail
-          brew install bash coreutils fd gawk ripgrep
           test -x "$(command -v gtar)"
+          brew install bash coreutils fd gawk ripgrep
           mkdir -p "$RUNNER_TEMP/nemoclaw-bin"
           ln -s "$(command -v gtar)" "$RUNNER_TEMP/nemoclaw-bin/tar"
           printf '%s\n' \
