@@ -112,7 +112,7 @@ export type MaterializeSandboxCreatePlanInput = {
       allowedSandboxes: readonly [string];
       revalidateSandboxIdentity?(operation: string): void;
     },
-  ): string[];
+  ): string[] | Promise<string[]>;
   getHermesToolGatewayProviderName(sandboxName: string): string;
   discloseInitialSandboxPolicy?(policy: InitialSandboxPolicy): void;
   prepareInitialSandboxCreatePolicy?: PrepareInitialSandboxCreatePolicy;

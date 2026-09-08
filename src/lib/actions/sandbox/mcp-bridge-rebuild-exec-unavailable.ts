@@ -90,6 +90,20 @@ function snapshotCompleteEntries(sandboxName: string): {
       `MCP server '${incomplete.server}' has an incomplete add transaction (${incomplete.addState}). Read-only host-side rebuild recovery cannot discard or adopt it; re-run the original mcp add command or remove it with --force before rebuilding the sandbox.`,
     );
   }
+  const pendingUpdate = entries.find((entry) => entry.pendingDenyTools !== undefined);
+  if (pendingUpdate) {
+    throw new McpBridgeError(
+      `MCP server '${pendingUpdate.server}' has an interrupted denied-tool update. Repair sandbox transport and run \`nemoclaw ${sandboxName} mcp restart ${pendingUpdate.server}\` before forcing rebuild.`,
+    );
+  }
+  const legacyUnpinned = entries.find(
+    (entry) => !entry.trustedPrivateHost && (entry.allowedIps?.length ?? 0) === 0,
+  );
+  if (legacyUnpinned) {
+    throw new McpBridgeError(
+      `MCP server '${legacyUnpinned.server}' is a legacy public registration without recorded address pins. Repair sandbox transport and run \`nemoclaw ${sandboxName} mcp restart ${legacyUnpinned.server}\` before forcing rebuild.`,
+    );
+  }
   const agent = getSandboxAgent(sandbox);
   const adapter = getBridgeAdapter(agent);
   const incompatible = entries.find(

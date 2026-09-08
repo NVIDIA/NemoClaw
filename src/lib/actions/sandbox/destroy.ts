@@ -624,6 +624,9 @@ async function destroySandboxUnlocked(
   const registeredSandbox = registry.getSandbox(sandboxName);
   const operationRuntimeSelection = resolveSandboxDestroyRuntimeSelection(registeredSandbox);
   if (!(await confirmSandboxDestroy(sandboxName, normalized, operationRuntimeSelection))) return;
+  if (registeredSandbox) {
+    onboardSession.reconstructRetainedSandboxRecoveryFromPendingCreate(registeredSandbox);
+  }
   const destroySession = onboardSession.loadSession();
   const retainedRecoveryRecords = onboardSession.listRetainedSandboxRecoveryRecords();
   const retainedRecoveryAuthority = selectRetainedSandboxRecoveryAuthority(
