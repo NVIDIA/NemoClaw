@@ -254,6 +254,15 @@ const nonInteractive = {
   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
 } as const;
 
+const SKILL_LIFECYCLE_OWNING_PATHS = [
+  "src/commands/sandbox/skill.ts",
+  "src/commands/sandbox/skill/",
+  "src/lib/actions/sandbox/skill-install.ts",
+  "src/lib/adapters/openshell/sandbox-command-sdk.ts",
+  "src/lib/agent/skill-integration.ts",
+  "src/lib/skill-install.ts",
+] as const;
+
 // Keep every checked-in input copied by the Pi Dockerfiles in the PR selection boundary.
 // test/e2e/support/pi-agent-qualification-events.test.ts verifies this list against the
 // real Dockerfiles so a new COPY instruction cannot silently reuse a stale image receipt.
@@ -1031,14 +1040,16 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   managedRuntimeTarget("openclaw-skill-cli", {
-    displayName: "Skills: OpenClaw installs and inspects workspace skills",
+    displayName: "Skills: OpenClaw owns the public stateless lifecycle",
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
     profile: "nvidia-inference",
-    timeoutMinutes: 60,
+    prAdvisorSelectable: true,
+    timeoutMinutes: 70,
     installMode: "none",
     restoreCli: true,
     exposeCliBin: true,
+    owningPaths: [...SKILL_LIFECYCLE_OWNING_PATHS, "agents/openclaw/manifest.yaml"],
     environment: {
       ...hostedInference,
       NEMOCLAW_SANDBOX_NAME: "e2e-oc-skill-cli",
@@ -1335,6 +1346,11 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     runnerComparison: true,
     shard: "hermes",
     artifactLayout: "flat-shard",
+    owningPaths: [
+      ...SKILL_LIFECYCLE_OWNING_PATHS,
+      "agents/hermes/manifest.yaml",
+      "test/e2e/live/hermes-skill-lifecycle.ts",
+    ],
     environment: {
       ...hostedInference,
       ...nonInteractive,
@@ -1415,6 +1431,10 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     installMode: "authenticated",
     restoreCli: true,
     exposeCliBin: true,
+    owningPaths: [
+      "test/e2e/e2e-cloud-experimental/features/skill/add-sandbox-skill.sh",
+      "test/e2e/e2e-cloud-experimental/features/skill/verify-sandbox-skill-via-agent.sh",
+    ],
     environment: hostedInference,
   }),
   managedRuntimeTarget("state-backup-restore", {
