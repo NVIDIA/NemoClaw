@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   OLLAMA_HOST_DOCKER_INTERNAL,
@@ -11,6 +11,7 @@ import {
 } from "./local";
 
 afterEach(() => {
+  vi.restoreAllMocks();
   setResolvedOllamaHost(OLLAMA_LOCALHOST);
 });
 
@@ -37,18 +38,33 @@ describe("Ollama probe timeout retry", () => {
     expect(commands[1]).toMatch(/--max-time.*300|300.*--max-time/);
   });
 
-  it("prints stale-runner recovery when both bounded probes time out", () => {
-    const result = validateOllamaModel(
-      "nemotron-3-nano:30b",
-      () => "",
-      () => false,
-      () => ({ stdout: "", exitCode: 28, timedOut: true }),
-    );
+  it.each([
+    { platform: "linux" as const, systemdUnit: true, systemctl: true },
+    { platform: "darwin" as const, systemdUnit: true, systemctl: false },
+    { platform: "linux" as const, systemdUnit: false, systemctl: false },
+  ])(
+    "selects recovery for $platform with systemd unit $systemdUnit",
+    ({ platform, systemdUnit, systemctl }) => {
+      vi.spyOn(process, "platform", "get").mockReturnValue(platform);
+      const result = validateOllamaModel(
+        "nemotron-3-nano:30b",
+        (command) =>
+          systemdUnit && command.some((argument) => argument.includes("systemctl"))
+            ? "ollama.service enabled"
+            : "",
+        () => false,
+        () => ({ stdout: "", exitCode: 28, timedOut: true }),
+      );
+      const message = result.message ?? "";
 
-    expect(result).toMatchObject({ ok: false });
-    expect(result.message).toContain("Stale runner processes from a previous model");
-    expect(result.message).toContain("sudo systemctl restart ollama");
-  });
+      expect({
+        generic: message.includes("Restart Ollama and rerun onboarding"),
+        ok: result.ok,
+        staleRunner: message.includes("Stale runner processes from a previous model"),
+        systemctl: message.includes("systemctl"),
+      }).toEqual({ generic: !systemctl, ok: false, staleRunner: true, systemctl });
+    },
+  );
 
   it("reports a fast retry failure from the final probe result", () => {
     let callCount = 0;

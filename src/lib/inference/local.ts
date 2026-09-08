@@ -2359,6 +2359,21 @@ export function getOllamaProbeCommand(
   ];
 }
 
+/** Return true only when this Linux host has an installed systemd Ollama unit. */
+function hasOllamaSystemdUnit(capture: RunCaptureFn): boolean {
+  if (process.platform !== "linux") return false;
+  return Boolean(
+    capture(
+      [
+        "sh",
+        "-c",
+        "command -v systemctl >/dev/null && [ -d /run/systemd/system ] && systemctl list-unit-files ollama.service --no-legend 2>/dev/null | head -n1",
+      ],
+      { ignoreError: true, timeout: 5_000 },
+    ).trim(),
+  );
+}
+
 export function validateOllamaModel(
   model: string,
   runCaptureImpl?: RunCaptureFn,
@@ -2392,18 +2407,20 @@ export function validateOllamaModel(
   }
   if (!output) {
     const localDaemon = getResolvedOllamaHost() === OLLAMA_LOCALHOST;
+    const staleRunnerRecovery =
+      timedOut && localDaemon
+        ? " Stale runner processes from a previous model may be holding GPU memory. " +
+          (hasOllamaSystemdUnit(capture)
+            ? "Run 'sudo systemctl restart ollama' and rerun onboarding."
+            : "Restart Ollama and rerun onboarding.")
+        : "";
     const failure =
       timedOut === true
         ? `Selected Ollama model '${model}' did not answer the local probe in time. It may still be loading, too large for the host, or otherwise unhealthy.`
         : `Selected Ollama model '${model}' failed the local probe without a response. Check that Ollama is running and the model is available.`;
     return {
       ok: false,
-      message:
-        failure +
-        (timedOut && localDaemon
-          ? " Stale runner processes from a previous model may be holding GPU memory. " +
-            "Run 'sudo systemctl restart ollama' and rerun onboarding."
-          : ""),
+      message: failure + staleRunnerRecovery,
     };
   }
 
