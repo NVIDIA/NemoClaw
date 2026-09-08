@@ -1419,14 +1419,14 @@ if (cmd.includes(".env") || cmd.includes(".mcp.json")) {
   process.exit(99);
 }
 if (cmd.includes("[ -d ")) {
-  process.stdout.write(".state\\nskills\\nagent/skills\\n");
+  process.stdout.write(".state\\nagent/skills\\n");
   process.exit(0);
 }
 if (cmd.includes("find ")) {
   process.exit(0);
 }
 if (cmd.includes("-cf -")) {
-  const r = spawnSync("tar", ["-cf", "-", "-C", deepAgentsDir, ".state", "skills", "agent/skills"], {
+  const r = spawnSync("tar", ["-cf", "-", "-C", deepAgentsDir, ".state", "agent/skills"], {
     stdio: ["ignore", "pipe", "pipe"],
   });
   if (r.stdout) fs.writeSync(1, r.stdout);
@@ -1451,12 +1451,12 @@ process.exit(0);
 
       const backup = sandboxState.backupSandboxState("deepagents", { name: "deepagents-state" });
       expect(backup.success).toBe(true);
-      expect(backup.backedUpDirs).toEqual([".state", "skills", "agent/skills"]);
+      expect(backup.backedUpDirs).toEqual([".state", "agent/skills"]);
       expect(backup.backedUpFiles).toEqual(["config.toml"]);
       expect(backup.failedDirs).toEqual([]);
       expect(backup.failedFiles).toEqual([]);
       expect(backup.manifest?.agentType).toBe("langchain-deepagents-code");
-      expect(backup.manifest?.stateDirs).toEqual([".state", "skills", "agent/skills"]);
+      expect(backup.manifest?.stateDirs).toEqual([".state", "agent/skills"]);
       expect(backup.manifest?.stateFiles).toEqual([{ path: "config.toml", strategy: "copy" }]);
       expect(fs.existsSync(path.join(backup.manifest!.backupPath, ".state", "thread.json"))).toBe(
         true,
@@ -1467,9 +1467,7 @@ process.exit(0);
       expect(
         fs.existsSync(path.join(backup.manifest!.backupPath, ".state", "chatgpt-auth.json")),
       ).toBe(false);
-      expect(fs.existsSync(path.join(backup.manifest!.backupPath, "skills", "README.md"))).toBe(
-        true,
-      );
+      expect(fs.existsSync(path.join(backup.manifest!.backupPath, "skills"))).toBe(false);
       expect(fs.readFileSync(path.join(backup.manifest!.backupPath, "config.toml"), "utf-8")).toBe(
         "generated config\n",
       );
@@ -1485,9 +1483,7 @@ process.exit(0);
       // #5753: restore must include agent/skills after backup and recreation.
       const restore = sandboxState.restoreSandboxState("deepagents", backup.manifest!.backupPath);
       expect(restore.success).toBe(true);
-      expect(restore.restoredDirs).toEqual(
-        expect.arrayContaining([".state", "skills", "agent/skills"]),
-      );
+      expect(restore.restoredDirs).toEqual(expect.arrayContaining([".state", "agent/skills"]));
     } finally {
       oldOpenshell === undefined
         ? delete process.env.NEMOCLAW_OPENSHELL_BIN

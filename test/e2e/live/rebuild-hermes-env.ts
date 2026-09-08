@@ -1,19 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { SandboxBaseImageResolutionMetadata } from "../../../src/lib/sandbox-base-image/types";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-
-const HERMES_BASE_IMAGE_OVERRIDE_ENV = "NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF";
-const OFFICIAL_HERMES_BASE_DIGEST =
-  /^ghcr\.io\/nvidia\/nemoclaw\/hermes-sandbox-base@sha256:[0-9a-f]{64}$/;
-const LOCAL_HERMES_BASE = /^nemoclaw-hermes-sandbox-base-local:[^\s]+$/;
-
-export interface RebuildHermesBaseReusePlan {
-  sourceRef: string;
-  preparedRef: string;
-  childEnv: NodeJS.ProcessEnv;
-}
 
 /** Supply the current Discord credential when rebuild replaces the legacy provider. */
 export function buildRebuildHermesRecreateEnv(
@@ -24,47 +12,6 @@ export function buildRebuildHermesRecreateEnv(
     ...baseImageEnv,
     DISCORD_BOT_TOKEN: discordBotToken,
     NEMOCLAW_REBUILD_VERBOSE: "1",
-  };
-}
-
-/** Select the normal lane's exact phase 1 image under a test-owned local alias. */
-export function planRebuildHermesBaseReuse(
-  staleBaseMode: boolean,
-  metadata: SandboxBaseImageResolutionMetadata | null,
-  preparedRef: string,
-): RebuildHermesBaseReusePlan | null {
-  if (staleBaseMode) return null;
-  if (!metadata) {
-    throw new Error("normal rebuild-Hermes setup did not record base-image resolution metadata");
-  }
-
-  const sourceRef = metadata.ref.trim();
-  const trustedSource =
-    metadata.source === "pinned"
-      ? Boolean(
-          sourceRef &&
-            OFFICIAL_HERMES_BASE_DIGEST.test(sourceRef) &&
-            metadata.pinnedRemoteRef &&
-            OFFICIAL_HERMES_BASE_DIGEST.test(metadata.pinnedRemoteRef),
-        )
-      : metadata.source === "local"
-        ? Boolean(sourceRef && LOCAL_HERMES_BASE.test(sourceRef))
-        : false;
-  if (!trustedSource) {
-    throw new Error(
-      `normal rebuild-Hermes setup recorded unsupported base-image source '${metadata.source}'`,
-    );
-  }
-
-  const normalizedPreparedRef = preparedRef.trim();
-  if (!LOCAL_HERMES_BASE.test(normalizedPreparedRef)) {
-    throw new Error("normal rebuild-Hermes setup requires a test-owned local base-image ref");
-  }
-
-  return {
-    sourceRef,
-    preparedRef: normalizedPreparedRef,
-    childEnv: { [HERMES_BASE_IMAGE_OVERRIDE_ENV]: normalizedPreparedRef },
   };
 }
 

@@ -118,7 +118,7 @@ For Windows WSL N1x, also confirm these requirements:
 - Provide at least 48,000 MiB of GPU memory.
 - Pass Docker storage, runtime, NVIDIA GPU integration, and Docker Desktop GPU passthrough readiness.
 
-If the preliminary Express checks do not match, Windows Express retains Windows-host or WSL-local Ollama.
+If the preliminary Express checks do not match, Windows Express selects WSL-local Ollama.
 If a later readiness check fails, onboarding stops managed llama.cpp selection before installation.
 Managed N1x WSL selection rejects any other Docker selector.
 

@@ -68,6 +68,11 @@
     },
     {
       "file": "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
+      "test": "routes rootless job dependency auditing by workflow trigger (#11028)",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
       "test": "keeps live E2E on the accepted rootless runtime and local registry authority (#9006)",
       "category": "compatibility"
     },
@@ -84,11 +89,6 @@
     {
       "file": "test/e2e/support/pr-self-hosted-llama-selector.test.ts",
       "test": "binds trusted base publication to the generic NVIDIA GPU job",
-      "category": "security"
-    },
-    {
-      "file": "test/agents/hermes/hermes-final-image-layout.test.ts",
-      "test": "pins $source to its current bytes at $target",
       "category": "security"
     },
     {
@@ -208,12 +208,27 @@
     },
     {
       "file": "test/automation/releases/reviewed-npm-audit-workflow.test.ts",
+      "test": "passes the cache identity target root without interpolating it into shell source",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/releases/reviewed-npm-audit-workflow.test.ts",
       "test": "rejects the removed plural source-registry package shape",
       "category": "security"
     },
     {
       "file": "test/automation/releases/reviewed-npm-audit-workflow.test.ts",
       "test": "rejects malformed reviewed source package specifications",
+      "category": "security"
+    },
+    {
+      "file": "test/agents/hermes/hermes-image-build-probes.test.ts",
+      "test": "binds the runtime environment validator to its source digest",
+      "category": "security"
+    },
+    {
+      "file": "test/agents/hermes/hermes-image-build-probes.test.ts",
+      "test": "binds the Hermes wrapper to its source digest",
       "category": "security"
     },
     {
@@ -249,6 +264,21 @@
     {
       "file": "test/mcp/mcp-tool-discovery-image-contract.test.ts",
       "test": "pins the reviewed image runtime artifacts exactly",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
+      "test": "cleans the protected registry before passing risk evidence",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
+      "test": "binds a correlation identity for main pushes without an input",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/e2e/support/pr-self-hosted-llama-selector.test.ts",
+      "test": "runs the typed security test against the produced image and uploads evidence",
       "category": "security"
     },
     {

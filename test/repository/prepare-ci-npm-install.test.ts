@@ -79,6 +79,9 @@ function reviewedConfigSource(packageIdentity: ReviewedSourceRegistryPackage = r
     exceptionFile: "ci/npm-audit-exceptions.json",
     lockedGraphs: [],
     nodeVersion: "22.23.2",
+    npmIntegrity:
+      "sha512-OnUGvKW3lJs/ooPKDKUNfz1UmMfF48YWbjNA20QdiWrCVnZaAPppOfHPnfGiPb+1lKIsxjKXQ4UAfDI7PcvLPg==",
+    npmVersion: "10.9.4",
     registryOrigin: "https://registry.npmjs.org/",
     schemaVersion: 2,
     severityThreshold: "high",

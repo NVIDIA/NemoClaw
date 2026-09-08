@@ -44,7 +44,7 @@ The release-matched `openclaw@2026.7.1` development graph currently has known ad
 Run from `test/e2e/fixtures/plugins/weather`:
 
 ```bash
-npm audit --package-lock-only --ignore-scripts --json
+npm audit --registry=https://registry.yarnpkg.com --package-lock-only --ignore-scripts --json
 ```
 
 Revalidated on 2026-09-02: npm audit exited `1` and reported 10 vulnerable packages (4 moderate and 6 high; 0 info, low, or critical) across 311 total dependencies.

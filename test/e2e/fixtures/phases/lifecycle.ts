@@ -353,6 +353,7 @@ export class LifecyclePhaseFixture {
           host: this.host,
           sandbox: this.sandbox,
           cleanup: this.cleanup,
+          runtimeProvider: this.requireRuntimeProvider(),
         });
       default: {
         const _exhaustive: never = profile;

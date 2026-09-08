@@ -6,7 +6,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
-import { resolveRequestedProviderSelection } from "../../src/lib/onboard/provider-selection.js";
 import { runInstallerSourcedBody } from "../helpers/installer-run-fixture";
 import {
   INSTALLER_PAYLOAD,
@@ -123,20 +122,20 @@ sys.exit(exit_code)
     });
   }
 
-  it("maps Windows WSL express install to Windows-host Ollama under Docker Desktop", () => {
+  it("maps Windows WSL express install to WSL-local Ollama under Docker Desktop", () => {
     const dockerBin = dockerStubBin("Docker Desktop");
     const result = runWslExpressPrompt({ PATH: `${dockerBin}:${TEST_SYSTEM_PATH}` });
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status, output).toBe(0);
     expect(output).toMatch(/Detected Windows WSL/);
     expect(output).toMatch(
-      /Express install will configure Windows-host Ollama through host\.docker\.internal/,
+      /Express install will configure WSL-local Ollama, with a sandbox auth proxy when containers cannot reach host loopback/,
     );
     expect(output).toMatch(/Sandbox policy: suggested mode, tier 'balanced'/);
     expect(output).toMatch(/Run express install/);
     expect(output).toMatch(/Using express install for Windows WSL/);
     expect(output).toMatch(
-      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-windows-ollama MODEL= VLLM_MODEL= POLICY=suggested YES=1 SANDBOX=/,
+      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-ollama MODEL= VLLM_MODEL= POLICY=suggested YES=1 SANDBOX=/,
     );
   });
 
@@ -175,18 +174,18 @@ sys.exit(exit_code)
   it.each([
     ["a non-N1x product", "Generic ARM64 PC", "49088"],
     ["insufficient GPU memory", "RTX Spark N1X", "47999"],
-  ])("keeps Windows-host Ollama for %s (#10102)", (_scenario, product, memoryMb) => {
+  ])("uses WSL-local Ollama for %s (#10102)", (_scenario, product, memoryMb) => {
     const { result, output } = runInstallerSourced(
       `uname() { printf 'aarch64\\n'; }\n` +
         `timeout() { shift; "$@"; }\n` +
         `powershell.exe() { printf '${product}\\r\\n'; }\n` +
         `nvidia-smi() { printf '${memoryMb}\\n'; }\n` +
-        `express_wsl_can_use_windows_host_ollama() { return 0; }\n` +
+        `express_wsl_uses_local_docker_desktop() { return 0; }\n` +
         `activate_express_install "Windows WSL"\n` +
         `printf 'PROVIDER=%s RECIPE=%s\\n' "$NEMOCLAW_PROVIDER" "\${NEMOCLAW_LLAMACPP_RECIPE:-}"\n`,
     );
     expect(result.status, output).toBe(0);
-    expect(output).toContain("PROVIDER=install-windows-ollama RECIPE=");
+    expect(output).toContain("PROVIDER=install-ollama RECIPE=");
   });
 
   it("maps Windows WSL express install to WSL-local Ollama under native Docker Engine", () => {
@@ -219,14 +218,14 @@ sys.exit(exit_code)
     );
   });
 
-  it("activate_express_install keeps Windows-host Ollama when Docker Desktop is detected", () => {
+  it("activate_express_install uses WSL-local Ollama when Docker Desktop is detected", () => {
     const { result, output } = runInstallerSourced(
       `express_wsl_docker_operating_system() { printf 'Docker Desktop\\n'; }\n` +
         `activate_express_install "Windows WSL"\n` +
         `printf 'PROVIDER=%s\\n' "$NEMOCLAW_PROVIDER"\n`,
     );
     expect(result.status, output).toBe(0);
-    expect(output).toContain("PROVIDER=install-windows-ollama");
+    expect(output).toContain("PROVIDER=install-ollama");
   });
 
   it("activate_express_install falls back to WSL-local Ollama under native Docker Engine", () => {
@@ -357,7 +356,7 @@ sys.exit(exit_code)
     expect(output).toContain("PROVIDER=install-ollama");
   });
 
-  it("accepts deferred Windows-host selection in onboarding provider resolution (#8199)", () => {
+  it("resolves deferred Windows WSL selection to WSL-local Ollama (#8199)", () => {
     const { result, output } = runInstallerSourced(
       `mkdir -p "$HOME/.docker"\n` +
         `printf '%s' '{}' > "$HOME/.docker/config.json"\n` +
@@ -373,33 +372,7 @@ sys.exit(exit_code)
     expect(result.status, output).toBe(0);
     expect(output).toContain("NODE_BEFORE=\n");
     expect(output).toContain("DEFERRED=1 PROVIDER=");
-    expect(output).toContain("PROVIDER=install-windows-ollama");
-
-    const requestedProvider = output.match(/^PROVIDER=(.+)$/m)?.[1];
-    expect(requestedProvider).toBe("install-windows-ollama");
-
-    const resolution = resolveRequestedProviderSelection({
-      options: [
-        {
-          key: "start-windows-ollama",
-          label: "Start Ollama on Windows host (suggested)",
-        },
-      ],
-      requestedProvider: requestedProvider ?? null,
-      sandboxName: null,
-      remoteProviderConfig: {},
-      isWsl: true,
-      isWindowsHostOllama: false,
-      windowsHostOllamaSupported: true,
-      hermesProviderAvailable: false,
-      readRecordedProvider: () => null,
-      readRecordedNimContainer: () => null,
-      readRecordedModel: () => null,
-    });
-    expect(resolution).toMatchObject({
-      kind: "selected",
-      selected: { key: "start-windows-ollama" },
-    });
+    expect(output).toContain("PROVIDER=install-ollama");
   });
 
   it("describes a deferred Windows WSL selection before Node.js is installed (#8199)", () => {
@@ -427,8 +400,8 @@ sys.exit(exit_code)
       { PATH: `${dockerBin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}` },
     );
     expect(result.status, output).toBe(0);
-    expect(output).toContain("DEFERRED= PROVIDER=install-windows-ollama");
-    expect(output).toContain("PROVIDER=install-windows-ollama");
+    expect(output).toContain("DEFERRED= PROVIDER=install-ollama");
+    expect(output).toContain("PROVIDER=install-ollama");
   });
 
   it("activate_express_install fails closed on an unreadable Docker config", () => {
@@ -444,7 +417,7 @@ sys.exit(exit_code)
     expect(output).toContain("PROVIDER=install-ollama");
   });
 
-  it("activate_express_install treats a default persisted currentContext as local", () => {
+  it("activate_express_install keeps WSL-local Ollama for a default persisted currentContext", () => {
     const { result, output } = runInstallerSourced(
       `mkdir -p "$HOME/.docker"\n` +
         `printf '%s' '{"currentContext":"default"}' > "$HOME/.docker/config.json"\n` +
@@ -454,6 +427,6 @@ sys.exit(exit_code)
       { PATH: `${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}` },
     );
     expect(result.status, output).toBe(0);
-    expect(output).toContain("PROVIDER=install-windows-ollama");
+    expect(output).toContain("PROVIDER=install-ollama");
   });
 });
