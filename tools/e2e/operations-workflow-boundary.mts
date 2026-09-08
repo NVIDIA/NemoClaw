@@ -1572,6 +1572,7 @@ function validateUnifiedAdvisorBoundary(errors: string[], advisorPath: string): 
     "github.event_name == 'workflow_dispatch'",
     "github.event.workflow_run.conclusion == 'success'",
     "github.event.workflow_run.event == 'pull_request'",
+    "github.event.workflow_run.path == '.github/workflows/pr.yaml'",
     "endsWith(github.event.workflow_run.display_title, ' gate true')",
   ]) {
     if (!gateCondition.includes(fragment)) {
@@ -1579,10 +1580,10 @@ function validateUnifiedAdvisorBoundary(errors: string[], advisorPath: string): 
     }
   }
   if (
-    Object.keys(permissionMap(gate.permissions)).length > 0 ||
+    !isDeepStrictEqual(permissionMap(gate.permissions), { "pull-requests": "read" }) ||
     JSON.stringify(gate).includes("PR_REVIEW_ADVISOR_API_KEY")
   ) {
-    errors.push("Unified advisor green checks gate must not receive credentials or permissions");
+    errors.push("Unified advisor green checks gate must only read pull requests");
   }
   if (
     !isDeepStrictEqual(gate.outputs, {
@@ -1593,17 +1594,29 @@ function validateUnifiedAdvisorBoundary(errors: string[], advisorPath: string): 
   ) {
     errors.push("Unified advisor green checks gate must expose the checked PR revision");
   }
-  const targetStep = (gate.steps ?? []).find((step) => step.name === "Read checked PR revision");
+  const targetStep = (gate.steps ?? []).find((step) => step.name === "Resolve checked PR revision");
   for (const fragment of [
-    "^CI\\ PR\\ \\#([1-9][0-9]*)\\ head\\ ([0-9a-f]{40})\\ base\\ ([0-9a-f]{40})\\ gate\\ true$",
-    '"${BASH_REMATCH[2]}" = "$RUN_HEAD_SHA"',
-    'echo "pr_number=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"',
-    'echo "head_sha=${BASH_REMATCH[2]}" >> "$GITHUB_OUTPUT"',
-    'echo "base_sha=${BASH_REMATCH[3]}" >> "$GITHUB_OUTPUT"',
+    'gh api --method GET "repos/$GITHUB_REPOSITORY/pulls"',
+    '-f state=open -f "head=${head_owner}:${RUN_HEAD_BRANCH}" -f per_page=100',
+    ".head.repo.full_name == $repo",
+    ".head.ref == $branch",
+    ".head.sha == $sha",
+    ".base.repo.full_name == $base",
+    'if length == 1 then .[0] else error("CI run must identify one open PR") end',
+    '"pr_number=\\(.number)\\nhead_sha=\\(.head.sha)\\nbase_sha=\\(.base.sha)"',
   ]) {
     if (!String(targetStep?.run ?? "").includes(fragment)) {
       errors.push(`Unified advisor green checks gate must retain ${fragment}`);
     }
+  }
+  if (
+    targetStep?.env?.GH_TOKEN !== "${{ github.token }}" ||
+    targetStep.env?.RUN_HEAD_BRANCH !== "${{ github.event.workflow_run.head_branch }}" ||
+    targetStep.env?.RUN_HEAD_REPOSITORY !==
+      "${{ github.event.workflow_run.head_repository.full_name }}" ||
+    targetStep.env?.RUN_HEAD_SHA !== "${{ github.event.workflow_run.head_sha }}"
+  ) {
+    errors.push("Unified advisor green checks gate must resolve the source run PR");
   }
   const specialistEnv = advisor.jobs?.["review-specialists"]?.env ?? {};
   const expectedBaseRef =

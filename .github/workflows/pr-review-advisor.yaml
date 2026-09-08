@@ -50,9 +50,11 @@ jobs:
       (github.event_name == 'workflow_run' &&
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.path == '.github/workflows/pr.yaml' &&
       endsWith(github.event.workflow_run.display_title, ' gate true')))
       }}
-    permissions: {}
+    permissions:
+      pull-requests: read
     runs-on: ubuntu-24.04
     timeout-minutes: 1
     outputs:
@@ -60,22 +62,28 @@ jobs:
       head_sha: ${{ steps.target.outputs.head_sha }}
       base_sha: ${{ steps.target.outputs.base_sha }}
     steps:
-      - name: Read checked PR revision
+      - name: Resolve checked PR revision
         id: target
         if: ${{ github.event_name == 'workflow_run' }}
         env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          RUN_HEAD_REPOSITORY: ${{ github.event.workflow_run.head_repository.full_name }}
           RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
-          RUN_TITLE: ${{ github.event.workflow_run.display_title }}
         run: |
-          if [[ "$RUN_TITLE" =~ ^CI\ PR\ \#([1-9][0-9]*)\ head\ ([0-9a-f]{40})\ base\ ([0-9a-f]{40})\ gate\ true$ ]] &&
-             [ "${BASH_REMATCH[2]}" = "$RUN_HEAD_SHA" ]; then
-            echo "pr_number=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
-            echo "head_sha=${BASH_REMATCH[2]}" >> "$GITHUB_OUTPUT"
-            echo "base_sha=${BASH_REMATCH[3]}" >> "$GITHUB_OUTPUT"
-          else
-            echo "The successful CI run does not identify one checked PR revision." >&2
-            exit 1
-          fi
+          head_owner="${RUN_HEAD_REPOSITORY%%/*}"
+          pulls="$(gh api --method GET "repos/$GITHUB_REPOSITORY/pulls" \
+            -f state=open -f "head=${head_owner}:${RUN_HEAD_BRANCH}" -f per_page=100)"
+          target="$(jq -cer \
+            --arg repo "$RUN_HEAD_REPOSITORY" \
+            --arg branch "$RUN_HEAD_BRANCH" \
+            --arg sha "$RUN_HEAD_SHA" \
+            --arg base "$GITHUB_REPOSITORY" \
+            '[.[] | select(.head.repo.full_name == $repo and .head.ref == $branch and .head.sha == $sha and .base.repo.full_name == $base)] |
+             if length == 1 then .[0] else error("CI run must identify one open PR") end' \
+            <<< "$pulls")"
+          jq -r '"pr_number=\(.number)\nhead_sha=\(.head.sha)\nbase_sha=\(.base.sha)"' \
+            <<< "$target" >> "$GITHUB_OUTPUT"
       - name: Accept manual dispatch
         if: ${{ github.event_name == 'workflow_dispatch' }}
         run: echo "A maintainer dispatched the advisor."
