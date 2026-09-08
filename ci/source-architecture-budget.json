@@ -3,6 +3,7 @@
   "fanIn": {
     "defaultMax": 20,
     "maxByFile": {
+      "src/lib/actions/sandbox/gateway-target.ts": 21,
       "src/lib/actions/sandbox/mcp-bridge-contracts.ts": 25,
       "src/lib/actions/sandbox/process-recovery.ts": 26,
       "src/lib/adapters/docker/index.ts": 42,
@@ -10,10 +11,10 @@
       "src/lib/adapters/openshell/command-argv.ts": 23,
       "src/lib/adapters/openshell/resolve.ts": 25,
       "src/lib/adapters/openshell/runtime.ts": 53,
-      "src/lib/adapters/openshell/timeouts.ts": 33,
+      "src/lib/adapters/openshell/timeouts.ts": 32,
       "src/lib/agent/defs.ts": 32,
       "src/lib/cli/branding.ts": 80,
-      "src/lib/cli/nemoclaw-oclif-command.ts": 105,
+      "src/lib/cli/nemoclaw-oclif-command.ts": 106,
       "src/lib/cli/terminal-style.ts": 42,
       "src/lib/core/json-types.ts": 34,
       "src/lib/core/ports.ts": 89,
