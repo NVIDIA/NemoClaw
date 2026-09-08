@@ -4841,6 +4841,7 @@ start_plugin_registry_refresh() {
     # part of the config before returning nonzero.
     if ! ensure_mutable_openclaw_config_hash; then
       echo "[plugin-refresh] mutable OpenClaw config hash refresh failed" >&2
+      exit 1
     fi
   ) &
   PLUGIN_REFRESH_PID=$!
@@ -4848,6 +4849,16 @@ start_plugin_registry_refresh() {
     # The best-effort refresh may legitimately finish before PID 1 can read
     # its stat record.  An uncaptured PID is never admitted or signalled.
     PLUGIN_REFRESH_PID_START_IDENTITY=""
+  fi
+}
+
+wait_for_plugin_registry_refresh() {
+  local refresh_rc=0
+  [ -n "${PLUGIN_REFRESH_PID:-}" ] || return 0
+  wait "$PLUGIN_REFRESH_PID" || refresh_rc=$?
+  if [ "$refresh_rc" -ne 0 ]; then
+    echo "[plugin-refresh] registry refresh postcondition failed" >&2
+    return "$refresh_rc"
   fi
 }
 
@@ -5807,6 +5818,11 @@ handle_openclaw_gateway_control_request() {
   # PID reuse could otherwise terminate an unrelated process. A still-running
   # prior refresh is harmless and will exit on its own.
   start_plugin_registry_refresh
+  if ! wait_for_plugin_registry_refresh; then
+    refresh_openclaw_supervised_child_pids
+    gateway_control_fail unsafe-config "$old_pid"
+    return 1
+  fi
   refresh_openclaw_supervised_child_pids
   gateway_control_complete ok "$old_pid" "$GATEWAY_PID"
 }
@@ -5949,6 +5965,7 @@ if [ "$(id -u)" -ne 0 ]; then
   start_persistent_gateway_log_mirror || exit 1
   start_auto_pair
   start_plugin_registry_refresh
+  wait_for_plugin_registry_refresh || exit 1
   start_gateway_serving_watchdog
   # NOTE: PIDs are collected after launch; a signal arriving between trap
   # registration and the final append is a small race window (same as before
@@ -6188,7 +6205,8 @@ start_auto_pair
 # registry forgets them — so `/nemoclaw` is unreachable in the TUI and
 # `openclaw plugins inspect nemoclaw` says "Plugin not found" (#2021).
 # A `plugins registry --refresh` repopulates plugins[] from installRecords.
-# Backgrounded so the gateway-wait loop is unblocked; failure is non-fatal.
+# Run in a supervised child so PID 1 can forward shutdown signals while the
+# caller waits for its config postcondition before publishing readiness.
 # Source boundary: the lossy policy-changed rebuild lives in OpenClaw's registry
 # regeneration path, outside NemoClaw. NemoClaw can only heal the initial
 # post-start registry from persisted installRecords until upstream preserves
@@ -6197,6 +6215,7 @@ start_auto_pair
 # workaround after openclaw/openclaw#89606 ships and the full onboard E2E still
 # proves /nemoclaw registration without the refresh.
 start_plugin_registry_refresh
+wait_for_plugin_registry_refresh || exit 1
 
 start_gateway_serving_watchdog
 
