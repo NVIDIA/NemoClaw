@@ -3851,7 +3851,7 @@ For each entry, NemoClaw registers an OpenShell provider with the endpointless `
 
 Entries are split on whitespace and commas and must match `^[A-Z][A-Z0-9_]{0,127}$`. Each entry must extend a canonical channel envKey with a non-empty `_<suffix>` (for example `TELEGRAM_BOT_TOKEN_AGENT_A`); the canonical envKeys are `TELEGRAM_BOT_TOKEN`, `DISCORD_BOT_TOKEN`, `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `WECHAT_BOT_TOKEN`, `BRAVE_API_KEY`, and `TAVILY_API_KEY`. Bare canonical envKeys, the control env itself, and arbitrary host secret names (`GITHUB_TOKEN`, `AWS_SECRET_ACCESS_KEY`, `KUBECONFIG`, and similar) are refused so they cannot leak into the sandbox provider gateway. Duplicates are dropped silently. The list is capped at 32 entries per sandbox. Offending tokens emit one warning each and are skipped.
 
-When NemoClaw creates the canonical provider, it omits an extension whose environment variable is unset.
+When NemoClaw creates the canonical provider, it omits an extension whose credential is unavailable from both the credential store and its environment variable.
 The primary credential is required to create that provider.
 An extension already stored in an existing provider remains available until that provider is replaced or removed.
 Export the extension credential before onboarding when that profile requires it.
