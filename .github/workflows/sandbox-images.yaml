@@ -239,37 +239,6 @@ jobs:
           df -h || true
           docker system df || true
 
-      - &hermes-export-swap-cleanup
-        name: Remove swap after Hermes image export
-        if: always()
-        shell: bash
-        run: |
-          set -u
-          swap_file=/mnt/nemoclaw-hermes-image-export.swap
-          cleanup_failed=0
-          if swapon --noheadings --output NAME | awk '{$1=$1};1' | grep -Fxq "$swap_file"; then
-            if ! sudo swapoff "$swap_file"; then
-              echo "::error::Failed to disable Hermes image export swap."
-              cleanup_failed=1
-            fi
-          fi
-          if ((cleanup_failed == 0)) && ! sudo rm -f "$swap_file"; then
-            echo "::error::Failed to remove Hermes image export swap."
-            cleanup_failed=1
-          fi
-          if swapon --noheadings --output NAME | awk '{$1=$1};1' | grep -Fxq "$swap_file"; then
-            echo "::error::Hermes image export swap remains active."
-            cleanup_failed=1
-          fi
-          if [[ -e "$swap_file" ]]; then
-            echo "::error::Hermes image export swap file remains present."
-            cleanup_failed=1
-          fi
-          swapon --show || cleanup_failed=1
-          free -h || cleanup_failed=1
-          df -h / /mnt || cleanup_failed=1
-          exit "$cleanup_failed"
-
       - name: Clean up Docker auth
         if: always()
         shell: bash
@@ -429,8 +398,6 @@ jobs:
             -certfile /usr/local/share/nemoclaw/corporate-ca.pem -out /dev/null
           node --experimental-strip-types scripts/check-messaging-plan-image-boundary.mts verify \
             nemoclaw-hermes-plan-boundary hermes
-
-      - *hermes-export-swap-cleanup
 
       - name: Clean up Docker auth
         if: always()

@@ -70,12 +70,8 @@ export {
   MCP_BRIDGE_POLICY_MAX_BODY_BYTES,
 } from "./mcp-bridge-policy";
 export {
-  buildMcpBridgeProviderArgs,
   buildMcpCredentialRevisionObservationCommand,
   detachMissingProviderReference,
-  parseMcpProviderAttachmentNames,
-  parseMcpProviderMetadata,
-  providerDetachChangedState,
 } from "./mcp-bridge-provider";
 export { prepareMcpBridgesForExecUnavailableRebuild } from "./mcp-bridge-rebuild";
 export {
@@ -373,7 +369,9 @@ export async function dispatchMcpBridgeCommand(
         const agent = getSandboxAgent(sandbox);
         const statuses = await statusMcpBridge(sandboxName);
         if (json)
-          process.stdout.write(`${JSON.stringify(buildJsonSummary(sandboxName, agent, statuses), null, 2)}\n`);
+          process.stdout.write(
+            `${JSON.stringify(buildJsonSummary(sandboxName, agent, statuses), null, 2)}\n`,
+          );
         else renderMcpBridgeList(sandboxName, statuses, agent);
         return;
       }

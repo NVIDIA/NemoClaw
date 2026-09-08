@@ -16,8 +16,6 @@ export {
   inspectMcpProvider,
   inspectMcpProviderAttachments,
   MCP_BRIDGE_PROVIDER_TYPE,
-  parseMcpProviderAttachmentNames,
-  parseMcpProviderMetadata,
   preflightMcpEntryTargets,
   providerAttached,
   providerMatchesCredential,
@@ -27,13 +25,11 @@ export {
 export type { ProviderDetachOutcome } from "./mcp-bridge-provider-mutation";
 export {
   attachProvider,
-  buildMcpBridgeProviderArgs,
   deleteProvider,
   detachMissingProviderReference,
   detachProvider,
   ensureMcpBridgeProviderProfile,
   refreshMcpProviderEnvironment,
-  providerDetachChangedState,
   upsertMcpProvider,
 } from "./mcp-bridge-provider-mutation";
 export type { McpCredentialRevisionObservation } from "./mcp-bridge-provider-readiness";
