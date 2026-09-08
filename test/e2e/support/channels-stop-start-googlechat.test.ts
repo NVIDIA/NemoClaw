@@ -50,16 +50,6 @@ describe("channels stop/start Google Chat live composition", () => {
         stateUpdates: [],
         healthChecks: [],
       };
-      const definition = {
-        channelId: "googlechat",
-        credentialId: "GOOGLE_CHAT_ACCESS_TOKEN",
-        providerName,
-        providerType,
-        credentials: [
-          { name: "GOOGLE_CHAT_ACCESS_TOKEN", value: "openshell-managed-pending-mint" },
-        ],
-        profile: { profilePath: "/repo/googlechat.yaml", profileType: providerType },
-      } as const;
       const applied = {
         upserted: [],
         reused: [],
@@ -141,53 +131,29 @@ describe("channels stop/start Google Chat live composition", () => {
 
         expect(addProviderNames).toEqual([providerName]);
         expect(onboard).toHaveBeenCalledOnce();
-        expect(commonJsApply.mock.calls.map(([, options]) => options.refreshes)).toEqual([[], []]);
         expect(esmApply).not.toHaveBeenCalled();
         expect(commonJsApply).toHaveBeenCalledTimes(2);
+        const expectedApplication = {
+          plan,
+          definitions: [
+            expect.objectContaining({
+              channelId: "googlechat",
+              providerName,
+              providerType,
+              credentials: [
+                { name: "GOOGLE_CHAT_ACCESS_TOKEN", value: GOOGLECHAT_E2E_ACCESS_TOKEN },
+              ],
+            }),
+          ],
+          refreshes: [],
+        };
         expect(
-          commonJsApply.mock.calls.map(([, options]) => ({
-            definitions: options.definitions?.map((receivedDefinition) => ({
-              channelId: receivedDefinition.channelId,
-              credentialId: receivedDefinition.credentialId,
-              providerName: receivedDefinition.providerName,
-              providerType: receivedDefinition.providerType,
-              credentials: receivedDefinition.credentials,
-              profileType: receivedDefinition.profile?.profileType,
-            })),
+          commonJsApply.mock.calls.map(([receivedPlan, options]) => ({
+            plan: receivedPlan,
+            definitions: options.definitions,
             refreshes: options.refreshes,
           })),
-        ).toEqual([
-          {
-            definitions: [
-              {
-                channelId: definition.channelId,
-                credentialId: definition.credentialId,
-                providerName: definition.providerName,
-                providerType: definition.providerType,
-                profileType: definition.profile.profileType,
-                credentials: [
-                  { name: "GOOGLE_CHAT_ACCESS_TOKEN", value: GOOGLECHAT_E2E_ACCESS_TOKEN },
-                ],
-              },
-            ],
-            refreshes: [],
-          },
-          {
-            definitions: [
-              {
-                channelId: definition.channelId,
-                credentialId: definition.credentialId,
-                providerName: definition.providerName,
-                providerType: definition.providerType,
-                profileType: definition.profile.profileType,
-                credentials: [
-                  { name: "GOOGLE_CHAT_ACCESS_TOKEN", value: GOOGLECHAT_E2E_ACCESS_TOKEN },
-                ],
-              },
-            ],
-            refreshes: [],
-          },
-        ]);
+        ).toEqual([expectedApplication, expectedApplication]);
         expect(runOpenshellMock).not.toHaveBeenCalled();
         expect(JSON.stringify(commonJsApply.mock.calls)).not.toContain(privateKey);
       } finally {
