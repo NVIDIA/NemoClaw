@@ -122,6 +122,10 @@ describe("sandbox build context staging", () => {
       path.join("ci", "npm-audit-exceptions.json"),
       `${JSON.stringify({ schemaVersion: 1, exceptions: [] })}\n`,
     );
+    writeFixture(
+      path.join("ci", "reviewed-npm-audit.json"),
+      `${JSON.stringify({ npmVersion: "10.9.4" })}\n`,
+    );
     for (const runtimeName of [
       "managed-image-messaging-runtime",
       "mcporter-runtime",
@@ -285,6 +289,7 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "lib", "bundled-npm-package.mts"), "fixture\n", 0o700);
     writeFixture(path.join("scripts", "lib", "seed-reviewed-npm-cache.mts"), "fixture\n", 0o700);
     writeFixture(path.join("scripts", "lib", "reviewed-npm-audit.mts"), "fixture\n", 0o700);
+    writeFixture(path.join("scripts", "lib", "npm-audit-receipt.mts"), "fixture\n", 0o700);
     writeFixture(path.join("scripts", "lib", "openclaw-npm-remediation.mts"), "fixture\n", 0o700);
     fs.chmodSync(path.join(sourceRoot, "scripts"), 0o700);
     fs.chmodSync(path.join(sourceRoot, "scripts", "lib"), 0o700);
@@ -536,6 +541,16 @@ describe("sandbox build context staging", () => {
     ).toBe("644");
   }
 
+  function expectStagedReviewedNpmAuditPolicy(buildCtx: string, sourceRoot: string) {
+    for (const fileName of ["npm-audit-exceptions.json", "reviewed-npm-audit.json"]) {
+      const stagedFile = path.join(buildCtx, "ci", fileName);
+      expect(fs.readFileSync(stagedFile, "utf8")).toBe(
+        fs.readFileSync(path.join(sourceRoot, "ci", fileName), "utf8"),
+      );
+      expect((fs.statSync(stagedFile).mode & 0o777).toString(8)).toBe("644");
+    }
+  }
+
   it("normalizes restrictive and group-writable modes for Docker COPY", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-context-unit-"));
     const blueprintDir = path.join(tmpDir, "nemoclaw-blueprint");
@@ -587,6 +602,7 @@ describe("sandbox build context staging", () => {
     try {
       writeBuildContextFixture(sourceRoot);
       const { buildCtx } = stageOptimizedSandboxBuildContext(sourceRoot, tmpDir);
+      expectStagedReviewedNpmAuditPolicy(buildCtx, sourceRoot);
       expectStagedBlueprintModes(buildCtx);
       expectStagedOpenClawRuntimeGraphs(buildCtx, sourceRoot);
       expectStagedMcpToolDiscoveryRuntime(buildCtx, sourceRoot);
@@ -618,6 +634,7 @@ describe("sandbox build context staging", () => {
     try {
       writeBuildContextFixture(sourceRoot);
       const { buildCtx } = stageLegacySandboxBuildContext(sourceRoot, tmpDir);
+      expectStagedReviewedNpmAuditPolicy(buildCtx, sourceRoot);
       expectStagedBlueprintModes(buildCtx);
       expectStagedOpenClawRuntimeGraphs(buildCtx, sourceRoot);
       expectStagedMcpToolDiscoveryRuntime(buildCtx, sourceRoot);

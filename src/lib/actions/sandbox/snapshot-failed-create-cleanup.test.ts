@@ -10,7 +10,8 @@ const mocks = vi.hoisted(() => ({
   removeSandboxStateBackup: vi.fn(() => true),
 }));
 
-vi.mock("../../adapters/openshell/runtime", () => ({
+vi.mock("../../adapters/openshell/runtime", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../adapters/openshell/runtime")>()),
   captureOpenshell: mocks.captureOpenshell,
   getOpenshellBinary: vi.fn(() => "openshell"),
   runOpenshell: vi.fn(),

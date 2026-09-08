@@ -14,18 +14,12 @@ const patcher = path.join(root, "agents", "hermes", "patch-hermes-sqlite-temp-st
 const dockerfile = fs.readFileSync(path.join(root, "agents", "hermes", "Dockerfile"), "utf8");
 const fixtures: string[] = [];
 
-const walSetup = 'apply_wal_with_fallback(self._conn, db_label="state.db")';
+const pragmaSetup = 'apply_database_pragmas(self._conn, db_label="state.db")';
 const tempStore = '                self._conn.execute("PRAGMA temp_store=MEMORY")';
 const foreignKeys = '                self._conn.execute("PRAGMA foreign_keys=ON")';
-const unpatchedConnection = `${walSetup}\n${foreignKeys}`;
-const legacyTempStoreConnection = `${walSetup}\n${tempStore}\n${foreignKeys}`;
-const unpatchedImports = [
-  "import logging",
-  "import random",
-  "import re",
-  "import sqlite3",
-  "import sys",
-].join("\n");
+const unpatchedConnection = `${pragmaSetup}\n${foreignKeys}`;
+const legacyTempStoreConnection = `${pragmaSetup}\n${tempStore}\n${foreignKeys}`;
+const unpatchedImports = ["import os", "import re", "import sqlite3", "import sys"].join("\n");
 
 function moduleSource(connection: string): string {
   return `${unpatchedImports}
@@ -36,9 +30,12 @@ def get_hermes_home():
 
 DEFAULT_DB_PATH = get_hermes_home() / "state.db"
 
-SCHEMA_VERSION = 22
+# How long SessionDB stops attempting read-only opens after one fails.
 
-def apply_wal_with_fallback(_connection, *, db_label):
+def _connect_tracked_db(*args, **kwargs):
+    return sqlite3.connect(*args, **kwargs)
+
+def apply_database_pragmas(_connection, *, db_label):
     return db_label
 
 class SessionDB:
@@ -47,7 +44,7 @@ class SessionDB:
 
     def connect(self):
             def _connect_and_init():
-                self._conn = sqlite3.connect(":memory:")
+                self._conn = _connect_tracked_db(":memory:")
                 ${connection}
                 self._init_schema()
             _connect_and_init()
@@ -74,7 +71,6 @@ afterEach(() => {
     fs.rmSync(fixture, { recursive: true, force: true });
   }
 });
-
 describe("Hermes SQLite temp-store patch", () => {
   it("inserts the temp store and fixed-layout descriptor normalizer", () => {
     const stateModule = fixtureFile(moduleSource(unpatchedConnection));
@@ -171,7 +167,7 @@ print(f"unrelated={stat.S_IMODE(unrelated.stat().st_mode):03o}")
 
   it.each([
     ["duplicate", moduleSource(`${legacyTempStoreConnection}\n${tempStore}`)],
-    ["partial", moduleSource(`${walSetup}\n${tempStore}`)],
+    ["partial", moduleSource(`${pragmaSetup}\n${tempStore}`)],
     ["misplaced", moduleSource(`${tempStore}\n${unpatchedConnection}`)],
   ])("rejects a %s connection patch", (_case, source) => {
     const stateModule = fixtureFile(source);

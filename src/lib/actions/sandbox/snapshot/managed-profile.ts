@@ -149,6 +149,6 @@ export function rejectManagedSnapshotCloneUntilRebind(
   const authority = readManagedSnapshotProfileAuthority(source);
   if (!authority) return;
   throw new ManagedSnapshotProfileRestoreError(
-    `restoring '${source.sandboxName}' as '${targetSandboxName}' requires managed-profile clone rebind`,
+    `restoring '${source.sandboxName}' into '${targetSandboxName}' is not available because '${source.sandboxName}' uses a NemoClaw-managed image`,
   );
 }

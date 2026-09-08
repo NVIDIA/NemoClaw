@@ -4,7 +4,15 @@
 import { EventEmitter } from "node:events";
 import { createRequire } from "node:module";
 import { PassThrough } from "node:stream";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+beforeEach(() => {
+  vi.stubEnv("DOCKER_CONTEXT", "default");
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 const require = createRequire(import.meta.url);
 const PROXY_DIST = require.resolve("./proxy");
@@ -405,19 +413,25 @@ describe("pullOllamaModel CLI-vs-HTTP dispatch", () => {
     local.prepareOllamaApiExecution = (
       command: readonly string[],
       host: string,
-      options: NonNullable<Parameters<typeof originalPrepareOllamaApiExecution>[2]>,
-    ) =>
-      originalPrepareOllamaApiExecution(command, host, {
-        ...options,
-        prepareDockerEnvironment: () => ({
-          env: { DOCKER_CONFIG: setup.isolatedDockerConfig ?? "/tmp/test-docker-config" },
-          isolatedCredentialConfig: true,
-          cleanup: () => {
-            cleanupCalls += 1;
-            return { ok: true };
-          },
-        }),
-      });
+      _options: NonNullable<Parameters<typeof originalPrepareOllamaApiExecution>[2]>,
+    ) => {
+      const prepared = {
+        env: { DOCKER_CONFIG: setup.isolatedDockerConfig ?? "/tmp/test-docker-config" },
+        isolatedCredentialConfig: true,
+        cleanup: () => {
+          cleanupCalls += 1;
+          return { ok: true as const };
+        },
+      };
+      return {
+        command:
+          command[0] === "curl" ? local.getOllamaApiCommand(command.slice(1), host) : [...command],
+        env: { ...prepared.env, DOCKER_CONTEXT: "default" },
+        cleanup: () => {
+          prepared.cleanup();
+        },
+      };
+    };
     const spawn = vi
       .spyOn(childProcess, "spawn")
       .mockImplementation((file: unknown, args, options) => {
