@@ -6,7 +6,9 @@ import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 import { type OpenRegularFile, openRegularFileNoFollow } from "../../adapters/fs/regular-file";
+import { getAgentSandboxBaseImageEnvVar } from "../../agent/base-image";
 import { getBuildIdentity } from "../../core/version";
+import { OPENCLAW_SANDBOX_BASE_IMAGE_REF_ENV_VAR } from "../base-image";
 import {
   ManagedImageCatalogUnavailableError,
   normalizeManagedImageRelease,
@@ -55,6 +57,22 @@ export interface PrepareSandboxWorkloadSourceInput {
   /** Contract from the repository-accepted candidate qualification receipt. */
   readonly acceptedCandidateContract?: ManagedImageContractV1 | null;
   readonly environment?: NodeJS.ProcessEnv;
+  /**
+   * Reject an agent base-image override that a managed-image workload cannot
+   * honor. Onboarding sets this; managed rebuild does not, because it keeps its
+   * own base-image preflight and immutable handoff validation (#11138).
+   */
+  readonly rejectUnsupportedBaseImageOverride?: boolean;
+}
+
+/**
+ * OpenClaw predates the multi-agent `NEMOCLAW_<AGENT>_SANDBOX_BASE_IMAGE_REF`
+ * naming scheme and keeps its original, documented env var name.
+ */
+function sandboxBaseImageOverrideEnvVar(agentName: string): string {
+  return agentName === "openclaw"
+    ? OPENCLAW_SANDBOX_BASE_IMAGE_REF_ENV_VAR
+    : getAgentSandboxBaseImageEnvVar(agentName);
 }
 
 export function liveE2eManagedImageRevision(environment: NodeJS.ProcessEnv): string | null {
@@ -429,6 +447,24 @@ export async function prepareSandboxWorkloadSource(
       fallbackDiagnostic: null,
     };
   }
+  // Past this point onboarding is committed to a managed-image workload, which
+  // installs an exact, pre-verified digest and never reads a base-image
+  // override. Silently ignoring an operator-supplied override would accept it
+  // without ever resolving it to a trusted digest (#11138). The check runs
+  // before catalog resolution so a catalog outage cannot turn the rejection
+  // into a legacy Dockerfile build that consumes the override instead.
+  // Rebuild is excluded: managed rebuild keeps its own base-image preflight
+  // and immutable handoff validation, and the per-agent override remains
+  // supported there.
+  if (input.rejectUnsupportedBaseImageOverride) {
+    const overrideEnvVar = sandboxBaseImageOverrideEnvVar(input.agentName);
+    const requestedOverride = (input.environment ?? process.env)[overrideEnvVar]?.trim();
+    if (requestedOverride) {
+      throw new SandboxWorkloadPreparationError(
+        `'${overrideEnvVar}' is set to '${requestedOverride}', but the managed image workload for '${input.agentName}' installs an exact, pre-verified digest and does not consult this override. To use a locally overridden base image, onboard with '--from <Dockerfile>'; otherwise unset '${overrideEnvVar}' to onboard the managed image.`,
+      );
+    }
+  }
   if (input.catalog && input.catalogPath) {
     throw new SandboxWorkloadPreparationError(
       "managed image catalog has conflicting content authorities",
@@ -525,7 +561,6 @@ export async function prepareSandboxWorkloadSource(
       catalog,
       policy,
       candidateAgentsEnabled: candidateSelection,
-      environment: input.environment,
     }),
     release,
     fallbackDiagnostic: null,

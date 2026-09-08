@@ -271,6 +271,7 @@ function completeHandoff(
 }
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource = ORIGINAL_PREPARE;
 });
 
@@ -314,6 +315,28 @@ describe("managed workload rebuild preflight", () => {
     expect(Object.isFrozen(handoff)).toBe(true);
     expect(Object.isFrozen(handoff?.previousProfile.proxy)).toBe(true);
     expect(Object.isFrozen(handoff?.replacement.source.contract.source)).toBe(true);
+  });
+
+  it("keeps a supported Hermes base-image override usable during managed rebuild (#11138)", async () => {
+    // `NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF` is documented as usable during
+    // onboarding *or* rebuild. Managed rebuild keeps its own base-image
+    // preflight and immutable handoff validation, so it must not opt into
+    // onboarding's managed-image override rejection.
+    vi.stubEnv("NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF", "ghcr.io/nvidia/x@sha256:abc");
+    const prepare = vi.fn(async () => replacement("hermes"));
+    managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource = prepare;
+
+    const handoff = await prepareManagedWorkloadRebuildHandoff(entry("hermes"), {
+      runtime: runtime(),
+      provider: provider(),
+      version: "0.0.100",
+    });
+
+    expect(handoff?.replacement.source.kind).toBe("managed-image");
+    expect(prepare).toHaveBeenCalledOnce();
+    expect(prepare).toHaveBeenCalledWith(
+      expect.not.objectContaining({ rejectUnsupportedBaseImageOverride: expect.anything() }),
+    );
   });
 
   it("retains the live qualification revision during rebuild preflight (#9385)", async () => {

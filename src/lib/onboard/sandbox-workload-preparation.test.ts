@@ -493,6 +493,7 @@ describe("sandbox workload preparation", () => {
       prepareSandboxWorkloadSource(
         {
           ...input("openclaw"),
+          rejectUnsupportedBaseImageOverride: true,
           environment: {
             NEMOCLAW_SANDBOX_BASE_IMAGE_REF: "ghcr.io/nvidia/nemoclaw/sandbox-base:local-only-no-push",
           },
@@ -500,13 +501,20 @@ describe("sandbox workload preparation", () => {
         { resolveCatalog },
       ),
     ).rejects.toThrow(/'NEMOCLAW_SANDBOX_BASE_IMAGE_REF' is set .* does not consult this override/);
+    // The rejection precedes catalog resolution, so a catalog outage cannot
+    // turn it into a legacy Dockerfile build that consumes the override.
+    expect(resolveCatalog).not.toHaveBeenCalled();
   });
 
   it("fails closed on the agent-specific override env var, not just the openclaw default (#11138)", async () => {
     const resolveCatalog = vi.fn(async () => CATALOG);
     await expect(
       prepareSandboxWorkloadSource(
-        { ...input("hermes"), environment: { NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF: "evil:tag" } },
+        {
+          ...input("hermes"),
+          rejectUnsupportedBaseImageOverride: true,
+          environment: { NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF: "evil:tag" },
+        },
         { resolveCatalog },
       ),
     ).rejects.toThrow(/NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF/);
@@ -515,7 +523,7 @@ describe("sandbox workload preparation", () => {
   it("still onboards the managed image when no base-image override is set (#11138)", async () => {
     const resolveCatalog = vi.fn(async () => CATALOG);
     const prepared = await prepareSandboxWorkloadSource(
-      { ...input("openclaw"), environment: {} },
+      { ...input("openclaw"), rejectUnsupportedBaseImageOverride: true, environment: {} },
       { resolveCatalog },
     );
 
@@ -523,11 +531,51 @@ describe("sandbox workload preparation", () => {
     expect(resolveCatalog).toHaveBeenCalledOnce();
   });
 
+  it("rejects the override even when the managed catalog is unavailable (#11138)", async () => {
+    // The prefer-managed fallback would otherwise select the legacy Dockerfile
+    // path, which consumes the override, so a catalog outage must not turn a
+    // fail-closed onboard into an override-honoring build.
+    const resolveCatalog = vi.fn(async () => {
+      throw new ManagedImageCatalogUnavailableError("registry offline");
+    });
+
+    await expect(
+      prepareSandboxWorkloadSource(
+        {
+          ...input("openclaw"),
+          policy: "prefer-managed",
+          rejectUnsupportedBaseImageOverride: true,
+          environment: { NEMOCLAW_SANDBOX_BASE_IMAGE_REF: "evil:tag" },
+        },
+        { resolveCatalog },
+      ),
+    ).rejects.toThrow(/NEMOCLAW_SANDBOX_BASE_IMAGE_REF/);
+    expect(resolveCatalog).not.toHaveBeenCalled();
+  });
+
+  it("leaves a base-image override alone for a caller that is not onboarding (#11138)", async () => {
+    // Managed rebuild keeps its own base-image preflight and immutable handoff
+    // validation, and the documented per-agent override stays supported there,
+    // so it never opts into the onboarding-only rejection.
+    const resolveCatalog = vi.fn(async () => CATALOG);
+    const prepared = await prepareSandboxWorkloadSource(
+      {
+        ...input("hermes"),
+        policy: "require-managed",
+        environment: { NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF: "ghcr.io/nvidia/x@sha256:abc" },
+      },
+      { resolveCatalog },
+    );
+
+    expect(prepared.source.kind).toBe("managed-image");
+  });
+
   it("still honors a base-image override on the legacy custom-Dockerfile path (#11138)", async () => {
     const resolveCatalog = vi.fn(async () => CATALOG);
     const prepared = await prepareSandboxWorkloadSource(
       {
         ...input("openclaw"),
+        rejectUnsupportedBaseImageOverride: true,
         customDockerfilePath: "/workspace/CustomDockerfile",
         environment: {
           NEMOCLAW_SANDBOX_BASE_IMAGE_REF: "ghcr.io/nvidia/nemoclaw/sandbox-base:local-only-no-push",
@@ -844,6 +892,7 @@ describe("sandbox workload preparation", () => {
       prepareSandboxWorkloadSource(
         {
           ...input("pi"),
+          rejectUnsupportedBaseImageOverride: true,
           acceptedCandidateContract: piContract,
           catalogPath,
           environment: { NEMOCLAW_PI_SANDBOX_BASE_IMAGE_REF: "evil:tag" },
