@@ -254,6 +254,13 @@ export function isForwardServiceListenerOwner(
   return after.length === 1 && after[0] === pid;
 }
 
+function forwardServiceEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const environment = buildOpenShellSubprocessEnv(source);
+  const configHome = source.XDG_CONFIG_HOME?.trim();
+  if (configHome && path.isAbsolute(configHome)) environment.XDG_CONFIG_HOME = configHome;
+  return environment;
+}
+
 /** Launch one foreground OpenShell service forward as a detached host child. */
 export function launchForwardService(
   target: ForwardServiceTarget,
@@ -271,7 +278,7 @@ export function launchForwardService(
   const child = spawnDetached(
     target.executable,
     buildForwardServiceArgs(target),
-    buildOpenShellSubprocessEnv(options.sourceEnvironment ?? process.env),
+    forwardServiceEnvironment(options.sourceEnvironment ?? process.env),
   );
   child.unref();
 
