@@ -10,7 +10,7 @@ vi.mock("../../adapters/openshell/runtime", async (importOriginal) => {
 
 import { captureOpenshellForStatus } from "../../adapters/openshell/runtime";
 import type { SandboxEntry } from "../../state/registry";
-import { collectSandboxStatusSnapshot } from "./status-snapshot";
+import { collectSandboxStatusSnapshot, getSandboxStatusReport } from "./status-snapshot";
 
 const capture = vi.mocked(captureOpenshellForStatus);
 
@@ -64,6 +64,7 @@ describe("collectSandboxStatusSnapshot route drift", () => {
     expect(snapshot.recordedRoute).toEqual({ provider: "nvidia", model: "nvidia/nemotron" });
     expect(snapshot.currentProvider).toBe("nvidia");
     expect(snapshot.currentModel).toBe("nvidia/nemotron");
+    expect(snapshot.llamaCpp).toBeNull();
   });
 
   it("reads the sandbox's non-default gateway before computing drift (#6315)", async () => {
@@ -181,6 +182,50 @@ describe("collectSandboxStatusSnapshot route drift", () => {
     const snapshot = await collectSandboxStatusSnapshot("alpha", options);
 
     expect(snapshot.routeDrift).toMatchObject({ canConnect: false });
+  });
+});
+
+describe("getSandboxStatusReport llama.cpp attribution on drift (#10256)", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("suppresses llamaCpp when the live gateway route has drifted away from a recorded llama-cpp-local route", async () => {
+    liveGatewayInference("nvidia-prod", "nvidia/nemotron-3-super-120b-a12b");
+
+    const report = await getSandboxStatusReport(
+      "alpha",
+      snapshotDeps({
+        provider: "llama-cpp-local",
+        model: "muse-glimmer",
+        endpointUrl: "http://127.0.0.1:8081/v1",
+      }).deps,
+    );
+
+    expect(report.routeDrift).not.toBeNull();
+    expect(report.llamaCpp).toBeNull();
+  });
+
+  it("classifies llama.cpp once in the snapshot consumed by the JSON report", async () => {
+    liveGatewayInference("llama-cpp-local", "muse-glimmer");
+    const options = snapshotDeps({
+      provider: "llama-cpp-local",
+      model: "muse-glimmer",
+      endpointUrl: "http://127.0.0.1:8081/v1",
+    });
+    const inspectOwnership = vi.fn().mockReturnValueOnce("absent").mockReturnValue("unknown");
+
+    const report = await getSandboxStatusReport("alpha", {
+      ...options.deps,
+      inspectManagedLlamaCppOwnership: inspectOwnership,
+    });
+
+    expect(report.routeDrift).toBeNull();
+    expect(report.llamaCpp).toEqual({
+      kind: "attached",
+      endpointUrl: "http://127.0.0.1:8081/v1",
+    });
+    expect(inspectOwnership).toHaveBeenCalledOnce();
   });
 });
 

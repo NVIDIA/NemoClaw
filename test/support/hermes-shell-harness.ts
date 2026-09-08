@@ -10,6 +10,16 @@ import { shellQuote } from "../../src/lib/core/shell-quote";
 
 export { extractShellFunctionFromSource as extractShellFunction } from "./shell-function-extractor";
 
+export function bashPrintfQ(value: string): string {
+  const result = spawnSync("bash", ["-c", "printf '%q' \"$1\"", "bash-printf-q", value], {
+    encoding: "utf-8",
+    timeout: 5000,
+    env: process.env,
+  });
+  if (result.status !== 0) throw new Error(`bash printf %q failed: ${result.stderr}`);
+  return result.stdout;
+}
+
 export const LOCKED_HERMES_CONFIG_STAT_MOCK = [
   "stat() {",
   '  if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%U:%G" ] && [ "${3:-}" = "$HERMES_DIR" ]; then printf "root:root\\n"; return 0; fi',
@@ -46,7 +56,6 @@ export function runHermesBashHarness(
       "#!/usr/bin/env bash",
       "set -uo pipefail",
       "HERMES_MCP_RECONCILE_PENDING=0",
-      "HERMES_MCP_INTEGRITY_FAILED=0",
       ...lines,
     ].join("\n"),
     { mode: 0o700 },

@@ -530,6 +530,16 @@ function validateContainerEngineSurface(
 ): void {
   if (surface.supported === true) {
     requireFunction(surface, "capture", "containerEngine");
+    const nvidiaContainer = surface.nvidiaContainer;
+    if (nvidiaContainer !== undefined) {
+      if (!isPlainRecord(nvidiaContainer)) {
+        throw new RuntimeProviderRegistrationError(
+          `containerEngine for '${providerId}' has an invalid NVIDIA container capability`,
+        );
+      }
+      requireFunction(nvidiaContainer, "capture", "containerEngine.nvidiaContainer");
+      requireFunction(nvidiaContainer, "cleanup", "containerEngine.nvidiaContainer");
+    }
     const identities = surface.identities;
     if (!Array.isArray(identities)) {
       throw new RuntimeProviderRegistrationError(
@@ -559,6 +569,11 @@ function validateContainerEngineSurface(
     if (new Set(operations).size !== operations.length) {
       throw new RuntimeProviderRegistrationError(
         `containerEngine for '${providerId}' has duplicate operation identities`,
+      );
+    }
+    if (nvidiaContainer !== undefined && !operations.includes("host-local-inference")) {
+      throw new RuntimeProviderRegistrationError(
+        `containerEngine for '${providerId}' cannot expose NVIDIA container proof without host-local-inference authority`,
       );
     }
   }

@@ -14,6 +14,24 @@ export function isN1xManagedVllmProviderModel(
   return provider === N1X_EXPRESS_PROVIDER && model === N1X_EXPRESS_MODEL;
 }
 
+/** Recheck the staged N1x replacement authority before destructive boundaries. */
+export function hasValidDeferredN1xManagedVllmReplacementAuthority(
+  recreateOptions: {
+    allowDeferredN1xManagedVllm?: boolean;
+    reinstallDeferredN1xManagedVllm?: boolean;
+  },
+  sandboxEntry: { openshellDriver?: string | null; nimContainer?: unknown },
+  rebuildSelection: { provider: string; model: string },
+): boolean {
+  return (
+    recreateOptions.reinstallDeferredN1xManagedVllm !== true ||
+    (recreateOptions.allowDeferredN1xManagedVllm === true &&
+      isN1xManagedVllmProviderModel(rebuildSelection.provider, rebuildSelection.model) &&
+      sandboxEntry.openshellDriver === "docker" &&
+      !sandboxEntry.nimContainer)
+  );
+}
+
 export interface DeferredN1xManagedVllmAcceptanceRoute {
   provider?: string | null;
   model?: string | null;

@@ -734,8 +734,13 @@ RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_SQLITE_TEMP_STORE_PATCHER_SHA256" /usr/local/lib/nemoclaw/patch-hermes-sqlite-temp-store.py \
     | sha256sum -c - \
     || { echo "ERROR: patch-hermes-sqlite-temp-store.py hash mismatch (update NEMOCLAW_HERMES_SQLITE_TEMP_STORE_PATCHER_SHA256)" >&2; exit 1; }
+# Hermes 0.20.6 autocommits every statement in its fresh Kanban schema.
+# Apply the transaction at the single call site and fail if upstream moves it.
 RUN /usr/bin/python3 -I /usr/local/lib/nemoclaw/patch-hermes-sqlite-temp-store.py \
     && grep -q 'PRAGMA temp_store=MEMORY' /opt/hermes/hermes_state.py \
+    && test "$(grep -Fc 'conn.executescript(SCHEMA_SQL)' /opt/hermes/hermes_cli/kanban_db.py)" -eq 1 \
+    && sed -i 's|conn.executescript(SCHEMA_SQL)|conn.executescript("BEGIN IMMEDIATE;\\n" + SCHEMA_SQL + "\\nCOMMIT;")|' /opt/hermes/hermes_cli/kanban_db.py \
+    && /opt/hermes/.venv/bin/python3 -m py_compile /opt/hermes/hermes_cli/kanban_db.py \
     && HERMES_HOME="$(mktemp -d)" /opt/hermes/.venv/bin/python -I \
         /opt/nemoclaw-hermes-config/image-build-probes.py session-delete
 
@@ -790,7 +795,7 @@ RUN node --experimental-strip-types \
 ARG NEMOCLAW_HERMES_CLI_ADAPTER_SHA256=3c769f05292b840424a8feec9a9eb441e393a48bf0212bd824b0db8a33a66331
 ARG NEMOCLAW_HERMES_WRAPPER_SHA256=20de8ca3316dcd1e606ffb34a8adfd82f39e558882d3fbfa221da699cae712cc
 ARG NEMOCLAW_HERMES_CLI_ADAPTER_VALIDATOR_SHA256=db4046e79e513eab67b069a8eda20167b8b65529cf26842531d2ad673c670330
-ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=007f49a2d0e107adeacc63e67d541d3308e2964cb6fc1b74c1e38de78d799f76
+ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=adc35f1ed8248eb87a76357795649e6301c0030d2e9ad5aa11e2a9520fc4afaf
 ARG NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256=a1e6b1c53ab297569abb87c29d15c294d729e46005bfd022136b4c447a791819
 ARG NEMOCLAW_HERMES_CRON_RESTORE_CONTROLLER_SHA256=dbd32832383f174878c08529947f5d81911152e1516b6f960824db3c7f7ac1e9
 # hadolint ignore=DL4006

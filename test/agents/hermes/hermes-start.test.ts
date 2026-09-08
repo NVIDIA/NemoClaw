@@ -163,67 +163,6 @@ function createLayoutSwapFixture(tmpDir: string, hermesHome: string, target: Mut
   return { fakeBin, before: fingerprint(), fingerprint, originalEntry };
 }
 
-function runHermesMutableLayoutChmodDenied(initialMode: number, desiredMode: string) {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-layout-chmod-"));
-  const hermesHome = path.join(tmpDir, ".hermes");
-  const injectedScript = path.join(tmpDir, "layout-repair.py");
-  const fakeBin = path.join(tmpDir, "fake-bin");
-  const scriptPath = path.join(tmpDir, "run.sh");
-  fs.mkdirSync(hermesHome);
-  fs.chmodSync(hermesHome, initialMode);
-  fs.mkdirSync(fakeBin);
-  fs.writeFileSync(
-    path.join(fakeBin, "python3"),
-    [
-      "#!/usr/bin/env bash",
-      "set -euo pipefail",
-      `tee ${shellQuote(injectedScript)} >/dev/null`,
-      `export NEMOCLAW_TEST_LAYOUT_SCRIPT=${shellQuote(injectedScript)}`,
-      `export PATH=${shellQuote(process.env.PATH ?? "")}`,
-      "exec python3 -I -c '",
-      "import errno",
-      "import os",
-      "def deny_fchmod(_fd, _mode):",
-      '    raise PermissionError(errno.EPERM, "Operation not permitted")',
-      "os.fchmod = deny_fchmod",
-      'script = os.environ["NEMOCLAW_TEST_LAYOUT_SCRIPT"]',
-      'exec(compile(open(script, encoding="utf-8").read(), script, "exec"))',
-      "'",
-    ].join("\n"),
-    { mode: 0o700 },
-  );
-
-  const src = fs.readFileSync(START_SCRIPT, "utf-8");
-  fs.writeFileSync(
-    scriptPath,
-    [
-      "#!/usr/bin/env bash",
-      "set -euo pipefail",
-      extractShellFunctionFromSource(src, "ensure_hermes_mutable_layout_dir"),
-      `HERMES_DIR=${shellQuote(hermesHome)}`,
-      `ensure_hermes_mutable_layout_dir . ${shellQuote(desiredMode)}`,
-    ].join("\n"),
-    { mode: 0o700 },
-  );
-
-  try {
-    const result = spawnSync("bash", [scriptPath], {
-      encoding: "utf-8",
-      timeout: 5000,
-      env: {
-        ...process.env,
-        PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
-      },
-    });
-    return {
-      result,
-      mode: (fs.statSync(hermesHome).mode & 0o7777).toString(8),
-    };
-  } finally {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  }
-}
-
 function extractRuntimeShellEnvBlock(src: string): string {
   const start = src.indexOf("write_runtime_shell_env() {");
   const end = src.indexOf("\nwrite_runtime_shell_env\n", start);
@@ -246,7 +185,11 @@ function runHermesLazyInstallTargetBootstrap(childEnv: NodeJS.ProcessEnv) {
   );
 }
 
-function runHermesEnvSecretBoundary(opts: { envFile?: string; symlinkEnvFile?: boolean }) {
+function runHermesEnvSecretBoundary(opts: {
+  envFile?: string;
+  symlinkEnvFile?: boolean;
+  prepareMode?: "nonroot" | "root";
+}) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-env-boundary-"));
   const hermesHome = path.join(tmpDir, ".hermes");
   const envFile = path.join(hermesHome, ".env");
@@ -262,6 +205,13 @@ function runHermesEnvSecretBoundary(opts: { envFile?: string; symlinkEnvFile?: b
   }
 
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
+  const boundaryInvocation = opts.prepareMode
+    ? [
+        'refresh_hermes_runtime_config_hashes() { printf "unexpected-adopt:%s\\n" "$*"; }',
+        extractShellFunctionFromSource(src, `prepare_hermes_${opts.prepareMode}_runtime`),
+        `prepare_hermes_${opts.prepareMode}_runtime`,
+      ]
+    : ["validate_hermes_env_secret_boundary"];
   fs.writeFileSync(
     scriptPath,
     [
@@ -272,7 +222,7 @@ function runHermesEnvSecretBoundary(opts: { envFile?: string; symlinkEnvFile?: b
       extractShellFunctionFromSource(src, "validate_hermes_env_secret_boundary"),
       `HERMES_DIR=${shellQuote(hermesHome)}`,
       `_HERMES_BOUNDARY_VALIDATOR=${shellQuote(SECRET_BOUNDARY_VALIDATOR_SCRIPT)}`,
-      "validate_hermes_env_secret_boundary",
+      ...boundaryInvocation,
     ].join("\n"),
     { mode: 0o700 },
   );
@@ -414,13 +364,13 @@ function runHermesRootStartupMutableRootPreflight() {
       extractShellFunctionFromSource(src, "ensure_hermes_config_root_mode"),
       'id() { [ "${1:-}" = "-u" ] && printf "1000\\n" || command id "$@"; }',
       'dir_mode() { python3 -I -c "import os,sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o7777)[2:])" "$HERMES_DIR"; }',
-      'verify_hermes_config_integrity() { printf "verify mode=%s\\n" "$(dir_mode)"; }',
+      'refresh_hermes_runtime_config_hashes() { printf "adopt mode=%s args=%s\\n" "$(dir_mode)" "$*"; }',
+      'inspect_hermes_mcp_integrity() { printf "mcp-integrity mode=%s\\n" "$(dir_mode)"; }',
       'prepare_hermes_lazy_dependencies() { printf "lazy mode=%s\\n" "$(dir_mode)"; }',
       'ensure_hermes_runtime_api_server_key() { printf "api-key mode=%s\\n" "$(dir_mode)"; }',
       "validate_hermes_env_secret_boundary() { :; }",
       "validate_hermes_runtime_env_secret_boundary() { :; }",
       "refresh_hermes_provider_placeholders() { :; }",
-      "refresh_hermes_runtime_config_hashes() { :; }",
       "configure_messaging_channels() { :; }",
       'retry_tirith_marker_if_needed() { printf "tirith-state=%s\\n" "$TIRITH_RETRY_MARKER_CLEARED"; }',
       "prepare_tirith_marker_retry() { TIRITH_RETRY_MARKER_CLEARED=0; retry_tirith_marker_if_needed; }",
@@ -1117,7 +1067,24 @@ describe("agents/hermes/start.sh env secret boundary", () => {
     expect(result.stderr).not.toContain(rawToken);
   });
 
-  it("reconciles mutable hashes after the env boundary and before MCP integrity (#9203)", () => {
+  it.each(["nonroot", "root"] as const)(
+    "stops %s preparation before config adoption when the secret boundary refuses",
+    (prepareMode) => {
+      const rawToken = `SENTINEL_${prepareMode.toUpperCase()}_RAW_SECRET_VALUE`;
+      const result = runHermesEnvSecretBoundary({
+        envFile: `DEVTEST_API_TOKEN=${rawToken}\n`,
+        prepareMode,
+      });
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("raw secret-shaped values");
+      expect(result.stderr).toContain("DEVTEST_API_TOKEN (line 1)");
+      expect(result.stderr).not.toContain(rawToken);
+      expect(result.stdout).not.toContain("unexpected-adopt");
+    },
+  );
+
+  it("adopts mutable config after the env boundary and before MCP integrity (#11108)", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf-8");
     const result = spawnSync(
       "bash",
@@ -1133,7 +1100,7 @@ describe("agents/hermes/start.sh env secret boundary", () => {
           "ensure_hermes_runtime_api_server_key() { trace api-key; }",
           "validate_hermes_runtime_env_secret_boundary() { trace runtime-boundary; }",
           "refresh_hermes_provider_placeholders() { trace placeholders; }",
-          "refresh_hermes_runtime_config_hashes() { trace hashes; hash_state=current; }",
+          'refresh_hermes_runtime_config_hashes() { trace "hashes:$1:${2:-preserve}"; hash_state=current; }',
           "configure_messaging_channels() { trace channels; }",
           "retry_tirith_marker_if_needed() { trace tirith; }",
           extractShellFunctionFromSource(source, "prepare_tirith_marker_retry"),
@@ -1147,14 +1114,14 @@ describe("agents/hermes/start.sh env secret boundary", () => {
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout.trim().split("\n")).toEqual([
       "env-boundary",
-      "hashes",
+      "hashes:compat:adopt",
       "mcp-integrity",
       "lazy-dependencies",
       "api-key",
       "env-boundary",
       "runtime-boundary",
       "placeholders",
-      "hashes",
+      "hashes:compat:preserve",
       "mcp-integrity",
       "channels",
       "tirith",
@@ -1277,16 +1244,6 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
     expect(run.historyMode).toBe("660");
     expect(run.historyContent).toBe("");
     expect(run.pythonImportSentinelExists).toBe(false);
-  });
-  it("accepts a non-root chmod refusal only when the descriptor mode already matches", () => {
-    const matching = runHermesMutableLayoutChmodDenied(0o3770, "3770");
-    expect(matching.result.status, matching.result.stderr).toBe(0);
-    expect(matching.mode).toBe("3770");
-
-    const mismatched = runHermesMutableLayoutChmodDenied(0o750, "3770");
-    expect(mismatched.result.status).not.toBe(0);
-    expect(mismatched.result.stderr).toContain("mode could not be repaired");
-    expect(mismatched.mode).toBe("750");
   });
   it.each([
     ["sessions", "symlink", "is a symlink"],
@@ -1486,7 +1443,8 @@ describe("agents/hermes/start.sh Tirith marker bootstrap", () => {
     const run = runHermesRootStartupMutableRootPreflight();
 
     expect(run.result.status).toBe(0);
-    expect(run.result.stdout).toContain("verify mode=750");
+    expect(run.result.stdout).toContain("adopt mode=750 args=both adopt");
+    expect(run.result.stdout).toContain("mcp-integrity mode=750");
     expect(run.result.stdout).toContain("lazy mode=750");
     expect(run.result.stdout).toContain("api-key mode=3770");
     expect(run.result.stdout).toContain("tirith-state=0");
