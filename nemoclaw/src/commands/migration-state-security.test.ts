@@ -211,6 +211,102 @@ describe("migration-state external restore security", () => {
       expect.stringContaining("external root target is duplicated"),
     );
   });
+
+  it("rejects overlapping external root targets before changing host state", () => {
+    const home = makeHome();
+    const parentPath = path.join(home, "workspace");
+    const childPath = path.join(parentPath, "skills");
+    const parent = externalRoot(parentPath, "workspaces-default-workspace");
+    const child = externalRoot(childPath, "skills-extra-1");
+    const { snapshotDir, stateDir } = writeExternalRestoreSnapshot(home, [parent, child]);
+    writeFileSync(path.join(stateDir, "marker"), "current-state");
+    mkdirSync(childPath, { recursive: true });
+    writeFileSync(path.join(parentPath, "marker"), "current-parent");
+    writeFileSync(path.join(childPath, "marker"), "current-child");
+    writeFileSync(path.join(snapshotDir, parent.snapshotRelativePath, "marker"), "snapshot-parent");
+    writeFileSync(path.join(snapshotDir, child.snapshotRelativePath, "marker"), "snapshot-child");
+    vi.stubEnv("HOME", home);
+    const logger = makeLogger();
+
+    expect(restoreSnapshotToHost(snapshotDir, logger)).toBe(false);
+    expect(readFileSync(path.join(stateDir, "marker"), "utf8")).toBe("current-state");
+    expect(readFileSync(path.join(parentPath, "marker"), "utf8")).toBe("current-parent");
+    expect(readFileSync(path.join(childPath, "marker"), "utf8")).toBe("current-child");
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining("external root targets overlap"),
+    );
+  });
+
+  it("rejects an external root whose parent symlink escapes the trusted host root", () => {
+    const home = makeHome();
+    const outsideHome = makeHome();
+    const outsideWorkspace = path.join(outsideHome, "workspace");
+    mkdirSync(outsideWorkspace, { recursive: true });
+    writeFileSync(path.join(outsideWorkspace, "marker"), "outside-current");
+    symlinkSync(outsideHome, path.join(home, "linked-parent"));
+    const root = externalRoot(
+      path.join(home, "linked-parent", "workspace"),
+      "workspaces-default-workspace",
+    );
+    const { snapshotDir, stateDir } = writeExternalRestoreSnapshot(home, [root]);
+    writeFileSync(path.join(stateDir, "marker"), "current-state");
+    writeFileSync(path.join(snapshotDir, root.snapshotRelativePath, "marker"), "snapshot-root");
+    vi.stubEnv("HOME", home);
+    const logger = makeLogger();
+
+    expect(restoreSnapshotToHost(snapshotDir, logger)).toBe(false);
+    expect(readFileSync(path.join(stateDir, "marker"), "utf8")).toBe("current-state");
+    expect(readFileSync(path.join(outsideWorkspace, "marker"), "utf8")).toBe("outside-current");
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining("external root is outside the trusted host root"),
+    );
+  });
+
+  it("rejects an external root snapshot whose parent symlink escapes the snapshot", () => {
+    const home = makeHome();
+    const outsideHome = makeHome();
+    const root = externalRoot(path.join(home, "workspace"), "workspaces-default-workspace");
+    const { snapshotDir, stateDir } = writeExternalRestoreSnapshot(home, [root]);
+    const snapshotExternalPath = path.join(snapshotDir, "external");
+    rmSync(snapshotExternalPath, { recursive: true });
+    mkdirSync(path.join(outsideHome, "external", root.id), { recursive: true });
+    symlinkSync(path.join(outsideHome, "external"), snapshotExternalPath);
+    writeFileSync(path.join(stateDir, "marker"), "current-state");
+    vi.stubEnv("HOME", home);
+    const logger = makeLogger();
+
+    expect(restoreSnapshotToHost(snapshotDir, logger)).toBe(false);
+    expect(readFileSync(path.join(stateDir, "marker"), "utf8")).toBe("current-state");
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining("external root is missing or invalid"),
+    );
+  });
+
+  it("stages every replacement before changing host state", () => {
+    const home = makeHome();
+    const firstPath = path.join(home, "workspace");
+    const blockedParent = path.join(home, "blocked-parent");
+    const secondPath = path.join(blockedParent, "skills");
+    const first = externalRoot(firstPath, "workspaces-default-workspace");
+    const second = externalRoot(secondPath, "skills-extra-1");
+    const { snapshotDir, stateDir } = writeExternalRestoreSnapshot(home, [first, second]);
+    writeFileSync(path.join(stateDir, "marker"), "current-state");
+    mkdirSync(firstPath, { recursive: true });
+    writeFileSync(path.join(firstPath, "marker"), "current-first");
+    writeFileSync(blockedParent, "not-a-directory");
+    writeFileSync(path.join(snapshotDir, first.snapshotRelativePath, "marker"), "snapshot-first");
+    writeFileSync(path.join(snapshotDir, second.snapshotRelativePath, "marker"), "snapshot-second");
+    vi.stubEnv("HOME", home);
+    const logger = makeLogger();
+
+    expect(restoreSnapshotToHost(snapshotDir, logger)).toBe(false);
+    expect(readFileSync(path.join(stateDir, "marker"), "utf8")).toBe("current-state");
+    expect(readFileSync(path.join(firstPath, "marker"), "utf8")).toBe("current-first");
+    expect(readFileSync(blockedParent, "utf8")).toBe("not-a-directory");
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining("host state was not changed"),
+    );
+  });
 });
 
 describe("migration-state snapshot directory reservation", () => {
@@ -435,17 +531,16 @@ describe("migration-state config path security", () => {
     }
   };
 
-  it.each([
-    "__proto__",
-    "constructor",
-    "prototype",
-  ])("rejects prototype-related config path segment: %s", (segment) => {
-    const doc: Record<string, unknown> = {};
-    expect(() => {
-      setConfigValue(doc, `${segment}.polluted`, "true");
-    }).toThrow(/Unsafe config path segment/);
-    expectPrototypeClean();
-  });
+  it.each(["__proto__", "constructor", "prototype"])(
+    "rejects prototype-related config path segment: %s",
+    (segment) => {
+      const doc: Record<string, unknown> = {};
+      expect(() => {
+        setConfigValue(doc, `${segment}.polluted`, "true");
+      }).toThrow(/Unsafe config path segment/);
+      expectPrototypeClean();
+    },
+  );
 
   it("rejects __proto__ in nested position", () => {
     const doc: Record<string, unknown> = {};
@@ -455,16 +550,16 @@ describe("migration-state config path security", () => {
     expectPrototypeClean();
   });
 
-  it.each([
-    "foo.prototype.bar",
-    "foo.constructor.bar",
-  ])("rejects prototype-related segment in nested config path: %s", (configPath) => {
-    const doc: Record<string, unknown> = {};
-    expect(() => {
-      setConfigValue(doc, configPath, "true");
-    }).toThrow(/Unsafe config path segment/);
-    expectPrototypeClean();
-  });
+  it.each(["foo.prototype.bar", "foo.constructor.bar"])(
+    "rejects prototype-related segment in nested config path: %s",
+    (configPath) => {
+      const doc: Record<string, unknown> = {};
+      expect(() => {
+        setConfigValue(doc, configPath, "true");
+      }).toThrow(/Unsafe config path segment/);
+      expectPrototypeClean();
+    },
+  );
 
   it("allows simple top-level keys", () => {
     const doc: Record<string, unknown> = {};
