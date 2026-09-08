@@ -138,6 +138,8 @@ describe("reviewed npm audit handoff", () => {
       const retainedPackageLock = path.join(root, "mcporter-runtime.package-lock.json");
       const transportRawReport = path.join(root, "mcporter-runtime.raw.json");
       const receiptVerifier = path.join(REPO_ROOT, "scripts", "lib", "npm-audit-receipt.mts");
+      const retainedReport = path.join(root, "retained-report.json");
+      const retainedResult = path.join(root, "retained-result.json");
       const verifierArgs = [
         "--experimental-strip-types",
         receiptVerifier,
@@ -161,6 +163,8 @@ describe("reviewed npm audit handoff", () => {
         "high",
         "--legacy-npmjs",
         "true",
+        "--result",
+        retainedResult,
       ];
       const nodeLog = path.join(root, "node.log");
       const stubBin = path.join(root, "bin");
@@ -168,7 +172,7 @@ describe("reviewed npm audit handoff", () => {
       fs.mkdirSync(stubBin);
       fs.writeFileSync(
         path.join(stubBin, "node"),
-        '#!/usr/bin/env bash\nset -euo pipefail\nprintf \'%s\\n\' "$*" >>"$NEMOCLAW_TEST_NODE_LOG"\nexec "$NEMOCLAW_TEST_REAL_NODE" "$@"\n',
+        '#!/usr/bin/env bash\nset -euo pipefail\nprintf \'%s\\n\' "$*" >>"$NEMOCLAW_TEST_NODE_LOG"\n[[ "$*" != *"/scripts/lib/reviewed-npm-audit.mts"* ]] || exit 0\nexec "$NEMOCLAW_TEST_REAL_NODE" "$@"\n',
         { mode: 0o755 },
       );
       let helperSource = fs.readFileSync(
@@ -199,6 +203,8 @@ describe("reviewed npm audit handoff", () => {
             NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256: createHash("sha256")
               .update(fs.readFileSync(receiptFile))
               .digest("hex"),
+            NEMOCLAW_MCPORTER_AUDIT_REPORT_PATH: retainedReport,
+            NEMOCLAW_MCPORTER_AUDIT_RESULT_PATH: retainedResult,
             NEMOCLAW_TEST_NODE_LOG: nodeLog,
             NEMOCLAW_TEST_REAL_NODE: process.execPath,
             PATH: `${stubBin}:${process.env.PATH ?? ""}`,
@@ -209,13 +215,44 @@ describe("reviewed npm audit handoff", () => {
       const rejected = runHelper();
       expect(rejected.status).not.toBe(0);
       expect(rejected.stderr).toContain("receipt rawResponseSha256 does not match");
+      expect(fs.existsSync(retainedReport)).toBe(false);
+      expect(fs.existsSync(retainedResult)).toBe(false);
 
       fs.writeFileSync(transportRawReport, rawReport);
       const accepted = runHelper();
       expect(accepted.status, accepted.stderr).toBe(0);
       expect(fs.readFileSync(transportRawReport, "utf8")).toBe(rawReport);
+      expect(fs.readFileSync(retainedReport, "utf8")).toBe(rawReport);
+      expect(JSON.parse(fs.readFileSync(retainedResult, "utf8"))).toMatchObject({
+        graph: "mcporter-runtime",
+        status: "clean",
+      });
       expect(fs.readFileSync(nodeLog, "utf8").trim().split("\n").at(-1)).toBe(
         verifierArgs.join(" "),
+      );
+
+      const directHelper = path.join(root, "verify-mcporter-direct-audit.sh");
+      fs.writeFileSync(
+        directHelper,
+        helperSource
+          .replaceAll(receiptFile, path.join(root, "missing-direct-receipt"))
+          .replaceAll(transportRawReport, path.join(root, "missing-direct-report")),
+        { mode: 0o755 },
+      );
+      const direct = spawnSync("bash", [directHelper], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256: "",
+          NEMOCLAW_MCPORTER_AUDIT_REPORT_PATH: retainedReport,
+          NEMOCLAW_MCPORTER_AUDIT_RESULT_PATH: retainedResult,
+          NEMOCLAW_TEST_NODE_LOG: nodeLog,
+          PATH: `${stubBin}:${process.env.PATH ?? ""}`,
+        },
+      });
+      expect(direct.status, direct.stderr).toBe(0);
+      expect(fs.readFileSync(nodeLog, "utf8").trim().split("\n").at(-1)).toContain(
+        `--report ${retainedReport} --result ${retainedResult}`,
       );
 
       const seedEvidence = path.join(root, "seed", "reviewed-npm-audit");

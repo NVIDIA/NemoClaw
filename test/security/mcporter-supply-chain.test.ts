@@ -192,8 +192,8 @@ describe("mcporter image supply-chain controls", () => {
     expect(unpinned.stdout).not.toContain("gate-passed");
   });
 
-  it.each(dockerfiles)("audits the committed dependency graph in $name", ({ name, contents }) => {
-    const auditContents = name === "Dockerfile" ? `${contents}\n${mcporterAuditHelper}` : contents;
+  it.each(dockerfiles)("audits the committed dependency graph in $name", ({ contents }) => {
+    const auditContents = `${contents}\n${mcporterAuditHelper}`;
     const flattenedContents = auditContents.replace(/\\\s*\n/g, " ").replace(/\s+/g, " ");
     const auditReceiptInvocation = extractAuditReceiptInvocation(auditContents);
     expect(contents).toContain(
@@ -277,8 +277,11 @@ describe("mcporter image supply-chain controls", () => {
     const contents = fs.readFileSync(path.join(repoRoot, "Dockerfile.base"), "utf8");
     const flattenedContents = contents.replace(/\\\s*\n/g, " ").replace(/\s+/g, " ");
 
+    expect(contents).toContain(
+      "COPY scripts/lib/verify-mcporter-audit.sh /scripts/lib/verify-mcporter-audit.sh",
+    );
     expect(flattenedContents).toContain(
-      '--result /tmp/mcporter-npm-audit-policy.json && cp "$MCPORTER_RAW_REPORT" /tmp/mcporter-npm-audit.json;',
+      "NEMOCLAW_MCPORTER_AUDIT_REPORT_PATH=/tmp/mcporter-npm-audit.json NEMOCLAW_MCPORTER_AUDIT_RESULT_PATH=/tmp/mcporter-npm-audit-policy.json bash /scripts/lib/verify-mcporter-audit.sh",
     );
   });
 
