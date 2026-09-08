@@ -39,7 +39,8 @@ export async function prepareMcpBridgesForDestroy(
   if (sandbox.name !== sandboxName) {
     throw new Error("MCP destroy source does not match the requested sandbox.");
   }
-  let runtimeSelection = options.runtimeSelection;
+  const explicitRuntimeSelection = options.runtimeSelection;
+  let runtimeSelection = explicitRuntimeSelection;
   let entries: McpSourceEntry[];
   try {
     runtimeSelection ??= getMcpProviderInspectionRuntimeSelection(sandbox);
@@ -58,7 +59,11 @@ export async function prepareMcpBridgesForDestroy(
   }
   return {
     entries,
-    ...(runtimeSelection ? { runtimeSelection } : {}),
+    ...(entries.length > 0 && runtimeSelection
+      ? { runtimeSelection }
+      : explicitRuntimeSelection
+        ? { runtimeSelection: explicitRuntimeSelection }
+        : {}),
   };
 }
 

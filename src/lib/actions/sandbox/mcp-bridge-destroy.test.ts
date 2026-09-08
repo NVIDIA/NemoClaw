@@ -82,7 +82,15 @@ describe("source-backed MCP destroy preparation", () => {
       throw new Error("sandbox unreachable");
     });
 
-    await expect(prepareMcpBridgesForDestroy("alpha")).resolves.toEqual({
+    await expect(prepareMcpBridgesForDestroy("alpha")).resolves.toEqual({ entries: [] });
+  });
+
+  it("preserves an explicitly supplied runtime target for empty cleanup", async () => {
+    mocks.inspectCurrent.mockImplementationOnce(() => {
+      throw new Error("sandbox unreachable");
+    });
+
+    await expect(prepareMcpBridgesForDestroy("alpha", { runtimeSelection })).resolves.toEqual({
       entries: [],
       runtimeSelection,
     });
