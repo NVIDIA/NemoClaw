@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-// Focused coverage for the plausible-name Docker CUDA proof escape in
+// Focused coverage for the plausible-name provider-owned CUDA proof escape in
 // detectGpu() (#9000). Lives outside nim.test.ts because that file is at its
 // legacy line budget and cannot grow.
 
 import { describe, expect, it, vi } from "vitest";
+import { selectDefaultOllamaModel } from "./local";
 import { detectGpu } from "./nim";
 
 const fs = require("fs");
@@ -18,11 +19,27 @@ const isNvidiaSmiMemoryQuery = (command: readonly string[]): boolean =>
 const makeRunCapture = (smiOutput: string) =>
   vi.fn((command: readonly string[]) => (isNvidiaSmiMemoryQuery(command) ? smiOutput : ""));
 
-const passingProver = () =>
-  vi.fn(() => ({ passed: true, timedOut: false, exitCode: 0, diagnostic: "" }));
+const passingProver = (
+  verifiedCapacity?: { totalMemoryMB: number; availableMemoryMB: number },
+  providerId = "docker",
+) =>
+  vi.fn(() => ({
+    providerId,
+    passed: true,
+    timedOut: false,
+    exitCode: 0,
+    diagnostic: "",
+    ...(verifiedCapacity ? { verifiedCapacity } : {}),
+  }));
 
 const failingProver = () =>
-  vi.fn(() => ({ passed: false, timedOut: false, exitCode: 1, diagnostic: "proof failed" }));
+  vi.fn(() => ({
+    providerId: "docker",
+    passed: false,
+    timedOut: false,
+    exitCode: 1,
+    diagnostic: "proof failed",
+  }));
 
 function withProcessProperty(key: "arch" | "platform", value: string, fn: () => void): void {
   const origDesc = Object.getOwnPropertyDescriptor(process, key) as PropertyDescriptor;
@@ -81,7 +98,7 @@ describe("detectGpu CUDA proof for a plausible, non-placeholder NVIDIA GPU name 
     const prover = passingProver();
     onWsl2Arm64WithoutKernelInterface(() => {
       const result = detectGpu({
-        proveArm64WslDockerDesktopGpu: prover,
+        proveArm64ContainerGpu: prover,
         runCaptureImpl: makeRunCapture(`${PLAUSIBLE_NAME}, 8128, 7000\n`),
         isWsl: true,
       });
@@ -90,10 +107,104 @@ describe("detectGpu CUDA proof for a plausible, non-placeholder NVIDIA GPU name 
         name: PLAUSIBLE_NAME,
         count: 1,
         totalMemoryMB: 8128,
-        computeConstrained: true,
-        wslDockerDesktopGpuProofPassed: true,
+        containerGpuProof: { providerId: "docker", passed: true },
       });
       expect(prover).toHaveBeenCalledWith([PLAUSIBLE_NAME]);
+      expect(selectDefaultOllamaModel(["qwen3.5:9b", "qwen3.6:35b"], result)).toBe("qwen3.5:9b");
+    });
+  });
+
+  it.each(["docker", "podman"])(
+    "selects the largest installed Ollama model on a %s-proven WSL RTX Spark N1X (#10954)",
+    (providerId) => {
+      onWsl2Arm64WithoutKernelInterface(() => {
+        const runCaptureImpl = makeRunCapture(`${PLAUSIBLE_NAME}, 999999, 999999\n`);
+        const gpu = detectGpu({
+          proveArm64ContainerGpu: passingProver(
+            {
+              totalMemoryMB: 63_936,
+              availableMemoryMB: 60_000,
+            },
+            providerId,
+          ),
+          runCaptureImpl,
+          isWsl: true,
+          n1xWslProduct: true,
+        });
+        expect(gpu).toMatchObject({
+          totalMemoryMB: 63_936,
+          availableMemoryMB: 60_000,
+          containerGpuProof: { providerId, passed: true },
+        });
+        expect(gpu).not.toHaveProperty("computeConstrained");
+        expect(selectDefaultOllamaModel(["qwen3.5:9b", "qwen3.6:35b"], gpu)).toBe("qwen3.6:35b");
+        expect(runCaptureImpl).not.toHaveBeenCalledWith(
+          expect.arrayContaining(["powershell.exe"]),
+          expect.anything(),
+        );
+      });
+    },
+  );
+
+  it("keeps an unqualified Windows product compute-constrained despite the GPU name (#10954)", () => {
+    onWsl2Arm64WithoutKernelInterface(() => {
+      const gpu = detectGpu({
+        proveArm64ContainerGpu: passingProver({
+          totalMemoryMB: 63_936,
+          availableMemoryMB: 60_000,
+        }),
+        runCaptureImpl: makeRunCapture(`${PLAUSIBLE_NAME}, 63936, 60000\n`),
+        isWsl: true,
+        n1xWslProduct: false,
+      });
+      expect(gpu).toMatchObject({ computeConstrained: true });
+      expect(selectDefaultOllamaModel(["qwen3.5:9b", "qwen3.6:35b"], gpu)).toBe("qwen3.5:9b");
+    });
+  });
+
+  it("keeps a busy qualified N1x compute-constrained below 30,000 MiB free (#10954)", () => {
+    onWsl2Arm64WithoutKernelInterface(() => {
+      const gpu = detectGpu({
+        proveArm64ContainerGpu: passingProver({
+          totalMemoryMB: 63_936,
+          availableMemoryMB: 29_999,
+        }),
+        runCaptureImpl: makeRunCapture(`${PLAUSIBLE_NAME}, 63936, 60000\n`),
+        isWsl: true,
+        n1xWslProduct: true,
+      });
+      expect(gpu).toMatchObject({ computeConstrained: true });
+      expect(selectDefaultOllamaModel(["qwen3.5:9b", "qwen3.6:35b"], gpu)).toBe("qwen3.5:9b");
+    });
+  });
+
+  it("selects the larger installed model at exactly 30,000 MiB of proven capacity (#10954)", () => {
+    onWsl2Arm64WithoutKernelInterface(() => {
+      const gpu = detectGpu({
+        proveArm64ContainerGpu: passingProver({
+          totalMemoryMB: 63_936,
+          availableMemoryMB: 30_000,
+        }),
+        runCaptureImpl: makeRunCapture(`${PLAUSIBLE_NAME}, 8128, 7000\n`),
+        isWsl: true,
+        n1xWslProduct: true,
+      });
+      expect(gpu).toMatchObject({ totalMemoryMB: 63_936, availableMemoryMB: 30_000 });
+      expect(gpu).not.toHaveProperty("computeConstrained");
+      expect(selectDefaultOllamaModel(["qwen3.5:9b", "qwen3.6:35b"], gpu)).toBe("qwen3.6:35b");
+    });
+  });
+
+  it("ignores a forged high-memory row when the CUDA proof has no capacity (#10954)", () => {
+    onWsl2Arm64WithoutKernelInterface(() => {
+      const gpu = detectGpu({
+        proveArm64ContainerGpu: passingProver(),
+        runCaptureImpl: makeRunCapture(`${PLAUSIBLE_NAME}, 999999, 999999\n`),
+        isWsl: true,
+        n1xWslProduct: true,
+      });
+      expect(gpu).toMatchObject({ computeConstrained: true });
+      expect(selectDefaultOllamaModel(["qwen3.5:9b", "qwen3.6:35b"], gpu)).toBe("qwen3.5:9b");
     });
   });
 
@@ -102,7 +213,7 @@ describe("detectGpu CUDA proof for a plausible, non-placeholder NVIDIA GPU name 
     onWsl2Arm64WithoutKernelInterface(() => {
       expect(
         detectGpu({
-          proveArm64WslDockerDesktopGpu: prover,
+          proveArm64ContainerGpu: prover,
           runCaptureImpl: makeRunCapture(`${PLAUSIBLE_NAME}, 8128, 7000\n`),
           isWsl: true,
         }),
@@ -115,7 +226,7 @@ describe("detectGpu CUDA proof for a plausible, non-placeholder NVIDIA GPU name 
     onWsl2Arm64WithoutKernelInterface(() => {
       expect(
         detectGpu({
-          proveArm64WslDockerDesktopGpu: null,
+          proveArm64ContainerGpu: null,
           runCaptureImpl: makeRunCapture(`${PLAUSIBLE_NAME}, 8128, 7000\n`),
           isWsl: true,
         }),
@@ -128,7 +239,7 @@ describe("detectGpu CUDA proof for a plausible, non-placeholder NVIDIA GPU name 
     onWsl2Arm64WithoutKernelInterface(() => {
       expect(
         detectGpu({
-          proveArm64WslDockerDesktopGpu: prover,
+          proveArm64ContainerGpu: prover,
           runCaptureImpl: makeRunCapture("Graphics Device, 8128, 7000\n"),
           isWsl: true,
         }),
@@ -142,7 +253,7 @@ describe("detectGpu CUDA proof for a plausible, non-placeholder NVIDIA GPU name 
     onWsl2Arm64WithoutKernelInterface(() => {
       expect(
         detectGpu({
-          proveArm64WslDockerDesktopGpu: prover,
+          proveArm64ContainerGpu: prover,
           runCaptureImpl: makeRunCapture(
             `${PLAUSIBLE_NAME}, 8128, 7000\nNVIDIA GeForce RTX 4090 Laptop GPU, 16376, 15000\n`,
           ),
@@ -159,12 +270,12 @@ describe("detectGpu CUDA proof for a plausible, non-placeholder NVIDIA GPU name 
       withGenericFirmware(() => {
         withNvidiaKernelInterface(true, () => {
           const result = detectGpu({
-            proveArm64WslDockerDesktopGpu: prover,
+            proveArm64ContainerGpu: prover,
             runCaptureImpl: makeRunCapture(`${PLAUSIBLE_NAME}, 8128, 7000\n`),
             isWsl: true,
           });
           expect(result).toMatchObject({ type: "nvidia", name: PLAUSIBLE_NAME, count: 1 });
-          expect(result?.wslDockerDesktopGpuProofPassed).toBeUndefined();
+          expect(result?.containerGpuProof).toBeUndefined();
           expect(prover).not.toHaveBeenCalled();
         });
       });
@@ -177,7 +288,7 @@ describe("detectGpu CUDA proof for a plausible, non-placeholder NVIDIA GPU name 
       withGenericFirmware(() => {
         withNvidiaKernelInterface(false, () => {
           const result = detectGpu({
-            proveArm64WslDockerDesktopGpu: prover,
+            proveArm64ContainerGpu: prover,
             runCaptureImpl: makeRunCapture("NVIDIA GeForce RTX 4090, 24564, 24000\n"),
             isWsl: false,
           });
@@ -200,7 +311,7 @@ describe("detectGpu trust-gate rejection reasons (#9000)", () => {
     onWsl2Arm64WithoutKernelInterface(() => {
       expect(
         detectGpu({
-          proveArm64WslDockerDesktopGpu: failingProver(),
+          proveArm64ContainerGpu: failingProver(),
           runCaptureImpl: makeRunCapture(`${PLAUSIBLE_NAME}, 8128, 7000\n`),
           isWsl: true,
           onTrustGateRejection,
@@ -215,7 +326,7 @@ describe("detectGpu trust-gate rejection reasons (#9000)", () => {
     onWsl2Arm64WithoutKernelInterface(() => {
       expect(
         detectGpu({
-          proveArm64WslDockerDesktopGpu: null,
+          proveArm64ContainerGpu: null,
           runCaptureImpl: makeRunCapture(`${PLAUSIBLE_NAME}, 8128, 7000\n`),
           isWsl: true,
           onTrustGateRejection,
@@ -233,7 +344,7 @@ describe("detectGpu trust-gate rejection reasons (#9000)", () => {
     onWsl2Arm64WithoutKernelInterface(() => {
       expect(
         detectGpu({
-          proveArm64WslDockerDesktopGpu: prover,
+          proveArm64ContainerGpu: prover,
           runCaptureImpl: makeRunCapture("Graphics Device, 8128, 7000\n"),
           isWsl: true,
           onTrustGateRejection,
@@ -252,7 +363,7 @@ describe("detectGpu trust-gate rejection reasons (#9000)", () => {
     onWsl2Arm64WithoutKernelInterface(() => {
       expect(
         detectGpu({
-          proveArm64WslDockerDesktopGpu: prover,
+          proveArm64ContainerGpu: prover,
           runCaptureImpl: makeRunCapture(
             `${PLAUSIBLE_NAME}, 8128, 7000\nNVIDIA GeForce RTX 4090 Laptop GPU, 16376, 15000\n`,
           ),
@@ -274,7 +385,7 @@ describe("detectGpu trust-gate rejection reasons (#9000)", () => {
       withGenericFirmware(() => {
         expect(
           detectGpu({
-            proveArm64WslDockerDesktopGpu: prover,
+            proveArm64ContainerGpu: prover,
             runCaptureImpl: makeRunCapture("Graphics Device, 8128, 7000\n"),
             isWsl: false,
             onTrustGateRejection,
@@ -299,7 +410,7 @@ describe("detectGpu trust-gate rejection reasons (#9000)", () => {
     onWsl2Arm64WithoutKernelInterface(() => {
       expect(
         detectGpu({
-          proveArm64WslDockerDesktopGpu: prover,
+          proveArm64ContainerGpu: prover,
           runCaptureImpl: namesOnlyRunCapture,
           isWsl: true,
           onTrustGateRejection,
@@ -324,7 +435,7 @@ describe("detectGpu trust-gate rejection reasons (#9000)", () => {
     onWsl2Arm64WithoutKernelInterface(() => {
       expect(
         detectGpu({
-          proveArm64WslDockerDesktopGpu: null,
+          proveArm64ContainerGpu: null,
           runCaptureImpl,
           isWsl: true,
           onTrustGateRejection,
@@ -341,7 +452,7 @@ describe("detectGpu trust-gate rejection reasons (#9000)", () => {
     onWsl2Arm64WithoutKernelInterface(() => {
       expect(
         detectGpu({
-          proveArm64WslDockerDesktopGpu: failingProver(),
+          proveArm64ContainerGpu: failingProver(),
           runCaptureImpl: makeRunCapture("JMJWOA-Generic-GPU, 65471, 65000\n"),
           isWsl: true,
           onTrustGateRejection,
@@ -358,7 +469,7 @@ describe("detectGpu trust-gate rejection reasons (#9000)", () => {
     onWsl2Arm64WithoutKernelInterface(() => {
       expect(
         detectGpu({
-          proveArm64WslDockerDesktopGpu: passingProver(),
+          proveArm64ContainerGpu: passingProver(),
           runCaptureImpl: makeRunCapture(`${PLAUSIBLE_NAME}, 8128, 7000\n`),
           isWsl: true,
           onTrustGateRejection,

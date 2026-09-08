@@ -14,16 +14,27 @@ vi.mock("../../platform", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../platform")>()),
   containerCanReachHostLoopback: vi.fn(() => true),
 }));
+vi.mock("../../runner", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../runner")>();
+  return {
+    ...actual,
+    runCapture: vi.fn(actual.runCapture),
+    runCaptureEx: vi.fn(actual.runCaptureEx),
+  };
+});
 
 import {
   CONTAINER_REACHABILITY_IMAGE,
   loadPersistedOllamaHost,
   OLLAMA_HOST_DOCKER_INTERNAL,
+  OLLAMA_LOCALHOST,
   persistResolvedOllamaHost,
   resetOllamaHostCache,
   runOllamaWarmup,
   setResolvedOllamaHost,
+  validateOllamaModelWithToolsOverride,
 } from "../../inference/local";
+import { runCapture, runCaptureEx } from "../../runner";
 import { setupOllamaLocalInference } from "./ollama-local";
 import type { OllamaDeps } from "./types";
 
@@ -34,6 +45,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
   resetOllamaHostCache();
 });
@@ -342,16 +354,27 @@ describe("Ollama local provider sandbox-facing model gate", () => {
   it("restores the prior cleanup route when model validation fails", async () => {
     const rollbackPersistedOllamaHost = vi.fn();
     const persistResolvedOllamaHost = vi.fn(() => rollbackPersistedOllamaHost);
+    const error = vi.fn();
+    setResolvedOllamaHost(OLLAMA_LOCALHOST);
+    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    vi.mocked(runCapture).mockClear().mockReturnValueOnce("active");
+    vi.mocked(runCaptureEx)
+      .mockClear()
+      .mockReturnValueOnce({ stdout: "", stderr: "", exitCode: 28, timedOut: true })
+      .mockReturnValueOnce({ stdout: "", stderr: "", exitCode: 28, timedOut: true });
+    const recoveryMessage =
+      "Selected Ollama model 'llama3.2:1b' did not answer the local probe in time. " +
+      "It may still be loading, too large for the host, or otherwise unhealthy. " +
+      "Stale runner processes from a previous model may be holding GPU memory. " +
+      "Run 'sudo systemctl restart ollama' and rerun onboarding.";
 
     await expect(
       setupOllamaLocalInference(
         { model: "llama3.2:1b", provider: "ollama-local", allowToolsIncompatible: false },
         deps({
+          error,
           localInference: {
-            validateOllamaModelWithToolsOverride: () => ({
-              ok: false,
-              message: "model validation failed",
-            }),
+            validateOllamaModelWithToolsOverride,
             validateSandboxFacingOllamaModel: () => ({ ok: true }),
             persistResolvedOllamaHost,
           },
@@ -359,7 +382,10 @@ describe("Ollama local provider sandbox-facing model gate", () => {
       ),
     ).rejects.toThrow("exit 1");
 
-    expect(rollbackPersistedOllamaHost).toHaveBeenCalledOnce();
+    expect({ errorCalls: error.mock.calls, rollbackCalls: rollbackPersistedOllamaHost.mock.calls }).toEqual({
+      errorCalls: [[`  ${recoveryMessage}`]],
+      rollbackCalls: [[]],
+    });
   });
 
   it("restores the prior cleanup route when model warm-up throws", async () => {
