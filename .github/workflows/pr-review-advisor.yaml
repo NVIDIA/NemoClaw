@@ -347,13 +347,33 @@ jobs:
       # fetch/validation logic lives in the trusted, unit-tested helper and is
       # executed only from $ADVISOR_DIR (github.workflow_sha checkout).
       - name: Prepare isolated analysis workspace
-        if: ${{ github.event_name == 'workflow_run' || (github.event_name == 'workflow_dispatch' && (inputs.target_repo != '' || inputs.target_pr != '')) }}
+        if: >-
+          ${{ github.event_name == 'workflow_run' ||
+          (github.event_name == 'workflow_dispatch' &&
+          (inputs.target_repo != '' || inputs.target_pr != '') &&
+          inputs.repair_attempt_key == '' && inputs.repair_finding_ids_json == '[]') }}
         env:
           TARGET_REPO: ${{ github.event_name == 'workflow_run' && github.repository || inputs.target_repo }}
           TARGET_PR: ${{ github.event_name == 'workflow_run' && needs.require-green-checks.outputs.pr_number || inputs.target_pr }}
           TARGET_BASE: ${{ github.event_name == 'workflow_run' && 'main' || inputs.target_base }}
-          PR_BASE_SHA: ${{ github.event_name == 'workflow_run' && needs.require-green-checks.outputs.base_sha || inputs.repair_base_sha }}
-          EXPECTED_HEAD_SHA: ${{ github.event_name == 'workflow_run' && needs.require-green-checks.outputs.head_sha || inputs.repair_head_sha }}
+          PR_BASE_SHA: ${{ github.event_name == 'workflow_run' && needs.require-green-checks.outputs.base_sha || '' }}
+          EXPECTED_HEAD_SHA: ${{ github.event_name == 'workflow_run' && needs.require-green-checks.outputs.head_sha || '' }}
+          GIT_LFS_SKIP_SMUDGE: "1"
+          TARGET_DIR: ${{ github.workspace }}/pr-workdir
+        run: |
+          node --experimental-strip-types \
+            "$ADVISOR_DIR/tools/pr-review-advisor/prepare-target-pr.mts"
+
+      - name: Prepare exact repair analysis workspace
+        if: >-
+          ${{ github.event_name == 'workflow_dispatch' &&
+          (inputs.repair_attempt_key != '' || inputs.repair_finding_ids_json != '[]') }}
+        env:
+          TARGET_REPO: ${{ inputs.target_repo }}
+          TARGET_PR: ${{ inputs.target_pr }}
+          TARGET_BASE: ${{ inputs.target_base }}
+          PR_BASE_SHA: ${{ inputs.repair_base_sha }}
+          EXPECTED_HEAD_SHA: ${{ inputs.repair_head_sha }}
           GIT_LFS_SKIP_SMUDGE: "1"
           TARGET_DIR: ${{ github.workspace }}/pr-workdir
         run: |

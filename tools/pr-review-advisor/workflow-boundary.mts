@@ -13,10 +13,15 @@ const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "pr-review
 const EXPECTED_GATE_CONDITION =
   "${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.path == '.github/workflows/pr.yaml' && endsWith(github.event.workflow_run.display_title, ' gate true'))) }}";
 const EXPECTED_ENTRY_CONDITION = "${{ github.repository == 'NVIDIA/NemoClaw' }}";
+const EXPECTED_AUTOMATIC_PREPARATION_CONDITION =
+  "${{ github.event_name == 'workflow_run' || (github.event_name == 'workflow_dispatch' && (inputs.target_repo != '' || inputs.target_pr != '') && inputs.repair_attempt_key == '' && inputs.repair_finding_ids_json == '[]') }}";
+const EXPECTED_REPAIR_PREPARATION_CONDITION =
+  "${{ github.event_name == 'workflow_dispatch' && (inputs.repair_attempt_key != '' || inputs.repair_finding_ids_json != '[]') }}";
 
 type WorkflowPermissions = Record<string, unknown> | string;
 type WorkflowStep = {
   env?: Record<string, unknown>;
+  if?: string;
   name?: string;
   run?: string;
   with?: Record<string, unknown>;
@@ -148,6 +153,7 @@ export function validatePrReviewAdvisorWorkflow(workflowPath = DEFAULT_WORKFLOW_
     (step) => step.name === "Prepare isolated analysis workspace",
   );
   if (
+    targetPreparation?.if !== EXPECTED_AUTOMATIC_PREPARATION_CONDITION ||
     targetPreparation?.env?.TARGET_REPO !==
       "${{ github.event_name == 'workflow_run' && github.repository || inputs.target_repo }}" ||
     targetPreparation.env?.TARGET_PR !==
@@ -160,6 +166,19 @@ export function validatePrReviewAdvisorWorkflow(workflowPath = DEFAULT_WORKFLOW_
       "${{ github.event_name == 'workflow_run' && needs.require-green-checks.outputs.head_sha || '' }}"
   ) {
     errors.push("Unified advisor must prepare the PR revision from the successful checks run");
+  }
+  const repairPreparation = specialistSteps.find(
+    (step) => step.name === "Prepare exact repair analysis workspace",
+  );
+  if (
+    repairPreparation?.if !== EXPECTED_REPAIR_PREPARATION_CONDITION ||
+    repairPreparation.env?.TARGET_REPO !== "${{ inputs.target_repo }}" ||
+    repairPreparation.env?.TARGET_PR !== "${{ inputs.target_pr }}" ||
+    repairPreparation.env?.TARGET_BASE !== "${{ inputs.target_base }}" ||
+    repairPreparation.env?.PR_BASE_SHA !== "${{ inputs.repair_base_sha }}" ||
+    repairPreparation.env?.EXPECTED_HEAD_SHA !== "${{ inputs.repair_head_sha }}"
+  ) {
+    errors.push("Unified advisor must bind exact repair dispatch inputs separately");
   }
   const specialistEnv = specialist.env ?? {};
   if (
