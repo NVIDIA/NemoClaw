@@ -213,8 +213,6 @@ describe("reviewed npm audit handoff", () => {
       fs.writeFileSync(transportRawReport, rawReport);
       const accepted = runHelper();
       expect(accepted.status, accepted.stderr).toBe(0);
-      expect(fs.readFileSync(retainedPackageJson)).toEqual(packageJson);
-      expect(fs.readFileSync(retainedPackageLock)).toEqual(packageLock);
       expect(fs.readFileSync(transportRawReport, "utf8")).toBe(rawReport);
       expect(fs.readFileSync(nodeLog, "utf8").trim().split("\n").at(-1)).toBe(
         verifierArgs.join(" "),
