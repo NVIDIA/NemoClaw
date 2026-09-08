@@ -467,6 +467,15 @@ describe("protected managed-image build-cache boundary", () => {
         "utf8",
       ),
     ).toBe(`${DIGEST}\n`);
+    expect(
+      readFileSync(
+        path.join(
+          cacheRoot,
+          "npm-cache-seed/reviewed-npm-audit/mcporter-runtime.receipt.sha256",
+        ),
+        "utf8",
+      ),
+    ).toBe(`${DIGEST}\n`);
     expect(recordedBuildInvocation("openclaw")).toContain(
       `--secret id=nemoclaw-mcporter-audit-receipt,src=${realpathSync(cacheRoot)}/reviewed-npm-audit/mcporter-runtime.receipt.json`,
     );

@@ -546,6 +546,7 @@ COPY scripts/lib/bundled-npm-package.mts /scripts/lib/bundled-npm-package.mts
 COPY scripts/lib/reviewed-npm-audit.mts /scripts/lib/reviewed-npm-audit.mts
 COPY scripts/lib/npm-audit-receipt.mts /scripts/lib/npm-audit-receipt.mts
 COPY scripts/lib/openclaw-npm-remediation.mts /scripts/lib/openclaw-npm-remediation.mts
+COPY scripts/lib/verify-mcporter-audit.sh /scripts/lib/verify-mcporter-audit.sh
 COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts
 COPY scripts/lib/patch-bundled-npm-ip-address.mts /scripts/lib/patch-bundled-npm-ip-address.mts
 COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
@@ -598,6 +599,11 @@ COPY --from=managed-startup-runtime-builder /out/managed-startup-image-runtime.c
 COPY src/lib/tool-disclosure.ts /src/lib/tool-disclosure.ts
 COPY nemoclaw-blueprint/openclaw-plugins/ /usr/local/share/nemoclaw/openclaw-plugins/
 COPY --from=mcp-tool-discovery-runtime /opt/mcp-tool-discovery-runtime/dist/ /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/
+
+# Protected GPU consumers receive reviewed audit evidence through the existing
+# locked seed because their build driver comes from trusted main.
+FROM scratch AS protected-mcporter-audit-cache
+COPY tools/mcp-tool-discovery-runtime/npm-cache-seed/ /seed/
 
 # Stage 3: Runtime image — pull cached base from GHCR
 # hadolint ignore=DL3006
@@ -823,6 +829,7 @@ RUN command -v codex-acp >/dev/null
 RUN --network=default \
     --mount=type=secret,id=nemoclaw-mcporter-audit-receipt,required=false \
     --mount=type=secret,id=nemoclaw-mcporter-audit-raw-report,required=false \
+    --mount=type=bind,from=protected-mcporter-audit-cache,source=/seed,target=/run/nemoclaw-mcporter-audit-cache \
     set -eu; \
     if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
         export CURL_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem; \
@@ -986,24 +993,7 @@ RUN --network=default \
         ln -s /usr/local/lib/nemoclaw/mcporter-runtime/node_modules/.bin/mcporter /usr/local/bin/mcporter; \
         test "$(mcporter --version)" = "$MCPORTER_VERSION"; \
     fi; \
-    MCPORTER_RECEIPT=/run/secrets/nemoclaw-mcporter-audit-receipt; \
-    MCPORTER_RAW_REPORT=/run/secrets/nemoclaw-mcporter-audit-raw-report; \
-    if [ -f "$MCPORTER_RECEIPT" ] || [ -f "$MCPORTER_RAW_REPORT" ] || [ -n "${NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256:-}" ]; then \
-        [ -f "$MCPORTER_RECEIPT" ] && [ -f "$MCPORTER_RAW_REPORT" ] && printf %s "$NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256" | grep -qxE '[0-9a-f]{64}' \
-            || { echo "ERROR: cached mcporter audit requires paired receipt, raw report, and receipt SHA-256" >&2; exit 1; }; \
-        printf '%s  %s\n' "$NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256" "$MCPORTER_RECEIPT" | sha256sum -c -; \
-node --experimental-strip-types /scripts/lib/npm-audit-receipt.mts \
---receipt "$MCPORTER_RECEIPT" \
---package-json /usr/local/lib/nemoclaw/mcporter-runtime/package.json \
---package-lock /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json \
---raw-report "$MCPORTER_RAW_REPORT" --exceptions /scripts/npm-audit-exceptions.json \
---graph mcporter-runtime --audit-config /scripts/reviewed-npm-audit.json \
---registry https://registry.yarnpkg.com --threshold high --legacy-npmjs true; \
-    else \
-        node --experimental-strip-types /scripts/lib/reviewed-npm-audit.mts \
-            --directory /usr/local/lib/nemoclaw/mcporter-runtime \
-            --exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --threshold high; \
-    fi
+    bash /scripts/lib/verify-mcporter-audit.sh
 
 # Patch OpenClaw media fetch for proxy-only sandbox (NVIDIA/NemoClaw#1755).
 #
