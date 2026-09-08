@@ -348,6 +348,7 @@ esac
     root,
     runnerTemp,
     runtimeDirectory,
+    restoreRoot,
     serviceUnitDirectory,
     storageDirectory,
     systemctlLog,
@@ -555,7 +556,11 @@ describe("native Podman E2E setup boundary", () => {
       expect(fs.existsSync(path.join(fixture.toolchainRoot, "bin", "podman"))).toBe(true);
       expect(fs.existsSync(fixture.storageDirectory)).toBe(true);
       expect(fs.existsSync(fixture.serviceUnitDirectory)).toBe(true);
-      expect(fs.existsSync(fixture.destination)).toBe(true);
+      expect(fs.existsSync(fixture.destination)).toBe(false);
+      expect(fs.existsSync(fixture.restoreRoot)).toBe(true);
+      expect(fs.existsSync(path.join(fixture.restoreRoot, "docker"))).toBe(true);
+      expect(fs.existsSync(path.join(fixture.restoreRoot, "metadata"))).toBe(true);
+      expect(fs.existsSync(path.join(fixture.restoreRoot, "runtime.json"))).toBe(true);
     } finally {
       fs.rmSync(fixture.root, { force: true, recursive: true });
     }

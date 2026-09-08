@@ -3759,6 +3759,8 @@ export function validateNativePodmanRestoreAction(
   if (
     !run.includes("cleanup_native_podman_runtime()") ||
     !run.includes("(set -e; cleanup_native_podman_runtime)") ||
+    !run.includes('if [[ "$cleanup_status" -ne 0 ]]') ||
+    run.indexOf('if [[ "$cleanup_status" -ne 0 ]]') > run.indexOf("restore_present=false") ||
     !run.includes(
       '/usr/bin/systemctl --user stop "$service_name.socket" "$service_name.service"',
     ) ||
