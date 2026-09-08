@@ -309,20 +309,24 @@ automatic_gateway_port_path_is_trusted() {
 resolve_persisted_automatic_gateway_port() {
   local root gateways_dir marker state_dir port marker_value marker_size expected_size
   local selected_port="" marker_count=0
+  local -a markers=()
   root="$(nemoclaw_state_root)" || return 2
   if [[ ! -e "$root" && ! -L "$root" ]]; then return 1; fi
   if [[ -L "$root" ]]; then return 3; fi
   if [[ ! -d "$root" || ! -r "$root" || ! -x "$root" ]]; then return 2; fi
-  automatic_gateway_port_path_is_trusted "$root" || return 2
   gateways_dir="${root}/gateways"
   if [[ ! -e "$gateways_dir" && ! -L "$gateways_dir" ]]; then return 1; fi
   if [[ -L "$gateways_dir" ]]; then return 3; fi
   if [[ ! -d "$gateways_dir" || ! -r "$gateways_dir" || ! -x "$gateways_dir" ]]; then
     return 2
   fi
-  automatic_gateway_port_path_is_trusted "$gateways_dir" || return 2
   for marker in "$gateways_dir"/*/automatic-gateway-port "$gateways_dir"/*/automatic-gateway-port.pending; do
-    if [[ ! -e "$marker" && ! -L "$marker" ]]; then continue; fi
+    if [[ -e "$marker" || -L "$marker" ]]; then markers+=("$marker"); fi
+  done
+  [[ "${#markers[@]}" -gt 0 ]] || return 1
+  automatic_gateway_port_path_is_trusted "$root" || return 2
+  automatic_gateway_port_path_is_trusted "$gateways_dir" || return 2
+  for marker in "${markers[@]}"; do
     state_dir="${marker%/automatic-gateway-port*}"
     port="${state_dir##*/}"
     if [[ -L "$state_dir" ]]; then return 3; fi
