@@ -93,26 +93,27 @@ function terminateWindowsProcessTree(pid: number): Promise<void> {
   });
 }
 
-// Pre-set OLLAMA_HOST in both User scope (persists across logins) and the
-// current PowerShell session (inherited by the installer's auto-spawned
-// ollama_app + daemon) so the new daemon stays on Windows loopback. Ollama
-// enables its Host-header validation only for loopback listeners, which is
-// required to reject same-host DNS-rebinding requests.
+// Pre-set OLLAMA_HOST in the current PowerShell session so the installer's
+// auto-spawned ollama_app + daemon inherit the loopback binding. The enclosing
+// mutation transaction owns the separate User-scope write and its rollback.
+// Ollama enables its Host-header validation only for loopback listeners, which
+// is required to reject same-host DNS-rebinding requests.
 // Don't use stdio:inherit here. When powershell.exe is spawned through
 // WSL interop, its stdout looks like a pipe (not a console), so PowerShell
 // holds output in an internal buffer and the user sees long silent gaps.
 // Reading the pipe from Node and re-writing to our own TTY shows progress
 // as soon as PowerShell flushes a chunk.
-function startWindowsOllamaInstaller(): WindowsOllamaInstallerProcess {
-  const child = spawn(
-    "powershell.exe",
-    [
-      "-Command",
-      `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::Out.WriteLine('${WINDOWS_INSTALLER_PID_SENTINEL}' + $PID); [Console]::Out.Flush(); ` +
-        `[Environment]::SetEnvironmentVariable('OLLAMA_HOST','${OLLAMA_LOOPBACK_HOST}','User'); $env:OLLAMA_HOST='${OLLAMA_LOOPBACK_HOST}'; irm https://ollama.com/install.ps1 | iex`,
-    ],
-    { stdio: ["ignore", "pipe", "pipe"] },
+function buildWindowsOllamaInstallerCommand(): string {
+  return (
+    `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::Out.WriteLine('${WINDOWS_INSTALLER_PID_SENTINEL}' + $PID); [Console]::Out.Flush(); ` +
+    `$env:OLLAMA_HOST='${OLLAMA_LOOPBACK_HOST}'; irm https://ollama.com/install.ps1 | iex`
   );
+}
+
+function startWindowsOllamaInstaller(): WindowsOllamaInstallerProcess {
+  const child = spawn("powershell.exe", ["-Command", buildWindowsOllamaInstallerCommand()], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
   let windowsPid: number | null = null;
   let stdoutPrefix = Buffer.alloc(0);
   let awaitingPidLine = true;
@@ -746,6 +747,7 @@ function printWindowsOllamaSnapshotDiagnostics(): void {
 module.exports = {
   installOllamaOnWindowsHost,
   awaitWindowsOllamaReady,
+  buildWindowsOllamaInstallerCommand,
   startWindowsOllamaInstaller,
   setupWindowsOllamaLoopbackBinding,
   sleep,

@@ -308,14 +308,22 @@ describe("Windows Ollama helper", () => {
     vi.unstubAllEnvs();
   });
 
+  it("leaves the persistent installer binding under the mutation transaction", () => {
+    const { windows, restore } = loadWindowsOllamaWithMocks(vi.fn(), vi.fn());
+
+    try {
+      const installerCommand = windows.buildWindowsOllamaInstallerCommand();
+      expect(installerCommand).toContain("$env:OLLAMA_HOST='127.0.0.1:11434'");
+      expect(installerCommand).not.toContain("SetEnvironmentVariable('OLLAMA_HOST'");
+    } finally {
+      restore();
+    }
+  });
+
   it("terminates the PowerShell wrapper when cancellation precedes the PID sentinel", async () => {
     const child = createMockChildProcess();
     const spawnProcess = vi.fn(() => child);
-    const { windows, restore } = loadWindowsOllamaWithMocks(
-      vi.fn(),
-      vi.fn(),
-      spawnProcess,
-    );
+    const { windows, restore } = loadWindowsOllamaWithMocks(vi.fn(), vi.fn(), spawnProcess);
 
     try {
       const installer = windows.startWindowsOllamaInstaller();
@@ -335,18 +343,11 @@ describe("Windows Ollama helper", () => {
     const spawnProcess = vi.fn((command: string) =>
       command === "taskkill.exe" ? taskkillChild : installerChild,
     );
-    const { windows, restore } = loadWindowsOllamaWithMocks(
-      vi.fn(),
-      vi.fn(),
-      spawnProcess,
-    );
+    const { windows, restore } = loadWindowsOllamaWithMocks(vi.fn(), vi.fn(), spawnProcess);
 
     try {
       const installer = windows.startWindowsOllamaInstaller();
-      installerChild.stdout.emit(
-        "data",
-        Buffer.from("__NEMOCLAW_WINDOWS_INSTALLER_PID__:4321\n"),
-      );
+      installerChild.stdout.emit("data", Buffer.from("__NEMOCLAW_WINDOWS_INSTALLER_PID__:4321\n"));
       const cancellation = installer.cancelAndWait();
       expect(installerChild.kill).not.toHaveBeenCalled();
       await vi.waitFor(() =>
@@ -1046,8 +1047,7 @@ describe("Windows Ollama helper", () => {
       (command: string | string[], options?: { env?: NodeJS.ProcessEnv }) => {
         return commandText(command).includes("Get-NetTCPConnection")
           ? "127.0.0.1"
-          : !Array.isArray(command) ||
-              options?.env?.DOCKER_CONFIG !== "/tmp/credential-free-docker"
+          : !Array.isArray(command) || options?.env?.DOCKER_CONFIG !== "/tmp/credential-free-docker"
             ? ""
             : command.includes(REBINDING_PROBE_HOST_HEADER)
               ? "403"
