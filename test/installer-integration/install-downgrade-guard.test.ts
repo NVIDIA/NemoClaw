@@ -22,9 +22,9 @@ function runInstall(
   targetVersion: string,
   extraEnvironment: Record<string, string> = {},
   options: {
-    interruptBeforeLookupTrap?: boolean;
     lookupMaxOutputBytes?: number;
     lookupSignal?: "INT" | "TERM";
+    tagLookupMaxOutputBytes?: number;
     lookupTimeoutSeconds?: number;
     useRealSleep?: boolean;
   } = {},
@@ -49,7 +49,6 @@ case "${installedVersion}" in
   ignore-term) trap '' TERM; while :; do :; done ;;
   interrupt) printf '%s' "$$" >"\${LOOKUP_PID:?}"; exec /bin/sleep 60 ;;
   terminate) printf '%s' "$$" >"\${LOOKUP_PID:?}"; exec /bin/sleep 60 ;;
-  trap-race) printf '%s' "$$" >"\${LOOKUP_PID:?}"; /bin/sleep 60 ;;
   descendant-ignore-term) (trap '' TERM; printf '%s' "\${BASHPID}" >"\${LOOKUP_PID:?}"; while :; do :; done) & exit 0 ;;
   signaled) kill -KILL "$$" ;;
   oversized) printf 'nemoclaw v0.0.118'; printf '%0100d' 0 ;;
@@ -87,6 +86,11 @@ PAYLOAD
       version="${targetVersion.replace(/^annotated-/, "")}"
       printf 'tag-object\trefs/tags/v%s\n' "$version"
       printf 'target-commit\trefs/tags/v%s^{}\n' "$version"
+    elif [[ "${targetVersion}" == 'many-tags' ]]; then
+      for version in {1..20}; do
+        printf 'other-%s\trefs/tags/v0.0.%s\n' "$version" "$version"
+      done
+      printf 'target-commit\trefs/tags/v0.0.109\n'
     else
       printf 'target-commit\trefs/tags/v%s\n' "${targetVersion}"
     fi
@@ -109,16 +113,19 @@ esac
       `BOOTSTRAP_LOOKUP_TIMEOUT_SECONDS=${options.lookupTimeoutSeconds ?? 30}`,
     )
     .replace(
-      "BOOTSTRAP_LOOKUP_MAX_OUTPUT_BYTES=65536",
-      `BOOTSTRAP_LOOKUP_MAX_OUTPUT_BYTES=${options.lookupMaxOutputBytes ?? 65536}`,
+      "BOOTSTRAP_CLI_LOOKUP_MAX_OUTPUT_BYTES=65536",
+      `BOOTSTRAP_CLI_LOOKUP_MAX_OUTPUT_BYTES=${options.lookupMaxOutputBytes ?? 65536}`,
+    )
+    .replace(
+      "BOOTSTRAP_TAG_LOOKUP_MAX_OUTPUT_BYTES=1048576",
+      `BOOTSTRAP_TAG_LOOKUP_MAX_OUTPUT_BYTES=${options.tagLookupMaxOutputBytes ?? 1048576}`,
     );
-  const lookupSignal = options.lookupSignal ?? (options.interruptBeforeLookupTrap ? "INT" : "");
-  installerSource = lookupSignal
+  installerSource = options.lookupSignal
     ? installerSource.replace(
         "  command_pid=$!\n  set +m",
         `  command_pid=$!
   while [[ ! -s "\${LOOKUP_PID:?}" ]]; do :; done
-  /bin/bash -c 'kill -${lookupSignal} "$PPID"'
+  /bin/bash -c 'kill -${options.lookupSignal} "$PPID"'
   set +m`,
       )
     : installerSource;
@@ -212,6 +219,21 @@ describe("public installer downgrade guard", () => {
 
   it("accepts the peeled commit from an annotated maintained release tag", () => {
     const { result, payloadMarker } = runInstall("0.0.108", "annotated-0.0.109");
+
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(payloadMarker)).toBe(true);
+  });
+
+  it("finds the maintained release tag beyond the CLI output bound", () => {
+    const { result, payloadMarker } = runInstall(
+      "0.0.108",
+      "many-tags",
+      {},
+      {
+        lookupMaxOutputBytes: 32,
+        tagLookupMaxOutputBytes: 2048,
+      },
+    );
 
     expect(result.status).toBe(0);
     expect(fs.existsSync(payloadMarker)).toBe(true);
@@ -381,23 +403,6 @@ describe("public installer downgrade guard", () => {
       expect(() => process.kill(pid, 0)).toThrow();
     },
   );
-
-  it("registers cleanup before starting a version lookup", () => {
-    const { lookupPid, payloadMarker, result, root } = runInstall(
-      "trap-race",
-      "0.0.109",
-      {},
-      { interruptBeforeLookupTrap: true },
-    );
-
-    expect(result.status).toBe(130);
-    expect(fs.existsSync(payloadMarker)).toBe(false);
-    expect(
-      fs.readdirSync(root).filter((name) => name.startsWith("nemoclaw-bootstrap-lookup.")),
-    ).toEqual([]);
-    const pid = Number(fs.readFileSync(lookupPid, "utf8"));
-    expect(() => process.kill(pid, 0)).toThrow();
-  });
 
   it("kills a lookup descendant after its process-group leader exits", () => {
     const { lookupPid, payloadMarker, result } = runInstall("descendant-ignore-term", "0.0.109");

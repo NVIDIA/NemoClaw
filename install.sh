@@ -20,7 +20,8 @@ PAYLOAD_MARKER="NEMOCLAW_VERSIONED_INSTALLER_PAYLOAD=1"
 DEFAULT_INSTALL_REF="lkg"
 INSTALL_TAG_EXAMPLE="vX.Y.Z"
 BOOTSTRAP_LOOKUP_TIMEOUT_SECONDS=30
-BOOTSTRAP_LOOKUP_MAX_OUTPUT_BYTES=65536
+BOOTSTRAP_CLI_LOOKUP_MAX_OUTPUT_BYTES=65536
+BOOTSTRAP_TAG_LOOKUP_MAX_OUTPUT_BYTES=1048576
 SELECTED_PAYLOAD_IDENTITY_REF=""
 
 resolve_release_tag() {
@@ -91,7 +92,7 @@ installed_nemoclaw_release_version() {
   esac
   cli_path="$(command -v "$cli_name" 2>/dev/null || true)"
   [[ -n "$cli_path" ]] || return 3
-  output="$(run_bounded_bootstrap_lookup "installed NemoClaw version lookup" "$cli_path" --version)" || {
+  output="$(run_bounded_bootstrap_lookup "installed NemoClaw version lookup" "$BOOTSTRAP_CLI_LOOKUP_MAX_OUTPUT_BYTES" "$cli_path" --version)" || {
     status=$?
     ((status == 124)) && return 124
     ((status >= 128)) && return "$status"
@@ -108,7 +109,7 @@ checkout_release_version() {
   local source_root="$1" target_commit refs status ref version
   target_commit="$(git -C "$source_root" rev-parse HEAD 2>/dev/null || true)"
   [[ -n "$target_commit" ]] || return 0
-  refs="$(run_bounded_bootstrap_lookup "maintained release tag lookup" git -C "$source_root" ls-remote --tags origin 'refs/tags/v*')" || {
+  refs="$(run_bounded_bootstrap_lookup "maintained release tag lookup" "$BOOTSTRAP_TAG_LOOKUP_MAX_OUTPUT_BYTES" git -C "$source_root" ls-remote --tags origin 'refs/tags/v*')" || {
     status=$?
     ((status == 124)) && exit 1
     ((status >= 128)) && exit "$status"
@@ -141,8 +142,8 @@ release_version_is_newer() {
 }
 
 run_bounded_bootstrap_lookup() (
-  local label="$1" output_file command_pid="" output_bytes status ticks=0
-  shift
+  local label="$1" max_output_bytes="$2" output_file command_pid="" output_bytes status ticks=0
+  shift 2
   output_file="$(mktemp "${TMPDIR:-/tmp}/nemoclaw-bootstrap-lookup.XXXXXX")"
   trap 'trap - INT TERM EXIT; [[ -z "$command_pid" ]] || terminate_bootstrap_lookup_group "$command_pid"; rm -f "$output_file"; exit 130' INT
   trap 'trap - INT TERM EXIT; [[ -z "$command_pid" ]] || terminate_bootstrap_lookup_group "$command_pid"; rm -f "$output_file"; exit 143' TERM
@@ -150,7 +151,7 @@ run_bounded_bootstrap_lookup() (
   set -m
   (
     set -o pipefail
-    "$@" 2>/dev/null </dev/null | head -c "$((BOOTSTRAP_LOOKUP_MAX_OUTPUT_BYTES + 1))"
+    "$@" 2>/dev/null </dev/null | head -c "$((max_output_bytes + 1))"
   ) >"$output_file" 2>/dev/null &
   command_pid=$!
   set +m
@@ -172,7 +173,7 @@ run_bounded_bootstrap_lookup() (
     status=$?
   fi
   output_bytes="$(wc -c <"$output_file")"
-  if ((output_bytes > BOOTSTRAP_LOOKUP_MAX_OUTPUT_BYTES)); then
+  if ((output_bytes > max_output_bytes)); then
     status=2
   elif ((status == 0)); then
     cat "$output_file"
