@@ -84,6 +84,11 @@ export interface DockerGpuProofResult {
   timedOut: boolean;
   exitCode: number | null;
   diagnostic: string;
+  /** Capacity reported from the same container-visible device that ran the CUDA workload. */
+  verifiedCapacity?: {
+    totalMemoryMB: number;
+    availableMemoryMB: number;
+  };
 }
 
 // Optional accept-path used by `detectGpu()` when an ARM64 Linux host reports a

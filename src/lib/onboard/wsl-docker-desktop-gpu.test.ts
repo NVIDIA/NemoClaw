@@ -12,6 +12,7 @@ import {
   detectWslDockerDesktopStatus,
   isExecFormatErrorDiagnostic,
   isWslDockerDesktopRuntime,
+  parseWslDockerDesktopGpuProofCapacity,
   WSL_DOCKER_DESKTOP_GPU_COMPATIBILITY_REMOVAL_CONDITION,
   WSL_DOCKER_DESKTOP_GPU_PROOF_COMMAND,
   wslDockerDesktopGpuCompatibilityAction,
@@ -47,6 +48,13 @@ describe("WSL Docker Desktop GPU compatibility helpers", () => {
         release: "6.8.0-generic",
         procVersion: "Linux version 6.8.0-generic",
         dockerInfoFormat: vi.fn(() => '"Docker Desktop"'),
+      }),
+    ).toBe("not-docker-desktop");
+    expect(
+      detectWslDockerDesktopStatus({
+        platform: "linux",
+        env: { WSL_DISTRO_NAME: "Ubuntu" },
+        dockerInfoFormat: vi.fn(() => '"Podman Engine"'),
       }),
     ).toBe("not-docker-desktop");
   });
@@ -122,37 +130,62 @@ describe("createArm64WslDockerDesktopGpuProver (#4565)", () => {
     expect(runProof).toHaveBeenCalledTimes(1);
   });
 
-  it.each(["not-docker-desktop", "unknown"] as const)(
-    "leaves WSL hosts without Docker Desktop unproven [case %#] (#8096)",
-    (status) => {
-      const runProof = vi.fn(() => passingProof);
-      const prover = createArm64WslDockerDesktopGpuProver({
-        platform: "linux",
-        arch: "arm64",
-        env: { WSL_DISTRO_NAME: "Ubuntu" },
-        detectWslDockerDesktopStatus: () => status,
-        runProof,
-        log: () => undefined,
-      });
-      expect(prover(["JMJWOA-Generic-GPU"])).toBeNull();
-      expect(runProof).not.toHaveBeenCalled();
-    },
-  );
+  it.each([
+    ["Podman or native runtime", "not-docker-desktop"],
+    ["unknown runtime", "unknown"],
+  ] as const)("leaves WSL %s unproven without Docker Desktop (#8096)", (_scenario, status) => {
+    const runProof = vi.fn(() => passingProof);
+    const prover = createArm64WslDockerDesktopGpuProver({
+      platform: "linux",
+      arch: "arm64",
+      env: { WSL_DISTRO_NAME: "Ubuntu" },
+      detectWslDockerDesktopStatus: () => status,
+      runProof,
+      log: () => undefined,
+    });
+    expect(prover(["JMJWOA-Generic-GPU"])).toBeNull();
+    expect(runProof).not.toHaveBeenCalled();
+  });
 
   it("runs the bounded proof and reports the result on ARM64 Docker Desktop WSL", () => {
     const runProof = vi.fn((_argv: string[], _timeoutMs: number) => passingProof);
+    const logs: string[] = [];
     const prover = createArm64WslDockerDesktopGpuProver({
       platform: "linux",
       arch: "arm64",
       detectWslDockerDesktopStatus: () => "docker-desktop",
       runProof,
-      log: () => undefined,
+      log: (message) => logs.push(message),
     });
     expect(prover(["JMJWOA-Generic-GPU"])).toEqual(passingProof);
     expect(runProof).toHaveBeenCalledTimes(1);
     const argv = runProof.mock.calls[0]?.[0] ?? [];
     expect(argv[0]).toBe("docker");
     expect(argv).toContain("--gpus");
+    expect(argv).toContain("/bin/sh");
+    expect(argv.at(-1)).toContain("NEMOCLAW_GPU_MEMORY_MIB");
+    expect(argv.at(-1)).toContain("nvidia-smi --query-gpu=memory.total,memory.free");
+    expect(logs.join("\n")).toContain("compute-intensive Ollama models remain disabled");
+  });
+
+  it("parses one capacity row from the container-bound CUDA proof", () => {
+    expect(
+      parseWslDockerDesktopGpuProofCapacity("Test PASSED\nNEMOCLAW_GPU_MEMORY_MIB=63936, 60000\n"),
+    ).toEqual({ totalMemoryMB: 63_936, availableMemoryMB: 60_000 });
+  });
+
+  it.each([
+    ["a missing marker", "Test PASSED\n"],
+    [
+      "duplicate markers",
+      "NEMOCLAW_GPU_MEMORY_MIB=63936, 60000\nNEMOCLAW_GPU_MEMORY_MIB=63936, 60000\n",
+    ],
+    ["multiple device rows", "NEMOCLAW_GPU_MEMORY_MIB=63936, 60000\n63936, 60000\n"],
+    ["free memory above total memory", "NEMOCLAW_GPU_MEMORY_MIB=63936, 70000\n"],
+    ["zero total memory", "NEMOCLAW_GPU_MEMORY_MIB=0, 0\n"],
+    ["nonnumeric memory", "NEMOCLAW_GPU_MEMORY_MIB=not-a-number\n"],
+  ])("rejects container capacity with %s", (_scenario, output) => {
+    expect(parseWslDockerDesktopGpuProofCapacity(output)).toBeNull();
   });
 
   it("escapes terminal controls in a denylisted GPU name before logging", () => {
@@ -177,9 +210,11 @@ describe("createArm64WslDockerDesktopGpuProver (#4565)", () => {
     // binary. `cuda-sample:nbody` packs an x86-64 binary in its arm64 tag and
     // fails with `exec format error` on the N1X target (#4565); the chosen
     // vectorAdd image ships a genuine aarch64 binary.
-    expect(WSL_DOCKER_DESKTOP_GPU_PROOF_COMMAND).toBe(
-      "docker run --rm --gpus all nvcr.io/nvidia/k8s/cuda-sample@sha256:7c7540bdf1f942d4fb6db97069fd6c289471b54ac29e3c7fcdf914cf77af7d41",
+    expect(WSL_DOCKER_DESKTOP_GPU_PROOF_COMMAND).toContain(
+      "nvcr.io/nvidia/k8s/cuda-sample@sha256:7c7540bdf1f942d4fb6db97069fd6c289471b54ac29e3c7fcdf914cf77af7d41",
     );
+    expect(WSL_DOCKER_DESKTOP_GPU_PROOF_COMMAND).toContain("--entrypoint /bin/sh");
+    expect(WSL_DOCKER_DESKTOP_GPU_PROOF_COMMAND).toContain("NEMOCLAW_GPU_MEMORY_MIB");
     expect(WSL_DOCKER_DESKTOP_GPU_PROOF_COMMAND).not.toContain("vectoradd-cuda12.5.0");
     expect(WSL_DOCKER_DESKTOP_GPU_PROOF_COMMAND).not.toContain("nbody");
   });

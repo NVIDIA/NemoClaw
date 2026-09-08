@@ -68,7 +68,7 @@ export interface CollectPlatformIdentityOptions extends N1xIdentityOptions {
   isWsl?: boolean;
   runCaptureImpl?: (
     command: readonly string[],
-    options?: { ignoreError?: boolean },
+    options?: { ignoreError?: boolean; timeout?: number },
   ) => string;
 }
 

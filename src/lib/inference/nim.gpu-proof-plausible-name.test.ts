@@ -25,8 +25,14 @@ const makeRunCapture = (smiOutput: string, windowsProduct = "") =>
         : "",
   );
 
-const passingProver = () =>
-  vi.fn(() => ({ passed: true, timedOut: false, exitCode: 0, diagnostic: "" }));
+const passingProver = (verifiedCapacity?: { totalMemoryMB: number; availableMemoryMB: number }) =>
+  vi.fn(() => ({
+    passed: true,
+    timedOut: false,
+    exitCode: 0,
+    diagnostic: "",
+    ...(verifiedCapacity ? { verifiedCapacity } : {}),
+  }));
 
 const failingProver = () =>
   vi.fn(() => ({ passed: false, timedOut: false, exitCode: 1, diagnostic: "proof failed" }));
@@ -100,22 +106,36 @@ describe("detectGpu CUDA proof for a plausible, non-placeholder NVIDIA GPU name 
         wslDockerDesktopGpuProofPassed: true,
       });
       expect(prover).toHaveBeenCalledWith([PLAUSIBLE_NAME]);
-      expect(selectDefaultOllamaModel(["qwen3.5:9b", "qwen3.6:35b"], result)).toBe(
-        "qwen3.5:9b",
-      );
+      expect(selectDefaultOllamaModel(["qwen3.5:9b", "qwen3.6:35b"], result)).toBe("qwen3.5:9b");
     });
   });
 
   it("selects the largest installed Ollama model on a CUDA-proven WSL RTX Spark N1X (#10954)", () => {
     onWsl2Arm64WithoutKernelInterface(() => {
+      const runCaptureImpl = makeRunCapture(`${PLAUSIBLE_NAME}, 999999, 999999\n`, "RTX Spark N1X");
       const gpu = detectGpu({
-        proveArm64WslDockerDesktopGpu: passingProver(),
-        runCaptureImpl: makeRunCapture(`${PLAUSIBLE_NAME}, 63936, 60000\n`, "RTX Spark N1X"),
+        proveArm64WslDockerDesktopGpu: passingProver({
+          totalMemoryMB: 63_936,
+          availableMemoryMB: 60_000,
+        }),
+        runCaptureImpl,
         isWsl: true,
       });
+      expect(gpu).toMatchObject({
+        totalMemoryMB: 63_936,
+        availableMemoryMB: 60_000,
+      });
       expect(gpu).not.toHaveProperty("computeConstrained");
-      expect(selectDefaultOllamaModel(["qwen3.5:9b", "qwen3.6:35b"], gpu)).toBe(
-        "qwen3.6:35b",
+      expect(selectDefaultOllamaModel(["qwen3.5:9b", "qwen3.6:35b"], gpu)).toBe("qwen3.6:35b");
+      expect(runCaptureImpl).toHaveBeenCalledWith(
+        [
+          "powershell.exe",
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          "(Get-CimInstance Win32_ComputerSystem).Model",
+        ],
+        { ignoreError: true, timeout: 10_000 },
       );
     });
   });
@@ -123,28 +143,58 @@ describe("detectGpu CUDA proof for a plausible, non-placeholder NVIDIA GPU name 
   it("keeps an unqualified Windows product compute-constrained despite the GPU name (#10954)", () => {
     onWsl2Arm64WithoutKernelInterface(() => {
       const gpu = detectGpu({
-        proveArm64WslDockerDesktopGpu: passingProver(),
+        proveArm64WslDockerDesktopGpu: passingProver({
+          totalMemoryMB: 63_936,
+          availableMemoryMB: 60_000,
+        }),
         runCaptureImpl: makeRunCapture(`${PLAUSIBLE_NAME}, 63936, 60000\n`, "SKU 1"),
         isWsl: true,
       });
       expect(gpu).toMatchObject({ computeConstrained: true });
-      expect(selectDefaultOllamaModel(["qwen3.5:9b", "qwen3.6:35b"], gpu)).toBe(
-        "qwen3.5:9b",
-      );
+      expect(selectDefaultOllamaModel(["qwen3.5:9b", "qwen3.6:35b"], gpu)).toBe("qwen3.5:9b");
     });
   });
 
   it("keeps a busy qualified N1x compute-constrained below 30,000 MiB free (#10954)", () => {
     onWsl2Arm64WithoutKernelInterface(() => {
       const gpu = detectGpu({
-        proveArm64WslDockerDesktopGpu: passingProver(),
-        runCaptureImpl: makeRunCapture(`${PLAUSIBLE_NAME}, 63936, 29999\n`, "RTX Spark N1X"),
+        proveArm64WslDockerDesktopGpu: passingProver({
+          totalMemoryMB: 63_936,
+          availableMemoryMB: 29_999,
+        }),
+        runCaptureImpl: makeRunCapture(`${PLAUSIBLE_NAME}, 63936, 60000\n`, "RTX Spark N1X"),
         isWsl: true,
       });
       expect(gpu).toMatchObject({ computeConstrained: true });
-      expect(selectDefaultOllamaModel(["qwen3.5:9b", "qwen3.6:35b"], gpu)).toBe(
-        "qwen3.5:9b",
-      );
+      expect(selectDefaultOllamaModel(["qwen3.5:9b", "qwen3.6:35b"], gpu)).toBe("qwen3.5:9b");
+    });
+  });
+
+  it("selects the larger installed model at exactly 30,000 MiB of proven capacity (#10954)", () => {
+    onWsl2Arm64WithoutKernelInterface(() => {
+      const gpu = detectGpu({
+        proveArm64WslDockerDesktopGpu: passingProver({
+          totalMemoryMB: 63_936,
+          availableMemoryMB: 30_000,
+        }),
+        runCaptureImpl: makeRunCapture(`${PLAUSIBLE_NAME}, 8128, 7000\n`, "RTX Spark N1X"),
+        isWsl: true,
+      });
+      expect(gpu).toMatchObject({ totalMemoryMB: 63_936, availableMemoryMB: 30_000 });
+      expect(gpu).not.toHaveProperty("computeConstrained");
+      expect(selectDefaultOllamaModel(["qwen3.5:9b", "qwen3.6:35b"], gpu)).toBe("qwen3.6:35b");
+    });
+  });
+
+  it("ignores a forged high-memory row when the CUDA proof has no capacity (#10954)", () => {
+    onWsl2Arm64WithoutKernelInterface(() => {
+      const gpu = detectGpu({
+        proveArm64WslDockerDesktopGpu: passingProver(),
+        runCaptureImpl: makeRunCapture(`${PLAUSIBLE_NAME}, 999999, 999999\n`, "RTX Spark N1X"),
+        isWsl: true,
+      });
+      expect(gpu).toMatchObject({ computeConstrained: true });
+      expect(selectDefaultOllamaModel(["qwen3.5:9b", "qwen3.6:35b"], gpu)).toBe("qwen3.5:9b");
     });
   });
 

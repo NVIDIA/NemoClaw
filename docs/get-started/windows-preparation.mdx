@@ -190,8 +190,8 @@ A direct request from WSL can fail because Docker Desktop defines this hostname 
 Do not set Windows `OLLAMA_HOST` to `0.0.0.0:11434`; the wildcard listener is unauthenticated and disables the loopback-only HTTP `Host` validation that NemoClaw requires.
 Do not run both the Windows and WSL Ollama instances on port `11434` at the same time.
 Use one instance, or move one of them to a different port before running `$$nemoclaw onboard`.
-A CUDA-proven WSL host whose Windows product reports RTX Spark N1x uses available GPU memory to rank installed Ollama models.
-When `qwen3.6:35b` is installed and at least 30,000 MiB is available, NemoClaw selects it before `qwen3.5:9b`.
+A WSL host whose Windows product reports RTX Spark N1x uses capacity from the same Docker CUDA proof to rank installed Ollama models.
+When `qwen3.6:35b` is installed and that proof reports at least 30,000 MiB available, NemoClaw selects it before `qwen3.5:9b`.
 Other Windows on Arm GPUs remain compute-constrained and select `qwen3.5:9b` instead of the 30B and 35B starter models.
 <AgentOnly variant="openclaw">
 For the selection boundary and remaining N1X limitations, refer to [Use Ollama for Local Inference](/user-guide/openclaw/inference/local-inference/set-up-ollama).

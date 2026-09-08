@@ -20,10 +20,14 @@ const WSL_DOCKER_DESKTOP_DETECTION_TIMEOUT_MS = 30_000;
 // ARM64 image ships a genuine aarch64 binary and runs a real CUDA kernel (device
 // alloc + add + result verification), which is a strong usability proof that
 // still fails closed on the Snapdragon nvidia-smi shim (no usable CUDA device,
-// #3988). The image's entrypoint runs vectorAdd directly, so no trailing args
-// are needed.
-export const WSL_DOCKER_DESKTOP_GPU_PROOF_COMMAND =
-  "docker run --rm --gpus all nvcr.io/nvidia/k8s/cuda-sample@sha256:7c7540bdf1f942d4fb6db97069fd6c289471b54ac29e3c7fcdf914cf77af7d41";
+// #3988). The same container then reports the memory visible to that proven
+// device. Missing or malformed capacity remains unverified.
+const WSL_DOCKER_DESKTOP_GPU_PROOF_IMAGE =
+  "nvcr.io/nvidia/k8s/cuda-sample@sha256:7c7540bdf1f942d4fb6db97069fd6c289471b54ac29e3c7fcdf914cf77af7d41";
+const WSL_DOCKER_DESKTOP_GPU_CAPACITY_MARKER = "NEMOCLAW_GPU_MEMORY_MIB=";
+const WSL_DOCKER_DESKTOP_GPU_PROOF_SCRIPT =
+  'set -eu; /cuda-samples/sample; memory="$(nvidia-smi --query-gpu=memory.total,memory.free --format=csv,noheader,nounits 2>/dev/null || true)"; printf "NEMOCLAW_GPU_MEMORY_MIB=%s\\n" "$memory"';
+export const WSL_DOCKER_DESKTOP_GPU_PROOF_COMMAND = `docker run --rm --gpus all --entrypoint /bin/sh ${WSL_DOCKER_DESKTOP_GPU_PROOF_IMAGE} -c '${WSL_DOCKER_DESKTOP_GPU_PROOF_SCRIPT}'`;
 
 // The proof runs a real CUDA workload and may first pull the CUDA sample image,
 // so it is bounded generously (3 min) rather than with the 30s detection
@@ -149,11 +153,44 @@ export type Arm64WslDockerDesktopGpuProverDeps = WslDockerDesktopDetectionDeps &
   log?: (message: string) => void;
 };
 
-// Split the fixed proof command constant into an argv. The command is repo-
-// controlled and contains no quoting, so a whitespace split is exact and avoids
-// routing the bounded proof through a shell.
 function wslDockerDesktopGpuProofArgv(): string[] {
-  return WSL_DOCKER_DESKTOP_GPU_PROOF_COMMAND.split(/\s+/).filter(Boolean);
+  return [
+    "docker",
+    "run",
+    "--rm",
+    "--gpus",
+    "all",
+    "--entrypoint",
+    "/bin/sh",
+    WSL_DOCKER_DESKTOP_GPU_PROOF_IMAGE,
+    "-c",
+    WSL_DOCKER_DESKTOP_GPU_PROOF_SCRIPT,
+  ];
+}
+
+export function parseWslDockerDesktopGpuProofCapacity(
+  output: string,
+): DockerGpuProofResult["verifiedCapacity"] | null {
+  const firstMarker = output.indexOf(WSL_DOCKER_DESKTOP_GPU_CAPACITY_MARKER);
+  if (
+    firstMarker < 0 ||
+    firstMarker !== output.lastIndexOf(WSL_DOCKER_DESKTOP_GPU_CAPACITY_MARKER)
+  ) {
+    return null;
+  }
+  const value = output.slice(firstMarker + WSL_DOCKER_DESKTOP_GPU_CAPACITY_MARKER.length).trim();
+  const match = /^([1-9][0-9]*)\s*,\s*([0-9]+)$/u.exec(value);
+  if (!match) return null;
+  const totalMemoryMB = Number(match[1]);
+  const availableMemoryMB = Number(match[2]);
+  if (
+    !Number.isSafeInteger(totalMemoryMB) ||
+    !Number.isSafeInteger(availableMemoryMB) ||
+    availableMemoryMB > totalMemoryMB
+  ) {
+    return null;
+  }
+  return { totalMemoryMB, availableMemoryMB };
 }
 
 // Docker reports an architecture mismatch (proof image built for a different
@@ -174,11 +211,14 @@ function runWslDockerDesktopGpuProof(argv: string[], timeoutMs: number): DockerG
     // failures ("no CUDA-capable device is detected") are written to stderr, so
     // prefer it for the diagnostic and fall back to stdout (vectorAdd output).
     const diagnosticSource = result.stderr || result.stdout;
+    const passed = result.exitCode === 0 && !result.timedOut;
+    const verifiedCapacity = passed ? parseWslDockerDesktopGpuProofCapacity(result.stdout) : null;
     return {
-      passed: result.exitCode === 0 && !result.timedOut,
+      passed,
       timedOut: result.timedOut,
       exitCode: result.exitCode,
       diagnostic: diagnosticSource.slice(0, 300),
+      ...(verifiedCapacity ? { verifiedCapacity } : {}),
     };
   } catch (err) {
     return {
@@ -226,6 +266,15 @@ export function createArm64WslDockerDesktopGpuProver(
     );
     if (result.passed) {
       log("  ✓ Docker GPU proof passed; trusting the reported GPU.");
+      if (result.verifiedCapacity) {
+        log(
+          `  ✓ Docker GPU capacity proof: ${String(result.verifiedCapacity.availableMemoryMB)} MiB available of ${String(result.verifiedCapacity.totalMemoryMB)} MiB.`,
+        );
+      } else {
+        log(
+          "  ! Docker GPU capacity proof was unavailable; compute-intensive Ollama models remain disabled.",
+        );
+      }
     } else if (result.timedOut) {
       log("  ✗ Docker GPU proof timed out; treating GPU as unproven (CPU fallback).");
       log(

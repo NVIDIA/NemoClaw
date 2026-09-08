@@ -28,6 +28,7 @@ import { isDgxStationGb300Product } from "./dgx-station-identity";
 import {
   type Arm64WslDockerDesktopGpuProver,
   captureNvidiaSmi,
+  type DockerGpuProofResult,
   escapeGpuNameForTerminal,
   isDenylistedNvidiaGpuName,
   isPlausibleNvidiaGpuName,
@@ -526,9 +527,15 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
         // are genuine, so a multi-row response stays untrusted.
         // Null when the proof passed; otherwise a fixed-text fragment naming
         // why it did not, composed into the onTrustGateRejection reason.
-        const boundedCudaProofRejection = (): string | null => {
+        type BoundedCudaProofAttempt =
+          | { proof: DockerGpuProofResult; rejection: null }
+          | { proof: null; rejection: string };
+        const runBoundedCudaProof = (): BoundedCudaProofAttempt => {
           if (parsed.length !== 1) {
-            return "the bounded CUDA proof was not attempted for multiple GPU rows";
+            return {
+              proof: null,
+              rejection: "the bounded CUDA proof was not attempted for multiple GPU rows",
+            };
           }
           const prover =
             deps.proveArm64WslDockerDesktopGpu === undefined
@@ -536,11 +543,14 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
               : deps.proveArm64WslDockerDesktopGpu;
           const proof = prover ? prover(parsed.map((p: ParsedGpu) => p.name)) : null;
           if (!proof) {
-            return "the bounded CUDA proof was not attempted";
+            return { proof: null, rejection: "the bounded CUDA proof was not attempted" };
           }
-          return proof.passed ? null : "the bounded CUDA proof failed";
+          return proof.passed
+            ? { proof, rejection: null }
+            : { proof: null, rejection: "the bounded CUDA proof failed" };
         };
         let trusted: ParsedGpu[];
+        let boundedCudaProof: DockerGpuProofResult | null = null;
         let wslDockerDesktopGpuProofPassed = false;
         if (firmwareConfirmsNvidia) {
           trusted = parsed;
@@ -551,13 +561,14 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
           // A bounded Docker `--gpus` workload proves that the single reported
           // row has a usable CUDA device. The Snapdragon shim cannot pass it
           // (#4565 without reopening #3988/#4424).
-          const proofRejection = boundedCudaProofRejection();
-          if (proofRejection) {
+          const proofAttempt = runBoundedCudaProof();
+          if (proofAttempt.rejection) {
             deps.onTrustGateRejection?.(
-              `nvidia-smi reported a placeholder GPU name and ${proofRejection}`,
+              `nvidia-smi reported a placeholder GPU name and ${proofAttempt.rejection}`,
             );
             return null;
           }
+          boundedCudaProof = proofAttempt.proof;
           trusted = parsed;
           wslDockerDesktopGpuProofPassed = true;
         } else {
@@ -576,11 +587,14 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
               );
               return null;
             }
-            const proofRejection = boundedCudaProofRejection();
-            if (proofRejection) {
-              deps.onTrustGateRejection?.(`/proc/driver/nvidia is absent and ${proofRejection}`);
+            const proofAttempt = runBoundedCudaProof();
+            if (proofAttempt.rejection) {
+              deps.onTrustGateRejection?.(
+                `/proc/driver/nvidia is absent and ${proofAttempt.rejection}`,
+              );
               return null;
             }
+            boundedCudaProof = proofAttempt.proof;
             wslDockerDesktopGpuProofPassed = true;
           }
           trusted = parsed.filter((p: ParsedGpu) => isPlausibleNvidiaGpuName(p.name));
@@ -600,9 +614,11 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
         // Only surface a single name when every GPU reports the same model;
         // a mixed-GPU host would otherwise be misreported as `Nx <firstName>`.
         const allSameName = !!firstName && trusted.every((p: ParsedGpu) => p.name === firstName);
+        const verifiedCapacity = boundedCudaProof?.verifiedCapacity;
         const n1xWslOllamaEligible =
           wslDockerDesktopGpuProofPassed &&
-          availableMemoryMB >= 30_000 &&
+          verifiedCapacity !== undefined &&
+          verifiedCapacity.availableMemoryMB >= 30_000 &&
           collectN1xWslProduct({
             isWsl: deps.isWsl ?? isWsl(),
             runCaptureImpl,
@@ -612,15 +628,26 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
         const computeConstrained =
           !n1xWslOllamaEligible &&
           (platform === "jetson" || platform === "n1x" || wslDockerDesktopGpuProofPassed);
+        const selectedTotalMemoryMB = n1xWslOllamaEligible
+          ? verifiedCapacity.totalMemoryMB
+          : totalMemoryMB;
+        const selectedAvailableMemoryMB = n1xWslOllamaEligible
+          ? verifiedCapacity.availableMemoryMB
+          : availableMemoryMB;
         return {
           type: "nvidia",
           ...(allSameName ? { name: firstName } : {}),
-          gpus: trusted.map((p) => ({ name: p.name, memoryMB: p.memoryMB })),
+          gpus: trusted.map((p) => ({
+            name: p.name,
+            memoryMB: n1xWslOllamaEligible ? selectedTotalMemoryMB : p.memoryMB,
+          })),
           count: trusted.length,
-          totalMemoryMB,
-          ...(availableMemoryMB > 0 ? { availableMemoryMB } : {}),
-          perGpuMB: trusted[0].memoryMB,
-          nimCapable: canRunNimWithMemory(totalMemoryMB),
+          totalMemoryMB: selectedTotalMemoryMB,
+          ...(selectedAvailableMemoryMB > 0
+            ? { availableMemoryMB: selectedAvailableMemoryMB }
+            : {}),
+          perGpuMB: n1xWslOllamaEligible ? selectedTotalMemoryMB : trusted[0].memoryMB,
+          nimCapable: canRunNimWithMemory(selectedTotalMemoryMB),
           platform,
           spark: platform === "spark",
           ...(platform === "spark" || platform === "n1x" || platform === "jetson"
