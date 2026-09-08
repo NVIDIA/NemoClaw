@@ -67,10 +67,10 @@ export function buildMessagingProviderApplication(
       providerType,
       credentials: [
         { name: tokenDef.envKey, value: normalizeToken(tokenDef.token) },
-        ...(tokenDef.additionalCredentials ?? []).map(({ envKey, token }) => ({
-          name: envKey,
-          value: normalizeToken(token),
-        })),
+        ...(tokenDef.additionalCredentials ?? []).flatMap(({ envKey, token }) => {
+          const value = normalizeToken(token);
+          return value ? [{ name: envKey, value }] : [];
+        }),
       ],
       ...(profile ? { profile } : {}),
     });

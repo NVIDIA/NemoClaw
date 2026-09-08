@@ -103,13 +103,17 @@ describe("messaging provider application planning", () => {
     expect(result.refreshes).toEqual([]);
   });
 
-  it("routes an OpenShell built-in type without importing a custom profile (#9806)", () => {
+  it("routes a built-in type and omits unavailable optional credentials (#9806)", () => {
     const result = buildMessagingProviderApplication({
       tokenDefs: [
         {
           name: "legacy-openai",
           envKey: "OPENAI_API_KEY",
           token: "openai-secret",
+          additionalCredentials: [
+            { envKey: "OPENAI_API_KEY_WORKSPACE", token: "workspace-secret" },
+            { envKey: "OPENAI_API_KEY_MISSING", token: null },
+          ],
         },
       ],
       root: "/repo",
@@ -124,7 +128,10 @@ describe("messaging provider application planning", () => {
         credentialId: "OPENAI_API_KEY",
         providerName: "legacy-openai",
         providerType: "generic",
-        credentials: [{ name: "OPENAI_API_KEY", value: "openai-secret" }],
+        credentials: [
+          { name: "OPENAI_API_KEY", value: "openai-secret" },
+          { name: "OPENAI_API_KEY_WORKSPACE", value: "workspace-secret" },
+        ],
       },
     ]);
   });
