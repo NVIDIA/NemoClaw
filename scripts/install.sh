@@ -230,11 +230,11 @@ resolve_nemoclaw_gateway_port() {
       port="$persisted_port"
     else
       persisted_status=$?
-      if [[ "$persisted_status" -eq 1 ]]; then
-        port=8080
-      else
-        error "Could not safely resolve the automatically selected NemoClaw gateway port. Remove invalid automatic-gateway-port markers or set NEMOCLAW_GATEWAY_PORT explicitly."
-      fi
+      case "$persisted_status" in
+        1) port=8080 ;;
+        3) error "Refusing symbolic link in NemoClaw state path while resolving the automatic gateway port." ;;
+        *) error "Could not safely resolve the automatically selected NemoClaw gateway port. Remove invalid automatic-gateway-port markers or set NEMOCLAW_GATEWAY_PORT explicitly." ;;
+      esac
     fi
   fi
   port="${port#"${port%%[![:space:]]*}"}"
@@ -291,17 +291,20 @@ resolve_persisted_automatic_gateway_port() {
   local root gateways_dir marker state_dir port marker_value selected_port="" marker_count=0
   root="$(nemoclaw_state_root)" || return 2
   if [[ ! -e "$root" && ! -L "$root" ]]; then return 1; fi
-  if [[ -L "$root" || ! -d "$root" || ! -r "$root" || ! -x "$root" ]]; then return 2; fi
+  if [[ -L "$root" ]]; then return 3; fi
+  if [[ ! -d "$root" || ! -r "$root" || ! -x "$root" ]]; then return 2; fi
   gateways_dir="${root}/gateways"
   if [[ ! -e "$gateways_dir" && ! -L "$gateways_dir" ]]; then return 1; fi
-  if [[ -L "$gateways_dir" || ! -d "$gateways_dir" || ! -r "$gateways_dir" || ! -x "$gateways_dir" ]]; then
+  if [[ -L "$gateways_dir" ]]; then return 3; fi
+  if [[ ! -d "$gateways_dir" || ! -r "$gateways_dir" || ! -x "$gateways_dir" ]]; then
     return 2
   fi
   for marker in "$gateways_dir"/*/automatic-gateway-port; do
     if [[ ! -e "$marker" && ! -L "$marker" ]]; then continue; fi
     state_dir="${marker%/automatic-gateway-port}"
     port="${state_dir##*/}"
-    if [[ -L "$state_dir" || ! -d "$state_dir" || ! -r "$state_dir" || ! -x "$state_dir" ]]; then
+    if [[ -L "$state_dir" ]]; then return 3; fi
+    if [[ ! -d "$state_dir" || ! -r "$state_dir" || ! -x "$state_dir" ]]; then
       return 2
     fi
     case "$port" in

@@ -91,16 +91,20 @@ function applyPersistedAutomaticGatewayPort() {
     const marker = path.join(stateDir, "automatic-gateway-port");
     try {
       const stateStat = fs.lstatSync(stateDir);
-      const markerStat = fs.lstatSync(marker);
-      if (
-        !/^(?:899[0-9]|900[0-5])$/.test(entry.name) ||
-        stateStat.isSymbolicLink() ||
-        !stateStat.isDirectory() ||
-        markerStat.isSymbolicLink() ||
-        !markerStat.isFile() ||
-        ![entry.name, `${entry.name}\n`].includes(fs.readFileSync(marker, "utf8"))
-      ) {
-        throw new Error("unsafe automatic gateway port marker");
+      const markerFd = fs.openSync(marker, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+      try {
+        const markerStat = fs.fstatSync(markerFd);
+        if (
+          !/^(?:899[0-9]|900[0-5])$/.test(entry.name) ||
+          stateStat.isSymbolicLink() ||
+          !stateStat.isDirectory() ||
+          !markerStat.isFile() ||
+          ![entry.name, `${entry.name}\n`].includes(fs.readFileSync(markerFd, "utf8"))
+        ) {
+          throw new Error("unsafe automatic gateway port marker");
+        }
+      } finally {
+        fs.closeSync(markerFd);
       }
       selectedPorts.push(entry.name);
     } catch (error) {
