@@ -160,6 +160,12 @@ function latestUserPrompt(payload: JsonObject): string | null {
 
 function requestedPromptReply(payload: JsonObject): string | null {
   if (!replyFromPrompt) return null;
+  const embeddedReplies = new Set(
+    [...JSON.stringify(payload).matchAll(/NEMOCLAW_E2E_FAKE_RESPONSE=([A-Z0-9_]{1,64})/gu)].map(
+      (match) => match[1],
+    ),
+  );
+  if (embeddedReplies.size === 1) return [...embeddedReplies][0] ?? null;
   const prompt = latestUserPrompt(payload);
   const launchMatch = prompt?.match(
     /^Join these four fragments with underscores and put only the result on its own line: NEMOCLAW, ([0-9A-F]{12}), (FIRST|SECOND), OK\. Do not use tools\.(?:\n\n[\s\S]+)?$/u,
@@ -266,8 +272,9 @@ const server = createServer(async (req, res) => {
       sendJson(res, 401, { error: { message: "missing bearer credential" } });
       return;
     }
+    const content = requestedPromptReply(payload) ?? responseText;
     if (payload.stream) {
-      sendResponseSse(res, responseText);
+      sendResponseSse(res, content);
       return;
     }
     sendJson(res, 200, {
@@ -277,7 +284,7 @@ const server = createServer(async (req, res) => {
         {
           type: "message",
           role: "assistant",
-          content: [{ type: "output_text", text: responseText }],
+          content: [{ type: "output_text", text: content }],
         },
       ],
     });

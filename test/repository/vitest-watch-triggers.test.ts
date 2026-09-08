@@ -90,7 +90,7 @@ const OPAQUE_INPUTS = [
   ".github/scripts/docker-auth-setup.sh",
   ".github/scripts/docker-auth-cleanup.sh",
   ".github/workflows/pr-self-hosted.yaml",
-  ".github/workflows/sandbox-images-and-e2e.yaml",
+  ".github/workflows/sandbox-images.yaml",
   ".github/workflows/code-scanning.yaml",
   ".github/workflows/post-merge-docs.yaml",
   "tools/post-merge-docs/review-policy.yaml",
@@ -260,6 +260,9 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/e2e/support/hosted-inference.test.ts",
     ]);
     expect(triggeredBy("scripts/setup-jetson.sh")).toEqual(["test/install/setup-jetson.test.ts"]);
+    expect(triggeredBy("scripts/backup-workspace.sh")).toEqual([
+      "test/scripts/backup-workspace.test.ts",
+    ]);
     expect(triggeredBy("tools/e2e/contracts/v1/jetson-dispatch.json")).toEqual([
       "test/e2e/support/jetson-dispatch-client.test.ts",
     ]);
@@ -334,7 +337,7 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/e2e/support/dockerhub-auth-workflow-boundary.test.ts",
     ]);
 
-    expect(triggeredBy(".github/workflows/sandbox-images-and-e2e.yaml")).toEqual([
+    expect(triggeredBy(".github/workflows/sandbox-images.yaml")).toEqual([
       "test/e2e/support/sandbox-images-workflow-boundary.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/pr-self-hosted.yaml")).toEqual([

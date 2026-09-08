@@ -25,9 +25,13 @@ import { runCapture } from "../runner";
 import { isSafeModelId } from "../validation";
 import { isDgxStationGb300Product } from "./dgx-station-identity";
 import {
-  type Arm64WslDockerDesktopGpuProver,
-  captureNvidiaSmi,
+  type Arm64ContainerGpuProver,
+  type ContainerGpuProofResult,
+  type ContainerGpuProofStatus,
   escapeGpuNameForTerminal,
+} from "../container-gpu-proof";
+import {
+  captureNvidiaSmi,
   isDenylistedNvidiaGpuName,
   isPlausibleNvidiaGpuName,
   nvidiaHostLooksGenuine,
@@ -87,26 +91,25 @@ export interface GpuDetection {
   // onto `GpuInfo.computeConstrained` so the Ollama bootstrap-model selector
   // skips `computeIntensive` registry entries on these hosts.
   computeConstrained?: boolean;
-  // Set when a GPU was accepted only because a bounded Docker `--gpus` CUDA
-  // proof passed: a denylisted `JMJWOA-Generic-*` placeholder name on
-  // Windows-ARM N1X (WSL2 + Docker Desktop, #4565) or native ARM64 Linux
-  // (#8096), or a plausible, non-placeholder NVIDIA GPU name on an ARM64
-  // Linux host without `/proc/driver/nvidia` (#9000). Diagnostic marker that
-  // this detection cleared a live proof rather than firmware/name trust. The
-  // sandbox GPU preflight reaches the Docker Desktop WSL compatibility branch
-  // through its own `detectWslDockerDesktopStatus()` check, which stays false
-  // on a native Linux host; this flag does not gate that branch.
-  wslDockerDesktopGpuProofPassed?: boolean;
+  // Provider-bound proof state set only after a real CUDA workload succeeds on
+  // ARM64 Linux. The provider identity prevents readiness from attributing a
+  // proof from one runtime to another.
+  containerGpuProof?: ContainerGpuProofStatus;
+  /** Immutable Windows product observation used by the N1x WSL classification. */
+  n1xWslProduct?: boolean | null;
 }
 
 export interface DetectGpuDeps {
-  // Optional accept-path for native or Docker Desktop-backed WSL ARM64 Linux
+  // Optional accept-path for native or WSL ARM64 Linux
   // hosts that report a `JMJWOA-Generic-*` GPU (#4565/#8096) or a plausible,
   // non-placeholder NVIDIA GPU name without `/proc/driver/nvidia` (#9000).
-  // Injected in tests; in production
-  // `detectGpu()` lazily builds the default prover only when it is about to
-  // reject an ARM64 host that the proof could still clear.
-  proveArm64WslDockerDesktopGpu?: Arm64WslDockerDesktopGpuProver | null;
+  // Injected by effectful onboarding/rebuild owners and by tests. Read-only
+  // inference callers remain fail-closed and never pull a proof image.
+  proveArm64ContainerGpu?: Arm64ContainerGpuProver | null;
+  /** Observe attempted proof state even when failed proof makes detection return null. */
+  onContainerGpuProof?: (proof: ContainerGpuProofStatus) => void;
+  /** Product observation collected once by the effectful preflight boundary. */
+  n1xWslProduct?: boolean | null;
   /** Read-only command transport used by observation-only readiness callers. */
   runCaptureImpl?: typeof runCapture;
   /** Override WSL detection for deterministic tests. */
@@ -118,25 +121,12 @@ export interface DetectGpuDeps {
   onTrustGateRejection?: (reason: string) => void;
 }
 
-// Lazily construct the default ARM64 Linux GPU prover. Keep it behind a require
-// so the inference layer does not statically depend on the onboard layer. The
-// bounded Docker proof is wired only at the trust-gate reject paths.
-function defaultArm64WslDockerDesktopGpuProver(): Arm64WslDockerDesktopGpuProver | null {
-  try {
-    return require("../onboard/wsl-docker-desktop-gpu").createArm64WslDockerDesktopGpuProver();
-  } catch (error) {
-    // Only the optional module-resolution case should degrade to "no prover";
-    // a real bug inside the prover module must bubble up rather than masquerade
-    // as a missing GPU on an otherwise-supported N1X host.
-    if (
-      error &&
-      typeof error === "object" &&
-      (error as NodeJS.ErrnoException).code === "MODULE_NOT_FOUND"
-    ) {
-      return null;
-    }
-    throw error;
-  }
+function n1xWslProductObservationFromDeps(
+  deps: DetectGpuDeps,
+): Pick<GpuDetection, "n1xWslProduct"> {
+  return Object.prototype.hasOwnProperty.call(deps, "n1xWslProduct")
+    ? { n1xWslProduct: deps.n1xWslProduct ?? null }
+    : {};
 }
 
 // Group GPUs by their nvidia-smi model name, preserving first-appearance order.
@@ -510,7 +500,7 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
         // Windows-on-ARM WSL2 nvidia-smi shim emits a `JMJWOA-Generic-*`
         // placeholder name AND ships no `/proc/driver/nvidia/` directory. A
         // denylisted row still fails closed by default; the only escape is a
-        // bounded Docker `--gpus` CUDA proof (#4565), which the Snapdragon shim
+        // bounded container-provider CUDA proof (#4565), which the Snapdragon shim
         // cannot pass. Without that proof, any denylisted row rejects the whole
         // probe — partial filtering would let a mixed-row spoof surface a
         // non-placeholder row as a real GPU.
@@ -524,40 +514,48 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
         // are genuine, so a multi-row response stays untrusted.
         // Null when the proof passed; otherwise a fixed-text fragment naming
         // why it did not, composed into the onTrustGateRejection reason.
-        const boundedCudaProofRejection = (): string | null => {
+        type BoundedCudaProofAttempt =
+          | { proof: ContainerGpuProofResult; rejection: null }
+          | { proof: null; rejection: string };
+        const runBoundedCudaProof = (): BoundedCudaProofAttempt => {
           if (parsed.length !== 1) {
-            return "the bounded CUDA proof was not attempted for multiple GPU rows";
+            return {
+              proof: null,
+              rejection: "the bounded CUDA proof was not attempted for multiple GPU rows",
+            };
           }
-          const prover =
-            deps.proveArm64WslDockerDesktopGpu === undefined
-              ? defaultArm64WslDockerDesktopGpuProver()
-              : deps.proveArm64WslDockerDesktopGpu;
+          const prover = deps.proveArm64ContainerGpu ?? null;
           const proof = prover ? prover(parsed.map((p: ParsedGpu) => p.name)) : null;
           if (!proof) {
-            return "the bounded CUDA proof was not attempted";
+            return { proof: null, rejection: "the bounded CUDA proof was not attempted" };
           }
-          return proof.passed ? null : "the bounded CUDA proof failed";
+          deps.onContainerGpuProof?.({ providerId: proof.providerId, passed: proof.passed });
+          return proof.passed
+            ? { proof, rejection: null }
+            : { proof: null, rejection: "the bounded CUDA proof failed" };
         };
         let trusted: ParsedGpu[];
-        let wslDockerDesktopGpuProofPassed = false;
+        let boundedCudaProof: ContainerGpuProofResult | null = null;
+        let containerGpuProofPassed = false;
         if (firmwareConfirmsNvidia) {
           trusted = parsed;
         } else if (parsed.some((p: ParsedGpu) => isDenylistedNvidiaGpuName(p.name))) {
           // A denylisted `JMJWOA-Generic-*` placeholder. Both real Windows-ARM
-          // N1X (WSL2 + Docker Desktop) and the Snapdragon nvidia-smi shim emit
+          // N1X and the Snapdragon nvidia-smi shim emit
           // this name, so the name and `/proc/driver/nvidia` are insufficient.
-          // A bounded Docker `--gpus` workload proves that the single reported
+          // A bounded provider-owned CUDA workload proves that the single reported
           // row has a usable CUDA device. The Snapdragon shim cannot pass it
           // (#4565 without reopening #3988/#4424).
-          const proofRejection = boundedCudaProofRejection();
-          if (proofRejection) {
+          const proofAttempt = runBoundedCudaProof();
+          if (proofAttempt.rejection) {
             deps.onTrustGateRejection?.(
-              `nvidia-smi reported a placeholder GPU name and ${proofRejection}`,
+              `nvidia-smi reported a placeholder GPU name and ${proofAttempt.rejection}`,
             );
             return null;
           }
+          boundedCudaProof = proofAttempt.proof;
           trusted = parsed;
-          wslDockerDesktopGpuProofPassed = true;
+          containerGpuProofPassed = true;
         } else {
           if (!nvidiaHostLooksGenuine()) {
             // A plausible, non-placeholder NVIDIA GPU name on a host without
@@ -565,7 +563,7 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
             // paravirtualized through `/dev/dxg` and the proc interface never
             // exists. The same bounded CUDA proof used for a placeholder name
             // is required here (#9000). The plausibility check runs first so a
-            // name the filter below would discard never starts the Docker workload.
+            // name the filter below would discard never starts the container workload.
             // Without a passing proof this path stays fail-closed as before.
             const plausible = parsed.every((p: ParsedGpu) => isPlausibleNvidiaGpuName(p.name));
             if (!plausible) {
@@ -574,19 +572,20 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
               );
               return null;
             }
-            const proofRejection = boundedCudaProofRejection();
-            if (proofRejection) {
-              deps.onTrustGateRejection?.(`/proc/driver/nvidia is absent and ${proofRejection}`);
+            const proofAttempt = runBoundedCudaProof();
+            if (proofAttempt.rejection) {
+              deps.onTrustGateRejection?.(
+                `/proc/driver/nvidia is absent and ${proofAttempt.rejection}`,
+              );
               return null;
             }
-            wslDockerDesktopGpuProofPassed = true;
+            boundedCudaProof = proofAttempt.proof;
+            containerGpuProofPassed = true;
           }
           trusted = parsed.filter((p: ParsedGpu) => isPlausibleNvidiaGpuName(p.name));
         }
         if (trusted.length === 0) {
-          deps.onTrustGateRejection?.(
-            "nvidia-smi reported no recognized NVIDIA GPU product names",
-          );
+          deps.onTrustGateRejection?.("nvidia-smi reported no recognized NVIDIA GPU product names");
           return null;
         }
         const totalMemoryMB = trusted.reduce((sum: number, p: ParsedGpu) => sum + p.memoryMB, 0);
@@ -598,32 +597,52 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
         // Only surface a single name when every GPU reports the same model;
         // a mixed-GPU host would otherwise be misreported as `Nx <firstName>`.
         const allSameName = !!firstName && trusted.every((p: ParsedGpu) => p.name === firstName);
+        const verifiedCapacity = boundedCudaProof?.verifiedCapacity;
+        const n1xWslOllamaEligible =
+          containerGpuProofPassed &&
+          verifiedCapacity !== undefined &&
+          verifiedCapacity.availableMemoryMB >= 30_000 &&
+          deps.n1xWslProduct === true;
+        // Keep the 30B/35B timeout protection except for the planned
+        // identity-qualified WSL RTX Spark N1X path (#10954).
+        const computeConstrained =
+          !n1xWslOllamaEligible &&
+          (platform === "jetson" || platform === "n1x" || containerGpuProofPassed);
+        const selectedTotalMemoryMB = n1xWslOllamaEligible
+          ? verifiedCapacity.totalMemoryMB
+          : totalMemoryMB;
+        const selectedAvailableMemoryMB = n1xWslOllamaEligible
+          ? verifiedCapacity.availableMemoryMB
+          : availableMemoryMB;
         return {
           type: "nvidia",
           ...(allSameName ? { name: firstName } : {}),
-          gpus: trusted.map((p) => ({ name: p.name, memoryMB: p.memoryMB })),
+          gpus: trusted.map((p) => ({
+            name: p.name,
+            memoryMB: n1xWslOllamaEligible ? selectedTotalMemoryMB : p.memoryMB,
+          })),
           count: trusted.length,
-          totalMemoryMB,
-          ...(availableMemoryMB > 0 ? { availableMemoryMB } : {}),
-          perGpuMB: trusted[0].memoryMB,
-          nimCapable: canRunNimWithMemory(totalMemoryMB),
+          totalMemoryMB: selectedTotalMemoryMB,
+          ...(selectedAvailableMemoryMB > 0
+            ? { availableMemoryMB: selectedAvailableMemoryMB }
+            : {}),
+          perGpuMB: n1xWslOllamaEligible ? selectedTotalMemoryMB : trusted[0].memoryMB,
+          nimCapable: canRunNimWithMemory(selectedTotalMemoryMB),
           platform,
           spark: platform === "spark",
           ...(platform === "spark" || platform === "n1x" || platform === "jetson"
             ? { unifiedMemory: true }
             : {}),
-          // The proof-passed ARM64 N1X GPU is memory-shared like Jetson and
-          // cannot serve a computeIntensive model in-loop, so tag it
-          // computeConstrained to exclude those Ollama bootstrap models (#3707).
-          // This covers N1X on WSL2 and native Linux (#8096), plus any
-          // proof-passed GPU with a plausible, non-placeholder NVIDIA name
-          // (#9000). The latter lacks firmware and kernel-driver identity, so
-          // avoid selecting compute-intensive bootstrap models without device
-          // evidence.
-          ...(platform === "jetson" || platform === "n1x" || wslDockerDesktopGpuProofPassed
-            ? { computeConstrained: true }
+          ...(computeConstrained ? { computeConstrained: true } : {}),
+          ...(containerGpuProofPassed && boundedCudaProof
+            ? {
+                containerGpuProof: {
+                  providerId: boundedCudaProof.providerId,
+                  passed: true as const,
+                },
+              }
             : {}),
-          ...(wslDockerDesktopGpuProofPassed ? { wslDockerDesktopGpuProofPassed: true } : {}),
+          ...n1xWslProductObservationFromDeps(deps),
         };
       }
     }
@@ -676,11 +695,7 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
         : firmwareIsUnifiedMemory
           ? gpuNames
           : [];
-    if (
-      taggedNames.length > 0 &&
-      !firmwareIsUnifiedMemory &&
-      !allowTaggedOnGenericFirmware
-    ) {
+    if (taggedNames.length > 0 && !firmwareIsUnifiedMemory && !allowTaggedOnGenericFirmware) {
       deps.onTrustGateRejection?.(
         "/proc/driver/nvidia is absent for the nvidia-smi names-only unified-memory check",
       );

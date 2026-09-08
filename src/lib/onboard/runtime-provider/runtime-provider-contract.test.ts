@@ -60,6 +60,18 @@ const PORTABLE_PROFILE = {
     startupProfileContractVersions: [1],
     capabilityContractVersions: [1],
   },
+  portableAgentRuntimeSupport: {
+    exactDigestReferences: true,
+    agents: ["hermes"],
+    platforms: ["linux/amd64", "linux/arm64"],
+    contractVersions: [1],
+    capabilityContractVersions: [1],
+    tokenizedStartupCommands: true,
+    openshellSandboxCommand: true,
+    openshellNonRootIdentity: true,
+    openshellWorkspaceOwnership: true,
+    ownerOnlyPrivateState: true,
+  },
   hostArchitectures: ["amd64", "arm64"],
   managedImageSelectionPolicy: "require-managed",
   legacyDockerfileBuilds: true,
@@ -163,6 +175,7 @@ describe("RuntimeProviderBundle registry contract", () => {
           : { supported: false },
       );
       expect(bundle.recovery).toMatchObject({ supported: providerId === "podman" });
+      expect(bundle.workload.profile.portableAgentRuntimeSupport).toBeUndefined();
     });
     expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.docker?.capabilities.hostLocalInference).toBe(true);
     expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.docker?.hostLocalInference).toMatchObject({
@@ -230,6 +243,10 @@ describe("RuntimeProviderBundle registry contract", () => {
     expect(Object.isFrozen(registry)).toBe(true);
     expect(Object.isFrozen(registered)).toBe(true);
     expect(Object.isFrozen(registered.workload.profile)).toBe(true);
+    expect(Object.isFrozen(registered.workload.profile.portableAgentRuntimeSupport)).toBe(true);
+    expect(Object.isFrozen(registered.workload.profile.portableAgentRuntimeSupport!.agents)).toBe(
+      true,
+    );
     const support = registered.workload.profile.support;
     expect(support).not.toBeNull();
     expect(Object.isFrozen(support!.platforms)).toBe(true);
@@ -245,6 +262,27 @@ describe("RuntimeProviderBundle registry contract", () => {
     expect(() => {
       (registered.capabilities as { directLifecycle: boolean }).directLifecycle = false;
     }).toThrow(TypeError);
+  });
+
+  it("rejects incomplete portable runtime capability advertisements (#11079)", () => {
+    const bundle = mxcBundle();
+    const support = bundle.workload.profile.portableAgentRuntimeSupport!;
+    const { openshellSandboxCommand: _openshellSandboxCommand, ...incomplete } = support;
+
+    expect(() =>
+      createRuntimeProviderBundleRegistry([
+        [
+          "mxc",
+          replaceSurface(bundle, "workload", {
+            ...bundle.workload,
+            profile: {
+              ...bundle.workload.profile,
+              portableAgentRuntimeSupport: incomplete,
+            },
+          }),
+        ],
+      ]),
+    ).toThrow(/must declare portable agent runtime openshellSandboxCommand/u);
   });
 
   it("registers an MXC-style managed-bootstrap provider through the bundle surface", () => {

@@ -285,6 +285,9 @@ describe("publishDownloadArtifact", () => {
     expect(fs.readFileSync(outside, "utf8")).toBe("outside");
   });
 
+  // #10636: the destination directory used to be created before the staged
+  // members were inspected, so a rejected artifact still published a partial
+  // host destination.
   it("rejects a symbolic link in the staged artifact without publishing it", () => {
     const staged = path.join(dir, "staged");
     const outside = path.join(dir, "outside.txt");
@@ -296,9 +299,48 @@ describe("publishDownloadArtifact", () => {
     expect(() => publishDownloadArtifact(staged, destination, "dir")).toThrow(
       /Refusing to publish symbolic link from staged artifact/,
     );
+    expect(fs.existsSync(destination)).toBe(false);
     expect(fs.existsSync(path.join(destination, "linked.txt"))).toBe(false);
     expect(fs.readFileSync(outside, "utf8")).toBe("outside");
   });
+
+  it("leaves a fresh destination absent when a nested member is a symbolic link (#10636)", () => {
+    const staged = path.join(dir, "staged");
+    const outside = path.join(dir, "outside.txt");
+    const destination = path.join(dir, "destination");
+    fs.mkdirSync(path.join(staged, "nested"), { recursive: true });
+    fs.writeFileSync(outside, "outside");
+    fs.writeFileSync(path.join(staged, "keep.txt"), "keep");
+    fs.symlinkSync(outside, path.join(staged, "nested", "linked.txt"));
+
+    expect(() => publishDownloadArtifact(staged, destination, "dir")).toThrow(
+      /Refusing to publish symbolic link from staged artifact/,
+    );
+    expect(fs.existsSync(destination)).toBe(false);
+    expect(fs.readFileSync(outside, "utf8")).toBe("outside");
+  });
+
+  it.runIf(process.platform !== "win32")(
+    "leaves a fresh destination absent when a nested member is a FIFO (#10636)",
+    () => {
+      const staged = path.join(dir, "staged");
+      const destination = path.join(dir, "destination");
+      const fifo = path.join(staged, "nested", "input");
+      fs.mkdirSync(path.dirname(fifo), { recursive: true });
+      fs.writeFileSync(path.join(staged, "keep.txt"), "keep");
+      const created = actualChildProcess.spawnSync("mkfifo", [fifo], {
+        encoding: "utf8",
+        timeout: 5_000,
+      });
+      expect(created.status, created.stderr).toBe(0);
+      expect(fs.lstatSync(fifo).isFIFO()).toBe(true);
+
+      expect(() => publishDownloadArtifact(staged, destination, "dir")).toThrow(
+        /Refusing to publish unsupported staged artifact/,
+      );
+      expect(fs.existsSync(destination)).toBe(false);
+    },
+  );
 
   it("replaces an existing regular file", () => {
     const staged = path.join(dir, "staged.txt");

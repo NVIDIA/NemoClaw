@@ -4,6 +4,7 @@
 import { isObjectRecord } from "../core/json-types";
 import { isIP } from "node:net";
 import { isBlockedMcpUrlTargetHost, MCP_SERVER_URL_MAX_LENGTH } from "../security/mcp-url-target";
+import { inspectMcpDeniedToolSelectors } from "../security/mcp-denied-tool-selector";
 import {
   canonicalizeTrustedPrivateEndpointPins,
   normalizeTrustedPrivateHost,
@@ -15,6 +16,10 @@ export interface McpBridgeEntry {
   adapter?: string;
   url: string;
   env: string[];
+  /** Tool-name or tool-name-glob selectors denied at the OpenShell MCP proxy. */
+  denyTools?: string[];
+  /** Durable replacement intent retained until restart or update commits it. */
+  pendingDenyTools?: string[];
   /** Exact URL host explicitly admitted for routed private access. */
   trustedPrivateHost?: string;
   /** Validated endpoint pins recorded as MCP domain state for new bridges. */
@@ -204,6 +209,20 @@ function normalizeMcpBridgeEntry(server: string, value: unknown): McpBridgeEntry
       ? [...new Set(rawEnv)]
       : null;
   if (!env) return null;
+  let denyTools: string[] | undefined;
+  const rawDenyTools = value.denyTools;
+  if (rawDenyTools !== undefined) {
+    const inspection = inspectMcpDeniedToolSelectors(rawDenyTools);
+    if (!inspection.ok || !inspection.canonical) return null;
+    if (inspection.selectors.length > 0) denyTools = inspection.selectors;
+  }
+  let pendingDenyTools: string[] | undefined;
+  const rawPendingDenyTools = value.pendingDenyTools;
+  if (rawPendingDenyTools !== undefined) {
+    const inspection = inspectMcpDeniedToolSelectors(rawPendingDenyTools);
+    if (!inspection.ok || !inspection.canonical) return null;
+    pendingDenyTools = inspection.selectors;
+  }
   const adapter = typeof value.adapter === "string" && value.adapter ? value.adapter : undefined;
   if (adapter && !MCP_ADAPTERS.has(adapter)) return null;
   const providerName =
@@ -228,6 +247,8 @@ function normalizeMcpBridgeEntry(server: string, value: unknown): McpBridgeEntry
     ...(adapter ? { adapter } : {}),
     url,
     env,
+    ...(denyTools ? { denyTools } : {}),
+    ...(pendingDenyTools !== undefined ? { pendingDenyTools } : {}),
     ...(trustedPrivateHost ? { trustedPrivateHost } : {}),
     ...(allowedIps ? { allowedIps } : {}),
     ...(providerName ? { providerName } : {}),
