@@ -30,6 +30,8 @@ async function main(): Promise<void> {
       tools: [],
       truncated: false,
       detail: "tool discovery received invalid runtime arguments",
+      failedStage: "preflight",
+      failureClass: "precondition",
     });
     return;
   }
@@ -50,6 +52,8 @@ async function main(): Promise<void> {
       tools: [],
       truncated: false,
       detail: "managed MCP credential placeholder is unavailable",
+      failedStage: "preflight",
+      failureClass: "precondition",
     });
     return;
   }

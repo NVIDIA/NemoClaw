@@ -42,7 +42,10 @@ import {
   getSandboxAgent,
   getSandboxOrThrow,
 } from "./mcp-bridge-state";
-import { discoverMcpTools } from "./mcp-bridge-tool-discovery";
+import {
+  discoverMcpTools,
+  mcpToolDiscoveryPreconditionFailure,
+} from "./mcp-bridge-tool-discovery";
 import {
   inspectMcpRecordedTargetPins,
   type McpBridgeRecordedPinStatus,
@@ -240,13 +243,9 @@ export async function statusMcpBridge(
         adapter: { registered: null },
         ...(options.discoverTools
           ? {
-              toolDiscovery: {
-                ok: false,
-                count: 0,
-                tools: [],
-                truncated: false,
-                detail: "tool discovery skipped: MCP server is not registered",
-              },
+              toolDiscovery: mcpToolDiscoveryPreconditionFailure(
+                "tool discovery skipped: MCP server is not registered",
+              ),
             }
           : {}),
       },
@@ -438,13 +437,9 @@ export async function statusMcpBridge(
     const toolDiscovery =
       options.discoverTools && entry
         ? unsafeCredentialMayBeAttached
-          ? {
-              ok: false,
-              count: 0,
-              tools: [],
-              truncated: false,
-              detail: `tool discovery skipped: ${UNSUPPORTED_ATTACHED_CREDENTIAL_DETAIL}`,
-            }
+          ? mcpToolDiscoveryPreconditionFailure(
+              `tool discovery skipped: ${UNSUPPORTED_ATTACHED_CREDENTIAL_DETAIL}`,
+            )
           : discoverMcpTools(
               sandboxName,
               entry,

@@ -220,7 +220,7 @@ describe("MCP tool discovery image contract", () => {
       relativePath: "mcp-tool-discovery/THIRD_PARTY_LICENSES.txt",
     },
     {
-      expectedHash: "47b9c1f7f1f5b6c9d5bf304953701b2cff107a81ced8a9646ea66ec12bc6b7f1",
+      expectedHash: "3cff01c9552108804673bc93b5e7c50aa5efd3f15b85a3c64711440a8f980edc",
       relativePath: "mcp-tool-discovery/mcp-tool-discovery.bundle",
     },
   ])("pins the reviewed image runtime artifacts exactly", ({ expectedHash, relativePath }) => {
@@ -254,12 +254,14 @@ describe("MCP tool discovery image contract", () => {
       const discoveryResult = spawnSync(process.execPath, [executablePath], { encoding: "utf8" });
       expect(discoveryResult).toMatchObject({ status: 0, stderr: "" });
       expect(JSON.parse(discoveryResult.stdout)).toEqual({
-        protocol: 1,
+        protocol: 2,
         ok: false,
         count: 0,
         tools: [],
         truncated: false,
         detail: "tool discovery received invalid runtime arguments",
+        failedStage: "preflight",
+        failureClass: "precondition",
       });
     } finally {
       fs.rmSync(executableFixture, { force: true, recursive: true });

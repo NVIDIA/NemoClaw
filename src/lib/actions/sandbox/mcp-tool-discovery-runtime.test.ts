@@ -9,6 +9,7 @@ import {
   enumerateMcpToolNames,
   MCP_TOOL_DISCOVERY_LIMITS,
   MCP_TOOL_DISCOVERY_PROTOCOL,
+  mcpToolDiscoveryFailure,
   normalizeMcpToolPage,
   parseMcpToolDiscoveryArguments,
   runMcpToolDiscoverySession,
@@ -174,6 +175,8 @@ describe("shared MCP tool discovery runtime", () => {
       tools: [],
       truncated: true,
       detail: `tool discovery reached the ${MCP_TOOL_DISCOVERY_LIMITS.maxPages}-page safety limit`,
+      failedStage: "tool-discovery",
+      failureClass: "tool-operation",
     });
   });
 
@@ -238,11 +241,42 @@ describe("shared MCP tool discovery runtime", () => {
       count: 0,
       tools: [],
       truncated: false,
-      detail: "MCP tool discovery request failed",
+      detail: "MCP request failed",
+      failedStage: "tool-discovery",
+      failureClass: "tool-operation",
     });
     expect(JSON.stringify(result)).not.toContain("Bearer");
     expect(JSON.stringify(result)).not.toContain("terminate failure");
     expect(JSON.stringify(result)).not.toContain("close failure");
+  });
+
+  it("closes the client after authentication fails during initialization (#10944)", async () => {
+    const terminateSession = vi.fn();
+    const close = vi.fn(async () => undefined);
+    const publishResult = vi.fn();
+
+    await runMcpToolDiscoverySession({
+      connect: vi.fn(async () => {
+        throw new ToolDiscoveryRuntimeError("http-error", 401);
+      }),
+      loadPage: vi.fn(),
+      hasSession: () => false,
+      terminateSession,
+      close,
+      publishResult,
+    });
+
+    expect(terminateSession).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledOnce();
+    expect(publishResult).toHaveBeenCalledWith({
+      ok: false,
+      count: 0,
+      tools: [],
+      truncated: false,
+      detail: "MCP endpoint rejected the request (HTTP 401)",
+      failedStage: "initialization",
+      failureClass: "authentication",
+    });
   });
 
   it("rejects redirects, HTTP failures, and declared oversized responses before reading bodies", async () => {
@@ -264,6 +298,15 @@ describe("shared MCP tool discovery runtime", () => {
       httpStatus: 401,
     });
 
+    const forbiddenFetch = createBoundedMcpFetch(
+      async () => new Response("untrusted auth failure", { status: 403 }),
+      deadline,
+    );
+    await expect(forbiddenFetch("https://example.test/mcp")).rejects.toMatchObject({
+      code: "http-error",
+      httpStatus: 403,
+    });
+
     const oversizedFetch = createBoundedMcpFetch(
       async () =>
         new Response("small", {
@@ -276,6 +319,46 @@ describe("shared MCP tool discovery runtime", () => {
     await expect(oversizedFetch("https://example.test/mcp")).rejects.toMatchObject({
       code: "response-too-large",
     });
+  });
+
+  it.each([
+    ["connection refusal", new TypeError("connect ECONNREFUSED credential-bearing.invalid")],
+    ["DNS failure", new TypeError("getaddrinfo ENOTFOUND credential-bearing.invalid")],
+    ["TLS failure", new TypeError("certificate rejected for credential-bearing.invalid")],
+  ])("classifies %s without exposing transport error text (#10944)", async (_label, error) => {
+    const boundedFetch = createBoundedMcpFetch(
+      async () => Promise.reject(error),
+      AbortSignal.timeout(1_000),
+    );
+
+    const classifiedError = await boundedFetch("https://example.test/mcp").catch(
+      (caught: unknown) => caught,
+    );
+    expect(classifiedError).toMatchObject({ code: "connection" });
+    const result = mcpToolDiscoveryFailure(classifiedError, "initialization");
+    expect(result).toMatchObject({
+      ok: false,
+      failedStage: "initialization",
+      failureClass: "connection",
+    });
+    expect(JSON.stringify(result)).not.toContain("credential-bearing.invalid");
+  });
+
+  it("classifies a response-body connection failure without exposing its error (#10944)", async () => {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.error(new TypeError("credential-bearing response interruption"));
+      },
+    });
+    const boundedFetch = createBoundedMcpFetch(
+      async () => new Response(body),
+      AbortSignal.timeout(1_000),
+    );
+
+    const response = await boundedFetch("https://example.test/mcp");
+    const error = await response.arrayBuffer().catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ code: "connection" });
+    expect(JSON.stringify(error)).not.toContain("credential-bearing");
   });
 
   it("cancels a chunked response after cumulative bytes cross the limit", async () => {
@@ -323,27 +406,62 @@ describe("shared MCP tool discovery runtime", () => {
       (abortSource === "deadline" ? deadline : request).abort();
       const error = await pending.catch((caught: unknown) => caught);
       expect(error).toMatchObject({ code: "timeout" });
-      expect(safeToolDiscoveryErrorDetail(error)).toBe("tool discovery timed out after 10s");
+      expect(safeToolDiscoveryErrorDetail(error)).toBe("MCP request timed out after 10s");
       expect(safeToolDiscoveryErrorDetail(error)).not.toContain("untrusted-timeout-detail");
     },
   );
 
   it("maps failures to bounded details without echoing untrusted messages", () => {
+    expect(safeToolDiscoveryErrorDetail(new ToolDiscoveryRuntimeError("connection"))).toBe(
+      "MCP endpoint connection failed",
+    );
     expect(safeToolDiscoveryErrorDetail(new ToolDiscoveryRuntimeError("redirect"))).toBe(
       "MCP endpoint redirect was rejected",
     );
     expect(safeToolDiscoveryErrorDetail(new ToolDiscoveryRuntimeError("http-error", 401))).toBe(
-      "MCP endpoint rejected tool discovery (HTTP 401)",
+      "MCP endpoint rejected the request (HTTP 401)",
     );
     expect(
       safeToolDiscoveryErrorDetail(
         Object.assign(new Error("remote body contains Bearer secret-value"), { code: 401 }),
       ),
-    ).toBe("MCP tool discovery request failed");
+    ).toBe("MCP request failed");
     expect(safeToolDiscoveryErrorDetail(new Error("Bearer secret-value"))).toBe(
-      "MCP tool discovery request failed",
+      "MCP request failed",
     );
   });
+
+  it.each([
+    ["connection", new ToolDiscoveryRuntimeError("connection"), "initialization", "connection"],
+    [
+      "authentication",
+      new ToolDiscoveryRuntimeError("http-error", 401),
+      "initialization",
+      "authentication",
+    ],
+    [
+      "forbidden authentication",
+      new ToolDiscoveryRuntimeError("http-error", 403),
+      "initialization",
+      "authentication",
+    ],
+    ["timeout", new ToolDiscoveryRuntimeError("timeout"), "initialization", "connection"],
+    ["protocol", new ToolDiscoveryRuntimeError("invalid-response"), "tool-discovery", "protocol"],
+    ["initialization protocol", new Error("untrusted parse failure"), "initialization", "protocol"],
+    [
+      "tool operation",
+      new Error("untrusted operation failure"),
+      "tool-discovery",
+      "tool-operation",
+    ],
+  ] as const)(
+    "classifies %s failures without returning untrusted error text (#10944)",
+    (_label, error, failedStage, failureClass) => {
+      const result = mcpToolDiscoveryFailure(error, failedStage);
+      expect(result).toMatchObject({ ok: false, failedStage, failureClass });
+      expect(JSON.stringify(result)).not.toContain("untrusted");
+    },
+  );
 
   it("keeps the host parser and image runtime on the same result limits", () => {
     expect(MCP_TOOL_DISCOVERY_RESULT_PROTOCOL).toBe(MCP_TOOL_DISCOVERY_PROTOCOL);

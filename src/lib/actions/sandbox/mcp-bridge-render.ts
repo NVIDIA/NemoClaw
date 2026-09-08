@@ -98,7 +98,9 @@ export function renderMcpBridgeStatus(
     if (discovery) {
       console.log(
         `    tool discovery: ${
-          discovery.ok ? "successful" : `FAILED${discovery.detail ? ` (${discovery.detail})` : ""}`
+          discovery.ok
+            ? "successful"
+            : `FAILED${discovery.failedStage ? ` at ${discovery.failedStage}` : ""}${discovery.detail ? ` (${discovery.detail})` : ""}`
         }`,
       );
       console.log(

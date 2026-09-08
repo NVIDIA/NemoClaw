@@ -1144,13 +1144,11 @@ mcpBridgeShardTest("hermes")(
       expectedAdapter: "hermes-config",
       artifactPrefix: "hermes",
     });
-    const initialDiscoveryRequestOffset = fakeMcp.requests.length;
-    const initialDiscoveryObservationOffset = fakeMcp.observations.length;
     await runHermesInitialMcpReadiness({
       discover: () =>
         assertAuthenticatedMcpDiscoveryWithOneRestart(fakeMcp, {
-          requestOffset: initialDiscoveryRequestOffset,
-          observationOffset: initialDiscoveryObservationOffset,
+          requestOffset: fakeMcp.requests.length,
+          observationOffset: fakeMcp.observations.length,
           expectedSecret: HOST_SECRET,
           label: "Hermes initial MCP discovery",
           artifacts,
@@ -1171,8 +1169,10 @@ mcpBridgeShardTest("hermes")(
           artifacts,
           sandboxName: HERMES_SANDBOX_NAME,
           artifactPrefix: "hermes",
+          deniedSecret: ROTATED_HOST_SECRET,
           hostSecret: HOST_SECRET,
           progress,
+          sandbox,
         }),
       prepareModelTurn: async () => {
         await assertBridgeInfrastructure(host, sandbox, {
