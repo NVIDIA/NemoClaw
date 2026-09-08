@@ -101,6 +101,10 @@ const createDirectSetupInferenceHarness =
   createDirectSetupInferenceHarnessFactory(createSetupInference);
 
 describe("onboard helpers", () => {
+  it("does not expose the removed provider argument builder", () => {
+    expect(loadedOnboardInternals).not.toHaveProperty("buildProviderArgs");
+  });
+
   it("does not treat an empty policy preset selection as already applied (#6042)", () => {
     expect(arePolicyPresetsApplied("unused", [])).toBe(false);
   });
