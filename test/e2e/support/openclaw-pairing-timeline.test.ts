@@ -136,7 +136,7 @@ function writeStateTree(root: string) {
     "node\0/usr/local/lib/node_modules/openclaw/openclaw.mjs\0gateway\0run\0--port\0" + "18789\0",
   );
   writeText(join(inputs.procRoot, "50", "stat"), procStat(50, "python3", 700));
-  writeText(join(inputs.procRoot, "50", "cmdline"), "python3\0-u\0-\0");
+  writeText(join(inputs.procRoot, "50", "cmdline"), "python3\0-\0");
   mkdirSync(join(inputs.procRoot, "50", "fd"), { recursive: true });
   symlinkSync("/tmp/other.log", join(inputs.procRoot, "50", "fd", "1"));
   writeText(join(inputs.procRoot, "77", "stat"), procStat(77, "python3", 3250));
@@ -283,7 +283,11 @@ describe("OpenClaw pairing timeline evidence", () => {
         processes: {
           containerStartedAtMs: BOOT_TIME_MS + 2_500,
           gateway: { running: true, startedAtMs: BOOT_TIME_MS + 12_500 },
-          autoPairWatcher: { running: true, startedAtMs: BOOT_TIME_MS + 32_500 },
+          autoPairWatcher: {
+            running: true,
+            startedAtMs: BOOT_TIME_MS + 32_500,
+            stdoutIsAutoPairLog: true,
+          },
         },
       });
       expect(SECRETS.some((secret) => result.stdout.includes(secret))).toBe(false);
@@ -330,7 +334,7 @@ describe("OpenClaw pairing timeline evidence", () => {
         processes: {
           containerStartedAtMs: null,
           gateway: { running: false, startedAtMs: null },
-          autoPairWatcher: { running: false, startedAtMs: null },
+          autoPairWatcher: { running: false, startedAtMs: null, stdoutIsAutoPairLog: null },
         },
       });
       expect(result.stdout).not.toContain(root);
