@@ -16,6 +16,8 @@ describe("native snapshot sanitizer workflow", () => {
 
     expect(workflow.on?.pull_request?.paths).toEqual(
       expect.arrayContaining([
+        "package-lock.json",
+        "package.json",
         "src/lib/security/credential-filter.ts",
         "src/lib/security/snapshot-sanitizer.ts",
       ]),

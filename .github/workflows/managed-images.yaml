@@ -43,6 +43,8 @@ on:
       - "ci/reviewed-npm-audit.json"
       - "nemoclaw/**"
       - "nemoclaw-blueprint/**"
+      - "package-lock.json"
+      - "package.json"
       - "scripts/**"
       - "src/lib/actions/sandbox/openshell-child-visible-credentials.v*.json"
       - "src/lib/actions/sandbox/mcp-bridge-*.ts"
