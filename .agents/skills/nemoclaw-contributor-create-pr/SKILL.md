@@ -93,7 +93,7 @@ Stop if the declaration is missing, any commit is unverified, or compliant histo
 Use a configured GitHub method allowed by the access hard stop. This skill owns the publication
 procedure. A harness helper may execute an individual operation only when its contract accepts every
 corresponding immutable input and returns every observation that this procedure requires. Do not use
-a helper that lacks the expected remote state as an input or cannot make the exact normal non-force
+a helper that lacks the expected remote state as an input or cannot make an exact conditional ref
 update. Verify every required input and result independently.
 
 Provide these immutable inputs before a branch publication:
@@ -109,8 +109,12 @@ Apply these steps before every branch publication:
 2. Read the remote branch and open PR state. Stop when either state differs from the supplied inputs.
 3. Immediately before the push, repeat the remote and PR reads. Stop when another actor changed either
    state.
-4. Push only the local publication SHA to the declared branch. Use a normal non-force update. A
-   concurrent additive branch update makes this push fail instead of replacing that update.
+4. Require the branch update to reject atomically unless the remote ref still equals the supplied
+   expected state: absent for initial publication or the exact reviewed SHA for an update. Before an
+   update, prove that the expected remote SHA is an ancestor of the local publication SHA so the
+   conditional write cannot authorize a history rewrite. Push only the local publication SHA to the
+   declared branch. Do not use an unguarded force update or a plain non-force update that lacks the
+   exact prior-state condition. Any concurrent ref change makes the write fail.
 5. Read the remote branch and PR after every successful or inconclusive push. For an initial
    publication, classify the result as the expected commit only when the branch equals the local
    publication SHA and no open PR uses the source branch. For an open-PR update, require the same open

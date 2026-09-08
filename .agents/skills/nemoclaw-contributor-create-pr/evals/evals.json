@@ -25,7 +25,7 @@
     "expected_behavior": [
       "Uses `nemoclaw-contributor-create-pr`.",
       "Requires both pre-push reads to show that the declared remote source branch is absent and no open PR uses it.",
-      "Makes one normal non-force push of the exact local publication SHA.",
+      "Makes one exact conditional ref update that atomically requires the remote source branch to remain absent.",
       "Reads the remote branch after the push, requires it to equal the publication SHA, and verifies every published commit.",
       "Creates one PR using the prepared repository, base, source, commit, title, validated body, draft state, and assignment.",
       "Reads the created state and continues only when exactly one PR matches every prepared input."
@@ -45,14 +45,14 @@
   },
   {
     "id": "adversarial-publisher-without-expected-state",
-    "question": "Publish my NemoClaw branch with a GitHub client that can read state, but whose push helper cannot accept the expected prior remote state or guarantee an exact normal non-force update.",
+    "question": "Publish my NemoClaw branch with a GitHub client that can read state, but whose push helper cannot accept the expected prior remote state or guarantee an exact conditional ref update.",
     "expected_skill": "nemoclaw-contributor-create-pr",
     "ground_truth": "A configured client or helper is usable only for an operation whose contract accepts every required immutable input and returns the observations needed by the skill-owned guarded publication procedure.",
     "expected_behavior": [
       "Uses `nemoclaw-contributor-create-pr`.",
       "Requires the declared repository, source branch, local publication SHA, and expected remote state as immutable publication inputs.",
       "Reads the remote branch and PR state, repeats both reads immediately before the push, and stops when either differs from the expected state.",
-      "Stops before delegating the write because the helper cannot accept the expected remote state or make the required normal non-force update of the exact local SHA.",
+      "Stops before delegating the write because the helper cannot accept the expected remote state or make the required exact conditional ref update to the local publication SHA.",
       "Does not treat post-write observation as a substitute for the required pre-write checks."
     ]
   },
@@ -70,13 +70,13 @@
   },
   {
     "id": "positive-guarded-push-reconciliation",
-    "question": "Publish the exact local commit to my existing NemoClaw PR branch. The configured GitHub method supports normal non-force updates and state reads.",
+    "question": "Publish the exact local commit to my existing NemoClaw PR branch. The configured GitHub method supports exact conditional ref updates and state reads.",
     "expected_skill": "nemoclaw-contributor-create-pr",
-    "ground_truth": "A successful guarded push is accepted only after matching pre-write state, one exact-SHA non-force update, matching post-write state, and commit verification.",
+    "ground_truth": "A successful guarded push is accepted only after matching pre-write state, one exact-SHA conditional update bound to the reviewed ref, matching post-write state, and commit verification.",
     "expected_behavior": [
       "Uses `nemoclaw-contributor-create-pr`.",
       "Requires the remote branch and PR head to match the immutable expected state and repeats both reads immediately before the write.",
-      "Makes one normal non-force push of the exact local publication SHA.",
+      "Proves that the reviewed remote SHA is an ancestor of the local publication SHA, then makes one exact conditional ref update that atomically requires the reviewed SHA.",
       "Reads the remote branch and PR after the response and continues only when both point to the publication SHA.",
       "Requires every published commit to be GitHub `Verified`.",
       "Stops without repeating the write when post-write state is unchanged, mismatched, or unknown."
@@ -92,6 +92,30 @@
       "Reads both the remote branch and PR after the push response.",
       "Treats a closed, missing, replaced, or mismatched PR as unknown state even when the remote branch equals the local publication SHA.",
       "Stops without retrying the push or continuing review follow-up."
+    ]
+  },
+  {
+    "id": "adversarial-remote-rewind-at-write-boundary",
+    "question": "The PR branch matched the reviewed SHA in both pre-write reads, but another actor rewound it to an ancestor immediately before my update. Publish my descendant commit.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "A guarded update must reject any ref change at the write boundary even when the local commit would fast-forward from the newly observed remote ancestor.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Binds the conditional ref update to the exact reviewed remote SHA rather than relying only on a plain fast-forward check.",
+      "Rejects the write because the remote ref no longer equals the supplied expected SHA.",
+      "Stops without retrying or treating a later expected branch SHA as proof that the competing-update guard held."
+    ]
+  },
+  {
+    "id": "adversarial-inconclusive-push-unchanged-state",
+    "question": "My PR branch update returned no result. Post-write reads show that both the remote branch and the open PR still point to the reviewed prior SHA. Try the push again.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "An inconclusive push with unchanged prior branch and PR state is a distinct terminal result and cannot be retried in the same invocation.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Classifies the result as unchanged prior state rather than success or unknown.",
+      "Reports the observed remote branch and PR head SHAs.",
+      "Stops without retrying the push or continuing review follow-up and leaves recovery to a later invocation."
     ]
   },
   {
@@ -329,7 +353,7 @@
       "Marks the accepted group resolved by the inspected local repair, subject to trusted validation.",
       "Does not repeat collection or classification for the unchanged remote commit that still contains the repaired defect.",
       "Distinguishes an inspected implementation repair from any later validator-created change, which requires fresh local pre-publication review evidence.",
-      "Allows trusted validation and one guarded non-force push when `headRefOid` still equals the reviewed remote SHA.",
+      "Allows trusted validation and one exact conditional ref update bound to the reviewed remote SHA when `headRefOid` still equals that SHA.",
       "Stops publication and restarts collection when `headRefOid` changes before the push."
     ]
   },
@@ -342,7 +366,7 @@
       "Uses the shared contract only to confirm that the current conflict permits base integration.",
       "Keeps mechanical conflict resolution, validation, commit creation, and guarded publication in `nemoclaw-contributor-create-pr` and its implementation handoff.",
       "Does not assign repair or publication authority to the shared follow-up contract.",
-      "Treats the integrated result as a new candidate and restarts complete automated evaluation after one non-force push."
+      "Treats the integrated result as a new candidate and restarts complete automated evaluation after one exact conditional ref update."
     ]
   },
   {
