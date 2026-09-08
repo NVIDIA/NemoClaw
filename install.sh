@@ -79,6 +79,60 @@ clone_nemoclaw_ref() {
   )
 }
 
+installed_nemoclaw_release_version() {
+  local cli_path output
+  cli_path="$(command -v nemoclaw 2>/dev/null || true)"
+  [[ -n "$cli_path" ]] || return 0
+  output="$("$cli_path" --version 2>/dev/null || true)"
+  if [[ "$output" =~ ^nemoclaw[[:space:]]+v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+    printf '%s' "${BASH_REMATCH[1]}"
+  fi
+}
+
+checkout_release_version() {
+  local source_root="$1" target_commit ref version
+  target_commit="$(git -C "$source_root" rev-parse HEAD 2>/dev/null || true)"
+  [[ -n "$target_commit" ]] || return 0
+  while read -r commit ref; do
+    [[ "$commit" == "$target_commit" ]] || continue
+    ref="${ref%\^\{\}}"
+    version="${ref#refs/tags/v}"
+    if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      printf '%s' "$version"
+      return 0
+    fi
+  done < <(git -C "$source_root" ls-remote --tags origin 'refs/tags/v*' 2>/dev/null || true)
+}
+
+release_version_is_newer() {
+  local left="$1" right="$2" left_major left_minor left_patch right_major right_minor right_patch
+  IFS=. read -r left_major left_minor left_patch <<<"$left"
+  IFS=. read -r right_major right_minor right_patch <<<"$right"
+  ((10#$left_major > 10#$right_major)) && return 0
+  ((10#$left_major < 10#$right_major)) && return 1
+  ((10#$left_minor > 10#$right_minor)) && return 0
+  ((10#$left_minor < 10#$right_minor)) && return 1
+  ((10#$left_patch > 10#$right_patch))
+}
+
+guard_implicit_maintained_downgrade() {
+  local source_root="$1" installed_version target_version
+  [[ -z "${NEMOCLAW_INSTALL_REF:-}" && -z "${NEMOCLAW_INSTALL_TAG:-}" ]] || return 0
+  installed_version="$(installed_nemoclaw_release_version)"
+  [[ -n "$installed_version" ]] || return 0
+  target_version="$(checkout_release_version "$source_root")"
+  if [[ -z "$target_version" ]]; then
+    printf "[ERROR] Cannot verify the maintained lkg version before replacing installed NemoClaw v%s.\n" "$installed_version" >&2
+    printf "        The installed CLI was not changed. Set NEMOCLAW_INSTALL_TAG=v%s to reinstall this release.\n" "$installed_version" >&2
+    exit 1
+  fi
+  if release_version_is_newer "$installed_version" "$target_version"; then
+    printf "[ERROR] Refusing to replace installed NemoClaw v%s with maintained lkg v%s.\n" "$installed_version" "$target_version" >&2
+    printf "        The installed CLI was not changed. Set NEMOCLAW_INSTALL_TAG=v%s to reinstall this release.\n" "$installed_version" >&2
+    exit 1
+  fi
+}
+
 exec_installer_from_ref() {
   local ref="$1"
   shift
@@ -90,6 +144,8 @@ exec_installer_from_ref() {
   source_root="${tmpdir}/source"
 
   clone_nemoclaw_ref "$ref" "$source_root"
+
+  guard_implicit_maintained_downgrade "$source_root"
 
   payload_script="${source_root}/scripts/install.sh"
   legacy_script="${source_root}/install.sh"
