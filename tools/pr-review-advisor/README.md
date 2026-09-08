@@ -54,6 +54,16 @@ explicitly requested, the protected deterministic publisher rechecks the live st
 one verified, non-force, compare-and-swap branch update. A trusted-main reporter then runs and
 records the approved exact-generated-SHA checks without starting another repair attempt.
 
+Trusted selection accepts a finding only when its specialist and path match one of these pairs and
+its exclusion list is empty:
+
+- `reduction-simplification`: JavaScript or TypeScript under `src/` or `nemoclaw/src/`
+- `verification-mistake-proofing`: non-E2E JavaScript or TypeScript under `test/`
+- `documentation-standard-work`: Markdown or MDX under `docs/`
+
+The model-provided finding kind cannot widen this list. Every other specialist and path combination,
+or any nonempty exclusion list, fails closed.
+
 Before dispatch, configure the `advisor-repair-publish` environment with required reviewers limited
 to users or teams that hold `maintain` or `admin` permission, plus the intended self-review policy,
 and set the repository variable `PR_REVIEW_ADVISOR_REPAIR_ENABLED=true`. Dispatch the workflow from

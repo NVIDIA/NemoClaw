@@ -307,14 +307,27 @@ export function parseSelection(value: unknown): RepairSelection {
   return selection;
 }
 
+const TRUSTED_REPAIR_CLASSES = {
+  "documentation-standard-work": {
+    kind: "documentation",
+    path: /^docs\/.+[.]mdx?$/u,
+  },
+  "reduction-simplification": {
+    kind: "implementation",
+    path: /^(?:src|nemoclaw\/src)\/.+[.](?:[cm]?[jt]s)$/u,
+  },
+  "verification-mistake-proofing": {
+    kind: "verification",
+    path: /^test\/(?!e2e\/).+[.](?:[cm]?[jt]s)$/u,
+  },
+} as const;
+
 function findingSkipReason(finding: AdvisorFinding): string | null {
+  const repairClass =
+    TRUSTED_REPAIR_CLASSES[finding.interest as keyof typeof TRUSTED_REPAIR_CLASSES];
+  if (!repairClass) return "excluded:untrusted-repair-class";
+  if (!repairClass.path.test(finding.path)) return `excluded:${repairClass.kind}-path-mismatch`;
   if (finding.exclusions.length) return `excluded:${[...finding.exclusions].sort()[0]}`;
-  if (finding.interest === "security-built-in-quality" || finding.kind === "security")
-    return "excluded:security-sensitive";
-  if (finding.kind === "dependency") return "excluded:dependency-change";
-  if (finding.kind === "product-scope") return "excluded:product-scope";
-  if (["design", "migration", "operations"].includes(finding.kind))
-    return "excluded:maintainer-decision";
   return allowedRepairPath(finding.path) ? null : "excluded:unsupported-path";
 }
 

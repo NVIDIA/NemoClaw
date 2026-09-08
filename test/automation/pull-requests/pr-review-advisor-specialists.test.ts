@@ -22,9 +22,15 @@ import {
   selectRepairFindings,
 } from "../../../tools/pr-review-advisor/repair-contract.mts";
 import { TERMINOLOGY_TRACE_TOOL } from "../../../tools/pr-review-advisor/terminology.mts";
-import { runSpecialistAdvisor, writeSpecialistSummary } from "../../../tools/pr-review-advisor/run-specialist.mts";
+import {
+  runSpecialistAdvisor,
+  writeSpecialistSummary,
+} from "../../../tools/pr-review-advisor/run-specialist.mts";
 import { writeSpecialistDiff } from "../../../tools/pr-review-advisor/specialist-context.mts";
-import type { RunAdvisorResult, RunReadOnlyAdvisorOptions } from "../../../tools/advisors/session.mts";
+import type {
+  RunAdvisorResult,
+  RunReadOnlyAdvisorOptions,
+} from "../../../tools/advisors/session.mts";
 import {
   ADVISOR_INTERESTS,
   ADVISOR_SPECIALISTS,
@@ -330,7 +336,9 @@ describe("PR review advisor specialist prompts", () => {
     );
     const documentationTools =
       captured.find(([interest]) => interest === "documentation-standard-work")?.[1] ?? [];
-    const trace = documentationTools.find(({ name }) => name === TERMINOLOGY_TRACE_TOOL) as CallableTool;
+    const trace = documentationTools.find(
+      ({ name }) => name === TERMINOLOGY_TRACE_TOOL,
+    ) as CallableTool;
     const evidence = await trace.execute(
       "trace-1",
       { term: "checkout-bound" },
@@ -438,7 +446,10 @@ describe("PR review advisor specialist prompts", () => {
 
   it("selects only exact opted-in source, test, and documentation findings (#10791)", async () => {
     const headSha = "a".repeat(40);
-    const controller = createAdvisorFindingToolController({ headSha, interest: "behavior" });
+    const controller = createAdvisorFindingToolController({
+      headSha,
+      interest: "reduction-simplification",
+    });
     const record = controller.tools[0] as CallableTool;
     await record.execute(
       "record",
@@ -507,7 +518,7 @@ describe("PR review advisor specialist prompts", () => {
     expect(selection.decisions).toContainEqual({
       id: excluded.id,
       selected: false,
-      reason: "excluded:dependency-change",
+      reason: "excluded:implementation-path-mismatch",
     });
     expect(() =>
       parseProposal(
@@ -528,6 +539,66 @@ describe("PR review advisor specialist prompts", () => {
     expect(allowedRepairPath("test/e2e/example.test.ts")).toBe(false);
   });
 
+  it("fails closed when an ineligible specialist labels a security-sensitive repair as correctness (#10791)", async () => {
+    const headSha = "a".repeat(40);
+    const controller = createAdvisorFindingToolController({
+      headSha,
+      interest: "customer-value-behavior",
+    });
+    const record = controller.tools[0] as CallableTool;
+    await record.execute(
+      "record",
+      {
+        findings: [
+          {
+            severity: "P1",
+            kind: "correctness",
+            summary: "The selector permits a security-sensitive repair.",
+            path: "src/lib/example.ts",
+            line: 4,
+            impact: "Trusted publication can advance an unsafe candidate.",
+            smallestSafeFix: "Reject the finding through trusted classification.",
+            regressionTest: "Prove non-security metadata cannot make it eligible.",
+            exclusions: [],
+          },
+        ],
+        noFindingsReason: null,
+      },
+      undefined,
+      undefined,
+      undefined as never,
+    );
+    const finding = controller.snapshot().findings[0]!;
+
+    expect(() =>
+      selectRepairFindings({
+        version: 1,
+        repository: "NVIDIA/NemoClaw",
+        prNumber: 42,
+        sourceHeadSha: headSha,
+        baseSha: "b".repeat(40),
+        headRef: "feature/fix",
+        repositoryId: "R_repo",
+        author: "maintainer",
+        actor: "maintainer",
+        triggeringActor: "maintainer",
+        workflowSha: "c".repeat(40),
+        advisor: {
+          runId: 7,
+          runAttempt: 1,
+          workflowSha: "d".repeat(40),
+          artifactIds: Array.from({ length: 10 }, (_, index) => index + 1),
+        },
+        stateDigest: `sha256:${"e".repeat(64)}`,
+        reviewDigest: `sha256:${"f".repeat(64)}`,
+        ledgers: [controller.snapshot()],
+        optedFindingIds: [finding.id],
+        productScope: "accepted:#10791",
+        optIn: "manual-exact-head",
+      }),
+    ).toThrow("no opted-in finding is eligible for repair");
+  });
+
   it("binds Phase 0 to the exact manual run, PR revisions, artifacts, and owner (#10791)", () => {
     const headSha = "a".repeat(40);
     const baseSha = "b".repeat(40);
@@ -537,7 +608,7 @@ describe("PR review advisor specialist prompts", () => {
         headSha,
         interest,
         input:
-          interest === ADVISOR_INTERESTS[0]
+          interest === "reduction-simplification"
             ? {
                 findings: [
                   {
@@ -628,9 +699,9 @@ describe("PR review advisor specialist prompts", () => {
         pullRequest: { ...pullRequest, maintainer_can_modify: false },
       }),
     ).toThrow("not eligible");
-    expect(() =>
-      bindRepairSelection({ ...request, currentRunId: 78 }),
-    ).toThrow("successful trusted workflow revision");
+    expect(() => bindRepairSelection({ ...request, currentRunId: 78 })).toThrow(
+      "successful trusted workflow revision",
+    );
     expect(() =>
       bindRepairSelection({
         ...request,
