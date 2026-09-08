@@ -1,8 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 
 import {
   buildMcpToolDiscoveryAuthorizationPlaceholder,
@@ -13,11 +17,17 @@ import {
   normalizeMcpToolPage,
   parseMcpToolDiscoveryArguments,
   runMcpToolDiscoverySession,
+  ToolDiscoveryRuntimeError,
 } from "./tool-discovery-core.ts";
-import { normalizeMcpSdkError } from "./mcp-sdk-error.ts";
 
 function writeResult(result: McpToolDiscoveryResult): void {
   process.stdout.write(`${JSON.stringify({ protocol: MCP_TOOL_DISCOVERY_PROTOCOL, ...result })}\n`);
+}
+
+export function normalizeMcpSdkError(error: unknown): unknown {
+  return error instanceof McpError && error.code === ErrorCode.RequestTimeout
+    ? new ToolDiscoveryRuntimeError("timeout")
+    : error;
 }
 
 async function callMcpSdk<T>(operation: () => Promise<T>): Promise<T> {
@@ -105,4 +115,10 @@ async function main(): Promise<void> {
   });
 }
 
-await main();
+const entrypointPath = process.argv[1];
+if (
+  entrypointPath &&
+  realpathSync(fileURLToPath(import.meta.url)) === realpathSync(entrypointPath)
+) {
+  await main();
+}

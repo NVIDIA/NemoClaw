@@ -19,7 +19,7 @@ import {
   normalizeMcpToolPage,
   runMcpToolDiscoverySession,
 } from "./tool-discovery-core.ts";
-import { normalizeMcpSdkError } from "./mcp-sdk-error.ts";
+import { normalizeMcpSdkError } from "./mcp-tool-discovery.ts";
 
 test("classifies only the SDK request-timeout code as a remote request timeout (#10944)", () => {
   const timeout = mcpToolDiscoveryFailure(
