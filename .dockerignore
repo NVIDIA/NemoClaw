@@ -47,3 +47,5 @@ secrets.json
 secrets.yaml
 service-account*.json
 token.json
+
+# #11085 reproduction branch: inert change so the managed-image PR build runs on this revision.
