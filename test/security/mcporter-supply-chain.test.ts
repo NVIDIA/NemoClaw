@@ -243,6 +243,9 @@ describe("mcporter image supply-chain controls", () => {
     const contents = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
     const producer = fs.readFileSync(path.join(repoRoot, "Dockerfile.protected-npm-audit"), "utf8");
     const flattenedProducer = producer.replace(/\\\s*\n/g, " ").replace(/\s+/g, " ");
+    const installStart = contents.indexOf("# Upgrade stale bases.");
+    const installEnd = contents.indexOf("# Patch OpenClaw media fetch", installStart);
+    const protectedInstall = contents.slice(installStart, installEnd);
 
     expect(producer).toContain(
       `FROM node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c AS protected-mcporter-audit`,
@@ -266,6 +269,9 @@ describe("mcporter image supply-chain controls", () => {
       "cached mcporter audit requires paired receipt, raw report, and receipt SHA-256",
     );
     expect(mcporterAuditHelper).toContain("seed-cached mcporter audit evidence is incomplete");
+    expect(installStart).toBeGreaterThanOrEqual(0);
+    expect(installEnd).toBeGreaterThan(installStart);
+    expect(protectedInstall).not.toMatch(/RUN --network=(?:default|host)/);
   });
 
   it("copies the cached base-image audit report only after receipt verification succeeds", () => {

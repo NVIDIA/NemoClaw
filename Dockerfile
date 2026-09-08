@@ -600,8 +600,8 @@ COPY src/lib/tool-disclosure.ts /src/lib/tool-disclosure.ts
 COPY nemoclaw-blueprint/openclaw-plugins/ /usr/local/share/nemoclaw/openclaw-plugins/
 COPY --from=mcp-tool-discovery-runtime /opt/mcp-tool-discovery-runtime/dist/ /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/
 
-# Protected GPU consumers receive reviewed audit evidence through the existing
-# locked seed because their build driver comes from trusted main.
+# Protected qualification supplies reviewed audit evidence as BuildKit secrets.
+# A trusted driver without secret wiring can use the locked-seed fallback.
 FROM scratch AS protected-mcporter-audit-cache
 COPY tools/mcp-tool-discovery-runtime/npm-cache-seed/ /seed/
 
@@ -826,7 +826,7 @@ RUN command -v codex-acp >/dev/null
 # OPENCLAW_VERSION is the NemoClaw runtime build target and must meet the blueprint minimum.
 # Reviewed archives retain registry and packed-byte SRI, basename, local-only install, and cleanup gates.
 # hadolint ignore=DL3059,DL4006,DL3016,SC2015
-RUN --network=default \
+RUN \
     --mount=type=secret,id=nemoclaw-mcporter-audit-receipt,required=false \
     --mount=type=secret,id=nemoclaw-mcporter-audit-raw-report,required=false \
     --mount=type=bind,from=protected-mcporter-audit-cache,source=/seed,target=/run/nemoclaw-mcporter-audit-cache \

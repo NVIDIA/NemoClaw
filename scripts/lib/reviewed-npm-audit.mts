@@ -152,7 +152,8 @@ export type NpmAuditResponseClassification =
   | Readonly<{ failure: NpmAuditFailureClassification }>
   | Readonly<{ report: Record<string, unknown> }>;
 
-const RETRYABLE_TRANSPORT_CODE = "ECONNRESET";
+const RETRYABLE_TRANSPORT_CODES = ["EAI_AGAIN", "ECONNRESET"] as const;
+type RetryableTransportCode = (typeof RETRYABLE_TRANSPORT_CODES)[number];
 
 function asRecord(value: unknown, label: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -332,14 +333,24 @@ function firstInvalidAuditField(value: unknown): string | undefined {
   return undefined;
 }
 
-function hasRetryableTransportError(report: Record<string, unknown>, stderr: string): boolean {
+function retryableTransportCode(
+  report: Record<string, unknown>,
+  stderr: string,
+): RetryableTransportCode | undefined {
   const error =
     typeof report.error === "object" && report.error !== null && !Array.isArray(report.error)
       ? (report.error as Record<string, unknown>)
       : {};
-  return [report.message, error.code, error.summary, error.detail, stderr]
-    .filter((value): value is string => typeof value === "string")
-    .some((value) => /(?:^|[^A-Z0-9_])ECONNRESET(?:$|[^A-Z0-9_])/u.test(value));
+  const values = [report.message, error.code, error.summary, error.detail, stderr].filter(
+    (value): value is string => typeof value === "string",
+  );
+  return RETRYABLE_TRANSPORT_CODES.find((code) =>
+    values.some((value) =>
+      code === "EAI_AGAIN"
+        ? /(?:^|[^A-Z0-9_])EAI_AGAIN(?:$|[^A-Z0-9_])/u.test(value)
+        : /(?:^|[^A-Z0-9_])ECONNRESET(?:$|[^A-Z0-9_])/u.test(value),
+    ),
+  );
 }
 
 function rejectedAuditResponse(
@@ -387,10 +398,11 @@ export function classifyNpmAuditResponse(result: {
   const report = value as Record<string, unknown>;
   const invalidField = firstInvalidAuditField(report);
   if (report.error !== undefined) {
-    const retryable = hasRetryableTransportError(report, result.stderr);
+    const transport = retryableTransportCode(report, result.stderr);
+    const retryable = transport !== undefined;
     const reason = retryable ? "registry-network-error" : "npm-error-document";
     return rejectedAuditResponse(result, reason, retryable, [
-      ...(retryable ? [`transport=${RETRYABLE_TRANSPORT_CODE}`] : []),
+      ...(transport ? [`transport=${transport}`] : []),
       ...(invalidField ? [`required-field=${invalidField}`] : []),
     ]);
   }
@@ -999,8 +1011,7 @@ export function runReviewedNpmAudit(
   const audit = cached
     ? runNpmAuditWithRetry({ run: () => cached.result, wait: () => {}, warn: () => {} })
     : runNpmAuditWithRetry({
-        run: () =>
-          spawnSync("npm", NPM_AUDIT_ARGV, npmAuditProcessOptions(options.directory)),
+        run: () => spawnSync("npm", NPM_AUDIT_ARGV, npmAuditProcessOptions(options.directory)),
       });
   const finishedAt = new Date().toISOString();
   if (!cached && cacheFile && cacheInput && audit.report)

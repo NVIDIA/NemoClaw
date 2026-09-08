@@ -187,31 +187,36 @@ describe("reviewed npm audit gate", () => {
     ).toEqual({ report });
   });
 
-  it("classifies npm 11.18.0's observed registry error document without exposing its message (#11088)", () => {
-    const secret = "https://audit-user:registry-secret@registry.example/private";
-    const classified = classifyNpmAuditResponse({
-      status: 1,
-      stderr: `authorization: Bearer stderr-secret for ${secret}`,
-      stdout: JSON.stringify({
-        message: `request to ${secret} failed, reason: read ECONNRESET`,
-        error: { summary: "", detail: "" },
-      }),
-    });
+  it.each(["EAI_AGAIN", "ECONNRESET"])(
+    "classifies the %s registry error without exposing its message (#11088)",
+    (transport) => {
+      const secret = "https://audit-user:registry-secret@registry.example/private";
+      const classified = classifyNpmAuditResponse({
+        status: 1,
+        stderr: `authorization: Bearer stderr-secret for ${secret}`,
+        stdout: JSON.stringify({
+          message: `request to ${secret} failed, reason: ${transport}`,
+          error: { summary: "", detail: "" },
+        }),
+      });
 
-    expect(classified).toEqual({
-      failure: {
-        diagnostic: expect.stringMatching(
-          /^exit=1 stdout-bytes=\d+ stdout-sha256=[a-f0-9]{64} condition=registry-network-error transport=ECONNRESET required-field=metadata:missing$/,
-        ),
-        reason: "registry-network-error",
-        retryable: true,
-      },
-    });
-    expect(JSON.stringify(classified)).not.toContain("audit-user");
-    expect(JSON.stringify(classified)).not.toContain("registry-secret");
-    expect(JSON.stringify(classified)).not.toContain("stderr-secret");
-    expect(JSON.stringify(classified)).not.toContain("registry.example");
-  });
+      expect(classified).toEqual({
+        failure: {
+          diagnostic: expect.stringMatching(
+            new RegExp(
+              `^exit=1 stdout-bytes=\\d+ stdout-sha256=[a-f0-9]{64} condition=registry-network-error transport=${transport} required-field=metadata:missing$`,
+            ),
+          ),
+          reason: "registry-network-error",
+          retryable: true,
+        },
+      });
+      expect(JSON.stringify(classified)).not.toContain("audit-user");
+      expect(JSON.stringify(classified)).not.toContain("registry-secret");
+      expect(JSON.stringify(classified)).not.toContain("stderr-secret");
+      expect(JSON.stringify(classified)).not.toContain("registry.example");
+    },
+  );
 
   it.each([
     ["missing metadata", {}],
@@ -238,7 +243,7 @@ describe("reviewed npm audit gate", () => {
     });
   });
 
-  it("retries only the observed registry reset with bounded backoff", () => {
+  it("retries the observed registry lookup failure with bounded backoff", () => {
     const completeReport = {
       metadata: {
         vulnerabilities: { info: 0, low: 0, moderate: 0, high: 0, critical: 0 },
@@ -250,7 +255,7 @@ describe("reviewed npm audit gate", () => {
       {
         status: 1,
         stderr: sensitiveStderr,
-        stdout: JSON.stringify({ message: "read ECONNRESET", error: { summary: "" } }),
+        stdout: JSON.stringify({ message: "getaddrinfo EAI_AGAIN", error: { summary: "" } }),
       },
       { status: 0, stderr: "", stdout: JSON.stringify(completeReport) },
     ];
@@ -268,7 +273,7 @@ describe("reviewed npm audit gate", () => {
     expect(delays).toEqual([1_000]);
     expect(warnings).toEqual([
       expect.stringMatching(
-        /^npm audit scan failed on attempt 1\/2; retrying in 1000 ms \(reason=registry-network-error; exit=1 stdout-bytes=\d+ stdout-sha256=[a-f0-9]{64} condition=registry-network-error transport=ECONNRESET required-field=metadata:missing\)$/,
+        /^npm audit scan failed on attempt 1\/2; retrying in 1000 ms \(reason=registry-network-error; exit=1 stdout-bytes=\d+ stdout-sha256=[a-f0-9]{64} condition=registry-network-error transport=EAI_AGAIN required-field=metadata:missing\)$/,
       ),
     ]);
     const warningOutput = warnings.join("\n");
