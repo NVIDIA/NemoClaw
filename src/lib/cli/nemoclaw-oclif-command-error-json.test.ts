@@ -118,9 +118,19 @@ describe("a command that fails under --json (#11150)", () => {
   it("prints the diagnostic on stderr and a small envelope on stdout", async () => {
     const stderr = vi.spyOn(console, "error").mockImplementation(() => undefined);
     ExclusiveFlagCommand.emitted = [];
+    // oclif sets `process.exitCode` only when it is still unset, so start from
+    // a clean slate; otherwise a value left by an earlier test would pass here.
+    const priorExitCode = process.exitCode;
+    process.exitCode = undefined;
 
     await ExclusiveFlagCommand.run(["--text", "--json"], process.cwd());
     const emitted = ExclusiveFlagCommand.emitted;
+    const exitCode = process.exitCode;
+    process.exitCode = priorExitCode;
+
+    // The streams can both be right while the process still reports success;
+    // a caller scripting on the exit status would then see a clean run.
+    expect(exitCode).toBeGreaterThan(0);
 
     expect(stderr).toHaveBeenCalledWith(
       expect.stringContaining("--json and --text are mutually exclusive"),
