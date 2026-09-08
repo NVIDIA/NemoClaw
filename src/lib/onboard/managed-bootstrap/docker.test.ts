@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { assert, describe, expect, it, vi } from "vitest";
-
+import { JETSON_DEVICE_GROUP_BOOTSTRAP } from "../docker-gpu-jetson-groups";
+import { MANAGED_BOOTSTRAP_TRAMPOLINE_EXECUTABLE } from "../docker-gpu-patch-clone";
 import {
   MANAGED_BOOTSTRAP_IDENTITY_ENV,
   ManagedBootstrapDurableCommitCleanupPendingError,
@@ -215,6 +216,76 @@ describe("Docker managed bootstrap adapter", () => {
       { Name: "memlock", Soft: -1, Hard: -1 },
       { Name: "nproc", Soft: 512, Hard: 512 },
     ]);
+  });
+
+  it("preserves Jetson device groups through the managed supervisor handoff (#7610)", async () => {
+    const fake = fixture({ agent: "openclaw", managedImageAgentLabel: "openclaw" });
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+    const { handle, request } = authority("openclaw");
+    const discovered = await adapter.discoverHeldWorkload({
+      sandbox: handle.sandbox,
+      bootstrapIdentity: handle.bootstrapIdentity,
+      expectedImage: handle.plan.image,
+      metadata: handle.plan.metadata,
+    });
+    const snapshot = await adapter.inspectHeldWorkload({ handle, discovered });
+
+    await expect(
+      adapter.prepareBootstrapReplacement({
+        handle,
+        snapshot,
+        request,
+        replacementOptions: {
+          values: {
+            extraGroupGids: ["44", "110"],
+          },
+        },
+      }),
+    ).resolves.toMatchObject({ preparedRuntimeId: NEW_ID });
+    expect(fake.replacement?.HostConfig?.GroupAdd).toEqual(["44", "110"]);
+    expect(fake.replacement?.Config?.Entrypoint).toEqual([
+      MANAGED_BOOTSTRAP_TRAMPOLINE_EXECUTABLE,
+    ]);
+    const replacementCommand = fake.replacement?.Config?.Cmd;
+    assert(Array.isArray(replacementCommand));
+    expect(replacementCommand.filter((entry) => entry === JETSON_DEVICE_GROUP_BOOTSTRAP)).toEqual([
+      JETSON_DEVICE_GROUP_BOOTSTRAP,
+    ]);
+    expect(fake.replacement?.Config?.Cmd?.slice(-7)).toEqual([
+      JETSON_DEVICE_GROUP_BOOTSTRAP,
+      "--device-group-gids",
+      "44,110",
+      "--",
+      "/opt/openshell/bin/openshell-sandbox",
+      "--workdir",
+      "/sandbox",
+    ]);
+    expect(fake.events).not.toContain(`stop:${OLD_ID}`);
+  });
+
+  it("rejects an invalid Jetson device group before replacement creation (#7610)", async () => {
+    const fake = fixture({ agent: "openclaw" });
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+    const { handle, request } = authority("openclaw");
+    const discovered = await adapter.discoverHeldWorkload({
+      sandbox: handle.sandbox,
+      bootstrapIdentity: handle.bootstrapIdentity,
+      expectedImage: handle.plan.image,
+      metadata: handle.plan.metadata,
+    });
+    const snapshot = await adapter.inspectHeldWorkload({ handle, discovered });
+
+    await expect(
+      adapter.prepareBootstrapReplacement({
+        handle,
+        snapshot,
+        request,
+        replacementOptions: {
+          values: { extraGroupGids: ["0"] },
+        },
+      }),
+    ).rejects.toThrow("invalid or excessive supplementary group IDs");
+    expect(fake.events).not.toContain("create:replacement");
   });
 
   it("accepts equivalent Engine API and Docker CLI create metadata before cutover", async () => {

@@ -23,11 +23,14 @@ export function resolveDockerStartupCommandPatch(
   persistStartupCommand: boolean;
   requiredUlimits: readonly DockerUlimit[] | null;
 } {
-  if (dockerDriverGateway !== true) {
-    return { persistStartupCommand: false, requiredUlimits: null };
-  }
   const agentName = agent?.name ?? "openclaw";
   const requiredUlimits = agentName === DCODE_AGENT_NAME ? DCODE_DOCKER_ULIMITS : null;
+  if (dockerDriverGateway !== true) {
+    return {
+      persistStartupCommand: false,
+      requiredUlimits: null,
+    };
+  }
   // The restart-safe recreation discovers the sandbox with docker-driver
   // labels (openshell.ai/managed-by), but the portable profile registers the
   // gateway with the podman driver, whose containers never carry that label —

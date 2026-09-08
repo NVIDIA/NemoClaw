@@ -101,6 +101,60 @@ describe("Docker startup-command patch", () => {
     );
   });
 
+  it("preserves Jetson device groups during startup-command recreation (#7610)", () => {
+    const inspect = inspectFixture();
+    inspect.Config!.Labels!["io.nvidia.nemoclaw.agent"] = "openclaw";
+    const dockerCaptureOutput: Record<string, string> = {
+      ps: "old-container-id\n",
+      inspect: JSON.stringify([inspect]),
+    };
+    const dockerRunDetached = vi.fn((_args: readonly string[]) => ({
+      status: 0,
+      stdout: "new-container-id\n",
+    }));
+
+    recreateStartupCommandForTest(
+      {
+        sandboxName: "alpha",
+        timeoutSecs: 1,
+        waitForSupervisor: false,
+        openshellSandboxCommand: ["nemoclaw-start"],
+        backend: "jetson",
+      },
+      {
+        dockerCapture: vi.fn((args: readonly string[]) => dockerCaptureOutput[args[0] ?? ""] ?? ""),
+        dockerRun: vi.fn(() => ({ status: 0 })),
+        dockerRunDetached,
+        dockerRename: vi.fn(() => ({ status: 0 })),
+        dockerStop: vi.fn(() => ({ status: 0 })),
+        sleep: vi.fn(),
+        now: () => new Date("2026-07-10T00:00:00Z"),
+        detectTegraDeviceGroupGids: () => ["44", "993"],
+      },
+    );
+
+    const cloneArgs = dockerRunDetached.mock.calls[0]?.[0] ?? [];
+    expect(cloneArgs).toEqual(
+      expect.arrayContaining([
+        "--group-add",
+        "44",
+        "--group-add",
+        "993",
+        "--entrypoint",
+        "/usr/local/lib/nemoclaw/jetson-device-group-bootstrap.sh",
+      ]),
+    );
+    expect(cloneArgs.slice(cloneArgs.indexOf(`sha256:${"c".repeat(64)}`))).toEqual([
+      `sha256:${"c".repeat(64)}`,
+      "--device-group-gids",
+      "44,993",
+      "--",
+      "/opt/openshell/bin/openshell-sandbox",
+      "--workdir",
+      "/sandbox",
+    ]);
+  });
+
   it("preserves OpenShell's native CDI GPU request during restart-persistence recreation", () => {
     const inspect = inspectFixture();
     inspect.HostConfig!.DeviceRequests = [
@@ -211,39 +265,39 @@ describe("Docker startup-command patch", () => {
     expect(dockerRunDetached).not.toHaveBeenCalled();
   });
 
-  it.each([
-    "different-container-id",
-    "",
-  ])("refuses to mutate when the pinned container identity is changed or empty", (expectedOldContainerId) => {
-    const dockerStop = vi.fn(() => ({ status: 0 }));
-    const dockerRename = vi.fn(() => ({ status: 0 }));
-    const dockerRunDetached = vi.fn(() => ({ status: 0, stdout: "new-container-id\n" }));
+  it.each(["different-container-id", ""])(
+    "refuses to mutate when the pinned container identity is changed or empty",
+    (expectedOldContainerId) => {
+      const dockerStop = vi.fn(() => ({ status: 0 }));
+      const dockerRename = vi.fn(() => ({ status: 0 }));
+      const dockerRunDetached = vi.fn(() => ({ status: 0, stdout: "new-container-id\n" }));
 
-    expect(() =>
-      recreateStartupCommandForTest(
-        {
-          sandboxName: "alpha",
-          openshellSandboxCommand: ["env", "nemoclaw-start"],
-          expectedOldContainerId,
-        },
-        {
-          dockerCapture: vi.fn((args: readonly string[]) =>
-            args[0] === "ps"
-              ? "old-container-id\n"
-              : args[0] === "inspect"
-                ? JSON.stringify([inspectFixture()])
-                : "",
-          ),
-          dockerRunDetached,
-          dockerRename,
-          dockerStop,
-        },
-      ),
-    ).toThrow("observed container differs from the pinned identity");
-    expect(dockerStop).not.toHaveBeenCalled();
-    expect(dockerRename).not.toHaveBeenCalled();
-    expect(dockerRunDetached).not.toHaveBeenCalled();
-  });
+      expect(() =>
+        recreateStartupCommandForTest(
+          {
+            sandboxName: "alpha",
+            openshellSandboxCommand: ["env", "nemoclaw-start"],
+            expectedOldContainerId,
+          },
+          {
+            dockerCapture: vi.fn((args: readonly string[]) =>
+              args[0] === "ps"
+                ? "old-container-id\n"
+                : args[0] === "inspect"
+                  ? JSON.stringify([inspectFixture()])
+                  : "",
+            ),
+            dockerRunDetached,
+            dockerRename,
+            dockerStop,
+          },
+        ),
+      ).toThrow("observed container differs from the pinned identity");
+      expect(dockerStop).not.toHaveBeenCalled();
+      expect(dockerRename).not.toHaveBeenCalled();
+      expect(dockerRunDetached).not.toHaveBeenCalled();
+    },
+  );
 
   it("does not rename or recreate when the original container cannot be stopped", () => {
     const dockerRename = vi.fn(() => ({ status: 0 }));

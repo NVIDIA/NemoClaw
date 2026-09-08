@@ -7,10 +7,15 @@ import type {
   DockerGpuPatchMode,
   DockerUlimit,
 } from "./docker-gpu-patch-types";
+import {
+  NEMOCLAW_MANAGED_AGENT_LABEL,
+  normalizeJetsonDeviceGroupGids,
+  OPENSHELL_SANDBOX_ENTRYPOINT,
+  resolveJetsonDeviceGroupBootstrap,
+} from "./docker-gpu-jetson-groups";
 import { openshellSandboxCommandEnvValue } from "./docker-startup-command-env";
 
 const OPENSHELL_SANDBOX_COMMAND_ENV = "OPENSHELL_SANDBOX_COMMAND";
-const OPENSHELL_SANDBOX_ENTRYPOINT = "/opt/openshell/bin/openshell-sandbox";
 const OPENSHELL_V0_0_99_WORKDIR_COMMAND = ["--workdir", "/sandbox"] as const;
 const OPENSHELL_OCI_IMAGE_USER_ENV = "OPENSHELL_OCI_IMAGE_USER";
 const OPENSHELL_SANDBOX_UID_ENV = "OPENSHELL_SANDBOX_UID";
@@ -28,6 +33,8 @@ type DockerStructuredMount = NonNullable<
 >[number];
 
 export const DOCKER_GPU_PATCH_NETWORK_ENV = "NEMOCLAW_DOCKER_GPU_PATCH_NETWORK";
+export const MANAGED_BOOTSTRAP_TRAMPOLINE_EXECUTABLE =
+  "/usr/local/bin/nemoclaw-managed-bootstrap";
 
 export function dockerContainerName(inspect: DockerContainerInspect): string {
   const raw = String(inspect.Name || "")
@@ -582,6 +589,7 @@ export function buildDockerGpuCloneRunArgs(
 ): string[] {
   const config = inspect.Config || {};
   const host = inspect.HostConfig || {};
+  const labels = config.Labels || {};
   const image = String(options.image || config.Image || "").trim();
   if (!image) throw new Error("Docker inspect output did not include Config.Image.");
 
@@ -595,6 +603,7 @@ export function buildDockerGpuCloneRunArgs(
   }
   const args: string[] = ["--name", containerName, ...mode.args];
   const gpuAugment = mode.kind !== "startup-command";
+  const extraGroupGids = normalizeJetsonDeviceGroupGids(options.extraGroupGids ?? []);
 
   // Startup-command recreation must retain OpenShell's native CDI attachment.
   if (!gpuAugment) {
@@ -669,7 +678,6 @@ export function buildDockerGpuCloneRunArgs(
     const value = annotations[key];
     if (value !== undefined && value !== null) args.push("--annotation", `${key}=${value}`);
   }
-  const labels = config.Labels || {};
   for (const key of Object.keys(labels).sort()) {
     const value = labels[key];
     if (value !== undefined && value !== null) args.push("--label", `${key}=${value}`);
@@ -705,11 +713,10 @@ export function buildDockerGpuCloneRunArgs(
   for (const hostEntry of stringArray(host.ExtraHosts)) args.push("--add-host", hostEntry);
   const groupAdds = new Set(stringArray(host.GroupAdd));
   for (const group of groupAdds) args.push("--group-add", group);
-  for (const gid of options.extraGroupGids ?? []) {
-    const normalized = String(gid).trim();
-    if (normalized && !groupAdds.has(normalized)) {
-      groupAdds.add(normalized);
-      args.push("--group-add", normalized);
+  for (const gid of extraGroupGids) {
+    if (!groupAdds.has(gid)) {
+      groupAdds.add(gid);
+      args.push("--group-add", gid);
     }
   }
   for (const ulimit of dockerUlimits(inspect, options.requiredUlimits)) {
@@ -743,17 +750,26 @@ export function buildDockerGpuCloneRunArgs(
 
   const entrypoint = stringArray(config.Entrypoint);
   const replacementEntrypoint = String(options.containerEntrypoint ?? "").trim();
-  if (replacementEntrypoint) {
-    args.push("--entrypoint", replacementEntrypoint);
-  } else if (entrypoint.length > 0) {
-    args.push("--entrypoint", entrypoint[0]);
-  }
-  const commandArgs = dockerContainerCommandArgs(
+  const groupBootstrapTarget = replacementEntrypoint || entrypoint[0] || "";
+  const targetCommandArgs = dockerContainerCommandArgs(
     entrypoint,
     stringArray(config.Cmd),
     sandboxCommand,
     options.containerCommand,
   );
+  const bootstrapPlan =
+    replacementEntrypoint === MANAGED_BOOTSTRAP_TRAMPOLINE_EXECUTABLE
+      ? null
+      : resolveJetsonDeviceGroupBootstrap({
+          agent: labels[NEMOCLAW_MANAGED_AGENT_LABEL],
+          deviceGroupGids: extraGroupGids,
+          supervisorArgv: [groupBootstrapTarget, ...targetCommandArgs],
+        });
+  const [selectedEntrypoint, ...commandArgs] = bootstrapPlan?.supervisorArgv ?? [
+    groupBootstrapTarget,
+    ...targetCommandArgs,
+  ];
+  if (selectedEntrypoint) args.push("--entrypoint", selectedEntrypoint);
   args.push(image, ...commandArgs);
   return args;
 }

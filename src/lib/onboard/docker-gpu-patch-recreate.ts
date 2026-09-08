@@ -12,7 +12,11 @@ import {
 } from "../adapters/docker";
 import { hasZeroDockerExitStatus } from "./docker-command-result";
 import { detectSandboxFallbackDns } from "./docker-gpu-dns-fallback";
-import { detectTegraDeviceGroupGids } from "./docker-gpu-jetson-groups";
+import {
+  detectTegraDeviceGroupGids,
+  JETSON_DEVICE_GROUP_BOOTSTRAP,
+  NEMOCLAW_MANAGED_AGENT_LABEL,
+} from "./docker-gpu-jetson-groups";
 import {
   buildDockerGpuCloneRunArgs,
   buildDockerGpuCloneRunOptions,
@@ -262,15 +266,43 @@ export function recreateOpenShellDockerSandboxContainer(
         );
       }
     }
-    if (selection.mode.kind !== "startup-command" && options.backend === "jetson") {
+    const managedAgent = inspect.Config?.Labels?.[NEMOCLAW_MANAGED_AGENT_LABEL] ?? null;
+    const shouldBootstrapJetsonGroups = managedAgent === "openclaw";
+    const shouldDetectJetsonGroups =
+      options.backend === "jetson" &&
+      (selection.mode.kind !== "startup-command" || shouldBootstrapJetsonGroups);
+    if (shouldDetectJetsonGroups) {
       const tegraGroupGids = d.detectTegraDeviceGroupGids();
       if (tegraGroupGids.length > 0) {
         cloneOptions.extraGroupGids = tegraGroupGids;
-        console.log(
-          `  ✓ Granting sandbox user the detected Jetson GPU device groups via --group-add ${tegraGroupGids.join(
-            ", ",
-          )} (so CUDA can initialize as a non-root user)`,
-        );
+        if (shouldBootstrapJetsonGroups) {
+          const wrapperProbe = d.dockerRun(
+            [
+              "exec",
+              "--user",
+              "0",
+              oldContainerId,
+              "/usr/bin/test",
+              "-x",
+              JETSON_DEVICE_GROUP_BOOTSTRAP,
+            ],
+            { ignoreError: true, suppressOutput: true, timeout: DOCKER_GPU_PATCH_TIMEOUT_MS },
+          );
+          if (!hasZeroDockerExitStatus(wrapperProbe)) {
+            throw new Error(
+              `OpenClaw sandbox image is missing executable ${JETSON_DEVICE_GROUP_BOOTSTRAP}.`,
+            );
+          }
+          console.log(
+            `  ✓ Preserving the detected Jetson GPU device groups through OpenShell startup: ${tegraGroupGids.join(", ")}`,
+          );
+        } else {
+          console.log(
+            `  ✓ Granting sandbox user the detected Jetson GPU device groups via --group-add ${tegraGroupGids.join(
+              ", ",
+            )} (so CUDA can initialize as a non-root user)`,
+          );
+        }
       } else {
         console.warn(
           "  ⚠ Could not resolve the group owning Jetson Tegra GPU device nodes (/dev/nvmap); CUDA may fail with NvRmMemInitNvmap permission denied. Confirm /dev/nvmap exists and is group-readable on the host.",

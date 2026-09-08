@@ -228,6 +228,7 @@ describe("sandbox build context staging", () => {
     fs.chmodSync(path.join(sourceRoot, "nemoclaw-blueprint", "model-specific-setup"), 0o700);
     fs.chmodSync(blueprintManifestDir, 0o700);
     writeFixture(path.join("scripts", "nemoclaw-start.sh"));
+    writeFixture(path.join("scripts", "jetson-device-group-bootstrap.sh"));
     writeFixture(path.join("scripts", "managed-startup-hold.sh"));
     writeFixture(path.join("scripts", "managed-bootstrap-entrypoint.c"));
     writeFixture(path.join("scripts", "managed-bootstrap-trampoline.sh"));
