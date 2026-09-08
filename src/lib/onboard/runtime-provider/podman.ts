@@ -61,6 +61,7 @@ import {
   resolveNativePodmanSocketPath,
 } from "./podman-runtime-surfaces";
 import { resolvePodmanStateRoot } from "./podman-state-root";
+import { cleanupOwnedContainer, ownedContainerRunArguments } from "./owned-container-resource";
 
 export interface PodmanRuntimeProviderEngines {
   readonly hostDoctor: PodmanContainerEngine;
@@ -460,6 +461,46 @@ export function createPodmanRuntimeProviderBundle(
         }
         return engine.capture(args, timeoutMs);
       },
+      nvidiaContainer: inferenceEngine
+        ? {
+            capture: (operation, input, timeoutMs) => {
+              const engine = containerEngineOperations.get(operation);
+              if (!engine) {
+                throw new Error(
+                  `Podman provider does not register the '${operation}' engine operation.`,
+                );
+              }
+              return engine.capture(
+                [
+                  "run",
+                  "--rm",
+                  ...ownedContainerRunArguments(input.resource),
+                  "--device",
+                  "nvidia.com/gpu=all",
+                  "--entrypoint",
+                  input.entrypoint,
+                  input.image,
+                  ...input.command,
+                ],
+                timeoutMs,
+              );
+            },
+            cleanup: (operation, resource, options) => {
+              const engine = containerEngineOperations.get(operation);
+              if (!engine) {
+                throw new Error(
+                  `Podman provider does not register the '${operation}' engine operation.`,
+                );
+              }
+              return cleanupOwnedContainer(
+                resource,
+                `^${resource.name}$`,
+                (args, timeout) => engine.capture(args, timeout),
+                options,
+              );
+            },
+          }
+        : undefined,
     },
   };
 }

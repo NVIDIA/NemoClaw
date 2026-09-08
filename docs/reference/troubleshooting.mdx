@@ -845,13 +845,22 @@ Run `$$nemoclaw onboard` to retry. The wizard cleans up stale port forwards and 
 
 On Windows, WSL, and native Linux ARM64 hosts, some systems report a placeholder display adapter name even when no NVIDIA GPU firmware is present. This section also applies when preflight reports no GPU on an ARM64 Linux host whose `nvidia-smi` shows a non-placeholder GPU name. NVIDIA NIM and GPU-backed sandbox setup require a real NVIDIA GPU.
 
-When the primary memory-query probe reports exactly one placeholder-named GPU row on a native or Docker Desktop-backed WSL ARM64 Linux host without firmware-confirmed NVIDIA platform metadata, onboarding runs one bounded Docker CUDA workload. When that probe reports a single non-placeholder NVIDIA GPU name on such a host and the NVIDIA kernel-driver interface (`/proc/driver/nvidia`) is absent, onboarding runs the same workload. A WSL2 host never provides that interface because Windows paravirtualizes the GPU through `/dev/dxg`. A non-placeholder name that does not identify an NVIDIA GPU or product family does not start the workload. NemoClaw treats a recognized NVIDIA product model from `/sys/class/dmi/id/product_name` or `/sys/firmware/devicetree/base/model`, or a known Tegra device node, as authoritative platform identity. Docker may pull the CUDA sample image from `nvcr.io` and keeps the image in the local cache after the container exits. The workload uses this command:
+When the primary memory-query probe reports exactly one placeholder-named GPU row on an eligible ARM64 Linux host without firmware-confirmed NVIDIA platform metadata, onboarding runs one bounded CUDA workload through the selected runtime provider. When that probe reports a single non-placeholder NVIDIA GPU name on such a host and the NVIDIA kernel-driver interface (`/proc/driver/nvidia`) is absent, onboarding runs the same workload. A WSL2 host never provides that interface because Windows paravirtualizes the GPU through `/dev/dxg`. A non-placeholder name that does not identify an NVIDIA GPU or product family does not start the workload. NemoClaw treats a recognized NVIDIA product model from `/sys/class/dmi/id/product_name` or `/sys/firmware/devicetree/base/model`, or a known Tegra device node, as authoritative platform identity. Docker or Podman may pull the CUDA sample image from `nvcr.io` and keeps the image in the local cache after the container exits. Docker uses `--gpus all`; qualified rootless Podman uses the NVIDIA CDI device. The following manual diagnostics run the same fixed workload and capacity query:
 
 ```bash
-docker run --rm --gpus all nvcr.io/nvidia/k8s/cuda-sample@sha256:7c7540bdf1f942d4fb6db97069fd6c289471b54ac29e3c7fcdf914cf77af7d41
+proof_image='nvcr.io/nvidia/k8s/cuda-sample@sha256:7c7540bdf1f942d4fb6db97069fd6c289471b54ac29e3c7fcdf914cf77af7d41'
+proof_script='set -eu; /cuda-samples/sample; memory="$(nvidia-smi --query-gpu=memory.total,memory.free --format=csv,noheader,nounits 2>/dev/null || true)"; printf "NEMOCLAW_GPU_MEMORY_MIB=%s\n" "$memory"'
+
+# Docker
+docker run --rm --gpus all --entrypoint /bin/sh "$proof_image" -c "$proof_script"
+
+# Qualified rootless Podman socket from NemoClaw preflight
+podman --url 'unix://<qualified-current-user-socket>' run --rm --device nvidia.com/gpu=all --entrypoint /bin/sh "$proof_image" -c "$proof_script"
 ```
 
-The run is bounded to 3 minutes. Set `NEMOCLAW_WSL_GPU_PROOF_TIMEOUT_MS` to a positive millisecond value to change that bound. Increase the value only when the image pull or GPU workload needs more than 3 minutes. A passing workload lets onboarding treat the detected GPU as eligible for GPU passthrough during that run. For Windows-on-Arm, this proof is a technical detection check and does not change the Unsupported product status or establish platform qualification. Refer to [Platform Support and Launch Claims](platform-support#out-of-scope-and-not-supported) for the current support boundary. A failed or timed-out workload leaves the GPU unproven and does not enable GPU passthrough. The names-only unified-memory fallback does not run this workload and rejects denylisted names. WSL hosts that are not Docker Desktop-backed do not run the workload and continue to report the GPU as unavailable.
+A diagnostic result includes `Test PASSED` and exactly one `NEMOCLAW_GPU_MEMORY_MIB=<total>, <free>` line. For Podman, replace `<qualified-current-user-socket>` with the exact socket accepted by [Podman preflight](#podman); do not omit `--url`, because a bare command can select another rootful, remote, or named connection. Manual output does not qualify onboarding. Only the proof that NemoClaw runs through its provider-bound authority supplies the capacity evidence used for N1x model selection.
+
+The run is bounded to 3 minutes by default. Set `NEMOCLAW_WSL_GPU_PROOF_TIMEOUT_MS` to a positive integer number of milliseconds to change that bound; values above 15 minutes are capped at 15 minutes. A passing workload with confirmed container reconciliation lets onboarding treat the detected GPU as eligible for GPU passthrough during that run. On Windows-on-Arm, only the documented N1x WSL path can use this proof for platform qualification; other GPU routes remain unsupported. A failed, interrupted, or timed-out workload leaves the GPU unproven and does not enable GPU passthrough. After every completed capture, NemoClaw immediately reconciles the proof container by its exact name and ownership label. After an interrupted capture, it continues that exact check for up to 15 seconds. If the resource appears, NemoClaw removes only its immutable container ID. If an interrupted capture remains absent through that deadline, or removal fails after any capture, NemoClaw invalidates the proof, reports unresolved cleanup, and names the exact resource to verify or remove before retrying. The names-only unified-memory fallback does not run this workload and rejects denylisted names. WSL uses Docker Desktop by default; a qualification-backed rootless Podman provider can run the same proof for WSL-local Ollama.
 
 When GPU detection rejects the `nvidia-smi` report, preflight prints the failed check under the `Local NIM unavailable — no GPU detected` line, for example an absent `/proc/driver/nvidia` interface or a failed bounded CUDA proof. If NemoClaw rejects the detected GPU name during preflight, select a CPU or remote inference provider, or move the setup to a host with a supported NVIDIA GPU and current drivers.
 
@@ -2693,11 +2702,7 @@ sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
 nvidia-ctk cdi list
 ```
 
-On WSL with Docker Desktop, confirm Docker Desktop WSL integration is enabled for your distro and verify Docker GPU access from WSL:
-
-```bash
-docker run --rm --gpus all nvcr.io/nvidia/k8s/cuda-sample@sha256:7c7540bdf1f942d4fb6db97069fd6c289471b54ac29e3c7fcdf914cf77af7d41
-```
+On WSL with Docker Desktop, confirm Docker Desktop WSL integration is enabled for your distro and run the [canonical Docker proof and capacity query](#gpu-setup-fails-with-a-placeholder-gpu-name) from WSL.
 
 If GPU passthrough is not required on this host, rerun onboarding with `--no-gpu` instead.
 

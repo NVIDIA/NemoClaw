@@ -13,6 +13,7 @@ vi.mock("./runtime-provider/selection", () => ({
     _architecture: NodeJS.Architecture,
     environment: NodeJS.ProcessEnv,
   ) => ({
+    identity: { id: environment.NEMOCLAW_GATEWAY_RUNTIME ?? "docker" },
     gateway: {
       supported: true,
       ownsHostReadiness: environment.NEMOCLAW_GATEWAY_RUNTIME === "podman",
@@ -21,7 +22,10 @@ vi.mock("./runtime-provider/selection", () => ({
   }),
 }));
 
-import { configuredRuntimeProviderOwnsHostReadiness } from "./docker-driver-gateway-env";
+import {
+  configuredRuntimeProviderOwnsHostReadiness,
+  configuredRuntimeProviderReadinessAuthority,
+} from "./docker-driver-gateway-env";
 
 afterEach(() => {
   vi.clearAllMocks();
@@ -36,6 +40,9 @@ describe("configured runtime provider host readiness", () => {
 
     expect(configuredRuntimeProviderOwnsHostReadiness({ environment, platform: "linux" })).toBe(
       expected,
+    );
+    expect(configuredRuntimeProviderReadinessAuthority({ environment, platform: "linux" })).toEqual(
+      { providerId: runtime, ownsHostReadiness: expected },
     );
     expect(mocks.prepareHostRuntime).not.toHaveBeenCalled();
   });
