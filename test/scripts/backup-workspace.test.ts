@@ -18,13 +18,22 @@ describe("backup-workspace.sh", () => {
   let root: string;
   let home: string;
   let bin: string;
+  let sourceRoot: string;
+  let sourceScript: string;
+  let sourceCli: string;
 
   beforeEach(() => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-backup-workspace-"));
     home = path.join(root, "home");
     bin = path.join(root, "bin");
+    sourceRoot = path.join(root, "source");
+    sourceScript = path.join(sourceRoot, "scripts", "backup-workspace.sh");
+    sourceCli = path.join(sourceRoot, "bin", "nemoclaw.js");
     fs.mkdirSync(home);
     fs.mkdirSync(bin);
+    fs.mkdirSync(path.dirname(sourceScript), { recursive: true });
+    fs.mkdirSync(path.dirname(sourceCli));
+    fs.symlinkSync(BACKUP_SCRIPT, sourceScript);
   });
 
   afterEach(() => {
@@ -32,13 +41,8 @@ describe("backup-workspace.sh", () => {
   });
 
   it("rejects an unbuilt source CLI before creating a backup (#10636)", () => {
-    const sourceRoot = path.join(root, "source");
-    const sourceScript = path.join(sourceRoot, "scripts", "backup-workspace.sh");
-    fs.mkdirSync(path.dirname(sourceScript), { recursive: true });
-    fs.mkdirSync(path.join(sourceRoot, "bin"));
-    fs.symlinkSync(BACKUP_SCRIPT, sourceScript);
     writeExecutable(
-      path.join(sourceRoot, "bin", "nemoclaw.js"),
+      sourceCli,
       `#!/usr/bin/env bash
 printf '%s\n' "Error: NemoClaw's compiled CLI is missing or incomplete." >&2
 exit 1
@@ -73,9 +77,8 @@ exit 99
   it("removes an incomplete backup when a required file is absent (#10636)", () => {
     const calls = path.join(root, "nemoclaw-calls.txt");
     const openshellCalls = path.join(root, "openshell-calls.txt");
-    const nemoclaw = path.join(bin, "nemoclaw");
     writeExecutable(
-      nemoclaw,
+      sourceCli,
       `#!/usr/bin/env bash
 set -euo pipefail
 if [ "\${1:-}" = "--version" ]; then
@@ -100,13 +103,12 @@ exit 99
     const env = {
       ...process.env,
       HOME: home,
-      NEMOCLAW_CLI_BIN: nemoclaw,
       NEMOCLAW_TEST_CALLS: calls,
       NEMOCLAW_TEST_OPENSHELL_CALLS: openshellCalls,
       PATH: `${bin}:${process.env.PATH ?? ""}`,
     };
-    const result = spawnSync("bash", [BACKUP_SCRIPT, "backup", "test-sandbox"], {
-      cwd: REPO_ROOT,
+    const result = spawnSync("bash", [sourceScript, "backup", "test-sandbox"], {
+      cwd: sourceRoot,
       encoding: "utf8",
       env,
     });
@@ -120,8 +122,8 @@ exit 99
     expect(fs.readdirSync(backupRoot)).toEqual([]);
     expect(fs.existsSync(openshellCalls)).toBe(false);
 
-    const restoreResult = spawnSync("bash", [BACKUP_SCRIPT, "restore", "test-sandbox"], {
-      cwd: REPO_ROOT,
+    const restoreResult = spawnSync("bash", [sourceScript, "restore", "test-sandbox"], {
+      cwd: sourceRoot,
       encoding: "utf8",
       env,
     });
@@ -140,9 +142,8 @@ exit 99
     fs.writeFileSync(path.join(root, "outside.txt"), "outside");
     fs.symlinkSync(path.join(root, "outside.txt"), linked);
 
-    const nemoclaw = path.join(bin, "nemoclaw");
     writeExecutable(
-      nemoclaw,
+      sourceCli,
       `#!/usr/bin/env bash
 set -euo pipefail
 if [ "\${1:-}" = "--version" ]; then
@@ -169,14 +170,13 @@ exit 99
     const env = {
       ...process.env,
       HOME: home,
-      NEMOCLAW_CLI_BIN: nemoclaw,
       NEMOCLAW_TEST_CALLS: calls,
       NEMOCLAW_TEST_LINKED_MEMBER: linked,
       NEMOCLAW_TEST_OPENSHELL_CALLS: openshellCalls,
       PATH: `${bin}:${process.env.PATH ?? ""}`,
     };
-    const result = spawnSync("bash", [BACKUP_SCRIPT, "backup", "test-sandbox"], {
-      cwd: REPO_ROOT,
+    const result = spawnSync("bash", [sourceScript, "backup", "test-sandbox"], {
+      cwd: sourceRoot,
       encoding: "utf8",
       env,
     });
@@ -199,8 +199,8 @@ exit 99
     );
     expect(fs.readdirSync(backupRoot)).toEqual([]);
 
-    const restoreResult = spawnSync("bash", [BACKUP_SCRIPT, "restore", "test-sandbox"], {
-      cwd: REPO_ROOT,
+    const restoreResult = spawnSync("bash", [sourceScript, "restore", "test-sandbox"], {
+      cwd: sourceRoot,
       encoding: "utf8",
       env,
     });
@@ -212,9 +212,8 @@ exit 99
 
   it("keeps a backup when optional memory paths are absent (#10636)", () => {
     const calls = path.join(root, "nemoclaw-calls.txt");
-    const nemoclaw = path.join(bin, "nemoclaw");
     writeExecutable(
-      nemoclaw,
+      sourceCli,
       `#!/usr/bin/env bash
 set -euo pipefail
 if [ "\${1:-}" = "--version" ]; then
@@ -238,13 +237,12 @@ exit 99
 `,
     );
 
-    const result = spawnSync("bash", [BACKUP_SCRIPT, "backup", "test-sandbox"], {
-      cwd: REPO_ROOT,
+    const result = spawnSync("bash", [sourceScript, "backup", "test-sandbox"], {
+      cwd: sourceRoot,
       encoding: "utf8",
       env: {
         ...process.env,
         HOME: home,
-        NEMOCLAW_CLI_BIN: nemoclaw,
         NEMOCLAW_TEST_CALLS: calls,
         PATH: `${bin}:${process.env.PATH ?? ""}`,
       },
@@ -290,9 +288,8 @@ printf '%s\n' '${timestamp}'
 exit 99
 `,
     );
-    const nemoclaw = path.join(bin, "nemoclaw");
     writeExecutable(
-      nemoclaw,
+      sourceCli,
       `#!/usr/bin/env bash
 if [ "\${1:-}" = "--version" ]; then
   exit 0
@@ -302,13 +299,12 @@ exit 99
 `,
     );
 
-    const result = spawnSync("bash", [BACKUP_SCRIPT, "backup", "test-sandbox"], {
-      cwd: REPO_ROOT,
+    const result = spawnSync("bash", [sourceScript, "backup", "test-sandbox"], {
+      cwd: sourceRoot,
       encoding: "utf8",
       env: {
         ...process.env,
         HOME: home,
-        NEMOCLAW_CLI_BIN: nemoclaw,
         NEMOCLAW_TEST_CALLS: calls,
         PATH: `${bin}:${process.env.PATH ?? ""}`,
       },

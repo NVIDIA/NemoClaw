@@ -5,7 +5,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-NEMOCLAW_CLI_BIN="${NEMOCLAW_CLI_BIN:-${SCRIPT_DIR}/../bin/nemoclaw.js}"
+NEMOCLAW_CLI="${SCRIPT_DIR}/../bin/nemoclaw.js"
 WORKSPACE_PATH="/sandbox/.openclaw/workspace"
 BACKUP_BASE="${HOME}/.nemoclaw/backups"
 FILES=(SOUL.md USER.md IDENTITY.md AGENTS.md MEMORY.md)
@@ -55,7 +55,7 @@ download_backup_item() {
   local output
   local status
 
-  if output="$("$NEMOCLAW_CLI_BIN" "$sandbox" download "$remote_path" "$host_dest" 2>&1)"; then
+  if output="$("$NEMOCLAW_CLI" "$sandbox" download "$remote_path" "$host_dest" 2>&1)"; then
     [ -z "$output" ] || printf '%s\n' "$output"
     return 0
   else
@@ -108,8 +108,8 @@ restore_directory() {
 
 do_backup() {
   local sandbox="$1"
-  require_cmd "$NEMOCLAW_CLI_BIN"
-  "$NEMOCLAW_CLI_BIN" --version >/dev/null 2>&1 \
+  require_cmd "$NEMOCLAW_CLI"
+  "$NEMOCLAW_CLI" --version >/dev/null 2>&1 \
     || fail "The selected NemoClaw CLI cannot start. Run 'npm run dev:setup' from the NemoClaw source repository root. Then retry the backup."
   local ts
   ts="$(date +%Y%m%d-%H%M%S)"
