@@ -7,7 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-// pull_request_target content is fetched manually so no PR-controlled action,
+// PR content is fetched manually so no PR-controlled action,
 // hook, submodule, LFS filter, or package setup can run. Every input that is
 // interpolated into a git ref is validated against a strict allow-list before
 // any git command runs, and commands execute via execFileSync (no shell), so a
