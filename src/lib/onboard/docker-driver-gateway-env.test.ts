@@ -12,6 +12,7 @@ import { writeOpenShell0044PreAuthState } from "../../../test/support/openshell-
 import {
   buildDockerDriverGatewayEnv,
   buildDockerGatewayDebEnvFile,
+  requirePreparedDockerDriverGatewayHostRuntime,
   startPackageManagedDockerDriverGatewayWithEnvOverride,
   writeDockerGatewayDebEnvOverride,
 } from "./docker-driver-gateway-env";
@@ -181,13 +182,14 @@ describe("buildDockerDriverGatewayEnv", () => {
     vi.stubEnv("CONTAINERS_CONF", "/tmp/nemoclaw-portable/containers.conf");
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-native-podman-gateway-"));
     try {
+      const gatewayHostRuntime = prepareNativePodmanGatewayHostRuntime({
+        environment: process.env,
+        platform: "linux",
+      });
       const env = buildDockerDriverGatewayEnv({
         platform: "linux",
         stateDir,
-        gatewayHostRuntime: prepareNativePodmanGatewayHostRuntime({
-          environment: process.env,
-          platform: "linux",
-        }),
+        gatewayHostRuntime,
         getDockerSupervisorImage: () => "supervisor:test",
         resolveSandboxBin: () => "/usr/bin/openshell-sandbox",
       });
@@ -200,6 +202,7 @@ describe("buildDockerDriverGatewayEnv", () => {
       expect(env.OPENSHELL_PODMAN_SOCKET).toMatch(/\/podman\/podman\.sock$/u);
       expect(env.CONTAINERS_CONF).toBeUndefined();
       expect(env.NETAVARK_FW).toBeUndefined();
+      expect(requirePreparedDockerDriverGatewayHostRuntime(env)).toBe(gatewayHostRuntime);
       const toml = fs.readFileSync(env.OPENSHELL_GATEWAY_CONFIG, "utf-8");
       expect(toml).toContain('compute_drivers = ["podman"]');
       expect(toml).toContain(`socket_path = "${env.OPENSHELL_PODMAN_SOCKET}"`);
@@ -208,6 +211,12 @@ describe("buildDockerDriverGatewayEnv", () => {
       vi.unstubAllEnvs();
       fs.rmSync(stateDir, { recursive: true, force: true });
     }
+  });
+
+  it("rejects an environment that has no prepared gateway runtime", () => {
+    expect(() => requirePreparedDockerDriverGatewayHostRuntime({})).toThrow(
+      "OpenShell gateway environment has no prepared host runtime.",
+    );
   });
 
   it.each([

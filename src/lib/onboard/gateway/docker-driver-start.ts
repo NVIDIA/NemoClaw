@@ -42,7 +42,6 @@ export interface DockerDriverGatewayStartDeps {
   gatewayPort(): number;
   getDockerDriverGatewayEndpoint: DynamicGatewayHelpers["getDockerDriverGatewayEndpoint"];
   getDockerDriverGatewayEnv: GatewayRuntimeHelpers["getDockerDriverGatewayEnv"];
-  prepareDockerDriverGatewayHostRuntime: GatewayRuntimeHelpers["prepareDockerDriverGatewayHostRuntime"];
   getDockerDriverGatewayPid: GatewayRuntimeHelpers["getDockerDriverGatewayPid"];
   getDockerDriverGatewayPortListenerScan: GatewayRuntimeHelpers["getDockerDriverGatewayPortListenerScan"];
   getDockerDriverGatewayRuntimeDrift: GatewayRuntimeHelpers["getDockerDriverGatewayRuntimeDrift"];
@@ -138,12 +137,9 @@ export function createDockerDriverGatewayStart(
       }
       const gatewayBin = deps.resolveOpenShellGatewayBinary();
       const openshellVersionOutput = runCaptureOpenshell(["--version"], { ignoreError: true });
-      const gatewayHostRuntime = deps.prepareDockerDriverGatewayHostRuntime();
-      const gatewayEnv = deps.getDockerDriverGatewayEnv(
-        openshellVersionOutput,
-        undefined,
-        gatewayHostRuntime,
-      );
+      const gatewayEnv = deps.getDockerDriverGatewayEnv(openshellVersionOutput);
+      const gatewayHostRuntime =
+        deps.dockerDriverGatewayEnv.requirePreparedDockerDriverGatewayHostRuntime(gatewayEnv);
       const runtimeIdentity = gatewayBin
         ? dockerDriverGatewayLaunch.buildDockerDriverGatewayRuntimeIdentity({
             gatewayBin,

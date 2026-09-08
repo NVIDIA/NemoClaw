@@ -91,6 +91,21 @@ export interface BuildDockerDriverGatewayEnvOptions {
   enableBindMounts?: boolean;
 }
 
+const preparedGatewayHostRuntimeByEnv = new WeakMap<
+  Record<string, string>,
+  RuntimeProviderGatewayHostRuntime
+>();
+
+export function requirePreparedDockerDriverGatewayHostRuntime(
+  gatewayEnv: Record<string, string>,
+): RuntimeProviderGatewayHostRuntime {
+  const runtime = preparedGatewayHostRuntimeByEnv.get(gatewayEnv);
+  if (!runtime) {
+    throw new Error("OpenShell gateway environment has no prepared host runtime.");
+  }
+  return runtime;
+}
+
 function preparePortableGatewayHostRuntime(
   socketPath?: string,
   platform: NodeJS.Platform = process.platform,
@@ -482,6 +497,7 @@ export function buildDockerDriverGatewayEnv({
       process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE === "1",
     gatewayRuntime: runtime,
   });
+  preparedGatewayHostRuntimeByEnv.set(env, runtime);
   return env;
 }
 
