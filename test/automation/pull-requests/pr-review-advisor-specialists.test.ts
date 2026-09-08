@@ -679,8 +679,8 @@ describe("PR review advisor specialist prompts", () => {
       state: { open: true },
       reviews: [],
       permissions: {
-        actor: { permission: "maintain" },
-        triggeringActor: { permission: "admin" },
+        actor: { permission: "write", role_name: "maintain" },
+        triggeringActor: { permission: "admin", role_name: "admin" },
       },
     };
 
@@ -705,7 +705,10 @@ describe("PR review advisor specialist prompts", () => {
     expect(() =>
       bindRepairSelection({
         ...request,
-        permissions: { ...request.permissions, triggeringActor: { permission: "write" } },
+        permissions: {
+          ...request.permissions,
+          triggeringActor: { permission: "write", role_name: "write" },
+        },
       }),
     ).toThrow("not eligible");
     expect(() =>

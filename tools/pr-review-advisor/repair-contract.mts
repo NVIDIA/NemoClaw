@@ -417,7 +417,9 @@ export function bindRepairSelection(input: {
   const headRef = typeof pull.head?.ref === "string" ? pull.head.ref : "";
   const author = typeof pull.user?.login === "string" ? pull.user.login : "";
   const repositoryId = typeof pull.base?.repo?.node_id === "string" ? pull.base.repo.node_id : "";
-  const permission = (value: unknown): unknown => (record(value) ? value.permission : undefined);
+  const hasMaintainerPermission = (value: unknown): boolean =>
+    record(value) &&
+    [value.permission, value.role_name].some((role) => role === "admin" || role === "maintain");
   const sourceMessage = input.sourceCommit.commit?.message;
   if (
     input.repository !== REPAIR_REPOSITORY ||
@@ -434,8 +436,8 @@ export function bindRepairSelection(input: {
     !repositoryId ||
     typeof sourceMessage !== "string" ||
     /^Advisor-Repair-Attempt:/mu.test(sourceMessage) ||
-    !["admin", "maintain"].includes(String(permission(input.permissions.actor))) ||
-    !["admin", "maintain"].includes(String(permission(input.permissions.triggeringActor)))
+    !hasMaintainerPermission(input.permissions.actor) ||
+    !hasMaintainerPermission(input.permissions.triggeringActor)
   )
     fail("pull request is not eligible for maintainer-owned Advisor repair");
   const exactDispatch =
