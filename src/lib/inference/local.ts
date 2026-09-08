@@ -75,6 +75,7 @@ import {
   resetOllamaRuntimeContextWindowAutoState,
   resolveOllamaRuntimeContextWindow as resolveOllamaRuntimeContextWindowWithHost,
 } from "./ollama-runtime-context";
+import { hasOllamaSystemdUnit } from "./ollama-version";
 import {
   type RecoveredManagedClusterVllmEndpoint,
   recoverInstalledManagedClusterVllmEndpoint,
@@ -547,7 +548,6 @@ export function prepareOllamaApiExecution(
   host: string = getResolvedOllamaHost(),
   options: {
     dockerContextIsDefault?: typeof dockerContextIsDefaultFromBuild;
-    detached?: boolean;
     env?: NodeJS.ProcessEnv;
     operation?: string;
     prepareDockerEnvironment?: PrepareDockerEnvironmentFn;
@@ -555,10 +555,7 @@ export function prepareOllamaApiExecution(
   } = {},
 ): PreparedOllamaApiExecution {
   const [executable, ...args] = command;
-  let translated = executable === "curl" ? getOllamaApiCommand(args, host) : [...command];
-  if (options.detached === true && translated[0] === "docker" && translated[1] === "run") {
-    translated = [...translated.slice(0, 3), "-d", ...translated.slice(3)];
-  }
+  const translated = executable === "curl" ? getOllamaApiCommand(args, host) : [...command];
   if (translated[0] !== "docker") {
     return { command: translated, env: options.env, cleanup: () => {} };
   }
@@ -2312,7 +2309,6 @@ export function runOllamaWarmup(
   let execution: PreparedOllamaApiExecution;
   try {
     execution = prepareOllamaApiExecution(command, getResolvedOllamaHost(), {
-      detached: windowsHost,
       prepareDockerEnvironment,
       operation: `Windows-host Ollama warm-up for '${model}'`,
       runCaptureImpl: routeProtectionCapture,
@@ -2322,7 +2318,10 @@ export function runOllamaWarmup(
     return;
   }
   try {
-    runImpl(execution.command, {
+    const warmupCommand = windowsHost
+      ? [...execution.command.slice(0, 3), "-d", ...execution.command.slice(3)]
+      : execution.command;
+    runImpl(warmupCommand, {
       ignoreError: true,
       ...(execution.env === undefined ? {} : { env: execution.env }),
     });
@@ -2357,21 +2356,6 @@ export function getOllamaProbeCommand(
       endpoint,
     ]),
   ];
-}
-
-/** Return true only when this Linux host has an installed systemd Ollama unit. */
-function hasOllamaSystemdUnit(capture: RunCaptureFn): boolean {
-  if (process.platform !== "linux") return false;
-  return Boolean(
-    capture(
-      [
-        "sh",
-        "-c",
-        "command -v systemctl >/dev/null && [ -d /run/systemd/system ] && systemctl list-unit-files ollama.service --no-legend 2>/dev/null | head -n1",
-      ],
-      { ignoreError: true, timeout: 5_000 },
-    ).trim(),
-  );
 }
 
 export function validateOllamaModel(
