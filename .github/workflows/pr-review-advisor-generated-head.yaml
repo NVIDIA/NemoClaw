@@ -159,16 +159,19 @@ jobs:
           node --experimental-strip-types --no-warnings --input-type=module <<'NODE'
           import fs from "node:fs";
           import path from "node:path";
-          import { assertRepairArtifactDirectory, parseSelection, readJson } from "./advisor/tools/pr-review-advisor/repair-contract.mts";
+          import { assertRepairArtifactDirectory, parseSelection, parseValidationReceipt, readJson } from "./advisor/tools/pr-review-advisor/repair-contract.mts";
           const directory = process.env.REQUEST_DIR;
-          assertRepairArtifactDirectory(directory, { "generated-head.json": 1024 * 1024, "selection.json": 1024 * 1024 });
+          assertRepairArtifactDirectory(directory, { "generated-head.json": 1024 * 1024, "selection.json": 1024 * 1024, "validation.json": 1024 * 1024 });
           const request = readJson(path.join(directory, "generated-head.json"));
           const selection = parseSelection(readJson(path.join(directory, "selection.json")));
+          const validation = parseValidationReceipt(readJson(path.join(directory, "validation.json")));
           const run = Number(process.env.SOURCE_RUN_ID);
           const attempt = Number(process.env.SOURCE_RUN_ATTEMPT);
           const workflowSha = process.env.SOURCE_WORKFLOW_SHA;
           if (request.version !== 1 || request.sourceRunId !== run || request.sourceRunAttempt !== attempt ||
               request.sourceWorkflowSha !== workflowSha || selection.workflowSha !== workflowSha ||
+              validation.attemptKey !== selection.attemptKey || validation.workflowSha !== workflowSha ||
+              validation.sourceHeadSha !== selection.sourceHeadSha || validation.baseSha !== selection.baseSha ||
               typeof request.generatedHeadSha !== "string" || !/^[0-9a-f]{40}$/u.test(request.generatedHeadSha)) {
             throw new Error("generated-head request identity is invalid");
           }
@@ -180,6 +183,7 @@ jobs:
           GENERATED_HEAD_SHA: ${{ steps.request.outputs.head }}
           GITHUB_TOKEN: ${{ github.token }}
           SELECTION_FILE: ${{ env.REQUEST_DIR }}/selection.json
+          VALIDATION_FILE: ${{ env.REQUEST_DIR }}/validation.json
         run: node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-publish.mts" advisor-repair-checks
 
       - name: Upload bounded generated-head evidence

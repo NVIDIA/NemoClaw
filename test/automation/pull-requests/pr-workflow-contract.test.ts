@@ -62,10 +62,6 @@ type PrekConfig = {
   }>;
 };
 
-type PackageJson = {
-  scripts: Record<string, string>;
-};
-
 type TypeScriptConfig = {
   include: string[];
 };
@@ -495,15 +491,15 @@ describe("pull request and main workflow contracts", () => {
     ".github/actions/ci-installer-hash-check/action.yaml",
   );
   const prekConfig = readYaml<PrekConfig>(".pre-commit-config.yaml");
-  const packageJson = JSON.parse(readFileSync("package.json", "utf8")) as PackageJson;
+  const packageJson = JSON.parse(readFileSync("package.json", "utf8")) as {
+    scripts: Record<string, string>;
+  };
   const cliTypeScriptConfig = JSON.parse(
     readFileSync("tsconfig.cli.json", "utf8"),
   ) as TypeScriptConfig;
   const sharedActions = {
     staticChecks: readYaml<CompositeAction>(".github/actions/ci-static-checks/action.yaml"),
-    compileArtifacts: readYaml<CompositeAction>(
-      ".github/actions/ci-compile-artifacts/action.yaml",
-    ),
+    compileArtifacts: readYaml<CompositeAction>(".github/actions/ci-compile-artifacts/action.yaml"),
     buildTypecheck: readYaml<CompositeAction>(".github/actions/ci-build-typecheck/action.yaml"),
     cliCoverageShard: readYaml<CompositeAction>(
       ".github/actions/ci-cli-coverage-shard/action.yaml",
@@ -526,10 +522,7 @@ describe("pull request and main workflow contracts", () => {
     const repairVerify = generatedHeadWorkflow.jobs.validate;
     const repairRequest = generatedHeadWorkflow.jobs.locate;
     const audit = advisorWorkflow.jobs["repair-audit"];
-    const validatorText = readFileSync(
-      "tools/pr-review-advisor/repair-validate.mts",
-      "utf8",
-    );
+    const validatorText = readFileSync("tools/pr-review-advisor/repair-validate.mts", "utf8");
     expect(advisorWorkflow.permissions).toEqual({});
     expect(select.if).toContain("github.event_name == 'workflow_dispatch'");
     expect(select.if).toContain("vars.PR_REVIEW_ADVISOR_REPAIR_ENABLED == 'true'");
@@ -600,11 +593,13 @@ describe("pull request and main workflow contracts", () => {
     expect(validateText).not.toContain("publishAdvisorRepair");
     expect(repairPublishText).toContain("needs.repair-select.outputs.context-artifact-id");
     expect(repairPublishText).toContain("needs.repair-validate.outputs.validated-artifact-id");
-    expect(repairPublishText).toContain("advisor-repair");
     expect(repairPublishText).toContain("assertRepairArtifactDirectory");
     expect(repairPublishText).toContain("advisor-repair-generated-head-request");
+    expect(repairPublishText).toContain("validation.json");
     const upload = repairPublishText.indexOf("Upload the generated-head validation request");
-    expect(upload).toBeLessThan(repairPublishText.indexOf("Compare-and-swap the prepared repair commit"));
+    expect(upload).toBeLessThan(
+      repairPublishText.indexOf("Compare-and-swap the prepared repair commit"),
+    );
     const auditSteps = advisorWorkflow.jobs["repair-audit"]?.steps ?? [];
     expect(auditSteps.every((step) => step["continue-on-error"] === true)).toBe(true);
     expect(repairPublishText).not.toMatch(/secrets[.]|OPENAI_API_KEY|PR_REVIEW_ADVISOR_API_KEY/u);
@@ -614,16 +609,24 @@ describe("pull request and main workflow contracts", () => {
     expect(repairVerifyText).toContain("needs.locate.outputs.source-workflow-sha");
     expect(repairVerifyText).toContain("needs.locate.outputs.artifact-id");
     expect(repairVerifyText).toContain("advisor-repair-checks");
+    expect(repairVerifyText).toContain("VALIDATION_FILE");
+    expect(repairVerifyText).toContain("parseValidationReceipt");
     expect(repairVerifyText).not.toContain("check-runs");
     expect(repairVerifyText).not.toMatch(/secrets[.]|contents":"write/u);
     const auditText = JSON.stringify(audit);
-    expect(auditText).toContain('failure:{stage:');
+    expect(auditText).toContain("failure:{stage:");
     expect(auditText).toContain("prNumber:$pr");
     expect(auditText).toContain("tr -cd '0-9'");
   });
   // source-shape-contract: security -- Exact-SHA inputs and trusted-main dispatches prevent generated commits from inheriting old-head checks.
   it("runs generated-head validation only through trusted exact-SHA dispatches (#10791)", () => {
-    const standard = [prWorkflow, commitLintWorkflow, dcoWorkflow, installerHashWorkflow, codeScanningWorkflow];
+    const standard = [
+      prWorkflow,
+      commitLintWorkflow,
+      dcoWorkflow,
+      installerHashWorkflow,
+      codeScanningWorkflow,
+    ];
     expect(
       standard.map((workflow) =>
         ["repair_pr_number", "repair_head_sha", "repair_base_sha", "repair_attempt_key"].every(
@@ -635,18 +638,16 @@ describe("pull request and main workflow contracts", () => {
     const repairRunNameClause =
       "inputs.repair_attempt_key != '' && format('Repair validation {0} head {1}', inputs.repair_attempt_key, inputs.repair_head_sha)";
     expect(
-      [...standard, advisorWorkflow].map((workflow) =>
-        String(workflow["run-name"]).match(/^[$][{][{] (.*?) [|][|]/u)?.[1],
+      [...standard, advisorWorkflow].map(
+        (workflow) => String(workflow["run-name"]).match(/^[$][{][{] (.*?) [|][|]/u)?.[1],
       ),
     ).toEqual(Array.from({ length: 6 }, () => repairRunNameClause));
     expect(serialized.every((workflow) => workflow.includes("refs/heads/main"))).toBe(true);
     expect(serialized.every((workflow) => workflow.includes("REPAIR_ATTEMPT_KEY"))).toBe(true);
-    expect(serialized.every((workflow) => workflow.includes('^sha256:[0-9a-f]{64}$'))).toBe(true);
-    expect(serialized.every((workflow) => workflow.includes('.head.sha == $head'))).toBe(true);
-    expect(serialized.every((workflow) => workflow.includes('.base.sha == $base'))).toBe(true);
-    expect(String(commitLintWorkflow.concurrency?.group)).toContain(
-      "inputs.repair_attempt_key",
-    );
+    expect(serialized.every((workflow) => workflow.includes("^sha256:[0-9a-f]{64}$"))).toBe(true);
+    expect(serialized.every((workflow) => workflow.includes(".head.sha == $head"))).toBe(true);
+    expect(serialized.every((workflow) => workflow.includes(".base.sha == $base"))).toBe(true);
+    expect(String(commitLintWorkflow.concurrency?.group)).toContain("inputs.repair_attempt_key");
     expect(String(dcoWorkflow.concurrency?.group)).toContain("inputs.repair_attempt_key");
     expect(
       [commitLintWorkflow, dcoWorkflow, prWorkflow].map(
@@ -666,8 +667,8 @@ describe("pull request and main workflow contracts", () => {
       prWorkflow.jobs.changes,
       "Bind validation to the live generated head",
     );
-    expect(generatedHeadGuard.run).toContain('commits/$HEAD_SHA');
-    expect(generatedHeadGuard.run).toContain('.parents[0].sha == $parent');
+    expect(generatedHeadGuard.run).toContain("commits/$HEAD_SHA");
+    expect(generatedHeadGuard.run).toContain(".parents[0].sha == $parent");
     const packageLookup = requiredWorkflowStep(
       prWorkflow.jobs["openshell-sdk-package"],
       "Locate exact base-controlled SDK package run",
@@ -682,11 +683,8 @@ describe("pull request and main workflow contracts", () => {
       ).with?.name,
     ).toContain("inputs.repair_head_sha");
     expect(
-      (
-        sdkPackageWorkflow.on?.workflow_dispatch as
-          | { inputs?: Record<string, unknown> }
-          | undefined
-      )?.inputs,
+      (sdkPackageWorkflow.on?.workflow_dispatch as { inputs?: Record<string, unknown> } | undefined)
+        ?.inputs,
     ).toEqual(
       expect.objectContaining({
         repair_attempt_key: expect.any(Object),
@@ -700,8 +698,8 @@ describe("pull request and main workflow contracts", () => {
       sdkPackageJob,
       "Bind package production to the live generated head",
     );
-    expect(packageGuard.run).toContain('commits/$HEAD_SHA');
-    expect(packageGuard.run).toContain('.parents[0].sha == $parent');
+    expect(packageGuard.run).toContain("commits/$HEAD_SHA");
+    expect(packageGuard.run).toContain(".parents[0].sha == $parent");
     expect(JSON.stringify(codeScanningWorkflow)).toContain(
       "inputs.repair_attempt_key != '' && inputs.repair_head_sha",
     );
@@ -718,10 +716,7 @@ describe("pull request and main workflow contracts", () => {
   it("verifies changed Hugging Face catalog references without credentials", () => {
     const job = prWorkflow.jobs["hugging-face-models"];
     const filterStep = prWorkflow.jobs.changes.steps?.find((step) => step.id === "filter");
-    const filters = YAML.parse(String(filterStep?.with?.filters ?? "")) as Record<
-      string,
-      string[]
-    >;
+    const filters = YAML.parse(String(filterStep?.with?.filters ?? "")) as Record<string, string[]>;
     const huggingFaceModelFilters = filters.hugging_face_models ?? [];
 
     expect(

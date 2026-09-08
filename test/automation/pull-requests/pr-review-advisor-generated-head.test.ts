@@ -11,6 +11,7 @@ import YAML from "yaml";
 import {
   ADVISOR_REPAIR_HEAD_WORKFLOWS,
   ADVISOR_REPAIR_PREREQUISITE_WORKFLOWS,
+  advisorRepairE2eDispatchRequest,
   type GitHubRequest,
   waitForAdvisorRepairHead,
 } from "../../../tools/pr-review-advisor/repair-publish.mts";
@@ -186,7 +187,17 @@ describe("PR Review Advisor generated-head evidence", () => {
     let failedWorkflow: string | undefined;
     let correlationMode: "one" | "zero" | "ambiguous" = "one";
     let mismatchedReceipt = false;
+    let changedPaths: string[] = [];
+    let e2eConclusion = "success";
+    let e2eMatrixConclusion = "success";
+    const e2eRunId = 99;
+    const e2eCorrelationId = "01234567-89ab-4cde-8fab-0123456789ab";
+    const e2eUrl = `https://github.com/${selection.repository}/actions/runs/${e2eRunId}`;
     const dispatchedWorkflows = new Set<string>();
+    const dispatchE2e = vi.fn(async () => ({
+      runId: e2eRunId,
+      source: "dispatch-response" as const,
+    }));
     const request = vi.fn(
       async (method: string, apiPath: string, body?: unknown): Promise<unknown> => {
         const workflow = [
@@ -239,6 +250,33 @@ describe("PR Review Advisor generated-head evidence", () => {
             dispatchedWorkflows.add(workflow);
             return {};
           }
+          case method === "GET" && apiPath.endsWith(`/actions/runs/${e2eRunId}`):
+            return {
+              id: e2eRunId,
+              event: "workflow_dispatch",
+              path: ".github/workflows/e2e.yaml",
+              status: "completed",
+              conclusion: e2eConclusion,
+              display_title: `E2E PR #${selection.prNumber} (${e2eCorrelationId})`,
+              head_branch: "main",
+              head_sha: "5".repeat(40),
+              html_url: e2eUrl,
+              run_attempt: 1,
+            };
+          case method === "GET" && apiPath.includes(`/actions/runs/${e2eRunId}/attempts/1/jobs`):
+            return {
+              total_count: 1,
+              jobs: [
+                {
+                  id: 991,
+                  name: "generate-matrix",
+                  status: "completed",
+                  conclusion: e2eMatrixConclusion,
+                  html_url: `${e2eUrl}/job/991`,
+                  run_attempt: 1,
+                },
+              ],
+            };
           case method === "GET" && runMatch !== null: {
             const runId = Number(runMatch[1]);
             const specification = ADVISOR_REPAIR_HEAD_WORKFLOWS[runId - 1];
@@ -306,16 +344,25 @@ describe("PR Review Advisor generated-head evidence", () => {
         sourceHeadSha: selection.sourceHeadSha,
         baseSha: selection.baseSha,
         generatedHeadSha,
+        workflowSha: "5".repeat(40),
+        changedPaths,
         attemptKey: selection.attemptKey,
         request: request as GitHubRequest,
+        token: "token",
+        dispatchE2e,
+        correlationId: () => e2eCorrelationId,
         attempts: 1,
       });
 
     await expect(verify()).resolves.toMatchObject({
+      version: 2,
       outcome: "success",
       workflows: { length: 6 },
+      riskPlan: { requiredJobs: [] },
+      e2e: null,
       checks: { length: 5 },
     });
+    expect(dispatchE2e).not.toHaveBeenCalled();
     expect(dispatchedWorkflows).toContain("openshell-sdk-package-pr.yaml");
     failedWorkflow = "pr.yaml";
     dispatchedWorkflows.clear();
@@ -331,5 +378,69 @@ describe("PR Review Advisor generated-head evidence", () => {
     correlationMode = "ambiguous";
     dispatchedWorkflows.clear();
     await expect(verify()).rejects.toThrow("run identity is ambiguous");
+    correlationMode = "one";
+    changedPaths = ["src/lib/onboard/sandbox-create-step.ts"];
+    dispatchedWorkflows.clear();
+    await expect(verify()).resolves.toMatchObject({
+      version: 2,
+      outcome: "success",
+      riskPlan: { requiredJobs: ["onboard-repair", "onboard-resume"] },
+      e2e: {
+        correlationId: e2eCorrelationId,
+        runId: e2eRunId,
+        receipt: { name: `e2e-dispatch-${e2eRunId}-1` },
+        requiredJobs: ["onboard-repair", "onboard-resume"],
+      },
+      checks: { length: 6 },
+    });
+    expect(dispatchE2e).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        generatedHeadSha,
+        requiredJobs: ["onboard-repair", "onboard-resume"],
+        correlationId: e2eCorrelationId,
+      }),
+    );
+    e2eConclusion = "failure";
+    dispatchedWorkflows.clear();
+    await expect(verify()).rejects.toThrow("generated-head E2E run failed");
+    e2eConclusion = "success";
+    e2eMatrixConclusion = "failure";
+    dispatchedWorkflows.clear();
+    await expect(verify()).rejects.toThrow(
+      "generated-head E2E generate-matrix job did not succeed",
+    );
+  });
+
+  it("dispatches only the trusted exact generated-head E2E selection (#10791)", () => {
+    expect(
+      advisorRepairE2eDispatchRequest({
+        prNumber: 10791,
+        generatedHeadSha: "1".repeat(40),
+        baseSha: "2".repeat(40),
+        workflowSha: "3".repeat(40),
+        correlationId: "01234567-89ab-4cde-8fab-0123456789ab",
+        requiredJobs: ["onboard-repair", "onboard-resume"],
+      }),
+    ).toEqual({
+      ref: "main",
+      inputs: {
+        targets: "",
+        jobs: "onboard-repair,onboard-resume",
+        include_staging_brev_launchable: false,
+        inference_mode: "mock",
+        gateway_runtime: "docker",
+        gateway_runtimes: "",
+        allow_jetson_dispatch: false,
+        allow_dgx_spark_runner_queue: false,
+        pr_number: "10791",
+        post_to_slack: false,
+        checkout_sha: "1".repeat(40),
+        checkout_repository: "NVIDIA/NemoClaw",
+        base_sha: "2".repeat(40),
+        workflow_sha: "3".repeat(40),
+        managed_image_revision: "",
+        correlation_id: "01234567-89ab-4cde-8fab-0123456789ab",
+      },
+    });
   });
 });

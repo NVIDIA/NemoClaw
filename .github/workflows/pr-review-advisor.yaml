@@ -963,6 +963,7 @@ jobs:
         run: |
           mkdir -m 700 "$PUBLISH_REPORT_DIR"
           cp "$SELECTION_FILE" "$PUBLISH_REPORT_DIR/selection.json"
+          cp "$PUBLISH_INPUT_DIR/validated/validation.json" "$PUBLISH_REPORT_DIR/validation.json"
           jq -n --arg head "$GENERATED_HEAD_SHA" --arg run "$GITHUB_RUN_ID" \
             --arg attempt "$GITHUB_RUN_ATTEMPT" --arg workflow "$SOURCE_WORKFLOW_SHA" \
             '{version:1, generatedHeadSha:$head, sourceRunId:($run|tonumber), sourceRunAttempt:($attempt|tonumber), sourceWorkflowSha:$workflow}' \

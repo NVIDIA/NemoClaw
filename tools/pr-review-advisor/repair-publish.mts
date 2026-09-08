@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { randomUUID } from "node:crypto";
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -14,6 +15,10 @@ import {
   updateVerifiedRef,
 } from "../pull-requests/publication.mts";
 export type { GitHubRequest, GraphqlRequest } from "../pull-requests/publication.mts";
+
+import { githubApiWithResponse } from "../advisors/github.mts";
+import { buildRiskPlan, riskPlanRequiredJobIds, type RiskPlan } from "../advisors/risk-plan.mts";
+import { dispatchWorkflowWithReconciliation } from "../e2e/pr-e2e-dispatch-reconciliation.mts";
 
 import {
   assertLiveRepairState,
@@ -55,6 +60,9 @@ export const ADVISOR_REPAIR_HEAD_WORKFLOWS = [
 
 export const ADVISOR_REPAIR_PREREQUISITE_WORKFLOWS = ["openshell-sdk-package-pr.yaml"] as const;
 
+const ADVISOR_REPAIR_E2E_WORKFLOW = "e2e.yaml";
+const ADVISOR_REPAIR_E2E_CHECK = "advisor-repair-risk-plan-e2e";
+
 type WorkflowRun = {
   id?: unknown;
   event?: unknown;
@@ -83,8 +91,29 @@ type PublishedCheck = {
   url: string;
 };
 
+type AdvisorRepairE2eDispatch = {
+  correlationId: string;
+  runId: number;
+  source: "dispatch-response" | "workflow-run-inventory";
+};
+
+type AdvisorRepairE2eEvidence = AdvisorRepairE2eDispatch & {
+  runAttempt: number;
+  url: string;
+  receipt: { name: string; url: string };
+  generateMatrix: { name: "generate-matrix"; url: string };
+  requiredJobs: string[];
+};
+
+type AdvisorRepairRiskPlan = {
+  version: RiskPlan["version"];
+  planHash: string;
+  changedPaths: string[];
+  requiredJobs: string[];
+};
+
 export type AdvisorRepairHeadReceipt = {
-  version: 1;
+  version: 2;
   attemptKey: string;
   sourceHeadSha: string;
   baseSha: string;
@@ -99,6 +128,8 @@ export type AdvisorRepairHeadReceipt = {
     receipt: { name: string; url: string };
     jobs: Array<{ name: string; url: string }>;
   }>;
+  riskPlan: AdvisorRepairRiskPlan;
+  e2e: AdvisorRepairE2eEvidence | null;
   checks: PublishedCheck[];
   failure: string | null;
 };
@@ -218,6 +249,97 @@ function repairValidationInputs(
   };
 }
 
+export function advisorRepairRiskPlan(
+  generatedHeadSha: string,
+  changedPaths: readonly string[],
+): AdvisorRepairRiskPlan {
+  const plan = buildRiskPlan({ headSha: generatedHeadSha, changedFiles: changedPaths });
+  return {
+    version: plan.version,
+    planHash: plan.planHash,
+    changedPaths: [...plan.changedFiles],
+    requiredJobs: riskPlanRequiredJobIds(plan),
+  };
+}
+
+type DispatchAdvisorRepairE2e = (input: {
+  prNumber: number;
+  generatedHeadSha: string;
+  baseSha: string;
+  workflowSha: string;
+  correlationId: string;
+  requiredJobs: readonly string[];
+  token: string;
+}) => Promise<{ runId: number; source: AdvisorRepairE2eDispatch["source"] }>;
+
+export function advisorRepairE2eDispatchRequest(input: {
+  prNumber: number;
+  generatedHeadSha: string;
+  baseSha: string;
+  workflowSha: string;
+  correlationId: string;
+  requiredJobs: readonly string[];
+}): { ref: "main"; inputs: Record<string, string | boolean> } {
+  return {
+    ref: "main",
+    inputs: {
+      targets: "",
+      jobs: input.requiredJobs.join(","),
+      include_staging_brev_launchable: false,
+      inference_mode: "mock",
+      gateway_runtime: "docker",
+      gateway_runtimes: "",
+      allow_jetson_dispatch: false,
+      allow_dgx_spark_runner_queue: false,
+      pr_number: String(input.prNumber),
+      post_to_slack: false,
+      checkout_sha: input.generatedHeadSha,
+      checkout_repository: REPAIR_REPOSITORY,
+      base_sha: input.baseSha,
+      workflow_sha: input.workflowSha,
+      managed_image_revision: "",
+      correlation_id: input.correlationId,
+    },
+  };
+}
+
+const defaultDispatchAdvisorRepairE2e: DispatchAdvisorRepairE2e = async (input) =>
+  dispatchWorkflowWithReconciliation({
+    repository: REPAIR_REPOSITORY,
+    token: input.token,
+    workflowSha: input.workflowSha,
+    correlationId: input.correlationId,
+    prNumber: input.prNumber,
+    dispatch: (signal) =>
+      githubApiWithResponse(
+        `repos/${REPAIR_REPOSITORY}/actions/workflows/${ADVISOR_REPAIR_E2E_WORKFLOW}/dispatches`,
+        input.token,
+        {
+          method: "POST",
+          signal,
+          body: advisorRepairE2eDispatchRequest(input),
+        },
+      ),
+  });
+
+async function dispatchAdvisorRepairE2e(input: {
+  prNumber: number;
+  generatedHeadSha: string;
+  baseSha: string;
+  workflowSha: string;
+  requiredJobs: readonly string[];
+  token: string;
+  correlationId?: () => string;
+  dispatch?: DispatchAdvisorRepairE2e;
+}): Promise<AdvisorRepairE2eDispatch> {
+  const correlationId = (input.correlationId ?? randomUUID)();
+  const result = await (input.dispatch ?? defaultDispatchAdvisorRepairE2e)({
+    ...input,
+    correlationId,
+  });
+  return { correlationId, ...result };
+}
+
 async function dispatchRepairValidation(
   workflow: string,
   input: Parameters<typeof repairValidationInputs>[1],
@@ -327,10 +449,96 @@ async function completedWorkflowEvidence(
   return { ...dispatch, runAttempt: Number(run.run_attempt), receipt, jobs };
 }
 
+async function listE2eJobs(runId: number, request: GitHubRequest): Promise<WorkflowJob[]> {
+  const jobs: WorkflowJob[] = [];
+  const ids = new Set<number>();
+  let totalCount: number | undefined;
+  for (let page = 1; page <= 10; page += 1) {
+    const response = (await request(
+      "GET",
+      `/repos/${REPAIR_REPOSITORY}/actions/runs/${runId}/attempts/1/jobs?per_page=100&page=${page}`,
+    )) as { total_count?: unknown; jobs?: unknown };
+    if (
+      !Number.isSafeInteger(response.total_count) ||
+      Number(response.total_count) < 1 ||
+      Number(response.total_count) > 1_000 ||
+      !Array.isArray(response.jobs) ||
+      response.jobs.length > 100 ||
+      (totalCount !== undefined && response.total_count !== totalCount)
+    )
+      throw new RepairError("generated-head E2E job listing is invalid");
+    totalCount ??= Number(response.total_count);
+    for (const job of response.jobs as WorkflowJob[]) {
+      if (!Number.isSafeInteger(job.id) || Number(job.id) < 1 || ids.has(Number(job.id)))
+        throw new RepairError("generated-head E2E job listing is invalid");
+      ids.add(Number(job.id));
+      jobs.push(job);
+    }
+    if (jobs.length === totalCount) return jobs;
+    if (jobs.length > totalCount || response.jobs.length < 100)
+      throw new RepairError("generated-head E2E job listing is incomplete");
+  }
+  throw new RepairError("generated-head E2E job listing exceeds one thousand jobs");
+}
+
+async function completedE2eEvidence(
+  dispatch: AdvisorRepairE2eDispatch,
+  input: {
+    prNumber: number;
+    workflowSha: string;
+    requiredJobs: readonly string[];
+    request: GitHubRequest;
+  },
+): Promise<AdvisorRepairE2eEvidence | null> {
+  const url = `https://github.com/${REPAIR_REPOSITORY}/actions/runs/${dispatch.runId}`;
+  const run = (await input.request(
+    "GET",
+    `/repos/${REPAIR_REPOSITORY}/actions/runs/${dispatch.runId}`,
+  )) as WorkflowRun;
+  if (
+    run.id !== dispatch.runId ||
+    run.path !== `.github/workflows/${ADVISOR_REPAIR_E2E_WORKFLOW}` ||
+    run.event !== "workflow_dispatch" ||
+    run.head_branch !== "main" ||
+    run.head_sha !== input.workflowSha ||
+    run.display_title !== `E2E PR #${input.prNumber} (${dispatch.correlationId})` ||
+    run.html_url !== url ||
+    run.run_attempt !== 1
+  )
+    throw new RepairError("generated-head E2E run evidence is invalid");
+  if (run.status !== "completed") return null;
+  if (run.conclusion !== "success") throw new RepairError("generated-head E2E run failed");
+  const jobs = await listE2eJobs(dispatch.runId, input.request);
+  const generateMatrixMatches = jobs.filter((job) => job.name === "generate-matrix");
+  if (generateMatrixMatches.length !== 1)
+    throw new RepairError("generated-head E2E generate-matrix job is ambiguous");
+  const [generateMatrixJob] = generateMatrixMatches;
+  if (
+    generateMatrixJob.status !== "completed" ||
+    generateMatrixJob.conclusion !== "success" ||
+    generateMatrixJob.run_attempt !== 1 ||
+    !Number.isSafeInteger(generateMatrixJob.id) ||
+    Number(generateMatrixJob.id) < 1 ||
+    typeof generateMatrixJob.html_url !== "string" ||
+    !generateMatrixJob.html_url.startsWith(`${url}/job/`)
+  )
+    throw new RepairError("generated-head E2E generate-matrix job did not succeed");
+  const artifactName = `e2e-dispatch-${dispatch.runId}-1`;
+  return {
+    ...dispatch,
+    runAttempt: 1,
+    url,
+    receipt: { name: artifactName, url },
+    generateMatrix: { name: "generate-matrix", url: generateMatrixJob.html_url },
+    requiredJobs: [...input.requiredJobs],
+  };
+}
+
 async function publishRepairChecks(
   generatedHeadSha: string,
   attemptKey: string,
   workflows: AdvisorRepairHeadReceipt["workflows"],
+  e2e: AdvisorRepairE2eEvidence | null,
   request: GitHubRequest,
 ): Promise<PublishedCheck[]> {
   const response = (await request(
@@ -348,7 +556,11 @@ async function publishRepairChecks(
     html_url?: unknown;
   }>;
   const published: PublishedCheck[] = [];
-  for (const job of workflows.flatMap(({ jobs }) => jobs)) {
+  const jobs = [
+    ...workflows.flatMap(({ jobs }) => jobs),
+    ...(e2e ? [{ name: ADVISOR_REPAIR_E2E_CHECK, url: e2e.url }] : []),
+  ];
+  for (const job of jobs) {
     const externalId = `${attemptKey}:${job.name}`;
     const matches = existing.filter((check) => check.external_id === externalId);
     if (matches.length > 1) throw new RepairError(`generated-head check ${job.name} is ambiguous`);
@@ -388,8 +600,13 @@ export async function waitForAdvisorRepairHead(input: {
   sourceHeadSha: string;
   baseSha: string;
   generatedHeadSha: string;
+  workflowSha: string;
+  changedPaths: readonly string[];
   attemptKey: string;
   request: GitHubRequest;
+  token?: string;
+  dispatchE2e?: DispatchAdvisorRepairE2e;
+  correlationId?: () => string;
   wait?: (milliseconds: number) => Promise<void>;
   attempts?: number;
 }): Promise<AdvisorRepairHeadReceipt> {
@@ -398,6 +615,7 @@ export async function waitForAdvisorRepairHead(input: {
   const attempts = input.attempts ?? 120;
   const runName = repairValidationRunName(input.attemptKey, input.generatedHeadSha);
   const receiptName = repairValidationReceiptName(input);
+  const riskPlan = advisorRepairRiskPlan(input.generatedHeadSha, input.changedPaths);
   await Promise.all(
     ADVISOR_REPAIR_PREREQUISITE_WORKFLOWS.map((workflow) =>
       dispatchRepairValidation(workflow, input, runName, input.request),
@@ -408,7 +626,20 @@ export async function waitForAdvisorRepairHead(input: {
       dispatchRepairValidation(workflow, input, runName, input.request),
     ),
   );
+  const e2eDispatch = riskPlan.requiredJobs.length
+    ? await dispatchAdvisorRepairE2e({
+        prNumber: input.prNumber,
+        generatedHeadSha: input.generatedHeadSha,
+        baseSha: input.baseSha,
+        workflowSha: input.workflowSha,
+        requiredJobs: riskPlan.requiredJobs,
+        token: required(input.token, "GITHUB_TOKEN"),
+        correlationId: input.correlationId,
+        dispatch: input.dispatchE2e,
+      })
+    : null;
   const dispatches = new Map<string, { workflow: string; runId: number; url: string }>();
+  let e2e: AdvisorRepairE2eEvidence | null = null;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const pull = (await input.request(
       "GET",
@@ -443,15 +674,23 @@ export async function waitForAdvisorRepairHead(input: {
       );
       if (evidence) workflows.push(evidence);
     }
-    if (workflows.length === ADVISOR_REPAIR_HEAD_WORKFLOWS.length) {
+    if (e2eDispatch && !e2e)
+      e2e = await completedE2eEvidence(e2eDispatch, {
+        prNumber: input.prNumber,
+        workflowSha: input.workflowSha,
+        requiredJobs: riskPlan.requiredJobs,
+        request: input.request,
+      });
+    if (workflows.length === ADVISOR_REPAIR_HEAD_WORKFLOWS.length && (!e2eDispatch || e2e)) {
       const checks = await publishRepairChecks(
         input.generatedHeadSha,
         input.attemptKey,
         workflows,
+        e2e,
         input.request,
       );
       return {
-        version: 1,
+        version: 2,
         attemptKey: input.attemptKey,
         sourceHeadSha: input.sourceHeadSha,
         baseSha: input.baseSha,
@@ -459,6 +698,8 @@ export async function waitForAdvisorRepairHead(input: {
         prNumber: input.prNumber,
         outcome: "success",
         workflows,
+        riskPlan,
+        e2e,
         checks,
         failure: null,
       };
@@ -481,10 +722,25 @@ async function main(): Promise<void> {
     const selection = parseSelection(
       readJson(required(process.env.SELECTION_FILE, "SELECTION_FILE")),
     );
+    const validation = parseValidationReceipt(
+      readJson(required(process.env.VALIDATION_FILE, "VALIDATION_FILE")),
+    );
     const generatedHeadSha = fullSha(
       required(process.env.GENERATED_HEAD_SHA, "GENERATED_HEAD_SHA"),
       "generated head SHA",
     );
+    if (
+      validation.attemptKey !== selection.attemptKey ||
+      validation.prNumber !== selection.prNumber ||
+      validation.sourceHeadSha !== selection.sourceHeadSha ||
+      validation.baseSha !== selection.baseSha ||
+      validation.workflowSha !== selection.workflowSha ||
+      JSON.stringify(validation.findingIds) !== JSON.stringify(selection.findingIds) ||
+      JSON.stringify(validation.selectedPaths) !== JSON.stringify(selection.selectedPaths)
+    )
+      throw new RepairError("generated-head validation receipt does not match the selection");
+    const changedPaths = validation.changedPaths.map(({ path: file }) => file);
+    const riskPlan = advisorRepairRiskPlan(generatedHeadSha, changedPaths);
     const output = required(process.env.VERIFICATION_OUTPUT_DIR, "VERIFICATION_OUTPUT_DIR");
     try {
       const token = required(process.env.GITHUB_TOKEN, "GITHUB_TOKEN");
@@ -493,14 +749,17 @@ async function main(): Promise<void> {
         sourceHeadSha: selection.sourceHeadSha,
         baseSha: selection.baseSha,
         generatedHeadSha,
+        workflowSha: selection.workflowSha,
+        changedPaths,
         attemptKey: selection.attemptKey,
         request: githubClient(token).request,
+        token,
       });
       writeAdvisorRepairHeadReceipt(output, receipt);
       console.log(`Verified all generated-head workflows on ${generatedHeadSha}.`);
     } catch (error) {
       writeAdvisorRepairHeadReceipt(output, {
-        version: 1,
+        version: 2,
         attemptKey: selection.attemptKey,
         sourceHeadSha: selection.sourceHeadSha,
         baseSha: selection.baseSha,
@@ -508,6 +767,8 @@ async function main(): Promise<void> {
         prNumber: selection.prNumber,
         outcome: "manual-remediation-required",
         workflows: [],
+        riskPlan,
+        e2e: null,
         checks: [],
         failure: sanitizeDiagnostic(error),
       });
