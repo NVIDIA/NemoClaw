@@ -10,6 +10,10 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const requireSource = createRequire(import.meta.url);
+const { DirectSandboxContainerNotFoundError, DirectSandboxFallbackUnavailableError } =
+  requireSource(
+    "../../src/lib/onboard/runtime-provider/privileged-sandbox-control-errors.ts",
+  ) as typeof import("../../src/lib/onboard/runtime-provider/privileged-sandbox-control-errors.js");
 const {
   executeGatewaySupervisorAction,
   executeSandboxCommand,
@@ -187,6 +191,7 @@ describe("waitForManagedGatewaySupervisor", () => {
         status: 1,
         stdout: "",
         stderr: "PRIVILEGED_CONTROL_UNAVAILABLE",
+        managedContainerDiscoveryUnavailable: true,
       })
       .mockReturnValueOnce({
         status: 0,
@@ -283,6 +288,61 @@ describe("waitForManagedGatewaySupervisor", () => {
     ).toBe(false);
     expect(sleepImpl).not.toHaveBeenCalled();
   });
+
+  it("does not treat an untyped helper refusal as pending container discovery (#11107)", () => {
+    const sleepImpl = vi.fn();
+    const requestGatewaySupervisorActionImpl = vi.fn(() => ({
+      status: 1,
+      stdout: "",
+      stderr: "PRIVILEGED_CONTROL_UNAVAILABLE",
+    }));
+
+    expect(
+      waitForManagedGatewaySupervisor("new-clone", {
+        maxAttempts: 2,
+        requestGatewaySupervisorActionImpl,
+        sleepImpl,
+      }),
+    ).toBe(false);
+    expect(requestGatewaySupervisorActionImpl).toHaveBeenCalledOnce();
+    expect(sleepImpl).not.toHaveBeenCalled();
+  });
+
+  it("shares one deadline across managed probe attempts (#11107)", () => {
+    let now = 0;
+    const requestGatewaySupervisorActionImpl = vi.fn(
+      (_sandboxName: string, _action: "restart" | "recover" | "probe", timeout = 210_000) => {
+        now += timeout;
+        return {
+          status: 1,
+          stdout: "",
+          stderr: "SUPERVISOR_DISCOVERY_PENDING",
+        };
+      },
+    );
+
+    expect(
+      waitForManagedGatewaySupervisor("new-clone", {
+        nowImpl: () => now,
+        requestGatewaySupervisorActionImpl,
+        sleepImpl: vi.fn(),
+        totalTimeoutMs: 20_000,
+      }),
+    ).toBe(false);
+    expect(requestGatewaySupervisorActionImpl).toHaveBeenCalledTimes(2);
+    expect(requestGatewaySupervisorActionImpl).toHaveBeenNthCalledWith(
+      1,
+      "new-clone",
+      "probe",
+      15_000,
+    );
+    expect(requestGatewaySupervisorActionImpl).toHaveBeenNthCalledWith(
+      2,
+      "new-clone",
+      "probe",
+      5_000,
+    );
+  });
 });
 
 describe("executeGatewaySupervisorAction", () => {
@@ -291,15 +351,33 @@ describe("executeGatewaySupervisorAction", () => {
   it("sanitizes a temporarily unavailable direct container into the retry marker", () => {
     const privilegedExec = requireSource("../../src/lib/sandbox/privileged-exec.ts");
     vi.spyOn(privilegedExec, "resolvePrivilegedSandboxTarget").mockImplementation(() => {
-      throw new Error("temporary direct-container discovery detail");
+      throw new DirectSandboxContainerNotFoundError("temporary direct-container discovery detail");
     });
-    vi.spyOn(privilegedExec, "isDirectSandboxFallbackUnavailableError").mockReturnValue(true);
 
     expect(executeGatewaySupervisorAction("new-clone", "probe", 100)).toEqual({
       status: 1,
       stdout: "",
       stderr: "PRIVILEGED_CONTROL_UNAVAILABLE",
+      managedContainerDiscoveryUnavailable: true,
     });
+  });
+
+  it.each([
+    "Direct sandbox container discovery failed for 'new-clone': transport unavailable",
+    "No running Podman runtime resource found for sandbox 'new-clone'.",
+  ])("keeps a direct-container authority failure terminal: %s (#11107)", (detail) => {
+    const privilegedExec = requireSource("../../src/lib/sandbox/privileged-exec.ts");
+    const request = vi.spyOn(privilegedExec, "resolvePrivilegedSandboxTarget");
+    request.mockImplementation(() => {
+      throw new DirectSandboxFallbackUnavailableError(detail);
+    });
+
+    expect(executeGatewaySupervisorAction("new-clone", "probe", 100)).toEqual({
+      status: 1,
+      stdout: "",
+      stderr: `PRIVILEGED_CONTROL_UNAVAILABLE: ${detail}`,
+    });
+    expect(request).toHaveBeenCalledOnce();
   });
 
   it("keeps other privileged-control refusals terminal and classified", () => {

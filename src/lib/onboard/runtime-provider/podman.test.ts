@@ -31,6 +31,10 @@ import {
   createRuntimeProviderBundleRegistry,
   requireRuntimeProviderHostLocalInferenceOperation,
 } from "./registry";
+import {
+  DirectSandboxContainerNotFoundError,
+  DirectSandboxFallbackUnavailableError,
+} from "./privileged-sandbox-control-errors";
 import { clearStoppedSandboxStateWithEngine } from "./stopped-sandbox-state-cleanup";
 
 const AGENTS = ["openclaw", "hermes", "langchain-deepagents-code"] as const;
@@ -363,6 +367,49 @@ describe("managed Podman runtime provider", () => {
     expect(
       JSON.stringify((runtime.lifecycle.capture as ReturnType<typeof vi.fn>).mock.calls),
     ).not.toContain("docker");
+  });
+
+  it("keeps a stopped Podman container terminal for privileged control (#11107)", () => {
+    const runtime = providerHarness("hermes");
+    const lifecycle = runtime.providers.podman?.lifecycle;
+    expect(lifecycle).toMatchObject({ supported: true });
+    const supportedLifecycle = lifecycle as Extract<
+      NonNullable<typeof lifecycle>,
+      { readonly supported: true }
+    >;
+    let refusal: unknown;
+
+    try {
+      supportedLifecycle.privilegedSandboxControl.resolveTarget({
+        registeredSandboxNames: [runtime.sandboxName],
+        sandbox: runtime.entry,
+        sandboxName: runtime.sandboxName,
+      });
+    } catch (error) {
+      refusal = error;
+    }
+
+    expect(refusal).toBeInstanceOf(DirectSandboxFallbackUnavailableError);
+    expect(refusal).not.toBeInstanceOf(DirectSandboxContainerNotFoundError);
+  });
+
+  it("classifies a successful Podman discovery with no container as pending (#11107)", () => {
+    const runtime = providerHarness("hermes");
+    vi.mocked(runtime.lifecycle.capture).mockReturnValue({ status: 0, stdout: "", stderr: "" });
+    const lifecycle = runtime.providers.podman?.lifecycle;
+    expect(lifecycle).toMatchObject({ supported: true });
+    const supportedLifecycle = lifecycle as Extract<
+      NonNullable<typeof lifecycle>,
+      { readonly supported: true }
+    >;
+
+    expect(() =>
+      supportedLifecycle.privilegedSandboxControl.resolveTarget({
+        registeredSandboxNames: [runtime.sandboxName],
+        sandbox: runtime.entry,
+        sandboxName: runtime.sandboxName,
+      }),
+    ).toThrow(DirectSandboxContainerNotFoundError);
   });
 
   it("routes stopped state cleanup through the Podman workload-cleanup engine", () => {
