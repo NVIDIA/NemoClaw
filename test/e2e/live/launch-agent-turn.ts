@@ -13,17 +13,17 @@ const OPENCLAW_LAUNCH_PROVIDER_ATTEMPTS = 2;
 const OPENCLAW_LAUNCH_PROVIDER_RETRY_DELAY_MS = 1_000;
 export const OPENCLAW_PROVIDER_UNAVAILABLE_MARKER =
   "nemoclaw.e2e.launch-failure=provider-unavailable";
-const OPENCLAW_PROVIDER_UNAVAILABLE_PREFIX = `launch did not record the required structured session turns\n${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}\n`;
-const OPENCLAW_LAUNCH_CLEANUP_FAILURES = [
-  "structured session baseline cleanup failed",
-  "launch host session cleanup failed",
-  "launch PTY monitor cleanup failed",
-] as const;
+const OPENCLAW_PROVIDER_UNAVAILABLE_FAILURE_PREFIX =
+  "launch did not record the required structured session turns\n";
 
-function isTransientProviderAvailabilityFailure(result: Pick<ShellProbeResult, "stderr">): boolean {
+function isTransientProviderAvailabilityFailure(
+  result: Pick<ShellProbeResult, "stderr">,
+  runId: string,
+): boolean {
+  const finalMarker = `${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}:${runId}\n`;
   return (
-    result.stderr.startsWith(OPENCLAW_PROVIDER_UNAVAILABLE_PREFIX) &&
-    OPENCLAW_LAUNCH_CLEANUP_FAILURES.every((diagnostic) => !result.stderr.includes(diagnostic))
+    result.stderr.startsWith(OPENCLAW_PROVIDER_UNAVAILABLE_FAILURE_PREFIX) &&
+    result.stderr.endsWith(`\n${finalMarker}`)
   );
 }
 
@@ -1068,6 +1068,7 @@ baseline_path="/tmp/nemoclaw-launch-session-$NEMOCLAW_LAUNCH_RUN_ID.json"
 pty_monitor_root="/tmp/nemoclaw-launch-turn-$NEMOCLAW_LAUNCH_RUN_ID"
 session_pid=""
 session_deadline=""
+provider_unavailable_candidate=0
 
 remove_session_baseline() {
   session_evidence cleanup-baseline
@@ -1112,6 +1113,9 @@ cleanup() {
     cleanup_status=1
   fi
   if [[ "$original_status" != 0 ]]; then
+    case "$provider_unavailable_candidate:$cleanup_status" in
+      1:0) echo "${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}:$NEMOCLAW_LAUNCH_RUN_ID" >&2 ;;
+    esac
     exit "$original_status"
   fi
   exit "$cleanup_status"
@@ -1131,6 +1135,9 @@ terminal_diagnostic() {
 
 transient_provider_availability_failure() {
   local diagnostic
+  grep -Eiq \
+    'authentication failed|authorization failed|unauthorized|forbidden|HTTP( status)?[:= ]+40[13]|invalid.*(api[_ -]?key|credential|JSON|response)|\b(egress|request|connection|certificate|TLS|network|route|routing|policy|proxy|transport)[^\r\n]*(blocked|denied|failed|invalid)\b|\b(blocked|denied|failed|invalid)[^\r\n]*(egress|request|connection|certificate|TLS|network|route|routing|policy|proxy|transport)\b|malformed' \
+    "$capture" && return 1
   diagnostic="$(tail -c 4096 "$capture" 2>/dev/null || true)"
   printf '%s\n' "$diagnostic" | grep -Fq \
     'run error: litellm.ServiceUnavailableError: ServiceUnavailableError:' || return 1
@@ -1138,8 +1145,6 @@ transient_provider_availability_failure() {
     'OpenAIException - . Received Model Group=' || return 1
   printf '%s\n' "$diagnostic" | grep -Fq \
     'Available Model Group Fallbacks=' || return 1
-  ! printf '%s\n' "$diagnostic" | grep -Eiq \
-    'authentication failed|authorization failed|unauthorized|forbidden|HTTP( status)?[:= ]+40[13]|invalid.*(api[_ -]?key|credential|JSON|response)|\b(egress|request|connection|certificate|TLS|network|route|routing|policy|proxy|transport)[^\r\n]*(blocked|denied|failed|invalid)\b|\b(blocked|denied|failed|invalid)[^\r\n]*(egress|request|connection|certificate|TLS|network|route|routing|policy|proxy|transport)\b|malformed'
 }
 
 provider_empty_message_evidence() {
@@ -1148,7 +1153,6 @@ provider_empty_message_evidence() {
 
 fail_launch_session() {
   echo "$1" >&2
-  echo "${"$"}{2:-}" >&2
   if [[ -s "$evidence_error" ]]; then
     tail -c 2048 "$evidence_error" >&2 || true
   fi
@@ -1198,9 +1202,8 @@ wait_for_turn_count() {
         2)
           provider_empty_message_evidence && \
             transient_provider_availability_failure && \
-            fail_launch_session \
-              "launch did not record the required structured session turns" \
-              "${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}"
+            provider_unavailable_candidate=1 && \
+            fail_launch_session "launch did not record the required structured session turns"
           ;;
       esac
       fail_launch_session \
@@ -1397,6 +1400,7 @@ export async function runOpenClawLaunchSession(
   let providerUnavailable = false;
   for (let attempt = 1; attempt <= OPENCLAW_LAUNCH_PROVIDER_ATTEMPTS; attempt += 1) {
     const inputs = uniqueTurnInputs();
+    const runId = randomUUID().replaceAll("-", "");
     const result = await options.host.command("bash", ["-lc", LAUNCH_TURN_SCRIPT], {
       artifactName:
         attempt === 1
@@ -1409,7 +1413,7 @@ export async function runOpenClawLaunchSession(
         NEMOCLAW_LAUNCH_EXIT_COMMAND: options.exitCommand ?? "",
         NEMOCLAW_LAUNCH_FIRST_INPUT: inputs.first,
         NEMOCLAW_LAUNCH_HOST_TMP_ROOT: resolve(options.env.TMPDIR || "/tmp"),
-        NEMOCLAW_LAUNCH_RUN_ID: randomUUID().replaceAll("-", ""),
+        NEMOCLAW_LAUNCH_RUN_ID: runId,
         NEMOCLAW_LAUNCH_SANDBOX: options.sandboxName,
         NEMOCLAW_LAUNCH_SESSION_BUDGET_SECONDS: "230",
         NEMOCLAW_LAUNCH_SECOND_INPUT: inputs.second,
@@ -1426,7 +1430,7 @@ export async function runOpenClawLaunchSession(
     });
     if (result.exitCode === 0) return result;
     finalFailure = result;
-    providerUnavailable = isTransientProviderAvailabilityFailure(result);
+    providerUnavailable = isTransientProviderAvailabilityFailure(result, runId);
     if (!providerUnavailable) break;
     if (attempt < OPENCLAW_LAUNCH_PROVIDER_ATTEMPTS) {
       await delay(OPENCLAW_LAUNCH_PROVIDER_RETRY_DELAY_MS);

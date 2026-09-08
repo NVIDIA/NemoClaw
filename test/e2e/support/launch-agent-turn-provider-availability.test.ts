@@ -33,7 +33,7 @@ it("retries a transient provider failure in a fresh launch session (#10978)", as
         ? {
             exitCode: 1,
             signal: null,
-            stderr: `launch did not record the required structured session turns\n${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}\nlitellm.ServiceUnavailableError: NVIDIA upstream unavailable`,
+            stderr: `launch did not record the required structured session turns\nlitellm.ServiceUnavailableError: NVIDIA upstream unavailable\n${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}:${options?.env?.NEMOCLAW_LAUNCH_RUN_ID}\n`,
             stdout: "",
           }
         : { exitCode: 0, signal: null, stderr: "", stdout: "" };
@@ -66,12 +66,16 @@ it("classifies exhausted transient launch attempts as provider unavailable (#109
   vi.useFakeTimers();
   const calls: string[] = [];
   const host = {
-    command: async (_command: string, _args: string[], options?: { artifactName?: string }) => {
+    command: async (
+      _command: string,
+      _args: string[],
+      options?: { artifactName?: string; env?: NodeJS.ProcessEnv },
+    ) => {
       calls.push(options?.artifactName ?? "");
       return {
         exitCode: 1,
         signal: null,
-        stderr: `launch did not record the required structured session turns\n${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}\nHTTP ${calls.length === 1 ? "503" : "502"}`,
+        stderr: `launch did not record the required structured session turns\nHTTP ${calls.length === 1 ? "503" : "502"}\n${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}:${options?.env?.NEMOCLAW_LAUNCH_RUN_ID}\n`,
         stdout: "",
       };
     },
@@ -92,6 +96,10 @@ it("classifies exhausted transient launch attempts as provider unavailable (#109
 
 it.each([
   [
+    "marker from another launch run",
+    `launch did not record the required structured session turns\n${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}:different-run-id\n`,
+  ],
+  [
     "invalid structured session evidence",
     `${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}\nServiceUnavailableError\nlaunch final structured session evidence did not qualify (status 2)\n{"reason":"message_order_invalid"}`,
   ],
@@ -109,7 +117,7 @@ it.each([
   ],
   [
     "cleanup failure",
-    `launch did not record the required structured session turns\n${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}\nServiceUnavailableError: HTTP 503\nstructured session baseline cleanup failed`,
+    "launch did not record the required structured session turns\nServiceUnavailableError: HTTP 503\nstructured session baseline cleanup failed",
   ],
   ["unstructured provider output", "ServiceUnavailableError: HTTP 503"],
   ["unknown failure", "launch failed for an unknown reason"],

@@ -29,6 +29,7 @@ import {
   LAUNCH_TURN_SCRIPT,
   OPENCLAW_LAUNCH_OPENSHELL_SHIM_SCRIPT,
   OPENCLAW_LAUNCH_RUNTIME_ENV_SCRIPT,
+  OPENCLAW_PROVIDER_UNAVAILABLE_MARKER,
   OPENCLAW_PTY_MONITOR_STARTER_SCRIPT,
   OPENCLAW_SESSION_EVIDENCE_SCRIPT,
   runOpenClawLaunchSession,
@@ -101,7 +102,14 @@ it("reports a residual PTY monitor socket without removing it (#9384)", async ()
 
 function runLaunchSessionFixture(
   mode: FixtureMode,
-  terminalCopy: "absent" | "ansi" | "policy" | "provider" | "reordered" | "security",
+  terminalCopy:
+    | "absent"
+    | "ansi"
+    | "long-policy"
+    | "policy"
+    | "provider"
+    | "reordered"
+    | "security",
 ) {
   const fixtureRoot = mkdtempSync(join(tmpdir(), "nemoclaw-launch-turn-"));
   const canonicalRestoredMarker = join(fixtureRoot, "canonical-restored");
@@ -330,6 +338,13 @@ if (process.argv[2] !== "tui") {
     process.stdout.write("\u001b[2Krun error: litellm.ServiceUnavailableError: ServiceUnavailableError:\r\n");
     process.stdout.write("\u001b[2KOpenAIException - . Received Model Group=nvidia/model\r\n");
     process.stdout.write("\u001b[2KAvailable Model Group Fallbacks=None\r");
+  }
+  if (terminalCopy === "long-policy") {
+    process.stdout.write("denied by network policy\r\n");
+    process.stdout.write("x".repeat(5_000) + "\r\n");
+    process.stdout.write("run error: litellm.ServiceUnavailableError: ServiceUnavailableError:\r\n");
+    process.stdout.write("OpenAIException - . Received Model Group=nvidia/model\r\n");
+    process.stdout.write("Available Model Group Fallbacks=None\r");
   }
   if (terminalCopy === "policy") {
     process.stdout.write("\u001b[2Krun error: litellm.ServiceUnavailableError: ServiceUnavailableError:\r\n");
@@ -1027,12 +1042,8 @@ it.runIf(process.platform === "linux")(
   "retries the provider marker emitted by the real launch producer (#10978)",
   async () => {
     const produced = runLaunchSessionFixture("provider-empty-message", "provider").result;
-    const firstResult = {
-      exitCode: produced.status ?? 1,
-      signal: produced.signal,
-      stderr: produced.stderr,
-      stdout: produced.stdout,
-    };
+    const markerOffset = produced.stderr.lastIndexOf(`\n${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}:`);
+    const producedFailure = produced.stderr.slice(0, markerOffset);
     const calls: Array<{ artifactName?: string; runId?: string }> = [];
     const host = {
       command: async (
@@ -1045,7 +1056,12 @@ it.runIf(process.platform === "linux")(
           runId: options?.env?.NEMOCLAW_LAUNCH_RUN_ID,
         });
         return calls.length === 1
-          ? firstResult
+          ? {
+              exitCode: produced.status ?? 1,
+              signal: produced.signal,
+              stderr: `${producedFailure}\n${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}:${options?.env?.NEMOCLAW_LAUNCH_RUN_ID}\n`,
+              stdout: produced.stdout,
+            }
           : { exitCode: 0, signal: null, stderr: "", stdout: "" };
       },
       openshellCommandPath: "/usr/bin/openshell",
@@ -1094,7 +1110,7 @@ it.runIf(process.platform === "linux")(
       openshellCommandPath: "/usr/bin/openshell",
     };
 
-    expect(produced.stderr).toContain("nemoclaw.e2e.launch-failure=provider-unavailable");
+    expect(produced.stderr).not.toContain("nemoclaw.e2e.launch-failure=provider-unavailable");
     expect(produced.stderr).toContain("structured session baseline cleanup failed");
     await expect(
       runOpenClawLaunchSession({
@@ -1106,6 +1122,38 @@ it.runIf(process.platform === "linux")(
         sandboxName: "alpha",
       }),
     ).rejects.toThrow("launch session failed");
+    expect(calls).toBe(1);
+  },
+  testTimeout(30_000),
+);
+
+it.runIf(process.platform === "linux")(
+  "does not retry when a policy denial precedes the bounded provider diagnostic (#10978)",
+  async () => {
+    const produced = runLaunchSessionFixture("provider-empty-message", "long-policy").result;
+    let calls = 0;
+    const host = {
+      command: async () => {
+        calls += 1;
+        return {
+          exitCode: produced.status ?? 1,
+          signal: produced.signal,
+          stderr: produced.stderr,
+          stdout: produced.stdout,
+        };
+      },
+      openshellCommandPath: "/usr/bin/openshell",
+    };
+
+    expect(produced.stderr).not.toContain("nemoclaw.e2e.launch-failure=provider-unavailable");
+    await runOpenClawLaunchSession({
+      artifactName: "producer-long-policy-handoff",
+      cliCommand: "node",
+      env: {},
+      host: host as never,
+      redactionValues: [],
+      sandboxName: "alpha",
+    }).catch(() => undefined);
     expect(calls).toBe(1);
   },
   testTimeout(30_000),
