@@ -3,7 +3,6 @@
 
 import { createHash } from "node:crypto";
 import {
-  chmodSync,
   copyFileSync,
   cpSync,
   existsSync,
@@ -12,7 +11,6 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
-  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -32,6 +30,10 @@ import {
   sanitizeOpenClawConfigFile,
 } from "../security/snapshot-sanitizer.js";
 import { isObjectRecord, type UnknownRecord } from "../shared/object-record.js";
+import {
+  restoreDescriptorSnapshotReplacements,
+  type DescriptorRestoreReplacement,
+} from "../shared/migration-restore-boundary.cjs";
 import {
   decodeDescriptorSnapshotContent,
   inspectDescriptorSnapshotRoot,
@@ -598,87 +600,6 @@ function pathsOverlap(leftPath: string, rightPath: string): boolean {
   return isWithinRoot(leftPath, rightPath) || isWithinRoot(rightPath, leftPath);
 }
 
-type RestoreReplacement = {
-  sourcePath: string;
-  resolvedSourcePath: string;
-  targetPath: string;
-  resolvedTargetPath: string;
-  label: string;
-  kind: "directory" | "file";
-  mode?: number;
-  stagedPath: string;
-  archivePath: string | null;
-  installed: boolean;
-};
-
-function reserveRestoreSibling(targetPath: string, purpose: "staging" | "archived"): string {
-  const basePath = `${targetPath}.nemoclaw-${purpose}-${String(Date.now())}`;
-  let candidatePath = basePath;
-  let suffix = 1;
-  while (existsSync(candidatePath)) {
-    candidatePath = `${basePath}-${String(suffix)}`;
-    suffix += 1;
-  }
-  return candidatePath;
-}
-
-function stageRestoreReplacement(replacement: RestoreReplacement): void {
-  assertRestorePathUnchanged(
-    replacement.sourcePath,
-    replacement.resolvedSourcePath,
-    replacement.label,
-  );
-  assertRestorePathUnchanged(
-    replacement.targetPath,
-    replacement.resolvedTargetPath,
-    replacement.label,
-  );
-  mkdirSync(path.dirname(replacement.targetPath), { recursive: true });
-  if (replacement.kind === "directory") {
-    copyDirectory(replacement.sourcePath, replacement.stagedPath);
-  } else {
-    copyFileSync(replacement.sourcePath, replacement.stagedPath);
-  }
-  if (replacement.mode !== undefined) {
-    chmodSync(replacement.stagedPath, replacement.mode);
-  }
-}
-
-function assertRestorePathUnchanged(
-  candidatePath: string,
-  expectedPath: string,
-  label: string,
-): void {
-  const currentPath = resolveContainedPath(candidatePath, candidatePath);
-  if (currentPath !== expectedPath) {
-    throw new Error(`${label} path changed after validation: ${candidatePath}`);
-  }
-}
-
-function removeRestorePath(targetPath: string): void {
-  rmSync(targetPath, { recursive: true, force: true });
-}
-
-function rollbackRestoreReplacements(replacements: RestoreReplacement[]): string[] {
-  const failures: string[] = [];
-  for (const replacement of [...replacements].reverse()) {
-    try {
-      if (replacement.installed && existsSync(replacement.targetPath)) {
-        removeRestorePath(replacement.targetPath);
-      }
-      if (replacement.archivePath && existsSync(replacement.archivePath)) {
-        renameSync(replacement.archivePath, replacement.targetPath);
-      }
-      if (existsSync(replacement.stagedPath)) {
-        removeRestorePath(replacement.stagedPath);
-      }
-    } catch (err: unknown) {
-      failures.push(`${replacement.label}: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
-  return failures;
-}
-
 function writeSnapshotManifest(snapshotDir: string, manifest: SnapshotManifest): void {
   writeFileSync(path.join(snapshotDir, "snapshot.json"), JSON.stringify(manifest, null, 2));
 }
@@ -1204,28 +1125,21 @@ export function restoreSnapshotToHost(
     }
   }
 
-  const replacements: RestoreReplacement[] = [
+  const replacements: DescriptorRestoreReplacement[] = [
     {
-      sourcePath: snapshotStateDir,
-      resolvedSourcePath: resolvedSnapshotStateDir,
-      targetPath: manifest.stateDir,
-      resolvedTargetPath: resolvedStateDir,
+      sourcePath: resolvedSnapshotStateDir,
+      targetPath: normalizeHostPath(manifest.stateDir),
       label: "OpenClaw state directory",
       kind: "directory",
-      stagedPath: reserveRestoreSibling(manifest.stateDir, "staging"),
-      archivePath: null,
-      installed: false,
+      ...(!manifest.hasExternalConfig && existsSync(path.join(snapshotStateDir, "openclaw.json"))
+        ? { modeOverrides: [{ relativePath: "openclaw.json", mode: 0o600 }] }
+        : {}),
     },
-    ...externalRestores.map(({ root, snapshotPath, resolvedSnapshotPath, resolvedTarget }) => ({
-      sourcePath: snapshotPath,
-      resolvedSourcePath: resolvedSnapshotPath,
-      targetPath: root.sourcePath,
-      resolvedTargetPath: resolvedTarget,
+    ...externalRestores.map(({ root, resolvedSnapshotPath }) => ({
+      sourcePath: resolvedSnapshotPath,
+      targetPath: normalizeHostPath(root.sourcePath),
       label: root.label,
       kind: "directory" as const,
-      stagedPath: reserveRestoreSibling(root.sourcePath, "staging"),
-      archivePath: null,
-      installed: false,
     })),
   ];
 
@@ -1241,69 +1155,33 @@ export function restoreSnapshotToHost(
       return false;
     }
     replacements.push({
-      sourcePath: configSnapshotPath,
-      resolvedSourcePath: resolvedConfigSnapshotPath,
-      targetPath: manifest.configPath,
-      resolvedTargetPath: resolvedConfigPath,
+      sourcePath: resolvedConfigSnapshotPath,
+      targetPath: normalizeHostPath(manifest.configPath),
       label: "external config",
       kind: "file",
       mode: 0o600,
-      stagedPath: reserveRestoreSibling(manifest.configPath, "staging"),
-      archivePath: null,
-      installed: false,
     });
   }
 
-  try {
-    for (const replacement of replacements) {
-      stageRestoreReplacement(replacement);
-    }
-    if (!manifest.hasExternalConfig) {
-      const stagedBundledConfigPath = path.join(replacements[0].stagedPath, "openclaw.json");
-      if (existsSync(stagedBundledConfigPath)) {
-        chmodSync(stagedBundledConfigPath, 0o600);
-      }
-    }
-  } catch (err: unknown) {
-    const cleanupFailures = rollbackRestoreReplacements(replacements);
-    const msg = err instanceof Error ? err.message : String(err);
-    const cleanup = cleanupFailures.length
-      ? ` Staging cleanup was incomplete: ${cleanupFailures.join("; ")}`
-      : "";
-    logger.error(`Restoration failed while staging; host state was not changed: ${msg}.${cleanup}`);
+  const result = restoreDescriptorSnapshotReplacements(replacements);
+  if (!result.ok) {
+    const recovery = result.rollbackFailures.length
+      ? `Rollback incomplete (${result.rollbackFailures.join("; ")}). Archives: ${result.retainedArchives.join(", ") || "none"}`
+      : result.phase === "commit"
+        ? "Previous host state was restored."
+        : "host state was not changed.";
+    logger.error(`Restoration failed during ${result.phase}: ${result.message}. ${recovery}`);
     return false;
   }
-
-  try {
-    for (const replacement of replacements) {
-      assertRestorePathUnchanged(
-        replacement.targetPath,
-        replacement.resolvedTargetPath,
-        replacement.label,
-      );
-      if (existsSync(replacement.targetPath)) {
-        replacement.archivePath = reserveRestoreSibling(replacement.targetPath, "archived");
-        renameSync(replacement.targetPath, replacement.archivePath);
-        logger.info(`Archived current ${replacement.label} to ${replacement.archivePath}`);
-      }
-      renameSync(replacement.stagedPath, replacement.targetPath);
-      replacement.installed = true;
-      logger.info(`Restored ${replacement.label} to ${replacement.targetPath}`);
-    }
-
-    logger.info("Host OpenClaw state restored.");
-    return true;
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    const rollbackFailures = rollbackRestoreReplacements(replacements);
-    const archives = replacements
-      .filter((replacement) => replacement.archivePath)
-      .map((replacement) => `${replacement.targetPath} -> ${replacement.archivePath}`)
-      .join(", ");
-    const recovery = rollbackFailures.length
-      ? `Rollback incomplete (${rollbackFailures.join("; ")}). Archives: ${archives || "none"}`
-      : "Previous host state was restored.";
-    logger.error(`Restoration failed while replacing host state: ${msg}. ${recovery}`);
-    return false;
+  if (result.cleanupFailures.length) {
+    logger.warn(
+      `Host OpenClaw state restored, but archive cleanup was incomplete: ${result.cleanupFailures.join("; ")}. ` +
+        `Retained archives: ${result.retainedArchives.join(", ") || "none"}`,
+    );
   }
+  for (const replacement of replacements) {
+    logger.info(`Restored ${replacement.label} to ${replacement.targetPath}`);
+  }
+  logger.info("Host OpenClaw state restored.");
+  return true;
 }

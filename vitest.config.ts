@@ -30,6 +30,9 @@ const canonicalBannerBoundary = path.resolve("nemoclaw/src/shared/banner-boundar
 const canonicalCredentialFilterBoundary = path.resolve(
   "nemoclaw/src/shared/credential-filter-boundary.cts",
 );
+const canonicalMigrationRestoreBoundary = path.resolve(
+  "nemoclaw/src/shared/migration-restore-boundary.cts",
+);
 const canonicalOpenShellExternalTargetBoundary = path.resolve(
   "nemoclaw/src/shared/openshell-external-target-boundary.cts",
 );
@@ -57,6 +60,10 @@ const canonicalSourceAliases = [
   {
     find: /^.*credential-filter-boundary\.cjs$/,
     replacement: canonicalCredentialFilterBoundary,
+  },
+  {
+    find: /^.*migration-restore-boundary\.cjs$/,
+    replacement: canonicalMigrationRestoreBoundary,
   },
   {
     find: /^.*openshell-external-target-boundary\.cjs$/,

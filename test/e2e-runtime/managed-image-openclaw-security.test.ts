@@ -444,6 +444,7 @@ test.runIf(RUN_MANAGED_IMAGE_SECURITY)(
       [
         'gateway_uid="$(id -u gateway)"',
         'sandbox_uid="$(id -u sandbox)"',
+        'sandbox_gid="$(id -g sandbox)"',
         '[ "$gateway_uid" != "$sandbox_uid" ]',
         "test -x /usr/bin/setpriv",
         "! command -v gosu",
@@ -454,7 +455,7 @@ test.runIf(RUN_MANAGED_IMAGE_SECURITY)(
         `[ "$(bash -lc 'printf %s "$PATH"' 2>/dev/null)" = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" ]`,
         "cd /sandbox/.openclaw && sha256sum -c .config-hash >/dev/null",
         `python3 -c 'import json; assert json.load(open("/sandbox/.openclaw/openclaw.json"))["update"]["checkOnStart"] is False'`,
-        'printf "%s:%s\\n" "$gateway_uid" "$sandbox_uid"',
+        'printf "%s:%s:%s\\n" "$gateway_uid" "$sandbox_uid" "$sandbox_gid"',
       ].join("\n"),
       "managed-image-openclaw-identities",
     );
@@ -476,10 +477,19 @@ test.runIf(RUN_MANAGED_IMAGE_SECURITY)(
       "managed-image-openclaw-no-new-privileges",
     );
 
-    const [gatewayUid, sandboxUid] = identity.stdout.trim().split(":");
+    const [gatewayUid, sandboxUid, sandboxGid] = identity.stdout.trim().split(":");
     expect(gatewayUid).toMatch(/^[0-9]+$/u);
     expect(sandboxUid).toMatch(/^[0-9]+$/u);
+    expect(sandboxGid).toMatch(/^[0-9]+$/u);
     expect(gatewayUid).not.toBe(sandboxUid);
+    const nonRootEntrypoint = await runDefaultContainer(
+      host,
+      image,
+      ["--user", `${sandboxUid}:${sandboxGid}`],
+      ["bash", "-c", 'printf "%s\\n" "NON_ROOT_EXEC_OK"'],
+      "managed-image-openclaw-non-root-entrypoint",
+    );
+    expect(nonRootEntrypoint.stdout).toContain("NON_ROOT_EXEC_OK");
     await runContainer(
       host,
       image,
