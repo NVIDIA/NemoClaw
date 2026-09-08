@@ -225,15 +225,28 @@ export function prepareConfiguredGatewayHostRuntime(
 export function configuredRuntimeProviderOwnsHostReadiness(
   options: PrepareConfiguredGatewayHostRuntimeOptions = {},
 ): boolean {
+  return configuredRuntimeProviderReadinessAuthority(options)?.ownsHostReadiness === true;
+}
+
+/** Qualification-backed provider identity used by provider-neutral readiness. */
+export function configuredRuntimeProviderReadinessAuthority(
+  options: PrepareConfiguredGatewayHostRuntimeOptions = {},
+): { providerId: string; ownsHostReadiness: boolean } | null {
   const environment = options.environment ?? process.env;
-  if (isPortableExperimentalProfile(environment)) return false;
+  if (isPortableExperimentalProfile(environment)) return null;
   const platform = options.platform ?? process.platform;
-  const gateway = requireConfiguredRuntimeProviderGateway(
+  const provider = resolveConfiguredRuntimeProvider(
     platform,
     options.architecture ?? process.arch,
     environment,
   );
-  return gateway.ownsHostReadiness;
+  if (!provider.gateway.supported) {
+    throw new Error("The selected runtime provider does not support a host-managed gateway.");
+  }
+  return {
+    providerId: provider.identity.id,
+    ownsHostReadiness: provider.gateway.ownsHostReadiness,
+  };
 }
 
 export type PackageManagedDockerDriverGatewayWithEnvOverrideOptions = Omit<

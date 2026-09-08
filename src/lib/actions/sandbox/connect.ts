@@ -64,9 +64,8 @@ import { runSetupDnsProxy } from "../dns";
 import { runSandboxExecChild } from "./exec";
 import { runConnectAutoPairApprovalPass } from "./auto-pair-approval";
 import {
-  exitOnMcpReconciliationRefusal,
   exitOnSecretBoundaryRefusal,
-  printGatewayIntegrityRepairGuidance,
+  printGatewayTerminalRepairGuidance,
 } from "./connect-boundary-refusal";
 import { prepareHermesLightTerminalSkin } from "./connect-hermes-light-skin";
 import {
@@ -432,10 +431,6 @@ async function runSandboxConnectProbe(
     probeTiming?.markFailureStage("processes");
     exitOnSecretBoundaryRefusal(sandboxName, agentName, processCheck, "Probe");
   }
-  if ("mcpReconciliationRefused" in processCheck && processCheck.mcpReconciliationRefused) {
-    probeTiming?.markFailureStage("processes");
-    exitOnMcpReconciliationRefusal(sandboxName, agentName, processCheck, "Probe");
-  }
   if ("forwardRecoveryFailed" in processCheck && processCheck.forwardRecoveryFailed) {
     probeTiming?.markFailureStage("forward");
     const detail =
@@ -498,7 +493,7 @@ async function runSandboxConnectProbe(
     `  Probe failed: ${agentName} gateway is not running in '${sandboxName}' and automatic recovery failed.`,
   );
   probeTiming?.markFailureStage("processes");
-  if (printGatewayIntegrityRepairGuidance(sandboxName, recoveryFailureLayer)) {
+  if (printGatewayTerminalRepairGuidance(sandboxName, recoveryFailureLayer)) {
     process.exit(1);
   }
   // Surface the #4710 wedge signature: recovery ran with quiet=true, so this
@@ -2179,12 +2174,6 @@ export async function prepareInteractiveSession(sandboxName: string): Promise<{
             agentRuntime.getSessionAgent(sandboxName),
           );
           exitOnSecretBoundaryRefusal(sandboxName, agentName, processCheck, "Connect");
-        }
-        if ("mcpReconciliationRefused" in processCheck && processCheck.mcpReconciliationRefused) {
-          const agentName = agentRuntime.getAgentDisplayName(
-            agentRuntime.getSessionAgent(sandboxName),
-          );
-          exitOnMcpReconciliationRefusal(sandboxName, agentName, processCheck, "Connect");
         }
         const recoveryFailureDetail =
           "recoveryFailureDetail" in processCheck && processCheck.recoveryFailureDetail

@@ -7,7 +7,13 @@
  */
 
 import { isSafeModelId, shouldSkipResponsesProbe } from "../validation";
-import { isSafeLlamaCppServedModelAlias, LLAMA_CPP_CREDENTIAL_ENV } from "./llama-cpp/contract";
+import {
+  isSafeLlamaCppServedModelAlias,
+  LLAMA_CPP_CREDENTIAL_ENV,
+  LLAMA_CPP_HOST_OPENAI_BASE_URL,
+  LLAMA_CPP_PROVIDER_NAME,
+} from "./llama-cpp/contract";
+import type { ManagedLlamaCppOwnership } from "./llama-cpp/managed-state";
 import { DEFAULT_OLLAMA_MODEL_TAG as DEFAULT_OLLAMA_MODEL } from "./ollama-model-registry";
 import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "./ollama/contract";
 import { OPENROUTER_CREDENTIAL_ENV, OPENROUTER_PROVIDER_NAME } from "./openrouter";
@@ -97,6 +103,65 @@ export interface ProviderSelectionConfig {
 export interface GatewayInference {
   provider: string | null;
   model: string | null;
+}
+
+export type LlamaCppRouteDetails =
+  | { kind: "attached"; endpointUrl: typeof LLAMA_CPP_HOST_OPENAI_BASE_URL }
+  | { kind: "managed" }
+  | {
+      kind: "unavailable";
+      diagnostic: "Managed llama.cpp ownership state is unavailable.";
+      recovery: "Run nemoclaw doctor and correct the reported state before retrying.";
+    };
+
+type LlamaCppRouteSelection = {
+  name: string;
+  provider?: string | null;
+  endpointUrl?: string | null;
+  gatewayPort?: number | null;
+  servingProfileProvenance?: { recipe?: { backend?: string } };
+  hostLocalInferenceProvenance?: unknown;
+};
+
+export type InspectManagedLlamaCppOwnership = (
+  sandboxName: string,
+  gatewayPort?: number,
+) => ManagedLlamaCppOwnership;
+
+/**
+ * Describe durable llama.cpp ownership without reading the runtime credential.
+ *
+ * An attached route exposes only the fixed, credential-free loopback endpoint.
+ *
+ * This module's other exports are pure; `inspectOwnership` is required (no
+ * default) so this file never itself performs filesystem I/O. Callers pass
+ * `inspectManagedLlamaCppOwnership` from `./llama-cpp/managed-state`.
+ */
+export function getLlamaCppRouteDetails(
+  route: LlamaCppRouteSelection | null | undefined,
+  inspectOwnership: InspectManagedLlamaCppOwnership,
+): LlamaCppRouteDetails | null {
+  if (!route || route.provider !== LLAMA_CPP_PROVIDER_NAME) return null;
+  if (
+    route.servingProfileProvenance?.recipe?.backend === "install-llama-cpp" ||
+    route.hostLocalInferenceProvenance
+  ) {
+    return { kind: "managed" };
+  }
+
+  const ownership = inspectOwnership(route.name, route.gatewayPort ?? undefined);
+  if (ownership === "owned") return { kind: "managed" };
+  if (ownership === "unknown") {
+    return {
+      kind: "unavailable",
+      diagnostic: "Managed llama.cpp ownership state is unavailable.",
+      recovery: "Run nemoclaw doctor and correct the reported state before retrying.",
+    };
+  }
+  if (route.endpointUrl === LLAMA_CPP_HOST_OPENAI_BASE_URL) {
+    return { kind: "attached", endpointUrl: LLAMA_CPP_HOST_OPENAI_BASE_URL };
+  }
+  return null;
 }
 
 export interface SandboxInferenceConfig {

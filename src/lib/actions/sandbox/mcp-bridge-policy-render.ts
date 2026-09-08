@@ -8,7 +8,7 @@ import {
   type McpBridgeTargetValidation,
   parseMcpUrlWithValidatedTarget,
 } from "./mcp-bridge-url-validation";
-import { validateMcpServerName } from "./mcp-bridge-validation";
+import { normalizeMcpDenyTools, validateMcpServerName } from "./mcp-bridge-validation";
 
 export const MCP_BRIDGE_POLICY_MAX_BODY_BYTES = 131_072;
 export const MCP_BRIDGE_ALLOWED_METHODS = [
@@ -88,12 +88,14 @@ function renderMcpBridgePolicyYaml(
   adapter: AgentMcpAdapter,
   target: McpBridgeTargetValidation,
   providerName?: string,
+  denyTools: readonly string[] = [],
 ): string {
   const parsed = parseMcpUrlWithValidatedTarget(url, target);
   const key = buildMcpBridgePolicyKey(server);
   // OpenShell resolves this hostname for every new connection, validates every
   // current answer against allowed_ips, and connects to that validated list.
   const allowedIps = [...target.addresses];
+  const normalizedDenyTools = normalizeMcpDenyTools(denyTools);
   return YAML.stringify({
     preset: {
       name: buildMcpBridgePolicyName(server),
@@ -117,6 +119,14 @@ function renderMcpBridgePolicyYaml(
               allow_all_known_mcp_methods: false,
             },
             rules: MCP_BRIDGE_ALLOWED_METHODS.map((method) => ({ allow: { method } })),
+            ...(normalizedDenyTools.length > 0
+              ? {
+                  deny_rules: normalizedDenyTools.map((tool) => ({
+                    method: "tools/call",
+                    tool,
+                  })),
+                }
+              : {}),
           },
         ],
         binaries: binariesForAdapter(adapter),
@@ -131,11 +141,12 @@ export function buildMcpBridgePolicyYaml(
   adapter: AgentMcpAdapter,
   target: McpBridgeTargetValidation,
   providerName: string,
+  denyTools: readonly string[] = [],
 ): string {
   if (providerName.trim() !== providerName || providerName.length === 0) {
     throw new Error("Generated MCP credential binding requires an exact provider name.");
   }
-  return renderMcpBridgePolicyYaml(server, url, adapter, target, providerName);
+  return renderMcpBridgePolicyYaml(server, url, adapter, target, providerName, denyTools);
 }
 
 /** Render the temporary credential-free policy used before first provider attachment. */
@@ -144,6 +155,7 @@ export function buildMcpBridgeCapabilityPolicyYaml(
   url: string,
   adapter: AgentMcpAdapter,
   target: McpBridgeTargetValidation,
+  denyTools: readonly string[] = [],
 ): string {
-  return renderMcpBridgePolicyYaml(server, url, adapter, target);
+  return renderMcpBridgePolicyYaml(server, url, adapter, target, undefined, denyTools);
 }
