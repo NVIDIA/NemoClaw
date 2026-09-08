@@ -17,7 +17,7 @@ import DoctorCommand from "./doctor";
 
 const rootDir = process.cwd();
 
-/** Capture global console calls and direct writes in stream order. */
+/** Capture global console calls and direct writes in per-stream order. */
 function captureCommandOutput(): { stderr: string[]; stdout: string[] } {
   const stdout: string[] = [];
   const stderr: string[] = [];
