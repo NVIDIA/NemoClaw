@@ -28,6 +28,7 @@ import type { CreatedSandboxRegistrationInput } from "./sandbox-registration";
 const fixtures: string[] = [];
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   delete process.env.NEMOCLAW_OPENSHELL_BIN;
   delete process.env.CHAT_UI_URL;
   for (const fixture of fixtures.splice(0)) fs.rmSync(fixture, { recursive: true, force: true });
@@ -984,12 +985,14 @@ describe("created OpenClaw sandbox finalization", () => {
 
 describe("created sandbox completion actions", () => {
   it.each([
-    ["ordinary", true, false, "http://127.0.0.1:8643", "127.0.0.1"],
-    ["schema-5", false, true, "http://127.0.0.1:8643", null],
-    ["remote-origin", true, false, "https://dashboard.example.test:8643", "0.0.0.0"],
+    ["ordinary", true, false, "http://127.0.0.1:8643", "", "127.0.0.1"],
+    ["schema-5", false, true, "http://127.0.0.1:8643", "", null],
+    ["remote-origin", true, false, "https://dashboard.example.test:8643", "", "0.0.0.0"],
+    ["opted-in", true, false, "http://127.0.0.1:8643", "0.0.0.0", "0.0.0.0"],
   ] as const)(
     "keeps %s dashboard completion ordered and bounded, recording the bind it started with (#9203, #10861)",
-    async (_route, manageDashboard, schema5, chatUiUrl, dashboardBindAddress) => {
+    async (_route, manageDashboard, schema5, chatUiUrl, remoteBindOptIn, dashboardBindAddress) => {
+      vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", remoteBindOptIn);
       const order: string[] = [];
       const gpuProof = {
         status: "verified" as const,

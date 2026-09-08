@@ -353,18 +353,27 @@ export function isSandboxPortForwardHealthy(
   return true;
 }
 
-/** Persist the bind a dashboard forward was just started with; a failed write must not fail the forward. */
-function recordDashboardBindAddress(sandboxName: string, port: number, bindAddress: string): void {
+/**
+ * Persist the bind a dashboard forward is about to be started with. Warns and
+ * returns false when the write fails; the caller decides whether the forward
+ * may start without its record.
+ */
+function recordDashboardBindAddress(
+  sandboxName: string,
+  port: number,
+  bindAddress: string,
+): boolean {
   try {
-    if (registry.updateSandbox(sandboxName, { dashboardBindAddress: bindAddress })) return;
+    if (registry.updateSandbox(sandboxName, { dashboardBindAddress: bindAddress })) return true;
     console.error(
-      `  Warning: the dashboard forward for port ${String(port)} is bound on ${bindAddress}, but that could not be recorded for '${sandboxName}'; \`dashboard-url\` may report a stale address until the next onboard.`,
+      `  Warning: the dashboard forward for port ${String(port)} binds ${bindAddress}, but that could not be recorded for '${sandboxName}'; \`dashboard-url\` may report a stale address until the next onboard.`,
     );
   } catch (error) {
     console.error(
-      `  Warning: the dashboard forward for port ${String(port)} is bound on ${bindAddress}, but recording it for '${sandboxName}' failed: ${error instanceof Error ? error.message : String(error)}`,
+      `  Warning: the dashboard forward for port ${String(port)} binds ${bindAddress}, but recording it for '${sandboxName}' failed: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
+  return false;
 }
 
 export function ensureSandboxPortForwardForPort(
@@ -407,6 +416,27 @@ export function ensureSandboxPortForwardForPort(
   try {
     const sandbox = registry.getSandbox(sandboxName);
     if (!sandbox) throw new Error(`Sandbox '${sandboxName}' is not registered`);
+    // The record follows the forward, not the sandbox. Onboarding writes it
+    // when it starts the first forward; every later re-creation — restart,
+    // connect, gateway recovery — decides the bind again from the current
+    // environment, and a record left from onboarding would report the bind
+    // that used to be true (#10861). Only a launch writes: on the healthy
+    // path above nothing was created, and the listener may not be ours.
+    // It is written before the launch so a wide listener can never exist
+    // undisclosed: when the write fails, a wide forward is not started while
+    // a loopback one still is. Should the launch then fail, the record is at
+    // worst ahead of a listener that does not exist, which over-reports
+    // exposure rather than hiding it.
+    if (
+      recordDashboardBind &&
+      !recordDashboardBindAddress(sandboxName, port, bindAddress) &&
+      bindAddress === "0.0.0.0"
+    ) {
+      console.error(
+        `  Refusing to start the dashboard forward for '${sandboxName}' on all interfaces: its exposure could not be recorded, so \`dashboard-url\` and \`status\` would not disclose it. Repair the sandbox registry and reconnect.`,
+      );
+      return false;
+    }
     const gatewayName = resolveSandboxGatewayName(sandbox);
     retireLegacyForwardServiceMigration(sandboxName, gatewayName, [port]);
     const executable = resolveOpenshell();
@@ -414,13 +444,6 @@ export function ensureSandboxPortForwardForPort(
     launchForwardService(
       forwardServiceTarget(executable, gatewayName, sandboxName, port, bindAddress),
     );
-    // The record follows the forward, not the sandbox. Onboarding writes it
-    // when it starts the first forward; every later re-creation — restart,
-    // connect, gateway recovery — decides the bind again from the current
-    // environment, and a record left from onboarding would report the bind
-    // that used to be true (#10861). Only a launch writes: on the healthy
-    // path above nothing was created, and the listener may not be ours.
-    if (recordDashboardBind) recordDashboardBindAddress(sandboxName, port, bindAddress);
     return acceptSuccessfulForward();
   } catch (error) {
     console.error(
