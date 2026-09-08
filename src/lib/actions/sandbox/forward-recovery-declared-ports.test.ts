@@ -208,3 +208,59 @@ describe("ensureDeclaredAgentForwardPortsHealthy", { timeout: 30_000 }, () => {
     expect(mocks.runOpenshell).not.toHaveBeenCalled();
   });
 });
+
+describe("a dashboard port held by a listener the sandbox does not own (#11149)", () => {
+  beforeEach(() => {
+    mocks.getSessionAgent.mockReturnValue(null);
+    mocks.getSandbox.mockReturnValue({ agent: "openclaw", dashboardPort: 18789 });
+    mocks.captureOpenshell.mockReturnValue(forwardList([]));
+  });
+
+  it.each([
+    ["nothing listens", () => mocks.isLocalForwardReachable.mockReturnValue(false), "absent"],
+    [
+      "a tracked legacy forward listens",
+      () =>
+        mocks.captureOpenshell.mockReturnValue(
+          forwardList(["box  127.0.0.1  18789  4242  running"]),
+        ),
+      "legacy",
+    ],
+    ["the sandbox's own ForwardTcp service listens", () => undefined, "owned"],
+    [
+      "an unrelated process listens",
+      () => mocks.isForwardServiceListenerOwner.mockReturnValue(false),
+      "unverified",
+    ],
+  ])("describes the listener when %s", async (_case, arrange, expected) => {
+    arrange();
+    const { describeSandboxForwardListener } = await import("./forward-recovery");
+
+    expect(describeSandboxForwardListener("box", { isWsl: false })).toBe(expected);
+  });
+
+  it("refuses to relaunch onto it, names the port and leaves it running", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mocks.isForwardServiceListenerOwner.mockReturnValue(false);
+    const { ensureSandboxPortForward } = await import("./forward-recovery");
+
+    expect(ensureSandboxPortForward("box", { isWsl: false })).toBe(false);
+
+    expect(mocks.launchForwardService).not.toHaveBeenCalled();
+    expect(mocks.runOpenshell).not.toHaveBeenCalled();
+    const message = error.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(message).toContain(
+      "Host port 18789 for 'box' is held by a listener that NemoClaw cannot attribute to this sandbox's OpenShell forward",
+    );
+    expect(message).toContain("nemoclaw box recover");
+  });
+
+  it("still relaunches when nothing listens", async () => {
+    mocks.isLocalForwardReachable.mockReturnValue(false);
+    const { ensureSandboxPortForward } = await import("./forward-recovery");
+
+    expect(ensureSandboxPortForward("box", { isWsl: false })).toBe(true);
+
+    expect(mocks.launchForwardService).toHaveBeenCalledOnce();
+  });
+});
