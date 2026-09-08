@@ -56,8 +56,11 @@ import {
   getSandboxAgent,
   getSandboxOrThrow,
 } from "./mcp-bridge-state";
-import { inspectSourceBridgeState } from "./mcp-bridge-source";
-import type { McpBridgeTargetValidation } from "./mcp-bridge-url-validation";
+import { inspectPolicyOnlyMcpEntry, inspectSourceBridgeState } from "./mcp-bridge-source";
+import {
+  type McpBridgeTargetValidation,
+  parseMcpUrlWithValidatedTarget,
+} from "./mcp-bridge-url-validation";
 import {
   assertAuthenticatedBridgeEntry,
   assertAuthenticatedCredentialReference,
@@ -90,6 +93,95 @@ function sameMcpAddIntent(existing: McpSourceEntry, requested: McpSourceEntry): 
     existing.env.length === requested.env.length &&
     existing.env.every((name, index) => name === requested.env[index])
   );
+}
+
+function replayMcpAddTarget(
+  entry: McpSourceEntry,
+  normalizedUrl: string,
+  matchingTrustedPrivateHosts: readonly string[],
+): McpBridgeTargetValidation | null {
+  const recordedPins = entry.allowedIps ?? [];
+  if (recordedPins.length === 0) return null;
+  if (entry.trustedPrivateHost) {
+    const urlHost = new URL(normalizedUrl).hostname.toLowerCase();
+    if (
+      entry.trustedPrivateHost !== urlHost ||
+      !matchingTrustedPrivateHosts.includes(entry.trustedPrivateHost)
+    ) {
+      throw new McpBridgeError(
+        `MCP server '${entry.server}' has an incomplete add transaction with different trusted-private host intent. Re-run the original add command or remove it with --force before changing the definition.`,
+        2,
+      );
+    }
+    try {
+      const replay = replayTrustedPrivateEndpoint(entry.trustedPrivateHost, recordedPins, {
+        requireAllPrivate: true,
+      });
+      return {
+        addresses: [...replay.addresses],
+        trustedPrivateCapability: replay.trustedPrivateCapability,
+        trustedPrivateHost: replay.host,
+      };
+    } catch (error) {
+      throw new McpBridgeError(
+        `MCP server '${entry.server}' has invalid durable trusted-private intent: ${error instanceof Error ? error.message : String(error)}. Remove it with --force and add it again.`,
+        2,
+      );
+    }
+  }
+  const target = { addresses: [...recordedPins] };
+  // Public policy pins are part of the committed transaction. Validate them
+  // again, but do not replace them with a later DNS answer during an exact
+  // retry; OpenShell must continue enforcing the originally admitted set.
+  parseMcpUrlWithValidatedTarget(normalizedUrl, target);
+  return target;
+}
+
+function recoverCommittedPolicyTarget(
+  sandboxName: string,
+  sandbox: ReturnType<typeof getSandboxOrThrow>,
+  adapter: AgentMcpAdapter,
+  requestedEntry: McpSourceEntry,
+  currentTarget: McpBridgeTargetValidation,
+  matchingTrustedPrivateHosts: readonly string[],
+  runtimeSelection: ReturnType<typeof getMcpProviderInspectionRuntimeSelection>,
+): McpBridgeTargetValidation | null {
+  const boundState = policies.getPresetContentGatewayState(
+    sandboxName,
+    buildMcpBridgePolicyYaml(
+      requestedEntry.server,
+      requestedEntry.url,
+      adapter,
+      currentTarget,
+      requestedEntry.providerName ?? "",
+      requestedEntry.denyTools,
+    ),
+    undefined,
+    runtimeSelection,
+  );
+  const capabilityState = policies.getPresetContentGatewayState(
+    sandboxName,
+    buildMcpBridgeCapabilityPolicyYaml(
+      requestedEntry.server,
+      requestedEntry.url,
+      adapter,
+      currentTarget,
+      requestedEntry.denyTools,
+    ),
+    undefined,
+    runtimeSelection,
+  );
+  if (boundState !== "drift" || capabilityState !== "drift") return null;
+  const policyEntry = inspectPolicyOnlyMcpEntry(
+    sandbox,
+    requestedEntry.server,
+    requestedEntry.agent,
+    adapter,
+    runtimeSelection,
+  );
+  return policyEntry
+    ? replayMcpAddTarget(policyEntry, requestedEntry.url, matchingTrustedPrivateHosts)
+    : null;
 }
 
 type McpAddRecovery = {
@@ -368,35 +460,10 @@ async function addMcpBridgeUnlocked(
   const agent = getSandboxAgent(sandbox);
   const adapter = getBridgeAdapter(agent);
   const existingEntry = observed.bridges[options.server];
-  let target: McpBridgeTargetValidation;
-  if (existingEntry?.trustedPrivateHost) {
-    if (
-      existingEntry.trustedPrivateHost !== urlHost ||
-      !matchingTrustedPrivateHosts.includes(existingEntry.trustedPrivateHost)
-    ) {
-      throw new McpBridgeError(
-        `MCP server '${options.server}' has an incomplete add transaction with different trusted-private host intent. Re-run the original add command or remove it with --force before changing the definition.`,
-        2,
-      );
-    }
-    try {
-      const replay = replayTrustedPrivateEndpoint(
-        existingEntry.trustedPrivateHost,
-        existingEntry.allowedIps ?? [],
-        { requireAllPrivate: true },
-      );
-      target = {
-        addresses: [...replay.addresses],
-        trustedPrivateCapability: replay.trustedPrivateCapability,
-        trustedPrivateHost: replay.host,
-      };
-    } catch (error) {
-      throw new McpBridgeError(
-        `MCP server '${options.server}' has invalid durable trusted-private intent: ${error instanceof Error ? error.message : String(error)}. Remove it with --force and add it again.`,
-        2,
-      );
-    }
-  } else {
+  let target = existingEntry
+    ? replayMcpAddTarget(existingEntry, normalizedUrl, matchingTrustedPrivateHosts)
+    : null;
+  if (!target) {
     target = await preflightMcpServerUrlResolvedTarget(new URL(normalizedUrl), {
       trustedPrivateHosts: matchingTrustedPrivateHosts,
       requireTrustedPrivateEndpoint: explicitTrustedPrivateHosts.length > 0,
@@ -422,7 +489,7 @@ async function addMcpBridgeUnlocked(
   const adapterEnvValues = resolveCredentialEnv(options.env);
   const policyName = buildMcpBridgePolicyName(options.server);
   assertNoDerivedResourceCollision(observed.bridges, options.server, providerName, policyName);
-  const requestedEntry: McpSourceEntry = {
+  let requestedEntry: McpSourceEntry = {
     server: options.server,
     agent: agent.name,
     adapter,
@@ -452,6 +519,32 @@ async function addMcpBridgeUnlocked(
   // mutating a provider, policy, or adapter.
   assertMcpCredentialBoundaryRuntimeVersion();
   await ensureSandboxGatewaySelected(sandboxName, providerRuntimeSelection);
+  const committedPolicyTarget = recoverCommittedPolicyTarget(
+    sandboxName,
+    sandbox,
+    adapter,
+    requestedEntry,
+    target,
+    matchingTrustedPrivateHosts,
+    providerRuntimeSelection,
+  );
+  if (committedPolicyTarget) {
+    target = committedPolicyTarget;
+    const { trustedPrivateHost: _currentTrustedPrivateHost, ...requestedWithoutPrivateHost } =
+      requestedEntry;
+    requestedEntry = {
+      ...requestedWithoutPrivateHost,
+      allowedIps: [...target.addresses],
+      ...(target.trustedPrivateHost ? { trustedPrivateHost: target.trustedPrivateHost } : {}),
+    };
+    if (existingEntry && !sameMcpAddIntent(existingEntry, requestedEntry)) {
+      throw new McpBridgeError(
+        `MCP server '${options.server}' already exists with different URL, credential, denied tools, agent, or derived resources. Re-run the original add command or remove it with --force before changing the definition.`,
+        2,
+      );
+    }
+    entry = requestedEntry;
+  }
   let recovery!: McpAddRecovery;
   await withMcpCredentialOwnershipLock(() => {
     recovery = inspectMcpAddRecovery(

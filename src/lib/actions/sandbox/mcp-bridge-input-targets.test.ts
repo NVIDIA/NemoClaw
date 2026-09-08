@@ -382,7 +382,9 @@ require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
       const script = String.raw`
 process.env.HOME = ${JSON.stringify(home)};
 process.env.GITHUB_TOKEN = "host-only-secret";
-require("node:dns/promises").lookup = async () => [{ address: "8.8.8.8", family: 4 }];
+// Simulate DNS rotation after the original policy mutation. An exact retry
+// must replay the committed public pins rather than deriving a new request.
+require("node:dns/promises").lookup = async () => [{ address: "1.1.1.1", family: 4 }];
 const phase = ${JSON.stringify(phase)};
 if (phase === "provider-hostless") delete process.env.GITHUB_TOKEN;
 const providerId = "11111111-2222-4333-8444-555555555555";
@@ -440,7 +442,7 @@ replace(provider, "refreshMcpProviderEnvironment", () => {});
 replace(policies, "getPresetContentGatewayState", (_sandbox, content) => {
   if (state.policy === "absent") return "absent";
   const expected = content.includes("credential_binding") ? "bound" : "capability";
-  return state.policy === expected ? "match" : "drift";
+  return state.policy === expected && content.includes("8.8.8.8") ? "match" : "drift";
 });
 replace(policies, "applyPresetContent", (_sandbox, _name, content) => {
   state.policy = content.includes("credential_binding") ? "bound" : "capability";
@@ -450,6 +452,11 @@ replace(sourceState, "inspectSourceBridgeState", () => ({
   bridges: state.adapter ? { github: entry() } : {},
   sources: { native: state.adapter ? { github: entry() } : {}, legacy: {} },
 }));
+replace(sourceState, "inspectPolicyOnlyMcpEntry", () =>
+  state.policy === "absent"
+    ? null
+    : { ...entry(), source: "policy", ...(state.policy === "capability" ? { providerName: undefined, providerId: undefined } : {}) },
+);
 replace(processRecovery, "restartSandboxGateway", () => ({
   ok: true, restarted: true, healthPassed: true, forwardRecovered: true,
 }));
