@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -14,10 +15,9 @@ function runHermesApiPortBootstrap(apiPort: string) {
   try {
     const scriptPath = path.join(tmpDir, "run.sh");
     const source = fs.readFileSync(START_SCRIPT, "utf-8");
-    const start = source.indexOf('NEMOCLAW_CMD=("$@")');
+    const start = source.indexOf('_dashboard_port_raw="${NEMOCLAW_DASHBOARD_PORT:-}"');
     const end = source.indexOf('\nHERMES="$(command -v hermes)"', start);
-    expect(start, "Hermes startup command boundary").toBeGreaterThanOrEqual(0);
-    expect(end, "Hermes startup command boundary").toBeGreaterThan(start);
+    assert(start >= 0 && end > start, "Hermes API port bootstrap markers not found");
     fs.writeFileSync(
       scriptPath,
       [
