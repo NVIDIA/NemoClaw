@@ -76,7 +76,7 @@ describe("global doctor command", () => {
     expect(JSON.stringify(report)).not.toContain("sk-abc123DEF456ghi789");
   });
 
-  it("rejects --text with --json before any check runs and says so on both streams (#11150)", async () => {
+  it("rejects --text with --json before a doctor check runs (#11150)", async () => {
     const out: string[] = [];
     const err: string[] = [];
     vi.spyOn(console, "log").mockImplementation((...parts: unknown[]) => {
@@ -93,11 +93,29 @@ describe("global doctor command", () => {
     // stray text after the envelope makes it throw.
     expect(JSON.parse(out.join("\n"))).toEqual({
       error: {
-        message: expect.stringContaining("--json and --text are mutually exclusive"),
+        message: "--json and --text are mutually exclusive. Use one or the other.",
         exit: 2,
       },
     });
     expect(err.join("\n")).toContain("--json and --text are mutually exclusive");
+    expect(process.exitCode).toBeGreaterThan(0);
+  });
+
+  it("does not report another parse failure as an output-mode conflict (#11150)", async () => {
+    const out: string[] = [];
+    const err: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((...parts: unknown[]) => {
+      out.push(parts.map(String).join(" "));
+    });
+    vi.spyOn(console, "error").mockImplementation((...parts: unknown[]) => {
+      err.push(parts.map(String).join(" "));
+    });
+
+    await DoctorCommand.run(["--bogus", "--text", "--json"], rootDir);
+
+    expect(mocks.runGlobalDoctor).not.toHaveBeenCalled();
+    expect(out.join("\n")).not.toContain("mutually exclusive");
+    expect(err.join("\n")).not.toContain("mutually exclusive");
     expect(process.exitCode).toBeGreaterThan(0);
   });
 
