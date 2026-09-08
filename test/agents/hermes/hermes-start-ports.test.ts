@@ -22,10 +22,15 @@ const {
 } = process.env;
 
 function extractDashboardPortBootstrap(source: string): string {
-  const start = source.indexOf('NEMOCLAW_CMD=("$@")');
-  const end = source.indexOf('\nHERMES="$(command -v hermes)"', start);
-  assert(start >= 0 && end > start, "Hermes dashboard port bootstrap markers not found");
-  return source.slice(start, end).trimEnd();
+  const chatUiStart = source.indexOf("_chat_ui_url_dashboard_settings() {");
+  const captureStart = source.indexOf("\n# ── Early stderr/stdout capture", chatUiStart);
+  const portStart = source.indexOf('_dashboard_port_raw="${NEMOCLAW_DASHBOARD_PORT:-}"');
+  const end = source.indexOf('\nHERMES="$(command -v hermes)"', portStart);
+  assert(
+    chatUiStart >= 0 && captureStart > chatUiStart && portStart > captureStart && end > portStart,
+    "Hermes dashboard port bootstrap markers not found",
+  );
+  return [source.slice(chatUiStart, captureStart), source.slice(portStart, end)].join("\n");
 }
 
 function runHermesDashboardPortBootstrap(env: Record<string, string>) {
@@ -107,6 +112,14 @@ describe("agents/hermes/start.sh port bootstrap", () => {
     expect(run.stdout).toContain("DASHBOARD_PUBLIC_PORT=29443");
     expect(run.stdout).toContain("PUBLIC_PORT=8642");
     expect(run.pythonImportSentinelExists).toBe(false);
+  });
+
+  it("rejects an invalid CHAT_UI_URL without exposing its value (#10872)", () => {
+    const invalidUrl = "https://dashboard.example.test:invalid";
+    const invalidChatUiUrl = runHermesDashboardPortBootstrap({ CHAT_UI_URL: invalidUrl });
+    expect(invalidChatUiUrl.status).toBe(1);
+    expect(invalidChatUiUrl.stderr).toContain("Invalid CHAT_UI_URL for the Hermes dashboard");
+    expect(invalidChatUiUrl.stderr).not.toContain(invalidUrl);
   });
 
   it("rejects invalid and API-colliding dashboard ports", () => {
