@@ -7,6 +7,7 @@ import { isDirectSandboxFallbackUnavailableError } from "../../sandbox/privilege
 import type { GatewayRestartResult } from "./gateway-restart";
 import {
   checkAndRecoverSandboxProcesses,
+  executeGatewaySupervisorAction,
   executePrivilegedSandboxCommand,
   restartSandboxGateway,
   type SandboxCommandResult,
@@ -112,6 +113,7 @@ interface HermesPostRestoreGatewayDeps {
     sandboxName: string,
     originalIdentity: HermesCronRestoreIdentity,
   ) => HermesCronRestoreIdentity;
+  frozenTargetGatewaySupervisorAction?: typeof executeGatewaySupervisorAction;
   runtimeSelection?: OpenShellRuntimeSelection;
 }
 
@@ -146,8 +148,12 @@ export function restartHermesGatewayAfterStateRestore(
 ): HermesPostRestoreGatewayRestartState {
   if (agentName !== "hermes") return "not-applicable";
   const restart = deps.restartSandboxGateway ?? restartSandboxGateway;
+  const requestGatewaySupervisorAction = deps.frozenTargetGatewaySupervisorAction;
   const result = restart(sandboxName, {
     quiet: true,
+    ...(requestGatewaySupervisorAction
+      ? { deps: { requestGatewaySupervisorAction } }
+      : {}),
     ...(deps.runtimeSelection ? { runtimeSelection: deps.runtimeSelection } : {}),
   });
   if (result.ok) return "restarted";
@@ -214,6 +220,9 @@ function verifyHermesGatewayAfterStateRestoreImpl(
     }
     const observation: GatewayRecoveryObservation = checkAndRecover(sandboxName, {
       quiet: true,
+      ...(deps.frozenTargetGatewaySupervisorAction
+        ? { requestGatewaySupervisorAction: deps.frozenTargetGatewaySupervisorAction }
+        : {}),
       ...(deps.runtimeSelection ? { runtimeSelection: deps.runtimeSelection } : {}),
     });
     if (observation.forwardRecoveryFailed === true || observation.secretBoundaryRefused === true) {

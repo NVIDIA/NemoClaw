@@ -239,7 +239,10 @@ describe("prepareRebuildTargetPreflights", () => {
     const readinessOptions = await prepareN1xTarget(null, null, undefined, undefined, null, false);
 
     expect(readinessOptions).toEqual(
-      expect.objectContaining({ allowDeferredN1xManagedVllm: true }),
+      expect.objectContaining({
+        allowDeferredN1xManagedVllm: true,
+        reinstallDeferredN1xManagedVllm: true,
+      }),
     );
   });
 
