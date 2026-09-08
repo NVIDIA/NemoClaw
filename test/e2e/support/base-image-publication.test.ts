@@ -1100,12 +1100,9 @@ describe("base-image publication evidence", () => {
   });
 
   it("aborts an in-flight GitHub request at the caller's request budget", async () => {
-    vi.useFakeTimers();
-    const timeoutSignal = vi.spyOn(AbortSignal, "timeout").mockImplementation((milliseconds) => {
-      const controller = new AbortController();
-      setTimeout(() => controller.abort(), milliseconds);
-      return controller.signal;
-    });
+    const controller = new AbortController();
+    const timeoutSignal = vi.spyOn(AbortSignal, "timeout").mockReturnValue(controller.signal);
+    let currentTime = 0;
     let observedAbort = false;
 
     try {
@@ -1116,6 +1113,7 @@ describe("base-image publication evidence", () => {
           attempts: 1,
           budgetMs: 100,
           timeoutMs: 5_000,
+          now: () => currentTime,
           fetchImpl: async (_input, init) => {
             const signal = required(init.signal ?? undefined, "request signal is required");
             await new Promise<void>((_resolve, reject) => {
@@ -1132,15 +1130,15 @@ describe("base-image publication evidence", () => {
           },
         },
       );
-      const rejection = expect(request).rejects.toThrow();
+      const rejection = expect(request).rejects.toThrow(/time budget/u);
 
-      await vi.advanceTimersByTimeAsync(100);
+      currentTime = 100;
+      controller.abort();
       await rejection;
       expect(timeoutSignal).toHaveBeenCalledWith(100);
       expect(observedAbort).toBe(true);
     } finally {
       timeoutSignal.mockRestore();
-      vi.useRealTimers();
     }
   }, 2_000);
 
