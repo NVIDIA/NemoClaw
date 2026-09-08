@@ -73,7 +73,7 @@ Follow the current collector help when those controls evolve.
 
 ## Keep Point-in-Time Review Records out of the Repository
 
-Do not commit point-in-time release ledgers, concern records, review reports, or qualification reports anywhere in the repository. Keep temporary evidence outside the repository with private permissions. In the pull request, record conclusions and supporting evidence. Encode durable claims in executable configuration and tests. For a user-visible change, update the canonical `docs/` page with current supported behavior and operator action, not review chronology. Preserve historical executable fixtures only when they still support a current test. Point-in-time review records and evidence must not be preserved as historical fixtures; renaming or relocating them does not create an exception.
+Do not commit point-in-time release ledgers, concern records, review reports, or qualification reports anywhere in the repository. Encode durable claims in executable configuration and tests. For a user-visible change, update the canonical `docs/` page with current supported behavior and operator action. Preserve historical executable fixtures only when they still support a current test.
 
 ## Resolve concerns
 
