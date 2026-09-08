@@ -97,9 +97,7 @@ export type { OllamaRuntimeModelStatus } from "./ollama-runtime-context";
  * WSL-local and other host-local daemons use the auth proxy.
  */
 export function getOllamaContainerPort(): number {
-  return getResolvedOllamaHost() === OLLAMA_HOST_DOCKER_INTERNAL
-    ? OLLAMA_PORT
-    : OLLAMA_PROXY_PORT;
+  return getResolvedOllamaHost() === OLLAMA_HOST_DOCKER_INTERNAL ? OLLAMA_PORT : OLLAMA_PROXY_PORT;
 }
 
 /** Keep proxy lifecycle and sandbox-facing port selection under the route owner. */
@@ -556,12 +554,14 @@ const OLLAMA_DOCKER_PROXY_GUARD_ARGS = [
 export function getOllamaApiCommand(
   curlArgs: readonly string[],
   host: string = getResolvedOllamaHost(),
+  options: { dockerDetached?: boolean } = {},
 ): string[] {
   return host === OLLAMA_HOST_DOCKER_INTERNAL
     ? [
         "docker",
         "run",
         "--rm",
+        ...(options.dockerDetached ? ["-d"] : []),
         ...OLLAMA_DOCKER_PROXY_GUARD_ARGS,
         CONTAINER_REACHABILITY_IMAGE,
         ...curlArgs,
@@ -729,7 +729,7 @@ export interface GpuInfo {
    * is too low to clear agent-loop timeouts on 30B-class models, even when
    * advertised memory ostensibly fits. Populated for Jetson (Tegra/Thor/Orin)
    * platforms and the Windows-ARM N1X integrated GPU (the JMJWOA-Generic
-   * placeholder that clears the bounded Docker CUDA proof). Drives the
+   * placeholder that clears the bounded provider-owned CUDA proof). Drives the
    * `computeIntensive` exclusion in the bootstrap-model selector so
    * compute-constrained hosts are not steered onto 30B+ tags.
    */
@@ -1316,7 +1316,7 @@ export function getLocalProviderHealthCheck(provider: string): string[] | null {
   }
   if (!endpoint) return null;
   const curlArgs = buildValidatedCurlCommandArgs(["-sf", endpoint]);
-  return provider === "ollama-local" ? getOllamaApiCommand(curlArgs) : ["curl", ...curlArgs];
+  return ["curl", ...curlArgs];
 }
 
 /**
@@ -2298,7 +2298,11 @@ export function selectDefaultOllamaModel(
   return OLLAMA_MODEL_REGISTRY.find((entry) => pool.includes(entry.tag))?.tag ?? pool[0];
 }
 
-export function getOllamaWarmupRequestCommand(model: string, keepAlive = "15m"): string[] {
+export function getOllamaWarmupRequestCommand(
+  model: string,
+  keepAlive = "15m",
+  options: { dockerDetached?: boolean } = {},
+): string[] {
   const payload = JSON.stringify({
     model,
     prompt: "Hello, reply in less than 5 words",
@@ -2321,6 +2325,7 @@ export function getOllamaWarmupRequestCommand(model: string, keepAlive = "15m"):
       payload,
     ],
     host,
+    options,
   );
 }
 
@@ -2348,7 +2353,7 @@ export function runOllamaWarmup(
 ): void {
   const windowsHost = getResolvedOllamaHost() === OLLAMA_HOST_DOCKER_INTERNAL;
   const command = windowsHost
-    ? getOllamaWarmupRequestCommand(model)
+    ? getOllamaWarmupRequestCommand(model, "15m", { dockerDetached: true })
     : getOllamaWarmupCommand(model);
   let execution: PreparedOllamaApiExecution;
   try {
@@ -2422,6 +2427,7 @@ export function validateOllamaModel(
   const probeCmd = getOllamaProbeCommand(model);
   const probeResult = captureEx(probeCmd);
   let output = probeResult.stdout;
+  let timedOut = probeResult.timedOut;
   // Cold-loading a large model from disk can routinely exceed the default 120 s
   // probe window — on DGX Spark unified-memory hosts (#3251) and also on
   // tight-VRAM dGPU hosts (e.g. NVIDIA L4 23 GB) where the runner spills GPU→CPU
@@ -2431,13 +2437,31 @@ export function validateOllamaModel(
   if (probeResult.timedOut) {
     const retryResult = captureEx(getOllamaProbeCommand(model, 300));
     output = retryResult.stdout;
+    timedOut = retryResult.timedOut;
   }
   if (!output) {
+    const localDaemon = getResolvedOllamaHost() === OLLAMA_LOCALHOST;
+    const staleRunnerTimeout = timedOut && localDaemon && process.platform === "linux";
+    const activeSystemdUnit =
+      staleRunnerTimeout &&
+      capture(["systemctl", "is-active", "ollama.service"], {
+        ignoreError: true,
+        timeout: 5_000,
+      }).trim() === "active";
+    const staleRunnerRecovery =
+      staleRunnerTimeout
+        ? " Stale runner processes from a previous model may be holding GPU memory. " +
+          (activeSystemdUnit
+            ? "Run 'sudo systemctl restart ollama' and rerun onboarding."
+            : "Restart Ollama and rerun onboarding.")
+        : "";
+    const failure =
+      timedOut === true
+        ? `Selected Ollama model '${model}' did not answer the local probe in time. It may still be loading, too large for the host, or otherwise unhealthy.`
+        : `Selected Ollama model '${model}' failed the local probe without a response. Check that Ollama is running and the model is available.`;
     return {
       ok: false,
-      message:
-        `Selected Ollama model '${model}' did not answer the local probe in time. ` +
-        "It may still be loading, too large for the host, or otherwise unhealthy.",
+      message: failure + staleRunnerRecovery,
     };
   }
 

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   detectGpu: vi.fn(),
+  detectGpuWithRuntimeProviderProof: vi.fn(),
   enforceDockerGpuPatchPreserveNetwork: vi.fn(),
   ensureValidatedWebSearchCredential: vi.fn(),
   isDockerDesktopWslRuntime: vi.fn(),
@@ -30,6 +31,7 @@ vi.mock("../../onboard/gateway-provider-metadata", async (importOriginal) => {
 
 vi.mock("./rebuild-onboard-dependencies", () => ({
   rebuildOnboardDependencies: {
+    detectGpuWithRuntimeProviderProof: mocks.detectGpuWithRuntimeProviderProof,
     ensureValidatedWebSearchCredential: mocks.ensureValidatedWebSearchCredential,
     preflightAuthoritativeRebuildTarget: mocks.preflightAuthoritativeRebuildTarget,
   },
@@ -75,7 +77,7 @@ const TARGET = {
   fromDockerfile: null,
   agentDefinition: null,
 } as unknown as RebuildTargetConfig;
-const ENTRY = { mcp: null } as unknown as RebuildSandboxEntry;
+const ENTRY = { mcp: null, openshellDriver: "docker" } as unknown as RebuildSandboxEntry;
 const RECREATE_OPTIONS = {
   sandboxGpu: "enable",
   sandboxGpuDevice: null,
@@ -87,7 +89,7 @@ describe("preflightRebuildTargetRuntime GPU route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     Object.defineProperty(process, "platform", { ...platformDescriptor, value: "linux" });
-    mocks.detectGpu.mockReturnValue({
+    mocks.detectGpuWithRuntimeProviderProof.mockReturnValue({
       type: "nvidia",
       name: "NVIDIA test GPU",
       count: 1,
@@ -95,6 +97,7 @@ describe("preflightRebuildTargetRuntime GPU route", () => {
       perGpuMB: 24_576,
       nimCapable: true,
       platform: "linux",
+      containerGpuProof: { providerId: "docker", passed: true },
     });
     mocks.isLinuxDockerDriverGatewayEnabled.mockReturnValue(true);
     mocks.isDockerDesktopWslRuntime.mockReturnValue(false);
@@ -132,6 +135,8 @@ describe("preflightRebuildTargetRuntime GPU route", () => {
     });
 
     expect(mocks.enforceDockerGpuPatchPreserveNetwork).toHaveBeenCalledOnce();
+    expect(mocks.detectGpuWithRuntimeProviderProof).toHaveBeenCalledExactlyOnceWith("docker");
+    expect(mocks.detectGpu).not.toHaveBeenCalled();
     expect(mocks.enforceDockerGpuPatchPreserveNetwork).toHaveBeenCalledWith(
       "ollama-local",
       expect.objectContaining({

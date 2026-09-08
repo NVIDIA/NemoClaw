@@ -138,7 +138,11 @@ $$nemoclaw <sandbox-name> gateway restart
 
 The restart command asks the topology-specific controller to stop the tracked gateway child, wait for the entrypoint to launch a replacement, and prove listener and HTTP health. The host then checks or recovers host-side dashboard, messaging, and agent forwards.
 
-For Hermes, the entrypoint supervisor owns the gateway, dashboard process, internal API relay, dashboard relay, and gateway log stream. The nonroot managed supervisor repairs those processes continuously, stops an alive but deaf gateway after four consecutive failed health checks, and quarantines relaunch after five exits within 60 seconds until sandbox recreation.
+For Hermes, the entrypoint supervisor owns the gateway, dashboard process, internal API relay, dashboard relay, and gateway log stream.
+The nonroot managed supervisor repairs those processes continuously and stops an alive but deaf gateway after four consecutive failed health checks.
+Five unexpected gateway exits or failed replacement candidates within 60 seconds stop relaunch for the current supervisor instance. Host-authorized exits do not consume this crash budget.
+Correct the reported failure, then run `$$nemoclaw <sandbox-name> stop` and `$$nemoclaw <sandbox-name> start` to reset the supervisor.
+Rebuild only if the sandbox still cannot start.
 
 The host does not start the in-sandbox processes independently. Refer to [`$$nemoclaw <name> recover`](../../reference/commands#$$nemoclaw-name-recover) and [`$$nemoclaw <name> gateway restart`](../../reference/commands#$$nemoclaw-name-gateway-restart) for details.
 
