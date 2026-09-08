@@ -39,7 +39,7 @@ describe("managed bootstrap sandbox registration", () => {
     } as never;
     const completeRegistration = createOnboardCreatedSandboxRegistrationWithManagedLifecycle({
       sandboxName: "alpha",
-      allowManagedBootstrapNotReady: managedBootstrap && !compatibilityReplacement,
+      allowManagedBootstrapNotReady: () => managedBootstrap && !compatibilityReplacement,
       allowNotReadyWithMatchingIdentity: () => persistedFinalHandoffAcknowledged,
       sandboxGpuEnabled: false,
       createdLifecycle: createCreatedSandboxLifecycle(

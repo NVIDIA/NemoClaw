@@ -95,7 +95,7 @@ describe("durable final-handoff publication", () => {
       );
       const completeRegistration = createOnboardCreatedSandboxRegistrationWithManagedLifecycle({
         sandboxName: authority.sandboxName,
-        allowManagedBootstrapNotReady: false,
+        allowManagedBootstrapNotReady: () => false,
         allowNotReadyWithMatchingIdentity: () =>
           registry.getSandbox("alpha")?.pendingCreateIdentity?.exactFinalHandoffAcknowledged ===
           true,
