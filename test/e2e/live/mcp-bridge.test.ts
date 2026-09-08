@@ -598,7 +598,7 @@ async function assertRealAdapterToolCall(
   ];
   const command =
     options.agent === "openclaw"
-      ? `nemoclaw-start openclaw agent --agent main --json --thinking off --session-id mcp-e2e-native -m ${shellQuote(prompt)}`
+      ? `nemoclaw-start openclaw agent --agent main --json --thinking off --session-id ${shellQuote(`mcp-e2e-native-${options.artifactName}`)} -m ${shellQuote(prompt)}`
       : options.agent === "hermes"
         ? [
             ...HERMES_MCP_ENV_LOAD_COMMANDS,
