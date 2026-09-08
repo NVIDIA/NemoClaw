@@ -64,7 +64,7 @@ describe("Hermes image workflow secret boundary", () => {
       DOCKERHUB_TOKEN: "${{ secrets.DOCKERHUB_TOKEN }}",
     };
     auth!.run = auth!.run?.replaceAll("exit 1", "exit 0");
-    mainWorkflow.jobs["sandbox-images-and-e2e"].secrets = {
+    mainWorkflow.jobs["sandbox-image-contracts"].secrets = {
       inherit: true,
     };
 
