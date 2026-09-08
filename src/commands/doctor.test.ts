@@ -111,7 +111,9 @@ describe("global doctor command", () => {
     expect(mocks.runGlobalDoctor).not.toHaveBeenCalled();
     // Parsing the whole of stdout is the assertion: a second document or any
     // stray text after the envelope makes it throw.
-    expect(JSON.parse(stdout.join(""))).toEqual({
+    const stdoutText = stdout.join("");
+    expect(Buffer.byteLength(stdoutText)).toBeLessThan(1_000);
+    expect(JSON.parse(stdoutText)).toEqual({
       error: {
         message: "--json and --text are mutually exclusive. Use one or the other.",
         exit: 2,
