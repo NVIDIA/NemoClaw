@@ -711,14 +711,14 @@ describe("privileged sandbox exec routing", () => {
     },
   );
 
-  it("rejects ambiguous labeled running containers", () => {
+  it("rejects ambiguous labeled containers", () => {
     expect(() =>
       selectDirectSandboxContainer(
         "demo",
         "abc123\topenshell-demo-one\ndef456\topenshell-demo-two\n",
         ["demo"],
       ),
-    ).toThrow(/Multiple running OpenShell containers.*refusing ambiguous/);
+    ).toThrow(/Multiple OpenShell containers.*refusing ambiguous/);
   });
 
   it("rejects malformed Docker metadata", () => {
@@ -913,7 +913,7 @@ describe("privileged sandbox exec routing", () => {
     expect(resolvePortableDemoPrivilegedExecTarget).not.toHaveBeenCalled();
   });
 
-  it("keeps ordinary Docker discovery bounded and uses symbolic root (#9054)", () => {
+  it("keeps Docker discovery across lifecycle states bounded and uses symbolic root (#9054)", () => {
     const discoveryCalls: Array<{
       args: readonly string[];
       timeout: number | undefined;
@@ -943,6 +943,7 @@ describe("privileged sandbox exec routing", () => {
       {
         args: [
           "ps",
+          "--all",
           "--no-trunc",
           "--filter",
           "label=openshell.ai/managed-by=openshell",
@@ -954,6 +955,26 @@ describe("privileged sandbox exec routing", () => {
         timeout: 5000,
       },
     ]);
+  });
+
+  it("selects a stopped Docker container instead of classifying it as missing (#11107)", () => {
+    withPrivilegedExecMocks(
+      {
+        getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
+        listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
+        dockerCapture: (args) =>
+          args.includes("--all") ? "stopped-alpha-id\topenshell-alpha\n" : "",
+      },
+      ({ privilegedSandboxExecArgv }) => {
+        expect(privilegedSandboxExecArgv("alpha", ["id"])).toEqual([
+          "exec",
+          "--user",
+          "root",
+          "stopped-alpha-id",
+          "id",
+        ]);
+      },
+    );
   });
 
   it("clears interpreter and dynamic-loader injection variables for root control", () => {

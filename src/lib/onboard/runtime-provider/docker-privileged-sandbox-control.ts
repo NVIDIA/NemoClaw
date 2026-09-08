@@ -59,6 +59,7 @@ function findDirectSandboxContainer(
     output = dockerCapture(
       [
         "ps",
+        "--all",
         "--no-trunc",
         "--filter",
         `label=${OPENSHELL_MANAGED_BY_LABEL}=${OPENSHELL_MANAGED_BY_VALUE}`,
