@@ -441,6 +441,8 @@ function restartInterruptedFinalHandoff(
   if (input.resumeVerifiedCreate?.finalHandoffCommitStarted !== true) return;
   runOpenshell(["sandbox", "start", "-g", input.gatewayName, input.sandboxName], {
     ignoreError: true,
+    timeout: SANDBOX_RECREATE_PROBE_TIMEOUT_MS,
+    killSignal: "SIGKILL",
     killProcessTreeOnTimeout: true,
   });
 }

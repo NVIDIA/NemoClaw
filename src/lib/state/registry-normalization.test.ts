@@ -414,6 +414,34 @@ describe("sandbox registry normalization", () => {
     });
   });
 
+  it.each([
+    ["an acknowledgement without a commit fence", { exactFinalHandoffAcknowledged: true }],
+    ["a false commit fence", { exactFinalHandoffCommitStarted: false }],
+    ["a false acknowledgement", { exactFinalHandoffAcknowledged: false }],
+  ])("rejects %s in a pending create checkpoint", async (_case, receipt) => {
+    const registry = await loadRegistryWith({
+      alpha: {
+        name: "alpha",
+        pendingRouteReservation: true,
+        pendingCreateIdentity: {
+          schemaVersion: 1,
+          state: "verified-create",
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+          sandboxName: "alpha",
+          lifecycleGeneration: "generation",
+          sandboxIdentityFingerprint: "a".repeat(64),
+          route: "compatibility",
+          ...receipt,
+        },
+      },
+    });
+
+    expect(() => registry.getSandbox("alpha")).toThrow(
+      /invalid pending sandbox create verification/u,
+    );
+  });
+
   it("sets a gateway port only while the complete qualified row remains current", async () => {
     const registry = await loadRegistryWith({
       alpha: {

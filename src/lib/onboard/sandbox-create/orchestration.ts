@@ -387,6 +387,41 @@ export function persistExactFinalHandoffCommitStarted(input: {
   return started;
 }
 
+/** Bind the create flow's handoff callbacks to one durable registry checkpoint. */
+export function createFinalHandoffCheckpointPersistence(input: {
+  readonly getCheckpoint: () => PendingSandboxCreateIdentity;
+  readonly setCheckpoint: (checkpoint: PendingSandboxCreateIdentity) => void;
+  readonly persist: (
+    checkpoint: PendingSandboxCreateIdentity,
+    expected: PendingSandboxCreateIdentity,
+  ) => void;
+}) {
+  const update = (
+    transition: (checkpoint: PendingSandboxCreateIdentity) => PendingSandboxCreateIdentity,
+  ): void => input.setCheckpoint(transition(input.getCheckpoint()));
+  return {
+    persistFinalHandoffAcknowledgement(runtimePatch: ManagedBootstrapRuntimePatch | null): void {
+      update((checkpoint) =>
+        persistExactFinalHandoffAcknowledgement({
+          runtimePatch,
+          checkpoint,
+          persist: input.persist,
+        }),
+      );
+    },
+    persistFinalHandoffCommitStarted(): void {
+      update((checkpoint) =>
+        persistExactFinalHandoffCommitStarted({ checkpoint, persist: input.persist }),
+      );
+    },
+    persistResumedFinalHandoffAcknowledgement(): void {
+      update((checkpoint) =>
+        persistRecoveredFinalHandoffAcknowledgement({ checkpoint, persist: input.persist }),
+      );
+    },
+  };
+}
+
 /** Require an acknowledged handoff before a not-Ready sandbox can be published. */
 export function allowsNotReadyCreatedSandboxRevalidation(input: {
   readonly managedBootstrapCreateFinished: boolean;
@@ -2560,39 +2595,21 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       }
       return admittedCreateReservation;
     };
-    const persistFinalHandoffAcknowledgement = (
-      runtimePatch: ManagedBootstrapRuntimePatch | null,
-    ): void => {
-      pendingCreateIdentity = persistExactFinalHandoffAcknowledgement({
-        runtimePatch,
-        checkpoint: requirePendingCreateIdentity(),
-        persist: (acknowledged, expected) => {
-          registry.recordPendingSandboxCreateIdentity(requireCreateReservation(), acknowledged, {
-            expected,
-          });
-        },
-      });
-    };
-    const persistFinalHandoffCommitStarted = (): void => {
-      pendingCreateIdentity = persistExactFinalHandoffCommitStarted({
-        checkpoint: requirePendingCreateIdentity(),
-        persist: (started, expected) => {
-          registry.recordPendingSandboxCreateIdentity(requireCreateReservation(), started, {
-            expected,
-          });
-        },
-      });
-    };
-    const persistResumedFinalHandoffAcknowledgement = (): void => {
-      pendingCreateIdentity = persistRecoveredFinalHandoffAcknowledgement({
-        checkpoint: requirePendingCreateIdentity(),
-        persist: (acknowledged, expected) => {
-          registry.recordPendingSandboxCreateIdentity(requireCreateReservation(), acknowledged, {
-            expected,
-          });
-        },
-      });
-    };
+    const {
+      persistFinalHandoffAcknowledgement,
+      persistFinalHandoffCommitStarted,
+      persistResumedFinalHandoffAcknowledgement,
+    } = createFinalHandoffCheckpointPersistence({
+      getCheckpoint: requirePendingCreateIdentity,
+      setCheckpoint: (checkpoint) => {
+        pendingCreateIdentity = checkpoint;
+      },
+      persist: (checkpoint, expected) => {
+        registry.recordPendingSandboxCreateIdentity(requireCreateReservation(), checkpoint, {
+          expected,
+        });
+      },
+    });
     let durableCreatedSandboxIdentity:
       | import("../sandbox-recreate-transaction").CreatedSandboxLifecycleRegistration
       | null = null;

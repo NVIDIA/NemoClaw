@@ -257,7 +257,12 @@ describe("created sandbox identity gate", () => {
     mocks.waitForCreatedSandboxReadyWithTrace.mockImplementation(() => {
       expect(deps.runOpenshell).toHaveBeenCalledWith(
         ["sandbox", "start", "-g", gatewayName, "alpha"],
-        expect.objectContaining({ ignoreError: true }),
+        expect.objectContaining({
+          ignoreError: true,
+          timeout: 15_000,
+          killSignal: "SIGKILL",
+          killProcessTreeOnTimeout: true,
+        }),
       );
       return { ready: true, reason: "ready", failurePhase: null };
     });
