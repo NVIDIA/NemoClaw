@@ -63,20 +63,70 @@ function errorSuggestions(err: unknown): string[] | undefined {
   return suggestions.length > 0 ? suggestions : undefined;
 }
 
+type ParsedFlagInput = {
+  input?: { flags?: Record<string, { exclusive?: unknown } | undefined> };
+  output?: { raw?: unknown };
+};
+
+/**
+ * Name the flags a caller passed together that the command declares exclusive.
+ *
+ * The parser already rejects the pair; this reads its record of the rejection
+ * rather than its prose. `output.raw` holds exactly the flags the caller typed,
+ * so a flag that is merely defaulted (`--debug`/`--quiet` default to false)
+ * never counts, and `input.flags[name].exclusive` is the declaration itself.
+ * Returns null for any failure that is not an exclusive-flag violation.
+ */
+export function mutuallyExclusiveFlagStatement(err: unknown): string | null {
+  const parse = (err as { parse?: ParsedFlagInput } | null)?.parse;
+  const declared = parse?.input?.flags;
+  const raw = parse?.output?.raw;
+  if (!declared || !Array.isArray(raw)) return null;
+  const provided = new Set<string>();
+  for (const entry of raw) {
+    const token = (entry as { type?: unknown; flag?: unknown } | null) ?? {};
+    if (token.type === "flag" && typeof token.flag === "string") provided.add(token.flag);
+  }
+  const pairs = new Set<string>();
+  for (const name of provided) {
+    const exclusive = declared[name]?.exclusive;
+    if (!Array.isArray(exclusive)) continue;
+    for (const other of exclusive) {
+      if (typeof other !== "string" || !provided.has(other)) continue;
+      pairs.add([name, other].sort().join("|"));
+    }
+  }
+  if (pairs.size === 0) return null;
+  const sentences = [...pairs].map((pair) => {
+    const [first, second] = pair.split("|");
+    return `--${first} and --${second} are mutually exclusive. Use one or the other.`;
+  });
+  return sentences.join("\n");
+}
+
 /**
  * Describe a command failure as data a `--json` caller can act on.
  *
  * The message is the whole point and it is the one field the default envelope
  * loses: `Error.prototype.message` is not enumerable, so serializing the error
  * drops it. Everything else is narrowed on purpose — see `toErrorJson`.
+ *
+ * An exclusive-flag violation leads with a plain statement of which flags
+ * collided. The parser's own text follows, so its `--help` pointer survives.
  */
 export function describeCommandErrorForJson(err: unknown): CommandErrorJson {
-  const message =
+  const original =
     err instanceof Error && err.message
       ? err.message
       : typeof err === "string" && err
         ? err
         : "The command failed without reporting a reason.";
+  // Only the parser's text can carry user argv, so only it is redacted. The
+  // statement is built from declared flag names, and running prose through
+  // the redactor is how "Pass one" became "Pass <REDACTED>".
+  const redactedOriginal = String(redactForLog(original));
+  const statement = mutuallyExclusiveFlagStatement(err);
+  const message = statement ? `${statement}\n${redactedOriginal}` : redactedOriginal;
   // A thrown `undefined` still has to produce an envelope: the error path is
   // the last thing standing between a caller and an unexplained exit code.
   const detail: { code?: unknown; oclif?: { exit?: unknown } } =
@@ -85,8 +135,7 @@ export function describeCommandErrorForJson(err: unknown): CommandErrorJson {
   const exit = detail.oclif?.exit;
   const suggestions = errorSuggestions(err);
   return {
-    // A message can carry an inline credential flag from the argv it rejected.
-    message: String(redactForLog(message)),
+    message,
     ...(typeof code === "string" ? { code } : {}),
     ...(typeof exit === "number" ? { exit } : {}),
     ...(suggestions
@@ -155,7 +204,14 @@ export abstract class NemoClawCommand extends Command {
    * stderr at all and the exit code was the only signal the caller got.
    */
   protected override async catch(err: Interfaces.CommandError): Promise<unknown> {
-    if (this.jsonEnabled()) console.error(describeCommandErrorForJson(err).message);
+    const described = describeCommandErrorForJson(err);
+    if (this.jsonEnabled()) {
+      console.error(described.message);
+    } else if (mutuallyExclusiveFlagStatement(err)) {
+      // The human path rethrows and lets oclif print `err.message`, so the
+      // same statement has to travel on the error itself.
+      err.message = described.message;
+    }
     return await super.catch(err);
   }
 

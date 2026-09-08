@@ -4,7 +4,11 @@
 import { Flags, Parser } from "@oclif/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { describeCommandErrorForJson, NemoClawCommand } from "./nemoclaw-oclif-command";
+import {
+  describeCommandErrorForJson,
+  mutuallyExclusiveFlagStatement,
+  NemoClawCommand,
+} from "./nemoclaw-oclif-command";
 
 /** The exact parse failure `doctor --text --json` produces, built from the real parser. */
 async function rejectedExclusiveFlagCombination(): Promise<unknown> {
@@ -119,9 +123,60 @@ describe("a command that fails under --json (#11150)", () => {
     const emitted = ExclusiveFlagCommand.emitted;
 
     expect(stderr).toHaveBeenCalledWith(
-      expect.stringContaining("cannot also be provided when using"),
+      expect.stringContaining("--json and --text are mutually exclusive"),
     );
-    expect(JSON.stringify(emitted[0])).toContain("cannot also be provided when using");
+    expect(JSON.stringify(emitted[0])).toContain("--json and --text are mutually exclusive");
     expect(JSON.stringify(emitted[0]).length).toBeLessThan(1_000);
+  });
+
+  it("names the colliding flags ahead of the parser's own text", async () => {
+    await DefaultEnvelopeCommand.run(["--text", "--json"], process.cwd());
+    const described = describeCommandErrorForJson(DefaultEnvelopeCommand.captured);
+
+    expect(described.message.split("\n")[0]).toBe(
+      "--json and --text are mutually exclusive. Use one or the other.",
+    );
+    expect(described.message).toContain("cannot also be provided when using");
+  });
+
+  it("names the hidden --debug/--quiet pair once, not once per declaration", async () => {
+    await DefaultEnvelopeCommand.run(["--debug", "--quiet", "--json"], process.cwd());
+    const statement = mutuallyExclusiveFlagStatement(DefaultEnvelopeCommand.captured);
+
+    expect(statement).toBe("--debug and --quiet are mutually exclusive. Use one or the other.");
+  });
+
+  it("does not count a flag that was only defaulted as a collision", async () => {
+    await DefaultEnvelopeCommand.run(["--text", "--json"], process.cwd());
+    const statement = mutuallyExclusiveFlagStatement(DefaultEnvelopeCommand.captured);
+
+    expect(statement).not.toContain("--debug");
+    expect(statement).not.toContain("--quiet");
+  });
+
+  it("leaves a failure that is not an exclusive-flag violation unadorned", async () => {
+    await DefaultEnvelopeCommand.run(["--bogus", "--json"], process.cwd());
+
+    expect(mutuallyExclusiveFlagStatement(DefaultEnvelopeCommand.captured)).toBeNull();
+    expect(describeCommandErrorForJson(DefaultEnvelopeCommand.captured).message).toMatch(
+      /^Nonexistent flag: --bogus/,
+    );
+  });
+
+  it("carries the statement on the human path too", async () => {
+    await expect(ExclusiveFlagCommand.run(["--debug", "--quiet"], process.cwd())).rejects.toThrow(
+      "--debug and --quiet are mutually exclusive. Use one or the other.",
+    );
+  });
+
+  it("satisfies the report's acceptance grep on both streams", async () => {
+    const stderr = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    ExclusiveFlagCommand.emitted = [];
+
+    await ExclusiveFlagCommand.run(["--text", "--json"], process.cwd());
+
+    const acceptance = /mutually exclusive|cannot be used together/i;
+    expect(stderr.mock.calls.flat().join("\n")).toMatch(acceptance);
+    expect(JSON.stringify(ExclusiveFlagCommand.emitted[0])).toMatch(acceptance);
   });
 });
