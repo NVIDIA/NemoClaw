@@ -136,7 +136,7 @@ run_bounded_bootstrap_lookup() (
   shift
   output_file="$(mktemp "${TMPDIR:-/tmp}/nemoclaw-bootstrap-lookup.XXXXXX")"
   set -m
-  "$@" >"$output_file" 2>/dev/null &
+  "$@" >"$output_file" 2>/dev/null </dev/null &
   command_pid=$!
   set +m
   trap 'trap - INT TERM EXIT; terminate_bootstrap_lookup_group "$command_pid"; rm -f "$output_file"; exit 130' INT
@@ -161,6 +161,8 @@ run_bounded_bootstrap_lookup() (
   fi
   if ((status == 0)); then
     cat "$output_file"
+  elif ((status >= 128)); then
+    status=2
   fi
   trap - INT TERM EXIT
   rm -f "$output_file"

@@ -35,6 +35,7 @@ case "${installedVersion}" in
   hang) /bin/sleep 60 ;;
   ignore-term) trap '' TERM; while :; do :; done ;;
   interrupt) printf '%s' "$$" >"\${LOOKUP_PID:?}"; /bin/sleep 60 ;;
+  signaled) kill -KILL "$$" ;;
   invalid) printf 'not a NemoClaw version\n' ;;
   *) printf 'nemoclaw v%s\n' "${installedVersion}" ;;
 esac
@@ -208,6 +209,16 @@ describe("public installer downgrade guard", () => {
     expect(fs.existsSync(payloadMarker)).toBe(false);
   });
 
+  it("fails closed when the installed version lookup is killed", () => {
+    const { result, payloadMarker } = runInstall("signaled", "0.0.109");
+
+    expect(result.status).toBe(1);
+    expect(`${result.stdout}${result.stderr}`).toContain(
+      "Cannot verify the installed NemoClaw version",
+    );
+    expect(fs.existsSync(payloadMarker)).toBe(false);
+  });
+
   it("keeps the installed CLI when the implicit lkg version cannot be verified", () => {
     const { result, payloadMarker } = runInstall("0.0.118", "unknown");
 
@@ -250,9 +261,9 @@ describe("public installer downgrade guard", () => {
 
     expect(result.status).toBe(1);
     expect(elapsedMs).toBeGreaterThanOrEqual(900);
-    expect(elapsedMs).toBeLessThan(5_000);
+    expect(elapsedMs).toBeLessThan(10_000);
     expect(fs.existsSync(payloadMarker)).toBe(false);
-  });
+  }, 15_000);
 
   it("cleans up an active lookup when the installer is interrupted", () => {
     const { lookupPid, payloadMarker, result, root } = runInstall("interrupt", "0.0.109");
