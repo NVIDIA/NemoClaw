@@ -106,6 +106,13 @@ describe("migration snapshot sanitizer fallbacks", () => {
       }),
     },
     {
+      label: "Windows-separated file path",
+      output: JSON.stringify({
+        root: identity,
+        files: [{ path: "nested\\\\config.json", metadata: identity }],
+      }),
+    },
+    {
       label: "null file metadata",
       output: JSON.stringify({
         root: identity,
@@ -302,6 +309,24 @@ describe("migration snapshot sanitizer fallbacks", () => {
     expect(() => scanDescriptorSnapshot(root, new Set())).toThrow(
       SnapshotSanitizerPrerequisiteError,
     );
+
+    writeRawNodeHelper([
+      'process.stdout.write(\'{"ok":false,"code":"unexpected-sensitive-code"}\');',
+    ]);
+    expect(scanDescriptorSnapshot(root, new Set())).toBeNull();
+  });
+
+  it("passes only the required Windows root variables to the helper", () => {
+    const root = { canonicalPath: makeRoot(), identity };
+    vi.stubEnv("SYSTEMROOT", "C:\\Windows");
+    vi.stubEnv("WINDIR", "C:\\Windows");
+    writeRawNodeHelper([
+      `const valid = process.env.SYSTEMROOT === "C:\\\\Windows" && process.env.WINDIR === "C:\\\\Windows";`,
+      `const result = valid ? ${JSON.stringify({ root: identity, files: [] })} : null;`,
+      "process.stdout.write(JSON.stringify({ ok: true, result }));",
+    ]);
+
+    expect(scanDescriptorSnapshot(root, new Set())).toEqual({ root: identity, files: [] });
   });
 
   it("surfaces only the bounded failure class reported by the helper (#11174)", () => {

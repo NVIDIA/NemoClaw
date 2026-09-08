@@ -279,9 +279,6 @@ export function decodeDescriptorSnapshotContent(content: string | undefined): st
       return null;
     }
   }
-  for (let index = unpaddedLength; index < content.length; index += 1) {
-    if (content.charCodeAt(index) !== 0x3d) return null;
-  }
   const decoded = Buffer.from(content, "base64");
   if (decoded.length > MAX_SNAPSHOT_FILE_BYTES) return null;
   if (decoded.toString("base64") !== content) return null;
