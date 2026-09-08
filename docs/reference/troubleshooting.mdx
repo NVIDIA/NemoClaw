@@ -1483,6 +1483,20 @@ NemoClaw cannot safely infer the pre-transaction ownership, modes, or inode flag
 Do not repair the paths with manual `chown`, `chmod`, or hash regeneration.
 Restore a trusted snapshot into a new sandbox as shown above, or recreate from host-side onboarding configuration if no state-preserving recovery is required.
 
+### Hermes startup refuses an unsafe state directory
+
+Hermes stops startup when `/sandbox/.hermes/sessions`, `/sandbox/.hermes/gateway`, or `/sandbox/.hermes/runtime` is a symbolic link, a file, or cannot be repaired safely.
+Startup also stops if the config root or its `hooks`, `image_cache`, or `audio_cache` directories cannot be repaired safely, or if any of those paths changes during descriptor-anchored repair.
+The same startup stops when the `logs` directory tree contains a symbolic link, a hard-linked file, another unsafe entry, or changes during descriptor-anchored repair.
+It also refuses to repair more than 4,096 retained log entries or a log tree deeper than 64 directories in one startup.
+Startup also stops when `/sandbox/.hermes/.hermes_history` is a symbolic link, a nonregular or hard-linked file, or cannot be repaired safely.
+`/tmp/nemoclaw-start.log` names the reported state item and reports `Hermes pre-launch layout repair failed`.
+When a host-side control command fails, its output can include matching startup diagnostics as `NEMOCLAW_START_LOG=...`.
+If the diagnostic reports the maximum log-entry count or repair depth, archive or remove old retained logs from a trusted host-side recovery environment and retry startup.
+For symbolic links, hard links, unsafe entry types, or paths that changed during repair, do not run `chown`, `chmod`, or another in-place repair on the reported path.
+For those unsafe-path failures, follow [Hermes startup reports HERMES_CONFIG_MUTATION_ORPHANED](#hermes-startup-reports-hermes_config_mutation_orphaned) to restore a trusted host-side snapshot into a recreated sandbox.
+If no trusted snapshot exists for an unsafe-path failure, recreate the sandbox from host-side onboarding configuration only if you accept losing its inaccessible state.
+
 </AgentOnly>
 
 ### Sandbox is running an outdated agent version
@@ -1925,14 +1939,15 @@ Onboarding ends with:
 
 ```text
   Sandbox 'my-assistant' was created but did not become ready within 180s.
-  Retry: $$nemoclaw onboard
+  terminal_resolution: timed_out_retained
+  Recovery remains blocked while sandbox 'my-assistant' exists.
 ```
 
 This is a separate budget from `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT`. It covers the readiness wait that follows sandbox creation, including in-sandbox boot, OpenClaw start, and policy load. It does not cover the inference probe.
 
 <AgentOnly variant="openclaw,hermes">
 
-For a newly created OpenClaw or Hermes sandbox, `Ready` is not the final acceptance signal. Within this same budget, NemoClaw also requires OpenShell to return a durable sandbox ID and accept `openshell sandbox exec --name <sandbox> -- true`. NemoClaw keeps waiting only when OpenShell returns its exact `sandbox is not ready` response. A missing or malformed ID, or another command failure, stops the wait. Ordinary onboarding then follows the failed-creation cleanup path. Portable OpenClaw onboarding preserves the sandbox as described below.
+For a newly created OpenClaw or Hermes sandbox, `Ready` is not the final acceptance signal. Within this same budget, NemoClaw also requires OpenShell to return a durable sandbox ID and accept `openshell sandbox exec --name <sandbox> -- true`. NemoClaw keeps waiting only when OpenShell returns its exact `sandbox is not ready` response. A missing or malformed ID, or another command failure, stops the wait and preserves the sandbox. Inspect the gateway, then run `$$nemoclaw <sandbox-name> destroy` to check whether authoritative absence permits cleanup. Do not retry same-name onboarding while the retained sandbox exists.
 
 </AgentOnly>
 
@@ -1949,7 +1964,7 @@ export NEMOCLAW_SANDBOX_READY_TIMEOUT=600
 $$nemoclaw onboard
 ```
 
-The variable accepts seconds and applies to the readiness wait only. When the ordinary create deadline expires, NemoClaw tries to delete the partially created sandbox. After successful cleanup, the output ends with `Retry: $$nemoclaw onboard`. If cleanup fails, NemoClaw instead reports that the failed sandbox could not be removed and prints `Manual cleanup: openshell sandbox delete "<name>"`.
+The variable accepts seconds and applies to the readiness wait only. When the ordinary create deadline expires, NemoClaw preserves the partially created sandbox because OpenShell deletion targets its mutable name. Same-name onboarding remains blocked while that sandbox exists. Run `$$nemoclaw <sandbox-name> destroy` to check retained recovery. Do not delete the sandbox by mutable name.
 
 <AgentOnly variant="openclaw">
 
@@ -2742,13 +2757,7 @@ Starting with NemoClaw v0.0.43, the standard installer handles the `/proc/<pid>/
 If an older release fails direct GPU proof with that path and `Permission denied`, upgrade NemoClaw and rerun onboarding.
 </Note>
 
-When inspection confirms that the failed sandbox remains, delete it with a command such as:
-
-```bash
-openshell sandbox delete <sandbox-name>
-```
-
-Fix the NVIDIA Container Toolkit or CDI configuration reported in the diagnostics. Run the deletion command only after confirming that the pre-patch sandbox was not restored, then rerun onboarding. If you do not need GPU access inside the sandbox, rerun with `--no-sandbox-gpu`.
+When the failed sandbox remains, recovery stays blocked because OpenShell deletion targets its mutable name. Inspection is diagnostic only and does not authorize deletion. Run `$$nemoclaw <sandbox-name> destroy` to check for authoritative absence. Fix the NVIDIA Container Toolkit or CDI configuration reported in the diagnostics. Rerun onboarding only after retained recovery completes. If you do not need GPU access inside the sandbox, use `--no-sandbox-gpu` when onboarding can continue.
 
 If sandbox creation fails with `CDI device injection failed: unresolvable CDI devices nvidia.com/gpu=all`, the OpenShell gateway tried `docker create --device nvidia.com/gpu=all` and Docker could not resolve the CDI spec. This injection happens inside the gateway, so `NEMOCLAW_DOCKER_GPU_PATCH=0` does not bypass it. Rerun with `--no-gpu`, or set `NEMOCLAW_SANDBOX_GPU=0` and resume onboarding.
 
@@ -4385,12 +4394,7 @@ The host repairs only the host-side OpenShell forwards after the supervised proc
 ### Restart or recovery reports `relaunch quarantined`
 
 Valid Hermes config changes do not trigger relaunch quarantine.
-The supervisor quarantines relaunch after five unexpected gateway exits or failed replacement candidates within 60 seconds.
-Invalid Hermes config can make each replacement exit and consume that crash budget.
-
-The quarantine is deterministic, so retrying restart or recovery cannot clear it.
-Inspect the Hermes log and correct the process or config failure.
-Then restart the sandbox to reset the supervisor's crash budget:
+The supervisor adopts a stable, secret-boundary-safe config snapshot before launching a replacement gateway. If the startup log reports `HERMES_RUNTIME_PREPARATION_FAILED stage=<stage>`, the named environment, config, dependency, provider, or messaging input still failed after five bounded preparation attempts. Correct that input through its supported host-side configuration or credential flow, then restart the sandbox:
 
 ```bash
 nemohermes <name> logs --tail 50
@@ -4398,7 +4402,11 @@ nemohermes <name> stop
 nemohermes <name> start
 ```
 
-If the sandbox still cannot start, rebuild it from registered configuration:
+The supervisor stops relaunch after five unexpected gateway exits or failed replacement candidates within 60 seconds. Invalid Hermes config can make each replacement exit and consume that crash budget. Correct the process or config failure, then stop and start the sandbox to reset the supervisor.
+
+An unsafe startup layout also stops automatic relaunch. If layout repair reports the maximum log-entry count or repair depth, archive or remove old retained logs from a trusted host-side recovery environment, then stop and start the sandbox. For symbolic links, hard links, unsafe entry types, or paths that changed during repair, do not repair the path in place. Restore a trusted snapshot into a recreated sandbox or recreate from host-side onboarding configuration.
+
+If an integrity mismatch is reported or the sandbox still cannot start, rebuild it from registered configuration:
 
 ```bash
 nemohermes <name> rebuild --yes
