@@ -12,6 +12,7 @@ import {
 } from "../docker-driver-gateway-config";
 import * as dockerDriverGatewayLaunch from "../docker-driver-gateway-launch";
 import * as gatewayBinding from "../gateway-binding";
+import { prepareNativePodmanGatewayHostRuntime } from "../runtime-provider/podman-runtime-surfaces";
 import { createDockerDriverGatewayStart } from "./docker-driver-start";
 import { createGatewayRecoveryOrchestration } from "./recovery";
 import { createGatewayRegistration } from "./registration";
@@ -181,19 +182,32 @@ describe("gateway lifecycle late binding", () => {
     const dockerDriverGatewayEnv = {
       startPackageManagedDockerDriverGatewayWithEnvOverride: managedStart,
     } as unknown as typeof import("../docker-driver-gateway-env");
-    const getDockerDriverGatewayEnv = vi.fn(() => {
-      expect(
-        gatewayBinding.managedGatewayStateRootOwnershipFailure({
-          gatewayName: name,
-          gatewayPort: port,
-          stateDir,
-        }),
-      ).toBeNull();
-      expect(
-        gatewayStateLifecycleLock.tryAcquireManagedGatewayStateLifecycleLock(stateDir),
-      ).toBeNull();
-      return { OPENSHELL_SERVER_PORT: String(port) };
+    const gatewayHostRuntime = prepareNativePodmanGatewayHostRuntime({
+      environment: {},
+      platform: "linux",
+      socketPath: "/run/user/1001/podman/podman.sock",
     });
+    const prepareDockerDriverGatewayHostRuntime = vi.fn(() => gatewayHostRuntime);
+    const getDockerDriverGatewayEnv = vi.fn(
+      (
+        _version?: string | null,
+        _platform?: NodeJS.Platform,
+        selectedGatewayHostRuntime?: typeof gatewayHostRuntime,
+      ) => {
+        expect(selectedGatewayHostRuntime).toBe(gatewayHostRuntime);
+        expect(
+          gatewayBinding.managedGatewayStateRootOwnershipFailure({
+            gatewayName: name,
+            gatewayPort: port,
+            stateDir,
+          }),
+        ).toBeNull();
+        expect(
+          gatewayStateLifecycleLock.tryAcquireManagedGatewayStateLifecycleLock(stateDir),
+        ).toBeNull();
+        return { OPENSHELL_SERVER_PORT: String(port) };
+      },
+    );
     const runCaptureOpenshell = vi.fn((_args: string[], _options?: Record<string, unknown>) => "");
     const runtimeIdentitySpy = vi
       .spyOn(dockerDriverGatewayLaunch, "buildDockerDriverGatewayRuntimeIdentity")
@@ -238,6 +252,7 @@ describe("gateway lifecycle late binding", () => {
       isGatewayTcpReady: async () => true,
       isPidAlive: () => false,
       logDockerDriverGatewayRestart: vi.fn(),
+      prepareDockerDriverGatewayHostRuntime,
       registerDockerDriverGatewayEndpoint: () => true,
       rememberDockerDriverGatewayPid: vi.fn(),
       resolveOpenShellGatewayBinary: () => "/opt/openshell/openshell-gateway",
@@ -290,6 +305,8 @@ describe("gateway lifecycle late binding", () => {
       );
       const runtimeIdentityOptions = runtimeIdentitySpy.mock.calls[0]?.[0];
       const managedOptions = managedStart.mock.calls[0]?.[0];
+      expect(prepareDockerDriverGatewayHostRuntime).toHaveBeenCalledOnce();
+      expect(runtimeIdentityOptions?.gatewayHostRuntime).toBe(gatewayHostRuntime);
       expect(runtimeIdentityOptions?.env).toEqual(managedOptions?.env);
       expect(runtimeIdentityOptions?.env).toEqual(
         expect.objectContaining({

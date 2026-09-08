@@ -36,6 +36,7 @@ import {
 } from "./gateway-process-identity";
 import { resolveOpenshell } from "./openshell-cli";
 import type { PortProbeResult } from "./preflight";
+import type { RuntimeProviderGatewayHostRuntime } from "./runtime-provider/contract";
 
 // Keep the listener option type on the established runtime facade while the
 // implementation remains isolated in docker-driver-gateway-port-listener.ts.
@@ -101,7 +102,11 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
   getDockerDriverGatewayEnv(
     versionOutput?: string | null,
     platform?: NodeJS.Platform,
+    gatewayHostRuntime?: RuntimeProviderGatewayHostRuntime,
   ): Record<string, string>;
+  prepareDockerDriverGatewayHostRuntime(
+    platform?: NodeJS.Platform,
+  ): RuntimeProviderGatewayHostRuntime;
   getDockerDriverGatewayPid(): number | null;
   getDockerDriverGatewayPidFile(): string;
   getDockerDriverGatewayPortListenerScan(
@@ -243,10 +248,9 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
       : `ghcr.io/nvidia/openshell/supervisor:${supportedVersion}`;
   }
 
-  function getDockerDriverGatewayEnv(
-    versionOutput: string | null = null,
+  function prepareDockerDriverGatewayHostRuntime(
     platform: NodeJS.Platform = process.platform,
-  ): Record<string, string> {
+  ): RuntimeProviderGatewayHostRuntime {
     const dockerHost = process.env.DOCKER_HOST;
     let podmanSocketPath: string | undefined;
     if (isPortableExperimentalProfile()) {
@@ -258,12 +262,25 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
       }
       podmanSocketPath = candidate.slice("unix://".length);
     }
+    return dockerDriverGatewayEnv.prepareConfiguredGatewayHostRuntime({
+      platform,
+      socketPath: podmanSocketPath,
+    });
+  }
+
+  function getDockerDriverGatewayEnv(
+    versionOutput: string | null = null,
+    platform: NodeJS.Platform = process.platform,
+    gatewayHostRuntime: RuntimeProviderGatewayHostRuntime = prepareDockerDriverGatewayHostRuntime(
+      platform,
+    ),
+  ): Record<string, string> {
     const gatewayEnv = dockerDriverGatewayEnv.buildDockerDriverGatewayEnv({
       platform,
       gatewayPort: currentGatewayPort(),
       stateDir: getDockerDriverGatewayStateDir(),
       dockerNetworkName: process.env.OPENSHELL_DOCKER_NETWORK_NAME || "openshell-docker",
-      podmanSocketPath,
+      gatewayHostRuntime,
       getDockerSupervisorImage: () => getOpenShellDockerSupervisorImage(versionOutput),
       resolveSandboxBin: resolveOpenShellSandboxBinary,
       enableBindMounts: deps.enableBindMounts?.() === true,
@@ -593,6 +610,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     getDockerDriverGatewayRuntimeDriftFromSnapshot,
     getDockerDriverGatewayStateDir,
     isDockerDriverGatewayPortListener,
+    prepareDockerDriverGatewayHostRuntime,
     isDockerDriverGatewayProcess,
     isDockerDriverGatewayProcessAlive,
     isDockerDriverGatewayStateInUse,

@@ -120,12 +120,15 @@ jobs:
       - name: Install macOS test dependencies
         run: |
           set -euo pipefail
-          brew install bash coreutils docker fd gawk gnu-tar iproute2mac podman ripgrep
+          brew install bash coreutils fd gawk ripgrep
+          test -x "$(command -v gtar)"
+          mkdir -p "$RUNNER_TEMP/nemoclaw-bin"
+          ln -s "$(command -v gtar)" "$RUNNER_TEMP/nemoclaw-bin/tar"
           printf '%s\n' \
+            "$RUNNER_TEMP/nemoclaw-bin" \
             "$(brew --prefix bash)/bin" \
             "$(brew --prefix coreutils)/libexec/gnubin" \
             "$(brew --prefix gawk)/libexec/gnubin" \
-            "$(brew --prefix gnu-tar)/libexec/gnubin" \
             >>"$GITHUB_PATH"
           python -m pip install \
             --only-binary=:all: \
@@ -169,15 +172,42 @@ jobs:
       - name: Run full Vitest suite on macOS
         run: npx vitest run --testTimeout 60000 --shard="${{ matrix.shard }}/4"
 
-      - name: Install pinned OpenShell for macOS E2E
-        if: ${{ matrix.shard == 1 }}
+  macos-live-e2e:
+    name: macOS live E2E
+    if: ${{ github.ref == 'refs/heads/main' }}
+    needs: macos-vitest
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
+        run: bash .github/actions/ci-install-dependencies.sh
+
+      - name: Build CLI and plugin
+        run: |
+          npm run build:cli
+          npm --prefix nemoclaw run build
+
+      - name: Install pinned OpenShell
         env:
           NEMOCLAW_NON_INTERACTIVE: "1"
         run: env -u GH_TOKEN -u GITHUB_TOKEN bash scripts/install-openshell.sh
 
       - id: macos_docker
         name: Detect Docker availability for macOS E2E
-        if: ${{ matrix.shard == 1 }}
         shell: bash
         run: |
           set -euo pipefail
@@ -190,7 +220,7 @@ jobs:
           fi
 
       - name: Run macOS live E2E
-        if: ${{ matrix.shard == 1 && steps.macos_docker.outputs.docker_ok == 'true' && github.ref == 'refs/heads/main' }}
+        if: ${{ steps.macos_docker.outputs.docker_ok == 'true' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
@@ -205,19 +235,13 @@ jobs:
           --silent=false --reporter=default
 
       - name: Explain skipped macOS live E2E
-        if: ${{ matrix.shard == 1 && (steps.macos_docker.outputs.docker_ok != 'true' || github.ref != 'refs/heads/main') }}
-        shell: bash
+        if: ${{ steps.macos_docker.outputs.docker_ok != 'true' }}
         run: |
-          set -euo pipefail
-          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
-            echo "The macOS live E2E did not run because this workflow does not test main."
-          else
-            echo "The macOS live E2E did not run because Docker is unavailable."
-          fi
-          echo "The macOS build and Vitest shard still provide platform evidence."
+          echo "The macOS live E2E did not run because Docker is unavailable."
+          echo "The macOS Vitest shards still provide platform evidence."
 
       - name: Upload macOS E2E logs on failure
-        if: ${{ matrix.shard == 1 && failure() }}
+        if: ${{ failure() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: macos-platform-evidence-logs

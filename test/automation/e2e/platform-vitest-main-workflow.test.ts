@@ -36,21 +36,10 @@ describe("platform evidence workflow", () => {
     expect(run).toContain('test "$(git rev-parse --verify HEAD)" = "$GITHUB_SHA"');
     expect(run.indexOf("safe.directory")).toBeLessThan(run.indexOf("npm run build:cli"));
   });
-  it.each([
-    {
-      job: "macos-vitest",
-      step: "Run macOS live E2E",
-      dockerOutput: "steps.macos_docker.outputs.docker_ok == 'true'",
-    },
-    {
-      job: "wsl-vitest",
-      step: "Run WSL live E2E",
-      dockerOutput: "steps.wsl_docker.outputs.docker_ok == 'true'",
-    },
-  ])("limits credentialed $job E2E to the first main-branch shard", (workflowCase) => {
-    const live = step(workflowCase.job, workflowCase.step);
+  it("limits credentialed WSL E2E to the first main-branch shard", () => {
+    const live = step("wsl-vitest", "Run WSL live E2E");
     expect(live.if).toContain("matrix.shard == 1");
-    expect(live.if).toContain(workflowCase.dockerOutput);
+    expect(live.if).toContain("steps.wsl_docker.outputs.docker_ok == 'true'");
     expect(live.if).toContain("github.ref == 'refs/heads/main'");
     expect(live.env).toMatchObject({
       GITHUB_TOKEN: "${{ github.token }}",
@@ -58,32 +47,31 @@ describe("platform evidence workflow", () => {
     });
   });
 
-  it("keeps real macOS OpenShell state out of the non-live suite", () => {
-    const steps = job("macos-vitest").steps ?? [];
-    const nonLiveIndex = steps.findIndex(
-      (entry) => entry.name === "Run full Vitest suite on macOS",
+  it("isolates credentialed macOS E2E from mutable non-live dependencies", () => {
+    const nonLive = job("macos-vitest");
+    const liveJob = job("macos-live-e2e");
+    const live = step("macos-live-e2e", "Run macOS live E2E");
+    const installOpenShell = step("macos-live-e2e", "Install pinned OpenShell");
+    expect(nonLive.steps).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: "Run macOS live E2E" })]),
     );
-    const installIndex = steps.findIndex(
-      (entry) => entry.name === "Install pinned OpenShell for macOS E2E",
-    );
-    const liveIndex = steps.findIndex((entry) => entry.name === "Run macOS live E2E");
-    expect(nonLiveIndex).toBeGreaterThanOrEqual(0);
-    expect(installIndex).toBeGreaterThan(nonLiveIndex);
-    expect(liveIndex).toBeGreaterThan(installIndex);
-    expect(steps[installIndex]?.if).toContain("matrix.shard == 1");
+    expect(liveJob.needs).toBe("macos-vitest");
+    expect(liveJob.if).toContain("github.ref == 'refs/heads/main'");
+    expect(JSON.stringify(liveJob)).not.toContain("brew install");
+    expect(installOpenShell.run).toContain("scripts/install-openshell.sh");
+    expect(live.if).toContain("steps.macos_docker.outputs.docker_ok == 'true'");
+    expect(live.env).toMatchObject({
+      GITHUB_TOKEN: "${{ github.token }}",
+      NVIDIA_INFERENCE_API_KEY: "${{ secrets.NVIDIA_INFERENCE_API_KEY }}",
+    });
   });
 
-  it.each(["docker", "gnu-tar", "iproute2mac", "podman"])(
-    "installs the %s host tool resolved by macOS platform fixtures",
-    (formula) => {
-      const install = step("macos-vitest", "Install macOS test dependencies").run ?? "";
-      expect(install).toContain(formula);
-    },
-  );
-
-  it("puts GNU tar first on the macOS fixture path", () => {
+  it("uses the runner's preinstalled GNU tar without adding mutable formulae", () => {
     const install = step("macos-vitest", "Install macOS test dependencies").run ?? "";
-    expect(install).toContain('"$(brew --prefix gnu-tar)/libexec/gnubin"');
+    expect(install).toContain('test -x "$(command -v gtar)"');
+    expect(install).toContain('ln -s "$(command -v gtar)" "$RUNNER_TEMP/nemoclaw-bin/tar"');
+    expect(install).toContain('"$RUNNER_TEMP/nemoclaw-bin"');
+    expect(install).not.toMatch(/brew install[^\n]*(?:docker|gnu-tar|iproute2mac|podman)/u);
   });
 
   it("starts Docker and qualifies both WSL container clients before the suite", () => {
