@@ -492,6 +492,24 @@ describe("openshell helpers", () => {
     expect(stdin.end).not.toHaveBeenCalled();
   });
 
+  it("returns a structured failure when async process creation throws", async () => {
+    const error = Object.assign(new Error("spawn openshell EACCES"), { code: "EACCES" });
+
+    await expect(
+      captureOpenshellCommandAsyncResult("openshell", ["status"], {
+        spawnImpl: (() => {
+          throw error;
+        }) as never,
+      }),
+    ).resolves.toEqual({
+      status: null,
+      signal: null,
+      stdout: "",
+      stderr: "",
+      error,
+    });
+  });
+
   it("preserves a concrete async close status after its deadline", async () => {
     const result = await captureOpenshellCommandAsync(
       process.execPath,

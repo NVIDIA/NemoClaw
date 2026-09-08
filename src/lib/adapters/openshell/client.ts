@@ -385,12 +385,24 @@ export function captureOpenshellCommandAsyncResult(
   const spawnImpl = opts.spawnImpl ?? spawn;
   return new Promise((resolve) => {
     const hasInput = opts.input !== undefined && opts.input.length > 0;
-    const child = spawnImpl(binary, [...args], {
-      cwd: opts.cwd,
-      env: opts.environment,
-      detached: process.platform !== "win32",
-      stdio: [hasInput ? "pipe" : "ignore", "pipe", "pipe"],
-    }) as ChildProcess;
+    let child: ChildProcess;
+    try {
+      child = spawnImpl(binary, [...args], {
+        cwd: opts.cwd,
+        env: opts.environment,
+        detached: process.platform !== "win32",
+        stdio: [hasInput ? "pipe" : "ignore", "pipe", "pipe"],
+      }) as ChildProcess;
+    } catch (error) {
+      resolve({
+        status: null,
+        signal: null,
+        stdout: "",
+        stderr: "",
+        error: error instanceof Error ? error : new Error(String(error)),
+      });
+      return;
+    }
 
     let settled = false;
     let timedOut = false;

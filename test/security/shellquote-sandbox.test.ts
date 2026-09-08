@@ -142,16 +142,9 @@ sandboxCommandCli.createCliOpenShellSandboxCommandExecutor = (deps) => {
   return {
     ...executor,
     runBuffered: async (request) => {
-      const gatewayArgs = request.target.kind === "named" ? ["-g", request.target.gatewayName] : [];
       const command = [
         "openshell",
-        "sandbox",
-        "exec",
-        "--name",
-        request.sandboxName,
-        ...gatewayArgs,
-        "--",
-        ...request.command,
+        ...sandboxCommandCli.buildCliOpenShellSandboxExecArgs(request),
       ];
       commands.push({ type: "buffered", command: asText(command), env: null });
       return { outcome: { kind: "completed", exitCode: 0 }, stdout: "", stderr: "" };
