@@ -585,7 +585,7 @@ export function projectPlatformQualification(
       summary: "WSL cannot reach the configured Docker runtime.",
       capabilityIds: ["host.platform.wsl_runtime_available"],
     });
-  } else if (nativeDocker) {
+  } else if (nativeDocker && !providerOwnedRuntime) {
     findings.push({
       id: "host.platform.wsl_native_docker_unqualified",
       severity: "blocking",

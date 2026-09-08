@@ -133,26 +133,20 @@ describe("platform readiness qualification (#7410)", () => {
   });
 
   it.each([
-    ["Docker Desktop integration", true, true, "docker-desktop", "present", "absent"],
-    ["native Docker", true, true, "docker", "absent", "present"],
-    ["unavailable Docker", false, false, "unknown", "absent", "absent"],
-    ["inconclusive runtime", true, true, "unknown", "absent", "absent"],
+    ["Docker Desktop integration", true, true, "docker-desktop", "present", "absent", "present"],
+    ["native Docker", true, true, "docker", "absent", "present", "present"],
+    ["unavailable Docker", false, false, "unknown", "absent", "absent", "absent"],
+    ["inconclusive runtime", true, true, "unknown", "absent", "absent", "unknown"],
   ] as const)(
     "distinguishes WSL %s",
-    (_scenario, dockerInstalled, dockerReachable, runtime, desktop, native) => {
+    (_scenario, dockerInstalled, dockerReachable, runtime, desktop, native, runtimeAvailable) => {
       const result = projectPlatformQualification(
         input({ isWsl: true, dockerInstalled, dockerReachable, runtime }),
       );
 
       expect(capability(result, "host.platform.wsl_docker_desktop")).toBe(desktop);
       expect(capability(result, "host.platform.wsl_native_docker")).toBe(native);
-      expect(capability(result, "host.platform.wsl_runtime_available")).toBe(
-        !dockerInstalled || !dockerReachable
-          ? "absent"
-          : runtime === "unknown"
-            ? "unknown"
-            : "present",
-      );
+      expect(capability(result, "host.platform.wsl_runtime_available")).toBe(runtimeAvailable);
     },
   );
 
@@ -202,6 +196,22 @@ describe("platform readiness qualification (#7410)", () => {
     expect(capability(result, "host.platform.wsl_gpu_passthrough")).toBe("absent");
     expect(capability(result, "host.platform.n1x_wsl")).toBe("absent");
     expect(qualification(result, "host.platform.n1x_wsl")).toBe("unqualified");
+  });
+
+  it("does not emit a native-Docker blocker when Podman owns WSL readiness", () => {
+    const result = projectPlatformQualification(
+      input({
+        isWsl: true,
+        runtime: "docker",
+        runtimeProviderId: "podman",
+        runtimeProviderOwnsHostReadiness: true,
+      }),
+    );
+
+    expect(capability(result, "host.platform.supported")).toBe("present");
+    expect(result.findings.map(({ id }) => id)).not.toContain(
+      "host.platform.wsl_native_docker_unqualified",
+    );
   });
 
   it.each([
