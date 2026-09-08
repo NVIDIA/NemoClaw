@@ -6,6 +6,7 @@
 // legacy line budget and cannot grow.
 
 import { describe, expect, it, vi } from "vitest";
+import { selectDefaultOllamaModel } from "./local";
 import { detectGpu } from "./nim";
 
 const fs = require("fs");
@@ -90,10 +91,26 @@ describe("detectGpu CUDA proof for a plausible, non-placeholder NVIDIA GPU name 
         name: PLAUSIBLE_NAME,
         count: 1,
         totalMemoryMB: 8128,
-        computeConstrained: true,
         wslDockerDesktopGpuProofPassed: true,
       });
       expect(prover).toHaveBeenCalledWith([PLAUSIBLE_NAME]);
+      expect(selectDefaultOllamaModel(["qwen3.5:9b", "qwen3.6:35b"], result)).toBe(
+        "qwen3.5:9b",
+      );
+    });
+  });
+
+  it("selects the largest installed Ollama model on a CUDA-proven WSL RTX Spark N1X (#10954)", () => {
+    onWsl2Arm64WithoutKernelInterface(() => {
+      const gpu = detectGpu({
+        proveArm64WslDockerDesktopGpu: passingProver(),
+        runCaptureImpl: makeRunCapture(`${PLAUSIBLE_NAME}, 63936, 60000\n`),
+        isWsl: true,
+      });
+      expect(gpu).not.toHaveProperty("computeConstrained");
+      expect(selectDefaultOllamaModel(["qwen3.5:9b", "qwen3.6:35b"], gpu)).toBe(
+        "qwen3.6:35b",
+      );
     });
   });
 

@@ -21,6 +21,7 @@ import {
 import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import { VLLM_PORT } from "../core/ports";
 import { sleepSeconds } from "../core/wait";
+import { isWsl } from "../platform";
 import { runCapture } from "../runner";
 import { isSafeModelId } from "../validation";
 import { isDgxStationGb300Product } from "./dgx-station-identity";
@@ -598,6 +599,16 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
         // Only surface a single name when every GPU reports the same model;
         // a mixed-GPU host would otherwise be misreported as `Nx <firstName>`.
         const allSameName = !!firstName && trusted.every((p: ParsedGpu) => p.name === firstName);
+        const isRtxSparkN1xWsl =
+          allSameName &&
+          wslDockerDesktopGpuProofPassed &&
+          (deps.isWsl ?? isWsl()) &&
+          /(?:^|\s)RTX Spark N1X(?:$|[\s(])/i.test(firstName);
+        // Keep the 30B/35B timeout protection except for the planned
+        // CUDA-proven WSL RTX Spark N1X memory-ranked path (#10954).
+        const computeConstrained =
+          !isRtxSparkN1xWsl &&
+          (platform === "jetson" || platform === "n1x" || wslDockerDesktopGpuProofPassed);
         return {
           type: "nvidia",
           ...(allSameName ? { name: firstName } : {}),
@@ -612,17 +623,7 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
           ...(platform === "spark" || platform === "n1x" || platform === "jetson"
             ? { unifiedMemory: true }
             : {}),
-          // The proof-passed ARM64 N1X GPU is memory-shared like Jetson and
-          // cannot serve a computeIntensive model in-loop, so tag it
-          // computeConstrained to exclude those Ollama bootstrap models (#3707).
-          // This covers N1X on WSL2 and native Linux (#8096), plus any
-          // proof-passed GPU with a plausible, non-placeholder NVIDIA name
-          // (#9000). The latter lacks firmware and kernel-driver identity, so
-          // avoid selecting compute-intensive bootstrap models without device
-          // evidence.
-          ...(platform === "jetson" || platform === "n1x" || wslDockerDesktopGpuProofPassed
-            ? { computeConstrained: true }
-            : {}),
+          ...(computeConstrained ? { computeConstrained: true } : {}),
           ...(wslDockerDesktopGpuProofPassed ? { wslDockerDesktopGpuProofPassed: true } : {}),
         };
       }
