@@ -50,11 +50,13 @@ describe("sandbox status inference.local route health (#6192)", () => {
               phase: "Ready",
               output: "Name: alpha\nPhase: Ready\n",
             },
-      captureOpenshellForStatusImpl: async () =>
-        ({
-          status: 0,
-          output: `Gateway inference:\n  Provider: ${options.liveProvider ?? provider}\n  Model: ${options.liveModel ?? "nvidia/nemotron"}\n`,
-        }) as never,
+      captureOpenshellForStatusImpl: vi.fn(
+        async () =>
+          ({
+            status: 0,
+            output: `Gateway inference:\n  Provider: ${options.liveProvider ?? provider}\n  Model: ${options.liveModel ?? "nvidia/nemotron"}\n`,
+          }) as never,
+      ),
       getSandboxStatusPreflightImpl: vi.fn(async () => ({
         failure: null,
         failureLayer: null,
@@ -154,6 +156,24 @@ describe("sandbox status inference.local route health (#6192)", () => {
 
     expect(snapshot.terminalRuntimeHealth).toBeNull();
     expect(deps.probeTerminalRuntimeHealth).not.toHaveBeenCalled();
+    expect(deps.probeProviderHealthImpl).not.toHaveBeenCalled();
+    expect(deps.probeSandboxInferenceGatewayHealthImpl).not.toHaveBeenCalled();
+  });
+
+  it("reports a missing provider-confirmed intentional stop as Stopped (#11025)", async () => {
+    const deps = snapshotDeps({
+      confirmedStopped: true,
+      stopped: true,
+      lookupState: "missing",
+      routeHealth: null,
+    });
+
+    const report = await getSandboxStatusReport("alpha", deps);
+
+    expect(report.phase).toBe("Stopped");
+    expect(report.failureLayer).toBeNull();
+    expect(report.inferenceHealth).toBeNull();
+    expect(deps.captureOpenshellForStatusImpl).not.toHaveBeenCalled();
     expect(deps.probeProviderHealthImpl).not.toHaveBeenCalled();
     expect(deps.probeSandboxInferenceGatewayHealthImpl).not.toHaveBeenCalled();
   });

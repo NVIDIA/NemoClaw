@@ -16,10 +16,6 @@ export interface RebuildRegistryRollback {
   restoreForRetry(): void;
 }
 
-export function persistSandboxStopIntent(name: string, stopped: boolean): boolean {
-  return registry.recordSandboxStopIntent(name, stopped, registry.updateSandbox);
-}
-
 interface RebuildRegistryRollbackDeps {
   restoreSandboxEntry?: typeof registry.restoreSandboxEntry;
   restoreSandboxEntryIfMissing?: typeof registry.restoreSandboxEntryIfMissing;

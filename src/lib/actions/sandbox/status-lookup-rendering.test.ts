@@ -109,6 +109,32 @@ describe("printNonReadySandboxPhaseGuidance (#7222)", () => {
     expect(text).not.toContain("rebuild --yes");
   });
 
+  it("renders a missing provider-confirmed intentional stop as cleanly stopped (#11025)", async () => {
+    const cap = captureConsoleLog();
+    await printSandboxGatewayLookupStatus({
+      sandboxName: "beta",
+      registered: true,
+      lookup: { state: "missing", output: "sandbox beta not found" },
+      phase: "Stopped",
+      dockerRuntime: null,
+      effectivePreflight: {
+        failure: null,
+        failureLayer: null,
+        intentionalStopConfirmed: true,
+        suppressInferenceProbe: true,
+        exitCode: 0,
+      },
+    });
+    const text = cap.lines();
+    cap.restore();
+
+    expect(text).toContain("Phase: Stopped");
+    expect(text).toContain("Sandbox 'beta' is stopped.");
+    expect(text).toContain("Workspace state is preserved.");
+    expect(text).toContain("nemoclaw beta start");
+    expect(text).not.toContain("not present in the live OpenShell gateway");
+  });
+
   it("keeps the unpause hint for a paused container and never suggests start/rebuild (#4495)", async () => {
     const cap = captureConsoleLog();
     await printGuidance({

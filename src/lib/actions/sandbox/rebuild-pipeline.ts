@@ -21,6 +21,7 @@ import {
   retireRemovedImmutabilityStateRecord,
 } from "../../state/migrations/removed-immutability";
 import * as onboardSession from "../../state/onboard-session";
+import * as registry from "../../state/registry";
 import { load as loadRegistry, REGISTRY_FILE } from "../../state/registry/persistence";
 import {
   captureRebuildPolicyDocument,
@@ -77,10 +78,7 @@ import {
   recordRebuildRecoveryBackup,
 } from "./rebuild-recreate-journal";
 import { runRebuildRecreatePhase } from "./rebuild-recreate-phase";
-import {
-  createRebuildRegistryRollback,
-  persistSandboxStopIntent,
-} from "./rebuild-registry-rollback";
+import { createRebuildRegistryRollback } from "./rebuild-registry-rollback";
 import { runRebuildRestorePhase } from "./rebuild-restore-phase";
 
 export { buildRefreshMutableOpenClawConfigHashCommand, stageMessagingManifestPlanForRebuild };
@@ -840,7 +838,7 @@ async function rebuildSandboxUnlocked(
         }
         retireRemovedImmutabilityStateRecord(sandboxName, "mutable-rebuild");
       }
-      if (!persistSandboxStopIntent(sandboxName, false)) {
+      if (!registry.recordSandboxStopIntent(sandboxName, false, registry.updateSandbox)) {
         return bail(
           `Sandbox '${sandboxName}' was rebuilt, but NemoClaw could not clear its intentional-stop record. Run 'nemoclaw ${sandboxName} status' before another lifecycle command.`,
         );

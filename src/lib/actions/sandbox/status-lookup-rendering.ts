@@ -40,6 +40,10 @@ export async function printSandboxGatewayLookupStatus(
       console.log(context.lookup.output);
       deferSandboxLifecycleExit(1);
     case "missing":
+      if (context.effectivePreflight.intentionalStopConfirmed) {
+        printConfirmedStoppedSandboxStatus(context.sandboxName);
+        return;
+      }
       printMissingLiveSandboxStatusGuidance(context);
       deferSandboxLifecycleExit(1);
     case "identity_drift":
@@ -57,6 +61,14 @@ export async function printSandboxGatewayLookupStatus(
     default:
       await printUnknownGatewayLookupStatus(context);
   }
+}
+
+function printConfirmedStoppedSandboxStatus(sandboxName: string): void {
+  console.log("");
+  console.log("  Phase: Stopped");
+  console.log(`  Sandbox '${sandboxName}' is stopped.`);
+  console.log("  Workspace state is preserved.");
+  console.log(`  Start it again with \`${CLI_NAME} ${sandboxName} start\`.`);
 }
 
 function printSandboxRecoveryFailedLookupStatus({
