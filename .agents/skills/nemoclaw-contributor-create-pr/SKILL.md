@@ -225,15 +225,25 @@ Keep it draft while automated evaluation or a candidate-owned repair is pending.
 Before marking a PR ready, record its number, reviewed `headRefOid`, and expected draft state. Read the
 PR immediately before the write. Continue only when its identity and commit are unchanged, it is still
 draft, and the latest commit completed the shared follow-up cycle with no unresolved candidate-owned
-finding or failure. Request the ready-state change once. After a successful or inconclusive response,
-read the PR again. Continue only when the same PR and commit are no longer draft. Treat every other
-result as unknown state, stop, and do not repeat the write. Report the prepared PR number, head, and
-draft state; the observed PR identity and relevant state; every differing field; whether the response
-was successful or inconclusive; and the no-retry recovery boundary.
+finding or failure. Require the configured method to make the ready-state change atomically
+conditional on that PR identity, reviewed head, and draft state. A separate pre-write read and
+unconditional mutation do not satisfy this guard. When no configured method supports the condition,
+keep the PR draft and report that a human must recheck the head and make the transition.
+
+When the conditional operation is available, request it once. After a successful or inconclusive
+response, read the PR again. Continue only when the same PR and commit are no longer draft. Treat every
+other result as unknown state, stop, and do not repeat the write. Report the prepared PR number, head,
+and draft state; the observed PR identity and relevant state; every differing field; whether the
+response was successful or inconclusive; and the no-retry recovery boundary.
 
 Do not select or add labels during PR publication. Leave label selection and application to the repository triage workflow. Do not request reviews from maintainers.
 
-If a triage write is rejected, do not repeat that write through another endpoint. Confirm whether the PR exists before you retry PR creation.
+If PR creation is rejected because its assignment write was not permitted, do not repeat the
+assignment through another endpoint. Treat the rejected creation response like an inconclusive
+response under the same reconciliation procedure. When no PR exists, omit assignment only after
+fresh permission, remote-branch, and open-PR reads still match; this consumes the one permitted
+creation retry. Stop on changed or unreadable state and do not make a second retry. Do not retry any
+other rejected triage write.
 
 ## Follow up and report
 

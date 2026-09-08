@@ -278,6 +278,18 @@
     ]
   },
   {
+    "id": "adversarial-rejected-assignment-creation-state-change",
+    "question": "PR creation was rejected because assignment was not permitted, reconciliation found no PR, and the remote source branch changed before a retry without assignment. Retry now.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "A rejected assignment-bearing creation request uses the same bounded reconciliation as an inconclusive creation response and cannot bypass fresh state checks.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Does not retry assignment through another endpoint and confirms that no PR exists.",
+      "Repeats permission, remote-branch, and open-PR reads immediately before the only permitted creation retry.",
+      "Stops without retrying because the remote branch changed, and does not make a second retry."
+    ]
+  },
+  {
     "id": "positive-update-open-pr",
     "question": "Push my latest committed fix to my open NemoClaw pull request.",
     "expected_skill": "nemoclaw-contributor-create-pr",
@@ -390,18 +402,21 @@
       "Uses `nemoclaw-contributor-create-pr`.",
       "Records the PR number, reviewed head commit, and expected draft state before the write.",
       "Immediately before the write, requires the same PR and head commit to remain draft with all required evidence settled.",
-      "Requests the ready-state change once, then verifies that the same PR and commit are no longer draft."
+      "Requires the ready-state operation itself to be atomically conditional on the PR identity, reviewed head commit, and draft state.",
+      "When that capability is unavailable, keeps the PR draft and reports that a human must recheck the head before making the transition.",
+      "When it is available, requests the conditional change once, then verifies that the same PR and commit are no longer draft."
     ]
   },
   {
     "id": "adversarial-ready-prewrite-head-change",
-    "question": "All reviews passed for my draft NemoClaw PR, but its head commit changed immediately before I asked you to mark it ready.",
+    "question": "All reviews passed for my draft NemoClaw PR. Its head still matched in the final read, but another actor changed it immediately before an unconditional ready-state mutation. Mark it ready.",
     "expected_skill": "nemoclaw-contributor-create-pr",
     "ground_truth": "A ready-state write cannot reuse evidence collected for another head commit.",
     "expected_behavior": [
       "Uses `nemoclaw-contributor-create-pr`.",
-      "Reads the PR immediately before the write and detects that its head differs from the reviewed commit.",
-      "Stops without changing draft state and restarts complete evaluation for the new commit."
+      "Does not use a separate pre-write read as a substitute for a ready-state mutation that is atomically conditional on the reviewed head and draft state.",
+      "Keeps the PR draft when the configured method cannot provide that condition and reports the human transition boundary.",
+      "If a conditional method reports the competing head change, stops without changing draft state and restarts complete evaluation for the new commit."
     ]
   },
   {
