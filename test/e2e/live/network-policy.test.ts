@@ -8,7 +8,6 @@ import path from "node:path";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import { parseCurlHttpStatus } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
   type SandboxClient,
@@ -16,6 +15,10 @@ import {
   validateSandboxName,
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import {
+  buildNetworkPolicyCurlProbe,
+  parseNetworkPolicyCurlStatus,
+} from "../fixtures/network-policy-probe.ts";
 import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import { ensureConfiguredRuntimeProviderAvailable } from "../fixtures/runtime-provider.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -94,11 +97,7 @@ async function probeUrl(
   url: string,
   artifactName: string,
 ): Promise<string> {
-  const result = await sandboxBash(
-    sandbox,
-    `curl -sS --connect-timeout 10 --max-time 20 -w '\nSTATUS_%{http_code}\n' '${url}' 2>&1`,
-    artifactName,
-  );
+  const result = await sandboxBash(sandbox, buildNetworkPolicyCurlProbe(url), artifactName);
   return text(result).trim();
 }
 
@@ -393,7 +392,7 @@ test(
       "network-policy-denied-host-gateway-port",
     );
     expect(denied).not.toContain(deniedMarker);
-    expect(parseCurlHttpStatus(denied), denied).toBe(403);
+    expect(parseNetworkPolicyCurlStatus(denied), denied).toBe(403);
 
     progress.phase("prove the installed OpenClaw web_fetch path obeys the host-gateway policy");
     const webFetch = await sandboxBash(

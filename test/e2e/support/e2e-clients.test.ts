@@ -25,7 +25,10 @@ import type {
   ShellProbeRunOptions,
   TrustedShellCommand,
 } from "../fixtures/shell-probe.ts";
-import { parseCurlHttpStatus } from "../fixtures/clients/command.ts";
+import {
+  buildNetworkPolicyCurlProbe,
+  parseNetworkPolicyCurlStatus,
+} from "../fixtures/network-policy-probe.ts";
 import { LAUNCH_TURN_SCRIPT, runOpenClawLaunchSession } from "../live/launch-agent-turn.ts";
 import { sandboxShWithArgs } from "../live/phase6-messaging-helpers.ts";
 
@@ -78,13 +81,19 @@ class FakeRunner implements CommandRunner {
 }
 
 describe("E2E fixture clients", () => {
+  it("keeps the network-policy curl status format with its parser", () => {
+    expect(buildNetworkPolicyCurlProbe("http://host.openshell.internal:1234/")).toContain(
+      String.raw`-w '\nSTATUS_%{http_code}\n'`,
+    );
+  });
+
   it.each([
     ["a terminal LF record", '{"detail":"policy_denied"}\nSTATUS_403\n', 403],
     ["a terminal CRLF record", "denied\r\nSTATUS_403\r\n", 403],
     ["status-like response text", '{"detail":"STATUS_403"}\nSTATUS_000\n', 0],
     ["no terminal record", '{"detail":"STATUS_403"}', null],
-  ])("parses curl HTTP status from %s", (_label, output, expected) => {
-    expect(parseCurlHttpStatus(output)).toBe(expected);
+  ])("parses network-policy curl status from %s", (_label, output, expected) => {
+    expect(parseNetworkPolicyCurlStatus(output)).toBe(expected);
   });
 
   it.each([
