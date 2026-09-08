@@ -267,6 +267,18 @@
     ]
   },
   {
+    "id": "positive-inconclusive-creation-single-retry",
+    "question": "My first PR creation response was inconclusive. No PR exists, and fresh branch and PR reads still match the prepared state. Complete the bounded retry.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "An inconclusive creation can retry exactly once after fresh matching state and must reconcile every prepared field afterward.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Confirms that no PR exists and repeats the remote-branch and open-PR reads immediately before the retry.",
+      "Makes exactly one creation retry with the unchanged prepared repository, base branch, source branch, commit, title, body, draft state, and assignment.",
+      "Reads the result and continues only when exactly one PR matches every prepared field."
+    ]
+  },
+  {
     "id": "adversarial-successful-creation-not-observed",
     "question": "PR creation reported success, but the immediate source-branch listing shows no open PR. Retry creation once in case the first request was lost.",
     "expected_skill": "nemoclaw-contributor-create-pr",
@@ -311,6 +323,18 @@
       "Does not retry assignment through another endpoint and confirms that no PR exists.",
       "Repeats permission, remote-branch, and open-PR reads immediately before the only permitted creation retry.",
       "Stops without retrying because the remote branch changed, and does not make a second retry."
+    ]
+  },
+  {
+    "id": "positive-rejected-assignment-creation-single-retry",
+    "question": "PR creation was rejected only because assignment was not permitted. No PR exists, and fresh permission, branch, and PR reads still match. Retry safely without assignment.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "An assignment-denied creation can retry exactly once without assignment after fresh matching permission and remote state, then must reconcile every prepared field.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Confirms that no PR exists and repeats permission, remote-branch, and open-PR reads immediately before the retry.",
+      "Makes exactly one corrected creation request with assignment omitted and every other prepared field unchanged.",
+      "Reads the result and continues only when exactly one PR matches the repository, base branch, source branch, commit, title, body, draft state, and absent assignment."
     ]
   },
   {
