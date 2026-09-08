@@ -524,9 +524,12 @@
       "live": "test/e2e/live/hermes-e2e.test.ts",
       "liveSources": [
         "test/e2e/live/hermes-cli-adapter-live.ts",
-        "test/e2e/live/hermes-e2e-phases.ts"
+        "test/e2e/live/hermes-e2e-phases.ts",
+        "test/e2e/live/hermes-skill-lifecycle.ts"
       ],
       "fast": [
+        "src/lib/actions/sandbox/skill-install.test.ts",
+        "test/agents/hermes/hermes-image-build-probes.test.ts",
         "test/e2e/support/hermes-cli-adapter-live.test.ts",
         "test/e2e/support/managed-image-cohort-contract.test.ts",
         "test/e2e/support/managed-image-receipt.test.ts",
@@ -534,6 +537,7 @@
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/inference-adapter.test.ts",
+        "test/e2e/support/workflow-plan.test.ts",
         "test/helpers/e2e-answer-assertions.test.ts"
       ]
     },
@@ -717,6 +721,7 @@
     {
       "live": "test/e2e/live/openclaw-skill-cli.test.ts",
       "fast": [
+        "src/lib/actions/sandbox/skill-install.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -811,6 +816,8 @@
     {
       "live": "test/e2e/live/skill-agent.test.ts",
       "fast": [
+        "src/lib/skill-install.test.ts",
+        "test/e2e/support/skill-agent-classifiers.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -929,6 +936,8 @@
       "live": "test/e2e/live/registry-targets.test.ts",
       "liveSources": [
         "test/e2e/live/cloud-experimental-checks.ts",
+        "test/e2e/live/deepagents-observability-contract.ts",
+        "test/e2e/live/deepagents-otlp-capture-server.ts",
         "test/e2e/live/dcode-base-image-runtime-evidence.ts"
       ],
       "fast": [
@@ -937,7 +946,9 @@
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
         "test/e2e/support/e2e-semantic-phase-check.test.ts",
+        "test/e2e/support/deepagents-observability-contract.test.ts",
         "test/e2e/support/onboard-timeout-contract.test.ts",
+        "test/e2e/support/platform-parity-cloud-experimental.test.ts",
         "test/e2e/support/workflow-plan.test.ts",
         "test/e2e/support/workflow-e2e-progress.test.ts"
       ]
