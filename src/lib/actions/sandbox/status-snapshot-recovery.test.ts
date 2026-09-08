@@ -34,6 +34,12 @@ const clearPreflight: SandboxStatusPreflightResult = {
   exitCode: 0,
 };
 
+const intentionalStopPreflight: SandboxStatusPreflightResult = {
+  ...clearPreflight,
+  intentionalStopConfirmed: true,
+  suppressInferenceProbe: true,
+};
+
 const conflictPreflight: SandboxStatusPreflightResult = {
   failure: {
     layer: "sandbox_dashboard_port_conflict",
@@ -170,6 +176,31 @@ describe("collectSandboxStatusSnapshot Docker recovery", () => {
     const snapshot = await collectSandboxStatusSnapshot("alpha", {
       deps,
       preflight: stoppedPreflight,
+    });
+
+    expect(deps.recoverSandboxProcesses).not.toHaveBeenCalled();
+    expect(snapshot.lookup.state).toBe("present");
+  });
+
+  it("does not recover delivery after provider-confirmed intentional stop (#11025)", async () => {
+    const deps = {
+      ...snapshotDeps({
+        checked: true,
+        wasRunning: false,
+        recovered: true,
+        forwardRecovered: true,
+      }),
+      reconcile: () =>
+        Promise.resolve({
+          state: "present" as const,
+          phase: "Ready",
+          output: "Phase: Ready",
+        }),
+    };
+
+    const snapshot = await collectSandboxStatusSnapshot("alpha", {
+      deps,
+      preflight: intentionalStopPreflight,
     });
 
     expect(deps.recoverSandboxProcesses).not.toHaveBeenCalled();

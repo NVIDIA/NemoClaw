@@ -461,7 +461,8 @@ export async function collectSandboxStatusSnapshot(
     usesManagedProviderGateway(sb) &&
     (sb.agent ?? "openclaw") === "openclaw" &&
     lookup.phase === "Ready" &&
-    !initialPreflight?.failure;
+    !initialPreflight?.failure &&
+    !initialPreflight?.intentionalStopConfirmed;
   let recoveredManagedGateway = false;
   if (
     lookup.state === "present" &&
