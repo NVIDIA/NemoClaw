@@ -86,7 +86,7 @@ describe("DCode missing-dependency profile import gate workflow boundary", () =>
     const errors = validateMutation((workflow) => {
       const steps = workflow.jobs.live.steps;
       steps.splice(steps.indexOf(liveGateStep(workflow)), 0, {
-        if: "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}",
+        if: "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' && matrix.runtime_provider == 'docker' }}",
         name: "Route DCode builds through Buildx",
         run: "printf 'BUILDX_BUILDER=%s\\n' external >> \"${GITHUB_ENV}\"",
       });
@@ -101,7 +101,7 @@ describe("DCode missing-dependency profile import gate workflow boundary", () =>
     const errors = validateMutation((workflow) => {
       const steps = workflow.jobs.live.steps;
       steps.splice(steps.indexOf(liveGateStep(workflow)), 0, {
-        if: "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}",
+        if: "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' && matrix.runtime_provider == 'docker' }}",
         name: "Persist DCode Buildx through the environment file",
         run: "printf '%s\\n' 'BUILDX_BUILDER<<EOF' 'external' 'EOF' >> \"$GITHUB_ENV\"",
       });
@@ -116,7 +116,7 @@ describe("DCode missing-dependency profile import gate workflow boundary", () =>
     const errors = validateMutation((workflow) => {
       const steps = workflow.jobs.live.steps;
       steps.splice(steps.indexOf(liveGateStep(workflow)), 0, {
-        if: "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}",
+        if: "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' && matrix.runtime_provider == 'docker' }}",
         name: "Select DCode Buildx builder",
         run: "docker buildx use external",
       });
