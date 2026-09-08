@@ -168,6 +168,7 @@ describe("finalizeDockerGpuPatchBackup", () => {
         runCaptureOpenshell,
         runOpenshell,
         sleep: vi.fn(),
+        now: () => new Date("2026-08-23T10:00:02Z"),
       },
     );
 
@@ -218,6 +219,131 @@ describe("finalizeDockerGpuPatchBackup", () => {
         timeout: 60_000,
       }),
     );
+  });
+
+  it("reconciles a nonzero OpenShell start within the remaining handoff budget (#11096)", () => {
+    const result = exactDeferredCreateResult();
+    let currentTimeMs = new Date("2026-09-04T07:42:01Z").getTime();
+    const phases = ["Provisioning", "Ready"];
+    const runCaptureOpenshell = vi.fn(
+      (_args: string[], _opts?: Record<string, unknown>) =>
+        `alpha  2026-09-04 07:42:01  ${phases.shift() ?? "Ready"}\n`,
+    );
+    const runOpenshell = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0 })
+      .mockImplementationOnce(() => {
+        currentTimeMs += 40_000;
+        return { status: 1, error: new Error("timed out waiting for Ready") };
+      })
+      .mockReturnValue({ status: 0 });
+    const dockerRun = vi.fn((args: readonly string[]) => {
+      const namespaceInspect = String(args[4]).includes("sandbox-namespace");
+      return args[0] === "ps"
+        ? { status: 0, stdout: `${result.newContainerId}\n` }
+        : namespaceInspect
+          ? { status: 0, stdout: "current-gateway\n" }
+          : { status: 0, stdout: "true\n" };
+    });
+
+    const outcome = finalizeDockerGpuPatchBackup(
+      {
+        result,
+        supervisorReady: true,
+        sandboxName: "alpha",
+        finalHandoffTimeoutSecs: 60,
+      },
+      {
+        dockerStop: vi.fn(() => ({ status: 0 })),
+        dockerRm: vi.fn(() => ({ status: 0 })),
+        dockerRun,
+        dockerStart: vi.fn(() => ({ status: 0 })),
+        runCaptureOpenshell,
+        runOpenshell,
+        sleep: vi.fn(),
+        now: () => new Date(currentTimeMs),
+      },
+    );
+
+    expect(outcome).toEqual({
+      backupRemoved: true,
+      rolledBack: false,
+      replacementStoppedForCommit: true,
+      replacementRestarted: true,
+      lifecycleStopAcknowledged: true,
+      finalHandoffAcknowledged: true,
+      lastSandboxPhase: "Ready",
+    });
+    expect(runCaptureOpenshell).toHaveBeenCalledTimes(2);
+    const firstListTimeoutMs = Number(runCaptureOpenshell.mock.calls[0]?.[1]?.timeout);
+    expect(firstListTimeoutMs).toBeGreaterThan(19_000);
+    expect(firstListTimeoutMs).toBeLessThanOrEqual(20_000);
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "exec", "-n", "alpha", "--", "true"],
+      expect.any(Object),
+    );
+  });
+
+  it("rejects a running replacement that stays Provisioning through the remaining handoff budget (#11096)", () => {
+    const result = exactDeferredCreateResult();
+    const startedAtMs = new Date("2026-09-04T07:42:01Z").getTime();
+    let currentTimeMs = startedAtMs;
+    const runCaptureOpenshell = vi.fn(
+      (_args: string[], _opts?: Record<string, unknown>) =>
+        "alpha  2026-09-04 07:42:01  Provisioning\n",
+    );
+    const runOpenshell = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0 })
+      .mockImplementationOnce(() => {
+        currentTimeMs += 59_500;
+        return { status: 1, error: new Error("timed out waiting for Ready") };
+      });
+    const dockerRun = vi.fn((args: readonly string[]) => {
+      const namespaceInspect = String(args[4]).includes("sandbox-namespace");
+      return args[0] === "ps"
+        ? { status: 0, stdout: `${result.newContainerId}\n` }
+        : namespaceInspect
+          ? { status: 0, stdout: "current-gateway\n" }
+          : { status: 0, stdout: "true\n" };
+    });
+
+    const outcome = finalizeDockerGpuPatchBackup(
+      {
+        result,
+        supervisorReady: true,
+        sandboxName: "alpha",
+        finalHandoffTimeoutSecs: 60,
+      },
+      {
+        dockerStop: vi.fn(() => ({ status: 0 })),
+        dockerRm: vi.fn(() => ({ status: 0 })),
+        dockerRun,
+        dockerStart: vi.fn(() => ({ status: 0 })),
+        runCaptureOpenshell,
+        runOpenshell,
+        sleep: vi.fn((seconds: number) => {
+          currentTimeMs += seconds * 1000;
+        }),
+        now: () => new Date(currentTimeMs),
+      },
+    );
+
+    expect(outcome).toEqual({
+      backupRemoved: true,
+      rolledBack: false,
+      replacementStoppedForCommit: true,
+      replacementRestarted: false,
+      lifecycleStopAcknowledged: true,
+      finalHandoffAcknowledged: false,
+      lastSandboxPhase: "Provisioning",
+    });
+    expect(runCaptureOpenshell).toHaveBeenCalledOnce();
+    expect(runOpenshell).toHaveBeenCalledTimes(2);
+    expect(currentTimeMs - startedAtMs).toBe(60_000);
+    const firstListTimeoutMs = Number(runCaptureOpenshell.mock.calls[0]?.[1]?.timeout);
+    expect(firstListTimeoutMs).toBeGreaterThan(0);
+    expect(firstListTimeoutMs).toBeLessThanOrEqual(500);
   });
 
   it("fails immediately when OpenShell reports Deleting after the final start (#9531)", () => {
@@ -656,14 +782,24 @@ describe("finalizeDockerGpuPatchBackup", () => {
     expect(dockerStart).not.toHaveBeenCalled();
   });
 
-  it("reports a failed replacement restart after the backup is removed", () => {
+  it("rejects a nonzero OpenShell start when the exact replacement is not running (#11096)", () => {
+    const result = exactDeferredCreateResult();
     const runOpenshell = vi
       .fn()
       .mockReturnValueOnce({ status: 0 })
       .mockReturnValueOnce({ status: 1 });
+    const runCaptureOpenshell = vi.fn(() => "alpha  2026-09-04 07:42:01  Provisioning\n");
+    const dockerRun = vi.fn((args: readonly string[]) => {
+      const namespaceInspect = String(args[4]).includes("sandbox-namespace");
+      return args[0] === "ps"
+        ? { status: 0, stdout: `${result.newContainerId}\n` }
+        : namespaceInspect
+          ? { status: 0, stdout: "current-gateway\n" }
+          : { status: 0, stdout: "false\n" };
+    });
     const outcome = finalizeDockerGpuPatchBackup(
       {
-        result: deferredCreateResult(),
+        result,
         supervisorReady: true,
         sandboxName: "alpha",
         finalHandoffTimeoutSecs: 60,
@@ -671,8 +807,9 @@ describe("finalizeDockerGpuPatchBackup", () => {
       {
         dockerStop: vi.fn(() => ({ status: 0 })),
         dockerRm: vi.fn(() => ({ status: 0 })),
+        dockerRun,
         dockerStart: vi.fn(() => ({ status: 1 })),
-        runCaptureOpenshell: vi.fn(() => "alpha  2026-08-23 10:00:02  Ready\n"),
+        runCaptureOpenshell,
         runOpenshell,
         sleep: vi.fn(),
       },
@@ -685,8 +822,9 @@ describe("finalizeDockerGpuPatchBackup", () => {
       replacementRestarted: false,
       lifecycleStopAcknowledged: true,
       finalHandoffAcknowledged: false,
-      lastSandboxPhase: null,
+      lastSandboxPhase: "Provisioning",
     });
+    expect(runCaptureOpenshell).toHaveBeenCalledTimes(1);
     expect(runOpenshell).toHaveBeenNthCalledWith(
       1,
       ["sandbox", "stop", "alpha"],

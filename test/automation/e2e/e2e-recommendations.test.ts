@@ -76,9 +76,12 @@ describe("E2E recommendation normalizer", () => {
       expect.arrayContaining([
         "bedrock-runtime-compatible-anthropic",
         "channels-stop-start",
+        "openclaw-skill-cli",
         "security-posture",
       ]),
     );
+    expect(inventory.allowedJobIds).toContain("openclaw-skill-cli");
+    expect(inventory.manualOnlyJobIds).not.toContain("openclaw-skill-cli");
 
     const channels = normalizeE2eTargetAdvisorResult(
       { required: [], optional: [], confidence: "high" },

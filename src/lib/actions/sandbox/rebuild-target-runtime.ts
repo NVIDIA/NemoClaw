@@ -3,7 +3,6 @@
 
 import { runOpenshell } from "../../adapters/openshell/runtime";
 import { getCredential } from "../../credentials/store";
-import * as nim from "../../inference/nim";
 import {
   type WebSearchProvider,
   webSearchEnvFor,
@@ -165,11 +164,14 @@ export async function preflightRebuildTargetRuntime(
   const gpuEnv = { ...process.env };
   delete gpuEnv.NEMOCLAW_SANDBOX_GPU;
   delete gpuEnv.NEMOCLAW_SANDBOX_GPU_DEVICE;
-  const sandboxGpuConfig = resolveSandboxGpuConfig(nim.detectGpu(), {
-    flag: recreateOptions.sandboxGpu,
-    device: recreateOptions.sandboxGpuDevice,
-    env: gpuEnv,
-  });
+  const sandboxGpuConfig = resolveSandboxGpuConfig(
+    rebuildOnboardDependencies.detectGpuWithRuntimeProviderProof(sb.openshellDriver),
+    {
+      flag: recreateOptions.sandboxGpu,
+      device: recreateOptions.sandboxGpuDevice,
+      env: gpuEnv,
+    },
+  );
   if (sandboxGpuConfig.errors.length > 0) {
     printRebuildPreflightFailure(
       "the recorded sandbox GPU state cannot be recreated.",

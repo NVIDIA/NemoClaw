@@ -15,7 +15,7 @@ afterEach(() => {
 
 function n1xCollectionOptions(): Omit<
   CollectHostObservationsOptions,
-  "detectGpu" | "wslDockerDesktopGpuProofPassed"
+  "detectGpu" | "containerGpuProof"
 > {
   return {
     architecture: "arm64",
@@ -62,7 +62,7 @@ function n1xProofHarness(proofPassed: boolean, requestedProvider: string | null)
   } as never;
   const discoverManagedLlamaCppSelections = vi.fn(
     (_env?: NodeJS.ProcessEnv, gpu?: SetupNimGpu) =>
-      gpu?.wslDockerDesktopGpuProofPassed === true
+      gpu?.containerGpuProof?.passed === true
         ? {
             choices: [{ priority: 500, selection }],
             resolution: { kind: "selected" as const, selection },
@@ -88,7 +88,10 @@ function n1xProofHarness(proofPassed: boolean, requestedProvider: string | null)
   const runtimeProvider = makeDeps().getRuntimeProvider();
   const getRuntimeProvider = vi.fn(() => runtimeProvider);
   return {
-    gpu: { platform: "n1x", wslDockerDesktopGpuProofPassed: proofPassed } as never,
+    gpu: {
+      platform: "n1x",
+      containerGpuProof: { providerId: "docker", passed: proofPassed },
+    } as never,
     getRuntimeProvider,
     handleLlamaCppSelection,
     installManagedLlamaCpp,
@@ -221,7 +224,7 @@ describe("managed llama.cpp profile onboarding", () => {
     expect(harness.discoverManagedLlamaCppSelections).toHaveBeenNthCalledWith(
       1,
       undefined,
-      expect.objectContaining({ wslDockerDesktopGpuProofPassed: true }),
+      expect.objectContaining({ containerGpuProof: { providerId: "docker", passed: true } }),
       undefined,
       undefined,
       { runtimeProviderId: "docker" },
@@ -259,7 +262,7 @@ describe("managed llama.cpp profile onboarding", () => {
       totalMemoryMB: 49_088,
       perGpuMB: 49_088,
       nimCapable: true,
-      wslDockerDesktopGpuProofPassed: true,
+      containerGpuProof: { providerId: "docker", passed: true },
     } as never;
     const discoverManagedLlamaCppSelections = vi.fn(
       (env, detectedGpu, _catalog, _collectionOptions, selectionOptions) =>
@@ -380,7 +383,7 @@ describe("managed llama.cpp profile onboarding", () => {
     expect(harness.installManagedLlamaCpp).not.toHaveBeenCalled();
     expect(harness.discoverManagedLlamaCppSelections).toHaveBeenCalledWith(
       undefined,
-      expect.objectContaining({ wslDockerDesktopGpuProofPassed: false }),
+      expect.objectContaining({ containerGpuProof: { providerId: "docker", passed: false } }),
       undefined,
       undefined,
       { runtimeProviderId: "docker" },
@@ -401,7 +404,10 @@ describe("managed llama.cpp profile onboarding", () => {
     );
 
     await expect(
-      setupNim({ platform: "n1x", wslDockerDesktopGpuProofPassed: true } as never, "n1x-agent"),
+      setupNim(
+        { platform: "n1x", containerGpuProof: { providerId: "docker", passed: true } } as never,
+        "n1x-agent",
+      ),
     ).rejects.toThrow("effective Docker context");
     expect(installManagedLlamaCpp).not.toHaveBeenCalled();
   });

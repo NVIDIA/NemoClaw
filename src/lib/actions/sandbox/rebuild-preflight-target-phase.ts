@@ -55,6 +55,7 @@ import {
 } from "./rebuild-preflight-guards";
 import { disposePreparedBuildContext } from "./rebuild-prepared-image-context";
 import {
+  hasValidDeferredN1xManagedVllmReplacementAuthority,
   hydrateMessagingConfigForRebuild,
   preflightAuthoritativeOnboardRuntime,
   preflightRebuildTargetRuntime,
@@ -268,6 +269,11 @@ export async function prepareRebuildTargetPreflights(args: {
     requestedObservabilityEnabled ?? recreateOptions.observabilityEnabled;
   recreateOptions.observabilityRequestedExplicitly = requestedObservabilityEnabled !== undefined;
   stageRecordedDeferredN1xIntent(recreateOptions, sandboxEntry, resumeConfig);
+  if (
+    !hasValidDeferredN1xManagedVllmReplacementAuthority(recreateOptions, sandboxEntry, resumeConfig)
+  ) {
+    return bail("Deferred N1x managed-vLLM replacement authority is invalid.");
+  }
   if (
     !stageRebuildHermesDashboardConfig(
       rebuildAgent,

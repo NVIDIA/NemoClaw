@@ -85,7 +85,7 @@ function fixture(presetId = SPARK_PRESET_ID) {
 
 function n1xCollectionOptions(): Omit<
   CollectHostObservationsOptions,
-  "detectGpu" | "wslDockerDesktopGpuProofPassed"
+  "detectGpu" | "containerGpuProof"
 > {
   const now = new Date();
   return {
@@ -261,7 +261,7 @@ describe("managed llama.cpp selection", () => {
       totalMemoryMB: 49_088,
       perGpuMB: 49_088,
       nimCapable: true,
-      wslDockerDesktopGpuProofPassed: true,
+      containerGpuProof: { providerId: "docker", passed: true },
     };
 
     expect(
@@ -387,7 +387,7 @@ describe("managed llama.cpp selection", () => {
       totalMemoryMB: 49_088,
       perGpuMB: 49_088,
       nimCapable: true,
-      wslDockerDesktopGpuProofPassed: false,
+      containerGpuProof: { providerId: "docker", passed: false },
     };
 
     expect(

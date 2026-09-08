@@ -18,6 +18,83 @@ afterEach(() => {
 });
 
 describe("createSetupNim vLLM resume", () => {
+  it("aborts after one failed managed vLLM install when the provider is pinned", async () => {
+    const profile = { name: "N1x", platform: "n1x" } as VllmProfile;
+    const installVllm = vi.fn<SetupNimFlowDeps["installVllm"]>(async () => ({ ok: false }));
+    const failure = new Error("pinned managed vLLM install aborted");
+    const exitProcess = vi.fn<SetupNimFlowDeps["exitProcess"]>(() => {
+      throw failure;
+    });
+    const abortNonInteractive = vi.fn<SetupNimFlowDeps["abortNonInteractive"]>(() =>
+      unexpected("non-interactive abort"),
+    );
+    const setupNim = createSetupNim(
+      makeDeps({
+        getNonInteractiveProvider: () => "install-vllm",
+        selectFromNumberedMenu: () => unexpected("provider menu"),
+        detectInferenceProviderHostState: () =>
+          makeHostState({
+            vllmProfile: profile,
+            vllmEntries: [{ key: "install-vllm", label: "Install vLLM (N1x)" }],
+        }),
+        installVllm,
+        exitProcess,
+        abortNonInteractive,
+      }),
+    );
+
+    await expect(setupNim({ platform: "n1x" } as never)).rejects.toBe(failure);
+
+    expect({
+      installCalls: installVllm.mock.calls.length,
+      exitCalls: exitProcess.mock.calls,
+      nonInteractiveAbortCalls: abortNonInteractive.mock.calls.length,
+    }).toEqual({ installCalls: 1, exitCalls: [[1]], nonInteractiveAbortCalls: 0 });
+  });
+
+  it("exits an interactive pinned-provider port conflict without a non-interactive marker", async () => {
+    const profile = { name: "N1x", platform: "n1x" } as VllmProfile;
+    const failure = new Error("pinned managed vLLM port conflict");
+    const exitProcess = vi.fn<SetupNimFlowDeps["exitProcess"]>(() => {
+      throw failure;
+    });
+    const abortNonInteractive = vi.fn<SetupNimFlowDeps["abortNonInteractive"]>(() =>
+      unexpected("non-interactive abort"),
+    );
+    const error = vi.fn();
+    const installVllm = vi.fn<SetupNimFlowDeps["installVllm"]>();
+    const setupNim = createSetupNim(
+      makeDeps({
+        getNonInteractiveProvider: () => "install-vllm",
+        selectFromNumberedMenu: () => unexpected("provider menu"),
+        detectInferenceProviderHostState: () =>
+          makeHostState({
+            vllmRunning: true,
+            vllmProfile: profile,
+            vllmEntries: [{ key: "install-vllm", label: "Install vLLM (N1x)" }],
+          }),
+        error,
+        installVllm,
+        exitProcess,
+        abortNonInteractive,
+      }),
+    );
+
+    await expect(setupNim({ platform: "n1x" } as never)).rejects.toBe(failure);
+
+    expect({
+      errorCalls: error.mock.calls,
+      installCalls: installVllm.mock.calls.length,
+      exitCalls: exitProcess.mock.calls,
+      nonInteractiveAbortCalls: abortNonInteractive.mock.calls.length,
+    }).toEqual({
+      errorCalls: [[expect.stringContaining("localhost:8000")]],
+      installCalls: 0,
+      exitCalls: [[1]],
+      nonInteractiveAbortCalls: 0,
+    });
+  });
+
   it("resumes a checkpointed install without prompting for a provider (#9582)", async () => {
     const profile = { name: "DGX Spark" } as VllmProfile;
     const prompt = vi.fn(async () => unexpected("provider prompt"));

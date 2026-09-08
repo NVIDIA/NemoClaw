@@ -375,10 +375,7 @@ export function resolveManagedLlamaCppSelectionForGpu(
   env: NodeJS.ProcessEnv | undefined,
   gpu: GpuDetection | null,
   catalog: CompiledManagedInferenceCatalog = loadManagedInferenceCatalog(),
-  collectionOptions: Omit<
-    CollectHostObservationsOptions,
-    "detectGpu" | "wslDockerDesktopGpuProofPassed"
-  > = {},
+  collectionOptions: Omit<CollectHostObservationsOptions, "detectGpu" | "containerGpuProof"> = {},
   selectionOptions: ManagedLlamaCppSelectionOptions = {},
 ): ManagedLlamaCppSelectionResult {
   return discoverManagedLlamaCppSelectionsForGpu(
@@ -397,16 +394,14 @@ export function discoverManagedLlamaCppSelectionsForGpu(
   catalog: CompiledManagedInferenceCatalog = loadManagedInferenceCatalog(),
   collectionOptions: Omit<
     CollectHostObservationsOptions,
-    "detectGpu" | "wslDockerDesktopGpuProofPassed"
+    "detectGpu" | "containerGpuProof"
   > = {},
   selectionOptions: ManagedLlamaCppSelectionOptions = {},
 ): ManagedLlamaCppDiscoveryResult {
   const report = createHostReadinessReport(getBuildIdentity(), {
     ...collectionOptions,
     ...(gpu ? { detectGpu: () => gpu } : {}),
-    ...(gpu?.wslDockerDesktopGpuProofPassed === undefined
-      ? {}
-      : { wslDockerDesktopGpuProofPassed: gpu.wslDockerDesktopGpuProofPassed }),
+    ...(gpu?.containerGpuProof === undefined ? {} : { containerGpuProof: gpu.containerGpuProof }),
   });
   return discoverManagedLlamaCppSelections(env, catalog, report, selectionOptions);
 }
