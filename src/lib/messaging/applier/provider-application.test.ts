@@ -132,6 +132,7 @@ describe("messaging provider application planning", () => {
           { name: "OPENAI_API_KEY", value: "openai-secret" },
           { name: "OPENAI_API_KEY_WORKSPACE", value: "workspace-secret" },
         ],
+        optionalCredentialNames: ["OPENAI_API_KEY_WORKSPACE", "OPENAI_API_KEY_MISSING"],
       },
     ]);
   });

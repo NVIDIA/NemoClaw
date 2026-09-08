@@ -105,11 +105,20 @@ describe("messaging OpenShell provider application", () => {
   it("reuses an exact provider through typed adapter calls (#9806)", async () => {
     const expected = definition({
       credentials: [{ name: "TELEGRAM_BOT_TOKEN", value: null }],
+      optionalCredentialNames: ["TELEGRAM_BOT_TOKEN_AGENT_A", "TELEGRAM_BOT_TOKEN_AGENT_B"],
     });
     const adapter = providerAdapter({
-      getProvider: vi
-        .fn<OpenShellProviderAdapter["getProvider"]>()
-        .mockResolvedValue({ ok: true, value: metadata(expected) }),
+      getProvider: vi.fn<OpenShellProviderAdapter["getProvider"]>().mockResolvedValue({
+        ok: true,
+        value: {
+          ...metadata(expected),
+          credentialKeys: [
+            "TELEGRAM_BOT_TOKEN",
+            "TELEGRAM_BOT_TOKEN_AGENT_A",
+            "TELEGRAM_BOT_TOKEN_AGENT_B",
+          ],
+        },
+      }),
     });
 
     const result = await applyCredentialsAtOpenShell(plan, {
@@ -162,6 +171,7 @@ describe("messaging OpenShell provider application", () => {
   it.each([
     ["provider type", { type: "generic" }],
     ["configuration keys", { configKeys: ["BASE_URL"] }],
+    ["credential keys", { credentialKeys: ["TELEGRAM_BOT_TOKEN", "UNREGISTERED_TOKEN"] }],
   ])(
     "rejects a %s collision before profile or provider mutation (#9806)",
     async (_field, conflictingMetadata) => {

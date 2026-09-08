@@ -653,13 +653,18 @@ function classifyProviderDefinition(
       ? "missing"
       : "indeterminate";
   }
-  const expectedCredentialKeys = definition.credentials.map(({ name }) => name).sort();
-  const actualCredentialKeys = [...result.value.credentialKeys].sort();
+  const requiredCredentialKeys = definition.credentials.map(({ name }) => name);
+  const allowedCredentialKeys = new Set([
+    ...requiredCredentialKeys,
+    ...(definition.optionalCredentialNames ?? []),
+  ]);
+  const actualCredentialKeys = new Set(result.value.credentialKeys);
   return result.value.name === definition.providerName &&
     result.value.type === definition.providerType &&
     result.value.configKeys.length === 0 &&
-    actualCredentialKeys.length === expectedCredentialKeys.length &&
-    actualCredentialKeys.every((key, index) => key === expectedCredentialKeys[index])
+    requiredCredentialKeys.every((key) => actualCredentialKeys.has(key)) &&
+    actualCredentialKeys.size === result.value.credentialKeys.length &&
+    result.value.credentialKeys.every((key) => allowedCredentialKeys.has(key))
     ? "exact"
     : "collision";
 }
