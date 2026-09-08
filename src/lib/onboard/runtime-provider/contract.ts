@@ -9,6 +9,7 @@ import type {
   ManagedBootstrapRuntimeOnboardRoutingInput,
 } from "../managed-bootstrap/runtime-create";
 import type { NativeArtifactWorkloadReceiptV1 } from "../workload/native-artifact";
+import type { PortableAgentRuntimeProviderSupport } from "../workload/portable-agent-runtime";
 import type { ManagedImageSelectionPolicy } from "../workload/source";
 import type { SandboxGpuConfig } from "../sandbox-gpu-mode";
 import type {
@@ -297,6 +298,8 @@ export type RuntimeProviderNativeArtifactSupport = {
 export interface RuntimeProviderWorkloadProfile {
   readonly support: RuntimeProviderManagedImageSupport | null;
   readonly nativeArtifactSupport?: RuntimeProviderNativeArtifactSupport | null;
+  /** Missing or null until this provider has complete, reviewed portable runtime qualification. */
+  readonly portableAgentRuntimeSupport?: PortableAgentRuntimeProviderSupport | null;
   readonly hostArchitectures: readonly string[];
   readonly managedImageSelectionPolicy: ManagedImageSelectionPolicy;
   readonly legacyDockerfileBuilds: boolean;

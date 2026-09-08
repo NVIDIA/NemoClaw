@@ -1727,7 +1727,22 @@ NUL bytes are still rejected in command arguments. Line breaks are accepted only
 
 ### `$$nemoclaw <name> logs`
 
-View sandbox logs. Use `--follow` to stream output in real time. Use `--tail <lines>` or `-n <lines>` to limit the number of returned lines. Use `--since <duration>` to show recent logs only, such as `5m`, `1h`, or `30s`. The command reads both agent gateway output and OpenShell audit events, so policy denials appear alongside the gateway log stream. If one log source is unavailable, NemoClaw prints a warning and keeps reading the remaining source. NemoClaw's `--tail <lines>` flag is a line-count flag; the lower-level `openshell logs --tail` flag means follow live output, so use `openshell logs <sandbox> -n <lines>` when running OpenShell directly for a fixed line count.
+View sandbox logs.
+Use `--follow` to stream output in real time.
+Use `--tail <lines>` or `-n <lines>` to limit the number of returned lines.
+Use `--since <duration>` to show recent logs only, such as `5m`, `1h`, or `30s`.
+
+<AgentOnly variant="openclaw,hermes">
+When `--since` is not set, the command reads both agent gateway output and OpenShell audit events, so policy denials appear alongside the gateway log stream.
+With `--since`, the command reads only OpenShell logs.
+If one log source is unavailable, NemoClaw prints a warning and keeps reading the remaining source.
+</AgentOnly>
+<AgentOnly variant="deepagents">
+The command reads OpenShell logs, including audit events, so policy denials appear with other OpenShell log entries.
+</AgentOnly>
+If NemoClaw cannot enable OpenShell audit logs, it prints a warning and policy-denial events can be missing.
+
+NemoClaw's `--tail <lines>` flag is a line-count flag; the lower-level `openshell logs --tail` flag means follow live output, so use `openshell logs <sandbox> -n <lines>` when running OpenShell directly for a fixed line count.
 
 ```bash
 $$nemoclaw my-assistant logs [--follow] [--tail <lines>|-n <lines>] [--since <duration>]

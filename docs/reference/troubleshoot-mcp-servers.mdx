@@ -116,14 +116,11 @@ Read recent sandbox logs while you reproduce an MCP failure:
 $$nemoclaw <sandbox> logs --tail 200
 ```
 
-<AgentOnly variant="openclaw">
-The command reads OpenClaw gateway output and OpenShell audit events, so policy denials appear beside gateway logs.
-</AgentOnly>
-<AgentOnly variant="hermes">
-The command reads Hermes gateway output and OpenShell audit events, so policy denials appear beside gateway logs.
+<AgentOnly variant="openclaw,hermes">
+The command reads agent gateway output and OpenShell audit events, so policy denials appear beside gateway logs.
 </AgentOnly>
 <AgentOnly variant="deepagents">
-The command reads Deep Agents sandbox output and OpenShell audit events, so policy denials appear beside sandbox logs.
+The command reads OpenShell logs, including audit events, so policy denials appear with other OpenShell log entries.
 </AgentOnly>
 If NemoClaw cannot enable OpenShell audit logs, it prints a warning and the policy denial events can be missing.
 
