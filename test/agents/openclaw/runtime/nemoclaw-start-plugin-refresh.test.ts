@@ -56,7 +56,7 @@ function extractRefreshBlock(): string {
 // step-down prefix. Returns the temp dir so the caller can inspect the
 // stub log and the refresh status sentinel.
 function runRefreshBlock(
-  opts: { gatewayReadyAfter: number; rootMode?: boolean } = {
+  opts: { gatewayReadyAfter: number; rootMode?: boolean; rewriteConfigMode?: boolean } = {
     gatewayReadyAfter: 1,
     rootMode: true,
   },
@@ -121,6 +121,7 @@ function runRefreshBlock(
       "allowedSlash:/nemoclaw",
       "staleSlash:",
       "REGISTRY_STATE",
+      ...(opts.rewriteConfigMode ? [`  chmod 600 ${JSON.stringify(registryState)}`] : []),
       `  printf 'refreshed' > ${JSON.stringify(refreshLog)}`,
       "  exit 0",
       "fi",
@@ -164,6 +165,9 @@ function runRefreshBlock(
     "GATEWAY_WATCHDOG_PID=",
     "GATEWAY_WATCHDOG_PID_START_IDENTITY=",
     'gateway_control_pid_is_live() { case "$1" in ""|0|1|*[!0-9]*) return 1 ;; *) return 0 ;; esac; }',
+    opts.rewriteConfigMode
+      ? `normalize_mutable_config_perms() { chmod 660 ${JSON.stringify(registryState)}; }`
+      : "normalize_mutable_config_perms() { :; }",
     `ensure_mutable_openclaw_config_hash() { cp ${JSON.stringify(registryState)} ${JSON.stringify(hashRefreshState)}; }`,
     block,
     "# Surface PLUGIN_REFRESH_PID + tracked SANDBOX_CHILD_PIDS for the test",
@@ -371,6 +375,19 @@ describe("plugin registry refresh workaround for openclaw/openclaw#89606 (#2021)
       const hashedState = fs.readFileSync(hashRefreshState, "utf-8");
       expect(hashedState).toBe(fs.readFileSync(registryState, "utf-8"));
       expect(hashedState).toContain("plugins:nemoclaw");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("restores the guard-compatible config mode after the registry refresh (#10681)", () => {
+    const { result, registryState, tmpDir } = runRefreshBlock({
+      gatewayReadyAfter: 1,
+      rewriteConfigMode: true,
+    });
+    try {
+      expect(result.status).toBe(0);
+      expect(fs.statSync(registryState).mode & 0o777).toBe(0o660);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
