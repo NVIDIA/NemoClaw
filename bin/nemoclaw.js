@@ -10,17 +10,15 @@ if (invokedAs === "nemo-deepagents") {
 }
 
 let topLevelLog = null;
-try {
-  topLevelLog = require("../dist/lib/cli/logger").log;
-} catch {
-  topLevelLog = null;
-}
 
 const PORT_ENV_NAME =
   "NEMOCLAW_(?:GATEWAY|DASHBOARD|VLLM|OLLAMA|OLLAMA_PROXY|BEDROCK_RUNTIME_ADAPTER|OPENROUTER_RUNTIME_ADAPTER|HTTPS_PIN_RUNTIME_ADAPTER)_PORT";
 const SAFE_PORT_DIAGNOSTIC = new RegExp(
   `^Invalid port: ${PORT_ENV_NAME}="\\d{1,5}" — (?:must be an integer between 1024 and 65535|must not overlap the 18789-18799 dashboard port range|must not overlap the (?:llama\\.cpp inference|vLLM / NIM inference|Ollama inference|Ollama auth proxy|Bedrock Runtime adapter|OpenRouter Runtime adapter|HTTPS Pin Runtime adapter) default port \\(\\d{1,5}\\)|conflicts with ${PORT_ENV_NAME} \\(\\d{1,5}\\)|conflicts with the fixed llama\\.cpp inference port \\(8081\\))$`,
 );
+const SAFE_AUTOMATIC_GATEWAY_PORT_DIAGNOSTIC =
+  "Could not safely resolve the automatically selected NemoClaw gateway port. " +
+  "Remove invalid automatic-gateway-port markers or set NEMOCLAW_GATEWAY_PORT explicitly.";
 
 function redactFallbackMessage(message) {
   try {
@@ -28,7 +26,9 @@ function redactFallbackMessage(message) {
     const redacted = redactForLog(message);
     return typeof redacted === "string" ? redacted : "Command failed.";
   } catch {
-    return SAFE_PORT_DIAGNOSTIC.test(message) ? message : "Command failed.";
+    return SAFE_PORT_DIAGNOSTIC.test(message) || message === SAFE_AUTOMATIC_GATEWAY_PORT_DIAGNOSTIC
+      ? message
+      : "Command failed.";
   }
 }
 
@@ -80,46 +80,39 @@ function applyPersistedAutomaticGatewayPort() {
     entries = fs.readdirSync(gatewaysDir, { withFileTypes: true });
   } catch (error) {
     if (error && error.code === "ENOENT") return;
-    throw new Error(
-      "Could not safely resolve the automatically selected NemoClaw gateway port. " +
-        "Remove invalid automatic-gateway-port markers or set NEMOCLAW_GATEWAY_PORT explicitly.",
-    );
+    throw new Error(SAFE_AUTOMATIC_GATEWAY_PORT_DIAGNOSTIC);
   }
   const selectedPorts = [];
   for (const entry of entries) {
     const stateDir = path.join(gatewaysDir, entry.name);
-    const marker = path.join(stateDir, "automatic-gateway-port");
-    try {
-      const stateStat = fs.lstatSync(stateDir);
-      const markerFd = fs.openSync(marker, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    for (const markerName of ["automatic-gateway-port", "automatic-gateway-port.pending"]) {
+      const marker = path.join(stateDir, markerName);
       try {
-        const markerStat = fs.fstatSync(markerFd);
-        if (
-          !/^(?:899[0-9]|900[0-5])$/.test(entry.name) ||
-          stateStat.isSymbolicLink() ||
-          !stateStat.isDirectory() ||
-          !markerStat.isFile() ||
-          ![entry.name, `${entry.name}\n`].includes(fs.readFileSync(markerFd, "utf8"))
-        ) {
-          throw new Error("unsafe automatic gateway port marker");
+        const stateStat = fs.lstatSync(stateDir);
+        const markerFd = fs.openSync(marker, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+        try {
+          const markerStat = fs.fstatSync(markerFd);
+          if (
+            !/^(?:899[0-9]|900[0-5])$/.test(entry.name) ||
+            stateStat.isSymbolicLink() ||
+            !stateStat.isDirectory() ||
+            !markerStat.isFile() ||
+            ![entry.name, `${entry.name}\n`].includes(fs.readFileSync(markerFd, "utf8"))
+          ) {
+            throw new Error("unsafe automatic gateway port marker");
+          }
+        } finally {
+          fs.closeSync(markerFd);
         }
-      } finally {
-        fs.closeSync(markerFd);
+        selectedPorts.push(entry.name);
+      } catch (error) {
+        if (error && error.code === "ENOENT") continue;
+        throw new Error(SAFE_AUTOMATIC_GATEWAY_PORT_DIAGNOSTIC);
       }
-      selectedPorts.push(entry.name);
-    } catch (error) {
-      if (error && error.code === "ENOENT") continue;
-      throw new Error(
-        "Could not safely resolve the automatically selected NemoClaw gateway port. " +
-          "Remove invalid automatic-gateway-port markers or set NEMOCLAW_GATEWAY_PORT explicitly.",
-      );
     }
   }
   if (selectedPorts.length > 1) {
-    throw new Error(
-      "Could not safely resolve the automatically selected NemoClaw gateway port. " +
-        "Remove invalid automatic-gateway-port markers or set NEMOCLAW_GATEWAY_PORT explicitly.",
-    );
+    throw new Error(SAFE_AUTOMATIC_GATEWAY_PORT_DIAGNOSTIC);
   }
   if (selectedPorts.length === 1) {
     process.env.NEMOCLAW_GATEWAY_PORT = selectedPorts[0];
@@ -131,6 +124,14 @@ try {
   applyPersistedAutomaticGatewayPort();
 } catch (error) {
   handleTopLevelError(error);
+}
+
+if (!process.exitCode) {
+  try {
+    topLevelLog = require("../dist/lib/cli/logger").log;
+  } catch {
+    topLevelLog = null;
+  }
 }
 
 let compiledCliPath;

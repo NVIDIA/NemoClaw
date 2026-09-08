@@ -518,13 +518,25 @@ describe("install.sh OpenShell gateway service", () => {
     expect(fs.existsSync(servicePath(home))).toBe(false);
   });
 
-  it("does not retain a failed automatic selection and rechecks candidates on retry (#10824)", () => {
+  it("retains a failed automatic selection for installer resume on the same port (#10824)", () => {
     const home = makeTempRoot();
     const fixture = writeQualifiedDefaultPortActivation(home);
     const failedCli = path.join(home, "failed-nemoclaw");
+    const session = JSON.stringify({
+      status: "in_progress",
+      resumable: true,
+      sandboxName: "partial-sandbox",
+      steps: { sandbox: { status: "complete" } },
+    });
     writeExecutable(
       failedCli,
-      '#!/usr/bin/env bash\nmkdir -p "$HOME/.nemoclaw/gateways/8990"\nexit 9\n',
+      [
+        "#!/usr/bin/env bash",
+        'mkdir -p "$HOME/.nemoclaw/gateways/8990"',
+        `printf '%s\\n' ${JSON.stringify(session)} >"$HOME/.nemoclaw/gateways/8990/onboard-session.json"`,
+        "exit 9",
+        "",
+      ].join("\n"),
     );
     const systemctl = writeUnavailableUserManagerStub(home);
 
@@ -547,15 +559,22 @@ describe("install.sh OpenShell gateway service", () => {
         path.join(home, ".nemoclaw", "gateways", "8990", "automatic-gateway-port"),
       ),
     ).toBe(false);
+    expect(
+      fs.readFileSync(
+        path.join(home, ".nemoclaw", "gateways", "8990", "automatic-gateway-port.pending"),
+        "utf8",
+      ),
+    ).toBe("8990\n");
 
     const successfulCli = path.join(home, "successful-nemoclaw");
     writeExecutable(
       successfulCli,
-      '#!/usr/bin/env bash\nprintf "SELECTED_PORT=%s\\n" "$NEMOCLAW_GATEWAY_PORT"\n',
+      '#!/usr/bin/env bash\nprintf "SELECTED_PORT=%s ARGS=%s\\n" "$NEMOCLAW_GATEWAY_PORT" "$*"\n',
     );
     const retried = runInstallHelper(
       home,
       qualifiedInstallBody(fixture, [
+        "apply_persisted_automatic_gateway_port",
         "install_nemoclaw_openshell_gateway_user_service",
         "show_usage_notice() { :; }",
         `NON_INTERACTIVE=1 _CLI_PATH=${JSON.stringify(successfulCli)} run_onboard`,
@@ -566,14 +585,19 @@ describe("install.sh OpenShell gateway service", () => {
     );
 
     expect(retried.status, retried.stderr).toBe(0);
-    expect(retried.stdout).toContain("Automatically selected safe alternate gateway port 8991");
-    expect(retried.stdout).toContain("SELECTED_PORT=8991");
+    expect(retried.stdout).toContain("Found an interrupted onboarding session — resuming it");
+    expect(retried.stdout).toContain("SELECTED_PORT=8990 ARGS=onboard --resume");
     expect(
       fs.readFileSync(
-        path.join(home, ".nemoclaw", "gateways", "8991", "automatic-gateway-port"),
+        path.join(home, ".nemoclaw", "gateways", "8990", "automatic-gateway-port"),
         "utf8",
       ),
-    ).toBe("8991\n");
+    ).toBe("8990\n");
+    expect(
+      fs.existsSync(
+        path.join(home, ".nemoclaw", "gateways", "8990", "automatic-gateway-port.pending"),
+      ),
+    ).toBe(false);
   });
 
   it("refuses automatic selection for an unqualified activation link (#10824)", () => {

@@ -299,9 +299,9 @@ resolve_persisted_automatic_gateway_port() {
   if [[ ! -d "$gateways_dir" || ! -r "$gateways_dir" || ! -x "$gateways_dir" ]]; then
     return 2
   fi
-  for marker in "$gateways_dir"/*/automatic-gateway-port; do
+  for marker in "$gateways_dir"/*/automatic-gateway-port "$gateways_dir"/*/automatic-gateway-port.pending; do
     if [[ ! -e "$marker" && ! -L "$marker" ]]; then continue; fi
-    state_dir="${marker%/automatic-gateway-port}"
+    state_dir="${marker%/automatic-gateway-port*}"
     port="${state_dir##*/}"
     if [[ -L "$state_dir" ]]; then return 3; fi
     if [[ ! -d "$state_dir" || ! -r "$state_dir" || ! -x "$state_dir" ]]; then
@@ -320,6 +320,22 @@ resolve_persisted_automatic_gateway_port() {
   done
   [[ "$marker_count" -eq 1 ]] || return 1
   printf '%s' "$selected_port"
+}
+
+apply_persisted_automatic_gateway_port() {
+  local persisted_port persisted_status
+  [[ -z "${NEMOCLAW_GATEWAY_PORT:-}" ]] || return 0
+  if persisted_port="$(resolve_persisted_automatic_gateway_port)"; then
+    NEMOCLAW_GATEWAY_PORT="$persisted_port"
+    export NEMOCLAW_GATEWAY_PORT
+    return 0
+  fi
+  persisted_status=$?
+  case "$persisted_status" in
+    1) return 0 ;;
+    3) error "Refusing symbolic link in NemoClaw state path while resolving the automatic gateway port." ;;
+    *) error "Could not safely resolve the automatically selected NemoClaw gateway port. Remove invalid automatic-gateway-port markers or set NEMOCLAW_GATEWAY_PORT explicitly." ;;
+  esac
 }
 
 is_explicit_nemoclaw_gateway_port() {
@@ -466,13 +482,13 @@ ensure_nemoclaw_state_dir() {
   printf "%s" "$state_dir"
 }
 
-persist_automatic_gateway_port_selection() {
+persist_pending_automatic_gateway_port_selection() {
   local port state_dir marker
   port="$(resolve_nemoclaw_gateway_port)" || return 1
   validate_gateway_port_candidate "$port" || error "Refusing to persist an invalid automatic NemoClaw gateway port."
   state_dir="$(ensure_nemoclaw_state_dir)" || return 1
-  marker="${state_dir}/automatic-gateway-port"
-  node - "$marker" "$port" <<'NODE' || error "Could not persist the automatically selected NemoClaw gateway port."
+  marker="${state_dir}/automatic-gateway-port.pending"
+  node - "$marker" "$port" <<'NODE' || error "Could not persist the pending automatic NemoClaw gateway port."
 const fs = require("node:fs");
 
 const [marker, port] = process.argv.slice(2);
@@ -489,6 +505,40 @@ try {
 } finally {
   fs.closeSync(fd);
 }
+NODE
+}
+
+automatic_gateway_port_selection_pending() {
+  local port state_dir marker marker_value
+  port="$(resolve_nemoclaw_gateway_port)" || return 1
+  [[ "$port" -ne 8080 ]] || return 1
+  state_dir="$(nemoclaw_state_dir)" || return 1
+  marker="${state_dir}/automatic-gateway-port.pending"
+  [[ -f "$marker" && ! -L "$marker" && -r "$marker" ]] || return 1
+  marker_value="$(<"$marker")" || return 1
+  [[ "$marker_value" == "$port" ]]
+}
+
+complete_automatic_gateway_port_selection() {
+  local port state_dir pending_marker complete_marker
+  port="$(resolve_nemoclaw_gateway_port)" || return 1
+  state_dir="$(nemoclaw_state_dir)" || return 1
+  pending_marker="${state_dir}/automatic-gateway-port.pending"
+  complete_marker="${state_dir}/automatic-gateway-port"
+  node - "$pending_marker" "$complete_marker" "$port" <<'NODE' || error "Could not complete the automatically selected NemoClaw gateway port record."
+const fs = require("node:fs");
+
+const [pendingMarker, completeMarker, port] = process.argv.slice(2);
+const pendingStat = fs.lstatSync(pendingMarker);
+if (pendingStat.isSymbolicLink() || !pendingStat.isFile()) process.exit(1);
+if (![port, `${port}\n`].includes(fs.readFileSync(pendingMarker, "utf8"))) process.exit(1);
+try {
+  fs.lstatSync(completeMarker);
+  process.exit(1);
+} catch (error) {
+  if (!error || error.code !== "ENOENT") process.exit(1);
+}
+fs.renameSync(pendingMarker, completeMarker);
 NODE
 }
 
@@ -4370,6 +4420,10 @@ run_onboard() {
     invoke_args=(-u DOCKER_HOST "$cli_invoke" "${onboard_cmd[@]}")
   fi
 
+  if [[ "${_NEMOCLAW_AUTOMATIC_GATEWAY_PORT_SELECTED:-false}" == true ]]; then
+    persist_pending_automatic_gateway_port_selection
+  fi
+
   if [ "${NON_INTERACTIVE:-}" = "1" ]; then
     NEMOCLAW_INSTALLER_AUTO_FRESH_RECEIPT_GENERATION="$installer_auto_fresh_receipt_generation" \
       "$invoke_bin" "${invoke_args[@]}" || status=$?
@@ -4384,8 +4438,8 @@ run_onboard() {
   else
     error "Interactive onboarding requires a TTY. Re-run in a terminal or set NEMOCLAW_NON_INTERACTIVE=1 with --yes-i-accept-third-party-software."
   fi
-  if [[ "$status" -eq 0 && "${_NEMOCLAW_AUTOMATIC_GATEWAY_PORT_SELECTED:-false}" == true ]]; then
-    persist_automatic_gateway_port_selection
+  if [[ "$status" -eq 0 ]] && automatic_gateway_port_selection_pending; then
+    complete_automatic_gateway_port_selection
   fi
   return "$status"
 }
@@ -6424,6 +6478,7 @@ main() {
   # self re-exec under sg(1) when the docker group needs activating in a
   # non-interactive run (#4414).
   _NEMOCLAW_INSTALLER_ARGS=("$@")
+  apply_persisted_automatic_gateway_port
 
   # Parse flags
   NON_INTERACTIVE=""

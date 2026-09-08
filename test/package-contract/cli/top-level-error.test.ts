@@ -306,6 +306,29 @@ describe("compiled CLI top-level errors", () => {
     }
   });
 
+  it("restores a pending automatic port so interrupted onboarding can resume (#10824)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-pending-port-"));
+    try {
+      const marker = path.join(
+        home,
+        ".nemoclaw",
+        "gateways",
+        "8990",
+        "automatic-gateway-port.pending",
+      );
+      fs.mkdirSync(path.dirname(marker), { recursive: true });
+      fs.writeFileSync(marker, "8990\n");
+
+      const result = runWithCapturedGatewayPort(home);
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toBe("8990:1");
+      expect(result.stderr).toBe("");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("preserves an explicit gateway port over an automatic marker (#10824)", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-explicit-port-"));
     try {

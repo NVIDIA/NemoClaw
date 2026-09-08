@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { AddressInfo } from "node:net";
+import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
 
@@ -29,7 +30,7 @@ describe("onboard gateway port conflict readiness (#6752)", () => {
     gatewayServer = net.createServer();
     await new Promise<void>((resolve, reject) => {
       gatewayServer.once("error", reject);
-      gatewayServer.listen(0, "127.0.0.1", resolve);
+    gatewayServer.listen(8990, "127.0.0.1", resolve);
     });
     gatewayPort = (gatewayServer.address() as AddressInfo).port;
 
@@ -86,16 +87,24 @@ describe("onboard gateway port conflict readiness (#6752)", () => {
   });
 
   it(
-    "rejects a foreign listener without waiting on lifecycle inspection",
+    "rejects a foreign listener on a restored automatic port without waiting on lifecycle inspection",
     testTimeoutOptions(15_000),
     () => {
+      const marker = path.join(
+        workspace.homeDir,
+        ".nemoclaw",
+        "gateways",
+        "8990",
+        "automatic-gateway-port.pending",
+      );
+      fs.mkdirSync(path.dirname(marker), { recursive: true, mode: 0o700 });
+      fs.writeFileSync(marker, "8990\n");
       const result = runOnboardProcess(
         [CLI, "onboard", "--name", "foreign-port", "--no-gpu", "--non-interactive"],
         {
           timeoutMs: 10_000,
           env: workspaceEnv(workspace, {
             NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
-            NEMOCLAW_GATEWAY_PORT: String(gatewayPort),
             NEMOCLAW_OPENSHELL_BIN: path.join(workspace.binDir, "openshell"),
             NEMOCLAW_OPENSHELL_CHANNEL: "stable",
             NEMOCLAW_OPENSHELL_GATEWAY_BIN: path.join(workspace.binDir, "openshell-gateway"),
@@ -107,7 +116,7 @@ describe("onboard gateway port conflict readiness (#6752)", () => {
       );
 
       const combined = result.output;
-      expect(result.error).toBeUndefined();
+      expect(result.error, combined).toBeUndefined();
       expect(result.signal).toBeNull();
       expect(result.status).toBeGreaterThan(0);
       expect(combined).toMatch(
@@ -123,6 +132,7 @@ describe("onboard gateway port conflict readiness (#6752)", () => {
       );
       expect(combined).toContain("signal only the matching PID from that fresh result");
       expect(combined).not.toMatch(/sudo kill \d+/);
+      expect(fs.readFileSync(marker, "utf8")).toBe("8990\n");
     },
   );
 
