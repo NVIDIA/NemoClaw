@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../adapters/openshell/runtime", async (importOriginal) => {
@@ -9,6 +12,10 @@ vi.mock("../../adapters/openshell/runtime", async (importOriginal) => {
 });
 
 import { captureOpenshellForStatus } from "../../adapters/openshell/runtime";
+import {
+  managedLlamaCppStatePaths,
+  reserveManagedLlamaCppOwner,
+} from "../../inference/llama-cpp/managed-state";
 import type { SandboxEntry } from "../../state/registry";
 import { collectSandboxStatusSnapshot, getSandboxStatusReport } from "./status-snapshot";
 
@@ -116,7 +123,7 @@ describe("collectSandboxStatusSnapshot route drift", () => {
     expect(snapshot.routeDrift).toBeNull();
   });
 
-  it("reports no drift when the live route is unreadable — repair, not divergence (#6315)", async () => {
+  it("omits llama.cpp attribution when the live route is unreadable (#10256)", async () => {
     capture.mockResolvedValue({
       status: 1,
       output: "",
@@ -124,12 +131,36 @@ describe("collectSandboxStatusSnapshot route drift", () => {
 
     const snapshot = await collectSandboxStatusSnapshot(
       "alpha",
-      snapshotDeps({ provider: "nvidia", model: "nvidia/nemotron" }),
+      snapshotDeps({
+        provider: "llama-cpp-local",
+        model: "muse-glimmer",
+        endpointUrl: "http://127.0.0.1:8081/v1",
+      }),
     );
 
     expect(snapshot.routeDrift).toBeNull();
-    expect(snapshot.currentProvider).toBe("nvidia");
-    expect(snapshot.currentModel).toBe("nvidia/nemotron");
+    expect(snapshot.currentProvider).toBe("llama-cpp-local");
+    expect(snapshot.currentModel).toBe("muse-glimmer");
+    expect(snapshot.llamaCpp).toBeNull();
+  });
+
+  it("omits llama.cpp attribution when a failed route lookup returns parsable output (#10256)", async () => {
+    capture.mockResolvedValue({
+      status: 1,
+      output: "Gateway inference:\n  Provider: llama-cpp-local\n  Model: muse-glimmer\n",
+    } as Awaited<ReturnType<typeof captureOpenshellForStatus>>);
+
+    const snapshot = await collectSandboxStatusSnapshot(
+      "alpha",
+      snapshotDeps({
+        provider: "llama-cpp-local",
+        model: "muse-glimmer",
+        endpointUrl: "http://127.0.0.1:8081/v1",
+      }),
+    );
+
+    expect(snapshot.liveRoute).toBeNull();
+    expect(snapshot.llamaCpp).toBeNull();
   });
 
   it("reports no drift when the registry entry has no recorded route (#6315)", async () => {
@@ -204,6 +235,61 @@ describe("getSandboxStatusReport llama.cpp attribution on drift (#10256)", () =>
 
     expect(report.routeDrift).not.toBeNull();
     expect(report.llamaCpp).toBeNull();
+  });
+
+  it.each([
+    {},
+    { servingProfileProvenance: { recipe: { backend: "install-llama-cpp" } } },
+    { hostLocalInferenceProvenance: {} },
+  ])("reports unavailable ownership from an aligned live route %# (#10256)", async (provenance) => {
+    liveGatewayInference("llama-cpp-local", "muse-glimmer");
+    const options = snapshotDeps({
+      provider: "llama-cpp-local",
+      model: "muse-glimmer",
+      endpointUrl: "http://127.0.0.1:8081/v1",
+      ...provenance,
+    } as Partial<SandboxEntry>);
+
+    const report = await getSandboxStatusReport("alpha", {
+      ...options.deps,
+      inspectManagedLlamaCppOwnership: () => "unknown",
+    });
+
+    expect(report.llamaCpp).toEqual({
+      kind: "unavailable",
+      diagnostic: "Managed llama.cpp ownership state is unavailable.",
+      recovery:
+        "Run nemoclaw alpha doctor. Rerun onboarding for that sandbox if the managed llama.cpp runtime check fails.",
+    });
+  });
+
+  it("reads a private owner receipt before reporting managed JSON status (#10256)", async () => {
+    const home = fs.realpathSync(fs.mkdtempSync(`${os.tmpdir()}/nemoclaw-status-owner-`));
+    vi.stubEnv("HOME", home);
+    try {
+      const paths = managedLlamaCppStatePaths(home);
+      fs.mkdirSync(paths.stateDir, { recursive: true, mode: 0o700 });
+      reserveManagedLlamaCppOwner(paths, {
+        schemaVersion: 1,
+        sandboxName: "alpha",
+        catalogDigest: `sha256:${"1".repeat(64)}`,
+        presetDigest: `sha256:${"2".repeat(64)}`,
+        recipeDigest: `sha256:${"3".repeat(64)}`,
+        recipeId: "llama-cpp.managed",
+      });
+      liveGatewayInference("llama-cpp-local", "muse-glimmer");
+      const options = snapshotDeps({
+        provider: "llama-cpp-local",
+        model: "muse-glimmer",
+      });
+
+      const report = await getSandboxStatusReport("alpha", options.deps);
+
+      expect(report.llamaCpp).toEqual({ kind: "managed" });
+    } finally {
+      vi.unstubAllEnvs();
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it("classifies llama.cpp once in the snapshot consumed by the JSON report", async () => {
