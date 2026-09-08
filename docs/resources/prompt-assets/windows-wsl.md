@@ -32,7 +32,7 @@ If Express is selected:
 - For managed llama.cpp, explain that Hugging Face authentication is optional and anonymous downloads can return HTTP 429. If needed, `HF_TOKEN` supplies a Hugging Face read token only to the temporary downloader. The token remains in the installer environment; remove `HF_TOKEN` after installation when no process needs it.
 - Otherwise, set `NEMOCLAW_PROVIDER=install-ollama` and leave `NEMOCLAW_MODEL` unset.
   This installs WSL-local Ollama and uses the sandbox authentication proxy.
-  Use Docker Desktop by default; preserve `NEMOCLAW_GATEWAY_RUNTIME=podman` only when the operator selected the qualified rootless Podman path and its current-user service and NVIDIA CDI prerequisites pass.
+  Use Docker Desktop by default; preserve `NEMOCLAW_GATEWAY_RUNTIME=podman` only when the operator selected the qualified rootless Podman path and its current-user service prerequisites pass. Require NVIDIA CDI only for sandbox GPU passthrough or the N1x CUDA capacity proof.
   Docker Desktop can reach host loopback directly, but that does not bypass the proxy.
 - Set `NEMOCLAW_AGENT` to the agent already selected in the starter prompt.
 - Set `NEMOCLAW_NON_INTERACTIVE=1`, `NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt`, `NEMOCLAW_YES=1`, and `NEMOCLAW_POLICY_MODE=suggested`.
