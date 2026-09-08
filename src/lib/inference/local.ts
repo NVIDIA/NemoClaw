@@ -529,9 +529,17 @@ export function clearPersistedOllamaHostIfUnused(
 export function getOllamaApiCommand(
   curlArgs: readonly string[],
   host: string = getResolvedOllamaHost(),
+  options: { dockerDetached?: boolean } = {},
 ): string[] {
   return host === OLLAMA_HOST_DOCKER_INTERNAL
-    ? ["docker", "run", "--rm", CONTAINER_REACHABILITY_IMAGE, ...curlArgs]
+    ? [
+        "docker",
+        "run",
+        "--rm",
+        ...(options.dockerDetached ? ["-d"] : []),
+        CONTAINER_REACHABILITY_IMAGE,
+        ...curlArgs,
+      ]
     : ["curl", ...curlArgs];
 }
 
@@ -2253,7 +2261,11 @@ export function selectDefaultOllamaModel(
   return OLLAMA_MODEL_REGISTRY.find((entry) => pool.includes(entry.tag))?.tag ?? pool[0];
 }
 
-export function getOllamaWarmupRequestCommand(model: string, keepAlive = "15m"): string[] {
+export function getOllamaWarmupRequestCommand(
+  model: string,
+  keepAlive = "15m",
+  options: { dockerDetached?: boolean } = {},
+): string[] {
   const payload = JSON.stringify({
     model,
     prompt: "Hello, reply in less than 5 words",
@@ -2276,6 +2288,7 @@ export function getOllamaWarmupRequestCommand(model: string, keepAlive = "15m"):
       payload,
     ],
     host,
+    options,
   );
 }
 
@@ -2303,7 +2316,7 @@ export function runOllamaWarmup(
 ): void {
   const windowsHost = getResolvedOllamaHost() === OLLAMA_HOST_DOCKER_INTERNAL;
   const command = windowsHost
-    ? getOllamaWarmupRequestCommand(model)
+    ? getOllamaWarmupRequestCommand(model, "15m", { dockerDetached: true })
     : getOllamaWarmupCommand(model);
   let execution: PreparedOllamaApiExecution;
   try {
@@ -2317,10 +2330,7 @@ export function runOllamaWarmup(
     return;
   }
   try {
-    const warmupCommand = windowsHost
-      ? [...execution.command.slice(0, 3), "-d", ...execution.command.slice(3)]
-      : execution.command;
-    runImpl(warmupCommand, {
+    runImpl(execution.command, {
       ignoreError: true,
       ...(execution.env === undefined ? {} : { env: execution.env }),
     });

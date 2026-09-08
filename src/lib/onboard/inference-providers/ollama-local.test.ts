@@ -342,15 +342,22 @@ describe("Ollama local provider sandbox-facing model gate", () => {
   it("restores the prior cleanup route when model validation fails", async () => {
     const rollbackPersistedOllamaHost = vi.fn();
     const persistResolvedOllamaHost = vi.fn(() => rollbackPersistedOllamaHost);
+    const error = vi.fn();
+    const recoveryMessage =
+      "Selected Ollama model 'llama3.2:1b' did not answer the local probe in time. " +
+      "It may still be loading, too large for the host, or otherwise unhealthy. " +
+      "Stale runner processes from a previous model may be holding GPU memory. " +
+      "Run 'sudo systemctl restart ollama' and rerun onboarding.";
 
     await expect(
       setupOllamaLocalInference(
         { model: "llama3.2:1b", provider: "ollama-local", allowToolsIncompatible: false },
         deps({
+          error,
           localInference: {
             validateOllamaModelWithToolsOverride: () => ({
               ok: false,
-              message: "model validation failed",
+              message: recoveryMessage,
             }),
             validateSandboxFacingOllamaModel: () => ({ ok: true }),
             persistResolvedOllamaHost,
@@ -359,7 +366,10 @@ describe("Ollama local provider sandbox-facing model gate", () => {
       ),
     ).rejects.toThrow("exit 1");
 
-    expect(rollbackPersistedOllamaHost).toHaveBeenCalledOnce();
+    expect({ errorCalls: error.mock.calls, rollbackCalls: rollbackPersistedOllamaHost.mock.calls }).toEqual({
+      errorCalls: [[`  ${recoveryMessage}`]],
+      rollbackCalls: [[]],
+    });
   });
 
   it("restores the prior cleanup route when model warm-up throws", async () => {
