@@ -100,8 +100,7 @@ Provide these immutable inputs before a branch publication:
 
 - declared repository and source branch;
 - full local publication SHA;
-- expected remote branch state: absent or the local publication SHA for an initial PR, or the reviewed
-  remote SHA for an update;
+- expected remote branch state: absent for an initial PR, or the reviewed remote SHA for an update;
 - pull request number and reviewed `headRefOid` for an open PR.
 
 Apply these steps before every branch publication:
@@ -156,8 +155,12 @@ git show origin/main:.agents/skills/nemoclaw-maintainer-day/RISKY-AREAS.md
 
 Use only the `Contributor PR sensitive paths` patterns from that canonical content to classify the
 trusted changed paths. Accept only the exact-file and terminal-`/**` pattern grammar defined there.
-Ignore caller-provided or helper-provided classifications and the candidate's copy of the policy. Stop
-when the canonical policy is missing, unreadable, or has an invalid pattern.
+Ignore caller-provided or helper-provided classifications and the candidate's copy of the policy.
+When the canonical file is readable but lacks the section and the trusted diff introduces it, use one
+fail-closed bootstrap: validate the proposed section's pattern grammar, classify every changed path as
+sensitive without using its patterns for matching, and disclose the bootstrap in `Review notes`. Stop
+when the canonical file is missing or unreadable, a canonical pattern is invalid, the proposed
+bootstrap section is invalid, or the section is absent without being introduced by the candidate.
 
 Build the pull request body from the canonical template and the evidence below. Validate the complete
 body against that template. When a sensitive path changed, disclose the available pre-publication
@@ -195,7 +198,9 @@ repository, base branch, source branch, commit, title, body, draft decision, and
 
 After every successful or inconclusive creation response, list open PRs for the declared source
 branch. Continue only when exactly one PR matches every prepared creation input. Stop and report all
-observed PR identifiers and commits when multiple PRs exist or any field differs.
+prepared inputs, observed PR identities and relevant state, and every differing field when multiple
+PRs exist or any field differs. Include whether the write response was successful or inconclusive and
+state that recovery requires a later invocation rather than a retry from the observed state.
 
 When no PR exists, repeat the remote-branch and open-PR checks immediately before one creation retry.
 Stop when either state changed or cannot be read. Do not make a second retry.
@@ -218,7 +223,9 @@ PR immediately before the write. Continue only when its identity and commit are 
 draft, and the latest commit completed the shared follow-up cycle with no unresolved candidate-owned
 finding or failure. Request the ready-state change once. After a successful or inconclusive response,
 read the PR again. Continue only when the same PR and commit are no longer draft. Treat every other
-result as unknown state, stop, and do not repeat the write.
+result as unknown state, stop, and do not repeat the write. Report the prepared PR number, head, and
+draft state; the observed PR identity and relevant state; every differing field; whether the response
+was successful or inconclusive; and the no-retry recovery boundary.
 
 Do not select or add labels during PR publication. Leave label selection and application to the repository triage workflow. Do not request reviews from maintainers.
 
