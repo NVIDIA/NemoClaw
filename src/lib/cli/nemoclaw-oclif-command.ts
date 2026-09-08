@@ -53,6 +53,7 @@ export type CommandErrorJson = {
   suggestions?: string[];
 };
 
+/** Keep only the string suggestions oclif attached to a pretty-printable error. */
 function errorSuggestions(err: unknown): string[] | undefined {
   const raw =
     err !== null && typeof err === "object"
