@@ -12,7 +12,7 @@ import {
   LAUNCH_READINESS_PAIRING_QUALIFICATION_OUTPUT,
   launchReadinessRegistryFixture,
 } from "../helpers/launch-readiness-fixture";
-import { nonWslPlatformNodeOptions } from "../helpers/platform-override-node-options";
+import { syntheticForwardNodeOptions } from "../helpers/platform-override-node-options";
 import {
   runWithEnv,
   testTimeoutOptions,
@@ -278,7 +278,7 @@ describe("CLI connect recovery process contracts", () => {
       try {
         const result = runWithEnv("alpha connect --probe-only", {
           HOME: home,
-          NODE_OPTIONS: nonWslPlatformNodeOptions(home),
+          NODE_OPTIONS: syntheticForwardNodeOptions(home),
           PATH: `${localBin}:${process.env.PATH || ""}`,
         });
 
@@ -357,7 +357,7 @@ describe("CLI connect recovery process contracts", () => {
       try {
         const result = runWithEnv("alpha connect --probe-only", {
           HOME: home,
-          NODE_OPTIONS: nonWslPlatformNodeOptions(home),
+          NODE_OPTIONS: syntheticForwardNodeOptions(home),
           PATH: `${localBin}:${process.env.PATH || ""}`,
         });
 
@@ -479,7 +479,7 @@ describe("CLI connect recovery process contracts", () => {
 
     const result = runWithEnv("alpha connect", {
       HOME: home,
-      NODE_OPTIONS: nonWslPlatformNodeOptions(home),
+      NODE_OPTIONS: syntheticForwardNodeOptions(home),
       PATH: `${localBin}:${process.env.PATH || ""}`,
     });
 
