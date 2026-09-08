@@ -56,7 +56,12 @@ function extractRefreshBlock(): string {
 // step-down prefix. Returns the temp dir so the caller can inspect the
 // stub log and the refresh status sentinel.
 function runRefreshBlock(
-  opts: { gatewayReadyAfter: number; rootMode?: boolean; rewriteConfigMode?: boolean } = {
+  opts: {
+    gatewayReadyAfter: number;
+    normalizationFails?: boolean;
+    rootMode?: boolean;
+    rewriteConfigMode?: boolean;
+  } = {
     gatewayReadyAfter: 1,
     rootMode: true,
   },
@@ -165,7 +170,9 @@ function runRefreshBlock(
     "GATEWAY_WATCHDOG_PID=",
     "GATEWAY_WATCHDOG_PID_START_IDENTITY=",
     'gateway_control_pid_is_live() { case "$1" in ""|0|1|*[!0-9]*) return 1 ;; *) return 0 ;; esac; }',
-    opts.rewriteConfigMode
+    opts.normalizationFails
+      ? "normalize_mutable_config_perms() { return 1; }"
+      : opts.rewriteConfigMode
       ? `normalize_mutable_config_perms() { chmod 660 ${JSON.stringify(registryState)}; }`
       : "normalize_mutable_config_perms() { :; }",
     `ensure_mutable_openclaw_config_hash() { cp ${JSON.stringify(registryState)} ${JSON.stringify(hashRefreshState)}; }`,
@@ -388,6 +395,18 @@ describe("plugin registry refresh workaround for openclaw/openclaw#89606 (#2021)
     try {
       expect(result.status).toBe(0);
       expect(fs.statSync(registryState).mode & 0o777).toBe(0o660);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not refresh the config hash when permission normalization fails (#10681)", () => {
+    const { hashRefreshState, tmpDir } = runRefreshBlock({
+      gatewayReadyAfter: 1,
+      normalizationFails: true,
+    });
+    try {
+      expect(fs.existsSync(hashRefreshState)).toBe(false);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

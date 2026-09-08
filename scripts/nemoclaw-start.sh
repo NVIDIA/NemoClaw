@@ -4832,6 +4832,7 @@ start_plugin_registry_refresh() {
 
     if ! normalize_mutable_config_perms; then
       echo "[plugin-refresh] mutable OpenClaw config permission normalization failed" >&2
+      exit 1
     fi
     # The registry refresh may rewrite openclaw.json after the gateway reports
     # ready. Keep the mutable integrity metadata ordered after that writer so a
