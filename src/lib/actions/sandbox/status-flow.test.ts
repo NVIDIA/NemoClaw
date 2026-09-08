@@ -683,6 +683,29 @@ describe("showSandboxStatus flow", () => {
     expect(output).toContain("Endpoint: http://127.0.0.1:8081/v1");
   });
 
+  it("exits nonzero when text status reports unavailable llama.cpp ownership (#10256)", async () => {
+    const harness = createStatusFlowHarness({
+      sandboxEntry: {
+        provider: "llama-cpp-local",
+        model: "muse-glimmer",
+      },
+      currentProvider: "llama-cpp-local",
+      currentModel: "muse-glimmer",
+      llamaCpp: {
+        kind: "unavailable",
+        diagnostic: "Managed llama.cpp ownership state is unavailable.",
+        recovery: "Run nemoclaw doctor and correct the reported state before retrying.",
+      },
+    });
+
+    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+
+    const output = harness.logSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("Llama.cpp: unavailable");
+    expect(output).toContain("Run nemoclaw doctor and correct the reported state before retrying.");
+    expect(process.exitCode).toBe(1);
+  });
+
   it("does not erase a dashboard-port conflict during Docker recovery", async () => {
     const conflict = {
       failure: {
