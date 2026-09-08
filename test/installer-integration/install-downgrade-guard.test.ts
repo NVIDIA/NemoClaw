@@ -17,6 +17,11 @@ function writeExecutable(filePath: string, contents: string): void {
   fs.writeFileSync(filePath, contents, { mode: 0o755 });
 }
 
+function replaceRequired(source: string, expected: string, replacement: string): string {
+  expect(source).toContain(expected);
+  return source.replace(expected, replacement);
+}
+
 function runInstall(
   installedVersion: string,
   targetVersion: string,
@@ -106,20 +111,20 @@ esac
       : '#!/usr/bin/env bash\nexec /bin/sleep "$@"\n';
   writeExecutable(path.join(bin, "sleep"), sleepBody);
 
-  let installerSource = fs
-    .readFileSync(INSTALLER, "utf8")
-    .replace(
+  let installerSource = replaceRequired(
+    replaceRequired(
+      fs.readFileSync(INSTALLER, "utf8"),
       "BOOTSTRAP_LOOKUP_TIMEOUT_SECONDS=30",
       `BOOTSTRAP_LOOKUP_TIMEOUT_SECONDS=${options.lookupTimeoutSeconds ?? 30}`,
-    )
-    .replace(
-      "BOOTSTRAP_CLI_LOOKUP_MAX_OUTPUT_BYTES=65536",
-      `BOOTSTRAP_CLI_LOOKUP_MAX_OUTPUT_BYTES=${options.lookupMaxOutputBytes ?? 65536}`,
-    )
-    .replace(
-      "BOOTSTRAP_TAG_LOOKUP_MAX_OUTPUT_BYTES=1048576",
-      `BOOTSTRAP_TAG_LOOKUP_MAX_OUTPUT_BYTES=${options.tagLookupMaxOutputBytes ?? 1048576}`,
-    );
+    ),
+    "BOOTSTRAP_CLI_LOOKUP_MAX_OUTPUT_BYTES=65536",
+    `BOOTSTRAP_CLI_LOOKUP_MAX_OUTPUT_BYTES=${options.lookupMaxOutputBytes ?? 65536}`,
+  );
+  installerSource = replaceRequired(
+    installerSource,
+    "BOOTSTRAP_TAG_LOOKUP_MAX_OUTPUT_BYTES=1048576",
+    `BOOTSTRAP_TAG_LOOKUP_MAX_OUTPUT_BYTES=${options.tagLookupMaxOutputBytes ?? 1048576}`,
+  );
   installerSource = options.lookupSignal
     ? installerSource.replace(
         "  command_pid=$!\n  set +m",
@@ -198,6 +203,7 @@ describe("public installer downgrade guard", () => {
 
     expect(result.status).toBe(0);
     expect(fs.existsSync(payloadMarker)).toBe(true);
+    expect(fs.readFileSync(payloadMarker, "utf8")).toBe("target-commit|v0.0.109|lkg");
   });
 
   it("keeps a newer installed prerelease when the implicit lkg release is older", () => {
