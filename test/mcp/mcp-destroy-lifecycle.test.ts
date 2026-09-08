@@ -65,15 +65,12 @@ vi.mock("../../src/lib/adapters/dns/resolve", () => ({
   resolveHostAddresses: testState.resolveHostAddresses,
 }));
 
-vi.mock(
-  "../../src/lib/actions/sandbox/mcp-bridge-provider-inspection",
-  async (importOriginal) => ({
-    ...(await importOriginal<
-      typeof import("../../src/lib/actions/sandbox/mcp-bridge-provider-inspection")
-    >()),
-    getMcpProviderInspectionRuntimeSelection: () => testState.runtimeSelection,
-  }),
-);
+vi.mock("../../src/lib/actions/sandbox/mcp-bridge-provider-inspection", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("../../src/lib/actions/sandbox/mcp-bridge-provider-inspection")
+  >()),
+  getMcpProviderInspectionRuntimeSelection: () => testState.runtimeSelection,
+}));
 
 vi.mock("../../src/lib/adapters/openshell/runtime", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../src/lib/adapters/openshell/runtime")>()),
@@ -290,7 +287,7 @@ beforeEach(() => {
         return provider
           ? {
               status: 0,
-              stdout: `Id: ${provider.id}\nType: nemoclaw-mcp-v1\nResource version: ${provider.resourceVersion ?? 1}\nCredential keys: ${provider.credential}\n`,
+              stdout: `Name: ${args[2]}\nId: ${provider.id}\nType: nemoclaw-mcp-v1\nResource version: ${provider.resourceVersion ?? 1}\nCredential keys: ${provider.credential}\nConfig keys: <none>\n`,
               stderr: "",
             }
           : { status: 1, stdout: "", stderr: "Provider not found" };
