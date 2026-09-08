@@ -7,8 +7,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { shellQuote } from "../../src/lib/core/shell-quote";
+import { extractShellFunctionFromSource } from "./shell-function-extractor";
 
-export { extractShellFunctionFromSource as extractShellFunction } from "./shell-function-extractor";
+export function extractShellFunction(src: string, name: string): string {
+  return extractShellFunctionFromSource(src, name, "agents/hermes/start.sh");
+}
 
 export function bashPrintfQ(value: string): string {
   const result = spawnSync("bash", ["-c", "printf '%q' \"$1\"", "bash-printf-q", value], {
@@ -52,12 +55,9 @@ export function runHermesBashHarness(
   const script = path.join(tmpDir, "run.sh");
   fs.writeFileSync(
     script,
-    [
-      "#!/usr/bin/env bash",
-      "set -uo pipefail",
-      "HERMES_MCP_RECONCILE_PENDING=0",
-      ...lines,
-    ].join("\n"),
+    ["#!/usr/bin/env bash", "set -uo pipefail", "HERMES_MCP_RECONCILE_PENDING=0", ...lines].join(
+      "\n",
+    ),
     { mode: 0o700 },
   );
 
