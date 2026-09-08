@@ -3,13 +3,9 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import type { RebuildRecreateOnboardOpts } from "../../../src/lib/actions/sandbox/rebuild-gpu-opt-out.ts";
-import { runRebuildRecreatePhase } from "../../../src/lib/actions/sandbox/rebuild-recreate-phase.ts";
+import { rebuildOnboardDependencies } from "../../../src/lib/actions/sandbox/rebuild-onboard-dependencies.ts";
 import { MessagingSetupApplier } from "../../../src/lib/messaging/applier/setup-applier.ts";
 import type { SandboxMessagingPlan } from "../../../src/lib/messaging/manifest/index.ts";
-import { decisionSelected } from "../../../src/lib/state/onboard-checkpoint-decision.ts";
-import { deriveCheckpointFromSession } from "../../../src/lib/state/onboard-checkpoint-migrate.ts";
-import * as onboardSession from "../../../src/lib/state/onboard-session.ts";
 import {
   GOOGLECHAT_E2E_ACCESS_TOKEN,
   addAndRebuildGooglechatForChannelsStopStartLiveE2e,
@@ -20,7 +16,7 @@ import {
 type CredentialProviderRegistrationModule =
   typeof import("../../../src/lib/onboard/credential-provider-registration.ts");
 type OnboardModule = {
-  onboard(options: RebuildRecreateOnboardOpts): Promise<void>;
+  onboard(options: Parameters<typeof rebuildOnboardDependencies.onboard>[0]): Promise<void>;
 };
 type SetupApplierModule = typeof import("../../../src/lib/messaging/applier/setup-applier.ts");
 type FixtureRunner = typeof import("../../../src/lib/adapters/openshell/runtime.ts").runOpenshell;
@@ -30,139 +26,6 @@ const commonJsRegistration =
   require("../../../src/lib/onboard/credential-provider-registration") as CredentialProviderRegistrationModule;
 const commonJsSetupApplier =
   require("../../../src/lib/messaging/applier/setup-applier") as SetupApplierModule;
-
-async function runRealRebuildRecreateHandoff(plan: SandboxMessagingPlan): Promise<boolean> {
-  const gatewayAuthority = {
-    gatewayName: "test-gateway",
-    gatewayPort: 8080,
-    mode: "nemoclaw-managed",
-    source: "standalone",
-    endpoint: null,
-    stateDir: null,
-    supervisor: null,
-    requiredCapabilities: [],
-  } as const;
-  let session = onboardSession.createSession({ sandboxName: plan.sandboxName });
-  session.checkpoint = {
-    ...deriveCheckpointFromSession(session),
-    sandboxIdentity: decisionSelected({ name: plan.sandboxName, agent: plan.agent }),
-    gatewayAuthority: decisionSelected(gatewayAuthority),
-    sandboxRecreate: {
-      version: 1,
-      id: "fixture-journal",
-      revision: 1,
-      sandboxName: plan.sandboxName,
-      gatewayName: gatewayAuthority.gatewayName,
-      gatewayPort: gatewayAuthority.gatewayPort,
-      sourceRegistryFingerprint: "fixture-registry",
-      sourceLiveIdentityFingerprint: "fixture-live-identity",
-      sourceWorkload: null,
-      targetIntentFingerprint: "fixture-intent",
-      targetGeneration: "fixture-generation",
-      targetLiveIdentityFingerprint: null,
-      phase: "deleted",
-      startedAt: "2026-09-08T00:00:00.000Z",
-      updatedAt: "2026-09-08T00:00:01.000Z",
-    },
-  };
-  vi.spyOn(console, "log").mockImplementation(() => undefined);
-  vi.spyOn(console, "error").mockImplementation(() => undefined);
-  vi.spyOn(onboardSession, "loadSession").mockImplementation(() => session);
-  vi.spyOn(onboardSession, "updateSession").mockImplementation((mutator) => {
-    session = mutator(session) ?? session;
-    return session;
-  });
-
-  return runRebuildRecreatePhase({
-    sandboxName: plan.sandboxName,
-    sandboxEntry: { name: plan.sandboxName, agent: plan.agent },
-    sessionSnapshot: onboardSession.createSession({ sandboxName: plan.sandboxName }),
-    sessionMatchesSandbox: true,
-    durableConfig: {
-      dcodeAutoApprovalMode: "disabled",
-      dcodeAutoApprovalModeError: null,
-      fromDockerfile: null,
-      fromDockerfileError: null,
-      hermesAuthMethod: null,
-      hermesAuthMethodError: null,
-      webSearchConfig: null,
-      webSearchError: null,
-      toolDisclosure: "progressive",
-      toolDisclosureError: null,
-    },
-    resumeConfig: {
-      agent: plan.agent,
-      provider: "nvidia",
-      model: "nvidia/test-model",
-      nimContainer: null,
-      credentialEnv: "NVIDIA_API_KEY",
-      preferredInferenceApi: null,
-      compatibleEndpointReasoning: null,
-      compatibleEndpointReasoningEffort: null,
-      pinEndpoint: true,
-      endpointUrl: "https://integrate.api.nvidia.com/v1",
-      registryInferenceRoute: null,
-      ambient: { presentVars: [], agentMismatch: null },
-    },
-    recreateOptions: {
-      resume: true,
-      nonInteractive: true,
-      recreateSandbox: true,
-      authoritativeResumeConfig: true,
-      rebuildPolicySourcePath: "/tmp/fixture-policy.yaml",
-      acceptThirdPartySoftware: true,
-      agent: plan.agent,
-      recreateProvider: "nvidia",
-      recreateModel: "nvidia/test-model",
-      recreatePreferredInferenceApi: "openai",
-      fromDockerfile: null,
-      sandboxGpu: null,
-      sandboxGpuDevice: null,
-      controlUiPort: null,
-      targetGatewayName: gatewayAuthority.gatewayName,
-      targetGatewayPort: gatewayAuthority.gatewayPort,
-      onboardLockAlreadyHeld: true,
-      deferProcessExit: true,
-      autoYes: true,
-      toolDisclosure: "progressive",
-      dcodeAutoApprovalMode: "disabled",
-      dcodeAutoApprovalRequestedExplicitly: false,
-      observabilityEnabled: false,
-      observabilityRequestedExplicitly: false,
-      baseImageResolutionHint: null,
-      rebuildGatewayAuthority: gatewayAuthority,
-    },
-    recreateJournal: {
-      id: "fixture-journal",
-      acceptedTarget: false,
-      sourceConfirmedAbsent: false,
-      gatewayAuthority,
-      targetGeneration: "fixture-generation",
-      targetIntentFingerprint: "fixture-intent",
-      beginDelete: vi.fn(() => "source" as const),
-      confirmDeleted: vi.fn(),
-      completeAcceptedTarget: vi.fn(),
-    },
-    fromDockerfile: null,
-    rebuildAgent: plan.agent,
-    messagingPlan: plan,
-    rebuildsHermesSandbox: plan.agent === "hermes",
-    hermesToolGateways: [],
-    hasHermesToolGateways: false,
-    policySourcePath: "/tmp/fixture-policy.yaml",
-    credentialEnv: "NVIDIA_API_KEY",
-    baseImagePreflight: { ok: true, imageRef: null, overrideEnvVar: null },
-    recoveryRecreate: false,
-    preparedBackupRecovery: false,
-    registryRollback: { recordRemoval: vi.fn(), restoreForRetry: vi.fn() },
-    backupManifest: null,
-    mcpEntries: [],
-    log: vi.fn(),
-    bail: vi.fn((message: string): never => {
-      throw new Error(`bail: ${message}`);
-    }),
-  });
-}
 
 describe("channels stop/start Google Chat live composition", () => {
   it.each([
@@ -227,9 +90,6 @@ describe("channels stop/start Google Chat live composition", () => {
         persistMigratedLegacyKeys: vi.fn(),
       });
       const onboard = vi.spyOn(commonJsOnboard, "onboard").mockImplementation(async () => {
-        const rebuildPlan = commonJsSetupApplier.MessagingSetupApplier.requirePlanFromEnv();
-        expect(rebuildPlan).toEqual(plan);
-        expect(onboardSession.loadSession()?.messagingPlan).toEqual(plan);
         await registration.applyMessagingProviders(
           [
             {
@@ -241,17 +101,10 @@ describe("channels stop/start Google Chat live composition", () => {
           ],
           {},
           runOpenshell,
-          rebuildPlan,
+          plan,
         );
       });
       const originalServiceAccount = process.env.GOOGLECHAT_SERVICE_ACCOUNT;
-      const originalMessagingPlan = process.env.NEMOCLAW_MESSAGING_PLAN_B64;
-      const restoreMessagingPlan =
-        originalMessagingPlan === undefined
-          ? () => Reflect.deleteProperty(process.env, "NEMOCLAW_MESSAGING_PLAN_B64")
-          : () => {
-              process.env.NEMOCLAW_MESSAGING_PLAN_B64 = originalMessagingPlan;
-            };
       const restoreServiceAccount =
         originalServiceAccount === undefined
           ? () => Reflect.deleteProperty(process.env, "GOOGLECHAT_SERVICE_ACCOUNT")
@@ -284,7 +137,7 @@ describe("channels stop/start Google Chat live composition", () => {
             revalidateSandboxIdentity: () => undefined,
           },
         );
-        await expect(runRealRebuildRecreateHandoff(plan)).resolves.toBe(true);
+        await rebuildOnboardDependencies.onboard({} as never);
 
         expect(addProviderNames).toEqual([providerName]);
         expect(onboard).toHaveBeenCalledOnce();
@@ -340,7 +193,6 @@ describe("channels stop/start Google Chat live composition", () => {
       } finally {
         fixture();
         restoreServiceAccount();
-        restoreMessagingPlan();
         vi.restoreAllMocks();
       }
     },
