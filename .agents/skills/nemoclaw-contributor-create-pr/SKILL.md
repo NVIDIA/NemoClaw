@@ -206,8 +206,10 @@ prepared inputs, observed PR identities and relevant state, and every differing 
 PRs exist or any field differs. Include whether the write response was successful or inconclusive and
 state that recovery requires a later invocation rather than a retry from the observed state.
 
-When no PR exists, repeat the remote-branch and open-PR checks immediately before one creation retry.
-Stop when either state changed or cannot be read. Do not make a second retry.
+After a successful creation response, treat zero or mismatched PRs as unknown state and stop without a
+retry. Only when the response was inconclusive and no PR exists, repeat the remote-branch and open-PR
+checks immediately before one creation retry. Stop when either state changed or cannot be read. Do not
+make a second retry.
 
 ### Assignment
 
