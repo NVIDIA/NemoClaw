@@ -391,7 +391,7 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
     expect(logs.join("\n")).toContain(result?.cleanup?.resourceName ?? "missing-resource");
   });
 
-  it("removes a proof container that appears after the first absent cleanup observation", () => {
+  it("removes a proof container that appears after the former five-poll cleanup window", () => {
     const uuid = "123e4567-e89b-42d3-a456-426614174001";
     const resourceName = `nemoclaw-gpu-proof-${uuid}`;
     const containerId = "c".repeat(64);
@@ -399,6 +399,11 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
     const captureHostCommand = vi
       .fn()
       .mockReturnValueOnce({ status: 1, stdout: "", stderr: "", error: timeout })
+      .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" })
+      .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" })
+      .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" })
+      .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" })
+      .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" })
       .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" })
       .mockReturnValueOnce({
         status: 0,
@@ -421,7 +426,7 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
       cleanup: { resourceName, status: "removed" },
     });
     expect(captureHostCommand).toHaveBeenNthCalledWith(
-      4,
+      9,
       "docker",
       ["rm", "-f", containerId],
       expect.any(Number),

@@ -12,7 +12,6 @@ const OWNERSHIP_LABEL = /^[a-z0-9][a-z0-9_.-]{0,127}$/u;
 const OWNERSHIP_VALUE = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/u;
 const FULL_CONTAINER_ID = /^[a-f0-9]{64}$/u;
 const CLEANUP_DEFAULT_TIMEOUT_MS = 15_000;
-const CLEANUP_ABSENCE_CONFIRMATIONS = 5;
 const CLEANUP_OBSERVATION_INTERVAL_MS = 100;
 const cleanupWaitArray = new Int32Array(new SharedArrayBuffer(4));
 
@@ -52,10 +51,10 @@ export function cleanupOwnedContainer(
   timeoutMs?: number,
 ): RuntimeProviderOwnedContainerCleanupResult {
   validateOwnedContainerResource(resource);
-  const deadline = Date.now() + (timeoutMs ?? CLEANUP_DEFAULT_TIMEOUT_MS);
-  for (let attempt = 0; attempt < CLEANUP_ABSENCE_CONFIRMATIONS; attempt += 1) {
-    const remainingMs = deadline - Date.now();
-    if (remainingMs <= 0) return { status: "failed" };
+  const deadline = performance.now() + (timeoutMs ?? CLEANUP_DEFAULT_TIMEOUT_MS);
+  for (;;) {
+    const remainingMs = Math.floor(deadline - performance.now());
+    if (remainingMs <= 0) return { status: "absent" };
     const discovery = capture(
       [
         "ps",
@@ -82,15 +81,15 @@ export function cleanupOwnedContainer(
       ) {
         return { status: "failed" };
       }
-      return capture(["rm", "-f", containerId!], Math.max(1, deadline - Date.now())).status === 0
+      return capture(
+        ["rm", "-f", containerId!],
+        Math.max(1, Math.floor(deadline - performance.now())),
+      ).status === 0
         ? { status: "removed" }
         : { status: "failed" };
     }
-    if (attempt + 1 < CLEANUP_ABSENCE_CONFIRMATIONS) {
-      waitForCleanupObservation(
-        Math.min(CLEANUP_OBSERVATION_INTERVAL_MS, Math.max(1, deadline - Date.now())),
-      );
-    }
+    const observationRemainingMs = Math.floor(deadline - performance.now());
+    if (observationRemainingMs <= 0) return { status: "absent" };
+    waitForCleanupObservation(Math.min(CLEANUP_OBSERVATION_INTERVAL_MS, observationRemainingMs));
   }
-  return { status: "absent" };
 }
