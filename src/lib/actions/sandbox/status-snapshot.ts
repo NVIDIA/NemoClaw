@@ -693,14 +693,9 @@ export async function collectSandboxStatusSnapshot(
   // Classify once per snapshot so every renderer observes the same receipt state.
   // A complete matching live route is required because the shared gateway route
   // may belong to another sandbox or provider entirely (#10256).
-  const liveRouteMatchesRecorded = Boolean(
-    recordedRoute &&
-      liveRoute &&
-      liveRoute.provider === recordedRoute.provider &&
-      liveRoute.model === recordedRoute.model,
-  );
-  const llamaCpp = liveRouteMatchesRecorded
-    ? getLlamaCppRouteDetails(
+  const llamaCpp =
+    routeDriftPlan?.kind === "aligned"
+      ? getLlamaCppRouteDetails(
         sb,
         opts.deps?.inspectManagedLlamaCppOwnership ?? inspectManagedLlamaCppOwnership,
       )
