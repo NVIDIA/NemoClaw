@@ -19,10 +19,13 @@ import {
   normalizeMcpToolPage,
   runMcpToolDiscoverySession,
 } from "./tool-discovery-core.ts";
+import { normalizeMcpSdkError } from "./mcp-sdk-error.ts";
 
 test("classifies only the SDK request-timeout code as a remote request timeout (#10944)", () => {
   const timeout = mcpToolDiscoveryFailure(
-    new McpError(ErrorCode.RequestTimeout, "Bearer untrusted-timeout-detail"),
+    normalizeMcpSdkError(
+      new McpError(ErrorCode.RequestTimeout, "Bearer untrusted-timeout-detail"),
+    ),
     "tool-discovery",
   );
   assert.deepEqual(timeout, {
@@ -36,9 +39,11 @@ test("classifies only the SDK request-timeout code as a remote request timeout (
   });
 
   const remoteFailure = mcpToolDiscoveryFailure(
-    new McpError(
-      ErrorCode.InternalError,
-      "remote tool operation timed out with Bearer untrusted-timeout-detail",
+    normalizeMcpSdkError(
+      new McpError(
+        ErrorCode.InternalError,
+        "remote tool operation timed out with Bearer untrusted-timeout-detail",
+      ),
     ),
     "tool-discovery",
   );

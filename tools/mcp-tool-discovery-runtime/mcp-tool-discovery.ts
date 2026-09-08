@@ -14,9 +14,18 @@ import {
   parseMcpToolDiscoveryArguments,
   runMcpToolDiscoverySession,
 } from "./tool-discovery-core.ts";
+import { normalizeMcpSdkError } from "./mcp-sdk-error.ts";
 
 function writeResult(result: McpToolDiscoveryResult): void {
   process.stdout.write(`${JSON.stringify({ protocol: MCP_TOOL_DISCOVERY_PROTOCOL, ...result })}\n`);
+}
+
+async function callMcpSdk<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    throw normalizeMcpSdkError(error);
+  }
 }
 
 async function main(): Promise<void> {
@@ -83,11 +92,12 @@ async function main(): Promise<void> {
   };
 
   await runMcpToolDiscoverySession({
-    connect: () => client.connect(transport, requestOptions),
-    loadPage: async (cursor) => {
-      const page = await client.listTools(cursor ? { cursor } : undefined, requestOptions);
-      return normalizeMcpToolPage(page);
-    },
+    connect: () => callMcpSdk(() => client.connect(transport, requestOptions)),
+    loadPage: (cursor) =>
+      callMcpSdk(async () => {
+        const page = await client.listTools(cursor ? { cursor } : undefined, requestOptions);
+        return normalizeMcpToolPage(page);
+      }),
     hasSession: () => Boolean(transport.sessionId),
     terminateSession: () => transport.terminateSession(),
     close: () => client.close(),

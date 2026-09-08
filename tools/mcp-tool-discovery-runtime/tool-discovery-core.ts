@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
-
 export const MCP_TOOL_DISCOVERY_PROTOCOL = 2;
 
 export const MCP_TOOL_DISCOVERY_LIMITS = {
@@ -127,12 +125,6 @@ export class ToolDiscoveryRuntimeError extends Error {
     this.code = code;
     this.httpStatus = httpStatus;
   }
-}
-
-function normalizeMcpToolDiscoveryError(error: unknown): unknown {
-  return error instanceof McpError && error.code === ErrorCode.RequestTimeout
-    ? new ToolDiscoveryRuntimeError("timeout")
-    : error;
 }
 
 function utf8Bytes(value: string): number {
@@ -356,14 +348,13 @@ export function createBoundedMcpFetch(
 }
 
 export function safeToolDiscoveryErrorDetail(error: unknown): string {
-  const normalizedError = normalizeMcpToolDiscoveryError(error);
-  if (normalizedError instanceof ToolDiscoveryRuntimeError) {
-    switch (normalizedError.code) {
+  if (error instanceof ToolDiscoveryRuntimeError) {
+    switch (error.code) {
       case "connection":
         return "MCP endpoint connection failed";
       case "http-error":
-        return typeof normalizedError.httpStatus === "number"
-          ? `MCP endpoint rejected the request (HTTP ${normalizedError.httpStatus})`
+        return typeof error.httpStatus === "number"
+          ? `MCP endpoint rejected the request (HTTP ${error.httpStatus})`
           : "MCP endpoint rejected the request";
       case "invalid-response":
         return "MCP endpoint returned an invalid tool-list response";
@@ -382,14 +373,13 @@ export function mcpToolDiscoveryFailure(
   error: unknown,
   failedStage: Extract<McpToolDiscoveryFailedStage, "initialization" | "tool-discovery">,
 ): McpToolDiscoveryFailureResult {
-  const normalizedError = normalizeMcpToolDiscoveryError(error);
   let failureClass: McpToolDiscoveryFailureClass;
-  if (normalizedError instanceof ToolDiscoveryRuntimeError) {
-    if (normalizedError.code === "connection" || normalizedError.code === "timeout") {
+  if (error instanceof ToolDiscoveryRuntimeError) {
+    if (error.code === "connection" || error.code === "timeout") {
       failureClass = "connection";
     } else if (
-      normalizedError.code === "http-error" &&
-      (normalizedError.httpStatus === 401 || normalizedError.httpStatus === 403)
+      error.code === "http-error" &&
+      (error.httpStatus === 401 || error.httpStatus === 403)
     ) {
       failureClass = "authentication";
     } else {
@@ -403,7 +393,7 @@ export function mcpToolDiscoveryFailure(
     count: 0,
     tools: [],
     truncated: false,
-    detail: safeToolDiscoveryErrorDetail(normalizedError),
+    detail: safeToolDiscoveryErrorDetail(error),
     failedStage,
     failureClass,
   };
