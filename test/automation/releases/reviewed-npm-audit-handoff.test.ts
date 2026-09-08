@@ -90,7 +90,7 @@ describe("reviewed npm audit handoff", () => {
     },
   );
 
-  it("passes producer output through the protected audit helper and rejects a forged report", () => {
+  it("passes producer output through protected audit handoffs and rejects forged reports", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "reviewed-audit-receipt-handoff-"));
     const packageJsonFile = path.join(root, "package.json");
     const packageLockFile = path.join(root, "package-lock.json");
@@ -217,6 +217,30 @@ describe("reviewed npm audit handoff", () => {
       expect(fs.readFileSync(nodeLog, "utf8").trim().split("\n").at(-1)).toBe(
         verifierArgs.join(" "),
       );
+
+      const seedEvidence = path.join(root, "seed", "reviewed-npm-audit");
+      const seedHelper = path.join(root, "verify-mcporter-seed-audit.sh");
+      fs.mkdirSync(seedEvidence, { recursive: true });
+      fs.copyFileSync(receiptFile, path.join(seedEvidence, "mcporter-runtime.receipt.json"));
+      fs.writeFileSync(path.join(seedEvidence, "mcporter-runtime.raw.json"), rawReport);
+      fs.writeFileSync(
+        path.join(seedEvidence, "mcporter-runtime.receipt.sha256"),
+        `${createHash("sha256").update(fs.readFileSync(receiptFile)).digest("hex")}\n`,
+      );
+      fs.writeFileSync(
+        seedHelper,
+        helperSource
+          .replaceAll(receiptFile, path.join(root, "missing-secret-receipt"))
+          .replaceAll(transportRawReport, path.join(root, "missing-secret-report"))
+          .replaceAll(path.join(root, "no-seed"), seedEvidence),
+        { mode: 0o755 },
+      );
+      const rejectedSeed = spawnSync("bash", [seedHelper], {
+        encoding: "utf8",
+        env: { ...process.env, NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256: "" },
+      });
+      expect(rejectedSeed.status).not.toBe(0);
+      expect(rejectedSeed.stderr).toContain("build-context mcporter audit evidence is not trusted");
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

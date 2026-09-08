@@ -254,21 +254,20 @@ describe("mcporter image supply-chain controls", () => {
       "NEMOCLAW_REVIEWED_NPM_AUDIT_LOCKED_GRAPH=mcporter-runtime NEMOCLAW_REVIEWED_NPM_AUDIT_REPORT_DIR=artifacts/reviewed-npm-audit",
     );
     expect(producer).toContain("FROM scratch AS protected-mcporter-audit-evidence");
-    expect(contents).toContain("FROM scratch AS protected-mcporter-audit-cache");
     expect(contents).toContain(
       "COPY scripts/lib/verify-mcporter-audit.sh /scripts/lib/verify-mcporter-audit.sh",
     );
     expect(contents).toContain(
       "--mount=type=secret,id=nemoclaw-mcporter-audit-receipt,required=false",
     );
-    expect(contents).toContain("from=protected-mcporter-audit-cache");
+    expect(contents).not.toContain("from=protected-mcporter-audit-cache");
     expect(mcporterAuditHelper).toContain(
       "seed=/run/nemoclaw-mcporter-audit-cache/reviewed-npm-audit",
     );
     expect(mcporterAuditHelper).toContain(
       "cached mcporter audit requires paired receipt, raw report, and receipt SHA-256",
     );
-    expect(mcporterAuditHelper).toContain("seed-cached mcporter audit evidence is incomplete");
+    expect(mcporterAuditHelper).toContain("build-context mcporter audit evidence is not trusted");
     expect(installStart).toBeGreaterThanOrEqual(0);
     expect(installEnd).toBeGreaterThan(installStart);
     expect(protectedInstall).not.toMatch(/RUN --network=(?:default|host)/);

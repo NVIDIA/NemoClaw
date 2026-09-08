@@ -555,10 +555,6 @@ if [[ -n "$cache_to" ]]; then
     --os "$npm_target_os" \
     --cpu "$npm_target_cpu" \
     --libc "$npm_target_libc"
-  install -d -m 0700 "$cache_to/npm-cache-seed/reviewed-npm-audit"
-  install -m 0400 \
-    "$audit_receipt" "$audit_raw_report" "$audit_evidence_dir/mcporter-runtime.receipt.sha256" \
-    "$cache_to/npm-cache-seed/reviewed-npm-audit/"
   node --experimental-strip-types --no-warnings "$seed_helper" export \
     --lockfile "$source_mcp_lockfile" \
     --output "$cache_to/mcp-runtime-npm-cache-seed" \

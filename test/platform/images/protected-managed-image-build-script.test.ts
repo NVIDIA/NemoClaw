@@ -264,11 +264,7 @@ function recordedBuildInvocation(agent: string): string {
   return invocation!;
 }
 
-function runBuild(
-  sourceRoot: string,
-  extraArgs: readonly string[] = [],
-  platform = "linux/amd64",
-) {
+function runBuild(sourceRoot: string, extraArgs: readonly string[] = [], platform = "linux/amd64") {
   const output = path.join(testRoot, "contracts.json");
   return spawnSync(
     "bash",
@@ -385,7 +381,9 @@ describe("protected managed-image build-cache boundary", () => {
     expect(recordedBuildInvocation("openclaw")).toContain("--build-arg TARGETARCH=arm64");
     expect(recordedBuildInvocation("hermes")).toContain("--platform linux/arm64");
     expect(recordedBuildInvocation("hermes")).toContain("--build-arg TARGETARCH=arm64");
-    expect(recordedBuildInvocation("langchain-deepagents-code")).toContain("--platform linux/arm64");
+    expect(recordedBuildInvocation("langchain-deepagents-code")).toContain(
+      "--platform linux/arm64",
+    );
     expect(recordedBuildInvocation("langchain-deepagents-code")).toContain(
       "--build-arg TARGETARCH=arm64",
     );
@@ -424,8 +422,12 @@ describe("protected managed-image build-cache boundary", () => {
     expect(recordedBuildInvocation("openclaw")).toContain("--build-arg TARGETARCH=arm64");
     expect(recordedBuildInvocation("hermes")).toContain("--platform linux/arm64");
     expect(recordedBuildInvocation("hermes")).toContain("--build-arg TARGETARCH=arm64");
-    expect(recordedBuildInvocation("langchain-deepagents-code")).toContain("--platform linux/arm64");
-    expect(recordedBuildInvocation("langchain-deepagents-code")).toContain("--build-arg TARGETARCH=arm64");
+    expect(recordedBuildInvocation("langchain-deepagents-code")).toContain(
+      "--platform linux/arm64",
+    );
+    expect(recordedBuildInvocation("langchain-deepagents-code")).toContain(
+      "--build-arg TARGETARCH=arm64",
+    );
   });
 
   it("passes each agent one empty absolute cache export root", () => {
@@ -485,15 +487,6 @@ describe("protected managed-image build-cache boundary", () => {
         "utf8",
       ),
     ).toBe(`${DIGEST}\n`);
-    expect(
-      readFileSync(
-        path.join(
-          cacheRoot,
-          "npm-cache-seed/reviewed-npm-audit/mcporter-runtime.receipt.sha256",
-        ),
-        "utf8",
-      ),
-    ).toBe(`${DIGEST}\n`);
     expect(recordedBuildInvocation("openclaw")).toContain(
       `--secret id=nemoclaw-mcporter-audit-receipt,src=${realpathSync(cacheRoot)}/reviewed-npm-audit/mcporter-runtime.receipt.json`,
     );
@@ -539,9 +532,7 @@ describe("protected managed-image build-cache boundary", () => {
     expect(output).toContain(
       "outcome=transient-external agent=reviewed-npm-audit attempt=1/2 retry-in=2s failure=buildkit-http2-internal-error",
     );
-    expect(output).toContain(
-      "outcome=passed-after-retry agent=reviewed-npm-audit attempt=2/2",
-    );
+    expect(output).toContain("outcome=passed-after-retry agent=reviewed-npm-audit attempt=2/2");
   });
 
   it.each([

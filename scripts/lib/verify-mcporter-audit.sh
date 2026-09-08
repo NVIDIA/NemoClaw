@@ -15,14 +15,8 @@ if [[ -e "$receipt" || -L "$receipt" || -e "$raw_report" || -L "$raw_report" || 
     exit 1
   }
 elif [[ -e "$seed" || -L "$seed" ]]; then
-  receipt="$seed/mcporter-runtime.receipt.json"
-  raw_report="$seed/mcporter-runtime.raw.json"
-  receipt_hash="$seed/mcporter-runtime.receipt.sha256"
-  [[ -d "$seed" && ! -L "$seed" && -f "$receipt" && ! -L "$receipt" && -f "$raw_report" && ! -L "$raw_report" && -f "$receipt_hash" && ! -L "$receipt_hash" ]] || {
-    echo "ERROR: seed-cached mcporter audit evidence is incomplete" >&2
-    exit 1
-  }
-  read -r receipt_sha256 <"$receipt_hash"
+  echo "ERROR: build-context mcporter audit evidence is not trusted" >&2
+  exit 1
 else
   exec node --experimental-strip-types /scripts/lib/reviewed-npm-audit.mts \
     --directory /usr/local/lib/nemoclaw/mcporter-runtime \

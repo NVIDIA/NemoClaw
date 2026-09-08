@@ -7,7 +7,6 @@ import {
   chmodSync,
   existsSync,
   mkdtempSync,
-  mkdirSync,
   readdirSync,
   readFileSync,
   rmSync,
@@ -72,21 +71,6 @@ function writeLock(root: string, archives: readonly LockedArchive[]): string {
   return lockfile;
 }
 
-function writeReviewedAuditEvidence(seed: string): void {
-  const directory = path.join(seed, "reviewed-npm-audit");
-  const rawReport = Buffer.from('{"metadata":{"vulnerabilities":{}}}\n');
-  const receipt = Buffer.from(
-    `${JSON.stringify({ rawResponseSha256: crypto.createHash("sha256").update(rawReport).digest("hex") })}\n`,
-  );
-  mkdirSync(directory);
-  writeFileSync(path.join(directory, "mcporter-runtime.raw.json"), rawReport);
-  writeFileSync(path.join(directory, "mcporter-runtime.receipt.json"), receipt);
-  writeFileSync(
-    path.join(directory, "mcporter-runtime.receipt.sha256"),
-    `${crypto.createHash("sha256").update(receipt).digest("hex")}\n`,
-  );
-}
-
 let testRoot = "";
 
 beforeEach(() => {
@@ -119,7 +103,6 @@ describe("locked npm cache seed materialization", () => {
       output: seed,
       target: TARGET,
     });
-    writeReviewedAuditEvidence(seed);
     const verified = await verifyAndCopyLockedNpmCacheSeed({
       lockfile,
       output: copied,
@@ -133,16 +116,10 @@ describe("locked npm cache seed materialization", () => {
       "alpha-1.0.0.tgz",
       "beta-1.0.0.tgz",
       "manifest.json",
-      "reviewed-npm-audit",
     ]);
-    expect(readdirSync(copied).sort()).toEqual([
-      "alpha-1.0.0.tgz",
-      "beta-1.0.0.tgz",
-      "reviewed-npm-audit",
-    ]);
+    expect(readdirSync(copied).sort()).toEqual(["alpha-1.0.0.tgz", "beta-1.0.0.tgz"]);
     expect(readFileSync(path.join(copied, alpha.locked.archive))).toEqual(alpha.bytes);
     expect(readFileSync(path.join(copied, beta.locked.archive))).toEqual(beta.bytes);
-    expect(readdirSync(path.join(copied, "reviewed-npm-audit"))).toHaveLength(3);
   });
 
   it("materializes only the reachable archives for the selected npm platform", async () => {
@@ -283,24 +260,6 @@ describe("locked npm cache seed materialization", () => {
     await expect(
       verifyAndCopyLockedNpmCacheSeed({ lockfile, seed, target: TARGET }),
     ).rejects.toThrow("npm cache seed directory contains missing or unexpected files");
-  });
-
-  it("rejects an incomplete reviewed audit handoff", async () => {
-    const alpha = archive("alpha", "alpha archive");
-    const lockfile = writeLock(testRoot, [alpha.locked]);
-    const seed = path.join(testRoot, "seed");
-    await materializeLockedNpmCacheSeed({
-      downloadArchive: async () => alpha.bytes,
-      lockfile,
-      output: seed,
-      target: TARGET,
-    });
-    writeReviewedAuditEvidence(seed);
-    unlinkSync(path.join(seed, "reviewed-npm-audit", "mcporter-runtime.raw.json"));
-
-    await expect(
-      verifyAndCopyLockedNpmCacheSeed({ lockfile, seed, target: TARGET }),
-    ).rejects.toThrow("reviewed npm audit evidence contains missing or unexpected files");
   });
 
   it.skipIf(process.platform === "win32")(
