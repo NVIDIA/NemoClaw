@@ -34,7 +34,6 @@ export interface DescriptorSnapshotRoot {
 
 export interface DescriptorSnapshotScan {
   readonly root: SnapshotFileIdentity;
-  readonly directories: Readonly<Record<string, SnapshotFileIdentity>>;
   readonly files: readonly SnapshotScannedFile[];
 }
 
@@ -74,13 +73,7 @@ function isSafeRelativePath(value: unknown): value is string {
 
 function parseScanResult(value: unknown): DescriptorSnapshotScan | null {
   if (!isObjectRecord(value) || !isFileIdentity(value.root)) return null;
-  if (!isObjectRecord(value.directories) || !Array.isArray(value.files)) return null;
-
-  const directories: Record<string, SnapshotFileIdentity> = {};
-  for (const [relativePath, identity] of Object.entries(value.directories)) {
-    if (!isSafeRelativePath(relativePath) || !isFileIdentity(identity)) return null;
-    directories[relativePath] = identity;
-  }
+  if (!Array.isArray(value.files)) return null;
 
   const files: SnapshotScannedFile[] = [];
   for (const candidate of value.files) {
@@ -93,7 +86,7 @@ function parseScanResult(value: unknown): DescriptorSnapshotScan | null {
       ...(typeof candidate.content === "string" ? { content: candidate.content } : {}),
     });
   }
-  return { root: value.root, directories, files };
+  return { root: value.root, files };
 }
 
 /** Resolve the packaged Node helper beside this source or compiled boundary. */
@@ -103,9 +96,7 @@ export function resolveSnapshotSanitizerHelperPath(): string {
 }
 
 /** @visibleForTesting Install an explicit helper substitute without weakening production lookup. */
-export function setSnapshotSanitizerHelperPathForTest(
-  helperPath: string | null | undefined,
-): void {
+export function setSnapshotSanitizerHelperPathForTest(helperPath: string | null | undefined): void {
   if (process.env.VITEST !== "true") {
     throw new Error("Snapshot sanitizer helper substitution is only available under Vitest");
   }

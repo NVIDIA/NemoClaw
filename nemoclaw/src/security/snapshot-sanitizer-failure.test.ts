@@ -55,7 +55,7 @@ function writeNodeHelperWrapper(beforeForward: readonly string[]): string {
     `const result = spawnSync(process.execPath, [${JSON.stringify(helper)}, process.argv[2]], {`,
     '  encoding: "utf8", env: {}, input, maxBuffer: 48 * 1024 * 1024,',
     "});",
-    'if (result.stdout) process.stdout.write(result.stdout);',
+    "if (result.stdout) process.stdout.write(result.stdout);",
     "process.exit(result.status ?? 1);",
   ]);
 }
@@ -84,26 +84,21 @@ describe("migration snapshot sanitizer fallbacks", () => {
   };
   const malformedDescriptorOutputs = [
     {
-      label: "array directories",
-      output: JSON.stringify({ root: identity, directories: [], files: [] }),
+      label: "invalid root identity",
+      output: JSON.stringify({ root: null, files: [] }),
     },
     {
-      label: "escaping directory path",
-      output: JSON.stringify({
-        root: identity,
-        directories: { "nested\\escape": identity },
-        files: [],
-      }),
+      label: "non-array files",
+      output: JSON.stringify({ root: identity, files: {} }),
     },
     {
       label: "null file",
-      output: JSON.stringify({ root: identity, directories: {}, files: [null] }),
+      output: JSON.stringify({ root: identity, files: [null] }),
     },
     {
       label: "absolute file path",
       output: JSON.stringify({
         root: identity,
-        directories: {},
         files: [{ path: "/escape", metadata: identity }],
       }),
     },
@@ -111,7 +106,6 @@ describe("migration snapshot sanitizer fallbacks", () => {
       label: "null file metadata",
       output: JSON.stringify({
         root: identity,
-        directories: {},
         files: [{ path: "config.json", metadata: null }],
       }),
     },
@@ -119,7 +113,6 @@ describe("migration snapshot sanitizer fallbacks", () => {
       label: "non-string file content",
       output: JSON.stringify({
         root: identity,
-        directories: {},
         files: [{ path: "config.json", metadata: identity, content: 42 }],
       }),
     },
@@ -142,7 +135,7 @@ describe("migration snapshot sanitizer fallbacks", () => {
     setSnapshotSanitizerHelperPathForTest(null);
 
     expect(() =>
-      applyDescriptorSnapshotActions(root, { root: identity, directories: {}, files: [] }, [
+      applyDescriptorSnapshotActions(root, { root: identity, files: [] }, [
         { kind: "remove", path: "config.json", metadata: identity },
       ]),
     ).toThrow(expect.objectContaining({ snapshotPath: root.canonicalPath }));
@@ -205,31 +198,28 @@ describe("migration snapshot sanitizer fallbacks", () => {
     },
   );
 
-  it.runIf(process.platform !== "win32")(
-    "rejects mutation of a scanned hard-linked file",
-    () => {
-      const rootPath = makeRoot();
-      const targetPath = path.join(rootPath, "auth.json");
-      const aliasPath = path.join(makeRoot(), "openclaw-alias.json");
-      writeFileSync(targetPath, "original");
-      const root = inspectDescriptorSnapshotRoot(rootPath)!;
-      const scan = scanDescriptorSnapshot(root, new Set(["auth.json"]))!;
-      const config = scan.files.find((file) => file.path === "auth.json")!;
-      linkSync(targetPath, aliasPath);
+  it.runIf(process.platform !== "win32")("rejects mutation of a scanned hard-linked file", () => {
+    const rootPath = makeRoot();
+    const targetPath = path.join(rootPath, "auth.json");
+    const aliasPath = path.join(makeRoot(), "openclaw-alias.json");
+    writeFileSync(targetPath, "original");
+    const root = inspectDescriptorSnapshotRoot(rootPath)!;
+    const scan = scanDescriptorSnapshot(root, new Set(["auth.json"]))!;
+    const config = scan.files.find((file) => file.path === "auth.json")!;
+    linkSync(targetPath, aliasPath);
 
-      expect(
-        applyDescriptorSnapshotActions(root, scan, [
-          {
-            kind: "remove",
-            path: config.path,
-            metadata: config.metadata,
-          },
-        ]),
-      ).toBe(false);
-      expect(readFileSync(targetPath, "utf8")).toBe("original");
-      expect(readFileSync(aliasPath, "utf8")).toBe("original");
-    },
-  );
+    expect(
+      applyDescriptorSnapshotActions(root, scan, [
+        {
+          kind: "remove",
+          path: config.path,
+          metadata: config.metadata,
+        },
+      ]),
+    ).toBe(false);
+    expect(readFileSync(targetPath, "utf8")).toBe("original");
+    expect(readFileSync(aliasPath, "utf8")).toBe("original");
+  });
 
   it.runIf(process.platform !== "win32")(
     "rejects a hard-linked readable config during scanning",
@@ -271,11 +261,9 @@ describe("migration snapshot sanitizer fallbacks", () => {
       writeFileSync(configPath, JSON.stringify({ apiKey: "sk-secret-value" }));
       writeFileSync(
         wrapper,
-        [
-          "#!/bin/sh",
-          `cp ${JSON.stringify(configPath)} ${JSON.stringify(stolen)}`,
-          "exit 1",
-        ].join("\n"),
+        ["#!/bin/sh", `cp ${JSON.stringify(configPath)} ${JSON.stringify(stolen)}`, "exit 1"].join(
+          "\n",
+        ),
       );
       chmodSync(wrapper, 0o755);
       vi.stubEnv("PATH", `${attackerRoot}:${process.env.PATH ?? ""}`);
@@ -296,10 +284,21 @@ describe("migration snapshot sanitizer fallbacks", () => {
     expect(readFileSync(configPath, "utf-8")).toBe(original);
   });
 
-  it("rejects non-JSON output from the descriptor helper", () => {
+  it("rejects malformed helper protocol responses", () => {
     const root = { canonicalPath: makeRoot(), identity };
     writeRawNodeHelper(['process.stdout.write("not-json");']);
     expect(scanDescriptorSnapshot(root, new Set())).toBeNull();
+
+    writeRawNodeHelper(['process.stdout.write("{}");']);
+    expect(scanDescriptorSnapshot(root, new Set())).toBeNull();
+
+    writeRawNodeHelper(["process.stdout.write('{\"ok\":true}');"]);
+    expect(scanDescriptorSnapshot(root, new Set())).toBeNull();
+
+    writeRawNodeHelper(['process.stdout.write(\'{"ok":false,"prerequisite":true}\');']);
+    expect(() => scanDescriptorSnapshot(root, new Set())).toThrow(
+      SnapshotSanitizerPrerequisiteError,
+    );
   });
 
   it.each(malformedDescriptorOutputs)(
@@ -323,7 +322,7 @@ describe("migration snapshot sanitizer fallbacks", () => {
     expect(
       applyDescriptorSnapshotActions(
         { canonicalPath: root, identity },
-        { root: identity, directories: {}, files: [] },
+        { root: identity, files: [] },
         [],
       ),
     ).toBe(true);
@@ -384,9 +383,7 @@ describe("migration snapshot sanitizer fallbacks", () => {
     const configPath = path.join(makeRoot(), "openclaw.json");
     const original = JSON.stringify({ apiKey: "sk-secret-value" });
     writeFileSync(configPath, original);
-    writeNodeHelperWrapper([
-      "if (process.argv[2] === 'apply') process.exit(1);",
-    ]);
+    writeNodeHelperWrapper(["if (process.argv[2] === 'apply') process.exit(1);"]);
 
     expect(sanitizeOpenClawConfigFile(configPath)).toBe(false);
     expect(readFileSync(configPath, "utf-8")).toBe(original);

@@ -56,6 +56,7 @@ type RestoreFixtureOptions = {
   archive?:
     | "valid"
     | "cli-directory"
+    | "missing-snapshot-helper"
     | "missing-shared"
     | "non-dist"
     | "link"
@@ -173,6 +174,14 @@ function writeMissingSharedArchive(context: ArchiveFixtureContext): void {
   );
 }
 
+function writeMissingSnapshotHelperArchive(context: ArchiveFixtureContext): void {
+  writeCliArchive(
+    context,
+    () => undefined,
+    (shared) => fs.rmSync(path.join(shared, "snapshot-sanitizer-helper.mjs")),
+  );
+}
+
 function writeSharedModuleDirectoryArchive(context: ArchiveFixtureContext): void {
   writeCliArchive(
     context,
@@ -211,6 +220,7 @@ const ARCHIVE_FIXTURE_WRITERS = {
   "cli-directory": writeCliDirectoryArchive,
   link: writeLinkArchive,
   "managed-catalog": writeManagedCatalogArchive,
+  "missing-snapshot-helper": writeMissingSnapshotHelperArchive,
   "missing-shared": writeMissingSharedArchive,
 
   "non-dist": writeNonDistArchive,
@@ -635,6 +645,13 @@ describe("exact-commit CLI artifact restore", () => {
     expectRestoreFailure(
       { archive: "missing-shared" },
       "restored CLI artifact shared module is missing or is not a nonempty regular file: sandbox-name.cjs",
+    );
+  });
+
+  it("rejects a payload missing the snapshot sanitizer helper before activation", () => {
+    expectRestoreFailure(
+      { archive: "missing-snapshot-helper" },
+      "restored CLI artifact shared module is missing or is not a nonempty regular file: snapshot-sanitizer-helper.mjs",
     );
   });
 

@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -23,6 +24,28 @@ afterEach(() => {
 });
 
 describe("snapshot sanitizer package boundary", () => {
+  it("emits both sanitizer modules from the shared boundary build owner", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-snapshot-shared-build-"));
+    roots.push(root);
+    const output = path.join(root, "dist");
+    execFileSync(
+      process.execPath,
+      [
+        path.join(REPOSITORY_ROOT, "node_modules", "typescript", "bin", "tsc"),
+        "-p",
+        path.join(REPOSITORY_ROOT, "nemoclaw", "tsconfig.shared.json"),
+        "--outDir",
+        output,
+        "--pretty",
+        "false",
+      ],
+      { cwd: REPOSITORY_ROOT },
+    );
+
+    expect(existsSync(path.join(output, "shared", "snapshot-sanitizer-boundary.cjs"))).toBe(true);
+    expect(existsSync(path.join(output, "shared", "snapshot-sanitizer-helper.mjs"))).toBe(true);
+  });
+
   it("ships and runs the compiled native helper", () => {
     const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-snapshot-package-"));
     roots.push(root);

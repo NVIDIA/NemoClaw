@@ -19,7 +19,11 @@ const CATALOG_INPUT_WRITERS = {
   symlink: (catalog: string) => fs.symlinkSync("missing-catalog.json", catalog),
 } satisfies Record<CatalogInput, (catalog: string) => void>;
 
-function runCliArtifactPackaging(catalogInput: CatalogInput, trustedCatalog = false) {
+function runCliArtifactPackaging(
+  catalogInput: CatalogInput,
+  trustedCatalog = false,
+  missingSharedModule?: string,
+) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "cli-artifact-package-"));
   const workspace = path.join(root, "workspace");
   const runnerTemp = path.join(root, "runner-temp");
@@ -94,6 +98,9 @@ exec ${JSON.stringify(systemTar)} "\${args[@]}"
   ]) {
     fs.writeFileSync(path.join(shared, boundary), "module.exports = {};\n");
   }
+  fs.rmSync(path.join(shared, missingSharedModule ?? "__all-shared-modules-present__"), {
+    force: true,
+  });
 
   const catalog = path.join(dist, "e2e-managed-image-catalog.json");
   CATALOG_INPUT_WRITERS[catalogInput](catalog);
@@ -168,4 +175,17 @@ describe("CLI artifact packaging", () => {
       }
     },
   );
+
+  it("rejects a candidate missing the snapshot sanitizer helper before artifact creation", () => {
+    const fixture = runCliArtifactPackaging("absent", false, "snapshot-sanitizer-helper.mjs");
+    try {
+      expect(fixture.result.status, fixture.output).not.toBe(0);
+      expect(fixture.output).toContain(
+        "candidate CLI build shared module is missing or is not a nonempty regular file: snapshot-sanitizer-helper.mjs",
+      );
+      expect(fixture.artifactExists).toBe(false);
+    } finally {
+      fixture.cleanup();
+    }
+  });
 });

@@ -47,7 +47,6 @@ type SnapshotScannedFile = Readonly<{
 
 type DescriptorSnapshotScan = Readonly<{
   root: SnapshotFileIdentity;
-  directories: Readonly<Record<string, SnapshotFileIdentity>>;
   files: readonly SnapshotScannedFile[];
 }>;
 
@@ -206,7 +205,7 @@ async function scanTree(
     files.push(file);
   }
   files.sort((left, right) => left.path.localeCompare(right.path));
-  return { root: rootIdentity, directories: {}, files };
+  return { root: rootIdentity, files };
 }
 
 async function scanOne(
@@ -220,10 +219,10 @@ async function scanOne(
   }
   try {
     const file = await scanFile(openedRoot, targetName, sensitiveNames);
-    return { root: rootIdentity, directories: {}, files: [file] };
+    return { root: rootIdentity, files: [file] };
   } catch (error) {
     if (error instanceof FsSafeError && error.code === "not-found") {
-      return { root: rootIdentity, directories: {}, files: [] };
+      return { root: rootIdentity, files: [] };
     }
     throw error;
   }
@@ -241,18 +240,8 @@ function decodeCanonicalBase64(value: unknown): Buffer {
 }
 
 function parseScan(value: unknown): DescriptorSnapshotScan {
-  if (
-    !isObjectRecord(value) ||
-    !isIdentity(value.root) ||
-    !isObjectRecord(value.directories) ||
-    !Array.isArray(value.files)
-  ) {
+  if (!isObjectRecord(value) || !isIdentity(value.root) || !Array.isArray(value.files)) {
     throw new Error("scan plan is invalid");
-  }
-  for (const [relativePath, metadata] of Object.entries(value.directories)) {
-    if (!isSafeRelativePath(relativePath) || !isIdentity(metadata)) {
-      throw new Error("scanned directory is invalid");
-    }
   }
   const seen = new Set<string>();
   const files: SnapshotScannedFile[] = value.files.map((file) => {
@@ -272,7 +261,7 @@ function parseScan(value: unknown): DescriptorSnapshotScan {
       ...(typeof file.content === "string" ? { content: file.content } : {}),
     };
   });
-  return { root: value.root, directories: {}, files };
+  return { root: value.root, files };
 }
 
 function parseActions(value: unknown): readonly SnapshotSanitizationAction[] {
