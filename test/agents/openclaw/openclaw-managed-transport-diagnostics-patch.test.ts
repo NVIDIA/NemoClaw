@@ -13,7 +13,7 @@ import {
 } from "../../../scripts/patch-openclaw-managed-transport-diagnostics.mts";
 
 /**
- * Mirrors the reviewed `openclaw@2026.7.1`
+ * Mirrors the reviewed `openclaw@2026.9.1`
  * `dist/agent-bundle-mcp-runtime-*.js` transport factory, including its tab
  * indentation, so the patch anchor is exercised against the real preimage.
  */

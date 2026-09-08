@@ -121,7 +121,7 @@ const stateUpgradeFixtureExpectations: ReadonlyArray<readonly [string, string]> 
     ? [
         [OLD_NEMOCLAW_REF, "v0.0.89"],
         [OLD_OPENCLAW_VERSION, "2026.6.10"],
-        [CURRENT_OPENCLAW_VERSION, "2026.7.1"],
+        [CURRENT_OPENCLAW_VERSION, "2026.9.1"],
       ]
     : [];
 for (const [actual, expected] of stateUpgradeFixtureExpectations) {
@@ -502,7 +502,7 @@ async function verifyUpgradedOpenClawStateUpgradeProof(
   expect(legacyStateContract).toBeDefined();
   const upgradedStateContract = await inspectOpenClawStateContract(host, "upgraded");
   expectStatePreservedAcrossUpgrade(legacyStateContract!, upgradedStateContract);
-  await artifacts.writeJson("openclaw-2026-7-state-contract.json", upgradedStateContract);
+  await artifacts.writeJson("openclaw-2026-9-state-contract.json", upgradedStateContract);
   await assertOpenClawAgentSecretBoundary(host, fake, "upgraded");
 }
 
@@ -1228,7 +1228,7 @@ runLinuxOpenShellGatewayUpgrade(
       ...(OPENCLAW_STATE_UPGRADE_PROOF
         ? {
             currentOpenClawVersion: CURRENT_OPENCLAW_VERSION,
-            openClawStateUpgrade: "2026.6.10 installed state to 2026.7.1",
+            openClawStateUpgrade: "2026.6.10 installed state to 2026.9.1",
           }
         : {}),
       survivorSandbox: SURVIVOR_SANDBOX,

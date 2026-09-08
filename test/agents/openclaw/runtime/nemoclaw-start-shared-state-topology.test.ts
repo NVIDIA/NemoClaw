@@ -34,7 +34,7 @@ describe("nemoclaw-start shared-state topology (#7280)", () => {
   ])("derives marker $expected for uid $uid", ({ expected, initial, uid }) => {
     const block = sourceBlock(
       source,
-      "# OpenClaw 2026.7.1 enforces owner-only SQLite",
+      "# OpenClaw 2026.9.1 enforces owner-only SQLite",
       "# Begin the root PID 1 readiness lease",
     );
     const result = runBash([

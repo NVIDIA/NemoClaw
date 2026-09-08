@@ -110,7 +110,7 @@ describe("OpenShell gateway upgrade boundary", () => {
           "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:3265d482f67c9d81ee3a59b0bbad5eb5ea6c705fea81ece8ae888ed12794f7f1",
         openShellVersion: "0.0.85",
         openClawVersion: "2026.6.10",
-        currentOpenClawVersion: "2026.7.1",
+        currentOpenClawVersion: "2026.9.1",
         stateUpgradeProof: "1",
       },
     ]);

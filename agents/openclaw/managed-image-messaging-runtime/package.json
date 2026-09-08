@@ -15,6 +15,7 @@
     "agent-base": "6.0.2",
     "axios": "1.18.0",
     "https-proxy-agent": "5.0.1",
+    "openclaw": "2026.9.1",
     "undici": "8.10.0"
   },
   "engines": {

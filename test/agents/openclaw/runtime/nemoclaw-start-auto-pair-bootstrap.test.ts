@@ -216,7 +216,7 @@ exit 2
           lifecycleGeneration: "generation-1",
           lifecycleLiveIdentityFingerprint: "fingerprint-1",
           stateDirectory: stateDir,
-          version: "2026.7.1",
+          version: "2026.9.1",
         };
         const deps: SettlementDeps & { runApproval(): void } = {
           getTarget: () => target,

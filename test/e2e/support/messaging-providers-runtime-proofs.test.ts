@@ -1076,7 +1076,7 @@ describe("messaging provider installed-runtime proofs", () => {
       fs.mkdirSync(slackPackageRoot, { recursive: true });
       fs.writeFileSync(
         path.join(slackProject, "package.json"),
-        JSON.stringify({ dependencies: { "@openclaw/slack": "2026.7.1" } }),
+        JSON.stringify({ dependencies: { "@openclaw/slack": "2026.9.1" } }),
       );
       fs.mkdirSync(path.join(unrelatedProject, "node_modules", "@openclaw", "slack"), {
         recursive: true,

@@ -43,7 +43,7 @@ const REAL_OPENCLAW_NODE_ENV = "NEMOCLAW_REAL_OPENCLAW_NODE";
 // timings as the real-artifact limit.
 const PATCH_COMMAND_TIMEOUT_MS = 120_000;
 // The compiled-dist classifier performs several full-tree grep/sed passes.
-// A cold 2026.7.1 materialization can exceed three minutes on macOS while the
+// A cold 2026.9.1 materialization can exceed three minutes on macOS while the
 // same patch completes normally; keep this bounded below the 12-minute CI job.
 const DOCKERFILE_PATCH_TIMEOUT_MS = 300_000;
 
@@ -404,8 +404,8 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
         `OpenClaw real patched-dist Node runtime: ${nodeRuntime.version} (${nodeRuntime.executable})`,
       );
       const version = readRequiredDockerArg("OPENCLAW_VERSION");
-      const integrity = readRequiredDockerArg("OPENCLAW_2026_7_1_INTEGRITY");
-      const tarballUrl = readRequiredDockerArg("OPENCLAW_2026_7_1_TARBALL");
+      const integrity = readRequiredDockerArg("OPENCLAW_2026_9_1_INTEGRITY");
+      const tarballUrl = readRequiredDockerArg("OPENCLAW_2026_9_1_TARBALL");
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-real-dist-"));
       try {
         const tarballPath = materializeReviewedTarball(tarballUrl, tmp, integrity);

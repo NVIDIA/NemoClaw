@@ -25,7 +25,7 @@ const PATCH_SCRIPT = path.join(
 );
 
 /**
- * Mirrors the reviewed `openclaw@2026.7.1`
+ * Mirrors the reviewed `openclaw@2026.9.1`
  * `dist/agent-bundle-mcp-runtime-*.js` catalog shape, including its tab
  * indentation, so patch anchors are exercised against the real preimage.
  */
@@ -99,11 +99,11 @@ function bundleMcpRuntimeFixture(): string {
   ].join("\n");
 }
 
-function writeFixtureDist(version = "2026.7.1"): { dist: string; runtime: string; tmp: string } {
+function writeFixtureDist(version = "2026.9.1"): { dist: string; runtime: string; tmp: string } {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-reliability-"));
   const dist = path.join(tmp, "dist");
   fs.mkdirSync(dist);
-  // The reviewed openclaw@2026.7.1 package declares "type": "module"; mirror it
+  // The reviewed openclaw@2026.9.1 package declares "type": "module"; mirror it
   // so the fixture carries the same module classification as the real package.
   fs.writeFileSync(path.join(tmp, "package.json"), JSON.stringify({ type: "module", version }));
   const runtime = path.join(dist, "agent-bundle-mcp-runtime-Fixture.js");
@@ -163,7 +163,7 @@ describe("OpenClaw MCP transient startup recovery patch (#7958)", () => {
     created.push(tmp);
 
     const first = patchOpenClawMcpReliability(dist);
-    expect(first).toMatchObject({ status: "patched", file: runtime, version: "2026.7.1" });
+    expect(first).toMatchObject({ status: "patched", file: runtime, version: "2026.9.1" });
 
     const patched = fs.readFileSync(runtime, "utf-8");
     expect(patched).toContain(MARKER);
@@ -251,7 +251,7 @@ describe("OpenClaw MCP transient startup recovery patch (#7958)", () => {
     );
     expect(applied.status).toBe(0);
     expect(applied.stdout).toContain("MCP startup recovery patched");
-    expect(applied.stdout).toContain("openclaw 2026.7.1");
+    expect(applied.stdout).toContain("openclaw 2026.9.1");
 
     const audited = spawnSync(
       process.execPath,
