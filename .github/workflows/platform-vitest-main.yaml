@@ -150,8 +150,14 @@ jobs:
 
       - name: Install dependencies
         env:
-          NODE_AUTH_TOKEN: ${{ github.token }}
-        run: bash .github/actions/ci-install-dependencies.sh
+          NODE_AUTH_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.token || '' }}
+        run: |
+          if [[ -n "$NODE_AUTH_TOKEN" ]]; then
+            bash .github/actions/ci-install-dependencies.sh
+          else
+            npm ci --ignore-scripts
+            npm --prefix nemoclaw ci --ignore-scripts
+          fi
 
       - name: Build CLI and plugin
         run: |
@@ -309,7 +315,7 @@ jobs:
       - name: Install dependencies and build in WSL
         shell: powershell
         env:
-          NODE_AUTH_TOKEN: ${{ github.token }}
+          NODE_AUTH_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.token || '' }}
         run: |
           . "$env:TRUSTED_WSL_HELPER"
           $testUser = ConvertTo-BashLiteral -Value $env:WSL_TEST_USER
@@ -320,8 +326,12 @@ jobs:
           id -un | grep -Fxq $testUser
           cd $workdir
           export NODE_AUTH_TOKEN=$nodeAuthToken
-          export GITHUB_EVENT_NAME=push
-          bash .github/actions/ci-install-dependencies.sh
+          if [ -n "`$NODE_AUTH_TOKEN" ]; then
+            bash .github/actions/ci-install-dependencies.sh
+          else
+            npm ci --ignore-scripts
+            npm --prefix nemoclaw ci --ignore-scripts
+          fi
           unset NODE_AUTH_TOKEN
           npm run build:cli
           cd nemoclaw

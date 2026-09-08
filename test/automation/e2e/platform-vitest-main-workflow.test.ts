@@ -66,8 +66,10 @@ describe("platform evidence workflow", () => {
     const installIndex = steps.findIndex(
       (entry) => entry.name === "Install pinned OpenShell for macOS E2E",
     );
+    const liveIndex = steps.findIndex((entry) => entry.name === "Run macOS live E2E");
     expect(nonLiveIndex).toBeGreaterThanOrEqual(0);
     expect(installIndex).toBeGreaterThan(nonLiveIndex);
+    expect(liveIndex).toBeGreaterThan(installIndex);
     expect(steps[installIndex]?.if).toContain("matrix.shard == 1");
   });
 
@@ -80,7 +82,10 @@ describe("platform evidence workflow", () => {
       NEMOCLAW_RECREATE_SANDBOX: "1",
       NEMOCLAW_SANDBOX_NAME: "e2e-wsl",
     };
-    expect(wsl.env).not.toMatchObject(liveOnlyEnvironment);
+    expect(wsl.env).not.toHaveProperty("NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE");
+    expect(wsl.env).not.toHaveProperty("NEMOCLAW_NON_INTERACTIVE");
+    expect(wsl.env).not.toHaveProperty("NEMOCLAW_RECREATE_SANDBOX");
+    expect(wsl.env).not.toHaveProperty("NEMOCLAW_SANDBOX_NAME");
     expect(live.env).toMatchObject(liveOnlyEnvironment);
   });
 
@@ -93,8 +98,12 @@ describe("platform evidence workflow", () => {
           ? "Install dependencies"
           : "Install dependencies and build in WSL",
       );
-      expect(install.env).toMatchObject({ NODE_AUTH_TOKEN: "${{ github.token }}" });
+      expect(install.env).toMatchObject({
+        NODE_AUTH_TOKEN:
+          "${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.token || '' }}",
+      });
       expect(install.run).toContain(".github/actions/ci-install-dependencies.sh");
+      expect(install.run).toContain("npm ci --ignore-scripts");
     },
   );
 });
