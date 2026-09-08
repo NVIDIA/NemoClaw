@@ -2945,7 +2945,10 @@ The selector accepts any of:
 - A name passed to `snapshot create --name`.
 - A timestamp.
 
-Pass `--to <dst>` to restore the snapshot into a different sandbox instead of the source. When `dst` does not exist, it is auto-created from the source image. For a Docker- or VM-driver source, the source can be stopped when its registry entry records both the sandbox image and a complete inference route. For a Kubernetes-driver source, the pod image must remain resolvable through its gateway. No re-onboarding is needed when those prerequisites are present. For a new destination, NemoClaw requires its owning gateway to report Ready state and a valid live identity. It revalidates that identity immediately before registration. The destination receives a new lifecycle generation and does not inherit the source sandbox's generation. If the destination is not Ready with the same valid identity, the command exits nonzero before registration or state restore. The created destination remains unregistered, so `--force` cannot select it for deletion. Run the exact owner-scoped deletion command printed by the failure:
+Pass `--to <dst>` to restore the snapshot into a different sandbox instead of the source.
+`--to <dst>` is not available for a snapshot of a sandbox that uses a NemoClaw-managed image.
+NemoClaw stops before it creates, deletes, or changes `dst`.
+When `dst` does not exist, it is auto-created from the source image. For a Docker- or VM-driver source, the source can be stopped when its registry entry records both the sandbox image and a complete inference route. For a Kubernetes-driver source, the pod image must remain resolvable through its gateway. No re-onboarding is needed when those prerequisites are present. For a new destination, NemoClaw requires its owning gateway to report Ready state and a valid live identity. It revalidates that identity immediately before registration. The destination receives a new lifecycle generation and does not inherit the source sandbox's generation. If the destination is not Ready with the same valid identity, the command exits nonzero before registration or state restore. The created destination remains unregistered, so `--force` cannot select it for deletion. Run the exact owner-scoped deletion command printed by the failure:
 
 ```bash
 openshell sandbox delete -g '<owning-gateway>' '<destination>'
@@ -3841,6 +3844,7 @@ Set `NEMOCLAW_EXTRA_PLACEHOLDER_KEYS` before running `$$nemoclaw onboard` when o
 
 ```bash
 export NEMOCLAW_EXTRA_PLACEHOLDER_KEYS="TELEGRAM_BOT_TOKEN_AGENT_A TELEGRAM_BOT_TOKEN_AGENT_B"
+export TELEGRAM_BOT_TOKEN=<primary-bot-token>
 export TELEGRAM_BOT_TOKEN_AGENT_A=<bot-A-token>
 export TELEGRAM_BOT_TOKEN_AGENT_B=<bot-B-token>
 $$nemoclaw onboard --agent hermes
@@ -3850,7 +3854,10 @@ For each entry, NemoClaw registers an OpenShell provider with the endpointless `
 
 Entries are split on whitespace and commas and must match `^[A-Z][A-Z0-9_]{0,127}$`. Each entry must extend a canonical channel envKey with a non-empty `_<suffix>` (for example `TELEGRAM_BOT_TOKEN_AGENT_A`); the canonical envKeys are `TELEGRAM_BOT_TOKEN`, `DISCORD_BOT_TOKEN`, `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `WECHAT_BOT_TOKEN`, `BRAVE_API_KEY`, and `TAVILY_API_KEY`. Bare canonical envKeys, the control env itself, and arbitrary host secret names (`GITHUB_TOKEN`, `AWS_SECRET_ACCESS_KEY`, `KUBECONFIG`, and similar) are refused so they cannot leak into the sandbox provider gateway. Duplicates are dropped silently. The list is capped at 32 entries per sandbox. Offending tokens emit one warning each and are skipped.
 
-If a referenced env is unset at onboard time, the matching provider row is registered with a null token; the `upsertMessagingProviders` helper then skips the row, so no placeholder is attached to the OpenShell gateway and no Hermes profile can resolve it. Export the credential before running `$$nemoclaw onboard` for that profile.
+When NemoClaw creates the canonical provider, it omits an extension whose credential is unavailable from both the credential store and its environment variable.
+The primary credential is required to create that provider.
+An extension already stored in an existing provider remains available until that provider is replaced or removed.
+If the extension credential is absent from the credential store, export it before onboarding.
 
 </AgentOnly>
 
