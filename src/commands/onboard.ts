@@ -10,7 +10,6 @@ import {
   onboardExamples,
   onboardUsage,
 } from "../lib/onboard/command-support";
-import { completeAutomaticGatewayPortAfterOnboard } from "../lib/onboard/gateway/automatic-port-completion";
 
 export default class OnboardCliCommand extends NemoClawCommand {
   static id = "onboard";
@@ -29,9 +28,8 @@ export default class OnboardCliCommand extends NemoClawCommand {
       await withOnboardJsonlEventStream(() =>
         runOnboardAction(onboardFlags, createOnboardActionRuntimeDeps()),
       );
-    } else {
-      await runOnboardAction(onboardFlags, createOnboardActionRuntimeDeps());
+      return;
     }
-    completeAutomaticGatewayPortAfterOnboard();
+    await runOnboardAction(onboardFlags, createOnboardActionRuntimeDeps());
   }
 }

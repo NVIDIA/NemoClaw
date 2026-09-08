@@ -57,7 +57,10 @@ function handleTopLevelError(error) {
 
 function applyPersistedAutomaticGatewayPort() {
   if (process.env.NEMOCLAW_GATEWAY_PORT) {
-    delete process.env._NEMOCLAW_AUTOMATIC_GATEWAY_PORT;
+    const installerAutomaticPort =
+      process.env.NEMOCLAW_INSTALLING === "1" &&
+      process.env._NEMOCLAW_AUTOMATIC_GATEWAY_PORT === "1";
+    if (!installerAutomaticPort) delete process.env._NEMOCLAW_AUTOMATIC_GATEWAY_PORT;
     return;
   }
   const { spawnSync } = require("node:child_process");

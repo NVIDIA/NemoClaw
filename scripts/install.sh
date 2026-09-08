@@ -547,17 +547,6 @@ try {
 NODE
 }
 
-automatic_gateway_port_selection_pending() {
-  local port state_dir marker marker_value
-  port="$(resolve_nemoclaw_gateway_port)" || return 1
-  [[ "$port" -ne 8080 ]] || return 1
-  state_dir="$(nemoclaw_state_dir)" || return 1
-  marker="${state_dir}/automatic-gateway-port.pending"
-  [[ -f "$marker" && ! -L "$marker" && -r "$marker" ]] || return 1
-  marker_value="$(<"$marker")" || return 1
-  [[ "$marker_value" == "$port" ]]
-}
-
 complete_automatic_gateway_port_selection() {
   local port persisted_port state_dir pending_marker complete_marker
   port="$(resolve_nemoclaw_gateway_port)" || return 1
@@ -4481,9 +4470,6 @@ run_onboard() {
     exec 3<&-
   else
     error "Interactive onboarding requires a TTY. Re-run in a terminal or set NEMOCLAW_NON_INTERACTIVE=1 with --yes-i-accept-third-party-software."
-  fi
-  if [[ "$status" -eq 0 ]] && automatic_gateway_port_selection_pending; then
-    complete_automatic_gateway_port_selection
   fi
   return "$status"
 }

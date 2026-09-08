@@ -502,7 +502,7 @@ describe("install.sh OpenShell gateway service", () => {
     const cli = path.join(home, "nemoclaw");
     writeExecutable(
       cli,
-      '#!/usr/bin/env bash\nprintf "SELECTED_PORT=%s\\n" "$NEMOCLAW_GATEWAY_PORT"\n',
+      '#!/usr/bin/env bash\nbash "$NEMOCLAW_REPO_ROOT/scripts/install.sh" --internal-complete-automatic-gateway-port\nprintf "SELECTED_PORT=%s\\n" "$NEMOCLAW_GATEWAY_PORT"\n',
     );
     const systemctl = writeUnavailableUserManagerStub(home);
 
@@ -612,7 +612,7 @@ describe("install.sh OpenShell gateway service", () => {
     const successfulCli = path.join(home, "successful-nemoclaw");
     writeExecutable(
       successfulCli,
-      '#!/usr/bin/env bash\nprintf "SELECTED_PORT=%s AUTOMATIC=%s ARGS=%s\\n" "$NEMOCLAW_GATEWAY_PORT" "$_NEMOCLAW_AUTOMATIC_GATEWAY_PORT" "$*"\n',
+      '#!/usr/bin/env bash\nbash "$NEMOCLAW_REPO_ROOT/scripts/install.sh" --internal-complete-automatic-gateway-port\nprintf "SELECTED_PORT=%s AUTOMATIC=%s ARGS=%s\\n" "$NEMOCLAW_GATEWAY_PORT" "$_NEMOCLAW_AUTOMATIC_GATEWAY_PORT" "$*"\n',
     );
     const retried = runInstallHelper(
       home,
