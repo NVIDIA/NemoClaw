@@ -272,6 +272,66 @@ describe("created sandbox identity gate", () => {
     expect(mocks.streamSandboxCreate).not.toHaveBeenCalled();
   });
 
+  it.each([
+    {
+      name: "unavailable",
+      resumedIdentityResult: { status: 1, stdout: "", stderr: "sandbox not found" },
+      expectedCheck: "probe_failed",
+      expectedReason: "identity_probe_failed",
+    },
+    {
+      name: "changed",
+      resumedIdentityResult: {
+        status: 0,
+        stdout: "Name: alpha\nId: replacement-sandbox-id\nState: Ready\n",
+        stderr: "",
+      },
+      expectedCheck: "identity_changed",
+      expectedReason: "identity_changed",
+    },
+  ])(
+    "does not acknowledge a started final handoff when its post-restart identity is $name (#10560)",
+    async ({ resumedIdentityResult, expectedCheck, expectedReason }) => {
+      const sandboxId = "alpha-sandbox-id";
+      const gatewayName = "nemoclaw-18080";
+      const input = noGpuInput();
+      input.gatewayName = gatewayName;
+      input.resumeVerifiedCreate = {
+        route: "compatibility",
+        liveIdentityFingerprint: fingerprintSandboxRecreateValue(sandboxId),
+        createAttemptNonce: "a".repeat(62),
+        finalHandoffCommitStarted: true,
+      };
+      input.verifyCreatedSandboxBeforeEffects = vi.fn();
+      input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
+      input.persistResumedFinalHandoffAcknowledgement = vi.fn();
+      const patch = createGpuPatchFixture();
+      mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
+      const deps = createGpuFlowDeps();
+      const sandboxGetResults = [
+        { status: 0, stdout: `Name: alpha\nId: ${sandboxId}\nState: Ready\n`, stderr: "" },
+        resumedIdentityResult,
+      ];
+      vi.mocked(deps.runOpenshell).mockImplementation((args) =>
+        args.join(" ") === `sandbox get -g ${gatewayName} alpha`
+          ? (sandboxGetResults.shift() ?? resumedIdentityResult)
+          : { status: 0, stdout: "", stderr: "" },
+      );
+      mocks.waitForCreatedSandboxReadyWithTrace.mockImplementation((options) => {
+        expect(options.checkReadyIdentity?.()).toBe(expectedCheck);
+        return { ready: false, reason: expectedReason, failurePhase: null };
+      });
+
+      await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
+        "did not become ready after verified creation",
+      );
+
+      expect(input.persistResumedFinalHandoffAcknowledgement).not.toHaveBeenCalled();
+      expect(patch.ensureApplied).not.toHaveBeenCalled();
+      expect(mocks.streamSandboxCreate).not.toHaveBeenCalled();
+    },
+  );
+
   it("refuses a changed live identity before resumed effects (#9833)", async () => {
     const input = noGpuInput();
     input.resumeVerifiedCreate = {
