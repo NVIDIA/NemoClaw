@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
+import type { SandboxEntry } from "../../state/registry";
 import {
   cloneMcpSourceEntry,
   inspectExactMcpDestroyProvider,
@@ -30,21 +31,34 @@ export async function prepareMcpBridgesForDestroy(
   options: {
     force?: boolean;
     runtimeSelection?: McpDestroyPreparation["runtimeSelection"];
+    sandbox?: SandboxEntry;
   } = {},
 ): Promise<McpDestroyPreparation> {
   validateSandboxName(sandboxName);
-  const sandbox = getSandboxOrThrow(sandboxName);
-  const runtimeSelection =
-    options.runtimeSelection ?? getMcpProviderInspectionRuntimeSelection(sandbox);
-  const observed = inspectSourceBridgeState(sandbox, runtimeSelection);
-  const legacy =
-    Object.keys(observed.sources.legacy).length > 0
-      ? inspectLegacyBridgeState(sandbox, runtimeSelection).bridges
-      : {};
-  const entries = Object.values({ ...legacy, ...observed.bridges }).map(cloneMcpSourceEntry);
+  const sandbox = options.sandbox ?? getSandboxOrThrow(sandboxName);
+  if (sandbox.name !== sandboxName) {
+    throw new Error("MCP destroy source does not match the requested sandbox.");
+  }
+  let runtimeSelection = options.runtimeSelection;
+  let entries: McpSourceEntry[];
+  try {
+    runtimeSelection ??= getMcpProviderInspectionRuntimeSelection(sandbox);
+    const observed = inspectSourceBridgeState(sandbox, runtimeSelection);
+    const legacy =
+      Object.keys(observed.sources.legacy).length > 0
+        ? inspectLegacyBridgeState(sandbox, runtimeSelection).bridges
+        : {};
+    entries = Object.values({ ...legacy, ...observed.bridges }).map(cloneMcpSourceEntry);
+  } catch {
+    // Destroy never deletes workspace providers. If the sandbox is already
+    // unreachable, retain every provider conservatively and continue without
+    // a named inventory rather than making cleanup depend on unreadable agent
+    // state. Reachable sandboxes still produce the source-derived list above.
+    entries = [];
+  }
   return {
     entries,
-    runtimeSelection,
+    ...(runtimeSelection ? { runtimeSelection } : {}),
   };
 }
 

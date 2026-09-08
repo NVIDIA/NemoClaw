@@ -140,6 +140,7 @@ async function prepareMcpDestroy(
       })
     : await prepareMcpBridgesForDestroy(sandboxName, {
         force,
+        sandbox,
         ...(runtimeSelection ? { runtimeSelection } : {}),
       });
   return preparation;

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
+import type { SandboxEntry } from "../../state/registry";
 import type { McpScrubbedAdapterEntry } from "./mcp-bridge-adapter-teardown";
 import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider";
 import {
@@ -166,6 +167,7 @@ export async function prepareMcpBridgesForDestroy(
   options: {
     force?: boolean;
     runtimeSelection?: McpProviderInspectionRuntimeSelection;
+    sandbox?: SandboxEntry;
   } = {},
 ): Promise<McpDestroyPreparation> {
   return prepareMcpBridgesForDestroyLifecycle(sandboxName, options);

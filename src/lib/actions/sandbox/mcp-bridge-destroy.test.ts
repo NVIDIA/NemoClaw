@@ -76,4 +76,24 @@ describe("source-backed MCP destroy preparation", () => {
       entries: [{ server: "github", source: "legacy" }],
     });
   });
+
+  it("retains providers implicitly when an unreachable sandbox cannot expose source state", async () => {
+    mocks.inspectCurrent.mockImplementationOnce(() => {
+      throw new Error("sandbox unreachable");
+    });
+
+    await expect(prepareMcpBridgesForDestroy("alpha")).resolves.toEqual({
+      entries: [],
+      runtimeSelection,
+    });
+  });
+
+  it("continues conservative destroy when runtime authority is unavailable", async () => {
+    mocks.runtimeSelection.mockImplementationOnce(() => {
+      throw new Error("gateway unavailable");
+    });
+
+    await expect(prepareMcpBridgesForDestroy("alpha")).resolves.toEqual({ entries: [] });
+    expect(mocks.inspectCurrent).not.toHaveBeenCalled();
+  });
 });
