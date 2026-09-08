@@ -302,15 +302,16 @@ async function assertConcurrentAddSerialized(
         env,
         redactionValues: [HOST_SECRET],
         // Keep both clients alive through Hermes' bounded restart and config
-        // reload; the loser then acquires the lock and rejects the duplicate.
+        // reload; the second acquires the lock and resumes the exact committed
+        // source prefix idempotently.
         timeoutMs: MCP_MUTATION_TIMEOUT_MS[options.expectedAdapter],
       }),
     ),
   );
   const successful = attempts.filter((result) => result.exitCode === 0);
   const rejected = attempts.filter((result) => result.exitCode !== 0);
-  expect(successful).toHaveLength(1);
-  expect(rejected).toHaveLength(1);
+  expect(successful).toHaveLength(2);
+  expect(rejected).toHaveLength(0);
   const statusObservation = await readConcurrentMcpStatusAndConfirmHermesRegistration({
     clients: { artifacts, host, sandbox },
     committedAddResult: successful[0]!,
@@ -336,23 +337,15 @@ async function assertConcurrentAddSerialized(
     policy: { present: true, state: "configured" },
   });
   expect(statusObservation.registered).toBe(true);
-  const duplicateRejection = await retryAfterHermesRestartTransportFailure({
-    adapter: options.expectedAdapter,
-    committedBridgeVerified: true,
-    diagnostic: resultText(rejected[0]!),
-    originalResult: rejected[0]!,
-    retry: () =>
-      host.nemoclaw(args, {
-        artifactName: `${options.artifactPrefix}-mcp-concurrent-add-after-restart-transport-failure`,
-        env,
-        redactionValues: [HOST_SECRET],
-        timeoutMs: MCP_MUTATION_TIMEOUT_MS[options.expectedAdapter],
-      }),
+  const exactRetry = await host.nemoclaw(args, {
+    artifactName: `${options.artifactPrefix}-mcp-concurrent-add-exact-retry`,
+    env,
+    redactionValues: [HOST_SECRET],
+    timeoutMs: MCP_MUTATION_TIMEOUT_MS[options.expectedAdapter],
   });
-  expectExitNonZero(
-    duplicateRejection,
-    `${options.artifactPrefix} concurrent MCP add rejects the serialized duplicate`,
-    /already exists/,
+  expectExitZero(
+    exactRetry,
+    `${options.artifactPrefix} exact MCP add retry converges from current sources`,
   );
   const remove = await host.nemoclaw(
     [options.sandboxName, "mcp", "remove", CONCURRENT_SERVER_NAME],
