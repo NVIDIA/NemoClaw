@@ -718,7 +718,9 @@ describe("privileged sandbox exec routing", () => {
         "abc123\topenshell-demo-one\ndef456\topenshell-demo-two\n",
         ["demo"],
       ),
-    ).toThrow(/Multiple OpenShell containers.*refusing ambiguous/);
+    ).toThrow(
+      /Multiple OpenShell containers are labeled for sandbox 'demo'; refusing ambiguous lifecycle execution/,
+    );
   });
 
   it("rejects malformed Docker metadata", () => {
