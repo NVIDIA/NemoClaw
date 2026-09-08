@@ -98,18 +98,16 @@ describe("ensureDeclaredAgentForwardPortsHealthy", { timeout: 30_000 }, () => {
     expect(mocks.launchForwardService).not.toHaveBeenCalled();
   });
 
-  it("fails closed when reachable direct service ownership cannot be proved", async () => {
+  it("fails closed without a launch attempt when reachable direct service ownership cannot be proved (#11149)", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
     mocks.getSandbox.mockReturnValue({ agent: "openclaw", dashboardPort: 18_789 });
     mocks.captureOpenshell.mockReturnValue(forwardList([]));
     mocks.isForwardServiceListenerOwner.mockReturnValue(false);
-    mocks.launchForwardService.mockImplementation(() => {
-      throw new Error("host port is occupied");
-    });
     const { ensureSandboxPortForward } = await import("./forward-recovery");
 
     expect(ensureSandboxPortForward("foreign-listener")).toBe(false);
     expect(mocks.isForwardServiceListenerOwner).toHaveBeenCalledOnce();
-    expect(mocks.launchForwardService).toHaveBeenCalledOnce();
+    expect(mocks.launchForwardService).not.toHaveBeenCalled();
   });
 
   it("does not demand the manifest dashboard port from a sandbox that owns a different dashboard port (#8543)", async () => {

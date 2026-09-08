@@ -334,19 +334,40 @@ export function ensureSandboxPortForward(
 }
 
 /** Probe local reachability for a registered sandbox port without claiming process ownership. */
-export function isSandboxForwardHealthy(
+/**
+ * What answers on a sandbox's host forward port.
+ *
+ * - `owned`: this sandbox's exact OpenShell ForwardTcp service, proved from
+ *   the listener PID, its executable and its full argv.
+ * - `absent`: nothing listens.
+ * - `legacy`: a tracked legacy forward that recovery migrates.
+ * - `unverified`: something listens that NemoClaw cannot attribute to this
+ *   sandbox's forward. Recovery never relaunches onto it: the listener is
+ *   left running and reported, because a forward that did start there would
+ *   hand the dashboard URL and its token to whatever answers (#11149).
+ */
+export type SandboxForwardListener = "owned" | "absent" | "legacy" | "unverified";
+
+export function describeSandboxForwardListener(
   sandboxName: string,
   options: { isWsl?: boolean; runtimeSelection?: OpenShellRuntimeSelection } = {},
-): SandboxForwardHealth {
+): SandboxForwardListener {
   const allInterfaceBindRequired =
     isRemoteDashboardBindRequested(process.env.NEMOCLAW_DASHBOARD_BIND) ||
     isWsl({ isWsl: options.isWsl });
-  return isSandboxPortForwardHealthy(
+  return describeSandboxPortForwardListener(
     sandboxName,
     resolveSandboxDashboardPort(sandboxName),
     allInterfaceBindRequired ? "0.0.0.0" : "127.0.0.1",
     options.runtimeSelection,
   );
+}
+
+export function isSandboxForwardHealthy(
+  sandboxName: string,
+  options: { isWsl?: boolean; runtimeSelection?: OpenShellRuntimeSelection } = {},
+): SandboxForwardHealth {
+  return describeSandboxForwardListener(sandboxName, options) === "owned";
 }
 
 export function isSandboxPortForwardHealthy(
@@ -355,9 +376,26 @@ export function isSandboxPortForwardHealthy(
   expectedBind?: string,
   runtimeSelection?: OpenShellRuntimeSelection,
 ): SandboxForwardHealth {
+  return (
+    describeSandboxPortForwardListener(sandboxName, port, expectedBind, runtimeSelection) ===
+    "owned"
+  );
+}
+
+/** Why recovery leaves a listener it cannot attribute to the sandbox alone. */
+export function unverifiedForwardListenerRefusal(sandboxName: string, port: number): string {
+  return `  Host port ${String(port)} for '${sandboxName}' is held by a listener that NemoClaw cannot attribute to this sandbox's OpenShell forward. NemoClaw did not start it, leaves it running, and does not restore a forward onto it. Find the owner with \`ss -ltnp 'sport = :${String(port)}'\` or \`lsof -nP -iTCP:${String(port)} -sTCP:LISTEN\`, free the port, then run \`nemoclaw ${sandboxName} recover\` again.`;
+}
+
+export function describeSandboxPortForwardListener(
+  sandboxName: string,
+  port: number,
+  expectedBind?: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
+): SandboxForwardListener {
   const sandbox = registry.getSandbox(sandboxName);
-  if (!sandbox) return false;
-  if (!isLocalForwardReachable(port)) return false;
+  if (!sandbox) return "absent";
+  if (!isLocalForwardReachable(port)) return "absent";
   const gatewayName = runtimeSelection?.gatewayName ?? resolveSandboxGatewayName(sandbox);
   const listed = captureOpenshell(
     ["forward", "list", "--gateway", gatewayName],
@@ -376,10 +414,10 @@ export function isSandboxPortForwardHealthy(
     listed.status === 0 &&
     isLegacySandboxForwardListed(listed.output, sandboxName, port)
   ) {
-    return false;
+    return "legacy";
   }
   const executable = resolveOpenshell();
-  if (!executable) return false;
+  if (!executable) return "unverified";
   return isForwardServiceListenerOwner(
     forwardServiceTarget(
       executable,
@@ -389,7 +427,9 @@ export function isSandboxPortForwardHealthy(
       expectedBind ?? "127.0.0.1",
       runtimeSelection?.workspace ?? "default",
     ),
-  );
+  )
+    ? "owned"
+    : "unverified";
 }
 
 export function ensureSandboxPortForwardForPort(
@@ -419,13 +459,20 @@ export function ensureSandboxPortForwardForPort(
     }
     return accepted;
   };
-  const forwardHealth = isSandboxPortForwardHealthy(
+  const listener = describeSandboxPortForwardListener(
     sandboxName,
     port,
     expectedBind,
     runtimeSelection,
   );
-  if (forwardHealth === true) return acceptSuccessfulForward();
+  if (listener === "owned") return acceptSuccessfulForward();
+  // A listener this sandbox does not own is reported, never replaced. A
+  // launch onto it would only fail as "occupied", and reporting the forward
+  // as restored would send the dashboard token to that process (#11149).
+  if (listener === "unverified") {
+    console.error(unverifiedForwardListenerRefusal(sandboxName, port));
+    return false;
+  }
   if (!beforeStart()) return false;
   try {
     const sandbox = registry.getSandbox(sandboxName);

@@ -830,3 +830,63 @@ hermes-box  127.0.0.1  18789  12345  running`;
     expect(errorOutput).toMatch(/Secret-boundary check did not complete cleanly.*hermes-box/);
   });
 });
+
+describe("recover with a dashboard port held by a listener the sandbox does not own (#11149)", () => {
+  it("reports the occupied port, withholds forward recovery and never relaunches", () => {
+    const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
+    const agentRuntime = requireSource("../../src/lib/agent/runtime.js");
+    const registry = requireSource("../../src/lib/state/registry.js");
+    const forwardHealth = requireSource("../../src/lib/actions/sandbox/forward-health.js");
+    const childProcess = requireSource("node:child_process");
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    vi.spyOn(childProcess, "spawnSync").mockReturnValue({
+      status: 0,
+      stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nRUNNING\n",
+      stderr: "",
+    } as never);
+    vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue(null);
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "beta",
+      agent: "openclaw",
+      dashboardPort: 18789,
+    });
+    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
+    vi.spyOn(forwardService, "isForwardServiceListenerOwner").mockReturnValue(false);
+    const launch = vi.spyOn(forwardService, "launchForwardService");
+    vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
+      status: 0,
+      output: "SANDBOX  BIND  PORT  PID  STATUS\n",
+    });
+    const runOpenshell = vi
+      .spyOn(openshellRuntime, "runOpenshell")
+      .mockReturnValue({ status: 0 } as never);
+
+    const result = withFakeOpenshellBinary(() =>
+      checkAndRecoverSandboxProcesses("beta", { quiet: false }),
+    );
+
+    expect(result).toMatchObject({
+      checked: true,
+      wasRunning: true,
+      recovered: false,
+      forwardRecovered: false,
+      forwardRecoveryFailed: true,
+      forwardRecoveryFailureDetail: expect.stringContaining(
+        "host port 18789 is held by a listener that NemoClaw cannot attribute",
+      ),
+    });
+    expect(launch).not.toHaveBeenCalled();
+    expect(
+      runOpenshell.mock.calls.some(
+        ([rawArgs]) => Array.isArray(rawArgs) && rawArgs[0] === "forward",
+      ),
+    ).toBe(false);
+    const output = logSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    expect(output).not.toContain("missing or dead");
+    expect(output).toContain("held by a listener NemoClaw does not own");
+    const errors = errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    expect(errors).toContain("Host port 18789 for 'beta' is held by a listener");
+  });
+});

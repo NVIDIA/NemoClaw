@@ -11,7 +11,10 @@ import {
   LAUNCH_READINESS_FIXTURE_POLICY,
   launchReadinessRegistryFixture,
 } from "../../helpers/launch-readiness-fixture";
-import { syntheticForwardNodeOptions } from "../../helpers/platform-override-node-options";
+import {
+  type ForwardOwnerProof,
+  syntheticForwardNodeOptions,
+} from "../../helpers/platform-override-node-options";
 import { execTimeout, testTimeoutOptions } from "../../helpers/timeouts";
 
 const tmpFixtures: string[] = [];
@@ -97,6 +100,8 @@ interface Fixture {
   sandboxName: string;
   invocationLog: string;
   recoveryWaitMs: string;
+  port: string;
+  listenerPidFile: string;
 }
 
 function setupFixture(opts: {
@@ -318,10 +323,12 @@ if (!(forwardIndex >= 0 && args[forwardIndex + 1] === "service")) process.exit(0
     sandboxName,
     invocationLog,
     recoveryWaitMs: opts.recoveryWaitMs ?? "2000",
+    port,
+    listenerPidFile,
   };
 }
 
-function runRecover(fixture: Fixture) {
+function runRecover(fixture: Fixture, ownerProof: ForwardOwnerProof = "synthetic") {
   const repoRoot = path.join(import.meta.dirname, "../../..");
   return spawnSync(
     process.execPath,
@@ -332,7 +339,11 @@ function runRecover(fixture: Fixture) {
       env: {
         ...process.env,
         HOME: fixture.tmpDir,
-        NODE_OPTIONS: syntheticForwardNodeOptions(fixture.tmpDir),
+        NODE_OPTIONS: syntheticForwardNodeOptions(
+          fixture.tmpDir,
+          process.env.NODE_OPTIONS,
+          ownerProof,
+        ),
         PATH: "/usr/bin:/bin",
         NEMOCLAW_NO_CONNECT_HINT: "1",
         NEMOCLAW_FORWARD_RECOVERY_WAIT_MS: fixture.recoveryWaitMs,
@@ -410,6 +421,40 @@ describe("nemoclaw <name> recover", () => {
     expect(stopIdx).toBeGreaterThanOrEqual(0);
     expect(startIdx).toBeGreaterThan(stopIdx);
   });
+
+  it(
+    "exits non-zero and leaves an unrelated listener on the dashboard port untouched (#11149)",
+    testTimeoutOptions(20_000),
+    () => {
+      const fixture = setupFixture({
+        sandboxName: "squatted-sandbox",
+        gatewayProbe: "RUNNING",
+        forwardListStatus: "missing",
+        forwardReachable: true,
+      });
+      const listenerPid = Number(
+        fs.readFileSync(fixture.listenerPidFile, "utf-8").trim().split(/\s+/).at(-1),
+      );
+
+      const result = runRecover(fixture, "real");
+
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(1);
+      const combined = (result.stdout || "") + (result.stderr || "");
+      expect(combined).toContain(
+        `Host port ${fixture.port} for 'squatted-sandbox' is held by a listener that NemoClaw cannot attribute to this sandbox's OpenShell forward`,
+      );
+      expect(combined).toContain(
+        `but host port ${fixture.port} is held by a listener that NemoClaw cannot attribute`,
+      );
+      expect(combined).not.toContain("restored dashboard port forward");
+      expect(combined).not.toContain("missing or dead");
+
+      const calls = fs.readFileSync(fixture.invocationLog, "utf-8").split("\n");
+      expect(calls.some((line) => line.startsWith("forward stop "))).toBe(false);
+      expect(calls.some((line) => line.includes("forward service "))).toBe(false);
+      expect(() => process.kill(listenerPid, 0)).not.toThrow();
+    },
+  );
 
   it("no-ops when a direct service is reachable and the legacy list is empty", () => {
     const fixture = setupFixture({
