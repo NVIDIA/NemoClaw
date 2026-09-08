@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   getSandbox: vi.fn(),
   inspectCurrent: vi.fn(),
-  inspectLegacy: vi.fn(),
+  joinEntries: vi.fn(),
   runtimeSelection: vi.fn(),
 }));
 
@@ -18,7 +18,7 @@ vi.mock("./mcp-bridge-provider", () => ({
 }));
 vi.mock("./mcp-bridge-source", () => ({
   inspectSourceBridgeState: mocks.inspectCurrent,
-  inspectLegacyBridgeState: mocks.inspectLegacy,
+  joinMcpEntriesToOpenShell: mocks.joinEntries,
 }));
 
 import { prepareMcpBridgesForDestroy } from "./mcp-bridge-destroy";
@@ -59,22 +59,27 @@ describe("source-backed MCP destroy preparation", () => {
       expect.objectContaining({ name: "alpha" }),
       runtimeSelection,
     );
-    expect(mocks.inspectLegacy).not.toHaveBeenCalled();
+    expect(mocks.joinEntries).not.toHaveBeenCalled();
   });
 
   it("includes legacy-only source state so retained providers are still reported", async () => {
+    const legacy = { github: { ...entry, source: "legacy" } };
     mocks.inspectCurrent.mockReturnValue({
       bridges: {},
-      sources: { native: {}, legacy: { github: { ...entry, source: "legacy" } } },
+      sources: { native: {}, legacy },
     });
-    mocks.inspectLegacy.mockReturnValue({
-      bridges: { github: { ...entry, source: "legacy" } },
-      sources: { native: {}, legacy: { github: { ...entry, source: "legacy" } } },
-    });
+    mocks.joinEntries.mockReturnValue({ github: { ...entry, source: "legacy" } });
 
     await expect(prepareMcpBridgesForDestroy("alpha")).resolves.toMatchObject({
       entries: [{ server: "github", source: "legacy" }],
     });
+    expect(mocks.joinEntries).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "alpha" }),
+      legacy,
+      runtimeSelection,
+      "inspect legacy MCP destroy state",
+    );
+    expect(mocks.joinEntries.mock.calls[0]?.[1]).toBe(legacy);
   });
 
   it("retains providers implicitly when an unreachable sandbox cannot expose source state", async () => {

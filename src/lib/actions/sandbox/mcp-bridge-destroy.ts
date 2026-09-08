@@ -11,7 +11,7 @@ import {
 } from "./mcp-bridge-destroy-preflight";
 import { getMcpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider";
 import { getSandboxOrThrow } from "./mcp-bridge-state";
-import { inspectLegacyBridgeState, inspectSourceBridgeState } from "./mcp-bridge-source";
+import { inspectSourceBridgeState, joinMcpEntriesToOpenShell } from "./mcp-bridge-source";
 import { redactBridgeFailureForDisplay } from "./mcp-bridge-output";
 import { validateSandboxName } from "./mcp-bridge-validation";
 
@@ -48,7 +48,12 @@ export async function prepareMcpBridgesForDestroy(
     const observed = inspectSourceBridgeState(sandbox, runtimeSelection);
     const legacy =
       Object.keys(observed.sources.legacy).length > 0
-        ? inspectLegacyBridgeState(sandbox, runtimeSelection).bridges
+        ? joinMcpEntriesToOpenShell(
+            sandbox,
+            observed.sources.legacy,
+            runtimeSelection,
+            "inspect legacy MCP destroy state",
+          )
         : {};
     entries = Object.values({ ...legacy, ...observed.bridges }).map(cloneMcpSourceEntry);
   } catch (error) {
