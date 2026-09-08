@@ -580,7 +580,7 @@ The first error means the installed OpenShell migration set does not contain mig
 - You select an older release with `NEMOCLAW_INSTALL_TAG` or `NEMOCLAW_INSTALL_REF`.
 - You install an older OpenShell yourself.
 
-The default installer and an explicit `NEMOCLAW_INSTALL_TAG=lkg` selection stop before replacing a newer installed NemoClaw release. Other explicit `NEMOCLAW_INSTALL_TAG` or `NEMOCLAW_INSTALL_REF` values can replace the installed release; use a version tag or full commit SHA when you need a fixed source.
+The default installer stops before replacing a newer installed NemoClaw release whenever the selected ref is `lkg` or `refs/tags/lkg`, whether it came from `NEMOCLAW_INSTALL_TAG` or the higher-priority `NEMOCLAW_INSTALL_REF`. Other explicit refs can replace the installed release; use a version tag or full commit SHA when you need a fixed source.
 
 The diagnosis always prints the database path. When an unused archive path is available, it also prints that archive path beside the selected state directory and the profile-specific onboarding command. When no unused archive path is available, it asks you to keep the gateway stopped and inspect the state directory instead.
 

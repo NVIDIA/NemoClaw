@@ -131,7 +131,7 @@ release_version_is_newer() {
   ((10#$left_patch > 10#$right_patch))
 }
 
-run_bounded_bootstrap_lookup() {
+run_bounded_bootstrap_lookup() (
   local label="$1" output_file command_pid status ticks=0
   shift
   output_file="$(mktemp "${TMPDIR:-/tmp}/nemoclaw-bootstrap-lookup.XXXXXX")"
@@ -165,7 +165,7 @@ run_bounded_bootstrap_lookup() {
   trap - INT TERM EXIT
   rm -f "$output_file"
   return "$status"
-}
+)
 
 terminate_bootstrap_lookup_group() {
   local command_pid="$1" grace_ticks
@@ -216,13 +216,14 @@ exec_installer_from_ref() {
   local ref="$1"
   shift
 
-  local tmpdir source_root payload_script legacy_script
+  local tmpdir source_root payload_script legacy_script selected_commit
   tmpdir="$(mktemp -d)"
   BOOTSTRAP_TMPDIR="$tmpdir"
   trap 'rm -rf "${BOOTSTRAP_TMPDIR:-}"' EXIT
   source_root="${tmpdir}/source"
 
   clone_nemoclaw_ref "$ref" "$source_root"
+  selected_commit="$(git -C "$source_root" rev-parse HEAD)"
 
   guard_implicit_maintained_downgrade "$source_root" "$ref"
 
@@ -235,7 +236,7 @@ exec_installer_from_ref() {
     # helpers beside scripts/install.sh (including DGX Station preparation)
     # are therefore staged from the same ref before payload execution.
     verify_downloaded_script "$payload_script" "versioned installer"
-    NEMOCLAW_INSTALL_REF="$ref" NEMOCLAW_INSTALL_TAG="$ref" NEMOCLAW_BOOTSTRAP_PAYLOAD=1 \
+    NEMOCLAW_INSTALL_REF="$selected_commit" NEMOCLAW_INSTALL_TAG="$ref" NEMOCLAW_BOOTSTRAP_PAYLOAD=1 \
       bash "$payload_script" "$@"
     return
   fi

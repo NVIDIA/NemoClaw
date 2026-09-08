@@ -55,7 +55,7 @@ case "\${1:-}" in
     cat >"$target/scripts/install.sh" <<'PAYLOAD'
 #!/usr/bin/env bash
 # NEMOCLAW_VERSIONED_INSTALLER_PAYLOAD=1
-touch "\${EXECUTION_MARKER:?}"
+printf '%s' "\${NEMOCLAW_INSTALL_REF:-}" >"\${EXECUTION_MARKER:?}"
 PAYLOAD
     chmod +x "$target/scripts/install.sh"
     ;;
@@ -128,10 +128,17 @@ describe("public installer downgrade guard", () => {
   });
 
   it("runs the selected payload when the implicit lkg release is newer", () => {
-    const { result, payloadMarker } = runInstall("0.0.108", "0.0.109");
+    const { result, payloadMarker, root } = runInstall("0.0.108", "0.0.109");
 
     expect(result.status).toBe(0);
     expect(fs.existsSync(payloadMarker)).toBe(true);
+    expect(fs.readFileSync(payloadMarker, "utf8")).toBe("target-commit");
+    expect(
+      fs
+        .readdirSync(root, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name),
+    ).toEqual(["bin"]);
   });
 
   it("runs the selected payload when the implicit lkg release is unchanged", () => {
@@ -255,6 +262,12 @@ describe("public installer downgrade guard", () => {
     expect(
       fs.readdirSync(root).filter((name) => name.startsWith("nemoclaw-bootstrap-lookup.")),
     ).toEqual([]);
+    expect(
+      fs
+        .readdirSync(root, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name),
+    ).toEqual(["bin"]);
     const pid = Number(fs.readFileSync(lookupPid, "utf8"));
     expect(() => process.kill(pid, 0)).toThrow();
   });
