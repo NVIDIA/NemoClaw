@@ -31,12 +31,6 @@ describe("portable profile rootless runtime workflow", () => {
 
     expect(Object.keys(workflow.on).sort()).toEqual(["pull_request", "push", "workflow_dispatch"]);
     expect(workflow.on.push.branches).toEqual(["main"]);
-    expect(workflow.on.push.paths).toEqual(
-      expect.arrayContaining([
-        "agents/hermes/image-build-probes.py",
-        "agents/hermes/patch-hermes-kanban-atomic-schema.py",
-      ]),
-    );
     expect(install).toMatchObject({
       if: "github.event_name != 'workflow_dispatch'",
       run: "npm ci --ignore-scripts --no-audit --no-fund",
@@ -93,8 +87,6 @@ describe("portable profile rootless runtime workflow", () => {
       expect.arrayContaining([
         "agents/hermes/Dockerfile",
         "agents/hermes/dashboard-external-host.patch",
-        "agents/hermes/image-build-probes.py",
-        "agents/hermes/patch-hermes-kanban-atomic-schema.py",
         "agents/hermes/start.sh",
         "src/lib/onboard/experimental/hermes-portable-build-context-files.ts",
         "src/lib/onboard/experimental/hermes-portable-build-context.ts",

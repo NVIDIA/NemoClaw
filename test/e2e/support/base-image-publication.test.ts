@@ -1101,14 +1101,12 @@ describe("base-image publication evidence", () => {
 
   it("aborts an in-flight GitHub request at the caller's request budget", async () => {
     let observedAbort = false;
-    let currentTime = 0;
 
     await expect(
       githubRequest("/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml", "token", {
         attempts: 1,
         budgetMs: 100,
         timeoutMs: 5_000,
-        now: () => currentTime,
         fetchImpl: async (_input, init) => {
           const signal = required(init.signal ?? undefined, "request signal is required");
           await new Promise<void>((_resolve, reject) => {
@@ -1116,7 +1114,6 @@ describe("base-image publication evidence", () => {
               "abort",
               () => {
                 observedAbort = true;
-                currentTime = 99;
                 reject(signal.reason);
               },
               { once: true },

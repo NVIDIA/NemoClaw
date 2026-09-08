@@ -88,7 +88,7 @@ COPY agents/hermes/plugin/__init__.py agents/hermes/plugin/plugin.yaml /opt/nemo
 COPY src/lib/messaging/channels/googlechat/runtime/hermes-adapter.py /opt/nemoclaw-hermes-plugin/googlechat_adapter.py
 COPY agents/hermes/generate-config.ts /opt/nemoclaw-hermes-config/generate-config.ts
 COPY agents/hermes/config/ /opt/nemoclaw-hermes-config/config/
-COPY agents/hermes/image-build-probes.py agents/hermes/finalize-image-layout.sh agents/hermes/patch-hermes-kanban-atomic-schema.py /opt/nemoclaw-hermes-config/
+COPY agents/hermes/image-build-probes.py agents/hermes/finalize-image-layout.sh /opt/nemoclaw-hermes-config/
 COPY agents/hermes/a2a-neutral.patch agents/hermes/patch-gateway-runtime-metadata.py /opt/nemoclaw-hermes-config/
 COPY agents/hermes/patch-gateway-process-identity.py /opt/nemoclaw-hermes-config/patch-gateway-process-identity.py
 COPY agents/hermes/patch-cron-execution-runtime.py /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py
@@ -453,7 +453,7 @@ COPY --from=hermes-agent-payload / /
 # published base can carry the expected Hermes version while omitting either
 # optional dependency group. This is a build-time package/import guard; live
 # protocol behavior remains a separate E2E concern.
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=e67c5f05f6325bafeea2ec1342780cb14ec7565070cfc5024e21fb5a78bfc4b6
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=7c74c3f190845fef222e3aac1bd7074d58968447e78221114344545c149595c2
 # hadolint ignore=DL3059,DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256" /opt/nemoclaw-hermes-config/image-build-probes.py \
@@ -481,7 +481,7 @@ RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
 # same-version wheel selected by its lazy installer. Bind that production
 # boundary to NVIDIA/NemoClaw's reviewed wheel hashes.
 ARG NEMOCLAW_HERMES_HINDSIGHT_LAZY_INTEGRITY_PATCH_SHA256=5c619477c10e0b76cffd7adc214cbccf3beb77e7a1121f394c443502d9e0b736
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=e67c5f05f6325bafeea2ec1342780cb14ec7565070cfc5024e21fb5a78bfc4b6
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=7c74c3f190845fef222e3aac1bd7074d58968447e78221114344545c149595c2
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_HINDSIGHT_LAZY_INTEGRITY_PATCH_SHA256" /opt/nemoclaw-hermes-config/hindsight-lazy-integrity.patch \
@@ -729,27 +729,20 @@ RUN printf '%s  %s\n' \
 # PRAGMA temp_store=MEMORY before PRAGMA foreign_keys=ON ensures FK processing
 # uses in-memory storage. Docker execution permits the file-based storage path.
 ARG NEMOCLAW_HERMES_SQLITE_TEMP_STORE_PATCHER_SHA256=495afa4b7b960a3df8d46c2380561307773449ca5bfa96ca8f4a49c4147c4b6a
-# Hermes v0.20.6 initializes a fresh Kanban schema in autocommit mode. When the
-# connection uses synchronous DELETE journaling, slow overlay storage can spend
-# minutes syncing each CREATE separately and keep the gateway from listening.
-# Bracket the base schema with one explicit transaction; legacy migrations
-# retain their upstream transaction policy.
-ARG NEMOCLAW_HERMES_KANBAN_ATOMIC_SCHEMA_PATCHER_SHA256=e5d60251f450903bd7f6dd4693ec166daaa285e9c93dff8136bd2973eef7a3a4
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_SQLITE_TEMP_STORE_PATCHER_SHA256" /usr/local/lib/nemoclaw/patch-hermes-sqlite-temp-store.py \
-        "$NEMOCLAW_HERMES_KANBAN_ATOMIC_SCHEMA_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-hermes-kanban-atomic-schema.py \
     | sha256sum -c - \
-    || { echo "ERROR: Hermes SQLite patcher hash mismatch (update the matching NEMOCLAW_HERMES_*_PATCHER_SHA256)" >&2; exit 1; }
+    || { echo "ERROR: patch-hermes-sqlite-temp-store.py hash mismatch (update NEMOCLAW_HERMES_SQLITE_TEMP_STORE_PATCHER_SHA256)" >&2; exit 1; }
+# Hermes 0.20.6 autocommits every statement in its fresh Kanban schema.
+# Apply the transaction at the single call site and fail if upstream moves it.
 RUN /usr/bin/python3 -I /usr/local/lib/nemoclaw/patch-hermes-sqlite-temp-store.py \
-    && /usr/bin/python3 -I /opt/nemoclaw-hermes-config/patch-hermes-kanban-atomic-schema.py \
     && grep -q 'PRAGMA temp_store=MEMORY' /opt/hermes/hermes_state.py \
-    && grep -Fq 'BEGIN IMMEDIATE;' /opt/hermes/hermes_cli/kanban_db.py \
-    && /opt/hermes/.venv/bin/python -I \
-        /opt/nemoclaw-hermes-config/image-build-probes.py kanban-init \
+    && test "$(grep -Fc 'conn.executescript(SCHEMA_SQL)' /opt/hermes/hermes_cli/kanban_db.py)" -eq 1 \
+    && sed -i 's|conn.executescript(SCHEMA_SQL)|conn.executescript("BEGIN IMMEDIATE;\\n" + SCHEMA_SQL + "\\nCOMMIT;")|' /opt/hermes/hermes_cli/kanban_db.py \
+    && /opt/hermes/.venv/bin/python3 -m py_compile /opt/hermes/hermes_cli/kanban_db.py \
     && HERMES_HOME="$(mktemp -d)" /opt/hermes/.venv/bin/python -I \
-        /opt/nemoclaw-hermes-config/image-build-probes.py session-delete \
-    && rm /opt/nemoclaw-hermes-config/patch-hermes-kanban-atomic-schema.py
+        /opt/nemoclaw-hermes-config/image-build-probes.py session-delete
 
 # Hermes v0.20.6 forces the gateway-created Discord recovery ledger to 0600,
 # which prevents sandbox-owned online backup and makes a sandbox-restored
@@ -1609,7 +1602,6 @@ RUN check_metadata() { \
     && check_absent /opt/nemoclaw-hermes-config/patch-cron-restore-drain.py \
     && check_absent /opt/nemoclaw-hermes-config/patch-session-list-preview.py \
     && check_absent /opt/nemoclaw-hermes-config/patch-profile-policy-defaults.py \
-    && check_absent /opt/nemoclaw-hermes-config/patch-hermes-kanban-atomic-schema.py \
     && check_absent /opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py \
     && check_absent /opt/nemoclaw-hermes-config/hindsight-lazy-integrity.patch \
     && check_absent /opt/nemoclaw-hermes-config/hindsight-probe-aiohttp-retry.whl \

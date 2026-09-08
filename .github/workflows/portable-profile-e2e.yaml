@@ -13,8 +13,6 @@ on:
       - ".github/workflows/portable-profile-e2e.yaml"
       - "agents/hermes/Dockerfile"
       - "agents/hermes/dashboard-external-host.patch"
-      - "agents/hermes/image-build-probes.py"
-      - "agents/hermes/patch-hermes-kanban-atomic-schema.py"
       - "agents/hermes/start.sh"
       - "src/lib/onboard/experimental/hermes-portable-build-context-files.ts"
       - "src/lib/onboard/experimental/hermes-portable-build-context.ts"
@@ -28,8 +26,6 @@ on:
       - main
     paths:
       - ".github/workflows/portable-profile-e2e.yaml"
-      - "agents/hermes/image-build-probes.py"
-      - "agents/hermes/patch-hermes-kanban-atomic-schema.py"
       - "install.sh"
       - "scripts/install.sh"
       - "scripts/install-openshell.sh"

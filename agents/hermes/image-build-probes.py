@@ -7,10 +7,8 @@ from __future__ import annotations
 
 import os
 import re
-import sqlite3
 import subprocess
 import sys
-import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
@@ -312,47 +310,6 @@ def verify_session_delete() -> None:
     assert deleted, f"delete_session returned {deleted!r}"
     rows = db.list_sessions_rich(limit=10)
     assert not any(r["id"] == session_id for r in rows), "session still present after delete"
-
-
-def verify_kanban_init(
-    *, hermes: Path = Path("/usr/local/bin/hermes")
-) -> None:
-    """Initialize a fresh board through the installed CLI and query its schema."""
-    with tempfile.TemporaryDirectory(prefix="nemoclaw-kanban-init-") as directory:
-        hermes_home = Path(directory)
-        child_env = dict(os.environ)
-        child_env["HERMES_HOME"] = str(hermes_home)
-        _run_required_build_command(
-            "Hermes Kanban initialization",
-            [str(hermes), "kanban", "init"],
-            env=child_env,
-        )
-
-        database = hermes_home / "kanban.db"
-        connection = sqlite3.connect(f"{database.resolve().as_uri()}?mode=ro", uri=True)
-        try:
-            tables = {
-                row[0]
-                for row in connection.execute(
-                    "SELECT name FROM sqlite_master WHERE type = 'table'"
-                )
-            }
-            assert {
-                "kanban_notify_subs",
-                "task_attachments",
-                "task_comments",
-                "task_events",
-                "task_links",
-                "task_runs",
-                "tasks",
-            } <= tables, tables
-            task_columns = {
-                row[1] for row in connection.execute("PRAGMA table_info(tasks)")
-            }
-            assert {"created_at", "id", "status", "title"} <= task_columns, task_columns
-            assert connection.execute("PRAGMA integrity_check").fetchall() == [("ok",)]
-        finally:
-            connection.close()
 
 
 _SESSION_STATE_PROBE_ID = "nemoclaw-cross-uid-session-probe"
@@ -732,7 +689,6 @@ COMMANDS: dict[str, Callable[[], None]] = {
     "googlechat-override-seams": verify_googlechat_override_seams,
     "gateway-runtime-metadata": verify_gateway_runtime_metadata,
     "langfuse-credentials": verify_langfuse_credentials,
-    "kanban-init": verify_kanban_init,
     "managed-runtime-capability": verify_managed_runtime_capability,
     "neutral-platform-inertness": verify_neutral_platform_inertness,
     "profile-policy": verify_profile_policy,

@@ -19,14 +19,12 @@ import {
   isHermesMcpStatusAwaitingRestartSettlement,
   isHermesRestartTransportFailure,
   isRetryableOpenClawBaselineScopeOnboardFailure,
-  isRetryableOpenClawPostReadyDeletingOnboardFailure,
   MCP_BRIDGE_TEST_REDACTION_VALUES,
   readConcurrentMcpStatusAndConfirmHermesRegistration,
   restartBridgeWithoutHostSecret,
   retryAfterHermesRestartTransportFailure,
   retryHermesGatewayDraining,
   retryOpenClawBaselineScopeOnboardFailure,
-  retryOpenClawPostReadyDeletingOnboardFailure,
 } from "../live/mcp-bridge-reliability.ts";
 
 const HTTP_STATUS_MARKER = "NEMOCLAW_HERMES_MCP_HTTP_STATUS=";
@@ -546,125 +544,6 @@ describe("MCP bridge transient classification", () => {
       }),
     ).resolves.toBe(passing);
     expect(retry).toHaveBeenCalledOnce();
-  });
-
-  it("classifies only the exact OpenClaw post-Ready Deleting lifecycle race", () => {
-    const sandboxName = "e2e-pr-exact-mcp-1";
-    const result = {
-      exitCode: 1,
-      signal: null,
-      timedOut: false,
-      stdout: [
-        "Sandbox reported Ready; waiting for the create ownership handoff to finish.",
-        `Error: sandbox '${sandboxName}' is not ready (phase: Deleting); wait for it`,
-        "to reach Ready state",
-      ].join("\n"),
-      stderr: "",
-    };
-
-    expect(
-      isRetryableOpenClawPostReadyDeletingOnboardFailure("openclaw", sandboxName, result),
-    ).toBe(true);
-    expect(isRetryableOpenClawPostReadyDeletingOnboardFailure("hermes", sandboxName, result)).toBe(
-      false,
-    );
-    expect(
-      isRetryableOpenClawPostReadyDeletingOnboardFailure("openclaw", "other-sandbox", result),
-    ).toBe(false);
-    expect(
-      isRetryableOpenClawPostReadyDeletingOnboardFailure("openclaw", sandboxName, {
-        ...result,
-        stdout: result.stdout.replace("Sandbox reported Ready", "Sandbox creation started"),
-      }),
-    ).toBe(false);
-    expect(
-      isRetryableOpenClawPostReadyDeletingOnboardFailure("openclaw", sandboxName, {
-        ...result,
-        stdout: result.stdout.replace("phase: Deleting", "phase: Error"),
-      }),
-    ).toBe(false);
-  });
-
-  it("reconciles the exact post-Ready deletion race before one recreated sandbox", async () => {
-    const sandboxName = "e2e-pr-exact-mcp-1";
-    const deleting = {
-      exitCode: 1,
-      signal: null,
-      timedOut: false,
-      stdout: [
-        "Sandbox reported Ready; waiting for the create ownership handoff to finish.",
-        `sandbox '${sandboxName}' is not ready (phase: Deleting); wait for it to reach Ready state`,
-      ].join("\n"),
-      stderr: "",
-    };
-    const passing = { ...deleting, exitCode: 0, stdout: "onboarded\n" };
-    const run = vi.fn().mockResolvedValueOnce(deleting).mockResolvedValueOnce(passing);
-    const reconcile = vi.fn().mockResolvedValue(true);
-    const sleep = vi.fn().mockResolvedValue(undefined);
-    const onEvidence = vi.fn().mockResolvedValue(undefined);
-
-    await expect(
-      retryOpenClawPostReadyDeletingOnboardFailure({
-        agent: "openclaw",
-        sandboxName,
-        run,
-        reconcile,
-        sleep,
-        onEvidence,
-      }),
-    ).resolves.toBe(passing);
-    expect(run).toHaveBeenCalledTimes(2);
-    expect(reconcile).toHaveBeenCalledOnce();
-    expect(sleep).toHaveBeenCalledWith(1_000);
-    expect(onEvidence).toHaveBeenCalledWith({
-      schemaVersion: 1,
-      operation: "mcp-bridge.openclaw-onboard-lifecycle",
-      owner: "mcp-bridge-live-e2e",
-      idempotence: "reconciled-mutation",
-      maxAttempts: 2,
-      outcome: "passed-after-retry",
-      attempts: [
-        {
-          attempt: 1,
-          outcome: "failed",
-          failureClass: "transient-external",
-          reconciled: true,
-          retryScheduled: true,
-        },
-        { attempt: 2, outcome: "passed", retryScheduled: false },
-      ],
-    });
-  });
-
-  it("does not recreate the sandbox when lifecycle reconciliation fails", async () => {
-    const sandboxName = "e2e-pr-exact-mcp-1";
-    const deleting = {
-      exitCode: 1,
-      signal: null,
-      timedOut: false,
-      stdout: `Sandbox reported Ready; waiting for the create ownership handoff to finish.\nsandbox '${sandboxName}' is not ready (phase: Deleting); wait for it to reach Ready state`,
-      stderr: "",
-    };
-    const run = vi.fn().mockResolvedValue(deleting);
-    const reconcile = vi.fn().mockResolvedValue(false);
-    const onEvidence = vi.fn().mockResolvedValue(undefined);
-
-    await expect(
-      retryOpenClawPostReadyDeletingOnboardFailure({
-        agent: "openclaw",
-        sandboxName,
-        run,
-        reconcile,
-        onEvidence,
-      }),
-    ).resolves.toBe(deleting);
-    expect(run).toHaveBeenCalledOnce();
-    expect(onEvidence).toHaveBeenCalledWith(
-      expect.objectContaining({
-        outcome: "failed-no-retry",
-        attempts: [expect.objectContaining({ reconciled: false, retryScheduled: false })],
-      }),
-    );
   });
 
   it("redacts every MCP fixture credential from a restart-command failure artifact", async () => {

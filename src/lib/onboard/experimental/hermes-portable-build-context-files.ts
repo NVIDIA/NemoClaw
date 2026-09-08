@@ -34,7 +34,6 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "agents/hermes/patch-discord-recovery-permissions.py", mode: "100755" },
   { path: "agents/hermes/patch-gateway-process-identity.py", mode: "100755" },
   { path: "agents/hermes/patch-gateway-runtime-metadata.py", mode: "100755" },
-  { path: "agents/hermes/patch-hermes-kanban-atomic-schema.py", mode: "100755" },
   { path: "agents/hermes/patch-hermes-sqlite-temp-store.py", mode: "100755" },
   { path: "agents/hermes/patch-langfuse-credentials.mts", mode: "100644" },
   { path: "agents/hermes/patch-neutral-platform-env-activation.py", mode: "100755" },
