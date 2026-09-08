@@ -112,6 +112,9 @@ export async function applyCredentialsAtOpenShell(
     const credentialAvailability = definition.credentials.map(({ value }) => Boolean(value));
     const hasAnyCredential = credentialAvailability.some(Boolean);
     const hasEveryCredential = credentialAvailability.every(Boolean);
+    const hasRequiredCredential = definition.credentials.some(
+      ({ name, value }) => name === definition.credentialId && Boolean(value),
+    );
     states.set(definition.providerName, state);
     if (state === "indeterminate") {
       throw new MessagingProviderApplyError({
@@ -121,7 +124,7 @@ export async function applyCredentialsAtOpenShell(
     if (state === "collision" && (!options.replaceExisting || !hasEveryCredential)) {
       throw bindingConflict(definition);
     }
-    if (state === "missing" && hasAnyCredential && !hasEveryCredential) {
+    if (state === "missing" && hasAnyCredential && !hasRequiredCredential) {
       throw new MessagingProviderApplyError({
         message: `Messaging provider '${definition.providerName}' is missing required credential material for creation.`,
       });
@@ -242,7 +245,8 @@ export async function applyCredentialsAtOpenShell(
       target,
       providerName: definition.providerName,
     });
-    if (classifyProviderDefinition(verification, definition) !== "exact") {
+    const appliedDefinition = action === "create" ? { ...definition, credentials } : definition;
+    if (classifyProviderDefinition(verification, appliedDefinition) !== "exact") {
       throw withMutationEvidence(
         `OpenShell did not confirm messaging provider '${definition.providerName}' after ${action}.`,
         mutatedProviderNames,

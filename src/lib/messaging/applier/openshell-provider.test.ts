@@ -220,6 +220,67 @@ describe("messaging OpenShell provider application", () => {
     expect(adapter.updateProvider).not.toHaveBeenCalled();
   });
 
+  it("omits an absent optional credential when creating a provider (#11190)", async () => {
+    const expected = definition({
+      credentials: [
+        { name: "TELEGRAM_BOT_TOKEN", value: "telegram-secret" },
+        { name: "TELEGRAM_BOT_TOKEN_AGENT_A", value: "telegram-agent-a-secret" },
+        { name: "TELEGRAM_BOT_TOKEN_AGENT_MISSING", value: null },
+      ],
+    });
+    const createdCredentials = expected.credentials.slice(0, 2);
+    const adapter = providerAdapter({
+      getProvider: vi
+        .fn<OpenShellProviderAdapter["getProvider"]>()
+        .mockResolvedValueOnce({
+          ok: false,
+          error: { kind: "command", reason: "not_found", message: "provider not found" },
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          value: metadata({ ...expected, credentials: createdCredentials }),
+        }),
+    });
+
+    await applyCredentialsAtOpenShell(plan, {
+      providerAdapter: adapter,
+      target,
+      definitions: [expected],
+      requireCompleteBindings: true,
+    });
+
+    expect(adapter.createProvider).toHaveBeenCalledWith({
+      target,
+      name: expected.providerName,
+      type: expected.providerType,
+      credentials: createdCredentials,
+      config: [],
+      fromExisting: false,
+    });
+  });
+
+  it("rejects provider creation when only an optional credential is present (#11190)", async () => {
+    const expected = definition({
+      credentials: [
+        { name: "TELEGRAM_BOT_TOKEN", value: null },
+        { name: "TELEGRAM_BOT_TOKEN_AGENT_A", value: "telegram-agent-a-secret" },
+      ],
+    });
+    const adapter = providerAdapter();
+
+    const failure = await applyCredentialsAtOpenShell(plan, {
+      providerAdapter: adapter,
+      target,
+      definitions: [expected],
+      requireCompleteBindings: true,
+    }).catch((error: unknown) => error);
+
+    expect(failure).toMatchObject({
+      message: "Messaging provider 'alpha-telegram-bridge' is missing required credential material for creation.",
+    });
+    expect(adapter.createProvider).not.toHaveBeenCalled();
+  });
+
   it("rejects replacement when any attachment is outside the authorized sandbox (#9806)", async () => {
     const expected = definition();
     const adapter = providerAdapter({
