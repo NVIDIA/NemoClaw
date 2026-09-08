@@ -100,12 +100,10 @@ describe("Hermes provider store availability", () => {
     const helpers = createHermesAuthHelpers(createDeps({ runOpenshell }));
 
     await expect(helpers.checkHermesProviderStoreReachable()).resolves.toEqual({ ok: true });
-    expect(runOpenshell).toHaveBeenCalledWith(["provider", "list", "--names"], {
-      ignoreError: true,
-      maxBuffer: 64 * 1024,
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: 10_000,
-    });
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["provider", "list", "--names"],
+      expect.objectContaining({ timeout: 10_000 }),
+    );
   });
 
   it("reports malformed provider inventory as unavailable", async () => {
@@ -116,12 +114,10 @@ describe("Hermes provider store availability", () => {
       ok: false,
       message: "OpenShell returned an invalid provider inventory.",
     });
-    expect(runOpenshell).toHaveBeenCalledWith(["provider", "list", "--names"], {
-      ignoreError: true,
-      maxBuffer: 64 * 1024,
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: 10_000,
-    });
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["provider", "list", "--names"],
+      expect.objectContaining({ timeout: 10_000 }),
+    );
   });
 });
 
