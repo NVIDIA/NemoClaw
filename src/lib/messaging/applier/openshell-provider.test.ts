@@ -333,8 +333,10 @@ describe("messaging OpenShell provider application", () => {
     }).catch((error: unknown) => error);
 
     expect(failure).toMatchObject({
-      message: "Messaging provider 'alpha-telegram-bridge' is missing required credential material for creation.",
+      message:
+        "Messaging provider 'alpha-telegram-bridge' is missing required credential 'TELEGRAM_BOT_TOKEN' for creation.",
     });
+    expect((failure as Error).message).not.toContain("telegram-agent-a-secret");
     expect(adapter.createProvider).not.toHaveBeenCalled();
   });
 

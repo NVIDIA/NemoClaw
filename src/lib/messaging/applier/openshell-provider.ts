@@ -109,7 +109,7 @@ export async function applyCredentialsAtOpenShell(
       providerName: definition.providerName,
     });
     const state = classifyProviderDefinition(observed, definition, true);
-    const primaryCredentialKey = requiredCredentialKey(definition);
+    const primaryCredentialKey = requiredCredentialKey(definition)!;
     const hasAnyCredential = definition.credentials.some(({ value }) => Boolean(value));
     const hasPrimaryCredential = definition.credentials.some(
       ({ name, value }) => name === primaryCredentialKey && Boolean(value),
@@ -125,7 +125,7 @@ export async function applyCredentialsAtOpenShell(
     }
     if (state === "missing" && hasAnyCredential && !hasPrimaryCredential) {
       throw new MessagingProviderApplyError({
-        message: `Messaging provider '${definition.providerName}' is missing required credential material for creation.`,
+        message: `Messaging provider '${definition.providerName}' is missing required credential '${primaryCredentialKey}' for creation.`,
       });
     }
   }
