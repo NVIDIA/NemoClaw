@@ -11,10 +11,6 @@ export interface InstallCompletedEvent {
   operation: TelemetryOperation;
 }
 
-// Keep every sendable event in this closed union. Adding a new schema requires
-// an explicit type, validator branch, and tests before the shared client can send it.
-export type TelemetryEvent = InstallCompletedEvent;
-
 export function isTelemetryOperation(value: unknown): value is TelemetryOperation {
   return TELEMETRY_OPERATIONS.some((operation) => operation === value);
 }
@@ -31,18 +27,6 @@ export function parseInstallCompletedEvent(value: unknown): InstallCompletedEven
   if (event !== INSTALL_COMPLETED_EVENT_NAME || !isTelemetryOperation(operation)) return null;
 
   return Object.freeze({ event: INSTALL_COMPLETED_EVENT_NAME, operation });
-}
-
-export function parseTelemetryEvent(value: unknown): TelemetryEvent | null {
-  return parseInstallCompletedEvent(value);
-}
-
-export function isInstallCompletedEvent(value: unknown): value is InstallCompletedEvent {
-  return parseInstallCompletedEvent(value) !== null;
-}
-
-export function isTelemetryEvent(value: unknown): value is TelemetryEvent {
-  return parseTelemetryEvent(value) !== null;
 }
 
 export function buildInstallCompletedEvent(operation: TelemetryOperation): InstallCompletedEvent {

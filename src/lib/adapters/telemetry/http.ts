@@ -3,8 +3,8 @@
 
 import http from "node:http";
 import https from "node:https";
-import type { TelemetryEvent } from "../../domain/telemetry/event";
-import { parseTelemetryEvent } from "../../domain/telemetry/event";
+import type { InstallCompletedEvent } from "../../domain/telemetry/event";
+import { parseInstallCompletedEvent } from "../../domain/telemetry/event";
 
 export const TELEMETRY_DELIVERY_DEADLINE_MS = 5_000;
 
@@ -22,10 +22,10 @@ function transportFor(endpoint: URL): typeof http | typeof https | null {
 
 export async function postTelemetryEvent(
   config: TelemetryHttpConfig,
-  event: TelemetryEvent,
+  event: InstallCompletedEvent,
   deadlineMs = TELEMETRY_DELIVERY_DEADLINE_MS,
 ): Promise<TelemetryHttpDeliveryResult> {
-  const canonicalEvent = parseTelemetryEvent(event);
+  const canonicalEvent = parseInstallCompletedEvent(event);
   if (!canonicalEvent || !Number.isFinite(deadlineMs) || deadlineMs <= 0) {
     return "failed";
   }

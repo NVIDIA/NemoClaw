@@ -10,7 +10,6 @@ import {
 import {
   buildInstallCompletedEvent,
   type InstallCompletedEvent,
-  type TelemetryEvent,
   type TelemetryOperation,
 } from "../../domain/telemetry/event";
 
@@ -21,7 +20,7 @@ export interface InstallerTelemetryDependencies {
   buildEvent: (operation: TelemetryOperation) => InstallCompletedEvent;
   deliverEvent: (
     config: TelemetryHttpConfig,
-    event: TelemetryEvent,
+    event: InstallCompletedEvent,
     deadlineMs: number,
   ) => Promise<TelemetryHttpDeliveryResult>;
 }

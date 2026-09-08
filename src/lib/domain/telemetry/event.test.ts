@@ -4,9 +4,8 @@
 import { describe, expect, it } from "vitest";
 import {
   buildInstallCompletedEvent,
-  isInstallCompletedEvent,
-  isTelemetryEvent,
   isTelemetryOperation,
+  parseInstallCompletedEvent,
 } from "./event";
 
 describe("install-completed telemetry event", () => {
@@ -34,7 +33,6 @@ describe("install-completed telemetry event", () => {
     { operation: "install" },
     null,
   ])("rejects an event outside the exact schema (#10440)", (event) => {
-    expect(isInstallCompletedEvent(event)).toBe(false);
-    expect(isTelemetryEvent(event)).toBe(false);
+    expect(parseInstallCompletedEvent(event)).toBeNull();
   });
 });

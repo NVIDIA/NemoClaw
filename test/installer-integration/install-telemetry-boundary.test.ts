@@ -75,11 +75,15 @@ recover_preexisting_sandboxes_before_onboard() { return 0; }
 run_onboard() { record_order onboard; return "$ONBOARD_STATUS"; }
 restore_onboard_forward_after_post_checks() { return 0; }
 finalize_install() { record_order finalize; }
-clear_station_resume_after_completed_onboarding() { record_order cleanup; }
+clear_station_resume_after_completed_onboarding() {
+  record_order cleanup
+  return "$CLEANUP_STATUS"
+}
 main --non-interactive --yes-i-accept-third-party-software
 `,
     {
       ONBOARD_STATUS: String(onboardStatus),
+      CLEANUP_STATUS: "0",
       PRIOR_MANAGED_INSTALL: priorManagedInstall,
       ...extraEnv,
     },
@@ -157,6 +161,14 @@ describe("installer telemetry boundary", () => {
 
     expect(run.result.status, run.output).not.toBe(0);
     expect(run.order).toBe("install\nonboard\n");
+    expect(run.calls).toBe("");
+  });
+
+  it("does not attempt telemetry when post-onboarding cleanup fails (#10440)", () => {
+    const run = runMainHarness(0, { CLEANUP_STATUS: "1" });
+
+    expect(run.result.status, run.output).not.toBe(0);
+    expect(run.order).toBe("install\nonboard\nfinalize\ncleanup\n");
     expect(run.calls).toBe("");
   });
 });
