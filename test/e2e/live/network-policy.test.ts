@@ -8,6 +8,7 @@ import path from "node:path";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { parseCurlHttpStatus } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
   type SandboxClient,
@@ -392,7 +393,7 @@ test(
       "network-policy-denied-host-gateway-port",
     );
     expect(denied).not.toContain(deniedMarker);
-    expect(denied).toContain("STATUS_403");
+    expect(parseCurlHttpStatus(denied), denied).toBe(403);
 
     progress.phase("prove the installed OpenClaw web_fetch path obeys the host-gateway policy");
     const webFetch = await sandboxBash(

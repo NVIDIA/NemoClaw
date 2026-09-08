@@ -29,6 +29,11 @@ export function resultText(result: CommandResultText): string {
   return [result.stdout, result.stderr].filter(Boolean).join("\n");
 }
 
+export function parseCurlHttpStatus(output: string): number | null {
+  const match = /(?:^|\r?\n)STATUS_(\d{3})\r?\n?$/u.exec(output);
+  return match ? Number.parseInt(match[1]!, 10) : null;
+}
+
 export function outputContainsSandbox(
   result: Pick<ShellProbeResult, "stdout" | "stderr">,
   sandboxName: string,

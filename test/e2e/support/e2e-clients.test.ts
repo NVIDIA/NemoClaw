@@ -25,6 +25,7 @@ import type {
   ShellProbeRunOptions,
   TrustedShellCommand,
 } from "../fixtures/shell-probe.ts";
+import { parseCurlHttpStatus } from "../fixtures/clients/command.ts";
 import { LAUNCH_TURN_SCRIPT, runOpenClawLaunchSession } from "../live/launch-agent-turn.ts";
 import { sandboxShWithArgs } from "../live/phase6-messaging-helpers.ts";
 
@@ -77,6 +78,15 @@ class FakeRunner implements CommandRunner {
 }
 
 describe("E2E fixture clients", () => {
+  it.each([
+    ["a terminal LF record", '{"detail":"policy_denied"}\nSTATUS_403\n', 403],
+    ["a terminal CRLF record", "denied\r\nSTATUS_403\r\n", 403],
+    ["status-like response text", '{"detail":"STATUS_403"}\nSTATUS_000\n', 0],
+    ["no terminal record", '{"detail":"STATUS_403"}', null],
+  ])("parses curl HTTP status from %s", (_label, output, expected) => {
+    expect(parseCurlHttpStatus(output)).toBe(expected);
+  });
+
   it.each([
     "a2345678901234567890",
     "e2e--sandbox",
@@ -217,9 +227,9 @@ describe("E2E fixture clients", () => {
       runner.enqueue({ stdout: "4321\n" });
       const host = new HostCliClient(runner);
 
-      await expect(
-        host.inspectOpenShellForwardListener("18789", "alpha"),
-      ).resolves.toMatchObject({ valid: expected });
+      await expect(host.inspectOpenShellForwardListener("18789", "alpha")).resolves.toMatchObject({
+        valid: expected,
+      });
     },
   );
 
