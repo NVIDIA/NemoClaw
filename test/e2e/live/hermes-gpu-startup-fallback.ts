@@ -82,8 +82,10 @@ function quoteShellLiteral(value: string): string {
 /**
  * Create an E2E-only OpenShell CLI wrapper that rejects the exact native
  * `--gpu` create before build or sandbox progress. The compatibility create
- * and its GPU proof delegate to the real CLI. Every other invocation also
- * transparently delegates its original argv. This
+ * and its GPU proof delegate to the real CLI. After the proof, the wrapper
+ * replaces itself with a link to the real CLI so later ForwardTcp ownership
+ * checks see the executable that owns each listener. Every other invocation
+ * also transparently delegates its original argv. This
  * test-only wrapper never logs argv: its sole artifact is an event log made of
  * fixed labels, so sandbox-create environment arguments never enter artifacts.
  * This interception pattern is specific to the #6110 fallback proof and must
@@ -150,6 +152,9 @@ export function createHermesGpuFallbackWrapper(
     "",
     'if [[ "$is_native_nvidia_smi_proof" == "1" && -d "$NATIVE_CREATE_REJECTED" ]]; then',
     `  printf '%s\\n' '${HERMES_GPU_FALLBACK_EVENTS.delegateNvidiaSmiProofAfterFallback}' >>"$FALLBACK_STATE_DIR/events.log"`,
+    '  REAL_OPENSHELL_LINK="$FALLBACK_STATE_DIR/openshell-real.$$"',
+    '  ln -s "$REAL_OPENSHELL" "$REAL_OPENSHELL_LINK"',
+    '  mv -f "$REAL_OPENSHELL_LINK" "$0"',
     "fi",
     "",
     "# Transparent test-only delegation: argv is never written by this wrapper.",

@@ -124,8 +124,8 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
     ]);
   });
 
-  it("rejects native create before progress and delegates one compatibility attempt (#10155)", () => {
-    const { root, wrapper } = createWrapperFixture("hermes-gpu-fallback-test-", {
+  it("retires fault injection before ForwardTcp restore after one compatibility attempt (#11239)", () => {
+    const { realOpenshell, root, wrapper } = createWrapperFixture("hermes-gpu-fallback-test-", {
       openshell: [
         "#!/usr/bin/env bash",
         "marker=delegated",
@@ -189,6 +189,8 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
       env,
     );
     expect(compatibilityProof.status, compatibilityProof.stderr).toBe(0);
+    expect(fs.lstatSync(wrapper.wrapperPath).isSymbolicLink()).toBe(true);
+    expect(fs.realpathSync(wrapper.wrapperPath)).toBe(fs.realpathSync(realOpenshell));
 
     const version = runWrapper(wrapper.wrapperPath, ["--version"], env);
     expect(version.status, version.stderr).toBe(0);
@@ -204,7 +206,9 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
         fs.readFileSync(path.join(path.dirname(wrapper.eventsPath), entry.name), "utf8"),
       )
       .join("\n");
-    expect(secretMarkers.every((secretMarker) => !wrapperArtifacts.includes(secretMarker))).toBe(true);
+    expect(secretMarkers.every((secretMarker) => !wrapperArtifacts.includes(secretMarker))).toBe(
+      true,
+    );
     expect(wrapperArtifacts).not.toMatch(/(?:TOKEN|API_KEY|PASSWORD)=/u);
     // The fake delegate records a constant marker only; it never serializes argv.
     expect(fs.readFileSync(delegateMarkerLog, "utf8").split(/\r?\n/u).filter(Boolean)).toEqual([
