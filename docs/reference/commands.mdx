@@ -3682,7 +3682,7 @@ export NEMOCLAW_DASHBOARD_PORT=19000
 $$nemoclaw onboard
 ```
 
-These overrides apply to onboarding, status checks, health probes, and the uninstaller. Defaults are unchanged when no variable is set.
+These overrides apply to onboarding, status checks, health probes, and the uninstaller. Defaults are unchanged when no variable is set, except that a recorded automatic gateway-port marker selects its alternate port.
 
 <AgentOnly variant="openclaw,hermes">
 If `NEMOCLAW_DASHBOARD_PORT` or the port from `CHAT_UI_URL` is already occupied by another sandbox, onboarding scans `18789` through `18799` and uses the next free dashboard port.

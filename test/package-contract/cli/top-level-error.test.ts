@@ -175,9 +175,14 @@ require(cliPath);`,
   );
 }
 
-function runWithCapturedGatewayPort(home: string, explicitPort?: string): SpawnSyncReturns<string> {
+function runWithCapturedGatewayPort(
+  home: string,
+  explicitPort?: string,
+  overrides: NodeJS.ProcessEnv = {},
+): SpawnSyncReturns<string> {
   const env = {
     ...process.env,
+    ...overrides,
     HOME: home,
     NEMOCLAW_GATEWAY_PORT: explicitPort ?? "",
   };
@@ -451,6 +456,30 @@ complete_automatic_gateway_port_selection`,
       expect(result.stderr).toContain(
         "Could not safely resolve the automatically selected NemoClaw gateway port",
       );
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("ignores an inherited BASH_ENV while resolving an automatic marker (#10824)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-bash-env-port-"));
+    try {
+      const marker = path.join(home, ".nemoclaw", "gateways", "8990", "automatic-gateway-port");
+      const bashEnv = path.join(home, "hostile-bash-env.sh");
+      const sentinel = path.join(home, "bash-env-ran");
+      fs.mkdirSync(path.dirname(marker), { recursive: true });
+      fs.writeFileSync(marker, "8990\n");
+      fs.writeFileSync(bashEnv, 'printf "executed\\n" >"$BASH_ENV_SENTINEL"\n');
+
+      const result = runWithCapturedGatewayPort(home, undefined, {
+        BASH_ENV: bashEnv,
+        BASH_ENV_SENTINEL: sentinel,
+      });
+
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(0);
+      expect(result.stdout).toBe("8990:1");
+      expect(fs.existsSync(sentinel)).toBe(false);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }

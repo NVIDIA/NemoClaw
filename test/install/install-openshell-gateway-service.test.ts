@@ -219,6 +219,20 @@ function runCandidateCheck(home: string, env: NodeJS.ProcessEnv = {}) {
   );
 }
 
+function runForcedCandidateProbe(home: string, probeName: "ss" | "fuser", source: string) {
+  const probeBin = path.join(home, `${probeName}-probe-bin`);
+  fs.mkdirSync(probeBin, { recursive: true });
+  writeExecutable(path.join(probeBin, probeName), source);
+  return runInstallHelper(
+    home,
+    [
+      `command_exists() { [[ "$1" == ${JSON.stringify(probeName)} ]]; }`,
+      'candidate_gateway_port_is_available 8990 && echo "AVAILABLE" || echo "UNAVAILABLE"',
+    ].join("\n"),
+    { PATH: `${probeBin}:${TEST_SYSTEM_PATH}` },
+  );
+}
+
 describe("install.sh OpenShell gateway service", () => {
   it.each([
     "user-local",
@@ -899,6 +913,41 @@ describe("install.sh OpenShell gateway service", () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("UNAVAILABLE");
+  });
+
+  it.each([
+    ["accepts an empty successful ss result", "ss", "#!/usr/bin/env bash\nexit 0\n", "AVAILABLE"],
+    [
+      "rejects a nonempty ss listener result",
+      "ss",
+      "#!/usr/bin/env bash\nprintf 'LISTEN 0 128 127.0.0.1:8990\\n'\n",
+      "UNAVAILABLE",
+    ],
+    [
+      "rejects an ss error",
+      "ss",
+      "#!/usr/bin/env bash\nprintf 'permission denied\\n' >&2\nexit 2\n",
+      "UNAVAILABLE",
+    ],
+    ["accepts the empty fuser no-listener result", "fuser", "#!/usr/bin/env bash\nexit 1\n", "AVAILABLE"],
+    [
+      "rejects a fuser listener result",
+      "fuser",
+      "#!/usr/bin/env bash\nprintf '8990/tcp: 42\\n'\n",
+      "UNAVAILABLE",
+    ],
+    [
+      "rejects an inconclusive fuser result",
+      "fuser",
+      "#!/usr/bin/env bash\nprintf 'permission denied\\n' >&2\nexit 1\n",
+      "UNAVAILABLE",
+    ],
+  ] as const)("%s (#10824)", (_label, probeName, source, expected) => {
+    const home = makeTempRoot();
+    const result = runForcedCandidateProbe(home, probeName, source);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain(expected);
   });
 
   it.each([

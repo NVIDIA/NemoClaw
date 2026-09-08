@@ -63,12 +63,31 @@ function applyPersistedAutomaticGatewayPort() {
   const { spawnSync } = require("node:child_process");
   const path = require("node:path");
   const resolver = path.join(__dirname, "..", "scripts", "install.sh");
+  const configuredPortNames = [
+    "NEMOCLAW_DASHBOARD_PORT",
+    "NEMOCLAW_VLLM_PORT",
+    "NEMOCLAW_OLLAMA_PORT",
+    "NEMOCLAW_OLLAMA_PROXY_PORT",
+    "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT",
+    "NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT",
+    "NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT",
+  ];
+  const configuredPorts = Object.fromEntries(
+    configuredPortNames.flatMap((name) =>
+      process.env[name] === undefined ? [] : [[name, process.env[name]]],
+    ),
+  );
   const result = spawnSync(
     "/bin/bash",
     [resolver, "--internal-resolve-automatic-gateway-port"],
     {
       encoding: "utf8",
-      env: { ...process.env, HOME: process.env.HOME || "/", NEMOCLAW_GATEWAY_PORT: "" },
+      env: {
+        HOME: process.env.HOME || "/",
+        PATH: "/usr/bin:/bin",
+        NEMOCLAW_GATEWAY_PORT: "",
+        ...configuredPorts,
+      },
       maxBuffer: 64 * 1024,
       timeout: 5_000,
     },
