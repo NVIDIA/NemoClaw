@@ -290,6 +290,7 @@ function loadRecoverSandboxProcesses(): RecoverSandboxProcesses {
 
 interface CollectSandboxStatusSnapshotDeps {
   getSandbox?: typeof registry.getSandbox;
+  updateSandbox?: typeof registry.updateSandbox;
   listSandboxes?: typeof registry.listSandboxes;
   captureOpenshellForStatusImpl?: typeof captureOpenshellForStatus;
   probeProviderHealthImpl?: ProbeProviderHealth;
@@ -452,6 +453,26 @@ export async function collectSandboxStatusSnapshot(
     lookup = {
       state: "gateway_error",
       output: `  Could not probe live gateway state: ${message}`,
+    };
+  }
+  if (
+    sb?.stopped === true &&
+    lookup.state === "present" &&
+    lookup.phase === "Ready" &&
+    !initialPreflight?.failure &&
+    !initialPreflight?.intentionalStopConfirmed &&
+    !registry.recordSandboxStopIntent(
+      sandboxName,
+      false,
+      opts.deps?.updateSandbox ?? registry.updateSandbox,
+    )
+  ) {
+    lookup = {
+      ...lookup,
+      state: "sandbox_recovery_failed",
+      output:
+        `  Sandbox '${sandboxName}' is running, but NemoClaw could not clear its stale intentional-stop record. ` +
+        `Retry 'nemoclaw ${sandboxName} status' before another lifecycle command.`,
     };
   }
   const dockerRecovered = lookup.recoveredSandbox === true;

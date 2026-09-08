@@ -605,6 +605,7 @@ describe("CLI sandbox status text output", () => {
         path.join(localBin, "openshell"),
         [
           "#!/usr/bin/env bash",
+          `if [ -f ${JSON.stringify(stoppedState)} ] && [ "$1" = "sandbox" ] && [ "$2" = "get" ]; then echo 'NotFound: sandbox not found'; exit 1; fi`,
           'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && { [ "$3" = "alpha" ] || [ "$5" = "alpha" ]; }; then',
           "  echo 'Sandbox:'",
           "  echo",
@@ -687,6 +688,7 @@ describe("CLI sandbox status text output", () => {
       expect(r.out).not.toContain("Failure layer:");
       expect(r.out).toContain("Phase: Stopped");
       expect(r.out).not.toContain("Phase: Provisioning");
+      expect(r.out).not.toContain("not present in the live OpenShell gateway");
       expect(r.out).toContain("Sandbox 'alpha' is stopped.");
       expect(r.out).toContain("Workspace state is preserved.");
       expect(r.out).toContain("Start it again with `nemoclaw alpha start`.");
@@ -704,6 +706,7 @@ describe("CLI sandbox status text output", () => {
       expect(j.code).toBe(0);
       const parsed = JSON.parse(j.out);
       expect(parsed.phase).toBe("Stopped");
+      expect(parsed.gatewayState).toBe("missing");
       expect(parsed.failureLayer).toBeNull();
     },
   );

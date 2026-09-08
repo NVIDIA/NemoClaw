@@ -1463,7 +1463,8 @@ For Portable Hermes, `status` reports `Portable lifecycle phase: pending`, `conf
 For a non-Portable sandbox, status reports a clean `phase: "Stopped"` only when the persisted
 intentional-stop record agrees with a provider-confirmed `sandbox_container_stopped` result. In that
 case it keeps `failureLayer` null, suppresses inference probes, and exits `0`; other preflight
-failures remain visible. A stopped runtime without recorded stop intent remains a
+failures remain visible. A separate gateway or status error can still make the command exit
+nonzero. A stopped runtime without recorded stop intent remains a
 `sandbox_container_stopped` failure.
 
 For a `compatible-endpoint` route that uses `openai-completions`, the text output prints `Reasoning effort` as `low`, `medium`, `high`, or `endpoint-default`. The line is omitted for another provider or API family.
