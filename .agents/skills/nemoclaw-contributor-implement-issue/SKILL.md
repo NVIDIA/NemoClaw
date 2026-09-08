@@ -16,11 +16,12 @@ Use this workflow when the user asks to implement, fix, code, or test a named is
 
 This workflow owns the code repair that `nemoclaw-contributor-create-pr` routes from a classified PR finding. The finding must stay in the accepted product scope and its root-cause group. Return the change and evidence to the publication workflow.
 
-For a review repair routed from `nemoclaw-contributor-create-pr`, require the recorded pre-handoff
-local state, original PR objective, accepted and deferred scope, complete root-cause group, and that
-group's frozen repair envelope. Return without editing when any input is missing or malformed. A
-maintainer salvage repair follows the accepted repair scope from its invoking maintainer workflow and
-does not require a contributor envelope.
+For a review repair routed from `nemoclaw-contributor-create-pr`, require the recorded reversible
+checkpoint of the complete pre-handoff local state, including the index, worktree, and untracked
+paths. Also require the original PR objective, accepted and deferred scope, complete root-cause group,
+and that group's frozen repair envelope. Return without editing when any input is missing or malformed.
+A maintainer salvage repair follows the accepted repair scope from its invoking maintainer workflow
+and does not require a contributor envelope.
 
 Do not use this workflow to plan an issue; publish a PR; collect, classify, or answer pull request review feedback; perform an independent security review; or do maintainer work.
 
@@ -42,8 +43,9 @@ path to equal an envelope path or match an envelope path rule, require the plann
 group's required behavior, and require its mechanism to fit the original objective and accepted and
 deferred scope. Enforce the envelope's additional-file and additions-plus-deletions limits during
 implementation. If the complete measured delta is unmeasurable or exceeds an envelope limit, restore
-only that handoff's delta to the recorded pre-handoff state and return the rejected paths and diff
-total. The publication workflow remeasures the returned delta independently.
+the checkpoint exactly and confirm that the complete local state matches it. Return the checkpoint
+identity, restored state, rejected paths, and diff total. The publication workflow remeasures the
+returned delta independently.
 
 Implementation permits local changes and validation; it does not authorize GitHub writes, a push, or PR publication.
 

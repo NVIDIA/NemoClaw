@@ -97,13 +97,13 @@
 
   {
     "id": "positive-routed-review-repair",
-    "question": "The publication workflow classified a CodeRabbit finding as a real defect and routed the pre-handoff state, original objective, accepted and deferred scope, complete group, and its frozen repair envelope. Fix the code.",
+    "question": "The publication workflow classified a CodeRabbit finding as a real defect and routed a reversible checkpoint of the complete pre-handoff state, original objective, accepted and deferred scope, complete group, and its frozen repair envelope. Fix the code.",
     "expected_skill": "nemoclaw-contributor-implement-issue",
     "ground_truth": "This workflow owns the code repair that the publication workflow routes back from a classified review finding. The finding bounds the repair to its root-cause group within the pull request's already accepted product scope; it does not define new product scope.",
     "expected_behavior": [
       "Uses `nemoclaw-contributor-implement-issue`.",
       "Checks the proposed behavior, mechanism, and paths against the accepted scope and group envelope before editing.",
-      "Keeps the change inside the envelope during implementation and restores the pre-handoff state if the measured delta exceeds it.",
+      "Keeps the change inside the envelope during implementation and restores the complete checkpoint if the measured delta is unmeasurable or exceeds it.",
       "Reports that the repair has no scope delta.",
       "Returns the measured path, file-count, churn, and validation evidence to `nemoclaw-contributor-create-pr` without pushing."
     ]
@@ -156,8 +156,8 @@
     "expected_skill": "nemoclaw-contributor-implement-issue",
     "ground_truth": "An exceeded implementation envelope must not leave unauthorized local state for later lifecycle stages.",
     "expected_behavior": [
-      "Restores only the handoff delta to the recorded pre-handoff state.",
-      "Returns the rejected paths and diff total without further validation, commit, or push."
+      "Restores the recorded checkpoint's index, worktree, and untracked paths exactly, then confirms the restored state.",
+      "Returns the checkpoint identity, restored state, rejected paths, and diff total without further validation, commit, or push."
     ]
   },
   {
