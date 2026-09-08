@@ -56,11 +56,13 @@ function handleTopLevelError(error) {
 }
 
 function applyPersistedAutomaticGatewayPort() {
-  if (process.env.NEMOCLAW_GATEWAY_PORT) return;
+  if (process.env.NEMOCLAW_GATEWAY_PORT) {
+    delete process.env._NEMOCLAW_AUTOMATIC_GATEWAY_PORT;
+    return;
+  }
   const fs = require("node:fs");
   const path = require("node:path");
-  const home = process.env.HOME;
-  if (!home) return;
+  const home = process.env.HOME || "/";
   const stateRoot = path.join(home, ".nemoclaw");
   const gatewaysDir = path.join(stateRoot, "gateways");
   let entries;
@@ -115,7 +117,10 @@ function applyPersistedAutomaticGatewayPort() {
         "Remove invalid automatic-gateway-port markers or set NEMOCLAW_GATEWAY_PORT explicitly.",
     );
   }
-  if (selectedPorts.length === 1) process.env.NEMOCLAW_GATEWAY_PORT = selectedPorts[0];
+  if (selectedPorts.length === 1) {
+    process.env.NEMOCLAW_GATEWAY_PORT = selectedPorts[0];
+    process.env._NEMOCLAW_AUTOMATIC_GATEWAY_PORT = "1";
+  }
 }
 
 try {

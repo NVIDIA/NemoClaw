@@ -3636,7 +3636,7 @@ Commands whose parser owns the base logging options also accept the hidden long-
 
 | Variable | Default | Service |
 | --- | --- | --- |
-| `NEMOCLAW_GATEWAY_PORT` | 8080 | OpenShell gateway port |
+| `NEMOCLAW_GATEWAY_PORT` | A recorded automatic alternate port, otherwise 8080 | OpenShell gateway port. An explicit supported value remains authoritative. See [Installer Reports That the Systemd User Manager Is Unavailable](./troubleshooting#installer-reports-that-the-systemd-user-manager-is-unavailable). |
 | `NEMOCLAW_GATEWAY_BIND_ADDRESS` | 127.0.0.1 | The OpenShell gateway uses this bind address. NemoClaw keeps Docker-driver gateways on loopback while gateway JWT auth is active. |
 
 <AgentOnly variant="openclaw,hermes">

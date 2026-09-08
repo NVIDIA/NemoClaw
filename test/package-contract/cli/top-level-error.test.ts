@@ -192,7 +192,11 @@ const originalLoad = Module._load;
 Module._load = function(request, parent, isMain) {
   const resolved = Module._resolveFilename(request, parent, isMain);
   if (resolved === mainPath) {
-    process.stdout.write(String(process.env.NEMOCLAW_GATEWAY_PORT || ""));
+    process.stdout.write(
+      String(process.env.NEMOCLAW_GATEWAY_PORT || "") +
+        ":" +
+        String(process.env._NEMOCLAW_AUTOMATIC_GATEWAY_PORT || ""),
+    );
     return { mainPromise: Promise.resolve() };
   }
   return originalLoad.apply(this, arguments);
@@ -295,7 +299,7 @@ describe("compiled CLI top-level errors", () => {
       const result = runWithCapturedGatewayPort(home);
 
       expect(result.status, result.stderr).toBe(0);
-      expect(result.stdout).toBe("8990");
+      expect(result.stdout).toBe("8990:1");
       expect(result.stderr).toBe("");
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
@@ -312,8 +316,42 @@ describe("compiled CLI top-level errors", () => {
       const result = runWithCapturedGatewayPort(home, "9123");
 
       expect(result.status, result.stderr).toBe(0);
-      expect(result.stdout).toBe("9123");
+      expect(result.stdout).toBe("9123:");
       expect(result.stderr).toBe("");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects ambiguous automatic gateway markers before loading the CLI (#10824)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-ambiguous-port-"));
+    try {
+      const firstMarker = path.join(
+        home,
+        ".nemoclaw",
+        "gateways",
+        "8990",
+        "automatic-gateway-port",
+      );
+      const secondMarker = path.join(
+        home,
+        ".nemoclaw",
+        "gateways",
+        "8991",
+        "automatic-gateway-port",
+      );
+      fs.mkdirSync(path.dirname(firstMarker), { recursive: true });
+      fs.mkdirSync(path.dirname(secondMarker), { recursive: true });
+      fs.writeFileSync(firstMarker, "8990\n");
+      fs.writeFileSync(secondMarker, "8991\n");
+
+      const result = runWithCapturedGatewayPort(home);
+
+      expect(result.status).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain(
+        "Could not safely resolve the automatically selected NemoClaw gateway port",
+      );
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }

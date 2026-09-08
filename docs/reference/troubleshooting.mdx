@@ -622,7 +622,8 @@ A supported listener probe must conclusively confirm that the port is unused.
 Installation stops if no candidate passes, including when listener inspection is unavailable or inconclusive for every remaining candidate.
 It does not modify the existing service or activation link.
 
-The completion output prints the selected value and records it under `~/.nemoclaw/gateways/<port>/automatic-gateway-port`.
+After onboarding succeeds, the completion path records the selected value under `~/.nemoclaw/gateways/<port>/automatic-gateway-port`.
+Failed or cancelled onboarding does not retain the selection, so a retry rechecks candidate availability.
 Later NemoClaw commands restore that recorded selection when `NEMOCLAW_GATEWAY_PORT` is unset.
 You can still use the printed export command when a script or surrounding process must carry the same scope explicitly.
 If the installer selects port `8990`, it prints this command:
@@ -632,6 +633,7 @@ export NEMOCLAW_GATEWAY_PORT=8990
 ```
 
 Later `list`, `status`, `connect`, `stop`, `rebuild`, and `uninstall` commands use the recorded automatic port unless this variable explicitly selects another supported port.
+A restored automatic port selects command state but does not count as explicit operator authority for the deprecated no-name `$$nemoclaw stop`; name the sandbox or set `NEMOCLAW_GATEWAY_PORT` explicitly when you intend to release a gateway.
 
 The installer does not replace a supported explicit non-default gateway port.
 It uses that port's detached lifecycle without automatic selection.

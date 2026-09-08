@@ -518,6 +518,64 @@ describe("install.sh OpenShell gateway service", () => {
     expect(fs.existsSync(servicePath(home))).toBe(false);
   });
 
+  it("does not retain a failed automatic selection and rechecks candidates on retry (#10824)", () => {
+    const home = makeTempRoot();
+    const fixture = writeQualifiedDefaultPortActivation(home);
+    const failedCli = path.join(home, "failed-nemoclaw");
+    writeExecutable(
+      failedCli,
+      '#!/usr/bin/env bash\nmkdir -p "$HOME/.nemoclaw/gateways/8990"\nexit 9\n',
+    );
+    const systemctl = writeUnavailableUserManagerStub(home);
+
+    const failed = runInstallHelper(
+      home,
+      qualifiedInstallBody(fixture, [
+        "install_nemoclaw_openshell_gateway_user_service",
+        "show_usage_notice() { :; }",
+        `NON_INTERACTIVE=1 _CLI_PATH=${JSON.stringify(failedCli)} run_onboard || printf 'ONBOARD_FAILED=%s\\n' "$?"`,
+      ]),
+      {
+        PATH: `${systemctl.bin}:${fixture.probeBin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}`,
+      },
+    );
+
+    expect(failed.status, failed.stderr).toBe(0);
+    expect(failed.stdout).toContain("ONBOARD_FAILED=9");
+    expect(
+      fs.existsSync(
+        path.join(home, ".nemoclaw", "gateways", "8990", "automatic-gateway-port"),
+      ),
+    ).toBe(false);
+
+    const successfulCli = path.join(home, "successful-nemoclaw");
+    writeExecutable(
+      successfulCli,
+      '#!/usr/bin/env bash\nprintf "SELECTED_PORT=%s\\n" "$NEMOCLAW_GATEWAY_PORT"\n',
+    );
+    const retried = runInstallHelper(
+      home,
+      qualifiedInstallBody(fixture, [
+        "install_nemoclaw_openshell_gateway_user_service",
+        "show_usage_notice() { :; }",
+        `NON_INTERACTIVE=1 _CLI_PATH=${JSON.stringify(successfulCli)} run_onboard`,
+      ]),
+      {
+        PATH: `${systemctl.bin}:${fixture.probeBin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}`,
+      },
+    );
+
+    expect(retried.status, retried.stderr).toBe(0);
+    expect(retried.stdout).toContain("Automatically selected safe alternate gateway port 8991");
+    expect(retried.stdout).toContain("SELECTED_PORT=8991");
+    expect(
+      fs.readFileSync(
+        path.join(home, ".nemoclaw", "gateways", "8991", "automatic-gateway-port"),
+        "utf8",
+      ),
+    ).toBe("8991\n");
+  });
+
   it("refuses automatic selection for an unqualified activation link (#10824)", () => {
     const home = makeTempRoot();
     const activationPath = path.join(
@@ -728,6 +786,18 @@ describe("install.sh OpenShell gateway service", () => {
     const probeBin = path.join(home, "probe-bin");
     fs.mkdirSync(probeBin, { recursive: true });
     writeExecutable(path.join(probeBin, "lsof"), "#!/usr/bin/env bash\nexit 2\n");
+
+    const result = runCandidateCheck(home, { PATH: `${probeBin}:${TEST_SYSTEM_PATH}` });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("UNAVAILABLE");
+  });
+
+  it("rejects a candidate when the listener probe finds a live listener (#10824)", () => {
+    const home = makeTempRoot();
+    const probeBin = path.join(home, "probe-bin");
+    fs.mkdirSync(probeBin, { recursive: true });
+    writeExecutable(path.join(probeBin, "lsof"), "#!/usr/bin/env bash\nprintf '4242\\n'\n");
 
     const result = runCandidateCheck(home, { PATH: `${probeBin}:${TEST_SYSTEM_PATH}` });
 

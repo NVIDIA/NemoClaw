@@ -1916,7 +1916,7 @@ install_nemoclaw_openshell_gateway_user_service() {
       if alternate_port="$(find_safe_alternate_gateway_port)"; then
         NEMOCLAW_GATEWAY_PORT="$alternate_port"
         export NEMOCLAW_GATEWAY_PORT
-        persist_automatic_gateway_port_selection
+        _NEMOCLAW_AUTOMATIC_GATEWAY_PORT_SELECTED=true
         warn "The systemd user manager is unavailable, but $activation_path can activate a gateway user service that can later claim port 8080. Automatically selected safe alternate gateway port ${alternate_port} to isolate the gateway environment without modifying the existing service."
         return 0
       fi
@@ -4380,6 +4380,9 @@ run_onboard() {
     exec 3<&-
   else
     error "Interactive onboarding requires a TTY. Re-run in a terminal or set NEMOCLAW_NON_INTERACTIVE=1 with --yes-i-accept-third-party-software."
+  fi
+  if [[ "$status" -eq 0 && "${_NEMOCLAW_AUTOMATIC_GATEWAY_PORT_SELECTED:-false}" == true ]]; then
+    persist_automatic_gateway_port_selection
   fi
   return "$status"
 }
