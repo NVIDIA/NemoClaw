@@ -304,7 +304,7 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     );
   });
 
-  it("withholds sandbox-route success output when policy authority changes during proof (#9833)", () => {
+  it("withholds sandbox-route success output when sandbox identity changes during proof (#9833)", () => {
     const runOpenshell = vi
       .fn()
       .mockReturnValueOnce({ status: 0, stdout: "provider ready" })
@@ -320,10 +320,10 @@ describe("compatible endpoint sandbox smoke helpers", () => {
         redact: (value) => value,
         messagingChannels: ["telegram"],
         beforeSuccess: () => {
-          throw new Error("policy authority changed");
+          throw new Error("sandbox identity changed");
         },
       }),
-    ).toThrow("policy authority changed");
+    ).toThrow("sandbox identity changed");
 
     expect(runOpenshell).toHaveBeenCalledTimes(2);
     expect(log.mock.calls.flat().join("\n")).not.toContain(

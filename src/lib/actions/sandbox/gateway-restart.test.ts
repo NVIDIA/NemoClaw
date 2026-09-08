@@ -141,7 +141,6 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
       recoverMessagingHostForward: vi.fn(() => null),
       recoverDeclaredAgentForwardPorts: vi.fn(() => null),
       printGatewayWedgeDiagnostics: vi.fn(() => false),
-      inspectHermesMcpReconciliationRefusal: vi.fn(() => null),
       ...overrides,
     };
   }
@@ -182,6 +181,29 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
     );
     expect(errorSpy).toHaveBeenCalledWith(
       "  Failure layer: privileged control unavailable - gateway restart failed for 'openclaw-box'.",
+    );
+  });
+
+  it("fails closed instead of using host-local supervisor control for a selected runtime", () => {
+    const deps = baseDeps();
+    const { requestGatewaySupervisorAction: hostLocalSupervisorAction, ...nonSupervisorDeps } =
+      deps;
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const result = restartSandboxGateway("alpha", {
+      quiet: true,
+      runtimeSelection: { gatewayName: "remote-gateway", workspace: "remote-workspace" },
+      deps: nonSupervisorDeps,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      failureLayer: "privileged control unavailable",
+      detail: expect.stringContaining("SELECTED_RUNTIME_SUPERVISOR_UNAVAILABLE"),
+    });
+    expect(hostLocalSupervisorAction).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Failure layer: privileged control unavailable"),
     );
   });
 

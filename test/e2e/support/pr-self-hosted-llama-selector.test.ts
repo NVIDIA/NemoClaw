@@ -158,7 +158,9 @@ describe("generic NVIDIA GPU PR selection", () => {
       env: {
         EXPECTED_SHA: "${{ steps.changed.outputs.base_sha }}",
         GITHUB_TOKEN: "${{ github.token }}",
+        PUBLICATION_HISTORY_ALLOW_NON_HEAD: "1",
         REQUIRE_MANAGED_IMAGE_PUBLICATION: "1",
+        SELECT_NEAREST_SUCCESSFUL_PUBLICATION: "1",
       },
       if: "${{ steps.changed.outputs.selected == 'true' }}",
     });

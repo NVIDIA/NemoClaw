@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { AgentDefinition } from "../agent/defs";
+import type { OpenShellSandboxObserver } from "../adapters/openshell/sandbox-observer";
 import { NEMOCLAW_CREATE_ATTEMPT_LABEL } from "../adapters/openshell/sandbox-identity";
 import type { StreamSandboxCreateResult } from "../sandbox/create-stream";
 import { redactFull } from "../security/redact";
@@ -54,7 +55,10 @@ import type {
   RuntimeProviderManagedImageBootstrapSurface,
 } from "./runtime-provider/contract";
 import * as sandboxGpuCreateAttempt from "./sandbox-gpu-create-attempt";
-import { createSandboxGpuCreateAttemptRunner } from "./sandbox-gpu-create-run-attempt";
+import {
+  createSandboxGpuCreateAttemptRunner,
+  verifySelectedSandboxBridgeReachability,
+} from "./sandbox-gpu-create-run-attempt";
 import { managedBootstrapCreateArgs } from "./sandbox-create-launch";
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 import {
@@ -258,6 +262,8 @@ export interface SandboxGpuCreateFlowInput {
     readonly request: ManagedStartupRootApplyRequest;
     readonly image: ManagedBootstrapImageIdentity;
     readonly agentIdentity: ManagedBootstrapAgentIdentity;
+    readonly workspaceRoot: import("./managed-startup/state-roots").ManagedStartupWorkspaceRoot;
+    readonly managedStateRoots: readonly import("./managed-startup/state-roots").ManagedStartupStateRoot[];
     readonly intendedWorkloadArgv: readonly string[];
     readonly expectedSupervisorArgv: readonly string[];
   } | null;
@@ -267,7 +273,7 @@ export interface SandboxGpuCreateFlowInput {
    * readiness, GPU, service, dashboard, or registry effects continue.
    */
   verifyCreatedSandboxBeforeEffects?: (identity: CreatedSandboxIdentity) => void | Promise<void>;
-  /** Re-read the exact durable policy checkpoint before each post-create effect. */
+  /** Re-read the exact pending create identity before each post-create effect. */
   revalidateVerifiedSandboxBeforeEffect?: (operation: string) => void;
 }
 
@@ -292,6 +298,7 @@ export function refuseApfMutableNameFallbackCleanup(sandboxName: string) {
 export interface SandboxGpuCreateFlowDeps {
   runOpenshell: RunOpenshell;
   runCaptureOpenshell: RunCaptureOpenshell;
+  sandboxObserver: OpenShellSandboxObserver;
   sleep: Sleep;
   openshellArgv(args: string[]): string[];
   verifyDirectSandboxGpu(sandboxName: string): SandboxGpuProofResult;
@@ -407,6 +414,7 @@ export async function runSandboxGpuCreateFlow(
           installPortableDemoLifecycle: () => input.lifecycleGeneration!,
         }
       : deps,
+    () => verifySelectedSandboxBridgeReachability(input),
   );
   const gpuCreateOutcome = await (input.resumeVerifiedCreate
     ? attemptRunner.runAttempt(input.resumeVerifiedCreate.route)
@@ -513,6 +521,7 @@ export async function runSandboxGpuCreateFlow(
               selectedRoute: "compatibility",
               gatewayPort: input.gatewayPort,
               log: console.log,
+              reverifyBridgeReachability: () => verifySelectedSandboxBridgeReachability(input),
             },
           );
         }

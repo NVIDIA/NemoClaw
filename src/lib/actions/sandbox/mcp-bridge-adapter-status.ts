@@ -10,15 +10,53 @@ import {
 import {
   DEEPAGENTS_MANAGED_PROJECTION_READ_HELPERS,
   DEEPAGENTS_STRICT_JSON_HELPERS,
+  DEEPAGENTS_UNSAFE_MCP_PROJECTION_TYPES,
 } from "./mcp-bridge-adapter-deepagents-projection";
 
 // NemoClaw owns this dedicated projection. Deep Agents Code's user/project
 // `.mcp.json` discovery is disabled in the managed image so user-authored MCP
 // state can never be layered over the validated registry projection.
 export const DEEPAGENTS_MCP_CONFIG_PATH = "/sandbox/.deepagents/.nemoclaw-mcp.json";
+export const UNSAFE_DEEPAGENTS_MCP_PROJECTION_PREFIX =
+  "Unsafe managed Deep Agents MCP projection path";
 export const DEFAULT_OPENCLAW_CONFIG_DIR = "/sandbox/.openclaw";
 export const HERMES_MCP_TRANSACTION_HELPER =
   "/usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py";
+
+/** Build the runtime classifier shared by Deep Agents status, repair, rollback, and teardown. */
+export function buildDeepAgentsRuntimeKindCommandLines(
+  initialKind: "auto" | "v2" = "auto",
+): string[] {
+  return [
+    `runtime_kind = "${initialKind}"  # NEMOCLAW_DEEPAGENTS_RUNTIME_TEST_ANCHOR`,
+    "if runtime_kind == 'auto':",
+    "    runtime_kind = 'unknown'",
+    "    try:",
+    "        from deepagents_code import _nemoclaw_managed as managed",
+    "        runtime_path = str(getattr(managed, '_MCP_CONFIG_FILE', ''))",
+    "        if runtime_path == str(managed_path):",
+    "            runtime_kind = 'v2'",
+    "        elif runtime_path == str(legacy_path):",
+    "            runtime_kind = 'legacy'",
+    "    except Exception:",
+    "        pass",
+    "if runtime_kind not in ('v2', 'legacy'):",
+    "    print('Could not identify the managed Deep Agents MCP runtime', file=sys.stderr)",
+    "    raise SystemExit(2)",
+  ];
+}
+
+export function buildDeepAgentsMcpRuntimeKindCommand(): string {
+  return [
+    "/opt/venv/bin/python3 -I - <<'PY'",
+    "import pathlib, sys",
+    `managed_path = pathlib.Path(${JSON.stringify(DEEPAGENTS_MCP_CONFIG_PATH)})`,
+    `legacy_path = pathlib.Path(${JSON.stringify(DEEPAGENTS_LEGACY_MCP_CONFIG_PATH)})`,
+    ...buildDeepAgentsRuntimeKindCommandLines(),
+    "print(runtime_kind)",
+    "PY",
+  ].join("\n");
+}
 
 /** Resolve Mcporter's project root beneath an OpenClaw agent configuration directory. */
 export function openClawMcporterRoot(configDir = DEFAULT_OPENCLAW_CONFIG_DIR): string {
@@ -27,6 +65,30 @@ export function openClawMcporterRoot(configDir = DEFAULT_OPENCLAW_CONFIG_DIR): s
 export const OPENCLAW_MCPORTER_ROOT = openClawMcporterRoot();
 const DEFAULT_AUTH_HEADER = "Authorization";
 const DEFAULT_AUTH_SCHEME = "Bearer";
+
+export interface UnsafeDeepAgentsMcpProjectionResult {
+  messagePrefix: string;
+  path: string;
+}
+
+/** Parse only the unsafe-projection result emitted by the Deep Agents status adapter. */
+export function parseUnsafeDeepAgentsMcpProjectionResult(result: {
+  status: number | null;
+  stdout: string;
+  stderr: string;
+}): UnsafeDeepAgentsMcpProjectionResult | null {
+  if (result.status === 0) return null;
+  const detail = (result.stderr || result.stdout || "not found").trim();
+  for (const type of DEEPAGENTS_UNSAFE_MCP_PROJECTION_TYPES) {
+    const messagePrefix = `${UNSAFE_DEEPAGENTS_MCP_PROJECTION_PREFIX}: ${type} at `;
+    if (!detail.startsWith(messagePrefix)) continue;
+    const projectionPath = detail.slice(messagePrefix.length);
+    return projectionPath && !/[\r\n]/u.test(projectionPath)
+      ? { messagePrefix, path: projectionPath }
+      : null;
+  }
+  return null;
+}
 
 function authPlaceholder(
   entry: Pick<McpBridgeEntry, "env">,
@@ -241,25 +303,14 @@ export function buildDeepAgentsMcpStatusCommand(
     ...DEEPAGENTS_MANAGED_PROJECTION_READ_HELPERS,
     ...DEEPAGENTS_LEGACY_CONFIG_HELPERS,
     ...MANAGED_HTTP_SERVER_MATCH_HELPERS,
-    `runtime_kind = "auto"  # NEMOCLAW_DEEPAGENTS_RUNTIME_TEST_ANCHOR`,
-    "if runtime_kind == 'auto':",
-    "    runtime_kind = 'unknown'",
-    "    try:",
-    "        from deepagents_code import _nemoclaw_managed as managed",
-    "        runtime_path = str(getattr(managed, '_MCP_CONFIG_FILE', ''))",
-    "        if runtime_path == str(managed_path):",
-    "            runtime_kind = 'v2'",
-    "        elif runtime_path == str(legacy_path):",
-    "            runtime_kind = 'legacy'",
-    "    except Exception:",
-    "        pass",
-    "if runtime_kind not in ('v2', 'legacy'):",
-    "    print('Could not identify the managed Deep Agents MCP runtime', file=sys.stderr)",
-    "    raise SystemExit(2)",
+    ...buildDeepAgentsRuntimeKindCommandLines(),
     "is_v2 = runtime_kind == 'v2'",
     "config_path = managed_path if is_v2 else legacy_path",
     "try:",
     "    data = read_managed_projection(config_path)[0] if is_v2 else read_legacy_config(config_path)[0]",
+    "except UnsafeManagedProjectionError as exc:",
+    `    print(f'${UNSAFE_DEEPAGENTS_MCP_PROJECTION_PREFIX}: {exc} at {config_path}', file=sys.stderr)`,
+    "    raise SystemExit(2)",
     "except FileNotFoundError:",
     "    data = {}",
     "except (OSError, UnicodeDecodeError, ValueError) as exc:",

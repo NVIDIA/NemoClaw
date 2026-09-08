@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { WebSearchConfig } from "../inference/web-search";
-import type { BaselineExclusionEntry } from "../state/registry";
 import type { DockerGpuRoutePlan } from "./docker-gpu-route";
 import type { NamedMessagingChannel } from "./messaging-prep";
 import {
@@ -38,8 +37,6 @@ export type CompleteSandboxCreateIntentInput<Agent, ResourceProfile> = {
   extraProviders: readonly string[];
   staleExtraProviders: readonly string[];
   policyTier?: string | null;
-  /** Operator baseline exclusions replayed into create/rebuild policy generation. */
-  baselineExclusions?: readonly BaselineExclusionEntry[];
   /** Internal OpenClaw resume authority for exact registered provider reuse. */
   reuseRegisteredCredentials?: boolean;
 };
@@ -170,7 +167,6 @@ export function createSandboxCreateIntentResolver<
       extraPlaceholderKeys: messaging.extraPlaceholderKeys,
       agentName: input.agent?.name,
       policyTier: resolveSandboxCreatePolicyTier(input.policyTier),
-      baselineExclusions: input.baselineExclusions,
     });
   }
 

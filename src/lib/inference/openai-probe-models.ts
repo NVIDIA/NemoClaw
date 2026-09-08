@@ -9,6 +9,12 @@ export const STANDARD_NVIDIA_ENDPOINT_PROBE_POLICY =
 export const EXTENDED_NVIDIA_ENDPOINT_PROBE_POLICY =
   "nvidia.endpoint-validation.extended/v1";
 
+const NVIDIA_ENDPOINT_PROVIDERS = new Set(["nvidia-prod", "nvidia-nim"]);
+
+export function usesNvidiaEndpointProbePayload(provider: unknown): boolean {
+  return typeof provider === "string" && NVIDIA_ENDPOINT_PROVIDERS.has(provider);
+}
+
 export function vllmProbePolicyForModel(model: string): string {
   const normalized = model.trim().toLowerCase();
   const matches = loadManagedInferenceCatalog().models.filter(({ spec }) =>
@@ -47,7 +53,10 @@ export function isKimiK26Model(model: unknown): boolean {
   return String(model || "").toLowerCase() === "moonshotai/kimi-k2.6";
 }
 
-export function getChatCompletionsProbePayload(model: string): Record<string, unknown> {
+export function getChatCompletionsProbePayload(
+  model: string,
+  options: { useNvidiaEndpointProbePayload?: boolean } = {},
+): Record<string, unknown> {
   const maxTokensField = resolveMaxTokensField(model);
   const payload = {
     model,
@@ -71,6 +80,18 @@ export function getChatCompletionsProbePayload(model: string): Record<string, un
       ...payload,
       [maxTokensField]: MIN_PROBE_REPLY_TOKENS,
       chat_template_kwargs: { thinking: false },
+    };
+  }
+
+  if (
+    options.useNvidiaEndpointProbePayload === true &&
+    model.toLowerCase() === "nvidia/nemotron-3-super-120b-a12b"
+  ) {
+    return {
+      ...payload,
+      temperature: 1,
+      top_p: 0.95,
+      chat_template_kwargs: { enable_thinking: false },
     };
   }
 

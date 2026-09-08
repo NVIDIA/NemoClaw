@@ -243,15 +243,19 @@ function provider(
 function replacement(
   agent: ShippedManagedImageAgent,
   platform: ManagedImagePlatform = "linux/amd64",
+  revision?: string,
 ) {
   const image = managedContract(agent, "new", platform);
+  const contract = revision
+    ? { ...image, source: { ...image.source, revision } }
+    : image;
   return {
     source: {
       kind: "managed-image" as const,
-      reference: image.reference,
-      contract: image,
+      reference: contract.reference,
+      contract,
     },
-    release: image.source.release,
+    release: contract.source.release,
     fallbackDiagnostic: null,
   };
 }
@@ -366,24 +370,39 @@ describe("managed workload rebuild preflight", () => {
     }
   });
 
-  it("rejects a qualification revision that conflicts with durable authority (#9385)", async () => {
-    const prepare = vi.fn(async () => replacement("langchain-deepagents-code"));
+  it("uses the GitHub Actions qualification revision and retains the previous workload receipt during rebuild (#10970)", async () => {
+    const prepare = vi.fn(async () =>
+      replacement("openclaw", "linux/amd64", "c".repeat(40)),
+    );
     managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource = prepare;
     vi.stubEnv("GITHUB_ACTIONS", "true");
     vi.stubEnv("E2E_MANAGED_IMAGE_REVISION", "c".repeat(40));
 
-    await expect(
-      prepareManagedWorkloadRebuildHandoff(entry("langchain-deepagents-code"), {
+    const handoff = await prepareManagedWorkloadRebuildHandoff(
+      entry("openclaw"),
+      {
         runtime: runtime(),
         provider: provider(),
         version: "0.0.100",
-      }),
-    ).rejects.toThrow("live qualification revision does not match the durable workload receipt");
-    expect(prepare).not.toHaveBeenCalled();
+      },
+    );
+
+    expect(handoff?.previousReceipt.sourceRevision).toBe("a".repeat(40));
+    expect(handoff?.replacement.source.contract.source.revision).toBe("c".repeat(40));
+    expect(prepare).toHaveBeenCalledExactlyOnceWith({
+      agentName: "openclaw",
+      legacyDockerfilePath: "managed-rebuild-must-not-stage-this-dockerfile",
+      runtime: runtime(),
+      version: "0.0.100",
+      policy: "require-managed",
+      catalogRevision: "c".repeat(40),
+    });
   });
 
-  it("rejects a PR catalog revision that conflicts with durable authority (#9464)", async () => {
-    const prepare = vi.fn(async () => replacement("openclaw"));
+  it("accepts an exact PR replacement catalog newer than durable authority (#9464)", async () => {
+    const prepare = vi.fn(async () =>
+      replacement("openclaw", "linux/amd64", "c".repeat(40)),
+    );
     const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-live-e2e-catalog-"));
     const catalogPath = path.join(fixtureRoot, "catalog.json");
     fs.writeFileSync(catalogPath, "{}\n", { mode: 0o600 });
@@ -394,14 +413,23 @@ describe("managed workload rebuild preflight", () => {
     vi.stubEnv("NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG", catalogPath);
 
     try {
-      await expect(
-        prepareManagedWorkloadRebuildHandoff(entry("openclaw"), {
-          runtime: runtime(),
-          provider: provider(),
-          version: "0.0.100",
-        }),
-      ).rejects.toThrow("live qualification revision does not match the durable workload receipt");
-      expect(prepare).not.toHaveBeenCalled();
+      const handoff = await prepareManagedWorkloadRebuildHandoff(entry("openclaw"), {
+        runtime: runtime(),
+        provider: provider(),
+        version: "0.0.100",
+      });
+
+      expect(handoff?.previousReceipt.sourceRevision).toBe("a".repeat(40));
+      expect(handoff?.replacement.source.contract.source.revision).toBe("c".repeat(40));
+      expect(prepare).toHaveBeenCalledExactlyOnceWith({
+        agentName: "openclaw",
+        legacyDockerfilePath: "managed-rebuild-must-not-stage-this-dockerfile",
+        runtime: runtime(),
+        version: "0.0.100",
+        policy: "require-managed",
+        catalogPath,
+        expectedCatalogRevision: "c".repeat(40),
+      });
     } finally {
       fs.rmSync(fixtureRoot, { force: true, recursive: true });
     }

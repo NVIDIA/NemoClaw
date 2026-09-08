@@ -17,12 +17,16 @@ function retainedRecoveryRecord(sandboxId = "sb-alpha"): RetainedSandboxRecovery
     recordId: "f".repeat(64),
     sandboxName: "alpha",
     sandboxIdentityFingerprint: createHash("sha256").update(sandboxId).digest("hex"),
+    identityWasUnavailable: false,
     gatewayName: "nemoclaw-19080",
     gatewayPort: 19080,
     lifecycleGeneration: "generation-alpha",
-    verifiedEffectivePolicyIdentity: null,
     createAttemptNonce: "c".repeat(62),
-    policyCreationReceipt: null,
+    resources: {
+      sharedInferenceProviders: [],
+      sandboxScopedProviders: [],
+      credentialEnvironmentVariables: [],
+    },
     reason: "retained_after_sandbox_creation_failure",
     recordedAt: "2026-08-28T00:00:00.000Z",
   };
@@ -47,6 +51,55 @@ describe("destroySandbox retained recovery flow", () => {
     vi.unstubAllEnvs();
     resetDestroyModuleCache();
   });
+
+  it(
+    "reconstructs a missing recovery record from the verified-create registry checkpoint (#11096)",
+    { timeout: 30_000 },
+    async () => {
+      const recovery = retainedRecoveryRecord();
+      const pendingCreateIdentity = {
+        schemaVersion: 1 as const,
+        state: "verified-create" as const,
+        gatewayName: recovery.gatewayName,
+        gatewayPort: recovery.gatewayPort,
+        sandboxName: recovery.sandboxName,
+        lifecycleGeneration: recovery.lifecycleGeneration!,
+        sandboxIdentityFingerprint: recovery.sandboxIdentityFingerprint!,
+        createAttemptNonce: recovery.createAttemptNonce,
+        route: "native" as const,
+      };
+      const harness = createDestroyHarness({
+        sandboxPresent: false,
+        dockerRunResult: { status: 0, stdout: "" },
+        registryEntryOverrides: {
+          pendingRouteReservation: true,
+          reservationSessionId: "failed-create-session",
+          lifecycleGeneration: recovery.lifecycleGeneration!,
+          lifecycleLiveIdentityFingerprint: recovery.sandboxIdentityFingerprint!,
+          pendingCreateIdentity,
+        },
+        reconstructRetainedRecoveryRecord: recovery,
+      });
+
+      await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+      expect(harness.reconstructRetainedSandboxRecoverySpy).toHaveBeenCalledWith(
+        expect.objectContaining({ pendingCreateIdentity }),
+      );
+      expect(
+        harness.runOpenshellSpy.mock.calls.some(
+          ([args]) =>
+            Array.isArray(args) &&
+            args[0] === "sandbox" &&
+            args[1] === "delete" &&
+            args[2] === "alpha",
+        ),
+      ).toBe(false);
+      expect(harness.resolveRetainedSandboxRecoverySpy).toHaveBeenCalledWith(recovery);
+      expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
+      expect(exitSpy).not.toHaveBeenCalled();
+    },
+  );
 
   it(
     "removes every container after OpenShell confirms the retained sandbox absent (#10547)",
@@ -215,11 +268,9 @@ describe("destroySandbox retained recovery flow", () => {
     async () => {
       const recovery = retainedRecoveryRecord();
       const bootstrapContainerId = "b".repeat(64);
-      const pendingPolicyVerification = {
+      const pendingCreateIdentity = {
         schemaVersion: 1 as const,
         state: "verified-create" as const,
-        policyAuthority: "externally-managed" as const,
-        observedPolicyAuthority: "externally-managed" as const,
         gatewayName: recovery.gatewayName,
         gatewayPort: recovery.gatewayPort,
         sandboxName: recovery.sandboxName,
@@ -227,8 +278,6 @@ describe("destroySandbox retained recovery flow", () => {
         sandboxIdentityFingerprint: recovery.sandboxIdentityFingerprint!,
         createAttemptNonce: recovery.createAttemptNonce,
         route: "none" as const,
-        policyHash: "policy-hash",
-        policyVersion: 1,
       };
       const harness = createDestroyHarness({
         sandboxPresent: false,
@@ -240,7 +289,7 @@ describe("destroySandbox retained recovery flow", () => {
         registryEntryOverrides: {
           lifecycleGeneration: recovery.lifecycleGeneration!,
           lifecycleLiveIdentityFingerprint: recovery.sandboxIdentityFingerprint!,
-          pendingPolicyVerification,
+          pendingCreateIdentity,
         },
         retainedRecoveryRecords: [recovery],
       });

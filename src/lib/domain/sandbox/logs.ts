@@ -127,6 +127,86 @@ export function parseLineTimestamp(line: string): number | null {
   return null;
 }
 
+/**
+ * Source tag written in front of OpenClaw gateway-log lines unless the text
+ * after a recognised leading timestamp already starts with `[gateway]`.
+ * The gateway log uses this token for its own structured lines, and the
+ * NemoClaw plugin writes it in front of its registration banner (#7322).
+ */
+export const GATEWAY_LOG_SOURCE_TAG = "[gateway]";
+
+/** Length of a leading timestamp recognised by `parseLineTimestamp`, else 0. */
+function leadingTimestampLength(line: string): number {
+  const epoch = line.match(EPOCH_TIMESTAMP_RE);
+  if (epoch) return epoch[0].length;
+  const iso = line.match(ISO_TIMESTAMP_RE);
+  if (iso) return iso[0].length;
+  return 0;
+}
+
+/**
+ * Attribute one line read from the OpenClaw gateway log to its source.
+ *
+ * `/tmp/gateway.log` is both stdout and stderr of `openclaw gateway run`, so it
+ * carries raw process output — box-drawing banners, Node warnings, stack traces
+ * — alongside structured gateway lines. Those raw lines name no subsystem, so a
+ * consumer reading the stream line by line cannot attribute them (#10340).
+ *
+ * Every non-empty line from this source is tagged by construction rather than
+ * by guessing whether it "looks attributable": a heuristic that accepts any
+ * bracketed token silently passes through the untagged banner lines this exists
+ * to catch.
+ *
+ * The tag goes *after* any recognised leading timestamp so `parseLineTimestamp`
+ * still sees the timestamp first and `mergeTailLogLines` keeps ordering the line
+ * correctly. A line that already names the gateway is returned byte-identical,
+ * which also makes this idempotent.
+ */
+export function tagGatewayLogLine(line: string): string {
+  if (line.length === 0) return line;
+  const headLength = leadingTimestampLength(line);
+  const rest = line.slice(headLength);
+  if (rest.trimStart().startsWith(GATEWAY_LOG_SOURCE_TAG)) return line;
+  if (headLength === 0) return `${GATEWAY_LOG_SOURCE_TAG} ${line}`;
+  return `${line.slice(0, headLength)} ${GATEWAY_LOG_SOURCE_TAG}${rest}`;
+}
+
+/**
+ * Exit code the CLI reports when the log stream's downstream reader closes the
+ * pipe first, as in `nemoclaw <name> logs --follow | head`.
+ *
+ * With raw passthrough the log child wrote to the shared stdout itself, took
+ * SIGPIPE when the reader went away, and the CLI reported 128 + SIGPIPE. Now
+ * that the relay owns the write, the parent sees EPIPE instead, so it reports
+ * the same code rather than surfacing a broken pipe as a crash (#10340).
+ */
+export const LOG_RELAY_BROKEN_PIPE_EXIT_CODE = 141;
+
+/**
+ * Decide what a failed relay write means.
+ *
+ * EPIPE is the reader hanging up, which is a normal way to stop reading a
+ * follow stream and must end the CLI cleanly. Any other write failure is a real
+ * fault. The action reports it, stops both sources, and exits with status 1.
+ *
+ * Node delivers EPIPE on `process.stdout` asynchronously, as an `error` event
+ * rather than a throw from `write()`, so callers must route the stream's
+ * `error` event here and not rely on a try/catch around the write.
+ */
+export function isBrokenPipeRelayError(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException | null)?.code === "EPIPE";
+}
+
+/** Apply `tagGatewayLogLine` to every line of a gateway-log chunk. */
+export function tagGatewayLogLines(text: string): string {
+  if (!text) return text;
+  const lines = text.split(LINE_SPLIT_RE);
+  const hadTrailingNewline = lines[lines.length - 1] === "";
+  if (hadTrailingNewline) lines.pop();
+  const tagged = lines.map(tagGatewayLogLine).join(NEWLINE);
+  return hadTrailingNewline ? tagged + NEWLINE : tagged;
+}
+
 interface ScoredLine {
   text: string;
   timestamp: number;

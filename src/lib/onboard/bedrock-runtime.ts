@@ -81,7 +81,7 @@ export async function selectBedrockRuntimeCustomAnthropic(
       label: string,
       helpUrl: string | null,
       validator?: ((value: string) => string | null) | null,
-      revalidatePolicyRequirements?: (operation: string) => void,
+      revalidateSandboxIdentity?: (operation: string) => void,
     ) => Promise<string | BackToSelection>;
     credentialMutationGuard?: (operation: string) => void;
   } & BedrockRuntimeDependencies,

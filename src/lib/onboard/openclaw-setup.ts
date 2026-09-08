@@ -41,12 +41,12 @@ const defaultWebSearchReuseDeps: OpenClawWebSearchReuseDeps = {
 export async function reconcileOpenClawWebSearchForReuse(
   sandboxName: string,
   webSearchConfig: WebSearchSelection,
-  revalidatePolicyRequirements?: (operation: string) => void,
+  revalidateSandboxIdentity?: (operation: string) => void,
   deps: OpenClawWebSearchReuseDeps = defaultWebSearchReuseDeps,
 ): Promise<void> {
   if (webSearchConfig?.fetchEnabled === true) return;
   if (deps.readEnabled(sandboxName) !== true) return;
-  revalidatePolicyRequirements?.(`disable OpenClaw web search in sandbox '${sandboxName}'`);
+  revalidateSandboxIdentity?.(`disable OpenClaw web search in sandbox '${sandboxName}'`);
   await deps.disable(sandboxName);
 }
 
@@ -55,12 +55,12 @@ export interface ConfigureOpenclawSandboxDeps {
     sandboxName: string,
     provider: string,
     model: string,
-    revalidatePolicyRequirements?: (operation: string) => void,
+    revalidateSandboxIdentity?: (operation: string) => void,
   ): void;
   reconcileWebSearch(
     sandboxName: string,
     webSearchConfig: WebSearchSelection,
-    revalidatePolicyRequirements?: (operation: string) => void,
+    revalidateSandboxIdentity?: (operation: string) => void,
   ): Promise<void>;
 }
 
@@ -70,10 +70,10 @@ export function createConfigureOpenclawSandbox(deps: ConfigureOpenclawSandboxDep
     model: string,
     provider: string,
     webSearchConfig: WebSearchSelection,
-    revalidatePolicyRequirements?: (operation: string) => void,
+    revalidateSandboxIdentity?: (operation: string) => void,
   ): Promise<void> {
-    deps.syncNemoClawConfigInSandbox(sandboxName, provider, model, revalidatePolicyRequirements);
-    await deps.reconcileWebSearch(sandboxName, webSearchConfig, revalidatePolicyRequirements);
+    deps.syncNemoClawConfigInSandbox(sandboxName, provider, model, revalidateSandboxIdentity);
+    await deps.reconcileWebSearch(sandboxName, webSearchConfig, revalidateSandboxIdentity);
   };
 }
 
@@ -85,7 +85,7 @@ export interface OpenclawSetupDeps {
     model: string,
     provider: string,
     webSearchConfig: WebSearchSelection,
-    revalidatePolicyRequirements?: (operation: string) => void,
+    revalidateSandboxIdentity?: (operation: string) => void,
   ): Promise<void>;
 }
 
@@ -95,7 +95,7 @@ export function createOpenclawSetup(deps: OpenclawSetupDeps) {
     model: string,
     provider: string,
     webSearchConfig: WebSearchSelection,
-    revalidatePolicyRequirements?: (operation: string) => void,
+    revalidateSandboxIdentity?: (operation: string) => void,
   ): Promise<void> {
     deps.step(7, 8, `Setting up ${deps.agentProductName()} inside sandbox`);
 
@@ -104,9 +104,9 @@ export function createOpenclawSetup(deps: OpenclawSetupDeps) {
       model,
       provider,
       webSearchConfig,
-      revalidatePolicyRequirements,
+      revalidateSandboxIdentity,
     );
-    revalidatePolicyRequirements?.(`publish OpenClaw setup for sandbox '${sandboxName}'`);
+    revalidateSandboxIdentity?.(`publish OpenClaw setup for sandbox '${sandboxName}'`);
     console.log(`  ✓ ${deps.agentProductName()} gateway launched inside sandbox`);
   };
 }

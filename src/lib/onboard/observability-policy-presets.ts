@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { ManagedPolicyBinding } from "../policy/managed-policy-binding";
 import {
   type ManagedSandboxFeature,
   managedSandboxFeatureHasDrift,
@@ -9,10 +8,6 @@ import {
 
 export const DCODE_AGENT_NAME = "langchain-deepagents-code";
 export const OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET = "observability-otlp-local";
-export const OBSERVABILITY_POLICY_BINDING = new ManagedPolicyBinding({
-  presetName: OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET,
-});
-
 export const DCODE_ONLY_POLICY_PRESETS = new Set<string>([OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET]);
 
 export function isDcodeAgent(agent: string | null | undefined): boolean {

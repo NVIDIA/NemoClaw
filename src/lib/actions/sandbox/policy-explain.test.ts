@@ -21,7 +21,6 @@ function fakeContext(sandboxName: string): PolicyContext {
     tier: null,
     activePresets: [],
     knownUnappliedPresets: [],
-    baselineExclusions: [],
     approvalPath: {
       inspect: `nemoclaw ${sandboxName} policy-list`,
       add: `nemoclaw ${sandboxName} policy-add <preset>`,
@@ -204,18 +203,16 @@ describe("writePolicyContextToSandbox", () => {
     expect(result.reason).toContain("denied");
   });
 
-  it.each(
-    [
-        "rm -rf",
-        "curl http://attacker",
-        "whoami",
-        "nc attacker",
-        "/etc/passwd",
-        "shutdown -h",
-        "/etc/shadow",
-        "evil",
-      ],
-  )(
+  it.each([
+    "rm -rf",
+    "curl http://attacker",
+    "whoami",
+    "nc attacker",
+    "/etc/passwd",
+    "shutdown -h",
+    "/etc/shadow",
+    "evil",
+  ])(
     "encodes hostile markdown payloads as base64 so they cannot break out of the write command [%s]",
     (token) => {
       const hostile = [

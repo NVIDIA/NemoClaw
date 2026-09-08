@@ -44,7 +44,14 @@ function runNodeScript(
   home: string,
   script: string,
 ): { status: number | null; stdout: string; stderr: string } {
-  const result = spawnSync(process.execPath, ["-e", script], {
+  const runtimeSelectionSetup = `
+const providerInspection = require("./src/lib/actions/sandbox/mcp-bridge-provider-inspection.js");
+providerInspection.getMcpProviderInspectionRuntimeSelection = () => ({
+  gatewayName: "nemoclaw",
+  workspace: "default",
+});
+`;
+  const result = spawnSync(process.execPath, ["-e", `${runtimeSelectionSetup}\n${script}`], {
     cwd: process.cwd(),
     encoding: "utf8",
     env: { ...process.env, HOME: home, NODE_OPTIONS: sourceNodeOptions },
@@ -241,7 +248,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
           stdout: "Id: " + expectedId + "\nType: nemoclaw-mcp-v1\nResource version: 4\nCredential keys: EXPECTED_TOKEN\n",
           stderr: "",
         }
-      : { status: 1, stdout: "", stderr: "NotFound: provider" };
+      : { status: 1, stdout: "", stderr: "provider '" + args[2] + "' not found" };
   }
   if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "list") {
     events.push(attached ? "provider:list:attached" : "provider:list:detached");
@@ -312,18 +319,12 @@ registry.registerSandbox({
     destroyPreparedAt: "2026-06-27T01:00:00.000Z",
   },
 });
-registry.addCustomPolicy("stuck-sandbox", {
-  name: entry.policyName,
-  content: "network_policies: {}",
-  sourcePath: "generated:nemoclaw-mcp-bridge",
-});
 const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
 bridge.removeMcpBridge("stuck-sandbox", "github", { force: true }).then(
   () => {
     const after = registry.getSandbox("stuck-sandbox");
     process.stdout.write("<<REPRO_JSON>>" + JSON.stringify({
       mcp: after && after.mcp,
-      customPolicies: after && after.customPolicies || [],
       events,
       commands,
       providerExists,
@@ -350,7 +351,6 @@ bridge.removeMcpBridge("stuck-sandbox", "github", { force: true }).then(
       result.stdout.slice(result.stdout.indexOf(jsonMarker) + jsonMarker.length),
     ) as {
       mcp: SandboxMcpSnapshot | undefined;
-      customPolicies: unknown[];
       events: string[];
       commands: string[];
       providerExists: boolean;
@@ -360,7 +360,6 @@ bridge.removeMcpBridge("stuck-sandbox", "github", { force: true }).then(
     expect(parsed.attached).toBe(false);
     expect(parsed.providerExists).toBe(false);
     expect(parsed.policyState).toBe("absent");
-    expect(parsed.customPolicies).toEqual([]);
     expect(parsed.mcp?.bridges).toEqual({});
     expect(parsed.mcp?.managedServerNames).toEqual(["github"]);
     expect(parsed.mcp?.destroyPreparedAt).toBeUndefined();
@@ -553,7 +552,6 @@ const state = require("./src/lib/actions/sandbox/mcp-bridge-state.js");
 const adapters = require("./src/lib/actions/sandbox/mcp-bridge-adapters.js");
 const policy = require("./src/lib/actions/sandbox/mcp-bridge-policy.js");
 state.ensureSandboxGatewaySelected = async () => {};
-adapters.assertAgentMcpConfigMutationAllowed = () => {};
 adapters.assertAgentMcpTeardownRuntimeCapability = () => {};
 adapters.unregisterAgentAdapter = () => {
   throw new Error("adapter cleanup failed (injected)");
@@ -583,7 +581,8 @@ bridge.removeMcpBridge("stuck-sandbox", "github", { force: true, allowResidual: 
 `;
     const result = runNodeScript(home, script);
     expect(result.status).toBe(0);
-    expect(result.stderr).toContain("adapter cleanup failed (injected)");
+    expect(result.stderr).toContain("MCP force cleanup reported");
+    expect(result.stderr).not.toContain("adapter cleanup failed (injected)");
     const jsonMarker = "<<REPRO_JSON>>";
     const parsed = JSON.parse(
       result.stdout.slice(result.stdout.indexOf(jsonMarker) + jsonMarker.length),
@@ -603,7 +602,6 @@ const state = require("./src/lib/actions/sandbox/mcp-bridge-state.js");
 const adapters = require("./src/lib/actions/sandbox/mcp-bridge-adapters.js");
 const policy = require("./src/lib/actions/sandbox/mcp-bridge-policy.js");
 state.ensureSandboxGatewaySelected = async () => {};
-adapters.assertAgentMcpConfigMutationAllowed = () => {};
 adapters.assertAgentMcpTeardownRuntimeCapability = () => {};
 adapters.unregisterAgentAdapter = () => "removed";
 policy.assertGeneratedPolicyMutationSafe = () => {};

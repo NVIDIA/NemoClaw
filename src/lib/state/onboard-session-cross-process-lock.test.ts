@@ -198,7 +198,9 @@ describe("cross-process onboard lock", () => {
           })();
     });
     try {
-      expect(() => session.clearSession()).toThrow(/state directory changed|session state changed/u);
+      expect(() => session.clearSession()).toThrow(
+        /state directory changed|session state changed/u,
+      );
     } finally {
       unlinkSpy.mockRestore();
     }
@@ -351,9 +353,12 @@ describe("cross-process onboard lock", () => {
           gatewayName: "nemoclaw",
           gatewayPort: 8080,
           lifecycleGeneration: "generation-" + role,
-          verifiedEffectivePolicyIdentity: null,
-          createAttemptNonce: "c".repeat(62),
-          policyCreationReceipt: null,
+          createAttemptNonce: role.repeat(62),
+          resources: {
+            sharedInferenceProviders: [],
+            sandboxScopedProviders: [],
+            credentialEnvironmentVariables: [],
+          },
           reason: "retained_after_sandbox_creation_failure",
         });
         process.stdout.write(JSON.stringify({ ok: true, recordId: recorded.recordId }));
@@ -395,17 +400,6 @@ describe("cross-process onboard lock", () => {
     const fingerprint = "a".repeat(64);
     const createAttemptNonce = "b".repeat(62);
     const lifecycleGeneration = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
-    const policyCreationReceipt = {
-      schemaVersion: 1,
-      origin: "sandbox-create",
-      gatewayName: "nemoclaw",
-      gatewayPort: 8080,
-      sandboxName: "alpha",
-      lifecycleGeneration,
-      sandboxIdentityFingerprint: fingerprint,
-      policyHash: "sha256:effective",
-      policyVersion: 4,
-    };
     const writer = spawnSync(
       process.execPath,
       [
@@ -438,9 +432,7 @@ describe("cross-process onboard lock", () => {
           gatewayName: "nemoclaw",
           gatewayPort: 8080,
           lifecycleGeneration,
-          verifiedEffectivePolicyIdentity: { hash: "sha256:effective", activeVersion: 4 },
           createAttemptNonce,
-          policyCreationReceipt,
         }),
       ],
       { env: { ...process.env, HOME: tempHome }, encoding: "utf8" },
@@ -457,10 +449,86 @@ describe("cross-process onboard lock", () => {
         gatewayName: "nemoclaw",
         gatewayPort: 8080,
         lifecycleGeneration,
-        verifiedEffectivePolicyIdentity: { hash: "sha256:effective", activeVersion: 4 },
         createAttemptNonce,
-        policyCreationReceipt,
       }),
     ]);
+  });
+
+  it("reconstructs retained recovery from the sole verified-create registry checkpoint (#11096)", () => {
+    const fingerprint = "a".repeat(64);
+    const createAttemptNonce = "b".repeat(62);
+    const lifecycleGeneration = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const pendingCreateIdentity = {
+      schemaVersion: 1 as const,
+      state: "verified-create" as const,
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      sandboxName: "alpha",
+      lifecycleGeneration,
+      sandboxIdentityFingerprint: fingerprint,
+      createAttemptNonce,
+      route: "native" as const,
+    };
+    session.saveSession(
+      session.createSession({ sessionId: "replacement-session", sandboxName: "alpha" }),
+    );
+    const registryEntry = {
+      name: "alpha",
+      provider: "vllm-local",
+      credentialEnv: "VLLM_API_KEY",
+      pendingRouteReservation: true as const,
+      reservationSessionId: "failed-create-session",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      lifecycleGeneration,
+      lifecycleLiveIdentityFingerprint: fingerprint,
+      pendingCreateIdentity,
+    };
+
+    const first = session.reconstructRetainedSandboxRecoveryFromPendingCreate(registryEntry);
+    const second = session.reconstructRetainedSandboxRecoveryFromPendingCreate(registryEntry);
+
+    expect(second).toEqual(first);
+    expect(session.listRetainedSandboxRecoveryRecords()).toEqual([
+      expect.objectContaining({
+        sandboxName: "alpha",
+        sandboxIdentityFingerprint: fingerprint,
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        lifecycleGeneration,
+        createAttemptNonce,
+        resources: {
+          sharedInferenceProviders: ["vllm-local"],
+          sandboxScopedProviders: [],
+          credentialEnvironmentVariables: ["VLLM_API_KEY"],
+        },
+      }),
+    ]);
+  });
+
+  it("refuses registry-only recovery when the checkpoint overlay disagrees (#11096)", () => {
+    expect(() =>
+      session.reconstructRetainedSandboxRecoveryFromPendingCreate({
+        name: "alpha",
+        pendingRouteReservation: true,
+        reservationSessionId: "failed-create-session",
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        lifecycleGeneration: "generation-alpha",
+        lifecycleLiveIdentityFingerprint: "a".repeat(64),
+        pendingCreateIdentity: {
+          schemaVersion: 1,
+          state: "verified-create",
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+          sandboxName: "alpha",
+          lifecycleGeneration: "generation-alpha",
+          sandboxIdentityFingerprint: "b".repeat(64),
+          createAttemptNonce: "c".repeat(62),
+          route: "native",
+        },
+      }),
+    ).toThrow(/does not match the registry lifecycle authority/u);
+    expect(session.listRetainedSandboxRecoveryRecords()).toEqual([]);
   });
 });

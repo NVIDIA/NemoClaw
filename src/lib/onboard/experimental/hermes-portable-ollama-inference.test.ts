@@ -46,6 +46,7 @@ import {
 import {
   prepareHermesPortableOllamaProviderRetirement,
   prepareHermesPortableOllamaPublishedInferenceAuthority,
+  prepareHermesPortableOllamaPublishedReceiptAuthority,
 } from "./hermes-portable-ollama-gateway-transaction";
 import { createHermesPortableOllamaInferenceResolver } from "./hermes-portable-ollama-inference";
 import { PORTABLE_HOST_GATEWAY_IP } from "./portable-profile";
@@ -328,6 +329,28 @@ afterEach(() => {
 });
 
 describe("Hermes Portable Ollama inference activation", () => {
+  it("binds committed receipt and journal without another live provider observation", async () => {
+    const fixture = createRuntimeFixture();
+    const journal = await publishPortableInference(fixture);
+    const receiptPath = inferenceReceiptPath(fixture);
+    const journalPath = gatewayJournalPath(fixture);
+    const receiptBefore = snapshotExactTestFile(receiptPath);
+    const journalBefore = snapshotExactTestFile(journalPath);
+    const callsBefore = fixture.gatewayProvider.calls().length;
+
+    const authority = prepareHermesPortableOllamaPublishedReceiptAuthority({
+      directory: path.dirname(receiptPath),
+      sandboxName: journal.intent.sandboxName,
+      credentialEnv: journal.intent.credentialEnv,
+    });
+    authority.assertCurrent();
+
+    expect(authority.serializedReceipt).toBe(receiptBefore.contents);
+    expect(fixture.gatewayProvider.calls()).toHaveLength(callsBefore);
+    expect(snapshotExactTestFile(receiptPath)).toEqual(receiptBefore);
+    expect(snapshotExactTestFile(journalPath)).toEqual(journalBefore);
+  });
+
   it("re-proves committed publication through a verification-only receipt writer", async () => {
     const fixture = createRuntimeFixture();
     const journal = await publishPortableInference(fixture);

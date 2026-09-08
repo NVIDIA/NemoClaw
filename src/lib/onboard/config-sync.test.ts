@@ -57,10 +57,10 @@ function modeBits(file: string): number {
 }
 
 describe("sandbox config sync helpers", () => {
-  it("revalidates policy authority immediately before sandbox execution", () => {
+  it("revalidates sandbox identity immediately before sandbox execution", () => {
     const run = vi.fn();
-    const revalidatePolicyRequirements = vi.fn(() => {
-      throw new Error("policy authority changed");
+    const revalidateSandboxIdentity = vi.fn(() => {
+      throw new Error("sandbox identity changed");
     });
     const syncConfig = createNemoClawConfigSync({
       getProviderSelectionConfig: () => ({
@@ -77,11 +77,11 @@ describe("sandbox config sync helpers", () => {
       openshellArgv: (args) => ["openshell", ...args],
     });
 
-    expect(() =>
-      syncConfig("spark-box", "provider", "model", revalidatePolicyRequirements),
-    ).toThrow("policy authority changed");
+    expect(() => syncConfig("spark-box", "provider", "model", revalidateSandboxIdentity)).toThrow(
+      "sandbox identity changed",
+    );
 
-    expect(revalidatePolicyRequirements).toHaveBeenCalledExactlyOnceWith(
+    expect(revalidateSandboxIdentity).toHaveBeenCalledExactlyOnceWith(
       "synchronize OpenClaw config in sandbox 'spark-box'",
     );
     expect(run).not.toHaveBeenCalled();
@@ -95,7 +95,7 @@ describe("sandbox config sync helpers", () => {
       "spark-box",
       "--no-tty",
       "--",
-      "bash",
+      "/bin/bash",
       "-s",
     ]);
   });

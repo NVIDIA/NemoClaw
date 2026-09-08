@@ -4,6 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createConnectHarness } from "../../../../test/support/connect-flow-test-harness";
+import { HermesPortableForwardRecoveryError } from "./probe/hermes-portable-forward-recovery";
 
 const originalStdoutIsTty = process.stdout.isTTY;
 
@@ -17,6 +18,7 @@ function acceptedHermesHarness(provider: string | null, model: string | null) {
     openshellDriver: "docker",
     gatewayName: "nemoclaw",
     lifecycleGeneration: "generation-1",
+    lifecycleLiveIdentityFingerprint: "f".repeat(64),
   } as never;
   const harness = createConnectHarness({
     agentName: "hermes",
@@ -53,6 +55,43 @@ function configureHealthyForward(harness: ReturnType<typeof acceptedHermesHarnes
   }) as never);
 }
 
+function missingHermesHarness(
+  disposition: "running-current" | "stopped" = "running-current",
+  category = "missing",
+) {
+  const entry = {
+    name: "alpha",
+    agent: "hermes",
+    provider: "ollama-local",
+    model: "qwen3-vl:4b",
+    policies: [],
+    openshellDriver: "docker",
+    gatewayName: "nemoclaw",
+    gatewayPort: 18_789,
+    dashboardPort: 18_789,
+    lifecycleGeneration: "generation-1",
+    lifecycleLiveIdentityFingerprint: "f".repeat(64),
+    hostLocalInferenceReceipt: "exact-receipt\n",
+  } as never;
+  return createConnectHarness({
+    agentName: "hermes",
+    sessionAgent: { name: "hermes" },
+    registryEntry: entry,
+    portableReceiptDisposition: { kind: "hermes", phase: "active" },
+    portableRecoveryResult: { kind: "already-running" },
+    hermesReadinessRuntimeDisposition: disposition,
+    readinessDecision: {
+      kind: "fallback",
+      category,
+      fence: { epochId: "a".repeat(64) },
+      gatewayName: "nemoclaw",
+      gatewayPort: 18_789,
+      fenceFailed: false,
+      recoveryBlocked: false,
+    },
+  });
+}
+
 describe("Hermes accepted launch-readiness probe", () => {
   beforeEach(() => {
     vi.stubEnv("NEMOCLAW_TEST_NO_SLEEP", "1");
@@ -86,15 +125,264 @@ describe("Hermes accepted launch-readiness probe", () => {
     expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
     expect(harness.recoverHermesPortableOllamaInferenceSpy).not.toHaveBeenCalled();
     expect(harness.captureResolvedOpenshellSpy).toHaveBeenCalledOnce();
-    expect(harness.captureResolvedOpenshellSpy.mock.calls[0]?.[0]).toEqual([
-      "forward",
-      "list",
-      "--gateway",
-      "nemoclaw",
-    ]);
+    expect(harness.captureResolvedOpenshellSpy).toHaveBeenCalledWith(
+      ["forward", "list", "--gateway", "nemoclaw"],
+      expect.objectContaining({ openshellBinary: "/usr/bin/openshell" }),
+    );
     expect(harness.logSpy.mock.calls.flat().join("\n")).toMatch(
       /Probe timing: .*lifecycleAction=reused forwardAction=verified result=ready/,
     );
+  });
+
+  it("publishes missing readiness for one running exact runtime without recovery", async () => {
+    vi.stubEnv("PATH", "/hostile/ambient/bin");
+    const harness = missingHermesHarness();
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    expect(harness.inspectHermesPortableOllamaReadinessRuntimeSpy).toHaveBeenCalledOnce();
+    expect(harness.inspectHermesPortableOllamaReadinessRuntimeSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        env: {
+          HOME: "/home/test",
+          XDG_CONFIG_HOME: "/home/test/.config",
+          XDG_RUNTIME_DIR: "/run/user/1000",
+        },
+      }),
+    );
+    expect(harness.verifyHermesPortableLaunchForwardsSpy).toHaveBeenCalledOnce();
+    expect(harness.launchReadinessMutationGateSpy).toHaveBeenCalledOnce();
+    expect(harness.requalifyPortableAgentAuthoritySpy).not.toHaveBeenCalled();
+    expect(harness.recoverPortableDemoLifecycleSpy).not.toHaveBeenCalled();
+    expect(harness.recoverHermesPortableOllamaInferenceSpy).not.toHaveBeenCalled();
+    expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
+    expect(harness.getSandboxDockerRuntimeSpy).not.toHaveBeenCalled();
+    expect(harness.dockerStartSpy).not.toHaveBeenCalled();
+    expect(harness.publishLaunchReadinessSpy).toHaveBeenCalledOnce();
+    expect(harness.publishLaunchReadinessSpy.mock.calls[0]?.[1]).toEqual(
+      expect.objectContaining({ assertPublicationCurrent: expect.any(Function) }),
+    );
+    expect(harness.logSpy.mock.calls.flat().join("\n")).toMatch(
+      /lifecycleAction=reused forwardAction=verified result=ready/,
+    );
+  });
+
+  it("emits all lifecycle timing after stopped exact runtime recovery", async () => {
+    const harness = missingHermesHarness("stopped");
+    harness.recoverPortableDemoLifecycleSpy.mockImplementation((...args) => {
+      args[5]?.onComplete({
+        receiptReadMs: 1,
+        receiptReadCount: 2,
+        socketAuthorityMs: 3,
+        socketAuthorityCount: 4,
+        openshellExecutableMs: 5,
+        openshellExecutableCount: 6,
+        podmanExecutableMs: 7,
+        podmanExecutableCount: 8,
+        podmanPathResolutionMs: 9,
+        podmanPathResolutionCount: 10,
+        podmanCanonicalRealpathMs: 11,
+        podmanCanonicalRealpathCount: 12,
+        podmanDirectoryChainMs: 13,
+        podmanDirectoryChainCount: 14,
+        podmanExecutableMetadataMs: 15,
+        podmanExecutableMetadataCount: 16,
+        podmanContentReadMs: 17,
+        podmanContentReadCount: 18,
+        podmanContentHashMs: 19,
+        podmanContentHashCount: 20,
+        podmanAuthorityCompareMs: 21,
+        podmanAuthorityCompareCount: 22,
+        containerInspectMs: 23,
+        containerInspectCount: 24,
+        transactionCompareMs: 25,
+        transactionCompareCount: 26,
+      });
+      args[6]?.onComplete({
+        preGuardMs: 13,
+        preGuardCount: 14,
+        podmanCaptureMs: 15,
+        podmanCaptureCount: 16,
+        postGuardMs: 17,
+        postGuardCount: 18,
+        jsonParseMs: 19,
+        jsonParseCount: 20,
+        identityCompareMs: 21,
+        identityCompareCount: 22,
+      });
+      return { kind: "recovered" };
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    expect(harness.inspectHermesPortableOllamaReadinessRuntimeSpy).toHaveBeenCalledOnce();
+    expect(harness.verifyHermesPortableLaunchForwardsSpy).not.toHaveBeenCalled();
+    expect(harness.recoverPortableDemoLifecycleSpy).toHaveBeenCalledOnce();
+    expect(harness.recoverHermesPortableOllamaInferenceSpy).toHaveBeenCalledOnce();
+    expect(harness.publishLaunchReadinessSpy).toHaveBeenCalledOnce();
+    const output = harness.logSpy.mock.calls.flat().join("\n");
+    expect(output).toContain(
+      "Hermes Portable currentness timing: receiptRead=1ms receiptReadCount=2 socketAuthority=3ms socketAuthorityCount=4 openshellExecutable=5ms openshellExecutableCount=6 podmanExecutable=7ms podmanExecutableCount=8 podmanPathResolution=9ms podmanPathResolutionCount=10 podmanCanonicalRealpath=11ms podmanCanonicalRealpathCount=12 podmanDirectoryChain=13ms podmanDirectoryChainCount=14 podmanExecutableMetadata=15ms podmanExecutableMetadataCount=16 podmanContentRead=17ms podmanContentReadCount=18 podmanContentHash=19ms podmanContentHashCount=20 podmanAuthorityCompare=21ms podmanAuthorityCompareCount=22 containerInspect=23ms containerInspectCount=24 transactionCompare=25ms transactionCompareCount=26",
+    );
+    expect(output).toContain(
+      "Hermes Portable inspection timing: preGuard=13ms preGuardCount=14 podmanCapture=15ms podmanCaptureCount=16 postGuard=17ms postGuardCount=18 jsonParse=19ms jsonParseCount=20 identityCompare=21ms identityCompareCount=22",
+    );
+  });
+
+  it("routes an unhealthy exact forward to existing recovery without fast publication", async () => {
+    const harness = missingHermesHarness();
+    harness.verifyHermesPortableLaunchForwardsSpy.mockReturnValue({ kind: "unhealthy" });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    expect(harness.recoverPortableDemoLifecycleSpy).toHaveBeenCalledOnce();
+    expect(harness.recoverHermesPortableOllamaInferenceSpy).toHaveBeenCalledOnce();
+    expect(harness.publishLaunchReadinessSpy).toHaveBeenCalledOnce();
+  });
+
+  it("settles transient final Hermes publication health without another recovery", async () => {
+    const harness = missingHermesHarness();
+    harness.publishLaunchReadinessSpy
+      .mockResolvedValueOnce({ kind: "validation-failed", category: "health" })
+      .mockResolvedValueOnce({ kind: "published" });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    expect(harness.launchReadinessMutationGateSpy).toHaveBeenCalledOnce();
+    expect(harness.recoverPortableDemoLifecycleSpy).toHaveBeenCalledOnce();
+    expect(harness.recoverHermesPortableOllamaInferenceSpy).toHaveBeenCalledOnce();
+    expect(harness.publishLaunchReadinessSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("bounds final Hermes publication settlement before reporting persistent health failure", async () => {
+    const harness = missingHermesHarness();
+    harness.publishLaunchReadinessSpy.mockResolvedValue({
+      kind: "validation-failed",
+      category: "health",
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.launchReadinessMutationGateSpy).toHaveBeenCalledOnce();
+    expect(harness.recoverPortableDemoLifecycleSpy).toHaveBeenCalledOnce();
+    // One accepted-runtime attempt enters recovery; final settlement is then capped at three.
+    expect(harness.publishLaunchReadinessSpy).toHaveBeenCalledTimes(4);
+  });
+
+  it.each([
+    ["identity", { kind: "validation-failed", category: "identity" }],
+    ["config", { kind: "validation-failed", category: "config" }],
+    ["evidence", { kind: "evidence-failed" }],
+  ] as const)("rejects %s publication failure without recovery", async (_label, result) => {
+    const harness = missingHermesHarness();
+    harness.publishLaunchReadinessSpy.mockResolvedValue(result as never);
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.recoverPortableDemoLifecycleSpy).not.toHaveBeenCalled();
+    expect(harness.recoverHermesPortableOllamaInferenceSpy).not.toHaveBeenCalled();
+    expect(harness.publishLaunchReadinessSpy).toHaveBeenCalledOnce();
+  });
+
+  it("rejects runtime authority drift before publication or recovery", async () => {
+    const harness = missingHermesHarness();
+    harness.inspectHermesPortableOllamaReadinessRuntimeSpy.mockImplementation(() => {
+      throw new Error("private publication receipt changed");
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.recoverPortableDemoLifecycleSpy).not.toHaveBeenCalled();
+    expect(harness.recoverHermesPortableOllamaInferenceSpy).not.toHaveBeenCalled();
+    expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["occupied", "forward-occupied"],
+    ["unavailable", "forward-state-unavailable"],
+    ["authority drift", "authority-drift"],
+  ] as const)("rejects %s forward evidence without recovery", async (_label, failure) => {
+    const harness = missingHermesHarness();
+    harness.verifyHermesPortableLaunchForwardsSpy.mockImplementation(() => {
+      throw new HermesPortableForwardRecoveryError(failure);
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.recoverPortableDemoLifecycleSpy).not.toHaveBeenCalled();
+    expect(harness.recoverHermesPortableOllamaInferenceSpy).not.toHaveBeenCalled();
+    expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["before forward", 1, 0],
+    ["after forward", 2, 0],
+    ["before publication", 3, 0],
+    ["after publication", 4, 1],
+  ] as const)(
+    "rejects transaction drift %s without recovery",
+    async (_label, failureCall, expectedPublications) => {
+      const harness = missingHermesHarness();
+      const assertCurrent = vi.fn(() => {
+        expect(assertCurrent.mock.calls.length).not.toBe(failureCall);
+      });
+      harness.inspectHermesPortableOllamaReadinessRuntimeSpy.mockReturnValue({
+        kind: "running-current",
+        assertCurrent,
+      });
+
+      await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow();
+
+      expect(harness.recoverPortableDemoLifecycleSpy).not.toHaveBeenCalled();
+      expect(harness.recoverHermesPortableOllamaInferenceSpy).not.toHaveBeenCalled();
+      expect(harness.publishLaunchReadinessSpy).toHaveBeenCalledTimes(expectedPublications);
+    },
+  );
+
+  it("keeps stale readiness on the existing recovery path", async () => {
+    const harness = missingHermesHarness("running-current", "expired");
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    expect(harness.inspectHermesPortableOllamaReadinessRuntimeSpy).not.toHaveBeenCalled();
+    expect(harness.recoverPortableDemoLifecycleSpy).toHaveBeenCalledOnce();
+    expect(harness.recoverHermesPortableOllamaInferenceSpy).toHaveBeenCalledOnce();
+  });
+
+  it("keeps schema-5 missing readiness on the existing recovery path", async () => {
+    const harness = missingHermesHarness();
+    harness.qualifyHermesPortableAcceptedReadinessAuthoritySpy
+      .mockReturnValueOnce({ kind: "requalification-required" })
+      .mockReturnValueOnce({
+        kind: "current",
+        commandAuthority: {
+          assertCurrent: harness.assertHermesPortableOperatingCommandCurrentSpy,
+          assertTransactionCurrent: harness.assertHermesPortableOperatingCommandCurrentSpy,
+          receipt: {} as never,
+          env: {},
+          executablePath: "/usr/bin/openshell",
+        },
+      });
+    harness.requalifyPortableAgentAuthoritySpy.mockReturnValue({
+      kind: "migrated",
+      snapshot: {},
+      assertCurrent: vi.fn(),
+    } as never);
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    expect(harness.inspectHermesPortableOllamaReadinessRuntimeSpy).not.toHaveBeenCalled();
+    expect(harness.requalifyPortableAgentAuthoritySpy).toHaveBeenCalledOnce();
+    expect(harness.recoverPortableDemoLifecycleSpy).toHaveBeenCalledOnce();
+    expect(harness.recoverHermesPortableOllamaInferenceSpy).toHaveBeenCalledOnce();
   });
 
   it("keeps accepted compatible-endpoint authority verification-only", async () => {
@@ -146,6 +434,195 @@ describe("Hermes accepted launch-readiness probe", () => {
     expect(harness.assertHermesPortableOperatingCommandCurrentSpy).toHaveBeenCalledTimes(10);
     expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
     expect(harness.runSandboxExecChildSpy).not.toHaveBeenCalled();
+  });
+
+  it("recovers a stopped schema-6 lifecycle before retrying accepted authority", async () => {
+    const harness = acceptedHermesHarness("compatible-endpoint", "model-alpha");
+    configureHealthyForward(harness);
+    const assertRequalifiedReceiptCurrent = vi.fn();
+    harness.qualifyHermesPortableAcceptedReadinessAuthoritySpy
+      .mockImplementationOnce(() => {
+        throw new Error("stopped container has no current operating authority");
+      })
+      .mockReturnValueOnce({
+        kind: "current",
+        commandAuthority: {
+          assertCurrent: harness.assertHermesPortableOperatingCommandCurrentSpy,
+          env: {},
+          executablePath: "/usr/bin/openshell",
+        },
+      });
+    harness.requalifyPortableAgentAuthoritySpy.mockReturnValue({
+      kind: "already-current",
+      snapshot: {},
+      assertCurrent: assertRequalifiedReceiptCurrent,
+    } as never);
+    harness.recoverPortableDemoLifecycleSpy.mockImplementation((...args) => {
+      args[4]?.onComplete({
+        entryQualificationMs: 101,
+        containerStartMs: 102,
+        postStartCurrentnessMs: 103,
+        execReadyMs: 104,
+        execReadyCurrentnessMs: 41,
+        execReadyCommandMs: 42,
+        execReadySleepMs: 21,
+        preHealthCurrentnessMs: 105,
+        authenticatedHealthMs: 106,
+        authenticatedHealthPodmanMs: 43,
+        authenticatedHealthOpenShellMs: 44,
+        authenticatedHealthSleepMs: 19,
+        startupLaunchMs: 107,
+        healthPollCurrentnessMs: 108,
+        finalQualificationMs: 109,
+        rollbackMs: 0,
+        qualificationCount: 2,
+        transactionCurrentnessCount: 20,
+        containerInspectionCount: 8,
+        containerStartCount: 1,
+        execReadyAttempts: 1,
+        authenticatedHealthCount: 1,
+        startupLaunchCount: 0,
+        rollbackCount: 0,
+        totalMs: 938,
+        containerAction: "started",
+        result: "recovered",
+      });
+      return { kind: "recovered" };
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    expect(harness.requalifyPortableAgentAuthoritySpy).toHaveBeenCalledOnce();
+    expect(harness.recoverPortableDemoLifecycleSpy).toHaveBeenCalledOnce();
+    expect(harness.qualifyHermesPortableAcceptedReadinessAuthoritySpy.mock.calls[1]?.[1]).toEqual({
+      priorReceiptAuthority: {
+        kind: "already-current",
+        snapshot: {},
+        assertCurrent: assertRequalifiedReceiptCurrent,
+      },
+    });
+    expect(harness.inspectLaunchReadinessSpy).toHaveBeenCalledOnce();
+    expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
+    expect(harness.logSpy.mock.calls.flat().join("\n")).toMatch(/result=ready/);
+    expect(harness.logSpy.mock.calls.flat().join("\n")).toContain(
+      "Hermes Portable lifecycle recovery timing: entryQualification=101ms containerStart=102ms postStartCurrentness=103ms execReady=104ms execReadyCurrentness=41ms execReadyCommand=42ms execReadySleep=21ms preHealthCurrentness=105ms authenticatedHealth=106ms authenticatedHealthPodman=43ms authenticatedHealthOpenShell=44ms authenticatedHealthSleep=19ms startupLaunch=107ms healthPollCurrentness=108ms finalQualification=109ms rollback=0ms qualificationCount=2 transactionCurrentnessCount=20 containerInspectionCount=8 containerStartCount=1 execReadyAttempts=1 authenticatedHealthCount=1 startupLaunchCount=0 rollbackCount=0 total=938ms containerAction=started result=recovered",
+    );
+  });
+
+  it("reuses one recovered lifecycle when missing readiness routes to stopped inference", async () => {
+    const harness = missingHermesHarness("stopped");
+    harness.qualifyHermesPortableAcceptedReadinessAuthoritySpy
+      .mockImplementationOnce(() => {
+        throw new Error("stopped container has no current operating authority");
+      })
+      .mockReturnValue({
+        kind: "current",
+        commandAuthority: {
+          assertCurrent: harness.assertHermesPortableOperatingCommandCurrentSpy,
+          assertTransactionCurrent: harness.assertHermesPortableOperatingCommandCurrentSpy,
+          receipt: {} as never,
+          env: {},
+          executablePath: "/usr/bin/openshell",
+        },
+      });
+    const assertRequalifiedReceiptCurrent = vi.fn();
+    harness.requalifyPortableAgentAuthoritySpy.mockReturnValue({
+      kind: "already-current",
+      snapshot: {},
+      assertCurrent: assertRequalifiedReceiptCurrent,
+    } as never);
+    harness.recoverPortableDemoLifecycleSpy.mockReturnValue({ kind: "recovered" });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    expect(harness.recoverPortableDemoLifecycleSpy).toHaveBeenCalledOnce();
+    expect(harness.inspectHermesPortableOllamaReadinessRuntimeSpy).toHaveBeenCalledOnce();
+    expect(harness.recoverHermesPortableOllamaInferenceSpy).toHaveBeenCalledOnce();
+    expect(harness.publishLaunchReadinessSpy).toHaveBeenCalledOnce();
+    expect(assertRequalifiedReceiptCurrent.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(harness.logSpy.mock.calls.flat().join("\n")).toMatch(
+      /lifecycleAction=recovered forwardAction=verified result=ready/,
+    );
+  });
+
+  it("rejects recovered lifecycle drift before stopped inference recovery", async () => {
+    const harness = missingHermesHarness("stopped");
+    harness.qualifyHermesPortableAcceptedReadinessAuthoritySpy
+      .mockImplementationOnce(() => {
+        throw new Error("stopped container has no current operating authority");
+      })
+      .mockReturnValue({
+        kind: "current",
+        commandAuthority: {
+          assertCurrent: harness.assertHermesPortableOperatingCommandCurrentSpy,
+          assertTransactionCurrent: harness.assertHermesPortableOperatingCommandCurrentSpy,
+          receipt: {} as never,
+          env: {},
+          executablePath: "/usr/bin/openshell",
+        },
+      });
+    const assertRequalifiedReceiptCurrent = vi
+      .fn()
+      .mockImplementationOnce(() => undefined)
+      .mockImplementation(() => {
+        throw new Error("recovered receipt authority changed");
+      });
+    harness.requalifyPortableAgentAuthoritySpy.mockReturnValue({
+      kind: "already-current",
+      snapshot: {},
+      assertCurrent: assertRequalifiedReceiptCurrent,
+    } as never);
+    harness.recoverPortableDemoLifecycleSpy.mockReturnValue({ kind: "recovered" });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.recoverPortableDemoLifecycleSpy).toHaveBeenCalledOnce();
+    expect(harness.recoverHermesPortableOllamaInferenceSpy).not.toHaveBeenCalled();
+    expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not recover when stopped schema-6 requalification fails", async () => {
+    const harness = acceptedHermesHarness("compatible-endpoint", "model-alpha");
+    harness.qualifyHermesPortableAcceptedReadinessAuthoritySpy.mockImplementationOnce(() => {
+      throw new Error("operating authority is not ready");
+    });
+    harness.requalifyPortableAgentAuthoritySpy.mockImplementationOnce(() => {
+      throw new Error("receipt, executable, or policy authority changed");
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.requalifyPortableAgentAuthoritySpy).toHaveBeenCalledOnce();
+    expect(harness.recoverPortableDemoLifecycleSpy).not.toHaveBeenCalled();
+    expect(harness.inspectLaunchReadinessSpy).not.toHaveBeenCalled();
+    expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not recover when stopped schema-6 receipt authority drifts", async () => {
+    const harness = acceptedHermesHarness("compatible-endpoint", "model-alpha");
+    harness.qualifyHermesPortableAcceptedReadinessAuthoritySpy.mockImplementationOnce(() => {
+      throw new Error("operating authority is not ready");
+    });
+    harness.requalifyPortableAgentAuthoritySpy.mockReturnValue({
+      kind: "already-current",
+      snapshot: {},
+      assertCurrent: () => {
+        throw new Error("requalified receipt authority changed");
+      },
+    } as never);
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.requalifyPortableAgentAuthoritySpy).toHaveBeenCalledOnce();
+    expect(harness.recoverPortableDemoLifecycleSpy).not.toHaveBeenCalled();
+    expect(harness.inspectLaunchReadinessSpy).not.toHaveBeenCalled();
+    expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
   });
 
   it("rejects schema-5 authority that disappears during requalification", async () => {
@@ -221,10 +698,6 @@ describe("Hermes accepted launch-readiness probe", () => {
         const marker = argv.join(" ").match(/__NEMOCLAW_SANDBOX_EXEC_STARTED___[0-9a-f]{32}/u)?.[0];
         return { status: 0, output: `${marker ?? "missing-marker"}\nRUNNING` };
       }) as never)
-      .mockReturnValueOnce({
-        status: 0,
-        output: "SANDBOX BIND PORT PID STATUS\nalpha 127.0.0.1 18789 12345 running",
-      } as never)
       .mockReturnValueOnce({ status: 0, output: "OK 200" } as never)
       .mockReturnValueOnce({
         status: 0,
@@ -247,7 +720,6 @@ describe("Hermes accepted launch-readiness probe", () => {
         }),
       );
       await assertBoundObservation(() => deps.gatewayHealth?.("alpha", "nemoclaw"));
-      await assertBoundObservation(() => deps.forwardsHealthy?.("alpha", "nemoclaw"));
       await assertBoundObservation(() =>
         deps.inferenceProbe?.("alpha", { name: "hermes" } as never, "nemoclaw"),
       );
@@ -262,7 +734,7 @@ describe("Hermes accepted launch-readiness probe", () => {
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
     expect(harness.captureOpenshellSpy).not.toHaveBeenCalled();
-    expect(harness.captureResolvedOpenshellSpy).toHaveBeenCalledTimes(6);
+    expect(harness.captureResolvedOpenshellSpy).toHaveBeenCalledTimes(5);
     const exactOptions = {
       env: {
         HOME: "/home/test",
@@ -277,7 +749,6 @@ describe("Hermes accepted launch-readiness probe", () => {
     expect(harness.captureResolvedOpenshellSpy.mock.calls[2]?.[1]).toMatchObject(exactOptions);
     expect(harness.captureResolvedOpenshellSpy.mock.calls[3]?.[1]).toMatchObject(exactOptions);
     expect(harness.captureResolvedOpenshellSpy.mock.calls[4]?.[1]).toMatchObject(exactOptions);
-    expect(harness.captureResolvedOpenshellSpy.mock.calls[5]?.[1]).toMatchObject(exactOptions);
   });
 
   it.each(["executable", "socket"])(

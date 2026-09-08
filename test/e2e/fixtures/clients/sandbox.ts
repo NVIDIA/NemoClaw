@@ -22,6 +22,27 @@ const { diagnosticPreview, isValidName, NAME_ALLOWED_FORMAT } = sandboxNameContr
 
 const SANDBOX_ALREADY_ABSENT =
   /\bNotFound\b|\bNot Found\b|sandbox[^\n]*(?:not found|not present|does not exist)|no such sandbox/i;
+const INITIAL_OPENCLAW_PAIRING_TIMEOUT_MS = 60_000;
+const OPENCLAW_STATE_DIR = "/sandbox/.openclaw";
+
+// argv: deadline ms, state dir. Exit 0 once the local CLI device is paired; exit 1 at the deadline.
+const WAIT_FOR_INITIAL_OPENCLAW_PAIRING_PROGRAM = String.raw`
+const fs = require("node:fs");
+const path = require("node:path");
+const deadline = Date.now() + Number(process.argv[1]);
+const stateDir = process.argv[2];
+function wait() {
+  try {
+    const identity = JSON.parse(fs.readFileSync(path.join(stateDir, "identity/device.json"), "utf8"));
+    const auth = JSON.parse(fs.readFileSync(path.join(stateDir, "identity/device-auth.json"), "utf8"));
+    const paired = Object.values(JSON.parse(fs.readFileSync(path.join(stateDir, "devices/paired.json"), "utf8")));
+    if (paired.some((device) => device?.deviceId === identity.deviceId && device.clientId === "cli" && device.clientMode === "cli" && device.tokens?.operator?.token && device.tokens.operator.token === auth.tokens?.operator?.token)) process.exit(0);
+  } catch {}
+  if (Date.now() >= deadline) process.exit(1);
+  setTimeout(wait, 250);
+}
+wait();
+`;
 
 /**
  * Default env for openshell-targeted spawns. ShellProbe filters env via
@@ -121,6 +142,28 @@ export class SandboxClient {
       artifactName: `sandbox-exec-${name}`,
       ...options,
     });
+  }
+
+  async waitForInitialOpenClawPairing(
+    name: string,
+    options: ShellProbeRunOptions = {},
+  ): Promise<void> {
+    const result = await this.exec(
+      name,
+      [
+        "node",
+        "-e",
+        WAIT_FOR_INITIAL_OPENCLAW_PAIRING_PROGRAM,
+        String(INITIAL_OPENCLAW_PAIRING_TIMEOUT_MS),
+        OPENCLAW_STATE_DIR,
+      ],
+      {
+        artifactName: "wait-for-initial-openclaw-pairing",
+        ...options,
+        timeoutMs: INITIAL_OPENCLAW_PAIRING_TIMEOUT_MS + 10_000,
+      },
+    );
+    assertExitZero(result, `wait for initial OpenClaw CLI pairing in ${name}`);
   }
 
   execShell(

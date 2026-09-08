@@ -1,12 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const cliPath = JSON.stringify(path.join(REPO_ROOT, "bin", "nemoclaw.js"));
+const nemohermesPath = JSON.stringify(path.join(REPO_ROOT, "bin", "nemohermes.js"));
 const dispatchPath = JSON.stringify(
   path.join(REPO_ROOT, "dist", "lib", "cli", "public-dispatch.js"),
 );
@@ -105,6 +106,73 @@ require(cliPath);`,
   expect(result.stderr).not.toContain(secret);
 }
 
+// An interrupted install or upgrade leaves the compiled entrypoint unresolvable.
+// Reproduce that shape rather than deleting `dist/`, which the rest of this
+// lane needs.
+function runWithMissingCompiledCli(launcherPath = cliPath): SpawnSyncReturns<string> {
+  return spawnSync(
+    process.execPath,
+    [
+      "--eval",
+      `const Module = require("node:module");
+const cliPath = ${launcherPath};
+const mainPath = ${mainPath};
+const originalResolveFilename = Module._resolveFilename;
+Module._resolveFilename = function(request, parent, isMain, options) {
+  const resolved = originalResolveFilename.apply(this, arguments);
+  if (resolved === mainPath) {
+    const error = new Error("Cannot find module '" + mainPath + "'");
+    error.code = "MODULE_NOT_FOUND";
+    throw error;
+  }
+  return resolved;
+};
+require(cliPath);`,
+    ],
+    {
+      cwd: REPO_ROOT,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        NEMOCLAW_LOG_LEVEL: "info",
+        NEMOCLAW_DEBUG: "0",
+      },
+    },
+  );
+}
+
+function runWithMissingCompiledDependency(): SpawnSyncReturns<string> {
+  return spawnSync(
+    process.execPath,
+    [
+      "--eval",
+      `const Module = require("node:module");
+const cliPath = ${cliPath};
+const mainPath = ${mainPath};
+const originalLoad = Module._load;
+Module._load = function(request, parent, isMain) {
+  const resolved = Module._resolveFilename(request, parent, isMain);
+  if (resolved === mainPath) {
+    const error = new Error("Cannot find module '/private/nemoclaw-secret-dependency'");
+    error.code = "MODULE_NOT_FOUND";
+    throw error;
+  }
+  return originalLoad.apply(this, arguments);
+};
+require(cliPath);`,
+    ],
+    {
+      cwd: REPO_ROOT,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        NEMOCLAW_LOG_LEVEL: "info",
+        NEMOCLAW_DEBUG: "0",
+      },
+    },
+  );
+}
+
 describe("compiled CLI top-level errors", () => {
   it("prints an Error rejection as one line without a Node.js stack (#8202)", () => {
     expectTopLevelError('new Error("Command failed.")', "Error: Command failed.\n");
@@ -147,5 +215,43 @@ describe("compiled CLI top-level errors", () => {
 
   it("prints a generic safe error when the logger and shared redactor cannot load (#8202)", () => {
     expectLoggerFallbackRedaction(`openai-${"a".repeat(40)}`, true);
+  });
+
+  it("reports an unfinished install when the compiled CLI cannot be found (#10372)", () => {
+    const result = runWithMissingCompiledCli();
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr.split(/\r?\n/).filter(Boolean)).toEqual([
+      "Error: NemoClaw's compiled CLI is missing or incomplete, so no command can run.",
+      "  An install or upgrade did not finish.",
+      "  Rerun the installer command that you used to install NemoClaw to finish the installation.",
+      "  The installer attempts to recover existing sandboxes. Follow any recovery guidance that it reports.",
+    ]);
+  });
+
+  it("reports an unfinished install through the Hermes launcher (#10372)", () => {
+    const result = runWithMissingCompiledCli(nemohermesPath);
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("An install or upgrade did not finish.");
+    expect(result.stderr).toContain("The installer attempts to recover existing sandboxes.");
+    expect(result.stderr).not.toContain("dist");
+    expect(result.stderr).not.toContain("Cannot find module");
+  });
+
+  it("does not report an unfinished install for a missing compiled dependency (#10372)", () => {
+    const result = runWithMissingCompiledDependency();
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe(
+      "Error: NemoClaw's compiled CLI could not start because a required module is unavailable. " +
+        "Rerun the installer command that you used to install NemoClaw; if the problem continues, report the startup failure.\n",
+    );
+    expect(result.stderr).not.toContain("/private/nemoclaw-secret-dependency");
+    expect(result.stderr).not.toContain("Cannot find module");
+    expect(result.stderr).not.toContain("An install or upgrade did not finish.");
   });
 });

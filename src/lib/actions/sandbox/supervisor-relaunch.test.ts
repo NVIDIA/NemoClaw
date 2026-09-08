@@ -170,6 +170,87 @@ describe("relaunchManagedSupervisorSession", () => {
     );
   });
 
+  it("retains the managed Hermes browser URL during supervisor recovery", () => {
+    vi.stubEnv("NEMOCLAW_EXTRA_PLACEHOLDER_KEYS", "HERMES_RECOVERY_CREDENTIAL");
+    vi.stubEnv("HERMES_RECOVERY_CREDENTIAL", "recovery-secret");
+    const deps = baseDeps({
+      getSandbox: vi.fn(() => ({
+        name: "alpha",
+        agent: "hermes",
+        dashboardPort: 19189,
+        hermesDashboardEnabled: true,
+        hermesDashboardPort: 19189,
+        hermesDashboardInternalPort: 8643,
+        openshellDriver: "docker",
+      })),
+      getSessionAgent: vi.fn(
+        () =>
+          ({
+            name: "hermes",
+            displayName: "Hermes",
+            forwardPort: 19189,
+          }) as never,
+      ),
+      resolveDashboardPort: vi.fn(() => 19189),
+      readManagedWorkloadAuthority: vi.fn(
+        () =>
+          ({
+            agent: "hermes",
+            profile: {
+              dashboard: {
+                agent: "hermes",
+                browserUrl: "https://hermes.example.test:19189",
+              },
+            },
+          }) as never,
+      ),
+    });
+
+    expect(relaunchManagedSupervisorSession("alpha", { quiet: true, deps })).not.toBeNull();
+    expect(deps.readManagedWorkloadAuthority).toHaveBeenCalledWith(
+      expect.objectContaining({ agent: "hermes", hermesDashboardEnabled: true }),
+    );
+    const command = vi.mocked(deps.recreate).mock.calls[0]?.[0].openshellSandboxCommand ?? [];
+    expect(command).toContain("CHAT_UI_URL=https://hermes.example.test:19189");
+    expect(command).not.toContain("CHAT_UI_URL=http://127.0.0.1:19189");
+    expect(command.join(" ")).not.toContain("HERMES_RECOVERY_CREDENTIAL");
+    expect(command.join(" ")).not.toContain("recovery-secret");
+  });
+
+  it("refuses Hermes supervisor recovery without a recorded browser URL", () => {
+    const deps = baseDeps({
+      getSandbox: vi.fn(() => ({
+        name: "alpha",
+        agent: "hermes",
+        dashboardPort: 19189,
+        hermesDashboardEnabled: true,
+        hermesDashboardPort: 19189,
+        hermesDashboardInternalPort: 8643,
+        openshellDriver: "docker",
+      })),
+      getSessionAgent: vi.fn(
+        () =>
+          ({
+            name: "hermes",
+            displayName: "Hermes",
+            forwardPort: 19189,
+          }) as never,
+      ),
+      resolveDashboardPort: vi.fn(() => 19189),
+      readManagedWorkloadAuthority: vi.fn(
+        () =>
+          ({
+            agent: "hermes",
+            profile: { dashboard: { agent: "hermes" } },
+          }) as never,
+      ),
+    });
+
+    expect(relaunchManagedSupervisorSession("alpha", { quiet: true, deps })).toBeNull();
+    expect(deps.resolveContainer).not.toHaveBeenCalled();
+    expect(deps.recreate).not.toHaveBeenCalled();
+  });
+
   it("retries only transport-level state backup failures after a container restart", () => {
     const backupState = vi
       .fn()

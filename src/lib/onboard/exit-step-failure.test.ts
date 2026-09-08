@@ -259,9 +259,7 @@ describe("incomplete-onboard --resume backstop (#6003)", () => {
       gatewayName: "nemoclaw",
       gatewayPort: 8080,
       lifecycleGeneration: "generation-1",
-      verifiedEffectivePolicyIdentity: null,
       createAttemptNonce: "c".repeat(62),
-      policyCreationReceipt: null,
     });
     const beforeExit = requireLoadedSession();
 

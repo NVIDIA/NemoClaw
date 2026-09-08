@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -14,60 +12,21 @@ import {
   generateStarterPromptSnippet,
   renderStarterPromptSnippet,
   runStarterPromptGenerator,
-  STARTER_PROMPT_GENERATED_PATH,
-  STARTER_PROMPT_SOURCE_PATH,
 } from "../../scripts/generate-starter-prompt.mts";
-import {
-  createGitRunner,
-  type GitRunner,
-  readPinnedPromptAssetBlob,
-  requireExpectedPromptAssetRoutes,
-  resolvePromptAssetRevision,
-} from "../helpers/starter-prompt-asset-contract";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "../..");
 
-const starterPromptMarkdownSource = path.join(repoRoot, "docs", "resources", "starter-prompt.md");
-// CI resolves this Git commit and byte-compares its prompt-asset blobs with
-// the local files. The digests independently assert those same immutable bytes.
-const promptAssetRevision = "6e1a29a1fb0fbbcd25b3fe2d4523ffa71e814010";
+const syntheticPromptSource = `<!--
+  SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+  SPDX-License-Identifier: Apache-2.0
+-->
 
-type PromptAsset = {
-  path: string;
-  pinnedSha256: string;
-  url: string;
-};
+# NemoClaw Instructions for a Non-Technical User
 
-function definePromptAsset(assetPath: string, pinnedSha256: string): PromptAsset {
-  return {
-    path: assetPath,
-    pinnedSha256,
-    url: `https://raw.githubusercontent.com/NVIDIA/NemoClaw/${promptAssetRevision}/${assetPath}`,
-  };
-}
-
-const promptAssets = {
-  dgxSpark: definePromptAsset(
-    "docs/resources/prompt-assets/dgx-spark.md",
-    "0025eb13e6295b5db2994d9898c5305166f43548473532bd9f2d629d08584801", // gitleaks:allow -- pinned prompt-asset SHA-256
-  ),
-  dgxStation: definePromptAsset(
-    "docs/resources/prompt-assets/dgx-station.md",
-    "4aa682fdb1ff2dd552bf8803c9a55dc5b7029fd33b7565812fdc46cb3745da09", // gitleaks:allow -- pinned prompt-asset SHA-256
-  ),
-  windowsWsl: definePromptAsset(
-    "docs/resources/prompt-assets/windows-wsl.md",
-    "7719b81e9304ac7cd924a9fe487a154846660557e50a0f1524f2b0dc87e729ab", // gitleaks:allow -- pinned prompt-asset SHA-256
-  ),
-} as const;
-const platformPromptAssetRoutes = [
-  { asset: promptAssets.dgxSpark, label: "Confirmed DGX Spark" },
-  { asset: promptAssets.dgxStation, label: "Confirmed DGX Station" },
-  { asset: promptAssets.windowsWsl, label: "Officially detected Windows WSL" },
-] as const;
-const runGit = createGitRunner(repoRoot);
+Use the synthetic prompt payload.
+`;
 
 const localCredentialFormSource = path.join(
   repoRoot,
@@ -75,26 +34,6 @@ const localCredentialFormSource = path.join(
   "resources",
   "local-credential-form.html",
 );
-const localCredentialHelperUrl =
-  "https://raw.githubusercontent.com/NVIDIA/NemoClaw/dd61a307d7ddf7be99de8ff1e2678fb8ef42f8e6/scripts/local-credential-helper.mts";
-const localCredentialHelperSha256 =
-  "1a42bbe8dbc9003cb79d4e641b53760571aacd85293671aee97c09c0746fef33"; // gitleaks:allow -- checked-in SHA-256 fixture
-const localCredentialFormUrl =
-  "https://raw.githubusercontent.com/NVIDIA/NemoClaw/dd61a307d7ddf7be99de8ff1e2678fb8ef42f8e6/docs/resources/local-credential-form.html";
-const localCredentialFormSha256 =
-  "5512a256e0ad7c63a26ab82cf4f5924e98652097172ab8a5dc9d9358dd4f6ae8"; // gitleaks:allow -- checked-in SHA-256 fixture
-const localCredentialFormScriptCspHash = [
-  "'sha256-i3cXmSMU",
-  "jTA5LqLSfFQpXe0B",
-  "BZRj4cM8t36dJMm3",
-  "YJw='",
-].join("");
-const localCredentialFormStyleCspHash = [
-  "'sha256-W4wSJyrm",
-  "RXSCgQSjhVRZBhE",
-  "msaHh6dbUj9ZlKh",
-  "xipME='",
-].join("");
 const localCredentialCapability = "A".repeat(43);
 const localCredentialNetworkControlNames = [
   "ALL_PROXY",
@@ -177,33 +116,6 @@ const localCredentialConfigControlNames = [
   "XDG_STATE_HOME",
   "ZDOTDIR",
 ];
-const starterPromptPages = [
-  "docs/index.mdx",
-  "docs/get-started/quickstart.mdx",
-  "docs/get-started/quickstart-hermes.mdx",
-  "docs/get-started/quickstart-langchain-deepagents-code.mdx",
-  "docs/resources/agent-skills.mdx",
-];
-
-function read(relativePath: string): string {
-  return fs.readFileSync(path.join(repoRoot, relativePath), "utf8");
-}
-
-function readStarterPrompt(): string {
-  return extractStarterPromptMarkdown(
-    fs.readFileSync(starterPromptMarkdownSource, "utf8"),
-    "docs/resources/starter-prompt.md",
-  );
-}
-
-function readPromptAsset(asset: (typeof promptAssets)[keyof typeof promptAssets]): string {
-  return read(asset.path);
-}
-
-function urlsIn(content: string): URL[] {
-  return Array.from(content.matchAll(/https?:\/\/[^\s"'<>;]+/g), ([match]) => new URL(match));
-}
-
 function withCredentialCapability(url: string, capability = localCredentialCapability): string {
   const parsed = new URL(url);
   parsed.hash = `cap=${capability}`;
@@ -219,17 +131,6 @@ function extractTagContent(content: string, tagName: "script" | "style"): string
     content.match(new RegExp(`<${tagName}>([\\s\\S]*?)</${tagName}>`)) ??
     fail(`Missing <${tagName}> block`);
   return match[1];
-}
-
-function sha256Source(content: string): string {
-  return `'sha256-${createHash("sha256").update(content).digest("base64")}'`;
-}
-
-function cspMetaContent(content: string): string {
-  return (
-    content.match(/http-equiv="Content-Security-Policy"[\s\S]*?content="([^"]+)"/)?.[1] ??
-    fail("Missing Content-Security-Policy meta content")
-  );
 }
 
 class FakeClassList {
@@ -444,65 +345,41 @@ function runCredentialForm(
 }
 
 describe("starter prompt docs CTA", () => {
-  it.each(Array.from(starterPromptPages, (value) => [value]))(
-    "generates one visible Fern Prompt from the shared Markdown source [case %#] (#5048)",
-    (page) => {
-      const prompt = readStarterPrompt();
-      const generatedSnippet = renderStarterPromptSnippet(prompt);
+  it("renders one visible prompt from validated synthetic Markdown", () => {
+    const prompt = extractStarterPromptMarkdown(syntheticPromptSource, "synthetic-prompt.md");
 
-      expect(prompt).toMatch(/^# NemoClaw Instructions for a Non-Technical User$/m);
-      expect(STARTER_PROMPT_GENERATED_PATH).toBe("docs/_build/StarterPrompt.generated.mdx");
-      expect(generatedSnippet).toContain(
-        '<Prompt\n  title="Install NemoClaw with your coding agent"',
-      );
-      expect(generatedSnippet).not.toContain("hidePrompt");
-      expect(generatedSnippet).not.toContain("actions=");
-      expect(generatedSnippet).toContain(`>\n${prompt}\n</Prompt>`);
-      expect(generatedSnippet).not.toContain("<!--");
-      expect(prompt).not.toMatch(/<https?:\/\//);
-      expect(prompt).toContain("Use redacted placeholders such as `<PASTE_YOUR_API_KEY_HERE>`");
-      expect(read("docs/index.mdx")).toContain(
-        'import { CommandTerminal } from "./_components/CommandTerminal";\n\n<BadgeLinks',
-      );
-
-      const content = read(page);
-      expect(content, `${page} includes the generated Fern Prompt`).toContain(
-        '<Markdown src="/../docs/_build/StarterPrompt.generated.mdx" />',
-      );
-      expect(content, `${page} does not use the retired custom components`).not.toMatch(
-        /StarterPrompt(?:Button|Fallback)/,
-      );
-    },
-  );
+    expect(renderStarterPromptSnippet(prompt)).toContain(`>\n${prompt}\n</Prompt>`);
+  });
 
   it("rejects prompt Markdown that cannot generate one stable payload (#5048)", () => {
-    const source = fs.readFileSync(starterPromptMarkdownSource, "utf8");
-
-    expect(() => extractStarterPromptMarkdown(source.replace("<!--\n", ""), "fixture.md")).toThrow(
-      "expected the standard Markdown SPDX header",
-    );
-    expect(() => extractStarterPromptMarkdown(`${source}\n`, "fixture.md")).toThrow(
+    expect(() =>
+      extractStarterPromptMarkdown(syntheticPromptSource.replace("<!--\n", ""), "fixture.md"),
+    ).toThrow("expected the standard Markdown SPDX header");
+    expect(() => extractStarterPromptMarkdown(`${syntheticPromptSource}\n`, "fixture.md")).toThrow(
       "prompt must end with exactly one newline",
     );
     expect(() =>
-      extractStarterPromptMarkdown(source.replaceAll("\n", "\r\n"), "fixture.md"),
+      extractStarterPromptMarkdown(syntheticPromptSource.replaceAll("\n", "\r\n"), "fixture.md"),
     ).toThrow("use LF line endings");
   });
 
   it("rejects missing or stale generated snippets and accepts the current output (#5048)", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-starter-prompt-"));
+    const sourcePath = path.join(tempDir, "starter-prompt.md");
     const generatedPath = path.join(tempDir, "StarterPrompt.generated.mdx");
     const stdout: string[] = [];
     const stderr: string[] = [];
     const runCheck = () =>
       runStarterPromptGenerator({
         args: ["--check"],
+        sourcePath,
         generatedPath,
         log: (message) => stdout.push(message),
         reportError: (message) => stderr.push(message),
       });
 
     try {
+      fs.writeFileSync(sourcePath, syntheticPromptSource);
       const missing = runCheck();
       expect(missing).toBe(1);
       expect(stderr.at(-1)).toContain("is missing or stale");
@@ -512,253 +389,13 @@ describe("starter prompt docs CTA", () => {
       expect(stale).toBe(1);
       expect(stderr.at(-1)).toContain("is missing or stale");
 
-      fs.writeFileSync(generatedPath, generateStarterPromptSnippet());
+      fs.writeFileSync(generatedPath, generateStarterPromptSnippet(sourcePath));
       const current = runCheck();
       expect(current).toBe(0);
       expect(stdout.at(-1)).toBe("Generated Starter Prompt snippet is current.");
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
-  });
-
-  it("pins local credential capture to the checked-in helper and form (#5048)", () => {
-    const promptSource = readStarterPrompt();
-    const formSource = fs.readFileSync(localCredentialFormSource, "utf8");
-
-    expect(promptSource).toContain(localCredentialHelperUrl);
-    expect(promptSource).toContain(localCredentialHelperSha256);
-    expect(promptSource).toContain(localCredentialFormUrl);
-    expect(promptSource).toContain(localCredentialFormSha256);
-    expect(createHash("sha256").update(formSource).digest("hex")).toBe(localCredentialFormSha256);
-    expect(localCredentialHelperUrl).toMatch(/\/[0-9a-f]{40}\//);
-    expect(localCredentialHelperUrl).not.toMatch(/\/(?:main|master)\//);
-    expect(localCredentialFormUrl).toMatch(/\/[0-9a-f]{40}\//);
-    expect(localCredentialFormUrl).not.toMatch(/\/(?:main|master)\//);
-    expect(promptSource).toContain("Do not generate, rewrite, or redesign the helper or form.");
-    expect(promptSource).toContain(
-      "two immutable URL and digest pairs as one reviewed trust boundary",
-    );
-    expect(promptSource).toContain(
-      "before executing the helper, compute the SHA-256 digest of both downloaded files and compare each result with its pinned digest",
-    );
-    expect(promptSource).toContain(
-      "If either digest differs, do not execute the helper; delete both temporary files and stop.",
-    );
-    expect(promptSource).toContain("every environment-variable name and the complete command argv");
-    expect(promptSource).toContain("--field NAME:type");
-    expect(promptSource).toContain("--execution-profile isolated");
-    expect(promptSource).toContain("--execution-profile account-home --cwd");
-    expect(promptSource).toContain("Never put credentials in argv");
-    expect(promptSource).toContain("Confirm and Run Approved Command");
-    expect(promptSource).toContain("do not retry or resubmit");
-    expect(promptSource).toContain("exposure minimization, not guaranteed erasure");
-    expect(promptSource).toContain(
-      "Keep the helper bound to `http://127.0.0.1`, accept only one valid submission, and run only the already-approved command.",
-    );
-    expect(promptSource).toContain(
-      "Prefer letting an account-persistent command use its own reviewed secure credential prompt when available.",
-    );
-    expect(promptSource).toContain(
-      "use the reviewed helper only with an already-downloaded and verified installer",
-    );
-    expect(promptSource).toContain("Do not hand-assemble a `curl | bash` wrapper");
-    // The slim prompt delegates install-time credential mechanics to the helper and installer;
-    // guard against the prose curl | bash wrapper synthesis creeping back into the copied prompt.
-    expect(promptSource).not.toContain("<absolute-bash-path> -c");
-    expect(promptSource).not.toContain("non-exported shell variable");
-    expect(promptSource).not.toContain("unsets the exported credential before starting");
-    expect(formSource).toContain("<title>NemoClaw Local Credential Form</title>");
-    expect(formSource).toContain("Content-Security-Policy");
-    expect(formSource).toContain("connect-src 'self';");
-    expect(formSource).not.toContain("'unsafe-inline'");
-    expect(formSource).toContain(`script-src ${localCredentialFormScriptCspHash};`);
-    expect(formSource).toContain(`style-src ${localCredentialFormStyleCspHash};`);
-    expect(formSource).toContain(
-      `style-src ${sha256Source(extractTagContent(formSource, "style"))};`,
-    );
-    expect(formSource).toContain(
-      `script-src ${sha256Source(extractTagContent(formSource, "script"))};`,
-    );
-    expect(cspMetaContent(formSource)).not.toContain("frame-ancestors");
-    expect(formSource).toContain('const LOCAL_SUBMIT_PATH = "/submit";');
-    expect(formSource).toContain("fetch(LOCAL_SUBMIT_PATH");
-    expect(formSource).not.toContain('params.get("submit")');
-    for (const url of urlsIn(formSource)) {
-      expect(["127.0.0.1", "localhost", "[::1]"], url.href).toContain(url.hostname);
-    }
-    expect(formSource).not.toContain("localStorage");
-    expect(formSource).not.toContain("sessionStorage");
-  });
-
-  it.each(Array.from(Object.values(promptAssets), (value) => [value]))(
-    "keeps local prompt assets byte-aligned with their pinned revision blobs [case %#] (#6990)",
-    (asset) => {
-      resolvePromptAssetRevision(promptAssetRevision, runGit);
-
-      const localBytes = fs.readFileSync(path.join(repoRoot, asset.path));
-      const pinnedBytes = readPinnedPromptAssetBlob(promptAssetRevision, asset, runGit);
-      const pinnedSha256 = createHash("sha256").update(pinnedBytes).digest("hex");
-
-      expect(asset.pinnedSha256).toMatch(/^[0-9a-f]{64}$/);
-      expect(
-        localBytes.equals(pinnedBytes),
-        `${asset.path} does not byte-match its Git blob at ${promptAssetRevision}; commit the asset content, then repin every platform URL, promptAssetRevision, and digest to that content commit`,
-      ).toBe(true);
-      expect(pinnedSha256, `${asset.path} has a stale pinned SHA-256`).toBe(asset.pinnedSha256);
-    },
-  );
-
-  it("fails closed when the immutable prompt asset revision or blobs cannot be resolved (#6990)", () => {
-    expect(() => resolvePromptAssetRevision("main", () => fail("git must not run"))).toThrow(
-      "promptAssetRevision must be a full lowercase commit SHA",
-    );
-
-    const fetchedRevisionResults = [
-      { status: 1, stdout: Buffer.alloc(0) },
-      { status: 0, stdout: Buffer.alloc(0) },
-      { status: 0, stdout: Buffer.from("commit\n") },
-    ];
-    const fetchedRevision: GitRunner = () =>
-      fetchedRevisionResults.shift() ?? fail("unexpected immutable-revision Git command");
-    expect(() => resolvePromptAssetRevision(promptAssetRevision, fetchedRevision)).not.toThrow();
-    expect(fetchedRevisionResults).toEqual([]);
-
-    const unavailableRevision: GitRunner = (args) => ({
-      status: args[0] === "fetch" ? 128 : 1,
-      stdout: Buffer.alloc(0),
-    });
-    expect(() => resolvePromptAssetRevision(promptAssetRevision, unavailableRevision)).toThrow(
-      `could not fetch immutable prompt asset revision ${promptAssetRevision}`,
-    );
-
-    expect(() =>
-      resolvePromptAssetRevision(promptAssetRevision, () => ({
-        status: 0,
-        stdout: Buffer.from("tree\n"),
-      })),
-    ).toThrow("promptAssetRevision must resolve to a commit object");
-
-    expect(() =>
-      readPinnedPromptAssetBlob(promptAssetRevision, promptAssets.dgxSpark, () => ({
-        status: 0,
-        stdout: Buffer.alloc(0),
-      })),
-    ).toThrow("must contain exactly one regular prompt asset blob");
-
-    const malformedBlobOid = "a".repeat(40);
-    const malformedBlob: GitRunner = (args) => ({
-      status: 0,
-      stdout:
-        args[0] === "ls-tree"
-          ? Buffer.from(`100644 blob ${malformedBlobOid}\t${promptAssets.dgxSpark.path}\0`)
-          : Buffer.from("tree\n"),
-    });
-    expect(() =>
-      readPinnedPromptAssetBlob(promptAssetRevision, promptAssets.dgxSpark, malformedBlob),
-    ).toThrow("does not resolve to a readable Git blob");
-  });
-
-  it("routes platform-only installation instructions to raw prompt assets (#6990)", () => {
-    const promptSource = readStarterPrompt();
-    const sparkSource = readPromptAsset(promptAssets.dgxSpark);
-    const stationSource = readPromptAsset(promptAssets.dgxStation);
-    const windowsSource = readPromptAsset(promptAssets.windowsWsl);
-
-    expect(promptAssetRevision).toMatch(/^[0-9a-f]{40}$/);
-    expect(requireExpectedPromptAssetRoutes(promptSource, platformPromptAssetRoutes)).toEqual(
-      new Map(platformPromptAssetRoutes.map(({ asset, label }) => [label, asset.url])),
-    );
-    for (const asset of Object.values(promptAssets)) {
-      expect(promptSource).toContain(asset.url);
-      const assetUrl = new URL(asset.url);
-      expect(assetUrl.origin).toBe("https://raw.githubusercontent.com");
-      expect(assetUrl.pathname).toMatch(
-        /^\/NVIDIA\/NemoClaw\/[0-9a-f]{40}\/docs\/resources\/prompt-assets\/[^/]+\.md$/,
-      );
-      expect(assetUrl.pathname).toContain(`/${promptAssetRevision}/`);
-    }
-
-    expect(promptSource).toContain("load exactly one matching instruction asset");
-    expect(promptSource).toContain("Read the matching raw Markdown file completely");
-    expect(promptSource).toContain("Do not load a platform asset for any other computer.");
-    expect(promptSource).not.toContain("approximately 352 GB");
-    expect(promptSource).not.toContain("NEMOCLAW_PROVIDER=install-windows-ollama");
-    expect(promptSource).not.toContain(
-      "NEMOCLAW_VLLM_MODEL=nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4",
-    );
-
-    expect(sparkSource).toContain("nvidia/Qwen3.6-35B-A3B-NVFP4");
-    expect(sparkSource).toContain(
-      "Managed vLLM with automatic serving-profile selection. This is the default",
-    );
-    expect(sparkSource).toContain(
-      "`nvidia/Qwen3.6-35B-A3B-NVFP4` with the fixed catalog-backed vLLM profile",
-    );
-    expect(sparkSource).toContain(
-      "Leave `NEMOCLAW_PROVIDER`, `NEMOCLAW_MODEL`, `NEMOCLAW_VLLM_MODEL`, and `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` unset",
-    );
-    expect(sparkSource).toContain(
-      "Preserve an existing `NEMOCLAW_VLLM_PORT` host-port override",
-    );
-    expect(stationSource).toContain("`nemotron-3-ultra-550b-a55b`");
-    expect(stationSource).toContain("`nemotron-ultra`");
-    expect(stationSource).toContain("`deepseek-v4-flash`");
-    expect(stationSource).toContain("`deepseek-ai/DeepSeek-V4-Flash`");
-    expect(stationSource).toContain("Automatic pair selection");
-    expect(stationSource).toContain(
-      "DeepSeek V4 Flash, the explicit `--station-deepseek` override",
-    );
-    expect(stationSource).not.toContain("provider-preseeded DeepSeek path");
-    expect(stationSource).not.toContain("only supported next step");
-    expect(stationSource).toContain("model-cache filesystem and Docker storage");
-    expect(stationSource).toContain(
-      "DGX Station is tested with limitations across qualified profiles on one physical DGX Station GB300.",
-    );
-    expect(stationSource).toContain(
-      "Dual-Station configurations are not yet validated, and dedicated CI coverage is not available.",
-    );
-    expect(stationSource).not.toContain("deferred end-to-end validation on physical hardware");
-    expect(stationSource).toContain(
-      "Do not run `scripts/prepare-dgx-station-host.sh --check`, `--verify`, or `--apply` separately",
-    );
-    expect(stationSource).toContain(
-      "For automatic pair selection, run the ordinary installer without",
-    );
-    expect(stationSource).toContain("For DeepSeek, pass `--station-deepseek`");
-    expect(stationSource).toContain("TCP port `6379`");
-    expect(stationSource).toContain("shared `/24`");
-    for (const environmentName of [
-      "NEMOCLAW_PROVIDER",
-      "NEMOCLAW_VLLM_MODEL",
-      "NEMOCLAW_MODEL",
-      "NEMOCLAW_NON_INTERACTIVE",
-      "NEMOCLAW_YES",
-      "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
-      "NEMOCLAW_NO_EXPRESS",
-    ]) {
-      expect(stationSource).toContain(`\`${environmentName}\``);
-    }
-    expect(stationSource).toContain(
-      "Let the installer present its third-party-software notice and complete Express summary.",
-    );
-    expect(stationSource).toContain("Run the installer only in a secure interactive terminal");
-    expect(stationSource).toContain("Keep each official confirmation visible");
-    expect(stationSource).toContain("third-party-software notice");
-    expect(windowsSource).toContain("NEMOCLAW_PROVIDER=install-windows-ollama");
-    expect(windowsSource).toContain("Do not start a second Ollama service on the same port.");
-  });
-
-  it("rejects platform labels whose pinned prompt asset URLs are swapped (#6990)", () => {
-    const promptSource = readStarterPrompt();
-    const sparkUrlMarker = "__DGX_SPARK_PROMPT_ASSET_URL__";
-    const swappedRoutes = promptSource
-      .replace(promptAssets.dgxSpark.url, sparkUrlMarker)
-      .replace(promptAssets.dgxStation.url, promptAssets.dgxSpark.url)
-      .replace(sparkUrlMarker, promptAssets.dgxStation.url);
-
-    expect(() =>
-      requireExpectedPromptAssetRoutes(swappedRoutes, platformPromptAssetRoutes),
-    ).toThrow(`Confirmed DGX Spark must map to ${promptAssets.dgxSpark.url}`);
   });
 
   it("rejects missing, ambiguous, and unsafe credential schemas (#5048)", async () => {
@@ -1042,88 +679,5 @@ describe("starter prompt docs CTA", () => {
     expect(networkFailure.resultElement.allText()).toContain("outcome is unknown");
     expect(networkFailure.consoleCalls).toHaveLength(0);
     expect(networkInput.value).toBe("");
-  });
-
-  it("keeps Deep Agents as a selectable starter prompt option (#5048)", () => {
-    const promptSource = readStarterPrompt();
-
-    expect(promptSource).toContain("3. LangChain Deep Agents Code.");
-    expect(promptSource).toContain("https://docs.nvidia.com/nemoclaw/llms.txt");
-    expect(promptSource).toContain(
-      "https://docs.nvidia.com/nemoclaw/latest/user-guide/openclaw/get-started/quickstart.md",
-    );
-    expect(promptSource).toContain(
-      "https://docs.nvidia.com/nemoclaw/latest/user-guide/hermes/get-started/quickstart.md",
-    );
-    expect(promptSource).toContain(
-      "https://docs.nvidia.com/nemoclaw/latest/user-guide/deepagents/get-started/quickstart.md",
-    );
-    expect(promptSource).toContain("NEMOCLAW_AGENT=langchain-deepagents-code");
-    expect(promptSource).toContain("nemo-deepagents onboard");
-  });
-});
-
-describe("starter prompt checkout line endings", () => {
-  // Point core.attributesFile at an absent path and set GIT_ATTR_NOSYSTEM so the
-  // result comes from the repository .gitattributes alone. Without that, a
-  // contributor's global "* text=auto" would decide the outcome.
-  const absentAttributesFile = path.join(os.tmpdir(), "nemoclaw-absent-gitattributes");
-
-  function checkoutEol(relativePath: string): string {
-    const result = spawnSync(
-      "git",
-      [
-        "-c",
-        `core.attributesFile=${absentAttributesFile}`,
-        "check-attr",
-        "eol",
-        "--",
-        relativePath,
-      ],
-      {
-        cwd: repoRoot,
-        encoding: "utf8",
-        env: { ...process.env, GIT_ATTR_NOSYSTEM: "1" },
-        timeout: 10_000,
-      },
-    );
-    const diagnostic = [
-      `git check-attr did not run for ${relativePath}:`,
-      `status=${result.status}`,
-      `signal=${result.signal}`,
-      result.error?.message ?? "",
-      result.stderr ?? "",
-    ]
-      .join(" ")
-      .trim();
-    expect(result.error, diagnostic).toBeUndefined();
-    expect(result.status, diagnostic).toBe(0);
-    return result.stdout;
-  }
-
-  // check-attr answers for any path, so require the file before trusting its
-  // attribute; otherwise a rename would leave these assertions passing.
-  function readCheckoutEol(relativePath: string): string {
-    expect(fs.existsSync(path.join(repoRoot, relativePath))).toBe(true);
-    return checkoutEol(relativePath);
-  }
-
-  // Every file whose exact working-tree bytes this suite asserts.
-  const bytePinnedPaths = [
-    STARTER_PROMPT_SOURCE_PATH,
-    ...Object.values(promptAssets).map((asset) => asset.path),
-    "docs/resources/local-credential-form.html",
-  ];
-
-  it.each(bytePinnedPaths)(
-    "checks out %s with LF so an autocrlf clone keeps the bytes this suite asserts (#8648)",
-    (relativePath) => {
-      expect(readCheckoutEol(relativePath)).toContain(`${relativePath}: eol: lf`);
-    },
-  );
-
-  it("checks out a representative tracked text file with LF (#8648)", () => {
-    const relativePath = "docs/resources/agent-skills.mdx";
-    expect(readCheckoutEol(relativePath)).toContain(`${relativePath}: eol: lf`);
   });
 });

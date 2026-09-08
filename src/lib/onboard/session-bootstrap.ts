@@ -3,6 +3,7 @@
 
 import path from "node:path";
 
+import { normalizeProcessExitCode } from "../core/process-exit";
 import type { ServingProfileProvenance } from "../inference/serving/types";
 import { NEMOCLAW_VLLM_GPU_DEVICE_ENV, parseVllmGpuDevice } from "../inference/vllm-models";
 import { PERSONAL_POLICY_TIER_NAME } from "../policy/tiers";
@@ -58,6 +59,14 @@ export {
   type OnboardResumeIntentSnapshot,
   type ResolvedOnboardResumeIntent,
 };
+
+/** Expected onboarding refusal when selected restore authority changes. */
+export class OnboardRestoreSnapshotDriftError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "OnboardRestoreSnapshotDriftError";
+  }
+}
 
 export function resolveOnboardResumeIntent(options: {
   readonly explicitResume: boolean;
@@ -173,8 +182,7 @@ export class OnboardDeferredExitError extends Error {
 
 export function isOnboardDeferredExitError(error: unknown): error is OnboardDeferredExitError {
   const candidate = error as
-    | (Error & { code?: unknown; [ONBOARD_DEFERRED_EXIT_ERROR]?: unknown })
-    | null;
+    (Error & { code?: unknown; [ONBOARD_DEFERRED_EXIT_ERROR]?: unknown }) | null;
   return (
     candidate instanceof Error &&
     candidate[ONBOARD_DEFERRED_EXIT_ERROR] === true &&
@@ -199,8 +207,8 @@ export function wrapOnboardDeferredExit<TOptions extends DeferredExitOptions>(
     const resolvedOptions = options ?? ({} as TOptions);
     const originalProcessExit = process.exit;
     let deferredExit: OnboardDeferredExitError | null = null;
-    process.exit = ((code?: number): never => {
-      throw new OnboardDeferredExitError(code ?? 0);
+    process.exit = ((code?: number | string | null): never => {
+      throw new OnboardDeferredExitError(normalizeProcessExitCode(code));
     }) as typeof process.exit;
     try {
       await run(resolvedOptions);

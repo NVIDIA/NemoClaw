@@ -13,7 +13,12 @@ removed_marker="$0.removed"
 case "$1" in
   ps)
     if [ ! -e "$removed_marker" ]; then
-      printf 'aaaaaaaaaaaa\topenshell\tdefault\tsb-alpha\n'
+      last_arg=""
+      for arg do last_arg="$arg"; done
+      case "$last_arg" in
+        '{{.ID}}') printf 'aaaaaaaaaaaa\n' ;;
+        *) printf 'aaaaaaaaaaaa\topenshell\tdefault\tsb-alpha\n' ;;
+      esac
     fi
     ;;
   rm)
@@ -46,7 +51,6 @@ describe("CLI dispatch", () => {
               model: "test-model",
               provider: "nvidia-prod",
               gpuEnabled: false,
-              policies: [],
             },
           },
           defaultSandbox: "alpha",
@@ -83,13 +87,13 @@ describe("CLI dispatch", () => {
         PATH: `${localBin}:${process.env.PATH || ""}`,
       });
 
-      expect(r.code).toBe(0);
+      expect(r.code, r.out).toBe(0);
       const openshellOutput = fs.readFileSync(openshellLog, "utf8");
       const dockerOutput = fs.readFileSync(bashLog, "utf8");
       const shouldCleanupGateway = process.platform === "darwin";
       expect(openshellOutput).toContain("sandbox delete alpha");
       expect(openshellOutput).toContain("NAME STATUS");
-      expect(openshellOutput.includes("forward stop 18789")).toBe(shouldCleanupGateway);
+      expect(openshellOutput).not.toContain("forward stop 18789");
       expect(openshellOutput.includes("gateway remove nemoclaw")).toBe(shouldCleanupGateway);
       expect(dockerOutput.includes("volume ls -q --filter name=openshell-cluster-nemoclaw")).toBe(
         shouldCleanupGateway,
@@ -119,7 +123,6 @@ describe("CLI dispatch", () => {
               model: "test-model",
               provider: "nvidia-prod",
               gpuEnabled: false,
-              policies: [],
               gatewayName: "nemoclaw-8081",
               gatewayPort: 8081,
             },
@@ -170,7 +173,7 @@ describe("CLI dispatch", () => {
       expect(r.code, r.out).toBe(0);
       const openshellOutput = fs.readFileSync(openshellLog, "utf8");
       expect(openshellOutput).toContain("sandbox delete alpha");
-      expect(openshellOutput).toContain("forward stop 18789");
+      expect(openshellOutput).not.toContain("forward stop 18789");
       // `gateway remove` is the modern subcommand on every platform (#6569).
       expect(openshellOutput).toContain("gateway remove nemoclaw-8081");
       expect(openshellOutput).toContain("gateway destroy -g nemoclaw-8081");
@@ -203,7 +206,6 @@ describe("CLI dispatch", () => {
               model: "test-model",
               provider: "nvidia-prod",
               gpuEnabled: false,
-              policies: [],
             },
           },
           defaultSandbox: "alpha",
@@ -249,7 +251,7 @@ describe("CLI dispatch", () => {
 
       expect(r.code, r.out).toBe(0);
       const openshellOutput = fs.readFileSync(openshellLog, "utf8");
-      expect(openshellOutput).toContain("forward stop 18789");
+      expect(openshellOutput).not.toContain("forward stop 18789");
       // `gateway remove` is the modern subcommand on every platform (#6569).
       expect(openshellOutput).toContain("gateway remove nemoclaw");
       expect(openshellOutput).not.toContain("gateway destroy -g nemoclaw");
@@ -295,7 +297,6 @@ describe("CLI dispatch", () => {
               model: "test-model",
               provider: "nvidia-prod",
               gpuEnabled: false,
-              policies: [],
               gatewayName: "nemoclaw-8081",
               gatewayPort: 8081,
             },
@@ -366,7 +367,6 @@ describe("CLI dispatch", () => {
               model: "test-model",
               provider: "nvidia-prod",
               gpuEnabled: false,
-              policies: [],
             },
           },
           defaultSandbox: "alpha",
@@ -441,7 +441,6 @@ describe("CLI dispatch", () => {
             model: "test-model",
             provider: "nvidia-prod",
             gpuEnabled: false,
-            policies: [],
             gatewayName: "nemoclaw-8081",
             gatewayPort: 8081,
           },
@@ -450,7 +449,6 @@ describe("CLI dispatch", () => {
             model: "test-model",
             provider: "nvidia-prod",
             gpuEnabled: false,
-            policies: [],
           },
         },
         defaultSandbox: "alpha",
@@ -515,7 +513,6 @@ describe("CLI dispatch", () => {
             model: "test-model",
             provider: "nvidia-prod",
             gpuEnabled: false,
-            policies: [],
           },
         },
         defaultSandbox: "alpha",
@@ -582,7 +579,6 @@ describe("CLI dispatch", () => {
             model: "test-model",
             provider: "nvidia-prod",
             gpuEnabled: false,
-            policies: [],
             gatewayName: "nemoclaw-8081",
             gatewayPort: 8081,
           },
@@ -676,7 +672,6 @@ describe("CLI dispatch", () => {
               model: "test-model",
               provider: "nvidia-prod",
               gpuEnabled: false,
-              policies: [],
               gatewayName: "nemoclaw-8081",
               gatewayPort: 8081,
             },
@@ -741,7 +736,6 @@ describe("CLI dispatch", () => {
             model: "test-model",
             provider: "nvidia-prod",
             gpuEnabled: false,
-            policies: [],
           },
         },
         defaultSandbox: "alpha",
@@ -803,7 +797,6 @@ describe("CLI dispatch", () => {
               model: "test-model",
               provider: "nvidia-prod",
               gpuEnabled: false,
-              policies: [],
             },
           },
           defaultSandbox: "alpha",
@@ -846,7 +839,7 @@ describe("CLI dispatch", () => {
         PATH: `${localBin}:${process.env.PATH || ""}`,
       });
 
-      expect(r.code).toBe(0);
+      expect(r.code, r.out).toBe(0);
       expect(r.out).toContain("already absent from the live gateway");
       expect(r.out).toContain("Sandbox 'alpha' destroyed");
 
@@ -858,7 +851,7 @@ describe("CLI dispatch", () => {
       const openshellOutput = fs.readFileSync(openshellLog, "utf8");
       const dockerOutput = fs.readFileSync(bashLog, "utf8");
       const shouldCleanupGateway = process.platform === "darwin";
-      expect(openshellOutput.includes("forward stop 18789")).toBe(shouldCleanupGateway);
+      expect(openshellOutput).not.toContain("forward stop 18789");
       expect(openshellOutput.includes("gateway remove nemoclaw")).toBe(shouldCleanupGateway);
       expect(dockerOutput.includes("volume ls -q --filter name=openshell-cluster-nemoclaw")).toBe(
         shouldCleanupGateway,
@@ -884,7 +877,6 @@ describe("CLI dispatch", () => {
             model: "test-model",
             provider: "nvidia-prod",
             gpuEnabled: false,
-            policies: [],
           },
         },
         defaultSandbox: "alpha",
@@ -921,7 +913,7 @@ describe("CLI dispatch", () => {
       PATH: `${localBin}:${process.env.PATH || ""}`,
     });
 
-    expect(r.code).toBe(0);
+    expect(r.code, r.out).toBe(0);
     const log = fs.readFileSync(openshellLog, "utf8");
     expect(log).toContain("provider delete alpha-telegram-bridge");
     expect(log).toContain("provider delete alpha-discord-bridge");

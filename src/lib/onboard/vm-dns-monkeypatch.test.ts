@@ -59,17 +59,17 @@ describe("applyOnboardVmDnsMonkeypatch", () => {
       ok: true,
       status: "applied" as const,
     }));
-    const revalidatePolicyAuthority = vi.fn(() => {
-      throw new Error("policy authority changed");
+    const revalidateSandboxIdentity = vi.fn(() => {
+      throw new Error("sandbox identity changed");
     });
 
     expect(() =>
       applyOnboardVmDnsMonkeypatch(
         "demo",
         { openshellDriver: "vm" },
-        { apply, log, revalidatePolicyAuthority },
+        { apply, log, revalidateSandboxIdentity },
       ),
-    ).toThrow("policy authority changed");
+    ).toThrow("sandbox identity changed");
 
     expect(apply).toHaveBeenCalledOnce();
     expect(log).not.toHaveBeenCalled();

@@ -59,6 +59,8 @@ describe("showSandboxStatus flow", () => {
         agent: "hermes",
         agentDisplayName: "Hermes",
         portableLifecyclePhase: phase,
+        policies: ["npm", "telegram"],
+        policiesAvailable: true,
       });
       expect(harness.collectSandboxStatusSnapshotSpy).not.toHaveBeenCalled();
       expect(harness.getSandboxDockerRuntimeSpy).not.toHaveBeenCalled();
@@ -253,10 +255,10 @@ describe("showSandboxStatus flow", () => {
     expect(output).toContain("Serving process (openclaw gateway):");
     expect(output).toContain("not checked");
     expect(output).toContain("Host GPU: yes");
+    expect(output).toContain("Policies: npm, telegram");
     expect(output).toContain("last CUDA proof failed: cuInit");
     expect(output).toContain("CUDA initialization failed");
     expect(output).toContain("SSH sessions: 2");
-    expect(output).toContain("Permissions: mutable default");
     expect(output).toContain("Update:");
     expect(output).toContain("Recovered NemoClaw gateway runtime via gateway reattach.");
     expect(output).toContain("Recovered sandbox 'alpha' from Docker via docker unpause");
@@ -268,6 +270,16 @@ describe("showSandboxStatus flow", () => {
     expect(harness.getActiveSandboxSessionsSpy).toHaveBeenCalledWith("alpha", expect.any(Object));
     expect(harness.getSandboxDockerRuntimeSpy).toHaveBeenCalledWith("alpha");
     expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it("reports unavailable live policy instead of an empty policy set", async () => {
+    const harness = createStatusFlowHarness({ gatewayPresets: null });
+
+    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+
+    const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).toContain("Policies: unavailable");
+    expect(output).not.toContain("Policies: none");
   });
 
   it("reports zero SSH sessions as 'none' without connection-negative language (#7805)", async () => {
@@ -327,64 +339,6 @@ describe("showSandboxStatus flow", () => {
 
     const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
     expect(output).not.toMatch(/^\s*(?:Connected|SSH sessions):/m);
-  });
-
-  it("reports active baseline exclusions and their support impact (#7178)", async () => {
-    const harness = createStatusFlowHarness({
-      sandboxEntry: {
-        baselineExclusions: [
-          { version: 1, agent: "openclaw", key: "nous_research", digest: "digest" },
-        ],
-      },
-    });
-
-    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
-
-    const output = harness.logSpy.mock.calls.flat().join("\n");
-    expect(output).toContain("Baseline exclusions: nous_research");
-    expect(output).toContain("Support impact:");
-    expect(output).toContain("unsupported");
-    expect(output).toContain("policy restore <key>");
-  });
-
-  it("warns when a recorded exclusion is still present in the live policy (#7178)", async () => {
-    const harness = createStatusFlowHarness({
-      baselineExclusionStatus: "live-policy-mismatch",
-      sandboxEntry: {
-        baselineExclusions: [{ version: 1, agent: "openclaw", key: "pypi", digest: "digest" }],
-      },
-    });
-
-    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
-
-    const output = harness.logSpy.mock.calls.flat().join("\n");
-    expect(output).toContain("pypi: excluded key is present in live policy");
-  });
-
-  it("reports interrupted baseline policy repair and the exact reconciliation command (#7178)", async () => {
-    const harness = createStatusFlowHarness({
-      sandboxEntry: {
-        baselineExclusionTransition: {
-          id: "tx-1",
-          operation: "restore",
-          exclusion: {
-            version: 1,
-            agent: "openclaw",
-            key: "nous_research",
-            digest: "digest",
-          },
-          targetLiveDigest: "current-digest",
-          startedAt: "2026-07-19T00:00:00.000Z",
-        },
-      },
-    });
-
-    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
-
-    const output = harness.logSpy.mock.calls.flat().join("\n");
-    expect(output).toContain("Baseline policy repair required: interrupted restore");
-    expect(output).toContain("rebuild blocked");
-    expect(output).toContain("nemoclaw alpha policy restore nous_research");
   });
 
   it("omits serving-process status when the gateway is unavailable (#7003)", async () => {
@@ -621,21 +575,6 @@ describe("showSandboxStatus flow", () => {
     expect(output).toContain("unreachable");
     expect(output).toContain("Start Ollama and retry");
     expect(output).toContain("http://127.0.0.1:11434/api/tags");
-  });
-
-  it("renders fresh shields posture as not configured rather than down", async () => {
-    const harness = createStatusFlowHarness({
-      shieldsPosture: {
-        mode: "mutable_default",
-        detail: "not configured (default mutable state)",
-      },
-    });
-
-    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
-
-    const output = harness.logSpy.mock.calls.flat().join("\n");
-    expect(output).toContain("Permissions: not configured (default mutable state)");
-    expect(output).not.toContain("Permissions: shields down");
   });
 
   it("renders the live agent version instead of stale registry metadata", async () => {

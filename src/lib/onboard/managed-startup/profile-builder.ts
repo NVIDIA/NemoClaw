@@ -65,7 +65,7 @@ export const MANAGED_STARTUP_HOST_PROXY_URL_INPUTS = [
  */
 const EXPECTED_AFFORDANCE_INVENTORY_SHA256 = {
   openclaw: "9b722441e33f0b0d7580f74cd185c0174979de9c1a784556ff56ff931b2c9904",
-  hermes: "26c2dc3750274e5c2a79bf382a4b18b3cf26c0ef64938e91b694427aa23756e8",
+  hermes: "795c97be2dcb1921e06328a6d23b1f7389ebb2f6a085fa67b7aaa0f287ce88e0",
   "langchain-deepagents-code": "08c75cf22495ec93a090bc5b70544eac65970e658b10fba057dea5ffef502e4a",
   pi: "6302d387182c596fd67ad18577ecf82107bad6271aeeb5e69714115f91557abb",
 } as const satisfies Record<ManagedStartupAgent, string>;
@@ -682,9 +682,11 @@ function assertEnvironmentConsistency(
     NEMOCLAW_INFERENCE_API: profile.inference.api,
     NEMOCLAW_TOOL_DISCLOSURE: profile.tools.disclosure,
     CHAT_UI_URL:
-      profile.dashboard.agent === "openclaw" || profile.dashboard.agent === "hermes"
+      profile.dashboard.agent === "openclaw"
         ? profile.dashboard.url
-        : null,
+        : profile.dashboard.agent === "hermes"
+          ? (profile.dashboard.browserUrl ?? profile.dashboard.url)
+          : null,
   };
   for (const [name, expected] of Object.entries(stringValues)) {
     const raw = presentEnvironmentValue(environment, name);

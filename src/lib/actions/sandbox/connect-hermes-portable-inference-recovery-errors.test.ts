@@ -55,7 +55,7 @@ describe("Hermes Portable connect recovery errors", () => {
     expect(output).not.toContain("Hermes Portable inference recovery for 'alpha' failed");
   });
 
-  it("verifies a compatible-endpoint route without Ollama recovery", async () => {
+  it("carries current schema-6 authority through compatible-endpoint recovery", async () => {
     const entry = {
       name: "alpha",
       agent: "hermes",
@@ -79,16 +79,11 @@ describe("Hermes Portable connect recovery errors", () => {
       portableReceiptDisposition: { kind: "hermes", phase: "active" },
       portableRecoveryResult: { kind: "already-running" },
     });
-    harness.requalifyPortableAgentAuthoritySpy.mockReturnValue({
-      kind: "already-current",
-      snapshot: {},
-      assertCurrent: vi.fn(),
-    } as never);
-
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
     expect(harness.registryEntries[0]?.hostLocalInferenceReceipt).toBeUndefined();
-    expect(harness.requalifyPortableAgentAuthoritySpy).toHaveBeenCalled();
+    expect(harness.requalifyPortableAgentAuthoritySpy).not.toHaveBeenCalled();
+    expect(harness.recoverPortableDemoLifecycleSpy).toHaveBeenCalledOnce();
     expect(harness.recoverHermesPortableOllamaInferenceSpy).not.toHaveBeenCalled();
     expect(harness.captureResolvedOpenshellSpy).toHaveBeenCalledWith(
       ["inference", "get", "-g", "nemoclaw"],

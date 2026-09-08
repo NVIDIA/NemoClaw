@@ -55,9 +55,43 @@ function handleTopLevelError(error) {
   }
 }
 
+let compiledCliPath;
 try {
-  const { mainPromise } = require("../dist/nemoclaw");
-  mainPromise.catch(handleTopLevelError);
+  compiledCliPath = require.resolve("../dist/nemoclaw");
 } catch (error) {
-  handleTopLevelError(error);
+  // Resolving the entrypoint does not execute it, so MODULE_NOT_FOUND here
+  // identifies the incomplete-install case without hiding a nested dependency failure.
+  if (error && error.code === "MODULE_NOT_FOUND") {
+    process.exitCode = 1;
+    try {
+      process.stderr.write(
+        "Error: NemoClaw's compiled CLI is missing or incomplete, so no command can run.\n" +
+          "  An install or upgrade did not finish.\n" +
+          "  Rerun the installer command that you used to install NemoClaw to finish the installation.\n" +
+          "  The installer attempts to recover existing sandboxes. Follow any recovery guidance that it reports.\n",
+      );
+    } catch {
+      // The diagnostic sink itself failed; there is nothing left to report safely.
+    }
+  } else {
+    handleTopLevelError(error);
+  }
+}
+
+if (compiledCliPath) {
+  try {
+    const { mainPromise } = require(compiledCliPath);
+    mainPromise.catch(handleTopLevelError);
+  } catch (error) {
+    if (error && error.code === "MODULE_NOT_FOUND") {
+      handleTopLevelError(
+        new Error(
+          "NemoClaw's compiled CLI could not start because a required module is unavailable. " +
+            "Rerun the installer command that you used to install NemoClaw; if the problem continues, report the startup failure.",
+        ),
+      );
+    } else {
+      handleTopLevelError(error);
+    }
+  }
 }

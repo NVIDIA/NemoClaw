@@ -10,9 +10,10 @@ import {
   cloneMcpBridgeEntry,
   inspectExactMcpDestroyProvider,
 } from "./mcp-bridge-destroy-preflight";
-import { assertGeneratedPolicyExactReadOnly } from "./mcp-bridge-policy";
 import {
   assertNoProviderCredentialCollisions,
+  getMcpProviderInspectionRuntimeSelection,
+  type McpProviderInspectionRuntimeSelection,
   preflightMcpEntryTargets,
 } from "./mcp-bridge-provider";
 import {
@@ -27,8 +28,8 @@ import type { McpBridgeTargetValidation } from "./mcp-bridge-url-validation";
 import { assertAuthenticatedBridgeEntry, validateSandboxName } from "./mcp-bridge-validation";
 
 type ReadOnlyValidationSnapshot = {
-  policyByServer: Map<string, string>;
   providerByServer: Map<string, string>;
+  runtimeSelection: McpProviderInspectionRuntimeSelection;
   targetsByServer: Map<string, string>;
 };
 
@@ -45,6 +46,7 @@ export interface ExecUnavailableMcpRebuildPreparation {
   scrubbedAdapterEntries: McpBridgeEntry[];
   revalidateBeforeDelete: () => Promise<void>;
   assertDeleteEdgeUnchanged: () => void;
+  runtimeSelection?: McpProviderInspectionRuntimeSelection;
 }
 
 function assertUniqueMcpOwnership(entries: readonly McpBridgeEntry[]): void {
@@ -88,6 +90,20 @@ function snapshotCompleteEntries(sandboxName: string): {
       `MCP server '${incomplete.server}' has an incomplete add transaction (${incomplete.addState}). Read-only host-side rebuild recovery cannot discard or adopt it; re-run the original mcp add command or remove it with --force before rebuilding the sandbox.`,
     );
   }
+  const pendingUpdate = entries.find((entry) => entry.pendingDenyTools !== undefined);
+  if (pendingUpdate) {
+    throw new McpBridgeError(
+      `MCP server '${pendingUpdate.server}' has an interrupted denied-tool update. Repair sandbox transport and run \`nemoclaw ${sandboxName} mcp restart ${pendingUpdate.server}\` before forcing rebuild.`,
+    );
+  }
+  const legacyUnpinned = entries.find(
+    (entry) => !entry.trustedPrivateHost && (entry.allowedIps?.length ?? 0) === 0,
+  );
+  if (legacyUnpinned) {
+    throw new McpBridgeError(
+      `MCP server '${legacyUnpinned.server}' is a legacy public registration without recorded address pins. Repair sandbox transport and run \`nemoclaw ${sandboxName} mcp restart ${legacyUnpinned.server}\` before forcing rebuild.`,
+    );
+  }
   const agent = getSandboxAgent(sandbox);
   const adapter = getBridgeAdapter(agent);
   const incompatible = entries.find(
@@ -105,16 +121,6 @@ function snapshotCompleteEntries(sandboxName: string): {
     agentName: agent.name,
     adapter,
   };
-}
-
-function policyFingerprint(policy: ReturnType<typeof assertGeneratedPolicyExactReadOnly>): string {
-  return JSON.stringify({
-    name: policy.name,
-    content: policy.content,
-    pendingContent: policy.pendingContent,
-    sourcePath: policy.sourcePath,
-    appliedAt: policy.appliedAt,
-  });
 }
 
 function providerFingerprint(provider: ReturnType<typeof inspectExactMcpDestroyProvider>): string {
@@ -139,34 +145,43 @@ function targetFingerprint(target: McpBridgeTargetValidation | undefined): strin
 async function inspectReadOnlyRecoveryState(
   sandboxName: string,
   entries: readonly McpBridgeEntry[],
-  adapter: AgentMcpAdapter,
+  expectedRuntimeSelection?: McpProviderInspectionRuntimeSelection,
 ): Promise<ReadOnlyValidationSnapshot> {
   const resolvedTargets = await preflightMcpEntryTargets(entries);
-  // This may start or recover the sandbox's recorded host gateway and select
-  // it in CLI context. It does not mutate MCP ownership or sandbox contents;
-  // the provider, policy, and target checks below remain inspection-only.
-  if (entries.length > 0) await ensureSandboxGatewaySelected(sandboxName);
+  const currentRuntimeSelection = getMcpProviderInspectionRuntimeSelection(
+    getSandboxOrThrow(sandboxName),
+  );
+  if (
+    expectedRuntimeSelection &&
+    (currentRuntimeSelection.gatewayName !== expectedRuntimeSelection.gatewayName ||
+      currentRuntimeSelection.workspace !== expectedRuntimeSelection.workspace ||
+      currentRuntimeSelection.localTlsDir !== expectedRuntimeSelection.localTlsDir)
+  ) {
+    throw new McpBridgeError(
+      `Sandbox '${sandboxName}' changed its MCP gateway authority before host-side rebuild recovery could inspect providers. Recorded OpenShell target gateway '${expectedRuntimeSelection.gatewayName}' no longer matches observed target gateway '${currentRuntimeSelection.gatewayName}' or its workspace and TLS authority. NemoClaw did not delete the original sandbox. Restore recorded gateway '${expectedRuntimeSelection.gatewayName}', confirm it is healthy, then retry.`,
+    );
+  }
+  const providerRuntimeSelection = expectedRuntimeSelection ?? currentRuntimeSelection;
+  // This may start or recover only the frozen recorded host gateway and select
+  // it in CLI context. It does not mutate MCP lifecycle state or sandbox
+  // contents; the provider and target checks below remain inspection-only.
+  if (entries.length > 0) {
+    await ensureSandboxGatewaySelected(sandboxName, providerRuntimeSelection);
+  }
 
-  const policyByServer = new Map<string, string>();
   const providerByServer = new Map<string, string>();
   const targetsByServer = new Map<string, string>();
   for (const entry of entries) {
     const target = resolvedTargets.get(entry.server);
-    const policy = assertGeneratedPolicyExactReadOnly(
-      sandboxName,
-      entry,
-      adapter,
-      target ?? {
-        addresses: [],
-      },
-    );
-    policyByServer.set(entry.server, policyFingerprint(policy));
-    const provider = inspectExactMcpDestroyProvider(entry, { allowMissing: false });
+    const provider = inspectExactMcpDestroyProvider(entry, {
+      allowMissing: false,
+      runtimeSelection: providerRuntimeSelection,
+    });
     providerByServer.set(entry.server, providerFingerprint(provider));
     targetsByServer.set(entry.server, targetFingerprint(target));
   }
-  assertNoProviderCredentialCollisions(sandboxName, entries);
-  return { policyByServer, providerByServer, targetsByServer };
+  assertNoProviderCredentialCollisions(sandboxName, entries, providerRuntimeSelection);
+  return { providerByServer, runtimeSelection: providerRuntimeSelection, targetsByServer };
 }
 
 function assertValidationSnapshotCurrent(
@@ -176,13 +191,18 @@ function assertValidationSnapshotCurrent(
 ): void {
   const drifted = entries.find(
     (entry) =>
-      current.policyByServer.get(entry.server) !== expected.policyByServer.get(entry.server) ||
       current.providerByServer.get(entry.server) !== expected.providerByServer.get(entry.server) ||
       current.targetsByServer.get(entry.server) !== expected.targetsByServer.get(entry.server),
   );
-  if (drifted) {
+  const targetChanged =
+    current.runtimeSelection.gatewayName !== expected.runtimeSelection.gatewayName ||
+    current.runtimeSelection.workspace !== expected.runtimeSelection.workspace ||
+    current.runtimeSelection.localTlsDir !== expected.runtimeSelection.localTlsDir;
+  if (drifted || targetChanged) {
     throw new McpBridgeError(
-      `MCP server '${drifted.server}' changed after host-side rebuild preflight. Refusing to delete the still-live sandbox; retry after its target, policy, and provider state is stable.`,
+      drifted
+        ? `MCP server '${drifted.server}' changed after host-side rebuild preflight on recorded OpenShell gateway '${expected.runtimeSelection.gatewayName}'. NemoClaw did not delete the original sandbox. Restore recorded gateway '${expected.runtimeSelection.gatewayName}', confirm it is healthy and the MCP target and provider identity match the sandbox registry, then retry.`
+        : `Sandbox MCP gateway authority changed after host-side rebuild preflight. Recorded OpenShell target gateway '${expected.runtimeSelection.gatewayName}' no longer matches observed target gateway '${current.runtimeSelection.gatewayName}' or its workspace and TLS authority. NemoClaw did not delete the original sandbox. Restore recorded gateway '${expected.runtimeSelection.gatewayName}', confirm it is healthy, then retry.`,
     );
   }
 }
@@ -206,9 +226,10 @@ function assertDeleteEdgeUnchanged(
       `Sandbox '${sandboxName}' changed its recorded agent or MCP adapter after host-side rebuild preflight. Refusing to delete it.`,
     );
   }
-  if (resolveSandboxGatewayName(sandbox) !== expectedGatewayName) {
+  const observedGatewayName = resolveSandboxGatewayName(sandbox);
+  if (observedGatewayName !== expectedGatewayName) {
     throw new McpBridgeError(
-      `Sandbox '${sandboxName}' changed its recorded gateway after host-side rebuild preflight. Refusing to delete it.`,
+      `Sandbox '${sandboxName}' changed its recorded gateway after host-side rebuild preflight from '${expectedGatewayName}' to '${observedGatewayName}'. NemoClaw did not delete the original sandbox. Restore recorded gateway '${expectedGatewayName}', confirm it is healthy, then retry.`,
     );
   }
 }
@@ -231,7 +252,7 @@ async function revalidateBeforeDelete(
   const currentValidation = await inspectReadOnlyRecoveryState(
     sandboxName,
     expectedEntries,
-    expectedAdapter,
+    expectedValidation.runtimeSelection,
   );
   assertValidationSnapshotCurrent(expectedEntries, expectedValidation, currentValidation);
 }
@@ -239,25 +260,39 @@ async function revalidateBeforeDelete(
 /**
  * Preserve complete MCP intent when sandbox exec is unavailable but OpenShell
  * still reports the sandbox live. Unlike absent-sandbox recovery, this path is
- * read-only with respect to MCP ownership and sandbox contents: it may recover
+ * read-only with respect to MCP lifecycle state and sandbox contents: it may recover
  * and select the recorded host gateway for inspection, but it never discards
- * add markers, scrubs adapters, detaches providers, reconciles policy records,
- * or otherwise mutates MCP ownership before delete.
+ * add markers, scrubs adapters, detaches providers, or changes policy before
+ * delete.
  */
 export async function prepareMcpBridgesForExecUnavailableRebuild(
   sandboxName: string,
+  runtimeSelection?: McpProviderInspectionRuntimeSelection,
 ): Promise<ExecUnavailableMcpRebuildPreparation> {
   const { entries, gatewayName, agentName, adapter } = snapshotCompleteEntries(sandboxName);
   const expectedEntries = entries.map(cloneMcpBridgeEntry);
+  if (expectedEntries.length === 0) {
+    return {
+      entries: [],
+      detachedProviderEntries: [],
+      scrubbedAdapterEntries: [],
+      runtimeSelection,
+      revalidateBeforeDelete: async () =>
+        assertDeleteEdgeUnchanged(sandboxName, expectedEntries, gatewayName, agentName, adapter),
+      assertDeleteEdgeUnchanged: () =>
+        assertDeleteEdgeUnchanged(sandboxName, expectedEntries, gatewayName, agentName, adapter),
+    };
+  }
   const expectedValidation = await inspectReadOnlyRecoveryState(
     sandboxName,
     expectedEntries,
-    adapter,
+    runtimeSelection,
   );
   return {
     entries: entries.map(cloneMcpBridgeEntry),
     detachedProviderEntries: [],
     scrubbedAdapterEntries: [],
+    runtimeSelection: expectedValidation.runtimeSelection,
     revalidateBeforeDelete: () =>
       revalidateBeforeDelete(
         sandboxName,

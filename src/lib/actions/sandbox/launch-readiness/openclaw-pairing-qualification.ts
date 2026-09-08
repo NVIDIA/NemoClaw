@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import path from "node:path";
 
 import { resolveOpenshellBinary } from "../../../adapters/openshell/command-argv";
@@ -80,10 +79,6 @@ export class OpenClawPairingObservationRetryableError extends OpenClawPairingQua
     super();
     this.name = "OpenClawPairingObservationRetryableError";
   }
-}
-
-function sha256(value: string): string {
-  return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
 function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
@@ -835,7 +830,6 @@ export function observeOpenClawPairingQualification(
       kind: "openclaw-pairing",
       openclawVersion: normalizedVersion,
       ...projection,
-      policySha256: sha256(executed.policy),
     };
   } catch (error) {
     if (error instanceof OpenClawPairingQualificationError) throw error;

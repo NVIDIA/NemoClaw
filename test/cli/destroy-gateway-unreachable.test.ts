@@ -43,7 +43,6 @@ function fixture(): { home: string; registryPath: string; localBin: string } {
           model: "test-model",
           provider: "nvidia-prod",
           gpuEnabled: false,
-          policies: [],
         },
       },
       defaultSandbox: "alpha",

@@ -14,7 +14,8 @@ const ORIGINAL_HOME = process.env.HOME;
 const TMP_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-kanban-snapshot-"));
 process.env.HOME = TMP_HOME;
 const sandboxState = await import(
-  pathToFileURL(path.join(import.meta.dirname, "../../..", "src", "lib", "state", "sandbox.ts")).href
+  pathToFileURL(path.join(import.meta.dirname, "../../..", "src", "lib", "state", "sandbox.ts"))
+    .href
 );
 
 afterAll(() => {
@@ -38,7 +39,6 @@ function writeHermesRegistry(): void {
           model: "m",
           provider: "p",
           gpuEnabled: false,
-          policies: [],
           agent: "hermes",
         },
       },

@@ -12,7 +12,7 @@ const BASE_INPUTS = {
   agent: "openclaw",
   probedAt: "2026-07-14T00:00:00.000Z",
   channelEnabledInRegistry: true,
-  presetInRegistry: true,
+  presetApplied: true,
   presetOnGateway: true,
 };
 
@@ -132,7 +132,7 @@ describe("telegram.statusHealth hook", () => {
     expect(
       reportOf(hook(context({ ...BASE_INPUTS, channelEnabledInRegistry: false })))?.verdict,
     ).toBe("config_gap");
-    expect(reportOf(hook(context({ ...BASE_INPUTS, presetInRegistry: false })))?.verdict).toBe(
+    expect(reportOf(hook(context({ ...BASE_INPUTS, presetApplied: false })))?.verdict).toBe(
       "policy_gap",
     );
   });

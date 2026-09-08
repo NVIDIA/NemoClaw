@@ -1255,9 +1255,10 @@ const PR_METADATA_EDIT_JOB_NAMES = new Set([
 const PR_REVIEW_ADVISOR_WORKFLOW_NAME = "Automation / PR Review Advisor";
 const PR_REVIEW_ADVISOR_WORKFLOW_PATH = ".github/workflows/pr-review-advisor.yaml";
 const ADVISORY_PR_REVIEW_ADVISOR_JOB_NAMES = new Set([
-  "PR review advisor (GPT-5.6 Terra)",
-  "PR review advisor (Nemotron 3 Ultra)",
+  "Discover review specialists and collect GitHub context",
+  "Publish advisor link",
 ]);
+const ADVISORY_PR_REVIEW_ADVISOR_SPECIALIST_JOB = /^Specialist \/ [^/]+$/u;
 
 interface ActionRunMetadata {
   attempt: number;
@@ -1893,7 +1894,8 @@ function currentCheckRollup(
     if (
       check.__typename !== "CheckRun" ||
       check.workflowName !== PR_REVIEW_ADVISOR_WORKFLOW_NAME ||
-      !ADVISORY_PR_REVIEW_ADVISOR_JOB_NAMES.has(checkName)
+      !ADVISORY_PR_REVIEW_ADVISOR_JOB_NAMES.has(checkName) &&
+      !ADVISORY_PR_REVIEW_ADVISOR_SPECIALIST_JOB.test(checkName)
     ) {
       return false;
     }

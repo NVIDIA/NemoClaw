@@ -3,7 +3,6 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { PolicyAuthorityRefusalError } from "../adapters/openshell/policy-authority";
 import { ensureAgentDashboardForward } from "./agent-dashboard-forward";
 
 describe("ensureAgentDashboardForward", () => {
@@ -11,7 +10,7 @@ describe("ensureAgentDashboardForward", () => {
     delete process.env.CHAT_UI_URL;
   });
 
-  it("preserves additional host-forward ports during dashboard refresh", async () => {
+  it("launches each declared host-forward port", async () => {
     const ensureDashboardForward = vi.fn((_sandboxName, chatUiUrl = "http://127.0.0.1:18789") => {
       const parsed = new URL(chatUiUrl);
       return Number(parsed.port);
@@ -26,15 +25,13 @@ describe("ensureAgentDashboardForward", () => {
         },
         ensureDashboardForward,
         hermesApiPort: 8642,
-        preserveForwardPorts: [3978],
       }),
     ).toBe(18789);
 
     expect(ensureDashboardForward).toHaveBeenNthCalledWith(1, "hm", "http://127.0.0.1:18789", {
-      preserveSandboxPorts: [18789, 8642, 3978],
+      allowPortReallocation: false,
     });
     expect(ensureDashboardForward).toHaveBeenNthCalledWith(2, "hm", "http://127.0.0.1:8642", {
-      preserveSandboxPorts: [18789, 8642, 3978],
       allowPortReallocation: false,
     });
   });
@@ -54,15 +51,13 @@ describe("ensureAgentDashboardForward", () => {
         },
         ensureDashboardForward,
         hermesApiPort: 8643,
-        preserveForwardPorts: [3978],
       }),
     ).toBe(18789);
 
     expect(ensureDashboardForward).toHaveBeenNthCalledWith(1, "hm", "http://127.0.0.1:18789", {
-      preserveSandboxPorts: [18789, 8643, 3978],
+      allowPortReallocation: false,
     });
     expect(ensureDashboardForward).toHaveBeenNthCalledWith(2, "hm", "http://127.0.0.1:8643", {
-      preserveSandboxPorts: [18789, 8643, 3978],
       allowPortReallocation: false,
     });
     expect(ensureDashboardForward).not.toHaveBeenCalledWith(
@@ -111,15 +106,13 @@ describe("ensureAgentDashboardForward", () => {
         ensureDashboardForward,
         hermesApiPort: 8642,
         controlUiPort: 9120,
-        preserveForwardPorts: [3978],
       }),
     ).toBe(9120);
 
     expect(ensureDashboardForward).toHaveBeenNthCalledWith(1, "hm", "http://127.0.0.1:9120", {
-      preserveSandboxPorts: [9120, 8642, 3978],
+      allowPortReallocation: false,
     });
     expect(ensureDashboardForward).toHaveBeenNthCalledWith(2, "hm", "http://127.0.0.1:8642", {
-      preserveSandboxPorts: [9120, 8642, 3978],
       allowPortReallocation: false,
     });
     expect(ensureDashboardForward).not.toHaveBeenCalledWith(
@@ -154,55 +147,9 @@ describe("ensureAgentDashboardForward", () => {
       1,
       "hm",
       "https://hermes.example.test:9120/ui",
-      { preserveSandboxPorts: [9120, 8642] },
+      { allowPortReallocation: false },
     );
     expect(process.env.CHAT_UI_URL).toBe("https://hermes.example.test:9120/ui");
-  });
-
-  it("compensates primary and optional forwards when final authority is refused (#9833)", async () => {
-    const refusal = new PolicyAuthorityRefusalError("policy authority changed at finality");
-    const revalidatePolicyAuthority = vi
-      .fn<(operation: string) => void>()
-      .mockImplementationOnce(() => undefined)
-      .mockImplementationOnce(() => undefined)
-      .mockImplementationOnce(() => undefined)
-      .mockImplementationOnce(() => {
-        throw refusal;
-      });
-    const compensateDashboardForward = vi.fn();
-    const ensureDashboardForward = vi.fn(
-      (
-        _sandboxName,
-        chatUiUrl = "",
-        options?: {
-          revalidatePolicyAuthority?: (operation: string) => void;
-          onForwardStarted?: (port: number) => void;
-        },
-      ) => {
-        const port = Number(new URL(chatUiUrl).port);
-        options?.revalidatePolicyAuthority?.(`start dashboard forward ${String(port)}`);
-        options?.onForwardStarted?.(port);
-        return port;
-      },
-    );
-
-    await expect(
-      ensureAgentDashboardForward({
-        sandboxName: "hm",
-        agent: {
-          dashboard: { kind: "ui" },
-          forwardPort: 18789,
-          forward_ports: [18789, 8642],
-        },
-        ensureDashboardForward,
-        revalidatePolicyAuthority,
-        compensateDashboardForward,
-      }),
-    ).rejects.toBe(refusal);
-
-    expect(ensureDashboardForward).toHaveBeenCalledTimes(2);
-    expect(compensateDashboardForward.mock.calls).toEqual([[8642], [18789]]);
-    expect(process.env.CHAT_UI_URL).toBeUndefined();
   });
 
   it("forwards an API-kind agent on the sandbox-owned primary port", async () => {
@@ -225,9 +172,11 @@ describe("ensureAgentDashboardForward", () => {
       }),
     ).toBe(8647);
 
-    expect(ensureDashboardForward).toHaveBeenCalledWith("api-agent", "http://127.0.0.1:8647", {
-      preserveSandboxPorts: [8647],
-    });
+    expect(ensureDashboardForward).toHaveBeenCalledWith(
+      "api-agent",
+      "http://127.0.0.1:8647",
+      { allowPortReallocation: false },
+    );
     expect(ensureDashboardForward).not.toHaveBeenCalledWith(
       "api-agent",
       "http://127.0.0.1:8642",
@@ -262,14 +211,13 @@ describe("ensureAgentDashboardForward", () => {
       1,
       "legacy-hermes",
       "http://127.0.0.1:8642",
-      { preserveSandboxPorts: [8642, 9120] },
+      { allowPortReallocation: false },
     );
     expect(ensureDashboardForward).toHaveBeenNthCalledWith(
       2,
       "legacy-hermes",
       "https://hermes.example.test:9120/ui",
       {
-        preserveSandboxPorts: [8642, 9120],
         allowPortReallocation: false,
       },
     );

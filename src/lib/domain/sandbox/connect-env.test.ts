@@ -21,7 +21,7 @@ describe("sandbox connect environment helpers", () => {
     expect(NEMOCLAW_HERMES_LIGHT_SKIN_REVIEWED_HERMES_VERSIONS).toEqual([
       "v2026.6.19",
       "v2026.7.1",
-      "v2026.7.20",
+      "v2026.8.27",
     ]);
   });
 

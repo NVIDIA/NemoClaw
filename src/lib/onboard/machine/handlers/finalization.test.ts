@@ -29,8 +29,6 @@ function createDeps(
 ) {
   const calls = {
     setDefaultSandbox: vi.fn(),
-    ensureAgentDashboard: vi.fn(() => 18789),
-    persistDashboardPort: vi.fn(),
     removeLegacy: vi.fn(),
     cleanupHost: vi.fn(),
     recoverProcesses: vi.fn(),
@@ -57,8 +55,6 @@ function createDeps(
   return {
     calls,
     deps: {
-      ensureAgentDashboardForward: calls.ensureAgentDashboard,
-      persistDashboardPort: calls.persistDashboardPort,
       setDefaultSandbox: calls.setDefaultSandbox,
       toSessionUpdates: (updates: Record<string, unknown>) => updates as SessionUpdates,
       removeLegacyCredentialsFile: calls.removeLegacy,
@@ -115,42 +111,6 @@ async function runFinalizationHandlers(
 }
 
 describe("finalization handlers", () => {
-  it("refuses finalization before its first mutation when policy authority drifts (#9833)", async () => {
-    const revalidatePolicyRequirements = vi.fn(() => {
-      throw new Error("policy authority changed");
-    });
-    const { deps, calls } = createDeps({ revalidatePolicyRequirements });
-
-    await expect(handleFinalizationPhase(baseOptions(deps))).rejects.toThrow(
-      "policy authority changed",
-    );
-
-    expect(calls.setDefaultSandbox).not.toHaveBeenCalled();
-    expect(calls.removeLegacy).not.toHaveBeenCalled();
-    expect(calls.cleanupHost).not.toHaveBeenCalled();
-    expect(calls.recoverProcesses).not.toHaveBeenCalled();
-  });
-
-  it("refuses post-verification before pairing or success publication after drift (#9833)", async () => {
-    const revalidatePolicyRequirements = vi.fn(() => {
-      throw new Error("policy authority changed");
-    });
-    const { deps, calls } = createDeps({ revalidatePolicyRequirements });
-
-    await expect(
-      handlePostVerifyState({
-        ...baseOptions(deps),
-        agent: { name: "openclaw" },
-        portableProfileSelected: true,
-      }),
-    ).rejects.toThrow("policy authority changed");
-
-    expect(calls.settlePortablePairing).not.toHaveBeenCalled();
-    expect(calls.verify).not.toHaveBeenCalled();
-    expect(calls.dashboard).not.toHaveBeenCalled();
-    expect(calls.reportReadiness).not.toHaveBeenCalled();
-  });
-
   it("advances to post verification before deployment verification runs", async () => {
     const { deps, calls } = createDeps();
 
@@ -238,30 +198,6 @@ describe("finalization handlers", () => {
     expect(calls.settlePortablePairing).toHaveBeenCalledExactlyOnceWith("my-assistant", {
       portableRequired: true,
     });
-  });
-
-  it("passes the bound policy check through pairing settlement (#9833)", async () => {
-    const revalidatePolicyRequirements = vi.fn();
-    const portable = createDeps({ revalidatePolicyRequirements });
-
-    await runFinalizationHandlers({
-      ...baseOptions(portable.deps),
-      agent: { name: "openclaw" },
-      portableProfileSelected: true,
-    });
-
-    expect(portable.calls.settlePortablePairing).toHaveBeenCalledExactlyOnceWith("my-assistant", {
-      portableRequired: true,
-      revalidatePolicyRequirements,
-    });
-
-    const ordinary = createDeps({ revalidatePolicyRequirements });
-    await runFinalizationHandlers(baseOptions(ordinary.deps));
-
-    expect(ordinary.calls.settleOrdinaryPairing).toHaveBeenCalledExactlyOnceWith(
-      "my-assistant",
-      revalidatePolicyRequirements,
-    );
   });
 
   it("fails selected Portable OpenClaw closed before ordinary writers when registry identity is invalid (#9207)", async () => {
@@ -362,112 +298,36 @@ describe("finalization handlers", () => {
     });
   });
 
-  it("restores the default OpenClaw dashboard forward after process recovery", async () => {
-    let forwardLive = true;
+  it("relies on process recovery to restore the default OpenClaw dashboard forward", async () => {
+    let forwardLive = false;
     const recoverProcesses = vi.fn(() => {
-      forwardLive = false;
-    });
-    const ensureDashboard = vi.fn(() => {
       forwardLive = true;
-      return 18789;
     });
     const verify = vi.fn(async () => ({ ok: forwardLive }));
     const { deps } = createDeps({
       checkAndRecoverSandboxProcesses: recoverProcesses,
-      ensureAgentDashboardForward: ensureDashboard,
       verifyDeployment: verify,
       isDeploymentHealthy: vi.fn((result) => result.ok),
     });
 
     const result = await runFinalizationHandlers(baseOptions(deps));
 
-    expect(ensureDashboard).toHaveBeenCalledWith("my-assistant", null);
-    expect(ensureDashboard.mock.invocationCallOrder[0]).toBeGreaterThan(
-      recoverProcesses.mock.invocationCallOrder[1],
-    );
-    expect(ensureDashboard.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(recoverProcesses).toHaveBeenCalledTimes(2);
+    expect(recoverProcesses.mock.invocationCallOrder[1]).toBeLessThan(
       verify.mock.invocationCallOrder[0],
     );
     expect(result.deploymentHealthy).toBe(true);
     expect(result.stateResult.type).toBe("complete");
   });
 
-  it("persists the dashboard port selected after final recovery (#8214)", async () => {
-    const persistDashboardPort = vi.fn();
-    const { deps } = createDeps({
-      ensureAgentDashboardForward: vi.fn(() => 18792),
-      persistDashboardPort,
-    });
-
-    await handleFinalizationPhase({
-      ...baseOptions(deps),
-      agent: { name: "hermes" },
-    });
-
-    expect(persistDashboardPort).toHaveBeenCalledWith("my-assistant", 18792);
-  });
-
-  it("withholds dashboard-port persistence when authority drifts after forwarding (#9833)", async () => {
-    const persistDashboardPort = vi.fn();
-    const refuseDashboardPersistence = () => {
-      throw new Error("policy authority changed");
-    };
-    const policyChecks = new Map([
-      ["persist the dashboard port for sandbox 'my-assistant'", refuseDashboardPersistence],
-    ]);
-    const revalidatePolicyRequirements = vi.fn<(operation: string) => void>((operation) =>
-      policyChecks.get(operation)?.(),
-    );
-    const ensureAgentDashboardForward = vi.fn(
-      (_sandboxName, _agent, revalidate?: (operation: string) => void) => {
-        revalidate?.("start dashboard forward");
-        return 18792;
-      },
-    );
-    const { deps } = createDeps({
-      ensureAgentDashboardForward,
-      persistDashboardPort,
-      revalidatePolicyRequirements,
-    });
-
-    await expect(
-      handleFinalizationPhase({
-        ...baseOptions(deps),
-        agent: { name: "hermes" },
-      }),
-    ).rejects.toThrow("policy authority changed");
-
-    expect(ensureAgentDashboardForward).toHaveBeenCalledWith(
-      "my-assistant",
-      { name: "hermes" },
-      revalidatePolicyRequirements,
-    );
-    expect(persistDashboardPort).not.toHaveBeenCalled();
-  });
-
-  it("does not persist a zero dashboard port after final recovery (#8214)", async () => {
-    const persistDashboardPort = vi.fn();
-    const { deps } = createDeps({
-      ensureAgentDashboardForward: vi.fn(() => 0),
-      persistDashboardPort,
-    });
-
-    await handleFinalizationPhase({
-      ...baseOptions(deps),
-      agent: { name: "hermes" },
-    });
-
-    expect(persistDashboardPort).not.toHaveBeenCalled();
-  });
-
-  it("ensures agent dashboard forwarding before completion for non-OpenClaw agents", async () => {
+  it("recovers agent dashboard forwarding before completion for non-OpenClaw agents", async () => {
     const { deps, calls } = createDeps();
     const agent = { name: "hermes" };
 
     await runFinalizationHandlers({ ...baseOptions(deps), agent });
 
-    expect(calls.ensureAgentDashboard).toHaveBeenCalledWith("my-assistant", agent);
-    expect(calls.ensureAgentDashboard.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(calls.recoverProcesses).toHaveBeenCalledWith("my-assistant", { quiet: true });
+    expect(calls.recoverProcesses.mock.invocationCallOrder[0]).toBeLessThan(
       calls.dashboard.mock.invocationCallOrder[0],
     );
     expect(calls.dashboard).toHaveBeenCalledWith(
@@ -492,15 +352,12 @@ describe("finalization handlers", () => {
     });
 
     const recoveryOrders = calls.recoverProcesses.mock.invocationCallOrder;
-    const refreshOrder = calls.ensureAgentDashboard.mock.invocationCallOrder[0];
     expect(recoveryOrders).toHaveLength(2);
     expect(calls.settleOrdinaryPairing).toHaveBeenCalledExactlyOnceWith("my-assistant");
     expect(recoveryOrders[1]).toBeGreaterThan(
       calls.settleOrdinaryPairing.mock.invocationCallOrder[0],
     );
-    expect(refreshOrder).toBeGreaterThan(recoveryOrders[1]);
-    expect(calls.verifyWebSearch.mock.invocationCallOrder[0]).toBeGreaterThan(refreshOrder);
-    expect(refreshOrder).toBeLessThan(calls.verify.mock.invocationCallOrder[0]);
+    expect(calls.verifyWebSearch.mock.invocationCallOrder[0]).toBeGreaterThan(recoveryOrders[1]);
     expect(calls.verifyWebSearch.mock.invocationCallOrder[0]).toBeLessThan(
       calls.verify.mock.invocationCallOrder[0],
     );
@@ -524,7 +381,6 @@ describe("finalization handlers", () => {
       webSearchEnabled: true,
     });
 
-    expect(calls.ensureAgentDashboard).not.toHaveBeenCalled();
     expect(calls.recoverProcesses).not.toHaveBeenCalled();
     expect(calls.settleOrdinaryPairing).not.toHaveBeenCalled();
     expect(calls.getChatUiUrl).not.toHaveBeenCalled();
@@ -556,33 +412,8 @@ describe("finalization handlers", () => {
 
     expect(calls.dashboard).not.toHaveBeenCalled();
     // The sandbox reached finalization (policies confirmed), so it stays the default
-    // even when post-policy verification flakes — only a pre-policy cancel rolls back.
+    // even when post-identity verification flakes — only a pre-policy cancel rolls back.
     expect(calls.setDefaultSandbox).toHaveBeenCalledWith("my-assistant");
-  });
-
-  it("withholds verified deployment output when authority drifts during the probe (#9833)", async () => {
-    const refuseStatusPublication = () => {
-      throw new Error("policy authority changed");
-    };
-    const policyChecks = new Map([
-      ["publish deployment status for sandbox 'my-assistant'", refuseStatusPublication],
-    ]);
-    const revalidatePolicyRequirements = vi.fn<(operation: string) => void>((operation) =>
-      policyChecks.get(operation)?.(),
-    );
-    const { deps, calls } = createDeps({ revalidatePolicyRequirements });
-
-    await expect(runFinalizationHandlers(baseOptions(deps))).rejects.toThrow(
-      "policy authority changed",
-    );
-
-    expect(calls.verify).toHaveBeenCalledOnce();
-    expect(calls.log).not.toHaveBeenCalled();
-    expect(calls.dashboard).not.toHaveBeenCalled();
-    expect(calls.reportReadiness).not.toHaveBeenCalled();
-    expect(revalidatePolicyRequirements).not.toHaveBeenCalledWith(
-      "complete onboarding for sandbox 'my-assistant'",
-    );
   });
 
   it("removes legacy credentials only when all staged values migrated", async () => {
@@ -691,7 +522,9 @@ describe("finalization handlers", () => {
 
     expect(result.stateResult.type).toBe("complete");
     expect(calls.settleOrdinaryPairing).not.toHaveBeenCalled();
-    expect(calls.ensureAgentDashboard).toHaveBeenCalledWith("my-assistant", null);
+    expect(calls.recoverProcesses).toHaveBeenCalledExactlyOnceWith("my-assistant", {
+      quiet: true,
+    });
     expect(calls.verify).toHaveBeenCalledOnce();
   });
 
@@ -726,7 +559,6 @@ describe("finalization handlers", () => {
     ]);
     expect(calls.verify).not.toHaveBeenCalled();
     expect(calls.dashboard).not.toHaveBeenCalled();
-    expect(calls.ensureAgentDashboard).not.toHaveBeenCalled();
     expect(calls.reportReadiness).toHaveBeenCalledWith(false);
     expect(calls.error).toHaveBeenCalledWith(
       "  OpenClaw onboarding is incomplete; resume onboarding.",

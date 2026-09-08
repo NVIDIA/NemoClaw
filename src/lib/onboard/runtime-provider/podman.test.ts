@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createPodmanHostLocalInferenceTestHarness } from "../../../../test/helpers/podman-host-local-inference-test-harness";
 import { startSandbox } from "../../actions/sandbox/start";
 import { stopSandbox } from "../../actions/sandbox/stop";
+import type { ContainerEngineCommandResult } from "../../adapters/container-engine";
 import {
   createPodmanContainerEngine,
   type PodmanBoundContainerEngine,
@@ -13,7 +14,7 @@ import {
   type PodmanExecutableStat,
   type PodmanSocketAuthority,
 } from "../../adapters/podman";
-import type { SandboxEntry } from "../../state/registry/types";
+import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "./current";
 import { createPodmanRuntimeProviderBundle } from "./podman";
 import {
@@ -30,6 +31,7 @@ import {
   createRuntimeProviderBundleRegistry,
   requireRuntimeProviderHostLocalInferenceOperation,
 } from "./registry";
+import { clearStoppedSandboxStateWithEngine } from "./stopped-sandbox-state-cleanup";
 
 const AGENTS = ["openclaw", "hermes", "langchain-deepagents-code"] as const;
 const CONTAINER_ID = "a".repeat(64);
@@ -48,6 +50,10 @@ const SUCCESSFUL_RECOVERY = {
   wasRunning: true,
   recovered: false,
   forwardRecovered: false,
+} as const;
+const GPU_PROOF_RESOURCE = {
+  name: "nemoclaw-gpu-proof-1234",
+  ownership: { label: "com.nvidia.nemoclaw.gpu-proof", value: "true" },
 } as const;
 
 function podmanExecutableAuthorityDeps(): PodmanExecutableAuthorityDeps {
@@ -79,12 +85,15 @@ function podmanExecutableAuthorityDeps(): PodmanExecutableAuthorityDeps {
   };
 }
 
-function realOperationEngines(socketAuthority: PodmanSocketAuthority = REAL_SOCKET_AUTHORITY) {
+function realOperationEngines(
+  socketAuthority: PodmanSocketAuthority = REAL_SOCKET_AUTHORITY,
+  capture = vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+) {
   const common = {
     socketAuthority,
     executable: "/usr/bin/podman",
     assertAuthority: vi.fn(),
-    capture: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+    capture,
   } as const;
   return {
     hostDoctor: createPodmanContainerEngine({ ...common, operation: "host-doctor" }),
@@ -97,12 +106,18 @@ function realOperationEngines(socketAuthority: PodmanSocketAuthority = REAL_SOCK
       ...common,
       operation: "sandbox-lifecycle",
     }),
-    stateMutation: createPodmanContainerEngine({
-      ...common,
-      operation: "state-mutation",
-      executableAuthorityDeps: podmanExecutableAuthorityDeps(),
-    }),
   };
+}
+
+function supportedContainerEngine(provider: ReturnType<typeof createPodmanRuntimeProviderBundle>) {
+  expect(provider.containerEngine.supported).toBe(true);
+  return provider.containerEngine as Extract<typeof provider.containerEngine, { supported: true }>;
+}
+
+function nvidiaContainer(provider: ReturnType<typeof createPodmanRuntimeProviderBundle>) {
+  const capability = supportedContainerEngine(provider).nvidiaContainer;
+  expect(capability).toBeDefined();
+  return capability!;
 }
 
 function hostDoctorEngine(authorityId = AUTHORITY_ID): PodmanContainerEngine {
@@ -160,6 +175,41 @@ function lifecycleEngine(sandboxName: string, authorityId = AUTHORITY_ID): Podma
   let running = false;
   const sandboxId = `id-${sandboxName}`;
   const containerName = `${PODMAN_SANDBOX_CONTAINER_PREFIX}${sandboxName}-${sandboxId}`;
+  const containerOperations: Readonly<Record<string, () => ContainerEngineCommandResult>> = {
+    exec: () => ({ status: 0, stdout: "uid=0\n", stderr: "" }),
+    inspect: () => ({
+      status: 0,
+      stdout: JSON.stringify([
+        {
+          Id: CONTAINER_ID,
+          Name: containerName,
+          Config: {
+            Labels: {
+              [PODMAN_MANAGED_LABEL]: "true",
+              [PODMAN_SANDBOX_ID_LABEL]: sandboxId,
+              [PODMAN_SANDBOX_NAME_LABEL]: sandboxName,
+              [PODMAN_SANDBOX_NAMESPACE_LABEL]: PODMAN_SANDBOX_NAMESPACE,
+              [PODMAN_SANDBOX_WORKSPACE_LABEL]: PODMAN_SANDBOX_WORKSPACE,
+            },
+          },
+          Mounts: [
+            {
+              Type: "volume",
+              Name: `nemoclaw-${sandboxName}-state`,
+              Destination: "/sandbox",
+              RW: true,
+            },
+          ],
+          State: {
+            Running: running,
+            Paused: false,
+            Status: running ? "running" : "exited",
+          },
+        },
+      ]),
+      stderr: "",
+    }),
+  };
   return {
     operation: "sandbox-lifecycle",
     engineId: "podman",
@@ -176,30 +226,10 @@ function lifecycleEngine(sandboxName: string, authorityId = AUTHORITY_ID): Podma
             stderr: "",
           };
         case "container":
-          return {
-            status: 0,
-            stdout: JSON.stringify([
-              {
-                Id: CONTAINER_ID,
-                Name: containerName,
-                Config: {
-                  Labels: {
-                    [PODMAN_MANAGED_LABEL]: "true",
-                    [PODMAN_SANDBOX_ID_LABEL]: sandboxId,
-                    [PODMAN_SANDBOX_NAME_LABEL]: sandboxName,
-                    [PODMAN_SANDBOX_NAMESPACE_LABEL]: PODMAN_SANDBOX_NAMESPACE,
-                    [PODMAN_SANDBOX_WORKSPACE_LABEL]: PODMAN_SANDBOX_WORKSPACE,
-                  },
-                },
-                State: {
-                  Running: running,
-                  Paused: false,
-                  Status: running ? "running" : "exited",
-                },
-              },
-            ]),
-            stderr: "",
-          };
+          return (
+            containerOperations[String(args[1])] ??
+            (() => ({ status: 125, stdout: "", stderr: "unexpected container operation" }))
+          )();
         case "start":
           running = true;
           return { status: 0, stdout: CONTAINER_ID, stderr: "" };
@@ -230,7 +260,7 @@ function providerHarness(agent: (typeof AGENTS)[number]) {
   return { entry, lifecycle, providers, sandboxName };
 }
 
-describe("dormant Podman runtime provider", () => {
+describe("managed Podman runtime provider", () => {
   it.each(AGENTS)(
     "runs basic CPU start and stop for %s through an injected bundle",
     async (agent) => {
@@ -292,9 +322,149 @@ describe("dormant Podman runtime provider", () => {
     ).toBe(true);
   });
 
-  it("stays outside the production-selectable registry", () => {
-    expect(Object.keys(CURRENT_RUNTIME_PROVIDER_BUNDLES)).toEqual(["docker", "kubernetes"]);
-    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES).not.toHaveProperty("podman");
+  it("executes privileged control through the lifecycle-bound Podman engine", () => {
+    const runtime = providerHarness("openclaw");
+    const lifecycle = runtime.providers.podman?.lifecycle;
+    expect(lifecycle).toMatchObject({ supported: true });
+    const supportedLifecycle = lifecycle as Extract<
+      NonNullable<typeof lifecycle>,
+      { readonly supported: true }
+    >;
+
+    supportedLifecycle.start({
+      environment: {},
+      log: vi.fn(),
+      sandbox: runtime.entry,
+      sandboxName: runtime.sandboxName,
+    });
+    const target = supportedLifecycle.privilegedSandboxControl.resolveTarget({
+      registeredSandboxNames: [runtime.sandboxName],
+      sandbox: runtime.entry,
+      sandboxName: runtime.sandboxName,
+    });
+    const result = supportedLifecycle.privilegedSandboxControl.execute({
+      registeredSandboxNames: [runtime.sandboxName],
+      sandbox: runtime.entry,
+      sandboxName: runtime.sandboxName,
+      command: ["/usr/bin/id", "-u"],
+      expectedResourceHandle: target.resourceHandle,
+      sanitizeEnvironment: false,
+      timeoutMs: 9000,
+    });
+
+    expect(target).toEqual({ providerId: "podman", resourceHandle: CONTAINER_ID });
+    expect(result).toMatchObject({ status: 0, signal: null });
+    expect(result.stdout.toString("utf8")).toBe("uid=0\n");
+    expect(runtime.lifecycle.capture).toHaveBeenLastCalledWith(
+      ["container", "exec", "--user", "root", CONTAINER_ID, "/usr/bin/id", "-u"],
+      9000,
+      undefined,
+    );
+    expect(
+      JSON.stringify((runtime.lifecycle.capture as ReturnType<typeof vi.fn>).mock.calls),
+    ).not.toContain("docker");
+  });
+
+  it("routes stopped state cleanup through the Podman workload-cleanup engine", () => {
+    const sandboxName = "podman-cleanup";
+    const lifecycle = lifecycleEngine(sandboxName);
+    const cleanupCapture = vi.fn((args: readonly string[]) => ({
+      status: args[0] === "image" ? 1 : 125,
+      stdout: "",
+      stderr: "expected unavailable cleanup image",
+    }));
+    const cleanup: PodmanBoundContainerEngine = {
+      operation: "workload-cleanup",
+      engineId: "podman",
+      displayName: "Podman",
+      authorityId: AUTHORITY_ID,
+      endpointAuthorityId: AUTHORITY_ID,
+      capture: cleanupCapture,
+      captureHost: vi.fn(),
+      assertAuthority: vi.fn(),
+    };
+    const bundle = createPodmanRuntimeProviderBundle({
+      engines: {
+        hostDoctor: hostDoctorEngine(),
+        sandboxLifecycle: lifecycle,
+        workloadCleanup: cleanup,
+      },
+      preflight: { platform: "linux", architecture: "x64" },
+    });
+    const entry: SandboxEntry = {
+      agent: "openclaw",
+      name: sandboxName,
+      openshellDriver: "podman",
+    };
+    const control = (bundle.lifecycle as Extract<typeof bundle.lifecycle, { supported: true }>)
+      .privilegedSandboxControl;
+
+    expect(
+      control.clearStoppedStateRoots?.({
+        registeredSandboxNames: [sandboxName],
+        sandbox: entry,
+        sandboxName,
+        paths: ["/sandbox/.openclaw/openclaw-weixin"],
+      }),
+    ).toEqual({ cleared: false, failure: "cleanup-helper-image-unavailable" });
+    expect(cleanupCapture).toHaveBeenCalledExactlyOnceWith(
+      ["image", "inspect", "--format", "{{.Id}}", expect.stringContaining("node:22-trixie-slim")],
+      30_000,
+    );
+  });
+
+  it.each([CONTAINER_ID, `sha256:${CONTAINER_ID}`])(
+    "accepts the cleanup image ID format returned by the container engine (%s)",
+    (imageId) => {
+      const stateResource = {
+        type: "volume" as const,
+        source: "openclaw-state",
+        target: "/sandbox/.openclaw",
+      };
+      const observe = vi.fn(() => ({
+        target: { resourceHandle: CONTAINER_ID, running: false, stateResource },
+      }));
+      const capture = vi.fn((args: readonly string[]) => {
+        switch (args[0]) {
+          case "image":
+            return { status: 0, stdout: `${imageId}\n`, stderr: "" };
+          case "inspect":
+            return { status: 1, stdout: "", stderr: "No such container" };
+          case "create":
+            return { status: 0, stdout: `${CONTAINER_ID}\n`, stderr: "" };
+          case "start":
+          case "rm":
+            return { status: 0, stdout: "", stderr: "" };
+          default:
+            return { status: 125, stdout: "", stderr: `unexpected command: ${args.join(" ")}` };
+        }
+      });
+
+      expect(
+        clearStoppedSandboxStateWithEngine(
+          "podman-cleanup",
+          ["/sandbox/.openclaw/openclaw-weixin"],
+          { capture, observe },
+        ),
+      ).toEqual({ cleared: true });
+      expect(observe).toHaveBeenCalledTimes(3);
+      expect(capture.mock.calls[0]?.[0]).toEqual([
+        "image",
+        "inspect",
+        "--format",
+        "{{.Id}}",
+        expect.stringContaining("node:22-trixie-slim"),
+      ]);
+    },
+  );
+
+  it("is available through the production-selectable registry", () => {
+    expect(Object.keys(CURRENT_RUNTIME_PROVIDER_BUNDLES)).toEqual([
+      "docker",
+      "kubernetes",
+      "podman",
+    ]);
+    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.podman?.identity.id).toBe("podman");
   });
 
   it("declares read-only host mounts unsupported until Podman qualification lands", () => {
@@ -304,6 +474,44 @@ describe("dormant Podman runtime provider", () => {
       supported: false,
       reason: "Read-only host mounts are not qualified for the Podman runtime provider.",
     });
+  });
+
+  it("accepts only exact supported managed-image receipts", () => {
+    const runtime = providerHarness("openclaw");
+    const receipt: SandboxWorkloadReceipt = {
+      schemaVersion: 1,
+      kind: "managed-image",
+      reference: `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${"a".repeat(64)}`,
+      platform: "linux/amd64",
+      release: "v0.0.113",
+      sourceRevision: "b".repeat(40),
+      sourceCohort: "ghrun-1-1",
+      startupProfileContractVersion: 1,
+      capabilityContractVersion: 1,
+      encodedProfile: "e30",
+      startupProfileSha256: "c".repeat(64),
+      credentialProxyReplayRequired: true,
+      shared: true,
+    };
+
+    expect(runtime.providers.podman?.workload.profile).toMatchObject({
+      support: {
+        exactDigestReferences: true,
+        platforms: ["linux/amd64", "linux/arm64"],
+      },
+      hostArchitectures: ["amd64", "arm64"],
+      managedImageSelectionPolicy: "require-managed",
+      legacyDockerfileBuilds: false,
+    });
+    expect(runtime.providers.podman?.workload.acceptsReceipt(receipt)).toBe(true);
+    expect(
+      runtime.providers.podman?.workload.acceptsReceipt({
+        schemaVersion: 1,
+        kind: "legacy-dockerfile",
+        reference: null,
+        shared: false,
+      }),
+    ).toBe(false);
   });
 
   it("fails host-local inference before probing either Podman operation scope", () => {
@@ -368,7 +576,7 @@ describe("dormant Podman runtime provider", () => {
         env: inference.env,
       }),
     ).toThrow("service 'llama-cpp' is not enabled");
-    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES).not.toHaveProperty("podman");
+    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.podman?.identity.id).toBe("podman");
   });
 
   it("composes real operation engines on one socket without dropping executable authority", () => {
@@ -390,18 +598,10 @@ describe("dormant Podman runtime provider", () => {
     expect(engines.sandboxLifecycle.endpointAuthorityId).toBe(
       engines.hostLocalInference.endpointAuthorityId,
     );
-    expect(engines.stateMutation.endpointAuthorityId).toBe(
-      engines.hostLocalInference.endpointAuthorityId,
-    );
     expect(engines.hostLocalInference.authorityId).not.toBe(engines.hostDoctor.authorityId);
-    expect(engines.stateMutation.authorityId).not.toBe(engines.hostDoctor.authorityId);
     expect(bundle).toMatchObject({
       capabilities: { hostLocalInference: true },
       hostLocalInference: {
-        providerId: "podman",
-        supported: true,
-      },
-      stateMutation: {
         providerId: "podman",
         supported: true,
       },
@@ -410,14 +610,131 @@ describe("dormant Podman runtime provider", () => {
         supported: true,
         identities: expect.arrayContaining([
           {
-            operation: "state-mutation",
+            operation: "host-local-inference",
             engineId: "podman",
             displayName: "Podman",
           },
         ]),
       },
     });
-    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES).not.toHaveProperty("podman");
+    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.podman?.identity.id).toBe("podman");
+  });
+
+  it("maps one provider-neutral NVIDIA run to Podman CDI arguments", () => {
+    const inference = createPodmanHostLocalInferenceTestHarness();
+    const capture = vi.fn(() => ({ status: 0, stdout: "proof", stderr: "" }));
+    const bundle = createPodmanRuntimeProviderBundle({
+      engines: realOperationEngines(REAL_SOCKET_AUTHORITY, capture),
+      hostLocalInference: {
+        authorityStore: inference.authorityStore,
+        routeAuthorityStore: inference.routeAuthorityStore,
+        onFailureEvidence: inference.onFailureEvidence,
+        redactSensitive: inference.redactSensitive,
+      },
+    });
+    const capability = nvidiaContainer(bundle);
+
+    expect(
+      capability.capture(
+        "host-local-inference",
+        {
+          image: "registry.example/proof@sha256:" + "a".repeat(64),
+          entrypoint: "/bin/sh",
+          command: ["-c", "proof"],
+          resource: GPU_PROOF_RESOURCE,
+        },
+        12_000,
+      ),
+    ).toMatchObject({ status: 0, stdout: "proof" });
+    expect(capture).toHaveBeenCalledWith(
+      "/usr/bin/podman",
+      [
+        "--url",
+        `unix://${REAL_SOCKET_AUTHORITY.socketPath}`,
+        "run",
+        "--rm",
+        "--name",
+        GPU_PROOF_RESOURCE.name,
+        "--label",
+        "com.nvidia.nemoclaw.gpu-proof=true",
+        "--device",
+        "nvidia.com/gpu=all",
+        "--entrypoint",
+        "/bin/sh",
+        "registry.example/proof@sha256:" + "a".repeat(64),
+        "-c",
+        "proof",
+      ],
+      12_000,
+    );
+  });
+
+  it("removes only the exact owned proof container after timeout", () => {
+    const inference = createPodmanHostLocalInferenceTestHarness();
+    const containerId = "b".repeat(64);
+    const capture = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: `${containerId}\t${GPU_PROOF_RESOURCE.name}\n`,
+        stderr: "",
+      })
+      .mockReturnValueOnce({ status: 0, stdout: containerId, stderr: "" });
+    const capability = nvidiaContainer(
+      createPodmanRuntimeProviderBundle({
+        engines: realOperationEngines(REAL_SOCKET_AUTHORITY, capture),
+        hostLocalInference: {
+          authorityStore: inference.authorityStore,
+          routeAuthorityStore: inference.routeAuthorityStore,
+          onFailureEvidence: inference.onFailureEvidence,
+          redactSensitive: inference.redactSensitive,
+        },
+      }),
+    );
+
+    expect(
+      capability.cleanup("host-local-inference", GPU_PROOF_RESOURCE, {
+        timeoutMs: 15_000,
+        observation: "until-deadline",
+      }),
+    ).toEqual({ status: "removed" });
+    expect(capture).toHaveBeenNthCalledWith(
+      1,
+      "/usr/bin/podman",
+      [
+        "--url",
+        `unix://${REAL_SOCKET_AUTHORITY.socketPath}`,
+        "ps",
+        "--all",
+        "--no-trunc",
+        "--filter",
+        `name=^${GPU_PROOF_RESOURCE.name}$`,
+        "--filter",
+        "label=com.nvidia.nemoclaw.gpu-proof=true",
+        "--format",
+        "{{.ID}}\t{{.Names}}",
+      ],
+      expect.any(Number),
+    );
+    expect(capture).toHaveBeenNthCalledWith(
+      2,
+      "/usr/bin/podman",
+      expect.arrayContaining([
+        "ps",
+        "--filter",
+        `name=^${GPU_PROOF_RESOURCE.name}$`,
+        "--filter",
+        "label=com.nvidia.nemoclaw.gpu-proof=true",
+      ]),
+      expect.any(Number),
+    );
+    expect(capture).toHaveBeenNthCalledWith(
+      3,
+      "/usr/bin/podman",
+      ["--url", `unix://${REAL_SOCKET_AUTHORITY.socketPath}`, "rm", "-f", containerId],
+      expect.any(Number),
+    );
   });
 
   it("rejects real operation engines when one socket endpoint drifts", () => {
@@ -439,48 +756,6 @@ describe("dormant Podman runtime provider", () => {
         },
       }),
     ).toThrow("same endpoint authority");
-  });
-
-  it("rejects a state-mutation engine with another operation scope", () => {
-    const { hostLocalInference: _hostLocalInference, ...engines } = realOperationEngines();
-
-    expect(() =>
-      createPodmanRuntimeProviderBundle({
-        engines: {
-          ...engines,
-          stateMutation: engines.sandboxLifecycle as PodmanBoundContainerEngine,
-        },
-      }),
-    ).toThrow("'state-mutation' Podman engine");
-  });
-
-  it("rejects a state-mutation engine bound to another endpoint authority", () => {
-    const { hostLocalInference: _hostLocalInference, ...engines } = realOperationEngines();
-    const driftedStateMutation = realOperationEngines({
-      ...REAL_SOCKET_AUTHORITY,
-      inode: "9002",
-    }).stateMutation;
-
-    expect(() =>
-      createPodmanRuntimeProviderBundle({
-        engines: { ...engines, stateMutation: driftedStateMutation },
-      }),
-    ).toThrow("same endpoint authority");
-  });
-
-  it("rejects state-mutation options without a state-mutation engine", () => {
-    const {
-      hostLocalInference: _hostLocalInference,
-      stateMutation: _stateMutation,
-      ...engines
-    } = realOperationEngines();
-
-    expect(() =>
-      createPodmanRuntimeProviderBundle({
-        engines,
-        stateMutation: {},
-      }),
-    ).toThrow("state-mutation engine with its options");
   });
 
   it("rejects a mismatched engine scope before bundle registration", () => {

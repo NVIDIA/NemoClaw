@@ -98,13 +98,15 @@ const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
   lifecycleState: "created",
   phase: "NotReady",
 });
+const forwardService = fixtureMocks.installForwardServiceReachabilityFixture();
 runner.run = (command) => {
   const cmd = _n(command);
   events.push({ kind: "run", cmd });
-  const profileResult = require(${onboardScriptMocksPath}).mockManagedEndpointlessProviderProfileRun(command);
+  const profileResult = require(${onboardScriptMocksPath}).mockManagedProviderPreparationRun(command, "nemoclaw");
   if (profileResult !== null) return profileResult;
   if (cmd.includes("sandbox delete")) {
     createdSandbox.delete();
+    forwardService.release();
     return { status: 0 };
   }
   const sandboxResult = createdSandbox.run(command);
@@ -114,7 +116,7 @@ runner.runCapture = (command) => {
   const cmd = _n(command);
   const sandboxCapture = createdSandbox.capture(command);
   if (sandboxCapture !== null) return sandboxCapture;
-  if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (cmd.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
       defaultCurlOutput: "ok",
@@ -179,16 +181,11 @@ const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry,
 
 const preflight = require(${JSON.stringify(path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"))});
 preflight.checkPortAvailable = async () => ({ ok: true });
-const policyAuthorityPreflight = require(${JSON.stringify(
-        path.join(repoRoot, "src", "lib", "onboard", "policy-authority", "preflight.ts"),
-      )});
-policyAuthorityPreflight.qualifySandboxPolicyAuthority = () => ({
-  authority: "nemoclaw-managed",
-});
 
 childProcess.spawn = (...args) => {
   const command = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
-  if (command.includes("sandbox create")) {
+  const forwardSpawn = forwardService.recordSpawn(args);
+  if (!forwardSpawn && command.includes("sandbox create")) {
     createdSandbox.recreate(args.flat());
     createdSandbox.setPhase("Ready");
   }
@@ -415,7 +412,6 @@ if (mode === "seed") {
       toolDisclosure: "progressive",
       dcodeAutoApprovalMode: null,
       observabilityEnabled: false,
-      policyTier: null,
     },
   });
 }
@@ -434,16 +430,15 @@ if (mode === "resume" && scenario === "foreign-reservation") {
   registry.save(data);
 }
 if (mode === "resume" && scenario === "changed-checkpoint") {
-  const requireCurrent = registry.requireCurrentPendingSandboxPolicyVerification;
+  const requireCurrent = registry.requireCurrentPendingSandboxCreateIdentity;
   let reads = 0;
-  registry.requireCurrentPendingSandboxPolicyVerification = (reservation, checkpoint) => {
+  registry.requireCurrentPendingSandboxCreateIdentity = (reservation, checkpoint) => {
     const current = requireCurrent(reservation, checkpoint);
     reads += 1;
     if (reads === 1) {
       const data = registry.load();
-      const changed = data.sandboxes["my-assistant"].pendingPolicyVerification;
-      changed.policyVersion += 1;
-      changed.policyCreationReceipt.policyVersion += 1;
+      const changed = data.sandboxes["my-assistant"].pendingCreateIdentity;
+      changed.route = changed.route === "native" ? "none" : "native";
       registry.save(data);
     }
     return current;
@@ -455,6 +450,7 @@ const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
   sandboxId: "sbx-resumable-create",
   lifecycleState: mode === "resume" ? "created" : "absent",
 });
+const forwardService = fixtureMocks.installForwardServiceReachabilityFixture();
 let createChild = null;
 runner.run = (command) => {
   const cmd = normalize(command);
@@ -478,7 +474,7 @@ runner.runCapture = (command) => {
   }
   const sandboxCapture = createdSandbox.capture(command);
   if (sandboxCapture !== null) return sandboxCapture;
-  if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (cmd.includes("forward list")) return "SANDBOX BIND PORT PID STATUS";
   const mocked = fixtureMocks.mockOnboardRunCapture(command, { defaultCurlOutput: "ok" });
   return mocked === null ? "" : mocked;
 };
@@ -493,7 +489,8 @@ process.kill = (pid, signal) => {
 };
 childProcess.spawn = (...args) => {
   const command = normalize([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
-  if (command.includes("sandbox create")) {
+  const forwardSpawn = forwardService.recordSpawn(args);
+  if (!forwardSpawn && command.includes("sandbox create")) {
     fs.appendFileSync(createCountPath, "create\n");
     createdSandbox.create(args.flat());
   }
@@ -521,7 +518,7 @@ const createArgs = fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
   createFixture,
 );
 createArgs[15] = {
-  deferSandboxEffectsUntilPolicyVerification: true,
+  deferSandboxEffectsUntilIdentityVerification: true,
   recreate: false,
   toolDisclosure: "progressive",
   observabilityEnabled: false,
@@ -578,14 +575,14 @@ createArgs[16] = async () => {
         error: string;
         registryEntry: {
           pendingRouteReservation?: boolean;
-          pendingPolicyVerification?: unknown;
+          pendingCreateIdentity?: unknown;
           lifecycleLiveIdentityFingerprint?: string;
         };
         journal: { phase: string; targetLiveIdentityFingerprint?: string };
       }>(first.stdout);
       assert.match(retained.error, /automatic sandbox cleanup was not safe/u);
       assert.equal(retained.registryEntry.pendingRouteReservation, true);
-      assert.ok(retained.registryEntry.pendingPolicyVerification);
+      assert.ok(retained.registryEntry.pendingCreateIdentity);
       assert.match(
         retained.registryEntry.lifecycleLiveIdentityFingerprint ?? "",
         /^[0-9a-f]{64}$/u,
@@ -606,8 +603,7 @@ createArgs[16] = async () => {
         error: string | null;
         registryEntry: {
           pendingRouteReservation?: boolean;
-          pendingPolicyVerification?: unknown;
-          policyAuthority?: string;
+          pendingCreateIdentity?: unknown;
         };
       }>(second.stdout);
       const createEvents = fs
@@ -627,11 +623,7 @@ createArgs[16] = async () => {
       );
       assert.equal(recovered.sandboxName, resumes ? "my-assistant" : null);
       assert.equal(recovered.registryEntry.pendingRouteReservation, resumes ? undefined : true);
-      assert.equal(Boolean(recovered.registryEntry.pendingPolicyVerification), !resumes);
-      assert.equal(
-        recovered.registryEntry.policyAuthority,
-        resumes ? "nemoclaw-managed" : undefined,
-      );
+      assert.equal(Boolean(recovered.registryEntry.pendingCreateIdentity), !resumes);
       assert.deepEqual(effectEvents, resumes ? ["seed", "resume"] : ["seed"]);
     },
   );

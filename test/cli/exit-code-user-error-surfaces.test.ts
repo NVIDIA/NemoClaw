@@ -114,7 +114,6 @@ describe("user-error/startup surfaces return non-zero exit (#5974)", () => {
             model: "test-model",
             provider: "test-provider",
             gpuEnabled: false,
-            policies: [],
             agent: "openclaw",
           },
         },

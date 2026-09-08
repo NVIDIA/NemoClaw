@@ -4,6 +4,7 @@
 import {
   HermesPortableOllamaRecoveryError,
   HermesPortableOllamaRecoveryPhaseError,
+  inspectHermesPortableOllamaReadinessRuntime,
   recoverHermesPortableOllamaInference,
   type HermesPortableOllamaPreparedProbeDependency,
   type HermesPortableOllamaRecoveryFailure,
@@ -21,6 +22,7 @@ export interface HermesPortableInferenceConnectRecoveryInput {
   readonly readRegistry: (sandboxName: string) => SandboxEntry | null;
   readonly verifyRoute: () => SandboxEntry;
   readonly prepareProbeDependency?: () => HermesPortableOllamaPreparedProbeDependency;
+  readonly assertCallerTransactionCurrent?: () => void;
   readonly assertCallerCurrent?: () => void;
   readonly runGatewayOpenshell?: typeof captureHermesPortableInferenceRecoveryGateway;
 }
@@ -37,6 +39,13 @@ export function classifyHermesPortableInferenceConnectRecoveryFailure(
   if (error instanceof HermesPortableOllamaRecoveryError) return error.failure;
   if (error instanceof HermesPortableOllamaRecoveryPhaseError) return error.phase;
   return "recovery-failed";
+}
+
+/** Classify one exact published Ollama runtime without opening recovery authority. */
+export function inspectHermesPortableInferenceReadinessRuntimeForConnectProbe(
+  input: Parameters<typeof inspectHermesPortableOllamaReadinessRuntime>[0],
+) {
+  return inspectHermesPortableOllamaReadinessRuntime(input);
 }
 
 /** Resume exact published Ollama authority for one probe-only connect operation. */
@@ -56,6 +65,7 @@ export function recoverHermesPortableInferenceForConnectProbe(
     readRegistry: input.readRegistry,
     verifyRoute: input.verifyRoute,
     prepareProbeDependency: input.prepareProbeDependency,
+    assertCallerTransactionCurrent: input.assertCallerTransactionCurrent,
     assertCallerCurrent: input.assertCallerCurrent,
   });
 }

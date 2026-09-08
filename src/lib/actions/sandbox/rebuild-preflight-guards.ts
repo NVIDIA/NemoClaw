@@ -5,6 +5,7 @@ import {
   detectOpenShellStateRpcPreflightIssue,
   printOpenShellStateRpcIssue,
 } from "../../adapters/openshell/gateway-drift";
+import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { CLI_NAME } from "../../cli/branding";
 import {
   checkGatewayRouteCompatibility,
@@ -269,9 +270,17 @@ export function checkRebuildGatewaySchemaPreflight(
   sandboxName: string,
   sb: RebuildSandboxEntry,
   bail: RebuildBail,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): boolean {
+  const gatewayName = resolveSandboxGatewayName(sb);
+  if (runtimeSelection && runtimeSelection.gatewayName !== gatewayName) {
+    return bail(
+      `Rebuild gateway schema target '${gatewayName}' does not match the frozen OpenShell target '${runtimeSelection.gatewayName}'.`,
+    );
+  }
   const issue = detectOpenShellStateRpcPreflightIssue({
-    gatewayName: resolveSandboxGatewayName(sb),
+    gatewayName,
+    ...(runtimeSelection ? { runtimeSelection } : {}),
   });
   if (issue) {
     printOpenShellStateRpcIssue(issue, {
@@ -316,9 +325,11 @@ export function getRebuildSandboxEntryOrBail(
 
 /** Block rebuild before any live-state probe or cleanup can bypass retained recovery. */
 export function blockRebuildOnRetainedSandboxRecovery(
-  sandboxName: string,
+  sandbox: RebuildSandboxEntry,
   bail: RebuildBail,
 ): boolean {
+  const sandboxName = sandbox.name;
+  onboardSession.reconstructRetainedSandboxRecoveryFromPendingCreate(sandbox);
   const retainedRecovery = onboardSession
     .listRetainedSandboxRecoveryRecords()
     .find((record) => record.sandboxName === sandboxName);
@@ -333,27 +344,6 @@ export function blockRebuildOnRetainedSandboxRecovery(
   bail(`Retained sandbox recovery blocks rebuild for '${sandboxName}'.`, 1);
   return true;
 }
-
-/** Keep the pending baseline-policy transaction guard identical at every rebuild boundary. */
-export function blockRebuildOnPendingBaselineTransition(
-  sandboxEntry: RebuildSandboxEntry,
-  sandboxName: string,
-  bail: RebuildBail,
-): boolean {
-  const transition = sandboxEntry.baselineExclusionTransition;
-  if (!transition) return false;
-
-  const key = transition.exclusion.key;
-  printRebuildPreflightFailure(
-    `baseline policy ${transition.operation} for '${key}' needs repair before rebuild.`,
-    `Re-run: ${CLI_NAME} ${sandboxName} policy ${transition.operation} ${key}`,
-    `Pending baseline policy ${transition.operation} for '${key}' blocks rebuild.`,
-    bail,
-    1,
-  );
-  return true;
-}
-
 export function isSingleAgentRebuildSupported(
   sb: registry.SandboxEntry & { agents?: unknown[] },
   bail: RebuildBail,

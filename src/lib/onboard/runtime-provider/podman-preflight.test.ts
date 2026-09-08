@@ -109,8 +109,8 @@ describe("Podman host preflight", () => {
     expect(runtime.captureHost).toHaveBeenCalledTimes(1);
   });
 
-  it("qualifies the exact socket-bound Hermes portable Podman matrix", () => {
-    const runtime = engine({ operation: "state-mutation", version: "5.7.0" });
+  it("qualifies the exact socket-bound Hermes portable Podman lifecycle", () => {
+    const runtime = engine({ operation: "sandbox-lifecycle", version: "5.7.0" });
 
     expect(
       qualifyPodmanEndpointHost(runtime, {
@@ -135,9 +135,9 @@ describe("Podman host preflight", () => {
   it.each([
     ["client mismatch", { version: "5.6.2", serverVersion: "5.7.0" }, "client version"],
     ["server mismatch", { version: "5.7.0", serverVersion: "5.6.2" }, "server version"],
-  ])("rejects exact endpoint $0", (_label, versions, message) => {
+  ])("rejects exact lifecycle endpoint $0", (_label, versions, message) => {
     expect(() =>
-      qualifyPodmanEndpointHost(engine({ operation: "state-mutation", ...versions }), {
+      qualifyPodmanEndpointHost(engine({ operation: "sandbox-lifecycle", ...versions }), {
         expectedVersion: "5.7.0",
         expectedNetworkBackend: "netavark",
         platform: "linux",

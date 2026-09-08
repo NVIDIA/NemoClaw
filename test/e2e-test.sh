@@ -65,11 +65,9 @@ else
 fi
 
 # -------------------------------------------------------
-info "3b. Verify blueprint profile validation from compiled TypeScript"
+info "3b. Verify blueprint profile and policy YAML contracts"
 # -------------------------------------------------------
-# Independent backstop for validate-blueprint.test.ts — exercises the same
-# checks from the compiled TS inside the Docker container so a vitest
-# loading bug cannot hide a broken blueprint.
+# Direct YAML backstop for profile declarations, definitions, and base policy.
 if node --input-type=module -e "
   import { createRequire } from 'node:module';
   import { readFileSync } from 'node:fs';
@@ -103,42 +101,55 @@ if node --input-type=module -e "
 
   console.log('Validated ' + declared.length + ' profiles: ' + declared.join(', '));
 "; then
-  pass "Blueprint validation from compiled TS inside Docker"
+  pass "Blueprint profile and policy YAML contracts are valid"
 else
-  fail "Blueprint validation from compiled TS failed"
+  fail "Blueprint profile or policy YAML contract is invalid"
 fi
 
 # -------------------------------------------------------
 info "4. Verify blueprint runner plan command"
 # -------------------------------------------------------
-cd /opt/nemoclaw-blueprint
-# Runner will fail at openshell prereq check (expected in test container).
-# Use 'ncp' profile (empty endpoint skips SSRF DNS lookup in sandbox).
-# Catch only the expected error — anything else propagates as a real failure.
-NEMOCLAW_BLUEPRINT_PATH=/opt/nemoclaw-blueprint node --input-type=module -e "
-  const { main } = await import('/opt/nemoclaw/dist/blueprint/runner.js');
-  try {
-    await main(['plan', '--profile', 'ncp', '--dry-run']);
-  } catch (err) {
-    if (!err.message.includes('openshell CLI not found')) throw err;
-    console.log('EXPECTED_ERROR: ' + err.message);
-  }
-" 2>&1 | tee /tmp/plan-output.txt
-if grep -q "RUN_ID:" /tmp/plan-output.txt; then
+# Runner will fail at the OpenShell prerequisite check (expected in this image).
+# Use an independent minimal blueprint so shipped policy changes cannot mask
+# the missing-CLI behavior under test.
+PLAN_OUTPUT=$(mktemp)
+trap 'rm -f "$PLAN_OUTPUT"' EXIT
+(
+  plan_blueprint=$(mktemp -d)
+  trap 'rm -rf "$plan_blueprint"' EXIT
+  cat >"$plan_blueprint/blueprint.yaml" <<'YAML'
+components:
+  inference:
+    profiles:
+      default: {}
+YAML
+  NEMOCLAW_BLUEPRINT_PATH="$plan_blueprint" node --input-type=module -e "
+    const { main } = await import('/opt/nemoclaw/dist/blueprint/runner.js');
+    try {
+      await main(['plan', '--profile', 'default', '--dry-run']);
+    } catch (err) {
+      if (!err.message.includes('openshell CLI not found')) throw err;
+      console.log('EXPECTED_ERROR: ' + err.message);
+    }
+  "
+) 2>&1 | tee "$PLAN_OUTPUT"
+if grep -q "RUN_ID:" "$PLAN_OUTPUT"; then
   pass "Blueprint plan generates run ID"
 else
   fail "No run ID in plan output"
 fi
-if grep -q "Validating blueprint" /tmp/plan-output.txt; then
+if grep -q "Validating blueprint" "$PLAN_OUTPUT"; then
   pass "Blueprint runner validates before execution"
 else
   fail "No validation step"
 fi
-if grep -q "EXPECTED_ERROR: openshell CLI not found" /tmp/plan-output.txt; then
+if grep -q "EXPECTED_ERROR: openshell CLI not found" "$PLAN_OUTPUT"; then
   pass "Plan fails with expected openshell error (not silently)"
 else
   fail "Plan did not produce expected openshell error"
 fi
+rm -f "$PLAN_OUTPUT"
+trap - EXIT
 
 # -------------------------------------------------------
 info "4b. Verify blueprint runner apply smoke test"
@@ -146,15 +157,45 @@ info "4b. Verify blueprint runner apply smoke test"
 # Apply runs the full codepath (profile resolution, sandbox creation,
 # provider setup, state save) against a fixture CLI. Policy mutation reads must
 # return the same metadata + YAML shape as OpenShell 0.0.72; an empty successful
-# response is intentionally rejected by the runner.
+# response is intentionally rejected by the runner. Use an independent
+# blueprint so shipped policy endpoints cannot preempt the apply behavior under
+# test.
 FAKE_OPENSHELL_BIN=$(mktemp -d)
+APPLY_BLUEPRINT_PATH=$(mktemp -d)
 APPLY_OUTPUT=$(mktemp)
 APPLY_CALLS="$FAKE_OPENSHELL_BIN/calls"
 cleanup_apply_fixture() {
-  rm -rf "$FAKE_OPENSHELL_BIN"
+  rm -rf "$FAKE_OPENSHELL_BIN" "$APPLY_BLUEPRINT_PATH"
   rm -f "$APPLY_OUTPUT" "$APPLY_CALLS"
 }
 trap cleanup_apply_fixture EXIT
+cat >"$APPLY_BLUEPRINT_PATH/blueprint.yaml" <<'YAML'
+components:
+  sandbox:
+    image: openclaw
+    name: openclaw
+    forward_ports:
+      - 18789
+  inference:
+    profiles:
+      ncp:
+        provider_type: nvidia
+        provider_name: nvidia-ncp
+        model: nvidia/nemotron-3-super-120b-a12b
+  policy:
+    additions:
+      fixture_service:
+        name: fixture_service
+        endpoints:
+          - host: 93.184.216.34
+            port: 8000
+            access: full
+YAML
+cat >"$APPLY_BLUEPRINT_PATH/sandbox-policy.yaml" <<'YAML'
+version: 1
+network_policies: {}
+YAML
+cp /opt/nemoclaw-blueprint/private-networks.yaml "$APPLY_BLUEPRINT_PATH/private-networks.yaml"
 cat >"$FAKE_OPENSHELL_BIN/openshell" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -188,7 +229,7 @@ if [ "${1:-} ${2:-}" = "policy get" ]; then
 fi
 if [ "${1:-} ${2:-}" = "policy get" ] && [[ " $* " == *" --output json "* ]]; then
   sandbox="${@: -1}"
-  policy_file=/opt/nemoclaw-blueprint/policies/openclaw-sandbox.yaml
+  policy_file="${OPENSHELL_SANDBOX_POLICY:?}"
   policy_hash=sha256:fixture-policy
   policy_version=1
   if [ -f "${BASH_SOURCE[0]%/*}/effective-policy.yaml" ]; then
@@ -218,8 +259,12 @@ case "$*" in
       echo "unexpected policy read: expected policy get -g fixture-gateway --base <sandbox>" >&2
       exit 64
     fi
+    policy_file="${OPENSHELL_SANDBOX_POLICY:?}"
+    if [ -f "${BASH_SOURCE[0]%/*}/effective-policy.yaml" ]; then
+      policy_file="${BASH_SOURCE[0]%/*}/effective-policy.yaml"
+    fi
     printf '%s\n' 'Policy for sandbox fixture' '---'
-    cat /opt/nemoclaw-blueprint/policies/openclaw-sandbox.yaml
+    cat "$policy_file"
     ;;
   "policy get "*)
     echo "unexpected policy read: expected policy get -g fixture-gateway --base <sandbox>" >&2
@@ -229,8 +274,8 @@ esac
 SH
 chmod 0755 "$FAKE_OPENSHELL_BIN/openshell"
 PATH="$FAKE_OPENSHELL_BIN:$PATH" \
-  NEMOCLAW_BLUEPRINT_PATH=/opt/nemoclaw-blueprint \
-  OPENSHELL_SANDBOX_POLICY=/opt/nemoclaw-blueprint/policies/openclaw-sandbox.yaml \
+  NEMOCLAW_BLUEPRINT_PATH="$APPLY_BLUEPRINT_PATH" \
+  OPENSHELL_SANDBOX_POLICY="$APPLY_BLUEPRINT_PATH/sandbox-policy.yaml" \
   node --input-type=module -e "
   const { main } = await import('/opt/nemoclaw/dist/blueprint/runner.js');
   await main(['apply', '--profile', 'ncp']);

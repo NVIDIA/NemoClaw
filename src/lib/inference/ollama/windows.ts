@@ -6,21 +6,22 @@
 // Detection lives in onboard.ts; this module owns the action side.
 
 const { spawn } = require("child_process");
-const { dockerCapture } = require("../../adapters/docker/command");
+const { detectContainerRuntimeFromDockerInfo } = require("../../adapters/docker/runtime");
+const { isWsl } = require("../../platform");
 const { run, runCapture } = require("../../runner");
 const {
+  getWindowsHostOllamaDockerHostValidationArgs,
   getWindowsHostOllamaDockerReachabilityArgs,
-  isValidOllamaTagsResponseBody,
   OLLAMA_HOST_DOCKER_INTERNAL,
+  probeWindowsHostOllamaRouteProtection,
   setResolvedOllamaHost,
 } = require("../local");
-const { OLLAMA_PORT } = require("../../core/ports");
-
 // Avoid starting a subprocess for each fixed readiness delay.
 // The supported Windows-host Ollama path runs through WSL PowerShell interop.
 // Native Windows activation remains gated by #8178.
 const sleepBuffer = new SharedArrayBuffer(4);
 const sleepArray = new Int32Array(sleepBuffer);
+const OLLAMA_LOOPBACK_HOST = "127.0.0.1:11434";
 
 function sleep(seconds: number): void {
   if (seconds <= 0) return;
@@ -33,7 +34,9 @@ function psSingleQuote(value: string): string {
 
 // Pre-set OLLAMA_HOST in both User scope (persists across logins) and the
 // current PowerShell session (inherited by the installer's auto-spawned
-// ollama_app + daemon) so the new daemon binds 0.0.0.0 from the start.
+// ollama_app + daemon) so the new daemon stays on Windows loopback. Ollama
+// enables its Host-header validation only for loopback listeners, which is
+// required to reject same-host DNS-rebinding requests.
 // Don't use stdio:inherit here. When powershell.exe is spawned through
 // WSL interop, its stdout looks like a pipe (not a console), so PowerShell
 // holds output in an internal buffer and the user sees long silent gaps.
@@ -42,12 +45,16 @@ function psSingleQuote(value: string): string {
 async function installOllamaOnWindowsHost(): Promise<{ ok: boolean; path: string }> {
   console.log("  Installing Ollama on Windows host...");
   console.log("  This can take several minutes. Output may pause silently");
+  if (!persistOllamaLoopbackHostEnvVar()) {
+    console.error("  Failed to persist the Windows Ollama loopback binding.");
+    return { ok: false, path: "" };
+  }
   await new Promise<void>((resolve) => {
     const child = spawn(
       "powershell.exe",
       [
         "-Command",
-        "[Environment]::SetEnvironmentVariable('OLLAMA_HOST','0.0.0.0:11434','User'); $env:OLLAMA_HOST='0.0.0.0:11434'; irm https://ollama.com/install.ps1 | iex",
+        `$env:OLLAMA_HOST='${OLLAMA_LOOPBACK_HOST}'; irm https://ollama.com/install.ps1 | iex`,
       ],
       { stdio: ["ignore", "pipe", "pipe"] },
     );
@@ -87,24 +94,26 @@ function captureWindowsOllamaWatcherPath(): string {
   ).trim();
 }
 
-// User-scope so the next login-time tray launch keeps the 0.0.0.0 binding
-// without NemoClaw being involved.
-function persistOllamaHostEnvVar(): void {
-  runCapture(
+// User-scope so the next login-time tray launch remains loopback-only without
+// NemoClaw being involved. This also replaces legacy wildcard configuration.
+function persistOllamaLoopbackHostEnvVar(): boolean {
+  const persistedHost = runCapture(
     [
       "powershell.exe",
       "-Command",
-      "[Environment]::SetEnvironmentVariable('OLLAMA_HOST','0.0.0.0:11434','User')",
+      `[Environment]::SetEnvironmentVariable('OLLAMA_HOST','${OLLAMA_LOOPBACK_HOST}','User'); ` +
+        "[Environment]::GetEnvironmentVariable('OLLAMA_HOST','User')",
     ],
     { ignoreError: true },
-  );
+  ).trim();
+  return persistedHost === OLLAMA_LOOPBACK_HOST;
 }
 
 // Order matters: kill 'ollama app' (the tray watcher) before 'ollama'
 // (the daemon). The watcher auto-respawns the daemon as soon as it dies.
 // If the daemon goes first, the watcher can launch a fresh daemon with
 // default env (127.0.0.1) before we get to kill it. That respawned daemon
-// then holds port 11434 and blocks our 0.0.0.0 relaunch.
+// then holds port 11434 and blocks our explicit loopback relaunch.
 function killWindowsOllamaProcesses(): void {
   runCapture(
     [
@@ -120,14 +129,19 @@ function killWindowsOllamaProcesses(): void {
   );
 }
 
-function awaitWindowsOllamaReady(): boolean {
+function awaitWindowsOllamaReady(
+  opts: { prepareDockerEnvironment?: () => unknown; delay?: (seconds: number) => void } = {},
+): boolean {
   console.log("  Waiting for Ollama to respond on host.docker.internal...");
+  const delay = opts.delay ?? sleep;
   for (let attempt = 0; attempt < 15; attempt++) {
-    sleep(2);
-    const probe = dockerCapture(getWindowsHostOllamaDockerReachabilityArgs(), {
-      ignoreError: true,
+    delay(2);
+    const protection = probeWindowsHostOllamaRouteProtection(runCapture, {
+      runtime: detectContainerRuntimeFromDockerInfo(),
+      wslDetection: { isWsl: isWsl() },
+      prepareDockerEnvironment: opts.prepareDockerEnvironment,
     });
-    if (isValidOllamaTagsResponseBody(probe)) {
+    if (protection.protected) {
       setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
       return true;
     }
@@ -139,9 +153,10 @@ function awaitWindowsOllamaReady(): boolean {
 // watcher's auto-restart survive; fall back through the verified installed
 // path and finally refreshed PATH because stale watcher paths are possible.
 function launchAndAwaitWindowsOllama(
-  opts: { watcherPath?: string; installedPath?: string } = {},
+  opts: { watcherPath?: string; installedPath?: string; delay?: (seconds: number) => void } = {},
 ): boolean {
   console.log("  Starting Ollama on Windows host via WSL interop...");
+  const delay = opts.delay ?? sleep;
   const watcherPath = typeof opts.watcherPath === "string" ? opts.watcherPath.trim() : "";
   const installedPath = typeof opts.installedPath === "string" ? opts.installedPath.trim() : "";
   const launchAttempts: Array<{ label: string; script: string }> = [];
@@ -149,7 +164,7 @@ function launchAndAwaitWindowsOllama(
     launchAttempts.push({
       label: "Ollama tray app",
       script:
-        `$env:OLLAMA_HOST='0.0.0.0:11434'; Start-Process -FilePath ${psSingleQuote(watcherPath)} ` +
+        `$env:OLLAMA_HOST='127.0.0.1:11434'; Start-Process -FilePath ${psSingleQuote(watcherPath)} ` +
         "-WindowStyle Hidden",
     });
   }
@@ -157,7 +172,7 @@ function launchAndAwaitWindowsOllama(
     launchAttempts.push({
       label: "verified ollama.exe",
       script:
-        `$env:OLLAMA_HOST='0.0.0.0:11434'; Start-Process -FilePath ${psSingleQuote(installedPath)} ` +
+        `$env:OLLAMA_HOST='127.0.0.1:11434'; Start-Process -FilePath ${psSingleQuote(installedPath)} ` +
         "-ArgumentList 'serve' -WindowStyle Hidden",
     });
   }
@@ -165,7 +180,7 @@ function launchAndAwaitWindowsOllama(
     label: "refreshed Windows PATH",
     script:
       "$env:PATH = [Environment]::GetEnvironmentVariable('PATH','Machine') + ';' + [Environment]::GetEnvironmentVariable('PATH','User'); " +
-      "$env:OLLAMA_HOST='0.0.0.0:11434'; Start-Process -FilePath ollama.exe -ArgumentList serve -WindowStyle Hidden",
+      "$env:OLLAMA_HOST='127.0.0.1:11434'; Start-Process -FilePath ollama.exe -ArgumentList serve -WindowStyle Hidden",
   });
 
   for (let i = 0; i < launchAttempts.length; i++) {
@@ -174,7 +189,7 @@ function launchAndAwaitWindowsOllama(
       ignoreError: true,
       suppressOutput: true,
     });
-    if (result.status === 0 && awaitWindowsOllamaReady()) {
+    if (result.status === 0 && awaitWindowsOllamaReady({ delay })) {
       return true;
     }
 
@@ -187,51 +202,67 @@ function launchAndAwaitWindowsOllama(
     console.error(`  PowerShell launch via ${attempt.label} failed: ${detail}`);
     if (i < launchAttempts.length - 1) {
       killWindowsOllamaProcesses();
-      sleep(1);
+      delay(1);
     }
   }
   return false;
 }
 
-// Used by start and restart paths to force a 0.0.0.0 binding on an already
-// installed Ollama. Fresh install fallback passes installedPath to avoid
-// relying on a newly-mutated Windows PATH from this process.
-function setupWindowsOllamaWith0000Binding(
-  opts: { announceStop?: boolean; installedPath?: string } = {},
+// Used by start and restart paths to force a loopback-only binding on an
+// already installed Ollama. Fresh install fallback passes installedPath to
+// avoid relying on a newly-mutated Windows PATH from this process.
+function setupWindowsOllamaLoopbackBinding(
+  opts: {
+    announceStop?: boolean;
+    installedPath?: string;
+    delay?: (seconds: number) => void;
+  } = {},
 ): boolean {
+  const delay = opts.delay ?? sleep;
   const watcherPath = captureWindowsOllamaWatcherPath();
-  persistOllamaHostEnvVar();
+  if (!persistOllamaLoopbackHostEnvVar()) {
+    console.error("  Failed to persist the Windows Ollama loopback binding.");
+    return false;
+  }
   if (opts.announceStop) {
     console.log("  Stopping existing Ollama on Windows host...");
   }
   killWindowsOllamaProcesses();
-  sleep(1);
-  return launchAndAwaitWindowsOllama({
+  delay(1);
+  const launched = launchAndAwaitWindowsOllama({
     watcherPath: watcherPath || undefined,
     installedPath: opts.installedPath,
+    delay,
   });
-}
-
-function switchToWindowsOllamaHost(): void {
-  setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
-  console.log(`  ✓ Using Ollama on host.docker.internal:${OLLAMA_PORT}`);
+  if (!launched) {
+    console.error(
+      `  The Windows user OLLAMA_HOST=${OLLAMA_LOOPBACK_HOST} setting was persisted, and Ollama may now be stopped.`,
+    );
+    console.error(
+      "  Resolve the launch or probe failure below, then rerun `nemoclaw onboard` to retry the bounded restart.",
+    );
+  }
+  return launched;
 }
 
 function printWindowsOllamaTimeoutDiagnostics(): void {
-  console.error("  Timed out waiting for Ollama to start on the Windows host.");
+  console.error(
+    "  Timed out waiting for loopback-only Ollama with Host validation on the Windows host.",
+  );
   console.error("  Diagnose Windows-side Ollama state with:");
   console.error('    powershell.exe -Command "Get-Process ollama* -ErrorAction SilentlyContinue"');
   console.error(
     '    powershell.exe -Command "Get-NetTCPConnection -LocalPort 11434 -State Listen -ErrorAction SilentlyContinue"',
   );
   console.error(`    docker ${getWindowsHostOllamaDockerReachabilityArgs().join(" ")}`);
+  console.error(`    docker ${getWindowsHostOllamaDockerHostValidationArgs().join(" ")}`);
+  console.error("      Expected output: 403 (other values mean Host validation is disabled).");
 }
 
 module.exports = {
   installOllamaOnWindowsHost,
   awaitWindowsOllamaReady,
-  setupWindowsOllamaWith0000Binding,
+  setupWindowsOllamaLoopbackBinding,
   sleep,
-  switchToWindowsOllamaHost,
   printWindowsOllamaTimeoutDiagnostics,
 };

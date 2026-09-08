@@ -30,6 +30,7 @@ function createAgentSetupContext(
     status: 0,
     output: runCaptureOpenshell(args, opts) ?? "",
   })),
+  timing: Pick<OnboardContext, "sleepSeconds"> = {},
 ) {
   return {
     step: vi.fn((_current: number, _total: number, _message: string) => undefined),
@@ -47,6 +48,7 @@ function createAgentSetupContext(
       return undefined;
     }),
     skippedStepMessage: vi.fn((_stepName: string, _sandboxName: string) => undefined),
+    ...timing,
   };
 }
 
@@ -92,15 +94,48 @@ describe("NemoCUA terminal onboard acceptance", () => {
       model: "model-x",
     });
     expect(context.recordStepFailed).not.toHaveBeenCalled();
-    expect(calls.filter((args) => args.join(" ").includes("NEMOCLAW_AGENT_SMOKE_BEGIN"))).toHaveLength(
-      3,
-    );
+    expect(
+      calls.filter((args) => args.join(" ").includes("NEMOCLAW_AGENT_SMOKE_BEGIN")),
+    ).toHaveLength(3);
     expect(calls.some((args) => args.includes("curl"))).toBe(false);
     expect(JSON.stringify(context.recordStepComplete.mock.calls)).not.toContain("cuaRuntime");
   });
 });
 
 describe("Deep Agents Code terminal onboard acceptance", () => {
+  it("retries only unobservable binary execs while a newly Ready sandbox settles", async () => {
+    const calls: string[] = [];
+    const runCaptureOpenshell = vi
+      .fn<RunCaptureOpenshell>((args: string[]) =>
+        recordSuccessfulDeepAgentsRuntimeCall(args, calls),
+      )
+      .mockReturnValueOnce(null)
+      .mockReturnValueOnce(null);
+    const sleepSeconds = vi.fn();
+    const context = createAgentSetupContext(runCaptureOpenshell, undefined, { sleepSeconds });
+
+    await handleAgentSetup(
+      "deepagents-code",
+      "model-x",
+      "provider-x",
+      makeDeepAgentsCodeAgent(),
+      false,
+      null,
+      context,
+    );
+
+    expect(
+      runCaptureOpenshell.mock.calls.filter(([args]) =>
+        args.join(" ").includes("NEMOCLAW_AGENT_BINARY_CHECK"),
+      ),
+    ).toHaveLength(3);
+    expect(sleepSeconds).toHaveBeenCalledTimes(2);
+    expect(sleepSeconds).toHaveBeenNthCalledWith(1, 1);
+    expect(sleepSeconds).toHaveBeenNthCalledWith(2, 1);
+    expect(context.recordStepFailed).not.toHaveBeenCalled();
+    expect(context.recordStepComplete).toHaveBeenCalledOnce();
+  });
+
   it("runs terminal smoke checks on fresh setup without gateway probes", async () => {
     const calls: string[] = [];
     const runCaptureOpenshell = vi.fn((args: string[]) =>
@@ -356,10 +391,12 @@ describe("Deep Agents Code terminal onboard acceptance", () => {
     const runCaptureOpenshell = vi.fn((args: string[]) =>
       recordSuccessfulDeepAgentsRuntimeCall(args, calls),
     );
-    const captureOpenshell = vi.fn(() => ({
-      status: 97,
-      output: "NEMOCLAW_AGENT_SMOKE_BEGIN\nNEMOCLAW_AGENT_SMOKE_EXIT:0",
-    }));
+    const captureOpenshell = vi
+      .fn(() => ({
+        status: 97,
+        output: "NEMOCLAW_AGENT_SMOKE_BEGIN\nNEMOCLAW_AGENT_SMOKE_EXIT:0",
+      }))
+      .mockReturnValueOnce({ status: 0, output: "NEMOCLAW_AGENT_BINARY_CHECK:ok" });
     const context = createAgentSetupContext(runCaptureOpenshell, captureOpenshell);
 
     await expectSetupExit(() =>

@@ -12,7 +12,7 @@ describe("OpenClaw sandbox setup", () => {
   it("shares config sync before web-search reconciliation", async () => {
     const syncNemoClawConfigInSandbox = vi.fn();
     const reconcileWebSearch = vi.fn(async () => undefined);
-    const revalidatePolicyRequirements = vi.fn();
+    const revalidateSandboxIdentity = vi.fn();
     const configureOpenclawSandbox = createConfigureOpenclawSandbox({
       syncNemoClawConfigInSandbox,
       reconcileWebSearch,
@@ -23,19 +23,19 @@ describe("OpenClaw sandbox setup", () => {
       "model",
       "provider",
       null,
-      revalidatePolicyRequirements,
+      revalidateSandboxIdentity,
     );
 
     expect(syncNemoClawConfigInSandbox).toHaveBeenCalledExactlyOnceWith(
       "spark-box",
       "provider",
       "model",
-      revalidatePolicyRequirements,
+      revalidateSandboxIdentity,
     );
     expect(reconcileWebSearch).toHaveBeenCalledExactlyOnceWith(
       "spark-box",
       null,
-      revalidatePolicyRequirements,
+      revalidateSandboxIdentity,
     );
     expect(syncNemoClawConfigInSandbox.mock.invocationCallOrder[0]).toBeLessThan(
       reconcileWebSearch.mock.invocationCallOrder[0]!,
@@ -44,37 +44,37 @@ describe("OpenClaw sandbox setup", () => {
 
   it("delegates fresh setup to shared OpenClaw configuration", async () => {
     const configureOpenclawSandbox = vi.fn(async () => undefined);
-    const revalidatePolicyRequirements = vi.fn();
+    const revalidateSandboxIdentity = vi.fn();
     const setup = createOpenclawSetup({
       step: vi.fn(),
       agentProductName: () => "OpenClaw",
       configureOpenclawSandbox,
     });
 
-    await setup("spark-box", "model", "provider", null, revalidatePolicyRequirements);
+    await setup("spark-box", "model", "provider", null, revalidateSandboxIdentity);
 
     expect(configureOpenclawSandbox).toHaveBeenCalledExactlyOnceWith(
       "spark-box",
       "model",
       "provider",
       null,
-      revalidatePolicyRequirements,
+      revalidateSandboxIdentity,
     );
   });
 
-  it("withholds setup success when policy authority changes during config sync (#9833)", async () => {
+  it("withholds setup success when sandbox identity changes during config sync (#9833)", async () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     try {
       const setup = createOpenclawSetup({
         step: vi.fn(),
         agentProductName: () => "OpenClaw",
         configureOpenclawSandbox: async () => {
-          throw new Error("policy authority changed");
+          throw new Error("sandbox identity changed");
         },
       });
 
       await expect(setup("spark-box", "model", "provider", null)).rejects.toThrow(
-        "policy authority changed",
+        "sandbox identity changed",
       );
 
       expect(log.mock.calls.flat().join("\n")).not.toContain("gateway launched");
@@ -131,22 +131,22 @@ describe("fresh OpenClaw reuse web search reconciliation", () => {
     expect(disable).not.toHaveBeenCalled();
   });
 
-  it("does not mutate when policy authority changes after the live-config read (#10404)", async () => {
+  it("does not mutate when sandbox identity changes after the live-config read (#10404)", async () => {
     const readEnabled = vi.fn(() => true);
     const disable = vi.fn(async () => undefined);
-    const revalidatePolicyRequirements = vi.fn(() => {
-      throw new Error("policy authority changed");
+    const revalidateSandboxIdentity = vi.fn(() => {
+      throw new Error("sandbox identity changed");
     });
 
     await expect(
-      reconcileOpenClawWebSearchForReuse("alpha", null, revalidatePolicyRequirements, {
+      reconcileOpenClawWebSearchForReuse("alpha", null, revalidateSandboxIdentity, {
         readEnabled,
         disable,
       }),
-    ).rejects.toThrow("policy authority changed");
+    ).rejects.toThrow("sandbox identity changed");
 
     expect(readEnabled).toHaveBeenCalledExactlyOnceWith("alpha");
-    expect(revalidatePolicyRequirements).toHaveBeenCalledExactlyOnceWith(
+    expect(revalidateSandboxIdentity).toHaveBeenCalledExactlyOnceWith(
       "disable OpenClaw web search in sandbox 'alpha'",
     );
     expect(disable).not.toHaveBeenCalled();

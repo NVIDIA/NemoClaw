@@ -266,7 +266,6 @@ describe("inactive OpenShell MXC runtime provider", () => {
     expect(provider.workload.providerId).toBe("mxc");
     expect(provider.lifecycle.providerId).toBe("mxc");
     expect(provider.mutationAuthority.providerId).toBe("mxc");
-    expect(provider.stateMutation.providerId).toBe("mxc");
     expect(provider.bootstrap.providerId).toBe("mxc");
     expect(provider.snapshot.providerId).toBe("mxc");
     expect(provider.recovery.providerId).toBe("mxc");
@@ -394,7 +393,6 @@ describe("inactive OpenShell MXC runtime provider", () => {
   it.each([
     { scenario: "lifecycle" },
     { scenario: "mutation authority" },
-    { scenario: "state mutation" },
     { scenario: "snapshot" },
     { scenario: "recovery" },
     { scenario: "cleanup" },
@@ -407,7 +405,6 @@ describe("inactive OpenShell MXC runtime provider", () => {
         {
           lifecycle: provider.lifecycle,
           "mutation authority": provider.mutationAuthority,
-          "state mutation": provider.stateMutation,
           snapshot: provider.snapshot,
           recovery: provider.recovery,
           cleanup: provider.cleanup,

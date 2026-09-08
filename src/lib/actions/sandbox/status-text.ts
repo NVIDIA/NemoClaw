@@ -11,13 +11,8 @@ import type { ProviderHealthStatus } from "../../inference/health";
 import * as nim from "../../inference/nim";
 import { getEffectiveReasoningEffort } from "../../inference/selection";
 import { buildSshForwardHintLines } from "../../onboard/ssh-forward-hint";
-import { getBaselineExclusionRuntimeStatus } from "../../policy";
-import {
-  BASELINE_EXCLUSION_SUPPORT_IMPACT,
-  type BaselineExclusionRuntimeStatus,
-} from "../../policy/baseline-exclusion";
+import { getGatewayPresets } from "../../policy";
 import * as sandboxVersion from "../../sandbox/version";
-import * as shields from "../../shields";
 import type { SandboxEntry, SandboxGpuProofResult } from "../../state/registry";
 import {
   createSystemDeps as createSessionDeps,
@@ -36,60 +31,23 @@ import {
   type ServingProcessHealth,
 } from "./status-snapshot";
 
-export interface SandboxStatusTextContext
-  extends Pick<
-    SandboxStatusSnapshot,
-    | "sb"
-    | "lookup"
-    | "currentModel"
-    | "currentProvider"
-    | "routeDrift"
-    | "inferenceHealth"
-    | "terminalRuntimeHealth"
-    | "servingProcessHealth"
-  > {
+export interface SandboxStatusTextContext extends Pick<
+  SandboxStatusSnapshot,
+  | "sb"
+  | "lookup"
+  | "currentModel"
+  | "currentProvider"
+  | "routeDrift"
+  | "inferenceHealth"
+  | "terminalRuntimeHealth"
+  | "servingProcessHealth"
+> {
   sandboxName: string;
   statusAgent: SandboxStatusAgentInfo;
 }
 
 export interface SandboxStatusTextOutcome {
   exitCode: number | null;
-}
-
-function describeBaselineExclusionStatus(status: BaselineExclusionRuntimeStatus): string {
-  switch (status) {
-    case "excluded":
-      return "live policy verified";
-    case "agent-changed":
-      return "approval belongs to another agent";
-    case "baseline-unreadable":
-      return "agent baseline unreadable";
-    case "content-changed":
-      return "baseline content changed";
-    case "no-longer-in-baseline":
-      return "key no longer in baseline";
-    case "live-policy-unreadable":
-      return "live policy unreadable";
-    case "live-policy-mismatch":
-      return "excluded key is present in live policy";
-  }
-}
-
-function printBaselineExclusions(sandboxName: string, sandbox: SandboxEntry): void {
-  if (!sandbox.baselineExclusions?.length) return;
-  console.log(
-    `    Baseline exclusions: ${sandbox.baselineExclusions.map((entry) => entry.key).join(", ")}`,
-  );
-  console.log(`      Support impact: ${BASELINE_EXCLUSION_SUPPORT_IMPACT}`);
-  console.log(
-    `      Review or restore with \`${CLI_NAME} ${sandboxName} policy list\` or \`${CLI_NAME} ${sandboxName} policy restore <key>\`.`,
-  );
-  for (const exclusion of sandbox.baselineExclusions) {
-    const status = getBaselineExclusionRuntimeStatus(sandboxName, exclusion);
-    if (status !== "excluded") {
-      console.log(`      ${YW}${exclusion.key}: ${describeBaselineExclusionStatus(status)}${R}`);
-    }
-  }
 }
 
 /** Returns true when status can validate an agent version against the running sandbox. */
@@ -266,16 +224,6 @@ function printActiveSessions(sandboxName: string): void {
   }
 }
 
-function printShieldsPosture(sandboxName: string): void {
-  const posture = shields.getShieldsPosture(sandboxName, false);
-  if (posture.mode === "locked") return;
-  const detail =
-    posture.mode === "mutable_default"
-      ? posture.detail
-      : `${posture.detail} (check \`shields status\` for details)`;
-  console.log(`    Permissions: ${detail}`);
-}
-
 function printAgentVersion(context: SandboxStatusTextContext, sandbox: SandboxEntry): void {
   try {
     const { lookup, sandboxName, statusAgent } = context;
@@ -372,20 +320,12 @@ export function printSandboxDetails(context: SandboxStatusTextContext): SandboxS
   console.log(
     `    OpenShell: ${sb.openshellVersion || "unknown"} (${sb.openshellDriver || "unknown"})`,
   );
-  console.log(`    Policies: ${(sb.policies || []).join(", ") || "none"}`);
-  printBaselineExclusions(sandboxName, sb);
-  if (sb.baselineExclusionTransition) {
-    const transition = sb.baselineExclusionTransition;
-    console.log(
-      `    Baseline policy repair required: interrupted ${transition.operation} for ${transition.exclusion.key} (rebuild blocked)`,
-    );
-    console.log(
-      `      Re-run \`${CLI_NAME} ${sandboxName} policy ${transition.operation} ${transition.exclusion.key}\` to reconcile live and durable state.`,
-    );
-  }
+  const livePolicies = getGatewayPresets(sandboxName);
+  console.log(
+    `    Policies: ${livePolicies === null ? "unavailable" : livePolicies.join(", ") || "none"}`,
+  );
   const agentExitCode = printAgentHarness(context);
   printActiveSessions(sandboxName);
-  printShieldsPosture(sandboxName);
   printAgentVersion(context, sb);
   return { exitCode: inferenceExitCode ?? agentExitCode };
 }

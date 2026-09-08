@@ -36,16 +36,43 @@ sandbox_exec() {
 }
 
 cleanup_hostile_login_fallback() {
-  local container_id
-  container_id="$(
-    docker ps \
-      --filter "label=openshell.ai/sandbox-name=$SANDBOX_NAME" \
-      --format '{{.ID}}' 2>/dev/null | head -n 1
-  )"
-  [ -n "$container_id" ] || return 0
-  docker exec --user 0 "$container_id" /bin/sh -c \
+  local resource_handle
+  resource_handle="$(runtime_resource_handle)" || return 0
+  privileged_exec "$resource_handle" /bin/sh -c \
     "rm -f '$HOSTILE_LOGIN_FALLBACK' '$HOSTILE_PROFILE_MARKER'" \
     >/dev/null 2>&1 || true
+}
+
+runtime_resource_handle() {
+  NEMOCLAW_E2E_SANDBOX_NAME="$SANDBOX_NAME" node <<'NODE'
+const { resolvePrivilegedSandboxTarget } = require("./dist/lib/sandbox/privileged-exec.js");
+
+const target = resolvePrivilegedSandboxTarget(process.env.NEMOCLAW_E2E_SANDBOX_NAME);
+process.stdout.write(target.resourceHandle);
+NODE
+}
+
+privileged_exec() {
+  local expected_resource_handle="$1"
+  shift
+  NEMOCLAW_E2E_EXPECTED_RESOURCE_HANDLE="$expected_resource_handle" \
+    NEMOCLAW_E2E_SANDBOX_NAME="$SANDBOX_NAME" \
+    node - "$@" <<'NODE'
+const { executePrivilegedSandboxCommand } = require("./dist/lib/sandbox/privileged-exec.js");
+
+const command = process.argv.slice(2);
+const result = executePrivilegedSandboxCommand(
+  process.env.NEMOCLAW_E2E_SANDBOX_NAME,
+  command,
+  {
+    expectedResourceHandle: process.env.NEMOCLAW_E2E_EXPECTED_RESOURCE_HANDLE,
+    sanitizeEnvironment: true,
+  },
+);
+process.stdout.write(result.stdout);
+process.stderr.write(result.stderr);
+process.exit(result.status ?? 1);
+NODE
 }
 
 dcode_identity() {
@@ -218,14 +245,10 @@ pass "initial live identity reports model A"
 # connect reaches the real managed smoke runner (#8624).
 cleanup_hostile_login_fallback
 trap cleanup_hostile_login_fallback EXIT
-container_id="$(
-  docker ps \
-    --filter "label=openshell.ai/sandbox-name=$SANDBOX_NAME" \
-    --format '{{.ID}}' | head -n 1
-)"
-[ -n "$container_id" ] || fail "could not resolve the DCode sandbox container"
+resource_handle="$(runtime_resource_handle)" || fail "could not resolve the DCode sandbox runtime resource"
+[ -n "$resource_handle" ] || fail "DCode sandbox runtime resource is empty"
 managed_profile_state="$(
-  docker exec --user 0 "$container_id" /bin/sh -c \
+  privileged_exec "$resource_handle" /bin/sh -c \
     "stat -c '%U:%G:%a' /sandbox; stat -c '%U:%G:%a' '$MANAGED_LOGIN_PROFILE'; cmp -s /usr/local/lib/nemoclaw/dcode-login-profile.sh '$MANAGED_LOGIN_PROFILE' && printf '%s' MANAGED_PROFILE_MATCH"
 )" || fail "could not inspect the managed DCode login profile"
 expected_profile_state="$(printf '%s\n' root:sandbox:1775 root:root:444 MANAGED_PROFILE_MATCH)"
@@ -244,7 +267,7 @@ sandbox_exec "umask 077; printf '%s\n' 'case \"\${BASH_EXECUTION_STRING:-}\" in'
 
 managed_profile_connect_output="$("$CLI" "$SANDBOX_NAME" connect --probe-only 2>&1)" || fail "managed profile did not protect probe-only connect: $managed_profile_connect_output"
 marker_state="$(
-  docker exec --user 0 "$container_id" /bin/sh -c \
+  privileged_exec "$resource_handle" /bin/sh -c \
     "if [ -e '$HOSTILE_PROFILE_MARKER' ]; then printf PROFILE_LOADED; else printf PROFILE_NOT_LOADED; fi"
 )" || fail "could not inspect the hostile DCode profile marker"
 cleanup_hostile_login_fallback
@@ -317,7 +340,6 @@ if ! reonboard_output="$(
     NEMOCLAW_COMPAT_MODEL="$model_b" \
     NEMOCLAW_E2E_USE_HOSTED_INFERENCE=1 \
     NEMOCLAW_ENDPOINT_URL="$HOSTED_ENDPOINT" \
-    NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF="$NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF" \
     NEMOCLAW_MODEL="$model_b" \
     NEMOCLAW_NON_INTERACTIVE=1 \
     NEMOCLAW_PREFERRED_API=openai-completions \

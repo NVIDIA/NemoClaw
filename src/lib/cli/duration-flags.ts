@@ -3,8 +3,6 @@
 
 import { Errors, Flags } from "@oclif/core";
 
-import { parseDuration } from "../domain/duration";
-
 const LOGS_SINCE_DURATION_RE = /^[1-9]\d*(?:ms|s|m|h|d)$/i;
 
 export function parseLogsSinceDuration(input: string): string {
@@ -15,21 +13,6 @@ export function parseLogsSinceDuration(input: string): string {
   return trimmed;
 }
 
-export function parseShieldsTimeoutDuration(input: string): string {
-  const trimmed = input.trim();
-  try {
-    parseDuration(trimmed);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Errors.CLIError(message);
-  }
-  return trimmed;
-}
-
 export const logsSinceDurationFlag = Flags.custom<string>({
   parse: async (input) => parseLogsSinceDuration(input),
-});
-
-export const shieldsTimeoutDurationFlag = Flags.custom<string>({
-  parse: async (input) => parseShieldsTimeoutDuration(input),
 });

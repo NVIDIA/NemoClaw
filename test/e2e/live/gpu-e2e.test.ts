@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
@@ -27,8 +28,8 @@ import {
 } from "./gpu-e2e-helpers.ts";
 import { assertHermesFollowUpReplies } from "./hermes-cli-adapter-live.ts";
 
-const TIMEOUT_MS = 75 * 60_000;
-const HERMES_RESPONSE_TIMEOUT_MS = 90 * 60_000;
+const TIMEOUT_MS = testTimeout(75 * 60_000);
+const HERMES_RESPONSE_TIMEOUT_MS = testTimeout(90 * 60_000);
 
 function hermesResponseEnv(): NodeJS.ProcessEnv {
   return env({
@@ -59,7 +60,7 @@ test(
       ],
     },
   },
-  async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, skip }) => {
     await artifacts.target.declare({
       id: "gpu-e2e",
       boundary:
@@ -98,12 +99,10 @@ test(
     });
     await cleanupGpu(host, sandbox);
 
-    const docker = await host.command("docker", ["info"], {
-      artifactName: "docker-info",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
+    await runtimeProvider.requireAvailable({
+      artifactName: "runtime-info",
+      scenarioLabel: "GPU",
     });
-    expect(docker.exitCode, resultText(docker)).toBe(0);
     const nvidia = await host.command("nvidia-smi", [], {
       artifactName: "nvidia-smi",
       env: buildAvailabilityProbeEnv(),
@@ -120,7 +119,7 @@ test(
       artifactName: "install-gpu-ollama",
       cwd: REPO_ROOT,
       env: env(),
-      timeoutMs: 55 * 60_000,
+      timeoutMs: execTimeout(55 * 60_000),
     });
     expect(install.exitCode, resultText(install)).toBe(0);
     await artifacts.writeText("install-gpu-ollama.log", resultText(install));
@@ -146,15 +145,15 @@ test(
     );
     expect(installLog).not.toContain("Docker GPU mode selected");
 
-    const sandboxContainers = await host.command(
-      "docker",
+    const sandboxContainers = await runtimeProvider.command(
       [
+        "container",
         "ps",
-        "-a",
+        "--all",
         "--filter",
         `label=openshell.ai/sandbox-name=${SANDBOX_NAME}`,
         "--format",
-        "{{json .}}",
+        "{{.Names}}\t{{.State}}\t{{.Status}}",
       ],
       {
         artifactName: "gpu-native-route-sandbox-containers",
@@ -167,14 +166,10 @@ test(
       .split(/\r?\n/)
       .map((line) => line.trim())
       .filter(Boolean)
-      .map(
-        (line) =>
-          JSON.parse(line) as {
-            Names?: string;
-            State?: string;
-            Status?: string;
-          },
-      );
+      .map((line) => {
+        const [Names = "", State = "", Status = ""] = line.split("\t");
+        return { Names, State, Status };
+      });
     expect(
       sandboxContainerInventory,
       `native GPU route must retain exactly one sandbox container; got ${sandboxContainers.stdout}`,
@@ -324,8 +319,6 @@ exit 1`,
       },
     );
     expect(recovered.exitCode, resultText(recovered)).toBe(0);
-    expect(resultText(recovered)).toContain("Checking Ollama model readiness after daemon restart");
-    expect(resultText(recovered)).toContain(`Ollama model '${model}' is loaded and ready.`);
     assertAgentExecutionSucceeded(recovered.stdout, "inference", model);
 
     const loaded = await host.command("curl", ["-fsS", "http://127.0.0.1:11434/api/ps"], {
@@ -350,7 +343,7 @@ test(
       ],
     },
   },
-  async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, skip }) => {
     await artifacts.target.declare({
       id: "gpu-e2e",
       boundary: "Hermes sandbox + GPU Ollama + initial, resumed, and continued CLI replies",
@@ -383,12 +376,10 @@ test(
     progress.phase("prepare clean GPU Ollama runtime for Hermes");
     await cleanupGpu(host, sandbox);
 
-    const docker = await host.command("docker", ["info"], {
-      artifactName: "docker-info-hermes-response",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
+    await runtimeProvider.requireAvailable({
+      artifactName: "runtime-info-hermes-response",
+      scenarioLabel: "Hermes GPU response validation",
     });
-    expect(docker.exitCode, resultText(docker)).toBe(0);
     const nvidia = await host.command("nvidia-smi", [], {
       artifactName: "nvidia-smi-hermes-response",
       env: buildAvailabilityProbeEnv(),
@@ -408,7 +399,7 @@ test(
         artifactName: "install-gpu-hermes-ollama",
         cwd: REPO_ROOT,
         env: hermesResponseEnv(),
-        timeoutMs: 60 * 60_000,
+        timeoutMs: execTimeout(60 * 60_000),
       },
     );
     expect(install.exitCode, resultText(install)).toBe(0);

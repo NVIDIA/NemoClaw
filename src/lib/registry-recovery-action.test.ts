@@ -98,7 +98,6 @@ describe("recoverRegistryEntries seed-time guard (#2753)", () => {
       sandboxName: "interrupt-test",
       provider: "nvidia",
       model: "nemotron",
-      policyPresets: [],
       nimContainer: null,
       steps: {
         sandbox: { status: "pending", startedAt: null, completedAt: null, error: null },
@@ -117,7 +116,6 @@ describe("recoverRegistryEntries seed-time guard (#2753)", () => {
       sandboxName: "alpha",
       provider: "nvidia",
       model: "nemotron",
-      policyPresets: ["npm"],
       nimContainer: null,
       observabilityEnabled: true,
       agent: "langchain-deepagents-code",
@@ -131,7 +129,7 @@ describe("recoverRegistryEntries seed-time guard (#2753)", () => {
     expect(result.recoveredFromSession).toBe(true);
     const recovered = result.sandboxes.find((s) => s.name === "alpha");
     expect(recovered).toBeDefined();
-    expect(recovered?.policies).toEqual(["npm"]);
+    expect(recovered).not.toHaveProperty("policies");
     expect(recovered?.observabilityEnabled).toBe(true);
   });
 
@@ -143,7 +141,6 @@ describe("recoverRegistryEntries seed-time guard (#2753)", () => {
       endpointUrl: "https://inference.example.test/v1",
       credentialEnv: "COMPATIBLE_API_KEY",
       preferredInferenceApi: "openai-completions",
-      policyPresets: [],
       nimContainer: null,
       steps: {
         sandbox: { status: "complete", startedAt: null, completedAt: null, error: null },
@@ -171,7 +168,6 @@ describe("recoverRegistryEntries seed-time guard (#2753)", () => {
       endpointUrl: null,
       credentialEnv: "COMPATIBLE_API_KEY",
       preferredInferenceApi: null,
-      policyPresets: [],
       nimContainer: null,
       steps: {
         sandbox: { status: "complete", startedAt: null, completedAt: null, error: null },
@@ -207,7 +203,6 @@ describe("recoverRegistryEntries seed-time guard (#2753)", () => {
       provider: "nvidia-prod",
       model: "nvidia/nemotron-3-super-120b-a12b",
       gpuEnabled: false,
-      policies: ["npm", "pypi"],
       nimContainer: null,
       agent: "hermes",
       agentVersion: "2026.5.16",
@@ -216,7 +211,6 @@ describe("recoverRegistryEntries seed-time guard (#2753)", () => {
       sandboxName: "my-hermes",
       provider: "nvidia-prod",
       model: "nvidia/nemotron-3-super-120b-a12b",
-      policyPresets: ["npm", "pypi"],
       nimContainer: null,
       agent: "hermes",
       steps: {
@@ -238,7 +232,6 @@ describe("recoverRegistryEntries seed-time guard (#2753)", () => {
       provider: "nvidia-prod",
       model: "nvidia/nemotron-3-super-120b-a12b",
       gpuEnabled: false,
-      policies: [],
       nimContainer: null,
       agent: "hermes",
     };
@@ -246,7 +239,6 @@ describe("recoverRegistryEntries seed-time guard (#2753)", () => {
       sandboxName: "my-hermes",
       provider: "nvidia-prod",
       model: "nvidia/nemotron-3-super-120b-a12b",
-      policyPresets: [],
       nimContainer: null,
       steps: {
         sandbox: { status: "complete", startedAt: null, completedAt: null, error: null },
@@ -264,7 +256,6 @@ describe("recoverRegistryEntries seed-time guard (#2753)", () => {
       provider: "nvidia-prod",
       model: "nvidia/nemotron-3-super-120b-a12b",
       gpuEnabled: false,
-      policies: [],
       nimContainer: null,
       agent: "langchain-deepagents-code",
       observabilityEnabled: true,
@@ -273,7 +264,6 @@ describe("recoverRegistryEntries seed-time guard (#2753)", () => {
       sandboxName: "alpha",
       provider: "nvidia-prod",
       model: "nvidia/nemotron-3-super-120b-a12b",
-      policyPresets: [],
       nimContainer: null,
       agent: "langchain-deepagents-code",
       steps: {
@@ -297,7 +287,6 @@ describe("recoverRegistryEntries seed-time guard (#2753)", () => {
       provider: "nvidia",
       model: "nemotron",
       gpuEnabled: false,
-      policies: [],
       nimContainer: null,
       agent: null,
     };
@@ -305,7 +294,6 @@ describe("recoverRegistryEntries seed-time guard (#2753)", () => {
       sandboxName: "alpha",
       provider: "nvidia",
       model: "nemotron",
-      policyPresets: [],
       nimContainer: null,
       steps: {
         sandbox: { status: "pending", startedAt: null, completedAt: null, error: null },
@@ -377,7 +365,6 @@ describe("recoverRegistryEntries empty-registry live gateway recovery (#5714)", 
       provider: "nvidia",
       model: "nemotron",
       gpuEnabled: false,
-      policies: [],
       nimContainer: null,
       agent: "openclaw",
     };
@@ -385,7 +372,6 @@ describe("recoverRegistryEntries empty-registry live gateway recovery (#5714)", 
       sandboxName: "phantom",
       provider: "nvidia",
       model: "nemotron",
-      policyPresets: [],
       nimContainer: null,
       steps: {
         sandbox: { status: "pending", startedAt: null, completedAt: null, error: null },

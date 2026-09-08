@@ -118,10 +118,7 @@ function normalizeHermesAuthMethod(value: unknown): "oauth" | "api_key" | null {
 }
 
 function builtinWebSearchPolicyProviders(entry: RebuildSandboxEntry): WebSearchProvider[] {
-  const customPolicyNames = new Set(entry.customPolicies?.map((policy) => policy.name) ?? []);
-  return (["brave", "tavily"] as const).filter(
-    (provider) => entry.policies?.includes(provider) === true && !customPolicyNames.has(provider),
-  );
+  return (["brave", "tavily"] as const).filter((provider) => entry.webSearchProvider === provider);
 }
 
 export function resolveRebuildDurableConfig(
@@ -142,7 +139,6 @@ export function resolveRebuildDurableConfig(
     (!resolvedSelection.model || session.model === resolvedSelection.model)
       ? session
       : null;
-  const customPolicyNames = new Set(entry.customPolicies?.map((policy) => policy.name) ?? []);
   const policyProviders = builtinWebSearchPolicyProviders(entry);
   const migrationPolicyProviders =
     entry.webSearchEnabled === true || entry.agent !== DCODE_AGENT_NAME
@@ -188,10 +184,6 @@ export function resolveRebuildDurableConfig(
       sessionWebSearchProvider ??
       migrationPolicyProviders[0] ??
       "brave";
-    if (customPolicyNames.has(webSearchProvider)) {
-      webSearchError = `managed web-search provider '${webSearchProvider}' conflicts with a custom same-name policy`;
-      webSearchProvider = null;
-    }
   }
   const recordedToolDisclosure =
     entry.toolDisclosure !== undefined && entry.toolDisclosure !== null
