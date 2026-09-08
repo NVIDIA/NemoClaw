@@ -396,6 +396,7 @@ describe("verifyGpuSandboxLocalInferenceAndCommitAfterReady", () => {
       commitAfterReady: vi.fn(),
       rollbackManagedStartupAfterCreateFailure: vi.fn(),
     };
+    const persistFinalHandoffAcknowledgement = vi.fn();
     await verifyGpuSandboxLocalInferenceAndCommitAfterReady(
       GPU_CONFIG,
       "ollama-local",
@@ -404,8 +405,11 @@ describe("verifyGpuSandboxLocalInferenceAndCommitAfterReady", () => {
         deps: { execInSandbox: execEmitting("HTTP_200"), sleep: vi.fn() },
       },
       runtimePatch,
+      undefined,
+      persistFinalHandoffAcknowledgement,
     );
     expect(runtimePatch.commitAfterReady).toHaveBeenCalledOnce();
+    expect(persistFinalHandoffAcknowledgement).toHaveBeenCalledOnce();
     expect(runtimePatch.rollbackManagedStartupAfterCreateFailure).not.toHaveBeenCalled();
   });
 
@@ -436,6 +440,7 @@ describe("verifyGpuSandboxLocalInferenceAndCommitAfterReady", () => {
       }),
       rollbackManagedStartupAfterCreateFailure: vi.fn(),
     };
+    const persistFinalHandoffAcknowledgement = vi.fn();
     await expect(
       verifyGpuSandboxLocalInferenceAndCommitAfterReady(
         GPU_CONFIG,
@@ -445,9 +450,12 @@ describe("verifyGpuSandboxLocalInferenceAndCommitAfterReady", () => {
           deps: { execInSandbox: execEmitting("HTTP_200"), sleep: vi.fn() },
         },
         runtimePatch,
+        undefined,
+        persistFinalHandoffAcknowledgement,
       ),
     ).rejects.toThrow("durable commit acknowledgement failed");
     expect(runtimePatch.rollbackManagedStartupAfterCreateFailure).not.toHaveBeenCalled();
+    expect(persistFinalHandoffAcknowledgement).not.toHaveBeenCalled();
   });
 
   it("rechecks sandbox identity after verification and before GPU commit (#9833)", async () => {

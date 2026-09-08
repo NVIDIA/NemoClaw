@@ -503,6 +503,7 @@ export async function verifyGpuSandboxLocalInferenceAndCommitAfterReady(
     "commitAfterReady" | "rollbackManagedStartupAfterCreateFailure"
   >,
   revalidateBeforeCommit?: () => void,
+  persistFinalHandoffAcknowledgement?: () => void,
 ): Promise<void> {
   try {
     verifyGpuSandboxLocalInferenceAfterReady(config, provider, {
@@ -521,4 +522,5 @@ export async function verifyGpuSandboxLocalInferenceAndCommitAfterReady(
     throw failure;
   }
   await runtimePatch.commitAfterReady();
+  persistFinalHandoffAcknowledgement?.();
 }

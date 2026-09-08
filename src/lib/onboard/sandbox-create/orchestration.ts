@@ -323,6 +323,29 @@ export function createOnboardCreatedSandboxRegistrationWithManagedLifecycle(inpu
   return input.createRegistration({ ...input.registration, createdLifecycle });
 }
 
+/** Persist final-handoff authority before registry publication can observe it. */
+export function persistExactFinalHandoffAcknowledgement(input: {
+  readonly runtimePatch: ManagedBootstrapRuntimePatch | null;
+  readonly checkpoint: PendingSandboxCreateIdentity;
+  readonly persist: (
+    acknowledged: PendingSandboxCreateIdentity,
+    expected: PendingSandboxCreateIdentity,
+  ) => void;
+}): PendingSandboxCreateIdentity {
+  if (
+    input.checkpoint.exactFinalHandoffAcknowledged === true ||
+    input.runtimePatch?.allowsNotReadyLifecycleRevalidation?.() !== true
+  ) {
+    return input.checkpoint;
+  }
+  const acknowledged: PendingSandboxCreateIdentity = {
+    ...input.checkpoint,
+    exactFinalHandoffAcknowledged: true,
+  };
+  input.persist(acknowledged, input.checkpoint);
+  return acknowledged;
+}
+
 /** Persist one create-attempt recovery message through the onboard session owner. */
 export function persistRetainedSandboxRecoveryMessage(
   input: {
@@ -2403,10 +2426,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     const createFlowEnvironment = hermesGpuAuthority?.env ?? sandboxEnv;
     const createGpuVerifier = hermesGpuAuthority?.verify ?? verifyDirectSandboxGpu;
     let managedBootstrapCreateFinished = false;
-    let completedRuntimePatch: ManagedBootstrapRuntimePatch | null = null;
     const allowNotReadyWithMatchingIdentity = (): boolean =>
       managedBootstrapCreateFinished ||
-      completedRuntimePatch?.allowsNotReadyLifecycleRevalidation?.() === true;
+      pendingCreateIdentity?.exactFinalHandoffAcknowledged === true ||
+      acceptedTargetPendingIdentity?.exactFinalHandoffAcknowledged === true;
     const revalidateCreatedSandboxIdentity = (
       expectedIdentity: string,
       operation: string,
@@ -2438,6 +2461,19 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         throw new Error("Sandbox creation has no exact inference route reservation.");
       }
       return admittedCreateReservation;
+    };
+    const persistFinalHandoffAcknowledgement = (
+      runtimePatch: ManagedBootstrapRuntimePatch | null,
+    ): void => {
+      pendingCreateIdentity = persistExactFinalHandoffAcknowledgement({
+        runtimePatch,
+        checkpoint: requirePendingCreateIdentity(),
+        persist: (acknowledged, expected) => {
+          registry.recordPendingSandboxCreateIdentity(requireCreateReservation(), acknowledged, {
+            expected,
+          });
+        },
+      });
     };
     let durableCreatedSandboxIdentity:
       | import("../sandbox-recreate-transaction").CreatedSandboxLifecycleRegistration
@@ -2728,7 +2764,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               verifyDirectSandboxGpu: createGpuVerifier,
             },
           );
-          completedRuntimePatch = created.runtimePatch;
+          persistFinalHandoffAcknowledgement(created.runtimePatch);
           return created;
         },
       });
@@ -2800,6 +2836,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         revalidateSandboxIdentity: (operation) => {
           revalidateVerifiedCreateIdentity(requireVerifiedCreateBoundary(), operation);
         },
+        persistFinalHandoffAcknowledgement,
         dashboardRemoteBindPrepared,
       },
       prebuild.imageRef,

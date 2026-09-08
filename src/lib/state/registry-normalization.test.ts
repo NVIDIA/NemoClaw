@@ -266,9 +266,7 @@ describe("sandbox registry normalization", () => {
         deferredN1xManagedVllmAccepted: "true",
       },
     });
-    expect(() => malformed.getSandbox("malformed")).toThrow(
-      "invalid N1x preview acceptance",
-    );
+    expect(() => malformed.getSandbox("malformed")).toThrow("invalid N1x preview acceptance");
     const mismatchedRoute = await loadRegistryWith({
       mismatched: {
         name: "mismatched",
@@ -387,7 +385,8 @@ describe("sandbox registry normalization", () => {
       sandboxName: "alpha",
       lifecycleGeneration: "generation",
       sandboxIdentityFingerprint: "a".repeat(64),
-      route: "none" as const,
+      route: "compatibility" as const,
+      exactFinalHandoffAcknowledged: true as const,
       policyHash: "legacy",
     };
     const { registry } = await loadRegistryDocument({
@@ -408,7 +407,8 @@ describe("sandbox registry normalization", () => {
       sandboxName: "alpha",
       lifecycleGeneration: "generation",
       sandboxIdentityFingerprint: "a".repeat(64),
-      route: "none",
+      route: "compatibility",
+      exactFinalHandoffAcknowledged: true,
     });
   });
 

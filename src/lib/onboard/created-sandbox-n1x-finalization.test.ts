@@ -266,6 +266,7 @@ async function completeRegistration(createIntent: CreateIntent): Promise<Sandbox
         checkpoint,
       }),
       revalidateSandboxIdentity: vi.fn(),
+      persistFinalHandoffAcknowledgement: vi.fn(),
     },
     null,
     "build-1",

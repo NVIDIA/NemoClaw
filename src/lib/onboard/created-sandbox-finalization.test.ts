@@ -1279,6 +1279,7 @@ describe("created sandbox completion actions", () => {
               return gpuProof;
             },
             runCaptureOpenshell: vi.fn(),
+            persistFinalHandoffAcknowledgement: vi.fn(),
           },
           dashboard: {
             chatUiUrl: "http://127.0.0.1:8643",

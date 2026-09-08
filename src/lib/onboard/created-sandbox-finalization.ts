@@ -138,6 +138,9 @@ export interface CreatedSandboxCompletionOptions {
         typeof dockerGpuLocalInference.verifyGpuSandboxLocalInferenceAndCommitAfterReady
       >[2]["runCaptureOpenshell"]
     >;
+    readonly persistFinalHandoffAcknowledgement: (
+      runtimePatch: SandboxGpuCreateFlowResult["runtimePatch"],
+    ) => void;
   };
   readonly dashboard: {
     readonly chatUiUrl: string;
@@ -374,6 +377,7 @@ export function createCreatedSandboxCompletionActions(
         deps.revalidateSandboxIdentity?.(
           `committing GPU capability for sandbox '${options.finalization.sandboxName}'`,
         ),
+      () => options.gpu.persistFinalHandoffAcknowledgement(created.runtimePatch),
     );
   }
   function recordHermesGpuProof(): void {
@@ -616,6 +620,9 @@ type OnboardPreparedPolicy = Pick<
     CreatedSandboxRegistrationInput["verifiedCreate"]
   >;
   readonly revalidateSandboxIdentity: (operation: string) => void;
+  readonly persistFinalHandoffAcknowledgement: (
+    runtimePatch: SandboxGpuCreateFlowResult["runtimePatch"],
+  ) => void;
 };
 
 type CurrentRestoreSnapshotDependencies = {
@@ -761,6 +768,7 @@ export function createOnboardCreatedSandboxCompletion(
         dockerDriverGateway,
         verifyDirectSandboxGpu,
         runCaptureOpenshell,
+        persistFinalHandoffAcknowledgement: preparedPolicy.persistFinalHandoffAcknowledgement,
       },
       dashboard: {
         chatUiUrl,

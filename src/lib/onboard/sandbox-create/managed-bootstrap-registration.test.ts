@@ -3,12 +3,16 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import type { PendingSandboxCreateIdentity } from "../../state/registry";
 import { createOnboardCreatedSandboxRegistration } from "../created-sandbox-finalization";
 import {
   createCreatedSandboxLifecycle,
   type SandboxRecreateObservation,
 } from "../sandbox-recreate-transaction";
-import { createOnboardCreatedSandboxRegistrationWithManagedLifecycle } from "./orchestration";
+import {
+  createOnboardCreatedSandboxRegistrationWithManagedLifecycle,
+  persistExactFinalHandoffAcknowledgement,
+} from "./orchestration";
 
 describe("managed bootstrap sandbox registration", () => {
   const lifecycleGeneration = "generation-1";
@@ -21,7 +25,7 @@ describe("managed bootstrap sandbox registration", () => {
   function registrationFixture(
     managedBootstrap: boolean,
     observation: SandboxRecreateObservation,
-    finalHandoffAcknowledged = false,
+    persistedFinalHandoffAcknowledged = false,
   ) {
     const publish = vi.fn();
     const runtime = {
@@ -32,7 +36,7 @@ describe("managed bootstrap sandbox registration", () => {
     const completeRegistration = createOnboardCreatedSandboxRegistrationWithManagedLifecycle({
       sandboxName: "alpha",
       managedBootstrap,
-      allowNotReadyWithMatchingIdentity: () => finalHandoffAcknowledged,
+      allowNotReadyWithMatchingIdentity: () => persistedFinalHandoffAcknowledged,
       sandboxGpuEnabled: false,
       createdLifecycle: createCreatedSandboxLifecycle(
         runtime,
@@ -84,14 +88,62 @@ describe("managed bootstrap sandbox registration", () => {
   });
 
   it("publishes an explicitly recreated sandbox after its exact final handoff (#10560)", async () => {
+    let checkpoint: PendingSandboxCreateIdentity = {
+      schemaVersion: 1 as const,
+      state: "verified-create" as const,
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      sandboxName: "alpha",
+      lifecycleGeneration,
+      sandboxIdentityFingerprint: durableIdentity,
+      route: "compatibility" as const,
+    };
+    const persist = vi.fn((acknowledged: PendingSandboxCreateIdentity) => {
+      checkpoint = acknowledged;
+    });
+    checkpoint = persistExactFinalHandoffAcknowledgement({
+      runtimePatch: { allowsNotReadyLifecycleRevalidation: () => true } as never,
+      checkpoint,
+      persist,
+    });
     const fixture = registrationFixture(
       false,
       { state: "not_ready", liveIdentityFingerprint: durableIdentity },
-      true,
+      checkpoint.exactFinalHandoffAcknowledged === true,
     );
 
     await expect(fixture.complete()).resolves.toBeUndefined();
+    expect(persist).toHaveBeenCalledOnce();
     expect(fixture.publish).toHaveBeenCalledExactlyOnceWith(recordedRegistration);
+  });
+
+  it("does not publish a resumed recreation without a persisted final handoff (#10560)", async () => {
+    const checkpoint: PendingSandboxCreateIdentity = {
+      schemaVersion: 1,
+      state: "verified-create",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      sandboxName: "alpha",
+      lifecycleGeneration,
+      sandboxIdentityFingerprint: durableIdentity,
+      route: "compatibility",
+    };
+    const persist = vi.fn();
+    expect(
+      persistExactFinalHandoffAcknowledgement({
+        runtimePatch: { allowsNotReadyLifecycleRevalidation: () => false } as never,
+        checkpoint,
+        persist,
+      }),
+    ).toBe(checkpoint);
+    const fixture = registrationFixture(false, {
+      state: "not_ready",
+      liveIdentityFingerprint: durableIdentity,
+    });
+
+    await expect(fixture.complete()).rejects.toThrow(/not report it Ready/u);
+    expect(persist).not.toHaveBeenCalled();
+    expect(fixture.publish).not.toHaveBeenCalled();
   });
 
   it.each([

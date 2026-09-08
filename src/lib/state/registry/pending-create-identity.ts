@@ -9,6 +9,7 @@ const KEYS = new Set([
   "gatewayPort",
   "lifecycleGeneration",
   "createAttemptNonce",
+  "exactFinalHandoffAcknowledged",
   "route",
   "sandboxIdentityFingerprint",
   "sandboxName",
@@ -51,6 +52,9 @@ export function normalizePendingSandboxCreateIdentity(
     (value.createAttemptNonce !== undefined &&
       (typeof value.createAttemptNonce !== "string" ||
         !/^[0-9a-f]{62}$/u.test(value.createAttemptNonce))) ||
+    (value.exactFinalHandoffAcknowledged !== undefined &&
+      value.exactFinalHandoffAcknowledged !== true) ||
+    (value.exactFinalHandoffAcknowledged === true && value.route !== "compatibility") ||
     (value.route !== "none" && value.route !== "native" && value.route !== "compatibility")
   ) {
     throw new Error(
@@ -67,5 +71,8 @@ export function normalizePendingSandboxCreateIdentity(
     sandboxIdentityFingerprint: value.sandboxIdentityFingerprint,
     ...(value.createAttemptNonce ? { createAttemptNonce: value.createAttemptNonce } : {}),
     route: value.route,
+    ...(value.exactFinalHandoffAcknowledged === true
+      ? { exactFinalHandoffAcknowledged: true as const }
+      : {}),
   };
 }
