@@ -362,8 +362,10 @@ describe("migration snapshot sanitizer fallbacks", () => {
     const root = { canonicalPath: makeRoot(), identity };
     vi.stubEnv("SYSTEMROOT", "C:\\Windows");
     vi.stubEnv("WINDIR", "C:\\Windows");
+    vi.stubEnv("NEMOCLAW_TEST_SECRET", "must-not-reach-helper");
     writeRawNodeHelper([
-      `const valid = process.env.SYSTEMROOT === "C:\\\\Windows" && process.env.WINDIR === "C:\\\\Windows";`,
+      "const keys = Object.keys(process.env).sort();",
+      `const valid = process.env.SYSTEMROOT === "C:\\\\Windows" && process.env.WINDIR === "C:\\\\Windows" && process.env.NEMOCLAW_TEST_SECRET === undefined && JSON.stringify(keys) === '["SYSTEMROOT","WINDIR"]';`,
       `const result = valid ? ${JSON.stringify({ root: identity, files: [] })} : null;`,
       "process.stdout.write(JSON.stringify({ ok: true, result }));",
     ]);
@@ -449,6 +451,31 @@ describe("migration snapshot sanitizer fallbacks", () => {
         code: "native-probe-failed",
         message: "Native snapshot sanitization failed: native-probe-failed",
         retainedPath: undefined,
+      }),
+    );
+  });
+
+  it("reports the retained native probe when cleanup rejects", () => {
+    const retainedPath = path.join(realpathSync(tmpdir()), ".nemoclaw-native-probe-rejected");
+    const wrapper = path.join(makeRoot(), "snapshot-helper.mts");
+    writeFileSync(
+      wrapper,
+      [
+        `import { main } from ${JSON.stringify(resolveSnapshotSanitizerHelperPath())};`,
+        "await main(async () => ({",
+        `  receipt: { directory: { realPath: ${JSON.stringify(path.dirname(retainedPath))} }, temporaryBasename: ${JSON.stringify(path.basename(retainedPath))} },`,
+        '  cleanup: async () => { throw new Error("cleanup denied"); },',
+        "}));",
+      ].join("\n"),
+    );
+    setSnapshotSanitizerHelperPathForTest(wrapper);
+    const root = { canonicalPath: makeRoot(), identity };
+
+    expect(() => scanDescriptorSnapshot(root, new Set())).toThrow(
+      expect.objectContaining({
+        code: "native-probe-failed",
+        message: `Native snapshot sanitization failed: native-probe-failed; remove retained temporary file and retry: ${retainedPath}`,
+        retainedPath,
       }),
     );
   });

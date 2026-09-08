@@ -389,8 +389,8 @@ interface NativeSupportProbe {
 class NativeProbeCleanupError extends Error {
   readonly retainedPath: string;
 
-  constructor(retainedPath: string) {
-    super("native support probe cleanup failed");
+  constructor(retainedPath: string, options?: ErrorOptions) {
+    super("native support probe cleanup failed", options);
     this.name = "NativeProbeCleanupError";
     this.retainedPath = retainedPath;
   }
@@ -402,18 +402,22 @@ export async function assertNativeSupport(
     stageFileInDirectory({ directory: tmpdir(), content: Buffer.alloc(0) }),
 ): Promise<void> {
   const probe = await createProbe();
-  const cleanup = await probe.cleanup();
+  const retainedPath = path.join(probe.receipt.directory.realPath, probe.receipt.temporaryBasename);
+  let cleanup: { readonly status: string };
+  try {
+    cleanup = await probe.cleanup();
+  } catch (error) {
+    throw new NativeProbeCleanupError(retainedPath, { cause: error });
+  }
   if (cleanup.status !== "removed") {
-    throw new NativeProbeCleanupError(
-      path.join(probe.receipt.directory.realPath, probe.receipt.temporaryBasename),
-    );
+    throw new NativeProbeCleanupError(retainedPath);
   }
 }
 
-async function main(): Promise<void> {
+export async function main(createProbe?: () => Promise<NativeSupportProbe>): Promise<void> {
   try {
     configureFsSafeNative({ mode: "require" });
-    await assertNativeSupport();
+    await assertNativeSupport(createProbe);
     const request: unknown = JSON.parse(
       readFileDescriptorBoundedSync(0, MAX_HELPER_INPUT_BYTES).toString("utf8"),
     );
