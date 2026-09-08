@@ -21,6 +21,14 @@ export function ubuntuRepoManagedRuntime(onboarding: string): TargetEnvironment 
   };
 }
 
+/** Managed Docker-or-Podman runtime with a post-onboard lifecycle profile. */
+export function ubuntuRepoManagedRuntimeLifecycle(
+  onboarding: string,
+  lifecycle: string,
+): TargetEnvironment {
+  return { ...ubuntuRepoManagedRuntime(onboarding), lifecycle };
+}
+
 export function gpuRepoDockerCdi(onboarding: string): TargetEnvironment {
   return { platform: "gpu-runner", install: "repo-current", runtime: "gpu-docker-cdi", onboarding };
 }

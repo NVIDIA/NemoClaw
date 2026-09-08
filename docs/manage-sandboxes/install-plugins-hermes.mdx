@@ -22,7 +22,7 @@ Hermes can discover bundled plugins under `/opt/hermes/plugins/<plugin-name>` an
 NemoClaw supports the image-owned bundled path so the sandbox agent cannot replace code later executed by the separated gateway identity.
 NemoClaw installs its built-in Hermes integration into the image-owned bundled-plugin path at `/opt/hermes/plugins/nemoclaw`.
 
-The built-in NemoClaw Hermes plugin provides sandbox status tools, skill reload support, managed-tool broker patches, and runtime grounding for the OpenShell sandbox.
+The built-in NemoClaw Hermes plugin provides sandbox status tools, managed-tool broker patches, and runtime grounding for the OpenShell sandbox.
 Do not replace or remove `/opt/hermes/plugins/nemoclaw` when you add your own plugin.
 The root-separated gateway ignores `/sandbox/.hermes/plugins` because it cannot trust sandbox-writable Python.
 The same-identity topology retains Hermes' upstream user-plugin behavior, and rebuilds continue to preserve that directory as agent state; image-bundled plugins are the supported path across both topologies.
@@ -115,7 +115,7 @@ The supported path for custom Hermes plugins is to bake the plugin into a custom
 Use this path when the plugin adds Python code, runtime hooks, or dependencies that Hermes must see at gateway startup.
 
 `nemohermes <name> skill install <path>` is only for `SKILL.md` agent skills.
-It uploads skill instructions and refreshes skill discovery, but it does not install Hermes runtime plugins.
+It places the validated tree in Hermes' canonical writable user-skill root, but it does not install Hermes runtime plugins or maintain a separate NemoClaw skill inventory.
 
 When you change plugin code or dependencies, update the custom image and rebuild the sandbox so the plugin remains reproducible.
 When you change a supported startup-only setting with a NemoClaw host command, restart the Hermes gateway from the host:
