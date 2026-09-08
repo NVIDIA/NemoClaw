@@ -154,7 +154,7 @@ jobs:
 
       - name: Install dependencies
         env:
-          NODE_AUTH_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.token || '' }}
+          NODE_AUTH_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && github.token || '' }}
         run: |
           if [[ -n "$NODE_AUTH_TOKEN" ]]; then
             bash .github/actions/ci-install-dependencies.sh
@@ -299,7 +299,7 @@ jobs:
           . "$env:TRUSTED_WSL_HELPER"
           $null = Set-WslWorkflowPaths `
             -Workspace "$env:GITHUB_WORKSPACE\source" `
-            -WorkdirPrefix '/tmp/nemoclaw-wsl-vitest' `
+            -WorkdirPrefix '/home/nemoclaw-ci/nemoclaw-wsl-vitest' `
             -RunId $env:GITHUB_RUN_ID `
             -RunAttempt $env:GITHUB_RUN_ATTEMPT `
             -EnvironmentFile $env:GITHUB_ENV
@@ -316,25 +316,10 @@ jobs:
           . "$env:TRUSTED_WSL_HELPER"
           $packages = @(
             'bash', 'ca-certificates', 'curl', 'git', 'jq', 'lsb-release', 'make',
-            'docker.io', 'iproute2', 'podman', 'procps', 'python3', 'python3-pip', 'python3-venv',
+            'procps', 'python3', 'python3-pip', 'python3-venv',
             'ripgrep', 'rsync', 'tar', 'unzip', 'xz-utils'
           )
           Install-WslUbuntuDependencies -Distro $env:WSL_DISTRO -Packages $packages -TestUser $env:WSL_TEST_USER
-
-      - name: Start the WSL container runtime
-        shell: powershell
-        run: |
-          . "$env:TRUSTED_WSL_HELPER"
-          $testUser = ConvertTo-BashLiteral -Value $env:WSL_TEST_USER
-          $script = @"
-          set -euo pipefail
-          usermod -aG docker $testUser
-          service docker start
-          docker info
-          podman --version
-          ip -Version
-          "@
-          Invoke-WslScript -Distro $env:WSL_DISTRO -User root -Script $script
 
       - name: Install Node.js 22 in WSL
         shell: powershell
@@ -355,7 +340,7 @@ jobs:
       - name: Install dependencies and build in WSL
         shell: powershell
         env:
-          NODE_AUTH_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.token || '' }}
+          NODE_AUTH_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && github.token || '' }}
         run: |
           . "$env:TRUSTED_WSL_HELPER"
           $testUser = ConvertTo-BashLiteral -Value $env:WSL_TEST_USER
@@ -423,6 +408,26 @@ jobs:
           npx vitest run --project integration \
             test/agents/openclaw/runtime/nemoclaw-start-perms.test.ts \
             -t 'requires both fixed files to match|reclaims a root-owned collapsed config|leaves a root-owned recovery baseline untouched'
+          "@
+          Invoke-WslScript -Distro $env:WSL_DISTRO -User root -Script $script
+
+      - name: Install and start the WSL container runtime
+        if: ${{ matrix.shard == 1 && github.ref == 'refs/heads/main' }}
+        shell: powershell
+        run: |
+          . "$env:TRUSTED_WSL_HELPER"
+          Install-WslUbuntuDependencies `
+            -Distro $env:WSL_DISTRO `
+            -Packages @('docker.io', 'iproute2', 'podman') `
+            -TestUser $env:WSL_TEST_USER
+          $testUser = ConvertTo-BashLiteral -Value $env:WSL_TEST_USER
+          $script = @"
+          set -euo pipefail
+          usermod -aG docker $testUser
+          service docker start
+          docker info
+          podman --version
+          ip -Version
           "@
           Invoke-WslScript -Distro $env:WSL_DISTRO -User root -Script $script
 

@@ -77,22 +77,24 @@ describe("platform evidence workflow", () => {
     expect(install).not.toMatch(/brew install[^\n]*(?:docker|gnu-tar|iproute2mac|podman)/u);
   });
 
-  it("starts Docker and qualifies both WSL container clients before the suite", () => {
+  it("keeps container clients out of the non-live WSL suite", () => {
     const steps = job("wsl-vitest").steps ?? [];
     const install = step("wsl-vitest", "Install Ubuntu dependencies").run ?? "";
-    const runtime = step("wsl-vitest", "Start the WSL container runtime").run ?? "";
+    const runtime = step("wsl-vitest", "Install and start the WSL container runtime").run ?? "";
     const runtimeIndex = steps.findIndex(
-      (entry) => entry.name === "Start the WSL container runtime",
+      (entry) => entry.name === "Install and start the WSL container runtime",
     );
     const suiteIndex = steps.findIndex((entry) => entry.name === "Run full Vitest suite in WSL");
-    expect(install).toContain("'docker.io'");
-    expect(install).toContain("'podman'");
+    expect(install).not.toContain("'docker.io'");
+    expect(install).not.toContain("'podman'");
+    expect(runtime).toContain("'docker.io'");
+    expect(runtime).toContain("'podman'");
     expect(runtime).toContain("service docker start");
     expect(runtime).toContain("docker info");
     expect(runtime).toContain("podman --version");
     expect(runtime).toContain("ip -Version");
     expect(runtimeIndex).toBeGreaterThanOrEqual(0);
-    expect(suiteIndex).toBeGreaterThan(runtimeIndex);
+    expect(runtimeIndex).toBeGreaterThan(suiteIndex);
   });
 
   it("scopes WSL live-E2E settings to the credentialed live step", () => {
@@ -122,7 +124,7 @@ describe("platform evidence workflow", () => {
       );
       expect(install.env).toMatchObject({
         NODE_AUTH_TOKEN:
-          "${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.token || '' }}",
+          "${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && github.token || '' }}",
       });
       expect(install.run).toContain(".github/actions/ci-install-dependencies.sh");
       expect(install.run).toContain("npm ci --ignore-scripts");
