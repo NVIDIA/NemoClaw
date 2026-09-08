@@ -257,7 +257,9 @@ If the sandbox's container is stopped (for example, an out-of-band container kil
 
 <AgentOnly variant="hermes">
 
-For a legacy Hermes sandbox with no base-image hint or `NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF` override, rebuild requires the release-pinned immutable Hermes base image.
+For every Hermes rebuild without a `NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF` override, NemoClaw disables new local base-image fallback.
+It can reuse a recorded local image only when its resolution metadata and image identity remain valid.
+Otherwise, rebuild requires the release-pinned immutable Hermes base image.
 Remote overrides must use the official repository and resolve to a trusted immutable digest.
 During rebuild, NemoClaw accepts a caller-supplied local alias only when Docker proves that the alias and the tracked official image have the same image ID, operating system, architecture, and official repository digest; other local aliases are rejected.
 On Linux, accepted images must pass the OpenShell ABI check. On every platform, they must pass the required MCP and ACP runtime and immutable security package inventory checks described in the [NemoClaw CLI Commands Reference](/user-guide/hermes/reference/commands).
