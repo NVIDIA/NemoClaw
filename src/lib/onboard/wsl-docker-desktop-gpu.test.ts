@@ -3,8 +3,11 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { createInMemoryRuntimeProviderBundle } from "../../../test/helpers/runtime-provider-bundle";
+import { selectDefaultOllamaModel } from "../inference/local";
+import { detectGpu } from "../inference/nim";
 
-vi.mock("../adapters/docker", () => ({
+vi.mock("../adapters/docker", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../adapters/docker")>()),
   dockerInfoFormat: vi.fn(),
 }));
 
@@ -23,6 +26,7 @@ import {
   isExecFormatErrorDiagnostic,
   parseContainerGpuProofCapacity,
 } from "./runtime-provider/nvidia-container-proof";
+import { createPodmanRuntimeProviderBundle } from "./runtime-provider/podman";
 
 const PROOF_WORKLOAD_PROFILE = createDockerRuntimeProviderBundle().workload.profile;
 
@@ -30,6 +34,35 @@ function proofProvider(providerId: "docker" | "podman") {
   return createInMemoryRuntimeProviderBundle({
     providerId,
     workloadProfile: PROOF_WORKLOAD_PROFILE,
+  });
+}
+
+function podmanProofProvider(
+  capture: (
+    args: readonly string[],
+    timeoutMs?: number,
+  ) => {
+    status: number;
+    stdout: string;
+    stderr: string;
+  },
+) {
+  const engine = (operation: "host-doctor" | "host-local-inference" | "sandbox-lifecycle") => ({
+    operation,
+    engineId: "podman",
+    displayName: "Podman",
+    authorityId: `podman:${operation}`,
+    endpointAuthorityId: "podman:test-endpoint",
+    capture,
+    captureHost: capture,
+  });
+  return createPodmanRuntimeProviderBundle({
+    engines: {
+      hostDoctor: engine("host-doctor"),
+      hostLocalInference: engine("host-local-inference"),
+      sandboxLifecycle: engine("sandbox-lifecycle"),
+    },
+    hostLocalInference: {} as never,
   });
 }
 
@@ -207,6 +240,51 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
       }),
       expect.any(Number),
     );
+  });
+
+  it("carries a real Podman capture through GPU detection to Ollama selection", () => {
+    const capture = vi.fn(() => ({
+      status: 0,
+      stdout: "Test PASSED\nNEMOCLAW_GPU_MEMORY_MIB=63936, 60000\n",
+      stderr: "",
+    }));
+    const provider = podmanProofProvider(capture);
+    const prover = createArm64ContainerGpuProver({
+      platform: "linux",
+      arch: "arm64",
+      resolveRuntimeProvider: () => provider,
+      log: () => undefined,
+    });
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    const arch = Object.getOwnPropertyDescriptor(process, "arch")!;
+    Object.defineProperty(process, "platform", { ...platform, value: "linux" });
+    Object.defineProperty(process, "arch", { ...arch, value: "arm64" });
+    try {
+      const gpu = detectGpu({
+        proveArm64ContainerGpu: prover,
+        runCaptureImpl: vi.fn((command: readonly string[]) =>
+          command[0] === "nvidia-smi"
+            ? "NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU), 999999, 999999\n"
+            : "",
+        ),
+        isWsl: true,
+        n1xWslProduct: true,
+      });
+
+      expect(gpu).toMatchObject({
+        containerGpuProof: { providerId: "podman", passed: true },
+        totalMemoryMB: 63_936,
+        availableMemoryMB: 60_000,
+      });
+      expect(selectDefaultOllamaModel(["qwen3.5:9b", "qwen3.6:35b"], gpu)).toBe("qwen3.6:35b");
+      expect(capture).toHaveBeenCalledWith(
+        expect.arrayContaining(["--device", "nvidia.com/gpu=all"]),
+        expect.any(Number),
+      );
+    } finally {
+      Object.defineProperty(process, "platform", platform);
+      Object.defineProperty(process, "arch", arch);
+    }
   });
 
   it("maps a nonzero provider-owned container capture to a failed proof", () => {
