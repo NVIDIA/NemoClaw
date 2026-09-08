@@ -34,6 +34,7 @@ import {
   nvidiaHostLooksGenuine,
 } from "./gpu-trust";
 import { collectN1xIdentity } from "./platform-identity/n1x";
+import { collectN1xWslProduct } from "./platform-identity/n1x-wsl";
 
 const UNIFIED_MEMORY_GPU_TAGS = ["GB10", "Thor", "Orin", "Xavier", "Jetson", "Tegra"];
 const NIM_UNIFIED_MEMORY_UTILIZATION = 0.5;
@@ -599,15 +600,17 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
         // Only surface a single name when every GPU reports the same model;
         // a mixed-GPU host would otherwise be misreported as `Nx <firstName>`.
         const allSameName = !!firstName && trusted.every((p: ParsedGpu) => p.name === firstName);
-        const isRtxSparkN1xWsl =
-          allSameName &&
+        const n1xWslOllamaEligible =
           wslDockerDesktopGpuProofPassed &&
-          (deps.isWsl ?? isWsl()) &&
-          /(?:^|\s)RTX Spark N1X(?:$|[\s(])/i.test(firstName);
+          availableMemoryMB >= 30_000 &&
+          collectN1xWslProduct({
+            isWsl: deps.isWsl ?? isWsl(),
+            runCaptureImpl,
+          }) === true;
         // Keep the 30B/35B timeout protection except for the planned
-        // CUDA-proven WSL RTX Spark N1X memory-ranked path (#10954).
+        // identity-qualified WSL RTX Spark N1X path (#10954).
         const computeConstrained =
-          !isRtxSparkN1xWsl &&
+          !n1xWslOllamaEligible &&
           (platform === "jetson" || platform === "n1x" || wslDockerDesktopGpuProofPassed);
         return {
           type: "nvidia",

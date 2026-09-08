@@ -16,8 +16,14 @@ const PLAUSIBLE_NAME = "NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)";
 const isNvidiaSmiMemoryQuery = (command: readonly string[]): boolean =>
   command[0] === "nvidia-smi" && command.some((arg) => arg.includes("name,memory.total"));
 
-const makeRunCapture = (smiOutput: string) =>
-  vi.fn((command: readonly string[]) => (isNvidiaSmiMemoryQuery(command) ? smiOutput : ""));
+const makeRunCapture = (smiOutput: string, windowsProduct = "") =>
+  vi.fn((command: readonly string[]) =>
+    isNvidiaSmiMemoryQuery(command)
+      ? smiOutput
+      : command[0] === "powershell.exe"
+        ? windowsProduct
+        : "",
+  );
 
 const passingProver = () =>
   vi.fn(() => ({ passed: true, timedOut: false, exitCode: 0, diagnostic: "" }));
@@ -104,12 +110,40 @@ describe("detectGpu CUDA proof for a plausible, non-placeholder NVIDIA GPU name 
     onWsl2Arm64WithoutKernelInterface(() => {
       const gpu = detectGpu({
         proveArm64WslDockerDesktopGpu: passingProver(),
-        runCaptureImpl: makeRunCapture(`${PLAUSIBLE_NAME}, 63936, 60000\n`),
+        runCaptureImpl: makeRunCapture(`${PLAUSIBLE_NAME}, 63936, 60000\n`, "RTX Spark N1X"),
         isWsl: true,
       });
       expect(gpu).not.toHaveProperty("computeConstrained");
       expect(selectDefaultOllamaModel(["qwen3.5:9b", "qwen3.6:35b"], gpu)).toBe(
         "qwen3.6:35b",
+      );
+    });
+  });
+
+  it("keeps an unqualified Windows product compute-constrained despite the GPU name (#10954)", () => {
+    onWsl2Arm64WithoutKernelInterface(() => {
+      const gpu = detectGpu({
+        proveArm64WslDockerDesktopGpu: passingProver(),
+        runCaptureImpl: makeRunCapture(`${PLAUSIBLE_NAME}, 63936, 60000\n`, "SKU 1"),
+        isWsl: true,
+      });
+      expect(gpu).toMatchObject({ computeConstrained: true });
+      expect(selectDefaultOllamaModel(["qwen3.5:9b", "qwen3.6:35b"], gpu)).toBe(
+        "qwen3.5:9b",
+      );
+    });
+  });
+
+  it("keeps a busy qualified N1x compute-constrained below 30,000 MiB free (#10954)", () => {
+    onWsl2Arm64WithoutKernelInterface(() => {
+      const gpu = detectGpu({
+        proveArm64WslDockerDesktopGpu: passingProver(),
+        runCaptureImpl: makeRunCapture(`${PLAUSIBLE_NAME}, 63936, 29999\n`, "RTX Spark N1X"),
+        isWsl: true,
+      });
+      expect(gpu).toMatchObject({ computeConstrained: true });
+      expect(selectDefaultOllamaModel(["qwen3.5:9b", "qwen3.6:35b"], gpu)).toBe(
+        "qwen3.5:9b",
       );
     });
   });

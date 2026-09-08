@@ -6,6 +6,10 @@ import path from "node:path";
 import type { NvidiaPlatform } from "../inference/nim.js";
 import { collectN1xIdentity, type N1xIdentityOptions } from "../inference/platform-identity/n1x.js";
 import {
+  collectN1xWslProduct,
+  isN1xWslProductName,
+} from "../inference/platform-identity/n1x-wsl.js";
+import {
   isQualifiedStationProfile,
   isQualifiedStationRuntime,
   isStationGb300PciDevice,
@@ -24,6 +28,7 @@ import type {
 } from "./types.js";
 
 export type { StationProfile } from "./station-qualification.js";
+export { isN1xWslProductName } from "../inference/platform-identity/n1x-wsl.js";
 
 export interface PlatformIdentity {
   nvidiaPlatform?: NvidiaPlatform | null;
@@ -65,43 +70,6 @@ export interface CollectPlatformIdentityOptions extends N1xIdentityOptions {
     command: readonly string[],
     options?: { ignoreError?: boolean },
   ) => string;
-}
-
-const N1X_WSL_PRODUCT_NAME_MAX_BYTES = 256;
-const N1X_WSL_PRODUCT_PATTERN = /(?:^|\s)RTX Spark N1X(?:$|\s)/i;
-
-export function isN1xWslProductName(value: string): boolean {
-  return N1X_WSL_PRODUCT_PATTERN.test(value.trim());
-}
-
-function collectN1xWslProduct(
-  options: CollectPlatformIdentityOptions,
-): boolean | undefined {
-  if (!options.isWsl || !options.runCaptureImpl) return undefined;
-  try {
-    const raw = options.runCaptureImpl(
-      [
-        "powershell.exe",
-        "-NoProfile",
-        "-NonInteractive",
-        "-Command",
-        "(Get-CimInstance Win32_ComputerSystem).Model",
-      ],
-      { ignoreError: true },
-    );
-    const normalized = String(raw ?? "").replace(/\r/g, "").trim();
-    if (
-      !normalized ||
-      normalized.includes("\0") ||
-      normalized.includes("\n") ||
-      Buffer.byteLength(normalized, "utf8") > N1X_WSL_PRODUCT_NAME_MAX_BYTES
-    ) {
-      return undefined;
-    }
-    return isN1xWslProductName(normalized);
-  } catch {
-    return undefined;
-  }
 }
 
 function readOptional(
