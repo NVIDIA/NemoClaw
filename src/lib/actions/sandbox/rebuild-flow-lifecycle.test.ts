@@ -284,6 +284,22 @@ describe("rebuildSandbox flow: lifecycle", () => {
     ).toContain("rebuild completed");
   });
 
+  it("reports failure and retains stop intent when the rebuilt sandbox cannot clear it", async () => {
+    const harness = createRebuildFlowHarness({ sandboxEntry: { stopped: true } });
+    const updateSandbox = harness.registryUpdateSpy.getMockImplementation();
+    harness.registryUpdateSpy.mockImplementation((name, updates) => {
+      if (updates?.stopped === false) return false;
+      return updateSandbox?.(name, updates) ?? true;
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("could not clear its intentional-stop record");
+
+    expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", { stopped: false });
+    expect(harness.getSandboxEntry().stopped).toBe(true);
+  });
+
   it("retains removed immutability state when mutable config verification fails", async () => {
     const harness = createRebuildFlowHarness({
       sandboxEntry: {},
