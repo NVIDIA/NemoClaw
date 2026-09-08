@@ -32,6 +32,15 @@ type Workflow = {
   >;
 };
 
+type CompositeAction = {
+  readonly runs?: {
+    readonly steps?: readonly {
+      readonly name?: string;
+      readonly run?: string;
+    }[];
+  };
+};
+
 const TRUSTED_AUDIT_SPARSE_CHECKOUTS = TRUSTED_WORKFLOWS.flatMap((workflowFile) => {
   const workflow = YAML.parse(
     fs.readFileSync(path.join(REPO_ROOT, ".github", "workflows", workflowFile), "utf8"),
@@ -50,6 +59,19 @@ const TRUSTED_AUDIT_SPARSE_CHECKOUTS = TRUSTED_WORKFLOWS.flatMap((workflowFile) 
       })),
   );
 });
+const TRUSTED_AUDIT_ACTION_CHECKOUTS = TRUSTED_AUDIT_SPARSE_CHECKOUTS.filter(({ sparseCheckout }) =>
+  sparseCheckout.includes(".github/actions/ci-reviewed-npm-audit"),
+);
+const REVIEWED_NPM_ACTION = YAML.parse(
+  fs.readFileSync(
+    path.join(REPO_ROOT, ".github", "actions", "ci-reviewed-npm-audit", "action.yaml"),
+    "utf8",
+  ),
+) as CompositeAction;
+const REVIEWED_NPM_BOOTSTRAP_COMMAND = REVIEWED_NPM_ACTION.runs?.steps?.find(
+  (step) => step.name === "Download and verify production npm",
+)?.run;
+
 function stageSparseCheckout(root: string, sparseCheckout: string): void {
   sparseCheckout
     .split("\n")
@@ -60,6 +82,88 @@ function stageSparseCheckout(root: string, sparseCheckout: string): void {
       fs.mkdirSync(path.dirname(destination), { recursive: true });
       fs.cpSync(path.join(REPO_ROOT, entry), destination, { recursive: true });
     });
+}
+
+function runTrustedBootstrapHandoff(
+  sparseCheckout: string,
+  mutateCheckout: (root: string) => void = () => {},
+) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "reviewed-audit-bootstrap-handoff-"));
+  const bin = path.join(root, "bin");
+  const archive = Buffer.from("verified archive\n");
+  const archiveFile = path.join(root, "fixture.tgz");
+  const installMarker = path.join(root, "install-called");
+  const npmLog = path.join(root, "npm.log");
+  stageSparseCheckout(root, sparseCheckout);
+  mutateCheckout(root);
+  fs.mkdirSync(bin);
+  fs.writeFileSync(archiveFile, archive);
+  fs.writeFileSync(
+    path.join(root, "ci", "reviewed-npm-audit.json"),
+    `${JSON.stringify({
+      npmArchiveSha256: createHash("sha256").update(archive).digest("hex"),
+      npmIntegrity: `sha512-${createHash("sha512").update(archive).digest("base64")}`,
+      npmVersion: "12.0.2",
+    })}\n`,
+  );
+  fs.writeFileSync(
+    path.join(bin, "npm"),
+    `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$NEMOCLAW_TEST_NPM_LOG"
+case "$1" in
+  pack)
+    shift
+    download_dir=""
+    while [ "$#" -gt 0 ]; do
+      if [ "$1" = "--pack-destination" ]; then
+        download_dir="$2"
+        break
+      fi
+      shift
+    done
+    [ -n "$download_dir" ]
+    cp "$NEMOCLAW_TEST_ARCHIVE_FILE" "$download_dir/npm-12.0.2.tgz"
+    ;;
+  install)
+    : > "$NEMOCLAW_TEST_INSTALL_MARKER"
+    ;;
+  *)
+    exit 2
+    ;;
+esac
+`,
+    { mode: 0o755 },
+  );
+  fs.writeFileSync(
+    path.join(bin, "tar"),
+    `#!/usr/bin/env bash
+set -euo pipefail
+[ "$1" = "-xOf" ]
+[ "$3" = "package/package.json" ]
+printf '{"version":"12.0.2"}\\n'
+`,
+    { mode: 0o755 },
+  );
+  const result = spawnSync("bash", ["-c", REVIEWED_NPM_BOOTSTRAP_COMMAND ?? "exit 99"], {
+    cwd: root,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      GITHUB_ACTION_PATH: path.join(root, ".github", "actions", "ci-reviewed-npm-audit"),
+      NEMOCLAW_TEST_ARCHIVE_FILE: archiveFile,
+      NEMOCLAW_TEST_INSTALL_MARKER: installMarker,
+      NEMOCLAW_TEST_NPM_LOG: npmLog,
+      PATH: `${bin}:${process.env.PATH ?? ""}`,
+      RUNNER_TEMP: root,
+    },
+  });
+  return {
+    cleanup: () => fs.rmSync(root, { recursive: true, force: true }),
+    installCalled: fs.existsSync(installMarker),
+    npmInvocations: fs.existsSync(npmLog) ? fs.readFileSync(npmLog, "utf8").trim().split("\n") : [],
+    result,
+  };
 }
 
 describe("reviewed npm audit handoff", () => {
@@ -88,6 +192,39 @@ describe("reviewed npm audit handoff", () => {
       }
     },
   );
+
+  it.each(TRUSTED_AUDIT_ACTION_CHECKOUTS)(
+    "executes the reviewed npm bootstrap from the $name trusted sparse checkout",
+    ({ sparseCheckout }) => {
+      const fixture = runTrustedBootstrapHandoff(sparseCheckout);
+      try {
+        expect(fixture.result.status, fixture.result.stderr).toBe(0);
+        expect(fixture.installCalled).toBe(true);
+        expect(fixture.npmInvocations).toHaveLength(2);
+        expect(fixture.npmInvocations[1]).toMatch(/install --global .* --offline$/u);
+      } finally {
+        fixture.cleanup();
+      }
+    },
+  );
+
+  it("fails before installation when the trusted checkout omits the reviewed npm bootstrap", () => {
+    const fixture = runTrustedBootstrapHandoff(
+      TRUSTED_AUDIT_ACTION_CHECKOUTS[0]?.sparseCheckout ?? "",
+      (root) =>
+        fs.rmSync(path.join(root, ".github", "actions", "setup-reviewed-npm"), {
+          recursive: true,
+          force: true,
+        }),
+    );
+    try {
+      expect(fixture.result.status).not.toBe(0);
+      expect(fixture.installCalled).toBe(false);
+      expect(fixture.npmInvocations).toEqual([]);
+    } finally {
+      fixture.cleanup();
+    }
+  });
 
   it("passes producer output to the Docker receipt verifier and rejects an npm mismatch", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "reviewed-audit-receipt-handoff-"));

@@ -351,7 +351,8 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
     version: "0.0.103",
   },
   {
-    // The third template authorizes the reviewed Node 24.18.1 and npm 12.0.2 successor.
+    // The third template is pre-authorized because dependent installer validation reads this
+    // trust record from the base branch.
     brevTemplateSha256: [
       "c0a4ddf25a02a9fe02b2df53a60942ea887610f04d4ce16a121b6e79a5aeff1a",
       "56fc6482d1508b73604099e6fd6c16daea16275cf36cc25c1c5366c82a4394e3",
