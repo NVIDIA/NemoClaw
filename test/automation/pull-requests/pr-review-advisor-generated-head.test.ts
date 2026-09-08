@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
+import YAML from "yaml";
 
 import {
   ADVISOR_REPAIR_HEAD_WORKFLOWS,
@@ -10,6 +12,31 @@ import {
 } from "../../../tools/pr-review-advisor/repair-publish.mts";
 
 describe("PR Review Advisor generated-head evidence", () => {
+  // source-shape-contract: security -- Manual recovery must stay on trusted main and bind the exact successful canonical source run and attempt before dispatching generated-head checks.
+  it("allows only trusted-main manual reconciliation of an exact source run (#10791)", () => {
+    const workflow = YAML.parse(
+      readFileSync(".github/workflows/pr-review-advisor-generated-head.yaml", "utf8"),
+    ) as {
+      on?: { workflow_dispatch?: { inputs?: Record<string, { required?: boolean }> } };
+      concurrency?: { group?: string };
+      jobs?: Record<string, { if?: string }>;
+    };
+    const serialized = JSON.stringify(workflow);
+
+    expect(workflow.on?.workflow_dispatch?.inputs).toEqual(
+      expect.objectContaining({
+        source_run_attempt: expect.objectContaining({ required: true }),
+        source_run_id: expect.objectContaining({ required: true }),
+      }),
+    );
+    expect(String(workflow.concurrency?.group)).toContain("inputs.source_run_id");
+    expect(String(workflow.jobs?.locate?.if)).toContain("github.ref == 'refs/heads/main'");
+    expect(serialized).toContain("EVENT_SOURCE_WORKFLOW_SHA");
+    expect(serialized).toContain("needs.locate.outputs.source-workflow-sha");
+    expect(serialized).toContain("needs.locate.outputs.source-run-id");
+    expect(serialized).toContain("source-artifact-pages.json");
+  });
+
   it("accepts only successful same-attempt workflows with exact repair receipts (#10791)", async () => {
     const selection = {
       prNumber: 10791,

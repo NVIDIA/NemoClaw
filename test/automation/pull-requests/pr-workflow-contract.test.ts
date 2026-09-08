@@ -596,7 +596,7 @@ describe("pull request and main workflow contracts", () => {
     expect(repairRequestText).toContain("github.event.workflow_run.id");
     expect(repairRequestText).toContain("pr-review-advisor.yaml");
     expect(repairRequestText).toContain("source-artifact-pages.json");
-    expect(repairVerifyText).toContain("github.event.workflow_run.head_sha");
+    expect(repairVerifyText).toContain("needs.locate.outputs.source-workflow-sha");
     expect(repairVerifyText).toContain("needs.locate.outputs.artifact-id");
     expect(repairVerifyText).toContain("advisor-repair-checks");
     expect(repairVerifyText).not.toContain("check-runs");

@@ -61,10 +61,16 @@ and set the repository variable `PR_REVIEW_ADVISOR_REPAIR_ENABLED=true`. Dispatc
 `repair_head_sha` and `repair_base_sha`, `repair_finding_ids_json`, and explicit
 `repair_egress_authorized=true`; set `repair_publish=true` only for Phase 1. Selection requires a
 maintainer-triggered, open, same-repository, non-draft PR whose exact head is current and whose
-`maintainer_can_modify` value is true. The initial workflow actor (`github.actor`) and workflow-run
-initiator (`github.triggering_actor`) must each have `maintain` or `admin` permission. Selection
-checks both identities, and publication rechecks their current permissions before updating the
-branch. Repair reruns are rejected; start a new exact-head dispatch instead.
+`maintainer_can_modify` value is true. The source PR may change other paths. The repair patch may
+change only the selected allowlisted paths, and validation rejects any other repair change. The
+initial workflow actor (`github.actor`) and workflow-run initiator (`github.triggering_actor`) must
+each have `maintain` or `admin` permission. Selection checks both identities, and publication
+rechecks their current permissions before updating the branch. A rerun of one repair workflow run
+is rejected. A new exact-head manual dispatch creates a new repair attempt, including when it names
+the same PR head. If automatic generated-head observation is missed, dispatch `Automation / PR
+Review Advisor Generated Head` from `main` with the successful source `source_run_id` and exact
+`source_run_attempt`; reconciliation revalidates and reuses that run's content-addressed request
+without creating another repair attempt.
 
 The repair path retains bounded proposal, validation, publication, generated-head, and diagnostic
 artifacts. Ordinary `pull_request_target` review runs remain advisory-only and read-only.

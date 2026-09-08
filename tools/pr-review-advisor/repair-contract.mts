@@ -885,19 +885,6 @@ export function validateRepairPatch(input: {
     input.destination,
   ]);
   git(input.destination, ["checkout", "--detach", input.selection.sourceHeadSha]);
-  const sourcePaths = String(
-    git(input.destination, [
-      "diff",
-      "--name-only",
-      "-z",
-      `${input.selection.baseSha}...${input.selection.sourceHeadSha}`,
-      "--",
-    ]),
-  )
-    .split("\0")
-    .filter(Boolean);
-  if (sourcePaths.some((file) => !allowedRepairPath(file)))
-    fail("pull request changes a path outside the Advisor repair allowlist");
   applyResolutionPatch(input.destination, input.patchFile);
   const statuses = nameStatuses(input.destination);
   if (!statuses.length || statuses.length > MAX_REPAIR_FILES)

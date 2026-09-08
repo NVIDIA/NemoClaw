@@ -7,11 +7,22 @@ on:
   workflow_run:
     workflows: [Automation / PR Review Advisor]
     types: [completed]
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: Successful trusted Advisor repair run to reconcile
+        required: true
+        type: string
+      source_run_attempt:
+        description: Exact attempt of the trusted Advisor repair run
+        required: true
+        default: "1"
+        type: string
 
 permissions: {}
 
 concurrency:
-  group: advisor-repair-generated-head-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+  group: advisor-repair-generated-head-${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || inputs.source_run_id }}-${{ github.event_name == 'workflow_run' && github.event.workflow_run.run_attempt || inputs.source_run_attempt }}
   cancel-in-progress: false
 
 jobs:
@@ -19,9 +30,11 @@ jobs:
     name: Locate a trusted generated-head request
     if: >-
       github.repository == 'NVIDIA/NemoClaw' &&
-      github.event.workflow_run.conclusion == 'success' &&
+      (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main') &&
+      (github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'workflow_dispatch' &&
-      github.event.workflow_run.head_branch == 'main'
+      github.event.workflow_run.head_branch == 'main'))
     permissions:
       actions: read
       contents: read
@@ -29,12 +42,15 @@ jobs:
     timeout-minutes: 5
     outputs:
       artifact-id: ${{ steps.locate.outputs.artifact-id }}
+      source-run-attempt: ${{ steps.locate.outputs.source-run-attempt }}
+      source-run-id: ${{ steps.locate.outputs.source-run-id }}
+      source-workflow-sha: ${{ steps.locate.outputs.source-workflow-sha }}
     steps:
       - name: Checkout the exact trusted Advisor revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: NVIDIA/NemoClaw
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.workflow_sha }}
           persist-credentials: false
           lfs: false
           submodules: false
@@ -43,20 +59,28 @@ jobs:
         name: Validate the source run and locate its exact request artifact
         env:
           GH_TOKEN: ${{ github.token }}
-          SOURCE_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
-          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
-          SOURCE_WORKFLOW_SHA: ${{ github.event.workflow_run.head_sha }}
+          EVENT_SOURCE_RUN_ATTEMPT: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.run_attempt || '' }}
+          EVENT_SOURCE_RUN_ID: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || '' }}
+          EVENT_SOURCE_WORKFLOW_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || '' }}
+          INPUT_SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt || '' }}
+          INPUT_SOURCE_RUN_ID: ${{ inputs.source_run_id || '' }}
         run: |
           set -euo pipefail
+          SOURCE_RUN_ID="${EVENT_SOURCE_RUN_ID:-$INPUT_SOURCE_RUN_ID}"
+          SOURCE_RUN_ATTEMPT="${EVENT_SOURCE_RUN_ATTEMPT:-$INPUT_SOURCE_RUN_ATTEMPT}"
+          [[ "$SOURCE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$SOURCE_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID" > "$RUNNER_TEMP/source-run.json"
           gh api "repos/$GITHUB_REPOSITORY/actions/workflows/pr-review-advisor.yaml" > "$RUNNER_TEMP/source-workflow.json"
-          jq -e --arg repo "$GITHUB_REPOSITORY" --arg sha "$SOURCE_WORKFLOW_SHA" \
+          SOURCE_WORKFLOW_SHA="$(jq -er '.head_sha | select(type == "string" and test("^[0-9a-f]{40}$"))' "$RUNNER_TEMP/source-run.json")"
+          jq -e --arg repo "$GITHUB_REPOSITORY" --arg event_sha "$EVENT_SOURCE_WORKFLOW_SHA" \
             --argjson run "$SOURCE_RUN_ID" --argjson attempt "$SOURCE_RUN_ATTEMPT" \
             --slurpfile workflow "$RUNNER_TEMP/source-workflow.json" '
               .id == $run and .run_attempt == $attempt and .repository.full_name == $repo and
               .workflow_id == $workflow[0].id and .name == "Automation / PR Review Advisor" and
               .path == ".github/workflows/pr-review-advisor.yaml" and .event == "workflow_dispatch" and
-              .status == "completed" and .conclusion == "success" and .head_branch == "main" and .head_sha == $sha
+              .status == "completed" and .conclusion == "success" and .head_branch == "main" and
+              ($event_sha == "" or .head_sha == $event_sha)
             ' "$RUNNER_TEMP/source-run.json" >/dev/null
           gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/artifacts?per_page=100" \
             --slurp > "$RUNNER_TEMP/source-artifact-pages.json"
@@ -69,6 +93,9 @@ jobs:
           jq -e --argjson run "$SOURCE_RUN_ID" '.[0].expired == false and .[0].workflow_run.id == $run' \
             "$RUNNER_TEMP/request-artifacts.json" >/dev/null
           echo "artifact-id=$(jq -r '.[0].id' "$RUNNER_TEMP/request-artifacts.json")" >> "$GITHUB_OUTPUT"
+          echo "source-run-attempt=$SOURCE_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+          echo "source-run-id=$SOURCE_RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "source-workflow-sha=$SOURCE_WORKFLOW_SHA" >> "$GITHUB_OUTPUT"
 
   validate:
     name: Dispatch and report exact generated-head checks
@@ -93,7 +120,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: NVIDIA/NemoClaw
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ needs.locate.outputs.source-workflow-sha }}
           path: advisor
           persist-credentials: false
           lfs: false
@@ -115,15 +142,15 @@ jobs:
           artifact-ids: ${{ needs.locate.outputs.artifact-id }}
           github-token: ${{ github.token }}
           repository: NVIDIA/NemoClaw
-          run-id: ${{ github.event.workflow_run.id }}
+          run-id: ${{ needs.locate.outputs.source-run-id }}
           path: ${{ env.REQUEST_DIR }}
 
       - id: request
         name: Verify the content-addressed generated-head request
         env:
-          SOURCE_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
-          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
-          SOURCE_WORKFLOW_SHA: ${{ github.event.workflow_run.head_sha }}
+          SOURCE_RUN_ATTEMPT: ${{ needs.locate.outputs.source-run-attempt }}
+          SOURCE_RUN_ID: ${{ needs.locate.outputs.source-run-id }}
+          SOURCE_WORKFLOW_SHA: ${{ needs.locate.outputs.source-workflow-sha }}
         run: |
           node --experimental-strip-types --no-warnings --input-type=module <<'NODE'
           import fs from "node:fs";
@@ -155,7 +182,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: advisor-repair-generated-head-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+          name: advisor-repair-generated-head-${{ needs.locate.outputs.source-run-id }}-${{ needs.locate.outputs.source-run-attempt }}
           path: ${{ env.VERIFICATION_OUTPUT_DIR }}/generated-head.json
           if-no-files-found: error
           retention-days: 14

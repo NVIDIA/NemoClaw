@@ -157,6 +157,11 @@
       "category": "security"
     },
     {
+      "file": "test/automation/pull-requests/pr-review-advisor-generated-head.test.ts",
+      "test": "allows only trusted-main manual reconciliation of an exact source run (#10791)",
+      "category": "security"
+    },
+    {
       "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
       "test": "keeps Phase 0 Advisor repair manual, credential-separated, and non-publishing (#10791)",
       "category": "security"
