@@ -2392,7 +2392,7 @@ export function validateOllamaModel(
   if (!output) {
     const localDaemon = getResolvedOllamaHost() === OLLAMA_LOCALHOST;
     const staleRunnerRecovery =
-      timedOut && localDaemon
+      timedOut && localDaemon && process.platform === "linux"
         ? " Stale runner processes from a previous model may be holding GPU memory. " +
           (hasOllamaSystemdUnit(capture)
             ? "Run 'sudo systemctl restart ollama' and rerun onboarding."
@@ -2405,6 +2405,7 @@ export function validateOllamaModel(
     return {
       ok: false,
       message: failure + staleRunnerRecovery,
+      ...(staleRunnerRecovery ? { daemonFailure: true } : {}),
     };
   }
 

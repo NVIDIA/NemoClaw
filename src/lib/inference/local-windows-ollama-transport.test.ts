@@ -930,24 +930,30 @@ describe("Windows-host Ollama transport", () => {
       protectionCapture,
     );
 
-    expect(run).toHaveBeenCalledWith(
-      expect.arrayContaining([
+    const [command, options] = run.mock.calls[0] ?? [];
+    expect({
+      cleanupCalls: cleanup.mock.calls.length,
+      commandPrefix: command?.slice(0, 5),
+      endpoint: command?.find((argument: string) => argument.endsWith("/api/generate")),
+      options,
+    }).toEqual({
+      cleanupCalls: 3,
+      commandPrefix: [
         "docker",
         "run",
         "--rm",
         "-d",
         CONTAINER_REACHABILITY_IMAGE,
-        "http://host.docker.internal:11434/api/generate",
-      ]),
-      {
+      ],
+      endpoint: "http://host.docker.internal:11434/api/generate",
+      options: {
         ignoreError: true,
         env: expect.objectContaining({
           DOCKER_CONFIG: "/tmp/credential-free-docker",
           DOCKER_CONTEXT: "default",
         }),
       },
-    );
-    expect(cleanup).toHaveBeenCalledTimes(3);
+    });
   });
 
   it("keeps the Hermes context-window check fail-closed on an invalid Docker response (#10553)", () => {

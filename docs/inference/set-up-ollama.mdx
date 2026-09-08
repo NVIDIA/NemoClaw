@@ -370,6 +370,9 @@ When the runtime value cannot be verified, onboarding shows the required `OLLAMA
 
 If the initial validation times out during a cold load, NemoClaw retries once with a 300-second probe budget.
 This retry also applies to tight-VRAM hosts where model warm-up can spill from GPU to CPU.
+If the retry also times out against a local Ollama daemon on Linux, stale runners may still be holding GPU memory.
+NemoClaw recommends `sudo systemctl restart ollama` only when the host has an Ollama systemd unit; otherwise, restart Ollama and rerun onboarding.
+Windows-host Ollama does not receive this Linux recovery guidance.
 
 ## Release GPU Memory
 

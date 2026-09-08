@@ -4,7 +4,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
-  OLLAMA_HOST_DOCKER_INTERNAL,
   OLLAMA_LOCALHOST,
   setResolvedOllamaHost,
   validateOllamaModel,
@@ -39,12 +38,12 @@ describe("Ollama probe timeout retry", () => {
   });
 
   it.each([
-    { platform: "linux" as const, systemdUnit: true, systemctl: true },
-    { platform: "darwin" as const, systemdUnit: true, systemctl: false },
-    { platform: "linux" as const, systemdUnit: false, systemctl: false },
+    { platform: "linux" as const, systemdUnit: true, recovery: "systemctl" },
+    { platform: "darwin" as const, systemdUnit: true, recovery: null },
+    { platform: "linux" as const, systemdUnit: false, recovery: "generic" },
   ])(
     "selects recovery for $platform with systemd unit $systemdUnit",
-    ({ platform, systemdUnit, systemctl }) => {
+    ({ platform, systemdUnit, recovery }) => {
       vi.spyOn(process, "platform", "get").mockReturnValue(platform);
       const result = validateOllamaModel(
         "nemotron-3-nano:30b",
@@ -58,11 +57,18 @@ describe("Ollama probe timeout retry", () => {
       const message = result.message ?? "";
 
       expect({
+        daemonFailure: result.daemonFailure ?? false,
         generic: message.includes("Restart Ollama and rerun onboarding"),
         ok: result.ok,
         staleRunner: message.includes("Stale runner processes from a previous model"),
         systemctl: message.includes("systemctl"),
-      }).toEqual({ generic: !systemctl, ok: false, staleRunner: true, systemctl });
+      }).toEqual({
+        daemonFailure: recovery !== null,
+        generic: recovery === "generic",
+        ok: false,
+        staleRunner: recovery !== null,
+        systemctl: recovery === "systemctl",
+      });
     },
   );
 
@@ -80,8 +86,9 @@ describe("Ollama probe timeout retry", () => {
       },
     );
 
-    expect(result.message).toContain("failed the local probe without a response");
-    expect(result.message).not.toContain("Stale runner processes");
+    expect({ daemonFailure: result.daemonFailure, message: result.message }).toEqual({
+      daemonFailure: undefined,
+      message: expect.stringMatching(/^Selected Ollama model .* failed the local probe/),
+    });
   });
-
 });
