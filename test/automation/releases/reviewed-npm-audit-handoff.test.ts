@@ -175,18 +175,21 @@ describe("reviewed npm audit handoff", () => {
         path.join(REPO_ROOT, "scripts/lib/verify-mcporter-audit.sh"),
         "utf8",
       );
-      for (const [source, staged] of [
-        ["/run/secrets/nemoclaw-mcporter-audit-receipt", receiptFile],
-        ["/run/secrets/nemoclaw-mcporter-audit-raw-report", transportRawReport],
-        ["/run/nemoclaw-mcporter-audit-cache/reviewed-npm-audit", path.join(root, "no-seed")],
-        ["/scripts/lib/npm-audit-receipt.mts", receiptVerifier],
-        ["/usr/local/lib/nemoclaw/mcporter-runtime/package.json", retainedPackageJson],
-        ["/usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json", retainedPackageLock],
-        ["/scripts/npm-audit-exceptions.json", exceptionFile],
-        ["/scripts/reviewed-npm-audit.json", auditConfigFile],
-      ] as const) {
-        helperSource = helperSource.replaceAll(source, staged);
-      }
+      helperSource = helperSource
+        .replaceAll("/run/secrets/nemoclaw-mcporter-audit-receipt", receiptFile)
+        .replaceAll("/run/secrets/nemoclaw-mcporter-audit-raw-report", transportRawReport)
+        .replaceAll(
+          "/run/nemoclaw-mcporter-audit-cache/reviewed-npm-audit",
+          path.join(root, "no-seed"),
+        )
+        .replaceAll("/scripts/lib/npm-audit-receipt.mts", receiptVerifier)
+        .replaceAll("/usr/local/lib/nemoclaw/mcporter-runtime/package.json", retainedPackageJson)
+        .replaceAll(
+          "/usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json",
+          retainedPackageLock,
+        )
+        .replaceAll("/scripts/npm-audit-exceptions.json", exceptionFile)
+        .replaceAll("/scripts/reviewed-npm-audit.json", auditConfigFile);
       fs.writeFileSync(helper, helperSource, { mode: 0o755 });
       const runHelper = () =>
         spawnSync("bash", [helper], {
