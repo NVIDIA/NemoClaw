@@ -45,7 +45,8 @@ for boundary in \
   openshell-observation-boundary.cjs \
   openshell-policy-boundary.cjs \
   sandbox-name.cjs \
-  snapshot-sanitizer-boundary.cjs; do
+  snapshot-sanitizer-boundary.cjs \
+  snapshot-sanitizer-helper.mjs; do
   boundary_path="nemoclaw/dist/shared/$boundary"
   [[ -f "$boundary_path" && ! -L "$boundary_path" && -s "$boundary_path" ]] \
     || {

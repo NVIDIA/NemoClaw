@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
-  chmodSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -14,8 +13,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  resolveTrustedSnapshotSanitizerPythonPath,
-  setSnapshotSanitizerPythonPathForTest,
+  resolveSnapshotSanitizerHelperPath,
+  setSnapshotSanitizerHelperPathForTest,
 } from "../shared/snapshot-sanitizer-boundary.cjs";
 import { sanitizeMigrationDirectory, sanitizeOpenClawConfigFile } from "./snapshot-sanitizer.js";
 
@@ -28,13 +27,31 @@ function makeRoot(): string {
 }
 
 afterEach(() => {
-  setSnapshotSanitizerPythonPathForTest(undefined);
+  setSnapshotSanitizerHelperPathForTest(undefined);
   vi.unstubAllEnvs();
   for (const root of temporaryRoots.splice(0)) rmSync(root, { force: true, recursive: true });
 });
 
-function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", `'"'"'`)}'`;
+function writeNodeHelperWrapper(beforeForward: readonly string[]): string {
+  const wrapperRoot = makeRoot();
+  const wrapper = path.join(wrapperRoot, "snapshot-helper.mjs");
+  const helper = resolveSnapshotSanitizerHelperPath();
+  writeFileSync(
+    wrapper,
+    [
+      'import { readFileSync, renameSync, symlinkSync } from "node:fs";',
+      'import { spawnSync } from "node:child_process";',
+      ...beforeForward,
+      'const input = readFileSync(0, "utf8");',
+      `const result = spawnSync(process.execPath, [${JSON.stringify(helper)}, process.argv[2]], {`,
+      '  encoding: "utf8", env: {}, input, maxBuffer: 48 * 1024 * 1024,',
+      "});",
+      'if (result.stdout) process.stdout.write(result.stdout);',
+      "process.exit(result.status ?? 1);",
+    ].join("\n"),
+  );
+  setSnapshotSanitizerHelperPathForTest(wrapper);
+  return wrapper;
 }
 
 describe("migration snapshot sanitizer", () => {
@@ -173,11 +190,8 @@ describe("migration snapshot sanitizer", () => {
     () => {
       const root = makeRoot();
       const outside = makeRoot();
-      const wrapperRoot = makeRoot();
       const nested = path.join(root, "nested");
       const movedNested = path.join(root, "nested-before-swap");
-      const marker = path.join(wrapperRoot, "swapped");
-      const wrapper = path.join(wrapperRoot, "python3");
       const outsideConfig = path.join(outside, "config.json");
       mkdirSync(nested);
       writeFileSync(
@@ -186,22 +200,12 @@ describe("migration snapshot sanitizer", () => {
       );
       writeFileSync(outsideConfig, JSON.stringify({ apiKey: "outside-must-not-change" }));
 
-      const python = resolveTrustedSnapshotSanitizerPythonPath();
-      expect(python).toEqual(expect.any(String));
-      writeFileSync(
-        wrapper,
-        [
-          "#!/bin/sh",
-          `if [ \"\${4-}\" = apply ] && [ ! -e ${shellQuote(marker)} ]; then`,
-          `  mv ${shellQuote(nested)} ${shellQuote(movedNested)}`,
-          `  ln -s ${shellQuote(outside)} ${shellQuote(nested)}`,
-          `  : > ${shellQuote(marker)}`,
-          "fi",
-          `exec ${shellQuote(python as string)} \"$@\"`,
-        ].join("\n"),
-      );
-      chmodSync(wrapper, 0o755);
-      setSnapshotSanitizerPythonPathForTest(wrapper);
+      writeNodeHelperWrapper([
+        "if (process.argv[2] === 'apply') {",
+        `  renameSync(${JSON.stringify(nested)}, ${JSON.stringify(movedNested)});`,
+        `  symlinkSync(${JSON.stringify(outside)}, ${JSON.stringify(nested)});`,
+        "}",
+      ]);
 
       expect(() => sanitizeMigrationDirectory(root)).toThrow(
         /Failed to sanitize migration artifacts safely/u,

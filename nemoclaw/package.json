@@ -31,6 +31,7 @@
     "clean": "rm -rf dist/"
   },
   "dependencies": {
+    "@openclaw/fs-safe": "0.8.6",
     "execa": "^9.6.1",
     "json5": "^2.2.3",
     "tar": "7.5.21",

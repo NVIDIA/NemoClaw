@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
-  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -17,8 +16,8 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
-  resolveTrustedSnapshotSanitizerPythonPath,
-  setSnapshotSanitizerPythonPathForTest,
+  resolveSnapshotSanitizerHelperPath,
+  setSnapshotSanitizerHelperPathForTest,
   SnapshotSanitizerPrerequisiteError,
 } from "../../../nemoclaw/dist/shared/snapshot-sanitizer-boundary.cjs";
 import { sanitizeBackupDirectory } from "./sandbox.js";
@@ -33,12 +32,35 @@ function createBackup(): string {
 }
 
 afterEach(() => {
-  setSnapshotSanitizerPythonPathForTest(undefined);
+  setSnapshotSanitizerHelperPathForTest(undefined);
   vi.unstubAllEnvs();
   for (const testDirectory of testDirectories.splice(0)) {
     rmSync(testDirectory, { recursive: true, force: true });
   }
 });
+
+function writeNodeHelperWrapper(beforeForward: readonly string[]): string {
+  const wrapperRoot = mkdtempSync(join(tmpdir(), "nemoclaw-sanitize-helper-"));
+  testDirectories.push(wrapperRoot);
+  const wrapper = join(wrapperRoot, "snapshot-helper.mjs");
+  const helper = resolveSnapshotSanitizerHelperPath();
+  writeFileSync(
+    wrapper,
+    [
+      'import { readFileSync, renameSync, symlinkSync } from "node:fs";',
+      'import { spawnSync } from "node:child_process";',
+      ...beforeForward,
+      'const input = readFileSync(0, "utf8");',
+      `const result = spawnSync(process.execPath, [${JSON.stringify(helper)}, process.argv[2]], {`,
+      '  encoding: "utf8", env: {}, input, maxBuffer: 48 * 1024 * 1024,',
+      "});",
+      'if (result.stdout) process.stdout.write(result.stdout);',
+      "process.exit(result.status ?? 1);",
+    ].join("\n"),
+  );
+  setSnapshotSanitizerHelperPathForTest(wrapper);
+  return wrapper;
+}
 
 describe("rebuild backup credential sanitization", () => {
   it("sanitizes a real env file and restricts its mode", () => {
@@ -312,26 +334,25 @@ describe("rebuild backup credential sanitization", () => {
     expect(existsSync(backupPath)).toBe(false);
   });
 
-  it("permits a rerun after removing a snapshot that the sanitizer could not inspect (#8202)", () => {
+  it("permits a rerun after removing a snapshot without native support (#11174)", () => {
     const backupPath = createBackup();
     writeFileSync(join(backupPath, "state", "config.json"), '{"apiKey":"sk-secret-value"}');
-    setSnapshotSanitizerPythonPathForTest(null);
+    setSnapshotSanitizerHelperPathForTest(null);
 
     expect(() => sanitizeBackupDirectory(backupPath)).toThrow(
-      "python3 is required for snapshot sanitization; install python3 and rerun. Credential sanitization failed; removed the incomplete backup",
+      "Native snapshot sanitization support is unavailable; reinstall NemoClaw with optional dependencies and rerun. Credential sanitization failed; removed the incomplete backup",
     );
     expect(existsSync(backupPath)).toBe(false);
   });
 
-  it("keeps a helper failure distinct from a missing interpreter (#8202)", () => {
+  it("keeps a helper failure distinct from missing native support (#11174)", () => {
     const backupPath = createBackup();
     writeFileSync(join(backupPath, "state", "config.json"), '{"apiKey":"sk-secret-value"}');
-    const wrapperRoot = mkdtempSync(join(tmpdir(), "nemoclaw-failing-python-"));
+    const wrapperRoot = mkdtempSync(join(tmpdir(), "nemoclaw-failing-helper-"));
     testDirectories.push(wrapperRoot);
-    const pythonWrapper = join(wrapperRoot, "python3");
-    writeFileSync(pythonWrapper, "#!/bin/sh\nexit 1\n");
-    chmodSync(pythonWrapper, 0o755);
-    setSnapshotSanitizerPythonPathForTest(pythonWrapper);
+    const helperWrapper = join(wrapperRoot, "snapshot-helper.mjs");
+    writeFileSync(helperWrapper, "process.exit(1);\n");
+    setSnapshotSanitizerHelperPathForTest(helperWrapper);
 
     expect(() => sanitizeBackupDirectory(backupPath)).toThrow(
       "Credential sanitization failed; removed the incomplete backup",
@@ -343,7 +364,7 @@ describe("rebuild backup credential sanitization", () => {
     const backupPath = createBackup();
     const validatedPath = realpathSync(backupPath);
     writeFileSync(join(backupPath, "state", "config.json"), '{"apiKey":"sk-secret-value"}');
-    setSnapshotSanitizerPythonPathForTest(null);
+    setSnapshotSanitizerHelperPathForTest(null);
 
     const cleanupError = new Error("injected cleanup failure");
     let received: unknown;
@@ -359,7 +380,7 @@ describe("rebuild backup credential sanitization", () => {
 
     expect(received).toBeInstanceOf(Error);
     expect((received as Error).message).toBe(
-      `python3 is required for snapshot sanitization; install python3 and rerun. Credential sanitization failed and backup cleanup failed; the incomplete backup may remain at ${validatedPath}`,
+      `Native snapshot sanitization support is unavailable; reinstall NemoClaw with optional dependencies and rerun. Credential sanitization failed and backup cleanup failed; the incomplete backup may remain at ${validatedPath}`,
     );
     expect((received as Error).cause).toBeInstanceOf(AggregateError);
     expect(((received as Error).cause as AggregateError).errors).toEqual([
@@ -404,7 +425,7 @@ describe("rebuild backup credential sanitization", () => {
     const validatedPath = realpathSync(backupPath);
     const unvalidatedPath = `${backupPath}/.`;
     writeFileSync(join(backupPath, "state", "config.json"), '{"apiKey":"sk-secret-value"}');
-    setSnapshotSanitizerPythonPathForTest(null);
+    setSnapshotSanitizerHelperPathForTest(null);
     const removeBackup = vi.fn();
     const backupExists = vi.fn(() => true);
 
@@ -420,7 +441,7 @@ describe("rebuild backup credential sanitization", () => {
 
     expect(thrown).toBeInstanceOf(Error);
     expect((thrown as Error).message).toBe(
-      `python3 is required for snapshot sanitization; install python3 and rerun. Credential sanitization failed and the incomplete backup remains at ${validatedPath}`,
+      `Native snapshot sanitization support is unavailable; reinstall NemoClaw with optional dependencies and rerun. Credential sanitization failed and the incomplete backup remains at ${validatedPath}`,
     );
     expect((thrown as Error).message).not.toContain(unvalidatedPath);
     expect(removeBackup).toHaveBeenCalledWith(unvalidatedPath);
@@ -453,22 +474,17 @@ describe("rebuild backup credential sanitization", () => {
     writeFileSync(join(nestedPath, "config.json"), '{"apiKey":"sk-inside-secret"}');
 
     const outsidePath = mkdtempSync(join(tmpdir(), "nemoclaw-sanitize-outside-"));
-    const wrapperPath = mkdtempSync(join(tmpdir(), "nemoclaw-sanitize-python-"));
-    testDirectories.push(outsidePath, wrapperPath);
+    testDirectories.push(outsidePath);
     const outsideConfigPath = join(outsidePath, "config.json");
     const outsideContents = '{"apiKey":"sk-outside-secret"}';
     writeFileSync(outsideConfigPath, outsideContents);
 
-    const realPython = resolveTrustedSnapshotSanitizerPythonPath();
-    expect(realPython).toEqual(expect.any(String));
-    const shellQuote = (value: string): string => `'${value.replaceAll("'", `'\\''`)}'`;
-    const pythonWrapper = join(wrapperPath, "python3");
-    writeFileSync(
-      pythonWrapper,
-      `#!/bin/sh\nif [ "$4" = "apply" ]; then\n  mv ${shellQuote(nestedPath)} ${shellQuote(movedPath)}\n  ln -s ${shellQuote(outsidePath)} ${shellQuote(nestedPath)}\nfi\nexec ${shellQuote(realPython as string)} "$@"\n`,
-    );
-    chmodSync(pythonWrapper, 0o755);
-    setSnapshotSanitizerPythonPathForTest(pythonWrapper);
+    writeNodeHelperWrapper([
+      "if (process.argv[2] === 'apply') {",
+      `  renameSync(${JSON.stringify(nestedPath)}, ${JSON.stringify(movedPath)});`,
+      `  symlinkSync(${JSON.stringify(outsidePath)}, ${JSON.stringify(nestedPath)});`,
+      "}",
+    ]);
 
     expect(() => sanitizeBackupDirectory(backupPath)).toThrow(
       "Credential sanitization failed; removed the incomplete backup",

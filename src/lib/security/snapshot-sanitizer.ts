@@ -175,7 +175,7 @@ function actionForScannedFile(file: SnapshotScannedFile): SnapshotSanitizationAc
 /**
  * Sanitize every credential-bearing artifact beneath a copied snapshot root.
  *
- * Both discovery and mutation use the shared descriptor-relative helper. A
+ * Both discovery and mutation use the shared native filesystem boundary. A
  * directory or file that changes after inspection therefore fails closed
  * instead of redirecting the sanitizer outside the snapshot root.
  */

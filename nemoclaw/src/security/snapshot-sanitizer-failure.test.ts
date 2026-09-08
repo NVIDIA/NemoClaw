@@ -5,6 +5,7 @@ import {
   chmodSync,
   closeSync,
   fstatSync,
+  linkSync,
   mkdtempSync,
   openSync,
   readFileSync,
@@ -20,18 +21,15 @@ import {
   decodeDescriptorSnapshotContent,
   inspectDescriptorSnapshotRoot,
   installDescriptorSnapshotFile,
-  resolveTrustedSnapshotSanitizerPythonPath,
+  resolveSnapshotSanitizerHelperPath,
   SnapshotSanitizerPrerequisiteError,
   type SnapshotFileIdentity,
   scanDescriptorSnapshot,
-  setSnapshotSanitizerPythonPathForTest,
+  setSnapshotSanitizerHelperPathForTest,
 } from "../shared/snapshot-sanitizer-boundary.cjs";
 import { sanitizeMigrationDirectory, sanitizeOpenClawConfigFile } from "./snapshot-sanitizer.js";
 
 const roots: string[] = [];
-
-const LARGE_INSTALL_CONTENT = "x".repeat(15 * 1024 * 1024);
-const SHELL_WAIT_ATTEMPTS = 10_000;
 
 function makeRoot(): string {
   const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-migration-sanitizer-failure-"));
@@ -39,38 +37,37 @@ function makeRoot(): string {
   return root;
 }
 
-function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", `'"'"'`)}'`;
-}
-
-function boundedShellWait(condition: string, pauseCommand = "sleep 0.001"): string[] {
-  return [
-    "    wait_attempt=0",
-    `    while ${condition}; do`,
-    "      wait_attempt=$((wait_attempt + 1))",
-    `      [ "$wait_attempt" -lt ${String(SHELL_WAIT_ATTEMPTS)} ] || exit 1`,
-    `      ${pauseCommand}`,
-    "    done",
-  ];
-}
-
-function writePythonWrapper(lines: readonly string[]): string {
+function writeRawNodeHelper(lines: readonly string[]): string {
   const wrapperRoot = makeRoot();
-  const wrapper = path.join(wrapperRoot, "python3");
-  writeFileSync(wrapper, ["#!/bin/sh", ...lines].join("\n"));
-  chmodSync(wrapper, 0o755);
-  setSnapshotSanitizerPythonPathForTest(wrapper);
+  const wrapper = path.join(wrapperRoot, "snapshot-helper.mjs");
+  writeFileSync(wrapper, lines.join("\n"));
+  setSnapshotSanitizerHelperPathForTest(wrapper);
   return wrapper;
 }
 
-function requireTrustedPython(): string {
-  const python = resolveTrustedSnapshotSanitizerPythonPath();
-  expect(python).toEqual(expect.any(String));
-  return python as string;
+function writeNodeHelperWrapper(beforeForward: readonly string[]): string {
+  const helper = resolveSnapshotSanitizerHelperPath();
+  return writeRawNodeHelper([
+    'import { readFileSync, renameSync, symlinkSync } from "node:fs";',
+    'import { spawnSync } from "node:child_process";',
+    ...beforeForward,
+    'const input = readFileSync(0, "utf8");',
+    `const result = spawnSync(process.execPath, [${JSON.stringify(helper)}, process.argv[2]], {`,
+    '  encoding: "utf8", env: {}, input, maxBuffer: 48 * 1024 * 1024,',
+    "});",
+    'if (result.stdout) process.stdout.write(result.stdout);',
+    "process.exit(result.status ?? 1);",
+  ]);
+}
+
+function writeStaticHelperResult(result: unknown): string {
+  return writeRawNodeHelper([
+    `process.stdout.write(${JSON.stringify(JSON.stringify({ ok: true, result }))});`,
+  ]);
 }
 
 afterEach(() => {
-  setSnapshotSanitizerPythonPathForTest(undefined);
+  setSnapshotSanitizerHelperPathForTest(undefined);
   vi.unstubAllEnvs();
   for (const root of roots.splice(0)) rmSync(root, { force: true, recursive: true });
 });
@@ -86,7 +83,6 @@ describe("migration snapshot sanitizer fallbacks", () => {
     ctimeNs: "4",
   };
   const malformedDescriptorOutputs = [
-    { label: "non-JSON output", output: "not-json" },
     {
       label: "array directories",
       output: JSON.stringify({ root: identity, directories: [], files: [] }),
@@ -129,11 +125,11 @@ describe("migration snapshot sanitizer fallbacks", () => {
     },
   ];
 
-  it("reports when the descriptor helper has no trusted interpreter (#8202)", () => {
+  it("reports when native snapshot support is unavailable (#11174)", () => {
     const configPath = path.join(makeRoot(), "openclaw.json");
     const original = JSON.stringify({ apiKey: "sk-secret-value" });
     writeFileSync(configPath, original);
-    setSnapshotSanitizerPythonPathForTest(null);
+    setSnapshotSanitizerHelperPathForTest(null);
 
     expect(() => sanitizeOpenClawConfigFile(configPath)).toThrow(
       SnapshotSanitizerPrerequisiteError,
@@ -141,9 +137,9 @@ describe("migration snapshot sanitizer fallbacks", () => {
     expect(readFileSync(configPath, "utf-8")).toBe(original);
   });
 
-  it("reports the validated root when the apply helper has no trusted interpreter (#8202)", () => {
+  it("reports the validated root when native snapshot support is unavailable (#11174)", () => {
     const root = { canonicalPath: makeRoot(), identity };
-    setSnapshotSanitizerPythonPathForTest(null);
+    setSnapshotSanitizerHelperPathForTest(null);
 
     expect(() =>
       applyDescriptorSnapshotActions(root, { root: identity, directories: {}, files: [] }, [
@@ -155,11 +151,11 @@ describe("migration snapshot sanitizer fallbacks", () => {
   it("fails closed when the descriptor install helper is unavailable", () => {
     const root = inspectDescriptorSnapshotRoot(makeRoot());
     expect(root).not.toBeNull();
-    setSnapshotSanitizerPythonPathForTest(null);
+    setSnapshotSanitizerHelperPathForTest(null);
 
-    expect(
+    expect(() =>
       installDescriptorSnapshotFile(root as NonNullable<typeof root>, "openclaw.json", "{}"),
-    ).toBe(false);
+    ).toThrow(SnapshotSanitizerPrerequisiteError);
   });
 
   it("rejects nested install targets before creating any entry", () => {
@@ -186,12 +182,12 @@ describe("migration snapshot sanitizer fallbacks", () => {
         const originalMode = fstatSync(outsideConfigFd).mode & 0o777;
         const root = inspectDescriptorSnapshotRoot(rootPath);
         expect(root).not.toBeNull();
-        const python = requireTrustedPython();
-        writePythonWrapper([
-          `if [ "\${4-}" = install ]; then ln -s ${shellQuote(outsideConfig)} ${shellQuote(
+        writeNodeHelperWrapper([
+          "if (process.argv[2] === 'install') {",
+          `  symlinkSync(${JSON.stringify(outsideConfig)}, ${JSON.stringify(
             path.join(rootPath, "openclaw.json"),
-          )}; fi`,
-          `exec ${shellQuote(python)} "$@"`,
+          )});`,
+          "}",
         ]);
 
         expect(
@@ -210,82 +206,53 @@ describe("migration snapshot sanitizer fallbacks", () => {
   );
 
   it.runIf(process.platform !== "win32")(
-    "rejects a persistent hard link created while sanitized config is installed",
+    "rejects mutation of a scanned hard-linked file",
     () => {
       const rootPath = makeRoot();
-      const targetPath = path.join(rootPath, "openclaw.json");
-      const aliasPath = path.join(rootPath, "openclaw-alias.json");
-      const root = inspectDescriptorSnapshotRoot(rootPath);
-      expect(root).not.toBeNull();
-      const python = requireTrustedPython();
-      writePythonWrapper([
-        `if [ "\${4-}" = install ]; then`,
-        "  (",
-        ...boundedShellWait(`[ ! -s ${shellQuote(targetPath)} ]`),
-        `    ln ${shellQuote(targetPath)} ${shellQuote(aliasPath)}`,
-        "  ) &",
-        "fi",
-        `exec ${shellQuote(python)} "$@"`,
-      ]);
+      const targetPath = path.join(rootPath, "auth.json");
+      const aliasPath = path.join(makeRoot(), "openclaw-alias.json");
+      writeFileSync(targetPath, "original");
+      const root = inspectDescriptorSnapshotRoot(rootPath)!;
+      const scan = scanDescriptorSnapshot(root, new Set(["auth.json"]))!;
+      const config = scan.files.find((file) => file.path === "auth.json")!;
+      linkSync(targetPath, aliasPath);
 
       expect(
-        installDescriptorSnapshotFile(
-          root as NonNullable<typeof root>,
-          "openclaw.json",
-          LARGE_INSTALL_CONTENT,
-        ),
+        applyDescriptorSnapshotActions(root, scan, [
+          {
+            kind: "remove",
+            path: config.path,
+            metadata: config.metadata,
+          },
+        ]),
       ).toBe(false);
-      expect(() => statSync(targetPath)).toThrow();
-      expect(statSync(aliasPath).isFile()).toBe(true);
+      expect(readFileSync(targetPath, "utf8")).toBe("original");
+      expect(readFileSync(aliasPath, "utf8")).toBe("original");
     },
   );
 
   it.runIf(process.platform !== "win32")(
-    "rejects a transient hard-link mutation while sanitized config is installed",
+    "rejects a hard-linked readable config during scanning",
     () => {
       const rootPath = makeRoot();
-      const targetPath = path.join(rootPath, "openclaw.json");
-      const aliasPath = path.join(rootPath, "openclaw-alias.json");
-      const root = inspectDescriptorSnapshotRoot(rootPath);
-      expect(root).not.toBeNull();
-      const python = requireTrustedPython();
-      writePythonWrapper([
-        `if [ "\${4-}" = install ]; then`,
-        "  (",
-        ...boundedShellWait(`[ ! -s ${shellQuote(targetPath)} ]`),
-        `    ln ${shellQuote(targetPath)} ${shellQuote(aliasPath)}`,
-        ...boundedShellWait(
-          `[ "$(wc -c < ${shellQuote(aliasPath)})" -lt ${String(LARGE_INSTALL_CONTENT.length)} ]`,
-          "sleep 0.001",
-        ),
-        `    printf M | dd of=${shellQuote(aliasPath)} bs=1 count=1 conv=notrunc 2>/dev/null`,
-        `    rm ${shellQuote(aliasPath)}`,
-        "  ) &",
-        "fi",
-        `exec ${shellQuote(python)} "$@"`,
-      ]);
+      const targetPath = path.join(rootPath, "config.json");
+      writeFileSync(targetPath, "{}");
+      linkSync(targetPath, path.join(rootPath, "config-alias.json"));
+      const root = inspectDescriptorSnapshotRoot(rootPath)!;
 
-      expect(
-        installDescriptorSnapshotFile(
-          root as NonNullable<typeof root>,
-          "openclaw.json",
-          LARGE_INSTALL_CONTENT,
-        ),
-      ).toBe(false);
-      expect(() => statSync(targetPath)).toThrow();
-      expect(() => statSync(aliasPath)).toThrow();
+      expect(scanDescriptorSnapshot(root, new Set())).toBeNull();
     },
   );
 
   it("accepts only absolute helper substitutions under Vitest", () => {
-    expect(() => setSnapshotSanitizerPythonPathForTest("python3")).toThrow(
-      /test Python path must be absolute/u,
+    expect(() => setSnapshotSanitizerHelperPathForTest("snapshot-helper.mjs")).toThrow(
+      /test helper path must be absolute/u,
     );
 
     const originalVitest = process.env.VITEST;
     try {
       process.env.VITEST = "false";
-      expect(() => setSnapshotSanitizerPythonPathForTest(null)).toThrow(
+      expect(() => setSnapshotSanitizerHelperPathForTest(null)).toThrow(
         /only available under Vitest/u,
       );
     } finally {
@@ -300,15 +267,13 @@ describe("migration snapshot sanitizer fallbacks", () => {
       const configPath = path.join(root, "openclaw.json");
       const attackerRoot = makeRoot();
       const stolen = path.join(attackerRoot, "stolen-config");
-      const wrapper = path.join(attackerRoot, "python3");
+      const wrapper = path.join(attackerRoot, "node");
       writeFileSync(configPath, JSON.stringify({ apiKey: "sk-secret-value" }));
       writeFileSync(
         wrapper,
         [
           "#!/bin/sh",
-          'if [ "${4-}" = scan-file ]; then',
-          `  cp "$5/$7" ${shellQuote(stolen)}`,
-          "fi",
+          `cp ${JSON.stringify(configPath)} ${JSON.stringify(stolen)}`,
           "exit 1",
         ].join("\n"),
       );
@@ -325,17 +290,23 @@ describe("migration snapshot sanitizer fallbacks", () => {
     const configPath = path.join(makeRoot(), "openclaw.json");
     const original = JSON.stringify({ apiKey: "sk-secret-value" });
     writeFileSync(configPath, original);
-    writePythonWrapper(["printf '%s\\n' '{}'", "exit 0"]);
+    writeStaticHelperResult({});
 
     expect(sanitizeOpenClawConfigFile(configPath)).toBe(false);
     expect(readFileSync(configPath, "utf-8")).toBe(original);
+  });
+
+  it("rejects non-JSON output from the descriptor helper", () => {
+    const root = { canonicalPath: makeRoot(), identity };
+    writeRawNodeHelper(['process.stdout.write("not-json");']);
+    expect(scanDescriptorSnapshot(root, new Set())).toBeNull();
   });
 
   it.each(malformedDescriptorOutputs)(
     "rejects a malformed descriptor with $label",
     ({ output }) => {
       const root = { canonicalPath: makeRoot(), identity };
-      writePythonWrapper([`printf '%s\\n' ${shellQuote(output)}`]);
+      writeStaticHelperResult(JSON.parse(output));
       expect(scanDescriptorSnapshot(root, new Set())).toBeNull();
     },
   );
@@ -413,10 +384,8 @@ describe("migration snapshot sanitizer fallbacks", () => {
     const configPath = path.join(makeRoot(), "openclaw.json");
     const original = JSON.stringify({ apiKey: "sk-secret-value" });
     writeFileSync(configPath, original);
-    const python = requireTrustedPython();
-    writePythonWrapper([
-      'if [ "${4-}" = apply ]; then exit 1; fi',
-      `exec ${shellQuote(python)} "$@"`,
+    writeNodeHelperWrapper([
+      "if (process.argv[2] === 'apply') process.exit(1);",
     ]);
 
     expect(sanitizeOpenClawConfigFile(configPath)).toBe(false);
@@ -426,7 +395,7 @@ describe("migration snapshot sanitizer fallbacks", () => {
   it("aborts optional-artifact sanitization when inspection fails", () => {
     const root = makeRoot();
     writeFileSync(path.join(root, "config.json"), JSON.stringify({ token: "raw" }));
-    writePythonWrapper(["exit 1"]);
+    writeRawNodeHelper(["process.exit(1);"]);
 
     expect(() => sanitizeMigrationDirectory(root)).toThrow(
       /Failed to inspect migration artifacts safely/u,
@@ -450,10 +419,10 @@ describe("migration snapshot sanitizer fallbacks", () => {
       const movedRoot = `${root}-moved`;
       roots.push(movedRoot);
       writeFileSync(path.join(root, "config.json"), JSON.stringify({ token: "raw" }));
-      const python = requireTrustedPython();
-      writePythonWrapper([
-        `if [ "\${4-}" = scan-tree ]; then mv ${shellQuote(root)} ${shellQuote(movedRoot)}; fi`,
-        `exec ${shellQuote(python)} "$@"`,
+      writeNodeHelperWrapper([
+        "if (process.argv[2] === 'scan-tree') {",
+        `  renameSync(${JSON.stringify(root)}, ${JSON.stringify(movedRoot)});`,
+        "}",
       ]);
 
       expect(() => sanitizeMigrationDirectory(root)).toThrow(
