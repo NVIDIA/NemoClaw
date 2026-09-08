@@ -29,7 +29,7 @@ import { recordRebuildRecoveryBackup } from "./rebuild-recreate-journal";
 export { clearRebuildPolicyHandoff, writeRebuildPolicyHandoff } from "../../state/sandbox";
 
 export type RebuildBackupManifest = Exclude<
-  ReturnType<typeof backupSandboxStateForRebuild>,
+  Awaited<ReturnType<typeof backupSandboxStateForRebuild>>,
   undefined
 >;
 
@@ -109,10 +109,10 @@ function writeRebuildPolicySource(policy: string, policySourcePath?: string): st
   return resolvedPolicySourcePath;
 }
 
-export function runRebuildBackupPhase(
+export async function runRebuildBackupPhase(
   input: RebuildBackupPhaseInput,
   backupStateForRebuild: typeof backupSandboxStateForRebuild = backupSandboxStateForRebuild,
-): RebuildBackupPhaseResult | null {
+): Promise<RebuildBackupPhaseResult | null> {
   const customOpenClaw =
     Boolean(input.sandboxEntry.fromDockerfile) &&
     (!input.sandboxEntry.agent || input.sandboxEntry.agent === "openclaw");
@@ -150,13 +150,13 @@ export function runRebuildBackupPhase(
         );
   let backupManifest =
     preparedRecoveryManifest ??
-    backupStateForRebuild(
+    (await backupStateForRebuild(
       input.sandboxName,
       input.sandboxEntry,
       input.staleRecovery,
       input.log,
       input.bail,
-    );
+    ));
   if (backupManifest === undefined) return null;
   if (
     backupManifest &&

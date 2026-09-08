@@ -52,6 +52,11 @@ import {
   usesLegacyRuntimeLifecycleCompatibility,
 } from "./gateway-state";
 import * as snapshotBackup from "./snapshot/backup-authority";
+import {
+  backupStartedSandboxState,
+  returnSandboxContainerToStopped,
+  startStoppedSandboxContainerForBackup,
+} from "./stopped-sandbox-backup";
 
 export { removeStaleRebuildDockerOrphan };
 export { replaceOpenShellRuntimeSelectionEnv, snapshotOpenShellEnv };
@@ -475,18 +480,18 @@ export function pinRebuildAgentBaseImageForRecreate(
   };
 }
 
-export function backupSandboxStateForRebuild(
+export async function backupSandboxStateForRebuild(
   sandboxName: string,
   sb: RebuildSandboxEntry,
   staleRecovery: boolean,
   log: (msg: string) => void,
   bail: (msg: string, code?: number) => never,
-): sandboxState.RebuildManifest | null | undefined {
+): Promise<sandboxState.RebuildManifest | null | undefined> {
   if (staleRecovery) return null;
 
   console.log("  Backing up sandbox state...");
   log(`Agent type: ${sb.agent || "openclaw"}, stateDirs from manifest`);
-  const backup = snapshotBackup.backupSandboxStateWithManagedAuthority(
+  let backup = snapshotBackup.backupSandboxStateWithManagedAuthority(
     sandboxName,
     {},
     {
@@ -496,6 +501,50 @@ export function backupSandboxStateForRebuild(
   log(
     `Backup result: success=${backup.success}, backed=${backup.backedUpDirs.join(",")}; files=${backup.backedUpFiles.join(",")}, failed=${backup.failedDirs.join(",")}; failedFiles=${backup.failedFiles.join(",")}`,
   );
+  // A backup that fails because the sandbox transport is unreachable (e.g. the
+  // container was killed out-of-band) is recoverable the same way `backup-all`
+  // already recovers a stopped container (#6500): start it, retry, then return
+  // it to stopped. Any other failure (permission denied, absent state, audit
+  // rejection) is not a transport problem and must not attempt this recovery.
+  if (!backup.success && backup.unreachable) {
+    const started = startStoppedSandboxContainerForBackup(sandboxName);
+    if (started) {
+      console.log("  Sandbox container is stopped; starting it to back up state before rebuild...");
+      log(`Started stopped container '${started.containerName}' to retry backup`);
+      let returnedToStopped = false;
+      try {
+        backup = await backupStartedSandboxState(sandboxName);
+        log(
+          `Retry backup result: success=${backup.success}, backed=${backup.backedUpDirs.join(",")}; files=${backup.backedUpFiles.join(",")}, failed=${backup.failedDirs.join(",")}; failedFiles=${backup.failedFiles.join(",")}`,
+        );
+      } finally {
+        returnedToStopped = returnSandboxContainerToStopped(started);
+        if (!returnedToStopped) {
+          log(`Could not return '${sandboxName}' container to its stopped state after backup retry`);
+        }
+      }
+      // A container this recovery started must be reported whenever it cannot
+      // be returned to stopped, whether or not the retried backup succeeded.
+      // The sandbox was stopped before rebuild started, so leaving it running
+      // is an unrequested lifecycle change; reporting it only on the success
+      // path would let the ordinary backup-failure diagnostic imply the
+      // original stopped state was restored (#11137 review).
+      if (!returnedToStopped) {
+        console.error(
+          `  Started container '${started.containerName}' to back up sandbox state before rebuild,`,
+        );
+        console.error("  but could not return it to its stopped state.");
+        if (!backup.success) {
+          console.error("  The retried backup also failed, so no sandbox state was preserved.");
+        }
+        console.error(
+          `  The sandbox was stopped before rebuild started and container '${started.containerName}' may still be running.`,
+        );
+        console.error("  Inspect and stop that container manually, then retry rebuild.");
+        bail("Could not return the sandbox's recovered container to its stopped state.");
+      }
+    }
+  }
   if (!backup.success) {
     console.error("  Failed to back up sandbox state.");
     const allStateDirsFailed = backup.backedUpDirs.length === 0 && backup.failedDirs.length > 0;
