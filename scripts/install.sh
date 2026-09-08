@@ -329,8 +329,9 @@ apply_persisted_automatic_gateway_port() {
     NEMOCLAW_GATEWAY_PORT="$persisted_port"
     export NEMOCLAW_GATEWAY_PORT
     return 0
+  else
+    persisted_status=$?
   fi
-  persisted_status=$?
   case "$persisted_status" in
     1) return 0 ;;
     3) error "Refusing symbolic link in NemoClaw state path while resolving the automatic gateway port." ;;
