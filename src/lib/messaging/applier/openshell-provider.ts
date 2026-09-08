@@ -108,7 +108,7 @@ export async function applyCredentialsAtOpenShell(
       target,
       providerName: definition.providerName,
     });
-    const state = classifyProviderDefinition(observed, definition);
+    const state = classifyProviderDefinition(observed, definition, true);
     const credentialAvailability = definition.credentials.map(({ value }) => Boolean(value));
     const hasAnyCredential = credentialAvailability.some(Boolean);
     const hasEveryCredential = credentialAvailability.every(Boolean);
@@ -649,6 +649,7 @@ function toMissingEntry(
 function classifyProviderDefinition(
   result: OpenShellProviderResult<OpenShellProviderMetadata>,
   definition: MessagingCredentialProviderEphemeralInput,
+  allowMissingPresentCredentials = false,
 ): ProviderBindingState {
   if (!result.ok) {
     return result.error.kind === "command" && result.error.reason === "not_found"
@@ -658,7 +659,10 @@ function classifyProviderDefinition(
   const declaredCredentialKeys = new Set(definition.credentials.map(({ name }) => name));
   const requiredCredentialKeys = new Set(
     definition.credentials
-      .filter(({ value }, index) => index === 0 || Boolean(value))
+      .filter(
+        ({ value }, index) =>
+          index === 0 || (!allowMissingPresentCredentials && Boolean(value)),
+      )
       .map(({ name }) => name),
   );
   const actualCredentialKeys = new Set(result.value.credentialKeys);

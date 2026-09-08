@@ -282,6 +282,38 @@ describe("messaging OpenShell provider application", () => {
     expect(adapter.createProvider).not.toHaveBeenCalled();
     expect(adapter.updateProvider).not.toHaveBeenCalled();
     expect(adapter.deleteProvider).not.toHaveBeenCalled();
+
+    const expandedCredentials = expected.credentials.map((credential) =>
+      credential.name === "TELEGRAM_BOT_TOKEN_AGENT_MISSING"
+        ? { ...credential, value: "telegram-agent-missing-secret" }
+        : credential,
+    );
+    vi.mocked(adapter.getProvider)
+      .mockReset()
+      .mockResolvedValueOnce({
+        ok: true,
+        value: metadata({ ...expected, credentials: createdCredentials }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        value: metadata({ ...expected, credentials: expandedCredentials }),
+      });
+
+    await applyCredentialsAtOpenShell(plan, {
+      providerAdapter: adapter,
+      target,
+      definitions: [{ ...expected, credentials: expandedCredentials }],
+      requireCompleteBindings: true,
+    });
+
+    expect(adapter.updateProvider).toHaveBeenCalledWith({
+      target,
+      providerName: expected.providerName,
+      credentials: expandedCredentials,
+      config: [],
+    });
+    expect(adapter.createProvider).not.toHaveBeenCalled();
+    expect(adapter.deleteProvider).not.toHaveBeenCalled();
   });
 
   it("rejects provider creation when only an optional credential is present (#11190)", async () => {
