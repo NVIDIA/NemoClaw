@@ -49,17 +49,39 @@ class ExclusiveFlagCommand extends NemoClawCommand {
   static id = "exclusive-flag-test";
   static enableJsonFlag = true;
   static flags = { text: Flags.boolean({ exclusive: ["json"] }) };
-  static emitted: unknown[] = [];
 
   public async run(): Promise<unknown> {
     await this.parse(ExclusiveFlagCommand);
     return { unreachable: true };
   }
+}
 
-  /** Capture what reaches stdout without writing to the test runner's own stream. */
-  public override logJson(value: unknown): void {
-    ExclusiveFlagCommand.emitted.push(value);
-  }
+/**
+ * Run a rejected `--json` invocation through the real serializer and return
+ * everything it wrote to each stream. The production `logJson` writes with
+ * `console.log`, so intercepting that is observing stdout, not replacing it.
+ */
+async function runRejectedJsonInvocation(argv: string[]): Promise<{
+  stdout: string;
+  stderr: string;
+  exitCode: number | string | undefined;
+}> {
+  const out: string[] = [];
+  const err: string[] = [];
+  vi.spyOn(console, "log").mockImplementation((...parts: unknown[]) => {
+    out.push(parts.map(String).join(" "));
+  });
+  vi.spyOn(console, "error").mockImplementation((...parts: unknown[]) => {
+    err.push(parts.map(String).join(" "));
+  });
+  // oclif sets `process.exitCode` only when it is still unset, so start from
+  // a clean slate; otherwise a value left by an earlier test would pass here.
+  const priorExitCode = process.exitCode;
+  process.exitCode = undefined;
+  await ExclusiveFlagCommand.run(argv, process.cwd());
+  const exitCode = process.exitCode;
+  process.exitCode = priorExitCode;
+  return { stdout: out.join("\n"), stderr: err.join("\n"), exitCode };
 }
 
 describe("a command that fails under --json (#11150)", () => {
@@ -115,28 +137,23 @@ describe("a command that fails under --json (#11150)", () => {
     );
   });
 
-  it("prints the diagnostic on stderr and a small envelope on stdout", async () => {
-    const stderr = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    ExclusiveFlagCommand.emitted = [];
-    // oclif sets `process.exitCode` only when it is still unset, so start from
-    // a clean slate; otherwise a value left by an earlier test would pass here.
-    const priorExitCode = process.exitCode;
-    process.exitCode = undefined;
+  it("prints the diagnostic on stderr and exactly one small JSON document on stdout", async () => {
+    const { stdout, stderr, exitCode } = await runRejectedJsonInvocation(["--text", "--json"]);
 
-    await ExclusiveFlagCommand.run(["--text", "--json"], process.cwd());
-    const emitted = ExclusiveFlagCommand.emitted;
-    const exitCode = process.exitCode;
-    process.exitCode = priorExitCode;
-
+    // Parsing the whole stream is the assertion: a second document, a raw
+    // error dump, or any stray text after the envelope makes this throw.
+    const document: unknown = JSON.parse(stdout);
+    expect(document).toEqual({
+      error: {
+        message: expect.stringContaining("--json and --text are mutually exclusive"),
+        exit: 2,
+      },
+    });
+    expect(stdout.length).toBeLessThan(1_000);
+    expect(stderr).toContain("--json and --text are mutually exclusive");
     // The streams can both be right while the process still reports success;
     // a caller scripting on the exit status would then see a clean run.
     expect(exitCode).toBeGreaterThan(0);
-
-    expect(stderr).toHaveBeenCalledWith(
-      expect.stringContaining("--json and --text are mutually exclusive"),
-    );
-    expect(JSON.stringify(emitted[0])).toContain("--json and --text are mutually exclusive");
-    expect(JSON.stringify(emitted[0]).length).toBeLessThan(1_000);
   });
 
   it("names the colliding flags ahead of the parser's own text", async () => {
@@ -180,13 +197,10 @@ describe("a command that fails under --json (#11150)", () => {
   });
 
   it("satisfies the report's acceptance grep on both streams", async () => {
-    const stderr = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    ExclusiveFlagCommand.emitted = [];
-
-    await ExclusiveFlagCommand.run(["--text", "--json"], process.cwd());
+    const { stdout, stderr } = await runRejectedJsonInvocation(["--text", "--json"]);
 
     const acceptance = /mutually exclusive|cannot be used together/i;
-    expect(stderr.mock.calls.flat().join("\n")).toMatch(acceptance);
-    expect(JSON.stringify(ExclusiveFlagCommand.emitted[0])).toMatch(acceptance);
+    expect(stderr).toMatch(acceptance);
+    expect(stdout).toMatch(acceptance);
   });
 });
