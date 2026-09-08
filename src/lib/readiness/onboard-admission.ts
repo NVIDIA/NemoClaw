@@ -2,6 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ReadinessCapability, ReadinessFinding, SystemReadinessReport } from "./types";
+import { isN1xOnboardingProviderKey } from "../onboard/inference-providers/provider-selection-keys";
+
+/** Return whether installer state records an accepted Deferred N1x onboarding path. */
+export function hasExplicitDeferredN1xOnboardingIntent(
+  env: Readonly<Record<string, string | undefined>>,
+): boolean {
+  const provider = String(env.NEMOCLAW_PROVIDER ?? "").trim();
+  if (provider) return isN1xOnboardingProviderKey(provider);
+  return env.NEMOCLAW_NO_EXPRESS === "1";
+}
 
 export const ONBOARD_READINESS_ADMISSION_REASON_IDS = {
   blockingFindings: "onboard.readiness.blocking_findings",
@@ -53,7 +63,7 @@ export interface OnboardReadinessAdmissionOptions {
   allowStorageRemediation: boolean;
   /** The explicit portable profile may prepare its rootless runtime before revalidation. */
   allowPortableHostPreparation?: boolean;
-  /** Explicit managed-vLLM intent may exercise the Deferred N1x validation path. */
+  /** Explicit accepted onboarding intent may exercise the Deferred N1x validation path. */
   allowDeferredN1xManagedVllm?: boolean;
 }
 

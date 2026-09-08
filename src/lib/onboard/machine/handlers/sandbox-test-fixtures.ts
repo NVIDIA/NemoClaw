@@ -120,7 +120,7 @@ export function bindJournaledRecreate(
       const transaction = updateSession((current) => current).checkpoint?.sandboxRecreate;
       expect(transaction).toBeDefined();
       const ownedTransaction = transaction as CheckpointSandboxRecreateTransaction;
-      const createIntent = args.at(-1) as
+      const createIntent = args.at(-2) as
         | { recreate?: boolean; recreateTransaction?: { id?: string } }
         | undefined;
       expect(createIntent?.recreate).toBe(true);
