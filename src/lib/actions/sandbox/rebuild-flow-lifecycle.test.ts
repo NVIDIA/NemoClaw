@@ -287,10 +287,9 @@ describe("rebuildSandbox flow: lifecycle", () => {
   it("reports failure and retains stop intent when the rebuilt sandbox cannot clear it", async () => {
     const harness = createRebuildFlowHarness({ sandboxEntry: { stopped: true } });
     const updateSandbox = harness.registryUpdateSpy.getMockImplementation();
-    harness.registryUpdateSpy.mockImplementation((name, updates) => {
-      if (updates?.stopped === false) return false;
-      return updateSandbox?.(name, updates) ?? true;
-    });
+    harness.registryUpdateSpy.mockImplementation((name, updates) =>
+      updates?.stopped === false ? false : (updateSandbox?.(name, updates) ?? true),
+    );
 
     await expect(
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
