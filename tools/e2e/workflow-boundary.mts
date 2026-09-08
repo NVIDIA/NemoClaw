@@ -3661,6 +3661,21 @@ export function validateNativePodmanSetupAction(
   if (!run.includes('printf \'PATH=%s:%s\\n\' "$toolchain_install_root/bin" "$PATH"')) {
     errors.push("native Podman setup must preserve the reviewed executable authority on PATH");
   }
+  if (
+    !run.includes('cleanup_state_path="$toolchain_install_root/cleanup.json"') ||
+    !run.includes("podman_directory_preexisting") ||
+    !run.includes("loopback_address_added") ||
+    !run.includes("user_runtime_active") ||
+    !run.includes("user_manager_active") ||
+    !run.includes("dbus_active") ||
+    !run.includes("select_subordinate_range") ||
+    !run.includes("subuidRange") ||
+    !run.includes("subgidRange") ||
+    !run.includes('sudo tee "$cleanup_state_path"') ||
+    run.indexOf('sudo tee "$cleanup_state_path"') > run.indexOf("/usr/bin/apt-get update")
+  ) {
+    errors.push("native Podman setup must record cleanup authority before runner mutation");
+  }
   const isolationRun = stringValue(isolate?.run);
   if (
     isolate?.if !== "${{ inputs.enabled == 'true' }}" ||
@@ -3722,6 +3737,28 @@ export function validateNativePodmanRestoreAction(
   ) {
     errors.push(
       "native Podman restore action must verify and restore its root-owned Docker runtime state",
+    );
+  }
+  if (
+    !run.includes("cleanup_native_podman_runtime()") ||
+    !run.includes(
+      '/usr/bin/systemctl --user stop "$service_name.socket" "$service_name.service"',
+    ) ||
+    !run.includes('remove_user_file "$service_unit"') ||
+    !run.includes('remove_user_file "$socket_unit"') ||
+    !run.includes('sudo -n rm -rf --one-file-system -- "$storage_directory"') ||
+    !run.includes('rm -f -- "$socket_path"') ||
+    !run.includes("apparmor_parser -R") ||
+    !run.includes('helper_path="$helper_install_root/$helper"') ||
+    !run.includes("remove_subordinate_range subuidRange /etc/subuid --del-subuids") ||
+    !run.includes("remove_subordinate_range subgidRange /etc/subgid --del-subgids") ||
+    !run.includes("ip address del 169.254.2.2/32 dev lo") ||
+    !run.includes('sudo -n rm -f -- "$cleanup_state_path"') ||
+    run.indexOf("(set -e; cleanup_native_podman_runtime)") >
+      run.indexOf("restore_unit_mask docker.service dockerService")
+  ) {
+    errors.push(
+      "native Podman restore action must remove recorded runner resources before restoring Docker",
     );
   }
   return errors;
