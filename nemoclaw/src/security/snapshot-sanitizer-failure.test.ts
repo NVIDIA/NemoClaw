@@ -53,7 +53,9 @@ function writeNodeHelperWrapper(beforeForward: readonly string[]): string {
     'import { spawnSync } from "node:child_process";',
     ...beforeForward,
     'const input = readFileSync(0, "utf8");',
-    `const result = spawnSync(process.execPath, [${JSON.stringify(helper)}, process.argv[2]], {`,
+    `const helper = ${JSON.stringify(helper)};`,
+    'const helperArguments = helper.endsWith(".mts") ? ["--import", "tsx", helper, process.argv[2]] : [helper, process.argv[2]];',
+    "const result = spawnSync(process.execPath, helperArguments, {",
     '  encoding: "utf8", env: {}, input, maxBuffer: 48 * 1024 * 1024,',
     "});",
     "if (result.stdout) process.stdout.write(result.stdout);",
@@ -425,7 +427,7 @@ describe("migration snapshot sanitizer fallbacks", () => {
     writeFileSync(configPath, original);
     writeNodeHelperWrapper(["if (process.argv[2] === 'apply') process.exit(1);"]);
 
-    expect(sanitizeOpenClawConfigFile(configPath)).toBe(false);
+    expect(() => sanitizeOpenClawConfigFile(configPath)).toThrow(/helper-process-failed/u);
     expect(readFileSync(configPath, "utf-8")).toBe(original);
   });
 
@@ -434,9 +436,7 @@ describe("migration snapshot sanitizer fallbacks", () => {
     writeFileSync(path.join(root, "config.json"), JSON.stringify({ token: "raw" }));
     writeRawNodeHelper(["process.exit(1);"]);
 
-    expect(() => sanitizeMigrationDirectory(root)).toThrow(
-      /Failed to inspect migration artifacts safely/u,
-    );
+    expect(() => sanitizeMigrationDirectory(root)).toThrow(/helper-process-failed/u);
   });
 
   it("removes optional artifacts that are not valid UTF-8", () => {

@@ -1192,6 +1192,19 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22.19.0
+      - name: Validate the candidate snapshot sanitizer on the native architecture
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse --verify HEAD)" == "$SOURCE_REVISION" ]] || {
+            echo "ERROR: snapshot sanitizer checkout does not match the exact PR head" >&2
+            exit 1
+          }
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run build:cli
+          npx --no-install vitest run \
+            --project package-contract \
+            test/package-contract/snapshot-sanitizer-boundary.test.ts
       # Pi has no published base alias yet, so the candidate lane builds its own
       # base on the target architecture. The activation change adds the shared
       # published-base contract with the rest of the release cohort.

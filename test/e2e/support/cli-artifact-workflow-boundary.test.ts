@@ -121,6 +121,7 @@ function writeCliArchive(
     "sandbox-name.cjs",
     "snapshot-sanitizer-boundary.cjs",
     "snapshot-sanitizer-helper.mjs",
+    "snapshot-sanitizer-protocol.cjs",
   ]) {
     fs.writeFileSync(path.join(shared, boundary), "module.exports = {};\n");
   }
@@ -167,7 +168,11 @@ function writeFunctionalSnapshotSanitizerArchive(context: ArchiveFixtureContext)
       }
     },
     (shared) => {
-      for (const module of ["credential-filter-boundary", "snapshot-sanitizer-boundary"]) {
+      for (const module of [
+        "credential-filter-boundary",
+        "snapshot-sanitizer-boundary",
+        "snapshot-sanitizer-protocol",
+      ]) {
         transpileArtifactModule(
           `nemoclaw/src/shared/${module}.cts`,
           path.join(shared, `${module}.cjs`),

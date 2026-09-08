@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import {
   existsSync,
   lstatSync,
@@ -10,8 +10,10 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -55,38 +57,46 @@ describe("snapshot sanitizer package boundary", () => {
 
     const boundaryPath = path.join(output, "shared", "snapshot-sanitizer-boundary.cjs");
     const helperPath = path.join(output, "shared", "snapshot-sanitizer-helper.mjs");
+    const protocolPath = path.join(output, "shared", "snapshot-sanitizer-protocol.cjs");
     expect(existsSync(boundaryPath)).toBe(true);
     expect(existsSync(helperPath)).toBe(true);
+    expect(existsSync(protocolPath)).toBe(true);
 
     const snapshotPath = path.join(root, "snapshot");
     mkdirSync(snapshotPath);
     const observed = lstatSync(snapshotPath, { bigint: true });
-    const request = {
-      root: {
-        canonicalPath: realpathSync(snapshotPath),
-        identity: {
-          dev: String(observed.dev),
-          ino: String(observed.ino),
-          mode: String(observed.mode),
-          nlink: String(observed.nlink),
-          size: String(observed.size),
-          mtimeNs: String(observed.mtimeNs),
-          ctimeNs: String(observed.ctimeNs),
-        },
+    const descriptorRoot = {
+      canonicalPath: realpathSync(snapshotPath),
+      identity: {
+        dev: String(observed.dev),
+        ino: String(observed.ino),
+        mode: String(observed.mode),
+        nlink: String(observed.nlink),
+        size: String(observed.size),
+        mtimeNs: String(observed.mtimeNs),
+        ctimeNs: String(observed.ctimeNs),
       },
-      name: "installed.txt",
-      content: Buffer.from("installed by emitted helper", "utf8").toString("base64"),
     };
-    const result = spawnSync(process.execPath, [helperPath, "install"], {
-      encoding: "utf8",
-      env: {},
-      input: JSON.stringify(request),
-    });
+    const require = createRequire(import.meta.url);
+    const emittedBoundary = require(boundaryPath) as {
+      installDescriptorSnapshotFile(
+        root: typeof descriptorRoot,
+        targetName: string,
+        content: string,
+      ): boolean;
+    };
+    const emittedProtocol = require(protocolPath) as { MAX_SNAPSHOT_FILE_BYTES: number };
+    const boundarySizedContent = "a".repeat(emittedProtocol.MAX_SNAPSHOT_FILE_BYTES);
 
-    expect(result.status, result.stderr).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual({ ok: true, result: true });
-    expect(readFileSync(path.join(snapshotPath, "installed.txt"), "utf8")).toBe(
-      "installed by emitted helper",
+    expect(
+      emittedBoundary.installDescriptorSnapshotFile(
+        descriptorRoot,
+        "installed.txt",
+        boundarySizedContent,
+      ),
+    ).toBe(true);
+    expect(statSync(path.join(snapshotPath, "installed.txt")).size).toBe(
+      emittedProtocol.MAX_SNAPSHOT_FILE_BYTES,
     );
   });
 

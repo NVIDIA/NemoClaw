@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { lstatSync, realpathSync, type BigIntStats } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import path from "node:path";
@@ -17,64 +18,25 @@ import {
   readFileHandleBounded,
   stageFileInDirectory,
 } from "@openclaw/fs-safe/advanced";
+import type {
+  DescriptorSnapshotRoot,
+  DescriptorSnapshotScan,
+  SnapshotFileIdentity,
+  SnapshotSanitizationAction,
+  SnapshotSanitizerFailureCode,
+  SnapshotSanitizerHelperRequest,
+  SnapshotScannedFile,
+} from "./snapshot-sanitizer-protocol.cjs";
+
+const protocolExtension = import.meta.url.endsWith(".mts") ? ".cts" : ".cjs";
+const { MAX_SNAPSHOT_FILE_BYTES } = createRequire(import.meta.url)(
+  `./snapshot-sanitizer-protocol${protocolExtension}`,
+) as typeof import("./snapshot-sanitizer-protocol.cjs");
 
 const MAX_ENTRIES = 100_000;
 const MAX_HELPER_INPUT_BYTES = 64 * 1024 * 1024;
-const MAX_SNAPSHOT_FILE_BYTES = 16 * 1024 * 1024;
 const MAX_SNAPSHOT_TOTAL_BYTES = 32 * 1024 * 1024;
 const SUPPORTED_SUFFIXES = [".json", ".yaml", ".yml", ".env"] as const;
-
-type SnapshotFileIdentity = Readonly<{
-  dev: string;
-  ino: string;
-  mode: string;
-  nlink: string;
-  size: string;
-  mtimeNs: string;
-  ctimeNs: string;
-}>;
-
-type DescriptorSnapshotRoot = Readonly<{
-  canonicalPath: string;
-  identity: SnapshotFileIdentity;
-}>;
-
-type SnapshotScannedFile = Readonly<{
-  path: string;
-  metadata: SnapshotFileIdentity;
-  content?: string;
-}>;
-
-type DescriptorSnapshotScan = Readonly<{
-  root: SnapshotFileIdentity;
-  files: readonly SnapshotScannedFile[];
-}>;
-
-type SnapshotSanitizationAction =
-  | Readonly<{ kind: "remove"; path: string; metadata: SnapshotFileIdentity }>
-  | Readonly<{
-      kind: "replace";
-      path: string;
-      metadata: SnapshotFileIdentity;
-      content: string;
-    }>;
-
-type HelperRequest = Readonly<{
-  root: DescriptorSnapshotRoot;
-  sensitiveNames?: readonly string[];
-  targetName?: string;
-  scan?: DescriptorSnapshotScan;
-  actions?: readonly SnapshotSanitizationAction[];
-  name?: string;
-  content?: string;
-}>;
-
-type SnapshotSanitizerFailureCode =
-  | "snapshot-entry-limit-exceeded"
-  | "snapshot-size-limit-exceeded"
-  | "snapshot-scan-failed"
-  | "snapshot-mutation-failed"
-  | "native-probe-failed";
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -321,7 +283,10 @@ async function assertFileCurrent(
   }
 }
 
-async function applyActions(openedRoot: Root, request: HelperRequest): Promise<boolean> {
+async function applyActions(
+  openedRoot: Root,
+  request: SnapshotSanitizerHelperRequest,
+): Promise<boolean> {
   const scan = parseScan(request.scan);
   if (!identitiesMatch(request.root.identity, scan.root)) throw new Error("scan root changed");
   const scannedFiles = new Map(scan.files.map((file) => [file.path, file.metadata]));
@@ -345,7 +310,10 @@ async function applyActions(openedRoot: Root, request: HelperRequest): Promise<b
   return true;
 }
 
-async function installFile(openedRoot: Root, request: HelperRequest): Promise<boolean> {
+async function installFile(
+  openedRoot: Root,
+  request: SnapshotSanitizerHelperRequest,
+): Promise<boolean> {
   if (!isSafeRelativePath(request.name) || request.name.includes("/")) {
     throw new Error("install target must be one direct-child basename");
   }
@@ -366,7 +334,7 @@ function sensitiveNames(value: unknown): ReadonlySet<string> {
 
 async function run(mode: string, value: unknown): Promise<unknown> {
   if (!isObjectRecord(value) || !isRoot(value.root)) throw new Error("helper request is invalid");
-  const request = value as HelperRequest;
+  const request = value as SnapshotSanitizerHelperRequest;
   const rootIdentity = inspectRoot(request.root);
   const openedRoot = await openRoot(request.root);
   if (mode === "scan-tree") {

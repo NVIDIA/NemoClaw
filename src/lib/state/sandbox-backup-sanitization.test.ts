@@ -18,6 +18,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   resolveSnapshotSanitizerHelperPath,
   setSnapshotSanitizerHelperPathForTest,
+  SnapshotSanitizerOperationError,
   SnapshotSanitizerPrerequisiteError,
 } from "../../../nemoclaw/dist/shared/snapshot-sanitizer-boundary.cjs";
 import { sanitizeBackupDirectory } from "./sandbox.js";
@@ -51,7 +52,9 @@ function writeNodeHelperWrapper(beforeForward: readonly string[]): string {
       'import { spawnSync } from "node:child_process";',
       ...beforeForward,
       'const input = readFileSync(0, "utf8");',
-      `const result = spawnSync(process.execPath, [${JSON.stringify(helper)}, process.argv[2]], {`,
+      `const helper = ${JSON.stringify(helper)};`,
+      'const helperArguments = helper.endsWith(".mts") ? ["--import", "tsx", helper, process.argv[2]] : [helper, process.argv[2]];',
+      "const result = spawnSync(process.execPath, helperArguments, {",
       '  encoding: "utf8", env: {}, input, maxBuffer: 48 * 1024 * 1024,',
       "});",
       'if (result.stdout) process.stdout.write(result.stdout);',
@@ -403,6 +406,40 @@ describe("rebuild backup credential sanitization", () => {
     expect((received as Error).cause).toBeInstanceOf(AggregateError);
     expect(((received as Error).cause as AggregateError).errors).toEqual([
       expect.any(SnapshotSanitizerPrerequisiteError),
+      cleanupError,
+    ]);
+    expect(existsSync(backupPath)).toBe(true);
+  });
+
+  it("reports the validated directory when the helper and cleanup both fail (#11174)", () => {
+    const backupPath = createBackup();
+    const validatedPath = realpathSync(backupPath);
+    writeFileSync(join(backupPath, "state", "config.json"), '{"apiKey":"sk-secret-value"}');
+    const wrapperRoot = mkdtempSync(join(tmpdir(), "nemoclaw-crashed-helper-"));
+    testDirectories.push(wrapperRoot);
+    const helperWrapper = join(wrapperRoot, "snapshot-helper.mjs");
+    writeFileSync(helperWrapper, "process.exit(1);\n");
+    setSnapshotSanitizerHelperPathForTest(helperWrapper);
+
+    const cleanupError = new Error("injected cleanup failure");
+    let received: unknown;
+    try {
+      sanitizeBackupDirectory(backupPath, {
+        removeBackup: () => {
+          throw cleanupError;
+        },
+      });
+    } catch (error) {
+      received = error;
+    }
+
+    expect(received).toBeInstanceOf(Error);
+    expect((received as Error).message).toBe(
+      `Native snapshot sanitization failed: helper-process-failed. Credential sanitization failed and backup cleanup failed; the incomplete backup may remain at ${validatedPath}`,
+    );
+    expect((received as Error).cause).toBeInstanceOf(AggregateError);
+    expect(((received as Error).cause as AggregateError).errors).toEqual([
+      expect.any(SnapshotSanitizerOperationError),
       cleanupError,
     ]);
     expect(existsSync(backupPath)).toBe(true);

@@ -5,73 +5,33 @@ import { spawnSync } from "node:child_process";
 import { lstatSync, realpathSync } from "node:fs";
 import path from "node:path";
 
+import {
+  isSnapshotSanitizerFailureCode,
+  MAX_SNAPSHOT_FILE_BASE64_LENGTH,
+  MAX_SNAPSHOT_FILE_BYTES,
+} from "./snapshot-sanitizer-protocol.cjs";
+import type {
+  DescriptorSnapshotRoot,
+  DescriptorSnapshotScan,
+  SnapshotFileIdentity,
+  SnapshotSanitizationAction,
+  SnapshotSanitizerFailureCode,
+  SnapshotSanitizerHelperResponse,
+  SnapshotScannedFile,
+} from "./snapshot-sanitizer-protocol.cjs";
+
+export type {
+  DescriptorSnapshotRoot,
+  DescriptorSnapshotScan,
+  SnapshotFileIdentity,
+  SnapshotSanitizationAction,
+  SnapshotSanitizerFailureCode,
+  SnapshotScannedFile,
+} from "./snapshot-sanitizer-protocol.cjs";
+
 const HELPER_TIMEOUT_MS = 60_000;
 const HELPER_MAX_BUFFER_BYTES = 48 * 1024 * 1024;
-const MAX_SNAPSHOT_FILE_BYTES = 16 * 1024 * 1024;
-const MAX_SNAPSHOT_FILE_BASE64_LENGTH = Math.ceil(MAX_SNAPSHOT_FILE_BYTES / 3) * 4;
 let snapshotSanitizerHelperPathForTest: string | null | undefined;
-
-export interface SnapshotFileIdentity {
-  readonly dev: string;
-  readonly ino: string;
-  readonly mode: string;
-  readonly nlink: string;
-  readonly size: string;
-  readonly mtimeNs: string;
-  readonly ctimeNs: string;
-}
-
-export interface SnapshotScannedFile {
-  readonly path: string;
-  readonly metadata: SnapshotFileIdentity;
-  readonly content?: string;
-}
-
-export interface DescriptorSnapshotRoot {
-  readonly canonicalPath: string;
-  readonly identity: SnapshotFileIdentity;
-}
-
-export interface DescriptorSnapshotScan {
-  readonly root: SnapshotFileIdentity;
-  readonly files: readonly SnapshotScannedFile[];
-}
-
-export type SnapshotSanitizationAction =
-  | {
-      readonly kind: "remove";
-      readonly path: string;
-      readonly metadata: SnapshotFileIdentity;
-    }
-  | {
-      readonly kind: "replace";
-      readonly path: string;
-      readonly metadata: SnapshotFileIdentity;
-      readonly content: string;
-    };
-
-export type SnapshotSanitizerFailureCode =
-  | "snapshot-entry-limit-exceeded"
-  | "snapshot-size-limit-exceeded"
-  | "snapshot-scan-failed"
-  | "snapshot-mutation-failed"
-  | "native-probe-failed";
-
-type HelperResponse =
-  | { readonly ok: true; readonly result: unknown }
-  | {
-      readonly ok: false;
-      readonly prerequisite?: boolean;
-      readonly code?: SnapshotSanitizerFailureCode;
-    };
-
-const SNAPSHOT_SANITIZER_FAILURE_CODES = new Set<SnapshotSanitizerFailureCode>([
-  "snapshot-entry-limit-exceeded",
-  "snapshot-size-limit-exceeded",
-  "snapshot-scan-failed",
-  "snapshot-mutation-failed",
-  "native-probe-failed",
-]);
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -158,13 +118,6 @@ export class SnapshotSanitizerOperationError extends Error {
   }
 }
 
-function isSnapshotSanitizerFailureCode(value: unknown): value is SnapshotSanitizerFailureCode {
-  return (
-    typeof value === "string" &&
-    SNAPSHOT_SANITIZER_FAILURE_CODES.has(value as SnapshotSanitizerFailureCode)
-  );
-}
-
 function helperEnvironment(): NodeJS.ProcessEnv {
   const environment: NodeJS.ProcessEnv = {};
   for (const name of ["SYSTEMROOT", "WINDIR"] as const) {
@@ -177,10 +130,13 @@ function invokeSnapshotSanitizerHelper(
   root: DescriptorSnapshotRoot,
   mode: "scan-tree" | "scan-file" | "apply" | "install",
   request: unknown,
-): HelperResponse | null {
+): SnapshotSanitizerHelperResponse | null {
   const helperPath = snapshotSanitizerHelperPath();
   if (helperPath === null) throw new SnapshotSanitizerPrerequisiteError(root.canonicalPath);
-  const result = spawnSync(process.execPath, [helperPath, mode], {
+  const helperArguments = helperPath.endsWith(".mts")
+    ? ["--import", "tsx", helperPath, mode]
+    : [helperPath, mode];
+  const result = spawnSync(process.execPath, helperArguments, {
     encoding: "utf-8",
     env: helperEnvironment(),
     input: JSON.stringify(request),
@@ -188,7 +144,9 @@ function invokeSnapshotSanitizerHelper(
     timeout: HELPER_TIMEOUT_MS,
     windowsHide: true,
   });
-  if (result.status !== 0 || result.error) return null;
+  if (result.status !== 0 || result.error) {
+    throw new SnapshotSanitizerOperationError(root.canonicalPath, "helper-process-failed");
+  }
   try {
     const parsed: unknown = JSON.parse(result.stdout);
     if (!isObjectRecord(parsed) || typeof parsed.ok !== "boolean") return null;
