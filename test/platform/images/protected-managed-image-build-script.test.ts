@@ -491,6 +491,22 @@ describe("protected managed-image build-cache boundary", () => {
     );
   });
 
+  it("cleans an incomplete cache export after a protected build fails", () => {
+    const cacheRoot = path.join(testRoot, "export-cache");
+    stubBuildInvocation();
+    dockerBuildFailureMode = "near-match";
+
+    const failed = runBuild(REPO_ROOT, ["--cache-to", cacheRoot]);
+
+    expect(failed.status, failed.stderr).toBe(42);
+    expect(readdirSync(cacheRoot)).toEqual([]);
+
+    dockerBuildFailureMode = "";
+    const retried = runBuild(REPO_ROOT, ["--cache-to", cacheRoot]);
+
+    expect(retried.status, retried.stderr).toBe(0);
+  });
+
   it.each([
     ["relative", () => "export-cache"],
     [

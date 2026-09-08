@@ -167,6 +167,36 @@ for command in curl docker jq node sha256sum; do
   }
 done
 
+work_dir="$(mktemp -d "${RUNNER_TEMP:-/tmp}/nemoclaw-protected-images.XXXXXX")"
+cache_export_complete=0
+seed_overlay_active=0
+seed_backup="$work_dir/npm-cache-seed-original"
+mcp_seed_overlay_active=0
+mcp_seed_backup="$work_dir/mcp-runtime-npm-cache-seed-original"
+messaging_seed_overlay_active=0
+messaging_seed_backup="$work_dir/messaging-npm-cache-seed-original"
+restore_worktree() {
+  if [[ "$seed_overlay_active" == 1 ]]; then
+    rm -rf -- "$source_seed_dir"
+    cp -pR -- "$seed_backup" "$source_seed_dir"
+  fi
+  if [[ "$mcp_seed_overlay_active" == 1 ]]; then
+    rm -rf -- "$source_mcp_seed_dir"
+    cp -pR -- "$mcp_seed_backup" "$source_mcp_seed_dir"
+  fi
+  if [[ "$messaging_seed_overlay_active" == 1 ]]; then
+    rm -rf -- "$source_messaging_seed_dir"
+    cp -pR -- "$messaging_seed_backup" "$source_messaging_seed_dir"
+  fi
+  if [[ -n "$cache_to" && "$cache_export_complete" != 1 && -d "$cache_to" ]]; then
+    find "$cache_to" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+  fi
+  rm -rf -- "$work_dir"
+}
+trap restore_worktree EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
 audit_evidence_dir=""
 audit_receipt=""
 audit_raw_report=""
@@ -217,32 +247,6 @@ fi
 if [[ -n "$audit_evidence_dir" ]]; then
   validate_audit_evidence "$audit_evidence_dir"
 fi
-
-work_dir="$(mktemp -d "${RUNNER_TEMP:-/tmp}/nemoclaw-protected-images.XXXXXX")"
-seed_overlay_active=0
-seed_backup="$work_dir/npm-cache-seed-original"
-mcp_seed_overlay_active=0
-mcp_seed_backup="$work_dir/mcp-runtime-npm-cache-seed-original"
-messaging_seed_overlay_active=0
-messaging_seed_backup="$work_dir/messaging-npm-cache-seed-original"
-restore_worktree() {
-  if [[ "$seed_overlay_active" == 1 ]]; then
-    rm -rf -- "$source_seed_dir"
-    cp -pR -- "$seed_backup" "$source_seed_dir"
-  fi
-  if [[ "$mcp_seed_overlay_active" == 1 ]]; then
-    rm -rf -- "$source_mcp_seed_dir"
-    cp -pR -- "$mcp_seed_backup" "$source_mcp_seed_dir"
-  fi
-  if [[ "$messaging_seed_overlay_active" == 1 ]]; then
-    rm -rf -- "$source_messaging_seed_dir"
-    cp -pR -- "$messaging_seed_backup" "$source_messaging_seed_dir"
-  fi
-  rm -rf -- "$work_dir"
-}
-trap restore_worktree EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
 
 if [[ -n "$cache_from" ]]; then
   imported_seed="$work_dir/npm-cache-seed-import"
@@ -579,3 +583,4 @@ jq -se \
   end
 ' "$contracts" >"${output}.tmp"
 mv "${output}.tmp" "$output"
+cache_export_complete=1
