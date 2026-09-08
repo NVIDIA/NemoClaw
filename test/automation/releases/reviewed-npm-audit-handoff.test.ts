@@ -90,33 +90,32 @@ describe("reviewed npm audit handoff", () => {
     },
   );
 
-  it("passes producer output to the Docker receipt verifier and rejects an npm mismatch", () => {
+  it("passes producer output through the protected audit helper and rejects a forged report", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "reviewed-audit-receipt-handoff-"));
     const packageJsonFile = path.join(root, "package.json");
     const packageLockFile = path.join(root, "package-lock.json");
     const rawReportFile = path.join(root, "report.json");
-    const exceptionFile = path.join(root, "exceptions.json");
-    const auditConfigFile = path.join(root, "reviewed-npm-audit.json");
-    const resultFile = path.join(root, "policy.json");
-    const packageJson = Buffer.from("temporary manifest\n");
-    const packageLock = Buffer.from("temporary lock\n");
-    const exceptionPolicy = '{"schemaVersion":1,"exceptions":[]}\n';
+    const runtime = path.join(REPO_ROOT, "agents/openclaw/mcporter-runtime");
+    const exceptionFile = path.join(REPO_ROOT, "ci/npm-audit-exceptions.json");
+    const auditConfigFile = path.join(REPO_ROOT, "ci/reviewed-npm-audit.json");
+    const packageJson = fs.readFileSync(path.join(runtime, "package.json"));
+    const packageLock = fs.readFileSync(path.join(runtime, "package-lock.json"));
+    const exceptionPolicy = fs.readFileSync(exceptionFile, "utf8");
+    const npmVersion = JSON.parse(fs.readFileSync(auditConfigFile, "utf8")).npmVersion as string;
     const rawReport =
       '{"vulnerabilities":{},"metadata":{"vulnerabilities":{"info":0,"low":0,"moderate":0,"high":0,"critical":0}}}\n';
     try {
       fs.writeFileSync(packageJsonFile, packageJson);
       fs.writeFileSync(packageLockFile, packageLock);
       fs.writeFileSync(rawReportFile, rawReport);
-      fs.writeFileSync(exceptionFile, exceptionPolicy);
-      fs.writeFileSync(auditConfigFile, JSON.stringify({ npmVersion: "10.9.4" }));
       fs.writeFileSync(
         path.join(root, "report.provenance.json"),
         JSON.stringify({ run: { startedAt: new Date().toISOString() } }),
       );
       const receiptFile = emitAuditReceipt({
         artifactDirectory: root,
-        graphId: "temporary-graph",
-        npmVersion: "10.9.4",
+        graphId: "mcporter-runtime",
+        npmVersion,
         packageJsonFile,
         packageLockFile,
         preserveInputs: true,
@@ -126,7 +125,7 @@ describe("reviewed npm audit handoff", () => {
           acceptedAdvisories: [],
           blockingThreshold: "high",
           exceptionPolicySha256: createHash("sha256").update(exceptionPolicy).digest("hex"),
-          graph: "temporary-graph",
+          graph: "mcporter-runtime",
           reported: { info: 0, low: 0, moderate: 0, high: 0, critical: 0 },
           schemaVersion: 1,
           status: "clean",
@@ -135,12 +134,13 @@ describe("reviewed npm audit handoff", () => {
         threshold: "high",
       });
 
-      const retainedPackageJson = path.join(root, "temporary-graph.package.json");
-      const retainedPackageLock = path.join(root, "temporary-graph.package-lock.json");
-      const transportRawReport = path.join(root, "temporary-graph.raw.json");
+      const retainedPackageJson = path.join(root, "mcporter-runtime.package.json");
+      const retainedPackageLock = path.join(root, "mcporter-runtime.package-lock.json");
+      const transportRawReport = path.join(root, "mcporter-runtime.raw.json");
+      const receiptVerifier = path.join(REPO_ROOT, "scripts", "lib", "npm-audit-receipt.mts");
       const verifierArgs = [
         "--experimental-strip-types",
-        path.join(REPO_ROOT, "scripts", "lib", "npm-audit-receipt.mts"),
+        receiptVerifier,
         "--receipt",
         receiptFile,
         "--package-json",
@@ -152,32 +152,70 @@ describe("reviewed npm audit handoff", () => {
         "--exceptions",
         exceptionFile,
         "--graph",
-        "temporary-graph",
+        "mcporter-runtime",
         "--audit-config",
         auditConfigFile,
         "--registry",
         "https://registry.yarnpkg.com",
         "--threshold",
         "high",
-        "--result",
-        resultFile,
+        "--legacy-npmjs",
+        "true",
       ];
-      const accepted = spawnSync(process.execPath, verifierArgs, { encoding: "utf8" });
+      const nodeLog = path.join(root, "node.log");
+      const stubBin = path.join(root, "bin");
+      const helper = path.join(root, "verify-mcporter-audit.sh");
+      fs.mkdirSync(stubBin);
+      fs.writeFileSync(
+        path.join(stubBin, "node"),
+        '#!/usr/bin/env bash\nset -euo pipefail\nprintf \'%s\\n\' "$*" >>"$NEMOCLAW_TEST_NODE_LOG"\nexec "$NEMOCLAW_TEST_REAL_NODE" "$@"\n',
+        { mode: 0o755 },
+      );
+      let helperSource = fs.readFileSync(
+        path.join(REPO_ROOT, "scripts/lib/verify-mcporter-audit.sh"),
+        "utf8",
+      );
+      for (const [source, staged] of [
+        ["/run/secrets/nemoclaw-mcporter-audit-receipt", receiptFile],
+        ["/run/secrets/nemoclaw-mcporter-audit-raw-report", transportRawReport],
+        ["/run/nemoclaw-mcporter-audit-cache/reviewed-npm-audit", path.join(root, "no-seed")],
+        ["/scripts/lib/npm-audit-receipt.mts", receiptVerifier],
+        ["/usr/local/lib/nemoclaw/mcporter-runtime/package.json", retainedPackageJson],
+        ["/usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json", retainedPackageLock],
+        ["/scripts/npm-audit-exceptions.json", exceptionFile],
+        ["/scripts/reviewed-npm-audit.json", auditConfigFile],
+      ] as const) {
+        helperSource = helperSource.replaceAll(source, staged);
+      }
+      fs.writeFileSync(helper, helperSource, { mode: 0o755 });
+      const runHelper = () =>
+        spawnSync("bash", [helper], {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256: createHash("sha256")
+              .update(fs.readFileSync(receiptFile))
+              .digest("hex"),
+            NEMOCLAW_TEST_NODE_LOG: nodeLog,
+            NEMOCLAW_TEST_REAL_NODE: process.execPath,
+            PATH: `${stubBin}:${process.env.PATH ?? ""}`,
+          },
+        });
+
+      fs.writeFileSync(transportRawReport, "{}\n");
+      const rejected = runHelper();
+      expect(rejected.status).not.toBe(0);
+      expect(rejected.stderr).toContain("receipt rawResponseSha256 does not match");
+
+      fs.writeFileSync(transportRawReport, rawReport);
+      const accepted = runHelper();
       expect(accepted.status, accepted.stderr).toBe(0);
       expect(fs.readFileSync(retainedPackageJson)).toEqual(packageJson);
       expect(fs.readFileSync(retainedPackageLock)).toEqual(packageLock);
       expect(fs.readFileSync(transportRawReport, "utf8")).toBe(rawReport);
-      expect(JSON.parse(fs.readFileSync(resultFile, "utf8"))).toMatchObject({
-        graph: "temporary-graph",
-        status: "clean",
-      });
-
-      fs.rmSync(resultFile);
-      fs.writeFileSync(auditConfigFile, JSON.stringify({ npmVersion: "11.18.0" }));
-      const rejected = spawnSync(process.execPath, verifierArgs, { encoding: "utf8" });
-      expect(rejected.status).not.toBe(0);
-      expect(rejected.stderr).toContain("receipt identity does not match expected graph and npm");
-      expect(fs.existsSync(resultFile)).toBe(false);
+      expect(fs.readFileSync(nodeLog, "utf8").trim().split("\n").at(-1)).toBe(
+        verifierArgs.join(" "),
+      );
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
