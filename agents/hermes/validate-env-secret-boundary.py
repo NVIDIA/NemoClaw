@@ -225,6 +225,7 @@ def _validate_directory_descriptor(path: str, fd: int) -> tuple[int, int, int, i
                 allowed.update(
                     {
                         (sandbox_uid, sandbox_gid, 0o700),
+                        (sandbox_uid, sandbox_gid, 0o750),
                         (sandbox_uid, sandbox_gid, 0o3770),
                     }
                 )

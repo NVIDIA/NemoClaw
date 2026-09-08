@@ -360,7 +360,8 @@ When you start managed vLLM outside the installer express flow, NemoClaw uses th
 
 For the managed one-host DGX Spark and N1x `nvidia/Qwen3.6-35B-A3B-NVFP4` profiles, NemoClaw enables async scheduling and does not enable multi-token prediction (MTP) speculative decoding.
 The DGX Spark profile retains `--gpu-memory-utilization 0.4`, a `262144`-token context window, `4` concurrent sequences, and an `8192`-token batch limit.
-The Deferred N1x profile uses `--gpu-memory-utilization 0.6`, a `32768`-token context window, `1` concurrent sequence, and a `4096`-token batch limit.
+The Deferred N1x profile uses `--gpu-memory-utilization 0.6`, a `32768`-token context window, `2` concurrent sequences, and a `4096`-token batch limit.
+The two-sequence limit permits vLLM to schedule a compaction summary while an agent response uses the other sequence.
 Both profiles retain chunked prefill, prefix caching, and their registered parsers and acceleration backends.
 
 NVIDIA Nemotron 3.5 Lightning is an additional explicit-only single-DGX Spark profile and does not change the Qwen default.
@@ -459,8 +460,38 @@ A full uninstall removes it only after managed-runtime cleanup succeeds and no s
 On an N1x host that matches the required identity, the Deferred Express preview selects one-host managed vLLM with `nvidia/Qwen3.6-35B-A3B-NVFP4`.
 The installer uses the existing managed-vLLM image, download, container, receipt, recovery, and uninstall lifecycle.
 The installer applies the existing CUDA and Container Device Interface (CDI) readiness checks before it downloads the image or model.
-The N1x serving limits above have reached the ready vLLM endpoint on one physical host.
-That result covers managed-vLLM startup only; the full Express onboarding E2E remains pending.
+The N1x memory, context, and batch limits above have reached the ready vLLM endpoint on one physical host.
+Physical validation of compaction with the two-sequence limit and the full Express onboarding E2E remain pending.
+
+#### Upgrade an Existing N1x Managed vLLM Runtime
+
+An existing `nemoclaw-vllm` container retains its original command after a NemoClaw update or ordinary sandbox rebuild.
+Replace an affected N1x managed container when its command contains `--max-num-seqs 1`.
+
+Before replacement, follow [Handle a Running vLLM Server](#handle-a-running-vllm-server) to inspect every gateway environment and confirm that no other sandbox or distributed deployment uses the server.
+Stop only the exact verified managed container ID.
+If another sandbox can use the server, schedule coordinated downtime instead of continuing.
+
+Rebuild the affected sandbox with explicit managed-vLLM intent.
+
+```bash
+NEMOCLAW_PROVIDER=install-vllm \
+  $$nemoclaw my-assistant rebuild --yes
+```
+
+NemoClaw verifies the stopped container ownership, replaces that container with the current N1x recipe, and then continues the transactional sandbox rebuild.
+If managed-vLLM startup fails, the existing sandbox remains registered, but its stopped host inference server can remain unavailable.
+Correct the reported startup problem, then repeat the same rebuild command.
+
+Verify that the replacement container uses the two-sequence limit.
+
+```bash
+docker container inspect \
+  --format '{{json .Config.Cmd}}' \
+  nemoclaw-vllm
+```
+
+Accept the result when the command contains `--max-num-seqs 2`.
 
 NemoClaw requires all of this N1x identity evidence:
 
@@ -680,7 +711,7 @@ The following override disables async scheduling and lowers the context window, 
 ```bash
 NEMOCLAW_PROVIDER=install-vllm \
   NEMOCLAW_VLLM_MODEL=qwen3.6-35b-a3b-nvfp4 \
-  NEMOCLAW_VLLM_EXTRA_ARGS_JSON='["--no-async-scheduling","--max-model-len","32768","--max-num-seqs","1","--max-num-batched-tokens","4096"]' \
+  NEMOCLAW_VLLM_EXTRA_ARGS_JSON='["--no-async-scheduling","--max-model-len","32768","--max-num-seqs","2","--max-num-batched-tokens","4096"]' \
   $$nemoclaw onboard --non-interactive
 ```
 

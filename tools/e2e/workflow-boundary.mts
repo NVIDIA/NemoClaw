@@ -3084,6 +3084,8 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   }
 
   const dcodeTargetIf = "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}";
+  const dcodeDockerTargetIf =
+    "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' && matrix.runtime_provider == 'docker' }}";
   const configureTrace = requireStep(errors, steps, "Configure live E2E trace directory");
   const configureTraceEnv = asRecord(configureTrace?.env);
   if (configureTraceEnv.TARGET_ID !== "${{ matrix.id }}") {
@@ -3136,7 +3138,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
       "live DCode profile import gate must build the reviewed repository base without an override",
     );
   }
-  if (dcodeProfileImportGate?.["if"] !== dcodeTargetIf) {
+  if (dcodeProfileImportGate?.["if"] !== dcodeDockerTargetIf) {
     errors.push("live DCode profile import gate must be scoped to the typed DCode target");
   }
   if (dcodeProfileImportGate?.shell !== "bash") {
@@ -3152,7 +3154,10 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     ? steps.indexOf(dcodeProfileImportGate)
     : steps.length;
   const routesDcodeBuildsThroughBuildx = steps.slice(0, dcodeGateIndex).some((step) => {
-    const stepCanRunForDcode = step["if"] === undefined || step["if"] === dcodeTargetIf;
+    const stepCanRunForDcode =
+      step["if"] === undefined ||
+      step["if"] === dcodeTargetIf ||
+      step["if"] === dcodeDockerTargetIf;
     const run = stringValue(step.run);
     return (
       stepCanRunForDcode &&
