@@ -438,7 +438,7 @@ test(
     expectExitZero(status, "inspect credential-window MCP bridge");
     const providerName = (JSON.parse(status.stdout) as { provider: { name: string } }).provider
       .name;
-    expect(providerName).toMatch(/^e2e-cred-window-mcp-fake-[a-f0-9]{16}$/u);
+    expect(providerName).toBe("e2e-cred-window-mcp-fake");
 
     const originalRevision = await observeFreshRevision(
       sandbox,

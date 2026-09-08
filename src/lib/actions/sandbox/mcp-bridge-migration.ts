@@ -321,6 +321,7 @@ export async function migrateMcpBridges(
       const rebuiltRuntimeSelection = getMcpProviderInspectionRuntimeSelection(rebuilt);
       await preflightMigrationOpenShellState(sandboxName, entries, rebuiltRuntimeSelection);
       const created: McpSourceEntry[] = [];
+      let cleanupStarted = false;
       try {
         let native = inspectAgentMcpSources(rebuilt, rebuiltRuntimeSelection).native;
         for (const entry of entries) {
@@ -347,11 +348,12 @@ export async function migrateMcpBridges(
         }
         for (const entry of entries) {
           if (observed.sources.legacy[entry.server]) {
+            cleanupStarted = true;
             removeLegacyAgentMcpEntry(rebuilt, entry, rebuiltRuntimeSelection);
           }
         }
       } catch (error) {
-        for (const entry of created.reverse()) {
+        for (const entry of cleanupStarted ? [] : created.reverse()) {
           try {
             unregisterAgentAdapter(sandboxName, adapter, entry, rebuiltRuntimeSelection, {
               force: true,

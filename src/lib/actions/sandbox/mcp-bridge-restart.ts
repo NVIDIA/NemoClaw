@@ -62,6 +62,24 @@ function resolvedTargetPins(
   return target;
 }
 
+function reloadAttemptedOpenClawMutation(
+  sandboxName: string,
+  adapters: readonly AgentMcpAdapter[],
+  failure: unknown,
+): void {
+  if (!adapters.includes("openclaw-config")) return;
+  try {
+    reloadOpenClawGatewayAfterMcpMutation(sandboxName, adapters);
+  } catch (reloadFailure) {
+    const originalDetail = failure instanceof Error ? failure.message : String(failure);
+    const reloadDetail =
+      reloadFailure instanceof Error ? reloadFailure.message : String(reloadFailure);
+    throw new McpBridgeError(
+      `${originalDetail} OpenClaw configuration recovery also failed: ${reloadDetail}`,
+    );
+  }
+}
+
 export async function restartMcpBridge(sandboxName: string, server?: string): Promise<void> {
   return withMcpLifecycleLock(sandboxName, () => {
     assertHermesPortableCommandUnavailable(sandboxName, "sandbox:mcp:restart");
@@ -98,7 +116,7 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
     .map(([, entry]) => entry)
     .filter((entry): entry is McpSourceEntry => !!entry);
   const providerRuntimeSelection = getMcpProviderInspectionRuntimeSelection(sandbox);
-  const reloadedAdapters: AgentMcpAdapter[] = [];
+  const attemptedAdapters: AgentMcpAdapter[] = [];
   assertMcpCredentialBoundaryRuntimeVersion();
   await ensureSandboxGatewaySelected(sandboxName, providerRuntimeSelection);
   assertMcpAdapterMutationRuntimeCapabilities(
@@ -107,49 +125,54 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
     targetEntries,
     providerRuntimeSelection,
   );
-  for (const [name, entry] of targets) {
-    if (!entry) continue;
-    const [status] = await statusMcpBridge(sandboxName, name, {
-      runtimeSelection: providerRuntimeSelection,
-    });
-    if (
-      status?.policy.present !== true ||
-      status.provider.present !== true ||
-      status.provider.attached !== true ||
-      status.provider.credentialReady !== true
-    ) {
-      throw new McpBridgeError(
-        `MCP server '${name}' is not ready in the current agent and OpenShell sources (policy=${String(status?.policy.state ?? "unavailable")}, provider=${String(status?.provider.state ?? "unavailable")}). Restart does not reconstruct missing source state.`,
+  try {
+    for (const [name, entry] of targets) {
+      if (!entry) continue;
+      const [status] = await statusMcpBridge(sandboxName, name, {
+        runtimeSelection: providerRuntimeSelection,
+      });
+      if (
+        status?.policy.present !== true ||
+        status.provider.present !== true ||
+        status.provider.attached !== true ||
+        status.provider.credentialReady !== true
+      ) {
+        throw new McpBridgeError(
+          `MCP server '${name}' is not ready in the current agent and OpenShell sources (policy=${String(status?.policy.state ?? "unavailable")}, provider=${String(status?.provider.state ?? "unavailable")}). Restart does not reconstruct missing source state.`,
+        );
+      }
+      const credentialObservation = observeMcpCredentialRevision(
+        sandboxName,
+        entry,
+        providerRuntimeSelection,
       );
-    }
-    const credentialObservation = observeMcpCredentialRevision(
-      sandboxName,
-      entry,
-      providerRuntimeSelection,
-    );
-    if (
-      credentialObservation === null ||
-      credentialObservation === "absent" ||
-      credentialObservation === "canonical"
-    ) {
-      throw new McpBridgeError(
-        `MCP server '${name}' does not expose a revision-scoped OpenShell credential to the running agent.`,
+      if (
+        credentialObservation === null ||
+        credentialObservation === "absent" ||
+        credentialObservation === "canonical"
+      ) {
+        throw new McpBridgeError(
+          `MCP server '${name}' does not expose a revision-scoped OpenShell credential to the running agent.`,
+        );
+      }
+      const entryAdapter = entry.adapter ?? adapter;
+      attemptedAdapters.push(entryAdapter);
+      registerAgentAdapterAtCurrentCredentialRevision(
+        sandboxName,
+        entryAdapter,
+        entry,
+        providerRuntimeSelection,
+        {},
+        credentialObservation,
+        { replaceExisting: true },
       );
+      console.log(`  Reloaded MCP server '${name}' from current agent configuration.`);
     }
-    const entryAdapter = entry.adapter ?? adapter;
-    registerAgentAdapterAtCurrentCredentialRevision(
-      sandboxName,
-      entryAdapter,
-      entry,
-      providerRuntimeSelection,
-      {},
-      credentialObservation,
-      { replaceExisting: true },
-    );
-    reloadedAdapters.push(entryAdapter);
-    console.log(`  Reloaded MCP server '${name}' from current agent configuration.`);
+  } catch (error) {
+    reloadAttemptedOpenClawMutation(sandboxName, attemptedAdapters, error);
+    throw error;
   }
-  reloadOpenClawGatewayAfterMcpMutation(sandboxName, reloadedAdapters);
+  reloadOpenClawGatewayAfterMcpMutation(sandboxName, attemptedAdapters);
 }
 
 export async function restoreExistingMcpBridgeRuntime(
@@ -191,7 +214,7 @@ export async function restoreExistingMcpBridgeRuntime(
     );
   }
   const defaultAdapter = getBridgeAdapter(getSandboxAgent(sandbox));
-  const restoredAdapters: AgentMcpAdapter[] = [];
+  const attemptedAdapters: AgentMcpAdapter[] = [];
   for (const entry of entries) {
     assertGeneratedPolicyMutationSafe(sandboxName, entry);
     const provider = assertMcpProviderRecoverable(entry, providerRuntimeSelection);
@@ -206,41 +229,46 @@ export async function restoreExistingMcpBridgeRuntime(
   // mutation. Per-entry attached-provider checks detect new collisions at each
   // restore mutation edge.
   assertNoProviderCredentialCollisions(sandboxName, entries, providerRuntimeSelection);
-  for (const entry of entries) {
-    assertNoAttachedProviderCredentialCollisions(sandboxName, [entry], providerRuntimeSelection);
-    ensureMcpBridgeProviderProfile(providerRuntimeSelection);
-    if (options.applyPolicy !== false) {
-      applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry), {
-        bindCredential: false,
-        runtimeSelection: providerRuntimeSelection,
-      });
+  try {
+    for (const entry of entries) {
+      assertNoAttachedProviderCredentialCollisions(sandboxName, [entry], providerRuntimeSelection);
+      ensureMcpBridgeProviderProfile(providerRuntimeSelection);
+      if (options.applyPolicy !== false) {
+        applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry), {
+          bindCredential: false,
+          runtimeSelection: providerRuntimeSelection,
+        });
+      }
+      attachProvider(sandboxName, entry, providerRuntimeSelection);
+      if (options.applyPolicy !== false) {
+        applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry), {
+          runtimeSelection: providerRuntimeSelection,
+        });
+      }
+      const adapter = entry.adapter ?? defaultAdapter;
+      refreshMcpProviderEnvironment(entry, providerRuntimeSelection);
+      const credentialRevision = waitForAttachedMcpCredential(
+        sandboxName,
+        entry,
+        providerRuntimeSelection,
+      );
+      attemptedAdapters.push(adapter);
+      registerAgentAdapterAtCurrentCredentialRevision(
+        sandboxName,
+        adapter,
+        entry,
+        providerRuntimeSelection,
+        {},
+        credentialRevision,
+        {
+          replaceExisting: true,
+          teardownRollback: options.lifecyclePhase === "teardown-rollback",
+        },
+      );
     }
-    attachProvider(sandboxName, entry, providerRuntimeSelection);
-    if (options.applyPolicy !== false) {
-      applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry), {
-        runtimeSelection: providerRuntimeSelection,
-      });
-    }
-    const adapter = entry.adapter ?? defaultAdapter;
-    refreshMcpProviderEnvironment(entry, providerRuntimeSelection);
-    const credentialRevision = waitForAttachedMcpCredential(
-      sandboxName,
-      entry,
-      providerRuntimeSelection,
-    );
-    registerAgentAdapterAtCurrentCredentialRevision(
-      sandboxName,
-      adapter,
-      entry,
-      providerRuntimeSelection,
-      {},
-      credentialRevision,
-      {
-        replaceExisting: true,
-        teardownRollback: options.lifecyclePhase === "teardown-rollback",
-      },
-    );
-    restoredAdapters.push(adapter);
+  } catch (error) {
+    reloadAttemptedOpenClawMutation(sandboxName, attemptedAdapters, error);
+    throw error;
   }
-  reloadOpenClawGatewayAfterMcpMutation(sandboxName, restoredAdapters);
+  reloadOpenClawGatewayAfterMcpMutation(sandboxName, attemptedAdapters);
 }

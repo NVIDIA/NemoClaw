@@ -54,7 +54,7 @@ function commonPythonSourceReader(): string[] {
     "    try:",
     "        before = os.fstat(fd)",
     "        linked = os.stat(path, follow_symlinks=False)",
-    "        if not stat.S_ISREG(before.st_mode) or before.st_uid != os.getuid() or before.st_nlink != 1 or (before.st_dev, before.st_ino) != (linked.st_dev, linked.st_ino) or before.st_size > MAX_BYTES:",
+    "        if not stat.S_ISREG(before.st_mode) or before.st_uid not in {0, os.getuid()} or before.st_nlink != 1 or (before.st_dev, before.st_ino) != (linked.st_dev, linked.st_ino) or before.st_size > MAX_BYTES:",
     "            raise ValueError('unsafe MCP configuration source')",
     "        chunks = []; remaining = before.st_size",
     "        while remaining:",
@@ -82,6 +82,7 @@ function buildDeepAgentsSourceCommand(configDir: string): string {
   const nativePath = path.posix.join(configDir, ".mcp.json");
   const legacyPath = path.posix.join(configDir, ".nemoclaw-mcp.json");
   return [
+    `if [ ! -e ${quoteMcpBridgeShellArg(nativePath)} ] && [ ! -L ${quoteMcpBridgeShellArg(nativePath)} ] && [ ! -e ${quoteMcpBridgeShellArg(legacyPath)} ] && [ ! -L ${quoteMcpBridgeShellArg(legacyPath)} ]; then printf '[]'; exit 0; fi`,
     "/opt/venv/bin/python3 -I - <<'PY'",
     ...commonPythonSourceReader(),
     `paths = [('native', pathlib.Path(${sourcePayload(nativePath)})), ('legacy', pathlib.Path(${sourcePayload(legacyPath)}))]`,
@@ -103,7 +104,8 @@ function buildDeepAgentsSourceCommand(configDir: string): string {
 function buildHermesSourceCommand(configDir: string): string {
   const configPath = path.posix.join(configDir, "config.yaml");
   return [
-    "/opt/hermes/.venv/bin/python - <<'PY'",
+    `if [ ! -e ${quoteMcpBridgeShellArg(configPath)} ] && [ ! -L ${quoteMcpBridgeShellArg(configPath)} ]; then printf '[]'; exit 0; fi`,
+    "/opt/hermes/.venv/bin/python3 -I - <<'PY'",
     ...commonPythonSourceReader(),
     "import yaml",
     `config_path = pathlib.Path(${sourcePayload(configPath)})`,
@@ -133,7 +135,7 @@ function buildOpenClawSourceCommand(configDir: string): string {
     "const PREFIX = 'Bearer openshell:resolve:env:';",
     "function read(path) {",
     "  let fd; try { fd = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW); } catch (error) { if (error && error.code === 'ENOENT') return null; throw error; }",
-    "  try { const before = fs.fstatSync(fd); const linked = fs.lstatSync(path); if (!before.isFile() || !linked.isFile() || before.uid !== process.getuid() || before.nlink !== 1 || before.dev !== linked.dev || before.ino !== linked.ino || before.size > MAX_BYTES) throw new Error('unsafe MCP configuration source'); const raw = Buffer.alloc(before.size); let count = 0; while (count < raw.length) { const read = fs.readSync(fd, raw, count, raw.length - count, count); if (read === 0) break; count += read; } const after = fs.fstatSync(fd); if (count !== before.size || before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size || before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs) throw new Error('MCP configuration changed while reading'); return JSON.parse(raw.toString('utf8')); } finally { fs.closeSync(fd); }",
+    "  try { const before = fs.fstatSync(fd); const linked = fs.lstatSync(path); if (!before.isFile() || !linked.isFile() || (before.uid !== 0 && before.uid !== process.getuid()) || before.nlink !== 1 || before.dev !== linked.dev || before.ino !== linked.ino || before.size > MAX_BYTES) throw new Error('unsafe MCP configuration source'); const raw = Buffer.alloc(before.size); let count = 0; while (count < raw.length) { const read = fs.readSync(fd, raw, count, raw.length - count, count); if (read === 0) break; count += read; } const after = fs.fstatSync(fd); if (count !== before.size || before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size || before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs) throw new Error('MCP configuration changed while reading'); return JSON.parse(raw.toString('utf8')); } finally { fs.closeSync(fd); }",
     "}",
     "function envName(headers) { if (!headers || typeof headers !== 'object' || Array.isArray(headers)) return null; const key = Object.keys(headers).find((name) => name.toLowerCase() === 'authorization'); const value = key ? headers[key] : null; if (typeof value !== 'string' || !value.startsWith(PREFIX)) return null; let suffix = value.slice(PREFIX.length); if (/^v[0-9]{1,20}_[A-Z_][A-Z0-9_]*$/.test(suffix)) suffix = suffix.slice(suffix.indexOf('_') + 1); return /^[A-Z_][A-Z0-9_]*$/.test(suffix) ? suffix : null; }",
     "const records = [];",

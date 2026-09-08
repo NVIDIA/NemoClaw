@@ -179,6 +179,16 @@ network_policies:
       adapter: "hermes-config",
       source: "native",
     });
+    const commands = mocks.executeSandboxCommand.mock.calls.map(([, command]) => String(command));
+    expect(commands.find((command) => command.includes("/sandbox/.hermes/config.yaml"))).toContain(
+      "if [ ! -e '/sandbox/.hermes/config.yaml' ]",
+    );
+    expect(commands.find((command) => command.includes("/sandbox/.hermes/config.yaml"))).toContain(
+      "/opt/hermes/.venv/bin/python3 -I",
+    );
+    expect(commands.find((command) => command.includes("openclaw.json"))).toContain(
+      "before.uid !== 0 && before.uid !== process.getuid()",
+    );
   });
 
   it("reports a policy/provider orphan without inventing an agent registration", () => {

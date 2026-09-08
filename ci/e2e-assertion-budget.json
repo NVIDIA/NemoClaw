@@ -36,7 +36,7 @@
       "objectFieldAssertions": 348,
       "assertionPoints": 4389,
       "generatedProbeBlocks": 290,
-      "generatedProbeConditions": 975
+      "generatedProbeConditions": 972
     },
     "fileMetricOrder": [
       "directExpectCalls",

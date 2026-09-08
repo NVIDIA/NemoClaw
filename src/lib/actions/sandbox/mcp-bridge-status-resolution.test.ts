@@ -171,10 +171,11 @@ const sourceEntry = {
     policyName: "mcp-bridge-github",
 };
 let legacySourceEnabled = false;
+let policyOnlySourceEnabled = false;
 sourceState.inspectSourceBridgeState = () => ({
-  bridges: { github: sourceEntry },
+  bridges: { github: policyOnlySourceEnabled ? { ...sourceEntry, source: "policy" } : sourceEntry },
   sources: {
-    native: legacySourceEnabled ? {} : { github: sourceEntry },
+    native: legacySourceEnabled || policyOnlySourceEnabled ? {} : { github: sourceEntry },
     legacy: legacySourceEnabled ? { github: { ...sourceEntry, source: "legacy" } } : {},
   },
 });
@@ -221,6 +222,30 @@ ${body}
 }
 
 describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 }, () => {
+  it("reports a policy-derived entry as configured when direct adapter inspection succeeds", () => {
+    const home = createTempHome("nemoclaw-mcp-resolution-policy-source-");
+    const { stdout } = runHarness(
+      home,
+      String.raw`
+  policyOnlySourceEnabled = true;
+  const [status] = await bridge.statusMcpBridge("alpha", "github");
+  writeHarnessResult(JSON.stringify({
+    adapter: status.adapter,
+    policy: status.policy,
+    provider: status.provider,
+  }));
+`,
+    );
+    const payload = JSON.parse(stdout) as {
+      adapter: { registered: boolean | null };
+      policy: { state: string };
+      provider: { state: string };
+    };
+    expect(payload.adapter.registered).toBe(true);
+    expect(payload.policy.state).toBe("configured");
+    expect(payload.provider.state).toBe("configured");
+  });
+
   it("refuses status while a legacy source still requires explicit migration", () => {
     const home = createTempHome("nemoclaw-mcp-resolution-legacy-");
     const { stdout } = runHarness(

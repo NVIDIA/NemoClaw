@@ -296,7 +296,6 @@ export async function statusMcpBridge(
 
   return entries.map(([name, entry]) => {
     const support = entry ? getPersistedBridgeSupport(entry) : getSupportSummary(agent);
-    const agentRegistrationMissing = entry?.source === "policy";
     const policyPresence = getPolicyPresence(sandboxName, entry, providerRuntimeSelection);
     const hasCredentialBinding =
       !!entry &&
@@ -321,11 +320,7 @@ export async function statusMcpBridge(
       expectedCredential,
       entry?.providerId,
     );
-    const attached = providerAttached(
-      sandboxName,
-      entry?.providerName,
-      providerRuntimeSelection,
-    );
+    const attached = providerAttached(sandboxName, entry?.providerName, providerRuntimeSelection);
     const warnings: string[] = [];
     let credentialWarning: string | undefined;
     if (entry) {
@@ -363,6 +358,8 @@ export async function statusMcpBridge(
       credentialRevision,
       unsafeCredentialMayBeAttached ? UNSUPPORTED_ATTACHED_CREDENTIAL_DETAIL : observationDetail,
     );
+    const agentRegistrationMissing =
+      entry?.source === "policy" && adapterRegistration.registered !== true;
     const credentialResolution =
       options.probeCredentialResolution && entry
         ? unsafeCredentialMayBeAttached
@@ -462,11 +459,11 @@ export async function statusMcpBridge(
             ? "unavailable"
             : entry?.policyConflict
               ? "conflict"
-            : policyPresence
-              ? agentRegistrationMissing
-                ? "orphaned"
-                : "configured"
-              : "blocked",
+              : policyPresence
+                ? agentRegistrationMissing
+                  ? "orphaned"
+                  : "configured"
+                : "blocked",
         ...(entry?.policyConflict ? { detail: entry.policyConflict } : {}),
       },
       adapter: adapterRegistration,

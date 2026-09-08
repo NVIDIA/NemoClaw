@@ -12,6 +12,7 @@ import {
 import { getMcpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider";
 import { getSandboxOrThrow } from "./mcp-bridge-state";
 import { inspectLegacyBridgeState, inspectSourceBridgeState } from "./mcp-bridge-source";
+import { redactBridgeFailureForDisplay } from "./mcp-bridge-output";
 import { validateSandboxName } from "./mcp-bridge-validation";
 
 export type { McpDestroyPreparation } from "./mcp-bridge-destroy-preflight";
@@ -50,11 +51,14 @@ export async function prepareMcpBridgesForDestroy(
         ? inspectLegacyBridgeState(sandbox, runtimeSelection).bridges
         : {};
     entries = Object.values({ ...legacy, ...observed.bridges }).map(cloneMcpSourceEntry);
-  } catch {
+  } catch (error) {
     // Destroy never deletes workspace providers. If the sandbox is already
     // unreachable, retain every provider conservatively and continue without
     // a named inventory rather than making cleanup depend on unreadable agent
     // state. Reachable sandboxes still produce the source-derived list above.
+    console.warn(
+      `  Warning: MCP source inventory is incomplete; workspace providers will be preserved without names: ${redactBridgeFailureForDisplay(error instanceof Error ? error.message : String(error))}`,
+    );
     entries = [];
   }
   return {
@@ -93,6 +97,8 @@ export async function finalizeMcpBridgesAfterSandboxDelete(
     console.warn(
       `  Preserved detached OpenShell MCP provider${providers.length === 1 ? "" : "s"} after deleting '${sandboxName}': ${providers.join(", ")}`,
     );
-    console.warn("  Inspect and remove unused providers explicitly after confirming no sandbox uses them.");
+    console.warn(
+      "  Inspect and remove unused providers explicitly after confirming no sandbox uses them.",
+    );
   }
 }

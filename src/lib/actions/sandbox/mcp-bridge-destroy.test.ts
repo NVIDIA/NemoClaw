@@ -78,11 +78,16 @@ describe("source-backed MCP destroy preparation", () => {
   });
 
   it("retains providers implicitly when an unreachable sandbox cannot expose source state", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     mocks.inspectCurrent.mockImplementationOnce(() => {
-      throw new Error("sandbox unreachable");
+      throw new Error("sandbox unreachable with Authorization: Bearer host-secret");
     });
 
     await expect(prepareMcpBridgesForDestroy("alpha")).resolves.toEqual({ entries: [] });
+    expect(warning).toHaveBeenCalledWith(
+      expect.stringContaining("MCP source inventory is incomplete"),
+    );
+    expect(warning.mock.calls.flat().join("\n")).not.toContain("host-secret");
   });
 
   it("preserves an explicitly supplied runtime target for empty cleanup", async () => {

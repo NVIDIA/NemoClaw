@@ -369,6 +369,7 @@ require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
 
   it.each([
     "policy",
+    "policy-url-mismatch",
     "provider",
     "provider-hostless",
     "attachment",
@@ -386,10 +387,11 @@ process.env.GITHUB_TOKEN = "host-only-secret";
 // must replay the committed public pins rather than deriving a new request.
 require("node:dns/promises").lookup = async () => [{ address: "1.1.1.1", family: 4 }];
 const phase = ${JSON.stringify(phase)};
+const expectFailure = phase === "policy-url-mismatch";
 if (phase === "provider-hostless") delete process.env.GITHUB_TOKEN;
 const providerId = "11111111-2222-4333-8444-555555555555";
 const state = {
-  policy: ["policy", "provider", "provider-hostless", "attachment"].includes(phase) ? "capability" : phase === "bound-policy" || phase === "adapter" ? "bound" : "absent",
+  policy: ["policy", "policy-url-mismatch", "provider", "provider-hostless", "attachment"].includes(phase) ? "capability" : phase === "bound-policy" || phase === "adapter" ? "bound" : "absent",
   provider: ["provider", "provider-hostless", "attachment", "bound-policy", "adapter"].includes(phase),
   attachment: ["attachment", "bound-policy", "adapter"].includes(phase),
   adapter: phase === "adapter",
@@ -441,6 +443,7 @@ replace(provider, "waitForAttachedMcpCredential", () => "v7");
 replace(provider, "refreshMcpProviderEnvironment", () => {});
 replace(policies, "getPresetContentGatewayState", (_sandbox, content) => {
   if (state.policy === "absent") return "absent";
+  if (expectFailure) return "drift";
   const expected = content.includes("credential_binding") ? "bound" : "capability";
   return state.policy === expected && content.includes("8.8.8.8") ? "match" : "drift";
 });
@@ -455,7 +458,12 @@ replace(sourceState, "inspectSourceBridgeState", () => ({
 replace(sourceState, "inspectPolicyOnlyMcpEntry", () =>
   state.policy === "absent"
     ? null
-    : { ...entry(), source: "policy", ...(state.policy === "capability" ? { providerName: undefined, providerId: undefined } : {}) },
+    : {
+        ...entry(),
+        ...(expectFailure ? { url: "https://other.example/mcp" } : {}),
+        source: "policy",
+        ...(state.policy === "capability" ? { providerName: undefined, providerId: undefined } : {}),
+      },
 );
 replace(processRecovery, "restartSandboxGateway", () => ({
   ok: true, restarted: true, healthPassed: true, forwardRecovered: true,
@@ -464,9 +472,17 @@ registry.registerSandbox({ name: "alpha", agent: "openclaw", gatewayName: "nemoc
 require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
   server: "github", url: "https://8.8.8.8/mcp", env: [{ name: "GITHUB_TOKEN" }],
 }).then(() => {
-  process.stdout.write(JSON.stringify(state), () => process.exit(0));
+  if (expectFailure) process.exit(2);
+  process.stdout.write(JSON.stringify({ state }), () => process.exit(0));
 }, (error) => {
-  process.stderr.write(String(error && error.stack || error), () => process.exit(1));
+  if (!expectFailure) {
+    process.stderr.write(String(error && error.stack || error), () => process.exit(1));
+    return;
+  }
+  process.stdout.write(JSON.stringify({
+    message: String(error && error.message || error),
+    state,
+  }), () => process.exit(0));
 });
 `;
       try {
@@ -483,12 +499,30 @@ require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
           timeout: 30_000,
         });
         expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-        expect(JSON.parse(result.stdout)).toMatchObject({
-          adapter: true,
-          attachment: true,
-          policy: "bound",
-          provider: true,
-        });
+        const outcome = JSON.parse(result.stdout) as {
+          message?: string;
+          state: Record<string, unknown>;
+        };
+        expect(outcome).toMatchObject(
+          phase === "policy-url-mismatch"
+            ? {
+                message: expect.stringContaining("incomplete add transaction for a different URL"),
+                state: {
+                  adapter: false,
+                  attachment: false,
+                  policy: "capability",
+                  provider: false,
+                },
+              }
+            : {
+                state: {
+                  adapter: true,
+                  attachment: true,
+                  policy: "bound",
+                  provider: true,
+                },
+              },
+        );
       } finally {
         fs.rmSync(home, { recursive: true, force: true });
       }

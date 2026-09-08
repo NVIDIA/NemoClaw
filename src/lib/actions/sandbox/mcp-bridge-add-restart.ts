@@ -179,9 +179,14 @@ function recoverCommittedPolicyTarget(
     adapter,
     runtimeSelection,
   );
-  return policyEntry
-    ? replayMcpAddTarget(policyEntry, requestedEntry.url, matchingTrustedPrivateHosts)
-    : null;
+  if (!policyEntry) return null;
+  if (policyEntry.url !== requestedEntry.url) {
+    throw new McpBridgeError(
+      `MCP server '${requestedEntry.server}' has an incomplete add transaction for a different URL. Re-run the original add command or remove it with --force before changing the definition.`,
+      2,
+    );
+  }
+  return replayMcpAddTarget(policyEntry, requestedEntry.url, matchingTrustedPrivateHosts);
 }
 
 type McpAddRecovery = {
@@ -259,13 +264,7 @@ function inspectMcpAddRecovery(
   } else {
     const capabilityPolicyState = policies.getPresetContentGatewayState(
       sandboxName,
-      buildMcpBridgeCapabilityPolicyYaml(
-        entry.server,
-        entry.url,
-        adapter,
-        target,
-        entry.denyTools,
-      ),
+      buildMcpBridgeCapabilityPolicyYaml(entry.server, entry.url, adapter, target, entry.denyTools),
       undefined,
       providerRuntimeSelection,
     );
@@ -277,10 +276,7 @@ function inspectMcpAddRecovery(
     policyState = "capability";
   }
 
-  const attachmentInspection = inspectMcpProviderAttachments(
-    sandboxName,
-    providerRuntimeSelection,
-  );
+  const attachmentInspection = inspectMcpProviderAttachments(sandboxName, providerRuntimeSelection);
   if (!attachmentInspection.attachments) {
     throw new McpBridgeError(
       attachmentInspection.error ??
@@ -547,13 +543,7 @@ async function addMcpBridgeUnlocked(
   }
   let recovery!: McpAddRecovery;
   await withMcpCredentialOwnershipLock(() => {
-    recovery = inspectMcpAddRecovery(
-      sandboxName,
-      adapter,
-      entry,
-      target,
-      providerRuntimeSelection,
-    );
+    recovery = inspectMcpAddRecovery(sandboxName, adapter, entry, target, providerRuntimeSelection);
     entry = recovery.entry;
     // Check live providers under the same cross-command lock used by
     // credentials add so neither command can race its collision check.

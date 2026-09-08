@@ -243,9 +243,7 @@ async function rebuildSandboxUnlocked(
       recoveryManifest = preDeleteRecovery.manifest;
       recoveryRegistrySnapshot = preDeleteRecovery.registrySnapshot;
       const activeRecoveryTransaction = onboardSession.loadSession()?.checkpoint?.sandboxRecreate;
-      const retainedMcpHandoff = recoveryManifest
-        ? readRebuildMcpHandoff(recoveryManifest)
-        : null;
+      const retainedMcpHandoff = recoveryManifest ? readRebuildMcpHandoff(recoveryManifest) : null;
       if (
         recoveryManifest?.rebuildMcpHandoff &&
         recoveryManifest.rebuildMcpHandoff.retired !== true &&
@@ -253,11 +251,12 @@ async function rebuildSandboxUnlocked(
       ) {
         return bail("The retained rebuild MCP recovery handoff is invalid.");
       }
-      const observedMcp = retainedMcpHandoff ??
+      const observedMcp =
+        retainedMcpHandoff ??
         observeMcpStateForRebuild(
           sandboxEntry,
           recreateOptions.runtimeSelection,
-          !activeRecoveryTransaction,
+          recoveryManifest === null && activeRecoveryTransaction?.sandboxName !== sandboxName,
         );
       const mcpEntries = observedMcp.entries;
       const mcpRuntimeSelectionRequired = mcpEntries.length > 0;
@@ -365,10 +364,7 @@ async function rebuildSandboxUnlocked(
             `The rebuild policy cleanup record could not be updated: ${rebuildFailureDetail(error)}`,
           );
         }
-        if (
-          clearRebuildPolicyHandoff(backupManifest) &&
-          clearRebuildMcpHandoff(backupManifest)
-        )
+        if (clearRebuildPolicyHandoff(backupManifest) && clearRebuildMcpHandoff(backupManifest))
           return true;
         return reportIncompletePolicyHandoffCleanup(
           backupManifest,
@@ -905,8 +901,7 @@ async function rebuildSandboxUnlocked(
       ) {
         runBestEffortRebuildCleanup(
           () =>
-            clearRebuildPolicyHandoff(handoffManifest) &&
-            clearRebuildMcpHandoff(handoffManifest),
+            clearRebuildPolicyHandoff(handoffManifest) && clearRebuildMcpHandoff(handoffManifest),
           "  Warning: bounded rebuild recovery handoff could not be removed.",
         );
       } else if (rebuildPolicySourcePath && rebuildPolicySourceIsEphemeral) {

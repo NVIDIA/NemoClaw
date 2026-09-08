@@ -233,7 +233,64 @@ describe("explicit MCP migration", () => {
         rebuildSandbox: vi.fn().mockResolvedValue(undefined),
       }),
     ).rejects.toThrow("legacy cleanup failed");
-    expect(mocks.unregister).toHaveBeenCalledOnce();
+    expect(mocks.unregister).not.toHaveBeenCalled();
+    expect(mocks.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("preserves every verified Deep Agents native entry after legacy cleanup begins", async () => {
+    const deepEntry = {
+      ...entry,
+      agent: "langchain-deepagents-code",
+      adapter: "deepagents-config" as const,
+    };
+    const secondEntry = {
+      ...deepEntry,
+      server: "slack",
+      url: "https://mcp.slack.example/mcp/",
+      env: ["SLACK_TOKEN"],
+      providerName: "alpha-mcp-slack",
+      providerId: "provider-slack",
+      policyName: "mcp-bridge-slack",
+    };
+    const legacy = { github: deepEntry, slack: secondEntry };
+    const native = {
+      github: { ...deepEntry, source: "native" as const },
+      slack: { ...secondEntry, source: "native" as const },
+    };
+    mocks.getSandbox.mockReturnValue({ name: "alpha", agent: deepEntry.agent });
+    mocks.getAgent.mockReturnValue({
+      name: deepEntry.agent,
+      displayName: "Deep Agents Code",
+      mcpCapability: { support: "bridge", adapter: deepEntry.adapter },
+    });
+    mocks.getAdapter.mockReturnValue(deepEntry.adapter);
+    mocks.inspectLegacy.mockReturnValue({
+      bridges: legacy,
+      sources: { native: {}, legacy },
+    });
+    mocks.inspectSources
+      .mockReturnValueOnce({ native: {}, legacy })
+      .mockReturnValue({ native, legacy });
+    mocks.preflightTargets.mockResolvedValue(
+      new Map([
+        ["github", { addresses: ["8.8.8.8"] }],
+        ["slack", { addresses: ["1.1.1.1"] }],
+      ]),
+    );
+    mocks.removeLegacy
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw new Error("second legacy cleanup failed");
+      });
+
+    await expect(
+      migrateMcpBridges("alpha", {
+        apply: true,
+        rebuildSandbox: vi.fn().mockResolvedValue(undefined),
+      }),
+    ).rejects.toThrow("second legacy cleanup failed");
+    expect(mocks.removeLegacy).toHaveBeenCalledTimes(2);
+    expect(mocks.unregister).not.toHaveBeenCalled();
     expect(mocks.updateSandbox).not.toHaveBeenCalled();
   });
 
