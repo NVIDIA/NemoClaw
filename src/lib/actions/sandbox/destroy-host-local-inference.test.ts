@@ -3,6 +3,24 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+vi.mock("./mcp-bridge", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./mcp-bridge")>()),
+  prepareMcpBridgesForDestroy: async (
+    _sandboxName: string,
+    options: { runtimeSelection?: OpenShellRuntimeSelection } = {},
+  ) => ({
+    entries: [],
+    ...(options.runtimeSelection ? { runtimeSelection: options.runtimeSelection } : {}),
+  }),
+  prepareMcpBridgesForAbsentSandboxDestroy: async (
+    _sandboxName: string,
+    options: { runtimeSelection?: OpenShellRuntimeSelection } = {},
+  ) => ({
+    entries: [],
+    ...(options.runtimeSelection ? { runtimeSelection: options.runtimeSelection } : {}),
+  }),
+}));
+
 import { createInMemoryRuntimeProviderBundle } from "../../../../test/helpers/runtime-provider-bundle";
 import { llamaCppHostLocalInferenceReceipt } from "../../../../test/helpers/host-local-inference-receipt";
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
