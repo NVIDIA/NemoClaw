@@ -15,6 +15,7 @@ import { allMessagingChannelPolicyPresets } from "../messaging-policy-presets";
 import {
   materializeRebuildPolicyHandoff,
   mergeReplacementPolicyAccess,
+  readValidatedRebuildPolicySource,
 } from "./rebuild-policy-handoff";
 
 const roots: string[] = [];
@@ -48,6 +49,27 @@ afterEach(() => {
 });
 
 describe("rebuild policy handoff", () => {
+  it("accepts the read-only endpoint access emitted by OpenShell policy update", () => {
+    const policyPath = tempPolicy(
+      "read-only-host-edit.yaml",
+      `version: 1
+network_policies:
+  host_edit:
+    name: host_edit
+    endpoints:
+      - host: host-edit.example.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: read-only
+    binaries:
+      - path: /usr/bin/curl
+`,
+    );
+
+    expect(readValidatedRebuildPolicySource(policyPath).providers).toEqual([]);
+  });
+
   it("adds missing replacement access while preserving OpenShell's live choices", () => {
     const live = `
 version: 1
