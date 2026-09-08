@@ -19,6 +19,7 @@ BOOTSTRAP_TMPDIR=""
 PAYLOAD_MARKER="NEMOCLAW_VERSIONED_INSTALLER_PAYLOAD=1"
 DEFAULT_INSTALL_REF="lkg"
 INSTALL_TAG_EXAMPLE="vX.Y.Z"
+BOOTSTRAP_LOOKUP_TIMEOUT_SECONDS=30
 
 resolve_release_tag() {
   if [[ -n "${NEMOCLAW_INSTALL_REF:-}" ]]; then
@@ -80,19 +81,28 @@ clone_nemoclaw_ref() {
 }
 
 installed_nemoclaw_release_version() {
-  local cli_path output
+  local cli_path output status
   cli_path="$(command -v nemoclaw 2>/dev/null || true)"
   [[ -n "$cli_path" ]] || return 0
-  output="$("$cli_path" --version 2>/dev/null || true)"
-  if [[ "$output" =~ ^nemoclaw[[:space:]]+v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+  output="$(run_bounded_bootstrap_lookup "installed NemoClaw version lookup" "$cli_path" --version)" || {
+    status=$?
+    ((status == 124)) && exit 1
+    return 0
+  }
+  if [[ "$output" =~ ^nemoclaw[[:space:]]+v([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?)$ ]]; then
     printf '%s' "${BASH_REMATCH[1]}"
   fi
 }
 
 checkout_release_version() {
-  local source_root="$1" target_commit ref version
+  local source_root="$1" target_commit refs status ref version
   target_commit="$(git -C "$source_root" rev-parse HEAD 2>/dev/null || true)"
   [[ -n "$target_commit" ]] || return 0
+  refs="$(run_bounded_bootstrap_lookup "maintained release tag lookup" git -C "$source_root" ls-remote --tags origin 'refs/tags/v*')" || {
+    status=$?
+    ((status == 124)) && exit 1
+    return 0
+  }
   while read -r commit ref; do
     [[ "$commit" == "$target_commit" ]] || continue
     ref="${ref%\^\{\}}"
@@ -101,11 +111,13 @@ checkout_release_version() {
       printf '%s' "$version"
       return 0
     fi
-  done < <(git -C "$source_root" ls-remote --tags origin 'refs/tags/v*' 2>/dev/null || true)
+  done <<<"$refs"
 }
 
 release_version_is_newer() {
   local left="$1" right="$2" left_major left_minor left_patch right_major right_minor right_patch
+  left="${left%%+*}"
+  left="${left%%-*}"
   IFS=. read -r left_major left_minor left_patch <<<"$left"
   IFS=. read -r right_major right_minor right_patch <<<"$right"
   ((10#$left_major > 10#$right_major)) && return 0
@@ -115,9 +127,42 @@ release_version_is_newer() {
   ((10#$left_patch > 10#$right_patch))
 }
 
+run_bounded_bootstrap_lookup() {
+  local label="$1" output_file command_pid status ticks=0
+  shift
+  output_file="$(mktemp "${TMPDIR:-/tmp}/nemoclaw-bootstrap-lookup.XXXXXX")"
+  "$@" >"$output_file" 2>/dev/null &
+  command_pid=$!
+  while kill -0 "$command_pid" 2>/dev/null; do
+    if ((ticks >= BOOTSTRAP_LOOKUP_TIMEOUT_SECONDS * 10)); then
+      kill -TERM "$command_pid" 2>/dev/null || true
+      wait "$command_pid" 2>/dev/null || true
+      rm -f "$output_file"
+      printf '[ERROR] Timed out during %s after %s seconds.\n' "$label" "$BOOTSTRAP_LOOKUP_TIMEOUT_SECONDS" >&2
+      printf '        The installed CLI was not changed. Retry or select an explicit immutable release tag.\n' >&2
+      return 124
+    fi
+    sleep 0.1
+    ticks=$((ticks + 1))
+  done
+  if wait "$command_pid"; then
+    status=0
+  else
+    status=$?
+  fi
+  if ((status == 0)); then
+    cat "$output_file"
+  fi
+  rm -f "$output_file"
+  return "$status"
+}
+
 guard_implicit_maintained_downgrade() {
-  local source_root="$1" installed_version target_version
-  [[ -z "${NEMOCLAW_INSTALL_REF:-}" && -z "${NEMOCLAW_INSTALL_TAG:-}" ]] || return 0
+  local source_root="$1" selected_ref="$2" installed_version target_version
+  case "$selected_ref" in
+    lkg | refs/tags/lkg) ;;
+    *) return 0 ;;
+  esac
   installed_version="$(installed_nemoclaw_release_version)"
   [[ -n "$installed_version" ]] || return 0
   target_version="$(checkout_release_version "$source_root")"
@@ -145,7 +190,7 @@ exec_installer_from_ref() {
 
   clone_nemoclaw_ref "$ref" "$source_root"
 
-  guard_implicit_maintained_downgrade "$source_root"
+  guard_implicit_maintained_downgrade "$source_root" "$ref"
 
   payload_script="${source_root}/scripts/install.sh"
   legacy_script="${source_root}/install.sh"

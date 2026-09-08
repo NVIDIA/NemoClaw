@@ -28,6 +28,9 @@ function runInstall(
   writeExecutable(
     path.join(bin, "nemoclaw"),
     `#!/usr/bin/env bash
+if [[ "${installedVersion}" == 'hang' ]]; then
+  /bin/sleep 60
+fi
 printf 'nemoclaw v%s\n' "${installedVersion}"
 `,
   );
@@ -54,11 +57,24 @@ PAYLOAD
     printf 'target-commit\n'
     ;;
   ls-remote)
-    printf 'target-commit\trefs/tags/v%s\n' "${targetVersion}"
+    if [[ "${targetVersion}" == 'hang' ]]; then
+      /bin/sleep 60
+    elif [[ "${targetVersion}" == annotated-* ]]; then
+      version="${targetVersion.replace(/^annotated-/, "")}"
+      printf 'tag-object\trefs/tags/v%s\n' "$version"
+      printf 'target-commit\trefs/tags/v%s^{}\n' "$version"
+    else
+      printf 'target-commit\trefs/tags/v%s\n' "${targetVersion}"
+    fi
     ;;
 esac
 `,
   );
+  const sleepBody =
+    installedVersion === "hang" || targetVersion === "hang"
+      ? "#!/usr/bin/env bash\nexit 0\n"
+      : '#!/usr/bin/env bash\nexec /bin/sleep "$@"\n';
+  writeExecutable(path.join(bin, "sleep"), sleepBody);
 
   const result = spawnSync("bash", [], {
     cwd: root,
@@ -99,6 +115,27 @@ describe("public installer downgrade guard", () => {
     expect(fs.existsSync(payloadMarker)).toBe(true);
   });
 
+  it("runs the selected payload when the implicit lkg release is unchanged", () => {
+    const { result, payloadMarker } = runInstall("0.0.109", "0.0.109");
+
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(payloadMarker)).toBe(true);
+  });
+
+  it("keeps a newer installed prerelease when the implicit lkg release is older", () => {
+    const { result, payloadMarker } = runInstall("0.0.119-rc.1", "0.0.118");
+
+    expect(result.status).toBe(1);
+    expect(fs.existsSync(payloadMarker)).toBe(false);
+  });
+
+  it("accepts the peeled commit from an annotated maintained release tag", () => {
+    const { result, payloadMarker } = runInstall("0.0.108", "annotated-0.0.109");
+
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(payloadMarker)).toBe(true);
+  });
+
   it("runs an older release when the user selects its tag", () => {
     const { result, payloadMarker } = runInstall("0.0.118", "0.0.109", {
       NEMOCLAW_INSTALL_TAG: "v0.0.109",
@@ -108,6 +145,15 @@ describe("public installer downgrade guard", () => {
     expect(fs.existsSync(payloadMarker)).toBe(true);
   });
 
+  it("keeps the installed CLI when lkg is selected explicitly", () => {
+    const { result, payloadMarker } = runInstall("0.0.118", "0.0.109", {
+      NEMOCLAW_INSTALL_TAG: "lkg",
+    });
+
+    expect(result.status).toBe(1);
+    expect(fs.existsSync(payloadMarker)).toBe(false);
+  });
+
   it("keeps the installed CLI when the implicit lkg version cannot be verified", () => {
     const { result, payloadMarker } = runInstall("0.0.118", "unknown");
 
@@ -115,6 +161,18 @@ describe("public installer downgrade guard", () => {
     expect(`${result.stdout}${result.stderr}`).toContain(
       "Cannot verify the maintained lkg version before replacing installed NemoClaw v0.0.118.",
     );
+    expect(fs.existsSync(payloadMarker)).toBe(false);
+  });
+
+  it.each([
+    ["installed NemoClaw version lookup", "hang", "0.0.109"],
+    ["maintained release tag lookup", "0.0.108", "hang"],
+  ])("bounds the %s", (label, installedVersion, targetVersion) => {
+    const { result, payloadMarker } = runInstall(installedVersion, targetVersion);
+
+    expect(result.status).toBe(1);
+    expect(`${result.stdout}${result.stderr}`).toContain(`Timed out during ${label}`);
+    expect(`${result.stdout}${result.stderr}`).toContain("The installed CLI was not changed.");
     expect(fs.existsSync(payloadMarker)).toBe(false);
   });
 });
