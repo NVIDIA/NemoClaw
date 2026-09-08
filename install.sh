@@ -82,8 +82,13 @@ clone_nemoclaw_ref() {
 }
 
 installed_nemoclaw_release_version() {
-  local cli_path output status
-  cli_path="$(command -v nemoclaw 2>/dev/null || true)"
+  local cli_name cli_path output status
+  case "${NEMOCLAW_AGENT:-openclaw}" in
+    hermes) cli_name="nemohermes" ;;
+    langchain-deepagents-code) cli_name="nemo-deepagents" ;;
+    *) cli_name="nemoclaw" ;;
+  esac
+  cli_path="$(command -v "$cli_name" 2>/dev/null || true)"
   [[ -n "$cli_path" ]] || return 3
   output="$(run_bounded_bootstrap_lookup "installed NemoClaw version lookup" "$cli_path" --version)" || {
     status=$?
@@ -91,7 +96,7 @@ installed_nemoclaw_release_version() {
     ((status >= 128)) && return "$status"
     return 2
   }
-  if [[ "$output" =~ ^nemoclaw[[:space:]]+v([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?)$ ]]; then
+  if [[ "$output" =~ ^${cli_name}[[:space:]]+v([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?)$ ]]; then
     printf '%s' "${BASH_REMATCH[1]}"
     return 0
   fi
@@ -133,16 +138,16 @@ release_version_is_newer() {
 }
 
 run_bounded_bootstrap_lookup() (
-  local label="$1" output_file command_pid status ticks=0
+  local label="$1" output_file command_pid="" status ticks=0
   shift
   output_file="$(mktemp "${TMPDIR:-/tmp}/nemoclaw-bootstrap-lookup.XXXXXX")"
+  trap 'trap - INT TERM EXIT; [[ -z "$command_pid" ]] || terminate_bootstrap_lookup_group "$command_pid"; rm -f "$output_file"; exit 130' INT
+  trap 'trap - INT TERM EXIT; [[ -z "$command_pid" ]] || terminate_bootstrap_lookup_group "$command_pid"; rm -f "$output_file"; exit 143' TERM
+  trap 'status=$?; trap - INT TERM EXIT; [[ -z "$command_pid" ]] || terminate_bootstrap_lookup_group "$command_pid"; rm -f "$output_file"; exit "$status"' EXIT
   set -m
   "$@" >"$output_file" 2>/dev/null </dev/null &
   command_pid=$!
   set +m
-  trap 'trap - INT TERM EXIT; terminate_bootstrap_lookup_group "$command_pid"; rm -f "$output_file"; exit 130' INT
-  trap 'trap - INT TERM EXIT; terminate_bootstrap_lookup_group "$command_pid"; rm -f "$output_file"; exit 143' TERM
-  trap 'status=$?; trap - INT TERM EXIT; terminate_bootstrap_lookup_group "$command_pid"; rm -f "$output_file"; exit "$status"' EXIT
   while bootstrap_lookup_group_is_alive "$command_pid"; do
     if ((ticks >= BOOTSTRAP_LOOKUP_TIMEOUT_SECONDS * 10)); then
       trap - INT TERM EXIT

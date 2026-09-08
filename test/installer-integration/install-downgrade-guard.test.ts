@@ -8,6 +8,8 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { INSTALLER_PAYLOAD } from "../helpers/installer-sourced-env";
+
 const INSTALLER = path.join(import.meta.dirname, "../..", "install.sh");
 const temporaryDirectories: string[] = [];
 
@@ -19,7 +21,11 @@ function runInstall(
   installedVersion: string,
   targetVersion: string,
   extraEnvironment: Record<string, string> = {},
-  options: { lookupTimeoutSeconds?: number; useRealSleep?: boolean } = {},
+  options: {
+    interruptBeforeLookupTrap?: boolean;
+    lookupTimeoutSeconds?: number;
+    useRealSleep?: boolean;
+  } = {},
 ) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-downgrade-"));
   temporaryDirectories.push(root);
@@ -27,18 +33,25 @@ function runInstall(
   const payloadMarker = path.join(root, "payload-ran");
   const lookupPid = path.join(root, "lookup.pid");
   const interruptSent = path.join(root, "interrupt-sent");
+  const cliName =
+    extraEnvironment.NEMOCLAW_AGENT === "hermes"
+      ? "nemohermes"
+      : extraEnvironment.NEMOCLAW_AGENT === "langchain-deepagents-code"
+        ? "nemo-deepagents"
+        : "nemoclaw";
   fs.mkdirSync(bin);
   writeExecutable(
-    path.join(bin, "nemoclaw"),
+    path.join(bin, cliName),
     `#!/usr/bin/env bash
 case "${installedVersion}" in
   hang) /bin/sleep 60 ;;
   ignore-term) trap '' TERM; while :; do :; done ;;
   interrupt) printf '%s' "$$" >"\${LOOKUP_PID:?}"; /bin/sleep 60 ;;
+  trap-race) printf '%s' "$$" >"\${LOOKUP_PID:?}"; /bin/sleep 60 ;;
   descendant-ignore-term) (trap '' TERM; printf '%s' "\${BASHPID}" >"\${LOOKUP_PID:?}"; while :; do :; done) & exit 0 ;;
   signaled) kill -KILL "$$" ;;
   invalid) printf 'not a NemoClaw version\n' ;;
-  *) printf 'nemoclaw v%s\n' "${installedVersion}" ;;
+  *) printf '${cliName} v%s\n' "${installedVersion}" ;;
 esac
 `,
   );
@@ -88,12 +101,18 @@ esac
         : '#!/usr/bin/env bash\nexec /bin/sleep "$@"\n';
   writeExecutable(path.join(bin, "sleep"), sleepBody);
 
-  const installerSource = fs
+  let installerSource = fs
     .readFileSync(INSTALLER, "utf8")
     .replace(
       "BOOTSTRAP_LOOKUP_TIMEOUT_SECONDS=30",
       `BOOTSTRAP_LOOKUP_TIMEOUT_SECONDS=${options.lookupTimeoutSeconds ?? 30}`,
     );
+  installerSource = options.interruptBeforeLookupTrap
+    ? installerSource.replace(
+        "  command_pid=$!\n  set +m",
+        '  command_pid=$!\n  while [[ ! -s "${LOOKUP_PID:?}" ]]; do :; done\n  /bin/bash -c \'kill -INT "$PPID"\'\n  set +m',
+      )
+    : installerSource;
 
   const result = spawnSync("bash", [], {
     cwd: root,
@@ -127,6 +146,21 @@ describe("public installer downgrade guard", () => {
       "Refusing to replace installed NemoClaw v0.0.118 with maintained lkg v0.0.109.",
     );
     expect(`${result.stdout}${result.stderr}`).toContain("The installed CLI was not changed.");
+    expect(fs.existsSync(payloadMarker)).toBe(false);
+  });
+
+  it.each([
+    ["Hermes", "hermes"],
+    ["Deep Agents", "langchain-deepagents-code"],
+  ])("keeps the installed %s CLI when the implicit lkg release is older", (_label, agent) => {
+    const { result, payloadMarker } = runInstall("0.0.118", "0.0.109", {
+      NEMOCLAW_AGENT: agent,
+    });
+
+    expect(result.status).toBe(1);
+    expect(`${result.stdout}${result.stderr}`).toContain(
+      "Refusing to replace installed NemoClaw v0.0.118 with maintained lkg v0.0.109.",
+    );
     expect(fs.existsSync(payloadMarker)).toBe(false);
   });
 
@@ -285,6 +319,23 @@ describe("public installer downgrade guard", () => {
     expect(() => process.kill(pid, 0)).toThrow();
   });
 
+  it("registers cleanup before starting a version lookup", () => {
+    const { lookupPid, payloadMarker, result, root } = runInstall(
+      "trap-race",
+      "0.0.109",
+      {},
+      { interruptBeforeLookupTrap: true },
+    );
+
+    expect(result.status).not.toBe(0);
+    expect(fs.existsSync(payloadMarker)).toBe(false);
+    expect(
+      fs.readdirSync(root).filter((name) => name.startsWith("nemoclaw-bootstrap-lookup.")),
+    ).toEqual([]);
+    const pid = Number(fs.readFileSync(lookupPid, "utf8"));
+    expect(() => process.kill(pid, 0)).toThrow();
+  });
+
   it("kills a lookup descendant after its process-group leader exits", () => {
     const { lookupPid, payloadMarker, result } = runInstall("descendant-ignore-term", "0.0.109");
 
@@ -298,5 +349,39 @@ describe("public installer downgrade guard", () => {
       encoding: "utf8",
     });
     expect(processState.status === 1 || processState.stdout.trim().startsWith("Z")).toBe(true);
+  });
+});
+
+describe("versioned installer payload ref selection", () => {
+  it("passes the bootstrap commit to the managed clone boundary", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-payload-ref-"));
+    temporaryDirectories.push(root);
+    const cloneMarker = path.join(root, "clone-ref");
+    const result = spawnSync(
+      "bash",
+      [
+        "-c",
+        `source "$INSTALLER_PAYLOAD" >/dev/null
+resolve_repo_root() { printf '%s' "$NON_SOURCE_ROOT"; }
+clone_nemoclaw_ref() { printf '%s' "$1" >"$CLONE_MARKER"; return 73; }
+install_nemoclaw`,
+      ],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          CLONE_MARKER: cloneMarker,
+          HOME: root,
+          INSTALLER_PAYLOAD,
+          NEMOCLAW_BOOTSTRAP_FETCH_REF: "bootstrap-commit",
+          NEMOCLAW_INSTALL_REF: "v0.0.109",
+          NEMOCLAW_INSTALL_TAG: "lkg",
+          NON_SOURCE_ROOT: path.join(root, "not-a-checkout"),
+        },
+      },
+    );
+
+    expect(result.status).toBe(73);
+    expect(fs.readFileSync(cloneMarker, "utf8")).toBe("bootstrap-commit");
   });
 });
