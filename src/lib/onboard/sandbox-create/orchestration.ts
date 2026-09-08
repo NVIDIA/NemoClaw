@@ -283,7 +283,7 @@ export function selectRebuildCreatePolicy(
 
 export function createOnboardCreatedSandboxRegistrationWithManagedLifecycle(input: {
   readonly sandboxName: string;
-  readonly managedBootstrap: boolean;
+  readonly allowManagedBootstrapNotReady: boolean;
   readonly allowNotReadyWithMatchingIdentity?: () => boolean;
   readonly sandboxGpuEnabled: boolean;
   readonly createdLifecycle: CreatedSandboxLifecycle;
@@ -295,9 +295,9 @@ export function createOnboardCreatedSandboxRegistrationWithManagedLifecycle(inpu
   >;
 }) {
   let createdLifecycle = input.createdLifecycle;
-  if (input.managedBootstrap || input.allowNotReadyWithMatchingIdentity) {
+  if (input.allowManagedBootstrapNotReady || input.allowNotReadyWithMatchingIdentity) {
     const allowNotReadyWithMatchingIdentity = () =>
-      input.managedBootstrap || input.allowNotReadyWithMatchingIdentity?.() === true;
+      input.allowManagedBootstrapNotReady || input.allowNotReadyWithMatchingIdentity?.() === true;
     const capture = (fields: Pick<SandboxEntry, "lifecycleGeneration">) => {
       if (input.sandboxGpuEnabled || !allowNotReadyWithMatchingIdentity()) {
         return input.createdLifecycle.capture(fields);
@@ -344,6 +344,27 @@ export function persistExactFinalHandoffAcknowledgement(input: {
   };
   input.persist(acknowledged, input.checkpoint);
   return acknowledged;
+}
+
+/** Keep compatibility replacement recovery separate from managed-bootstrap recovery. */
+export function allowsNotReadyCreatedSandboxRevalidation(input: {
+  readonly managedBootstrapCreateFinished: boolean;
+  readonly createRoute: PendingSandboxCreateIdentity["route"] | null;
+  readonly currentCheckpoint: PendingSandboxCreateIdentity | null;
+  readonly acceptedCheckpoint: PendingSandboxCreateIdentity | null;
+}): boolean {
+  const checkpoint = input.currentCheckpoint ?? input.acceptedCheckpoint;
+  if (input.createRoute === "compatibility" || checkpoint?.route === "compatibility") {
+    return checkpoint?.exactFinalHandoffAcknowledged === true;
+  }
+  return input.managedBootstrapCreateFinished;
+}
+
+function allowsManagedBootstrapNotReady(
+  managedBootstrapActive: boolean,
+  route: PendingSandboxCreateIdentity["route"],
+): boolean {
+  return managedBootstrapActive && route !== "compatibility";
 }
 
 /** Persist one create-attempt recovery message through the onboard session owner. */
@@ -2426,10 +2447,14 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     const createFlowEnvironment = hermesGpuAuthority?.env ?? sandboxEnv;
     const createGpuVerifier = hermesGpuAuthority?.verify ?? verifyDirectSandboxGpu;
     let managedBootstrapCreateFinished = false;
+    let managedBootstrapCreateRoute: PendingSandboxCreateIdentity["route"] | null = null;
     const allowNotReadyWithMatchingIdentity = (): boolean =>
-      managedBootstrapCreateFinished ||
-      pendingCreateIdentity?.exactFinalHandoffAcknowledged === true ||
-      acceptedTargetPendingIdentity?.exactFinalHandoffAcknowledged === true;
+      allowsNotReadyCreatedSandboxRevalidation({
+        managedBootstrapCreateFinished,
+        createRoute: managedBootstrapCreateRoute,
+        currentCheckpoint: pendingCreateIdentity,
+        acceptedCheckpoint: acceptedTargetPendingIdentity,
+      });
     const revalidateCreatedSandboxIdentity = (
       expectedIdentity: string,
       operation: string,
@@ -2747,6 +2772,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               managedBootstrap,
               verifyCreatedSandboxBeforeEffects: async (identity) => {
                 managedBootstrapCreateFinished = managedBootstrap !== null;
+                managedBootstrapCreateRoute = identity.route;
                 await verifyCreatedSandbox(identity);
               },
               revalidateVerifiedSandboxBeforeEffect: (operation) =>
@@ -2860,7 +2886,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     const completeCreatedSandboxRegistration =
       createOnboardCreatedSandboxRegistrationWithManagedLifecycle({
         sandboxName,
-        managedBootstrap: managedBootstrap !== null,
+        allowManagedBootstrapNotReady: allowsManagedBootstrapNotReady(
+          managedBootstrap !== null,
+          requireVerifiedCreateBoundary().route,
+        ),
         allowNotReadyWithMatchingIdentity,
         sandboxGpuEnabled: effectiveSandboxGpuConfig.sandboxGpuEnabled,
         createdLifecycle: createdSandboxLifecycle,

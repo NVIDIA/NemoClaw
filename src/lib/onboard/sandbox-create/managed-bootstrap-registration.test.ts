@@ -26,6 +26,7 @@ describe("managed bootstrap sandbox registration", () => {
     managedBootstrap: boolean,
     observation: SandboxRecreateObservation,
     persistedFinalHandoffAcknowledged = false,
+    compatibilityReplacement = false,
   ) {
     const publish = vi.fn();
     const runtime = {
@@ -35,7 +36,7 @@ describe("managed bootstrap sandbox registration", () => {
     } as never;
     const completeRegistration = createOnboardCreatedSandboxRegistrationWithManagedLifecycle({
       sandboxName: "alpha",
-      managedBootstrap,
+      allowManagedBootstrapNotReady: managedBootstrap && !compatibilityReplacement,
       allowNotReadyWithMatchingIdentity: () => persistedFinalHandoffAcknowledged,
       sandboxGpuEnabled: false,
       createdLifecycle: createCreatedSandboxLifecycle(
@@ -143,6 +144,18 @@ describe("managed bootstrap sandbox registration", () => {
 
     await expect(fixture.complete()).rejects.toThrow(/not report it Ready/u);
     expect(persist).not.toHaveBeenCalled();
+    expect(fixture.publish).not.toHaveBeenCalled();
+  });
+
+  it("does not let managed bootstrap bypass a compatibility handoff receipt (#10560)", async () => {
+    const fixture = registrationFixture(
+      true,
+      { state: "not_ready", liveIdentityFingerprint: durableIdentity },
+      false,
+      true,
+    );
+
+    await expect(fixture.complete()).rejects.toThrow(/not report it Ready/u);
     expect(fixture.publish).not.toHaveBeenCalled();
   });
 
