@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../adapters/openshell/runtime", async (importOriginal) => {
@@ -9,6 +12,10 @@ vi.mock("../../adapters/openshell/runtime", async (importOriginal) => {
 });
 
 import { captureOpenshellForStatus } from "../../adapters/openshell/runtime";
+import {
+  managedLlamaCppStatePaths,
+  reserveManagedLlamaCppOwner,
+} from "../../inference/llama-cpp/managed-state";
 import type { SandboxEntry } from "../../state/registry";
 import { collectSandboxStatusSnapshot, getSandboxStatusReport } from "./status-snapshot";
 
@@ -254,6 +261,35 @@ describe("getSandboxStatusReport llama.cpp attribution on drift (#10256)", () =>
       recovery:
         "Run nemoclaw alpha doctor. Rerun onboarding for that sandbox if the managed llama.cpp runtime check fails.",
     });
+  });
+
+  it("reads a private owner receipt before reporting managed JSON status (#10256)", async () => {
+    const home = fs.realpathSync(fs.mkdtempSync(`${os.tmpdir()}/nemoclaw-status-owner-`));
+    vi.stubEnv("HOME", home);
+    try {
+      const paths = managedLlamaCppStatePaths(home);
+      fs.mkdirSync(paths.stateDir, { recursive: true, mode: 0o700 });
+      reserveManagedLlamaCppOwner(paths, {
+        schemaVersion: 1,
+        sandboxName: "alpha",
+        catalogDigest: `sha256:${"1".repeat(64)}`,
+        presetDigest: `sha256:${"2".repeat(64)}`,
+        recipeDigest: `sha256:${"3".repeat(64)}`,
+        recipeId: "llama-cpp.managed",
+      });
+      liveGatewayInference("llama-cpp-local", "muse-glimmer");
+      const options = snapshotDeps({
+        provider: "llama-cpp-local",
+        model: "muse-glimmer",
+      });
+
+      const report = await getSandboxStatusReport("alpha", options.deps);
+
+      expect(report.llamaCpp).toEqual({ kind: "managed" });
+    } finally {
+      vi.unstubAllEnvs();
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it("classifies llama.cpp once in the snapshot consumed by the JSON report", async () => {
