@@ -1594,6 +1594,7 @@ RUN check_metadata() { \
             || { echo "ERROR: build-only Hermes path leaked into the final image: $path" >&2; return 1; }; \
     }; \
     check_absent /opt/hermes/tests \
+    && check_absent /opt/hermes/apps/desktop/src/store/suggestion-providers/github.test.ts \
     && check_absent /opt/nemoclaw-hermes-config/image-build-probes.py \
     && check_absent /opt/nemoclaw-hermes-config/finalize-image-layout.sh \
     && check_absent /opt/nemoclaw-hermes-config/patch-gateway-runtime-metadata.py \
