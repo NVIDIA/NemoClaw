@@ -30,7 +30,6 @@ const E2E_WORKFLOW_CONTRACTS = [
   "test/e2e/support/openshell-gateway-upgrade-workflow-boundary.test.ts",
   "test/e2e/support/prepare-e2e-workflow-boundary.test.ts",
   "test/e2e/support/runner-pressure-workflow-boundary.test.ts",
-  "test/e2e/support/sandbox-images-workflow-boundary.test.ts",
   "test/e2e/support/security-posture-workflow-boundary.test.ts",
   "test/e2e/support/shared-e2e-workflow-boundary.test.ts",
   "test/e2e/support/staging-brev-launchable-identity-workflow-boundary.test.ts",
@@ -331,10 +330,6 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/e2e/support/dockerhub-auth-workflow-boundary.test.ts"),
   },
   {
-    pattern: /(?:^|\/)\.github\/workflows\/(?:pr-self-hosted|sandbox-images)\.yaml$/,
-    testsToRun: runTests("test/e2e/support/sandbox-images-workflow-boundary.test.ts"),
-  },
-  {
     pattern: /(?:^|\/)\.github\/workflows\/code-scanning\.yaml$/,
     testsToRun: runTests("test/repository/code-scanning-workflow.test.ts"),
   },
@@ -351,7 +346,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   },
   {
     pattern: /(?:^|\/)\.github\/workflows\/pr-review-advisor\.yaml$/,
-    testsToRun: runTests("test/e2e/support/e2e-operations-workflow-boundary.test.ts"),
+    testsToRun: runTests("test/e2e/support/pr-review-advisor-workflow-boundary.test.ts"),
   },
   {
     pattern: /(?:^|\/)tools\/pr-review-advisor\/openshell-policy\.yaml$/,

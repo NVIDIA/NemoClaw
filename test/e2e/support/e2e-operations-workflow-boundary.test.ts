@@ -1447,43 +1447,4 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       vi.unstubAllEnvs();
     }
   });
-  it.each(
-    (() => {
-      const run = "${{ github.run_id }}",
-        attempt = "${{ github.run_attempt }}",
-        temp = "${{ runner.temp }}",
-        matrix = "${{ matrix.advisor.artifact_name }}";
-      return [
-        [
-          `pr-review-advisor-context-${run}\n`,
-          `pr-review-advisor-context-${run}-${attempt}\n`,
-          false,
-        ],
-        [
-          `name: pr-review-advisor-context-${run}\n          path: ${temp}`,
-          `name: pr-review-advisor-context-${run}-${attempt}\n          path: ${temp}`,
-          false,
-        ],
-        ["overwrite: true", "overwrite: false", false],
-        [`${matrix}-${attempt}`, matrix, true],
-      ] as const;
-    })(),
-  )("rejects an unsafe Advisor rerun artifact mutation", (before, after, specialist) => {
-    const directory = mkdtempSync(join(tmpdir(), "nemoclaw-e2e-operations-"));
-    const advisorPath = join(directory, "advisor.yaml");
-    try {
-      const source = readFileSync(
-        join(process.cwd(), ".github/workflows/pr-review-advisor.yaml"),
-        "utf8",
-      );
-      writeFileSync(advisorPath, source.replace(before, after));
-      expect(validateE2eOperationsWorkflow(readE2eOperationsWorkflow(), advisorPath)).toContain(
-        specialist
-          ? "Unified advisor specialist artifacts must be unique per rerun attempt"
-          : "Unified advisor context artifact must survive failed-job and full reruns",
-      );
-    } finally {
-      rmSync(directory, { force: true, recursive: true });
-    }
-  });
 });
