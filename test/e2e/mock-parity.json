@@ -162,6 +162,7 @@
         "test/e2e/live/full-e2e-workload-evidence.ts"
       ],
       "fast": [
+        "test/runtime/sandbox/sandbox-provisioning.test.ts",
         "test/e2e/support/hosted-inference.test.ts",
         "test/e2e/support/full-e2e-inference-probe.test.ts",
         "test/e2e/support/launch-agent-turn.test.ts",
@@ -533,6 +534,7 @@
       "fast": [
         "src/lib/actions/sandbox/skill-install.test.ts",
         "test/agents/hermes/hermes-image-build-probes.test.ts",
+        "test/agents/hermes/hermes-start.test.ts",
         "test/e2e/support/hermes-cli-adapter-live.test.ts",
         "test/e2e/support/managed-image-cohort-contract.test.ts",
         "test/e2e/support/managed-image-receipt.test.ts",
@@ -540,6 +542,7 @@
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/inference-adapter.test.ts",
+        "test/e2e/support/security-posture.test.ts",
         "test/e2e/support/workflow-plan.test.ts",
         "test/helpers/e2e-answer-assertions.test.ts"
       ]

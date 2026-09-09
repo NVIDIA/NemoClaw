@@ -35,6 +35,8 @@ const COLD_ONBOARD_PERFORMANCE_EVIDENCE_PATH =
   "e2e-artifacts/live/${{ matrix.id }}/onboard-progress-budget.json";
 const MANAGED_SOURCE_CONDITION =
   "${{ inputs.pr_number == '' || steps.select_pr_source.outputs.selection == 'base-cohort' }}";
+const BASE_PUBLICATION_CONDITION =
+  "${{ inputs.pr_number == '' || steps.select_pr_source.outputs.selection == 'base-cohort' || inputs.jobs != '' || inputs.targets == '' || contains(inputs.targets, 'managed-image-') }}";
 const PR_MANAGED_IMAGE_RESOLVER_SCRIPT =
   [
     "set -euo pipefail",
@@ -764,6 +766,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
       {
         id: "publication",
         name: "Select base and optional managed-image publication",
+        if: BASE_PUBLICATION_CONDITION,
         env: {
           EXPECTED_SHA: "${{ steps.publication_mode.outputs.expected_sha }}",
           GITHUB_TOKEN: "${{ github.token }}",
@@ -789,6 +792,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
       },
       {
         name: "Download immutable Deep Agents Code base contract",
+        if: BASE_PUBLICATION_CONDITION,
         env: {
           GITHUB_TOKEN: "${{ github.token }}",
           PUBLICATION_HEAD_SHA: "${{ steps.publication.outputs.head_sha }}",
@@ -800,6 +804,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
       {
         id: "validate_dcode_base",
         name: "Validate immutable Deep Agents Code base",
+        if: BASE_PUBLICATION_CONDITION,
         env: {
           PUBLICATION_HEAD_SHA: "${{ steps.publication.outputs.head_sha }}",
           PUBLICATION_RUN_ATTEMPT: "${{ steps.publication.outputs.run_attempt }}",

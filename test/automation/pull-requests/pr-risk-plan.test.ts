@@ -1009,7 +1009,7 @@ describe("deterministic PR risk plan", () => {
     "tools/e2e/job-map.txt",
     "test/e2e/registry/runtime-support.ts",
     "test/e2e/risk-signal-reporter.ts",
-    "test/e2e/lib/security-posture-assertions.sh",
+    "test/e2e/fixtures/security-posture.ts",
     "test/e2e/lib/redact-text.py",
     "test/e2e/lib/fake-slack-api.cjs",
     "test/e2e/fixtures/runtime-input.txt",
