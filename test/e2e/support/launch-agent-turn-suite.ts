@@ -25,6 +25,7 @@ import {
   SUBPROCESS_ENV_ALLOWED_PREFIXES,
 } from "../../../src/lib/subprocess-env";
 import { testTimeout } from "../../helpers/timeouts";
+import { registerTestGroup } from "../../helpers/test-group-registration";
 import {
   LAUNCH_TURN_SCRIPT,
   OPENCLAW_LAUNCH_OPENSHELL_SHIM_SCRIPT,
@@ -47,7 +48,7 @@ import {
 export type LaunchAgentTurnGroup = "evidence" | "failure-paths" | "readiness" | "termios";
 
 export function registerLaunchAgentTurnTests(group: LaunchAgentTurnGroup): void {
-  if (group === "evidence") {
+  registerTestGroup(group, "evidence", () => {
     it("reports a residual PTY monitor socket without removing it (#9384)", async () => {
       const fixtureRoot = mkdtempSync(join(tmpdir(), "nemoclaw-monitor-cleanup-"));
       const runId = randomUUID().replaceAll("-", "");
@@ -87,7 +88,7 @@ export function registerLaunchAgentTurnTests(group: LaunchAgentTurnGroup): void 
         rmSync(ptyMonitorRoot, { force: true, recursive: true });
       }
     });
-  }
+  });
 
   function runLaunchSessionFixture(
     mode: FixtureMode,
@@ -669,7 +670,7 @@ require("node:fs").appendFileSync(
     }
   }
 
-  if (group === "evidence") {
+  registerTestGroup(group, "evidence", () => {
     it("qualifies two ordered structured turns without comparing message content (#9160)", () => {
       const { baseline, baselineKeys, baselineMode, baselineNlink, baselineUid, qualification } =
         runEvidenceFixture({
@@ -822,9 +823,9 @@ require("node:fs").appendFileSync(
         }
       },
     );
-  }
+  });
 
-  if (group === "readiness") {
+  registerTestGroup(group, "readiness", () => {
     it.runIf(process.platform === "linux").each(["absent", "ansi", "reordered"] as const)(
       "keeps the monitor alive through SIGTERM, records an auto-message and PTY turn, sends /exit, strips launch authority, and ignores terminal copy evidence [%s] (#9160, #9384)",
       (terminalCopy) => {
@@ -1029,9 +1030,9 @@ require("node:fs").appendFileSync(
       },
       testTimeout(20_000),
     );
-  }
+  });
 
-  if (group === "termios") {
+  registerTestGroup(group, "termios", () => {
     it.runIf(process.platform === "linux")(
       "requires a current noncanonical observation after the PTY returns to canonical mode (#9384)",
       () => {
@@ -1057,9 +1058,9 @@ require("node:fs").appendFileSync(
       },
       testTimeout(30_000),
     );
-  }
+  });
 
-  if (group === "failure-paths") {
+  registerTestGroup(group, "failure-paths", () => {
     it.runIf(process.platform === "linux")(
       "fails when the PTY monitor socket remains missing until the session deadline (#9160)",
       () => {
@@ -1207,9 +1208,9 @@ require("node:fs").appendFileSync(
         expect(result.status).toBe(23);
       },
     );
-  }
+  });
 
-  if (group === "termios") {
+  registerTestGroup(group, "termios", () => {
     it.runIf(process.platform === "linux")(
       "rejects a relative OpenShell command before launching a host command (#9160)",
       async () => {
@@ -1345,5 +1346,5 @@ require("node:fs").appendFileSync(
         });
       },
     );
-  }
+  });
 }

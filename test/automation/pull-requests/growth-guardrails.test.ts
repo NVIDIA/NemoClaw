@@ -441,6 +441,27 @@ function defineCodebaseGrowthGuardrailTestSupport(): void {
     ]);
   });
 
+  it("keeps conditional growth attached when a test is renamed to a suite owner", async () => {
+    const base = "it('works', () => expect(ok).toBe(true));";
+    const diff = fixtureDiff(
+      [
+        {
+          filename: "test/helpers/example-suite.ts",
+          previous_filename: "test/example.test.ts",
+          status: "renamed",
+        },
+      ],
+      { "test/example.test.ts": base },
+      {
+        "test/helpers/example-suite.ts": `${base}\nif (ok) expect(ok).toBe(true);`,
+      },
+    );
+
+    expect(await conditionalGrowthViolations(diff)).toEqual([
+      "test/helpers/example-suite.ts: 1 if statement(s), up from 0",
+    ]);
+  });
+
   it.each([
     ["if statements", conditionalGrowthViolations, "if (ok) expect(ok).toBe(true);"],
     [

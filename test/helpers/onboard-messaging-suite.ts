@@ -20,6 +20,7 @@ import {
 } from "./messaging-plan-fixtures";
 import { runBoundedOnboardScript } from "./onboard-child-process-harness";
 import { writeOkOpenshell } from "./onboard-openshell-fixture";
+import { registerTestGroup } from "./test-group-registration";
 
 type CommandEntry = {
   command: string;
@@ -46,7 +47,7 @@ export type OnboardMessagingGroup = "lifecycle" | "provider";
 
 export function registerOnboardMessagingTests(group: OnboardMessagingGroup): void {
   describe(`onboard messaging (${group})`, () => {
-    if (group === "provider") {
+    registerTestGroup(group, "provider", () => {
       it(
         "creates providers for messaging tokens and attaches them to the sandbox",
         {
@@ -306,9 +307,9 @@ const { createSandbox, setupMessagingChannels } = require(${onboardPath});
           );
         },
       );
-    }
+    });
 
-    if (group === "lifecycle") {
+    registerTestGroup(group, "lifecycle", () => {
       it(
         "preserves Hermes Slack policy when Slack is active at sandbox create time",
         {
@@ -853,9 +854,9 @@ const { createSandbox } = require(${onboardPath});
           );
         },
       );
-    }
+    });
 
-    if (group === "provider") {
+    registerTestGroup(group, "provider", () => {
       it("aborts onboard when a messaging provider upsert fails", { timeout: 60_000 }, async () => {
         const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-provider-fail-"));
         const fakeBin = path.join(tmpDir, "bin");
@@ -1183,6 +1184,6 @@ const { createSandbox } = require(${onboardPath});
           assert.doesNotMatch(createCommand.command, /my-assistant-slack-bridge/);
         },
       );
-    }
+    });
   });
 }
