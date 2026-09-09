@@ -250,6 +250,155 @@ function Stop-ProcessStartAudit {
     Unregister-Event -SourceIdentifier $Audit.sourceIdentifier -ErrorAction SilentlyContinue
 }
 
+function Invoke-DelayedDescendantProbe {
+    param([Parameter(Mandatory)][string]$SentinelPath)
+
+    $delayMilliseconds = 2500
+    $timeoutMilliseconds = 10000
+    $eventPrefix = 'Local\NemoClawDelayedChild-' + [guid]::NewGuid().ToString('N')
+    $ready = $null
+    $go = $null
+    $helper = $null
+    $audit = $null
+    $result = $null
+    # The handshake excludes PowerShell startup from the calibrated drain window.
+    $command = @'
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+$ready = [Threading.EventWaitHandle]::OpenExisting('__READY_EVENT__')
+$go = [Threading.EventWaitHandle]::OpenExisting('__GO_EVENT__')
+$child = $null
+try {
+    $startInfo = [Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = Join-Path $env:SystemRoot 'System32\cmd.exe'
+    $startInfo.Arguments = '/d /c echo delayed-child-executed'
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $ready.Set() | Out-Null
+    if (-not $go.WaitOne(10000)) { throw 'Delayed child was not released.' }
+    $delayClock = [Diagnostics.Stopwatch]::StartNew()
+    [Threading.Thread]::Sleep(__DELAY_MILLISECONDS__)
+    while ($delayClock.ElapsedMilliseconds -lt __DELAY_MILLISECONDS__) {
+        [Threading.Thread]::Sleep(1)
+    }
+    $delayClock.Stop()
+    $launchStarted = [Diagnostics.Stopwatch]::GetTimestamp()
+    $child = [Diagnostics.Process]::Start($startInfo)
+    $launchCompleted = [Diagnostics.Stopwatch]::GetTimestamp()
+    if (-not $child.WaitForExit(5000)) { throw 'Delayed child did not exit.' }
+    $output = $child.StandardOutput.ReadToEnd()
+    if ($output.Length -gt 64) { throw 'Delayed child output exceeded its bound.' }
+    $receipt = [pscustomobject]@{
+        parentProcessId = $PID
+        processId = $child.Id
+        exitCode = $child.ExitCode
+        launchStarted = $launchStarted
+        launchCompleted = $launchCompleted
+        output = $output.Trim()
+    }
+    [IO.File]::WriteAllText('__SENTINEL_PATH__', ($receipt | ConvertTo-Json -Compress), [Text.UTF8Encoding]::new($false))
+} finally {
+    if ($child) {
+        try {
+            if (-not $child.HasExited) {
+                $child.Kill()
+                if (-not $child.WaitForExit(5000)) { throw 'Delayed child cleanup did not complete.' }
+            }
+        } finally { $child.Dispose() }
+    }
+    $go.Dispose()
+    $ready.Dispose()
+}
+'@
+    $command = $command.Replace('__READY_EVENT__', "$eventPrefix-ready")
+    $command = $command.Replace('__GO_EVENT__', "$eventPrefix-go")
+    $command = $command.Replace('__SENTINEL_PATH__', $SentinelPath.Replace("'", "''"))
+    $command = $command.Replace('__DELAY_MILLISECONDS__', [string]$delayMilliseconds)
+    $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
+    try {
+        $ready = [Threading.EventWaitHandle]::new($false, [Threading.EventResetMode]::ManualReset, "$eventPrefix-ready")
+        $go = [Threading.EventWaitHandle]::new($false, [Threading.EventResetMode]::ManualReset, "$eventPrefix-go")
+        $audit = Start-ProcessStartAudit
+        $helper = Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') `
+            -ArgumentList @('-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', $encodedCommand) `
+            -PassThru -ErrorAction Stop
+        $null = $helper.Handle
+        if (-not $ready.WaitOne($timeoutMilliseconds)) {
+            Fail-Qualification 'The delayed descendant helper did not become ready.'
+        }
+        $releasedAt = [Diagnostics.Stopwatch]::GetTimestamp()
+        $go.Set() | Out-Null
+        $records = @(Receive-ProcessStartAudit -Audit $audit -SettleMilliseconds $script:ProcessAuditSettleMilliseconds)
+        if (-not $helper.WaitForExit($timeoutMilliseconds) -or $helper.ExitCode -ne 0) {
+            Fail-Qualification 'The delayed descendant helper did not complete successfully.'
+        }
+        Assert-BoundedFile -Path $SentinelPath -MaximumBytes 1024
+        $probe = Get-Content -LiteralPath $SentinelPath -Raw | ConvertFrom-Json
+        $launchStartedMilliseconds = 1000.0 * ([long]$probe.launchStarted - $releasedAt) / [Diagnostics.Stopwatch]::Frequency
+        $launchCompletedMilliseconds = 1000.0 * ([long]$probe.launchCompleted - $releasedAt) / [Diagnostics.Stopwatch]::Frequency
+        if ($launchStartedMilliseconds -lt $delayMilliseconds -or
+            $launchCompletedMilliseconds -lt $launchStartedMilliseconds -or
+            $launchCompletedMilliseconds -ge $script:ProcessAuditSettleMilliseconds) {
+            Fail-Qualification 'The delayed descendant did not start inside the calibrated 2500-3000 ms window.'
+        }
+        if ($probe.parentProcessId -ne $helper.Id -or $probe.exitCode -ne 0 -or
+            $probe.output -cne 'delayed-child-executed') {
+            Fail-Qualification 'The delayed descendant did not produce its bounded control side effect.'
+        }
+        $descendants = @(Get-AuditedDescendantStarts -Records $records -RootProcessId $PID)
+        $helperStarts = @($descendants | Where-Object {
+            $_.processId -eq $helper.Id -and $_.parentProcessId -eq $PID
+        })
+        $childStarts = @($descendants | Where-Object {
+            $_.processId -eq $probe.processId -and $_.parentProcessId -eq $helper.Id -and
+                $_.processName -ieq 'cmd.exe'
+        })
+        if ($helperStarts.Count -ne 1 -or $childStarts.Count -ne 1) {
+            Fail-Qualification 'The calibrated Windows process-start audit missed its delayed descendant.'
+        }
+        $result = [pscustomobject]@{
+            delayMilliseconds = $delayMilliseconds
+            settleMilliseconds = $script:ProcessAuditSettleMilliseconds
+            launchStartedMilliseconds = $launchStartedMilliseconds
+            launchCompletedMilliseconds = $launchCompletedMilliseconds
+            helperProcessId = $helper.Id
+            processId = [int]$probe.processId
+            exitCode = [int]$probe.exitCode
+            sideEffectObserved = $true
+            auditedDescendantStarts = $descendants
+        }
+    } finally {
+        try {
+            if ($helper) {
+                try {
+                    if (-not $helper.HasExited) {
+                        $helper.Kill()
+                        if (-not $helper.WaitForExit(5000)) {
+                            Fail-Qualification 'The delayed descendant helper cleanup did not complete.'
+                        }
+                    }
+                } finally { $helper.Dispose() }
+            }
+        } finally {
+            if ($go) { $go.Dispose() }
+            if ($ready) { $ready.Dispose() }
+            if ($audit) {
+                Stop-ProcessStartAudit -Audit $audit
+                if (@(Get-EventSubscriber -SourceIdentifier $audit.sourceIdentifier -ErrorAction SilentlyContinue).Count -ne 0 -or
+                    @(Get-Event -SourceIdentifier $audit.sourceIdentifier -ErrorAction SilentlyContinue).Count -ne 0) {
+                    Fail-Qualification 'The delayed descendant process-start audit cleanup did not complete.'
+                }
+            }
+            if (Test-Path -LiteralPath $SentinelPath -PathType Leaf) {
+                [IO.File]::Delete($SentinelPath)
+            }
+        }
+    }
+    $result | Add-Member -NotePropertyName cleanupComplete -NotePropertyValue $true
+    return $result
+}
+
 function Get-ProhibitedProcessSnapshot {
     param([Parameter(Mandatory)][string]$Phase)
 
@@ -482,6 +631,7 @@ $receiptStage = Join-Path $artifactParent ('.' + $artifactName + '.' + [guid]::N
 $processAudit = $null
 $installerDescendantStarts = @()
 $childProbeControl = $null
+$delayedChildProbeControl = $null
 $controlDescendantStarts = @()
 $nativeBinaryEvidence = $null
 $hostPlatformEvidence = [pscustomobject]@{
@@ -561,6 +711,7 @@ try {
         Invoke-NativeVersionProbe -Path (Join-Path $payloadRoot 'bin\openshell.exe') -Label 'OpenShell CLI'
         Invoke-NativeVersionProbe -Path (Join-Path $payloadRoot 'bin\openshell-gateway.exe') -Label 'OpenShell gateway'
     )
+    $delayedChildProbeControl = Invoke-DelayedDescendantProbe -SentinelPath (Join-Path $qualificationRoot 'child-delayed-control.json')
     $processAudit = Start-ProcessStartAudit
     $controlSentinel = Join-Path $qualificationRoot 'child-control.txt'
     $childProbeControl = Invoke-ChildSideEffectProbe -SentinelPath $controlSentinel
@@ -812,6 +963,7 @@ try {
         receiptVersion = 1
         calibratedChildProbe = $childProbeControl
         calibratedDescendantStarts = $controlDescendantStarts
+        delayedChildProbe = $delayedChildProbeControl
         installerDescendantStarts = $installerDescendantStarts
         newProhibitedProcesses = $newProhibitedProcesses
         preExecution = $preExecution
