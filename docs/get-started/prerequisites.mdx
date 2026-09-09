@@ -44,6 +44,7 @@ In a non-interactive run, the installer can reactivate the group through `sg doc
 If that path is unavailable or does not restore Docker access, the installer exits with `newgrp docker` guidance before it starts onboarding.
 
 Rootless Podman is an explicit provider choice and does not require the Docker CLI or daemon. It is qualified for standard onboarding on supported native Linux hosts and for WSL-local Ollama on the documented Windows WSL2 path.
+Native Podman gateway readiness also requires `lsof` on `PATH` to verify the gateway listener. NemoClaw does not install it; use the host's package-management policy to install `lsof` before retrying onboarding.
 Start standard onboarding with `NEMOCLAW_GATEWAY_RUNTIME=podman $$nemoclaw onboard`.
 Before selecting it, review its qualified host requirements and limitations in [Platform Support](../reference/platform-support#deployment-paths) and the [Podman troubleshooting guide](../reference/troubleshooting#podman).
 Managed llama.cpp and Windows-host Ollama remain Docker Desktop-only on WSL. Managed local vLLM install/start remains Docker-backed and is unavailable when Docker is absent; attaching an already-running local vLLM server remains a separate path.
