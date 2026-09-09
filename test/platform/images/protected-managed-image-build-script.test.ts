@@ -28,10 +28,9 @@ const DIGEST = "b".repeat(64);
 let testRoot = "";
 let stubBin = "";
 let dockerLog = "";
-let dockerAuditBuildCount = "";
-let dockerAuditBuildFailureMode = "";
 let dockerBuildCount = "";
 let dockerBuildFailureMode = "";
+let receiptVerifyStatus = "";
 let seedLog = "";
 let registryCurlExit = "";
 let registryLog = "";
@@ -53,32 +52,6 @@ printf '%s\n' "$*" >>"$NEMOCLAW_TEST_DOCKER_LOG"
 case "$*" in
   "buildx imagetools inspect "*) printf '{}\n' ;;
   "buildx build "*)
-    if [[ "$*" == *"--target protected-mcporter-audit-evidence"* ]]; then
-      output_spec=""
-      previous=""
-      for argument in "$@"; do
-        if [[ "$previous" == "--output" ]]; then output_spec="$argument"; fi
-        previous="$argument"
-      done
-      destination="\${output_spec#type=local,dest=}"
-      [[ -n "$destination" && "$destination" != "$output_spec" ]]
-      mkdir -p "$destination"
-      audit_build_count=0
-      if [[ -f "$NEMOCLAW_TEST_DOCKER_AUDIT_BUILD_COUNT" ]]; then
-        read -r audit_build_count <"$NEMOCLAW_TEST_DOCKER_AUDIT_BUILD_COUNT"
-      fi
-      audit_build_count=$((audit_build_count + 1))
-      printf '%s\n' "$audit_build_count" >"$NEMOCLAW_TEST_DOCKER_AUDIT_BUILD_COUNT"
-      if [[ "$NEMOCLAW_TEST_DOCKER_AUDIT_BUILD_FAILURE_MODE:$audit_build_count" == "exact-once:1" ]]; then
-        printf 'partial\n' >"$destination/partial"
-        printf '%s\n' 'ERROR: failed to build: failed to solve: stream error: stream ID 71; INTERNAL_ERROR; received from peer' >&2
-        exit 42
-      fi
-      [[ ! -e "$destination/partial" ]]
-      printf '{"result":"pass"}\n' >"$destination/mcporter-runtime.receipt.json"
-      printf '{"metadata":{"vulnerabilities":{"info":0,"low":0,"moderate":0,"high":0,"critical":0}}}\n' >"$destination/mcporter-runtime.raw.json"
-      exit 0
-    fi
     build_count=0
     if [[ -f "$NEMOCLAW_TEST_DOCKER_BUILD_COUNT" ]]; then
       read -r build_count <"$NEMOCLAW_TEST_DOCKER_BUILD_COUNT"
@@ -129,6 +102,9 @@ esac
     `#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"$NEMOCLAW_TEST_SEED_LOG"
+if [[ "$*" == *"/scripts/lib/npm-audit-receipt.mts"* ]]; then
+  exit "$NEMOCLAW_TEST_RECEIPT_VERIFY_STATUS"
+fi
 mode="$4"
 shift 4
 output=""
@@ -184,14 +160,12 @@ function completeImportedCache(cacheRoot: string): void {
   );
   mkdirSync(path.join(cacheRoot, "messaging-npm-cache-seed"));
   writeFileSync(path.join(cacheRoot, "messaging-npm-cache-seed", "manifest.json"), "{}\n", "utf8");
-  const auditDirectory = path.join(cacheRoot, "reviewed-npm-audit");
-  mkdirSync(auditDirectory);
+}
+
+function completeAuditEvidence(auditDirectory: string): void {
+  mkdirSync(auditDirectory, { recursive: true });
   writeFileSync(path.join(auditDirectory, "mcporter-runtime.receipt.json"), '{"result":"pass"}\n');
-  writeFileSync(
-    path.join(auditDirectory, "mcporter-runtime.raw.json"),
-    '{"metadata":{"vulnerabilities":{"info":0,"low":0,"moderate":0,"high":0,"critical":0}}}\n',
-  );
-  writeFileSync(path.join(auditDirectory, "mcporter-runtime.receipt.sha256"), `${DIGEST}\n`);
+  writeFileSync(path.join(auditDirectory, "mcporter-runtime.raw.json"), '{"metadata":{}}\n');
 }
 
 function completeSourceBoundary(sourceRoot: string): void {
@@ -246,16 +220,6 @@ function recordedBuildInvocations(): string[] {
     );
 }
 
-function recordedAuditBuildInvocations(): string[] {
-  return readFileSync(dockerLog, "utf8")
-    .split("\n")
-    .filter(
-      (line) =>
-        line.startsWith("buildx build ") &&
-        line.includes("--target protected-mcporter-audit-evidence"),
-    );
-}
-
 function recordedBuildInvocation(agent: string): string {
   const invocation = recordedBuildInvocations().find((line) =>
     line.includes(`io.nvidia.nemoclaw.agent=${agent}`),
@@ -293,8 +257,6 @@ function runBuild(sourceRoot: string, extraArgs: readonly string[] = [], platfor
       encoding: "utf8",
       env: {
         ...process.env,
-        NEMOCLAW_TEST_DOCKER_AUDIT_BUILD_COUNT: dockerAuditBuildCount,
-        NEMOCLAW_TEST_DOCKER_AUDIT_BUILD_FAILURE_MODE: dockerAuditBuildFailureMode,
         NEMOCLAW_TEST_DOCKER_BUILD_COUNT: dockerBuildCount,
         NEMOCLAW_TEST_DOCKER_BUILD_FAILURE_MODE: dockerBuildFailureMode,
         NEMOCLAW_TEST_DOCKER_LOG: dockerLog,
@@ -302,6 +264,7 @@ function runBuild(sourceRoot: string, extraArgs: readonly string[] = [], platfor
         NEMOCLAW_TEST_REGISTRY_LOG: registryLog,
         NEMOCLAW_TEST_REGISTRY_STATUS: registryStatus,
         NEMOCLAW_TEST_REAL_PATH: process.env.PATH ?? "",
+        NEMOCLAW_TEST_RECEIPT_VERIFY_STATUS: receiptVerifyStatus,
         NEMOCLAW_TEST_SEED_LOG: seedLog,
         NEMOCLAW_TEST_TEE_FAILURE_MODE: teeFailureMode,
         PATH: `${stubBin}:${process.env.PATH ?? ""}`,
@@ -315,10 +278,9 @@ beforeEach(() => {
   testRoot = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-protected-build-"));
   stubBin = path.join(testRoot, "bin");
   dockerLog = path.join(testRoot, "docker.log");
-  dockerAuditBuildCount = path.join(testRoot, "docker-audit-build-count");
-  dockerAuditBuildFailureMode = "";
   dockerBuildCount = path.join(testRoot, "docker-build-count");
   dockerBuildFailureMode = "";
+  receiptVerifyStatus = "0";
   seedLog = path.join(testRoot, "seed.log");
   registryCurlExit = "0";
   registryLog = path.join(testRoot, "registry.log");
@@ -396,7 +358,6 @@ describe("protected managed-image build-cache boundary", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(recordedBuildInvocations()).toHaveLength(3);
-    expect(recordedAuditBuildInvocations()).toEqual([]);
 
     expect({
       openclaw: recordedBuildInvocation("openclaw"),
@@ -439,15 +400,7 @@ describe("protected managed-image build-cache boundary", () => {
     expect(result.status, result.stderr).toBe(0);
     expect(existsSync(cacheRoot)).toBe(true);
     expect(recordedBuildInvocations()).toHaveLength(3);
-    expect(recordedAuditBuildInvocations()).toEqual([
-      expect.stringContaining(
-        `--target protected-mcporter-audit-evidence --output type=local,dest=${realpathSync(cacheRoot)}/reviewed-npm-audit`,
-      ),
-    ]);
-    expect(recordedAuditBuildInvocations()[0]).toContain(
-      `--file ${REPO_ROOT}/Dockerfile.protected-npm-audit`,
-    );
-    expect(recordedAuditBuildInvocations()[0]).not.toContain("--network none");
+    expect(existsSync(path.join(cacheRoot, "reviewed-npm-audit"))).toBe(false);
 
     expect({
       openclaw: recordedBuildInvocation("openclaw"),
@@ -481,21 +434,7 @@ describe("protected managed-image build-cache boundary", () => {
     expect(existsSync(path.join(cacheRoot, "messaging-npm-cache-seed", "manifest.json"))).toBe(
       true,
     );
-    expect(
-      readFileSync(
-        path.join(cacheRoot, "reviewed-npm-audit", "mcporter-runtime.receipt.sha256"),
-        "utf8",
-      ),
-    ).toBe(`${DIGEST}\n`);
-    expect(recordedBuildInvocation("openclaw")).toContain(
-      `--secret id=nemoclaw-mcporter-audit-receipt,src=${realpathSync(cacheRoot)}/reviewed-npm-audit/mcporter-runtime.receipt.json`,
-    );
-    expect(recordedBuildInvocation("openclaw")).toContain(
-      `--secret id=nemoclaw-mcporter-audit-raw-report,src=${realpathSync(cacheRoot)}/reviewed-npm-audit/mcporter-runtime.raw.json`,
-    );
-    expect(recordedBuildInvocation("openclaw")).toContain(
-      `--build-arg NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256=${DIGEST}`,
-    );
+    expect(recordedBuildInvocation("openclaw")).not.toContain("nemoclaw-mcporter-audit");
     expect(recordedBuildInvocation("hermes")).not.toContain("nemoclaw-mcporter-audit");
     expect(recordedBuildInvocation("langchain-deepagents-code")).not.toContain(
       "nemoclaw-mcporter-audit",
@@ -516,23 +455,6 @@ describe("protected managed-image build-cache boundary", () => {
     const retried = runBuild(REPO_ROOT, ["--cache-to", cacheRoot]);
 
     expect(retried.status, retried.stderr).toBe(0);
-  });
-
-  it("retries a transient reviewed audit build from clean evidence", () => {
-    const cacheRoot = path.join(testRoot, "export-cache");
-    stubBuildInvocation();
-    dockerAuditBuildFailureMode = "exact-once";
-
-    const result = runBuild(REPO_ROOT, ["--cache-to", cacheRoot]);
-    const output = `${result.stdout}${result.stderr}`;
-
-    expect(result.status, output).toBe(0);
-    expect(recordedAuditBuildInvocations()).toHaveLength(2);
-    expect(existsSync(path.join(cacheRoot, "reviewed-npm-audit", "partial"))).toBe(false);
-    expect(output).toContain(
-      "outcome=transient-external agent=reviewed-npm-audit attempt=1/2 retry-in=2s failure=buildkit-http2-internal-error",
-    );
-    expect(output).toContain("outcome=passed-after-retry agent=reviewed-npm-audit attempt=2/2");
   });
 
   it.each([
@@ -612,70 +534,48 @@ describe("protected managed-image build-cache boundary", () => {
     expect(existsSync(dockerLog)).toBe(false);
   });
 
-  it.each([
-    [
-      "missing",
-      (cacheRoot: string) =>
-        rmSync(path.join(cacheRoot, "reviewed-npm-audit"), { recursive: true }),
-      "reviewed audit evidence is missing or unsafe",
-    ],
-    [
-      "changed",
-      (cacheRoot: string) =>
-        writeFileSync(
-          path.join(cacheRoot, "reviewed-npm-audit", "mcporter-runtime.receipt.sha256"),
-          `${"c".repeat(64)}\n`,
-        ),
-      "reviewed audit receipt hash does not match",
-    ],
-    [
-      "empty",
-      (cacheRoot: string) =>
-        writeFileSync(
-          path.join(cacheRoot, "reviewed-npm-audit", "mcporter-runtime.receipt.sha256"),
-          "",
-        ),
-      "reviewed audit receipt hash does not match",
-    ],
-  ])(
-    "rejects %s reviewed audit evidence before invoking Docker (#11088)",
-    (_case, mutate, error) => {
-      const cacheRoot = path.join(testRoot, "imported-cache");
-      completeImportedCache(cacheRoot);
-      stubBuildInvocation();
-      mutate(cacheRoot);
-
-      const result = runBuild(REPO_ROOT, ["--cache-from", cacheRoot]);
-
-      expect(result.status, result.stderr).toBe(1);
-      expect(result.stderr).toContain(error);
-      expect(existsSync(dockerLog)).toBe(false);
-    },
-  );
-
-  it("rejects a changed imported audit receipt before invoking Docker (#11088)", () => {
+  it("rejects incomplete reviewed audit evidence before invoking Docker (#11088)", () => {
     const cacheRoot = path.join(testRoot, "imported-cache");
+    const auditRoot = path.join(testRoot, "audit-evidence");
     completeImportedCache(cacheRoot);
+    mkdirSync(auditRoot);
+    writeFileSync(path.join(auditRoot, "mcporter-runtime.receipt.json"), "", "utf8");
     stubBuildInvocation();
-    writeExecutable(
-      "sha256sum",
-      `#!/usr/bin/env bash
-if [[ "$(<"$1")" == '{"result":"pass"}' ]]; then
-  printf '%s  %s\\n' '${DIGEST}' "$1"
-else
-  printf '%s  %s\\n' '${"c".repeat(64)}' "$1"
-fi
-`,
-    );
-    writeFileSync(
-      path.join(cacheRoot, "reviewed-npm-audit", "mcporter-runtime.receipt.json"),
-      '{"result":"changed"}\n',
-    );
 
-    const result = runBuild(REPO_ROOT, ["--cache-from", cacheRoot]);
+    const result = runBuild(REPO_ROOT, [
+      "--cache-from",
+      cacheRoot,
+      "--audit-evidence-from",
+      auditRoot,
+    ]);
 
     expect(result.status, result.stderr).toBe(1);
-    expect(result.stderr).toContain("reviewed audit receipt hash does not match");
+    expect(result.stderr).toContain("reviewed audit evidence is incomplete");
+    expect(existsSync(dockerLog)).toBe(false);
+  });
+
+  it("binds external evidence to the trusted verifier and candidate graph (#11088)", () => {
+    const cacheRoot = path.join(testRoot, "imported-cache");
+    const auditRoot = path.join(testRoot, "audit-evidence");
+    completeImportedCache(cacheRoot);
+    completeAuditEvidence(auditRoot);
+    stubBuildInvocation();
+    receiptVerifyStatus = "42";
+
+    const result = runBuild(REPO_ROOT, [
+      "--cache-from",
+      cacheRoot,
+      "--audit-evidence-from",
+      auditRoot,
+    ]);
+    const verification = readFileSync(seedLog, "utf8");
+
+    expect(result.status, result.stderr).toBe(42);
+    expect(verification).toContain(`${REPO_ROOT}/scripts/lib/npm-audit-receipt.mts`);
+    expect(verification).toContain(
+      `--package-json ${REPO_ROOT}/agents/openclaw/mcporter-runtime/package.json`,
+    );
+    expect(verification).toContain(`--audit-config ${REPO_ROOT}/ci/reviewed-npm-audit.json`);
     expect(existsSync(dockerLog)).toBe(false);
   });
 
@@ -693,10 +593,17 @@ fi
     const originalSeedNames = readdirSync(sourceSeed).sort();
     const originalMcpSeedNames = readdirSync(sourceMcpSeed).sort();
     const originalMessagingSeedNames = readdirSync(sourceMessagingSeed).sort();
+    const auditRoot = path.join(testRoot, "audit-evidence");
     completeImportedCache(cacheRoot);
+    completeAuditEvidence(auditRoot);
     stubBuildInvocation();
 
-    const result = runBuild(REPO_ROOT, ["--cache-from", cacheRoot]);
+    const result = runBuild(REPO_ROOT, [
+      "--cache-from",
+      cacheRoot,
+      "--audit-evidence-from",
+      auditRoot,
+    ]);
 
     expect(result.status, result.stderr).toBe(0);
     expect(recordedBuildInvocations()).toHaveLength(3);
@@ -723,7 +630,7 @@ fi
     });
     expect(recordedBuildInvocation("openclaw").split(" ")).toContain("--no-cache");
     expect(recordedBuildInvocation("openclaw")).toContain(
-      `--secret id=nemoclaw-mcporter-audit-receipt,src=${realpathSync(cacheRoot)}/reviewed-npm-audit/mcporter-runtime.receipt.json`,
+      `--secret id=nemoclaw-mcporter-audit-receipt,src=${realpathSync(auditRoot)}/mcporter-runtime.receipt.json`,
     );
     expect(recordedBuildInvocation("openclaw")).toContain(
       `--build-arg NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256=${DIGEST}`,

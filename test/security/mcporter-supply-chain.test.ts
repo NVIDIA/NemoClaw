@@ -241,19 +241,24 @@ describe("mcporter image supply-chain controls", () => {
 
   it("carries a networked reviewed audit into the offline protected OpenClaw build", () => {
     const contents = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
-    const producer = fs.readFileSync(path.join(repoRoot, "Dockerfile.protected-npm-audit"), "utf8");
-    const flattenedProducer = producer.replace(/\\\s*\n/g, " ").replace(/\s+/g, " ");
+    const workflow = fs.readFileSync(path.join(repoRoot, ".github/workflows/e2e.yaml"), "utf8");
+    const protectedController = fs.readFileSync(
+      path.join(repoRoot, "scripts/checks/build-protected-managed-images.sh"),
+      "utf8",
+    );
     const installStart = contents.indexOf("# Upgrade stale bases.");
     const installEnd = contents.indexOf("# Patch OpenClaw media fetch", installStart);
     const protectedInstall = contents.slice(installStart, installEnd);
 
-    expect(producer).toContain(
-      `FROM node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c AS protected-mcporter-audit`,
+    expect(workflow).toContain("uses: ./.github/actions/ci-reviewed-npm-audit");
+    expect(workflow).toContain("locked-graph: mcporter-runtime");
+    expect(workflow).toContain('--audit-evidence-from "$RUNNER_TEMP/protected-reviewed-npm-audit"');
+    expect(protectedController).toContain(
+      'trusted_receipt_verifier="$controller_root/scripts/lib/npm-audit-receipt.mts"',
     );
-    expect(flattenedProducer).toContain(
-      "NEMOCLAW_REVIEWED_NPM_AUDIT_LOCKED_GRAPH=mcporter-runtime NEMOCLAW_REVIEWED_NPM_AUDIT_REPORT_DIR=artifacts/reviewed-npm-audit",
+    expect(protectedController).toContain(
+      '--package-json "$source_root/agents/openclaw/mcporter-runtime/package.json"',
     );
-    expect(producer).toContain("FROM scratch AS protected-mcporter-audit-evidence");
     expect(contents).toContain(
       "COPY scripts/lib/verify-mcporter-audit.sh /scripts/lib/verify-mcporter-audit.sh",
     );
@@ -261,9 +266,6 @@ describe("mcporter image supply-chain controls", () => {
       "--mount=type=secret,id=nemoclaw-mcporter-audit-receipt,required=false",
     );
     expect(contents).not.toContain("from=protected-mcporter-audit-cache");
-    expect(mcporterAuditHelper).toContain(
-      "seed=/run/nemoclaw-mcporter-audit-cache/reviewed-npm-audit",
-    );
     expect(mcporterAuditHelper).toContain(
       "cached mcporter audit requires paired receipt, raw report, and receipt SHA-256",
     );

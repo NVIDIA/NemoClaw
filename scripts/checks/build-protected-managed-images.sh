@@ -5,7 +5,7 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: $0 --output <json> --revision <sha> --cohort <id> --platform <linux/amd64|linux/arm64> --openclaw-base <exact-ref> --hermes-base <exact-ref> --dcode-base <exact-ref> [--source-root <absolute-dir>] [--cache-to <absolute-dir>] [--cache-from <absolute-dir>]" >&2
+  echo "usage: $0 --output <json> --revision <sha> --cohort <id> --platform <linux/amd64|linux/arm64> --openclaw-base <exact-ref> --hermes-base <exact-ref> --dcode-base <exact-ref> [--source-root <absolute-dir>] [--cache-to <absolute-dir>] [--cache-from <absolute-dir> --audit-evidence-from <absolute-dir>]" >&2
   exit 2
 }
 
@@ -19,8 +19,14 @@ dcode_base=""
 source_root="$PWD"
 cache_to=""
 cache_from=""
+audit_evidence_from=""
 while (($# > 0)); do
   case "$1" in
+    --audit-evidence-from)
+      (($# >= 2)) || usage
+      audit_evidence_from="$2"
+      shift 2
+      ;;
     --cache-to)
       (($# >= 2)) || usage
       cache_to="$2"
@@ -93,6 +99,13 @@ npm_target_libc="glibc"
 [[ "$dcode_base" =~ ^ghcr[.]io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base@sha256:[a-f0-9]{64}$ ]] || usage
 [[ "$source_root" == /* && "$source_root" != *$'\n'* && -d "$source_root" && ! -L "$source_root" ]] || usage
 source_root="$(cd -- "$source_root" && pwd -P)"
+controller_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+trusted_audit_config="$controller_root/ci/reviewed-npm-audit.json"
+trusted_audit_exceptions="$controller_root/ci/npm-audit-exceptions.json"
+trusted_receipt_verifier="$controller_root/scripts/lib/npm-audit-receipt.mts"
+[[ -f "$trusted_audit_config" && ! -L "$trusted_audit_config" ]] || usage
+[[ -f "$trusted_audit_exceptions" && ! -L "$trusted_audit_exceptions" ]] || usage
+[[ -f "$trusted_receipt_verifier" && ! -L "$trusted_receipt_verifier" ]] || usage
 seed_helper="$source_root/scripts/checks/materialize-locked-npm-cache-seed.mts"
 source_lockfile="$source_root/nemoclaw/package-lock.json"
 source_seed_dir="$source_root/tools/mcp-tool-discovery-runtime/npm-cache-seed"
@@ -159,6 +172,12 @@ if [[ -n "$cache_from" ]]; then
     exit 1
   }
 fi
+if [[ -n "$audit_evidence_from" ]]; then
+  [[ -n "$cache_from" && "$audit_evidence_from" == /* && "$audit_evidence_from" != *$'\n'* && -d "$audit_evidence_from" && ! -L "$audit_evidence_from" ]] || usage
+  audit_evidence_from="$(cd -- "$audit_evidence_from" && pwd -P)"
+elif [[ -n "$cache_from" ]]; then
+  usage
+fi
 
 for command in curl docker jq node sha256sum; do
   command -v "$command" >/dev/null 2>&1 || {
@@ -209,22 +228,26 @@ validate_audit_evidence() {
   }
   audit_receipt="$directory/mcporter-runtime.receipt.json"
   audit_raw_report="$directory/mcporter-runtime.raw.json"
-  local hash_file="$directory/mcporter-runtime.receipt.sha256"
-  [[ -f "$audit_receipt" && -s "$audit_receipt" && -f "$audit_raw_report" && -s "$audit_raw_report" && -f "$hash_file" ]] || {
+  [[ -f "$audit_receipt" && -s "$audit_receipt" && -f "$audit_raw_report" && -s "$audit_raw_report" ]] || {
     echo "ERROR: protected managed-image reviewed audit evidence is incomplete" >&2
     exit 1
   }
-  local recorded_hash
-  read -r recorded_hash <"$hash_file" || recorded_hash=""
   audit_receipt_sha256="$(sha256sum "$audit_receipt" | awk '{print $1}')"
-  [[ "$recorded_hash" =~ ^[a-f0-9]{64}$ && "$recorded_hash" == "$audit_receipt_sha256" ]] || {
-    echo "ERROR: protected managed-image reviewed audit receipt hash does not match" >&2
-    exit 1
-  }
+  node --experimental-strip-types --no-warnings "$trusted_receipt_verifier" \
+    --receipt "$audit_receipt" \
+    --package-json "$source_root/agents/openclaw/mcporter-runtime/package.json" \
+    --package-lock "$source_root/agents/openclaw/mcporter-runtime/package-lock.json" \
+    --raw-report "$audit_raw_report" \
+    --exceptions "$trusted_audit_exceptions" \
+    --graph mcporter-runtime \
+    --audit-config "$trusted_audit_config" \
+    --registry https://registry.yarnpkg.com \
+    --threshold high \
+    --legacy-npmjs true
 }
 
 if [[ -n "$cache_from" ]]; then
-  audit_evidence_dir="$cache_from/reviewed-npm-audit"
+  audit_evidence_dir="$audit_evidence_from"
   validate_audit_evidence "$audit_evidence_dir"
 fi
 
@@ -513,27 +536,6 @@ build_agent() {
       baseReference: $baseReference
     }' >>"$contracts"
 }
-
-if [[ -n "$cache_to" ]]; then
-  audit_evidence_dir="$cache_to/reviewed-npm-audit"
-  audit_build_command=(docker buildx build
-    --file "$source_root/Dockerfile.protected-npm-audit"
-    --platform "$platform"
-    --target protected-mcporter-audit-evidence
-    --output "type=local,dest=${audit_evidence_dir}"
-    --provenance=false
-    --sbom=false
-    "$source_root")
-  run_build_with_retry "reviewed-npm-audit" "" "$audit_evidence_dir" "${audit_build_command[@]}"
-  [[ -f "$audit_evidence_dir/mcporter-runtime.receipt.json" && ! -L "$audit_evidence_dir/mcporter-runtime.receipt.json" ]] || {
-    echo "ERROR: protected managed-image reviewed audit receipt is missing or unsafe" >&2
-    exit 1
-  }
-  sha256sum "$audit_evidence_dir/mcporter-runtime.receipt.json" | awk '{print $1}' \
-    >"$audit_evidence_dir/mcporter-runtime.receipt.sha256"
-  chmod 0400 "$audit_evidence_dir/mcporter-runtime.receipt.sha256"
-  validate_audit_evidence "$audit_evidence_dir"
-fi
 
 build_agent \
   openclaw \

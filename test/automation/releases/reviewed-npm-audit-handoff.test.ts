@@ -119,6 +119,17 @@ describe("reviewed npm audit handoff", () => {
       fs.cpSync(path.join(REPO_ROOT, "agents/openclaw/mcporter-runtime"), runtime, {
         recursive: true,
       });
+      fs.mkdirSync(path.join(targetRoot, "ci"), { recursive: true });
+      fs.mkdirSync(path.join(targetRoot, "scripts", "lib"), { recursive: true });
+      fs.writeFileSync(path.join(targetRoot, "ci", "reviewed-npm-audit.json"), "{}\n");
+      fs.writeFileSync(
+        path.join(targetRoot, "scripts", "audit-reviewed-npm-graph.mts"),
+        "throw new Error('candidate producer executed');\n",
+      );
+      fs.writeFileSync(
+        path.join(targetRoot, "scripts", "lib", "npm-audit-receipt.mts"),
+        "throw new Error('candidate verifier executed');\n",
+      );
       fs.copyFileSync(path.join(REPO_ROOT, "ci/npm-audit-exceptions.json"), exceptionFile);
       fs.copyFileSync(path.join(REPO_ROOT, "ci/reviewed-npm-audit.json"), auditConfigFile);
       fs.writeFileSync(
