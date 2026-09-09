@@ -312,8 +312,8 @@ if (process.argv[2] !== "tui") {
       message: {
         api: "openai-completions",
         content: [],
-        errorCode: "503",
-        errorMessage: "litellm.ServiceUnavailableError: ServiceUnavailableError: OpenAIException - . Received Model Group=nvidia/model; Available Model Group Fallbacks=None",
+        errorCode: process.env.NEMOCLAW_FIXTURE_PROVIDER_ERROR_CODE || "503",
+        errorMessage: process.env.NEMOCLAW_FIXTURE_PROVIDER_ERROR_MESSAGE || "litellm.ServiceUnavailableError: ServiceUnavailableError: OpenAIException - . Received Model Group=nvidia/model; Available Model Group Fallbacks=None",
         model: "nvidia/model",
         provider: "inference",
         role: "assistant",
@@ -1052,19 +1052,18 @@ it.runIf(process.platform === "linux")(
 );
 
 it.runIf(process.platform === "linux").each([
-  {
-    expectedError: null,
-    secondMode: "valid",
-    secondTerminal: "absent",
-  },
-  {
-    expectedError: "OpenClaw launch provider unavailable after 2 attempts",
-    secondMode: "provider-empty-message",
-    secondTerminal: "provider",
-  },
+  ["500", "ServiceUnavailableError", "valid"],
+  ["502", "ServiceUnavailableError", "valid"],
+  ["503", "ServiceUnavailableError", "valid"],
+  ["504", "ServiceUnavailableError", "valid"],
+  ["529", "ServiceUnavailableError", "valid"],
+  ["500", "InternalServerError", "valid"],
+  ["503", "ServiceUnavailableError", "provider-empty-message"],
 ] as const)(
-  "executes the real launch producer through $secondMode (#10978)",
-  async ({ expectedError, secondMode, secondTerminal }) => {
+  "executes the real $1 HTTP $0 launch producer through $2 (#10978)",
+  async (providerCode, providerError, secondMode) => {
+    const expectedError = secondMode === "valid" ? null : "provider unavailable after 2 attempts";
+    const secondTerminal = secondMode === "valid" ? "absent" : "provider";
     const calls: Array<{
       artifactName?: string;
       firstInput?: string;
@@ -1080,7 +1079,15 @@ it.runIf(process.platform === "linux").each([
         const fixture = runLaunchSessionFixture(
           calls.length === 0 ? "provider-empty-message" : secondMode,
           calls.length === 0 ? "provider" : secondTerminal,
-          { args, command, env: options?.env },
+          {
+            args,
+            command,
+            env: {
+              ...options?.env,
+              NEMOCLAW_FIXTURE_PROVIDER_ERROR_CODE: providerCode,
+              NEMOCLAW_FIXTURE_PROVIDER_ERROR_MESSAGE: `litellm.${providerError}: ${providerError}: upstream unavailable`,
+            },
+          },
         ).result;
         calls.push({
           artifactName: options?.artifactName,
@@ -1108,18 +1115,11 @@ it.runIf(process.platform === "linux").each([
         redactionValues: [],
         sandboxName: "alpha",
       });
-      const outcome = launch.then(
-        (result) => ({ error: null, exitCode: result.exitCode }),
-        (error: unknown) => ({
-          error: error instanceof Error ? error.message : String(error),
-          exitCode: null,
-        }),
-      );
       await vi.advanceTimersByTimeAsync(1_000);
-      await expect(outcome).resolves.toEqual({
-        error: expectedError === null ? null : expect.stringContaining(expectedError),
-        exitCode: expectedError === null ? 0 : null,
-      });
+      const outcome = launch.then(({ exitCode }) => exitCode).catch(String);
+      await expect(outcome).resolves.toEqual(
+        expectedError === null ? 0 : expect.stringContaining(expectedError),
+      );
       expect(calls.map((call) => call.artifactName)).toEqual([
         "producer-handoff",
         "producer-handoff-provider-retry-02",

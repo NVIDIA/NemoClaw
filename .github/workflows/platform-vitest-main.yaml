@@ -89,7 +89,7 @@ jobs:
       matrix:
         include:
           - shard: 1
-            # 60m pre-live shard/setup + 70m live E2E + 20m cleanup/artifacts.
+            # The live E2E has a 70m timeout; every other step shares the remaining job time.
             timeout_minutes: 150
           - shard: 2
             timeout_minutes: 30
