@@ -64,6 +64,7 @@ type AuditConfig = Readonly<{
   severityThreshold: Severity;
   sourceNestedShrinkwrapPackages: readonly string[];
   sourceRegistryPackage: SourceRegistryPackage;
+  sourceRegistryPackageReplacement?: SourceRegistryPackage;
   sourceRegistryPackagesWithoutIntegrity: readonly PackageWithoutIntegrity[];
 }>;
 type ReviewedAuditReport = Readonly<{
@@ -93,6 +94,28 @@ const SOURCE_GRAPH = {
   id: "nemoclaw-cli",
   label: "NemoClaw CLI locked production graph",
 } as const;
+
+function isSourceRegistryPackage(value: unknown): value is SourceRegistryPackage {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const candidate = value as Partial<SourceRegistryPackage>;
+  return (
+    typeof candidate.artifactName === "string" &&
+    /^[a-z0-9][a-z0-9._-]*\.tgz$/.test(candidate.artifactName) &&
+    typeof candidate.label === "string" &&
+    candidate.label.length > 0 &&
+    typeof candidate.packageSpec === "string" &&
+    EXACT_NPM_PACKAGE_SPEC.test(candidate.packageSpec) &&
+    typeof candidate.integrity === "string" &&
+    candidate.integrity.length > 0 &&
+    typeof candidate.tarballUrl === "string" &&
+    candidate.tarballUrl.length > 0
+  );
+}
+
+function exactPackageName(packageSpec: string): string {
+  const separator = packageSpec.lastIndexOf("@");
+  return packageSpec.slice(0, separator);
+}
 const OPENCLAW_DOMEXCEPTION_ALIAS = {
   actualName: "@nolyfill/domexception",
   aliasPackagePath: "node_modules/openclaw/node_modules/node-domexception",
@@ -202,19 +225,15 @@ export function parseAuditConfig(contents: string): AuditConfig {
     ) ||
     new Set(parsed.sourceRegistryPackagesWithoutIntegrity.map(({ packageSpec }) => packageSpec))
       .size !== parsed.sourceRegistryPackagesWithoutIntegrity.length ||
-    typeof parsed.sourceRegistryPackage !== "object" ||
-    parsed.sourceRegistryPackage === null ||
-    Array.isArray(parsed.sourceRegistryPackage) ||
-    typeof parsed.sourceRegistryPackage.artifactName !== "string" ||
-    !/^[a-z0-9][a-z0-9._-]*\.tgz$/.test(parsed.sourceRegistryPackage.artifactName) ||
-    typeof parsed.sourceRegistryPackage.label !== "string" ||
-    !parsed.sourceRegistryPackage.label ||
-    typeof parsed.sourceRegistryPackage.packageSpec !== "string" ||
-    !EXACT_NPM_PACKAGE_SPEC.test(parsed.sourceRegistryPackage.packageSpec) ||
-    typeof parsed.sourceRegistryPackage.integrity !== "string" ||
-    !parsed.sourceRegistryPackage.integrity ||
-    typeof parsed.sourceRegistryPackage.tarballUrl !== "string" ||
-    !parsed.sourceRegistryPackage.tarballUrl ||
+    !isSourceRegistryPackage(parsed.sourceRegistryPackage) ||
+    (parsed.sourceRegistryPackageReplacement !== undefined &&
+      (!isSourceRegistryPackage(parsed.sourceRegistryPackageReplacement) ||
+        exactPackageName(parsed.sourceRegistryPackageReplacement.packageSpec) !==
+          exactPackageName(parsed.sourceRegistryPackage.packageSpec) ||
+        parsed.sourceRegistryPackageReplacement.packageSpec ===
+          parsed.sourceRegistryPackage.packageSpec ||
+        parsed.sourceRegistryPackageReplacement.artifactName ===
+          parsed.sourceRegistryPackage.artifactName)) ||
     parsed.lockedGraphs.some(
       (graph) =>
         typeof graph.id !== "string" ||
@@ -472,26 +491,33 @@ export function materializeSourceGraph(
   sourceRegistryPackage?: ReviewedPackage,
   sourceNestedShrinkwrapPackages: readonly string[] = [],
   sourceRegistryPackagesWithoutIntegrity: readonly PackageWithoutIntegrity[] = [],
+  sourceRegistryPackageReplacements: readonly ReviewedPackage[] = [],
 ): string {
   assertRegularFile(sourcePackage, "NemoClaw CLI package manifest");
   assertRegularFile(sourceLock, "NemoClaw CLI lockfile");
-  verifyReviewedNpmLockPackages({
+  const reviewedSourcePackages = [
+    sourceRegistryPackage,
+    ...sourceRegistryPackageReplacements,
+  ].filter((reviewed): reviewed is ReviewedPackage => reviewed !== undefined);
+  const lockedPackages = verifyReviewedNpmLockPackages({
     allowedNestedShrinkwrapPackages: sourceNestedShrinkwrapPackages,
     lockfilePath: sourceLock,
     omitDev: true,
     registryOrigin,
-    reviewedRegistryPackages: sourceRegistryPackage
-      ? [
-          {
-            expectedIntegrity: sourceRegistryPackage.integrity,
-            label: sourceRegistryPackage.label,
-            packageSpec: sourceRegistryPackage.packageSpec,
-            tarballUrl: sourceRegistryPackage.tarballUrl,
-          },
-        ]
-      : [],
+    reviewedRegistryPackages: reviewedSourcePackages.map((reviewed) => ({
+      expectedIntegrity: reviewed.integrity,
+      label: reviewed.label,
+      packageSpec: reviewed.packageSpec,
+      tarballUrl: reviewed.tarballUrl,
+    })),
     reviewedPackagesWithoutIntegrity: sourceRegistryPackagesWithoutIntegrity,
   });
+  if (
+    reviewedSourcePackages.filter(({ packageSpec }) => lockedPackages.includes(packageSpec))
+      .length > 1
+  ) {
+    throw new Error("reviewed npm lock uses conflicting OpenShell SDK identities");
+  }
   const lockSha256 = createHash("sha256").update(fs.readFileSync(sourceLock)).digest("hex");
   fs.mkdirSync(destination);
   fs.copyFileSync(sourcePackage, path.join(destination, "package.json"));
@@ -748,6 +774,7 @@ function auditSourceGraph(
     config.sourceRegistryPackage,
     config.sourceNestedShrinkwrapPackages,
     config.sourceRegistryPackagesWithoutIntegrity,
+    config.sourceRegistryPackageReplacement ? [config.sourceRegistryPackageReplacement] : [],
   );
   return auditMaterializedSourceGraph({
     directory,
@@ -1008,10 +1035,7 @@ function isMainModule(): boolean {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
     throw error;
   }
-  return (
-    fs.realpathSync.native(fileURLToPath(import.meta.url)) ===
-    invokedPath
-  );
+  return fs.realpathSync.native(fileURLToPath(import.meta.url)) === invokedPath;
 }
 
 if (isMainModule()) {
