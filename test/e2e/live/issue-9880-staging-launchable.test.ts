@@ -4,6 +4,7 @@
 import { randomUUID } from "node:crypto";
 
 import { ISSUE_9880_STAGING_LAUNCHABLE_CLEANUP_TIMEOUT_MS } from "../../../tools/e2e/staging-launchable-timeout-contract.mts";
+import { BrevLaunchableFixture } from "../fixtures/brev-launchable.ts";
 import { test } from "../fixtures/e2e-test.ts";
 
 const CONTROL_PLANE_TEST_TIMEOUT_MS = 45 * 60_000;
@@ -21,7 +22,8 @@ test(
       ],
     },
   },
-  async ({ artifacts, brevLaunchable, cleanup, progress, secrets }) => {
+  async ({ artifacts, cleanup, host, progress, secrets }) => {
+    const brevLaunchable = new BrevLaunchableFixture({ artifacts, host, secrets });
     const launchableId = secrets.required("BREV_LAUNCHABLE_ID");
     const name = `staging-full-${randomUUID().slice(0, 8)}`;
     const handoff = await brevLaunchable.resolveLatestStagingHandoff();
