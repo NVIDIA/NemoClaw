@@ -1,17 +1,25 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 import { afterAll, describe, expect, it, vi } from "vitest";
 
+import { preflightRebuildImage } from "../../actions/sandbox/rebuild-custom-image-preflight";
+import type { AgentDefinition } from "../../agent/defs";
 import { createHermesStateVolumeDockerHarness } from "../__test-helpers__/hermes-state-volume";
+import {
+  type PreparedSandboxBuildContext,
+  stageCreateSandboxBuildContext,
+} from "../build-context-stage";
 import {
   managedStartupStateRoots,
   managedStartupWorkspaceRoot,
 } from "../managed-startup/state-roots";
+import { resolveSandboxBuildPatch } from "../prepared-dcode-rebuild";
 
 describe("managed workspace-root declarations", () => {
   it("preserves the DCode sticky root-owned login-profile boundary generically", () => {
@@ -539,34 +547,83 @@ describe("managed workload onboard orchestration", () => {
     );
   });
 
-  it("resolves final-image patch metadata after managed build-context staging", async () => {
-    const resolutionMetadata = { key: "published-dcode-base" };
-    const trustedDockerfile = path.join(
-      process.cwd(),
-      "agents",
-      "langchain-deepagents-code",
-      "Dockerfile",
-    );
-    let staged = false;
-    const resolvePatchInput = vi.fn(() => {
-      expect(staged).toBe(true);
+  function createBuildContextLaunchHarness(agentName: string) {
+    const fixtureRoot = fs.mkdtempSync(path.join(releaseRoot, "rebuild-"));
+    const trustedDockerfile = path.join(fixtureRoot, "Dockerfile");
+    fs.writeFileSync(trustedDockerfile, "FROM scratch\n");
+    const buildCtx = fs.mkdtempSync(path.join(fixtureRoot, "staged-"));
+    const stagedDockerfile = path.join(buildCtx, "Dockerfile");
+    const resolutionMetadata = { key: `published-${agentName}-base` };
+    const agent = {
+      name: agentName,
+      displayName: agentName,
+      dockerfilePath: trustedDockerfile,
+    } as AgentDefinition;
+    const sandboxGpuConfig = {
+      mode: "0" as const,
+      hostGpuDetected: false,
+      hostGpuPlatform: null,
+      sandboxGpuEnabled: false,
+      sandboxGpuDevice: null,
+      errors: [],
+    };
+    const buildInput = {
+      agent,
+      fromDockerfile: trustedDockerfile,
+      model: "model",
+      provider: "ollama-local",
+      preferredInferenceApi: null,
+      webSearchConfig: null,
+      toolDisclosure: "progressive" as const,
+      hermesToolGateways: [],
+      sandboxGpuConfig,
+      gatewayPort: 8080,
+      chatUiUrl: "http://127.0.0.1:18789",
+    };
+    const createAgentSandbox = vi.fn(() => {
+      fs.copyFileSync(trustedDockerfile, stagedDockerfile);
       return {
-        fromDockerfile: trustedDockerfile,
+        buildCtx,
+        stagedDockerfile,
+        baseImageResolutionMetadata: resolutionMetadata,
+      } as never;
+    });
+    const prepareDockerfilePatch = vi.fn(async () => ({
+      buildId: "image-build",
+      dashboardRemoteBindPrepared: true,
+      resolvedBaseImage: null,
+    }));
+    const resolvePatchInput = vi.fn(() => {
+      expect(createAgentSandbox).toHaveBeenCalledOnce();
+      return {
+        ...buildInput,
+        preparedBuildContext: legacy.preparedBuildContext,
         preResolvedBaseImageMetadata: resolutionMetadata,
       } as never;
     });
-    const resolveSandboxBuildPatch = vi.fn(async (input: Record<string, unknown>) => {
-      expect(input.fromDockerfile).toBeNull();
-      expect(input.preResolvedBaseImageMetadata).toBe(resolutionMetadata);
-      expect(input.stagedDockerfile).toBe("/tmp/nemoclaw-staged-context/Dockerfile");
-      return { buildId: "dcode-build", dashboardRemoteBindPrepared: false };
-    });
+    const legacy = {
+      preparedBuildContext: null as PreparedSandboxBuildContext | null,
+      agent,
+      fromDockerfile: trustedDockerfile,
+      createAgentSandbox,
+      resolvePatchInput,
+    };
+    const resolveBuildPatch = vi.fn(
+      async (input: Parameters<typeof resolveSandboxBuildPatch>[0]) => {
+        expect(input.preResolvedBaseImageMetadata).toBe(resolutionMetadata);
+        expect(input.stagedDockerfile).toBe(stagedDockerfile);
+        expect(input.fromDockerfile).toBe(legacy.preparedBuildContext ? trustedDockerfile : null);
+        return resolveSandboxBuildPatch(input, {
+          prepareSandboxDockerfilePatch: prepareDockerfilePatch,
+        });
+      },
+    );
     const materializeSandboxCreatePlan = vi.fn(() => ({
       activeMessagingChannels: [],
       compatibilityPolicyPath: null,
       createArgs: [
         "--from",
-        "/tmp/nemoclaw-staged-context/Dockerfile",
+        stagedDockerfile,
         "--name",
         "dcode",
         "--policy",
@@ -581,7 +638,7 @@ describe("managed workload onboard orchestration", () => {
       sandboxGpuLogMessage: null,
     }));
 
-    await prepareOnboardSandboxWorkloadLaunch({
+    const input = {
       runtime: {
         runtimeProvider: null,
         ensurePreparedWorkload: vi.fn(),
@@ -590,30 +647,13 @@ describe("managed workload onboard orchestration", () => {
       workload: {
         source: {
           kind: "legacy-dockerfile",
-          dockerfilePath: "agents/langchain-deepagents-code/Dockerfile",
+          dockerfilePath: trustedDockerfile,
           reason: "runtime-unsupported",
         },
         release: "v0.0.0",
         fallbackDiagnostic: null,
       },
-      legacy: {
-        preparedBuildContext: null,
-        agent: {
-          name: "langchain-deepagents-code",
-          displayName: "LangChain Deep Agents Code",
-          dockerfilePath: trustedDockerfile,
-        },
-        fromDockerfile: trustedDockerfile,
-        createAgentSandbox: () => {
-          staged = true;
-          return {
-            buildCtx: "/tmp/nemoclaw-staged-context",
-            stagedDockerfile: "/tmp/nemoclaw-staged-context/Dockerfile",
-            baseImageResolutionMetadata: resolutionMetadata,
-          };
-        },
-        resolvePatchInput,
-      },
+      legacy,
       plan: {
         intent: {},
         rebindMessagingTokenDefs: async () => [],
@@ -636,14 +676,7 @@ describe("managed workload onboard orchestration", () => {
       plannedMessagingPlan: null,
       gpu: {
         provider: "compatible-endpoint",
-        config: {
-          mode: "0",
-          hostGpuDetected: false,
-          hostGpuPlatform: null,
-          sandboxGpuEnabled: false,
-          sandboxGpuDevice: null,
-          errors: [],
-        },
+        config: sandboxGpuConfig,
         dockerDriverGateway: false,
         gatewayPort: 8080,
       },
@@ -652,11 +685,62 @@ describe("managed workload onboard orchestration", () => {
         prepareSandboxBuildPatchConfig: vi.fn(() => ({
           messagingChannelConfig: null,
         })),
-        resolveSandboxBuildPatch,
+        resolveSandboxBuildPatch: resolveBuildPatch,
       },
-    } as unknown as Parameters<typeof prepareOnboardSandboxWorkloadLaunch>[0]);
+    } as unknown as Parameters<typeof prepareOnboardSandboxWorkloadLaunch>[0];
 
-    expect(resolvePatchInput).toHaveBeenCalledOnce();
-    expect(resolveSandboxBuildPatch).toHaveBeenCalledOnce();
+    return {
+      input,
+      legacy,
+      prepareDockerfilePatch,
+      resolveBuildPatch,
+      preflightInput: {
+        ...buildInput,
+        compatibleEndpointReasoning: null,
+        compatibleEndpointReasoningEffort: null,
+      },
+      preflightDeps: {
+        stageBuildContext: (stageInput: Parameters<typeof stageCreateSandboxBuildContext>[0]) =>
+          stageCreateSandboxBuildContext({ ...stageInput, createAgentSandbox }),
+        prepareDockerfilePatch,
+        buildImage: () => ({ status: 0 }) as never,
+        removeImage: () => ({ status: 0 }) as never,
+        env: {},
+        dockerContextIsDefault: () => false,
+      },
+    };
+  }
+
+  it("resolves final-image patch metadata after managed build-context staging", async () => {
+    const harness = createBuildContextLaunchHarness("langchain-deepagents-code");
+    await prepareOnboardSandboxWorkloadLaunch(harness.input);
+    expect(harness.legacy.resolvePatchInput).toHaveBeenCalledOnce();
+    expect(harness.resolveBuildPatch).toHaveBeenCalledOnce();
+    expect(harness.prepareDockerfilePatch).toHaveBeenCalledOnce();
+  });
+
+  it("reuses a prepared Hermes image only for its original --from target", async () => {
+    const harness = createBuildContextLaunchHarness("hermes");
+    const result = await preflightRebuildImage(harness.preflightInput, harness.preflightDeps);
+    assert(result.ok, "Rebuild image preflight must succeed");
+    harness.legacy.preparedBuildContext = result.prepared;
+    try {
+      expect(result.prepared.origin).toBe("generated");
+      await expect(prepareOnboardSandboxWorkloadLaunch(harness.input)).resolves.toMatchObject({
+        buildId: result.prepared.buildId,
+        dashboardRemoteBindPrepared: true,
+      });
+      expect(harness.legacy.resolvePatchInput).toHaveBeenCalledOnce();
+      expect(harness.resolveBuildPatch).toHaveBeenCalledOnce();
+      await expect(
+        resolveSandboxBuildPatch({
+          ...harness.resolveBuildPatch.mock.calls[0]![0],
+          fromDockerfile: path.join(result.prepared.buildCtx, "other.Dockerfile"),
+        }),
+      ).rejects.toThrow("A prepared rebuild image cannot be used for this sandbox target.");
+      expect(harness.prepareDockerfilePatch).toHaveBeenCalledOnce();
+    } finally {
+      result.prepared.cleanupBuildCtx();
+    }
   });
 });
