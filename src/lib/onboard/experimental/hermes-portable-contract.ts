@@ -45,6 +45,11 @@ const ALLOWED_ENV = new Set([
   "NEMOCLAW_SANDBOX_NAME",
   "NEMOCLAW_EXTRA_PLACEHOLDER_KEYS",
 ]);
+// One-way compatibility bridge for the exact additive skills metadata change in #11248.
+const REVIEWED_MANIFEST_TRANSITION = Object.freeze({
+  installed: "c7bcd6e0616904ab66c1f2f39a670d920cfb1b7ef7c1edc496e20e554db6a6c2",
+  current: "e78822837d5530f61a26ea1d554d7f9b21be13e3e223e294f0999187dc0fa71e",
+});
 
 export interface ResolveHermesPortableStartupContractInput {
   readonly agent: AgentDefinition;
@@ -309,6 +314,22 @@ function stateIdentity(projection: ReturnType<typeof manifestProjection>): strin
   );
 }
 
+function startupAuthorityMatches(
+  current: HermesPortableStartupContract,
+  installed: HermesPortableStartupContract,
+): boolean {
+  if (isDeepStrictEqual(current, installed)) return true;
+  if (
+    installed.manifestSha256 !== REVIEWED_MANIFEST_TRANSITION.installed ||
+    current.manifestSha256 !== REVIEWED_MANIFEST_TRANSITION.current
+  ) {
+    return false;
+  }
+  const { manifestSha256: _currentManifest, ...currentAuthority } = current;
+  const { manifestSha256: _installedManifest, ...installedAuthority } = installed;
+  return isDeepStrictEqual(currentAuthority, installedAuthority);
+}
+
 /** Derive the complete lifecycle descriptor from current manifest and launch inputs. */
 export function resolveHermesPortableStartupContract(
   input: ResolveHermesPortableStartupContractInput,
@@ -379,7 +400,7 @@ export function assertCurrentHermesPortableStoredStartupContract(
     sandboxName,
     startupArgv: currentArgv,
   });
-  if (!isDeepStrictEqual(current, actual)) fail("current startup authority disagrees");
+  if (!startupAuthorityMatches(current, actual)) fail("current startup authority disagrees");
 }
 
 /** Re-render from current manifest, profile, and launch inputs before lifecycle mutation. */
@@ -388,6 +409,6 @@ export function assertCurrentHermesPortableStartupContract(
   input: ResolveHermesPortableStartupContractInput,
 ): HermesPortableStartupContract {
   const current = resolveHermesPortableStartupContract(input);
-  if (!isDeepStrictEqual(current, expected)) fail("current startup authority disagrees");
+  if (!startupAuthorityMatches(current, expected)) fail("current startup authority disagrees");
   return current;
 }

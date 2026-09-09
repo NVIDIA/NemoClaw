@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawn, spawnSync } from "node:child_process";
-import { readFileSync, readdirSync, readlinkSync, realpathSync } from "node:fs";
+import { lstatSync, readFileSync, readdirSync, readlinkSync, realpathSync } from "node:fs";
 import path from "node:path";
 
 import { isValidName } from "../../name-validation";
@@ -11,6 +11,8 @@ import { probeLocalForwardListener } from "./local-forward-listener";
 
 const START_TIMEOUT_MS = 30_000;
 const POLL_INTERVAL_MS = 100;
+const PROCESS_TREE_TERMINATION_TIMEOUT_MS = 5_000;
+const PROCESS_TREE_TERMINATION_POLL_MS = 25;
 const sleepBuffer = new Int32Array(new SharedArrayBuffer(4));
 
 export interface ForwardServiceTarget {
@@ -32,10 +34,38 @@ export interface ForwardServiceLaunchOptions {
     executable: string,
     args: readonly string[],
     environment: NodeJS.ProcessEnv,
-  ) => {
-    unref(): void;
-  };
+  ) => ForwardServiceChild;
+  readonly terminateProcessTree?: (child: ForwardServiceChild) => void;
   readonly timeoutMs?: number;
+}
+
+export interface ForwardServiceChild {
+  readonly pid?: number;
+  unref(): void;
+}
+
+export interface ForwardServiceProcessTreeTerminationDependencies {
+  readonly environment?: NodeJS.ProcessEnv;
+  readonly isTrustedTaskkillExecutable?: (executable: string) => boolean;
+  readonly now?: () => number;
+  readonly platform?: NodeJS.Platform;
+  readonly processGroupHasRunnableMember?: (pid: number) => boolean;
+  readonly signalProcess?: (pid: number, signal: NodeJS.Signals | number) => void;
+  readonly sleep?: (milliseconds: number) => void;
+  readonly taskkill?: (
+    executable: string,
+    args: readonly string[],
+  ) => { readonly error?: Error; readonly status: number | null };
+}
+
+export class ForwardServiceStartupCleanupError extends AggregateError {
+  constructor(startupError: Error, cleanupError: unknown) {
+    super(
+      [startupError, cleanupError],
+      "OpenShell forward service startup cleanup could not be proved",
+    );
+    this.name = "ForwardServiceStartupCleanupError";
+  }
 }
 
 type ForwardServiceOwnerProbe = (
@@ -261,6 +291,119 @@ function forwardServiceEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv
   return environment;
 }
 
+function noSuchProcess(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException | undefined)?.code === "ESRCH";
+}
+
+function normalizedWindowsPath(value: string): string {
+  return path.win32.normalize(value.replace(/^\\\\\?\\/u, "")).toLowerCase();
+}
+
+export function isTrustedTaskkillExecutable(executable: string): boolean {
+  try {
+    const metadata = lstatSync(executable);
+    if (!metadata.isFile() || metadata.isSymbolicLink()) return false;
+    return (
+      normalizedWindowsPath(realpathSync.native(executable)) === normalizedWindowsPath(executable)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function resolveTrustedTaskkillExecutable(
+  environment: NodeJS.ProcessEnv,
+  verify: (executable: string) => boolean,
+): string {
+  const systemRoot = environment.SystemRoot?.trim();
+  if (
+    !systemRoot ||
+    systemRoot.includes("\0") ||
+    !/^[a-z]:[\\/]/iu.test(systemRoot) ||
+    systemRoot.split(/[\\/]/u).includes("..")
+  ) {
+    throw new Error("Trusted Windows SystemRoot is unavailable");
+  }
+  const executable = path.win32.join(path.win32.normalize(systemRoot), "System32", "taskkill.exe");
+  if (!verify(executable)) {
+    throw new Error("Trusted Windows taskkill executable is unavailable");
+  }
+  return executable;
+}
+
+function processGroupHasRunnableMember(pid: number): boolean {
+  const result = spawnSync("/bin/ps", ["-axo", "pgid=,stat="], {
+    encoding: "utf8",
+    timeout: FORWARD_OWNER_PROBE_TIMEOUT_MS,
+  });
+  if (result.error || result.status !== 0) {
+    throw new Error("OpenShell forward service process-group settlement probe failed", {
+      cause: result.error,
+    });
+  }
+  return (result.stdout ?? "")
+    .split(/\r?\n/u)
+    .map((line) => /^\s*(\d+)\s+(\S+)/u.exec(line))
+    .some((match) => Number(match?.[1]) === pid && !match?.[2]?.startsWith("Z"));
+}
+
+/** Terminate only the detached child process group created for this forward launch. */
+export function terminateForwardServiceProcessTree(
+  child: ForwardServiceChild,
+  dependencies: ForwardServiceProcessTreeTerminationDependencies = {},
+): void {
+  const pid = child.pid;
+  if (!Number.isSafeInteger(pid) || Number(pid) <= 1 || pid === process.pid) {
+    throw new Error("OpenShell forward service child PID is unavailable");
+  }
+
+  const signalProcess = dependencies.signalProcess ?? process.kill;
+  if ((dependencies.platform ?? process.platform) !== "win32") {
+    try {
+      signalProcess(-Number(pid), "SIGKILL");
+    } catch (error) {
+      if (!noSuchProcess(error)) {
+        throw new Error("OpenShell forward service process-group termination failed", {
+          cause: error,
+        });
+      }
+    }
+    const now = dependencies.now ?? Date.now;
+    const sleep =
+      dependencies.sleep ??
+      ((milliseconds: number) => Atomics.wait(sleepBuffer, 0, 0, milliseconds));
+    const hasRunnableMember =
+      dependencies.processGroupHasRunnableMember ?? processGroupHasRunnableMember;
+    const deadline = now() + PROCESS_TREE_TERMINATION_TIMEOUT_MS;
+    while (now() < deadline) {
+      if (!hasRunnableMember(Number(pid))) return;
+      sleep(PROCESS_TREE_TERMINATION_POLL_MS);
+    }
+    if (!hasRunnableMember(Number(pid))) return;
+    throw new Error("OpenShell forward service process group did not terminate");
+  }
+
+  const taskkill =
+    dependencies.taskkill ??
+    ((executable: string, args: readonly string[]) => {
+      const result = spawnSync(executable, [...args], {
+        stdio: "ignore",
+        timeout: FORWARD_OWNER_PROBE_TIMEOUT_MS,
+        windowsHide: true,
+      });
+      return { error: result.error, status: result.status };
+    });
+  const taskkillExecutable = resolveTrustedTaskkillExecutable(
+    dependencies.environment ?? process.env,
+    dependencies.isTrustedTaskkillExecutable ?? isTrustedTaskkillExecutable,
+  );
+  const result = taskkill(taskkillExecutable, ["/PID", String(pid), "/T", "/F"]);
+  if (!result.error && result.status === 0) return;
+  throw new Error("OpenShell forward service process-tree termination failed", {
+    cause: result.error,
+  });
+}
+
 /** Launch one foreground OpenShell service forward as a detached host child. */
 export function launchForwardService(
   target: ForwardServiceTarget,
@@ -280,16 +423,28 @@ export function launchForwardService(
     buildForwardServiceArgs(target),
     forwardServiceEnvironment(options.sourceEnvironment ?? process.env),
   );
-  child.unref();
 
   const sleep =
     options.sleep ?? ((milliseconds: number) => Atomics.wait(sleepBuffer, 0, 0, milliseconds));
   const deadline = Date.now() + (options.timeoutMs ?? START_TIMEOUT_MS);
   while (Date.now() < deadline) {
-    if (isReachable(target.localPort)) return;
+    if (isReachable(target.localPort)) {
+      child.unref();
+      return;
+    }
     sleep(POLL_INTERVAL_MS);
   }
-  throw new Error(
+  const startupError = new Error(
     `OpenShell forward service did not bind ${target.localHost}:${String(target.localPort)}`,
   );
+  try {
+    (options.terminateProcessTree ?? terminateForwardServiceProcessTree)(child);
+    if (isReachable(target.localPort)) {
+      throw new Error("OpenShell forward service listener remained reachable after termination");
+    }
+  } catch (cleanupError) {
+    throw new ForwardServiceStartupCleanupError(startupError, cleanupError);
+  }
+  // Keep the failed child referenced so Node reaps it after this synchronous stack unwinds.
+  throw startupError;
 }

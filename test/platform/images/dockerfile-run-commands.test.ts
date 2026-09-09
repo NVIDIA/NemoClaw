@@ -7,11 +7,11 @@ import {
   requireSingleReviewedDockerfileRunCommand,
 } from "../../helpers/dockerfile-run-commands";
 
-const command = "node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts";
+const command = "node /scripts/patch-bundled-npm-tar.mts";
 const corporateCaPath = "/usr/local/share/nemoclaw/corporate-ca.pem";
 const requiredArguments = ["--npm-root", "/usr/local/lib/node_modules/npm"] as const;
 const invocation = [command, ...requiredArguments].join(" ");
-const splicedCommand = command.replace("strip-types", "strip-\\\ntypes");
+const splicedCommand = command.replace("bundled-npm", "bundled-\\\nnpm");
 
 describe("Dockerfile RUN command discovery", () => {
   it("finds only executable unquoted npm command words in RUN instructions (#9933)", () => {
