@@ -165,7 +165,7 @@ function executableAuthorityDeps(): PodmanExecutableAuthorityDeps {
   };
 }
 
-function createRuntimeFixture(pullFailure?: PullFailure) {
+function createRuntimeFixture(pullFailure?: PullFailure, gatewayName = "nemoclaw") {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-inference-"));
   temporaryDirectories.push(homeDir);
   const runtime = runtimeAuthority(homeDir);
@@ -211,6 +211,7 @@ function createRuntimeFixture(pullFailure?: PullFailure) {
     : capture;
   const resolverOptions = {
     runtimeContext: { authority: runtime, environmentScope },
+    gatewayName,
     credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
     getReservationSessionId: () => "portable-session",
     runGatewayOpenshell,
@@ -294,6 +295,7 @@ function gatewayJournal(fixture: ReturnType<typeof createRuntimeFixture>) {
   return JSON.parse(fs.readFileSync(gatewayJournalPath(fixture), "utf8")) as {
     phase: string;
     intent: {
+      gatewayName: string;
       providerCredentialEnv: string;
       transactionId: string;
       targetSha256: string;
@@ -340,6 +342,7 @@ describe("Hermes Portable Ollama inference activation", () => {
 
     const authority = prepareHermesPortableOllamaPublishedReceiptAuthority({
       directory: path.dirname(receiptPath),
+      gatewayName: journal.intent.gatewayName,
       sandboxName: journal.intent.sandboxName,
       credentialEnv: journal.intent.credentialEnv,
     });
@@ -364,6 +367,7 @@ describe("Hermes Portable Ollama inference activation", () => {
 
     const authority = prepareHermesPortableOllamaPublishedInferenceAuthority({
       directory: path.dirname(receiptPath),
+      gatewayName: journal.intent.gatewayName,
       sandboxName: journal.intent.sandboxName,
       credentialEnv: journal.intent.credentialEnv,
       runGatewayOpenshell: fixture.gatewayProvider.run,
@@ -537,6 +541,7 @@ describe("Hermes Portable Ollama inference activation", () => {
     vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
     const resolverOptions = {
       runtimeContext: null,
+      gatewayName: "nemoclaw",
       credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
       getReservationSessionId: () => null,
       runGatewayOpenshell: () => ({ status: 1, stdout: "", stderr: "" }),
@@ -682,6 +687,44 @@ describe("Hermes Portable Ollama inference activation", () => {
     await expect(published.prepareGatewayMutation(gatewayMutationInput)).rejects.toThrow(
       "gateway mutation authority changed",
     );
+  });
+
+  it("preserves the selected gateway through publication and retirement for a non-default port (#10778)", async () => {
+    const gatewayName = "nemoclaw-18080";
+    const fixture = createRuntimeFixture(undefined, gatewayName);
+    const selection = fixture.resolve()!;
+    const route = prepareManagedRoute(fixture, selection);
+    route.prepared.validateBeforeCommit();
+    const mutation = await selection.prepareGatewayMutation({
+      ...gatewayMutationInput,
+      gatewayName,
+    });
+    createExactGatewayProvider(mutation);
+    await mutation.commit();
+    route.prepared.commit();
+    const journal = gatewayJournal(fixture);
+
+    expect(journal.intent.gatewayName).toBe(gatewayName);
+    const published = prepareHermesPortableOllamaPublishedReceiptAuthority({
+      directory: path.dirname(gatewayJournalPath(fixture)),
+      gatewayName,
+      sandboxName: journal.intent.sandboxName,
+      credentialEnv: journal.intent.credentialEnv,
+    });
+    published.assertCurrent();
+    const retirement = prepareHermesPortableOllamaProviderRetirement({
+      directory: path.dirname(gatewayJournalPath(fixture)),
+      transactionId: journal.intent.transactionId,
+      targetSha256: journal.intent.targetSha256,
+      gatewayName,
+      sandboxName: journal.intent.sandboxName,
+      model: journal.intent.model,
+      credentialEnv: journal.intent.credentialEnv,
+      runGatewayOpenshell: fixture.gatewayProvider.run,
+    });
+    expect(retirement.present).toBe(true);
+    retirement.removeAndVerify();
+    retirement.verifyAbsent();
   });
 
   it("recovers a committed gateway transaction before checking rebound live authority (#9596)", async () => {
