@@ -199,11 +199,11 @@ export type DockerManagedBootstrapDeps = Pick<
   | "dockerStart"
   | "dockerStop"
   | "runCaptureOpenshell"
-  | "runOpenshell"
   | "sleep"
   | "errorPhaseDebouncePolls"
   | "now"
 > & {
+  runOpenshell: NonNullable<DockerGpuPatchDeps["runOpenshell"]>;
   readonly createBootstrapIdentity?: () => string;
   readonly journalStore?: DockerManagedBootstrapJournalStore;
   /** Canonical gateway-scoped state root; required when no store is injected. */
@@ -232,6 +232,9 @@ type DockerBootstrapTransaction = DockerManagedBootstrapJournal;
 export interface DockerManagedBootstrapAdapter extends ManagedBootstrapAdapter {}
 
 function resolveDeps(deps: DockerManagedBootstrapDeps): ResolvedDeps {
+  if (!deps.runOpenshell) {
+    throw new Error("Managed bootstrap Docker requires OpenShell lifecycle authority.");
+  }
   const journalStore =
     deps.journalStore ??
     (deps.stateRoot ? createFileDockerManagedBootstrapJournalStore(deps.stateRoot) : null);
@@ -268,9 +271,6 @@ function runRequiredOpenShellLifecycleCommand(
   args: string[],
   timeoutSecs: number,
 ): void {
-  if (!deps.runOpenshell) {
-    throw new Error("Managed bootstrap Docker requires OpenShell lifecycle authority.");
-  }
   const result = deps.runOpenshell(args, {
     ignoreError: true,
     ...PROCESS_TREE_BOUNDED_OPENSHELL_OPTIONS,
@@ -2082,7 +2082,7 @@ function resolvePreparedRollbackAuthority(input: {
 }
 
 export function createDockerManagedBootstrapAdapter(
-  dependencies: DockerManagedBootstrapDeps = {},
+  dependencies: DockerManagedBootstrapDeps,
 ): DockerManagedBootstrapAdapter {
   const deps = resolveDeps(dependencies);
   const finalizationContext = (handle: ManagedBootstrapHeldWorkloadHandle) =>

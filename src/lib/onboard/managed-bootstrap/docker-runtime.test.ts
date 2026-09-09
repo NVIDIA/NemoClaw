@@ -136,7 +136,10 @@ function compatibilityLifecycleInput(
       gatewayPort: 8080,
       reverifyBridgeReachability: vi.fn(),
     },
-    dependencies,
+    dependencies: {
+      runOpenshell: vi.fn(() => ({ status: 0 })),
+      ...dependencies,
+    },
   };
 }
 
@@ -561,7 +564,9 @@ describe("Docker managed-bootstrap lifecycle composition", () => {
         gatewayPort: 0,
         reverifyBridgeReachability: () => undefined,
       },
-      dependencies: {},
+      dependencies: {
+        runOpenshell: vi.fn(() => ({ status: 0 })),
+      },
     });
     const child = new FakeChild();
     let ready = false;
@@ -668,7 +673,9 @@ describe("Docker managed-bootstrap lifecycle composition", () => {
         gatewayPort: 0,
         reverifyBridgeReachability: () => undefined,
       },
-      dependencies: {},
+      dependencies: {
+        runOpenshell: vi.fn(() => ({ status: 0 })),
+      },
     });
 
     await expect(
