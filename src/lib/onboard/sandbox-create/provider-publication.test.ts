@@ -40,8 +40,9 @@ function typedProviderAdapter(
       value: { credentialKeys: [] },
     })),
     deleteProvider: vi.fn(async () => ({ ok: true as const })),
-    detachProvider: vi.fn(async () => ({ ok: true as const })),
+    detachProvider: vi.fn(async () => ({ ok: true as const, value: { changed: true } })),
     attachProvider: vi.fn(async () => ({ ok: true as const })),
+    listProviderAttachments: vi.fn(async () => ({ ok: true as const, value: { names: [] } })),
     configureProviderRefresh: vi.fn(async () => ({ ok: true as const })),
     getProviderRefreshStatus: vi.fn(async () => ({
       ok: true as const,

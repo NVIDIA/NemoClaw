@@ -7,6 +7,55 @@ import { describe, expect, it } from "vitest";
 
 const HELPER = path.join(import.meta.dirname, "../../..", "scripts", "managed-gateway-control.py");
 
+const OPENCLAW_PREFLIGHT_SETTLE_HARNESS = String.raw`
+import importlib.util
+import json
+import subprocess
+import sys
+
+spec = importlib.util.spec_from_file_location("managed_control_preflight", sys.argv[1])
+control = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = control
+spec.loader.exec_module(control)
+
+clock = [0.0]
+sleeps = []
+control.time.monotonic = lambda: clock[0]
+control.time.sleep = lambda seconds: (sleeps.append(seconds), clock.__setitem__(0, clock[0] + seconds))
+control._validate_trusted_regular = lambda _path: None
+control._system_path = lambda path: path
+refusal = subprocess.CompletedProcess([], 1, b'{"type":"issue","code":"config-not-mutable"}\n{"type":"result","status":"failed"}\n')
+startup_refusal = subprocess.CompletedProcess([], 1, b'{"type":"issue","code":"startup-not-ready"}\n')
+responses = [startup_refusal] + [refusal] * 26 + [subprocess.CompletedProcess([], 0, b'{"type":"result","status":"ok"}\n')]
+calls = []
+control.subprocess.run = lambda *args, **kwargs: (calls.append(kwargs), responses.pop(0))[1]
+control._openclaw_preflight(10.0)
+settled = {"calls": len(calls), "elapsed": round(clock[0], 1)}
+
+clock[0] = 0.0
+sleeps.clear()
+calls.clear()
+responses = [startup_refusal, refusal, subprocess.CompletedProcess([], 0, b'{"type":"result","status":"ok"}\n')]
+control.subprocess.run = lambda *args, **kwargs: (calls.append(kwargs), responses.pop(0))[1]
+# _control("probe") invokes OpenClaw preflight without a recovery deadline.
+control._openclaw_preflight()
+probe_settled = {"calls": len(calls), "elapsed": round(clock[0], 1)}
+
+clock[0] = 0.0
+sleeps.clear()
+calls.clear()
+control.OPENCLAW_PREFLIGHT_SETTLE_SECONDS = 0.2
+control.subprocess.run = lambda *args, **kwargs: (calls.append(kwargs), refusal)[1]
+try:
+    control._openclaw_preflight()
+except control.ControlError as error:
+    persistent = {"code": error.code, "calls": len(calls), "sleeps": list(sleeps)}
+else:
+    persistent = {"code": "accepted", "calls": len(calls), "sleeps": list(sleeps)}
+
+print(json.dumps({"persistent": persistent, "probeSettled": probe_settled, "settled": settled}))
+`;
+
 const CONTROL_DEADLINE_HARNESS = String.raw`
 import importlib.util
 import json
@@ -451,6 +500,24 @@ function runHarness(source: string): unknown {
 }
 
 describe("managed gateway recovery deadline", () => {
+  it("settles the startup registry refresh for recovery and probe preflight (#10681)", () => {
+    expect(runHarness(OPENCLAW_PREFLIGHT_SETTLE_HARNESS)).toEqual({
+      persistent: {
+        calls: 2,
+        code: "GATEWAY_UNSAFE_CONFIG_PATH",
+        sleeps: [0.2],
+      },
+      probeSettled: {
+        calls: 3,
+        elapsed: 0.4,
+      },
+      settled: {
+        calls: 28,
+        elapsed: 5.4,
+      },
+    });
+  });
+
   it("stops preflight, marker publication, and signaling at the recovery deadline (#8262)", () => {
     expect(runHarness(CONTROL_DEADLINE_HARNESS)).toEqual({
       forwarding: [["ok", 41, 43], true],
