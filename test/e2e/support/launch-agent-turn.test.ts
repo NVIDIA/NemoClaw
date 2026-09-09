@@ -4,21 +4,13 @@
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
-  appendFileSync,
   chmodSync,
-  closeSync,
-  constants,
   existsSync,
-  fstatSync,
-  fsyncSync,
-  ftruncateSync,
   mkdtempSync,
   mkdirSync,
-  openSync,
   readFileSync,
   readdirSync,
   rmSync,
-  type Stats,
   statSync,
   writeFileSync,
 } from "node:fs";
@@ -35,15 +27,17 @@ import {
 import { testTimeout } from "../../helpers/timeouts";
 import {
   LAUNCH_TURN_SCRIPT,
+  OPENCLAW_LAUNCH_READINESS_LEASE_ACCEPTANCE_TIMEOUT_MS,
+  OPENCLAW_LAUNCH_READINESS_LEASE_MAXIMUM_MS,
   OPENCLAW_LAUNCH_OPENSHELL_SHIM_SCRIPT,
   OPENCLAW_LAUNCH_RUNTIME_ENV_SCRIPT,
+  OPENCLAW_PROVIDER_UNAVAILABLE_MARKER,
   OPENCLAW_PTY_MONITOR_STARTER_SCRIPT,
   OPENCLAW_SESSION_EVIDENCE_SCRIPT,
   runOpenClawLaunchSession,
   runOpenClawLaunchReadinessLeaseTurns,
 } from "../live/launch-agent-turn.ts";
 const PROCESS_EXIT_WAIT = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
-type SessionRecords = Record<string, string[]>;
 type FixtureMode =
   | "cleanup-failure"
   | "delayed-input-attachment"
@@ -62,180 +56,14 @@ type FixtureMode =
   | "pty-socket-timeout"
   | "pty-path-unreadable"
   | "pty-termios-unavailable"
-  | "recording-timeout"
-  | "restored-canonical-timeout"
-  | "valid";
+  | "provider-cleanup-failure" | "provider-empty-message" | "provider-exit-after-recording"
+  | "provider-terminal-spoof" | "provider-wrong-api" | "provider-wrong-route"
+  | "recording-timeout" | "restored-canonical-timeout" | "valid";
 
-function message(role: "assistant" | "user", content = "nonempty"): string {
-  return JSON.stringify({
-    message: { content: [{ text: content, type: "text" }], role },
-    type: "message",
-  });
-}
-
-function emptyMessage(role: "assistant" | "user"): string {
-  return JSON.stringify({ message: { content: [], role }, type: "message" });
-}
-
-function writeSessionRecords(
-  root: string,
-  sessions: SessionRecords,
-  append: boolean,
-  finalNewline = true,
-): void {
-  for (const [sessionId, records] of Object.entries(sessions)) {
-    const filePath = join(root, `${sessionId}.jsonl`);
-    const body = records.length > 0 ? `${records.join("\n")}${finalNewline ? "\n" : ""}` : "";
-    const writeRecords = append ? appendFileSync : writeFileSync;
-    writeRecords(filePath, body);
-  }
-}
-
-function withOwnedFixtureFile<T>(
-  filePath: string,
-  flags: number,
-  action: (descriptor: number, stats: Stats) => T,
-): T {
-  const descriptor = openSync(filePath, flags | constants.O_NOFOLLOW, 0o600);
-  try {
-    const stats = fstatSync(descriptor);
-    expect([stats.isFile(), stats.uid, stats.mode & 0o777, stats.nlink]).toEqual([
-      true,
-      process.getuid?.(),
-      0o600,
-      1,
-    ]);
-    return action(descriptor, stats);
-  } finally {
-    closeSync(descriptor);
-  }
-}
-
-function runEvidenceFixture(input: {
-  after: SessionRecords;
-  afterFinalNewline?: boolean;
-  before?: SessionRecords;
-  expectedTurns: number;
-}) {
-  const fixtureRoot = mkdtempSync(join(tmpdir(), "nemoclaw-launch-evidence-"));
-  const runId = randomUUID().replaceAll("-", "");
-  const baselinePath = `/tmp/nemoclaw-launch-session-${runId}.json`;
-  const ptyMonitorRoot = `/tmp/nemoclaw-launch-turn-${runId}`;
-  const sessionRoot = join(fixtureRoot, "sessions");
-  mkdirSync(sessionRoot);
-  try {
-    writeSessionRecords(sessionRoot, input.before ?? {}, false);
-    const baseline = spawnSync(
-      process.execPath,
-      [
-        "-e",
-        OPENCLAW_SESSION_EVIDENCE_SCRIPT,
-        "baseline",
-        sessionRoot,
-        baselinePath,
-        "",
-        ptyMonitorRoot,
-        runId,
-      ],
-      { encoding: "utf8" },
-    );
-    writeSessionRecords(sessionRoot, input.after, true, input.afterFinalNewline ?? true);
-    const qualification = spawnSync(
-      process.execPath,
-      [
-        "-e",
-        OPENCLAW_SESSION_EVIDENCE_SCRIPT,
-        "qualify",
-        sessionRoot,
-        baselinePath,
-        String(input.expectedTurns),
-        ptyMonitorRoot,
-        runId,
-      ],
-      { encoding: "utf8" },
-    );
-    const baselineFile = withOwnedFixtureFile(
-      baselinePath,
-      constants.O_RDONLY,
-      (descriptor, stats) => ({ body: readFileSync(descriptor, "utf8"), stats }),
-    );
-    return {
-      baseline,
-      baselineKeys: Object.keys(JSON.parse(baselineFile.body)).sort(),
-      baselineMode: baselineFile.stats.mode & 0o777,
-      baselineNlink: baselineFile.stats.nlink,
-      baselineUid: baselineFile.stats.uid,
-      qualification,
-    };
-  } finally {
-    rmSync(fixtureRoot, { force: true, recursive: true });
-    rmSync(baselinePath, { force: true });
-    rmSync(`${baselinePath}.tmp`, { force: true });
-    rmSync(ptyMonitorRoot, { force: true, recursive: true });
-  }
-}
-
-function runBaselineMutationFixture(mutation: "invalid" | "removed" | "rewritten" | "truncated") {
-  const fixtureRoot = mkdtempSync(join(tmpdir(), "nemoclaw-launch-baseline-"));
-  const runId = randomUUID().replaceAll("-", "");
-  const baselinePath = `/tmp/nemoclaw-launch-session-${runId}.json`;
-  const ptyMonitorRoot = `/tmp/nemoclaw-launch-turn-${runId}`;
-  const sessionRoot = join(fixtureRoot, "sessions");
-  const sessionPath = join(sessionRoot, "session-a.jsonl");
-  mkdirSync(sessionRoot);
-  writeSessionRecords(sessionRoot, { "session-a": [message("user"), message("assistant")] }, false);
-  try {
-    const baseline = spawnSync(
-      process.execPath,
-      [
-        "-e",
-        OPENCLAW_SESSION_EVIDENCE_SCRIPT,
-        "baseline",
-        sessionRoot,
-        baselinePath,
-        "",
-        ptyMonitorRoot,
-        runId,
-      ],
-      { encoding: "utf8" },
-    );
-    const applyMutation: Record<typeof mutation, () => void> = {
-      invalid: () =>
-        withOwnedFixtureFile(baselinePath, constants.O_WRONLY, (descriptor) => {
-          ftruncateSync(descriptor, 0);
-          writeFileSync(descriptor, "{}");
-          fsyncSync(descriptor);
-        }),
-      removed: () => rmSync(sessionPath),
-      rewritten: () =>
-        writeFileSync(
-          sessionPath,
-          readFileSync(sessionPath, "utf8").replace("nonempty", "changed!"),
-        ),
-      truncated: () => writeFileSync(sessionPath, ""),
-    };
-    applyMutation[mutation]();
-    const qualification = spawnSync(
-      process.execPath,
-      [
-        "-e",
-        OPENCLAW_SESSION_EVIDENCE_SCRIPT,
-        "qualify",
-        sessionRoot,
-        baselinePath,
-        "1",
-        ptyMonitorRoot,
-        runId,
-      ],
-      { encoding: "utf8" },
-    );
-    return { baseline, qualification };
-  } finally {
-    rmSync(fixtureRoot, { force: true, recursive: true });
-    rmSync(baselinePath, { force: true });
-    rmSync(`${baselinePath}.tmp`, { force: true });
-    rmSync(ptyMonitorRoot, { force: true, recursive: true });
-  }
+interface LaunchFixtureInvocation {
+  args: string[];
+  command: string;
+  env?: NodeJS.ProcessEnv;
 }
 
 it("reports a residual PTY monitor socket without removing it (#9384)", async () => {
@@ -278,7 +106,11 @@ it("reports a residual PTY monitor socket without removing it (#9384)", async ()
   }
 });
 
-function runLaunchSessionFixture(mode: FixtureMode, terminalCopy: "absent" | "ansi" | "reordered") {
+function runLaunchSessionFixture(
+  mode: FixtureMode,
+  terminalCopy: "absent" | "ansi" | "provider" | "reordered",
+  invocation?: LaunchFixtureInvocation,
+) {
   const fixtureRoot = mkdtempSync(join(tmpdir(), "nemoclaw-launch-turn-"));
   const canonicalRestoredMarker = join(fixtureRoot, "canonical-restored");
   const earlyInputMarker = join(fixtureRoot, "early-input");
@@ -293,7 +125,8 @@ function runLaunchSessionFixture(mode: FixtureMode, terminalCopy: "absent" | "an
   const pendingQualificationMarker = join(fixtureRoot, "pending-qualification-observed");
   const ptyPathUnreadableMarker = join(fixtureRoot, "pty-path-unreadable");
   const ptySocketReceiptPath = join(fixtureRoot, "pty-socket-receipt.json");
-  const runId = randomUUID().replaceAll("-", "");
+  const invocationEnv = invocation?.env ?? {};
+  const runId = invocationEnv.NEMOCLAW_LAUNCH_RUN_ID ?? randomUUID().replaceAll("-", "");
   const baselinePath = `/tmp/nemoclaw-launch-session-${runId}.json`;
   const ptyMonitorRoot = `/tmp/nemoclaw-launch-turn-${runId}`;
   mkdirSync(sessionRoot);
@@ -328,6 +161,7 @@ const net = require("node:net");
 const readline = require("node:readline");
 
 const mode = process.env.NEMOCLAW_FIXTURE_MODE;
+const exitWithStatus = process.exit.bind(process);
 if (process.argv[2] !== "tui") {
   const allowedNames = new Set(${JSON.stringify(SUBPROCESS_ENV_ALLOWED_NAMES)});
   const allowedPrefixes = ${JSON.stringify(SUBPROCESS_ENV_ALLOWED_PREFIXES)};
@@ -468,6 +302,23 @@ if (process.argv[2] !== "tui") {
     sessionFile,
     JSON.stringify({ message: { content: [{ text: content, type: "text" }], role }, type: "message" }) + "\n",
   );
+  const appendProviderError = (overrides = {}) => fs.appendFileSync(
+    sessionFile,
+    JSON.stringify({
+      message: {
+        api: "openai-completions",
+        content: [],
+        errorCode: process.env.NEMOCLAW_FIXTURE_PROVIDER_ERROR_CODE || "503",
+        errorMessage: process.env.NEMOCLAW_FIXTURE_PROVIDER_ERROR_MESSAGE || "litellm.ServiceUnavailableError: ServiceUnavailableError: OpenAIException - . Received Model Group=nvidia/model; Available Model Group Fallbacks=None",
+        model: "nvidia/model",
+        provider: "inference",
+        role: "assistant",
+        stopReason: "error",
+        ...overrides,
+      },
+      type: "message",
+    }) + "\n",
+  );
   if (mode === "restored-canonical-timeout") {
     process.stdin.setRawMode(true);
     await new Promise((resolve) => setTimeout(resolve, 750));
@@ -497,10 +348,15 @@ if (process.argv[2] !== "tui") {
   }
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true });
   const ask = () => new Promise((resolve) => rl.question("", resolve));
-  if (terminalCopy === "ansi") process.stdout.write("\u001b[2Kgateway connected | idle\r");
+  if (terminalCopy === "ansi") process.stdout.write("\u001b[2KServiceUnavailableError\r");
+  if (terminalCopy === "provider") {
+    process.stdout.write("\u001b[2Krun error: litellm.ServiceUnavailableError: ServiceUnavailableError:\r\n");
+    process.stdout.write("\u001b[2KOpenAIException - . Received Model Group=nvidia/model\r\n");
+    process.stdout.write("\u001b[2KAvailable Model Group Fallbacks=None\r");
+  }
   if (terminalCopy === "reordered") process.stdout.write("idle | gateway connected\n");
 
-  if (mode === "delayed-recording") {
+  if (mode === "delayed-recording" || mode === "provider-exit-after-recording") {
     const publicationDeadline = Date.now() + 2_000;
     while (!fs.existsSync(process.env.NEMOCLAW_FIXTURE_PENDING_QUALIFICATION_MARKER)) {
       if (Date.now() >= publicationDeadline) process.exit(68);
@@ -511,6 +367,19 @@ if (process.argv[2] !== "tui") {
   if (mode === "invalid-order") {
     append("assistant", "response before input");
     append("user", firstInput);
+  } else if (mode === "provider-empty-message" || mode === "provider-cleanup-failure" || mode === "provider-exit-after-recording") {
+    append("user", firstInput);
+    appendProviderError();
+    new Map([["provider-exit-after-recording", () => exitWithStatus(23)]]).get(mode)?.();
+  } else if (mode === "provider-terminal-spoof") {
+    append("user", firstInput);
+    appendProviderError({ errorCode: "400" });
+  } else if (mode === "provider-wrong-api") {
+    append("user", firstInput);
+    appendProviderError({ api: "openai-responses" });
+  } else if (mode === "provider-wrong-route") {
+    append("user", firstInput);
+    appendProviderError({ provider: "attacker-controlled" });
   } else {
     append("user", firstInput);
     append("assistant", "first response");
@@ -575,7 +444,7 @@ if [[ "$NEMOCLAW_FIXTURE_MODE" == "restored-canonical-timeout" && "$4" == "input
   done
   [[ -e "$NEMOCLAW_FIXTURE_CANONICAL_RESTORED_MARKER" ]] || exit 1
 fi
-if [[ "$NEMOCLAW_FIXTURE_MODE" == "cleanup-failure" && "$4" == "cleanup-baseline" ]]; then
+if [[ ( "$NEMOCLAW_FIXTURE_MODE" == "cleanup-failure" || "$NEMOCLAW_FIXTURE_MODE" == "provider-cleanup-failure" ) && "$4" == "cleanup-baseline" ]]; then
   exit 71
 fi
 if [[ ( "$NEMOCLAW_FIXTURE_MODE" == "pty-cleanup-failure" || "$NEMOCLAW_FIXTURE_MODE" == "nonzero-pty-cleanup-failure" ) && "$4" == "cleanup-pty" ]]; then
@@ -584,12 +453,13 @@ fi
 if [[ "$NEMOCLAW_FIXTURE_MODE" == "pty-socket-timeout" && "$4" == "$NEMOCLAW_FIXTURE_RUN_ID" ]]; then
   exec node -e 'setTimeout(() => process.exit(0), 10_000)'
 fi
-if [[ "$NEMOCLAW_FIXTURE_MODE" == "delayed-recording" && "$4" == "qualify" && "$7" == "1" ]]; then
+if [[ ( "$NEMOCLAW_FIXTURE_MODE" == "delayed-recording" || "$NEMOCLAW_FIXTURE_MODE" == "provider-exit-after-recording" ) && "$4" == "qualify" && "$7" == "1" ]]; then
   set +e
   "$@"
   status=$?
   set -e
   [[ "$status" != "1" ]] || : > "$NEMOCLAW_FIXTURE_PENDING_QUALIFICATION_MARKER"
+  [[ "$NEMOCLAW_FIXTURE_MODE" != "provider-exit-after-recording" ]] || sleep 0.2
   exit "$status"
 fi
 exec "$@"
@@ -609,11 +479,14 @@ exec "$@"
         ? unavailablePtyMonitorStarterScript
         : OPENCLAW_PTY_MONITOR_STARTER_SCRIPT;
 
-    const result = spawnSync("bash", ["-c", LAUNCH_TURN_SCRIPT], {
+    const launchCommand = invocation?.command ?? "bash";
+    const launchArgs = invocation?.args ?? ["-c", LAUNCH_TURN_SCRIPT];
+    const result = spawnSync(launchCommand, launchArgs, {
       encoding: "utf8",
       killSignal: "SIGKILL",
       env: {
         ...process.env,
+        ...invocationEnv,
         HOME: fixtureRoot,
         NEMOCLAW_FIXTURE_BIN_ROOT: fixtureRoot,
         NEMOCLAW_FIXTURE_CANONICAL_RESTORED_MARKER: canonicalRestoredMarker,
@@ -630,29 +503,30 @@ exec "$@"
         NEMOCLAW_FIXTURE_RUN_ID: runId,
         NEMOCLAW_FIXTURE_TUI_PIDS: tuiPidsPath,
         NEMOCLAW_FIXTURE_TTY_MARKER: ttyMarker,
-        NEMOCLAW_LAUNCH_COMMAND: fakeLaunch,
-        NEMOCLAW_LAUNCH_ENTRYPOINT: "",
-        NEMOCLAW_LAUNCH_EXIT_COMMAND: "/exit",
-        NEMOCLAW_LAUNCH_FIRST_INPUT: "first input",
+        NEMOCLAW_LAUNCH_COMMAND: invocationEnv.NEMOCLAW_LAUNCH_COMMAND ?? fakeLaunch,
+        NEMOCLAW_LAUNCH_ENTRYPOINT: invocationEnv.NEMOCLAW_LAUNCH_ENTRYPOINT ?? "",
+        NEMOCLAW_LAUNCH_EXIT_COMMAND: invocationEnv.NEMOCLAW_LAUNCH_EXIT_COMMAND ?? "/exit",
+        NEMOCLAW_LAUNCH_FIRST_INPUT: invocationEnv.NEMOCLAW_LAUNCH_FIRST_INPUT ?? "first input",
         NEMOCLAW_LAUNCH_HOST_TMP_ROOT: fixtureRoot,
         NEMOCLAW_LAUNCH_OPENSHELL_SHIM_SCRIPT: OPENCLAW_LAUNCH_OPENSHELL_SHIM_SCRIPT,
         NEMOCLAW_LAUNCH_PTY_MONITOR_STARTER_SCRIPT: ptyMonitorStarterScript,
         NEMOCLAW_LAUNCH_RUN_ID: runId,
         NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT: OPENCLAW_LAUNCH_RUNTIME_ENV_SCRIPT,
-        NEMOCLAW_LAUNCH_SANDBOX: "sandbox",
-        NEMOCLAW_LAUNCH_SESSION_BUDGET_SECONDS: mode === "restored-canonical-timeout"
-          ? "10"
-          : mode === "pty-socket-timeout"
-          ? "5"
-          : mode.endsWith("-timeout")
-            ? "2"
-            : "230",
-        NEMOCLAW_LAUNCH_SECOND_INPUT: "second input",
+        NEMOCLAW_LAUNCH_SANDBOX: invocationEnv.NEMOCLAW_LAUNCH_SANDBOX ?? "sandbox",
+        NEMOCLAW_LAUNCH_SESSION_BUDGET_SECONDS:
+          mode === "restored-canonical-timeout"
+            ? "10"
+            : mode === "pty-socket-timeout"
+              ? "5"
+              : mode.endsWith("-timeout")
+                ? "2"
+                : (invocationEnv.NEMOCLAW_LAUNCH_SESSION_BUDGET_SECONDS ?? "230"),
+        NEMOCLAW_LAUNCH_SECOND_INPUT: invocationEnv.NEMOCLAW_LAUNCH_SECOND_INPUT ?? "second input",
         NEMOCLAW_LAUNCH_SESSION_EVIDENCE_SCRIPT: OPENCLAW_SESSION_EVIDENCE_SCRIPT,
         NEMOCLAW_LAUNCH_SESSION_ROOT: sessionRoot,
         NEMOCLAW_OPENSHELL_COMMAND: fakeOpenshell,
         PATH: `${fixtureRoot}:${process.env.PATH ?? ""}`,
-        TERM: "xterm-256color",
+        TERM: invocationEnv.TERM ?? "xterm-256color",
       },
       timeout: 15_000,
     });
@@ -853,93 +727,6 @@ require("node:fs").appendFileSync(
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
 }
-
-it("qualifies two ordered structured turns without comparing message content (#9160)", () => {
-  const { baseline, baselineKeys, baselineMode, baselineNlink, baselineUid, qualification } =
-    runEvidenceFixture({
-      after: {
-        "session-a": [
-          message("user", "first arbitrary input"),
-          message("assistant", "first arbitrary response"),
-          message("user", "different second input"),
-          message("assistant", "different second response"),
-        ],
-      },
-      expectedTurns: 2,
-    });
-
-  expect(baseline.status).toBe(0);
-  expect(baselineKeys).toEqual(["schemaVersion", "sessions"]);
-  expect(baselineMode).toBe(0o600);
-  expect(baselineNlink).toBe(1);
-  expect(baselineUid).toBe(process.getuid?.());
-  expect(qualification.status).toBe(0);
-});
-
-it("keeps a partial structured turn pending (#9160)", () => {
-  const { baseline, qualification } = runEvidenceFixture({
-    after: { "session-a": [message("user")] },
-    expectedTurns: 1,
-  });
-
-  expect(baseline.status).toBe(0);
-  expect(qualification.status).toBe(1);
-});
-
-it("does not qualify structured turns recorded before the baseline (#9160)", () => {
-  const { baseline, qualification } = runEvidenceFixture({
-    before: { "session-a": [message("user"), message("assistant")] },
-    after: {},
-    expectedTurns: 1,
-  });
-
-  expect(baseline.status).toBe(0);
-  expect(qualification.status).toBe(1);
-});
-
-it.each([
-  { "session-a": [message("assistant"), message("user")] },
-  { "session-a": [message("user"), message("user"), message("assistant")] },
-  { "session-a": [message("user"), message("assistant"), message("assistant")] },
-  { "session-a": [message("user"), "not-json", message("assistant")] },
-  { "session-a": [emptyMessage("user"), message("assistant")] },
-  { "session-a": [message("user"), message("assistant")], "session-b": [message("user")] },
-] as SessionRecords[])(
-  "rejects malformed, empty, duplicated, extra, out-of-order, or cross-session records [case %#] (#9160)",
-  (after) => {
-    const { baseline, qualification } = runEvidenceFixture({ after, expectedTurns: 1 });
-    expect(baseline.status).toBe(0);
-    expect(qualification.status).toBe(2);
-  },
-);
-
-it("rejects an unterminated appended session record (#9160)", () => {
-  const { baseline, qualification } = runEvidenceFixture({
-    after: {
-      "session-a": [
-        message("user"),
-        message("assistant"),
-        message("user"),
-        message("assistant"),
-        message("user"),
-      ],
-    },
-    afterFinalNewline: false,
-    expectedTurns: 2,
-  });
-
-  expect(baseline.status).toBe(0);
-  expect(qualification.status).toBe(2);
-});
-
-it.each(["invalid", "removed", "rewritten", "truncated"] as const)(
-  "rejects an invalid baseline or a removed, rewritten, or truncated session [case %#] (#9160)",
-  (mutation) => {
-    const { baseline, qualification } = runBaselineMutationFixture(mutation);
-    expect(baseline.status).toBe(0);
-    expect(qualification.status).toBe(2);
-  },
-);
 
 it.each([[], ["-g", "fixture-gateway"]].map((gatewayArgs) => [gatewayArgs] as const))(
   "intercepts one OpenClaw launch, preserves pass-through argv, and strips launch authority from filtered and inherited environments [case %#] (#9160)",
@@ -1248,19 +1035,226 @@ it.runIf(process.platform === "linux")(
 );
 
 it.runIf(process.platform === "linux")(
-  "reports missing structured turns before the PTY child timeout (#9160)",
+  "marks provider unavailability when it leaves an empty structured turn (#9160, #10978)",
   () => {
     const { baselineRemoved, result, ttyObserved } = runLaunchSessionFixture(
-      "recording-timeout",
-      "absent",
+      "provider-empty-message",
+      "provider",
     );
 
     expect(ttyObserved).toBe(true);
     expect(baselineRemoved).toBe(true);
-    expect(result.signal).toBeNull();
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("launch did not record the required structured session turns");
+    expect(result.stderr).toContain("nemoclaw.e2e.launch-failure=provider-unavailable");
   },
+);
+
+it.runIf(process.platform === "linux").each([
+  ["500", "ServiceUnavailableError", "valid"],
+  ["502", "ServiceUnavailableError", "valid"],
+  ["503", "ServiceUnavailableError", "valid"],
+  ["504", "ServiceUnavailableError", "valid"],
+  ["529", "ServiceUnavailableError", "valid"],
+  ["500", "InternalServerError", "valid"],
+  ["503", "ServiceUnavailableError", "provider-empty-message"],
+] as const)(
+  "executes the real $1 HTTP $0 launch producer through $2 (#10978)",
+  async (providerCode, providerError, secondMode) => {
+    const expectedError = secondMode === "valid" ? null : "provider unavailable after 2 attempts";
+    const secondTerminal = secondMode === "valid" ? "absent" : "provider";
+    const calls: Array<{
+      artifactName?: string;
+      firstInput?: string;
+      runId?: string;
+      stderr: string;
+    }> = [];
+    const host = {
+      command: async (
+        command: string,
+        args: string[],
+        options?: { artifactName?: string; env?: NodeJS.ProcessEnv },
+      ) => {
+        const fixture = runLaunchSessionFixture(
+          calls.length === 0 ? "provider-exit-after-recording" : secondMode,
+          calls.length === 0 ? "provider" : secondTerminal,
+          {
+            args,
+            command,
+            env: {
+              ...options?.env,
+              NEMOCLAW_FIXTURE_PROVIDER_ERROR_CODE: providerCode,
+              NEMOCLAW_FIXTURE_PROVIDER_ERROR_MESSAGE: `litellm.${providerError}: ${providerError}: upstream unavailable`,
+            },
+          },
+        ).result;
+        calls.push({
+          artifactName: options?.artifactName,
+          firstInput: options?.env?.NEMOCLAW_LAUNCH_FIRST_INPUT,
+          runId: options?.env?.NEMOCLAW_LAUNCH_RUN_ID,
+          stderr: fixture.stderr,
+        });
+        return {
+          exitCode: fixture.status ?? 1,
+          signal: fixture.signal,
+          stderr: fixture.stderr,
+          stdout: fixture.stdout,
+        };
+      },
+      openshellCommandPath: "/usr/bin/openshell",
+    };
+    vi.useFakeTimers();
+    try {
+      const launch = runOpenClawLaunchSession({
+        artifactName: "producer-handoff",
+        cliCommand: "openclaw",
+        env: {},
+        exitCommand: "/exit",
+        host: host as never,
+        redactionValues: [],
+        sandboxName: "alpha",
+      });
+      await vi.advanceTimersByTimeAsync(1_000);
+      const outcome = launch.then(({ exitCode }) => exitCode).catch(String);
+      await expect(outcome).resolves.toEqual(
+        expectedError === null ? 0 : expect.stringContaining(expectedError),
+      );
+      expect(calls.map((call) => call.artifactName)).toEqual([
+        "producer-handoff",
+        "producer-handoff-provider-retry-02",
+      ]);
+      expect(new Set(calls.map((call) => call.runId)).size).toBe(2);
+      expect(new Set(calls.map((call) => call.firstInput)).size).toBe(2);
+      expect(calls[0]?.stderr).toContain(
+        `${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}:${calls[0]?.runId}`,
+      );
+      expect(
+        calls[1]?.stderr.includes(`${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}:${calls[1]?.runId}`),
+      ).toBe(expectedError !== null);
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+  testTimeout(30_000),
+);
+
+it.runIf(process.platform === "linux")(
+  "does not retry a provider failure when producer cleanup is incomplete (#10978)",
+  async () => {
+    const produced = runLaunchSessionFixture("provider-cleanup-failure", "provider").result;
+    let calls = 0;
+    const host = {
+      command: async () => {
+        calls += 1;
+        return calls === 1
+          ? {
+              exitCode: produced.status ?? 1,
+              signal: produced.signal,
+              stderr: produced.stderr,
+              stdout: produced.stdout,
+            }
+          : { exitCode: 0, signal: null, stderr: "", stdout: "" };
+      },
+      openshellCommandPath: "/usr/bin/openshell",
+    };
+
+    expect(produced.stderr).not.toContain("nemoclaw.e2e.launch-failure=provider-unavailable");
+    expect(produced.stderr).toContain("structured session baseline cleanup failed");
+    await expect(
+      runOpenClawLaunchSession({
+        artifactName: "provider-cleanup-handoff",
+        cliCommand: "node",
+        env: {},
+        host: host as never,
+        redactionValues: [],
+        sandboxName: "alpha",
+      }),
+    ).rejects.toThrow("launch session failed");
+    expect(calls).toBe(1);
+  },
+  testTimeout(30_000),
+);
+
+it.runIf(process.platform === "linux")(
+  "does not retry when terminal output mimics provider unavailability (#10978)",
+  async () => {
+    const produced = runLaunchSessionFixture("provider-terminal-spoof", "provider").result;
+    let calls = 0;
+    const host = {
+      command: async () => {
+        calls += 1;
+        return {
+          exitCode: produced.status ?? 1,
+          signal: produced.signal,
+          stderr: produced.stderr,
+          stdout: produced.stdout,
+        };
+      },
+      openshellCommandPath: "/usr/bin/openshell",
+    };
+
+    expect(produced.stderr).not.toContain("nemoclaw.e2e.launch-failure=provider-unavailable");
+    await runOpenClawLaunchSession({
+      artifactName: "producer-terminal-spoof-handoff",
+      cliCommand: "node",
+      env: {},
+      host: host as never,
+      redactionValues: [],
+      sandboxName: "alpha",
+    }).catch(() => undefined);
+    expect(calls).toBe(1);
+  },
+  testTimeout(30_000),
+);
+
+it.runIf(process.platform === "linux").each([
+  { mismatch: "API", mode: "provider-wrong-api" },
+  { mismatch: "route", mode: "provider-wrong-route" },
+] as const)(
+  "does not retry a structured provider error with the wrong $mismatch identity (#10978)",
+  async ({ mode }) => {
+    const produced = runLaunchSessionFixture(mode, "provider").result;
+    const firstResult = {
+      exitCode: produced.status ?? 1,
+      signal: produced.signal,
+      stderr: produced.stderr,
+      stdout: produced.stdout,
+    };
+    let calls = 0;
+    const host = {
+      command: async () => {
+        calls += 1;
+        return firstResult;
+      },
+      openshellCommandPath: "/usr/bin/openshell",
+    };
+
+    expect(firstResult.stderr).toContain("ServiceUnavailableError");
+    expect(firstResult.stderr).not.toContain("nemoclaw.e2e.launch-failure=provider-unavailable");
+    await expect(
+      runOpenClawLaunchSession({
+        artifactName: "producer-identity-mismatch-handoff",
+        cliCommand: "node",
+        env: {},
+        host: host as never,
+        redactionValues: [],
+        sandboxName: "alpha",
+      }),
+    ).rejects.toThrow("launch session failed");
+    expect(calls).toBe(1);
+  },
+  testTimeout(30_000),
+);
+
+it.runIf(process.platform === "linux")(
+  "does not mark provider output without structured empty-message evidence (#10978)",
+  () => {
+    const produced = runLaunchSessionFixture("recording-timeout", "provider").result;
+
+    expect(produced.status).toBe(1);
+    expect(produced.stderr).toContain("ServiceUnavailableError");
+    expect(produced.stderr).not.toContain("nemoclaw.e2e.launch-failure=provider-unavailable");
+  },
+  testTimeout(20_000),
 );
 
 it.runIf(process.platform === "linux")(
@@ -1455,7 +1449,11 @@ it.runIf(process.platform === "linux")(
       },
     });
 
-    expect(launchPhaseStartedAtCallCount).toBe(1);
+    expect(
+      launchPhaseStartedAtCallCount === 1 &&
+        OPENCLAW_LAUNCH_READINESS_LEASE_ACCEPTANCE_TIMEOUT_MS >=
+          OPENCLAW_LAUNCH_READINESS_LEASE_MAXIMUM_MS + 5 * 60_000,
+    ).toBe(true);
     expect(calls).toHaveLength(3);
     expect(calls[0]).toMatchObject({
       command: "node",

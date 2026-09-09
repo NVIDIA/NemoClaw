@@ -348,10 +348,6 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "lib", "openclaw_device_approval_policy.py"),
   );
   fs.copyFileSync(
-    path.join(rootDir, "scripts", "lib", "clean_runtime_shell_env_shim.py"),
-    path.join(stagedScriptsDir, "lib", "clean_runtime_shell_env_shim.py"),
-  );
-  fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "normalize_mutable_config_perms.py"),
     path.join(stagedScriptsDir, "lib", "normalize_mutable_config_perms.py"),
   );
