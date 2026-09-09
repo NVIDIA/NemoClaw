@@ -15,28 +15,28 @@
     "testFileCount": 86,
     "liveFileCount": 222,
     "direct": {
-      "expectCalls": 1802,
-      "matcherAssertions": 1771,
+      "expectCalls": 1800,
+      "matcherAssertions": 1769,
       "nodeAssertions": 108,
       "namedAssertionHelpers": 601,
       "failCalls": 8,
       "throwGuards": 87,
       "objectFieldAssertions": 245,
-      "assertionPoints": 2820,
-      "generatedProbeBlocks": 124,
-      "generatedProbeConditions": 328
+      "assertionPoints": 2818,
+      "generatedProbeBlocks": 122,
+      "generatedProbeConditions": 322
     },
     "unique": {
-      "expectCalls": 2292,
-      "matcherAssertions": 2256,
+      "expectCalls": 2290,
+      "matcherAssertions": 2254,
       "nodeAssertions": 129,
       "namedAssertionHelpers": 905,
       "failCalls": 38,
       "throwGuards": 633,
       "objectFieldAssertions": 344,
-      "assertionPoints": 4305,
-      "generatedProbeBlocks": 278,
-      "generatedProbeConditions": 949
+      "assertionPoints": 4303,
+      "generatedProbeBlocks": 276,
+      "generatedProbeConditions": 943
     },
     "fileMetricOrder": [
       "directExpectCalls",
@@ -78,7 +78,7 @@
       "test/e2e/live/issue-2478-crash-loop-recovery.test.ts": [9,16,9,16,3],
       "test/e2e/live/issue-4434-tui-unreachable-inference.test.ts": [28,32,28,32,0],
       "test/e2e/live/issue-4462-scope-upgrade-approval.test.ts": [12,22,12,22,16],
-      "test/e2e/live/issue-9880-staging-launchable.test.ts": [2,2,2,2,2],
+      "test/e2e/live/issue-9880-staging-launchable.test.ts": [0,0,0,0,0],
       "test/e2e/live/jetson-nvmap-gpu.test.ts": [37,50,37,50,4],
       "test/e2e/live/kimi-inference-compat.test.ts": [18,20,37,43,1],
       "test/e2e/live/launch-readiness-lease-acceptance.test.ts": [6,6,6,10,6],
