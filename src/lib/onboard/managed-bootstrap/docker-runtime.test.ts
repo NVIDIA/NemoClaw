@@ -14,7 +14,7 @@ import {
   makePollingOptions,
 } from "../../sandbox/create-stream-test-fixtures";
 import { getReadyCheckOutputPatternsForAgent } from "../../sandbox/create-stream-ready-gate";
-import type { DockerGpuPatchDeps } from "../docker-gpu-patch-types";
+import type { DockerGpuPatchDeps, DockerGpuPatchModeAttempt } from "../docker-gpu-patch-types";
 
 const dockerAdapterMocks = vi.hoisted(() => ({
   imageInspect: vi.fn(),
@@ -270,6 +270,14 @@ describe("Docker managed-bootstrap pre-create GPU fallback", () => {
   });
 });
 
+function failedGpuModeAttempt(error: string): DockerGpuPatchModeAttempt {
+  return {
+    mode: { kind: "gpus", label: "--gpus all", device: "all", args: ["--gpus", "all"] },
+    ok: false,
+    error,
+  };
+}
+
 describe("Docker managed-bootstrap GPU probe diagnostics", () => {
   it("includes each failed mode without exposing credentials", () => {
     const details = formatDockerGpuModeFailureDetails([
@@ -288,6 +296,34 @@ describe("Docker managed-bootstrap GPU probe diagnostics", () => {
     expect(details).toContain("--gpus all");
     expect(details).toContain("token=<REDACTED>");
     expect(details).not.toContain("secret-value");
+  });
+
+  it("keeps the Docker reason when digest-pinned image references fill the old budget (#11197)", () => {
+    const digest = "41eb2663a761897dec9cd999d938f7aae8a97698f041739c7aee7344c1a24c08";
+    const reference = `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${digest}`;
+    const details = formatDockerGpuModeFailureDetails([
+      failedGpuModeAttempt(
+        `Unable to find image '${reference}' locally\n${reference}: Error response from daemon: manifest unknown: manifest for ${reference} not found`,
+      ),
+    ]);
+
+    expect(details).toContain("Error response from daemon: manifest unknown");
+    expect(details).toContain("@sha256:41eb2663a761...");
+    expect(details).not.toContain(digest);
+    expect(details).not.toContain("\n");
+    expect(details).not.toContain("characters omitted");
+  });
+
+  it("says how much of an over-long Docker error was cut and keeps its ending (#11197)", () => {
+    const details = formatDockerGpuModeFailureDetails([
+      failedGpuModeAttempt(
+        `${"context ".repeat(120)}Error response from daemon: unauthorized: authentication required`,
+      ),
+    ]);
+
+    expect(details).toMatch(/ \.\.\. \[\d+ characters omitted\] \.\.\. /u);
+    expect(details).toContain("unauthorized: authentication required");
+    expect(details.length).toBeLessThan(700);
   });
 });
 
