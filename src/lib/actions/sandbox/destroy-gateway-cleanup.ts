@@ -9,6 +9,7 @@ import {
   type LiveSandboxListSnapshot,
   shouldCleanupGatewayAfterDestroy,
 } from "../../domain/sandbox/destroy";
+import { resolveRegisteredRuntimeProvider } from "../../onboard/runtime-provider/selection";
 import * as registry from "../../state/registry";
 
 type SandboxListProvider = () => { sandboxes: unknown[] };
@@ -29,12 +30,15 @@ type LiveSandboxProbe = (deps?: {
 type FinalDestroyGatewayCleanupInput = {
   deleteSucceededOrAlreadyGone: boolean;
   removedRegistryEntry: boolean;
+  runtimeProviderId?: string | null;
 };
 
 type FinalDestroyGatewayCleanupDeps = {
   captureOpenshell?: LiveSandboxListProbe;
+  dockerCapture?: DockerCaptureProbe;
   listSandboxes?: SandboxListProvider;
   liveSandboxProbe?: LiveSandboxProbe;
+  resolveRuntimeProvider?: typeof resolveRegisteredRuntimeProvider;
   timeoutMs?: number;
 };
 
@@ -97,6 +101,22 @@ function hasNoLiveSandboxesFromHost(deps?: Parameters<LiveSandboxProbe>[0]): boo
   return hasNoLiveSandboxes(collectLiveSandboxProbeSnapshot(deps));
 }
 
+function hasNoLiveSandboxesWithoutDocker(
+  timeoutMs: number,
+  captureOpenshell: LiveSandboxListProbe = captureLiveSandboxes,
+): boolean {
+  const liveList = captureOpenshell(["sandbox", "list"], {
+    ignoreError: true,
+    timeout: timeoutMs,
+  });
+  // OpenShell terminal rows do not record their backing runtime. A Podman
+  // absence proof therefore cannot establish that a same-named Docker
+  // resource is absent. Preserve the shared gateway whenever any unclassified
+  // row remains; an empty successful OpenShell snapshot is the only
+  // cross-runtime absence proof available without invoking Docker.
+  return liveList.status === 0 && getLiveSandboxNames(liveList).length === 0;
+}
+
 export function shouldCleanupGatewayAfterConfirmedFinalDestroy(
   input: FinalDestroyGatewayCleanupInput,
   deps: FinalDestroyGatewayCleanupDeps = {},
@@ -105,14 +125,23 @@ export function shouldCleanupGatewayAfterConfirmedFinalDestroy(
   const liveSandboxProbe = deps.liveSandboxProbe ?? hasNoLiveSandboxesFromHost;
   const timeoutMs = deps.timeoutMs ?? OPENSHELL_PROBE_TIMEOUT_MS;
   const noRegisteredSandboxes = listSandboxes().sandboxes.length === 0;
+  const provider = input.runtimeProviderId
+    ? (deps.resolveRuntimeProvider ?? resolveRegisteredRuntimeProvider)(input.runtimeProviderId)
+    : null;
+  const liveProbeDeps = {
+    ...(deps.captureOpenshell ? { captureOpenshell: deps.captureOpenshell } : {}),
+    ...(deps.dockerCapture ? { dockerCapture: deps.dockerCapture } : {}),
+    timeoutMs,
+  };
   const noLiveSandboxes =
     input.deleteSucceededOrAlreadyGone &&
     input.removedRegistryEntry &&
     noRegisteredSandboxes &&
-    liveSandboxProbe({
-      ...(deps.captureOpenshell ? { captureOpenshell: deps.captureOpenshell } : {}),
-      timeoutMs,
-    });
+    (deps.liveSandboxProbe
+      ? liveSandboxProbe(liveProbeDeps)
+      : provider?.gateway.ownsHostReadiness === true
+        ? hasNoLiveSandboxesWithoutDocker(timeoutMs, deps.captureOpenshell)
+        : liveSandboxProbe(liveProbeDeps));
 
   return shouldCleanupGatewayAfterDestroy({
     deleteSucceededOrAlreadyGone: input.deleteSucceededOrAlreadyGone,

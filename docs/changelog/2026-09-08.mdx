@@ -39,11 +39,6 @@ It also hardens messaging providers, Windows and WSL inference, sandbox recovery
   A retained sandbox is removed only after its gateway confirms absence and residual resources have sufficient identity evidence.
   Related changes: [PR #10654](https://github.com/NVIDIA/NemoClaw/pull/10654), [PR #11142](https://github.com/NVIDIA/NemoClaw/pull/11142), [PR #11094](https://github.com/NVIDIA/NemoClaw/pull/11094), and [PR #10867](https://github.com/NVIDIA/NemoClaw/pull/10867).
   For more information, refer to [Transfer State Manually](/user-guide/openclaw/manage-sandboxes/state-and-backups/transfer-state-manually), [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes), and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
-- Managed OpenClaw and Hermes recovery now waits up to 210 seconds for a typed delayed managed-container discovery result.
-  Other privileged-control, identity, and diagnostic failures remain terminal.
-  Hermes Portable recovery reports failed host-forward operations and does not publish readiness after a failed repair.
-  Related change: [PR #11236](https://github.com/NVIDIA/NemoClaw/pull/11236).
-  For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes) and [Troubleshooting](/user-guide/hermes/reference/troubleshooting).
 - Hermes startup now repairs restored session, gateway, runtime, history, and log state through descriptor-verified paths before the gateway opens them.
   It rejects symbolic-link and file substitutions without changing their targets, and it keeps mutable runtime configuration outside relaunch policy.
   Hermes diagnostics also preserve invalid dashboard URL details and initialize the Kanban schema atomically.
