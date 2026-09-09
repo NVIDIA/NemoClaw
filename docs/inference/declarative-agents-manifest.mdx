@@ -49,7 +49,8 @@ nemoclaw onboard --agents ./agents.yaml --name my-assistant
 
 NemoClaw reads the manifest on the host and sets `NEMOCLAW_EXTRA_AGENTS_JSON` for the Dockerfile patcher.
 Host preflight rejects selected provider-independent errors—including per-agent `subagents.maxSpawnDepth`—before onboarding starts.
-The OpenClaw config generator revalidates the complete payload, including provider-dependent fields, at the image and runtime trust boundaries.
+The OpenClaw config generator revalidates the complete payload, including provider-dependent fields, during the image build.
+Managed startup validates its profile before it starts the runtime.
 
 ## Define the Manifest
 
