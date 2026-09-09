@@ -47,6 +47,7 @@ const CONFIG_ROOT_ENV_NAMES = [
   "LOCPATH",
   "NETRC",
   "NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL",
+  "NEMOCLAW_BOOTSTRAP_FETCH_REF",
   "NEMOCLAW_BOOTSTRAP_PAYLOAD",
   "NEMOCLAW_INSTALL_REF",
   "NEMOCLAW_INSTALL_TAG",
@@ -527,6 +528,20 @@ export function registerLocalCredentialHelperTests(group: LocalCredentialHelperT
         expect(csp).toContain("style-src 'sha256-");
       });
 
+      it("matches the checked-in form CSP to its inline resources (#11160)", () => {
+        const formBytes = fs.readFileSync(FORM_PATH);
+        const formSource = formBytes.toString("utf8");
+        const metaCsp = formSource.match(
+          /http-equiv="Content-Security-Policy"\s+content="([^"]+)"/,
+        )?.[1];
+        const expectedMetaCsp = `${buildCredentialFormCsp(formBytes).replace(
+          "; frame-ancestors 'none'",
+          "",
+        )};`;
+
+        expect(metaCsp).toBe(expectedMetaCsp);
+      });
+
       it("drops every ambient entry without mutating the source environment (#5048)", () => {
         const ambient = {
           ...CONFIG_ROOT_ENV_OVERRIDES,
@@ -624,19 +639,26 @@ export function registerLocalCredentialHelperTests(group: LocalCredentialHelperT
         ).toThrow();
       });
 
-      it("wires field rejection through the CLI entrypoint before listening (#5048)", async () => {
-        const captured = captureChild(
-          helperArgs(["PATH:text"], [process.execPath, "-e", "process.exit(0)"]),
-        );
+      it.each(["PATH", "NEMOCLAW_BOOTSTRAP_FETCH_REF"])(
+        "rejects %s through the CLI entrypoint before listening (#5048)",
+        async (name) => {
+          const captured = captureChild(
+            helperArgs([`${name}:text`], [process.execPath, "-e", "process.exit(0)"]),
+          );
 
-        const result = await withTimeout(captured.closed, PROCESS_TIMEOUT_MS, "invalid helper CLI");
+          const result = await withTimeout(
+            captured.closed,
+            PROCESS_TIMEOUT_MS,
+            "invalid helper CLI",
+          );
 
-        expect(result.code).not.toBe(0);
-        expect(captured.output()).toContain(
-          "--field PATH is a process-control environment variable and is not allowed",
-        );
-        expect(captured.output()).not.toMatch(READINESS_URL_PATTERN);
-      });
+          expect(result.code).not.toBe(0);
+          expect(captured.output()).toContain(
+            `--field ${name} is a process-control environment variable and is not allowed`,
+          );
+          expect(captured.output()).not.toMatch(READINESS_URL_PATTERN);
+        },
+      );
 
       it.each([
         { executable: "node" },
