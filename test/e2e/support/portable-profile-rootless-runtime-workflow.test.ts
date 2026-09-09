@@ -134,6 +134,8 @@ describe("portable profile rootless runtime workflow", () => {
     expect(liveTest).toContain("preparePortableExperimentalHost(process.env, { home });");
     expect(liveTest).toContain("createHermesPortableBuildContextPlan(");
     expect(liveTest).toContain('"test/e2e/live/hermes-portable-lifecycle-policy.yaml"');
+    expect(liveTest).toContain("await streamSandboxCreate(");
+    expect(liveTest).toContain("waitForReadyTermination: true");
     expect(hermesPolicy.filesystem_policy?.read_only).toContain("/opt/hermes");
     expect(hermesPolicy.process).toEqual({
       run_as_user: "sandbox",

@@ -62,6 +62,7 @@ import { withMcpLifecycleLockSync } from "../../../src/lib/state/mcp-lifecycle-l
 import { withPortableHostFence } from "../../../src/lib/state/portable-uninstall-retirement.ts";
 import type { SandboxEntry } from "../../../src/lib/state/registry/types.ts";
 import { retryUntil } from "../../../src/lib/core/retry.ts";
+import { streamSandboxCreate } from "../../../src/lib/sandbox/create-stream.ts";
 import { test } from "../fixtures/e2e-test.ts";
 import { OPENSHELL_V0106_QUALIFICATION } from "../fixtures/openshell-v0106-qualification.ts";
 import {
@@ -605,27 +606,54 @@ async function proveHistoricalHermesPortableLifecycle(input: {
     "/usr/local/bin/nemoclaw-start",
   ];
 
+  const createArgs = [
+    "sandbox",
+    "create",
+    "-g",
+    HERMES_PORTABLE_E2E_GATEWAY_NAME,
+    "--name",
+    sandboxName,
+    "--from",
+    input.hermesImageRef,
+    "--policy",
+    HERMES_PORTABLE_E2E_POLICY,
+    "--no-tty",
+    "--",
+    ...startupArgv,
+  ];
+  let observedCreatePhase = "";
+  const createResult = await streamSandboxCreate(
+    "/usr/bin/timeout",
+    ["--signal=TERM", "--kill-after=5s", "240s", input.openshellBin, ...createArgs],
+    input.openshellClientEnv,
+    {
+      initialPhase: "create",
+      readyCheck: () => {
+        try {
+          observedCreatePhase = readOpenShellSandbox(
+            input.openshellBin,
+            input.openshellClientEnv,
+            sandboxName,
+          ).phase;
+        } catch {
+          observedCreatePhase = "";
+        }
+        return observedCreatePhase === "Ready";
+      },
+      failureCheck: () =>
+        observedCreatePhase === "Error"
+          ? "OpenShell Hermes sandbox entered Error during creation."
+          : null,
+      readyCheckOutputPatterns: [/Setting up NemoClaw/u],
+      waitForReadyTermination: true,
+    },
+  );
   requireOpenShellResult(
-    captureOpenShell(
-      input.openshellBin,
-      input.openshellClientEnv,
-      [
-        "sandbox",
-        "create",
-        "-g",
-        HERMES_PORTABLE_E2E_GATEWAY_NAME,
-        "--name",
-        sandboxName,
-        "--from",
-        input.hermesImageRef,
-        "--policy",
-        HERMES_PORTABLE_E2E_POLICY,
-        "--no-tty",
-        "--",
-        ...startupArgv,
-      ],
-      240_000,
-    ),
+    {
+      status: createResult.status,
+      stdout: createResult.output,
+      stderr: "",
+    },
     "OpenShell Hermes sandbox creation",
   );
 
@@ -1318,7 +1346,9 @@ async function main(progress: TestProgress): Promise<void> {
         "HTTP/1.1 200 OK",
       );
 
-      progress.phase("upgrade the historical receipt through public start and verify its lifecycle");
+      progress.phase(
+        "upgrade the historical receipt through public start and verify its lifecycle",
+      );
       hermesLifecycleEvidence = await proveHistoricalHermesPortableLifecycle({
         artifactDir,
         hermesImageRef: hermesImageRef!,
