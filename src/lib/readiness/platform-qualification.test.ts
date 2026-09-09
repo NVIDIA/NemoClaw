@@ -144,10 +144,7 @@ describe("platform readiness qualification (#7410)", () => {
       throw error;
     };
     const files = new Map([
-      [
-        "/fixtures/os-release",
-        'ID=ubuntu\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu 24.04.4 LTS"\n',
-      ],
+      ["/fixtures/os-release", 'ID=ubuntu\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu 24.04.4 LTS"\n'],
     ]);
     const identity = collectPlatformIdentity({
       osReleasePath: "/fixtures/os-release",
