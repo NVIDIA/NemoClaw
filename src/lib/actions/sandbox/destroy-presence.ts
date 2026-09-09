@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
-  OPENSHELL_PODMAN_MANAGED_VALUE,
   OPENSHELL_SANDBOX_ID_LABEL,
   OPENSHELL_SANDBOX_NAME_LABEL,
   OPENSHELL_SANDBOX_WORKSPACE_LABEL,
   inspectDockerSandboxNameLabeledContainers,
+  isOpenShellSandboxOwnershipMarker,
   resolveOpenShellSandboxOwnershipLabel,
 } from "../../onboard/openshell-docker-sandbox-containers";
 import { fingerprintOpenShellSandboxId } from "../../adapters/openshell/sandbox-identity";
@@ -36,18 +36,6 @@ export type SandboxNameLabeledContainer = {
   sandboxId: string;
   managedAlt: string;
 };
-
-/**
- * A container is OpenShell-owned if it carries either the Docker driver's
- * `managedBy` marker or the Podman driver's separate `managedAlt` marker
- * (#11139) — the two drivers do not stamp the same ownership label.
- */
-function isOpenShellOwnedContainer(
-  row: SandboxNameLabeledContainer,
-  ownershipValue: string,
-): boolean {
-  return row.managedBy === ownershipValue || row.managedAlt === OPENSHELL_PODMAN_MANAGED_VALUE;
-}
 
 /** Verdict for whether destroy resolved one complete managed container identity. */
 export type DestroyContainerIdentityVerdict =
@@ -115,8 +103,10 @@ export function classifyDestroyContainerIdentity(
 
   const { malformedRows, rows } = observation;
   const ownership = resolveOpenShellSandboxOwnershipLabel();
-  const managed = rows.filter((row) => isOpenShellOwnedContainer(row, ownership.value));
-  const foreign = rows.filter((row) => !isOpenShellOwnedContainer(row, ownership.value));
+  // Ownership policy is owned by the onboarding container module so destroy
+  // cannot drift from the rest of the lifecycle (#11139).
+  const managed = rows.filter((row) => isOpenShellSandboxOwnershipMarker(row));
+  const foreign = rows.filter((row) => !isOpenShellSandboxOwnershipMarker(row));
 
   if (malformedRows > 0) {
     return {

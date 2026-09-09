@@ -33,14 +33,36 @@ export function resolveOpenShellSandboxOwnershipLabel(
   return { label: OPENSHELL_MANAGED_BY_LABEL, value: OPENSHELL_MANAGED_BY_VALUE };
 }
 
+/**
+ * Sole owner of the "is this container OpenShell's" policy. Callers that hold
+ * an observed label map and callers that hold a parsed identity row both route
+ * here, so a new or changed driver marker is defined once (#11139).
+ *
+ * The Docker driver stamps `openshell.ai/managed-by=openshell`; the Podman
+ * driver stamps `openshell.managed=true` and omits `managed-by` entirely.
+ */
+export function isOpenShellSandboxOwnershipMarker(
+  observed: { readonly managedBy: string; readonly managedAlt: string },
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  const ownership = resolveOpenShellSandboxOwnershipLabel(env);
+  return (
+    observed.managedBy === ownership.value ||
+    observed.managedAlt === OPENSHELL_PODMAN_MANAGED_VALUE
+  );
+}
+
 export function hasOpenShellSandboxOwnership(
   labels: Readonly<Record<string, string>>,
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
   const ownership = resolveOpenShellSandboxOwnershipLabel(env);
-  return (
-    labels[ownership.label] === ownership.value ||
-    labels[OPENSHELL_PODMAN_MANAGED_LABEL] === OPENSHELL_PODMAN_MANAGED_VALUE
+  return isOpenShellSandboxOwnershipMarker(
+    {
+      managedBy: labels[ownership.label] ?? "",
+      managedAlt: labels[OPENSHELL_PODMAN_MANAGED_LABEL] ?? "",
+    },
+    env,
   );
 }
 
