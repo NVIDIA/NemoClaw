@@ -75,9 +75,10 @@ describe("global doctor action", () => {
     );
     mocks.getNamedGatewayLifecycleState.mockReturnValue({
       state: "healthy_named",
-      status: "Status: Connected",
-      gatewayInfo: "Gateway: nemoclaw",
       activeGateway: "nemoclaw",
+      diagnostic: "Status: Connected",
+      recoveryBlocked: false,
+      unavailable: false,
     });
     mocks.shouldInspectLegacyGatewayContainer.mockReturnValue(false);
   });
@@ -110,9 +111,7 @@ describe("global doctor action", () => {
     expect(report.checks.some((check) => check.group === "Inference")).toBe(false);
     expect(report.checks.some((check) => check.group === "Messaging")).toBe(false);
     expect(report.checks.some((check) => check.group === "Local services")).toBe(false);
-    expect(mocks.getNamedGatewayLifecycleState).toHaveBeenCalledWith("nemoclaw", {
-      ignoreProbeErrors: true,
-    });
+    expect(mocks.getNamedGatewayLifecycleState).toHaveBeenCalledWith("nemoclaw");
     expect(mocks.recoverNamedGatewayRuntime).not.toHaveBeenCalled();
   });
 
@@ -191,9 +190,10 @@ describe("global doctor action", () => {
     });
     mocks.getNamedGatewayLifecycleState.mockReturnValueOnce({
       state: "missing_named",
-      status: "Status: Disconnected",
-      gatewayInfo: "",
       activeGateway: null,
+      diagnostic: "Status: Disconnected",
+      recoveryBlocked: false,
+      unavailable: false,
     });
 
     const report = await runGlobalDoctor({ quiet: true });
@@ -220,18 +220,17 @@ describe("global doctor action", () => {
       ]),
     );
     expect(JSON.stringify(report)).not.toContain("/private/gateway-management.json");
-    expect(mocks.getNamedGatewayLifecycleState).toHaveBeenCalledWith("nemoclaw", {
-      ignoreProbeErrors: true,
-    });
+    expect(mocks.getNamedGatewayLifecycleState).toHaveBeenCalledWith("nemoclaw");
     expect(mocks.recoverNamedGatewayRuntime).not.toHaveBeenCalled();
   });
 
   it("renders actionable text without naming a sandbox (#10212)", async () => {
     mocks.getNamedGatewayLifecycleState.mockReturnValueOnce({
       state: "missing_named",
-      status: "Status: Disconnected",
-      gatewayInfo: "",
       activeGateway: null,
+      diagnostic: "Status: Disconnected",
+      recoveryBlocked: false,
+      unavailable: false,
     });
     const lines: string[] = [];
     vi.spyOn(console, "log").mockImplementation((line = "") => lines.push(String(line)));

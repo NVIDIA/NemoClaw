@@ -473,9 +473,7 @@ describe("recoverRegistryEntries empty-registry live gateway recovery (#5714)", 
 
     await recoverRegistryEntries();
 
-    expect(getNamedGatewayLifecycleState).toHaveBeenCalledWith(undefined, {
-      ignoreProbeErrors: true,
-    });
+    expect(getNamedGatewayLifecycleState).toHaveBeenCalledWith();
     expect(recoverNamedGatewayRuntime).not.toHaveBeenCalled();
   });
 

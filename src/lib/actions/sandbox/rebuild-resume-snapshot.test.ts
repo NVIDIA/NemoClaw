@@ -156,8 +156,20 @@ describe("rebuild resume snapshot repair", () => {
         .mockImplementation(resolveGatewayAuthority),
       vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockResolvedValue({
         recovered: true,
-        before: { state: "healthy_named", status: "", gatewayInfo: "", activeGateway: null },
-        after: { state: "healthy_named", status: "", gatewayInfo: "", activeGateway: null },
+        before: {
+          state: "healthy_named",
+          activeGateway: null,
+          diagnostic: "",
+          recoveryBlocked: false,
+          unavailable: false,
+        },
+        after: {
+          state: "healthy_named",
+          activeGateway: null,
+          diagnostic: "",
+          recoveryBlocked: false,
+          unavailable: false,
+        },
         attempted: false,
       }),
       vi.spyOn(sandboxList, "captureSandboxListWithGatewayRecovery").mockResolvedValue({

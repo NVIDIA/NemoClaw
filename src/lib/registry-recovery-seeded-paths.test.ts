@@ -220,9 +220,7 @@ describe("recoverRegistryEntries seeded recovery paths", () => {
     // Read-only path: never invokes the mutating gateway recovery, inspects
     // lifecycle directly, and surfaces the live sandbox display-only.
     expect(recoverNamedGatewayRuntime).not.toHaveBeenCalled();
-    expect(getNamedGatewayLifecycleState).toHaveBeenCalledWith(undefined, {
-      ignoreProbeErrors: true,
-    });
+    expect(getNamedGatewayLifecycleState).toHaveBeenCalledWith();
     const recovered = result.sandboxes.find((s) => s.name === "dcode-station") as
       | { recoveredFromGateway?: boolean }
       | undefined;

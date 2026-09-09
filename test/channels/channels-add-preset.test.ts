@@ -272,9 +272,10 @@ beforeEach(() => {
     .mockImplementation(() => successfulOpenshellResult());
   const healthyGatewayState = {
     state: "healthy_named",
-    status: "",
-    gatewayInfo: "",
     activeGateway: "nemoclaw",
+    diagnostic: "",
+    recoveryBlocked: false,
+    unavailable: false,
   } as const;
   vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockResolvedValue({
     recovered: true,
@@ -604,10 +605,9 @@ describe("channels add applies a matching policy preset (#3437)", () => {
       lifecycleGeneration: "generation-1",
       lifecycleLiveIdentityFingerprint: "fingerprint-1",
     } as SandboxEntry;
-    vi.spyOn(
-      policyChannelDependencies,
-      "inspectMessagingProviderAttachmentTarget",
-    ).mockReturnValue("fingerprint-1");
+    vi.spyOn(policyChannelDependencies, "inspectMessagingProviderAttachmentTarget").mockReturnValue(
+      "fingerprint-1",
+    );
     applyPresetSpy
       .mockImplementationOnce((_name, presetName) => {
         callOrder.push(`applyPreset:${presetName}`);

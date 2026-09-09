@@ -214,7 +214,7 @@ export async function resolveRebuildLiveState(
 
   const reconciled = await getReconciledSandboxGatewayState(sandboxName);
   if (reconciled.state === "present") {
-    const lifecycle = getNamedGatewayLifecycleState(recordedGateway);
+    const lifecycle = await getNamedGatewayLifecycleState(recordedGateway);
     if (lifecycle.state !== "healthy_named") {
       printWrongGatewayActiveGuidance(
         sandboxName,

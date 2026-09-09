@@ -29,8 +29,9 @@ vi.mock("../../agent/defs", () => ({
 vi.mock("../../gateway-runtime-action", () => ({
   getNamedGatewayLifecycleState: () => ({
     state: "healthy_named",
-    status: "Status: Connected",
-    gatewayInfo: "Gateway: nemoclaw-19080",
+    diagnostic: "Status: Connected",
+    recoveryBlocked: false,
+    unavailable: false,
   }),
   recoverNamedGatewayRuntime: vi.fn(),
 }));

@@ -5,6 +5,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import type { OpenShellGatewayObservation } from "../../adapters/openshell/gateway-observer";
+
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
 import {
   getNamedGatewayLifecycleState,
@@ -657,7 +659,7 @@ export async function reconcileMissingAgainstNamedGateway(
     // Ambient selection is irrelevant and must not trigger a sibling retry.
     return tryRecoverDockerDriverSandbox(sandboxName, missingLookup, pinnedGatewayName);
   }
-  const lifecycle = getNamedGatewayLifecycleState(targetGatewayName);
+  const lifecycle = await getNamedGatewayLifecycleState(targetGatewayName);
   if (lifecycle.recoveryBlocked) {
     return missingLookup;
   }
@@ -674,7 +676,7 @@ export async function reconcileMissingAgainstNamedGateway(
       return retry;
     }
     if (retry.state === "missing") {
-      const after = getNamedGatewayLifecycleState(targetGatewayName);
+      const after = await getNamedGatewayLifecycleState(targetGatewayName);
       if (after.state === "healthy_named") {
         // Even with the right gateway selected, the sandbox is
         // still missing. Try Docker-side recovery before declaring
@@ -686,23 +688,23 @@ export async function reconcileMissingAgainstNamedGateway(
       // caller emits restart guidance, rather than `wrong_gateway_active`
       // pointing at the now-irrelevant pre-select active gateway.
       if (after.state === "missing_named") {
-        return { state: "gateway_missing_after_restart", output: after.status };
+        return { state: "gateway_missing_after_restart", output: after.diagnostic };
       }
       if (after.state === "named_unreachable" || after.state === "named_unhealthy") {
-        return { state: "gateway_unreachable_after_restart", output: after.status };
+        return { state: "gateway_unreachable_after_restart", output: after.diagnostic };
       }
     }
     return {
       state: "wrong_gateway_active",
       activeGateway: lifecycle.activeGateway,
-      output: lifecycle.status,
+      output: lifecycle.diagnostic,
     };
   }
   if (lifecycle.state === "missing_named") {
-    return { state: "gateway_missing_after_restart", output: lifecycle.status };
+    return { state: "gateway_missing_after_restart", output: lifecycle.diagnostic };
   }
   if (lifecycle.state === "named_unreachable" || lifecycle.state === "named_unhealthy") {
-    return { state: "gateway_unreachable_after_restart", output: lifecycle.status };
+    return { state: "gateway_unreachable_after_restart", output: lifecycle.diagnostic };
   }
   if (lifecycle.state === "healthy_named") {
     // The gateway is healthy and we already see `missing`. This is
@@ -774,12 +776,17 @@ export function printWrongGatewayActiveGuidance(
 
 /** Print troubleshooting hints based on gateway lifecycle state in the output. */
 export function printGatewayLifecycleHint(
-  output = "",
+  output: string | OpenShellGatewayObservation = "",
   sandboxName = "",
   writer: (message: string) => void = console.error,
 ): void {
-  const cleanOutput = stripOpenShellCliAnsi(output);
+  const observation = typeof output === "string" ? null : output;
+  const cleanOutput = typeof output === "string" ? stripOpenShellCliAnsi(output) : "";
   const targetGatewayName = getSandboxTargetGatewayName(sandboxName);
+  if (observation?.error) {
+    writer(observation.error.message);
+    return;
+  }
   // The gateway-side gRPC reply `sandbox has no spec` is returned when the
   // active OpenShell gateway does not know about the sandbox — which on a
   // multi-instance host typically means a sibling NemoClaw gateway (the one
@@ -799,7 +806,7 @@ export function printGatewayLifecycleHint(
     );
     return;
   }
-  if (/No gateway configured/i.test(cleanOutput)) {
+  if (observation?.state === "missing_named" || /No gateway configured/i.test(cleanOutput)) {
     writer(
       `  The selected ${CLI_DISPLAY_NAME} gateway is no longer configured or its metadata/runtime has been lost.`,
     );
@@ -810,8 +817,9 @@ export function printGatewayLifecycleHint(
     return;
   }
   if (
-    /Connection refused|client error \(Connect\)|tcp connect error/i.test(cleanOutput) &&
-    gatewayNamePattern(targetGatewayName).test(cleanOutput)
+    observation?.state === "named_unreachable" ||
+    (/Connection refused|client error \(Connect\)|tcp connect error/i.test(cleanOutput) &&
+      gatewayNamePattern(targetGatewayName).test(cleanOutput))
   ) {
     writer(
       "  The target OpenShell gateway exists in metadata, but its API is refusing connections after restart.",
@@ -910,12 +918,12 @@ export async function getReconciledSandboxGatewayState(
     // below is the per-subprocess authority for the status RPC.
     const selection = selectSandboxOwningGateway(sandboxName);
     if (selection.outcome !== "selected") {
-      const lifecycle = getNamedGatewayLifecycleState(targetGatewayName);
+      const lifecycle = await getNamedGatewayLifecycleState(targetGatewayName);
       return {
         state: "wrong_gateway_active",
         activeGateway: lifecycle.activeGateway,
         output:
-          lifecycle.status ||
+          lifecycle.diagnostic ||
           `Failed to select owning gateway '${targetGatewayName}' for sandbox '${sandboxName}'.`,
       };
     }
@@ -953,21 +961,17 @@ export async function getReconciledSandboxGatewayState(
       }
       return { ...retried, recoveredGateway: true, recoveryVia: recovery.via || null };
     }
-    const latestLifecycle = getNamedGatewayLifecycleState(recoveryGatewayName);
-    const latestStatus = stripOpenShellCliAnsi(latestLifecycle.status || "");
-    if (/No gateway configured/i.test(latestStatus)) {
+    const latestLifecycle = await getNamedGatewayLifecycleState(recoveryGatewayName);
+    if (latestLifecycle.state === "missing_named") {
       return {
         state: "gateway_missing_after_restart",
-        output: latestLifecycle.status || lookup.output,
+        output: latestLifecycle.diagnostic || lookup.output,
       };
     }
-    if (
-      /Connection refused|client error \(Connect\)|tcp connect error/i.test(latestStatus) &&
-      gatewayNamePattern(recoveryGatewayName).test(latestStatus)
-    ) {
+    if (latestLifecycle.state === "named_unreachable") {
       return {
         state: "gateway_unreachable_after_restart",
-        output: latestLifecycle.status || lookup.output,
+        output: latestLifecycle.diagnostic || lookup.output,
       };
     }
     if (
@@ -976,7 +980,7 @@ export async function getReconciledSandboxGatewayState(
     ) {
       return {
         state: "gateway_unreachable_after_restart",
-        output: recovery.after?.status || recovery.before?.status || lookup.output,
+        output: recovery.after?.diagnostic || recovery.before?.diagnostic || lookup.output,
       };
     }
     return { ...lookup, gatewayRecoveryFailed: true };
@@ -1104,12 +1108,12 @@ export async function ensureLiveSandboxOrExit(
   }
   if (lookup.state === "missing") {
     const targetGatewayName = getSandboxTargetGatewayName(sandboxName);
-    const guard = getNamedGatewayLifecycleState(targetGatewayName);
+    const guard = await getNamedGatewayLifecycleState(targetGatewayName);
     if (guard.state !== "healthy_named") {
       if (guard.state === "connected_other") {
         printWrongGatewayActiveGuidance(sandboxName, guard.activeGateway, console.error);
       } else {
-        printGatewayLifecycleHint(guard.status || "", sandboxName, console.error);
+        printGatewayLifecycleHint(guard, sandboxName, console.error);
       }
       exit(1);
     }

@@ -153,17 +153,28 @@ function createDoctorHarness(
   const recoverNamedGatewayRuntimeSpy = vi
     .spyOn(gatewayRuntime, "recoverNamedGatewayRuntime")
     .mockResolvedValue({
-      before: { state: "healthy_named", status: "Status: Connected", gatewayInfo: "" },
-      after: { state: "healthy_named", status: "Status: Connected", gatewayInfo: "" },
+      before: {
+        state: "healthy_named",
+        diagnostic: "Status: Connected",
+        recoveryBlocked: false,
+        unavailable: false,
+      },
+      after: {
+        state: "healthy_named",
+        diagnostic: "Status: Connected",
+        recoveryBlocked: false,
+        unavailable: false,
+      },
       recovered: false,
     });
   const getNamedGatewayLifecycleStateSpy = vi
     .spyOn(gatewayRuntime, "getNamedGatewayLifecycleState")
     .mockReturnValue({
       state: "healthy_named",
-      status: "Status: Connected",
-      gatewayInfo: "Gateway: nemoclaw-19080",
       activeGateway: "nemoclaw-19080",
+      diagnostic: "Status: Connected",
+      recoveryBlocked: false,
+      unavailable: false,
     });
   const captureOpenShellSpy = vi
     .spyOn(runtime, "captureOpenshell")
@@ -658,9 +669,10 @@ describe("runSandboxDoctor flow", () => {
     harness.configuredMessagingChannelsSpy.mockReturnValue(["telegram"]);
     harness.getNamedGatewayLifecycleStateSpy.mockReturnValue({
       state: "missing_named",
-      status: "Status: Disconnected",
-      gatewayInfo: "",
       activeGateway: null,
+      diagnostic: "Status: Disconnected",
+      recoveryBlocked: false,
+      unavailable: false,
     });
 
     const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
@@ -802,13 +814,15 @@ describe("runSandboxDoctor flow", () => {
     harness.recoverNamedGatewayRuntimeSpy.mockResolvedValue({
       before: {
         state: "missing_named",
-        status: "Status: Disconnected",
-        gatewayInfo: "",
+        diagnostic: "Status: Disconnected",
+        recoveryBlocked: false,
+        unavailable: false,
       },
       after: {
         state: "healthy_named",
-        status: "Status: Connected",
-        gatewayInfo: "Gateway: nemoclaw-19080",
+        diagnostic: "Status: Connected",
+        recoveryBlocked: false,
+        unavailable: false,
       },
       recovered: true,
     });

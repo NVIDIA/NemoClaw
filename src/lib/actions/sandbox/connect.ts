@@ -1061,16 +1061,10 @@ function verifyOrRecoverHermesPortableInferenceRouteForProbeOnlyOrExit(
   return { forwardsRecovered: true };
 }
 
-const GATEWAY_UNAVAILABLE_RE =
-  /No gateway configured|No active gateway|Connection refused|client error \(Connect\)|tcp connect error|Status:\s*Disconnected/i;
-
 function isBlockingGatewayLifecycle(
-  lifecycle: ReturnType<typeof getNamedGatewayLifecycleState>,
+  lifecycle: Awaited<ReturnType<typeof getNamedGatewayLifecycleState>>,
 ): boolean {
-  if (lifecycle.state === "named_unreachable" || lifecycle.state === "named_unhealthy") {
-    return true;
-  }
-  return lifecycle.state === "missing_named" && GATEWAY_UNAVAILABLE_RE.test(lifecycle.status || "");
+  return lifecycle.unavailable;
 }
 
 function failConnectReadinessGatewayUnavailable(sandboxName: string, detailOutput = ""): never {
@@ -1131,14 +1125,12 @@ function failConnectReadinessDockerRuntimeDown(sandboxName: string): never {
   process.exit(1);
 }
 
-function failIfGatewayBlocksConnectReadiness(sandboxName: string): void {
+async function failIfGatewayBlocksConnectReadiness(sandboxName: string): Promise<void> {
   const sb = registry.getSandbox(sandboxName);
-  const lifecycle = getNamedGatewayLifecycleState(resolveSandboxGatewayName(sb));
+  const lifecycle = await getNamedGatewayLifecycleState(resolveSandboxGatewayName(sb));
+  if (lifecycle.error) failConnectReadinessObservation(sandboxName, lifecycle.error);
   if (isBlockingGatewayLifecycle(lifecycle)) {
-    failConnectReadinessGatewayUnavailable(
-      sandboxName,
-      lifecycle.status || lifecycle.gatewayInfo || "",
-    );
+    failConnectReadinessGatewayUnavailable(sandboxName, lifecycle.diagnostic);
   }
 }
 
@@ -1809,7 +1801,7 @@ export async function waitForSandboxReadyOrExit(
 
   const status = initial?.phase ?? null;
   if (status && /^unknown$/i.test(status)) {
-    failIfGatewayBlocksConnectReadiness(sandboxName);
+    await failIfGatewayBlocksConnectReadiness(sandboxName);
   }
   let remainingInitialErrorGracePolls =
     allowInitialErrorAfterStart && status === "Error" ? START_INITIAL_ERROR_GRACE_POLLS - 1 : 0;
@@ -1842,7 +1834,7 @@ export async function waitForSandboxReadyOrExit(
     const parsedCur = poll?.phase ?? null;
     const cur = parsedCur || "unknown";
     if (parsedCur && /^unknown$/i.test(parsedCur)) {
-      failIfGatewayBlocksConnectReadiness(sandboxName);
+      await failIfGatewayBlocksConnectReadiness(sandboxName);
     }
     if (cur !== "unknown") everSeen = true;
     const waitingThroughInitialError = cur === "Error" && remainingInitialErrorGracePolls > 0;
@@ -2741,9 +2733,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
           probeTiming!.measure("authority", retainedCommand.assertCurrent);
         }
         const published = await probeTiming!.measureAsync("publication", () =>
-          (retainedCommand
-            ? publishHermesLaunchReadinessWithSettlement
-            : publishLaunchReadiness)(
+          (retainedCommand ? publishHermesLaunchReadinessWithSettlement : publishLaunchReadiness)(
             publicationRequest,
             retainedCommand
               ? hermesPortableLaunchReadinessDeps(retainedCommand, probeTiming)
