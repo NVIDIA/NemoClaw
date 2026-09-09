@@ -319,12 +319,11 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     agent: VerifyChainAgent | null | undefined,
   ): ReturnType<typeof buildChain> {
     // One resolver for the host hints, so this chain and the forward's chain
-    // cannot disagree about WSL or the bind override (#10861). The WSL host
-    // address is not looked up here — no `runCapture` — which matches what
-    // this call did before; the verify chain never reads it.
+    // cannot disagree about WSL, its fallback address, or the bind override
+    // (#10861).
     return buildChain({
       chatUiUrl,
-      ...dashboardAccess.resolveDashboardPlatformHints({ isWsl: deps.isWsl() }),
+      ...dashboardAccess.resolveDashboardPlatformHints({ isWsl: deps.isWsl(), runCapture }),
       dashboardHealthEndpoint: agent?.dashboard?.healthPath,
       gatewayPort: resolveVerifyAgentApiPort(sandboxName, agent, {
         getSandbox,

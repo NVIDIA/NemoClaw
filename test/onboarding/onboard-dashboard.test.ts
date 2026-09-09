@@ -102,6 +102,76 @@ describe("onboard dashboard helpers", () => {
     }
   });
 
+  it("rejects a malformed dashboard bind override in the verification chain", () => {
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0; rm -rf");
+    const helpers = createOnboardDashboardHelpers({
+      runOpenshell: vi.fn(() => ({ status: 0 })),
+      runCaptureOpenshell: vi.fn(() => ""),
+      openshellArgv: (args: string[]) => [process.execPath, "-e", "", ...args],
+      cliName: () => "nemoclaw",
+      agentProductName: () => "NemoClaw",
+      getProviderLabel: (provider: string) => provider,
+      note: vi.fn(),
+      isWsl: () => false,
+      redact: (value: unknown) => String(value),
+      sleep: vi.fn(),
+      printAgentDashboardUi: vi.fn(),
+      listSandboxes: () => ({ sandboxes: [] }),
+    });
+
+    try {
+      expect(
+        helpers.buildAgentVerifyChain(
+          "http://127.0.0.1:18789",
+          "my-openclaw",
+          loadAgent("openclaw"),
+        ),
+      ).toMatchObject({
+        forwardTarget: "18789",
+        bindAddress: "127.0.0.1",
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("preserves the WSL host fallback in the verification chain", () => {
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", undefined);
+    const runCapture = vi.fn(() => "172.24.80.1 10.0.0.2\n");
+    const helpers = createOnboardDashboardHelpers({
+      runOpenshell: vi.fn(() => ({ status: 0 })),
+      runCaptureOpenshell: vi.fn(() => ""),
+      runCapture,
+      openshellArgv: (args: string[]) => [process.execPath, "-e", "", ...args],
+      cliName: () => "nemoclaw",
+      agentProductName: () => "NemoClaw",
+      getProviderLabel: (provider: string) => provider,
+      note: vi.fn(),
+      isWsl: () => true,
+      redact: (value: unknown) => String(value),
+      sleep: vi.fn(),
+      printAgentDashboardUi: vi.fn(),
+      listSandboxes: () => ({ sandboxes: [] }),
+    });
+
+    try {
+      expect(
+        helpers.buildAgentVerifyChain(
+          "http://127.0.0.1:18789",
+          "my-openclaw",
+          loadAgent("openclaw"),
+        ),
+      ).toMatchObject({
+        fallbackUrls: ["http://172.24.80.1:18789"],
+        forwardTarget: "0.0.0.0:18789",
+        bindAddress: "0.0.0.0",
+      });
+      expect(runCapture).toHaveBeenCalledWith(["hostname", "-I"], { ignoreError: true });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("prints platform-appropriate service hints for port conflicts", () => {
     expect(getPortConflictServiceHints("darwin").join("\n")).toMatch(/launchctl unload/);
     expect(getPortConflictServiceHints("darwin").join("\n")).not.toMatch(/systemctl --user/);
