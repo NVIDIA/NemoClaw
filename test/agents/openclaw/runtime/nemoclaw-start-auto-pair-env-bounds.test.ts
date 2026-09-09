@@ -59,6 +59,56 @@ function resolveSchedulerConstants(env: NodeJS.ProcessEnv): {
   return { status: result.status, stderr: result.stderr, constants };
 }
 
+function resolveNextPollSleep(options: {
+  deadline: number;
+  now: number;
+  defaultSeconds: number;
+  fastReentryInterval: number;
+  fastReentryRemaining: number;
+}): { status: number | null; stderr: string; sleep: number; fastReentryRemaining: number } {
+  const source = fs.readFileSync(START_SCRIPT, "utf-8");
+  const watcher = source.match(/<<'PYAUTOPAIR'[^\n]*\n([\s\S]*?)\nPYAUTOPAIR/u);
+  expect(watcher).not.toBeNull();
+  const sleepFunction = watcher![1].match(
+    /def sleep_for_next_poll\(default_seconds, productive=True\):[\s\S]*?(?=\n\nwhile time\.time\(\) < DEADLINE:)/u,
+  );
+  expect(sleepFunction).not.toBeNull();
+  const program = [
+    "class FakeTime:",
+    "    def __init__(self):",
+    `        self.now = ${String(options.now)}`,
+    "        self.sleeps = []",
+    "    def time(self):",
+    "        return self.now",
+    "    def sleep(self, seconds):",
+    "        self.sleeps.append(seconds)",
+    "time = FakeTime()",
+    `DEADLINE = ${String(options.deadline)}`,
+    `FAST_REENTRY_INTERVAL = ${String(options.fastReentryInterval)}`,
+    `FAST_REENTRY_REMAINING = ${String(options.fastReentryRemaining)}`,
+    sleepFunction![0],
+    `sleep_for_next_poll(${String(options.defaultSeconds)})`,
+    "print('SLEEP', repr(time.sleeps[0]))",
+    "print('FAST_REENTRY_REMAINING', FAST_REENTRY_REMAINING)",
+  ].join("\n");
+  const result = spawnSync("python3", ["-c", program], {
+    encoding: "utf8",
+    env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
+  });
+  const output = Object.fromEntries(
+    result.stdout
+      .split("\n")
+      .filter((line) => line.includes(" "))
+      .map((line) => [line.slice(0, line.indexOf(" ")), line.slice(line.indexOf(" ") + 1)]),
+  );
+  return {
+    status: result.status,
+    stderr: result.stderr,
+    sleep: Number(output.SLEEP),
+    fastReentryRemaining: Number(output.FAST_REENTRY_REMAINING),
+  };
+}
+
 describe("nemoclaw-start auto-pair scheduler environment bounds", () => {
   it.each([
     {
@@ -110,6 +160,14 @@ describe("nemoclaw-start auto-pair scheduler environment bounds", () => {
       input: { NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "Infinity" },
     },
     {
+      name: "a slow interval that rounds below binary64",
+      input: { NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "1e-324" },
+    },
+    {
+      name: "a slow interval at the lower binary64 midpoint",
+      input: { NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "2.4703282292062327e-324" },
+    },
+    {
       name: "a run timeout past the subprocess limit",
       input: { NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "2147484" },
     },
@@ -158,6 +216,16 @@ describe("nemoclaw-start auto-pair scheduler environment bounds", () => {
       input: { NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "2147483" },
       expected: { RUN_TIMEOUT: "2147483.0" },
     },
+    {
+      name: "a slow interval above the lower binary64 midpoint",
+      input: { NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "2.4703282292062328e-324" },
+      expected: { SLOW: "5e-324" },
+    },
+    {
+      name: "a slow interval that rounds to the smallest binary64 value",
+      input: { NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "3e-324" },
+      expected: { SLOW: "5e-324" },
+    },
   ])(
     "bounds each knob by the limit that applies to it, honouring $name (#11161)",
     ({ input, expected }) => {
@@ -185,5 +253,31 @@ describe("nemoclaw-start auto-pair scheduler environment bounds", () => {
       RUN_TIMEOUT: "12.0",
       DEADLINE: "600",
     });
+  });
+
+  it.each([
+    {
+      name: "slow-mode cadence",
+      fastReentryRemaining: 0,
+      expectedFastReentryRemaining: 0,
+    },
+    {
+      name: "fast-reentry cadence",
+      fastReentryRemaining: 2,
+      expectedFastReentryRemaining: 1,
+    },
+  ])("caps $name sleep at the remaining watcher deadline (#11161)", (testCase) => {
+    const resolved = resolveNextPollSleep({
+      deadline: 100.25,
+      now: 100,
+      defaultSeconds: 1_000_000_000,
+      fastReentryInterval: 1_000_000_000,
+      fastReentryRemaining: testCase.fastReentryRemaining,
+    });
+
+    expect(resolved.status).toBe(0);
+    expect(resolved.stderr).toBe("");
+    expect(resolved.sleep).toBe(0.25);
+    expect(resolved.fastReentryRemaining).toBe(testCase.expectedFastReentryRemaining);
   });
 });

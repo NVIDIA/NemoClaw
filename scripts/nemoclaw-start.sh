@@ -3126,12 +3126,13 @@ def sleep_for_next_poll(default_seconds, productive=True):
     # silently drain the bounded window before a productive poll observes
     # the cascading upgrades.
     global FAST_REENTRY_REMAINING
+    remaining_seconds = max(0.0, DEADLINE - time.time())
     if FAST_REENTRY_REMAINING > 0:
         if productive:
             FAST_REENTRY_REMAINING -= 1
-        time.sleep(min(FAST_REENTRY_INTERVAL, default_seconds))
+        time.sleep(min(FAST_REENTRY_INTERVAL, default_seconds, remaining_seconds))
         return
-    time.sleep(default_seconds)
+    time.sleep(min(default_seconds, remaining_seconds))
 
 
 while time.time() < DEADLINE:
