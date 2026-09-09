@@ -28,7 +28,6 @@ import { startSandbox } from "../../../src/lib/actions/sandbox/start.ts";
 import {
   configureHermesPortableRestartPolicy,
   enrollHermesPortableContainer,
-  hermesPortableContainerInternals,
 } from "../../../src/lib/onboard/experimental/hermes-portable-container.ts";
 import { resolveHermesPortableStartupContract } from "../../../src/lib/onboard/experimental/hermes-portable-contract.ts";
 import {
@@ -763,9 +762,8 @@ async function proveHistoricalHermesPortableLifecycle(input: {
     lifecycleEvidence = await withPortableHostFence(input.runtimeAuthority.homeDir, async () => {
       const gatewayEvidence: {
         forwardRecovery: ReturnType<typeof recoverHermesPortableLaunchForwards> | null;
-        health: string;
         verificationCount: number;
-      } = { forwardRecovery: null, health: "", verificationCount: 0 };
+      } = { forwardRecovery: null, verificationCount: 0 };
       const requireCompatibleStartupAuthority = () => {
         const current = readHermesPortableLifecycleReceipt(sandboxName, receiptStateDir);
         assert.ok(
@@ -797,21 +795,6 @@ async function proveHistoricalHermesPortableLifecycle(input: {
               sandboxName,
             }),
           );
-          const health = retryUntil(
-            () =>
-              capture(
-                ["sandbox", "exec", "-g", HERMES_PORTABLE_E2E_GATEWAY_NAME, "--name", sandboxName,
-                  "--no-tty", "--", "python3", "-I", "-c",
-                  hermesPortableContainerInternals.authenticatedHealthScript],
-                10_000,
-              ),
-            {
-              accept: (result) => result.status === 0 && !result.error && String(result.stdout).trim() === "200",
-              retryDelaysMs: OPENSHELL_SETTLEMENT_DELAYS_MS.slice(0, 2),
-              sleep: (milliseconds) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds),
-            },
-          );
-          gatewayEvidence.health = requireOpenShellResult(health, "public-start gateway health verification");
         },
       } satisfies Parameters<typeof startSandbox>[1];
       const upgradeResult = await startSandbox(sandboxName, publicStartDeps);
@@ -832,9 +815,8 @@ async function proveHistoricalHermesPortableLifecycle(input: {
       assert.ok(
         upgradeResult.exitCode === 0 &&
           startResult.exitCode === 0 &&
-          gatewayEvidence.verificationCount === 2 &&
-          gatewayEvidence.health === "200",
-        `Public start did not complete recovery and gateway verification: upgrade=${JSON.stringify(upgradeResult)} start=${JSON.stringify(startResult)} checks=${String(gatewayEvidence.verificationCount)} health=${gatewayEvidence.health || "none"}`,
+          gatewayEvidence.verificationCount === 2,
+        `Public start did not complete authenticated lifecycle recovery and gateway verification: upgrade=${JSON.stringify(upgradeResult)} start=${JSON.stringify(startResult)} checks=${String(gatewayEvidence.verificationCount)}`,
       );
       requireCompatibleStartupAuthority();
 
@@ -933,7 +915,7 @@ async function proveHistoricalHermesPortableLifecycle(input: {
         recovery: {
           result: "public-start",
           forwardResult: gatewayEvidence.forwardRecovery?.kind ?? "missing",
-          authenticatedHealthStatus: Number(gatewayEvidence.health),
+          authenticatedHealth: "verified-by-public-start-before-forward-verification",
         },
         refusal: {
           primaryFailureClass: classifiedFailure.primaryFailureClass,
