@@ -148,7 +148,6 @@ Changing those values requires a fresh replacement.
 Create a snapshot first when declared user state must survive, then export the new values and recreate the sandbox.
 
 ```bash
-nemoclaw <sandbox-name> shields down
 nemoclaw <sandbox-name> snapshot create --name before-model-change
 nemoclaw onboard --agent pi --name <sandbox-name> --fresh --recreate-sandbox
 ```

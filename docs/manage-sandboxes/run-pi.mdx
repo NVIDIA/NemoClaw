@@ -113,7 +113,6 @@ Pi has no long-running agent gateway or host forward. `recover` re-enters the sh
 Pi has no runtime `inference set` path. To change the provider, model, context window, output limit, or reasoning flag, create a snapshot, set the new selection, and run a fresh replacement.
 
 ```bash
-nemoclaw <sandbox-name> shields down
 nemoclaw <sandbox-name> snapshot create --name before-model-change
 nemoclaw onboard --agent pi --name <sandbox-name> --fresh --recreate-sandbox
 ```
