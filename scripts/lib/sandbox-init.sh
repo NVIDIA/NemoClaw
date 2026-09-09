@@ -501,60 +501,6 @@ verify_config_integrity() {
   fi
 }
 
-# ── RC file locking ──────────────────────────────────────────────
-# Lock .bashrc and .profile to 444 after startup has written dynamic shell
-# state to /tmp/nemoclaw-proxy-env.sh. This prevents the sandbox user from
-# injecting code that runs on every `nemoclaw connect`.
-#
-# SECURITY: This fixes the Hermes vulnerability where .bashrc/.profile
-# were never locked (unlike OpenClaw which had this via #2125).
-#
-# Usage:
-#   lock_rc_files /sandbox   # locks /sandbox/.bashrc and /sandbox/.profile
-lock_rc_files() {
-  local home_dir="$1"
-
-  for rc_file in "${home_dir}/.bashrc" "${home_dir}/.profile"; do
-    if [ -L "$rc_file" ]; then
-      echo "[SECURITY] Refusing to lock symlinked rc file: ${rc_file}" >&2
-      continue
-    fi
-    if [ -f "$rc_file" ]; then
-      if ! python3 -I - "$rc_file" "$(id -u)" <<'PY' 2>/dev/null; then
-import errno
-import os
-import stat
-import sys
-
-path, uid_text = sys.argv[1:3]
-uid = int(uid_text)
-flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-try:
-    fd = os.open(path, flags)
-except OSError as exc:
-    if exc.errno == errno.ELOOP:
-        print(f"[SECURITY] Refusing to lock symlinked rc file: {path}", file=sys.stderr)
-    else:
-        print(f"[SECURITY] Could not open rc file for locking: {path}: {exc}", file=sys.stderr)
-    sys.exit(1)
-
-try:
-    st = os.fstat(fd)
-    if not stat.S_ISREG(st.st_mode):
-        print(f"[SECURITY] Refusing to lock non-regular rc file: {path}", file=sys.stderr)
-        sys.exit(1)
-    if uid == 0:
-        os.fchown(fd, 0, 0)
-    os.fchmod(fd, 0o444)
-finally:
-    os.close(fd)
-PY
-        echo "[SECURITY] Could not lock ${rc_file} to 444 — continuing (best-effort, Landlock may enforce)" >&2
-      fi
-    fi
-  done
-}
-
 # ── Cleanup / signal forwarding ──────────────────────────────────
 # Forward SIGTERM/SIGINT to child processes for graceful shutdown.
 # The entrypoint is PID 1 — without a trap, signals interrupt wait and

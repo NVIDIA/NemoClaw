@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: E2E / Issue 9880 Staging Reproduction
+name: E2E / Staging Launchable Control Plane
 
 on:
   workflow_dispatch:
@@ -10,35 +10,33 @@ permissions:
   contents: read
 
 concurrency:
-  group: issue-9880-staging-launchable
+  group: staging-brev-launchable-cpu
   cancel-in-progress: false
 
 jobs:
-  reproduce:
+  test:
     if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 210
-    env:
-      INSTANCE_NAME: issue-9880-${{ github.run_id }}-${{ github.run_attempt }}
+    timeout-minutes: 90
     steps:
-      - name: Check out trusted reproduction lane
+      - name: Check out trusted Vitest controller
         timeout-minutes: 10
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.workflow_sha }}
           persist-credentials: false
           sparse-checkout: |
+            ci/cli-test-timing-hints.json
+            nemoclaw/vitest.project.ts
+            src/
             test/e2e/
             test/helpers/
             tools/e2e/
-            src/
             package.json
             package-lock.json
-            vitest.config.ts
-            nemoclaw/vitest.project.ts
-            ci/cli-test-timing-hints.json
             tsconfig.json
             tsconfig.src.json
+            vitest.config.ts
             oxlint.config.ts
             oxfmt.config.ts
           sparse-checkout-cone-mode: false
@@ -74,13 +72,13 @@ jobs:
         env:
           BREV_API_KEY: ${{ secrets.BREV_API_KEY }}
           BREV_CLI_SHA256: d4aa49db1716f10308a6587778a676a0c0076bd48a212d86a421ab9550bc8f32
-          HOME: ${{ runner.temp }}/issue-9880-home
           BREV_CLI_VERSION: 0.6.334
           BREV_ORG_ID: ${{ secrets.BREV_ORG_ID }}
+          HOME: ${{ runner.temp }}/staging-launchable-full-home
         run: |
           set -euo pipefail
           install -d -m 0700 "$HOME"
-          work_dir="$(mktemp -d "${RUNNER_TEMP}/issue-9880.XXXXXX")"
+          work_dir="$(mktemp -d "${RUNNER_TEMP}/staging-launchable-full.XXXXXX")"
           chmod 700 "$work_dir"
           archive="${RUNNER_TEMP}/brev-cli.tar.gz"
           curl -fsSL -o "$archive" "https://github.com/brevdev/brev-cli/releases/download/v${BREV_CLI_VERSION}/brev-cli_${BREV_CLI_VERSION}_linux_amd64.tar.gz"
@@ -90,17 +88,16 @@ jobs:
           brev login --api-key "$BREV_API_KEY" --org-id "$BREV_ORG_ID"
           printf 'work_dir=%s\n' "$work_dir" >>"$GITHUB_OUTPUT"
 
-      - name: Reproduce issue 9880 on the staging Launchable
-        timeout-minutes: 120
+      - name: Verify staging Launchable control-plane checkpoint
+        timeout-minutes: 60
         env:
           BREV_LAUNCHABLE_ID: ${{ vars.NEMOCLAW_STAGING_LAUNCHABLE_ID }}
           BREV_WORKSPACE_OWNERSHIP_FILE: ${{ steps.prepare.outputs.work_dir }}/workspace-owner.json
           E2E_ARTIFACT_DIR: ${{ steps.prepare.outputs.work_dir }}
-          E2E_TARGET_ID: issue-9880-staging-launchable
-          HOME: ${{ runner.temp }}/issue-9880-home
+          E2E_TARGET_ID: staging-launchable-full
+          HOME: ${{ runner.temp }}/staging-launchable-full-home
           NEMOCLAW_IMAGE_DISPATCH_TOKEN: ${{ secrets.NEMOCLAW_IMAGE_DISPATCH_TOKEN }}
           NEMOCLAW_RUN_LIVE_E2E: "1"
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           PATH: /usr/local/bin:/usr/bin:/bin
         run: ./node_modules/.bin/vitest run --project e2e-live test/e2e/live/issue-9880-staging-launchable.test.ts --silent=false --reporter=default
 
@@ -110,7 +107,7 @@ jobs:
         env:
           BREV_WORKSPACE_OWNERSHIP_FILE: ${{ steps.prepare.outputs.work_dir }}/workspace-owner.json
           E2E_ARTIFACT_DIR: ${{ steps.prepare.outputs.work_dir }}
-          HOME: ${{ runner.temp }}/issue-9880-home
+          HOME: ${{ runner.temp }}/staging-launchable-full-home
           NEMOCLAW_RUN_LIVE_E2E: "1"
           PATH: /usr/local/bin:/usr/bin:/bin
         run: ./node_modules/.bin/vitest run --project e2e-live test/e2e/live/brev-workspace-cleanup.test.ts --silent=false --reporter=default
@@ -119,16 +116,16 @@ jobs:
         if: always()
         timeout-minutes: 5
         env:
-          HOME: ${{ runner.temp }}/issue-9880-home
+          HOME: ${{ runner.temp }}/staging-launchable-full-home
         run: |
           set -euo pipefail
           rm -rf -- "$HOME"
           test ! -e "$HOME"
 
-      - name: Upload issue 9880 evidence
-        timeout-minutes: 10
+      - name: Upload staging Launchable evidence
         if: ${{ always() && steps.prepare.outputs.work_dir != '' }}
+        timeout-minutes: 10
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
-          name: issue-9880-staging-reproduction-${{ github.run_id }}-${{ github.run_attempt }}
+          name: staging-launchable-control-plane-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ steps.prepare.outputs.work_dir }}/
