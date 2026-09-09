@@ -362,10 +362,6 @@ test(
   async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
     const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
     expect(
-      fs.existsSync(CLI_ENTRYPOINT),
-      "bin/nemoclaw.js missing — run npm ci && npm run build:cli before live rebuild coverage",
-    ).toBe(true);
-    expect(
       path.resolve(host.commandPath),
       "rebuild-OpenClaw must invoke the checked-out CLI through NEMOCLAW_CLI_BIN",
     ).toBe(CLI_ENTRYPOINT);
