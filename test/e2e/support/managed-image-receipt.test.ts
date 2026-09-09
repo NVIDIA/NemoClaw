@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { managedStartupE2eProfile } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import {
@@ -23,6 +23,11 @@ import {
   assertStockManagedImageReceipt,
   shouldAssertStockManagedImageReceipt,
 } from "../fixtures/managed-image-receipt.ts";
+import { ArtifactSink } from "../fixtures/artifacts.ts";
+import { HostCliClient } from "../fixtures/clients/host.ts";
+import { SecretStore } from "../fixtures/secrets.ts";
+import { DEEPAGENTS_FRESH_REONBOARD_CHECK } from "../live/cloud-experimental-check-list.ts";
+import { runE2eCloudExperimentalChecks } from "../live/cloud-experimental-checks.ts";
 import { readFullE2eColdWorkloadEvidence } from "../live/full-e2e-workload-evidence.ts";
 
 const SANDBOX_NAME = "managed-only-stock";
@@ -158,6 +163,49 @@ function writeRegistry(workload: Record<string, unknown>): string {
 }
 
 describe("stock E2E managed-image receipt assertion", () => {
+  it("rejects a stale receipt after the fresh re-onboarding script succeeds (#11305)", async () => {
+    const home = writeRegistry(managedReceipt("a".repeat(40)));
+    const environment = selectedEnvironment(home);
+    vi.stubEnv("HOME", home);
+    vi.stubEnv("E2E_MANAGED_IMAGE_REVISION", environment.E2E_MANAGED_IMAGE_REVISION);
+    vi.stubEnv("E2E_MANAGED_IMAGE_COHORT_RECEIPT", environment.E2E_MANAGED_IMAGE_COHORT_RECEIPT);
+    vi.stubEnv("E2E_WORKLOAD_SOURCE", "managed-image");
+    const run = vi.fn(async () => ({
+      command: [],
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      stdout: "",
+      stderr: "",
+      artifacts: { stdout: "stdout.txt", stderr: "stderr.txt", result: "result.json" },
+    }));
+    try {
+      await expect(
+        runE2eCloudExperimentalChecks(
+          "cloud-langchain-deepagents-code",
+          SANDBOX_NAME,
+          [DEEPAGENTS_FRESH_REONBOARD_CHECK],
+          {
+            artifacts: new ArtifactSink(path.join(home, "artifacts")),
+            host: new HostCliClient({ run }),
+            secrets: new SecretStore({}, (note) => {
+              throw new Error(note);
+            }),
+          },
+        ),
+      ).rejects.toThrow("managed-image revision does not match the selected cohort");
+      expect(run).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          command: "bash",
+          args: [path.join(process.cwd(), DEEPAGENTS_FRESH_REONBOARD_CHECK)],
+        }),
+        expect.anything(),
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("accepts the durable receipt from the selected cohort revision", () => {
     const home = writeRegistry(managedReceipt());
 

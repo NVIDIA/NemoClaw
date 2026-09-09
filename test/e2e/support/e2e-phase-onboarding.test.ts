@@ -281,32 +281,37 @@ describe("onboarding phase fixture", () => {
   });
 
   it.each([
-    ["published cohort", ""],
-    ["candidate catalog", '{"langchain-deepagents-code":{}}'],
-  ])("uses the %s without a Deep Agents base override (#11305)", async (_source, catalog) => {
-    const runner = new FakeRunner();
-    runner.enqueue(shellResult(0, "onboarded\n"));
-    const secrets = new FakeSecrets({ NVIDIA_INFERENCE_API_KEY: "secret-token" });
-    const onboard = new OnboardingPhaseFixture(new HostCliClient(runner), secrets);
+    ["published cohort", "", undefined],
+    ["candidate catalog", '{"langchain-deepagents-code":{}}', undefined],
+    ["explicit override", "", DCODE_BASE_IMAGE_REF],
+  ])(
+    "uses the %s without a Deep Agents base override (#11305)",
+    async (_source, catalog, dcodeBaseImageReference) => {
+      const runner = new FakeRunner();
+      runner.enqueue(shellResult(0, "onboarded\n"));
+      const secrets = new FakeSecrets({ NVIDIA_INFERENCE_API_KEY: "secret-token" });
+      const onboard = new OnboardingPhaseFixture(new HostCliClient(runner), secrets);
 
-    const instance = await withProcessEnvironment(
-      {
-        E2E_WORKLOAD_SOURCE: "managed-image",
-        NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: catalog,
-        [DCODE_BASE_IMAGE_ENV]: undefined,
-      },
-      () =>
-        onboard.from(ready({ onboarding: "cloud-langchain-deepagents-code" }), {
-          sandboxName: "e2e-dcode-candidate",
-        }),
-    );
+      const instance = await withProcessEnvironment(
+        {
+          E2E_WORKLOAD_SOURCE: "managed-image",
+          NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: catalog,
+          [DCODE_BASE_IMAGE_ENV]: undefined,
+        },
+        () =>
+          onboard.from(ready({ onboarding: "cloud-langchain-deepagents-code" }), {
+            sandboxName: "e2e-dcode-candidate",
+            dcodeBaseImageReference,
+          }),
+      );
 
-    expect(instance).toMatchObject({
-      agent: "langchain-deepagents-code",
-      sandboxName: "e2e-dcode-candidate",
-    });
-    expect(runner.calls[0]?.options?.env).not.toHaveProperty(DCODE_BASE_IMAGE_ENV);
-  });
+      expect(instance).toMatchObject({
+        agent: "langchain-deepagents-code",
+        sandboxName: "e2e-dcode-candidate",
+      });
+      expect(runner.calls[0]?.options?.env).not.toHaveProperty(DCODE_BASE_IMAGE_ENV);
+    },
+  );
 
   it("uses the contract-selected Deep Agents Code base image reference instead of the ambient publication index", async () => {
     const runner = new FakeRunner();
