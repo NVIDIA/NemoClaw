@@ -48,8 +48,10 @@ function parseFileResults(value: VitestReport, repoRoot: string): Map<string, nu
   }
 
   const durations = new Map<string, number>();
-  for (const candidate of value.testResults) {
-    if (!isRecord(candidate)) continue;
+  for (const [index, candidate] of value.testResults.entries()) {
+    if (!isRecord(candidate)) {
+      throw new Error(`Invalid Vitest timing report entry at index ${index}`);
+    }
     const { name, startTime, endTime } = candidate as VitestFileResult;
     if (
       typeof name !== "string" ||
@@ -59,7 +61,7 @@ function parseFileResults(value: VitestReport, repoRoot: string): Map<string, nu
       !Number.isFinite(endTime) ||
       endTime < startTime
     ) {
-      continue;
+      throw new Error(`Invalid Vitest timing report entry at index ${index}`);
     }
     const file = normalizeReportPath(name, repoRoot);
     if (!file) continue;

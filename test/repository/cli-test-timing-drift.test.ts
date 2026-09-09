@@ -76,6 +76,17 @@ describe("CLI test timing drift", () => {
     ]);
   });
 
+  it("rejects malformed file results instead of reporting a false normal state", () => {
+    const value = report({ "test/stable.test.ts": 20_000 }) as {
+      testResults: unknown[];
+    };
+    value.testResults.push({ name: "test/malformed.test.ts", startTime: 1_000 });
+
+    expect(() => findCliTestTimingDrift(value, hints, repoRoot)).toThrow(
+      /Invalid Vitest timing report entry at index 1/u,
+    );
+  });
+
   it("renders a concise advisory summary", () => {
     const summary = formatCliTestTimingDriftSummary([
       { file: "test/new.test.ts", kind: "unprofiled", observedMs: 16_000 },
