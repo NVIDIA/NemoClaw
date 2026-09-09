@@ -151,7 +151,7 @@ jobs:
 
       - name: Install dependencies
         env:
-          NODE_AUTH_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && github.token || '' }}
+          NODE_AUTH_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.token || '' }}
         run: |
           if [[ -n "$NODE_AUTH_TOKEN" ]]; then
             bash .github/actions/ci-install-dependencies.sh
@@ -338,7 +338,7 @@ jobs:
       - name: Install dependencies and build in WSL
         shell: powershell
         env:
-          NODE_AUTH_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && github.token || '' }}
+          NODE_AUTH_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.token || '' }}
         run: |
           . "$env:TRUSTED_WSL_HELPER"
           $testUser = ConvertTo-BashLiteral -Value $env:WSL_TEST_USER

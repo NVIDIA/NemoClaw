@@ -222,7 +222,7 @@ describe("onboard helpers", () => {
       fs.writeFileSync(path.join(fakeBin, "brew"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
       fs.writeFileSync(
         path.join(fakeBin, "docker"),
-        '#!/bin/sh\ncase "$1" in\n  info) printf \'%s\\n\' \'{"ServerVersion":"test"}\' ;;\n  version) printf \'%s\\n\' \'{"Server":{"Version":"test"}}\' ;;\nesac\n',
+        '#!/bin/sh\ncase "$1" in\n  info) printf \'%s\\n\' \'{"ServerVersion":"test"}\' ;;\n  version) printf \'%s\\n\' \'{"Server":{"Version":"test"}}\' ;;\n  *) printf \'unexpected docker command: %s\\n\' "$*" >&2; exit 1 ;;\nesac\n',
         { mode: 0o755 },
       );
 

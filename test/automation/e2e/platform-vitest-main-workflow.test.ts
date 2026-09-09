@@ -127,7 +127,7 @@ describe("platform evidence workflow", () => {
       );
       expect(install.env).toMatchObject({
         NODE_AUTH_TOKEN:
-          "${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && github.token || '' }}",
+          "${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.token || '' }}",
       });
       expect(install.run).toContain(".github/actions/ci-install-dependencies.sh");
       expect(install.run).toContain("npm ci --ignore-scripts");
