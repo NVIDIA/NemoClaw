@@ -30,8 +30,14 @@ const canonicalBannerBoundary = path.resolve("nemoclaw/src/shared/banner-boundar
 const canonicalCredentialFilterBoundary = path.resolve(
   "nemoclaw/src/shared/credential-filter-boundary.cts",
 );
+const canonicalMigrationRestoreBoundary = path.resolve(
+  "nemoclaw/src/shared/migration-restore-boundary.cts",
+);
 const canonicalOpenShellExternalTargetBoundary = path.resolve(
   "nemoclaw/src/shared/openshell-external-target-boundary.cts",
+);
+const canonicalOpenShellObservationBoundary = path.resolve(
+  "nemoclaw/src/shared/openshell-observation-boundary.cts",
 );
 const canonicalOpenShellPolicyBoundary = path.resolve(
   "nemoclaw/src/shared/openshell-policy-boundary.cts",
@@ -56,8 +62,16 @@ const canonicalSourceAliases = [
     replacement: canonicalCredentialFilterBoundary,
   },
   {
+    find: /^.*migration-restore-boundary\.cjs$/,
+    replacement: canonicalMigrationRestoreBoundary,
+  },
+  {
     find: /^.*openshell-external-target-boundary\.cjs$/,
     replacement: canonicalOpenShellExternalTargetBoundary,
+  },
+  {
+    find: /^.*openshell-observation-boundary\.cjs$/,
+    replacement: canonicalOpenShellObservationBoundary,
   },
   {
     find: /^.*openshell-policy-boundary\.cjs$/,
@@ -181,11 +195,6 @@ export default defineConfig({
           env: {
             ...controlledNonLiveEnv,
             NODE_OPTIONS: sourceNodeOptions,
-            // Integration fixtures exercise onboarding against controlled fake
-            // Docker state. Keep a base-image Dockerfile change in the PR from
-            // redirecting those fixtures into the real local-build guard.
-            NEMOCLAW_SANDBOX_BASE_IMAGE_REF:
-              "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           },
           include: ["test/**/*.test.{js,ts}"],
           exclude: [

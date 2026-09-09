@@ -519,15 +519,68 @@ describe("deferred provider effect authority", () => {
         gatewayName: "nemoclaw",
       },
       preparationDeps: {
-        providerExistsInGateway: vi.fn(() => true),
         runOpenshell: runOpenshell as never,
         cleanupCreateSources: vi.fn(),
       },
       runVerifiedSandboxCreateEffects: null,
-      activateDeferredProviderEffects: (revalidate) => {
+      activateDeferredProviderEffects: async (revalidate) => {
         revalidate("cleaning up providers for sandbox 'alpha'");
         return ["first", "second"];
       },
+      revalidateSandboxIdentityBeforeCreate: vi.fn(),
+    });
+    const runAfterVerifiedCreate = boundary.runAfterVerifiedCreate;
+    expect(runAfterVerifiedCreate).toBeTypeOf("function");
+
+    const error = await runAfterVerifiedCreate!({
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw",
+      gatewayPort: 18790,
+      lifecycleGeneration: "generation-1",
+      lifecycleLiveIdentityFingerprint: "a".repeat(64),
+      route: "direct" as never,
+      revalidateSandboxIdentity,
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain(
+      "Do not delete it by mutable sandbox name. Run 'nemoclaw alpha destroy'.",
+    );
+    expect((error as Error).message).toContain(
+      "can reconcile verified residual resources and the recovery record only after OpenShell confirms absence",
+    );
+    expect((error as Error).message).not.toContain("administrator");
+
+    expect(runOpenshell).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["sandbox", "provider", "attach"]),
+      expect.anything(),
+    );
+    expect(revalidateSandboxIdentity).toHaveBeenCalledWith(
+      "attaching deferred providers to sandbox 'alpha'",
+    );
+  });
+
+  it("completes deferred provider effects when no attachment remains (#9833)", async () => {
+    const revalidateSandboxIdentity = vi.fn();
+    const runOpenshell = vi.fn(() => ({ status: 0 }));
+    const boundary = createProviderEffectBoundary({
+      deferred: true,
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw",
+      preparationInput: {
+        openshellDriver: "docker",
+        inferenceProvider: null,
+        messagingProviders: [],
+        messagingProviderRequests: [],
+        extraProviders: [],
+        gatewayName: "nemoclaw",
+      },
+      preparationDeps: {
+        runOpenshell: runOpenshell as never,
+        cleanupCreateSources: vi.fn(),
+      },
+      runVerifiedSandboxCreateEffects: null,
+      activateDeferredProviderEffects: async () => [],
       revalidateSandboxIdentityBeforeCreate: vi.fn(),
     });
     const runAfterVerifiedCreate = boundary.runAfterVerifiedCreate;
@@ -543,7 +596,7 @@ describe("deferred provider effect authority", () => {
         route: "direct" as never,
         revalidateSandboxIdentity,
       }),
-    ).rejects.toThrow("OpenShell cannot attach providers to the immutable identity");
+    ).resolves.toBeUndefined();
 
     expect(runOpenshell).not.toHaveBeenCalledWith(
       expect.arrayContaining(["sandbox", "provider", "attach"]),
@@ -799,7 +852,7 @@ describe("sandbox create identity checks", () => {
     expect(error).toBeInstanceOf(AggregateError);
     expect((error as AggregateError).message).toMatch(
       new RegExp(
-        `Create-attempt label: ai\\.nvidia\\.nemoclaw\\.create-attempt=${createAttemptNonce}.*left sandbox 'alpha' in place.*identity fingerprint: ${exactIdentity}.*did not run OpenShell's mutable-name deletion command.*Do not delete the sandbox by mutable sandbox name.*OpenShell administrator.*identity-bound recovery or removal procedure`,
+        `Create-attempt label: ai\\.nvidia\\.nemoclaw\\.create-attempt=${createAttemptNonce}.*left sandbox 'alpha' in place.*identity fingerprint: ${exactIdentity}.*did not run OpenShell's mutable-name deletion command.*Do not delete the sandbox by mutable sandbox name.*Inspection is diagnostic only and does not authorize deletion`,
         "u",
       ),
     );
@@ -808,7 +861,7 @@ describe("sandbox create identity checks", () => {
         expect.objectContaining({
           message: expect.stringMatching(
             new RegExp(
-              `Create-attempt label: ai\\.nvidia\\.nemoclaw\\.create-attempt=${createAttemptNonce}.*left sandbox 'alpha' in place.*identity fingerprint: ${exactIdentity}.*did not run OpenShell's mutable-name deletion command.*Do not delete the sandbox by mutable sandbox name.*OpenShell administrator.*identity-bound recovery or removal procedure`,
+              `Create-attempt label: ai\\.nvidia\\.nemoclaw\\.create-attempt=${createAttemptNonce}.*left sandbox 'alpha' in place.*identity fingerprint: ${exactIdentity}.*did not run OpenShell's mutable-name deletion command.*Do not delete the sandbox by mutable sandbox name.*Inspection is diagnostic only and does not authorize deletion`,
               "u",
             ),
           ),
@@ -1020,12 +1073,11 @@ describe("sandbox create identity checks", () => {
         gatewayName: "nemoclaw",
       },
       preparationDeps: {
-        providerExistsInGateway: vi.fn(() => true),
         runOpenshell: runOpenshell as never,
         cleanupCreateSources: vi.fn(),
       },
       runVerifiedSandboxCreateEffects: null,
-      activateDeferredProviderEffects: () => ["credential-provider"],
+      activateDeferredProviderEffects: async () => ["credential-provider"],
       revalidateSandboxIdentityBeforeCreate: vi.fn(),
     });
     const error = await runSandboxCreateWithIdentityVerification({
@@ -1337,7 +1389,7 @@ describe("sandbox create identity checks", () => {
 
     expect(error).toBeInstanceOf(AggregateError);
     expect((error as AggregateError).message).toMatch(
-      /left sandbox 'alpha' in place.*did not return a durable sandbox identity fingerprint.*Do not delete the sandbox by mutable sandbox name.*identity-bound recovery or removal procedure/u,
+      /left sandbox 'alpha' in place.*did not return a durable sandbox identity fingerprint.*Do not delete the sandbox by mutable sandbox name.*Inspection is diagnostic only and does not authorize deletion/u,
     );
     expect((error as AggregateError).errors).toEqual(
       expect.arrayContaining([

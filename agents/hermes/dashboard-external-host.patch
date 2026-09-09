@@ -1,0 +1,27 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Lets the loopback-bound Hermes dashboard accept the normalized browser hostname
+# that NemoClaw derives from an HTTPS CHAT_UI_URL. This remains Host validation,
+# not proxy authentication; deployments keep their existing ingress controls.
+diff --git a/hermes_cli/web_server.py b/hermes_cli/web_server.py
+--- a/hermes_cli/web_server.py
++++ b/hermes_cli/web_server.py
+@@ -395,3 +395,4 @@
++_NEMOCLAW_DASHBOARD_EXTERNAL_HOST_ENV = "_NEMOCLAW_HERMES_DASHBOARD_EXTERNAL_HOST"
+ _LOOPBACK_HOST_VALUES: frozenset = frozenset({
+     "localhost", "127.0.0.1", "::1",
+ })
+@@ -457,4 +458,12 @@ def _is_accepted_host(host_header: str, bound_host: str) -> bool:
+     # Loopback bind: accept the loopback names
+     bound_lc = bound_host.lower()
+     if bound_lc in _LOOPBACK_HOST_VALUES:
++        # NemoClaw keeps its managed dashboard loopback-bound while an external
++        # reverse proxy preserves the configured browser Host header. Accept
++        # only the normalized hostname that NemoClaw derives from CHAT_UI_URL.
++        external_host = os.environ.get(
++            _NEMOCLAW_DASHBOARD_EXTERNAL_HOST_ENV, ""
++        ).strip().lower().rstrip(".")
++        if external_host and host_only == external_host:
++            return True
+         return host_only in _LOOPBACK_HOST_VALUES

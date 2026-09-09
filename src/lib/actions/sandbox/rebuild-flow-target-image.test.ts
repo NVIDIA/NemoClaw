@@ -138,6 +138,21 @@ describe("rebuildSandbox flow: target image", () => {
     expect(harness.onboardSpy).not.toHaveBeenCalled();
   });
 
+  it("stops before sandbox mutation when Hermes base-image preflight fails (#11072)", async () => {
+    const harness = createRebuildFlowHarness({
+      sandboxEntry: { agent: "hermes" },
+      baseImagePreflight: { ok: false, imageRef: null, overrideEnvVar: null },
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+    expectNoSandboxDelete(harness.runOpenshellSpy);
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+  });
+
   it("finalizes the retained Hermes image from backup before sandbox deletion (#7803)", async () => {
     const preservedEnv = [
       {
@@ -503,12 +518,6 @@ describe("rebuildSandbox flow: target image", () => {
         machine: { state: "failed" },
         steps: { sandbox: { status: "failed", error: "Rebuild recreate failed" } },
       });
-      expect(harness.relockSpy).toHaveBeenCalledWith(
-        "alpha",
-        expect.any(Object),
-        false,
-        "nemoclaw",
-      );
       expect(process.env.NEMOCLAW_SANDBOX_NAME).toBe(originalSandboxName);
 
       const errors = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");

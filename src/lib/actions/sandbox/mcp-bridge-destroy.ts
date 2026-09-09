@@ -20,14 +20,12 @@ import {
 import {
   deleteProvider,
   detachProvider,
+  getMcpProviderInspectionRuntimeSelection,
   inspectMcpProvider,
   waitForDetachedMcpCredential,
 } from "./mcp-bridge-provider";
 import { restoreExistingMcpBridgeRuntime } from "./mcp-bridge-restart";
-import {
-  assertMcpAdapterConfigMutationsAllowed,
-  assertMcpAdapterTeardownRuntimeCapabilities,
-} from "./mcp-bridge-runtime-capabilities";
+import { assertMcpAdapterTeardownRuntimeCapabilities } from "./mcp-bridge-runtime-capabilities";
 import {
   bridgeState,
   ensureSandboxGatewaySelected,
@@ -50,25 +48,27 @@ export {
  * provider objects (and therefore their host-only credentials) and registry
  * cleanup manifest. OpenShell requires the generated policy key to be removed before
  * detach. Any failure restores the managed runtime before returning.
+ *
  */
 export async function prepareMcpBridgesForDestroy(
   sandboxName: string,
+  options: {
+    force?: boolean;
+    runtimeSelection?: McpDestroyPreparation["runtimeSelection"];
+  } = {},
 ): Promise<McpDestroyPreparation> {
   validateSandboxName(sandboxName);
   const currentSandbox = getSandboxOrThrow(sandboxName);
   const entriesRequiringExternalCleanup = Object.values(bridgeState(currentSandbox)).filter(
     (entry) => entry.addState !== "prepared",
   );
-  // Run the host-visible config preflight before
-  // discardSafeIncompleteMcpAdds, which may remove the generated live policy key for a
-  // providerless preflighted add. That cleanup has no adapter/provider to
-  // probe; complete entries get the teardown runtime probe after retry markers.
-  assertMcpAdapterConfigMutationsAllowed(
-    sandboxName,
-    currentSandbox,
-    entriesRequiringExternalCleanup,
-  );
-  const sandbox = await discardSafeIncompleteMcpAdds(sandboxName, currentSandbox);
+  let providerRuntimeSelection = options.runtimeSelection;
+  if (entriesRequiringExternalCleanup.length > 0) {
+    providerRuntimeSelection ??= getMcpProviderInspectionRuntimeSelection(currentSandbox);
+  }
+  const sandbox = await discardSafeIncompleteMcpAdds(sandboxName, currentSandbox, {
+    runtimeSelection: providerRuntimeSelection,
+  });
   const entries = Object.values(bridgeState(sandbox)).map(cloneMcpBridgeEntry);
   const destroyAlreadyPrepared = !!sandbox.mcp?.destroyPreparedAt;
   const destroyAlreadyPending = !!sandbox.mcp?.destroyPendingAt;
@@ -85,15 +85,21 @@ export async function prepareMcpBridgesForDestroy(
       scrubbedAdapterEntries: [],
       destroyAlreadyPrepared,
       destroyAlreadyPending,
+      runtimeSelection: providerRuntimeSelection,
     };
   }
+
+  providerRuntimeSelection ??= getMcpProviderInspectionRuntimeSelection(sandbox);
+
+  await ensureSandboxGatewaySelected(sandboxName, providerRuntimeSelection);
 
   // A pending marker is written only after OpenShell confirmed deletion. On
   // retry, a provider may therefore already be absent due to partial cleanup;
   // the retained entries are the durable, idempotent cleanup manifest.
   for (const entry of entries) {
-    inspectExactMcpDestroyProvider(entry, {
+    await inspectExactMcpDestroyProvider(entry, {
       allowMissing: destroyAlreadyPending,
+      runtimeSelection: providerRuntimeSelection,
     });
   }
   if (destroyAlreadyPending) {
@@ -103,6 +109,7 @@ export async function prepareMcpBridgesForDestroy(
       scrubbedAdapterEntries: [],
       destroyAlreadyPrepared,
       destroyAlreadyPending: true,
+      runtimeSelection: providerRuntimeSelection,
     };
   }
   if (destroyAlreadyPrepared) {
@@ -115,31 +122,46 @@ export async function prepareMcpBridgesForDestroy(
       scrubbedAdapterEntries: entries.map(cloneMcpBridgeEntry),
       destroyAlreadyPrepared: true,
       destroyAlreadyPending: false,
+      runtimeSelection: providerRuntimeSelection,
     };
   }
 
-  await ensureSandboxGatewaySelected(sandboxName);
-  assertMcpAdapterTeardownRuntimeCapabilities(sandboxName, sandbox, entries);
+  assertMcpAdapterTeardownRuntimeCapabilities(
+    sandboxName,
+    sandbox,
+    entries,
+    providerRuntimeSelection,
+  );
   const detached: McpBridgeEntry[] = [];
   const scrubbedAdapters: McpScrubbedAdapterEntry[] = [];
   const removedPolicies: McpBridgeEntry[] = [];
   try {
     for (const entry of entries) {
-      scrubbedAdapters.push(scrubManagedMcpAdapterOrThrow(sandboxName, sandbox, entry));
+      scrubbedAdapters.push(
+        scrubManagedMcpAdapterOrThrow(sandboxName, sandbox, entry, providerRuntimeSelection),
+      );
     }
     for (const entry of entries) {
-      removeGeneratedPolicy(sandboxName, entry);
+      removeGeneratedPolicy(sandboxName, entry, {
+        runtimeSelection: providerRuntimeSelection,
+      });
       removedPolicies.push(entry);
     }
     for (const entry of entries) {
-      inspectExactMcpDestroyProvider(entry, { allowMissing: false });
-      const detachOutcome = detachProvider(sandboxName, entry, { allowLegacyGeneric: true });
+      await inspectExactMcpDestroyProvider(entry, {
+        allowMissing: false,
+        runtimeSelection: providerRuntimeSelection,
+      });
+      const detachOutcome = await detachProvider(sandboxName, entry, {
+        allowLegacyGeneric: true,
+        runtimeSelection: providerRuntimeSelection,
+      });
       if (detachOutcome === "unknown") {
         throw new McpBridgeError(
           `Could not prove provider detach for MCP server '${entry.server}'.`,
         );
       }
-      waitForDetachedMcpCredential(sandboxName, entry);
+      waitForDetachedMcpCredential(sandboxName, entry, providerRuntimeSelection);
       // Both an acknowledged detach and a freshly-proven absent binding are
       // rollback responsibilities until destroyPreparedAt is durable. This
       // closes retry-after-process-death gaps where an earlier attempt already
@@ -169,6 +191,7 @@ export async function prepareMcpBridgesForDestroy(
       try {
         await restoreExistingMcpBridgeRuntime(sandboxName, removedPolicies, {
           lifecyclePhase: "teardown-rollback",
+          runtimeSelection: providerRuntimeSelection,
         });
         runtimeRestored = true;
       } catch (rollbackError) {
@@ -178,7 +201,14 @@ export async function prepareMcpBridgesForDestroy(
       }
     }
     if (!runtimeRestored) {
-      rollbackFailures.push(...rollbackScrubbedMcpAdapters(sandboxName, sandbox, scrubbedAdapters));
+      rollbackFailures.push(
+        ...rollbackScrubbedMcpAdapters(
+          sandboxName,
+          sandbox,
+          scrubbedAdapters,
+          providerRuntimeSelection,
+        ),
+      );
     }
     const current = registry.getSandbox(sandboxName);
     if (current?.mcp?.destroyPreparedAt) {
@@ -212,6 +242,7 @@ export async function prepareMcpBridgesForDestroy(
     scrubbedAdapterEntries: scrubbedAdapters,
     destroyAlreadyPrepared: false,
     destroyAlreadyPending: false,
+    runtimeSelection: providerRuntimeSelection,
   };
 }
 
@@ -220,10 +251,16 @@ export async function restoreMcpBridgesAfterDestroyAbort(
   sandboxName: string,
   preparation: McpDestroyPreparation,
 ): Promise<void> {
-  if (preparation.entries.length === 0 || preparation.destroyAlreadyPending) {
+  if (
+    preparation.entries.length === 0 ||
+    preparation.destroyAlreadyPending ||
+    preparation.adapterScrubSkipped
+  ) {
     return;
   }
   const preparedSandbox = assertMcpDestroySnapshotCurrent(sandboxName, preparation.entries);
+  const providerRuntimeSelection =
+    preparation.runtimeSelection ?? getMcpProviderInspectionRuntimeSelection(preparedSandbox);
   const destroyPreparedAt = preparedSandbox.mcp?.destroyPreparedAt ?? nowIso();
   const cleared = registry.updateSandbox(sandboxName, {
     mcp: {
@@ -243,10 +280,15 @@ export async function restoreMcpBridgesAfterDestroyAbort(
   try {
     // Reattach only the exact existing providers. This restoration path never
     // reads host secret values and therefore cannot rotate preserved credentials.
-    for (const entry of preparation.entries)
-      inspectExactMcpDestroyProvider(entry, { allowMissing: false });
+    for (const entry of preparation.entries) {
+      await inspectExactMcpDestroyProvider(entry, {
+        allowMissing: false,
+        runtimeSelection: providerRuntimeSelection,
+      });
+    }
     await restoreExistingMcpBridgeRuntime(sandboxName, preparation.entries, {
       lifecyclePhase: "teardown-rollback",
+      runtimeSelection: providerRuntimeSelection,
     });
   } catch (error) {
     let markerRestoreFailure = "";
@@ -289,9 +331,10 @@ export async function finalizeMcpBridgesAfterSandboxDelete(
   const entries = preparation.entries;
   if (entries.length === 0) return;
 
-  await ensureSandboxGatewaySelected(sandboxName);
-
   const sandbox = assertMcpDestroySnapshotCurrent(sandboxName, entries);
+  const providerRuntimeSelection =
+    preparation.runtimeSelection ?? getMcpProviderInspectionRuntimeSelection(sandbox);
+  await ensureSandboxGatewaySelected(sandboxName, providerRuntimeSelection);
   if (!sandbox.mcp?.destroyPendingAt) {
     const marked = registry.updateSandbox(sandboxName, {
       mcp: {
@@ -315,21 +358,29 @@ export async function finalizeMcpBridgesAfterSandboxDelete(
   // Inspect every provider before deleting any so ownership drift cannot
   // produce a predictable partial cleanup. Missing is safe only now that the
   // durable pending marker proves the sandbox was already deleted.
-  const inspections = entries.map((entry) =>
-    inspectExactMcpDestroyProvider(entry, {
-      allowMissing: true,
-      force: options.force,
-    }),
+  const inspections = await Promise.all(
+    entries.map((entry) =>
+      inspectExactMcpDestroyProvider(entry, {
+        allowMissing: true,
+        force: options.force,
+        runtimeSelection: providerRuntimeSelection,
+      }),
+    ),
   );
   for (const [index, entry] of entries.entries()) {
     if (!inspections[index]?.exists) continue;
-    const beforeDelete = inspectExactMcpDestroyProvider(entry, {
+    const beforeDelete = await inspectExactMcpDestroyProvider(entry, {
       allowMissing: true,
       force: options.force,
+      runtimeSelection: providerRuntimeSelection,
     });
     if (!beforeDelete.exists) continue;
-    deleteProvider(entry, { allowLegacyGeneric: true, allowMissing: true });
-    const after = inspectMcpProvider(entry.providerName);
+    await deleteProvider(entry, {
+      allowLegacyGeneric: true,
+      allowMissing: true,
+      runtimeSelection: providerRuntimeSelection,
+    });
+    const after = await inspectMcpProvider(entry.providerName, providerRuntimeSelection);
     if (after.exists !== false) {
       throw new McpBridgeError(
         after.error ??

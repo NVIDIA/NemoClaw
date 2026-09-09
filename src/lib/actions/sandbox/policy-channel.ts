@@ -26,7 +26,6 @@ import {
   createBuiltInMessagingHookRegistry,
   createBuiltInRenderTemplateResolver,
   createMessagingPreEnableHookInputs,
-  formatSupportedMessagingAgentIds,
   getMessagingManifestAvailabilityContext,
   isMessagingChannelSupportedByAgent,
   isMessagingHookConflictError,
@@ -44,7 +43,10 @@ import {
 } from "../../messaging";
 import { findChannelConflicts } from "../../messaging/applier/conflict-detection/registry";
 import type { GooglechatNonInteractiveAudienceCapability } from "../../messaging/channels/googlechat/hooks/tunnel-audience-gate";
-import { hydrateMessagingChannelConfig } from "../../messaging-channel-config";
+import {
+  hydrateMessagingChannelConfig,
+  type MessagingChannelConfig,
+} from "../../messaging-channel-config";
 import { filterSetupPolicyPresetsForAgent } from "../../onboard/agent-policy-presets";
 import {
   bridgeProviderNamesForChannel,
@@ -52,7 +54,10 @@ import {
   collectMessagingBridgeTokenDefs,
   staticMessagingProviderTypeForChannel,
 } from "../../onboard/messaging-bridge-provider";
-import { getStoredMessagingChannelConfig } from "../../onboard/messaging-config";
+import {
+  getMessagingChannelConfigFromPlan,
+  getStoredMessagingChannelConfig,
+} from "../../onboard/messaging-config";
 import type { MessagingTokenDef } from "../../onboard/messaging-prep";
 import { getMessagingToken } from "../../onboard/messaging-token";
 import * as policies from "../../policy";
@@ -65,7 +70,7 @@ import {
 } from "../../policy/baseline-exclusion";
 import { formatPolicyListPresetRow } from "../../policy/policy-list-display";
 import type { PolicyObject } from "../../policy/preset-parsing";
-import { shellQuote } from "../../runner";
+import { redactFullWithUrls, shellQuote } from "../../runner";
 import {
   type ChannelDef,
   channelUsesInSandboxQrPairing,
@@ -317,6 +322,13 @@ async function addSandboxPolicyUnlocked(
   }
 
   const sandboxAgent = registry.getSandbox(sandboxName)?.agent ?? null;
+  const storedMessagingConfig = getStoredMessagingChannelConfig(
+    sandboxName,
+    safeLoadOnboardSession(),
+  );
+  const messagingPolicyOptions = storedMessagingConfig
+    ? { messagingConfig: storedMessagingConfig }
+    : {};
   const allPresets = filterSetupPolicyPresetsForAgent(
     policies.listPresets({ agent: sandboxAgent }),
     sandboxAgent,
@@ -351,7 +363,11 @@ async function addSandboxPolicyUnlocked(
         );
         process.exit(1);
       }
-      const appliedContent = policies.loadPresetForSandbox(sandboxName, preset.name);
+      const appliedContent = policies.loadPresetForSandbox(
+        sandboxName,
+        preset.name,
+        messagingPolicyOptions,
+      );
       if (!appliedContent) {
         console.error(`  Could not read the content of preset '${preset.name}'.`);
         process.exit(1);
@@ -421,7 +437,7 @@ async function addSandboxPolicyUnlocked(
   }
   if (!answer) return;
 
-  const presetContent = policies.loadPresetForSandbox(sandboxName, answer);
+  const presetContent = policies.loadPresetForSandbox(sandboxName, answer, messagingPolicyOptions);
   if (!presetContent) return;
 
   if (reapplyState) {
@@ -438,7 +454,9 @@ async function addSandboxPolicyUnlocked(
     policies.logOpenClawNpmCompatibilityDisclosure();
   }
 
-  const presetWarning = policies.getPresetValidationWarning(answer);
+  const messagingAgent =
+    sandboxAgent === "openclaw" || sandboxAgent === "hermes" ? sandboxAgent : undefined;
+  const presetWarning = policies.getPresetValidationWarning(answer, { agent: messagingAgent });
   if (presetWarning) {
     console.log("");
     console.log(`  ${presetWarning}`);
@@ -455,7 +473,12 @@ async function addSandboxPolicyUnlocked(
     if (confirm.trim().toLowerCase().startsWith("n")) return;
   }
 
-  if (!policies.applyPreset(sandboxName, answer, { suppressDisclosure: true })) {
+  if (
+    !policies.applyPreset(sandboxName, answer, {
+      suppressDisclosure: true,
+      ...messagingPolicyOptions,
+    })
+  ) {
     process.exit(1);
   }
   refreshSandboxPolicyContextFile(sandboxName);
@@ -538,9 +561,8 @@ async function applyExternalPreset(
       refreshSandboxPolicyContextFile(sandboxName);
     }
     return result !== false;
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error(`  Failed to apply preset '${loaded.presetName}': ${message}`);
+  } catch {
+    console.error(`  Failed to apply preset '${loaded.presetName}': validation failed.`);
     return false;
   }
 }
@@ -622,20 +644,12 @@ export function listSandboxChannels(sandboxName: string) {
   console.log("");
   console.log(`  Known messaging channels for sandbox '${sandboxName}':`);
   if (availableChannels.length === 0) {
-    console.log(`    (none supported by agent '${agent.name}')`);
+    console.log("    (none supported by this agent)");
   }
   for (const manifest of availableChannels) {
     console.log(`    ${manifest.id} — ${manifest.description ?? manifest.displayName}`);
   }
   console.log("");
-}
-
-function formatAvailableChannelsForAgent(agent: AgentDefinition): string {
-  return (
-    availableManifestChannelsForAgent(agent)
-      .map((manifest) => manifest.id)
-      .join(", ") || "(none)"
-  );
 }
 
 // Map a channel + token-env-key to the OpenShell provider name onboarding
@@ -826,6 +840,7 @@ async function applyChannelAddToGatewayAndRegistry(
   sandboxName: string,
   channelName: string,
   acquired: Record<string, string>,
+  plan: SandboxMessagingPlan,
   applyPolicyAfterAttachment?: () => boolean,
   upsertMessagingProviders = policyChannelDependencies.upsertMessagingProviders,
   cleanupCredentialFreePolicy?: () => void,
@@ -884,61 +899,63 @@ async function applyChannelAddToGatewayAndRegistry(
   }
   policyChannelDependencies.revalidateChannelProviderPolicy(sandboxName, gatewayName);
   try {
-    // bestEffort: failures throw (instead of process.exit inside the helper)
-    // so a partial add can be torn down below before exiting.
-    const providerNames = upsertMessagingProviders(tokenDefs, gatewayName, {
-      bestEffort: true,
-      requireExactBindings: true,
-    });
-    for (const providerName of providerNames) {
-      revalidateMessagingProviderAttachmentTarget(sandboxName, gatewayName);
-      const attached = runOpenshell(
-        ["sandbox", "provider", "attach", "-g", gatewayName, sandboxName, providerName],
-        { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] },
-      );
-      if (attached.status !== 0) {
-        throw new Error(
-          `OpenShell did not attach messaging provider '${providerName}' to sandbox '${sandboxName}'.`,
-        );
-      }
-      revalidateMessagingProviderAttachmentTarget(sandboxName, gatewayName);
-    }
+    await upsertMessagingProviders(
+      tokenDefs,
+      gatewayName,
+      { replaceExisting: true },
+      {
+        plan,
+        channelName,
+        sandboxAgent,
+        sandboxName,
+        revalidateSandboxIdentity: (operation) => {
+          revalidateMessagingProviderAttachmentTarget(sandboxName, gatewayName);
+          void operation;
+        },
+      },
+    );
     if (applyPolicyAfterAttachment && !applyPolicyAfterAttachment()) {
       return null;
     }
   } catch (err) {
-    console.error(
-      `  ✗ Failed to register '${channelName}' providers with the gateway: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
+    console.error("  ✗ Failed to register channel providers with the gateway.");
     if (
       policyChannelDependencies.isMessagingProviderBindingConflict(err) ||
       policyChannelDependencies.isMessagingProviderMutationFailure(err)
     ) {
       const createdProviderNames = [...(err.createdProviderNames ?? [])];
       const createdProviders = new Set(createdProviderNames);
-      const cleanupFailures = createdProviderNames.filter((providerName) => {
-        const result = policyChannelDependencies.runGatewayOpenshell(
-          gatewayName,
-          ["provider", "delete", providerName],
-          { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] },
-        );
-        const output = `${result.stdout || ""}${result.stderr || ""}`;
-        return result.status !== 0 && !/\bNotFound\b|not found/i.test(output);
-      });
-      const updatedProviderNames = err.mutatedProviderNames.filter(
-        (providerName) => !createdProviders.has(providerName),
+      const replacedProviders = new Set(err.replacedProviderNames ?? []);
+      const cleanup = await policyChannelDependencies.cleanupMessagingProviders(
+        createdProviderNames,
+        sandboxName,
+        gatewayName,
+        () => revalidateMessagingProviderAttachmentTarget(sandboxName, gatewayName),
       );
+      const updatedProviderNames = err.mutatedProviderNames.filter(
+        (providerName) => !createdProviders.has(providerName) || replacedProviders.has(providerName),
+      );
+      const originalFailure = redactFullWithUrls(err instanceof Error ? err.message : String(err))
+        .replace(/\s+/gu, " ")
+        .trim()
+        .slice(0, 500);
+      if (originalFailure) console.error(`  ${originalFailure}`);
       if (updatedProviderNames.length > 0) {
+        const providerNames = updatedProviderNames.map((name) => JSON.stringify(name)).join(", ");
         console.error(
-          `  ${YW}⚠${R} Updated provider state remains for ${updatedProviderNames.join(", ")}; resolve the conflicting provider, then rerun '${CLI_NAME} ${sandboxName} channels add ${channelName}'.`,
+          `  ${YW}⚠${R} Provider state may have changed for ${providerNames}; inspect the named provider, correct the gateway failure, then retry the channel add.`, // lgtm[js/clear-text-logging] Validated provider identifiers only.
         );
       }
-      if (cleanupFailures.length > 0) {
-        console.error(
-          `  ${YW}⚠${R} Could not remove newly created providers ${cleanupFailures.join(", ")}; rerun '${CLI_NAME} ${sandboxName} channels remove ${channelName}'.`,
-        );
+      if (cleanup.residualProviders.length > 0) {
+        for (const { providerName, error } of cleanup.residualProviders) {
+          const diagnostic = redactFullWithUrls(error.message).replace(/\s+/gu, " ").trim();
+          console.error(
+            `  ${YW}⚠${R} Could not remove newly created provider ${JSON.stringify(providerName)}: ${diagnostic}.`, // lgtm[js/clear-text-logging] Validated provider identifier and fully redacted diagnostic only.
+          );
+          console.error(
+            `  Rerun '${CLI_NAME} ${sandboxName} channels remove ${channelName}' after the gateway recovers.`,
+          );
+        }
       }
       cleanupCredentialFreePolicy?.();
       process.exit(1);
@@ -1031,76 +1048,20 @@ async function applyChannelRemoveToGatewayAndRegistry(
     }
   }
 
-  // Detach providers from the sandbox before deletion. openshell rejects
-  // `provider delete` with FailedPrecondition when the provider is still
-  // attached to a sandbox; the sandbox image itself only stops referencing
-  // the bridge after the next rebuild, so without an explicit detach the
-  // delete will fail on any sandbox that is still alive at remove-time.
-  // NotFound / NotAttached are treated as success-equivalent because a
-  // previous run may have already detached, or the channel may have been
-  // configured for a sandbox that is no longer alive.
-  const detachFailures: Array<{ name: string; output: string }> = [];
   if (gatewayReachable) {
-    for (const name of providerNames) {
-      const result = policyChannelDependencies.runGatewayOpenshell(
-        gatewayName,
-        ["sandbox", "provider", "detach", sandboxName, name],
-        {
-          ignoreError: true,
-          stdio: ["ignore", "pipe", "pipe"],
-        },
-      );
-      if (result.status !== 0) {
-        const output = `${result.stdout || ""}${result.stderr || ""}`;
-        if (!/\bNotFound\b|not found|not attached/i.test(output)) {
-          detachFailures.push({ name, output: output.trim() });
-        }
-      }
-    }
-    if (detachFailures.length > 0) {
+    const cleanup = await policyChannelDependencies.cleanupMessagingProviders(
+      providerNames,
+      sandboxName,
+      gatewayName,
+      () => revalidateMessagingProviderAttachmentTarget(sandboxName, gatewayName),
+    );
+    if (cleanup.residualProviders.length > 0) {
       console.error(
-        `  Failed to detach bridge provider(s) from sandbox '${sandboxName}': ${detachFailures.map((f) => f.name).join(", ")}.`,
+        `  Failed to remove bridge provider(s) from the OpenShell gateway: ${cleanup.residualProviders.map(({ providerName }) => providerName).join(", ")}.`,
       );
-      for (const f of detachFailures) {
-        console.error(`    [${f.name}] ${f.output.split("\n").join("\n      ")}`);
-      }
-      if (!bestEffort) {
-        console.error("  Registry not updated; re-run after resolving the gateway error.");
-        process.exit(1);
-      }
-      if (!residual.includes("gateway-providers")) residual.push("gateway-providers");
-    }
-  }
-
-  // Capture each delete's outcome. If any non-NotFound failure surfaces
-  // we must NOT update the registry — otherwise NemoClaw would record
-  // the channel as removed locally while the bridge is still live in
-  // the gateway, which produces a half-configured sandbox the user
-  // can't easily recover. Surface the underlying openshell output so the
-  // operator can see exactly why the delete was rejected.
-  const deleteFailures: Array<{ name: string; output: string }> = [];
-  if (gatewayReachable) {
-    const detachFailedSet = new Set(detachFailures.map((f) => f.name));
-    for (const name of providerNames) {
-      if (detachFailedSet.has(name)) continue;
-      const result = policyChannelDependencies.deleteMessagingProviderWithRecovery(
-        name,
-        sandboxName,
-        gatewayName,
-      );
-      if (!result.ok) {
-        const output = `${result.stdout}${result.stderr}`;
-        if (!/\bNotFound\b|not found/i.test(output)) {
-          deleteFailures.push({ name, output: output.trim() });
-        }
-      }
-    }
-    if (deleteFailures.length > 0) {
-      console.error(
-        `  Failed to delete bridge provider(s) from the OpenShell gateway: ${deleteFailures.map((f) => f.name).join(", ")}.`,
-      );
-      for (const f of deleteFailures) {
-        console.error(`    [${f.name}] ${f.output.split("\n").join("\n      ")}`);
+      for (const failure of cleanup.residualProviders) {
+        const diagnostic = redactFullWithUrls(failure.error.message).replace(/\s+/gu, " ").trim();
+        console.error(`    [${failure.providerName}] ${diagnostic}`);
       }
       if (!bestEffort) {
         console.error("  Registry not updated; re-run after resolving the gateway error.");
@@ -1215,9 +1176,9 @@ async function planSandboxChannelAdd(
     });
     MessagingSetupApplier.writePlanToEnv(plan);
     return plan;
-  } catch (error) {
+  } catch {
     console.error(`  Failed to plan messaging channel '${channelId}'.`);
-    console.error(`  ${error instanceof Error ? error.message : String(error)}`);
+    console.error("  Inspect the redacted channel diagnostics for details.");
     process.exit(1);
   }
 }
@@ -1316,11 +1277,7 @@ function assertAddChannelPlanActive(
   const missing =
     channelPlan?.inputs.filter((input) => input.required && !inputAvailable(input)) ?? [];
   if (missing.length > 0) {
-    console.error(
-      `  Missing required input(s) for channel '${manifest.id}': ${missing
-        .map(formatMissingInput)
-        .join(", ")}.`,
-    );
+    console.error("  Missing required inputs for this channel.");
     if (
       manifest.auth.mode === "host-qr" &&
       getMessagingToken(manifest.credentials[0]?.providerEnvKey)
@@ -1345,10 +1302,6 @@ function inputAvailable(input: SandboxMessagingChannelPlan["inputs"][number]): b
   return typeof input.value === "string" ? input.value.trim().length > 0 : true;
 }
 
-function formatMissingInput(input: SandboxMessagingChannelPlan["inputs"][number]): string {
-  return input.sourceEnv ? `${input.inputId} (${input.sourceEnv})` : input.inputId;
-}
-
 function hydrateAddChannelEnvFromStoredState(sandboxName: string): void {
   const savedSession = safeLoadOnboardSession();
   hydrateMessagingChannelConfig(getStoredMessagingChannelConfig(sandboxName, savedSession));
@@ -1368,8 +1321,11 @@ function loadValidateAndDiscloseChannelPreset(
   sandboxName: string,
   channelName: string,
   verb: "add" | "start",
+  messagingConfig?: MessagingChannelConfig | null,
 ): policies.PresetPolicyState | null {
-  const presetContent = policies.loadPresetForSandbox(sandboxName, channelName);
+  const presetContent = policies.loadPresetForSandbox(sandboxName, channelName, {
+    messagingConfig,
+  });
   const presetPolicyKeys =
     presetContent === null ? [] : policies.parsePresetPolicyKeys(presetContent);
   if (presetContent === null || presetPolicyKeys.length === 0) {
@@ -1430,21 +1386,17 @@ async function addSandboxChannelUnlocked(
 
   const agent = resolveAgentForSandbox(sandboxName);
   if (!channelSupportedByAgent(manifest, agent)) {
-    console.error(
-      `  Channel '${canonical}' does not support agent '${agent.name}' for sandbox '${sandboxName}'.`,
-    );
-    console.error(
-      `  Channel-supported agents: ${formatSupportedMessagingAgentIds(manifest.supportedAgents)}.`,
-    );
-    console.error(
-      `  Channels supported by agent '${agent.name}': ${formatAvailableChannelsForAgent(agent)}.`,
-    );
+    console.error("  This channel does not support the configured agent.");
     process.exit(1);
   }
 
   // Disclose before credential collection, conflict prompts, or any gateway /
   // registry mutation. The core apply path rechecks immediately before set.
-  const disclosedPresetState = loadValidateAndDiscloseChannelPreset(sandboxName, canonical, "add");
+  const initialDisclosedPresetState = loadValidateAndDiscloseChannelPreset(
+    sandboxName,
+    canonical,
+    "add",
+  );
 
   if (dryRun) {
     console.log(`  --dry-run: would enable channel '${canonical}' for '${sandboxName}'.`);
@@ -1452,6 +1404,11 @@ async function addSandboxChannelUnlocked(
   }
 
   const plan = await planSandboxChannelAdd(sandboxName, canonical, agent, dependencies);
+  const messagingConfig = getMessagingChannelConfigFromPlan(plan);
+  const disclosedPresetState =
+    canonical === "wechat"
+      ? loadValidateAndDiscloseChannelPreset(sandboxName, canonical, "add", messagingConfig)
+      : initialDisclosedPresetState;
   const acquired = collectManifestCredentials(manifest);
   if (!(await checkChannelAddConflict(sandboxName, canonical, acquired, force))) {
     return; // user aborted; nothing registered or widened
@@ -1470,6 +1427,7 @@ async function addSandboxChannelUnlocked(
     if (
       !applyChannelPresetIfAvailable(sandboxName, canonical, "add", {
         disclosedPresetState,
+        messagingConfig,
       })
     ) {
       process.exit(1);
@@ -1478,6 +1436,7 @@ async function addSandboxChannelUnlocked(
       sandboxName,
       canonical,
       {},
+      plan,
       undefined,
       dependencies.upsertMessagingProviders,
     );
@@ -1512,6 +1471,9 @@ async function addSandboxChannelUnlocked(
     process.exit(1);
   }
   const priorEntry = registry.getSandbox(sandboxName);
+  const priorMessagingConfig = getMessagingChannelConfigFromPlan(
+    registry.getHydratedMessagingPlanFromEntry(priorEntry),
+  );
   const wasAlreadyEnabled = registry
     .getConfiguredMessagingChannelsFromEntry(priorEntry)
     .includes(canonical);
@@ -1532,6 +1494,7 @@ async function addSandboxChannelUnlocked(
     !applyChannelPresetIfAvailable(sandboxName, canonical, "add", {
       disclosedPresetState,
       includeMessagingCredentialBindings: false,
+      messagingConfig,
     })
   ) {
     process.exit(1);
@@ -1540,17 +1503,20 @@ async function addSandboxChannelUnlocked(
     sandboxName,
     canonical,
     acquired,
+    plan,
     () =>
       applyChannelPresetIfAvailable(sandboxName, canonical, "add", {
         disclosedPresetState,
+        messagingConfig,
       }),
     dependencies.upsertMessagingProviders,
     cleanupCredentialFreePolicy,
   );
   if (registeredBridge === null) {
-    await rollbackChannelAdd(sandboxName, channelDef, canonical, {
+    await rollbackChannelAdd(sandboxName, channelDef, canonical, plan, {
       wasAlreadyEnabled,
       priorCreds,
+      priorMessagingConfig,
     });
     process.exit(1);
   }
@@ -1561,9 +1527,10 @@ async function addSandboxChannelUnlocked(
 
   if (!MessagingHostStateApplier.applyPlanToRegistry(sandboxName, plan)) {
     console.error(`  ${YW}⚠${R} Could not persist messaging plan for '${sandboxName}'.`);
-    await rollbackChannelAdd(sandboxName, channelDef, canonical, {
+    await rollbackChannelAdd(sandboxName, channelDef, canonical, plan, {
       wasAlreadyEnabled,
       priorCreds,
+      priorMessagingConfig,
     });
     process.exit(1);
   }
@@ -1579,9 +1546,11 @@ async function rollbackChannelAdd(
   sandboxName: string,
   channel: ChannelDef,
   canonical: string,
+  plan: SandboxMessagingPlan,
   snapshot: {
     wasAlreadyEnabled: boolean;
     priorCreds: Record<string, string>;
+    priorMessagingConfig: MessagingChannelConfig | null;
   },
 ): Promise<{ ok: boolean; residual: string[] }> {
   if (snapshot.wasAlreadyEnabled) {
@@ -1593,6 +1562,13 @@ async function rollbackChannelAdd(
       persistChannelTokens(snapshot.priorCreds);
     }
     const residual: string[] = ["gateway-providers"];
+    if (
+      !applyChannelPresetIfAvailable(sandboxName, canonical, "add", {
+        messagingConfig: snapshot.priorMessagingConfig,
+      })
+    ) {
+      residual.push("network-policy");
+    }
     console.error(
       `  ${YW}⚠${R} Rollback could not fully clean ${residual.join(", ")}; run '${CLI_NAME} ${sandboxName} channels remove ${canonical}' once the gateway is reachable.`,
     );
@@ -1611,11 +1587,20 @@ async function rollbackChannelAdd(
           token,
           providerType: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
         }));
-        policyChannelDependencies.upsertMessagingProviders(
+        await policyChannelDependencies.upsertMessagingProviders(
           priorTokenDefs,
           getSandboxTargetGatewayName(sandboxName),
+          { replaceExisting: true },
           {
-            bestEffort: true,
+            plan,
+            channelName: canonical,
+            sandboxAgent: registry.getSandbox(sandboxName)?.agent,
+            sandboxName,
+            revalidateSandboxIdentity: () =>
+              revalidateMessagingProviderAttachmentTarget(
+                sandboxName,
+                getSandboxTargetGatewayName(sandboxName),
+              ),
           },
         );
       } catch (err) {
@@ -1655,6 +1640,7 @@ export function applyChannelPresetIfAvailable(
   options: {
     disclosedPresetState?: policies.PresetPolicyState | null;
     includeMessagingCredentialBindings?: boolean;
+    messagingConfig?: MessagingChannelConfig | null;
   } = {},
 ): boolean {
   try {
@@ -1666,9 +1652,11 @@ export function applyChannelPresetIfAvailable(
       ? policies.applyPreset(sandboxName, channelName, {
           disclosedPresetState: options.disclosedPresetState,
           includeMessagingCredentialBindings,
+          messagingConfig: options.messagingConfig,
         })
       : policies.applyPreset(sandboxName, channelName, {
           includeMessagingCredentialBindings,
+          messagingConfig: options.messagingConfig,
         });
     if (!applied) {
       console.error(
@@ -1681,9 +1669,8 @@ export function applyChannelPresetIfAvailable(
     }
     refreshSandboxPolicyContextFile(sandboxName);
     return true;
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error(`  ${YW}⚠${R} Failed to apply '${channelName}' policy preset: ${msg}`);
+  } catch {
+    console.error(`  ${YW}⚠${R} Failed to apply '${channelName}' policy preset.`);
     console.error(
       `    Restore the preset YAML and re-run: ${CLI_NAME} ${sandboxName} channels ${retryAction} ${channelName}`,
     );
@@ -1735,27 +1722,27 @@ function isSafeChannelStatePath(p: string): boolean {
 const CHANNEL_CLEAR_SENTINEL = "NEMOCLAW_CHANNEL_CLEAR_OK";
 const STOPPED_WECHAT_CLEANUP_FAILURE_GUIDANCE = {
   "sandbox-registry-unavailable": "Restore the NemoClaw sandbox registry entry.",
-  "driver-not-docker": "Restore normal OpenShell lifecycle access for this non-Docker sandbox.",
+  "provider-cleanup-unavailable": "Restore the selected runtime provider's cleanup capability.",
   "state-paths-invalid": "Restore the channel's declared state-path contract.",
-  "docker-discovery-failed": "Start Docker or restore access to its daemon.",
-  "no-eligible-stopped-container": "Restore the registered stopped OpenShell container.",
-  "container-ownership-invalid": "Reconcile the sandbox registry and Docker container identity.",
-  "container-inspection-failed": "Restore Docker inspection access for the stopped container.",
-  "container-not-stopped": "Stop the registered sandbox container before retrying removal.",
-  "sandbox-volume-unavailable": "Restore a single writable Docker volume at /sandbox.",
+  "runtime-discovery-failed": "Restore access to the selected runtime provider.",
+  "no-eligible-stopped-runtime": "Restore the registered stopped OpenShell container.",
+  "runtime-ownership-invalid": "Reconcile the sandbox registry and runtime resource identity.",
+  "runtime-inspection-failed": "Restore inspection access for the stopped runtime resource.",
+  "runtime-not-stopped": "Stop the registered sandbox container before retrying removal.",
+  "state-resource-unavailable": "Restore the single writable runtime state resource at /sandbox.",
   "cleanup-helper-image-unavailable": "Restore the pinned NemoClaw cleanup image locally.",
   "cleanup-helper-ownership-invalid": "Remove the conflicting cleanup helper container.",
   "cleanup-helper-reconciliation-failed": "Reconcile the named cleanup helper container.",
   "cleanup-state-tree-unsafe":
     "Inspect the stopped sandbox volume; recreate the sandbox if its state tree is untrusted.",
   "cleanup-deletion-unconfirmed": "Restore writable access to the stopped sandbox volume.",
-  "cleanup-helper-failed": "Inspect the stopped sandbox and Docker daemon.",
-  "container-revalidation-failed": "Reconcile the stopped container identity and state.",
+  "cleanup-helper-failed": "Inspect the stopped sandbox and selected runtime provider.",
+  "runtime-revalidation-failed": "Reconcile the stopped container identity and state.",
   "lifecycle-authority-unavailable": "Finish the active lifecycle transition or repair its lock.",
 } as const;
 
 type StoppedWechatCleanupFailure = Exclude<
-  ReturnType<(typeof policyChannelDependencies)["clearStoppedDockerSandboxChannelState"]>,
+  ReturnType<(typeof policyChannelDependencies)["clearStoppedSandboxStateRoots"]>,
   { readonly cleared: true }
 >;
 
@@ -1778,7 +1765,7 @@ function stoppedWechatCleanupFailureGuidance(
 
 /**
  * Wipe durable channel state before rebuild can preserve an obsolete auth blob.
- * OpenShell exec runs first, followed by SSH and the stopped WeChat Docker fallback.
+ * OpenShell exec runs first, followed by SSH and the selected provider's stopped-state fallback.
  * Fixes #3998.
  */
 function clearSandboxChannelDurableState(
@@ -1804,7 +1791,7 @@ function clearSandboxChannelDurableState(
     result = executeSandboxCommand(sandboxName, cmd);
   }
   if (!sentinelSeen(result) && agent.name === "openclaw" && channelName === "wechat") {
-    const stoppedCleanup = policyChannelDependencies.clearStoppedDockerSandboxChannelState(
+    const stoppedCleanup = policyChannelDependencies.clearStoppedSandboxStateRoots(
       sandboxName,
       paths,
     );
@@ -1816,14 +1803,14 @@ function clearSandboxChannelDurableState(
       options.allowAbsentStoppedState &&
       [
         "sandbox-registry-unavailable",
-        "driver-not-docker",
-        "no-eligible-stopped-container",
+        "provider-cleanup-unavailable",
+        "no-eligible-stopped-runtime",
       ].includes(stoppedCleanup.failure)
     ) {
       return true;
     }
     console.error(
-      `  ${YW}⚠${R} Stopped-Docker cleanup failed (${stoppedCleanup.failure}). ` +
+      `  ${YW}⚠${R} Stopped-runtime cleanup failed (${stoppedCleanup.failure}). ` +
         `${stoppedWechatCleanupFailureGuidance(sandboxName, stoppedCleanup)} Then retry removal.`,
     );
   }
@@ -1861,9 +1848,8 @@ export function removeChannelPresetIfPresent(sandboxName: string, channelName: s
     }
     refreshSandboxPolicyContextFile(sandboxName);
     return true;
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error(`  ${YW}⚠${R} Failed to remove '${channelName}' policy preset: ${msg}`);
+  } catch {
+    console.error(`  ${YW}⚠${R} Failed to remove '${channelName}' policy preset.`);
     console.error(
       `    Run manually after rebuild with: ${CLI_NAME} ${sandboxName} policy remove ${channelName}`,
     );
@@ -1937,12 +1923,12 @@ async function removeSandboxChannelUnlocked(
   // Channels with durable account or session state store auth blobs inside
   // the sandbox that survive a rebuild via the state_dirs backup. Tear those
   // down FIRST so a cleanup failure leaves the registry/policy untouched.
-  // OpenClaw WeChat can additionally recover through a stopped Docker volume
+  // OpenClaw WeChat can additionally recover through a provider-owned stopped-state
   // helper because the same missing account file may block its entrypoint.
   // Bailing here is the only way to keep #3998 from recurring on cleanup
   // error. OpenClaw WeChat also checks for physical residue after an earlier
   // interrupted removal erased its logical plan or policy record. A missing
-  // registry, non-Docker driver, or absent stopped container remains a quiet
+  // registry, unavailable provider cleanup, or absent stopped runtime remains a quiet
   // no-op only when no logical residue exists (#4001 review).
   if (
     requiresStateCleanupBeforeTeardown &&
@@ -2068,15 +2054,7 @@ async function sandboxChannelsSetEnabled(
   const agent = resolveAgentForSandbox(sandboxName);
   const availableChannels = availableManifestChannelsForAgent(agent);
   if (!availableChannels.some((candidate) => candidate.id === canonical)) {
-    console.error(
-      `  Channel '${canonical}' does not support agent '${agent.name}' for sandbox '${sandboxName}'.`,
-    );
-    console.error(
-      `  Channel-supported agents: ${formatSupportedMessagingAgentIds(manifest.supportedAgents)}.`,
-    );
-    console.error(
-      `  Channels supported by agent '${agent.name}': ${formatAvailableChannelsForAgent(agent)}.`,
-    );
+    console.error("  This channel does not support the configured agent.");
     process.exit(1);
   }
 

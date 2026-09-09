@@ -100,9 +100,9 @@ describe("fresh sandbox executable readiness", () => {
     const deps = createDeps();
     vi.mocked(deps.runOpenshell).mockImplementation(
       createSequencedOpenShellRunner([
-        ["sandbox get alpha", [readySandboxGetResult(), readySandboxGetResult()]],
+        ["sandbox get -g nemoclaw alpha", [readySandboxGetResult(), readySandboxGetResult()]],
         [
-          "sandbox exec --name alpha -- true",
+          "sandbox exec -g nemoclaw --name alpha -- true",
           [
             {
               status: 1,
@@ -122,7 +122,9 @@ describe("fresh sandbox executable readiness", () => {
     expect(
       vi
         .mocked(deps.runOpenshell)
-        .mock.calls.filter(([args]) => args.join(" ") === "sandbox exec --name alpha -- true"),
+        .mock.calls.filter(
+          ([args]) => args.join(" ") === "sandbox exec -g nemoclaw --name alpha -- true",
+        ),
     ).toHaveLength(2);
     expect(deps.runOpenshell).not.toHaveBeenCalledWith(
       ["sandbox", "delete", "alpha"],
@@ -134,9 +136,9 @@ describe("fresh sandbox executable readiness", () => {
     const deps = createDeps();
     vi.mocked(deps.runOpenshell).mockImplementation(
       createSequencedOpenShellRunner([
-        ["sandbox get alpha", [readySandboxGetResult()]],
+        ["sandbox get -g nemoclaw alpha", [readySandboxGetResult()]],
         [
-          "sandbox exec --name alpha -- true",
+          "sandbox exec -g nemoclaw --name alpha -- true",
           [{ status: 1, stdout: "", stderr: "permission denied" }],
         ],
       ]),
@@ -158,7 +160,10 @@ describe("fresh sandbox executable readiness", () => {
     const deps = createDeps();
     vi.mocked(deps.runOpenshell).mockImplementation(
       createSequencedOpenShellRunner([
-        ["sandbox get alpha", [{ status: 0, stdout: "Name: alpha\nState: Ready\n", stderr: "" }]],
+        [
+          "sandbox get -g nemoclaw alpha",
+          [{ status: 0, stdout: "Name: alpha\nState: Ready\n", stderr: "" }],
+        ],
       ]),
     );
     mockExit();
@@ -166,7 +171,7 @@ describe("fresh sandbox executable readiness", () => {
     await expect(runSandboxGpuCreateFlow(createInput(), deps)).rejects.toThrow("process.exit:1");
 
     expect(deps.runOpenshell).not.toHaveBeenCalledWith(
-      ["sandbox", "exec", "--name", "alpha", "--", "true"],
+      ["sandbox", "exec", "-g", "nemoclaw", "--name", "alpha", "--", "true"],
       expect.anything(),
     );
     expect(deps.runOpenshell).not.toHaveBeenCalledWith(
@@ -185,7 +190,7 @@ describe("fresh sandbox executable readiness", () => {
     const deps = createDeps();
     vi.mocked(deps.runOpenshell).mockImplementation(
       createSequencedOpenShellRunner([
-        ["sandbox get alpha", [timedOutOpenShellResult(SANDBOX_NOT_READY_OUTPUT)]],
+        ["sandbox get -g nemoclaw alpha", [timedOutOpenShellResult(SANDBOX_NOT_READY_OUTPUT)]],
       ]),
     );
     mockExit();
@@ -193,7 +198,7 @@ describe("fresh sandbox executable readiness", () => {
     await expect(runSandboxGpuCreateFlow(createInput(), deps)).rejects.toThrow("process.exit:1");
 
     expect(deps.runOpenshell).not.toHaveBeenCalledWith(
-      ["sandbox", "exec", "--name", "alpha", "--", "true"],
+      ["sandbox", "exec", "-g", "nemoclaw", "--name", "alpha", "--", "true"],
       expect.anything(),
     );
     expect(deps.runOpenshell).not.toHaveBeenCalledWith(
@@ -208,9 +213,9 @@ describe("fresh sandbox executable readiness", () => {
     input.sandboxReadyTimeoutSecs = 0.5;
     vi.mocked(deps.runOpenshell).mockImplementation(
       createSequencedOpenShellRunner([
-        ["sandbox get alpha", [readySandboxGetResult()]],
+        ["sandbox get -g nemoclaw alpha", [readySandboxGetResult()]],
         [
-          ["sandbox", "exec", "--name", "alpha", "--", "true"].join(" "),
+          ["sandbox", "exec", "-g", "nemoclaw", "--name", "alpha", "--", "true"].join(" "),
           [timedOutOpenShellResult(SANDBOX_NOT_READY_OUTPUT)],
         ],
       ]),
@@ -221,10 +226,12 @@ describe("fresh sandbox executable readiness", () => {
 
     const identityOptions = vi
       .mocked(deps.runOpenshell)
-      .mock.calls.find(([args]) => args.join(" ") === "sandbox get alpha")?.[1];
+      .mock.calls.find(([args]) => args.join(" ") === "sandbox get -g nemoclaw alpha")?.[1];
     const executableOptions = vi
       .mocked(deps.runOpenshell)
-      .mock.calls.find(([args]) => args.join(" ") === "sandbox exec --name alpha -- true")?.[1];
+      .mock.calls.find(
+        ([args]) => args.join(" ") === "sandbox exec -g nemoclaw --name alpha -- true",
+      )?.[1];
     expect(identityOptions).toMatchObject({ killSignal: "SIGKILL" });
     expect(executableOptions).toMatchObject({ killSignal: "SIGKILL" });
     expect(identityOptions?.timeout).toBeGreaterThan(0);

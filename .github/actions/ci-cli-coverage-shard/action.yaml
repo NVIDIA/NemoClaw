@@ -41,16 +41,6 @@ runs:
           exit 1
         fi
 
-        build_artifact_shard="$CLI_SHARD_COUNT"
-        if [ "$build_artifact_shard" -gt 4 ]; then
-          build_artifact_shard=4
-        fi
-        upload_build_artifact=false
-        if [ "$CLI_SHARD" -eq "$build_artifact_shard" ]; then
-          upload_build_artifact=true
-        fi
-        printf 'upload_build_artifact=%s\n' "$upload_build_artifact" >> "$GITHUB_OUTPUT"
-
     - name: Setup Node.js
       uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
       with:
@@ -138,26 +128,6 @@ runs:
           exit 1
         fi
         npx tsx scripts/checks/e2e-mock-parity.mts --base "$base" --head "$head"
-
-    - name: Build TypeScript plugin
-      shell: bash
-      run: cd nemoclaw && npm run build
-
-    - name: Build CLI for coverage shard
-      shell: bash
-      run: |
-        node -e "require('node:fs').rmSync('dist', { recursive: true, force: true })"
-        npm run build:cli
-        npx tsx scripts/check-dist-sourcemaps.mts dist
-
-    - name: Upload compiled CLI artifact
-      if: ${{ steps.validate-shard-inputs.outputs.upload_build_artifact == 'true' && success() }}
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-      with:
-        name: cli-build-output
-        path: dist
-        if-no-files-found: error
-        retention-days: 1
 
     - name: Run CLI coverage and E2E support shard
       shell: bash

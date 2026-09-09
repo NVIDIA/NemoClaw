@@ -12,6 +12,9 @@ on:
     paths:
       - ".github/workflows/portable-profile-e2e.yaml"
       - "agents/hermes/Dockerfile"
+      - "agents/hermes/dashboard-external-host.patch"
+      - "agents/hermes/start.sh"
+      - "src/lib/onboard/experimental/hermes-portable-build-context-files.ts"
       - "src/lib/onboard/experimental/hermes-portable-build-context.ts"
       - "src/lib/onboard/experimental/portable-host-preparation.ts"
       - "src/lib/onboard/experimental/portable-profile.ts"
@@ -67,7 +70,12 @@ jobs:
           cache: npm
 
       - name: Install root dependencies
-        run: npm ci --ignore-scripts
+        if: github.event_name != 'workflow_dispatch'
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Install root dependencies with audit
+        if: github.event_name == 'workflow_dispatch'
+        run: npm ci --ignore-scripts --audit --no-fund
 
       - name: Compile managed inference catalogue
         run: npm run catalog:compile

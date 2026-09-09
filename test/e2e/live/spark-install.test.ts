@@ -6,6 +6,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText, shellQuote } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -25,8 +26,8 @@ import {
 const SANDBOX_NAME = assertSparkInstallSandboxName(
   process.env.NEMOCLAW_SANDBOX_NAME ?? DEFAULT_SPARK_INSTALL_SANDBOX_NAME,
 );
-const LIVE_TIMEOUT_MS = 40 * 60_000;
-const INSTALL_TIMEOUT_MS = 30 * 60_000;
+const LIVE_TIMEOUT_MS = testTimeout(40 * 60_000);
+const INSTALL_TIMEOUT_MS = execTimeout(30 * 60_000);
 const liveTest = process.platform === "linux" ? test : test.skip;
 
 function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {

@@ -9,7 +9,6 @@ import {
   dashboardUrlForDisplay,
   getDashboardAccessInfo,
   getDashboardForwardPort,
-  getDashboardForwardStartCommand,
   getDashboardForwardTarget,
   getDashboardGuidanceLines,
   getWslHostAddress,
@@ -22,17 +21,6 @@ describe("dashboard access helpers", () => {
     expect(getDashboardForwardTarget("http://10.0.0.25:18789", { isWsl: false })).toBe(
       "0.0.0.0:18789",
     );
-  });
-
-  it("builds the OpenShell forward start command with the resolved target", () => {
-    const openshellShellCommand = vi.fn((args: string[]) => `openshell ${args.join(" ")}`);
-
-    expect(
-      getDashboardForwardStartCommand("alpha", {
-        chatUiUrl: "http://10.0.0.25:18789",
-        openshellShellCommand,
-      }),
-    ).toBe("openshell forward start --background 0.0.0.0:18789 alpha");
   });
 
   it("redacts token fragments for display", () => {

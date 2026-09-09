@@ -3,6 +3,7 @@
 
 import type { AgentDashboardUi } from "./dashboard-ui";
 import type { AgentRuntime } from "./runtime-manifest";
+import type { AgentSkillIntegration } from "./skill-integration";
 import type { AgentWebAuth } from "./web-auth";
 
 export type ManifestScalar = string | number | boolean | null | Date;
@@ -21,20 +22,15 @@ export interface AgentConfigPaths {
   configFile: string;
   envFile: string | null;
   format: string;
-  shieldsFiles: string[];
 }
-
-export type AgentStateDirectoryShields = "read-only" | "confidential";
 
 interface AgentStateDirectoryBehavior {
   backup: boolean;
-  shields?: AgentStateDirectoryShields;
 }
 
 export interface AgentStateDirectoryPath extends AgentStateDirectoryBehavior {
   kind: "path";
   path: string;
-  writableSubpaths: string[];
 }
 
 export interface AgentStateDirectoryPrefix extends AgentStateDirectoryBehavior {
@@ -43,15 +39,6 @@ export interface AgentStateDirectoryPrefix extends AgentStateDirectoryBehavior {
 }
 
 export type AgentStateDirectory = AgentStateDirectoryPath | AgentStateDirectoryPrefix;
-
-export interface AgentStateLockPlan {
-  version: 1;
-  readOnlyRoots: string[];
-  confidentialRoots: string[];
-  readOnlyPrefixes: string[];
-  confidentialPrefixes: string[];
-  writableSubpaths: string[];
-}
 
 export type AgentStateFileStrategy = "copy" | "sqlite_backup";
 
@@ -149,7 +136,6 @@ export interface AgentDefinition {
   config?: ManifestRecord;
   inference?: AgentInference;
   mcp?: AgentMcpCapability;
-  state_lock_plan_in_image?: boolean;
   state_files?: AgentStateFile[];
   user_managed_files?: string[];
   _legacy_paths?: StringMap;
@@ -164,6 +150,7 @@ export interface AgentDefinition {
   readonly configPaths: AgentConfigPaths;
   readonly inferenceProviderOptions: string[];
   readonly mcpCapability: AgentMcpCapability;
+  readonly skillIntegration?: AgentSkillIntegration | null;
   readonly stateDirectories: AgentStateDirectory[];
   readonly stateDirs: string[];
   readonly stateDirPrefixes: string[];
@@ -171,8 +158,6 @@ export interface AgentDefinition {
   readonly backupStateDirPrefixes: string[];
   readonly nonBackupStateDirs: string[];
   readonly nonBackupStateDirPrefixes: string[];
-  readonly stateLockPlan: AgentStateLockPlan;
-  readonly stateLockPlanInImage: boolean;
   readonly stateFiles: AgentStateFile[];
   readonly userManagedFiles: string[];
   readonly versionCommand: string;
@@ -184,7 +169,6 @@ export interface AgentDefinition {
   readonly dockerfilePath: string | null;
   readonly startScriptPath: string | null;
   readonly policyAdditionsPath: string | null;
-  readonly policyPermissivePath: string | null;
   readonly pluginDir: string | null;
   readonly legacyPaths: AgentLegacyPaths | null;
 }

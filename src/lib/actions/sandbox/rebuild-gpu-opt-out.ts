@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { loadAgent } from "../../agent/defs";
+import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import {
   type InferenceEndpointSource,
   normalizeInferenceEndpointSource,
@@ -106,6 +107,8 @@ export type RebuildRecreateOnboardOpts = {
   nonInteractive: true;
   recreateSandbox: true;
   authoritativeResumeConfig: true;
+  /** Internal permission granted only by a validated prepared-backup recovery. */
+  allowRemovedImmutabilityStateRecord?: true;
   endpointSource?: InferenceEndpointSource | null;
   acceptThirdPartySoftware: true;
   agent: string | null | undefined;
@@ -118,15 +121,21 @@ export type RebuildRecreateOnboardOpts = {
   controlUiPort: number | null;
   targetGatewayName: string;
   targetGatewayPort: number;
+  runtimeSelection?: OpenShellRuntimeSelection;
   onboardLockAlreadyHeld: true;
+  deferProcessExit: true;
   /** Target fingerprint of the replacement journal opened before deletion. */
   recreateJournalTargetIntentFingerprint?: string;
   preparedDcodeRebuild?: PreparedDcodeRebuildHandoff;
   rebuildRegistryInferenceRoute?: RebuildRouteHandoff;
   rebuildProviderReconfigure?: RebuildProviderReconfigureHandoff;
   providerRecoveryReceipt?: ProviderRecoveryReceipt;
-  /** Recorded managed-vLLM intent admitted only by the N1x readiness exception. */
+  /** Recorded provider intent admitted only by the N1x readiness exception. */
   allowDeferredN1xManagedVllm?: true;
+  /** Internal legacy Hermes rebuild authority for the pre-v0.0.97 Station admission rule. */
+  allowLegacyDgxStationQualification?: true;
+  /** Explicit request to replace an eligible Deferred N1x managed-vLLM runtime. */
+  reinstallDeferredN1xManagedVllm?: true;
   /** Target-scoped authority admitted by the authoritative rebuild preflight. */
   rebuildGatewayAuthority?: CheckpointGatewayAuthority;
   preparedImageRebuild?: PreparedImageRebuildHandoff;
@@ -202,6 +211,7 @@ export function buildRebuildRecreateOnboardOpts(args: {
     targetGatewayName,
     targetGatewayPort,
     onboardLockAlreadyHeld: true,
+    deferProcessExit: true,
     ...(args.preparedDcodeRebuild ? { preparedDcodeRebuild: args.preparedDcodeRebuild } : {}),
     autoYes: args.autoYes,
     toolDisclosure: toolDisclosureOrDefault(args.sb?.toolDisclosure),

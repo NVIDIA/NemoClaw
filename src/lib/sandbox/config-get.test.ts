@@ -224,7 +224,6 @@ describe("configGet parsing for manifest-declared formats (#6548)", () => {
         dir: "/sandbox/.deepagents",
         configFile: "config.toml",
         format: "toml",
-        shieldsFiles: [],
       },
     });
     // The sandbox `cat` returns the raw TOML text.
@@ -322,7 +321,6 @@ describe("configGet parsing for manifest-declared formats (#6548)", () => {
         dir: "/sandbox/.hermes",
         configFile: "config.yaml",
         format: "yaml",
-        shieldsFiles: [".env"],
       },
     });
     const secret = "nvapi-yamlabcdefghijklmnopqrstuvwxyz0123456789";

@@ -100,10 +100,3 @@ components:
 
   policy:
     base: "sandboxes/openclaw/policy.yaml"
-    additions:
-      nim_service:
-        name: nim_service
-        endpoints:
-          - host: "nim-service.local"
-            port: 8000
-            access: full

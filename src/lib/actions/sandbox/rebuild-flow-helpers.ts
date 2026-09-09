@@ -3,6 +3,11 @@
 
 import { dockerRmi } from "../../adapters/docker/image";
 import { printOpenShellStateRpcIssue } from "../../adapters/openshell/gateway-drift";
+import {
+  replaceOpenShellRuntimeSelectionEnv,
+  snapshotOpenShellEnv,
+  type OpenShellRuntimeSelection,
+} from "../../adapters/openshell/runtime-selection";
 import { loadAgent } from "../../agent/defs";
 import {
   bindLocalAgentBaseImageHandoffToResolution,
@@ -30,24 +35,31 @@ import {
   printSandboxListFailureWithRecoveryContext,
 } from "../../openshell-sandbox-list";
 import {
+  formatBuildFailureDiagnostics,
   parseContentAddressedSandboxBaseImageId,
   type SandboxBaseImageResolutionMetadata,
   type TrustedLocalBaseImageOverride,
 } from "../../sandbox-base-image";
-import * as shields from "../../shields";
 import type { SandboxEntry } from "../../state/registry";
 import { load as loadRegistry } from "../../state/registry/persistence";
 import * as sandboxState from "../../state/sandbox";
+import { removeStaleRebuildDockerOrphan } from "../../onboard/openshell-docker-sandbox-containers";
 import * as userManagedFilesProbe from "../../state/user-managed-files-probe";
 import {
   getReconciledSandboxGatewayState,
   printSandboxGatewayStateHint,
   printWrongGatewayActiveGuidance,
+  usesLegacyRuntimeLifecycleCompatibility,
 } from "./gateway-state";
-import { openRebuildShieldsWindow, type RebuildShieldsWindow } from "./rebuild-shields";
 import * as snapshotBackup from "./snapshot/backup-authority";
+import {
+  backupStartedSandboxState,
+  returnSandboxContainerToStopped,
+  startStoppedSandboxContainerForBackup,
+} from "./stopped-sandbox-backup";
 
-export { removeStaleRebuildDockerOrphan } from "../../onboard/openshell-docker-sandbox-containers";
+export { removeStaleRebuildDockerOrphan };
+export { replaceOpenShellRuntimeSelectionEnv, snapshotOpenShellEnv };
 
 export type RebuildSandboxEntry = SandboxEntry & { agents?: unknown[] };
 
@@ -135,9 +147,19 @@ export async function ensureRebuildTargetGatewaySelected(
   sb: RebuildSandboxEntry,
   log: (message: string) => void,
   bail: (message: string, code?: number) => never,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): Promise<boolean> {
   const gatewayName = resolveSandboxGatewayName(sb);
-  const recovery = await recoverNamedGatewayRuntime({ gatewayName });
+  if (runtimeSelection && runtimeSelection.gatewayName !== gatewayName) {
+    bail(
+      `OpenShell runtime selection '${runtimeSelection.gatewayName}' does not match recorded gateway '${gatewayName}'`,
+    );
+    return false;
+  }
+  const recovery = await recoverNamedGatewayRuntime({
+    gatewayName,
+    ...(runtimeSelection ? { runtimeSelection } : {}),
+  });
   if (!recovery.recovered || recovery.after.state !== "healthy_named") {
     console.error("");
     console.error(
@@ -150,7 +172,8 @@ export async function ensureRebuildTargetGatewaySelected(
     bail(`Could not select healthy gateway '${gatewayName}' for sandbox '${sandboxName}'`);
     return false;
   }
-  process.env.OPENSHELL_GATEWAY = gatewayName;
+  if (runtimeSelection) replaceOpenShellRuntimeSelectionEnv(process.env, runtimeSelection);
+  else process.env.OPENSHELL_GATEWAY = gatewayName;
   log(`Pinned rebuild subprocesses to target gateway '${gatewayName}'`);
   return true;
 }
@@ -210,6 +233,16 @@ export async function resolveRebuildLiveState(
 
   if (reconciled.state === "missing") {
     if (options.authoritativeRecoveryPolicyAvailable === true) {
+      if (usesLegacyRuntimeLifecycleCompatibility(sb)) {
+        try {
+          removeStaleRebuildDockerOrphan(sandboxName, sb.openshellDriver, log);
+        } catch (error) {
+          bail(
+            `Stale-recovery Docker orphan cleanup failed: ${error instanceof Error ? error.message : String(error)}.`,
+          );
+          return null;
+        }
+      }
       log(
         "Stale-sandbox recovery: the sandbox is absent, but its transaction-bound policy handoff is intact",
       );
@@ -256,22 +289,6 @@ export async function resolveRebuildLiveState(
   return null;
 }
 
-export function openRebuildShieldsWindowForState(
-  sandboxName: string,
-  recoveryRecreate: boolean,
-): { rebuildShieldsWindow: RebuildShieldsWindow | null; staleSandboxWasLocked: boolean } {
-  if (recoveryRecreate) {
-    return {
-      staleSandboxWasLocked: !shields.isShieldsDown(sandboxName),
-      rebuildShieldsWindow: { relocked: false, wasLocked: false },
-    };
-  }
-  return {
-    staleSandboxWasLocked: false,
-    rebuildShieldsWindow: openRebuildShieldsWindow(sandboxName, CLI_NAME),
-  };
-}
-
 export function ensureRebuildAgentBaseImage(
   rebuildAgent: string | null,
   bail: (msg: string, code?: number) => never,
@@ -282,6 +299,7 @@ export function ensureRebuildAgentBaseImage(
   const overrideEnvVar = getAgentSandboxBaseImageEnvVar(agentDef.name);
   const explicitOverride = process.env[overrideEnvVar]?.trim();
   const hasExplicitOverride = Boolean(explicitOverride);
+  const restrictHermesRebuildBase = agentDef.name === "hermes" && !hasExplicitOverride;
   try {
     // Prove that a retained local alias names the tracked official image before
     // the resolver sees it, and lease that proof only for this resolution call.
@@ -299,7 +317,9 @@ export function ensureRebuildAgentBaseImage(
     let result: ReturnType<typeof ensureAgentBaseImage>;
     try {
       result = ensureAgentBaseImage(agentDef, {
-        forceBaseImageRebuild: !hasExplicitOverride && !options.resolutionHint,
+        forceBaseImageRebuild:
+          !restrictHermesRebuildBase && !hasExplicitOverride && !options.resolutionHint,
+        ...(restrictHermesRebuildBase ? { allowLocalFallback: false } : {}),
         ...(options.resolutionHint !== undefined ? { resolutionHint: options.resolutionHint } : {}),
         ...(options.forceBaseImageRefresh !== undefined
           ? { forceBaseImageRefresh: options.forceBaseImageRefresh }
@@ -307,6 +327,16 @@ export function ensureRebuildAgentBaseImage(
       });
     } finally {
       restoreExplicitOverrideTrust();
+    }
+    const reusedLocalResolution =
+      result.resolutionMetadata?.source === "local" &&
+      result.reusedResolutionHint === result.resolutionMetadata;
+    if (
+      restrictHermesRebuildBase &&
+      !reusedLocalResolution &&
+      (!result.imageTag || !isImmutableRemoteBaseImageRef(result.imageTag))
+    ) {
+      throw new Error("Hermes rebuild requires the release-pinned immutable base image");
     }
     if (agentDef.name === "nemocua") {
       if (!result.imageTag) throw new Error("NemoCUA caller image resolution returned no image");
@@ -324,9 +354,6 @@ export function ensureRebuildAgentBaseImage(
         disposeImageRef: createTemporaryBaseImageHandoffDisposer(imageRef),
       };
     }
-    const reusedLocalResolution =
-      result.resolutionMetadata?.source === "local" &&
-      result.reusedResolutionHint === result.resolutionMetadata;
     if (
       !hasExplicitOverride &&
       result.imageTag &&
@@ -408,13 +435,14 @@ export function ensureRebuildAgentBaseImage(
         : {}),
     };
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const safeMessage =
+      formatBuildFailureDiagnostics({ error: err }) || "Agent base image preparation failed.";
     console.error("");
-    console.error(`  ${_RD}Rebuild preflight failed:${R} agent base image could not be built.`);
-    console.error(`  ${message}`);
+    console.error(`  ${_RD}Rebuild preflight failed:${R} agent base image could not be prepared.`);
+    console.error("  Inspect the redacted rebuild diagnostics for details.");
     console.error("");
     console.error("  Sandbox is untouched — no data was lost.");
-    bail(message);
+    bail(safeMessage);
     return { ok: false, imageRef: null, overrideEnvVar: null };
   }
 }
@@ -452,20 +480,18 @@ export function pinRebuildAgentBaseImageForRecreate(
   };
 }
 
-export function backupSandboxStateForRebuild(
+export async function backupSandboxStateForRebuild(
   sandboxName: string,
   sb: RebuildSandboxEntry,
   staleRecovery: boolean,
   log: (msg: string) => void,
-  relockShieldsIfNeeded: (sandboxStillExists: boolean) => boolean,
   bail: (msg: string, code?: number) => never,
-  options?: { force?: boolean },
-): sandboxState.RebuildManifest | null | undefined {
+): Promise<sandboxState.RebuildManifest | null | undefined> {
   if (staleRecovery) return null;
 
   console.log("  Backing up sandbox state...");
   log(`Agent type: ${sb.agent || "openclaw"}, stateDirs from manifest`);
-  const backup = snapshotBackup.backupSandboxStateWithManagedAuthority(
+  let backup = snapshotBackup.backupSandboxStateWithManagedAuthority(
     sandboxName,
     {},
     {
@@ -475,42 +501,63 @@ export function backupSandboxStateForRebuild(
   log(
     `Backup result: success=${backup.success}, backed=${backup.backedUpDirs.join(",")}; files=${backup.backedUpFiles.join(",")}, failed=${backup.failedDirs.join(",")}; failedFiles=${backup.failedFiles.join(",")}`,
   );
-  const hasAnyBackup = backup.backedUpDirs.length > 0 || backup.backedUpFiles.length > 0;
-  // Saving a few loose files while every state directory failed is still
-  // catastrophic: the top-level state dirs (memories, sessions, workspace,
-  // plans, ...) would be permanently lost once rebuild recreates the sandbox.
-  // Guard against it the same way as a fully-empty backup so the rebuild aborts
-  // by default instead of silently discarding them. See issue #6972: a
-  // post-reboot mount-ownership/permission corruption left every `.hermes`
-  // state dir unreadable, the sandbox-user tar backed up only 3 loose files,
-  // and the old code proceeded and destroyed all 14 state directories.
-  const allStateDirsFailed = backup.backedUpDirs.length === 0 && backup.failedDirs.length > 0;
-  // State files are individually declared durability contracts. Losing even
-  // one cannot be treated like a salvageable partial directory archive: the
-  // replacement would otherwise delete the only live copy. (#7144)
-  const requiredStateFileFailed = backup.failedFiles.length > 0;
-  if (!backup.success && (!hasAnyBackup || allStateDirsFailed || requiredStateFileFailed)) {
-    if (options?.force) {
-      console.warn(
-        `  ${YW}⚠${R} Backup could not preserve sandbox state but --force was specified — continuing with any salvageable files and rebuilding from registry metadata.`,
-      );
-      log(
-        "Force-skip: backup could not preserve state directories; continuing as requested by --force",
-      );
-      // Keep the partial manifest when at least some files were saved so --force
-      // still restores what it could rather than throwing it away.
-      return hasAnyBackup ? (backup.manifest ?? null) : null;
+  // A backup that fails because the sandbox transport is unreachable (e.g. the
+  // container was killed out-of-band) is recoverable the same way `backup-all`
+  // already recovers a stopped container (#6500): start it, retry, then return
+  // it to stopped. Any other failure (permission denied, absent state, audit
+  // rejection) is not a transport problem and must not attempt this recovery.
+  if (!backup.success && backup.unreachable) {
+    const started = startStoppedSandboxContainerForBackup(sandboxName);
+    if (started) {
+      console.log("  Sandbox container is stopped; starting it to back up state before rebuild...");
+      log(`Started stopped container '${started.containerName}' to retry backup`);
+      let returnedToStopped = false;
+      try {
+        backup = await backupStartedSandboxState(sandboxName);
+        log(
+          `Retry backup result: success=${backup.success}, backed=${backup.backedUpDirs.join(",")}; files=${backup.backedUpFiles.join(",")}, failed=${backup.failedDirs.join(",")}; failedFiles=${backup.failedFiles.join(",")}`,
+        );
+      } finally {
+        returnedToStopped = returnSandboxContainerToStopped(started);
+        if (!returnedToStopped) {
+          log(
+            `Could not return '${sandboxName}' container to its stopped state after backup retry`,
+          );
+        }
+      }
+      // A container this recovery started must be reported whenever it cannot
+      // be returned to stopped, whether or not the retried backup succeeded.
+      // The sandbox was stopped before rebuild started, so leaving it running
+      // is an unrequested lifecycle change; reporting it only on the success
+      // path would let the ordinary backup-failure diagnostic imply the
+      // original stopped state was restored (#11137 review).
+      if (!returnedToStopped) {
+        console.error(
+          `  Started container '${started.containerName}' to back up sandbox state before rebuild,`,
+        );
+        console.error("  but could not return it to its stopped state.");
+        if (!backup.success) {
+          console.error("  The retried backup also failed, so no sandbox state was preserved.");
+        }
+        console.error(
+          `  The sandbox was stopped before rebuild started and container '${started.containerName}' may still be running.`,
+        );
+        console.error("  Inspect and stop that container manually, then retry rebuild.");
+        bail("Could not return the sandbox's recovered container to its stopped state.");
+      }
     }
+  }
+  if (!backup.success) {
     console.error("  Failed to back up sandbox state.");
-    if (allStateDirsFailed && hasAnyBackup) {
+    const allStateDirsFailed = backup.backedUpDirs.length === 0 && backup.failedDirs.length > 0;
+    if (allStateDirsFailed && backup.backedUpFiles.length > 0) {
       const dirCount = backup.failedDirs.length;
       const fileCount = backup.backedUpFiles.length;
       console.error(
         `  None of the ${dirCount} sandbox state ${dirCount === 1 ? "directory" : "directories"} could be preserved (only ${fileCount} loose ${fileCount === 1 ? "file was" : "files were"} saved).`,
       );
-      // Tailor the hypothesis to the recorded per-dir cause instead of always
-      // blaming ownership: "permission denied" points at ownership/permissions,
-      // while "absent after extraction" points at an unstable/disappearing mount.
+    }
+    if (backup.failedDirs.length > 0) {
       const reasons = Object.values(backup.failedDirReasons ?? {});
       const anyPermissionDenied = reasons.includes(BACKUP_FAILURE_PERMISSION_DENIED);
       const allAbsent =
@@ -537,11 +584,13 @@ export function backupSandboxStateForRebuild(
       );
     if (backup.failedFiles.length > 0)
       console.error(`  Failed files: ${backup.failedFiles.join(", ")}`);
+    if (backup.manifest?.backupPath) {
+      console.error(
+        `  Incomplete snapshot retained for manual recovery: ${backup.manifest.backupPath}`,
+      );
+      console.error("  It is excluded from snapshot restore selection.");
+    }
     console.error("  Aborting rebuild to prevent data loss.");
-    console.error(
-      `  Hint: use '${CLI_NAME} ${sandboxName} rebuild --force' only if you accept losing state the incomplete backup could not preserve.`,
-    );
-    relockShieldsIfNeeded(true);
     bail("Failed to back up sandbox state.");
     return undefined;
   }
@@ -549,24 +598,12 @@ export function backupSandboxStateForRebuild(
   if (!backupManifest) {
     console.error("  Failed to record backup metadata.");
     console.error("  Aborting rebuild to prevent data loss.");
-    relockShieldsIfNeeded(true);
     bail("Failed to record backup metadata.");
     return undefined;
   }
-  if (!backup.success) {
-    console.warn(
-      `  ${YW}⚠${R} Partial backup: ${backup.backedUpDirs.length} dirs and ${backup.backedUpFiles.length} files OK; ${backup.failedDirs.length} dirs and ${backup.failedFiles.length} files failed`,
-    );
-    if (backup.failedDirs.length > 0)
-      console.warn(`    Failed dirs: ${backup.failedDirs.join(", ")}`);
-    if (backup.failedFiles.length > 0)
-      console.warn(`    Failed files: ${backup.failedFiles.join(", ")}`);
-    console.warn("    Rebuild will continue — failed state could not be preserved.");
-  } else {
-    console.log(
-      `  ${G}✓${R} State backed up (${backup.backedUpDirs.length} directories, ${backup.backedUpFiles.length} files)`,
-    );
-  }
+  console.log(
+    `  ${G}✓${R} State backed up (${backup.backedUpDirs.length} directories, ${backup.backedUpFiles.length} files)`,
+  );
   console.log(`    Backup: ${backupManifest.backupPath}`);
   return backupManifest;
 }
@@ -580,10 +617,11 @@ export function backupSandboxStateForRebuild(
 export function warnUnpreservedUserManagedFiles(
   sandboxName: string,
   log: (msg: string) => void,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): void {
   let probe: userManagedFilesProbe.UserManagedFilesProbe;
   try {
-    probe = userManagedFilesProbe.probeUserManagedFiles(sandboxName);
+    probe = userManagedFilesProbe.probeUserManagedFiles(sandboxName, runtimeSelection);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     log(`User-managed file probe errored: ${message}`);

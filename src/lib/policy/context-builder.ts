@@ -171,11 +171,6 @@ function buildSupportBoundaries(): PolicyContextSupportBoundary[] {
       note: "policy is enforced by the OpenShell gateway",
     },
     {
-      capability: "Shields transition",
-      owner: "nemoclaw",
-      note: "Shields up locks mutable configuration and reverts its temporary policy delta",
-    },
-    {
       capability: "credential storage",
       owner: "nemoclaw",
       note: "credentials are stored outside the policy context surface",

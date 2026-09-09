@@ -19,7 +19,7 @@
     }
   },
   "scripts": {
-    "build": "tsc",
+    "build": "npm run clean && tsc",
     "dev": "tsc --watch",
     "test": "vitest run --config vitest.config.ts",
     "lint": "oxlint src && oxlint --config ../oxlint.type-aware.config.ts src",

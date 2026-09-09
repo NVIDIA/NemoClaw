@@ -128,6 +128,49 @@ function restoreTmpArtifacts(paths: string[], backups: Record<string, string>): 
 }
 
 describe("scripts/lib/sandbox-init.sh", () => {
+  describe("Python startup isolation", () => {
+    it.each([
+      {
+        operation: "lock_rc_files",
+        observe: (rcFile: string, _stdout: string) => lstatSync(rcFile).mode & 0o777,
+        expected: 0o444,
+      },
+      {
+        operation: "read_messaging_plan_channels",
+        observe: (_rcFile: string, stdout: string) => stdout,
+        expected: "telegram",
+      },
+    ])(
+      "ignores inherited PYTHONPATH in $operation",
+      ({ operation, observe, expected }) => {
+        const workDir = mkdtempSync(join(tmpdir(), "sandbox-init-python-"));
+        const sentinel = join(workDir, "sitecustomize-ran");
+        const rcFile = join(workDir, ".bashrc");
+        writeFileSync(rcFile, "# fixture\n", { mode: 0o600 });
+        writeFileSync(
+          join(workDir, "sitecustomize.py"),
+          'import os\nfrom pathlib import Path\nPath(os.environ["TEST_PYTHON_SENTINEL"]).write_text("executed")\n',
+        );
+        try {
+          const result = runWithLib(`${operation} "$TEST_PYTHON_HOME"`, {
+            env: {
+              PYTHONPATH: workDir,
+              TEST_PYTHON_HOME: workDir,
+              TEST_PYTHON_SENTINEL: sentinel,
+              NEMOCLAW_MESSAGING_PLAN_B64: Buffer.from(
+                JSON.stringify({ channels: [{ channelId: "telegram", active: true }] }),
+              ).toString("base64"),
+            },
+          });
+          expect(existsSync(sentinel)).toBe(false);
+          expect(observe(rcFile, result.stdout)).toBe(expected);
+        } finally {
+          rmSync(workDir, { recursive: true, force: true });
+        }
+      },
+    );
+  });
+
   describe("emit_sandbox_sourced_file", () => {
     let workDir: string;
 
@@ -320,45 +363,6 @@ EOF
       expect(stderr).toContain("integrity check FAILED");
     });
 
-    it("locked-aware verifier skips mutable-default hash files", () => {
-      const configFile = join(workDir, "config.json");
-      writeFileSync(configFile, '{"test": true}');
-      execFileSync("bash", [
-        "-c",
-        `cd ${JSON.stringify(workDir)} && sha256sum config.json > .config-hash`,
-      ]);
-      writeFileSync(configFile, '{"test": false, "mutable": true}');
-
-      const { stdout } = runWithLib(`
-        verify_config_integrity_if_locked ${JSON.stringify(workDir)} 2>&1
-        echo "MUTABLE_OK"
-      `);
-      expect(stdout).toContain("Config integrity check skipped for mutable default");
-    });
-
-    it("locked-aware verifier fails closed when a locked config is missing its hash", () => {
-      const fakeBin = join(workDir, "bin");
-      mkdirSync(fakeBin);
-      writeFileSync(
-        join(fakeBin, "stat"),
-        [
-          "#!/usr/bin/env bash",
-          'if [ "${2:-}" = "%u" ]; then echo 0; exit 0; fi',
-          'if [ "${2:-}" = "%a" ] || [ "${2:-}" = "%Lp" ]; then echo 755; exit 0; fi',
-          "exit 1",
-        ].join("\n"),
-        { mode: 0o700 },
-      );
-
-      const { stderr } = runWithLib(
-        `verify_config_integrity_if_locked ${JSON.stringify(workDir)}`,
-        {
-          env: { PATH: `${fakeBin}:${process.env.PATH || ""}` },
-          expectFail: true,
-        },
-      );
-      expect(stderr).toContain("Locked config is missing hash file");
-    });
   });
 
   describe("lock_rc_files", () => {
