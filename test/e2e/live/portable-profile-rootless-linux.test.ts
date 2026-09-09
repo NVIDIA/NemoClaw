@@ -618,6 +618,8 @@ async function proveHistoricalHermesPortableLifecycle(input: {
       },
       { stateDir: path.join(receiptStateDir, "state") },
     );
+    const activeContainerId =
+      active.receipt.phase === "active" ? active.receipt.container.containerId : "";
     const lifecycleDeps: HermesPortableLifecycleDeps = {
       stateDir: receiptStateDir,
       env: lifecycleEnv,
@@ -646,7 +648,7 @@ async function proveHistoricalHermesPortableLifecycle(input: {
             "inspect",
             "--format",
             "{{.State.Status}}",
-            active.receipt.container.containerId,
+            activeContainerId,
           ]);
           const firstTerminalPhase = readOpenShellSandbox(
             input.openshellBin,
@@ -748,7 +750,7 @@ async function proveHistoricalHermesPortableLifecycle(input: {
             "inspect",
             "--format",
             "{{.State.Status}}",
-            active.receipt.container.containerId,
+            activeContainerId,
           ]);
           const rollbackTerminalPhase = waitForOpenShellTerminalPhase(
             input.openshellBin,
