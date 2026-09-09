@@ -64,7 +64,8 @@ Restore a separately created snapshot afterward if one is available; rebuild can
 </AgentOnly>
 
 <AgentOnly variant="openclaw">
-If `$$nemoclaw <name> status` reports the sandbox container or gateway is not running, run the recover command instead of opening a shell.
+If `$$nemoclaw <name> status` reports `Phase: Stopped` after an intentional stop, run `$$nemoclaw <name> start`.
+If status reports `sandbox_container_stopped`, a missing sandbox, or an unhealthy gateway, run the recover command instead of opening a shell.
 
 ```bash
 $$nemoclaw <sandbox-name> recover
@@ -83,7 +84,8 @@ The restart command asks the topology-specific controller to stop the tracked ga
 </AgentOnly>
 
 <AgentOnly variant="hermes">
-If `$$nemoclaw <name> status` reports the sandbox container or Hermes gateway is not running, run the recover command instead of opening a shell.
+If `$$nemoclaw <name> status` reports `Phase: Stopped` after an intentional stop, run `$$nemoclaw <name> start`.
+If status reports `sandbox_container_stopped`, a missing sandbox, or an unhealthy Hermes gateway, run the recover command instead of opening a shell.
 
 ```bash
 $$nemoclaw <sandbox-name> recover
