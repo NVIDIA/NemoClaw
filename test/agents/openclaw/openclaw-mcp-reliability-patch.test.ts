@@ -338,7 +338,7 @@ describe("OpenClaw MCP transient startup recovery patch (#7958)", () => {
   ] as Array<[string, unknown]>)(
     "classifies %s as a retryable transport startup failure",
     (label, error) => {
-    const helper = loadInjectedHelper([]);
+      const helper = loadInjectedHelper([]);
       expect(helper.nemoClawIsTransientMcpStartFailure(error), label).toBe(true);
     },
   );
