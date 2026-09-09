@@ -114,6 +114,8 @@ function setupFixture(opts: {
   /** Number of post-start list probes that remain stale before ownership is visible. */
   forwardStartDelayPolls?: number;
   forwardReachable?: boolean;
+  /** "stale" makes the legacy row name a PID that is not the port's listener (#11149). */
+  forwardListPid?: "listener" | "stale";
   recoveryWaitMs?: string;
   port?: string;
 }): Fixture {
@@ -220,12 +222,14 @@ if (args[0] === "forward" && args[1] === "list") {
     }
   }
   // OpenShell lists the PID of the forward it tracks; the fixture's tracked
-  // forward is the listener started for this test, so the row names it.
+  // forward is the listener started for this test, so the row names it. A
+  // stale row names a PID that is not listening on the port (#11149).
   const livePid = fs.readFileSync(${JSON.stringify(listenerPidFile)}, "utf-8")
     .trim().split(/\\s+/).filter(Boolean).at(-1) ?? "12345";
+  const rowPid = ${opts.forwardListPid === "stale"} ? String(Number(livePid) + 1) : livePid;
   process.stdout.write((state === "running"
     ? ${JSON.stringify(recoveredForwardListBody)}
-    : ${JSON.stringify(initialForwardListBody)}).replace("12345", livePid));
+    : ${JSON.stringify(initialForwardListBody)}).replace("12345", rowPid));
   process.exit(0);
 }
 
@@ -452,6 +456,37 @@ describe("nemoclaw <name> recover", () => {
       );
       expect(combined).not.toContain("restored dashboard port forward");
       expect(combined).not.toContain("missing or dead");
+
+      const calls = fs.readFileSync(fixture.invocationLog, "utf-8").split("\n");
+      expect(calls.some((line) => line.startsWith("forward stop "))).toBe(false);
+      expect(calls.some((line) => line.includes("forward service "))).toBe(false);
+      expect(() => process.kill(listenerPid, 0)).not.toThrow();
+    },
+  );
+
+  it(
+    "refuses a stale legacy row whose PID is not the port's listener (#11149)",
+    testTimeoutOptions(20_000),
+    () => {
+      const fixture = setupFixture({
+        sandboxName: "stale-row-sandbox",
+        gatewayProbe: "RUNNING",
+        forwardListStatus: "running",
+        forwardListPid: "stale",
+        forwardReachable: true,
+      });
+      const listenerPid = Number(
+        fs.readFileSync(fixture.listenerPidFile, "utf-8").trim().split(/\s+/).at(-1),
+      );
+
+      const result = runRecover(fixture, "real");
+
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(1);
+      const combined = (result.stdout || "") + (result.stderr || "");
+      expect(combined).toContain(
+        `Host port ${fixture.port} for 'stale-row-sandbox' is held by a listener that NemoClaw cannot attribute to this sandbox's OpenShell forward`,
+      );
+      expect(combined).not.toContain("restored dashboard port forward");
 
       const calls = fs.readFileSync(fixture.invocationLog, "utf-8").split("\n");
       expect(calls.some((line) => line.startsWith("forward stop "))).toBe(false);
