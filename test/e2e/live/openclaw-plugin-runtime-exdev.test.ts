@@ -538,7 +538,7 @@ test(
       [CLI_ENTRYPOINT, SANDBOX_NAME, "gateway", "restart"],
       {
         artifactName: "openclaw-weather-plugin-gateway-restart",
-        env: sandboxEnv,
+        env: { ...sandboxEnv, NEMOCLAW_OPENSHELL_BIN: openshell.cli },
         timeoutMs: 180_000,
       },
     );
