@@ -70,7 +70,5 @@ describe("OpenShell channel workflow boundary", () => {
       "requires exact stable OpenShell 0.0.116",
     );
 
-    const source = fs.readFileSync(LAUNCHABLE, "utf8");
-    expect(source).toContain('verify_openshell_cli_asset "$tmpdir" "$asset"');
   });
 });

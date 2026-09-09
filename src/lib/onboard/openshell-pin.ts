@@ -10,6 +10,7 @@ import {
   type OpenshellInstallVersionResolution,
   resolveOpenshellInstallVersion,
 } from "./openshell-install";
+import { getOpenshellChannel } from "./openshell-version";
 
 const GH_LIMIT = 1000;
 const PER_PAGE = 100;
@@ -169,7 +170,7 @@ export function computeOpenshellInstallEnv(
   baseEnv: NodeJS.ProcessEnv,
   deps: OpenshellInstallPinDeps,
 ): OpenshellInstallEnvDirective {
-  const channel = (baseEnv.NEMOCLAW_OPENSHELL_CHANNEL ?? "auto").trim();
+  const channel = getOpenshellChannel(baseEnv);
   if (channel === "dev") {
     const error = deps.error ?? ((m: string) => console.error(m));
     error("");

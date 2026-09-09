@@ -1244,6 +1244,21 @@ exit 0`,
     );
   });
 
+  it.each([
+    "NEMOCLAW_OPENSHELL_MIN_VERSION",
+    "NEMOCLAW_OPENSHELL_MAX_VERSION",
+    "NEMOCLAW_OPENSHELL_PIN_VERSION",
+  ] as const)("rejects a non-0.0.116 %s override before installation", (variable) => {
+    const result = runWithInstalledVersion(REQUIRED_OPENSHELL_VERSION, {
+      [variable]: "0.0.115",
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      `${variable} must equal immutable OpenShell ${REQUIRED_OPENSHELL_VERSION}.`,
+    );
+    expect(result.stdout).not.toContain("Installing OpenShell from release");
+  });
+
   it("reconciles an installed development build to the exact stable release", () => {
     const result = runWithInstalledVersion("0.0.116-dev.8+g7bce1223d");
     expect(result.status).not.toBe(0);

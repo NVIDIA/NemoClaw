@@ -126,11 +126,14 @@ MAX_VERSION="0.0.116"
 # OpenShell release that satisfies the blueprint's max_openshell_version
 # (see #3404). The hardcoded value is the fallback for offline runs.
 PIN_VERSION="$MAX_VERSION"
+# Keep the base-trusted template selector aligned with the immutable release;
+# the dev channel is rejected below and cannot consume it.
+DEV_MIN_VERSION="0.0.116"
 
 CHANNEL="${NEMOCLAW_OPENSHELL_CHANNEL:-auto}"
 case "$CHANNEL" in
   stable | auto) ;;
-  dev) fail "NemoClaw requires exact stable OpenShell 0.0.116; the dev channel is not supported." ;;
+  dev) fail "NemoClaw requires exact stable OpenShell $DEV_MIN_VERSION; the dev channel is not supported." ;;
   *) fail "NEMOCLAW_OPENSHELL_CHANNEL must be one of: stable, auto" ;;
 esac
 
@@ -168,6 +171,8 @@ esac
 # the validation outside of $(...) avoids relying on that.
 if [ -n "${NEMOCLAW_OPENSHELL_MIN_VERSION:-}" ]; then
   if [[ "$NEMOCLAW_OPENSHELL_MIN_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    [ "$NEMOCLAW_OPENSHELL_MIN_VERSION" = "$MIN_VERSION" ] \
+      || fail "NEMOCLAW_OPENSHELL_MIN_VERSION must equal immutable OpenShell $MIN_VERSION."
     MIN_VERSION="$NEMOCLAW_OPENSHELL_MIN_VERSION"
   else
     fail "NEMOCLAW_OPENSHELL_MIN_VERSION='$NEMOCLAW_OPENSHELL_MIN_VERSION' is not a valid X.Y.Z version."
@@ -175,6 +180,8 @@ if [ -n "${NEMOCLAW_OPENSHELL_MIN_VERSION:-}" ]; then
 fi
 if [ -n "${NEMOCLAW_OPENSHELL_MAX_VERSION:-}" ]; then
   if [[ "$NEMOCLAW_OPENSHELL_MAX_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    [ "$NEMOCLAW_OPENSHELL_MAX_VERSION" = "$MAX_VERSION" ] \
+      || fail "NEMOCLAW_OPENSHELL_MAX_VERSION must equal immutable OpenShell $MAX_VERSION."
     MAX_VERSION="$NEMOCLAW_OPENSHELL_MAX_VERSION"
     # Intentionally do NOT default PIN_VERSION to the overridden MAX here.
     # If the TS resolver couldn't reach GitHub (rate-limited / offline) it
@@ -186,6 +193,8 @@ if [ -n "${NEMOCLAW_OPENSHELL_MAX_VERSION:-}" ]; then
 fi
 if [ -n "${NEMOCLAW_OPENSHELL_PIN_VERSION:-}" ]; then
   if [[ "$NEMOCLAW_OPENSHELL_PIN_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    [ "$NEMOCLAW_OPENSHELL_PIN_VERSION" = "$PIN_VERSION" ] \
+      || fail "NEMOCLAW_OPENSHELL_PIN_VERSION must equal immutable OpenShell $PIN_VERSION."
     PIN_VERSION="$NEMOCLAW_OPENSHELL_PIN_VERSION"
   else
     fail "NEMOCLAW_OPENSHELL_PIN_VERSION='$NEMOCLAW_OPENSHELL_PIN_VERSION' is not a valid X.Y.Z version."

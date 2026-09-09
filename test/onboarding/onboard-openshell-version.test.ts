@@ -405,11 +405,11 @@ describe("resolveOpenshellInstallPin", () => {
 });
 
 describe("computeOpenshellInstallEnv", () => {
-  it("rejects the dev channel before stable release discovery", () => {
+  it.each(["dev", " DEV "])("rejects the %s channel before stable release discovery", (channel) => {
     const errors: string[] = [];
     const result = pinModule.computeOpenshellInstallEnv(
       {
-        NEMOCLAW_OPENSHELL_CHANNEL: "dev",
+        NEMOCLAW_OPENSHELL_CHANNEL: channel,
         NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.71",
       },
       {
