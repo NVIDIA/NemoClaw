@@ -122,7 +122,7 @@ describe("Hermes Portable probe-only forward recovery", () => {
     Object.assign(fixture.input.deps, {
       captureCurrentList: () => ({
         status: 0,
-        output: "",
+        output: "No active forwards.\n",
         stdout: "No active forwards.\n",
         stderr: "SANDBOX BIND PORT PID STATUS\nalpha 127.0.0.1 18789 12345 running\n",
       }),

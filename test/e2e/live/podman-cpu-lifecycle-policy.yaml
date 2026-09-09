@@ -11,6 +11,8 @@ filesystem_policy:
     - /lib
     - /lib64
     - /etc
+    # The Portable profile acceptance path executes the immutable Hermes venv.
+    - /opt/hermes
     - /proc
     - /dev/urandom
   read_write:

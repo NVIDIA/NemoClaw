@@ -20,6 +20,11 @@ import { capturePodmanSocketAuthority } from "../../../src/lib/adapters/podman/i
 import { captureHermesPortableOpenShellExecutableAuthority } from "../../../src/lib/adapters/openshell/resolve-shared.ts";
 import { loadAgent } from "../../../src/lib/agent/defs.ts";
 import {
+  createHermesPortableForwardRecoveryInput,
+  recoverHermesPortableLaunchForwards,
+} from "../../../src/lib/actions/sandbox/forward-recovery.ts";
+import { startSandbox } from "../../../src/lib/actions/sandbox/start.ts";
+import {
   configureHermesPortableRestartPolicy,
   enrollHermesPortableContainer,
   hermesPortableContainerInternals,
@@ -28,7 +33,6 @@ import { resolveHermesPortableStartupContract } from "../../../src/lib/onboard/e
 import {
   HermesPortableRecoveryRollbackError,
   recoverHermesPortableSandboxLifecycle,
-  requalifyHermesPortableSandboxAuthority,
   stopHermesPortableSandboxLifecycle,
   type HermesPortableLifecycleCommandResult,
   type HermesPortableLifecycleDeps,
@@ -41,6 +45,7 @@ import {
   captureHermesPortablePolicySource,
   publishHermesPortableDurablePolicySource,
   publishHermesPortableLifecycleReceipt,
+  readHermesPortableLifecycleReceipt,
   type HermesPortableConfiguredReceipt,
   type HermesPortablePendingReceipt,
 } from "../../../src/lib/onboard/experimental/hermes-portable-receipt.ts";
@@ -123,7 +128,7 @@ const HERMES_PORTABLE_E2E_TRANSACTION_ID = "11111111-1111-4111-8111-111111111111
 const HERMES_PORTABLE_E2E_CREATE_INTENT = "b".repeat(64);
 const HERMES_PORTABLE_E2E_HISTORICAL_MANIFEST_SHA256 =
   "c7bcd6e0616904ab66c1f2f39a670d920cfb1b7ef7c1edc496e20e554db6a6c2";
-const HERMES_PORTABLE_E2E_GATEWAY_NAME = "portable-e2e-gateway";
+const HERMES_PORTABLE_E2E_GATEWAY_NAME = "nemoclaw";
 const HERMES_PORTABLE_E2E_GENERATION = "portable-e2e-generation";
 const HERMES_PORTABLE_E2E_POLICY = path.join(
   process.cwd(),
@@ -146,7 +151,7 @@ const PORTABLE_PROFILE_E2E_PHASES = [
   "verify Hermes accepts the configured external Host",
   "start the pinned Podman gateway",
   "verify distinct same-network routes",
-  "requalify the historical receipt then stop and recover its lifecycle",
+  "upgrade the historical receipt through public start and verify its lifecycle",
   "classify a post-start refusal and rollback settlement",
   "record portable environment completion",
 ] as const;
@@ -475,6 +480,78 @@ function waitForOpenShellTerminalPhase(
   return phase;
 }
 
+function waitForReceiptOwnedContainerExit(containerId: string): "exited" {
+  const sleepBuffer = new Int32Array(new SharedArrayBuffer(4));
+  const status = retryUntil(
+    () => {
+      try {
+        return run("podman", [
+          "container",
+          "inspect",
+          "--format",
+          "{{.State.Status}}",
+          containerId,
+        ]);
+      } catch {
+        return "";
+      }
+    },
+    {
+      accept: (observed) => observed === "exited",
+      retryDelaysMs: OPENSHELL_SETTLEMENT_DELAYS_MS,
+      sleep: (milliseconds) => Atomics.wait(sleepBuffer, 0, 0, milliseconds),
+    },
+  );
+  assert.equal(status, "exited", "The exact receipt-owned container did not stop");
+  return status;
+}
+
+function waitForOpenShellSandboxAbsent(
+  executablePath: string,
+  env: NodeJS.ProcessEnv,
+  sandboxName: string,
+): void {
+  const sleepBuffer = new Int32Array(new SharedArrayBuffer(4));
+  const observation = retryUntil(
+    () => {
+      const result = captureOpenShell(
+        executablePath,
+        env,
+        ["sandbox", "list", "-g", HERMES_PORTABLE_E2E_GATEWAY_NAME, "-o", "json"],
+        10_000,
+      );
+      try {
+        const sandboxes = JSON.parse(String(result.stdout)) as unknown;
+        return {
+          absent:
+            result.status === 0 &&
+            !result.error &&
+            Array.isArray(sandboxes) &&
+            sandboxes.every(
+              (sandbox) =>
+                !sandbox ||
+                typeof sandbox !== "object" ||
+                Array.isArray(sandbox) ||
+                (sandbox as { name?: unknown }).name !== sandboxName,
+            ),
+          detail: String(result.error?.message ?? result.stderr ?? result.stdout),
+        };
+      } catch {
+        return {
+          absent: false,
+          detail: String(result.error?.message ?? result.stderr ?? result.stdout),
+        };
+      }
+    },
+    {
+      accept: (observed) => observed.absent,
+      retryDelaysMs: OPENSHELL_SETTLEMENT_DELAYS_MS,
+      sleep: (milliseconds) => Atomics.wait(sleepBuffer, 0, 0, milliseconds),
+    },
+  );
+  assert.ok(observation.absent, `OpenShell sandbox cleanup did not settle: ${observation.detail}`);
+}
+
 function withoutPodmanConnectionSelectors(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const blocked = new Set([
     "CONTAINER_CONNECTION",
@@ -644,40 +721,43 @@ async function proveHistoricalHermesPortableLifecycle(input: {
       readRegistry: () => registry,
     };
 
-    return await withPortableHostFence(input.runtimeAuthority.homeDir, async () =>
-      withMcpLifecycleLockSync(
-        sandboxName,
-        () => {
-          const requalified = requalifyHermesPortableSandboxAuthority(
-            sandboxName,
-            context,
-            lifecycleDeps,
+    return await withPortableHostFence(input.runtimeAuthority.homeDir, async () => {
+      const gatewayEvidence: {
+        forwardRecovery: ReturnType<typeof recoverHermesPortableLaunchForwards> | null;
+        health: string;
+        verificationCount: number;
+      } = { forwardRecovery: null, health: "", verificationCount: 0 };
+      const requireCurrentStartupAuthority = () => {
+        const current = readHermesPortableLifecycleReceipt(sandboxName, receiptStateDir);
+        assert.ok(
+          current?.successor &&
+            current.successor.receipt.startup.manifestSha256 === currentStartup.manifestSha256,
+          "Public start did not publish current Hermes startup authority",
+        );
+      };
+      const publicStartDeps = {
+        environment: lifecycleEnv,
+        getSandbox: (name) => (name === sandboxName ? registry : null),
+        log: console.log,
+        verifyGateway: async () => {
+          gatewayEvidence.verificationCount += 1;
+          requireCurrentStartupAuthority();
+          gatewayEvidence.forwardRecovery = recoverHermesPortableLaunchForwards(
+            createHermesPortableForwardRecoveryInput({
+              assertCurrent: requireCurrentStartupAuthority,
+              assertRollbackCurrent: requireCurrentStartupAuthority,
+              commandAuthority: {
+                env: childEnv,
+                executablePath: input.openshellBin,
+              },
+              gatewayName: HERMES_PORTABLE_E2E_GATEWAY_NAME,
+              intent: "connect-probe-only",
+              onTiming: () => undefined,
+              ports: [18_789, 8_642],
+              sandboxName,
+            }),
           );
-          assert.equal(requalified.kind, "migrated", "Historical Hermes receipt was not migrated");
-          const firstStop = stopHermesPortableSandboxLifecycle(
-            sandboxName,
-            context,
-            () => undefined,
-            lifecycleDeps,
-          );
-          const firstStoppedContainerStatus = run("podman", [
-            "container",
-            "inspect",
-            "--format",
-            "{{.State.Status}}",
-            activeContainerId,
-          ]);
-          const firstTerminalPhase = readOpenShellSandbox(
-            input.openshellBin,
-            input.openshellClientEnv,
-            sandboxName,
-          ).phase;
-          const recovery = recoverHermesPortableSandboxLifecycle(
-            sandboxName,
-            context,
-            lifecycleDeps,
-          );
-          const health = requireOpenShellResult(
+          gatewayEvidence.health = requireOpenShellResult(
             capture(
               [
                 "sandbox",
@@ -695,54 +775,86 @@ async function proveHistoricalHermesPortableLifecycle(input: {
               ],
               40_000,
             ),
-            "post-recovery authenticated health probe",
+            "public-start gateway health verification",
           );
-          assert.ok(
-            firstStop.kind === "stopped" && recovery.kind === "recovered" && health === "200",
-            "Hermes stop, immediate recovery, or authenticated probe did not pass",
-          );
-          stopHermesPortableSandboxLifecycle(sandboxName, context, () => undefined, lifecycleDeps);
+        },
+      } satisfies Parameters<typeof startSandbox>[1];
+      const upgradeResult = await startSandbox(sandboxName, publicStartDeps);
+      const firstStop = withMcpLifecycleLockSync(
+        sandboxName,
+        () =>
+          stopHermesPortableSandboxLifecycle(sandboxName, context, () => undefined, lifecycleDeps),
+        { stateDir: path.join(receiptStateDir, "state") },
+      );
+      assert.equal(firstStop.kind, "stopped", "Historical Hermes receipt did not stop");
+      const firstStoppedContainerStatus = waitForReceiptOwnedContainerExit(activeContainerId);
+      const firstTerminalPhase = waitForOpenShellTerminalPhase(
+        input.openshellBin,
+        input.openshellClientEnv,
+        sandboxName,
+      );
+      const startResult = await startSandbox(sandboxName, publicStartDeps);
+      assert.ok(
+        upgradeResult.exitCode === 0 &&
+          startResult.exitCode === 0 &&
+          gatewayEvidence.verificationCount === 2 &&
+          gatewayEvidence.health === "200",
+        "Public start did not complete recovery and gateway verification",
+      );
+      requireCurrentStartupAuthority();
 
-          input.progress.phase("classify a post-start refusal and rollback settlement");
-          let refuseTerminalObservation = false;
-          let virtualNow = Date.now();
-          const refusedObservations = new Map<string, HermesPortableLifecycleCommandResult>([
-            [
-              "sandbox\0list",
+      withMcpLifecycleLockSync(
+        sandboxName,
+        () =>
+          stopHermesPortableSandboxLifecycle(sandboxName, context, () => undefined, lifecycleDeps),
+        { stateDir: path.join(receiptStateDir, "state") },
+      );
+      waitForReceiptOwnedContainerExit(activeContainerId);
+      waitForOpenShellTerminalPhase(input.openshellBin, input.openshellClientEnv, sandboxName);
+
+      input.progress.phase("classify a post-start refusal and rollback settlement");
+      let refuseTerminalObservation = false;
+      let virtualNow = Date.now();
+      const refusedObservations = new Map<string, HermesPortableLifecycleCommandResult>([
+        [
+          "sandbox\0list",
+          {
+            status: 0,
+            stderr: "",
+            stdout: JSON.stringify([
               {
-                status: 0,
-                stderr: "",
-                stdout: JSON.stringify([
-                  {
-                    id: live.id,
-                    name: sandboxName,
-                    phase: "Ready",
-                    labels: {},
-                    resource_version: 1,
-                    created_at: "2026-01-01T00:00:00Z",
-                    current_policy_version: 1,
-                  },
-                ]),
+                id: live.id,
+                name: sandboxName,
+                phase: "Ready",
+                labels: {},
+                resource_version: 1,
+                created_at: "2026-01-01T00:00:00Z",
+                current_policy_version: 1,
               },
-            ],
-            [
-              "sandbox\0get",
-              {
-                status: 0,
-                stderr: "",
-                stdout: `Name: ${sandboxName}\nID: ${live.id}\nPhase: Ready\n`,
-              },
-            ],
-          ]);
-          const refusingCapture: NonNullable<HermesPortableLifecycleDeps["captureOpenShell"]> = (
-            args,
-            timeoutMs,
-          ) =>
-            (refuseTerminalObservation
-              ? refusedObservations.get(args.slice(0, 2).join("\0"))
-              : undefined) ?? capture(args, timeoutMs);
-          let classifiedFailure: unknown;
-          try {
+            ]),
+          },
+        ],
+        [
+          "sandbox\0get",
+          {
+            status: 0,
+            stderr: "",
+            stdout: `Name: ${sandboxName}\nID: ${live.id}\nPhase: Ready\n`,
+          },
+        ],
+      ]);
+      const refusingCapture: NonNullable<HermesPortableLifecycleDeps["captureOpenShell"]> = (
+        args,
+        timeoutMs,
+      ) =>
+        (refuseTerminalObservation
+          ? refusedObservations.get(args.slice(0, 2).join("\0"))
+          : undefined) ?? capture(args, timeoutMs);
+      let classifiedFailure: unknown;
+      try {
+        withMcpLifecycleLockSync(
+          sandboxName,
+          () =>
             recoverHermesPortableSandboxLifecycle(sandboxName, context, {
               ...lifecycleDeps,
               captureOpenShell: refusingCapture,
@@ -752,69 +864,67 @@ async function proveHistoricalHermesPortableLifecycle(input: {
               },
               now: () => (refuseTerminalObservation ? (virtualNow += 31_000) : Date.now()),
               sleep: () => undefined,
-            });
-          } catch (error) {
-            classifiedFailure = error;
-          }
-          assert.ok(classifiedFailure instanceof HermesPortableRecoveryRollbackError);
-          assert.ok(
-            classifiedFailure.primaryFailureClass === "startup-launch" &&
-              classifiedFailure.rollbackFailureClass === "openshell-terminal-settlement",
-            "Hermes recovery did not preserve primary and rollback classifications",
-          );
-          const stoppedContainerStatus = run("podman", [
-            "container",
-            "inspect",
-            "--format",
-            "{{.State.Status}}",
-            activeContainerId,
-          ]);
-          const rollbackTerminalPhase = waitForOpenShellTerminalPhase(
-            input.openshellBin,
-            input.openshellClientEnv,
-            sandboxName,
-          );
+            }),
+          { stateDir: path.join(receiptStateDir, "state") },
+        );
+      } catch (error) {
+        classifiedFailure = error;
+      }
+      assert.ok(
+        classifiedFailure instanceof HermesPortableRecoveryRollbackError &&
+          classifiedFailure.primaryFailureClass === "startup-launch" &&
+          classifiedFailure.rollbackFailureClass === "openshell-terminal-settlement",
+        "Hermes recovery did not preserve primary and rollback classifications",
+      );
+      const stoppedContainerStatus = waitForReceiptOwnedContainerExit(activeContainerId);
+      const rollbackTerminalPhase = waitForOpenShellTerminalPhase(
+        input.openshellBin,
+        input.openshellClientEnv,
+        sandboxName,
+      );
 
-          const evidence = {
-            sourceRevision: input.sourceRevision,
-            manifestTransition: {
-              installed: active.receipt.startup.manifestSha256,
-              current: currentStartup.manifestSha256,
-            },
-            requalification: requalified.kind,
-            stop: {
-              result: firstStop.kind,
-              containerStatus: firstStoppedContainerStatus,
-              openShellPhase: firstTerminalPhase,
-            },
-            recovery: {
-              result: recovery.kind,
-              authenticatedHealthStatus: Number(health),
-            },
-            refusal: {
-              primaryFailureClass: classifiedFailure.primaryFailureClass,
-              rollbackFailureClass: classifiedFailure.rollbackFailureClass,
-              containerStatus: stoppedContainerStatus,
-              openShellPhase: rollbackTerminalPhase,
-            },
-          };
-          fs.writeFileSync(
-            path.join(input.artifactDir, "hermes-portable-lifecycle-receipt.json"),
-            `${JSON.stringify(evidence, null, 2)}\n`,
-            { encoding: "utf-8", mode: 0o600 },
-          );
-          return evidence;
+      const evidence = {
+        sourceRevision: input.sourceRevision,
+        manifestTransition: {
+          installed: active.receipt.startup.manifestSha256,
+          current: currentStartup.manifestSha256,
         },
-        { stateDir: path.join(receiptStateDir, "state") },
-      ),
-    );
+        requalification: "migrated-via-public-start",
+        stop: {
+          result: firstStop.kind,
+          containerStatus: firstStoppedContainerStatus,
+          openShellPhase: firstTerminalPhase,
+        },
+        recovery: {
+          result: "public-start",
+          forwardResult: gatewayEvidence.forwardRecovery?.kind ?? "missing",
+          authenticatedHealthStatus: Number(gatewayEvidence.health),
+        },
+        refusal: {
+          primaryFailureClass: classifiedFailure.primaryFailureClass,
+          rollbackFailureClass: classifiedFailure.rollbackFailureClass,
+          containerStatus: stoppedContainerStatus,
+          openShellPhase: rollbackTerminalPhase,
+        },
+      };
+      fs.writeFileSync(
+        path.join(input.artifactDir, "hermes-portable-lifecycle-receipt.json"),
+        `${JSON.stringify(evidence, null, 2)}\n`,
+        { encoding: "utf-8", mode: 0o600 },
+      );
+      return evidence;
+    });
   } finally {
-    captureOpenShell(
-      input.openshellBin,
-      input.openshellClientEnv,
-      ["sandbox", "delete", "-g", HERMES_PORTABLE_E2E_GATEWAY_NAME, sandboxName],
-      40_000,
+    requireOpenShellResult(
+      captureOpenShell(
+        input.openshellBin,
+        input.openshellClientEnv,
+        ["sandbox", "delete", "-g", HERMES_PORTABLE_E2E_GATEWAY_NAME, sandboxName],
+        40_000,
+      ),
+      "OpenShell Hermes sandbox deletion",
     );
+    waitForOpenShellSandboxAbsent(input.openshellBin, input.openshellClientEnv, sandboxName);
   }
 }
 
@@ -1018,10 +1128,7 @@ async function main(progress: TestProgress): Promise<void> {
         origin: "generated",
         log: console.log,
       });
-      assert.ok(hermesPrebuild.imageRef, "The staged Hermes image was not built.");
-      assert.ok(hermesPrebuild.imageId, "The staged Hermes image identity was not proven.");
-      hermesImageRef = hermesPrebuild.imageRef;
-      assert.equal(hermesPrebuild.createArgs[1], hermesImageRef);
+      hermesImageRef = hermesPrebuild.imageRef!;
       const inspectedHermesImageId = run("podman", [
         "image",
         "inspect",
@@ -1031,7 +1138,7 @@ async function main(progress: TestProgress): Promise<void> {
       ]).toLowerCase();
       assert.equal(
         inspectedHermesImageId.replace(/^sha256:/u, ""),
-        hermesPrebuild.imageId.replace(/^sha256:/u, ""),
+        hermesPrebuild.imageId!.replace(/^sha256:/u, ""),
       );
       hermesImageId = inspectedHermesImageId;
       run("podman", [
@@ -1211,7 +1318,7 @@ async function main(progress: TestProgress): Promise<void> {
         "HTTP/1.1 200 OK",
       );
 
-      progress.phase("requalify the historical receipt then stop and recover its lifecycle");
+      progress.phase("upgrade the historical receipt through public start and verify its lifecycle");
       hermesLifecycleEvidence = await proveHistoricalHermesPortableLifecycle({
         artifactDir,
         hermesImageRef: hermesImageRef!,

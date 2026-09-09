@@ -282,12 +282,12 @@ function nonEmptyCommandStream(value: string | null | undefined): string | null 
 }
 
 function selectForwardListOutput(result: CommandResult): string | null {
-  const output = nonEmptyCommandStream(result.output);
-  if (output !== null) return output;
   const stdout = nonEmptyCommandStream(result.stdout);
   const stderr = nonEmptyCommandStream(result.stderr);
   if (stdout !== null && stderr !== null) return null;
-  return stdout ?? stderr;
+  if (stdout !== null) return stdout;
+  if (stderr !== null) return stderr;
+  return nonEmptyCommandStream(result.output);
 }
 
 function forwardServiceTarget(
