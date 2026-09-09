@@ -11,12 +11,12 @@ on:
   workflow_dispatch:
     inputs:
       targets:
-        description: "Optional comma-separated typed target IDs. On trusted main runs, empty jobs and targets select all supported registry E2E tests. PR revision runs use the trusted controller target matrix."
+        description: "Optional comma-separated typed target IDs. Empty jobs and targets select all default registry E2E tests. Manual PR runs require a source branch in NVIDIA/NemoClaw."
         required: false
         default: ""
         type: string
       jobs:
-        description: "Optional comma-separated E2E test IDs. Empty selectors choose the default suite. Set include_staging_brev_launchable for full Launchable E2E, or select staging-brev-launchable-identity for the explicit identity smoke run. Jetson dispatch and DGX Spark require their opt-in flags. PR revisions use the trusted controller matrix."
+        description: "Optional comma-separated E2E test IDs. Empty selectors choose the default suite. Set include_staging_brev_launchable for full Launchable E2E, or select staging-brev-launchable-identity for the explicit identity smoke run. Jetson dispatch and DGX Spark require their opt-in flags. Manual PR runs require a source branch in NVIDIA/NemoClaw."
         required: false
         default: ""
         type: string
@@ -464,41 +464,6 @@ jobs:
           fi
           printf 'nvidia_owned=%s\n' "$nvidia_owned" >> "$GITHUB_OUTPUT"
 
-      - id: controller_matrix
-        name: Build trusted controller target matrix
-        if: ${{ inputs.checkout_sha != '' && steps.candidate_authorization.outputs.nvidia_owned != 'true' }}
-        env:
-          JOBS: ${{ inputs.jobs }}
-          TARGETS: ${{ inputs.targets }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          test_matrix='[]'
-          case "${JOBS}:${TARGETS}" in
-            :)
-              matrix='[{"id":"ubuntu-policy-custom-missing-presets-negative","runner":"ubuntu-latest"},{"id":"ubuntu-repo-cloud-langchain-deepagents-code","runner":"ubuntu-latest"},{"id":"ubuntu-repo-cloud-openclaw","runner":"ubuntu-latest"},{"id":"ubuntu-repo-docker-post-reboot-recovery","runner":"ubuntu-latest"}]'
-              test_matrix='[{"id":"onboard-managed-image-buildless-e2e","file":"test/onboarding/onboard-managed-image-buildless-e2e.test.ts","project":"integration"},{"id":"vllm-docker-storage","file":"test/platform/images/vllm-docker-storage.test.ts","project":"integration"}]'
-              ;;
-            inference-routing: | managed-image-protected-runtime: | native-runtime-qualification-producer: | :jetson-nvmap-gpu)
-              matrix='[]'
-              ;;
-            :ubuntu-repo-cloud-langchain-deepagents-code)
-              matrix='[{"id":"ubuntu-repo-cloud-langchain-deepagents-code","runner":"ubuntu-latest","label":"ubuntu-repo-cloud-langchain-deepagents-code"}]'
-              ;;
-            :ubuntu-repo-docker-post-reboot-recovery)
-              matrix='[{"id":"ubuntu-repo-docker-post-reboot-recovery","runner":"ubuntu-latest","label":"ubuntu-repo-docker-post-reboot-recovery"}]'
-              ;;
-            :ubuntu-repo-cloud-langchain-deepagents-code,ubuntu-repo-docker-post-reboot-recovery)
-              matrix='[{"id":"ubuntu-repo-cloud-langchain-deepagents-code","runner":"ubuntu-latest","label":"ubuntu-repo-cloud-langchain-deepagents-code"},{"id":"ubuntu-repo-docker-post-reboot-recovery","runner":"ubuntu-latest","label":"ubuntu-repo-docker-post-reboot-recovery"}]'
-              ;;
-            *)
-              echo "::error::PR E2E target is not approved by the trusted controller" >&2
-              exit 1
-              ;;
-          esac
-          printf 'matrix=%s\n' "${matrix}" >> "${GITHUB_OUTPUT}"
-          printf 'test_matrix=%s\n' "${test_matrix}" >> "${GITHUB_OUTPUT}"
-
       - name: Record trusted E2E dispatch receipt
         if: ${{ github.event_name == 'workflow_dispatch' }}
         env:
@@ -683,9 +648,6 @@ jobs:
       - id: matrix
         name: Generate E2E target matrix
         env:
-          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
-          CONTROLLER_MATRIX: ${{ steps.controller_matrix.outputs.matrix }}
-          CONTROLLER_TEST_MATRIX: ${{ steps.controller_matrix.outputs.test_matrix }}
           INFERENCE_MODE: ${{ inputs.inference_mode || 'mock' }}
           NEMOCLAW_GATEWAY_RUNTIMES: ${{ inputs.gateway_runtimes || inputs.gateway_runtime || 'docker' }}
           JOBS: ${{ inputs.jobs }}
@@ -695,7 +657,6 @@ jobs:
           CANDIDATE_SHA: ${{ github.sha }}
           NEMOCLAW_E2E_CREDENTIALS_ALLOWED: ${{ (inputs.checkout_sha == '' || steps.candidate_authorization.outputs.nvidia_owned == 'true') && 'true' || 'false' }}
           NEMOCLAW_E2E_BRAVE_API_KEY_AVAILABLE: ${{ secrets.BRAVE_API_KEY != '' && 'true' || 'false' }}
-          NVIDIA_OWNED: ${{ steps.candidate_authorization.outputs.nvidia_owned }}
         run: |
           set -euo pipefail
           if [[ "${JOBS:-}" == "native-runtime-qualification-producer" && -z "${TARGETS:-}" ]]; then
@@ -726,20 +687,6 @@ jobs:
             export CHANGED_FILES
           fi
           npx --no-install tsx tools/e2e/workflow-plan.mts --ci-output
-          if [ -n "${CHECKOUT_SHA}" ] && [ "${NVIDIA_OWNED}" != "true" ]; then
-            matrix="$(sed -n 's/^matrix=//p' "${GITHUB_OUTPUT}")"
-            expected_controller_matrix="$(jq -c 'map({id, runner}) | sort_by(.id)' <<< "${CONTROLLER_MATRIX}")"
-            actual_controller_matrix="$(jq -c 'map({id, runner}) | sort_by(.id)' <<< "${matrix}")"
-            test_matrix="$(sed -n 's/^test_matrix=//p' "${GITHUB_OUTPUT}")"
-            expected_controller_test_matrix="$(jq -c 'map({id, file, project}) | sort_by(.id)' <<< "${CONTROLLER_TEST_MATRIX}")"
-            actual_controller_test_matrix="$(jq -c 'map({id, file, project}) | sort_by(.id)' <<< "${test_matrix}")"
-            if [ "${actual_controller_matrix}" != "${expected_controller_matrix}" ] ||
-              [ "${actual_controller_test_matrix}" != "${expected_controller_test_matrix}" ]; then
-              : > "${GITHUB_OUTPUT}"
-              echo "::error::E2E planner matrix does not match controller-selected targets or shared tests" >&2
-              exit 1
-            fi
-          fi
 
       # Publish immutable source-run toolchains before candidate checkout or
       # candidate-controlled workspace preparation can execute on this runner.

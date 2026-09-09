@@ -55,6 +55,9 @@ for main CI, PR CI, and E2E candidate preparation. Its key includes the checkout
 SHA, trusted recipe revision, action content, Node version, and runner platform.
 A full cache match skips dependency installation and compilation; a miss rebuilds
 the same output. Both paths verify output completeness and source identity.
+A rejected cache hit fails the job. The job summary gives its key and a cache-deletion command.
+Delete that cache, then rerun the failed jobs to rebuild on a miss.
+Rerunning before deletion restores the same invalid entry.
 Main CI and main E2E can reuse an entry for the same source and recipe.
 PR caches remain scoped to their merge refs, so manual E2E can miss a PR CI entry.
 Cache eviction and concurrent misses can cause additional builds. Each workflow
@@ -1432,6 +1435,7 @@ The API must report `NVIDIA/NemoClaw` as the PR source repository. Empty `jobs` 
 - every default registry target.
 
 A same-repository PR may also select any supported E2E job or target.
+Main and manual PR runs use the same typed planner from the trusted workflow revision.
 PRs from forks, including other NVIDIA repositories, are rejected before candidate execution.
 The run skips `jetson-nvmap-gpu` unless `allow_jetson_dispatch` is `true`.
 Jetson and Launchable retain their operator and image-producer requirements.

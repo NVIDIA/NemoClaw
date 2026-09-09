@@ -56,6 +56,7 @@ describe("compiled artifact preparation", () => {
     (event) => {
       const result = runCompiledArtifactPreparation(true, event);
       expect(result.failure).toBe("");
+      expect(result.summary).not.toContain("gh cache delete");
       expect(result.commands).toEqual([]);
       expect(result.saved).toBe(0);
       expect(result.outputs.identity.sha).toBe(COMPILED_ARTIFACT_SHA);
@@ -67,6 +68,7 @@ describe("compiled artifact preparation", () => {
     (event) => {
       const result = runCompiledArtifactPreparation(false, event);
       expect(result.failure).toBe("");
+      expect(result.summary).not.toContain("gh cache delete");
       expect(result.commands).toEqual(["install", "--prefix nemoclaw run build", "run build:cli"]);
       expect(existsSync(join(result.root, "dist/stale"))).toBe(false);
       expect(result.saved).toBe(1);
@@ -74,11 +76,16 @@ describe("compiled artifact preparation", () => {
     },
   );
 
-  it("rejects a mismatched cache hit without compiling or saving", () => {
+  it("reports recovery for a rejected cache hit without compiling or saving", () => {
     const result = runCompiledArtifactPreparation(true, "pull_request", true);
     expect(result.failure).toContain("checkout SHA");
     expect(result.commands).toEqual([]);
     expect(result.saved).toBe(0);
+    expect(result.summary).toContain(`Cache key: \`${result.outputs.identity.key}\``);
+    expect(result.summary).toContain("Result: failure. Cache hit: true.");
+    expect(result.summary).toContain(
+      `gh cache delete "${result.outputs.identity.key}" --repo "NVIDIA/NemoClaw"`,
+    );
   });
 
   it("uses the same cache identity for main CI and manual E2E of the same commit", () => {

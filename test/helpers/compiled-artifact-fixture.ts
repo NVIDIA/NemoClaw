@@ -84,7 +84,7 @@ export function runCompiledArtifactPreparation(
   let restored = 0;
   let failure = "";
   for (const [index, step] of action.runs.steps.entries()) {
-    if (!enabled(step.if)) continue;
+    if (!enabled(step.if) || (failure && step.if !== "always()")) continue;
     if (step.uses?.startsWith("actions/setup-node@")) continue;
     if (step.uses?.startsWith("actions/cache/restore@")) {
       restored++;
@@ -100,9 +100,11 @@ export function runCompiledArtifactPreparation(
     const stepEnv = Object.fromEntries(
       Object.entries(step.env ?? {}).map(([key, input]) => [
         key,
-        input.replace(/\$\{\{ (steps\.[\w-]+\.outputs\.[\w-]+) \}\}/g, (_, reference: string) =>
-          value(reference),
-        ),
+        input
+          .replace(/\$\{\{ (steps\.[\w-]+\.outputs\.[\w-]+) \}\}/g, (_, reference: string) =>
+            value(reference),
+          )
+          .replace("${{ job.status }}", failure ? "failure" : "success"),
       ]),
     );
     const result = spawnSync("/bin/bash", ["-e", "-c", step.run], {
@@ -115,6 +117,7 @@ export function runCompiledArtifactPreparation(
         PATH: `${bin}:${process.env.PATH}`,
         GITHUB_ACTION_PATH: actionPath,
         GITHUB_WORKSPACE: root,
+        GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
         GITHUB_OUTPUT: output,
         GITHUB_STEP_SUMMARY: join(root, "summary"),
         GITHUB_EVENT_NAME: event,
@@ -128,8 +131,8 @@ export function runCompiledArtifactPreparation(
       },
     });
     if (result.status !== 0) {
-      failure = result.stderr || result.stdout;
-      break;
+      failure ||= result.stderr || result.stdout || `Step "${step.name}" exited ${result.status}`;
+      continue;
     }
     if (step.id && existsSync(output))
       outputs[step.id] = Object.fromEntries(
@@ -148,6 +151,7 @@ export function runCompiledArtifactPreparation(
     saved,
     restored,
     outputs,
+    summary: readFileSync(join(root, "summary"), "utf8"),
     commands: existsSync(log) ? readFileSync(log, "utf8").trim().split("\n") : [],
   };
 }

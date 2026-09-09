@@ -33,8 +33,7 @@ runs:
     - name: Remove outputs after a cache miss
       if: steps.cache.outputs.cache-hit != 'true'
       shell: bash
-      run: |
-        node -e 'for (const p of ["dist", "nemoclaw/dist"]) require("node:fs").rmSync(p, { recursive: true, force: true });'
+      run: rm -rf -- dist nemoclaw/dist
 
     - name: Install dependencies
       if: steps.cache.outputs.cache-hit != 'true'
@@ -72,11 +71,16 @@ runs:
       shell: bash
       env:
         CACHE_HIT: ${{ steps.cache.outputs.cache-hit }}
+        CACHE_KEY: ${{ steps.identity.outputs.key }}
         SOURCE_SHA: ${{ steps.identity.outputs.sha }}
         PREPARATION_RESULT: ${{ job.status }}
       run: |
         {
           echo '### Compiled CLI and plugin'
           printf 'Source: `%s`\n\n' "$SOURCE_SHA"
+          printf 'Cache key: `%s`\n\n' "$CACHE_KEY"
           printf 'Result: %s. Cache hit: %s.\n\n' "$PREPARATION_RESULT" "${CACHE_HIT:-false}"
+          if [[ "$CACHE_HIT" == "true" && "$PREPARATION_RESULT" == "failure" ]]; then
+            printf 'Delete the rejected cache with `gh cache delete "%s" --repo "%s"`, then rerun the failed jobs.\n' "$CACHE_KEY" "$GITHUB_REPOSITORY"
+          fi
         } >> "$GITHUB_STEP_SUMMARY"
