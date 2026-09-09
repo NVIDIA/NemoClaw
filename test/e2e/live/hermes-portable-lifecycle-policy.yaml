@@ -22,6 +22,11 @@ filesystem_policy:
 landlock:
   compatibility: best_effort
 
-# Preserve the Hermes image's root entrypoint. Its production startup script
-# validates the mounted sandbox posture before dropping privileges itself.
+# OpenShell-managed Hermes runs through the image's supported same-UID path.
+# Resolve the reviewed account names from the image instead of assuming the
+# legacy sandbox-base fixture's numeric 1000:1000 identity.
+process:
+  run_as_user: sandbox
+  run_as_group: sandbox
+
 network_policies: {}

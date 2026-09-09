@@ -135,7 +135,10 @@ describe("portable profile rootless runtime workflow", () => {
     expect(liveTest).toContain("createHermesPortableBuildContextPlan(");
     expect(liveTest).toContain('"test/e2e/live/hermes-portable-lifecycle-policy.yaml"');
     expect(hermesPolicy.filesystem_policy?.read_only).toContain("/opt/hermes");
-    expect(hermesPolicy.process).toBeUndefined();
+    expect(hermesPolicy.process).toEqual({
+      run_as_user: "sandbox",
+      run_as_group: "sandbox",
+    });
     expect(liveTest).toContain('buildId: "hermes-rootless-e2e"');
     expect(liveTest).toContain("hermesContextPlan.retire(hermesContextInput)");
     expect(liveTest).toContain("assert.equal(prepared?.authority.configHome, configHome);");
