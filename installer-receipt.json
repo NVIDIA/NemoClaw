@@ -1,15 +1,15 @@
 {
   "schemaVersion": 1,
   "classification": "unsigned-native-windows-arm64-preview-qualification-pending",
-  "candidateSha": "c140fe10519b728a63af8180e51d54671750f99a",
+  "candidateSha": "0cfdb712f6db87e831829f5ab5a2fde9e143807d",
   "sourceRepository": "https://github.com/NVIDIA/NemoClaw",
   "sourcePullRequest": 10799,
-  "sourceWorkflowRun": 34380426001,
+  "sourceWorkflowRun": 34404680432,
   "sourceWorkflowAttempts": [
     1
   ],
-  "sourceArtifactId": 10117395635,
-  "packageManifestSha256": "ee2fa0fb595ec58af04355f9388f96cc2d65eb638c98bfcdc27450bfda9ca1d3",
+  "sourceArtifactId": 10127637925,
+  "packageManifestSha256": "9c89409caafac7db5465392f4ab32a5aacaf819e2821f697251e44006cd98ff4",
   "openshell": {
     "repository": "https://github.com/NVIDIA/OpenShell",
     "pullRequest": 2721,
@@ -19,39 +19,25 @@
   "files": [
     {
       "name": "NemoClaw-0.1.0-windows-arm64.msi",
-      "size": 260342753,
-      "sha256": "befe5c6e772deaad55f86251c4fc7d3faefef03af5cb143c27b6fcd507f56cfd"
+      "size": 260809676,
+      "sha256": "4a72eab1e52b949391156850c3aece140328d85f9743e43a718ac9fc58f38f0c"
     },
     {
       "name": "NemoClawSetup-0.1.0-windows-arm64.exe",
-      "size": 304374659,
-      "sha256": "13b5d56f798a214bbc83cf4728380668fe59e9ad5afd46f447a9dd356f761ab0"
+      "size": 304704841,
+      "sha256": "5a7702197b57786ab51f54d375e06af158bf26726868eee810a3f781151c0ffb"
     }
   ],
   "qualification": {
     "architecture": "arm64",
     "retainedReferenceInstallerChecks": "passed",
     "earlyAndRepeatedProcessAudit": "passed",
-    "installedAcceptance": "failed",
+    "installedAcceptance": "pending",
     "requiredCompleteNativePasses": 2,
     "completeNativePasses": 0,
     "physicalN1x": "not-qualified",
-    "productionSupport": false,
-    "failure": {
-      "step": "Qualify MSI and setup executable",
-      "reportedError": "Installed NemoClaw CLI did not report expected version 0.1.0.",
-      "credentialAndOptionalServiceControlsPassed": true,
-      "fullPackageQualificationPassed": false
-    }
+    "productionSupport": false
   },
-  "criticalSourcePayloadHashesMatched": 12,
-  "payloadFiles": 81806,
-  "knownRuntimeIssue": {
-    "observedCandidate": "36cdec5a1e8cd5fb0618afd5b20d8055ed051d53",
-    "affectedRuntimeUnchangedInThisCandidate": true,
-    "stage": "contained broker bootstrap",
-    "errorCode": "ETIMEDOUT",
-    "hostProbeStatus": 403,
-    "status": "repair in progress; no deployed fix claimed"
-  }
+  "criticalSourcePayloadHashesMatched": 26,
+  "payloadFiles": 83245
 }
