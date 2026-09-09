@@ -36,6 +36,40 @@ export interface HermesConfigExportLiveResult {
   readonly passed: boolean;
 }
 
+export interface HermesConfigExportLiveEvidence {
+  readonly agent: string | undefined;
+  readonly aliasesEquivalent: boolean;
+  readonly checked: true;
+  readonly credentialReferenceMatches: boolean;
+  readonly credentialValuesOmitted: boolean;
+  readonly identityDriftPreventedPublication: boolean;
+  readonly identityDriftReported: boolean;
+  readonly immutableManagedImageMatches: boolean;
+  readonly inferenceEndpointMatches: boolean;
+  readonly launchersSucceeded: boolean;
+  readonly policyMatches: boolean;
+  readonly sandboxNameMatches: boolean;
+}
+
+/** Decide the live contract from redacted, serializable observations. */
+export function passesHermesConfigExportLiveEvidence(
+  evidence: HermesConfigExportLiveEvidence,
+): boolean {
+  return (
+    evidence.agent === "hermes" &&
+    evidence.aliasesEquivalent &&
+    evidence.credentialReferenceMatches &&
+    evidence.credentialValuesOmitted &&
+    evidence.identityDriftPreventedPublication &&
+    evidence.identityDriftReported &&
+    evidence.immutableManagedImageMatches &&
+    evidence.inferenceEndpointMatches &&
+    evidence.launchersSucceeded &&
+    evidence.policyMatches &&
+    evidence.sandboxNameMatches
+  );
+}
+
 /** Exercise both public CLI names against one live, canonical Hermes source. */
 export async function verifyHermesConfigExportLive(
   input: HermesConfigExportLiveInput,
@@ -135,26 +169,7 @@ export async function verifyHermesConfigExportLive(
     save(registry);
   }
 
-  const passed =
-    nemoclaw.exitCode === 0 &&
-    nemohermes.exitCode === 0 &&
-    !containsCredential &&
-    sandbox.name === input.sandboxName &&
-    sandbox.agents[0]?.type === "hermes" &&
-    sandbox.runtime.image.ref === expectedImage &&
-    nemoclawDocument.spec.inferenceProviders[0]?.endpoint === entry.endpointUrl &&
-    nemoclawDocument.spec.inferenceProviders[0]?.credential?.env === entry.credentialEnv &&
-    isDeepStrictEqual(sandbox.network.policy.explicit, expectedPolicy) &&
-    isDeepStrictEqual(nemohermesDocument.spec, nemoclawDocument.spec) &&
-    typeof nemoclawDriftExitCode === "number" &&
-    nemoclawDriftExitCode !== 0 &&
-    typeof nemohermesDriftExitCode === "number" &&
-    nemohermesDriftExitCode !== 0 &&
-    driftDiagnostics.includes("drifted") &&
-    !fs.existsSync(nemoclawMismatchPath) &&
-    !fs.existsSync(nemohermesMismatchPath);
-
-  await input.artifacts.writeJson("hermes-config-export-live-evidence.json", {
+  const evidence: HermesConfigExportLiveEvidence = {
     aliasesEquivalent: isDeepStrictEqual(nemohermesDocument.spec, nemoclawDocument.spec),
     agent: sandbox.agents[0]?.type,
     checked: true,
@@ -168,11 +183,14 @@ export async function verifyHermesConfigExportLive(
       nemohermesDriftExitCode !== 0 &&
       !fs.existsSync(nemoclawMismatchPath) &&
       !fs.existsSync(nemohermesMismatchPath),
+    identityDriftReported: driftDiagnostics.includes("drifted"),
     immutableManagedImageMatches: sandbox.runtime.image.ref === expectedImage,
     inferenceEndpointMatches:
       nemoclawDocument.spec.inferenceProviders[0]?.endpoint === entry.endpointUrl,
+    launchersSucceeded: nemoclaw.exitCode === 0 && nemohermes.exitCode === 0,
     policyMatches: isDeepStrictEqual(sandbox.network.policy.explicit, expectedPolicy),
     sandboxNameMatches: sandbox.name === input.sandboxName,
-  });
-  return { checked: true, passed };
+  };
+  await input.artifacts.writeJson("hermes-config-export-live-evidence.json", evidence);
+  return { checked: true, passed: passesHermesConfigExportLiveEvidence(evidence) };
 }
