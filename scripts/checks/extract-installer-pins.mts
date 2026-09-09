@@ -499,8 +499,8 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       url: "https://github.com/NVIDIA/OpenShell/releases/download/v0.0.116/openshell.rb",
     },
     // The v0.0.116 release publishes only MUSL standalone sandbox archives.
-    // Trust only the prospective installer template whose stable Linux path
-    // selects that ABI. The historical v0.0.106 record retains the GNU templates.
+    // Trust only the exact full-cutover installer template whose stable Linux
+    // path selects that ABI. The historical v0.0.106 record retains the GNU templates.
     installerTemplateSha256: [
       "2b6ad3e0730d3220da05d13b88fdba4458de46840bad57942ecad26a5d606017",
     ],
@@ -533,6 +533,7 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       manifestDigest: "sha256:c8c42aef16c200063e32cbf72e553e4ead027085427b555efafd95063ecead42",
       required: false,
       runtimeTemplateSha256: [
+        // Exact template after the reviewed 0.0.116-only recovery gate.
         "593ced09573f8cea5d2323b6d388ebb5d30f6da241d4f511e5364a3057887911",
       ],
     },

@@ -26,10 +26,17 @@ import {
 
 const temporaryRoots: string[] = [];
 const archiveBytes = Buffer.from("reviewed OpenShell SDK fixture");
-const artifactName = "nvidia-openshell-sdk-0.0.116.tgz";
+const artifactName = "nvidia-openshell-sdk-0.0.106.tgz";
 const reviewed: ReviewedSourceRegistryPackage = {
   artifactName,
   integrity: `sha512-${createHash("sha512").update(archiveBytes).digest("base64")}`,
+  label: "OpenShell TypeScript SDK 0.0.106",
+  packageSpec: "@nvidia/openshell-sdk@0.0.106",
+  tarballUrl: "https://npm.pkg.github.com/download/@nvidia/openshell-sdk/0.0.106/reviewed-fixture",
+};
+const replacement: ReviewedSourceRegistryPackage = {
+  ...reviewed,
+  artifactName: "nvidia-openshell-sdk-0.0.116.tgz",
   label: "OpenShell TypeScript SDK 0.0.116",
   packageSpec: "@nvidia/openshell-sdk@0.0.116",
   tarballUrl: "https://npm.pkg.github.com/download/@nvidia/openshell-sdk/0.0.116/reviewed-fixture",
@@ -46,15 +53,18 @@ function cacheStageMock() {
 }
 
 function reviewedLock(packageIdentity: ReviewedSourceRegistryPackage = reviewed) {
+  const version = packageIdentity.packageSpec.slice(
+    packageIdentity.packageSpec.lastIndexOf("@") + 1,
+  );
   return {
     lockfileVersion: 3,
     name: "reviewed-sdk-artifact-fixture",
     packages: {
-      "": { dependencies: { "@nvidia/openshell-sdk": "0.0.116" } },
+      "": { dependencies: { "@nvidia/openshell-sdk": version } },
       "node_modules/@nvidia/openshell-sdk": {
         integrity: packageIdentity.integrity,
         resolved: packageIdentity.tarballUrl,
-        version: "0.0.116",
+        version,
       },
     },
     version: "1.0.0",
@@ -70,7 +80,10 @@ function publicLock() {
   };
 }
 
-function reviewedConfigSource(packageIdentity: ReviewedSourceRegistryPackage = reviewed) {
+function reviewedConfigSource(
+  packageIdentity: ReviewedSourceRegistryPackage = reviewed,
+  replacementIdentity?: ReviewedSourceRegistryPackage,
+) {
   return JSON.stringify({
     archiveGraphId: "reviewed-archive-graph",
     archivePackages: [],
@@ -87,11 +100,12 @@ function reviewedConfigSource(packageIdentity: ReviewedSourceRegistryPackage = r
     severityThreshold: "high",
     sourceNestedShrinkwrapPackages: [],
     sourceRegistryPackage: packageIdentity,
+    ...(replacementIdentity ? { sourceRegistryPackageReplacement: replacementIdentity } : {}),
     sourceRegistryPackagesWithoutIntegrity: [],
   });
 }
 
-function fixture() {
+function fixture(packageIdentity: ReviewedSourceRegistryPackage = reviewed) {
   const root = mkdtempSync(join(tmpdir(), "nemoclaw-reviewed-sdk-artifact-"));
   temporaryRoots.push(root);
   const artifactDirectory = join(root, "artifact");
@@ -99,8 +113,8 @@ function fixture() {
   const lockfilePath = join(root, "package-lock.json");
   mkdirSync(artifactDirectory);
   mkdirSync(cacheDirectory);
-  writeFileSync(join(artifactDirectory, artifactName), archiveBytes);
-  writeFileSync(lockfilePath, JSON.stringify(reviewedLock()));
+  writeFileSync(join(artifactDirectory, packageIdentity.artifactName), archiveBytes);
+  writeFileSync(lockfilePath, JSON.stringify(reviewedLock(packageIdentity)));
   return { artifactDirectory, cacheDirectory, lockfilePath, root };
 }
 
@@ -108,7 +122,7 @@ function installFixture(
   reviewedLocation: "root" | "nemoclaw",
   packageIdentity: ReviewedSourceRegistryPackage = reviewed,
 ) {
-  const source = fixture();
+  const source = fixture(packageIdentity);
   const nestedRoot = join(source.root, "nemoclaw");
   mkdirSync(nestedRoot);
   writeFileSync(
@@ -128,7 +142,7 @@ function packedInstallFixture() {
   mkdirSync(packageRoot);
   writeFileSync(
     join(packageRoot, "package.json"),
-    JSON.stringify({ name: "@nvidia/openshell-sdk", version: "0.0.116" }),
+    JSON.stringify({ name: "@nvidia/openshell-sdk", version: "0.0.106" }),
   );
   writeFileSync(join(packageRoot, "index.js"), "export {};\n");
   rmSync(join(source.artifactDirectory, artifactName));
@@ -148,7 +162,7 @@ function packedInstallFixture() {
   writeFileSync(
     join(source.root, "package.json"),
     JSON.stringify({
-      dependencies: { "@nvidia/openshell-sdk": "0.0.116" },
+      dependencies: { "@nvidia/openshell-sdk": "0.0.106" },
       name: "reviewed-sdk-install-fixture",
       private: true,
       version: "1.0.0",
@@ -272,6 +286,51 @@ describe("trusted OpenShell SDK archive preparation", () => {
     expect(stage).toHaveBeenCalledOnce();
   });
 
+  it("selects and stages one base-approved replacement SDK identity", async () => {
+    const source = installFixture("root", replacement);
+    const stage = cacheStageMock();
+
+    await prepareCiNpmInstallWithReviewedConfig(
+      installRequest(source, "artifact"),
+      reviewedConfigSource(reviewed, replacement),
+      stage,
+    );
+
+    expect(stage).toHaveBeenCalledOnce();
+    expect(stage.mock.calls[0]?.[0]).toMatchObject({ artifactName: replacement.artifactName });
+  });
+
+  it("rejects a candidate that mixes active and replacement SDK identities", async () => {
+    const source = installFixture("root", reviewed);
+    writeFileSync(
+      join(source.root, "nemoclaw", "package-lock.json"),
+      JSON.stringify(reviewedLock(replacement)),
+    );
+
+    await expect(
+      prepareCiNpmInstallWithReviewedConfig(
+        installRequest(source, "registry"),
+        reviewedConfigSource(reviewed, replacement),
+      ),
+    ).rejects.toThrow("reviewed npm locks use conflicting OpenShell SDK identities");
+  });
+
+  it.each([
+    ["a different package", { packageSpec: "@example/other-sdk@0.0.116" }],
+    ["the active package version", { packageSpec: reviewed.packageSpec }],
+    ["the active artifact name", { artifactName: reviewed.artifactName }],
+  ])("rejects replacement trust for %s", async (_case, replacementPatch) => {
+    const source = installFixture("root");
+    const invalidReplacement = { ...replacement, ...replacementPatch };
+
+    await expect(
+      prepareCiNpmInstallWithReviewedConfig(
+        installRequest(source, "registry"),
+        reviewedConfigSource(reviewed, invalidReplacement),
+      ),
+    ).rejects.toThrow("ci/reviewed-npm-audit.json is invalid");
+  });
+
   it("uses registry mode without requiring or caching an archive", async () => {
     const source = installFixture("root");
     const stage = cacheStageMock();
@@ -324,7 +383,7 @@ describe("trusted OpenShell SDK archive preparation", () => {
     const installed = JSON.parse(
       readFileSync(join(source.root, "node_modules/@nvidia/openshell-sdk/package.json"), "utf8"),
     ) as { version?: string };
-    expect(installed.version).toBe("0.0.116");
+    expect(installed.version).toBe("0.0.106");
   });
 
   it("rejects changed bytes before writing the npm cache", async () => {
