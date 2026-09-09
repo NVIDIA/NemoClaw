@@ -589,10 +589,10 @@ describe("CLI sandbox status text output", () => {
     },
   );
 
-  it(
-    "sandbox <name> status reports clean Stopped state without failureLayer when stopped (#11025)",
+  it.each(["missing", "present"] as const)(
+    "sandbox <name> status reports clean Stopped state with a %s live lookup (#11025)",
     testTimeoutOptions(30_000),
-    () => {
+    (gatewayState) => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-status-stopped-"));
       const localBin = path.join(home, "bin");
       const stoppedState = path.join(home, "docker-stopped");
@@ -605,7 +605,11 @@ describe("CLI sandbox status text output", () => {
         path.join(localBin, "openshell"),
         [
           "#!/usr/bin/env bash",
-          `if [ -f ${JSON.stringify(stoppedState)} ] && [ "$1" = "sandbox" ] && [ "$2" = "get" ]; then echo 'NotFound: sandbox not found'; exit 1; fi`,
+          ...(gatewayState === "missing"
+            ? [
+                `if [ -f ${JSON.stringify(stoppedState)} ] && [ "$1" = "sandbox" ] && [ "$2" = "get" ]; then echo 'NotFound: sandbox not found'; exit 1; fi`,
+              ]
+            : []),
           'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && { [ "$3" = "alpha" ] || [ "$5" = "alpha" ]; }; then',
           "  echo 'Sandbox:'",
           "  echo",
@@ -673,7 +677,7 @@ describe("CLI sandbox status text output", () => {
         },
         30_000,
       );
-      expect(stopped.code).toBe(0);
+      expect(stopped.code, stopped.out).toBe(0);
 
       const r = runWithEnv(
         "alpha status",
@@ -706,7 +710,7 @@ describe("CLI sandbox status text output", () => {
       expect(j.code).toBe(0);
       const parsed = JSON.parse(j.out);
       expect(parsed.phase).toBe("Stopped");
-      expect(parsed.gatewayState).toBe("missing");
+      expect(parsed.gatewayState).toBe(gatewayState);
       expect(parsed.failureLayer).toBeNull();
     },
   );
