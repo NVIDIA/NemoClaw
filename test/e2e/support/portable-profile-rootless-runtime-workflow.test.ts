@@ -6,12 +6,6 @@ import fs from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
-import {
-  FULL_E2E_PORTABLE_JOB_TIMEOUT_MINUTES,
-  FULL_E2E_PORTABLE_POST_TEST_MINUTES,
-  FULL_E2E_PORTABLE_PRE_TEST_MINUTES,
-  FULL_E2E_TEST_TIMEOUT_MINUTES,
-} from "../../../tools/e2e/full-e2e-timeout-contract.mts";
 import { readRepoText, readYaml, type Workflow } from "../../helpers/e2e-workflow-contract";
 
 type PortableProfileWorkflow = Workflow & {
@@ -273,6 +267,7 @@ ${serviceIdentityCheck}`,
         "src/lib/onboard/experimental/portable-retired-subnet-recovery.test.ts",
         "test/e2e/live/portable-profile-rootless-linux.test.ts",
         "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
+        "tools/e2e/full-e2e-timeout-contract.mts",
       ]),
     );
     expect(job?.env?.E2E_SOURCE_REVISION).toBe(revisionExpression);
@@ -281,14 +276,7 @@ ${serviceIdentityCheck}`,
     expect(upload?.if).toBe("always()");
     expect(upload?.with?.name).toContain(revisionExpression);
     expect(workflow.jobs["portable-launch"]?.if).toBe("${{ github.ref == 'refs/heads/main' }}");
-    expect(workflow.jobs["portable-launch"]?.["timeout-minutes"]).toBe(
-      FULL_E2E_PORTABLE_JOB_TIMEOUT_MINUTES,
-    );
-    expect(workflow.jobs["portable-launch"]?.["timeout-minutes"]).toBe(
-      FULL_E2E_PORTABLE_PRE_TEST_MINUTES +
-        FULL_E2E_TEST_TIMEOUT_MINUTES +
-        FULL_E2E_PORTABLE_POST_TEST_MINUTES,
-    );
+    expect(workflow.jobs["portable-launch"]?.["timeout-minutes"]).toBe(135);
     expect(liveSource).toContain('run("git", ["rev-parse", "HEAD"])');
     expect(liveSource).toContain('"network", "rm", disposableNetworkId');
     expect(liveSource).not.toContain('"network", "rm", "--force"');

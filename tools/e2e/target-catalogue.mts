@@ -745,6 +745,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       "test/e2e/live/launch-agent-turn.ts",
       "test/e2e/live/pr-base-comparison.ts",
       "src/lib/tunnel/gateway-stop-script.ts",
+      "tools/e2e/full-e2e-timeout-contract.mts",
     ],
     environment: {
       ...hostedInference,
@@ -1316,6 +1317,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     exposeCliBin: true,
     shard: "openclaw",
     artifactLayout: "flat-shard",
+    owningPaths: ["tools/e2e/full-e2e-timeout-contract.mts"],
     environment: {
       ...hostedInference,
       ...nonInteractive,

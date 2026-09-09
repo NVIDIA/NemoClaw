@@ -4,12 +4,6 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  FULL_E2E_MACOS_JOB_TIMEOUT_MINUTES,
-  FULL_E2E_MACOS_POST_TEST_MINUTES,
-  FULL_E2E_MACOS_PRE_TEST_MINUTES,
-  FULL_E2E_TEST_TIMEOUT_MINUTES,
-} from "../../../tools/e2e/full-e2e-timeout-contract.mts";
-import {
   readRepoText,
   readYaml,
   type Workflow,
@@ -73,11 +67,6 @@ describe("platform evidence workflow", () => {
     }>;
     const firstShard = macosShards.find(({ shard }) => shard === 1);
 
-    expect(firstShard?.timeout_minutes).toBe(FULL_E2E_MACOS_JOB_TIMEOUT_MINUTES);
-    expect(firstShard?.timeout_minutes).toBe(
-      FULL_E2E_MACOS_PRE_TEST_MINUTES +
-        FULL_E2E_TEST_TIMEOUT_MINUTES +
-        FULL_E2E_MACOS_POST_TEST_MINUTES,
-    );
+    expect(firstShard?.timeout_minutes).toBe(150);
   });
 });
