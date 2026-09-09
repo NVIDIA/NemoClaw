@@ -14,7 +14,7 @@ export function usesLegacyRuntimeLifecycleCompatibility(entry: SandboxEntry): bo
   }
   try {
     return (
-      provider.gateway.prepareHostRuntime({
+      provider.gateway.observeHostRuntime({
         environment: process.env,
         platform: process.platform,
       }).socketPath === null

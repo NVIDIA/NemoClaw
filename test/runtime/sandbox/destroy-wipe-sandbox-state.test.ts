@@ -448,7 +448,7 @@ describe("wipeSandboxState (#5449)", () => {
     {
       agent: "langchain-deepagents-code",
       configDir: "/sandbox/.deepagents",
-      stateDirs: [".state", "skills", "agent/skills"],
+      stateDirs: [".state", "agent/skills"],
       stateDirPrefixes: [],
       stateFiles: [{ path: "config.toml" }],
       label: "langchain-deepagents-code",

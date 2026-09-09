@@ -202,6 +202,6 @@ describe("managed snapshot profile restore", () => {
         },
         "beta",
       ),
-    ).toThrow(/requires managed-profile clone rebind/u);
+    ).toThrow(/uses a NemoClaw-managed image/u);
   });
 });

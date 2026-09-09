@@ -1202,69 +1202,6 @@ describe("createSetupNim", () => {
     expect(getRuntimeProvider).not.toHaveBeenCalled();
   });
 
-  it("activates a readiness-selected managed llama.cpp recipe for the selected gateway", async () => {
-    const discoverySelection = {
-      recipe: {
-        metadata: { id: "test.llama.recipe.discovery" },
-        spec: { model: { servedName: "stale-discovery-model" } },
-      },
-    } as never;
-    const selection = {
-      recipe: {
-        metadata: { id: "test.llama.recipe" },
-        spec: { model: { servedName: "nvidia-nemotron-3-nano-30b-a3b" } },
-      },
-    } as never;
-    const resolveManagedLlamaCppSelection = vi
-      .fn()
-      .mockReturnValueOnce({ kind: "selected" as const, selection: discoverySelection })
-      .mockReturnValueOnce({ kind: "selected" as const, selection });
-    const installManagedLlamaCpp = vi.fn(async () => ({
-      ok: true as const,
-      apiKey: "a".repeat(64),
-      model: "nvidia-nemotron-3-nano-30b-a3b",
-      receipt: { schemaVersion: 1 } as never,
-    }));
-    const handleLlamaCppSelection = vi.fn<SetupNimFlowDeps["handleLlamaCppSelection"]>(
-      async (state, requestedModel) => {
-        expect(requestedModel).toBe("nvidia-nemotron-3-nano-30b-a3b");
-        state.provider = "llama-cpp-local";
-        state.model = requestedModel;
-        state.endpointUrl = "http://127.0.0.1:8081/v1";
-        state.credentialEnv = "NEMOCLAW_LLAMACPP_LOCAL_TOKEN";
-        state.preferredInferenceApi = "openai-completions";
-        return "selected";
-      },
-    );
-    const runtimeProvider = makeDeps().getRuntimeProvider();
-    const getRuntimeProvider = vi.fn(() => runtimeProvider);
-    const setupNim = createSetupNim(
-      makeDeps({
-        isNonInteractive: () => true,
-        getNonInteractiveProvider: () => "install-llama-cpp",
-        getGatewayPort: () => 8091,
-        resolveManagedLlamaCppSelection,
-        installManagedLlamaCpp,
-        getRuntimeProvider,
-        handleLlamaCppSelection,
-      }),
-    );
-
-    await expect(setupNim({ platform: "spark" } as never, "spark-agent")).resolves.toMatchObject({
-      provider: "llama-cpp-local",
-      model: "nvidia-nemotron-3-nano-30b-a3b",
-      preferredInferenceApi: "openai-completions",
-    });
-    expect(resolveManagedLlamaCppSelection).toHaveBeenCalledTimes(2);
-    expect(installManagedLlamaCpp).toHaveBeenCalledWith(selection, {
-      sandboxName: "spark-agent",
-      gatewayPort: 8091,
-      revalidateSandboxIdentity: expect.any(Function),
-      runtimeProvider,
-    });
-    expect(getRuntimeProvider).toHaveBeenCalledOnce();
-  });
-
   it("does not resolve a host-local-inference runtime provider for existing vLLM", async () => {
     const getRuntimeProvider = vi.fn(() => unexpected("runtime provider selection"));
     const handleVllmSelection = vi.fn<SetupNimFlowDeps["handleVllmSelection"]>(async (state) => {
@@ -1306,7 +1243,10 @@ describe("createSetupNim", () => {
       makeDeps({
         isNonInteractive: () => true,
         getNonInteractiveProvider: () => "install-llama-cpp",
-        resolveManagedLlamaCppSelection: () => ({ kind: "selected", selection }),
+        discoverManagedLlamaCppSelections: () => ({
+          choices: [{ priority: 500, selection }],
+          resolution: { kind: "selected", selection },
+        }),
         installManagedLlamaCpp: installManagedLlamaCpp as never,
       }),
     );
@@ -1329,10 +1269,14 @@ describe("createSetupNim", () => {
     expect(installManagedLlamaCpp).not.toHaveBeenCalled();
   });
 
-  it("omits managed llama.cpp from the interactive menu when canonical readiness rejects it", async () => {
-    const resolveManagedLlamaCppSelection = vi.fn(() => ({
-      kind: "rejected" as const,
-      reason: "host readiness requirements are unmet",
+  it("explains why N1x managed llama.cpp is unavailable before offering fallbacks", async () => {
+    const note = vi.fn();
+    const discoverManagedLlamaCppSelections = vi.fn(() => ({
+      choices: [],
+      resolution: {
+        kind: "rejected" as const,
+        reason: "host readiness requirements are unmet",
+      },
     }));
     const selectFromNumberedMenu = vi.fn<SetupNimFlowDeps["selectFromNumberedMenu"]>(
       (_rawChoice, _defaultIndex, options) => {
@@ -1353,16 +1297,22 @@ describe("createSetupNim", () => {
     const setupNim = createSetupNim(
       makeDeps({
         prompt: async () => "1",
+        note,
         selectFromNumberedMenu,
-        resolveManagedLlamaCppSelection,
+        discoverManagedLlamaCppSelections,
         handleRemoteProviderSelection,
       }),
     );
 
-    await expect(setupNim({ platform: "spark" } as never, "spark-agent")).resolves.toMatchObject({
+    await expect(setupNim({ platform: "n1x" } as never, "n1x-agent")).resolves.toMatchObject({
       provider: "nvidia-prod",
     });
-    expect(resolveManagedLlamaCppSelection).toHaveBeenCalledOnce();
+    expect(discoverManagedLlamaCppSelections).toHaveBeenCalledOnce();
+    expect(note).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "Managed llama.cpp is unavailable on this N1x host: host readiness requirements are unmet",
+      ),
+    );
   });
 
   it("keeps existing Spark providers available when optional managed llama.cpp discovery fails", async () => {
@@ -1386,7 +1336,7 @@ describe("createSetupNim", () => {
       makeDeps({
         prompt: async () => "1",
         selectFromNumberedMenu,
-        resolveManagedLlamaCppSelection: () => {
+        discoverManagedLlamaCppSelections: () => {
           throw new Error("managed-inference catalog is unavailable");
         },
         handleRemoteProviderSelection,
