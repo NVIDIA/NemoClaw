@@ -10,6 +10,7 @@
  */
 
 import type { AgentDefinition } from "../agent/defs";
+import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
 import {
   probeChannelRuntimeStatus,
   type ChannelRuntimeStatusDeps,
@@ -40,7 +41,7 @@ export interface ChannelRuntimeProbeDeps {
 export function buildChannelRuntimeProbe(
   agent: AgentDefinition | null,
   deps: ChannelRuntimeProbeDeps,
-): (() => RuntimeChannelStatus | null) | null {
+): (() => Promise<RuntimeChannelStatus | null>) | null {
   const configPaths = agent?.configPaths;
   if (!configPaths || configPaths.format !== "json") return null;
   const configFilePath = `${configPaths.dir}/${configPaths.configFile}`;
@@ -60,11 +61,12 @@ export function buildChannelRuntimeProbe(
 export function buildOnboardChannelRuntimeProbe(
   agent: AgentDefinition | null,
   sandboxName: string,
-): (() => RuntimeChannelStatus | null) | undefined {
+  commandExecutor: OpenShellSandboxBufferedCommandExecutor,
+): (() => Promise<RuntimeChannelStatus | null>) | undefined {
   return (
     buildChannelRuntimeProbe(agent, {
       executeSandboxCommand: (script: string) =>
-        executeSandboxCommandForVerification(sandboxName, script),
+        executeSandboxCommandForVerification(sandboxName, script, commandExecutor),
     }) ?? undefined
   );
 }

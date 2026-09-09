@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import type { OpenShellSandboxBufferedCommandExecutor } from "../../adapters/openshell/sandbox-command";
 import { loadAgent } from "../../agent/defs";
 import type { SandboxEntry } from "../../state/registry";
 import {
@@ -14,9 +15,8 @@ import { isSandboxGatewayRunningForStatus } from "./process-recovery";
 
 describe("launch-readiness gateway health scope", () => {
   it("pins the semantic gateway probe to the owning OpenShell gateway (#8942)", async () => {
-    const capture = vi.fn(async (_args: string[]) => ({
-      status: 0,
-      output: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nRUNNING\n",
+    const runBuffered = vi.fn<OpenShellSandboxBufferedCommandExecutor["runBuffered"]>(async () => ({
+      outcome: { kind: "completed", exitCode: 0 },
       stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nRUNNING\n",
       stderr: "",
     }));
@@ -25,26 +25,24 @@ describe("launch-readiness gateway health scope", () => {
       isSandboxGatewayRunningForStatus("alpha", "nemoclaw-8091", {
         getSessionAgent: () => null,
         getHealthProbeUrl: () => "http://127.0.0.1:18789/health",
-        capture: capture as never,
+        commandExecutor: { runBuffered },
       }),
     ).resolves.toBe(true);
 
-    expect(capture).toHaveBeenCalledTimes(1);
-    expect(capture.mock.calls[0]?.[0]?.slice(0, 7)).toEqual([
-      "sandbox",
-      "exec",
-      "--name",
-      "alpha",
-      "-g",
-      "nemoclaw-8091",
-      "--",
-    ]);
+    expect(runBuffered).toHaveBeenCalledTimes(1);
+    expect(runBuffered).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: "alpha",
+        target: { kind: "named", gatewayName: "nemoclaw-8091" },
+        command: ["sh", "-c", expect.stringContaining("http://127.0.0.1:18789/health")],
+      }),
+    );
   });
 
   it("pins Hermes readiness checks to its recorded OpenShell gateway (#10302)", async () => {
     const gatewayHealth = vi.fn(async () => true);
     const forwardsHealthy = vi.fn(() => true);
-    const inferenceProbe = vi.fn(() => ({
+    const inferenceProbe = vi.fn(async () => ({
       healthy: true,
       broken: false,
       httpStatus: 200,
@@ -91,21 +89,41 @@ function dcodeEntry(): SandboxEntry {
 }
 
 function dcodeHealthDeps(
-  invocation: ReturnType<NonNullable<LaunchReadinessHealthDeps["inferenceInvocationProbe"]>>,
+  invocation: Awaited<
+    ReturnType<NonNullable<LaunchReadinessHealthDeps["inferenceInvocationProbe"]>>
+  >,
 ): LaunchReadinessHealthDeps {
   return {
-    smoke: vi.fn(() => ({ ok: true }) as const),
-    inferenceProbe: vi.fn(() => ({
+    smoke: vi.fn(async () => ({ ok: true }) as const),
+    inferenceProbe: vi.fn(async () => ({
       healthy: true,
       broken: false,
       httpStatus: 404,
       detail: "OK 404",
     })),
-    inferenceInvocationProbe: vi.fn(() => invocation),
+    inferenceInvocationProbe: vi.fn(async () => invocation),
   };
 }
 
 describe("Deep Agents Code OpenRouter launch readiness", () => {
+  it("accepts an injected terminal smoke without constructing a command executor", async () => {
+    const smoke = vi.fn(async () => ({ ok: true }) as const);
+
+    await expect(
+      requireLaunchSemanticHealth(
+        SANDBOX,
+        GATEWAY,
+        "langchain-deepagents-code",
+        dcodeEntry(),
+        dcodeAgent,
+        false,
+        { smoke },
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(smoke).toHaveBeenCalledWith(SANDBOX, dcodeAgent);
+  });
+
   it("accepts readiness after an inference request succeeds (#9834)", async () => {
     const currentDeps = dcodeHealthDeps({ ok: true });
 
