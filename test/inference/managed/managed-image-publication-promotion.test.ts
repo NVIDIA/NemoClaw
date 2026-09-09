@@ -52,7 +52,7 @@ function expectedReceipt(cohort: string, receiptAttempt: number): Record<string,
 }
 
 describe("managed-image publication promotion", () => {
-  it("stages all multi-platform cohort aliases before moving the shipped root pointers (#7744, #11228)", () => {
+  it("stages all multi-platform cohort aliases before moving the shipped root pointers (#7744, #11228, #11341)", () => {
     const promotion = required(
       step(
         managedPromoter(readWorkflow("managed-images.yaml")),
@@ -77,6 +77,7 @@ describe("managed-image publication promotion", () => {
     expect(failedCalls).toContain(`openclaw-sandbox:cohort-${cohort}`);
     expect(failedCalls).not.toContain(`openclaw-sandbox:${revision}`);
     expect(failedCalls).not.toContain(`hermes-sandbox:${revision}`);
+    expect(failedCalls).not.toContain(`langchain-deepagents-code-sandbox:${revision}`);
 
     const accepted = runManagedImagePromotion(promotion, "", pointer);
     const acceptedCalls = accepted.calls.join("\n");
@@ -97,6 +98,7 @@ describe("managed-image publication promotion", () => {
     );
     const rootPointer = acceptedCalls.indexOf(`openclaw-sandbox:${revision}`);
     const hermesPointer = acceptedCalls.indexOf(`hermes-sandbox:${revision}`);
+    const dcodePointer = acceptedCalls.indexOf(`langchain-deepagents-code-sandbox:${revision}`);
 
     expect(accepted.calls.filter((call) => call.startsWith("pull ")).sort()).toEqual(
       expectedPullCalls.sort(),
@@ -110,10 +112,10 @@ describe("managed-image publication promotion", () => {
     });
     expect(lastCohortStage).toBeGreaterThanOrEqual(0);
     expect(rootPointer).toBeGreaterThan(lastCohortStage);
-    // Hermes ships its root pointer alongside OpenClaw (#11228); Deep Agents
-    // Code stays cohort-only.
+    // Every shipped agent's root pointer moves only after all cohort aliases
+    // stage: Hermes per #11228, Deep Agents Code per #11341.
     expect(hermesPointer).toBeGreaterThan(lastCohortStage);
-    expect(acceptedCalls).not.toContain(`langchain-deepagents-code-sandbox:${revision}`);
+    expect(dcodePointer).toBeGreaterThan(lastCohortStage);
     expect(Object.keys(accepted.platformContracts).sort()).toEqual(
       publicationAgents
         .flatMap((agent) => publicationPlatforms.map((platform) => `${agent}|${platform}`))
