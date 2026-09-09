@@ -222,7 +222,7 @@ Use these details when your first-run path needs more control.
     ```
 
     NemoClaw derives the forwarded dashboard port from `CHAT_UI_URL` and passes its hostname to Hermes for browser Host-header validation.
-    The Hermes dashboard service remains bound to loopback.
+    The Hermes dashboard service remains bound to loopback inside the sandbox, but the host-side dashboard forward then listens on all interfaces (`0.0.0.0`), at onboarding and at every later forward recovery, so other hosts may reach the dashboard at this host's address, subject to the host firewall. `$$nemoclaw <name> dashboard-url`, `$$nemoclaw list`, and `$$nemoclaw <name> status` report that bind. To keep the dashboard forward on loopback, leave `CHAT_UI_URL` unset and use SSH port forwarding.
     External `CHAT_UI_URL` values must use HTTPS.
     NemoClaw preserves an external browser URL across rebuild and clone operations.
     Otherwise, leave it unset and use SSH port forwarding for remote access.

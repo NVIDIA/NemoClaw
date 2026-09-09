@@ -106,6 +106,21 @@ describe("buildCreatedSandboxRegistryEntry", () => {
     expect(authority.readManagedWorkloadAuthority(entry)?.agent).toBe("openclaw");
   });
 
+  it.each([
+    ["a wide bind", "0.0.0.0", "0.0.0.0"],
+    ["a loopback bind", "127.0.0.1", "127.0.0.1"],
+    ["no recorded bind", undefined, null],
+  ])(
+    "carries %s from finalization into the registry entry (#10861)",
+    (_label, dashboardBindAddress, expected) => {
+      const entry = buildCreatedSandboxRegistryEntry(
+        createdRegistryEntryInput({ dashboardBindAddress }),
+      );
+
+      expect(entry.dashboardBindAddress).toBe(expected);
+    },
+  );
+
   it("keeps the legacy OpenClaw registry identity for a custom image (#9356)", () => {
     const entry = buildCreatedSandboxRegistryEntry(
       createdRegistryEntryInput({
@@ -588,20 +603,23 @@ describe("registerCreatedSandbox", () => {
       },
       "generation-1",
     ],
-  ])("rejects a Portable OpenClaw %s receipt before registry mutation (#9207)", (_label, receipt, lifecycleGeneration) => {
-    const registerSandbox = vi.fn();
+  ])(
+    "rejects a Portable OpenClaw %s receipt before registry mutation (#9207)",
+    (_label, receipt, lifecycleGeneration) => {
+      const registerSandbox = vi.fn();
 
-    expect(() =>
-      registerCreatedSandbox({
-        ...createdRegistryEntryInput({ lifecycleGeneration }),
-        portableLifecycle: true,
-        environment: { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
-        classifyPortableLifecycleReceipt: () => receipt,
-        registerSandbox,
-      }),
-    ).toThrow(/requires a current lifecycle receipt that matches the registry generation/u);
-    expect(registerSandbox).not.toHaveBeenCalled();
-  });
+      expect(() =>
+        registerCreatedSandbox({
+          ...createdRegistryEntryInput({ lifecycleGeneration }),
+          portableLifecycle: true,
+          environment: { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
+          classifyPortableLifecycleReceipt: () => receipt,
+          registerSandbox,
+        }),
+      ).toThrow(/requires a current lifecycle receipt that matches the registry generation/u);
+      expect(registerSandbox).not.toHaveBeenCalled();
+    },
+  );
 
   it("keeps ordinary OpenClaw registration agent-neutral (#9207)", () => {
     const classifyPortableLifecycleReceipt = vi.fn();

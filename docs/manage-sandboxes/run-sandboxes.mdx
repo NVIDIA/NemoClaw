@@ -101,6 +101,8 @@ CHAT_UI_URL=http://127.0.0.1:19000 $$nemoclaw onboard
 NEMOCLAW_DASHBOARD_PORT=19000 $$nemoclaw onboard
 ```
 
+A `CHAT_UI_URL` whose host is not loopback makes the host-side dashboard forward listen on all interfaces (`0.0.0.0`), at onboarding and at every later forward recovery, so other hosts may reach the dashboard at this host's address, subject to the host firewall. `$$nemoclaw <name> dashboard-url`, `$$nemoclaw list`, and `$$nemoclaw <name> status` report that bind. Leave `CHAT_UI_URL` unset, or give it a loopback host, to keep the forward on loopback.
+
 For port conflicts and overrides, refer to [Port already in use](../../reference/troubleshooting#port-already-in-use).
 
 </AgentOnly>
