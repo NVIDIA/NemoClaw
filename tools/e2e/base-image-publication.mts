@@ -804,15 +804,13 @@ export async function waitForBaseImagePublication(
   const workflowId = validateWorkflow(
     await request(`/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_FILE}`),
   );
-  const allowWorkflowDispatch = options.selectNearestSuccessfulRun === true;
-  const eventFilter = allowWorkflowDispatch ? "" : "&event=push";
-  const runsPath = `/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_FILE}/runs?branch=${MAIN_BRANCH}${eventFilter}&per_page=100`;
+  const runsPath = `/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_FILE}/runs?branch=${MAIN_BRANCH}&per_page=100`;
   while (true) {
     const runs = await collectPaginated(request, runsPath, "workflow_runs");
     const excludedRunIds = new Set<number>();
     const select = () =>
       selectPublicationRun(runs, options.history, workflowId, {
-        allowWorkflowDispatch,
+        allowWorkflowDispatch: true,
         completedSuccessOnly: options.selectNearestSuccessfulRun === true,
         excludedRunIds,
       });

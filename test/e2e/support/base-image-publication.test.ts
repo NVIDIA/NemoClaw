@@ -167,10 +167,7 @@ function successfulJobs(overrides: { runAttempt?: number } = {}): Record<string,
 }
 
 function successfulManualJobs(): Record<string, unknown>[] {
-  return [
-    ...successfulJobs(),
-    publisherJob(MANAGED_IMAGE_PROMOTION_JOB, { id: 4 }),
-  ];
+  return [...successfulJobs(), publisherJob(MANAGED_IMAGE_PROMOTION_JOB, { id: 4 })];
 }
 
 describe("base-image publication evidence", () => {
@@ -828,10 +825,10 @@ describe("base-image publication evidence", () => {
     expect(run.id).toBe(RUN_ID);
     expect(requests).toEqual([
       "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml",
-      "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&event=push&per_page=100&page=1",
-      "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&event=push&per_page=100&page=1",
+      "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&per_page=100&page=1",
+      "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&per_page=100&page=1",
       `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/1/jobs?per_page=100&page=1`,
-      "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&event=push&per_page=100&page=1",
+      "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&per_page=100&page=1",
       `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/1/jobs?per_page=100&page=1`,
       `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}`,
     ]);
@@ -921,36 +918,42 @@ describe("base-image publication evidence", () => {
     ).resolves.toEqual(selectedRun());
   });
 
-  it("uses a successful manual main publication for branch reuse", async () => {
-    const manualRun = workflowRun({ event: "workflow_dispatch" });
-    const responses = [
-      workflowMetadata(),
-      runsPayload([manualRun]),
-      { total_count: 4, jobs: successfulManualJobs() },
-      manualRun,
-    ];
-    const requests: string[] = [];
+  it.each([
+    { context: "automatic main", selectNearestSuccessfulRun: false },
+    { context: "manual main", selectNearestSuccessfulRun: true },
+  ])(
+    "uses a successful manual publication for $context E2E",
+    async ({ selectNearestSuccessfulRun }) => {
+      const manualRun = workflowRun({ event: "workflow_dispatch" });
+      const responses = [
+        workflowMetadata(),
+        runsPayload([manualRun]),
+        { total_count: 4, jobs: successfulManualJobs() },
+        manualRun,
+      ];
+      const requests: string[] = [];
 
-    await expect(
-      waitForBaseImagePublication({
-        history: history(),
-        request: async (requestPath) => {
-          requests.push(requestPath);
-          return responses.shift();
-        },
-        requireWorkflowSuccess: true,
-        selectNearestSuccessfulRun: true,
-        waitMs: 100,
-        pollMs: 10,
-      }),
-    ).resolves.toEqual(selectedRun({ event: "workflow_dispatch" }));
-    expect(requests).toEqual([
-      "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml",
-      "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&per_page=100&page=1",
-      `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/1/jobs?per_page=100&page=1`,
-      `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}`,
-    ]);
-  });
+      await expect(
+        waitForBaseImagePublication({
+          history: history(),
+          request: async (requestPath) => {
+            requests.push(requestPath);
+            return responses.shift();
+          },
+          requireWorkflowSuccess: true,
+          selectNearestSuccessfulRun,
+          waitMs: 100,
+          pollMs: 10,
+        }),
+      ).resolves.toEqual(selectedRun({ event: "workflow_dispatch" }));
+      expect(requests).toEqual([
+        "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml",
+        "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&per_page=100&page=1",
+        `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/1/jobs?per_page=100&page=1`,
+        `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}`,
+      ]);
+    },
+  );
 
   it("selects the newest tied manual publication deterministically (#11289)", () => {
     const olderManualRunId = RUN_ID + 1;
@@ -976,7 +979,10 @@ describe("base-image publication evidence", () => {
         WORKFLOW_ID,
         { allowWorkflowDispatch: true, completedSuccessOnly: true },
       ),
-    ).toMatchObject({ state: "selected", run: { id: newerManualRunId, event: "workflow_dispatch" } });
+    ).toMatchObject({
+      state: "selected",
+      run: { id: newerManualRunId, event: "workflow_dispatch" },
+    });
   });
 
   it("falls back through multiple ineligible manual publications to an older push (#11289)", async () => {
@@ -1169,7 +1175,7 @@ describe("base-image publication evidence", () => {
     ).resolves.toMatchObject({ id: RUN_ID, attempt: 1, conclusion: "success" });
     expect(requests).toEqual([
       "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml",
-      "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&event=push&per_page=100&page=1",
+      "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&per_page=100&page=1",
       ...Array.from(
         { length: 11 },
         (_, index) => `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/${11 - index}`,
@@ -1203,7 +1209,7 @@ describe("base-image publication evidence", () => {
     ).rejects.toThrow(/selected base-image workflow changed while evidence was verified/u);
     expect(requests).toEqual([
       "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml",
-      "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&event=push&per_page=100&page=1",
+      "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&per_page=100&page=1",
       `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/2`,
     ]);
   });
@@ -1241,7 +1247,7 @@ describe("base-image publication evidence", () => {
         budgetMs: 100,
       },
       {
-        path: "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&event=push&per_page=100&page=1",
+        path: "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&per_page=100&page=1",
         budgetMs: 100,
       },
       {
