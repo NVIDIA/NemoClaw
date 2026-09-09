@@ -7,7 +7,6 @@ import {
   OpenShellSdkPreflightUnavailableError,
   type OpenShellSdkConnectionDeps,
 } from "./sdk";
-export { connectManagedOpenShellSdk } from "./sdk";
 import { isValidName } from "../../sandbox-name-contract";
 import type {
   OpenShellSandboxCommandCompletion,

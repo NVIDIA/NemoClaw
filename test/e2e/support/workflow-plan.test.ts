@@ -263,6 +263,17 @@ describe("E2E workflow plan", () => {
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-nvidia-api"]);
   });
 
+  it.each([
+    "src/commands/config/export.ts",
+    "src/lib/config/canonical.ts",
+    "src/lib/adapters/fs/config-export-file.ts",
+    "src/lib/adapters/openshell/sdk-read-schema.ts",
+  ])("selects live config export coverage when %s changes", (changedFile) => {
+    expect(catalogueTargetsForChangedFiles([changedFile]).map((target) => target.id)).toContain(
+      "network-policy",
+    );
+  });
+
   it("emits required fields and catalogue workflow jobs for migrated targets", () => {
     const plan = buildE2eWorkflowPlan({
       jobs: "gateway-guard-recovery,hermes-slack,network-policy,openclaw-inference-switch,openclaw-tui-chat-correlation,sandbox-operations",

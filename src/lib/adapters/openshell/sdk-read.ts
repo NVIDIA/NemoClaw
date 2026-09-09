@@ -70,7 +70,7 @@ function readError(error: unknown): OpenShellReadError {
   return new OpenShellReadError("transport");
 }
 
-/** Bound connection and read time; never return transport details or caught response data. */
+/** Honor the caller's abort/deadline signal; never expose transport details or response data. */
 export async function readOpenShell<T>(
   request: ReadRequest,
   operation: () => Promise<T>,
