@@ -1985,8 +1985,8 @@ function validateJetsonControllerBoundary(errors: string[], jobs: WorkflowRecord
     errors.push("jetson-nvmap-gpu controller must set up Node.js");
   } else {
     requireFullShaAction(errors, setupNode, "jetson-nvmap-gpu Node setup");
-    if (asRecord(setupNode.with)["node-version"] !== 22) {
-      errors.push("jetson-nvmap-gpu controller must use Node.js 22");
+    if (asRecord(setupNode.with)["node-version"] !== ">=22.19.0 <23") {
+      errors.push("jetson-nvmap-gpu controller must require Node.js 22.19 or later within 22.x");
     }
   }
   const dispatch = namedStep(steps, "Dispatch exact commit to Jetson through operator backend");
@@ -2718,10 +2718,10 @@ function validateTrustedE2ePlannerBoundary(
   requireFullShaAction(errors, trustedPlannerSetup, "trusted E2E planner Node setup");
   if (
     !isDeepStrictEqual(asRecord(trustedPlannerSetup?.with), {
-      "node-version": 22,
+      "node-version": ">=22.19.0 <23",
     })
   ) {
-    errors.push("trusted E2E planner must use Node 22");
+    errors.push("trusted E2E planner must require Node.js 22.19 or later within 22.x");
   }
   if (trustedPlannerInstall?.run !== "npm ci --ignore-scripts --no-audit --no-fund") {
     errors.push("trusted E2E planner dependencies must install without lifecycle scripts");

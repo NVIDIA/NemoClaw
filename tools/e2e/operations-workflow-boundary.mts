@@ -757,7 +757,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
         name: "Set up Node for publication verification",
         uses: "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
         with: {
-          "node-version": 22,
+          "node-version": ">=22.19.0 <23",
         },
       },
       {
