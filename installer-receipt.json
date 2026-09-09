@@ -32,11 +32,18 @@
     "architecture": "arm64",
     "retainedReferenceInstallerChecks": "passed",
     "earlyAndRepeatedProcessAudit": "passed",
-    "installedAcceptance": "pending",
+    "installedAcceptance": "failed",
     "requiredCompleteNativePasses": 2,
     "completeNativePasses": 0,
     "physicalN1x": "not-qualified",
-    "productionSupport": false
+    "productionSupport": false,
+    "failure": {
+      "step": "Qualify MSI and setup executable",
+      "reportedError": "Credential binding control could not remove its keys and restore its owned settings.",
+      "rootCause": "under investigation; cleanup may mask an earlier failure",
+      "basicNativeOnboardingSelectionsPassed": 5,
+      "fullPackageQualificationPassed": false
+    }
   },
   "criticalSourcePayloadHashesMatched": 12,
   "payloadFiles": 81806

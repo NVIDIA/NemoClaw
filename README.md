@@ -9,7 +9,10 @@
 
 This unsigned test installer was built from source commit `1cb0dfbc0f4ca58ccb08b9433a8e8ab2a79cfecb`.
 
-**Installed acceptance is pending: 0 of 2 required complete native qualification passes.**
+**Installed acceptance failed: 0 of 2 required complete native qualification passes.**
+The five basic native onboarding selections passed. Qualification then stopped
+in the credential-binding control with a cleanup error; its root cause is being
+investigated. This preview is not qualified for the complete installed flow.
 Physical N1X acceptance and production support remain unqualified.
 
 The [source run, attempt 1](https://github.com/NVIDIA/NemoClaw/actions/runs/34358022355/attempts/1) passed its early process-audit, authentic Hermes ConPTY,
@@ -19,7 +22,7 @@ Those prerequisites do not establish complete installed-agent acceptance.
 The bundled OpenShell source is pinned to NVIDIA/OpenShell#2721 commit
 `bcd517bbe08cc80860c9be57699390cd32e8445f`, with the checked-in NemoClaw derivative.
 
-The [receipt](https://raw.githubusercontent.com/NVIDIA/NemoClaw/c43dcdda5a1d4267c084a3348d010dd95bd82da0/installer-receipt.json) records the source and verified package hashes.
+The [receipt](installer-receipt.json) records the source and verified package hashes.
 The [package manifest](https://raw.githubusercontent.com/NVIDIA/NemoClaw/c43dcdda5a1d4267c084a3348d010dd95bd82da0/package-manifest.json) records the payload inventory.
 The original [source artifact 10108686147](https://github.com/NVIDIA/NemoClaw/actions/runs/34358022355/artifacts/10108686147) is retained by GitHub Actions.
 
