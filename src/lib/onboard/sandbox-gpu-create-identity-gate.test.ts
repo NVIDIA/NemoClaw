@@ -383,8 +383,8 @@ describe("created sandbox identity gate", () => {
           ? (sandboxGetResults.shift() ?? resumedIdentityResult)
           : { status: 0, stdout: "", stderr: "" },
       );
-      mocks.waitForCreatedSandboxReadyWithTrace.mockImplementation((options) => {
-        expect(options.checkReadyIdentity?.()).toBe(expectedCheck);
+      mocks.waitForCreatedSandboxReadyWithTrace.mockImplementation(async (options) => {
+        await expect(options.checkReadyIdentity?.()).resolves.toBe(expectedCheck);
         return { ready: false, reason: expectedReason, failurePhase: null };
       });
 
