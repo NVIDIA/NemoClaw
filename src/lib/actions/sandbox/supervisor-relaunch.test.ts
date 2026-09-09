@@ -181,6 +181,8 @@ describe("relaunchManagedSupervisorSession", () => {
   });
 
   it("uses managed backup authority for default supervisor recovery", () => {
+    vi.stubEnv("NEMOCLAW_HERMES_API_PORT", "8642");
+    vi.spyOn(registry, "getSandbox").mockReturnValue({ hermesApiPort: 8642 } as never);
     const managedBackup = vi
       .spyOn(backupAuthority, "backupSandboxStateWithManagedAuthority")
       .mockReturnValue({
@@ -218,6 +220,7 @@ describe("relaunchManagedSupervisorSession", () => {
   it("retains the managed Hermes browser URL during supervisor recovery", () => {
     vi.stubEnv("NEMOCLAW_EXTRA_PLACEHOLDER_KEYS", "HERMES_RECOVERY_CREDENTIAL");
     vi.stubEnv("HERMES_RECOVERY_CREDENTIAL", "recovery-secret");
+    vi.stubEnv("NEMOCLAW_HERMES_API_PORT", "8643");
     vi.spyOn(registry, "getSandbox").mockReturnValue({ hermesApiPort: 8643 } as never);
     const deps = baseDeps({
       getSandbox: vi.fn(() => ({
