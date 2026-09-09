@@ -327,6 +327,33 @@ describe("Docker managed-bootstrap GPU probe diagnostics", () => {
     expect(details.length).toBeLessThanOrEqual(" Attempts: --gpus all: ".length + 400);
   });
 
+  it("throws the preserved Docker reason from the lifecycle when every probe rejects (#11197)", () => {
+    const { dependencies, dockerRun } = gpuModeDependencies();
+    const seed = authority("openclaw");
+    const input = compatibilityLifecycleInput(seed, dependencies);
+    const digest = "41eb2663a761897dec9cd999d938f7aae8a97698f041739c7aee7344c1a24c08";
+    const reference = `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${digest}`;
+    dockerRun.mockReturnValue({
+      status: 1,
+      stderr: `Unable to find image '${reference}' locally\n${reference}: Error response from daemon: unauthorized: token=secret-value`,
+    });
+
+    let thrown = "";
+    try {
+      createDockerManagedBootstrapSurface().createLifecycle(input);
+    } catch (error) {
+      thrown = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(thrown).toContain("Docker did not accept a compatibility GPU mode for managed bootstrap.");
+    expect(thrown).toContain("Error response from daemon: unauthorized");
+    expect(thrown).toContain("@sha256:41eb2663a761...");
+    expect(thrown).not.toContain(digest);
+    expect(thrown).toContain("token=<REDACTED>");
+    expect(thrown).not.toContain("secret-value");
+    expect(dockerRun.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
   it("keeps the joined attempt detail within its budget and keeps its ending (#11197)", () => {
     const details = formatDockerGpuModeFailureDetails(
       Array.from({ length: 6 }, (_, index) =>
