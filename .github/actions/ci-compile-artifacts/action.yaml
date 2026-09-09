@@ -19,7 +19,7 @@ runs:
     - name: Identify compiled output
       id: identity
       shell: bash
-      run: node --experimental-strip-types "$GITHUB_ACTION_PATH/compiled-artifact.mts" identity
+      run: node "$GITHUB_ACTION_PATH/compiled-artifact.mts" identity
 
     - name: Restore compiled CLI and plugin
       id: cache
@@ -54,8 +54,8 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        node --experimental-strip-types "$GITHUB_ACTION_PATH/compiled-artifact.mts" verify
-        node --experimental-strip-types "$GITHUB_ACTION_PATH/../../../scripts/check-dist-sourcemaps.mts" dist
+        node "$GITHUB_ACTION_PATH/compiled-artifact.mts" verify
+        node "$GITHUB_ACTION_PATH/../../../scripts/check-dist-sourcemaps.mts" dist
 
     - name: Save compiled CLI and plugin
       if: steps.cache.outputs.cache-hit != 'true'
