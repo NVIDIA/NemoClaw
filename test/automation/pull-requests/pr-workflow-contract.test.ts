@@ -583,31 +583,66 @@ describe("pull request and main workflow contracts", () => {
         "Install locked runtime",
       ),
     ],
-  ])("refreshes only Ubuntu package metadata for %s", (_name, installStep) => {
+  ])("installs from isolated Ubuntu package metadata for %s", (_name, installStep) => {
     const temp = mkdtempSync(join(tmpdir(), "nemoclaw-ubuntu-apt-sources-"));
     const fakeBin = join(temp, "bin");
     const aptArgs = join(temp, "apt-args");
+    const runnerTemp = join(temp, "runner");
     mkdirSync(fakeBin);
     writeFileSync(
       join(fakeBin, "sudo"),
-      '#!/usr/bin/env bash\nprintf "%s\\n" "$@" > "$APT_ARGS"\nexit 86\n',
+      [
+        "#!/usr/bin/env bash",
+        'printf "%s\\n" "CALL" >> "$APT_ARGS"',
+        'printf "%s\\n" "$@" >> "$APT_ARGS"',
+        'if [ "$1" = "apt-get" ] && [ "$2" = "install" ]; then exit 86; fi',
+        "",
+      ].join("\n"),
       { mode: 0o755 },
     );
 
     try {
       const result = runWorkflowShellStep(installStep, {
         APT_ARGS: aptArgs,
+        FD_FIND_VERSION: "9.0.0-1",
         PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+        RIPGREP_VERSION: "14.1.0-1",
+        RUNNER_TEMP: runnerTemp,
       });
       expect(result.status).toBe(86);
-      expect(readFileSync(aptArgs, "utf8").trim().split("\n")).toEqual([
-        "apt-get",
-        "update",
-        "-qq",
-        "-o",
-        "Dir::Etc::sourcelist=sources.list.d/ubuntu.sources",
-        "-o",
-        "Dir::Etc::sourceparts=-",
+      expect(
+        readFileSync(aptArgs, "utf8")
+          .trim()
+          .split("CALL\n")
+          .filter(Boolean)
+          .map((invocation) => invocation.trim().split("\n")),
+      ).toEqual([
+        ["mkdir", "-p", `${runnerTemp}/nemoclaw-apt-lists/partial`],
+        [
+          "apt-get",
+          "update",
+          "-qq",
+          "-o",
+          "Dir::Etc::sourcelist=sources.list.d/ubuntu.sources",
+          "-o",
+          "Dir::Etc::sourceparts=-",
+          "-o",
+          `Dir::State::lists=${runnerTemp}/nemoclaw-apt-lists`,
+        ],
+        [
+          "apt-get",
+          "install",
+          "-y",
+          "--no-install-recommends",
+          "-o",
+          "Dir::Etc::sourcelist=sources.list.d/ubuntu.sources",
+          "-o",
+          "Dir::Etc::sourceparts=-",
+          "-o",
+          `Dir::State::lists=${runnerTemp}/nemoclaw-apt-lists`,
+          "fd-find=9.0.0-1",
+          "ripgrep=14.1.0-1",
+        ],
       ]);
     } finally {
       rmSync(temp, { force: true, recursive: true });
