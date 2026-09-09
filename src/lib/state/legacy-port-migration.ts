@@ -15,7 +15,6 @@ import {
   readGatewayRegistryFile,
   registryEntryGatewayPort,
 } from "./gateway-registry";
-import { inspectOnboardLock, type OnboardLockObservation } from "./onboard-session/index";
 import {
   listRetainedSandboxRecoveryRecords,
   retainedSandboxRecoveryFile,
@@ -116,24 +115,6 @@ interface RetainedRecoveryDocument {
 
 function migrationError(message: string): Error {
   return new Error(`Cannot safely migrate legacy NemoClaw state for this gateway port: ${message}`);
-}
-
-function onboardLockRecoveryAdvice(
-  reason: Extract<OnboardLockObservation, { kind: "busy" }>["reason"],
-  lockPath: string,
-): string {
-  switch (reason) {
-    case "active":
-      return "finish the active onboarding run before retrying";
-    case "publishing":
-      return "wait for the lock write to finish, then retry";
-    case "foreign":
-      return "finish or stop the onboarding run in the other host or PID namespace before retrying";
-    case "unsafe":
-      return `inspect ${lockPath} and replace or remove that unsafe path after confirming it is not in use, then retry; migration will not remove it automatically`;
-    case "unverified":
-      return `confirm no NemoClaw onboarding process in any environment sharing this state root is active, then remove only ${lockPath} and retry; migration will not remove it automatically`;
-  }
 }
 
 function ensureRealDirectory(home: string, dir: string): void {
@@ -531,9 +512,10 @@ function readMigrationIntent(home: string, sharedRoot: string): LegacyPortMigrat
   }
   if (
     selectedRecovery === null &&
-    readRetainedRecoveryDocument(home, retainedSandboxRecoveryFile(sharedRoot))?.unresolved.some(
-      (record) => record.gatewayPort === gatewayPort,
-    )
+    readRetainedRecoveryDocument(
+      home,
+      retainedSandboxRecoveryFile(sharedRoot),
+    )?.unresolved.some((record) => record.gatewayPort === gatewayPort)
   ) {
     throw migrationError(
       "published migration intent predates retained recovery partitioning; retained recovery remains safely in the shared root",
@@ -677,9 +659,17 @@ function applyMigrationIntent(
   }
 
   if (intent.selectedRecovery && intent.remainingRecovery) {
-    writeJsonAtomic(home, retainedSandboxRecoveryFile(selectedRoot), intent.selectedRecovery);
+    writeJsonAtomic(
+      home,
+      retainedSandboxRecoveryFile(selectedRoot),
+      intent.selectedRecovery,
+    );
     if (intent.remainingRecovery.unresolved.length > 0) {
-      writeJsonAtomic(home, retainedSandboxRecoveryFile(sharedRoot), intent.remainingRecovery);
+      writeJsonAtomic(
+        home,
+        retainedSandboxRecoveryFile(sharedRoot),
+        intent.remainingRecovery,
+      );
     } else {
       removeRetainedRecoveryFile(home, retainedSandboxRecoveryFile(sharedRoot));
     }
@@ -776,12 +766,10 @@ function acquireDirectoryLock(home: string, lock: string): string {
 function assertOnboardStateUnlocked(home: string, stateRoots: readonly string[]): void {
   for (const stateRoot of stateRoots) {
     const activeLock = path.join(stateRoot, "onboard.lock");
-    assertGatewayStatePathSafe(home, activeLock);
-    const lock = inspectOnboardLock(activeLock).observation;
-    if (lock.kind === "busy") {
-      const owner = lock.owner ? ` recorded for PID ${String(lock.owner.pid)}` : "";
-      const recovery = onboardLockRecoveryAdvice(lock.reason, activeLock);
-      throw migrationError(`onboarding lock ${activeLock}${owner} is ${lock.reason}; ${recovery}`);
+    if (lstatNoFollow(home, activeLock)) {
+      throw migrationError(
+        `onboarding lock ${activeLock} is present; confirm that no NemoClaw onboarding process in any environment sharing this state root is active, then remove only ${activeLock} and retry; migration will not remove it automatically`,
+      );
     }
   }
 }
@@ -899,7 +887,9 @@ export function migrateLegacyPortState(
     const remainingRecoveryRecords =
       recovery?.unresolved.filter((record) => record.gatewayPort !== gatewayPort) ?? [];
     const selectedRecovery =
-      selectedRecoveryRecords.length > 0 ? retainedRecoveryDocument(selectedRecoveryRecords) : null;
+      selectedRecoveryRecords.length > 0
+        ? retainedRecoveryDocument(selectedRecoveryRecords)
+        : null;
     const remainingRecovery = selectedRecovery
       ? retainedRecoveryDocument(remainingRecoveryRecords)
       : null;
@@ -940,7 +930,11 @@ export function migrateLegacyPortState(
       }
     }
     if (selectedRecovery) {
-      preflightMovePath(home, legacyRecoveryFile, retainedSandboxRecoveryFile(selectedRoot));
+      preflightMovePath(
+        home,
+        legacyRecoveryFile,
+        retainedSandboxRecoveryFile(selectedRoot),
+      );
     }
 
     registryLocks.push(acquireDirectoryLock(home, `${selectedRegistryFile}.lock`));

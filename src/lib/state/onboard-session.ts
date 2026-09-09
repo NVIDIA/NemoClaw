@@ -61,20 +61,16 @@ import {
 } from "./onboard-session-tool-disclosure";
 import { nextMachineStateAfterCompletedStep } from "./onboard-step-state";
 import {
-  createOnboardLockOwner,
-  inspectOnboardLock,
   listRetainedSandboxRecoveryRecords as readRetainedSandboxRecoveryRecords,
   recordRetainedSandboxRecovery as writeRetainedSandboxRecovery,
   retainedSandboxRecoveryAuthorityIsCurrent,
   retainedSandboxRecoveryFile,
   resolveRetainedSandboxRecovery as retireRetainedSandboxRecovery,
-  systemOnboardLockEvidence,
-  type OnboardLockEvidence,
   type RecordRetainedSandboxRecoveryInput,
   type RetainedSandboxRecoveryRecord,
   type RetainedSandboxRecoveryReason,
   validSafeEvidence,
-} from "./onboard-session/index";
+} from "./onboard-session/retained-sandbox-recovery";
 import type { SandboxEntry, SandboxHostMount } from "./registry/types";
 import { hasUnsafeHostMountTerminalText } from "./registry/host-mount";
 import { nemoclawStateRoot } from "./state-root";
@@ -1351,7 +1347,83 @@ function parseLockFile(contents: string): LockInfo | null {
   }
 }
 
+interface LockFileSnapshot {
+  info: LockInfo | null;
+  inode: bigint;
+  mtimeMs: number;
+}
+
+function readLockFileSnapshot(): LockFileSnapshot {
+  const fd = fs.openSync(LOCK_FILE, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+  try {
+    const stat = fs.fstatSync(fd, { bigint: true });
+    if (!stat.isFile()) {
+      return { info: null, inode: stat.ino, mtimeMs: Number(stat.mtimeMs) };
+    }
+    return {
+      info: parseLockFile(String(fs.readFileSync(fd, "utf8"))),
+      inode: stat.ino,
+      mtimeMs: Number(stat.mtimeMs),
+    };
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 const MALFORMED_STALE_SECONDS = 30;
+
+function isProcessAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return isErrnoException(error) && error.code === "EPERM";
+  }
+}
+
+function readProcProcessStartMs(pid: number): number | null {
+  try {
+    const statText = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+    const btimeLine = fs
+      .readFileSync("/proc/stat", "utf8")
+      .split("\n")
+      .find((line) => line.startsWith("btime "));
+    const bootSeconds = btimeLine ? Number(btimeLine.trim().split(/\s+/)[1]) : NaN;
+    const closeParen = statText.lastIndexOf(")");
+    if (!Number.isFinite(bootSeconds) || closeParen < 0) return null;
+
+    const fieldsAfterComm = statText
+      .slice(closeParen + 2)
+      .trim()
+      .split(/\s+/);
+    const startTicks = Number(fieldsAfterComm[19]);
+    if (!Number.isFinite(startTicks)) return null;
+
+    // Linux exposes /proc/<pid>/stat starttime in USER_HZ ticks. 100 is the
+    // stable value on supported NemoClaw Linux hosts.
+    const clockTicksPerSecond = 100;
+    return (bootSeconds + startTicks / clockTicksPerSecond) * 1000;
+  } catch {
+    return null;
+  }
+}
+
+function lockHolderStillMatches(lock: LockInfo): boolean {
+  if (!isProcessAlive(lock.pid)) return false;
+  if (lock.pid === process.pid) return true;
+
+  const lockStartedMs = lock.startedAt ? Date.parse(lock.startedAt) : NaN;
+  if (!Number.isFinite(lockStartedMs)) return true;
+
+  const processStartMs = readProcProcessStartMs(lock.pid);
+  if (processStartMs === null) return true;
+
+  // The original lock holder must have started before it wrote the lock. If
+  // the currently-live PID started after the lock timestamp, the PID was reused
+  // and the lock is stale even though kill(pid, 0) succeeds.
+  return processStartMs <= lockStartedMs + 1000;
+}
 
 // File descriptor we hold across the lifetime of an acquired lock. On
 // release, fstat(fd).ino vs stat(path).ino confirms the on-disk path
@@ -1415,16 +1487,17 @@ export function isOnboardLockHeldByCurrentProcess(): boolean {
   }
 }
 
-export function acquireOnboardLock(
-  command: string | null = null,
-  evidence: OnboardLockEvidence = systemOnboardLockEvidence,
-): LockResult {
+export function acquireOnboardLock(command: string | null = null): LockResult {
   ensureSessionDir();
-  const owner = createOnboardLockOwner(typeof command === "string" ? command : null, evidence);
-  if (!owner) {
-    return { acquired: false, lockFile: LOCK_FILE, stale: false };
-  }
-  const payload = JSON.stringify(owner, null, 2);
+  const payload = JSON.stringify(
+    {
+      pid: process.pid,
+      startedAt: new Date().toISOString(),
+      command: typeof command === "string" ? command : null,
+    },
+    null,
+    2,
+  );
 
   // The retry budget here used to be 2, which is the bare minimum needed
   // for "see-stale → cleanup → reclaim". With the inode-verified cleanup
@@ -1447,17 +1520,22 @@ export function acquireOnboardLock(
         throw error;
       }
 
-      // Inspect through the shared bounded, nonblocking reader. The returned
-      // snapshot and observation describe the same verified inode, so cleanup
-      // never needs an independent read of an attacker-controlled path.
-      const inspection = inspectOnboardLock(LOCK_FILE, evidence);
-      const { observation, snapshot } = inspection;
-      if (observation.kind === "absent") continue;
-      if (!snapshot) {
-        return { acquired: false, lockFile: LOCK_FILE, stale: false };
+      // Capture both the parsed lock and the inode so we can verify the
+      // file we're about to unlink is STILL the same stale file we read.
+      // Without the inode check, two concurrent processes can both read
+      // the same stale lock, and the slower one will unlink the fresh
+      // lock the faster one just claimed, breaking mutual exclusion.
+      // See issue #1281.
+      let snapshot: LockFileSnapshot;
+      try {
+        snapshot = readLockFileSnapshot();
+      } catch (readError) {
+        if (isErrnoException(readError) && readError.code === "ENOENT") {
+          continue;
+        }
+        throw readError;
       }
-      const existing = parseLockFile(snapshot.contents);
-      const staleInode = snapshot.inode;
+      const { info: existing, inode: staleInode } = snapshot;
       if (!existing) {
         // Malformed lock file. If the file is very recent (<30 s), a
         // concurrent process may be mid-write — leave it and retry.
@@ -1470,20 +1548,19 @@ export function acquireOnboardLock(
         }
         continue;
       }
-      if (observation.kind === "busy") {
-        const holder = observation.owner ?? existing;
+      if (lockHolderStillMatches(existing)) {
         return {
           acquired: false,
           lockFile: LOCK_FILE,
           stale: false,
-          holderPid: holder.pid,
-          holderStartedAt: holder.startedAt,
-          holderCommand: holder.command,
+          holderPid: existing.pid,
+          holderStartedAt: existing.startedAt,
+          holderCommand: existing.command,
         };
       }
 
-      // The shared observer proved this owner stale. Unlink ONLY if the file
-      // on disk is still the same inode we first read. If a concurrent process already cleaned up and
+      // Stale: unlink ONLY if the file on disk is still the same inode
+      // we just read. If a concurrent process already cleaned up and
       // claimed the lock, the inode will have changed and we'll fall
       // through to the next iteration where openSync(wx) will either
       // succeed (we win) or fail EEXIST against the new holder (and we
@@ -1495,27 +1572,19 @@ export function acquireOnboardLock(
     // Atomic create succeeded — write the payload and keep the fd open
     // for the lifetime of the lock so releaseOnboardLock() can verify
     // ownership via the live descriptor.
-    let createdInode: bigint | null = null;
     try {
-      createdInode = fs.fstatSync(fd, { bigint: true }).ino;
-      const bytes = Buffer.from(payload);
-      let offset = 0;
-      while (offset < bytes.length) {
-        const written = fs.writeSync(fd, bytes, offset, bytes.length - offset, offset);
-        if (written <= 0) {
-          throw new Error(
-            "Could not publish the onboarding lock because the write made no progress.",
-          );
-        }
-        offset += written;
-      }
+      fs.writeSync(fd, payload);
     } catch (writeError) {
       try {
         fs.closeSync(fd);
       } catch {
         /* ignore */
       }
-      unlinkIfInodeMatches(LOCK_FILE, createdInode);
+      try {
+        fs.unlinkSync(LOCK_FILE);
+      } catch {
+        /* ignore */
+      }
       throw writeError;
     }
     heldLockFd = fd;
@@ -1627,9 +1696,8 @@ export function releaseOnboardLock(): void {
     return;
   }
 
-  // Without the live descriptor retained by a successful acquisition there
-  // is no release authority. A PID match alone is not sufficient across hosts
-  // or PID namespaces that share a state root.
+  // A PID match does not prove ownership across hosts or PID namespaces.
+  // Without the retained descriptor, this process has no cleanup authority.
 }
 
 // ── Step management ──────────────────────────────────────────────

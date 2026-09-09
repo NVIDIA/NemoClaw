@@ -7,16 +7,11 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { inspectOnboardLock } = vi.hoisted(() => ({
-  inspectOnboardLock: vi.fn<(lockPath: string) => { observation: OnboardLockObservation }>(() => ({
-    observation: { kind: "absent" },
-  })),
-}));
-vi.mock("./onboard-session/lock-observation", () => ({ inspectOnboardLock }));
-
-import { type OnboardEntryOptionsDeps, resolveOnboardEntryOptions } from "../onboard/entry-options";
+import {
+  type OnboardEntryOptionsDeps,
+  resolveOnboardEntryOptions,
+} from "../onboard/entry-options";
 import { hasMigratableLegacySandbox, migrateLegacyPortState } from "./legacy-port-migration";
-import type { OnboardLockObservation } from "./onboard-session/lock-observation";
 import {
   listRetainedSandboxRecoveryRecords,
   recordRetainedSandboxRecovery,
@@ -92,8 +87,6 @@ function expectRetainedNameBlocked(
 }
 
 afterEach(() => {
-  inspectOnboardLock.mockReset();
-  inspectOnboardLock.mockReturnValue({ observation: { kind: "absent" } });
   vi.restoreAllMocks();
   for (const home of homes.splice(0)) fs.rmSync(home, { recursive: true, force: true });
 });
@@ -454,176 +447,47 @@ describe("legacy non-default gateway state migration", () => {
     const shared = path.join(home, ".nemoclaw");
     const selected = path.join(shared, "gateways", "9123");
     const recoveryFile = path.join(shared, "retained-sandbox-recovery.json");
+    const lockFile = path.join(root(shared, selected), "onboard.lock");
     recordRecovery(recoveryFile, "port-box", 9123, "d");
     const before = fs.readFileSync(recoveryFile, "utf8");
     fs.mkdirSync(root(shared, selected), { recursive: true });
-    fs.writeFileSync(path.join(root(shared, selected), "onboard.lock"), "active writer");
+    fs.writeFileSync(lockFile, "active writer");
 
-    inspectOnboardLock.mockImplementation((lockPath: string) => ({
-      observation: fs.existsSync(lockPath)
-        ? { kind: "busy", reason: "unverified" }
-        : { kind: "absent" },
-    }));
     expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(
-      `is unverified; confirm no NemoClaw onboarding process in any environment sharing this state root is active, then remove only ${path.join(root(shared, selected), "onboard.lock")} and retry; migration will not remove it automatically`,
+      `onboarding lock ${lockFile} is present; confirm that no NemoClaw onboarding process in any environment sharing this state root is active, then remove only ${lockFile} and retry; migration will not remove it automatically`,
     );
+    expect(fs.readFileSync(lockFile, "utf8")).toBe("active writer");
     expect(fs.readFileSync(recoveryFile, "utf8")).toBe(before);
     expect(fs.existsSync(path.join(selected, "retained-sandbox-recovery.json"))).toBe(false);
   });
 
-  it.each([
-    ["active", () => "finish the active onboarding run before retrying"],
-    ["publishing", () => "wait for the lock write to finish, then retry"],
-    [
-      "foreign",
-      () => "finish or stop the onboarding run in the other host or PID namespace before retrying",
-    ],
-    [
-      "unsafe",
-      (lockPath: string) =>
-        `inspect ${lockPath} and replace or remove that unsafe path after confirming it is not in use, then retry; migration will not remove it automatically`,
-    ],
-  ] as const)("explains how to recover from a %s onboarding lock", (reason, recoveryFor) => {
-    const home = makeHome();
-    const shared = path.join(home, ".nemoclaw");
-    const activeLock = path.join(shared, "onboard.lock");
-    const recoveryFile = path.join(shared, "retained-sandbox-recovery.json");
-    recordRecovery(recoveryFile, "port-box", 9123, "d");
-    const before = fs.readFileSync(recoveryFile, "utf8");
-    const lockBefore = `retained ${reason} lock`;
-    fs.writeFileSync(activeLock, lockBefore);
-    inspectOnboardLock.mockReturnValue({ observation: { kind: "busy", reason } });
-
-    expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(
-      `is ${reason}; ${recoveryFor(activeLock)}`,
-    );
-    expect(fs.readFileSync(recoveryFile, "utf8")).toBe(before);
-    expect(fs.readFileSync(activeLock, "utf8")).toBe(lockBefore);
-  });
-
-  it("migrates past a proven-stale onboarding lock without removing it", () => {
+  it.each(
+    ["ollama-proxy-token", "ollama-proxy-port", "ollama-auth-proxy.pid"],
+  )("keeps host-shared Ollama proxy state out of a non-default gateway migration [%s]", (entry) => {
     const home = makeHome();
     const shared = path.join(home, ".nemoclaw");
     const selected = path.join(shared, "gateways", "9123");
-    const lock = path.join(shared, "onboard.lock");
     writeJson(path.join(shared, "sandboxes.json"), {
       defaultSandbox: "port-box",
       sandboxes: {
         "port-box": { name: "port-box", gatewayName: "nemoclaw-9123", gatewayPort: 9123 },
       },
     });
-    writeJson(path.join(shared, "onboard-session.json"), {
-      sandboxName: "port-box",
-      metadata: { gatewayName: "nemoclaw-9123" },
-    });
-    fs.writeFileSync(lock, "retained stale lock");
-    inspectOnboardLock.mockReturnValue({
-      observation: {
-        kind: "stale",
-        reason: "departed",
-        owner: {
-          pid: 123,
-          startedAt: null,
-          command: null,
-          processGeneration: "boot:10",
-          hostIdentity: "host-a",
-          pidNamespaceIdentity: "pid:[1]",
-        },
-      },
-    });
+    writeJson(path.join(shared, "credentials.json"), { NVIDIA_API_KEY: "selected-secret" });
+    fs.writeFileSync(path.join(shared, "ollama-proxy-token"), "host-token\n");
+    fs.writeFileSync(path.join(shared, "ollama-proxy-port"), "11435\n");
+    fs.writeFileSync(path.join(shared, "ollama-auth-proxy.pid"), "4242\n");
 
-    expect(migrateLegacyPortState({ home, gatewayPort: 9123 }).migratedSession).toBe(true);
-    expect(fs.readFileSync(lock, "utf8")).toBe("retained stale lock");
-    expect(fs.existsSync(path.join(selected, "onboard-session.json"))).toBe(true);
+    const result = migrateLegacyPortState({ home, gatewayPort: 9123 });
+
+    expect(result.warnings).toEqual([]);
+
+    expect(fs.existsSync(path.join(shared, entry))).toBe(true);
+    expect(fs.existsSync(path.join(selected, entry))).toBe(false);
+
+    expect(fs.existsSync(path.join(shared, "credentials.json"))).toBe(false);
+    expect(fs.existsSync(path.join(selected, "credentials.json"))).toBe(true);
   });
-
-  it("migrates past a persisted departed owner through the real lock observer", async () => {
-    const actualLockObservation = await vi.importActual<
-      typeof import("./onboard-session/lock-observation")
-    >("./onboard-session/lock-observation");
-    inspectOnboardLock.mockImplementation((lockPath: string) =>
-      actualLockObservation.inspectOnboardLock(lockPath),
-    );
-    const hostIdentity = actualLockObservation.systemOnboardLockEvidence.hostIdentity();
-    const pidNamespaceIdentity =
-      actualLockObservation.systemOnboardLockEvidence.pidNamespaceIdentity();
-    expect(hostIdentity).not.toBeNull();
-    expect(pidNamespaceIdentity).not.toBeNull();
-
-    const home = makeHome();
-    const shared = path.join(home, ".nemoclaw");
-    const selected = path.join(shared, "gateways", "9123");
-    const lock = path.join(shared, "onboard.lock");
-    writeJson(path.join(shared, "sandboxes.json"), {
-      defaultSandbox: "port-box",
-      sandboxes: {
-        "port-box": { name: "port-box", gatewayName: "nemoclaw-9123", gatewayPort: 9123 },
-      },
-    });
-    writeJson(path.join(shared, "onboard-session.json"), {
-      sandboxName: "port-box",
-      metadata: { gatewayName: "nemoclaw-9123" },
-    });
-    const lockBefore = JSON.stringify({
-      pid: 2_147_483_647,
-      startedAt: "2026-09-09T00:00:00.000Z",
-      command: "departed nemoclaw onboard",
-      processGeneration: "departed-process-generation",
-      hostIdentity: hostIdentity as string,
-      pidNamespaceIdentity: pidNamespaceIdentity as string,
-    });
-    fs.writeFileSync(lock, lockBefore, { mode: 0o600 });
-
-    expect(migrateLegacyPortState({ home, gatewayPort: 9123 }).migratedSession).toBe(true);
-    expect(fs.readFileSync(lock, "utf8")).toBe(lockBefore);
-    expect(fs.existsSync(path.join(selected, "onboard-session.json"))).toBe(true);
-  });
-
-  it("refuses an onboarding lock below a symbolic-link state root", () => {
-    const home = makeHome();
-    const shared = path.join(home, ".nemoclaw");
-    const selected = path.join(shared, "gateways", "9123");
-    const outside = path.join(home, "outside");
-    recordRecovery(path.join(shared, "retained-sandbox-recovery.json"), "port-box", 9123, "d");
-    fs.mkdirSync(path.dirname(selected), { recursive: true });
-    fs.mkdirSync(outside);
-    fs.writeFileSync(path.join(outside, "onboard.lock"), "outside lock");
-    fs.symlinkSync(outside, selected, "dir");
-
-    expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(/symbolic link/);
-    expect(inspectOnboardLock).toHaveBeenCalledOnce();
-    expect(inspectOnboardLock).toHaveBeenCalledWith(path.join(shared, "onboard.lock"));
-    expect(fs.readFileSync(path.join(outside, "onboard.lock"), "utf8")).toBe("outside lock");
-  });
-
-  it.each(["ollama-proxy-token", "ollama-proxy-port", "ollama-auth-proxy.pid"])(
-    "keeps host-shared Ollama proxy state out of a non-default gateway migration [%s]",
-    (entry) => {
-      const home = makeHome();
-      const shared = path.join(home, ".nemoclaw");
-      const selected = path.join(shared, "gateways", "9123");
-      writeJson(path.join(shared, "sandboxes.json"), {
-        defaultSandbox: "port-box",
-        sandboxes: {
-          "port-box": { name: "port-box", gatewayName: "nemoclaw-9123", gatewayPort: 9123 },
-        },
-      });
-      writeJson(path.join(shared, "credentials.json"), { NVIDIA_API_KEY: "selected-secret" });
-      fs.writeFileSync(path.join(shared, "ollama-proxy-token"), "host-token\n");
-      fs.writeFileSync(path.join(shared, "ollama-proxy-port"), "11435\n");
-      fs.writeFileSync(path.join(shared, "ollama-auth-proxy.pid"), "4242\n");
-
-      const result = migrateLegacyPortState({ home, gatewayPort: 9123 });
-
-      expect(result.warnings).toEqual([]);
-
-      expect(fs.existsSync(path.join(shared, entry))).toBe(true);
-      expect(fs.existsSync(path.join(selected, entry))).toBe(false);
-
-      expect(fs.existsSync(path.join(shared, "credentials.json"))).toBe(false);
-      expect(fs.existsSync(path.join(selected, "credentials.json"))).toBe(true);
-    },
-  );
 
   it.each([8080, 9123])(
     "removes only generated stale migration-intent directories for gateway port %i",

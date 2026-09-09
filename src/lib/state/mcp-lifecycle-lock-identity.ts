@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import childProcess from "node:child_process";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import { performance } from "node:perf_hooks";
@@ -145,7 +145,7 @@ export function readMcpLockProcessIdentity(pid: number, fresh = false): string |
       identity = null;
     }
   } else {
-    const result = childProcess.spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], {
+    const result = spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], {
       encoding: "utf8",
       env: buildSubprocessEnv(),
       stdio: ["ignore", "pipe", "ignore"],
@@ -159,40 +159,17 @@ export function readMcpLockProcessIdentity(pid: number, fresh = false): string |
   return identity;
 }
 
-function readLinuxMachineIdentity(): string | null {
-  for (const candidate of ["/etc/machine-id", "/var/lib/dbus/machine-id"]) {
-    try {
-      const machineId = fs.readFileSync(candidate, "utf8").trim();
-      if (machineId) return `linux:${machineId}`;
-    } catch {
-      // Try the next stable machine identity source.
-    }
-  }
-  return null;
-}
-
-/** Stable machine identity suitable for deciding whether local PID evidence applies. */
-export function readMcpLockStableHostIdentity(): string | null {
-  if (process.platform === "linux") return readLinuxMachineIdentity();
-  if (process.platform === "darwin") {
-    const result = childProcess.spawnSync("ioreg", ["-rd1", "-c", "IOPlatformExpertDevice"], {
-      encoding: "utf8",
-      env: buildSubprocessEnv(),
-      stdio: ["ignore", "pipe", "ignore"],
-      timeout: 1_000,
-    });
-    const platformUuid =
-      result.status === 0 ? /"IOPlatformUUID"\s*=\s*"([^"]+)"/u.exec(result.stdout)?.[1] : null;
-    return platformUuid ? `darwin:${platformUuid}` : null;
-  }
-  return null;
-}
-
-/** Compatibility identity for the existing MCP lifecycle-lock protocol. */
+/** Stable enough to distinguish independent hosts sharing a state directory. */
 export function readMcpLockHostIdentity(): string {
   if (process.platform === "linux") {
-    const machineIdentity = readLinuxMachineIdentity();
-    if (machineIdentity) return machineIdentity;
+    for (const candidate of ["/etc/machine-id", "/var/lib/dbus/machine-id"]) {
+      try {
+        const machineId = fs.readFileSync(candidate, "utf8").trim();
+        if (machineId) return `linux:${machineId}`;
+      } catch {
+        // Fall through to the hostname identity.
+      }
+    }
   }
   return `${process.platform}:${os.hostname() || "unknown-host"}`;
 }
