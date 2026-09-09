@@ -123,7 +123,7 @@ printf 'install|%s|offline=%s|peer=%s|cache=%s\n' "$3" "$NPM_CONFIG_OFFLINE" "$N
     executable(
       path.join(tmp, "node"),
       `#!/bin/sh
-printf 'verify|%s|%s|openclaw=%s|offline=%s|cache=%s\n' "$3" "$4" "$5" "$NPM_CONFIG_OFFLINE" "$NPM_CONFIG_CACHE" >> "$TRACE"
+printf 'verify|%s|%s|openclaw=%s|offline=%s|cache=%s\n' "$2" "$3" "$4" "$NPM_CONFIG_OFFLINE" "$NPM_CONFIG_CACHE" >> "$TRACE"
 `,
     );
 
