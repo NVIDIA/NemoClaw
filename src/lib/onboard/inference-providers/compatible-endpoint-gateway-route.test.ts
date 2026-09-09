@@ -97,25 +97,14 @@ describe("compatible endpoint gateway routing", () => {
   });
 });
 
-describe("recovered provider reuse and the openai provider profile (#9895)", () => {
+describe("recovered provider reuse", () => {
   const REGISTERED_URL = "http://host.openshell.internal:8000/v1";
-  const OPENAI_ENDPOINTLESS_PROFILE = JSON.stringify({
-    id: "openai",
-    credentials: [],
-    endpoints: [],
-    binaries: [],
-    inference_capable: true,
-  });
 
-  function createRunOpenshell(
-    profileResults: Array<{ status: number; stdout?: string; stderr?: string }>,
-  ) {
+  function createRunOpenshell() {
     const commands: string[] = [];
     const runOpenshell = vi.fn((args: string[]) => {
       commands.push(args.join(" "));
-      return args[1] === "profile"
-        ? (profileResults.shift() ?? { status: 1, stderr: "unexpected profile call" })
-        : { status: 0, stdout: "", stderr: "" };
+      return { status: 0, stdout: "", stderr: "" };
     });
     return { commands, runOpenshell };
   }
@@ -128,10 +117,8 @@ describe("recovered provider reuse and the openai provider profile (#9895)", () 
     gatewayEndpointUrl: REGISTERED_URL,
   };
 
-  it("declares the openai profile for an unchanged gateway route that performs no upsert", () => {
-    const { commands, runOpenshell } = createRunOpenshell([
-      { status: 0, stdout: OPENAI_ENDPOINTLESS_PROFILE },
-    ]);
+  it("reuses an unchanged OpenAI gateway route without a compatibility-profile mutation", () => {
+    const { commands, runOpenshell } = createRunOpenshell();
     const upsertProvider = vi.fn(() => ({ ok: true }));
 
     expect(
@@ -139,36 +126,11 @@ describe("recovered provider reuse and the openai provider profile (#9895)", () 
     ).toEqual({ ok: true });
 
     expect(upsertProvider).not.toHaveBeenCalled();
-    expect(commands).toEqual([
-      "provider get compatible-endpoint",
-      "provider profile export openai --output json",
-    ]);
-  });
-
-  it("reports a failed profile import instead of reusing the recovered provider", () => {
-    const { runOpenshell } = createRunOpenshell([
-      { status: 1, stderr: "provider profile not found" },
-      { status: 1, stderr: "import refused" },
-    ]);
-    const upsertProvider = vi.fn(() => ({ ok: true }));
-
-    const result = reuseRegisteredProviderWithGatewayEndpoint({
-      ...reuseArgs,
-      runOpenshell,
-      upsertProvider,
-    });
-
-    expect(result.ok).toBe(false);
-    expect(result.status).toBe(1);
-    expect(result.message).toContain(
-      "could not import the checked-in 'openai' inference provider profile",
-    );
-    expect(result.message).not.toContain("import refused");
-    expect(upsertProvider).not.toHaveBeenCalled();
+    expect(commands).toEqual(["provider get compatible-endpoint"]);
   });
 
   it("leaves a non-openai recovered provider untouched", () => {
-    const { commands, runOpenshell } = createRunOpenshell([]);
+    const { commands, runOpenshell } = createRunOpenshell();
     const upsertProvider = vi.fn(() => ({ ok: true }));
 
     expect(

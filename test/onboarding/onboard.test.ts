@@ -802,12 +802,8 @@ const { createSandbox } = require(${onboardPath});
         "OPENAI_API_KEY",
       );
 
-      // openai provider profile validation + provider get + provider update + inference set
-      assert.equal(
-        harness.commands[0].command,
-        "provider profile -g nemoclaw export openai --output json",
-      );
-      assert.equal(harness.commands.length, 4);
+      assert.equal(harness.commands[0].command, "provider get -g nemoclaw openai-api");
+      assert.equal(harness.commands.length, 3);
     });
   });
   it("accepts gateway inference output that omits the Route line", async () => {
@@ -841,12 +837,8 @@ const { createSandbox } = require(${onboardPath});
         "OPENAI_API_KEY",
       );
 
-      // openai provider profile validation + provider get + provider update + inference set
-      assert.equal(
-        harness.commands[0].command,
-        "provider profile -g nemoclaw export openai --output json",
-      );
-      assert.equal(harness.commands.length, 4);
+      assert.equal(harness.commands[0].command, "provider get -g nemoclaw openai-api");
+      assert.equal(harness.commands.length, 3);
     });
   });
   it("uses the sandbox-base registry in pullAndResolveBaseImageDigest (#1904)", () => {

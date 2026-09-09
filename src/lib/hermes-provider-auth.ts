@@ -11,7 +11,6 @@
 
 import type { StdioOptions } from "node:child_process";
 
-import { checkOpenAiInferenceProviderProfile } from "./adapters/openshell/provider-profile-registration";
 import { HERMES_PROVIDER_NAME } from "./onboard/inference-providers/hermes-provider-identity";
 import * as oauth from "./oauth-device-code";
 
@@ -125,10 +124,6 @@ export function registerHermesInferenceProvider(
   const normalizedApiKey = nonEmptyString(apiKey);
   if (!normalizedApiKey) {
     throw new Error("Hermes Provider credential is empty");
-  }
-  const profile = checkOpenAiInferenceProviderProfile({ runOpenshell });
-  if (!profile.ok) {
-    throw new Error(profile.messages.join("\n"));
   }
   const result = onboardProviders.upsertProvider(
     HERMES_PROVIDER_NAME,

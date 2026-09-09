@@ -240,10 +240,7 @@ function mockEndpointlessProviderProfileRun(command, profileId, inferenceCapable
 }
 
 function mockManagedEndpointlessProviderProfileRun(command) {
-  return (
-    mockEndpointlessProviderProfileRun(command, "openai", true) ??
-    mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false)
-  );
+  return mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
 }
 
 function mockProviderPreparationRun(command, gatewayName, profileId, inferenceCapable) {
