@@ -830,7 +830,7 @@ async function proveHistoricalHermesPortableLifecycle(input: {
       waitForOpenShellTerminalPhase(input.openshellBin, input.openshellClientEnv, sandboxName);
 
       input.progress.phase("classify a post-start refusal and rollback settlement");
-      let refuseTerminalObservation = false;
+      let startupRefused = false;
       let virtualNow = Date.now();
       const refusedObservations = new Map<string, HermesPortableLifecycleCommandResult>([
         [
@@ -859,14 +859,12 @@ async function proveHistoricalHermesPortableLifecycle(input: {
             stdout: `Name: ${sandboxName}\nID: ${live.id}\nPhase: Ready\n`,
           },
         ],
+        ["sandbox\0exec", { status: 0, stderr: "", stdout: "" }],
       ]);
       const refusingCapture: NonNullable<HermesPortableLifecycleDeps["captureOpenShell"]> = (
         args,
         timeoutMs,
-      ) =>
-        (refuseTerminalObservation
-          ? refusedObservations.get(args.slice(0, 2).join("\0"))
-          : undefined) ?? capture(args, timeoutMs);
+      ) => refusedObservations.get(args.slice(0, 2).join("\0")) ?? capture(args, timeoutMs);
       let classifiedFailure: unknown;
       try {
         withMcpLifecycleLockSync(
@@ -876,10 +874,10 @@ async function proveHistoricalHermesPortableLifecycle(input: {
               ...lifecycleDeps,
               captureOpenShell: refusingCapture,
               launchOpenShell: () => {
-                refuseTerminalObservation = true;
+                startupRefused = true;
                 assert.ok(false, "injected post-start startup refusal");
               },
-              now: () => (refuseTerminalObservation ? (virtualNow += 31_000) : Date.now()),
+              now: () => (startupRefused ? (virtualNow += 31_000) : Date.now()),
               sleep: () => undefined,
             }),
           { stateDir: path.join(receiptStateDir, "state") },
@@ -887,11 +885,15 @@ async function proveHistoricalHermesPortableLifecycle(input: {
       } catch (error) {
         classifiedFailure = error;
       }
+      const classifiedDetails =
+        classifiedFailure instanceof HermesPortableRecoveryRollbackError
+          ? `primary=${classifiedFailure.primaryFailureClass} rollback=${classifiedFailure.rollbackFailureClass}`
+          : String(classifiedFailure);
       assert.ok(
         classifiedFailure instanceof HermesPortableRecoveryRollbackError &&
           classifiedFailure.primaryFailureClass === "startup-launch" &&
           classifiedFailure.rollbackFailureClass === "openshell-terminal-settlement",
-        "Hermes recovery did not preserve primary and rollback classifications",
+        `Hermes recovery did not preserve primary and rollback classifications: ${classifiedDetails}`,
       );
       const stoppedContainerStatus = waitForReceiptOwnedContainerExit(activeContainerId);
       const rollbackTerminalPhase = waitForOpenShellTerminalPhase(
