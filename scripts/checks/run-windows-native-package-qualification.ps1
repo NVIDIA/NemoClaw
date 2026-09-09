@@ -374,10 +374,28 @@ function Invoke-NativeCredentialHelper {
     $startInfo.RedirectStandardInput = $true
     $startInfo.RedirectStandardOutput = $true
     $startInfo.RedirectStandardError = $true
+    $utf8WithoutBom = [Text.UTF8Encoding]::new($false)
+    $parentInputEncoding = [Console]::InputEncoding
+    $useConsoleInputEncoding = $null -eq $startInfo.PSObject.Properties['StandardInputEncoding']
+    if (-not $useConsoleInputEncoding) { $startInfo.StandardInputEncoding = $utf8WithoutBom }
+    if ($Arguments -contains '--configure-native' -and ($Arguments -contains '--prepare' -or $Arguments -contains '--prepare-service')) {
+        $encodingMode = if ($useConsoleInputEncoding) { 'scoped-console' } else { 'process-property' }
+        $preamble = [BitConverter]::ToString($parentInputEncoding.GetPreamble())
+        if ($preamble.Length -eq 0) { $preamble = 'none' }
+        Write-Host "[CREDENTIAL HELPER] stdin=$encodingMode; parent codepage=$($parentInputEncoding.CodePage); parent preamble=$preamble; selected=UTF-8/no-BOM"
+    }
     $process = [Diagnostics.Process]::new()
     $process.StartInfo = $startInfo
     try {
-        if (-not $process.Start()) {
+        # Framework constructs and flushes its writer inside Start, so choosing
+        # UTF-8 without a preamble must happen before Start, not on BaseStream later.
+        try {
+            if ($useConsoleInputEncoding) { [Console]::InputEncoding = $utf8WithoutBom }
+            $started = $process.Start()
+        } finally {
+            if ($useConsoleInputEncoding) { [Console]::InputEncoding = $parentInputEncoding }
+        }
+        if (-not $started) {
             Fail-PackageQualification 'The native Windows credential helper could not start.'
         }
         if (-not [string]::IsNullOrEmpty($StandardInput)) {
@@ -400,6 +418,24 @@ function Invoke-NativeCredentialHelper {
     } finally {
         $process.Dispose()
     }
+}
+
+function Get-NativeCredentialPrepareDiagnostic {
+    param([Parameter(Mandatory)]$Result)
+    $stdout = [string]$Result.stdout
+    $stderr = [string]$Result.stderr
+    $stdoutStatus = if ($stdout.Length -eq 0) { 'empty' } elseif ($stdout -cmatch '^[a-f0-9]{64}$') { 'binding' } else { 'invalid' }
+    $sample = $stderr.Substring(0, [Math]::Min($stderr.Length, 4096))
+    # Classify a bounded stderr prefix instead of printing helper data, which may
+    # contain submitted values. Never emit the key-bearing stdout stream.
+    $stderrStatus = if ($stderr.Length -eq 0) { 'empty' } elseif ($sample.Contains([string][char]0xFEFF)) {
+        'JSON-BOM'
+    } elseif ($sample -match 'JSON|Unexpected token|Unexpected end') {
+        'JSON-parse-error'
+    } elseif ($sample -match 'EACCES|EPERM|access.denied|permission') {
+        'access-denied'
+    } else { 'redacted' }
+    return "exit=$($Result.exitCode); stdout=$stdoutStatus/$($stdout.Length) chars; stderr=$stderrStatus/$($stderr.Length) chars"
 }
 
 function Invoke-NativeCredentialManagerRoundTrip {
@@ -1270,7 +1306,7 @@ function Invoke-NativeCredentialBindingControl {
             $prepared = Invoke-NativeCredentialHelper -LauncherPath $nemoclawUiLauncherPath `
                 -Arguments @('--configure-native', '--prepare') -StandardInput ($metadata | ConvertTo-Json -Depth 8 -Compress)
             if ($prepared.exitCode -ne 0 -or $prepared.stdout -cnotmatch '^[a-f0-9]{64}$') {
-                Fail-PackageQualification 'Native setup did not prepare a bounded credential binding.'
+                Fail-PackageQualification ('Native setup did not prepare a bounded credential binding. ' + (Get-NativeCredentialPrepareDiagnostic -Result $prepared))
             }
             $case.binding = $prepared.stdout
             foreach ($snapshot in $snapshots) {
@@ -1290,7 +1326,7 @@ function Invoke-NativeCredentialBindingControl {
                 $servicePrepared = Invoke-NativeCredentialHelper -LauncherPath $nemoclawUiLauncherPath `
                     -Arguments @('--configure-native', '--prepare-service', $service) -StandardInput ($metadata | ConvertTo-Json -Depth 8 -Compress)
                 if ($servicePrepared.exitCode -ne 0 -or $servicePrepared.stdout -cnotmatch '^[a-f0-9]{64}$' -or $servicePrepared.stdout -ceq $case.binding) {
-                    Fail-PackageQualification 'A service credential binding was invalid or aliased inference.'
+                    Fail-PackageQualification ('A service credential binding was invalid or aliased inference. ' + (Get-NativeCredentialPrepareDiagnostic -Result $servicePrepared))
                 }
                 Write-Host "[CREDENTIAL CONTROL] Check absent service key: $($case.agent)/$service"
                 $serviceAbsent = Invoke-NativeCredentialHelper -LauncherPath $nemoclawUiLauncherPath `
@@ -1332,7 +1368,7 @@ function Invoke-NativeCredentialBindingControl {
         $wrongAgent = Invoke-NativeCredentialHelper -LauncherPath $nemoclawUiLauncherPath `
             -Arguments @('--configure-native', '--prepare') -StandardInput ($wrongAgentMetadata | ConvertTo-Json -Compress)
         if ($wrongAgent.exitCode -ne 0 -or $wrongAgent.stdout -cnotmatch '^[a-f0-9]{64}$' -or $wrongAgent.stdout -ceq $cases[0].binding) {
-            Fail-PackageQualification 'Changing the agent did not change the credential binding.'
+            Fail-PackageQualification ('Changing the agent did not change the credential binding. ' + (Get-NativeCredentialPrepareDiagnostic -Result $wrongAgent))
         }
         $wrongRead = Invoke-NativeCredentialHelper -LauncherPath $nemoclawUiLauncherPath `
             -Arguments @('--credential-read', 'compatible', '--binding', $wrongAgent.stdout)
