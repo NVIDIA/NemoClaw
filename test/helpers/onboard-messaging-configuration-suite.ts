@@ -6,10 +6,8 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { beforeEach, describe, it, vi } from "vitest";
-import YAML from "yaml";
 
 import {
   activeChannelsFromDockerfile,
@@ -18,7 +16,6 @@ import {
   parseMessagingFixturePayload,
   writeCustomMessagingDockerfile,
 } from "./messaging-plan-fixtures";
-import { runBoundedOnboardScript } from "./onboard-child-process-harness";
 import { writeOkOpenshell } from "./onboard-openshell-fixture";
 
 type CommandEntry = {
@@ -33,7 +30,6 @@ type CommandEntry = {
 };
 const parseStdoutJson = parseMessagingFixturePayload;
 const repoRoot = path.join(import.meta.dirname, "../..");
-const yamlModulePath = fileURLToPath(import.meta.resolve("yaml"));
 const onboardScriptMocksPath = JSON.stringify(
   path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
 );
