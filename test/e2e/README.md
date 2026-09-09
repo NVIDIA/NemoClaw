@@ -1555,7 +1555,8 @@ A repository-authorized user decides whether to dispatch this trusted selection 
 For API-confirmed NVIDIA-owned sources, the selection may include secret-backed targets such as `network-policy`.
 External PR revisions retain the credential-free controller boundary.
 The Advisor comment labels the requested coverage, but does not restrict an NVIDIA-owned PR to that recommendation.
-No PR E2E controller dispatches the risk plan.
+The ordinary PR E2E controller does not dispatch the risk plan. The trusted generated-head repair
+reporter dispatches only the required jobs for an exact repair attempt.
 
 The `full-e2e` target enforces a separate hard acceptance contract for the
 first fresh onboarding path in that job. It measures from the onboard root span
