@@ -831,6 +831,7 @@ async function proveHistoricalHermesPortableLifecycle(input: {
 
       input.progress.phase("classify a post-start refusal and rollback settlement");
       let startupRefused = false;
+      let terminalSettlementObserved = false;
       let virtualNow = Date.now();
       const refusedObservations = new Map<string, HermesPortableLifecycleCommandResult>([
         [
@@ -868,7 +869,14 @@ async function proveHistoricalHermesPortableLifecycle(input: {
       const refusingCapture: NonNullable<HermesPortableLifecycleDeps["captureOpenShell"]> = (
         args,
         timeoutMs,
-      ) => refusedObservations.get(args.slice(0, 2).join("\0")) ?? capture(args, timeoutMs);
+      ) => {
+        const operation = args.slice(0, 2).join("\0");
+        const startsTerminalSettlement =
+          !terminalSettlementObserved && startupRefused && operation === "sandbox\0list";
+        virtualNow = startsTerminalSettlement ? Date.now() : virtualNow;
+        terminalSettlementObserved ||= startsTerminalSettlement;
+        return refusedObservations.get(operation) ?? capture(args, timeoutMs);
+      };
       let classifiedFailure: unknown;
       try {
         withMcpLifecycleLockSync(
@@ -881,8 +889,8 @@ async function proveHistoricalHermesPortableLifecycle(input: {
                 startupRefused = true;
                 assert.ok(false, "injected post-start startup refusal");
               },
-              now: () => (startupRefused ? (virtualNow += 31_000) : Date.now()),
-              sleep: () => undefined,
+              now: () =>
+                terminalSettlementObserved ? (virtualNow += 31_000) : Date.now(),
             }),
           { stateDir: path.join(receiptStateDir, "state") },
         );
