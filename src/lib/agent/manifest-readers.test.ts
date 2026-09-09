@@ -31,13 +31,19 @@ describe("agent manifest YAML merges", () => {
     ).toThrow(/abnormal merge sequence size/);
   });
 
+  it("accepts repeated empty merge sources at the document work limit", () => {
+    const sources = Array<string>(100).fill("*empty").join(", ");
+    const mappings = Array.from({ length: 100 }, (_, index) => `agent${index}: {<<: [${sources}]}`);
+    const parsed = parseManifestRecord(`empty: &empty {}\n${mappings.join("\n")}\n`, "merge.yaml");
+
+    expect(Object.keys(parsed)).toHaveLength(101);
+    expect(parsed.agent99).toEqual({});
+  });
+
   it("rejects repeated empty merge sources that exceed the document work limit (#11252)", () => {
     const sources = Array<string>(100).fill("*empty").join(", ");
-    // Each sequence stays within its limit; 1,001 sequences exceed the 100,000-work document limit.
-    const mappings = Array.from(
-      { length: 1001 },
-      (_, index) => `agent${index}: {<<: [${sources}]}`,
-    );
+    // Each sequence stays within its limit; 101 sequences exceed the 10,000-work document limit.
+    const mappings = Array.from({ length: 101 }, (_, index) => `agent${index}: {<<: [${sources}]}`);
     expect(() =>
       parseManifestRecord(`empty: &empty {}\n${mappings.join("\n")}\n`, "merge.yaml"),
     ).toThrow(/merge keys exceeded maxTotalMergeKeys/);
