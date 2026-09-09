@@ -274,7 +274,6 @@ describe("OpenShell policy boundary package contract", () => {
       execFileSync(
         process.execPath,
         [
-          "--experimental-strip-types",
           "--no-warnings",
           "--eval",
           `const contract = require(${JSON.stringify(controlContractPath)}); process.stdout.write(JSON.stringify([contract.isValidName("packaged-hermes"), contract.isValidName("../packaged-hermes")]));`,
