@@ -65,7 +65,7 @@ export function buildExportConfig(
           agents: [
             {
               name: "primary",
-              type: "openclaw",
+              type: source.agent,
               inference: {
                 routes: [
                   {
