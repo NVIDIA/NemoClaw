@@ -194,10 +194,9 @@ export function validatePrReviewAdvisorWorkflow(workflowPath = DEFAULT_WORKFLOW_
   );
   const runtimeInstallScript = String(runtimeInstall?.run ?? "");
   if (
-    !runtimeInstallScript.includes(
-      'UBUNTU_APT_SOURCES="/etc/apt/sources.list.d/ubuntu.sources"',
-    ) ||
-    !runtimeInstallScript.includes('Dir::Etc::sourcelist=$UBUNTU_APT_SOURCES') ||
+    !runtimeInstallScript.includes('UBUNTU_APT_SOURCES="/etc/apt/sources.list.d/ubuntu.sources"') ||
+    !runtimeInstallScript.includes('if [ ! -r "$UBUNTU_APT_SOURCES" ]; then') ||
+    !runtimeInstallScript.includes("Dir::Etc::sourcelist=$UBUNTU_APT_SOURCES") ||
     !runtimeInstallScript.includes("Dir::Etc::sourceparts=-") ||
     runtimeInstallScript.includes("sudo apt-get update -qq")
   ) {

@@ -574,7 +574,9 @@ describe("pull request and main workflow contracts", () => {
     const temp = mkdtempSync(join(tmpdir(), "nemoclaw-cli-shard-apt-"));
     const fakeBin = join(temp, "bin");
     const aptTrace = join(temp, "apt-trace");
+    const ubuntuSources = join(temp, "ubuntu.sources");
     mkdirSync(fakeBin);
+    writeFileSync(ubuntuSources, "Types: deb\nURIs: http://archive.ubuntu.com/ubuntu\n");
     writeFileSync(
       join(fakeBin, "sudo"),
       '#!/usr/bin/env bash\nset -euo pipefail\nprintf "%s\\n" "$*" >> "$APT_TRACE"\n',
@@ -601,19 +603,37 @@ describe("pull request and main workflow contracts", () => {
     });
 
     try {
-      const result = runWorkflowShellStep(
-        requiredStep(sharedActions.cliCoverageShard, "Install pinned Pi search tools"),
-        {
-          APT_TRACE: aptTrace,
-          PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
-        },
+      const installStep = requiredStep(
+        sharedActions.cliCoverageShard,
+        "Install pinned Pi search tools",
       );
+      const executableInstallStep = {
+        ...installStep,
+        run: installStep.run?.replace(
+          'UBUNTU_APT_SOURCES="/etc/apt/sources.list.d/ubuntu.sources"',
+          `UBUNTU_APT_SOURCES=${JSON.stringify(ubuntuSources)}`,
+        ),
+      };
+      const result = runWorkflowShellStep(executableInstallStep, {
+        APT_TRACE: aptTrace,
+        PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+      });
 
       expect(result.status, result.stderr).toBe(0);
       expect(readFileSync(aptTrace, "utf8").trim().split("\n")).toEqual([
-        "apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- update -qq",
-        "apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- install -y --no-install-recommends fd-find=9.0.0-1 ripgrep=14.1.0-1",
+        `apt-get -o Dir::Etc::sourcelist=${ubuntuSources} -o Dir::Etc::sourceparts=- update -qq`,
+        `apt-get -o Dir::Etc::sourcelist=${ubuntuSources} -o Dir::Etc::sourceparts=- install -y --no-install-recommends fd-find=9.0.0-1 ripgrep=14.1.0-1`,
       ]);
+
+      rmSync(ubuntuSources);
+      rmSync(aptTrace);
+      const missingSourceResult = runWorkflowShellStep(executableInstallStep, {
+        APT_TRACE: aptTrace,
+        PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+      });
+      expect(missingSourceResult.status).not.toBe(0);
+      expect(missingSourceResult.stdout).toContain("Required Ubuntu APT source is unavailable");
+      expect(existsSync(aptTrace)).toBe(false);
     } finally {
       rmSync(temp, { force: true, recursive: true });
     }
@@ -969,9 +989,7 @@ describe("pull request and main workflow contracts", () => {
       NEMOCLAW_OPEN_SHELL_SDK_INCLUDE_REPLACEMENT: "1",
       NODE_AUTH_TOKEN: "${{ github.token }}",
     });
-    expect(fetch.run).toContain(
-      "node scripts/checks/package-openshell-sdk-for-pr.mts",
-    );
+    expect(fetch.run).toContain("node scripts/checks/package-openshell-sdk-for-pr.mts");
     expect(fetch.run).toContain("artifact_path=");
     expect(
       (sdkPackageJob.steps ?? [])

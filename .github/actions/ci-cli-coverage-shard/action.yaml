@@ -58,6 +58,10 @@ runs:
       run: |
         set -euo pipefail
         UBUNTU_APT_SOURCES="/etc/apt/sources.list.d/ubuntu.sources"
+        if [ ! -r "$UBUNTU_APT_SOURCES" ]; then
+          echo "::error::Required Ubuntu APT source is unavailable: $UBUNTU_APT_SOURCES"
+          exit 1
+        fi
         APT_SOURCE_OPTIONS=(
           -o "Dir::Etc::sourcelist=$UBUNTU_APT_SOURCES"
           -o "Dir::Etc::sourceparts=-"

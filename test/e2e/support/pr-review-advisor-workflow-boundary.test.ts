@@ -97,6 +97,12 @@ it.each([
     "sudo apt-get update -qq",
     "Unified advisor runtime package install must use only Ubuntu archive sources",
   ],
+  [
+    "Ubuntu archive source availability",
+    'if [ ! -r "$UBUNTU_APT_SOURCES" ]; then',
+    "if false; then",
+    "Unified advisor runtime package install must use only Ubuntu archive sources",
+  ],
 ])("rejects an unsafe Advisor %s mutation", (_case, before, after, error) => {
   const directory = mkdtempSync(join(tmpdir(), "nemoclaw-pr-review-advisor-"));
   const advisorPath = join(directory, "advisor.yaml");
