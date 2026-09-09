@@ -2683,11 +2683,15 @@ _ENV_SLEEP_MAX = 1000000000.0
 _ENV_TIMEOUT_MAX = 2147483.0
 _ENV_DEADLINE_MAX = 1000000000000.0
 _ENV_POLLS_MAX = 9007199254740991
+_ENV_SECONDS_VALUE = re.compile(
+    r'^\+?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]{1,3})?$'
+)
+_ENV_POLLS_VALUE = re.compile(r'^\+?[0-9]+$')
 
 
 def _env_seconds(name, default, maximum):
     raw = os.environ.get(name, '').strip()
-    if not raw:
+    if not raw or _ENV_SECONDS_VALUE.fullmatch(raw) is None:
         return default
     try:
         value = float(raw)
@@ -2699,13 +2703,14 @@ def _env_seconds(name, default, maximum):
 
 
 def _env_polls(name, default):
-    # The launch renderer and the entrypoint wrapper both admit this counter as
-    # an integer only. A direct `docker run -e` reaches neither, and truncating
-    # a fraction here would turn 0.5 into 0 and silently disable fast reentry at
-    # the `FAST_REENTRY_POLLS > 0` gate, so a non-integer falls back to the
-    # default like any other value this helper cannot use.
-    value = _env_seconds(name, default, _ENV_POLLS_MAX)
-    return int(value) if float(value).is_integer() else default
+    # Keep direct process-environment parsing on the same decimal-integer
+    # grammar as the host renderer and entrypoint wrapper. Python otherwise
+    # accepts forms such as 1e1 that the managed handoff rejects.
+    raw = os.environ.get(name, '').strip()
+    if not raw or _ENV_POLLS_VALUE.fullmatch(raw) is None:
+        return default
+    value = int(raw, 10)
+    return value if 0 < value <= _ENV_POLLS_MAX else default
 
 
 # Total runtime cap. After convergence the watcher polls at a slow cadence,

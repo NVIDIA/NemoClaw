@@ -37,6 +37,7 @@ function resolveSchedulerConstants(env: NodeJS.ProcessEnv): {
   const prelude = body.slice(start, body.indexOf("\n", last));
   const program = [
     "import os",
+    "import re",
     "import time",
     prelude,
     "print('POLLS', FAST_REENTRY_POLLS)",
@@ -91,6 +92,14 @@ describe("nemoclaw-start auto-pair scheduler environment bounds", () => {
     {
       name: "a fractional poll count that would truncate down",
       input: { NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "2.7" },
+    },
+    {
+      name: "an exponent-form poll count rejected by the shared grammar",
+      input: { NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "1e1" },
+    },
+    {
+      name: "an underscore-separated interval rejected by the shared grammar",
+      input: { NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "1_000" },
     },
     {
       name: "a poll count past the safe integer range",

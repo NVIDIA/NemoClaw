@@ -105,6 +105,16 @@ describe("relaunchManagedSupervisorSession", () => {
     expect(deps.recreate).not.toHaveBeenCalled();
   });
 
+  it("refuses an invalid auto-pair environment before recovery side effects", () => {
+    vi.stubEnv("NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS", "Infinity");
+    const deps = baseDeps();
+
+    expect(relaunchManagedSupervisorSession("alpha", { quiet: true, deps })).toBeNull();
+    expect(deps.resolveContainer).not.toHaveBeenCalled();
+    expect(deps.backupState).not.toHaveBeenCalled();
+    expect(deps.recreate).not.toHaveBeenCalled();
+  });
+
   it("refuses a container that no longer has the legacy keepalive startup", () => {
     const deps = baseDeps({
       inspectContainer: vi.fn(() => ({
