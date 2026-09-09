@@ -203,7 +203,7 @@ installed_copy_schema_error() {
       "hermes-mcp-config-transaction.py" \
       "openshell-child-visible-credentials.v0.0.106.json" \
       "HERMES_HOME=/sandbox/.hermes /usr/local/bin/hermes doctor --fix" \
-      "node --experimental-strip-types /opt/nemoclaw-hermes-config/generate-config.ts" \
+      "node /opt/nemoclaw-hermes-config/generate-config.ts" \
       "/sandbox/.hermes/profiles/dashboard-home"; do
       grep -Fq "$item" "$dockerfile" || missing+=("marker ${item}")
     done

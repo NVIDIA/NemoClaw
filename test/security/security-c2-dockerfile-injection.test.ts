@@ -135,7 +135,7 @@ describe("Gateway auth hardening: Dockerfile must not hardcode insecure auth def
         promoted = true;
       }
       if (
-        /^RUN\s+(?:NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0\s+)?(?:NEMOCLAW_OPENCLAW_MANAGED_PROXY=0\s+)?node\s+--experimental-strip-types\s+\/scripts\/generate-openclaw-config\.mts$/.test(
+        /^RUN\s+(?:NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0\s+)?(?:NEMOCLAW_OPENCLAW_MANAGED_PROXY=0\s+)?node\s+\/scripts\/generate-openclaw-config\.mts$/.test(
           instruction.text,
         )
       ) {

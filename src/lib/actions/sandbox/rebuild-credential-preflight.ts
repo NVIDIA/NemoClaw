@@ -16,16 +16,16 @@ const hermesProviderAuth = require("../../hermes-provider-auth") as {
   HERMES_PROVIDER_NAME: string;
   HERMES_INFERENCE_CREDENTIAL_ENV: string;
   HERMES_NOUS_API_KEY_CREDENTIAL_ENV: string;
-  inspectHermesProviderBinding: (runOpenshellFn: typeof runOpenshell) => {
+  inspectHermesProviderBinding: (runOpenshellFn: typeof runOpenshell) => Promise<{
     exists: boolean;
     credentialKeys: string[] | null;
-  };
+  }>;
   registerHermesInferenceProvider: (
     apiKey: string,
     runOpenshellFn: typeof runOpenshell,
     credentialEnv?: string,
     baseUrl?: string,
-  ) => void;
+  ) => Promise<void>;
 };
 
 export type RebuildBail = (message: string, code?: number) => never;
@@ -62,11 +62,11 @@ function nonEmptyString(value: unknown): string | null {
   return normalized || null;
 }
 
-function preflightHermesProviderCredentials(
+async function preflightHermesProviderCredentials(
   persistedAuthMethod: unknown,
   credentialEnv: string | null,
   log: RebuildLog,
-): boolean {
+): Promise<boolean> {
   const authMethod =
     normalizeHermesRebuildAuthMethod(persistedAuthMethod) ||
     (credentialEnv === hermesProviderAuth.HERMES_NOUS_API_KEY_CREDENTIAL_ENV ? "api_key" : null);
@@ -74,7 +74,7 @@ function preflightHermesProviderCredentials(
     authMethod === "api_key"
       ? hermesProviderAuth.HERMES_NOUS_API_KEY_CREDENTIAL_ENV
       : hermesProviderAuth.HERMES_INFERENCE_CREDENTIAL_ENV;
-  const binding = hermesProviderAuth.inspectHermesProviderBinding(runOpenshell);
+  const binding = await hermesProviderAuth.inspectHermesProviderBinding(runOpenshell);
 
   if (binding.exists) {
     const matches =
@@ -107,12 +107,12 @@ function preflightHermesProviderCredentials(
         console.log(
           "  Hermes Provider is not registered in OpenShell; registering it from the configured exported API-key environment variable before rebuild.",
         );
-        hermesProviderAuth.registerHermesInferenceProvider(
+        await hermesProviderAuth.registerHermesInferenceProvider(
           envKey,
           runOpenshell,
           hermesProviderAuth.HERMES_NOUS_API_KEY_CREDENTIAL_ENV,
         );
-        const registered = hermesProviderAuth.inspectHermesProviderBinding(runOpenshell);
+        const registered = await hermesProviderAuth.inspectHermesProviderBinding(runOpenshell);
         return (
           registered.credentialKeys?.length === 1 &&
           registered.credentialKeys[0] === hermesProviderAuth.HERMES_NOUS_API_KEY_CREDENTIAL_ENV
@@ -146,17 +146,17 @@ function preflightHermesProviderCredentials(
   return false;
 }
 
-export function preflightRebuildCredentials(
+export async function preflightRebuildCredentials(
   sb: RebuildSandboxEntry,
   log: RebuildLog,
   bail: RebuildBail,
   options: RebuildCredentialPreflightOptions = {},
-): boolean {
+): Promise<boolean> {
   const rebuildCredentialEnv = getRebuildCredentialEnvFromRegistry(sb.provider, sb.credentialEnv);
   const rebuildProvider = sb.provider;
 
   if (rebuildProvider === hermesProviderAuth.HERMES_PROVIDER_NAME) {
-    if (!preflightHermesProviderCredentials(sb.hermesAuthMethod, rebuildCredentialEnv, log)) {
+    if (!(await preflightHermesProviderCredentials(sb.hermesAuthMethod, rebuildCredentialEnv, log))) {
       bail("Missing Hermes Provider credentials");
       return false;
     }

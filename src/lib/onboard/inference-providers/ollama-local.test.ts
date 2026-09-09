@@ -42,6 +42,7 @@ const CREDENTIAL_ENV = "NEMOCLAW_OLLAMA_PROXY_TOKEN";
 
 beforeEach(() => {
   vi.stubEnv("DOCKER_CONTEXT", "default");
+  vi.stubEnv("DOCKER_HOST", "");
 });
 
 afterEach(() => {
@@ -63,7 +64,7 @@ function deps(overrides: OllamaDepsOverrides = {}): OllamaDeps {
   const { localInference, ...rest } = overrides;
   return {
     runOpenshell: vi.fn(() => ({ status: 0 })),
-    upsertProvider: vi.fn(() => ({ ok: true })),
+    upsertProvider: vi.fn(async () => ({ ok: true })),
     verifyInferenceRoute: vi.fn(),
     verifyOnboardInferenceSmoke: vi.fn(),
     isNonInteractive: () => true,
@@ -96,7 +97,7 @@ function deps(overrides: OllamaDepsOverrides = {}): OllamaDeps {
 
 describe("Ollama local provider sandbox-facing model gate", () => {
   it("refuses to record a route the sandbox endpoint cannot serve (#9454)", async () => {
-    const upsertProvider = vi.fn(() => ({ ok: true }));
+    const upsertProvider = vi.fn(async () => ({ ok: true }));
     const error = vi.fn();
     const validateSandboxFacingOllamaModel = vi.fn(() => ({
       ok: false,
@@ -148,7 +149,7 @@ describe("Ollama local provider sandbox-facing model gate", () => {
   });
 
   it("records the route when the sandbox endpoint serves the model", async () => {
-    const upsertProvider = vi.fn(() => ({ ok: true }));
+    const upsertProvider = vi.fn(async () => ({ ok: true }));
     const stateRoot = mkdtempSync(join(tmpdir(), "nemoclaw-ollama-provider-route-"));
     setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
     try {
@@ -234,7 +235,7 @@ describe("Ollama local provider sandbox-facing model gate", () => {
   });
 
   it("fails before provider registration when the cleanup route cannot be staged", async () => {
-    const upsertProvider = vi.fn(() => ({ ok: true }));
+    const upsertProvider = vi.fn(async () => ({ ok: true }));
     const error = vi.fn();
 
     await expect(
@@ -266,7 +267,7 @@ describe("Ollama local provider sandbox-facing model gate", () => {
       setupOllamaLocalInference(
         { model: "llama3.2:1b", provider: "ollama-local", allowToolsIncompatible: false },
         deps({
-          upsertProvider: () => ({ ok: false, status: 1, message: "provider rejected" }),
+          upsertProvider: async () => ({ ok: false, status: 1, message: "provider rejected" }),
           localInference: {
             validateOllamaModelWithToolsOverride: () => ({ ok: true }),
             validateSandboxFacingOllamaModel: () => ({ ok: true }),
