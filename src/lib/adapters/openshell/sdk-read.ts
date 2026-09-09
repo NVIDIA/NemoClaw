@@ -21,6 +21,10 @@ type Options = Readonly<{ signal: AbortSignal }>;
 export interface OpenShellReadClient {
   readonly raw: {
     getProvider(request: { name: string; workspace: string }, options: Options): Promise<unknown>;
+    getProviderProfile(
+      request: { id: string; workspace: string },
+      options: Options,
+    ): Promise<unknown>;
     getSandbox(request: { name: string; workspace: string }, options: Options): Promise<unknown>;
     getSandboxConfig(request: { sandboxId: string }, options: Options): Promise<unknown>;
   };
@@ -70,7 +74,7 @@ function readError(error: unknown): OpenShellReadError {
   return new OpenShellReadError("transport");
 }
 
-/** Bound connection and read time; never return transport details or caught response data. */
+/** Honor the caller's abort/deadline signal; never expose transport details or response data. */
 export async function readOpenShell<T>(
   request: ReadRequest,
   operation: () => Promise<T>,
