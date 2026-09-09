@@ -24,6 +24,7 @@ import {
   buildCredentialWindowChildScript,
   buildCredentialWindowOneShotScript,
   buildCredentialWindowProviderUpdateArgs,
+  captureCredentialWindowFailureDiagnostics,
   CREDENTIAL_WINDOW_ENV_NAME,
   CREDENTIAL_WINDOW_EXPIRY_DELAY_MS,
   CREDENTIAL_WINDOW_PATHS,
@@ -497,6 +498,7 @@ test(
     );
     let expiryChildRevision = "";
     let expiryChildResult: ShellProbeResult | undefined;
+    let expiryPhaseCompleted = false;
     let restoredRevision = "";
     try {
       expiryChildRevision = await waitForReadyRevision(sandbox);
@@ -571,7 +573,15 @@ test(
           initialSecret,
         ).seen,
       ).toBe(false);
+      expiryPhaseCompleted = true;
     } finally {
+      await captureCredentialWindowFailureDiagnostics(host, {
+        phaseCompleted: expiryPhaseCompleted,
+        sandboxName: SANDBOX_NAME,
+        artifactName: "credential-window-expiry-failure-proxy-logs",
+        env: openshellEnv(),
+        redactionValues: [COMPATIBLE_KEY, ...allSecrets],
+      });
       await writeControl(
         sandbox,
         CREDENTIAL_WINDOW_STEPS.stop,
@@ -631,6 +641,7 @@ test(
     );
     let oldChildRevision = "";
     let oldChildResult: ShellProbeResult | undefined;
+    let rotationPhaseCompleted = false;
     let restartedRevision = "";
     const observedRevisions = [restoredRevision];
     try {
@@ -840,7 +851,15 @@ test(
           restartSecret,
         ).seen,
       ).toBe(false);
+      rotationPhaseCompleted = true;
     } finally {
+      await captureCredentialWindowFailureDiagnostics(host, {
+        phaseCompleted: rotationPhaseCompleted,
+        sandboxName: SANDBOX_NAME,
+        artifactName: "credential-window-rotation-failure-proxy-logs",
+        env: openshellEnv(),
+        redactionValues: [COMPATIBLE_KEY, ...allSecrets],
+      });
       await writeControl(
         sandbox,
         CREDENTIAL_WINDOW_STEPS.stop,

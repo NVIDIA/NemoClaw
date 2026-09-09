@@ -38,6 +38,7 @@ import {
   assertHermesMcpHttpResponse,
   buildHermesMcpChatProbeScript,
   buildHermesMcpRuntimeDiagnosticsScript,
+  captureHermesMcpRestartFailure,
   HERMES_MCP_FAILURE_CAPTURE_BYTES,
 } from "./mcp-bridge-hermes-http.ts";
 import {
@@ -684,6 +685,13 @@ async function replaceBridgeCredentialConservatively(
     env: { ...buildAvailabilityProbeEnv(), FAKE_MCP_SECRET: ROTATED_HOST_SECRET },
     redactionValues: [HOST_SECRET, ROTATED_HOST_SECRET],
     timeoutMs: 12 * 60_000,
+  });
+  await captureHermesMcpRestartFailure({
+    adapter,
+    result: restart,
+    sandbox,
+    sandboxName,
+    redactionValues: [HOST_SECRET, ROTATED_HOST_SECRET, COMPATIBLE_KEY],
   });
   expectExitZero(restart, `${artifactPrefix} restart ignores replacement credential`);
   await assertRealAdapterToolCall(host, sandbox, fakeMcp, {
