@@ -101,6 +101,12 @@ when its selection runs no tests.
 
 ## Run Live E2E Locally
 
+Review the selected revision and local changes before running setup or live E2E on your workstation.
+A detached worktree shares host privileges, credentials, and Docker access.
+Run source you have not reviewed and trusted in a disposable isolated environment.
+Keep workstation credentials and its Docker socket outside that environment.
+Supply only test-specific credentials and follow the selected test's cleanup and revocation contract.
+
 Run `test:live-e2e` from the checkout whose source you want to test. The command
 deletes and rebuilds `dist/` from source in that checkout before Vitest starts.
 It includes tracked and untracked source inputs, runs selected test files serially,
@@ -117,7 +123,9 @@ and `nemoclaw/runner-dist/` paths.
 A local aggregate run is not the GitHub full E2E matrix. Tests that require another
 platform, runner, credential, service, or explicit target-specific opt-in can skip
 or fail locally. GitHub Actions owns those job capabilities and the strict full-run
-aggregate.
+aggregate. Interactive TUI targets require the `expect` utility on the local runner.
+For trusted GitHub runs targeting the latest PR commit or current `main`, follow
+[Run Maintainer E2E](../../../.agents/skills/nemoclaw-maintainer-e2e/SKILL.md).
 
 ### Run the current working tree
 
