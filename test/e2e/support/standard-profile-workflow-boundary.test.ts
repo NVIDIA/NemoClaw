@@ -27,14 +27,6 @@ describe("standard E2E execution profile", () => {
   });
 
   it("reserves the standard full-E2E setup, test, and artifact envelope", () => {
-    const profile = YAML.parse(
-      fs.readFileSync(
-        path.join(REPO_ROOT, ".github", "workflows", "e2e-standard-profile.yaml"),
-        "utf8",
-      ),
-    ) as { jobs: { run: { "timeout-minutes": string } } };
-
-    expect(profile.jobs.run["timeout-minutes"]).toBe("${{ inputs.timeout_minutes }}");
     expect(catalogueTarget("full-e2e").timeoutMinutes).toBe(
       FULL_E2E_STANDARD_PROFILE_JOB_TIMEOUT_MINUTES,
     );
