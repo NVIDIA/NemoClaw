@@ -91,19 +91,9 @@ export interface BuildDockerDriverGatewayEnvOptions {
   enableBindMounts?: boolean;
 }
 
-const preparedGatewayHostRuntimeByEnv = new WeakMap<
-  Record<string, string>,
-  RuntimeProviderGatewayHostRuntime
->();
-
-export function requirePreparedDockerDriverGatewayHostRuntime(
-  gatewayEnv: Record<string, string>,
-): RuntimeProviderGatewayHostRuntime {
-  const runtime = preparedGatewayHostRuntimeByEnv.get(gatewayEnv);
-  if (!runtime) {
-    throw new Error("OpenShell gateway environment has no prepared host runtime.");
-  }
-  return runtime;
+export interface DockerDriverGatewayPreparation {
+  gatewayEnv: Record<string, string>;
+  gatewayHostRuntime: RuntimeProviderGatewayHostRuntime;
 }
 
 function preparePortableGatewayHostRuntime(
@@ -438,7 +428,7 @@ export function warnIfGatewayWildcardBindAddress(): void {
   );
 }
 
-export function buildDockerDriverGatewayEnv({
+export function prepareDockerDriverGatewayEnv({
   platform = process.platform,
   architecture = process.arch,
   gatewayPort = GATEWAY_PORT,
@@ -449,7 +439,7 @@ export function buildDockerDriverGatewayEnv({
   getDockerSupervisorImage,
   resolveSandboxBin,
   enableBindMounts = false,
-}: BuildDockerDriverGatewayEnvOptions): Record<string, string> {
+}: BuildDockerDriverGatewayEnvOptions): DockerDriverGatewayPreparation {
   const portable = isPortableExperimentalProfile();
   const runtime =
     gatewayHostRuntime ??
@@ -506,8 +496,13 @@ export function buildDockerDriverGatewayEnv({
       process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE === "1",
     gatewayRuntime: runtime,
   });
-  preparedGatewayHostRuntimeByEnv.set(env, runtime);
-  return env;
+  return { gatewayEnv: env, gatewayHostRuntime: runtime };
+}
+
+export function buildDockerDriverGatewayEnv(
+  options: BuildDockerDriverGatewayEnvOptions,
+): Record<string, string> {
+  return prepareDockerDriverGatewayEnv(options).gatewayEnv;
 }
 
 export function buildDockerGatewayDebEnvFile(

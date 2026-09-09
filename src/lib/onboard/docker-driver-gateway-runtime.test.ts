@@ -363,6 +363,11 @@ describe("docker-driver gateway runtime helpers", () => {
                   ...options,
                   architecture: "arm64",
                 }),
+              prepareDockerDriverGatewayEnv: (options) =>
+                dockerDriverGatewayEnv.prepareDockerDriverGatewayEnv({
+                  ...options,
+                  architecture: "arm64",
+                }),
             }),
             runCapture: vi.fn((args) => processOutput.get(args.join(" ")) ?? ""),
           });

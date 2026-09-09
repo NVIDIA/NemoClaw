@@ -38,6 +38,7 @@ describe("platform evidence workflow", () => {
   });
   it("limits credentialed WSL E2E to the first main-branch shard", () => {
     const live = step("wsl-vitest", "Run WSL live E2E");
+    const detection = step("wsl-vitest", "Detect Docker availability in WSL");
     expect(live.if).toContain("matrix.shard == 1");
     expect(live.if).toContain("steps.wsl_docker.outputs.docker_ok == 'true'");
     expect(live.if).toContain("github.ref == 'refs/heads/main'");
@@ -45,6 +46,8 @@ describe("platform evidence workflow", () => {
       GITHUB_TOKEN: "${{ github.token }}",
       NVIDIA_INFERENCE_API_KEY: "${{ secrets.NVIDIA_INFERENCE_API_KEY }}",
     });
+    expect(detection.run).toContain("-User $env:WSL_TEST_USER");
+    expect(live.run).toContain("-User $env:WSL_TEST_USER");
   });
 
   it("keeps credentialed macOS E2E independent from non-live shard failures", () => {

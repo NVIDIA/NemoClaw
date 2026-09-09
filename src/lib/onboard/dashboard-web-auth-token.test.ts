@@ -7,7 +7,10 @@ import { loadAgent } from "../agent/defs";
 import { createOnboardDashboardHelpers } from "./dashboard";
 
 // Minimal no-op deps; only runCaptureOpenshell matters for these tests.
-function makeHelpers(runCaptureOpenshell: (args: string[], opts?: unknown) => string | null) {
+function makeHelpers(
+  runCaptureOpenshell: (args: string[], opts?: unknown) => string | null,
+  overrides: Partial<Parameters<typeof createOnboardDashboardHelpers>[0]> = {},
+) {
   return createOnboardDashboardHelpers({
     runOpenshell: () => ({ status: 0 }),
     runCaptureOpenshell,
@@ -20,6 +23,7 @@ function makeHelpers(runCaptureOpenshell: (args: string[], opts?: unknown) => st
     redact: (v: unknown) => String(v),
     sleep: () => {},
     printAgentDashboardUi: () => {},
+    ...overrides,
   });
 }
 
@@ -77,5 +81,17 @@ describe("fetchAgentWebAuthTokenFromSandbox", () => {
     const helpers = makeHelpers(runCaptureOpenshell);
     expect(helpers.fetchAgentWebAuthTokenFromSandbox("alpha", openclaw)).toBeNull();
     expect(runCaptureOpenshell).not.toHaveBeenCalled();
+  });
+});
+
+describe("dashboard forwarding dependency handoff", () => {
+  it("uses the injected dashboard URL and WSL decision", () => {
+    const helpers = makeHelpers(() => "172.22.1.1\n", {
+      env: { CHAT_UI_URL: "http://127.0.0.1:19999" },
+      isWsl: () => true,
+    });
+
+    expect(helpers.getDashboardForwardPort()).toBe("19999");
+    expect(helpers.getDashboardForwardTarget()).toBe("0.0.0.0:19999");
   });
 });

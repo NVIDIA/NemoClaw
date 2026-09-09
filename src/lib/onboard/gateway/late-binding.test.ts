@@ -210,7 +210,7 @@ describe("gateway lifecycle late binding", () => {
       startPackageManagedDockerDriverGatewayWithEnvOverride: managedStart,
     } as unknown as typeof import("../docker-driver-gateway-env");
     let gatewayEnv: Record<string, string> | undefined;
-    const getDockerDriverGatewayEnv = vi.fn(() => {
+    const getDockerDriverGatewayPreparation = vi.fn(() => {
       expect(
         gatewayBinding.managedGatewayStateRootOwnershipFailure({
           gatewayName: name,
@@ -221,7 +221,7 @@ describe("gateway lifecycle late binding", () => {
       expect(
         gatewayStateLifecycleLock.tryAcquireManagedGatewayStateLifecycleLock(stateDir),
       ).toBeNull();
-      gatewayEnv = dockerDriverGatewayEnvModule.buildDockerDriverGatewayEnv({
+      const preparation = dockerDriverGatewayEnvModule.prepareDockerDriverGatewayEnv({
         platform: "linux",
         gatewayPort: port,
         stateDir,
@@ -230,7 +230,8 @@ describe("gateway lifecycle late binding", () => {
         getDockerSupervisorImage: () => "supervisor:test",
         resolveSandboxBin: () => null,
       });
-      return gatewayEnv;
+      gatewayEnv = { ...preparation.gatewayEnv };
+      return { gatewayEnv, gatewayHostRuntime: preparation.gatewayHostRuntime };
     });
     const runCaptureOpenshell = vi.fn((_args: string[], _options?: Record<string, unknown>) => "");
     const runtimeIdentitySpy = vi
@@ -259,7 +260,7 @@ describe("gateway lifecycle late binding", () => {
       gatewayName: () => name,
       gatewayPort: () => port,
       getDockerDriverGatewayEndpoint: () => "https://127.0.0.1",
-      getDockerDriverGatewayEnv,
+      getDockerDriverGatewayPreparation,
       getDockerDriverGatewayPid: () => null,
       getDockerDriverGatewayPortListenerScan: () => ({
         complete: true,
@@ -329,9 +330,6 @@ describe("gateway lifecycle late binding", () => {
       );
       const runtimeIdentityOptions = runtimeIdentitySpy.mock.calls[0]?.[0];
       const managedOptions = managedStart.mock.calls[0]?.[0];
-      expect(
-        dockerDriverGatewayEnvModule.requirePreparedDockerDriverGatewayHostRuntime(gatewayEnv!),
-      ).toBe(gatewayHostRuntime);
       expect(runtimeIdentityOptions?.gatewayHostRuntime).toBe(gatewayHostRuntime);
       expect(runtimeIdentityOptions?.env).toEqual(managedOptions?.env);
       expect(runtimeIdentityOptions?.env).toEqual(
@@ -385,7 +383,7 @@ describe("gateway lifecycle late binding", () => {
 
       await expect(start.startDockerDriverGateway()).rejects.toThrow(/refusing to adopt/);
       expect(fs.readFileSync(path.join(unsafeStateDir, "keep.txt"), "utf8")).toBe("keep\n");
-      expect(getDockerDriverGatewayEnv).toHaveBeenCalledTimes(1);
+      expect(getDockerDriverGatewayPreparation).toHaveBeenCalledTimes(1);
       expect(managedStart).toHaveBeenCalledTimes(1);
 
       const writableParent = path.join(root, "writable-parent");
@@ -403,7 +401,7 @@ describe("gateway lifecycle late binding", () => {
         ),
       ).toBe(false);
       expect(fs.existsSync(writableStateDir)).toBe(false);
-      expect(getDockerDriverGatewayEnv).toHaveBeenCalledTimes(1);
+      expect(getDockerDriverGatewayPreparation).toHaveBeenCalledTimes(1);
       expect(managedStart).toHaveBeenCalledTimes(1);
     } finally {
       runtimeIdentitySpy.mockRestore();

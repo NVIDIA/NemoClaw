@@ -12,7 +12,7 @@ import { writeOpenShell0044PreAuthState } from "../../../test/support/openshell-
 import {
   buildDockerDriverGatewayEnv,
   buildDockerGatewayDebEnvFile,
-  requirePreparedDockerDriverGatewayHostRuntime,
+  prepareDockerDriverGatewayEnv,
   startPackageManagedDockerDriverGatewayWithEnvOverride,
   writeDockerGatewayDebEnvOverride,
 } from "./docker-driver-gateway-env";
@@ -108,12 +108,13 @@ describe("buildDockerDriverGatewayEnv", () => {
     try {
       writeOpenShell0044PreAuthState(stateDir);
 
-      const env = buildDockerDriverGatewayEnv({
+      const preparation = prepareDockerDriverGatewayEnv({
         platform: "linux",
         stateDir,
         getDockerSupervisorImage: () => "supervisor:test",
         resolveSandboxBin: () => "/usr/bin/openshell-sandbox",
       });
+      const env = preparation.gatewayEnv;
 
       expect(fs.existsSync(env.OPENSHELL_GATEWAY_CONFIG)).toBe(true);
       expect(fs.readFileSync(path.join(stateDir, "openshell.db"), "utf-8")).toBe("legacy-database");
@@ -186,13 +187,14 @@ describe("buildDockerDriverGatewayEnv", () => {
         environment: process.env,
         platform: "linux",
       });
-      const env = buildDockerDriverGatewayEnv({
+      const preparation = prepareDockerDriverGatewayEnv({
         platform: "linux",
         stateDir,
         gatewayHostRuntime,
         getDockerSupervisorImage: () => "supervisor:test",
         resolveSandboxBin: () => "/usr/bin/openshell-sandbox",
       });
+      const env = preparation.gatewayEnv;
       expect(env).toMatchObject({
         OPENSHELL_DRIVERS: "podman",
         OPENSHELL_BIND_ADDRESS: "0.0.0.0",
@@ -202,7 +204,7 @@ describe("buildDockerDriverGatewayEnv", () => {
       expect(env.OPENSHELL_PODMAN_SOCKET).toMatch(/\/podman\/podman\.sock$/u);
       expect(env.CONTAINERS_CONF).toBeUndefined();
       expect(env.NETAVARK_FW).toBeUndefined();
-      expect(requirePreparedDockerDriverGatewayHostRuntime(env)).toBe(gatewayHostRuntime);
+      expect(preparation.gatewayHostRuntime).toBe(gatewayHostRuntime);
       const toml = fs.readFileSync(env.OPENSHELL_GATEWAY_CONFIG, "utf-8");
       expect(toml).toContain('compute_drivers = ["podman"]');
       expect(toml).toContain(`socket_path = "${env.OPENSHELL_PODMAN_SOCKET}"`);
@@ -211,12 +213,6 @@ describe("buildDockerDriverGatewayEnv", () => {
       vi.unstubAllEnvs();
       fs.rmSync(stateDir, { recursive: true, force: true });
     }
-  });
-
-  it("rejects an environment that has no prepared gateway runtime", () => {
-    expect(() => requirePreparedDockerDriverGatewayHostRuntime({})).toThrow(
-      "OpenShell gateway environment has no prepared host runtime.",
-    );
   });
 
   it.each([

@@ -444,7 +444,7 @@ jobs:
             echo DOCKER_OK=0
           fi
           '@
-          $result = Invoke-WslScript -Distro $env:WSL_DISTRO -Script $script -CaptureOutput
+          $result = Invoke-WslScript -Distro $env:WSL_DISTRO -User $env:WSL_TEST_USER -Script $script -CaptureOutput
           if ($result -match 'DOCKER_OK=1') {
             'docker_ok=true' | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
             Write-Host 'Docker is available in WSL'
@@ -481,7 +481,7 @@ jobs:
           export NEMOCLAW_RUN_LIVE_E2E=1
           npx vitest run --project e2e-live test/e2e/live/full-e2e.test.ts --silent=false --reporter=default
           "@
-          Invoke-WslScript -Distro $env:WSL_DISTRO -Script $script
+          Invoke-WslScript -Distro $env:WSL_DISTRO -User $env:WSL_TEST_USER -Script $script
 
       - name: Explain skipped WSL live E2E
         if: ${{ matrix.shard == 1 && (steps.wsl_docker.outputs.docker_ok != 'true' || github.ref != 'refs/heads/main') }}
