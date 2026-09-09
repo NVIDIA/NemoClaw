@@ -30,7 +30,7 @@ type DcodeRebuildOrchestratorDeps = {
     entry: RebuildSandboxEntry,
     log: (message: string) => void,
     bail: DcodeRebuildPreflightBail,
-  ): boolean;
+  ): boolean | Promise<boolean>;
   ensureAgentBaseImage(
     agentName: string | null,
     bail: DcodeRebuildPreflightBail,
