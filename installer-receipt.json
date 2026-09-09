@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "classification": "unsigned-native-windows-arm64-preview-qualification-pending",
+  "classification": "unsigned-native-windows-arm64-preview-qualification-failed",
   "candidateSha": "0cfdb712f6db87e831829f5ab5a2fde9e143807d",
   "sourceRepository": "https://github.com/NVIDIA/NemoClaw",
   "sourcePullRequest": 10799,
@@ -32,7 +32,7 @@
     "architecture": "arm64",
     "retainedReferenceInstallerChecks": "passed",
     "earlyAndRepeatedProcessAudit": "passed",
-    "installedAcceptance": "pending",
+    "installedAcceptance": "failed: source workflow did not complete acceptance",
     "requiredCompleteNativePasses": 2,
     "completeNativePasses": 0,
     "physicalN1x": "not-qualified",
