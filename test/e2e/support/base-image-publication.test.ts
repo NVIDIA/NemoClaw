@@ -34,6 +34,8 @@ const RUN_ID = 29891942278;
 const WORKFLOW_ID = 251475843;
 const RUN_URL_ROOT = "https://github.com/NVIDIA/NemoClaw/actions/runs";
 const RUN_URL = `https://github.com/NVIDIA/NemoClaw/actions/runs/${RUN_ID}`;
+const MANAGED_IMAGE_PROMOTION_JOB =
+  "Publish complete managed images / Promote complete multi-platform managed image cohort";
 const WORKFLOW_SOURCE = `on:
   push:
     branches: [main]
@@ -167,10 +169,7 @@ function successfulJobs(overrides: { runAttempt?: number } = {}): Record<string,
 function successfulManualJobs(): Record<string, unknown>[] {
   return [
     ...successfulJobs(),
-    publisherJob(
-      "Publish complete managed images / Promote complete multi-platform managed image cohort",
-      { id: 4 },
-    ),
+    publisherJob(MANAGED_IMAGE_PROMOTION_JOB, { id: 4 }),
   ];
 }
 
@@ -994,6 +993,48 @@ describe("base-image publication evidence", () => {
       `/repos/NVIDIA/NemoClaw/actions/runs/${manualRunId}/attempts/1/jobs?per_page=100&page=1`,
       `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/1/jobs?per_page=100&page=1`,
       `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}`,
+    ]);
+  });
+
+  it("rejects malformed manual promotion evidence instead of falling back to a push (#11289)", async () => {
+    const manualRunId = RUN_ID + 1;
+    const manualRun = workflowRun({
+      id: manualRunId,
+      event: "workflow_dispatch",
+      head_sha: DESCENDANT_SHA,
+      html_url: `${RUN_URL_ROOT}/${manualRunId}`,
+    });
+    const malformedManualJobs = successfulManualJobs().map((job) => ({
+      ...job,
+      run_id: manualRunId,
+      head_sha: DESCENDANT_SHA,
+      ...(job.name === MANAGED_IMAGE_PROMOTION_JOB ? { conclusion: "not-a-conclusion" } : {}),
+    }));
+    const pushRun = workflowRun();
+    const responses = [
+      workflowMetadata(),
+      runsPayload([manualRun, pushRun]),
+      { total_count: malformedManualJobs.length, jobs: malformedManualJobs },
+    ];
+    const requests: string[] = [];
+
+    await expect(
+      waitForBaseImagePublication({
+        history: history(),
+        request: async (requestPath) => {
+          requests.push(requestPath);
+          return responses.shift();
+        },
+        requireWorkflowSuccess: true,
+        selectNearestSuccessfulRun: true,
+        waitMs: 100,
+        pollMs: 10,
+      }),
+    ).rejects.toThrow(/conclusion is invalid/u);
+    expect(requests).toEqual([
+      "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml",
+      "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&per_page=100&page=1",
+      `/repos/NVIDIA/NemoClaw/actions/runs/${manualRunId}/attempts/1/jobs?per_page=100&page=1`,
     ]);
   });
 

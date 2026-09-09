@@ -102,6 +102,17 @@ const PUBLISHER_JOB_ALIASES = new Map<string, RequiredPublisherJob>([
   [REQUIRED_MANUAL_MANAGED_IMAGE_JOB, REQUIRED_MANUAL_MANAGED_IMAGE_JOB],
 ]);
 
+class IneligibleManualManagedImagePromotionError extends Error {}
+
+function requiredPublisherIneligibilityError(
+  requiredName: RequiredPublisherJob,
+  message: string,
+): Error {
+  return requiredName === REQUIRED_MANUAL_MANAGED_IMAGE_JOB
+    ? new IneligibleManualManagedImagePromotionError(message)
+    : new Error(message);
+}
+
 type JsonRecord = Record<string, unknown>;
 
 export interface FirstParentHistory {
@@ -601,7 +612,8 @@ export function validatePublisherJobs(payload: unknown, run: PublicationRun): "p
     const current = jobsByName.get(requiredName);
     if (!current) {
       if (run.status === "completed") {
-        throw new Error(
+        throw requiredPublisherIneligibilityError(
+          requiredName,
           `missing required ${requiredName} job in attempt ${run.attempt}; ${run.url}`,
         );
       }
@@ -610,7 +622,8 @@ export function validatePublisherJobs(payload: unknown, run: PublicationRun): "p
     }
     if (current.status !== "completed") {
       if (run.status === "completed") {
-        throw new Error(
+        throw requiredPublisherIneligibilityError(
+          requiredName,
           `${requiredName} job is not complete in terminal attempt ${run.attempt}; ${run.url}`,
         );
       }
@@ -618,7 +631,8 @@ export function validatePublisherJobs(payload: unknown, run: PublicationRun): "p
       continue;
     }
     if (current.conclusion !== "success") {
-      throw new Error(
+      throw requiredPublisherIneligibilityError(
+        requiredName,
         `${requiredName} job did not complete successfully in attempt ${run.attempt}; ${run.url}`,
       );
     }
@@ -850,8 +864,7 @@ export async function waitForBaseImagePublication(
       } catch (error) {
         if (
           selection.run.event === "workflow_dispatch" &&
-          error instanceof Error &&
-          error.message.includes(REQUIRED_MANUAL_MANAGED_IMAGE_JOB)
+          error instanceof IneligibleManualManagedImagePromotionError
         ) {
           excludedRunIds.add(selection.run.id);
           selection = select();
