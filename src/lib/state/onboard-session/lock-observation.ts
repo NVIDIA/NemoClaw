@@ -3,6 +3,12 @@
 
 import fs from "node:fs";
 
+import {
+  readMcpLockHostIdentity,
+  readMcpLockPidNamespaceIdentity,
+  readMcpLockProcessIdentity,
+} from "../mcp-lifecycle-lock-identity";
+
 const MAX_LOCK_BYTES = 64 * 1024;
 const MAX_PROCESS_ID = 0x7fffffff;
 
@@ -35,15 +41,6 @@ export type OnboardLockObservation =
       owner?: OnboardLockOwner;
     };
 
-function readTrimmed(path: string): string | null {
-  try {
-    const value = fs.readFileSync(path, "utf8").trim();
-    return value || null;
-  } catch {
-    return null;
-  }
-}
-
 function errnoCode(error: unknown): string | undefined {
   if (!error || typeof error !== "object" || !("code" in error)) return undefined;
   return typeof error.code === "string" ? error.code : undefined;
@@ -59,41 +56,12 @@ function defaultProcessAlive(pid: number): boolean {
   }
 }
 
-function linuxProcessGeneration(pid: number): string | null {
-  try {
-    const stat = fs.readFileSync(`/proc/${String(pid)}/stat`, "utf8");
-    const closeParen = stat.lastIndexOf(")");
-    if (closeParen < 0) return null;
-    const fields = stat
-      .slice(closeParen + 2)
-      .trim()
-      .split(/\s+/);
-    const startTicks = fields[19];
-    if (!startTicks || !/^[0-9]+$/.test(startTicks)) return null;
-    const bootIdentity =
-      readTrimmed("/proc/sys/kernel/random/boot_id") ??
-      fs
-        .readFileSync("/proc/stat", "utf8")
-        .split("\n")
-        .find((line) => line.startsWith("btime "))
-        ?.slice("btime ".length)
-        .trim();
-    return bootIdentity ? `linux:${bootIdentity}:${startTicks}` : null;
-  } catch {
-    return null;
-  }
-}
-
 export const systemOnboardLockEvidence: OnboardLockEvidence = {
-  hostIdentity: () => readTrimmed("/etc/machine-id"),
-  pidNamespaceIdentity: () => {
-    try {
-      return fs.readlinkSync("/proc/self/ns/pid");
-    } catch {
-      return null;
-    }
-  },
-  processGeneration: (pid) => (process.platform === "linux" ? linuxProcessGeneration(pid) : null),
+  hostIdentity: readMcpLockHostIdentity,
+  pidNamespaceIdentity: () =>
+    readMcpLockPidNamespaceIdentity() ??
+    (process.platform === "linux" ? null : `${process.platform}:host-pid-namespace`),
+  processGeneration: (pid) => readMcpLockProcessIdentity(pid, true),
   processAlive: defaultProcessAlive,
 };
 

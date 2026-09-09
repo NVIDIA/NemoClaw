@@ -10,6 +10,7 @@ import { spawnSync } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  createOnboardLockOwner,
   observeOnboardLock,
   systemOnboardLockEvidence,
   type OnboardLockEvidence,
@@ -56,6 +57,39 @@ describe("onboarding lock observation", () => {
   it("reports a missing lock as absent", () => {
     const { evidence, lock } = fixture();
     expect(observeOnboardLock(lock, evidence)).toEqual({ kind: "absent" });
+  });
+
+  it("creates an owner from complete local process evidence", () => {
+    const { evidence } = fixture();
+    expect(createOnboardLockOwner("nemoclaw onboard", evidence)).toEqual({
+      pid: process.pid,
+      startedAt: expect.any(String),
+      command: "nemoclaw onboard",
+      processGeneration: "boot:10",
+      hostIdentity: "host-a",
+      pidNamespaceIdentity: "pid:[1]",
+    });
+  });
+
+  it.each(["hostIdentity", "pidNamespaceIdentity", "processGeneration"] as const)(
+    "rejects missing %s evidence when creating an owner",
+    (missing) => {
+      const { evidence } = fixture();
+      expect(
+        createOnboardLockOwner("nemoclaw onboard", { ...evidence, [missing]: () => null }),
+      ).toBeNull();
+    },
+  );
+
+  it("creates complete owner evidence on a host without Linux PID namespaces", () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+
+    expect(createOnboardLockOwner("nemoclaw onboard", systemOnboardLockEvidence)).toMatchObject({
+      pid: process.pid,
+      processGeneration: expect.stringMatching(/^darwin:/u),
+      hostIdentity: expect.stringMatching(/^darwin:/u),
+      pidNamespaceIdentity: "darwin:host-pid-namespace",
+    });
   });
 
   it("reports only proven-local departed and reused owners as stale", () => {

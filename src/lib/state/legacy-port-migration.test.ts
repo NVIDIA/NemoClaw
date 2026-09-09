@@ -463,13 +463,37 @@ describe("legacy non-default gateway state migration", () => {
       fs.existsSync(lockPath) ? { kind: "busy", reason: "unverified" } : { kind: "absent" },
     );
     expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(
-      new RegExp(
-        `onboarding lock .* is unverified; confirm no NemoClaw onboarding process .* then remove only ${path.join(root(shared, selected), "onboard.lock")} and retry; migration will not remove it automatically`,
-        "u",
-      ),
+      `is unverified; confirm no NemoClaw onboarding process in any environment sharing this state root is active, then remove only ${path.join(root(shared, selected), "onboard.lock")} and retry; migration will not remove it automatically`,
     );
     expect(fs.readFileSync(recoveryFile, "utf8")).toBe(before);
     expect(fs.existsSync(path.join(selected, "retained-sandbox-recovery.json"))).toBe(false);
+  });
+
+  it.each([
+    ["active", () => "finish the active onboarding run before retrying"],
+    ["publishing", () => "wait for the lock write to finish, then retry"],
+    [
+      "foreign",
+      () => "finish or stop the onboarding run in the other host or PID namespace before retrying",
+    ],
+    [
+      "unsafe",
+      (lockPath: string) =>
+        `inspect ${lockPath} and replace or remove that unsafe path after confirming it is not in use, then retry; migration will not remove it automatically`,
+    ],
+  ] as const)("explains how to recover from a %s onboarding lock", (reason, recoveryFor) => {
+    const home = makeHome();
+    const shared = path.join(home, ".nemoclaw");
+    const activeLock = path.join(shared, "onboard.lock");
+    const recoveryFile = path.join(shared, "retained-sandbox-recovery.json");
+    recordRecovery(recoveryFile, "port-box", 9123, "d");
+    const before = fs.readFileSync(recoveryFile, "utf8");
+    observeOnboardLock.mockReturnValue({ kind: "busy", reason });
+
+    expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(
+      `is ${reason}; ${recoveryFor(activeLock)}`,
+    );
+    expect(fs.readFileSync(recoveryFile, "utf8")).toBe(before);
   });
 
   it("migrates past a proven-stale onboarding lock without removing it", () => {

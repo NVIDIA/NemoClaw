@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { makeMessagingPlan } from "../../../test/helpers/messaging-plan-fixtures";
 import { decisionSelected } from "./onboard-checkpoint-decision";
+import { createOnboardLockOwner, observeOnboardLock } from "./onboard-session/lock-observation";
 
 const require = createRequire(import.meta.url);
 const distPath = require.resolve("./onboard-session");
@@ -24,6 +25,12 @@ type NullableSessionUpdateKey = import("./onboard-session").NullableSessionUpdat
 let session: OnboardSessionModule;
 let machineEvents: OnboardMachineEventsModule;
 let tmpDir: string;
+
+function localOnboardLockOwner(command: string) {
+  const owner = createOnboardLockOwner(command);
+  if (!owner) throw new Error("Expected complete local onboarding lock evidence");
+  return owner;
+}
 
 const _nullableSessionUpdateKeyAcceptsNullableFields: Record<
   Extract<"model" | "credentialEnv" | "webSearchConfig", NullableSessionUpdateKey>,
@@ -1080,6 +1087,16 @@ describe("onboard session", () => {
     const acquired = session.acquireOnboardLock("nemoclaw onboard");
     expect(acquired.acquired).toBe(true);
     expect(fs.existsSync(session.LOCK_FILE)).toBe(true);
+    expect(observeOnboardLock(session.LOCK_FILE)).toMatchObject({
+      kind: "busy",
+      reason: "active",
+      owner: {
+        pid: process.pid,
+        processGeneration: expect.any(String),
+        hostIdentity: expect.any(String),
+        pidNamespaceIdentity: expect.any(String),
+      },
+    });
 
     const secondAttempt = session.acquireOnboardLock("nemoclaw onboard --resume");
     expect(secondAttempt.acquired).toBe(false);
@@ -1091,13 +1108,14 @@ describe("onboard session", () => {
 
   it("replaces a stale onboard lock", () => {
     fs.mkdirSync(path.dirname(session.LOCK_FILE), { recursive: true });
+    const departedOwner = {
+      ...localOnboardLockOwner("nemoclaw onboard"),
+      pid: 999999,
+      processGeneration: "departed-process-generation",
+    };
     fs.writeFileSync(
       session.LOCK_FILE,
-      JSON.stringify({
-        pid: 999999,
-        startedAt: "2026-03-25T00:00:00.000Z",
-        command: "nemoclaw onboard",
-      }),
+      JSON.stringify(departedOwner),
       { mode: 0o600 },
     );
 
@@ -1110,46 +1128,38 @@ describe("onboard session", () => {
 
   it("replaces a stale onboard lock when the recorded PID was reused by another process", () => {
     fs.mkdirSync(path.dirname(session.LOCK_FILE), { recursive: true });
-    const reusedPid = 424242;
+    const reusedOwner = localOnboardLockOwner("nemoclaw onboard");
     fs.writeFileSync(
       session.LOCK_FILE,
       JSON.stringify({
-        pid: reusedPid,
-        startedAt: "1970-01-01T00:20:00.000Z",
-        command: "nemoclaw onboard",
+        ...reusedOwner,
+        processGeneration: `${reusedOwner.processGeneration}:reused`,
       }),
       { mode: 0o600 },
     );
 
-    const killSpy = vi.spyOn(process, "kill").mockReturnValue(true);
-    const originalReadFileSync = fs.readFileSync;
-    const readSpy = vi.spyOn(fs, "readFileSync").mockImplementation(((file, options) => {
-      const fileName = String(file);
-      if (fileName === `/proc/${reusedPid}/stat`) {
-        const fieldsAfterComm = Array.from({ length: 50 }, (_, index) => {
-          if (index === 0) return "S";
-          if (index === 19) return "23000";
-          return "0";
-        }).join(" ");
-        return `${reusedPid} (node) ${fieldsAfterComm}`;
-      }
-      if (fileName === "/proc/stat") {
-        return "cpu  1 2 3 4\nbtime 1000\n";
-      }
-      return originalReadFileSync(file, options);
-    }) as typeof fs.readFileSync);
+    const acquired = session.acquireOnboardLock("nemoclaw onboard --resume");
+    expect(acquired.acquired).toBe(true);
 
-    try {
-      const acquired = session.acquireOnboardLock("nemoclaw onboard --resume");
-      expect(acquired.acquired).toBe(true);
+    const written = JSON.parse(fs.readFileSync(session.LOCK_FILE, "utf8"));
+    expect(written.pid).toBe(process.pid);
+    session.releaseOnboardLock();
+  });
 
-      const written = JSON.parse(fs.readFileSync(session.LOCK_FILE, "utf8"));
-      expect(written.pid).toBe(process.pid);
-    } finally {
-      readSpy.mockRestore();
-      killSpy.mockRestore();
-      session.releaseOnboardLock();
-    }
+  it("preserves a foreign onboard lock whose PID is absent locally", () => {
+    fs.mkdirSync(path.dirname(session.LOCK_FILE), { recursive: true });
+    const foreignOwner = {
+      ...localOnboardLockOwner("nemoclaw onboard"),
+      pid: 999999,
+      hostIdentity: "foreign-host",
+    };
+    const before = JSON.stringify(foreignOwner);
+    fs.writeFileSync(session.LOCK_FILE, before, { mode: 0o600 });
+
+    const acquired = session.acquireOnboardLock("nemoclaw onboard --resume");
+
+    expect(acquired).toMatchObject({ acquired: false, stale: false, holderPid: 999999 });
+    expect(fs.readFileSync(session.LOCK_FILE, "utf8")).toBe(before);
   });
 
   it("does not unlink a fresh lock claimed by another process during a stale-cleanup race (#1281)", () => {
@@ -1161,17 +1171,17 @@ describe("onboard session", () => {
 
     // 1. Lay down a stale lock from a dead PID (PID 999999 on the test box).
     const staleLock = JSON.stringify({
+      ...localOnboardLockOwner("nemoclaw onboard"),
       pid: 999999,
-      startedAt: "2026-03-25T00:00:00.000Z",
-      command: "nemoclaw onboard",
+      processGeneration: "departed-process-generation",
     });
     fs.writeFileSync(session.LOCK_FILE, staleLock, { mode: 0o600 });
 
     // 2. Wrap fs.statSync so the swap happens just before stat #2:
     //    - stat #1 (inside acquireOnboardLock): reads the stale inode
     //      and returns it unmodified. readFileSync then reads the
-    //      ORIGINAL stale lock (dead PID 999999), isProcessAlive
-    //      returns false, and acquireOnboardLock enters the stale-
+    //      ORIGINAL stale lock (dead PID 999999), the shared observer
+    //      returns stale, and acquireOnboardLock enters the stale-
     //      cleanup path calling unlinkIfInodeMatches.
     //    - stat #1 (inside unlinkIfInodeMatches): BEFORE the actual
     //      stat, swap the file for a fresh claim. stat #1 then sees

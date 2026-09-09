@@ -15,7 +15,10 @@ import {
   readGatewayRegistryFile,
   registryEntryGatewayPort,
 } from "./gateway-registry";
-import { observeOnboardLock } from "./onboard-session/lock-observation";
+import {
+  observeOnboardLock,
+  type OnboardLockObservation,
+} from "./onboard-session/index";
 import {
   listRetainedSandboxRecoveryRecords,
   retainedSandboxRecoveryFile,
@@ -116,6 +119,24 @@ interface RetainedRecoveryDocument {
 
 function migrationError(message: string): Error {
   return new Error(`Cannot safely migrate legacy NemoClaw state for this gateway port: ${message}`);
+}
+
+function onboardLockRecoveryAdvice(
+  reason: Extract<OnboardLockObservation, { kind: "busy" }>["reason"],
+  lockPath: string,
+): string {
+  switch (reason) {
+    case "active":
+      return "finish the active onboarding run before retrying";
+    case "publishing":
+      return "wait for the lock write to finish, then retry";
+    case "foreign":
+      return "finish or stop the onboarding run in the other host or PID namespace before retrying";
+    case "unsafe":
+      return `inspect ${lockPath} and replace or remove that unsafe path after confirming it is not in use, then retry; migration will not remove it automatically`;
+    case "unverified":
+      return `confirm no NemoClaw onboarding process in any environment sharing this state root is active, then remove only ${lockPath} and retry; migration will not remove it automatically`;
+  }
 }
 
 function ensureRealDirectory(home: string, dir: string): void {
@@ -771,10 +792,7 @@ function assertOnboardStateUnlocked(home: string, stateRoots: readonly string[])
     const lock = observeOnboardLock(activeLock);
     if (lock.kind === "busy") {
       const owner = lock.owner ? ` recorded for PID ${String(lock.owner.pid)}` : "";
-      const recovery =
-        lock.reason === "unverified"
-          ? `confirm no NemoClaw onboarding process in any environment sharing this state root is active, then remove only ${activeLock} and retry; migration will not remove it automatically`
-          : "finish that run or verify the lock owner before retrying";
+      const recovery = onboardLockRecoveryAdvice(lock.reason, activeLock);
       throw migrationError(
         `onboarding lock ${activeLock}${owner} is ${lock.reason}; ${recovery}`,
       );

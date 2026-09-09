@@ -1,7 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-export { createOnboardLockOwner } from "./lock-observation";
+export {
+  createOnboardLockOwner,
+  observeOnboardLock,
+  systemOnboardLockEvidence,
+} from "./lock-observation";
+export type {
+  OnboardLockEvidence,
+  OnboardLockObservation,
+  OnboardLockOwner,
+} from "./lock-observation";
 export {
   listRetainedSandboxRecoveryRecords,
   recordRetainedSandboxRecovery,
