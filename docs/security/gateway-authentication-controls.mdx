@@ -88,7 +88,8 @@ OpenClaw's security audit keeps NemoClaw-managed loopback `allowInsecureAuth` fi
 
 Device-auth findings record whether the opt-out came from NemoClaw's managed onboarding compatibility behavior or an operator-provided `NEMOCLAW_DISABLE_DEVICE_AUTH=1`; an opt-out with missing provenance remains active.
 
-For audit reporting, NemoClaw treats a non-loopback `CHAT_UI_URL`, an onboard-time `NEMOCLAW_DASHBOARD_BIND=0.0.0.0`, or WSL's default all-interface dashboard forward as remote dashboard exposure.
+For audit reporting, NemoClaw treats an onboard-time `NEMOCLAW_DASHBOARD_BIND=0.0.0.0` setting or WSL's default all-interface dashboard forward as remote dashboard exposure.
+Outside WSL, a non-loopback `CHAT_UI_URL` changes the browser URL and its security settings but does not widen the host forward.
 For an explicit `NEMOCLAW_DASHBOARD_BIND=0.0.0.0` bind, use the same setting on later `connect` calls.
 
 If the sandbox was created without that explicit setting, NemoClaw refuses the remote forward until you recreate it with `NEMOCLAW_DASHBOARD_BIND=0.0.0.0 $$nemoclaw onboard --recreate-sandbox`; this keeps the generated audit state aligned with the host exposure state.

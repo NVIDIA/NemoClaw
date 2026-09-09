@@ -1092,7 +1092,6 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
     const fakeWechat = await startFakeDockerApi(host, cleanup.add.bind(cleanup), {
       kind: "wechat",
       imageScript: "fake-wechat-api.mts",
-      nodeArgs: ["--experimental-strip-types"],
       containerPrefix: "nemoclaw-fake-wechat",
       portEnv: "FAKE_WECHAT_API_PORT",
       captureFileEnv: "FAKE_WECHAT_API_CAPTURE_FILE",

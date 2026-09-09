@@ -212,7 +212,8 @@ Use these details when your first-run path needs more control.
     A sandbox receives those ports when no other sandbox or host listener already holds them.
     Otherwise, NemoClaw allocates the next free dashboard port from `18789` through `18799` and the next free API port from `8642` through `8652`.
     Run `openshell forward list` to read the host bind for each of that sandbox's forwards.
-    For a remote dashboard origin or tunnel, set `CHAT_UI_URL` to the externally reachable dashboard origin before onboarding.
+    Choose how the remote client reaches the host forwards.
+    If a reverse proxy or tunnel already reaches the loopback dashboard forward, set `CHAT_UI_URL` to its externally reachable HTTPS origin before onboarding.
 
     ```bash
     export NEMOCLAW_AGENT=hermes
@@ -222,10 +223,30 @@ Use these details when your first-run path needs more control.
     ```
 
     NemoClaw derives the forwarded dashboard port from `CHAT_UI_URL` and passes its hostname to Hermes for browser Host-header validation.
+    `CHAT_UI_URL` does not expose the host forward outside WSL.
     The Hermes dashboard service remains bound to loopback.
-    External `CHAT_UI_URL` values must use HTTPS.
+    Use HTTPS for an external `CHAT_UI_URL`.
+    Hermes rejects an external HTTP URL when the sandbox starts.
     NemoClaw preserves an external browser URL across rebuild and clone operations.
-    Otherwise, leave it unset and use SSH port forwarding for remote access.
+
+    For direct dashboard or API access to a non-WSL host, set `NEMOCLAW_DASHBOARD_BIND=0.0.0.0` before onboarding.
+    Use the same setting for later `nemohermes <sandbox> connect` calls.
+
+    ```bash
+    export NEMOCLAW_AGENT=hermes
+    export NEMOCLAW_SANDBOX_NAME=my-hermes
+    export NEMOCLAW_DASHBOARD_BIND=0.0.0.0
+    curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+    ```
+
+    A sandbox created without the bind opt-in must be recreated before it can use a remote bind:
+
+    ```bash
+    NEMOCLAW_DASHBOARD_BIND=0.0.0.0 nemohermes onboard --recreate-sandbox
+    ```
+
+    See the [environment-variable reference](../reference/commands#environment-variables) for the complete bind behavior.
+    To keep the host forwards on loopback, leave the bind setting unset and use SSH port forwarding for remote access.
 
     ```bash
     ssh -L 18789:127.0.0.1:18789 <user>@<host>

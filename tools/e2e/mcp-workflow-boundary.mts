@@ -107,6 +107,11 @@ const FORBIDDEN_INFERENCE_SECRETS =
 
 type UnknownRecord = Record<string, unknown>;
 
+function nodeSetupSecurityBoundary(step: UnknownRecord): UnknownRecord {
+  const { "node-version": _nodeVersion, ...inputs } = asRecord(step.with);
+  return { ...step, with: inputs };
+}
+
 function asRecord(value: unknown): UnknownRecord {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as UnknownRecord)
@@ -345,7 +350,8 @@ function validateJobSecurity(
   const trustedNodeSetupIndex = steps.indexOf(trustedNodeSetup);
   if (
     jobName === "mcp-bridge-dev" &&
-    (contentSha256(trustedNodeSetup) !== MCP_DEV_TRUSTED_NODE_SETUP_CONTENT_SHA256 ||
+    (contentSha256(nodeSetupSecurityBoundary(trustedNodeSetup)) !==
+      MCP_DEV_TRUSTED_NODE_SETUP_CONTENT_SHA256 ||
       trustedNodeSetupIndex !== checkoutIndex - 1)
   ) {
     errors.push(
@@ -593,7 +599,11 @@ function validateJobExecution(
     }
     if (
       installIndex < 0 ||
-      contentSha256(steps.slice(0, installIndex + 1)) !== MCP_DEV_TRUSTED_PREFIX_CONTENT_SHA256
+      contentSha256(
+        steps
+          .slice(0, installIndex + 1)
+          .map((step) => (step === trustedNodeSetup ? nodeSetupSecurityBoundary(step) : step)),
+      ) !== MCP_DEV_TRUSTED_PREFIX_CONTENT_SHA256
     ) {
       errors.push("mcp-bridge-dev must preserve every reviewed step through trusted installation");
     }
@@ -795,8 +805,8 @@ function validateDevArtifactJob(errors: string[], job: UnknownRecord): void {
   if (!/^actions\/setup-node@[a-f0-9]{40}$/u.test(asString(setup.uses))) {
     errors.push(`${DEV_ARTIFACT_JOB} must use a SHA-pinned Node setup`);
   }
-  if (!hasExactEntries(asRecord(setup.with), { "node-version": 22 })) {
-    errors.push(`${DEV_ARTIFACT_JOB} must use only the reviewed Node version`);
+  if (Object.keys(asRecord(setup.with)).some((key) => key !== "node-version")) {
+    errors.push(`${DEV_ARTIFACT_JOB} must not enable additional Node setup inputs`);
   }
   const resolve = namedStep(job, "Resolve immutable OpenShell dev artifact");
   requireEqual(

@@ -23,7 +23,7 @@ const ARTIFACT_SAFETY_GATED_UPLOAD =
   "${{ always() && steps.artifact_safety.outcome == 'success' && steps.artifact_safety.outputs.approved_path != '' }}";
 const APPROVED_ARTIFACT_PATH = "${{ steps.artifact_safety.outputs.approved_path }}";
 const ARTIFACT_SAFETY_COMMAND =
-  'node --experimental-strip-types --no-warnings tools/e2e/openshell-gateway-auth-artifact-safety.mts "$E2E_ARTIFACT_DIR"';
+  'node --no-warnings tools/e2e/openshell-gateway-auth-artifact-safety.mts "$E2E_ARTIFACT_DIR"';
 
 type WorkflowStep = {
   env?: Record<string, unknown>;

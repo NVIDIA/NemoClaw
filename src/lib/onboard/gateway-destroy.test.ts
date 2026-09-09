@@ -37,7 +37,7 @@ describe("destroyGatewayWithVolumeCleanup", () => {
   it("falls back to gateway destroy when remove is unavailable", () => {
     const runOpenshell = vi
       .fn()
-      .mockReturnValueOnce({ status: 1 })
+      .mockReturnValueOnce({ status: 1, stderr: "unrecognized subcommand 'remove'" })
       .mockReturnValueOnce({ status: 0 });
     const d = deps({ runOpenshell });
 
@@ -51,18 +51,21 @@ describe("destroyGatewayWithVolumeCleanup", () => {
     });
   });
 
-  it("does not fall back to gateway destroy when lifecycle commands are unavailable", () => {
-    const runOpenshell = vi.fn().mockReturnValueOnce({ status: 1 });
-    const d = deps({
-      hasLifecycleCommands: vi.fn(() => false),
-      runOpenshell,
-    });
+  it("does not hide a current remove failure behind gateway destroy", () => {
+    const runOpenshell = vi.fn().mockReturnValueOnce({ status: 1, stderr: "connection refused" });
+    const d = deps({ runOpenshell });
 
     expect(destroyGatewayWithVolumeCleanup(d)).toBe(false);
     expect(runOpenshell).toHaveBeenCalledTimes(1);
     expect(runOpenshell).toHaveBeenCalledWith(["gateway", "remove", "nemoclaw"], {
       ignoreError: true,
     });
+    expect(runOpenshell).not.toHaveBeenCalledWith(
+      ["gateway", "destroy", "-g", "nemoclaw"],
+      expect.anything(),
+    );
+    expect(d.clearRegistry).not.toHaveBeenCalled();
+    expect(d.dockerRemoveVolumesByPrefix).not.toHaveBeenCalled();
   });
 
   it("stops Docker-driver gateways, unregisters them, and removes cluster volumes", () => {

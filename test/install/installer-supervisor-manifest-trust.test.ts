@@ -126,7 +126,6 @@ function runParser(options: RunOptions = {}) {
   return spawnSync(
     "node",
     [
-      "--experimental-strip-types",
       "--no-warnings",
       PARSER,
       "--blueprint",
@@ -158,6 +157,19 @@ describe("OpenShell supervisor manifest trust", () => {
     const result = runParser({ transformSupervisor: () => prospective });
 
     expect(result.status, result.stderr).toBe(0);
+  });
+
+  it("rejects an operational mutation of the base-trusted prospective supervisor fixture", () => {
+    const result = runParser({
+      transformSupervisor: (source) =>
+        selectSharedGatewayStateResolver(source).replace(
+          "ghcr.io/nvidia/openshell/supervisor@${manifestDigest}",
+          "registry.invalid/openshell/supervisor@${manifestDigest}",
+        ),
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("supervisor runtime operational template is not base-trusted");
   });
 
   it.each([["0.0.103", V00103_SUPERVISOR_MANIFEST_DIGEST]] as const)(

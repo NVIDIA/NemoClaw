@@ -145,7 +145,6 @@ function fixture(log: string, result?: Record<string, unknown>, archive?: Buffer
   return { root, env };
 }
 const classifierArgs = (extra: string[] = []) => [
-  "--experimental-strip-types",
   "--no-warnings",
   script,
   "--job-id",
@@ -170,7 +169,6 @@ function importedClassifierArgs(env: NodeJS.ProcessEnv, extra: string[]): string
     ...(clipMode === undefined ? {} : { clipMode }),
   };
   return [
-    "--experimental-strip-types",
     "--no-warnings",
     "--input-type=module",
     "-e",

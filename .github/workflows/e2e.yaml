@@ -143,7 +143,7 @@ jobs:
       - name: Set up Node for reviewed package download
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: ">=22.19.0 <23"
           registry-url: https://npm.pkg.github.com
           scope: "@nvidia"
 
@@ -154,7 +154,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          artifact_path="$(node --experimental-strip-types scripts/checks/package-openshell-sdk-for-pr.mts)"
+          artifact_path="$(node scripts/checks/package-openshell-sdk-for-pr.mts)"
           test -n "$artifact_path"
           printf 'artifact_path=%s\n' "$artifact_path" >> "$GITHUB_OUTPUT"
 
@@ -237,7 +237,7 @@ jobs:
       - name: Set up Node for publication verification
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: ">=22.19.0 <23"
 
       - id: select_pr_source
         name: Resolve exact PR managed-image publication
@@ -264,7 +264,7 @@ jobs:
               exit 1
             }
           fi
-          selection="$(node --experimental-strip-types --no-warnings tools/e2e/pr-managed-image-publication.mts "$catalog_path")"
+          selection="$(node --no-warnings tools/e2e/pr-managed-image-publication.mts "$catalog_path")"
           case "$selection" in
             base-cohort)
               [[ ! -e "$catalog_path" && ! -L "$catalog_path" ]] || {
@@ -307,7 +307,7 @@ jobs:
           if [[ "$SELECT_NEAREST_SUCCESSFUL_PUBLICATION" == "1" ]]; then
             wait_seconds=300
           fi
-          node --experimental-strip-types --no-warnings tools/e2e/base-image-publication.mts --wait-seconds "$wait_seconds" --poll-seconds 30
+          node --no-warnings tools/e2e/base-image-publication.mts --wait-seconds "$wait_seconds" --poll-seconds 30
 
       - name: Download immutable Deep Agents Code base contract
         if: ${{ inputs.pr_number == '' || steps.select_pr_source.outputs.selection == 'base-cohort' || inputs.jobs != '' || inputs.targets == '' || contains(inputs.targets, 'managed-image-') }}
@@ -316,7 +316,7 @@ jobs:
           PUBLICATION_HEAD_SHA: ${{ steps.publication.outputs.head_sha }}
           PUBLICATION_RUN_ATTEMPT: ${{ steps.publication.outputs.run_attempt }}
           PUBLICATION_RUN_ID: ${{ steps.publication.outputs.run_id }}
-        run: node --experimental-strip-types --no-warnings tools/e2e/exact-artifact-download.mts "${RUNNER_TEMP}/dcode-base-contract"
+        run: node --no-warnings tools/e2e/exact-artifact-download.mts "${RUNNER_TEMP}/dcode-base-contract"
 
       - id: validate_dcode_base
         name: Validate immutable Deep Agents Code base
@@ -325,7 +325,7 @@ jobs:
           PUBLICATION_HEAD_SHA: ${{ steps.publication.outputs.head_sha }}
           PUBLICATION_RUN_ATTEMPT: ${{ steps.publication.outputs.run_attempt }}
           PUBLICATION_RUN_ID: ${{ steps.publication.outputs.run_id }}
-        run: node --experimental-strip-types --no-warnings tools/e2e/dcode-base-image-contract.mts "${RUNNER_TEMP}/dcode-base-contract/contract.json"
+        run: node --no-warnings tools/e2e/dcode-base-image-contract.mts "${RUNNER_TEMP}/dcode-base-contract/contract.json"
 
       - id: download_managed_cohort
         name: Download immutable managed-image cohort contract
@@ -336,7 +336,7 @@ jobs:
           PUBLICATION_HEAD_SHA: ${{ steps.publication.outputs.head_sha }}
           PUBLICATION_RUN_ATTEMPT: ${{ steps.publication.outputs.run_attempt }}
           PUBLICATION_RUN_ID: ${{ steps.publication.outputs.run_id }}
-        run: node --experimental-strip-types --no-warnings tools/e2e/exact-artifact-download.mts "${RUNNER_TEMP}/managed-image-cohort"
+        run: node --no-warnings tools/e2e/exact-artifact-download.mts "${RUNNER_TEMP}/managed-image-cohort"
 
       - id: validate_managed_cohort
         name: Validate immutable managed-image cohort contract
@@ -345,7 +345,7 @@ jobs:
           PUBLICATION_HEAD_SHA: ${{ steps.publication.outputs.head_sha }}
           PUBLICATION_RUN_ATTEMPT: ${{ steps.publication.outputs.run_attempt }}
           PUBLICATION_RUN_ID: ${{ steps.publication.outputs.run_id }}
-        run: node --experimental-strip-types --no-warnings tools/e2e/managed-image-cohort-contract.mts "${RUNNER_TEMP}/managed-image-cohort/cohort.json"
+        run: node --no-warnings tools/e2e/managed-image-cohort-contract.mts "${RUNNER_TEMP}/managed-image-cohort/cohort.json"
 
   generate-matrix:
     needs: base-image-publication
@@ -643,7 +643,7 @@ jobs:
       - name: Set up Node for trusted E2E planning
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: ">=22.19.0 <23"
 
       - name: Install trusted E2E planner dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
@@ -915,7 +915,7 @@ jobs:
       - name: Set up Node for trusted qualification planning
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: ">=22.19.0 <23"
 
       - id: source
         name: Authenticate the candidate and dispatch artifact
@@ -1010,7 +1010,7 @@ jobs:
           PRODUCER_RUN_ATTEMPT: ${{ github.run_attempt }}
           PRODUCER_RUN_ID: ${{ github.run_id }}
           WORKFLOW_SHA: ${{ github.workflow_sha }}
-        run: node --experimental-strip-types --no-warnings tools/e2e/native-runtime-qualification-producer-plan.mts --ci-output
+        run: node --no-warnings tools/e2e/native-runtime-qualification-producer-plan.mts --ci-output
 
   native-runtime-qualification-podman-toolchain:
     name: Build pinned native Podman toolchain / ${{ matrix.architecture }}
@@ -2170,7 +2170,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo --preserve-env=EVIDENCE_DIRECTORY,EXECUTION_RECEIPT_PATH,INSTALLER_RECEIPT_DIRECTORY,QUALIFICATION_ROW \
-            "$NODE_DIRECTORY/node" --experimental-strip-types --no-warnings \
+            "$NODE_DIRECTORY/node" --no-warnings \
             .qualification-workflow/tools/e2e/native-runtime-qualification-producer-evidence.mts
           sudo chown -R "$(id -u):$(id -g)" "$EVIDENCE_DIRECTORY"
 
@@ -2528,7 +2528,7 @@ jobs:
           EVIDENCE_DIRECTORY: ${{ runner.temp }}/native-runtime-aggregate
           QUALIFICATION_PLAN: ${{ needs.native-runtime-qualification-producer-plan.outputs.matrix }}
         run: >-
-          node --experimental-strip-types --no-warnings tools/e2e/native-runtime-qualification-producer-aggregate.mts
+          node --no-warnings tools/e2e/native-runtime-qualification-producer-aggregate.mts
 
       - name: Upload aggregate evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -3353,7 +3353,7 @@ jobs:
       - id: artifact_safety
         name: Validate final OpenShell gateway auth contract artifacts
         if: always()
-        run: node --experimental-strip-types --no-warnings tools/e2e/openshell-gateway-auth-artifact-safety.mts "$E2E_ARTIFACT_DIR"
+        run: node --no-warnings tools/e2e/openshell-gateway-auth-artifact-safety.mts "$E2E_ARTIFACT_DIR"
 
       - name: Upload OpenShell gateway auth contract artifacts
         if: ${{ always() && steps.artifact_safety.outcome == 'success' && steps.artifact_safety.outputs.approved_path != '' }}
@@ -3966,12 +3966,12 @@ jobs:
       - name: Set up Node for OpenShell dev artifact resolution
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: ">=22.19.0 <23"
 
       - id: resolve_openshell_dev_artifact
         name: Resolve immutable OpenShell dev artifact
         run: >-
-          node --experimental-strip-types --no-warnings "${{ github.workspace }}/.trusted-openshell-dev-artifact/tools/e2e/openshell-dev-artifact.mts" resolve "${{ runner.temp }}/openshell-dev-artifact"
+          node --no-warnings "${{ github.workspace }}/.trusted-openshell-dev-artifact/tools/e2e/openshell-dev-artifact.mts" resolve "${{ runner.temp }}/openshell-dev-artifact"
 
       - name: Upload OpenShell dev artifact resolution
         if: ${{ always() }}
@@ -4026,7 +4026,7 @@ jobs:
       - name: Set up Node.js for trusted OpenShell verification
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: ">=22.19.0 <23"
           package-manager-cache: false
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -4064,7 +4064,7 @@ jobs:
           OPENSHELL_DEV_EXPECTED_MANIFEST_SHA256: ${{ needs.openshell-dev-artifact.outputs.manifest_sha256 }}
           OPENSHELL_DEV_EXPECTED_SOURCE_COMMIT: ${{ needs.openshell-dev-artifact.outputs.source_commit }}
         run: >-
-          node --experimental-strip-types --no-warnings "${{ github.workspace }}/.trusted-openshell-dev-artifact/tools/e2e/openshell-dev-artifact.mts" verify "$OPENSHELL_DEV_ARTIFACT_DIR" "$OPENSHELL_DEV_EXPECTED_SOURCE_COMMIT" "$OPENSHELL_DEV_EXPECTED_MANIFEST_SHA256"
+          node --no-warnings "${{ github.workspace }}/.trusted-openshell-dev-artifact/tools/e2e/openshell-dev-artifact.mts" verify "$OPENSHELL_DEV_ARTIFACT_DIR" "$OPENSHELL_DEV_EXPECTED_SOURCE_COMMIT" "$OPENSHELL_DEV_EXPECTED_MANIFEST_SHA256"
 
       - name: Revoke Docker auth before OpenShell development tooling
         shell: bash
@@ -4714,7 +4714,7 @@ jobs:
       - name: Set up Node for trusted llama.cpp plan compilation
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: ">=22.19.0 <23"
           cache: npm
 
       - name: Install trusted llama.cpp plan dependencies
@@ -4732,7 +4732,7 @@ jobs:
             echo "::error::Protected llama.cpp candidate checkout does not match the candidate SHA" >&2
             exit 1
           }
-          node --experimental-strip-types --no-warnings \
+          node --no-warnings \
             scripts/checks/export-llama-cpp-dgx-spark-qualification-plan.mts \
             --source-root "$CANDIDATE_ROOT"
 
@@ -5484,7 +5484,7 @@ jobs:
           ENV: /dev/null
           NODE_OPTIONS: ""
         with:
-          node-version: "22"
+          node-version: ">=22.19.0 <23"
 
       - name: Recover Docker CLI before native Podman E2E
         if: ${{ matrix.runtime_provider == 'podman' }}
@@ -5668,7 +5668,7 @@ jobs:
       - name: Set up Node for Jetson controller
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: ">=22.19.0 <23"
 
       - name: Dispatch exact commit to Jetson through operator backend
         env:
@@ -5676,7 +5676,7 @@ jobs:
           JETSON_DISPATCH_CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
           JETSON_DISPATCH_MANAGED_IMAGE_REVISION: ${{ needs.base-image-publication.outputs.managed_image_revision }}
           JETSON_DISPATCH_URL: ${{ vars.JETSON_DISPATCH_URL }}
-        run: node --experimental-strip-types --no-warnings tools/e2e/jetson-dispatch-client.mts
+        run: node --no-warnings tools/e2e/jetson-dispatch-client.mts
 
       - name: Upload Jetson nvmap GPU artifacts
         if: always()
@@ -6135,7 +6135,7 @@ jobs:
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
           RELEASE_REQUIRED_JOBS: ${{ needs.generate-matrix.outputs.selected_workflow_jobs }}
-        run: node --experimental-strip-types --no-warnings tools/e2e/release-qualification.mts
+        run: node --no-warnings tools/e2e/release-qualification.mts
       - name: Summarize selected E2E
         env:
           SELECTED_WORKFLOW_JOBS: ${{ needs.generate-matrix.outputs.selected_workflow_jobs }}
@@ -6171,7 +6171,7 @@ jobs:
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
           RELEASE_REQUIRED_JOBS: ${{ needs.generate-matrix.outputs.release_required_jobs }}
-        run: node --experimental-strip-types --no-warnings tools/e2e/release-qualification.mts
+        run: node --no-warnings tools/e2e/release-qualification.mts
 
   # ── Push/manual scorecard ─────────────────────────────────────────────────
   scorecard:

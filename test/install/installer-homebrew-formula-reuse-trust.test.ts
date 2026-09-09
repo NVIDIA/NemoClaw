@@ -31,7 +31,6 @@ function runTrustCheck(source: string) {
   return spawnSync(
     process.execPath,
     [
-      "--experimental-strip-types",
       path.join(REPO_ROOT, "scripts/checks/extract-installer-pins.mts"),
       "--blueprint",
       path.join(REPO_ROOT, "nemoclaw-blueprint/blueprint.yaml"),

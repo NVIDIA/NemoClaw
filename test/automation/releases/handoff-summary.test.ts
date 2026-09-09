@@ -29,7 +29,7 @@ function git(cwd: string, ...args: string[]): string {
 function runCli(cwd: string, ...args: string[]) {
   return spawnSync(
     process.execPath,
-    ["--experimental-strip-types", "--no-warnings", SCRIPT, ...args],
+    ["--no-warnings", SCRIPT, ...args],
     { cwd, encoding: "utf8" },
   );
 }

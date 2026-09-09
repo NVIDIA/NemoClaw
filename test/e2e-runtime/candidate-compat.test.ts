@@ -472,7 +472,6 @@ describe("OpenShell candidate compatibility contract", () => {
       const result = spawnSync(
         process.execPath,
         [
-          "--experimental-strip-types",
           resolve("tools/candidate-compat.mts"),
           "finalize",
           "--receipt",
