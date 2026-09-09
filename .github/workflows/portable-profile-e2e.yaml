@@ -88,20 +88,29 @@ jobs:
       - name: Install pinned OpenShell
         run: |
           env -u GH_TOKEN -u GITHUB_TOKEN NEMOCLAW_NON_INTERACTIVE=1 bash scripts/install-openshell.sh
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          authority_dir="/opt/nemoclaw-openshell-e2e/bin"
+          sudo install -d -o root -g root -m 0755 "$authority_dir"
+          for component in openshell openshell-gateway openshell-sandbox; do
+            resolved="$(command -v "$component")"
+            sudo install -o root -g root -m 0755 "$resolved" "$authority_dir/$component"
+          done
+          echo "$authority_dir" >> "$GITHUB_PATH"
 
-      - name: Qualify the user-local OpenShell executable path
+      - name: Qualify the root-owned OpenShell executable path
         shell: bash
         run: |
           set -euo pipefail
           openshell_bin="$(command -v openshell)"
-          test "$openshell_bin" = "$HOME/.local/bin/openshell"
+          test "$openshell_bin" = "/opt/nemoclaw-openshell-e2e/bin/openshell"
           test -f "$openshell_bin"
-          test ! -L "$HOME"
-          test ! -L "$HOME/.local"
-          test ! -L "$HOME/.local/bin"
-          test ! -L "$openshell_bin"
-          chmod go-w "$HOME" "$HOME/.local" "$HOME/.local/bin" "$openshell_bin"
+          for component in \
+            /opt \
+            /opt/nemoclaw-openshell-e2e \
+            /opt/nemoclaw-openshell-e2e/bin \
+            "$openshell_bin"; do
+            test ! -L "$component"
+            test "$(stat -c '%u:%g:%a' "$component")" = "0:0:755"
+          done
           test "$(realpath "$openshell_bin")" = "$openshell_bin"
 
       - name: Provision restricted rootless Linux runtime
