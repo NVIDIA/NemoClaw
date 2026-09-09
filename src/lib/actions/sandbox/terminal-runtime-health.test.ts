@@ -73,7 +73,7 @@ describe("probeTerminalRuntimeCgroupOom", () => {
     const args = calls[0] ?? [];
     // The sandbox exec transport runs the probe under the sandbox policy, which
     // denies /sys/fs/cgroup and hid every real OOM behind unavailable.
-    expect(args.slice(0, 4)).toEqual(["exec", "openshell-alpha", "sh", "-lc"]);
+    expect(args.slice(0, 4)).toEqual(["exec", "openshell-alpha", "sh", "-c"]);
     expect(args[4]).toContain("/sys/fs/cgroup/memory.events");
     expect(args[4]).toContain("/sys/fs/cgroup/memory.oom_control");
     expect(args[4]).toContain("/sys/fs/cgroup/memory/memory.oom_control");

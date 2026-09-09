@@ -291,6 +291,7 @@ jobs:
 
       - id: publication
         name: Select base and optional managed-image publication
+        if: ${{ inputs.pr_number == '' || steps.select_pr_source.outputs.selection == 'base-cohort' || inputs.jobs != '' || inputs.targets == '' || contains(inputs.targets, 'managed-image-') }}
         env:
           EXPECTED_SHA: ${{ steps.publication_mode.outputs.expected_sha }}
           GITHUB_TOKEN: ${{ github.token }}
@@ -309,6 +310,7 @@ jobs:
           node --experimental-strip-types --no-warnings tools/e2e/base-image-publication.mts --wait-seconds "$wait_seconds" --poll-seconds 30
 
       - name: Download immutable Deep Agents Code base contract
+        if: ${{ inputs.pr_number == '' || steps.select_pr_source.outputs.selection == 'base-cohort' || inputs.jobs != '' || inputs.targets == '' || contains(inputs.targets, 'managed-image-') }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
           PUBLICATION_HEAD_SHA: ${{ steps.publication.outputs.head_sha }}
@@ -318,6 +320,7 @@ jobs:
 
       - id: validate_dcode_base
         name: Validate immutable Deep Agents Code base
+        if: ${{ inputs.pr_number == '' || steps.select_pr_source.outputs.selection == 'base-cohort' || inputs.jobs != '' || inputs.targets == '' || contains(inputs.targets, 'managed-image-') }}
         env:
           PUBLICATION_HEAD_SHA: ${{ steps.publication.outputs.head_sha }}
           PUBLICATION_RUN_ATTEMPT: ${{ steps.publication.outputs.run_attempt }}

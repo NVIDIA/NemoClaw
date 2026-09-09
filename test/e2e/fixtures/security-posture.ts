@@ -51,7 +51,7 @@ export interface SplitProcessSecurityReport {
 export interface SecurityPostureSummary {
   configureGuard: true;
   hostNonRoot: true;
-  rcFilesLocked: true;
+  rcFilesMutable: true;
   runtimeProxyEnvLocked: true;
   splitProcess: {
     childSupervisor: ProcessSecurityIdentity;
@@ -99,9 +99,10 @@ const OPENSHELL_SUPERVISOR_CAPABILITY_MASKS = Object.freeze({
 });
 
 function supervisorCapabilityMask(providerId: string): string {
-  const mask = OPENSHELL_SUPERVISOR_CAPABILITY_MASKS[
-    providerId as keyof typeof OPENSHELL_SUPERVISOR_CAPABILITY_MASKS
-  ];
+  const mask =
+    OPENSHELL_SUPERVISOR_CAPABILITY_MASKS[
+      providerId as keyof typeof OPENSHELL_SUPERVISOR_CAPABILITY_MASKS
+    ];
   if (!mask) {
     throw new Error(`security-posture has no reviewed capability mask for '${providerId}'`);
   }
@@ -542,12 +543,9 @@ function validateSupervisor(
   }
   requireExactIds(process.status.uid, 0, "OpenShell supervisor Uid");
   requireExactIds(process.status.gid, 0, "OpenShell supervisor Gid");
-  requireExactSupplementaryGroups(
-    process.status.groups,
-    [0],
-    "OpenShell supervisor Groups",
-    [[0, sandboxGid]],
-  );
+  requireExactSupplementaryGroups(process.status.groups, [0], "OpenShell supervisor Groups", [
+    [0, sandboxGid],
+  ]);
   for (const field of ["capInh", "capPrm", "capEff", "capBnd", "capAmb"] as const) {
     requireCapabilityHex(process.status[field], `OpenShell supervisor ${field}`);
   }
@@ -832,12 +830,15 @@ for f in /sandbox/.bashrc /sandbox/.profile; do
   test ! -L "$f" || { echo "SYMLINK $f"; bad=1; }
   set -- $(stat -c "%a %U:%G" "$f")
   echo "META $f $1 $2"
-  test "$1" = 444 || { echo "BAD_MODE $f $1"; bad=1; }
-  test "$2" = root:root || { echo "BAD_OWNER $f $2"; bad=1; }
+  test -w "$f" || { echo "NOT_WRITABLE $f"; bad=1; }
+  test "$2" = "$(id -un):$(id -gn)" || { echo "BAD_OWNER $f $2"; bad=1; }
   grep -Eq "nemoclaw-configure-guard|^(openclaw|hermes)\(\)" "$f" && {
     echo "INLINE_GUARD $f"
     bad=1
   }
+  printf '\n# nemoclaw-e2e-personal-profile\n' >> "$f" &&
+    cp "$f" "$f.nemoclaw-e2e" && mv "$f.nemoclaw-e2e" "$f" &&
+    grep -qx '# nemoclaw-e2e-personal-profile' "$f" || { echo "EDIT_FAILED $f"; bad=1; }
 done
 exit "$bad"
 `),
@@ -847,7 +848,7 @@ exit "$bad"
       timeoutMs: 30_000,
     },
   );
-  requireSuccess("locked sandbox rc files", rcFiles);
+  requireSuccess("agent-owned editable sandbox rc files", rcFiles);
 
   const functionName = agent === "hermes" ? "hermes" : "openclaw";
   const guardArg = agent === "hermes" ? "setup" : "configure";
@@ -929,7 +930,7 @@ tail -n 20 "$log"
   return {
     configureGuard: true,
     hostNonRoot: true,
-    rcFilesLocked: true,
+    rcFilesMutable: true,
     runtimeProxyEnvLocked: true,
     splitProcess: {
       childSupervisor: selectNemoclawStartSupervisor(splitProcess.childSupervisors),
