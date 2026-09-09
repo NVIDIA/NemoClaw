@@ -331,7 +331,7 @@ async function assertGatewayProcess(
     probe,
     container,
     "Hermes gateway process does not preserve its user, launch, or dispatcher contract",
-    `ps -eo user=,args= | awk '$1 == "gateway" && (index($0, "hermes gateway run") || index($0, "hermes.real gateway run")) { found = 1 } END { exit found ? 0 : 1 }' && grep -F "hermes gateway launched as 'gateway' user" /tmp/nemoclaw-start.log && ${dispatcherProbe}`,
+    `ps -o user=,pid=,ppid=,args= -p 1 | awk '$1 == "root" && $2 == 1 && $3 == 0 && index($0, "/usr/local/bin/nemoclaw-start") { found = 1 } END { exit found ? 0 : 1 }' && ps -eo user=,args= | awk '$1 == "gateway" && (index($0, "hermes gateway run") || index($0, "hermes.real gateway run")) { found = 1 } END { exit found ? 0 : 1 }' && grep -F "hermes gateway launched as 'gateway' user" /tmp/nemoclaw-start.log && ${dispatcherProbe}`,
   );
 }
 
