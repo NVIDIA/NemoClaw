@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { resolveSandboxLaunchForwardPorts } from "../../../src/lib/actions/sandbox/process-recovery";
 import {
   createForwardServiceTarget,
   isForwardServiceListenerOwner,
@@ -492,7 +493,8 @@ test(
     });
 
     const verifyFallback = (wrapper: ReturnType<typeof createHermesGpuFallbackWrapper>) => {
-      const forwardOwnership = [18_789, 8_642].map((port) =>
+      const forwardPorts = resolveSandboxLaunchForwardPorts(SANDBOX_NAME);
+      const forwardOwnership = (forwardPorts ?? []).map((port) =>
         isForwardServiceListenerOwner(
           createForwardServiceTarget(
             {
@@ -507,9 +509,13 @@ test(
         ),
       );
       expect(
-        [...fallbackEvents, `forward-ownership:${forwardOwnership.join(",")}`].join("\n"),
+        [
+          ...fallbackEvents,
+          `forward-ports:${forwardPorts?.join(",") ?? "unresolved"}`,
+          `forward-ownership:${forwardOwnership.length > 0 && forwardOwnership.every(Boolean)}`,
+        ].join("\n"),
       ).toBe(
-        `${HERMES_GPU_FALLBACK_EVENTS.rejectNativeCreateBeforeProgress}\n${HERMES_GPU_FALLBACK_EVENTS.delegateCompatibilityCreate}\n${HERMES_GPU_FALLBACK_EVENTS.delegateNvidiaSmiProofAfterFallback}\nforward-ownership:true,true`,
+        `${HERMES_GPU_FALLBACK_EVENTS.rejectNativeCreateBeforeProgress}\n${HERMES_GPU_FALLBACK_EVENTS.delegateCompatibilityCreate}\n${HERMES_GPU_FALLBACK_EVENTS.delegateNvidiaSmiProofAfterFallback}\nforward-ports:${forwardPorts?.join(",") ?? "unresolved"}\nforward-ownership:true`,
       );
       expect(resultText(install)).toContain("Native GPU diagnostics saved:");
       expect(

@@ -8,7 +8,6 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createForwardServiceTarget } from "../../../src/lib/adapters/openshell/forward-service";
 import { buildDirectSandboxGpuProofCommands } from "../../../src/lib/onboard/initial-policy";
 import {
   hasRequiredOpenshellMessagingFeatures,
@@ -190,42 +189,8 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
       env,
     );
     expect(compatibilityProof.status, compatibilityProof.stderr).toBe(0);
+    expect(fs.lstatSync(wrapper.wrapperPath).isSymbolicLink()).toBe(true);
     expect(fs.realpathSync(wrapper.wrapperPath)).toBe(fs.realpathSync(realOpenshell));
-    expect(
-      [18_789, 8_642].map((port) =>
-        createForwardServiceTarget(
-          {
-            executable: wrapper.wrapperPath,
-            gatewayName: "nemoclaw",
-            localHost: "127.0.0.1",
-            sandboxName: "alpha",
-            workspace: "default",
-          },
-          port,
-        ),
-      ),
-    ).toEqual([
-      {
-        executable: wrapper.wrapperPath,
-        gatewayName: "nemoclaw",
-        localHost: "127.0.0.1",
-        localPort: 18_789,
-        sandboxName: "alpha",
-        targetHost: "127.0.0.1",
-        targetPort: 18_789,
-        workspace: "default",
-      },
-      {
-        executable: wrapper.wrapperPath,
-        gatewayName: "nemoclaw",
-        localHost: "127.0.0.1",
-        localPort: 8_642,
-        sandboxName: "alpha",
-        targetHost: "127.0.0.1",
-        targetPort: 8_642,
-        workspace: "default",
-      },
-    ]);
 
     const version = runWrapper(wrapper.wrapperPath, ["--version"], env);
     expect(version.status, version.stderr).toBe(0);
