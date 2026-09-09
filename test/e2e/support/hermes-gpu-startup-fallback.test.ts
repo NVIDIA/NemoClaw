@@ -8,6 +8,8 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { createForwardServiceTarget } from "../../../src/lib/adapters/openshell/forward-service";
+import { buildDirectSandboxGpuProofCommands } from "../../../src/lib/onboard/initial-policy";
 import {
   hasRequiredOpenshellMessagingFeatures,
   REQUIRED_OPENSHELL_SANDBOX_MCP_FEATURE,
@@ -16,6 +18,7 @@ import {
   createHermesGpuFallbackWrapper,
   extractHermesGpuDiagnosticsDirectory,
   HERMES_GPU_FALLBACK_EVENTS,
+  HERMES_GPU_NATIVE_NVIDIA_SMI_PROOF,
   readHermesGpuFallbackEvents,
   resolveHermesGpuStartupScenario,
 } from "../live/hermes-gpu-startup-fallback.ts";
@@ -48,10 +51,7 @@ function createWrapperFixture(
     realDir,
     realOpenshell,
     root,
-    wrapper: createHermesGpuFallbackWrapper(realOpenshell, {
-      rootDir: path.join(root, "wrapper"),
-      sandboxName: "alpha",
-    }),
+    wrapper: createHermesGpuFallbackWrapper(realOpenshell, { rootDir: path.join(root, "wrapper") }),
   };
 }
 
@@ -59,12 +59,13 @@ function runWrapper(wrapperPath: string, args: string[], env: NodeJS.ProcessEnv)
   return spawnSync(wrapperPath, args, { encoding: "utf8", env });
 }
 
-function spawnWrapper(wrapperPath: string, args: string[], env: NodeJS.ProcessEnv) {
-  return spawn(wrapperPath, args, { env, stdio: "ignore" });
-}
-
-function waitForChild(child: ReturnType<typeof spawn>): Promise<number | null> {
+function runWrapperConcurrently(
+  wrapperPath: string,
+  args: string[],
+  env: NodeJS.ProcessEnv,
+): Promise<number | null> {
   return new Promise((resolve, reject) => {
+    const child = spawn(wrapperPath, args, { env, stdio: "ignore" });
     child.once("error", reject);
     child.once("close", resolve);
   });
@@ -108,7 +109,23 @@ describe("Hermes GPU startup failure diagnostics", () => {
 });
 
 describe("Hermes GPU startup fallback OpenShell wrapper", () => {
-  it("keeps the real OpenShell CLI at the wrapper path after compatibility create succeeds (#11239)", () => {
+  it("tracks the exact production nvidia-smi proof argv", () => {
+    const proof = buildDirectSandboxGpuProofCommands("alpha").find(
+      (candidate) => candidate.id === "nvidia-smi",
+    );
+    expect(proof?.args).toEqual([
+      "sandbox",
+      "exec",
+      "-n",
+      "alpha",
+      "--",
+      "sh",
+      "-lc",
+      HERMES_GPU_NATIVE_NVIDIA_SMI_PROOF,
+    ]);
+  });
+
+  it("rejects native create before progress and delegates one compatibility attempt (#10155)", () => {
     const { realOpenshell, root, wrapper } = createWrapperFixture("hermes-gpu-fallback-test-", {
       openshell: [
         "#!/usr/bin/env bash",
@@ -120,17 +137,14 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
         "  done",
         "fi",
         `printf '%s\\n' "$marker" >>"$E2E_FAKE_DELEGATE_LOG"`,
-        `printf '%s\\n' "$0" >>"$E2E_FAKE_DELEGATE_EXECUTABLE_LOG"`,
         "",
       ].join("\n"),
     });
     const delegateMarkerLog = path.join(root, "delegate-markers.log");
-    const delegateExecutableLog = path.join(root, "delegate-executables.log");
     const env = {
       ...process.env,
       ...wrapper.componentEnv,
       E2E_FAKE_DELEGATE_LOG: delegateMarkerLog,
-      E2E_FAKE_DELEGATE_EXECUTABLE_LOG: delegateExecutableLog,
     };
     const secretMarkers = [
       "must-not-enter-wrapper-events",
@@ -147,7 +161,6 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
         "image",
         "--gpu",
         "--",
-        "NEMOCLAW_SANDBOX_NAME=alpha",
         `TOKEN=${secretMarkers[0]}`,
         `OPENAI_API_KEY=${secretMarkers[1]}`,
         `PASSWORD=${secretMarkers[2]}`,
@@ -166,44 +179,60 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
 
     const compatibility = runWrapper(
       wrapper.wrapperPath,
-      [
-        "sandbox",
-        "create",
-        "--from",
-        "image",
-        "--gpu-device",
-        "all",
-        "--",
-        "NEMOCLAW_SANDBOX_NAME=alpha",
-      ],
+      ["sandbox", "create", "--from", "image", "--gpu-device", "all"],
       env,
     );
     expect(compatibility.status, compatibility.stderr).toBe(0);
-    expect(fs.lstatSync(wrapper.wrapperPath).isSymbolicLink()).toBe(true);
-    expect(fs.realpathSync(wrapper.wrapperPath)).toBe(fs.realpathSync(realOpenshell));
 
-    const repeatedCompatibility = runWrapper(
+    const compatibilityProof = runWrapper(
       wrapper.wrapperPath,
-      [
-        "sandbox",
-        "create",
-        "--from",
-        "image",
-        "--gpu-device",
-        "all",
-        "--",
-        "NEMOCLAW_SANDBOX_NAME=alpha",
-      ],
+      ["sandbox", "exec", "-n", "alpha", "--", "sh", "-lc", HERMES_GPU_NATIVE_NVIDIA_SMI_PROOF],
       env,
     );
-    expect(repeatedCompatibility.status, repeatedCompatibility.stderr).toBe(0);
+    expect(compatibilityProof.status, compatibilityProof.stderr).toBe(0);
+    expect(fs.realpathSync(wrapper.wrapperPath)).toBe(fs.realpathSync(realOpenshell));
+    expect(
+      [18_789, 8_642].map((port) =>
+        createForwardServiceTarget(
+          {
+            executable: wrapper.wrapperPath,
+            gatewayName: "nemoclaw",
+            localHost: "127.0.0.1",
+            sandboxName: "alpha",
+            workspace: "default",
+          },
+          port,
+        ),
+      ),
+    ).toEqual([
+      {
+        executable: wrapper.wrapperPath,
+        gatewayName: "nemoclaw",
+        localHost: "127.0.0.1",
+        localPort: 18_789,
+        sandboxName: "alpha",
+        targetHost: "127.0.0.1",
+        targetPort: 18_789,
+        workspace: "default",
+      },
+      {
+        executable: wrapper.wrapperPath,
+        gatewayName: "nemoclaw",
+        localHost: "127.0.0.1",
+        localPort: 8_642,
+        sandboxName: "alpha",
+        targetHost: "127.0.0.1",
+        targetPort: 8_642,
+        workspace: "default",
+      },
+    ]);
 
     const version = runWrapper(wrapper.wrapperPath, ["--version"], env);
     expect(version.status, version.stderr).toBe(0);
     expect(readHermesGpuFallbackEvents(wrapper.eventsPath)).toEqual([
       HERMES_GPU_FALLBACK_EVENTS.rejectNativeCreateBeforeProgress,
       HERMES_GPU_FALLBACK_EVENTS.delegateCompatibilityCreate,
-      HERMES_GPU_FALLBACK_EVENTS.commitCompatibilityHandoff,
+      HERMES_GPU_FALLBACK_EVENTS.delegateNvidiaSmiProofAfterFallback,
     ]);
     const wrapperArtifacts = fs
       .readdirSync(path.dirname(wrapper.eventsPath), { withFileTypes: true })
@@ -220,73 +249,8 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
     expect(fs.readFileSync(delegateMarkerLog, "utf8").split(/\r?\n/u).filter(Boolean)).toEqual([
       "delegated",
       "create-without-gpu",
-      "create-without-gpu",
       "delegated",
-    ]);
-    expect(fs.readFileSync(delegateExecutableLog, "utf8").split(/\r?\n/u).filter(Boolean)).toEqual([
-      realOpenshell,
-      wrapper.wrapperPath,
-      wrapper.wrapperPath,
-      wrapper.wrapperPath,
-    ]);
-  });
-
-  it("keeps native fault injection when a delegated command precedes compatibility create (#11239)", () => {
-    const { wrapper } = createWrapperFixture("hermes-gpu-fallback-order-test-");
-    const env = { ...process.env, ...wrapper.componentEnv };
-
-    const firstNativeCreate = runWrapper(
-      wrapper.wrapperPath,
-      ["sandbox", "create", "--from", "image", "--gpu", "--", "NEMOCLAW_SANDBOX_NAME=alpha"],
-      env,
-    );
-    expect(firstNativeCreate.status).toBe(2);
-
-    const delegatedVersion = runWrapper(wrapper.wrapperPath, ["--version"], env);
-    expect(delegatedVersion.status, delegatedVersion.stderr).toBe(0);
-    expect(fs.lstatSync(wrapper.wrapperPath).isFile()).toBe(true);
-
-    const secondNativeCreate = runWrapper(
-      wrapper.wrapperPath,
-      ["sandbox", "create", "--from", "image", "--gpu", "--", "NEMOCLAW_SANDBOX_NAME=alpha"],
-      env,
-    );
-    expect(secondNativeCreate.status).toBe(2);
-    expect(readHermesGpuFallbackEvents(wrapper.eventsPath)).toEqual([
-      HERMES_GPU_FALLBACK_EVENTS.rejectNativeCreateBeforeProgress,
-    ]);
-  });
-
-  it("does not let another sandbox retire the target sandbox fault injection (#11239)", () => {
-    const { wrapper } = createWrapperFixture("hermes-gpu-fallback-other-sandbox-test-");
-    const env = { ...process.env, ...wrapper.componentEnv };
-
-    expect(
-      runWrapper(
-        wrapper.wrapperPath,
-        [
-          "sandbox",
-          "create",
-          "--from",
-          "image",
-          "--gpu-device",
-          "all",
-          "--",
-          "NEMOCLAW_SANDBOX_NAME=beta",
-        ],
-        env,
-      ).status,
-    ).toBe(0);
-    expect(fs.lstatSync(wrapper.wrapperPath).isFile()).toBe(true);
-    expect(
-      runWrapper(
-        wrapper.wrapperPath,
-        ["sandbox", "create", "--from", "image", "--gpu", "--", "NEMOCLAW_SANDBOX_NAME=alpha"],
-        env,
-      ).status,
-    ).toBe(2);
-    expect(readHermesGpuFallbackEvents(wrapper.eventsPath)).toEqual([
-      HERMES_GPU_FALLBACK_EVENTS.rejectNativeCreateBeforeProgress,
+      "delegated",
     ]);
   });
 
@@ -405,12 +369,10 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
     const env = { ...process.env, ...wrapper.componentEnv };
     const statuses = await Promise.all(
       Array.from({ length: 8 }, () =>
-        waitForChild(
-          spawnWrapper(
-            wrapper.wrapperPath,
-            ["sandbox", "create", "--from", "image", "--gpu", "--", "NEMOCLAW_SANDBOX_NAME=alpha"],
-            env,
-          ),
+        runWrapperConcurrently(
+          wrapper.wrapperPath,
+          ["sandbox", "create", "--from", "image", "--gpu"],
+          env,
         ),
       ),
     );

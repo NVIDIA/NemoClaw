@@ -10,8 +10,16 @@ import { REQUIRED_OPENSHELL_MCP_FEATURES } from "../../../src/lib/onboard/opensh
 export const HERMES_GPU_FALLBACK_EVENTS = {
   rejectNativeCreateBeforeProgress: "reject-native-create-before-progress",
   delegateCompatibilityCreate: "delegate-compatibility-create",
-  commitCompatibilityHandoff: "commit-compatibility-handoff",
+  delegateNvidiaSmiProofAfterFallback: "delegate-nvidia-smi-proof-after-fallback",
 } as const;
+
+export const HERMES_GPU_NATIVE_NVIDIA_SMI_PROOF = [
+  "set -eu;",
+  "if command -v nvidia-smi >/dev/null 2>&1; then",
+  "exec nvidia-smi;",
+  "fi;",
+  'echo "nvidia-smi not installed; skipping optional visibility check"',
+].join(" ");
 
 export interface HermesGpuFallbackWrapper {
   componentEnv: NodeJS.ProcessEnv;
@@ -73,11 +81,9 @@ function quoteShellLiteral(value: string): string {
 
 /**
  * Create an E2E-only OpenShell CLI wrapper that rejects the exact native
- * `--gpu` create for one sandbox before build or sandbox progress. When that
- * sandbox enters compatibility create, the wrapper atomically replaces itself
- * with a real-CLI link before executing the create through the configured path.
- * Creates for other sandboxes cannot retire the fault injection. Every other
- * invocation transparently delegates its original argv. This
+ * `--gpu` create before build or sandbox progress. The compatibility create
+ * and its GPU proof delegate to the real CLI. Every other invocation also
+ * transparently delegates its original argv. This
  * test-only wrapper never logs argv: its sole artifact is an event log made of
  * fixed labels, so sandbox-create environment arguments never enter artifacts.
  * This interception pattern is specific to the #6110 fallback proof and must
@@ -86,7 +92,7 @@ function quoteShellLiteral(value: string): string {
  */
 export function createHermesGpuFallbackWrapper(
   realOpenshellPath: string,
-  options: { rootDir?: string; sandboxName: string },
+  options: { rootDir?: string } = {},
 ): HermesGpuFallbackWrapper {
   requireAbsoluteExecutable(realOpenshellPath, "real OpenShell CLI");
   const componentDir = path.dirname(realOpenshellPath);
@@ -110,34 +116,22 @@ export function createHermesGpuFallbackWrapper(
     ...REQUIRED_OPENSHELL_MCP_FEATURES.map((marker) => `# capability: ${marker}`),
     `REAL_OPENSHELL=${quoteShellLiteral(realOpenshellPath)}`,
     `FALLBACK_STATE_DIR=${quoteShellLiteral(stateDir)}`,
-    `TARGET_SANDBOX_NAME=${quoteShellLiteral(options.sandboxName)}`,
+    `NATIVE_NVIDIA_SMI_PROOF=${quoteShellLiteral(HERMES_GPU_NATIVE_NVIDIA_SMI_PROOF)}`,
     'NATIVE_CREATE_REJECTED="$FALLBACK_STATE_DIR/native-create-rejected"',
     "",
-    "commit_compatibility_handoff() {",
-    '  REAL_OPENSHELL_LINK="$FALLBACK_STATE_DIR/openshell-real.$$"',
-    '  ln -s "$REAL_OPENSHELL" "$REAL_OPENSHELL_LINK"',
-    '  mv -f "$REAL_OPENSHELL_LINK" "$0"',
-    `  printf '%s\\n' '${HERMES_GPU_FALLBACK_EVENTS.commitCompatibilityHandoff}' >>"$FALLBACK_STATE_DIR/events.log"`,
-    "}",
-    "",
     "is_sandbox_create=0",
-    "is_target_sandbox=0",
     "has_gpu_flag=0",
     'if [[ "${1:-}" == "sandbox" && "${2:-}" == "create" ]]; then',
     "  is_sandbox_create=1",
-    '  previous_arg=""',
     '  for arg in "$@"; do',
-    '    case "$previous_arg:$arg" in',
-    '      "--name:$TARGET_SANDBOX_NAME"|*":--name=$TARGET_SANDBOX_NAME"|*":NEMOCLAW_SANDBOX_NAME=$TARGET_SANDBOX_NAME") is_target_sandbox=1 ;;',
-    "    esac",
-    '    case "$arg" in',
-    "      --gpu) has_gpu_flag=1 ;;",
-    "    esac",
-    '    previous_arg="$arg"',
+    '    if [[ "$arg" == "--gpu" ]]; then',
+    "      has_gpu_flag=1",
+    "      break",
+    "    fi",
     "  done",
     "fi",
     "",
-    'if [[ "$is_sandbox_create" == "1" && "$is_target_sandbox" == "1" ]]; then',
+    'if [[ "$is_sandbox_create" == "1" ]]; then',
     '  if [[ "$has_gpu_flag" == "1" ]]; then',
     '    if mkdir "$NATIVE_CREATE_REJECTED" 2>/dev/null; then',
     `      printf '%s\\n' '${HERMES_GPU_FALLBACK_EVENTS.rejectNativeCreateBeforeProgress}' >>"$FALLBACK_STATE_DIR/events.log"`,
@@ -146,9 +140,14 @@ export function createHermesGpuFallbackWrapper(
     "    exit 2",
     "  else",
     `    printf '%s\\n' '${HERMES_GPU_FALLBACK_EVENTS.delegateCompatibilityCreate}' >>"$FALLBACK_STATE_DIR/events.log"`,
-    "    commit_compatibility_handoff",
-    '    exec "$0" "$@"',
     "  fi",
+    "fi",
+    "",
+    'if [[ -d "$NATIVE_CREATE_REJECTED" && "$#" -eq 8 && "${1:-}" == "sandbox" && "${2:-}" == "exec" && "${3:-}" == "-n" && -n "${4:-}" && "${5:-}" == "--" && "${6:-}" == "sh" && "${7:-}" == "-lc" && "${8:-}" == "$NATIVE_NVIDIA_SMI_PROOF" ]]; then',
+    `  printf '%s\\n' '${HERMES_GPU_FALLBACK_EVENTS.delegateNvidiaSmiProofAfterFallback}' >>"$FALLBACK_STATE_DIR/events.log"`,
+    "  # Later forwards must retain the selected executable identity for ownership checks.",
+    '  ln -s "$REAL_OPENSHELL" "$FALLBACK_STATE_DIR/openshell"',
+    '  mv -f "$FALLBACK_STATE_DIR/openshell" "$0"',
     "fi",
     "",
     "# Transparent test-only delegation: argv is never written by this wrapper.",
