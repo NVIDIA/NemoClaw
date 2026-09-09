@@ -21,7 +21,6 @@ on:
       - "src/lib/onboard/experimental/portable-retired-subnet-recovery.test.ts"
       - "test/e2e/live/portable-profile-rootless-linux.test.ts"
       - "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts"
-      - "tools/e2e/full-e2e-timeout-contract.mts"
   push:
     branches:
       - main

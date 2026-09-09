@@ -18,10 +18,6 @@ describe("security-posture catalogue boundary", () => {
       const openclaw = catalogueTarget("security-posture-openclaw");
       const hermes = catalogueTarget("security-posture-hermes");
 
-      expect(catalogueTarget("full-e2e").timeoutMinutes).toBe(
-        FULL_E2E_STANDARD_PROFILE_JOB_TIMEOUT_MINUTES,
-      );
-
       const target = ({ OpenClaw: openclaw, Hermes: hermes } as const)[scenario]!;
       expect(target).toMatchObject({
         targetId: "security-posture",

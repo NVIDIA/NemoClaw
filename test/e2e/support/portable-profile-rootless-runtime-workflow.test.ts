@@ -260,6 +260,7 @@ ${serviceIdentityCheck}`,
 
     expect(workflow.on.pull_request.types).toEqual(["opened", "synchronize", "reopened"]);
     expect(workflow.on.push.paths).toContain("tools/e2e/full-e2e-timeout-contract.mts");
+    expect(workflow.on.pull_request.paths).not.toContain("tools/e2e/full-e2e-timeout-contract.mts");
     expect(workflow.on.pull_request.paths).toEqual(
       expect.arrayContaining([
         "src/lib/onboard/experimental/portable-host-preparation.ts",
@@ -267,7 +268,6 @@ ${serviceIdentityCheck}`,
         "src/lib/onboard/experimental/portable-retired-subnet-recovery.test.ts",
         "test/e2e/live/portable-profile-rootless-linux.test.ts",
         "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
-        "tools/e2e/full-e2e-timeout-contract.mts",
       ]),
     );
     expect(job?.env?.E2E_SOURCE_REVISION).toBe(revisionExpression);
