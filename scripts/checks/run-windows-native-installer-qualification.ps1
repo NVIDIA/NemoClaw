@@ -303,6 +303,7 @@ function Invoke-DelayedDescendantProbe {
     )
 
     $delayMilliseconds = 2500
+    $childCreationDeadlineMilliseconds = 3000
     $timeoutMilliseconds = 10000
     $eventPrefix = 'Local\NemoClawDelayedChild-' + [guid]::NewGuid().ToString('N')
     $ready = $null
@@ -313,18 +314,24 @@ function Invoke-DelayedDescendantProbe {
     $records = @()
     $probe = $null
     $releasedAt = 0L
+    $actionCompletedAt = 0L
+    $settleStartedAt = 0L
+    $rawEventClockAnchorTicks = 0L
     $registrationStartedAt = 0L
     $registrationCompletedAt = 0L
     $helperStartedAt = 0L
     $helperReadyAt = 0L
     $helperProcessId = $null
     $collectionCompletedMilliseconds = $null
+    $actionCompletedMilliseconds = $null
+    $totalCompletedMilliseconds = $null
     $launchStartedMilliseconds = $null
     $launchCompletedMilliseconds = $null
     $failureMessage = $null
     $cleanupComplete = $false
     $ancestryControl = $null
-    # The handshake excludes PowerShell startup from the calibrated drain window.
+    # The handshake anchors child-creation timing after PowerShell startup;
+    # the delivery settle is separately anchored after the helper action exits.
     $command = @'
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -398,20 +405,31 @@ try {
         $helperReadyAt = [Diagnostics.Stopwatch]::GetTimestamp()
         $releasedAt = [Diagnostics.Stopwatch]::GetTimestamp()
         $go.Set() | Out-Null
-        $records = @(Receive-ProcessStartAudit -Audit $audit `
-            -SettleMilliseconds $script:ProcessAuditSettleMilliseconds -StartedAt $releasedAt)
-        $collectionCompletedMilliseconds = 1000.0 * ([Diagnostics.Stopwatch]::GetTimestamp() - $releasedAt) / [Diagnostics.Stopwatch]::Frequency
-        if (-not $helper.WaitForExit($timeoutMilliseconds) -or $helper.ExitCode -ne 0) {
+        # Match the installer audit: the delivery settle starts AFTER the
+        # audited action completes. The 2500-3000 ms child-creation window is
+        # measured separately from Go and does not consume this delivery budget.
+        if (-not $helper.WaitForExit($timeoutMilliseconds)) {
             Fail-Qualification 'The delayed descendant helper did not complete successfully.'
         }
+        $actionCompletedAt = [Diagnostics.Stopwatch]::GetTimestamp()
+        $settleStartedAt = $actionCompletedAt
+        $actionCompletedMilliseconds = 1000.0 * ($actionCompletedAt - $releasedAt) / [Diagnostics.Stopwatch]::Frequency
+        if ($helper.ExitCode -ne 0) {
+            Fail-Qualification 'The delayed descendant helper did not complete successfully.'
+        }
+        $records = @(Receive-ProcessStartAudit -Audit $audit `
+            -SettleMilliseconds $script:ProcessAuditSettleMilliseconds -StartedAt $settleStartedAt)
+        $collectionCompletedAt = [Diagnostics.Stopwatch]::GetTimestamp()
+        $collectionCompletedMilliseconds = 1000.0 * ($collectionCompletedAt - $settleStartedAt) / [Diagnostics.Stopwatch]::Frequency
+        $totalCompletedMilliseconds = 1000.0 * ($collectionCompletedAt - $releasedAt) / [Diagnostics.Stopwatch]::Frequency
         Assert-BoundedFile -Path $SentinelPath -MaximumBytes 1024
         $probe = Get-Content -LiteralPath $SentinelPath -Raw | ConvertFrom-Json
         $launchStartedMilliseconds = 1000.0 * ([long]$probe.launchStarted - $releasedAt) / [Diagnostics.Stopwatch]::Frequency
         $launchCompletedMilliseconds = 1000.0 * ([long]$probe.launchCompleted - $releasedAt) / [Diagnostics.Stopwatch]::Frequency
         if ($launchStartedMilliseconds -lt $delayMilliseconds -or
             $launchCompletedMilliseconds -lt $launchStartedMilliseconds -or
-            $launchCompletedMilliseconds -ge $script:ProcessAuditSettleMilliseconds) {
-            Fail-Qualification 'The delayed descendant did not start inside the calibrated 2500-3000 ms window.'
+            $launchCompletedMilliseconds -ge $childCreationDeadlineMilliseconds) {
+            Fail-Qualification 'The delayed descendant did not start inside the 2500-3000 ms child-creation window.'
         }
         if ($probe.parentProcessId -ne $helper.Id -or $probe.exitCode -ne 0 -or
             $probe.output -cne 'delayed-child-executed') {
@@ -431,7 +449,16 @@ try {
         }
         $result = [pscustomobject]@{
             delayMilliseconds = $delayMilliseconds
+            childCreationDeadlineMilliseconds = $childCreationDeadlineMilliseconds
             settleMilliseconds = $script:ProcessAuditSettleMilliseconds
+            settleAnchor = 'after-audited-action-completed'
+            stopwatchFrequency = [Diagnostics.Stopwatch]::Frequency
+            executionStartedAtTicks = $releasedAt
+            actionCompletedAtTicks = $actionCompletedAt
+            observationStartedAtTicks = $settleStartedAt
+            actionCompletedMilliseconds = $actionCompletedMilliseconds
+            collectionCompletedMilliseconds = $collectionCompletedMilliseconds
+            totalCompletedMilliseconds = $totalCompletedMilliseconds
             launchStartedMilliseconds = $launchStartedMilliseconds
             launchCompletedMilliseconds = $launchCompletedMilliseconds
             helperProcessId = $helper.Id
@@ -461,10 +488,12 @@ try {
                 if ($ready) { $ready.Dispose() }
                 if ($audit) {
                     try {
-                        if ($releasedAt -gt 0) {
+                        $rawEventClockAnchorTicks = if ($settleStartedAt -gt 0) { $settleStartedAt } `
+                            elseif ($releasedAt -gt 0) { $releasedAt } else { $helperStartedAt }
+                        if ($rawEventClockAnchorTicks -gt 0) {
                             # This immediate diagnostic drain cannot satisfy the earlier assertion.
                             $records += @(Receive-ProcessStartAudit -Audit $audit -DrainOnly `
-                                -SettleMilliseconds $script:ProcessAuditSettleMilliseconds -StartedAt $releasedAt)
+                                -SettleMilliseconds $script:ProcessAuditSettleMilliseconds -StartedAt $rawEventClockAnchorTicks)
                         }
                     } finally {
                         Stop-ProcessStartAudit -Audit $audit
@@ -498,14 +527,21 @@ try {
                 helperProcessId = $helperProcessId
                 childProcessId = $childProcessId
                 delayMilliseconds = $delayMilliseconds
+                childCreationDeadlineMilliseconds = $childCreationDeadlineMilliseconds
                 settleMilliseconds = $script:ProcessAuditSettleMilliseconds
+                settleAnchor = 'after-audited-action-completed'
                 stopwatchFrequency = [Diagnostics.Stopwatch]::Frequency
                 registrationStartedAtTicks = $registrationStartedAt
                 registrationCompletedAtTicks = $registrationCompletedAt
                 helperLaunchStartedAtTicks = $helperStartedAt
                 helperReadyAtTicks = $helperReadyAt
-                observationStartedAtTicks = $releasedAt
+                executionStartedAtTicks = $releasedAt
+                actionCompletedAtTicks = $actionCompletedAt
+                observationStartedAtTicks = $settleStartedAt
+                rawEventClockAnchorTicks = $rawEventClockAnchorTicks
+                actionCompletedMilliseconds = $actionCompletedMilliseconds
                 collectionCompletedMilliseconds = $collectionCompletedMilliseconds
+                totalCompletedMilliseconds = $totalCompletedMilliseconds
                 launchStartedMilliseconds = $launchStartedMilliseconds
                 launchCompletedMilliseconds = $launchCompletedMilliseconds
                 sideEffect = $probe

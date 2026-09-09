@@ -38,6 +38,7 @@ internal static class NativeWebSession
         var result = 1;
         var thread = new Thread(() =>
         {
+            using var shutdown = new CancellationTokenSource();
             var stopped = false;
             var stopRequested = false;
             var content = new StackPanel { Margin = new Thickness(24) };
@@ -57,6 +58,9 @@ internal static class NativeWebSession
                 stopRequested = true;
                 open.IsEnabled = false; stop.IsEnabled = false;
                 status.Text = "Stopping your agent and closing its private session…";
+                // Hermes may need 45 seconds before the remaining sandbox and
+                // state cleanup. Keep the wait bounded without cutting it short.
+                shutdown.CancelAfter(TimeSpan.FromMinutes(2));
                 try { output.WriteLine("{\"kind\":\"stop\"}"); }
                 catch (IOException) { stopped = true; window.Close(); }
             }
@@ -67,18 +71,19 @@ internal static class NativeWebSession
                 catch (Exception) { status.Text = "Windows could not open your default browser. Try Open Web UI again, or stop this session."; }
             }
             open.Click += (_, _) => OpenBrowser();
-            stop.Click += (_, _) => RequestStop();
+            stop.Click += (_, _) => { if (stopped) window.Close(); else RequestStop(); };
             window.Closing += (_, args) => { if (!stopped) { args.Cancel = true; RequestStop(); } };
-            window.Closed += (_, _) => Dispatcher.CurrentDispatcher.InvokeShutdown();
+            window.Closed += (_, _) => { shutdown.Cancel(); Dispatcher.CurrentDispatcher.InvokeShutdown(); };
             window.Loaded += async (_, _) =>
             {
+                var showShutdownFailure = false;
                 try
                 {
                     output.WriteLine("{\"kind\":\"ready\"}");
                     if (!qualification) OpenBrowser();
-                    for (var count = 0; count < 64; count++)
+                    while (true)
                     {
-                        using var message = JsonDocument.Parse(await ReadLineAsync(input, CancellationToken.None));
+                        using var message = JsonDocument.Parse(await ReadLineAsync(input, shutdown.Token).WaitAsync(shutdown.Token));
                         var record = message.RootElement;
                         var kind = record.GetProperty("kind").GetString();
                         if (kind is "stopped" or "failed") { result = kind == "stopped" ? 0 : 1; break; }
@@ -106,8 +111,20 @@ internal static class NativeWebSession
                         else if (kind != "progress") throw new InvalidDataException();
                     }
                 }
+                catch (OperationCanceledException) when (stopRequested)
+                {
+                    result = 1;
+                    showShutdownFailure = true;
+                    status.Text = "The agent did not confirm shutdown within two minutes. Cleanup may still be running. Close this window and check the agent session before starting it again.";
+                    window.Height = Math.Max(window.Height, 340);
+                }
                 catch (Exception) { result = 1; }
-                finally { stopped = true; window.Close(); }
+                finally
+                {
+                    stopped = true;
+                    if (showShutdownFailure) { stop.Content = "Close"; stop.IsEnabled = true; }
+                    else window.Close();
+                }
             };
             window.Show();
             Dispatcher.Run();

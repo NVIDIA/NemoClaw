@@ -5,6 +5,36 @@ import fs from "node:fs";
 import net, { type Socket } from "node:net";
 import { join } from "node:path";
 
+function readRelayFile(file: string, maxBytes: number): Buffer | null {
+  let descriptor: number;
+  try {
+    descriptor = fs.openSync(file, "r");
+  } catch (error: unknown) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+  try {
+    const stat = fs.fstatSync(descriptor);
+    if (!stat.isFile() || stat.size > maxBytes)
+      throw new Error("The opened native UI relay marker is invalid.");
+    const bytes = Buffer.alloc(stat.size + 1);
+    let count = 0;
+    while (count < bytes.length) {
+      const received = fs.readSync(descriptor, bytes, count, bytes.length - count, null);
+      if (received === 0) break;
+      count += received;
+    }
+    if (count !== stat.size) throw new Error("The native UI relay file changed while reading.");
+    return bytes.subarray(0, count);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+export function readNativeUiTunnelMarker(file: string): string | null {
+  return readRelayFile(file, 4096)?.toString("utf8") ?? null;
+}
+
 export async function startNativeUiTunnel({
   relayRoot,
   relayToken,
@@ -58,36 +88,69 @@ export async function startNativeUiTunnel({
     if (!fs.statSync(relayRoot, { throwIfNoEntry: false })?.isDirectory()) {
       throw new Error("MXC UI relay directory is unavailable");
     }
-    const streams = new Map<string, { root: string; sequence: number; socket: Socket }>();
+    const streams = new Map<
+      string,
+      {
+        root: string;
+        sequence: number;
+        socket: Socket;
+        pendingFrames: number;
+        blocked: boolean;
+        hostEnded: boolean;
+      }
+    >();
     writeRelayFile(join(relayRoot, "ready"), relayToken);
-    return new Promise<void>((resolvePromise) => {
-      const poll = setInterval(() => {
+    return new Promise<void>((resolvePromise, reject) => {
+      let finished = false;
+      const finish = (error?: unknown) => {
+        if (finished) return;
+        finished = true;
+        clearInterval(poll);
+        for (const stream of streams.values()) stream.socket.destroy();
+        streams.clear();
+        if (error !== undefined) reject(error);
+        else resolvePromise();
+      };
+      const pollRelay = () => {
         const shutdown = join(relayRoot, "shutdown");
-        if (fs.statSync(shutdown, { throwIfNoEntry: false })?.isFile()) {
-          if (fs.readFileSync(shutdown, "utf8") !== relayToken) return;
-          clearInterval(poll);
-          for (const stream of streams.values()) stream.socket.destroy();
-          streams.clear();
-          resolvePromise();
+        const shutdownToken = readNativeUiTunnelMarker(shutdown);
+        if (shutdownToken !== null) {
+          if (shutdownToken !== relayToken) return;
+          finish();
           return;
         }
         for (const entry of fs
           .readdirSync(relayRoot)
-          .filter((name) => name.startsWith("stream-"))) {
+          .filter((name) => /^stream-[a-f0-9]{16}$/u.test(name))) {
           if (streams.has(entry)) continue;
           const streamRoot = join(relayRoot, entry);
           const open = join(streamRoot, "open");
-          if (!fs.statSync(open, { throwIfNoEntry: false })?.isFile()) continue;
           if (fs.existsSync(join(streamRoot, "sandbox-close"))) continue;
-          if (fs.readFileSync(open, "utf8") !== relayToken) continue;
+          if (readNativeUiTunnelMarker(open) !== relayToken) continue;
           const socket = net.createConnection({ host: "127.0.0.1", port: uiPort });
-          const state = { root: streamRoot, sequence: 0, socket };
+          const state = {
+            root: streamRoot,
+            sequence: 0,
+            socket,
+            pendingFrames: 0,
+            blocked: false,
+            hostEnded: false,
+          };
           streams.set(entry, state);
+          socket.on("drain", () => {
+            state.blocked = false;
+          });
           socket.on("data", (chunk) => {
-            writeRelayFile(
-              join(streamRoot, "sandbox-" + String(state.sequence++).padStart(10, "0") + ".bin"),
-              chunk,
-            );
+            if (finished) return;
+            try {
+              writeRelayFile(
+                join(streamRoot, "sandbox-" + String(state.sequence++).padStart(10, "0") + ".bin"),
+                chunk,
+              );
+              if (++state.pendingFrames >= 64) socket.pause();
+            } catch (error: unknown) {
+              finish(error);
+            }
           });
           socket.once("error", () => {});
           socket.once("close", () => {
@@ -98,15 +161,38 @@ export async function startNativeUiTunnel({
           });
         }
         for (const stream of streams.values()) {
-          for (const entry of fs
-            .readdirSync(stream.root)
-            .filter((name) => /^host-[0-9]{10}[.]bin$/u.test(name))
-            .sort()) {
+          const entries = fs.readdirSync(stream.root);
+          stream.pendingFrames = entries.filter((name) =>
+            /^sandbox-[0-9]{10}[.]bin$/u.test(name),
+          ).length;
+          if (stream.pendingFrames < 32) stream.socket.resume();
+          const incoming = entries.filter((name) => /^host-[0-9]{10}[.]bin$/u.test(name)).sort();
+          let delivered = 0;
+          for (const entry of incoming) {
+            if (stream.blocked || stream.hostEnded) break;
             const chunk = join(stream.root, entry);
-            stream.socket.write(fs.readFileSync(chunk));
+            const bytes = readRelayFile(chunk, 1024 * 1024);
+            if (bytes === null) throw new Error("A native UI relay frame disappeared.");
+            stream.blocked = !stream.socket.write(bytes);
             fs.unlinkSync(chunk);
+            delivered++;
           }
-          if (fs.existsSync(join(stream.root, "host-close"))) stream.socket.end();
+          if (
+            !stream.hostEnded &&
+            delivered === incoming.length &&
+            entries.includes("host-close")
+          ) {
+            stream.hostEnded = true;
+            stream.socket.end();
+          }
+        }
+      };
+      const poll = setInterval(() => {
+        if (finished) return;
+        try {
+          pollRelay();
+        } catch (error: unknown) {
+          finish(error);
         }
       }, 10);
     });

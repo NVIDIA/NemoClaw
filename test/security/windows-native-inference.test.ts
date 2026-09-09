@@ -10,7 +10,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   allowedDownloadUrl,
   downloadPinnedAsset,
+  verifyPinnedFile,
 } from "../../packaging/windows/runtime/native-inference-download.mts";
+import { verifyNativeOwnerListener } from "../../packaging/windows/runtime/native-inference.mts";
 import { createNativeInferenceGuard } from "../../packaging/windows/runtime/native-inference-guard.mts";
 import {
   controlProof,
@@ -158,6 +160,39 @@ describe("pinned native inference downloads", () => {
     expect(request).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    ["symbolic link", fs.symlinkSync],
+    ["hard link", fs.linkSync],
+  ] as const)(
+    "rejects a cached %s even when its target has the pinned bytes",
+    async (_name, link) => {
+      const { directory, bytes, asset } = fixture();
+      const source = path.join(directory, "source.gguf");
+      const file = path.join(directory, asset.name);
+      fs.writeFileSync(source, bytes);
+      link(source, file);
+      await expect(
+        verifyPinnedFile(file, asset, new AbortController().signal, () => undefined),
+      ).rejects.toThrow(/ordinary file/u);
+      expect(fs.readFileSync(source)).toEqual(bytes);
+    },
+  );
+
+  it("rejects pathname replacement during hashing even with identical replacement bytes", async () => {
+    const { directory, bytes, asset } = fixture();
+    const file = path.join(directory, asset.name);
+    fs.writeFileSync(file, bytes);
+    const replace = vi.fn().mockImplementationOnce(() => {
+      fs.renameSync(file, path.join(directory, "original.gguf"));
+      fs.writeFileSync(file, bytes);
+    });
+    await expect(
+      verifyPinnedFile(file, asset, new AbortController().signal, replace),
+    ).rejects.toThrow(/SHA-256/u);
+    expect(fs.readFileSync(file)).toEqual(bytes);
+    expect(fs.readFileSync(path.join(directory, "original.gguf"))).toEqual(bytes);
+  });
+
   it("rejects wrong hashes and removes only its partial download", async () => {
     const { directory, bytes, asset } = fixture();
     fs.writeFileSync(path.join(directory, "user-marker"), "retain me");
@@ -182,6 +217,27 @@ describe("pinned native inference downloads", () => {
     expect(preserved).toBeDefined();
     expect(fs.readFileSync(path.join(directory, preserved!), "utf8")).toBe("corrupted old cache");
   });
+
+  it.each([".", "..", "..."])(
+    "rejects dot-only asset name %s before touching a directory",
+    async (name) => {
+      const { directory, bytes, asset } = fixture();
+      const marker = path.join(directory, "retain");
+      fs.writeFileSync(marker, "owned data");
+      const request = vi.fn<typeof fetch>(async () => new Response(bytes));
+      await expect(
+        downloadPinnedAsset(
+          { ...asset, name },
+          directory,
+          new AbortController().signal,
+          () => undefined,
+          request,
+        ),
+      ).rejects.toThrow(/asset pin is invalid/u);
+      expect(fs.readFileSync(marker, "utf8")).toBe("owned data");
+      expect(request).not.toHaveBeenCalled();
+    },
+  );
 
   it("cancels an in-flight transfer without publishing a partial model", async () => {
     const { directory, bytes, asset } = fixture();
@@ -264,8 +320,17 @@ describe("authenticated native inference guard", () => {
       onStop: stop,
       assertHeld: () => undefined,
     });
+    const requests: Array<{ url?: string; headers: unknown }> = [];
+    guard.on("request", (request) => requests.push({ url: request.url, headers: request.headers }));
     record.port = await listen(guard);
-    return { base: `http://127.0.0.1:${record.port}`, credential, record, forwarded, stop };
+    return {
+      base: `http://127.0.0.1:${record.port}`,
+      credential,
+      record,
+      forwarded,
+      requests,
+      stop,
+    };
   }
 
   it("proves listener identity without sending or returning the server key", async () => {
@@ -281,6 +346,56 @@ describe("authenticated native inference guard", () => {
     expect(recordSignature({ ...f.record, port: f.record.port + 1 }, f.credential)).not.toBe(
       identity.record.signature,
     );
+  });
+
+  it("authenticates the discovered listener using fresh non-secret loopback challenges", async () => {
+    const f = await fixture();
+    const signed = { ...f.record, signature: recordSignature(f.record, f.credential) };
+    const first = await verifyNativeOwnerListener(signed, f.credential);
+    const second = await verifyNativeOwnerListener(signed, f.credential);
+    expect(first).toEqual({ record: signed, credential: f.credential });
+    expect(second).toEqual(first);
+    expect(f.requests).toHaveLength(2);
+    expect(f.requests[0].url).toMatch(/^\/identity\?nonce=[a-f0-9]{64}$/u);
+    expect(f.requests[1].url).toMatch(/^\/identity\?nonce=[a-f0-9]{64}$/u);
+    expect(f.requests[0].url).not.toBe(f.requests[1].url);
+    expect(JSON.stringify(f.requests)).not.toContain(f.credential);
+  });
+
+  it.each([0, 65_536, 1.5, Number.NaN])("rejects an invalid discovery port %s", async (port) => {
+    const f = await fixture();
+    const record = { ...f.record, port };
+    await expect(
+      verifyNativeOwnerListener(
+        { ...record, signature: recordSignature(record, f.credential) },
+        f.credential,
+      ),
+    ).rejects.toThrow(/could not be authenticated/u);
+    expect(f.requests).toEqual([]);
+  });
+
+  it("rejects a discovered listener that cannot prove possession of the expected key", async () => {
+    const f = await fixture();
+    const expectedKey = randomBytes(32).toString("base64url");
+    await expect(
+      verifyNativeOwnerListener(
+        { ...f.record, signature: recordSignature(f.record, expectedKey) },
+        expectedKey,
+      ),
+    ).rejects.toThrow(/could not prove its ownership/u);
+    expect(JSON.stringify(f.requests)).not.toContain(expectedKey);
+  });
+
+  it("bounds an unauthenticated listener response before parsing its identity", async () => {
+    const f = await fixture();
+    const server = createServer((_request, response) => response.end("x".repeat(16 * 1024 + 1)));
+    const record = { ...f.record, port: await listen(server) };
+    await expect(
+      verifyNativeOwnerListener(
+        { ...record, signature: recordSignature(record, f.credential) },
+        f.credential,
+      ),
+    ).rejects.toThrow(/response exceeded its limit/u);
   });
 
   it("requires authentication and denies every unowned API path", async () => {
@@ -384,9 +499,9 @@ describe("authenticated native inference guard", () => {
     expect(f.stop).toHaveBeenCalledTimes(1);
   });
 
-  it.each(["hermes", "openclaw", "pi", "langchain-deepagents-code", "nemocua"])(
-    "accepts %s-style history and tool payloads above 32 KiB with bounded output",
-    async (agent) => {
+  it.each(["OpenAI tool history", "NemoCUA text observation"])(
+    "accepts the %s wire shape above 32 KiB with bounded output",
+    async (shape) => {
       const f = await fixture();
       // Hermes 0.19's ChatCompletionsTransport preserves OpenAI tool messages;
       // the Pi/OpenClaw and LangChain adapters use the same wire schema. NemoCUA
@@ -394,7 +509,7 @@ describe("authenticated native inference guard", () => {
       // Exercise the actual fields the configured adapters forward, including
       // durable tool results larger than the former 32 KiB request limit.
       const messages =
-        agent === "nemocua"
+        shape === "NemoCUA text observation"
           ? [
               {
                 role: "user",

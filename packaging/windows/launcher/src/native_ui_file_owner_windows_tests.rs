@@ -173,6 +173,37 @@ fn only_one_host_owner_can_open_a_relay_root() {
     fixture.owner = Some(Owner::new(fixture.root.as_os_str()).unwrap());
 }
 
+fn assert_rejects_reopened_permissions(arguments: &[&str]) {
+    let mut fixture = Fixture::new();
+    drop(fixture.owner.take());
+    let system = std::env::var("SystemRoot").unwrap();
+    let result = std::process::Command::new(Path::new(&system).join("System32\\icacls.exe"))
+        .arg(&fixture.root)
+        .args(arguments)
+        .creation_flags(0x0800_0000)
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "The owned permission fixture must be available"
+    );
+    assert!(matches!(
+        Owner::new(fixture.root.as_os_str()),
+        Err("private-permissions")
+    ));
+    fixture.assert_secret();
+}
+
+#[test]
+fn relay_reuse_rejects_an_extra_everyone_read_grant() {
+    assert_rejects_reopened_permissions(&["/grant", "*S-1-1-0:(OI)(CI)(R)"]);
+}
+
+#[test]
+fn relay_reuse_rejects_unprotected_inherited_permissions() {
+    assert_rejects_reopened_permissions(&["/inheritance:e"]);
+}
+
 #[test]
 fn stream_limit_counts_live_handles_and_release_permits_new_connections() {
     let mut fixture = Fixture::new();

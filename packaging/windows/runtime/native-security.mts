@@ -128,15 +128,43 @@ export async function readCredentialByBinding(
       });
       const chunks: Buffer[] = [];
       let bytesRead = 0;
+      const terminate = (message: string) => {
+        clearTimeout(timer);
+        child.kill("SIGKILL");
+        child.stdout.destroy();
+        child.stderr.destroy();
+        chunks.forEach((chunk) => chunk.fill(0));
+        reject(new Error(message));
+      };
+      const timer = setTimeout(
+        () => terminate("Reading the selected Windows credential timed out."),
+        15_000,
+      );
       child.stdout.on("data", (chunk: Buffer) => {
         bytesRead += chunk.length;
-        if (bytesRead <= 2048) chunks.push(chunk);
+        if (bytesRead > 2048) {
+          terminate(
+            "Windows Credential Manager does not contain a valid bounded provider credential",
+          );
+          return;
+        }
+        chunks.push(chunk);
       });
-      child.stderr.resume();
-      child.once("error", reject);
-      child.once("close", (code) =>
-        resolve({ code: code ?? 1, bytesRead, secret: Buffer.concat(chunks) }),
+      child.stdout.once("error", () =>
+        terminate("Windows could not read the selected stored key."),
       );
+      child.stderr.once("error", () =>
+        terminate("Windows could not read the selected stored key."),
+      );
+      child.stderr.resume();
+      child.once("error", () => {
+        clearTimeout(timer);
+        reject(new Error("Windows could not read the selected stored key."));
+      });
+      child.once("close", (code) => {
+        clearTimeout(timer);
+        resolve({ code: code ?? 1, bytesRead, secret: Buffer.concat(chunks) });
+      });
     },
   );
   if (result.code !== 0 || result.bytesRead === 0 || result.bytesRead > 2048)
@@ -201,6 +229,8 @@ export function readOpenedRegularFile(
   file: string,
   { encoding, maxBytes = 2 * 1024 * 1024 }: ReadOpenedRegularFileOptions = {},
 ): Buffer | string | null {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 0)
+    fail("the opened file byte limit is invalid");
   let descriptor: number;
   try {
     descriptor = fs.openSync(file, "r");
@@ -212,7 +242,19 @@ export function readOpenedRegularFile(
     const stat = fs.fstatSync(descriptor);
     if (!stat.isFile()) fail("the opened relay or diagnostic path is not a regular file");
     if (stat.size > maxBytes) fail("the opened relay or diagnostic file exceeds its limit");
-    return encoding ? fs.readFileSync(descriptor, encoding) : fs.readFileSync(descriptor);
+    const chunks: Buffer[] = [];
+    let bytes = 0;
+    for (;;) {
+      // Read at most one byte beyond the limit, even if the file grows after fstat.
+      const chunk = Buffer.alloc(Math.min(64 * 1024, maxBytes - bytes + 1));
+      const count = fs.readSync(descriptor, chunk, 0, chunk.length, null);
+      if (count === 0) break;
+      bytes += count;
+      if (bytes > maxBytes) fail("the opened relay or diagnostic file exceeds its limit");
+      chunks.push(chunk.subarray(0, count));
+    }
+    const content = Buffer.concat(chunks, bytes);
+    return encoding ? content.toString(encoding) : content;
   } finally {
     fs.closeSync(descriptor);
   }

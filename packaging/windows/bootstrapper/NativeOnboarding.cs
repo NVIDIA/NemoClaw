@@ -52,10 +52,10 @@ internal static class NativeOnboarding
                         result = 1223;
                         window.ShowConfigurationFailure("Model setup was cancelled. You can choose hosted inference or prepare the local model later.");
                     }
-                    catch (Exception)
+                    catch (Exception error)
                     {
                         result = 1;
-                        window.ShowConfigurationFailure();
+                        window.ShowConfigurationFailure(NativeExpressSetup.FailureDetail(error));
                     }
                     finally { modelCancellation = null; }
                 };

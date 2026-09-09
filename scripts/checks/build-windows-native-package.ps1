@@ -253,7 +253,6 @@ function New-BootstrapperPayloadAuthoring {
     $settings.Indent = $true
     $settings.NewLineChars = [Environment]::NewLine
     $settings.NewLineHandling = [Xml.NewLineHandling]::Replace
-    $writer = [Xml.XmlWriter]::Create($OutputPath, $settings)
     $namespace = 'http://wixtoolset.org/schemas/v4/wxs'
     $root = [IO.Path]::GetFullPath($BootstrapperRoot).TrimEnd('\')
     $primary = [IO.Path]::GetFullPath($PrimaryExecutable)
@@ -264,6 +263,7 @@ function New-BootstrapperPayloadAuthoring {
         Fail-WindowsPackageBuild 'Bootstrapper publish did not contain any support payloads.'
     }
 
+    $writer = [Xml.XmlWriter]::Create($OutputPath, $settings)
     try {
         $writer.WriteStartDocument()
         $writer.WriteStartElement('Wix', $namespace)

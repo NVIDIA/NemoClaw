@@ -30,6 +30,7 @@ async function writeBrowserFrame(socket: Socket, data: Buffer) {
 export async function startFileTcpRelay(relayRoot: string, token: string, launcher: string) {
   const files = await openNativeUiFileOwner(launcher, relayRoot);
   const streams = new Map<string, Stream>();
+  const sockets = new Set<Socket>();
   let closed = false;
   let failure: Error | null = null;
   let readyResolve!: () => void;
@@ -50,10 +51,12 @@ export async function startFileTcpRelay(relayRoot: string, token: string, launch
     failSession(failure);
     for (const stream of streams.values()) {
       stream.closing = true;
-      stream.socket.destroy();
     }
+    for (const socket of sockets) socket.destroy();
   };
   const browserServer = net.createServer((socket) => {
+    sockets.add(socket);
+    socket.once("close", () => sockets.delete(socket));
     socket.pause();
     const directory = `stream-${randomBytes(8).toString("hex")}`;
     const stream: Stream = { directory, socket, sequence: 0, closing: false };
@@ -83,13 +86,21 @@ export async function startFileTcpRelay(relayRoot: string, token: string, launch
       socket.resume();
     })().catch(recordFailure);
   });
+  browserServer.on("error", recordFailure);
   try {
     await new Promise<void>((resolve, reject) => {
       browserServer.once("error", reject);
-      browserServer.listen(0, "127.0.0.1", resolve);
+      browserServer.listen(0, "127.0.0.1", () => {
+        browserServer.removeListener("error", reject);
+        resolve();
+      });
     });
   } catch (error) {
-    await files.close();
+    for (const socket of sockets) socket.destroy();
+    browserServer.close();
+    try {
+      await files.close();
+    } catch {}
     throw error;
   }
   const browserPort = (browserServer.address() as AddressInfo).port;
@@ -134,23 +145,26 @@ export async function startFileTcpRelay(relayRoot: string, token: string, launch
       });
   }, 10);
   let disposal: Promise<void> | undefined;
+  let closure: Promise<void> | undefined;
   return {
     browserPort,
     ready,
     failure: failed,
     async close() {
-      if (closed) return;
-      closed = true;
-      clearInterval(poll);
-      if (!readyObserved)
-        readyReject(new Error("The native UI session closed before it became ready."));
-      for (const stream of streams.values()) {
-        stream.closing = true;
-        stream.socket.destroy();
-      }
-      await pollTask;
-      await files.write("shutdown", token).catch(recordFailure);
-      await new Promise<void>((resolve) => browserServer.close(() => resolve()));
+      closure ??= (async () => {
+        closed = true;
+        clearInterval(poll);
+        if (!readyObserved)
+          readyReject(new Error("The native UI session closed before it became ready."));
+        for (const stream of streams.values()) stream.closing = true;
+        // A completed stream may still have buffered TCP output or a peer that
+        // has not closed. Retain socket ownership through its actual close.
+        for (const socket of sockets) socket.destroy();
+        await pollTask;
+        await files.write("shutdown", token).catch(recordFailure);
+        await new Promise<void>((resolve) => browserServer.close(() => resolve()));
+      })();
+      return await closure;
     },
     async dispose() {
       // Keep directory handles pinned through MXC teardown. Call only after

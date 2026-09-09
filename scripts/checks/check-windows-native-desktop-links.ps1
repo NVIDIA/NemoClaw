@@ -12,7 +12,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $desktop = [Environment]::GetFolderPath([Environment+SpecialFolder]::DesktopDirectory)
-$launcher = Join-Path ([IO.Path]::GetFullPath($InstallRoot)) 'bin\NemoClaw.exe'
+$normalizedInstallRoot = [IO.Path]::GetFullPath($InstallRoot).TrimEnd('\', '/')
+$launcher = Join-Path $normalizedInstallRoot 'bin\NemoClaw.exe'
 $names = @{ openclaw = 'OpenClaw'; hermes = 'Hermes'; 'langchain-deepagents-code' = 'Deep Agents'; pi = 'Pi'; nemocua = 'NemoCUA' }
 $expectedLinks = @([pscustomobject]@{ Name = 'NemoClaw Setup'; Arguments = '--installer'; Icon = 'NemoClaw' })
 foreach ($agent in $Agents) {
@@ -32,7 +33,7 @@ try {
         if ($file.PSIsContainer -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'A desktop link is not an ordinary file.' }
         $link = $shell.CreateShortcut($path)
         try {
-            $icon = (Join-Path $InstallRoot "desktop-icons\$($expectedLink.Icon).ico") + ',0'
+            $icon = (Join-Path $normalizedInstallRoot "desktop-icons\$($expectedLink.Icon).ico") + ',0'
             if ($link.TargetPath -ine $launcher -or $link.Arguments -cne $expectedLink.Arguments -or
                 $link.IconLocation -ine $icon -or $link.Description -cne 'NVIDIA NemoClaw native desktop shortcut v1') {
                 throw "The actual Windows shortcut target, arguments, icon, or ownership marker is wrong: $($expectedLink.Name)"

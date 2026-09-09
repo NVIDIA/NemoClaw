@@ -3,6 +3,7 @@
 
 using System.ComponentModel;
 using System.Diagnostics;
+using System.IO;
 using System.Security;
 using System.Security.Cryptography;
 using System.Windows;
@@ -268,7 +269,7 @@ public partial class MainWindow : Window
         this.ClearCredential();
         this.HidePanels();
         this.FailurePanel.Visibility = Visibility.Visible;
-        this.FailureDetail.Text = detail;
+        this.FailureDetail.Text = File.Exists(setupLog) ? $"{detail}\n\nSetup log:\n{setupLog}" : detail;
     }
 
     public void ShowRecoverableError(string detail)

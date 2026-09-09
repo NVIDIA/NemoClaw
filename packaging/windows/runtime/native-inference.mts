@@ -61,9 +61,27 @@ async function existingOwner(installRoot: string, signal?: AbortSignal) {
   const credential = await hostCredential(layout.launcher, "read");
   const record = readOwnerRecord(credential);
   if (!record || record.status === "error") return null;
+  return verifyNativeOwnerListener(record, credential, signal);
+}
+
+export async function verifyNativeOwnerListener(
+  record: NativeOwnerRecord,
+  credential: string,
+  signal?: AbortSignal,
+) {
+  if (
+    !Number.isInteger(record.port) ||
+    record.port < 1 ||
+    record.port > 65_535 ||
+    !equalProof(record.signature, recordSignature(record, credential))
+  )
+    throw new Error("The managed inference discovery record could not be authenticated.");
   const nonce = randomBytes(32).toString("hex");
-  // Prove the current listener holds the owner key before returning credentials
-  // to any broker. The key is never sent to an unverified discovery port.
+  // Intentional host-only IPC: the authenticated record selects only a bounded
+  // integer port on literal 127.0.0.1. Only a fresh nonce is sent, never the key or
+  // other file contents; redirects fail and the response is bounded to 16 KiB/2s.
+  // Credentials are returned only after the listener proves key possession.
+  // codeql[js/file-access-to-http]: authenticated loopback discovery challenge, no secret request data.
   const response = await fetch(`http://127.0.0.1:${record.port}/identity?nonce=${nonce}`, {
     redirect: "error",
     signal: AbortSignal.any([signal ?? new AbortController().signal, AbortSignal.timeout(2000)]),
@@ -71,11 +89,12 @@ async function existingOwner(installRoot: string, signal?: AbortSignal) {
   const identity = (await responseJson(response, 16 * 1024)) as {
     proof?: string;
     record?: NativeOwnerRecord;
-  };
+  } | null;
   if (
     response.status !== 200 ||
-    !identity.record ||
+    !identity?.record ||
     identity.record.instance !== record.instance ||
+    identity.record.port !== record.port ||
     !equalProof(identity.proof, controlProof(credential, "identity", record.instance, nonce)) ||
     !equalProof(identity.record.signature, recordSignature(identity.record, credential))
   )
@@ -130,14 +149,22 @@ export async function installNativeInference(options: NativeInferenceOptions) {
     return { schemaVersion: 1, event: "installed", localModel: NATIVE_EXPRESS.id, reused: true };
   const state = await acquireNativeStateSession(layout.launcher, "inference");
   let prepared: Awaited<ReturnType<typeof prepareNativeFiles>> | undefined;
+  let failure: Error | undefined;
   try {
     prepared = await prepareNativeFiles(options.installRoot, state.stateRoot, signal, onProgress);
     state.assertHeld();
-    return { schemaVersion: 1, event: "installed", localModel: NATIVE_EXPRESS.id, reused: false };
+  } catch (error) {
+    failure = error instanceof Error ? error : new Error("Native model preparation failed.");
   } finally {
-    if (prepared) await fs.promises.rm(prepared.runtimeRoot, { recursive: true, force: true });
-    await state.release();
+    failure = await finishNativeInferencePreparation(failure, {
+      async removeRuntime() {
+        if (prepared) await fs.promises.rm(prepared.runtimeRoot, { recursive: true, force: true });
+      },
+      releaseState: () => state.release(),
+    });
   }
+  if (failure) throw failure;
+  return { schemaVersion: 1, event: "installed", localModel: NATIVE_EXPRESS.id, reused: false };
 }
 
 export async function ensureNativeInference(
@@ -244,6 +271,84 @@ export async function stopNativeInference(
     await sleep(200);
   }
   throw new Error("The local model did not finish shutdown within its limit.");
+}
+
+type NativeInferenceCleanup = {
+  closeListener(): Promise<void>;
+  stopServer(): Promise<void>;
+  serverStopped(): boolean;
+  removeRuntime(): Promise<void>;
+  removeRecord(): Promise<void>;
+  deleteCredential(): Promise<void>;
+  releaseState(): Promise<void>;
+};
+
+async function collectNativeInferenceCleanup(
+  failure: Error | undefined,
+  actions: Array<() => Promise<void>>,
+): Promise<Error | undefined> {
+  const errors: Error[] = failure ? [failure] : [];
+  for (const action of actions) {
+    try {
+      await action();
+    } catch (error) {
+      errors.push(error instanceof Error ? error : new Error("Native inference cleanup failed."));
+    }
+  }
+  if (errors.length > 1)
+    return new AggregateError(errors, errors.map((error) => error.message).join(" "));
+  return errors[0];
+}
+
+export async function finishNativeInferencePreparation(
+  failure: Error | undefined,
+  cleanup: Pick<NativeInferenceCleanup, "removeRuntime" | "releaseState">,
+): Promise<Error | undefined> {
+  return collectNativeInferenceCleanup(failure, [
+    () => cleanup.removeRuntime(),
+    () => cleanup.releaseState(),
+  ]);
+}
+
+export async function finishNativeInferenceCleanup(
+  failure: Error | undefined,
+  cleanup: NativeInferenceCleanup,
+): Promise<Error | undefined> {
+  return collectNativeInferenceCleanup(failure, [
+    () => cleanup.closeListener(),
+    () => cleanup.stopServer(),
+    () => cleanup.removeRuntime(),
+    // A failed startup retains its authenticated diagnostic record and key. A
+    // normal stop attempts both removals even if earlier cleanup failed.
+    ...(!failure ? [() => cleanup.removeRecord(), () => cleanup.deleteCredential()] : []),
+    async () => {
+      if (!cleanup.serverStopped())
+        throw new Error(
+          "The native state lease is retained until the process owner terminates the live CUDA server.",
+        );
+      await cleanup.releaseState();
+    },
+  ]);
+}
+
+export async function waitForNativeInferenceShutdown(
+  completion: Promise<void>,
+  timeoutMs = NATIVE_EXPRESS.shutdownTimeoutMs,
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      completion,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("The native CUDA server did not stop.")),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function serveNativeInference(options: NativeInferenceOptions): Promise<void> {
@@ -445,42 +550,48 @@ export async function serveNativeInference(options: NativeInferenceOptions): Pro
       record.status = "error";
       record.failure = failure.message.slice(0, 1024);
       delete record.progress;
-      writeOwnerRecord(record, credential);
+      try {
+        writeOwnerRecord(record, credential);
+      } catch (error) {
+        const diagnosticFailure =
+          error instanceof Error
+            ? error
+            : new Error("The native model failure record could not be saved.");
+        failure = new AggregateError(
+          [failure, diagnosticFailure],
+          `${failure.message} ${diagnosticFailure.message}`,
+        );
+      }
     }
   } finally {
     closing = true;
     controller.abort();
     options.signal?.removeEventListener("abort", abort);
-    guard.closeAllConnections();
-    await new Promise<void>((resolve) => guard.close(() => resolve()));
-    try {
-      if (serverProcess && serverProcess.exitCode === null && serverProcess.signalCode === null)
-        serverProcess.kill();
-      if (serverClosed)
-        await new Promise<void>((resolve, reject) => {
-          const timer = setTimeout(
-            () => reject(new Error("The native CUDA server did not stop.")),
-            NATIVE_EXPRESS.shutdownTimeoutMs,
-          );
-          serverClosed!.then(
-            () => {
-              clearTimeout(timer);
-              resolve();
-            },
-            (error) => {
-              clearTimeout(timer);
-              reject(error);
-            },
-          );
-        });
-      if (prepared) await fs.promises.rm(prepared.runtimeRoot, { recursive: true, force: true });
-      if (!failure) {
-        await fs.promises.unlink(ownerRecordPath()).catch(() => undefined);
-        await hostCredential(layout.launcher, "delete");
-      }
-    } finally {
-      await state.release();
-    }
+    failure = await finishNativeInferenceCleanup(failure, {
+      async closeListener() {
+        guard.closeAllConnections();
+        await new Promise<void>((resolve) => guard.close(() => resolve()));
+      },
+      async stopServer() {
+        if (serverProcess && serverProcess.exitCode === null && serverProcess.signalCode === null)
+          serverProcess.kill("SIGKILL");
+        if (serverClosed) await waitForNativeInferenceShutdown(serverClosed);
+      },
+      serverStopped: () =>
+        !serverProcess || serverProcess.exitCode !== null || serverProcess.signalCode !== null,
+      async removeRuntime() {
+        if (prepared) await fs.promises.rm(prepared.runtimeRoot, { recursive: true, force: true });
+      },
+      async removeRecord() {
+        try {
+          await fs.promises.unlink(ownerRecordPath());
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        }
+      },
+      deleteCredential: () => hostCredential(layout.launcher, "delete").then(() => undefined),
+      releaseState: () => state.release(),
+    });
   }
   if (failure) throw failure;
 }

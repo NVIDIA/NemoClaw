@@ -406,10 +406,8 @@ fn main() {
             "The installed NemoClaw runtime is incomplete. Run Repair from Apps > Installed apps.",
         );
     }
-    let explicit_wait = forwarded.first().is_some_and(|value| value == "--wait");
-    if explicit_wait {
-        forwarded.remove(0);
-    }
+    let explicit_wait = forwarded.iter().any(|value| value == "--wait");
+    forwarded.retain(|value| value != "--wait");
     let wait = explicit_wait || configure_native || (configured && !new_console);
     let mut command = Command::new(node);
     command

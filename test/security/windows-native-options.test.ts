@@ -15,16 +15,26 @@ import {
 import { nativeCredentialBinding } from "../../packaging/windows/runtime/native-security.mts";
 
 describe("native optional services", () => {
-  it("filters services by real agent capability and validates sender identities", () => {
+  it("filters services by real agent capability and rejects inline keys", () => {
     expect(
       normalizeNativeOptions("hermes", { search: { provider: "tavily", credentialStored: true } }),
     ).toEqual({ search: { provider: "tavily", credentialStored: true } });
-    expect(() =>
+    expect(
       normalizeNativeOptions("hermes", {
-        messaging: { slack: { credentialStored: true, allowedUsers: [] } },
+        messaging: {
+          slack: { credentialStored: true, appCredentialStored: true, allowedUsers: [] },
+        },
       }),
-    ).toThrow();
-    expect(() => normalizeNativeOptions("pi", { messaging: {} })).toThrow();
+    ).toEqual({
+      messaging: { slack: { credentialStored: true, appCredentialStored: true, allowedUsers: [] } },
+    });
+    expect(() =>
+      normalizeNativeOptions("pi", {
+        messaging: {
+          slack: { credentialStored: true, appCredentialStored: true, allowedUsers: [] },
+        },
+      }),
+    ).toThrow("Messaging is unavailable for this agent.");
     expect(() =>
       normalizeNativeOptions("openclaw", {
         search: { provider: "brave", credentialStored: true, apiKey: "must-not-persist" },

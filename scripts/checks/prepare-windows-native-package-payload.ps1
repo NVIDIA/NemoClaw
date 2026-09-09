@@ -128,6 +128,20 @@ function Assert-Sha256 {
     }
 }
 
+function Assert-QuickJsRestore {
+    param([Parameter(Mandatory)][string]$ReportPath)
+
+    $report = Get-Content -LiteralPath $ReportPath -Raw | ConvertFrom-Json
+    $restored = @($report.install | Where-Object {
+        [regex]::Replace([string]$_.metadata.name, '[-_.]+', '-').ToLowerInvariant() -ceq 'quickjs-rs'
+    })
+    if ($report.version -cne '1' -or $restored.Count -ne 1 -or
+        $restored[0].metadata.version -cne $script:QuickJsRsVersion -or
+        $restored[0].download_info.archive_info.hashes.sha256 -cne $script:QuickJsRsWheelSha256) {
+        Fail-PayloadPreparation 'The installed QuickJS-rs wheel identity does not match its receipt pins.'
+    }
+}
+
 function Assert-Arm64PortableExecutable {
     param(
         [Parameter(Mandatory)][string]$Path,
@@ -307,7 +321,7 @@ try {
         ) `
         -Label 'Hermes native ARM64 dependency restore'
     $hermesWheel = Join-Path $workRoot "hermes_agent-$($script:HermesVersion)-py3-none-any.whl"
-    Invoke-WebRequest -UseBasicParsing -Uri 'https://files.pythonhosted.org/packages/e5/30/c85be8290e9565dc3c7a9720e93f3e59e09b1b163487be4946c3aa848f80/hermes_agent-0.19.0-py3-none-any.whl' -OutFile $hermesWheel
+    Invoke-WebRequest -UseBasicParsing -Uri "https://files.pythonhosted.org/packages/e5/30/c85be8290e9565dc3c7a9720e93f3e59e09b1b163487be4946c3aa848f80/hermes_agent-$($script:HermesVersion)-py3-none-any.whl" -OutFile $hermesWheel
     Assert-Sha256 -Path $hermesWheel -Expected $script:HermesWheelSha256 -Label 'Hermes Agent wheel'
     $ruamelWheel = Join-Path $workRoot 'ruamel_yaml-0.18.17-py3-none-any.whl'
     Invoke-WebRequest -UseBasicParsing -Uri 'https://files.pythonhosted.org/packages/af/fe/b6045c782f1fd1ae317d2a6ca1884857ce5c20f59befe6ab25a8603c43a7/ruamel_yaml-0.18.17-py3-none-any.whl' -OutFile $ruamelWheel
@@ -330,6 +344,7 @@ try {
     $deepAgentsSitePackages = Join-Path $deepAgentsRoot 'site-packages'
     [IO.Directory]::CreateDirectory($deepAgentsSitePackages) | Out-Null
     $deepAgentsLock = Join-Path $candidate 'packaging\windows\python\deepagents-windows-arm64.lock'
+    $deepAgentsInstallReport = Join-Path $workRoot 'deepagents-install-report.json'
     Invoke-Checked `
         -FilePath $pythonBuilder `
         -Arguments @(
@@ -340,9 +355,11 @@ try {
             '--no-deps',
             '--no-compile',
             '--target', $deepAgentsSitePackages,
+            '--report', $deepAgentsInstallReport,
             '--requirement', $deepAgentsLock
         ) `
         -Label 'Deep Agents Code native ARM64 runtime restore'
+    Assert-QuickJsRestore -ReportPath $deepAgentsInstallReport
     $deepAgentsSiteCustomize = Join-Path $candidate 'packaging\windows\python\deepagents-sitecustomize.py'
     Copy-Item -LiteralPath $deepAgentsSiteCustomize -Destination (Join-Path $deepAgentsSitePackages 'sitecustomize.py')
     $langGraphPatch = Join-Path $candidate 'packaging\windows\python\langgraph-api-0.14.0.dev3-python313.patch'
@@ -468,7 +485,7 @@ try {
     $tiktokenArchive = Join-Path $workRoot "tiktoken-$($script:TiktokenVersion).tar.gz"
     Invoke-WebRequest `
         -UseBasicParsing `
-        -Uri 'https://files.pythonhosted.org/packages/e4/e5/5f3cb2159769d0f4324c0e9e87f9de3c4b1cd45848a96b2eb3566ad5ca77/tiktoken-0.13.0.tar.gz' `
+        -Uri "https://files.pythonhosted.org/packages/e4/e5/5f3cb2159769d0f4324c0e9e87f9de3c4b1cd45848a96b2eb3566ad5ca77/tiktoken-$($script:TiktokenVersion).tar.gz" `
         -OutFile $tiktokenArchive
     Assert-Sha256 -Path $tiktokenArchive -Expected $script:TiktokenSourceDigest -Label 'tiktoken source archive'
     $tiktokenExtract = Join-Path $workRoot 'tiktoken'
@@ -476,7 +493,7 @@ try {
     Invoke-Checked -FilePath $tar -Arguments @('-xzf', $tiktokenArchive, '-C', $tiktokenExtract) -Label 'tiktoken source extraction'
     $tiktokenSource = Join-Path $tiktokenExtract "tiktoken-$($script:TiktokenVersion)"
     Copy-Item -LiteralPath (Join-Path $tiktokenSource 'LICENSE') -Destination (Join-Path $deepAgentsRoot 'TIKTOKEN-LICENSE.txt')
-    $tiktokenCargoLock = Join-Path $candidate 'packaging\windows\python\tiktoken-0.13.0.Cargo.lock'
+    $tiktokenCargoLock = Join-Path $candidate "packaging\windows\python\tiktoken-$($script:TiktokenVersion).Cargo.lock"
     Assert-Sha256 -Path $tiktokenCargoLock -Expected $script:TiktokenCargoLockDigest -Label 'tiktoken Cargo lock'
     Copy-Item -LiteralPath $tiktokenCargoLock -Destination (Join-Path $tiktokenSource 'Cargo.lock')
     $tiktokenWheelRoot = Join-Path $workRoot 'tiktoken-wheel'
@@ -499,7 +516,7 @@ try {
     } finally {
         $env:RUSTUP_TOOLCHAIN = $priorRustupToolchain
     }
-    $tiktokenWheels = @(Get-ChildItem -LiteralPath $tiktokenWheelRoot -Filter 'tiktoken-0.13.0-cp313-cp313-win_arm64.whl' -File)
+    $tiktokenWheels = @(Get-ChildItem -LiteralPath $tiktokenWheelRoot -Filter "tiktoken-$($script:TiktokenVersion)-cp313-cp313-win_arm64.whl" -File)
     if ($tiktokenWheels.Count -ne 1) {
         Fail-PayloadPreparation 'The tiktoken native ARM64 build did not produce one exact wheel.'
     }
@@ -519,7 +536,7 @@ try {
     $jsonSchemaRsArchive = Join-Path $workRoot "jsonschema_rs-$($script:JsonSchemaRsVersion).tar.gz"
     Invoke-WebRequest `
         -UseBasicParsing `
-        -Uri 'https://files.pythonhosted.org/packages/68/88/f0cc7013ad6a3d0b86275a6d0a3112eaa705545c89134ab2a057865c054c/jsonschema_rs-0.44.1.tar.gz' `
+        -Uri "https://files.pythonhosted.org/packages/68/88/f0cc7013ad6a3d0b86275a6d0a3112eaa705545c89134ab2a057865c054c/jsonschema_rs-$($script:JsonSchemaRsVersion).tar.gz" `
         -OutFile $jsonSchemaRsArchive
     Assert-Sha256 -Path $jsonSchemaRsArchive -Expected $script:JsonSchemaRsSourceDigest -Label 'jsonschema-rs source archive'
     $jsonSchemaRsExtract = Join-Path $workRoot 'jsonschema-rs'
@@ -547,7 +564,7 @@ try {
     } finally {
         $env:RUSTUP_TOOLCHAIN = $priorRustupToolchain
     }
-    $jsonSchemaRsWheels = @(Get-ChildItem -LiteralPath $jsonSchemaRsWheelRoot -Filter 'jsonschema_rs-0.44.1-cp310-abi3-win_arm64.whl' -File)
+    $jsonSchemaRsWheels = @(Get-ChildItem -LiteralPath $jsonSchemaRsWheelRoot -Filter "jsonschema_rs-$($script:JsonSchemaRsVersion)-cp310-abi3-win_arm64.whl" -File)
     if ($jsonSchemaRsWheels.Count -ne 1) {
         Fail-PayloadPreparation 'The jsonschema-rs native ARM64 build did not produce one exact wheel.'
     }
@@ -653,6 +670,10 @@ try {
 wxc_exec_path = "C:\\Program Files\\NVIDIA\\NemoClaw\\mxc\\wxc-exec.exe"
 backend = "process_container"
 default_configuration_id = "composable"
+# AppContainer compatibility baseline: the pinned ARM64 Node/agent paths have not
+# qualified restricted/LPAC mode. Personal adds internetClient/outbound-open per
+# sandbox; it grants no Windows user-profile filesystem access. Retirement needs
+# negative filesystem/network evidence: https://github.com/NVIDIA/NemoClaw/issues/8178
 pc_least_privilege = false
 pc_capabilities = ["privateNetworkClientServer"]
 debug = false
@@ -737,7 +758,7 @@ debug = false
             version = $script:HermesVersion
             wheelSha256 = $script:HermesWheelSha256
             dependencyLockSha256 = (Get-FileHash -LiteralPath $hermesLock -Algorithm SHA256).Hash.ToLowerInvariant()
-            omittedUnqualifiedNativeExtensions = @('cryptography==46.0.7', 'pywinpty==2.0.15')
+            omittedUnqualifiedNativeExtensions = @('cryptography==46.0.7')
         }
         deepAgentsCode = [pscustomobject]@{
             version = '0.1.55'

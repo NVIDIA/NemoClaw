@@ -975,7 +975,7 @@ async function main() {
       "--policy",
       policyPath,
       "--driver-config-json",
-      JSON.stringify({ mxc: { command: [node, workload], cwd: shareRoot } }),
+      JSON.stringify({ mxc: { command: [node, workload], cwd: shareRoot, windows_ui: true } }),
       "--no-tty",
     ];
     for (const [name, value] of Object.entries(sandboxEnvironment))

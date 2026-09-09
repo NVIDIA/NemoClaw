@@ -43,6 +43,8 @@ export async function openNativeUiFileOwner(launcher: string, root: string) {
     child.kill();
   };
   child.stdin.once("error", fail);
+  child.stdout.once("error", fail);
+  child.stderr.once("error", fail);
   child.once("error", fail);
   const completion = new Promise<number>((resolve) =>
     child.once("close", (code) => {

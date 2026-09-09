@@ -63,6 +63,18 @@ describe("native gateway configuration", () => {
     });
   });
 
+  it("preserves CRLF template endings while binding the installed executable", () => {
+    const { installRoot, runRoot } = fixture(template.replaceAll("\n", "\r\n"));
+    const rendered = fs.readFileSync(writeNativeGatewayConfig(installRoot, runRoot), "utf8");
+    expect(rendered.replaceAll("\r\n", "")).not.toContain("\n");
+    expect(rendered.endsWith("\r\n")).toBe(true);
+    expect(parse(rendered)).toMatchObject({
+      openshell: {
+        drivers: { mxc: { wxc_exec_path: path.join(installRoot, "mxc", "wxc-exec.exe") } },
+      },
+    });
+  });
+
   it.skipIf(process.platform === "win32")("escapes TOML-sensitive path characters", () => {
     const { installRoot, runRoot } = fixture(template, 'Nemo "quoted" \\ path\u007f');
     const output = writeNativeGatewayConfig(installRoot, runRoot);

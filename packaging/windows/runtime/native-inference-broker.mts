@@ -4,6 +4,7 @@
 import { createServer, type IncomingMessage } from "node:http";
 import { createNativeServiceBootstrap, type NativeOptions } from "./native-options.mts";
 import { brokerOperationForRequest, resolveBrokerUpstreamUrl } from "./native-security.mts";
+import { responseChunks } from "./native-inference-download.mts";
 function fail(message: string): never {
   throw new Error(`NemoClaw native inference broker failed: ${message}`);
 }
@@ -67,9 +68,19 @@ export async function startNativeInferenceBroker(
         redirect: "error",
         signal: AbortSignal.any([cancelled.signal, AbortSignal.timeout(180_000)]),
       });
-      const responseBody = Buffer.from(await upstream.arrayBuffer());
-      if (responseBody.length > 32 * 1024 * 1024)
-        fail("the provider response exceeded the broker limit");
+      const chunks: Uint8Array[] = [];
+      let responseSize = 0;
+      if (upstream.body) {
+        for await (const chunk of responseChunks(upstream.body)) {
+          responseSize += chunk.byteLength;
+          if (responseSize > 32 * 1024 * 1024) {
+            cancelled.abort();
+            fail("the provider response exceeded the broker limit");
+          }
+          chunks.push(chunk);
+        }
+      }
+      const responseBody = Buffer.concat(chunks, responseSize);
       response.writeHead(upstream.status, {
         "cache-control": "no-store",
         "content-type": upstream.headers.get("content-type") ?? "application/json",

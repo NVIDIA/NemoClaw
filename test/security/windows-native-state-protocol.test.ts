@@ -68,17 +68,31 @@ describe("native Windows state protocol", () => {
     expect(() => session.assertHeld()).toThrow();
   });
 
-  it.each(["C:\\Users\\test\\hermes", receipt.stateRoot.replace(/-hermes$/u, "-pi")])(
-    "rejects an unauthorized state path %s",
-    async (stateRoot) => {
-      const child = fixture();
-      const pending = acquireNativeStateSession("launcher.exe", "hermes");
-      const rejected = expect(pending).rejects.toThrow("receipt is invalid");
-      child.stdout.emit("data", Buffer.from(JSON.stringify({ ...receipt, stateRoot }) + "\n"));
-      await rejected;
-      expect(child.stdin.end).toHaveBeenCalledOnce();
+  it.each([
+    {
+      name: "profile path",
+      changed: { stateRoot: "C:\\Users\\test\\hermes" },
+      error: "receipt is invalid",
     },
-  );
+    {
+      name: "another agent",
+      changed: { stateRoot: receipt.stateRoot.replace(/-hermes$/u, "-pi") },
+      error: "receipt is invalid",
+    },
+    { name: "unheld lease", changed: { leaseHeld: false }, error: "receipt is invalid" },
+    {
+      name: "oversize receipt",
+      changed: { padding: "x".repeat(4096) },
+      error: "receipt exceeds its limit",
+    },
+  ])("rejects $name and closes its owner", async ({ changed, error }) => {
+    const child = fixture();
+    const pending = acquireNativeStateSession("launcher.exe", "hermes");
+    const rejected = expect(pending).rejects.toThrow(error);
+    child.stdout.emit("data", Buffer.from(JSON.stringify({ ...receipt, ...changed }) + "\n"));
+    await rejected;
+    expect(child.stdin.end).toHaveBeenCalledOnce();
+  });
 
   it("treats failed ACL restoration as failed cleanup", async () => {
     const child = fixture(2);

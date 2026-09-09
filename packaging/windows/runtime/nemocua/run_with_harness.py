@@ -12,7 +12,7 @@ from pathlib import Path
 import sys
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 
 VERSION = "0.1.0-windows-experimental"
@@ -39,6 +39,11 @@ class HarnessError(RuntimeError):
     """Raised when the browser, model, or action receipt violates the contract."""
 
 
+class NoBridgeRedirects(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 def request_json(
     url: str,
     *,
@@ -54,9 +59,15 @@ def request_json(
         method=method,
     )
     try:
-        with urlopen(request, timeout=60) as response:  # noqa: S310 - fixed loopback URL is validated by caller.
-            raw = response.read(4 * 1024 * 1024)
+        # This is local IPC carried through the owned MXC file relay. Never use
+        # environment/Windows proxy settings or forward its token on redirects.
+        with build_opener(ProxyHandler({}), NoBridgeRedirects()).open(request, timeout=60) as response:
+            raw = response.read(4 * 1024 * 1024 + 1)
+            if len(raw) > 4 * 1024 * 1024:
+                raise HarnessError("NemoCUA bridge response exceeded its limit")
     except (HTTPError, URLError, TimeoutError) as error:
+        if isinstance(error, HTTPError):
+            error.close()
         raise HarnessError(f"NemoCUA bridge request failed: {error}") from error
     try:
         decoded = json.loads(raw.decode("utf-8"))
@@ -144,6 +155,9 @@ def run(bridge_url: str, bridge_token: str, result_path: Path) -> int:
         if action_receipt.get("applied") is not True:
             raise HarnessError("NemoCUA browser action was not applied")
         after = request_json(f"{bridge}/observe", token=bridge_token)
+        after_screenshot_hash = after.get("screenshotSha256")
+        if not isinstance(after_screenshot_hash, str) or len(after_screenshot_hash) != 64:
+            raise HarnessError("NemoCUA observation lacks screenshot evidence")
         verify_postcondition(postcondition, after)
         print(f"NEMOCUA> TURN {index} PASS {token}", flush=True)
         turns.append(
@@ -151,7 +165,7 @@ def run(bridge_url: str, bridge_token: str, result_path: Path) -> int:
                 "task": task,
                 "action": action,
                 "beforeScreenshotSha256": screenshot_hash,
-                "afterScreenshotSha256": after["screenshotSha256"],
+                "afterScreenshotSha256": after_screenshot_hash,
                 "postcondition": postcondition,
                 "token": token,
             }

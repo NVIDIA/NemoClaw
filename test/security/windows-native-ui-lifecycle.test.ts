@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { mkdtemp, rm, writeFile, chmod, readFile, access } from "node:fs/promises";
-import { createServer } from "node:net";
+import { mkdtemp, mkdir, rm, writeFile, chmod, readFile, access } from "node:fs/promises";
+import { createServer, type AddressInfo, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -10,6 +10,96 @@ import {
   attemptNativeUiCleanup,
   watchNativeUiSandbox,
 } from "../../packaging/windows/runtime/native-ui-lifecycle.mts";
+import {
+  readNativeUiTunnelMarker,
+  startNativeUiTunnel,
+} from "../../packaging/windows/runtime/native-ui-tunnel.mts";
+
+describe("contained native UI relay failures", () => {
+  it.each([0, 4096])(
+    "reads a regular %i-byte marker through its opened descriptor",
+    async (size) => {
+      const directory = await mkdtemp(path.join(tmpdir(), "native-ui-marker-"));
+      const file = path.join(directory, "marker");
+      try {
+        expect(readNativeUiTunnelMarker(file)).toBeNull();
+        const content = "x".repeat(size);
+        await writeFile(file, content);
+        expect(readNativeUiTunnelMarker(file)).toBe(content);
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each([
+    { name: "directory", create: (file: string) => mkdir(file) },
+    { name: "oversized file", create: (file: string) => writeFile(file, "x".repeat(4097)) },
+  ])("rejects a $name before accepting its marker", async ({ create }) => {
+    const directory = await mkdtemp(path.join(tmpdir(), "native-ui-marker-"));
+    const file = path.join(directory, "marker");
+    try {
+      await create(file);
+      expect(() => readNativeUiTunnelMarker(file)).toThrow(
+        "opened native UI relay marker is invalid",
+      );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    {
+      name: "invalid shutdown marker during polling",
+      trigger: async (directory: string) => {
+        await mkdir(path.join(directory, "shutdown"));
+      },
+      error: /opened native UI relay marker is invalid/u,
+    },
+    {
+      name: "exclusive frame collision during socket data",
+      trigger: async (directory: string) => {
+        const stream = path.join(directory, "stream-0123456789abcdef");
+        await mkdir(stream);
+        await writeFile(path.join(stream, "sandbox-0000000000.bin"), "collision");
+        await writeFile(path.join(stream, "host-0000000000.bin"), "echo");
+        await writeFile(path.join(stream, "open"), "owned-token");
+      },
+      error: /EEXIST/u,
+    },
+  ])("rejects and closes sockets after $name", async ({ trigger, error }) => {
+    const directory = await mkdtemp(path.join(tmpdir(), "native-ui-tunnel-"));
+    const clients = new Set<Socket>();
+    const server = createServer((socket) => {
+      clients.add(socket);
+      socket.on("data", (data) => socket.write(data));
+      socket.once("error", () => {});
+      socket.once("close", () => clients.delete(socket));
+    });
+    let tunnel: Promise<void> | undefined;
+    try {
+      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+      tunnel = startNativeUiTunnel({
+        relayRoot: directory,
+        relayToken: "owned-token",
+        uiPort: (server.address() as AddressInfo).port,
+      });
+      const rejection = expect(tunnel).rejects.toThrow(error);
+      await vi.waitFor(async () =>
+        expect(await readFile(path.join(directory, "ready"), "utf8")).toBe("owned-token"),
+      );
+      await trigger(directory);
+      await rejection;
+      await vi.waitFor(() => expect(clients.size).toBe(0));
+    } finally {
+      await writeFile(path.join(directory, "shutdown"), "owned-token").catch(() => {});
+      await tunnel?.catch(() => {});
+      clients.forEach((socket) => socket.destroy());
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("native OpenClaw session lifecycle", () => {
   it("closes an owned listener, file, and state lease after earlier cleanup failures", async () => {

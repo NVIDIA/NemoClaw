@@ -3,6 +3,7 @@
 
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows;
 using System.Windows.Interop;
@@ -52,6 +53,7 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
         dispatcherReady.Wait();
         if (this.dispatcherFailure is not null)
         {
+            this.Engine.Quit(this.NormalizeExitCode(Marshal.GetHRForException(this.dispatcherFailure)));
             throw new InvalidOperationException("The NemoClaw setup UI could not initialize.", this.dispatcherFailure);
         }
 
@@ -61,6 +63,7 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
         dispatcherThread.Join();
         if (this.dispatcherFailure is not null)
         {
+            this.Engine.Quit(this.NormalizeExitCode(Marshal.GetHRForException(this.dispatcherFailure)));
             throw new InvalidOperationException("The NemoClaw setup UI failed.", this.dispatcherFailure);
         }
         this.Engine.Quit(this.NormalizeExitCode(this.result));
@@ -387,11 +390,11 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
             this.result = UserCancelled;
             this.window?.ShowConfigurationFailure("Model setup was cancelled. NemoClaw is installed; you can choose hosted inference or prepare the local model later.");
         }
-        catch (Exception)
+        catch (Exception error)
         {
             this.result = 1;
             this.Engine.Log(LogLevel.Error, "Native agent configuration could not be saved. The installed application remains available.");
-            this.window?.ShowConfigurationFailure();
+            this.window?.ShowConfigurationFailure(NativeExpressSetup.FailureDetail(error));
         }
         finally { this.modelSetupCancellation = null; }
     }

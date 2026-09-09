@@ -1490,6 +1490,7 @@ async function main() {
         "--driver-config-json",
         JSON.stringify({
           mxc: {
+            windows_ui: true,
             command: [node, gatewayScript],
             cwd: shareRoot,
             host_loopback: configuredIdentity !== null,

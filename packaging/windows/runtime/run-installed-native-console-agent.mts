@@ -465,7 +465,7 @@ export async function runNativeConsoleAgent(
     process.env.NEMOCLAW_NATIVE_INSTALL_ROOT ?? "",
     "NemoClaw installation root",
   );
-  const { config: storedConfig, stateRoot } = readConfiguration(agentId);
+  const { config: storedConfig } = readConfiguration(agentId);
   options.webSession?.assertRunning();
   options.webSession?.progress("inference");
   const binRoot = requiredDirectory(path.join(installRoot, "bin"), "NemoClaw bin directory");
@@ -682,6 +682,7 @@ export async function runNativeConsoleAgent(
         "--driver-config-json",
         JSON.stringify({
           mxc: {
+            windows_ui: true,
             command: [node, workload],
             cwd: agentRuntimeRoot,
             host_loopback: true,

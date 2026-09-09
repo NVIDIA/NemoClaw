@@ -21,8 +21,9 @@ adds the installed `bin` directory to the machine PATH.
 The workflow first builds and qualifies the unmodified NVIDIA/OpenShell#2721
 merge commit, then applies the checked-in Node compatibility patch and rebuilds
 the packaged derivative. The patch and its exact hash are installed with the
-product. It sets `ui.disable=false` so the contained Node process can initialize,
-and adds explicit per-sandbox `host_loopback`, `host_console`, and
+product. Packaged Node workloads explicitly set `windows_ui=true` so the
+contained Node process can initialize. Other sandboxes retain MXC's disabled-UI
+default. The derivative also adds per-sandbox `host_loopback`, `host_console`, and
 `personal_network` options. Configured sessions use the Personal network profile:
 MXC's supported outbound-open policy and local-network access. The ordinary
 qualification controls retain their original network policy. Personal does not

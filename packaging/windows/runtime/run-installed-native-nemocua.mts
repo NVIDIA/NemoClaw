@@ -590,6 +590,7 @@ async function main() {
       "--driver-config-json",
       JSON.stringify({
         mxc: {
+          windows_ui: true,
           command: [node, relayWorkload],
           cwd: shareRoot,
           personal_network: configuredIdentity !== null,

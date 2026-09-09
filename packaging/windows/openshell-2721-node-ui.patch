@@ -1,13 +1,14 @@
 diff --git a/crates/openshell-driver-mxc/src/driver.rs b/crates/openshell-driver-mxc/src/driver.rs
-index d8e981a46d..4a1120f203 100644
 --- a/crates/openshell-driver-mxc/src/driver.rs
 +++ b/crates/openshell-driver-mxc/src/driver.rs
-@@ -92,6 +92,12 @@ struct MxcSandboxConfig {
+@@ -92,6 +92,14 @@
      command: Vec<String>,
      #[serde(default)]
      cwd: String,
 +    #[serde(default)]
 +    host_loopback: bool,
++    #[serde(default)]
++    windows_ui: bool,
 +    #[serde(default)]
 +    host_console: bool,
 +    #[serde(default)]
@@ -15,28 +16,29 @@ index d8e981a46d..4a1120f203 100644
  }
 
  // ── Registry entry ────────────────────────────────────────────────────────────
-@@ -634,6 +640,9 @@ async fn run_lifecycle(
+@@ -634,6 +642,10 @@
          denied_paths: Vec::new(),
      };
      let command_line = encode_windows_command_line(&sandbox_config.command);
 +    let host_loopback = sandbox_config.host_loopback;
++    let windows_ui = sandbox_config.windows_ui;
 +    let host_console = sandbox_config.host_console;
 +    let personal_network = sandbox_config.personal_network;
      let process = MxcProcess {
          command_line: command_line.clone(),
          cwd: sandbox_config.cwd,
-@@ -700,6 +709,9 @@ async fn run_lifecycle(
+@@ -700,6 +712,10 @@
              let process_container = MxcProcessContainer {
                  least_privilege: config.pc_least_privilege,
                  capabilities: config.pc_capabilities.clone(),
 +                host_loopback,
++                windows_ui,
 +                host_console,
 +                personal_network,
              };
              match invoker
                  .run_oneshot(&sandbox_id, filesystem, process_container, process, None)
 diff --git a/crates/openshell-driver-mxc/src/mxc.rs b/crates/openshell-driver-mxc/src/mxc.rs
-index 32d7006d90..6bba637237 100644
 --- a/crates/openshell-driver-mxc/src/mxc.rs
 +++ b/crates/openshell-driver-mxc/src/mxc.rs
 @@ -10,6 +10,7 @@
@@ -47,13 +49,15 @@ index 32d7006d90..6bba637237 100644
  use std::net::SocketAddr;
  use std::path::PathBuf;
  use std::sync::{Mutex, OnceLock};
-@@ -78,6 +79,13 @@ pub struct MxcProcessContainer {
+@@ -78,6 +79,15 @@
      pub least_privilege: bool,
      /// `AppContainer` capabilities to grant (e.g. `internetClient`).
      pub capabilities: Vec<String>,
 +    /// Opt in to legacy host-loopback ingress for a host-rendered UI.
 +    /// False preserves the NVIDIA/OpenShell#2721 network posture exactly.
 +    pub host_loopback: bool,
++    /// Explicit Win32k compatibility for packaged Node workloads; false keeps UI disabled.
++    pub windows_ui: bool,
 +    /// Opt in to the dedicated gateway's existing native console.
 +    pub host_console: bool,
 +    /// Explicit Personal-preview outbound-open networking; false stays default-deny.
@@ -61,7 +65,7 @@ index 32d7006d90..6bba637237 100644
  }
 
  /// Process config for the exec phase.
-@@ -162,8 +170,12 @@ fn oneshot_config_json(
+@@ -162,8 +172,12 @@
 
      let mut pc_json = serde_json::Map::new();
      pc_json.insert("leastPrivilege".into(), pc.least_privilege.into());
@@ -76,11 +80,11 @@ index 32d7006d90..6bba637237 100644
      }
 
      let mut config = serde_json::json!({
-@@ -177,10 +189,26 @@ fn oneshot_config_json(
+@@ -177,10 +191,26 @@
              "timeout": process.timeout,
          },
          "processContainer": serde_json::Value::Object(pc_json),
-+        "ui": { "disable": false },
++        "ui": { "disable": !pc.windows_ui },
          "filesystem": serde_json::Value::Object(filesystem_json),
      });
      if let Some(network) = network {
@@ -103,10 +107,12 @@ index 32d7006d90..6bba637237 100644
      }
      config
  }
-@@ -282,6 +310,18 @@ impl InvokerError {
+@@ -280,6 +310,18 @@
+             }
+         }
      }
- }
-
++}
++
 +fn require_host_console(requested: bool, terminal_handles: [bool; 3]) -> Result<(), InvokerError> {
 +    if requested && !terminal_handles.into_iter().all(|terminal| terminal) {
 +        return Err(InvokerError::Mxc {
@@ -117,12 +123,10 @@ index 32d7006d90..6bba637237 100644
 +        });
 +    }
 +    Ok(())
-+}
-+
- // ── Invoker ───────────────────────────────────────────────────────────────────
+ }
 
- /// Wraps `wxc-exec` invocations for the MXC state-aware lifecycle.
-@@ -588,13 +628,26 @@ impl WxcExecInvoker {
+ // ── Invoker ───────────────────────────────────────────────────────────────────
+@@ -588,13 +630,26 @@
              return Self::mock_spawn_with_grants(&process, &grants);
          }
 
@@ -150,10 +154,11 @@ index 32d7006d90..6bba637237 100644
              .stdout(std::process::Stdio::inherit())
              .stderr(std::process::Stdio::inherit())
              .kill_on_drop(true);
-@@ -649,6 +702,81 @@ impl WxcExecInvoker {
+@@ -648,6 +703,81 @@
+ #[cfg(test)]
  mod tests {
      use super::*;
-
++
 +    #[test]
 +    fn personal_network_is_explicit_and_does_not_expand_filesystem_grants() {
 +        let filesystem = MxcFilesystem {
@@ -228,15 +233,22 @@ index 32d7006d90..6bba637237 100644
 +            ));
 +        }
 +    }
-+
+
      #[test]
      fn provision_envelope_parse_success() {
-         let json = r#"{"result":{"sandboxId":"iso:wxc-abc123","metadata":{}}}"#;
-@@ -810,6 +938,43 @@ mod tests {
+@@ -810,6 +940,51 @@
          let config = oneshot_config_json("sb-1", &filesystem, &pc, &process, None);
 
          assert!(config.get("network").is_none());
-+        assert_eq!(config["ui"]["disable"], false);
++        assert_eq!(config["ui"]["disable"], true);
++        let requested = MxcProcessContainer {
++            windows_ui: true,
++            ..Default::default()
++        };
++        let enabled = oneshot_config_json("node-ui", &filesystem, &requested, &process, None);
++        assert_eq!(enabled["ui"]["disable"], false);
++        assert_eq!(enabled["filesystem"], config["filesystem"]);
++        assert_eq!(enabled.get("network"), config.get("network"));
 +    }
 +
 +    #[test]

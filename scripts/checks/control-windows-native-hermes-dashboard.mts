@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { createHash } from "node:crypto";
+import { readOpenedRegularFile } from "../../packaging/windows/runtime/native-security.mts";
 
 // These names are provided by the browser when Playwright evaluates the callbacks.
 // Module-local declarations keep browser globals out of the CLI type environment.
@@ -34,14 +35,31 @@ if (
 )
   throw new Error("Invalid native dashboard proof identity");
 const startPath = path.join(artifactRoot, "dashboard-ready.json");
-if (fs.statSync(startPath).size > 16384) throw new Error("Dashboard identity exceeded its limit");
-const start = JSON.parse(fs.readFileSync(startPath, "utf8"));
-const address = new URL(start.url);
+const startText = readOpenedRegularFile(startPath, { encoding: "utf8", maxBytes: 16384 });
+if (startText === null) throw new Error("The installed dashboard readiness receipt is missing");
+const start: unknown = JSON.parse(startText);
 if (
+  typeof start !== "object" ||
+  start === null ||
+  !("url" in start) ||
+  typeof start.url !== "string" ||
+  !("schemaVersion" in start) ||
   start.schemaVersion !== 1 ||
+  !("agent" in start) ||
   start.agent !== "hermes" ||
+  !("nodeProcessId" in start) ||
+  typeof start.nodeProcessId !== "number" ||
   !Number.isInteger(start.nodeProcessId) ||
-  start.nodeProcessId <= 0 ||
+  start.nodeProcessId <= 0
+)
+  throw new Error("The installed dashboard returned an invalid address");
+let address: URL;
+try {
+  address = new URL(start.url);
+} catch {
+  throw new Error("The installed dashboard returned an invalid address");
+}
+if (
   address.protocol !== "http:" ||
   address.hostname !== "127.0.0.1" ||
   !address.port ||
@@ -52,16 +70,15 @@ if (
 )
   throw new Error("The installed dashboard returned an invalid address");
 const receiptPath = path.join(artifactRoot, "dashboard-control.json");
-if (fs.existsSync(receiptPath)) throw new Error("Dashboard control evidence already exists");
 const edge = [process.env["ProgramFiles(x86)"], process.env.ProgramFiles]
   .filter(Boolean)
   .map((root) => path.join(root!, "Microsoft", "Edge", "Application", "msedge.exe"))
   .find((file) => fs.existsSync(file));
 if (!edge) throw new Error("Installed Microsoft Edge is missing");
-const require = createRequire(import.meta.url);
-const { chromium } = require(
-  path.join(installRoot, "openclaw", "node_modules", "openclaw", "node_modules", "playwright-core"),
+const require = createRequire(
+  path.join(installRoot, "openclaw", "node_modules", "openclaw", "package.json"),
 );
+const { chromium } = require("playwright-core");
 const browser = await chromium.launch({
   executablePath: edge,
   headless: false,

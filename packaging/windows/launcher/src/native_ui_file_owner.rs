@@ -67,13 +67,14 @@ fn decode(text: &str) -> Result<Vec<u8>, &'static str> {
     for group in text.as_bytes().chunks(4) {
         let mut value = 0u32;
         for &byte in group {
-            let digit = if byte == b'=' {
-                0
-            } else {
-                BASE64
-                    .iter()
-                    .position(|candidate| *candidate == byte)
-                    .ok_or("base64")? as u32
+            let digit = match byte {
+                b'A'..=b'Z' => u32::from(byte - b'A'),
+                b'a'..=b'z' => u32::from(byte - b'a') + 26,
+                b'0'..=b'9' => u32::from(byte - b'0') + 52,
+                b'+' => 62,
+                b'/' => 63,
+                b'=' => 0,
+                _ => return Err("base64"),
             };
             value = (value << 6) | digit;
         }
@@ -139,6 +140,12 @@ mod native {
         size: u16,
         count: u16,
         reserved2: u16,
+    }
+    #[repr(C)]
+    struct AceHeader {
+        kind: u8,
+        flags: u8,
+        size: u16,
     }
     #[repr(C)]
     struct StandardInfo {
@@ -251,6 +258,12 @@ mod native {
             sacl: *mut *mut Acl,
             descriptor: *mut *mut c_void,
         ) -> u32;
+        fn GetSecurityDescriptorControl(
+            descriptor: *const c_void,
+            control: *mut u16,
+            revision: *mut u32,
+        ) -> i32;
+        fn GetAce(acl: *const Acl, index: u32, ace: *mut *mut c_void) -> i32;
     }
 
     struct Handle(RawHandle);
@@ -318,7 +331,12 @@ mod native {
 
     fn descriptor(sid: &str, private: bool) -> Result<LocalMemory, &'static str> {
         let value = if private {
-            format!("O:{sid}D:P(A;OICI;FA;;;{sid})(A;OICI;FA;;;SY)")
+            let system = if sid == "S-1-5-18" {
+                ""
+            } else {
+                "(A;OICI;FA;;;SY)"
+            };
+            format!("O:{sid}D:P(A;OICI;FA;;;{sid}){system}")
         } else {
             format!("O:{sid}")
         };
@@ -464,6 +482,69 @@ mod native {
         Ok(())
     }
 
+    fn verify_private_root(handle: &Handle, sid: &str) -> Result<(), &'static str> {
+        let mut owner = null_mut();
+        let mut dacl = null_mut();
+        let mut descriptor = null_mut();
+        if unsafe {
+            GetSecurityInfo(
+                handle.0,
+                1,
+                5,
+                &mut owner,
+                null_mut(),
+                &mut dacl,
+                null_mut(),
+                &mut descriptor,
+            )
+        } != 0
+        {
+            return Err("permissions");
+        }
+        let _memory = LocalMemory(descriptor);
+        let mut control = 0;
+        let mut revision = 0;
+        if sid_string(owner)? != sid
+            || dacl.is_null()
+            || unsafe { GetSecurityDescriptorControl(descriptor, &mut control, &mut revision) } == 0
+            || control & 0x1000 == 0
+        {
+            return Err("private-permissions");
+        }
+        let count = unsafe { (*dacl).count };
+        if count != if sid == "S-1-5-18" { 1 } else { 2 } {
+            return Err("private-permissions");
+        }
+        let mut owner_seen = false;
+        let mut system_seen = false;
+        for index in 0..u32::from(count) {
+            let mut ace = null_mut();
+            if unsafe { GetAce(dacl, index, &mut ace) } == 0 || ace.is_null() {
+                return Err("private-permissions");
+            }
+            let header = unsafe { &*ace.cast::<AceHeader>() };
+            if header.kind != 0 || header.flags != 3 || header.size < 16 {
+                return Err("private-permissions");
+            }
+            let bytes = ace.cast::<u8>();
+            if unsafe { bytes.add(4).cast::<u32>().read_unaligned() } != 0x001f_01ff {
+                return Err("private-permissions");
+            }
+            let principal = sid_string(unsafe { bytes.add(8).cast() })?;
+            if principal == sid && !owner_seen {
+                owner_seen = true;
+            } else if principal == "S-1-5-18" && !system_seen {
+                system_seen = true;
+            } else {
+                return Err("private-permissions");
+            }
+        }
+        if !owner_seen || (sid != "S-1-5-18" && !system_seen) {
+            return Err("private-permissions");
+        }
+        Ok(())
+    }
+
     fn file_size(handle: &Handle) -> Result<usize, &'static str> {
         if attributes(handle)?.attributes & DIRECTORY != 0 {
             return Err("file-type");
@@ -572,6 +653,9 @@ mod native {
                 Err(error) => return Err(error),
             };
             verify_directory(&root, Some(&sid))?;
+            // Check before publishing any token. MXC may grant the selected
+            // container access only after this private host owner is ready.
+            verify_private_root(&root, &sid)?;
             // Exclusive open is the per-root owner lease. This private marker is
             // outside the wire-name grammar and never read or removed by RPC.
             let lock = open_relative(

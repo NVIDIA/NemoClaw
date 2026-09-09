@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   brokerOperationForRequest,
@@ -16,7 +16,7 @@ import {
   readWindowsCredential,
   resolveBrokerUpstreamUrl,
   validatedChatMessages,
-} from "../../../packaging/windows/runtime/native-security.mts";
+} from "../../packaging/windows/runtime/native-security.mts";
 
 const { credentialSpawn } = vi.hoisted(() => ({ credentialSpawn: vi.fn() }));
 vi.mock("node:child_process", () => ({ spawn: credentialSpawn }));
@@ -36,6 +36,7 @@ function mockCredentialOutput(chunks: Buffer[], code = 0) {
     const child = Object.assign(new EventEmitter(), {
       stdout: new PassThrough(),
       stderr: new PassThrough(),
+      kill: vi.fn(() => true),
     });
     queueMicrotask(() => {
       for (const chunk of chunks) child.stdout.write(chunk);
@@ -46,6 +47,11 @@ function mockCredentialOutput(chunks: Buffer[], code = 0) {
     return child;
   });
 }
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
 
 describe("native Windows runtime security boundaries", () => {
   it("keeps broker request targets on the configured provider origin", () => {
@@ -105,6 +111,28 @@ describe("native Windows runtime security boundaries", () => {
       "",
     );
     expect(credentialSpawn.mock.calls).toHaveLength(calls);
+  });
+
+  it("terminates and rejects a hung credential read without waiting for a close event", async () => {
+    vi.useFakeTimers();
+    const child = Object.assign(new EventEmitter(), {
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      kill: vi.fn(() => true),
+    });
+    credentialSpawn.mockReturnValueOnce(child);
+    const pending = readWindowsCredential("launcher", nvidiaCredentialIdentity, true);
+    const rejected = expect(pending).rejects.toThrow(
+      "Reading the selected Windows credential timed out.",
+    );
+    child.stdout.write("partial-private-key");
+    await vi.advanceTimersByTimeAsync(15_000);
+    await rejected;
+    expect(child.kill).toHaveBeenCalledWith("SIGKILL");
+    expect(child.stdout.destroyed).toBe(true);
+    expect(child.stderr.destroyed).toBe(true);
+    child.emit("close", 0);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("binds credentials to the agent, provider, and canonical broker endpoint", () => {
@@ -182,6 +210,24 @@ describe("native Windows runtime security boundaries", () => {
       expect(
         readOpenedRegularFile(path.join(directory, "missing"), { encoding: "utf8" }),
       ).toBeNull();
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("limits actual descriptor reads when a file grows after its metadata check", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "native-file-growth-"));
+    try {
+      const file = path.join(directory, "receipt");
+      fs.writeFileSync(file, "small");
+      const checked = fs.statSync(file);
+      fs.appendFileSync(file, "x".repeat(128));
+      // Reproduce the legitimate stale fstat result from before the append; the
+      // following descriptor reads still use the real, now-grown file.
+      vi.spyOn(fs, "fstatSync").mockReturnValueOnce(checked);
+      const reads = vi.spyOn(fs, "readSync");
+      expect(() => readOpenedRegularFile(file, { maxBytes: 8 })).toThrow(/exceeds its limit/u);
+      expect(reads.mock.results.reduce((bytes, result) => bytes + Number(result.value), 0)).toBe(9);
     } finally {
       fs.rmSync(directory, { recursive: true, force: true });
     }

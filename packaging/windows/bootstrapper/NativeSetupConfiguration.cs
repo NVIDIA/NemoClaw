@@ -31,7 +31,7 @@ internal sealed record NativeSetupConfiguration(string Agent, string Inference, 
         };
         if (this.LocalModel is not null)
         {
-            if (this.LocalModel != "n1x-qwen3.6-35b-a3b" || this.Inference != "local") throw new InvalidOperationException("The local model selection is invalid.");
+            if (this.LocalModel != NativeExpressSetup.Id || this.Inference != "local") throw new InvalidOperationException("The local model selection is invalid.");
             value["localModel"] = this.LocalModel;
         }
         return JsonSerializer.Serialize(value);

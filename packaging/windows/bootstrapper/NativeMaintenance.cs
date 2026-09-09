@@ -124,17 +124,28 @@ internal static class NativeMaintenance
             RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true };
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
         using var child = Process.Start(start) ?? throw new InvalidOperationException(failure);
-        child.StandardInput.Close();
         using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        Exception? operationError = null;
+        Exception? cleanupError = null;
         try
         {
+            child.StandardInput.Close();
             await Task.WhenAll(DiscardBoundedAsync(child.StandardOutput, timeout.Token), DiscardBoundedAsync(child.StandardError, timeout.Token), child.WaitForExitAsync(timeout.Token));
             if (child.ExitCode != 0) throw new InvalidOperationException(failure);
         }
+        catch (Exception error) { operationError = error; }
         finally
         {
-            if (!child.HasExited) { child.Kill(entireProcessTree: true); using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(5)); await child.WaitForExitAsync(cleanup.Token); }
+            try
+            {
+                if (!child.HasExited) { child.Kill(entireProcessTree: true); using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(5)); await child.WaitForExitAsync(cleanup.Token); }
+            }
+            catch (Exception error) { cleanupError = error; }
         }
+        if (operationError is not null || cleanupError is not null)
+            throw new InvalidOperationException(failure +
+                (operationError is OperationCanceledException ? " The operation timed out." : string.Empty) +
+                (cleanupError is not null ? " Helper shutdown could not be confirmed." : string.Empty), operationError ?? cleanupError);
     }
 
     private static async Task DiscardBoundedAsync(StreamReader reader, CancellationToken cancellation)

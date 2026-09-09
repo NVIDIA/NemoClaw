@@ -56,19 +56,24 @@ export async function verifyPinnedFile(
   onProgress: ProgressSink,
 ): Promise<void> {
   signal.throwIfAborted();
-  const before = await fs.promises.lstat(file);
-  if (
-    !before.isFile() ||
-    before.isSymbolicLink() ||
-    before.nlink !== 1 ||
-    before.size !== asset.bytes
-  )
-    throw new Error(`The cached ${asset.name} is not the expected ordinary file.`);
   const handle = await fs.promises.open(file, "r");
   try {
+    // Open first and inspect that descriptor before reading any bytes. The path
+    // must still name this ordinary, singly linked file rather than a symlink.
     const opened = await handle.stat();
-    if (opened.dev !== before.dev || opened.ino !== before.ino || opened.size !== asset.bytes)
-      throw new Error("The managed inference file changed while opening it.");
+    const named = await fs.promises.lstat(file);
+    if (
+      !opened.isFile() ||
+      opened.nlink !== 1 ||
+      opened.size !== asset.bytes ||
+      !named.isFile() ||
+      named.isSymbolicLink() ||
+      named.nlink !== 1 ||
+      named.size !== opened.size ||
+      named.dev !== opened.dev ||
+      named.ino !== opened.ino
+    )
+      throw new Error(`The cached ${asset.name} is not the expected ordinary file.`);
     const hash = createHash("sha256");
     let bytes = 0;
     let last = 0;
@@ -90,10 +95,18 @@ export async function verifyPinnedFile(
       }
     }
     const after = await handle.stat();
+    const namedAfter = await fs.promises.lstat(file);
     if (
       bytes !== asset.bytes ||
+      !after.isFile() ||
+      after.nlink !== 1 ||
       after.size !== opened.size ||
       after.mtimeMs !== opened.mtimeMs ||
+      !namedAfter.isFile() ||
+      namedAfter.isSymbolicLink() ||
+      namedAfter.nlink !== 1 ||
+      namedAfter.dev !== opened.dev ||
+      namedAfter.ino !== opened.ino ||
       hash.digest("hex") !== asset.sha256
     )
       throw new Error(`The SHA-256 verification failed for ${asset.name}.`);
@@ -145,6 +158,7 @@ export async function downloadPinnedAsset(
 ): Promise<string> {
   if (
     !/^[A-Za-z0-9_.-]+$/u.test(asset.name) ||
+    /^\.+$/u.test(asset.name) ||
     !/^[a-f0-9]{64}$/u.test(asset.sha256) ||
     !Number.isSafeInteger(asset.bytes) ||
     asset.bytes < 1
@@ -152,7 +166,6 @@ export async function downloadPinnedAsset(
     throw new Error("The managed inference asset pin is invalid.");
   const file = path.join(directory, asset.name);
   try {
-    await fs.promises.lstat(file);
     await verifyPinnedFile(file, asset, signal, onProgress);
     return file;
   } catch (error) {
