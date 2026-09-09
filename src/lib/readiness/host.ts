@@ -328,6 +328,7 @@ function stateOf(value: boolean | undefined): ReadinessState {
   return value === undefined ? "unknown" : value ? "present" : "absent";
 }
 
+/** Project every host capability as unknown when collection cannot produce usable evidence. */
 function unknownProjection(evidenceIds: readonly string[]): {
   observations: ReadinessObservation[];
   capabilities: ReadinessCapability[];
@@ -412,6 +413,7 @@ function unknownProjection(evidenceIds: readonly string[]): {
   };
 }
 
+/** Convert a bounded host snapshot into stable observations, capabilities, and findings. */
 export function projectHostReadiness(
   snapshot: Readonly<HostObservationSnapshot>,
   options: CreateHostReadinessReportOptions,

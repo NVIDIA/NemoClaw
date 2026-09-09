@@ -143,6 +143,7 @@ function readInjectedOsRelease(
   }
 }
 
+/** Read optional injected fixture text while applying the shared diagnostic sanitization bound. */
 function readOptional(
   readFile: (filePath: string) => string,
   filePath: string,
@@ -310,6 +311,7 @@ function parseStationRelease(contents: string): StationProfile {
   return "unsupported-dgx-os";
 }
 
+/** Read bounded text from an already validated file descriptor. */
 function readOpenedFile(fileDescriptor: number, maxBytes: number): string {
   const contents = Buffer.alloc(maxBytes + 1);
   const bytesRead = fs.readSync(fileDescriptor, contents, 0, contents.length, 0);

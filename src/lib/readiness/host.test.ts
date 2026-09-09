@@ -27,6 +27,7 @@ const ajv = new Ajv2020({ allErrors: true, strict: true });
 ajv.addFormat("date-time", { type: "string", validate: () => true });
 const validateReport = ajv.compile(systemReadinessSchema as AnySchema);
 
+/** Return the smallest neutral platform identity used by host-readiness tests. */
 function emptyPlatformIdentity(): PlatformIdentity {
   return {
     productName: null,
@@ -156,18 +157,21 @@ describe("host readiness projection (#7408)", () => {
   it.each([
     ["debian", "12"],
     ["ubuntu", "22.04"],
-  ])("warns when Linux %s %s is outside the qualified release boundary (#11026)", (osId, osVersionId) => {
-    const result = report(
-      {},
-      { platformIdentity: { ...emptyPlatformIdentity(), osId, osVersionId } },
-    );
+  ])(
+    "warns when Linux %s %s is outside the qualified release boundary (#11026)",
+    (osId, osVersionId) => {
+      const result = report(
+        {},
+        { platformIdentity: { ...emptyPlatformIdentity(), osId, osVersionId } },
+      );
 
-    expect(result.status).toBe("supported");
-    expect(result.exitCode).toBe(0);
-    expect(result.findings).toContainEqual(
-      expect.objectContaining({ id: "host.os.release_unqualified", severity: "warning" }),
-    );
-  });
+      expect(result.status).toBe("supported");
+      expect(result.exitCode).toBe(0);
+      expect(result.findings).toContainEqual(
+        expect.objectContaining({ id: "host.os.release_unqualified", severity: "warning" }),
+      );
+    },
+  );
 
   it("warns when Linux release evidence is unavailable (#11026)", () => {
     const result = report();
