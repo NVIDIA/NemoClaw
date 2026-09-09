@@ -996,6 +996,13 @@
       "fast": ["test/e2e/support/brev-launchable-fixture.test.ts"]
     },
     {
+      "live": "test/e2e/live/issue-9880-staging-launchable.test.ts",
+      "fast": [
+        "test/e2e/support/brev-launchable-fixture.test.ts",
+        "test/e2e/support/e2e-semantic-phase-check.test.ts"
+      ]
+    },
+    {
       "live": "test/e2e/live/whatsapp-qr-compact.test.ts",
       "fast": [
         "test/e2e/support/e2e-progress-fixture.test.ts",
