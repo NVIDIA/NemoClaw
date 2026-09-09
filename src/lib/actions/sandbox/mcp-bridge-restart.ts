@@ -5,8 +5,12 @@ import type { AgentMcpAdapter } from "../../agent/defs";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import { assertHermesPortableCommandUnavailable } from "../../onboard/experimental/portable-agent-lifecycle";
 import type { McpBridgeEntry } from "../../state/registry";
-import { registerAgentAdapterAtCurrentCredentialRevision } from "./mcp-bridge-adapters";
+import {
+  registerAgentAdapterAtCurrentCredentialRevision,
+  unregisterAgentAdapter,
+} from "./mcp-bridge-adapters";
 import { McpBridgeError } from "./mcp-bridge-contracts";
+import { assertUnchangedStableMcpCredentialAuthorized } from "./mcp-bridge-credential-authorization";
 import { assertHermesMcpRuntimeIntent } from "./mcp-bridge-hermes-reconciliation";
 import { redactBridgeFailureForDisplay } from "./mcp-bridge-output";
 import {
@@ -130,38 +134,6 @@ async function assertRestartCredentialsAvailable(
       `MCP server '${entry.server}' cannot reuse its stored credential: ${detail}. Export host environment variable '${entry.env[0]}' and run \`nemoclaw ${sandboxName} mcp restart ${entry.server}\` to replace it.`,
     );
   }
-}
-
-async function assertUpdatedStableCredentialAuthorized(
-  sandboxName: string,
-  entry: McpBridgeEntry,
-  runtimeSelection: McpProviderInspectionRuntimeSelection,
-  previousRevision: McpCredentialRevisionObservation | undefined,
-  credentialRevision: McpCredentialRevisionObservation,
-): Promise<void> {
-  if (previousRevision !== credentialRevision || !credentialRevision.startsWith("s")) {
-    return;
-  }
-  let detail = "post-update wire-level credential verification did not return a result";
-  try {
-    const [status] = await statusMcpBridge(sandboxName, entry.server, {
-      allowCredentialProbeWithAdapterMismatch: true,
-      probeCredentialResolution: true,
-      runtimeSelection,
-    });
-    const probe = status?.provider.credentialResolution;
-    if (probe?.ok === true) return;
-    if (probe?.detail) detail = restartStatusDetailForDisplay(probe.detail, entry, detail);
-  } catch (error) {
-    detail = restartStatusDetailForDisplay(
-      error instanceof Error ? error.message : String(error),
-      entry,
-      "post-update credential status inspection failed",
-    );
-  }
-  throw new McpBridgeError(
-    `MCP server '${entry.server}' did not authorize its unchanged stable credential handle after provider update: ${detail}.`,
-  );
 }
 
 export async function restartMcpBridge(sandboxName: string, server?: string): Promise<void> {
@@ -324,7 +296,7 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
       },
     );
     if (providerResult.action === "updated") {
-      await assertUpdatedStableCredentialAuthorized(
+      await assertUnchangedStableMcpCredentialAuthorized(
         sandboxName,
         entry,
         providerRuntimeSelection,
@@ -429,12 +401,34 @@ export async function restoreExistingMcpBridgeRuntime(
       });
     }
     const adapter = (entry.adapter as AgentMcpAdapter | undefined) ?? defaultAdapter;
+    const previousCredentialRevision = observeMcpCredentialRevision(
+      sandboxName,
+      entry,
+      providerRuntimeSelection,
+    );
     await refreshMcpProviderEnvironment(entry, providerRuntimeSelection);
     const credentialRevision = await waitForAttachedMcpCredential(
       sandboxName,
       entry,
       providerRuntimeSelection,
+      { previousRevision: previousCredentialRevision },
     );
+    try {
+      await assertUnchangedStableMcpCredentialAuthorized(
+        sandboxName,
+        entry,
+        providerRuntimeSelection,
+        previousCredentialRevision,
+        credentialRevision,
+      );
+    } catch (error) {
+      unregisterAgentAdapter(sandboxName, adapter, entry, providerRuntimeSelection, {
+        bestEffort: true,
+        envValues: {},
+        force: false,
+      });
+      throw error;
+    }
     registerAgentAdapterAtCurrentCredentialRevision(
       sandboxName,
       adapter,

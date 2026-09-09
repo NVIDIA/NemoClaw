@@ -340,6 +340,7 @@ bridge.restartMcpBridge("alpha", "example").then(
   )}`;
 
   const runCredentialRestart = ({
+    operation = "restart",
     probeResponses,
     statusErrors = {},
     restartAll = false,
@@ -347,6 +348,7 @@ bridge.restartMcpBridge("alpha", "example").then(
     policyApplyFails = false,
     stableRevision = false,
   }: {
+    operation?: "restart" | "restore";
     probeResponses: Record<
       string,
       {
@@ -378,6 +380,7 @@ const bridgeStatus = require("./src/lib/actions/sandbox/mcp-bridge-status.js");
 
 let policyApplyCalls = 0;
 let resourceVersion = 1;
+let adapterRegistered = true;
 const providerCalls = [];
 const statusCalls = [];
 const entry = {
@@ -454,7 +457,18 @@ processRecovery.executeSandboxExecCommand = () => ({
 });
 processRecovery.executeSandboxCommand = (_sandbox, command) => ({
   status: 0,
-  stdout: command === "command -v mcporter" ? "/usr/local/bin/mcporter\n" : "registered\n",
+  stdout: (() => {
+    if (command === "command -v mcporter") return "/usr/local/bin/mcporter\n";
+    if (command.includes("config' 'remove") || (command.includes('spawnSync("mcporter"') && command.includes('"remove", expected.server'))) {
+      adapterRegistered = false;
+      return "removed\n";
+    }
+    if (command.includes("config' 'add") || command.includes('"config", "add"')) {
+      adapterRegistered = true;
+      return "registered\n";
+    }
+    return adapterRegistered ? "registered\n" : "absent\n";
+  })(),
   stderr: "",
 });
 const probeResponses = ${JSON.stringify(probeResponses)};
@@ -475,16 +489,21 @@ registry.registerSandbox({
 });
 
 const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
+const restart = require("./src/lib/actions/sandbox/mcp-bridge-restart.js");
+const operation = ${JSON.stringify(operation)};
 const report = (payload) => {
   process.stdout.write(JSON.stringify(payload), () => process.exit(0));
 };
-bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then(
+(operation === "restart"
+  ? bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'})
+  : restart.restoreExistingMcpBridgeRuntime("alpha", [entry])).then(
   () => {
     report({
       outcome: "refreshed",
       policyApplyCalls,
       providerCalls,
       statusCalls,
+      ...(operation === "restore" ? { adapterRegistered } : {}),
       ...journalState(),
     });
   },
@@ -496,6 +515,7 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
       policyApplyCalls,
       providerCalls,
       statusCalls,
+      ...(operation === "restore" ? { adapterRegistered } : {}),
       ...journalState(),
     });
   },
@@ -528,14 +548,16 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
         server: string;
         options: { probeCredentialResolution: boolean };
       }>;
+      adapterRegistered: boolean;
     };
   };
 
-  const expectedStatusCall = (server: string) => ({
+  const expectedStatusCall = (server: string, incompleteAdd = false) => ({
     sandboxName: "alpha",
     server,
     options: {
       allowCredentialProbeWithAdapterMismatch: true,
+      ...(incompleteAdd ? { allowIncompleteAddCredentialProbe: true } : {}),
       probeCredentialResolution: true,
       runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
     },
@@ -563,6 +585,31 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
       providerCalls: [],
       statusCalls: [expectedStatusCall("example")],
     });
+  }, 75_000);
+
+  it("unregisters a recovered adapter when an unchanged stable credential fails wire authorization", () => {
+    const payload = runCredentialRestart({
+      operation: "restore",
+      stableRevision: true,
+      probeResponses: {
+        example: {
+          ok: null,
+          httpStatus: 401,
+          controlHttpStatus: 401,
+          detail: "updated credential remained unauthorized",
+        },
+      },
+    });
+
+    expect(payload).toMatchObject({
+      outcome: "rejected",
+      message: expect.stringContaining(
+        "MCP server 'example' did not authorize its unchanged stable credential handle after provider update:",
+      ),
+      adapterRegistered: false,
+      statusCalls: [expectedStatusCall("example", true)],
+    });
+    expect(payload.message).not.toContain("host-only-secret");
   }, 75_000);
 
   it("redacts and bounds an unverified credential probe detail (#10750)", () => {
@@ -627,7 +674,7 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
         "provider update alpha-mcp-example --credential MCP_TOKEN",
         "provider update alpha-mcp-example",
       ],
-      statusCalls: [expectedStatusCall("example")],
+      statusCalls: [expectedStatusCall("example", true)],
     });
     expect(payload.message).not.toContain("host-only-secret");
   }, 75_000);

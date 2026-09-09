@@ -20,6 +20,7 @@ type CrashBoundary =
   | "credential-projection-coalesced"
   | "credential-projection-unstable"
   | "credential-projection-delayed-hostless"
+  | "credential-wire-unauthorized"
   | "registered-credential-collision"
   | "registered-late-collision"
   | "adapter"
@@ -104,6 +105,7 @@ runner.run = (args) => {
 };
 const policies = require("./src/lib/policy/index.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
+const bridgeStatus = require("./src/lib/actions/sandbox/mcp-bridge-status.js");
 const ownershipLocks = require("./src/lib/state/mcp-lifecycle-lock/credential-ownership.js");
 
 providerInspection.getMcpProviderInspectionRuntimeSelection = () => {
@@ -171,7 +173,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
       setProviderVersion(providerVersion() + 1);
       if (isCredentialUpdate) {
         credentialUpdatedThisProcess = true;
-        advanceChildCredentialRevision();
+        if (crashAfter !== "credential-wire-unauthorized") advanceChildCredentialRevision();
         mark("updated");
       }
       if (
@@ -374,6 +376,22 @@ processRecovery.executeSandboxCommand = (_sandbox, command) => {
     stderr: "",
   };
 };
+
+if (crashAfter === "credential-wire-unauthorized") {
+  bridgeStatus.statusMcpBridge = async (_sandbox, _server, options) => {
+    fs.writeFileSync(marker("credential-wire-probe"), JSON.stringify(options), { mode: 0o600 });
+    return [{
+      provider: {
+        credentialResolution: {
+          ok: null,
+          httpStatus: 401,
+          controlHttpStatus: 401,
+          detail: "updated credential remained unauthorized",
+        },
+      },
+    }];
+  };
+}
 
 if (initializeSandbox && !registry.getSandbox("crash-test")) {
   registry.registerSandbox({
@@ -908,6 +926,33 @@ describe("MCP add crash consistency", () => {
       expect(resumed.status, `${resumed.stdout}\n${resumed.stderr}`).toBe(0);
       expect(fs.existsSync(path.join(home, "observation.marker"))).toBe(false);
       expect(readBridge(home).addState).toBeUndefined();
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("unregisters a resumed adapter when an unchanged stable credential fails wire authorization", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-wire-proof-"));
+    try {
+      const interrupted = runAddProcess(home, "adapter");
+      expect(interrupted.status, `${interrupted.stdout}\n${interrupted.stderr}`).toBe(86);
+      expect(fs.existsSync(path.join(home, "adapter.marker"))).toBe(true);
+
+      const resumed = runAddProcess(home, "credential-wire-unauthorized");
+      expect(resumed.status, `${resumed.stdout}\n${resumed.stderr}`).toBe(2);
+      expect(resumed.stderr).toContain(
+        "did not authorize its unchanged stable credential handle after provider update",
+      );
+      expect(`${resumed.stdout}\n${resumed.stderr}`).not.toContain("host-only-secret");
+      expect(fs.existsSync(path.join(home, "credential-wire-probe.marker"))).toBe(true);
+      expect(
+        JSON.parse(fs.readFileSync(path.join(home, "credential-wire-probe.marker"), "utf8")),
+      ).toMatchObject({
+        allowCredentialProbeWithAdapterMismatch: true,
+        allowIncompleteAddCredentialProbe: true,
+        probeCredentialResolution: true,
+      });
+      expect(fs.existsSync(path.join(home, "adapter.marker"))).toBe(false);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }

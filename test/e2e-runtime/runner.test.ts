@@ -925,7 +925,13 @@ describe("regression guards", () => {
 
   describe("credential exposure guards (#429)", () => {
     it("install-openshell.sh gh-absent path uses curl directly", () => {
-      const scriptPath = path.join(import.meta.dirname, "..", "..", "scripts", "install-openshell.sh");
+      const scriptPath = path.join(
+        import.meta.dirname,
+        "..",
+        "..",
+        "scripts",
+        "install-openshell.sh",
+      );
       const tmpBin = fs.mkdtempSync(path.join(os.tmpdir(), "gh-absent-"));
       const stub = `
         #!/usr/bin/env bash
@@ -959,8 +965,8 @@ describe("regression guards", () => {
               ;;
             openshell-sandbox-checksums-sha256.txt)
               printf '%s\n' \
-                '${PINNED_OPEN_SHELL_SHA256.sandboxLinuxX64}  openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz' \
-                '${PINNED_OPEN_SHELL_SHA256.sandboxLinuxArm64}  openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz' > "$out"
+                '${PINNED_OPEN_SHELL_SHA256.sandboxLinuxX64}  openshell-sandbox-x86_64-unknown-linux-musl.tar.gz' \
+                '${PINNED_OPEN_SHELL_SHA256.sandboxLinuxArm64}  openshell-sandbox-aarch64-unknown-linux-musl.tar.gz' > "$out"
               ;;
             *)
               : > "$out"
@@ -1023,7 +1029,13 @@ describe("regression guards", () => {
     });
 
     it("install-openshell.sh gh-present-but-fails path falls back to curl", () => {
-      const scriptPath = path.join(import.meta.dirname, "..", "..", "scripts", "install-openshell.sh");
+      const scriptPath = path.join(
+        import.meta.dirname,
+        "..",
+        "..",
+        "scripts",
+        "install-openshell.sh",
+      );
       const tmpBin = fs.mkdtempSync(path.join(os.tmpdir(), "gh-stub-"));
       const checksumLog = path.join(tmpBin, "sha256sum.log");
       const ghStub = path.join(tmpBin, "gh");
@@ -1061,8 +1073,8 @@ describe("regression guards", () => {
               ;;
             openshell-sandbox-checksums-sha256.txt)
               printf '%s\n' \
-                '${PINNED_OPEN_SHELL_SHA256.sandboxLinuxX64}  openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz' \
-                '${PINNED_OPEN_SHELL_SHA256.sandboxLinuxArm64}  openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz' > "$out"
+                '${PINNED_OPEN_SHELL_SHA256.sandboxLinuxX64}  openshell-sandbox-x86_64-unknown-linux-musl.tar.gz' \
+                '${PINNED_OPEN_SHELL_SHA256.sandboxLinuxArm64}  openshell-sandbox-aarch64-unknown-linux-musl.tar.gz' > "$out"
               ;;
             *)
               : > "$out"

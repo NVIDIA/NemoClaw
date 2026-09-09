@@ -34,7 +34,7 @@ describe("onboard gateway port conflict readiness (#6752)", () => {
     gatewayServer = net.createServer();
     await new Promise<void>((resolve, reject) => {
       gatewayServer.once("error", reject);
-    gatewayServer.listen(8990, "127.0.0.1", resolve);
+      gatewayServer.listen(8990, "127.0.0.1", resolve);
     });
     gatewayPort = (gatewayServer.address() as AddressInfo).port;
 
@@ -131,9 +131,7 @@ describe("onboard gateway port conflict readiness (#6752)", () => {
       );
       expect(combined).not.toMatch(/occupied by unknown/);
       expect(combined).toMatch(/\(PID \d+\)/);
-      expect(combined).toContain(
-        `sudo lsof -i :${String(gatewayPort)} -sTCP:LISTEN -P -n`,
-      );
+      expect(combined).toContain(`sudo lsof -i :${String(gatewayPort)} -sTCP:LISTEN -P -n`);
       expect(combined).toContain("signal only the matching PID from that fresh result");
       expect(combined).not.toMatch(/sudo kill \d+/);
       expect(fs.readFileSync(marker, "utf8")).toBe("8990\n");
@@ -238,7 +236,7 @@ Module._load = function(request, parent, isMain) {
           "# openshell capabilities: request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods",
           `printf '%s\\n' "$*" >>${JSON.stringify(commandLog)}`,
           'case "$*" in',
-          '  --version|-V) printf "%s 0.0.106\\n" "${0##*/}"; exit 0;;',
+          '  --version|-V) printf "%s 0.0.116\\n" "${0##*/}"; exit 0;;',
           `  status|"status -g ${gatewayName}") printf ${JSON.stringify(gatewayStatus)}; exit 0;;`,
           `  "gateway info"|"gateway info -g ${gatewayName}") printf ${JSON.stringify(gatewayInfo)}; exit 0;;`,
           `  "gateway select ${gatewayName}") exit 0;;`,

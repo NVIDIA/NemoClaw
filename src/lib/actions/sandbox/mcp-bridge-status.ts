@@ -42,10 +42,7 @@ import {
   getSandboxAgent,
   getSandboxOrThrow,
 } from "./mcp-bridge-state";
-import {
-  discoverMcpTools,
-  mcpToolDiscoveryPreconditionFailure,
-} from "./mcp-bridge-tool-discovery";
+import { discoverMcpTools, mcpToolDiscoveryPreconditionFailure } from "./mcp-bridge-tool-discovery";
 import {
   inspectMcpRecordedTargetPins,
   type McpBridgeRecordedPinStatus,
@@ -166,6 +163,11 @@ export interface McpBridgeStatusOptions {
    * revision. The normal status path remains fail-closed on adapter drift.
    */
   allowCredentialProbeWithAdapterMismatch?: boolean;
+  /**
+   * Let the add transaction prove an already-applied provider and policy before
+   * clearing its durable add journal. Internal lifecycle callers only.
+   */
+  allowIncompleteAddCredentialProbe?: boolean;
   /**
    * Run the wire-level credential-resolution probe for each entry (#6379).
    * Costs one SSH round trip plus an in-sandbox MCP initialize per entry, so
@@ -435,7 +437,9 @@ export async function statusMcpBridge(
                   }
                 : probeCredentialResolution(
                     sandboxName,
-                    entry,
+                    options.allowIncompleteAddCredentialProbe && entry.addState
+                      ? (({ addState: _addState, ...committedEntry }) => committedEntry)(entry)
+                      : entry,
                     support.adapter,
                     readiness,
                     providerRuntimeSelection,

@@ -325,37 +325,40 @@ describe("Hermes MCP adapter credential revision", () => {
   });
 });
 
-describe.each(reconciliationCases)("$name MCP credential revision reconciliation", (adapterCase) => {
-  beforeEach(() => {
-    mocks.executeSandboxCommand.mockReset();
-    mocks.runOpenshellProviderCommand.mockReset();
-    mocks.getSandbox.mockReset();
-    mocks.getSandbox.mockReturnValue(sandbox);
-    mocks.observeMcpCredentialRevision.mockReset();
-    mocks.observeMcpCredentialRevision.mockReturnValue("v12");
-  });
+describe.each(reconciliationCases)(
+  "$name MCP credential revision reconciliation",
+  (adapterCase) => {
+    beforeEach(() => {
+      mocks.executeSandboxCommand.mockReset();
+      mocks.runOpenshellProviderCommand.mockReset();
+      mocks.getSandbox.mockReset();
+      mocks.getSandbox.mockReturnValue(sandbox);
+      mocks.observeMcpCredentialRevision.mockReset();
+      mocks.observeMcpCredentialRevision.mockReturnValue("v12");
+    });
 
-  it("reconciles registration to a later stable revision", () => {
-    mocks.observeMcpCredentialRevision.mockReturnValueOnce("v11");
-    adapterCase.arrange();
+    it("reconciles registration to a later stable revision", () => {
+      mocks.observeMcpCredentialRevision.mockReturnValueOnce("v11");
+      adapterCase.arrange();
 
-    expect(
-      registerAgentAdapterAtCurrentCredentialRevision(
-        "alpha",
-        adapterCase.adapter,
-        adapterCase.entry,
-        runtimeSelection,
-        { GITHUB_TOKEN: "host-only-secret" },
-        "v11",
-      ),
-    ).toBe("v12");
+      expect(
+        registerAgentAdapterAtCurrentCredentialRevision(
+          "alpha",
+          adapterCase.adapter,
+          adapterCase.entry,
+          runtimeSelection,
+          { GITHUB_TOKEN: "host-only-secret" },
+          "v11",
+        ),
+      ).toBe("v12");
 
-    const mutationCalls = adapterCase.mutationCalls();
-    expect(mutationCalls).toContain("openshell:resolve:env:v11_GITHUB_TOKEN");
-    expect(mutationCalls).toContain("openshell:resolve:env:v12_GITHUB_TOKEN");
-    expect(mutationCalls).not.toContain("host-only-secret");
-  });
-});
+      const mutationCalls = adapterCase.mutationCalls();
+      expect(mutationCalls).toContain("openshell:resolve:env:v11_GITHUB_TOKEN");
+      expect(mutationCalls).toContain("openshell:resolve:env:v12_GITHUB_TOKEN");
+      expect(mutationCalls).not.toContain("host-only-secret");
+    });
+  },
+);
 
 describe("MCP adapter credential revision reconciliation failures", () => {
   beforeEach(() => {
@@ -403,9 +406,9 @@ describe("MCP adapter credential revision reconciliation failures", () => {
       ),
     ).toBe("v11");
     expect(mocks.getSandbox()).toMatchObject({ gatewayName: "foreign-gateway" });
-    expect(
-      mocks.executeSandboxCommand.mock.calls.map((call) => call[2]?.runtimeSelection),
-    ).toEqual(Array(mocks.executeSandboxCommand.mock.calls.length).fill(operationSelection));
+    expect(mocks.executeSandboxCommand.mock.calls.map((call) => call[2]?.runtimeSelection)).toEqual(
+      Array(mocks.executeSandboxCommand.mock.calls.length).fill(operationSelection),
+    );
     expect(mocks.observeMcpCredentialRevision.mock.calls.map((call) => call[2])).toEqual(
       Array(mocks.observeMcpCredentialRevision.mock.calls.length).fill(operationSelection),
     );
@@ -432,7 +435,7 @@ describe("MCP adapter credential revision reconciliation failures", () => {
           {},
           "v11",
         ),
-      ).toThrow("did not expose a generation-scoped credential");
+      ).toThrow("did not expose a credential handle");
     },
   );
 

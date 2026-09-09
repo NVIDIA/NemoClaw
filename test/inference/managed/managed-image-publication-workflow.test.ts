@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
+import { OPENSHELL_V0116_QUALIFICATION } from "../../e2e/fixtures/openshell-v0116-qualification";
 
 import {
   publicationAgents,
@@ -585,7 +586,9 @@ describe("complete managed-image publication workflow", () => {
     expect(contractSource).toContain('result = JSON.parse(require("node:fs").readFileSync(0');
     expect(contractSource).toContain("record.protocol !== expected.protocol");
     expect(contractSource).toContain("record.ok !== expected.ok");
-    expect(contractSource).toMatch(/Object\.keys.*record\.count.*record\.tools.*record\.truncated/su);
+    expect(contractSource).toMatch(
+      /Object\.keys.*record\.count.*record\.tools.*record\.truncated/su,
+    );
     expect(contractSource).toContain("record.detail !== expected.detail");
     expect(contractSource).not.toContain(
       '[ "$actual_discovery_contract" != "$expected_discovery_contract" ]',
@@ -778,6 +781,10 @@ describe("complete managed-image publication workflow", () => {
       readWorkflow("e2e.yaml").jobs?.["mcp-bridge"],
       "unified E2E workflow is missing its stable MCP job",
     );
+    const credentialWindow = required(
+      readWorkflow("e2e.yaml").jobs?.["openshell-credential-generation-window"],
+      "unified E2E workflow is missing its stable credential-generation job",
+    );
     expect(workflow.on?.pull_request?.paths).toContain("test/e2e/live/mcp-bridge*.ts");
     expect(discovery.needs).toBe("pr-build-and-entrypoint");
     expect(discovery.if).toContain(
@@ -804,7 +811,11 @@ describe("complete managed-image publication workflow", () => {
       discovery.env?.OPENSHELL_DOCKER_SUPERVISOR_IMAGE,
       "OpenClaw MCP discovery is missing OPENSHELL_DOCKER_SUPERVISOR_IMAGE",
     );
-    expect(discoverySupervisorImage).toBe(stableSupervisorImage);
+    expect(stableSupervisorImage).toBe(OPENSHELL_V0116_QUALIFICATION.supervisorImage);
+    expect(credentialWindow.env?.OPENSHELL_DOCKER_SUPERVISOR_IMAGE).toBe(
+      OPENSHELL_V0116_QUALIFICATION.supervisorImage,
+    );
+    expect(discoverySupervisorImage).toBe(OPENSHELL_V0116_QUALIFICATION.supervisorImage);
     expect(discovery.env).not.toHaveProperty("E2E_MANAGED_IMAGE_REVISION");
     expect(JSON.stringify(discovery)).not.toContain("secrets.");
     expect(JSON.stringify(discovery)).not.toContain("github.token");
