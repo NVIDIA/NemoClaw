@@ -137,11 +137,21 @@ function classifyHermesExcludedCapabilities(entry: ObservedExportRegistry): Expo
       "Hermes-specific authentication",
     ],
   ];
-  return excluded
-    .filter(([, value]) => hasEntries(value))
-    .map(([field, , capability]) =>
-      finding(field, "unsupported", "V1 export does not support " + capability + "."),
-    );
+  const present = excluded.filter(([, value]) => hasEntries(value));
+  if (entry.agent !== "hermes") {
+    return present.length > 0
+      ? [
+          finding(
+            "source.registry",
+            "unsupported",
+            "V1 export does not support stale agent-specific registry state.",
+          ),
+        ]
+      : [];
+  }
+  return present.map(([field, , capability]) =>
+    finding(field, "unsupported", "V1 export does not support " + capability + "."),
+  );
 }
 
 function classifyExcludedCapabilities(entry: ObservedExportRegistry): ExportFinding[] {

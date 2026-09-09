@@ -1368,6 +1368,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       "src/commands/config/export.ts",
       "src/lib/actions/config/",
       "src/lib/adapters/config/",
+      "src/lib/adapters/fs/config-export-file.ts",
       "src/lib/config/",
       "src/lib/domain/config/",
       "test/e2e/fixtures/hermes-config-export-live.ts",

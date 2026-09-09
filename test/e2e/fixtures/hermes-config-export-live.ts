@@ -113,16 +113,36 @@ export async function verifyHermesConfigExportLive(
     { ...commonOptions, artifactName: "phase-6-hermes-config-export-nemohermes" },
   );
 
+  const launchersSucceeded = nemoclaw.exitCode === 0 && nemohermes.exitCode === 0;
   const nemoclawRaw = nemoclaw.exitCode === 0 ? fs.readFileSync(nemoclawPath, "utf8") : "";
   const nemohermesRaw = nemohermes.exitCode === 0 ? fs.readFileSync(nemohermesPath, "utf8") : "";
+  const containsCredential = input.redactionValues.some(
+    (value) => value.length > 0 && (nemoclawRaw.includes(value) || nemohermesRaw.includes(value)),
+  );
+  if (!launchersSucceeded) {
+    const evidence: HermesConfigExportLiveEvidence = {
+      agent: undefined,
+      aliasesEquivalent: false,
+      checked: true,
+      credentialReferenceMatches: false,
+      credentialValuesOmitted: !containsCredential,
+      identityDriftPreventedPublication: false,
+      identityDriftReported: false,
+      immutableManagedImageMatches: false,
+      inferenceEndpointMatches: false,
+      launchersSucceeded,
+      policyMatches: false,
+      sandboxNameMatches: false,
+    };
+    await input.artifacts.writeJson("hermes-config-export-live-evidence.json", evidence);
+    return { checked: true, passed: false };
+  }
+
   const nemoclawDocument = validateNemoClawConfig(YAML.parse(nemoclawRaw));
   const nemohermesDocument = validateNemoClawConfig(YAML.parse(nemohermesRaw));
   const sandbox = nemoclawDocument.spec.sandboxes[0]!;
   const expectedPolicy = policy.ok ? YAML.parse(policy.value.document) : null;
   const expectedImage = entry.workload?.kind === "managed-image" ? entry.workload.reference : null;
-  const containsCredential = input.redactionValues.some(
-    (value) => value.length > 0 && (nemoclawRaw.includes(value) || nemohermesRaw.includes(value)),
-  );
 
   const nemoclawMismatchPath = path.join(exportDirectory, "nemoclaw-mismatch.yaml");
   const nemohermesMismatchPath = path.join(exportDirectory, "nemohermes-mismatch.yaml");
@@ -187,7 +207,7 @@ export async function verifyHermesConfigExportLive(
     immutableManagedImageMatches: sandbox.runtime.image.ref === expectedImage,
     inferenceEndpointMatches:
       nemoclawDocument.spec.inferenceProviders[0]?.endpoint === entry.endpointUrl,
-    launchersSucceeded: nemoclaw.exitCode === 0 && nemohermes.exitCode === 0,
+    launchersSucceeded,
     policyMatches: isDeepStrictEqual(sandbox.network.policy.explicit, expectedPolicy),
     sandboxNameMatches: sandbox.name === input.sandboxName,
   };

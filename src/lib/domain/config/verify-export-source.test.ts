@@ -366,6 +366,16 @@ describe("config export source verification (#10938)", () => {
     );
   });
 
+  it("rejects stale agent-specific state on an OpenClaw registry row (#11286)", () => {
+    expect(
+      findings(verify(snapshot({ registry: entry({ hermesToolGateways: ["browser"] }) }))),
+    ).toContainEqual({
+      category: "unsupported",
+      diagnostic: "V1 export does not support stale agent-specific registry state.",
+      field: "source.registry",
+    });
+  });
+
   it("rejects OpenClaw workload authority for a Hermes registry row (#11286)", () => {
     const result = verify(
       hermesSnapshot({ workload: managedWorkload(profileInput(), hermesImageRef) }),
