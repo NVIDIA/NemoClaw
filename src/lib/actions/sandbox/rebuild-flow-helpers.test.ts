@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
+import { restoreEnvBulk } from "../../../../test/helpers/env-test-helpers";
 import * as dockerImage from "../../adapters/docker/image";
 import * as agentDefs from "../../agent/defs";
 import * as agentOnboard from "../../agent/onboard";
@@ -15,6 +16,7 @@ import type { SandboxBaseImageResolutionMetadata } from "../../sandbox-base-imag
 import * as sandboxState from "../../state/sandbox";
 import * as userManagedFilesProbe from "../../state/user-managed-files-probe";
 import * as snapshotBackup from "./snapshot/backup-authority";
+import * as stoppedSandboxBackup from "./stopped-sandbox-backup";
 import {
   backupSandboxStateForRebuild,
   disposeRebuildAgentBaseImagePreflight,
@@ -65,20 +67,30 @@ function makeBail(): (msg: string, code?: number) => never {
 }
 
 describe("rebuild target gateway preflight", () => {
-  const priorGateway = process.env.OPENSHELL_GATEWAY;
+  const priorOpenShellEnv = {
+    OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY,
+    OPENSHELL_GATEWAY_ENDPOINT: process.env.OPENSHELL_GATEWAY_ENDPOINT,
+    OPENSHELL_LOCAL_TLS_DIR: process.env.OPENSHELL_LOCAL_TLS_DIR,
+    OPENSHELL_TOKEN: process.env.OPENSHELL_TOKEN,
+    OPENSHELL_WORKSPACE: process.env.OPENSHELL_WORKSPACE,
+  };
 
   afterEach(() => {
     vi.restoreAllMocks();
-    switch (priorGateway) {
-      case undefined:
-        delete process.env.OPENSHELL_GATEWAY;
-        break;
-      default:
-        process.env.OPENSHELL_GATEWAY = priorGateway;
-    }
+    restoreEnvBulk(priorOpenShellEnv);
   });
 
   it("health-checks and pins the sandbox's persisted gateway", async () => {
+    process.env.OPENSHELL_GATEWAY = "hostile-gateway";
+    process.env.OPENSHELL_GATEWAY_ENDPOINT = "https://hostile.invalid";
+    process.env.OPENSHELL_LOCAL_TLS_DIR = "/hostile/tls";
+    process.env.OPENSHELL_TOKEN = "hostile-token";
+    process.env.OPENSHELL_WORKSPACE = "hostile-workspace";
+    const runtimeSelection = {
+      gatewayName: "nemoclaw-19080",
+      localTlsDir: "/authority/tls",
+      workspace: "default",
+    };
     const recover = vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockResolvedValue({
       recovered: true,
       before: { state: "connected_other", status: "", gatewayInfo: "", activeGateway: null },
@@ -92,11 +104,54 @@ describe("rebuild target gateway preflight", () => {
         { name: "alpha", gatewayName: "nemoclaw-19080", gatewayPort: 19080 },
         () => undefined,
         makeBail(),
+        runtimeSelection,
+      ),
+    ).resolves.toBe(true);
+
+    expect(recover).toHaveBeenCalledWith({
+      gatewayName: "nemoclaw-19080",
+      runtimeSelection,
+    });
+    expect(process.env.OPENSHELL_GATEWAY).toBe("nemoclaw-19080");
+    expect(process.env.OPENSHELL_WORKSPACE).toBe("default");
+    expect(process.env.OPENSHELL_LOCAL_TLS_DIR).toBe("/authority/tls");
+    expect(process.env.OPENSHELL_GATEWAY_ENDPOINT).toBeUndefined();
+    expect(process.env.OPENSHELL_TOKEN).toBeUndefined();
+  });
+
+  it("keeps non-MCP ambient selectors while pinning the recorded gateway (#10514)", async () => {
+    process.env.OPENSHELL_GATEWAY = "hostile-gateway";
+    process.env.OPENSHELL_GATEWAY_ENDPOINT = "https://hostile.invalid";
+    process.env.OPENSHELL_LOCAL_TLS_DIR = "/hostile/tls";
+    process.env.OPENSHELL_TOKEN = "hostile-token";
+    process.env.OPENSHELL_WORKSPACE = "hostile-workspace";
+    const recover = vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockResolvedValue({
+      recovered: true,
+      before: { state: "connected_other", status: "", gatewayInfo: "", activeGateway: null },
+      after: {
+        state: "healthy_named",
+        status: "",
+        gatewayInfo: "",
+        activeGateway: "nemoclaw-19080",
+      },
+      attempted: true,
+    });
+
+    await expect(
+      ensureRebuildTargetGatewaySelected(
+        "alpha",
+        { name: "alpha", gatewayName: "nemoclaw-19080", gatewayPort: 19080 },
+        vi.fn(),
+        makeBail(),
       ),
     ).resolves.toBe(true);
 
     expect(recover).toHaveBeenCalledWith({ gatewayName: "nemoclaw-19080" });
     expect(process.env.OPENSHELL_GATEWAY).toBe("nemoclaw-19080");
+    expect(process.env.OPENSHELL_GATEWAY_ENDPOINT).toBe("https://hostile.invalid");
+    expect(process.env.OPENSHELL_LOCAL_TLS_DIR).toBe("/hostile/tls");
+    expect(process.env.OPENSHELL_TOKEN).toBe("hostile-token");
+    expect(process.env.OPENSHELL_WORKSPACE).toBe("hostile-workspace");
   });
 
   it("fails closed when the target gateway cannot become healthy", async () => {
@@ -164,30 +219,37 @@ describe("rebuild agent base image preflight", () => {
     };
   }
 
-  it("forces a repository-local build and returns its exact ref when no override exists", () => {
-    const imageRef = `nemoclaw-hermes-sandbox-base-local:image-${"a".repeat(64)}`;
-    const trustedLocalOverride = {
-      ref: imageRef,
-      provenance: `${"b".repeat(64)}.${"c".repeat(64)}`,
-    };
+  it("uses the pinned Hermes base when a legacy sandbox has no resolution hint (#10903)", () => {
+    const imageRef = `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:${"a".repeat(64)}`;
     const { ensureAgentBaseImage } = mockBaseImagePreflight(imageRef);
     ensureAgentBaseImage.mockReturnValue({
       imageTag: imageRef,
-      built: true,
-      trustedLocalOverride,
+      built: false,
     });
 
     const result = ensureRebuildAgentBaseImage("hermes", makeBail());
 
     expect(ensureAgentBaseImage).toHaveBeenCalledWith(expect.objectContaining({ name: "hermes" }), {
-      forceBaseImageRebuild: true,
+      allowLocalFallback: false,
+      forceBaseImageRebuild: false,
     });
     expect(result).toEqual({
       ok: true,
       imageRef,
       overrideEnvVar,
-      trustedLocalOverride,
     });
+  });
+
+  it("rejects a missing Hermes base when a legacy sandbox has no resolution hint (#10903)", () => {
+    const { ensureAgentBaseImage } = mockBaseImagePreflight("");
+    ensureAgentBaseImage.mockReturnValue({
+      imageTag: null,
+      built: false,
+    });
+
+    expect(() => ensureRebuildAgentBaseImage("hermes", makeBail())).toThrow(
+      "Hermes rebuild requires the release-pinned immutable base image",
+    );
   });
 
   it("hands a pinned NemoCUA image alias to the inner sandbox create (#9649)", () => {
@@ -339,12 +401,18 @@ describe("rebuild agent base image preflight", () => {
 
   it("retains a resolved platform digest for the immutable remote handoff (#7144)", () => {
     const platformRef = `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:${"a".repeat(64)}`;
-    const { pinAgentSandboxBaseImageRef } = mockBaseImagePreflight(platformRef);
+    const { ensureAgentBaseImage, pinAgentSandboxBaseImageRef } =
+      mockBaseImagePreflight(platformRef);
 
     const result = ensureRebuildAgentBaseImage("hermes", makeBail(), {
       resolutionHint: { key: "stale-base" } as never,
     });
 
+    expect(ensureAgentBaseImage).toHaveBeenCalledWith(expect.anything(), {
+      allowLocalFallback: false,
+      forceBaseImageRebuild: false,
+      resolutionHint: { key: "stale-base" },
+    });
     expect(pinAgentSandboxBaseImageRef).not.toHaveBeenCalled();
     expect(result).toEqual({
       ok: true,
@@ -405,7 +473,7 @@ describe("rebuild agent base image preflight", () => {
     }
   });
 
-  it("force-rebuilds instead of trusting fresh fallback metadata after a local tag moved", () => {
+  it("rejects a fresh local fallback after a stale Hermes hint (#11072)", () => {
     const sourceRef = "nemoclaw-hermes-sandbox-base-local:3ef2ca87";
     const imageId = `sha256:${"d".repeat(64)}`;
     const canonicalRef = `nemoclaw-hermes-sandbox-base-local:image-${"d".repeat(64)}`;
@@ -419,47 +487,32 @@ describe("rebuild agent base image preflight", () => {
       ...persistedHint,
       imageId,
     };
-    const forcedMetadata = {
-      ...freshFallbackMetadata,
-      ref: canonicalRef,
-    };
-    const forcedTrust = {
-      ref: canonicalRef,
-      provenance: `${"e".repeat(64)}.${"f".repeat(64)}`,
-    };
     const {
       bindLocalAgentBaseImageHandoffToResolution,
       ensureAgentBaseImage,
       pinAgentSandboxBaseImageRef,
     } = mockBaseImagePreflight(sourceRef);
-    ensureAgentBaseImage
-      .mockReturnValueOnce({
-        imageTag: sourceRef,
-        built: false,
-        resolutionMetadata: freshFallbackMetadata,
-      })
-      .mockReturnValueOnce({
-        imageTag: canonicalRef,
-        built: true,
-        resolutionMetadata: forcedMetadata,
-        trustedLocalOverride: forcedTrust,
-      });
+    ensureAgentBaseImage.mockReturnValue({
+      imageTag: sourceRef,
+      built: false,
+      resolutionMetadata: freshFallbackMetadata,
+    });
     pinAgentSandboxBaseImageRef.mockReturnValue(canonicalRef);
 
-    const result = ensureRebuildAgentBaseImage("hermes", makeBail(), {
-      resolutionHint: persistedHint,
-    });
+    expect(() =>
+      ensureRebuildAgentBaseImage("hermes", makeBail(), {
+        resolutionHint: persistedHint,
+      }),
+    ).toThrow("Hermes rebuild requires the release-pinned immutable base image");
 
     expect(bindLocalAgentBaseImageHandoffToResolution).not.toHaveBeenCalled();
-    expect(ensureAgentBaseImage).toHaveBeenCalledTimes(2);
-    expect(ensureAgentBaseImage).toHaveBeenNthCalledWith(2, expect.anything(), {
-      forceBaseImageRebuild: true,
+    expect(ensureAgentBaseImage).toHaveBeenCalledOnce();
+    expect(ensureAgentBaseImage).toHaveBeenCalledWith(expect.anything(), {
+      allowLocalFallback: false,
+      forceBaseImageRebuild: false,
+      resolutionHint: persistedHint,
     });
-    expect(result).toMatchObject({
-      imageRef: canonicalRef,
-      resolutionMetadata: forcedMetadata,
-      trustedLocalOverride: forcedTrust,
-    });
+    expect(pinAgentSandboxBaseImageRef).not.toHaveBeenCalled();
   });
 
   it("reuses the canonical forced-build metadata on the next offline rebuild", () => {
@@ -494,6 +547,7 @@ describe("rebuild agent base image preflight", () => {
 
     expect(ensureAgentBaseImage).toHaveBeenCalledOnce();
     expect(ensureAgentBaseImage).toHaveBeenCalledWith(expect.anything(), {
+      allowLocalFallback: false,
       forceBaseImageRebuild: false,
       resolutionHint: resolutionMetadata,
     });
@@ -645,7 +699,7 @@ describe("backupSandboxStateForRebuild failure safety", () => {
     vi.restoreAllMocks();
   });
 
-  it("aborts when backup fails completely", () => {
+  it("aborts when backup fails completely", async () => {
     backupSpy.mockReturnValue({
       success: false,
       backedUpDirs: [],
@@ -654,15 +708,15 @@ describe("backupSandboxStateForRebuild failure safety", () => {
       failedFiles: [],
       manifest: null,
     });
-    expect(() =>
+    await expect(
       backupSandboxStateForRebuild("alpha", makeSandboxEntry(), false, () => undefined, makeBail()),
-    ).toThrow("bail: Failed to back up sandbox state.");
+    ).rejects.toThrow("bail: Failed to back up sandbox state.");
 
     const errorLines = errorSpy.mock.calls.map((args: unknown[]) => String(args[0]));
     expect(errorLines.some((line: string) => line.includes("Aborting rebuild"))).toBe(true);
   });
 
-  it("aborts with an ownership hint when every state directory hit permission denied (#6972)", () => {
+  it("aborts with an ownership hint when every state directory hit permission denied (#6972)", async () => {
     // Mirrors the issue: a post-reboot ownership corruption left all state dirs
     // unreadable; only a few loose files backed up. Proceeding would destroy the
     // failed dirs on recreate.
@@ -684,9 +738,9 @@ describe("backupSandboxStateForRebuild failure safety", () => {
       manifest: null,
     });
 
-    expect(() =>
+    await expect(
       backupSandboxStateForRebuild("alpha", makeSandboxEntry(), false, () => undefined, makeBail()),
-    ).toThrow("bail: Failed to back up sandbox state.");
+    ).rejects.toThrow("bail: Failed to back up sandbox state.");
 
     const errorLines = errorSpy.mock.calls.map((args: unknown[]) => String(args[0]));
     expect(
@@ -706,7 +760,7 @@ describe("backupSandboxStateForRebuild failure safety", () => {
     expect(warnLines.some((line: string) => line.includes("Rebuild will continue"))).toBe(false);
   });
 
-  it("aborts with an unstable-mount hint when every dir was absent after extraction (#6972)", () => {
+  it("aborts with an unstable-mount hint when every dir was absent after extraction (#6972)", async () => {
     backupSpy.mockReturnValue({
       success: false,
       backedUpDirs: [],
@@ -722,9 +776,9 @@ describe("backupSandboxStateForRebuild failure safety", () => {
       manifest: null,
     });
 
-    expect(() =>
+    await expect(
       backupSandboxStateForRebuild("alpha", makeSandboxEntry(), false, () => undefined, makeBail()),
-    ).toThrow("bail: Failed to back up sandbox state.");
+    ).rejects.toThrow("bail: Failed to back up sandbox state.");
 
     const errorLines = errorSpy.mock.calls.map((args: unknown[]) => String(args[0]));
     expect(
@@ -735,7 +789,7 @@ describe("backupSandboxStateForRebuild failure safety", () => {
     );
   });
 
-  it("aborts before replacement when a required state file backup fails (#7144)", () => {
+  it("aborts before replacement when a required state file backup fails (#7144)", async () => {
     backupSpy.mockReturnValue({
       success: false,
       backedUpDirs: ["memories", "sessions"],
@@ -745,9 +799,9 @@ describe("backupSandboxStateForRebuild failure safety", () => {
       manifest: makeBackupResult().manifest,
     });
 
-    expect(() =>
+    await expect(
       backupSandboxStateForRebuild("alpha", makeSandboxEntry(), false, () => undefined, makeBail()),
-    ).toThrow("bail: Failed to back up sandbox state.");
+    ).rejects.toThrow("bail: Failed to back up sandbox state.");
 
     const errorLines = errorSpy.mock.calls.map((args: unknown[]) => String(args[0]));
     expect(errorLines.some((line: string) => line.includes("Failed files: kanban.db"))).toBe(true);
@@ -755,7 +809,7 @@ describe("backupSandboxStateForRebuild failure safety", () => {
     expect(warnLines.some((line: string) => line.includes("Rebuild will continue"))).toBe(false);
   });
 
-  it("aborts when one state directory fails after other state was preserved", () => {
+  it("aborts when one state directory fails after other state was preserved", async () => {
     backupSpy.mockReturnValue({
       success: false,
       backedUpDirs: ["memories", "sessions"],
@@ -765,18 +819,12 @@ describe("backupSandboxStateForRebuild failure safety", () => {
       manifest: makeBackupResult().manifest,
     });
 
-    expect(() =>
-      backupSandboxStateForRebuild(
-        "alpha",
-        makeSandboxEntry(),
-        false,
-        () => undefined,
-        makeBail(),
-      ),
-    ).toThrow("bail: Failed to back up sandbox state.");
+    await expect(
+      backupSandboxStateForRebuild("alpha", makeSandboxEntry(), false, () => undefined, makeBail()),
+    ).rejects.toThrow("bail: Failed to back up sandbox state.");
   });
 
-  it("aborts before rebuild when the workspace backup fails (#10639)", () => {
+  it("aborts before rebuild when the workspace backup fails (#10639)", async () => {
     backupSpy.mockReturnValue({
       success: false,
       backedUpDirs: ["extensions"],
@@ -786,15 +834,9 @@ describe("backupSandboxStateForRebuild failure safety", () => {
       manifest: makeBackupResult().manifest,
     });
 
-    expect(() =>
-      backupSandboxStateForRebuild(
-        "alpha",
-        makeSandboxEntry(),
-        false,
-        () => undefined,
-        makeBail(),
-      ),
-    ).toThrow("bail: Failed to back up sandbox state.");
+    await expect(
+      backupSandboxStateForRebuild("alpha", makeSandboxEntry(), false, () => undefined, makeBail()),
+    ).rejects.toThrow("bail: Failed to back up sandbox state.");
 
     const errorLines = errorSpy.mock.calls.map((args: unknown[]) => String(args[0]));
     expect(errorLines.some((line: string) => line.includes("workspace"))).toBe(true);
@@ -844,7 +886,7 @@ describe("warnUnpreservedUserManagedFiles", () => {
     warnUnpreservedUserManagedFiles("alpha", () => undefined);
 
     expect(probeSpy).toHaveBeenCalledOnce();
-    expect(probeSpy).toHaveBeenCalledWith("alpha");
+    expect(probeSpy).toHaveBeenCalledWith("alpha", undefined);
 
     const warnLines = warnSpy.mock.calls.map((args: unknown[]) => String(args[0]));
     expect(
@@ -879,8 +921,8 @@ describe("warnUnpreservedUserManagedFiles", () => {
     expect(warnLines.some((line: string) => line.includes("will not be preserved"))).toBe(false);
   });
 
-  it("skips probe when staleRecovery short-circuits the backup", () => {
-    const result = backupSandboxStateForRebuild(
+  it("skips probe when staleRecovery short-circuits the backup", async () => {
+    const result = await backupSandboxStateForRebuild(
       "alpha",
       makeSandboxEntry(),
       true,
@@ -893,8 +935,8 @@ describe("warnUnpreservedUserManagedFiles", () => {
     expect(probeSpy).not.toHaveBeenCalled();
   });
 
-  it("does not probe during backup before managed MCP adapter entries are scrubbed", () => {
-    const result = backupSandboxStateForRebuild(
+  it("does not probe during backup before managed MCP adapter entries are scrubbed", async () => {
+    const result = await backupSandboxStateForRebuild(
       "alpha",
       makeSandboxEntry(),
       false,
@@ -926,7 +968,7 @@ describe("warnUnpreservedUserManagedFiles", () => {
     expect(errorSpy).not.toHaveBeenCalled();
   });
 
-  it("surfaces the backup failure reason before aborting", () => {
+  it("surfaces the backup failure reason before aborting", async () => {
     backupSpy.mockReturnValue({
       ...makeBackupResult(),
       success: false,
@@ -937,11 +979,184 @@ describe("warnUnpreservedUserManagedFiles", () => {
       error: "Pre-backup audit rejected an unsafe symlink",
     });
 
-    expect(() =>
+    await expect(
       backupSandboxStateForRebuild("alpha", makeSandboxEntry(), false, () => undefined, makeBail()),
-    ).toThrow("bail: Failed to back up sandbox state.");
+    ).rejects.toThrow("bail: Failed to back up sandbox state.");
 
     const errorLines = errorSpy.mock.calls.map((args: unknown[]) => String(args[0]));
     expect(errorLines).toContain("  Reason: Pre-backup audit rejected an unsafe symlink");
+  });
+});
+
+describe("backupSandboxStateForRebuild stopped-container recovery (#11137)", () => {
+  let backupSpy: MockInstance;
+  let startSpy: MockInstance;
+  let backupStartedSpy: MockInstance;
+  let returnStoppedSpy: MockInstance;
+
+  beforeEach(() => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    backupSpy = vi.spyOn(snapshotBackup, "backupSandboxStateWithManagedAuthority");
+    startSpy = vi.spyOn(stoppedSandboxBackup, "startStoppedSandboxContainerForBackup");
+    backupStartedSpy = vi.spyOn(stoppedSandboxBackup, "backupStartedSandboxState");
+    returnStoppedSpy = vi.spyOn(stoppedSandboxBackup, "returnSandboxContainerToStopped");
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const startedForBackup = { containerName: "openshell-alpha", runtimeProviderId: "docker" };
+
+  it("recovers by starting the killed container, backing up, then returning it to stopped", async () => {
+    backupSpy.mockReturnValue({
+      success: false,
+      backedUpDirs: [],
+      backedUpFiles: [],
+      failedDirs: [".state"],
+      failedFiles: [],
+      manifest: null,
+      unreachable: true,
+    });
+    startSpy.mockReturnValue(startedForBackup);
+    backupStartedSpy.mockResolvedValue(makeBackupResult());
+    returnStoppedSpy.mockReturnValue(true);
+
+    const result = await backupSandboxStateForRebuild(
+      "alpha",
+      makeSandboxEntry(),
+      false,
+      () => undefined,
+      makeBail(),
+    );
+
+    expect(result).toEqual(makeBackupResult().manifest);
+    expect(startSpy).toHaveBeenCalledWith("alpha");
+    expect(backupStartedSpy).toHaveBeenCalledWith("alpha");
+    expect(returnStoppedSpy).toHaveBeenCalledWith(startedForBackup);
+  });
+
+  it("does not attempt recovery for a non-transport backup failure", async () => {
+    backupSpy.mockReturnValue({
+      success: false,
+      backedUpDirs: [],
+      backedUpFiles: [],
+      failedDirs: [".state"],
+      failedFiles: [],
+      manifest: null,
+      unreachable: false,
+    });
+
+    await expect(
+      backupSandboxStateForRebuild("alpha", makeSandboxEntry(), false, () => undefined, makeBail()),
+    ).rejects.toThrow("bail: Failed to back up sandbox state.");
+    expect(startSpy).not.toHaveBeenCalled();
+  });
+
+  it("falls through to the original abort when no stopped container can be found", async () => {
+    backupSpy.mockReturnValue({
+      success: false,
+      backedUpDirs: [],
+      backedUpFiles: [],
+      failedDirs: [".state"],
+      failedFiles: [],
+      manifest: null,
+      unreachable: true,
+    });
+    startSpy.mockReturnValue(null);
+
+    await expect(
+      backupSandboxStateForRebuild("alpha", makeSandboxEntry(), false, () => undefined, makeBail()),
+    ).rejects.toThrow("bail: Failed to back up sandbox state.");
+    expect(backupStartedSpy).not.toHaveBeenCalled();
+  });
+
+  it("aborts and still returns the container to stopped when the retried backup also fails", async () => {
+    backupSpy.mockReturnValue({
+      success: false,
+      backedUpDirs: [],
+      backedUpFiles: [],
+      failedDirs: [".state"],
+      failedFiles: [],
+      manifest: null,
+      unreachable: true,
+    });
+    startSpy.mockReturnValue(startedForBackup);
+    backupStartedSpy.mockResolvedValue({
+      success: false,
+      backedUpDirs: [],
+      backedUpFiles: [],
+      failedDirs: [".state"],
+      failedFiles: [],
+      manifest: null,
+      unreachable: true,
+    });
+    returnStoppedSpy.mockReturnValue(true);
+
+    await expect(
+      backupSandboxStateForRebuild("alpha", makeSandboxEntry(), false, () => undefined, makeBail()),
+    ).rejects.toThrow("bail: Failed to back up sandbox state.");
+    expect(returnStoppedSpy).toHaveBeenCalledWith(startedForBackup);
+  });
+
+  it("reports the still-running container when the retry and the return to stopped both fail", async () => {
+    backupSpy.mockReturnValue({
+      success: false,
+      backedUpDirs: [],
+      backedUpFiles: [],
+      failedDirs: [".state"],
+      failedFiles: [],
+      manifest: null,
+      unreachable: true,
+    });
+    startSpy.mockReturnValue(startedForBackup);
+    backupStartedSpy.mockResolvedValue({
+      success: false,
+      backedUpDirs: [],
+      backedUpFiles: [],
+      failedDirs: [".state"],
+      failedFiles: [],
+      manifest: null,
+      unreachable: true,
+    });
+    returnStoppedSpy.mockReturnValue(false);
+
+    await expect(
+      backupSandboxStateForRebuild("alpha", makeSandboxEntry(), false, () => undefined, makeBail()),
+    ).rejects.toThrow(
+      "bail: Could not return the sandbox's recovered container to its stopped state.",
+    );
+    const reported = vi.mocked(console.error).mock.calls.flat().join("\n");
+    expect(reported).toContain("openshell-alpha");
+    expect(reported).toContain("may still be running");
+    expect(reported).toContain("The retried backup also failed");
+    // The ordinary backup-failure diagnostic must not run: it would imply the
+    // sandbox was left in its original stopped state.
+    expect(reported).not.toContain("Failed to back up sandbox state.");
+  });
+
+  it("aborts a successful recovered backup when the container cannot return to stopped", async () => {
+    backupSpy.mockReturnValue({
+      success: false,
+      backedUpDirs: [],
+      backedUpFiles: [],
+      failedDirs: [".state"],
+      failedFiles: [],
+      manifest: null,
+      unreachable: true,
+    });
+    startSpy.mockReturnValue(startedForBackup);
+    backupStartedSpy.mockResolvedValue(makeBackupResult());
+    returnStoppedSpy.mockReturnValue(false);
+
+    await expect(
+      backupSandboxStateForRebuild("alpha", makeSandboxEntry(), false, () => undefined, makeBail()),
+    ).rejects.toThrow(
+      "bail: Could not return the sandbox's recovered container to its stopped state.",
+    );
+    expect(returnStoppedSpy).toHaveBeenCalledWith(startedForBackup);
   });
 });

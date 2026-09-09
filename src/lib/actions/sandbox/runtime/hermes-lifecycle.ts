@@ -56,6 +56,12 @@ export function checkAndRecoverSandboxProcesses(
   return processRecovery.checkAndRecoverSandboxProcesses(...args);
 }
 
+export function executeGatewaySupervisorAction(
+  ...args: Parameters<typeof processRecovery.executeGatewaySupervisorAction>
+) {
+  return processRecovery.executeGatewaySupervisorAction(...args);
+}
+
 export function executePrivilegedSandboxCommand(
   ...args: Parameters<typeof processRecovery.executePrivilegedSandboxCommand>
 ) {

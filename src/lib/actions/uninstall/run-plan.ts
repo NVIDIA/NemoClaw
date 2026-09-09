@@ -72,7 +72,6 @@ import {
   stopHostGatewayProcesses,
 } from "../../onboard/host-gateway-process";
 import { isModelRouterCommandLineForPort } from "../../onboard/model-router-process";
-import { stopStaleDashboardListeners } from "../../onboard/stale-gateway-cleanup";
 import {
   assertGatewayStatePathSafe,
   GATEWAYS_SUBDIR,
@@ -92,7 +91,6 @@ import {
   type ManagedHermesStateVolumeContext,
   removeManagedHermesStateVolumes,
   requiresManagedHermesStateVolume,
-  stopHermesForwardWatchers,
 } from "./hermes-uninstall-cleanup";
 import {
   stopBedrockRuntimeAdapter,
@@ -3325,19 +3323,6 @@ function executePreparedPlan(
         if (options.keepOpenShell || portableRuntimeCleanup) {
           runtime.log(serviceKeepMessage);
         } else {
-          stopMatchingPids(
-            `openshell.*forward.*${runtime.env.NEMOCLAW_DASHBOARD_PORT || "18789"}`,
-            runtime,
-            "local OpenShell forward processes",
-          );
-          stopStaleDashboardListeners({
-            run: runtime.run,
-            kill: runtime.kill,
-            env: runtime.env,
-            log: runtime.log,
-            warn: runtime.warn,
-            commandExists: runtime.commandExists,
-          });
           stopOrphanedOpenShell(runtime);
           if (!externallySupervised && openShellCleanup !== "reservation-removed") {
             stopHostGatewayProcessesForUninstall(
@@ -3358,7 +3343,6 @@ function executePreparedPlan(
       } else {
         runtime.log("Sibling gateways remain; kept shared helper services and sibling forwards.");
       }
-      if (!stopHermesForwardWatchers(paths.nemoclawStateDir, runtime)) return { ok: false };
       if (externallySupervised) {
         runtime.log("Kept the externally supervised OpenShell gateway process running.");
       }

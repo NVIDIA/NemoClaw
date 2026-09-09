@@ -540,10 +540,11 @@ COPY agents/openclaw/mcporter-runtime/package.json /usr/local/lib/nemoclaw/mcpor
 COPY agents/openclaw/mcporter-runtime/package-lock.json /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json
 COPY agents/openclaw/wechat-runtime/package.json /usr/local/lib/nemoclaw/wechat-runtime/package.json
 COPY agents/openclaw/wechat-runtime/package-lock.json /usr/local/lib/nemoclaw/wechat-runtime/package-lock.json
-COPY ci/npm-audit-exceptions.json /scripts/npm-audit-exceptions.json
+COPY ci/npm-audit-exceptions.json ci/reviewed-npm-audit.json /scripts/
 COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
 COPY scripts/lib/bundled-npm-package.mts /scripts/lib/bundled-npm-package.mts
 COPY scripts/lib/reviewed-npm-audit.mts /scripts/lib/reviewed-npm-audit.mts
+COPY scripts/lib/npm-audit-receipt.mts /scripts/lib/npm-audit-receipt.mts
 COPY scripts/lib/openclaw-npm-remediation.mts /scripts/lib/openclaw-npm-remediation.mts
 COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts
 COPY scripts/lib/patch-bundled-npm-ip-address.mts /scripts/lib/patch-bundled-npm-ip-address.mts
@@ -578,7 +579,6 @@ COPY scripts/lib/entrypoint-env-wrapper.sh /usr/local/lib/nemoclaw/entrypoint-en
 COPY scripts/lib/gateway-supervisor.sh /usr/local/lib/nemoclaw/gateway-supervisor.sh
 COPY scripts/lib/sandbox-rlimits.sh /usr/local/lib/nemoclaw/sandbox-rlimits.sh
 COPY scripts/lib/openclaw_device_approval_policy.py /usr/local/lib/nemoclaw/openclaw_device_approval_policy.py
-COPY scripts/lib/clean_runtime_shell_env_shim.py /usr/local/lib/nemoclaw/clean_runtime_shell_env_shim.py
 COPY scripts/lib/normalize_mutable_config_perms.py /usr/local/lib/nemoclaw/normalize_mutable_config_perms.py
 COPY scripts/lib/refresh-openclaw-wechat-placeholder.py /usr/local/lib/nemoclaw/refresh-openclaw-wechat-placeholder.py
 COPY scripts/openclaw-config-guard.py /usr/local/lib/nemoclaw/openclaw-config-guard.py
@@ -594,7 +594,7 @@ COPY scripts/codex-acp-wrapper.sh /usr/local/bin/nemoclaw-codex-acp
 COPY scripts/generate-openclaw-config.mts /scripts/generate-openclaw-config.mts
 COPY scripts/validate-openclaw-tool-search.mts /scripts/validate-openclaw-tool-search.mts
 COPY --from=managed-startup-runtime-builder /out/managed-startup-image-runtime.cjs /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs
-COPY src/lib/tool-disclosure.ts /src/lib/tool-disclosure.ts
+COPY src/lib/extra-agents-validation.ts src/lib/tool-disclosure.ts /src/lib/
 COPY nemoclaw-blueprint/openclaw-plugins/ /usr/local/share/nemoclaw/openclaw-plugins/
 COPY --from=mcp-tool-discovery-runtime /opt/mcp-tool-discovery-runtime/dist/ /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/
 
@@ -613,8 +613,6 @@ ENV AWS_EC2_METADATA_DISABLED=true
 # the same Node image, avoiding a redundant 125 MB layer in that local-only case.
 COPY --from=builder /usr/local/bin/node /usr/local/bin/node
 
-# Dependency review evidence for this runtime pin lives in
-# internal/security-reviews/openclaw-2026.7.1-dependency-review.md.
 ARG OPENCLAW_VERSION=2026.7.1
 ARG OPENCLAW_2026_7_1_INTEGRITY=sha512-ge/Xss99CHAjPL/ikmH/UFoiOrjcxDB4sW3y9mhyCD+dYW3wzV7TKbAVdkrXFgAG2d2BjpJofP97zUZ+umxo8g==
 ARG OPENCLAW_2026_7_1_TARBALL=https://registry.npmjs.org/openclaw/-/openclaw-2026.7.1.tgz
@@ -635,6 +633,7 @@ ARG OPENCLAW_2026_4_24_TARBALL=https://registry.npmjs.org/openclaw/-/openclaw-20
 ARG MCPORTER_VERSION=0.7.3
 ARG MCPORTER_0_7_3_INTEGRITY=sha512-egoPVYqTnWb3NjRIxo+xc8OrAI0dlPrJm9pAiZx0pImuNIV5rKhGtTnIfH/Y1ldGPVu74ibj3KR5c9U/QSdQFA==
 ARG MCPORTER_0_7_3_TARBALL=https://registry.npmjs.org/mcporter/-/mcporter-0.7.3.tgz
+ARG NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256=
 
 # A cross-stage root copy is accepted by Docker's legacy builder and creates one
 # final-image layer while preserving metadata on existing parent directories.
@@ -807,45 +806,21 @@ RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts \
         /usr/local/lib/nemoclaw/verify-wechat-runtime-lock.mts
 
-# Pre-install the codex-acp package so the embedded ACPx runtime can
-# call the local binary instead of `npx @zed-industries/codex-acp`.
-#
-# The sandbox's L7 proxy denies @zed-industries/* package URLs
-# (403 policy_denied), and npm still refreshes registry metadata for
-# versioned npx package specs even when the package is globally installed.
-# Installing the binary at build time and configuring ACPx to use it
-# directly keeps TC-SBX-02 off the runtime npm path.
-# The architecture-selected installer stage consumes checksum-addressed local
-# archives with the network disabled, verifies their committed SRI values, and
-# installs both the launcher and its native package together.
-#
+# Install SRI-verified ACP offline; runtime registry access is blocked.
 # hadolint ignore=DL3059,DL4006,DL3016
 COPY --from=codex-acp-runtime /usr/local/lib/node_modules/@zed-industries/ /usr/local/lib/node_modules/@zed-industries/
 COPY --from=codex-acp-runtime /usr/local/bin/codex-acp /usr/local/bin/codex-acp
 RUN command -v codex-acp >/dev/null
 
-# Upgrade OpenClaw if the base image is stale.
-# Reuse pinned OpenClaw and locked-mcporter base installs only from a published
-# NemoClaw base whose package provenance marker matches this build target;
-# otherwise reinstall both.
-#
-# The GHCR base image (sandbox-base:latest) may lag behind the version pinned in
-# Dockerfile.base, and legacy/custom bases may report the target version without
-# proving which archive and lifecycle produced it. The marker records package
-# and advisory-audit metadata, not trusted-CI signature attestation. Only a
-# digest-pinned base from the official GHCR publication path supplies that
-# independent gate. Mutable tags and local bases cannot authorize reuse even
-# when their marker matches; the existing version checks reinstall the locked
-# runtimes or reject a newer base. The final image consumes the marker before
-# applying NemoClaw patches so a custom base cannot masquerade as a pristine
-# published base.
-#
-# OPENCLAW_VERSION is the NemoClaw runtime build target. It must be at least the
-# blueprint minimum, which also supports the legacy direct-blueprint image path.
-# Reviewed-archive invariants (#5896): registry SRI, packed-byte SRI, contained
-# basename in a fresh directory, local-archive-only install, and cleanup.
-# hadolint ignore=DL3059,DL4006,DL3016
-RUN --network=default set -eu; \
+# Upgrade stale bases. Reuse is restricted to matching provenance from an
+# official digest-pinned base; mutable/custom bases reinstall the locked graphs.
+# OPENCLAW_VERSION is the NemoClaw runtime build target and must meet the blueprint minimum.
+# Reviewed archives retain registry and packed-byte SRI, basename, local-only install, and cleanup gates.
+# hadolint ignore=DL3059,DL4006,DL3016,SC2015
+RUN --network=default \
+    --mount=type=secret,id=nemoclaw-mcporter-audit-receipt,required=false \
+    --mount=type=secret,id=nemoclaw-mcporter-audit-raw-report,required=false \
+    set -eu; \
     if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
         export CURL_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem; \
         export NODE_EXTRA_CA_CERTS=/usr/local/share/nemoclaw/corporate-ca.pem; \
@@ -1007,6 +982,21 @@ RUN --network=default set -eu; \
             'const { StreamableHTTPServerTransport } = await import("file:///usr/local/lib/nemoclaw/mcporter-runtime/node_modules/@modelcontextprotocol/sdk/dist/esm/server/streamableHttp.js"); const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined }); await transport.close();'; \
         ln -s /usr/local/lib/nemoclaw/mcporter-runtime/node_modules/.bin/mcporter /usr/local/bin/mcporter; \
         test "$(mcporter --version)" = "$MCPORTER_VERSION"; \
+    fi; \
+    MCPORTER_RECEIPT=/run/secrets/nemoclaw-mcporter-audit-receipt; \
+    MCPORTER_RAW_REPORT=/run/secrets/nemoclaw-mcporter-audit-raw-report; \
+    if [ -f "$MCPORTER_RECEIPT" ] || [ -f "$MCPORTER_RAW_REPORT" ] || [ -n "${NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256:-}" ]; then \
+        [ -f "$MCPORTER_RECEIPT" ] && [ -f "$MCPORTER_RAW_REPORT" ] && printf %s "$NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256" | grep -qxE '[0-9a-f]{64}' \
+            || { echo "ERROR: cached mcporter audit requires paired receipt, raw report, and receipt SHA-256" >&2; exit 1; }; \
+        printf '%s  %s\n' "$NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256" "$MCPORTER_RECEIPT" | sha256sum -c -; \
+node --experimental-strip-types /scripts/lib/npm-audit-receipt.mts \
+--receipt "$MCPORTER_RECEIPT" \
+--package-json /usr/local/lib/nemoclaw/mcporter-runtime/package.json \
+--package-lock /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json \
+--raw-report "$MCPORTER_RAW_REPORT" --exceptions /scripts/npm-audit-exceptions.json \
+--graph mcporter-runtime --audit-config /scripts/reviewed-npm-audit.json \
+--registry https://registry.yarnpkg.com --threshold high --legacy-npmjs true; \
+    else \
         node --experimental-strip-types /scripts/lib/reviewed-npm-audit.mts \
             --directory /usr/local/lib/nemoclaw/mcporter-runtime \
             --exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --threshold high; \
@@ -1503,17 +1493,15 @@ RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-share
 RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
     && cp -r /opt/nemoclaw-blueprint/* /sandbox/.nemoclaw/blueprints/0.1.0/
 
-# Copy only the configuration inputs needed by the expensive non-messaging
-# offline plugin install. The full candidate runtime payload is copied after
-# all offline installs so unrelated runtime changes retain these cached layers.
+# Copy configuration inputs before the cached non-messaging plugin install.
 COPY scripts/generate-openclaw-config.mts /scripts/generate-openclaw-config.mts
 COPY scripts/validate-openclaw-tool-search.mts /scripts/validate-openclaw-tool-search.mts
-COPY src/lib/tool-disclosure.ts /src/lib/tool-disclosure.ts
+COPY src/lib/extra-agents-validation.ts src/lib/tool-disclosure.ts /src/lib/
 COPY nemoclaw-blueprint/openclaw-plugins/ /usr/local/share/nemoclaw/openclaw-plugins/
 
 RUN chmod 755 /scripts/generate-openclaw-config.mts \
-        /scripts/validate-openclaw-tool-search.mts \
-    && chmod 444 /src/lib/tool-disclosure.ts \
+        /scripts/validate-openclaw-tool-search.mts /src /src/lib \
+    && chmod 444 /src/lib/*.ts \
     && chmod 755 /usr/local/share/nemoclaw \
         /usr/local/share/nemoclaw/openclaw-plugins \
     && find /usr/local/share/nemoclaw/openclaw-plugins -type d -exec chmod 755 {} + \
@@ -1670,7 +1658,9 @@ RUN case "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" in \
     && command -v setpriv >/dev/null 2>&1
 
 WORKDIR /sandbox
-RUN test "$(id -u sandbox):$(id -g sandbox):$(pwd)" = "998:998:/sandbox"
+RUN test "$(id -u sandbox):$(id -g sandbox):$(pwd)" = "998:998:/sandbox" \
+    && chown sandbox:sandbox /sandbox/.bashrc /sandbox/.profile \
+    && chmod 644 /sandbox/.bashrc /sandbox/.profile
 USER sandbox
 
 # Write openclaw.json with gateway config but WITHOUT the real auth token.
@@ -1908,7 +1898,7 @@ RUN managed_runtime_assertion_failed() { \
     fi; \
     discovery_contract="$(node /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/mcp-tool-discovery.mjs)" \
       || managed_image_command_failed mcp-tool-discovery-bundle-execution "$?"; \
-    node -e 'const expected = { protocol: 1, ok: false, detail: "tool discovery received invalid runtime arguments" }; const standaloneSecretPatterns = [/(?:nvapi-|nvcf-|gh[pousr]_|sk-proj-|sk-ant-|hf_|glpat-|gsk_|pypi-|tvly-)[A-Za-z0-9_-]{10,}/gu, /github_pat_[A-Za-z0-9_]{30,}/gu, /sk-[A-Za-z0-9_-]{20,}/gu, /(?:xox[bpas]|xapp)-[A-Za-z0-9-]{10,}/gu, /A(?:K|S)IA[A-Z0-9]{16}/gu, /\bbot\d{8,10}:[A-Za-z0-9_-]{35}\b/gu, /\b\d{8,10}:[A-Za-z0-9_-]{35}\b/gu, /\b[A-Za-z0-9]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}\b/gu, /lsv2_(?:pt|sk)_[A-Za-z0-9]{10,}(?:_[A-Za-z0-9]+)*/gu, /\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{10,}\b/gu, /\b[A-Za-z0-9_=-]{32,}\b/gu]; const redactContextSecrets = (value) => value.replace(/\b(?:Bearer|Basic)\s+\S+/giu, "<REDACTED>").replace(/((?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}_(?:KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)|(?:X[-_])?API[-_]KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)["\x27]?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["\x27]?)[^\s"\x27]+/giu, (_match, prefix) => prefix + "<REDACTED>").replace(/((?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}(?:Token|Secret|Credential)|[A-Za-z0-9]{0,128}(?:[Aa]ccess|[Rr]efresh|[Cc]lient|[Bb]earer|[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|[Ss]ession|[Bb]ot|[Aa]pp|[Rr]esolved)Key|[A-Za-z0-9]{1,128}(?:Password|Passwd|Pass))["\x27]?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["\x27]?)[^\s"\x27]+/gu, (_match, prefix) => prefix + "<REDACTED>").replace(/((?:^|[^A-Za-z0-9])KEY["\x27]?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["\x27]?)[^\s"\x27]+/gu, (_match, prefix) => prefix + "<REDACTED>"); const sanitize = (value) => { if (value === undefined) return "<missing>"; if (value === null || typeof value === "boolean" || typeof value === "number") return value; if (typeof value !== "string") return "<" + (Array.isArray(value) ? "array" : typeof value) + ">"; let printable = value.replace(/-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----[\s\S]*/gu, "<REDACTED>").replace(/[^\x20-\x7e]/gu, "?"); for (const pattern of standaloneSecretPatterns) printable = printable.replace(pattern, "<REDACTED>"); printable = redactContextSecrets(printable); return printable.length <= 240 ? printable : printable.slice(0, 237) + "..."; }; let result; let parsed = true; try { result = JSON.parse(process.argv[1]); } catch { parsed = false; } const record = parsed && result !== null && typeof result === "object" && !Array.isArray(result) ? result : undefined; if (record && record.protocol === expected.protocol && record.ok === expected.ok && record.detail === expected.detail) process.exit(0); const actual = record ? { protocol: sanitize(record.protocol), ok: sanitize(record.ok), detail: sanitize(record.detail) } : parsed ? { type: result === null ? "null" : Array.isArray(result) ? "array" : typeof result, value: sanitize(result) } : { type: "invalid-json", preview: sanitize(process.argv[1]) }; console.error("ERROR: managed image assertion failed: mcp-tool-discovery-json-contract actual=%s expected=%s", JSON.stringify(actual), JSON.stringify(expected)); process.exit(1);' "$discovery_contract" \
+    node -e 'const expected={protocol:2,ok:false,count:0,tools:[],truncated:false,detail:"tool discovery received invalid runtime arguments",failedStage:"preflight",failureClass:"precondition"}; const secretPatterns = [/(?:nvapi-|nvcf-|gh[pousr]_|sk-proj-|sk-ant-|hf_|glpat-|gsk_|pypi-|tvly-)[A-Za-z0-9_-]{10,}/gu, /github_pat_[A-Za-z0-9_]{30,}/gu, /sk-[A-Za-z0-9_-]{20,}/gu, /(?:xox[bpas]|xapp)-[A-Za-z0-9-]{10,}/gu, /A(?:K|S)IA[A-Z0-9]{16}/gu, /\bbot\d{8,10}:[A-Za-z0-9_-]{35}\b/gu, /\b\d{8,10}:[A-Za-z0-9_-]{35}\b/gu, /\b[A-Za-z0-9]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}\b/gu, /lsv2_(?:pt|sk)_[A-Za-z0-9]{10,}(?:_[A-Za-z0-9]+)*/gu, /\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{10,}\b/gu, /\b[A-Za-z0-9_=-]{32,}\b/gu]; const redact = (value) => value.replace(/\b(?:Bearer|Basic)\s+\S+/giu, "<REDACTED>").replace(/((?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}_(?:KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)|(?:X[-_])?API[-_]KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)["\x27]?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["\x27]?)[^\s"\x27]+/giu, (_match, prefix) => prefix + "<REDACTED>").replace(/((?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}(?:Token|Secret|Credential)|[A-Za-z0-9]{0,128}(?:[Aa]ccess|[Rr]efresh|[Cc]lient|[Bb]earer|[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|[Ss]ession|[Bb]ot|[Aa]pp|[Rr]esolved)Key|[A-Za-z0-9]{1,128}(?:Password|Passwd|Pass))["\x27]?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["\x27]?)[^\s"\x27]+/gu, (_match, prefix) => prefix + "<REDACTED>").replace(/((?:^|[^A-Za-z0-9])KEY["\x27]?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["\x27]?)[^\s"\x27]+/gu, (_match, prefix) => prefix + "<REDACTED>"); const sanitize = (value) => { if (value === undefined) return "<missing>"; if (value === null || typeof value === "boolean" || typeof value === "number") return value; if (typeof value !== "string") return "<" + (Array.isArray(value) ? "array" : typeof value) + ">"; let text = value.replace(/-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----[\s\S]*/gu, "<REDACTED>").replace(/[^\x20-\x7e]/gu, "?"); for (const pattern of secretPatterns) text = text.replace(pattern, "<REDACTED>"); text = redact(text); return text.length <= 240 ? text : text.slice(0, 237) + "..."; }; let result; let parsed = true; try { result = JSON.parse(process.argv[1]); } catch { parsed = false; } const record = parsed && result !== null && typeof result === "object" && !Array.isArray(result) ? result : undefined; if(record&&Object.keys(record).length===8&&Object.keys(expected).every(k=>k==="tools"?Array.isArray(record[k])&&!record[k].length:record[k]===expected[k]))process.exit(0); const actual = record ? Object.fromEntries(Object.keys(expected).map(k=>[k,sanitize(record[k])])) : parsed ? { type: result === null ? "null" : Array.isArray(result) ? "array" : typeof result, value: sanitize(result) } : { type: "invalid-json", preview: sanitize(process.argv[1]) }; console.error("ERROR: managed image assertion failed: mcp-tool-discovery-json-contract actual=%s expected=%s", JSON.stringify(actual), JSON.stringify(expected)); process.exit(1);' "$discovery_contract" \
       || exit 1; \
     discovery_unsafe="$(find -L /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime \( ! -user root -o -perm /022 \) -print -quit)" \
       || managed_image_command_failed mcp-tool-discovery-tree-find-execution "$?"; \
@@ -1932,8 +1922,8 @@ RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
         /usr/local/bin/nemoclaw-managed-startup-hold \
         /usr/local/lib/nemoclaw/sandbox-init.sh \
         /scripts/generate-openclaw-config.mts \
-        /scripts/validate-openclaw-tool-search.mts \
-    && chmod 444 /src/lib/tool-disclosure.ts \
+        /scripts/validate-openclaw-tool-search.mts /src /src/lib \
+    && chmod 444 /src/lib/*.ts \
         /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh \
     && chown root:root /usr/local/bin/nemoclaw-gateway-control \
         /usr/local/lib/nemoclaw/gateway-supervisor.sh \
@@ -1946,7 +1936,6 @@ RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
         /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh \
         /usr/local/lib/nemoclaw/sandbox-rlimits.sh \
     && chmod 644 /usr/local/lib/nemoclaw/openclaw_device_approval_policy.py \
-        /usr/local/lib/nemoclaw/clean_runtime_shell_env_shim.py \
     && chmod 555 /usr/local/lib/nemoclaw/normalize_mutable_config_perms.py \
     && if [ -d /usr/local/lib/nemoclaw/preloads-compiled-channels ]; then \
         find /usr/local/lib/nemoclaw/preloads-compiled-channels -path '*/runtime/*.js' -type f \

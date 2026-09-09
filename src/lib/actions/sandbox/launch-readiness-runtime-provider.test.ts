@@ -54,4 +54,43 @@ describe("launch readiness runtime-provider projection", () => {
       ),
     ).toThrow();
   });
+
+  it("invalidates launch readiness when denied-tool intent changes (#11115)", () => {
+    const bridge = {
+      server: "github",
+      agent: "openclaw",
+      adapter: "mcporter",
+      url: "https://mcp.example.test/mcp",
+      env: ["GITHUB_TOKEN"],
+      allowedIps: ["8.8.8.8"],
+      providerName: "alpha-mcp-github",
+      providerId: "11111111-2222-4333-8444-555555555555",
+      policyName: "mcp-bridge-github",
+      addedAt: "2026-09-05T00:00:00.000Z",
+    };
+    const project = (denyTools?: string[], pendingDenyTools?: string[]) =>
+      buildLaunchReadinessRegistryProjection(
+        {
+          ...SANDBOX,
+          mcp: {
+            bridges: {
+              github: {
+                ...bridge,
+                ...(denyTools ? { denyTools } : {}),
+                ...(pendingDenyTools ? { pendingDenyTools } : {}),
+              },
+            },
+          },
+        },
+        loadAgent("openclaw"),
+      ) as { mcpSha256: string };
+
+    expect(project().mcpSha256).not.toBe(project(["delete_*"]).mcpSha256);
+    expect(project(["delete_*"]).mcpSha256).not.toBe(
+      project(["delete_*", "submit_*"]).mcpSha256,
+    );
+    expect(project(["delete_*"], ["replacement_*"]).mcpSha256).not.toBe(
+      project(["delete_*"]).mcpSha256,
+    );
+  });
 });

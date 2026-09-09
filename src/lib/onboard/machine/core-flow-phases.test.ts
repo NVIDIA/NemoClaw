@@ -270,7 +270,6 @@ function createPhases(
       stageSandboxCredentialProviders: vi.fn(async () => []),
       promptValidatedSandboxName: vi.fn(async () => "my-sandbox"),
       selectResourceProfileForSandbox: vi.fn(async () => null),
-      stopStaleDashboardListenersForSandbox: vi.fn(),
       listRegistrySandboxes: () => ({ sandboxes: [] }),
       planRegisteredExtraProviders: vi.fn(() => ({
         extraProviders: [],

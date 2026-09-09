@@ -214,6 +214,8 @@ function bundle(providerId: string): RuntimeProviderBundle {
       supported: true,
       launcher: "nemoclaw",
       inspectLegacyContainer: false,
+      ownsHostReadiness: false,
+      observeHostRuntime: (input) => candidate.gateway.prepareHostRuntime(input),
       prepareHostRuntime: () => ({
         providerId,
         openShellDriver: "memory",

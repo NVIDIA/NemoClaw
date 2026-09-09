@@ -7,7 +7,13 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, expect, it } from "vitest";
 
-const START_SCRIPT = path.join(import.meta.dirname, "..", "../../..", "scripts", "nemoclaw-start.sh");
+const START_SCRIPT = path.join(
+  import.meta.dirname,
+  "..",
+  "../../..",
+  "scripts",
+  "nemoclaw-start.sh",
+);
 
 function extractShellFunction(src: string, name: string): string {
   const header = `${name}() {`;
@@ -28,9 +34,8 @@ function extractShellFunction(src: string, name: string): string {
 }
 
 // Extract the post-gateway-start plugin-refresh block from the production
-// entrypoint, including the SANDBOX_CHILD_PIDS tracking so the test can
-// verify PLUGIN_REFRESH_PID is appended for SIGTERM cleanup. These anchors
-// span the full workaround block for #2021 / openclaw/openclaw#89606.
+// entrypoint. These anchors span the full workaround block for #2021 /
+// openclaw/openclaw#89606.
 function extractRefreshBlock(): string {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
   const start = src.indexOf("\nstart_auto_pair\n");
@@ -46,6 +51,7 @@ function extractRefreshBlock(): string {
     extractShellFunction(src, "capture_openclaw_pid_start_identity"),
     extractShellFunction(src, "openclaw_supervised_pid_is_live"),
     extractShellFunction(src, "start_plugin_registry_refresh"),
+    extractShellFunction(src, "wait_for_plugin_registry_refresh"),
     extractShellFunction(src, "openclaw_supervised_aux_pid_is_live"),
     extractShellFunction(src, "refresh_openclaw_supervised_child_pids"),
     src.slice(start, end),
@@ -56,7 +62,13 @@ function extractRefreshBlock(): string {
 // step-down prefix. Returns the temp dir so the caller can inspect the
 // stub log and the refresh status sentinel.
 function runRefreshBlock(
-  opts: { gatewayReadyAfter: number; rootMode?: boolean } = {
+  opts: {
+    gatewayReadyAfter: number;
+    normalizationFails?: boolean;
+    refreshTimesOut?: boolean;
+    rootMode?: boolean;
+    rewriteConfigMode?: boolean;
+  } = {
     gatewayReadyAfter: 1,
     rootMode: true,
   },
@@ -68,6 +80,7 @@ function runRefreshBlock(
   hashRefreshState: string;
   preRefreshState: string;
   registryState: string;
+  startupContinueState: string;
   tmpDir: string;
 } {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-plugin-refresh-"));
@@ -79,6 +92,7 @@ function runRefreshBlock(
   const hashRefreshState = path.join(tmpDir, "hash-refresh-state.txt");
   const preRefreshState = path.join(tmpDir, "registry-state.pre.txt");
   const registryState = path.join(tmpDir, "registry-state.txt");
+  const startupContinueState = path.join(tmpDir, "startup-continue-state.txt");
   const readyCounter = path.join(tmpDir, "ready-counter");
   fs.writeFileSync(
     registryState,
@@ -121,6 +135,7 @@ function runRefreshBlock(
       "allowedSlash:/nemoclaw",
       "staleSlash:",
       "REGISTRY_STATE",
+      ...(opts.rewriteConfigMode ? [`  chmod 600 ${JSON.stringify(registryState)}`] : []),
       `  printf 'refreshed' > ${JSON.stringify(refreshLog)}`,
       "  exit 0",
       "fi",
@@ -134,9 +149,8 @@ function runRefreshBlock(
   // Wrap the block with a sandbox-shaped harness:
   //   - OPENCLAW=<stub path> so the block invokes our stub
   //   - STEP_DOWN_PREFIX_SANDBOX marks the privilege-drop boundary in root-mode tests
-  //   - After spawning, the script PRINTS PLUGIN_REFRESH_PID then waits on it,
-  //     so the test can verify both that PLUGIN_REFRESH_PID is set AND that
-  //     the backgrounded refresh actually fired.
+  //   - The production block waits for the refresh postcondition before
+  //     continuing startup.
   const wrapper = [
     "#!/usr/bin/env bash",
     // -e/-u stripped: the production script is invoked by Docker entrypoint with
@@ -150,6 +164,10 @@ function runRefreshBlock(
       ? 'id() { if [ "${1:-}" = "-u" ]; then printf "0"; else command id "$@"; fi; }'
       : 'id() { if [ "${1:-}" = "-u" ]; then printf "1000"; else command id "$@"; fi; }',
     "sleep() { :; }",
+    opts.refreshTimesOut
+      ? 'timeout() { shift 3; "$@"; return 124; }'
+      : 'timeout() { shift 3; "$@"; }',
+    'PLUGIN_REFRESH_TIMEOUT_DURATION="30s"',
     "STEP_DOWN_PREFIX_SANDBOX=(env STEP_DOWN_USER=sandbox)",
     // Stubs for variables the extracted block references that are set
     // earlier in the production script.
@@ -164,13 +182,14 @@ function runRefreshBlock(
     "GATEWAY_WATCHDOG_PID=",
     "GATEWAY_WATCHDOG_PID_START_IDENTITY=",
     'gateway_control_pid_is_live() { case "$1" in ""|0|1|*[!0-9]*) return 1 ;; *) return 0 ;; esac; }',
+    opts.normalizationFails
+      ? "normalize_mutable_config_perms() { return 1; }"
+      : opts.rewriteConfigMode
+        ? `normalize_mutable_config_perms() { chmod 660 ${JSON.stringify(registryState)}; }`
+        : "normalize_mutable_config_perms() { :; }",
     `ensure_mutable_openclaw_config_hash() { cp ${JSON.stringify(registryState)} ${JSON.stringify(hashRefreshState)}; }`,
+    `start_gateway_serving_watchdog() { if [ -f ${JSON.stringify(hashRefreshState)} ]; then printf stable; else printf raced; fi > ${JSON.stringify(startupContinueState)}; }`,
     block,
-    "# Surface PLUGIN_REFRESH_PID + tracked SANDBOX_CHILD_PIDS for the test",
-    'printf "PLUGIN_REFRESH_PID=%s\\n" "$PLUGIN_REFRESH_PID"',
-    'printf "SANDBOX_CHILD_PIDS=%s\\n" "${SANDBOX_CHILD_PIDS[*]}"',
-    "# Wait for the backgrounded subshell to complete before exiting",
-    'wait "$PLUGIN_REFRESH_PID" 2>/dev/null || true',
   ].join("\n");
 
   const script = path.join(tmpDir, "run.sh");
@@ -190,6 +209,7 @@ function runRefreshBlock(
     hashRefreshState,
     preRefreshState,
     registryState,
+    startupContinueState,
     tmpDir,
   };
 }
@@ -376,6 +396,52 @@ describe("plugin registry refresh workaround for openclaw/openclaw#89606 (#2021)
     }
   });
 
+  it("restores the guard-compatible config mode after the registry refresh (#10681)", () => {
+    const { result, registryState, startupContinueState, tmpDir } = runRefreshBlock({
+      gatewayReadyAfter: 1,
+      rewriteConfigMode: true,
+    });
+    try {
+      expect(result.status).toBe(0);
+      expect(fs.statSync(registryState).mode & 0o777).toBe(0o660);
+      expect(fs.readFileSync(startupContinueState, "utf-8")).toBe("stable");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not refresh the config hash when permission normalization fails (#10681)", () => {
+    const { result, hashRefreshState, startupContinueState, tmpDir } = runRefreshBlock({
+      gatewayReadyAfter: 1,
+      normalizationFails: true,
+    });
+    try {
+      expect(result.status).not.toBe(0);
+      expect(fs.existsSync(hashRefreshState)).toBe(false);
+      expect(fs.existsSync(startupContinueState)).toBe(false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("continues from a bounded registry timeout after restoring config postconditions", () => {
+    const { result, hashRefreshState, registryState, startupContinueState, tmpDir } =
+      runRefreshBlock({
+      gatewayReadyAfter: 1,
+      refreshTimesOut: true,
+      rewriteConfigMode: true,
+      });
+    try {
+      expect(result.status).toBe(0);
+      expect(fs.statSync(registryState).mode & 0o777).toBe(0o660);
+      expect(fs.readFileSync(hashRefreshState, "utf-8")).toBe(fs.readFileSync(registryState, "utf-8"));
+      expect(fs.readFileSync(startupContinueState, "utf-8")).toBe("stable");
+      expect(result.stderr).toContain("registry refresh timed out after 30s");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("skips the refresh when the gateway never reports ready", () => {
     const { result, refreshLog, callLog, hashRefreshState, tmpDir } = runRefreshBlock({
       gatewayReadyAfter: 99,
@@ -389,24 +455,6 @@ describe("plugin registry refresh workaround for openclaw/openclaw#89606 (#2021)
       expect(probeCount).toBe(10);
       expect(calls).not.toMatch(/^plugins registry --refresh$/m);
       expect(result.stderr).toContain("gateway did not become ready");
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
-  it("captures PLUGIN_REFRESH_PID and appends it to SANDBOX_CHILD_PIDS", () => {
-    // SIGTERM cleanup walks SANDBOX_CHILD_PIDS; the refresh subshell must
-    // be reaped or it can outlive the sandbox container by ~10s.
-    const { result, tmpDir } = runRefreshBlock();
-    try {
-      expect(result.status).toBe(0);
-      const stdout =
-        typeof result.stdout === "string" ? result.stdout : result.stdout.toString("utf8");
-      const pid = stdout.match(/^PLUGIN_REFRESH_PID=(\d+)$/m)?.[1];
-      expect(pid).toBeDefined();
-      expect(Number(pid)).toBeGreaterThan(0);
-      const tracked = stdout.match(/^SANDBOX_CHILD_PIDS=(.+)$/m)?.[1] ?? "";
-      expect(tracked.split(/\s+/)).toContain(pid);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

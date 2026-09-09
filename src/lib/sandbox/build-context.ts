@@ -128,6 +128,7 @@ function stageMcpToolDiscoveryRuntime(rootDir: string, buildCtx: string): void {
 
 function stageManagedStartupRuntimeSources(rootDir: string, buildCtx: string): void {
   for (const relativePath of [
+    "extra-agents-validation.ts",
     path.join("core", "json-types.ts"),
     path.join("core", "ports.ts"),
     path.join("security", "credential-hash.ts"),
@@ -151,6 +152,15 @@ function stageManagedStartupRuntimeSources(rootDir: string, buildCtx: string): v
   );
 }
 
+function stageReviewedNpmAuditPolicy(rootDir: string, buildCtx: string): void {
+  const stagedCiDir = path.join(buildCtx, "ci");
+  fs.mkdirSync(stagedCiDir, { recursive: true });
+  for (const fileName of ["npm-audit-exceptions.json", "reviewed-npm-audit.json"]) {
+    fs.copyFileSync(path.join(rootDir, "ci", fileName), path.join(stagedCiDir, fileName));
+  }
+  normalizeReadModesForDockerCopy(stagedCiDir);
+}
+
 function stageLegacySandboxBuildContext(
   rootDir: string,
   tmpDir: string = os.tmpdir(),
@@ -161,6 +171,7 @@ function stageLegacySandboxBuildContext(
     path.join(rootDir, "tsconfig.runtime-preloads.json"),
     path.join(buildCtx, "tsconfig.runtime-preloads.json"),
   );
+  stageReviewedNpmAuditPolicy(rootDir, buildCtx);
   stageOpenClawRuntimeGraphs(rootDir, buildCtx);
   stageMcpToolDiscoveryRuntime(rootDir, buildCtx);
   fs.cpSync(path.join(rootDir, "nemoclaw"), path.join(buildCtx, "nemoclaw"), {
@@ -207,7 +218,6 @@ function stageOptimizedSandboxBuildContext(
   const stagedNemoclawDir = path.join(buildCtx, "nemoclaw");
   const sourceBlueprintDir = path.join(rootDir, "nemoclaw-blueprint");
   const stagedBlueprintDir = path.join(buildCtx, "nemoclaw-blueprint");
-  const stagedCiDir = path.join(buildCtx, "ci");
   const stagedScriptsDir = path.join(buildCtx, "scripts");
 
   fs.copyFileSync(path.join(rootDir, "Dockerfile"), stagedDockerfile);
@@ -218,12 +228,7 @@ function stageOptimizedSandboxBuildContext(
   stageOpenClawRuntimeGraphs(rootDir, buildCtx);
   stageMcpToolDiscoveryRuntime(rootDir, buildCtx);
 
-  fs.mkdirSync(stagedCiDir, { recursive: true });
-  fs.copyFileSync(
-    path.join(rootDir, "ci", "npm-audit-exceptions.json"),
-    path.join(stagedCiDir, "npm-audit-exceptions.json"),
-  );
-  normalizeReadModesForDockerCopy(stagedCiDir);
+  stageReviewedNpmAuditPolicy(rootDir, buildCtx);
 
   fs.mkdirSync(stagedNemoclawDir, { recursive: true });
   for (const fileName of [
@@ -343,10 +348,6 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "lib", "openclaw_device_approval_policy.py"),
   );
   fs.copyFileSync(
-    path.join(rootDir, "scripts", "lib", "clean_runtime_shell_env_shim.py"),
-    path.join(stagedScriptsDir, "lib", "clean_runtime_shell_env_shim.py"),
-  );
-  fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "normalize_mutable_config_perms.py"),
     path.join(stagedScriptsDir, "lib", "normalize_mutable_config_perms.py"),
   );
@@ -448,6 +449,10 @@ function stageOptimizedSandboxBuildContext(
   fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "reviewed-npm-audit.mts"),
     path.join(stagedScriptsDir, "lib", "reviewed-npm-audit.mts"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "npm-audit-receipt.mts"),
+    path.join(stagedScriptsDir, "lib", "npm-audit-receipt.mts"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "openclaw-npm-remediation.mts"),

@@ -72,6 +72,8 @@ export interface SandboxCreateIntent {
   readonly compatibleEndpointReasoning?: "true" | "false";
   /** Provenance for the endpoint recorded with the created sandbox. */
   readonly endpointSource?: import("../inference/selection").InferenceEndpointSource | null;
+  /** Process-local Deferred N1x managed-vLLM choice awaiting final route validation. */
+  readonly deferredN1xManagedVllmPreviewIntent?: true;
   /** Internal authoritative rebuild tier used before replacement registration completes. */
   readonly policyTier?: string | null;
   /** Gateway-level extra providers reconciled immediately before sandbox creation. */
@@ -140,6 +142,8 @@ export type OnboardOptions = {
   targetGatewayName?: string | null;
   /** Internal authoritative rebuild target; must match targetGatewayName. */
   targetGatewayPort?: number | null;
+  /** Exact OpenShell client target frozen by the outer rebuild transaction. */
+  runtimeSelection?: import("../adapters/openshell/runtime-selection").OpenShellRuntimeSelection;
   /** Internal rebuild handoff: the outer destructive lifecycle owns the onboard lock. */
   onboardLockAlreadyHeld?: boolean;
   /** Internal command handoff: propagate an exit request after onboarding restores its scopes. */
@@ -154,8 +158,10 @@ export type OnboardOptions = {
   rebuildProviderReconfigure?: import("./rebuild-route-handoff").RebuildProviderReconfigureHandoff;
   /** Internal one-shot authority to recover the recorded provider during a locked rebuild resume. */
   providerRecoveryReceipt?: import("./rebuild-route-handoff").ProviderRecoveryReceipt;
-  /** Internal rebuild handoff for a recorded managed-vLLM N1x preview selection. */
+  /** Internal rebuild handoff for a recorded provider admitted by Deferred N1x readiness. */
   allowDeferredN1xManagedVllm?: true;
+  /** Internal legacy Hermes rebuild handoff for the pre-v0.0.97 Station admission rule. */
+  allowLegacyDgxStationQualification?: true;
   /** Internal one-shot handoff for the exact image context validated before rebuild deletion. */
   preparedImageRebuild?: import("./prepared-dcode-rebuild").PreparedImageRebuildHandoff;
   /** Internal immutable managed-image/profile handoff validated before rebuild deletion. */

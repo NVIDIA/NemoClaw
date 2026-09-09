@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
 import http from "node:http";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { assertEndpointResolvesPublic } from "./endpoint-ssrf-preflight";
@@ -13,9 +14,12 @@ import {
   useOpenAiValidationTestServers,
 } from "./openai-validation-session.test-helpers";
 
+const { probeOpenAiLikeEndpointOptimized } = require("./onboard-probes");
+
 const listen = useOpenAiValidationTestServers();
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
 });
 
@@ -307,5 +311,137 @@ describe("OpenAI validation curl fallback", () => {
     expect(result).toMatchObject({ ok: true, api: "openai-completions" });
     expect(legacyProbe).toHaveBeenCalledTimes(1);
     expect(harness.sessionOptions!.lookup).not.toHaveBeenCalled();
+  });
+
+  // Pins the shared transient policy from the native retry side: a status the
+  // policy does not list must reach the fallback without spending retries
+  // (#10709).
+  it("does not retry a settled HTTP failure before falling back", async () => {
+    vi.stubEnv("NEMOCLAW_TEST_NO_SLEEP", "1");
+    let requests = 0;
+    const server = http.createServer((request, response) => {
+      request.resume();
+      requests += 1;
+      response.statusCode = 500;
+      response.end('{"error":{"message":"internal"}}');
+    });
+    const port = await listen(server);
+    const legacyProbe: OpenAiValidationSessionDeps["legacyProbe"] = vi.fn(() => ({
+      ok: false,
+      message: "curl settled diagnostic",
+    }));
+    const harness = createOpenAiValidationTestDeps(legacyProbe);
+
+    const result = await probeOpenAiLikeEndpointWithValidationSession(
+      `http://provider.example.test:${port}/v1`,
+      "test-model",
+      "test-key",
+      { skipResponsesProbe: true },
+      harness,
+    );
+
+    expect(result).toEqual({ ok: false, message: "curl settled diagnostic" });
+    expect(requests).toBe(1);
+    expect(legacyProbe).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("WSL2 advisory on native terminal failures (#10413)", () => {
+  it.each([
+    { label: "calibrated WSL floor", override: undefined, expectedTimeoutMs: 30_000 },
+    { label: "validation override", override: "360", expectedTimeoutMs: 360_000 },
+  ])("passes the $label to the native chat deadline", async (testCase) => {
+    vi.stubEnv("NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS", testCase.override ?? "");
+    const server = http.createServer((request, response) => {
+      request.resume();
+      response.end('{"choices":[{"message":{"content":"OK"}}]}');
+    });
+    const port = await listen(server);
+    const spawnSyncImpl = vi.fn((_command: string, args: readonly string[]) => {
+      const outputPath = args[args.indexOf("-o") + 1];
+      fs.writeFileSync(outputPath, "{}");
+      return { pid: 1, output: [], stdout: "200", stderr: "", status: 0, signal: null };
+    });
+    const timeoutSpy = vi.spyOn(globalThis, "setTimeout");
+
+    const result = await probeOpenAiLikeEndpointOptimized(
+      `http://provider.example.test:${port}/v1`,
+      "test-model",
+      "test-key",
+      {
+        skipResponsesProbe: true,
+        calibrateTimeouts: true,
+        isWsl: true,
+        spawnSyncImpl,
+        validationSessionOptions: {
+          env: {},
+          lookup: vi.fn(async () => [{ address: "127.0.0.1", family: 4 }]),
+          allowPrivateAddressesForTesting: true,
+        },
+      },
+    );
+
+    expect({
+      result,
+      calibrationArgs: spawnSyncImpl.mock.calls[0]?.[1],
+      nativeTimeouts: timeoutSpy.mock.calls.map((call) => call[1]),
+    }).toMatchObject({
+      result: { ok: true, api: "openai-completions" },
+      calibrationArgs: expect.arrayContaining(["--connect-timeout", "3", "--max-time", "5"]),
+      nativeTimeouts: expect.arrayContaining([testCase.expectedTimeoutMs]),
+    });
+  });
+
+  async function probeUntilNativeTransportFailure(isWsl: boolean) {
+    let requests = 0;
+    // The reasoning-budget retry runs first, then the connection drops, which is
+    // the native-session path that returns its own terminal failure.
+    const replyPlan = [
+      (response: http.ServerResponse) => {
+        response.setHeader("content-type", "application/json");
+        response.end(
+          '{"choices":[{"finish_reason":"length","message":{"content":"","reasoning_content":"Planning the tool call."}}]}',
+        );
+      },
+    ];
+    const dropConnection = (response: http.ServerResponse) => response.socket?.destroy();
+    const server = http.createServer((request, response) => {
+      request.resume();
+      const reply = replyPlan[requests] ?? dropConnection;
+      requests += 1;
+      reply(response);
+    });
+    const port = await listen(server);
+    return (await probeOpenAiLikeEndpointOptimized(
+      `http://provider.example.test:${port}/v1`,
+      "qwen3-vl:4b",
+      "test-key",
+      {
+        skipResponsesProbe: true,
+        requireChatCompletionsToolCalling: true,
+        isWsl,
+        validationSessionOptions: {
+          env: {},
+          lookup: vi.fn(async () => [{ address: "127.0.0.1", family: 4 }]),
+          allowPrivateAddressesForTesting: true,
+        },
+      },
+    )) as { ok: boolean; message?: string; advisory?: string };
+  }
+
+  it("carries the advisory when the reasoning retry ends in a transport failure", async () => {
+    const result = await probeUntilNativeTransportFailure(true);
+
+    expect(result.ok).toBe(false);
+    expect(result.advisory).toContain("NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS");
+    expect(result.message).toContain("WSL2 detected");
+  });
+
+  it("omits the advisory off WSL2", async () => {
+    const result = await probeUntilNativeTransportFailure(false);
+
+    expect(result.ok).toBe(false);
+    expect(result.advisory).toBeUndefined();
+    expect(result.message).not.toContain("WSL2 detected");
   });
 });

@@ -206,7 +206,7 @@ $$nemoclaw headless-agent status
 $$nemoclaw headless-agent connect --probe-only
 ```
 
-`$$nemoclaw headless-agent status` exits nonzero when the sandbox, gateway, local container, or authoritative inference route is not verified. Its main `Inference` line probes `https://inference.local/v1/models` from inside the sandbox, then sends one inference request over the same route when that probe reports the route reachable. The line reports `healthy` when the route served the request, `unauthorized` when the route rejected it with HTTP `401` or `403`, and `unhealthy` when the route returned HTTP `500` through `599`.
+`$$nemoclaw headless-agent status` exits nonzero when the sandbox, gateway, local container, or authoritative inference route is not verified. Its main `Inference` line probes `https://inference.local/v1/models` from inside the sandbox, then sends an inference request over the same route when that probe reports the route reachable. It repeats both probes up to three total attempts when that request returns a transient gateway status; refer to the [CLI commands reference](../reference/commands) for the retried statuses and their token cost. The line reports `healthy` when the route served the request, `unauthorized` when the route rejected it with HTTP `401` or `403`, and `unhealthy` after a final failure or after all transient attempts fail.
 
 <AgentOnly variant="openclaw,hermes">
 
@@ -441,7 +441,7 @@ Run `openshell sandbox list` and inspect the row for `headless-agent`. `NotReady
 
 ### Inference Returns HTTP 5xx
 
-An HTTP status from `500` through `599` makes the authoritative `inference.local` route unhealthy. Check the configured provider and host egress, then run:
+A final HTTP status from `500` through `599` makes the authoritative `inference.local` route unhealthy. HTTP `502`, `503`, and `504` report unhealthy only after all transient attempts fail. Check the configured provider and host egress, then run:
 
 ```bash
 $$nemoclaw headless-agent doctor

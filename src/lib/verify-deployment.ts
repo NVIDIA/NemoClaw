@@ -98,14 +98,11 @@ export interface VerifyDeploymentDeps {
   /** Probe an HTTP endpoint on the host. Returns the HTTP status code or 0 on failure. */
   probeHostPort: (port: number, path: string) => number;
 
-  /** List active port forwards. Returns raw output from `openshell forward list`. */
-  captureForwardList: () => string | null;
-
   /** Get the list of configured messaging channels for a sandbox. */
   getMessagingChannels: (name: string) => string[];
 
   /** Check if a messaging bridge is polling (provider exists in gateway). */
-  providerExistsInGateway: (providerName: string) => boolean;
+  providerExistsInGateway: (providerName: string) => boolean | Promise<boolean>;
 
   /**
    * Probe the in-sandbox agent config to learn which channels the runtime
@@ -405,10 +402,10 @@ export interface MessagingBridgeStatus {
  * the channel?) so the "No channels found" dashboard symptom from #4156
  * surfaces here as a warning.
  */
-function verifyMessagingBridges(
+async function verifyMessagingBridges(
   sandboxName: string,
   deps: VerifyDeploymentDeps,
-): MessagingBridgeStatus {
+): Promise<MessagingBridgeStatus> {
   const channels = deps.getMessagingChannels(sandboxName);
   if (channels.length === 0) {
     return {
@@ -427,7 +424,10 @@ function verifyMessagingBridges(
       continue;
     }
     const expectedProviders = providerNames.length > 0 ? providerNames : [channel];
-    if (!expectedProviders.every((providerName) => deps.providerExistsInGateway(providerName))) {
+    const providersExist = await Promise.all(
+      expectedProviders.map((providerName) => deps.providerExistsInGateway(providerName)),
+    );
+    if (!providersExist.every(Boolean)) {
       missingProviders.push(channel);
     }
   }
@@ -601,7 +601,7 @@ export async function verifyDeployment(
     hint: dashboard.reachable
       ? ""
       : (customRuntimeHints?.dashboard ??
-        `Port forward on ${chain.port} is not working. Run: openshell forward start ${chain.forwardTarget} ${sandboxName}`),
+        `Port forward on ${chain.port} is not working. Run: nemoclaw ${sandboxName} recover`),
   });
 
   // 3b. Agent OpenAI-compatible API reachable from the host (second port
@@ -620,7 +620,7 @@ export async function verifyDeployment(
       hint: agentApi.reachable
         ? ""
         : `The OpenAI-compatible API on port ${chain.gatewayPort} is not reachable from the host. ` +
-          `Run: openshell forward start --background ${chain.gatewayPort} ${sandboxName}`,
+          `Run: nemoclaw ${sandboxName} recover`,
     });
   }
 
@@ -646,7 +646,7 @@ export async function verifyDeployment(
 
   // 5. Messaging bridges (providers attached AND runtime config exposes
   // each configured channel — #4156).
-  const messaging = verifyMessagingBridges(sandboxName, deps);
+  const messaging = await verifyMessagingBridges(sandboxName, deps);
   if (!messaging.healthy) {
     diagnostics.push({
       link: "messaging",

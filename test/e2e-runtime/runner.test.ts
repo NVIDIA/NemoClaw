@@ -9,7 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
-import { redact, runCapture } from "../../src/lib/runner";
+import { redact, run, runCapture, runCaptureEx } from "../../src/lib/runner";
 
 const require = createRequire(import.meta.url);
 const runnerPath = path.join(import.meta.dirname, "..", "..", "src", "lib", "runner.ts");
@@ -177,6 +177,41 @@ describe("runner helpers", () => {
 });
 
 describe("runner env merging", () => {
+  it("uses only the explicit environment when replaceEnv is true", () => {
+    const inheritedName = "OPENSHELL_RUNNER_REPLACE_ENV_LEAK";
+    const selectedName = "OPENSHELL_RUNNER_REPLACE_ENV_SELECTED";
+    const command = [
+      process.execPath,
+      "-e",
+      `process.stdout.write(JSON.stringify({ inherited: process.env.${inheritedName} ?? null, selected: process.env.${selectedName} ?? null }))`,
+    ];
+    const selectedEnv = { [selectedName]: "selected-value" };
+
+    try {
+      vi.stubEnv(inheritedName, "ambient-value");
+      const runResult = run(command, {
+        env: selectedEnv,
+        replaceEnv: true,
+        suppressOutput: true,
+      });
+      const captureOutput = runCapture(command, {
+        env: selectedEnv,
+        replaceEnv: true,
+      });
+      const captureExOutput = runCaptureEx(command, {
+        env: selectedEnv,
+        replaceEnv: true,
+      });
+
+      const expected = { inherited: null, selected: "selected-value" };
+      expect(JSON.parse(String(runResult.stdout))).toEqual(expected);
+      expect(JSON.parse(captureOutput)).toEqual(expected);
+      expect(JSON.parse(captureExOutput.stdout)).toEqual(expected);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("clears a named context when initialization selects a socket fallback (#8816)", () => {
     const platform = require(platformPath);
     const detectDockerHostSpy = vi.spyOn(platform, "detectDockerHost").mockReturnValue({
@@ -245,6 +280,8 @@ describe("runner env merging", () => {
       vi.stubEnv("DOCKER_CONTEXT", "healthy-context");
       vi.stubEnv("DOCKER_CONFIG", "/tmp/docker-config");
       vi.stubEnv("DOCKER_HOST", undefined);
+      vi.stubEnv("HTTP_PROXY", "http://proxy.example");
+      vi.stubEnv("NO_PROXY", "internal.example");
       vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "test-secret-must-not-cross-runner-boundary");
       delete require.cache[require.resolve(runnerPath)];
       const { run } = require(runnerPath);
@@ -265,6 +302,8 @@ describe("runner env merging", () => {
     const configSelectedDockerEnv = requireCall(runnerCalls, 2)[2]?.env;
     expect(dockerEnv?.DOCKER_CONTEXT).toBe("healthy-context");
     expect(dockerEnv?.DOCKER_CONFIG).toBe("/tmp/docker-config");
+    expect(dockerEnv?.NO_PROXY).toContain("internal.example");
+    expect(dockerEnv?.NO_PROXY).toContain("localhost");
     expect(dockerEnv?.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
     expect(nonDockerEnv?.DOCKER_CONTEXT).toBeUndefined();
     expect(nonDockerEnv?.DOCKER_CONFIG).toBeUndefined();
@@ -890,7 +929,13 @@ describe("regression guards", () => {
 
   describe("credential exposure guards (#429)", () => {
     it("install-openshell.sh gh-absent path uses curl directly", () => {
-      const scriptPath = path.join(import.meta.dirname, "..", "..", "scripts", "install-openshell.sh");
+      const scriptPath = path.join(
+        import.meta.dirname,
+        "..",
+        "..",
+        "scripts",
+        "install-openshell.sh",
+      );
       const tmpBin = fs.mkdtempSync(path.join(os.tmpdir(), "gh-absent-"));
       const stub = `
         #!/usr/bin/env bash
@@ -988,7 +1033,13 @@ describe("regression guards", () => {
     });
 
     it("install-openshell.sh gh-present-but-fails path falls back to curl", () => {
-      const scriptPath = path.join(import.meta.dirname, "..", "..", "scripts", "install-openshell.sh");
+      const scriptPath = path.join(
+        import.meta.dirname,
+        "..",
+        "..",
+        "scripts",
+        "install-openshell.sh",
+      );
       const tmpBin = fs.mkdtempSync(path.join(os.tmpdir(), "gh-stub-"));
       const checksumLog = path.join(tmpBin, "sha256sum.log");
       const ghStub = path.join(tmpBin, "gh");

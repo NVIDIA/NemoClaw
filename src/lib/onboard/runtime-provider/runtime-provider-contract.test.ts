@@ -60,6 +60,18 @@ const PORTABLE_PROFILE = {
     startupProfileContractVersions: [1],
     capabilityContractVersions: [1],
   },
+  portableAgentRuntimeSupport: {
+    exactDigestReferences: true,
+    agents: ["hermes"],
+    platforms: ["linux/amd64", "linux/arm64"],
+    contractVersions: [1],
+    capabilityContractVersions: [1],
+    tokenizedStartupCommands: true,
+    openshellSandboxCommand: true,
+    openshellNonRootIdentity: true,
+    openshellWorkspaceOwnership: true,
+    ownerOnlyPrivateState: true,
+  },
   hostArchitectures: ["amd64", "arm64"],
   managedImageSelectionPolicy: "require-managed",
   legacyDockerfileBuilds: true,
@@ -163,6 +175,7 @@ describe("RuntimeProviderBundle registry contract", () => {
           : { supported: false },
       );
       expect(bundle.recovery).toMatchObject({ supported: providerId === "podman" });
+      expect(bundle.workload.profile.portableAgentRuntimeSupport).toBeUndefined();
     });
     expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.docker?.capabilities.hostLocalInference).toBe(true);
     expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.docker?.hostLocalInference).toMatchObject({
@@ -230,6 +243,10 @@ describe("RuntimeProviderBundle registry contract", () => {
     expect(Object.isFrozen(registry)).toBe(true);
     expect(Object.isFrozen(registered)).toBe(true);
     expect(Object.isFrozen(registered.workload.profile)).toBe(true);
+    expect(Object.isFrozen(registered.workload.profile.portableAgentRuntimeSupport)).toBe(true);
+    expect(Object.isFrozen(registered.workload.profile.portableAgentRuntimeSupport!.agents)).toBe(
+      true,
+    );
     const support = registered.workload.profile.support;
     expect(support).not.toBeNull();
     expect(Object.isFrozen(support!.platforms)).toBe(true);
@@ -245,6 +262,27 @@ describe("RuntimeProviderBundle registry contract", () => {
     expect(() => {
       (registered.capabilities as { directLifecycle: boolean }).directLifecycle = false;
     }).toThrow(TypeError);
+  });
+
+  it("rejects incomplete portable runtime capability advertisements (#11079)", () => {
+    const bundle = mxcBundle();
+    const support = bundle.workload.profile.portableAgentRuntimeSupport!;
+    const { openshellSandboxCommand: _openshellSandboxCommand, ...incomplete } = support;
+
+    expect(() =>
+      createRuntimeProviderBundleRegistry([
+        [
+          "mxc",
+          replaceSurface(bundle, "workload", {
+            ...bundle.workload,
+            profile: {
+              ...bundle.workload.profile,
+              portableAgentRuntimeSupport: incomplete,
+            },
+          }),
+        ],
+      ]),
+    ).toThrow(/must declare portable agent runtime openshellSandboxCommand/u);
   });
 
   it("registers an MXC-style managed-bootstrap provider through the bundle surface", () => {
@@ -405,10 +443,10 @@ describe("RuntimeProviderBundle registry contract", () => {
     ],
     [
       "gateway",
-      (bundle: RuntimeProviderBundle) => ({
-        ...bundle.gateway,
-        launcher: "invalid",
-      }),
+      (bundle: RuntimeProviderBundle) => {
+        const { observeHostRuntime: _observeHostRuntime, ...incomplete } = bundle.gateway;
+        return incomplete;
+      },
     ],
     [
       "workload",
@@ -628,6 +666,72 @@ describe("RuntimeProviderBundle registry contract", () => {
       ]),
     ).toThrow(/duplicate operation identities/u);
   });
+
+  it("requires an explicit boolean gateway readiness owner", () => {
+    const bundle = mxcBundle();
+    const { ownsHostReadiness: _ownsHostReadiness, ...gatewayWithoutReadinessOwner } =
+      bundle.gateway;
+
+    expect(() =>
+      createRuntimeProviderBundleRegistry([
+        ["mxc", replaceSurface(bundle, "gateway", gatewayWithoutReadinessOwner)],
+      ]),
+    ).toThrow(/gateway\.ownsHostReadiness must be a boolean/u);
+    expect(() =>
+      createRuntimeProviderBundleRegistry([
+        [
+          "mxc",
+          replaceSurface(bundle, "gateway", {
+            ...bundle.gateway,
+            ownsHostReadiness: "true",
+          }),
+        ],
+      ]),
+    ).toThrow(/gateway\.ownsHostReadiness must be a boolean/u);
+    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.docker?.gateway.ownsHostReadiness).toBe(false);
+    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.podman?.gateway.ownsHostReadiness).toBe(true);
+  });
+
+  it("requires provider-owned readiness observation from a gateway readiness owner (#10984)", () => {
+    const bundle = CURRENT_RUNTIME_PROVIDER_BUNDLES.podman!;
+    const { observeOwnedGateway: _observeOwnedGateway, ...gatewayWithoutObservation } =
+      bundle.gateway;
+
+    expect(() =>
+      createRuntimeProviderBundleRegistry([
+        ["podman", replaceSurface(bundle, "gateway", gatewayWithoutObservation)],
+      ]),
+    ).toThrow(/gateway\.observeOwnedGateway must be a function/u);
+  });
+
+  it("rejects provider-owned readiness observation from a non-owning gateway (#10984)", () => {
+    const bundle = mxcBundle();
+    expect(() =>
+      createRuntimeProviderBundleRegistry([
+        [
+          "mxc",
+          replaceSurface(bundle, "gateway", {
+            ...bundle.gateway,
+            observeOwnedGateway: vi.fn(),
+          }),
+        ],
+      ]),
+    ).toThrow(/observeOwnedGateway requires gateway\.ownsHostReadiness/u);
+  });
+
+  it.each(["observeHostRuntime", "prepareHostRuntime"] as const)(
+    "rejects a gateway surface without %s",
+    (method) => {
+      const bundle = mxcBundle();
+      const { [method]: _missing, ...incomplete } = bundle.gateway;
+
+      expect(() =>
+        createRuntimeProviderBundleRegistry([
+          ["mxc", replaceSurface(bundle, "gateway", incomplete)],
+        ]),
+      ).toThrow(new RegExp(`gateway\\.${method} must be a function`, "u"));
+    },
+  );
 
   it("rejects an unsupported host-local-inference capability with an actionable provider error", () => {
     const bundle = mxcBundle();

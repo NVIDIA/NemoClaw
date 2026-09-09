@@ -54,6 +54,7 @@ import type { McpBridgeEntry } from "../../state/registry";
 import { authorizationValue } from "./mcp-bridge-adapter-status";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import { observeMcpCredentialRevision } from "./mcp-bridge-provider";
+import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
 import type {
   McpAttachedCredentialRevision,
   McpCredentialRevisionObservation,
@@ -388,6 +389,7 @@ export function probeCredentialResolution(
   entry: McpBridgeEntry,
   adapter: AgentMcpAdapter | undefined,
   readiness: CredentialResolutionProbeReadiness,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
   observedCredentialRevision?: McpCredentialRevisionObservation,
 ): CredentialResolutionProbe {
   if (!adapter) return { ok: null, detail: "MCP adapter is not declared" };
@@ -406,7 +408,7 @@ export function probeCredentialResolution(
   let credentialRevision = observedCredentialRevision;
   if (credentialRevision === undefined) {
     try {
-      credentialRevision = observeMcpCredentialRevision(sandboxName, entry);
+      credentialRevision = observeMcpCredentialRevision(sandboxName, entry, runtimeSelection);
     } catch {
       return {
         ok: null,
@@ -429,6 +431,6 @@ export function probeCredentialResolution(
   }
   const probeCommand = buildCredentialResolutionProbeCommand(entry, adapter, credentialRevision);
   if (!probeCommand) return { ok: null, detail: "no credential binding or safe endpoint to probe" };
-  const result = executeSandboxCommand(sandboxName, probeCommand.command);
+  const result = executeSandboxCommand(sandboxName, probeCommand.command, { runtimeSelection });
   return classifyCredentialResolutionProbe(result, entry, probeCommand.resultMarker);
 }

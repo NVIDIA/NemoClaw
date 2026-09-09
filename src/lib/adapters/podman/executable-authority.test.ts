@@ -132,6 +132,34 @@ describe("Podman executable authority", () => {
     expect(realpath).toHaveBeenCalledTimes(2);
   });
 
+  it("reports non-overlapping executable authority leaf operations", () => {
+    const stages: string[] = [];
+
+    capturePodmanExecutableAuthority(
+      EXECUTABLE_PATH,
+      authorityDeps({
+        timing: {
+          measure: (stage, operation) => {
+            stages.push(stage);
+            return operation();
+          },
+        },
+      }),
+    );
+
+    expect(stages).toEqual([
+      "podmanCanonicalRealpath",
+      "podmanDirectoryChain",
+      "podmanExecutableMetadata",
+      "podmanContentRead",
+      "podmanExecutableMetadata",
+      "podmanDirectoryChain",
+      "podmanCanonicalRealpath",
+      "podmanAuthorityCompare",
+      "podmanContentHash",
+    ]);
+  });
+
   it("accepts an executable owned by the current user", () => {
     const authority = capturePodmanExecutableAuthority(
       EXECUTABLE_PATH,
@@ -257,6 +285,34 @@ describe("Podman executable authority", () => {
     expect(lstat).toHaveBeenCalledTimes(8);
     expect(realpath).toHaveBeenCalledTimes(2);
     expect(readFile).not.toHaveBeenCalled();
+  });
+
+  it("reports metadata-only leaf operations without content work", () => {
+    const authority = capturePodmanExecutableAuthority(EXECUTABLE_PATH, authorityDeps());
+    const stages: string[] = [];
+
+    assertPodmanExecutableMetadataAuthority(
+      authority,
+      authorityDeps({
+        timing: {
+          measure: (stage, operation) => {
+            stages.push(stage);
+            return operation();
+          },
+        },
+      }),
+    );
+
+    expect(stages).toEqual([
+      "podmanCanonicalRealpath",
+      "podmanDirectoryChain",
+      "podmanExecutableMetadata",
+      "podmanExecutableMetadata",
+      "podmanDirectoryChain",
+      "podmanCanonicalRealpath",
+      "podmanAuthorityCompare",
+      "podmanAuthorityCompare",
+    ]);
   });
 
   it("rejects executable rotation during a metadata-only authority check", () => {

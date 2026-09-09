@@ -207,6 +207,18 @@ describe("base-image publication workflow boundary (#7372)", () => {
     ["Node pin", (value) => (gateSteps(value)[2].uses = "actions/setup-node@v6")],
     ["Node version", (value) => (gateSteps(value)[2].with!["node-version"] = 20)],
     ["verifier condition", (value) => (gateSteps(value)[3].if = "${{ always() }}")],
+    [
+      "base publication selection condition",
+      (value) => (gateStep(value, "Select base and optional managed-image publication").if = "${{ false }}"),
+    ],
+    [
+      "base contract download condition",
+      (value) => (gateStep(value, "Download immutable Deep Agents Code base contract").if = "${{ false }}"),
+    ],
+    [
+      "base contract validation condition",
+      (value) => (gateStep(value, "Validate immutable Deep Agents Code base").if = "${{ false }}"),
+    ],
     ["verifier token", (value) => (gateSteps(value)[3].env!.GITHUB_TOKEN = "${{ secrets.TOKEN }}")],
     [
       "verifier SHA",

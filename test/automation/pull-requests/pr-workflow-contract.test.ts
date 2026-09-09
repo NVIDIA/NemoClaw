@@ -466,9 +466,7 @@ describe("pull request and main workflow contracts", () => {
   ) as TypeScriptConfig;
   const sharedActions = {
     staticChecks: readYaml<CompositeAction>(".github/actions/ci-static-checks/action.yaml"),
-    compileArtifacts: readYaml<CompositeAction>(
-      ".github/actions/ci-compile-artifacts/action.yaml",
-    ),
+    compileArtifacts: readYaml<CompositeAction>(".github/actions/ci-compile-artifacts/action.yaml"),
     buildTypecheck: readYaml<CompositeAction>(".github/actions/ci-build-typecheck/action.yaml"),
     cliCoverageShard: readYaml<CompositeAction>(
       ".github/actions/ci-cli-coverage-shard/action.yaml",
@@ -493,10 +491,7 @@ describe("pull request and main workflow contracts", () => {
   it("verifies changed Hugging Face catalog references without credentials", () => {
     const job = prWorkflow.jobs["hugging-face-models"];
     const filterStep = prWorkflow.jobs.changes.steps?.find((step) => step.id === "filter");
-    const filters = YAML.parse(String(filterStep?.with?.filters ?? "")) as Record<
-      string,
-      string[]
-    >;
+    const filters = YAML.parse(String(filterStep?.with?.filters ?? "")) as Record<string, string[]>;
     const huggingFaceModelFilters = filters.hugging_face_models ?? [];
 
     expect(
@@ -514,7 +509,7 @@ describe("pull request and main workflow contracts", () => {
     expect(stepUses(job)).toEqual([trustedCheckoutAction, trustedSetupNodeAction]);
     expect(requiredWorkflowStep(job, "Checkout").with?.["persist-credentials"]).toBe(false);
     expect(requiredWorkflowStep(job, "Install dependencies").run).toBe(
-      "npm ci --ignore-scripts",
+      "npm ci --ignore-scripts --no-audit --no-fund",
     );
     expect(requiredWorkflowStep(job, "Verify Hugging Face model references").run).toBe(
       "npm run catalog:verify-hugging-face",
@@ -922,6 +917,7 @@ describe("pull request and main workflow contracts", () => {
     );
     expect(fetch.env).toEqual({
       NEMOCLAW_OPEN_SHELL_SDK_OUTPUT_DIRECTORY: "${{ runner.temp }}/openshell-sdk",
+      NEMOCLAW_OPEN_SHELL_SDK_INCLUDE_REPLACEMENT: "1",
       NODE_AUTH_TOKEN: "${{ github.token }}",
     });
     expect(fetch.run).toContain(
@@ -1054,6 +1050,32 @@ describe("pull request and main workflow contracts", () => {
       expect(existsSync(marker)).toBe(false);
     } finally {
       rmSync(temp, { force: true, recursive: true });
+    }
+  });
+
+  it.each([
+    ["cli-build-output", "required=true\n"],
+    ["compiled-test-inputs", ""],
+  ])("uploads the legacy coverage artifact only when the base reads %s", (artifact, expected) => {
+    const root = mkdtempSync(join(tmpdir(), "coverage-artifact-rollout-"));
+    const actionDirectory = join(root, ".trusted-ci-actions/.github/actions/ci-cli-coverage-merge");
+    const output = join(root, "output");
+    try {
+      mkdirSync(actionDirectory, { recursive: true });
+      writeFileSync(join(actionDirectory, "action.yaml"), `with:\n  name: ${artifact}\n`);
+      writeFileSync(output, "");
+      const result = runWorkflowShellStep(
+        requiredWorkflowStep(
+          prWorkflow.jobs["compile-artifacts"],
+          "Detect legacy coverage artifact reader",
+        ),
+        { GITHUB_OUTPUT: output },
+        root,
+      );
+      expect(result.status, result.stderr).toBe(0);
+      expect(readFileSync(output, "utf8")).toBe(expected);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
     }
   });
 
@@ -1221,7 +1243,7 @@ describe("pull request and main workflow contracts", () => {
       PLUGIN_TESTS_RESULT: "success",
       REVIEWED_NPM_AUDIT_RESULT: "success",
       REAL_OPENCLAW_DIST_HARNESS_RESULT: "success",
-      SANDBOX_IMAGES_E2E_RESULT: "success",
+      SANDBOX_IMAGE_CONTRACTS_RESULT: "success",
       STATIC_RESULT: "success",
       WECHAT_RUNTIME_AUDIT_RESULT: "success",
     };
@@ -1261,9 +1283,9 @@ describe("pull request and main workflow contracts", () => {
       mainGate,
       {
         ...successfulMain,
-        SANDBOX_IMAGES_E2E_RESULT: "failure",
+        SANDBOX_IMAGE_CONTRACTS_RESULT: "failure",
       },
-      workflowJobListing([workflowJob(302, "sandbox-images-and-e2e", "failure")]),
+      workflowJobListing([workflowJob(302, "sandbox-image-contracts", "failure")]),
     );
     const malformedFailure = runWorkflowShellStepWithJobs(
       prGate,
@@ -1293,7 +1315,7 @@ describe("pull request and main workflow contracts", () => {
     expect(docsOnlySuccess.status).toBe(0);
     expect(mainSuccess.status).toBe(0);
     expect(mainFailure.status).not.toBe(0);
-    expect(mainFailure.stdout).toContain("sandbox-images-and-e2e failed");
+    expect(mainFailure.stdout).toContain("sandbox-image-contracts failed");
     expect(mainFailure.stdout).toContain(
       "https://github.com/NVIDIA/NemoClaw/actions/runs/123/job/302",
     );

@@ -13,6 +13,9 @@ const requireSource = createRequire(import.meta.url);
 const { checkAndRecoverSandboxProcesses: checkAndRecoverSandboxProcessesImpl } = requireSource(
   "../../src/lib/actions/sandbox/process-recovery.ts",
 ) as typeof import("../../src/lib/actions/sandbox/process-recovery.js");
+const forwardService = requireSource(
+  "../../src/lib/adapters/openshell/forward-service.ts",
+) as typeof import("../../src/lib/adapters/openshell/forward-service.js");
 
 function checkAndRecoverSandboxProcesses(
   sandboxName: string,
@@ -364,17 +367,21 @@ describe("managed gateway recovery controller", () => {
     }) => {
       const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
       const agentRuntime = requireSource("../../src/lib/agent/runtime.js");
+      const forwardHealth = requireSource("../../src/lib/actions/sandbox/forward-health.ts");
       const registry = requireSource("../../src/lib/state/registry.js");
       const childProcess = requireSource("node:child_process");
-      const runningForward = `SANDBOX  BIND  PORT  PID  STATUS
-beta  127.0.0.1  18789  12345  running`;
+      const runningForward = "SANDBOX  BIND  PORT  PID  STATUS";
       const previousWaitSeconds = process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS;
       const previousPollInterval = process.env.NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS;
       const previousSettleSeconds = process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS;
       let recoveryActionCalls = 0;
       let managedProbeCalls = 0;
       const requestGatewaySupervisorAction = vi.fn(
-        (_sandboxName: string, action: "restart" | "recover" | "probe") => {
+        (
+          _sandboxName: string,
+          action: "restart" | "recover" | "probe",
+          _timeoutMs?: number,
+        ) => {
           const isProbe = action === "probe";
           const probeResults = managedProbeResults ?? [managedProbeResult ?? successfulProbe];
           const result = isProbe
@@ -410,6 +417,8 @@ beta  127.0.0.1  18789  12345  running`;
           },
         );
         vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue(null);
+        vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
+        vi.spyOn(forwardService, "isForwardServiceListenerOwner").mockReturnValue(true);
         vi.spyOn(registry, "getSandbox").mockReturnValue({
           name: "beta",
           agent: "openclaw",
@@ -428,9 +437,19 @@ beta  127.0.0.1  18789  12345  running`;
           }),
         );
         expect(result).toEqual(expectedResult);
-        expect(requestGatewaySupervisorAction.mock.calls).toEqual(
-          expectedActions.map((action) => ["beta", action]),
-        );
+        const expectedCalls = expectedActions.map((action) => [
+          "beta",
+          action,
+          ...(action === "recover" ? [expect.any(Number)] : []),
+        ]);
+        expect(requestGatewaySupervisorAction.mock.calls).toEqual(expectedCalls);
+        expect(
+          requestGatewaySupervisorAction.mock.calls
+            .filter(([, action]) => action === "recover")
+            .every(([, , timeout]) =>
+              typeof timeout === "number" && timeout > 0 && timeout <= 210_000,
+            ),
+        ).toBe(true);
         expect(healthProbeCalls).toBe(1);
         expect(spawnedCommands).not.toContain("ssh");
       } finally {

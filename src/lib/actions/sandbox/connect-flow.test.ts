@@ -986,8 +986,11 @@ describe("connectSandbox flow", () => {
     );
 
     const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
-    expect(errorOutput).toContain("quarantined gateway relaunch");
+    expect(errorOutput).toContain("repeated process or health failures");
+    expect(errorOutput).toContain("nemoclaw alpha stop");
+    expect(errorOutput).toContain("nemoclaw alpha start");
     expect(errorOutput).toContain("nemoclaw alpha rebuild --yes");
+    expect(errorOutput).not.toContain("config set");
     expect(errorOutput).not.toContain("Check /tmp/gateway.log inside the sandbox for details.");
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
@@ -1017,7 +1020,7 @@ describe("connectSandbox flow", () => {
     expect(errorOutput).toContain(
       "Probe failed: OpenClaw gateway is running in 'alpha', but the dashboard/API host forward could not be restored.",
     );
-    expect(errorOutput).toContain("openshell forward start --background 18789 alpha");
+    expect(errorOutput).toContain("nemoclaw alpha recover");
     const logOutput = harness.logSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
     expect(logOutput).not.toContain("Probe complete");
     expect(exitSpy).toHaveBeenCalledWith(1);

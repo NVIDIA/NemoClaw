@@ -882,7 +882,8 @@ describe("Podman managed-bootstrap runtime surface", () => {
         bootstrapIdentity,
       })),
     ).resolves.toBe("created");
-    await lifecycle.patch.commitAfterReady();
+    const beforeFinalHandoff = vi.fn();
+    await lifecycle.patch.commitAfterReady({ beforeFinalHandoff });
 
     expect(injected.recoverUnfinishedTransactions).toHaveBeenCalledOnce();
     expect(coordinator.prepare).toHaveBeenCalledOnce();
@@ -891,6 +892,7 @@ describe("Podman managed-bootstrap runtime surface", () => {
       injected.value,
       expect.objectContaining({ outcome: "commit" }),
     );
+    expect(beforeFinalHandoff).not.toHaveBeenCalled();
     expect(operationEngine.capture).not.toHaveBeenCalled();
   });
 
