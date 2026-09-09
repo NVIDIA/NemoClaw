@@ -87,8 +87,8 @@ export function unsafeEndpointUrlViolation(
   try {
     decoded = decodeURIComponent(raw);
   } catch {
-    // Malformed percent-encoding carries no decoded controls; the remaining
-    // checks classify the raw input.
+    // A malformed suffix can hide a valid encoded control from the decoder.
+    return { kind: "invalid-url", reason: "must be a valid HTTP or HTTPS URL." };
   }
   if (CONTROL_OR_FORMAT_CHARACTER.test(decoded)) {
     return {

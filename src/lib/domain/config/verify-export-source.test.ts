@@ -119,7 +119,10 @@ function snapshot(overrides: Partial<ObservedExportSnapshot> = {}): ObservedExpo
     sandbox: {
       sandboxId,
       fingerprint,
-      resourceVersion: 7,
+      resourceVersion: "7",
+      workspace: "default",
+      imageRef,
+      providerNames: [],
       policyVersion: 3,
     },
     gateway: {
@@ -138,11 +141,28 @@ function snapshot(overrides: Partial<ObservedExportSnapshot> = {}): ObservedExpo
         endpoint,
         gatewayName: "nemoclaw",
         providerName: "openai-api",
+        providerId: "provider-id",
+        workspace: "default",
+        resourceVersion: "8",
         configKey: "OPENAI_BASE_URL",
       },
       credentialEnv: "OPENAI_API_KEY",
     },
-    policy: { sandboxId, revision: "3", document: policy },
+    policy: {
+      sandboxId,
+      revision: "3",
+      document: policy,
+    },
+    configuration: {
+      sandboxId,
+      workspace: "default",
+      revision: 3,
+      policyHash: "a".repeat(64),
+      configRevision: "1",
+      providerEnvRevision: "2",
+      policySource: "sandbox",
+      globalPolicyVersion: 0,
+    },
     ...overrides,
   };
 }
@@ -236,6 +256,20 @@ describe("config export source verification (#10938)", () => {
     );
   });
 
+  it.each([{ sandboxId: "replacement-id" }, { workspace: "other" }, { revision: 4 }])(
+    "rejects configuration that belongs to another source %j",
+    (change) => {
+      const value = snapshot();
+      const result = verify({ ...value, configuration: { ...value.configuration, ...change } });
+      expect(findings(result)).toContainEqual(
+        expect.objectContaining({
+          field: "source.sandbox.configuration",
+          category: "drifted",
+        }),
+      );
+    },
+  );
+
   it("fails closed on lifecycle, gateway, route, endpoint, and policy drift", async () => {
     const changed = snapshot({
       registry: entry({ lifecycleLiveIdentityFingerprint: "different" }),
@@ -255,11 +289,14 @@ describe("config export source verification (#10938)", () => {
           endpoint: "http://local",
           gatewayName: "other",
           providerName: "other",
+          providerId: "other-id",
+          workspace: "default",
+          resourceVersion: "9",
           configKey: "OPENAI_BASE_URL",
         },
         credentialEnv: null,
       },
-      policy: { sandboxId: "other-id", revision: "4", document: policy },
+      policy: { ...snapshot().policy, sandboxId: "other-id", revision: "4", document: policy },
     });
 
     const result = verify(changed);
@@ -325,6 +362,7 @@ describe("config export source verification (#10938)", () => {
     "https://api.example.test/v1?token=credential-canary",
     "https://api.example.test/v1#credential-canary",
     "https://api.example.test/%0acredential-canary",
+    "https://api.example.test/%0A%",
   ])("rejects an unsafe endpoint without exposing it: %s", async (unsafeEndpoint) => {
     const value = snapshot();
     const raw = snapshot({
@@ -456,6 +494,7 @@ describe("config export source verification (#10938)", () => {
     const canary = "credential-canary-value";
     const raw = snapshot({
       policy: {
+        ...snapshot().policy,
         sandboxId,
         revision: "3",
         document: `version: 1\nprocess:\n  run_as_user: sandbox\n  run_as_group: sandbox\n  password: ${canary}\nnetwork_policies: {}\n`,

@@ -319,7 +319,7 @@ function validateAgreement(
   requestedSandboxName: string,
   snapshot: QualifiedExportSnapshot,
 ): ExportFinding[] {
-  const { registry: entry, sandbox, gateway, inference, policy } = snapshot;
+  const { registry: entry, sandbox, gateway, inference, policy, configuration } = snapshot;
   const findings = classifyExportRegistry(entry);
   if (snapshot.sandboxName !== requestedSandboxName || entry.name !== requestedSandboxName) {
     findings.push(
@@ -361,6 +361,30 @@ function validateAgreement(
         "source.lifecycle.fingerprint",
         "drifted",
         "Registry and live sandbox identities differ.",
+      ),
+    );
+  if (sandbox.workspace !== "default")
+    findings.push(
+      finding(
+        "source.sandbox.workspace",
+        "unsupported",
+        "V1 export requires the default workspace.",
+      ),
+    );
+  if (entry.workload?.kind === "managed-image" && sandbox.imageRef !== entry.workload.reference)
+    findings.push(
+      finding(
+        "spec.sandboxes[].runtime.image",
+        "drifted",
+        "Registry and live sandbox images differ.",
+      ),
+    );
+  if (sandbox.providerNames.some((name) => name !== inference.provider))
+    findings.push(
+      finding(
+        "source.sandbox.providers",
+        "unsupported",
+        "V1 export does not support additional provider attachments.",
       ),
     );
   if (gateway.management !== "nemoclaw" || !gateway.stateRootOwned)
@@ -472,6 +496,9 @@ function validateAgreement(
         ),
       );
     if (
+      inference.endpointEvidence.workspace !== sandbox.workspace ||
+      !inference.endpointEvidence.providerId ||
+      !inference.endpointEvidence.resourceVersion ||
       inference.endpointEvidence.gatewayName !== gateway.name ||
       inference.endpointEvidence.providerName !== inference.provider ||
       expectedConfigKey === null ||
@@ -496,6 +523,19 @@ function validateAgreement(
         "The credential environment identifier is invalid or reserved for internal use.",
       ),
     );
+  if (
+    configuration.sandboxId !== sandbox.sandboxId ||
+    configuration.workspace !== sandbox.workspace ||
+    configuration.revision !== sandbox.policyVersion
+  ) {
+    findings.push(
+      finding(
+        "source.sandbox.configuration",
+        "drifted",
+        "Configuration is not bound to the observed sandbox and applied revision.",
+      ),
+    );
+  }
   if (policy.sandboxId !== sandbox.sandboxId)
     findings.push(
       finding(

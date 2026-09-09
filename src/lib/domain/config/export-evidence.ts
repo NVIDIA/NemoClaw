@@ -68,6 +68,9 @@ export interface ObservedExportEndpointEvidence {
   readonly endpoint: string;
   readonly gatewayName: string;
   readonly providerName: string;
+  readonly providerId: string;
+  readonly workspace: string;
+  readonly resourceVersion: string;
   readonly configKey: "OPENAI_BASE_URL" | "ANTHROPIC_BASE_URL";
 }
 
@@ -88,10 +91,24 @@ export interface ObservedExportPolicy {
   readonly document: string;
 }
 
+export type ObservedExportConfiguration = Readonly<{
+  sandboxId: string;
+  workspace: string;
+  revision: number;
+  policyHash: string;
+  configRevision: string;
+  providerEnvRevision: string;
+  policySource: "sandbox" | "global";
+  globalPolicyVersion: number;
+}>;
+
 export interface ObservedExportSandboxIdentity {
   readonly sandboxId: string;
   readonly fingerprint: string;
-  readonly resourceVersion: number;
+  readonly resourceVersion: string;
+  readonly workspace: string;
+  readonly imageRef: string;
+  readonly providerNames: readonly string[];
   readonly policyVersion: number;
 }
 
@@ -119,6 +136,7 @@ export type RawExportSnapshot =
       gateway: ObservedExportGateway;
       inference: ObservedExportInference;
       policy: ObservedExportPolicy;
+      configuration: ObservedExportConfiguration;
     }>;
 
 export type ObservedExportSnapshot = Extract<RawExportSnapshot, { kind: "observed" }>;

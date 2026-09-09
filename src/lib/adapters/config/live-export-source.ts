@@ -3,13 +3,11 @@
 
 import os from "node:os";
 
-import { createCliOpenShellProviderAdapter } from "../openshell/provider-adapter-cli";
+import { createProviders } from "../openshell/providers";
+import { createSandboxes, type Sandbox } from "../openshell/sandboxes";
+import { createSandboxConfig } from "../openshell/sandbox-config";
 import { captureSanitizedResolvedOpenshell } from "../openshell/sanitized-capture";
-import {
-  fingerprintOpenShellSandboxId,
-  parseStrictOpenShellSandboxListJson,
-} from "../openshell/sandbox-identity";
-import { inspectOpenShellSandboxIdentityFingerprint } from "../openshell/sandbox-identity-cli";
+import { fingerprintOpenShellSandboxId } from "../openshell/sandbox-identity";
 import { namedOpenShellGateway } from "../openshell/sandbox-observer";
 import { syncCliOpenShellSandboxPolicyReader } from "../openshell/sandbox-policy-cli";
 import { EXPORT_REGISTRY_EVIDENCE_KEYS } from "../../domain/config/export-evidence";
@@ -44,26 +42,6 @@ function registryEvidence(entry: Readonly<SandboxEntry>): ObservedExportRegistry
   } as ObservedExportRegistry;
 }
 
-function liveRow(sandboxName: string, gatewayName: string) {
-  const captured = captureSanitizedResolvedOpenshell(
-    ["sandbox", "list", "-g", gatewayName, "-o", "json"],
-    {
-      ignoreError: true,
-      includeStderr: true,
-      includeStreams: true,
-      maxBuffer: CAPTURE_MAX_BYTES,
-      timeout: CAPTURE_TIMEOUT_MS,
-    },
-  );
-  if (captured.status !== 0 || captured.error || (captured.stderr?.trim().length ?? 0) > 0) {
-    throw new Error("OpenShell sandbox inventory could not be read.");
-  }
-  const rows = parseStrictOpenShellSandboxListJson(captured.stdout ?? captured.output);
-  const matches = rows?.filter((row) => row.name === sandboxName) ?? [];
-  if (matches.length !== 1) throw new Error("OpenShell sandbox identity is missing or ambiguous.");
-  return matches[0]!;
-}
-
 function resolveGatewayBinding(entry: Readonly<SandboxEntry>): { name: string; port: number } {
   const port = entry.gatewayPort;
   if (typeof port !== "number" || !Number.isInteger(port) || port < 1 || port > 65535) {
@@ -94,40 +72,39 @@ function gatewayFor(entry: Readonly<SandboxEntry>): ObservedExportGateway {
   };
 }
 
-function sandboxIdentity(
-  sandboxName: string,
-  gatewayName: string,
-  row: ReturnType<typeof liveRow>,
-): ObservedExportSandboxIdentity {
-  const fingerprint = inspectOpenShellSandboxIdentityFingerprint({ sandboxName, gatewayName });
-  const idFingerprint = fingerprintOpenShellSandboxId(row.id);
-  if (!idFingerprint || fingerprint !== idFingerprint) {
-    throw new Error("OpenShell sandbox inventory and identity inspection disagree.");
-  }
+function sandboxIdentity(row: Sandbox): ObservedExportSandboxIdentity {
+  const fingerprint = fingerprintOpenShellSandboxId(row.id);
+  if (!fingerprint) throw new Error("OpenShell sandbox identity is invalid.");
   return {
     sandboxId: row.id,
     fingerprint,
-    resourceVersion: row.resource_version,
-    policyVersion: row.current_policy_version,
+    workspace: row.workspace,
+    resourceVersion: row.resourceVersion,
+    policyVersion: row.policyVersion,
+    imageRef: row.image,
+    providerNames: row.providers,
   };
 }
 
 async function inferenceFor(
   entry: Readonly<SandboxEntry>,
   beforeProviderRead: () => void,
+  signal: AbortSignal,
 ): Promise<ObservedExportInference> {
   const selected = getSandboxEntryInference(entry);
   const normalized = normalizeInferenceSelection(entry);
   const gateway = resolveGatewayBinding(entry);
   const live = getLiveGatewayInference(
     (args, options) =>
-      captureSanitizedResolvedOpenshell(args, {
-        ignoreError: true,
-        includeStderr: true,
-        includeStreams: true,
-        maxBuffer: CAPTURE_MAX_BYTES,
-        timeout: options?.timeout ?? CAPTURE_TIMEOUT_MS,
-      }),
+      args.includes("-g") || args.includes("--gateway")
+        ? captureSanitizedResolvedOpenshell(args, {
+            ignoreError: true,
+            includeStderr: true,
+            includeStreams: true,
+            maxBuffer: CAPTURE_MAX_BYTES,
+            timeout: options?.timeout ?? CAPTURE_TIMEOUT_MS,
+          })
+        : { status: 1, output: "" },
     { gatewayName: gateway.name, timeout: CAPTURE_TIMEOUT_MS },
   );
   if (live.failure || !live.inference)
@@ -139,28 +116,30 @@ async function inferenceFor(
   )
     throw new Error("The live gateway inference route does not match the registry.");
   beforeProviderRead();
-  const provider = await createCliOpenShellProviderAdapter().getProvider({
-    target: namedOpenShellGateway(gateway.name),
-    providerName: live.inference.provider,
-    timeoutMs: CAPTURE_TIMEOUT_MS,
-  });
-  if (!provider.ok) throw new Error("The live inference provider metadata could not be read.");
   const expectedType = normalized.preferredInferenceApi?.startsWith("anthropic")
     ? "anthropic"
     : normalized.preferredInferenceApi?.startsWith("openai")
       ? "openai"
       : null;
   const expectedConfigKey = expectedType === "anthropic" ? "ANTHROPIC_BASE_URL" : "OPENAI_BASE_URL";
+  const provider = await createProviders().get({
+    target: namedOpenShellGateway(gateway.name),
+    workspace: "default",
+    name: live.inference.provider,
+    configKeys: [expectedConfigKey],
+    signal,
+  });
+  if (!provider) throw new Error("The live inference provider is missing.");
   const expectedCredentialCount = normalized.credentialEnv === null ? 0 : 1;
   if (
-    provider.value.name !== live.inference.provider ||
+    provider.name !== live.inference.provider ||
     expectedType === null ||
-    provider.value.type !== expectedType ||
-    provider.value.credentialKeys.length !== expectedCredentialCount ||
+    provider.type !== expectedType ||
+    provider.credentialKeys.length !== expectedCredentialCount ||
     (normalized.credentialEnv !== null &&
-      provider.value.credentialKeys[0] !== normalized.credentialEnv) ||
-    provider.value.configKeys.length !== 1 ||
-    provider.value.configKeys[0] !== expectedConfigKey
+      provider.credentialKeys[0] !== normalized.credentialEnv) ||
+    provider.configKeys.length !== 1 ||
+    provider.configKeys[0] !== expectedConfigKey
   )
     throw new Error("The live inference provider metadata does not match the registry.");
 
@@ -173,18 +152,31 @@ async function inferenceFor(
     model: live.inference.model,
     api: normalized.preferredInferenceApi ?? "",
     endpoint: normalized.endpointUrl ?? "",
-    // OpenShell's provider metadata does not expose an independently read
-    // endpoint value. V1 export therefore fails closed at the pure boundary.
-    endpointEvidence: null,
+    endpointEvidence: {
+      endpoint: provider.config[expectedConfigKey] ?? "",
+      gatewayName: gateway.name,
+      providerName: provider.name,
+      configKey: expectedConfigKey,
+      providerId: provider.id,
+      workspace: provider.workspace,
+      resourceVersion: provider.resourceVersion,
+    },
     credentialEnv: normalized.credentialEnv,
   };
 }
 
-function effectivePolicy(
+async function effectivePolicy(
   sandboxName: string,
   gateway: ObservedExportGateway,
-  row: ReturnType<typeof liveRow>,
+  row: Sandbox,
+  signal: AbortSignal,
 ) {
+  const configuration = await createSandboxConfig().get({
+    target: namedOpenShellGateway(gateway.name),
+    workspace: row.workspace,
+    sandboxId: row.id,
+    signal,
+  });
   const result = syncCliOpenShellSandboxPolicyReader.readSandboxPolicy({
     target: namedOpenShellGateway(gateway.name),
     sandboxName,
@@ -196,13 +188,17 @@ function effectivePolicy(
   if (!isSandboxPolicyCredentialFree(result.value.document)) {
     throw new Error("The effective OpenShell policy is not credential-free.");
   }
-  if (row.current_policy_version !== result.value.appliedRevision) {
+  if (
+    row.policyVersion !== result.value.appliedRevision ||
+    configuration.revision !== result.value.appliedRevision
+  ) {
     throw new Error("The effective OpenShell policy revision does not match the live sandbox.");
   }
   return {
     sandboxId: row.id,
     revision: String(result.value.appliedRevision),
     document: result.value.document,
+    configuration,
   };
 }
 
@@ -216,15 +212,26 @@ async function readSnapshot(sandboxName: string): Promise<RawExportSnapshot> {
     stage = "gateway-binding";
     const gateway = gatewayFor(entry);
     stage = "sandbox-inventory";
-    const row = liveRow(sandboxName, gateway.name);
-    stage = "sandbox-identity";
-    const sandbox = sandboxIdentity(sandboxName, gateway.name, row);
-    stage = "inference-route";
-    const inference = await inferenceFor(entry, () => {
-      stage = "provider-metadata";
+    const signal = AbortSignal.timeout(CAPTURE_TIMEOUT_MS);
+    const row = await createSandboxes().get({
+      target: namedOpenShellGateway(gateway.name),
+      workspace: "default",
+      name: sandboxName,
+      signal,
     });
+    if (!row) throw new Error("The live sandbox is missing.");
+    stage = "sandbox-identity";
+    const sandbox = sandboxIdentity(row);
+    stage = "inference-route";
+    const inference = await inferenceFor(
+      entry,
+      () => {
+        stage = "provider-metadata";
+      },
+      signal,
+    );
     stage = "effective-policy";
-    const policy = effectivePolicy(sandboxName, gateway, row);
+    const { configuration, ...policy } = await effectivePolicy(sandboxName, gateway, row, signal);
     return {
       kind: "observed",
       sandboxName,
@@ -233,6 +240,7 @@ async function readSnapshot(sandboxName: string): Promise<RawExportSnapshot> {
       sandbox,
       inference,
       policy,
+      configuration,
     };
   } catch {
     return { kind: "read-failed", stage };
