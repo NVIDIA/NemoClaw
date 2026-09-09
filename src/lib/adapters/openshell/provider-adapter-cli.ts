@@ -105,6 +105,11 @@ const NO_PROVIDER_ATTACHMENTS_RE = /^No providers attached to sandbox\b/mu;
 const PROVIDER_ATTACHMENT_HEADER_RE = /^NAME\s+TYPE\s+CREDENTIAL_KEYS\s+CONFIG_KEYS$/u;
 const PROVIDER_ATTACHMENT_ROW_RE = /^(\S+)\s+(\S+)\s+(\d+)\s+(\d+)$/u;
 
+/** Return whether a credential key satisfies the OpenShell provider CLI contract. */
+export function isValidOpenShellProviderCredentialName(value: string): boolean {
+  return ENV_NAME_PATTERN.test(value);
+}
+
 function success<T>(value: T): OpenShellProviderResult<T> {
   return { ok: true, value };
 }
@@ -399,7 +404,7 @@ function parseProfileCredentialKeys(output: string, expectedProfileId: string): 
     const envVars = Reflect.get(credential, "env_vars");
     if (!Array.isArray(envVars)) return null;
     for (const key of envVars) {
-      if (typeof key !== "string" || !ENV_NAME_PATTERN.test(key)) return null;
+      if (typeof key !== "string" || !isValidOpenShellProviderCredentialName(key)) return null;
       keys.add(key);
     }
   }
@@ -501,7 +506,8 @@ export function createCliOpenShellProviderAdapter(
       (!request.fromExisting && request.credentials.length === 0) ||
       (request.fromExisting && request.credentials.length > 0) ||
       request.credentials.some(
-        (credential) => !ENV_NAME_PATTERN.test(credential.name) || credential.value.length === 0,
+        (credential) =>
+          !isValidOpenShellProviderCredentialName(credential.name) || credential.value.length === 0,
       )
     ) {
       return failure({
@@ -519,7 +525,14 @@ export function createCliOpenShellProviderAdapter(
     const env = Object.fromEntries(
       request.credentials.map((credential) => [credential.name, credential.value]),
     );
-    const result = invoke(args, request, request.credentials.length > 0 ? env : undefined);
+    const result = invoke(
+      args,
+      request,
+      request.credentials.length > 0 ? env : undefined,
+      2,
+      true,
+      PROVIDER_GET_DIAGNOSTIC_LIMIT,
+    );
     const error = commandError(result, Object.values(env));
     if (request.fromExisting && error?.kind === "command") {
       return failure({
@@ -586,7 +599,8 @@ export function createCliOpenShellProviderAdapter(
     if (
       !isValidCliOpenShellProviderIdentifier(request.providerName) ||
       request.credentials.some(
-        (credential) => !ENV_NAME_PATTERN.test(credential.name) || credential.value.length === 0,
+        (credential) =>
+          !isValidOpenShellProviderCredentialName(credential.name) || credential.value.length === 0,
       )
     ) {
       return failure({ kind: "validation", message: "Provider update input is invalid." });
@@ -738,7 +752,7 @@ export function createCliOpenShellProviderAdapter(
     ];
     if (
       !isValidCliOpenShellProviderIdentifier(request.providerName) ||
-      !ENV_NAME_PATTERN.test(request.credentialKey) ||
+      !isValidOpenShellProviderCredentialName(request.credentialKey) ||
       !request.strategy ||
       materialKeys.length === 0 ||
       new Set(materialKeys).size !== materialKeys.length ||
@@ -777,7 +791,7 @@ export function createCliOpenShellProviderAdapter(
     if (targetError) return failure(targetError);
     if (
       !isValidCliOpenShellProviderIdentifier(request.providerName) ||
-      !ENV_NAME_PATTERN.test(request.credentialKey)
+      !isValidOpenShellProviderCredentialName(request.credentialKey)
     ) {
       return failure({ kind: "validation", message: "Provider refresh status input is invalid." });
     }
