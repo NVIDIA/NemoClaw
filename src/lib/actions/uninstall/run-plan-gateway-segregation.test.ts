@@ -317,27 +317,37 @@ describe("uninstall gateway-port segregation (#3053)", () => {
     expect(openshellCalls).toContainEqual(["gateway", "destroy", "-g", "nemoclaw"]);
   });
 
-  it("does not hide a current gateway remove failure behind the legacy verb", () => {
+  it.each([
+    { name: "a permission error", diagnostic: "permission denied" },
+    { name: "an unrelated not-found error", diagnostic: "gateway service endpoint not found" },
+    {
+      name: "a different gateway absence",
+      diagnostic: "No gateway metadata found for 'other'. Request for nemoclaw failed",
+    },
+  ])("preserves state when gateway removal reports $name (#9859)", ({ diagnostic }) => {
     const calls: Array<{ args: string[]; command: string }> = [];
+    const logs: string[] = [];
+    const rmSync = vi.fn();
     const warnings: string[] = [];
     const responses = new Map<string, RunResult>([
       ["openshell gateway list -o json", ok(JSON.stringify([{ name: "nemoclaw" }]))],
-      ["openshell gateway remove nemoclaw", { status: 1, stdout: "", stderr: "permission denied" }],
+      ["openshell gateway remove nemoclaw", { status: 1, stdout: "", stderr: diagnostic }],
     ]);
     const result = runUninstallPlan(
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
         commandExists: (command) => command !== "docker" && command !== "pgrep",
         env: { HOME: STATIC_TEST_HOME, TMPDIR: "/tmp/test" } as NodeJS.ProcessEnv,
+        error: (line) => warnings.push(line),
         existsSync: () => false,
         isTty: false,
-        rmSync: vi.fn(),
+        log: (line) => logs.push(line),
+        rmSync,
         run: (command, args) => {
           calls.push({ args, command });
           return responses.get([command, ...args].join(" ")) ?? ok();
         },
         runDocker: () => ok(""),
-        error: (line) => warnings.push(line),
       },
     );
 
@@ -350,6 +360,10 @@ describe("uninstall gateway-port segregation (#3053)", () => {
     expect(warnings.join("\n")).toContain(
       "Could not remove gateway registration 'nemoclaw': openshell gateway remove failed (exit 1).",
     );
+    expect(warnings).not.toContain("Gateway 'nemoclaw' already removed or unreachable");
+    expect(rmSync).not.toHaveBeenCalled();
+    expect(logs).not.toContain("[3/6] NemoClaw CLI");
+    expect(logs).not.toContain("Claws retracted. Until next time.");
   });
 
   it("exits nonzero and preserves cleanup state when gateway registration removal fails (#9859)", () => {

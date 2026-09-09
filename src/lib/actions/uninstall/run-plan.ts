@@ -912,13 +912,6 @@ function isExplicitGatewayRegistrationAbsence(output: string, gatewayLabel: stri
   const clean = output.replace(/\x1B\[[0-?]*[ -/]*[@-~]/gu, "");
   const escapedLabel = gatewayLabel.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
   const namedGateway = `(?:['"]${escapedLabel}['"]|${escapedLabel})`;
-  if (
-    clean.includes(`No gateway metadata found for '${gatewayLabel}'.`) ||
-    clean.includes(`No gateway metadata found for \"${gatewayLabel}\".`) ||
-    clean.includes(`No gateway metadata found for ${gatewayLabel}.`)
-  ) {
-    return true;
-  }
   return clean.split(/\r?\n/u).some((rawLine) => {
     const line = rawLine
       .trim()
@@ -939,6 +932,7 @@ function gatewayRegistrationRemovalFailureMessage(
   result: RunResult,
 ): string {
   const output = `${result.stdout}\n${result.stderr}`;
+  // Map untrusted command output to fixed phrases so diagnostics do not expose secrets.
   const cause = /connection refused/iu.test(output) ? "connection refused; " : "";
   const status = result.status === null ? "no exit status" : `exit ${String(result.status)}`;
   return `Could not remove gateway registration '${gatewayLabel}': openshell gateway ${operation} failed (${cause}${status}).`;
@@ -958,10 +952,7 @@ function removeGatewayRegistration(
   }
 
   const removeOutput = `${removeResult.stdout}\n${removeResult.stderr}`;
-  if (
-    isExplicitGatewayRegistrationAbsence(removeOutput, gatewayLabel) ||
-    (/No gateway metadata found for/iu.test(removeOutput) && removeOutput.includes(gatewayLabel))
-  ) {
+  if (isExplicitGatewayRegistrationAbsence(removeOutput, gatewayLabel)) {
     runtime.warn(gatewayDestroySkipMessage(gatewayLabel));
     return true;
   }
