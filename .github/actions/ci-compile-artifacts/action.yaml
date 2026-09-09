@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 name: ci-compile-artifacts
-description: Install dependencies, then compile and verify fixed CLI and plugin outputs.
+description: Restore or build the complete CLI and plugin outputs for the checked-out commit.
 
 runs:
   using: composite
@@ -10,35 +10,77 @@ runs:
     - name: Setup Node.js
       uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
       with:
-        node-version: "22"
+        node-version: "22.23.2"
         cache: npm
         cache-dependency-path: |
           package-lock.json
           nemoclaw/package-lock.json
 
+    - name: Identify compiled output
+      id: identity
+      shell: bash
+      run: node --experimental-strip-types "$GITHUB_ACTION_PATH/compiled-artifact.mts" identity
+
+    - name: Restore compiled CLI and plugin
+      id: cache
+      uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+      with:
+        key: ${{ steps.identity.outputs.key }}
+        path: |
+          dist
+          nemoclaw/dist
+
+    - name: Remove outputs after a cache miss
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: rm -rf -- dist nemoclaw/dist
+
     - name: Install dependencies
+      if: steps.cache.outputs.cache-hit != 'true'
       shell: bash
       env:
         NODE_AUTH_TOKEN: ${{ github.event_name == 'push' && github.token || '' }}
       run: bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"
 
-    - name: Compile and verify outputs
+    - name: Compile CLI and plugin
+      if: steps.cache.outputs.cache-hit != 'true'
       shell: bash
       run: |
         set -euo pipefail
-
-        : "${GITHUB_WORKSPACE:?GITHUB_WORKSPACE must name the source checkout}"
-        cd -- "$GITHUB_WORKSPACE"
-
-        test -f package-lock.json
-        test -f nemoclaw/package-lock.json
-
-        npm run clean:cli
-        npm --prefix nemoclaw run clean
         npm --prefix nemoclaw run build
         npm run build:cli
-        npx tsx scripts/check-dist-sourcemaps.mts dist
 
-        test -s dist/nemoclaw.js
-        test -s nemoclaw/dist/index.js
-        test -s nemoclaw/dist/shared/sandbox-name.cjs
+    - name: Verify compiled CLI and plugin
+      shell: bash
+      run: |
+        set -euo pipefail
+        node --experimental-strip-types "$GITHUB_ACTION_PATH/compiled-artifact.mts" verify
+        node --experimental-strip-types "$GITHUB_ACTION_PATH/../../../scripts/check-dist-sourcemaps.mts" dist
+
+    - name: Save compiled CLI and plugin
+      if: steps.cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+      with:
+        key: ${{ steps.identity.outputs.key }}
+        path: |
+          dist
+          nemoclaw/dist
+
+    - name: Report compiled output preparation
+      if: always()
+      shell: bash
+      env:
+        CACHE_HIT: ${{ steps.cache.outputs.cache-hit }}
+        CACHE_KEY: ${{ steps.identity.outputs.key }}
+        SOURCE_SHA: ${{ steps.identity.outputs.sha }}
+        PREPARATION_RESULT: ${{ job.status }}
+      run: |
+        {
+          echo '### Compiled CLI and plugin'
+          printf 'Source: `%s`\n\n' "$SOURCE_SHA"
+          printf 'Cache key: `%s`\n\n' "$CACHE_KEY"
+          printf 'Result: %s. Cache hit: %s.\n\n' "$PREPARATION_RESULT" "${CACHE_HIT:-false}"
+          if [[ "$CACHE_HIT" == "true" && "$PREPARATION_RESULT" == "failure" ]]; then
+            printf 'Delete the rejected cache with `gh cache delete "%s" --repo "%s"`, then rerun the failed jobs.\n' "$CACHE_KEY" "$GITHUB_REPOSITORY"
+          fi
+        } >> "$GITHUB_STEP_SUMMARY"

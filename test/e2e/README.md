@@ -40,12 +40,35 @@ before those targets run; local runners must provide it themselves.
 ### Candidate CLI Artifact
 
 The candidate CLI comes from the source commit that an E2E run tests.
-The `generate-matrix` job builds it once.
+The `generate-matrix` job prepares it once through the shared `ci-compile-artifacts` action.
+Main CI and PR CI use that action too. It always produces the CLI and full plugin,
+with Node.js 22.23.2, and verifies the embedded source revision and source maps.
+E2E loads the action from a separate checkout of the trusted workflow revision.
+The existing E2E artifact handoff retains the CLI and shared-module payload during this migration.
 The job publishes root `dist/` and `nemoclaw/dist/shared/` in one content-addressed artifact.
 The boundary validator derives artifact consumers from jobs that use the pinned preparation action.
 It excludes `generate-matrix` and the no-build and trusted-build jobs in `E2E_JOB_POLICY`.
 Each selected consumer restores the artifact instead of running `npm run build:cli`.
 Each consumer runs the pinned preparation action with `build-cli: "false"` to install Node.js and project dependencies.
+The shared compiler uses native GitHub caching of `dist/` and `nemoclaw/dist/`
+for main CI, PR CI, and E2E candidate preparation. Its key includes the checkout
+SHA, trusted recipe revision, action content, Node version, and runner platform.
+A full cache match skips dependency installation and compilation; a miss rebuilds
+the same output. Both paths verify output completeness and source identity.
+A rejected cache hit fails the job. The job summary gives its key and a cache-deletion command.
+Delete that cache, then rerun the failed jobs to rebuild on a miss.
+Rerunning before deletion restores the same invalid entry.
+Main CI and main E2E can reuse an entry for the same source and recipe.
+PR caches remain scoped to their merge refs, so manual E2E can miss a PR CI entry.
+Cache eviction and concurrent misses can cause additional builds. Each workflow
+prepares once before its parallel consumers.
+
+Manual PR E2E accepts source branches only in `NVIDIA/NemoClaw`.
+The workflow checks the PR source repository through GitHub before candidate execution.
+Repository writers are trusted to populate compiled caches before their changes merge.
+Maintainers must review and adopt fork contributions onto a repository branch before manual E2E.
+Ordinary fork PR CI remains available in its separate cache scope.
+
 The `managed-image-protected-runtime` qualification does not use this artifact.
 It builds the CLI from the trusted workflow checkout and never executes or restores the candidate CLI.
 
@@ -240,7 +263,9 @@ boundaries are the behavior under test.
 `.github/workflows/platform-vitest-main.yaml` publishes the `CI / Platform Compatibility` workflow.
 It runs the Ubuntu 26.04 compatibility contracts and the full Vitest suite in four shards on macOS and WSL.
 The matrix disables `fail-fast`.
-The first macOS shard has a 60-minute budget for live E2E; the other shards have 30 minutes.
+The first macOS shard has a 150-minute job timeout. Its live E2E has a
+70-minute timeout, and every other step shares the remaining job time. The
+other shards have 30 minutes.
 The first WSL shard has a 180-minute budget for root-required contracts and live E2E; the other shards have 90 minutes.
 
 On shard 1, the workflow runs focused macOS and WSL live E2E only when the run tests `main` and Docker is available.
@@ -334,6 +359,19 @@ and transport. It also stops the gateway and removes its temporary state.
 
 ## Catalogue Targets
 
+The `network-policy` target also owns live configuration-export evidence for #10938 and PR #11065.
+After ordinary restricted OpenClaw onboarding, it invokes the candidate `config export` command through the real SDK connection.
+It compares the exported sandbox name, immutable managed image, hosted endpoint, and explicit policy with the fixture's registered and effective state.
+It then changes the fixture's recorded sandbox fingerprint and requires export to fail without creating a file.
+The fixture restores the registry in `finally` and removes private export files through its existing cleanup registry.
+This covers the SDK connection and complete export observation boundary; the deterministic adapter tests remain the owners of individual wire shapes and malformed responses.
+The assertion budget is unchanged. Nine export assertions replace nine redundant checks in the same target:
+
+- Two CLI-file and two OpenShell-version checks are covered by the retained successful onboarding checks.
+- Two intermediate process-start comparisons are covered by the retained comparison after all policy and traffic probes.
+- The approved HTTP status check is redundant with the marker server response, which always returns that marker with status 200.
+- Two web-fetch success-marker checks duplicate the retained probe exit-status check; the probe rejects missing approved content and unexpected denied-port access.
+
 `tools/e2e/target-catalogue.mts` declares live E2E targets that share one execution shape.
 Each entry owns these target properties:
 
@@ -375,11 +413,11 @@ The planner partitions that set into GitHub Actions matrices, one for each execu
 The execution profile owns the credentials available to its target step:
 
 - `standard` displays `no provider credential` and receives no NVIDIA API credential.
-- `nvidia-api` displays `NVIDIA API key` and receives `NVIDIA_API_KEY` on trusted `main` runs and authenticated NVIDIA-owned PR runs.
-- `nvidia-inference` displays `NVIDIA inference API key` and receives `NVIDIA_INFERENCE_API_KEY` on trusted `main` runs and authenticated NVIDIA-owned PR runs.
+- `nvidia-api` displays `NVIDIA API key` and receives `NVIDIA_API_KEY` on trusted `main` runs and authenticated same-repository PR runs.
+- `nvidia-inference` displays `NVIDIA inference API key` and receives `NVIDIA_INFERENCE_API_KEY` on trusted `main` runs and authenticated same-repository PR runs.
 - `github-read` displays `GitHub read token` and receives the job-scoped `GITHUB_TOKEN` only for the target step when `trusted_main` is `true`.
-  The reusable workflow enforces this boundary; an authenticated NVIDIA-owned PR caller sets `trusted_main` to `true`, while an external PR caller sets it to `false` and receives no `GITHUB_TOKEN`.
-- `brave-nvidia-inference` displays `Brave and NVIDIA inference API keys` and receives `BRAVE_API_KEY` and `NVIDIA_INFERENCE_API_KEY` on trusted `main` runs and authenticated NVIDIA-owned PR runs.
+  The reusable workflow enforces this boundary; an authenticated same-repository PR caller sets `trusted_main` to `true`.
+- `brave-nvidia-inference` displays `Brave and NVIDIA inference API keys` and receives `BRAVE_API_KEY` and `NVIDIA_INFERENCE_API_KEY` on trusted `main` runs and authenticated same-repository PR runs.
 
 `common-egress-agent` runs 4 isolated scenario shards.
 The Personal public-fetch shard exercises ordinary onboarding with an explicit Personal selection; it does not exercise Portable profile selection.
@@ -497,11 +535,15 @@ The host must provide that user a secure, independently writable OS runtime auth
 The host must provide the util-linux `script` command and GNU `timeout` command.
 
 The helper rebuilds the candidate CLI, runs `connect --probe-only`, and then
-runs two `launch` sessions during the same fixed lease.
-Each real pseudo-terminal session sends two distinct messages and `/exit`, then
-requires process exit status `0`. The OpenClaw session store must append two
-nonempty `user` and `assistant` record pairs in one session. The helper does not
-compare message content. Terminal output is a bounded failure diagnostic only.
+runs two logical `launch` sessions during the same fixed lease. Each logical
+session may retry once with a fresh run ID and input only when the OpenClaw
+session store contains a structured transient provider-unavailability record
+and cleanup succeeds. Authentication, authorization, policy, malformed-response,
+cleanup, and unknown failures stop the acceptance test without retrying.
+Each successful real pseudo-terminal attempt sends two distinct messages and
+`/exit`, then requires process exit status `0`. The OpenClaw session store must
+append two nonempty `user` and `assistant` record pairs in one session. The helper
+does not compare message content. Terminal output is a bounded failure diagnostic only.
 Deterministic unit tests separately prove selection of the complete preflight
 and lease paths, stale-producer exclusion, the fixed time-unsafe quarantine,
 refusal to recover when prior evidence cannot be durably fenced, and the named
@@ -667,13 +709,19 @@ mode.
 
 The `openclaw-plugin-runtime-exdev` job keeps one current-version lifecycle:
 
-1. Onboard the custom weather plugin as v1.
-2. Install v1 with OpenClaw across distinct filesystems.
-3. Restart the gateway and verify v1.
+1. Onboard the custom weather plugin as v1 and verify it through `tools.invoke`.
+2. Install v1-exdev with OpenClaw across distinct filesystems.
+3. Restart the gateway and verify v1-exdev.
 4. Recreate the sandbox with the plugin changed to v2 and verify v2.
 
-The recreation remains the replacement boundary. One `tools.invoke` assertion
-per phase proves the plugin version after onboarding, restart, and recreation.
+The recreation remains the replacement boundary. Initial onboarding and
+recreation each run once. If onboarding or recreation reports missing canonical
+CLI device pairing or a bounded CLI scope warm-up failure, the test attempts to
+record structured diagnostics, attempts to write bounded `failed-no-retry`
+evidence, and then stops without automatically resuming the ambiguously mutated
+session. An evidence
+write failure propagates, so that retry artifact may be absent. `tools.invoke`
+assertions prove the plugin version after onboarding, restart, and recreation.
 The job also keeps the test-only tmpfs mount and uses OpenClaw's plugin installer
 across the proven filesystem boundary before restart. `e2e-support` tests own
 deterministic wrapper argument rewriting. Deterministic tests own exact package
@@ -682,10 +730,10 @@ permutations are outside this live contract. Workspace preservation and policy
 selection retain their focused coverage instead of another assertion in this
 target. The `rebuild-openclaw` job remains the canonical live rebuild coverage.
 
-The current-checkout fixture locally prebuilds its repository-controlled v1
-and v2 Dockerfiles with BuildKit, then hands only those local image references
-to OpenShell. User-supplied `--from` Dockerfiles retain the gateway-builder
-trust boundary and are never host-prebuilt by this fixture.
+The current-checkout fixture locally prebuilds repository-controlled images
+with BuildKit. It verifies each local tag, then passes the matching immutable
+image ID to OpenShell. User-supplied `--from` Dockerfiles retain the
+gateway-builder trust boundary and are never host-prebuilt by this fixture.
 The current-checkout fixture enables local base-image resolution after the
 workflow removes Docker Hub credentials.
 
@@ -1383,7 +1431,7 @@ removes the temporary credential home and verifies its absence after the scenari
 These credentials remain valid until they expire or an administrator revokes
 them in their issuing services. If cleanup fails, remove the recorded Brev
 workspace. Rotate or revoke each credential to remove later access.
-For an NVIDIA-owned PR revision, the job builds and runs the candidate commit with this same credential boundary.
+For a same-repository PR revision, the job builds and runs the candidate commit with this same credential boundary.
 The PR branch must be in `NVIDIA/NemoClaw` because the image producer does not accept a sibling-repository candidate.
 
 The `NEMOCLAW_STAGING_LAUNCHABLE_ID` repository Actions variable selects the
@@ -1404,17 +1452,18 @@ GitHub's workflow-dispatch permission is the actor authorization for a PR revisi
 The workflow does not add a second `maintain` or `admin` role gate.
 Before checkout, it verifies the open PR, target repository and `main` branch, current source repository and commit, base commit, and trusted workflow commit from the GitHub PR API.
 
-When the API reports that the PR source repository owner is the `NVIDIA` organization, empty `jobs` and `targets` select:
+The API must report `NVIDIA/NemoClaw` as the PR source repository. Empty `jobs` and `targets` select:
 
 - every default-selected free-standing workflow E2E except `staging Brev Launchable`;
 - every catalogue target across all credential profiles;
 - every shared credential-free test; and
 - every default registry target.
 
-An NVIDIA-owned PR may also select any supported E2E job or target.
-For an external PR, the bounded controller matrix remains in effect and the workflow does not forward repository credentials to candidate-controlled processes or reusable workflow callers.
+A same-repository PR may also select any supported E2E job or target.
+Main and manual PR runs use the same typed planner from the trusted workflow revision.
+PRs from forks, including other NVIDIA repositories, are rejected before candidate execution.
 The run skips `jetson-nvmap-gpu` unless `allow_jetson_dispatch` is `true`.
-Jetson and Launchable dispatch additionally require the PR branch to be in `NVIDIA/NemoClaw`; their operator and image-producer backends do not accept a sibling-repository candidate.
+Jetson and Launchable retain their operator and image-producer requirements.
 It skips `llama-cpp-dgx-spark-plan` and `llama-cpp-dgx-spark-qualification`
 unless their runner-queue flag is `true`.
 The trusted workflow definition remains on `main` and binds the latest PR commit to the current PR base SHA.
@@ -1441,7 +1490,7 @@ The risk plan selects the `openshell-gateway-upgrade` catalogue target and the
 The catalogue target covers the installer-driven OpenShell gateway upgrade handoff.
 The typed target covers the LangChain Deep Agents Code sandbox recreation path.
 
-An NVIDIA-owned PR run with empty selectors exposes these values to candidate-controlled job processes:
+A same-repository PR run with empty selectors exposes these values to candidate-controlled job processes:
 
 - Long-lived API keys from repository secrets: `NVIDIA_INFERENCE_API_KEY`, `NVIDIA_API_KEY`, and `BRAVE_API_KEY`.
 - Docker Hub credentials from `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`, available to candidate processes through the job's temporary Docker configuration until cleanup.
@@ -1512,7 +1561,7 @@ recorded base SHA and `checkout_repository` to `NVIDIA/NemoClaw`, while leaving 
 `workflow_sha` unchanged. The workflow run is the evidence; do not publish a separate commit status
 or automatically replay the base.
 
-For the default NVIDIA-owned PR revision selection, leave `jobs` and `targets` empty and keep `include_staging_brev_launchable=false`.
+For the default same-repository PR revision selection, leave `jobs` and `targets` empty and keep `include_staging_brev_launchable=false`.
 Keep `allow_jetson_dispatch=false` and `allow_dgx_spark_runner_queue=false` for the default PR revision selection.
 If `allow_dgx_spark_runner_queue=true`, GitHub can pause the qualification job for the `approve-dgx-spark-image-qualification` environment.
 An authorized environment reviewer must approve it before qualification starts.
@@ -1524,8 +1573,8 @@ To select native runtime qualification evidence production, set `jobs=native-run
 Leave `targets` empty and keep `include_staging_brev_launchable=false`.
 For this producer run, the executing workflow SHA, `workflow_sha` input, and PR base SHA must match.
 Confirm that the PR comes from `NVIDIA/NemoClaw`, the required ephemeral runner variables are configured, and the workflow has not been rerun.
-A trusted `main` workflow pre-checkout step validates the open PR and records whether its source repository has API-confirmed `NVIDIA` organization ownership.
-That ownership authorizes the full ordinary plan and credential profiles; external sources retain the bounded controller plan.
+A trusted `main` workflow step validates the open PR before candidate checkout.
+It requires `NVIDIA/NemoClaw` as the source repository before authorizing the full ordinary plan and credential profiles.
 A second validation after checkout rejects a changed selected commit, base commit, repository, or
 NVIDIA ownership before preparation.
 Candidate runs cannot publish release qualification.
@@ -1573,9 +1622,9 @@ classify that guidance as required, but rendered advisor guidance remains
 non-authoritative. Model advice is additive and cannot downgrade the
 deterministic floor. PR Review Advisor recommendations remain advisory.
 A repository-authorized user decides whether to dispatch this trusted selection for the current PR revision.
-For API-confirmed NVIDIA-owned sources, the selection may include secret-backed targets such as `network-policy`.
-External PR revisions retain the credential-free controller boundary.
-The Advisor comment labels the requested coverage, but does not restrict an NVIDIA-owned PR to that recommendation.
+For API-confirmed same-repository sources, the selection may include secret-backed targets such as `network-policy`.
+Fork contributions require maintainer review and adoption onto a repository branch before manual E2E.
+The Advisor comment labels the requested coverage, but does not restrict a same-repository PR to that recommendation.
 No PR E2E controller dispatches the risk plan.
 
 The `full-e2e` target enforces a separate hard acceptance contract for the

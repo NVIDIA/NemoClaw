@@ -50,6 +50,7 @@ import {
 import { readFullE2eColdWorkloadEvidence } from "./full-e2e-workload-evidence.ts";
 import { runOpenClawLaunchReadinessLeaseTurns } from "./launch-agent-turn.ts";
 import { bindApprovedPrBaseForBaseImageComparison } from "./pr-base-comparison.ts";
+import { FULL_E2E_TEST_TIMEOUT_MS } from "../../../tools/e2e/full-e2e-timeout-contract.mts";
 import { parseOpenClawJsonDocuments } from "../../../src/lib/openclaw/agent-json-provenance.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-full";
@@ -57,7 +58,9 @@ const FULL_E2E_TARGET_ID = process.env.E2E_TARGET_ID ?? "full-e2e";
 const SETUP_MODE = process.env.NEMOCLAW_E2E_SETUP_MODE ?? "source-install";
 const USE_PREINSTALLED_LAUNCHABLE = SETUP_MODE === "preinstalled-launchable";
 const PORTABLE_PROFILE = process.env.NEMOCLAW_EXPERIMENTAL_PROFILE === "portable";
-const LIVE_TIMEOUT_MS = testTimeout(50 * 60_000);
+// Cold install plus two launch turns with one provider retry each can consume
+// almost 50 minutes before the remaining assertions and cleanup run.
+const LIVE_TIMEOUT_MS = testTimeout(FULL_E2E_TEST_TIMEOUT_MS);
 const INSTALL_TIMEOUT_MS = execTimeout(25 * 60_000);
 const FIRST_TURN_TIMEOUT_MS = 240_000;
 const MAX_SILENCE_SECS = 60;

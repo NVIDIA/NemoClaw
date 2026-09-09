@@ -27,6 +27,7 @@ import {
 import {
   hasPortableAgentSandboxLifecycleReceipt,
   recoverPortableAgentSandboxLifecycle,
+  requalifyPortableAgentSandboxAuthority,
   stopPortableAgentSandboxLifecycle,
 } from "../experimental/portable-agent-lifecycle";
 import { withMcpLifecycleLockSync } from "../../state/mcp-lifecycle-lock-acquisition";
@@ -78,6 +79,7 @@ export interface DockerRuntimeProviderDependencies {
   readonly printRuntimeDownGuidance: typeof printDockerRuntimeDownGuidance;
   readonly recoverSandbox: typeof recoverDockerDriverSandbox;
   readonly recoverPortableSandbox: typeof recoverPortableAgentSandboxLifecycle;
+  readonly requalifyPortableSandbox: typeof requalifyPortableAgentSandboxAuthority;
   readonly queryRuntimeSnapshot: typeof queryOpenShellDockerSandboxRuntimeSnapshot;
   readonly removeImage: DockerRemoveImage;
   readonly stopContainer: DockerStop;
@@ -229,6 +231,8 @@ function resolveDependencies(
     recoverSandbox: overrides.recoverSandbox ?? recoverDockerDriverSandbox,
     recoverPortableSandbox:
       overrides.recoverPortableSandbox ?? recoverPortableAgentSandboxLifecycle,
+    requalifyPortableSandbox:
+      overrides.requalifyPortableSandbox ?? requalifyPortableAgentSandboxAuthority,
     queryRuntimeSnapshot:
       overrides.queryRuntimeSnapshot ?? queryOpenShellDockerSandboxRuntimeSnapshot,
     removeImage:
@@ -301,6 +305,12 @@ function startDockerSandboxUnlocked(
   deps: DockerRuntimeProviderDependencies,
 ): RuntimeProviderLifecycleResult {
   try {
+    if (input.sandbox.agent === "hermes") {
+      deps.requalifyPortableSandbox(input.sandboxName, {
+        env: input.environment,
+        readRegistry: (sandboxName) => (sandboxName === input.sandboxName ? input.sandbox : null),
+      });
+    }
     const portable = deps.recoverPortableSandbox(
       input.sandboxName,
       {

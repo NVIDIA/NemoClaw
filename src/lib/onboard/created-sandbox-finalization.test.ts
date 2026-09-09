@@ -1206,7 +1206,7 @@ describe("created sandbox completion actions", () => {
         gatewayPort: 8080,
         lifecycleGeneration: "generation-1",
         lifecycleLiveIdentityFingerprint: "a".repeat(64),
-        route: "native" as const,
+        route: schema5 ? ("native" as const) : ("compatibility" as const),
       };
       const inferenceRouteReservation = {
         authority: {
@@ -1229,7 +1229,16 @@ describe("created sandbox completion actions", () => {
       } satisfies QualifiedSandboxInferenceRouteReservation;
       const verifiedCreate = {
         reservation: inferenceRouteReservation,
-        checkpoint: pendingSandboxCreateIdentityForBoundary(verifiedCreateBoundary),
+        checkpoint: {
+          ...pendingSandboxCreateIdentityForBoundary(verifiedCreateBoundary),
+          ...(schema5
+            ? {}
+            : {
+                exactFinalHandoffCommitStarted: true as const,
+                exactFinalHandoffRuntimeId: "b".repeat(64),
+                exactFinalHandoffAcknowledged: true as const,
+              }),
+        },
       } as NonNullable<CreatedSandboxRegistrationInput["verifiedCreate"]>;
       const completion = createCreatedSandboxCompletionActions(
         {
@@ -1288,6 +1297,8 @@ describe("created sandbox completion actions", () => {
               return gpuProof;
             },
             runCaptureOpenshell: vi.fn(),
+            persistFinalHandoffAcknowledgement: vi.fn(),
+            persistFinalHandoffCommitStarted: vi.fn(),
           },
           dashboard: {
             chatUiUrl: "http://127.0.0.1:8643",
