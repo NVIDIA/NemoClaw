@@ -51,6 +51,20 @@ OpenShell resolves the placeholder at egress.
 After `mcp add` commits, NemoClaw performs a fresh status inspection and runs the gated credential-resolution probe once unless you pass `--no-probe`.
 If readiness is inconclusive, the command reports a probe skip without failing the committed add.
 
+The generated egress policy is binary-scoped. It permits the selected agent's Node.js adapter to reach the MCP endpoint, but it does not permit `/usr/bin/curl`. A failed `curl` request from an interactive sandbox shell therefore does not show that the MCP route is broken. Use the managed status probe to verify both policy readiness and credential resolution:
+
+```bash
+$$nemoclaw my-sandbox mcp status github
+```
+
+To test only unauthenticated network reachability from inside the sandbox, use the allowed Node.js runtime and inspect the HTTP status without printing a response body:
+
+```bash
+node -e 'fetch("https://api.githubcopilot.com/mcp/").then(r => console.log(r.status)).catch(e => { console.error(e.message); process.exitCode = 1 })'
+```
+
+An authentication rejection can still prove that the Node.js request reached the endpoint. Only the managed status probe verifies that OpenShell resolved the stored credential.
+
 Pass `--deny-tool` once for each exact tool name or OpenShell glob pattern to block at the MCP proxy:
 
 ```bash
