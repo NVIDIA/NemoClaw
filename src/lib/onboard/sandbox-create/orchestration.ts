@@ -2014,9 +2014,14 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       // Check whether messaging providers are missing from the gateway. Only
       // force recreation when at least one required provider doesn't exist yet —
       // this avoids destroying sandboxes already created with provider attachments.
+      const providerExistence = await Promise.all(
+        messagingTokenDefs.map(async ({ name, token }) => ({
+          token,
+          exists: token ? await providerExistsInGateway(name) : true,
+        })),
+      );
       const needsProviderMigration =
-        hasMessagingTokens &&
-        messagingTokenDefs.some(({ name, token }) => token && !providerExistsInGateway(name));
+        hasMessagingTokens && providerExistence.some(({ token, exists }) => token && !exists);
       const selectionDrift = isManagedDcodeAgent
         ? readManagedDcodeCreateSelectionDrift(
             { sandboxName, provider, model, preferredInferenceApi, createIntent },
@@ -3252,12 +3257,12 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         cleanupInitialCreateSource();
       }
     }
-    return runWithPostCreateRecovery(
-      () => {
+    return runAsyncWithPostCreateRecovery(
+      async () => {
         managedStateVolumeLifecycle.commit();
         if ("complete" in recreateRuntime) recreateRuntime.complete();
         if (agentCreateInput.hermesPortableLifecycle) return sandboxName;
-        return completeOrdinaryOnboardSandboxCreation(
+        return await completeOrdinaryOnboardSandboxCreation(
           {
             sandboxName,
             sandboxWasLiveDefault,

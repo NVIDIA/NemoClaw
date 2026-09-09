@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { StdioOptions } from "node:child_process";
+import { createCliOpenShellProviderAdapter } from "../adapters/openshell/provider-adapter-cli";
 import { shellQuote } from "../core/shell-quote";
 import { compactText } from "../core/url-utils";
 import { INFERENCE_ROUTE_URL, MANAGED_PROVIDER_ID } from "../inference/config";
@@ -98,7 +99,7 @@ export function spawnOutputToString(value: unknown): string {
   return String(value);
 }
 
-export function verifyCompatibleEndpointSandboxSmoke(options: {
+export async function verifyCompatibleEndpointSandboxSmoke(options: {
   sandboxName: string;
   provider: string;
   model: string;
@@ -113,7 +114,7 @@ export function verifyCompatibleEndpointSandboxSmoke(options: {
   hostLocalInferenceProofAuthority?: HostLocalInferenceSandboxProofAuthority;
   /** Recheck sandbox identity after the sandbox proof and before success output. */
   beforeSuccess?: () => void;
-}): void {
+}): Promise<void> {
   const agentName = options.agent?.name || "openclaw";
   if (
     options.forceCanonicalRoute !== true &&
@@ -128,48 +129,40 @@ export function verifyCompatibleEndpointSandboxSmoke(options: {
       : "  Verifying compatible endpoint through the sandbox runtime...",
   );
 
-  const providerResult = options.runOpenshell(["provider", "get", options.provider], {
-    ignoreError: true,
-    suppressOutput: true,
-    stdio: ["ignore", "pipe", "pipe"],
+  const adapter = createCliOpenShellProviderAdapter({
+    run: (command, runOptions) => {
+      const result = options.runOpenshell(command, runOptions);
+      return {
+        status: result.status,
+        stdout:
+          typeof result.stdout === "string" || Buffer.isBuffer(result.stdout)
+            ? result.stdout
+            : null,
+        stderr:
+          typeof result.stderr === "string" || Buffer.isBuffer(result.stderr)
+            ? result.stderr
+            : null,
+      };
+    },
   });
-  const providerDetails = [
-    spawnOutputToString(providerResult.stdout),
-    spawnOutputToString(providerResult.stderr),
-  ]
-    .join("\n")
-    .trim();
+  const providerResult = await adapter.getProvider({
+    target: { kind: "selected" },
+    providerName: options.provider,
+  });
 
-  if (providerResult.status !== 0) {
+  if (!providerResult.ok) {
     console.error(
       options.forceCanonicalRoute
         ? `  Provider-neutral inference provider '${options.provider}' is missing or unreachable in the OpenShell gateway.`
         : `  Compatible endpoint provider '${options.provider}' is missing from the OpenShell gateway.`,
     );
     console.error("  The sandbox inference.local route cannot reach the selected model provider.");
-    if (providerDetails) {
-      console.error(`  ${compactText(options.redact(providerDetails)).slice(0, 800)}`);
-    }
-    process.exit(providerResult.status || 1);
-  }
-
-  if (
-    options.forceCanonicalRoute !== true &&
-    options.endpointUrl &&
-    providerDetails &&
-    /OPENAI_BASE_URL|baseUrl|base URL|endpoint/i.test(providerDetails) &&
-    !providerDetails.includes(options.endpointUrl)
-  ) {
-    console.warn(
-      `  \u26a0 Gateway provider '${options.provider}' did not report the selected endpoint URL.`,
-    );
-    console.warn("    Continuing to the sandbox-side inference.local smoke check.");
+    console.error(`  ${compactText(options.redact(providerResult.error.message)).slice(0, 800)}`);
+    process.exit(1);
   }
   if (
     options.credentialEnv &&
-    providerDetails &&
-    /credential|api key|secret/i.test(providerDetails) &&
-    !providerDetails.includes(options.credentialEnv)
+    !providerResult.value.credentialKeys.includes(options.credentialEnv)
   ) {
     console.warn(
       `  \u26a0 Gateway provider '${options.provider}' did not report the selected credential binding.`,

@@ -184,10 +184,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       ) => GatewayRouteDiscoveryConstraints,
       canProbeRoute?: (provider: string) => boolean,
       recoverySessionId?: string | null,
-      revalidateSandboxIdentity?: (
-        route: ProviderInferenceProbeRoute,
-        operation: string,
-      ) => void,
+      revalidateSandboxIdentity?: (route: ProviderInferenceProbeRoute, operation: string) => void,
     ): Promise<ProviderSelectionResult>;
     setupInference(
       sandboxName: string | null,
@@ -262,7 +259,9 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       provider: string,
       endpointUrl: string | null,
       credentialEnv: string | null,
-    ): { ok: boolean; endpointUrl: string; message?: string; status?: number };
+    ):
+      | { ok: boolean; endpointUrl: string; message?: string; status?: number }
+      | Promise<{ ok: boolean; endpointUrl: string; message?: string; status?: number }>;
     reserveSandboxInferenceRoute(
       sandboxName: string,
       route: {
@@ -1341,11 +1340,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         sandboxName,
         deps.ensureManagedLlamaCppResumeReady,
       );
-      const recovery = await deps.ensureResumeProviderReady(
-        gatewayName,
-        provider,
-        credentialEnv,
-      );
+      const recovery = await deps.ensureResumeProviderReady(gatewayName, provider, credentialEnv);
       forceInferenceSetup ||= recovery.forceInferenceSetup;
       credentialEnv = recovery.credentialEnv;
       // Rebuild may be resuming a legacy session whose step marker was never
@@ -1748,7 +1743,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
               );
               deps.exitProcess(1);
             }
-            const reupserted = deps.reupsertRoutedProvider(
+            const reupserted = await deps.reupsertRoutedProvider(
               gatewayName,
               selectedProvider,
               endpointUrl,

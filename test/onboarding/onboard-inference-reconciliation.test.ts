@@ -28,6 +28,30 @@ import {
   withProcessEnv,
 } from "../support/setup-inference-test-harness.js";
 
+const HERMES_OAUTH_PROVIDER_METADATA = [
+  "Name: hermes-provider",
+  "Type: openai",
+  "Credential keys: OPENAI_API_KEY",
+  "Config keys: OPENAI_BASE_URL",
+  "",
+].join("\n");
+
+const HERMES_API_KEY_PROVIDER_METADATA = [
+  "Name: hermes-provider",
+  "Type: openai",
+  "Credential keys: NOUS_API_KEY",
+  "Config keys: OPENAI_BASE_URL",
+  "",
+].join("\n");
+
+const OPENAI_API_PROVIDER_METADATA = [
+  "Name: openai-api",
+  "Type: openai",
+  "Credential keys: OPENAI_API_KEY",
+  "Config keys: OPENAI_BASE_URL",
+  "",
+].join("\n");
+
 describe("onboard helpers", () => {
   it("reuses a registered Hermes Provider without re-collecting host credentials", async () => {
     await withProcessEnv(
@@ -39,7 +63,7 @@ describe("onboard helpers", () => {
         const harness = createDirectSetupInferenceHarness({
           runOpenshell: (args) =>
             args.join(" ") === "provider get -g nemoclaw hermes-provider"
-              ? { status: 0, stdout: "Provider: hermes-provider", stderr: "" }
+              ? { status: 0, stdout: HERMES_OAUTH_PROVIDER_METADATA, stderr: "" }
               : undefined,
           overrides: { isNonInteractive: () => true },
         });
@@ -282,6 +306,7 @@ const prompts = [];
 const registryUpdates = [];
 const done = new Error("INFERENCE_STEP_DONE");
 let inferenceSessionSnapshot = null;
+const hermesApiKeyProviderMetadata = ${JSON.stringify(HERMES_API_KEY_PROVIDER_METADATA)};
 
 delete process.env.NEMOCLAW_NON_INTERACTIVE;
 delete process.env.NEMOCLAW_SANDBOX_NAME;
@@ -305,6 +330,10 @@ try {
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
+  const providerGet = "provider get -g nemoclaw hermes-provider";
+  if (normalized === providerGet || normalized.endsWith(" " + providerGet)) {
+    return { status: 0, stdout: hermesApiKeyProviderMetadata, stderr: "" };
+  }
   return { status: 0, stdout: "", stderr: "" };
 };
 runner.runCapture = (command) => {
@@ -517,7 +546,7 @@ const { onboard } = require(${onboardPath});
         const harness = createDirectSetupInferenceHarness({
           runOpenshell: (args) =>
             args.join(" ") === "provider get -g nemoclaw hermes-provider"
-              ? { status: 0, stdout: "Provider: hermes-provider", stderr: "" }
+              ? { status: 0, stdout: HERMES_OAUTH_PROVIDER_METADATA, stderr: "" }
               : undefined,
           overrides: { isNonInteractive: () => true },
         });
@@ -908,7 +937,7 @@ console.log(JSON.stringify({
       const harness = createDirectSetupInferenceHarness({
         runOpenshell: (args) =>
           args.slice(0, 2).join(" ") === "provider get"
-            ? { status: 0, stdout: "", stderr: "" }
+            ? { status: 0, stdout: OPENAI_API_PROVIDER_METADATA, stderr: "" }
             : undefined,
       });
 
@@ -935,7 +964,10 @@ console.log(JSON.stringify({
         {
           name: "provider-get",
           matches: (command) => command.startsWith("provider get"),
-          results: [{ status: 0, stdout: "", stderr: "" }],
+          results: [
+            { status: 0, stdout: OPENAI_API_PROVIDER_METADATA, stderr: "" },
+            { status: 0, stdout: OPENAI_API_PROVIDER_METADATA, stderr: "" },
+          ],
         },
         {
           name: "inference-set",
@@ -980,7 +1012,7 @@ console.log(JSON.stringify({
         {
           name: "provider-get",
           matches: (command) => command.startsWith("provider get"),
-          results: [{ status: 0, stdout: "", stderr: "" }],
+          results: [{ status: 0, stdout: OPENAI_API_PROVIDER_METADATA, stderr: "" }],
         },
         {
           name: "inference-set",
