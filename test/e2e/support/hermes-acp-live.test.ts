@@ -1,15 +1,22 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, it } from "vitest";
 
+import { ArtifactSink } from "../fixtures/artifacts.ts";
 import {
   acpMessageContainsPong,
   createHermesAcpPromptEvidenceTracker,
   hermesAcpExchangeEvidencePassed,
   hermesAcpLiveHostEnv,
+  hermesAcpScenarioTimeoutMs,
   isAcpResponse,
   isProcessAbsent,
+  runHermesAcpLiveScenario,
 } from "../fixtures/hermes-acp-live.ts";
 
 describe("Hermes ACP live evidence boundary", () => {
@@ -55,6 +62,11 @@ describe("Hermes ACP live evidence boundary", () => {
       },
     });
     evidence.observe({ jsonrpc: "2.0", id: 3, result: { stopReason: "end_turn" } });
+    evidence.observe({
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: { update: { text: "PONG" } },
+    });
 
     expect(evidence.pongObserved).toBe(false);
     expect(
@@ -82,6 +94,51 @@ describe("Hermes ACP live evidence boundary", () => {
       }),
     ).toBe(true);
   });
+
+  it.each(["cancel", "initialize"] as const)(
+    "does not start the later %s scenario after the shared ACP deadline expires (#10947)",
+    async (scenario) => {
+      const artifactDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-acp-deadline-"));
+      try {
+        const artifacts = new ArtifactSink(artifactDir);
+        const forbidden = new Proxy(
+          {},
+          {
+            get() {
+              throw new Error("an expired ACP scenario must not reach process or sandbox helpers");
+            },
+          },
+        );
+
+        expect(hermesAcpScenarioTimeoutMs(1_000_000, 0)).toBe(180_000);
+        expect(hermesAcpScenarioTimeoutMs(100_000, 0)).toBe(100_000);
+        expect(hermesAcpScenarioTimeoutMs(1_000, 1_001)).toBeNull();
+        await expect(
+          runHermesAcpLiveScenario({
+            artifacts,
+            deadlineAtMs: 1_000,
+            env: {},
+            now: () => 1_001,
+            progress: forbidden as never,
+            sandbox: forbidden as never,
+            sandboxName: "e2e-hermes",
+            scenario,
+          }),
+        ).resolves.toBe(false);
+        const receipt = JSON.parse(
+          fs.readFileSync(path.join(artifactDir, `hermes-acp-${scenario}.json`), "utf8"),
+        ) as Record<string, unknown>;
+        expect(receipt).toMatchObject({
+          deadlineExpired: true,
+          passed: false,
+          scenario,
+          scenarioStarted: false,
+        });
+      } finally {
+        fs.rmSync(artifactDir, { force: true, recursive: true });
+      }
+    },
+  );
 
   it("classifies the live adapter process state", () => {
     expect(isProcessAbsent(undefined)).toBe(true);

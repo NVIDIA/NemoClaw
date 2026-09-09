@@ -9,9 +9,13 @@ import type { SandboxClient } from "./clients/sandbox.ts";
 import { type ChildProcessProgress, spawnObservedChild } from "./observed-child-process.ts";
 import { superviseChild } from "./shell/supervisor.ts";
 
-const ACP_SCENARIO_TIMEOUT_MS = 7 * 60_000;
+const ACP_SCENARIO_TIMEOUT_MS = 3 * 60_000;
+const ACP_SCENARIO_START_MINIMUM_MS = 10_000;
+const ACP_SESSION_SHUTDOWN_RESERVE_MS = 5_000;
 const ACP_MESSAGE_LIMIT_BYTES = 1024 * 1024;
 const OPENSHELL_GATEWAY_NAME = "nemoclaw";
+
+export const HERMES_ACP_LIFECYCLE_BUDGET_MS = 12 * 60_000;
 
 type JsonObject = Record<string, unknown>;
 
@@ -25,7 +29,9 @@ export type HermesAcpLiveScenario =
 
 export interface HermesAcpLiveOptions {
   readonly artifacts: ArtifactSink;
+  readonly deadlineAtMs?: number;
   readonly env: NodeJS.ProcessEnv;
+  readonly now?: () => number;
   readonly progress: ChildProcessProgress;
   readonly restartGateway?: () => Promise<void>;
   readonly sandbox: SandboxClient;
@@ -101,10 +107,7 @@ export function createHermesAcpPromptEvidenceTracker(): {
     observe(message) {
       if (!promptSessionId || !acpMessageContainsPong(message)) return;
       const sessionIds = messageSessionIds(message);
-      if (
-        sessionIds.length === 0 ||
-        sessionIds.every((sessionId) => sessionId === promptSessionId)
-      ) {
+      if (sessionIds.includes(promptSessionId)) {
         pongObserved = true;
       }
     },
@@ -120,6 +123,12 @@ export function hermesAcpExchangeEvidencePassed(evidence: {
   sessionCreated: boolean;
 }): boolean {
   return evidence.sessionCreated && evidence.promptCompleted && evidence.pongObserved;
+}
+
+export function hermesAcpScenarioTimeoutMs(deadlineAtMs: number, nowMs: number): number | null {
+  const remainingMs = deadlineAtMs - nowMs;
+  if (remainingMs < ACP_SCENARIO_START_MINIMUM_MS) return null;
+  return Math.min(ACP_SCENARIO_TIMEOUT_MS, remainingMs);
 }
 
 function sessionIdFromResponse(message: JsonObject | null): string | null {
@@ -208,11 +217,73 @@ async function verifyNoRemoteHermesAcpProcess(
   return false;
 }
 
+type HermesAcpLiveReceipt = Readonly<{
+  adapterProcessAbsent: boolean;
+  deadlineExpired: boolean;
+  exitCode: number | null;
+  initialized: boolean;
+  passed: boolean;
+  pongObserved: boolean;
+  promptCompleted: boolean;
+  remoteProcessAbsent: boolean;
+  scenarioStarted: boolean;
+  sessionCreated: boolean;
+  signal: NodeJS.Signals | null;
+  stderrObserved: boolean;
+  timedOut: boolean;
+}>;
+
+async function writeHermesAcpLiveReceipt(
+  options: HermesAcpLiveOptions,
+  receipt: HermesAcpLiveReceipt,
+): Promise<void> {
+  await options.artifacts.writeJson(`hermes-acp-${options.scenario}.json`, {
+    schemaVersion: 1,
+    scenario: options.scenario,
+    ...receipt,
+    rawAcpPayloadRetained: false,
+  });
+}
+
 /** Drive the real packaged adapter while retaining only fixed boolean and exit evidence. */
 export async function runHermesAcpLiveScenario(options: HermesAcpLiveOptions): Promise<boolean> {
+  const now = options.now ?? Date.now;
+  const scenarioTimeoutMs =
+    options.deadlineAtMs === undefined
+      ? ACP_SCENARIO_TIMEOUT_MS
+      : hermesAcpScenarioTimeoutMs(options.deadlineAtMs, now());
+  if (scenarioTimeoutMs === null) {
+    await writeHermesAcpLiveReceipt(options, {
+      adapterProcessAbsent: true,
+      deadlineExpired: true,
+      exitCode: null,
+      initialized: false,
+      passed: false,
+      pongObserved: false,
+      promptCompleted: false,
+      remoteProcessAbsent: true,
+      scenarioStarted: false,
+      sessionCreated: false,
+      signal: null,
+      stderrObserved: false,
+      timedOut: false,
+    });
+    return false;
+  }
+  const adapterTimeoutSeconds = Math.max(
+    1,
+    Math.floor((scenarioTimeoutMs - ACP_SESSION_SHUTDOWN_RESERVE_MS) / 1_000),
+  );
   const child = spawnObservedChild(
     "nemoclaw-acp",
-    ["--sandbox", options.sandboxName, "--gateway", OPENSHELL_GATEWAY_NAME, "--timeout", "360"],
+    [
+      "--sandbox",
+      options.sandboxName,
+      "--gateway",
+      OPENSHELL_GATEWAY_NAME,
+      "--timeout",
+      String(adapterTimeoutSeconds),
+    ],
     {
       activityLabel: `command: hermes-acp-${options.scenario}`,
       progress: options.progress,
@@ -254,7 +325,7 @@ export async function runHermesAcpLiveScenario(options: HermesAcpLiveOptions): P
     notify();
   };
   const supervise = superviseChild(child, {
-    timeoutMs: ACP_SCENARIO_TIMEOUT_MS,
+    timeoutMs: scenarioTimeoutMs,
     killGraceMs: 1_000,
     onStdout: (chunk) => {
       observedBytes += Buffer.byteLength(chunk, "utf8");
@@ -394,21 +465,20 @@ export async function runHermesAcpLiveScenario(options: HermesAcpLiveOptions): P
         sessionCreated,
       }));
 
-  await options.artifacts.writeJson(`hermes-acp-${options.scenario}.json`, {
-    schemaVersion: 1,
-    scenario: options.scenario,
-    initialized,
-    sessionCreated,
-    promptCompleted,
-    pongObserved: promptEvidence.pongObserved,
-    exitCode: result.exitCode,
-    signal: result.signal,
-    timedOut: result.timedOut,
-    stderrObserved,
+  await writeHermesAcpLiveReceipt(options, {
     adapterProcessAbsent,
-    remoteProcessAbsent,
-    rawAcpPayloadRetained: false,
+    deadlineExpired: options.deadlineAtMs !== undefined && now() >= options.deadlineAtMs,
+    exitCode: result.exitCode,
+    initialized,
     passed,
+    pongObserved: promptEvidence.pongObserved,
+    promptCompleted,
+    remoteProcessAbsent,
+    scenarioStarted: true,
+    sessionCreated,
+    signal: result.signal,
+    stderrObserved,
+    timedOut: result.timedOut,
   });
   return passed;
 }

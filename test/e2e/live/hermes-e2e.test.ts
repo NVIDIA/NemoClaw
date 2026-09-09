@@ -13,6 +13,7 @@ import { resultText, shellQuote } from "../fixtures/clients/command.ts";
 import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import {
+  HERMES_ACP_LIFECYCLE_BUDGET_MS,
   type HermesAcpLiveScenario,
   runHermesAcpLiveScenario,
 } from "../fixtures/hermes-acp-live.ts";
@@ -789,9 +790,11 @@ test(
     progress.phase("exercise Hermes ACP lifecycle and inference routes");
     // Phase 5: exercise the packaged host adapter against the managed Hermes
     // ACP server, then retain the existing inference route coverage.
+    const acpDeadlineAtMs = Date.now() + HERMES_ACP_LIFECYCLE_BUDGET_MS;
     const runAcpScenario = (scenario: HermesAcpLiveScenario) =>
       runHermesAcpLiveScenario({
         artifacts,
+        deadlineAtMs: acpDeadlineAtMs,
         env,
         progress,
         sandbox,
@@ -804,6 +807,7 @@ test(
     const clientDisconnectPassed = await runAcpScenario("client-disconnect");
     const gatewayRestartPassed = await runHermesAcpLiveScenario({
       artifacts,
+      deadlineAtMs: acpDeadlineAtMs,
       env,
       progress,
       restartGateway: async () => {

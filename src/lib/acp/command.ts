@@ -25,6 +25,7 @@ import { recoverNamedGatewayRuntime } from "../gateway-runtime-action";
 import { assertNoOpenShellGatewayEndpointOverride } from "../openshell-gateway-endpoint-guard";
 import { resolveGatewayName, resolveGatewayPortFromName } from "../onboard/gateway-binding";
 import type { GatewayRecoveryOutput } from "../onboard/gateway-recovery";
+import { sanitizeReadinessText } from "../readiness/sanitize";
 import { isValidName } from "../sandbox-name-contract";
 import {
   listHostGatewayRegistryEntries,
@@ -45,6 +46,8 @@ Options:
 
 const MAX_TIMEOUT_SECONDS = 86_400;
 const FINGERPRINT_PATTERN = /^[a-f0-9]{64}$/u;
+const MAX_GATEWAY_RECOVERY_DIAGNOSTICS = 64;
+const MAX_GATEWAY_RECOVERY_DIAGNOSTIC_LENGTH = 240;
 
 type CommandIo = Readonly<{
   input: Readable;
@@ -235,12 +238,34 @@ function defaultObserver(): OpenShellSandboxObserver {
   });
 }
 
-const DISCARD_GATEWAY_RECOVERY_OUTPUT: GatewayRecoveryOutput = {
-  error: () => undefined,
-  log: () => undefined,
-  step: () => undefined,
-  warn: () => undefined,
-};
+function gatewayRecoveryDiagnostic(message: string): string {
+  return sanitizeReadinessText(message, MAX_GATEWAY_RECOVERY_DIAGNOSTIC_LENGTH)
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+function createGatewayRecoveryDiagnostics(): {
+  flush(stream: Writable): Promise<void>;
+  output: GatewayRecoveryOutput;
+} {
+  const lines: string[] = [];
+  const append = (message: string) => {
+    if (lines.length >= MAX_GATEWAY_RECOVERY_DIAGNOSTICS) return;
+    const diagnostic = gatewayRecoveryDiagnostic(message);
+    if (diagnostic) lines.push(diagnostic);
+  };
+  return {
+    output: {
+      error: append,
+      log: append,
+      step: (current, total, label) => append(`[${String(current)}/${String(total)}] ${label}`),
+      warn: append,
+    },
+    async flush(stream) {
+      for (const line of lines) await writeLine(stream, line);
+    },
+  };
+}
 
 async function validateLiveTarget(
   target: HermesAcpTarget,
@@ -349,16 +374,19 @@ export async function runHermesAcpCommand(
           gatewayName: target.gatewayName,
           workspace: OPENSHELL_DEFAULT_WORKSPACE,
         };
+        const recoveryDiagnostics = createGatewayRecoveryDiagnostics();
         let recovery: RecoveryResult;
         try {
           recovery = await (deps.recoverGateway ?? recoverNamedGatewayRuntime)({
             gatewayName: target.gatewayName,
-            output: DISCARD_GATEWAY_RECOVERY_OUTPUT,
+            output: recoveryDiagnostics.output,
             runtimeSelection,
           });
         } catch {
+          await recoveryDiagnostics.flush(io.diagnostics);
           return { error: "The selected OpenShell gateway could not be recovered." } as const;
         }
+        await recoveryDiagnostics.flush(io.diagnostics);
         if (!recovery.recovered || recovery.after.state !== "healthy_named") {
           return { error: "The selected OpenShell gateway is not ready." } as const;
         }

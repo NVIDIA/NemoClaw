@@ -215,7 +215,7 @@ describe("Hermes ACP command", () => {
       continueRecovery = resolve;
     });
     fixture.recoverGateway.mockImplementationOnce(async (options) => {
-      options.output.log("gateway lifecycle progress must not reach ACP stdout");
+      options.output.log("gateway lifecycle progress belongs on ACP stderr");
       markRecoveryStarted();
       await recoveryCanFinish;
       return {
@@ -236,7 +236,7 @@ describe("Hermes ACP command", () => {
     expect(consoleLog).toHaveBeenCalledOnce();
     expect(consoleLog).toHaveBeenCalledWith("unrelated concurrent diagnostic remains visible");
     expect(fixture.output.text()).toBe("");
-    expect(fixture.diagnostics.text()).toBe("");
+    expect(fixture.diagnostics.text()).toBe("gateway lifecycle progress belongs on ACP stderr\n");
     expect(fixture.recoverGateway).toHaveBeenCalledWith({
       gatewayName: "nemoclaw",
       output: expect.objectContaining({
@@ -348,6 +348,30 @@ describe("Hermes ACP command", () => {
     expect(await fixture.run(["--sandbox", "alpha"])).toBe(1);
 
     expect(fixture.diagnostics.text()).toContain("gateway is not ready");
+    expect(fixture.transport.run).not.toHaveBeenCalled();
+  });
+
+  it("reports bounded redacted recovery failure details only on diagnostics", async () => {
+    const fixture = commandHarness();
+    fixture.recoverGateway.mockImplementationOnce(async (options) => {
+      options.output.error(
+        "gateway service conflict\nAuthorization: Bearer unsafe-recovery-token https://host.invalid/?token=unsafe-query",
+      );
+      return {
+        recovered: false,
+        attempted: true,
+        before: { state: "missing_named" },
+        after: { state: "missing_named" },
+      } as never;
+    });
+
+    expect(await fixture.run(["--sandbox", "alpha"])).toBe(1);
+
+    expect(fixture.output.text()).toBe("");
+    expect(fixture.diagnostics.text()).toContain("gateway service conflict");
+    expect(fixture.diagnostics.text()).toContain("<REDACTED>");
+    expect(fixture.diagnostics.text()).toContain("gateway is not ready");
+    expect(fixture.diagnostics.text()).not.toMatch(/unsafe-recovery-token|unsafe-query/u);
     expect(fixture.transport.run).not.toHaveBeenCalled();
   });
 
