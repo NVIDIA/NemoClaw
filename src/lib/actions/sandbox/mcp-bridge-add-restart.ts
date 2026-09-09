@@ -25,6 +25,8 @@ import { type McpBridgeAddOptions, McpBridgeError } from "./mcp-bridge-contracts
 import { assertHermesMcpRuntimeIntent } from "./mcp-bridge-hermes-reconciliation";
 import {
   applyGeneratedPolicy,
+  applyRecordedGeneratedPolicy,
+  assertGeneratedPolicyRegistrationMutationSafe,
   buildMcpBridgePolicyKey,
   buildMcpBridgePolicyName,
   buildMcpBridgePolicyYaml,
@@ -44,6 +46,7 @@ import {
   observeMcpCredentialRevision,
   providerMatchesCredential,
   providerShapeDetail,
+  preflightMcpEntryTargets,
   refreshMcpProviderEnvironment,
   upsertMcpProvider,
   waitForAttachedMcpCredential,
@@ -62,9 +65,11 @@ import {
 } from "./mcp-bridge-state";
 import type { McpBridgeTargetValidation } from "./mcp-bridge-url-validation";
 import {
+  assertAuthenticatedBridgeEntry,
   assertAuthenticatedCredentialReference,
   assertMcpCredentialBoundaryRuntimeVersion,
   buildMcpBridgeProviderName,
+  normalizeMcpDenyTools,
   normalizeMcpServerUrl,
   preflightMcpServerUrlResolvedTarget,
   resolveCredentialEnv,
@@ -82,6 +87,8 @@ function sameMcpAddIntent(existing: McpBridgeEntry, requested: McpBridgeEntry): 
     existing.providerName === requested.providerName &&
     existing.policyName === requested.policyName &&
     existing.trustedPrivateHost === requested.trustedPrivateHost &&
+    (existing.denyTools?.length ?? 0) === (requested.denyTools?.length ?? 0) &&
+    (existing.denyTools ?? []).every((tool, index) => tool === requested.denyTools?.[index]) &&
     (existing.allowedIps?.length ?? 0) === (requested.allowedIps?.length ?? 0) &&
     (existing.allowedIps ?? []).every(
       (address, index) => address === requested.allowedIps?.[index],
@@ -91,13 +98,13 @@ function sameMcpAddIntent(existing: McpBridgeEntry, requested: McpBridgeEntry): 
   );
 }
 
-function assertPreparedMcpAddResourcesAbsent(
+async function assertPreparedMcpAddResourcesAbsent(
   sandboxName: string,
   adapter: AgentMcpAdapter,
   entry: McpBridgeEntry,
   target: McpBridgeTargetValidation,
   providerRuntimeSelection: ReturnType<typeof getMcpProviderInspectionRuntimeSelection>,
-): void {
+): Promise<void> {
   const adapterInspection = inspectAgentAdapterRegistration(
     sandboxName,
     adapter,
@@ -114,7 +121,7 @@ function assertPreparedMcpAddResourcesAbsent(
     );
   }
 
-  const providerInspection = inspectMcpProvider(entry.providerName, providerRuntimeSelection);
+  const providerInspection = await inspectMcpProvider(entry.providerName, providerRuntimeSelection);
   if (providerInspection.exists !== false) {
     const detail =
       providerInspection.exists === null
@@ -131,6 +138,7 @@ function assertPreparedMcpAddResourcesAbsent(
     adapter,
     target,
     entry.providerName ?? "",
+    entry.denyTools,
   );
   const policyState = policies.getPresetContentGatewayState(
     sandboxName,
@@ -155,6 +163,110 @@ export async function addMcpBridge(
   });
 }
 
+export async function updateMcpBridgeDenyTools(
+  sandboxName: string,
+  server: string,
+  denyTools: readonly string[],
+): Promise<void> {
+  return withMcpLifecycleLock(sandboxName, () => {
+    assertHermesPortableCommandUnavailable(sandboxName, "sandbox:mcp:update");
+    return updateMcpBridgeDenyToolsUnlocked(sandboxName, server, denyTools);
+  });
+}
+
+async function updateMcpBridgeDenyToolsUnlocked(
+  sandboxName: string,
+  server: string,
+  denyTools: readonly string[],
+): Promise<void> {
+  validateSandboxName(sandboxName);
+  validateMcpServerName(server);
+  const normalizedDenyTools = normalizeMcpDenyTools(denyTools);
+  const sandbox = getSandboxOrThrow(sandboxName);
+  assertMcpDestroyNotPending(sandbox);
+  const storedEntry = bridgeState(sandbox)[server];
+  if (!storedEntry) {
+    throw new McpBridgeError(`MCP server '${server}' not found on sandbox '${sandboxName}'.`);
+  }
+  if (storedEntry.addState) {
+    throw new McpBridgeError(
+      `MCP server '${server}' has an incomplete add transaction (${storedEntry.addState}). Re-run the original mcp add command or remove it with --force before updating denied tools.`,
+    );
+  }
+  if (storedEntry.pendingDenyTools !== undefined) {
+    throw new McpBridgeError(
+      `MCP server '${server}' has an interrupted denied-tool update. Run \`nemoclaw ${sandboxName} mcp restart ${server}\` before updating it again.`,
+    );
+  }
+  assertAuthenticatedBridgeEntry(storedEntry);
+  let allowedIps = storedEntry.allowedIps;
+  if (!storedEntry.trustedPrivateHost && !allowedIps) {
+    const target = (await preflightMcpEntryTargets([storedEntry])).get(server);
+    if (!target || target.addresses.length === 0) {
+      throw new McpBridgeError(
+        `MCP server '${server}' has no validated public address pins. Run \`nemoclaw ${sandboxName} mcp restart ${server}\` before updating denied tools.`,
+      );
+    }
+    allowedIps = [...target.addresses];
+  }
+  const updatedAt = nowIso();
+  const pendingEntry = {
+    ...storedEntry,
+    ...(allowedIps ? { allowedIps } : {}),
+    pendingDenyTools: [...normalizedDenyTools],
+    updatedAt,
+  };
+  const {
+    denyTools: _previousDenyTools,
+    pendingDenyTools: _pendingDenyTools,
+    ...entryWithoutDenyTools
+  } = pendingEntry;
+  const updatedEntry = {
+    ...entryWithoutDenyTools,
+    ...(normalizedDenyTools.length > 0 ? { denyTools: normalizedDenyTools } : {}),
+    updatedAt,
+  };
+  assertGeneratedPolicyRegistrationMutationSafe(sandboxName, updatedEntry);
+  const runtimeSelection = getMcpProviderInspectionRuntimeSelection(sandbox);
+  assertMcpCredentialBoundaryRuntimeVersion();
+  await ensureSandboxGatewaySelected(sandboxName, runtimeSelection);
+
+  // Journal replacement intent before removing the route. Do not replace the
+  // same policy key in place: a failed stricter update could otherwise leave
+  // the prior, more-permissive rule active. Removing the generated allow route
+  // first keeps interrupted activation fail-closed, and restart can finish the
+  // update from the journal.
+  writeBridgeEntry(sandboxName, pendingEntry);
+  try {
+    removeGeneratedPolicy(sandboxName, storedEntry, { runtimeSelection });
+  } catch (error) {
+    writeBridgeEntry(sandboxName, storedEntry);
+    throw error;
+  }
+  try {
+    writeBridgeEntry(sandboxName, updatedEntry);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new McpBridgeError(
+      `${detail} The denied-tool replacement intent was journaled; run \`nemoclaw ${sandboxName} mcp restart ${server}\` to finish the update.`,
+    );
+  }
+  try {
+    applyRecordedGeneratedPolicy(sandboxName, updatedEntry, runtimeSelection);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new McpBridgeError(
+      `${detail} The denied-tool intent was saved; run \`nemoclaw ${sandboxName} mcp restart ${server}\` to retry policy activation.`,
+    );
+  }
+
+  console.log(
+    normalizedDenyTools.length > 0
+      ? `  Updated denied tools for MCP server '${server}'.`
+      : `  Cleared denied tools for MCP server '${server}'.`,
+  );
+}
+
 async function addMcpBridgeUnlocked(
   sandboxName: string,
   options: McpBridgeAddOptions,
@@ -162,6 +274,7 @@ async function addMcpBridgeUnlocked(
   validateSandboxName(sandboxName);
   validateMcpServerName(options.server);
   assertAuthenticatedCredentialReference(options.env);
+  const denyTools = normalizeMcpDenyTools(options.denyTools ?? []);
   let explicitTrustedPrivateHosts: string[];
   let configuredTrustedPrivateHosts: string[];
   try {
@@ -276,6 +389,7 @@ async function addMcpBridgeUnlocked(
     adapter,
     url: normalizedUrl,
     env: envNames,
+    ...(denyTools.length > 0 ? { denyTools } : {}),
     allowedIps: [...target.addresses],
     ...(target.trustedPrivateHost
       ? {
@@ -290,7 +404,7 @@ async function addMcpBridgeUnlocked(
 
   if (existingEntry && !sameMcpAddIntent(existingEntry, requestedEntry)) {
     throw new McpBridgeError(
-      `MCP server '${options.server}' has an incomplete add transaction with different URL, credential, agent, or derived resources. Re-run the original add command or remove it with --force before changing the definition.`,
+      `MCP server '${options.server}' has an incomplete add transaction with different URL, credential, denied tools, agent, or derived resources. Re-run the original add command or remove it with --force before changing the definition.`,
       2,
     );
   }
@@ -299,6 +413,7 @@ async function addMcpBridgeUnlocked(
     ? {
         ...existingEntry,
         env: [...existingEntry.env],
+        ...(existingEntry.denyTools ? { denyTools: [...existingEntry.denyTools] } : {}),
         ...(existingEntry.allowedIps ? { allowedIps: [...existingEntry.allowedIps] } : {}),
       }
     : requestedEntry;
@@ -315,11 +430,11 @@ async function addMcpBridgeUnlocked(
   assertMcpCredentialBoundaryRuntimeVersion();
   await ensureSandboxGatewaySelected(sandboxName, providerRuntimeSelection);
   if (!existingEntry) {
-    await withMcpCredentialOwnershipLock(() => {
+    await withMcpCredentialOwnershipLock(async () => {
       // Publish the durable MCP reservation under the same cross-command lock
       // used by credentials add. Neither command can pass its collision check
       // before the other records its credential-key reservation.
-      assertNoProviderCredentialCollisions(sandboxName, [entry], providerRuntimeSelection);
+      await assertNoProviderCredentialCollisions(sandboxName, [entry], providerRuntimeSelection);
       writeBridgeEntry(sandboxName, entry);
     });
   }
@@ -331,7 +446,10 @@ async function addMcpBridgeUnlocked(
   try {
     let detachedMissingProviderReference = false;
     if (resumingPreflightedAdd) {
-      const providerInspection = inspectMcpProvider(entry.providerName, providerRuntimeSelection);
+      const providerInspection = await inspectMcpProvider(
+        entry.providerName,
+        providerRuntimeSelection,
+      );
       if (providerInspection.exists === null) {
         throw new McpBridgeError(
           providerInspection.error ??
@@ -345,7 +463,7 @@ async function addMcpBridgeUnlocked(
         // one recovery side effect that must precede the image capability
         // probe. It neither reads nor replaces credential material, and the
         // durable add manifest retains ownership if the later probe fails.
-        detachMissingProviderReference(sandboxName, entry, providerRuntimeSelection);
+        await detachMissingProviderReference(sandboxName, entry, providerRuntimeSelection);
         detachedMissingProviderReference = true;
       }
     }
@@ -358,7 +476,7 @@ async function addMcpBridgeUnlocked(
         // A retry may reuse an exact provider without re-exporting its secret,
         // but recreating a missing provider cannot. This check and any owned
         // policy cleanup happen only after the running-image capability probe.
-        assertMcpProviderRecoverable(entry, providerRuntimeSelection);
+        await assertMcpProviderRecoverable(entry, providerRuntimeSelection);
       } catch (error) {
         removeGeneratedPolicy(sandboxName, entry, {
           bestEffort: true,
@@ -369,7 +487,7 @@ async function addMcpBridgeUnlocked(
     }
 
     if (entry.addState === "prepared") {
-      assertPreparedMcpAddResourcesAbsent(
+      await assertPreparedMcpAddResourcesAbsent(
         sandboxName,
         adapter,
         entry,
@@ -403,8 +521,8 @@ async function addMcpBridgeUnlocked(
     // Credential keys are sandbox-global. Prove this key is not already
     // supplied by a foreign attachment before opening its MCP route, then check
     // again after provider creation to close the intervening race.
-    assertNoProviderCredentialCollisions(sandboxName, [entry], providerRuntimeSelection);
-    ensureMcpBridgeProviderProfile(providerRuntimeSelection);
+    await assertNoProviderCredentialCollisions(sandboxName, [entry], providerRuntimeSelection);
+    await ensureMcpBridgeProviderProfile(providerRuntimeSelection);
     // Load the real protocol:mcp policy without a credential binding before
     // provider mutation. OpenShell requires the endpointless provider to be
     // attached before it accepts credential_binding.provider, and withholds
@@ -414,7 +532,7 @@ async function addMcpBridgeUnlocked(
       runtimeSelection: providerRuntimeSelection,
     });
     policyApplied = true;
-    const providerResult = upsertMcpProvider(providerName ?? "", options.env, {
+    const providerResult = await upsertMcpProvider(providerName ?? "", options.env, {
       // A first mutation must still observe the absence proven above. Only a
       // retry of the durable preflighted transaction may encounter an exact
       // provider whose immutable ID was already persisted by this add.
@@ -448,55 +566,55 @@ async function addMcpBridgeUnlocked(
       // adapter mutations. A process death before this write fails closed.
       writeBridgeEntry(sandboxName, entry);
     }
-    assertNoProviderCredentialCollisions(sandboxName, [entry], providerRuntimeSelection);
+    await assertNoProviderCredentialCollisions(sandboxName, [entry], providerRuntimeSelection);
     if (providerResult.action === "updated" && previousCredentialRevision === undefined) {
       throw new McpBridgeError(
         `Could not retain the prior OpenShell credential revision for provider '${entry.providerName}'.`,
       );
     }
     providerAttachAttempted = true;
-    attachProvider(sandboxName, entry, providerRuntimeSelection);
+    await attachProvider(sandboxName, entry, providerRuntimeSelection);
     applyGeneratedPolicy(sandboxName, entry, target, {
       runtimeSelection: providerRuntimeSelection,
     });
     let refreshedAfterObservedAbsence = false;
-    let credentialRevision = waitForAttachedMcpCredential(
+    let credentialRevision = await waitForAttachedMcpCredential(
       sandboxName,
       entry,
       providerRuntimeSelection,
       {
-      ...(providerResult.action === "updated"
-        ? {
-            previousRevision: previousCredentialRevision,
+        ...(providerResult.action === "updated"
+          ? {
+              previousRevision: previousCredentialRevision,
+            }
+          : {}),
+        // A no-field provider update advances only the provider resource version.
+        // If the credential remains available, republish it after observing an
+        // absence; otherwise, a hostless recovery advances the provider revision.
+        refreshAfterObservedAbsence: async () => {
+          refreshedAfterObservedAbsence = true;
+          // invalidState: OpenShell 0.0.106 can coalesce a no-field provider
+          // refresh without publishing the credential into fresh sandbox execs.
+          // sourceBoundary: OpenShell owns provider revision projection.
+          // whyNotSourceFix: NemoClaw can only observe absence after the bound
+          // policy is active, then republish when this process still has the host
+          // credential value. Hostless recovery retains the credential-free path.
+          // regressionTest: mcp-add-crash-consistency.test.ts covers republish
+          // and hostless recovery; mcp-provider-ownership.test.ts covers loss of
+          // the persisted provider identity before republish.
+          // removalCondition: remove the credential-bearing republish when the
+          // supported OpenShell version guarantees that a post-policy no-field
+          // refresh projects the bound credential into fresh sandbox execs.
+          const republished = await upsertMcpProvider(entry.providerName ?? "", options.env, {
+            allowExisting: true,
+            expectedProviderId: entry.providerId,
+            requireExisting: true,
+            runtimeSelection: providerRuntimeSelection,
+          });
+          if (republished.action !== "updated") {
+            await refreshMcpProviderEnvironment(entry, providerRuntimeSelection);
           }
-        : {}),
-      // A no-field provider update advances only the provider resource version.
-      // If the credential remains available, republish it after observing an
-      // absence; otherwise, a hostless recovery advances the provider revision.
-      refreshAfterObservedAbsence: () => {
-        refreshedAfterObservedAbsence = true;
-        // invalidState: OpenShell 0.0.106 can coalesce a no-field provider
-        // refresh without publishing the credential into fresh sandbox execs.
-        // sourceBoundary: OpenShell owns provider revision projection.
-        // whyNotSourceFix: NemoClaw can only observe absence after the bound
-        // policy is active, then republish when this process still has the host
-        // credential value. Hostless recovery retains the credential-free path.
-        // regressionTest: mcp-add-crash-consistency.test.ts covers republish
-        // and hostless recovery; mcp-provider-ownership.test.ts covers loss of
-        // the persisted provider identity before republish.
-        // removalCondition: remove the credential-bearing republish when the
-        // supported OpenShell version guarantees that a post-policy no-field
-        // refresh projects the bound credential into fresh sandbox execs.
-        const republished = upsertMcpProvider(entry.providerName ?? "", options.env, {
-          allowExisting: true,
-          expectedProviderId: entry.providerId,
-          requireExisting: true,
-          runtimeSelection: providerRuntimeSelection,
-        });
-        if (republished.action !== "updated") {
-          refreshMcpProviderEnvironment(entry, providerRuntimeSelection);
-        }
-      },
+        },
       },
     );
     if (Object.hasOwn(adapterEnvValues, entry.env[0]) && !refreshedAfterObservedAbsence) {
@@ -505,13 +623,13 @@ async function addMcpBridgeUnlocked(
       // bound policy is active and require a different observed revision.
       // This prevents a quick series of reads from accepting an intermediate
       // generation while the final credential-bearing update is still queued.
-      upsertMcpProvider(entry.providerName ?? "", options.env, {
+      await upsertMcpProvider(entry.providerName ?? "", options.env, {
         allowExisting: true,
         expectedProviderId: entry.providerId,
         requireExisting: true,
         runtimeSelection: providerRuntimeSelection,
       });
-      credentialRevision = waitForAttachedMcpCredential(
+      credentialRevision = await waitForAttachedMcpCredential(
         sandboxName,
         entry,
         providerRuntimeSelection,
@@ -540,7 +658,7 @@ async function addMcpBridgeUnlocked(
   } catch (error) {
     const rollbackProviderInspection =
       (providerAttachAttempted || providerCreated) && entry.providerId
-        ? inspectMcpProvider(providerName, providerRuntimeSelection)
+        ? await inspectMcpProvider(providerName, providerRuntimeSelection)
         : undefined;
     const rollbackProviderOwned =
       !!rollbackProviderInspection &&
@@ -559,7 +677,7 @@ async function addMcpBridgeUnlocked(
       });
     }
     const detachOutcome = providerAttachAttempted
-      ? detachProvider(sandboxName, entry, {
+      ? await detachProvider(sandboxName, entry, {
           bestEffort: true,
           runtimeSelection: providerRuntimeSelection,
         })
@@ -574,9 +692,9 @@ async function addMcpBridgeUnlocked(
       }
     }
     if (providerCreated && rollbackProviderOwned && reservationCleanupProved) {
-      const beforeDelete = inspectMcpProvider(providerName, providerRuntimeSelection);
+      const beforeDelete = await inspectMcpProvider(providerName, providerRuntimeSelection);
       if (providerMatchesCredential(beforeDelete, entry.env[0], entry.providerId)) {
-        deleteProvider(entry, {
+        await deleteProvider(entry, {
           allowMissing: true,
           bestEffort: true,
           runtimeSelection: providerRuntimeSelection,

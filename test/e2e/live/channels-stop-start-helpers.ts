@@ -6,13 +6,8 @@ import os from "node:os";
 import path from "node:path";
 
 import type { AddSandboxChannelDependencies } from "../../../src/lib/actions/sandbox/policy-channel.ts";
-import * as policyChannelDependenciesModule from "../../../src/lib/actions/sandbox/policy-channel-dependencies.ts";
 import * as policyChannelModule from "../../../src/lib/actions/sandbox/policy-channel.ts";
-import * as openshellRuntimeModule from "../../../src/lib/adapters/openshell/runtime.ts";
-import * as messagingBridgeProviderModule from "../../../src/lib/onboard/messaging-bridge-provider.ts";
-import * as legacyProvidersModule from "../../../src/lib/onboard/providers.ts";
 import { clearStoppedSandboxStateRoots } from "../../../src/lib/sandbox/privileged-exec.ts";
-import * as statePathsModule from "../../../src/lib/state/paths.ts";
 import {
   assertCleanupSucceededOrAbsent,
   cleanupWhenOpenShellAvailable,
@@ -55,49 +50,25 @@ import { parsePolicyPresetState } from "./policy-list-state.ts";
 type PolicyChannelModule = typeof import("../../../src/lib/actions/sandbox/policy-channel.ts");
 type PolicyChannelDependenciesModule =
   typeof import("../../../src/lib/actions/sandbox/policy-channel-dependencies.ts");
-type OpenshellRuntimeModule = typeof import("../../../src/lib/adapters/openshell/runtime.ts");
-type MessagingBridgeProviderModule =
-  typeof import("../../../src/lib/onboard/messaging-bridge-provider.ts");
-type StatePathsModule = typeof import("../../../src/lib/state/paths.ts");
-type ProviderUpsertOptions = {
-  readonly replaceExisting?: boolean;
-  readonly revalidateSandboxIdentity?: (operation: string) => void;
-};
-type ProviderDependencies = {
-  upsertMessagingProviders(
-    tokenDefs: Parameters<typeof policyChannelDependencies.upsertMessagingProviders>[0],
-    run: typeof runOpenshell,
-    options?: ProviderUpsertOptions,
-  ): string[];
-};
+type MessagingSetupApplierModule =
+  typeof import("../../../src/lib/messaging/applier/setup-applier.ts");
 
 const policyChannel = (
   "default" in policyChannelModule ? policyChannelModule.default : policyChannelModule
 ) as PolicyChannelModule;
 const { addSandboxChannel } = policyChannel;
+// Rebuild enters a late-bound CommonJS graph. Route the injected channel-add
+// dependency through the same module identities so one fixture covers both.
+const requiredPolicyChannelDependenciesModule =
+  require("../../../src/lib/actions/sandbox/policy-channel-dependencies") as PolicyChannelDependenciesModule;
 const policyChannelDependenciesNamespace = (
-  "default" in policyChannelDependenciesModule
-    ? policyChannelDependenciesModule.default
-    : policyChannelDependenciesModule
+  "default" in requiredPolicyChannelDependenciesModule
+    ? requiredPolicyChannelDependenciesModule.default
+    : requiredPolicyChannelDependenciesModule
 ) as PolicyChannelDependenciesModule;
 const { policyChannelDependencies } = policyChannelDependenciesNamespace;
-const openshellRuntime = (
-  "default" in openshellRuntimeModule ? openshellRuntimeModule.default : openshellRuntimeModule
-) as OpenshellRuntimeModule;
-const { runOpenshell } = openshellRuntime;
-const messagingBridgeProvider = (
-  "default" in messagingBridgeProviderModule
-    ? messagingBridgeProviderModule.default
-    : messagingBridgeProviderModule
-) as MessagingBridgeProviderModule;
-const { ensureMessagingBridgeProfiles } = messagingBridgeProvider;
-const legacyProviderDependencies = (
-  "default" in legacyProvidersModule ? legacyProvidersModule.default : legacyProvidersModule
-) as ProviderDependencies;
-const statePaths = (
-  "default" in statePathsModule ? statePathsModule.default : statePathsModule
-) as StatePathsModule;
-const { ROOT } = statePaths;
+const { MessagingSetupApplier } =
+  require("../../../src/lib/messaging/applier/setup-applier") as MessagingSetupApplierModule;
 
 interface GooglechatLiveE2eComposition {
   readonly sandboxName: string;
@@ -113,18 +84,6 @@ interface GooglechatLiveE2eDependencies {
   ) => Promise<void>;
   readonly installCredentialFixture: (sandboxName: string, agent: AgentKind) => () => void;
   readonly rebuildSandbox?: (sandboxName: string, args: string[]) => Promise<unknown>;
-}
-
-interface GooglechatCredentialFixtureDependencies {
-  readonly channelDependencies?: Pick<
-    typeof policyChannelDependencies,
-    "runGatewayOpenshell" | "upsertMessagingProviders"
-  >;
-  readonly ensureProfiles?: typeof ensureMessagingBridgeProfiles;
-  readonly providerDependencies?: ProviderDependencies;
-  readonly legacyProviderDependencies?: ProviderDependencies;
-  readonly root?: string;
-  readonly run?: typeof runOpenshell;
 }
 
 type InstalledGooglechatCredentialFixture = (() => void) & {
@@ -152,166 +111,61 @@ const PROVIDER_TYPE_BY_AGENT: Readonly<
 export function installGooglechatCredentialFixture(
   sandboxName: string,
   agent: AgentKind,
-  dependencies: GooglechatCredentialFixtureDependencies = {},
 ): InstalledGooglechatCredentialFixture {
   assertChannelsStopStartSandboxName(sandboxName, agent);
-  const ensureProfiles = dependencies.ensureProfiles ?? ensureMessagingBridgeProfiles;
-  const channelDependencies = dependencies.channelDependencies ?? policyChannelDependencies;
+  const channelDependencies = policyChannelDependencies;
   const originalChannelUpsert = channelDependencies.upsertMessagingProviders;
+  const applier = MessagingSetupApplier;
+  const originalApply = applier.applyCredentialsAtOpenShell;
   const expectedName = `${sandboxName}-googlechat-bridge`;
   const expectedType = PROVIDER_TYPE_BY_AGENT[agent];
-  const directUpsert: InstalledGooglechatCredentialFixture["upsertMessagingProviders"] = (
-    tokenDefs,
-    gatewayName,
-    options = {},
-  ) => {
-    const fixtureTokenDefs = tokenDefs.filter(({ name }) => name === expectedName);
-    const fixtureTokenDef = fixtureTokenDefs[0];
+  applier.applyCredentialsAtOpenShell = (plan, options) => {
+    const fixtureDefinitions = (options.definitions ?? []).filter(
+      ({ providerName }) => providerName === expectedName,
+    );
+    const fixtureDefinition = fixtureDefinitions[0];
+    const fixtureRefreshes = (options.refreshes ?? []).filter(
+      ({ providerName }) => providerName === expectedName,
+    );
+    const fixtureRefresh = fixtureRefreshes[0];
     if (
-      fixtureTokenDefs.length !== 1 ||
-      fixtureTokenDef?.envKey !== "GOOGLE_CHAT_ACCESS_TOKEN" ||
-      fixtureTokenDef?.providerType !== expectedType
+      plan.sandboxName !== sandboxName ||
+      fixtureDefinitions.length !== 1 ||
+      fixtureDefinition?.channelId !== "googlechat" ||
+      fixtureDefinition.credentialId !== "GOOGLE_CHAT_ACCESS_TOKEN" ||
+      fixtureDefinition?.providerType !== expectedType ||
+      fixtureDefinition.credentials.length !== 1 ||
+      fixtureDefinition.credentials[0]?.name !== "GOOGLE_CHAT_ACCESS_TOKEN" ||
+      fixtureRefreshes.length !== 1 ||
+      fixtureRefresh?.channelId !== "googlechat" ||
+      fixtureRefresh.credentialKey !== "GOOGLE_CHAT_ACCESS_TOKEN" ||
+      fixtureRefresh.strategy !== "google_service_account_jwt"
     ) {
-      throw new Error("Google Chat live fixture received an unexpected provider definition");
+      throw new Error("Google Chat live fixture received an unexpected provider application");
     }
-    const delegatedTokenDefs = tokenDefs.filter(({ name }) => name !== expectedName);
-    const delegatedProviderNames =
-      delegatedTokenDefs.length === 0
-        ? []
-        : originalChannelUpsert.call(channelDependencies, delegatedTokenDefs, gatewayName, options);
-    const effectiveRun: typeof runOpenshell = (args, runOptions) =>
-      channelDependencies.runGatewayOpenshell(gatewayName, args, runOptions);
-    ensureProfiles(fixtureTokenDefs, {
-      root: dependencies.root ?? ROOT,
-      runOpenshell: effectiveRun,
+    return originalApply.call(applier, plan, {
+      ...options,
+      definitions: (options.definitions ?? []).map((definition) =>
+        definition.providerName === expectedName
+          ? {
+              ...definition,
+              credentials: [
+                { name: "GOOGLE_CHAT_ACCESS_TOKEN", value: GOOGLECHAT_E2E_ACCESS_TOKEN },
+              ],
+            }
+          : definition,
+      ),
+      refreshes: (options.refreshes ?? []).filter(
+        ({ providerName }) => providerName !== expectedName,
+      ),
     });
-    const existing = effectiveRun(["provider", "get", expectedName], {
-      ignoreError: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    if (existing.status === 0 && options.replaceExisting) {
-      const removed = effectiveRun(["provider", "delete", expectedName], {
-        ignoreError: true,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-      if (removed.status !== 0) {
-        throw new Error(`Google Chat live fixture could not replace provider '${expectedName}'`);
-      }
-    }
-    const action = existing.status === 0 && !options.replaceExisting ? "update" : "create";
-    const providerArgs =
-      action === "update"
-        ? ["provider", "update", expectedName, "--credential", "GOOGLE_CHAT_ACCESS_TOKEN"]
-        : [
-            "provider",
-            "create",
-            "--name",
-            expectedName,
-            "--type",
-            expectedType,
-            "--credential",
-            "GOOGLE_CHAT_ACCESS_TOKEN",
-          ];
-    const mutated = effectiveRun(providerArgs, {
-      env: { GOOGLE_CHAT_ACCESS_TOKEN: GOOGLECHAT_E2E_ACCESS_TOKEN },
-      ignoreError: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    if (mutated.status !== 0) {
-      throw new Error(`Google Chat live fixture could not ${action} provider '${expectedName}'`);
-    }
-    const registered = new Set([...delegatedProviderNames, expectedName]);
-    return tokenDefs.map(({ name }) => name).filter((name) => registered.has(name));
   };
-  const providerDependencies = dependencies.providerDependencies ?? legacyProviderDependencies;
-  const effectiveLegacyProviderDependencies =
-    dependencies.legacyProviderDependencies ?? providerDependencies;
-  const root = dependencies.root ?? ROOT;
-  const run = dependencies.run ?? runOpenshell;
-  const originalRegistrationUpsert = providerDependencies.upsertMessagingProviders;
-  const originalLegacyUpsert = effectiveLegacyProviderDependencies.upsertMessagingProviders;
-  const delegatedUpsert = dependencies.legacyProviderDependencies
-    ? originalLegacyUpsert
-    : originalRegistrationUpsert;
-
-  const fixtureUpsert: ProviderDependencies["upsertMessagingProviders"] = (
-    tokenDefs,
-    providerRun,
-    options = {},
-  ) => {
-    const fixtureTokenDefs = tokenDefs.filter(({ name }) => name === expectedName);
-    const fixtureTokenDef = fixtureTokenDefs[0];
-    if (
-      fixtureTokenDefs.length !== 1 ||
-      fixtureTokenDef?.envKey !== "GOOGLE_CHAT_ACCESS_TOKEN" ||
-      fixtureTokenDef?.providerType !== expectedType
-    ) {
-      throw new Error("Google Chat live fixture received an unexpected provider definition");
-    }
-
-    const delegatedTokenDefs = tokenDefs.filter(({ name }) => name !== expectedName);
-    const delegatedProviderNames =
-      delegatedTokenDefs.length === 0
-        ? []
-        : delegatedUpsert(delegatedTokenDefs, providerRun, options);
-    const baseRun = providerRun ?? run;
-    const revalidate = () =>
-      options.revalidateSandboxIdentity?.(
-        `manage Google Chat live fixture provider '${expectedName}'`,
-      );
-    const effectiveRun: typeof runOpenshell = (args, runOptions) => {
-      revalidate();
-      return baseRun(args, runOptions);
-    };
-    ensureProfiles(fixtureTokenDefs, {
-      root,
-      runOpenshell: effectiveRun,
-    });
-    const existing = effectiveRun(["provider", "get", expectedName], {
-      ignoreError: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    if (existing.status === 0 && options.replaceExisting) {
-      const removed = effectiveRun(["provider", "delete", expectedName], {
-        ignoreError: true,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-      if (removed.status !== 0) {
-        throw new Error(`Google Chat live fixture could not replace provider '${expectedName}'`);
-      }
-    }
-    const action = existing.status === 0 && !options.replaceExisting ? "update" : "create";
-    const providerArgs =
-      action === "update"
-        ? ["provider", "update", expectedName, "--credential", "GOOGLE_CHAT_ACCESS_TOKEN"]
-        : [
-            "provider",
-            "create",
-            "--name",
-            expectedName,
-            "--type",
-            expectedType,
-            "--credential",
-            "GOOGLE_CHAT_ACCESS_TOKEN",
-          ];
-    const mutated = effectiveRun(providerArgs, {
-      env: { GOOGLE_CHAT_ACCESS_TOKEN: GOOGLECHAT_E2E_ACCESS_TOKEN },
-      ignoreError: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    if (mutated.status !== 0) {
-      throw new Error(`Google Chat live fixture could not ${action} provider '${expectedName}'`);
-    }
-    const registered = new Set([...delegatedProviderNames, expectedName]);
-    return tokenDefs.map(({ name }) => name).filter((name) => registered.has(name));
-  };
-  providerDependencies.upsertMessagingProviders = fixtureUpsert;
-  effectiveLegacyProviderDependencies.upsertMessagingProviders = fixtureUpsert;
   const restore = () => {
-    providerDependencies.upsertMessagingProviders = originalRegistrationUpsert;
-    effectiveLegacyProviderDependencies.upsertMessagingProviders = originalLegacyUpsert;
+    applier.applyCredentialsAtOpenShell = originalApply;
   };
-  return Object.assign(restore, { upsertMessagingProviders: directUpsert });
+  return Object.assign(restore, {
+    upsertMessagingProviders: originalChannelUpsert.bind(channelDependencies),
+  });
 }
 
 const DEFAULT_GOOGLECHAT_DEPENDENCIES: GooglechatLiveE2eDependencies = {

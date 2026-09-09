@@ -42,9 +42,8 @@ function smokeRunner(shell: "sh -c" | "sh -lc" | "/bin/bash -lc"): string {
  * Deep Agents Code smoke commands run through the same image-baked launcher the
  * managed route probe uses, without adding another login shell (#8624). The
  * OpenShell transport still starts its own login shell before this command; see
- * NVIDIA/OpenShell#2668. Rebuilt managed DCode images reserve that shell's
- * first-match profile as a root-owned file which skips sandbox startup state
- * for the image-baked launcher. Older images can still read a sandbox-user
+ * NVIDIA/OpenShell#2668. DCode's image-owned system hook selects the managed
+ * home before reading personal files. Older images can read a sandbox-user
  * profile before these requested-command environment assignments apply, so the
  * managed runner's single ordered begin/exit pair remains diagnostic rather
  * than a trust boundary. When the caller preserves OpenShell's process status,
@@ -82,9 +81,8 @@ export function buildAgentSmokeArgs(
       command,
     ];
   }
-  // Pi's login profile enforces an exact nproc limit, which Ubuntu /bin/sh
-  // cannot inspect. Keep the profile active, but run it with the Bash shell
-  // the Pi image provisions for this contract.
+  // Pi's system shell hooks enforce an exact nproc limit, which Ubuntu /bin/sh
+  // cannot inspect. Use the Bash shell the Pi image provisions.
   const shellPath = agent.name === "pi" ? "/bin/bash" : "/bin/sh";
   const commandShell = agent.name === "pi" ? "/bin/bash -lc" : "sh -lc";
   return [

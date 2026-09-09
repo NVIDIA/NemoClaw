@@ -840,6 +840,7 @@ async function applyChannelAddToGatewayAndRegistry(
   sandboxName: string,
   channelName: string,
   acquired: Record<string, string>,
+  plan: SandboxMessagingPlan,
   applyPolicyAfterAttachment?: () => boolean,
   upsertMessagingProviders = policyChannelDependencies.upsertMessagingProviders,
   cleanupCredentialFreePolicy?: () => void,
@@ -898,25 +899,21 @@ async function applyChannelAddToGatewayAndRegistry(
   }
   policyChannelDependencies.revalidateChannelProviderPolicy(sandboxName, gatewayName);
   try {
-    // bestEffort: failures throw (instead of process.exit inside the helper)
-    // so a partial add can be torn down below before exiting.
-    const providerNames = upsertMessagingProviders(tokenDefs, gatewayName, {
-      bestEffort: true,
-      requireExactBindings: true,
-    });
-    for (const providerName of providerNames) {
-      revalidateMessagingProviderAttachmentTarget(sandboxName, gatewayName);
-      const attached = runOpenshell(
-        ["sandbox", "provider", "attach", "-g", gatewayName, sandboxName, providerName],
-        { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] },
-      );
-      if (attached.status !== 0) {
-        throw new Error(
-          `OpenShell did not attach messaging provider '${providerName}' to sandbox '${sandboxName}'.`,
-        );
-      }
-      revalidateMessagingProviderAttachmentTarget(sandboxName, gatewayName);
-    }
+    await upsertMessagingProviders(
+      tokenDefs,
+      gatewayName,
+      { replaceExisting: true },
+      {
+        plan,
+        channelName,
+        sandboxAgent,
+        sandboxName,
+        revalidateSandboxIdentity: (operation) => {
+          revalidateMessagingProviderAttachmentTarget(sandboxName, gatewayName);
+          void operation;
+        },
+      },
+    );
     if (applyPolicyAfterAttachment && !applyPolicyAfterAttachment()) {
       return null;
     }
@@ -928,26 +925,15 @@ async function applyChannelAddToGatewayAndRegistry(
     ) {
       const createdProviderNames = [...(err.createdProviderNames ?? [])];
       const createdProviders = new Set(createdProviderNames);
-      const cleanupFailures = createdProviderNames.flatMap((providerName) => {
-        const result = policyChannelDependencies.runGatewayOpenshell(
-          gatewayName,
-          ["provider", "delete", providerName],
-          { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] },
-        );
-        const output = `${result.stdout || ""}${result.stderr || ""}`;
-        return result.status === 0 || /\bNotFound\b|not found/i.test(output)
-          ? []
-          : [
-              {
-                providerName,
-                diagnostic:
-                  redactFullWithUrls(output).replace(/\s+/gu, " ").trim() ||
-                  `provider delete exited with status ${result.status ?? "unknown"}`,
-              },
-            ];
-      });
+      const replacedProviders = new Set(err.replacedProviderNames ?? []);
+      const cleanup = await policyChannelDependencies.cleanupMessagingProviders(
+        createdProviderNames,
+        sandboxName,
+        gatewayName,
+        () => revalidateMessagingProviderAttachmentTarget(sandboxName, gatewayName),
+      );
       const updatedProviderNames = err.mutatedProviderNames.filter(
-        (providerName) => !createdProviders.has(providerName),
+        (providerName) => !createdProviders.has(providerName) || replacedProviders.has(providerName),
       );
       const originalFailure = redactFullWithUrls(err instanceof Error ? err.message : String(err))
         .replace(/\s+/gu, " ")
@@ -960,13 +946,14 @@ async function applyChannelAddToGatewayAndRegistry(
           `  ${YW}⚠${R} Provider state may have changed for ${providerNames}; inspect the named provider, correct the gateway failure, then retry the channel add.`, // lgtm[js/clear-text-logging] Validated provider identifiers only.
         );
       }
-      if (cleanupFailures.length > 0) {
-        for (const { providerName, diagnostic } of cleanupFailures) {
+      if (cleanup.residualProviders.length > 0) {
+        for (const { providerName, error } of cleanup.residualProviders) {
+          const diagnostic = redactFullWithUrls(error.message).replace(/\s+/gu, " ").trim();
           console.error(
             `  ${YW}⚠${R} Could not remove newly created provider ${JSON.stringify(providerName)}: ${diagnostic}.`, // lgtm[js/clear-text-logging] Validated provider identifier and fully redacted diagnostic only.
           );
           console.error(
-            `  Run \`openshell provider delete -g ${JSON.stringify(gatewayName)} ${JSON.stringify(providerName)}\`, then retry the channel add.`, // lgtm[js/clear-text-logging] Validated gateway and provider identifiers only.
+            `  Rerun '${CLI_NAME} ${sandboxName} channels remove ${channelName}' after the gateway recovers.`,
           );
         }
       }
@@ -1061,76 +1048,20 @@ async function applyChannelRemoveToGatewayAndRegistry(
     }
   }
 
-  // Detach providers from the sandbox before deletion. openshell rejects
-  // `provider delete` with FailedPrecondition when the provider is still
-  // attached to a sandbox; the sandbox image itself only stops referencing
-  // the bridge after the next rebuild, so without an explicit detach the
-  // delete will fail on any sandbox that is still alive at remove-time.
-  // NotFound / NotAttached are treated as success-equivalent because a
-  // previous run may have already detached, or the channel may have been
-  // configured for a sandbox that is no longer alive.
-  const detachFailures: Array<{ name: string; output: string }> = [];
   if (gatewayReachable) {
-    for (const name of providerNames) {
-      const result = policyChannelDependencies.runGatewayOpenshell(
-        gatewayName,
-        ["sandbox", "provider", "detach", sandboxName, name],
-        {
-          ignoreError: true,
-          stdio: ["ignore", "pipe", "pipe"],
-        },
-      );
-      if (result.status !== 0) {
-        const output = `${result.stdout || ""}${result.stderr || ""}`;
-        if (!/\bNotFound\b|not found|not attached/i.test(output)) {
-          detachFailures.push({ name, output: output.trim() });
-        }
-      }
-    }
-    if (detachFailures.length > 0) {
+    const cleanup = await policyChannelDependencies.cleanupMessagingProviders(
+      providerNames,
+      sandboxName,
+      gatewayName,
+      () => revalidateMessagingProviderAttachmentTarget(sandboxName, gatewayName),
+    );
+    if (cleanup.residualProviders.length > 0) {
       console.error(
-        `  Failed to detach bridge provider(s) from sandbox '${sandboxName}': ${detachFailures.map((f) => f.name).join(", ")}.`,
+        `  Failed to remove bridge provider(s) from the OpenShell gateway: ${cleanup.residualProviders.map(({ providerName }) => providerName).join(", ")}.`,
       );
-      for (const f of detachFailures) {
-        console.error(`    [${f.name}] ${f.output.split("\n").join("\n      ")}`);
-      }
-      if (!bestEffort) {
-        console.error("  Registry not updated; re-run after resolving the gateway error.");
-        process.exit(1);
-      }
-      if (!residual.includes("gateway-providers")) residual.push("gateway-providers");
-    }
-  }
-
-  // Capture each delete's outcome. If any non-NotFound failure surfaces
-  // we must NOT update the registry — otherwise NemoClaw would record
-  // the channel as removed locally while the bridge is still live in
-  // the gateway, which produces a half-configured sandbox the user
-  // can't easily recover. Surface the underlying openshell output so the
-  // operator can see exactly why the delete was rejected.
-  const deleteFailures: Array<{ name: string; output: string }> = [];
-  if (gatewayReachable) {
-    const detachFailedSet = new Set(detachFailures.map((f) => f.name));
-    for (const name of providerNames) {
-      if (detachFailedSet.has(name)) continue;
-      const result = policyChannelDependencies.deleteMessagingProviderWithRecovery(
-        name,
-        sandboxName,
-        gatewayName,
-      );
-      if (!result.ok) {
-        const output = `${result.stdout}${result.stderr}`;
-        if (!/\bNotFound\b|not found/i.test(output)) {
-          deleteFailures.push({ name, output: output.trim() });
-        }
-      }
-    }
-    if (deleteFailures.length > 0) {
-      console.error(
-        `  Failed to delete bridge provider(s) from the OpenShell gateway: ${deleteFailures.map((f) => f.name).join(", ")}.`,
-      );
-      for (const f of deleteFailures) {
-        console.error(`    [${f.name}] ${f.output.split("\n").join("\n      ")}`);
+      for (const failure of cleanup.residualProviders) {
+        const diagnostic = redactFullWithUrls(failure.error.message).replace(/\s+/gu, " ").trim();
+        console.error(`    [${failure.providerName}] ${diagnostic}`);
       }
       if (!bestEffort) {
         console.error("  Registry not updated; re-run after resolving the gateway error.");
@@ -1505,6 +1436,7 @@ async function addSandboxChannelUnlocked(
       sandboxName,
       canonical,
       {},
+      plan,
       undefined,
       dependencies.upsertMessagingProviders,
     );
@@ -1571,6 +1503,7 @@ async function addSandboxChannelUnlocked(
     sandboxName,
     canonical,
     acquired,
+    plan,
     () =>
       applyChannelPresetIfAvailable(sandboxName, canonical, "add", {
         disclosedPresetState,
@@ -1580,7 +1513,7 @@ async function addSandboxChannelUnlocked(
     cleanupCredentialFreePolicy,
   );
   if (registeredBridge === null) {
-    await rollbackChannelAdd(sandboxName, channelDef, canonical, {
+    await rollbackChannelAdd(sandboxName, channelDef, canonical, plan, {
       wasAlreadyEnabled,
       priorCreds,
       priorMessagingConfig,
@@ -1594,7 +1527,7 @@ async function addSandboxChannelUnlocked(
 
   if (!MessagingHostStateApplier.applyPlanToRegistry(sandboxName, plan)) {
     console.error(`  ${YW}⚠${R} Could not persist messaging plan for '${sandboxName}'.`);
-    await rollbackChannelAdd(sandboxName, channelDef, canonical, {
+    await rollbackChannelAdd(sandboxName, channelDef, canonical, plan, {
       wasAlreadyEnabled,
       priorCreds,
       priorMessagingConfig,
@@ -1613,6 +1546,7 @@ async function rollbackChannelAdd(
   sandboxName: string,
   channel: ChannelDef,
   canonical: string,
+  plan: SandboxMessagingPlan,
   snapshot: {
     wasAlreadyEnabled: boolean;
     priorCreds: Record<string, string>;
@@ -1653,11 +1587,20 @@ async function rollbackChannelAdd(
           token,
           providerType: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
         }));
-        policyChannelDependencies.upsertMessagingProviders(
+        await policyChannelDependencies.upsertMessagingProviders(
           priorTokenDefs,
           getSandboxTargetGatewayName(sandboxName),
+          { replaceExisting: true },
           {
-            bestEffort: true,
+            plan,
+            channelName: canonical,
+            sandboxAgent: registry.getSandbox(sandboxName)?.agent,
+            sandboxName,
+            revalidateSandboxIdentity: () =>
+              revalidateMessagingProviderAttachmentTarget(
+                sandboxName,
+                getSandboxTargetGatewayName(sandboxName),
+              ),
           },
         );
       } catch (err) {
