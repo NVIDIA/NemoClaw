@@ -116,7 +116,7 @@ function countIfStatements(file: string, source: string | null): number {
   const sourceFile = parseTestSource(file, source);
   let count = 0;
   function visit(node: ts.Node): void {
-    if (ts.isIfStatement(node)) count += 1;
+    if (ts.isIfStatement(node) && !isTestGroupRegistration(node)) count += 1;
     ts.forEachChild(node, visit);
   }
   visit(sourceFile);
@@ -145,6 +145,20 @@ function containsTestDefinition(node: ts.Node): boolean {
   }
   ts.forEachChild(node, visit);
   return found;
+}
+
+/** Group selection is file-registration routing, not conditional behavior inside a test. */
+function isTestGroupRegistration(node: ts.IfStatement): boolean {
+  const condition = node.expression;
+  return (
+    node.elseStatement === undefined &&
+    ts.isBinaryExpression(condition) &&
+    condition.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken &&
+    ts.isIdentifier(condition.left) &&
+    condition.left.text === "group" &&
+    ts.isStringLiteral(condition.right) &&
+    containsTestDefinition(node.thenStatement)
+  );
 }
 
 function isFunctionLike(node: ts.Node): node is ts.FunctionLikeDeclaration {

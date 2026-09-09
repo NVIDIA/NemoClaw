@@ -15,7 +15,6 @@ import {
   parseStdoutJson,
   stripMessagingEnv,
 } from "./onboard-split-context";
-import { registerTestGroup } from "./test-group-registration";
 
 beforeEach(() => {
   vi.stubEnv("NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG", "1");
@@ -27,7 +26,7 @@ export type OnboardSandboxBuildGroup = "base" | "dashboard";
 
 export function registerOnboardSandboxBuildTests(group: OnboardSandboxBuildGroup): void {
   describe(`onboard helpers (${group})`, () => {
-    registerTestGroup(group, "base", () => {
+    if (group === "base") {
       it(
         "creates the stock managed sandbox without uploading an external OpenClaw config file",
         {
@@ -606,9 +605,9 @@ const { createSandbox } = require(${onboardPath});
           "stock managed-image onboarding must not enter sandbox-base resolution",
         );
       });
-    });
+    }
 
-    registerTestGroup(group, "dashboard", () => {
+    if (group === "dashboard") {
       it("defers a remote dashboard forward until post-create recovery", async () => {
         const repoRoot = path.join(import.meta.dirname, "../..");
         const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-remote-forward-"));
@@ -898,6 +897,6 @@ const { createSandbox } = require(${onboardPath});
           "sandbox creation must defer the custom-port forward until agent setup or final recovery",
         );
       });
-    });
+    }
   });
 }

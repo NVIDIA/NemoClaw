@@ -22,7 +22,6 @@ import {
   resolveProductionGhExecutableForTest,
 } from "../../.agents/skills/nemoclaw-maintainer-classify-ci-failure/scripts/classify-ci-failure.mts";
 import { artifactZip, artifactZipEntryDataOffset } from "./artifact-zip";
-import { registerTestGroup } from "./test-group-registration";
 const script = resolve(
   ".agents/skills/nemoclaw-maintainer-classify-ci-failure/scripts/classify-ci-failure.mts",
 );
@@ -252,7 +251,7 @@ function trustedDirectories(home = "/home/tester"): Record<string, FakePath> {
 export type ClassifyCiFailureGroup = "artifacts" | "logs" | "process-lifecycle";
 
 export function registerClassifyCiFailureTests(group: ClassifyCiFailureGroup): void {
-  registerTestGroup(group, "logs", () => {
+  if (group === "logs") {
     describe("GitHub CLI production resolver", () => {
       test("selects a safe user-local executable without consulting PATH", () => {
         const home = "/home/tester";
@@ -308,10 +307,10 @@ export function registerClassifyCiFailureTests(group: ClassifyCiFailureGroup): v
         ).toThrow("Could not find a trusted GitHub CLI executable");
       });
     });
-  });
+  }
 
   describe.skipIf(process.platform !== "linux")("CI failure classifier process", () => {
-    registerTestGroup(group, "logs", () => {
+    if (group === "logs") {
       test("redacts credentials from classified diagnostic output", () => {
         const secrets = [
           "Authorization: Bearer full authorization value with spaces",
@@ -653,9 +652,9 @@ export function registerClassifyCiFailureTests(group: ClassifyCiFailureGroup): v
         expect(result.stderr.length).toBeLessThanOrEqual(2001);
         expect(classifierTemporaryDirectories("nemoclaw-ci-log.")).toEqual([]);
       });
-    });
+    }
 
-    registerTestGroup(group, "artifacts", () => {
+    if (group === "artifacts") {
       test.each([
         ["malformed", Buffer.from("not a zip")],
         [
@@ -978,9 +977,9 @@ export function registerClassifyCiFailureTests(group: ClassifyCiFailureGroup): v
         );
         expect(result.stdout).not.toContain(secret);
       });
-    });
+    }
 
-    registerTestGroup(group, "process-lifecycle", () => {
+    if (group === "process-lifecycle") {
       test("retains a leader for an ignored-stdio process-group member until timeout", async () => {
         const root = mkdtempSync(join(tmpdir(), "classify-ci-timeout-"));
         roots.push(root);
@@ -1157,6 +1156,6 @@ export function registerClassifyCiFailureTests(group: ClassifyCiFailureGroup): v
         expect(value.artifact.failures[0].path).toContain("[REDACTED]");
         expect(result.stdout).not.toContain(secret);
       });
-    });
+    }
   });
 }

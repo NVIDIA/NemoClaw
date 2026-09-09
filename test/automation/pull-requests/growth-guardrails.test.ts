@@ -462,6 +462,22 @@ function defineCodebaseGrowthGuardrailTestSupport(): void {
     ]);
   });
 
+  it("excludes suite registration routing without excluding conditionals inside its tests", async () => {
+    const file = "test/helpers/example-suite.ts";
+    const diff = fixtureDiff(
+      [{ filename: file, status: "added" }],
+      {},
+      {
+        [file]:
+          "if (group === 'provider') { it('works', () => { if (ok) expect(ok).toBe(true); }); }",
+      },
+    );
+
+    expect(await conditionalGrowthViolations(diff)).toEqual([
+      "test/helpers/example-suite.ts: 1 if statement(s), up from 0",
+    ]);
+  });
+
   it.each([
     ["if statements", conditionalGrowthViolations, "if (ok) expect(ok).toBe(true);"],
     [
