@@ -177,12 +177,19 @@ describe("OpenShell policy mutation read failures", () => {
     ).mockImplementation(() => ({ ok: true, value: { document, appliedRevision: null } }));
     const runtimeSelection = { gatewayName: "nemoclaw-9090", workspace: "default" };
     const sourceAuthority = { sandboxName: "alpha", runtimeSelection, assertCurrent: vi.fn() };
-    const write = vi
-      .spyOn(policyReader.syncCliOpenShellSandboxPolicyWriter, "setSandboxPolicy")
-      .mockImplementation((request) => {
-        document = fs.readFileSync(request.policyPath, "utf8");
-        return { outcome: { kind: "applied" }, status: 0 };
+    const submissions: unknown[] = [];
+    vi.spyOn(
+      policyReader.syncCliOpenShellSandboxPolicyWriter,
+      "setSandboxPolicy",
+    ).mockImplementation((request) => {
+      document = fs.readFileSync(request.policyPath, "utf8");
+      submissions.push({
+        sandboxName: request.sandboxName,
+        runtimeSelection: request.runtimeSelection,
+        document,
       });
+      return { outcome: { kind: "applied" }, status: 0 };
+    });
     const desired = "version: 1\nnetwork_policies:\n  example:\n    host: example.com\n";
     expect(
       policies.setPolicyDocument("alpha", desired, {
@@ -191,10 +198,7 @@ describe("OpenShell policy mutation read failures", () => {
         sourceAuthority,
       }),
     ).toBe(true);
-    expect(write).toHaveBeenCalledOnce();
-    expect(write).toHaveBeenCalledWith(
-      expect.objectContaining({ sandboxName: "alpha", runtimeSelection }),
-    );
+    expect(submissions).toEqual([{ sandboxName: "alpha", runtimeSelection, document: desired }]);
     expect(document).toBe(desired);
   });
 

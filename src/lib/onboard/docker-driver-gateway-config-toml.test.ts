@@ -899,6 +899,13 @@ describe("existing gateway config authority", () => {
       } finally {
         authority.close();
       }
+      expect(() => {
+        const mismatched = openExistingGatewayConfigAuthority(stateDir, {
+          ...runtime,
+          socketPath: path.join(stateDir, "another-podman.sock"),
+        });
+        mismatched.close();
+      }).toThrow(/socket/);
       expect(() =>
         openExistingGatewayConfigAuthority(stateDir, observedDockerGatewayRuntime()),
       ).toThrow();
@@ -953,6 +960,32 @@ describe("existing gateway config authority", () => {
       fs.rmSync(stateDir, { force: true, recursive: true });
     }
   });
+
+  it.each(["vm", "Docker", ""])(
+    "rejects normalized driver alias %j even in generated TOML",
+    (driver) => {
+      const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-existing-alias-"));
+      try {
+        const env = writeGatewayConfig(stateDir);
+        const runtime = { ...observedDockerGatewayRuntime(), openShellDriver: driver };
+        const toml = buildDockerDriverGatewayConfigToml(
+          env,
+          "/usr/bin/openshell-sandbox",
+          jwtBundlePaths(stateDir),
+          gatewayIdForStateDir(stateDir),
+          runtime,
+        );
+        fs.writeFileSync(env.OPENSHELL_GATEWAY_CONFIG, toml);
+        expect(() => {
+          const authority = openExistingGatewayConfigAuthority(stateDir, runtime);
+          authority.close();
+        }).toThrow(/explicitly observed/);
+        expect(fs.readFileSync(env.OPENSHELL_GATEWAY_CONFIG, "utf-8")).toBe(toml);
+      } finally {
+        fs.rmSync(stateDir, { force: true, recursive: true });
+      }
+    },
+  );
 
   it("rejects state-directory replacement even when the original config inode is reused", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-existing-directory-"));

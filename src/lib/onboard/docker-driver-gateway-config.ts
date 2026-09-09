@@ -703,9 +703,10 @@ export function openExistingGatewayConfigAuthority(
   runtime: RuntimeProviderGatewayHostRuntime,
 ): ExistingGatewayConfigAuthority {
   const driver = runtime.openShellDriver;
-  if (driver !== "docker" && driver !== "podman") {
+  const provider = resolveRegisteredRuntimeProvider(driver);
+  if (!provider?.gateway.supported || provider.identity.id !== driver) {
     throw new Error(
-      "Existing gateway config authority requires an explicitly observed Docker or Podman driver.",
+      "Existing gateway config authority requires an explicitly observed qualified gateway driver.",
     );
   }
   const identity = existingGatewayIdentityFromConfig(path.resolve(stateDir), runtime);
@@ -722,11 +723,8 @@ export function openExistingGatewayConfigAuthority(
     const openshell = asTomlTable(config?.openshell);
     const driverConfig = asTomlTable(asTomlTable(openshell?.drivers)?.[driver]);
     const socket = driverConfig?.socket_path;
-    if (driver === "docker" && socket !== undefined) {
-      throw new Error("Docker gateway config cannot supply container-engine socket authority.");
-    }
-    if (driver === "podman" && !isNonEmptyString(socket)) {
-      throw new Error("Podman gateway config has no explicit container-engine socket.");
+    if ((socket ?? null) !== runtime.socketPath) {
+      throw new Error("Gateway config socket does not match the observed runtime authority.");
     }
     assertExistingConfigProof(proof);
     let closed = false;
