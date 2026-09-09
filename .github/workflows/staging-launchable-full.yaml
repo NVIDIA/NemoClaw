@@ -17,7 +17,7 @@ jobs:
   test:
     if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 160
     steps:
       - name: Check out trusted Vitest controller
         timeout-minutes: 10
@@ -89,7 +89,7 @@ jobs:
           printf 'work_dir=%s\n' "$work_dir" >>"$GITHUB_OUTPUT"
 
       - name: Verify staging Launchable remote execution readiness
-        timeout-minutes: 60
+        timeout-minutes: 75
         env:
           BREV_LAUNCHABLE_ID: ${{ vars.NEMOCLAW_STAGING_LAUNCHABLE_ID }}
           BREV_WORKSPACE_OWNERSHIP_FILE: ${{ steps.prepare.outputs.work_dir }}/workspace-owner.json
