@@ -649,7 +649,7 @@ describe("Hermes portable lifecycle", () => {
       ),
     ).toThrow("simulated schema-8 process exit");
     const fixture = lifecycleDeps(receipt);
-
+    Reflect.deleteProperty(fixture.deps.operatingAuthority!, "env");
     const recovered = await withPortableHostFence(stateDir, () =>
       withMcpLifecycleLockSync(
         SANDBOX,
@@ -658,7 +658,7 @@ describe("Hermes portable lifecycle", () => {
       ),
     );
 
-    expect(recovered.kind).toBe("already-current");
+    expect([recovered.kind, (fixture.capturePodmanExecutableAuthority.mock.calls.at(-1) as unknown[] | undefined)?.[2]]).toEqual(["already-current", fixture.deps.env]);
     expect(readHermesPortableLifecycleReceipt(SANDBOX, stateDir)?.successor).toBeDefined();
   });
 

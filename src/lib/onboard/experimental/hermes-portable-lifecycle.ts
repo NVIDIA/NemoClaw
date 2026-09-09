@@ -842,6 +842,7 @@ function qualify(
     },
     {
       ...deps.operatingAuthority,
+      env: deps.operatingAuthority?.env ?? commandEnv,
       timing: currentnessTiming,
       podmanAuthorityDeps:
         deps.operatingAuthority?.podmanAuthorityDeps ?? deps.podmanAuthorityDeps,
