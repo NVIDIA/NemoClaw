@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { resolveOpenshell } from "../../../src/lib/adapters/openshell/resolve.ts";
+import { DASHBOARD_PORT } from "../../../src/lib/core/ports.ts";
 import { pullAndResolveBaseImageDigest } from "../../../src/lib/onboard/base-image.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
@@ -371,6 +372,7 @@ test(
         `test-only driver config mounts tmpfs at ${EXDEV_TMPFS_MOUNT}`,
         `sandbox proves ${EXDEV_TMPFS_SOURCE} and the OpenClaw extension target are distinct devices`,
         "OpenClaw installs the weather plugin across that boundary before restart",
+        "the restarted dashboard forward is owned by canonical OpenShell, not the test wrapper",
       ],
       selector: "current-lifecycle",
       nemoclawSource: "current-checkout",
@@ -433,6 +435,11 @@ test(
       host,
       path.join(REPO_ROOT, "scripts", "install-openshell.sh"),
     );
+    await host.resolveOpenShellCommandPath({
+      artifactName: "resolve-canonical-openshell-for-exdev-listener",
+      env: liveEnv(),
+      timeoutMs: PROBE_TIMEOUT_MS,
+    });
     const openshellWrapper = createOpenShellTrustedImageWrapper({
       driverConfigJson: EXDEV_TMPFS_DRIVER_CONFIG,
       realOpenshellPath: openshell.cli,
@@ -542,7 +549,18 @@ test(
         timeoutMs: 180_000,
       },
     );
-    expect(restart.exitCode, resultText(restart)).toBe(0);
+    const listenerAfterRestart = await host.inspectOpenShellForwardListener(
+      String(DASHBOARD_PORT),
+      SANDBOX_NAME,
+      {
+        artifactName: "openclaw-weather-plugin-listener-after-restart",
+        env: liveEnv(),
+      },
+    );
+    expect(
+      restart.exitCode === 0 && listenerAfterRestart.valid,
+      `${resultText(restart)}\n${listenerAfterRestart.output}`,
+    ).toBe(true);
     const weatherAfterRestart = await assertWeatherPluginRuntime(
       sandbox,
       "after-restart",
