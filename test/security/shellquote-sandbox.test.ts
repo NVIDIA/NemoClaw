@@ -93,6 +93,10 @@ const createdSandbox = fixtureMocks.createCreatedSandboxFixture();
 const forwardService = fixtureMocks.installForwardServiceReachabilityFixture();
 const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
+const originalSpawnSync = childProcess.spawnSync;
+childProcess.spawnSync = (command, ...args) => command === "ioreg"
+  ? { status: 0, stdout: '"IOPlatformUUID" = "fixture-platform-uuid"\n' }
+  : originalSpawnSync(command, ...args);
 childProcess.spawn = (...args) => {
   if (!forwardService.recordSpawn(args)) throw new Error("unexpected spawned process");
   const child = new EventEmitter();
