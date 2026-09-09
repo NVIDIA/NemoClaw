@@ -175,6 +175,6 @@ export function printMcpRestoreRecovery(
 ): void {
   if (!mcpBridgeRestoreUnverified) return;
   console.log(
-    `    MCP bridge definitions were preserved but not fully refreshed — fix the reported cause, then run \`${CLI_NAME} ${sandboxName} mcp restart\``,
+    `    MCP bridge definitions were preserved but not fully refreshed — fix the reported cause, then run \`${CLI_NAME} ${sandboxName} rebuild --yes\``,
   );
 }

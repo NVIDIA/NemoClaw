@@ -545,11 +545,8 @@ export async function runRebuildPostRestorePhase(
     bail("OpenClaw config integrity verification failed after rebuild.");
     return;
   }
-  if (
-    targetAgentName === "hermes" &&
-    (hermesGatewayRestoreUnverified || mcpBridgeRestoreUnverified)
-  ) {
-    bail(`Hermes post-restore verification failed for '${sandboxName}'.`);
+  if (hermesGatewayRestoreUnverified || mcpBridgeRestoreUnverified) {
+    bail(`${rebuiltAgentName} post-restore verification failed for '${sandboxName}'.`);
     return;
   }
   if (preparedBackupRecovery && !postRestoreComplete) {

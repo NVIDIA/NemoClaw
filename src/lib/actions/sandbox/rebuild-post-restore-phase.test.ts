@@ -26,6 +26,12 @@ describe("rebuild post-restore phase", () => {
     "langchain-deepagents-code": "terminal",
     pi: "terminal",
   } as const;
+  const displayNameByAgent = {
+    openclaw: "OpenClaw",
+    hermes: "Hermes",
+    "langchain-deepagents-code": "Deep Agents Code",
+    pi: "Pi",
+  } as const;
   let agentName: keyof typeof runtimeKindByAgent;
   let order: string[];
 
@@ -42,6 +48,7 @@ describe("rebuild post-restore phase", () => {
       () =>
         ({
           name: agentName,
+          displayName: displayNameByAgent[agentName],
           expectedVersion: null,
           runtime: { kind: runtimeKindByAgent[agentName] },
         }) as never,
@@ -258,22 +265,27 @@ describe("rebuild post-restore phase", () => {
     expect(output).not.toContain("rebuilt successfully");
   });
 
-  it("does not seal OpenClaw config after unverified MCP restoration (#9946)", async () => {
-    vi.mocked(rebuildMcp.restoreMcpAfterRebuild).mockResolvedValue(false);
-    const args = input();
+  it.each(["openclaw", "langchain-deepagents-code"] as const)(
+    "retains rebuild recovery after unverified %s MCP restoration (#9946)",
+    async (targetAgent) => {
+      agentName = targetAgent;
+      vi.mocked(rebuildMcp.restoreMcpAfterRebuild).mockResolvedValue(false);
+      const args = input();
 
-    await runRebuildPostRestorePhase(args);
+      await runRebuildPostRestorePhase(args);
 
-    expect(
-      rebuildConfigHash.refreshMutableOpenClawConfigHashAfterPostRestoreWrites,
-    ).not.toHaveBeenCalled();
-    expect(rebuildConfigHash.verifyFinalMutableOpenClawConfigHash).not.toHaveBeenCalled();
-    expect(args.bail).not.toHaveBeenCalled();
-    const output = vi.mocked(console.log).mock.calls.flat().join("\n");
-    expect(output).toContain("Mutable OpenClaw config hash was not refreshed");
-    expect(output).toContain("MCP bridge definitions were preserved but not fully refreshed");
-    expect(output).not.toContain("rebuilt successfully");
-  });
+      expect(
+        rebuildConfigHash.refreshMutableOpenClawConfigHashAfterPostRestoreWrites,
+      ).not.toHaveBeenCalled();
+      expect(rebuildConfigHash.verifyFinalMutableOpenClawConfigHash).not.toHaveBeenCalled();
+      expect(args.bail).toHaveBeenCalledWith(
+        `${displayNameByAgent[targetAgent]} post-restore verification failed for 'alpha'.`,
+      );
+      const output = vi.mocked(console.log).mock.calls.flat().join("\n");
+      expect(output).toContain("MCP bridge definitions were preserved but not fully refreshed");
+      expect(output).not.toContain("rebuilt successfully");
+    },
+  );
 
   it("stops before later writes when doctor exits nonzero (#9946)", async () => {
     vi.mocked(processRecovery.executeSandboxExecCommand).mockReturnValue({
@@ -722,7 +734,7 @@ describe("rebuild post-restore phase", () => {
     );
     const mcpCall = vi
       .mocked(console.log)
-      .mock.calls.findIndex((call) => String(call[0]).includes("nemoclaw alpha mcp restart"));
+      .mock.calls.findIndex((call) => String(call[0]).includes("nemoclaw alpha rebuild --yes"));
     const recoverCall = vi
       .mocked(console.error)
       .mock.calls.findIndex((call) => String(call[0]).includes("nemoclaw alpha recover"));
@@ -755,7 +767,7 @@ describe("rebuild post-restore phase", () => {
     ).not.toHaveBeenCalled();
     const mcpCall = vi
       .mocked(console.log)
-      .mock.calls.findIndex((call) => String(call[0]).includes("nemoclaw alpha mcp restart"));
+      .mock.calls.findIndex((call) => String(call[0]).includes("nemoclaw alpha rebuild --yes"));
     const recoverCall = vi
       .mocked(console.error)
       .mock.calls.findIndex((call) => String(call[0]).includes("nemoclaw alpha recover"));

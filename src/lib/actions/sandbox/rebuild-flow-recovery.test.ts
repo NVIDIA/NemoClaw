@@ -481,7 +481,7 @@ describe("rebuildSandbox flow: recovery", () => {
         throwOnError: true,
         recoveryManifest: makePreparedRecoveryManifest(),
       }),
-    ).rejects.toThrow("Prepared backup recovery");
+    ).rejects.toThrow("OpenClaw post-restore verification failed for 'alpha'.");
 
     expect(harness.errorSpy).toHaveBeenCalledWith(
       expect.stringContaining("MCP bridge restore incomplete; inspect redacted diagnostics"),
@@ -629,30 +629,69 @@ describe("rebuildSandbox flow: recovery", () => {
     });
   });
 
-  it("reports MCP recovery when bridge restoration is incomplete", async () => {
+  it("retains native MCP recovery until the accepted replacement restores it", async () => {
     const mcpEntry = {
       server: "github",
       providerName: "nemoclaw-mcp-alpha-github",
     };
     const harness = createRebuildFlowHarness({
-      applyPreset: () => false,
+      ...provenReplacement,
+      captureOpenshell: sandboxGetProbes([SOURCE_PROBE, null]),
       mcpPreparation: {
         entries: [mcpEntry],
         detachedProviderEntries: [mcpEntry],
+      },
+      onboard: (session) => {
+        Object.assign(
+          (session.checkpoint as { sandboxRecreate: Record<string, unknown> }).sandboxRecreate,
+          {
+            phase: "created",
+            targetGeneration: "generation-1",
+            targetLiveIdentityFingerprint: REPLACEMENT_IDENTITY,
+          },
+        );
       },
       restoreMcpBridgesAfterRebuild: () => Promise.reject(new Error("MCP restore boom")),
     });
 
     await expect(
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).resolves.toBeUndefined();
+    ).rejects.toThrow("OpenClaw post-restore verification failed for 'alpha'.");
 
+    const manifestPath = path.join(harness.backupPath, "rebuild-manifest.json");
+    const recoveryPath = path.join(harness.backupPath, ".nemoclaw-rebuild-recovery.json");
+    const retainedManifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    expect(retainedManifest.rebuildMcpHandoff).toMatchObject({ entries: [mcpEntry] });
+    expect(retainedManifest.rebuildMcpHandoff).not.toHaveProperty("retired");
+    expect(retainedManifest.rebuildPolicyHandoff).not.toHaveProperty("retired");
+    expect(JSON.parse(fs.readFileSync(recoveryPath, "utf8"))).toMatchObject({ phase: "restore" });
+    expect(harness.session.checkpoint).toHaveProperty("sandboxRecreate.phase", "created");
     const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
-    expect(output).toContain("rebuilt but some post-restore steps were incomplete");
-    expect(output).toContain("MCP bridge definitions were preserved but not fully refreshed");
-    expect(output).not.toContain("rebuilt successfully");
+    expect(output).toContain("nemoclaw alpha rebuild --yes");
+    expect(output).not.toContain("nemoclaw alpha mcp restart");
     expect(harness.errorSpy).toHaveBeenCalledWith(
       expect.stringContaining("MCP bridge restore incomplete; inspect redacted diagnostics"),
     );
+
+    const restarted = restartRebuild(REPLACEMENT_PROBE, harness.session.checkpoint);
+    await expect(
+      restarted.rebuildSandbox("alpha", ["--yes"], {
+        throwOnError: true,
+        recoveryManifest: retainedManifest,
+      }),
+    ).resolves.toBeUndefined();
+
+    expectNoSandboxDelete(restarted.runOpenshellSpy);
+    expect(restarted.onboardSpy).not.toHaveBeenCalled();
+    expect(restarted.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith(
+      "alpha",
+      [mcpEntry],
+      { gatewayName: "nemoclaw", workspace: "default" },
+    );
+    expect(JSON.parse(fs.readFileSync(manifestPath, "utf8"))).not.toHaveProperty(
+      "rebuildMcpHandoff",
+    );
+    expect(fs.existsSync(recoveryPath)).toBe(false);
+    expect(restarted.session.checkpoint).toHaveProperty("sandboxRecreate", null);
   });
 });
