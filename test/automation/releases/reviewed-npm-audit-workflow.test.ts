@@ -337,6 +337,7 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
 
     expect(cacheBucketStep.env).toEqual({
       NEMOCLAW_REVIEWED_NPM_AUDIT_CACHE_DIRECTORY: "${{ inputs.cache-directory }}",
+      NEMOCLAW_REVIEWED_NPM_AUDIT_LOCKED_GRAPH: "${{ inputs.locked-graph }}",
       NEMOCLAW_REVIEWED_NPM_AUDIT_TARGET_ROOT: "${{ inputs.target-root }}",
     });
     expect(cacheBucketStep.run).toContain(
