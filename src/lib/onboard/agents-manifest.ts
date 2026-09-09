@@ -4,7 +4,10 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { assertNoPerAgentMaxSpawnDepth } from "../extra-agents-validation";
 import { isObjectRecord } from "../core/json-types";
+
+export { assertNoPerAgentMaxSpawnDepthJson } from "../extra-agents-validation";
 
 // Load YAML lazily via require to match the rest of the onboard pipeline
 // (see src/lib/sandbox/config.ts and src/lib/policy/index.ts). Importing
@@ -75,39 +78,6 @@ function assertNoCredentialFields(value: unknown, label: string): void {
       assertNoCredentialFields(child, `${label}[${index}]`);
     });
   }
-}
-
-function assertNoMaxSpawnDepth(value: unknown, label: string): void {
-  if (!isObjectRecord(value) || !Object.hasOwn(value, "maxSpawnDepth")) return;
-  throw new Error(
-    `${label}.maxSpawnDepth is not accepted per-agent; OpenClaw honours it only on agents.defaults.subagents. Set it under the manifest 'defaults.subagents.maxSpawnDepth' instead.`,
-  );
-}
-
-export function assertNoPerAgentMaxSpawnDepth(value: unknown): void {
-  const agents = Array.isArray(value)
-    ? value
-    : isObjectRecord(value) && Array.isArray(value.agents)
-      ? value.agents
-      : [];
-  agents.forEach((entry, index) => {
-    if (!isObjectRecord(entry)) return;
-    assertNoMaxSpawnDepth(entry.subagents, `NEMOCLAW_EXTRA_AGENTS_JSON.agents[${index}].subagents`);
-  });
-  if (isObjectRecord(value) && isObjectRecord(value.main)) {
-    assertNoMaxSpawnDepth(value.main.subagents, "NEMOCLAW_EXTRA_AGENTS_JSON.main.subagents");
-  }
-}
-
-export function assertNoPerAgentMaxSpawnDepthJson(raw: string | undefined): void {
-  if (!raw?.trim()) return;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw) as unknown;
-  } catch {
-    return;
-  }
-  assertNoPerAgentMaxSpawnDepth(parsed);
 }
 
 function expectedAgentPath(kind: "workspace" | "agentDir", id: string): string {

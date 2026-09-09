@@ -128,6 +128,7 @@ function stageMcpToolDiscoveryRuntime(rootDir: string, buildCtx: string): void {
 
 function stageManagedStartupRuntimeSources(rootDir: string, buildCtx: string): void {
   for (const relativePath of [
+    "extra-agents-validation.ts",
     path.join("core", "json-types.ts"),
     path.join("core", "ports.ts"),
     path.join("security", "credential-hash.ts"),

@@ -4,11 +4,11 @@
 import { Buffer } from "node:buffer";
 import { createHash, X509Certificate } from "node:crypto";
 
+import { assertNoPerAgentMaxSpawnDepth } from "../../extra-agents-validation";
 import { MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW } from "../../inference/ollama-runtime-context";
 import { hydrateDerivedSandboxMessagingPlanFields } from "../../messaging/hydration";
 import { parseSandboxMessagingPlan } from "../../messaging/plan-validation";
 import { withLocalNoProxy } from "../../proxy/local-no-proxy";
-import { assertNoPerAgentMaxSpawnDepth } from "../agents-manifest";
 import {
   MAX_CORPORATE_CA_BYTES,
   MAX_CORPORATE_CA_CERTS,
