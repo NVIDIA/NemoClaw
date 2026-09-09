@@ -236,6 +236,8 @@ RUN umask 077 \
 USER root
 RUN chown root:sandbox /sandbox \
     && chmod 1775 /sandbox \
+    && chown sandbox:sandbox /sandbox/.bashrc /sandbox/.profile \
+    && chmod 644 /sandbox/.bashrc /sandbox/.profile \
     && test "$(stat -c '%U:%G:%a' /sandbox)" = 'root:sandbox:1775' \
     && chown root:root /sandbox/.nemoclaw \
     && chmod 1755 /sandbox/.nemoclaw \

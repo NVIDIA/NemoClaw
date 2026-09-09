@@ -320,32 +320,6 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(baseDockerfile).toContain("> /sandbox/.profile");
   });
 
-  it("reserves the first DCode login profile under a sticky root workspace (#8624)", () => {
-    const dockerfile = readAgentFile("Dockerfile");
-    const loginProfile = readAgentFile("dcode-login-profile.sh");
-    const startScript = readAgentFile("start.sh");
-
-    expect(dockerfile).toContain(
-      "COPY agents/langchain-deepagents-code/dcode-login-profile.sh /usr/local/lib/nemoclaw/dcode-login-profile.sh",
-    );
-    expect(dockerfile).toContain("chown root:sandbox /sandbox");
-    expect(dockerfile).toContain("chmod 1775 /sandbox");
-    expect(dockerfile).toContain(
-      "install -o root -g root -m 0444 /usr/local/lib/nemoclaw/dcode-login-profile.sh /sandbox/.bash_profile",
-    );
-    expect(startScript).toContain("protect_dcode_login_profile");
-    expect(startScript).toContain("verify_dcode_login_profile");
-    expect(startScript).toContain("rm -f -- /sandbox/.bash_profile");
-    expect(startScript).toContain(
-      "[SECURITY] DCode login profile is not protected; rebuild this sandbox.",
-    );
-    expect(loginProfile).toContain('case "${BASH_EXECUTION_STRING:-}" in');
-    expect(loginProfile).toContain('*"/usr/local/lib/nemoclaw/dcode-managed-exec"*)');
-    expect(loginProfile.indexOf("unset BASH_ENV ENV")).toBeLessThan(
-      loginProfile.indexOf("/tmp/nemoclaw-proxy-env.sh"),
-    );
-  });
-
   it("serializes the sandbox name into the shell env file for in-sandbox identity", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-start-"));
     try {

@@ -957,6 +957,61 @@ describe("sandbox recreate recovery", () => {
     ).toMatchObject({ action: "reject", reason: expect.stringMatching(/not ready/) });
   });
 
+  it("selects an exact not-ready replacement with a parent-format pending checkpoint (#10560)", () => {
+    expect(
+      planSandboxRecreateRecovery(
+        transactionAt("created"),
+        { state: "not_ready", liveIdentityFingerprint: TARGET_ID },
+        {
+          ...SOURCE_ENTRY,
+          lifecycleGeneration: TARGET_GENERATION,
+          lifecycleLiveIdentityFingerprint: TARGET_ID,
+          pendingRouteReservation: true,
+          reservationSessionId: "v0-0-55-upgrade-session",
+          pendingCreateIdentity: {
+            schemaVersion: 1,
+            state: "verified-create",
+            gatewayName: "nemoclaw-31818",
+            gatewayPort: 31818,
+            sandboxName: "alpha",
+            lifecycleGeneration: TARGET_GENERATION,
+            sandboxIdentityFingerprint: TARGET_ID,
+            route: "compatibility",
+          },
+        },
+      ),
+    ).toEqual({ action: "accept_target" });
+  });
+
+  it("rejects identity drift in a parent-format pending replacement (#10560)", () => {
+    expect(
+      planSandboxRecreateRecovery(
+        transactionAt("created"),
+        { state: "not_ready", liveIdentityFingerprint: FOREIGN_ID },
+        {
+          ...SOURCE_ENTRY,
+          lifecycleGeneration: TARGET_GENERATION,
+          lifecycleLiveIdentityFingerprint: TARGET_ID,
+          pendingRouteReservation: true,
+          reservationSessionId: "v0-0-55-upgrade-session",
+          pendingCreateIdentity: {
+            schemaVersion: 1,
+            state: "verified-create",
+            gatewayName: "nemoclaw-31818",
+            gatewayPort: 31818,
+            sandboxName: "alpha",
+            lifecycleGeneration: TARGET_GENERATION,
+            sandboxIdentityFingerprint: TARGET_ID,
+            route: "compatibility",
+          },
+        },
+      ),
+    ).toMatchObject({
+      action: "reject",
+      reason: expect.stringMatching(/not the journaled pending replacement/u),
+    });
+  });
+
   it("rejects a ready same-name sandbox whose identity differs from the registered target", () => {
     expect(
       planSandboxRecreateRecovery(

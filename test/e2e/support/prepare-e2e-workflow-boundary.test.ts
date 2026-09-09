@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -10,6 +11,7 @@ import YAML from "yaml";
 
 import {
   PREPARE_E2E_ACTION,
+  PREPARE_COMPILED_ARTIFACT_ACTION,
   PREPARE_E2E_STEP,
   validatePrepareE2eAction,
   validatePrepareE2eInvocations,
@@ -30,6 +32,63 @@ describe("prepare-e2e workflow boundary", () => {
   it("requires one workspace preparation step per E2E job and one candidate CLI build in generate-matrix", () => {
     expect(validatePrepareE2eAction()).toEqual([]);
     expect(validatePrepareE2eInvocations(readWorkflow())).toEqual([]);
+  });
+
+  it("loads the dependency installer from the sparse trusted checkout", () => {
+    const workflow = readWorkflow() as Workflow;
+    const checkout = workflow.jobs["generate-matrix"].steps!.find(
+      (step) => step.name === "Check out trusted compiled artifact action",
+    )!;
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "trusted-build-action-"));
+    try {
+      const included = String(checkout.with!["sparse-checkout"]).trim().split("\n");
+      fs.cpSync(process.cwd(), root, {
+        recursive: true,
+        filter: (source) => {
+          const relative = path.relative(process.cwd(), source);
+          return (
+            relative === "" ||
+            included.some(
+              (entry) =>
+                entry === relative ||
+                entry.startsWith(`${relative}/`) ||
+                relative.startsWith(`${entry}/`),
+            )
+          );
+        },
+      });
+      const result = spawnSync(
+        process.execPath,
+        [
+          "--experimental-strip-types",
+          path.join(root, "scripts/checks/prepare-ci-npm-install.mts"),
+        ],
+        {
+          encoding: "utf8",
+          cwd: root,
+          env: {
+            ...process.env,
+            NEMOCLAW_CI_NPM_PACKAGE_MODE: "inspect",
+            NEMOCLAW_CI_TARGET_ROOT: process.cwd(),
+          },
+        },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      expect(typeof JSON.parse(result.stdout).required).toBe("boolean");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a compiler action loaded from the candidate revision", () => {
+    const workflow = readWorkflow() as Workflow;
+    const checkout = workflow.jobs["generate-matrix"].steps!.find(
+      (step) => step.name === "Check out trusted compiled artifact action",
+    )!;
+    checkout.with!.ref = "${{ inputs.checkout_sha || github.sha }}";
+    expect(validatePrepareE2eInvocations(workflow)).toContain(
+      "generate-matrix must load the shared compiler from the trusted workflow checkout after candidate checkout",
+    );
   });
 
   it("rejects action implementation drift", () => {
@@ -77,7 +136,7 @@ describe("prepare-e2e workflow boundary", () => {
     const workflow = readWorkflow() as Workflow;
     const artifactProducer = workflow.jobs["generate-matrix"];
     const producerPrepare = artifactProducer.steps!.find(
-      (step) => step.uses === PREPARE_E2E_ACTION,
+      (step) => step.uses === PREPARE_COMPILED_ARTIFACT_ACTION,
     )!;
     producerPrepare.with = { "build-cli": "false" };
 
