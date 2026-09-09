@@ -512,6 +512,43 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
     expect(fs.lstatSync(wrapper.wrapperPath).isFile()).toBe(true);
   });
 
+  it("kills and reaps a compatibility child that ignores cancellation (#11239)", async () => {
+    const { root, wrapper } = createWrapperFixture("hermes-gpu-fallback-child-timeout-test-", {
+      openshell: [
+        "#!/usr/bin/env bash",
+        'if [[ "${1:-}" == "sandbox" && "${2:-}" == "get" ]]; then exit 1; fi',
+        "trap '' HUP INT TERM",
+        'printf \'%s\\n\' "$$" >"$E2E_FAKE_CHILD_PID"',
+        ': >"$E2E_FAKE_READY"',
+        "exec sleep 30",
+        "",
+      ].join("\n"),
+    });
+    const ready = path.join(root, "compatibility-ready");
+    const childPidPath = path.join(root, "compatibility-child.pid");
+    const env = {
+      ...process.env,
+      ...wrapper.componentEnv,
+      E2E_FAKE_CHILD_PID: childPidPath,
+      E2E_FAKE_READY: ready,
+    };
+    const compatibility = spawnWrapper(
+      wrapper.wrapperPath,
+      ["sandbox", "create", "--from", "image", "--", "NEMOCLAW_SANDBOX_NAME=alpha"],
+      env,
+    );
+    const compatibilityStatus = waitForChild(compatibility);
+    await waitForFile(ready);
+    const delegatedPid = Number(fs.readFileSync(childPidPath, "utf8").trim());
+    const terminatedAt = Date.now();
+
+    expect(compatibility.kill("SIGTERM")).toBe(true);
+    expect(await compatibilityStatus).toBe(143);
+    expect(Date.now() - terminatedAt).toBeLessThan(4_000);
+    expect(() => process.kill(delegatedPid, 0)).toThrow();
+    expect(fs.lstatSync(wrapper.wrapperPath).isFile()).toBe(true);
+  });
+
   it("preserves the fallback wrapper while staging the existing OpenShell service (#7140)", () => {
     const { realDir, root, wrapper } = createWrapperFixture(
       "hermes-gpu-fallback-installer-selection-",

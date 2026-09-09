@@ -6,7 +6,9 @@
 # Triggers:
 #   - Push to main when a base- or managed-image input changes
 #   - Manual dispatch for ad-hoc rebuilds
-# E2E publication verification accepts push builds, not manual rebuilds.
+# E2E publication verification normally accepts push builds. Trusted manual PR
+# branch reuse may accept an exact manual main publication only when its complete
+# managed-image promotion job succeeded.
 #
 # Base images contain the expensive, rarely-changing layers. Complete image
 # publication consumes exact base digests from the same trusted workflow run.

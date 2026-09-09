@@ -4,6 +4,10 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import {
+  createForwardServiceTarget,
+  isForwardServiceListenerOwner,
+} from "../../../src/lib/adapters/openshell/forward-service";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertStockManagedImageReceipt } from "../fixtures/managed-image-receipt.ts";
@@ -487,9 +491,23 @@ test(
       sandboxName: SANDBOX_NAME,
     });
 
-    const verifyFallback = () => {
-      expect(fallbackEvents.join("\n")).toBe(
-        `${HERMES_GPU_FALLBACK_EVENTS.rejectNativeCreateBeforeProgress}\n${HERMES_GPU_FALLBACK_EVENTS.delegateCompatibilityCreate}\n${HERMES_GPU_FALLBACK_EVENTS.commitCompatibilityHandoff}`,
+    const verifyFallback = (wrapper: ReturnType<typeof createHermesGpuFallbackWrapper>) => {
+      const forwardOwnership = [18_789, 8_642].map((port) =>
+        isForwardServiceListenerOwner(
+          createForwardServiceTarget(
+            {
+              executable: wrapper.wrapperPath,
+              gatewayName: "nemoclaw",
+              localHost: "127.0.0.1",
+              sandboxName: SANDBOX_NAME,
+              workspace: "default",
+            },
+            port,
+          ),
+        ),
+      );
+      expect([...fallbackEvents, `forward-ownership:${forwardOwnership.join(",")}`].join("\n")).toBe(
+        `${HERMES_GPU_FALLBACK_EVENTS.rejectNativeCreateBeforeProgress}\n${HERMES_GPU_FALLBACK_EVENTS.delegateCompatibilityCreate}\n${HERMES_GPU_FALLBACK_EVENTS.commitCompatibilityHandoff}\nforward-ownership:true,true`,
       );
       expect(resultText(install)).toContain("Native GPU diagnostics saved:");
       expect(
@@ -498,7 +516,7 @@ test(
         ),
       ).toBe(true);
     };
-    await (fallbackWrapper ? Promise.resolve(verifyFallback()) : Promise.resolve());
+    await (fallbackWrapper ? Promise.resolve(verifyFallback(fallbackWrapper)) : Promise.resolve());
 
     progress.phase("validate GPU startup and supervisor proof");
     const status = await host.command("nemoclaw", [SANDBOX_NAME, "status"], {

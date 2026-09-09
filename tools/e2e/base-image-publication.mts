@@ -863,7 +863,7 @@ export async function waitForBaseImagePublication(
     notice(
       selection.state === "selected"
         ? `Required base image publishers are not complete for ${selection.run.headSha}; selected workflow run status ${selection.run.status}; ${selection.run.url}`
-        : `Waiting for a trusted base-image push run covering ${options.history.relevantSha}`,
+        : `Waiting for a trusted base-image publication run covering ${options.history.relevantSha}`,
     );
     await sleep(Math.min(options.pollMs, Math.max(1, deadline - now())));
   }
