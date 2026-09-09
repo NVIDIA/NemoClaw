@@ -225,7 +225,8 @@ Use these details when your first-run path needs more control.
     NemoClaw derives the forwarded dashboard port from `CHAT_UI_URL` and passes its hostname to Hermes for browser Host-header validation.
     `CHAT_UI_URL` does not expose the host forward outside WSL.
     The Hermes dashboard service remains bound to loopback.
-    Use HTTPS for an external `CHAT_UI_URL`; HTTP enables insecure authentication.
+    Use HTTPS for an external `CHAT_UI_URL`.
+    Hermes rejects an external HTTP URL when the sandbox starts.
     NemoClaw preserves an external browser URL across rebuild and clone operations.
 
     For direct dashboard or API access to a non-WSL host, set `NEMOCLAW_DASHBOARD_BIND=0.0.0.0` before onboarding.
