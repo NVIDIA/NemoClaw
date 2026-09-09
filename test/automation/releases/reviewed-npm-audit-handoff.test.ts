@@ -90,7 +90,9 @@ describe("reviewed npm audit handoff", () => {
   );
 
   it("passes producer output through protected audit handoffs and rejects forged reports", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "reviewed-audit-receipt-handoff-"));
+    const root = fs.realpathSync(
+      fs.mkdtempSync(path.join(os.tmpdir(), "reviewed-audit-receipt-handoff-")),
+    );
     const trustedRoot = path.join(root, "trusted");
     const targetRoot = path.join(root, "target");
     const runtime = path.join(targetRoot, "agents/openclaw/mcporter-runtime");
