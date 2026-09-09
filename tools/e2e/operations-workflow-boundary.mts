@@ -441,6 +441,8 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     "Launchable PR E2E requires a branch in NVIDIA/NemoClaw",
     `"$(jq -r '.head.repo.owner.login // ""' <<< "$pull_json")" == "NVIDIA"`,
     `"$(jq -r '.head.repo.owner.type // ""' <<< "$pull_json")" == "Organization"`,
+    `"$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "NVIDIA/NemoClaw"`,
+    "Manual PR E2E requires a source branch in NVIDIA/NemoClaw.",
     "nvidia_owned=false",
     "nvidia_owned=true",
     `printf 'nvidia_owned=%s\\n' "$nvidia_owned" >> "$GITHUB_OUTPUT"`,
@@ -508,6 +510,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     '[[ -n "$GITHUB_TOKEN" ]]',
     'auth_args=(--header "Authorization: Bearer ${GITHUB_TOKEN}")',
     '"${auth_args[@]}"',
+    `"$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "NVIDIA/NemoClaw"`,
     "PR source repository ownership changed before execution",
   ]) {
     if (!validationSource.includes(fragment)) {
@@ -543,6 +546,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   const authorizationSource = String(credentialAuthorization.run ?? "");
   for (const fragment of [
     '"$WORKFLOW_REPOSITORY" == "NVIDIA/NemoClaw"',
+    '"$CHECKOUT_REPOSITORY" == "NVIDIA/NemoClaw"',
     '"$NVIDIA_OWNED" == "true"',
     '"$EVENT_NAME" == "workflow_dispatch"',
     '"$REF" == refs/heads/*',
@@ -664,7 +668,15 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
           step.name === "Check out the qualification aggregator" &&
           step.with?.repository === "${{ github.repository }}" &&
           step.with?.ref === "${{ github.workflow_sha }}");
+      const trustedCompilerCheckout =
+        jobName === "generate-matrix" &&
+        step.name === "Check out trusted compiled artifact action" &&
+        step.with?.repository === "${{ github.repository }}" &&
+        step.with?.ref === "${{ github.workflow_sha }}" &&
+        step.with?.path === ".trusted-ci-actions" &&
+        step.with?.["persist-credentials"] === false;
       const trustedCheckout =
+        trustedCompilerCheckout ||
         trustedHermesFixtureCheckout ||
         trustedE2ePlannerCheckout ||
         trustedReportHelperCheckout ||
@@ -1537,9 +1549,7 @@ function validateTraceTiming(errors: string[], workflow: OperationsWorkflow): vo
   }
 }
 
-export function validateE2eOperationsWorkflow(
-  workflow: OperationsWorkflow,
-): string[] {
+export function validateE2eOperationsWorkflow(workflow: OperationsWorkflow): string[] {
   const errors = validateStandardProfileWorkflowBoundary(
     workflow as unknown as Record<string, unknown>,
   );
