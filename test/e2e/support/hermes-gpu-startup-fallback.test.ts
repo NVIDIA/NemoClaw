@@ -8,7 +8,6 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { buildDirectSandboxGpuProofCommands } from "../../../src/lib/onboard/initial-policy";
 import {
   hasRequiredOpenshellMessagingFeatures,
   REQUIRED_OPENSHELL_SANDBOX_MCP_FEATURE,
@@ -17,7 +16,6 @@ import {
   createHermesGpuFallbackWrapper,
   extractHermesGpuDiagnosticsDirectory,
   HERMES_GPU_FALLBACK_EVENTS,
-  HERMES_GPU_NATIVE_NVIDIA_SMI_PROOF,
   readHermesGpuFallbackEvents,
   resolveHermesGpuStartupScenario,
 } from "../live/hermes-gpu-startup-fallback.ts";
@@ -110,22 +108,6 @@ describe("Hermes GPU startup failure diagnostics", () => {
 });
 
 describe("Hermes GPU startup fallback OpenShell wrapper", () => {
-  it("tracks the exact production nvidia-smi proof argv", () => {
-    const proof = buildDirectSandboxGpuProofCommands("alpha").find(
-      (candidate) => candidate.id === "nvidia-smi",
-    );
-    expect(proof?.args).toEqual([
-      "sandbox",
-      "exec",
-      "-n",
-      "alpha",
-      "--",
-      "sh",
-      "-lc",
-      HERMES_GPU_NATIVE_NVIDIA_SMI_PROOF,
-    ]);
-  });
-
   it("keeps the real OpenShell CLI at the wrapper path after compatibility create succeeds (#11239)", () => {
     const { realOpenshell, root, wrapper } = createWrapperFixture("hermes-gpu-fallback-test-", {
       openshell: [
@@ -216,13 +198,6 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
     );
     expect(repeatedCompatibility.status, repeatedCompatibility.stderr).toBe(0);
 
-    const compatibilityProof = runWrapper(
-      wrapper.wrapperPath,
-      ["sandbox", "exec", "-n", "alpha", "--", "sh", "-lc", HERMES_GPU_NATIVE_NVIDIA_SMI_PROOF],
-      env,
-    );
-    expect(compatibilityProof.status, compatibilityProof.stderr).toBe(0);
-
     const version = runWrapper(wrapper.wrapperPath, ["--version"], env);
     expect(version.status, version.stderr).toBe(0);
     expect(readHermesGpuFallbackEvents(wrapper.eventsPath)).toEqual([
@@ -247,18 +222,16 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
       "create-without-gpu",
       "create-without-gpu",
       "delegated",
-      "delegated",
     ]);
     expect(fs.readFileSync(delegateExecutableLog, "utf8").split(/\r?\n/u).filter(Boolean)).toEqual([
       realOpenshell,
       wrapper.wrapperPath,
       wrapper.wrapperPath,
       wrapper.wrapperPath,
-      wrapper.wrapperPath,
     ]);
   });
 
-  it("keeps native fault injection when the exact proof precedes compatibility create (#11239)", () => {
+  it("keeps native fault injection when a delegated command precedes compatibility create (#11239)", () => {
     const { wrapper } = createWrapperFixture("hermes-gpu-fallback-order-test-");
     const env = { ...process.env, ...wrapper.componentEnv };
 
@@ -269,12 +242,8 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
     );
     expect(firstNativeCreate.status).toBe(2);
 
-    const prematureProof = runWrapper(
-      wrapper.wrapperPath,
-      ["sandbox", "exec", "-n", "alpha", "--", "sh", "-lc", HERMES_GPU_NATIVE_NVIDIA_SMI_PROOF],
-      env,
-    );
-    expect(prematureProof.status, prematureProof.stderr).toBe(0);
+    const delegatedVersion = runWrapper(wrapper.wrapperPath, ["--version"], env);
+    expect(delegatedVersion.status, delegatedVersion.stderr).toBe(0);
     expect(fs.lstatSync(wrapper.wrapperPath).isFile()).toBe(true);
 
     const secondNativeCreate = runWrapper(

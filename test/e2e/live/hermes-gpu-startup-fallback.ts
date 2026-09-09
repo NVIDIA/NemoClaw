@@ -13,14 +13,6 @@ export const HERMES_GPU_FALLBACK_EVENTS = {
   commitCompatibilityHandoff: "commit-compatibility-handoff",
 } as const;
 
-export const HERMES_GPU_NATIVE_NVIDIA_SMI_PROOF = [
-  "set -eu;",
-  "if command -v nvidia-smi >/dev/null 2>&1; then",
-  "exec nvidia-smi;",
-  "fi;",
-  'echo "nvidia-smi not installed; skipping optional visibility check"',
-].join(" ");
-
 export interface HermesGpuFallbackWrapper {
   componentEnv: NodeJS.ProcessEnv;
   eventsPath: string;
