@@ -199,7 +199,7 @@ describe("E2E scorecard", () => {
       const artifactZip = require(path.join(process.env.GITHUB_WORKSPACE, 'scripts/lib/read-artifact-zip.mts'));
       if (Object.keys(artifactZip).length === 0) process.exit(2);
     `;
-    const result = spawnSync(process.execPath, ["--experimental-strip-types", "-e", script], {
+    const result = spawnSync(process.execPath, ["-e", script], {
       cwd: process.cwd(),
       encoding: "utf8",
       env: { ...process.env, GITHUB_WORKSPACE: process.cwd() },

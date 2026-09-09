@@ -921,7 +921,7 @@ describe("pull request and main workflow contracts", () => {
       NODE_AUTH_TOKEN: "${{ github.token }}",
     });
     expect(fetch.run).toContain(
-      "node --experimental-strip-types scripts/checks/package-openshell-sdk-for-pr.mts",
+      "node scripts/checks/package-openshell-sdk-for-pr.mts",
     );
     expect(fetch.run).toContain("artifact_path=");
     expect(
@@ -1050,6 +1050,32 @@ describe("pull request and main workflow contracts", () => {
       expect(existsSync(marker)).toBe(false);
     } finally {
       rmSync(temp, { force: true, recursive: true });
+    }
+  });
+
+  it.each([
+    ["cli-build-output", "required=true\n"],
+    ["compiled-test-inputs", ""],
+  ])("uploads the legacy coverage artifact only when the base reads %s", (artifact, expected) => {
+    const root = mkdtempSync(join(tmpdir(), "coverage-artifact-rollout-"));
+    const actionDirectory = join(root, ".trusted-ci-actions/.github/actions/ci-cli-coverage-merge");
+    const output = join(root, "output");
+    try {
+      mkdirSync(actionDirectory, { recursive: true });
+      writeFileSync(join(actionDirectory, "action.yaml"), `with:\n  name: ${artifact}\n`);
+      writeFileSync(output, "");
+      const result = runWorkflowShellStep(
+        requiredWorkflowStep(
+          prWorkflow.jobs["compile-artifacts"],
+          "Detect legacy coverage artifact reader",
+        ),
+        { GITHUB_OUTPUT: output },
+        root,
+      );
+      expect(result.status, result.stderr).toBe(0);
+      expect(readFileSync(output, "utf8")).toBe(expected);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
     }
   });
 

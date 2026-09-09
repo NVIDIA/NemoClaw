@@ -280,8 +280,8 @@ function runHermesDockerfileRuntimePlanGuard(runtimePlan: unknown) {
     "# Apply messaging agent-install hooks",
   )
     .replace(
-      "node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent hermes --phase runtime-setup",
-      `node --experimental-strip-types ${shellQuote(applierPath)}`,
+      "node /src/lib/messaging/applier/build/messaging-build-applier.mts --agent hermes --phase runtime-setup",
+      `node ${shellQuote(applierPath)}`,
     )
     .replaceAll("/usr/local/share/nemoclaw/messaging-runtime-plan.json", runtimePlanPath)
     // Unit fixtures run as the invoking user, not Docker root; keep the
