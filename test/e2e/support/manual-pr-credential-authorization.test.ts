@@ -30,7 +30,7 @@ describe("manual PR E2E credential authorization", () => {
       workflowRef: "refs/heads/main",
       checkoutShaMatches: true,
       workflowShaMatches: true,
-      expectedAllowed: true,
+      expectedAllowed: false,
     },
     {
       caseName: "a checkout repository outside NVIDIA",

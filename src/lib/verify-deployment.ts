@@ -102,7 +102,7 @@ export interface VerifyDeploymentDeps {
   getMessagingChannels: (name: string) => string[];
 
   /** Check if a messaging bridge is polling (provider exists in gateway). */
-  providerExistsInGateway: (providerName: string) => boolean;
+  providerExistsInGateway: (providerName: string) => boolean | Promise<boolean>;
 
   /**
    * Probe the in-sandbox agent config to learn which channels the runtime
@@ -402,10 +402,10 @@ export interface MessagingBridgeStatus {
  * the channel?) so the "No channels found" dashboard symptom from #4156
  * surfaces here as a warning.
  */
-function verifyMessagingBridges(
+async function verifyMessagingBridges(
   sandboxName: string,
   deps: VerifyDeploymentDeps,
-): MessagingBridgeStatus {
+): Promise<MessagingBridgeStatus> {
   const channels = deps.getMessagingChannels(sandboxName);
   if (channels.length === 0) {
     return {
@@ -424,7 +424,10 @@ function verifyMessagingBridges(
       continue;
     }
     const expectedProviders = providerNames.length > 0 ? providerNames : [channel];
-    if (!expectedProviders.every((providerName) => deps.providerExistsInGateway(providerName))) {
+    const providersExist = await Promise.all(
+      expectedProviders.map((providerName) => deps.providerExistsInGateway(providerName)),
+    );
+    if (!providersExist.every(Boolean)) {
       missingProviders.push(channel);
     }
   }
@@ -643,7 +646,7 @@ export async function verifyDeployment(
 
   // 5. Messaging bridges (providers attached AND runtime config exposes
   // each configured channel — #4156).
-  const messaging = verifyMessagingBridges(sandboxName, deps);
+  const messaging = await verifyMessagingBridges(sandboxName, deps);
   if (!messaging.healthy) {
     diagnostics.push({
       link: "messaging",

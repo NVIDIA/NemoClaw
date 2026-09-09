@@ -189,16 +189,22 @@ function readTrustedAuditConfig(): AuditConfig {
   );
 }
 
+function reviewedSourceRegistryPackages(
+  config: AuditConfig,
+): readonly ReviewedSourceRegistryPackage[] {
+  return config.sourceRegistryPackageReplacement
+    ? [config.sourceRegistryPackage, config.sourceRegistryPackageReplacement]
+    : [config.sourceRegistryPackage];
+}
+
 function inspectReviewedLocks(targetRoot: string, config: AuditConfig) {
-  const reviewed = config.sourceRegistryPackage;
-  const reviewedRegistryPackages = [
-    {
-      expectedIntegrity: reviewed.integrity,
-      label: reviewed.label,
-      packageSpec: reviewed.packageSpec,
-      tarballUrl: reviewed.tarballUrl,
-    },
-  ];
+  const reviewedPackages = reviewedSourceRegistryPackages(config);
+  const reviewedRegistryPackages = reviewedPackages.map((reviewed) => ({
+    expectedIntegrity: reviewed.integrity,
+    label: reviewed.label,
+    packageSpec: reviewed.packageSpec,
+    tarballUrl: reviewed.tarballUrl,
+  }));
   const lockfiles = ["package-lock.json", "nemoclaw/package-lock.json"].map((relativePath) => {
     const lockfilePath = join(targetRoot, relativePath);
     const packages = verifyReviewedNpmLockPackages({
@@ -210,6 +216,20 @@ function inspectReviewedLocks(targetRoot: string, config: AuditConfig) {
     });
     return { lockfilePath, packages };
   });
+  const lockedReviewedSpecs = new Set(
+    lockfiles.flatMap(({ packages }) =>
+      reviewedPackages
+        .map(({ packageSpec }) => packageSpec)
+        .filter((packageSpec) => packages.includes(packageSpec)),
+    ),
+  );
+  if (lockedReviewedSpecs.size > 1) {
+    throw new Error("reviewed npm locks use conflicting OpenShell SDK identities");
+  }
+  const selectedSpec = [...lockedReviewedSpecs][0];
+  const reviewed =
+    reviewedPackages.find(({ packageSpec }) => packageSpec === selectedSpec) ??
+    config.sourceRegistryPackage;
   return {
     config,
     reviewed,

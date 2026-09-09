@@ -3,10 +3,10 @@
 
 import {
   buildGatewayInferenceGetArgs,
-  getSandboxInferenceConfig,
   parseGatewayInference,
-  resolveAgentInferenceApi,
-} from "../inference/config";
+  resolveManagedStartupInferenceRoute,
+} from "../inference/gateway/route-contract";
+export { resolveManagedStartupInferenceRoute } from "../inference/gateway/route-contract";
 import {
   type CurrentGatewayRouteCompatibilityCheck,
   type CurrentGatewayRouteDiscoveryPreflight,
@@ -19,20 +19,6 @@ type RunCaptureOpenshell = (args: string[], options?: { ignoreError?: boolean })
 
 /** A gateway that cannot answer is distinct from one that answers with another route. */
 export type InferenceRouteState = "matched" | "mismatched" | "unanswered";
-
-/** Resolve the exact portable inference route used by managed clone preparation. */
-export function resolveManagedStartupInferenceRoute(
-  agentName: string,
-  provider: string,
-  model: string,
-  preferredInferenceApi: string | null,
-) {
-  const api =
-    agentName === "langchain-deepagents-code"
-      ? "openai-completions"
-      : resolveAgentInferenceApi(agentName, provider, preferredInferenceApi);
-  return getSandboxInferenceConfig(model, provider, api);
-}
 
 export function createInferenceRouteHelpers(
   runCaptureOpenshell: RunCaptureOpenshell,

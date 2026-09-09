@@ -64,7 +64,7 @@ export async function setupVllmLocalInference(
   // the bearer for legacy single-host installs; managed dual-Station vLLM
   // uses the private persisted key. The dedicated env name prevents
   // accidental hijacking by a host OPENAI_API_KEY. See GH #2519.
-  const providerResult = upsertProvider(
+  const providerResult = await upsertProvider(
     "vllm-local",
     "openai",
     VLLM_LOCAL_CREDENTIAL_ENV,

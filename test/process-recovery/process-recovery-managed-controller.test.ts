@@ -377,7 +377,11 @@ describe("managed gateway recovery controller", () => {
       let recoveryActionCalls = 0;
       let managedProbeCalls = 0;
       const requestGatewaySupervisorAction = vi.fn(
-        (_sandboxName: string, action: "restart" | "recover" | "probe") => {
+        (
+          _sandboxName: string,
+          action: "restart" | "recover" | "probe",
+          _timeoutMs?: number,
+        ) => {
           const isProbe = action === "probe";
           const probeResults = managedProbeResults ?? [managedProbeResult ?? successfulProbe];
           const result = isProbe
@@ -433,9 +437,19 @@ describe("managed gateway recovery controller", () => {
           }),
         );
         expect(result).toEqual(expectedResult);
-        expect(requestGatewaySupervisorAction.mock.calls).toEqual(
-          expectedActions.map((action) => ["beta", action]),
-        );
+        const expectedCalls = expectedActions.map((action) => [
+          "beta",
+          action,
+          ...(action === "recover" ? [expect.any(Number)] : []),
+        ]);
+        expect(requestGatewaySupervisorAction.mock.calls).toEqual(expectedCalls);
+        expect(
+          requestGatewaySupervisorAction.mock.calls
+            .filter(([, action]) => action === "recover")
+            .every(([, , timeout]) =>
+              typeof timeout === "number" && timeout > 0 && timeout <= 210_000,
+            ),
+        ).toBe(true);
         expect(healthProbeCalls).toBe(1);
         expect(spawnedCommands).not.toContain("ssh");
       } finally {

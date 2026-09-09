@@ -598,7 +598,6 @@ bash() { :; }
 step() { record "step-$1-$2"; }
 install_nodejs() { :; }
 ensure_supported_runtime() { :; }
-resolve_pending_express_wsl_provider() { :; }
 ensure_station_express_pair() { :; }
 fix_npm_permissions() { :; }
 preinstall_backup_and_retire_legacy_gateway() { :; }
