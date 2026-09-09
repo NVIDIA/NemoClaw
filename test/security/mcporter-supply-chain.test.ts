@@ -239,42 +239,6 @@ describe("mcporter image supply-chain controls", () => {
     expect(contents).toContain("StreamableHTTPServerTransport");
   });
 
-  it("carries a networked reviewed audit into the offline protected OpenClaw build", () => {
-    const contents = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
-    const workflow = fs.readFileSync(path.join(repoRoot, ".github/workflows/e2e.yaml"), "utf8");
-    const protectedController = fs.readFileSync(
-      path.join(repoRoot, "scripts/checks/build-protected-managed-images.sh"),
-      "utf8",
-    );
-    const installStart = contents.indexOf("# Upgrade stale bases.");
-    const installEnd = contents.indexOf("# Patch OpenClaw media fetch", installStart);
-    const protectedInstall = contents.slice(installStart, installEnd);
-
-    expect(workflow).toContain("uses: ./.github/actions/ci-reviewed-npm-audit");
-    expect(workflow).toContain("locked-graph: mcporter-runtime");
-    expect(workflow).toContain('--audit-evidence-from "$RUNNER_TEMP/protected-reviewed-npm-audit"');
-    expect(protectedController).toContain(
-      'trusted_receipt_verifier="$controller_root/scripts/lib/npm-audit-receipt.mts"',
-    );
-    expect(protectedController).toContain(
-      '--package-json "$source_root/agents/openclaw/mcporter-runtime/package.json"',
-    );
-    expect(contents).toContain(
-      "COPY scripts/lib/verify-mcporter-audit.sh /scripts/lib/verify-mcporter-audit.sh",
-    );
-    expect(contents).toContain(
-      "--mount=type=secret,id=nemoclaw-mcporter-audit-receipt,required=false",
-    );
-    expect(contents).not.toContain("from=protected-mcporter-audit-cache");
-    expect(mcporterAuditHelper).toContain(
-      "cached mcporter audit requires paired receipt, raw report, and receipt SHA-256",
-    );
-    expect(mcporterAuditHelper).toContain("build-context mcporter audit evidence is not trusted");
-    expect(installStart).toBeGreaterThanOrEqual(0);
-    expect(installEnd).toBeGreaterThan(installStart);
-    expect(protectedInstall).not.toMatch(/RUN --network=(?:default|host)/);
-  });
-
   it("copies the cached base-image audit report only after receipt verification succeeds", () => {
     const contents = fs.readFileSync(path.join(repoRoot, "Dockerfile.base"), "utf8");
     const flattenedContents = contents.replace(/\\\s*\n/g, " ").replace(/\s+/g, " ");

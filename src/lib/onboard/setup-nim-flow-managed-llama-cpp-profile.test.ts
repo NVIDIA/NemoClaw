@@ -529,11 +529,21 @@ describe("managed llama.cpp profile onboarding", () => {
     vi.stubEnv("NEMOCLAW_LLAMACPP_RECIPE", "llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1");
     vi.stubEnv("DOCKER_CONTEXT", "remote-builder");
     const installManagedLlamaCpp = vi.fn();
+    const discoverManagedLlamaCppSelections = vi.fn(
+      (env, gpu, catalog, _collectionOptions, selectionOptions) =>
+        discoverManagedLlamaCppSelectionsForGpu(
+          env,
+          gpu,
+          catalog,
+          n1xCollectionOptions(),
+          selectionOptions,
+        ),
+    );
     const setupNim = createSetupNim(
       makeDeps({
         isNonInteractive: () => true,
         getNonInteractiveProvider: () => "install-llama-cpp",
-        discoverManagedLlamaCppSelections: discoverManagedLlamaCppSelectionsForGpu,
+        discoverManagedLlamaCppSelections,
         installManagedLlamaCpp,
       }),
     );

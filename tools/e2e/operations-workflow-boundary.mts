@@ -600,6 +600,11 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         step.name === "Checkout trusted protected runtime qualification" &&
         step.with?.repository === "${{ github.repository }}" &&
         step.with?.ref === "${{ inputs.workflow_sha || github.workflow_sha }}";
+      const trustedManagedImageAuditCheckout =
+        jobName === "managed-image-protected-audit" &&
+        step.name === "Checkout trusted reviewed npm audit" &&
+        step.with?.repository === "${{ github.repository }}" &&
+        step.with?.ref === "${{ inputs.workflow_sha || github.workflow_sha }}";
       const trustedManagedImageMultiarchResolverCheckout =
         jobName === "managed-image-multiarch-startup" &&
         step.name === "Checkout trusted Hermes resolver" &&
@@ -672,6 +677,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         trustedPublicationCheckout ||
         trustedOpenShellSdkPackageCheckout ||
         trustedManagedImageMultiarchResolverCheckout ||
+        trustedManagedImageAuditCheckout ||
         trustedManagedImageRuntimeCheckout ||
         trustedLlamaCppPlanCheckout ||
         trustedLlamaCppQualificationCheckout ||
