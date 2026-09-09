@@ -570,6 +570,55 @@ describe("pull request and main workflow contracts", () => {
     );
   });
 
+  it("limits CLI shard package installation to Ubuntu archive sources", () => {
+    const temp = mkdtempSync(join(tmpdir(), "nemoclaw-cli-shard-apt-"));
+    const fakeBin = join(temp, "bin");
+    const aptTrace = join(temp, "apt-trace");
+    mkdirSync(fakeBin);
+    writeFileSync(
+      join(fakeBin, "sudo"),
+      '#!/usr/bin/env bash\nset -euo pipefail\nprintf "%s\\n" "$*" >> "$APT_TRACE"\n',
+      { mode: 0o755 },
+    );
+    writeFileSync(
+      join(fakeBin, "dpkg-query"),
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        'case "${@: -1}" in',
+        '  fd-find) printf "9.0.0-1" ;;',
+        '  ripgrep) printf "14.1.0-1" ;;',
+        "  *) exit 1 ;;",
+        "esac",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    writeFileSync(join(fakeBin, "fdfind"), '#!/usr/bin/env bash\nprintf "fdfind 9.0.0\\n"\n', {
+      mode: 0o755,
+    });
+    writeFileSync(join(fakeBin, "rg"), '#!/usr/bin/env bash\nprintf "ripgrep 14.1.0\\n"\n', {
+      mode: 0o755,
+    });
+
+    try {
+      const result = runWorkflowShellStep(
+        requiredStep(sharedActions.cliCoverageShard, "Install pinned Pi search tools"),
+        {
+          APT_TRACE: aptTrace,
+          PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+        },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(readFileSync(aptTrace, "utf8").trim().split("\n")).toEqual([
+        "apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- update -qq",
+        "apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- install -y --no-install-recommends fd-find=9.0.0-1 ripgrep=14.1.0-1",
+      ]);
+    } finally {
+      rmSync(temp, { force: true, recursive: true });
+    }
+  });
+
   // source-shape-contract: security -- The PR workflow must select an exact base-controlled package run before publishing its archive internally
   it("passes only the base-packaged SDK archive to pull request dependency jobs", () => {
     const packageJob = prWorkflow.jobs["openshell-sdk-package"];

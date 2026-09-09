@@ -91,6 +91,12 @@ it.each([
     "needs.require-green-checks.outputs.base_sha || ''",
     "Unified advisor must prepare the PR revision from the successful checks run",
   ],
+  [
+    "Ubuntu archive source isolation",
+    'sudo apt-get "${APT_SOURCE_OPTIONS[@]}" update -qq',
+    "sudo apt-get update -qq",
+    "Unified advisor runtime package install must use only Ubuntu archive sources",
+  ],
 ])("rejects an unsafe Advisor %s mutation", (_case, before, after, error) => {
   const directory = mkdtempSync(join(tmpdir(), "nemoclaw-pr-review-advisor-"));
   const advisorPath = join(directory, "advisor.yaml");
