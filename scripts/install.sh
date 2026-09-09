@@ -1039,7 +1039,7 @@ usage() {
   printf "                          and the build, cloud, or routed NVIDIA hosted provider\n"
   printf "    --fresh              Discard any failed/interrupted onboarding session and start over\n"
   printf "    --station-deepseek   Use DeepSeek V4 Flash for DGX Station express install (interactive terminal required)\n"
-  printf "    --force-station-install Bypass only the DGX release-metadata allowlist for Station GB300 express install\n"
+  printf "    --force-station-install Validate an unrecognized Station GB300 release profile without onboarding\n"
   printf "    --version, -v        Print installer version and exit\n"
   printf "    --help, -h           Show this help message and exit\n\n"
   printf "  ${C_DIM}Environment:${C_RESET}\n"
@@ -4724,16 +4724,16 @@ is_wsl_host() {
 # N1x from its protected FastOS and PCI identity, and Windows WSL from the host
 # environment. Used to gate the express install prompt; only platforms with an
 # accepted default are offered.
-is_station_gb300_product() {
-  local product=${1:-}
-  [[ "$product" =~ (^|[^[:alnum:]])[Ss][Tt][Aa][Tt][Ii][Oo][Nn]([^[:alnum:]]|$) &&
-    "$product" =~ (^|[^[:alnum:]])[Gg][Bb]300([^[:alnum:]]|$) ]]
-}
-
 classify_dgx_station_release() {
   local helper="${SCRIPT_DIR}/prepare-dgx-station-host.sh"
   [[ -f "$helper" ]] || error "DGX Station host preparation helper is missing: ${helper}"
   bash "$helper" --classify-dgx-release
+}
+
+classify_dgx_station_hardware() {
+  local helper="${SCRIPT_DIR}/prepare-dgx-station-host.sh"
+  [[ -f "$helper" ]] || error "DGX Station host preparation helper is missing: ${helper}"
+  bash "$helper" --classify-station-hardware
 }
 
 N1X_FASTOS_RELEASE_MAX_BYTES=4096
@@ -4876,20 +4876,44 @@ is_n1x_host() {
 }
 
 detect_express_platform() {
-  local model="" release_state=""
+  local firmware_state="" release_state=""
   if is_wsl_host; then
     printf "Windows WSL"
     return
   fi
-  if [ -r /sys/class/dmi/id/product_name ]; then
-    model="$(cat /sys/class/dmi/id/product_name 2>/dev/null || true)"
-  fi
-  if [ -z "$model" ] && [ -r /sys/firmware/devicetree/base/model ]; then
-    model="$(tr -d '\0' </sys/firmware/devicetree/base/model 2>/dev/null || true)"
-  fi
-  case "$model" in
-    *DGX*Spark*)
+  firmware_state="$(classify_dgx_station_hardware)" || return "$?"
+  case "$firmware_state" in
+    conflicting)
+      printf "Conflicting NVIDIA firmware identity"
+      return
+      ;;
+    spark)
       printf "DGX Spark"
+      return
+      ;;
+    station-other)
+      printf "Unsupported DGX Station generation"
+      return
+      ;;
+    station-gb300-pci-missing)
+      printf "Unverified DGX Station hardware"
+      return
+      ;;
+    jetson) return ;;
+    station-gb300)
+      release_state="$(classify_dgx_station_release)" || return "$?"
+      case "$release_state" in
+        generic-ubuntu | supported-dgx-os | supported-colossus-baseos | supported-ai-developer-tools)
+          printf "DGX Station"
+          ;;
+        *)
+          if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
+            printf "DGX Station"
+          else
+            printf "Unsupported DGX Station OS"
+          fi
+          ;;
+      esac
       return
       ;;
   esac
@@ -4897,41 +4921,27 @@ detect_express_platform() {
     printf "DGX Spark"
     return
   fi
-  if is_station_gb300_product "$model"; then
-    release_state="$(classify_dgx_station_release)"
-    case "$release_state" in
-      generic-ubuntu | supported-dgx-os | supported-colossus-baseos | supported-ai-developer-tools)
-        printf "DGX Station"
-        ;;
-      *)
-        if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
-          printf "DGX Station"
-        else
-          printf "Unsupported DGX Station OS"
-        fi
-        ;;
-    esac
-    return
-  fi
   if is_n1x_host; then
     printf "N1x"
     return
   fi
-  case "$model" in
-    *DGX*Station*) printf "Unsupported DGX Station generation" ;;
-    *) ;;
-  esac
 }
 
 validate_express_platform_boundary() {
   case "${1:-}" in
     "Unsupported DGX Station OS")
       if [ "${NEMOCLAW_NO_EXPRESS:-}" = "1" ] || [ -n "${NEMOCLAW_PROVIDER:-}" ]; then return 0; fi
-      error "This DGX Station OS image is outside the recognized Station Express release-metadata boundary. Station Express accepts generic Ubuntu 24.04 ARM64, OTA-form DGX OS 7.2.0, 7.4.0, or 7.5.0, an explicitly qualified Station factory image, or the no-OTA DGX OS 7.6.x profile with DGX_PRETTY_NAME=\"NVIDIA DGX GB300WS\" or DGX_PRETTY_NAME=\"NVIDIA DGX Server\"."
+      error "This DGX Station OS image is outside the recognized Station Express release-metadata boundary. Station Express accepts generic Ubuntu 24.04 ARM64, OTA-form DGX OS 7.2.0, 7.4.0, or 7.5.0, the no-OTA DGX OS 7.6.x profile, or an explicitly qualified Station factory image. DGX_PRETTY_NAME is diagnostic and does not determine qualification."
       ;;
     "Unsupported DGX Station generation")
       if [ "${NEMOCLAW_NO_EXPRESS:-}" = "1" ] || [ -n "${NEMOCLAW_PROVIDER:-}" ]; then return 0; fi
       error "This DGX Station generation is outside the validated Station GB300 express boundary."
+      ;;
+    "Conflicting NVIDIA firmware identity")
+      error "NVIDIA platform identity conflicts across firmware fields. Resolve the firmware identity before installation."
+      ;;
+    "Unverified DGX Station hardware")
+      error "DGX Station GB300 firmware was found without an exact NVIDIA GB300 PCI device. Resolve the hardware identity before installation."
       ;;
   esac
 }
@@ -4943,7 +4953,6 @@ STATION_ULTRA_LEGACY_VLLM_IMAGE="vllm/vllm-openai@sha256:0fec7ec5f3e6bc168e54899
 STATION_DEEPSEEK_VLLM_MODEL="deepseek-v4-flash"
 STATION_DEEPSEEK_SERVED_MODEL="deepseek-ai/DeepSeek-V4-Flash"
 _SELECTED_EXPRESS_PLATFORM=""
-_EXPRESS_WSL_PROVIDER_PENDING=""
 _STATION_EXPRESS_RESUME_REVISION=""
 _STATION_EXPRESS_MODEL_WAS_EXPLICIT=0
 _STATION_EXPRESS_DEFERRED_MANAGED_PAIR=0
@@ -4983,6 +4992,9 @@ validate_force_station_install_override() {
   local platform="$1" release_state
   if [ "${FORCE_STATION_INSTALL:-}" != "1" ]; then
     return 0
+  fi
+  if [ "${STATION_DEEPSEEK:-}" = "1" ] || [ -n "${NEMOCLAW_VLLM_MODEL:-}" ] || [ -n "${NEMOCLAW_MODEL:-}" ]; then
+    error "--force-station-install is validation-only and cannot be combined with --station-deepseek, NEMOCLAW_VLLM_MODEL, or NEMOCLAW_MODEL. Remove the model-selection override."
   fi
   if [ "$platform" != "DGX Station" ]; then
     error "--force-station-install requires DGX Station GB300 hardware (detected: ${platform:-unsupported platform})."
@@ -5062,7 +5074,8 @@ validate_station_deepseek_override() {
 
 preflight_explicit_express_flags() {
   local platform
-  platform="$(detect_express_platform)"
+  platform="$(detect_express_platform)" \
+    || error "Cannot classify NVIDIA platform identity. Refusing to continue installation."
   validate_express_platform_boundary "$platform"
   validate_force_station_install_override "$platform"
   validate_station_deepseek_override "$platform"
@@ -5540,158 +5553,6 @@ clear_station_express_resume() {
       || error "DGX Station express receipt retirement claim contains unexpected state: ${claim}"
   done
 }
-
-# Report the container runtime's operating-system string (e.g. "Docker Desktop"
-# or "Ubuntu 24.04.4 LTS"). Bounded with a hard timeout so a wedged,
-# misconfigured, or dead-DOCKER_HOST daemon cannot hang the interactive express
-# prompt: this runs from describe_express_install before ensure_docker, and WSL
-# skips ensure_docker entirely. Empty on timeout or error.
-express_wsl_docker_operating_system() {
-  timeout 10 docker info --format '{{.OperatingSystem}}' 2>/dev/null
-}
-
-# Resolve Docker's effective context name: the DOCKER_CONTEXT override if set,
-# otherwise the persisted currentContext from Docker's config (what
-# `docker context use` writes). A missing config or a config with no
-# currentContext uses Docker's "default"; an unreadable or unparseable config
-# fails closed as non-local.
-express_wsl_docker_active_context() {
-  if [ -n "${DOCKER_CONTEXT:-}" ]; then
-    printf '%s' "${DOCKER_CONTEXT}"
-    return 0
-  fi
-  local cfg="${DOCKER_CONFIG:-${HOME:-}/.docker}/config.json"
-  local ctx="" parse_status=0
-  if [ ! -e "$cfg" ]; then
-    printf '%s' "default"
-    return 0
-  fi
-  if [ -e "$cfg" ] && [ ! -r "$cfg" ]; then
-    printf '%s' "__unknown__"
-    return 0
-  fi
-  if command -v node >/dev/null 2>&1; then
-    ctx="$(
-      node - "$cfg" <<'NODE'
-const fs = require("node:fs");
-
-let config;
-try {
-  config = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-} catch {
-  process.exit(1);
-}
-if (config === null || typeof config !== "object" || Array.isArray(config)) process.exit(1);
-if (!Object.prototype.hasOwnProperty.call(config, "currentContext")) process.exit(2);
-if (typeof config.currentContext !== "string") process.exit(1);
-process.stdout.write(config.currentContext);
-NODE
-    )" || parse_status=$?
-    if [ "$parse_status" -eq 0 ]; then
-      printf '%s' "$ctx"
-      return 0
-    fi
-    if [ "$parse_status" -eq 2 ]; then
-      printf '%s' "default"
-      return 0
-    fi
-    printf '%s' "__unknown__"
-    return 0
-  fi
-  printf '%s' "__unknown__"
-}
-
-# True only when the Docker CLI targets the LOCAL default daemon: the active
-# context is "default" and no DOCKER_HOST override is set. A DOCKER_HOST, a
-# DOCKER_CONTEXT override, or a persisted currentContext other than "default"
-# (a context name like desktop-linux is not proof of a local endpoint — it can be
-# pointed at a remote daemon) can reach a remote Docker Desktop that is not the
-# qualified local N1x runtime (PRA-1). Fails closed (non-local) on any
-# non-default, unreadable, or unparseable context.
-express_wsl_docker_target_is_local() {
-  [ -z "${DOCKER_HOST:-}" ] || return 1
-  [ "$(express_wsl_docker_active_context)" = "default" ]
-}
-
-# The managed N1x WSL llama.cpp route requires LOCAL Docker Desktop WSL
-# integration. Keep this topology check narrow: Windows-host Ollama is no
-# longer an Express default because making raw port 11434 container-reachable
-# previously required a wildcard, unauthenticated listener.
-express_wsl_uses_local_docker_desktop() {
-  express_wsl_docker_target_is_local || return 1
-  express_wsl_docker_operating_system | grep -qi 'docker desktop'
-}
-
-# Select the accepted N1x WSL llama.cpp candidate only when Windows product
-# identity, WSL architecture, Docker Desktop locality, and the 48 GB GPU class
-# all match. Later readiness still requires container GPU proof before launch.
-express_wsl_can_use_n1x_managed_llama_cpp() {
-  express_wsl_uses_local_docker_desktop || return 1
-  [ "$(uname -m 2>/dev/null | tr -d '[:space:]')" = "aarch64" ] || return 1
-  command_exists timeout || return 1
-  command_exists powershell.exe || return 1
-  command_exists nvidia-smi || return 1
-
-  local product_name=""
-  local memory_mb=""
-  product_name="$(timeout 10s powershell.exe -NoProfile -NonInteractive -Command '(Get-CimInstance Win32_ComputerSystem).Model' 2>/dev/null | tr -d '\r' | head -n 1)"
-  case "$product_name" in
-    *"RTX Spark N1X"*) ;;
-    *) return 1 ;;
-  esac
-
-  memory_mb="$(timeout 10s nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -n 1 | tr -d '[:space:]')"
-  case "$memory_mb" in
-    '' | *[!0-9]*) return 1 ;;
-  esac
-  [ "$memory_mb" -ge 48000 ]
-}
-
-# True when a readable Docker configuration decides the context but no Node.js can
-# parse it yet. The express prompt runs before install_nodejs; selection waits
-# for the runtime so a qualifying N1x host can still choose managed llama.cpp.
-express_wsl_docker_context_needs_node() {
-  [ -z "${DOCKER_HOST:-}" ] || return 1
-  [ -z "${DOCKER_CONTEXT:-}" ] || return 1
-  local cfg="${DOCKER_CONFIG:-${HOME:-}/.docker}/config.json"
-  [ -e "$cfg" ] && [ -r "$cfg" ] || return 1
-  ! command_exists node
-}
-
-# Choose managed llama.cpp on qualified N1x WSL; otherwise use WSL-local
-# Ollama. Defer when a missing Node.js runtime is the only thing preventing the
-# N1x Docker topology check.
-select_express_wsl_provider() {
-  _EXPRESS_WSL_PROVIDER_PENDING=""
-  unset NEMOCLAW_LLAMACPP_RECIPE
-  if express_wsl_can_use_n1x_managed_llama_cpp; then
-    export NEMOCLAW_PROVIDER=install-llama-cpp
-    export NEMOCLAW_LLAMACPP_RECIPE=llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1
-    return 0
-  fi
-  if express_wsl_docker_context_needs_node; then
-    _EXPRESS_WSL_PROVIDER_PENDING=1
-    return 0
-  fi
-  export NEMOCLAW_PROVIDER=install-ollama
-}
-
-# Finish a deferred Windows WSL selection once install_nodejs has provided the
-# runtime that reads the Docker configuration.
-resolve_pending_express_wsl_provider() {
-  [ "${_EXPRESS_WSL_PROVIDER_PENDING:-}" = "1" ] || return 0
-  _EXPRESS_WSL_PROVIDER_PENDING=""
-  select_express_wsl_provider
-  case "${NEMOCLAW_PROVIDER:-}" in
-    install-llama-cpp)
-      info "Express install will configure managed Qwen 3.6 35B with llama.cpp on N1x WSL."
-      ;;
-    *)
-      info "Express install will configure WSL-local Ollama."
-      ;;
-  esac
-}
-
 select_spark_express_inference() {
   local input_fd="${1:-0}"
   local reply=""
@@ -5775,7 +5636,7 @@ activate_express_install() {
       configure_station_express_model
       ;;
     "Windows WSL")
-      select_express_wsl_provider
+      unset NEMOCLAW_PROVIDER NEMOCLAW_LLAMACPP_RECIPE
       ;;
   esac
 }
@@ -5926,6 +5787,13 @@ ensure_station_express_host() {
   run_station_host_preparation || status=$?
   case "$status" in
     0)
+      if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
+        clear_station_express_resume
+        ok "DGX Station factory-runtime validation completed"
+        warn "Station Express remains blocked because this release profile is not qualified."
+        info "Install a supported DGX Station software profile, then rerun the installer without --force-station-install."
+        exit 0
+      fi
       ok "DGX Station host prerequisites are ready"
       ;;
     10)
@@ -6259,15 +6127,8 @@ describe_express_install() {
       sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       ;;
     "Windows WSL")
-      if express_wsl_can_use_n1x_managed_llama_cpp; then
-        show_hf_authentication="1"
-        inference_summary="managed Qwen 3.6 35B with llama.cpp on N1x WSL"
-        inference_disclosure="Managed llama.cpp downloads a pinned 20.4 GB GGUF file before it starts the loopback-only authenticated server."
-      elif express_wsl_docker_context_needs_node; then
-        inference_summary="local inference, selected once the installed Node.js runtime reads the Docker configuration"
-      else
-        inference_summary="WSL-local Ollama, with a sandbox auth proxy when containers cannot reach host loopback"
-      fi
+      inference_summary="automatic local inference for the detected WSL hardware"
+      inference_disclosure="Onboarding selects managed Qwen 3.6 35B with llama.cpp on a qualified N1x GPU. Other WSL hosts use WSL-local Ollama."
       sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       ;;
     *)
@@ -6275,6 +6136,12 @@ describe_express_install() {
       sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       ;;
   esac
+
+  if [ "$platform" = "DGX Station" ] && [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
+    printf "  This validation-only run checks the existing factory GPU and container runtime without authorizing onboarding.\n"
+    printf "  A passing result stops before onboarding. Install a supported DGX Station software profile, then rerun without --force-station-install.\n"
+    return 0
+  fi
 
   case "$tier" in
     balanced)
@@ -6332,7 +6199,8 @@ describe_hf_download_authentication() {
 
 maybe_offer_express_install() {
   local platform resume_file
-  platform="$(detect_express_platform)"
+  platform="$(detect_express_platform)" \
+    || error "Cannot classify NVIDIA platform identity. Refusing to continue installation."
   validate_express_platform_boundary "$platform"
   validate_force_station_install_override "$platform"
   validate_station_deepseek_override "$platform"
@@ -6419,6 +6287,8 @@ maybe_offer_express_install() {
     describe_express_install "$platform"
     if [ "$platform" = "N1x" ]; then
       printf "  Run the Deferred N1x preview with these settings? [Y/n]: "
+    elif [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
+      printf "  Run validation-only Station checks with these settings? [Y/n]: "
     else
       printf "  Run express install with these settings? [Y/n]: "
     fi
@@ -6441,6 +6311,8 @@ maybe_offer_express_install() {
     describe_express_install "$platform"
     if [ "$platform" = "N1x" ]; then
       printf "  Run the Deferred N1x preview with these settings? [Y/n]: "
+    elif [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
+      printf "  Run validation-only Station checks with these settings? [Y/n]: "
     else
       printf "  Run express install with these settings? [Y/n]: "
     fi
@@ -6464,6 +6336,8 @@ maybe_offer_express_install() {
     "" | y | yes)
       if [ "$platform" = "N1x" ]; then
         info "Using the Deferred N1x preview."
+      elif [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
+        info "Using validation-only Station checks."
       else
         info "Using express install for ${platform}."
       fi
@@ -6487,7 +6361,6 @@ install_nemoclaw_before_onboarding() {
   step 1 "Node.js"
   install_nodejs
   ensure_supported_runtime
-  resolve_pending_express_wsl_provider
   ensure_station_express_pair
 
   step 2 "${_CLI_DISPLAY} CLI"

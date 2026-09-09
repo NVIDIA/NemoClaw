@@ -541,6 +541,8 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
         "abfc1337284d437e71e47945936af7ef0bc6f28ac2495e12fac41894eb24ce3c",
         // Exact #11251 template after the reviewed 0.0.116-only recovery gate.
         "593ced09573f8cea5d2323b6d388ebb5d30f6da241d4f511e5364a3057887911",
+        // Exact #11251 template after stable supervisor override binding.
+        "56c0cdf06734b45b235b7426de260245b03a6806a3d09a328d9bbd9161733d3e",
       ],
     },
     pinLayout: V00116_OPENSHELL_PIN_LAYOUT,
