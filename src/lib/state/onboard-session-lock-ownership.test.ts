@@ -7,6 +7,8 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { OnboardLockEvidence } from "./onboard-session/lock-observation";
+
 type OnboardSessionModule = typeof import("./onboard-session");
 let session: OnboardSessionModule;
 let tmpDir: string;
@@ -27,6 +29,22 @@ afterEach(() => {
 });
 
 describe("onboard lock ownership", () => {
+  it("does not create an onboard lock without complete owner evidence", () => {
+    const incompleteEvidence: OnboardLockEvidence = {
+      hostIdentity: () => "host-a",
+      pidNamespaceIdentity: () => "pid:[1]",
+      processGeneration: () => null,
+      processAlive: () => true,
+    };
+
+    expect(session.acquireOnboardLock("nemoclaw onboard", incompleteEvidence)).toEqual({
+      acquired: false,
+      lockFile: session.LOCK_FILE,
+      stale: false,
+    });
+    expect(fs.existsSync(session.LOCK_FILE)).toBe(false);
+  });
+
   it("reports ownership only while this process holds the acquired lock (#9833)", () => {
     expect(session.isOnboardLockHeldByCurrentProcess()).toBe(false);
     expect(session.acquireOnboardLock("nemoclaw onboard").acquired).toBe(true);

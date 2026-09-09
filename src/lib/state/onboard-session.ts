@@ -68,6 +68,8 @@ import {
   retainedSandboxRecoveryAuthorityIsCurrent,
   retainedSandboxRecoveryFile,
   resolveRetainedSandboxRecovery as retireRetainedSandboxRecovery,
+  systemOnboardLockEvidence,
+  type OnboardLockEvidence,
   type RecordRetainedSandboxRecoveryInput,
   type RetainedSandboxRecoveryRecord,
   type RetainedSandboxRecoveryReason,
@@ -1436,17 +1438,16 @@ export function isOnboardLockHeldByCurrentProcess(): boolean {
   }
 }
 
-export function acquireOnboardLock(command: string | null = null): LockResult {
+export function acquireOnboardLock(
+  command: string | null = null,
+  evidence: OnboardLockEvidence = systemOnboardLockEvidence,
+): LockResult {
   ensureSessionDir();
-  const payload = JSON.stringify(
-    createOnboardLockOwner(typeof command === "string" ? command : null) ?? {
-      pid: process.pid,
-      startedAt: new Date().toISOString(),
-      command: typeof command === "string" ? command : null,
-    },
-    null,
-    2,
-  );
+  const owner = createOnboardLockOwner(typeof command === "string" ? command : null, evidence);
+  if (!owner) {
+    return { acquired: false, lockFile: LOCK_FILE, stale: false };
+  }
+  const payload = JSON.stringify(owner, null, 2);
 
   // The retry budget here used to be 2, which is the bare minimum needed
   // for "see-stale → cleanup → reclaim". With the inode-verified cleanup
@@ -1497,7 +1498,7 @@ export function acquireOnboardLock(command: string | null = null): LockResult {
         }
         continue;
       }
-      const observation = observeOnboardLock(LOCK_FILE);
+      const observation = observeOnboardLock(LOCK_FILE, evidence);
       if (observation.kind === "absent") {
         continue;
       }

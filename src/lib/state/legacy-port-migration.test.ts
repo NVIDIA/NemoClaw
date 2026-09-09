@@ -488,12 +488,15 @@ describe("legacy non-default gateway state migration", () => {
     const recoveryFile = path.join(shared, "retained-sandbox-recovery.json");
     recordRecovery(recoveryFile, "port-box", 9123, "d");
     const before = fs.readFileSync(recoveryFile, "utf8");
+    const lockBefore = `retained ${reason} lock`;
+    fs.writeFileSync(activeLock, lockBefore);
     observeOnboardLock.mockReturnValue({ kind: "busy", reason });
 
     expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(
       `is ${reason}; ${recoveryFor(activeLock)}`,
     );
     expect(fs.readFileSync(recoveryFile, "utf8")).toBe(before);
+    expect(fs.readFileSync(activeLock, "utf8")).toBe(lockBefore);
   });
 
   it("migrates past a proven-stale onboarding lock without removing it", () => {

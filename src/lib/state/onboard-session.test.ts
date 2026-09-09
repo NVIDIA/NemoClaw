@@ -1113,11 +1113,7 @@ describe("onboard session", () => {
       pid: 999999,
       processGeneration: "departed-process-generation",
     };
-    fs.writeFileSync(
-      session.LOCK_FILE,
-      JSON.stringify(departedOwner),
-      { mode: 0o600 },
-    );
+    fs.writeFileSync(session.LOCK_FILE, JSON.stringify(departedOwner), { mode: 0o600 });
 
     const acquired = session.acquireOnboardLock("nemoclaw onboard --resume");
     expect(acquired.acquired).toBe(true);
