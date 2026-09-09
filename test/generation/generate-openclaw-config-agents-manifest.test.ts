@@ -62,7 +62,6 @@ function runMessagingPostInstall(env: Record<string, string>): void {
   const result = spawnSync(
     "node",
     [
-      "--experimental-strip-types",
       APPLIER_PATH,
       "--agent",
       "openclaw",

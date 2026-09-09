@@ -10,7 +10,6 @@ export {
   type ExtraProviderReconciliationPlan,
   planRegisteredExtraProviders,
   type ReconcileExtraProvidersDeps,
-  reconcileRegisteredExtraProviders,
 } from "./extra-provider-reconciliation";
 export function removeManagedHermesStateVolume(
   context: import("./managed-workload/hermes-state-volume").ManagedHermesStateVolumeContext,
@@ -161,9 +160,7 @@ export function detachSandboxProviders(
     // OpenShell resolves provider detach by mutable sandbox name. These checks detect
     // replacement and stop later detaches; they do not make this command an atomic,
     // identity-bound mutation. Operators must not mutate the sandbox concurrently.
-    deps.revalidateSandboxIdentity?.(
-      `detaching provider '${name}' from sandbox '${sandboxName}'`,
-    );
+    deps.revalidateSandboxIdentity?.(`detaching provider '${name}' from sandbox '${sandboxName}'`);
     const result = runOpenshell(["sandbox", "provider", "detach", sandboxName, name], {
       ignoreError: true,
       stdio: ["ignore", "pipe", "pipe"],

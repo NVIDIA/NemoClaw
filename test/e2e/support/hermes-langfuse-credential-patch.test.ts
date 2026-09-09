@@ -122,7 +122,7 @@ describe("Hermes Langfuse OpenShell credential compatibility", () => {
 
     const result = spawnSync(
       process.execPath,
-      ["--experimental-strip-types", patcherPath, fixturePath],
+      [patcherPath, fixturePath],
       { encoding: "utf8" },
     );
 

@@ -5,7 +5,7 @@
  * Generate exact-range QA context for a release brief.
  *
  * Usage:
- *   node --experimental-strip-types --no-warnings handoff-summary.ts \
+ *   node --no-warnings handoff-summary.ts \
  *     --plan PATH --output PATH
  */
 

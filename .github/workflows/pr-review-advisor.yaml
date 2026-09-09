@@ -124,11 +124,11 @@ jobs:
           submodules: false
       - name: Read specialist prompts
         id: specialists
-        run: node --experimental-strip-types tools/pr-review-advisor/render-specialist-matrix.mts
+        run: node tools/pr-review-advisor/render-specialist-matrix.mts
       - name: Collect GitHub review context
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node --experimental-strip-types --no-warnings tools/pr-review-advisor/github-context.mts
+        run: node --no-warnings tools/pr-review-advisor/github-context.mts
       - name: Upload GitHub review context
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -167,7 +167,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: ">=22.19.0 <23"
           cache: npm
           cache-dependency-path: advisor/package-lock.json
       - name: Install locked runtime
@@ -270,12 +270,12 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: ">=22.19.0 <23"
           cache: npm
           cache-dependency-path: advisor/package-lock.json
 
       - name: Load advisor runtime image
-        run: node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/export-runtime-env.mts"
+        run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/export-runtime-env.mts"
 
       # The source PR is fetched manually so no PR-controlled
       # action, hook, submodule, LFS filter, or package setup can run. The base
@@ -293,7 +293,7 @@ jobs:
           GIT_LFS_SKIP_SMUDGE: "1"
           TARGET_DIR: ${{ github.workspace }}/pr-workdir
         run: |
-          node --experimental-strip-types \
+          node \
             "$ADVISOR_DIR/tools/pr-review-advisor/prepare-target-pr.mts"
 
       # symlinks first so an untrusted link cannot redirect a read outside the
@@ -329,7 +329,7 @@ jobs:
           BASE_REF: ${{ github.event_name == 'workflow_run' && 'target/base' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'target/base' || inputs.base_ref) }}
           HEAD_REF: ${{ github.event_name == 'workflow_run' && 'HEAD' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'HEAD' || inputs.head_ref) }}
           PR_REVIEW_ADVISOR_GITHUB_CONTEXT_PATH: ${{ runner.temp }}/shared-pr-review-advisor-context/github-context.json
-        run: node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/specialist-lifecycle.mts" prepare
+        run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/specialist-lifecycle.mts" prepare
 
       # Shared lifecycle phases preserve the configure-only credential boundary.
       - name: Install OpenShell
@@ -342,7 +342,7 @@ jobs:
         id: specialist-analysis
         env:
           OPENAI_API_KEY: ${{ secrets.PR_REVIEW_ADVISOR_API_KEY }}
-        run: node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/specialist-lifecycle.mts" analysis
+        run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/specialist-lifecycle.mts" analysis
 
       - name: Upload specialist review
         id: upload-specialist-session
@@ -401,13 +401,13 @@ jobs:
       - name: Setup Node for trusted publisher
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: ">=22.19.0 <23"
 
       - name: Post PR review advisor link
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          node --experimental-strip-types "$ADVISOR_DIR/tools/pr-review-advisor/completion-comment.mts" \
+          node "$ADVISOR_DIR/tools/pr-review-advisor/completion-comment.mts" \
             --repo "$GITHUB_REPOSITORY" \
             --pr "$PR_NUMBER" \
             --marker "$PR_REVIEW_ADVISOR_COMMENT_MARKER"
