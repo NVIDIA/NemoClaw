@@ -210,6 +210,40 @@ describe("sandbox config sync helpers", () => {
     },
   );
 
+  itUnix("propagates a real config normalizer ownership refusal", () => {
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sync-owner-refusal-"));
+    const configDir = path.join(homeDir, ".openclaw");
+    fs.mkdirSync(configDir);
+    fs.writeFileSync(path.join(configDir, "openclaw.json"), '{"gateway":{"mode":"local"}}');
+    try {
+      const script = buildSandboxConfigSyncScript({
+        endpointType: "custom",
+        endpointUrl: "https://inference.local/v1",
+        ncpPartner: null,
+        model: "model",
+        profile: "inference-local",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        provider: "compatible-endpoint",
+        providerLabel: "Compatible endpoint",
+      });
+      const { result, nativeCalls } = runConfigSyncScript(
+        script,
+        homeDir,
+        String((process.getuid?.() ?? 0) + 1),
+        undefined,
+        { modes: [0o700, 0o600], expectedStatus: 1 },
+      );
+      expect(result.stderr).toContain("UnsafeTree");
+      expect(nativeCalls.map((call) => call.split("|")[0])).toEqual([
+        "config validate",
+        "setup --baseline",
+      ]);
+      expect(fs.statSync(configDir).uid).toBe(process.getuid?.());
+    } finally {
+      fs.rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
+
   itUnix("keeps credential values out of sandbox selection config", () => {
     const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sync-home-"));
     try {

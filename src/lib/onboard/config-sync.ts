@@ -80,7 +80,7 @@ if [ -d "$config_dir" ]; then
     /usr/local/bin/openclaw config validate
     /usr/local/bin/openclaw setup --baseline
     (cd "$config_dir" && sha256sum openclaw.json >.config-hash)
-    python3 -I /usr/local/lib/nemoclaw/normalize_mutable_config_perms.py "$config_dir" "$current_uid" "$(id -g)" || true
+    python3 -I /usr/local/lib/nemoclaw/normalize_mutable_config_perms.py "$config_dir" "$current_uid" "$(id -g)"
   fi
 fi
 exit
