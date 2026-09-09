@@ -130,7 +130,7 @@ function hasLegacyContainerHealthProbe(driverName: string | null | undefined): b
   }
   try {
     return (
-      provider.gateway.prepareHostRuntime({
+      provider.gateway.observeHostRuntime({
         environment: process.env,
         platform: process.platform,
       }).socketPath === null
