@@ -35,7 +35,6 @@ const E2E_WORKFLOW_CONTRACTS = [
   "test/e2e/support/openshell-gateway-upgrade-workflow-boundary.test.ts",
   "test/e2e/support/prepare-e2e-workflow-boundary.test.ts",
   "test/e2e/support/runner-pressure-workflow-boundary.test.ts",
-  "test/e2e/support/sandbox-images-workflow-boundary.test.ts",
   "test/e2e/support/security-posture-workflow-boundary.test.ts",
   "test/e2e/support/shared-e2e-workflow-boundary.test.ts",
   "test/e2e/support/staging-brev-launchable-identity-workflow-boundary.test.ts",
@@ -88,8 +87,6 @@ const OPAQUE_INPUTS = [
   ".github/actions/docker-auth-cleanup/action.yaml",
   ".github/scripts/docker-auth-setup.sh",
   ".github/scripts/docker-auth-cleanup.sh",
-  ".github/workflows/pr-self-hosted.yaml",
-  ".github/workflows/sandbox-images.yaml",
   ".github/workflows/code-scanning.yaml",
   ".github/workflows/post-merge-docs.yaml",
   "tools/post-merge-docs/review-policy.yaml",
@@ -208,6 +205,7 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy("Dockerfile")).toEqual([
       "src/lib/onboard/managed-startup-profile.test.ts",
       "src/lib/sandbox/optimized-build-context-copy-sources.test.ts",
+      "test/mcp/mcp-tool-discovery-image-contract.test.ts",
     ]);
     expect(triggeredBy("agents/hermes/Dockerfile.base")).toEqual([
       "test/agents/hermes/hermes-share-mount-deps.test.ts",
@@ -224,6 +222,7 @@ describe("Vitest opaque-input watch triggers", () => {
       "src/lib/onboard/experimental/hermes-portable-build-context.test.ts",
       "src/lib/onboard/managed-startup-profile.test.ts",
       "test/agents/hermes/hermes-mcp-runtime-capability.test.ts",
+      "test/mcp/mcp-tool-discovery-image-contract.test.ts",
     ]);
     expect(triggeredBy("scripts/checks/download-hermes-source-archive.sh")).toEqual([
       "test/agents/hermes/hermes-share-mount-deps.test.ts",
@@ -231,6 +230,7 @@ describe("Vitest opaque-input watch triggers", () => {
     ]);
     expect(triggeredBy("agents/langchain-deepagents-code/Dockerfile")).toEqual([
       "src/lib/onboard/managed-startup-profile.test.ts",
+      "test/mcp/mcp-tool-discovery-image-contract.test.ts",
     ]);
     expect(triggeredBy("agents/hermes/policy-additions.yaml")).toEqual([
       "src/lib/onboard/initial-policy-real-policy.test.ts",
@@ -333,12 +333,6 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/e2e/support/dockerhub-auth-workflow-boundary.test.ts",
     ]);
 
-    expect(triggeredBy(".github/workflows/sandbox-images.yaml")).toEqual([
-      "test/e2e/support/sandbox-images-workflow-boundary.test.ts",
-    ]);
-    expect(triggeredBy(".github/workflows/pr-self-hosted.yaml")).toEqual([
-      "test/e2e/support/sandbox-images-workflow-boundary.test.ts",
-    ]);
     expect(triggeredBy(".github/workflows/code-scanning.yaml")).toEqual([
       "test/repository/code-scanning-workflow.test.ts",
     ]);

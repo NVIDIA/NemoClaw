@@ -8,15 +8,56 @@ import test from "node:test";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 
 import {
   buildMcpToolDiscoveryAuthorizationPlaceholder,
   createBoundedMcpFetch,
   MCP_TOOL_DISCOVERY_LIMITS,
   type McpToolDiscoveryResult,
+  mcpToolDiscoveryFailure,
   normalizeMcpToolPage,
   runMcpToolDiscoverySession,
 } from "./tool-discovery-core.ts";
+import { normalizeMcpSdkError } from "./mcp-tool-discovery.ts";
+
+test("classifies only the SDK request-timeout code as a remote request timeout (#10944)", () => {
+  const timeout = mcpToolDiscoveryFailure(
+    normalizeMcpSdkError(
+      new McpError(ErrorCode.RequestTimeout, "Bearer untrusted-timeout-detail"),
+    ),
+    "tool-discovery",
+  );
+  assert.deepEqual(timeout, {
+    ok: false,
+    count: 0,
+    tools: [],
+    truncated: false,
+    detail: "MCP request timed out after 10s",
+    failedStage: "tool-discovery",
+    failureClass: "connection",
+  });
+
+  const remoteFailure = mcpToolDiscoveryFailure(
+    normalizeMcpSdkError(
+      new McpError(
+        ErrorCode.InternalError,
+        "remote tool operation timed out with Bearer untrusted-timeout-detail",
+      ),
+    ),
+    "tool-discovery",
+  );
+  assert.deepEqual(remoteFailure, {
+    ok: false,
+    count: 0,
+    tools: [],
+    truncated: false,
+    detail: "MCP request failed",
+    failedStage: "tool-discovery",
+    failureClass: "tool-operation",
+  });
+  assert.doesNotMatch(JSON.stringify({ timeout, remoteFailure }), /untrusted-timeout-detail/u);
+});
 
 interface ObservedRequest {
   httpMethod: string;

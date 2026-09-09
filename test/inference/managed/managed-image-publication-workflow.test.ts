@@ -585,6 +585,7 @@ describe("complete managed-image publication workflow", () => {
     expect(contractSource).toContain('result = JSON.parse(require("node:fs").readFileSync(0');
     expect(contractSource).toContain("record.protocol !== expected.protocol");
     expect(contractSource).toContain("record.ok !== expected.ok");
+    expect(contractSource).toMatch(/Object\.keys.*record\.count.*record\.tools.*record\.truncated/su);
     expect(contractSource).toContain("record.detail !== expected.detail");
     expect(contractSource).not.toContain(
       '[ "$actual_discovery_contract" != "$expected_discovery_contract" ]',
@@ -643,12 +644,14 @@ describe("complete managed-image publication workflow", () => {
       const bundleResult = spawnSync(process.execPath, [executableBundle], { encoding: "utf8" });
       expect(bundleResult.status, bundleResult.stderr).toBe(0);
       expect(JSON.parse(bundleResult.stdout)).toMatchObject({
-        protocol: 1,
+        protocol: 2,
         ok: false,
         count: 0,
         tools: [],
         truncated: false,
         detail: "tool discovery received invalid runtime arguments",
+        failedStage: "preflight",
+        failureClass: "precondition",
       });
       const acceptedContract = spawnSync(process.execPath, ["-e", contractValidator], {
         encoding: "utf8",
@@ -656,9 +659,9 @@ describe("complete managed-image publication workflow", () => {
       });
       expect(acceptedContract.status, acceptedContract.stderr).toBe(0);
       for (const rejectedOutput of [
-        '{"protocol":1,"ok":false,"detail":"wrong"}\n',
-        '{"protocol":1,"ok":false,"detail":"tool discovery received invalid runtime arguments","extra":NaN}\n',
-        '\uFEFF{"protocol":1,"ok":false,"detail":"tool discovery received invalid runtime arguments"}\n',
+        '{"protocol":2,"ok":false,"detail":"wrong"}\n',
+        '{"protocol":2,"ok":false,"count":0,"tools":[],"truncated":false,"detail":"tool discovery received invalid runtime arguments","failedStage":"preflight","failureClass":"precondition","extra":"unexpected"}\n',
+        '\uFEFF{"protocol":2,"ok":false,"count":0,"tools":[],"truncated":false,"detail":"tool discovery received invalid runtime arguments","failedStage":"preflight","failureClass":"precondition"}\n',
       ]) {
         const rejectedContract = spawnSync(process.execPath, ["-e", contractValidator], {
           encoding: "utf8",
@@ -1187,6 +1190,7 @@ fi
     expect(identity?.outputs).toEqual({ cohort: "${{ steps.identity.outputs.cohort }}" });
     expect(publisher.needs).toEqual(["publication-identity", "reviewed-npm-audit"]);
     expect(publisher.outputs).toBeUndefined();
+    expect(JSON.stringify(workflow)).not.toContain('rm -rf -- "$ANONYMOUS_CONFIG"');
     expect(publisher.steps?.map((candidate) => candidate.name)).not.toContain(
       "Export validated managed image candidate output",
     );

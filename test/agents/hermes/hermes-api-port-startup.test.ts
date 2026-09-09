@@ -36,6 +36,8 @@ function runHermesApiPortBootstrap(apiPort: string) {
       timeout: 5000,
       env: {
         ...process.env,
+        CHAT_UI_URL: "",
+        NEMOCLAW_DASHBOARD_PORT: "18789",
         NEMOCLAW_HERMES_API_PORT: apiPort,
       },
     });

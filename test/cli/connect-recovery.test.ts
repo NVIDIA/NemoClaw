@@ -114,7 +114,7 @@ function writeGatewayControlDockerStub(
 function expectGatewayControlRecovery(callsFile: string): void {
   const calls = fs.readFileSync(callsFile, "utf8");
   expect(calls).toContain(
-    "ps --no-trunc --filter label=openshell.ai/managed-by=openshell " +
+    "ps --all --no-trunc --filter label=openshell.ai/managed-by=openshell " +
       "--filter label=openshell.ai/sandbox-name=alpha --format {{.ID}}\t{{.Names}}",
   );
   const recoveryCall = calls
