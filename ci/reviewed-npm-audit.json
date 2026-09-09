@@ -11,7 +11,9 @@
     "integrity": "sha512-dB4mLex23Pnw61caGMR2CMHQihy9bj7IK2elJJd718k3yevm+fOt/vG6dJg8/5us4la2BwcOdRwLvOia3tdwFw==",
     "tarballUrl": "https://npm.pkg.github.com/download/@nvidia/openshell-sdk/0.0.106/dc32180ba1d658fc4ec309bdf89d2b162196928d"
   },
-  "sourceNestedShrinkwrapPackages": ["@earendil-works/pi-coding-agent@0.80.6"],
+  "sourceNestedShrinkwrapPackages": [
+    "@earendil-works/pi-coding-agent@0.80.6"
+  ],
   "sourceRegistryPackagesWithoutIntegrity": [
     {
       "label": "Pi agent core 0.80.6 nested shrinkwrap entry",
@@ -93,12 +95,12 @@
   "lockedGraphs": [
     {
       "id": "openclaw-runtime",
-      "label": "OpenClaw 2026.7.1 locked runtime graph",
-      "packageSpec": "openclaw@2026.7.1",
-      "integrity": "sha512-ge/Xss99CHAjPL/ikmH/UFoiOrjcxDB4sW3y9mhyCD+dYW3wzV7TKbAVdkrXFgAG2d2BjpJofP97zUZ+umxo8g==",
-      "tarballUrl": "https://registry.npmjs.org/openclaw/-/openclaw-2026.7.1.tgz",
+      "label": "OpenClaw 2026.9.1 locked runtime graph",
+      "packageSpec": "openclaw@2026.9.1",
+      "integrity": "sha512-0Ve0631CdgkJDwd4NNG1BawIdF5yCL2sO+Tts8amStw+H6vKURTj0K4rOa4+hFpJk1Dnw5LyKl5twzwX1VtA2w==",
+      "tarballUrl": "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.1.tgz",
       "directory": "agents/openclaw/openclaw-runtime",
-      "lockSha256": "248d881ca125bb83da293c4b3f40b46d057095a9fe90b5165255da0de78af9f9"
+      "lockSha256": "9f99aa4f5d10280b4d809e0d54f20bcbe786d4140d30fc10ed502b1305ff9a8d"
     },
     {
       "id": "mcporter-runtime",
