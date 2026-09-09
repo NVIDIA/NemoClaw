@@ -102,7 +102,7 @@ export interface VerifyDeploymentDeps {
   getMessagingChannels: (name: string) => string[];
 
   /** Check if a messaging bridge is polling (provider exists in gateway). */
-  providerExistsInGateway: (providerName: string) => boolean;
+  providerExistsInGateway: (providerName: string) => boolean | Promise<boolean>;
 
   /**
    * Probe the in-sandbox agent config to learn which channels the runtime
@@ -427,7 +427,10 @@ async function verifyMessagingBridges(
       continue;
     }
     const expectedProviders = providerNames.length > 0 ? providerNames : [channel];
-    if (!expectedProviders.every((providerName) => deps.providerExistsInGateway(providerName))) {
+    const providersExist = await Promise.all(
+      expectedProviders.map((providerName) => deps.providerExistsInGateway(providerName)),
+    );
+    if (!providersExist.every(Boolean)) {
       missingProviders.push(channel);
     }
   }

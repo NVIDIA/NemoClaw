@@ -169,7 +169,7 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
     activeMessagingChannels,
     disabledChannels,
   );
-  const verifySandboxInferenceRoute = () =>
+  const verifySandboxInferenceRoute = async () =>
     deps.verifyCompatibleEndpointSandboxSmoke({
       sandboxName,
       provider,
