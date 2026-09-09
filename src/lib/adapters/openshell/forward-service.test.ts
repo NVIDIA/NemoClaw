@@ -378,18 +378,72 @@ describe("OpenShell forward service", () => {
     expect(signalProcess).toHaveBeenCalledWith(-4_321, "SIGKILL");
   });
 
-  it("targets the exact detached process tree on Windows", () => {
+  it("uses the trusted absolute Windows taskkill path despite poisoned search paths", () => {
     const signalProcess = vi.fn();
     const taskkill = vi.fn(() => ({ status: 0 }));
+    const trustedTaskkill = "C:\\Windows\\System32\\taskkill.exe";
 
     terminateForwardServiceProcessTree(
       { pid: 4_321, unref: vi.fn() },
-      { platform: "win32", signalProcess, taskkill },
+      {
+        environment: {
+          PATH: "C:\\attacker-controlled",
+          PWD: "C:\\attacker-controlled",
+          SystemRoot: "C:\\Windows",
+        },
+        isTrustedTaskkillExecutable: (executable) => executable === trustedTaskkill,
+        platform: "win32",
+        signalProcess,
+        taskkill,
+      },
     );
 
-    expect(taskkill).toHaveBeenCalledWith("taskkill.exe", ["/PID", "4321", "/T", "/F"]);
+    expect(taskkill).toHaveBeenCalledWith(trustedTaskkill, ["/PID", "4321", "/T", "/F"]);
     expect(signalProcess).not.toHaveBeenCalled();
   });
+
+  it("fails closed when the trusted Windows taskkill executable is unavailable", () => {
+    const taskkill = vi.fn(() => ({ status: 0 }));
+
+    expect(() =>
+      terminateForwardServiceProcessTree(
+        { pid: 4_321, unref: vi.fn() },
+        {
+          environment: {
+            PATH: "C:\\attacker-controlled",
+            SystemRoot: "C:\\Windows",
+          },
+          isTrustedTaskkillExecutable: () => false,
+          platform: "win32",
+          taskkill,
+        },
+      ),
+    ).toThrow(/Trusted Windows taskkill executable is unavailable/u);
+    expect(taskkill).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, "Windows", "\\\\attacker\\share", "C:\\Windows\\..\\poison"])(
+    "fails closed for an invalid Windows SystemRoot: %s",
+    (systemRoot) => {
+      const taskkill = vi.fn(() => ({ status: 0 }));
+
+      expect(() =>
+        terminateForwardServiceProcessTree(
+          { pid: 4_321, unref: vi.fn() },
+          {
+            environment: {
+              PATH: "C:\\attacker-controlled",
+              SystemRoot: systemRoot,
+            },
+            isTrustedTaskkillExecutable: () => true,
+            platform: "win32",
+            taskkill,
+          },
+        ),
+      ).toThrow(/Trusted Windows SystemRoot is unavailable/u);
+      expect(taskkill).not.toHaveBeenCalled();
+    },
+  );
 
   it("fails closed when Windows process-tree termination is not proved", () => {
     const noSuchProcess = Object.assign(new Error("not found"), { code: "ESRCH" });
@@ -398,6 +452,8 @@ describe("OpenShell forward service", () => {
       terminateForwardServiceProcessTree(
         { pid: 4_321, unref: vi.fn() },
         {
+          environment: { SystemRoot: "C:\\Windows" },
+          isTrustedTaskkillExecutable: () => true,
           platform: "win32",
           signalProcess: () => {
             throw noSuchProcess;

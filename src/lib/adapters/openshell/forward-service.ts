@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawn, spawnSync } from "node:child_process";
-import { readFileSync, readdirSync, readlinkSync, realpathSync } from "node:fs";
+import { lstatSync, readFileSync, readdirSync, readlinkSync, realpathSync } from "node:fs";
 import path from "node:path";
 
 import { isValidName } from "../../name-validation";
@@ -45,6 +45,8 @@ export interface ForwardServiceChild {
 }
 
 export interface ForwardServiceProcessTreeTerminationDependencies {
+  readonly environment?: NodeJS.ProcessEnv;
+  readonly isTrustedTaskkillExecutable?: (executable: string) => boolean;
   readonly now?: () => number;
   readonly platform?: NodeJS.Platform;
   readonly processGroupHasRunnableMember?: (pid: number) => boolean;
@@ -293,6 +295,42 @@ function noSuchProcess(error: unknown): boolean {
   return (error as NodeJS.ErrnoException | undefined)?.code === "ESRCH";
 }
 
+function normalizedWindowsPath(value: string): string {
+  return path.win32.normalize(value.replace(/^\\\\\?\\/u, "")).toLowerCase();
+}
+
+function isTrustedTaskkillExecutable(executable: string): boolean {
+  try {
+    const metadata = lstatSync(executable);
+    if (!metadata.isFile() || metadata.isSymbolicLink()) return false;
+    return (
+      normalizedWindowsPath(realpathSync.native(executable)) === normalizedWindowsPath(executable)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function resolveTrustedTaskkillExecutable(
+  environment: NodeJS.ProcessEnv,
+  verify: (executable: string) => boolean,
+): string {
+  const systemRoot = environment.SystemRoot?.trim();
+  if (
+    !systemRoot ||
+    systemRoot.includes("\0") ||
+    !/^[a-z]:[\\/]/iu.test(systemRoot) ||
+    systemRoot.split(/[\\/]/u).includes("..")
+  ) {
+    throw new Error("Trusted Windows SystemRoot is unavailable");
+  }
+  const executable = path.win32.join(path.win32.normalize(systemRoot), "System32", "taskkill.exe");
+  if (!verify(executable)) {
+    throw new Error("Trusted Windows taskkill executable is unavailable");
+  }
+  return executable;
+}
+
 function processGroupHasRunnableMember(pid: number): boolean {
   const result = spawnSync("/bin/ps", ["-axo", "pgid=,stat="], {
     encoding: "utf8",
@@ -355,7 +393,11 @@ export function terminateForwardServiceProcessTree(
       });
       return { error: result.error, status: result.status };
     });
-  const result = taskkill("taskkill.exe", ["/PID", String(pid), "/T", "/F"]);
+  const taskkillExecutable = resolveTrustedTaskkillExecutable(
+    dependencies.environment ?? process.env,
+    dependencies.isTrustedTaskkillExecutable ?? isTrustedTaskkillExecutable,
+  );
+  const result = taskkill(taskkillExecutable, ["/PID", String(pid), "/T", "/F"]);
   if (!result.error && result.status === 0) return;
   throw new Error("OpenShell forward service process-tree termination failed", {
     cause: result.error,
