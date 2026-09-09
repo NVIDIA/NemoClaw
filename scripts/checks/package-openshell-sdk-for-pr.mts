@@ -16,6 +16,7 @@ export function packageReviewedOpenShellSdk(
   includeReplacement = false,
   dependencies: Readonly<{
     pack?: typeof packReviewedNpmArchive;
+    readAuditConfig?: () => string;
     remove?: typeof removeReviewedNpmArchive;
   }> = {},
 ): string {
@@ -23,8 +24,12 @@ export function packageReviewedOpenShellSdk(
     throw new Error("reviewed OpenShell SDK output directory is required");
   }
   const config = parseAuditConfig(
-    readFileSync(join(TRUSTED_REPOSITORY_ROOT, "ci/reviewed-npm-audit.json"), "utf8"),
+    dependencies.readAuditConfig?.() ??
+      readFileSync(join(TRUSTED_REPOSITORY_ROOT, "ci/reviewed-npm-audit.json"), "utf8"),
   );
+  if (includeReplacement && !config.sourceRegistryPackageReplacement) {
+    throw new Error("reviewed OpenShell SDK replacement metadata is required");
+  }
   const reviewedPackages =
     includeReplacement && config.sourceRegistryPackageReplacement
       ? [config.sourceRegistryPackage, config.sourceRegistryPackageReplacement]

@@ -34,6 +34,21 @@ function fixture() {
 }
 
 describe("reviewed OpenShell SDK transition packaging", () => {
+  it("fails closed when replacement packaging lacks replacement metadata", () => {
+    const source = fixture();
+    const configPath = path.resolve("ci/reviewed-npm-audit.json");
+    const config = JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+    delete config.sourceRegistryPackageReplacement;
+
+    expect(() =>
+      packageReviewedOpenShellSdk(source.output, true, {
+        ...source,
+        readAuditConfig: () => JSON.stringify(config),
+      }),
+    ).toThrow("reviewed OpenShell SDK replacement metadata is required");
+    expect(source.pack).not.toHaveBeenCalled();
+  });
+
   it("keeps the default package result to the active SDK archive", () => {
     const source = fixture();
 
