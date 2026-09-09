@@ -98,9 +98,9 @@ export function isOpenshellDevVersion(versionOutput: string | null | undefined):
 }
 
 export function shouldAllowOpenshellAboveBlueprintMax(
-  versionOutput: string | null | undefined,
-  platform: NodeJS.Platform = process.platform,
-  env: NodeJS.ProcessEnv = process.env,
+  _versionOutput: string | null | undefined,
+  _platform: NodeJS.Platform = process.platform,
+  _env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  return shouldUseOpenshellDevChannel(platform, env) && isOpenshellDevVersion(versionOutput);
+  return false;
 }

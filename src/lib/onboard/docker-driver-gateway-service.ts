@@ -17,6 +17,7 @@ import { isDockerDriverGatewayHttpReady } from "./gateway-http-readiness";
 import {
   getBlueprintMaxOpenshellVersion,
   getBlueprintMinOpenshellVersion,
+  isOpenshellDevVersion,
   shouldAllowOpenshellAboveBlueprintMax,
   versionGte,
 } from "./openshell-version";
@@ -275,6 +276,16 @@ export function checkUpstreamGatewayVersion(
       message:
         `  NemoClaw could not determine the package-managed OpenShell gateway version at ${binaryPath}. ` +
         "Restore the OpenShell package, then retry.",
+    };
+  }
+  if (isOpenshellDevVersion(versionOutput)) {
+    return {
+      supported: false,
+      binaryPath,
+      version,
+      message:
+        `  Refusing the system OpenShell gateway service: ${binaryPath} is a development build. ` +
+        "Install exact stable OpenShell 0.0.116 before retrying NemoClaw.",
     };
   }
   const bounds = (opts.getUpstreamGatewayVersionBounds ?? defaultUpstreamGatewayVersionBounds)();

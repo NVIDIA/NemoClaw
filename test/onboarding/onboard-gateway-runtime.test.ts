@@ -315,7 +315,7 @@ describe("onboard gateway runtime helpers", () => {
     ).toBe(false);
   });
 
-  it("recognizes Docker CDI and explicit dev-channel version gates", () => {
+  it("recognizes Docker CDI and rejects every above-maximum version", () => {
     expect(parseDockerCdiSpecDirs('["/etc/cdi","/var/run/cdi"]')).toEqual([
       "/etc/cdi",
       "/var/run/cdi",
@@ -325,7 +325,7 @@ describe("onboard gateway runtime helpers", () => {
       shouldAllowOpenshellAboveBlueprintMax("openshell 0.0.40.dev1+gabcdef", "linux", {
         NEMOCLAW_OPENSHELL_CHANNEL: "dev",
       }),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       shouldAllowOpenshellAboveBlueprintMax("openshell 0.0.40.dev1+gabcdef", "linux", {
         NEMOCLAW_OPENSHELL_CHANNEL: "auto",

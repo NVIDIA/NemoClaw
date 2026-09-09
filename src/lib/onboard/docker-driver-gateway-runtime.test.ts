@@ -147,21 +147,22 @@ describe("docker-driver gateway runtime helpers", () => {
     });
   });
 
-  it("uses the moving dev supervisor image for an explicit or detected dev runtime", () => {
+  it("rejects an explicit or detected dev runtime", () => {
     withTemporaryGatewayState(() => {
       const explicit = makeHelpers({ shouldUseOpenshellDevChannel: () => true });
-      expect(
-        explicit.helpers.getDockerDriverGatewayEnv("openshell 0.0.72", "linux")
-          .OPENSHELL_DOCKER_SUPERVISOR_IMAGE,
-      ).toBe("ghcr.io/nvidia/openshell/supervisor:dev");
+      expect(() => explicit.helpers.getDockerDriverGatewayEnv("openshell 0.0.72", "linux")).toThrow(
+        "exact stable OpenShell 0.0.116",
+      );
 
       const detected = makeHelpers({
         isOpenshellDevVersion: (versionOutput) => String(versionOutput).includes("-dev."),
       });
-      expect(
-        detected.helpers.getDockerDriverGatewayEnv("openshell 0.0.72-dev.8+g7bce1223", "linux")
-          .OPENSHELL_DOCKER_SUPERVISOR_IMAGE,
-      ).toBe("ghcr.io/nvidia/openshell/supervisor:dev");
+      expect(() =>
+        detected.helpers.getDockerDriverGatewayEnv(
+          "openshell 0.0.72-dev.8+g7bce1223",
+          "linux",
+        ),
+      ).toThrow("exact stable OpenShell 0.0.116");
     });
   });
 

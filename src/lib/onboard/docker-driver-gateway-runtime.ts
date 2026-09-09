@@ -229,9 +229,8 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
   function getOpenShellDockerSupervisorImage(versionOutput: string | null = null): string {
     const installedVersion = deps.getInstalledOpenshellVersion(versionOutput);
     if (deps.shouldUseOpenshellDevChannel() || deps.isOpenshellDevVersion(versionOutput)) {
-      return (
-        process.env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE ??
-        "ghcr.io/nvidia/openshell/supervisor:dev"
+      throw new Error(
+        `OpenShell Docker-driver gateway recovery requires exact stable OpenShell ${QUALIFIED_STABLE_OPENSHELL_VERSION}; development builds are not supported.`,
       );
     }
     const supportedVersion =

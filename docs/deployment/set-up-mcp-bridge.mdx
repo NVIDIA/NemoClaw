@@ -30,7 +30,7 @@ The integration has three parts:
 This integration depends on the OpenShell MCP/JSON-RPC L7 policy support from [NVIDIA/OpenShell#1865](https://github.com/NVIDIA/OpenShell/pull/1865).
 
 Current NemoClaw builds require the pinned stable OpenShell `0.0.116` release, which exposes native `protocol: mcp` policy handling and endpoint-bound credential replacement.
-The optional OpenShell development channel is compatibility evidence only and is not a shipping target.
+Development builds are rejected because they do not match the reviewed credential boundary for the supported managed runtime.
 
 NemoClaw accepts Streamable HTTP MCP endpoints only.
 It does not launch an MCP server, stdio adapter, bridge, credential proxy, data-plane relay, or listener on the host.

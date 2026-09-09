@@ -17,7 +17,6 @@ import {
   OPENSHELL_REWRITE_FEATURE_MARKERS,
   PINNED_OPEN_SHELL_SHA256,
   trustedFormulaBoundaryEvents,
-  unverifiedFormulaBoundaryEvents,
   ZERO_SHA256,
 } from "../helpers/openshell-release-fixtures";
 
@@ -821,123 +820,6 @@ exit 1`,
       expect(unsupportedTrustEvents).toContain("help trust");
       expect(unsupportedTrustEvents).not.toContain("trust --formula nvidia/openshell/openshell");
       expect(unsupportedTrustEvents).not.toContain("install --formula nvidia/openshell/openshell");
-
-      fs.writeFileSync(brewLog, "");
-      const missingUntrust = spawnSync("bash", [SCRIPT], {
-        env: {
-          ...process.env,
-          HOME: tmp,
-          XDG_BIN_HOME: path.join(tmp, "local-bin"),
-          NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
-          NEMOCLAW_OPENSHELL_CHANNEL: "dev",
-          NEMOCLAW_TEST_BREW_UNTRUST_HELP_STATUS: "1",
-          NEMOCLAW_TEST_INSTALLED_VERSION: "0.0.116-dev.8+g7bce1223d",
-          PATH: `${fakeBin}:/usr/bin:/bin`,
-        },
-        encoding: "utf8",
-      });
-
-      expect(
-        missingUntrust.status,
-        `${missingUntrust.stdout}\n${missingUntrust.stderr}`,
-      ).toBeGreaterThan(0);
-      expect(missingUntrust.stderr).toContain(
-        "OpenShell Homebrew formula verification or temporary trust setup failed (status 67)",
-      );
-      const missingUntrustEvents = fs.readFileSync(brewLog, "utf-8").trim().split("\n");
-      expect(missingUntrustEvents).toContain("help trust");
-      expect(missingUntrustEvents).toContain("help untrust");
-      expect(missingUntrustEvents).not.toContain("untrust --formula nvidia/openshell/openshell");
-      expect(missingUntrustEvents).not.toContain("install --formula nvidia/openshell/openshell");
-
-      fs.writeFileSync(brewLog, "");
-      fs.writeFileSync(untrustCount, "0");
-      const refusedUntrust = spawnSync("bash", [SCRIPT], {
-        env: {
-          ...process.env,
-          HOME: tmp,
-          XDG_BIN_HOME: path.join(tmp, "local-bin"),
-          NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
-          NEMOCLAW_OPENSHELL_CHANNEL: "dev",
-          NEMOCLAW_TEST_BREW_UNTRUST_STATUS: "1",
-          NEMOCLAW_TEST_INSTALLED_VERSION: "0.0.116-dev.8+g7bce1223d",
-          PATH: `${fakeBin}:/usr/bin:/bin`,
-        },
-        encoding: "utf8",
-      });
-
-      expect(
-        refusedUntrust.status,
-        `${refusedUntrust.stdout}\n${refusedUntrust.stderr}`,
-      ).toBeGreaterThan(0);
-      expect(refusedUntrust.stderr).toContain(
-        "OpenShell Homebrew formula verification or temporary trust setup failed (status 67)",
-      );
-      const refusedUntrustEvents = fs.readFileSync(brewLog, "utf-8").trim().split("\n");
-      expect(refusedUntrustEvents).toContain("help trust");
-      expect(refusedUntrustEvents).toContain("help untrust");
-      expect(refusedUntrustEvents).toContain("untrust --formula nvidia/openshell/openshell");
-      expect(refusedUntrustEvents).not.toContain("install --formula nvidia/openshell/openshell");
-
-      fs.writeFileSync(brewLog, "");
-      fs.writeFileSync(untrustCount, "0");
-      const failedCleanupUntrust = spawnSync("bash", [SCRIPT], {
-        env: {
-          ...process.env,
-          HOME: tmp,
-          XDG_BIN_HOME: path.join(tmp, "local-bin"),
-          NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
-          NEMOCLAW_OPENSHELL_CHANNEL: "dev",
-          NEMOCLAW_TEST_BREW_INSTALL_STATUS: "1",
-          NEMOCLAW_TEST_BREW_UNTRUST_CLEANUP_STATUS: "1",
-          NEMOCLAW_TEST_INSTALLED_VERSION: "0.0.116-dev.8+g7bce1223d",
-          PATH: `${fakeBin}:/usr/bin:/bin`,
-        },
-        encoding: "utf8",
-      });
-
-      expect(
-        failedCleanupUntrust.status,
-        `${failedCleanupUntrust.stdout}\n${failedCleanupUntrust.stderr}`,
-      ).toBeGreaterThan(0);
-      expect(failedCleanupUntrust.stderr).toContain(
-        "OpenShell Homebrew formula verification or temporary trust setup failed (status 68)",
-      );
-      expect(fs.readFileSync(brewLog, "utf-8").trim().split("\n")).toEqual([
-        "tap-info nvidia/openshell",
-        "tap-new --no-git nvidia/openshell",
-        "--repository nvidia/openshell",
-        ...unverifiedFormulaBoundaryEvents("list --formula openshell"),
-      ]);
-      expect(fs.existsSync(path.join(formulaTmpDir, "openshell.rb"))).toBe(false);
-
-      fs.writeFileSync(brewLog, "");
-      fs.writeFileSync(untrustCount, "0");
-      const devInstall = spawnSync("bash", [SCRIPT], {
-        env: {
-          ...process.env,
-          HOME: tmp,
-          XDG_BIN_HOME: path.join(tmp, "local-bin"),
-          NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
-          NEMOCLAW_OPENSHELL_CHANNEL: "dev",
-          NEMOCLAW_TEST_BREW_TRUST_STATUS: "1",
-          NEMOCLAW_TEST_INSTALLED_VERSION: "0.0.116-dev.8+g7bce1223d",
-          PATH: `${fakeBin}:/usr/bin:/bin`,
-        },
-        encoding: "utf8",
-      });
-
-      expect(devInstall.status, `${devInstall.stdout}\n${devInstall.stderr}`).toBe(0);
-      const devBrewEvents = fs.readFileSync(brewLog, "utf-8").trim().split("\n");
-      expect(devBrewEvents).toEqual([
-        "tap-info nvidia/openshell",
-        "tap-new --no-git nvidia/openshell",
-        "--repository nvidia/openshell",
-        ...unverifiedFormulaBoundaryEvents("list --formula openshell"),
-        ...unverifiedFormulaBoundaryEvents("install --formula nvidia/openshell/openshell"),
-        "--prefix",
-      ]);
-      expect(devBrewEvents).not.toContain("trust --formula nvidia/openshell/openshell");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -1348,88 +1230,29 @@ exit 0`,
     expect(result.stderr).not.toMatch(/Upgrade NemoClaw first/);
   });
 
-  it("accepts an installed OpenShell dev-channel Docker-driver build", () => {
+  it("rejects the OpenShell dev channel even with the former risk-acceptance flag", () => {
     const result = runWithInstalledVersion("0.0.116.dev84+g6b2180425", {
       NEMOCLAW_OPENSHELL_CHANNEL: "dev",
       NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
-    });
-    expect(result.status).toBe(0);
-    expect(result.stdout).toMatch(/dev channel/);
-    expect(result.stdout).toMatch(/Dev channel install skips SHA-256 verification/);
-  });
-
-  it("fails closed for dev-channel installs without explicit risk acceptance", () => {
-    const result = runWithInstalledVersion("0.0.116.dev84+g6b2180425", {
-      NEMOCLAW_OPENSHELL_CHANNEL: "dev",
     });
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(
-      "Set NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL=1 to explicitly accept an unverified OpenShell dev-channel install.",
+      "NemoClaw requires exact stable OpenShell 0.0.116; the dev channel is not supported.",
+    );
+    expect(result.stdout).not.toContain(
+      "Installing OpenShell from release 'dev'",
     );
   });
 
-  it("accepts coherent dev components with different git-prefix lengths", () => {
-    const result = runWithInstalledVersion(
-      "0.0.116-dev.8+g7bce1223d",
-      {
-        NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
-        NEMOCLAW_OPENSHELL_CHANNEL: "dev",
-      },
-      { driverVersion: "0.0.116-dev.8+g7bce1223" },
-    );
-    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-    expect(result.stdout).toMatch(/dev channel/);
-  });
-
-  it("refreshes a dev build when Docker-driver binaries are missing", () => {
-    const result = runWithInstalledVersion(
-      `${LEGACY_OPENSHELL_VERSION}.dev84+g6b2180425`,
-      {
-        NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
-        NEMOCLAW_OPENSHELL_CHANNEL: "dev",
-      },
-      { driverBins: false, os: "Linux" },
-    );
+  it("reconciles an installed development build to the exact stable release", () => {
+    const result = runWithInstalledVersion("0.0.116-dev.8+g7bce1223d");
     expect(result.status).not.toBe(0);
-    expect(result.stdout).toMatch(/required dev-channel messaging-rewrite\/MCP-L7 build/);
-    expect(result.stdout).toContain("Installing OpenShell from release 'dev'");
-  });
-
-  it("refreshes a Linux dev build when the sandbox binary alone is missing", () => {
-    const result = runWithInstalledVersion(
-      `${LEGACY_OPENSHELL_VERSION}.dev84+g6b2180425`,
-      {
-        NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
-        NEMOCLAW_OPENSHELL_CHANNEL: "dev",
-      },
-      { driverBins: "gateway", os: "Linux" },
+    expect(result.stdout).toContain(
+      "OpenShell development builds are unsupported",
     );
-    expect(result.status).not.toBe(0);
-    expect(result.stdout).toContain("Installing OpenShell from release 'dev'");
-  });
-
-  it("reuses a macOS dev build with its required Homebrew gateway service", () => {
-    const result = runWithInstalledVersion(
-      "0.0.116-dev.8+g7bce1223d",
-      {
-        NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
-        NEMOCLAW_OPENSHELL_CHANNEL: "dev",
-      },
-      { driverBins: "gateway", os: "Darwin", arch: "arm64" },
+    expect(result.stdout).toContain(
+      `Installing OpenShell from release 'v${REQUIRED_OPENSHELL_VERSION}'`,
     );
-    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-    expect(result.stdout).toMatch(/dev channel/);
-  });
-
-  it("refreshes an installed dev build when current main is required", () => {
-    const result = runWithInstalledVersion("0.0.116-dev.8+g7bce1223d", {
-      NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
-      NEMOCLAW_OPENSHELL_CHANNEL: "dev",
-      NEMOCLAW_OPENSHELL_FORCE_INSTALL: "1",
-    });
-    expect(result.status).not.toBe(0);
-    expect(result.stdout).toContain("refreshing the moving dev release");
-    expect(result.stdout).toContain("Installing OpenShell from release 'dev'");
   });
 
   it("keeps auto on the stable release-selection contract", () => {
@@ -1444,22 +1267,13 @@ exit 0`,
     expect(result.stdout).not.toContain("Installing OpenShell from release 'dev'");
   });
 
-  it("upgrades stable OpenShell when the dev channel is requested", () => {
-    const result = runWithInstalledVersion("0.0.36", {
-      NEMOCLAW_OPENSHELL_CHANNEL: "dev",
-      NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
-    });
-    expect(result.status).not.toBe(0);
-    expect(result.stdout).toMatch(/required dev-channel messaging-rewrite\/MCP-L7 build/);
-  });
-
   it("rejects the removed artifact channel", () => {
     const result = runWithInstalledVersion("0.0.72", {
       NEMOCLAW_OPENSHELL_CHANNEL: "artifact",
     });
 
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("NEMOCLAW_OPENSHELL_CHANNEL must be one of: stable, dev, auto");
+    expect(result.stderr).toContain("NEMOCLAW_OPENSHELL_CHANNEL must be one of: stable, auto");
   });
 
   it("proceeds to install when openshell is not present", () => {

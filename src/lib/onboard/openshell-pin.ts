@@ -170,11 +170,14 @@ export function computeOpenshellInstallEnv(
   deps: OpenshellInstallPinDeps,
 ): OpenshellInstallEnvDirective {
   const channel = (baseEnv.NEMOCLAW_OPENSHELL_CHANNEL ?? "auto").trim();
-  // Dev installs already identify a non-stable build source. Stable release
-  // discovery must not block that current-main proof path merely because the
-  // next semver release has not been published yet.
-  const pin: OpenshellInstallPinResult =
-    channel === "dev" ? { kind: "no-max" } : resolveOpenshellInstallPin(deps);
+  if (channel === "dev") {
+    const error = deps.error ?? ((m: string) => console.error(m));
+    error("");
+    error("  ✗ NemoClaw requires exact stable OpenShell 0.0.116; the dev channel is not supported.");
+    error("");
+    return { env: null };
+  }
+  const pin: OpenshellInstallPinResult = resolveOpenshellInstallPin(deps);
   if (pin.kind === "incompatible") {
     const error = deps.error ?? ((m: string) => console.error(m));
     error("");
@@ -188,11 +191,6 @@ export function computeOpenshellInstallEnv(
   if (blueprintMin) overlay.NEMOCLAW_OPENSHELL_MIN_VERSION = blueprintMin;
   if (blueprintMax) overlay.NEMOCLAW_OPENSHELL_MAX_VERSION = blueprintMax;
   if (pin.kind === "pin") overlay.NEMOCLAW_OPENSHELL_PIN_VERSION = pin.version;
-  if (channel === "dev") {
-    const env = { ...baseEnv, ...overlay };
-    delete env.NEMOCLAW_OPENSHELL_PIN_VERSION;
-    return { env };
-  }
   return Object.keys(overlay).length === 0 ? { env: baseEnv } : { env: { ...baseEnv, ...overlay } };
 }
 

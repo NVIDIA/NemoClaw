@@ -168,4 +168,21 @@ describe("ensureOpenshellForOnboard", () => {
     );
     expect(deps.error).toHaveBeenCalledWith("    blueprint.yaml max_openshell_version: 0.0.116");
   });
+
+  it("fails closed when the installed version remains unknown after installation", () => {
+    const deps = makeDeps({
+      isOpenshellInstalled: () => false,
+      getInstalledOpenshellVersion: () => null,
+      runCaptureOpenshell: () => "unknown build",
+    });
+
+    expect(() => ensureOpenshellForOnboard(deps)).toThrow("exit 1");
+    expect(deps.installOpenshell).toHaveBeenCalledOnce();
+    expect(deps.error).toHaveBeenCalledWith(
+      "  \u2717 OpenShell version could not be determined after installation.",
+    );
+    expect(deps.error).toHaveBeenCalledWith(
+      "    Install exact stable OpenShell 0.0.116 and retry.",
+    );
+  });
 });

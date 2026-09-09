@@ -2448,7 +2448,7 @@ Refresh one MCP server registration, or every server on the sandbox when no serv
 Restart reapplies the generated policy, reattaches the OpenShell provider when needed, and refreshes the sandbox agent adapter registration.
 For a trusted-private entry, restart replays recorded address pins without resolving the endpoint again or widening the policy.
 For a public entry, restart resolves the hostname again and refreshes the policy with the current validated public addresses.
-If the recorded host variable is exported, restart replaces the provider credential and waits for its new opaque revision.
+If the recorded host variable is exported, restart replaces the provider credential and waits for an attached credential handle. A legacy revision handle must advance; an OpenShell 0.0.116 stable handle can remain unchanged after provider identity and endpoint authorization are revalidated.
 Otherwise, restart reuses an existing provider only when its current metadata match the registry and the credential-resolution probe verifies the stored credential.
 Restart checks every selected server before it changes a policy, provider, or agent adapter.
 If credential verification fails or is inconclusive, restart exits without those changes.

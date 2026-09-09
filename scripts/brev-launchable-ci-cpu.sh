@@ -28,9 +28,8 @@
 #   bash scripts/brev-launchable-ci-cpu.sh --print-openshell-version  # resolve only
 #
 # Environment overrides:
-#   OPENSHELL_VERSION          — OpenShell CLI release tag (default: stable selector below)
-#   NEMOCLAW_OPENSHELL_CHANNEL — Release channel (stable/dev/auto)
-#   NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL — Required opt-in for the unverified dev channel
+#   OPENSHELL_VERSION          — OpenShell CLI release tag (must resolve to v0.0.116)
+#   NEMOCLAW_OPENSHELL_CHANNEL — Release channel (stable/auto)
 #   NEMOCLAW_REF               — NemoClaw git ref to clone (default: main)
 #   NEMOCLAW_CLONE_DIR         — Where to clone NemoClaw (default: ~/NemoClaw)
 #
@@ -70,27 +69,26 @@ assert_openshell_version() {
   fi
 }
 
+case "${NEMOCLAW_OPENSHELL_CHANNEL:-stable}" in
+  stable | auto) ;;
+  dev) fail "NemoClaw requires exact stable OpenShell 0.0.116; the dev channel is not supported." ;;
+  *) fail "NEMOCLAW_OPENSHELL_CHANNEL must be one of: stable, auto" ;;
+esac
 if [ -z "$OPENSHELL_VERSION" ]; then
   case "${NEMOCLAW_OPENSHELL_CHANNEL:-stable}" in
-    dev) OPENSHELL_VERSION="dev" ;;
     stable | auto) OPENSHELL_VERSION="v0.0.116" ;;
-    *) fail "NEMOCLAW_OPENSHELL_CHANNEL must be one of: stable, dev, auto" ;;
   esac
+fi
+assert_openshell_version "$OPENSHELL_VERSION"
+if [[ "$OPENSHELL_VERSION" != v* ]]; then
+  OPENSHELL_VERSION="v${OPENSHELL_VERSION}"
+fi
+if [[ "$OPENSHELL_VERSION" != "v0.0.116" ]]; then
+  fail "NemoClaw requires exact stable OpenShell 0.0.116; OPENSHELL_VERSION resolved to '${OPENSHELL_VERSION}'."
 fi
 if [ "${1:-}" = "--print-openshell-version" ]; then
   printf '%s\n' "$OPENSHELL_VERSION"
   exit 0
-fi
-if [[ "$OPENSHELL_VERSION" = "dev" ]]; then
-  if [[ "${NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL:-}" != "1" ]]; then
-    fail "Dev channel install skips SHA-256 verification. Set NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL=1 to explicitly accept an unverified OpenShell dev-channel install."
-  fi
-  warn "Dev channel install skips SHA-256 verification. Use only in trusted environments."
-else
-  assert_openshell_version "$OPENSHELL_VERSION"
-  if [[ "$OPENSHELL_VERSION" != v* ]]; then
-    OPENSHELL_VERSION="v${OPENSHELL_VERSION}"
-  fi
 fi
 OPENSHELL_VERSION_NO_V="${OPENSHELL_VERSION#v}"
 TARGET_USER="${SUDO_USER:-$(id -un)}"
@@ -213,9 +211,7 @@ install_openshell_cli_release() {
   retry 3 10 "download openshell" \
     curl -fsSL -o "$tmpdir/$asset" \
     "https://github.com/NVIDIA/OpenShell/releases/download/${OPENSHELL_VERSION}/${asset}"
-  if [[ "$OPENSHELL_VERSION" != "dev" ]]; then
-    verify_openshell_cli_asset "$tmpdir" "$asset"
-  fi
+  verify_openshell_cli_asset "$tmpdir" "$asset"
   validate_openshell_archive "$tmpdir/$asset" openshell
   tar xzf "$tmpdir/$asset" -C "$tmpdir"
   sudo install -m 755 "$tmpdir/openshell" /usr/local/bin/openshell
