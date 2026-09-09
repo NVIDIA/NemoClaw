@@ -284,7 +284,181 @@ describe("authenticated MCP rediscovery evidence", () => {
 });
 
 describe("authenticated MCP tool discovery transport retry", () => {
-  it("writes redacted boundary diagnostics before a discovery failure (#8746)", async () => {
+  it("retries one connection failure, records denied authentication, and restores the credential (#10944)", async () => {
+    const requests: FakeMcpRequest[] = [];
+    const setSecret = vi.fn();
+    const fakeMcp = { requests, setSecret } as unknown as FakeMcpHttpsServer;
+    const provider = {
+      registryPresent: true,
+      gatewayPresent: true,
+      attached: true,
+      credentialReady: true,
+    };
+    const policy = { registryPresent: true, gatewayPresent: true };
+    const adapter = { registered: true };
+    const host = {
+      nemoclaw: vi
+        .fn()
+        .mockImplementationOnce(async () => ({
+          exitCode: 1,
+          stdout: JSON.stringify({
+            provider,
+            policy,
+            adapter,
+            toolDiscovery: {
+              ok: false,
+              count: 0,
+              tools: [],
+              truncated: false,
+              commandStatus: 0,
+              failedStage: "initialization",
+              failureClass: "connection",
+              detail: "MCP request failed",
+            },
+          }),
+          stderr: "",
+        }))
+        .mockImplementationOnce(async () => {
+          requests.push(
+            successfulInitialize(),
+            request("notifications/initialized"),
+            request("tools/list"),
+            request("tools/list"),
+          );
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              provider,
+              policy,
+              adapter,
+              toolDiscovery: {
+                ok: true,
+                count: 2,
+                tools: ["fake_echo", "fake_status"],
+                truncated: false,
+                commandStatus: 0,
+              },
+            }),
+            stderr: "",
+          };
+        })
+        .mockImplementationOnce(async () => {
+          requests.push(
+            request("initialize", {
+              sessionId: "",
+              protocolVersion: "",
+              responseStatus: 401,
+              responseHasResult: false,
+            }),
+          );
+          return {
+            exitCode: 1,
+            stdout: JSON.stringify({
+              provider,
+              policy,
+              adapter,
+              toolDiscovery: {
+                ok: false,
+                count: 0,
+                tools: [],
+                truncated: false,
+                commandStatus: 0,
+                failedStage: "initialization",
+                failureClass: "authentication",
+                detail: "MCP endpoint rejected the request (HTTP 401)",
+              },
+            }),
+            stderr: "",
+          };
+        }),
+    } as unknown as Parameters<typeof assertAuthenticatedMcpToolDiscovery>[0];
+    const artifacts = discoveryArtifacts();
+    const progress = { event: vi.fn() };
+
+    await assertAuthenticatedMcpToolDiscovery(host, fakeMcp, {
+      artifacts,
+      sandboxName: "sandbox",
+      artifactPrefix: "hermes",
+      deniedSecret: "denied-secret",
+      hostSecret: EXPECTED_SECRET,
+      progress,
+    });
+
+    expect(host.nemoclaw).toHaveBeenCalledTimes(3);
+    expect(progress.event).toHaveBeenCalledOnce();
+    expect(setSecret.mock.calls).toEqual([["denied-secret"], [EXPECTED_SECRET]]);
+    expect(artifacts.writeJson).toHaveBeenLastCalledWith(
+      "hermes-mcp-tool-discovery-denied-auth.json",
+      expect.objectContaining({
+        toolDiscovery: expect.objectContaining({
+          commandStatus: 0,
+          failedStage: "initialization",
+          failureClass: "authentication",
+        }),
+      }),
+    );
+    expect(JSON.stringify(artifacts.writeJson.mock.calls)).not.toContain("denied-secret");
+    expect(JSON.stringify(artifacts.writeJson.mock.calls)).not.toContain(EXPECTED_SECRET);
+  });
+
+  it.each([
+    [
+      "a failed command",
+      1,
+      "not-json",
+      "runtime failed",
+      "openclaw mcp status --tools --json failed: not-json\nruntime failed",
+    ],
+    [
+      "a successful command",
+      0,
+      "not-json",
+      "",
+      "openclaw mcp status --tools --json did not return valid MCP discovery JSON",
+    ],
+    [
+      "a successful command with incomplete JSON",
+      0,
+      JSON.stringify({
+        provider: {
+          registryPresent: true,
+          gatewayPresent: true,
+          attached: true,
+          credentialReady: true,
+        },
+        policy: { registryPresent: true, gatewayPresent: true },
+        adapter: { registered: true },
+        toolDiscovery: {},
+      }),
+      "",
+      "openclaw mcp status --tools --json did not return valid MCP discovery JSON",
+    ],
+  ])(
+    "does not retry malformed status output from %s (#10944)",
+    async (_case, exitCode, stdout, stderr, expectedError) => {
+      const host = {
+        nemoclaw: vi.fn(async () => ({ exitCode, stdout, stderr })),
+      } as unknown as Parameters<typeof assertAuthenticatedMcpToolDiscovery>[0];
+      const artifacts = discoveryArtifacts();
+      const progress = { event: vi.fn() };
+
+      await expect(
+        assertAuthenticatedMcpToolDiscovery(host, fakeDiscoveryServer(), {
+          artifacts,
+          sandboxName: "sandbox",
+          artifactPrefix: "openclaw",
+          hostSecret: EXPECTED_SECRET,
+          progress,
+        }),
+      ).rejects.toThrow(expectedError);
+
+      expect(host.nemoclaw).toHaveBeenCalledOnce();
+      expect(progress.event).not.toHaveBeenCalled();
+      expect(artifacts.writeJson).not.toHaveBeenCalled();
+    },
+  );
+
+  it("writes redacted diagnostics before rejecting an exit-zero failed discovery (#8746)", async () => {
     const statusJson = {
       provider: {
         registryPresent: true,
@@ -307,7 +481,10 @@ describe("authenticated MCP tool discovery transport retry", () => {
         count: 0,
         tools: [],
         truncated: false,
-        detail: "MCP tool discovery request failed",
+        commandStatus: 0,
+        failedStage: "initialization" as const,
+        failureClass: "connection" as const,
+        detail: "MCP request failed",
         credential: STATUS_SECRET,
       },
     };
@@ -353,7 +530,10 @@ describe("authenticated MCP tool discovery transport retry", () => {
         count: 0,
         tools: [],
         truncated: false,
-        detail: "MCP tool discovery request failed",
+        commandStatus: 0,
+        failedStage: "initialization",
+        failureClass: "connection",
+        detail: "MCP request failed",
       },
       requests: [
         {
@@ -383,10 +563,10 @@ describe("authenticated MCP tool discovery transport retry", () => {
     expect(diagnostics).not.toContain(PROTOCOL_VERSION);
   });
 
-  it("retries one generic transport failure before any request reaches the fixture", () => {
+  it("retries one connection failure before any request reaches the fixture", () => {
     expect(
       shouldRetryMcpToolDiscoveryTransportFailure(
-        { ok: false, detail: "MCP tool discovery request failed" },
+        { ok: false, failureClass: "connection" },
         [],
         1,
       ),
@@ -399,7 +579,7 @@ describe("authenticated MCP tool discovery transport retry", () => {
   ])("does not retry when %s", (_case, requests, attempt) => {
     expect(
       shouldRetryMcpToolDiscoveryTransportFailure(
-        { ok: false, detail: "MCP tool discovery request failed" },
+        { ok: false, failureClass: "connection" },
         requests as FakeMcpRequest[],
         attempt as number,
       ),
@@ -409,7 +589,7 @@ describe("authenticated MCP tool discovery transport retry", () => {
   it("does not retry a classified product or endpoint failure", () => {
     expect(
       shouldRetryMcpToolDiscoveryTransportFailure(
-        { ok: false, detail: "MCP endpoint returned an invalid tool-list response" },
+        { ok: false, failureClass: "protocol" },
         [],
         1,
       ),
