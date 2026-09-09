@@ -41,18 +41,20 @@ Pi remains a release candidate. Ordinary installations reject `--agent pi` until
 | `nemoclaw launch <name>` | Run launch preflight and open interactive Pi |
 | `nemoclaw <name> connect` | Open a shell in the sandbox |
 | `nemoclaw <name> exec --workdir /sandbox --no-tty -- pi --no-approve --print "<task>"` | Run one headless task from the host |
-| `nemoclaw <name> exec --workdir /sandbox --no-tty -- pi --no-approve --mode json --print "<task>"` | Emit newline-delimited JSON task events |
+| `nemoclaw <name> exec --workdir /sandbox --no-tty -- pi --no-approve --no-context-files --mode json --print "<task>"` | Emit newline-delimited JSON task events |
 
 Inside a connected sandbox:
 
 ```bash
 pi
 pi --no-approve --print "Review the current changes"
-pi --no-approve --mode json --print --tools read "Read README.md"
+pi --no-approve --no-context-files --mode json --print --tools read "Read README.md"
 pi --no-context-files
 ```
 
-`--no-approve` ignores project-local executable resources. It does not disable `AGENTS.md` or `CLAUDE.md`; use `--no-context-files` for that boundary.
+`--no-approve` ignores project-local executable resources.
+It does not disable `AGENTS.md` or `CLAUDE.md`.
+Use `--no-context-files` when project instructions must not enter the prompt.
 
 ## Configure Model Metadata
 
@@ -82,7 +84,7 @@ Review the selected version, name, or timestamp before restore replaces sandbox 
 nemoclaw <name> snapshot restore <version-or-name-or-timestamp>
 ```
 
-Rebuild validates recorded authority and resolves the current release's Pi image.
+Rebuild validates recorded authority and selects the immutable Pi image authorised by the protected qualification receipt.
 
 ```bash
 nemoclaw <name> rebuild --yes
@@ -91,13 +93,16 @@ nemoclaw <name> recover
 
 ## Update the Host and Sandbox
 
+After updating NemoClaw, inspect registered sandboxes before rebuilding Pi.
+
 ```bash
 nemoclaw update --yes
 nemoclaw upgrade-sandboxes --check
 nemoclaw <name> rebuild --yes
 ```
 
-The host update does not self-update Pi inside a running sandbox. Rebuild selects the reviewed Pi package and exact image associated with the installed NemoClaw release.
+The host update does not self-update Pi inside a running sandbox.
+While Pi remains a candidate, rebuild uses the protected qualification receipt rather than the installed release catalogue.
 
 ## Stop or Remove the Sandbox
 

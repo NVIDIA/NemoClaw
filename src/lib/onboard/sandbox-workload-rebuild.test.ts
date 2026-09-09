@@ -671,43 +671,49 @@ describe("managed workload rebuild preflight", () => {
     );
   });
 
-  it("preserves Pi model tuning during startup-profile reconstruction", () => {
-    const previousProfile = {
-      ...managedStartupE2eProfile("pi"),
-      tuning: {
-        contextWindow: 65_536,
-        maxTokens: 8_192,
-        reasoning: false,
-        reasoningEffort: null,
-      },
-    };
-    const encodedProfile = encodeManagedStartupProfile(previousProfile);
-    const catalog: ManagedWorkloadRebuildCatalogHandoff = {
-      schemaVersion: 1,
-      providerId: "mxc",
-      agent: "pi",
-      previousReceipt: {
-        ...receipt("pi", "old"),
-        encodedProfile,
-        startupProfileSha256: createHash("sha256")
-          .update(encodedProfile, "utf8")
-          .digest("hex"),
-      },
-      previousContract: managedContract("pi", "old"),
-      previousProfile,
-      replacement: replacement("pi"),
-      corporateCa: null,
-    };
+  it.each([
+    ["explicit", 65_536, 8_192, false],
+    ["upper-bound", 4_194_304, 1_000_000_000, true],
+    ["omitted", null, null, null],
+  ] as const)(
+    "preserves Pi %s tuning instead of ambient values during startup-profile reconstruction",
+    (_label, contextWindow, maxTokens, reasoning) => {
+      const previousProfile = {
+        ...managedStartupE2eProfile("pi"),
+        tuning: { contextWindow, maxTokens, reasoning, reasoningEffort: null },
+      };
+      const encodedProfile = encodeManagedStartupProfile(previousProfile);
+      const catalog: ManagedWorkloadRebuildCatalogHandoff = {
+        schemaVersion: 1,
+        providerId: "mxc",
+        agent: "pi",
+        previousReceipt: {
+          ...receipt("pi", "old"),
+          encodedProfile,
+          startupProfileSha256: createHash("sha256")
+            .update(encodedProfile, "utf8")
+            .digest("hex"),
+        },
+        previousContract: managedContract("pi", "old"),
+        previousProfile,
+        replacement: replacement("pi"),
+        corporateCa: null,
+      };
 
-    const staged = stageManagedWorkloadRebuildProfile(
-      catalog,
-      rebuildProfileInput("pi"),
-      {},
-    );
-    const decoded = decodeManagedStartupProfile(staged.replacementProfile.encodedProfile);
+      const staged = stageManagedWorkloadRebuildProfile(
+        catalog,
+        rebuildProfileInput("pi"),
+        {
+          NEMOCLAW_CONTEXT_WINDOW: "131072",
+          NEMOCLAW_MAX_TOKENS: "4096",
+          NEMOCLAW_REASONING: "false",
+        },
+      );
+      const decoded = decodeManagedStartupProfile(staged.replacementProfile.encodedProfile);
 
-    expect(decoded.tuning).toEqual(previousProfile.tuning);
-  });
+      expect(decoded.tuning).toEqual(previousProfile.tuning);
+    },
+  );
 
   it("replays credential-bearing proxy intent without persisting credentials", async () => {
     managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource = vi.fn(async () =>
