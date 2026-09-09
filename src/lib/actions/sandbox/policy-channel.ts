@@ -1768,7 +1768,8 @@ function stoppedWechatCleanupFailureGuidance(
 
 /**
  * Wipe durable channel state before rebuild can preserve an obsolete auth blob.
- * OpenShell exec runs first, followed by SSH and the selected provider's stopped-state fallback.
+ * OpenShell exec runs first. A permitted reconciled runtime-provider retry runs before SSH.
+ * OpenClaw WeChat stopped-state cleanup runs last.
  * Fixes #3998.
  */
 async function clearSandboxChannelDurableState(
