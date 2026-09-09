@@ -786,7 +786,7 @@ export function writeFixtureDist(dist: string): void {
 export function runPatch(dist: string, audit = false) {
   return spawnSync(
     process.execPath,
-    ["--experimental-strip-types", PATCH_SCRIPT, ...(audit ? ["--audit"] : []), dist],
+    [PATCH_SCRIPT, ...(audit ? ["--audit"] : []), dist],
     {
       encoding: "utf8",
       timeout: 10_000,

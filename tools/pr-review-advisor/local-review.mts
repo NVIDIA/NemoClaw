@@ -176,7 +176,7 @@ async function main(): Promise<{ code: number | null; signal: NodeJS.Signals | n
       throw new Error("npm failed while preparing the trusted local review checkout");
     result = await run(
       process.execPath,
-      ["--experimental-strip-types", "--no-warnings", path.join(checkout, IMPLEMENTATION), source],
+      ["--no-warnings", path.join(checkout, IMPLEMENTATION), source],
       { cwd: checkout, env, inherit: true },
     );
     return { code: result.code, signal: received ?? result.signal };

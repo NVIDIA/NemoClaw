@@ -760,7 +760,6 @@ describe("native Podman CPU proof workflow", () => {
       const imported = spawnSync(
         process.execPath,
         [
-          "--experimental-strip-types",
           "--no-warnings",
           "--input-type=module",
           "-e",
@@ -775,14 +774,14 @@ describe("native Podman CPU proof workflow", () => {
       );
       const rejected = spawnSync(
         process.execPath,
-        ["--experimental-strip-types", "--no-warnings", scriptPath, "unknown"],
+        ["--no-warnings", scriptPath, "unknown"],
         { cwd: path.resolve("."), encoding: "utf8", env },
       );
       expect(rejected.status).toBe(1);
       expect(rejected.stderr).toContain("Expected exactly one mode");
       const cleaned = spawnSync(
         process.execPath,
-        ["--experimental-strip-types", "--no-warnings", scriptPath, "cleanup"],
+        ["--no-warnings", scriptPath, "cleanup"],
         { cwd: path.resolve("."), encoding: "utf8", env },
       );
       expect(cleaned.status).toBe(0);
@@ -793,7 +792,7 @@ describe("native Podman CPU proof workflow", () => {
       );
       const signaled = spawnSync(
         process.execPath,
-        ["--experimental-strip-types", "--no-warnings", scriptPath, "cleanup"],
+        ["--no-warnings", scriptPath, "cleanup"],
         { cwd: path.resolve("."), encoding: "utf8", env },
       );
       expect(signaled.status).toBe(1);

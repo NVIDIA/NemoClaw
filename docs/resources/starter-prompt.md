@@ -155,8 +155,8 @@ Before collecting secrets, determine every environment-variable name and the com
 Do not generate, rewrite, or redesign the helper or form.
 Use this reviewed pair without modification:
 
-- Helper: `https://raw.githubusercontent.com/NVIDIA/NemoClaw/dd61a307d7ddf7be99de8ff1e2678fb8ef42f8e6/scripts/local-credential-helper.mts` (SHA-256 `1a42bbe8dbc9003cb79d4e641b53760571aacd85293671aee97c09c0746fef33`).
-- Form: `https://raw.githubusercontent.com/NVIDIA/NemoClaw/dd61a307d7ddf7be99de8ff1e2678fb8ef42f8e6/docs/resources/local-credential-form.html` (SHA-256 `5512a256e0ad7c63a26ab82cf4f5924e98652097172ab8a5dc9d9358dd4f6ae8`).
+- Helper: `https://raw.githubusercontent.com/NVIDIA/NemoClaw/11e0bb209103b03ee8239cbc307d1cb5d3521866/scripts/local-credential-helper.mts` (SHA-256 `72c187067dca6423e7aa7fa4bfab660e4202805f503c79520d8a0cf24869b668`).
+- Form: `https://raw.githubusercontent.com/NVIDIA/NemoClaw/11e0bb209103b03ee8239cbc307d1cb5d3521866/docs/resources/local-credential-form.html` (SHA-256 `5512a256e0ad7c63a26ab82cf4f5924e98652097172ab8a5dc9d9358dd4f6ae8`).
 
 - Treat the two immutable URL and digest pairs as one reviewed trust boundary; before executing the helper, compute the SHA-256 digest of both downloaded files and compare each result with its pinned digest.
 - If either digest differs, do not execute the helper; delete both temporary files and stop.
@@ -171,7 +171,7 @@ Use this reviewed pair without modification:
 - Never omit the literal `--`.
 - Never use a relative, alias-only, or PATH-only approved executable.
 - Never put credentials in argv.
-- Command shape: `node --experimental-strip-types <helper> --execution-profile <profile> --form <form> --field NAME:secret -- <absolute-executable> <approved-args...>`.
+- Command shape: `node <helper> --execution-profile <profile> --form <form> --field NAME:secret -- <absolute-executable> <approved-args...>`.
 - Use **Preview Credentials**, **Edit**, then **Confirm and Run Approved Command**.
 - If the outcome is unknown, check whether the command ran; do not retry or resubmit blindly.
 - Keep secrets in memory only long enough to start the command.
