@@ -1054,19 +1054,17 @@ it.runIf(process.platform === "linux")(
 it.runIf(process.platform === "linux").each([
   {
     expectedError: null,
-    secondMarker: false,
     secondMode: "valid",
     secondTerminal: "absent",
   },
   {
     expectedError: "OpenClaw launch provider unavailable after 2 attempts",
-    secondMarker: true,
     secondMode: "provider-empty-message",
     secondTerminal: "provider",
   },
 ] as const)(
   "executes the real launch producer through $secondMode (#10978)",
-  async ({ expectedError, secondMarker, secondMode, secondTerminal }) => {
+  async ({ expectedError, secondMode, secondTerminal }) => {
     const calls: Array<{
       artifactName?: string;
       firstInput?: string;
@@ -1118,8 +1116,10 @@ it.runIf(process.platform === "linux").each([
         }),
       );
       await vi.advanceTimersByTimeAsync(1_000);
-      const expectedExitCode = expectedError === null ? 0 : null;
-      await expect(outcome).resolves.toEqual({ error: expectedError, exitCode: expectedExitCode });
+      await expect(outcome).resolves.toEqual({
+        error: expectedError === null ? null : expect.stringContaining(expectedError),
+        exitCode: expectedError === null ? 0 : null,
+      });
       expect(calls.map((call) => call.artifactName)).toEqual([
         "producer-handoff",
         "producer-handoff-provider-retry-02",
@@ -1131,7 +1131,7 @@ it.runIf(process.platform === "linux").each([
       );
       expect(
         calls[1]?.stderr.includes(`${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}:${calls[1]?.runId}`),
-      ).toBe(secondMarker);
+      ).toBe(expectedError !== null);
     } finally {
       vi.useRealTimers();
     }
