@@ -1272,7 +1272,7 @@ describe("Docker managed bootstrap adapter", () => {
     ).rejects.toThrow(
       "Managed bootstrap Docker replacement requires one bounded intended workload argv.",
     );
-    expect(fake.events).toContain("create:replacement");
+    expect(fake.events).not.toContain("create:replacement");
     expect(fake.events).not.toContain(`stop:${OLD_ID}`);
   });
 

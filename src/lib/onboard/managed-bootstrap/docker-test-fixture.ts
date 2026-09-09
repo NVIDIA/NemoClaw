@@ -7,6 +7,7 @@ import { expect, vi } from "vitest";
 
 import { managedStartupE2eProfile } from "../../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import type { DockerContainerInspect } from "../docker-gpu-patch-types";
+import { openshellMainProcessSpecEnvValue } from "../docker-startup-command-env";
 import { encodeManagedStartupProfile, type ManagedStartupAgent } from "../managed-startup/profile";
 import { createManagedStartupRootApplyRequest } from "../managed-startup/root-apply";
 import {
@@ -130,7 +131,7 @@ function originalInspect(inputs = agentInputs()): DockerContainerInspect {
       Env: [
         "A=1",
         `${MANAGED_BOOTSTRAP_IDENTITY_ENV}=${IDENTITY}`,
-        "OPENSHELL_SANDBOX_COMMAND=sleep infinity",
+        `OPENSHELL_MAIN_PROCESS_SPEC=${openshellMainProcessSpecEnvValue(inputs.heldArgv, false)}`,
         "OPENSHELL_OCI_IMAGE_USER=root",
         "OPENSHELL_SANDBOX_UID=",
         "OPENSHELL_SANDBOX_GID=",

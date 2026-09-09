@@ -41,7 +41,11 @@ import {
   getDockerGpuSupervisorReconnectTimeoutSecs,
   waitForOpenShellSupervisorReconnect,
 } from "../docker-gpu-supervisor-reconnect";
-import { openshellSandboxCommandEnvValue } from "../docker-startup-command-env";
+import {
+  OPENSHELL_MAIN_PROCESS_SPEC_ENV,
+  parseOpenShellMainProcessSpecEnvValue,
+  replaceOpenShellMainProcessSpecCommand,
+} from "../docker-startup-command-env";
 import {
   hasOpenShellSandboxOwnership,
   OPENSHELL_SANDBOX_ID_LABEL,
@@ -124,7 +128,6 @@ const COMPLETION_TEMP_PREFIX = "nemoclaw-managed-bootstrap-completion";
 const COMPLETION_MAX_BYTES = 4096;
 const DOCKER_DRIVER_ID = "docker";
 const MAX_RECOVERY_FAILURE_DETAIL_BYTES = 8 * 1024;
-const OPENSHELL_DRIVER_IDLE_COMMAND = "sleep infinity";
 
 export const MANAGED_BOOTSTRAP_TRAMPOLINE_EXECUTABLE = "/usr/local/bin/nemoclaw-managed-bootstrap";
 
@@ -524,9 +527,12 @@ function assertHeldCommand(
     throw new Error("Managed bootstrap hold does not contain exactly one bootstrap identity.");
   }
   assertBootstrapIdentityEnvironment(inspect, bootstrapIdentity);
-  if (
-    envValue(inspect.Config?.Env, "OPENSHELL_SANDBOX_COMMAND") !== OPENSHELL_DRIVER_IDLE_COMMAND
-  ) {
+  const encoded = envValue(inspect.Config?.Env, OPENSHELL_MAIN_PROCESS_SPEC_ENV);
+  if (!encoded) {
+    throw new Error("Managed bootstrap Docker workload left the OpenShell idle hold boundary.");
+  }
+  const spec = parseOpenShellMainProcessSpecEnvValue(encoded);
+  if (!exactArrayEqual(spec.command, heldWorkloadArgv)) {
     throw new Error("Managed bootstrap Docker workload left the OpenShell idle hold boundary.");
   }
 }
@@ -764,8 +770,14 @@ function assertReplacementBoundary(
   ) {
     throw new Error("Managed bootstrap Docker replacement process boundary changed.");
   }
-  const intended = openshellSandboxCommandEnvValue(handle.intendedWorkloadArgv);
-  if (envValue(inspect.Config?.Env, "OPENSHELL_SANDBOX_COMMAND") !== intended) {
+  const encoded = envValue(inspect.Config?.Env, OPENSHELL_MAIN_PROCESS_SPEC_ENV);
+  if (
+    !encoded ||
+    !exactArrayEqual(
+      parseOpenShellMainProcessSpecEnvValue(encoded).command,
+      handle.intendedWorkloadArgv,
+    )
+  ) {
     throw new Error(
       "Managed bootstrap Docker replacement did not restore the intended sandbox command.",
     );
@@ -878,7 +890,7 @@ function assertExactEnvironmentDelta(
   original: Record<string, unknown>,
   replacement: Record<string, unknown>,
   mode: DockerGpuPatchMode,
-  intendedSandboxCommand: string,
+  intendedMainProcessSpec: string,
   omitOciImageUser: boolean,
 ): void {
   const gpuAugment = mode.kind !== "startup-command";
@@ -889,8 +901,8 @@ function assertExactEnvironmentDelta(
       .filter((entry) => !gpuAugment || !REPLACED_GPU_ENV_KEYS.has(entry.split("=", 1)[0] ?? ""))
       .filter((entry) => !omitOciImageUser || !entry.startsWith("OPENSHELL_OCI_IMAGE_USER="))
       .map((entry) =>
-        entry.startsWith("OPENSHELL_SANDBOX_COMMAND=")
-          ? `OPENSHELL_SANDBOX_COMMAND=${intendedSandboxCommand}`
+        entry.startsWith(`${OPENSHELL_MAIN_PROCESS_SPEC_ENV}=`)
+          ? `${OPENSHELL_MAIN_PROCESS_SPEC_ENV}=${intendedMainProcessSpec}`
           : entry,
       ),
   ];
@@ -1063,7 +1075,7 @@ function assertReplacementMatchesIntent(
     readonly requiredUlimits: readonly DockerUlimit[];
     readonly extraGroupGids: readonly string[];
   },
-  intendedSandboxCommand: string,
+  intendedWorkloadArgv: readonly string[],
   omitOciImageUser: boolean,
 ): string {
   const original = canonicalObject(originalCanonicalJson);
@@ -1078,12 +1090,23 @@ function assertReplacementMatchesIntent(
   const observedInspect = objectField(observed, "inspect");
   const observedConfig = objectField(observedInspect, "Config");
   const observedHost = objectField(observedInspect, "HostConfig");
+  const originalMainProcessSpec = envValue(
+    exactStringArray(originalConfig.Env ?? [], "original environment"),
+    OPENSHELL_MAIN_PROCESS_SPEC_ENV,
+  );
+  if (!originalMainProcessSpec) {
+    throw new Error("Managed bootstrap requires the OpenShell 0.0.116 main-process boundary.");
+  }
+  const intendedMainProcessSpec = replaceOpenShellMainProcessSpecCommand(
+    originalMainProcessSpec,
+    intendedWorkloadArgv,
+  );
   const gpuAugment = plan.mode.kind !== "startup-command";
   assertExactEnvironmentDelta(
     originalConfig,
     observedConfig,
     plan.mode,
-    intendedSandboxCommand,
+    intendedMainProcessSpec,
     omitOciImageUser,
   );
   const originalCapabilities = capabilitySet(originalHost.CapAdd, "original capability additions");
@@ -3454,6 +3477,11 @@ export function createDockerManagedBootstrapAdapter(
         });
       }
       const trampolineCommand = replacementCommand(handle, snapshot);
+      if (handle.intendedWorkloadArgv.length === 0) {
+        throw new Error(
+          "Managed bootstrap Docker replacement requires one bounded intended workload argv.",
+        );
+      }
       const omitOciImageUser = shouldOmitOpenShellOciImageUser(
         parsed.inspect,
         handle.intendedWorkloadArgv,
@@ -3514,19 +3542,13 @@ export function createDockerManagedBootstrapAdapter(
         }
         assertMetadata(createdInspect, handle.sandbox, snapshot.metadata);
         assertRootSupervisor(createdInspect);
-        const intendedSandboxCommand = openshellSandboxCommandEnvValue(handle.intendedWorkloadArgv);
-        if (!intendedSandboxCommand) {
-          throw new Error(
-            "Managed bootstrap Docker replacement requires one bounded intended workload argv.",
-          );
-        }
         assertReplacementBoundary(createdInspect, handle, snapshot);
         const expectedActivatedSpecHash = assertReplacementMatchesIntent(
           snapshot.specCanonicalJson,
           createdInspect,
           originalName,
           plan,
-          intendedSandboxCommand,
+          handle.intendedWorkloadArgv,
           omitOciImageUser,
         );
         const preparedSpec = normalizeDockerManagedBootstrapLaunchSpec(createdInspect);
