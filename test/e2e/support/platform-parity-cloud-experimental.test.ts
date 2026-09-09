@@ -803,6 +803,18 @@ assert_status_mode disabled
     expect(env[DCODE_BASE_IMAGE_ENV]).toBeUndefined();
   });
 
+  it("omits base overrides from managed-image fresh re-onboarding (#11305)", () => {
+    const baseImageReference = `${DCODE_BASE_IMAGE}@sha256:${"a".repeat(64)}`;
+    const env = buildCloudExperimentalCommandEnv(
+      "deepagents-sandbox",
+      "secret-key",
+      { E2E_WORKLOAD_SOURCE: "managed-image", [DCODE_BASE_IMAGE_ENV]: baseImageReference },
+      { dcodeBaseImageReference: baseImageReference, forwardDcodeBaseImage: true },
+    );
+
+    expect(env[DCODE_BASE_IMAGE_ENV]).toBeUndefined();
+  });
+
   it("forwards the contract-selected Deep Agents Code base image reference instead of the ambient publication index", () => {
     const indexReference = `${DCODE_BASE_IMAGE}@sha256:${"a".repeat(64)}`;
     const platformReference = `${DCODE_BASE_IMAGE}@sha256:${"b".repeat(64)}`;

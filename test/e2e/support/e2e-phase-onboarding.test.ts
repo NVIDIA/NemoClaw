@@ -280,7 +280,10 @@ describe("onboarding phase fixture", () => {
     expect(runner.calls[0]?.options?.env).not.toHaveProperty(DCODE_BASE_IMAGE_ENV);
   });
 
-  it("uses the exact candidate catalog without a second Deep Agents base authority", async () => {
+  it.each([
+    ["published cohort", ""],
+    ["candidate catalog", '{"langchain-deepagents-code":{}}'],
+  ])("uses the %s without a Deep Agents base override (#11305)", async (_source, catalog) => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(0, "onboarded\n"));
     const secrets = new FakeSecrets({ NVIDIA_INFERENCE_API_KEY: "secret-token" });
@@ -289,7 +292,7 @@ describe("onboarding phase fixture", () => {
     const instance = await withProcessEnvironment(
       {
         E2E_WORKLOAD_SOURCE: "managed-image",
-        NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: '{"langchain-deepagents-code":{}}',
+        NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: catalog,
         [DCODE_BASE_IMAGE_ENV]: undefined,
       },
       () =>

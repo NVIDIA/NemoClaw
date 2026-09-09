@@ -70,11 +70,12 @@ export function buildCloudExperimentalCommandEnv(
 ): NodeJS.ProcessEnv {
   const candidateDcodeBaseImage =
     options.dcodeBaseImageReference ?? base[DCODE_BASE_IMAGE_ENV]?.trim();
-  const dcodeBaseImage = options.forwardDcodeBaseImage && candidateDcodeBaseImage
-    ? requireDcodeBaseImageReference(
-        { [DCODE_BASE_IMAGE_ENV]: candidateDcodeBaseImage },
-      )
-    : undefined;
+  const dcodeBaseImage =
+    base.E2E_WORKLOAD_SOURCE !== "managed-image" &&
+    options.forwardDcodeBaseImage &&
+    candidateDcodeBaseImage
+      ? requireDcodeBaseImageReference({ [DCODE_BASE_IMAGE_ENV]: candidateDcodeBaseImage })
+      : undefined;
   return {
     ...buildAvailabilityProbeEnv(base),
     CLOUD_EXPERIMENTAL_MODEL: base.NEMOCLAW_MODEL,
