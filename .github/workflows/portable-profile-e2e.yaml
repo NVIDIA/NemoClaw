@@ -88,8 +88,7 @@ jobs:
       - name: Install pinned OpenShell
         run: |
           env -u GH_TOKEN -u GITHUB_TOKEN NEMOCLAW_NON_INTERACTIVE=1 bash scripts/install-openshell.sh
-          authority_dir="/opt/nemoclaw-openshell-e2e/bin"
-          sudo install -d -o root -g root -m 0755 "$authority_dir"
+          authority_dir="/usr/bin"
           for component in openshell openshell-gateway openshell-sandbox; do
             resolved="$(command -v "$component")"
             sudo install -o root -g root -m 0755 "$resolved" "$authority_dir/$component"
@@ -101,12 +100,12 @@ jobs:
         run: |
           set -euo pipefail
           openshell_bin="$(command -v openshell)"
-          test "$openshell_bin" = "/opt/nemoclaw-openshell-e2e/bin/openshell"
+          test "$openshell_bin" = "/usr/bin/openshell"
           test -f "$openshell_bin"
           for component in \
-            /opt \
-            /opt/nemoclaw-openshell-e2e \
-            /opt/nemoclaw-openshell-e2e/bin \
+            / \
+            /usr \
+            /usr/bin \
             "$openshell_bin"; do
             test ! -L "$component"
             test "$(stat -c '%u:%g:%a' "$component")" = "0:0:755"
