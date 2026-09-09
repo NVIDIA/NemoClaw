@@ -153,4 +153,19 @@ describe("ensureOpenshellForOnboard", () => {
     );
     expect(deps.error).toHaveBeenCalledWith("    blueprint.yaml min_openshell_version: 0.0.116");
   });
+
+  it("applies the exact 0.0.116 ceiling when the blueprint omits a maximum", () => {
+    const deps = makeDeps({
+      getInstalledOpenshellVersion: () => "0.0.117",
+      getBlueprintMinOpenshellVersion: () => null,
+      getBlueprintMaxOpenshellVersion: () => null,
+      runCaptureOpenshell: () => "openshell 0.0.117",
+    });
+
+    expect(() => ensureOpenshellForOnboard(deps)).toThrow("exit 1");
+    expect(deps.error).toHaveBeenCalledWith(
+      "  \u2717 openshell 0.0.117 is above the maximum supported by this NemoClaw release.",
+    );
+    expect(deps.error).toHaveBeenCalledWith("    blueprint.yaml max_openshell_version: 0.0.116");
+  });
 });

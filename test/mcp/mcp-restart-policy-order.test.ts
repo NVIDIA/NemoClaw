@@ -345,6 +345,7 @@ bridge.restartMcpBridge("alpha", "example").then(
     restartAll = false,
     pendingDenyTools,
     policyApplyFails = false,
+    stableRevision = false,
   }: {
     probeResponses: Record<
       string,
@@ -359,12 +360,13 @@ bridge.restartMcpBridge("alpha", "example").then(
     restartAll?: boolean;
     pendingDenyTools?: string[];
     policyApplyFails?: boolean;
+    stableRevision?: boolean;
   }) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-restart-credential-"));
     const gatewayManagement = writeManagedGatewayDeclaration(home);
     const script = String.raw`
 process.env.HOME = ${JSON.stringify(home)};
-delete process.env.MCP_TOKEN;
+${stableRevision ? 'process.env.MCP_TOKEN = "host-only-secret";' : "delete process.env.MCP_TOKEN;"}
 delete process.env.LATER_TOKEN;
 const registry = require("./src/lib/state/registry.js");
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
@@ -444,7 +446,12 @@ policies.applyPresetContent = () => {
   policyApplyCalls += 1;
   return !policyApplyFails;
 };
-processRecovery.executeSandboxExecCommand = () => ({ status: 0, stdout: "v" + resourceVersion, stderr: "" });
+const stableRevision = ${JSON.stringify(stableRevision)};
+processRecovery.executeSandboxExecCommand = () => ({
+  status: 0,
+  stdout: stableRevision ? "s" + "a".repeat(64) : "v" + resourceVersion,
+  stderr: "",
+});
 processRecovery.executeSandboxCommand = (_sandbox, command) => ({
   status: 0,
   stdout: command === "command -v mcporter" ? "/usr/local/bin/mcporter\n" : "registered\n",
@@ -595,6 +602,34 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
       providerCalls: ["provider update alpha-mcp-example"],
       statusCalls: [expectedStatusCall("example")],
     });
+  }, 75_000);
+
+  it("requires a post-update wire proof when the stable handle is unchanged", () => {
+    const payload = runCredentialRestart({
+      stableRevision: true,
+      probeResponses: {
+        example: {
+          ok: null,
+          httpStatus: 401,
+          controlHttpStatus: 401,
+          detail: "updated credential remained unauthorized",
+        },
+      },
+    });
+
+    expect(payload).toMatchObject({
+      outcome: "rejected",
+      message: expect.stringContaining(
+        "MCP server 'example' did not authorize its unchanged stable credential handle after provider update:",
+      ),
+      policyApplyCalls: 2,
+      providerCalls: [
+        "provider update alpha-mcp-example --credential MCP_TOKEN",
+        "provider update alpha-mcp-example",
+      ],
+      statusCalls: [expectedStatusCall("example")],
+    });
+    expect(payload.message).not.toContain("host-only-secret");
   }, 75_000);
 
   it("retains journaled replacement intent until restart policy activation succeeds (#11115)", () => {

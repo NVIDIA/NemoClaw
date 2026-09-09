@@ -781,6 +781,7 @@ test(
         "-e",
         buildCredentialWindowChildScript({
           mcpUrl: tunnel.url,
+          maxRuntimeMs: 10 * 60_000,
           paths: RESTORED_CREDENTIAL_WINDOW_PATHS,
         }),
       ],

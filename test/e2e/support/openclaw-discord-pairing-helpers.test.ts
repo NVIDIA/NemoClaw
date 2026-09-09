@@ -528,7 +528,7 @@ describe("OpenClaw Discord pairing helper contracts", () => {
         "SLACK_APP_TOKEN must be the OpenShell credential-handle reference",
       );
       expect(result.stderr).toContain("NETWORK_ATTEMPTED=false");
-      expect(result.stderr).not.toContain("xapp-raw-slack-token");
+      expect(result.stderr).not.toContain(value || "xapp-raw-slack-token");
     },
   );
 
@@ -626,7 +626,7 @@ describe("OpenClaw Discord pairing helper contracts", () => {
         "Discord Gateway proof requires the stable-handle DISCORD_BOT_TOKEN placeholder",
       );
       expect(result.stderr).not.toContain("ECONNREFUSED");
-      expect(result.stderr).not.toContain("raw-discord-token");
+      expect(result.stderr).not.toContain(value || "raw-discord-token");
     },
   );
 

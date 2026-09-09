@@ -51,6 +51,15 @@ export function credentialWindowRequestId(
   return `${CREDENTIAL_WINDOW_REQUEST_PREFIX}:${step}`;
 }
 
+export function credentialWindowStableHandlePattern(
+  envName = CREDENTIAL_WINDOW_ENV_NAME,
+): RegExp {
+  if (!/^[A-Z_][A-Z0-9_]{0,127}$/u.test(envName)) {
+    throw new Error("credential window environment name is invalid");
+  }
+  return new RegExp(`^openshell:resolve:env:(s[a-f0-9]{64})_${envName}$`, "u");
+}
+
 export function buildCredentialWindowProviderUpdateArgs(
   providerName: string,
   removeCredential = false,
@@ -95,6 +104,7 @@ export function buildCredentialWindowChildScript(
     mcpUrl: options.mcpUrl,
     readyPath: (options.paths ?? CREDENTIAL_WINDOW_PATHS).ready,
     requestPrefix: CREDENTIAL_WINDOW_REQUEST_PREFIX,
+    stableHandlePatternSource: credentialWindowStableHandlePattern().source,
     steps: CREDENTIAL_WINDOW_STEPS,
   });
 
@@ -103,9 +113,7 @@ const fs = require("node:fs");
 const https = require("node:https");
 const config = ${config};
 const credentialPlaceholder = process.env[config.envName] || "";
-const stableHandlePattern = new RegExp(
-  "^openshell:resolve:env:(s[a-f0-9]{64})_" + config.envName + "$",
-);
+const stableHandlePattern = new RegExp(config.stableHandlePatternSource);
 const stableHandleMatch = stableHandlePattern.exec(credentialPlaceholder);
 if (!stableHandleMatch) throw new Error("old child did not receive a stable credential handle");
 const stableHandle = stableHandleMatch[1];
@@ -180,14 +188,13 @@ const deadline = Date.now() + config.maxRuntimeMs;
 export function buildCredentialWindowOneShotScript(): string {
   const config = JSON.stringify({
     envName: CREDENTIAL_WINDOW_ENV_NAME,
+    stableHandlePatternSource: credentialWindowStableHandlePattern().source,
   });
   return `
 const https = require("node:https");
 const config = ${config};
 const credentialPlaceholder = process.env[config.envName] || "";
-const stableHandlePattern = new RegExp(
-  "^openshell:resolve:env:(s[a-f0-9]{64})_" + config.envName + "$",
-);
+const stableHandlePattern = new RegExp(config.stableHandlePatternSource);
 const stableHandleMatch = stableHandlePattern.exec(credentialPlaceholder);
 if (!stableHandleMatch) throw new Error("fresh child did not receive a stable credential handle");
 const target = new URL(process.argv[1]);

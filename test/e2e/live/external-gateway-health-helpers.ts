@@ -15,7 +15,10 @@ import {
   externalGatewayHealthProcessStopped,
   stopExternalGatewayHealthGateway,
 } from "../fixtures/external-gateway-health-process.ts";
-import { OPENSHELL_V0116_QUALIFICATION } from "../fixtures/openshell-v0116-qualification.ts";
+import {
+  exactGatewayRelease,
+  OPENSHELL_V0116_QUALIFICATION,
+} from "../fixtures/openshell-v0116-qualification.ts";
 import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import { runBoundedRetry } from "../../../tools/e2e/retry-evidence.mts";
@@ -211,7 +214,7 @@ export async function startPreparedExternalTlsGateway({
     },
   );
   requireProbeSuccess(version, "OpenShell gateway version check");
-  if (!`${version.stdout}\n${version.stderr}`.includes(OPENSHELL_V0116_QUALIFICATION.version)) {
+  if (exactGatewayRelease(version.stdout) !== OPENSHELL_V0116_QUALIFICATION.version) {
     throw new Error("The OpenShell gateway release does not match the required release.");
   }
 

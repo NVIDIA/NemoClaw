@@ -132,6 +132,38 @@ async function assertRestartCredentialsAvailable(
   }
 }
 
+async function assertUpdatedStableCredentialAuthorized(
+  sandboxName: string,
+  entry: McpBridgeEntry,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
+  previousRevision: McpCredentialRevisionObservation | undefined,
+  credentialRevision: McpCredentialRevisionObservation,
+): Promise<void> {
+  if (previousRevision !== credentialRevision || !credentialRevision.startsWith("s")) {
+    return;
+  }
+  let detail = "post-update wire-level credential verification did not return a result";
+  try {
+    const [status] = await statusMcpBridge(sandboxName, entry.server, {
+      allowCredentialProbeWithAdapterMismatch: true,
+      probeCredentialResolution: true,
+      runtimeSelection,
+    });
+    const probe = status?.provider.credentialResolution;
+    if (probe?.ok === true) return;
+    if (probe?.detail) detail = restartStatusDetailForDisplay(probe.detail, entry, detail);
+  } catch (error) {
+    detail = restartStatusDetailForDisplay(
+      error instanceof Error ? error.message : String(error),
+      entry,
+      "post-update credential status inspection failed",
+    );
+  }
+  throw new McpBridgeError(
+    `MCP server '${entry.server}' did not authorize its unchanged stable credential handle after provider update: ${detail}.`,
+  );
+}
+
 export async function restartMcpBridge(sandboxName: string, server?: string): Promise<void> {
   return withMcpLifecycleLock(sandboxName, () => {
     assertHermesPortableCommandUnavailable(sandboxName, "sandbox:mcp:restart");
@@ -291,6 +323,15 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
           : {}),
       },
     );
+    if (providerResult.action === "updated") {
+      await assertUpdatedStableCredentialAuthorized(
+        sandboxName,
+        entry,
+        providerRuntimeSelection,
+        previousCredentialRevision,
+        credentialRevision,
+      );
+    }
     registerAgentAdapterAtCurrentCredentialRevision(
       sandboxName,
       entryAdapter,

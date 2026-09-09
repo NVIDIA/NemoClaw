@@ -301,4 +301,5 @@ export const teamsManifest = {
       ],
     },
   ],
+  state: {},
 } as const satisfies ChannelManifest;

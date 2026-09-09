@@ -292,7 +292,7 @@ export function ensureOpenshellForOnboard(
     deps.exit(1);
   }
 
-  const maxOpenshellVersion = deps.getBlueprintMaxOpenshellVersion();
+  const maxOpenshellVersion = deps.getBlueprintMaxOpenshellVersion() ?? "0.0.116";
   if (
     installedOpenshellVersion &&
     maxOpenshellVersion &&

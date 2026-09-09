@@ -8,3 +8,9 @@ export const OPENSHELL_V0116_QUALIFICATION = Object.freeze({
     "ghcr.io/nvidia/openshell/supervisor@sha256:c8c42aef16c200063e32cbf72e553e4ead027085427b555efafd95063ecead42",
   version: "0.0.116",
 });
+
+export function exactGatewayRelease(versionOutput: string): string | null {
+  const tokens = versionOutput.match(/(?:^|\s)v?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)(?=\s|$)/gu);
+  if (tokens?.length !== 1) return null;
+  return tokens[0]!.trim().replace(/^v/u, "");
+}
