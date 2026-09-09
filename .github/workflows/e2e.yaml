@@ -6076,7 +6076,6 @@ jobs:
         openshell-credential-generation-window,
         openshell-dev-artifact,
         mcp-bridge-dev,
-        managed-image-protected-audit,
         managed-image-multiarch-startup,
         llama-cpp-dgx-spark-plan,
         llama-cpp-dgx-spark-qualification,

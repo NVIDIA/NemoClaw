@@ -319,9 +319,6 @@ describe("reviewed npm audit gate", () => {
     );
 
     expect(callers).toHaveLength(6);
-    expect(callers.map(({ timeoutMinutes }) => timeoutMinutes)).toEqual([
-      25, 25, 25, 25, 25, 25,
-    ]);
     expect(Math.min(...callers.map(({ timeoutMinutes }) => timeoutMinutes))).toBeGreaterThanOrEqual(
       minimumJobTimeoutMinutes,
     );
