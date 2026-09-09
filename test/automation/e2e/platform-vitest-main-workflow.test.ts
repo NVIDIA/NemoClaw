@@ -47,7 +47,7 @@ describe("platform evidence workflow", () => {
     });
   });
 
-  it("isolates credentialed macOS E2E from mutable non-live dependencies", () => {
+  it("keeps credentialed macOS E2E independent from non-live shard failures", () => {
     const nonLive = job("macos-vitest");
     const liveJob = job("macos-live-e2e");
     const live = step("macos-live-e2e", "Run macOS live E2E");
@@ -55,7 +55,7 @@ describe("platform evidence workflow", () => {
     expect(nonLive.steps).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ name: "Run macOS live E2E" })]),
     );
-    expect(liveJob.needs).toBe("macos-vitest");
+    expect(liveJob.needs).toBeUndefined();
     expect(liveJob.if).toContain("github.ref == 'refs/heads/main'");
     expect(JSON.stringify(liveJob)).not.toContain("brew install");
     expect(installOpenShell.run).toContain("scripts/install-openshell.sh");

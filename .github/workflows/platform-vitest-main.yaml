@@ -90,7 +90,7 @@ jobs:
       matrix:
         include:
           - shard: 1
-            timeout_minutes: 60
+            timeout_minutes: 30
           - shard: 2
             timeout_minutes: 30
           - shard: 3
@@ -177,7 +177,6 @@ jobs:
   macos-live-e2e:
     name: macOS live E2E
     if: ${{ github.ref == 'refs/heads/main' }}
-    needs: macos-vitest
     runs-on: macos-26
     timeout-minutes: 60
     steps:
