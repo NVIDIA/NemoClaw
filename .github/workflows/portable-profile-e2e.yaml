@@ -41,6 +41,7 @@ on:
       - "test/e2e/live/portable-profile-gateway-proof.ts"
       - "test/e2e/live/portable-profile-rootless-linux.test.ts"
       - "tools/e2e/check-semantic-phases.mts"
+      - "tools/e2e/full-e2e-timeout-contract.mts"
 
 permissions:
   contents: read

@@ -222,7 +222,8 @@ boundaries are the behavior under test.
 `.github/workflows/platform-vitest-main.yaml` publishes the `CI / Platform Compatibility` workflow.
 It runs the Ubuntu 26.04 compatibility contracts and the full Vitest suite in four shards on macOS and WSL.
 The matrix disables `fail-fast`.
-The first macOS shard has a 60-minute budget for live E2E; the other shards have 30 minutes.
+The first macOS shard has a 95-minute job budget: a 70-minute live-E2E deadline plus
+25 minutes of setup, cleanup, and artifact headroom. The other shards have 30 minutes.
 The first WSL shard has a 180-minute budget for root-required contracts and live E2E; the other shards have 90 minutes.
 
 On shard 1, the workflow runs focused macOS and WSL live E2E only when the run tests `main` and Docker is available.

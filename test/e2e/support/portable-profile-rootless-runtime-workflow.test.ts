@@ -260,6 +260,7 @@ ${serviceIdentityCheck}`,
     const revisionExpression = "${{ github.event.pull_request.head.sha || github.sha }}";
 
     expect(workflow.on.pull_request.types).toEqual(["opened", "synchronize", "reopened"]);
+    expect(workflow.on.push.paths).toContain("tools/e2e/full-e2e-timeout-contract.mts");
     expect(workflow.on.pull_request.paths).toEqual(
       expect.arrayContaining([
         "src/lib/onboard/experimental/portable-host-preparation.ts",

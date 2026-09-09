@@ -352,7 +352,8 @@ test/e2e/
 - `.github/workflows/platform-vitest-main.yaml` publishes `CI / Platform Compatibility`.
   It runs the Ubuntu 26.04 compatibility contracts and four full-suite Vitest shards on each of macOS and WSL.
   Each macOS shard installs the pinned OpenShell formula.
-  Shard 1 has a 60-minute budget for live E2E; the other shards have 30 minutes.
+  Shard 1 has a 95-minute job budget: a 70-minute live-E2E deadline plus 25 minutes of setup, cleanup, and artifact headroom.
+  The other shards have 30 minutes.
   WSL shard 1 has a 180-minute budget for root-required contracts and live E2E; the other shards have 90 minutes.
   On shard 1, the workflow runs focused macOS and WSL live E2E only when the run tests `main` and Docker is available.
   Otherwise, those live tests skip and the platform contracts remain as evidence.
