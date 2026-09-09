@@ -492,6 +492,8 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       "c0a4ddf25a02a9fe02b2df53a60942ea887610f04d4ce16a121b6e79a5aeff1a",
       "56fc6482d1508b73604099e6fd6c16daea16275cf36cc25c1c5366c82a4394e3",
       "aa4afa0397780c26e0539625945052082731c441b7157cfe5917211418083756",
+      // Exact #11251 template after immutable stable-channel enforcement.
+      "9b906cc4d61c469cbd416169c678a7b4f3d5d3c3dee23fa902e735a6c3d94f27",
     ],
     formula: {
       asset: "openshell.rb",
@@ -507,6 +509,8 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
     installerTemplateSha256: [
       "243f607a1b9a67c116f80844d5cd6e7185d63537e74fb08b3994652f79cb00e9",
       "2b6ad3e0730d3220da05d13b88fdba4458de46840bad57942ecad26a5d606017",
+      // Exact #11251 template after immutable stable-override validation.
+      "d570aa89cd5845118ca0797180527e686c264d292340fe6cc54f3133be8d0f7c",
     ],
     manifests: [
       {
