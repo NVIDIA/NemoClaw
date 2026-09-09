@@ -28,7 +28,7 @@ import {
   TOOL_DISCLOSURE_ENV,
   type ToolDisclosure,
 } from "../tool-disclosure";
-import { applyAgentsManifestEnv } from "./agents-manifest";
+import { applyAgentsManifestEnv, assertNoPerAgentMaxSpawnDepthJson } from "./agents-manifest";
 import type { OnboardFlags } from "./command-support";
 import {
   type ExperimentalOnboardProfile,
@@ -737,6 +737,13 @@ async function runOnboardCommandAttempt(
   };
   let options = resolvedOptions;
   try {
+    const selectedAgent = deps.flags.agent ?? env.NEMOCLAW_AGENT;
+    const validationAgent = resolveAgentNameAlias(selectedAgent, ["openclaw"]) ?? selectedAgent;
+    if (options.agentsManifest) {
+      applyAgentsManifestEnv(options.agentsManifest, env);
+    } else if (isOpenclawAgent(validationAgent)) {
+      assertNoPerAgentMaxSpawnDepthJson(env.NEMOCLAW_EXTRA_AGENTS_JSON);
+    }
     const activation = await activatePortableInference(resolvedOptions, deps, env);
     options = activation.options;
     restoreServingProfileEnvironment = applyServingProfileEnvironment(options, env);
@@ -747,7 +754,6 @@ async function runOnboardCommandAttempt(
     if (options.noOllamaAutostart && !options.experimentalProfile) {
       env.NEMOCLAW_OLLAMA_NO_AUTOSTART = "1";
     }
-    if (options.agentsManifest) applyAgentsManifestEnv(options.agentsManifest, env);
     await withCredentialOverrides(activation.credentialOverrides, () => deps.runOnboard(options));
     return "complete";
   } catch (error) {

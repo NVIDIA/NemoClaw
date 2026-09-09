@@ -347,6 +347,7 @@ function createDockerLifecycle(
       );
       patch.attachManagedBootstrapCutover({
         selectedMode: mode,
+        replacementRuntimeId: activated.replacement.replacementRuntimeId,
         failureContext: {
           sandboxName: input.sandboxName,
           oldContainerId: activated.snapshot.runtimeId,
