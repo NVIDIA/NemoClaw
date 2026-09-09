@@ -280,6 +280,8 @@ describe("runner env merging", () => {
       vi.stubEnv("DOCKER_CONTEXT", "healthy-context");
       vi.stubEnv("DOCKER_CONFIG", "/tmp/docker-config");
       vi.stubEnv("DOCKER_HOST", undefined);
+      vi.stubEnv("HTTP_PROXY", "http://proxy.example");
+      vi.stubEnv("NO_PROXY", "internal.example");
       vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "test-secret-must-not-cross-runner-boundary");
       delete require.cache[require.resolve(runnerPath)];
       const { run } = require(runnerPath);
@@ -300,6 +302,8 @@ describe("runner env merging", () => {
     const configSelectedDockerEnv = requireCall(runnerCalls, 2)[2]?.env;
     expect(dockerEnv?.DOCKER_CONTEXT).toBe("healthy-context");
     expect(dockerEnv?.DOCKER_CONFIG).toBe("/tmp/docker-config");
+    expect(dockerEnv?.NO_PROXY).toContain("internal.example");
+    expect(dockerEnv?.NO_PROXY).toContain("localhost");
     expect(dockerEnv?.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
     expect(nonDockerEnv?.DOCKER_CONTEXT).toBeUndefined();
     expect(nonDockerEnv?.DOCKER_CONFIG).toBeUndefined();
