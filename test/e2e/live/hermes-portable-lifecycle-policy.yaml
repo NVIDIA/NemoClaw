@@ -11,6 +11,8 @@ filesystem_policy:
     - /lib
     - /lib64
     - /etc
+    # The Portable profile acceptance path executes the immutable Hermes venv.
+    - /opt/hermes
     - /proc
     - /dev/urandom
   read_write:
@@ -20,12 +22,6 @@ filesystem_policy:
 landlock:
   compatibility: best_effort
 
-# The immutable sandbox-base from the NemoClaw v0.0.89 fixture, which runs
-# OpenShell v0.0.85, omits OCI Config.User.
-# OpenShell v0.0.99 requires either that image metadata or an explicit non-root
-# policy identity, so keep this proof independent of mutable image metadata.
-process:
-  run_as_user: "1000"
-  run_as_group: "1000"
-
+# Preserve the Hermes image's root entrypoint. Its production startup script
+# validates the mounted sandbox posture before dropping privileges itself.
 network_policies: {}

@@ -16,6 +16,11 @@ type PortableProfileWorkflow = Workflow & {
   };
 };
 
+type SandboxPolicy = {
+  filesystem_policy?: { read_only?: string[] };
+  process?: { run_as_user?: string; run_as_group?: string };
+};
+
 describe("portable profile rootless runtime workflow", () => {
   // source-shape-contract: security -- The rootless-linux install must skip redundant advisory requests on automated runs while manual dispatches retain an explicit audit without a reviewed prerequisite
   it("routes rootless job dependency auditing by workflow trigger (#11028)", () => {
@@ -52,6 +57,9 @@ describe("portable profile rootless runtime workflow", () => {
     const liveTest = fs.readFileSync(
       "test/e2e/live/portable-profile-rootless-linux.test.ts",
       "utf-8",
+    );
+    const hermesPolicy = readYaml<SandboxPolicy>(
+      "test/e2e/live/hermes-portable-lifecycle-policy.yaml",
     );
     const job = workflow.jobs["rootless-linux"];
     const steps = job?.steps ?? [];
@@ -125,6 +133,9 @@ describe("portable profile rootless runtime workflow", () => {
     );
     expect(liveTest).toContain("preparePortableExperimentalHost(process.env, { home });");
     expect(liveTest).toContain("createHermesPortableBuildContextPlan(");
+    expect(liveTest).toContain('"test/e2e/live/hermes-portable-lifecycle-policy.yaml"');
+    expect(hermesPolicy.filesystem_policy?.read_only).toContain("/opt/hermes");
+    expect(hermesPolicy.process).toBeUndefined();
     expect(liveTest).toContain('buildId: "hermes-rootless-e2e"');
     expect(liveTest).toContain("hermesContextPlan.retire(hermesContextInput)");
     expect(liveTest).toContain("assert.equal(prepared?.authority.configHome, configHome);");

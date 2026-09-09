@@ -132,7 +132,7 @@ const HERMES_PORTABLE_E2E_GATEWAY_NAME = "nemoclaw";
 const HERMES_PORTABLE_E2E_GENERATION = "portable-e2e-generation";
 const HERMES_PORTABLE_E2E_POLICY = path.join(
   process.cwd(),
-  "test/e2e/live/podman-cpu-lifecycle-policy.yaml",
+  "test/e2e/live/hermes-portable-lifecycle-policy.yaml",
 );
 const HERMES_PORTABLE_E2E_BUILD_SETTINGS = {
   model: "qwen3-vl:4b",
