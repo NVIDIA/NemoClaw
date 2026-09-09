@@ -51,7 +51,6 @@ const OPENCLAW_CONFIG_CAPTURE_PROTOCOL_MAX_BYTES = 128;
 const OPENCLAW_CONFIG_CAPTURE_DIAGNOSTIC_MAX_BYTES = 1024;
 const OPENCLAW_CONFIG_DIRECTORY = "/sandbox/.openclaw";
 const OPENCLAW_CONFIG_NAME = "openclaw.json";
-const HERMES_CONFIG_DIRECTORY = "/sandbox/.hermes";
 const HERMES_CAPTURE_TIMEOUT_MS = 120_000;
 const HERMES_CAPTURE_MAX_BUFFER = 256 * 1024 * 1024;
 export const OPENCLAW_CONFIG_CAPTURE_SCRIPT = `import os, stat, sys
@@ -321,7 +320,26 @@ export const HERMES_DIRECTORY_CAPTURE_SCRIPT = `import os, stat, sys, tarfile
 automatic_flags = getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
 directory_flags = os.O_RDONLY | os.O_DIRECTORY | automatic_flags
 file_flags = os.O_RDONLY | automatic_flags | getattr(os, "O_NONBLOCK", 0)
-base, *names = sys.argv[1:]
+base, maximum_text, *names = sys.argv[1:]
+maximum = int(maximum_text)
+if maximum <= 0:
+    raise SystemExit(10)
+class BoundedWriter:
+    def __init__(self, stream, limit):
+        self.stream = stream
+        self.limit = limit
+        self.total = 0
+    def write(self, data):
+        next_total = self.total + len(data)
+        if next_total > self.limit:
+            raise SystemExit(14)
+        written = self.stream.write(data)
+        if written != len(data):
+            raise SystemExit(15)
+        self.total = next_total
+        return written
+    def flush(self):
+        self.stream.flush()
 def identity(value):
     return (value.st_dev, value.st_ino, stat.S_IFMT(value.st_mode), value.st_size, value.st_mtime_ns, value.st_ctime_ns, value.st_nlink)
 def directory_identity(value):
@@ -381,7 +399,7 @@ for name in names:
 base_fd = os.open(base, directory_flags)
 try:
     base_before = os.fstat(base_fd)
-    with tarfile.open(fileobj=sys.stdout.buffer, mode="w|") as archive:
+    with tarfile.open(fileobj=BoundedWriter(sys.stdout.buffer, maximum), mode="w|") as archive:
         for name in names:
             add_entry(archive, base_fd, name, name)
     base_current = os.stat(base, follow_symlinks=False)
@@ -411,7 +429,7 @@ export function captureHermesStateFile(
             "-S",
             "-c",
             HERMES_STATE_CAPTURE_SCRIPT,
-            HERMES_CONFIG_DIRECTORY,
+            request.dir,
             request.spec.path,
             request.spec.strategy,
           ],
@@ -468,7 +486,8 @@ export function captureHermesStateDirectories(
               "-S",
               "-c",
               HERMES_DIRECTORY_CAPTURE_SCRIPT,
-              HERMES_CONFIG_DIRECTORY,
+              request.dir,
+              String(request.maxArchiveBytes),
               ...request.dirs,
             ],
             false,
@@ -482,9 +501,14 @@ export function captureHermesStateDirectories(
           },
         );
         if (result.status !== 0 || result.error || result.signal) {
+          const detail =
+            result.status === 14
+              ? `archive exceeded the ${String(request.maxArchiveBytes)}-byte snapshot limit`
+              : (result.error?.message ??
+                (result.signal ? `signal ${result.signal}` : `exit ${String(result.status)}`));
           return {
             outcome: "failed",
-            error: `privileged Hermes directory capture failed: ${result.error?.message ?? (result.signal ? `signal ${result.signal}` : `exit ${String(result.status)}`)}`,
+            error: `privileged Hermes directory capture failed: ${detail}`,
           };
         }
         return { outcome: "backed_up" };

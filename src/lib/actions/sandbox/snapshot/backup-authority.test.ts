@@ -42,6 +42,8 @@ import {
   captureHermesStateDirectories,
   captureHermesStateFile,
   captureOpenClawStateFile,
+  HERMES_DIRECTORY_CAPTURE_SCRIPT,
+  HERMES_STATE_CAPTURE_SCRIPT,
 } from "./backup-authority";
 
 function workload(
@@ -363,6 +365,12 @@ describe("managed snapshot backup authority", () => {
       expect.any(Array),
       expect.objectContaining({ maxBuffer: 256 * 1024 * 1024 }),
     );
+    expect(privilegedCaptureMocks.privilegedSandboxExecArgv).toHaveBeenLastCalledWith(
+      "alpha",
+      expect.arrayContaining([HERMES_STATE_CAPTURE_SCRIPT, "/sandbox/.hermes", "SOUL.md", "copy"]),
+      false,
+      true,
+    );
     expect(
       captureHermesStateFile("alpha", {
         sandboxName: "alpha",
@@ -413,7 +421,12 @@ describe("managed snapshot backup authority", () => {
     expect(
       captureHermesStateDirectories(
         "alpha",
-        { sandboxName: "alpha", dir: "/sandbox/.hermes", dirs: ["workspace"] },
+        {
+          sandboxName: "alpha",
+          dir: "/sandbox/.hermes",
+          dirs: ["workspace"],
+          maxArchiveBytes: 256 * 1024 * 1024,
+        },
         42,
       ),
     ).toEqual({ outcome: "backed_up" });
@@ -421,17 +434,38 @@ describe("managed snapshot backup authority", () => {
       expect.any(Array),
       expect.objectContaining({ stdio: ["ignore", 42, "pipe"] }),
     );
+    expect(privilegedCaptureMocks.privilegedSandboxExecArgv).toHaveBeenLastCalledWith(
+      "alpha",
+      expect.arrayContaining([
+        HERMES_DIRECTORY_CAPTURE_SCRIPT,
+        "/sandbox/.hermes",
+        String(256 * 1024 * 1024),
+        "workspace",
+      ]),
+      false,
+      true,
+    );
     expect(
       captureHermesStateDirectories(
         "alpha",
-        { sandboxName: "other", dir: "/sandbox/.hermes", dirs: ["workspace"] },
+        {
+          sandboxName: "other",
+          dir: "/sandbox/.hermes",
+          dirs: ["workspace"],
+          maxArchiveBytes: 256 * 1024 * 1024,
+        },
         42,
       ),
     ).toBeNull();
     expect(
       captureHermesStateDirectories(
         "alpha",
-        { sandboxName: "alpha", dir: "/sandbox/.hermes", dirs: ["../outside"] },
+        {
+          sandboxName: "alpha",
+          dir: "/sandbox/.hermes",
+          dirs: ["../outside"],
+          maxArchiveBytes: 256 * 1024 * 1024,
+        },
         42,
       ),
     ).toBeNull();

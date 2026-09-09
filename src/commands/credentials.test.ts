@@ -99,6 +99,7 @@ describe("credentials oclif adapter source coverage", () => {
       ["provider", "list", "-g", "nemoclaw", "--names"],
       {
         ignoreError: true,
+        maxBuffer: 64 * 1024,
         stdio: ["ignore", "pipe", "pipe"],
         timeout: 30_000,
       },

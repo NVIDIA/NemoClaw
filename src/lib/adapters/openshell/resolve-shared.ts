@@ -6,7 +6,6 @@ import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { HERMES_LIFECYCLE_DEFINITION } from "../../domain/lifecycle/hermes-definition";
 import {
   assertPodmanExecutableAuthority,
-
   capturePodmanExecutableAuthority,
   type PodmanExecutableAuthority,
   type PodmanExecutableAuthorityDeps,
@@ -190,6 +189,7 @@ export function buildOpenShellSubprocessEnv(
     "SSL_CERT_DIR",
     "NODE_EXTRA_CA_CERTS",
     "CURL_CA_BUNDLE",
+    "XDG_CONFIG_HOME",
   ]);
   const environment = Object.fromEntries(
     Object.entries(source).filter(

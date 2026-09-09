@@ -88,11 +88,68 @@ describe("sandbox base-image build diagnostics", () => {
     expect(output).toContain("****");
   });
 
+  it("removes terminal controls split across captured streams (#10548)", () => {
+    const output = formatBuildFailureDiagnostics({
+      stderr: "build failed\u001b[",
+      stdout: "31mvisible detail\u0007",
+    });
+
+    expect({
+      hasEscape: output.includes("\u001b"),
+      hasBell: output.includes("\u0007"),
+      hasVisibleDetail: output.includes("visible detail"),
+    }).toEqual({ hasEscape: false, hasBell: false, hasVisibleDetail: true });
+  });
+
   it("bounds captured build diagnostics before returning them", () => {
     const output = formatBuildFailureDiagnostics({ stderr: "x".repeat(10_000) });
 
     expect(output.length).toBeLessThan(8_100);
-    expect(output.endsWith("[diagnostic truncated]")).toBe(true);
+    expect(output.startsWith("[diagnostic truncated]")).toBe(true);
+  });
+
+  it("retains the failing step when long build output is truncated (#10548)", () => {
+    const output = formatBuildFailureDiagnostics({
+      stderr: `successful build output\n${"x".repeat(10_000)}\nERROR: RUN exit 1 failed`,
+    });
+
+    expect(output.length).toBeLessThan(8_100);
+    expect(output).toContain("[diagnostic truncated]");
+    expect(output).toContain("ERROR: RUN exit 1 failed");
+    expect(output).not.toContain("successful build output");
+  });
+
+  it("retains failure tails from both captured build streams (#10548)", () => {
+    const output = formatBuildFailureDiagnostics({
+      stderr: `stderr successful output\n${"e".repeat(10_000)}\nERROR: stderr build step failed`,
+      stdout: `stdout successful output\n${"o".repeat(10_000)}\nERROR: stdout build step failed`,
+    });
+
+    expect(output.length).toBeLessThan(8_100);
+    expect(output).toContain("ERROR: stderr build step failed");
+    expect(output).toContain("ERROR: stdout build step failed");
+    expect(output).not.toContain("stderr successful output");
+    expect(output).not.toContain("stdout successful output");
+    expect(output).toContain("[diagnostic truncated]");
+  });
+
+  it("reuses a short stream's unused budget for the long failure tail (#10548)", () => {
+    const output = formatBuildFailureDiagnostics({
+      stderr: `successful build output\n${"e".repeat(10_000)}\nERROR: stderr build step failed`,
+      stdout: "short stdout diagnostic",
+    });
+
+    expect({
+      length: output.length,
+      hasFailure: output.includes("ERROR: stderr build step failed"),
+      hasShortStream: output.includes("short stdout diagnostic"),
+      hasSuccessfulHead: output.includes("successful build output"),
+    }).toEqual({
+      length: 8_023,
+      hasFailure: true,
+      hasShortStream: true,
+      hasSuccessfulHead: false,
+    });
   });
 
   it("surfaces a redacted spawn failure cause", () => {

@@ -21,11 +21,14 @@ Use host-side channel commands to change a configured messaging channel.
 
 ## Rotate Credentials
 
-Running `channels add` for a channel that is already configured overwrites stored tokens and registers the updated bridge provider. Rebuild the sandbox after the update so the image reflects the current channel set.
+A successful `channels add` for a channel that is already configured updates the stored tokens and bridge provider.
+Provider replacement requires complete credentials and is refused when the provider is attached to another sandbox.
+If re-add fails after changing the provider, follow the [channel-add recovery guidance](add-channels-after-onboarding#apply-policy-and-rebuild) for residual gateway-provider state.
+Rebuild the sandbox after a successful update so the image reflects the current channel set.
 
 For WeChat, the cached-token shortcut applies. Remove WeChat first when you intend to acquire a fresh account through a new QR scan.
 
-For Google Chat, re-add the channel and paste the replacement service-account JSON. NemoClaw updates the gateway-side refresh material. The sandbox keeps only the OpenShell credential placeholder. OpenShell keeps refreshed access tokens at the gateway and substitutes them at approved egress boundaries.
+For Google Chat, re-add the channel and paste the replacement service-account JSON. On success, NemoClaw updates the gateway-side refresh material. The sandbox keeps only the OpenShell credential placeholder. OpenShell keeps refreshed access tokens at the gateway and substitutes them at approved egress boundaries.
 
 <AgentOnly variant="hermes">
   Re-adding Google Chat prompts again for the project ID, complete Pub/Sub subscription name, and
@@ -46,7 +49,11 @@ $$nemoclaw my-assistant channels remove teams
 
 `channels remove wechat` clears the bot token, deletes the `<sandbox>-wechat-bridge` provider, and removes `wechat` from the enabled-channel set. The next rebuild omits WeChat configuration and per-account state files.
 
-`channels remove googlechat` detaches and deletes the `<sandbox>-googlechat-bridge` provider before the rebuild removes Google Chat configuration and the matching policy preset.
+`channels remove googlechat` disables the channel, removes its agent configuration and matching policy preset, and then detaches and deletes the `<sandbox>-googlechat-bridge` provider.
+If deletion fails after detachment, NemoClaw attempts to restore the provider attachment.
+If restoration also fails, the command names the provider and sandbox and warns that delivery may remain interrupted.
+The credentials remain, but the channel stays disabled with provider cleanup pending and its policy already removed.
+Resolve the gateway error, then rerun `$$nemoclaw <name> channels remove googlechat`.
 
 <AgentOnly variant="openclaw">
 It also stops the dedicated cloudflared process and webhook proxy for that sandbox.

@@ -6,7 +6,7 @@ import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { D, G, R, YW } from "../../cli/terminal-style";
 import type { SandboxMessagingPlan } from "../../messaging";
-import type * as sandboxVersion from "../../sandbox/version";
+import * as sandboxVersion from "../../sandbox/version";
 import {
   inspectMutableHermesConfigPerms,
   repairMutableConfigPerms,
@@ -29,6 +29,8 @@ import {
   verifyHermesGatewayAfterStateRestore,
   verifyHermesGatewayAfterStateRestoreForCronGate,
 } from "./rebuild-hermes-post-restore";
+import { getPersistedSandboxTargetGatewayName } from "./gateway-target";
+import { executeGatewaySupervisorAction } from "./runtime/hermes-lifecycle";
 import {
   type McpRebuildPreparation,
   postRestoreCompleted,
@@ -47,6 +49,13 @@ export {
   recoverHermesCronRestore,
   runHermesCronRestoreTransaction,
 } from "./rebuild-hermes-post-restore";
+
+/** Probe the recreated runtime instead of accepting its requested version metadata. */
+function probeRebuiltAgentVersion(
+  sandboxName: string,
+): ReturnType<typeof sandboxVersion.checkAgentVersion> {
+  return sandboxVersion.checkAgentVersion(sandboxName, { forceProbe: true });
+}
 
 const OPENCLAW_DOCTOR_TIMEOUT_MS = 5 * 60_000;
 
@@ -136,7 +145,10 @@ export async function runRebuildPostRestorePhase(
   if (
     !recreatedEntry ||
     recreatedRegistryAgentName !== targetAgentName ||
-    recreatedRuntimeAgentName !== targetAgentName
+    recreatedRuntimeAgentName !== targetAgentName ||
+    (targetAgentName === "hermes" &&
+      mcpRuntimeSelection &&
+      getPersistedSandboxTargetGatewayName(recreatedEntry) !== mcpRuntimeSelection.gatewayName)
   ) {
     console.error(
       `  ${YW}\u26a0${R} Recreated sandbox agent identity could not be verified against the rebuild target.`,
@@ -161,6 +173,19 @@ export async function runRebuildPostRestorePhase(
   let finalMutableConfigHashUnverified = false;
   let messagingHostForwardUnverified = false;
   let effectiveMessagingPlan = messagingPlan;
+  // Rebuild freezes the OpenShell target before deletion and revalidates the
+  // recreated registry binding above. That exact binding can safely authorize
+  // the provider-scoped root controller while every OpenShell operation stays
+  // pinned to the selected runtime. The ordinary gateway restart command keeps
+  // its fail-closed selected-runtime fence.
+  const hermesPostRestoreGatewayDeps = mcpRuntimeSelection
+    ? {
+        ...(targetAgentName === "hermes"
+          ? { frozenTargetGatewaySupervisorAction: executeGatewaySupervisorAction }
+          : {}),
+        runtimeSelection: mcpRuntimeSelection,
+      }
+    : {};
 
   if (targetAgentName === "openclaw") {
     log("Running openclaw doctor --fix inside sandbox for post-upgrade structure repair");
@@ -265,7 +290,7 @@ export async function runRebuildPostRestorePhase(
   const hermesGatewayRestartState = restartHermesGatewayAfterStateRestore(
     sandboxName,
     targetAgentName,
-    mcpRuntimeSelection ? { runtimeSelection: mcpRuntimeSelection } : {},
+    hermesPostRestoreGatewayDeps,
   );
   const mcpBridgeRestoreUnverified = !(await restoreMcpAfterRebuild(
     sandboxName,
@@ -290,19 +315,51 @@ export async function runRebuildPostRestorePhase(
         targetAgentName,
         hermesGatewayRestartState,
         hermesCronRestoreIdentity,
-        mcpRuntimeSelection ? { runtimeSelection: mcpRuntimeSelection } : {},
+        hermesPostRestoreGatewayDeps,
       )
     : {
         state: verifyHermesGatewayAfterStateRestore(
           sandboxName,
           targetAgentName,
           hermesGatewayRestartState,
-          mcpRuntimeSelection ? { runtimeSelection: mcpRuntimeSelection } : {},
+          hermesPostRestoreGatewayDeps,
         ),
         replacementIdentity: undefined,
       };
   const hermesGatewayRestoreState = hermesGatewayVerification.state;
   const hermesGatewayRestoreUnverified = hermesGatewayRestoreState === "unverified";
+  let verifiedAgentVersion: string | null = null;
+  if (versionCheck.expectedVersion) {
+    // The replacement runtime is the only authority for the completed rebuild
+    // version. Clear create-time bookkeeping before the forced live probe so a
+    // failed probe cannot leave the requested version recorded as observed.
+    registry.updateSandbox(sandboxName, { agentVersion: null });
+    const rebuiltVersion = probeRebuiltAgentVersion(sandboxName);
+    if (
+      rebuiltVersion.verificationFailed ||
+      rebuiltVersion.sandboxVersion !== versionCheck.expectedVersion
+    ) {
+      // checkAgentVersion caches a successful probe. Do not retain metadata
+      // from a replacement that this rebuild rejects.
+      registry.updateSandbox(sandboxName, { agentVersion: null });
+      const observed = rebuiltVersion.sandboxVersion ?? "unverified";
+      const detail = `  Replacement agent version did not match the rebuild target (expected ${versionCheck.expectedVersion}, observed ${observed}).`;
+      if (hermesCronRestoreIdentity) {
+        return bailAfterHermesCronRestoreFailure(
+          sandboxName,
+          backupManifest,
+          `${detail} Hermes cron dispatch remains drained.`,
+          "Replacement agent version did not match the authoritative rebuild target.",
+          bail,
+          mcpBridgeRestoreUnverified ? () => printMcpRestoreRecovery(sandboxName, true) : undefined,
+        );
+      }
+      console.error(detail);
+      bail("Replacement agent version did not match the authoritative rebuild target.");
+      return;
+    }
+    verifiedAgentVersion = rebuiltVersion.sandboxVersion;
+  }
   if (
     targetAgentName === "hermes" &&
     (hermesGatewayRestoreState === "healthy" || hermesGatewayRestoreState === "recovered")
@@ -379,7 +436,7 @@ export async function runRebuildPostRestorePhase(
     console.log(`  ${G}\u2713${R} Hermes gateway recovered after state restore`);
   }
   registry.updateSandbox(sandboxName, {
-    agentVersion: agentDef.expectedVersion || null,
+    agentVersion: verifiedAgentVersion,
   });
   log(`Registry updated: agentVersion=${agentDef.expectedVersion}`);
 

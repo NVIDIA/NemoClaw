@@ -97,6 +97,7 @@ const HOME_DIR = path.resolve(process.env.HOME || os.homedir());
 const REBUILD_BACKUPS_DIR = path.join(nemoclawStateRoot(HOME_DIR, GATEWAY_PORT), "rebuild-backups");
 
 const MANIFEST_VERSION = 1;
+export const STATE_DIRECTORY_CAPTURE_MAX_BYTES = 256 * 1024 * 1024;
 export const OPENCLAW_IMAGE_PLUGIN_PROVENANCE_RESTORE_ERROR =
   "custom-image OpenClaw plugin provenance is missing or invalid";
 export const MANAGED_SNAPSHOT_RESTORE_AUTHORITY_ERROR =
@@ -224,10 +225,13 @@ export interface StateDirectoryCaptureRequest {
   sandboxName: string;
   dir: string;
   dirs: readonly string[];
+  /** Maximum archive bytes the privileged producer may write to the owned fd. */
+  maxArchiveBytes: number;
 }
 
 export type StateDirectoryCaptureResult =
-  { outcome: "backed_up" } | { outcome: "failed"; error?: string; unreachable?: boolean };
+  | { outcome: "backed_up" }
+  | { outcome: "failed"; error?: string; unreachable?: boolean };
 
 export type StateFileCapture = (request: StateFileCaptureRequest) => StateFileCaptureResult | null;
 export type StateDirectoryCapture = (
@@ -1311,13 +1315,30 @@ function retryPermissionDeniedDirectories(
     stagingDir = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-state-privileged-"));
     archivePath = path.join(stagingDir, "archive.tar");
     archiveFd = openSync(archivePath, "wx", 0o600);
-    const capture = captureFallback({ sandboxName, dir, dirs: denied }, archiveFd);
+    const capture = captureFallback(
+      {
+        sandboxName,
+        dir,
+        dirs: denied,
+        maxArchiveBytes: STATE_DIRECTORY_CAPTURE_MAX_BYTES,
+      },
+      archiveFd,
+    );
     closeSync(archiveFd);
     archiveFd = undefined;
-    if (capture?.outcome !== "backed_up" || statSync(archivePath).size === 0) {
-      _log(
-        `FAILED: privileged state directory capture: ${capture?.outcome === "failed" ? (capture.error ?? "failed") : "no archive"}`,
-      );
+    const archiveBytes = statSync(archivePath).size;
+    if (
+      capture?.outcome !== "backed_up" ||
+      archiveBytes === 0 ||
+      archiveBytes > STATE_DIRECTORY_CAPTURE_MAX_BYTES
+    ) {
+      const detail =
+        archiveBytes > STATE_DIRECTORY_CAPTURE_MAX_BYTES
+          ? `archive exceeded the ${String(STATE_DIRECTORY_CAPTURE_MAX_BYTES)}-byte snapshot limit`
+          : capture?.outcome === "failed"
+            ? (capture.error ?? "failed")
+            : "no archive";
+      _log(`FAILED: privileged state directory capture: ${detail}`);
       return;
     }
     const allowedTopLevelEntries = new Set(denied);
@@ -2500,10 +2521,7 @@ function restoreSandboxStateInternal(
   }
 
   _log("Getting SSH config for restore");
-  const sshConfig = getSshConfig(
-    sandboxName,
-    selectedSshConfigOptions(options.runtimeSelection),
-  );
+  const sshConfig = getSshConfig(sandboxName, selectedSshConfigOptions(options.runtimeSelection));
   if (!sshConfig) {
     _log("FAILED: Could not get SSH config for restore");
     return {
@@ -2978,7 +2996,8 @@ function readManifest(backupPath: string): RebuildManifest | null {
 // ── Listing ────────────────────────────────────────────────────────
 
 export type RebuildRecoveryManifestValidation =
-  { ok: true; manifest: RebuildManifest } | { ok: false; reason: string };
+  | { ok: true; manifest: RebuildManifest }
+  | { ok: false; reason: string };
 
 function legacyStateFilesArePresent(backupPath: string, manifest: RebuildManifest): boolean {
   if (manifest.backupComplete !== undefined) return true;
@@ -3093,23 +3112,6 @@ export function hasPositiveManagedImageEvidence(
   sandbox: Pick<registry.SandboxEntry, "nemoclawVersion">,
 ): boolean {
   return typeof sandbox.nemoclawVersion === "string" && sandbox.nemoclawVersion.trim().length > 0;
-}
-
-/**
- * The DGX Station qualification projection was introduced in v0.0.97. A Hermes
- * sandbox stamped by an earlier managed release may be rebuilt once without
- * reapplying that later admission rule. Version-shaped text is not authority.
- */
-export function hasLegacyDgxStationQualificationAuthority(
-  sandbox: Pick<registry.SandboxEntry, "agent" | "fromDockerfile" | "nemoclawVersion">,
-): boolean {
-  if (sandbox.agent !== "hermes" || sandbox.fromDockerfile != null) return false;
-  const match = /^(?:v)?0\.0\.(0|[1-9]\d*)(?:-[1-9]\d*-g[0-9a-f]{7,40})?$/i.exec(
-    sandbox.nemoclawVersion ?? "",
-  );
-  if (!match) return false;
-  const patch = Number(match[1]);
-  return Number.isSafeInteger(patch) && patch < 97;
 }
 
 /**

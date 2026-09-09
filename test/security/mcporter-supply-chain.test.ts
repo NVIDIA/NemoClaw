@@ -32,6 +32,7 @@ const runtimePrefix = "npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime";
 const reviewedAuditConfig = JSON.parse(
   fs.readFileSync(path.join(repoRoot, "ci", "reviewed-npm-audit.json"), "utf8"),
 ) as {
+  npmVersion: string;
   lockedGraphs: Array<{
     directory: string;
     id: string;
@@ -41,6 +42,7 @@ const reviewedAuditConfig = JSON.parse(
     tarballUrl: string;
   }>;
 };
+const expectedReviewedNpmVersion = reviewedAuditConfig.npmVersion;
 const reviewedAuditDriver = fs.readFileSync(
   path.join(repoRoot, "scripts", "audit-reviewed-npm-graph.mts"),
   "utf8",
@@ -64,6 +66,19 @@ function extractIntegrityGate(contents: string): string {
   return `${contents.slice(start, end)}\n${contents.slice(helperStart, helperEnd)}`
     .replace(/\\\s*\n/g, " ")
     .trim();
+}
+
+function extractAuditReceiptInvocation(contents: string): string {
+  const startMarker = "node --experimental-strip-types /scripts/lib/npm-audit-receipt.mts";
+  const endMarker = "--legacy-npmjs true";
+  const start = contents.indexOf(startMarker);
+  const end = contents.indexOf(endMarker, start);
+  expect(start).toBeGreaterThanOrEqual(0);
+  expect(end).toBeGreaterThan(start);
+  return contents
+    .slice(start, end + endMarker.length)
+    .replace(/\\\s*\n/g, " ")
+    .replace(/\s+/g, " ");
 }
 
 function runIntegrityGate(contents: string, version: string) {
@@ -176,8 +191,9 @@ describe("mcporter image supply-chain controls", () => {
 
   it.each(dockerfiles)("audits the committed dependency graph in $name", ({ contents }) => {
     const flattenedContents = contents.replace(/\\\s*\n/g, " ").replace(/\s+/g, " ");
+    const auditReceiptInvocation = extractAuditReceiptInvocation(contents);
     expect(contents).toContain(
-      "COPY ci/npm-audit-exceptions.json /scripts/npm-audit-exceptions.json",
+      "COPY ci/npm-audit-exceptions.json ci/reviewed-npm-audit.json /scripts/",
     );
     expect(
       flattenedContents.includes(
@@ -203,18 +219,29 @@ describe("mcporter image supply-chain controls", () => {
     expect(flattenedContents).toContain(
       "--package-json /usr/local/lib/nemoclaw/mcporter-runtime/package.json --package-lock /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json --raw-report",
     );
-    expect(flattenedContents).toContain(
-      "--exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --npm-version",
+    expect(auditReceiptInvocation).toContain(
+      "--exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --audit-config /scripts/reviewed-npm-audit.json --registry https://registry.yarnpkg.com --threshold high --legacy-npmjs true",
     );
-    expect(flattenedContents).toContain(
-      "--registry https://registry.npmjs.org/ --threshold high",
-    );
+    expect(expectedReviewedNpmVersion).toMatch(/^[0-9]+\.[0-9]+\.[0-9]+$/);
+    expect(auditReceiptInvocation).not.toContain("--npm-version");
+    expect(contents).not.toContain("--raw-copy");
+    expect(auditReceiptInvocation).not.toMatch(/\bnpm\s+--version\b/);
+    expect(auditReceiptInvocation).not.toMatch(/\$\(|`/);
     expect(contents).not.toContain(`${runtimePrefix} audit --omit=dev --audit-level=low`);
     expect(contents).not.toContain(`${runtimePrefix} audit signatures`);
     expect(flattenedContents).toContain(
       `${runtimePrefix} ls --omit=dev --all @hono/node-server @modelcontextprotocol/sdk hono mcporter`,
     );
     expect(contents).toContain("StreamableHTTPServerTransport");
+  });
+
+  it("copies the cached base-image audit report only after receipt verification succeeds", () => {
+    const contents = fs.readFileSync(path.join(repoRoot, "Dockerfile.base"), "utf8");
+    const flattenedContents = contents.replace(/\\\s*\n/g, " ").replace(/\s+/g, " ");
+
+    expect(flattenedContents).toContain(
+      '--result /tmp/mcporter-npm-audit-policy.json && cp "$MCPORTER_RAW_REPORT" /tmp/mcporter-npm-audit.json;',
+    );
   });
 
   it("verifies the exact committed dependency graph signatures in trusted CI (#8925)", () => {
@@ -230,8 +257,6 @@ describe("mcporter image supply-chain controls", () => {
 
     const lockfile = fs.readFileSync(path.join(runtimeDirectory, "package-lock.json"));
     expect(createHash("sha256").update(lockfile).digest("hex")).toBe(graph?.lockSha256);
-    expect(reviewedAuditDriver).toContain(
-      'run("npm", ["audit", "signatures", "--omit=dev"], directory);',
-    );
+    expect(reviewedAuditDriver).toContain("NPM_AUDIT_SIGNATURE_ARGV");
   });
 });

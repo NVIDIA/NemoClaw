@@ -16,6 +16,7 @@ import {
 
 const CONFIG_NAME = "openclaw.json";
 const MAX_CONFIG_BYTES = 16 * 1024 * 1024;
+const HERMES_DIRECTORY_MAX_BYTES = 256 * 1024 * 1024;
 const PROTOCOL_PREFIX = "nemoclaw-openclaw-config-capture:";
 const fixtureRoots: string[] = [];
 
@@ -302,7 +303,7 @@ describe("Hermes privileged state capture scripts", () => {
 
     const captured = spawnSync(
       "/usr/bin/python3",
-      ["-I", "-S", "-c", script, directory, "workspace"],
+      ["-I", "-S", "-c", script, directory, String(HERMES_DIRECTORY_MAX_BYTES), "workspace"],
       { encoding: null },
     );
 
@@ -323,7 +324,7 @@ describe("Hermes privileged state capture scripts", () => {
 
     const captured = spawnSync(
       "/usr/bin/python3",
-      ["-I", "-S", "-c", script, directory, "workspace"],
+      ["-I", "-S", "-c", script, directory, String(HERMES_DIRECTORY_MAX_BYTES), "workspace"],
       { encoding: null },
     );
 
@@ -338,7 +339,15 @@ describe("Hermes privileged state capture scripts", () => {
     fs.writeFileSync(path.join(workspace, "marker"), "state");
     const captured = spawnSync(
       "/usr/bin/python3",
-      ["-I", "-S", "-c", HERMES_DIRECTORY_CAPTURE_SCRIPT, directory, "workspace"],
+      [
+        "-I",
+        "-S",
+        "-c",
+        HERMES_DIRECTORY_CAPTURE_SCRIPT,
+        directory,
+        String(HERMES_DIRECTORY_MAX_BYTES),
+        "workspace",
+      ],
       { encoding: null },
     );
     expect(captured.status).toBe(0);
@@ -346,10 +355,35 @@ describe("Hermes privileged state capture scripts", () => {
     fs.symlinkSync(path.join(workspace, "marker"), path.join(workspace, "unsafe"));
     const unsafe = spawnSync(
       "/usr/bin/python3",
-      ["-I", "-S", "-c", HERMES_DIRECTORY_CAPTURE_SCRIPT, directory, "workspace"],
+      [
+        "-I",
+        "-S",
+        "-c",
+        HERMES_DIRECTORY_CAPTURE_SCRIPT,
+        directory,
+        String(HERMES_DIRECTORY_MAX_BYTES),
+        "workspace",
+      ],
       { encoding: null },
     );
     expect(unsafe.status).not.toBe(0);
+  });
+
+  it("stops a directory archive before it exceeds the supplied byte limit", () => {
+    const directory = fixtureDirectory();
+    const workspace = path.join(directory, "workspace");
+    fs.mkdirSync(workspace);
+    fs.writeFileSync(path.join(workspace, "large-state"), Buffer.alloc(32 * 1024, 0xa5));
+    const maximum = 16 * 1024;
+
+    const captured = spawnSync(
+      "/usr/bin/python3",
+      ["-I", "-S", "-c", HERMES_DIRECTORY_CAPTURE_SCRIPT, directory, String(maximum), "workspace"],
+      { encoding: null },
+    );
+
+    expect(captured.status).toBe(14);
+    expect(captured.stdout.length).toBeLessThanOrEqual(maximum);
   });
 });
 

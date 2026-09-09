@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -10,6 +15,12 @@ import {
   shouldSkipExternalAgentVerificationFailure,
   VERIFY_PHRASE,
 } from "./skill-agent-classifiers.ts";
+
+const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
+const ADD_SKILL_SCRIPT = path.join(
+  REPO_ROOT,
+  "test/e2e/e2e-cloud-experimental/features/skill/add-sandbox-skill.sh",
+);
 
 describe("skill-agent live test local classifiers", () => {
   it("does not treat helper fail-closed output as a skippable provider flake", () => {
@@ -48,5 +59,31 @@ describe("skill-agent live test local classifiers", () => {
     expect(
       agentSectionContainsToken(`--- agent stdout/stderr\n\`${VERIFY_PHRASE}\`\n--- end ---`),
     ).toBe(true);
+  });
+
+  it("rejects a helper skill ID that differs from SKILL.md before sandbox contact", () => {
+    const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-skill-helper-name-"));
+    const skillFile = path.join(fixtureDir, "SKILL.md");
+    fs.writeFileSync(skillFile, "---\nname: other-skill\n---\n# Other\n");
+    try {
+      const result = spawnSync("bash", [ADD_SKILL_SCRIPT], {
+        cwd: REPO_ROOT,
+        encoding: "utf8",
+        env: {
+          PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`,
+          SANDBOX_NAME: "test-sandbox",
+          SKILL_FILE: skillFile,
+          SKILL_ID: "expected-skill",
+        },
+      });
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(
+        "SKILL_ID 'expected-skill' does not match SKILL.md name 'other-skill'",
+      );
+      expect(result.stderr).not.toContain("openshell not on PATH");
+    } finally {
+      fs.rmSync(fixtureDir, { recursive: true, force: true });
+    }
   });
 });

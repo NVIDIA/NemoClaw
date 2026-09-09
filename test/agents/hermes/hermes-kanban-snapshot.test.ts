@@ -6,9 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { afterAll, expect, it, vi } from "vitest";
-
-import type { StateDirectoryCaptureRequest } from "../../../src/lib/state/sandbox";
+import { afterAll, expect, it } from "vitest";
 
 // sandbox-state captures HOME when the module loads, so isolate its registry
 // and rebuild backups before importing it.
@@ -18,6 +16,20 @@ process.env.HOME = TMP_HOME;
 const sandboxState = await import(
   pathToFileURL(path.join(import.meta.dirname, "../../..", "src", "lib", "state", "sandbox.ts"))
     .href
+);
+const backupAuthority = await import(
+  pathToFileURL(
+    path.join(
+      import.meta.dirname,
+      "../../..",
+      "src",
+      "lib",
+      "actions",
+      "sandbox",
+      "snapshot",
+      "backup-authority.ts",
+    ),
+  ).href
 );
 
 afterAll(() => {
@@ -42,6 +54,7 @@ function writeHermesRegistry(): void {
           provider: "p",
           gpuEnabled: false,
           agent: "hermes",
+          openshellDriver: "docker",
         },
       },
     }),
@@ -125,22 +138,25 @@ process.exit(result.status === null ? 1 : result.status);
   }
 }
 
-function exercisePermissionDeniedDirectoryCapture(archive: "declared" | "undeclared"): {
+function exercisePermissionDeniedDirectoryCapture(
+  mode: "success" | "capture-failure" | "oversized",
+): {
   backup: ReturnType<typeof sandboxState.backupSandboxState>;
-  captureRequests: unknown[][];
   restoredMarker: string | null;
+  stagingEntries: string[];
 } {
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-directory-recovery-"));
   const oldPath = process.env.PATH;
   const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
+  const oldTmpdir = process.env.TMPDIR;
   try {
     const binDir = path.join(fixture, "bin");
     const hermesDir = path.join(fixture, "sandbox-root", ".hermes");
+    const stagingRoot = path.join(fixture, "tmp");
     fs.mkdirSync(binDir, { recursive: true });
     fs.mkdirSync(path.join(hermesDir, "memories"), { recursive: true });
-    fs.mkdirSync(path.join(hermesDir, "sessions"), { recursive: true });
+    fs.mkdirSync(stagingRoot);
     fs.writeFileSync(path.join(hermesDir, "memories", "marker.txt"), "preserved\n");
-    fs.writeFileSync(path.join(hermesDir, "sessions", "outside.txt"), "undeclared\n");
 
     const openshell = path.join(binDir, "openshell");
     writeExecutable(
@@ -169,47 +185,70 @@ if (cmd.includes("-cf -")) {
 process.exit(2);
 `,
     );
+    writeExecutable(
+      path.join(binDir, "docker"),
+      `#!/usr/bin/env node
+const fs = require("node:fs");
+const { spawnSync } = require("node:child_process");
+const args = process.argv.slice(2);
+if (args[0] === "ps") {
+  process.stdout.write("container-hermes\\topenshell-hermes\\n");
+  process.exit(0);
+}
+if (args[0] !== "exec") process.exit(2);
+if (${JSON.stringify(mode)} === "capture-failure") process.exit(14);
+if (${JSON.stringify(mode)} === "oversized") {
+  fs.ftruncateSync(1, 256 * 1024 * 1024 + 1);
+  process.exit(0);
+}
+const containerIndex = args.indexOf("container-hermes");
+if (containerIndex < 0) process.exit(2);
+const command = args.slice(containerIndex + 1).map((value) =>
+  value === "/sandbox/.hermes" ? ${JSON.stringify(hermesDir)} : value
+);
+const result = spawnSync(command[0], command.slice(1), { stdio: "inherit" });
+process.exit(result.status === null ? 1 : result.status);
+`,
+    );
 
     writeHermesRegistry();
     process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
     process.env.PATH = `${binDir}${path.delimiter}${oldPath || ""}`;
-    const names = archive === "declared" ? ["memories"] : ["memories", "sessions"];
-    const archiveResult = spawnSync("tar", ["-cf", "-", "-C", hermesDir, ...names], {
-      encoding: null,
-    });
-    expect(archiveResult.status).toBe(0);
-    expect(Buffer.isBuffer(archiveResult.stdout)).toBe(true);
-    const archiveBytes = archiveResult.stdout as Buffer;
-    const captureStateDirectories = vi.fn(
-      (_request: StateDirectoryCaptureRequest, archiveFd: number) => {
-        fs.writeSync(archiveFd, archiveBytes);
-        return { outcome: "backed_up" as const };
-      },
+    process.env.TMPDIR = stagingRoot;
+    const registryEntry = {
+      name: "hermes",
+      model: "m",
+      provider: "p",
+      gpuEnabled: false,
+      agent: "hermes",
+      openshellDriver: "docker",
+    } as const;
+    const backup = backupAuthority.backupSandboxStateWithManagedAuthority(
+      "hermes",
+      { name: `directory-${mode}` },
+      { getSandbox: () => registryEntry },
     );
-    const backup = sandboxState.backupSandboxState("hermes", {
-      name: `directory-${archive}`,
-      captureStateDirectories,
-    });
     const markerPath = backup.manifest
       ? path.join(backup.manifest.backupPath, "memories", "marker.txt")
       : "";
     return {
       backup,
-      captureRequests: captureStateDirectories.mock.calls,
       restoredMarker:
         markerPath && fs.existsSync(markerPath) ? fs.readFileSync(markerPath, "utf8") : null,
+      stagingEntries: fs.readdirSync(stagingRoot),
     };
   } finally {
     oldOpenshell === undefined
       ? delete process.env.NEMOCLAW_OPENSHELL_BIN
       : (process.env.NEMOCLAW_OPENSHELL_BIN = oldOpenshell);
     oldPath === undefined ? delete process.env.PATH : (process.env.PATH = oldPath);
+    oldTmpdir === undefined ? delete process.env.TMPDIR : (process.env.TMPDIR = oldTmpdir);
     fs.rmSync(fixture, { recursive: true, force: true });
   }
 }
 
 it("recovers a permission-denied Hermes directory through the state-layer fallback (#10375)", () => {
-  const result = exercisePermissionDeniedDirectoryCapture("declared");
+  const result = exercisePermissionDeniedDirectoryCapture("success");
 
   expect(
     result.backup.success,
@@ -225,18 +264,34 @@ it("recovers a permission-denied Hermes directory through the state-layer fallba
   expect(result.backup.backedUpDirs).toEqual(["memories"]);
   expect(result.backup.failedDirs).toEqual([]);
   expect(result.backup.failedDirReasons).toBeUndefined();
+  expect(result.backup.manifest?.backupComplete).toBe(true);
   expect(result.restoredMarker).toBe("preserved\n");
-  expect(result.captureRequests[0]?.[0]).toMatchObject({ dirs: ["memories"] });
+  expect(result.stagingEntries).toEqual([]);
 });
 
-it("rejects undeclared entries from privileged Hermes directory capture (#10375)", () => {
-  const result = exercisePermissionDeniedDirectoryCapture("undeclared");
+it("keeps a failed privileged Hermes capture unpublished and removes its staging archive (#10375)", () => {
+  const result = exercisePermissionDeniedDirectoryCapture("capture-failure");
 
   expect(result.backup.success).toBe(false);
   expect(result.backup.backedUpDirs).toEqual([]);
   expect(result.backup.failedDirs).toEqual(["memories"]);
   expect(result.backup.failedDirReasons).toEqual({ memories: "permission denied" });
+  expect(result.backup.manifest?.backupComplete).toBe(false);
+  expect(sandboxState.findBackup("hermes", "directory-capture-failure").match).toBeNull();
   expect(result.restoredMarker).toBeNull();
+  expect(result.stagingEntries).toEqual([]);
+});
+
+it("rejects an oversized privileged Hermes archive and removes its staging file (#10375)", () => {
+  const result = exercisePermissionDeniedDirectoryCapture("oversized");
+
+  expect(result.backup.success).toBe(false);
+  expect(result.backup.backedUpDirs).toEqual([]);
+  expect(result.backup.failedDirs).toEqual(["memories"]);
+  expect(result.backup.manifest?.backupComplete).toBe(false);
+  expect(sandboxState.findBackup("hermes", "directory-oversized").match).toBeNull();
+  expect(result.restoredMarker).toBeNull();
+  expect(result.stagingEntries).toEqual([]);
 });
 
 it("fails closed when the remote Hermes SQLite backup command fails (#7144)", () => {
@@ -284,25 +339,25 @@ it("fails the SQLite state backup when the online backup command fails (#7095)",
 it.skipIf(typeof process.getuid === "function" && process.getuid() === 0)(
   "classifies an unreadable Hermes SQLite file before opening the database (#10375)",
   () => {
-  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sqlite-backup-denied-"));
-  try {
-    const sourceDir = path.join(fixture, "state");
-    const sourceFile = path.join(sourceDir, "kanban.db");
-    fs.mkdirSync(sourceDir, { recursive: true });
-    fs.writeFileSync(sourceFile, "source database\n", { mode: 0o000 });
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sqlite-backup-denied-"));
+    try {
+      const sourceDir = path.join(fixture, "state");
+      const sourceFile = path.join(sourceDir, "kanban.db");
+      fs.mkdirSync(sourceDir, { recursive: true });
+      fs.writeFileSync(sourceFile, "source database\n", { mode: 0o000 });
 
-    const command = sandboxState.buildStateFileBackupCommand(sourceDir, {
-      path: "kanban.db",
-      strategy: "sqlite_backup",
-    });
-    const result = spawnSync("sh", ["-c", command], { encoding: "utf8" });
+      const command = sandboxState.buildStateFileBackupCommand(sourceDir, {
+        path: "kanban.db",
+        strategy: "sqlite_backup",
+      });
+      const result = spawnSync("sh", ["-c", command], { encoding: "utf8" });
 
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain(`permission denied: ${sourceFile}`);
-    expect(result.stdout).toBe("");
-  } finally {
-    fs.rmSync(fixture, { recursive: true, force: true });
-  }
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(`permission denied: ${sourceFile}`);
+      expect(result.stdout).toBe("");
+    } finally {
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
   },
 );
 

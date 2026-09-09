@@ -137,6 +137,7 @@ jobs:
             scripts/lib/reviewed-npm-archive.mts
             scripts/lib/reviewed-npm-audit.mts
             scripts/lib/npm-audit-receipt.mts
+            scripts/lib/repository-input-path.mts
           sparse-checkout-cone-mode: false
 
       - name: Set up Node for reviewed package download
@@ -739,7 +740,7 @@ jobs:
       # Publish immutable source-run toolchains before candidate checkout or
       # candidate-controlled workspace preparation can execute on this runner.
       - name: Stage immutable native Podman E2E toolchains
-        uses: NVIDIA/NemoClaw/.github/actions/stage-native-podman-e2e-toolchains@1a0f53d5d7e5420556be72b50d79ed5a333d637d
+        uses: NVIDIA/NemoClaw/.github/actions/stage-native-podman-e2e-toolchains@1385418619a2518fb79c3b603efba69d5d825f0d
         with:
           enabled: ${{ contains(format(',{0},', inputs.gateway_runtimes || inputs.gateway_runtime || 'docker'), ',podman,') && 'true' || 'false' }}
           github-token: ${{ github.token }}
@@ -2768,7 +2769,7 @@ jobs:
       E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
       E2E_WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
       NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: ${{ needs.base-image-publication.outputs.managed_image_catalog }}
-      NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF: ${{ needs.generate-matrix.outputs.workload_source == 'managed-image' && needs.base-image-publication.outputs.dcode_base_ref || '' }}
+      NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF: ${{ needs.generate-matrix.outputs.workload_source == 'managed-image' && needs.base-image-publication.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.dcode_base_ref || '' }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
@@ -2825,7 +2826,7 @@ jobs:
           build-cli: "false"
 
       - name: Record immutable Deep Agents Code base evidence
-        if: ${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' && needs.generate-matrix.outputs.workload_source == 'managed-image' }}
+        if: ${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' && needs.generate-matrix.outputs.workload_source == 'managed-image' && needs.base-image-publication.outputs.managed_image_catalog == '' }}
         env:
           BASE_CONTRACT: ${{ needs.base-image-publication.outputs.dcode_base_contract }}
           CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
@@ -2881,7 +2882,7 @@ jobs:
       # removalCondition: remove only if package installation no longer uses
       # --no-deps or an equivalent earlier build gate proves both imports.
       - name: Verify DCode profile import gate rejects missing base dependencies
-        if: ${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}
+        if: ${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' && matrix.runtime_provider == 'docker' }}
         shell: bash
         run: bash scripts/check-dcode-profile-import-gate.sh
 
@@ -4223,7 +4224,7 @@ jobs:
       E2E_AGENT_RUNTIME: "openclaw + hermes + langchain-deepagents-code"
       E2E_OBSERVABLE_OUTCOME: "Exact managed images start directly on the native architecture"
       RELEASE_E2E_ACTIVATION_PATH: ci/protected-managed-image-multiarch-activation-v1.json
-      NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.checkout_sha }}
+      NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.checkout_sha || github.sha }}
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_HEAD_SHA: ${{ inputs.checkout_sha || github.sha }}
       NEMOCLAW_E2E_SHARD: ${{ matrix.shard }}
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_BASE_SHA: ${{ inputs.base_sha || github.event.before || github.sha }}
@@ -4237,6 +4238,20 @@ jobs:
       NEMOCLAW_PROTECTED_REGISTRY_NAME: nemoclaw-managed-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
       NEMOCLAW_RUN_LIVE_E2E: "1"
     steps:
+      - name: Bind protected E2E correlation identity
+        shell: bash
+        env:
+          REQUESTED_CORRELATION_ID: ${{ inputs.correlation_id }}
+        run: |
+          set -euo pipefail
+          correlation_id="$REQUESTED_CORRELATION_ID"
+          if [[ -z "$correlation_id" ]]; then
+            correlation_id="$(node --input-type=module -e \
+              'import { randomUUID } from "node:crypto"; console.log(randomUUID())')"
+          fi
+          [[ "$correlation_id" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$ ]]
+          printf 'NEMOCLAW_E2E_CORRELATION_ID=%s\n' "$correlation_id" >>"$GITHUB_ENV"
+
       - name: Validate protected exact-head dispatch
         env:
           BASE_SHA: ${{ inputs.base_sha || github.event.before || github.sha }}
@@ -4445,7 +4460,7 @@ jobs:
           fi
           docker run --detach \
             --name "$NEMOCLAW_PROTECTED_REGISTRY_NAME" \
-            --label "io.nvidia.nemoclaw.e2e-owner=${NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT}" \
+            --label "io.nvidia.nemoclaw.managed-image.cohort=${NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT}" \
             --label "io.nvidia.nemoclaw.e2e-platform=${NEMOCLAW_PROTECTED_MANAGED_IMAGE_PLATFORM}" \
             --publish 127.0.0.1:5000:5000 \
             docker.io/library/registry@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
@@ -4541,29 +4556,23 @@ jobs:
             "${NEMOCLAW_PROTECTED_MANAGED_IMAGE_EVIDENCE}.tmp" \
             "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_EVIDENCE"
 
+
       - name: Remove isolated protected managed-image registry
         if: always()
         shell: bash
         run: |
           set -euo pipefail
           if docker container inspect "$NEMOCLAW_PROTECTED_REGISTRY_NAME" >/dev/null 2>&1; then
-            owner="$(
-              docker container inspect \
-                --format '{{index .Config.Labels "io.nvidia.nemoclaw.e2e-owner"}}' \
-                "$NEMOCLAW_PROTECTED_REGISTRY_NAME"
-            )"
+            owner="$(docker container inspect --format '{{index .Config.Labels "io.nvidia.nemoclaw.managed-image.cohort"}}' "$NEMOCLAW_PROTECTED_REGISTRY_NAME")"
             [[ "$owner" == "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT" ]] || {
               echo "::error::Refusing to remove a registry not owned by this protected shard" >&2
               exit 1
             }
             docker rm -f "$NEMOCLAW_PROTECTED_REGISTRY_NAME" >/dev/null
           fi
-          if docker container inspect "$NEMOCLAW_PROTECTED_REGISTRY_NAME" >/dev/null 2>&1; then
-            echo "::error::Protected managed-image registry container remained after cleanup" >&2
-            exit 1
-          fi
-          if curl --fail --silent --show-error http://127.0.0.1:5000/v2/ >/dev/null 2>&1; then
-            echo "::error::Protected managed-image registry listener remained after cleanup" >&2
+          if docker container inspect "$NEMOCLAW_PROTECTED_REGISTRY_NAME" >/dev/null 2>&1 ||
+            curl --fail --silent --show-error http://127.0.0.1:5000/v2/ >/dev/null 2>&1; then
+            echo "::error::Protected managed-image registry remained after cleanup" >&2
             exit 1
           fi
 
@@ -4571,6 +4580,42 @@ jobs:
         shell: bash
         run: >-
           npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/managed-image-multiarch-startup.test.ts
+
+      - name: Validate OpenClaw managed-image security boundary
+        shell: bash
+        run: >-
+          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN npx vitest run --project integration test/e2e-runtime/managed-image-openclaw-security.test.ts --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+
+      - name: Validate managed-image glibc probe lifecycle
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          export NEMOCLAW_RUN_GLIBC_PROBE_DOCKER_E2E=1
+          NEMOCLAW_TEST_IMAGE="$(jq -er '.[] | select(.agent == "openclaw") | .reference' "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_CONTRACT")"
+          export NEMOCLAW_TEST_IMAGE
+          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN npx vitest run --project integration test/e2e-runtime/image-compatibility-docker-lifecycle.test.ts --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+
+      - name: Remove protected managed-image cohort resources
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          label="io.nvidia.nemoclaw.managed-image.cohort=${NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT}"
+          cleanup_failed=0
+          mapfile -t owned_containers < <(docker ps -aq --filter "label=$label")
+          ((${#owned_containers[@]} == 0)) || docker rm -f "${owned_containers[@]}" >/dev/null || cleanup_failed=1
+          mapfile -t owned_images < <(docker image ls -q --filter "label=$label" | sort -u)
+          ((${#owned_images[@]} == 0)) || docker image rm -f "${owned_images[@]}" >/dev/null || cleanup_failed=1
+          mapfile -t owned_volumes < <(docker volume ls -q --filter "label=$label")
+          ((${#owned_volumes[@]} == 0)) || docker volume rm -f "${owned_volumes[@]}" >/dev/null || cleanup_failed=1
+          if docker ps -aq --filter "label=$label" | grep -q . ||
+            docker image ls -q --filter "label=$label" | grep -q . ||
+            docker volume ls -q --filter "label=$label" | grep -q .; then
+            echo "::error::Protected managed-image cohort resources remained after cleanup" >&2
+            exit 1
+          fi
+          ((cleanup_failed == 0)) || exit 1
 
       - name: Publish exact amd64 protected runtime build cache
         if: ${{ matrix.platform == 'linux/amd64' }}
@@ -5087,7 +5132,7 @@ jobs:
           fi
           docker run --detach \
             --name "$NEMOCLAW_PROTECTED_REGISTRY_NAME" \
-            --label "io.nvidia.nemoclaw.e2e-owner=${NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT}" \
+            --label "io.nvidia.nemoclaw.managed-image.cohort=${NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT}" \
             --label "io.nvidia.nemoclaw.e2e-platform=linux/amd64" \
             --publish 127.0.0.1:5000:5000 \
             docker.io/library/registry@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
@@ -5147,7 +5192,7 @@ jobs:
           if docker container inspect "$NEMOCLAW_PROTECTED_REGISTRY_NAME" >/dev/null 2>&1; then
             owner="$(
               docker container inspect \
-                --format '{{index .Config.Labels "io.nvidia.nemoclaw.e2e-owner"}}' \
+                --format '{{index .Config.Labels "io.nvidia.nemoclaw.managed-image.cohort"}}' \
                 "$NEMOCLAW_PROTECTED_REGISTRY_NAME"
             )"
             [[ "$owner" == "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT" ]] || {

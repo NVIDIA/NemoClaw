@@ -23,9 +23,14 @@ import {
 const ROOT = path.resolve(import.meta.dirname, "../../..");
 const DOCKERFILE = path.join(ROOT, "Dockerfile");
 const DOCKERFILE_BASE = path.join(ROOT, "Dockerfile.base");
-const DOCKERFILE_SANDBOX = path.join(ROOT, "test", "Dockerfile.sandbox");
 const HERMES_DOCKERFILE = path.join(ROOT, "agents", "hermes", "Dockerfile");
 const HERMES_DOCKERFILE_BASE = path.join(ROOT, "agents", "hermes", "Dockerfile.base");
+const HERMES_FINALIZE_IMAGE_LAYOUT = path.join(
+  ROOT,
+  "agents",
+  "hermes",
+  "finalize-image-layout.sh",
+);
 const DEEPAGENTS_DOCKERFILE_BASE = path.join(
   ROOT,
   "agents",
@@ -720,12 +725,9 @@ describe("sandbox provisioning: image health checks (#1430)", () => {
     });
   });
 
-  it.each([
-    ["base image", DOCKERFILE_BASE, "# Baseline health check.", undefined],
-    ["test image", DOCKERFILE_SANDBOX, "# Test image: no long-running service", "ENTRYPOINT"],
-  ])("keeps %s non-service probe runtime-only", (_label, imagePath, startMarker, endMarker) => {
-    const imageDefinition = fs.readFileSync(imagePath, "utf-8");
-    const command = dockerHealthCommandBetween(imageDefinition, startMarker, endMarker);
+  it("keeps the base-image non-service probe runtime-only", () => {
+    const imageDefinition = fs.readFileSync(DOCKERFILE_BASE, "utf-8");
+    const command = dockerHealthCommandBetween(imageDefinition, "# Baseline health check.");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-probe-"));
 
     try {
@@ -1106,10 +1108,21 @@ describe("Hermes sandbox provisioning", () => {
       fs.writeFileSync(path.join(hermesDir, "config.yaml"), "model: test\n");
       fs.writeFileSync(path.join(hermesDir, ".env"), "TOKEN=test\n");
     }
-    const command = dockerRunCommandBetween(dockerfile, startMarker, endMarker).replaceAll(
-      "/root/.cache/pip",
-      path.join(tmp, "root-cache", "pip"),
-    );
+    const finalizeImageLayout = path.join(tmp, "finalize-image-layout.sh");
+    fs.copyFileSync(HERMES_FINALIZE_IMAGE_LAYOUT, finalizeImageLayout);
+    const finalizeImageLayoutSha256 = dockerfile.match(
+      /^ARG NEMOCLAW_HERMES_FINALIZE_IMAGE_LAYOUT_SHA256=([a-f0-9]{64})$/mu,
+    )?.[1] ?? "";
+    const command = dockerRunCommandBetween(dockerfile, startMarker, endMarker)
+      .replaceAll("/root/.cache/pip", path.join(tmp, "root-cache", "pip"))
+      .replaceAll(
+        "/opt/nemoclaw-hermes-config/finalize-image-layout.sh",
+        finalizeImageLayout,
+      )
+      .replaceAll(
+        "$NEMOCLAW_HERMES_FINALIZE_IMAGE_LAYOUT_SHA256",
+        finalizeImageLayoutSha256,
+      );
     const result = runDockerShell(command, sandboxRoot);
     return { ...result, tmp, sandboxRoot };
   }
@@ -1274,11 +1287,25 @@ describe("Hermes sandbox provisioning", () => {
     ];
     try {
       runs.forEach((run) => {
-        expect(run.result.status).toBe(0);
+        expect(
+          run.result.status,
+          [run.result.stderr, run.result.error?.message].filter(Boolean).join("\n"),
+        ).toBe(0);
         const hermesDir = path.join(run.sandboxRoot, ".hermes");
         expect((fs.statSync(hermesDir).mode & 0o7777).toString(8)).toBe("3770");
-        expect(["logs", "logs/curator", "cache", "hooks", "image_cache", "audio_cache", "platforms"].every((dir) =>
-              Object.is((fs.statSync(path.join(hermesDir, dir)).mode & 0o777).toString(8), "770"))).toBe(true);
+        expect(
+          [
+            "logs",
+            "logs/curator",
+            "cache",
+            "hooks",
+            "image_cache",
+            "audio_cache",
+            "platforms",
+          ].every((dir) =>
+            Object.is((fs.statSync(path.join(hermesDir, dir)).mode & 0o777).toString(8), "770"),
+          ),
+        ).toBe(true);
         expect((fs.statSync(path.join(hermesDir, "platforms")).mode & 0o7777).toString(8)).toBe(
           "2770",
         );
@@ -1286,6 +1313,9 @@ describe("Hermes sandbox provisioning", () => {
         expect(
           (fs.statSync(path.join(hermesDir, "logs", "curator")).mode & 0o7777).toString(8),
         ).toBe("2770");
+        expect((fs.statSync(path.join(hermesDir, "sessions")).mode & 0o7777).toString(8)).toBe(
+          "2770",
+        );
         const whatsappSessionDir = path.join(hermesDir, "platforms", "whatsapp", "session");
         expect((fs.statSync(whatsappSessionDir).mode & 0o7777).toString(8)).toBe("2770");
         expect((fs.statSync(path.join(hermesDir, "runtime")).mode & 0o7777).toString(8)).toBe(
@@ -1296,10 +1326,10 @@ describe("Hermes sandbox provisioning", () => {
         );
         expect(() => fs.lstatSync(path.join(hermesDir, "gateway.pid"))).toThrow();
         expect(run.calls).toContain(
-          `chown gateway:sandbox ${path.join(hermesDir, "cron")} ${path.join(
+          `chown gateway:sandbox ${path.join(hermesDir, "sessions")} ${path.join(
             hermesDir,
-            "gateway",
-          )} ${path.join(hermesDir, "runtime")}`,
+            "cron",
+          )} ${path.join(hermesDir, "gateway")} ${path.join(hermesDir, "runtime")}`,
         );
       });
     } finally {

@@ -189,7 +189,7 @@ describe("Hermes MCP managed configuration assertion", () => {
 });
 
 describe("Hermes MCP gateway restart", () => {
-  it("preserves managed config and integrity through restart", async () => {
+  it("keeps the strict baseline root-owned and compatibility integrity current", async () => {
     const mcpUrl = "https://mcp.example.test/mcp";
     const hostRunner = new RecordingRunner([
       shellResult(0, "Gateway restarted\nhealth passed\n"),
@@ -201,7 +201,7 @@ describe("Hermes MCP gateway restart", () => {
       ),
     ]);
     const sandboxRunner = new RecordingRunner([
-      shellResult(0, "HERMES_MCP_INTEGRITY_CURRENT\n"),
+      shellResult(0, "HERMES_MCP_COMPAT_INTEGRITY_CURRENT\n"),
       shellResult(0, `${JSON.stringify({ state: "matched" })}\n`),
     ]);
 
@@ -222,5 +222,10 @@ describe("Hermes MCP gateway restart", () => {
         args: ["hermes-e2e", "mcp", "list", "--json"],
       }),
     ]);
+    expect(sandboxRunner.calls[0]?.args.at(-1)).toContain(
+      "! cmp -s /etc/nemoclaw/hermes.config-hash /sandbox/.hermes/.config-hash",
+    );
+    expect(sandboxRunner.calls[0]?.args.at(-1)).toContain('test "$strict_status" -ne 0');
+    expect(sandboxRunner.calls[0]?.args.at(-1)).toContain('test "$compat_status" -eq 0');
   });
 });
