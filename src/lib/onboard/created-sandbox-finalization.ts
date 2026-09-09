@@ -246,7 +246,7 @@ export function createOnboardCreatedSandboxRegistration(input: {
 }
 
 /** Finish ordinary post-registration actions after portable onboarding has returned. */
-export function completeOrdinaryOnboardSandboxCreation(
+export async function completeOrdinaryOnboardSandboxCreation(
   input: {
     readonly sandboxName: string;
     readonly sandboxWasLiveDefault: boolean;
@@ -261,7 +261,7 @@ export function completeOrdinaryOnboardSandboxCreation(
     readonly runFile: (command: string, args: string[], options: { ignoreError: true }) => unknown;
     readonly scriptsDir: string;
     readonly gatewayName: string;
-    readonly providerExistsInGateway: (providerName: string) => boolean;
+    readonly providerExistsInGateway: (providerName: string) => boolean | Promise<boolean>;
     readonly armCancelRollback: (sandboxName: string, sandboxIdentityFingerprint: string) => void;
     readonly markCancellationRecovery: (sandboxName: string) => unknown;
     readonly dockerInfoFormat: Parameters<typeof warnIfLandlockUnsupported>[0]["dockerInfoFormat"];
@@ -269,7 +269,7 @@ export function completeOrdinaryOnboardSandboxCreation(
     readonly revalidateSandboxIdentity: (operation: string) => void;
     readonly applyVmDnsMonkeypatch?: typeof applyOnboardVmDnsMonkeypatch;
   },
-): string {
+): Promise<string> {
   deps.revalidateSandboxIdentity(`completing sandbox '${input.sandboxName}'`);
   restoreDefaultAfterRecreate(deps.setDefault, input.sandboxName, input.sandboxWasLiveDefault);
   deps.revalidateSandboxIdentity(`starting DNS setup for sandbox '${input.sandboxName}'`);
@@ -288,7 +288,7 @@ export function completeOrdinaryOnboardSandboxCreation(
     { revalidateSandboxIdentity: deps.revalidateSandboxIdentity },
   );
   for (const provider of input.messagingProviders) {
-    if (!deps.providerExistsInGateway(provider)) printMessagingProviderMissing(provider);
+    if (!(await deps.providerExistsInGateway(provider))) printMessagingProviderMissing(provider);
   }
   deps.revalidateSandboxIdentity(`reporting sandbox '${input.sandboxName}' creation success`);
   console.log(`  ✓ Sandbox '${input.sandboxName}' created`);

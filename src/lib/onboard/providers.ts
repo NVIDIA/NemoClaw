@@ -16,6 +16,7 @@ const {
 const openrouter = require("../inference/openrouter");
 const { isSafeModelId } = require("../validation");
 const { compactText } = require("../core/url-utils");
+const { createCliOpenShellProviderAdapter } = require("../adapters/openshell/provider-adapter-cli");
 const {
   LLAMA_CPP_CREDENTIAL_ENV,
   LLAMA_CPP_HOST_OPENAI_BASE_URL,
@@ -360,40 +361,6 @@ function getRequestedModelHint(nonInteractive, allowHostedInferenceStaging = tru
 // to avoid a circular dependency with onboard.ts.
 
 /**
- * Build the argument array for an `openshell provider create` or `update` command.
- * @param {"create"|"update"} action - Whether to create or update.
- * @param {string} name - Provider name.
- * @param {string} type - Provider type (for example, "openai" or "nemoclaw-mcp-v1").
- * @param {string} credentialEnv - Credential environment variable name.
- * @param {string|null} baseUrl - Optional base URL for API-compatible endpoints.
- * @param {{ includeCredential?: boolean, credentialEnvs?: string[] }} [opts] - When `includeCredential` is
- *   false, the `--credential` flag is omitted from the args. Used on the
- *   `provider update` path when the host env does not carry the credential and
- *   the gateway already holds it (no rotation needed). OpenShell's CLI rejects
- *   `--credential KEY` when the local env var is empty, so passing the flag
- *   would fail before reaching the gateway.
- * @returns {string[]} Argument array for runOpenshell().
- */
-function buildProviderArgs(action, name, type, credentialEnv, baseUrl, opts = {}) {
-  const { includeCredential = true, credentialEnvs } = opts;
-  const args =
-    action === "create"
-      ? ["provider", "create", "--name", name, "--type", type]
-      : ["provider", "update", name];
-  if (includeCredential) {
-    for (const envKey of credentialEnvs ?? [credentialEnv]) {
-      args.push("--credential", envKey);
-    }
-  }
-  if (baseUrl && type === "openai") {
-    args.push("--config", `OPENAI_BASE_URL=${baseUrl}`);
-  } else if (baseUrl && type === "anthropic") {
-    args.push("--config", `ANTHROPIC_BASE_URL=${baseUrl}`);
-  }
-  return args;
-}
-
-/**
  * Check whether an OpenShell provider exists in the gateway.
  *
  * Queries the gateway-level provider registry via `openshell provider get`.
@@ -403,12 +370,15 @@ function buildProviderArgs(action, name, type, credentialEnv, baseUrl, opts = {}
  * @param {Function} _runOpenshell - Injected runOpenshell from onboard.ts.
  * @returns {boolean} True if the provider exists in the gateway.
  */
-function providerExistsInGateway(name, _runOpenshell) {
-  const result = _runOpenshell(["provider", "get", name], {
-    ignoreError: true,
-    stdio: ["ignore", "ignore", "ignore"],
+async function providerExistsInGateway(name, runOpenshell) {
+  const adapter = createCliOpenShellProviderAdapter({ run: runOpenshell });
+  const result = await adapter.getProvider({
+    target: { kind: "selected" },
+    providerName: name,
   });
-  return result.status === 0;
+  if (result.ok) return true;
+  if (result.error.kind !== "schema" && result.error.kind !== "validation") return false;
+  throw new Error(result.error.message);
 }
 
 /**
@@ -448,13 +418,40 @@ function identityCheckedRunner(runOpenshell, revalidateSandboxIdentity, operatio
  * @param {{replaceExisting?: boolean, knownExists?: boolean, allowedSandboxes?: readonly string[], requireExactBinding?: boolean, allowExtendedCredentialKeys?: boolean, credentialEnvs?: string[], revalidateSandboxIdentity?: (operation: string) => void}} options - Optional replacement controls.
  * @returns {{ ok: boolean, status?: number, message?: string, reason?: string }}
  */
-function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, options = {}) {
-  const runOpenshell = identityCheckedRunner(
-    _runOpenshell,
-    options.revalidateSandboxIdentity,
-    `inspect or change provider ${JSON.stringify(name)}`,
-  );
-  const exists = options.knownExists ?? providerExistsInGateway(name, runOpenshell);
+async function upsertProvider(
+  name,
+  type,
+  credentialEnv,
+  baseUrl,
+  env,
+  _runOpenshell,
+  options = {},
+) {
+  const operation = `inspect or change provider ${JSON.stringify(name)}`;
+  const revalidate = () => options.revalidateSandboxIdentity?.(operation);
+  const adapter = createCliOpenShellProviderAdapter({ run: _runOpenshell });
+  let observed = null;
+  if (options.knownExists === undefined || options.requireExactBinding) {
+    revalidate();
+    observed = await adapter.getProvider({
+      target: { kind: "selected" },
+      providerName: name,
+    });
+  }
+  const exists =
+    options.knownExists ??
+    (observed?.ok === true
+      ? true
+      : observed?.error?.kind === "command" && observed.error.reason === "not_found"
+        ? false
+        : null);
+  if (exists === null) {
+    return {
+      ok: false,
+      status: 1,
+      message: observed?.error?.message || `Could not inspect provider '${name}'.`,
+    };
+  }
   const credentialEnvs = options.credentialEnvs ?? [credentialEnv];
   const bindingMatches = (metadata) =>
     options.allowExtendedCredentialKeys
@@ -472,7 +469,7 @@ function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, 
     exists &&
     options.requireExactBinding &&
     !options.replaceExisting &&
-    !bindingMatches(readGatewayProviderMetadata(name, runOpenshell))
+    !bindingMatches(observed?.ok ? observed.value : null)
   ) {
     return {
       ok: false,
@@ -483,6 +480,11 @@ function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, 
   }
   if (exists && options.replaceExisting) {
     const { deleteProviderWithRecovery } = require("./sandbox-provider-cleanup");
+    const runOpenshell = identityCheckedRunner(
+      _runOpenshell,
+      options.revalidateSandboxIdentity,
+      operation,
+    );
     const r = deleteProviderWithRecovery(name, {
       runOpenshell,
       allowedSandboxes: options.allowedSandboxes,
@@ -520,19 +522,37 @@ function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, 
     };
   }
   const submittedCredentialEnvs = action === "create" ? credentialEnvs : availableCredentialEnvs;
-  const includeCredential = submittedCredentialEnvs.length > 0;
-  const args = buildProviderArgs(action, name, type, credentialEnv, baseUrl, {
-    includeCredential,
-    credentialEnvs: submittedCredentialEnvs,
+  const credentials = submittedCredentialEnvs.flatMap((envKey) => {
+    const value = env[envKey];
+    return typeof value === "string" && value.length > 0 ? [{ name: envKey, value }] : [];
   });
-  const runOpts = { ignoreError: true, env, stdio: ["ignore", "pipe", "pipe"] };
-  const result = runOpenshell(args, runOpts);
-  if (result.status !== 0) {
-    const output =
-      compactText(redact(`${result.stderr || ""}`)) ||
-      compactText(redact(`${result.stdout || ""}`)) ||
-      `Failed to ${action} provider '${name}'.`;
-    return { ok: false, status: result.status || 1, message: output };
+  const config = baseUrl && (type === "openai" || type === "anthropic")
+    ? [
+        {
+          key: type === "anthropic" ? "ANTHROPIC_BASE_URL" : "OPENAI_BASE_URL",
+          value: baseUrl,
+        },
+      ]
+    : [];
+  revalidate();
+  const result =
+    action === "create"
+      ? await adapter.createProvider({
+          target: { kind: "selected" },
+          name,
+          type,
+          credentials,
+          config,
+          fromExisting: false,
+        })
+      : await adapter.updateProvider({
+          target: { kind: "selected" },
+          providerName: name,
+          credentials,
+          config,
+        });
+  if (!result.ok) {
+    return { ok: false, status: 1, message: result.error.message };
   }
   return { ok: true };
 }
@@ -563,7 +583,6 @@ module.exports = {
   getRequestedProviderHint,
   getRequestedModelHint,
   isProviderKeyCredentialCandidate,
-  buildProviderArgs,
   upsertProvider,
   providerExistsInGateway,
   readGatewayProviderMetadata,

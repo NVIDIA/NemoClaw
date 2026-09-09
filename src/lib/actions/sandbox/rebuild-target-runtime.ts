@@ -235,7 +235,7 @@ export async function preflightRebuildTargetRuntime(
     // rows may recover provider/model from their own matching onboard session;
     // checking the raw row first would miss that remote credential requirement.
     if (
-      !preflightRebuildCredentials(
+      !(await preflightRebuildCredentials(
         {
           ...sb,
           provider: target.resumeConfig.provider,
@@ -252,7 +252,7 @@ export async function preflightRebuildTargetRuntime(
             requiresGatewayProviderReconfigure = true;
           },
         },
-      )
+      ))
     ) {
       return { ok: false };
     }
