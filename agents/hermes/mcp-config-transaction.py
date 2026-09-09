@@ -30,6 +30,7 @@ import importlib.util
 import ipaddress
 import json
 import logging
+import math
 import os
 import grp
 import pwd
@@ -55,6 +56,9 @@ ROOT_LIFECYCLE_MARKER = "/run/nemoclaw/hermes-root-lifecycle"
 GATEWAY_PUBLIC_PORT_PATH = "/run/nemoclaw/hermes-api-port"
 SERVICE_MANAGER_PATH = b"/usr/local/bin/nemoclaw-start"
 RELOAD_TIMEOUT_SECONDS = 300
+# Five counted exits span four intervals. Stay beyond the supervisor's inclusive
+# 60-second crash window without exempting an exit or changing its crash budget.
+MIN_GATEWAY_RELOAD_UPTIME_SECONDS = 16
 SERVER_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")
 MCP_DNS_LABEL_RE = re.compile(
     r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"
@@ -1341,10 +1345,49 @@ def _gateway_healthy() -> bool:
     return _gateway_health_phase()[0]
 
 
+def _gateway_uptime_seconds(identity: tuple[int, object]) -> float:
+    start_ticks = identity[1]
+    if type(start_ticks) is not int or start_ticks <= 0:
+        raise RuntimeError("Hermes gateway uptime could not be verified")
+    try:
+        ticks_per_second = os.sysconf("SC_CLK_TCK")
+        # Linux /proc start identities and CLOCK_BOOTTIME both include suspend.
+        age = time.clock_gettime(time.CLOCK_BOOTTIME) - start_ticks / ticks_per_second
+    except (AttributeError, OSError, TypeError, ValueError, OverflowError, ZeroDivisionError):
+        raise RuntimeError("Hermes gateway uptime could not be verified") from None
+    if ticks_per_second <= 0 or not math.isfinite(age) or age < 0:
+        raise RuntimeError("Hermes gateway uptime could not be verified")
+    return age
+
+
+def _pace_gateway_reload(identity: tuple[int, object], deadline: float) -> None:
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("Hermes managed MCP reload deadline expired while pacing")
+        if _gateway_identity() != identity or not _gateway_has_managed_parent(identity[0]):
+            raise RuntimeError("Hermes gateway identity changed while pacing managed MCP reload")
+        delay = MIN_GATEWAY_RELOAD_UPTIME_SECONDS - _gateway_uptime_seconds(identity)
+        if delay <= 0:
+            break
+        # Pacing only delays this exact intended signal; it does not retry a
+        # failed reload, adopt another process, or renew the reload deadline.
+        remaining = deadline - time.monotonic()
+        if remaining > 0:
+            time.sleep(min(1, delay, remaining))
+    if _gateway_identity() != identity or not _gateway_has_managed_parent(identity[0]):
+        raise RuntimeError("Hermes gateway identity changed while pacing managed MCP reload")
+    if time.monotonic() >= deadline:
+        raise TimeoutError("Hermes managed MCP reload deadline expired while pacing")
+
+
 def reload_gateway() -> bool:
+    started_at = time.monotonic()
+    deadline = started_at + RELOAD_TIMEOUT_SECONDS
     previous = _gateway_identity()
     if previous is None:
         return False
+    _pace_gateway_reload(previous, deadline)
     try:
         os.kill(previous[0], signal.SIGUSR1)
     except ProcessLookupError:
@@ -1352,9 +1395,8 @@ def reload_gateway() -> bool:
             return False
         raise
 
-    started_at = time.monotonic()
-    deadline = started_at + RELOAD_TIMEOUT_SECONDS
-    re_kick_not_before = started_at + (RELOAD_TIMEOUT_SECONDS / 2)
+    # Preserve the first signal's settlement grace inside the original deadline.
+    re_kick_not_before = time.monotonic() + (RELOAD_TIMEOUT_SECONDS / 2)
     re_kick_attempted = False
     re_kick_sent = False
     phase_order = {
@@ -1404,8 +1446,10 @@ def reload_gateway() -> bool:
             and current is not None
             and _gateway_has_managed_parent(current[0])
             and _gateway_identity() == current
+            and _gateway_uptime_seconds(current) >= MIN_GATEWAY_RELOAD_UPTIME_SECONDS
             and time.monotonic() < deadline
         ):
+            _pace_gateway_reload(current, deadline)
             re_kick_attempted = True
             try:
                 os.kill(current[0], signal.SIGUSR1)

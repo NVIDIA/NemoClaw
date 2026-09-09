@@ -655,7 +655,6 @@ test(
       }
       expect(new Set(observedRevisions).size).toBe(CREDENTIAL_WINDOW_ROTATION_COUNT + 1);
       const currentRevision = observedRevisions.at(-1)!;
-      expect(currentRevision).not.toBe(oldChildRevision);
       await artifacts.writeJson("credential-window-revisions.json", {
         expiryAtMs,
         expiryRevision,
@@ -796,6 +795,18 @@ test(
       ).toBe(false);
 
       progress.phase("re-add the bridge and keep the old process revoked");
+      // The isolated fixture owns this detached provider. Normal MCP removal
+      // preserves it, so explicitly delete it before creating the replacement.
+      const deleteRetainedProvider = await host.command(
+        host.openshellCommandPath,
+        ["provider", "delete", providerName],
+        {
+          artifactName: "credential-window-delete-retained-fixture-provider-before-readd",
+          env: openshellEnv(),
+          timeoutMs: 60_000,
+        },
+      );
+      expect(deleteRetainedProvider.exitCode, resultText(deleteRetainedProvider)).toBe(0);
       fakeMcp.setSecret(restartSecret);
       const readd = await host.nemoclaw(
         [

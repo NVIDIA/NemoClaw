@@ -1048,7 +1048,7 @@ health_ports = list(ports)
 ports.clear()
 statuses[module.GATEWAY_INTERNAL_PORT] = 200
 statuses[module.GATEWAY_PUBLIC_PORT] = [503, 401, 401]
-identities = iter(((1, 10), (2, 20), (2, 20), (3, 30), (3, 30), (3, 30)))
+identities = iter(((1, 10), (1, 10), (1, 10), (2, 20), (2, 20), (3, 30), (3, 30), (3, 30)))
 module._gateway_identity = lambda: next(identities)
 module._gateway_has_managed_parent = lambda pid: True
 signals = []
@@ -1056,6 +1056,7 @@ module.os.kill = lambda pid, sent_signal: signals.append((pid, signal.Signals(se
 module.time.monotonic = lambda: 0
 sleeps = []
 module.time.sleep = sleeps.append
+module._gateway_uptime_seconds = lambda _identity: 16
 reloaded = module.reload_gateway()
 print(json.dumps({
     "ready": ready,
@@ -1170,6 +1171,7 @@ def signal_gateway(pid, sent_signal):
     observed["signal_pid"] = pid
     observed["signal_name"] = signal.Signals(sent_signal).name
     gateway_state["start_time"] = 100
+module._gateway_uptime_seconds = lambda _identity: 16
 module.os.kill = signal_gateway
 def gateway_health_phase(deadline=None):
     observed["health_uid"] = module.os.geteuid()
@@ -1206,7 +1208,7 @@ print(json.dumps(observed, sort_keys=True))
       signal_name: "SIGUSR1",
       signal_pid: 4242,
       signal_uid: 1000,
-      trusted_pids: [4242, 4242, 4242, 4242, 4242],
+      trusted_pids: [4242, 4242, 4242, 4242, 4242, 4242, 4242],
     });
   });
 
@@ -1448,6 +1450,7 @@ def signal_gateway(pid, sent_signal):
     signals.append((pid, signal.Signals(sent_signal).name))
     if len(signals) == 3:
         gateway["identity"] = (4243, 100)
+module._gateway_uptime_seconds = lambda _identity: 16
 module.os.kill = signal_gateway
 try:
     module.apply_transaction_and_reload("add", {
