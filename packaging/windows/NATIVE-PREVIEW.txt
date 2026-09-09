@@ -1,54 +1,54 @@
 NemoClaw Native Windows Candidate Preview
 
-This package contains the NemoClaw CLI, Node.js 22.22.3, OpenClaw 2026.7.1,
-native Windows ARM64 builds of openshell.exe and openshell-gateway.exe from
-NVIDIA/OpenShell#2721 merge commit bcd517bbe08cc80860c9be57699390cd32e8445f,
-and the pinned Microsoft MXC 0.8.0 ARM64 wxc-exec.exe and wxc-host-prep.exe
-ProcessContainer tools. WSLC and other unused backend sidecars are excluded.
+This package contains the NemoClaw CLI and authentic OpenClaw, Hermes Agent,
+Deep Agents Code, Pi, and NemoCUA runtime paths. Pi and NemoCUA are experimental.
+The MSI installs native ARM64 Node.js, Python, OpenShell, and Microsoft MXC
+ProcessContainer components. WSL, Docker, Linux virtual machines, and unused
+MXC backend sidecars are not part of this package.
 
-The packaged OpenShell gateway is a source-built NVIDIA/OpenShell#2721
-derivative with the checked-in OPENSHELL-NODE-UI-COMPATIBILITY.patch applied.
-That compatibility change emits ui.disable=false so the contained Node.js
-process can initialize. The qualification turn runs OpenClaw in a worker inside
-that same process; MXC filesystem containment remains active.
+Setup and onboarding share one native WPF window. Choose an agent once, select
+inference and supported optional services, and follow the named install phases.
+The Personal profile enables outbound network access while keeping host settings
+outside the agent filesystem. Setup adds a NemoClaw Setup desktop shortcut and
+a shortcut with the selected agent's icon. OpenClaw and Hermes open their web
+interfaces in the default browser; terminal agents open a Windows console.
+A native control window stops each web session and cleans up its sandbox.
 
-The pinned OpenShell create watcher does not return after the one-shot workload
-completes. NemoClaw stops that client-side watcher after receiving the exact
-workload result, then deletes the sandbox through OpenShell.
+Run NemoClaw Setup again to change settings or, when installed, uninstall.
+Uninstall retains personal data by default. Its explicit data-removal selection
+removes only the chosen agent's owned state, settings, and scoped stored keys.
+Shared on-device model files are separate from agent data.
 
-The NVIDIA-branded setup installs a native ARM64 NemoClaw GUI launcher and a
-graphical first-run experience. The interface names OpenClaw, Hermes Agent,
-LangChain Deep Agents Code, Pi, and NemoCUA, with Pi and NemoCUA explicitly
-marked experimental. Every enabled choice has an agent-specific executable
-adapter: OpenClaw opens its authentic Control UI, Hermes Agent, Deep Agents
-Code, and Pi open their native terminal surfaces, and NemoCUA runs its bounded
-experimental visible-browser implementation. A choice is not a production
-support claim until its exact package qualification passes.
+Inference keys are stored in Windows Credential Manager, bound to the agent,
+provider, and endpoint. The inference key stays in the host broker. Optional
+service keys use separate per-agent bindings and enter only the selected
+agent's process environment. Keys are not written into setup JSON or passed as
+process arguments. Native state ownership and the UI relay's native file owner
+protect their filesystem boundaries through shutdown.
 
-CI separately drives three deterministic turns through each real agent runtime
-inside native MXC. OpenClaw uses its Control UI; terminal agents use their
-genuine non-interactive CLI modes; NemoCUA observes and acts on real Edge
-pixels. The deterministic loopback model proves transport and runtime wiring
-without a pull-request secret; it is not production inference quality.
+The OpenShell binary is built from NVIDIA/OpenShell#2721 merge commit
+bcd517bbe08cc80860c9be57699390cd32e8445f with the installed, hash-recorded
+OPENSHELL-NODE-UI-COMPATIBILITY.patch. That derivative supports contained Node
+initialization, explicit host-console sharing, and the selected Personal network
+mode. It does not establish production LPAC or governed network-policy parity.
 
-Graphical onboarding collects the selected provider endpoint and model.
-Provider API keys are written by the native ARM64 launcher to Windows
-Credential Manager and are not stored in MSI-owned files or JSON. Agent state
-and secret-free configuration live below the current user's Local AppData.
-Runtime processes receive only an authenticated, ephemeral loopback broker
-route; the provider credential remains on the Windows host.
+Microsoft MXC's native elevated system-drive and null-device preparation runs
+before MSI installation. Windows resets the null-device preparation at reboot;
+persistent production gateway-service ownership remains a separate gate.
 
-The setup executable applies Microsoft MXC's elevated prepare-system-drive and
-prepare-null-device host prerequisites before installing the MSI. Windows
-resets the null-device prerequisite at reboot; persistent production lifecycle
-ownership remains deferred.
+On RTX Spark N1X, eligible Windows ARM64 machines may select native on-device
+Express. Pinned llama.cpp/CUDA and Qwen model downloads require compatible
+drivers, sufficient memory/storage, complete GPU offload, and an authenticated
+real model response before Ready. This is an agent-independent local service;
+it does not run the Linux or WSL recipes. Generic ARM64 CI is not physical N1X
+qualification.
 
-This is a qualification candidate, not a production support claim. Native MXC
-execution remains limited by the Windows host build and capabilities. Gateway
-service registration, messaging, web-search integration, managed local-model
-lifecycle, and production activation remain incomplete. Mutable runtime state
-stays outside this MSI-owned installation directory.
+Qualification must exercise the actual native setup, all five packaged agent
+paths, configured Hermes interactive console and dashboard, desktop links,
+repair/reinstall, default data preservation, explicit tester reset, and cleanup.
+Deterministic local inference proves runtime and transport behavior, not live
+commercial-provider or messaging-account qualification. Actual Windows screen
+captures and receipts identify the exact candidate being tested.
 
-PR qualification artifacts are unsigned. Production use remains gated on
-Authenticode signing of the NemoClaw, OpenClaw, OpenShell, MXC, MSI, and setup
-payloads as applicable.
+This is an unsigned PR preview, not a production release. Production signing,
+broader host/runtime qualification, and governed deployment remain separate.

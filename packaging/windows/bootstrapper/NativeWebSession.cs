@@ -1,0 +1,136 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+using System.Diagnostics;
+using System.IO;
+using System.Text;
+using System.Text.Json;
+using System.Threading;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Automation;
+using System.Windows.Threading;
+
+namespace Nvidia.NemoClaw.Bootstrapper;
+
+// The backend owns the sandbox and its cleanup. Browser processes may be reused
+// by Windows, so this private pipe is the explicit session lifetime boundary.
+internal static class NativeWebSession
+{
+    internal static int Run(string agent)
+    {
+        if (agent is not ("openclaw" or "hermes")) return 2;
+        using var input = new StreamReader(Console.OpenStandardInput(), new UTF8Encoding(false, true));
+        using var output = new StreamWriter(Console.OpenStandardOutput(), new UTF8Encoding(false)) { AutoFlush = true };
+        string? url;
+        bool qualification;
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            using var record = JsonDocument.Parse(ReadLineAsync(input, timeout.Token).GetAwaiter().GetResult());
+            var root = record.RootElement;
+            qualification = root.TryGetProperty("qualification", out var test) && test.ValueKind == JsonValueKind.True;
+            url = root.TryGetProperty("url", out var submittedUrl) ? submittedUrl.GetString() : null;
+            if (root.GetProperty("schemaVersion").GetInt32() != 1 || root.GetProperty("agent").GetString() != agent ||
+                (url is not null && !ValidAddress(url))) return 2;
+        }
+        catch (Exception) { return 2; }
+        var result = 1;
+        var thread = new Thread(() =>
+        {
+            var stopped = false;
+            var stopRequested = false;
+            var content = new StackPanel { Margin = new Thickness(24) };
+            var status = new TextBlock { Text = url is null ? "Preparing your private agent session…" : "Your agent is running. Use Stop session when you have finished.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 12, 0, 20) };
+            var open = new Button { Content = "Open Web UI", Height = 38, Margin = new Thickness(0, 0, 0, 10), IsEnabled = url is not null };
+            var stop = new Button { Content = "Stop session", Height = 38 };
+            AutomationProperties.SetAutomationId(stop, "NativeWebSessionStop");
+            AutomationProperties.SetAutomationId(open, "NativeWebSessionOpen");
+            var heading = new TextBlock { Text = NativeDesktopIntegration.AgentName(agent), FontSize = 22 };
+            content.Children.Add(heading);
+            content.Children.Add(status); content.Children.Add(open); content.Children.Add(stop);
+            var window = new Window { Title = $"NemoClaw {NativeDesktopIntegration.AgentName(agent)} session", Width = 430, Height = 265,
+                ResizeMode = ResizeMode.NoResize, WindowStartupLocation = WindowStartupLocation.CenterScreen, Content = content };
+            void RequestStop()
+            {
+                if (stopRequested || stopped) return;
+                stopRequested = true;
+                open.IsEnabled = false; stop.IsEnabled = false;
+                status.Text = "Stopping your agent and closing its private session…";
+                try { output.WriteLine("{\"kind\":\"stop\"}"); }
+                catch (IOException) { stopped = true; window.Close(); }
+            }
+            void OpenBrowser()
+            {
+                if (url is null || stopRequested) return;
+                try { Process.Start(new ProcessStartInfo { FileName = url, UseShellExecute = true })?.Dispose(); }
+                catch (Exception) { status.Text = "Windows could not open your default browser. Try Open Web UI again, or stop this session."; }
+            }
+            open.Click += (_, _) => OpenBrowser();
+            stop.Click += (_, _) => RequestStop();
+            window.Closing += (_, args) => { if (!stopped) { args.Cancel = true; RequestStop(); } };
+            window.Closed += (_, _) => Dispatcher.CurrentDispatcher.InvokeShutdown();
+            window.Loaded += async (_, _) =>
+            {
+                try
+                {
+                    output.WriteLine("{\"kind\":\"ready\"}");
+                    if (!qualification) OpenBrowser();
+                    for (var count = 0; count < 64; count++)
+                    {
+                        using var message = JsonDocument.Parse(await ReadLineAsync(input, CancellationToken.None));
+                        var record = message.RootElement;
+                        var kind = record.GetProperty("kind").GetString();
+                        if (kind is "stopped" or "failed") { result = kind == "stopped" ? 0 : 1; break; }
+                        if (kind == "ready" && url is null)
+                        {
+                            var address = record.GetProperty("url").GetString() ?? string.Empty;
+                            if (!ValidAddress(address)) throw new InvalidDataException();
+                            url = address;
+                            if (!stopRequested)
+                            {
+                                heading.Text = $"{NativeDesktopIntegration.AgentName(agent)} is ready";
+                                status.Text = "Your agent is running. Use Stop session when you have finished.";
+                                open.IsEnabled = true; if (!qualification) OpenBrowser();
+                            }
+                        }
+                        else if (kind == "progress" && !stopRequested)
+                            status.Text = record.GetProperty("stage").GetString() switch
+                            {
+                                "inference" => "Preparing your selected inference connection…",
+                                "runtime" => "Preparing the installed agent runtime…",
+                                "sandbox" => "Starting the private agent session…",
+                                "dashboard" => "Opening the agent's Web UI…",
+                                _ => throw new InvalidDataException(),
+                            };
+                        else if (kind != "progress") throw new InvalidDataException();
+                    }
+                }
+                catch (Exception) { result = 1; }
+                finally { stopped = true; window.Close(); }
+            };
+            window.Show();
+            Dispatcher.Run();
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start(); thread.Join();
+        return result;
+    }
+
+    private static bool ValidAddress(string url) => url.Length <= 1600 && Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
+        uri.Scheme == "http" && uri.Host == "127.0.0.1" && uri.Port > 0 && string.IsNullOrEmpty(uri.UserInfo);
+
+    private static async Task<string> ReadLineAsync(StreamReader input, CancellationToken cancellation)
+    {
+        var text = new StringBuilder();
+        var character = new char[1];
+        while (text.Length < 2048)
+        {
+            if (await input.ReadAsync(character.AsMemory(), cancellation) == 0) throw new EndOfStreamException();
+            if (character[0] == '\n') return text.ToString();
+            if (character[0] == '\r') continue;
+            text.Append(character[0]);
+        }
+        throw new InvalidDataException("The native session message is too long.");
+    }
+}

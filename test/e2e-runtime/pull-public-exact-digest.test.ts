@@ -112,11 +112,12 @@ echo "pulled $EXPECTED_REFERENCE"
       [
         "-c",
         `set -euo pipefail
-SECONDS=0
+# Exercise a nonzero start time without waiting for setup.
+SECONDS=7
 sleep() {
   printf '%s\\n' "$1" >>"$SLEEP_LOG"
   if [ "$SCENARIO" = "deadline-exhausted" ]; then
-    SECONDS=1800
+    SECONDS=$((started_at + 1800))
   elif [ "$SCENARIO" = "late-success" ]; then
     SECONDS=$((SECONDS + $1))
   else

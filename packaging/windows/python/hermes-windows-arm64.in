@@ -1,9 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Native Windows ARM64 subset of the exact Hermes Agent 0.19.0 runtime graph.
-# The terminal one-shot surface does not load the unavailable pywinpty 2.x or
-# cryptography 46.0.7 paths. Every included dependency remains version-pinned.
+# Native Windows ARM64 subset of the Hermes Agent 0.19.0 runtime graph.
+# Pillow, python-multipart, and aiohttp include reviewed security updates.
+# Native ConPTY uses the available pywinpty 3.0.3 ARM64 wheel; cryptography
+# 46.0.7 paths remain excluded. Every included dependency remains version-pinned.
 
 certifi==2026.5.20
 concurrent-log-handler==0.9.29
@@ -16,13 +17,13 @@ Markdown==3.10.2
 openai==2.24.0
 packaging==26.0
 pathspec==1.1.1
-Pillow==12.2.0
+Pillow==12.3.0
 prompt_toolkit==3.0.52
 psutil==7.2.2
 pydantic==2.13.4
 PyJWT==2.13.0
 python-dotenv==1.2.2
-python-multipart==0.0.27
+python-multipart==0.0.31
 PyYAML==6.0.3
 requests==2.33.0
 rich==14.3.3
@@ -31,3 +32,13 @@ tzdata==2025.3
 urllib3==2.7.0
 uvicorn==0.41.0
 websockets==15.0.1
+
+# Native messaging clients; voice, media, and webhook-server extras are excluded.
+aiohttp==3.14.3
+discord.py==2.7.1
+python-telegram-bot==22.6
+slack-bolt==1.29.0
+slack-sdk==3.43.0
+
+# Native Windows ARM64 ConPTY for the authentic Hermes dashboard.
+pywinpty==3.0.3

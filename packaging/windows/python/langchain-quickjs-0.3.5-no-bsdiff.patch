@@ -1,12 +1,12 @@
 diff --git a/langchain_quickjs/_snapshot.py b/langchain_quickjs/_snapshot.py
-index 44e8dd6..d1e3192 100644
+index 44e8dd6..22a8a33 100644
 --- a/langchain_quickjs/_snapshot.py
 +++ b/langchain_quickjs/_snapshot.py
 @@ -30 +30,4 @@ from typing import TYPE_CHECKING
 -import bsdiff4
 +try:
 +    import bsdiff4
-+except ModuleNotFoundError:
++except ImportError:
 +    bsdiff4 = None
 @@ -90,0 +94,2 @@ def replay_snapshot_chain(
 +            if bsdiff4 is None:

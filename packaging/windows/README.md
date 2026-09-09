@@ -22,15 +22,32 @@ The workflow first builds and qualifies the unmodified NVIDIA/OpenShell#2721
 merge commit, then applies the checked-in Node compatibility patch and rebuilds
 the packaged derivative. The patch and its exact hash are installed with the
 product. It sets `ui.disable=false` so the contained Node process can initialize,
-and adds an explicit per-sandbox `host_loopback` opt-in. Only the Control UI
-and visible NemoCUA workloads use that opt-in. The ARM64 runner selects MXC's
-AppContainer fallback, whose schema 0.8 path rejects private-network ingress
-with denied egress. The scoped compatibility path therefore uses schema 0.6
-`allowLocalNetwork=true` with `defaultPolicy=block` so the host browser can
-reach a listener bound only to `127.0.0.1`. Windows' AppContainer
-`privateNetworkClientServer` capability is bidirectional on this fallback, so
-this preview does not claim governed network-policy parity. Other
-NVIDIA/OpenShell#2721 workloads retain the original network posture.
+and adds explicit per-sandbox `host_loopback`, `host_console`, and
+`personal_network` options. Configured sessions use the Personal network profile:
+MXC's supported outbound-open policy and local-network access. The ordinary
+qualification controls retain their original network policy. Personal does not
+grant access to the Windows user-profile filesystem.
+
+Configured terminal sessions give the dedicated gateway a real Windows console.
+The gateway verifies all three standard handles before opting into MXC console
+sharing; the contained workload inherits input, output, resizing, and console
+lifetime. Startup errors appear in that same terminal. Deterministic one-shot
+qualification remains a separate regression surface.
+
+The tested ARM64 runner selects MXC's AppContainer fallback. The gateway template
+retains `pc_least_privilege=false` and `privateNetworkClientServer`. Personal sessions
+also add `internetClient` for public outbound connections; the qualification
+default does not add that capability. These are
+preview compatibility settings across the agent set; they do not establish LPAC
+qualification or governed egress-policy parity. The legacy `allowLocalNetwork`
+field has version-dependent ingress semantics. Retiring these exceptions needs
+agent, broker, negative filesystem, and network evidence on the selected Windows
+and MXC builds. Runtime qualification remains tracked in
+[#8178](https://github.com/NVIDIA/NemoClaw/issues/8178).
+
+Each run writes a gateway configuration outside the installed payload. It
+preserves the installed template's settings and resolves `wxc_exec_path` from
+the actual installation directory, including an overridden `INSTALLFOLDER`.
 The qualification turn executes OpenClaw in a worker inside that same contained
 Node process, avoiding an unsupported nested-process assumption while retaining
 MXC filesystem containment. The package does not bypass OpenShell or call MXC
@@ -46,37 +63,85 @@ custom actions. System-drive preparation supplies shallow-root traversal; the
 null-device setting is required for AppContainer process initialization and
 resets when Windows reboots.
 
-The setup uses a self-contained native ARM64 WPF bootstrapper application built
-against the pinned WiX 5.0.2 Bootstrapper Application API. It presents agent
-status before installation, narrates each MXC and Windows Installer stage with
-an elapsed timer and recovery log path, and launches NemoClaw after a successful
-interactive install. The MSI remains standard WiX authoring with no custom
-actions. Setup installs a native ARM64 `NemoClaw.exe` GUI launcher; launching it
-opens the local graphical onboarder without PowerShell or a visible console.
-The onboarder stores secret-free provider/model configuration below the
-current user's Local AppData and sends API keys over its loopback-only request
-to the native launcher, which writes them to Windows Credential Manager. Agent
-processes receive an ephemeral authenticated loopback broker instead of the
-provider credential.
-The onboarder presents real native candidates for OpenClaw, Hermes Agent,
-LangChain Deep Agents Code, Pi, and NemoCUA. Pi and NemoCUA are explicitly
-experimental. Each enabled choice passes through graphical selection and then
-hands off to its agent-specific native adapter; the machine-readable
-`agent-support.json` records pinned versions and current limitations. A card
-must be disabled, with its exact blocker shown, if its authentic runtime cannot
-complete qualification.
+The self-contained ARM64 WPF setup presents one custom-framed window for agent
+selection, inference, optional services, installation progress, and completion.
+Setup and onboarding do not use HTML, WebView, Edge, or a browser. An explicit
+API-key help action can open the service's official page in the user's browser.
+Progress names the current phase and refreshes elapsed time regularly; download
+and installer percentages come from actual work, while unknown-duration phases
+remain indeterminate.
 
-Package qualification launches Microsoft Edge through the installed GUI
-launcher and separately walks all four graphical onboarding screens for each
-enabled agent. It submits three turns through OpenClaw's real Control UI, the
-real Hermes, Deep Agents Code, and Pi terminal entrypoints, and NemoCUA's
-experimental computer-use adapter. Every agent runtime runs inside native MXC.
-A deterministic loopback model endpoint makes transport assertions repeatable
-without exposing a PR credential; it is evidence for UI/runtime/model-transport
-wiring, not production inference quality. The workflow always attempts to
-upload raw actual-window recordings so failed UI runs retain visual diagnostics.
+Setup creates current-user desktop shortcuts for NemoClaw Setup and each configured
+agent, using their own icons. The setup shortcut uses the registered cached
+installer for maintenance. Uninstall appears only for an installed product and
+preserves data by default; explicit per-agent removal checks ownership and active
+sessions before deleting state, settings, and scoped keys. Web agents use the
+Windows default browser and a native session-control window with explicit Stop.
+Closing that control waits for sandbox, gateway, broker, and state cleanup.
 
-The package is a preview distribution boundary. Host qualification, managed
-local-model lifecycle, gateway service registration, messaging and web-search
-integration, production activation, and production signing remain separate
-gates.
+The selected agent carries through configuration and launch, and the installed
+launcher remembers the last configured agent. The same native window edits
+settings later. Agent launch is an explicit completion action. Pi and NemoCUA
+remain experimental. `agent-support.json` records the authentic packaged
+implementations and their preview limitations.
+
+Provider endpoint, model, Personal profile, and optional-service selections are
+nonsecret host configuration under Local App Data. WPF sends key bytes through
+stdin to the native launcher, which stores them in Windows Credential Manager.
+Inference credentials bind to the agent, provider, and canonical endpoint;
+optional service credentials bind separately to the agent and service. Inference
+provider keys remain in the host broker. Opted-in search and messaging keys are
+delivered once through an authenticated local bootstrap into the selected agent's
+process environment, without credential values in configuration JSON or process
+arguments. These service integrations do not claim OpenShell-managed credential
+injection or governed provider parity.
+
+OpenClaw offers Brave and Tavily search; Hermes offers its native Tavily backend.
+Telegram, Discord, and Slack choices are restricted to the two agents whose
+packaged runtimes implement them. Messaging requires its selected bot/app keys;
+empty sender lists keep pairing behavior, and Personal network access does not
+authorize arbitrary senders. Hermes starts its actual messaging gateway with the
+interactive session, checks selected-channel connectivity, and uses the upstream
+planned-stop mechanism when that session closes.
+
+Configured OpenClaw and console agents keep their data in a stable system-drive-root
+directory named `NemoClawState-<Windows account SID>-<agent>`. The native launcher
+creates it with a protected current-user and SYSTEM DACL and holds exclusive
+per-account, per-agent session ownership through sandbox cleanup. Reopening
+retains data and checks the directory's owner, permissions, and ordinary-directory
+type. Changed permissions or a reparse point stop the launch without resetting
+or deleting state. Host configuration remains private in Local App Data; the
+agent receives no access to the user-profile directory. Existing preview state
+is not migrated automatically.
+
+Web UI file transport uses a native, bounded file owner. It pins the root and
+stream directory handles, performs handle-relative I/O, and refuses reparse
+points, hard links, path traversal, and oversized frames. Its guarded root has
+an explicit MXC filesystem grant and stays pinned through sandbox teardown.
+
+Package qualification drives the actual WPF controls for all five agents and
+rejects browser/WebView descendants during setup. It separately submits three
+turns through OpenClaw's Control UI, Hermes, Deep Agents Code, Pi, and NemoCUA's
+experimental browser adapter inside native MXC. The installed configured Hermes
+acceptance additionally requires its visible interactive prompt, typed input,
+a distinct deterministic provider response, a real console resize, exit, and
+sandbox cleanup. The Hermes dashboard also requires three typed turns through
+its shipped SPA and native ConPTY, then native Stop and complete cleanup.
+One-shot results cannot satisfy either acceptance. Tester reset exercises the
+actual maintenance data-removal option and a fresh native reinstall. Actual-window
+screenshots and recordings accompany the receipts, including failed-run evidence.
+The local deterministic provider proves runtime/transport wiring without a PR
+credential; it does not qualify a commercial provider or live messaging account.
+
+Native on-device Express is a separate host-owned llama.cpp/CUDA implementation
+for detected RTX Spark N1X Windows ARM64 machines. Its fixed Qwen 3.6 35B-A3B GGUF
+recipe is shared across agents and checks driver compatibility, available memory
+and storage, pinned downloads, full GPU offload, authentication, and an actual
+model response before reporting Ready. It does not invoke the existing WSL or
+Linux recipes. Model and runtime downloads occur only when selected. Generic
+ARM64 package CI does not qualify N1X GPU operation; the physical device check
+remains required.
+
+This remains a preview distribution boundary. Exact candidate package evidence,
+physical-host/N1X validation, commercial-provider and messaging validation,
+production gateway service ownership, and Authenticode signing are separate gates.

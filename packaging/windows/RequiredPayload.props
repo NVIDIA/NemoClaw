@@ -1,0 +1,84 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<Project>
+  <!-- Prepared files exist before the WPF build. Package files are added by
+       native UI publication and are required by the final MSI validation. -->
+  <ItemGroup>
+    <NemoClawRequiredPayload Include="bin\node.exe" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="bin\NemoClaw.exe" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="bin\openshell.exe" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="bin\openshell-gateway.exe" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="mxc\wxc-exec.exe" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="mxc\wxc-host-prep.exe" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="bin\nemoclaw.cmd" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="nemoclaw\app\bin\nemoclaw.js" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="openclaw\node_modules\openclaw\openclaw.mjs" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="pi\node_modules\@earendil-works\pi-coding-agent\dist\cli.js" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="python\python.exe" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="hermes\site-packages\hermes_cli\main.py" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="hermes\site-packages\concurrent_log_handler\__init__.py" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="deepagents\site-packages\deepagents_code\main.py" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="deepagents\site-packages\colorama\__init__.py" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="deepagents\site-packages\jsonschema_rs\jsonschema_rs.pyd" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="deepagents\site-packages\quickjs_rs\__init__.py" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="deepagents\site-packages\quickjs_rs\_guest.wasm" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="deepagents\site-packages\quickjs_rs\_transform.wasm" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="deepagents\site-packages\sitecustomize.py" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="deepagents\site-packages\tiktoken\_tiktoken.cp313-win_arm64.pyd" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="nemocua\run_with_harness.py" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="onboarding\index.html" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="onboarding\styles.css" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="onboarding\app.ts" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="config\mxc-gateway.toml" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="qualification\native-security.mts" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="qualification\native-state.mts" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="qualification\native-nemocua-relay.mts" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="qualification\native-ui-file-owner.mts" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="qualification\native-hermes-dashboard.mts" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="qualification\run-installed-native-hermes-ui.mts" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="qualification\native-remove-data.mts" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="qualification\native-web-session.mts" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="qualification\native-ui-tunnel.mts" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="desktop-icons\NemoClaw.ico" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="desktop-icons\openclaw.ico" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="desktop-icons\hermes.ico" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="desktop-icons\langchain-deepagents-code.ico" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="desktop-icons\pi.ico" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="desktop-icons\nemocua.ico" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="qualification\native-options.mts" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="qualification\native-inference-broker.mts" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="qualification\native-ui-relay.mts" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="qualification\native-ui-lifecycle.mts" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="qualification\native-inference.mts" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="qualification\native-inference-cli.mts" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="qualification\native-inference-host.mts" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="qualification\native-inference-install.mts" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="qualification\native-inference-download.mts" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="qualification\native-inference-manifest.mts" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="qualification\native-inference-manifest.json" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="qualification\native-inference-unpack.py" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="qualification\native-inference-guard.mts" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="qualification\native-configured-inference.mts" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="openclaw\extensions\brave\openclaw.plugin.json" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="openclaw\extensions\brave\dist\index.js" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="qualification\run-installed-native-turn.mts" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="qualification\run-installed-native-web-ui.mts" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="qualification\run-installed-native-console-agent.mts" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="qualification\run-installed-native-pi.mts" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="qualification\run-installed-native-nemocua.mts" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="agent-support.json" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="LANGGRAPH-PYTHON313-COMPATIBILITY.patch" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="LANGGRAPH-INMEMORY-NO-GRPC.patch" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="LANGCHAIN-QUICKJS-NO-BSDIFF.patch" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="DEEPAGENTS-WINDOWS-DACL.patch" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="OPENSHELL-NODE-UI-COMPATIBILITY.patch" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="LICENSE.txt" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="NATIVE-PREVIEW.txt" Phase="Prepared" />
+    <NemoClawRequiredPayload Include="native-ui\NemoClaw.Bootstrapper.exe" Phase="Package" />
+    <NemoClawRequiredPayload Include="native-ui\mbanative.dll" Phase="Package" />
+    <NemoClawRequiredPayload Include="native-ui\PenImc_cor3.dll" Phase="Package" />
+    <NemoClawRequiredPayload Include="native-ui\PresentationNative_cor3.dll" Phase="Package" />
+    <NemoClawRequiredPayload Include="native-ui\vcruntime140_cor3.dll" Phase="Package" />
+    <NemoClawRequiredPayload Include="native-ui\wpfgfx_cor3.dll" Phase="Package" />
+  </ItemGroup>
+</Project>

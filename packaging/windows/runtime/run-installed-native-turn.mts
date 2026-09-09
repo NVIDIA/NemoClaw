@@ -8,6 +8,8 @@ import net from "node:net";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { writeNativeGatewayConfig } from "./native-security.mts";
+
 const TIMEOUT_MS = 300_000;
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
@@ -340,10 +342,7 @@ async function main() {
     path.join(installedOpenClawRoot, "node_modules", "openclaw", "openclaw.mjs"),
     "OpenClaw entrypoint",
   );
-  const gatewayConfig = requiredFile(
-    path.join(installRoot, "config", "mxc-gateway.toml"),
-    "MXC gateway configuration",
-  );
+  requiredFile(path.join(installRoot, "config", "mxc-gateway.toml"), "MXC gateway configuration");
   requiredFile(path.join(installRoot, "mxc", "wxc-exec.exe"), "MXC executor");
 
   const systemDrive = process.env.SystemDrive;
@@ -362,6 +361,7 @@ async function main() {
   fs.mkdirSync(runRoot);
   fs.mkdirSync(shareRoot);
   fs.mkdirSync(runtimeRoot);
+  const gatewayConfig = writeNativeGatewayConfig(installRoot, runRoot);
   console.log("NEMOCLAW> Staging exact installed Node/OpenClaw bytes at the shallow MXC root");
   const node = path.join(runtimeRoot, "node.exe");
   const openClawRoot = path.join(runtimeRoot, "openclaw");

@@ -21,6 +21,7 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
     <ApplicationIcon>..\assets\NemoClaw.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
     <Version>$(ProductVersion)</Version>
     <AssemblyVersion>$(ProductVersion).0</AssemblyVersion>
     <FileVersion>$(ProductVersion).0</FileVersion>
@@ -29,6 +30,7 @@
     <PackageReference Include="WixToolset.BootstrapperApplicationApi" Version="5.0.2" />
   </ItemGroup>
   <ItemGroup>
+    <EmbeddedResource Include="..\runtime\native-inference-manifest.json" LogicalName="Nvidia.NemoClaw.NativeInferenceManifest.json" />
     <Resource Include="..\assets\NemoClawLogo.png" Link="Assets\NemoClawLogo.png" />
     <Resource Include="..\onboarding\assets\openclaw.png" Link="Assets\openclaw.png" />
     <Resource Include="..\onboarding\assets\hermes.png" Link="Assets\hermes.png" />

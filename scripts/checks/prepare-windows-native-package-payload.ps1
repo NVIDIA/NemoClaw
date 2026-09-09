@@ -47,9 +47,9 @@ $script:LangGraphStreamPatchedDigest = 'f9128fa986c46015d5391fbb3c944f5678c06597
 $script:QuickJsRsVersion = '0.2.5'
 $script:QuickJsRsWheelSha256 = 'e82240af1f1dd1b2e12bcf169a22a8e0e451e356f0688f2fc3bba886d9b2bb20' # gitleaks:allow -- public PyPI wheel integrity pin
 $script:LangChainQuickJsSnapshotSourceDigest = '616cbc40402b7b414fcbac1992113bab6310974883b01a9f89fba8ce621b1e3d' # gitleaks:allow -- public wheel source integrity pin
-$script:LangChainQuickJsSnapshotPatchedDigest = '105d5d6e999d5e04131211890e450e614b295bde4af0d5e7d40ac4ddfbc295a9' # gitleaks:allow -- deterministic compatibility output pin
+$script:LangChainQuickJsSnapshotPatchedDigest = 'd81ca8b46daeb56d1749e3dfb84f3590a88a8903021c2aba2c190f0dacc390e9' # gitleaks:allow -- deterministic compatibility output pin
 $script:DeepAgentsOffloadSourceDigest = 'baaf2a75eca26dbc58ab195ed9198822c3e48fd505faa36b8e0c0cb10ede3f14' # gitleaks:allow -- public wheel source integrity pin
-$script:DeepAgentsOffloadPatchedDigest = 'd86c8bbb15163cdde123246981f2bf94289eab45142e35e52018ab713871f6c7' # gitleaks:allow -- deterministic compatibility output pin
+$script:DeepAgentsOffloadPatchedDigest = '7e458382b98deef102f2ee667ee2e2e242de10c3ecda67b411bd92199c93a813' # gitleaks:allow -- deterministic compatibility output pin
 $script:JsonSchemaRsVersion = '0.44.1'
 $script:JsonSchemaRsSourceDigest = '49ca909cc3017990a732145b9a7c2f1a0727b2f95dba4190c05a514575b5f4bf' # gitleaks:allow -- public PyPI source integrity pin
 $script:JsonSchemaRsCargoLockDigest = '77170cff39f4f8bf22ecfde8c728aad659f0f4e2471e36eaffeb1eaca340e291' # gitleaks:allow -- source-supplied Cargo lock integrity pin
@@ -61,6 +61,38 @@ $script:OpenShellRevision = 'bcd517bbe08cc80860c9be57699390cd32e8445f'
 function Fail-PayloadPreparation {
     param([Parameter(Mandatory)][string]$Message)
     throw "Windows native payload preparation failed: $Message"
+}
+
+function Read-RequiredPayloadInventory {
+    param([Parameter(Mandatory)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw 'The canonical Windows payload inventory is missing.'
+    }
+    $document = [Xml.XmlDocument]::new()
+    $document.XmlResolver = $null
+    $document.Load($Path)
+    $entries = @($document.SelectNodes('/Project/ItemGroup/NemoClawRequiredPayload'))
+    if ($entries.Count -eq 0) { throw 'The canonical Windows payload inventory is empty.' }
+    $seen = @{}
+    $result = @()
+    foreach ($entry in $entries) {
+        $relative = $entry.GetAttribute('Include')
+        $phase = $entry.GetAttribute('Phase')
+        if ($relative -cnotmatch '^[A-Za-z0-9@._-]+(?:\\[A-Za-z0-9@._-]+)*$' -or
+            @($relative.Split('\') | Where-Object { $_ -in @('.', '..') }).Count -ne 0 -or
+            $phase -cnotin @('Prepared', 'Package') -or $seen.ContainsKey($relative) -or
+            @($entry.Attributes | Where-Object { $_.Name -cnotin @('Include', 'Phase') }).Count -ne 0) {
+            throw 'The canonical Windows payload inventory contains an invalid or duplicate entry.'
+        }
+        $seen[$relative] = $true
+        $result += [pscustomobject]@{ Include = $relative; Phase = $phase }
+    }
+    if (@($result | Where-Object Phase -CEQ 'Prepared').Count -eq 0 -or
+        @($result | Where-Object Phase -CEQ 'Package').Count -eq 0) {
+        throw 'The canonical Windows payload inventory must define both build phases.'
+    }
+    return $result
 }
 
 function Invoke-Checked {
@@ -232,6 +264,13 @@ try {
     Copy-Item -LiteralPath (Join-Path $candidate 'agents\openclaw\openclaw-runtime\package.json') -Destination $openClawRoot
     Copy-Item -LiteralPath (Join-Path $candidate 'agents\openclaw\openclaw-runtime\package-lock.json') -Destination $openClawRoot
     Invoke-Checked -FilePath $npm -Arguments @('ci', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund') -Label 'OpenClaw production runtime restore' -WorkingDirectory $openClawRoot
+
+    $braveArchive = Join-Path $workRoot 'brave-plugin-2026.7.1.tgz'
+    Invoke-WebRequest -UseBasicParsing -Uri 'https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.7.1.tgz' -OutFile $braveArchive
+    Assert-Sha256 -Path $braveArchive -Expected 'f5198ea18ea0adebc376c669b8e5e1100781f07ec2d9e24e86c90cb82acb039c' -Label 'Reviewed OpenClaw Brave provider'
+    $braveRoot = Join-Path $openClawRoot 'extensions\brave'
+    [IO.Directory]::CreateDirectory($braveRoot) | Out-Null
+    Invoke-Checked -FilePath $tar -Arguments @('-xzf', $braveArchive, '--strip-components=1', '-C', $braveRoot) -Label 'Reviewed Brave provider extraction'
 
     $piRoot = Join-Path $output 'pi'
     [IO.Directory]::CreateDirectory($piRoot) | Out-Null
@@ -525,10 +564,16 @@ try {
         ) `
         -Label 'jsonschema-rs native ARM64 runtime restore'
     Assert-Arm64PortableExecutable -Path (Join-Path $deepAgentsSitePackages 'jsonschema_rs\jsonschema_rs.pyd') -Label 'jsonschema-rs native ARM64 extension'
+    # discord.py bundles optional x86/x64 Opus binaries even without [voice].
+    # Native text messaging keeps the authentic SDK, excluding those two unused
+    # voice-only files before the package-wide ARM64 executable inspection.
+    foreach ($voiceFile in @('discord\bin\libopus-0.x64.dll', 'discord\bin\libopus-0.x86.dll')) {
+        Remove-Item -LiteralPath (Join-Path $hermesSitePackages $voiceFile) -Force
+    }
     Invoke-Checked `
         -FilePath (Join-Path $pythonRoot 'python.exe') `
-        -Arguments @('-I', '-c', 'import sys; sys.path.insert(0, sys.argv[1]); import concurrent_log_handler; import hermes_cli.main', $hermesSitePackages) `
-        -Label 'Hermes native ARM64 import preflight'
+        -Arguments @('-I', (Join-Path $candidate 'packaging\windows\python\native-hermes-preflight.py'), $hermesSitePackages) `
+        -Label 'Hermes native ARM64 messaging and ConPTY preflight'
     Invoke-Checked `
         -FilePath (Join-Path $pythonRoot 'python.exe') `
         -Arguments @('-I', '-c', 'import sys; sys.path.insert(0, sys.argv[1]); import colorama; import jsonschema_rs; import tiktoken; import langchain_openai; import langgraph_api.logging; langgraph_api.logging.Formatter(); from deepagents_code import cli_main', $deepAgentsSitePackages) `
@@ -556,6 +601,15 @@ try {
             '--target-dir', $launcherTarget
         ) `
         -Label 'NemoClaw native Windows launcher build'
+    Invoke-Checked `
+        -FilePath $rustup `
+        -Arguments @(
+            'run', $script:RustVersion, 'cargo', 'test', '--locked',
+            '--target', 'aarch64-pc-windows-msvc',
+            '--manifest-path', (Join-Path $candidate 'packaging\windows\launcher\Cargo.toml'),
+            '--target-dir', $launcherTarget
+        ) `
+        -Label 'Native Windows state ownership and credential boundary tests'
     Copy-Item `
         -LiteralPath (Join-Path $launcherTarget 'aarch64-pc-windows-msvc\release\NemoClaw.exe') `
         -Destination (Join-Path $binRoot 'NemoClaw.exe')
@@ -607,6 +661,22 @@ debug = false
     $qualificationRoot = Join-Path $output 'qualification'
     [IO.Directory]::CreateDirectory($qualificationRoot) | Out-Null
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\native-security.mts') -Destination $qualificationRoot
+    Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\native-state.mts') -Destination $qualificationRoot
+    Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\native-nemocua-relay.mts') -Destination $qualificationRoot
+    Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\native-ui-file-owner.mts') -Destination $qualificationRoot
+    Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\native-hermes-dashboard.mts') -Destination $qualificationRoot
+    Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\run-installed-native-hermes-ui.mts') -Destination $qualificationRoot
+    Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\native-remove-data.mts') -Destination $qualificationRoot
+    Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\native-web-session.mts') -Destination $qualificationRoot
+    Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\native-ui-tunnel.mts') -Destination $qualificationRoot
+    Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\assets\desktop-icons') -Destination (Join-Path $output 'desktop-icons') -Recurse
+    Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\native-options.mts') -Destination $qualificationRoot
+    Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\native-inference-broker.mts') -Destination $qualificationRoot
+    Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\native-ui-relay.mts') -Destination $qualificationRoot
+    Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\native-ui-lifecycle.mts') -Destination $qualificationRoot
+    foreach ($inferenceFile in @('native-inference.mts', 'native-inference-cli.mts', 'native-inference-host.mts', 'native-inference-install.mts', 'native-inference-download.mts', 'native-inference-manifest.mts', 'native-inference-manifest.json', 'native-inference-guard.mts', 'native-inference-unpack.py', 'native-configured-inference.mts')) {
+        Copy-Item -LiteralPath (Join-Path $candidate "packaging\windows\runtime\$inferenceFile") -Destination $qualificationRoot
+    }
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\run-installed-native-turn.mts') -Destination $qualificationRoot
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\run-installed-native-web-ui.mts') -Destination $qualificationRoot
     Copy-Item -LiteralPath (Join-Path $candidate 'packaging\windows\runtime\run-installed-native-console-agent.mts') -Destination $qualificationRoot
@@ -628,39 +698,9 @@ debug = false
     )) {
         Assert-Arm64PortableExecutable -Path (Join-Path $output $portableExecutable) -Label $portableExecutable
     }
-    foreach ($required in @(
-        'bin\nemoclaw.cmd',
-        'nemoclaw\app\bin\nemoclaw.js',
-        'openclaw\node_modules\openclaw\openclaw.mjs',
-        'pi\node_modules\@earendil-works\pi-coding-agent\dist\cli.js',
-        'python\python.exe',
-        'hermes\site-packages\hermes_cli\main.py',
-        'hermes\site-packages\concurrent_log_handler\__init__.py',
-        'deepagents\site-packages\deepagents_code\main.py',
-        'deepagents\site-packages\colorama\__init__.py',
-        'deepagents\site-packages\jsonschema_rs\jsonschema_rs.pyd',
-        'deepagents\site-packages\quickjs_rs\__init__.py',
-        'deepagents\site-packages\quickjs_rs\_guest.wasm',
-        'deepagents\site-packages\quickjs_rs\_transform.wasm',
-        'deepagents\site-packages\sitecustomize.py',
-        'deepagents\site-packages\tiktoken\_tiktoken.cp313-win_arm64.pyd',
-        'nemocua\run_with_harness.py',
-        'onboarding\index.html',
-        'onboarding\styles.css',
-        'onboarding\app.ts',
-        'config\mxc-gateway.toml',
-        'qualification\native-security.mts',
-        'qualification\run-installed-native-turn.mts',
-        'qualification\run-installed-native-web-ui.mts',
-        'qualification\run-installed-native-console-agent.mts',
-        'qualification\run-installed-native-pi.mts',
-        'qualification\run-installed-native-nemocua.mts',
-        'agent-support.json',
-        'LANGGRAPH-PYTHON313-COMPATIBILITY.patch',
-        'LANGGRAPH-INMEMORY-NO-GRPC.patch',
-        'LANGCHAIN-QUICKJS-NO-BSDIFF.patch',
-        'DEEPAGENTS-WINDOWS-DACL.patch'
-    )) {
+    $requiredInventory = @(Read-RequiredPayloadInventory -Path (Join-Path $candidate 'packaging\windows\RequiredPayload.props'))
+    foreach ($entry in @($requiredInventory | Where-Object Phase -CEQ 'Prepared')) {
+        $required = $entry.Include
         if (-not (Test-Path -LiteralPath (Join-Path $output $required) -PathType Leaf)) {
             Fail-PayloadPreparation "Prepared payload is incomplete: $required"
         }

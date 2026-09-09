@@ -29,6 +29,38 @@ function Fail-WindowsPackageBuild {
     throw "Windows native package build failed: $Message"
 }
 
+function Read-RequiredPayloadInventory {
+    param([Parameter(Mandatory)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw 'The canonical Windows payload inventory is missing.'
+    }
+    $document = [Xml.XmlDocument]::new()
+    $document.XmlResolver = $null
+    $document.Load($Path)
+    $entries = @($document.SelectNodes('/Project/ItemGroup/NemoClawRequiredPayload'))
+    if ($entries.Count -eq 0) { throw 'The canonical Windows payload inventory is empty.' }
+    $seen = @{}
+    $result = @()
+    foreach ($entry in $entries) {
+        $relative = $entry.GetAttribute('Include')
+        $phase = $entry.GetAttribute('Phase')
+        if ($relative -cnotmatch '^[A-Za-z0-9@._-]+(?:\\[A-Za-z0-9@._-]+)*$' -or
+            @($relative.Split('\') | Where-Object { $_ -in @('.', '..') }).Count -ne 0 -or
+            $phase -cnotin @('Prepared', 'Package') -or $seen.ContainsKey($relative) -or
+            @($entry.Attributes | Where-Object { $_.Name -cnotin @('Include', 'Phase') }).Count -ne 0) {
+            throw 'The canonical Windows payload inventory contains an invalid or duplicate entry.'
+        }
+        $seen[$relative] = $true
+        $result += [pscustomobject]@{ Include = $relative; Phase = $phase }
+    }
+    if (@($result | Where-Object Phase -CEQ 'Prepared').Count -eq 0 -or
+        @($result | Where-Object Phase -CEQ 'Package').Count -eq 0) {
+        throw 'The canonical Windows payload inventory must define both build phases.'
+    }
+    return $result
+}
+
 function Resolve-PlainDirectory {
     param(
         [Parameter(Mandatory)][string]$Path,
@@ -256,8 +288,10 @@ function New-BootstrapperPayloadAuthoring {
     Write-Host "Explicit WiX bootstrapper authoring: supportPayloads=$($payloads.Count)"
 }
 
-if ($ProductVersion -cnotmatch '^[0-9]{1,3}\.[0-9]{1,5}\.[0-9]{1,5}$') {
-    Fail-WindowsPackageBuild 'ProductVersion must be a strict three-part MSI version.'
+$versionParts = $ProductVersion -split '\.'
+if ($ProductVersion -cnotmatch '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,5}$' -or
+    [int]$versionParts[0] -gt 255 -or [int]$versionParts[1] -gt 255 -or [int]$versionParts[2] -gt 65535) {
+    Fail-WindowsPackageBuild 'ProductVersion must be a three-part MSI version within 255.255.65535.'
 }
 
 $sourceRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..')).TrimEnd('\')
@@ -275,46 +309,9 @@ $openshell = Join-Path $payload 'bin\openshell.exe'
 $gateway = Join-Path $payload 'bin\openshell-gateway.exe'
 Assert-Arm64PortableExecutable -Path $openshell -Label 'openshell.exe payload'
 Assert-Arm64PortableExecutable -Path $gateway -Label 'openshell-gateway.exe payload'
-foreach ($requiredPayload in @(
-    'bin\node.exe',
-    'bin\NemoClaw.exe',
-    'bin\nemoclaw.cmd',
-    'nemoclaw\app\bin\nemoclaw.js',
-    'openclaw\node_modules\openclaw\openclaw.mjs',
-    'pi\node_modules\@earendil-works\pi-coding-agent\dist\cli.js',
-    'python\python.exe',
-    'hermes\site-packages\hermes_cli\main.py',
-    'hermes\site-packages\concurrent_log_handler\__init__.py',
-    'deepagents\site-packages\deepagents_code\main.py',
-    'deepagents\site-packages\colorama\__init__.py',
-    'deepagents\site-packages\jsonschema_rs\jsonschema_rs.pyd',
-    'deepagents\site-packages\quickjs_rs\__init__.py',
-    'deepagents\site-packages\quickjs_rs\_guest.wasm',
-    'deepagents\site-packages\quickjs_rs\_transform.wasm',
-    'deepagents\site-packages\sitecustomize.py',
-    'deepagents\site-packages\tiktoken\_tiktoken.cp313-win_arm64.pyd',
-    'nemocua\run_with_harness.py',
-    'onboarding\index.html',
-    'onboarding\styles.css',
-    'onboarding\app.ts',
-    'mxc\wxc-exec.exe',
-    'mxc\wxc-host-prep.exe',
-    'config\mxc-gateway.toml',
-    'qualification\native-security.mts',
-    'qualification\run-installed-native-turn.mts',
-    'qualification\run-installed-native-web-ui.mts',
-    'qualification\run-installed-native-console-agent.mts',
-    'qualification\run-installed-native-pi.mts',
-    'qualification\run-installed-native-nemocua.mts',
-    'agent-support.json',
-    'LANGGRAPH-PYTHON313-COMPATIBILITY.patch',
-    'LANGGRAPH-INMEMORY-NO-GRPC.patch',
-    'LANGCHAIN-QUICKJS-NO-BSDIFF.patch',
-    'DEEPAGENTS-WINDOWS-DACL.patch',
-    'OPENSHELL-NODE-UI-COMPATIBILITY.patch',
-    'LICENSE.txt',
-    'NATIVE-PREVIEW.txt'
-)) {
+$requiredInventory = @(Read-RequiredPayloadInventory -Path (Join-Path $sourceRoot 'packaging\windows\RequiredPayload.props'))
+foreach ($entry in @($requiredInventory | Where-Object Phase -CEQ 'Prepared')) {
+    $requiredPayload = $entry.Include
     if (-not (Test-Path -LiteralPath (Join-Path $payload $requiredPayload) -PathType Leaf)) {
         Fail-WindowsPackageBuild "Required NemoClaw runtime payload is missing: $requiredPayload"
     }
@@ -336,7 +333,12 @@ $authoringText = @(
     [IO.File]::ReadAllText((Join-Path $sourceRoot 'packaging\windows\Product.wxs')),
     [IO.File]::ReadAllText((Join-Path $sourceRoot 'packaging\windows\Bundle.wxs'))
 ) -join [Environment]::NewLine
-$bootstrapperText = (@(Get-ChildItem -LiteralPath (Join-Path $sourceRoot 'packaging\windows\bootstrapper') -File | ForEach-Object {
+$bootstrapperSourceRoot = Join-Path $sourceRoot 'packaging\windows\bootstrapper'
+$bootstrapperText = (@(Get-ChildItem -LiteralPath $bootstrapperSourceRoot -Recurse -File | Where-Object {
+    $_.Extension -in @('.cs', '.xaml', '.csproj') -and
+    $_.FullName -notlike "$bootstrapperSourceRoot\bin\*" -and
+    $_.FullName -notlike "$bootstrapperSourceRoot\obj\*"
+} | ForEach-Object {
     [IO.File]::ReadAllText($_.FullName)
 }) -join [Environment]::NewLine)
 if ($authoringText -match '<\s*CustomAction\b' -or
@@ -397,7 +399,6 @@ $bootstrapperPayloadAuthoring = Join-Path $intermediate 'BootstrapperPayloads.wx
 $bootstrapperSha256 = $null
 $bootstrapperAuthenticodeStatus = $null
 $payloadAuthoring = Join-Path $intermediate 'GroupedPayload.wxs'
-New-GroupedPayloadAuthoring -PayloadRoot $payload -OutputPath $payloadAuthoring
 Push-Location $wixRoot
 try {
     $dotnetVersion = (& dotnet --version).Trim()
@@ -418,32 +419,6 @@ try {
         '-p:ContinuousIntegrationBuild=true',
         '-p:RestoreIgnoreFailedSources=false'
     )
-    $msiRestoreArguments = @(
-        'restore', $msiProject,
-        '--nologo',
-        '--force',
-        '--no-cache',
-        '--packages', $restorePackages
-    ) + $commonProperties
-    & dotnet @msiRestoreArguments
-    if ($LASTEXITCODE -ne 0) {
-        Fail-WindowsPackageBuild 'Pinned WiX MSI dependency restore failed.'
-    }
-    $msiBuildArguments = @(
-        'build', $msiProject,
-        '--configuration', 'Release',
-        '--nologo',
-        '--no-restore',
-        '--disable-build-servers'
-    ) + $commonProperties
-    & dotnet @msiBuildArguments
-    if ($LASTEXITCODE -ne 0) {
-        Fail-WindowsPackageBuild 'WiX MSI build failed.'
-    }
-    if (-not (Test-Path -LiteralPath $msiPath -PathType Leaf) -or (Get-Item -LiteralPath $msiPath).Length -eq 0) {
-        Fail-WindowsPackageBuild "Expected package output is missing: $msiName"
-    }
-
     $bootstrapperRestoreArguments = @(
         'restore', $bootstrapperProject,
         '--nologo',
@@ -474,16 +449,13 @@ try {
     Assert-Arm64PortableExecutable `
         -Path (Join-Path $bootstrapperOutput 'mbanative.dll') `
         -Label 'WiX managed-bootstrapper native bridge'
-    $expectedBootstrapperSupportPayloads = @(
-        'mbanative.dll',
-        'PenImc_cor3.dll',
-        'PresentationNative_cor3.dll',
-        'vcruntime140_cor3.dll',
-        'wpfgfx_cor3.dll'
-    )
-    $observedBootstrapperSupportPayloads = @(Get-ChildItem -LiteralPath $bootstrapperOutput -File | Where-Object {
-        $_.Name -cne 'NemoClaw.Bootstrapper.exe'
-    } | ForEach-Object { $_.Name } | Sort-Object)
+    $nativeUiPayloads = @($requiredInventory | Where-Object {
+        $_.Phase -ceq 'Package' -and $_.Include.StartsWith('native-ui\', [StringComparison]::Ordinal)
+    } | ForEach-Object { $_.Include.Substring('native-ui\'.Length) })
+    $expectedBootstrapperSupportPayloads = @($nativeUiPayloads | Where-Object { $_ -cne 'NemoClaw.Bootstrapper.exe' })
+    $observedBootstrapperSupportPayloads = @(Get-ChildItem -LiteralPath $bootstrapperOutput -Recurse -File | Where-Object {
+        $_.FullName -ine $bootstrapperPath
+    } | ForEach-Object { $_.FullName.Substring($bootstrapperOutput.Length + 1) } | Sort-Object)
     if (@(Compare-Object $expectedBootstrapperSupportPayloads $observedBootstrapperSupportPayloads).Count -ne 0) {
         Fail-WindowsPackageBuild 'The single-file bootstrapper publish did not contain the exact native support payload set.'
     }
@@ -501,6 +473,45 @@ try {
         -BootstrapperRoot $bootstrapperOutput `
         -PrimaryExecutable $bootstrapperPath `
         -OutputPath $bootstrapperPayloadAuthoring
+
+    $nativeUiRoot = Join-Path $payload 'native-ui'
+    [IO.Directory]::CreateDirectory($nativeUiRoot) | Out-Null
+    $nativeUiRoot = Resolve-PlainDirectory -Path $nativeUiRoot -Label 'Native onboarding payload'
+    foreach ($file in $nativeUiPayloads) {
+        [IO.File]::Copy((Join-Path $bootstrapperOutput $file), (Join-Path $nativeUiRoot $file), $true)
+    }
+    foreach ($entry in $requiredInventory) {
+        if (-not (Test-Path -LiteralPath (Join-Path $payload $entry.Include) -PathType Leaf)) {
+            Fail-WindowsPackageBuild "The final payload is missing a required $($entry.Phase) file: $($entry.Include)"
+        }
+    }
+    New-GroupedPayloadAuthoring -PayloadRoot $payload -OutputPath $payloadAuthoring
+
+    $msiRestoreArguments = @(
+        'restore', $msiProject,
+        '--nologo',
+        '--force',
+        '--no-cache',
+        '--packages', $restorePackages
+    ) + $commonProperties
+    & dotnet @msiRestoreArguments
+    if ($LASTEXITCODE -ne 0) {
+        Fail-WindowsPackageBuild 'Pinned WiX MSI dependency restore failed.'
+    }
+    $msiBuildArguments = @(
+        'build', $msiProject,
+        '--configuration', 'Release',
+        '--nologo',
+        '--no-restore',
+        '--disable-build-servers'
+    ) + $commonProperties
+    & dotnet @msiBuildArguments
+    if ($LASTEXITCODE -ne 0) {
+        Fail-WindowsPackageBuild 'WiX MSI build failed.'
+    }
+    if (-not (Test-Path -LiteralPath $msiPath -PathType Leaf) -or (Get-Item -LiteralPath $msiPath).Length -eq 0) {
+        Fail-WindowsPackageBuild "Expected package output is missing: $msiName"
+    }
 
     $bundleProperties = $commonProperties + @(
         "-p:MsiPath=$msiPath",

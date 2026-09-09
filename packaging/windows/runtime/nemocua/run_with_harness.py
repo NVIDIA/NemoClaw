@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import sys
 from typing import Any
@@ -166,8 +167,12 @@ def run(bridge_url: str, bridge_token: str, result_path: Path) -> int:
         "browserTransport": "playwright-loopback-bridge",
         "verdict": "pass",
     }
-    result_path.parent.mkdir(parents=True, exist_ok=True)
-    result_path.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+    if not result_path.parent.is_dir():
+        raise RuntimeError("The host-owned NemoCUA result slot is unavailable")
+    with result_path.open("x", encoding="utf-8") as output:
+        output.write(json.dumps(receipt, indent=2) + "\n")
+        output.flush()
+        os.fsync(output.fileno())
     return 0
 
 
@@ -177,7 +182,6 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--qualification", action="store_true")
     result.add_argument("--configured", action="store_true")
     result.add_argument("--bridge-url")
-    result.add_argument("--bridge-token")
     result.add_argument("--result-path", type=Path)
     return result
 
@@ -189,9 +193,10 @@ def main() -> int:
         return 0
     if args.qualification == args.configured:
         parser().error("select exactly one of --qualification or --configured")
-    if not args.bridge_url or not args.bridge_token or args.result_path is None:
-        parser().error("--bridge-url, --bridge-token, and --result-path are required")
-    return run(args.bridge_url, args.bridge_token, args.result_path)
+    bridge_token = os.environ.get("NEMOCLAW_NEMOCUA_BRIDGE_TOKEN", "")
+    if not args.bridge_url or not bridge_token or args.result_path is None:
+        parser().error("--bridge-url, --result-path, and the inherited bridge token are required")
+    return run(args.bridge_url, bridge_token, args.result_path)
 
 
 if __name__ == "__main__":

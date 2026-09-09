@@ -60,6 +60,21 @@ network_policies:
       - { path: /opt/venv/bin/python3* }
       - { path: /opt/venv/lib/python3.13/** }
 
+  observability-otlp-local:
+    name: observability-otlp-local
+    endpoints:
+      - host: host.openshell.internal
+        port: 4318
+        protocol: rest
+        enforcement: enforce
+        # OpenShell owns this reserved sandbox-to-host alias for every compute
+        # driver. Do not pin a driver address here: current native Podman uses
+        # a trusted link-local gateway, while Docker gateways use RFC1918.
+        rules:
+          - allow: { method: POST, path: "/v1/traces" }
+    binaries:
+      - { path: /opt/venv/bin/python3* }
+
   github:
     name: github
     endpoints:

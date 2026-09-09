@@ -1,38 +1,98 @@
 diff --git a/crates/openshell-driver-mxc/src/driver.rs b/crates/openshell-driver-mxc/src/driver.rs
-index d8e981a4..3fc90a16 100644
+index d8e981a46d..4a1120f203 100644
 --- a/crates/openshell-driver-mxc/src/driver.rs
 +++ b/crates/openshell-driver-mxc/src/driver.rs
-@@ -94,2 +94,4 @@ struct MxcSandboxConfig {
+@@ -92,6 +92,12 @@ struct MxcSandboxConfig {
+     command: Vec<String>,
+     #[serde(default)]
      cwd: String,
 +    #[serde(default)]
 +    host_loopback: bool,
++    #[serde(default)]
++    host_console: bool,
++    #[serde(default)]
++    personal_network: bool,
  }
-@@ -636,2 +638,3 @@ async fn run_lifecycle(
+
+ // ── Registry entry ────────────────────────────────────────────────────────────
+@@ -634,6 +640,9 @@ async fn run_lifecycle(
+         denied_paths: Vec::new(),
+     };
      let command_line = encode_windows_command_line(&sandbox_config.command);
 +    let host_loopback = sandbox_config.host_loopback;
++    let host_console = sandbox_config.host_console;
++    let personal_network = sandbox_config.personal_network;
      let process = MxcProcess {
-@@ -702,2 +705,3 @@ async fn run_lifecycle(
+         command_line: command_line.clone(),
+         cwd: sandbox_config.cwd,
+@@ -700,6 +709,9 @@ async fn run_lifecycle(
+             let process_container = MxcProcessContainer {
+                 least_privilege: config.pc_least_privilege,
                  capabilities: config.pc_capabilities.clone(),
 +                host_loopback,
++                host_console,
++                personal_network,
              };
+             match invoker
+                 .run_oneshot(&sandbox_id, filesystem, process_container, process, None)
 diff --git a/crates/openshell-driver-mxc/src/mxc.rs b/crates/openshell-driver-mxc/src/mxc.rs
-index 32d7006d..ba2eebe9 100644
+index 32d7006d90..6bba637237 100644
 --- a/crates/openshell-driver-mxc/src/mxc.rs
 +++ b/crates/openshell-driver-mxc/src/mxc.rs
-@@ -80,2 +80,5 @@ pub struct MxcProcessContainer {
+@@ -10,6 +10,7 @@
+ use base64::Engine as _;
+ use serde::{Deserialize, Serialize};
+ use std::collections::HashMap;
++use std::io::IsTerminal;
+ use std::net::SocketAddr;
+ use std::path::PathBuf;
+ use std::sync::{Mutex, OnceLock};
+@@ -78,6 +79,13 @@ pub struct MxcProcessContainer {
+     pub least_privilege: bool,
+     /// `AppContainer` capabilities to grant (e.g. `internetClient`).
      pub capabilities: Vec<String>,
 +    /// Opt in to legacy host-loopback ingress for a host-rendered UI.
 +    /// False preserves the NVIDIA/OpenShell#2721 network posture exactly.
 +    pub host_loopback: bool,
++    /// Opt in to the dedicated gateway's existing native console.
++    pub host_console: bool,
++    /// Explicit Personal-preview outbound-open networking; false stays default-deny.
++    pub personal_network: bool,
  }
-@@ -179,2 +182,3 @@ fn oneshot_config_json(
+
+ /// Process config for the exec phase.
+@@ -162,8 +170,12 @@ fn oneshot_config_json(
+
+     let mut pc_json = serde_json::Map::new();
+     pc_json.insert("leastPrivilege".into(), pc.least_privilege.into());
+-    if !pc.capabilities.is_empty() {
+-        pc_json.insert("capabilities".into(), pc.capabilities.clone().into());
++    let mut capabilities = pc.capabilities.clone();
++    if pc.personal_network && !capabilities.iter().any(|value| value == "internetClient") {
++        capabilities.push("internetClient".into());
++    }
++    if !capabilities.is_empty() {
++        pc_json.insert("capabilities".into(), capabilities.into());
+     }
+
+     let mut config = serde_json::json!({
+@@ -177,10 +189,26 @@ fn oneshot_config_json(
+             "timeout": process.timeout,
+         },
          "processContainer": serde_json::Value::Object(pc_json),
 +        "ui": { "disable": false },
          "filesystem": serde_json::Value::Object(filesystem_json),
-@@ -182,3 +186,11 @@ fn oneshot_config_json(
+     });
      if let Some(network) = network {
-+        debug_assert!(!pc.host_loopback);
++        debug_assert!(!pc.host_loopback && !pc.personal_network);
          config["network"] = network_json(network);
++    } else if pc.personal_network {
++        config["network"] = serde_json::json!({
++            "defaultPolicy": "allow",
++            "allowedHosts": [],
++            "blockedHosts": [],
++            "allowLocalNetwork": true,
++        });
 +    } else if pc.host_loopback {
 +        config["network"] = serde_json::json!({
 +            "defaultPolicy": "block",
@@ -41,7 +101,140 @@ index 32d7006d..ba2eebe9 100644
 +            "allowLocalNetwork": true,
 +        });
      }
-@@ -812,2 +824,39 @@ mod tests {
+     config
+ }
+@@ -282,6 +310,18 @@ impl InvokerError {
+     }
+ }
+
++fn require_host_console(requested: bool, terminal_handles: [bool; 3]) -> Result<(), InvokerError> {
++    if requested && !terminal_handles.into_iter().all(|terminal| terminal) {
++        return Err(InvokerError::Mxc {
++            code: "host_console_unavailable".into(),
++            message:
++                "host_console requires a dedicated gateway with terminal stdin, stdout, and stderr"
++                    .into(),
++        });
++    }
++    Ok(())
++}
++
+ // ── Invoker ───────────────────────────────────────────────────────────────────
+
+ /// Wraps `wxc-exec` invocations for the MXC state-aware lifecycle.
+@@ -588,13 +628,26 @@ impl WxcExecInvoker {
+             return Self::mock_spawn_with_grants(&process, &grants);
+         }
+
++        require_host_console(
++            pc.host_console,
++            [
++                std::io::stdin().is_terminal(),
++                std::io::stdout().is_terminal(),
++                std::io::stderr().is_terminal(),
++            ],
++        )?;
++
+         let json = serde_json::to_string(&config)?;
+         let b64 = base64::engine::general_purpose::STANDARD.encode(json.as_bytes());
+
+         let mut cmd = Command::new(&self.exec_path);
+         cmd.arg("--config-base64")
+             .arg(&b64)
+-            .stdin(std::process::Stdio::null())
++            .stdin(if pc.host_console {
++                std::process::Stdio::inherit()
++            } else {
++                std::process::Stdio::null()
++            })
+             .stdout(std::process::Stdio::inherit())
+             .stderr(std::process::Stdio::inherit())
+             .kill_on_drop(true);
+@@ -649,6 +702,81 @@ impl WxcExecInvoker {
+ mod tests {
+     use super::*;
+
++    #[test]
++    fn personal_network_is_explicit_and_does_not_expand_filesystem_grants() {
++        let filesystem = MxcFilesystem {
++            readwrite_paths: vec!["C:\\NemoClawData\\agent".into()],
++            ..Default::default()
++        };
++        let process = MxcProcess {
++            command_line: "cmd /c exit 0".into(),
++            cwd: "C:\\NemoClawData\\agent".into(),
++            env: Vec::new(),
++            timeout: 0,
++        };
++        let personal = MxcProcessContainer {
++            personal_network: true,
++            capabilities: vec!["privateNetworkClientServer".into()],
++            ..Default::default()
++        };
++        let enabled = oneshot_config_json("personal", &filesystem, &personal, &process, None);
++        assert_eq!(enabled["network"]["defaultPolicy"], "allow");
++        assert_eq!(enabled["network"]["allowLocalNetwork"], true);
++        assert_eq!(
++            enabled["processContainer"]["capabilities"],
++            serde_json::json!(["privateNetworkClientServer", "internetClient"])
++        );
++        let already_enabled = MxcProcessContainer {
++            capabilities: vec!["privateNetworkClientServer".into(), "internetClient".into()],
++            personal_network: true,
++            ..Default::default()
++        };
++        assert_eq!(
++            oneshot_config_json("existing", &filesystem, &already_enabled, &process, None)["processContainer"]
++                ["capabilities"],
++            enabled["processContainer"]["capabilities"]
++        );
++
++        assert_eq!(
++            enabled["filesystem"]["readwritePaths"],
++            serde_json::json!(["C:\\NemoClawData\\agent"])
++        );
++        let default = oneshot_config_json(
++            "default",
++            &filesystem,
++            &MxcProcessContainer::default(),
++            &process,
++            None,
++        );
++        assert!(default.get("network").is_none());
++        assert!(default["processContainer"].get("capabilities").is_none());
++        assert_eq!(enabled["filesystem"], default["filesystem"]);
++        let loopback = MxcProcessContainer {
++            host_loopback: true,
++            ..Default::default()
++        };
++        let restricted = oneshot_config_json("loopback", &filesystem, &loopback, &process, None);
++        assert_eq!(restricted["network"]["defaultPolicy"], "block");
++    }
++
++    #[test]
++    fn host_console_gate_preserves_noninteractive_default() {
++        assert!(require_host_console(false, [false; 3]).is_ok());
++        assert!(require_host_console(true, [true; 3]).is_ok());
++    }
++
++    #[test]
++    fn host_console_gate_rejects_each_redirected_standard_handle() {
++        for missing in 0..3 {
++            let mut handles = [true; 3];
++            handles[missing] = false;
++            assert!(matches!(
++                require_host_console(true, handles),
++                Err(InvokerError::Mxc { code, .. }) if code == "host_console_unavailable"
++            ));
++        }
++    }
++
+     #[test]
+     fn provision_envelope_parse_success() {
+         let json = r#"{"result":{"sandboxId":"iso:wxc-abc123","metadata":{}}}"#;
+@@ -810,6 +938,43 @@ mod tests {
+         let config = oneshot_config_json("sb-1", &filesystem, &pc, &process, None);
+
          assert!(config.get("network").is_none());
 +        assert_eq!(config["ui"]["disable"], false);
 +    }
@@ -81,3 +274,5 @@ index 32d7006d..ba2eebe9 100644
 +                .is_empty()
 +        );
      }
+
+     #[test]

@@ -6,13 +6,16 @@ import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
-import net from "node:net";
 import path from "node:path";
+
+import { resolveNativeConfiguredInference } from "./native-configured-inference.mts";
+import { startFileTcpTargetRelay, relayWorkloadSource } from "./native-nemocua-relay.mts";
 
 import {
   readOpenedRegularFile,
   resolveBrokerUpstreamUrl,
   validatedChatMessages,
+  writeNativeGatewayConfig,
 } from "./native-security.mts";
 
 import {
@@ -27,7 +30,6 @@ import {
   run,
   sanitizedDiagnostic,
   stopChild,
-  waitForFileText,
   waitForPort,
 } from "./run-installed-native-turn.mts";
 
@@ -41,157 +43,6 @@ const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, mil
 
 function fail(message) {
   throw new Error(`NemoClaw native Windows NemoCUA failed: ${message}`);
-}
-
-function writeRelayFile(file, content) {
-  const temporary = `${file}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
-  fs.writeFileSync(temporary, content);
-  fs.renameSync(temporary, file);
-}
-
-async function startFileTcpTargetRelay(relayRoot, token, targetPort) {
-  if (fs.existsSync(relayRoot)) fail("NemoCUA relay root already exists");
-  fs.mkdirSync(relayRoot);
-  const streams = new Map();
-  let closed = false;
-  const poll = setInterval(() => {
-    for (const entry of fs.readdirSync(relayRoot).filter((name) => name.startsWith("stream-"))) {
-      if (streams.has(entry)) continue;
-      const streamRoot = path.join(relayRoot, entry);
-      const open = path.join(streamRoot, "open");
-      if (fs.existsSync(path.join(streamRoot, "host-close"))) continue;
-      const openToken = readOpenedRegularFile(open, { encoding: "utf8", maxBytes: 4096 });
-      if (openToken !== token) continue;
-      const socket = net.createConnection({ host: "127.0.0.1", port: targetPort });
-      const state = { root: streamRoot, sequence: 0, socket };
-      streams.set(entry, state);
-      socket.on("data", (chunk) => {
-        writeRelayFile(
-          path.join(streamRoot, `host-${String(state.sequence++).padStart(10, "0")}.bin`),
-          chunk,
-        );
-      });
-      socket.once("error", () => {});
-      socket.once("close", () => {
-        streams.delete(entry);
-        try {
-          writeRelayFile(path.join(streamRoot, "host-close"), Buffer.alloc(0));
-        } catch {}
-      });
-    }
-    for (const stream of streams.values()) {
-      for (const entry of fs
-        .readdirSync(stream.root)
-        .filter((name) => /^sandbox-[0-9]{10}[.]bin$/u.test(name))
-        .sort()) {
-        const chunk = path.join(stream.root, entry);
-        const content = readOpenedRegularFile(chunk, { maxBytes: 16 * 1024 * 1024 });
-        if (content === null) continue;
-        stream.socket.write(content);
-        fs.unlinkSync(chunk);
-      }
-      if (fs.existsSync(path.join(stream.root, "sandbox-close"))) stream.socket.end();
-    }
-  }, 10);
-  return {
-    close: async () => {
-      if (closed) return;
-      closed = true;
-      clearInterval(poll);
-      try {
-        writeRelayFile(path.join(relayRoot, "shutdown"), token);
-      } catch {}
-      for (const stream of streams.values()) stream.socket.destroy();
-      streams.clear();
-    },
-  };
-}
-
-function relayWorkloadSource() {
-  return String.raw`import { spawn } from "node:child_process";
-import { randomBytes } from "node:crypto";
-import fs from "node:fs";
-import net from "node:net";
-import { join } from "node:path";
-
-const required = (name) => {
-  const value = process.env[name];
-  if (!value) throw new Error(name + " is required");
-  return value;
-};
-const relayRoot = required("NEMOCLAW_NEMOCUA_RELAY_ROOT");
-const relayToken = required("NEMOCLAW_NEMOCUA_RELAY_TOKEN");
-const bridgeToken = required("NEMOCLAW_NEMOCUA_BRIDGE_TOKEN");
-const python = required("NEMOCLAW_NEMOCUA_PYTHON");
-const harness = required("NEMOCLAW_NEMOCUA_HARNESS");
-const resultPath = required("NEMOCLAW_NEMOCUA_RESULT");
-const mode = required("NEMOCLAW_NEMOCUA_MODE");
-if (!fs.statSync(relayRoot, { throwIfNoEntry: false })?.isDirectory()) {
-  throw new Error("NemoCUA shared relay directory is unavailable");
-}
-const writeRelayFile = (file, content) => {
-  const temporary = file + "." + process.pid + "." + randomBytes(4).toString("hex") + ".tmp";
-  fs.writeFileSync(temporary, content);
-  fs.renameSync(temporary, file);
-};
-const streams = new Map();
-const server = net.createServer((socket) => {
-  const streamId = randomBytes(8).toString("hex");
-  const streamRoot = join(relayRoot, "stream-" + streamId);
-  fs.mkdirSync(streamRoot);
-  writeRelayFile(join(streamRoot, "open"), relayToken);
-  const state = { root: streamRoot, sequence: 0, socket };
-  streams.set(streamId, state);
-  socket.on("data", (chunk) => {
-    writeRelayFile(
-      join(streamRoot, "sandbox-" + String(state.sequence++).padStart(10, "0") + ".bin"),
-      chunk,
-    );
-  });
-  socket.once("error", () => {});
-  socket.once("close", () => {
-    streams.delete(streamId);
-    try { writeRelayFile(join(streamRoot, "sandbox-close"), Buffer.alloc(0)); } catch {}
-  });
-});
-await new Promise((resolve, reject) => {
-  server.once("error", reject);
-  server.listen(0, "127.0.0.1", resolve);
-});
-const port = server.address().port;
-const poll = setInterval(() => {
-  const shutdown = join(relayRoot, "shutdown");
-  if (fs.statSync(shutdown, { throwIfNoEntry: false })?.isFile() &&
-      fs.readFileSync(shutdown, "utf8") === relayToken) {
-    for (const stream of streams.values()) stream.socket.destroy();
-    streams.clear();
-    return;
-  }
-  for (const stream of streams.values()) {
-    for (const entry of fs.readdirSync(stream.root).filter((name) => /^host-[0-9]{10}[.]bin$/u.test(name)).sort()) {
-      const chunk = join(stream.root, entry);
-      stream.socket.write(fs.readFileSync(chunk));
-      fs.unlinkSync(chunk);
-    }
-    if (fs.existsSync(join(stream.root, "host-close"))) stream.socket.end();
-  }
-}, 10);
-const child = spawn(python, [
-  harness,
-  mode,
-  "--bridge-url", "http://127.0.0.1:" + port,
-  "--bridge-token", bridgeToken,
-  "--result-path", resultPath,
-], { env: process.env, stdio: "inherit", windowsHide: true });
-const exitCode = await new Promise((resolve, reject) => {
-  child.once("error", reject);
-  child.once("close", (code) => resolve(code ?? 1));
-});
-clearInterval(poll);
-for (const stream of streams.values()) stream.socket.destroy();
-await new Promise((resolve) => server.close(() => resolve()));
-process.exitCode = exitCode;
-`;
 }
 
 function readNativeConfiguration() {
@@ -220,28 +71,7 @@ function readNativeConfiguration() {
   return { config, stateRoot };
 }
 
-async function readWindowsCredential(launcher, provider, required) {
-  if (!required) return "";
-  const result = await new Promise((resolve, reject) => {
-    const child = spawn(launcher, ["--credential-read", provider], {
-      stdio: ["ignore", "pipe", "pipe"],
-      windowsHide: true,
-    });
-    const chunks = [];
-    let size = 0;
-    child.stdout.on("data", (chunk) => {
-      size += chunk.length;
-      if (size <= 2048) chunks.push(chunk);
-    });
-    child.once("error", reject);
-    child.once("close", (code) => resolve({ code: code ?? 1, secret: Buffer.concat(chunks) }));
-  });
-  if (result.code !== 0 || !result.secret.length || result.secret.length > 2048)
-    fail("Windows Credential Manager does not contain the selected provider credential");
-  return result.secret.toString("utf8");
-}
-
-async function forwardConfiguredModel(body, configuration, credential) {
+async function forwardConfiguredModel(body, configuration, credential, signal: AbortSignal) {
   const upstreamUrl = resolveBrokerUpstreamUrl(configuration.endpoint, "chat-completions");
   const messages = validatedChatMessages(body);
   const upstreamBody = {
@@ -269,7 +99,7 @@ async function forwardConfiguredModel(body, configuration, credential) {
     // are intentionally sent to the selected inference provider.
     body: JSON.stringify(upstreamBody), // lgtm[js/file-access-to-http]
     redirect: "error",
-    signal: AbortSignal.timeout(180_000),
+    signal: AbortSignal.any([signal, AbortSignal.timeout(180_000)]),
   });
   const responseBody = Buffer.from(await upstream.arrayBuffer());
   if (responseBody.length > 4 * 1024 * 1024) fail("the provider response exceeded the limit");
@@ -387,140 +217,180 @@ async function startBrowserBridge(
       "--window-size=1440,810",
     ],
   });
-  const context = await browser.newContext({ viewport: { width: 1400, height: 730 } });
-  const page = await context.newPage();
-  let observationIndex = 0;
-  let port = 0;
-  const server = createServer(async (request, response) => {
-    try {
-      const url = new URL(request.url ?? "/", "http://127.0.0.1");
-      if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/task")) {
-        response.writeHead(200, {
-          "cache-control": "no-store",
-          "content-security-policy":
-            "default-src 'self'; style-src 'unsafe-inline'; script-src 'self'",
-          "content-type": "text/html; charset=utf-8",
-        });
-        response.end(taskPage());
-        return;
-      }
-      if (request.method === "GET" && url.pathname === "/task.js") {
-        response.writeHead(200, {
-          "cache-control": "no-store",
-          "content-type": "text/javascript; charset=utf-8",
-        });
-        response.end(taskScript());
-        return;
-      }
-      if (request.headers.authorization !== `Bearer ${bridgeToken}`) {
-        response.writeHead(401, { "content-type": "application/json" });
-        response.end(JSON.stringify({ message: "unauthorized" }));
-        return;
-      }
-      if (request.method === "GET" && url.pathname === "/observe") {
-        const screenshot = await page.screenshot({ fullPage: false });
-        observationIndex += 1;
-        fs.writeFileSync(
-          path.join(
-            evidenceRoot,
-            `nemocua-observation-${String(observationIndex).padStart(2, "0")}.png`,
-          ),
-          screenshot,
-        );
-        const state = await page.evaluate(() => {
-          const input = document.querySelector("#task-input");
-          const result = document.querySelector("#result");
-          return {
-            inputFocused: input === document.activeElement,
-            inputValue: input instanceof HTMLInputElement ? input.value : null,
-            completed: document.body.dataset.completed === "true" && result?.hidden === false,
-          };
-        });
-        response.writeHead(200, { "content-type": "application/json" });
-        response.end(
-          JSON.stringify({
-            url: page.url(),
-            title: await page.title(),
-            bodyText: (await page.locator("body").innerText()).slice(0, 16 * 1024),
-            screenshotSha256: createHash("sha256").update(screenshot).digest("hex"),
-            state,
-          }),
-        );
-        return;
-      }
-      if (request.method === "POST" && url.pathname === "/v1/chat/completions") {
-        const body = JSON.parse(await readRequestBody(request));
-        if (!qualification) {
-          const upstream = await forwardConfiguredModel(body, configuration, credential);
-          response.writeHead(upstream.status, { "content-type": upstream.contentType });
-          response.end(upstream.body);
+  let server;
+  try {
+    const context = await browser.newContext({ viewport: { width: 1400, height: 730 } });
+    const page = await context.newPage();
+    let observationIndex = 0;
+    let port = 0;
+    server = createServer(async (request, response) => {
+      const cancellation = new AbortController();
+      const disconnected = () => {
+        if (!response.writableEnded) cancellation.abort();
+      };
+      response.once("close", disconnected);
+      try {
+        const url = new URL(request.url ?? "/", "http://127.0.0.1");
+        if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/task")) {
+          response.writeHead(200, {
+            "cache-control": "no-store",
+            "content-security-policy":
+              "default-src 'self'; style-src 'unsafe-inline'; script-src 'self'",
+            "content-type": "text/html; charset=utf-8",
+          });
+          response.end(taskPage());
           return;
         }
-        const content = body?.messages?.at(-1)?.content;
-        const prompt = typeof content === "string" ? content : JSON.stringify(content ?? "");
-        const action = prompt.includes("focus its input")
-          ? { kind: "focus", selector: "#task-input" }
-          : prompt.includes("Type NEMOCUA_NATIVE_WINDOWS")
-            ? { kind: "type", selector: "#task-input", text: "NEMOCUA_NATIVE_WINDOWS" }
-            : prompt.includes("Submit the task")
-              ? { kind: "click", selector: "#complete-task" }
-              : null;
-        if (body?.model !== "nemocua-native-preview" || action === null)
-          fail("deterministic model received an unexpected request");
-        response.writeHead(200, { "content-type": "application/json" });
+        if (request.method === "GET" && url.pathname === "/task.js") {
+          response.writeHead(200, {
+            "cache-control": "no-store",
+            "content-type": "text/javascript; charset=utf-8",
+          });
+          response.end(taskScript());
+          return;
+        }
+        if (request.headers.authorization !== `Bearer ${bridgeToken}`) {
+          response.writeHead(401, { "content-type": "application/json" });
+          response.end(JSON.stringify({ message: "unauthorized" }));
+          return;
+        }
+        if (request.method === "GET" && url.pathname === "/observe") {
+          const screenshot = await page.screenshot({ fullPage: false });
+          observationIndex += 1;
+          fs.writeFileSync(
+            path.join(
+              evidenceRoot,
+              `nemocua-observation-${String(observationIndex).padStart(2, "0")}.png`,
+            ),
+            screenshot,
+          );
+          const state = await page.evaluate(() => {
+            const input = document.querySelector("#task-input");
+            const result = document.querySelector("#result");
+            return {
+              inputFocused: input === document.activeElement,
+              inputValue: input instanceof HTMLInputElement ? input.value : null,
+              completed: document.body.dataset.completed === "true" && result?.hidden === false,
+            };
+          });
+          response.writeHead(200, { "content-type": "application/json" });
+          response.end(
+            JSON.stringify({
+              url: page.url(),
+              title: await page.title(),
+              bodyText: (await page.locator("body").innerText()).slice(0, 16 * 1024),
+              screenshotSha256: createHash("sha256").update(screenshot).digest("hex"),
+              state,
+            }),
+          );
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/v1/chat/completions") {
+          const body = JSON.parse(await readRequestBody(request));
+          if (!qualification) {
+            const upstream = await forwardConfiguredModel(
+              body,
+              configuration,
+              credential,
+              cancellation.signal,
+            );
+            response.writeHead(upstream.status, { "content-type": upstream.contentType });
+            response.end(upstream.body);
+            return;
+          }
+          const content = body?.messages?.at(-1)?.content;
+          const prompt = typeof content === "string" ? content : JSON.stringify(content ?? "");
+          const action = prompt.includes("focus its input")
+            ? { kind: "focus", selector: "#task-input" }
+            : prompt.includes("Type NEMOCUA_NATIVE_WINDOWS")
+              ? { kind: "type", selector: "#task-input", text: "NEMOCUA_NATIVE_WINDOWS" }
+              : prompt.includes("Submit the task")
+                ? { kind: "click", selector: "#complete-task" }
+                : null;
+          if (body?.model !== "nemocua-native-preview" || action === null)
+            fail("deterministic model received an unexpected request");
+          response.writeHead(200, { "content-type": "application/json" });
+          response.end(
+            JSON.stringify({
+              id: "chatcmpl-nemoclaw-native-cua",
+              object: "chat.completion",
+              created: Math.floor(Date.now() / 1000),
+              model: "nemocua-native-preview",
+              choices: [
+                { index: 0, message: { role: "assistant", content: JSON.stringify(action) } },
+              ],
+            }),
+          );
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/act") {
+          const action = JSON.parse(await readRequestBody(request));
+          const allowed =
+            (action?.kind === "focus" && action.selector === "#task-input") ||
+            (action?.kind === "type" &&
+              action.selector === "#task-input" &&
+              action.text === "NEMOCUA_NATIVE_WINDOWS") ||
+            (action?.kind === "click" && action.selector === "#complete-task");
+          if (!allowed)
+            fail("contained NemoCUA requested an action outside the qualification allowlist");
+          const locator = page.locator(action.selector);
+          if (action.kind === "focus") await locator.focus();
+          else if (action.kind === "type") await locator.fill(action.text);
+          else await locator.click();
+          await sleep(1600);
+          response.writeHead(200, { "content-type": "application/json" });
+          response.end(JSON.stringify({ applied: true, kind: action.kind }));
+          return;
+        }
+        response.writeHead(404, { "content-type": "application/json" });
+        response.end(JSON.stringify({ message: "not found" }));
+      } catch (error) {
+        response.writeHead(400, { "content-type": "application/json" });
         response.end(
-          JSON.stringify({
-            id: "chatcmpl-nemoclaw-native-cua",
-            object: "chat.completion",
-            created: Math.floor(Date.now() / 1000),
-            model: "nemocua-native-preview",
-            choices: [
-              { index: 0, message: { role: "assistant", content: JSON.stringify(action) } },
-            ],
-          }),
+          JSON.stringify({ message: error instanceof Error ? error.message : "bridge failure" }),
         );
-        return;
+      } finally {
+        response.removeListener("close", disconnected);
       }
-      if (request.method === "POST" && url.pathname === "/act") {
-        const action = JSON.parse(await readRequestBody(request));
-        const allowed =
-          (action?.kind === "focus" && action.selector === "#task-input") ||
-          (action?.kind === "type" &&
-            action.selector === "#task-input" &&
-            action.text === "NEMOCUA_NATIVE_WINDOWS") ||
-          (action?.kind === "click" && action.selector === "#complete-task");
-        if (!allowed)
-          fail("contained NemoCUA requested an action outside the qualification allowlist");
-        const locator = page.locator(action.selector);
-        if (action.kind === "focus") await locator.focus();
-        else if (action.kind === "type") await locator.fill(action.text);
-        else await locator.click();
-        await sleep(1600);
-        response.writeHead(200, { "content-type": "application/json" });
-        response.end(JSON.stringify({ applied: true, kind: action.kind }));
-        return;
+    });
+    port = await freePort();
+    await new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(port, "127.0.0.1", resolve);
+    });
+    await page.goto(`http://127.0.0.1:${port}/task`, {
+      waitUntil: "domcontentloaded",
+      timeout: 60_000,
+    });
+    await page.locator("#task-input").waitFor({ state: "visible", timeout: 30_000 });
+    await sleep(3000);
+    return { browser, page, server, port, browserVersion: browser.version() };
+  } catch (error) {
+    try {
+      if (server) {
+        const closed = new Promise((resolve) => server.close(resolve));
+        server.closeAllConnections();
+        await closed;
       }
-      response.writeHead(404, { "content-type": "application/json" });
-      response.end(JSON.stringify({ message: "not found" }));
-    } catch (error) {
-      response.writeHead(400, { "content-type": "application/json" });
-      response.end(
-        JSON.stringify({ message: error instanceof Error ? error.message : "bridge failure" }),
-      );
+    } finally {
+      if (browser.isConnected()) await browser.close();
     }
-  });
-  port = await freePort();
-  await new Promise((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(port, "127.0.0.1", resolve);
-  });
-  await page.goto(`http://127.0.0.1:${port}/task`, {
-    waitUntil: "domcontentloaded",
-    timeout: 60_000,
-  });
-  await page.locator("#task-input").waitFor({ state: "visible", timeout: 30_000 });
-  await sleep(3000);
-  return { browser, page, server, port, browserVersion: browser.version() };
+    throw error;
+  }
+}
+
+async function waitForGuardedResult(relay, create, gateway) {
+  const deadline = Date.now() + 360_000;
+  while (Date.now() < deadline) {
+    const result = await relay.readResult();
+    if (result !== null) return result.toString("utf8");
+    if (create.exitCode !== null || create.signalCode !== null)
+      fail("NemoCUA exited without its bounded result receipt");
+    if (gateway.exitCode !== null || gateway.signalCode !== null)
+      fail("The native gateway stopped before NemoCUA completed");
+    await sleep(100);
+  }
+  fail("NemoCUA did not publish its bounded result receipt before the deadline");
 }
 
 async function main() {
@@ -551,19 +421,14 @@ async function main() {
     path.join(installRoot, "openclaw"),
     "OpenClaw browser-driver runtime",
   );
-  const gatewayConfig = requiredFile(
-    path.join(installRoot, "config", "mxc-gateway.toml"),
-    "MXC gateway configuration",
-  );
+  requiredFile(path.join(installRoot, "config", "mxc-gateway.toml"), "MXC gateway configuration");
   requiredFile(path.join(installRoot, "mxc", "wxc-exec.exe"), "MXC executor");
   const configuredIdentity = configured ? readNativeConfiguration() : null;
-  const credential = configuredIdentity
-    ? await readWindowsCredential(
-        launcher,
-        configuredIdentity.config.inference,
-        configuredIdentity.config.credentialStored,
-      )
-    : "";
+  const resolvedInference = configuredIdentity
+    ? await resolveNativeConfiguredInference(installRoot, launcher, configuredIdentity.config)
+    : null;
+  if (configuredIdentity) configuredIdentity.config = resolvedInference.configuration;
+  const credential = resolvedInference?.credential ?? "";
 
   const systemDrive = process.env.SystemDrive;
   if (!systemDrive || !/^[A-Za-z]:$/u.test(systemDrive)) fail("SystemDrive is invalid");
@@ -572,95 +437,106 @@ async function main() {
   const runRoot = path.join(`${systemDrive}\\`, `NemoClawNativeCua-${runId}`);
   const shareRoot = path.join(`${systemDrive}\\`, `NemoClawNativeCuaShare-${runId}`);
   const runtimeRoot = path.join(`${systemDrive}\\`, `NemoClawNativeCuaRuntime-${runId}`);
-  for (const directory of [runRoot, shareRoot, runtimeRoot]) {
-    if (fs.existsSync(directory)) fail("runtime root already exists");
-    fs.mkdirSync(directory);
-  }
   const evidenceRoot = path.resolve(
     argumentValue("--artifact-directory") ??
       path.join(configuredIdentity?.stateRoot ?? process.env.LOCALAPPDATA ?? runRoot, "evidence"),
   );
-  fs.mkdirSync(evidenceRoot, { recursive: true });
-  const pythonRoot = path.join(runtimeRoot, "python");
-  const nemocuaRoot = path.join(runtimeRoot, "nemocua");
-  const node = path.join(runtimeRoot, "node.exe");
-  fs.copyFileSync(installedNode, node);
-  fs.cpSync(installedPythonRoot, pythonRoot, { recursive: true });
-  fs.cpSync(installedNemoCuaRoot, nemocuaRoot, { recursive: true });
-  const python = requiredFile(path.join(pythonRoot, "python.exe"), "staged Python runtime");
-  const harness = requiredFile(
-    path.join(nemocuaRoot, "run_with_harness.py"),
-    "staged NemoCUA harness",
-  );
-  const resultPath = path.join(shareRoot, "nemocua-result.json");
-  const policyPath = path.join(runRoot, "policy.yaml");
-  fs.writeFileSync(
-    policyPath,
-    [
-      "version: 1",
-      "",
-      "filesystem_policy:",
-      "  include_workdir: false",
-      "  read_only:",
-      `    - ${quoteYamlPath(runtimeRoot)}`,
-      "  read_write:",
-      `    - ${quoteYamlPath(shareRoot)}`,
-      "",
-    ].join("\n"),
-    "utf8",
-  );
-  const configRoot = path.join(runRoot, "config");
-  const stateRoot = path.join(runRoot, "state");
-  const temp = path.join(shareRoot, "temp");
-  for (const directory of [configRoot, stateRoot, temp])
-    fs.mkdirSync(directory, { recursive: true });
-  const bridgeToken = randomBytes(32).toString("base64url");
-  const bridge = await startBrowserBridge(
-    installedOpenClawRoot,
-    evidenceRoot,
-    qualification,
-    configuredIdentity?.config ?? null,
-    credential,
-    bridgeToken,
-  );
-  const relayToken = randomBytes(32).toString("base64url");
   const relayRoot = path.join(shareRoot, "browser-relay");
-  const browserRelay = await startFileTcpTargetRelay(relayRoot, relayToken, bridge.port);
-  const relayWorkload = path.join(shareRoot, "nemocua-native-relay.mjs");
-  fs.writeFileSync(relayWorkload, relayWorkloadSource(), "utf8");
-  const openShellPort = await freePort();
+  const bridgeToken = randomBytes(32).toString("base64url");
+  const relayToken = randomBytes(32).toString("base64url");
   const sandboxName = `nc-nc-${runId}`;
   const gatewayName = `nemoclaw-nemocua-${runId}`;
   const gatewayLogPath = path.join(runRoot, "openshell-gateway.log");
   const gatewayErrorPath = path.join(runRoot, "openshell-gateway.err.log");
-  const gatewayLog = fs.openSync(gatewayLogPath, "w");
-  const gatewayError = fs.openSync(gatewayErrorPath, "w");
-  const gatewayEnvironment = allowlistedWindowsEnvironment({
-    OPENSHELL_DRIVERS: "mxc",
-    OPENSHELL_GATEWAY_CONFIG: gatewayConfig,
-    XDG_CONFIG_HOME: configRoot,
-    XDG_STATE_HOME: stateRoot,
-  });
-  const gateway = spawn(
-    gatewayExecutable,
-    [
-      "--port",
-      String(openShellPort),
-      "--disable-tls",
-      "--db-url",
-      "sqlite::memory:",
-      "--log-level",
-      "info",
-    ],
-    { env: gatewayEnvironment, stdio: ["ignore", gatewayLog, gatewayError], windowsHide: true },
-  );
-  let cliEnvironment = gatewayEnvironment;
+  const ownedRoots = [];
+  let bridge;
+  let browserRelay;
+  let gateway;
+  let gatewayLog;
+  let gatewayError;
+  let cliEnvironment;
   let create = null;
   let createOutput = "";
   let createError = "";
   let passed = false;
-  let logsClosed = false;
+  let receipt;
+  let primaryError;
   try {
+    for (const directory of [runRoot, shareRoot, runtimeRoot]) {
+      if (fs.existsSync(directory)) fail("runtime root already exists");
+      fs.mkdirSync(directory);
+      ownedRoots.push(directory);
+    }
+    const gatewayConfig = writeNativeGatewayConfig(installRoot, runRoot);
+    fs.mkdirSync(evidenceRoot, { recursive: true });
+    const pythonRoot = path.join(runtimeRoot, "python");
+    const nemocuaRoot = path.join(runtimeRoot, "nemocua");
+    const node = path.join(runtimeRoot, "node.exe");
+    fs.copyFileSync(installedNode, node);
+    fs.cpSync(installedPythonRoot, pythonRoot, { recursive: true });
+    fs.cpSync(installedNemoCuaRoot, nemocuaRoot, { recursive: true });
+    const python = requiredFile(path.join(pythonRoot, "python.exe"), "staged Python runtime");
+    const harness = requiredFile(
+      path.join(nemocuaRoot, "run_with_harness.py"),
+      "staged NemoCUA harness",
+    );
+    const policyPath = path.join(runRoot, "policy.yaml");
+    fs.writeFileSync(
+      policyPath,
+      [
+        "version: 1",
+        "",
+        "filesystem_policy:",
+        "  include_workdir: false",
+        "  read_only:",
+        `    - ${quoteYamlPath(runtimeRoot)}`,
+        "  read_write:",
+        `    - ${quoteYamlPath(shareRoot)}`,
+        `    - ${quoteYamlPath(relayRoot)}`,
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    const configRoot = path.join(runRoot, "config");
+    const stateRoot = path.join(runRoot, "state");
+    const temp = path.join(shareRoot, "temp");
+    for (const directory of [configRoot, stateRoot, temp])
+      fs.mkdirSync(directory, { recursive: true });
+    bridge = await startBrowserBridge(
+      installedOpenClawRoot,
+      evidenceRoot,
+      qualification,
+      configuredIdentity?.config ?? null,
+      credential,
+      bridgeToken,
+    );
+    browserRelay = await startFileTcpTargetRelay(relayRoot, relayToken, bridge.port, launcher);
+    const resultPath = browserRelay.resultPath;
+    const relayWorkload = path.join(runtimeRoot, "nemocua-native-relay.mjs");
+    fs.writeFileSync(relayWorkload, relayWorkloadSource(), "utf8");
+    const openShellPort = await freePort();
+    gatewayLog = fs.openSync(gatewayLogPath, "w");
+    gatewayError = fs.openSync(gatewayErrorPath, "w");
+    const gatewayEnvironment = allowlistedWindowsEnvironment({
+      OPENSHELL_DRIVERS: "mxc",
+      OPENSHELL_GATEWAY_CONFIG: gatewayConfig,
+      XDG_CONFIG_HOME: configRoot,
+      XDG_STATE_HOME: stateRoot,
+    });
+    gateway = spawn(
+      gatewayExecutable,
+      [
+        "--port",
+        String(openShellPort),
+        "--disable-tls",
+        "--db-url",
+        "sqlite::memory:",
+        "--log-level",
+        "info",
+      ],
+      { env: gatewayEnvironment, stdio: ["ignore", gatewayLog, gatewayError], windowsHide: true },
+    );
+    cliEnvironment = gatewayEnvironment;
     console.log("NEMOCUA> Starting the installed OpenShell MXC gateway");
     await waitForPort(openShellPort, gateway);
     cliEnvironment = allowlistedWindowsEnvironment({
@@ -716,6 +592,7 @@ async function main() {
         mxc: {
           command: [node, relayWorkload],
           cwd: shareRoot,
+          personal_network: configuredIdentity !== null,
         },
       }),
       "--no-tty",
@@ -731,20 +608,17 @@ async function main() {
     create.stdout.on("data", (chunk) => {
       const text = chunk.toString("utf8");
       createOutput = `${createOutput}${text}`.slice(-128 * 1024);
-      process.stdout.write(text);
     });
     create.stderr.on("data", (chunk) => {
       const text = chunk.toString("utf8");
       createError = `${createError}${text}`.slice(-128 * 1024);
-      process.stderr.write(text);
     });
-    await waitForFileText(resultPath, EXPECTED_TOKENS[2], 360_000);
-    const agentResultText = readOpenedRegularFile(resultPath, {
-      encoding: "utf8",
-      maxBytes: 1024 * 1024,
-    });
-    if (agentResultText === null) fail("NemoCUA result disappeared");
-    const agentResult = JSON.parse(agentResultText);
+    const agentResult = JSON.parse(
+      await Promise.race([
+        waitForGuardedResult(browserRelay, create, gateway),
+        browserRelay.failure,
+      ]),
+    );
     const finalState = await bridge.page.evaluate(() => ({
       inputValue: document.querySelector("#task-input")?.value ?? null,
       completed: document.body.dataset.completed === "true",
@@ -782,14 +656,7 @@ async function main() {
     if (jsonContainsExactValue(JSON.parse(sandboxList.stdout.trim()), sandboxName))
       fail("NemoCUA sandbox remained registered after deletion");
     if (!(await stopChild(gateway))) fail("OpenShell MXC gateway did not stop");
-    fs.closeSync(gatewayLog);
-    fs.closeSync(gatewayError);
-    logsClosed = true;
-    for (const directory of [runRoot, runtimeRoot]) {
-      if (!(await removeDirectory(directory)))
-        fail(`runtime root remained: ${path.basename(directory)}`);
-    }
-    const receipt = {
+    receipt = {
       ...agentResult,
       classification: "installed-nemoclaw-native-windows-nemocua",
       architecture: "arm64",
@@ -797,7 +664,9 @@ async function main() {
       browser: "Microsoft Edge",
       browserVersion: bridge.browserVersion,
       interface: "NemoCUA visible browser task",
-      browserBridgeTransport: "authenticated-shared-file-tcp-relay",
+      browserBridgeTransport: "authenticated-guarded-file-tcp-relay",
+      guardedRelay: true,
+      relayStreamLimit: browserRelay.streamLimit,
       runtimeEntrypointSha256: createHash("sha256")
         .update(fs.readFileSync(path.join(installedNemoCuaRoot, "run_with_harness.py")))
         .digest("hex"),
@@ -815,62 +684,94 @@ async function main() {
       gatewayStopped: true,
       qualificationRootsRemoved: true,
     };
-    fs.writeFileSync(
-      path.join(evidenceRoot, `native-windows-nemocua-${runId}.json`),
-      `${JSON.stringify(receipt, null, 2)}\n`,
-      "utf8",
-    );
-    await browserRelay.close();
-    await removeDirectory(shareRoot);
     passed = true;
-    console.log("NEMOCUA> PASS three real model-driven browser actions inside native MXC");
+  } catch (error) {
+    primaryError = error;
+    throw error;
   } finally {
-    if (create !== null) await stopChild(create);
-    if (!passed) {
+    const failures = [];
+    const attempt = async (label, action) => {
       try {
-        await run(
+        await action();
+      } catch {
+        failures.push(label);
+      }
+    };
+    await attempt("relay stop", async () => {
+      if (browserRelay) await browserRelay.close();
+    });
+    await attempt("sandbox request stop", async () => {
+      if (create && !(await stopChild(create))) throw new Error();
+    });
+    if (!passed && gateway && cliEnvironment)
+      await attempt("sandbox removal", () =>
+        run(
           openshell,
           ["sandbox", "delete", sandboxName],
           cliEnvironment,
           "Failure cleanup native NemoCUA sandbox",
           30_000,
-        );
-      } catch {}
-    }
-    await stopChild(gateway);
-    if (!logsClosed) {
-      fs.closeSync(gatewayLog);
-      fs.closeSync(gatewayError);
-    }
-    await browserRelay.close();
-    await new Promise((resolve) => bridge.server.close(() => resolve()));
-    if (bridge.browser.isConnected()) await bridge.browser.close();
-    if (!passed) {
-      const diagnosticParts = [createOutput, createError];
-      for (const file of [gatewayLogPath, gatewayErrorPath]) {
-        const content = readOpenedRegularFile(file, {
-          encoding: "utf8",
-          maxBytes: 2 * 1024 * 1024,
-        });
-        if (content !== null) diagnosticParts.push(content);
-      }
-      const diagnostic = sanitizedDiagnostic(diagnosticParts.filter(Boolean).join("\n"), [
-        [installRoot, "<install-root>"],
-        [runtimeRoot, "<runtime-root>"],
-        [shareRoot, "<share-root>"],
-        [runRoot, "<run-root>"],
-      ]);
-      if (diagnostic) {
-        fs.writeFileSync(
-          path.join(evidenceRoot, `native-windows-nemocua-diagnostic-${runId}.log`),
-          diagnostic,
-          "utf8",
-        );
-        console.error(`NEMOCUA> Sanitized failure diagnostic\n${diagnostic}`);
-      }
-    }
-    for (const directory of [runRoot, shareRoot, runtimeRoot]) await removeDirectory(directory);
+        ),
+      );
+    await attempt("gateway stop", async () => {
+      if (gateway && !(await stopChild(gateway))) throw new Error();
+    });
+    for (const handle of [gatewayLog, gatewayError])
+      await attempt("gateway log close", () => {
+        if (handle !== undefined) fs.closeSync(handle);
+      });
+    await attempt("browser bridge stop", async () => {
+      if (!bridge) return;
+      const closed = new Promise((resolve) => bridge.server.close(resolve));
+      bridge.server.closeAllConnections();
+      await closed;
+    });
+    await attempt("browser stop", async () => {
+      if (bridge?.browser.isConnected()) await bridge.browser.close();
+    });
+    await attempt("guarded file owner stop", async () => {
+      if (browserRelay) await browserRelay.dispose();
+    });
+    if (!passed)
+      await attempt("failure diagnostic", () => {
+        const diagnosticParts = [createOutput, createError];
+        for (const file of [gatewayLogPath, gatewayErrorPath]) {
+          const content = readOpenedRegularFile(file, {
+            encoding: "utf8",
+            maxBytes: 2 * 1024 * 1024,
+          });
+          if (content !== null) diagnosticParts.push(content);
+        }
+        const diagnostic = sanitizedDiagnostic(diagnosticParts.filter(Boolean).join("\n"), [
+          [bridgeToken, "<bridge-token>"],
+          [relayToken, "<relay-token>"],
+          [installRoot, "<install-root>"],
+          [runtimeRoot, "<runtime-root>"],
+          [shareRoot, "<share-root>"],
+          [runRoot, "<run-root>"],
+        ]);
+        if (diagnostic)
+          fs.writeFileSync(
+            path.join(evidenceRoot, `native-windows-nemocua-diagnostic-${runId}.log`),
+            diagnostic,
+            "utf8",
+          );
+      });
+    for (const directory of ownedRoots)
+      await attempt("temporary root removal", async () => {
+        if (!(await removeDirectory(directory))) throw new Error();
+      });
+    if (failures.length && primaryError === undefined)
+      fail(`cleanup failed: ${failures.join(", ")}`);
+    if (failures.length) console.error(`NEMOCUA> Cleanup also failed: ${failures.join(", ")}`);
   }
+  if (!receipt || !passed) fail("the native browser receipt is missing");
+  fs.writeFileSync(
+    path.join(evidenceRoot, `native-windows-nemocua-${runId}.json`),
+    `${JSON.stringify(receipt, null, 2)}\n`,
+    "utf8",
+  );
+  console.log("NEMOCUA> PASS three real model-driven browser actions inside native MXC");
 }
 
 main().catch((error) => {

@@ -6,7 +6,7 @@ import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
-import { readOpenedRegularFile } from "./native-security.mts";
+import { readOpenedRegularFile, writeNativeGatewayConfig } from "./native-security.mts";
 
 import {
   allowlistedWindowsEnvironment,
@@ -48,6 +48,114 @@ function fail(message) {
 
 function sha256(file) {
   return createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+}
+
+async function createPrivateShareRoot(directory, systemRoot) {
+  const powershell = requiredFile(
+    path.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+    "Windows PowerShell",
+  );
+  const script = String.raw`$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+[assembly: DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+public static class NativeShareAccess {
+  [StructLayout(LayoutKind.Sequential)] struct Luid { public uint Low; public int High; }
+  [StructLayout(LayoutKind.Sequential)] struct Request {
+    public uint Access; public IntPtr Self; public IntPtr Types; public uint TypeCount; public IntPtr Arguments;
+  }
+  [StructLayout(LayoutKind.Sequential)] struct Reply {
+    public uint Count; public IntPtr Granted; public IntPtr Sacl; public IntPtr Error;
+  }
+  [DllImport("authz.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+  static extern bool AuthzInitializeResourceManager(uint flags, IntPtr check, IntPtr groups, IntPtr free, string name, out IntPtr manager);
+  [DllImport("authz.dll", SetLastError = true)]
+  static extern bool AuthzInitializeContextFromSid(uint flags, byte[] sid, IntPtr manager, IntPtr expiration, Luid id, IntPtr arguments, out IntPtr context);
+  [DllImport("authz.dll", SetLastError = true)]
+  static extern bool AuthzAccessCheck(uint flags, IntPtr context, ref Request request, IntPtr audit, byte[] descriptor, IntPtr descriptors, uint count, ref Reply reply, IntPtr results);
+  [DllImport("authz.dll")] static extern bool AuthzFreeContext(IntPtr context);
+  [DllImport("authz.dll")] static extern bool AuthzFreeResourceManager(IntPtr manager);
+  public static uint Granted(byte[] descriptor, byte[] sid) {
+    IntPtr manager = IntPtr.Zero, context = IntPtr.Zero;
+    IntPtr replyBuffer = Marshal.AllocHGlobal(12);
+    IntPtr granted = replyBuffer, sacl = IntPtr.Add(replyBuffer, 4), error = IntPtr.Add(replyBuffer, 8);
+    try {
+      Marshal.WriteInt32(granted, 0); Marshal.WriteInt32(sacl, 0); Marshal.WriteInt32(error, 0);
+      // NO_AUDIT avoids requiring SeAuditPrivilege; SKIP_TOKEN_GROUPS prevents account lookup.
+      if (!AuthzInitializeResourceManager(1, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, "NemoClaw share ACL", out manager))
+        throw new Win32Exception(Marshal.GetLastWin32Error());
+      if (!AuthzInitializeContextFromSid(2, sid, manager, IntPtr.Zero, new Luid(), IntPtr.Zero, out context))
+        throw new Win32Exception(Marshal.GetLastWin32Error());
+      Request request = new Request { Access = 0x02000000 }; // MAXIMUM_ALLOWED
+      Reply reply = new Reply { Count = 1, Granted = granted, Sacl = sacl, Error = error };
+      if (!AuthzAccessCheck(0, context, ref request, IntPtr.Zero, descriptor, IntPtr.Zero, 0, ref reply, IntPtr.Zero))
+        throw new Win32Exception(Marshal.GetLastWin32Error());
+      int result = Marshal.ReadInt32(error);
+      if (result != 0 && result != 5) throw new Win32Exception(result);
+      return unchecked((uint)Marshal.ReadInt32(granted));
+    } finally {
+      if (context != IntPtr.Zero) AuthzFreeContext(context);
+      if (manager != IntPtr.Zero) AuthzFreeResourceManager(manager);
+      Marshal.FreeHGlobal(replyBuffer);
+    }
+  }
+}
+'@
+$target = $env:NEMOCLAW_NATIVE_SHARE_ROOT
+if ([IO.Directory]::Exists($target) -or [IO.File]::Exists($target)) { throw 'Private share root already exists.' }
+$owner = [Security.Principal.WindowsIdentity]::GetCurrent().User
+$allowed = @(@($owner.Value, 'S-1-5-18') | Select-Object -Unique)
+$security = [Security.AccessControl.DirectorySecurity]::new()
+$security.SetOwner($owner)
+$security.SetAccessRuleProtection($true, $false)
+foreach ($value in $allowed) {
+  $sid = [Security.Principal.SecurityIdentifier]::new($value)
+  $rule = [Security.AccessControl.FileSystemAccessRule]::new($sid, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')
+  $security.AddAccessRule($rule)
+}
+# Apply the protected DACL during creation, before any offload, home, or temp data exists.
+[void][IO.Directory]::CreateDirectory($target, $security)
+$actual = Get-Acl -LiteralPath $target
+if (-not $actual.AreAccessRulesProtected -or $actual.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $owner.Value) {
+  throw 'Private share owner or inheritance differs from the required DACL.'
+}
+$rules = @($actual.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
+if ($rules.Count -ne $allowed.Count -or @($rules | Where-Object {
+  $_.IsInherited -or $_.IdentityReference.Value -notin $allowed -or $_.AccessControlType -ne 'Allow' -or
+  $_.FileSystemRights -ne 'FullControl' -or $_.InheritanceFlags -ne 'ContainerInherit,ObjectInherit' -or $_.PropagationFlags -ne 'None'
+}).Count -ne 0) { throw 'Private share DACL contains an unexpected access grant.' }
+$descriptor = $actual.GetSecurityDescriptorBinaryForm()
+foreach ($value in $allowed) {
+  $sid = [Security.Principal.SecurityIdentifier]::new($value)
+  $bytes = New-Object byte[] $sid.BinaryLength
+  $sid.GetBinaryForm($bytes, 0)
+  if (([NativeShareAccess]::Granted($descriptor, $bytes) -band 7) -ne 7) { throw 'Required host identity cannot access the private share.' }
+}
+$denied = @('S-1-1-0', 'S-1-5-11', 'S-1-5-32-545')
+foreach ($value in $denied) {
+  $sid = [Security.Principal.SecurityIdentifier]::new($value)
+  $bytes = New-Object byte[] $sid.BinaryLength
+  $sid.GetBinaryForm($bytes, 0)
+  if (([NativeShareAccess]::Granted($descriptor, $bytes) -band 7) -ne 0) { throw 'An unprivileged identity can access the private share.' }
+}
+@{ ownerSid = $owner.Value; serviceSid = 'S-1-5-18'; protected = $true; nonOwnerDataAccess = $false; deniedSids = $denied } | ConvertTo-Json -Compress
+`;
+  const result = await run(
+    powershell,
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-EncodedCommand",
+      Buffer.from(script, "utf16le").toString("base64"),
+    ],
+    allowlistedWindowsEnvironment({ NEMOCLAW_NATIVE_SHARE_ROOT: directory }),
+    "Creating and checking the private native-agent share",
+    60_000,
+  );
+  return JSON.parse(result.stdout);
 }
 
 function deepAgentDiagnosticFiles(root) {
@@ -332,6 +440,27 @@ writeFileSync(runner, [
   "import os",
   "import sys",
   "sys.path.insert(0, os.environ['NEMOCLAW_HERMES_SITE_PACKAGES'])",
+  "from io import BytesIO",
+  "from PIL import Image, ImageShow",
+  "from python_multipart.multipart import parse_form, parse_options_header",
+  "if len(Image.new('RGB', (2, 2)).tobytes()) != 12:",
+  "    raise RuntimeError('Native Pillow image operation failed')",
+  "try:",
+  "    ImageShow.WindowsViewer().get_command(chr(34))",
+  "except ValueError:",
+  "    pass",
+  "else:",
+  "    raise RuntimeError('Pillow accepted an invalid Windows filename')",
+  "try:",
+  "    parse_form({'Content-Type': b'application/octet-stream', 'Content-Length': b'-1'}, BytesIO(b'bounded'), lambda _: None, lambda _: None)",
+  "except ValueError as error:",
+  "    if 'Content-Length must be non-negative' not in str(error):",
+  "        raise",
+  "else:",
+  "    raise RuntimeError('Multipart accepted a negative content length')",
+  "header = b'form-data; name=plain; name*=utf-8' + bytes([39, 39]) + b'other'",
+  "if parse_options_header(header)[1] != {b'name': b'plain'}:",
+  "    raise RuntimeError('Multipart accepted an extended parameter override')",
   "from hermes_cli.main import main",
   "main()",
   "",
@@ -386,6 +515,7 @@ try {
     schemaVersion: 1,
     classification: "native-windows-hermes-agent-result",
     hermesVersion: "0.19.0",
+    nativePythonSecurityChecksPassed: true,
     turnCount: turns.length,
     turns,
     verdict: "pass",
@@ -634,10 +764,7 @@ async function main() {
           ),
     `${agentLabel} installed entrypoint`,
   );
-  const gatewayConfig = requiredFile(
-    path.join(installRoot, "config", "mxc-gateway.toml"),
-    "MXC gateway configuration",
-  );
+  requiredFile(path.join(installRoot, "config", "mxc-gateway.toml"), "MXC gateway configuration");
   requiredFile(path.join(installRoot, "mxc", "wxc-exec.exe"), "MXC executor");
 
   const systemDrive = process.env.SystemDrive;
@@ -650,10 +777,13 @@ async function main() {
     `${systemDrive}\\`,
     `NemoClawNativeAgentRuntime-${agentId}-${runId}`,
   );
-  for (const directory of [runRoot, shareRoot, runtimeRoot]) {
+  for (const directory of [runRoot, runtimeRoot]) {
     if (fs.existsSync(directory)) fail("qualification root already exists");
     fs.mkdirSync(directory);
   }
+  const gatewayConfig = writeNativeGatewayConfig(installRoot, runRoot);
+  // MXC adds its container-specific grant from filesystem_policy after this host boundary is set.
+  const privateShareAcl = await createPrivateShareRoot(shareRoot, systemRoot);
   const evidenceRoot = path.resolve(
     argumentValue("--artifact-directory") ??
       path.join(process.env.LOCALAPPDATA ?? runRoot, "NVIDIA", "NemoClaw", "evidence", agentId),
@@ -890,6 +1020,7 @@ async function main() {
     if (
       agentResult.verdict !== "pass" ||
       reportedVersion !== agentVersion ||
+      (isHermes && agentResult.nativePythonSecurityChecksPassed !== true) ||
       agentResult.turnCount !== 3 ||
       !turnProofs.every(([, expected], index) => agentResult.turns?.[index]?.expected === expected)
     )
@@ -931,6 +1062,7 @@ async function main() {
           : requiredFile(path.join(installedPythonRoot, "python.exe"), "installed Python runtime"),
       ),
       deterministicLocalModel: true,
+      privateShareAcl,
       createWatcherStopped: true,
       sandboxDeleted: true,
       sandboxRegistryAbsent: true,

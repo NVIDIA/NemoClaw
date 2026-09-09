@@ -18,10 +18,10 @@
       "displayName": "Hermes Agent",
       "version": "0.19.0",
       "source": "https://github.com/NousResearch/hermes-agent/tree/3ef6bbd201263d354fd83ec55b3c306ded2eb72a",
-      "interface": "Hermes native terminal UI",
+      "interface": "Hermes dashboard and native terminal UI",
       "status": "candidate",
       "selectable": true,
-      "limitation": "The native terminal candidate omits unqualified cryptography 46.0.7 and pywinpty 2.0.15 integrations; optional encrypted integration and PTY surfaces are not claimed."
+      "limitation": "Candidate uses the shipped Hermes dashboard with native ARM64 ConPTY and a separately tested interactive console. Live messaging accounts and physical N1X inference remain qualification gates."
     },
     {
       "id": "langchain-deepagents-code",

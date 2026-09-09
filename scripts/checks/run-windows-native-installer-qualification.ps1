@@ -14,13 +14,14 @@
     no-WSL evidence.
 #>
 
-[CmdletBinding()]
+[CmdletBinding(DefaultParameterSetName = 'Full')]
 param(
     [Parameter(Mandatory)][string]$CandidateCheckout,
     [Parameter(Mandatory)][string]$CandidateSha,
-    [Parameter(Mandatory)][string]$OpenShellCheckout,
-    [Parameter(Mandatory)][string]$OpenShellSha,
-    [Parameter(Mandatory)][string]$ArtifactDirectory
+    [Parameter(Mandatory, ParameterSetName = 'Full')][string]$OpenShellCheckout,
+    [Parameter(Mandatory, ParameterSetName = 'Full')][string]$OpenShellSha,
+    [Parameter(Mandatory)][string]$ArtifactDirectory,
+    [Parameter(Mandatory, ParameterSetName = 'ProcessAuditControl')][switch]$ProcessAuditControlOnly
 )
 
 Set-StrictMode -Version Latest
@@ -206,21 +207,36 @@ function Start-ProcessStartAudit {
 function Receive-ProcessStartAudit {
     param(
         [Parameter(Mandatory)]$Audit,
-        [Parameter(Mandatory)][int]$SettleMilliseconds
+        [Parameter(Mandatory)][int]$SettleMilliseconds,
+        [long]$StartedAt = [Diagnostics.Stopwatch]::GetTimestamp(),
+        [switch]$DrainOnly
     )
 
-    Start-Sleep -Milliseconds $SettleMilliseconds
-    $records = @()
-    foreach ($auditEvent in @(Get-Event -SourceIdentifier $Audit.sourceIdentifier -ErrorAction SilentlyContinue)) {
-        $processEvent = $auditEvent.SourceEventArgs.NewEvent
-        $records += [pscustomobject]@{
-            processId = [int]$processEvent.ProcessID
-            parentProcessId = [int]$processEvent.ParentProcessID
-            processName = [string]$processEvent.ProcessName
+    $frequency = [Diagnostics.Stopwatch]::Frequency
+    $deadline = $StartedAt + [long]($SettleMilliseconds * $frequency / 1000.0)
+    $records = [Collections.Generic.List[object]]::new()
+    do {
+        $queued = @(Get-Event -SourceIdentifier $Audit.sourceIdentifier -ErrorAction SilentlyContinue)
+        $observedAt = [Diagnostics.Stopwatch]::GetTimestamp()
+        foreach ($auditEvent in $queued) {
+            $processEvent = $auditEvent.SourceEventArgs.NewEvent
+            $records.Add([pscustomobject]@{
+                eventIdentifier = [int]$auditEvent.EventIdentifier
+                eventTime = [long]$processEvent.TIME_CREATED
+                timeGenerated = $auditEvent.TimeGenerated.ToUniversalTime().ToString('O')
+                observedAfterMilliseconds = 1000.0 * ($observedAt - $StartedAt) / $frequency
+                observedWithinWindow = $observedAt -le $deadline
+                processId = [int]$processEvent.ProcessID
+                parentProcessId = [int]$processEvent.ParentProcessID
+                processName = [string]$processEvent.ProcessName
+            })
+            Remove-Event -EventIdentifier $auditEvent.EventIdentifier
         }
-        Remove-Event -EventIdentifier $auditEvent.EventIdentifier
-    }
-    return @($records)
+        $remainingMilliseconds = 1000.0 * ($deadline - [Diagnostics.Stopwatch]::GetTimestamp()) / $frequency
+        if ($DrainOnly -or $remainingMilliseconds -le 0) { break }
+        Start-Sleep -Milliseconds ([int][Math]::Max(1, [Math]::Min(50, [Math]::Floor($remainingMilliseconds))))
+    } while ($true)
+    return $records.ToArray()
 }
 
 function Get-AuditedDescendantStarts {
@@ -231,14 +247,44 @@ function Get-AuditedDescendantStarts {
 
     $tracked = @{}
     $tracked[[string]$RootProcessId] = $true
+    # WMI arrival order does not establish parent-before-child order.
+    do {
+        $expanded = $false
+        foreach ($record in $Records) {
+            if ($tracked.ContainsKey([string]$record.parentProcessId) -and
+                -not $tracked.ContainsKey([string]$record.processId)) {
+                $tracked[[string]$record.processId] = $true
+                $expanded = $true
+            }
+        }
+    } while ($expanded)
     $descendants = @()
     foreach ($record in $Records) {
         if ($tracked.ContainsKey([string]$record.parentProcessId)) {
             $descendants += $record
-            $tracked[[string]$record.processId] = $true
         }
     }
     return @($descendants)
+}
+
+function Assert-ProcessAuditAncestryControl {
+    $records = @(
+        [pscustomobject]@{ processId = 103; parentProcessId = 102; processName = 'synthetic-leaf' }
+        [pscustomobject]@{ processId = 203; parentProcessId = 202; processName = 'unrelated-leaf' }
+        [pscustomobject]@{ processId = 102; parentProcessId = 101; processName = 'synthetic-helper' }
+        [pscustomobject]@{ processId = 202; parentProcessId = 201; processName = 'unrelated-helper' }
+    )
+    $descendants = @(Get-AuditedDescendantStarts -Records $records -RootProcessId 101)
+    $observedIds = @($descendants | ForEach-Object { $_.processId } | Sort-Object)
+    if (($observedIds -join ',') -cne '102,103') {
+        Fail-Qualification 'The synthetic ancestry control did not retain the reversed chain and exclude the unrelated chain.'
+    }
+    return [pscustomobject]@{
+        classification = 'synthetic-ancestry-regression'
+        recordOrder = 'leaf-before-helper'
+        unrelatedChainExcluded = $true
+        verdict = 'pass'
+    }
 }
 
 function Stop-ProcessStartAudit {
@@ -251,7 +297,10 @@ function Stop-ProcessStartAudit {
 }
 
 function Invoke-DelayedDescendantProbe {
-    param([Parameter(Mandatory)][string]$SentinelPath)
+    param(
+        [Parameter(Mandatory)][string]$SentinelPath,
+        [Parameter(Mandatory)][string]$DiagnosticPath
+    )
 
     $delayMilliseconds = 2500
     $timeoutMilliseconds = 10000
@@ -261,6 +310,20 @@ function Invoke-DelayedDescendantProbe {
     $helper = $null
     $audit = $null
     $result = $null
+    $records = @()
+    $probe = $null
+    $releasedAt = 0L
+    $registrationStartedAt = 0L
+    $registrationCompletedAt = 0L
+    $helperStartedAt = 0L
+    $helperReadyAt = 0L
+    $helperProcessId = $null
+    $collectionCompletedMilliseconds = $null
+    $launchStartedMilliseconds = $null
+    $launchCompletedMilliseconds = $null
+    $failureMessage = $null
+    $cleanupComplete = $false
+    $ancestryControl = $null
     # The handshake excludes PowerShell startup from the calibrated drain window.
     $command = @'
 Set-StrictMode -Version Latest
@@ -317,19 +380,27 @@ try {
     $command = $command.Replace('__DELAY_MILLISECONDS__', [string]$delayMilliseconds)
     $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
     try {
+        $ancestryControl = Assert-ProcessAuditAncestryControl
         $ready = [Threading.EventWaitHandle]::new($false, [Threading.EventResetMode]::ManualReset, "$eventPrefix-ready")
         $go = [Threading.EventWaitHandle]::new($false, [Threading.EventResetMode]::ManualReset, "$eventPrefix-go")
+        $registrationStartedAt = [Diagnostics.Stopwatch]::GetTimestamp()
         $audit = Start-ProcessStartAudit
+        $registrationCompletedAt = [Diagnostics.Stopwatch]::GetTimestamp()
+        $helperStartedAt = [Diagnostics.Stopwatch]::GetTimestamp()
         $helper = Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') `
             -ArgumentList @('-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', $encodedCommand) `
             -PassThru -ErrorAction Stop
+        $helperProcessId = $helper.Id
         $null = $helper.Handle
         if (-not $ready.WaitOne($timeoutMilliseconds)) {
             Fail-Qualification 'The delayed descendant helper did not become ready.'
         }
+        $helperReadyAt = [Diagnostics.Stopwatch]::GetTimestamp()
         $releasedAt = [Diagnostics.Stopwatch]::GetTimestamp()
         $go.Set() | Out-Null
-        $records = @(Receive-ProcessStartAudit -Audit $audit -SettleMilliseconds $script:ProcessAuditSettleMilliseconds)
+        $records = @(Receive-ProcessStartAudit -Audit $audit `
+            -SettleMilliseconds $script:ProcessAuditSettleMilliseconds -StartedAt $releasedAt)
+        $collectionCompletedMilliseconds = 1000.0 * ([Diagnostics.Stopwatch]::GetTimestamp() - $releasedAt) / [Diagnostics.Stopwatch]::Frequency
         if (-not $helper.WaitForExit($timeoutMilliseconds) -or $helper.ExitCode -ne 0) {
             Fail-Qualification 'The delayed descendant helper did not complete successfully.'
         }
@@ -346,7 +417,8 @@ try {
             $probe.output -cne 'delayed-child-executed') {
             Fail-Qualification 'The delayed descendant did not produce its bounded control side effect.'
         }
-        $descendants = @(Get-AuditedDescendantStarts -Records $records -RootProcessId $PID)
+        $inWindowRecords = @($records | Where-Object { $_.observedWithinWindow })
+        $descendants = @(Get-AuditedDescendantStarts -Records $inWindowRecords -RootProcessId $PID)
         $helperStarts = @($descendants | Where-Object {
             $_.processId -eq $helper.Id -and $_.parentProcessId -eq $PID
         })
@@ -355,7 +427,7 @@ try {
                 $_.processName -ieq 'cmd.exe'
         })
         if ($helperStarts.Count -ne 1 -or $childStarts.Count -ne 1) {
-            Fail-Qualification 'The calibrated Windows process-start audit missed its delayed descendant.'
+            Fail-Qualification "The calibrated Windows process-start audit missed its delayed descendant (helper=$($helperStarts.Count), child=$($childStarts.Count))."
         }
         $result = [pscustomobject]@{
             delayMilliseconds = $delayMilliseconds
@@ -368,30 +440,90 @@ try {
             sideEffectObserved = $true
             auditedDescendantStarts = $descendants
         }
+    } catch {
+        $failureMessage = $_.Exception.Message
+        throw
     } finally {
         try {
-            if ($helper) {
-                try {
-                    if (-not $helper.HasExited) {
-                        $helper.Kill()
-                        if (-not $helper.WaitForExit(5000)) {
-                            Fail-Qualification 'The delayed descendant helper cleanup did not complete.'
+            try {
+                if ($helper) {
+                    try {
+                        if (-not $helper.HasExited) {
+                            $helper.Kill()
+                            if (-not $helper.WaitForExit(5000)) {
+                                Fail-Qualification 'The delayed descendant helper cleanup did not complete.'
+                            }
+                        }
+                    } finally { $helper.Dispose() }
+                }
+            } finally {
+                if ($go) { $go.Dispose() }
+                if ($ready) { $ready.Dispose() }
+                if ($audit) {
+                    try {
+                        if ($releasedAt -gt 0) {
+                            # This immediate diagnostic drain cannot satisfy the earlier assertion.
+                            $records += @(Receive-ProcessStartAudit -Audit $audit -DrainOnly `
+                                -SettleMilliseconds $script:ProcessAuditSettleMilliseconds -StartedAt $releasedAt)
+                        }
+                    } finally {
+                        Stop-ProcessStartAudit -Audit $audit
+                        if (@(Get-EventSubscriber -SourceIdentifier $audit.sourceIdentifier -ErrorAction SilentlyContinue).Count -ne 0 -or
+                            @(Get-Event -SourceIdentifier $audit.sourceIdentifier -ErrorAction SilentlyContinue).Count -ne 0) {
+                            Fail-Qualification 'The delayed descendant process-start audit cleanup did not complete.'
                         }
                     }
-                } finally { $helper.Dispose() }
-            }
-        } finally {
-            if ($go) { $go.Dispose() }
-            if ($ready) { $ready.Dispose() }
-            if ($audit) {
-                Stop-ProcessStartAudit -Audit $audit
-                if (@(Get-EventSubscriber -SourceIdentifier $audit.sourceIdentifier -ErrorAction SilentlyContinue).Count -ne 0 -or
-                    @(Get-Event -SourceIdentifier $audit.sourceIdentifier -ErrorAction SilentlyContinue).Count -ne 0) {
-                    Fail-Qualification 'The delayed descendant process-start audit cleanup did not complete.'
+                }
+                if (Test-Path -LiteralPath $SentinelPath -PathType Leaf) {
+                    [IO.File]::Delete($SentinelPath)
                 }
             }
-            if (Test-Path -LiteralPath $SentinelPath -PathType Leaf) {
-                [IO.File]::Delete($SentinelPath)
+            $cleanupComplete = $true
+        } finally {
+            $childProcessId = if ($probe) { [int]$probe.processId } else { $null }
+            $helperEvents = @($records | Where-Object {
+                $_.processId -eq $helperProcessId -and $_.parentProcessId -eq $PID
+            })
+            $childEvents = @($records | Where-Object {
+                $_.processId -eq $childProcessId -and $_.parentProcessId -eq $helperProcessId
+            })
+            $diagnostic = [pscustomobject]@{
+                receiptVersion = 1
+                classification = 'qualification-only-process-audit-control'
+                candidateSha = $CandidateSha
+                syntheticAncestryControl = $ancestryControl
+                verdict = if ($result -and $cleanupComplete) { 'pass' } else { 'fail' }
+                failure = $failureMessage
+                rootProcessId = $PID
+                helperProcessId = $helperProcessId
+                childProcessId = $childProcessId
+                delayMilliseconds = $delayMilliseconds
+                settleMilliseconds = $script:ProcessAuditSettleMilliseconds
+                stopwatchFrequency = [Diagnostics.Stopwatch]::Frequency
+                registrationStartedAtTicks = $registrationStartedAt
+                registrationCompletedAtTicks = $registrationCompletedAt
+                helperLaunchStartedAtTicks = $helperStartedAt
+                helperReadyAtTicks = $helperReadyAt
+                observationStartedAtTicks = $releasedAt
+                collectionCompletedMilliseconds = $collectionCompletedMilliseconds
+                launchStartedMilliseconds = $launchStartedMilliseconds
+                launchCompletedMilliseconds = $launchCompletedMilliseconds
+                sideEffect = $probe
+                helperEventCount = $helperEvents.Count
+                childEventCount = $childEvents.Count
+                inWindowHelperEventCount = @($helperEvents | Where-Object { $_.observedWithinWindow }).Count
+                inWindowChildEventCount = @($childEvents | Where-Object { $_.observedWithinWindow }).Count
+                helperEvents = @($helperEvents | Select-Object -First 8)
+                childEvents = @($childEvents | Select-Object -First 8)
+                rawEventCount = $records.Count
+                rawEventsTruncated = $records.Count -gt 64
+                rawEvents = @($records | Select-Object -First 64)
+                cleanupComplete = $cleanupComplete
+            }
+            Write-JsonFile -Path $DiagnosticPath -Value $diagnostic
+            Assert-BoundedFile -Path $DiagnosticPath -MaximumBytes 65536
+            if ($diagnostic.verdict -ne 'pass') {
+                Write-Host ('Windows process-audit diagnostic: ' + ($diagnostic | ConvertTo-Json -Depth 12 -Compress))
             }
         }
     }
@@ -583,13 +715,11 @@ function Assert-InstalledDistribution {
     }
 }
 
-if ($CandidateSha -cnotmatch $script:ShaPattern -or $OpenShellSha -cnotmatch $script:ShaPattern) {
-    Fail-Qualification 'Candidate and OpenShell revisions must be lowercase 40-character commit SHAs.'
+if ($CandidateSha -cnotmatch $script:ShaPattern) {
+    Fail-Qualification 'Candidate revision must be a lowercase 40-character commit SHA.'
 }
-if ($OpenShellSha -cne $script:TrustedOpenShellRevision) {
-    Fail-Qualification 'OpenShell revision must match NVIDIA/OpenShell#2721 merge commit.'
-}
-if ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString() -cne 'Arm64') {
+if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT -or
+    [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString() -cne 'Arm64') {
     Fail-Qualification 'Windows native installer qualification requires a native ARM64 runner.'
 }
 
@@ -600,6 +730,42 @@ $candidateCheckoutParameters = @{
     Label = 'Candidate checkout'
 }
 $candidateRoot = Assert-Checkout @candidateCheckoutParameters
+$committedHarnessParameters = @{
+    Checkout = $candidateRoot
+    Revision = $CandidateSha
+    RelativePath = 'scripts/checks/run-windows-native-installer-qualification.ps1'
+    FilePath = $PSCommandPath
+}
+Assert-CommittedFile @committedHarnessParameters
+
+$artifactPath = [IO.Path]::GetFullPath($ArtifactDirectory).TrimEnd('\')
+$artifactParent = Split-Path -Parent $artifactPath
+$artifactName = Split-Path -Leaf $artifactPath
+if (-not (Test-Path -LiteralPath $artifactParent -PathType Container) -or
+    (Test-Path -LiteralPath $artifactPath) -or $artifactName -cnotmatch '^[A-Za-z0-9._-]+$') {
+    Fail-Qualification 'ArtifactDirectory must be a new child of an existing directory.'
+}
+
+if ($ProcessAuditControlOnly) {
+    $controlRoot = Join-Path $env:RUNNER_TEMP ('nemoclaw-process-audit-' + [guid]::NewGuid().ToString('N'))
+    [IO.Directory]::CreateDirectory($controlRoot) | Out-Null
+    [IO.Directory]::CreateDirectory($artifactPath) | Out-Null
+    try {
+        $control = Invoke-DelayedDescendantProbe `
+            -SentinelPath (Join-Path $controlRoot 'delayed-child.json') `
+            -DiagnosticPath (Join-Path $artifactPath 'process-audit-control.json')
+        Write-Host "Windows process-audit control passed: child launch completed after $($control.launchCompletedMilliseconds) ms."
+    } finally {
+        if (Test-Path -LiteralPath $controlRoot -PathType Container) {
+            [IO.Directory]::Delete($controlRoot, $true)
+        }
+    }
+    return
+}
+
+if ($OpenShellSha -cnotmatch $script:ShaPattern -or $OpenShellSha -cne $script:TrustedOpenShellRevision) {
+    Fail-Qualification 'OpenShell revision must match NVIDIA/OpenShell#2721 merge commit.'
+}
 $openShellCheckoutParameters = @{
     Root = $OpenShellCheckout
     ExpectedRevision = $OpenShellSha
@@ -615,14 +781,6 @@ $committedInstallerParameters = @{
     FilePath = $installerSource
 }
 Assert-CommittedFile @committedInstallerParameters
-
-$artifactPath = [IO.Path]::GetFullPath($ArtifactDirectory).TrimEnd('\')
-$artifactParent = Split-Path -Parent $artifactPath
-$artifactName = Split-Path -Leaf $artifactPath
-if (-not (Test-Path -LiteralPath $artifactParent -PathType Container) -or
-    (Test-Path -LiteralPath $artifactPath) -or $artifactName -cnotmatch '^[A-Za-z0-9._-]+$') {
-    Fail-Qualification 'ArtifactDirectory must be a new child of an existing directory.'
-}
 
 $qualificationRoot = Join-Path $env:RUNNER_TEMP ('nemoclaw-windows-native-' + [guid]::NewGuid().ToString('N'))
 $payloadRoot = Join-Path $qualificationRoot 'payload'
@@ -711,7 +869,9 @@ try {
         Invoke-NativeVersionProbe -Path (Join-Path $payloadRoot 'bin\openshell.exe') -Label 'OpenShell CLI'
         Invoke-NativeVersionProbe -Path (Join-Path $payloadRoot 'bin\openshell-gateway.exe') -Label 'OpenShell gateway'
     )
-    $delayedChildProbeControl = Invoke-DelayedDescendantProbe -SentinelPath (Join-Path $qualificationRoot 'child-delayed-control.json')
+    $delayedChildProbeControl = Invoke-DelayedDescendantProbe `
+        -SentinelPath (Join-Path $qualificationRoot 'child-delayed-control.json') `
+        -DiagnosticPath ($artifactPath + '.process-audit-control.json')
     $processAudit = Start-ProcessStartAudit
     $controlSentinel = Join-Path $qualificationRoot 'child-control.txt'
     $childProbeControl = Invoke-ChildSideEffectProbe -SentinelPath $controlSentinel
@@ -722,7 +882,8 @@ try {
     $controlAuditRecords = @(
         Receive-ProcessStartAudit -Audit $processAudit -SettleMilliseconds $script:ProcessAuditSettleMilliseconds
     )
-    $controlDescendantStarts = @(Get-AuditedDescendantStarts -Records $controlAuditRecords -RootProcessId $PID)
+    $controlDescendantStarts = @(Get-AuditedDescendantStarts `
+        -Records @($controlAuditRecords | Where-Object { $_.observedWithinWindow }) -RootProcessId $PID)
     if (@($controlDescendantStarts | Where-Object {
         $_.processId -eq $childProbeControl.processId
     }).Count -ne 1) {

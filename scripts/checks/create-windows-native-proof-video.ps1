@@ -65,6 +65,108 @@ function Resolve-RequiredFile {
     return $resolved
 }
 
+function Assert-NativeExperienceReceipt {
+    param([Parameter(Mandatory)]$Receipt)
+    $setup = $Receipt.nativeSetup
+    if ($setup.framework -cne 'WPF' -or $setup.windowTitle -cne 'NemoClaw Setup' -or
+        $setup.setupAndOnboardingBrowserFree -ne $true -or $setup.noAutomaticAgentLaunch -ne $true -or
+        @($setup.browserDescendantStarts).Count -ne 0 -or @($setup.automaticAgentStarts).Count -ne 0 -or
+        $setup.configurationsPreservedOnUninstall -ne $true -or $setup.qualificationConfigurationsRemoved -ne $true -or
+        (@($setup.selections | ForEach-Object { $_.agent }) -join ',') -cne 'openclaw,hermes,langchain-deepagents-code,pi,nemocua') {
+        Fail-ProofVideo 'The receipt does not prove one native setup experience and retained configuration ownership.'
+    }
+    foreach ($selection in $setup.selections) {
+        if ($selection.framework -cne 'WPF' -or $selection.selectionConfirmed -ne $true -or
+            $selection.finishedWithoutLaunch -ne $true -or [int]$selection.windowProcessId -le 0 -or
+            @($selection.screenshots).Count -lt 2 -or
+            (@($selection.demonstratedAgentChoices) -join ',') -cne 'openclaw,hermes,langchain-deepagents-code,pi,nemocua') {
+            Fail-ProofVideo 'A native agent selection lacks actual window and configuration evidence.'
+        }
+    }
+    $links = @($Receipt.desktopLinks)
+    if ($links.Count -lt 2 -or $links[0].expected -cne 'Present' -or $links[-1].expected -cne 'Absent') {
+        Fail-ProofVideo 'Desktop shortcut installation and removal are not proven.'
+    }
+    foreach ($stage in $links) {
+        if ($stage.classification -cne 'native-windows-desktop-shortcut-qualification' -or $stage.passed -ne $true -or @($stage.links).Count -ne 6) {
+            Fail-ProofVideo 'The six expected Windows desktop shortcuts lack a complete stage receipt.'
+        }
+        foreach ($link in $stage.links) {
+            if (($stage.expected -ceq 'Present' -and $link.nativeShellLink -ne $true) -or
+                ($stage.expected -ceq 'Absent' -and $link.absent -ne $true)) { Fail-ProofVideo 'A desktop shortcut stage is incomplete.' }
+        }
+    }
+    $reset = $Receipt.testerReset
+    if ($reset.classification -cne 'native-windows-tester-reset-qualification' -or $reset.passed -ne $true -or
+        $reset.freshOwnedState -ne $true -or $reset.preservedDataByDefault -ne $true -or
+        (@($reset.explicitSelection) -join ',') -cne 'pi' -or $reset.selectedStateRemoved -ne $true -or
+        $reset.selectedCredentialRemoved -ne $true -or $reset.selectedConfigurationRemoved -ne $true -or
+        $reset.activeAgentCleared -ne $true -or $reset.otherAgentConfigurationsPreserved -ne $true -or
+        $reset.desktopLinksRemoved -ne $true -or $reset.registrationRemoved -ne $true -or
+        $reset.actualNativeMaintenance -ne $true -or $reset.reinstalledThroughNativeSetup -ne $true -or
+        (@($reset.restoredAgents) -join ',') -cne 'openclaw,hermes,langchain-deepagents-code,pi,nemocua' -or
+        $reset.originalSelectionReceiptRetained -ne $true) {
+        Fail-ProofVideo 'The real tester data-removal and fresh native reinstall path is not proven.'
+    }
+    foreach ($agent in @('pi', 'hermes', 'deepAgentsCode')) {
+        $acl = $Receipt.$agent.privateShareAcl
+        if ($acl.protected -ne $true -or $acl.nonOwnerDataAccess -ne $false -or $acl.serviceSid -cne 'S-1-5-18' -or
+            (@($acl.deniedSids) -join ',') -cne 'S-1-1-0,S-1-5-11,S-1-5-32-545') {
+            Fail-ProofVideo 'Native console share ownership is not proven.'
+        }
+    }
+    if ($Receipt.hermes.nativePythonSecurityChecksPassed -ne $true) { Fail-ProofVideo 'The packaged Python security regression checks did not pass.' }
+    $binding = $Receipt.credentialBinding
+    if ($binding.endpointIsolation -ne $true -or $binding.agentIsolation -ne $true -or
+        $binding.scopedDelete -ne $true -or $binding.prepareHadNoWrites -ne $true -or
+        $binding.configurationCanariesAbsent -ne $true -or $binding.rememberedAgentMatches -ne $true) {
+        Fail-ProofVideo 'Native setup credential binding evidence is incomplete.'
+    }
+    $services = $binding.nativeOptionalServices
+    if ((@($services.services) -join ',') -cne 'brave,tavily,telegram,discord,slack-bot,slack-app' -or
+        $services.credentialRoundTrips -ne 6 -or $services.agentCapabilityChoicesMatched -ne $true -or
+        $services.metadataOnly -ne $true -or $services.emptyAllowedUsersPreserved -ne $true -or
+        $services.externalServiceRequestsSent -ne $false -or $services.credentialCanariesAbsentFromJson -ne $true) {
+        Fail-ProofVideo 'The native optional-service controls lack scoped credential and nonsecret configuration evidence.'
+    }
+    $dashboard = $Receipt.hermesDashboard
+    if ($dashboard.classification -cne 'installed-configured-hermes-dashboard' -or $dashboard.verdict -cne 'pass' -or
+        $dashboard.agentOneShotMode -ne $false -or $dashboard.control.actualShippedSpa -ne $true -or
+        $dashboard.control.realXtermInput -ne $true -or $dashboard.control.transport.overflow -ne $false -or
+        @($dashboard.control.turns).Count -ne 3 -or @($dashboard.provider.turns).Count -ne 3 -or @($dashboard.control.screenshots).Count -ne 4 -or
+        $dashboard.cleanup.sandboxDeleted -ne $true -or $dashboard.cleanup.gatewayStopped -ne $true -or
+        $dashboard.cleanup.ephemeralRootsRemoved -ne $true -or $dashboard.cleanup.stateRetained -ne $true -or
+        $dashboard.cleanup.leaseReleased -ne $true -or $dashboard.nativeStop.automationId -cne 'NativeWebSessionStop' -or
+        $dashboard.nativeStop.framework -cne 'WPF' -or $dashboard.nativeStop.invoked -ne $true -or
+        $dashboard.tooling.providerSha256 -cne $script:InteractiveProviderSha256 -or
+        $dashboard.tooling.controllerSha256 -cne $script:DashboardControllerSha256) {
+        Fail-ProofVideo 'The real Hermes dashboard, typed turns, native Stop, and cleanup are not fully proven.'
+    }
+    for ($index = 0; $index -lt 3; $index++) {
+        $turn = $dashboard.control.turns[$index]
+        $providerTurn = $dashboard.provider.turns[$index]
+        if ($turn.typedThroughRealTerminal -ne $true -or $turn.providerOutputObserved -ne $true -or
+            $turn.inputMarker -ceq $turn.outputMarker -or $providerTurn.inputMarker -cne $turn.inputMarker -or
+            $providerTurn.outputMarker -cne $turn.outputMarker -or $providerTurn.inputObserved -ne $true -or $providerTurn.responseSent -ne $true) {
+            Fail-ProofVideo 'A Hermes dashboard turn does not bind real input to a distinct provider response.'
+        }
+    }
+    $interactive = $Receipt.interactiveHermes
+    if ($interactive.classification -cne 'installed-configured-hermes-interactive-console' -or
+        $interactive.verdict -cne 'pass' -or $interactive.hostConsole -ne $true -or $interactive.agentOneShotMode -ne $false -or
+        $interactive.console.visiblePrompt -ne $true -or $interactive.console.typedMessage -ne $true -or
+        $interactive.console.visibleProviderResponse -ne $true -or $interactive.console.resizeApplied -ne $true -or
+        $interactive.console.exitCommandEntered -ne $true -or $interactive.provider.inputObserved -ne $true -or
+        $interactive.provider.responseSent -ne $true -or
+        $interactive.provider.inputMarker -ceq $interactive.provider.outputMarker -or
+        $interactive.cleanup.sandboxDeleted -ne $true -or $interactive.cleanup.gatewayStopped -ne $true -or
+        $interactive.cleanup.ephemeralRootsRemoved -ne $true -or @($interactive.screenshots).Count -ne 3 -or
+        $interactive.tooling.providerSha256 -cne $script:InteractiveProviderSha256 -or
+        $interactive.tooling.controllerSha256 -cne $script:InteractiveControllerSha256) {
+        Fail-ProofVideo 'The receipt does not prove installed configured Hermes prompt, input, provider response, resize, exit and cleanup.'
+    }
+}
+
 function Initialize-NativeWindowCapture {
     Add-Type -AssemblyName System.Drawing
     $captureSource = @'
@@ -190,7 +292,8 @@ function Save-ActualWindowFrame {
         [Parameter(Mandatory)][string]$Path,
         [Parameter(Mandatory)][IntPtr]$ConsoleWindow,
         [Parameter(Mandatory)][IntPtr]$InstallerWindow,
-        [Parameter(Mandatory)][IntPtr]$BrowserWindow
+        [Parameter(Mandatory)][IntPtr]$BrowserWindow,
+        [Parameter(Mandatory)][IntPtr]$HermesWindow
     )
 
     $consoleBitmap = [NemoClawNativeWindowCapture]::Capture($ConsoleWindow)
@@ -198,6 +301,8 @@ function Save-ActualWindowFrame {
     $installerCaptured = $false
     $browserBitmap = $null
     $browserCaptured = $false
+    $hermesBitmap = $null
+    $hermesCaptured = $false
     if ($InstallerWindow -ne [IntPtr]::Zero) {
         try {
             $installerBitmap = [NemoClawNativeWindowCapture]::Capture($InstallerWindow)
@@ -212,6 +317,14 @@ function Save-ActualWindowFrame {
             $browserCaptured = $true
         } catch {
             # Edge can close a page between enumeration and capture.
+        }
+    }
+    if ($HermesWindow -ne [IntPtr]::Zero) {
+        try {
+            $hermesBitmap = [NemoClawNativeWindowCapture]::Capture($HermesWindow)
+            $hermesCaptured = $true
+        } catch {
+            # The owned console can close between enumeration and capture.
         }
     }
     $frame = [Drawing.Bitmap]::new(1280, 720, [Drawing.Imaging.PixelFormat]::Format24bppRgb)
@@ -243,6 +356,13 @@ function Save-ActualWindowFrame {
             $graphics.Clear([Drawing.Color]::Black)
             $graphics.DrawImage($browserBitmap, $browserX, $browserY, $browserWidth, $browserHeight)
         }
+        if ($null -ne $hermesBitmap) {
+            $scale = [Math]::Min(1280 / $hermesBitmap.Width, 720 / $hermesBitmap.Height)
+            $width = [int]($hermesBitmap.Width * $scale)
+            $height = [int]($hermesBitmap.Height * $scale)
+            $graphics.Clear([Drawing.Color]::Black)
+            $graphics.DrawImage($hermesBitmap, [int]((1280 - $width) / 2), [int]((720 - $height) / 2), $width, $height)
+        }
         $frame.Save($Path, [Drawing.Imaging.ImageFormat]::Png)
     } finally {
         $graphics.Dispose()
@@ -253,11 +373,13 @@ function Save-ActualWindowFrame {
         if ($null -ne $browserBitmap) {
             $browserBitmap.Dispose()
         }
+        if ($null -ne $hermesBitmap) { $hermesBitmap.Dispose() }
         $consoleBitmap.Dispose()
     }
     return [pscustomobject]@{
         installer = $installerCaptured
         browser = $browserCaptured
+        hermes = $hermesCaptured
     }
 }
 
@@ -284,7 +406,7 @@ if (-not (Test-Path -LiteralPath $candidate -PathType Container)) {
 $msi = Resolve-RequiredFile -Path $MsiPath -Label 'MsiPath'
 $setup = Resolve-RequiredFile -Path $SetupPath -Label 'SetupPath'
 $manifestPath = Resolve-RequiredFile -Path $PackageManifestPath -Label 'PackageManifestPath'
-$qualificationPath = [IO.Path]::GetFullPath($QualificationReceiptPath)
+$qualificationPath = Resolve-RequiredFile -Path $QualificationReceiptPath -Label 'QualificationReceiptPath'
 $hostPath = Resolve-RequiredFile -Path $HostReceiptPath -Label 'HostReceiptPath'
 $openshellPath = Resolve-RequiredFile -Path $OpenShellReceiptPath -Label 'OpenShellReceiptPath'
 $qualificationScript = Resolve-RequiredFile `
@@ -293,6 +415,15 @@ $qualificationScript = Resolve-RequiredFile `
 $consoleDriver = Resolve-RequiredFile `
     -Path (Join-Path $candidate 'scripts\checks\run-windows-native-package-console-proof.ps1') `
     -Label 'Visible console proof driver'
+
+$interactiveProvider = Resolve-RequiredFile -Path (Join-Path $candidate 'scripts\checks\run-windows-native-interactive-provider.mts') -Label 'Interactive provider control'
+$interactiveController = Resolve-RequiredFile -Path (Join-Path $candidate 'scripts\checks\control-windows-native-hermes-console.ps1') -Label 'Interactive console controller'
+$script:InteractiveProviderSha256 = (Get-FileHash -LiteralPath $interactiveProvider -Algorithm SHA256).Hash.ToLowerInvariant()
+$script:InteractiveControllerSha256 = (Get-FileHash -LiteralPath $interactiveController -Algorithm SHA256).Hash.ToLowerInvariant()
+$dashboardController = Resolve-RequiredFile -Path (Join-Path $candidate 'scripts\checks\control-windows-native-hermes-dashboard.mts') -Label 'Hermes dashboard controller'
+$script:DashboardControllerSha256 = (Get-FileHash -LiteralPath $dashboardController -Algorithm SHA256).Hash.ToLowerInvariant()
+$testerResetScript = Resolve-RequiredFile -Path (Join-Path $candidate 'scripts\checks\qualify-windows-native-tester-reset.ps1') -Label 'Native tester-reset controller'
+$desktopLinkScript = Resolve-RequiredFile -Path (Join-Path $candidate 'scripts\checks\check-windows-native-desktop-links.ps1') -Label 'Native desktop shortcut checker'
 
 $output = [IO.Path]::GetFullPath($OutputDirectory).TrimEnd('\')
 if (Test-Path -LiteralPath $output) {
@@ -312,11 +443,7 @@ if (Test-Path -LiteralPath $desktopDownload) {
 }
 
 $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
-$qualification = if (Test-Path -LiteralPath $qualificationPath -PathType Leaf) {
-    Get-Content -LiteralPath $qualificationPath -Raw | ConvertFrom-Json
-} else {
-    $null
-}
+$qualification = Get-Content -LiteralPath $qualificationPath -Raw | ConvertFrom-Json
 $hostReceipt = Get-Content -LiteralPath $hostPath -Raw | ConvertFrom-Json
 $openshellReceipt = Get-Content -LiteralPath $openshellPath -Raw | ConvertFrom-Json
 if ($manifest.productVersion -cne $ProductVersion -or $manifest.architecture -cne 'arm64') {
@@ -331,7 +458,7 @@ if ($openshellReceipt.repository -cne 'https://github.com/NVIDIA/OpenShell.git' 
     $openshellReceipt.revision -cne 'bcd517bbe08cc80860c9be57699390cd32e8445f') {
     Fail-ProofVideo 'OpenShell source authority does not match NVIDIA/OpenShell#2721.'
 }
-if ($null -ne $qualification -and (-not $qualification.repairRestoredDigest -or
+if ($null -eq $qualification -or -not $qualification.repairRestoredDigest -or
     -not $qualification.reinstallPreservedRegistration -or
     -not $qualification.finalAbsence -or
     -not $qualification.machinePathRemoved -or
@@ -348,10 +475,8 @@ if ($null -ne $qualification -and (-not $qualification.repairRestoredDigest -or
     $qualification.credentialManager.removedAfterProbe -ne $true -or
     $qualification.webUi.verdict -cne 'pass' -or
     [int]$qualification.webUi.turnCount -ne 3 -or
-    $qualification.webUi.onboardingSelection.agent -cne 'openclaw' -or
-    (@($qualification.webUi.demonstratedAgentChoices) -join ',') -cne 'openclaw,hermes,langchain-deepagents-code,pi,nemocua' -or
-    @($qualification.webUi.disabledAgentChoices).Count -ne 0 -or
-    @($qualification.webUi.turns).Count -ne 3 -or
+    $qualification.webUi.onboardingSkipped -ne $true -or
+            @($qualification.webUi.turns).Count -ne 3 -or
     $qualification.pi.verdict -cne 'pass' -or
     [int]$qualification.pi.turnCount -ne 3 -or
     $qualification.hermes.verdict -cne 'pass' -or
@@ -360,16 +485,18 @@ if ($null -ne $qualification -and (-not $qualification.repairRestoredDigest -or
     [int]$qualification.deepAgentsCode.turnCount -ne 3 -or
     $qualification.nemoCua.verdict -cne 'pass' -or
     [int]$qualification.nemoCua.turnCount -ne 3 -or
-    $qualification.agentLaunches.pi.onboardingSelection.agent -cne 'pi' -or
-    $qualification.agentLaunches.hermes.onboardingSelection.agent -cne 'hermes' -or
-    $qualification.agentLaunches.deepAgentsCode.onboardingSelection.agent -cne 'langchain-deepagents-code' -or
-    $qualification.agentLaunches.nemoCua.onboardingSelection.agent -cne 'nemocua' -or
+    $qualification.agentLaunches.pi.nativeSetupSelection.agent -cne 'pi' -or
+    $qualification.agentLaunches.hermes.nativeSetupSelection.agent -cne 'hermes' -or
+    $qualification.agentLaunches.deepAgentsCode.nativeSetupSelection.agent -cne 'langchain-deepagents-code' -or
+    $qualification.agentLaunches.nemoCua.nativeSetupSelection.agent -cne 'nemocua' -or
     @($qualification.nativeExecutions).Count -ne 4 -or
     @($qualification.applicationExecutions).Count -ne 6 -or
     @($qualification.packageDescendantProhibitedStarts).Count -ne 0 -or
-    @($qualification.newPackageDescendantProhibitedProcesses).Count -ne 0)) {
+    @($qualification.newPackageDescendantProhibitedProcesses).Count -ne 0) {
     Fail-ProofVideo 'Initial package qualification receipt is not a complete passing lifecycle.'
 }
+
+Assert-NativeExperienceReceipt -Receipt $qualification
 
 Add-Type -AssemblyName System.Drawing
 Initialize-NativeWindowCapture
@@ -430,6 +557,8 @@ try {
     }
     $installerWindowFrameCount = 0
     $browserWindowFrameCount = 0
+    $hermesWindowFrameCount = 0
+    $hermesDashboardFrameCount = 0
     while (-not $proofProcess.HasExited) {
         if ($recordingClock.ElapsedMilliseconds -gt $script:MaximumRecordingMilliseconds) {
             $proofProcess.Kill()
@@ -445,13 +574,20 @@ try {
             'NemoClaw Native Windows',
             $consoleWindow
         )
+        $dashboardPhase = (Test-Path -LiteralPath (Join-Path $consoleQualification 'video-hermes-dashboard-start.json')) -and
+            -not (Test-Path -LiteralPath (Join-Path $consoleQualification 'video-hermes-dashboard-end.json'))
+        if ($dashboardPhase) {
+            $browserWindow = [NemoClawNativeWindowCapture]::FindWindowContaining('Hermes Agent - Dashboard', $consoleWindow)
+        }
+        $hermesWindow = [NemoClawNativeWindowCapture]::FindWindowContaining('NemoClaw Hermes Interactive Console', $consoleWindow)
         $framePath = Join-Path $frameRoot ('frame-{0:D5}.png' -f ($framePaths.Count + 1))
         try {
             $capturedWindows = Save-ActualWindowFrame `
                 -Path $framePath `
                 -ConsoleWindow $consoleWindow `
                 -InstallerWindow $installerWindow `
-                -BrowserWindow $browserWindow
+                -BrowserWindow $browserWindow `
+                -HermesWindow $hermesWindow
         } catch {
             $proofProcess.Refresh()
             if ($proofProcess.HasExited) {
@@ -470,8 +606,10 @@ try {
         if ($capturedWindows.installer) {
             $installerWindowFrameCount++
         }
+        if ($capturedWindows.hermes) { $hermesWindowFrameCount++ }
         if ($capturedWindows.browser) {
-            $browserWindowFrameCount++
+            if ($dashboardPhase) { $hermesDashboardFrameCount++ }
+            else { $browserWindowFrameCount++ }
         }
         $framePaths += $framePath
         foreach ($agent in $script:AgentVideoSegments) {
@@ -516,13 +654,19 @@ try {
             '[PASS] Installed nemoclaw command created an MXC sandbox and completed an exact CHAT_OK turn'
         ) -or
         -not $consoleTranscriptText.Contains(
-            '[PASS] Graphical onboarding selected OpenClaw and completed three exact Control UI agent turns'
+            '[PASS] Native WPF onboarding selected OpenClaw and completed three exact Control UI agent turns'
         ) -or
         -not $consoleTranscriptText.Contains(
             '[PASS] Installed Pi completed three real terminal agent turns inside native MXC'
         ) -or
         -not $consoleTranscriptText.Contains(
             '[PASS] Installed Hermes completed three real terminal agent turns inside native MXC'
+        ) -or
+        -not $consoleTranscriptText.Contains(
+            '[PASS] Configured Hermes displayed its real prompt, accepted typed input, resized, showed a provider response, and cleaned up'
+        ) -or
+        -not $consoleTranscriptText.Contains(
+            '[PASS] Real Hermes dashboard accepted three typed turns, displayed three provider responses, and native Stop released its sandbox and state lease'
         ) -or
         -not $consoleTranscriptText.Contains(
             '[PASS] Installed Deep Agents Code completed three real terminal agent turns inside native MXC'
@@ -538,6 +682,12 @@ try {
     }
     if ($browserWindowFrameCount -lt 8) {
         $captureFailures.Add('The real OpenClaw Control UI window was not captured for at least two seconds.')
+    }
+    if ($hermesWindowFrameCount -lt 8) {
+        $captureFailures.Add('The actual interactive Hermes console was not captured for at least two seconds.')
+    }
+    if ($hermesDashboardFrameCount -lt 8) {
+        $captureFailures.Add('The actual Hermes dashboard was not captured for at least two seconds.')
     }
     if ($framePaths.Count -eq 0) {
         Fail-ProofVideo 'The proof process produced no actual-window frames to encode.'
@@ -739,10 +889,8 @@ public static class NemoClawConsoleVideoEncoder
     }
     if ($null -ne $recordedQualification -and ($recordedQualification.webUi.verdict -cne 'pass' -or
         [int]$recordedQualification.webUi.turnCount -ne 3 -or
-        $recordedQualification.webUi.onboardingSelection.agent -cne 'openclaw' -or
-        (@($recordedQualification.webUi.demonstratedAgentChoices) -join ',') -cne 'openclaw,hermes,langchain-deepagents-code,pi,nemocua' -or
-        @($recordedQualification.webUi.disabledAgentChoices).Count -ne 0 -or
-        @($recordedQualification.webUi.turns).Count -ne 3)) {
+        $recordedQualification.webUi.onboardingSkipped -ne $true -or
+                        @($recordedQualification.webUi.turns).Count -ne 3)) {
         $captureFailures.Add('The recorded qualification receipt does not prove visible agent choices and three OpenClaw Control UI turns.')
     }
     if ($null -ne $recordedQualification -and ($recordedQualification.pi.verdict -cne 'pass' -or
@@ -763,11 +911,15 @@ public static class NemoClawConsoleVideoEncoder
     if ($null -ne $recordedQualification -and ($recordedQualification.nemoCua.verdict -cne 'pass' -or
         [int]$recordedQualification.nemoCua.turnCount -ne 3 -or
         @($recordedQualification.nemoCua.turns).Count -ne 3 -or
-        $recordedQualification.agentLaunches.pi.onboardingSelection.agent -cne 'pi' -or
-        $recordedQualification.agentLaunches.hermes.onboardingSelection.agent -cne 'hermes' -or
-        $recordedQualification.agentLaunches.deepAgentsCode.onboardingSelection.agent -cne 'langchain-deepagents-code' -or
-        $recordedQualification.agentLaunches.nemoCua.onboardingSelection.agent -cne 'nemocua')) {
+        $recordedQualification.agentLaunches.pi.nativeSetupSelection.agent -cne 'pi' -or
+        $recordedQualification.agentLaunches.hermes.nativeSetupSelection.agent -cne 'hermes' -or
+        $recordedQualification.agentLaunches.deepAgentsCode.nativeSetupSelection.agent -cne 'langchain-deepagents-code' -or
+        $recordedQualification.agentLaunches.nemoCua.nativeSetupSelection.agent -cne 'nemocua')) {
         $captureFailures.Add('The recorded qualification receipt does not prove three real NemoCUA browser turns.')
+    }
+    if ($null -ne $recordedQualification) {
+        try { Assert-NativeExperienceReceipt -Receipt $recordedQualification }
+        catch { $captureFailures.Add($_.Exception.Message) }
     }
     $initialQualificationHash = if (Test-Path -LiteralPath $qualificationPath -PathType Leaf) {
         (Get-FileHash -LiteralPath $qualificationPath -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -803,6 +955,11 @@ public static class NemoClawConsoleVideoEncoder
             hostReceiptSha256 = (Get-FileHash -LiteralPath $hostPath -Algorithm SHA256).Hash.ToLowerInvariant()
             openshellReceiptSha256 = (Get-FileHash -LiteralPath $openshellPath -Algorithm SHA256).Hash.ToLowerInvariant()
             consoleTranscriptSha256 = $consoleTranscriptHash
+            interactiveProviderSha256 = $script:InteractiveProviderSha256
+            interactiveControllerSha256 = $script:InteractiveControllerSha256
+            dashboardControllerSha256 = $script:DashboardControllerSha256
+            testerResetScriptSha256 = (Get-FileHash -LiteralPath $testerResetScript -Algorithm SHA256).Hash.ToLowerInvariant()
+            desktopLinkScriptSha256 = (Get-FileHash -LiteralPath $desktopLinkScript -Algorithm SHA256).Hash.ToLowerInvariant()
         }
         capture = [pscustomobject]@{
             kind = 'actual PrintWindow capture of real PowerShell console, WiX installer, and OpenClaw Control UI windows'
@@ -814,6 +971,8 @@ public static class NemoClawConsoleVideoEncoder
             uniqueFrameCount = $uniqueFrameCount
             installerWindowFrameCount = $installerWindowFrameCount
             browserWindowFrameCount = $browserWindowFrameCount
+            hermesWindowFrameCount = $hermesWindowFrameCount
+            hermesDashboardFrameCount = $hermesDashboardFrameCount
             recordingWallTimeMilliseconds = $recordingClock.ElapsedMilliseconds
             qualificationExitCode = $proofExitCode
             installedNemoClawTurn = $consoleTranscriptText.Contains('AGENT> CHAT_OK')

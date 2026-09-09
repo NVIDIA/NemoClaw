@@ -9,7 +9,7 @@ namespace Nvidia.NemoClaw.Bootstrapper;
 
 internal static class Program
 {
-    private static int Main()
+    private static int Main(string[] arguments)
     {
         var startupLog = Path.Combine(
             Path.GetTempPath(),
@@ -17,15 +17,41 @@ internal static class Program
         try
         {
             File.WriteAllText(startupLog, "Managed entrypoint reached." + Environment.NewLine);
-            var application = new NemoClawBootstrapperApplication();
-            File.AppendAllText(startupLog, "Bootstrapper application constructed." + Environment.NewLine);
-            ManagedBootstrapperApplication.Run(application);
-            File.Delete(startupLog);
-            return 0;
+            var exitCode = 0;
+            if (arguments.Length == 1 && arguments[0] == "--installer")
+            {
+                exitCode = NativeMaintenance.RunInstalledInstaller();
+            }
+            else if (arguments.Length == 3 && arguments[0] == "--web-session" && arguments[1] == "--agent")
+            {
+                exitCode = NativeWebSession.Run(arguments[2]);
+            }
+            else if (arguments.Length > 0 && arguments[0] == "--onboard")
+            {
+                if (arguments.Length == 1) exitCode = NativeOnboarding.Run(null);
+                else if (arguments.Length == 3 && arguments[1] == "--agent" &&
+                    arguments[2] is "openclaw" or "hermes" or "langchain-deepagents-code" or "pi" or "nemocua")
+                {
+                    exitCode = NativeOnboarding.Run(arguments[2]);
+                }
+                else exitCode = 2;
+            }
+            else
+            {
+                var application = new NemoClawBootstrapperApplication();
+                File.AppendAllText(startupLog, "Bootstrapper application constructed." + Environment.NewLine);
+                ManagedBootstrapperApplication.Run(application);
+            }
+            try { File.Delete(startupLog); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+            return exitCode;
         }
         catch (Exception error)
         {
-            File.AppendAllText(startupLog, error.ToString() + Environment.NewLine);
+            try { File.AppendAllText(startupLog, error.ToString() + Environment.NewLine); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
             return Marshal.GetHRForException(error);
         }
     }

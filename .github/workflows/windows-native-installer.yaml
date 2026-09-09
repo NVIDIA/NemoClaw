@@ -12,7 +12,7 @@ on:
         default: false
         type: boolean
       windows_native_diagnostic_source_run_id:
-        description: Diagnostic only - reuse the package artifact from this workflow run ID
+        description: Diagnostic only - reuse a package artifact built from this exact commit
         required: false
         default: ""
         type: string
@@ -41,6 +41,27 @@ jobs:
           path: candidate
           fetch-depth: 1
           persist-credentials: false
+
+      - name: Qualify delayed process auditing before the native build
+        shell: powershell
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          $candidate = [IO.Path]::GetFullPath("$env:GITHUB_WORKSPACE\candidate")
+          & "$candidate\scripts\checks\run-windows-native-installer-qualification.ps1" `
+            -ProcessAuditControlOnly `
+            -CandidateCheckout $candidate `
+            -CandidateSha $env:GITHUB_SHA `
+            -ArtifactDirectory "$env:RUNNER_TEMP\windows-native-process-audit-control"
+
+      - name: Upload early process-audit control evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-native-process-audit-control-${{ github.sha }}
+          path: ${{ runner.temp }}/windows-native-process-audit-control/
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Check out the pinned OpenShell Windows candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -109,6 +130,15 @@ jobs:
             -OpenShellCheckout $openshell `
             -OpenShellSha bcd517bbe08cc80860c9be57699390cd32e8445f `
             -ArtifactDirectory "$env:RUNNER_TEMP\windows-native-installer-receipts"
+
+      - name: Upload full qualification process-audit diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-native-installer-process-audit-${{ github.sha }}
+          path: ${{ runner.temp }}/windows-native-installer-receipts.process-audit-control.json
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Upload Windows native installer qualification receipts
         if: success()
@@ -313,6 +343,9 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or $run.head_repository.full_name -cne $env:GITHUB_REPOSITORY) {
             throw 'The diagnostic source run is not an exact run from this repository.'
           }
+          if ($run.head_sha -cne $env:GITHUB_SHA) {
+            throw 'This diagnostic requires a package built from the current commit, including its native ownership and ConPTY helpers. Run the full native build with windows_native_diagnostic_source_run_id empty, then reuse that run ID. Older package artifacts cannot be upgraded by overlaying runtime scripts.'
+          }
           $artifacts = & gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:SOURCE_RUN_ID/artifacts?per_page=100" | ConvertFrom-Json
           if ($LASTEXITCODE -ne 0) {
             throw 'Could not list diagnostic source artifacts.'
@@ -352,6 +385,12 @@ jobs:
           } finally {
             $process.Dispose()
           }
+          if ($null -eq $setupExitCode) {
+            throw 'The diagnostic setup executable did not exit within 1200 seconds.'
+          }
+          if ($setupExitCode -ne 0) {
+            throw "The diagnostic setup executable failed with exit code $setupExitCode."
+          }
           if ($setupExitCode -eq 0) {
             $installRoot = Join-Path $env:ProgramFiles 'NVIDIA\NemoClaw'
             $installedQualificationRoot = Join-Path $installRoot 'qualification'
@@ -360,13 +399,12 @@ jobs:
               -LiteralPath $candidateQualificationRoot `
               -Filter 'run-installed-native-*.mts' `
               -File)
-            if ($candidateQualifications.Count -ne 5) {
+            if ($candidateQualifications.Count -ne 6) {
               throw 'The candidate native runtime qualification set is incomplete.'
             }
-            Copy-Item `
-              -LiteralPath (Join-Path $candidateQualificationRoot 'native-security.mts') `
-              -Destination (Join-Path $installedQualificationRoot 'native-security.mts') `
-              -Force
+            foreach ($nativeSupport in (Get-ChildItem -LiteralPath $candidateQualificationRoot -Filter 'native-*' -File)) {
+              Copy-Item -LiteralPath $nativeSupport.FullName -Destination (Join-Path $installedQualificationRoot $nativeSupport.Name) -Force
+            }
             foreach ($candidateQualification in $candidateQualifications) {
               Copy-Item `
                 -LiteralPath $candidateQualification.FullName `
@@ -391,9 +429,9 @@ jobs:
             $langGraphStreamSourceDigest = '6a88d50614d34189d3a77d5d852d4479b889c88307bb1ccb52b9d1ef845c06e3' # gitleaks:allow -- public wheel source integrity pin
             $langGraphStreamPatchedDigest = 'f9128fa986c46015d5391fbb3c944f5678c06597f09b4f9630e208bb297cc96f' # gitleaks:allow -- deterministic compatibility output pin
             $langChainQuickJsSnapshotSourceDigest = '616cbc40402b7b414fcbac1992113bab6310974883b01a9f89fba8ce621b1e3d' # gitleaks:allow -- public wheel source integrity pin
-            $langChainQuickJsSnapshotPatchedDigest = '105d5d6e999d5e04131211890e450e614b295bde4af0d5e7d40ac4ddfbc295a9' # gitleaks:allow -- deterministic compatibility output pin
+            $langChainQuickJsSnapshotPatchedDigest = 'd81ca8b46daeb56d1749e3dfb84f3590a88a8903021c2aba2c190f0dacc390e9' # gitleaks:allow -- deterministic compatibility output pin
             $deepAgentsOffloadSourceDigest = 'baaf2a75eca26dbc58ab195ed9198822c3e48fd505faa36b8e0c0cb10ede3f14' # gitleaks:allow -- public wheel source integrity pin
-            $deepAgentsOffloadPatchedDigest = 'd86c8bbb15163cdde123246981f2bf94289eab45142e35e52018ab713871f6c7' # gitleaks:allow -- deterministic compatibility output pin
+            $deepAgentsOffloadPatchedDigest = '7e458382b98deef102f2ee667ee2e2e242de10c3ecda67b411bd92199c93a813' # gitleaks:allow -- deterministic compatibility output pin
             $langGraphDigest = (Get-FileHash -LiteralPath $langGraphLogging -Algorithm SHA256).Hash.ToLowerInvariant()
             $langGraphApiDigest = (Get-FileHash -LiteralPath $langGraphApi -Algorithm SHA256).Hash.ToLowerInvariant()
             if ($langGraphDigest -ceq $langGraphSourceDigest) {

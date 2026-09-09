@@ -1,9 +1,9 @@
 diff --git a/deepagents_code/offload.py b/deepagents_code/offload.py
-index a42e02e..43a4d0e 100644
+index a42e02e..94a4380 100644
 --- a/deepagents_code/offload.py
 +++ b/deepagents_code/offload.py
 @@ -103,0 +104,4 @@ def _harden_dir(path: Path) -> None:
-+    # Windows access is governed by the inherited DACL. Applying a POSIX mode can
-+    # reject an otherwise approved MXC writable root with ERROR_ACCESS_DENIED.
++    # The native launcher protects the share DACL before MXC adds its grant.
++    # Keep that inherited grant; POSIX chmod can fail inside the approved root.
 +    if os.name == "nt":
 +        return

@@ -85,7 +85,7 @@ try {
     }
     Write-Host '[PASS] Downloaded EXE, MSI, and manifest match the GitHub artifact digests' -ForegroundColor Green
     Write-Host ''
-    Write-Host "PS> Launch downloaded app with real WiX UI: $downloadedSetup /install /passive /norestart"
+    Write-Host "PS> Launch downloaded app with native WPF setup and onboarding: $downloadedSetup /install /norestart"
 
     & $QualificationScript `
         -ProductVersion $ProductVersion `
