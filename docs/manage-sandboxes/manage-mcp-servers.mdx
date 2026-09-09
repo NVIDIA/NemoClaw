@@ -225,7 +225,11 @@ The replacement image must expose native MCP capability v3 before NemoClaw resto
 
 </AgentOnly>
 
-If sandbox replacement fails, NemoClaw attempts to restore the previous attachment and adapter state at the path used by the surviving image. A later `mcp restart` can retry an incomplete post-rebuild restore.
+If sandbox replacement fails, NemoClaw attempts to restore the previous attachment and adapter state at the path used by the surviving image.
+
+If MCP restoration remains incomplete after replacement, NemoClaw retains the rebuild journal and source-derived MCP handoff.
+Fix the reported cause.
+Run `$$nemoclaw my-sandbox rebuild --yes` to resume restoration into the accepted replacement sandbox.
 
 ## Destroy a Sandbox with MCP State
 
