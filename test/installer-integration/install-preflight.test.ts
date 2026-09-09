@@ -509,7 +509,7 @@ exit 89
 
       writeSourceCheckoutPackages(tmp);
 
-      fs.mkdirSync(path.join(tmp, "scripts"), { recursive: true });
+      fs.mkdirSync(path.join(tmp, "scripts", "lib"), { recursive: true }); fs.copyFileSync(path.join(import.meta.dirname, "../..", "scripts", "lib", "openshell-gateway.service.in"), path.join(tmp, "scripts", "lib", "openshell-gateway.service.in"));
       writeExecutable(
         path.join(tmp, "scripts", "install-openshell.sh"),
         `#!/usr/bin/env bash

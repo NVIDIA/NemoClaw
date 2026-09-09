@@ -114,7 +114,7 @@
     "js-yaml": "^4.3.2",
     "p-retry": "^4.6.2",
     "qrcode-terminal": "^0.12.0",
-    "smol-toml": "1.7.0",
+    "smol-toml": "1.8.0",
     "typebox": "1.1.38",
     "undici": "8.10.0",
     "yaml": "2.8.3"
