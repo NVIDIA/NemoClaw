@@ -677,9 +677,14 @@ describe("PR Review Advisor generated-head evidence", () => {
     ];
     const workflows = workflowPaths.map((name) =>
       YAML.parse(readFileSync(`.github/workflows/${name}`, "utf8")),
-    ) as Array<{ jobs: Record<string, { uses?: string; "timeout-minutes"?: number }> }>;
+    ) as Array<{
+      jobs: Record<string, { if?: string; uses?: string; "timeout-minutes"?: number }>;
+    }>;
     expect(workflows.map(({ jobs }) => jobs["validate-repair-target"]?.uses)).toEqual(
       Array.from({ length: 6 }, () => "./.github/workflows/validate-repair-target.yaml"),
+    );
+    expect(workflows.map(({ jobs }) => jobs["validate-repair-target"]?.if)).toEqual(
+      Array.from({ length: 6 }, () => undefined),
     );
     expect(runRepairTargetValidator()).toBe(0);
     expect(runRepairTargetValidator({ env: { GITHUB_REF: "refs/heads/topic" } })).not.toBe(0);

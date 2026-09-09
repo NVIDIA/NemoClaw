@@ -29,7 +29,12 @@ jobs:
       contents: read
       pull-requests: read
     steps:
+      - name: Accept ordinary workflow execution
+        if: ${{ inputs.repair_attempt_key == '' }}
+        run: echo "No generated repair target was requested."
+
       - name: Bind validation to the live generated head
+        if: ${{ inputs.repair_attempt_key != '' }}
         env:
           BASE_SHA: ${{ inputs.repair_base_sha }}
           GH_TOKEN: ${{ github.token }}

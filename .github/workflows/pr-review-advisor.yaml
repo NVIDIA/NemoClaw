@@ -82,7 +82,6 @@ concurrency:
 
 jobs:
   validate-repair-target:
-    if: ${{ inputs.repair_attempt_key != '' }}
     uses: ./.github/workflows/validate-repair-target.yaml
     with:
       repair_pr_number: ${{ inputs.target_pr }}
