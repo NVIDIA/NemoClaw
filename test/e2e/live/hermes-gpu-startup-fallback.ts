@@ -80,11 +80,13 @@ function quoteShellLiteral(value: string): string {
 
 /**
  * Create an E2E-only OpenShell CLI wrapper that rejects the exact native
- * `--gpu` create before build or sandbox progress. Before the compatibility
- * create, the wrapper replaces its path with a link to the real CLI so the
- * create and later ForwardTcp ownership checks see the executable that owns
- * each listener. A failed create restores the wrapper. Every other invocation
- * transparently delegates its original argv. This
+ * `--gpu` create before build or sandbox progress. The compatibility create
+ * runs the real CLI with the wrapper path as argv[0], while the rejecting
+ * wrapper stays installed. After that create succeeds, the wrapper atomically
+ * replaces itself with a link to the real CLI so later ForwardTcp ownership
+ * checks resolve the configured path to the executable that owns each
+ * listener. A failed or interrupted create leaves the wrapper installed.
+ * Every other invocation transparently delegates its original argv. This
  * test-only wrapper never logs argv: its sole artifact is an event log made of
  * fixed labels, so sandbox-create environment arguments never enter artifacts.
  * This interception pattern is specific to the #6110 fallback proof and must
@@ -140,19 +142,32 @@ export function createHermesGpuFallbackWrapper(
     "    exit 2",
     "  else",
     `    printf '%s\\n' '${HERMES_GPU_FALLBACK_EVENTS.delegateCompatibilityCreate}' >>"$FALLBACK_STATE_DIR/events.log"`,
-    '    WRAPPER_BACKUP="$FALLBACK_STATE_DIR/openshell-wrapper-backup.$$"',
+    '    COMPATIBILITY_PID=""',
+    "    forward_compatibility_signal() {",
+    '      local signal="$1"',
+    '      local status="$2"',
+    "      trap - HUP INT TERM",
+    '      if [[ -n "$COMPATIBILITY_PID" ]] && kill -0 "$COMPATIBILITY_PID" 2>/dev/null; then',
+    '        kill "-$signal" "$COMPATIBILITY_PID" 2>/dev/null || true',
+    "      fi",
+    '      wait "$COMPATIBILITY_PID" 2>/dev/null || true',
+    '      exit "$status"',
+    "    }",
+    "    trap 'forward_compatibility_signal HUP 129' HUP",
+    "    trap 'forward_compatibility_signal INT 130' INT",
+    "    trap 'forward_compatibility_signal TERM 143' TERM",
+    '    (exec -a "$0" "$REAL_OPENSHELL" "$@") &',
+    '    COMPATIBILITY_PID="$!"',
+    '    wait "$COMPATIBILITY_PID" || {',
+    '      compatibility_status="$?"',
+    "      trap - HUP INT TERM",
+    '      exit "$compatibility_status"',
+    "    }",
+    "    trap - HUP INT TERM",
     '    REAL_OPENSHELL_LINK="$FALLBACK_STATE_DIR/openshell-real.$$"',
-    '    cp -p "$0" "$WRAPPER_BACKUP"',
     '    ln -s "$REAL_OPENSHELL" "$REAL_OPENSHELL_LINK"',
     '    mv -f "$REAL_OPENSHELL_LINK" "$0"',
-    '    if "$0" "$@"; then',
-    '      rm -f "$WRAPPER_BACKUP"',
-    "      exit 0",
-    "    else",
-    "      compatibility_status=$?",
-    '      mv -f "$WRAPPER_BACKUP" "$0"',
-    '      exit "$compatibility_status"',
-    "    fi",
+    "    exit 0",
     "  fi",
     "fi",
     "",

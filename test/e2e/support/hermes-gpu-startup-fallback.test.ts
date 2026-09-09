@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { buildDirectSandboxGpuProofCommands } from "../../../src/lib/onboard/initial-policy";
 import {
@@ -63,11 +63,22 @@ function runWrapperConcurrently(
   args: string[],
   env: NodeJS.ProcessEnv,
 ): Promise<number | null> {
+  return waitForChild(spawnWrapper(wrapperPath, args, env));
+}
+
+function spawnWrapper(wrapperPath: string, args: string[], env: NodeJS.ProcessEnv) {
+  return spawn(wrapperPath, args, { env, stdio: "ignore" });
+}
+
+function waitForChild(child: ReturnType<typeof spawn>): Promise<number | null> {
   return new Promise((resolve, reject) => {
-    const child = spawn(wrapperPath, args, { env, stdio: "ignore" });
     child.once("error", reject);
     child.once("close", resolve);
   });
+}
+
+async function waitForFile(filePath: string): Promise<void> {
+  await vi.waitUntil(() => fs.existsSync(filePath), { interval: 20, timeout: 5_000 });
 }
 
 describe("Hermes GPU startup scenario selection", () => {
@@ -229,11 +240,45 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
     ]);
     expect(fs.readFileSync(delegateExecutableLog, "utf8").split(/\r?\n/u).filter(Boolean)).toEqual([
       realOpenshell,
-      wrapper.wrapperPath,
+      realOpenshell,
       wrapper.wrapperPath,
       wrapper.wrapperPath,
       wrapper.wrapperPath,
     ]);
+  });
+
+  it("passes the configured wrapper path as native executable argv[0] before committing the link (#11239)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "hermes-gpu-fallback-argv0-test-"));
+    roots.push(root);
+    const realDir = path.join(root, "real");
+    fs.mkdirSync(realDir);
+    const realOpenshell = path.join(realDir, "openshell");
+    fs.symlinkSync(process.execPath, realOpenshell);
+    writeExecutable(path.join(realDir, "openshell-gateway"), "#!/usr/bin/env bash\nexit 0\n");
+    writeExecutable(path.join(realDir, "openshell-sandbox"), "#!/usr/bin/env bash\nexit 0\n");
+    const wrapper = createHermesGpuFallbackWrapper(realOpenshell, {
+      rootDir: path.join(root, "wrapper"),
+    });
+    const argvZeroLog = path.join(root, "argv-zero.log");
+    fs.writeFileSync(
+      path.join(root, "sandbox"),
+      'require("node:fs").writeFileSync(process.env.E2E_ARGV_ZERO_LOG, process.argv0);\n',
+    );
+
+    const compatibility = spawnSync(
+      wrapper.wrapperPath,
+      ["sandbox", "create", "--from", "image", "--gpu-device", "all"],
+      {
+        cwd: root,
+        encoding: "utf8",
+        env: { ...process.env, ...wrapper.componentEnv, E2E_ARGV_ZERO_LOG: argvZeroLog },
+      },
+    );
+
+    expect(compatibility.status, compatibility.stderr).toBe(0);
+    expect(fs.readFileSync(argvZeroLog, "utf8")).toBe(wrapper.wrapperPath);
+    expect(fs.lstatSync(wrapper.wrapperPath).isSymbolicLink()).toBe(true);
+    expect(fs.realpathSync(wrapper.wrapperPath)).toBe(fs.realpathSync(realOpenshell));
   });
 
   it("keeps native fault injection when the exact proof precedes compatibility create (#11239)", () => {
@@ -288,6 +333,136 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
         env,
       ).status,
     ).toBe(23);
+    expect(fs.lstatSync(wrapper.wrapperPath).isFile()).toBe(true);
+    expect(
+      runWrapper(wrapper.wrapperPath, ["sandbox", "create", "--from", "image", "--gpu"], env)
+        .status,
+    ).toBe(2);
+  });
+
+  it("rejects a native create while compatibility handoff is still pending (#11239)", async () => {
+    const { root, wrapper } = createWrapperFixture("hermes-gpu-fallback-pending-test-", {
+      openshell: [
+        "#!/usr/bin/env bash",
+        'for arg in "$@"; do',
+        '  if [[ "$arg" == "--gpu" ]]; then',
+        `    printf '%s\\n' native-bypass >>"$E2E_FAKE_DELEGATE_LOG"`,
+        "    exit 97",
+        "  fi",
+        "done",
+        `printf '%s\\n' compatibility >>"$E2E_FAKE_DELEGATE_LOG"`,
+        ': >"$E2E_FAKE_READY"',
+        'while [[ ! -f "$E2E_FAKE_RELEASE" ]]; do sleep 0.02; done',
+        "exit 0",
+        "",
+      ].join("\n"),
+    });
+    const ready = path.join(root, "compatibility-ready");
+    const release = path.join(root, "compatibility-release");
+    const delegateLog = path.join(root, "delegate.log");
+    const env = {
+      ...process.env,
+      ...wrapper.componentEnv,
+      E2E_FAKE_DELEGATE_LOG: delegateLog,
+      E2E_FAKE_READY: ready,
+      E2E_FAKE_RELEASE: release,
+    };
+    const compatibility = spawnWrapper(
+      wrapper.wrapperPath,
+      ["sandbox", "create", "--from", "image", "--gpu-device", "all"],
+      env,
+    );
+    const compatibilityStatus = waitForChild(compatibility);
+    await waitForFile(ready);
+
+    expect(fs.lstatSync(wrapper.wrapperPath).isFile()).toBe(true);
+    expect(
+      runWrapper(wrapper.wrapperPath, ["sandbox", "create", "--from", "image", "--gpu"], env)
+        .status,
+    ).toBe(2);
+    expect(fs.readFileSync(delegateLog, "utf8").trim()).toBe("compatibility");
+
+    fs.writeFileSync(release, "");
+    expect(await compatibilityStatus).toBe(0);
+    expect(fs.lstatSync(wrapper.wrapperPath).isSymbolicLink()).toBe(true);
+  });
+
+  it("retains the successful handoff when an overlapping compatibility create fails (#11239)", async () => {
+    const { root, wrapper } = createWrapperFixture("hermes-gpu-fallback-overlap-test-", {
+      openshell: [
+        "#!/usr/bin/env bash",
+        "mode=failure",
+        'for arg in "$@"; do [[ "$arg" == "--fixture-success" ]] && mode=success; done',
+        'if [[ "$mode" == "success" ]]; then',
+        '  ready="$E2E_SUCCESS_READY"',
+        '  release="$E2E_SUCCESS_RELEASE"',
+        "else",
+        '  ready="$E2E_FAILURE_READY"',
+        '  release="$E2E_FAILURE_RELEASE"',
+        "fi",
+        ': >"$ready"',
+        'while [[ ! -f "$release" ]]; do sleep 0.02; done',
+        '[[ "$mode" == "success" ]] && exit 0',
+        "exit 23",
+        "",
+      ].join("\n"),
+    });
+    const successReady = path.join(root, "success-ready");
+    const successRelease = path.join(root, "success-release");
+    const failureReady = path.join(root, "failure-ready");
+    const failureRelease = path.join(root, "failure-release");
+    const env = {
+      ...process.env,
+      ...wrapper.componentEnv,
+      E2E_FAILURE_READY: failureReady,
+      E2E_FAILURE_RELEASE: failureRelease,
+      E2E_SUCCESS_READY: successReady,
+      E2E_SUCCESS_RELEASE: successRelease,
+    };
+    const successful = spawnWrapper(
+      wrapper.wrapperPath,
+      ["sandbox", "create", "--from", "image", "--gpu-device", "all", "--fixture-success"],
+      env,
+    );
+    const successfulStatus = waitForChild(successful);
+    const failing = spawnWrapper(
+      wrapper.wrapperPath,
+      ["sandbox", "create", "--from", "image", "--gpu-device", "all"],
+      env,
+    );
+    const failingStatus = waitForChild(failing);
+    await Promise.all([waitForFile(successReady), waitForFile(failureReady)]);
+
+    fs.writeFileSync(successRelease, "");
+    expect(await successfulStatus).toBe(0);
+    expect(fs.lstatSync(wrapper.wrapperPath).isSymbolicLink()).toBe(true);
+    fs.writeFileSync(failureRelease, "");
+    expect(await failingStatus).toBe(23);
+    expect(fs.lstatSync(wrapper.wrapperPath).isSymbolicLink()).toBe(true);
+  });
+
+  it("leaves native fault injection installed when compatibility create is interrupted (#11239)", async () => {
+    const { root, wrapper } = createWrapperFixture("hermes-gpu-fallback-interrupt-test-", {
+      openshell: [
+        "#!/usr/bin/env bash",
+        "trap 'exit 143' HUP INT TERM",
+        ': >"$E2E_FAKE_READY"',
+        "while :; do sleep 1; done",
+        "",
+      ].join("\n"),
+    });
+    const ready = path.join(root, "compatibility-ready");
+    const env = { ...process.env, ...wrapper.componentEnv, E2E_FAKE_READY: ready };
+    const compatibility = spawnWrapper(
+      wrapper.wrapperPath,
+      ["sandbox", "create", "--from", "image", "--gpu-device", "all"],
+      env,
+    );
+    const compatibilityStatus = waitForChild(compatibility);
+    await waitForFile(ready);
+
+    expect(compatibility.kill("SIGTERM")).toBe(true);
+    expect(await compatibilityStatus).toBe(143);
     expect(fs.lstatSync(wrapper.wrapperPath).isFile()).toBe(true);
     expect(
       runWrapper(wrapper.wrapperPath, ["sandbox", "create", "--from", "image", "--gpu"], env)
