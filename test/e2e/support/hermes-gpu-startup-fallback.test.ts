@@ -58,14 +58,6 @@ function runWrapper(wrapperPath: string, args: string[], env: NodeJS.ProcessEnv)
   return spawnSync(wrapperPath, args, { encoding: "utf8", env });
 }
 
-function runWrapperConcurrently(
-  wrapperPath: string,
-  args: string[],
-  env: NodeJS.ProcessEnv,
-): Promise<number | null> {
-  return waitForChild(spawnWrapper(wrapperPath, args, env));
-}
-
 function spawnWrapper(wrapperPath: string, args: string[], env: NodeJS.ProcessEnv) {
   return spawn(wrapperPath, args, { env, stdio: "ignore" });
 }
@@ -585,10 +577,12 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
     const env = { ...process.env, ...wrapper.componentEnv };
     const statuses = await Promise.all(
       Array.from({ length: 8 }, () =>
-        runWrapperConcurrently(
-          wrapper.wrapperPath,
-          ["sandbox", "create", "--from", "image", "--gpu"],
-          env,
+        waitForChild(
+          spawnWrapper(
+            wrapper.wrapperPath,
+            ["sandbox", "create", "--from", "image", "--gpu"],
+            env,
+          ),
         ),
       ),
     );

@@ -444,7 +444,7 @@ test(
       );
       await artifacts.writeJson("gpu-fallback-wrapper.json", {
         behavior:
-          "reject the exact native --gpu create before progress, keep the rejecting wrapper installed while the real OpenShell CLI runs with the wrapper argv[0], replace the wrapper with a real-CLI link only after success, and retain the wrapper on failure or interruption",
+          "reject the exact native --gpu create before progress, keep the rejecting wrapper installed while the real OpenShell CLI runs with the wrapper argv[0], replace the wrapper with a real-CLI link only after success, and let failed or interrupted invocations leave the path unchanged while an overlapping success remains authoritative",
         eventVocabulary: HERMES_GPU_FALLBACK_EVENTS,
       });
       return wrapper;

@@ -85,8 +85,10 @@ function quoteShellLiteral(value: string): string {
  * wrapper stays installed. After that create succeeds, the wrapper atomically
  * replaces itself with a link to the real CLI so later ForwardTcp ownership
  * checks resolve the configured path to the executable that owns each
- * listener. A failed or interrupted create leaves the wrapper installed.
- * Every other invocation transparently delegates its original argv. This
+ * listener. A failed or interrupted invocation never changes the wrapper path;
+ * an overlapping successful invocation may independently commit the terminal
+ * link and remains authoritative. Every other invocation transparently
+ * delegates its original argv. This
  * test-only wrapper never logs argv: its sole artifact is an event log made of
  * fixed labels, so sandbox-create environment arguments never enter artifacts.
  * This interception pattern is specific to the #6110 fallback proof and must
