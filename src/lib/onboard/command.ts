@@ -737,9 +737,11 @@ async function runOnboardCommandAttempt(
   };
   let options = resolvedOptions;
   try {
+    const selectedAgent = deps.flags.agent ?? env.NEMOCLAW_AGENT;
+    const validationAgent = resolveAgentNameAlias(selectedAgent, ["openclaw"]) ?? selectedAgent;
     if (options.agentsManifest) {
       applyAgentsManifestEnv(options.agentsManifest, env);
-    } else if (isOpenclawAgent(deps.flags.agent ?? env.NEMOCLAW_AGENT)) {
+    } else if (isOpenclawAgent(validationAgent)) {
       assertNoPerAgentMaxSpawnDepthJson(env.NEMOCLAW_EXTRA_AGENTS_JSON);
     }
     const activation = await activatePortableInference(resolvedOptions, deps, env);

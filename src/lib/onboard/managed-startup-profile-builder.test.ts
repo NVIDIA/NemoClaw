@@ -861,26 +861,53 @@ describe("buildManagedStartupProfile", () => {
 
   it.each([
     [
+      "secondary-agent",
       "raw JSON",
       {
         NEMOCLAW_EXTRA_AGENTS_JSON: JSON.stringify([
           { id: "reviewer", subagents: { maxSpawnDepth: 2 } },
         ]),
       },
+      /NEMOCLAW_EXTRA_AGENTS_JSON\.agents\[0\]\.subagents\.maxSpawnDepth is not accepted per-agent.*defaults\.subagents\.maxSpawnDepth/,
     ],
     [
+      "secondary-agent",
       "base64 JSON",
       {
         NEMOCLAW_EXTRA_AGENTS_JSON_B64: encodeJson({
           agents: [{ id: "reviewer", subagents: { maxSpawnDepth: 2 } }],
         }),
       },
-    ],
-  ])("rejects per-agent maxSpawnDepth from %s profile input", (_label, environment) => {
-    expect(() => buildManagedStartupProfile(openClawInput({ environment }))).toThrow(
       /NEMOCLAW_EXTRA_AGENTS_JSON\.agents\[0\]\.subagents\.maxSpawnDepth is not accepted per-agent.*defaults\.subagents\.maxSpawnDepth/,
-    );
-  });
+    ],
+    [
+      "main-agent",
+      "raw JSON",
+      {
+        NEMOCLAW_EXTRA_AGENTS_JSON: JSON.stringify({
+          agents: [],
+          main: { subagents: { maxSpawnDepth: 2 } },
+        }),
+      },
+      /NEMOCLAW_EXTRA_AGENTS_JSON\.main\.subagents\.maxSpawnDepth is not accepted per-agent.*defaults\.subagents\.maxSpawnDepth/,
+    ],
+    [
+      "main-agent",
+      "base64 JSON",
+      {
+        NEMOCLAW_EXTRA_AGENTS_JSON_B64: encodeJson({
+          agents: [],
+          main: { subagents: { maxSpawnDepth: 2 } },
+        }),
+      },
+      /NEMOCLAW_EXTRA_AGENTS_JSON\.main\.subagents\.maxSpawnDepth is not accepted per-agent.*defaults\.subagents\.maxSpawnDepth/,
+    ],
+  ])(
+    "rejects %s maxSpawnDepth from %s profile input",
+    (_agent, _encoding, environment, message) => {
+      expect(() => buildManagedStartupProfile(openClawInput({ environment }))).toThrow(message);
+    },
+  );
 
   it("rejects malformed or non-CA certificate material", () => {
     expect(() =>
