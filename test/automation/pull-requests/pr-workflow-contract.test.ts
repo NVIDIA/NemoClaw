@@ -613,6 +613,7 @@ describe("pull request and main workflow contracts", () => {
     const actionPath = join(temp, "actions", "ci-cli-coverage-shard");
     const aptTrace = join(temp, "apt-trace");
     const binaryTrace = join(temp, "binary-trace");
+    const runnerTemp = join(temp, "runner");
     const ubuntuSources = join(temp, "ubuntu.sources");
     mkdirSync(fakeBin);
     mkdirSync(actionPath, { recursive: true });
@@ -676,14 +677,16 @@ describe("pull request and main workflow contracts", () => {
           BINARY_TRACE: binaryTrace,
           GITHUB_ACTION_PATH: actionPath,
           PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+          RUNNER_TEMP: runnerTemp,
           ...extraEnv,
         });
       const result = runInstall();
 
       expect(result.status, result.stderr).toBe(0);
       expect(readFileSync(aptTrace, "utf8").trim().split("\n")).toEqual([
-        `apt-get -o Dir::Etc::sourcelist=${ubuntuSources} -o Dir::Etc::sourceparts=- update -qq`,
-        `apt-get -o Dir::Etc::sourcelist=${ubuntuSources} -o Dir::Etc::sourceparts=- install -y --no-install-recommends fd-find=9.0.0-1 ripgrep=14.1.0-1`,
+        `mkdir -p ${runnerTemp}/nemoclaw-apt-lists/partial`,
+        `apt-get -o Dir::Etc::sourcelist=${ubuntuSources} -o Dir::Etc::sourceparts=- -o Dir::State::lists=${runnerTemp}/nemoclaw-apt-lists update -qq`,
+        `apt-get -o Dir::Etc::sourcelist=${ubuntuSources} -o Dir::Etc::sourceparts=- -o Dir::State::lists=${runnerTemp}/nemoclaw-apt-lists install -y --no-install-recommends fd-find=9.0.0-1 ripgrep=14.1.0-1`,
       ]);
       expect(readFileSync(binaryTrace, "utf8").trim().split("\n")).toEqual(["fdfind", "rg"]);
 
@@ -697,9 +700,17 @@ describe("pull request and main workflow contracts", () => {
       expect(existsSync(binaryTrace)).toBe(false);
 
       writeFileSync(ubuntuSources, "Types: deb\nURIs: http://archive.ubuntu.com/ubuntu\n");
+      const unpinnedPackageResult = runInstall({ FD_FIND_VERSION: "" });
+      expect(unpinnedPackageResult.status).not.toBe(0);
+      expect(unpinnedPackageResult.stderr).toContain(
+        "Package specification must use package=version",
+      );
+      expect(existsSync(aptTrace)).toBe(false);
+      expect(existsSync(binaryTrace)).toBe(false);
+
       const unavailablePackageResult = runInstall({ FAIL_APT_INSTALL: "1" });
       expect(unavailablePackageResult.status).not.toBe(0);
-      expect(readFileSync(aptTrace, "utf8").trim().split("\n")).toHaveLength(2);
+      expect(readFileSync(aptTrace, "utf8").trim().split("\n")).toHaveLength(3);
       expect(existsSync(binaryTrace)).toBe(false);
     } finally {
       rmSync(temp, { force: true, recursive: true });
