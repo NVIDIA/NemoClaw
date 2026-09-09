@@ -59,8 +59,8 @@ Copy this checklist and update it as you work:
 
 ```text
 Release tag:
-- [ ] 1. Generate the version plan and release-brief template
-- [ ] 2. Inspect independent prerequisites together and verify required candidate evidence
+- [ ] 1. Start independent checks and generate the version plan and release-brief template
+- [ ] 2. Verify required candidate evidence
 - [ ] 3. Show E2E context and record the maintainer's decision
 - [ ] 4. Finish and review the Markdown release brief
 - [ ] 5. Confirm, cut, and read back the signed tag
@@ -68,6 +68,10 @@ Release tag:
 ```
 
 ### 1. Generate the Plan and Brief Template
+
+Start the [kickoff checks](references/candidate-evidence.md#start-independent-checks-at-kickoff) before generating the plan.
+These preliminary reads do not select a candidate or initialize candidate evidence.
+Inspect general E2E context early and continue authorized docs preparation during image waits.
 
 Run the default current-main plan:
 
@@ -118,8 +122,8 @@ npm run release:plan -- --version vX.Y.Z \
 
 Use the returned plan directory for the brief and cutter commands that follow.
 
-Create the brief template now, before collecting evidence, so each result can be recorded as it is
-read:
+Create the brief template now, before collecting candidate-bound evidence, so each result can be
+recorded as it is read:
 
 ```bash
 node --no-warnings \
@@ -135,8 +139,6 @@ the helper after evidence has been added.
 
 Read and follow [Candidate Evidence](references/candidate-evidence.md). It owns the executable reads
 for the release entry, documentation coverage, and applicable base-image verifier.
-Start with its [kickoff checks](references/candidate-evidence.md#start-independent-checks-at-kickoff).
-Inspect general E2E context early and continue authorized docs preparation during image waits.
 
 Show the complete documentation coverage evidence. Offer the maintainer the three choices defined
 there. If the maintainer requests documentation work or stops, do not continue to E2E or tag
