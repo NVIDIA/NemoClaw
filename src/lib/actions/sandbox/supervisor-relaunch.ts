@@ -109,7 +109,7 @@ export function usesLegacyManagedGatewayRecovery(entry: registry.SandboxEntry): 
   }
   try {
     return (
-      provider.gateway.prepareHostRuntime({
+      provider.gateway.observeHostRuntime({
         environment: process.env,
         platform: process.platform,
       }).socketPath === null

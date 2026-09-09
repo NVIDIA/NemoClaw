@@ -89,6 +89,45 @@ describe("applyHealthyPortReuse", () => {
     vi.restoreAllMocks();
   });
 
+  it("reuses a provider-owned gateway without Docker container inspection (#10984)", async () => {
+    const destroyGateway = vi.fn(() => true);
+    const checkPortAvailable = vi.fn();
+    const verifyGatewayContainerRunning = vi.fn();
+
+    await expect(
+      applyHealthyPortReuse({
+        ...BASE_INPUT,
+        managedGatewayObservationAuthoritative: true,
+        destroyGateway,
+        checkPortAvailable,
+        verifyGatewayContainerRunning,
+      }),
+    ).resolves.toBe("continue");
+    expect(verifyGatewayContainerRunning).not.toHaveBeenCalled();
+    expect(destroyGateway).not.toHaveBeenCalled();
+    expect(checkPortAvailable).not.toHaveBeenCalled();
+  });
+
+  it("rejects stale provider-owned reuse without Docker container inspection (#10984)", async () => {
+    const destroyGateway = vi.fn(() => true);
+    const checkPortAvailable = vi.fn();
+    const verifyGatewayContainerRunning = vi.fn();
+
+    await expect(
+      applyHealthyPortReuse({
+        ...BASE_INPUT,
+        gatewayReuseState: "stale",
+        managedGatewayObservationAuthoritative: true,
+        destroyGateway,
+        checkPortAvailable,
+        verifyGatewayContainerRunning,
+      }),
+    ).resolves.toBeNull();
+    expect(verifyGatewayContainerRunning).not.toHaveBeenCalled();
+    expect(destroyGateway).not.toHaveBeenCalled();
+    expect(checkPortAvailable).not.toHaveBeenCalled();
+  });
+
   it("returns null when recorded state is not healthy", async () => {
     const result = await applyHealthyPortReuse({
       ...BASE_INPUT,

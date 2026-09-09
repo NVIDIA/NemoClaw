@@ -91,7 +91,14 @@ An above-maximum development build remains eligible when `NEMOCLAW_OPENSHELL_CHA
 An undetermined version or an unsupported version stops package-unit adoption.
 When the systemd identity query reports a recognized unavailable user manager, NemoClaw checks the standard user unit paths before standalone fallback.
 It checks `.wants`, `.requires`, and `.upholds` activation links for both gateway service names.
-An activation path blocks fallback because its service can later claim port `8080`.
+When `NEMOCLAW_GATEWAY_PORT` selects port `8080` and no activation path exists, NemoClaw keeps the standalone gateway on port `8080`.
+When the port is unset, one canonical package-service activation can make the installer select a separate standalone NemoClaw port from `8990` through `9005` only after offline unit and environment checks prove that the service uses port `8080`.
+The selector rejects a listener, an existing gateway registration, port-scoped NemoClaw state, reserved ports, and configured service ports.
+It fails closed when no supported listener probe can conclusively confirm that a candidate is unused.
+The installer records a pending automatic port under its port-scoped state root before onboarding runs or is deferred. Successful installer-driven or direct CLI onboarding promotes it to the completed identity.
+Later installer and CLI processes restore either identity when `NEMOCLAW_GATEWAY_PORT` is unset, so deferred or interrupted onboarding returns to the same port-scoped recovery state.
+A supported explicit non-default port remains authoritative and bypasses automatic selection.
+An explicit port of `8080`, multiple activation paths, a noncanonical service, a drop-in, or another effective service port blocks fallback.
 An active `SYSTEMD_UNIT_PATH` override also blocks fallback because NemoClaw cannot verify its activation state.
 Other identity-query failures stop package-unit adoption.
 NemoClaw stops when systemd identifies an untrusted unit or effective binary.
