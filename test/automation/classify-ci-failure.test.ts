@@ -14,6 +14,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import {
@@ -21,11 +22,11 @@ import {
   type GhResolverFilesystem,
   resolveProductionGhExecutableForTest,
 } from "../../.agents/skills/nemoclaw-maintainer-classify-ci-failure/scripts/classify-ci-failure.mts";
-import correlateE2eRootCauses from "../../.dsh/tools/e2e_root_cause_correlator/index.ts";
 import { artifactZip, artifactZipEntryDataOffset } from "../helpers/artifact-zip";
 const script = resolve(
   ".agents/skills/nemoclaw-maintainer-classify-ci-failure/scripts/classify-ci-failure.mts",
 );
+const rootCauseCorrelatorScript = resolve(".dsh/tools/e2e_root_cause_correlator/index.ts");
 const roots: string[] = [];
 const uid = process.getuid?.() ?? "unknown";
 const REDACTION_CASES = [
@@ -312,14 +313,29 @@ describe("reviewed npm root-cause correlation", () => {
   test.each([
     ["npm@12.0.2 archive integrity mismatch", "dependency-audit/bootstrap-integrity"],
     ["npm audit threshold failed", "dependency-audit/unaccepted-advisory"],
-  ])("separates %s", async (signature, expectedKey) => {
-    const result = await correlateE2eRootCauses({
+  ])("separates %s (#8253)", (signature, expectedKey) => {
+    const input = {
       changedFiles: [],
       failures: [{ jobId: 123, jobName: "PR npm audit", signatureLines: [signature] }],
-    });
+    };
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--experimental-strip-types",
+        "--no-warnings",
+        "--input-type=module",
+        "--eval",
+        [
+          `const { default: correlate } = await import(${JSON.stringify(pathToFileURL(rootCauseCorrelatorScript).href)});`,
+          "console.log(JSON.stringify(await correlate(JSON.parse(process.argv[1]))));",
+        ].join("\n"),
+        JSON.stringify(input),
+      ],
+      { encoding: "utf8" },
+    );
 
-    expect(result.groups).toHaveLength(1);
-    expect(result.groups[0]?.key).toBe(expectedKey);
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout).groups[0]?.key).toBe(expectedKey);
   });
 });
 

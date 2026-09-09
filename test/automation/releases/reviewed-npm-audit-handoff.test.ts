@@ -216,7 +216,7 @@ printf '{"version":"12.0.2"}\\n'
 `,
     { mode: 0o755 },
   );
-  const environment = {
+  const environment: NodeJS.ProcessEnv = {
     ...process.env,
     GITHUB_ACTION_PATH: path.join(root, ".github", "actions", "ci-reviewed-npm-audit"),
     NEMOCLAW_REVIEWED_NPM_AUDIT_REPORT_DIR: path.relative(root, reportDirectory),
