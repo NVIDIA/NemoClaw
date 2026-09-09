@@ -212,6 +212,30 @@ describe("resolveRequestedProviderSelection", () => {
     });
   });
 
+  it("rejects managed recovery without recorded recipe provenance", () => {
+    const available = {
+      key: "install-llama-cpp",
+      label: "Managed recommended",
+      managedLlamaCppRecipeId: "llama-cpp.recommended.v1",
+    };
+    const result = resolve({
+      options: [option("build"), available],
+      readRecordedProvider: () => "llama-cpp-local",
+      readRecordedManagedLlamaCpp: () => true,
+      readRecordedManagedLlamaCppRecipeId: () => null,
+    });
+
+    assert.deepEqual(result, {
+      kind: "failure",
+      reason: {
+        kind: "recorded-provider-unavailable",
+        recordedProvider: "llama-cpp-local",
+        recoveredKey: "install-llama-cpp",
+        windowsHostKey: null,
+      },
+    });
+  });
+
   it("keeps operator-attached llama.cpp distinct from managed recovery", () => {
     const result = resolve({
       options: [option("build"), option("llama-cpp"), option("install-llama-cpp")],

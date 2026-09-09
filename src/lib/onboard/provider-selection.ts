@@ -186,7 +186,10 @@ export function resolveRequestedProviderSelection<T extends ProviderOption>(
         recoveredKey === "install-llama-cpp"
           ? (input.readRecordedManagedLlamaCppRecipeId?.(input.sandboxName) ?? null)
           : null;
-      recoveredSelection = findOption(input.options, recoveredKey, recordedRecipeId);
+      recoveredSelection =
+        recoveredKey === "install-llama-cpp" && recordedRecipeId === null
+          ? undefined
+          : findOption(input.options, recoveredKey, recordedRecipeId);
       if (!recoveredSelection) {
         return {
           kind: "failure",

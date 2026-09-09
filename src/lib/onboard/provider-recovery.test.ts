@@ -292,6 +292,64 @@ describe("provider recovery persisted routing state", () => {
     },
   );
 
+  it("fails closed for managed lifecycle provenance without an exact recipe", () => {
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "alpha",
+      provider: "llama-cpp-local",
+      model: "recorded-model",
+      hostLocalInferenceProvenance: {},
+    } as never);
+    const recovery = helpers();
+    const discovery = prepareProviderDiscovery({
+      deps: {
+        remoteProviderConfig: REMOTE_PROVIDER_CONFIG as Record<string, { providerName: string }>,
+        isNonInteractive: () => true,
+        getNonInteractiveProvider: () => null,
+        getNonInteractiveModel: () => null,
+        ...recovery.providerSelectionReaders,
+      },
+      sandboxName: "alpha",
+      recoverProvider: true,
+      rebuildRegistryInferenceRoute: null,
+      recoverySessionId: null,
+    });
+    const result = resolveRequestedProviderSelection({
+      options: [
+        { key: "build", label: "NVIDIA Endpoints" },
+        {
+          key: "install-llama-cpp",
+          label: "Managed recommended",
+          managedLlamaCppRecipeId: "llama-cpp.recommended.v1",
+        },
+        {
+          key: "install-llama-cpp",
+          label: "Managed alternate",
+          managedLlamaCppRecipeId: "llama-cpp.alternate.v1",
+        },
+      ],
+      requestedProvider: discovery.requestedProvider,
+      sandboxName: "alpha",
+      remoteProviderConfig: REMOTE_PROVIDER_CONFIG,
+      isWsl: false,
+      isWindowsHostOllama: false,
+      windowsHostOllamaSupported: false,
+      hermesProviderAvailable: false,
+      ...discovery.recordedProviderReaders,
+    });
+
+    expect(discovery.recordedProviderReaders.readRecordedManagedLlamaCpp("alpha")).toBe(true);
+    expect(
+      discovery.recordedProviderReaders.readRecordedManagedLlamaCppRecipeId("alpha"),
+    ).toBeNull();
+    expect(result).toMatchObject({
+      kind: "failure",
+      reason: {
+        kind: "recorded-provider-unavailable",
+        recoveredKey: "install-llama-cpp",
+      },
+    });
+  });
+
   it("rejects partial live gateway output", () => {
     vi.spyOn(registry, "listSandboxes").mockReturnValue({
       defaultSandbox: "alpha",
