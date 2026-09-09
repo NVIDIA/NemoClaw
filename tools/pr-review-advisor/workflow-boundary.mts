@@ -13,6 +13,8 @@ const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "pr-review
 const EXPECTED_GATE_CONDITION =
   "${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.path == '.github/workflows/pr.yaml' && endsWith(github.event.workflow_run.display_title, ' gate true'))) }}";
 const EXPECTED_ENTRY_CONDITION = "${{ github.repository == 'NVIDIA/NemoClaw' }}";
+const EXPECTED_DISCOVERY_CONDITION =
+  "${{ always() && github.repository == 'NVIDIA/NemoClaw' && needs.require-green-checks.result == 'success' && (inputs.repair_attempt_key == '' || needs.validate-repair-target.result == 'success') }}";
 const EXPECTED_AUTOMATIC_PREPARATION_CONDITION =
   "${{ github.event_name == 'workflow_run' || (github.event_name == 'workflow_dispatch' && (inputs.target_repo != '' || inputs.target_pr != '') && inputs.repair_attempt_key == '' && inputs.repair_finding_ids_json == '[]') }}";
 const EXPECTED_REPAIR_PREPARATION_CONDITION =
@@ -88,16 +90,22 @@ export function validatePrReviewAdvisorWorkflow(workflowPath = DEFAULT_WORKFLOW_
     errors.push("Unified advisor must retain completed CI / Pull Request identity");
   }
   const gate = advisor.jobs?.["require-green-checks"] ?? {};
-  const entryJobs = ["discover-specialists", "build-advisor-runtime", "review-specialists"];
   if (
-    !sameMembers(needs(advisor.jobs?.["discover-specialists"] ?? {}), ["require-green-checks"]) ||
+    !sameMembers(needs(advisor.jobs?.["discover-specialists"] ?? {}), [
+      "require-green-checks",
+      "validate-repair-target",
+    ]) ||
     !sameMembers(needs(advisor.jobs?.["build-advisor-runtime"] ?? {}), ["require-green-checks"]) ||
     !needs(advisor.jobs?.["review-specialists"] ?? {}).includes("require-green-checks") ||
     !needs(advisor.jobs?.publish ?? {}).includes("require-green-checks")
   ) {
     errors.push("Unified advisor entry jobs must depend on the green checks gate");
   }
-  if (entryJobs.some((name) => advisor.jobs?.[name]?.if !== EXPECTED_ENTRY_CONDITION)) {
+  if (
+    advisor.jobs?.["discover-specialists"]?.if !== EXPECTED_DISCOVERY_CONDITION ||
+    advisor.jobs?.["build-advisor-runtime"]?.if !== EXPECTED_ENTRY_CONDITION ||
+    advisor.jobs?.["review-specialists"]?.if !== EXPECTED_ENTRY_CONDITION
+  ) {
     errors.push("Unified advisor entry jobs must retain fail-closed conditions");
   }
   if (gate.if !== EXPECTED_GATE_CONDITION) {

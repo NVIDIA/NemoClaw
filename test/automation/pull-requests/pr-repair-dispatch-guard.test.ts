@@ -31,24 +31,17 @@ const installerHash = workflow(".github/workflows/installer-hash-check.yaml");
 const codeScanning = workflow(".github/workflows/code-scanning.yaml");
 const advisor = workflow(".github/workflows/pr-review-advisor.yaml");
 const sdkPackage = workflow(".github/workflows/openshell-sdk-package-pr.yaml");
-const standardGuard = step(
-  commitLint.jobs["commit-lint"],
+const sharedRepairTarget = workflow(".github/workflows/validate-repair-target.yaml");
+const sharedGuard = step(
+  sharedRepairTarget.jobs.validate,
   "Bind validation to the live generated head",
 );
-const dcoGuard = step(dco.jobs["dco-check"], "Bind validation to the live generated head");
-const installerHashGuard = step(
-  installerHash.jobs["check-hash"],
-  "Bind validation to the live generated head",
-);
-const codeScanningGuard = step(
-  codeScanning.jobs["validate-repair-target"],
-  "Bind validation to the live generated head",
-);
-const prGuard = step(pr.jobs.changes, "Bind validation to the live generated head");
-const advisorGuard = step(
-  advisor.jobs["discover-specialists"],
-  "Bind validation to the live generated head",
-);
+const standardGuard = sharedGuard;
+const dcoGuard = sharedGuard;
+const installerHashGuard = sharedGuard;
+const codeScanningGuard = sharedGuard;
+const prGuard = step(pr.jobs.changes, "Bind generated commit to its source head");
+const advisorGuard = sharedGuard;
 const sdkPackageGuard = step(
   sdkPackage.jobs["package-openshell-sdk"],
   "Bind package production to the live generated head",
@@ -129,7 +122,6 @@ describe("generated-head repair workflow guards", () => {
     ["DCO", dcoGuard],
     ["installer hash", installerHashGuard],
     ["code scanning", codeScanningGuard],
-    ["pull request", prGuard],
     ["advisor", advisorGuard],
     ["SDK package", sdkPackageGuard],
   ])("rejects a stale head in the %s guard", (_name, guard) => {
@@ -141,7 +133,6 @@ describe("generated-head repair workflow guards", () => {
     ["DCO", dcoGuard],
     ["installer hash", installerHashGuard],
     ["code scanning", codeScanningGuard],
-    ["pull request", prGuard],
     ["advisor", advisorGuard],
     ["SDK package", sdkPackageGuard],
   ])("rejects a changed base in the %s guard", (_name, guard) => {
