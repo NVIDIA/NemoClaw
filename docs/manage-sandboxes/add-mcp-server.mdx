@@ -23,8 +23,8 @@ The early capability check identifies managed image version only; NemoClaw still
 </AgentOnly>
 <AgentOnly variant="hermes">
 Hermes performs its managed runtime probe before an active add or restart changes a live provider or policy.
-Hermes stores the credential revision from the readiness check in the OpenShell resolver placeholder.
-Registration, inspection, rollback, and lifecycle reconciliation preserve that revision while it remains observable.
+Hermes stores the stable credential handle from the readiness check in the OpenShell resolver placeholder.
+Registration, inspection, rollback, and lifecycle reconciliation preserve that handle while it remains observable.
 </AgentOnly>
 <AgentOnly variant="openclaw">
 OpenClaw verifies the pinned `mcporter` during adapter registration and rolls back an incomplete add.

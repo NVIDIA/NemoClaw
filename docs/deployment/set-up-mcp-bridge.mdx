@@ -63,8 +63,8 @@ The agent stores only an OpenShell resolver placeholder for the recorded credent
 OpenShell keeps the raw credential in its provider store and combines credential replacement with generated MCP policy at egress.
 
 <AgentOnly variant="hermes">
-Hermes includes the credential revision from the readiness check in this placeholder.
-Registration, inspection, rollback, and lifecycle reconciliation preserve that revision while OpenShell still reports it.
+Hermes includes the stable credential handle from the readiness check in this placeholder.
+Registration, inspection, rollback, and lifecycle reconciliation preserve that handle while OpenShell still reports it.
 </AgentOnly>
 
 For the normal MCP client path, OpenShell evaluates the effective policy for the destination host and port, adapter binary, literal endpoint path, and MCP method before replacing placeholders in allowed HTTP request headers.

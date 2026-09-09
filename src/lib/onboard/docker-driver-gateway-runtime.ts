@@ -243,13 +243,17 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
         `OpenShell Docker-driver gateway recovery requires exact stable OpenShell ${QUALIFIED_STABLE_OPENSHELL_VERSION}; found ${supportedVersion}. Re-run onboarding to reconcile the installed runtime.`,
       );
     }
-    if (process.env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE) {
-      return process.env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE;
-    }
     const manifestDigest = OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS[supportedVersion];
-    return manifestDigest
+    const qualifiedImage = manifestDigest
       ? `ghcr.io/nvidia/openshell/supervisor@${manifestDigest}`
       : `ghcr.io/nvidia/openshell/supervisor:${supportedVersion}`;
+    const configuredImage = process.env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE;
+    if (configuredImage && configuredImage !== qualifiedImage) {
+      throw new Error(
+        `Stable OpenShell ${supportedVersion} requires the reviewed Docker supervisor image ${qualifiedImage}; found override ${configuredImage}.`,
+      );
+    }
+    return qualifiedImage;
   }
 
   function getDockerDriverGatewayEnv(

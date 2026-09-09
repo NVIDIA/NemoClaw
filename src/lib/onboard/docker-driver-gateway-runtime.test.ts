@@ -165,7 +165,7 @@ describe("docker-driver gateway runtime helpers", () => {
     });
   });
 
-  it("pins the stable 0.0.116 supervisor default while preserving an explicit override", () => {
+  it("pins the stable 0.0.116 supervisor and rejects a foreign override", () => {
     const image = (fallback: string) =>
       makeHelpers({
         getBlueprintMaxOpenshellVersion: () => "0.0.116",
@@ -174,15 +174,25 @@ describe("docker-driver gateway runtime helpers", () => {
     const stable = withTemporaryGatewayState(() =>
       withEnv({ OPENSHELL_DOCKER_SUPERVISOR_IMAGE: undefined }, () => image("0.0.116")),
     );
-    expect(stable).toBe(
-      "ghcr.io/nvidia/openshell/supervisor@sha256:c8c42aef16c200063e32cbf72e553e4ead027085427b555efafd95063ecead42",
-    );
-    const override = "registry.example.test/supervisor@sha256:override";
+    const qualified =
+      "ghcr.io/nvidia/openshell/supervisor@sha256:c8c42aef16c200063e32cbf72e553e4ead027085427b555efafd95063ecead42";
+    expect(stable).toBe(qualified);
     expect(
       withTemporaryGatewayState(() =>
-        withEnv({ OPENSHELL_DOCKER_SUPERVISOR_IMAGE: override }, () => image("0.0.116")),
+        withEnv({ OPENSHELL_DOCKER_SUPERVISOR_IMAGE: qualified }, () => image("0.0.116")),
       ),
-    ).toBe(override);
+    ).toBe(qualified);
+    expect(() =>
+      withTemporaryGatewayState(() =>
+        withEnv(
+          {
+            OPENSHELL_DOCKER_SUPERVISOR_IMAGE:
+              "registry.example.test/supervisor@sha256:override",
+          },
+          () => image("0.0.116"),
+        ),
+      ),
+    ).toThrow("requires the reviewed Docker supervisor image");
   });
 
   it("rejects an installed 0.0.106 runtime before gateway recovery selects a supervisor", () => {
