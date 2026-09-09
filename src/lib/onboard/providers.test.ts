@@ -21,13 +21,27 @@ type RunOptions = {
 };
 type RunOpenshell = (command: string[], opts?: RunOptions) => RunResult;
 
+function providerMetadata(name: string, type: string, credentialKey: string): RunResult {
+  return {
+    status: 0,
+    stdout: [
+      `Id: provider-${name}`,
+      `Name: ${name}`,
+      `Type: ${type}`,
+      "Resource version: 1",
+      `Credential keys: ${credentialKey}`,
+      "Config keys: <none>",
+    ].join("\n"),
+    stderr: "",
+  };
+}
+
 const {
   HOSTED_INFERENCE_ENDPOINT_URL,
   HOSTED_INFERENCE_MODEL,
   NON_INTERACTIVE_PROVIDER_ALIASES,
   NON_INTERACTIVE_PROVIDER_KEYS,
   REMOTE_PROVIDER_CONFIG,
-  buildProviderArgs,
   getNonInteractiveProvider,
   getNonInteractiveModel,
   getRequestedModelHint,
@@ -50,13 +64,6 @@ const {
       defaultModel: string;
     }
   >;
-  buildProviderArgs: (
-    action: "create" | "update",
-    name: string,
-    type: string,
-    credentialEnv: string,
-    baseUrl: string | null,
-  ) => string[];
   getNonInteractiveProvider: (allowHostedInferenceStaging?: boolean) => string | null;
   getNonInteractiveModel: (
     providerKey: string,
@@ -71,7 +78,7 @@ const {
     allowHostedInferenceStaging?: boolean,
   ) => string | null;
   isProviderKeyCredentialCandidate: (value: string | null | undefined) => boolean;
-  providerExistsInGateway: (name: string, runOpenshell: RunOpenshell) => boolean;
+  providerExistsInGateway: (name: string, runOpenshell: RunOpenshell) => Promise<boolean>;
   stageHostedInferenceSourceSecretEnv: () => boolean;
   upsertProvider: (
     name: string,
@@ -87,7 +94,7 @@ const {
       requireExactBinding?: boolean;
       revalidateSandboxIdentity?(operation: string): void;
     },
-  ) => { ok: boolean; status?: number; message?: string; reason?: string };
+  ) => Promise<{ ok: boolean; status?: number; message?: string; reason?: string }>;
 };
 
 function withProviderEnv(next: Record<string, string | undefined>, testBody: () => void): void {
@@ -132,18 +139,18 @@ function withProviderEnv(next: Record<string, string | undefined>, testBody: () 
 }
 
 describe("onboard provider helpers", () => {
-  it("uses Gemini 3.6 Flash as the onboarding default (#9298)", () => {
+  it("uses Gemini 3.6 Flash as the onboarding default (#9298)", async () => {
     expect(REMOTE_PROVIDER_CONFIG.gemini.defaultModel).toBe("gemini-3.6-flash");
   });
 
-  it("keeps managed llama.cpp as a public non-interactive provider selector (#8433)", () => {
+  it("keeps managed llama.cpp as a public non-interactive provider selector (#8433)", async () => {
     expect(NON_INTERACTIVE_PROVIDER_KEYS.has("install-llama-cpp")).toBe(true);
     withProviderEnv({ NEMOCLAW_PROVIDER: "install-llama-cpp" }, () => {
       expect(getNonInteractiveProvider(false)).toBe("install-llama-cpp");
     });
   });
 
-  it("registers OpenRouter with an OpenAI-compatible provider profile and aliases (#5826)", () => {
+  it("registers OpenRouter with an OpenAI-compatible provider profile and aliases (#5826)", async () => {
     const provider = REMOTE_PROVIDER_CONFIG.openrouter;
 
     expect(provider).toMatchObject({
@@ -154,18 +161,9 @@ describe("onboard provider helpers", () => {
     expect(NON_INTERACTIVE_PROVIDER_KEYS.has("openrouter")).toBe(true);
     expect(NON_INTERACTIVE_PROVIDER_ALIASES["open-router"]).toBe("openrouter");
     expect(NON_INTERACTIVE_PROVIDER_ALIASES.openrouterai).toBe("openrouter");
-    expect(
-      buildProviderArgs(
-        "create",
-        provider.providerName,
-        provider.providerType,
-        provider.credentialEnv,
-        "https://openrouter.ai/api/v1",
-      ),
-    ).toContain("OPENAI_BASE_URL=https://openrouter.ai/api/v1");
   });
 
-  it("keeps the discovery profile Anthropic before agent-specific surface selection (#6289)", () => {
+  it("keeps the discovery profile Anthropic before agent-specific surface selection (#6289)", async () => {
     const provider = REMOTE_PROVIDER_CONFIG.anthropicCompatible;
 
     // Remote provider setup can replace this registration with type=openai
@@ -175,97 +173,43 @@ describe("onboard provider helpers", () => {
       providerType: "anthropic",
       credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
     });
+  });
+
+  it("checks whether providers exist in the gateway", async () => {
     expect(
-      buildProviderArgs(
-        "create",
-        provider.providerName,
-        provider.providerType,
-        provider.credentialEnv,
-        "https://inference-api.nvidia.com",
+      await providerExistsInGateway("discord-bridge", () =>
+        providerMetadata("discord-bridge", "generic", "DISCORD_BOT_TOKEN"),
       ),
-    ).toContain("ANTHROPIC_BASE_URL=https://inference-api.nvidia.com");
+    ).toBe(true);
+    expect(
+      await providerExistsInGateway("missing-bridge", () => ({
+        status: 1,
+        stderr: "provider 'missing-bridge' not found",
+      })),
+    ).toBe(false);
   });
 
-  it("builds create arguments for generic providers", () => {
-    const args = buildProviderArgs(
-      "create",
-      "discord-bridge",
-      "generic",
-      "DISCORD_BOT_TOKEN",
-      null,
-    );
-    expect(args).toEqual([
-      "provider",
-      "create",
-      "--name",
-      "discord-bridge",
-      "--type",
-      "generic",
-      "--credential",
-      "DISCORD_BOT_TOKEN",
-    ]);
+  it("fails closed when provider metadata is malformed", async () => {
+    await expect(
+      providerExistsInGateway("discord-bridge", () => ({
+        status: 0,
+        stdout: "unexpected output",
+      })),
+    ).rejects.toThrow("OpenShell returned invalid provider metadata");
   });
 
-  it("builds update arguments", () => {
-    const args = buildProviderArgs(
-      "update",
-      "inference",
-      "openai",
-      "NVIDIA_INFERENCE_API_KEY",
-      null,
-    );
-    expect(args).toEqual([
-      "provider",
-      "update",
-      "inference",
-      "--credential",
-      "NVIDIA_INFERENCE_API_KEY",
-    ]);
+  it("treats an operational provider inspection failure as unavailable", async () => {
+    await expect(
+      providerExistsInGateway("discord-bridge", () => ({
+        status: 1,
+        stderr: "gateway temporarily unavailable",
+      })),
+    ).resolves.toBe(false);
   });
 
-  it("appends OPENAI_BASE_URL config for openai providers with a base URL", () => {
-    const args = buildProviderArgs(
-      "create",
-      "inference",
-      "openai",
-      "NVIDIA_INFERENCE_API_KEY",
-      "https://api.example.com/v1",
-    );
-    expect(args).toContain("--config");
-    expect(args).toContain("OPENAI_BASE_URL=https://api.example.com/v1");
-  });
-
-  it("appends ANTHROPIC_BASE_URL config for anthropic providers with a base URL", () => {
-    const args = buildProviderArgs(
-      "create",
-      "inference",
-      "anthropic",
-      "ANTHROPIC_API_KEY",
-      "https://api.anthropic.example.com",
-    );
-    expect(args).toContain("--config");
-    expect(args).toContain("ANTHROPIC_BASE_URL=https://api.anthropic.example.com");
-  });
-
-  it("ignores base URL for generic providers", () => {
-    const args = buildProviderArgs(
-      "create",
-      "slack-bridge",
-      "generic",
-      "SLACK_BOT_TOKEN",
-      "https://ignored.example.com",
-    );
-    expect(args).not.toContain("--config");
-  });
-
-  it("checks whether providers exist in the gateway", () => {
-    expect(providerExistsInGateway("discord-bridge", () => ({ status: 0 }))).toBe(true);
-    expect(providerExistsInGateway("missing-bridge", () => ({ status: 1 }))).toBe(false);
-  });
-
-  it("creates a new provider and returns ok on success", () => {
+  it("creates a new provider and returns ok on success", async () => {
     const commands: string[] = [];
-    const result = upsertProvider(
+    const result = await upsertProvider(
       "discord-bridge",
       "generic",
       "DISCORD_BOT_TOKEN",
@@ -274,7 +218,9 @@ describe("onboard provider helpers", () => {
       (command) => {
         const normalized = command.join(" ");
         commands.push(normalized);
-        if (normalized.includes("provider get")) return { status: 1, stdout: "", stderr: "" };
+        if (normalized.includes("provider get")) {
+          return { status: 1, stdout: "", stderr: "provider 'discord-bridge' not found" };
+        }
         return { status: 0, stdout: "", stderr: "" };
       },
     );
@@ -286,16 +232,18 @@ describe("onboard provider helpers", () => {
     expect(commands[1]).toMatch(/--credential DISCORD_BOT_TOKEN/);
   });
 
-  it("does not add its own log line on top of runner output (#1506)", () => {
+  it("does not add its own log line on top of runner output (#1506)", async () => {
     let stdoutWrites = 0;
-    const result = upsertProvider(
+    const result = await upsertProvider(
       "test-bridge",
       "generic",
       "TEST_TOKEN",
       null,
       { TEST_TOKEN: "tok" },
       (command) => {
-        if (command.includes("get")) return { status: 1, stdout: "", stderr: "" };
+        if (command.includes("get")) {
+          return { status: 1, stdout: "", stderr: "provider 'test-bridge' not found" };
+        }
         stdoutWrites += 1;
         return { status: 0, stdout: "✓ Created provider test-bridge", stderr: "" };
       },
@@ -305,9 +253,9 @@ describe("onboard provider helpers", () => {
     expect(stdoutWrites).toBe(1);
   });
 
-  it("updates existing providers instead of creating (#1155)", () => {
+  it("updates existing providers instead of creating (#1155)", async () => {
     const commands: string[] = [];
-    const result = upsertProvider(
+    const result = await upsertProvider(
       "inference",
       "openai",
       "NVIDIA_INFERENCE_API_KEY",
@@ -315,7 +263,9 @@ describe("onboard provider helpers", () => {
       {},
       (command) => {
         commands.push(command.join(" "));
-        return { status: 0, stdout: "", stderr: "" };
+        return command.includes("get")
+          ? providerMetadata("inference", "openai", "NVIDIA_INFERENCE_API_KEY")
+          : { status: 0, stdout: "", stderr: "" };
       },
     );
 
@@ -328,9 +278,9 @@ describe("onboard provider helpers", () => {
     );
   });
 
-  it("omits --credential from the update args when the env value is empty", () => {
+  it("omits --credential from the update args when the env value is empty", async () => {
     const commands: string[] = [];
-    const result = upsertProvider(
+    const result = await upsertProvider(
       "nvidia-prod",
       "openai",
       "NVIDIA_INFERENCE_API_KEY",
@@ -338,7 +288,9 @@ describe("onboard provider helpers", () => {
       {},
       (command) => {
         commands.push(command.join(" "));
-        return { status: 0, stdout: "", stderr: "" };
+        return command.includes("get")
+          ? providerMetadata("nvidia-prod", "openai", "NVIDIA_INFERENCE_API_KEY")
+          : { status: 0, stdout: "", stderr: "" };
       },
     );
 
@@ -352,24 +304,54 @@ describe("onboard provider helpers", () => {
     expect(commands[1]).toMatch(/OPENAI_BASE_URL=https:\/\/integrate\.api\.nvidia\.com\/v1/);
   });
 
-  it("keeps --credential on the create path even when env is empty", () => {
-    // create cannot omit credentials — OpenShell rejects empty credential
-    // maps on creation. The caller is responsible for staging a value.
+  it("does not apply an OpenAI base URL config to native NVIDIA providers", async () => {
     const commands: string[] = [];
-    upsertProvider("fresh-provider", "generic", "FRESH_TOKEN", null, {}, (command) => {
-      commands.push(command.join(" "));
-      if (command.includes("get")) return { status: 1, stdout: "", stderr: "" };
-      return { status: 0, stdout: "", stderr: "" };
-    });
+    const result = await upsertProvider(
+      "nvidia",
+      "nvidia",
+      "NVIDIA_INFERENCE_API_KEY",
+      "https://integrate.api.nvidia.com/v1",
+      { NVIDIA_INFERENCE_API_KEY: "nvapi-staged" },
+      (command) => {
+        commands.push(command.join(" "));
+        return command.includes("get")
+          ? providerMetadata("nvidia", "nvidia", "NVIDIA_INFERENCE_API_KEY")
+          : { status: 0, stdout: "", stderr: "" };
+      },
+    );
 
-    expect(commands).toHaveLength(2);
-    expect(commands[1]).toMatch(/^provider create --name fresh-provider /);
-    expect(commands[1]).toMatch(/--credential FRESH_TOKEN/);
+    expect(result).toEqual({ ok: true });
+    expect(commands[1]).not.toContain("--config");
   });
 
-  it("keeps --credential on the update path when a value is staged in env", () => {
+  it("fails before create when the credential value is empty", async () => {
     const commands: string[] = [];
-    upsertProvider(
+    const result = await upsertProvider(
+      "fresh-provider",
+      "generic",
+      "FRESH_TOKEN",
+      null,
+      {},
+      (command) => {
+        commands.push(command.join(" "));
+        if (command.includes("get")) {
+          return { status: 1, stdout: "", stderr: "provider 'fresh-provider' not found" };
+        }
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      status: 1,
+      message: "Provider credential input is missing or conflicts with imported credentials.",
+    });
+    expect(commands).toEqual(["provider get fresh-provider"]);
+  });
+
+  it("keeps --credential on the update path when a value is staged in env", async () => {
+    const commands: string[] = [];
+    await upsertProvider(
       "nvidia-prod",
       "openai",
       "NVIDIA_INFERENCE_API_KEY",
@@ -377,7 +359,9 @@ describe("onboard provider helpers", () => {
       { NVIDIA_INFERENCE_API_KEY: "nvapi-staged" },
       (command) => {
         commands.push(command.join(" "));
-        return { status: 0, stdout: "", stderr: "" };
+        return command.includes("get")
+          ? providerMetadata("nvidia-prod", "openai", "NVIDIA_INFERENCE_API_KEY")
+          : { status: 0, stdout: "", stderr: "" };
       },
     );
 
@@ -386,7 +370,7 @@ describe("onboard provider helpers", () => {
     expect(commands[1]).toMatch(/--credential NVIDIA_INFERENCE_API_KEY/);
   });
 
-  it("stages non-nvapi NVIDIA_INFERENCE_API_KEY as hosted custom inference", () => {
+  it("stages non-nvapi NVIDIA_INFERENCE_API_KEY as hosted custom inference", async () => {
     withProviderEnv(
       {
         NVIDIA_INFERENCE_API_KEY: "  repo-hosted-key  ",
@@ -405,7 +389,7 @@ describe("onboard provider helpers", () => {
     );
   });
 
-  it("does not synthesize hosted selection when authoritative resume disables staging", () => {
+  it("does not synthesize hosted selection when authoritative resume disables staging", async () => {
     withProviderEnv(
       {
         NVIDIA_INFERENCE_API_KEY: "repo-hosted-key",
@@ -420,7 +404,7 @@ describe("onboard provider helpers", () => {
     );
   });
 
-  it("supports the NVIDIA QA non-interactive provider-model contract (#6869)", () => {
+  it("supports the NVIDIA QA non-interactive provider-model contract (#6869)", async () => {
     withProviderEnv(
       {
         NEMOCLAW_PROVIDER: "ollama",
@@ -432,7 +416,7 @@ describe("onboard provider helpers", () => {
     );
   });
 
-  it("keeps NEMOCLAW_MODEL ahead of NEMOCLAW_PROVIDER_MODEL", () => {
+  it("keeps NEMOCLAW_MODEL ahead of NEMOCLAW_PROVIDER_MODEL", async () => {
     withProviderEnv(
       {
         NEMOCLAW_PROVIDER: "ollama",
@@ -445,7 +429,7 @@ describe("onboard provider helpers", () => {
     );
   });
 
-  it("preserves NEMOCLAW_MODEL when the provider-model fallback is disabled", () => {
+  it("preserves NEMOCLAW_MODEL when the provider-model fallback is disabled", async () => {
     withProviderEnv(
       {
         NEMOCLAW_MODEL: "nvidia/nemotron-3-super-120b-a12b",
@@ -459,13 +443,13 @@ describe("onboard provider helpers", () => {
     );
   });
 
-  it("omits NEMOCLAW_PROVIDER_MODEL when the provider-model fallback is disabled", () => {
+  it("omits NEMOCLAW_PROVIDER_MODEL when the provider-model fallback is disabled", async () => {
     withProviderEnv({ NEMOCLAW_PROVIDER_MODEL: "fallback-model" }, () => {
       expect(getNonInteractiveModel("openai", { allowProviderModelFallback: false })).toBeNull();
     });
   });
 
-  it("stages Deep Agents NEMOCLAW_PROVIDER_KEY as hosted custom inference", () => {
+  it("stages Deep Agents NEMOCLAW_PROVIDER_KEY as hosted custom inference", async () => {
     withProviderEnv(
       {
         NEMOCLAW_AGENT: "langchain-deepagents-code",
@@ -483,7 +467,7 @@ describe("onboard provider helpers", () => {
     );
   });
 
-  it("does not stage route-like Deep Agents NEMOCLAW_PROVIDER_KEY values as credentials", () => {
+  it("does not stage route-like Deep Agents NEMOCLAW_PROVIDER_KEY values as credentials", async () => {
     withProviderEnv(
       {
         NEMOCLAW_AGENT: "langchain-deepagents-code",
@@ -553,7 +537,7 @@ describe("onboard provider helpers", () => {
     },
   );
 
-  it("keeps generic NEMOCLAW_PROVIDER_KEY from implying hosted custom inference", () => {
+  it("keeps generic NEMOCLAW_PROVIDER_KEY from implying hosted custom inference", async () => {
     withProviderEnv(
       {
         NEMOCLAW_PROVIDER_KEY: "repo-hosted-key",
@@ -566,7 +550,7 @@ describe("onboard provider helpers", () => {
     );
   });
 
-  it("does not override an explicit hosted inference API preference", () => {
+  it("does not override an explicit hosted inference API preference", async () => {
     withProviderEnv(
       {
         NVIDIA_INFERENCE_API_KEY: "repo-hosted-key",
@@ -580,7 +564,7 @@ describe("onboard provider helpers", () => {
     );
   });
 
-  it("keeps explicit cloud provider selection on the Build provider path", () => {
+  it("keeps explicit cloud provider selection on the Build provider path", async () => {
     withProviderEnv(
       {
         NVIDIA_INFERENCE_API_KEY: "repo-hosted-key",
@@ -595,7 +579,7 @@ describe("onboard provider helpers", () => {
     );
   });
 
-  it("preserves explicit custom provider credentials when NVIDIA_INFERENCE_API_KEY is unrelated", () => {
+  it("preserves explicit custom provider credentials when NVIDIA_INFERENCE_API_KEY is unrelated", async () => {
     withProviderEnv(
       {
         COMPATIBLE_API_KEY: "custom-endpoint-key",
@@ -611,16 +595,25 @@ describe("onboard provider helpers", () => {
     );
   });
 
-  it("returns redacted error details when create or update fails", () => {
-    const result = upsertProvider("bad-provider", "generic", "SOME_KEY", null, {}, (command) => {
-      if (command.includes("get")) return { status: 1, stdout: "", stderr: "" };
-      return { status: 1, stdout: "", stderr: "gateway unreachable" };
-    });
+  it("returns redacted error details when create or update fails", async () => {
+    const result = await upsertProvider(
+      "bad-provider",
+      "generic",
+      "SOME_KEY",
+      null,
+      { SOME_KEY: "fake" },
+      (command) => {
+        if (command.includes("get")) {
+          return { status: 1, stdout: "", stderr: "provider 'bad-provider' not found" };
+        }
+        return { status: 1, stdout: "", stderr: "gateway unreachable" };
+      },
+    );
 
     expect(result).toEqual({ ok: false, status: 1, message: "gateway unreachable" });
   });
 
-  it("rechecks sandbox identity after a provider probe and before its mutation (#9833)", () => {
+  it("rechecks sandbox identity after a provider probe and before its mutation (#9833)", async () => {
     const commands: string[] = [];
     const revalidationSteps = [
       () => undefined,
@@ -629,7 +622,7 @@ describe("onboard provider helpers", () => {
       },
     ];
 
-    expect(() =>
+    await expect(
       upsertProvider(
         "alpha-discord-bridge",
         "generic",
@@ -638,17 +631,21 @@ describe("onboard provider helpers", () => {
         { DISCORD_BOT_TOKEN: "secret" },
         (command) => {
           commands.push(command.join(" "));
-          return { status: 1, stdout: "", stderr: "not found" };
+          return {
+            status: 1,
+            stdout: "",
+            stderr: "provider 'alpha-discord-bridge' not found",
+          };
         },
         { revalidateSandboxIdentity: () => revalidationSteps.shift()?.() },
       ),
-    ).toThrow(/sandbox identity changed after provider probe/u);
+    ).rejects.toThrow(/sandbox identity changed after provider probe/u);
     expect(commands).toEqual(["provider get alpha-discord-bridge"]);
   });
 
-  it("rejects an existing generic provider when an exact credential binding is required", () => {
+  it("rejects an existing generic provider when an exact credential binding is required", async () => {
     const commands: string[] = [];
-    const result = upsertProvider(
+    const result = await upsertProvider(
       "alpha-discord-bridge",
       "discord-hermes-static-v1",
       "DISCORD_BOT_TOKEN",
@@ -677,15 +674,12 @@ describe("onboard provider helpers", () => {
       message:
         "Existing provider 'alpha-discord-bridge' does not match the required 'discord-hermes-static-v1' credential binding.",
     });
-    expect(commands).toEqual([
-      "provider get alpha-discord-bridge",
-      "provider get alpha-discord-bridge",
-    ]);
+    expect(commands).toEqual(["provider get alpha-discord-bridge"]);
   });
 
-  it("updates an existing provider when its exact credential binding matches", () => {
+  it("updates an existing provider when its exact credential binding matches", async () => {
     const commands: string[] = [];
-    const result = upsertProvider(
+    const result = await upsertProvider(
       "alpha-discord-bridge",
       "discord-hermes-static-v1",
       "DISCORD_BOT_TOKEN",
@@ -709,7 +703,6 @@ describe("onboard provider helpers", () => {
 
     expect(result).toEqual({ ok: true });
     expect(commands).toEqual([
-      "provider get alpha-discord-bridge",
       "provider get alpha-discord-bridge",
       "provider update alpha-discord-bridge --credential DISCORD_BOT_TOKEN",
     ]);

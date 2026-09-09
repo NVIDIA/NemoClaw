@@ -18,6 +18,8 @@ const openrouterRuntimeOnboard =
 const createDirectSetupInferenceHarness = createDirectSetupInferenceHarnessFactory(
   onboard.createSetupInference,
 );
+const OPENROUTER_PROVIDER_METADATA =
+  "Name: openrouter-api\nType: openai\nCredential keys: OPENROUTER_API_KEY\nConfig keys: OPENAI_BASE_URL\n";
 
 describe("OpenRouter onboarding inference setup", () => {
   it("configures OpenRouter through the runtime header adapter (#5826)", async () => {
@@ -31,6 +33,10 @@ describe("OpenRouter onboarding inference setup", () => {
       const setupOpenRouterRuntimeInference =
         openrouterRuntimeOnboard.setupOpenRouterRuntimeInference;
       const harness = createDirectSetupInferenceHarness({
+        runOpenshell: (args) =>
+          args.slice(0, 2).join(" ") === "provider get"
+            ? { status: 0, stdout: OPENROUTER_PROVIDER_METADATA }
+            : undefined,
         overrides: {
           isNonInteractive: () => true,
           openrouterRuntimeOnboard: {
@@ -96,7 +102,7 @@ describe("OpenRouter onboarding inference setup", () => {
       credentialValue: "sk-or-test",
       isNonInteractive: () => true,
       runOpenshell: () => ({ status: 0 }),
-      upsertProvider: () => ({ ok: true }),
+      upsertProvider: async () => ({ ok: true }),
       verifyInferenceRoute: vi.fn(),
       verifyOnboardInferenceSmoke: vi.fn(() => smokePending),
       ensureAdapter: vi.fn(async () => ({
@@ -130,6 +136,10 @@ describe("OpenRouter onboarding inference setup", () => {
       const setupOpenRouterRuntimeInference =
         openrouterRuntimeOnboard.setupOpenRouterRuntimeInference;
       const harness = createDirectSetupInferenceHarness({
+        runOpenshell: (args) =>
+          args.slice(0, 2).join(" ") === "provider get"
+            ? { status: 0, stdout: OPENROUTER_PROVIDER_METADATA }
+            : undefined,
         overrides: {
           isNonInteractive: () => true,
           openrouterRuntimeOnboard: {
