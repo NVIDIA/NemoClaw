@@ -820,13 +820,7 @@ describe("backupSandboxStateForRebuild failure safety", () => {
     });
 
     await expect(
-      backupSandboxStateForRebuild(
-        "alpha",
-        makeSandboxEntry(),
-        false,
-        () => undefined,
-        makeBail(),
-      ),
+      backupSandboxStateForRebuild("alpha", makeSandboxEntry(), false, () => undefined, makeBail()),
     ).rejects.toThrow("bail: Failed to back up sandbox state.");
   });
 
@@ -841,13 +835,7 @@ describe("backupSandboxStateForRebuild failure safety", () => {
     });
 
     await expect(
-      backupSandboxStateForRebuild(
-        "alpha",
-        makeSandboxEntry(),
-        false,
-        () => undefined,
-        makeBail(),
-      ),
+      backupSandboxStateForRebuild("alpha", makeSandboxEntry(), false, () => undefined, makeBail()),
     ).rejects.toThrow("bail: Failed to back up sandbox state.");
 
     const errorLines = errorSpy.mock.calls.map((args: unknown[]) => String(args[0]));
