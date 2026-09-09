@@ -5184,7 +5184,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          scripts/checks/build-protected-managed-images.sh \
+          "$GITHUB_WORKSPACE/.candidate-runtime/scripts/checks/build-protected-managed-images.sh" \
             --output "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_CONTRACT" \
             --revision "$CHECKOUT_SHA" \
             --cohort "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT" \

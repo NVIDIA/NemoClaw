@@ -412,6 +412,16 @@ describe("protected managed-image runtime workflow", () => {
     );
   });
 
+  it("requires the protected runtime to use the candidate cache consumer", () => {
+    const value = workflow();
+    const build = namedStep(value, "Build exact all-agent protected runtime images");
+    build.run = String(build.run).replace("$GITHUB_WORKSPACE/.candidate-runtime/", "");
+
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
+      "managed-image-protected-runtime step 'Build exact all-agent protected runtime images' must include \"$GITHUB_WORKSPACE/.candidate-runtime/scripts/checks/build-protected-managed-images.sh\"",
+    );
+  });
+
   it("rejects a hosted producer that is not selected with protected runtime", () => {
     const value = workflow();
     multiarchJob(value).if =

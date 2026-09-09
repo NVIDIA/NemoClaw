@@ -311,7 +311,7 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     "Build exact all-agent protected runtime images",
   );
   requireFragments(errors, build, [
-    "scripts/checks/build-protected-managed-images.sh",
+    '"$GITHUB_WORKSPACE/.candidate-runtime/scripts/checks/build-protected-managed-images.sh"',
     '--revision "$CHECKOUT_SHA"',
     '--cohort "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT"',
     "--platform linux/amd64",
