@@ -711,6 +711,7 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
       platform: "linux",
       arch: "arm64",
       env: {},
+      resolveRuntimeProvider: () => proofProvider("docker"),
       runProof: () => passingProof,
       log: (message) => logs.push(message),
     });
@@ -745,6 +746,7 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
     const prover = createArm64ContainerGpuProver({
       platform: "linux",
       arch: "arm64",
+      resolveRuntimeProvider: () => proofProvider("docker"),
       runProof: () => failing,
       log: () => undefined,
     });
@@ -763,6 +765,7 @@ describe("createArm64ContainerGpuProver (#4565)", () => {
     const prover = createArm64ContainerGpuProver({
       platform: "linux",
       arch: "arm64",
+      resolveRuntimeProvider: () => proofProvider("docker"),
       runProof: () => execFormatFailure,
       log: (message) => logs.push(message),
     });
