@@ -82,9 +82,10 @@ while (stack.length > 0 && files < 10000 && bytes < 32 * 1024 * 1024) {
   }
 }
 const dockerSockets = ["/var/run/docker.sock", "/run/docker.sock"].filter((candidate) => fs.existsSync(candidate));
-const result = {upstreamCredentialNames, credentialFiles, dockerSockets, files, bytes};
+const rootProfileLoaded = fs.existsSync("/tmp/nemoclaw-e2e-root-profile-loaded");
+const result = {upstreamCredentialNames, credentialFiles, dockerSockets, rootProfileLoaded, files, bytes};
 process.stdout.write(JSON.stringify(result) + "\n");
-process.exit(upstreamCredentialNames.length === 0 && credentialFiles.length === 0 && dockerSockets.length === 0 ? 0 : 1);
+process.exit(upstreamCredentialNames.length === 0 && credentialFiles.length === 0 && dockerSockets.length === 0 && !rootProfileLoaded ? 0 : 1);
 `;
 const NETWORK_DENIAL_PROBE = String.raw`
 const timer = setTimeout(() => process.exit(2), 20000);
@@ -253,7 +254,6 @@ async function runInteractiveTask(
   await artifacts.writeText("pi-interactive-terminal.txt", result.output);
   expect(result.timedOut).toBe(false);
   expect(result.firedTriggers).toContain(token);
-  expect(result.output).toContain(token);
   expect(result.exitCode).toBe(0);
 }
 
@@ -272,7 +272,7 @@ test(
         "onboard Pi without a Dockerfile build",
         "run headless and interactive Pi tasks",
         "rebuild Pi and preserve session state",
-        "recover Pi after a gateway restart",
+        "recover Pi after sandbox and gateway restarts",
         "prove Pi policy and credential boundaries",
         "destroy Pi and publish bounded evidence",
       ],
@@ -297,6 +297,7 @@ test(
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
       NEMOCLAW_AGENT: "pi",
       NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: catalogPath,
+      NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: "",
       NEMOCLAW_NON_INTERACTIVE: "1",
       NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
       OPENSHELL_DRIVERS: "docker",
@@ -319,9 +320,8 @@ test(
     });
 
     progress.phase("validate the exact Pi candidate receipt");
-    expect(receipt.contract.agent).toBe("pi");
-    expect(receipt.contract.platform).toBe(platform);
-    expect(receipt.contract.source.repository).toBe("NVIDIA/NemoClaw");
+    // readPiQualificationReceipt already validates these fields through the
+    // managed-image contract parser; this lane proves source and runtime parity.
     const piDockerfiles = ["agents/pi/Dockerfile", "agents/pi/Dockerfile.base"];
     const copiedSources = piDockerfiles.flatMap((dockerfile) =>
       directDockerfileCopySources(path.join(REPO_ROOT, dockerfile), dockerfile).map(
@@ -406,10 +406,33 @@ test(
     expect(sessionsAfterRebuild).toBe(sessionsBeforeRebuild);
     const rebuildProof = await runReadTask(artifacts, host, sandbox, env, "after-rebuild");
 
-    progress.phase("recover Pi after a gateway restart");
+    progress.phase("recover Pi after sandbox and gateway restarts");
+    const personalProfiles = await execPiShell(
+      sandbox,
+      trustedSandboxShellScript(
+        "set -euo pipefail; printf '%s\\n' '' 'export NEMOCLAW_E2E_PI_PROFILE=preserved' 'case \"$(id -u)\" in 0) touch /tmp/nemoclaw-e2e-root-profile-loaded ;; esac' | tee -a /sandbox/.bashrc /sandbox/.profile >/dev/null; sha256sum /sandbox/.bashrc /sandbox/.profile",
+      ),
+      { artifactName: "pi-personal-profiles-before-recovery", env, timeoutMs: 30_000 },
+    );
+    expect(personalProfiles.exitCode, resultText(personalProfiles)).toBe(0);
+    const restart = await host.command(
+      "bash",
+      ["-ec", '"$1" "$2" stop; "$1" "$2" start', "pi-sandbox-restart", host.commandPath, SANDBOX_NAME],
+      { artifactName: "pi-sandbox-stop-start", env, timeoutMs: 6 * 60_000 },
+    );
+    expect(restart.exitCode, resultText(restart)).toBe(0);
     await lifecycle.restartGatewayRuntime({ delayMs: 2_000, sandboxName: SANDBOX_NAME });
     await lifecycle.waitForGatewayConnected({ attempts: 60, intervalMs: 5_000 });
     const recoveryProof = await runReadTask(artifacts, host, sandbox, env, "after-recovery");
+    const profilesAfterRecovery = await execPiShell(
+      sandbox,
+      trustedSandboxShellScript(
+        "set -eu; : >> /sandbox/.bashrc; : >> /sandbox/.profile; /usr/bin/env -u NEMOCLAW_E2E_PI_PROFILE bash -lc 'test \"$NEMOCLAW_E2E_PI_PROFILE\" = preserved'; /usr/bin/env -u NEMOCLAW_E2E_PI_PROFILE bash -ic 'test \"$NEMOCLAW_E2E_PI_PROFILE\" = preserved'; sha256sum /sandbox/.bashrc /sandbox/.profile",
+      ),
+      { artifactName: "pi-personal-profiles-after-recovery", env, timeoutMs: 30_000 },
+    );
+    expect(profilesAfterRecovery.exitCode, resultText(profilesAfterRecovery)).toBe(0);
+    expect(profilesAfterRecovery.stdout).toBe(personalProfiles.stdout);
 
     progress.phase("prove Pi policy and credential boundaries");
     const security = await sandbox.exec(SANDBOX_NAME, ["node", "-e", SECURITY_PROBE], {

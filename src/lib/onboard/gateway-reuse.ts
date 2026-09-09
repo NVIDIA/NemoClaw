@@ -12,6 +12,7 @@ import {
   shouldSelectNamedGatewayForReuse,
 } from "../state/gateway";
 import * as dockerDriverGatewayLaunch from "./docker-driver-gateway-launch";
+import { configuredRuntimeProviderOwnsHostReadiness } from "./docker-driver-gateway-env";
 import * as gatewayService from "./docker-driver-gateway-service";
 import type { PortProbeResult } from "./preflight";
 
@@ -145,6 +146,7 @@ export function createDockerDriverGatewayReuseApplication(
     state: GatewayReuseState,
   ): Promise<GatewayReuseState> {
     if (!deps.isDockerDriverGatewayEnabled() || state !== "healthy") return state;
+    if (configuredRuntimeProviderOwnsHostReadiness()) return state;
 
     const gatewayBin = deps.resolveOpenShellGatewayBinary();
     const baseDesiredEnv = deps.getDockerDriverGatewayEnv(
