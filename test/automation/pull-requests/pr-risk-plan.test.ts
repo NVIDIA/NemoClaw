@@ -576,6 +576,7 @@ describe("deterministic PR risk plan", () => {
     "scripts/checks/build-protected-managed-images.sh",
     "src/lib/actions/sandbox/mcp-bridge-adapter-openclaw.ts",
     "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.106.json",
+    "src/lib/extra-agents-validation.ts",
     "src/lib/core/json-types.ts",
     "src/lib/core/ports.ts",
     "src/lib/messaging/runtime.ts",

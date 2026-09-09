@@ -82,9 +82,10 @@ while (stack.length > 0 && files < 10000 && bytes < 32 * 1024 * 1024) {
   }
 }
 const dockerSockets = ["/var/run/docker.sock", "/run/docker.sock"].filter((candidate) => fs.existsSync(candidate));
-const result = {upstreamCredentialNames, credentialFiles, dockerSockets, files, bytes};
+const rootProfileLoaded = fs.existsSync("/tmp/nemoclaw-e2e-root-profile-loaded");
+const result = {upstreamCredentialNames, credentialFiles, dockerSockets, rootProfileLoaded, files, bytes};
 process.stdout.write(JSON.stringify(result) + "\n");
-process.exit(upstreamCredentialNames.length === 0 && credentialFiles.length === 0 && dockerSockets.length === 0 ? 0 : 1);
+process.exit(upstreamCredentialNames.length === 0 && credentialFiles.length === 0 && dockerSockets.length === 0 && !rootProfileLoaded ? 0 : 1);
 `;
 const NETWORK_DENIAL_PROBE = String.raw`
 const timer = setTimeout(() => process.exit(2), 20000);
@@ -409,7 +410,7 @@ test(
     const personalProfiles = await execPiShell(
       sandbox,
       trustedSandboxShellScript(
-        "set -eu; for f in /sandbox/.bashrc /sandbox/.profile; do printf '\\nexport NEMOCLAW_E2E_PI_PROFILE=preserved\\n' >> \"$f\"; done; sha256sum /sandbox/.bashrc /sandbox/.profile",
+        "set -euo pipefail; printf '%s\\n' '' 'export NEMOCLAW_E2E_PI_PROFILE=preserved' 'case \"$(id -u)\" in 0) touch /tmp/nemoclaw-e2e-root-profile-loaded ;; esac' | tee -a /sandbox/.bashrc /sandbox/.profile >/dev/null; sha256sum /sandbox/.bashrc /sandbox/.profile",
       ),
       { artifactName: "pi-personal-profiles-before-recovery", env, timeoutMs: 30_000 },
     );
