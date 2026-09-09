@@ -620,10 +620,12 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
       providerIdentity: options.runtimeProviderIdentityProof,
     });
   }
-  vi.spyOn(sandboxProviderCleanup, "runSandboxProviderPreDeleteCleanup").mockImplementation(() => {
-    events.push("detach");
-    return { detached: options.detachedProviders ?? [], failures: [] };
-  });
+  vi.spyOn(sandboxProviderCleanup, "runSandboxProviderPreDeleteCleanup").mockImplementation(
+    async () => {
+      events.push("detach");
+      return { detached: options.detachedProviders ?? [], failures: [] };
+    },
+  );
   vi.spyOn(sandboxProviderCleanup, "emitProviderDetachResidualHint").mockImplementation(
     () => undefined,
   );

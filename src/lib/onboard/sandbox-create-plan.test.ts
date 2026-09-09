@@ -335,9 +335,7 @@ describe("resolveSandboxCreatePolicyTier", () => {
       [],
       expect.objectContaining({ policyTier: "balanced" }),
     );
-    expect(plan.initialSandboxPolicy.appliedPresets).toContain(
-      "openclaw-diagnostics-otel-local",
-    );
+    expect(plan.initialSandboxPolicy.appliedPresets).toContain("openclaw-diagnostics-otel-local");
     expect(plan).not.toHaveProperty("policyTier");
   });
 });
@@ -677,7 +675,9 @@ describe("resolveSandboxCreateIntent", () => {
         events.push("disclose");
         expect(policy.appliedPresets).toEqual(["telegram"]);
       },
-      runProviderPreDeleteCleanup: () => events.push("cleanup"),
+      runProviderPreDeleteCleanup: () => {
+        events.push("cleanup");
+      },
       upsertMessagingProviders: vi.fn((receivedTokenDefs, options) => {
         events.push("upsert");
         expect(receivedTokenDefs).toEqual(tokenDefs);
@@ -754,7 +754,9 @@ describe("resolveSandboxCreateIntent", () => {
       events.push("policy-cleanup");
       return true;
     });
-    const runProviderPreDeleteCleanup = vi.fn(() => events.push("provider-cleanup"));
+    const runProviderPreDeleteCleanup = vi.fn(() => {
+      events.push("provider-cleanup");
+    });
     const upsertMessagingProviders = vi.fn(() => {
       events.push("upsert");
       return ["sandbox-telegram-bridge"];

@@ -679,6 +679,7 @@ export function createCliOpenShellProviderAdapter(
       request,
       undefined,
       3,
+      true,
     );
     const output = commandOutput(result);
     const error = commandError(result);
@@ -689,6 +690,26 @@ export function createCliOpenShellProviderAdapter(
       TOLERATED_DETACH_OUTPUT_RE.test(output);
     if (confirmedIdempotentDetach) {
       return success({ changed: false });
+    }
+    if (
+      !result.error &&
+      !result.signal &&
+      result.status !== null &&
+      error?.kind === "command" &&
+      /\bsandbox\s+[^\n]{0,200}?(?:\bNotFound\b|\bnot\s+found\b)/i.test(output)
+    ) {
+      return failure({
+        kind: "command",
+        reason: "sandbox_not_found",
+        message: `OpenShell sandbox not found: '${request.sandboxName}'.`,
+      });
+    }
+    if (
+      error?.kind === "command" &&
+      error.reason === "not_found" &&
+      !/provider[^\n]{0,200}?(?:\bNotFound\b|\bnot\s+found\b)/i.test(output)
+    ) {
+      return failure({ ...error, reason: "failed" });
     }
     return error ? failure(error) : success({ changed: true });
   };

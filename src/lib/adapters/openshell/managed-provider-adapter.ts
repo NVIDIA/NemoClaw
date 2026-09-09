@@ -4,10 +4,14 @@
 import type { OpenShellProviderAdapter } from "./provider-adapter";
 import { createCliOpenShellProviderAdapter, type RunProviderCommand } from "./provider-adapter-cli";
 import type { OpenShellGatewayTarget } from "./sandbox-observer";
+import type { OpenShellGatewayEndpointEnvironment } from "./gateway-scope";
 
 export const managedProviderGatewayTarget: OpenShellGatewayTarget = { kind: "selected" };
 
 /** Bind managed recovery consumers to one selected-gateway provider protocol owner. */
-export function createManagedProviderAdapter(run?: RunProviderCommand): OpenShellProviderAdapter {
-  return createCliOpenShellProviderAdapter(run ? { run } : {});
+export function createManagedProviderAdapter(
+  run?: RunProviderCommand,
+  options: { environment?: OpenShellGatewayEndpointEnvironment } = {},
+): OpenShellProviderAdapter {
+  return createCliOpenShellProviderAdapter({ ...options, run });
 }

@@ -278,6 +278,14 @@ export function withRegistryLockAt<T>(registryFile: string, operation: () => T, 
 export function withProcessBoundRegistryLockAt<T>(registryFile: string, operation: () => T, deps: RegistryLockDeps = {}): T {
   return withAcquired(`${registryFile}.lock`, true, operation, deps);
 }
+export async function withProcessBoundRegistryLockAtAsync<T>(registryFile: string, operation: () => T | Promise<T>, deps: RegistryLockDeps = {}): Promise<T> {
+  const lock = acquire(`${registryFile}.lock`, true, deps);
+  try {
+    return await operation();
+  } finally {
+    release(lock);
+  }
+}
 export function acquireProcessBoundLockAt(lockDirectory: string, deps: RegistryLockDeps = {}): ProcessBoundLockHandle {
   const handle = {};
   handles.set(handle, acquire(lockDirectory, process.platform === "linux", deps));

@@ -13,8 +13,8 @@ import {
   withOllamaProxyLifecycleTransaction,
 } from "../../inference/ollama/proxy";
 import { OPENROUTER_PROVIDER_NAME } from "../../inference/openrouter";
-import { readGatewayProviderMetadata } from "../gateway-provider-metadata";
-import { deleteProviderWithRecovery, parseAttachedSandboxes } from "../sandbox-provider-cleanup";
+import { deleteProviderWithRecovery } from "../sandbox-provider-cleanup";
+import { createManagedProviderAdapter } from "../../adapters/openshell/managed-provider-adapter";
 import {
   gatewayReachableCompatibleEndpointUrl,
   reuseRegisteredProviderWithGatewayEndpoint,
@@ -47,15 +47,15 @@ type StaleProviderReplaceResult = { ok: boolean; status?: number | null; message
  * unconstrained. A provider still attached to other live sandboxes fails closed
  * too — flipping its type would silently break their Anthropic routing.
  */
-function replaceStaleAnthropicProviderForOpenAiSurface(args: {
+async function replaceStaleAnthropicProviderForOpenAiSurface(args: {
   provider: string;
   sandboxName: string | null;
   runOpenshell: RemoteProviderDeps["runOpenshell"];
-  readProviderMetadata: NonNullable<RemoteProviderDeps["readGatewayProviderMetadata"]>;
+  readProviderMetadata: RemoteProviderDeps["readGatewayProviderMetadata"];
   removeGatewayProvider: NonNullable<RemoteProviderDeps["deleteGatewayProvider"]>;
   redact: RemoteProviderDeps["redact"];
   compactText: RemoteProviderDeps["compactText"];
-}): StaleProviderReplaceResult {
+}): Promise<StaleProviderReplaceResult> {
   const {
     provider,
     sandboxName,
@@ -65,21 +65,42 @@ function replaceStaleAnthropicProviderForOpenAiSurface(args: {
     redact,
     compactText,
   } = args;
-  const live = readProviderMetadata(provider, runOpenshell);
-  if (!live || live.type === "openai") return { ok: true };
-  const attempt = runOpenshell(["provider", "delete", provider], {
-    ignoreError: true,
-    suppressOutput: true,
+  const adapter = createManagedProviderAdapter((command, options) => {
+    const result = runOpenshell(command, options);
+    return {
+      ...result,
+      stdout:
+        typeof result.stdout === "string" || Buffer.isBuffer(result.stdout) ? result.stdout : null,
+      stderr:
+        typeof result.stderr === "string" || Buffer.isBuffer(result.stderr) ? result.stderr : null,
+    };
   });
-  if (attempt.status === 0) return { ok: true };
-  const raw = `${attempt.stderr || ""}\n${attempt.stdout || ""}`;
-  const attached = parseAttachedSandboxes(raw);
+  const live = readProviderMetadata
+    ? await readProviderMetadata(provider, runOpenshell)
+    : await adapter
+        .getProvider({ target: { kind: "selected" }, providerName: provider })
+        .then((result) => {
+          if (result.ok) return result.value;
+          if (result.error.kind === "command" && result.error.reason === "not_found") return null;
+          throw new Error(result.error.message);
+        });
+  if (!live || live.type === "openai") return { ok: true };
+  const attempt = await adapter.deleteProvider({
+    target: { kind: "selected" },
+    providerName: provider,
+  });
+  if (attempt.ok) return { ok: true };
+  const raw = attempt.error.message;
+  const attached =
+    attempt.error.kind === "command" && attempt.error.reason === "attached"
+      ? [...(attempt.error.attachedSandboxes ?? [])]
+      : [];
   const allowedSandboxes = sandboxName === null ? [] : [sandboxName];
   const foreign = attached.filter((name) => !allowedSandboxes.includes(name));
   if (sandboxName === null && attached.length > 0) {
     return {
       ok: false,
-      status: attempt.status ?? 1,
+      status: 1,
       message:
         `Provider '${provider}' is attached to sandbox(es) (${attached.join(", ")}) ` +
         `but no target sandbox was confirmed, so it cannot be safely force-detached ` +
@@ -88,7 +109,7 @@ function replaceStaleAnthropicProviderForOpenAiSurface(args: {
     };
   }
   if (attached.length > 0 && foreign.length === 0) {
-    const recovery = removeGatewayProvider(provider, { runOpenshell, allowedSandboxes });
+    const recovery = await removeGatewayProvider(provider, { runOpenshell, allowedSandboxes });
     const detail = compactText(redact(`${recovery.stderr || ""} ${recovery.stdout || ""}`));
     return recovery.ok
       ? { ok: true }
@@ -101,7 +122,7 @@ function replaceStaleAnthropicProviderForOpenAiSurface(args: {
   if (foreign.length > 0) {
     return {
       ok: false,
-      status: attempt.status ?? 1,
+      status: 1,
       message:
         `Provider '${provider}' is attached to other sandbox(es) (${foreign.join(", ")}) ` +
         `and cannot be re-registered for the OpenAI-compatible route without breaking ` +
@@ -112,7 +133,7 @@ function replaceStaleAnthropicProviderForOpenAiSurface(args: {
   const detail = compactText(redact(raw));
   return {
     ok: false,
-    status: attempt.status ?? 1,
+    status: 1,
     message: `Failed to replace provider '${provider}' for the OpenAI-compatible route${detail ? `: ${detail}` : "."}`,
   };
 }
@@ -232,11 +253,7 @@ export async function setupRemoteProviderInference(
   const probeOpenAiSurface = deps.probeOpenAiLikeEndpoint ?? probeOpenAiLikeEndpointOptimized;
   // The concrete modules type their openshell runners independently; the deps
   // runner is call-compatible with both, so bridge the nominal mismatch here.
-  const readProviderMetadata =
-    deps.readGatewayProviderMetadata ??
-    (readGatewayProviderMetadata as unknown as NonNullable<
-      RemoteProviderDeps["readGatewayProviderMetadata"]
-    >);
+  const readProviderMetadata = deps.readGatewayProviderMetadata;
   const removeGatewayProvider =
     deps.deleteGatewayProvider ??
     (deleteProviderWithRecovery as unknown as NonNullable<
@@ -326,7 +343,7 @@ export async function setupRemoteProviderInference(
             } else {
               // `provider update` cannot change --type, so a provider left behind
               // by an earlier Anthropic-Messages registration must be replaced.
-              const replaced = replaceStaleAnthropicProviderForOpenAiSurface({
+              const replaced = await replaceStaleAnthropicProviderForOpenAiSurface({
                 provider,
                 sandboxName,
                 runOpenshell,

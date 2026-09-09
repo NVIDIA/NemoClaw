@@ -295,10 +295,13 @@ describe("managed clone provider transaction", () => {
 
   it("routes preparation inspection through the injected provider adapter", async () => {
     const runner = providerRunner();
-    const getProvider: OpenShellProviderAdapter["getProvider"] = vi.fn(async () => ({
-      ok: false,
-      error: { kind: "command", reason: "not_found", message: "Provider was not found." },
-    }) as const);
+    const getProvider: OpenShellProviderAdapter["getProvider"] = vi.fn(
+      async () =>
+        ({
+          ok: false,
+          error: { kind: "command", reason: "not_found", message: "Provider was not found." },
+        }) as const,
+    );
 
     const { prepared } = await prepareWithBinding({
       providerAdapter: { getProvider } as OpenShellProviderAdapter,
@@ -478,7 +481,7 @@ describe("managed clone provider transaction", () => {
     expect(
       runner.commands.some((command) => /provider (create|delete|update)/u.test(command)),
     ).toBe(false);
-    expect(cleanupManagedCloneProviderTransaction(receipt, runner.run)).toMatchObject({
+    expect(await cleanupManagedCloneProviderTransaction(receipt, runner.run)).toMatchObject({
       status: "complete",
       providers: [{ outcome: "reused-preserved" }],
     });
@@ -656,7 +659,7 @@ describe("managed clone provider transaction", () => {
 
     expect(receipt.providers).toEqual([{ binding: TOKEN_BINDING, disposition: "created" }]);
     expect(Object.isFrozen(receipt.providers[0]?.binding)).toBe(true);
-    expect(cleanupManagedCloneProviderTransaction(receipt, runner.run)).toMatchObject({
+    expect(await cleanupManagedCloneProviderTransaction(receipt, runner.run)).toMatchObject({
       status: "complete",
       providers: [{ outcome: "deleted" }],
     });
@@ -664,7 +667,7 @@ describe("managed clone provider transaction", () => {
     const deletesBeforeRetry = runner.commands.filter((command) =>
       command.startsWith("provider delete"),
     ).length;
-    expect(cleanupManagedCloneProviderTransaction(receipt, runner.run)).toMatchObject({
+    expect(await cleanupManagedCloneProviderTransaction(receipt, runner.run)).toMatchObject({
       status: "complete",
       providers: [{ outcome: "already-cleaned" }],
     });
@@ -798,7 +801,7 @@ describe("managed clone provider transaction", () => {
     });
     runner.setFailDelete(true);
 
-    expect(cleanupManagedCloneProviderTransaction(receipt, runner.run)).toMatchObject({
+    expect(await cleanupManagedCloneProviderTransaction(receipt, runner.run)).toMatchObject({
       status: "partial",
       providers: [{ outcome: "delete-failed" }],
     });
@@ -813,9 +816,9 @@ describe("managed clone provider transaction", () => {
       runOpenshell: runner.run,
     });
 
-    expect(() =>
+    await expect(
       cleanupManagedCloneProviderTransaction(structuredClone(receipt), runner.run),
-    ).toThrow(/exact process-local ownership receipt/u);
+    ).rejects.toThrow(/exact process-local ownership receipt/u);
     expect(runner.live.has(TOKEN_BINDING.providerName)).toBe(true);
   });
 

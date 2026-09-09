@@ -12,6 +12,7 @@ import {
   ProcessBoundLockContentionError,
   releaseProcessBoundLock,
   withProcessBoundRegistryLockAt,
+  withProcessBoundRegistryLockAtAsync,
   withRegistryLockAt,
   type RegistryLockDeps,
 } from "./registry/lock";
@@ -156,6 +157,50 @@ describe("registry lock ownership decisions", () => {
 });
 
 describe("process-bound registry locking", () => {
+  it.each([
+    {
+      outcome: "success",
+      finish: () => "removed",
+      assert: (operation: Promise<string>) => expect(operation).resolves.toBe("removed"),
+    },
+    {
+      outcome: "failure",
+      finish: (): string => {
+        throw new Error("cleanup failed");
+      },
+      assert: (operation: Promise<string>) => expect(operation).rejects.toThrow("cleanup failed"),
+    },
+  ])(
+    "holds the registry lock until asynchronous cleanup settles: $outcome",
+    async ({ finish, assert }) => {
+      const test = fixture("nemoclaw-async-provider-cleanup-lock-");
+      let settle!: () => void;
+      const pending = new Promise<void>((resolve) => {
+        settle = resolve;
+      });
+      const operation = withProcessBoundRegistryLockAtAsync(
+        test.registryFile,
+        async () => {
+          await pending;
+          expect(fs.existsSync(test.lockDir)).toBe(true);
+          return finish();
+        },
+        exactDeps(),
+      );
+      expect(fs.existsSync(test.lockDir)).toBe(true);
+      expect(() =>
+        withProcessBoundRegistryLockAt(
+          test.registryFile,
+          () => undefined,
+          exactDeps({ maxRetries: 0 }),
+        ),
+      ).toThrow();
+      settle();
+      await assert(operation);
+      expect(fs.existsSync(test.lockDir)).toBe(false);
+    },
+  );
+
   it("holds beyond ten seconds and makes a contender exhaust 120 bounded retries", () => {
     const test = fixture("nemoclaw-process-bound-lock-");
     const wait = vi.fn();
@@ -337,9 +382,9 @@ describe("generation-safe registry lock removal", () => {
     const handle = acquireProcessBoundLockAt(test.lockDir, exactDeps());
 
     expect(fs.readFileSync(test.ownerFile, "utf8")).toBe(String(process.pid));
-    expect(() =>
-      acquireProcessBoundLockAt(test.lockDir, exactDeps({ maxRetries: 1 })),
-    ).toThrow(ProcessBoundLockContentionError);
+    expect(() => acquireProcessBoundLockAt(test.lockDir, exactDeps({ maxRetries: 1 }))).toThrow(
+      ProcessBoundLockContentionError,
+    );
     releaseProcessBoundLock(handle);
     expect(fs.existsSync(test.lockDir)).toBe(false);
     expect(() => releaseProcessBoundLock(handle)).toThrow(/inactive/);
