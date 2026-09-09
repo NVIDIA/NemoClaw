@@ -5,10 +5,7 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-const sourcePath = path.resolve(
-  import.meta.dirname,
-  "../../../agents/langchain-deepagents-code/dcode-login-profile.sh",
-);
+const repoRoot = path.resolve(import.meta.dirname, "../../..");
 
 // The live fresh-reonboard check owns Linux /etc/profile.d ordering against
 // personal profiles. This test executes the hook's environment changes only.
@@ -20,14 +17,13 @@ function runHook(command: string) {
       "--norc",
       "-p",
       "-c",
-      '. "$1"; printf \'%s\\n\' "$HOME" "${BASH_ENV-unset}" "${ENV-unset}"; ' + command,
-      "dcode-login-hook-test",
-      sourcePath,
+      '. agents/langchain-deepagents-code/dcode-login-profile.sh; printf \'%s\\n\' "$HOME" "${BASH_ENV-unset}" "${ENV-unset}"; ' +
+        command,
     ],
     {
       encoding: "utf8",
+      cwd: repoRoot,
       env: {
-        PATH: process.env.PATH,
         HOME: "/sandbox",
         BASH_ENV: "/sandbox/.bashrc",
         ENV: "/sandbox/.profile",
