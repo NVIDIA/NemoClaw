@@ -1251,8 +1251,11 @@ function Invoke-NativeCredentialBindingControl {
     }
     $selections = @()
     $result = $null
+    $primaryFailure = $null
+    $cleanupFailures = [Collections.Generic.List[string]]::new()
     try {
         foreach ($case in $cases) {
+            Write-Host "[CREDENTIAL CONTROL] Prepare inference binding: $($case.agent)"
             $metadata = [pscustomobject]@{
                 schemaVersion = 1
                 classification = 'nemoclaw-native-windows-agent-configuration'
@@ -1275,6 +1278,7 @@ function Invoke-NativeCredentialBindingControl {
                     Fail-PackageQualification 'Preparing a credential binding changed configuration or the remembered agent.'
                 }
             }
+            Write-Host "[CREDENTIAL CONTROL] Check absent inference key: $($case.agent)"
             $absent = Invoke-NativeCredentialHelper -LauncherPath $nemoclawUiLauncherPath `
                 -Arguments @('--credential-read', 'compatible', '--binding', $case.binding)
             if ($absent.exitCode -eq 0 -or $absent.stdout.Length -ne 0) {
@@ -1282,11 +1286,13 @@ function Invoke-NativeCredentialBindingControl {
             }
             $case.owned = $true
             foreach ($service in $case.services.Keys) {
+                Write-Host "[CREDENTIAL CONTROL] Prepare service binding: $($case.agent)/$service"
                 $servicePrepared = Invoke-NativeCredentialHelper -LauncherPath $nemoclawUiLauncherPath `
                     -Arguments @('--configure-native', '--prepare-service', $service) -StandardInput ($metadata | ConvertTo-Json -Depth 8 -Compress)
                 if ($servicePrepared.exitCode -ne 0 -or $servicePrepared.stdout -cnotmatch '^[a-f0-9]{64}$' -or $servicePrepared.stdout -ceq $case.binding) {
                     Fail-PackageQualification 'A service credential binding was invalid or aliased inference.'
                 }
+                Write-Host "[CREDENTIAL CONTROL] Check absent service key: $($case.agent)/$service"
                 $serviceAbsent = Invoke-NativeCredentialHelper -LauncherPath $nemoclawUiLauncherPath `
                     -Arguments @('--credential-read', $service, '--binding', $servicePrepared.stdout)
                 if ($serviceAbsent.exitCode -eq 0 -or $serviceAbsent.stdout.Length -ne 0) {
@@ -1297,10 +1303,12 @@ function Invoke-NativeCredentialBindingControl {
         }
         if ($cases[0].binding -ceq $cases[1].binding) { Fail-PackageQualification 'Different endpoints shared a credential binding.' }
         foreach ($case in $cases) {
+            Write-Host "[CREDENTIAL CONTROL] Configure native canary selection: $($case.agent)"
             $selections += Invoke-NativeSetupSelection -Agent $case.agent -ChoiceId $case.choice `
                 -Standalone -ReplaceOwned -Inference compatible -Endpoint $case.endpoint `
                 -CredentialCanary $case.canary -ServiceCanaries $case.services -EvidenceName $case.evidence
         }
+        Write-Host '[CREDENTIAL CONTROL] Verify stored bindings'
         foreach ($case in $cases) {
             $read = Invoke-NativeCredentialHelper -LauncherPath $nemoclawUiLauncherPath `
                 -Arguments @('--credential-read', 'compatible', '--binding', $case.binding)
@@ -1315,6 +1323,7 @@ function Invoke-NativeCredentialBindingControl {
                 }
             }
         }
+        Write-Host '[CREDENTIAL CONTROL] Verify agent isolation and scoped deletion'
         $wrongAgentMetadata = [pscustomobject]@{
             schemaVersion = 1; classification = 'nemoclaw-native-windows-agent-configuration'; profile = 'personal'
             agent = $cases[1].agent; inference = 'compatible'; endpoint = $cases[0].endpoint
@@ -1352,8 +1361,10 @@ function Invoke-NativeCredentialBindingControl {
             }
             rememberedAgentMatches = $true; selections = $selections
         }
+    } catch {
+        $primaryFailure = $_
     } finally {
-        $cleanupFailed = $false
+        Write-Host '[CREDENTIAL CONTROL] Restore owned keys and settings'
         foreach ($case in $cases) {
             foreach ($service in $case.serviceBindings.Keys) {
                 try {
@@ -1361,8 +1372,8 @@ function Invoke-NativeCredentialBindingControl {
                         -Arguments @('--credential-delete', $service, '--binding', $case.serviceBindings[$service])
                     $serviceAbsent = Invoke-NativeCredentialHelper -LauncherPath $nemoclawUiLauncherPath `
                         -Arguments @('--credential-read', $service, '--binding', $case.serviceBindings[$service])
-                    if ($serviceDeleted.exitCode -ne 0 -or $serviceAbsent.exitCode -eq 0 -or $serviceAbsent.stdout.Length -ne 0) { $cleanupFailed = $true }
-                } catch { $cleanupFailed = $true }
+                    if ($serviceDeleted.exitCode -ne 0 -or $serviceAbsent.exitCode -eq 0 -or $serviceAbsent.stdout.Length -ne 0) { $cleanupFailures.Add("key:$($case.agent)/$service") }
+                } catch { $cleanupFailures.Add("key:$($case.agent)/$service") }
             }
             if (-not $case.owned) { continue }
             try {
@@ -1370,23 +1381,32 @@ function Invoke-NativeCredentialBindingControl {
                     -Arguments @('--credential-delete', 'compatible', '--binding', $case.binding)
                 $absent = Invoke-NativeCredentialHelper -LauncherPath $nemoclawUiLauncherPath `
                     -Arguments @('--credential-read', 'compatible', '--binding', $case.binding)
-                if ($deleted.exitCode -ne 0 -or $absent.exitCode -eq 0 -or $absent.stdout.Length -ne 0) { $cleanupFailed = $true }
-            } catch { $cleanupFailed = $true }
+                if ($deleted.exitCode -ne 0 -or $absent.exitCode -eq 0 -or $absent.stdout.Length -ne 0) { $cleanupFailures.Add("key:$($case.agent)/inference") }
+            } catch { $cleanupFailures.Add("key:$($case.agent)/inference") }
         }
         foreach ($snapshot in $snapshots) {
+            $snapshotLabel = if ($snapshot.path -ceq $nativeActiveAgentPath) { 'remembered-agent' } else { Split-Path -Leaf (Split-Path -Parent $snapshot.path) }
             $temporary = $snapshot.path + '.restore-' + [guid]::NewGuid().ToString('N')
             try {
                 if ((Get-FileHash -LiteralPath $snapshot.path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $script:OwnedNativeConfigurations[$snapshot.path]) {
                     throw 'The owned configuration changed during credential control.'
                 }
                 [IO.File]::WriteAllBytes($temporary, $snapshot.bytes)
-                [IO.File]::Replace($temporary, $snapshot.path, $null)
+                [IO.File]::Replace($temporary, $snapshot.path, [System.Management.Automation.Language.NullString]::Value)
                 $script:OwnedNativeConfigurations[$snapshot.path] = $snapshot.hash
-            } catch { $cleanupFailed = $true }
-            finally { if (Test-Path -LiteralPath $temporary -PathType Leaf) { [IO.File]::Delete($temporary) } }
+            } catch { $cleanupFailures.Add("restore:$snapshotLabel") }
+            finally {
+                try { if (Test-Path -LiteralPath $temporary -PathType Leaf) { [IO.File]::Delete($temporary) } }
+                catch { $cleanupFailures.Add("temporary:$snapshotLabel") }
+            }
         }
-        if ($cleanupFailed) { Fail-PackageQualification 'Credential binding control could not remove its keys and restore its owned settings.' }
     }
+    if ($cleanupFailures.Count -gt 0) {
+        $cleanupMessage = 'Credential binding control could not restore owned state: ' + ($cleanupFailures -join ', ') + '.'
+        if ($primaryFailure) { Write-Warning -Message $cleanupMessage -WarningAction Continue }
+        else { Fail-PackageQualification $cleanupMessage }
+    }
+    if ($primaryFailure) { throw $primaryFailure }
     $result | Add-Member -NotePropertyName ownedStateRestored -NotePropertyValue $true
     Write-Host '[PASS] Native WPF setup kept two canary keys separate by agent and endpoint; scoped deletion and owned cleanup passed'
     return $result
