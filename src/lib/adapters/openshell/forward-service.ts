@@ -232,6 +232,21 @@ function processExecutableMatches(
     .some((line) => executableMatches(line.slice(1), target.executable));
 }
 
+/** PIDs listening on a local IPv4 port, found with the same probes the ownership proof uses. */
+export function localListenerPids(
+  port: number,
+  options: ForwardServiceOwnerOptions = {},
+): string[] {
+  if (!isPort(port)) return [];
+  return listenerPids(
+    port,
+    options.platform ?? process.platform,
+    options.procRoot ?? "/proc",
+    options.procWorkLimit ?? LINUX_PROC_WORK_LIMIT,
+    options.probe ?? captureProcess,
+  );
+}
+
 /** Prove that the current listener is the exact direct ForwardTcp command. */
 export function isForwardServiceListenerOwner(
   target: ForwardServiceTarget,

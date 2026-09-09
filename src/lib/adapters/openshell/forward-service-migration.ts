@@ -7,15 +7,30 @@ const RELEASE_TIMEOUT_MS = 5_000;
 const POLL_INTERVAL_MS = 250;
 const sleepBuffer = new Int32Array(new SharedArrayBuffer(4));
 
-function legacyForwardPorts(output: string | null | undefined, sandboxName: string): number[] {
+function legacyForwardRows(output: string | null | undefined, sandboxName: string): string[][] {
   if (!output) return [];
   return output
     .replace(/\x1B\[[0-?]*[ -/]*[@-~]/gu, "")
     .split("\n")
     .map((line) => line.trim().split(/\s+/u))
-    .filter((columns) => columns[0] === sandboxName)
+    .filter((columns) => columns[0] === sandboxName);
+}
+
+function legacyForwardPorts(output: string | null | undefined, sandboxName: string): number[] {
+  return legacyForwardRows(output, sandboxName)
     .map((columns) => Number(columns[2]))
     .filter((port) => Number.isInteger(port));
+}
+
+/** PID column of the exact sandbox+port legacy entry, or null when absent or unparseable. */
+export function legacySandboxForwardPid(
+  output: string | null | undefined,
+  sandboxName: string,
+  port: number,
+): number | null {
+  const row = legacyForwardRows(output, sandboxName).find((columns) => Number(columns[2]) === port);
+  const pid = Number(row?.[3]);
+  return Number.isSafeInteger(pid) && pid > 0 ? pid : null;
 }
 
 /** Identify an exact sandbox+port entry in OpenShell's legacy forward registry. */

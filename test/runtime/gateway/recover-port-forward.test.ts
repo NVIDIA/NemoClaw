@@ -219,9 +219,13 @@ if (args[0] === "forward" && args[1] === "list") {
       state = "running";
     }
   }
-  process.stdout.write(state === "running"
+  // OpenShell lists the PID of the forward it tracks; the fixture's tracked
+  // forward is the listener started for this test, so the row names it.
+  const livePid = fs.readFileSync(${JSON.stringify(listenerPidFile)}, "utf-8")
+    .trim().split(/\\s+/).filter(Boolean).at(-1) ?? "12345";
+  process.stdout.write((state === "running"
     ? ${JSON.stringify(recoveredForwardListBody)}
-    : ${JSON.stringify(initialForwardListBody)});
+    : ${JSON.stringify(initialForwardListBody)}).replace("12345", livePid));
   process.exit(0);
 }
 

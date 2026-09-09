@@ -12,12 +12,14 @@ const mocks = vi.hoisted(() => ({
   isLocalForwardReachable: vi.fn(() => true),
   isForwardServiceListenerOwner: vi.fn(() => true),
   launchForwardService: vi.fn(),
+  localListenerPids: vi.fn(() => ["4242"]),
 }));
 
 vi.mock("../../adapters/openshell/forward-service", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../adapters/openshell/forward-service")>()),
   isForwardServiceListenerOwner: mocks.isForwardServiceListenerOwner,
   launchForwardService: mocks.launchForwardService,
+  localListenerPids: mocks.localListenerPids,
 }));
 
 vi.mock("../../adapters/openshell/resolve", async (importOriginal) => ({
@@ -66,6 +68,7 @@ beforeEach(() => {
   mocks.runOpenshell.mockReturnValue({ status: 0 });
   mocks.isLocalForwardReachable.mockReturnValue(true);
   mocks.isForwardServiceListenerOwner.mockReturnValue(true);
+  mocks.localListenerPids.mockReturnValue(["4242"]);
   mocks.launchForwardService.mockImplementation(() => {
     mocks.isLocalForwardReachable.mockReturnValue(true);
   });
@@ -253,6 +256,23 @@ describe("a dashboard port held by a listener the sandbox does not own (#11149)"
       "Host port 18789 for 'box' is held by a listener that NemoClaw cannot attribute to this sandbox's OpenShell forward",
     );
     expect(message).toContain("nemoclaw box recover");
+  });
+
+  it("treats a stale legacy row over a listener it cannot attribute as unverified", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mocks.captureOpenshell.mockReturnValue(forwardList(["box  127.0.0.1  18789  4242  running"]));
+    mocks.localListenerPids.mockReturnValue(["9999"]);
+    const { describeSandboxForwardListener, ensureSandboxPortForward } =
+      await import("./forward-recovery");
+
+    expect(describeSandboxForwardListener("box", { isWsl: false })).toBe("unverified");
+    expect(ensureSandboxPortForward("box", { isWsl: false })).toBe(false);
+
+    expect(mocks.runOpenshell).not.toHaveBeenCalled();
+    expect(mocks.launchForwardService).not.toHaveBeenCalled();
+    expect(error.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
+      "Host port 18789 for 'box' is held by a listener",
+    );
   });
 
   it("still relaunches when nothing listens", async () => {
