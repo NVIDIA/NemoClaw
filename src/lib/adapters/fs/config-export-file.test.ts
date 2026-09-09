@@ -245,32 +245,75 @@ describe("publishExportFile", () => {
     unlinkSync(foreignPath);
   });
 
-  it("reports the residual link when non-force cleanup fails after publication (#10938)", () => {
-    const root = temporaryRoot();
-    const outputPath = path.join(root, "selected.yaml");
-    const unlinkSync = fs.unlinkSync;
-    vi.spyOn(fs, "unlinkSync").mockImplementation((candidate) => {
-      expect(String(candidate)).toMatch(/\.tmp$/u);
-      throw Object.assign(new Error("injected cleanup failure"), { code: "EIO" });
-    });
+  it.each([
+    {
+      name: "unchanged",
+      retainedName: "output",
+      location: "confirmed" as const,
+      relocate: (_parent: string, _moved: string) => undefined,
+    },
+    {
+      name: "moved",
+      retainedName: "moved",
+      location: "unknown" as const,
+      relocate: (parent: string, moved: string) => {
+        fs.renameSync(parent, moved);
+        fs.mkdirSync(parent);
+      },
+    },
+  ])(
+    "identifies residual staging in the $name output directory (#10938)",
+    ({ retainedName, location, relocate }) => {
+      const root = temporaryRoot();
+      const parent = path.join(root, "output");
+      const moved = path.join(root, "moved");
+      fs.mkdirSync(parent);
+      const outputPath = path.join(parent, "selected.yaml");
+      const retainedParent = path.join(root, retainedName);
+      const fsyncSync = fs.fsyncSync;
+      vi.spyOn(fs, "fsyncSync")
+        .mockImplementationOnce((descriptor) => fsyncSync(descriptor))
+        .mockImplementationOnce((descriptor) => {
+          fsyncSync(descriptor);
+          relocate(parent, moved);
+        });
+      const unlinkSync = fs.unlinkSync;
+      vi.spyOn(fs, "unlinkSync").mockImplementation((candidate) => {
+        expect(String(candidate)).toMatch(/\.tmp$/u);
+        throw Object.assign(new Error("injected cleanup failure"), { code: "EIO" });
+      });
 
-    expect(() => publishExportFile(outputPath, "content")).toThrowError(
-      expect.objectContaining<Partial<YamlExportOutputError>>({
-        category: "unsafe-output",
-        fileState: {
-          publication: "published",
-          durability: "confirmed",
-          location: "confirmed",
-          stagingCleanup: "incomplete",
-        },
-        outputPath,
-        message: expect.stringContaining("temporary link could not be removed"),
-      }),
-    );
-    expect(fs.readFileSync(outputPath, "utf8")).toBe("content");
-    expect(temporaryEntries(root)).toHaveLength(1);
-    unlinkSync(path.join(root, temporaryEntries(root)[0]!));
-  });
+      const publish = vi.fn(() => publishExportFile(outputPath, "content"));
+      expect(publish).toThrowError(
+        expect.objectContaining<Partial<YamlExportOutputError>>({
+          category: "unsafe-output",
+          fileState: {
+            publication: "published",
+            durability: "confirmed",
+            location,
+            stagingCleanup: "incomplete",
+          },
+          outputPath,
+          message: expect.stringContaining("temporary link could not be removed"),
+        }),
+      );
+      expect(fs.readFileSync(path.join(retainedParent, "selected.yaml"), "utf8")).toBe("content");
+      const [name] = temporaryEntries(retainedParent);
+      expect(temporaryEntries(retainedParent)).toHaveLength(1);
+      const directory = fs.lstatSync(retainedParent);
+      const file = fs.lstatSync(path.join(retainedParent, name!));
+      const failure = publish.mock.results[0]!.value as YamlExportOutputError;
+      expect(failure.stagingReference).toEqual({
+        name,
+        directoryDevice: directory.dev,
+        directoryInode: directory.ino,
+        fileDevice: file.dev,
+        fileInode: file.ino,
+      });
+      expect(JSON.stringify(failure.stagingReference)).not.toContain("selected.yaml");
+      unlinkSync(path.join(retainedParent, name!));
+    },
+  );
 
   it("reports when publication succeeds but parent fsync fails (#10938)", () => {
     const root = temporaryRoot();

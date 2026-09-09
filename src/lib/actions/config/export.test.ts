@@ -148,6 +148,56 @@ describe("runConfigExport", () => {
 
   it.each([
     {
+      name: "valid",
+      stagingName: ".nemoclaw-export.123e4567-e89b-42d3-a456-426614174000.tmp",
+      expected: expect.stringContaining(
+        "Staging file: .nemoclaw-export.123e4567-e89b-42d3-a456-426614174000.tmp; device 1, inode 3. Original output directory: device 1, inode 2.",
+      ),
+    },
+    {
+      name: "unsafe",
+      stagingName: "../CANARY\n",
+      expected: expect.stringContaining("staging identity is unavailable"),
+    },
+  ])(
+    "sanitizes the $name staging reference in a cleanup diagnostic (#10938)",
+    async ({ stagingName, expected }) => {
+      const deps = dependencies();
+      vi.mocked(deps.publish).mockImplementation(() => {
+        throw new YamlExportOutputError(
+          "unsafe-output",
+          "/private/CANARY.yaml",
+          "CANARY",
+          { publication: "not-published", stagingCleanup: "incomplete" },
+          {
+            stagingReference: {
+              name: stagingName,
+              directoryDevice: 1,
+              directoryInode: 2,
+              fileDevice: 1,
+              fileInode: 3,
+            },
+          },
+        );
+      });
+      const outcome = await runConfigExport(
+        {
+          sandboxName: "alpha",
+          documentName: alphaDocumentName,
+          target: { kind: "file", outputPath: "/private/CANARY.yaml", force: false },
+        },
+        deps,
+      );
+      expect(outcome).toMatchObject({
+        ok: false,
+        failure: { kind: "output", diagnostic: expected },
+      });
+      expect(JSON.stringify(outcome)).not.toMatch(/CANARY|\/private/u);
+    },
+  );
+
+  it.each([
+    {
       name: "typed",
       error: new YamlExportOutputError(
         "output-conflict",
@@ -174,7 +224,8 @@ describe("runConfigExport", () => {
         publication: "not-published",
         stagingCleanup: "incomplete",
       },
-      diagnostic: "The export was not published, and its staging file could not be removed.",
+      diagnostic:
+        "The export was not published, and its staging file could not be removed. The staging identity is unavailable. Do not remove files by name alone.",
     },
     {
       name: "committed",
@@ -196,7 +247,8 @@ describe("runConfigExport", () => {
         location: "confirmed",
         stagingCleanup: "incomplete",
       },
-      diagnostic: "The export was written, but staging cleanup could not be confirmed.",
+      diagnostic:
+        "The export was written, but staging cleanup could not be confirmed. The staging identity is unavailable. Do not remove files by name alone.",
     },
     {
       name: "durability",

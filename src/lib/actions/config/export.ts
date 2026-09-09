@@ -129,7 +129,7 @@ function fileFailure(error: unknown): ConfigExportOutcome {
         target: "file",
         fileState,
         category,
-        diagnostic: fileDiagnostic(category, fileState),
+        diagnostic: fileDiagnostic(category, fileState) + stagingDiagnostic(error),
       },
     };
   }
@@ -143,6 +143,31 @@ function fileFailure(error: unknown): ConfigExportOutcome {
       diagnostic: "The export publication state could not be determined safely.",
     },
   };
+}
+
+function stagingDiagnostic(error: YamlExportOutputError): string {
+  if (error.fileState.stagingCleanup !== "incomplete") return "";
+  const reference = error.stagingReference;
+  if (
+    reference === null ||
+    !/^\.nemoclaw-export\.[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.tmp$/u.test(
+      reference.name,
+    ) ||
+    ![
+      reference.directoryDevice,
+      reference.directoryInode,
+      reference.fileDevice,
+      reference.fileInode,
+    ].every((value) => Number.isSafeInteger(value) && value >= 0)
+  ) {
+    return " The staging identity is unavailable. Do not remove files by name alone.";
+  }
+  return (
+    ` Staging file: ${reference.name}; device ${reference.fileDevice}, inode ${reference.fileInode}.` +
+    ` Original output directory: device ${reference.directoryDevice}, inode ${reference.directoryInode}.` +
+    " Locate that directory, which may have moved. Before manual removal, verify both identities and that the staging entry is a regular file." +
+    " Do not remove the requested output file."
+  );
 }
 
 export async function runConfigExport(

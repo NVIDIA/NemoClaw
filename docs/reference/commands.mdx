@@ -222,6 +222,12 @@ $$nemoclaw config export my-assistant --output -
 
 The export contains credential environment-variable references, not credential values. File output uses mode `0600`. Without `--force`, an existing destination is preserved and the command fails. With `--force`, publication checks that the existing destination is a regular file before ordinary atomic replacement.
 
+If staging cleanup fails, the diagnostic identifies the temporary file and its original directory by device and inode when that evidence is available.
+The directory can have moved from the requested output location.
+Before manual removal, use `stat` to verify both identities and confirm that the temporary entry is a regular file.
+If either identity cannot be verified, do not remove files by name alone.
+Do not remove the requested output file to clean up a temporary link.
+
 Version 1 exports managed OpenClaw sandboxes in the default workspace.
 Supported sandboxes use hosted external inference, an immutable managed image, a NemoClaw-owned gateway, and an explicit representable policy.
 Other profiles fail with a diagnostic instead of producing an incomplete document.

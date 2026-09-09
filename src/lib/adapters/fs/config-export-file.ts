@@ -12,6 +12,13 @@ function isErrnoException(error: unknown): error is ErrnoException {
 }
 
 export type YamlExportFailureKind = "output-conflict" | "unsafe-output";
+export type YamlExportStagingReference = Readonly<{
+  name: string;
+  directoryDevice: number;
+  directoryInode: number;
+  fileDevice: number;
+  fileInode: number;
+}>;
 export type YamlExportFileState =
   | {
       readonly publication: "not-published";
@@ -29,6 +36,8 @@ export type YamlExportFileState =
     };
 
 export class YamlExportOutputError extends Error {
+  readonly stagingReference: YamlExportStagingReference | null;
+
   constructor(
     public readonly category: YamlExportFailureKind,
     public readonly outputPath: string,
@@ -37,10 +46,13 @@ export class YamlExportOutputError extends Error {
       publication: "not-published",
       stagingCleanup: "complete",
     },
-    options?: ErrorOptions,
+    options?: ErrorOptions & { stagingReference?: YamlExportStagingReference },
   ) {
     super(message, options);
     this.name = "YamlExportOutputError";
+    this.stagingReference = options?.stagingReference
+      ? Object.freeze({ ...options.stagingReference })
+      : null;
   }
 }
 
@@ -225,7 +237,7 @@ export function publishExportFile(
   let primaryError: unknown;
   try {
     const name = path.basename(outputPath);
-    const temporaryName = `.${name}.${String(process.pid)}.${randomUUID()}.tmp`;
+    const temporaryName = `.nemoclaw-export.${randomUUID()}.tmp`;
     parent = openParent(outputPath);
     destination = path.join(parent.retainedPath, name);
     temporary = path.join(parent.retainedPath, temporaryName);
@@ -374,7 +386,23 @@ export function publishExportFile(
           ? primaryError.message
           : "The export could not be published safely.",
       fileState,
-      { cause: primaryError },
+      {
+        cause: primaryError,
+        ...(stagingCleanupIncomplete &&
+        temporary !== null &&
+        parent !== null &&
+        stagedFile?.isFile()
+          ? {
+              stagingReference: {
+                name: path.basename(temporary),
+                directoryDevice: parent.stat.dev,
+                directoryInode: parent.stat.ino,
+                fileDevice: stagedFile.dev,
+                fileInode: stagedFile.ino,
+              },
+            }
+          : {}),
+      },
     );
   }
   return outputPath;
