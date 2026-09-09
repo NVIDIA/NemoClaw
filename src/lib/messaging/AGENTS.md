@@ -94,7 +94,7 @@ Use the narrowest test that covers the changed surface:
 - Hook behavior: `npx vitest run src/lib/messaging/hooks src/lib/messaging/channels/<channel>/hooks`
 - Host/OpenShell application: `npx vitest run src/lib/messaging/applier`
 - Build-time render/install behavior: `npx vitest run test/runtime/messaging/messaging-build-applier.test.ts`
-- Onboard/channel CLI integration: `npx vitest run test/onboarding/onboard-messaging.test.ts test/channels/channels-add-preset.test.ts src/lib/onboard/messaging-channel-setup.test.ts`
+- Onboard/channel CLI integration: `npx vitest run test/onboarding/onboard-messaging-image-configuration.test.ts test/onboarding/onboard-messaging-provider.test.ts test/onboarding/onboard-messaging-recreation.test.ts test/channels/channels-add-preset.test.ts src/lib/onboard/messaging-channel-setup.test.ts`
 
 Add focused negative tests for invalid credentials, unauthorized senders, denied network access, malformed configuration, and cleanup when those behaviors are in scope.
 
