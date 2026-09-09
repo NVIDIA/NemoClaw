@@ -494,28 +494,29 @@ test(
 
     const verifyFallback = (wrapper: ReturnType<typeof createHermesGpuFallbackWrapper>) => {
       const forwardPorts = resolveSandboxLaunchForwardPorts(SANDBOX_NAME);
-      const forwardOwnership = (forwardPorts ?? []).map((port) =>
-        isForwardServiceListenerOwner(
-          createForwardServiceTarget(
-            {
-              executable: wrapper.wrapperPath,
-              gatewayName: "nemoclaw",
-              localHost: "127.0.0.1",
-              sandboxName: SANDBOX_NAME,
-              workspace: "default",
-            },
-            port,
-          ),
-        ),
+      const forwardOwnership = (forwardPorts ?? []).map(
+        (port) =>
+          `${port}=${isForwardServiceListenerOwner(
+            createForwardServiceTarget(
+              {
+                executable: wrapper.wrapperPath,
+                gatewayName: "nemoclaw",
+                localHost: "127.0.0.1",
+                sandboxName: SANDBOX_NAME,
+                workspace: "default",
+              },
+              port,
+            ),
+          )}`,
       );
       expect(
         [
           ...fallbackEvents,
-          `forward-ports:${forwardPorts?.join(",") ?? "unresolved"}`,
-          `forward-ownership:${forwardOwnership.length > 0 && forwardOwnership.every(Boolean)}`,
+          `forward-ownership:${forwardOwnership.join(",")}`,
+          `forward-ownership-complete:${forwardOwnership.length > 0 && forwardOwnership.every((entry) => entry.endsWith("=true"))}`,
         ].join("\n"),
       ).toBe(
-        `${HERMES_GPU_FALLBACK_EVENTS.rejectNativeCreateBeforeProgress}\n${HERMES_GPU_FALLBACK_EVENTS.delegateCompatibilityCreate}\n${HERMES_GPU_FALLBACK_EVENTS.delegateNvidiaSmiProofAfterFallback}\nforward-ports:${forwardPorts?.join(",") ?? "unresolved"}\nforward-ownership:true`,
+        `${HERMES_GPU_FALLBACK_EVENTS.rejectNativeCreateBeforeProgress}\n${HERMES_GPU_FALLBACK_EVENTS.delegateCompatibilityCreate}\n${HERMES_GPU_FALLBACK_EVENTS.delegateNvidiaSmiProofAfterFallback}\nforward-ownership:${(forwardPorts ?? []).map((port) => `${port}=true`).join(",")}\nforward-ownership-complete:true`,
       );
       expect(resultText(install)).toContain("Native GPU diagnostics saved:");
       expect(
