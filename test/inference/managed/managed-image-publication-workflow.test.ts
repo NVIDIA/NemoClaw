@@ -439,6 +439,13 @@ describe("complete managed-image publication workflow", () => {
     );
     const publishedContract = step(prBuilder, "Export exact published PR managed-image contract");
     const contractUpload = step(prBuilder, "Upload exact published PR managed-image contract");
+    expect(localBaseBuild.run).toContain(
+      'NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox',
+    );
+    expect(String(registryBaseBuild.with?.["build-args"])).toContain(
+      "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox",
+    );
+    expect(contract.run).toContain('.[0].Config.User == "sandbox"');
     expect(workflow.on?.pull_request?.paths).toEqual(
       expect.arrayContaining([
         ".github/actions/ci-reviewed-npm-audit/**",

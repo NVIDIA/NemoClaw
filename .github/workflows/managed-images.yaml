@@ -533,7 +533,7 @@ jobs:
             -f "$DOCKERFILE" \
             --build-arg "BASE_IMAGE=${BASE_REFERENCE}" \
             --build-arg "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1" \
-            --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root"
+            --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox"
 
       - name: Build PR managed image from local base
         if: steps.base.outputs.local == 'true'
@@ -588,7 +588,7 @@ jobs:
             "${audit_options[@]}" \
             --build-arg "BASE_IMAGE=${BASE_IMAGE}" \
             --build-arg "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1" \
-            --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root" \
+            --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox" \
             .
 
       - name: Build PR managed image from registry base
@@ -616,7 +616,7 @@ jobs:
           build-args: |
             BASE_IMAGE=${{ steps.base.outputs.ref }}
             NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1
-            NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root
+            NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox
             ${{ matrix.agent == 'openclaw' && format('NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256={0}', steps.mcporter-audit.outputs.receipt_sha256) || '' }}
           secret-files: |
             ${{ matrix.agent == 'openclaw' && format('nemoclaw-mcporter-audit-receipt={0}', steps.mcporter-audit.outputs.receipt) || '' }}
@@ -685,8 +685,7 @@ jobs:
                --arg revision "$CANDIDATE_SHA" '
                  length == 1 and
                  .[0].Id == $image_id and
-                 ((.[0].Config.User // "") as $user |
-                   $user == "" or $user == "root" or $user == "0") and
+                 .[0].Config.User == "sandbox" and
                  .[0].Config.Labels["io.nvidia.nemoclaw.agent"] == $agent and
                  .[0].Config.Labels["io.nvidia.nemoclaw.managed-image.contract"] == "1" and
                  .[0].Config.Labels["io.nvidia.nemoclaw.managed-image.platform"] == $platform and
@@ -851,7 +850,7 @@ jobs:
           build-args: |
             BASE_IMAGE=${{ steps.base.outputs.local == 'true' && 'nemoclaw-pr-base' || steps.base.outputs.ref }}
             NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1
-            NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root
+            NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox
             ${{ matrix.agent == 'openclaw' && format('NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256={0}', steps.mcporter-audit.outputs.receipt_sha256) || '' }}
           secret-files: |
             ${{ matrix.agent == 'openclaw' && format('nemoclaw-mcporter-audit-receipt={0}', steps.mcporter-audit.outputs.receipt) || '' }}
@@ -1259,7 +1258,7 @@ jobs:
             -f "$DOCKERFILE" \
             --build-arg "BASE_IMAGE=nemoclaw-pi-base" \
             --build-arg "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1" \
-            --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root"
+            --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox"
       - name: Build the Pi candidate managed image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
@@ -1283,7 +1282,7 @@ jobs:
           build-args: |
             BASE_IMAGE=nemoclaw-pi-base
             NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1
-            NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root
+            NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox
           provenance: false
           sbom: false
       - name: Validate the Pi candidate runtime contract
@@ -1346,7 +1345,7 @@ jobs:
           build-args: |
             BASE_IMAGE=nemoclaw-pi-base
             NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1
-            NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root
+            NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox
           provenance: false
           sbom: false
       - name: Remove Pi publication credentials
@@ -1889,7 +1888,7 @@ jobs:
             --build-arg "BASE_IMAGE=${BASE_IMAGE}"
             --build-arg "TARGETARCH=${target_arch}"
             --build-arg "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1"
-            --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root"
+            --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox"
           )
           scripts/check-production-build-args.sh "${build_args[@]}"
 
@@ -1918,7 +1917,7 @@ jobs:
             BASE_IMAGE=${{ steps.base.outputs.ref }}
             TARGETARCH=${{ matrix.arch }}
             NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1
-            NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root
+            NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox
             ${{ matrix.agent == 'openclaw' && format('NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256={0}', steps.mcporter-audit.outputs.receipt_sha256) || '' }}
           secret-files: |
             ${{ matrix.agent == 'openclaw' && format('nemoclaw-mcporter-audit-receipt={0}', steps.mcporter-audit.outputs.receipt) || '' }}
@@ -1955,8 +1954,8 @@ jobs:
           anonymous_config="$ANONYMOUS_CONFIG"
           image_id="$IMAGE_ID"
           image_user="$(docker image inspect --format '{{.Config.User}}' "$reference")"
-          if [ -n "$image_user" ] && [ "$image_user" != "root" ] && [ "$image_user" != "0" ]; then
-            echo "ERROR: managed image OCI user must be uid 0 for OpenShell supervisor initialization: $image_user" >&2
+          if [ "$image_user" != "sandbox" ]; then
+            echo "ERROR: managed image OCI user must be sandbox for OpenShell 0.0.116: $image_user" >&2
             exit 1
           fi
           if [ "$AGENT" = "langchain-deepagents-code" ] &&

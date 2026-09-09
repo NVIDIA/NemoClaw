@@ -873,7 +873,7 @@ ARG NEMOCLAW_MESSAGING_PLAN_B64=
 # Release-image mode preinstalls every reviewed optional dependency while
 # keeping the generated Hermes platform configuration disabled by default.
 ARG NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0
-ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root
+ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox
 ARG NEMOCLAW_WEB_SEARCH_ENABLED=0
 ARG NEMOCLAW_WEB_SEARCH_PROVIDER=tavily
 ARG NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=0
@@ -916,7 +916,7 @@ RUN case "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" in \
             ;; \
         *) echo "ERROR: NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION must be 0 or 1" >&2; exit 1 ;; \
     esac \
-    && test "$NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER" = "root"
+    && test "$NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER" = "sandbox"
 
 # Bake reduced messaging runtime metadata for the entrypoint. Hermes runtime
 # config refresh consumes generic manifest-owned aliases from this artifact.
@@ -1736,7 +1736,8 @@ RUN set -eu; \
     test -z "$(dpkg --audit)"
 # End completed-image security package verification.
 
-# start.sh handles privilege separation: runs as root initially, then drops
-# to the 'gateway' user via setpriv for the agent process. See start.sh.
+# OpenShell 0.0.116 launches the image as the non-root sandbox account.
+# start.sh uses its supported same-UID gateway topology in this mode.
+USER ${NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER}
 ENTRYPOINT ["/usr/local/bin/nemoclaw-start"]
 CMD ["/bin/bash"]
