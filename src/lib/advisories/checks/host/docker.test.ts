@@ -163,6 +163,7 @@ describe("Docker host advisories (#3213)", () => {
       "enable_docker_desktop_wsl_integration",
       "install_docker",
       "invalid_docker_host",
+      "docker_probe_inconclusive",
       "docker_group_permission",
       "start_docker",
       "docker_desktop_credential_store_headless",
