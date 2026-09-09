@@ -121,7 +121,10 @@
     },
     {
       "live": "test/e2e/live/hermes-gpu-startup.test.ts",
-      "liveSources": ["test/e2e/live/hermes-gpu-startup-proof.ts"],
+      "liveSources": [
+        "test/e2e/live/hermes-gpu-startup-fallback.ts",
+        "test/e2e/live/hermes-gpu-startup-proof.ts"
+      ],
       "fast": [
         "test/e2e/support/hermes-gpu-startup-fallback.test.ts",
         "test/e2e/support/hermes-gpu-startup-integrity.test.ts",
