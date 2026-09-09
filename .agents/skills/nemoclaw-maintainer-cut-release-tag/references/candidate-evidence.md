@@ -62,6 +62,9 @@ After authorized recovery, read the new attempt and verify the prerequisite befo
 
 ### Check Audit Receipt Reuse
 
+Use this preliminary check to plan recovery. It does not replace publisher verification or the
+candidate's required `base-image-publication` result.
+
 The [OpenClaw platform build](../../../../.github/workflows/base-image-platform.yaml) consumes the
 audit producer's `mcporter-runtime` receipt. Read the selected run's `run_attempt` with
 `gh api repos/NVIDIA/NemoClaw/actions/runs/<run-id>`, then inspect the run and attempt with
@@ -76,14 +79,19 @@ Record its artifact ID and SHA-256 digest. Read
 the expected run and commit, and an unexpired artifact. Do not select by name alone: one run can
 contain multiple audit artifacts with the same name.
 
-Set `AUDIT_EVIDENCE_DIR` to a new private directory. Download the exact ID with
+Run the audit inspection in a dedicated shell. Create a private `AUDIT_EVIDENCE_DIR` with `mktemp -d`.
+Before downloading, register an exit trap that removes only this procedure-owned directory.
+Handle catchable termination by exiting through cleanup. Report the retained path if cleanup fails;
+do not continue recovery with retained evidence from a failed check.
+Download the exact ID with
 `gh api repos/NVIDIA/NemoClaw/actions/artifacts/<artifact-id>/zip`, saving the response in that directory.
 Verify its SHA-256 digest against the producer's upload log with `shasum -a 256 <archive>`.
 Use `unzip -p <archive> <entry>` to extract only `mcporter-runtime.receipt.json` and
 `mcporter-runtime.raw.json` into files with those names in the evidence directory.
 Stop if the producer, artifact, digest, or either entry cannot be verified.
-Set `IMAGE_SOURCE_DIR` to an isolated checkout of the
-publisher's recorded commit, not the release candidate or current `main`. Verify its commit and
+Set `IMAGE_SOURCE_DIR` to an existing, maintainer-supplied isolated checkout. Record its owner;
+this check neither creates nor removes that checkout. If it is unavailable, report unverified.
+Require the publisher's recorded commit, not the release candidate or current `main`. Verify its commit and
 clean tracked files before using its package and policy inputs. Do not execute artifact contents.
 High or critical findings also require the matching installed dependency metadata under that
 checkout's `agents/openclaw/mcporter-runtime/node_modules`. If it is unavailable, report policy
@@ -104,7 +112,8 @@ node --experimental-strip-types scripts/lib/npm-audit-receipt.mts \
 ```
 
 The verifier enforces the existing legacy-receipt deadline; this option does not extend it.
-Record the producer, attempt, artifact ID, input commit, and result, then remove only the owned evidence directory.
+Record the producer, attempt, artifact ID, input commit, and result outside the temporary directory.
+Exit the audit shell and confirm that its evidence directory was removed. Preserve the supplied source checkout.
 Missing or unbound evidence is unverified; expired or mismatched evidence is blocked. Neither permits receipt reuse.
 For an expired receipt, propose rerunning the audit producer and its dependent image jobs, not only failed jobs.
 After authorization, verify the replacement receipt before proposing any remaining dependent E2E retry.
