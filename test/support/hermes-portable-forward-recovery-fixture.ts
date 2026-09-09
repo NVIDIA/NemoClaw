@@ -42,6 +42,7 @@ export function createHermesPortableForwardRecoveryFixture({
   driftCurrentAfterStart = false,
   dropStartedPort,
   listOutput,
+  stoppedListenerReleaseChecks,
 }: {
   ports?: readonly number[];
   active?: readonly number[];
@@ -57,6 +58,7 @@ export function createHermesPortableForwardRecoveryFixture({
   driftCurrentAfterStart?: boolean;
   dropStartedPort?: number;
   listOutput?: string;
+  stoppedListenerReleaseChecks?: number | null;
 } = {}) {
   const records = new Map<number, ForwardRecord>();
   for (const port of active) {
@@ -84,6 +86,8 @@ export function createHermesPortableForwardRecoveryFixture({
   let currentAllowed = true;
   let rollbackAllowed = true;
   let now = 0;
+  let pendingStoppedListener: { checks: number; port: number; record: ForwardRecord } | undefined;
+  let stoppedListenerReleaseCheckCount = 0;
 
   const capture = (args: readonly string[], rollback: boolean) => {
     const calls = rollback ? rollbackCalls : currentCalls;
@@ -100,7 +104,12 @@ export function createHermesPortableForwardRecoveryFixture({
     currentMutationCalls.push([...args]);
     const port = Number(args[1] === "stop" ? args[2] : args[3]);
     if (args[1] === "stop") {
+      const record = records.get(port);
       records.delete(port);
+      if (record?.reachable && stoppedListenerReleaseChecks !== undefined) {
+        records.set(port, record);
+        pendingStoppedListener = { checks: 0, port, record };
+      }
       return { status: stopStatus, output: "" };
     }
     throw new Error("unexpected command");
@@ -146,7 +155,22 @@ export function createHermesPortableForwardRecoveryFixture({
         if (driftCurrentAfterStart) currentAllowed = false;
         if (startStatus !== 0) throw new Error("direct forward launch canary");
       },
-      isPortReachable: (port) => records.get(port)?.reachable === true,
+      isPortReachable: (port) => {
+        if (pendingStoppedListener?.port === port) {
+          pendingStoppedListener.checks += 1;
+          stoppedListenerReleaseCheckCount += 1;
+          if (
+            typeof stoppedListenerReleaseChecks === "number" &&
+            pendingStoppedListener.checks >= stoppedListenerReleaseChecks
+          ) {
+            records.delete(port);
+            pendingStoppedListener = undefined;
+            return false;
+          }
+          return true;
+        }
+        return records.get(port)?.reachable === true;
+      },
       now: () => now,
       sleep: (milliseconds) => {
         now += milliseconds;
@@ -170,6 +194,7 @@ export function createHermesPortableForwardRecoveryFixture({
     setRollbackAllowed(value: boolean) {
       rollbackAllowed = value;
     },
+    stoppedListenerReleaseCheckCount: () => stoppedListenerReleaseCheckCount,
   };
 }
 

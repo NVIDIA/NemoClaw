@@ -528,6 +528,45 @@ function readClock(now: () => number, previous?: number): number {
   return current;
 }
 
+function waitForPortRelease(
+  input: HermesPortableForwardRecoveryInput,
+  port: number,
+  timing: ReturnType<typeof createForwardTimingRecorder>,
+): void {
+  timing.measure("settle", () => {
+    const now = input.deps.now ?? Date.now;
+    const sleep = input.deps.sleep ?? sleepMilliseconds;
+    const reachable = input.deps.isPortReachable ?? isLocalForwardReachable;
+    let previous = readClock(now);
+    const deadline = previous + Math.min(input.operationTimeoutMs, FORWARD_SETTLEMENT_TIMEOUT_MS);
+    if (!Number.isFinite(deadline)) failure("recovery-failed");
+
+    for (let observation = 0; observation < FORWARD_SETTLEMENT_MAX_OBSERVATIONS; observation += 1) {
+      requireCurrent(input, false);
+      let portReachable: boolean;
+      try {
+        portReachable = reachable(
+          port,
+          remainingBudget(deadline, now, input.probeTimeoutMs, {
+            cause: "forward-settlement-timed-out",
+          }),
+        );
+      } catch (error) {
+        if (error instanceof HermesPortableForwardRecoveryError) throw error;
+        failure("recovery-failed", { cause: "forward-reachability-failed", port });
+      }
+      requireCurrent(input, false);
+      if (!portReachable) return;
+
+      const current = readClock(now, previous);
+      previous = current;
+      if (current >= deadline) break;
+      sleep(Math.min(FORWARD_SETTLEMENT_INTERVAL_MS, deadline - current));
+    }
+    failure("recovery-failed", { cause: "forward-settlement-timed-out" });
+  });
+}
+
 function settleTouchedPorts(
   input: HermesPortableForwardRecoveryInput,
   requiredHealthy: ReadonlySet<number>,
@@ -631,6 +670,7 @@ export function prepareHermesPortableLaunchForwards(
           ["forward", "stop", String(port), input.sandboxName, "--gateway", input.gatewayName],
           timing,
         );
+        waitForPortRelease(input, port, timing);
       }
       invokeForwardServiceLaunch(input, port, timing);
     }

@@ -349,7 +349,7 @@ function captureOpenShell(
   executablePath: string,
   env: NodeJS.ProcessEnv,
   args: readonly string[],
-  _timeoutMs = 30_000,
+  timeoutMs = 30_000,
 ): HermesPortableLifecycleCommandResult {
   const result = spawnSync(executablePath, [...args], {
     encoding: "utf-8",
@@ -357,7 +357,14 @@ function captureOpenShell(
     killSignal: "SIGKILL",
     maxBuffer: 512 * 1024,
     stdio: ["ignore", "pipe", "pipe"],
-    timeout: 55_000,
+    timeout:
+      timeoutMs <= 10_000
+        ? 10_000
+        : timeoutMs <= 30_000
+          ? 30_000
+          : timeoutMs <= 40_000
+            ? 40_000
+            : 240_000,
   });
   return {
     status: result.status,
@@ -447,11 +454,20 @@ function waitForOpenShellTerminalPhase(
   sandboxName: string,
 ): "Error" | "Stopped" {
   const sleepBuffer = new Int32Array(new SharedArrayBuffer(4));
-  const phase = retryUntil(() => readOpenShellSandbox(executablePath, env, sandboxName).phase, {
-    accept: (observed) => observed === "Error" || observed === "Stopped",
-    retryDelaysMs: OPENSHELL_SETTLEMENT_DELAYS_MS,
-    sleep: (milliseconds) => Atomics.wait(sleepBuffer, 0, 0, milliseconds),
-  });
+  const phase = retryUntil(
+    () => {
+      try {
+        return readOpenShellSandbox(executablePath, env, sandboxName).phase;
+      } catch {
+        return "";
+      }
+    },
+    {
+      accept: (observed) => observed === "Error" || observed === "Stopped",
+      retryDelaysMs: OPENSHELL_SETTLEMENT_DELAYS_MS,
+      sleep: (milliseconds) => Atomics.wait(sleepBuffer, 0, 0, milliseconds),
+    },
+  );
   assert.ok(
     phase === "Error" || phase === "Stopped",
     "OpenShell did not independently report a terminal phase",

@@ -258,6 +258,33 @@ describe("Hermes Portable probe-only forward recovery", () => {
     },
   );
 
+  it("waits for a stopped listener to release before launching its replacement", () => {
+    const fixture = createRecoveryFixture({
+      dead: [18_789],
+      stoppedListenerReleaseChecks: 3,
+    });
+    fixture.records.get(18_789)!.reachable = true;
+
+    expect(recoverHermesPortableLaunchForwards(fixture.input).kind).toBe("restored");
+    expect(fixture.stoppedListenerReleaseCheckCount()).toBe(3);
+    expect(fixture.forwardServiceLaunches).toHaveLength(1);
+    expect(fixture.elapsedMs()).toBe(200);
+  });
+
+  it("does not launch while a stopped listener remains reachable", () => {
+    const fixture = createRecoveryFixture({
+      dead: [18_789],
+      stoppedListenerReleaseChecks: null,
+    });
+    fixture.records.get(18_789)!.reachable = true;
+
+    expect(() => recoverHermesPortableLaunchForwards(fixture.input)).toThrow(
+      expect.objectContaining({ failure: "restoration-unproved" }),
+    );
+    expect(fixture.forwardServiceLaunches).toEqual([]);
+    expect(fixture.elapsedMs()).toBe(3_000);
+  });
+
   it("restarts a target-owned live forward that is unreachable", () => {
     const fixture = createRecoveryFixture({ running: [18_789] });
     fixture.records.get(18_789)!.reachable = false;
@@ -873,7 +900,7 @@ describe("Hermes Portable connect composition", () => {
       /forwardAction=restored result=ready/,
     );
     expect(harness.logSpy.mock.calls.flat().join("\n")).toMatch(
-      /Hermes Portable forward recovery timing: list=\d+ms listCount=2 stop=\d+ms stopCount=1 start=\d+ms startCount=1 settle=\d+ms settleCount=1 total=\d+ms result=proved/u,
+      /Hermes Portable forward recovery timing: list=\d+ms listCount=2 stop=\d+ms stopCount=1 start=\d+ms startCount=1 settle=\d+ms settleCount=2 total=\d+ms result=proved/u,
     );
   });
 
