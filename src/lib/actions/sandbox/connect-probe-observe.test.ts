@@ -65,6 +65,30 @@ describe("connectSandbox probe-only observe mode", () => {
     );
   });
 
+  it("prints classified Portable recovery and rollback results without nested diagnostics (#11248)", async () => {
+    const harness = createConnectHarness({
+      agentName: "hermes",
+      portableReceiptDisposition: { kind: "hermes", phase: "active" },
+    });
+    const nestedDiagnostic = "Bearer do-not-print";
+    harness.recoverPortableDemoLifecycleSpy.mockImplementation(() => {
+      throw new AggregateError(
+        [new Error(nestedDiagnostic)],
+        "Hermes portable lifecycle recovery failed (primary=startup-launch; rollback=openshell-terminal-settlement-unproved)",
+      );
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    const output = harness.errorSpy.mock.calls.map(([line]) => String(line)).join("\n");
+    expect(output).toContain("primary=startup-launch");
+    expect(output).toContain("rollback=openshell-terminal-settlement-unproved");
+    expect(output).not.toContain(nestedDiagnostic);
+    expect(harness.ensureLiveSandboxSpy).not.toHaveBeenCalled();
+  });
+
   it("settles completed Portable pairing before publishing probe readiness (#9207)", async () => {
     const harness = createConnectHarness({
       portablePairingSettlementResult: { kind: "settled" },

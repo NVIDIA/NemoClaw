@@ -263,7 +263,7 @@ function lifecycleDeps(
     readonly failPostStartInspectOnce?: boolean;
   } = {},
 ) {
-  let running = initiallyRunning;
+  let running = initiallyRunning, now = 0;
   let postStartInspectFailurePending = false;
   const sandboxPhase = () => options.sandboxPhase?.(running) ?? (running ? "Ready" : "Error");
   const podman = vi.fn((args: readonly string[]) => {
@@ -376,7 +376,7 @@ function lifecycleDeps(
         capturePodmanExecutableFileAuthority,
       },
       container: { podman, assertSocketAuthority: vi.fn() },
-      sleep: vi.fn(),
+      now: () => now, sleep: vi.fn((milliseconds: number) => { now += milliseconds; }),
     },
     podman,
     captureOpenShell,
@@ -500,7 +500,7 @@ describe("Hermes portable lifecycle", () => {
     );
   });
 
-  it("fails before post-start work when retained socket authority drifts (#10423)", () => {
+  it("fails before post-start work when retained socket authority drifts (#11248)", () => {
     const receipt = activeReceipt();
     publishSuccessor();
     const fixture = lifecycleDeps(receipt, false);
@@ -518,7 +518,7 @@ describe("Hermes portable lifecycle", () => {
         { stateDir: path.join(stateDir, "state") },
       ),
     ).toThrow(
-      "Hermes portable lifecycle recovery failed and exact container rollback was not proven",
+      "Hermes portable lifecycle recovery failed (primary=post-start-authority; rollback=pre-stop-authority-unproved)",
     );
     expect(fixture.captureOpenShell).not.toHaveBeenCalledWith(
       expect.arrayContaining(["true"]),
@@ -1179,10 +1179,10 @@ describe("Hermes portable lifecycle", () => {
     expect(captureOpenShell).not.toHaveBeenCalled();
   });
 
-  it("proves the exact stopped Podman container and OpenShell Error phase after stopping one full ID (#9203)", () => {
+  it("waits for exact Podman exit and delayed OpenShell Error after stopping one full ID (#11248)", () => {
     const receipt = activeReceipt();
-    const { deps, podman, captureOpenShell } = lifecycleDeps(receipt);
-
+    let stoppedPhaseReads = 0;
+    const { deps, podman, captureOpenShell } = lifecycleDeps(receipt, true, { sandboxPhase: (running) => running ? "Ready" : stoppedPhaseReads++ < 6 ? "Ready" : "Error" });
     const result = withMcpLifecycleLockSync(
       SANDBOX,
       () => stopHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), vi.fn(), deps),
@@ -1248,7 +1248,7 @@ describe("Hermes portable lifecycle", () => {
     expect(podman.mock.calls.filter(([args]) => args[1] === "stop")).toEqual([]);
   });
 
-  it("rejects an already-stopped container when OpenShell remains Ready (#9203)", () => {
+  it("times out an already-stopped container when OpenShell remains Ready (#11248)", () => {
     const receipt = activeReceipt();
     const { deps, podman, captureOpenShell } = lifecycleDeps(receipt, false);
     const defaultCapture = captureOpenShell.getMockImplementation()!;
@@ -1264,11 +1264,11 @@ describe("Hermes portable lifecycle", () => {
         () => stopHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), vi.fn(), deps),
         { stateDir: path.join(stateDir, "state") },
       ),
-    ).toThrow("OpenShell sandbox identity disagrees");
+    ).toThrow("OpenShell sandbox did not settle in Error or Stopped after exact container exit");
     expect(podman.mock.calls.filter(([args]) => args[1] === "stop")).toEqual([]);
   });
 
-  it("rejects a stopped container when OpenShell remains Ready (#9203)", () => {
+  it("times out a stopped container when OpenShell remains Ready (#11248)", () => {
     const receipt = activeReceipt();
     const { deps, podman, captureOpenShell } = lifecycleDeps(receipt);
     const defaultCapture = captureOpenShell.getMockImplementation()!;
@@ -1284,7 +1284,7 @@ describe("Hermes portable lifecycle", () => {
         () => stopHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), vi.fn(), deps),
         { stateDir: path.join(stateDir, "state") },
       ),
-    ).toThrow("OpenShell sandbox identity disagrees");
+    ).toThrow("OpenShell sandbox did not settle in Error or Stopped after exact container exit");
     expect(podman.mock.calls.filter(([args]) => args[1] === "stop")).toHaveLength(1);
   });
 

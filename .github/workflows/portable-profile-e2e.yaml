@@ -16,6 +16,8 @@ on:
       - "agents/hermes/start.sh"
       - "src/lib/onboard/experimental/hermes-portable-build-context-files.ts"
       - "src/lib/onboard/experimental/hermes-portable-build-context.ts"
+      - "src/lib/onboard/experimental/hermes-portable-contract.ts"
+      - "src/lib/onboard/experimental/hermes-portable-lifecycle.ts"
       - "src/lib/onboard/experimental/portable-host-preparation.ts"
       - "src/lib/onboard/experimental/portable-profile.ts"
       - "src/lib/onboard/experimental/portable-retired-subnet-recovery.test.ts"

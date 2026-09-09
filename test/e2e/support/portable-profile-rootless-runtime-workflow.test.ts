@@ -90,6 +90,8 @@ describe("portable profile rootless runtime workflow", () => {
         "agents/hermes/start.sh",
         "src/lib/onboard/experimental/hermes-portable-build-context-files.ts",
         "src/lib/onboard/experimental/hermes-portable-build-context.ts",
+        "src/lib/onboard/experimental/hermes-portable-contract.ts",
+        "src/lib/onboard/experimental/hermes-portable-lifecycle.ts",
       ]),
     );
     expect(Array.isArray(actionlintLabels)).toBe(true);
