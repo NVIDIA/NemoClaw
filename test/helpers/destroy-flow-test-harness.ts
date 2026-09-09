@@ -58,6 +58,7 @@ export type DestroyHarness = {
   revokeHttpsPinRuntimeAdapterRouteSpy: MockInstance;
   restoreMcpBridgesAfterDestroyAbortSpy: MockInstance;
   runOpenshellSpy: MockInstance;
+  runSandboxProviderPreDeleteCleanupSpy: MockInstance;
   selectGatewaySpy: MockInstance;
   sessionState: Session;
   setDockerIdentityResult: (result: {
@@ -620,13 +621,13 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
       providerIdentity: options.runtimeProviderIdentityProof,
     });
   }
-  vi.spyOn(sandboxProviderCleanup, "runSandboxProviderPreDeleteCleanup").mockImplementation(
-    async () => {
+  const runSandboxProviderPreDeleteCleanupSpy = vi
+    .spyOn(sandboxProviderCleanup, "runSandboxProviderPreDeleteCleanup")
+    .mockImplementation(async () => {
       await Promise.resolve();
       events.push("detach");
       return { detached: options.detachedProviders ?? [], failures: [] };
-    },
-  );
+    });
   vi.spyOn(sandboxProviderCleanup, "emitProviderDetachResidualHint").mockImplementation(
     () => undefined,
   );
@@ -716,6 +717,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     errorSpy,
     events,
     executeSandboxDestroySpy,
+    runSandboxProviderPreDeleteCleanupSpy,
     enforceRemovedImmutabilityMigrationBoundarySpy,
     finalizeMcpBridgesAfterSandboxDeleteSpy,
     gatewayPinsAtMcpPrepare,

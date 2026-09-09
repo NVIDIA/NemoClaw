@@ -40,8 +40,8 @@ type StaleProviderReplaceResult = { ok: boolean; status?: number | null; message
  * Security containment: force-detach recovery may only touch the sandbox being
  * onboarded. The authorized set is exactly the confirmed `sandboxName`; every
  * attachment reported by the delete failure is revalidated against it before
- * any detach, and the same set is threaded into `removeGatewayProvider` so its
- * own re-parse also fails closed on an outside sandbox. With no confirmed
+ * any detach, and the same set is passed to `deleteProviderWithRecovery` so its
+ * next inspection also fails closed on an outside sandbox. With no confirmed
  * sandbox (`sandboxName === null`) there is nothing to authorize against, so
  * force-detach recovery is refused with an actionable error rather than run
  * unconstrained. A provider still attached to other live sandboxes fails closed
@@ -51,52 +51,43 @@ async function replaceStaleAnthropicProviderForOpenAiSurface(args: {
   provider: string;
   sandboxName: string | null;
   runOpenshell: RemoteProviderDeps["runOpenshell"];
-  readProviderMetadata: RemoteProviderDeps["readGatewayProviderMetadata"];
-  removeGatewayProvider: NonNullable<RemoteProviderDeps["deleteGatewayProvider"]>;
+  providerAdapter: RemoteProviderDeps["providerAdapter"];
   redact: RemoteProviderDeps["redact"];
   compactText: RemoteProviderDeps["compactText"];
 }): Promise<StaleProviderReplaceResult> {
-  const {
-    provider,
-    sandboxName,
-    runOpenshell,
-    readProviderMetadata,
-    removeGatewayProvider,
-    redact,
-    compactText,
-  } = args;
-  const adapter = createManagedProviderAdapter((command, options) => {
-    const result = runOpenshell(command, options);
-    return {
-      ...result,
-      stdout:
-        typeof result.stdout === "string" || Buffer.isBuffer(result.stdout) ? result.stdout : null,
-      stderr:
-        typeof result.stderr === "string" || Buffer.isBuffer(result.stderr) ? result.stderr : null,
-    };
-  });
-  let live: { type: string } | null;
-  if (readProviderMetadata) {
-    live = await readProviderMetadata(provider, runOpenshell);
-  } else {
-    const result = await adapter.getProvider({
-      target: { kind: "selected" },
-      providerName: provider,
-    });
-    if (!result.ok) {
-      if (result.error.kind === "command" && result.error.reason === "not_found") {
-        return { ok: true };
-      }
-      const detail = compactText(redact(result.error.message));
+  const { provider, sandboxName, runOpenshell, providerAdapter, redact, compactText } = args;
+  const adapter =
+    providerAdapter ??
+    createManagedProviderAdapter((command, options) => {
+      const result = runOpenshell(command, options);
       return {
-        ok: false,
-        status: 1,
-        message: `Failed to inspect provider '${provider}' before replacement${detail ? `: ${detail}` : "."}`,
+        ...result,
+        stdout:
+          typeof result.stdout === "string" || Buffer.isBuffer(result.stdout)
+            ? result.stdout
+            : null,
+        stderr:
+          typeof result.stderr === "string" || Buffer.isBuffer(result.stderr)
+            ? result.stderr
+            : null,
       };
+    });
+  const result = await adapter.getProvider({
+    target: { kind: "selected" },
+    providerName: provider,
+  });
+  if (!result.ok) {
+    if (result.error.kind === "command" && result.error.reason === "not_found") {
+      return { ok: true };
     }
-    live = result.value;
+    const detail = compactText(redact(result.error.message));
+    return {
+      ok: false,
+      status: 1,
+      message: `Failed to inspect provider '${provider}' before replacement${detail ? `: ${detail}` : "."}`,
+    };
   }
-  if (!live || live.type === "openai") return { ok: true };
+  if (result.value.type === "openai") return { ok: true };
   const attempt = await adapter.deleteProvider({
     target: { kind: "selected" },
     providerName: provider,
@@ -121,7 +112,10 @@ async function replaceStaleAnthropicProviderForOpenAiSurface(args: {
     };
   }
   if (attached.length > 0 && foreign.length === 0) {
-    const recovery = await removeGatewayProvider(provider, { runOpenshell, allowedSandboxes });
+    const recovery = await deleteProviderWithRecovery(provider, {
+      providerAdapter: adapter,
+      allowedSandboxes,
+    });
     const detail = compactText(redact(`${recovery.stderr || ""} ${recovery.stdout || ""}`));
     return recovery.ok
       ? { ok: true }
@@ -263,14 +257,6 @@ export async function setupRemoteProviderInference(
   const useOpenAiSurface =
     provider === "compatible-anthropic-endpoint" && preferredInferenceApi === "openai-completions";
   const probeOpenAiSurface = deps.probeOpenAiLikeEndpoint ?? probeOpenAiLikeEndpointOptimized;
-  // The concrete modules type their openshell runners independently; the deps
-  // runner is call-compatible with both, so bridge the nominal mismatch here.
-  const readProviderMetadata = deps.readGatewayProviderMetadata;
-  const removeGatewayProvider =
-    deps.deleteGatewayProvider ??
-    (deleteProviderWithRecovery as unknown as NonNullable<
-      RemoteProviderDeps["deleteGatewayProvider"]
-    >);
   const configureProvider = async (): Promise<
     { done: true; result: SetupInferenceResult } | { done: false }
   > => {
@@ -359,8 +345,7 @@ export async function setupRemoteProviderInference(
                 provider,
                 sandboxName,
                 runOpenshell,
-                readProviderMetadata,
-                removeGatewayProvider,
+                providerAdapter: deps.providerAdapter,
                 redact,
                 compactText,
               });

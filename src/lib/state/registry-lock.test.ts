@@ -192,12 +192,17 @@ describe("process-bound registry locking", () => {
         withProcessBoundRegistryLockAt(
           test.registryFile,
           () => undefined,
-          exactDeps({ maxRetries: 0 }),
+          exactDeps({ maxRetries: 1 }),
         ),
-      ).toThrow();
+      ).toThrow(ProcessBoundLockContentionError);
       settle();
       await assert(operation);
       expect(fs.existsSync(test.lockDir)).toBe(false);
+      const contender = vi.fn(() => "entered");
+      expect(
+        withProcessBoundRegistryLockAt(test.registryFile, contender, exactDeps({ maxRetries: 1 })),
+      ).toBe("entered");
+      expect(contender).toHaveBeenCalledOnce();
     },
   );
 

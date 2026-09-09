@@ -106,7 +106,7 @@ export type MaterializeSandboxCreatePlanInput = {
   messagingConfig?: MessagingChannelConfig | null;
   runProviderPreDeleteCleanup(
     revalidateSandboxIdentity?: (operation: string) => void,
-  ): void | Promise<void>;
+  ): Promise<void>;
   upsertMessagingProviders(
     tokenDefs: MessagingTokenDef[],
     options: {

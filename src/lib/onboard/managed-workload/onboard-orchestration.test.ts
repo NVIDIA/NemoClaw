@@ -617,7 +617,7 @@ describe("managed workload onboard orchestration", () => {
       plan: {
         intent: {},
         rebindMessagingTokenDefs: async () => [],
-        runProviderPreDeleteCleanup: vi.fn(),
+        runProviderPreDeleteCleanup: vi.fn(async () => {}),
         upsertMessagingProviders: vi.fn(() => []),
         getHermesToolGatewayProviderName: vi.fn(() => "unused"),
         discloseInitialSandboxPolicy: vi.fn(),
