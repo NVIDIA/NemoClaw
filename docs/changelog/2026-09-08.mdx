@@ -48,3 +48,8 @@ It also hardens messaging providers, Windows and WSL inference, sandbox recovery
   GPU handoff resumes from validated checkpoints, managed vLLM avoids repeated retries after a rejected pinned image, and Gemini HTTP `400` failures include provider-specific recovery guidance.
   Related changes: [PR #11152](https://github.com/NVIDIA/NemoClaw/pull/11152), [PR #11124](https://github.com/NVIDIA/NemoClaw/pull/11124), [PR #11048](https://github.com/NVIDIA/NemoClaw/pull/11048), and [PR #11171](https://github.com/NVIDIA/NemoClaw/pull/11171).
   For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands), [Set Up vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm), and [Use Google Gemini](/user-guide/openclaw/inference/hosted-inference/use-google-gemini).
+- Hermes rebuild now preserves supported operator-managed configuration set through `nemohermes <name> config set`.
+  Rebuild excludes managed route fields and credential material, verifies the restored values, and lists restored and dropped keys.
+  A capture, restore, or verification failure leaves rebuild recovery state intact and exits nonzero.
+  Related change: [PR #10780](https://github.com/NVIDIA/NemoClaw/pull/10780).
+  For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/hermes/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes) and the [NemoClaw CLI Commands Reference](/user-guide/hermes/reference/commands).

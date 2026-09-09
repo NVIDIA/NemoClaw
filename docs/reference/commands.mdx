@@ -2880,6 +2880,9 @@ After restore, the command runs `openclaw doctor --fix` for cross-version struct
 <AgentOnly variant="hermes">
 
 After restore, the command restores Hermes manifest-defined state and starts the rebuilt Hermes gateway with the regenerated `/sandbox/.hermes` config.
+It also restores supported operator-managed configuration that you set with `nemohermes <name> config set`.
+The completion report lists restored and dropped configuration keys.
+If it cannot capture, restore, or verify those values, rebuild exits nonzero and retains recovery state.
 A rebuild creates a new sandbox home and a new Hermes API bearer token.
 After the rebuild succeeds, retrieve the replacement token with `nemohermes my-assistant gateway-token --quiet` before reconnecting API clients.
 
@@ -3370,8 +3373,6 @@ $$nemoclaw doctor [--json | --text]
 
 The command exits nonzero when a required check fails.
 Pass `--json` for a redacted, schema-versioned report with `scope: "global"` and no sandbox field.
-`--json` and `--text` are mutually exclusive.
-When you combine them, `doctor` exits before it runs checks, writes one JSON error envelope to standard output, and names the conflicting flags on standard error.
 
 | Flag | Description |
 | --- | --- |
@@ -3730,7 +3731,7 @@ Commands whose parser owns the base logging options also accept the hidden long-
 
 | Variable | Default | Service |
 | --- | --- | --- |
-| `NEMOCLAW_GATEWAY_PORT` | 8080 | OpenShell gateway port |
+| `NEMOCLAW_GATEWAY_PORT` | A recorded automatic alternate port, otherwise 8080 | OpenShell gateway port. An explicit supported value remains authoritative. See [Installer Reports That the Systemd User Manager Is Unavailable](./troubleshooting#installer-reports-that-the-systemd-user-manager-is-unavailable). |
 | `NEMOCLAW_GATEWAY_BIND_ADDRESS` | 127.0.0.1 | The OpenShell gateway uses this bind address. NemoClaw keeps Docker-driver gateways on loopback while gateway JWT auth is active. |
 
 <AgentOnly variant="openclaw,hermes">
@@ -3776,7 +3777,7 @@ export NEMOCLAW_DASHBOARD_PORT=19000
 $$nemoclaw onboard
 ```
 
-These overrides apply to onboarding, status checks, health probes, and the uninstaller. Defaults are unchanged when no variable is set.
+These overrides apply to onboarding, status checks, health probes, and the uninstaller. Defaults are unchanged when no variable is set, except that a recorded automatic gateway-port marker selects its alternate port.
 
 <AgentOnly variant="openclaw,hermes">
 If `NEMOCLAW_DASHBOARD_PORT` or the port from `CHAT_UI_URL` is already occupied by another sandbox, onboarding scans `18789` through `18799` and uses the next free dashboard port.
