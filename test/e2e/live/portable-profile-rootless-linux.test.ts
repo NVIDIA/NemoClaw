@@ -31,8 +31,6 @@ import {
 } from "../../../src/lib/onboard/experimental/hermes-portable-container.ts";
 import { resolveHermesPortableStartupContract } from "../../../src/lib/onboard/experimental/hermes-portable-contract.ts";
 import {
-  HermesPortableRecoveryRollbackError,
-  recoverHermesPortableSandboxLifecycle,
   stopHermesPortableSandboxLifecycle,
   type HermesPortableLifecycleCommandResult,
   type HermesPortableLifecycleDeps,
@@ -153,7 +151,7 @@ const PORTABLE_PROFILE_E2E_PHASES = [
   "start the pinned Podman gateway",
   "verify distinct same-network routes",
   "upgrade the historical receipt through public start and verify its lifecycle",
-  "classify a post-start refusal and rollback settlement",
+  "prove post-recovery stop settlement",
   "record portable environment completion",
 ] as const;
 
@@ -820,95 +818,16 @@ async function proveHistoricalHermesPortableLifecycle(input: {
       );
       requireCompatibleStartupAuthority();
 
-      withMcpLifecycleLockSync(
+      input.progress.phase("prove post-recovery stop settlement");
+      const postRecoveryStop = withMcpLifecycleLockSync(
         sandboxName,
         () =>
           stopHermesPortableSandboxLifecycle(sandboxName, context, () => undefined, lifecycleDeps),
         { stateDir: path.join(receiptStateDir, "state") },
       );
-      waitForReceiptOwnedContainerExit(activeContainerId);
-      waitForOpenShellTerminalPhase(input.openshellBin, input.openshellClientEnv, sandboxName);
-
-      input.progress.phase("classify a post-start refusal and rollback settlement");
-      let startupRefused = false;
-      let terminalSettlementObserved = false;
-      let virtualNow = Date.now();
-      const refusedObservations = new Map<string, HermesPortableLifecycleCommandResult>([
-        [
-          "sandbox\0list",
-          {
-            status: 0,
-            stderr: "",
-            stdout: JSON.stringify([
-              {
-                id: live.id,
-                name: sandboxName,
-                phase: "Ready",
-                labels: {},
-                resource_version: 1,
-                created_at: "2026-01-01T00:00:00Z",
-                current_policy_version: 1,
-              },
-            ]),
-          },
-        ],
-        [
-          "sandbox\0get",
-          {
-            status: 0,
-            stderr: "",
-            stdout: `Name: ${sandboxName}\nID: ${live.id}\nPhase: Ready\n`,
-          },
-        ],
-        ["sandbox\0exec", { status: 0, stderr: "", stdout: "" }],
-        [
-          "policy\0get",
-          { status: 0, stderr: "", stdout: fs.readFileSync(qualifiedPolicyPath, "utf8") },
-        ],
-      ]);
-      const refusingCapture: NonNullable<HermesPortableLifecycleDeps["captureOpenShell"]> = (
-        args,
-        timeoutMs,
-      ) => {
-        const operation = args.slice(0, 2).join("\0");
-        const startsTerminalSettlement =
-          !terminalSettlementObserved && startupRefused && operation === "sandbox\0list";
-        virtualNow = startsTerminalSettlement ? Date.now() : virtualNow;
-        terminalSettlementObserved ||= startsTerminalSettlement;
-        return refusedObservations.get(operation) ?? capture(args, timeoutMs);
-      };
-      let classifiedFailure: unknown;
-      try {
-        withMcpLifecycleLockSync(
-          sandboxName,
-          () =>
-            recoverHermesPortableSandboxLifecycle(sandboxName, context, {
-              ...lifecycleDeps,
-              captureOpenShell: refusingCapture,
-              launchOpenShell: () => {
-                startupRefused = true;
-                assert.ok(false, "injected post-start startup refusal");
-              },
-              now: () =>
-                terminalSettlementObserved ? (virtualNow += 31_000) : Date.now(),
-            }),
-          { stateDir: path.join(receiptStateDir, "state") },
-        );
-      } catch (error) {
-        classifiedFailure = error;
-      }
-      const classifiedDetails =
-        classifiedFailure instanceof HermesPortableRecoveryRollbackError
-          ? `primary=${classifiedFailure.primaryFailureClass} rollback=${classifiedFailure.rollbackFailureClass}`
-          : String(classifiedFailure);
-      assert.ok(
-        classifiedFailure instanceof HermesPortableRecoveryRollbackError &&
-          classifiedFailure.primaryFailureClass === "startup-launch" &&
-          classifiedFailure.rollbackFailureClass === "openshell-terminal-settlement",
-        `Hermes recovery did not preserve primary and rollback classifications: ${classifiedDetails}`,
-      );
-      const stoppedContainerStatus = waitForReceiptOwnedContainerExit(activeContainerId);
-      const rollbackTerminalPhase = waitForOpenShellTerminalPhase(
+      assert.equal(postRecoveryStop.kind, "stopped", "Recovered Hermes receipt did not stop");
+      const postRecoveryContainerStatus = waitForReceiptOwnedContainerExit(activeContainerId);
+      const postRecoveryTerminalPhase = waitForOpenShellTerminalPhase(
         input.openshellBin,
         input.openshellClientEnv,
         sandboxName,
@@ -931,11 +850,10 @@ async function proveHistoricalHermesPortableLifecycle(input: {
           forwardResult: gatewayEvidence.forwardRecovery?.kind ?? "missing",
           authenticatedHealth: "verified-by-public-start-before-forward-verification",
         },
-        refusal: {
-          primaryFailureClass: classifiedFailure.primaryFailureClass,
-          rollbackFailureClass: classifiedFailure.rollbackFailureClass,
-          containerStatus: stoppedContainerStatus,
-          openShellPhase: rollbackTerminalPhase,
+        postRecoveryStop: {
+          result: postRecoveryStop.kind,
+          containerStatus: postRecoveryContainerStatus,
+          openShellPhase: postRecoveryTerminalPhase,
         },
       };
       fs.writeFileSync(
