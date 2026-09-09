@@ -299,7 +299,7 @@ function normalizedWindowsPath(value: string): string {
   return path.win32.normalize(value.replace(/^\\\\\?\\/u, "")).toLowerCase();
 }
 
-function isTrustedTaskkillExecutable(executable: string): boolean {
+export function isTrustedTaskkillExecutable(executable: string): boolean {
   try {
     const metadata = lstatSync(executable);
     if (!metadata.isFile() || metadata.isSymbolicLink()) return false;

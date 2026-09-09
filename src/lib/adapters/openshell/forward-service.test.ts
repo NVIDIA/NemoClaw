@@ -8,6 +8,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -22,6 +23,7 @@ import {
   buildForwardServiceArgs,
   ForwardServiceStartupCleanupError,
   isForwardServiceListenerOwner,
+  isTrustedTaskkillExecutable,
   launchForwardService,
   terminateForwardServiceProcessTree,
   type ForwardServiceTarget,
@@ -378,7 +380,7 @@ describe("OpenShell forward service", () => {
     expect(signalProcess).toHaveBeenCalledWith(-4_321, "SIGKILL");
   });
 
-  it("uses the trusted absolute Windows taskkill path despite poisoned search paths", () => {
+  it("resolves Windows taskkill from SystemRoot while PATH is poisoned", () => {
     const signalProcess = vi.fn();
     const taskkill = vi.fn(() => ({ status: 0 }));
     const trustedTaskkill = "C:\\Windows\\System32\\taskkill.exe";
@@ -388,7 +390,6 @@ describe("OpenShell forward service", () => {
       {
         environment: {
           PATH: "C:\\attacker-controlled",
-          PWD: "C:\\attacker-controlled",
           SystemRoot: "C:\\Windows",
         },
         isTrustedTaskkillExecutable: (executable) => executable === trustedTaskkill,
@@ -400,6 +401,19 @@ describe("OpenShell forward service", () => {
 
     expect(taskkill).toHaveBeenCalledWith(trustedTaskkill, ["/PID", "4321", "/T", "/F"]);
     expect(signalProcess).not.toHaveBeenCalled();
+  });
+
+  it("qualifies the real taskkill file and rejects a symlink with the default verifier", () => {
+    const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), "nemoclaw-taskkill-trust-")));
+    temporaryDirectories.push(root);
+    const executable = path.join(root, "taskkill.exe");
+    const symlink = path.join(root, "taskkill-link.exe");
+    writeFileSync(executable, "fixture");
+    symlinkSync(executable, symlink);
+
+    expect(isTrustedTaskkillExecutable(executable)).toBe(true);
+    expect(isTrustedTaskkillExecutable(symlink)).toBe(false);
+    expect(isTrustedTaskkillExecutable(path.join(root, "missing.exe"))).toBe(false);
   });
 
   it("fails closed when the trusted Windows taskkill executable is unavailable", () => {
