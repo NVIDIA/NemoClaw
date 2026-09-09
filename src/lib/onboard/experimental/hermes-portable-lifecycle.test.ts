@@ -336,9 +336,8 @@ function lifecycleDeps(
   const captureSocketAuthority = vi.fn(() => ({ ...receipt.socketAuthority, inode: "102" }));
   const captureOpenShellExecutableAuthority = vi.fn(() => receipt.openshellExecutableAuthority);
   const capturePodmanExecutableAuthority = vi.fn(() => receipt.podmanExecutableAuthority);
-  const assertOpenShellExecutableFileAuthority = vi.fn(
-    () => receipt.openshellExecutableAuthority.executable.executablePath,
-  );
+  const assertOpenShellExecutableAuthority = vi.fn(() => "/usr/bin/openshell");
+  const assertOpenShellExecutableFileAuthority = vi.fn(() => "/usr/bin/openshell");
   const capturePodmanExecutableFileAuthority = vi.fn(() => receipt.podmanExecutableAuthority);
   return {
     deps: {
@@ -362,7 +361,7 @@ function lifecycleDeps(
         }) as SandboxEntry,
       captureOpenShell,
       launchOpenShell,
-      assertOpenShellExecutableAuthority: vi.fn(() => "/usr/bin/openshell"),
+      assertOpenShellExecutableAuthority,
       operatingAuthority: {
         env: {
           HOME: receipt.runtimeAuthority.homeDir,
@@ -385,6 +384,7 @@ function lifecycleDeps(
     captureSocketAuthority,
     captureOpenShellExecutableAuthority,
     capturePodmanExecutableAuthority,
+    assertOpenShellExecutableAuthority,
     assertOpenShellExecutableFileAuthority,
     capturePodmanExecutableFileAuthority,
   };

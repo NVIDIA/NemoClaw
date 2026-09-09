@@ -7,12 +7,71 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import * as processRecovery from "./process-recovery";
+import {
+  refreshMutableOpenClawConfigHashAfterPostRestoreWrites,
+  verifyFinalMutableOpenClawConfigHash,
+} from "./rebuild-config-hash";
 import {
   buildRefreshMutableOpenClawConfigHashCommand,
   buildVerifyMutableOpenClawConfigHashCommand,
 } from "./rebuild-config-hash-command";
+
+const runtimeSelection = {
+  gatewayName: "recorded-gateway",
+  workspace: "default",
+  localTlsDir: "/authority/tls",
+} as const;
+
+describe("OpenClaw rebuild config hash target selection", () => {
+  beforeEach(() => {
+    vi.stubEnv("OPENSHELL_GATEWAY", "hostile-gateway");
+    vi.stubEnv("OPENSHELL_WORKSPACE", "hostile-workspace");
+    vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/hostile/tls");
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://hostile.invalid");
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  it("refreshes the config hash on the selected target instead of the ambient target (#10514)", () => {
+    const execute = vi.spyOn(processRecovery, "executeSandboxCommand").mockReturnValue({
+      status: 0,
+      stdout: "",
+      stderr: "",
+    });
+
+    expect(
+      refreshMutableOpenClawConfigHashAfterPostRestoreWrites("alpha", vi.fn(), runtimeSelection),
+    ).toBe(true);
+    expect(execute).toHaveBeenCalledExactlyOnceWith(
+      "alpha",
+      buildRefreshMutableOpenClawConfigHashCommand(),
+      { runtimeSelection },
+    );
+    expect(process.env.OPENSHELL_GATEWAY).toBe("hostile-gateway");
+  });
+
+  it("verifies the config hash on the selected target instead of the ambient target (#10514)", () => {
+    const execute = vi.spyOn(processRecovery, "executeSandboxCommand").mockReturnValue({
+      status: 0,
+      stdout: "",
+      stderr: "",
+    });
+
+    expect(verifyFinalMutableOpenClawConfigHash("alpha", vi.fn(), runtimeSelection)).toBe(true);
+    expect(execute).toHaveBeenCalledExactlyOnceWith(
+      "alpha",
+      buildVerifyMutableOpenClawConfigHashCommand(),
+      { runtimeSelection },
+    );
+    expect(process.env.OPENSHELL_GATEWAY).toBe("hostile-gateway");
+  });
+});
 
 function sha256Hex(filePath: string): string {
   return createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
