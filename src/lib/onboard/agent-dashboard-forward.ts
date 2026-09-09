@@ -172,6 +172,7 @@ export async function ensureAgentDashboardForward(options: {
           port === optionalDashboardPort && chatUiUrl
             ? replaceUrlPort(chatUiUrl, port)
             : `http://127.0.0.1:${port}`;
+        discloseDashboardBindWidening(forwardUrl, port, warn, dashboardAccess);
         ensureDashboardForward(sandboxName, forwardUrl, {
           allowPortReallocation: false,
           ...(revalidateIdentity ? { revalidateSandboxIdentity: revalidateIdentity } : {}),

@@ -126,9 +126,7 @@ describe("buildChain", () => {
 
   it("does not mark a loopback bind as widened", () => {
     expect(buildChain({}).bindWidenedByChatUiUrl).toBe(false);
-    expect(
-      buildChain({ chatUiUrl: "http://127.0.0.1:18789" }).bindWidenedByChatUiUrl,
-    ).toBe(false);
+    expect(buildChain({ chatUiUrl: "http://127.0.0.1:18789" }).bindWidenedByChatUiUrl).toBe(false);
   });
 
   it("does not mark the bind as widened when the operator opted in or the host is WSL", () => {

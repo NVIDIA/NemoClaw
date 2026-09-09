@@ -185,6 +185,7 @@ describe("ensureAgentDashboardForward", () => {
 
   it("preserves the canonical WebUI forward for an API-kind agent with an optional dashboard", async () => {
     process.env.CHAT_UI_URL = "https://hermes.example.test:9120/ui";
+    const warn = vi.fn();
     const ensureDashboardForward = vi.fn((_sandboxName, chatUiUrl = "") => {
       return Number(new URL(chatUiUrl).port);
     });
@@ -202,6 +203,7 @@ describe("ensureAgentDashboardForward", () => {
         hermesApiPort: 8642,
         chatUiUrl: process.env.CHAT_UI_URL,
         controlUiPort: 9120,
+        warn,
       }),
     ).toBe(8642);
 
@@ -218,6 +220,9 @@ describe("ensureAgentDashboardForward", () => {
       {
         allowPortReallocation: false,
       },
+    );
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("forward for port 9120 binds 0.0.0.0"),
     );
     expect(process.env.CHAT_UI_URL).toBe("https://hermes.example.test:9120/ui");
   });
