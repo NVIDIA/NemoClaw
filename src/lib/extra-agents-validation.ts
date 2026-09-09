@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+// This source also runs directly under Node's native TypeScript stripping in
+// the managed image. Keep it dependency-free: CLI-style extensionless imports
+// do not resolve another .ts source file at that runtime boundary.
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }

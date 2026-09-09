@@ -7,6 +7,8 @@ import path from "node:path";
 import { assertNoPerAgentMaxSpawnDepth } from "../extra-agents-validation";
 import { isObjectRecord } from "../core/json-types";
 
+// Keep the onboarding command on this existing manifest facade. Importing the
+// shared validator there directly would exceed command.ts's fan-out budget.
 export { assertNoPerAgentMaxSpawnDepthJson } from "../extra-agents-validation";
 
 // Load YAML lazily via require to match the rest of the onboard pipeline
