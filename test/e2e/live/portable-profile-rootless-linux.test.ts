@@ -530,9 +530,10 @@ function waitForOpenShellSandboxAbsent(
             Array.isArray(sandboxes) &&
             sandboxes.every(
               (sandbox) =>
-                !sandbox ||
-                typeof sandbox !== "object" ||
-                Array.isArray(sandbox) ||
+                sandbox !== null &&
+                typeof sandbox === "object" &&
+                !Array.isArray(sandbox) &&
+                typeof (sandbox as { name?: unknown }).name === "string" &&
                 (sandbox as { name?: unknown }).name !== sandboxName,
             ),
           detail: String(result.error?.message ?? result.stderr ?? result.stdout),
