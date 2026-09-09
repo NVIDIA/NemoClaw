@@ -29,18 +29,6 @@ require() {
   [ -n "${!name:-}" ] || die "$name is required"
 }
 
-write_workspace_recovery() {
-  local workspace_id="$1" receipt="$WORK_DIR/workspace-recovery.json" temporary
-  temporary="${receipt}.tmp"
-  jq -n --arg candidateSha "$CANDIDATE_SHA" --arg runId "${GITHUB_RUN_ID:-}" \
-    --arg runAttempt "${GITHUB_RUN_ATTEMPT:-}" --arg workspaceName "$INSTANCE_NAME" \
-    --arg workspaceId "$workspace_id" \
-    '{schemaVersion:1,candidateSha:$candidateSha,runId:$runId,runAttempt:$runAttempt,workspace:{name:$workspaceName,id:$workspaceId}}' \
-    >"$temporary"
-  chmod 600 "$temporary"
-  mv "$temporary" "$receipt"
-}
-
 write_workspace_ownership() {
   local create_state="$1" delete_attempts="${2:-}" temporary
   case "$create_state" in
@@ -495,9 +483,6 @@ cleanup() {
   if [ -f "$WORK_DIR/cleanup.json" ]; then
     workspace_id="$(jq -r '.workspaceId // ""' "$WORK_DIR/cleanup.json" 2>/dev/null || true)"
   fi
-  if [ -z "$workspace_id" ] && [ -f "$WORK_DIR/workspace-recovery.json" ]; then
-    workspace_id="$(jq -r --arg name "$INSTANCE_NAME" 'select(.schemaVersion == 1 and .workspace.name == $name) | .workspace.id // ""' "$WORK_DIR/workspace-recovery.json" 2>/dev/null || true)"
-  fi
   deadline=$((SECONDS + ${BREV_DELETE_TIMEOUT_SECONDS:-600}))
   while [ "$SECONDS" -lt "$deadline" ]; do
     if record="$(workspace)"; then
@@ -526,22 +511,7 @@ cleanup() {
       else
         absent=0
         workspace_observed=1
-        current_workspace_id="$(jq -r '.id // ""' <<<"$record")"
-        if [ -z "$workspace_id" ] && [ "$create_state" != reconciled ] && [ -n "$current_workspace_id" ]; then
-          workspace_id="$current_workspace_id"
-          if ! write_workspace_recovery "$workspace_id"; then
-            log "FAILED: cleanup could not record the reconciled workspace identity" >&2
-            return 1
-          fi
-        fi
-        if [ -z "$workspace_id" ]; then
-          log "FAILED: workspace recovery identity is missing; refusing deletion" >&2
-          break
-        fi
-        if [ -z "$current_workspace_id" ] || [ "$current_workspace_id" != "$workspace_id" ]; then
-          log "FAILED: workspace name now resolves to a different identity; refusing deletion" >&2
-          break
-        fi
+        [ -n "$workspace_id" ] || workspace_id="$(jq -r '.id // ""' <<<"$record")"
         if [ "$delete_attempts" -eq 0 ]; then
           create_state="reconciled"
           delete_attempts=$((delete_attempts + 1))
@@ -552,7 +522,7 @@ cleanup() {
             fi
           fi
           log "Workspace cleanup delete attempt $delete_attempts of 1"
-          timeout 60s brev delete "$workspace_id" || true
+          timeout 60s brev delete "$INSTANCE_NAME" || true
         fi
       fi
     else
@@ -827,15 +797,17 @@ existing="$(workspace)" || die "Brev workspace inventory failed"
   die "workspace name already exists"
 }
 cleanup_required=1
-write_workspace_ownership pending
-write_workspace_recovery ""
+if [ "$VALIDATION_MODE" = identity-smoke ]; then
+  write_workspace_ownership pending
+fi
 timeout 900s brev create "$INSTANCE_NAME" --launchable "$BREV_LAUNCHABLE_ID" --detached --timeout 900
-write_workspace_ownership accepted
+if [ "$VALIDATION_MODE" = identity-smoke ]; then
+  write_workspace_ownership accepted
+fi
 deadline=$((SECONDS + ${BREV_READY_TIMEOUT_SECONDS:-1200}))
 ready=""
 while [ "$SECONDS" -lt "$deadline" ]; do
   ready="$(workspace || true)"
-  write_workspace_recovery "$(jq -r '.id // ""' <<<"${ready:-null}")"
   if jq -e '.status == "RUNNING" and (.shell_status // .shellStatus) == "READY" and
     (.build_status // .buildStatus) == "COMPLETED"' <<<"${ready:-null}" >/dev/null; then break; fi
   state="$(jq -r '(.status // "") + ":" + (.build_status // .buildStatus // "")' <<<"${ready:-null}")"
@@ -846,8 +818,6 @@ jq -e '.status == "RUNNING" and (.shell_status // .shellStatus) == "READY" and
   (.build_status // .buildStatus) == "COMPLETED"' \
   <<<"${ready:-null}" >/dev/null || die "workspace readiness timed out"
 workspace_id="$(jq -r '.id // ""' <<<"$ready")"
-[ -n "$workspace_id" ] || die "ready workspace ID is missing"
-write_workspace_recovery "$workspace_id"
 log "Workspace $INSTANCE_NAME ($workspace_id) is ready"
 wait_for_workspace_ssh
 

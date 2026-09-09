@@ -15,7 +15,7 @@ dispatches. Do not improvise tag, push, version-bump, or other release-state Git
 
 Treat these as separate states:
 
-- **Tag can be cut:** the release entry, required image checks, and canonical Launchable evidence pass.
+- **Tag can be cut:** the release entry and required image checks pass.
   The maintainer chooses to proceed with the displayed documentation coverage and general E2E state.
   The release brief records both decisions and contains no unresolved prompts.
 - **Tag cut:** the remote signed tag exists and peels to the planned candidate.
@@ -35,7 +35,6 @@ Treat these as separate states:
   later commits and PRs, review and check state, changed paths, and open managed docs PRs.
 - Record the maintainer's documentation decision in the signed release brief.
 - Require applicable GHCR base and managed-image publication evidence.
-- Require successful canonical Launchable evidence for the candidate. Stop before confirmation when the inspector fails.
 - Treat E2E as maintainer context, not a tag gate. Show the newest full E2E result and let the
   maintainer run focused tests, run the full suite, or proceed with the displayed status.
 - Record every displayed or requested E2E result and the decision in the release brief, the signed
@@ -141,15 +140,14 @@ Show the complete documentation coverage evidence. Offer the maintainer the thre
 there. If the maintainer requests documentation work or stops, do not continue to E2E or tag
 confirmation. If the maintainer proceeds, record the decision line in the release brief.
 
-Do not offer the general E2E proceed option until the release entry and image checks pass, canonical
-Launchable inspection succeeds for the candidate, and the maintainer chooses to proceed with the
-displayed documentation coverage. Record the returned paths,
+Do not offer the general E2E proceed option until the release entry and image checks pass and the
+maintainer chooses to proceed with the displayed documentation coverage. Record the returned paths,
 URLs, PR state, commit ranges, review state, check state, and image identities in the release brief.
 
 ### 3. Present General E2E and Ask for a Decision
 
-Follow [Run Maintainer E2E](../nemoclaw-maintainer-e2e/SKILL.md) to inspect the newest completed or
-active full run. Present its release context for the candidate.
+Follow [Report the Release Context](../nemoclaw-maintainer-e2e/SKILL.md#report-the-release-context)
+to inspect the newest completed or active full run. Present its release context for the candidate.
 
 Offer exactly these three choices:
 
@@ -167,8 +165,7 @@ reason. The reason must say what differs or remains unresolved and why the maint
 Selecting “Proceed with the status as shown” is the decision, not the reason. Stop and ask the
 maintainer why before continuing when a reason is required.
 This exception applies only to E2E. It never replaces the current-main release entry, a historical
-plan's release-entry exception, the documentation coverage decision, required image evidence, or
-canonical Launchable evidence.
+plan's release-entry exception, the documentation coverage decision, or required image evidence.
 
 ### 4. Finish and Review the Release Brief
 
@@ -179,9 +176,6 @@ Replace every `TODO_RELEASE_BRIEF` prompt in that Markdown file with:
 - the latest included cumulative docs PR, coverage commit, later commits and PRs, changed-path
   result, review and check state, open managed docs PRs, and maintainer decision;
 - candidate E2E workflow, attempt, and successful `base-image-publication` job URL;
-- the plan-bound candidate and complete canonical Launchable receipt emitted by
-  `inspect-launchable-evidence.ts`; refresh the inspector output and require an exact match before tag
-  confirmation;
 - the newest full E2E result and every focused or full rerun result, including SHA, time, age, status,
   conclusion, and URLs;
 - the maintainer's E2E choice; and

@@ -46,9 +46,8 @@ Before dispatch:
 preparation. It exposes `NEMOCLAW_IMAGE_DISPATCH_TOKEN` only to the trusted host script as
 `GH_TOKEN`. It exports `NVIDIA_INFERENCE_API_KEY` into the Brev guest for full E2E. Candidate code in
 that guest can read the inference key. The workflow requires repository `maintain` or `admin`
-permission before source checkout. If cleanup fails, report the recovery identity and stop. Delete no
-workspace until the recovery procedure validates workflow ownership. Follow
-[Validate Existing Launchable Evidence](launchable-evidence.md) for credential removal.
+permission before source checkout. If cleanup fails, remove the recorded workspace. Rotate or revoke
+credentials that may remain accessible.
 
 Protected managed-image qualification supplies `NVIDIA_API_KEY` only to trusted qualification code.
 If its verified cleanup refuses removal, inspect the temporary NIM container and rotate the key.
@@ -165,9 +164,7 @@ Require the selected run to report `head_sha` equal to `CANDIDATE_SHA` and `stat
 `success`. Otherwise, return each failed, cancelled, skipped, or running job and URL.
 
 For Launchable mode, also require one completed, successful `Exact staging Brev Launchable` job.
-Preserve `workspace-recovery.json` for incomplete-cleanup recovery. Preserve links to
-`launchable-e2e.json`, `full-e2e.log`, and `cleanup.json` as the successful-evidence set. Follow [Recover Incomplete Cleanup](launchable-evidence.md#recover-incomplete-cleanup) when cleanup is
-incomplete.
+Preserve links to `launchable-e2e.json`, `full-e2e.log`, and `cleanup.json` for diagnosis.
 
 For full mode, also require one completed, successful `Release qualification` job. A skipped, cancelled, queued, or failed aggregate is not a passing full run.
 

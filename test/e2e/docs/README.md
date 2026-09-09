@@ -161,9 +161,9 @@ git worktree add --detach "$WORKTREE" "$COMMIT"
 ```
 
 Omit `-t` to run the complete file. Omit the test file for the aggregate local
-run. `NEMOCLAW_E2E_EXPECTED_SHA` checks identity; it does not select or clean a
-checkout. Do not use it in a dirty checkout to claim that a run tested only the
-named commit.
+run. The detached worktree selects the commit. `NEMOCLAW_E2E_EXPECTED_SHA` supplies
+that identity to tests that consume it. Do not use it in a dirty checkout to claim
+that a run tested only the named commit.
 
 The subshell returns to the primary checkout and leaves the worktree in place.
 Remove external resources recorded by a failed test. Preserve any needed artifacts.

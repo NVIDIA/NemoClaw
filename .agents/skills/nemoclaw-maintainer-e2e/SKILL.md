@@ -18,9 +18,9 @@ description: Runs local live E2E or dispatches and reports trusted GitHub Action
 | Inspect existing evidence for a release decision | [Report the Release Context](#report-the-release-context) |
 | Classify one failed GitHub Actions job | Load `nemoclaw-maintainer-classify-ci-failure`; this skill still owns dispatch and run-level reporting. |
 
-A GitHub dispatch tests the latest PR commit or the current `main` commit. It cannot test any
-other commit. Report that request as unsupported. Do not weaken the workflow's identity or trust
-checks.
+A new GitHub candidate run tests the latest PR commit or the current `main` commit.
+Manual PR runs may replay the PR base after a candidate failure, as described in their procedure.
+Report arbitrary historical candidate selection as unsupported. Preserve the workflow's identity and trust checks.
 
 Push runs select change-relevant E2E and publish `Relevant E2E`; they do not always run the full
 suite. Only a full manual run publishes `Release qualification`. That aggregate reports the full
@@ -60,9 +60,8 @@ GitHub-hosted runner. Later trusted steps and processes in that job can read the
 does not delete it explicitly. Runner teardown discards the ephemeral filesystem.
 
 The credentials remain valid until they expire or an administrator revokes them in their issuing
-services. If cleanup fails, report the recovery identity and stop. Delete no workspace until the
-recovery procedure validates workflow ownership. Rotate or revoke exposed credentials as described
-in [Validate Existing Launchable Evidence](references/launchable-evidence.md).
+services. If cleanup fails, remove the recorded Brev workspace. Rotate or revoke each credential to
+remove later access.
 
 The `NEMOCLAW_STAGING_LAUNCHABLE_ID` repository Actions variable selects the standing Launchable.
 Keep it equal to the Launchable ID in the default URL owned by

@@ -216,11 +216,6 @@ export function renderHandoffMarkdown(summary: HandoffOutput): string {
     `- Open managed docs PRs: ${INCOMPLETE}`,
     `- Maintainer decision: ${INCOMPLETE}`,
     "",
-    "## Canonical Launchable evidence",
-    "",
-    `- Candidate: ${code(summary.candidateCommit)}`,
-    `- Receipt: ${INCOMPLETE}`,
-    "",
     "## Base and managed image evidence",
     "",
     `- Base-image candidate: ${code(summary.candidateCommit)}`,
@@ -277,7 +272,10 @@ function readPlan(planPath: string): HandoffInput {
   if (typeof value.originMainHeadline !== "string" || !value.originMainHeadline) {
     throw new Error("release plan headline must be a nonempty string");
   }
-  if (value.candidateSelection !== "current-main" && value.candidateSelection !== "historical") {
+  if (
+    value.candidateSelection !== "current-main" &&
+    value.candidateSelection !== "historical"
+  ) {
     throw new Error("release plan candidate selection is invalid");
   }
   if (
