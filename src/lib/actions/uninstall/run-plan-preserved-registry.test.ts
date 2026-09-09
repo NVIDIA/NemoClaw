@@ -175,7 +175,7 @@ describe("uninstall messaging for a preserved-but-orphaned sandbox registry (#65
       const combined = `${warnings.join("\n")}\n${logs.join("\n")}`;
       expect(warnings.join("\n")).toContain("Provider 'nvidia-nim' already removed or unreachable");
       expect(warnings.join("\n")).toContain("OpenShell sandboxes already removed or unreachable");
-      expect(warnings.join("\n")).toContain("Gateway 'nemoclaw' already removed or unreachable");
+      expect(warnings.join("\n")).toContain("Gateway 'nemoclaw' is already absent");
       expect(
         calls.some(
           (call) => call[0] === "openshell" && call[1] === "gateway" && call[2] === "destroy",

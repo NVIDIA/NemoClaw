@@ -432,7 +432,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       );
       expect(warnings.join("\n")).toContain(expectedCause);
       expect(warnings.join("\n")).not.toContain("must-not-be-logged");
-      expect(warnings).not.toContain("Gateway 'nemoclaw' already removed or unreachable");
+      expect(warnings).not.toContain("Gateway 'nemoclaw' is already absent");
       expect(warnings).toContain(
         "Uninstall completed with errors. Some state may remain on disk; see warnings above.",
       );

@@ -19,6 +19,7 @@ import {
   GatewayAuthorityError,
   type GatewayTeardownAuthorityResolver,
   gatewayAuthorityFailureLines,
+  gatewayRegistrationRemovalFailureMessage,
   removeGatewayRegistrationWithPolicy,
   resolveGatewayTeardownAuthority,
 } from "../../onboard/gateway-teardown-authority";
@@ -284,7 +285,11 @@ export function cleanupGatewayAfterLastSandbox(
     );
   } else if (!registrationRemoval.ok) {
     throw new Error(
-      `Failed to remove gateway registration '${gatewayName}' with openshell gateway ${registrationRemoval.operation}. Resolve the reported OpenShell error, then rerun destroy.`,
+      `${gatewayRegistrationRemovalFailureMessage(
+        gatewayName,
+        registrationRemoval.operation,
+        registrationRemoval.result,
+      )} Resolve the reported OpenShell error, then rerun destroy.`,
     );
   }
   if (externallySupervised) {

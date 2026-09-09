@@ -59,6 +59,7 @@ import {
 import { type GatewayOwner, isExternallySupervised } from "../../onboard/gateway-ownership";
 import {
   collectOpenShellGatewayNames,
+  gatewayRegistrationRemovalFailureMessage,
   type GatewayTeardownAuthorityResolver,
   removeGatewayRegistrationWithPolicy,
   resolveGatewayTeardownAuthority,
@@ -905,22 +906,6 @@ function deletePortableOpenShellSandbox(
   }
   runtime.warn(`OpenShell sandbox '${sandboxName}' did not reach verified absence.`);
   return false;
-}
-
-function gatewayRegistrationRemovalFailureMessage(
-  gatewayLabel: string,
-  operation: "destroy" | "remove",
-  result: RunResult,
-): string {
-  const output = `${result.stdout}\n${result.stderr}`;
-  // Map untrusted command output to fixed phrases so diagnostics do not expose secrets.
-  const cause = /permission denied|operation not permitted|access denied|forbidden/iu.test(output)
-    ? "permission denied; "
-    : /connection refused/iu.test(output)
-      ? "connection refused; "
-      : "";
-  const status = result.status === null ? "no exit status" : `exit ${String(result.status)}`;
-  return `Could not remove gateway registration '${gatewayLabel}': openshell gateway ${operation} failed (${cause}${status}).`;
 }
 
 function removeGatewayRegistration(

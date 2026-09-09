@@ -10,6 +10,7 @@
  * signal processes, or remove runtime resources (#6576).
  */
 
+import type { Buffer } from "node:buffer";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -252,8 +253,8 @@ export function resolveGatewayCredentialMutationAuthority(
 
 export interface GatewayRegistrationCommandResult {
   status: number | null;
-  stdout?: string;
-  stderr?: string;
+  stdout?: string | Buffer;
+  stderr?: string | Buffer;
 }
 
 export type GatewayRegistrationCommandRunner = (args: string[]) => GatewayRegistrationCommandResult;
@@ -272,6 +273,22 @@ const GATEWAY_REMOVE_UNSUPPORTED =
 
 function gatewayRegistrationCommandOutput(result: GatewayRegistrationCommandResult): string {
   return `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+}
+
+export function gatewayRegistrationRemovalFailureMessage(
+  gatewayLabel: string,
+  operation: "destroy" | "remove",
+  result: GatewayRegistrationCommandResult,
+): string {
+  const output = gatewayRegistrationCommandOutput(result);
+  // Map untrusted command output to fixed phrases so diagnostics do not expose secrets.
+  const cause = /permission denied|operation not permitted|access denied|forbidden/iu.test(output)
+    ? "permission denied; "
+    : /connection refused/iu.test(output)
+      ? "connection refused; "
+      : "";
+  const status = result.status === null ? "no exit status" : `exit ${String(result.status)}`;
+  return `Could not remove gateway registration '${gatewayLabel}': openshell gateway ${operation} failed (${cause}${status}).`;
 }
 
 function isExplicitGatewayRegistrationAbsence(output: string, gatewayLabel: string): boolean {
@@ -314,7 +331,7 @@ export function collectOpenShellGatewayNames(
   const result = run(["gateway", "list", "-o", "json"]);
   if (result.status !== 0) return null;
   try {
-    const parsed: unknown = JSON.parse(result.stdout ?? "");
+    const parsed: unknown = JSON.parse(result.stdout?.toString() ?? "");
     if (!Array.isArray(parsed)) return null;
     const names = new Set<string>();
     for (const item of parsed) {
