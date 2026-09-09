@@ -10,7 +10,7 @@ const exactWrappedDiagnostic = [
   "  │ <type> --name stale-provider`",
 ].join("\n");
 
-describe("reconcileRegisteredExtraProviders diagnostics", () => {
+describe("planRegisteredExtraProviders diagnostics", () => {
   it.each([
     {
       label: "single-quoted CLI",

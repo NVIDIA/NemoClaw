@@ -5,7 +5,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   applyExtraProviderReconciliation,
   planRegisteredExtraProviders,
-  reconcileRegisteredExtraProviders,
 } from "./extra-provider-reconciliation";
 import {
   LIMIT,
@@ -19,16 +18,16 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-describe("reconcileRegisteredExtraProviders", () => {
+describe("planRegisteredExtraProviders", () => {
   it("skips gateway probes when no extra provider is recorded (#6501)", async () => {
     const runOpenshell = vi.fn((): ProbeResult => ok());
 
     expect(
-      await reconcileRegisteredExtraProviders("nemoclaw", {
+      await planRegisteredExtraProviders("nemoclaw", {
         listExtraProviders: () => [],
         runOpenshell,
       }),
-    ).toEqual([]);
+    ).toEqual({ extraProviders: [], staleExtraProviders: [] });
     expect(runOpenshell).not.toHaveBeenCalled();
   });
 
@@ -44,13 +43,17 @@ describe("reconcileRegisteredExtraProviders", () => {
       return args.at(-1) === "custom-provider-127" ? missing("custom-provider-127") : ok();
     });
 
-    expect(
-      await reconcileRegisteredExtraProviders("nemoclaw", {
-        listExtraProviders: () => [...recorded],
-        removeExtraProvider,
-        runOpenshell,
-      }),
-    ).toEqual(recorded.slice(0, -1));
+    const plan = await planRegisteredExtraProviders("nemoclaw", {
+      listExtraProviders: () => [...recorded],
+      removeExtraProvider,
+      runOpenshell,
+    });
+    expect(plan).toEqual({
+      extraProviders: recorded.slice(0, -1),
+      staleExtraProviders: ["custom-provider-127"],
+    });
+    expect(removeExtraProvider).not.toHaveBeenCalled();
+    applyExtraProviderReconciliation(plan, { removeExtraProvider });
     expect(removeExtraProvider).toHaveBeenCalledWith("custom-provider-127");
     expect(calls).toHaveLength(recorded.length);
     expect(calls.some(({ args }) => args.includes("list") || args.includes("--names"))).toBe(false);

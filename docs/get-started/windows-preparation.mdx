@@ -164,7 +164,7 @@ docker info
 If you see "Cannot connect to the Docker daemon", confirm that Docker Desktop is running and that Docker Desktop enables WSL integration.
 
 For WSL-local Ollama, a qualified rootless Podman provider is also supported.
-Set `NEMOCLAW_GATEWAY_RUNTIME=podman` before onboarding and make sure the current-user Podman service is available. NVIDIA CDI is additionally required for sandbox GPU passthrough and the N1x CUDA capacity proof.
+Set `NEMOCLAW_GATEWAY_RUNTIME=podman` before onboarding and make sure the current-user Podman service and `lsof` on `PATH` are available. NemoClaw does not install `lsof`; install it through the WSL distribution's package-management policy before retrying onboarding. NVIDIA CDI is additionally required for sandbox GPU passthrough and the N1x CUDA capacity proof.
 The Podman path does not enable the Docker-specific managed llama.cpp or Windows-host Ollama routes described below.
 
 ## Set Up Local Inference (Optional)

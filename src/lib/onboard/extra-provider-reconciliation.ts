@@ -189,13 +189,3 @@ export function applyExtraProviderReconciliation(
   const removeExtraProvider = deps.removeExtraProvider ?? defaultRemoveExtraProvider;
   for (const name of plan.staleExtraProviders) removeExtraProvider(name);
 }
-
-export async function reconcileRegisteredExtraProviders(
-  gatewayName: string,
-  deps: ReconcileExtraProvidersDeps = {},
-): Promise<string[]> {
-  // Compatibility wrapper for focused #6501 tests; remove with that defensive prune.
-  const plan = await planRegisteredExtraProviders(gatewayName, deps);
-  applyExtraProviderReconciliation(plan, deps);
-  return [...plan.extraProviders];
-}
