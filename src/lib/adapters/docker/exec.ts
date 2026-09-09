@@ -8,9 +8,6 @@ import {
   type ExecFileSyncOptionsWithStringEncoding,
 } from "node:child_process";
 
-/** Explicit container-scoped evidence for disposable probes created by NemoClaw. */
-export const NEMOCLAW_MANAGED_PROBE_LABEL = "com.nvidia.nemoclaw.managed-probe" as const;
-
 export type DockerExecFileSyncOptions = Omit<ExecFileSyncOptionsWithStringEncoding, "encoding">;
 export type DockerSpawnSyncOptions = Parameters<typeof spawnSync>[2];
 export type DockerSpawnSyncResult = ReturnType<typeof spawnSync>;

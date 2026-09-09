@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
-import { dockerSpawnSync, NEMOCLAW_MANAGED_PROBE_LABEL } from "../../adapters/docker/exec";
+import { dockerSpawnSync } from "../../adapters/docker/exec";
 import { type OpenRegularFile, openRegularFileNoFollow } from "../../adapters/fs/regular-file";
 import { type AgentBranding, getAgentBranding } from "../../cli/branding";
 import { isErrnoException } from "../../core/errno";
@@ -2372,15 +2372,9 @@ function removeDockerContainers(
   gatewayName: string,
   sandboxNames: readonly string[],
 ): boolean {
-  const result = runtime.runDocker(
-    [
-      "ps",
-      "-a",
-      "--format",
-      `{{.ID}} {{.Image}} {{.Names}} {{.Label "${NEMOCLAW_MANAGED_PROBE_LABEL}"}}`,
-    ],
-    { env: runtime.env },
-  );
+  const result = runtime.runDocker(["ps", "-a", "--format", "{{.ID}} {{.Image}} {{.Names}}"], {
+    env: runtime.env,
+  });
   if (result.status !== 0) {
     const detail =
       result.stderr.trim() || result.stdout.trim() || "Docker returned no error detail";
@@ -2390,7 +2384,7 @@ function removeDockerContainers(
     return false;
   }
 
-  const rows = splitNonEmptyLines(result.stdout).map((line) => dockerInventoryFields(line, 4));
+  const rows = splitNonEmptyLines(result.stdout).map((line) => dockerInventoryFields(line, 3));
   const containerNames = rows.map((fields) => fields[2] ?? "").join("\n");
   const ownedSandboxContainers = new Set(
     sandboxNames
@@ -2400,9 +2394,8 @@ function removeDockerContainers(
   const ids = rows
     .filter((fields) => {
       const name = fields[2] ?? "";
-      const managedProbe = fields[3] === "true";
       if (MANAGED_INFERENCE_CONTAINER_NAME_PATTERN.test(name)) return false;
-      return isOwnedDockerContainerName(name, gatewayName, ownedSandboxContainers, managedProbe);
+      return isOwnedDockerContainerName(name, gatewayName, ownedSandboxContainers);
     })
     .map((fields) => fields[0] ?? "")
     .filter(Boolean);
@@ -2456,35 +2449,21 @@ function isOwnedDockerContainerName(
   name: string,
   gatewayName: string,
   ownedSandboxContainers: ReadonlySet<string>,
-  managedProbe: boolean,
 ): boolean {
   return (
-    managedProbe ||
     name === `openshell-cluster-${gatewayName}` ||
     name === resolveGatewayCompatContainerName(GATEWAY_PORT) ||
     ownedSandboxContainers.has(name)
   );
 }
 
-const OWNED_DOCKER_IMAGE_REPOSITORIES = new Set([
-  "ghcr.io/nvidia/nemoclaw",
-  "ghcr.io/nvidia/nemoclaw/sandbox-base",
-  "ghcr.io/nvidia/nemoclaw/openclaw-sandbox",
-  "ghcr.io/nvidia/nemoclaw/hermes-sandbox",
-  "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox",
-  "ghcr.io/nvidia/nemoclaw/pi-sandbox",
-  "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base",
-  "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base",
-  "ghcr.io/nvidia/nemoclaw/llama-cpp-server",
-  "nemoclaw-sandbox-local",
-  "nemoclaw-hermes-sandbox-base-local",
-  "nemoclaw-langchain-deepagents-code-sandbox-base-local",
-  "openshell/sandbox-from",
-  "openshell/sandbox-from-nemoclaw",
-]);
-
 function isOwnedDockerImageRepository(imageRef: string): boolean {
-  return OWNED_DOCKER_IMAGE_REPOSITORIES.has(dockerImageRepository(imageRef));
+  const repository = dockerImageRepository(imageRef);
+  return (
+    /^nemoclaw-/iu.test(repository) ||
+    /^openshell\//iu.test(repository) ||
+    /^ghcr\.io\/nvidia\/nemoclaw(?:[/-]|$)/iu.test(repository)
+  );
 }
 
 function removeDockerVolume(name: string, runtime: UninstallRuntime): void {

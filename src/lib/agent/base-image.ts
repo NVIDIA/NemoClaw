@@ -14,7 +14,6 @@ import {
   dockerRmi,
   dockerTag,
 } from "../adapters/docker";
-import { NEMOCLAW_MANAGED_PROBE_LABEL } from "../adapters/docker/exec";
 import { requireCuaSandboxImageRef } from "../cua/feature";
 import { encodeCorporateCaArg, resolveCorporateCa } from "../onboard/corporate-ca";
 import { createCustomBuildContextFilter } from "../onboard/custom-build-context";
@@ -310,8 +309,6 @@ export function hermesBaseImageSupportsMcp(imageRef: string): boolean {
     [
       "run",
       "--rm",
-      "--label",
-      `${NEMOCLAW_MANAGED_PROBE_LABEL}=true`,
       ...HERMES_BASE_IMAGE_PROBE_GUARDS,
       "--entrypoint",
       "/opt/hermes/.venv/bin/python",
@@ -335,7 +332,8 @@ function createAgentBaseImageResolutionOptions(
     agent.name === "hermes"
       ? {
           validateImage: (imageRef: string) =>
-            hermesBaseImageSupportsMcp(imageRef) && sandboxBaseImageHasSecurityInventory(imageRef),
+            hermesBaseImageSupportsMcp(imageRef) &&
+            sandboxBaseImageHasSecurityInventory(imageRef),
           validationDescription:
             "the required MCP Streamable HTTP and ACP runtimes and the immutable security package inventory",
         }

@@ -24,8 +24,9 @@ During `--all-gateway-ports`, the sweep continues with later ports and reports t
 `--yes` skips the confirmation prompt but does not skip this backup gate.
 An explicit user-data purge skips eligible fresh backups and attempts to remove both current sandbox state and existing host-side backups.
 
-Full uninstall does not remove a Docker container or image only because its name or image reference contains `openclaw`.
-It preserves resources from a separate OpenClaw installation while continuing to remove NemoClaw and OpenShell Docker resources.
+Full uninstall removes a Docker container only when it can prove ownership through the selected gateway container name or an unambiguously registered sandbox container; it preserves a container that merely shares a `nemoclaw-` or `openshell-` name prefix or a NemoClaw image reference.
+If Docker cannot inventory containers, uninstall exits nonzero and preserves the remaining uninstall state so a later run can retry.
+It preserves resources from a separate OpenClaw installation and does not remove a Docker image only because its name or image reference contains `openclaw`.
 During full uninstall, NemoClaw stops a Bedrock Runtime adapter when its recorded process ID matches the adapter command line.
 When `lsof` is available, full uninstall also scans the configured adapter port and stops only a matching process owned by the current user.
 If `lsof` is unavailable and no recorded process was stopped, uninstall warns that it skipped the orphan scan.

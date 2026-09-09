@@ -14,7 +14,6 @@ import { createRuntimeProviderBundleRegistry } from "../../onboard/runtime-provi
 import { removeManagedHermesStateVolumes } from "./hermes-uninstall-cleanup";
 import { withSuccessfulPreUninstallBackup } from "../../../../test/support/uninstall-managed-gateway-test-support";
 
-import { NEMOCLAW_MANAGED_PROBE_LABEL } from "../../adapters/docker/exec";
 import {
   type RunResult,
   runUninstallPlanProduction as runUninstallPlanBase,
@@ -96,14 +95,14 @@ async function runManagedHermesVolumeUninstall(
     dockerCalls.push(args);
     events.push(`docker ${args.join(" ")}`);
     switch (args.join(" ")) {
-      case `ps -a --format {{.ID}} {{.Image}} {{.Names}} {{.Label "${NEMOCLAW_MANAGED_PROBE_LABEL}"}}`:
+      case "ps -a --format {{.ID}} {{.Image}} {{.Names}}":
         switch (containerPresent ? containerMode : "absent") {
           case "owned":
             return ok(
-              `${containerId} ghcr.io/nvidia/nemoclaw/hermes-sandbox:latest openshell-default--hermes-runtime-id false\n`,
+              `${containerId} ghcr.io/nvidia/nemoclaw/hermes-sandbox:latest openshell-default--hermes-runtime-id\n`,
             );
           case "foreign":
-            return ok(`${containerId} redis:7 foreign-service false\n`);
+            return ok(`${containerId} redis:7 foreign-service\n`);
           default:
             return ok();
         }

@@ -7,7 +7,6 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { NEMOCLAW_MANAGED_PROBE_LABEL } from "../../adapters/docker/exec";
 import {
   type RunResult,
   runUninstallPlan as runUninstallPlanBase,
@@ -35,37 +34,39 @@ function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps) 
   });
 }
 
-// `docker ps` reports the explicit probe label after the ordinary inventory
-// fields. Image provenance remains visible but does not grant container cleanup
-// authority.
+// `docker ps` reports `{{.ID}} {{.Image}} {{.Names}}`. Container cleanup uses
+// only container-specific ownership evidence — the exact gateway names or an
+// unambiguous registered sandbox container — never a name prefix or an image
+// reference. Image provenance stays visible but grants no container authority.
 const PS_OUTPUT = [
-  "c-cluster redis:7 openshell-cluster-nemoclaw false",
-  "c-sandbox redis:7 openshell-default--my-assistant-d619959d-ec43-443f-9015-802ad337bc56 false",
-  "c-sandbox-exact redis:7 openshell-exact-assistant false",
-  "c-sandbox-legacy redis:7 openshell-legacy-assistant-runtime-id false",
-  "c-gateway redis:7 nemoclaw-openshell-gateway false",
-  `c-probe nemoclaw-hermes-sandbox-base-local:image-abc nostalgic_curie true`,
-  "c-foreign-image nemoclaw-hermes-sandbox-base-local:image-abc foreign_workload false",
-  "c-foreign-openshell-image openshell/sandbox-from:123 foreign_openshell_workload false",
-  "c-foreign-nemoclaw redis:7 nemoclaw-unrelated false",
-  "c-foreign-openshell redis:7 openshell-scratch false",
-  "c-gateway-prefix redis:7 nemoclaw-openshell-gateway-copy false",
-  "c-cluster-prefix redis:7 openshell-cluster-nemoclaw-copy false",
-  "c-openclaw ghcr.io/openclaw/openclaw:latest my-openclaw-test false",
-  "c-registry registry.example.com/nemoclaw/tool:1 registry-tool false",
-  "c-unrelated redis:7 cache false",
+  "c-cluster redis:7 openshell-cluster-nemoclaw",
+  "c-sandbox redis:7 openshell-default--my-assistant-d619959d-ec43-443f-9015-802ad337bc56",
+  "c-sandbox-exact redis:7 openshell-exact-assistant",
+  "c-sandbox-legacy redis:7 openshell-legacy-assistant-runtime-id",
+  "c-gateway redis:7 nemoclaw-openshell-gateway",
+  // Probe containers run with `--rm` and no `--name`, so an interrupted run
+  // leaves a randomly named container identified only by its image. Image
+  // provenance is not container ownership, so cleanup must preserve it.
+  "c-probe nemoclaw-hermes-sandbox-base-local:image-abc nostalgic_curie",
+  "c-foreign-image nemoclaw-hermes-sandbox-base-local:image-abc foreign_workload",
+  "c-foreign-nemoclaw redis:7 nemoclaw-unrelated",
+  "c-foreign-openshell redis:7 openshell-scratch",
+  "c-gateway-prefix redis:7 nemoclaw-openshell-gateway-copy",
+  "c-cluster-prefix redis:7 openshell-cluster-nemoclaw-copy",
+  "c-openclaw ghcr.io/openclaw/openclaw:latest my-openclaw-test",
+  "c-registry registry.example.com/nemoclaw/tool:1 registry-tool",
+  "c-unrelated redis:7 cache",
 ].join("\n");
 
 const IMAGES_OUTPUT = [
   "i-nemoclaw ghcr.io/nvidia/nemoclaw:test",
   "i-managed ghcr.io/nvidia/nemoclaw/openclaw-sandbox:latest",
+  // The gateway builds sandbox images under this repository, so the `openshell`
+  // half of the filter selects real resources and must stay covered.
   "i-openshell openshell/sandbox-from:1780294581",
   "i-openclaw ghcr.io/openclaw/openclaw:latest",
   "i-tag python:3.12-nemoclaw",
   "i-registry registry.example.com/nemoclaw/tool:1",
-  "i-foreign-nemoclaw nemoclaw-unrelated:latest",
-  "i-foreign-openshell openshell/third-party:latest",
-  "i-foreign-nvidia ghcr.io/nvidia/nemoclaw-third-party:latest",
   "i-unrelated redis:7",
 ].join("\n");
 
@@ -93,9 +94,11 @@ function runWithDockerInventory(options: FixtureOptions = {}): {
   );
   try {
     const calls: string[][] = [];
+    const isContainerInventory = (args: string[]) =>
+      args[0] === "ps" && args.join(" ").includes("{{.ID}} {{.Image}} {{.Names}}");
     const runDocker = vi.fn((args: string[]) => {
       calls.push(args);
-      return args[0] === "ps" && args.join(" ").includes(NEMOCLAW_MANAGED_PROBE_LABEL)
+      return isContainerInventory(args)
         ? (options.psResult ?? ok(`${PS_OUTPUT}\n`))
         : args[0] === "images"
           ? ok(`${IMAGES_OUTPUT}\n`)
@@ -146,8 +149,10 @@ describe("uninstall Docker resource scope", () => {
 
     expect(result.exitCode).toBe(0);
     const forbiddenIds = new Set([
+      // A randomly named probe container is identified only by its NemoClaw
+      // image; image provenance is not container ownership, so it stays.
+      "c-probe",
       "c-foreign-image",
-      "c-foreign-openshell-image",
       "c-foreign-nemoclaw",
       "c-foreign-openshell",
       "c-gateway-prefix",
@@ -163,7 +168,7 @@ describe("uninstall Docker resource scope", () => {
     expect(removedForbiddenIds).toEqual([]);
   });
 
-  it("removes exact gateway, unambiguous registered sandbox, and labeled probe containers", () => {
+  it("removes exact gateway and unambiguous registered sandbox containers", () => {
     const { calls } = runWithDockerInventory();
 
     expect(calls).toContainEqual(["rm", "-f", "c-cluster"]);
@@ -171,14 +176,13 @@ describe("uninstall Docker resource scope", () => {
     expect(calls).toContainEqual(["rm", "-f", "c-sandbox-exact"]);
     expect(calls).toContainEqual(["rm", "-f", "c-sandbox-legacy"]);
     expect(calls).toContainEqual(["rm", "-f", "c-gateway"]);
-    expect(calls).toContainEqual(["rm", "-f", "c-probe"]);
   });
 
   it("fails closed when registered sandbox ownership is ambiguous", () => {
     const psResult = ok(
       [
-        "c-first redis:7 openshell-my-assistant-runtime-a false",
-        "c-second redis:7 openshell-my-assistant-runtime-b false",
+        "c-first redis:7 openshell-my-assistant-runtime-a",
+        "c-second redis:7 openshell-my-assistant-runtime-b",
       ].join("\n"),
     );
     const { calls } = runWithDockerInventory({ psResult, sandboxes: ["my-assistant"] });
@@ -187,26 +191,16 @@ describe("uninstall Docker resource scope", () => {
     expect(calls).not.toContainEqual(["rm", "-f", "c-second"]);
   });
 
-  it("keeps images outside exact managed repositories (#8496)", () => {
+  it("keeps images belonging to the separate OpenClaw project (#8496)", () => {
     const { calls } = runWithDockerInventory();
 
-    const forbiddenImageIds = new Set([
-      "i-openclaw",
-      "i-tag",
-      "i-registry",
-      "i-foreign-nemoclaw",
-      "i-foreign-openshell",
-      "i-foreign-nvidia",
-      "i-unrelated",
-    ]);
-    const removedForbiddenImageIds = calls
-      .filter((args) => args[0] === "rmi")
-      .map((args) => args[2])
-      .filter((id) => id !== undefined && forbiddenImageIds.has(id));
-    expect(removedForbiddenImageIds).toEqual([]);
+    expect(calls).not.toContainEqual(["rmi", "-f", "i-openclaw"]);
+    expect(calls).not.toContainEqual(["rmi", "-f", "i-tag"]);
+    expect(calls).not.toContainEqual(["rmi", "-f", "i-registry"]);
+    expect(calls).not.toContainEqual(["rmi", "-f", "i-unrelated"]);
   });
 
-  it("removes images from exact NemoClaw and gateway-built repositories", () => {
+  it("removes NemoClaw and gateway-built OpenShell images", () => {
     const { calls } = runWithDockerInventory();
 
     expect(calls).toContainEqual(["rmi", "-f", "i-nemoclaw"]);
