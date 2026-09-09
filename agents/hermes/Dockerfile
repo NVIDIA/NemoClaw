@@ -266,7 +266,7 @@ COPY --from=hermes-npm-patch-payload / /
 
 # A published base can lag the base-image rollout. Install the complete
 # reviewed npm tree from immutable local bytes before private-tree patches.
-RUN node --experimental-strip-types /scripts/upgrade-bundled-npm.mts \
+RUN node /scripts/upgrade-bundled-npm.mts \
       --npm-root /usr/local/lib/node_modules/npm \
       --archive /scripts/npm-12.0.2.tgz
 # hadolint ignore=DL3059
@@ -350,7 +350,7 @@ RUN grep -Fq 'from tools.lazy_deps import install_specs' /opt/hermes/hermes_cli/
 # The final Hermes image owns the shipped dependency boundary independently of
 # base freshness. Reassert the idempotent npm-private node-tar fix from the
 # locked cache seed so protected rebuilds remain network-disabled.
-RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
+RUN node /scripts/patch-bundled-npm-tar.mts \
       --npm-root /usr/local/lib/node_modules/npm \
       --archive /scripts/nemoclaw-bundled-npm-tar.tgz
 
@@ -362,7 +362,7 @@ RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
       export CURL_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem; \
       export NODE_EXTRA_CA_CERTS=/usr/local/share/nemoclaw/corporate-ca.pem; \
     fi; \
-    node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts \
+    node /scripts/patch-bundled-npm-brace-expansion.mts \
       --npm-root /usr/local/lib/node_modules/npm
 
 # Reassert the npm-private ip-address fix for the final filesystem. When
@@ -372,7 +372,7 @@ RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
       export CURL_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem; \
       export NODE_EXTRA_CA_CERTS=/usr/local/share/nemoclaw/corporate-ca.pem; \
     fi; \
-    node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts \
+    node /scripts/lib/patch-bundled-npm-ip-address.mts \
       --npm-root /usr/local/lib/node_modules/npm
 
 # Published base images can lag Dockerfile.base while local feature branches
@@ -542,7 +542,7 @@ RUN managed_runtime_assertion_failed() { \
     fi; \
     discovery_contract="$(node /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/mcp-tool-discovery.mjs)" \
       || managed_image_command_failed mcp-tool-discovery-bundle-execution "$?"; \
-    node -e 'const expected = { protocol: 1, ok: false, detail: "tool discovery received invalid runtime arguments" }; const standaloneSecretPatterns = [/(?:nvapi-|nvcf-|gh[pousr]_|sk-proj-|sk-ant-|hf_|glpat-|gsk_|pypi-|tvly-)[A-Za-z0-9_-]{10,}/gu, /github_pat_[A-Za-z0-9_]{30,}/gu, /sk-[A-Za-z0-9_-]{20,}/gu, /(?:xox[bpas]|xapp)-[A-Za-z0-9-]{10,}/gu, /A(?:K|S)IA[A-Z0-9]{16}/gu, /\bbot\d{8,10}:[A-Za-z0-9_-]{35}\b/gu, /\b\d{8,10}:[A-Za-z0-9_-]{35}\b/gu, /\b[A-Za-z0-9]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}\b/gu, /lsv2_(?:pt|sk)_[A-Za-z0-9]{10,}(?:_[A-Za-z0-9]+)*/gu, /\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{10,}\b/gu, /\b[A-Za-z0-9_=-]{32,}\b/gu]; const redactContextSecrets = (value) => value.replace(/\b(?:Bearer|Basic)\s+\S+/giu, "<REDACTED>").replace(/((?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}_(?:KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)|(?:X[-_])?API[-_]KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)["\x27]?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["\x27]?)[^\s"\x27]+/giu, (_match, prefix) => prefix + "<REDACTED>").replace(/((?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}(?:Token|Secret|Credential)|[A-Za-z0-9]{0,128}(?:[Aa]ccess|[Rr]efresh|[Cc]lient|[Bb]earer|[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|[Ss]ession|[Bb]ot|[Aa]pp|[Rr]esolved)Key|[A-Za-z0-9]{1,128}(?:Password|Passwd|Pass))["\x27]?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["\x27]?)[^\s"\x27]+/gu, (_match, prefix) => prefix + "<REDACTED>").replace(/((?:^|[^A-Za-z0-9])KEY["\x27]?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["\x27]?)[^\s"\x27]+/gu, (_match, prefix) => prefix + "<REDACTED>"); const sanitize = (value) => { if (value === undefined) return "<missing>"; if (value === null || typeof value === "boolean" || typeof value === "number") return value; if (typeof value !== "string") return "<" + (Array.isArray(value) ? "array" : typeof value) + ">"; let printable = value.replace(/-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----[\s\S]*/gu, "<REDACTED>").replace(/[^\x20-\x7e]/gu, "?"); for (const pattern of standaloneSecretPatterns) printable = printable.replace(pattern, "<REDACTED>"); printable = redactContextSecrets(printable); return printable.length <= 240 ? printable : printable.slice(0, 237) + "..."; }; let result; let parsed = true; try { result = JSON.parse(process.argv[1]); } catch { parsed = false; } const record = parsed && result !== null && typeof result === "object" && !Array.isArray(result) ? result : undefined; if (record && record.protocol === expected.protocol && record.ok === expected.ok && record.detail === expected.detail) process.exit(0); const actual = record ? { protocol: sanitize(record.protocol), ok: sanitize(record.ok), detail: sanitize(record.detail) } : parsed ? { type: result === null ? "null" : Array.isArray(result) ? "array" : typeof result, value: sanitize(result) } : { type: "invalid-json", preview: sanitize(process.argv[1]) }; console.error("ERROR: managed image assertion failed: mcp-tool-discovery-json-contract actual=%s expected=%s", JSON.stringify(actual), JSON.stringify(expected)); process.exit(1);' "$discovery_contract" \
+    node -e 'const expected={protocol:2,ok:false,count:0,tools:[],truncated:false,detail:"tool discovery received invalid runtime arguments",failedStage:"preflight",failureClass:"precondition"}; const secretPatterns = [/(?:nvapi-|nvcf-|gh[pousr]_|sk-proj-|sk-ant-|hf_|glpat-|gsk_|pypi-|tvly-)[A-Za-z0-9_-]{10,}/gu, /github_pat_[A-Za-z0-9_]{30,}/gu, /sk-[A-Za-z0-9_-]{20,}/gu, /(?:xox[bpas]|xapp)-[A-Za-z0-9-]{10,}/gu, /A(?:K|S)IA[A-Z0-9]{16}/gu, /\bbot\d{8,10}:[A-Za-z0-9_-]{35}\b/gu, /\b\d{8,10}:[A-Za-z0-9_-]{35}\b/gu, /\b[A-Za-z0-9]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}\b/gu, /lsv2_(?:pt|sk)_[A-Za-z0-9]{10,}(?:_[A-Za-z0-9]+)*/gu, /\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{10,}\b/gu, /\b[A-Za-z0-9_=-]{32,}\b/gu]; const redact = (value) => value.replace(/\b(?:Bearer|Basic)\s+\S+/giu, "<REDACTED>").replace(/((?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}_(?:KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)|(?:X[-_])?API[-_]KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)["\x27]?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["\x27]?)[^\s"\x27]+/giu, (_match, prefix) => prefix + "<REDACTED>").replace(/((?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}(?:Token|Secret|Credential)|[A-Za-z0-9]{0,128}(?:[Aa]ccess|[Rr]efresh|[Cc]lient|[Bb]earer|[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|[Ss]ession|[Bb]ot|[Aa]pp|[Rr]esolved)Key|[A-Za-z0-9]{1,128}(?:Password|Passwd|Pass))["\x27]?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["\x27]?)[^\s"\x27]+/gu, (_match, prefix) => prefix + "<REDACTED>").replace(/((?:^|[^A-Za-z0-9])KEY["\x27]?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["\x27]?)[^\s"\x27]+/gu, (_match, prefix) => prefix + "<REDACTED>"); const sanitize = (value) => { if (value === undefined) return "<missing>"; if (value === null || typeof value === "boolean" || typeof value === "number") return value; if (typeof value !== "string") return "<" + (Array.isArray(value) ? "array" : typeof value) + ">"; let text = value.replace(/-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----[\s\S]*/gu, "<REDACTED>").replace(/[^\x20-\x7e]/gu, "?"); for (const pattern of secretPatterns) text = text.replace(pattern, "<REDACTED>"); text = redact(text); return text.length <= 240 ? text : text.slice(0, 237) + "..."; }; let result; let parsed = true; try { result = JSON.parse(process.argv[1]); } catch { parsed = false; } const record = parsed && result !== null && typeof result === "object" && !Array.isArray(result) ? result : undefined; if(record&&Object.keys(record).length===8&&Object.keys(expected).every(k=>k==="tools"?Array.isArray(record[k])&&!record[k].length:record[k]===expected[k]))process.exit(0); const actual = record ? Object.fromEntries(Object.keys(expected).map(k=>[k,sanitize(record[k])])) : parsed ? { type: result === null ? "null" : Array.isArray(result) ? "array" : typeof result, value: sanitize(result) } : { type: "invalid-json", preview: sanitize(process.argv[1]) }; console.error("ERROR: managed image assertion failed: mcp-tool-discovery-json-contract actual=%s expected=%s", JSON.stringify(actual), JSON.stringify(expected)); process.exit(1);' "$discovery_contract" \
       || exit 1; \
     discovery_unsafe="$(find -L /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime \( ! -user root -o -perm /022 \) -print -quit)" \
       || managed_image_command_failed mcp-tool-discovery-tree-find-execution "$?"; \
@@ -742,8 +742,13 @@ RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_SQLITE_TEMP_STORE_PATCHER_SHA256" /usr/local/lib/nemoclaw/patch-hermes-sqlite-temp-store.py \
     | sha256sum -c - \
     || { echo "ERROR: patch-hermes-sqlite-temp-store.py hash mismatch (update NEMOCLAW_HERMES_SQLITE_TEMP_STORE_PATCHER_SHA256)" >&2; exit 1; }
+# Hermes 0.20.6 autocommits every statement in its fresh Kanban schema.
+# Apply the transaction at the single call site and fail if upstream moves it.
 RUN /usr/bin/python3 -I /usr/local/lib/nemoclaw/patch-hermes-sqlite-temp-store.py \
     && grep -q 'PRAGMA temp_store=MEMORY' /opt/hermes/hermes_state.py \
+    && test "$(grep -Fc 'conn.executescript(SCHEMA_SQL)' /opt/hermes/hermes_cli/kanban_db.py)" -eq 1 \
+    && sed -i 's|conn.executescript(SCHEMA_SQL)|conn.executescript("BEGIN IMMEDIATE;\\n" + SCHEMA_SQL + "\\nCOMMIT;")|' /opt/hermes/hermes_cli/kanban_db.py \
+    && /opt/hermes/.venv/bin/python3 -m py_compile /opt/hermes/hermes_cli/kanban_db.py \
     && HERMES_HOME="$(mktemp -d)" /opt/hermes/.venv/bin/python -I \
         /opt/nemoclaw-hermes-config/image-build-probes.py session-delete
 
@@ -780,7 +785,7 @@ RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_LANGFUSE_PATCHER_SHA256" /usr/local/lib/nemoclaw/patch-hermes-langfuse-credentials.mts \
     | sha256sum -c - \
     || { echo "ERROR: patch-hermes-langfuse-credentials.mts hash mismatch (update NEMOCLAW_HERMES_LANGFUSE_PATCHER_SHA256)" >&2; exit 1; }
-RUN node --experimental-strip-types \
+RUN node \
         /usr/local/lib/nemoclaw/patch-hermes-langfuse-credentials.mts \
         /opt/hermes/plugins/observability/langfuse/__init__.py \
     && /opt/hermes/.venv/bin/python -I \
@@ -924,7 +929,7 @@ RUN case "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" in \
 # Bake reduced messaging runtime metadata for the entrypoint. Hermes runtime
 # config refresh consumes generic manifest-owned aliases from this artifact.
 # hadolint ignore=DL3059
-RUN node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent hermes --phase runtime-setup \
+RUN node /src/lib/messaging/applier/build/messaging-build-applier.mts --agent hermes --phase runtime-setup \
     && runtime_plan=/usr/local/share/nemoclaw/messaging-runtime-plan.json \
     && { [ ! -f "$runtime_plan" ] || { test ! -L "$runtime_plan" \
     && node -e "const fs=require('fs'); const path=process.argv[1]; const st=fs.statSync(path); if (!st.isFile() || st.uid !== 0 || st.gid !== 0 || (st.mode & 0o022) !== 0) throw new Error('unsafe runtime plan file metadata'); const p=JSON.parse(fs.readFileSync(path,'utf8')); for (const k of ['agentRender','buildSteps','stateUpdates','healthChecks']) if (Object.hasOwn(p,k)) throw new Error('runtime plan contains unreduced key '+k); const runtimeSetup=p.runtimeSetup; const isObject=(v)=>v && typeof v === 'object' && !Array.isArray(v); if (!isObject(runtimeSetup) || !Array.isArray(runtimeSetup.nodePreloads) || !Array.isArray(runtimeSetup.envAliases) || !Array.isArray(runtimeSetup.secretScans) || !runtimeSetup.nodePreloads.every(isObject) || !runtimeSetup.envAliases.every(isObject) || !runtimeSetup.secretScans.every(isObject)) throw new Error('runtime plan missing reduced runtimeSetup shape');" "$runtime_plan"; }; }
@@ -940,7 +945,7 @@ RUN unset SSL_CERT_FILE REQUESTS_CA_BUNDLE; \
       export SSL_CERT_FILE=/usr/local/share/nemoclaw/corporate-ca.pem; \
       export REQUESTS_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem; \
     fi; \
-    node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent hermes --phase agent-install
+    node /src/lib/messaging/applier/build/messaging-build-applier.mts --agent hermes --phase agent-install
 
 # Managed images have no serialized messaging plan. Install their complete
 # reviewed package union from the selected wheel stage. Portable Podman uses the
@@ -951,7 +956,7 @@ COPY --from=hermes-managed-teams-wheels / /opt/nemoclaw-hermes-teams-wheels/
 # hadolint ignore=DL3059
 RUN if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then \
         UV_OFFLINE=true UV_FIND_LINKS=/opt/nemoclaw-hermes-teams-wheels \
-        node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts \
+        node /src/lib/messaging/applier/build/messaging-build-applier.mts \
             --agent hermes --phase managed-image-capability-union; \
     fi \
     && /opt/hermes/.venv/bin/python -I -c \
@@ -1107,7 +1112,7 @@ USER sandbox
 
 # Apply messaging render and post-agent-install build-file hooks after agent/plugin installation.
 # hadolint ignore=DL3059
-RUN node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent hermes --phase post-agent-install
+RUN node /src/lib/messaging/applier/build/messaging-build-applier.mts --agent hermes --phase post-agent-install
 
 # Write the default SOUL.md (agent identity) for the sandboxed agent.
 # This is the stock Hermes default soul (hermes_cli/default_soul.py,
@@ -1200,6 +1205,7 @@ RUN set -eu; \
     rm -rf /root/.cache/pip /sandbox/.cache \
     && chown -R sandbox:sandbox /sandbox/.hermes \
     && chown gateway:sandbox \
+        /sandbox/.hermes/sessions \
         /sandbox/.hermes/cron \
         /sandbox/.hermes/gateway \
         /sandbox/.hermes/runtime \
@@ -1236,6 +1242,7 @@ RUN set -eu; \
         /sandbox/.hermes/platforms \
         /sandbox/.hermes/platforms/whatsapp \
         /sandbox/.hermes/platforms/whatsapp/session \
+        /sandbox/.hermes/sessions \
         /sandbox/.hermes/cron \
         /sandbox/.hermes/gateway \
         /sandbox/.hermes/runtime \
@@ -1326,6 +1333,7 @@ RUN set -eu; \
         /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- \
         /opt/hermes/.venv/bin/python -I -c \
         "from pathlib import Path; from hermes_cli.plugins import discover_plugins, get_plugin_manager; from plugins.memory import _get_user_plugins_dir as memory_user_dir; from plugins.cron_providers import _get_user_plugins_dir as cron_user_dir; from providers import _user_plugins_dir as model_user_dir; discover_plugins(); plugin = get_plugin_manager()._plugins['nemoclaw']; assert plugin.enabled is True and plugin.error is None; assert plugin.manifest.source == 'bundled'; assert Path(plugin.manifest.path).resolve() == Path('/opt/hermes/plugins/nemoclaw').resolve(); assert memory_user_dir() is None; assert cron_user_dir() is None; assert model_user_dir() is None"; \
+    test "$(stat -c '%U:%G %a' /sandbox/.hermes/sessions)" = 'gateway:sandbox 2770'; \
     cd "$project_root"; \
     HERMES_HOME=/sandbox/.hermes \
         HERMES_BUNDLED_PLUGINS="$fake_bundled" \
@@ -1526,7 +1534,30 @@ RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/runtime)" = "gateway:sandbox 277
     && rm -f /sandbox/.hermes/gateway/discord_message_recovery.db \
         /sandbox/.hermes/gateway/discord_message_recovery.db-wal \
         /sandbox/.hermes/gateway/discord_message_recovery.db-shm \
-    && rm -f /opt/nemoclaw-hermes-config/image-build-probes.py
+    && rm -f /opt/nemoclaw-hermes-config/image-build-probes.py \
+    && chown gateway:sandbox /sandbox/.hermes/sessions /sandbox/.hermes/cron \
+    && chown sandbox:sandbox \
+        /sandbox/.hermes/logs \
+        /sandbox/.hermes/logs/curator \
+        /sandbox/.hermes/memories \
+        /sandbox/.hermes/pairing \
+        /sandbox/.hermes/hooks \
+        /sandbox/.hermes/image_cache \
+        /sandbox/.hermes/audio_cache \
+        /sandbox/.hermes/skills \
+    && chmod 3770 /sandbox/.hermes \
+    && chmod 2770 \
+        /sandbox/.hermes/sessions \
+        /sandbox/.hermes/cron \
+        /sandbox/.hermes/logs \
+        /sandbox/.hermes/logs/curator \
+    && chmod 770 \
+        /sandbox/.hermes/memories \
+        /sandbox/.hermes/pairing \
+        /sandbox/.hermes/hooks \
+        /sandbox/.hermes/image_cache \
+        /sandbox/.hermes/audio_cache \
+        /sandbox/.hermes/skills
 
 # Pin config hash at build time for integrity verification at startup. Invoke
 # the installed runtime guard's `_canonical_mcp_servers_digest` directly so
@@ -1549,7 +1580,9 @@ RUN cp /etc/nemoclaw/hermes.config-hash /sandbox/.hermes/.config-hash \
 # Keep the shared NemoClaw state root consistent across every shipped agent.
 # The root-owned sticky directory protects the managed-startup transaction
 # receipt while leaving the named plugin state directories sandbox-writable.
-RUN chown root:root /sandbox/.nemoclaw \
+RUN chown sandbox:sandbox /sandbox/.bashrc /sandbox/.profile \
+    && chmod 644 /sandbox/.bashrc /sandbox/.profile \
+    && chown root:root /sandbox/.nemoclaw \
     && chmod 1755 /sandbox/.nemoclaw \
     && chown -R root:root /sandbox/.nemoclaw/blueprints \
     && chmod -R 755 /sandbox/.nemoclaw/blueprints \
@@ -1596,6 +1629,15 @@ RUN check_metadata() { \
         { [ ! -e "$path" ] && [ ! -L "$path" ]; } \
             || { echo "ERROR: build-only Hermes path leaked into the final image: $path" >&2; return 1; }; \
     }; \
+    if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]; then \
+        hermes_root_metadata='sandbox:sandbox 3777'; \
+        hermes_gateway_state_metadata='gateway:sandbox 2777'; \
+        hermes_log_metadata='sandbox:sandbox 2777'; \
+    else \
+        hermes_root_metadata='sandbox:sandbox 3770'; \
+        hermes_gateway_state_metadata='gateway:sandbox 2770'; \
+        hermes_log_metadata='sandbox:sandbox 2770'; \
+    fi; \
     check_absent /opt/hermes/tests \
     && check_absent /opt/nemoclaw-hermes-config/image-build-probes.py \
     && check_absent /opt/nemoclaw-hermes-config/finalize-image-layout.sh \
@@ -1650,7 +1692,11 @@ RUN check_metadata() { \
     && check_metadata /usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js 'root:root 444' \
     && check_metadata /usr/local/lib/nemoclaw/hermes-wrapper.py 'root:root 755' \
     && check_metadata /usr/local/lib/nemoclaw/validate-hermes-cli-adapter.py 'root:root 755' \
-    && check_metadata /usr/local/share/nemoclaw/hermes-cli-adapter-v1.json 'root:root 444'
+    && check_metadata /usr/local/share/nemoclaw/hermes-cli-adapter-v1.json 'root:root 444' \
+    && check_metadata /sandbox/.hermes "$hermes_root_metadata" \
+    && check_metadata /sandbox/.hermes/sessions "$hermes_gateway_state_metadata" \
+    && check_metadata /sandbox/.hermes/cron "$hermes_gateway_state_metadata" \
+    && check_metadata /sandbox/.hermes/logs "$hermes_log_metadata"
 
 # Verify the immutable security package inventory in the completed image.
 # hadolint ignore=DL4006

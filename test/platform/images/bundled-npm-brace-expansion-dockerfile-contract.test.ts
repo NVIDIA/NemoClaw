@@ -30,7 +30,7 @@ const finalDockerfiles = [
 ] as const;
 const copiedSource = "scripts/patch-bundled-npm-brace-expansion.mts";
 const patchInstruction =
-  "node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts";
+  "node /scripts/patch-bundled-npm-brace-expansion.mts";
 const npmRootArguments = ["--npm-root", "/usr/local/lib/node_modules/npm"] as const;
 const hermesTarCacheSeedArguments = [
   ...npmRootArguments,
@@ -64,7 +64,7 @@ describe("bundled npm brace-expansion image remediation contract", () => {
     const copy = source.indexOf(copiedSource);
     const upgrade = requireSingleReviewedDockerfileRunCommand(
       source,
-      "node --experimental-strip-types /scripts/upgrade-bundled-npm.mts",
+      "node /scripts/upgrade-bundled-npm.mts",
       npmRootArguments,
     ).commandStart;
     const patch = requireSingleReviewedDockerfileRunCommand(
@@ -85,7 +85,7 @@ describe("bundled npm brace-expansion image remediation contract", () => {
       const copy = source.indexOf(copiedSource);
       const tarPatches = requireReviewedDockerfileRunCommands(
         source,
-        "node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts",
+        "node /scripts/patch-bundled-npm-tar.mts",
         tarPatchArgumentsByDockerfile[file],
         tarPatchCountByDockerfile[file],
       );

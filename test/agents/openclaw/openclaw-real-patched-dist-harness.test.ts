@@ -513,7 +513,7 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
 
         const npm12Patch = spawnSync(
           nodeRuntime.executable,
-          ["--experimental-strip-types", PATCH_OPENCLAW_NPM12_PACK_JSON, dist, version],
+          [PATCH_OPENCLAW_NPM12_PACK_JSON, dist, version],
           { encoding: "utf-8", timeout: PATCH_COMMAND_TIMEOUT_MS },
         );
         requireSpawnSuccess(npm12Patch, "apply npm 12 pack JSON compatibility patch");
@@ -524,7 +524,7 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
         );
         const npm12PatchAudit = spawnSync(
           nodeRuntime.executable,
-          ["--experimental-strip-types", PATCH_OPENCLAW_NPM12_PACK_JSON, dist, version],
+          [PATCH_OPENCLAW_NPM12_PACK_JSON, dist, version],
           { encoding: "utf-8", timeout: PATCH_COMMAND_TIMEOUT_MS },
         );
         requireSpawnSuccess(npm12PatchAudit, "audit npm 12 pack JSON compatibility patch");
@@ -678,7 +678,7 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
 
         const chatPatch = spawnSync(
           nodeRuntime.executable,
-          ["--experimental-strip-types", PATCH_OPENCLAW_CHAT_SEND, dist],
+          [PATCH_OPENCLAW_CHAT_SEND, dist],
           {
             encoding: "utf-8",
             timeout: PATCH_COMMAND_TIMEOUT_MS,
@@ -693,7 +693,7 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
 
         const audit = spawnSync(
           nodeRuntime.executable,
-          ["--experimental-strip-types", PATCH_OPENCLAW_CHAT_SEND, "--audit", dist],
+          [PATCH_OPENCLAW_CHAT_SEND, "--audit", dist],
           {
             encoding: "utf-8",
             timeout: PATCH_COMMAND_TIMEOUT_MS,
@@ -727,7 +727,7 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
 
         const issue4434Patch = spawnSync(
           nodeRuntime.executable,
-          ["--experimental-strip-types", PATCH_OPENCLAW_ISSUE_4434_DIAGNOSTICS, dist],
+          [PATCH_OPENCLAW_ISSUE_4434_DIAGNOSTICS, dist],
           {
             encoding: "utf-8",
             timeout: PATCH_COMMAND_TIMEOUT_MS,
@@ -742,7 +742,7 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
 
         const issue4434Audit = spawnSync(
           nodeRuntime.executable,
-          ["--experimental-strip-types", PATCH_OPENCLAW_ISSUE_4434_DIAGNOSTICS, "--audit", dist],
+          [PATCH_OPENCLAW_ISSUE_4434_DIAGNOSTICS, "--audit", dist],
           {
             encoding: "utf-8",
             timeout: PATCH_COMMAND_TIMEOUT_MS,
@@ -762,7 +762,7 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
 
         const gatewayDialbackPatch = spawnSync(
           nodeRuntime.executable,
-          ["--experimental-strip-types", PATCH_OPENCLAW_GATEWAY_DAEMON_DIALBACK, dist],
+          [PATCH_OPENCLAW_GATEWAY_DAEMON_DIALBACK, dist],
           { encoding: "utf-8", timeout: PATCH_COMMAND_TIMEOUT_MS },
         );
         requireSpawnSuccess(gatewayDialbackPatch, "apply gateway daemon self-dialback patch");
@@ -774,7 +774,7 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
 
         const gatewayDialbackAudit = spawnSync(
           nodeRuntime.executable,
-          ["--experimental-strip-types", PATCH_OPENCLAW_GATEWAY_DAEMON_DIALBACK, "--audit", dist],
+          [PATCH_OPENCLAW_GATEWAY_DAEMON_DIALBACK, "--audit", dist],
           { encoding: "utf-8", timeout: PATCH_COMMAND_TIMEOUT_MS },
         );
         requireSpawnSuccess(gatewayDialbackAudit, "audit gateway daemon self-dialback patch");
@@ -812,7 +812,7 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
 
         const sharedStatePatch = spawnSync(
           nodeRuntime.executable,
-          ["--experimental-strip-types", PATCH_OPENCLAW_SHARED_STATE_PERMISSIONS, dist],
+          [PATCH_OPENCLAW_SHARED_STATE_PERMISSIONS, dist],
           { encoding: "utf-8", timeout: PATCH_COMMAND_TIMEOUT_MS },
         );
         requireSpawnSuccess(sharedStatePatch, "apply shared-state permission patch");
@@ -824,7 +824,7 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
 
         const sharedStateAudit = spawnSync(
           nodeRuntime.executable,
-          ["--experimental-strip-types", PATCH_OPENCLAW_SHARED_STATE_PERMISSIONS, dist],
+          [PATCH_OPENCLAW_SHARED_STATE_PERMISSIONS, dist],
           { encoding: "utf-8", timeout: PATCH_COMMAND_TIMEOUT_MS },
         );
         requireSpawnSuccess(sharedStateAudit, "audit shared-state permission patch");

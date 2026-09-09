@@ -149,7 +149,6 @@ const os = require("os");
 const path = require("path");
 const runner: typeof import("./runner") = require("./runner");
 const { ROOT, SCRIPTS, redact, run, runCapture, runCaptureEx, runFile, validateName } = runner;
-const braveProviderProfile: typeof import("./onboard/brave-provider-profile") = require("./onboard/brave-provider-profile");
 const {
   applyExtraProviderReconciliation,
   planRegisteredExtraProviders,
@@ -228,7 +227,7 @@ const {
 } = require("./inference/ollama/proxy");
 const {
   installOllamaOnWindowsHost,
-  awaitWindowsOllamaReady,
+  printWindowsOllamaSnapshotDiagnostics,
   setupWindowsOllamaLoopbackBinding,
   printWindowsOllamaTimeoutDiagnostics,
 } = require("./inference/ollama/windows");
@@ -520,7 +519,7 @@ const openshellPinFlow: typeof import("./onboard/openshell-pin") = require("./on
 
 import type { CurlProbeResult } from "./adapters/http/probe";
 import type { AgentDefinition } from "./agent/defs";
-import type { WebSearchConfig } from "./inference/web-search";
+import { isWebSearchEnabled, type WebSearchConfig } from "./inference/web-search";
 import {
   hydrateMessagingChannelConfig,
   type MessagingChannelConfig,
@@ -813,13 +812,10 @@ const { promptValidationRecovery } = createValidationRecoveryPromptHelpers({
   exitOnboardFromPrompt,
 });
 
-// Provider CRUD — thin wrappers that inject runOpenshell to avoid circular deps.
-const { buildProviderArgs } = onboardProviders;
-
 // Snapshot of legacy {env-key → value} pairs that stageLegacyCredentialsToEnv()
 // imported from ~/.nemoclaw/credentials.json at the start of this run.
 // Captured by the onboard() entry point; consulted by the upsertProvider /
-// upsertMessagingProviders wrappers below to decide whether a successful
+// provider-registration wrappers below to decide whether a successful
 // gateway upsert actually migrated the *legacy* value (vs. e.g. a vllm/ollama
 // branch that upserts a placeholder under the same env-key name).
 const stagedLegacyValues: Map<string, string> = new Map<string, string>();
@@ -894,7 +890,7 @@ const registration = credentialProviderRegistration.createCredentialProviderRegi
   migratedLegacyKeys,
   persistMigratedLegacyKeys,
 });
-const { upsertProvider, upsertMessagingProviders, providerMatchesGatewayCredential } = registration;
+const { applyMessagingProviders, upsertProvider, providerMatchesGatewayCredential } = registration;
 const providerExistsInGateway = (name: string, gatewayName: string = GATEWAY_NAME) =>
   onboardProviders.providerExistsInGateway(
     name,
@@ -988,7 +984,7 @@ const {
   getLocalProviderBaseUrl,
   selectAndValidateOllamaModel,
   installOllamaOnWindowsHost,
-  awaitWindowsOllamaReady,
+  printWindowsOllamaSnapshotDiagnostics,
   setupWindowsOllamaLoopbackBinding,
   printWindowsOllamaTimeoutDiagnostics,
   resetOllamaHostCache,
@@ -1192,20 +1188,19 @@ async function preflight(
   const {
     externallySupervised: gatewayExternallySupervised,
     gatewayReuseState: initialGatewayReuseState,
+    managedGatewayObservationAuthoritative,
   } = await onboardPreflightGatewayAuthority.prepareGatewayAuthority();
   let reuseState = initialGatewayReuseState;
 
-  // Verify the legacy gateway container is actually running — openshell CLI
-  // metadata can be stale after a manual `docker rm`. See #2020. Newer
-  // package-managed OpenShell gateways do not have an openshell-cluster-*
-  // Docker container, so the live CLI health check is the source of truth.
-  // The reuse/cleanup/orphan stages run as one composed sequence so external
-  // supervision is enforced across the whole path, not per stage (#6576).
+  // Docker-backed gateways use one legacy reuse and cleanup sequence because
+  // OpenShell metadata can outlive a manually removed container (#2020).
+  // External and provider-owned gateways bypass those Docker effects (#6576).
   reuseState = await runPreflightGatewaySequence({
     gatewayReuseState: reuseState,
     externallySupervised: gatewayExternallySupervised,
     supportsLifecycleCommands: gatewayCliSupportsLifecycleCommands(runCaptureOpenshell),
     isDockerDriverGatewayEnabled: isLinuxDockerDriverGatewayEnabled(),
+    managedGatewayObservationAuthoritative,
     gatewayName: GATEWAY_NAME,
     cliDisplayName: cliDisplayName(),
     verifyGatewayContainerRunning,
@@ -1259,6 +1254,7 @@ async function preflight(
         gatewayName: GATEWAY_NAME,
         gatewayReuseState: reuseState,
         externallySupervised: gatewayExternallySupervised,
+        managedGatewayObservationAuthoritative,
         portCheckOptions,
         supportsLifecycleCommands: gatewayCliSupportsLifecycleCommands(runCaptureOpenshell),
         destroyGateway,
@@ -1576,7 +1572,7 @@ const sandboxCreateOrchestrationRuntime = {
   step,
   stringSetsEqual,
   toolDisclosureFlow,
-  upsertMessagingProviders,
+  applyMessagingProviders,
   usesManagedDcodeIdentity,
   validateName,
   verifyDirectSandboxGpu,
@@ -1619,6 +1615,7 @@ type ProviderChoice = import("./onboard/provider-menu").ProviderMenuChoice;
 type RebuildRouteHandoff = import("./onboard/rebuild-route-handoff").RebuildRouteHandoff;
 
 const {
+  providerSelectionReaders,
   readRecordedProvider,
   readRecordedNimContainer,
   readRecordedModel,
@@ -1674,7 +1671,7 @@ async function selectAndValidateOllamaModel(
             "non-interactive mode cannot prompt for confirmation. " +
             "Re-run with --yes / -y (or NEMOCLAW_YES=1) to authorise the download.",
         );
-        process.exit(1);
+        ollamaFlow.deferOllamaProcessExit();
       } else {
         const proceed = await promptYesNoOrDefault(
           `  Download Ollama model '${selectedModel}' (${sizeLabel})?`,
@@ -1705,7 +1702,7 @@ async function selectAndValidateOllamaModel(
     const allowToolsIncompatible = probe.allowToolsIncompatible === true;
     const validationBaseUrl = getLocalProviderValidationBaseUrl(provider);
     if (!validationBaseUrl)
-      abortNonInteractive("Local Ollama validation URL could not be determined.");
+      ollamaFlow.deferAbort("Local Ollama validation URL could not be determined.");
     const validation = await validateOpenAiLikeSelection(
       "Local Ollama",
       validationBaseUrl!,
@@ -1717,7 +1714,7 @@ async function selectAndValidateOllamaModel(
     );
     if (validation.retry === "selection") return { outcome: "back-to-selection" };
     if (!validation.ok) {
-      if (isNonInteractive()) abortNonInteractive(`model '${selectedModel}' failed validation.`);
+      if (isNonInteractive()) ollamaFlow.deferAbort(`model '${selectedModel}' failed validation.`);
       continue;
     }
     // Ollama's /v1/responses endpoint does not produce correctly formatted
@@ -2039,15 +2036,15 @@ async function handleRemoteProviderSelection(
     providerKeyBridge.stageBuildProviderKeyBridge();
     let apiKeyNavigation: unknown = null;
     if (isNonInteractive()) {
-      const reuseGatewayCredential = buildCredentialReuse.resolveNonInteractiveBuildCredential({
-        provider: state.provider,
-        helpUrl: REMOTE_PROVIDER_CONFIG.build.helpUrl,
-        recoveredFromSandbox,
-        providerExistsInGateway: (name) =>
-          providerExistsInGateway(name, args.gatewayName ?? GATEWAY_NAME),
-      });
-      state.skipHostInferenceSmoke = reuseGatewayCredential;
-      state.reuseGatewayCredentialWithoutLocalKey = reuseGatewayCredential;
+      state.skipHostInferenceSmoke =
+        await buildCredentialReuse.resolveNonInteractiveBuildCredential({
+          provider: state.provider,
+          helpUrl: REMOTE_PROVIDER_CONFIG.build.helpUrl,
+          recoveredFromSandbox,
+          providerExistsInGateway: (name) =>
+            providerExistsInGateway(name, args.gatewayName ?? GATEWAY_NAME),
+        });
+      state.reuseGatewayCredentialWithoutLocalKey = state.skipHostInferenceSmoke;
     } else {
       assertSelectionMutationAuthority(state, "register the NVIDIA provider credential");
       apiKeyNavigation = await ensureApiKey();
@@ -2298,6 +2295,7 @@ function getSetupNimDeps(): SetupNimDeps {
     vllmPort: VLLM_PORT,
     getGatewayPort: () => GATEWAY_PORT,
     getRuntimeProvider: () => setupNimFlow.resolveCurrentRuntimeProviderBundle(),
+    checkpointManagedLlamaCppSelection: onboardSession.checkpointManagedLlamaCppSelection,
     step,
     isNonInteractive,
     getNonInteractiveProvider,
@@ -2306,9 +2304,7 @@ function getSetupNimDeps(): SetupNimDeps {
     detectInferenceProviderHostState,
     getAgentInferenceProviderOptions,
     loadRoutedProfile: () => loadBlueprintProfile("routed"),
-    readRecordedProvider,
-    readRecordedNimContainer,
-    readRecordedModel,
+    ...providerSelectionReaders,
     prompt,
     selectFromNumberedMenu: selectFromNumberedMenuOrExit,
     note,
@@ -2470,11 +2466,11 @@ const stageSandboxCredentialProviders = (
     sandboxCreateIntentResolver.prepareCredentialProviders,
   );
 
-function getRecordedMessagingChannelsForResume(
+async function getRecordedMessagingChannelsForResume(
   resume: boolean,
   session: Session | null,
   sandboxName: string | null,
-): string[] | null {
+): Promise<string[] | null> {
   return getRecordedMessagingChannelsForResumeFromState({
     resume,
     sessionMessagingChannels: getChannelsFromPlan(session?.messagingPlan),
@@ -2632,7 +2628,6 @@ async function preflightAuthoritativeRebuildTarget(
   }
 }
 
-// ── Main ─────────────────────────────────────────────────────────
 const wrappedOnboard = onboardEntryOptions.wrapOnboard(runOnboard, onboardSession);
 const onboard = onboardSessionBootstrap.wrapOnboardDeferredExit(wrappedOnboard);
 async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
@@ -2903,6 +2898,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         gpuRequested: opts.gpu === true,
         noGpu: opts.noGpu === true,
         allowDeferredN1xManagedVllm: opts.allowDeferredN1xManagedVllm,
+        allowLegacyDgxStationQualification: opts.allowLegacyDgxStationQualification,
         env: process.env,
         recordedGpuPassthroughBeforePreflight,
         commitSelectedAgentTransition: selectedAgentTransition.commit,
@@ -2912,8 +2908,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         preflightDeps: {
           getSandbox: registry.getSandbox.bind(registry),
           getResumeSandboxGpuOverrides,
-          detectGpuForReadiness: () => nim.detectGpu({ proveArm64WslDockerDesktopGpu: null }),
-          detectGpu: nim.detectGpu,
+          detectGpuForReadiness: () => nim.detectGpu({ proveArm64ContainerGpu: null }),
+          detectGpu: fatalRuntimePreflight.detectGpuWithRuntimeProviderProof,
           runPreflight: (preflightOptions) => preflight({ ...opts, ...preflightOptions }),
           assessHost,
           providerNameToOptionKey: providerKey,
@@ -3056,6 +3052,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             resolveHostLocalInferenceStartupSelection:
               setupNimFlow.createHermesPortableOllamaInferenceResolver({
                 runtimeContext: lockedRuntime.portableRuntimeContext,
+                gatewayName: GATEWAY_NAME,
                 credentialEnv: OLLAMA_PROXY_CREDENTIAL_ENV,
                 getReservationSessionId: () => session?.sessionId,
                 runGatewayOpenshell: runCoreGatewayOpenshell,
@@ -3286,7 +3283,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         finalization: {
           stagedLegacyKeys,
           migratedLegacyKeys,
-          webSearchEnabled: (config) => braveProviderProfile.shouldEnableWebSearch(config),
+          webSearchEnabled: (config) => isWebSearchEnabled(config),
           webSearchProvider: (config) => webSearchProviderForConfig(config),
         },
         finalizationDeps: {
@@ -3386,10 +3383,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   }
   preserveIncompleteSession = true;
 }
-
 module.exports = {
   buildOrphanedSandboxRollbackMessage,
-  buildProviderArgs,
   buildGatewayBootstrapSecretsScript,
   buildCompatibleEndpointSandboxSmokeCommand,
   buildCompatibleEndpointSandboxSmokeScript,

@@ -49,6 +49,7 @@ import hashlib
 import http.client
 import io
 import importlib.util
+import json
 import os
 import pwd
 import re
@@ -113,6 +114,13 @@ START_LOG_PATH = "/tmp/nemoclaw-start.log"
 MAX_START_LOG_DIAGNOSTIC_BYTES = 16 * 1024
 MAX_START_LOG_DIAGNOSTIC_LINES = 6
 MAX_START_LOG_DIAGNOSTIC_LINE_CHARS = 512
+MAX_OPENCLAW_PREFLIGHT_OUTPUT_BYTES = 16 * 1024
+# Covers the entrypoint's gateway probe, 30-second registry refresh, five-second
+# termination grace, and the permission/hash postconditions that follow it.
+OPENCLAW_PREFLIGHT_SETTLE_SECONDS = 50.0
+TRANSIENT_OPENCLAW_PREFLIGHT_CODES = frozenset(
+    {"config-not-mutable", "startup-not-ready"}
+)
 START_LOG_DIAGNOSTIC_PATTERNS = (
     re.compile(
         r"\[gateway\] Hermes runtime preparation refused automatic respawn; retrying in 5s"
@@ -121,7 +129,23 @@ START_LOG_DIAGNOSTIC_PATTERNS = (
         r"\[gateway\] Hermes gateway launch failed; retrying under the same supervisor"
     ),
     re.compile(
-        r"\[gateway\] Hermes pre-launch layout repair failed at (?:gateway state directory|runtime state directory|history file)"
+        r"\[gateway\] HERMES_RUNTIME_PREPARATION_FAILED stage=[a-z][a-z0-9-]{0,63} "
+        r"after 5 consecutive attempts; supervisor exiting without launching a gateway; "
+        r"correct the reported failure, then stop and start the sandbox"
+    ),
+    re.compile(
+        r"\[gateway\] Hermes startup layout repair refused automatic respawn; relaunch is quarantined until sandbox recreation"
+    ),
+    re.compile(
+        r"\[gateway\] Hermes startup layout repair reached the retained-log safety limit; "
+        r"automatic respawn is quarantined until old retained logs are archived or removed from a trusted "
+        r"host-side recovery environment and the sandbox is restarted"
+    ),
+    re.compile(
+        r"\[gateway\] Hermes pre-launch layout repair failed at (?:"
+        r"sessions state directory|gateway state directory|runtime state directory|"
+        r"config root|logs directory|hooks directory|image_cache directory|"
+        r"audio_cache directory|history file)"
     ),
     re.compile(
         r"\[gateway\] Hermes auxiliary repair failed; retrying while the exact gateway remains healthy"
@@ -1732,33 +1756,62 @@ def _hermes_preflight(
     _require_recovery_time(recovery_deadline)
 
 
+def _openclaw_preflight_issue_code(output: bytes) -> str | None:
+    if len(output) > MAX_OPENCLAW_PREFLIGHT_OUTPUT_BYTES:
+        return None
+    try:
+        records = [json.loads(line) for line in output.splitlines() if line]
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    issues = [
+        record.get("code")
+        for record in records
+        if isinstance(record, dict) and record.get("type") == "issue"
+    ]
+    return issues[0] if len(issues) == 1 and isinstance(issues[0], str) else None
+
+
 def _openclaw_preflight(recovery_deadline: float | None = None) -> None:
     _require_recovery_time(recovery_deadline)
     guard = _system_path(OPENCLAW_GUARD_PATH)
     _validate_trusted_regular(guard)
-    try:
-        result = subprocess.run(
-            [
-                sys.executable,
-                "-I",
-                guard,
-                "preflight-restart",
-                "--config-dir",
-                _system_path("/sandbox/.openclaw"),
-            ],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=_preflight_timeout(recovery_deadline),
-            check=False,
-        )
-    except subprocess.TimeoutExpired as exc:
-        if recovery_deadline is not None:
-            raise ControlError("GATEWAY_FAILED") from exc
-        raise ControlError("GATEWAY_UNSAFE_CONFIG_PATH") from exc
-    _require_recovery_time(recovery_deadline)
-    if result.returncode != 0:
-        raise ControlError("GATEWAY_UNSAFE_CONFIG_PATH")
+    # OpenShell can report the container Ready while nemoclaw-start's bounded
+    # registry refresh is still restoring OpenClaw's 0660 mutable-file mode.
+    # Settle only the guard's typed startup postures for both probe and
+    # recovery; every other refusal stays immediate, and every accepted result
+    # still comes from a fresh read-only guard execution.
+    settle_deadline = time.monotonic() + OPENCLAW_PREFLIGHT_SETTLE_SECONDS
+    if recovery_deadline is not None:
+        settle_deadline = min(settle_deadline, recovery_deadline)
+    while True:
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-I",
+                    guard,
+                    "preflight-restart",
+                    "--config-dir",
+                    _system_path("/sandbox/.openclaw"),
+                ],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                timeout=_preflight_timeout(recovery_deadline),
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            if recovery_deadline is not None:
+                raise ControlError("GATEWAY_FAILED") from exc
+            raise ControlError("GATEWAY_UNSAFE_CONFIG_PATH") from exc
+        _require_recovery_time(recovery_deadline)
+        if result.returncode == 0:
+            return
+        issue_code = _openclaw_preflight_issue_code(result.stdout)
+        remaining = settle_deadline - time.monotonic()
+        if issue_code not in TRANSIENT_OPENCLAW_PREFLIGHT_CODES or remaining <= 0:
+            raise ControlError("GATEWAY_UNSAFE_CONFIG_PATH")
+        time.sleep(min(POLL_SECONDS, remaining))
 
 
 def _preflight(

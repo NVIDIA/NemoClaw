@@ -324,10 +324,12 @@ fi
 info "Installing npm dependencies..."
 cd "$NEMOCLAW_CLONE_DIR"
 reviewed_npm_tmp="$(mktemp -d)"
+trap 'rm -rf "$reviewed_npm_tmp"' EXIT
 sudo env -u NODE_AUTH_TOKEN -u NPM_TOKEN -u NPM_CONFIG__AUTH_TOKEN \
   RUNNER_TEMP="$reviewed_npm_tmp" \
   bash .github/actions/setup-reviewed-npm/verify-and-install-npm.sh ci/reviewed-npm-audit.json
 rm -rf "$reviewed_npm_tmp"
+trap - EXIT
 [[ "$(npm --version)" == "12.0.2" ]] || fail "Reviewed npm 12.0.2 installation failed"
 npm install --ignore-scripts 2>&1 | tail -3
 info "Root deps installed"

@@ -130,7 +130,7 @@ COPY --from=reviewed-npm-archive /npm-12.0.2.tgz /tmp/npm-12.0.2.tgz
 
 # Standardize stale and same-run bases before applying npm 12 private-tree
 # remediations. The local archive is independently SHA-256 and SRI verified.
-RUN node --experimental-strip-types /scripts/upgrade-bundled-npm.mts \
+RUN node /scripts/upgrade-bundled-npm.mts \
       --npm-root /usr/local/lib/node_modules/npm \
       --archive /tmp/npm-12.0.2.tgz
 # hadolint ignore=DL3059
@@ -139,16 +139,16 @@ RUN rm /tmp/npm-12.0.2.tgz
 # The final managed image owns the shipped dependency boundary independently
 # of base freshness. Reassert every reviewed npm-private remediation.
 # hadolint ignore=DL3059
-RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
+RUN node /scripts/patch-bundled-npm-tar.mts \
     --npm-root /usr/local/lib/node_modules/npm
 # hadolint ignore=DL3059
-RUN node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts \
+RUN node /scripts/patch-bundled-npm-brace-expansion.mts \
     --npm-root /usr/local/lib/node_modules/npm
 # hadolint ignore=DL3059
 RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
       export CURL_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem; \
     fi; \
-    node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts \
+    node /scripts/lib/patch-bundled-npm-ip-address.mts \
       --npm-root /usr/local/lib/node_modules/npm
 
 ARG PI_VERSION=0.84.1
@@ -240,13 +240,15 @@ USER sandbox
 RUN umask 077 \
     && mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
     && cp -r /opt/nemoclaw-blueprint/* /sandbox/.nemoclaw/blueprints/0.1.0/ \
-    && node --experimental-strip-types /opt/nemoclaw-pi/generate-config.ts \
+    && node /opt/nemoclaw-pi/generate-config.ts \
     && test "$(stat -c %a /sandbox/.pi/agent/models.json)" = "600"
 
 # hadolint ignore=DL3066
 USER root
 RUN chown root:sandbox /sandbox \
     && chmod 1775 /sandbox \
+    && chown sandbox:sandbox /sandbox/.bashrc /sandbox/.profile \
+    && chmod 644 /sandbox/.bashrc /sandbox/.profile \
     && test "$(stat -c '%U:%G:%a' /sandbox)" = 'root:sandbox:1775' \
     && chown root:root /sandbox/.nemoclaw \
     && chmod 1755 /sandbox/.nemoclaw \

@@ -89,7 +89,7 @@ describe("OpenClaw npm 12 pack JSON compatibility", () => {
     const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
     const baseDockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile.base"), "utf8");
     const script = "patch-openclaw-npm12-pack-json.mts";
-    const invocation = "node --experimental-strip-types /usr/local/lib/nemoclaw/npm12.mts";
+    const invocation = "node /usr/local/lib/nemoclaw/npm12.mts";
 
     expect(dockerfile).toContain(`COPY scripts/lib/${script} /usr/local/lib/nemoclaw/npm12.mts`);
     expect(dockerfile).toContain(invocation);
@@ -100,9 +100,7 @@ describe("OpenClaw npm 12 pack JSON compatibility", () => {
       dockerfile.slice(dockerfile.indexOf(invocation), dockerfile.indexOf(invocation) + 250),
     ).toContain('"$OPENCLAW_VERSION"');
     expect(baseDockerfile).toContain(`COPY scripts/lib/${script} /scripts/lib/${script}`);
-    const baseInvocationIndex = baseDockerfile.indexOf(
-      `node --experimental-strip-types /scripts/lib/${script}`,
-    );
+    const baseInvocationIndex = baseDockerfile.indexOf(`node /scripts/lib/${script}`);
     expect(baseInvocationIndex).toBeGreaterThanOrEqual(0);
     expect(baseDockerfile.slice(baseInvocationIndex, baseInvocationIndex + 300)).toContain(
       "/usr/local/lib/node_modules/openclaw/dist",

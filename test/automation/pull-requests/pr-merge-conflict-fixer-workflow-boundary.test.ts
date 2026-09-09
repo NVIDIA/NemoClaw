@@ -46,7 +46,7 @@ function checkout(job: Record<string, unknown>): Record<string, unknown> {
 }
 
 function resolverInvocation(command: string): string {
-  return `node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-merge-conflict-fixer/resolve.mts" ${command}`;
+  return `node --no-warnings "$TRUSTED_CHECKOUT/tools/pr-merge-conflict-fixer/resolve.mts" ${command}`;
 }
 
 describe("PR merge conflict fixer workflow boundary", () => {

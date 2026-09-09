@@ -64,7 +64,7 @@ function syntheticJetsonWorkflow(selector = REQUIRED_SELECTOR): unknown {
               JETSON_DISPATCH_URL: "${{ vars.JETSON_DISPATCH_URL }}",
             },
             name: "Dispatch exact commit to Jetson through operator backend",
-            run: "node --experimental-strip-types --no-warnings tools/e2e/jetson-dispatch-client.mts",
+            run: "node --no-warnings tools/e2e/jetson-dispatch-client.mts",
           },
           {
             if: "always()",

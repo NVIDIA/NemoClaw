@@ -57,7 +57,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
         run: >-
-          node --experimental-strip-types --no-warnings
+          node --no-warnings
           tools/e2e/hosted-runner-recovery.mts
 
       - name: Record static recovery policy

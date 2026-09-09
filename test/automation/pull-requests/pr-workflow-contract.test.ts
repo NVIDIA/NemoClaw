@@ -70,19 +70,13 @@ const sharedActionPaths = {
 } as const;
 
 const trustedPrActionPaths = {
-  staticChecks:
-    "NVIDIA/NemoClaw/.github/actions/ci-static-checks@7363df49a5f25b0dd1c20c80905917c31760a27e",
-  compileArtifacts:
-    "NVIDIA/NemoClaw/.github/actions/ci-compile-artifacts@7363df49a5f25b0dd1c20c80905917c31760a27e",
+  staticChecks: "./.trusted-ci-actions/.github/actions/ci-static-checks",
+  compileArtifacts: "./.trusted-ci-actions/.github/actions/ci-compile-artifacts",
   buildTypecheck: "./.trusted-ci-actions/.github/actions/ci-build-typecheck",
-  cliCoverageShard:
-    "NVIDIA/NemoClaw/.github/actions/ci-cli-coverage-shard@7363df49a5f25b0dd1c20c80905917c31760a27e",
-  cliCoverageMerge:
-    "NVIDIA/NemoClaw/.github/actions/ci-cli-coverage-merge@7363df49a5f25b0dd1c20c80905917c31760a27e",
-  pluginCoverage:
-    "NVIDIA/NemoClaw/.github/actions/ci-plugin-coverage@7363df49a5f25b0dd1c20c80905917c31760a27e",
-  installerIntegration:
-    "NVIDIA/NemoClaw/.github/actions/ci-installer-integration@7363df49a5f25b0dd1c20c80905917c31760a27e",
+  cliCoverageShard: "./.trusted-ci-actions/.github/actions/ci-cli-coverage-shard",
+  cliCoverageMerge: "./.trusted-ci-actions/.github/actions/ci-cli-coverage-merge",
+  pluginCoverage: "./.trusted-ci-actions/.github/actions/ci-plugin-coverage",
+  installerIntegration: "./.trusted-ci-actions/.github/actions/ci-installer-integration",
   reviewedNpmAudit:
     "NVIDIA/NemoClaw/.github/actions/ci-reviewed-npm-audit@7363df49a5f25b0dd1c20c80905917c31760a27e",
 } as const;
@@ -494,36 +488,6 @@ describe("pull request and main workflow contracts", () => {
     ["main", mainWorkflow],
   ] as const)("keeps the %s CLI coverage shard budget aligned", (_workflowName, workflow) => {
     expect(workflow.jobs["cli-test-shards"]?.["timeout-minutes"]).toBe(cliShardTimeoutMinutes);
-  });
-
-  // source-shape-contract: security -- npm-consuming pull request composites must execute from the reviewed immutable migration revision until the base contains npm 12.
-  it("pins npm-consuming pull request composites to the reviewed migration revision", () => {
-    expect([
-      requiredWorkflowStep(prWorkflow.jobs["static-checks"], "Run static checks").uses,
-      requiredWorkflowStep(
-        prWorkflow.jobs["compile-artifacts"],
-        "Compile and verify CLI and plugin outputs",
-      ).uses,
-      requiredWorkflowStep(
-        prWorkflow.jobs["installer-integration"],
-        "Run installer integration tests",
-      ).uses,
-      requiredWorkflowStep(
-        prWorkflow.jobs["reviewed-npm-audit"],
-        "Audit reviewed production npm graphs",
-      ).uses,
-      requiredWorkflowStep(prWorkflow.jobs["cli-test-shards"], "Run CLI coverage shard").uses,
-      requiredWorkflowStep(prWorkflow.jobs["cli-tests"], "Merge CLI coverage").uses,
-      requiredWorkflowStep(prWorkflow.jobs["plugin-tests"], "Run plugin coverage").uses,
-    ]).toEqual([
-      trustedPrActionPaths.staticChecks,
-      trustedPrActionPaths.compileArtifacts,
-      trustedPrActionPaths.installerIntegration,
-      trustedPrActionPaths.reviewedNpmAudit,
-      trustedPrActionPaths.cliCoverageShard,
-      trustedPrActionPaths.cliCoverageMerge,
-      trustedPrActionPaths.pluginCoverage,
-    ]);
   });
 
   // source-shape-contract: security -- Credential-free workflow structure prevents pull request code from receiving Hugging Face or checkout credentials
@@ -963,11 +927,10 @@ describe("pull request and main workflow contracts", () => {
     );
     expect(fetch.env).toEqual({
       NEMOCLAW_OPEN_SHELL_SDK_OUTPUT_DIRECTORY: "${{ runner.temp }}/openshell-sdk",
+      NEMOCLAW_OPEN_SHELL_SDK_INCLUDE_REPLACEMENT: "1",
       NODE_AUTH_TOKEN: "${{ github.token }}",
     });
-    expect(fetch.run).toContain(
-      "node --experimental-strip-types scripts/checks/package-openshell-sdk-for-pr.mts",
-    );
+    expect(fetch.run).toContain("node scripts/checks/package-openshell-sdk-for-pr.mts");
     expect(fetch.run).toContain("artifact_path=");
     expect(
       (sdkPackageJob.steps ?? [])
@@ -1095,6 +1058,32 @@ describe("pull request and main workflow contracts", () => {
       expect(existsSync(marker)).toBe(false);
     } finally {
       rmSync(temp, { force: true, recursive: true });
+    }
+  });
+
+  it.each([
+    ["cli-build-output", "required=true\n"],
+    ["compiled-test-inputs", ""],
+  ])("uploads the legacy coverage artifact only when the base reads %s", (artifact, expected) => {
+    const root = mkdtempSync(join(tmpdir(), "coverage-artifact-rollout-"));
+    const actionDirectory = join(root, ".trusted-ci-actions/.github/actions/ci-cli-coverage-merge");
+    const output = join(root, "output");
+    try {
+      mkdirSync(actionDirectory, { recursive: true });
+      writeFileSync(join(actionDirectory, "action.yaml"), `with:\n  name: ${artifact}\n`);
+      writeFileSync(output, "");
+      const result = runWorkflowShellStep(
+        requiredWorkflowStep(
+          prWorkflow.jobs["compile-artifacts"],
+          "Detect legacy coverage artifact reader",
+        ),
+        { GITHUB_OUTPUT: output },
+        root,
+      );
+      expect(result.status, result.stderr).toBe(0);
+      expect(readFileSync(output, "utf8")).toBe(expected);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
     }
   });
 
@@ -1262,7 +1251,7 @@ describe("pull request and main workflow contracts", () => {
       PLUGIN_TESTS_RESULT: "success",
       REVIEWED_NPM_AUDIT_RESULT: "success",
       REAL_OPENCLAW_DIST_HARNESS_RESULT: "success",
-      SANDBOX_IMAGES_E2E_RESULT: "success",
+      SANDBOX_IMAGE_CONTRACTS_RESULT: "success",
       STATIC_RESULT: "success",
       WECHAT_RUNTIME_AUDIT_RESULT: "success",
     };
@@ -1302,9 +1291,9 @@ describe("pull request and main workflow contracts", () => {
       mainGate,
       {
         ...successfulMain,
-        SANDBOX_IMAGES_E2E_RESULT: "failure",
+        SANDBOX_IMAGE_CONTRACTS_RESULT: "failure",
       },
-      workflowJobListing([workflowJob(302, "sandbox-images-and-e2e", "failure")]),
+      workflowJobListing([workflowJob(302, "sandbox-image-contracts", "failure")]),
     );
     const malformedFailure = runWorkflowShellStepWithJobs(
       prGate,
@@ -1334,7 +1323,7 @@ describe("pull request and main workflow contracts", () => {
     expect(docsOnlySuccess.status).toBe(0);
     expect(mainSuccess.status).toBe(0);
     expect(mainFailure.status).not.toBe(0);
-    expect(mainFailure.stdout).toContain("sandbox-images-and-e2e failed");
+    expect(mainFailure.stdout).toContain("sandbox-image-contracts failed");
     expect(mainFailure.stdout).toContain(
       "https://github.com/NVIDIA/NemoClaw/actions/runs/123/job/302",
     );

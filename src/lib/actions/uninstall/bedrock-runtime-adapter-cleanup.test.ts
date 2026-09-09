@@ -143,7 +143,7 @@ function writeJournal(
 
 function managedProcess(overrides: Partial<AdapterProcess> = {}): AdapterProcess {
   return {
-    argv: [EXECUTABLE_PATH, "--experimental-strip-types", "--no-warnings", SCRIPT_PATH],
+    argv: [EXECUTABLE_PATH, "--no-warnings", SCRIPT_PATH],
     executablePath: EXECUTABLE_PATH,
     generation: GENERATION,
     processStart: PROCESS_START,
@@ -434,7 +434,6 @@ describe("Bedrock Runtime adapter fail-closed uninstall cleanup (#9552)", () => 
       process: managedProcess({
         argv: [
           EXECUTABLE_PATH,
-          "--experimental-strip-types",
           "--no-warnings",
           "/tmp/foreign/bedrock-runtime-adapter.mts",
         ],

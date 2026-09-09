@@ -65,7 +65,7 @@ const dockerfiles = [
     patchCount: 1,
   },
 ] as const;
-const patchCommand = "node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts";
+const patchCommand = "node /scripts/patch-bundled-npm-tar.mts";
 const npmRootArguments = ["--npm-root", "/usr/local/lib/node_modules/npm"] as const;
 const reviewedNpmArchivePath = "/tmp/npm-12.0.2.tgz";
 const reviewedNpmUpgradeArguments = [
@@ -106,8 +106,8 @@ const directNodeDockerfiles = [
 ] as const;
 const npmHelperInvocationMarkers = [
   /\/opt\/nemoclaw-build-tools\/npm-ci-locked\.sh/gu,
-  /node --experimental-strip-types \/opt\/[^\s]*reviewed-npm-archive\.mts/gu,
-  /node --experimental-strip-types \/opt\/[^\s]*seed-reviewed-npm-cache\.mts/gu,
+  /node \/opt\/[^\s]*reviewed-npm-archive\.mts/gu,
+  /node \/opt\/[^\s]*seed-reviewed-npm-cache\.mts/gu,
 ] as const;
 
 interface DirectNodeStage {
@@ -468,7 +468,7 @@ describe("reviewed npm image remediation contract", () => {
     const archiveCopyIndex = source.indexOf(archiveCopy);
     const upgradeRun = requireSingleReviewedDockerfileRunCommand(
       source,
-      "node --experimental-strip-types /scripts/upgrade-bundled-npm.mts",
+      "node /scripts/upgrade-bundled-npm.mts",
       file === "agents/hermes/Dockerfile"
         ? hermesReviewedNpmUpgradeArguments
         : reviewedNpmUpgradeArguments,
@@ -495,7 +495,7 @@ describe("reviewed npm image remediation contract", () => {
     );
     const upgradeRun = requireSingleReviewedDockerfileRunCommand(
       npm12.source,
-      "node --experimental-strip-types /scripts/upgrade-bundled-npm.mts",
+      "node /scripts/upgrade-bundled-npm.mts",
       reviewedNpmUpgradeArguments,
     ).commandStart;
     const tarRun = requireSingleReviewedDockerfileRunCommand(
@@ -504,10 +504,10 @@ describe("reviewed npm image remediation contract", () => {
       npmRootArguments,
     ).commandStart;
     const braceRun = npm12.source.indexOf(
-      "node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts",
+      "node /scripts/patch-bundled-npm-brace-expansion.mts",
     );
     const ipAddressRun = npm12.source.indexOf(
-      "node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts",
+      "node /scripts/lib/patch-bundled-npm-ip-address.mts",
     );
 
     expect(upgradeRun).toBeGreaterThan(npm12.source.indexOf(reviewedNpmArchivePath));
@@ -522,7 +522,7 @@ describe("reviewed npm image remediation contract", () => {
     const payload = namedStage(dockerfile, "hermes-npm-patch-payload");
     const npmUpgrade = requireSingleReviewedDockerfileRunCommand(
       completedStage(dockerfile),
-      "node --experimental-strip-types /scripts/upgrade-bundled-npm.mts",
+      "node /scripts/upgrade-bundled-npm.mts",
       hermesReviewedNpmUpgradeArguments,
     );
     const finalization = dockerfileInstructions(completedStage(dockerfile)).filter(
@@ -560,7 +560,7 @@ describe("reviewed npm image remediation contract", () => {
       directNodeStages(file, fs.readFileSync(path.join(repoRoot, file), "utf8")),
     );
     const invokingStages = stages.filter((stage) => Number.isFinite(firstNpmInvocation(stage)));
-    const upgrade = "node --experimental-strip-types /scripts/upgrade-bundled-npm.mts";
+    const upgrade = "node /scripts/upgrade-bundled-npm.mts";
 
     expect(stages.map(({ file, name }) => `${file}:${name}`)).toEqual([
       "Dockerfile:npm12",
@@ -594,11 +594,11 @@ describe("reviewed npm image remediation contract", () => {
     ).toHaveLength(2);
     expect(
       rootDockerfile.match(
-        /node --experimental-strip-types \/scripts\/lib\/seed-reviewed-npm-cache[.]mts/gmu,
+        /node \/scripts\/lib\/seed-reviewed-npm-cache[.]mts/gmu,
       ),
     ).toHaveLength(3);
     expect(rootDockerfile).toContain(
-      "node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts",
+      "node /scripts/lib/reviewed-npm-archive.mts",
     );
     expect(rootDockerfile).not.toContain("/opt/nemoclaw-build-tools/seed-reviewed-npm-cache.mts");
     expect(rootDockerfile).not.toContain(
@@ -719,7 +719,7 @@ describe("reviewed npm image remediation contract", () => {
       );
       const upgradeRun = requireSingleReviewedDockerfileRunCommand(
         source,
-        "node --experimental-strip-types /scripts/upgrade-bundled-npm.mts",
+        "node /scripts/upgrade-bundled-npm.mts",
         npmRootArguments,
       ).commandStart;
 

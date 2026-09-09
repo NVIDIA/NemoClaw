@@ -38,11 +38,7 @@ runs:
         cache: npm
 
     - name: Install reviewed npm
-      shell: bash
-      run: >-
-        env -u NODE_AUTH_TOKEN -u NPM_TOKEN -u NPM_CONFIG__AUTH_TOKEN
-        "$GITHUB_ACTION_PATH/../setup-reviewed-npm/verify-and-install-npm.sh"
-        "$GITHUB_ACTION_PATH/../../../ci/reviewed-npm-audit.json"
+      uses: NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@7363df49a5f25b0dd1c20c80905917c31760a27e
 
     - name: Install dependencies
       shell: bash
@@ -53,8 +49,8 @@ runs:
     - name: Download compiled CLI artifact
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
       with:
-        name: cli-build-output
-        path: dist
+        name: compiled-test-inputs
+        path: .
 
     - name: Verify compiled CLI artifact
       shell: bash

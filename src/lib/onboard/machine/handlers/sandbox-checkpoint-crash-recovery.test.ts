@@ -175,7 +175,7 @@ function realStageSandboxCredentialProviders(
   const { runOpenshell } = fakeGatewayRunOpenshell();
   const registrationSession = { stagedCredentialProviders: [] as string[] } as Session;
   const registration = createCredentialProviderRegistration({
-    root: "/repo",
+    root: process.cwd(),
     runOpenshell: runOpenshell as unknown as CredentialProviderRegistrationDeps["runOpenshell"],
     getGatewayName: () => "nemoclaw",
     getCredential: () => null,

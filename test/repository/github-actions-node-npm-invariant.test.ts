@@ -297,15 +297,11 @@ describe("controlled setup-node environments", () => {
   it("keeps composite npm setup rooted in the trusted action checkout", () => {
     const invalidActions = setupNodeSteps
       .filter(({ file }) => path.relative(GITHUB_ROOT, file).startsWith(`actions${path.sep}`))
-      .filter(({ file, steps, index }) => {
+      .filter(({ steps, index }) => {
         const reviewed = steps.slice(index + 1).find(installsReviewedNpm);
-        return path.relative(REPO_ROOT, file) === ".github/actions/prepare-e2e/action.yaml"
-          ? reviewed?.uses !== IMMUTABLE_PREPARE_E2E_NPM_ACTION
-          : reviewed?.uses !== undefined ||
-              !reviewed?.run?.includes(
-                "$GITHUB_ACTION_PATH/../setup-reviewed-npm/verify-and-install-npm.sh",
-              ) ||
-              !reviewed?.run?.includes("$GITHUB_ACTION_PATH/../../../ci/reviewed-npm-audit.json");
+        return ![IMMUTABLE_REVIEWED_NPM_ACTION, IMMUTABLE_PREPARE_E2E_NPM_ACTION].includes(
+          reviewed?.uses ?? "",
+        );
       })
       .map(({ file }) => path.relative(REPO_ROOT, file));
     expect(invalidActions).toEqual([]);

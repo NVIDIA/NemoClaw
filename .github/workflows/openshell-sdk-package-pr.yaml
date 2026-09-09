@@ -58,10 +58,11 @@ jobs:
         id: package
         env:
           NEMOCLAW_OPEN_SHELL_SDK_OUTPUT_DIRECTORY: ${{ runner.temp }}/openshell-sdk
+          NEMOCLAW_OPEN_SHELL_SDK_INCLUDE_REPLACEMENT: "1"
           NODE_AUTH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          artifact_path="$(node --experimental-strip-types scripts/checks/package-openshell-sdk-for-pr.mts)"
+          artifact_path="$(node scripts/checks/package-openshell-sdk-for-pr.mts)"
           [ -n "$artifact_path" ]
           printf 'artifact_path=%s\n' "$artifact_path" >> "$GITHUB_OUTPUT"
 

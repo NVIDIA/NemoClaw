@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 
 import YAML from "yaml";
 import { CLI_ARTIFACT_RESTORE_STEP } from "./cli-artifact-workflow-boundary.mts";
@@ -126,8 +127,7 @@ export function validateHermesGpuStartupWorkflow(
     errors.push(`${JOB_NAME} job must run on the native RTX PRO 6000 GPU runner`);
   }
   if (
-    JSON.stringify(job.needs) !==
-      JSON.stringify(["base-image-publication", "generate-matrix"]) ||
+    JSON.stringify(job.needs) !== JSON.stringify(["base-image-publication", "generate-matrix"]) ||
     job.if !== EXPECTED_SELECTOR
   ) {
     errors.push(`${JOB_NAME} job must use the trusted execution plan behind generate-matrix`);
@@ -275,20 +275,25 @@ if ! @run restore`;
   const ni = steps.findIndex((step) => step.name === "Reassert trusted Node runtime");
   const node = steps[ni];
   const reviewedNpm = steps[ni + 1];
-  const nativePodmanRuntime = steps[ni + 2];
+  const staleDockerRestore = steps[ni + 2];
+  const nativePodmanRuntime = steps[ni + 3];
   if (
     runStep.shell !== BASH ||
     !trustedEnv(runStep) ||
     pi < 0 ||
     restoreI <= pi ||
     ni !== restoreI + 1 ||
-    ni + 3 !== steps.indexOf(runStep) ||
+    ni + 4 !== steps.indexOf(runStep) ||
     node?.uses !== "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020" ||
-    asRecord(node?.with)["node-version"] !== "24.18.1" ||
     !trustedEnv(node) ||
     asRecord(node?.env).NODE_OPTIONS !== "" ||
     reviewedNpm?.name !== "Reinstall reviewed npm after Node reassertion" ||
     reviewedNpm?.uses !== E2E_ACTION_PROVENANCE.reviewedNpmSetup.reference ||
+    staleDockerRestore?.name !== "Recover Docker CLI before native Podman E2E" ||
+    staleDockerRestore?.uses !== E2E_ACTION_PROVENANCE.restoreNativePodmanRuntime.reference ||
+    staleDockerRestore?.if !== "${{ matrix.runtime_provider == 'podman' }}" ||
+    staleDockerRestore?.["continue-on-error"] !== undefined ||
+    !isDeepStrictEqual(asRecord(staleDockerRestore?.with), { enabled: "true" }) ||
     nativePodmanRuntime?.name !== "Prepare native Podman E2E runtime" ||
     nativePodmanRuntime?.uses !== E2E_ACTION_PROVENANCE.nativePodmanRuntime.reference ||
     asRecord(nativePodmanRuntime?.with).enabled !==

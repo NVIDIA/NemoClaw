@@ -128,6 +128,7 @@ function stageMcpToolDiscoveryRuntime(rootDir: string, buildCtx: string): void {
 
 function stageManagedStartupRuntimeSources(rootDir: string, buildCtx: string): void {
   for (const relativePath of [
+    "extra-agents-validation.ts",
     path.join("core", "json-types.ts"),
     path.join("core", "ports.ts"),
     path.join("security", "credential-hash.ts"),
@@ -345,10 +346,6 @@ function stageOptimizedSandboxBuildContext(
   fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "openclaw_device_approval_policy.py"),
     path.join(stagedScriptsDir, "lib", "openclaw_device_approval_policy.py"),
-  );
-  fs.copyFileSync(
-    path.join(rootDir, "scripts", "lib", "clean_runtime_shell_env_shim.py"),
-    path.join(stagedScriptsDir, "lib", "clean_runtime_shell_env_shim.py"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "normalize_mutable_config_perms.py"),

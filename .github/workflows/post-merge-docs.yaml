@@ -99,7 +99,7 @@ jobs:
       - name: Configure isolated inference
         env:
           OPENAI_API_KEY: ${{ secrets.POST_MERGE_DOCS_API_KEY }}
-        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/post-merge-docs/run.mts" configure
+        run: node --no-warnings "$TRUSTED_CHECKOUT/tools/post-merge-docs/run.mts" configure
 
       - name: Author the documentation
         env:
@@ -107,7 +107,7 @@ jobs:
           POST_MERGE_DOCS_PHASE: author
           POST_MERGE_DOCS_WORKDIR: ${{ github.workspace }}/author
           SANDBOX_NAME: docs-main-author
-        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/post-merge-docs/run.mts" execute
+        run: node --no-warnings "$TRUSTED_CHECKOUT/tools/post-merge-docs/run.mts" execute
 
       - name: Validate the documentation candidate
         working-directory: author/repo
@@ -127,7 +127,7 @@ jobs:
           POST_MERGE_DOCS_PHASE: review
           POST_MERGE_DOCS_WORKDIR: ${{ github.workspace }}/review
           SANDBOX_NAME: docs-main-review
-        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/post-merge-docs/run.mts" execute
+        run: node --no-warnings "$TRUSTED_CHECKOUT/tools/post-merge-docs/run.mts" execute
 
       - name: Explain failed independent review
         if: ${{ failure() && steps.review.outcome == 'failure' }}
@@ -187,4 +187,4 @@ jobs:
       - name: Publish the reviewed patch
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/post-merge-docs/publish.mts"
+        run: node --no-warnings "$TRUSTED_CHECKOUT/tools/post-merge-docs/publish.mts"

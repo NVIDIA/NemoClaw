@@ -312,6 +312,19 @@ beforeEach(() => {
   fs.mkdirSync(registryDir, { recursive: true });
   fs.writeFileSync(installerInvocationsFile, "");
   fs.writeFileSync(dockerInvocationsFile, "");
+  // Image freshness has its own tests; this process fixture represents unchanged inputs.
+  fs.writeFileSync(
+    path.join(homeLocalBin, "git"),
+    `#!${process.execPath}
+const { spawnSync } = require("node:child_process");
+const args = process.argv.slice(2);
+if (args.includes("diff") && args.includes("--quiet")) process.exit(0);
+const result = spawnSync("/usr/bin/git", args, { env: process.env, stdio: "inherit" });
+if (result.error) throw result.error;
+process.exit(result.status ?? 1);
+`,
+    { mode: 0o755 },
+  );
   fs.writeFileSync(
     path.join(homeLocalBin, "bash"),
     `#!${process.execPath}

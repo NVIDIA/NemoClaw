@@ -25,6 +25,7 @@ type FakeSystemOptions = {
     | "traversal";
   checksum: "match" | "mismatch" | "unpinned";
   nodeSourceChecksumTool?: boolean;
+  reviewedNpmFailure?: boolean;
   openshellVersion?: string;
 };
 
@@ -50,6 +51,7 @@ function makeFakeSystem(options: FakeSystemOptions): {
   fakeBin: string;
   launchLog: string;
   sudoLog: string;
+  npmTmpLog: string;
   tarLog: string;
 } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-brev-checksum-"));
@@ -59,6 +61,7 @@ function makeFakeSystem(options: FakeSystemOptions): {
   const curlLog = path.join(root, "curl.log");
   const dockerLog = path.join(root, "docker.log");
   const sudoLog = path.join(root, "sudo.log");
+  const npmTmpLog = path.join(root, "npm-tmp.log");
   const tarLog = path.join(root, "tar.log");
   fs.mkdirSync(fakeBin);
 
@@ -169,6 +172,10 @@ exec /usr/bin/tar "$@"
     path.join(fakeBin, "sudo"),
     `#!/usr/bin/env bash
 printf '%s\\n' "$*" >> ${JSON.stringify(sudoLog)}
+if [[ "$*" == *setup-reviewed-npm/verify-and-install-npm.sh* ]]; then
+  printf '%s\\n' "$*" | sed -n 's/.*RUNNER_TEMP=\\([^ ]*\\).*/\\1/p' > ${JSON.stringify(npmTmpLog)}
+  exit ${options.reviewedNpmFailure ? 42 : 0}
+fi
 if [ "\${1:-}" = "install" ]; then
   shift
   if [ "\${1:-}" = "-m" ]; then shift 2; fi
@@ -252,6 +259,7 @@ exec /usr/bin/sha256sum "$@"
     fakeBin,
     launchLog,
     sudoLog,
+    npmTmpLog,
     tarLog,
   };
 }
@@ -285,6 +293,18 @@ function combinedLaunchableOutput(result: ReturnType<typeof spawnSync>, launchLo
 describe("brev-launchable-ci-cpu.sh OpenShell checksum gate", { timeout: 30_000 }, () => {
   it("fits within Brev's lifecycle setup-script limit", () => {
     expect(fs.statSync(SCRIPT).size).toBeLessThanOrEqual(BREV_LIFECYCLE_SCRIPT_MAX_BYTES);
+  });
+
+  it("removes temporary npm bootstrap state when installation fails", () => {
+    const { fake, result } = runLaunchable({ checksum: "match", reviewedNpmFailure: true });
+    try {
+      expect(result.status, combinedLaunchableOutput(result, fake.launchLog)).toBe(42);
+      const temporaryDirectory = fs.readFileSync(fake.npmTmpLog, "utf8").trim();
+      expect(temporaryDirectory).not.toBe("");
+      expect(fs.existsSync(temporaryDirectory)).toBe(false);
+    } finally {
+      fake.cleanup();
+    }
   });
 
   it("pins both Node.js 24.18.1 archives and installs the canonical reviewed npm", () => {

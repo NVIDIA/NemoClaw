@@ -30,7 +30,7 @@ const finalDockerfiles = [
 ] as const;
 const copiedSource = "scripts/lib/patch-bundled-npm-ip-address.mts";
 const patchCommand =
-  "node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts";
+  "node /scripts/lib/patch-bundled-npm-ip-address.mts";
 const npmRootArguments = ["--npm-root", "/usr/local/lib/node_modules/npm"] as const;
 const hermesTarCacheSeedArguments = [
   ...npmRootArguments,
@@ -66,7 +66,7 @@ describe("bundled npm ip-address image remediation contract", () => {
     const copy = source.indexOf(copiedSource);
     const upgrade = requireSingleReviewedDockerfileRunCommand(
       source,
-      "node --experimental-strip-types /scripts/upgrade-bundled-npm.mts",
+      "node /scripts/upgrade-bundled-npm.mts",
       npmRootArguments,
     ).commandStart;
     const patch = requireSingleReviewedDockerfileRunCommand(source, patchCommand, npmRootArguments);
@@ -81,14 +81,14 @@ describe("bundled npm ip-address image remediation contract", () => {
     const copy = source.indexOf(copiedSource);
     const tarPatches = requireReviewedDockerfileRunCommands(
       source,
-      "node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts",
+      "node /scripts/patch-bundled-npm-tar.mts",
       tarPatchArgumentsByDockerfile[file],
       tarPatchCountByDockerfile[file],
     );
     const tarPatch = tarPatches.at(-1)!.commandStart;
     const bracePatches = requireReviewedDockerfileRunCommands(
       source,
-      "node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts",
+      "node /scripts/patch-bundled-npm-brace-expansion.mts",
       npmRootArguments,
       tarPatchCountByDockerfile[file],
     );

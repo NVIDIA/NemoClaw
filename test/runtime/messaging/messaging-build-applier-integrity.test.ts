@@ -111,7 +111,6 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
       const result = spawnSync(
         process.execPath,
         [
-          "--experimental-strip-types",
           "--input-type=module",
           "--eval",
           `await import(${JSON.stringify(pathToFileURL(stagedApplier).href)})`,
@@ -329,7 +328,6 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
         const result = spawnSync(
           "node",
           [
-            "--experimental-strip-types",
             SCRIPT_PATH,
             "--agent",
             "openclaw",

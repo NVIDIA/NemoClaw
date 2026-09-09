@@ -36,7 +36,7 @@ NEMOCLAW_CI_NPM_CACHE="$npm_cache" \
   NEMOCLAW_CI_NPM_PACKAGE_MODE="$package_mode" \
   NEMOCLAW_CI_TARGET_ROOT="$target_root" \
   NEMOCLAW_OPEN_SHELL_SDK_ARTIFACT_DIRECTORY="${RUNNER_TEMP:-$target_root/.ci-artifacts}/openshell-sdk" \
-  node --experimental-strip-types "$trusted_root/scripts/checks/prepare-ci-npm-install.mts"
+  node "$trusted_root/scripts/checks/prepare-ci-npm-install.mts"
 
 trusted_npmrc=""
 cleanup() {
