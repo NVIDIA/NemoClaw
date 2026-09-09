@@ -313,11 +313,12 @@ A gateway that reports no live inference route does not stop the rebuild. Replac
 </AgentOnly>
 
 <AgentOnly variant="hermes">
-The rebuild command preserves Hermes state, the complete current OpenShell policy, managed MCP configuration, and supported operator-managed configuration while recreating the container.
-Before deletion, NemoClaw captures values set through `nemohermes <name> config set`, excluding NemoClaw-managed route fields and credential material.
-After it restores state, NemoClaw merges the captured values into the replacement configuration and verifies them.
-Rebuild reports each restored and dropped configuration key.
-If capture, restore, or verification fails, rebuild exits nonzero and retains its recovery state.
+The rebuild command preserves Hermes state, the complete current OpenShell policy, and managed MCP configuration while recreating the container.
+It also captures credential-free, non-managed values for supported Hermes dotpaths that host-side `config set` previously recorded.
+After it writes the fresh managed route, rebuild merges and verifies those values.
+The completion output lists the restored and dropped Hermes operator config keys.
+Rebuild drops managed-route fields and values that contain credentials.
+If it cannot capture or restore the operator configuration, rebuild exits nonzero and preserves the backup for recovery.
 For that one replacement create, NemoClaw adds baseline fields required by the current replacement image when they are absent from the live policy. Existing values, network keys, and same-name live network entries win, so host changes are not overwritten. NemoClaw does not save a desired-policy copy or enforce that handoff after OpenShell creates the sandbox.
 It reuses a messaging provider only when its exact type and credential keys match the recorded channel binding.
 A stopped channel remains inactive and contributes no token upsert, rendered runtime configuration, channel startup effect, or inactive built-in messaging preset.
@@ -353,7 +354,7 @@ It records the replacement process identity around managed health verification.
 NemoClaw clears the gate only if that same live process completes the final cron validation.
 If an operator already drained the gateway, NemoClaw clears its gate and release recovery record while leaving the operator drain active.
 
-If state restore, operator configuration restoration, managed MCP restoration, gateway replacement, agent-version verification, or cron validation fails after gate acquisition, `rebuild` exits nonzero and preserves the backup.
+If state restore, managed MCP restoration, gateway replacement, agent-version verification, or cron validation fails after gate acquisition, `rebuild` exits nonzero and preserves the backup.
 `rebuild` keeps the NemoClaw gate active after these failures unless release rollback cannot restore the drain marker.
 Failures before gate acquisition do not create a new gate.
 
