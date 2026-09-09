@@ -168,3 +168,33 @@ export function nativeStateDoctorReportIsValid(
     )
   );
 }
+
+export function nativeStateProcessIdentitiesAreValid(
+  result: Pick<ShellProbeResult, "stdout" | "exitCode" | "timedOut">,
+): boolean {
+  const lines = result.stdout.trim().split(/\r?\n/u);
+  const processes = lines
+    .slice(1)
+    .map((line) => line.match(/^\s*(\d+)\s+(\d+)\s+([1-9]\d*)\s+(\d+)\s+(\S.*)$/u)?.slice(1) ?? []);
+  const gateways = processes.filter((row) => row[4] === "openclaw-gatewa");
+  const gateway = gateways[0];
+  const parent = processes.find((row) => row[2] === gateway?.[3]);
+  const supervisor = processes.find((row) => row[2] === "1");
+  return (
+    result.timedOut === false &&
+    result.exitCode === 0 &&
+    lines[0]?.trim().split(/\s+/u).join(" ") === "EUID EGID PID PPID COMMAND" &&
+    processes.every((row) => row.length === 5) &&
+    new Set(processes.map((row) => row[2])).size === processes.length &&
+    gateways.length === 1 &&
+    Number(gateway?.[0]) > 0 &&
+    Number(gateway?.[1]) > 0 &&
+    parent?.[4] === "bash" &&
+    parent[3] === "1" &&
+    gateway?.[0] === parent[0] &&
+    gateway?.[1] === parent[1] &&
+    supervisor?.[0] === "0" &&
+    supervisor[1] === "0" &&
+    supervisor[3] === "0"
+  );
+}

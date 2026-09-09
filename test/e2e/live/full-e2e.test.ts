@@ -42,6 +42,7 @@ import type { ShellProbeOutputEvent, ShellProbeResult } from "../fixtures/shell-
 import { containsAnswer } from "../../helpers/e2e-answer-assertions.ts";
 import {
   nativeStateDoctorReportIsValid,
+  nativeStateProcessIdentitiesAreValid,
   parseOpenClawAgentText,
 } from "../fixtures/openclaw-agent-output.ts";
 import { buildOpenClawFirstTurnLatencyEvidence } from "./agent-turn-latency-helpers.ts";
@@ -624,7 +625,7 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
       Number(doctorReport?.checksRun) > 0 &&
       Array.isArray(doctorReport?.findings) &&
       (!nativeStateDoctor || nativeStateDoctorReportIsValid(nativeStateDoctor)) &&
-      (!identities || (!identities.timedOut && identities.exitCode === 0)),
+      (!identities || nativeStateProcessIdentitiesAreValid(identities)),
     [nativeDoctor, nativeStateDoctor, identities]
       .filter((result) => result !== null)
       .map(resultText)

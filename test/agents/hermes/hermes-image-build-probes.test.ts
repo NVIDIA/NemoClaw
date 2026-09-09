@@ -169,6 +169,21 @@ function runNeutralPlatformProbe(configuration: string) {
 }
 
 describe("Hermes image build probes", () => {
+  it("binds the probe runner to its source digest", () => {
+    const digest = createHash("sha256").update(probeSource).digest("hex");
+    const digestBinding = `ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=${digest}`;
+    const integrityCheck =
+      '"$NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256" /opt/nemoclaw-hermes-config/image-build-probes.py';
+    const bindingIndex = dockerfile.indexOf(digestBinding);
+    const integrityCheckIndex = dockerfile.indexOf(integrityCheck, bindingIndex);
+
+    expect(bindingIndex).toBeGreaterThan(-1);
+    expect(integrityCheckIndex).toBeGreaterThan(bindingIndex);
+    expect(dockerfile.indexOf("| sha256sum -c -", integrityCheckIndex)).toBeGreaterThan(
+      integrityCheckIndex,
+    );
+  });
+
   it("verifies the A2A neutralization patch before root applies it", () => {
     const digest = createHash("sha256").update(a2aNeutralPatch).digest("hex");
     const digestBinding = `ARG NEMOCLAW_HERMES_A2A_NEUTRAL_PATCH_SHA256=${digest}`;

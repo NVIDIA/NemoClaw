@@ -294,8 +294,10 @@ describe("sandbox config sync helpers", () => {
       );
       expect(fs.readFileSync(protectedFile, "utf8")).toBe("protected bytes\n");
       expect(fs.readFileSync(configFile, "utf8")).toBe(config);
+      expect(symlink ? fs.readlinkSync(hashFile) : fs.readFileSync(hashFile, "utf8")).toBe(
+        symlink ? protectedFile : hashContent,
+      );
       expect(fs.lstatSync(hashFile).isSymbolicLink()).toBe(symlink);
-      expect(fs.readFileSync(hashFile, "utf8")).toBe(hashContent);
     } finally {
       fs.rmSync(homeDir, { recursive: true, force: true });
     }
