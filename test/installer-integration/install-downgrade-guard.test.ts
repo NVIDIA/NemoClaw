@@ -8,6 +8,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { AGENT_ALIASES, resolveAgentNameAlias } from "../../src/lib/agent/aliases";
 import { INSTALLER_PAYLOAD } from "../helpers/installer-sourced-env";
 
 const INSTALLER = path.join(import.meta.dirname, "../..", "install.sh");
@@ -56,15 +57,22 @@ function runInstall(
   const payloadMarker = path.join(root, "payload-ran");
   const lookupPid = path.join(root, "lookup.pid");
   const requestedAgent = extraEnvironment.NEMOCLAW_AGENT ?? "openclaw";
-  const cliName = ["hermes", "Hermes", "nemohermes", "Nemo Hermes"].includes(requestedAgent)
-    ? "nemohermes"
-    : ["langchain-deepagents-code", "dcode", "deep_agents"].includes(requestedAgent)
-      ? "nemo-deepagents"
-      : "nemoclaw";
+  const canonicalAgent = resolveAgentNameAlias(requestedAgent, [
+    "openclaw",
+    "hermes",
+    "langchain-deepagents-code",
+  ]);
+  const cliName =
+    canonicalAgent === "hermes"
+      ? "nemohermes"
+      : canonicalAgent === "langchain-deepagents-code"
+        ? "nemo-deepagents"
+        : "nemoclaw";
   fs.mkdirSync(bin);
-  writeExecutable(
-    path.join(bin, cliName),
-    `#!/usr/bin/env bash
+  for (const installedCli of installedVersion === "absent" ? [] : [cliName]) {
+    writeExecutable(
+      path.join(bin, installedCli),
+      `#!/usr/bin/env bash
 case "${installedVersion}" in
   hang) /bin/sleep 60 ;;
   ignore-term) trap '' TERM; while :; do :; done ;;
@@ -73,12 +81,13 @@ case "${installedVersion}" in
   terminate) printf '%s' "$$" >"\${LOOKUP_PID:?}"; exec /bin/sleep 60 ;;
   descendant-ignore-term) (trap '' TERM; printf '%s' "\${BASHPID}" >"\${LOOKUP_PID:?}"; while :; do :; done) & exit 0 ;;
   signaled) kill -KILL "$$" ;;
-  oversized) printf 'nemoclaw v0.0.118'; printf '%0100d' 0 ;;
+  oversized) printf 'nemoclaw v0.0.108+'; printf '%0100d' 0 ;;
   invalid) printf 'not a NemoClaw version\n' ;;
   *) printf '${cliName} v%s\n' "${installedVersion}" ;;
 esac
 `,
-  );
+    );
+  }
   writeExecutable(
     path.join(bin, "git"),
     `#!/usr/bin/env bash
@@ -235,11 +244,13 @@ describe("public installer downgrade guard", () => {
   });
 
   it.each([
+    ...Object.entries(AGENT_ALIASES),
     ["Hermes", "hermes"],
-    ["nemohermes", "hermes"],
     ["Nemo Hermes", "hermes"],
-    ["dcode", "langchain-deepagents-code"],
     ["deep_agents", "langchain-deepagents-code"],
+    ["NEMO_DEEPAGENTS", "langchain-deepagents-code"],
+    ["Deep Agents", "langchain-deepagents-code"],
+    ["LANGCHAIN", "langchain-deepagents-code"],
   ])("uses the payload's canonical CLI for the %s alias", (agent, canonicalAgent) => {
     expect(payloadCanonicalAgent(agent)).toBe(canonicalAgent);
     const { result, payloadMarker } = runInstall("0.0.118", "0.0.109", {
@@ -253,12 +264,15 @@ describe("public installer downgrade guard", () => {
     expect(fs.existsSync(payloadMarker)).toBe(false);
   });
 
-  it("runs the selected payload when the implicit lkg release is newer", () => {
-    const { result, payloadMarker, root } = runInstall("0.0.108", "0.0.109");
+  it.each([
+    ["the implicit lkg release is newer", "0.0.108", "v0.0.109"],
+    ["no CLI is installed", "absent", "lkg"],
+  ])("runs the selected payload when %s", (_condition, installedVersion, selectedRef) => {
+    const { result, payloadMarker, root } = runInstall(installedVersion, "0.0.109");
 
     expect(result.status).toBe(0);
     expect(fs.existsSync(payloadMarker)).toBe(true);
-    expect(fs.readFileSync(payloadMarker, "utf8")).toBe("target-commit|v0.0.109|lkg");
+    expect(fs.readFileSync(payloadMarker, "utf8")).toBe(`target-commit|${selectedRef}|lkg`);
     expect(
       fs
         .readdirSync(root, { withFileTypes: true })
