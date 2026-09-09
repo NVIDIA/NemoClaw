@@ -81,13 +81,13 @@ function quoteShellLiteral(value: string): string {
 /**
  * Create an E2E-only OpenShell CLI wrapper that rejects the exact native
  * `--gpu` create before build or sandbox progress. The compatibility create
- * runs the real CLI while the rejecting wrapper stays installed. After that
- * create succeeds, the wrapper removes itself so normal OpenShell resolution
- * selects the real CLI path used by surviving ForwardTcp listeners. A failed
- * or interrupted invocation never changes the wrapper path; an overlapping
- * successful invocation may independently commit the removal and remains
- * authoritative. Every other invocation transparently delegates its original
- * argv. This
+ * runs the real CLI while the rejecting wrapper stays installed. A normal
+ * success, or NemoClaw's expected termination after the sandbox is independently
+ * proven Ready, atomically replaces the wrapper with a real-CLI link before
+ * host forwarding starts. A failed or pre-Ready interrupted invocation never
+ * changes the wrapper path; an overlapping successful invocation may
+ * independently commit the link and remains authoritative. Every other
+ * invocation transparently delegates its original argv. This
  * test-only wrapper never logs argv: its sole artifact is an event log made of
  * fixed labels, so sandbox-create environment arguments never enter artifacts.
  * This interception pattern is specific to the #6110 fallback proof and must
@@ -121,6 +121,19 @@ export function createHermesGpuFallbackWrapper(
     `REAL_OPENSHELL=${quoteShellLiteral(realOpenshellPath)}`,
     `FALLBACK_STATE_DIR=${quoteShellLiteral(stateDir)}`,
     'NATIVE_CREATE_REJECTED="$FALLBACK_STATE_DIR/native-create-rejected"',
+    'SANDBOX_NAME="$(printf \'%s\\n\' "$@" | awk \'previous == "--name" { print; exit } { previous = $0 }\')"',
+    "",
+    "commit_compatibility_handoff() {",
+    '  REAL_OPENSHELL_LINK="$FALLBACK_STATE_DIR/openshell-real.$$"',
+    '  ln -s "$REAL_OPENSHELL" "$REAL_OPENSHELL_LINK"',
+    '  mv -f "$REAL_OPENSHELL_LINK" "$0"',
+    "}",
+    "",
+    "sandbox_is_ready() {",
+    '  test -n "$SANDBOX_NAME" &&',
+    '    "$REAL_OPENSHELL" sandbox get "$SANDBOX_NAME" 2>/dev/null |',
+    "      grep -Eq '(^|[[:space:]])Ready([[:space:]]|$)'",
+    "}",
     "",
     "is_sandbox_create=0",
     "has_gpu_flag=0",
@@ -152,6 +165,7 @@ export function createHermesGpuFallbackWrapper(
     '        kill "-$signal" "$COMPATIBILITY_PID" 2>/dev/null || true',
     "      fi",
     '      wait "$COMPATIBILITY_PID" 2>/dev/null || true',
+    "      sandbox_is_ready && commit_compatibility_handoff || true",
     '      exit "$status"',
     "    }",
     "    trap 'forward_compatibility_signal HUP 129' HUP",
@@ -165,7 +179,7 @@ export function createHermesGpuFallbackWrapper(
     '      exit "$compatibility_status"',
     "    }",
     "    trap - HUP INT TERM",
-    '    rm -f "$0"',
+    "    commit_compatibility_handoff",
     "    exit 0",
     "  fi",
     "fi",
@@ -181,7 +195,6 @@ export function createHermesGpuFallbackWrapper(
       NEMOCLAW_OPENSHELL_BIN: wrapperPath,
       NEMOCLAW_OPENSHELL_GATEWAY_BIN: gatewayPath,
       NEMOCLAW_OPENSHELL_SANDBOX_BIN: sandboxPath,
-      PATH: `${componentDir}:${process.env.PATH ?? ""}`,
     },
     eventsPath,
     rootDir,

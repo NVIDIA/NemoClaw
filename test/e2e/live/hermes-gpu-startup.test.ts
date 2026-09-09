@@ -444,7 +444,7 @@ test(
       );
       await artifacts.writeJson("gpu-fallback-wrapper.json", {
         behavior:
-          "reject the exact native --gpu create before progress, keep the rejecting wrapper installed during compatibility create, remove it only after success so OpenShell resolves to the real ForwardTcp owner path, and let failed or interrupted invocations leave the path unchanged while an overlapping success remains authoritative",
+          "reject the exact native --gpu create before progress, keep the rejecting wrapper installed during compatibility create, commit the real-CLI link after normal success or an independently verified Ready termination, and retain the wrapper after failure or pre-Ready interruption unless an overlapping success already committed",
         eventVocabulary: HERMES_GPU_FALLBACK_EVENTS,
       });
       return wrapper;
