@@ -30,6 +30,8 @@ on:
       - ".github/actions/build-base-image-platform/**"
       - ".github/actions/publish-base-image-manifest/**"
       - ".dockerignore"
+      - "package.json"
+      - "package-lock.json"
       # Complete managed-image inputs. Keep these reviewed families synchronized
       # with tools/e2e/base-image-publication.mts.
       - "Dockerfile"
