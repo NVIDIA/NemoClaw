@@ -185,8 +185,8 @@ describe("nemoclaw-start auto-pair scheduler environment bounds", () => {
       input: { NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: "Infinity" },
     },
     {
-      name: "an unsleepable fast-reentry interval",
-      input: { NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: "1e10" },
+      name: "a fast-reentry interval above the operational limit",
+      input: { NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: "300.01" },
     },
     {
       name: "a not-a-number slow interval",
@@ -209,8 +209,8 @@ describe("nemoclaw-start auto-pair scheduler environment bounds", () => {
       input: { NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "1_000" },
     },
     {
-      name: "a poll count past the safe integer range",
-      input: { NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "9007199254740993" },
+      name: "a poll count past the operational range",
+      input: { NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "1728001" },
     },
     {
       name: "a poll count past Python's integer conversion limit",
@@ -221,6 +221,10 @@ describe("nemoclaw-start auto-pair scheduler environment bounds", () => {
       input: { NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "Infinity" },
     },
     {
+      name: "a slow interval past the operational limit",
+      input: { NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "300.01" },
+    },
+    {
       name: "a slow interval that rounds below binary64",
       input: { NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "1e-324" },
     },
@@ -229,12 +233,16 @@ describe("nemoclaw-start auto-pair scheduler environment bounds", () => {
       input: { NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "2.4703282292062327e-324" },
     },
     {
-      name: "a run timeout past the subprocess limit",
-      input: { NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "2147484" },
+      name: "a run timeout past the operational limit",
+      input: { NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "300.01" },
     },
     {
-      name: "a watcher deadline past its comparison limit",
-      input: { NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "1000000000001" },
+      name: "a watcher deadline past its operational limit",
+      input: { NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "86401" },
+    },
+    {
+      name: "a watcher deadline below its operational minimum",
+      input: { NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "0.5" },
     },
     { name: "an infinite watcher deadline", input: { NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "inf" } },
   ])("keeps the auto-pair watcher alive and on defaults for $name (#11161)", ({ input }) => {
@@ -253,39 +261,29 @@ describe("nemoclaw-start auto-pair scheduler environment bounds", () => {
 
   it.each([
     {
-      name: "a poll count the launch renderer accepts",
-      input: { NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "9007199254740991" },
-      expected: { POLLS: "9007199254740991" },
+      name: "a poll count at the operational limit",
+      input: { NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "1728000" },
+      expected: { POLLS: "1728000" },
     },
     {
-      name: "a poll count above the seconds range",
-      input: { NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "2000000" },
-      expected: { POLLS: "2000000" },
+      name: "a fast-reentry interval at the operational limit",
+      input: { NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: "300" },
+      expected: { INTERVAL: "300.0" },
     },
     {
-      name: "a month-long watcher deadline",
-      input: { NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "2592000" },
-      expected: { DEADLINE: "2592000" },
+      name: "a watcher deadline at the operational limit",
+      input: { NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "86400" },
+      expected: { DEADLINE: "86400" },
     },
     {
-      name: "a year-long watcher deadline",
-      input: { NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "31536000" },
-      expected: { DEADLINE: "31536000" },
+      name: "a slow interval at the operational limit",
+      input: { NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "300" },
+      expected: { SLOW: "300.0" },
     },
     {
-      name: "a run timeout at the subprocess limit",
-      input: { NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "2147483" },
-      expected: { RUN_TIMEOUT: "2147483.0" },
-    },
-    {
-      name: "a slow interval above the lower binary64 midpoint",
-      input: { NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "2.4703282292062328e-324" },
-      expected: { SLOW: "5e-324" },
-    },
-    {
-      name: "a slow interval that rounds to the smallest binary64 value",
-      input: { NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "3e-324" },
-      expected: { SLOW: "5e-324" },
+      name: "a run timeout at the operational limit",
+      input: { NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "300" },
+      expected: { RUN_TIMEOUT: "300.0" },
     },
   ])(
     "bounds each knob by the limit that applies to it, honouring $name (#11161)",
@@ -343,7 +341,7 @@ describe("nemoclaw-start auto-pair scheduler environment bounds", () => {
   });
 
   it("caps an active OpenClaw command at the remaining watcher deadline (#11161)", () => {
-    const resolved = resolveRunTimeout({ deadline: 100.25, now: 100, runTimeout: 2_147_483 });
+    const resolved = resolveRunTimeout({ deadline: 100.25, now: 100, runTimeout: 300 });
 
     expect(resolved.status).toBe(0);
     expect(resolved.stderr).toBe("");

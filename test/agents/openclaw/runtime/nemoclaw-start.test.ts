@@ -1562,9 +1562,9 @@ exit 0
       const elapsedMs = Date.now() - start;
       expect(run.status).toBe(0);
       // The watcher exited via DEADLINE, not via a wedged subprocess.
-      expect(run.stdout).toContain("watcher deadline reached approvals=0");
+      expect(run.stdout).toContain("watcher deadline reached approvals=0 limit=1s");
       // Timeout log was emitted for at least one stuck `devices list`.
-      expect(run.stdout).toContain("[auto-pair] timeout calling devices list");
+      expect(run.stdout).toContain("[auto-pair] timeout calling devices list limit=0.25s");
       // Sanity: if the timeout didn't fire, the first `sleep 2` would
       // already exceed this cap before the watcher could reach its deadline.
       expect(elapsedMs).toBeLessThan(1_800);
@@ -1638,7 +1638,7 @@ exit 2
       });
       expect(run.status).toBe(0);
       // Timeout was logged for the first attempt.
-      expect(run.stdout).toContain("[auto-pair] timeout calling devices approve");
+      expect(run.stdout).toContain("[auto-pair] timeout calling devices approve limit=0.75s");
       // Retry succeeded on the second attempt.
       expect(run.stdout).toContain(
         "[auto-pair] approved request=flaky-cli client=openclaw-cli mode=cli",

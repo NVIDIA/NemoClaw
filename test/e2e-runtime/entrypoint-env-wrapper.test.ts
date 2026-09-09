@@ -241,20 +241,20 @@ describe("OCI entrypoint env-wrapper normalization", () => {
       assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=.1e310",
     },
     {
-      name: "an interval above the watcher sleep limit",
-      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=1000000001",
+      name: "an interval above the operational limit",
+      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=300.01",
     },
     {
-      name: "a slow interval above the watcher sleep limit",
-      assignment: "NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS=1.000000001e9",
+      name: "a slow interval above the operational limit",
+      assignment: "NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS=301",
     },
     {
-      name: "a run timeout above the subprocess limit",
-      assignment: "NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS=2147484",
+      name: "a run timeout above the operational limit",
+      assignment: "NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS=300.01",
     },
     {
-      name: "a watcher deadline above its limit",
-      assignment: "NEMOCLAW_AUTO_PAIR_DEADLINE_SECS=1000000000001",
+      name: "a watcher deadline above its operational limit",
+      assignment: "NEMOCLAW_AUTO_PAIR_DEADLINE_SECS=86401",
     },
     {
       name: "an infinite watcher deadline",
@@ -283,13 +283,13 @@ describe("OCI entrypoint env-wrapper normalization", () => {
     },
     {
       name: "an interval in exponent form",
-      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=6e2",
-      probe: "FAST_REENTRY_INTERVAL=6e2",
+      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=3e2",
+      probe: "FAST_REENTRY_INTERVAL=3e2",
     },
     {
-      name: "a month-long interval",
-      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=2592000",
-      probe: "FAST_REENTRY_INTERVAL=2592000",
+      name: "the maximum fast-reentry interval",
+      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=300",
+      probe: "FAST_REENTRY_INTERVAL=300",
     },
     {
       name: "an empty value that defers to the built-in default",
@@ -297,9 +297,9 @@ describe("OCI entrypoint env-wrapper normalization", () => {
       probe: "FAST_REENTRY_INTERVAL=",
     },
     {
-      name: "a poll count at the safe integer boundary",
-      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS=9007199254740991",
-      probe: "FAST_REENTRY_POLLS=9007199254740991",
+      name: "a poll count at the operational boundary",
+      assignment: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS=1728000",
+      probe: "FAST_REENTRY_POLLS=1728000",
     },
     {
       name: "a two-digit poll count",

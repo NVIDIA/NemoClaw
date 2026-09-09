@@ -141,17 +141,17 @@ nemoclaw_normalize_entrypoint_env_wrapper() {
     esac
     case "$_nemoclaw_name" in
       NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS)
-        _nemoclaw_numeric_args+=(polls "${_nemoclaw_token#*=}" 9007199254740991)
+        _nemoclaw_numeric_args+=(polls "${_nemoclaw_token#*=}" 1 1728000)
         ;;
       NEMOCLAW_AUTO_PAIR_DEADLINE_SECS)
-        _nemoclaw_numeric_args+=(seconds "${_nemoclaw_token#*=}" 1000000000000)
+        _nemoclaw_numeric_args+=(seconds "${_nemoclaw_token#*=}" 1 86400)
         ;;
       NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS | \
         NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS)
-        _nemoclaw_numeric_args+=(seconds "${_nemoclaw_token#*=}" 1000000000)
+        _nemoclaw_numeric_args+=(seconds "${_nemoclaw_token#*=}" 0.05 300)
         ;;
       NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS)
-        _nemoclaw_numeric_args+=(seconds "${_nemoclaw_token#*=}" 2147483)
+        _nemoclaw_numeric_args+=(seconds "${_nemoclaw_token#*=}" 0.05 300)
         ;;
     esac
     _nemoclaw_assignments+=("$_nemoclaw_token")
@@ -168,8 +168,8 @@ import math, re, sys
 seconds = re.compile(r"\+?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]{1,3})?\Z")
 polls = re.compile(r"\+?[0-9]+\Z")
 try:
-    for index in range(1, len(sys.argv), 3):
-        kind, raw, maximum = sys.argv[index:index + 3]
+    for index in range(1, len(sys.argv), 4):
+        kind, raw, minimum, maximum = sys.argv[index:index + 4]
         if not raw:
             continue
         grammar = seconds if kind == "seconds" else polls
@@ -177,7 +177,9 @@ try:
         if grammar.fullmatch(raw) is None or (kind == "polls" and (not digits or len(digits) > 16)):
             raise ValueError
         value = float(raw) if kind == "seconds" else int(raw, 10)
-        if not math.isfinite(value) or not 0 < value <= int(maximum):
+        lower = float(minimum) if kind == "seconds" else int(minimum)
+        upper = float(maximum) if kind == "seconds" else int(maximum)
+        if not math.isfinite(value) or not lower <= value <= upper:
             raise ValueError
 except (OverflowError, ValueError):
     raise SystemExit(1)

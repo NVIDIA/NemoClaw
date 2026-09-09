@@ -392,7 +392,7 @@ describe("prepareSandboxCreateLaunch", () => {
         NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: " 0.25 ",
         NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: " 99 ",
         NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "10",
-        NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "600",
+        NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "300",
         NEMOCLAW_PROVIDER_KEY: "must-not-enter-the-sandbox",
       },
       extraPlaceholderKeys: [],
@@ -413,7 +413,7 @@ describe("prepareSandboxCreateLaunch", () => {
       "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=0.25",
       "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS=99",
       "NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS=10",
-      "NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS=600",
+      "NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS=300",
     ]);
     expect(result.sandboxStartupCommand.join(" ")).not.toContain("NEMOCLAW_PROVIDER_KEY");
     expect(result.sandboxStartupCommand.join(" ")).not.toContain(
@@ -428,9 +428,9 @@ describe("prepareSandboxCreateLaunch", () => {
       value: "Infinity",
     },
     {
-      name: "a poll count past the safe integer range",
+      name: "a poll count past the operational range",
       key: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS",
-      value: "9007199254740993",
+      value: "1728001",
     },
     { name: "a zero poll count", key: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS", value: "0" },
     {
@@ -444,6 +444,11 @@ describe("prepareSandboxCreateLaunch", () => {
       value: "0",
     },
     {
+      name: "a watcher deadline below the operational minimum",
+      key: "NEMOCLAW_AUTO_PAIR_DEADLINE_SECS",
+      value: "0.5",
+    },
+    {
       name: "a negative fast-reentry interval",
       key: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS",
       value: "-1",
@@ -454,24 +459,24 @@ describe("prepareSandboxCreateLaunch", () => {
       value: "1e309",
     },
     {
-      name: "an interval above the watcher sleep limit",
+      name: "a fast-reentry interval above the operational limit",
       key: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS",
-      value: "1000000001",
+      value: "300.01",
     },
     {
-      name: "a slow interval above the watcher sleep limit",
+      name: "a slow interval above the operational limit",
       key: "NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS",
-      value: "1.000000001e9",
+      value: "301",
     },
     {
-      name: "a run timeout above the subprocess limit",
+      name: "a run timeout above the operational limit",
       key: "NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS",
-      value: "2147484",
+      value: "300.01",
     },
     {
-      name: "a deadline above the watcher limit",
+      name: "a deadline above the operational limit",
       key: "NEMOCLAW_AUTO_PAIR_DEADLINE_SECS",
-      value: "1000000000001",
+      value: "86401",
     },
     { name: "a suffixed slow interval", key: "NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS", value: "5s" },
     {
@@ -502,16 +507,16 @@ describe("prepareSandboxCreateLaunch", () => {
     },
   );
 
-  it("renders long-lived and exponent-form OpenClaw auto-pair controls (#11161)", () => {
+  it("renders the operational OpenClaw auto-pair maxima (#11161)", () => {
     const result = prepareSandboxCreateLaunch({
       agent: { name: "openclaw" } as any,
       chatUiUrl: "",
       createArgs: [],
       env: {
-        NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "2592000",
-        NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: "1e9",
-        NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "9007199254740991",
-        NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "2147483",
+        NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "86400",
+        NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: "3e2",
+        NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "1728000",
+        NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "300",
       },
       extraPlaceholderKeys: [],
       getDashboardForwardPort: vi.fn(() => {
@@ -523,10 +528,10 @@ describe("prepareSandboxCreateLaunch", () => {
       buildEnv: () => ({}),
     });
 
-    expect(result.envArgs).toContain("NEMOCLAW_AUTO_PAIR_DEADLINE_SECS=2592000");
-    expect(result.envArgs).toContain("NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=1e9");
-    expect(result.envArgs).toContain("NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS=9007199254740991");
-    expect(result.envArgs).toContain("NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS=2147483");
+    expect(result.envArgs).toContain("NEMOCLAW_AUTO_PAIR_DEADLINE_SECS=86400");
+    expect(result.envArgs).toContain("NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=3e2");
+    expect(result.envArgs).toContain("NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS=1728000");
+    expect(result.envArgs).toContain("NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS=300");
   });
 
   it("adds Hermes dashboard env and skips OpenClaw env for non-OpenClaw agents", () => {
