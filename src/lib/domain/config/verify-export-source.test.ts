@@ -146,6 +146,7 @@ function snapshot(overrides: Partial<ObservedExportSnapshot> = {}): ObservedExpo
         providerId: "provider-id",
         workspace: "default",
         resourceVersion: "8",
+        kind: "provider-config",
         configKey: "OPENAI_BASE_URL",
       },
       credentialEnv: "OPENAI_API_KEY",
@@ -315,6 +316,7 @@ describe("config export source verification (#10938)", () => {
           providerId: "other-id",
           workspace: "default",
           resourceVersion: "9",
+          kind: "provider-config",
           configKey: "OPENAI_BASE_URL",
         },
         credentialEnv: null,
@@ -376,6 +378,62 @@ describe("config export source verification (#10938)", () => {
     );
     expect(findings(mismatchResult)).toContainEqual(
       expect.objectContaining({ field: "source.inference.endpoint", category: "drifted" }),
+    );
+  });
+
+  it.each([
+    {
+      label: "provider identity",
+      provider: "openai-api",
+      api: "openai-completions",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      endpoint: "https://integrate.api.nvidia.com/v1",
+    },
+    {
+      label: "API family",
+      provider: "nvidia-prod",
+      api: "anthropic-messages",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      endpoint: "https://integrate.api.nvidia.com/v1",
+    },
+    {
+      label: "endpoint",
+      provider: "nvidia-prod",
+      api: "openai-completions",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      endpoint: "https://different.example/v1",
+    },
+    {
+      label: "credential reference",
+      provider: "nvidia-prod",
+      api: "openai-completions",
+      credentialEnv: null,
+      endpoint: "https://integrate.api.nvidia.com/v1",
+    },
+  ])("rejects builtin NVIDIA evidence with the wrong $label", ({ label: _label, ...inference }) => {
+    const value = snapshot();
+    const result = verify({
+      ...value,
+      inference: {
+        ...value.inference,
+        ...inference,
+        endpointEvidence: {
+          kind: "builtin-provider",
+          providerType: "nvidia",
+          endpoint: inference.endpoint,
+          providerName: inference.provider,
+          providerId: "provider-id",
+          gatewayName: "nemoclaw",
+          workspace: "default",
+          resourceVersion: "8",
+        },
+      },
+    });
+    expect(findings(result)).toContainEqual(
+      expect.objectContaining({
+        field: "source.inference.endpoint",
+        category: "drifted",
+      }),
     );
   });
 

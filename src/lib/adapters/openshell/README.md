@@ -29,8 +29,15 @@ strings so uint64 values cannot lose precision.
 projection, keep credential values opaque, and check response identities against the request.
 Schema failures use fixed messages without rejected values.
 
-Provider reads return credential names and requested non-secret config values. They retain the
-complete config-key inventory so export can reject unsupported configuration. Sandbox reads omit
+Provider reads return credential names and requested non-secret config values.
+For native NVIDIA hosted inference with no overrides, export also reads `raw.getProviderProfile`
+through the same gateway and workspace. It requires the built-in `nvidia` profile, static scope,
+revision zero, inference capability, and its single `integrate.api.nvidia.com:443` endpoint.
+The pinned OpenShell native resolver uses `/v1` on that host. Export records the built-in profile
+as the endpoint evidence. Custom profiles, profile scope changes, and provider config overrides
+cannot use this derivation.
+
+Provider reads retain the complete config-key inventory so export can reject unsupported configuration. Sandbox reads omit
 environment values. Configuration reads return revision metadata, not settings or credential values.
 Export compares two complete observations and can repeat that pair once when state changes.
 

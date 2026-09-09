@@ -82,15 +82,23 @@ export interface ObservedExportGateway {
   readonly stateRootOwned: boolean;
 }
 
-export interface ObservedExportEndpointEvidence {
+interface ObservedExportEndpointIdentity {
   readonly endpoint: string;
   readonly gatewayName: string;
   readonly providerName: string;
   readonly providerId: string;
   readonly workspace: string;
   readonly resourceVersion: string;
-  readonly configKey: "OPENAI_BASE_URL" | "ANTHROPIC_BASE_URL";
 }
+
+export type ObservedExportEndpointEvidence = ObservedExportEndpointIdentity &
+  (
+    | {
+        readonly kind: "provider-config";
+        readonly configKey: "OPENAI_BASE_URL" | "ANTHROPIC_BASE_URL";
+      }
+    | { readonly kind: "builtin-provider"; readonly providerType: "nvidia" }
+  );
 
 export interface ObservedExportInference {
   readonly topology: "hosted" | "managed" | "local" | "unknown";

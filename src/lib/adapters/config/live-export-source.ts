@@ -18,6 +18,7 @@ import type {
   ExportSnapshotReader,
   ObservedExportGateway,
   ObservedExportInference,
+  ObservedExportEndpointEvidence,
   ObservedExportRegistry,
   ObservedExportSandboxIdentity,
   RawExportSnapshot,
@@ -127,7 +128,7 @@ async function readProviderEvidence(
   routeProvider: string,
   gatewayName: string,
   signal: AbortSignal,
-) {
+): Promise<ObservedExportEndpointEvidence> {
   const { type, configKey } = providerContract(normalized.preferredInferenceApi);
   const provider = await createProviders().get({
     target: namedOpenShellGateway(gatewayName),
@@ -138,20 +139,30 @@ async function readProviderEvidence(
   });
   if (!provider) throw new Error("The live inference provider is missing.");
   const credentialKeys = normalized.credentialEnv === null ? [] : [normalized.credentialEnv];
+  const builtin = provider.builtinInferenceEndpoint !== undefined;
   if (
     type === null ||
     !isDeepStrictEqual(
       [provider.name, provider.type, provider.credentialKeys, provider.configKeys],
-      [routeProvider, type, credentialKeys, [configKey]],
+      [routeProvider, builtin ? "nvidia" : type, credentialKeys, builtin ? [] : [configKey]],
     )
   ) {
     throw new Error("The live inference provider metadata does not match the registry.");
   }
   return {
-    endpoint: provider.config[configKey] ?? "",
+    ...(builtin
+      ? ({
+          kind: "builtin-provider",
+          providerType: "nvidia",
+          endpoint: provider.builtinInferenceEndpoint!,
+        } as const)
+      : ({
+          kind: "provider-config",
+          configKey,
+          endpoint: provider.config[configKey] ?? "",
+        } as const)),
     gatewayName,
     providerName: provider.name,
-    configKey,
     providerId: provider.id,
     workspace: provider.workspace,
     resourceVersion: provider.resourceVersion,
