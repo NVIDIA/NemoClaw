@@ -128,6 +128,7 @@ describe("E2E recommendation normalizer", () => {
         "tools/advisors/risk-plan.mts",
         "tools/e2e/credential-free-tests.mts",
         "tools/e2e/execution-coverage.mts",
+        "tools/e2e/full-e2e-timeout-contract.mts",
         "tools/e2e/gateway-runtime.mts",
         "tools/e2e/onboard-timeout-contract.mts",
         "tools/e2e/openshell-gateway-upgrade-fixture.mts",

@@ -415,7 +415,7 @@ Completed onboarding sessions are not resumable. Use `--resume` only for resumab
 
 An active same-name replacement is separate from ordinary onboarding-step resume. If onboarding printed `Journaled replacement` before it stopped, rerun the original onboarding command with the same target settings. The replacement can continue without an explicit `--resume` flag. Refer to [Continue an Interrupted Replacement](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#continue-an-interrupted-replacement) for the identity checks and failure conditions.
 
-Use `--fresh` to discard the saved onboarding session and start the wizard from the beginning. This clears stale or failed session state before NemoClaw creates a new session record. Before onboarding reserves an inference route, it releases an abandoned route-only reservation from another session when it holds the onboarding lock. NemoClaw reports that release. It also bypasses locally recorded sandbox base-image resolution metadata and reruns normal candidate resolution. `--fresh` takes precedence over a base-image hint carried from a rebuild, so NemoClaw does not use that recorded hint. The installer also accepts `--fresh` and forwards it to `$$nemoclaw onboard`, which skips automatic resume detection. `--resume` and `--fresh` are mutually exclusive. For an existing completed sandbox, use `--fresh --name <sandbox-name> --recreate-sandbox` when you intentionally want onboarding to replace that sandbox with a new provider, model, agent, or startup setting. Use `$$nemoclaw <sandbox-name> rebuild` when you want NemoClaw to recreate the sandbox from its recorded registry metadata without changing those selections.
+Use `--fresh` to discard the saved onboarding session and start the wizard from the beginning. This clears stale or failed session state before NemoClaw creates a new session record. It also bypasses locally recorded sandbox base-image resolution metadata and reruns normal candidate resolution. `--fresh` takes precedence over a base-image hint carried from a rebuild, so NemoClaw does not use that recorded hint. The installer also accepts `--fresh` and forwards it to `$$nemoclaw onboard`, which skips automatic resume detection. `--resume` and `--fresh` are mutually exclusive. For an existing completed sandbox, use `--fresh --name <sandbox-name> --recreate-sandbox` when you intentionally want onboarding to replace that sandbox with a new provider, model, agent, or startup setting. Use `$$nemoclaw <sandbox-name> rebuild` when you want NemoClaw to recreate the sandbox from its recorded registry metadata without changing those selections.
 
 <AgentOnly variant="openclaw">
 
@@ -751,7 +751,7 @@ If you run onboarding again with the same sandbox name and choose a different in
 
 Before deleting an existing sandbox during recreation, NemoClaw backs up the workspace state declared by the selected agent profile and restores it into the new sandbox once it is live. This applies whether the existing sandbox is ready or marked not-ready, so cross-version upgrades that pass `NEMOCLAW_RECREATE_SANDBOX=1` no longer drop user files from the selected agent workspace. The behaviour matches `$$nemoclaw <name> rebuild --force`. NemoClaw aborts the recreate when the backup cannot complete in full, including when individual state directories or files fail mid-backup, so failed entries are not silently dropped on delete. If restoration into the replacement does not complete, NemoClaw reports the failed directories, files, and restore reason that are available, preserves the snapshot, leaves the replacement unregistered, and exits nonzero. Recovery remains blocked while that unregistered sandbox exists. Do not delete it by mutable name. Preserve the snapshot, and run `$$nemoclaw <sandbox-name> destroy` to check for authoritative absence before you retry onboarding. Set `NEMOCLAW_RECREATE_WITHOUT_BACKUP=1` to skip the pre-recreate backup. The destination sandbox starts with a fresh workspace.
 
-Before deletion, onboarding prints a `Journaled replacement` diagnostic with the replacement identifier, recorded OpenShell gateway, and current phase. If the process stops after this point, a later same-target onboarding run continues the active replacement without requiring `--resume`. It accepts a ready same-name replacement only when the live identity and sandbox registry generation match the journal. It fails closed if the gateway, source, target, durable source registry fields, or replacement settings changed.
+Before deletion, onboarding prints a `Journaled replacement` diagnostic with the replacement identifier, recorded OpenShell gateway, and current phase. If the process stops after this point, rerun the original onboarding command with the same target settings. The rerun continues the active replacement without requiring `--resume`. It accepts a same-name replacement only after its live identity and sandbox registry generation match the journal and it completes or verifies the recorded final handoff. A matching replacement can report not-ready after that handoff. It fails closed if the gateway, source, target, durable source registry fields, or replacement settings changed.
 
 <AgentOnly variant="openclaw">
 
@@ -1412,7 +1412,7 @@ $$nemoclaw my-assistant stop
 
 <AgentOnly variant="hermes">
 
-For an active Portable Hermes receipt, `stop` targets only the exact receipt-owned Podman container and waits for its terminal stopped state without using Docker as a fallback. A `pending` or `configuring` receipt instead directs you to resume Portable onboarding. Portable Hermes does not run the Docker provider's channel hook or the generic post-stop dashboard-forward cleanup.
+For an active Portable Hermes receipt, `stop` targets only the exact receipt-owned Podman container without using Docker as a fallback. It returns only after Podman reports that container as `exited` and OpenShell reports `Error` or `Stopped`. A `pending` or `configuring` receipt instead directs you to resume Portable onboarding. Portable Hermes does not run the Docker provider's channel hook or the generic post-stop dashboard-forward cleanup.
 
 </AgentOnly>
 
@@ -1447,7 +1447,7 @@ $$nemoclaw my-assistant start
 
 <AgentOnly variant="hermes">
 
-For an active Portable Hermes receipt, `start` follows the exact Podman container, supervisor, authenticated health, and rollback contract documented for [`recover`](#$$nemoclaw-name-recover); it does not fall back to Docker. A `pending` or `configuring` receipt instead directs you to resume Portable onboarding.
+For an active Portable Hermes receipt, `start` follows the exact Podman container, supervisor, authenticated health, and rollback contract documented for [`recover`](#$$nemoclaw-name-recover). After lifecycle recovery, it checks and repairs the recorded host forwards before it reports success. It does not fall back to Docker. A `pending` or `configuring` receipt instead directs you to resume Portable onboarding.
 
 </AgentOnly>
 
