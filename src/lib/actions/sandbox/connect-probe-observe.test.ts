@@ -8,6 +8,7 @@ import {
   createConnectHarness,
   requireDist,
 } from "../../../../test/support/connect-flow-test-harness";
+import { HermesPortableRecoveryRollbackError } from "../../onboard/experimental/hermes-portable-lifecycle";
 
 describe("connectSandbox probe-only observe mode", () => {
   let exitSpy: MockInstance;
@@ -63,6 +64,32 @@ describe("connectSandbox probe-only observe mode", () => {
     expect(harness.recoverPortableDemoLifecycleSpy.mock.invocationCallOrder[0]).toBeLessThan(
       harness.ensureLiveSandboxSpy.mock.invocationCallOrder[0]!,
     );
+  });
+
+  it("prints classified Portable recovery and rollback results without nested diagnostics (#11248)", async () => {
+    const harness = createConnectHarness({
+      agentName: "hermes",
+      portableReceiptDisposition: { kind: "hermes", phase: "active" },
+    });
+    const nestedDiagnostic = "Bearer do-not-print";
+    harness.recoverPortableDemoLifecycleSpy.mockImplementation(() => {
+      throw new HermesPortableRecoveryRollbackError(
+        "startup-launch",
+        "openshell-terminal-settlement",
+        new Error(nestedDiagnostic),
+        new Error(nestedDiagnostic),
+      );
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    const output = harness.errorSpy.mock.calls.map(([line]) => String(line)).join("\n");
+    expect(output).toContain("primary=startup-launch");
+    expect(output).toContain("rollback=openshell-terminal-settlement-unproved");
+    expect(output).not.toContain(nestedDiagnostic);
+    expect(harness.ensureLiveSandboxSpy).not.toHaveBeenCalled();
   });
 
   it("settles completed Portable pairing before publishing probe readiness (#9207)", async () => {

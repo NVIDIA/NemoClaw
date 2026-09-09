@@ -30,7 +30,6 @@ const E2E_WORKFLOW_CONTRACTS = [
   "test/e2e/support/openshell-gateway-upgrade-workflow-boundary.test.ts",
   "test/e2e/support/prepare-e2e-workflow-boundary.test.ts",
   "test/e2e/support/runner-pressure-workflow-boundary.test.ts",
-  "test/e2e/support/sandbox-images-workflow-boundary.test.ts",
   "test/e2e/support/security-posture-workflow-boundary.test.ts",
   "test/e2e/support/shared-e2e-workflow-boundary.test.ts",
   "test/e2e/support/staging-brev-launchable-identity-workflow-boundary.test.ts",
@@ -45,6 +44,14 @@ function runTests(...tests: string[]): () => string[] {
 }
 
 export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
+  {
+    pattern: /(?:^|\/)(?:oxlint\.config\.ts|oxc\.ignore-patterns\.ts)$/,
+    testsToRun: runTests("test/automation/lint/config-export-complexity.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)scripts\/lib\/sandbox-init\.sh$/,
+    testsToRun: runTests("test/runtime/sandbox/sandbox-init.test.ts"),
+  },
   {
     pattern: /(?:^|\/)\.github\/workflows\/[^/]+\.ya?ml$/,
     testsToRun: runTests("test/repository/github-actions-workflow-names.test.ts"),
@@ -140,13 +147,18 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
           "src/lib/onboard/experimental/hermes-portable-build-context.test.ts",
           "src/lib/onboard/managed-startup-profile.test.ts",
           "test/agents/hermes/hermes-mcp-runtime-capability.test.ts",
+          "test/mcp/mcp-tool-discovery-image-contract.test.ts",
         ];
       }
       return match[1]
-        ? ["src/lib/onboard/managed-startup-profile.test.ts"]
+        ? [
+            "src/lib/onboard/managed-startup-profile.test.ts",
+            "test/mcp/mcp-tool-discovery-image-contract.test.ts",
+          ]
         : [
             "src/lib/onboard/managed-startup-profile.test.ts",
             "src/lib/sandbox/optimized-build-context-copy-sources.test.ts",
+            "test/mcp/mcp-tool-discovery-image-contract.test.ts",
           ];
     },
   },
@@ -325,10 +337,6 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/e2e/support/dockerhub-auth-workflow-boundary.test.ts"),
   },
   {
-    pattern: /(?:^|\/)\.github\/workflows\/(?:pr-self-hosted|sandbox-images)\.yaml$/,
-    testsToRun: runTests("test/e2e/support/sandbox-images-workflow-boundary.test.ts"),
-  },
-  {
     pattern: /(?:^|\/)\.github\/workflows\/code-scanning\.yaml$/,
     testsToRun: runTests("test/repository/code-scanning-workflow.test.ts"),
   },
@@ -345,7 +353,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   },
   {
     pattern: /(?:^|\/)\.github\/workflows\/pr-review-advisor\.yaml$/,
-    testsToRun: runTests("test/e2e/support/e2e-operations-workflow-boundary.test.ts"),
+    testsToRun: runTests("test/e2e/support/pr-review-advisor-workflow-boundary.test.ts"),
   },
   {
     pattern: /(?:^|\/)tools\/pr-review-advisor\/openshell-policy\.yaml$/,
@@ -370,6 +378,15 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern: /(?:^|\/)ci\/platform-vitest-macos-requirements\.lock$/,
     testsToRun: runTests("test/automation/e2e/platform-vitest-main-workflow.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)tools\/e2e\/full-e2e-timeout-contract\.mts$/,
+    testsToRun: runTests(
+      "test/automation/e2e/e2e-recommendations.test.ts",
+      "test/automation/e2e/platform-vitest-main-workflow.test.ts",
+      "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
+      "test/e2e/support/security-posture-workflow-boundary.test.ts",
+    ),
   },
   {
     pattern:

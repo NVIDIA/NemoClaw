@@ -22,6 +22,12 @@ export interface PendingSandboxCreateIdentity {
   readonly sandboxIdentityFingerprint: string;
   readonly createAttemptNonce?: string;
   readonly route: "none" | "native" | "compatibility";
+  /** The exact final handoff crossed its durable commit fence. */
+  readonly exactFinalHandoffCommitStarted?: true;
+  /** Exact Docker replacement ID authorized before compatibility handoff commit. */
+  readonly exactFinalHandoffRuntimeId?: string;
+  /** OpenShell acknowledged the exact replacement handoff for this identity. */
+  readonly exactFinalHandoffAcknowledged?: true;
 }
 
 // Outcome of the last live sandbox GPU proof run during onboarding/recovery.

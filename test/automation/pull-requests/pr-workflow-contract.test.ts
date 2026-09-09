@@ -451,6 +451,7 @@ describe("pull request and main workflow contracts", () => {
   const mainWorkflow = readYaml<CiWorkflow>(".github/workflows/main.yaml");
   const dcoWorkflow = readYaml<CiWorkflow>(".github/workflows/dco-check.yaml");
   const installerHashWorkflow = readYaml<CiWorkflow>(".github/workflows/installer-hash-check.yaml");
+  const advisorWorkflow = readYaml<CiWorkflow>(".github/workflows/pr-review-advisor.yaml");
   const sdkPackageWorkflow = readYaml<SdkPackageWorkflow>(
     ".github/workflows/openshell-sdk-package-pr.yaml",
   );
@@ -466,9 +467,7 @@ describe("pull request and main workflow contracts", () => {
   ) as TypeScriptConfig;
   const sharedActions = {
     staticChecks: readYaml<CompositeAction>(".github/actions/ci-static-checks/action.yaml"),
-    compileArtifacts: readYaml<CompositeAction>(
-      ".github/actions/ci-compile-artifacts/action.yaml",
-    ),
+    compileArtifacts: readYaml<CompositeAction>(".github/actions/ci-compile-artifacts/action.yaml"),
     buildTypecheck: readYaml<CompositeAction>(".github/actions/ci-build-typecheck/action.yaml"),
     cliCoverageShard: readYaml<CompositeAction>(
       ".github/actions/ci-cli-coverage-shard/action.yaml",
@@ -493,10 +492,7 @@ describe("pull request and main workflow contracts", () => {
   it("verifies changed Hugging Face catalog references without credentials", () => {
     const job = prWorkflow.jobs["hugging-face-models"];
     const filterStep = prWorkflow.jobs.changes.steps?.find((step) => step.id === "filter");
-    const filters = YAML.parse(String(filterStep?.with?.filters ?? "")) as Record<
-      string,
-      string[]
-    >;
+    const filters = YAML.parse(String(filterStep?.with?.filters ?? "")) as Record<string, string[]>;
     const huggingFaceModelFilters = filters.hugging_face_models ?? [];
 
     expect(
@@ -573,6 +569,49 @@ describe("pull request and main workflow contracts", () => {
     expect(actions.map((action) => requiredStep(action, "Install dependencies").run)).toEqual(
       actions.map(() => 'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"'),
     );
+  });
+
+  it.each([
+    [
+      "CLI shards",
+      requiredStep(sharedActions.cliCoverageShard, "Install pinned Pi search tools"),
+    ],
+    [
+      "Advisor runtime",
+      requiredWorkflowStep(
+        advisorWorkflow.jobs["build-advisor-runtime"],
+        "Install locked runtime",
+      ),
+    ],
+  ])("refreshes only Ubuntu package metadata for %s", (_name, installStep) => {
+    const temp = mkdtempSync(join(tmpdir(), "nemoclaw-ubuntu-apt-sources-"));
+    const fakeBin = join(temp, "bin");
+    const aptArgs = join(temp, "apt-args");
+    mkdirSync(fakeBin);
+    writeFileSync(
+      join(fakeBin, "sudo"),
+      '#!/usr/bin/env bash\nprintf "%s\\n" "$@" > "$APT_ARGS"\nexit 86\n',
+      { mode: 0o755 },
+    );
+
+    try {
+      const result = runWorkflowShellStep(installStep, {
+        APT_ARGS: aptArgs,
+        PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+      });
+      expect(result.status).toBe(86);
+      expect(readFileSync(aptArgs, "utf8").trim().split("\n")).toEqual([
+        "apt-get",
+        "update",
+        "-qq",
+        "-o",
+        "Dir::Etc::sourcelist=sources.list.d/ubuntu.sources",
+        "-o",
+        "Dir::Etc::sourceparts=-",
+      ]);
+    } finally {
+      rmSync(temp, { force: true, recursive: true });
+    }
   });
 
   // source-shape-contract: security -- The PR workflow must select an exact base-controlled package run before publishing its archive internally
@@ -922,10 +961,11 @@ describe("pull request and main workflow contracts", () => {
     );
     expect(fetch.env).toEqual({
       NEMOCLAW_OPEN_SHELL_SDK_OUTPUT_DIRECTORY: "${{ runner.temp }}/openshell-sdk",
+      NEMOCLAW_OPEN_SHELL_SDK_INCLUDE_REPLACEMENT: "1",
       NODE_AUTH_TOKEN: "${{ github.token }}",
     });
     expect(fetch.run).toContain(
-      "node --experimental-strip-types scripts/checks/package-openshell-sdk-for-pr.mts",
+      "node scripts/checks/package-openshell-sdk-for-pr.mts",
     );
     expect(fetch.run).toContain("artifact_path=");
     expect(
@@ -1054,6 +1094,32 @@ describe("pull request and main workflow contracts", () => {
       expect(existsSync(marker)).toBe(false);
     } finally {
       rmSync(temp, { force: true, recursive: true });
+    }
+  });
+
+  it.each([
+    ["cli-build-output", "required=true\n"],
+    ["compiled-test-inputs", ""],
+  ])("uploads the legacy coverage artifact only when the base reads %s", (artifact, expected) => {
+    const root = mkdtempSync(join(tmpdir(), "coverage-artifact-rollout-"));
+    const actionDirectory = join(root, ".trusted-ci-actions/.github/actions/ci-cli-coverage-merge");
+    const output = join(root, "output");
+    try {
+      mkdirSync(actionDirectory, { recursive: true });
+      writeFileSync(join(actionDirectory, "action.yaml"), `with:\n  name: ${artifact}\n`);
+      writeFileSync(output, "");
+      const result = runWorkflowShellStep(
+        requiredWorkflowStep(
+          prWorkflow.jobs["compile-artifacts"],
+          "Detect legacy coverage artifact reader",
+        ),
+        { GITHUB_OUTPUT: output },
+        root,
+      );
+      expect(result.status, result.stderr).toBe(0);
+      expect(readFileSync(output, "utf8")).toBe(expected);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
     }
   });
 

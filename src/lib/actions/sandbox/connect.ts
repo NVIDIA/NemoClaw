@@ -122,6 +122,7 @@ import {
   executeSandboxExecCommand,
   type GatewayRestartFailureLayer,
   HermesPortableForwardRecoveryError,
+  type HermesPortableForwardRecoveryContext,
   type HermesPortableForwardRecoveryFailure,
   type HermesPortableForwardRecoveryTimingEvidence,
   type ManagedGatewayControlCompletion,
@@ -543,18 +544,49 @@ function failHermesPortableInferenceRecovery(
   process.exit(1);
 }
 
+/** Keep captured OpenShell output out of operator-facing recovery diagnostics. */
+function describeHermesPortableForwardRecoveryFailure(
+  failure: HermesPortableForwardRecoveryFailure,
+  context?: HermesPortableForwardRecoveryContext,
+): string {
+  switch (context?.cause) {
+    case "port-occupied":
+      return `Recorded host port ${String(context.port)} is occupied by another sandbox or listener. NemoClaw did not stop that owner or change the recorded forwards. Inspect the port owner before retrying.`;
+    case "forward-list-failed":
+      return "The OpenShell `forward list` command failed, so NemoClaw could not prove the recorded forward state. Restore OpenShell access and retry.";
+    case "forward-list-invalid":
+      return "OpenShell `forward list` returned malformed or ambiguous state, so NemoClaw could not prove the recorded forwards. Inspect the complete forward list before retrying.";
+    case "forward-port-resolution-failed":
+      return "NemoClaw could not resolve the required recorded host ports. It made no forward changes. Inspect the sandbox registry and launch-forward configuration before retrying.";
+    case "forward-reachability-failed":
+      return `NemoClaw could not verify whether recorded host port ${String(context.port)} is reachable. Inspect that listener and the recorded forward state before retrying.`;
+    case "forward-settlement-timed-out":
+      return "The required recorded host forwards did not become healthy before the recovery deadline. Inspect the recorded forward state before retrying.";
+    case "forward-mutation-failed":
+      return `NemoClaw could not confirm that OpenShell forward ${context.operation} completed for recorded host port ${String(context.port)}. Inspect the recorded forward state before retrying.`;
+  }
+  switch (failure) {
+    case "forward-occupied":
+      return "A required recorded host port is occupied by another sandbox or listener. NemoClaw did not stop that owner or change the recorded forwards. Inspect the port owner before retrying.";
+    case "forward-state-unavailable":
+      return "NemoClaw could not read and prove one unambiguous OpenShell host-forward state. It made no forward changes. Inspect `openshell forward list` before retrying.";
+    case "recovery-failed":
+      return "NemoClaw could not establish the required recorded host forwards within the recovery bound. Inspect the recorded forward state before retrying.";
+    case "restoration-unproved":
+      return "NemoClaw could not prove that the recovered host forwards returned to a stopped state. Do not run another probe or launch until the recorded forward state is inspected.";
+    case "authority-drift":
+      return "Hermes Portable authority changed during host-forward recovery. Do not run another probe or launch until the current Portable state is inspected.";
+  }
+}
+
 function failHermesPortableForwardRecovery(
   sandboxName: string,
   failure: HermesPortableForwardRecoveryFailure,
+  context?: HermesPortableForwardRecoveryContext,
 ): never {
-  const detail =
-    failure === "restoration-unproved"
-      ? "NemoClaw could not prove that the recovered host forwards returned to a stopped state. Do not run another probe or launch until the recorded forward state is inspected."
-      : failure === "authority-drift"
-        ? "Hermes Portable authority changed during host-forward recovery. Do not run another probe or launch until the current Portable state is inspected."
-        : "The required recorded host forwards could not be restored. No launch-readiness evidence was published.";
+  const detail = describeHermesPortableForwardRecoveryFailure(failure, context);
   console.error(
-    `  Error: Hermes Portable host-forward recovery for '${sandboxName}' failed. ${detail}`,
+    `  Error: Hermes Portable host-forward recovery for '${sandboxName}' failed. ${detail} No launch-readiness evidence was published.`,
   );
   process.exit(1);
 }
@@ -679,7 +711,9 @@ function hermesPortableForwardInputForConnectProbe(
   try {
     ports = resolveSandboxLaunchForwardPorts(input.sandboxName);
   } catch {
-    throw new HermesPortableForwardRecoveryError("forward-state-unavailable");
+    throw new HermesPortableForwardRecoveryError("forward-state-unavailable", {
+      cause: "forward-port-resolution-failed",
+    });
   }
   try {
     assertProductCurrent();
@@ -687,7 +721,9 @@ function hermesPortableForwardInputForConnectProbe(
     throw new HermesPortableForwardRecoveryError("authority-drift");
   }
   if (!ports || ports.length === 0) {
-    throw new HermesPortableForwardRecoveryError("forward-state-unavailable");
+    throw new HermesPortableForwardRecoveryError("forward-state-unavailable", {
+      cause: "forward-port-resolution-failed",
+    });
   }
 
   return createHermesPortableForwardRecoveryInput({
@@ -767,6 +803,7 @@ function recoverHermesPortableForwardsForConnectProbeOrExit(
     failHermesPortableForwardRecovery(
       sandboxName,
       error instanceof HermesPortableForwardRecoveryError ? error.failure : "recovery-failed",
+      error instanceof HermesPortableForwardRecoveryError ? error.context : undefined,
     );
   }
 }
@@ -1004,7 +1041,7 @@ function verifyOrRecoverHermesPortableInferenceRouteForProbeOnlyOrExit(
     });
   } catch (error) {
     if (error instanceof HermesPortableForwardRecoveryError) {
-      failHermesPortableForwardRecovery(sandboxName, error.failure);
+      failHermesPortableForwardRecovery(sandboxName, error.failure, error.context);
     }
     if (error instanceof HermesPortableInferenceRouteVerificationError) {
       failHermesPortableInferenceRoute(sandboxName, error.reason);
@@ -2599,6 +2636,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
                 error instanceof HermesPortableForwardRecoveryError
                   ? error.failure
                   : "authority-drift",
+                error instanceof HermesPortableForwardRecoveryError ? error.context : undefined,
               );
             }
             if (forward.kind === "healthy") {

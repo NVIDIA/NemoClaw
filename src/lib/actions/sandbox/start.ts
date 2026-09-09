@@ -205,6 +205,8 @@ async function startSandboxWithinLifecycleFence(
     );
   }
   if ("hermesPortableVerified" in result && result.hermesPortableVerified === true) {
+    log("  Checking gateway health and host forwards…");
+    await (deps.verifyGateway ?? verifyGateway)(sandboxName);
     return { exitCode: 0 };
   }
 

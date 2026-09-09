@@ -32,6 +32,7 @@ import {
   type PodmanPublishedResumeTiming,
   type PodmanInferenceRedactor,
 } from "./podman-host-local-inference";
+import { observeNativePodmanGatewayReadiness } from "./podman-gateway-readiness";
 import type {
   PodmanInferenceAuthorityReceipt,
   PodmanInferenceQualificationOptions,
@@ -246,6 +247,27 @@ export function createPodmanRuntimeProviderBundle(
   const preflight = options.preflight ?? {};
   const environment = Object.freeze({ ...(options.environment ?? process.env) });
   const deferred = "This operation is intentionally deferred to a later Podman slice.";
+  const projectGatewayHostRuntime = (
+    input: Parameters<RuntimeProviderBundle["gateway"]["prepareHostRuntime"]>[0],
+    hostPreparation?: NativePodmanGatewayHostPreparationDeps,
+  ) => {
+    if (
+      options.gatewaySocketPath !== undefined &&
+      input.socketPath !== undefined &&
+      resolveNativePodmanSocketPath(input.environment, input.socketPath) !==
+        options.gatewaySocketPath
+    ) {
+      throw new Error("Native Podman gateway socket differs from its bundle authority.");
+    }
+    return prepareNativePodmanGatewayHostRuntime(
+      {
+        ...input,
+        socketPath: options.gatewaySocketPath ?? input.socketPath,
+      },
+      gatewayInspection,
+      hostPreparation,
+    );
+  };
 
   return {
     identity: {
@@ -280,24 +302,10 @@ export function createPodmanRuntimeProviderBundle(
       launcher: "nemoclaw",
       inspectLegacyContainer: false,
       ownsHostReadiness: true,
-      prepareHostRuntime: (input) => {
-        if (
-          options.gatewaySocketPath !== undefined &&
-          input.socketPath !== undefined &&
-          resolveNativePodmanSocketPath(input.environment, input.socketPath) !==
-            options.gatewaySocketPath
-        ) {
-          throw new Error("Native Podman gateway socket differs from its bundle authority.");
-        }
-        return prepareNativePodmanGatewayHostRuntime(
-          {
-            ...input,
-            socketPath: options.gatewaySocketPath ?? input.socketPath,
-          },
-          gatewayInspection,
-          options.gatewayHostPreparation,
-        );
-      },
+      observeOwnedGateway: observeNativePodmanGatewayReadiness,
+      observeHostRuntime: (input) => projectGatewayHostRuntime(input),
+      prepareHostRuntime: (input) =>
+        projectGatewayHostRuntime(input, options.gatewayHostPreparation),
     },
     workload: {
       providerId,

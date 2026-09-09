@@ -812,9 +812,6 @@ const { promptValidationRecovery } = createValidationRecoveryPromptHelpers({
   exitOnboardFromPrompt,
 });
 
-// Provider CRUD — thin wrappers that inject runOpenshell to avoid circular deps.
-const { buildProviderArgs } = onboardProviders;
-
 // Snapshot of legacy {env-key → value} pairs that stageLegacyCredentialsToEnv()
 // imported from ~/.nemoclaw/credentials.json at the start of this run.
 // Captured by the onboard() entry point; consulted by the upsertProvider /
@@ -1191,20 +1188,19 @@ async function preflight(
   const {
     externallySupervised: gatewayExternallySupervised,
     gatewayReuseState: initialGatewayReuseState,
+    managedGatewayObservationAuthoritative,
   } = await onboardPreflightGatewayAuthority.prepareGatewayAuthority();
   let reuseState = initialGatewayReuseState;
 
-  // Verify the legacy gateway container is actually running — openshell CLI
-  // metadata can be stale after a manual `docker rm`. See #2020. Newer
-  // package-managed OpenShell gateways do not have an openshell-cluster-*
-  // Docker container, so the live CLI health check is the source of truth.
-  // The reuse/cleanup/orphan stages run as one composed sequence so external
-  // supervision is enforced across the whole path, not per stage (#6576).
+  // Docker-backed gateways use one legacy reuse and cleanup sequence because
+  // OpenShell metadata can outlive a manually removed container (#2020).
+  // External and provider-owned gateways bypass those Docker effects (#6576).
   reuseState = await runPreflightGatewaySequence({
     gatewayReuseState: reuseState,
     externallySupervised: gatewayExternallySupervised,
     supportsLifecycleCommands: gatewayCliSupportsLifecycleCommands(runCaptureOpenshell),
     isDockerDriverGatewayEnabled: isLinuxDockerDriverGatewayEnabled(),
+    managedGatewayObservationAuthoritative,
     gatewayName: GATEWAY_NAME,
     cliDisplayName: cliDisplayName(),
     verifyGatewayContainerRunning,
@@ -1258,6 +1254,7 @@ async function preflight(
         gatewayName: GATEWAY_NAME,
         gatewayReuseState: reuseState,
         externallySupervised: gatewayExternallySupervised,
+        managedGatewayObservationAuthoritative,
         portCheckOptions,
         supportsLifecycleCommands: gatewayCliSupportsLifecycleCommands(runCaptureOpenshell),
         destroyGateway,
@@ -1618,6 +1615,7 @@ type ProviderChoice = import("./onboard/provider-menu").ProviderMenuChoice;
 type RebuildRouteHandoff = import("./onboard/rebuild-route-handoff").RebuildRouteHandoff;
 
 const {
+  providerSelectionReaders,
   readRecordedProvider,
   readRecordedNimContainer,
   readRecordedModel,
@@ -2038,15 +2036,15 @@ async function handleRemoteProviderSelection(
     providerKeyBridge.stageBuildProviderKeyBridge();
     let apiKeyNavigation: unknown = null;
     if (isNonInteractive()) {
-      const reuseGatewayCredential = buildCredentialReuse.resolveNonInteractiveBuildCredential({
-        provider: state.provider,
-        helpUrl: REMOTE_PROVIDER_CONFIG.build.helpUrl,
-        recoveredFromSandbox,
-        providerExistsInGateway: (name) =>
-          providerExistsInGateway(name, args.gatewayName ?? GATEWAY_NAME),
-      });
-      state.skipHostInferenceSmoke = reuseGatewayCredential;
-      state.reuseGatewayCredentialWithoutLocalKey = reuseGatewayCredential;
+      state.skipHostInferenceSmoke =
+        await buildCredentialReuse.resolveNonInteractiveBuildCredential({
+          provider: state.provider,
+          helpUrl: REMOTE_PROVIDER_CONFIG.build.helpUrl,
+          recoveredFromSandbox,
+          providerExistsInGateway: (name) =>
+            providerExistsInGateway(name, args.gatewayName ?? GATEWAY_NAME),
+        });
+      state.reuseGatewayCredentialWithoutLocalKey = state.skipHostInferenceSmoke;
     } else {
       assertSelectionMutationAuthority(state, "register the NVIDIA provider credential");
       apiKeyNavigation = await ensureApiKey();
@@ -2297,6 +2295,7 @@ function getSetupNimDeps(): SetupNimDeps {
     vllmPort: VLLM_PORT,
     getGatewayPort: () => GATEWAY_PORT,
     getRuntimeProvider: () => setupNimFlow.resolveCurrentRuntimeProviderBundle(),
+    checkpointManagedLlamaCppSelection: onboardSession.checkpointManagedLlamaCppSelection,
     step,
     isNonInteractive,
     getNonInteractiveProvider,
@@ -2305,9 +2304,7 @@ function getSetupNimDeps(): SetupNimDeps {
     detectInferenceProviderHostState,
     getAgentInferenceProviderOptions,
     loadRoutedProfile: () => loadBlueprintProfile("routed"),
-    readRecordedProvider,
-    readRecordedNimContainer,
-    readRecordedModel,
+    ...providerSelectionReaders,
     prompt,
     selectFromNumberedMenu: selectFromNumberedMenuOrExit,
     note,
@@ -2469,11 +2466,11 @@ const stageSandboxCredentialProviders = (
     sandboxCreateIntentResolver.prepareCredentialProviders,
   );
 
-function getRecordedMessagingChannelsForResume(
+async function getRecordedMessagingChannelsForResume(
   resume: boolean,
   session: Session | null,
   sandboxName: string | null,
-): string[] | null {
+): Promise<string[] | null> {
   return getRecordedMessagingChannelsForResumeFromState({
     resume,
     sessionMessagingChannels: getChannelsFromPlan(session?.messagingPlan),
@@ -2631,7 +2628,6 @@ async function preflightAuthoritativeRebuildTarget(
   }
 }
 
-// ── Main ─────────────────────────────────────────────────────────
 const wrappedOnboard = onboardEntryOptions.wrapOnboard(runOnboard, onboardSession);
 const onboard = onboardSessionBootstrap.wrapOnboardDeferredExit(wrappedOnboard);
 async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
@@ -2902,6 +2898,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         gpuRequested: opts.gpu === true,
         noGpu: opts.noGpu === true,
         allowDeferredN1xManagedVllm: opts.allowDeferredN1xManagedVllm,
+        allowLegacyDgxStationQualification: opts.allowLegacyDgxStationQualification,
         env: process.env,
         recordedGpuPassthroughBeforePreflight,
         commitSelectedAgentTransition: selectedAgentTransition.commit,
@@ -3055,6 +3052,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             resolveHostLocalInferenceStartupSelection:
               setupNimFlow.createHermesPortableOllamaInferenceResolver({
                 runtimeContext: lockedRuntime.portableRuntimeContext,
+                gatewayName: GATEWAY_NAME,
                 credentialEnv: OLLAMA_PROXY_CREDENTIAL_ENV,
                 getReservationSessionId: () => session?.sessionId,
                 runGatewayOpenshell: runCoreGatewayOpenshell,
@@ -3385,10 +3383,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   }
   preserveIncompleteSession = true;
 }
-
 module.exports = {
   buildOrphanedSandboxRollbackMessage,
-  buildProviderArgs,
   buildGatewayBootstrapSecretsScript,
   buildCompatibleEndpointSandboxSmokeCommand,
   buildCompatibleEndpointSandboxSmokeScript,

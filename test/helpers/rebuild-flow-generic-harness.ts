@@ -34,6 +34,7 @@ import {
   onboardCredentialEnv,
   onboardSession,
   openshellRuntime,
+  providerCommand,
   policies,
   policyGet,
   policyState,
@@ -731,12 +732,12 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       return argv[0] === "provider" && argv[1] === "get"
         ? {
             status: 0,
-            stdout:
-              "Name: compatible-endpoint\nType: openai\nCredential keys: COMPATIBLE_API_KEY\nConfig keys: OPENAI_BASE_URL\n",
+            stdout: `Name: ${argv[2]}\nType: openai\nCredential keys: COMPATIBLE_API_KEY\nConfig keys: OPENAI_BASE_URL\n`,
             stderr: "",
           }
         : { status: 0, output: "" };
     });
+  providerCommand.setProviderCommandRuntimeHooksForTest({ runOpenshell: runOpenshellSpy });
   const captureOpenshellSpy = vi
     .spyOn(openshellRuntime, "captureOpenshell")
     .mockImplementation((args: unknown, options?: unknown) => {

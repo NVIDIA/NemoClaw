@@ -205,6 +205,8 @@ describe("collectSandboxStatusSnapshot Docker recovery", () => {
 
     expect(deps.recoverSandboxProcesses).not.toHaveBeenCalled();
     expect(snapshot.lookup.state).toBe("present");
+    expect(snapshot.inferenceHealth).toBeNull();
+    expect(deps.probeSandboxInferenceGatewayHealthImpl).not.toHaveBeenCalled();
   });
 
   it.each([

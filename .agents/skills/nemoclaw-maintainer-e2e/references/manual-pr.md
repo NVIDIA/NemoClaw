@@ -8,12 +8,16 @@ Use this mode when a maintainer requests E2E for a pull request. The trusted wor
 only after a candidate failure remains unresolved. The result is advisory and does not create a
 required PR check.
 
+Manual PR E2E accepts only source branches in `NVIDIA/NemoClaw`, including for base replay.
+Review and adopt fork contributions onto a repository branch before dispatch.
+Repository writers are trusted to populate the compiled cache before their changes merge.
+
 ## Credential Boundary
 
 Before dispatch, read [Push and Manual PR E2E](../../../../test/e2e/README.md#push-and-manual-pr-e2e)
 for the selected jobs' credential locations, access, lifetimes, and removal or cleanup boundaries.
 
-An empty-selector NVIDIA-owned PR run can expose these values to candidate-controlled jobs:
+An empty-selector same-repository PR run can expose these values to candidate-controlled jobs:
 
 - long-lived NVIDIA inference and Brave Search API keys;
 - Docker Hub credentials through the job's temporary Docker configuration;
@@ -30,7 +34,7 @@ Before dispatch, review the complete candidate diff. After a failure:
 - remove resources that cleanup left behind; and
 - rotate or revoke exposed credentials when necessary.
 
-`Staging Brev Launchable` is available only when the source is an NVIDIA-owned branch in
+`Staging Brev Launchable` is available only when the source is a branch in
 `NVIDIA/NemoClaw`. Its trusted host receives the Brev API key and image-dispatch token. The guest
 receives the NVIDIA inference API key. The protected managed-image and native-runtime qualification
 jobs define narrower trusted-host boundaries in the workflow.
@@ -49,6 +53,7 @@ test "$(jq -r .base.ref <<<"$PR_JSON")" = main
 HEAD_SHA="$(jq -r .head.sha <<<"$PR_JSON")"
 BASE_SHA="$(jq -r .base.sha <<<"$PR_JSON")"
 HEAD_REPOSITORY="$(jq -r .head.repo.full_name <<<"$PR_JSON")"
+test "$HEAD_REPOSITORY" = NVIDIA/NemoClaw
 BASE_REPOSITORY="$(jq -r .base.repo.full_name <<<"$PR_JSON")"
 HEAD_OWNER="$(jq -r .head.repo.owner.login <<<"$PR_JSON")"
 HEAD_OWNER_TYPE="$(jq -r .head.repo.owner.type <<<"$PR_JSON")"
@@ -57,14 +62,8 @@ HEAD_OWNER_TYPE="$(jq -r .head.repo.owner.type <<<"$PR_JSON")"
 [[ "$WORKFLOW_SHA" =~ ^[0-9a-f]{40}$ ]]
 ```
 
-Choose the selection from the source owner:
-
-- An NVIDIA-owned PR can use the full candidate plan and credential profiles. Empty selectors run
-  every default-enabled E2E. Any supported job or target selector is allowed.
-- An external PR keeps the credential-free controller selection. Empty selectors run the trusted
-  default PR selection. The controller also permits `jobs=inference-routing`,
-  `jobs=managed-image-protected-runtime`, `jobs=native-runtime-qualification-producer`, or the
-  documented credential-free target selectors.
+A same-repository PR can use the full candidate plan and credential profiles.
+Empty selectors run every default-enabled E2E. Any supported job or target selector is allowed.
 
 Jetson and Launchable runs require a branch in `NVIDIA/NemoClaw`. Jetson also requires
 `allow_jetson_dispatch=true` and the reviewed service configuration in

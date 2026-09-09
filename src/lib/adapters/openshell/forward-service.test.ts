@@ -1,7 +1,19 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { type ChildProcess, spawn } from "node:child_process";
+import { once } from "node:events";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { type AddressInfo, createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
 
@@ -9,10 +21,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   buildForwardServiceArgs,
+  ForwardServiceStartupCleanupError,
   isForwardServiceListenerOwner,
+  isTrustedTaskkillExecutable,
   launchForwardService,
+  terminateForwardServiceProcessTree,
   type ForwardServiceTarget,
 } from "./forward-service";
+import { probeLocalForwardListener } from "./local-forward-listener";
 
 const target: ForwardServiceTarget = {
   executable: "/usr/local/bin/openshell",
@@ -27,6 +43,8 @@ const target: ForwardServiceTarget = {
 
 const ownerTarget: ForwardServiceTarget = { ...target, executable: process.execPath };
 const temporaryDirectories: string[] = [];
+const startedProcessGroups: number[] = [];
+const processSleepBuffer = new Int32Array(new SharedArrayBuffer(4));
 
 function createLinuxOwnerFixture(actualExecutable?: string) {
   const root = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-forward-owner-"));
@@ -65,10 +83,46 @@ function darwinOwnerProbe(commandLine: string, finalListener = "4321\n") {
 }
 
 afterEach(() => {
+  for (const processGroup of startedProcessGroups.splice(0)) {
+    try {
+      process.kill(-processGroup, "SIGKILL");
+    } catch {
+      // Best effort only — the owned process group may already be gone.
+    }
+  }
   for (const directory of temporaryDirectories.splice(0)) {
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+function isRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitForExit(pid: number): Promise<boolean> {
+  for (let attempt = 0; attempt < 200 && isRunning(pid); attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return !isRunning(pid);
+}
+
+async function availableLoopbackPort(): Promise<number> {
+  const server = createServer();
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address() as AddressInfo;
+  await new Promise<void>((resolve, reject) =>
+    server.close((error) => (error ? reject(error) : resolve())),
+  );
+  return address.port;
+}
 
 describe("OpenShell forward service", () => {
   it("builds the direct ForwardTcp command with explicit gateway authority", () => {
@@ -198,12 +252,14 @@ describe("OpenShell forward service", () => {
   it("detaches the OpenShell child and waits for its local port", () => {
     const unref = vi.fn();
     const spawnDetached = vi.fn(() => ({ unref }));
+    const terminateProcessTree = vi.fn();
     let probes = 0;
 
     launchForwardService(target, {
       isReachable: () => ++probes >= 3,
       sleep: () => {},
       spawnDetached,
+      terminateProcessTree,
       timeoutMs: 1_000,
     });
 
@@ -213,6 +269,7 @@ describe("OpenShell forward service", () => {
       expect.any(Object),
     );
     expect(unref).toHaveBeenCalledOnce();
+    expect(terminateProcessTree).not.toHaveBeenCalled();
   });
 
   it("uses the selected OpenShell configuration without exposing credentials (#11084)", () => {
@@ -246,14 +303,267 @@ describe("OpenShell forward service", () => {
     expect(spawnDetached).not.toHaveBeenCalled();
   });
 
-  it("fails when the detached service does not bind before the deadline", () => {
+  it("terminates a detached service that does not bind before the deadline", () => {
+    const child = { pid: 4_321, unref: vi.fn() };
+    const terminateProcessTree = vi.fn();
+
     expect(() =>
       launchForwardService(target, {
         isReachable: () => false,
         sleep: () => {},
-        spawnDetached: () => ({ unref: () => {} }),
+        spawnDetached: () => child,
+        terminateProcessTree,
         timeoutMs: 0,
       }),
     ).toThrow(/did not bind/u);
+    expect(terminateProcessTree).toHaveBeenCalledWith(child);
+    expect(child.unref).not.toHaveBeenCalled();
   });
+
+  it("fails closed when timeout cleanup cannot be proved", () => {
+    const cleanupError = new Error("tree remained live");
+
+    expect(() =>
+      launchForwardService(target, {
+        isReachable: () => false,
+        spawnDetached: () => ({ pid: 4_321, unref: vi.fn() }),
+        terminateProcessTree: () => {
+          throw cleanupError;
+        },
+        timeoutMs: 0,
+      }),
+    ).toThrow(
+      expect.objectContaining({
+        errors: [
+          expect.objectContaining({ message: expect.stringMatching(/did not bind/u) }),
+          cleanupError,
+        ],
+        name: ForwardServiceStartupCleanupError.name,
+      }),
+    );
+  });
+
+  it("targets the exact detached process group on POSIX", () => {
+    const signalProcess = vi.fn();
+
+    terminateForwardServiceProcessTree(
+      { pid: 4_321, unref: vi.fn() },
+      {
+        platform: "linux",
+        processGroupHasRunnableMember: () => false,
+        signalProcess,
+      },
+    );
+
+    expect(signalProcess).toHaveBeenCalledWith(-4_321, "SIGKILL");
+  });
+
+  it("fails closed when POSIX process-group settlement is not proved", () => {
+    const signalProcess = vi.fn();
+    const now = vi.fn().mockReturnValueOnce(0).mockReturnValue(5_000);
+
+    expect(() =>
+      launchForwardService(target, {
+        isReachable: () => false,
+        spawnDetached: () => ({ pid: 4_321, unref: vi.fn() }),
+        terminateProcessTree: (child) =>
+          terminateForwardServiceProcessTree(child, {
+            now,
+            platform: "linux",
+            processGroupHasRunnableMember: () => true,
+            signalProcess,
+            sleep: () => {},
+          }),
+        timeoutMs: 0,
+      }),
+    ).toThrow(expect.objectContaining({ name: ForwardServiceStartupCleanupError.name }));
+    expect(signalProcess).toHaveBeenCalledWith(-4_321, "SIGKILL");
+  });
+
+  it("resolves Windows taskkill from SystemRoot while PATH is poisoned", () => {
+    const signalProcess = vi.fn();
+    const taskkill = vi.fn(() => ({ status: 0 }));
+    const trustedTaskkill = "C:\\Windows\\System32\\taskkill.exe";
+
+    terminateForwardServiceProcessTree(
+      { pid: 4_321, unref: vi.fn() },
+      {
+        environment: {
+          PATH: "C:\\attacker-controlled",
+          SystemRoot: "C:\\Windows",
+        },
+        isTrustedTaskkillExecutable: (executable) => executable === trustedTaskkill,
+        platform: "win32",
+        signalProcess,
+        taskkill,
+      },
+    );
+
+    expect(taskkill).toHaveBeenCalledWith(trustedTaskkill, ["/PID", "4321", "/T", "/F"]);
+    expect(signalProcess).not.toHaveBeenCalled();
+  });
+
+  it("qualifies the real taskkill file and rejects a symlink with the default verifier", () => {
+    const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), "nemoclaw-taskkill-trust-")));
+    temporaryDirectories.push(root);
+    const executable = path.join(root, "taskkill.exe");
+    const symlink = path.join(root, "taskkill-link.exe");
+    writeFileSync(executable, "fixture");
+    symlinkSync(executable, symlink);
+
+    expect(isTrustedTaskkillExecutable(executable)).toBe(true);
+    expect(isTrustedTaskkillExecutable(symlink)).toBe(false);
+    expect(isTrustedTaskkillExecutable(path.join(root, "missing.exe"))).toBe(false);
+  });
+
+  it("fails closed when the trusted Windows taskkill executable is unavailable", () => {
+    const taskkill = vi.fn(() => ({ status: 0 }));
+
+    expect(() =>
+      terminateForwardServiceProcessTree(
+        { pid: 4_321, unref: vi.fn() },
+        {
+          environment: {
+            PATH: "C:\\attacker-controlled",
+            SystemRoot: "C:\\Windows",
+          },
+          isTrustedTaskkillExecutable: () => false,
+          platform: "win32",
+          taskkill,
+        },
+      ),
+    ).toThrow(/Trusted Windows taskkill executable is unavailable/u);
+    expect(taskkill).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, "Windows", "\\\\attacker\\share", "C:\\Windows\\..\\poison"])(
+    "fails closed for an invalid Windows SystemRoot: %s",
+    (systemRoot) => {
+      const taskkill = vi.fn(() => ({ status: 0 }));
+
+      expect(() =>
+        terminateForwardServiceProcessTree(
+          { pid: 4_321, unref: vi.fn() },
+          {
+            environment: {
+              PATH: "C:\\attacker-controlled",
+              SystemRoot: systemRoot,
+            },
+            isTrustedTaskkillExecutable: () => true,
+            platform: "win32",
+            taskkill,
+          },
+        ),
+      ).toThrow(/Trusted Windows SystemRoot is unavailable/u);
+      expect(taskkill).not.toHaveBeenCalled();
+    },
+  );
+
+  it("fails closed when Windows process-tree termination is not proved", () => {
+    const noSuchProcess = Object.assign(new Error("not found"), { code: "ESRCH" });
+
+    expect(() =>
+      terminateForwardServiceProcessTree(
+        { pid: 4_321, unref: vi.fn() },
+        {
+          environment: { SystemRoot: "C:\\Windows" },
+          isTrustedTaskkillExecutable: () => true,
+          platform: "win32",
+          signalProcess: () => {
+            throw noSuchProcess;
+          },
+          taskkill: () => ({ status: 1 }),
+        },
+      ),
+    ).toThrow(/process-tree termination failed/u);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "kills a delayed listener and its detached process group before reporting timeout",
+    async () => {
+      const port = await availableLoopbackPort();
+      const root = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-forward-timeout-"));
+      temporaryDirectories.push(root);
+      const markerPath = path.join(root, "pids.json");
+      const releasePath = path.join(root, "release");
+      const bindDelayMs = 2_500;
+      const descendantScript = `
+const fs = require("node:fs");
+const net = require("node:net");
+const server = net.createServer(() => {});
+const releasePoll = setInterval(() => {
+  if (!fs.existsSync(${JSON.stringify(releasePath)})) return;
+  clearInterval(releasePoll);
+  setTimeout(() => server.listen(${String(port)}, "127.0.0.1"), ${String(bindDelayMs)});
+}, 10);
+setInterval(() => {}, 1000);
+`;
+      const leaderScript = `
+const fs = require("node:fs");
+const { spawn } = require("node:child_process");
+const descendant = spawn(process.execPath, ["-e", ${JSON.stringify(descendantScript)}], {
+  stdio: "ignore",
+});
+fs.writeFileSync(
+  ${JSON.stringify(markerPath)},
+  JSON.stringify({ leader: process.pid, descendant: descendant.pid }),
+);
+setInterval(() => {}, 1000);
+`;
+      let spawned: ChildProcess | undefined;
+      let spawnedClose: Promise<unknown[]> | undefined;
+      const unref = vi.fn();
+      const runtimeTarget = {
+        ...target,
+        executable: process.execPath,
+        localPort: port,
+        targetPort: port,
+      };
+
+      let launchError: unknown;
+      try {
+        launchForwardService(runtimeTarget, {
+          sleep: (milliseconds) => {
+            writeFileSync(releasePath, "ready");
+            Atomics.wait(processSleepBuffer, 0, 0, milliseconds);
+          },
+          spawnDetached: () => {
+            spawned = spawn(process.execPath, ["-e", leaderScript], {
+              detached: true,
+              stdio: "ignore",
+            });
+            expect(spawned.pid).toBeTypeOf("number");
+            const processGroup = spawned.pid!;
+            startedProcessGroups.push(processGroup);
+            spawnedClose = once(spawned, "close");
+            const markerDeadline = Date.now() + 5_000;
+            while (!existsSync(markerPath) && Date.now() < markerDeadline) {
+              Atomics.wait(processSleepBuffer, 0, 0, 25);
+            }
+            expect(existsSync(markerPath)).toBe(true);
+            return { pid: processGroup, unref };
+          },
+          timeoutMs: 1_000,
+        });
+      } catch (error) {
+        launchError = error;
+      }
+
+      expect(launchError).toEqual(expect.objectContaining({ message: expect.stringMatching(/did not bind/u) }));
+      expect(existsSync(markerPath)).toBe(true);
+      expect(existsSync(releasePath)).toBe(true);
+      const pids = JSON.parse(readFileSync(markerPath, "utf8")) as {
+        descendant: number;
+        leader: number;
+      };
+      await spawnedClose;
+      expect(spawned?.signalCode).toBe("SIGKILL");
+      expect(await waitForExit(pids.leader)).toBe(true);
+      expect(await waitForExit(pids.descendant)).toBe(true);
+      await new Promise((resolve) => setTimeout(resolve, bindDelayMs));
+      expect(probeLocalForwardListener(port, 100)).toBe(false);
+      expect(unref).not.toHaveBeenCalled();
+    },
+    15_000,
+  );
 });

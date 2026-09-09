@@ -524,7 +524,7 @@ describe("startSandbox", () => {
     expect(h.recoverDockerDriverSandbox).not.toHaveBeenCalled();
   });
 
-  it("clears stop intent after verified Hermes portable start (#11025)", async () => {
+  it("clears stop intent and repairs forwards after Hermes Portable recovery (#11025, #11248)", async () => {
     const probeInferenceInvocation = vi.fn(() => ({ ok: true }) as const);
     const h = harness({ probeInferenceInvocation });
     h.getSandbox.mockReturnValue(
@@ -547,7 +547,10 @@ describe("startSandbox", () => {
     expect(h.recoverDockerDriverSandbox).not.toHaveBeenCalled();
     expect(h.dockerUnpause).not.toHaveBeenCalled();
     expect(h.restoreStartupState).not.toHaveBeenCalled();
-    expect(h.verifyGateway).not.toHaveBeenCalled();
+    expect(h.verifyGateway).toHaveBeenCalledWith("my-sandbox");
+    expect(h.recoverPortableSandbox.mock.invocationCallOrder[0]).toBeLessThan(
+      h.verifyGateway.mock.invocationCallOrder[0],
+    );
     expect(probeInferenceInvocation).not.toHaveBeenCalled();
     expect(h.updateSandbox).toHaveBeenCalledWith("my-sandbox", { stopped: false });
     expect(h.recoverPortableSandbox.mock.invocationCallOrder[0]).toBeLessThan(
