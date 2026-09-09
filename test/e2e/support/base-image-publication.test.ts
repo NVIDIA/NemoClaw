@@ -120,6 +120,7 @@ function selectedRun(overrides: Partial<PublicationRun> = {}): PublicationRun {
   return {
     id: RUN_ID,
     attempt: 1,
+    event: "push",
     workflowId: WORKFLOW_ID,
     headSha: RELEVANT_SHA,
     status: "completed",
@@ -160,6 +161,16 @@ function successfulJobs(overrides: { runAttempt?: number } = {}): Record<string,
       id: 3,
       run_attempt: runAttempt,
     }),
+  ];
+}
+
+function successfulManualJobs(): Record<string, unknown>[] {
+  return [
+    ...successfulJobs(),
+    publisherJob(
+      "Publish complete managed images / Promote complete multi-platform managed image cohort",
+      { id: 4 },
+    ),
   ];
 }
 
@@ -490,6 +501,53 @@ describe("base-image publication evidence", () => {
     });
   });
 
+  it("accepts an exact successful manual main publication for branch reuse", () => {
+    const selection = selectPublicationRun(
+      runsPayload([workflowRun({ event: "workflow_dispatch" })]),
+      history(),
+      WORKFLOW_ID,
+      { allowWorkflowDispatch: true, completedSuccessOnly: true },
+    );
+
+    expect(selection).toMatchObject({
+      state: "selected",
+      run: {
+        id: RUN_ID,
+        event: "workflow_dispatch",
+        headSha: RELEVANT_SHA,
+        conclusion: "success",
+      },
+    });
+    expect(() =>
+      selectPublicationRun(
+        runsPayload([workflowRun({ event: "workflow_dispatch" })]),
+        history(),
+        WORKFLOW_ID,
+      ),
+    ).toThrow(/event must be push/u);
+  });
+
+  it("prefers a successful push over a successful manual publication at the same commit", () => {
+    const pushRunId = RUN_ID + 1;
+    const selection = selectPublicationRun(
+      runsPayload([
+        workflowRun({ event: "workflow_dispatch" }),
+        workflowRun({
+          id: pushRunId,
+          html_url: `${RUN_URL_ROOT}/${pushRunId}`,
+        }),
+      ]),
+      history(),
+      WORKFLOW_ID,
+      { allowWorkflowDispatch: true, completedSuccessOnly: true },
+    );
+
+    expect(selection).toMatchObject({
+      state: "selected",
+      run: { id: pushRunId, event: "push", headSha: RELEVANT_SHA },
+    });
+  });
+
   it("accepts the renamed trusted workflow while selecting branch reuse", () => {
     const selection = selectPublicationRun(
       runsPayload([workflowRun({ name: "Images / Base Images" })]),
@@ -619,6 +677,23 @@ describe("base-image publication evidence", () => {
         run,
       ),
     ).toThrow(/provenance does not match/u);
+  });
+
+  it("requires exact managed-image promotion from a manual publication", () => {
+    const manualRun = selectedRun({ event: "workflow_dispatch" });
+
+    expect(() =>
+      validatePublisherJobs(
+        { total_count: successfulJobs().length, jobs: successfulJobs() },
+        manualRun,
+      ),
+    ).toThrow(/missing required Publish complete managed images/u);
+    expect(
+      validatePublisherJobs(
+        { total_count: successfulManualJobs().length, jobs: successfulManualJobs() },
+        manualRun,
+      ),
+    ).toBe("ready");
   });
 
   it("accepts the renamed trusted publisher jobs", () => {
@@ -844,6 +919,37 @@ describe("base-image publication evidence", () => {
         pollMs: 10,
       }),
     ).resolves.toEqual(selectedRun());
+  });
+
+  it("uses a successful manual main publication for branch reuse", async () => {
+    const manualRun = workflowRun({ event: "workflow_dispatch" });
+    const responses = [
+      workflowMetadata(),
+      runsPayload([manualRun]),
+      { total_count: 4, jobs: successfulManualJobs() },
+      manualRun,
+    ];
+    const requests: string[] = [];
+
+    await expect(
+      waitForBaseImagePublication({
+        history: history(),
+        request: async (requestPath) => {
+          requests.push(requestPath);
+          return responses.shift();
+        },
+        requireWorkflowSuccess: true,
+        selectNearestSuccessfulRun: true,
+        waitMs: 100,
+        pollMs: 10,
+      }),
+    ).resolves.toEqual(selectedRun({ event: "workflow_dispatch" }));
+    expect(requests).toEqual([
+      "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml",
+      "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&per_page=100&page=1",
+      `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/1/jobs?per_page=100&page=1`,
+      `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}`,
+    ]);
   });
 
   it("rejects failed managed-image publication before E2E consumers start", async () => {
