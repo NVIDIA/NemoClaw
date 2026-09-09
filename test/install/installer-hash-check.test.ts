@@ -420,7 +420,7 @@ const trustAlternateRelease = (source: string): string => {
     installerTemplateSha256: [
       "c3418c0837c450df89ca1b6ca3a598cdee47b0d30e2c2433fd7732ec35c2ccc2",
       "ec5d942bf1b1af45ffbdb2c1ceeb8ede25a0169d9f856ad3a83577d81088ee37",
-      "243f607a1b9a67c116f80844d5cd6e7185d63537e74fb08b3994652f79cb00e9",
+      "c7f505deccf25ac8fe1be632502c52938fb85916ef3f16b41df131cdff5540ad",
     ],
     manifests: [
 ${manifests}

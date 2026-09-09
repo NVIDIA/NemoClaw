@@ -502,7 +502,7 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
     // Trust only the prospective installer template whose stable Linux path
     // selects that ABI. The historical v0.0.106 record retains the GNU templates.
     installerTemplateSha256: [
-      "243f607a1b9a67c116f80844d5cd6e7185d63537e74fb08b3994652f79cb00e9",
+      "2b6ad3e0730d3220da05d13b88fdba4458de46840bad57942ecad26a5d606017",
     ],
     manifests: [
       {

@@ -291,10 +291,10 @@ exit 1
             "--",
             "/bin/sh",
             "-lc",
-            // OpenShell keeps sandboxes by default after the initial command
-            // exits. Let this command finish so `sandbox create` can return;
-            // a foreground keepalive would hold the CLI session indefinitely.
-            `printf '%s\\n' '${agent}' >/tmp/nemoclaw-agent-proof`,
+            // OpenShell v0.0.116 treats canonical main-process exit as a
+            // terminal sandbox error. Keep the proof-owned sandbox alive so
+            // the subsequent exec and stop/start lifecycle exercise Ready.
+            `printf '%s\\n' '${agent}' >/tmp/nemoclaw-agent-proof; exec sleep infinity`,
           ],
           {
             artifactName: `podman-lifecycle-create-${agent}`,
