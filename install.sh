@@ -138,6 +138,7 @@ bootstrap_usage() {
   printf "                          Use only with NEMOCLAW_AGENT=hermes, no registered sandboxes, no local model profile,\n"
   printf "                          and the build, cloud, or routed NVIDIA hosted provider\n"
   printf "    --fresh              Discard any failed/interrupted onboarding session and start over\n"
+  printf "    --force-station-install Validate an unrecognized Station GB300 release profile without onboarding\n"
   printf "    --version, -v        Print installer version and exit\n"
   printf "    --help, -h           Show this help message and exit\n\n"
   printf "  Environment:\n"

@@ -46,6 +46,10 @@ function runRecoveryBeforeOnboard(
   fs.mkdirSync(payloadDir);
   fs.mkdirSync(payloadLibDir);
   fs.copyFileSync(
+    path.join(path.dirname(INSTALLER_PAYLOAD), "prepare-dgx-station-host.sh"),
+    path.join(payloadDir, "prepare-dgx-station-host.sh"),
+  );
+  fs.copyFileSync(
     path.join(path.dirname(INSTALLER_PAYLOAD), "lib", "station-vllm-conflict.sh"),
     path.join(payloadLibDir, "station-vllm-conflict.sh"),
   );
