@@ -451,6 +451,7 @@ describe("pull request and main workflow contracts", () => {
   const mainWorkflow = readYaml<CiWorkflow>(".github/workflows/main.yaml");
   const dcoWorkflow = readYaml<CiWorkflow>(".github/workflows/dco-check.yaml");
   const installerHashWorkflow = readYaml<CiWorkflow>(".github/workflows/installer-hash-check.yaml");
+  const advisorWorkflow = readYaml<CiWorkflow>(".github/workflows/pr-review-advisor.yaml");
   const sdkPackageWorkflow = readYaml<SdkPackageWorkflow>(
     ".github/workflows/openshell-sdk-package-pr.yaml",
   );
@@ -568,6 +569,49 @@ describe("pull request and main workflow contracts", () => {
     expect(actions.map((action) => requiredStep(action, "Install dependencies").run)).toEqual(
       actions.map(() => 'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"'),
     );
+  });
+
+  it.each([
+    [
+      "CLI shards",
+      requiredStep(sharedActions.cliCoverageShard, "Install pinned Pi search tools"),
+    ],
+    [
+      "Advisor runtime",
+      requiredWorkflowStep(
+        advisorWorkflow.jobs["build-advisor-runtime"],
+        "Install locked runtime",
+      ),
+    ],
+  ])("refreshes only Ubuntu package metadata for %s", (_name, installStep) => {
+    const temp = mkdtempSync(join(tmpdir(), "nemoclaw-ubuntu-apt-sources-"));
+    const fakeBin = join(temp, "bin");
+    const aptArgs = join(temp, "apt-args");
+    mkdirSync(fakeBin);
+    writeFileSync(
+      join(fakeBin, "sudo"),
+      '#!/usr/bin/env bash\nprintf "%s\\n" "$@" > "$APT_ARGS"\nexit 86\n',
+      { mode: 0o755 },
+    );
+
+    try {
+      const result = runWorkflowShellStep(installStep, {
+        APT_ARGS: aptArgs,
+        PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+      });
+      expect(result.status).toBe(86);
+      expect(readFileSync(aptArgs, "utf8").trim().split("\n")).toEqual([
+        "apt-get",
+        "update",
+        "-qq",
+        "-o",
+        "Dir::Etc::sourcelist=sources.list.d/ubuntu.sources",
+        "-o",
+        "Dir::Etc::sourceparts=-",
+      ]);
+    } finally {
+      rmSync(temp, { force: true, recursive: true });
+    }
   });
 
   // source-shape-contract: security -- The PR workflow must select an exact base-controlled package run before publishing its archive internally
