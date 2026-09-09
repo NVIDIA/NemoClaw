@@ -268,7 +268,7 @@ export function createDockerDriverGatewayStart(
       fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
       const logPath = path.join(stateDir, "openshell-gateway.log");
       const log = dockerDriverGatewayLaunch.openDockerDriverGatewayLog(logPath, { exitOnFailure });
-      console.log("  Starting OpenShell Docker-driver gateway...");
+      console.log("  Starting OpenShell gateway...");
       console.log(`  Gateway log: ${logPath}`);
       dockerDriverGatewayLaunch.prepareAndLogDockerDriverGatewayLaunch(gatewayLaunch);
       const child = dockerDriverGatewayLaunch.spawnDockerDriverGateway(gatewayLaunch, log.fd);
