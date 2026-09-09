@@ -1051,13 +1051,27 @@ it.runIf(process.platform === "linux")(
   },
 );
 
-it.runIf(process.platform === "linux")(
-  "executes the real launch producer across a provider retry (#10978)",
-  async () => {
+it.runIf(process.platform === "linux").each([
+  {
+    expectedError: null,
+    secondMarker: false,
+    secondMode: "valid",
+    secondTerminal: "absent",
+  },
+  {
+    expectedError: "OpenClaw launch provider unavailable after 2 attempts",
+    secondMarker: true,
+    secondMode: "provider-empty-message",
+    secondTerminal: "provider",
+  },
+] as const)(
+  "executes the real launch producer through $secondMode (#10978)",
+  async ({ expectedError, secondMarker, secondMode, secondTerminal }) => {
     const calls: Array<{
       artifactName?: string;
       firstInput?: string;
       runId?: string;
+      stderr: string;
     }> = [];
     const host = {
       command: async (
@@ -1065,16 +1079,17 @@ it.runIf(process.platform === "linux")(
         args: string[],
         options?: { artifactName?: string; env?: NodeJS.ProcessEnv },
       ) => {
+        const fixture = runLaunchSessionFixture(
+          calls.length === 0 ? "provider-empty-message" : secondMode,
+          calls.length === 0 ? "provider" : secondTerminal,
+          { args, command, env: options?.env },
+        ).result;
         calls.push({
           artifactName: options?.artifactName,
           firstInput: options?.env?.NEMOCLAW_LAUNCH_FIRST_INPUT,
           runId: options?.env?.NEMOCLAW_LAUNCH_RUN_ID,
+          stderr: fixture.stderr,
         });
-        const fixture = runLaunchSessionFixture(
-          calls.length === 1 ? "provider-empty-message" : "valid",
-          calls.length === 1 ? "provider" : "absent",
-          { args, command, env: options?.env },
-        ).result;
         return {
           exitCode: fixture.status ?? 1,
           signal: fixture.signal,
@@ -1095,84 +1110,33 @@ it.runIf(process.platform === "linux")(
         redactionValues: [],
         sandboxName: "alpha",
       });
+      const outcome = launch.then(
+        (result) => ({ error: null, exitCode: result.exitCode }),
+        (error: unknown) => ({
+          error: error instanceof Error ? error.message : String(error),
+          exitCode: null,
+        }),
+      );
       await vi.advanceTimersByTimeAsync(1_000);
-      await expect(launch).resolves.toMatchObject({ exitCode: 0 });
+      const expectedExitCode = expectedError === null ? 0 : null;
+      await expect(outcome).resolves.toEqual({ error: expectedError, exitCode: expectedExitCode });
       expect(calls.map((call) => call.artifactName)).toEqual([
         "producer-handoff",
         "producer-handoff-provider-retry-02",
       ]);
       expect(new Set(calls.map((call) => call.runId)).size).toBe(2);
       expect(new Set(calls.map((call) => call.firstInput)).size).toBe(2);
+      expect(calls[0]?.stderr).toContain(
+        `${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}:${calls[0]?.runId}`,
+      );
+      expect(
+        calls[1]?.stderr.includes(`${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}:${calls[1]?.runId}`),
+      ).toBe(secondMarker);
     } finally {
       vi.useRealTimers();
     }
   },
   testTimeout(30_000),
-);
-
-it.runIf(process.platform === "linux")(
-  "executes two real provider failures before reporting exhausted availability (#10978)",
-  async () => {
-    const calls: Array<{
-      artifactName?: string;
-      firstInput?: string;
-      runId?: string;
-      stderr: string;
-    }> = [];
-    const host = {
-      command: async (
-        command: string,
-        args: string[],
-        options?: { artifactName?: string; env?: NodeJS.ProcessEnv },
-      ) => {
-        const fixture = runLaunchSessionFixture("provider-empty-message", "provider", {
-          args,
-          command,
-          env: options?.env,
-        }).result;
-        calls.push({
-          artifactName: options?.artifactName,
-          firstInput: options?.env?.NEMOCLAW_LAUNCH_FIRST_INPUT,
-          runId: options?.env?.NEMOCLAW_LAUNCH_RUN_ID,
-          stderr: fixture.stderr,
-        });
-        return {
-          exitCode: fixture.status ?? 1,
-          signal: fixture.signal,
-          stderr: fixture.stderr,
-          stdout: fixture.stdout,
-        };
-      },
-      openshellCommandPath: "/usr/bin/openshell",
-    };
-    vi.useFakeTimers();
-    try {
-      const launch = runOpenClawLaunchSession({
-        artifactName: "producer-exhaustion",
-        cliCommand: "openclaw",
-        env: {},
-        exitCommand: "/exit",
-        host: host as never,
-        redactionValues: [],
-        sandboxName: "alpha",
-      });
-      expect(calls).toHaveLength(1);
-      await vi.advanceTimersByTimeAsync(1_000);
-      await expect(launch).rejects.toThrow("OpenClaw launch provider unavailable after 2 attempts");
-      expect(calls.map((call) => call.artifactName)).toEqual([
-        "producer-exhaustion",
-        "producer-exhaustion-provider-retry-02",
-      ]);
-      expect(new Set(calls.map((call) => call.runId)).size).toBe(2);
-      expect(new Set(calls.map((call) => call.firstInput)).size).toBe(2);
-      for (const call of calls) {
-        expect(call.stderr).toContain(`${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}:${call.runId}`);
-      }
-    } finally {
-      vi.useRealTimers();
-    }
-  },
-  testTimeout(45_000),
 );
 
 it.runIf(process.platform === "linux")(
