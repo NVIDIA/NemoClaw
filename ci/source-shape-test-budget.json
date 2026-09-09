@@ -157,7 +157,7 @@
       "category": "security"
     },
     {
-      "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
+      "file": "test/automation/pull-requests/pr-review-advisor-repair-workflow-contract.test.ts",
       "test": "keeps Phase 0 Advisor repair manual, credential-separated, and non-publishing (#10791)",
       "category": "security"
     },
