@@ -761,7 +761,7 @@ class SandboxStateFlow<
       : { source: "none" as const, plan: null };
     const toolDisclosureSignals = resolveToolDisclosureResumeSignals(registryEntry, state.session);
     const sandboxReuseState = this.deps.getSandboxReuseState(state.sandboxName);
-    const dcodeResumeSignals = dcodeResume.resolveSignals(
+    const dcodeResumeSignals = await dcodeResume.resolveSignals(
       this.options,
       state,
       sandboxReuseState,

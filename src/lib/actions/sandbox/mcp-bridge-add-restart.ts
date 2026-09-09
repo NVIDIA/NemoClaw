@@ -469,7 +469,7 @@ async function addMcpBridgeUnlocked(
     }
     assertAgentMcpMutationRuntimeCapability(sandboxName, adapter, providerRuntimeSelection);
     if (detachedMissingProviderReference) {
-      waitForDetachedMcpCredential(sandboxName, entry, providerRuntimeSelection);
+      await waitForDetachedMcpCredential(sandboxName, entry, providerRuntimeSelection);
     }
     if (resumingPreflightedAdd && !Object.hasOwn(adapterEnvValues, entry.env[0])) {
       try {
@@ -539,12 +539,12 @@ async function addMcpBridgeUnlocked(
       allowExisting: resumingPreflightedAdd,
       expectedProviderId: entry.providerId,
       runtimeSelection: providerRuntimeSelection,
-      prepareMutation: (action) => {
+      prepareMutation: async (action) => {
         // A fresh create has no prior revision to compare. Observe only the
         // bounded placeholder classification for an actual update, after the
         // running supervisor has accepted the authenticated MCP policy.
         if (action === "update") {
-          previousCredentialRevision = observeMcpCredentialRevision(
+          previousCredentialRevision = await observeMcpCredentialRevision(
             sandboxName,
             entry,
             providerRuntimeSelection,
@@ -685,7 +685,7 @@ async function addMcpBridgeUnlocked(
     let reservationCleanupProved = !providerAttachAttempted;
     if (providerAttachAttempted && detachOutcome !== "unknown") {
       try {
-        waitForDetachedMcpCredential(sandboxName, entry, providerRuntimeSelection);
+        await waitForDetachedMcpCredential(sandboxName, entry, providerRuntimeSelection);
         reservationCleanupProved = true;
       } catch {
         reservationCleanupProved = false;
