@@ -43,7 +43,7 @@ async function runAnalyzer(
 ): Promise<{ stdout: string; stderr: string }> {
   return execFileAsync(
     process.execPath,
-    ["--experimental-strip-types", "--no-warnings", script, ...args],
+    ["--no-warnings", script, ...args],
     { cwd: process.cwd(), env: environment, maxBuffer: 10_000_000 },
   );
 }

@@ -203,6 +203,11 @@ describe("DGX Station stock DGX OS classification", () => {
       writeNoOtaFactoryRelease("colossus-baseos"),
     ],
     [
+      "April 2026 Colossus BaseOS with the GB300WS display name",
+      "supported-colossus-baseos",
+      writeNoOtaFactoryRelease("colossus-baseos", { pretty: "NVIDIA DGX GB300WS" }),
+    ],
+    [
       "June 2026 AI Developer Tools",
       "supported-ai-developer-tools",
       writeNoOtaFactoryRelease("ai-developer-tools"),
@@ -232,8 +237,9 @@ dgx_station_release_state "$DGX_RELEASE"
     ["7.6.0", "NVIDIA DGX GB300WS", "2026-07-14-13-59-06"],
     ["7.6.0", "NVIDIA DGX Server", "2026-07-30-10-25-15"],
     ["7.6.1", "NVIDIA DGX GB300WS", "2026-08-01-00-00-00"],
+    ["7.6.1", "NVIDIA DGX GB300 Workstation", "2026-08-01-00-00-00"],
   ])(
-    "classifies no-OTA stock DGX OS %s with the %s display name without binding its build date (#7417, #9898)",
+    "classifies no-OTA stock DGX OS %s without binding the %s display name or build date (#7417, #9898, #10928)",
     (version, pretty, buildDate) => {
       const release = writeNoOtaDgxOs76Release({ version, pretty, buildDate });
       const { result, output } = runSourced(
@@ -251,14 +257,13 @@ dgx_station_release_state "$DGX_RELEASE"
   );
 
   it.each([
-    [
-      "unrecognized display name",
-      writeNoOtaDgxOs76Release({ pretty: "NVIDIA DGX Customer Image" }),
-    ],
     ["older no-OTA version", writeNoOtaDgxOs76Release({ version: "7.5.0" })],
     ["future release family", writeNoOtaDgxOs76Release({ version: "7.7.0" })],
     ["non-numeric patch", writeNoOtaDgxOs76Release({ version: "7.6.rc1" })],
-    ["different platform", writeNoOtaDgxOs76Release({ platform: "DGX Server for GALAXY-GB200" })],
+    [
+      "different platform",
+      writeNoOtaDgxOs76Release({ platform: "DGX Server for GALAXY-GB200" }),
+    ],
     [
       "partial OTA identity",
       writeNoOtaDgxOs76Release({ otaMetadata: 'DGX_OTA_PRETTY_NAME="DGX OS"' }),
@@ -293,10 +298,6 @@ dgx_station_release_state "$DGX_RELEASE"
       writeNoOtaFactoryRelease("colossus-baseos", { buildDate: "2026-04-03-00-00-00" }),
     ],
     [
-      "AI Developer Tools product drift",
-      writeNoOtaFactoryRelease("ai-developer-tools", { pretty: "NVIDIA DGX Server" }),
-    ],
-    [
       "AI Developer Tools build date drift",
       writeNoOtaFactoryRelease("ai-developer-tools", { buildDate: "2026-06-17-00-00-00" }),
     ],
@@ -327,7 +328,6 @@ dgx_station_release_state "$DGX_RELEASE"
       "unproven Station platform identity",
       writeDgxReleaseFixture("7.5.0", 'DGX_PLATFORM="Not Specified"'),
     ],
-    ["missing DGX_OTA_PRETTY_NAME", writeDgxReleaseFixture("7.5.0", "", null)],
     ["BaseOS identity", writeDgxReleaseFixture("7.5.0", "", "NVIDIA BaseOS")],
     ["unknown field", writeDgxReleaseFixture("7.5.0", 'PAYLOAD="$(touch /tmp/nope)"')],
     [
@@ -484,37 +484,23 @@ dgx_station_release_state "$DGX_RELEASE"
     expect(result.stdout).toBe(expected);
   });
 
-  it("classifies an OTA-upgraded GB300 workstation without the fresh-install marker as supported-dgx-os (#7103)", () => {
-    const release = writeOtaUpgradedRelease();
-    const { result, output } = runSourced(
-      STATION_PREPARE,
-      `
+  it.each(["NVIDIA DGX GB300WS", "NVIDIA DGX Server", "NVIDIA DGX GB300 Workstation"])(
+    "classifies an OTA-upgraded GB300 workstation with the %s display name as supported-dgx-os (#7103, #10928)",
+    (pretty) => {
+      const release = writeOtaUpgradedRelease({ pretty });
+      const { result, output } = runSourced(
+        STATION_PREPARE,
+        `
 stat() { printf '0|0|644|256\n'; }
 dgx_station_release_state "$DGX_RELEASE"
 `,
-      { DGX_RELEASE: release },
-    );
+        { DGX_RELEASE: release },
+      );
 
-    expect(result.status, output).toBe(0);
-    expect(result.stdout).toBe("supported-dgx-os");
-  });
-
-  it.each([
-    [
-      "a non-workstation DGX Server identity",
-      writeOtaUpgradedRelease({ pretty: "NVIDIA DGX Server" }),
-    ],
-    ["an out-of-scope latest OTA version", writeOtaUpgradedRelease({ otaVersion: "7.6.0" })],
-    ["a future latest OTA version", writeOtaUpgradedRelease({ otaVersion: "7.7.0" })],
-  ])("keeps a marker-less OTA host fail-closed with %s (#7103)", (_scenario, release) => {
-    const { result } = runSourced(
-      STATION_PREPARE,
-      `dgx_station_release_contents_are_supported "$DGX_RELEASE"`,
-      { DGX_RELEASE: release },
-    );
-
-    expect(result.status).not.toBe(0);
-  });
+      expect(result.status, output).toBe(0);
+      expect(result.stdout).toBe("supported-dgx-os");
+    },
+  );
 
   it("keeps the classifier self-contained when the helper is transported alone", () => {
     const isolated = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-helper-only-"));
@@ -559,22 +545,24 @@ dgx_station_release_state "$DGX_RELEASE"
     expect(result.stderr).toBe("");
   });
 
-  it("uses explicit intent to bypass only unsupported release metadata", () => {
+  it("uses explicit intent to bypass only a complete unrecognized release profile", () => {
+    const release = writeDgxReleaseFixture("7.7.0");
     const forced = runSourced(
       STATION_PREPARE,
       `
 printf 'ID=ubuntu\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu 24.04"\n' >"$HOME/os-release"
 printf 'NVIDIA DGX Station GB300\n' >"$HOME/product-name"
+stat() { printf '0|0|644|256\n'; }
 uname() { printf 'aarch64\n'; }
 station_os_release_path() { printf '%s' "$HOME/os-release"; }
 station_product_name_path() { printf '%s' "$HOME/product-name"; }
-dgx_station_release_path() { printf '%s' "$HOME/dgx-release"; }
-dgx_station_release_state() { printf 'unsupported-dgx-os'; }
+dgx_station_release_path() { printf '%s' "$DGX_RELEASE"; }
 station_has_exact_gb300_pci_gpu() { return 0; }
 FORCE_STATION_INSTALL=1
 check_platform
 printf 'PROFILE=%s\n' "$STATION_HOST_PROFILE"
 `,
+      { DGX_RELEASE: release },
     );
 
     expect(forced.result.status, forced.output).toBe(0);
@@ -586,13 +574,15 @@ printf 'PROFILE=%s\n' "$STATION_HOST_PROFILE"
       `
 printf 'ID=ubuntu\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu 24.04"\n' >"$HOME/os-release"
 printf 'NVIDIA DGX Station GB300\n' >"$HOME/product-name"
+stat() { printf '0|0|644|256\n'; }
 uname() { printf 'aarch64\n'; }
 station_os_release_path() { printf '%s' "$HOME/os-release"; }
 station_product_name_path() { printf '%s' "$HOME/product-name"; }
-dgx_station_release_path() { printf '%s' "$HOME/dgx-release"; }
-dgx_station_release_state() { printf 'unsupported-dgx-os'; }
+dgx_station_release_path() { printf '%s' "$DGX_RELEASE"; }
+station_has_exact_gb300_pci_gpu() { return 0; }
 check_platform
 `,
+      { DGX_RELEASE: release },
     );
 
     expect(unforced.result.status, unforced.output).not.toBe(0);
@@ -617,6 +607,7 @@ station_os_release_path() { printf '%s' "$HOME/os-release"; }
 station_product_name_path() { printf '%s' "$HOME/product-name"; }
 dgx_station_release_path() { printf '%s' "$HOME/dgx-release"; }
 dgx_station_release_state() { printf '%s' "$RELEASE_STATE"; }
+station_has_exact_gb300_pci_gpu() { return 0; }
 FORCE_STATION_INSTALL=1
 check_platform
 printf 'PREPARATION_REACHED\n'

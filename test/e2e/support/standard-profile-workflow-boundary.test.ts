@@ -9,7 +9,14 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
+import {
+  FULL_E2E_STANDARD_PROFILE_JOB_TIMEOUT_MINUTES,
+  FULL_E2E_STANDARD_PROFILE_POST_TEST_MINUTES,
+  FULL_E2E_STANDARD_PROFILE_PRE_TEST_MINUTES,
+  FULL_E2E_TEST_TIMEOUT_MINUTES,
+} from "../../../tools/e2e/full-e2e-timeout-contract.mts";
 import { validateStandardProfileWorkflowBoundary } from "../../../tools/e2e/standard-profile-workflow-boundary.mts";
+import { catalogueTarget } from "../../../tools/e2e/target-catalogue.mts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract";
 
 const REPO_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -17,6 +24,17 @@ const REPO_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", 
 describe("standard E2E execution profile", () => {
   it("accepts the catalogue callers and reusable profile", () => {
     expect(validateStandardProfileWorkflowBoundary(readWorkflow())).toEqual([]);
+  });
+
+  it("reserves the standard full-E2E setup, test, and artifact envelope", () => {
+    expect(catalogueTarget("full-e2e").timeoutMinutes).toBe(
+      FULL_E2E_STANDARD_PROFILE_JOB_TIMEOUT_MINUTES,
+    );
+    expect(FULL_E2E_STANDARD_PROFILE_JOB_TIMEOUT_MINUTES).toBe(
+      FULL_E2E_STANDARD_PROFILE_PRE_TEST_MINUTES +
+        FULL_E2E_TEST_TIMEOUT_MINUTES +
+        FULL_E2E_STANDARD_PROFILE_POST_TEST_MINUTES,
+    );
   });
 
   it("rejects a cloudflared PATH shortcut before package verification", () => {

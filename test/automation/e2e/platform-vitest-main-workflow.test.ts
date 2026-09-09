@@ -59,8 +59,10 @@ describe("platform evidence workflow", () => {
       expect.arrayContaining([expect.objectContaining({ name: "Run macOS live E2E" })]),
     );
     expect(liveJob.needs).toBeUndefined();
+    expect(liveJob["timeout-minutes"]).toBe(150);
     expect(liveJob.if).toContain("github.ref == 'refs/heads/main'");
     expect(JSON.stringify(liveJob)).not.toContain("brew install");
+    expect(live.env).toHaveProperty("NEMOCLAW_RUN_LIVE_E2E", "1");
     expect(installOpenShell.run).toContain("scripts/install-openshell.sh");
     expect(live.if).toContain("steps.macos_docker.outputs.docker_ok == 'true'");
     expect(live.env).toMatchObject({

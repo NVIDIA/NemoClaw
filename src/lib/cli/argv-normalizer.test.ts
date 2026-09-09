@@ -98,6 +98,7 @@ describe("normalizeArgv", () => {
     { argv: ["doctor", "--help"], kind: "global", action: undefined },
     { argv: ["doctor", "--json"], kind: "global", action: undefined },
     { argv: ["doctor", "--text"], kind: "global", action: undefined },
+    { argv: ["doctor"], kind: "global", action: undefined, registered: true },
     { argv: ["doctor", "--json"], kind: "global", action: undefined, registered: true },
     { argv: ["doctor", "--text"], kind: "global", action: undefined, registered: true },
     { argv: ["doctor", "--probe-only"], kind: "sandbox", action: "connect" },
@@ -116,7 +117,6 @@ describe("normalizeArgv", () => {
   });
 
   it.each([
-    { label: "bare", firstArg: undefined, connectHelpRequested: false },
     { label: "help", firstArg: "--help", connectHelpRequested: true },
     { label: "probe-only", firstArg: "--probe-only", connectHelpRequested: false },
   ])("preserves $label connect for a registered sandbox named doctor (#10212)", (testCase) => {
