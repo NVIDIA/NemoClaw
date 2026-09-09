@@ -26,7 +26,7 @@ import {
 /** Read configuration identity and its effective policy in the same gateway response. */
 export function createSandboxConfig(
   connect: ConnectOpenShellReader = connectOpenShellReader,
-  serializePolicy: (policy: unknown) => Promise<string> = serializeSdkPolicy,
+  serializePolicy: (policy: unknown, signal?: AbortSignal) => Promise<string> = serializeSdkPolicy,
 ) {
   return {
     get: (
@@ -44,6 +44,9 @@ export function createSandboxConfig(
         if (config.workspace !== request.workspace) {
           throw new OpenShellReadError("schema");
         }
+        request.signal.throwIfAborted();
+        const document = await serializePolicy(config.policy, request.signal);
+        request.signal.throwIfAborted();
         return owned({
           sandboxId,
           workspace: request.workspace,
@@ -54,7 +57,7 @@ export function createSandboxConfig(
           policySource: config.policySource === 1 ? "sandbox" : "global",
           globalPolicyVersion: config.globalPolicyVersion,
           policy: {
-            document: await serializePolicy(config.policy),
+            document,
             appliedRevision:
               config.policySource === 2 && config.globalPolicyVersion > 0
                 ? config.globalPolicyVersion
@@ -100,7 +103,7 @@ function nestedParams(flat: Record<string, ParameterMatcher>): ParameterTree {
       branches.set(prefix, child);
       parent = child;
     }
-    parent[parts.at(-1)!] = flat[key];
+    parent[parts[parts.length - 1]] = flat[key];
   }
   return root;
 }
@@ -191,25 +194,37 @@ export function sdkPolicyDocument(value: unknown): PolicyDocument {
   return policy;
 }
 
+const MAX_POLICY_BYTES = 1024 * 1024;
+
 /** Keep generated messages and optional SDK dependencies inside the adapter. */
-export async function serializeSdkPolicy(policy: unknown): Promise<string> {
+export async function serializeSdkPolicy(policy: unknown, signal?: AbortSignal): Promise<string> {
   try {
+    signal?.throwIfAborted();
     const sdkPackage = "@nvidia/openshell-sdk/raw";
     const protobufPackage = "@bufbuild/protobuf";
-    const [{ SandboxPolicySchema }, { isMessage, toJson }] = await Promise.all([
+    const [{ SandboxPolicySchema }, { isMessage, toBinary, toJson }] = await Promise.all([
       import(sdkPackage),
       import(protobufPackage),
     ]);
+    signal?.throwIfAborted();
     if (!isMessage(policy, SandboxPolicySchema)) throw new OpenShellReadError("schema");
+    if (toBinary(SandboxPolicySchema, policy).byteLength > MAX_POLICY_BYTES) {
+      throw new OpenShellReadError("schema");
+    }
     rejectUnknownWireFields(policy);
     const document = YAML.stringify(
       sortCanonicalMappings(
         sdkPolicyDocument(toJson(SandboxPolicySchema, policy, { useProtoFieldName: true })),
       ),
     );
-    if (!isSandboxPolicyCredentialFree(document)) throw new OpenShellReadError("schema");
+    if (
+      Buffer.byteLength(document, "utf8") > MAX_POLICY_BYTES ||
+      !isSandboxPolicyCredentialFree(document)
+    ) {
+      throw new OpenShellReadError("schema");
+    }
     return document;
   } catch {
-    throw new OpenShellReadError("schema");
+    throw new OpenShellReadError(signal?.aborted ? "timeout" : "schema");
   }
 }

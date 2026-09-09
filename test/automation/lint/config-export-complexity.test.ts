@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { expect, it } from "vitest";
 
-const branches = `function read(flags: boolean[]) { return ${Array.from({ length: 12 }, (_, index) => `flags[${index}]`).join(" || ")}; }`;
+const branches = `export function read(flags: boolean[]) { return ${Array.from({ length: 12 }, (_, index) => `flags[${index}]`).join(" || ")}; }`;
 const nesting = `function verify(value: boolean) { ${"if (value) { ".repeat(6)}return true;${" }".repeat(6)} return false; }`;
 
 it.each([
@@ -32,7 +32,7 @@ it.each([
   {
     name: "nested ternary rejection in SDK reads",
     file: "src/lib/adapters/openshell/sdk-read.ts",
-    source: "function classify(a: boolean, b: boolean) { return a ? 1 : b ? 2 : 3; }",
+    source: "export function classify(a: boolean, b: boolean) { return a ? 1 : b ? 2 : 3; }",
     rules: ["eslint(no-nested-ternary)"],
   },
   {

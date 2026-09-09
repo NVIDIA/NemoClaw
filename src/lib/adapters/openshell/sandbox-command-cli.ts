@@ -9,6 +9,7 @@ import { isValidName } from "../../sandbox-name-contract";
 import { resolveOpenshellBinaryOrNull } from "./resolve-shared";
 import {
   type OpenShellSandboxCommandCompletion,
+  type OpenShellSandboxCommandError,
   type OpenShellSandboxCommandExecutor,
   type OpenShellSandboxCommandRequest,
   type OpenShellSandboxCommandOutcome,
@@ -167,12 +168,11 @@ export async function runCliOpenShellStreamingCommand(
   });
 }
 
-function commandError(error: Error) {
+function commandError(error: Error): OpenShellSandboxCommandError {
   const code = (error as NodeJS.ErrnoException).code;
-  return {
-    kind: code === "ENOENT" ? "unavailable" : code === "ETIMEDOUT" ? "timeout" : "invocation",
-    message: error.message,
-  } as const;
+  if (code === "ENOENT") return { kind: "unavailable", message: error.message };
+  if (code === "ETIMEDOUT") return { kind: "timeout", message: error.message };
+  return { kind: "invocation", message: error.message };
 }
 
 function commandFailure(error: Error): OpenShellSandboxCommandOutcome {

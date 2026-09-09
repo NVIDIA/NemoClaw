@@ -410,6 +410,25 @@ describe("OpenShell sandbox export evidence", () => {
     },
   );
 
+  it("does not serialize a configuration response that arrives after abort", async () => {
+    const { connect, raw } = fixture();
+    const response = await raw.getSandboxConfig();
+    const controller = new AbortController();
+    raw.getSandboxConfig.mockImplementation(async () => {
+      controller.abort();
+      return response;
+    });
+    const serialize = vi.fn(async () => "version: 1\n");
+    await expect(
+      createSandboxConfig(connect, serialize).get({
+        ...request(),
+        sandboxId: "verified-id",
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({ kind: "timeout" });
+    expect(serialize).not.toHaveBeenCalled();
+  });
+
   it.each([
     { workspace: "other" },
     { policySource: 0 },

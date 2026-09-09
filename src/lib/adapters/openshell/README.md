@@ -51,3 +51,5 @@ Managed rebuild recovery and snapshot-clone provider inspection, profile import,
 detachment, deletion, replacement cleanup, and other lifecycle operations keep their existing
 adapters until the remaining #9806 migration slices land. This does not claim SDK qualification for
 those operations.
+
+Policy export rejects SDK messages and serialized YAML above 1 MiB. It checks cancellation before conversion and after SDK loading. OpenShell SDK 0.0.106 does not expose a transport receive-size option.

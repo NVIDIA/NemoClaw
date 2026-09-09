@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 import { createProviders } from "../../src/lib/adapters/openshell/providers";
 import { createSandboxes } from "../../src/lib/adapters/openshell/sandboxes";
@@ -153,6 +153,64 @@ describe.skipIf(!hasSdkArtifact())("released OpenShell policy wire safety", () =
       kind: "schema",
       message: "OpenShell read failed (schema).",
     });
+  });
+
+  it("rejects an oversized encoded policy before YAML serialization", async () => {
+    const sdkPackage = "@nvidia/openshell-sdk/raw";
+    const protobufPackage = "@bufbuild/protobuf";
+    const [{ SandboxPolicySchema }, { create }] = await Promise.all([
+      import(sdkPackage),
+      import(protobufPackage),
+    ]);
+    const policy = create(SandboxPolicySchema, {
+      version: 1,
+      filesystem: { readOnly: ["/" + "界".repeat(350000)] },
+    });
+    const stringify = vi.spyOn(YAML, "stringify");
+    try {
+      await expect(serializeSdkPolicy(policy)).rejects.toMatchObject({ kind: "schema" });
+      expect(stringify).not.toHaveBeenCalled();
+    } finally {
+      stringify.mockRestore();
+    }
+  });
+
+  it("rejects an aborted policy read before loading the SDK", async () => {
+    await expect(serializeSdkPolicy(undefined, AbortSignal.abort())).rejects.toMatchObject({
+      kind: "timeout",
+    });
+  });
+
+  it("stops conversion when the read aborts during SDK loading", async () => {
+    const controller = new AbortController();
+    const stringify = vi.spyOn(YAML, "stringify");
+    try {
+      const result = serializeSdkPolicy(undefined, controller.signal);
+      controller.abort();
+      await expect(result).rejects.toMatchObject({ kind: "timeout" });
+      expect(stringify).not.toHaveBeenCalled();
+    } finally {
+      stringify.mockRestore();
+    }
+  });
+
+  it("rejects YAML expansion beyond the policy read limit", async () => {
+    const sdkPackage = "@nvidia/openshell-sdk/raw";
+    const protobufPackage = "@bufbuild/protobuf";
+    const [{ SandboxPolicySchema }, { create, toBinary }] = await Promise.all([
+      import(sdkPackage),
+      import(protobufPackage),
+    ]);
+    const policy = create(SandboxPolicySchema, {
+      version: 1,
+      filesystem: { readOnly: ["/" + "\x01".repeat(300000)] },
+    });
+    expect(toBinary(SandboxPolicySchema, policy).byteLength).toBeLessThan(1024 * 1024);
+    const outcome = await serializeSdkPolicy(policy).then(
+      () => "accepted",
+      (error) => error.kind,
+    );
+    expect(outcome).toBe("schema");
   });
 
   it("serializes equal policy maps identically regardless of wire order", async () => {
@@ -391,7 +449,30 @@ describe.skipIf(!hasSdkArtifact())("released OpenShell policy document conversio
         },
       });
       const policy = fromBinary(SandboxPolicySchema, toBinary(SandboxPolicySchema, input));
-      expect(YAML.parse(await serializeSdkPolicy(policy))).toEqual({
+      const reader = createSandboxConfig(async () => ({
+        raw: {
+          getProvider: async () => undefined,
+          getProviderProfile: async () => undefined,
+          getSandbox: async () => undefined,
+          getSandboxConfig: async () => ({
+            policy,
+            workspace: "default",
+            version: 3,
+            policyHash: "a".repeat(64),
+            policySource: 1,
+            configRevision: 3n,
+            providerEnvRevision: 1n,
+            globalPolicyVersion: 0,
+          }),
+        },
+      }));
+      const config = await reader.get({
+        sandboxId: "verified-id",
+        target: { kind: "named", gatewayName: "nemoclaw" },
+        workspace: "default",
+        signal: new AbortController().signal,
+      });
+      expect(YAML.parse(config.policy.document)).toEqual({
         version: 1,
         network_policies: {
           api: {
