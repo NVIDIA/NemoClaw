@@ -25,7 +25,6 @@ import {
 const CA_SHA256 = "a".repeat(64);
 const OPENCLAW_APPLICATION_RUNTIME_NAMES = [
   "NEMOCLAW_AUTO_PAIR_DEADLINE_SECS",
-  "NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS",
   "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS",
   "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS",
   "NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS",
@@ -298,7 +297,7 @@ describe("managed startup agent environment", () => {
   it("maps every OpenClaw profile field to the existing generator and entrypoint contracts", () => {
     const result = mapManagedStartupProfileToAgentEnvironment(openClawProfile(), {
       NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: " 30 ",
-      NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "3e0",
+      NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "removed-control-must-not-enter-the-runtime",
       NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: "0.25",
       NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "03",
       NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "10.0",
@@ -353,10 +352,15 @@ describe("managed startup agent environment", () => {
       no_proxy: "127.0.0.1,inference.local,localhost",
     });
     expect(Object.hasOwn(result.runtimeEnvironment, "NEMOCLAW_MESSAGING_PLAN_B64")).toBe(false);
+    expect(
+      Object.hasOwn(
+        result.applicationRuntime.exportEnvironment,
+        "NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS",
+      ),
+    ).toBe(false);
     expect(result.applicationRuntime).toEqual({
       exportEnvironment: {
         NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "30",
-        NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "3",
         NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: "0.25",
         NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "3",
         NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "10",
@@ -457,7 +461,6 @@ describe("managed startup agent environment", () => {
     (agent) => {
       const result = mapManagedStartupProfileToAgentEnvironment(PROFILES[agent](), {
         NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "30",
-        NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "3",
         NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: "0.25",
         NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "3",
         NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "10",

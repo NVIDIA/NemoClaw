@@ -388,7 +388,7 @@ describe("prepareSandboxCreateLaunch", () => {
       createArgs: [],
       env: {
         NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: " 30 ",
-        NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "3",
+        NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "removed-control-must-not-enter-the-sandbox",
         NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: " 0.25 ",
         NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: " 99 ",
         NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "10",
@@ -410,13 +410,15 @@ describe("prepareSandboxCreateLaunch", () => {
       "OPENCLAW_STATE_DIR=/sandbox/.openclaw",
       "OPENCLAW_WORKSPACE_DIR=/sandbox/.openclaw/workspace",
       "NEMOCLAW_AUTO_PAIR_DEADLINE_SECS=30",
-      "NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS=3",
       "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=0.25",
       "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS=99",
       "NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS=10",
       "NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS=600",
     ]);
     expect(result.sandboxStartupCommand.join(" ")).not.toContain("NEMOCLAW_PROVIDER_KEY");
+    expect(result.sandboxStartupCommand.join(" ")).not.toContain(
+      "NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS",
+    );
   });
 
   it.each([

@@ -160,6 +160,11 @@ describe("OCI entrypoint env-wrapper normalization", () => {
       message: "Malformed managed startup env wrapper",
     },
     {
+      name: "rejects the removed fast-deadline control",
+      argv: ["env", "NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS=3", "nemoclaw-start"],
+      message: "unsupported variable 'NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS'",
+    },
+    {
       name: "rejects a managed name after an unmanaged assignment",
       argv: ["env", "FOO=bar", "OPENCLAW_HOME=/sandbox", "/bin/sh", "-c", ":"],
       message: "Malformed managed startup env wrapper",
@@ -254,10 +259,6 @@ describe("OCI entrypoint env-wrapper normalization", () => {
     {
       name: "an infinite watcher deadline",
       assignment: "NEMOCLAW_AUTO_PAIR_DEADLINE_SECS=Infinity",
-    },
-    {
-      name: "an infinite fast deadline",
-      assignment: "NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS=Infinity",
     },
   ])("fails closed for an out-of-range auto-pair control: $name (#11161)", ({ assignment }) => {
     const result = runNormalizer(["env", assignment, "nemoclaw-start", "/bin/sh", "-c", ":"]);

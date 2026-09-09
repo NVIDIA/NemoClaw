@@ -16,11 +16,6 @@ export const OPENCLAW_AUTO_PAIR_RUNTIME_ENV_RULES = Object.freeze([
     maximum: 1_000_000_000_000,
   },
   {
-    name: "NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS",
-    kind: "seconds",
-    maximum: 1_000_000_000_000,
-  },
-  {
     name: "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS",
     kind: "seconds",
     maximum: 1_000_000_000,

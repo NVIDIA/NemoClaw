@@ -74,7 +74,6 @@ fi
 unset NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGC NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGV \
   _NEMOCLAW_ENTRYPOINT_ENV_WRAPPER
 unset -f nemoclaw_normalize_entrypoint_env_wrapper
-unset -f _nemoclaw_bounded_seconds_value _nemoclaw_bounded_polls_value
 # managed-entrypoint-env-wrapper end
 
 # Reject an invalid explicit dashboard port before installing the tee/fd startup
@@ -2709,7 +2708,13 @@ def _env_polls(name, default):
     raw = os.environ.get(name, '').strip()
     if not raw or _ENV_POLLS_VALUE.fullmatch(raw) is None:
         return default
-    value = int(raw, 10)
+    significant_digits = raw.removeprefix('+').lstrip('0')
+    if not significant_digits or len(significant_digits) > 16:
+        return default
+    try:
+        value = int(raw, 10)
+    except ValueError:
+        return default
     return value if 0 < value <= _ENV_POLLS_MAX else default
 
 
@@ -3098,9 +3103,16 @@ def run(*args, strip_gateway_env=False, force_device_pairing=False, pairing_sett
         env = dict(os.environ)
         env.pop('NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT', None)
         env['NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING'] = '1'
+    remaining_seconds = DEADLINE - time.time()
+    if remaining_seconds <= 0:
+        return 124, '', ''
     try:
         proc = subprocess.run(
-            args, capture_output=True, text=True, timeout=RUN_TIMEOUT_SECS, env=env,
+            args,
+            capture_output=True,
+            text=True,
+            timeout=min(RUN_TIMEOUT_SECS, remaining_seconds),
+            env=env,
         )
         return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
     except subprocess.TimeoutExpired as exc:

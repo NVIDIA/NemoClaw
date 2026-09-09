@@ -109,6 +109,63 @@ function resolveNextPollSleep(options: {
   };
 }
 
+function resolveRunTimeout(options: { deadline: number; now: number; runTimeout: number }): {
+  status: number | null;
+  stderr: string;
+  childStatus: number;
+  timeout: number;
+} {
+  const source = fs.readFileSync(START_SCRIPT, "utf-8");
+  const watcher = source.match(/<<'PYAUTOPAIR'[^\n]*\n([\s\S]*?)\nPYAUTOPAIR/u);
+  expect(watcher).not.toBeNull();
+  const runFunction = watcher![1].match(
+    /def run\(\*args, strip_gateway_env=False, force_device_pairing=False, pairing_settlement=False\):[\s\S]*?(?=\n\ndef sleep_for_next_poll)/u,
+  );
+  expect(runFunction).not.toBeNull();
+  const program = [
+    "class Result:",
+    "    returncode = 0",
+    "    stdout = ''",
+    "    stderr = ''",
+    "class FakeSubprocess:",
+    "    class TimeoutExpired(Exception):",
+    "        pass",
+    "    def run(self, *args, **kwargs):",
+    "        print('TIMEOUT', repr(kwargs['timeout']))",
+    "        return Result()",
+    "class FakeTime:",
+    "    def time(self):",
+    `        return ${String(options.now)}`,
+    "class FakeOs:",
+    "    environ = {}",
+    "subprocess = FakeSubprocess()",
+    "time = FakeTime()",
+    "os = FakeOs()",
+    "gateway_approval_env = lambda _env: {}",
+    `DEADLINE = ${String(options.deadline)}`,
+    `RUN_TIMEOUT_SECS = ${String(options.runTimeout)}`,
+    runFunction![0],
+    "result = run('openclaw', 'devices', 'list')",
+    "print('CHILD_STATUS', result[0])",
+  ].join("\n");
+  const result = spawnSync("python3", ["-c", program], {
+    encoding: "utf8",
+    env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
+  });
+  const output = Object.fromEntries(
+    result.stdout
+      .split("\n")
+      .filter((line) => line.includes(" "))
+      .map((line) => [line.slice(0, line.indexOf(" ")), line.slice(line.indexOf(" ") + 1)]),
+  );
+  return {
+    status: result.status,
+    stderr: result.stderr,
+    childStatus: Number(output.CHILD_STATUS),
+    timeout: Number(output.TIMEOUT),
+  };
+}
+
 describe("nemoclaw-start auto-pair scheduler environment bounds", () => {
   it.each([
     {
@@ -154,6 +211,10 @@ describe("nemoclaw-start auto-pair scheduler environment bounds", () => {
     {
       name: "a poll count past the safe integer range",
       input: { NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "9007199254740993" },
+    },
+    {
+      name: "a poll count past Python's integer conversion limit",
+      input: { NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "9".repeat(5_000) },
     },
     {
       name: "an infinite slow interval",
@@ -279,5 +340,14 @@ describe("nemoclaw-start auto-pair scheduler environment bounds", () => {
     expect(resolved.stderr).toBe("");
     expect(resolved.sleep).toBe(0.25);
     expect(resolved.fastReentryRemaining).toBe(testCase.expectedFastReentryRemaining);
+  });
+
+  it("caps an active OpenClaw command at the remaining watcher deadline (#11161)", () => {
+    const resolved = resolveRunTimeout({ deadline: 100.25, now: 100, runTimeout: 2_147_483 });
+
+    expect(resolved.status).toBe(0);
+    expect(resolved.stderr).toBe("");
+    expect(resolved.childStatus).toBe(0);
+    expect(resolved.timeout).toBe(0.25);
   });
 });
