@@ -357,7 +357,7 @@ export function safeToolDiscoveryErrorDetail(error: unknown): string {
           ? `MCP endpoint rejected the request (HTTP ${error.httpStatus})`
           : "MCP endpoint rejected the request";
       case "invalid-response":
-        return "MCP endpoint returned an invalid tool-list response";
+        return "MCP endpoint returned an invalid response";
       case "redirect":
         return "MCP endpoint redirect was rejected";
       case "response-too-large":
