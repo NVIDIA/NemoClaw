@@ -674,8 +674,19 @@ startGateway(null).catch((error) => {
     const commandSequence = commands.map(({ argv }) => argv.join(" "));
 
     assert.match(commandSequence[0] ?? "", /^provider get -g nemoclaw openai-api$/);
-    assert.ok(commandSequence.some((command) => /^provider update -g nemoclaw /.test(command)));
-    assert.ok(commandSequence.some((command) => /^inference set -g nemoclaw /.test(command)));
+    assert.ok(
+      commandSequence.some((command) =>
+        /^provider update -g nemoclaw openai-api(?: |$)/.test(command),
+      ),
+    );
+    assert.ok(
+      commandSequence.some(
+        (command) =>
+          /^inference set -g nemoclaw --no-verify --provider openai-api --model gpt-5\.4(?: |$)/.test(
+            command,
+          ),
+      ),
+    );
     assert.ok(
       commands.every(({ argv }) => !(argv[0] === "provider" && argv[1] === "profile")),
       `unexpected compatibility-profile command: ${commandSequence.join(" | ")}`,

@@ -513,7 +513,7 @@ exit 89
       writeExecutable(
         path.join(tmp, "scripts", "install-openshell.sh"),
         `#!/usr/bin/env bash
-printf 'install-openshell.sh invoked\\n' >> "$INSTALL_OPENSHELL_LOG"
+printf 'install-openshell.sh invoked\\n' >> "$INSTALL_OPENSHELL_LOG"; mkdir -p "$HOME/.local/bin"; for component in openshell openshell-gateway; do printf '%s\\n' '#!/usr/bin/env bash' 'if [ "\${1:-}" = "--version" ]; then echo "openshell 0.0.116"; fi' 'exit 0' > "$HOME/.local/bin/$component"; chmod 755 "$HOME/.local/bin/$component"; done
 exit 0
 `,
       );
@@ -537,7 +537,7 @@ exit 0
         },
       });
 
-      expect(result.status).toBe(0);
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
       expect(fs.existsSync(openshellLog)).toBe(true);
       expect(fs.readFileSync(openshellLog, "utf-8")).toMatch(/install-openshell\.sh invoked/);
     },
