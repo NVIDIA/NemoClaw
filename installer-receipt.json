@@ -1,54 +1,43 @@
 {
   "schemaVersion": 1,
-  "classification": "unsigned-earlier-qualified-native-windows-arm64-preview",
-  "candidateSha": "0fd3b6ee4f9bdcbc1fc5a0f0d97b10719e6f95c0",
+  "classification": "unsigned-native-windows-arm64-preview-qualification-pending",
+  "candidateSha": "1cb0dfbc0f4ca58ccb08b9433a8e8ab2a79cfecb",
   "sourceRepository": "https://github.com/NVIDIA/NemoClaw",
   "sourcePullRequest": 10799,
-  "sourceWorkflowRun": 33996120228,
+  "sourceWorkflowRun": 34358022355,
   "sourceWorkflowAttempts": [
-    2,
-    3
+    1
   ],
-  "sourceArtifactId": 9980422936,
-  "packageManifestSha256": "a75eed8119f92045477111f26f2a6f380dc905897c2539e67379e38ee39b1b9a",
+  "sourceArtifactId": 10108686147,
+  "packageManifestSha256": "bd4ec266479a766811db57d12730658edd996b2ec62c1b110b55a0cbebc67f0e",
   "openshell": {
     "repository": "https://github.com/NVIDIA/OpenShell",
     "pullRequest": 2721,
-    "revision": "bcd517bbe08cc80860c9be57699390cd32e8445f"
+    "revision": "bcd517bbe08cc80860c9be57699390cd32e8445f",
+    "derivativePatchSha256": "197297b5fe147cd95ecb45e44c6713e987e1222ea028e3168d234b223c073cf9"
   },
   "files": [
     {
-      "name": "NemoClawSetup-0.1.0-windows-arm64.exe",
-      "size": 249578791,
-      "sha256": "7b3ac6e595393aecec1ffc1621c08e540089769f352a95422b8fae2f2c1ed70d"
+      "name": "NemoClaw-0.1.0-windows-arm64.msi",
+      "size": 260346849,
+      "sha256": "55653d06481a1b49a801b0f31528a91936de1b3799975214dac8ac1c4d40cba0"
     },
     {
-      "name": "NemoClaw-0.1.0-windows-arm64.msi",
-      "size": 205067809,
-      "sha256": "8fb9c6ada28f8d27ab16ef3744a4a5ae9384c8a67d96e02c0c1adf76893df2a3"
+      "name": "NemoClawSetup-0.1.0-windows-arm64.exe",
+      "size": 304401231,
+      "sha256": "a15ea5c4a2ecdf3247c6db9b46a02dffa32e17d6ee7b0c1e82da3f9e6303c44c"
     }
   ],
-  "knownDependencyAdvisory": {
-    "package": "js-yaml",
-    "installedVersion": "4.3.1",
-    "advisory": "GHSA-2883-xcg3-v3hh",
-    "patchedVersion": "4.3.2",
-    "replacementBuild": "pending qualification"
-  },
   "qualification": {
     "architecture": "arm64",
-    "agents": [
-      "OpenClaw",
-      "Hermes Agent",
-      "Deep Agents Code",
-      "Pi (experimental)",
-      "NemoCUA (experimental)"
-    ],
-    "inference": "deterministic credential-free local endpoint",
-    "repair": true,
-    "reinstall": true,
-    "uninstallCleanup": true,
-    "prohibitedPackageDescendants": 0,
+    "retainedReferenceInstallerChecks": "passed",
+    "earlyAndRepeatedProcessAudit": "passed",
+    "installedAcceptance": "pending",
+    "requiredCompleteNativePasses": 2,
+    "completeNativePasses": 0,
+    "physicalN1x": "not-qualified",
     "productionSupport": false
-  }
+  },
+  "criticalSourcePayloadHashesMatched": 12,
+  "payloadFiles": 81806
 }
