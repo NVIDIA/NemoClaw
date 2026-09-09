@@ -126,6 +126,12 @@ describe("uninstall messaging for a preserved-but-orphaned sandbox registry (#65
       const logs: string[] = [];
       const calls: string[][] = [];
       const gatewayLists = [ok(JSON.stringify([{ name: "nemoclaw" }])), ok("[]")];
+      const returnedGatewayLists: string[] = [];
+      const nextGatewayList = () => {
+        const response = gatewayLists.shift() ?? ok("[]");
+        returnedGatewayLists.push(response.stdout);
+        return response;
+      };
       const responses = new Map<string, RunResult>([
         ["openshell gateway remove nemoclaw", { status: 1, stdout: "", stderr: removeDiagnostic }],
         [
@@ -147,7 +153,7 @@ describe("uninstall messaging for a preserved-but-orphaned sandbox registry (#65
             calls.push([command, ...args]);
             const key = [command, ...args].join(" ");
             return key === "openshell gateway list -o json"
-              ? (gatewayLists.shift() ?? ok("[]"))
+              ? nextGatewayList()
               : (responses.get(key) ??
                   (command === "openshell"
                     ? notFound()
@@ -169,6 +175,17 @@ describe("uninstall messaging for a preserved-but-orphaned sandbox registry (#65
           (call) => call[0] === "openshell" && call[1] === "gateway" && call[2] === "destroy",
         ),
       ).toBe(expectedDestroy);
+      const removalCommand = expectedDestroy
+        ? "openshell gateway destroy -g nemoclaw"
+        : "openshell gateway remove nemoclaw";
+      const removalIndex = calls.findIndex((call) => call.join(" ") === removalCommand);
+      const postconditionIndex = calls.findIndex(
+        (call, index) =>
+          index > removalIndex && call.join(" ") === "openshell gateway list -o json",
+      );
+      expect(removalIndex).toBeGreaterThanOrEqual(0);
+      expect(postconditionIndex).toBeGreaterThan(removalIndex);
+      expect(returnedGatewayLists.at(-1)).toBe("[]");
       expect(combined).not.toContain("Deleted provider 'nvidia-nim' skipped");
       expect(combined).not.toContain("Deleted all OpenShell sandboxes skipped");
     },
