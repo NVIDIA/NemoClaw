@@ -14,11 +14,18 @@ on:
       - "agents/hermes/Dockerfile"
       - "agents/hermes/dashboard-external-host.patch"
       - "agents/hermes/start.sh"
+      - "src/lib/actions/sandbox/forward-recovery.ts"
+      - "src/lib/actions/sandbox/probe/hermes-portable-forward-recovery.ts"
+      - "src/lib/actions/sandbox/start.ts"
+      - "src/lib/adapters/openshell/forward-service.ts"
       - "src/lib/onboard/experimental/hermes-portable-build-context-files.ts"
       - "src/lib/onboard/experimental/hermes-portable-build-context.ts"
+      - "src/lib/onboard/experimental/hermes-portable-contract.ts"
+      - "src/lib/onboard/experimental/hermes-portable-lifecycle.ts"
       - "src/lib/onboard/experimental/portable-host-preparation.ts"
       - "src/lib/onboard/experimental/portable-profile.ts"
       - "src/lib/onboard/experimental/portable-retired-subnet-recovery.test.ts"
+      - "src/lib/onboard/runtime-provider/docker.ts"
       - "test/e2e/live/portable-profile-rootless-linux.test.ts"
       - "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts"
   push:
@@ -87,7 +94,29 @@ jobs:
       - name: Install pinned OpenShell
         run: |
           env -u GH_TOKEN -u GITHUB_TOKEN NEMOCLAW_NON_INTERACTIVE=1 bash scripts/install-openshell.sh
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          authority_dir="/usr/bin"
+          for component in openshell openshell-gateway openshell-sandbox; do
+            resolved="$(command -v "$component")"
+            sudo install -o root -g root -m 0755 "$resolved" "$authority_dir/$component"
+          done
+          echo "$authority_dir" >> "$GITHUB_PATH"
+
+      - name: Qualify the root-owned OpenShell executable path
+        shell: bash
+        run: |
+          set -euo pipefail
+          openshell_bin="$(command -v openshell)"
+          test "$openshell_bin" = "/usr/bin/openshell"
+          test -f "$openshell_bin"
+          for component in \
+            / \
+            /usr \
+            /usr/bin \
+            "$openshell_bin"; do
+            test ! -L "$component"
+            test "$(stat -c '%u:%g:%a' "$component")" = "0:0:755"
+          done
+          test "$(realpath "$openshell_bin")" = "$openshell_bin"
 
       - name: Provision restricted rootless Linux runtime
         shell: bash
