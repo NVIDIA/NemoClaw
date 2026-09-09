@@ -1,8 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 
 import {
   buildMcpToolDiscoveryAuthorizationPlaceholder,
@@ -13,10 +17,25 @@ import {
   normalizeMcpToolPage,
   parseMcpToolDiscoveryArguments,
   runMcpToolDiscoverySession,
+  ToolDiscoveryRuntimeError,
 } from "./tool-discovery-core.ts";
 
 function writeResult(result: McpToolDiscoveryResult): void {
   process.stdout.write(`${JSON.stringify({ protocol: MCP_TOOL_DISCOVERY_PROTOCOL, ...result })}\n`);
+}
+
+export function normalizeMcpSdkError(error: unknown): unknown {
+  return error instanceof McpError && error.code === ErrorCode.RequestTimeout
+    ? new ToolDiscoveryRuntimeError("timeout")
+    : error;
+}
+
+async function callMcpSdk<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    throw normalizeMcpSdkError(error);
+  }
 }
 
 async function main(): Promise<void> {
@@ -30,6 +49,8 @@ async function main(): Promise<void> {
       tools: [],
       truncated: false,
       detail: "tool discovery received invalid runtime arguments",
+      failedStage: "preflight",
+      failureClass: "precondition",
     });
     return;
   }
@@ -50,6 +71,8 @@ async function main(): Promise<void> {
       tools: [],
       truncated: false,
       detail: "managed MCP credential placeholder is unavailable",
+      failedStage: "preflight",
+      failureClass: "precondition",
     });
     return;
   }
@@ -79,11 +102,12 @@ async function main(): Promise<void> {
   };
 
   await runMcpToolDiscoverySession({
-    connect: () => client.connect(transport, requestOptions),
-    loadPage: async (cursor) => {
-      const page = await client.listTools(cursor ? { cursor } : undefined, requestOptions);
-      return normalizeMcpToolPage(page);
-    },
+    connect: () => callMcpSdk(() => client.connect(transport, requestOptions)),
+    loadPage: (cursor) =>
+      callMcpSdk(async () => {
+        const page = await client.listTools(cursor ? { cursor } : undefined, requestOptions);
+        return normalizeMcpToolPage(page);
+      }),
     hasSession: () => Boolean(transport.sessionId),
     terminateSession: () => transport.terminateSession(),
     close: () => client.close(),
@@ -91,4 +115,10 @@ async function main(): Promise<void> {
   });
 }
 
-await main();
+const entrypointPath = process.argv[1];
+if (
+  entrypointPath &&
+  realpathSync(fileURLToPath(import.meta.url)) === realpathSync(entrypointPath)
+) {
+  await main();
+}
