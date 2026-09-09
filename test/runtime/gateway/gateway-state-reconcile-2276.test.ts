@@ -174,7 +174,10 @@ if (args[0] === "inference" && args[1] === "get") {
   process.exit(0);
 }
 
-if (args[0] === "provider" && args[1] === "get") process.exit(0);
+if (args[0] === "provider" && args[1] === "get") {
+  process.stdout.write("Name: nvidia-prod\\nType: nvidia\\nCredential keys: NVIDIA_INFERENCE_API_KEY\\nConfig keys: <none>\\n");
+  process.exit(0);
+}
 
 // forward stop/start, provider delete, logs, etc. — no-op success
 process.exit(0);
