@@ -63,6 +63,7 @@ export type DockerFixtureAcknowledgement =
   | "journal:create"
   | "journal:cutover"
   | "journal:completion"
+  | "journal:bootstrap-complete"
   | "journal:owner-cleanup-required"
   | "journal:remove"
   | "journal:rollback-authorized"
@@ -83,6 +84,7 @@ export type DockerFixtureOptions = {
   >;
   readonly lostAcknowledgements?: readonly DockerFixtureAcknowledgement[];
   readonly ownerId?: string;
+  readonly completionUnavailablePolls?: number;
   readonly replacementEnvironment?: (environment: readonly string[]) => readonly string[];
   readonly sharedState?: "committed" | "none" | "pending";
   readonly sharedStateCommitResult?: FixtureCommandResult;
@@ -234,6 +236,7 @@ export function fixture(options: DockerFixtureOptions = {}) {
   let journal: DockerManagedBootstrapJournal | null = null;
   let finalization: DockerManagedBootstrapFinalizationRecord | null = null;
   let sharedState: "committed" | "none" | "pending" = options.sharedState ?? "none";
+  let completionUnavailablePolls = Math.max(0, options.completionUnavailablePolls ?? 0);
   const events: string[] = [];
   const dockerRemoveFailures = [...(options.dockerRemoveFailures ?? [])];
   const dockerRemoveResults = [...(options.dockerRemoveResults ?? [])];
@@ -436,6 +439,13 @@ export function fixture(options: DockerFixtureOptions = {}) {
           };
           const copyFromContainer = () => {
             if (source === `${NEW_ID}:${MANAGED_BOOTSTRAP_COMPLETION_FILE}`) {
+              if (completionUnavailablePolls > 0) {
+                completionUnavailablePolls -= 1;
+                return {
+                  status: 1,
+                  stderr: `Error response from daemon: Could not find the file ${MANAGED_BOOTSTRAP_COMPLETION_FILE} in container ${NEW_ID}`,
+                };
+              }
               fs.writeFileSync(
                 destination,
                 serializeManagedBootstrapImageCompletion({

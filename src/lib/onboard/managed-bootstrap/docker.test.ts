@@ -333,6 +333,7 @@ describe("Docker managed bootstrap adapter", () => {
         "journal:create",
         "journal:cutover",
         "journal:completion",
+        "journal:bootstrap-complete",
         "journal:remove",
         "journal:shared-state-committed",
       ],
@@ -383,6 +384,7 @@ describe("Docker managed bootstrap adapter", () => {
       replacement,
       timeoutSecs: 1,
     });
+    expect(fake.journal?.phase).toBe("bootstrap-complete");
     const reorderedCommitReceipt = {
       completedAt: commitReceipt.completedAt,
       transactionPending: commitReceipt.transactionPending,
@@ -424,6 +426,11 @@ describe("Docker managed bootstrap adapter", () => {
     expect(fake.finalization).toMatchObject({ phase: "committed", commitReceipt });
     expect(fake.sharedState).toBe("none");
     expect(fake.replacement?.Id).toBe(NEW_ID);
+    expect(vi.mocked(fake.deps.runOpenshell!).mock.calls.map(([args]) => args.slice(0, 2))).toEqual([
+      ["sandbox", "stop"],
+      ["sandbox", "start"],
+      ["sandbox", "exec"],
+    ]);
 
     const eventCount = fake.events.length;
     await expect(
@@ -463,7 +470,7 @@ describe("Docker managed bootstrap adapter", () => {
   });
 
   it("uses the Docker-GPU reconnect minimum instead of the shorter create timeout", async () => {
-    const fake = fixture();
+    const fake = fixture({ completionUnavailablePolls: 1 });
     fake.deps.sleep = vi.fn();
     const adapter = createDockerManagedBootstrapAdapter(fake.deps);
     const { handle, request, snapshot } = authority();
@@ -481,10 +488,6 @@ describe("Docker managed bootstrap adapter", () => {
       durablePreparation: durable,
     });
     const dateNow = vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValue(2_000);
-    vi.mocked(fake.deps.runOpenshell!)
-      .mockImplementationOnce(() => ({ status: 1 }))
-      .mockReturnValue({ status: 0 });
-
     await expect(
       adapter.awaitBootstrap({
         handle,
@@ -494,7 +497,12 @@ describe("Docker managed bootstrap adapter", () => {
       }),
     ).resolves.toMatchObject({ runtimeId: NEW_ID });
 
-    expect(fake.deps.runOpenshell).toHaveBeenCalledTimes(2);
+    const completionCopies = vi
+      .mocked(fake.deps.dockerRun)
+      .mock.calls.filter(
+        ([args]) => args[0] === "cp" && String(args[1]).startsWith(`${NEW_ID}:`),
+      );
+    expect(completionCopies).toHaveLength(2);
     expect(fake.deps.sleep).toHaveBeenCalledWith(2);
     dateNow.mockRestore();
   });
@@ -503,17 +511,21 @@ describe("Docker managed bootstrap adapter", () => {
     const fake = fixture();
     const secret = "diagnostic-secret-canary";
     fake.deps.errorPhaseDebouncePolls = 1;
-    fake.deps.runOpenshell = vi.fn(() => {
-      assert(fake.replacement?.State);
-      Object.assign(fake.replacement.State, {
-        Status: "exited",
-        Running: false,
-        ExitCode: 137,
-        OOMKilled: true,
-        Error: "startup terminated",
+    fake.deps.runOpenshell = vi
+      .fn()
+      .mockImplementationOnce(() => ({ status: 0 }))
+      .mockImplementationOnce(() => ({ status: 0 }))
+      .mockImplementation(() => {
+        assert(fake.replacement?.State);
+        Object.assign(fake.replacement.State, {
+          Status: "exited",
+          Running: false,
+          ExitCode: 137,
+          OOMKilled: true,
+          Error: "startup terminated",
+        });
+        return { status: 1 };
       });
-      return { status: 1 };
-    });
     fake.deps.runCaptureOpenshell = vi.fn(() => "alpha Error");
     fake.deps.dockerLogs = vi.fn((id, options) => {
       expect(id).toBe(NEW_ID);
@@ -535,8 +547,22 @@ describe("Docker managed bootstrap adapter", () => {
       prepared,
       durablePreparation: durable,
     });
+    const commitReceipt = await adapter.awaitBootstrap({
+      handle,
+      snapshot,
+      replacement,
+      timeoutSecs: 1,
+    });
     const failure = await adapter
-      .awaitBootstrap({ handle, snapshot, replacement, timeoutSecs: 1 })
+      .finalizeBootstrap({
+        outcome: "commit",
+        handle,
+        snapshot,
+        prepared,
+        durablePreparation: durable,
+        replacement,
+        completion: commitReceipt,
+      })
       .catch((error: unknown) => error);
 
     expect(failure).toBeInstanceOf(Error);

@@ -241,9 +241,13 @@ describe("Docker managed bootstrap journal", () => {
     expect(store.recordCompletion(IDENTITY, finalization.commitReceipt).commitReceipt).toEqual(
       finalization.commitReceipt,
     );
-    expect(store.transition(IDENTITY, "cutover", "shared-state-committed").phase).toBe(
-      "shared-state-committed",
+    expect(store.transition(IDENTITY, "cutover", "bootstrap-complete").phase).toBe(
+      "bootstrap-complete",
     );
+    const restarted = createFileDockerManagedBootstrapJournalStore(root);
+    expect(
+      restarted.transition(IDENTITY, "bootstrap-complete", "shared-state-committed").phase,
+    ).toBe("shared-state-committed");
     store.remove(IDENTITY, ["shared-state-committed"]);
     expect(store.load(IDENTITY)).toBeNull();
   });
