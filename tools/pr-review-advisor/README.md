@@ -73,9 +73,11 @@ attempt, workflow, source head, base, finding IDs, and selected paths to match t
 The reporter binds its generated-head code and every workflow it dispatches to one revision that it
 first verifies as the current trusted `main`. It rebuilds the checked-in risk plan from the receipt's
 changed paths and the generated SHA. When that plan requires E2E jobs, it dispatches only those jobs
-through the trusted `main` workflow. The authoritative E2E planner and workflow metadata determine
-the expected job names. Each name must have one job record with completed status and a successful
-conclusion.
+through the trusted `main` workflow, bound to the exact repair attempt. Repair E2E cannot cancel an
+earlier run, uses mock inference, posts nothing to Slack, receives no E2E credentials, and cannot
+select protected or dedicated infrastructure. The authoritative E2E planner and workflow metadata
+determine the expected job names. Each name must have one job record with completed status and a
+successful conclusion.
 Missing, skipped, failed, duplicate, or unmapped job evidence fails closed. The reporter also
 downloads the sole dispatch receipt, verifies its artifact digest, and requires its PR, commit,
 workflow, run, and selector fields to match the request. The version 2 generated-head receipt records
@@ -90,8 +92,9 @@ its exclusion list is empty:
 - `verification-mistake-proofing`: non-E2E JavaScript or TypeScript under `test/`
 - `documentation-standard-work`: Markdown or MDX under `docs/`
 
-The model-provided finding kind cannot widen this list. Every other specialist and path combination,
-or any nonempty exclusion list, fails closed.
+Security findings are never eligible for automated repair, even when their specialist and path
+otherwise match an allowed pair. The model-provided finding kind cannot widen this list. Every other
+specialist and path combination, or any nonempty exclusion list, fails closed.
 
 Before dispatch, configure the `advisor-repair-publish` environment with required reviewers limited
 to users or teams that hold `maintain` or `admin` permission, plus the intended self-review policy,

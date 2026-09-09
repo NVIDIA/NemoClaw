@@ -320,10 +320,10 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   }
   if (
     workflow.concurrency?.["cancel-in-progress"] !==
-    "${{ inputs.checkout_sha != '' && !inputs.allow_jetson_dispatch && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable-identity,') && !inputs.include_staging_brev_launchable }}"
+    "${{ !inputs.repair_validation && inputs.checkout_sha != '' && !inputs.allow_jetson_dispatch && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable-identity,') && !inputs.include_staging_brev_launchable }}"
   ) {
     errors.push(
-      "Manual PR E2E concurrency must not cancel an active Jetson or Launchable dispatch",
+      "Manual PR E2E concurrency must not cancel an active repair, Jetson, or Launchable dispatch",
     );
   }
 
@@ -391,8 +391,12 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
     EXPECTED_WORKFLOW_SHA: "${{ inputs.workflow_sha }}",
     INCLUDE_LAUNCHABLE: "${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}",
+    INFERENCE_MODE: "${{ inputs.inference_mode || 'mock' }}",
     JOBS: "${{ inputs.jobs }}",
+    POST_TO_SLACK: "${{ inputs.post_to_slack && 'true' || 'false' }}",
     PR_NUMBER: "${{ inputs.pr_number }}",
+    REPAIR_ATTEMPT_KEY: "${{ inputs.repair_attempt_key }}",
+    REPAIR_VALIDATION: "${{ inputs.repair_validation && 'true' || 'false' }}",
     TARGETS: "${{ inputs.targets }}",
     WORKFLOW_EVENT: "${{ github.event_name }}",
     WORKFLOW_REF: "${{ github.ref }}",
@@ -414,6 +418,11 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     '"$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$',
     '"$BASE_SHA" =~ ^[a-f0-9]{40}$',
     '"$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA"',
+    'if [[ "$REPAIR_VALIDATION" == "true" ]]',
+    '"$WORKFLOW_REF" == "refs/heads/main"',
+    '"$REPAIR_ATTEMPT_KEY" =~ ^sha256:[a-f0-9]{64}$',
+    '"$INFERENCE_MODE" == "mock"',
+    '"$POST_TO_SLACK" != "true"',
     "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}",
     `[[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "NVIDIA/NemoClaw" ]]`,
     `[[ "$(jq -r '.base.ref // ""' <<< "$pull_json")" == "main" ]]`,
@@ -529,6 +538,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     EVENT_NAME: "${{ github.event_name }}",
     EXPECTED_WORKFLOW_SHA: "${{ inputs.workflow_sha }}",
     NVIDIA_OWNED: "${{ steps.candidate_authorization.outputs.nvidia_owned }}",
+    REPAIR_VALIDATION: "${{ inputs.repair_validation && 'true' || 'false' }}",
     REF: "${{ github.ref }}",
     WORKFLOW_REPOSITORY: "${{ github.repository }}",
     WORKFLOW_SHA: "${{ github.workflow_sha }}",
@@ -548,6 +558,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     '"$WORKFLOW_SHA" =~ ^[a-f0-9]{40}$',
     '"$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA"',
     '"$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA"',
+    '"$REPAIR_VALIDATION" != "true"',
     "credentials_allowed=false",
     "credentials_allowed=true",
     'printf \'allowed=%s\\n\' "$credentials_allowed" >> "$GITHUB_OUTPUT"',

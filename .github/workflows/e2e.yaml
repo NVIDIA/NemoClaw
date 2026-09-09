@@ -97,6 +97,16 @@ on:
         required: false
         default: ""
         type: string
+      repair_validation:
+        description: Run credential-free exact-head validation for one Advisor repair attempt.
+        required: false
+        default: false
+        type: boolean
+      repair_attempt_key:
+        description: Exact Advisor repair attempt digest when repair_validation is true.
+        required: false
+        default: ""
+        type: string
 
 permissions:
   checks: read
@@ -104,8 +114,8 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: e2e-${{ github.ref }}-${{ inputs.checkout_sha != '' && format('pr-{0}', inputs.pr_number) || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && format('full-{0}', github.run_id)) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'manual-pr' || inputs.jobs || 'all-jobs' }}
-  cancel-in-progress: ${{ inputs.checkout_sha != '' && !inputs.allow_jetson_dispatch && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable-identity,') && !inputs.include_staging_brev_launchable }}
+  group: e2e-${{ github.ref }}-${{ inputs.repair_validation && format('repair-{0}', inputs.repair_attempt_key) || inputs.checkout_sha != '' && format('pr-{0}', inputs.pr_number) || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && format('full-{0}', github.run_id)) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'manual-pr' || inputs.jobs || 'all-jobs' }}
+  cancel-in-progress: ${{ !inputs.repair_validation && inputs.checkout_sha != '' && !inputs.allow_jetson_dispatch && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable-identity,') && !inputs.include_staging_brev_launchable }}
 
 env:
   NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.checkout_sha }}
@@ -405,8 +415,12 @@ jobs:
           EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
 
           INCLUDE_LAUNCHABLE: ${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}
+          INFERENCE_MODE: ${{ inputs.inference_mode || 'mock' }}
           JOBS: ${{ inputs.jobs }}
+          POST_TO_SLACK: ${{ inputs.post_to_slack && 'true' || 'false' }}
           PR_NUMBER: ${{ inputs.pr_number }}
+          REPAIR_ATTEMPT_KEY: ${{ inputs.repair_attempt_key }}
+          REPAIR_VALIDATION: ${{ inputs.repair_validation && 'true' || 'false' }}
           TARGETS: ${{ inputs.targets }}
           WORKFLOW_EVENT: ${{ github.event_name }}
           WORKFLOW_REF: ${{ github.ref }}
@@ -425,6 +439,15 @@ jobs:
           [[ "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "::error::checkout_sha must be a lowercase 40-character SHA" >&2; exit 1; }
           [[ "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "::error::base_sha must be a lowercase 40-character SHA" >&2; exit 1; }
           [[ "$EXPECTED_WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ && "$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA" ]] || { echo "::error::workflow_sha must match the trusted main workflow SHA" >&2; exit 1; }
+          if [[ "$REPAIR_VALIDATION" == "true" ]]; then
+            [[ "$WORKFLOW_REF" == "refs/heads/main" ]] || { echo "::error::repair validation must run from trusted main" >&2; exit 1; }
+            [[ "$REPAIR_ATTEMPT_KEY" =~ ^sha256:[a-f0-9]{64}$ ]] || { echo "::error::repair_attempt_key must be an exact Advisor repair digest" >&2; exit 1; }
+            [[ -n "$JOBS" && -z "$TARGETS" ]] || { echo "::error::repair validation requires an explicit jobs-only selection" >&2; exit 1; }
+            [[ "$INFERENCE_MODE" == "mock" && "$POST_TO_SLACK" != "true" ]] || { echo "::error::repair validation cannot use inference credentials or external reporting" >&2; exit 1; }
+            [[ "$ALLOW_JETSON_DISPATCH" != "true" && "$ALLOW_DGX_SPARK_RUNNER_QUEUE" != "true" && "$INCLUDE_LAUNCHABLE" != "true" ]] || { echo "::error::repair validation cannot dispatch protected or dedicated infrastructure" >&2; exit 1; }
+          else
+            [[ -z "$REPAIR_ATTEMPT_KEY" ]] || { echo "::error::repair_attempt_key requires repair_validation" >&2; exit 1; }
+          fi
 
           pull_json="$(curl --fail --silent --show-error --proto '=https' \
             --header "Accept: application/vnd.github+json" \
@@ -511,6 +534,8 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           INCLUDE_STAGING_BREV_LAUNCHABLE: ${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}
           PR_NUMBER: ${{ inputs.checkout_sha != '' && inputs.pr_number || '' }}
+          REPAIR_ATTEMPT_KEY: ${{ inputs.repair_attempt_key }}
+          REPAIR_VALIDATION: ${{ inputs.repair_validation && 'true' || 'false' }}
           REPOSITORY: ${{ github.repository }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
           RUN_ID: ${{ github.run_id }}
@@ -529,6 +554,7 @@ jobs:
             --arg jobs "$DISPATCH_JOBS" \
             --arg prNumber "$PR_NUMBER" \
             --arg repository "$REPOSITORY" \
+            --arg repairAttemptKey "$REPAIR_ATTEMPT_KEY" \
             --arg targets "$DISPATCH_TARGETS" \
             --arg triggeringActor "$TRIGGERING_ACTOR" \
             --arg workflowRunId "$RUN_ID" \
@@ -537,6 +563,7 @@ jobs:
             --argjson allowJetsonDispatch "$ALLOW_JETSON_DISPATCH" \
             --argjson allowJetsonRunnerQueue "$ALLOW_JETSON_RUNNER_QUEUE" \
             --argjson includeStagingBrevLaunchable "$INCLUDE_STAGING_BREV_LAUNCHABLE" \
+            --argjson repairValidation "$REPAIR_VALIDATION" \
             --argjson workflowRunAttempt "$RUN_ATTEMPT" \
             '{
               kind: "nemoclaw-e2e-dispatch-v2",
@@ -556,6 +583,8 @@ jobs:
               allowJetsonDispatch: $allowJetsonDispatch,
               allowJetsonRunnerQueue: $allowJetsonRunnerQueue,
               includeStagingBrevLaunchable: $includeStagingBrevLaunchable,
+              repairValidation: $repairValidation,
+              repairAttemptKey: $repairAttemptKey,
               triggeringActor: $triggeringActor,
               emptySelectors: ($jobs == "" and $targets == "")
             }' >"$DISPATCH_RECEIPT_DIR/dispatch.json"
@@ -689,7 +718,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           BEFORE_SHA: ${{ github.event.before }}
           CANDIDATE_SHA: ${{ github.sha }}
-          NEMOCLAW_E2E_CREDENTIALS_ALLOWED: ${{ (inputs.checkout_sha == '' || steps.candidate_authorization.outputs.nvidia_owned == 'true') && 'true' || 'false' }}
+          NEMOCLAW_E2E_CREDENTIALS_ALLOWED: ${{ !inputs.repair_validation && (inputs.checkout_sha == '' || steps.candidate_authorization.outputs.nvidia_owned == 'true') && 'true' || 'false' }}
           NEMOCLAW_E2E_BRAVE_API_KEY_AVAILABLE: ${{ secrets.BRAVE_API_KEY != '' && 'true' || 'false' }}
           NVIDIA_OWNED: ${{ steps.candidate_authorization.outputs.nvidia_owned }}
         run: |
@@ -803,6 +832,7 @@ jobs:
           CHECKOUT_SHA: ${{ inputs.checkout_sha }}
           EVENT_NAME: ${{ github.event_name }}
           EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
+          REPAIR_VALIDATION: ${{ inputs.repair_validation && 'true' || 'false' }}
           NVIDIA_OWNED: ${{ steps.candidate_authorization.outputs.nvidia_owned }}
           REF: ${{ github.ref }}
           WORKFLOW_REPOSITORY: ${{ github.repository }}
@@ -818,7 +848,8 @@ jobs:
                 "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ &&
                 "$WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ &&
                 "$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA" &&
-                "$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA" ]]; then
+                "$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA" &&
+                "$REPAIR_VALIDATION" != "true" ]]; then
             credentials_allowed=true
           fi
           printf 'allowed=%s\n' "$credentials_allowed" >> "$GITHUB_OUTPUT"

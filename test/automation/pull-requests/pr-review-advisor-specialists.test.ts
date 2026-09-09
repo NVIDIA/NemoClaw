@@ -599,6 +599,66 @@ describe("PR review advisor specialist prompts", () => {
     ).toThrow("no opted-in finding is eligible for repair");
   });
 
+  it("never selects security findings from an otherwise eligible repair class (#10791)", async () => {
+    const headSha = "a".repeat(40);
+    const controller = createAdvisorFindingToolController({
+      headSha,
+      interest: "customer-value-behavior",
+    });
+    const record = controller.tools[0] as CallableTool;
+    await record.execute(
+      "record",
+      {
+        findings: [
+          {
+            severity: "P1",
+            kind: "security",
+            summary: "The eligible source path exposes a security boundary.",
+            path: "src/lib/example.ts",
+            line: 4,
+            impact: "Automation could publish a security-sensitive change.",
+            smallestSafeFix: "Leave the repair to a maintainer.",
+            regressionTest: "Prove security findings remain ineligible.",
+            exclusions: [],
+          },
+        ],
+        noFindingsReason: null,
+      },
+      undefined,
+      undefined,
+      undefined as never,
+    );
+    const finding = controller.snapshot().findings[0]!;
+
+    expect(() =>
+      selectRepairFindings({
+        version: 1,
+        repository: "NVIDIA/NemoClaw",
+        prNumber: 42,
+        sourceHeadSha: headSha,
+        baseSha: "b".repeat(40),
+        headRef: "feature/fix",
+        repositoryId: "R_repo",
+        author: "maintainer",
+        actor: "maintainer",
+        triggeringActor: "maintainer",
+        workflowSha: "c".repeat(40),
+        advisor: {
+          runId: 7,
+          runAttempt: 1,
+          workflowSha: "d".repeat(40),
+          artifactIds: Array.from({ length: 10 }, (_, index) => index + 1),
+        },
+        stateDigest: `sha256:${"e".repeat(64)}`,
+        reviewDigest: `sha256:${"f".repeat(64)}`,
+        ledgers: [controller.snapshot()],
+        optedFindingIds: [finding.id],
+        productScope: "accepted:#10791",
+        optIn: "manual-exact-head",
+      }),
+    ).toThrow("no opted-in finding is eligible for repair");
+  });
+
   it("binds Phase 0 to the exact manual run, PR revisions, artifacts, and owner (#10791)", () => {
     const headSha = "a".repeat(40);
     const baseSha = "b".repeat(40);

@@ -233,10 +233,10 @@ describe("PR Review Advisor generated-head evidence", () => {
     const e2eCorrelationId = "01234567-89ab-4cde-8fab-0123456789ab";
     const e2eUrl = `https://github.com/${selection.repository}/actions/runs/${e2eRunId}`;
     const e2eArtifactId = 990;
-    const expectedE2eJobNames = e2eEvidenceJobNamesForSelectors([
-      "onboard-repair",
-      "onboard-resume",
-    ]);
+    const expectedE2eJobNames = [
+      "Onboarding: repairs a missing sandbox and rejects conflicting resume input (docker)",
+      "Onboarding: resumes interrupted setup from recorded progress (docker)",
+    ];
     const dispatchedWorkflows = new Set<string>();
     const dispatchE2e = vi.fn(async () => ({
       runId: e2eRunId,
@@ -443,6 +443,8 @@ describe("PR Review Advisor generated-head evidence", () => {
           allowJetsonDispatch: false,
           allowJetsonRunnerQueue: false,
           includeStagingBrevLaunchable: false,
+          repairValidation: true,
+          repairAttemptKey: selection.attemptKey,
           emptySelectors: false,
           ...e2eReceiptOverrides,
         }),
@@ -561,6 +563,12 @@ describe("PR Review Advisor generated-head evidence", () => {
     e2eReceiptOverrides = { jobs: "onboard-repair" };
     dispatchedWorkflows.clear();
     await expect(verify()).rejects.toThrow("dispatch receipt content is invalid");
+    e2eReceiptOverrides = { repairValidation: false };
+    dispatchedWorkflows.clear();
+    await expect(verify()).rejects.toThrow("dispatch receipt content is invalid");
+    e2eReceiptOverrides = { repairAttemptKey: `sha256:${"0".repeat(64)}` };
+    dispatchedWorkflows.clear();
+    await expect(verify()).rejects.toThrow("dispatch receipt content is invalid");
   });
 
   it("derives E2E evidence names from the trusted plan rather than a repair map (#10791)", () => {
@@ -578,6 +586,7 @@ describe("PR Review Advisor generated-head evidence", () => {
         baseSha: "2".repeat(40),
         workflowSha: "3".repeat(40),
         correlationId: "01234567-89ab-4cde-8fab-0123456789ab",
+        attemptKey: `sha256:${"4".repeat(64)}`,
         requiredJobs: ["onboard-repair", "onboard-resume"],
       }),
     ).toEqual({
@@ -599,7 +608,35 @@ describe("PR Review Advisor generated-head evidence", () => {
         workflow_sha: "3".repeat(40),
         managed_image_revision: "",
         correlation_id: "01234567-89ab-4cde-8fab-0123456789ab",
+        repair_validation: true,
+        repair_attempt_key: `sha256:${"4".repeat(64)}`,
       },
     });
+  });
+
+  it("binds representative E2E selectors to fixed workflow evidence names (#10791)", () => {
+    expect(e2eEvidenceJobNamesForSelectors(["onboard-repair", "onboard-resume"])).toEqual([
+      "Onboarding: repairs a missing sandbox and rejects conflicting resume input (docker)",
+      "Onboarding: resumes interrupted setup from recorded progress (docker)",
+    ]);
+  });
+
+  it("keeps repair-generated E2E non-cancelable and credential-free (#10791)", () => {
+    const workflow = YAML.parse(readFileSync(".github/workflows/e2e.yaml", "utf8"));
+    const inputs = workflow.on.workflow_dispatch.inputs;
+    const serialized = JSON.stringify(workflow);
+    const credentialAuthorization = workflow.jobs["generate-matrix"].steps.find(
+      (step: { name?: string }) => step.name === "Authorize E2E credentials",
+    );
+
+    expect(inputs.repair_validation).toMatchObject({ type: "boolean", default: false });
+    expect(inputs.repair_attempt_key).toMatchObject({ type: "string", default: "" });
+    expect(String(workflow.concurrency.group)).toContain("inputs.repair_attempt_key");
+    expect(String(workflow.concurrency["cancel-in-progress"])).toContain(
+      "!inputs.repair_validation",
+    );
+    expect(serialized).toContain("repair validation must run from trusted main");
+    expect(String(credentialAuthorization.run)).toContain('"$REPAIR_VALIDATION" != "true"');
+    expect(serialized).toContain("!inputs.repair_validation");
   });
 });

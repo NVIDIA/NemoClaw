@@ -323,6 +323,7 @@ const TRUSTED_REPAIR_CLASSES = {
 } as const;
 
 function findingSkipReason(finding: AdvisorFinding): string | null {
+  if (finding.kind === "security") return "excluded:security-finding";
   const repairClass =
     TRUSTED_REPAIR_CLASSES[finding.interest as keyof typeof TRUSTED_REPAIR_CLASSES];
   if (!repairClass) return "excluded:untrusted-repair-class";

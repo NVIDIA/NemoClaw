@@ -2120,15 +2120,17 @@ function validateInferenceModeGeneration(
 function validateFullE2eConcurrency(errors: string[], workflow: WorkflowRecord): void {
   const concurrency = asRecord(workflow.concurrency);
   const expectedGroup =
-    "e2e-${{ github.ref }}-${{ inputs.checkout_sha != '' && format('pr-{0}', inputs.pr_number) || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && format('full-{0}', github.run_id)) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'manual-pr' || inputs.jobs || 'all-jobs' }}";
+    "e2e-${{ github.ref }}-${{ inputs.repair_validation && format('repair-{0}', inputs.repair_attempt_key) || inputs.checkout_sha != '' && format('pr-{0}', inputs.pr_number) || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && format('full-{0}', github.run_id)) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'manual-pr' || inputs.jobs || 'all-jobs' }}";
   if (concurrency.group !== expectedGroup) {
     errors.push("workflow concurrency must isolate each full dispatch with github.run_id");
   }
   if (
     concurrency["cancel-in-progress"] !==
-    "${{ inputs.checkout_sha != '' && !inputs.allow_jetson_dispatch && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable-identity,') && !inputs.include_staging_brev_launchable }}"
+    "${{ !inputs.repair_validation && inputs.checkout_sha != '' && !inputs.allow_jetson_dispatch && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable-identity,') && !inputs.include_staging_brev_launchable }}"
   ) {
-    errors.push("workflow concurrency must not cancel an active Jetson or Launchable dispatch");
+    errors.push(
+      "workflow concurrency must not cancel an active repair, Jetson, or Launchable dispatch",
+    );
   }
 }
 
@@ -2654,6 +2656,8 @@ function validateTrustedE2eDispatchReceipt(
     INCLUDE_STAGING_BREV_LAUNCHABLE:
       "${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}",
     PR_NUMBER: "${{ inputs.checkout_sha != '' && inputs.pr_number || '' }}",
+    REPAIR_ATTEMPT_KEY: "${{ inputs.repair_attempt_key }}",
+    REPAIR_VALIDATION: "${{ inputs.repair_validation && 'true' || 'false' }}",
     REPOSITORY: "${{ github.repository }}",
     RUN_ATTEMPT: "${{ github.run_attempt }}",
     RUN_ID: "${{ github.run_id }}",
@@ -2686,6 +2690,8 @@ function validateTrustedE2eDispatchReceipt(
     "allowJetsonDispatch: $allowJetsonDispatch",
     "allowJetsonRunnerQueue: $allowJetsonRunnerQueue",
     "includeStagingBrevLaunchable: $includeStagingBrevLaunchable",
+    "repairValidation: $repairValidation",
+    "repairAttemptKey: $repairAttemptKey",
     "triggeringActor: $triggeringActor",
     'emptySelectors: ($jobs == "" and $targets == "")',
     '>"$DISPATCH_RECEIPT_DIR/dispatch.json"',
@@ -2803,9 +2809,11 @@ function validateTrustedE2ePlannerBoundary(
   const generateEnv = asRecord(generate?.env);
   if (
     generateEnv.NEMOCLAW_E2E_CREDENTIALS_ALLOWED !==
-    "${{ (inputs.checkout_sha == '' || steps.candidate_authorization.outputs.nvidia_owned == 'true') && 'true' || 'false' }}"
+    "${{ !inputs.repair_validation && (inputs.checkout_sha == '' || steps.candidate_authorization.outputs.nvidia_owned == 'true') && 'true' || 'false' }}"
   ) {
-    errors.push("matrix generation step must bind NVIDIA-owned candidate authorization");
+    errors.push(
+      "matrix generation step must bind NVIDIA-owned candidate authorization and deny repair credentials",
+    );
   }
   if (generateEnv.NVIDIA_OWNED !== "${{ steps.candidate_authorization.outputs.nvidia_owned }}") {
     errors.push("matrix generation step must bind the authenticated PR repository owner");
@@ -2905,6 +2913,14 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
 
   const dispatchInputs = asRecord(workflowDispatch.inputs);
   requireInput(errors, dispatchInputs, "targets");
+  const repairValidationInput = requireInput(errors, dispatchInputs, "repair_validation");
+  if (repairValidationInput.type !== "boolean" || repairValidationInput.default !== false) {
+    errors.push("workflow_dispatch repair_validation input must be boolean and default to false");
+  }
+  const repairAttemptInput = requireInput(errors, dispatchInputs, "repair_attempt_key");
+  if (repairAttemptInput.type !== "string" || repairAttemptInput.default !== "") {
+    errors.push("workflow_dispatch repair_attempt_key input must be string and default to empty");
+  }
   validateFullE2eConcurrency(errors, workflow);
   validateStagingBrevLaunchableInput(errors, dispatchInputs);
   validateInferenceModeInput(errors, workflow, dispatchInputs);
@@ -3076,6 +3092,23 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   const candidateAuthorization = generateSteps.find(
     (step) => stringValue(step.id) === "candidate_authorization",
   );
+  const candidateAuthorizationEnv = asRecord(candidateAuthorization?.env);
+  if (
+    candidateAuthorizationEnv.REPAIR_ATTEMPT_KEY !== "${{ inputs.repair_attempt_key }}" ||
+    candidateAuthorizationEnv.REPAIR_VALIDATION !==
+      "${{ inputs.repair_validation && 'true' || 'false' }}"
+  ) {
+    errors.push("manual PR authentication must receive the exact repair validation identity");
+  }
+  for (const fragment of [
+    '[[ "$WORKFLOW_REF" == "refs/heads/main" ]]',
+    '[[ "$REPAIR_ATTEMPT_KEY" =~ ^sha256:[a-f0-9]{64}$ ]]',
+    '[[ -n "$JOBS" && -z "$TARGETS" ]]',
+    '[[ "$INFERENCE_MODE" == "mock" && "$POST_TO_SLACK" != "true" ]]',
+    '[[ -z "$REPAIR_ATTEMPT_KEY" ]]',
+  ]) {
+    requireRunContains(errors, candidateAuthorization, fragment);
+  }
   if (
     controllerMatrix &&
     candidateAuthorization &&

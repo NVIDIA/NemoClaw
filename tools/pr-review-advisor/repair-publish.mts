@@ -116,6 +116,8 @@ type E2eDispatchReceipt = {
   allowJetsonDispatch?: unknown;
   allowJetsonRunnerQueue?: unknown;
   includeStagingBrevLaunchable?: unknown;
+  repairValidation?: unknown;
+  repairAttemptKey?: unknown;
   emptySelectors?: unknown;
 };
 
@@ -305,6 +307,7 @@ type DispatchAdvisorRepairE2e = (input: {
   baseSha: string;
   workflowSha: string;
   correlationId: string;
+  attemptKey: string;
   requiredJobs: readonly string[];
   token: string;
 }) => Promise<{ runId: number; source: AdvisorRepairE2eDispatch["source"] }>;
@@ -315,6 +318,7 @@ export function advisorRepairE2eDispatchRequest(input: {
   baseSha: string;
   workflowSha: string;
   correlationId: string;
+  attemptKey: string;
   requiredJobs: readonly string[];
 }): { ref: "main"; inputs: Record<string, string | boolean> } {
   return {
@@ -336,6 +340,8 @@ export function advisorRepairE2eDispatchRequest(input: {
       workflow_sha: input.workflowSha,
       managed_image_revision: "",
       correlation_id: input.correlationId,
+      repair_validation: true,
+      repair_attempt_key: input.attemptKey,
     },
   };
 }
@@ -365,6 +371,7 @@ async function dispatchAdvisorRepairE2e(input: {
   baseSha: string;
   workflowSha: string;
   requiredJobs: readonly string[];
+  attemptKey: string;
   token: string;
   correlationId?: () => string;
   dispatch?: DispatchAdvisorRepairE2e;
@@ -631,6 +638,7 @@ async function verifiedE2eDispatchReceipt(
     generatedHeadSha: string;
     baseSha: string;
     workflowSha: string;
+    attemptKey: string;
     requiredJobs: readonly string[];
     request: GitHubRequest;
     requestArchive: ArtifactArchiveRequest;
@@ -694,6 +702,8 @@ async function verifiedE2eDispatchReceipt(
     receipt.allowJetsonDispatch !== false ||
     receipt.allowJetsonRunnerQueue !== false ||
     receipt.includeStagingBrevLaunchable !== false ||
+    receipt.repairValidation !== true ||
+    receipt.repairAttemptKey !== input.attemptKey ||
     receipt.emptySelectors !== false
   ) {
     throw new RepairError("generated-head E2E dispatch receipt content is invalid");
@@ -713,6 +723,7 @@ async function completedE2eEvidence(
     generatedHeadSha: string;
     baseSha: string;
     workflowSha: string;
+    attemptKey: string;
     requiredJobs: readonly string[];
     request: GitHubRequest;
     requestArchive: ArtifactArchiveRequest;
@@ -863,6 +874,7 @@ export async function waitForAdvisorRepairHead(input: {
         generatedHeadSha: input.generatedHeadSha,
         baseSha: input.baseSha,
         workflowSha: input.workflowSha,
+        attemptKey: input.attemptKey,
         requiredJobs: riskPlan.requiredJobs,
         token: required(input.token, "GITHUB_TOKEN"),
         correlationId: input.correlationId,
@@ -912,6 +924,7 @@ export async function waitForAdvisorRepairHead(input: {
         generatedHeadSha: input.generatedHeadSha,
         baseSha: input.baseSha,
         workflowSha: input.workflowSha,
+        attemptKey: input.attemptKey,
         requiredJobs: riskPlan.requiredJobs,
         request: input.request,
         requestArchive:
