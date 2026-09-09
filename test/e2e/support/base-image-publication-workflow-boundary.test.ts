@@ -113,7 +113,7 @@ describe("base-image publication workflow boundary (#7372)", () => {
 
   it.each([
     ["push to main", "push", "", "refs/heads/main", "0", "c".repeat(40), "0"],
-    ["manual main", "workflow_dispatch", "", "refs/heads/main", "0", "c".repeat(40), "0"],
+    ["manual main", "workflow_dispatch", "", "refs/heads/main", "0", "c".repeat(40), "1"],
     [
       "controller-selected PR",
       "workflow_dispatch",
