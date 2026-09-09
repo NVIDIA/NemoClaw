@@ -188,7 +188,7 @@ function runOpenClawUpgradeBlock(currentVersion: string) {
   )
     .replaceAll(
       "bash /scripts/lib/verify-mcporter-audit.sh",
-      "node --experimental-strip-types /scripts/lib/reviewed-npm-audit.mts --directory /usr/local/lib/nemoclaw/mcporter-runtime --exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --threshold high",
+      "node /scripts/lib/reviewed-npm-audit.mts --directory /usr/local/lib/nemoclaw/mcporter-runtime --exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --threshold high",
     )
     .replaceAll("/opt/nemoclaw-blueprint/blueprint.yaml", blueprint)
     .replaceAll("/usr/local/lib/node_modules/openclaw", openclawInstall)
