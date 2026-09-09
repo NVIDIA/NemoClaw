@@ -32,6 +32,12 @@ vi.mock("./resolver.js", () => ({
   resolveManagedInferenceServing: mocks.resolveManagedInferenceServing,
 }));
 
+vi.mock("../../readiness/host.js", () => ({
+  createHostReadinessReport() {
+    throw new Error("Host readiness must be supplied by the test");
+  },
+}));
+
 function hostLocalSelection(): ResolvedHostLocalInferenceSelection {
   const managed = fixtureManagedClusterSelection();
   const { topologyQualification: _topology, ...selection } = managed;
@@ -155,9 +161,11 @@ describe("host-local vLLM selection", () => {
     );
     mocks.resolveManagedInferenceServing.mockReturnValue(selection);
 
-    const result = resolveHostLocalVllmSelection(baseProfile(), {
-      NEMOCLAW_SERVING_PRESET: selection.preset.metadata.id,
-    });
+    const result = resolveHostLocalVllmSelection(
+      baseProfile(),
+      { NEMOCLAW_SERVING_PRESET: selection.preset.metadata.id },
+      { readinessReports: [] },
+    );
 
     expect(result).toMatchObject({
       kind: "selected",
@@ -221,9 +229,11 @@ describe("host-local vLLM selection", () => {
     const selection = hostLocalSelection();
     mocks.resolveManagedInferenceServing.mockReturnValue(selection);
 
-    const result = resolveHostLocalVllmSelection(baseProfile(), {
-      NEMOCLAW_VLLM_MODEL: selection.recipe.spec.model.environmentValue,
-    });
+    const result = resolveHostLocalVllmSelection(
+      baseProfile(),
+      { NEMOCLAW_VLLM_MODEL: selection.recipe.spec.model.environmentValue },
+      { readinessReports: [] },
+    );
 
     expect(result).toMatchObject({
       kind: "selected",
@@ -244,7 +254,7 @@ describe("host-local vLLM selection", () => {
     mocks.resolveManagedInferenceServing.mockReturnValue(selection);
 
     expect(
-      resolveHostLocalVllmSelection(baseProfile(), {}, { automatic: true }),
+      resolveHostLocalVllmSelection(baseProfile(), {}, { automatic: true, readinessReports: [] }),
     ).toMatchObject({
       kind: "selected",
     });
