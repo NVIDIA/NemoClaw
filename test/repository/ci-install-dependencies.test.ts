@@ -60,13 +60,14 @@ describe("shared CI dependency installer", () => {
         NPM_CONFIG_CACHE: join(fixture.root, "npm-cache"),
         NPM_TRACE: fixture.trace,
         PATH: fixture.path,
+        RUNNER_TEMP: join(fixture.root, "runner-temp"),
       },
     });
 
     expect(result.status, result.stderr).toBe(0);
     expect(readFileSync(fixture.trace, "utf8").trim().split("\n")).toEqual([
-      `ci --ignore-scripts --prefer-offline --cache ${join(fixture.root, "npm-cache")}`,
-      `--prefix nemoclaw ci --ignore-scripts --prefer-offline --cache ${join(fixture.root, "npm-cache")}`,
+      `ci --ignore-scripts --prefer-offline --no-audit --no-fund --cache ${join(fixture.root, "npm-cache")}`,
+      `--prefix nemoclaw ci --ignore-scripts --prefer-offline --no-audit --no-fund --cache ${join(fixture.root, "npm-cache")}`,
     ]);
   });
 

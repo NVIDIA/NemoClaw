@@ -303,6 +303,7 @@ function composedRecovery(fixture: ReturnType<typeof setup>, assertPublished = v
   });
   const registryRecovery = {
     started: true,
+    assertRetainedCurrent: vi.fn(),
     assertTransactionCurrent: vi.fn(),
     assertCurrent: vi.fn(),
     rollback: vi.fn(),
@@ -317,6 +318,7 @@ function composedRecovery(fixture: ReturnType<typeof setup>, assertPublished = v
         inferenceStateDir: "/state/portable-inference/alpha",
         network: fixture.externalNetwork,
         operation: fixture.publishedOperation,
+        assertRetainedCurrent: assertRuntimeTransaction,
         assertTransactionCurrent: assertRuntimeTransaction,
         assertCurrent: assertRuntime,
       };

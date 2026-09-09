@@ -113,7 +113,10 @@ later Jetson jobs instead of canceling a running job.
 For a trusted main run, the publication gate exports the first-parent commit
 whose successful managed-image workflow covers the candidate. The controller
 sends that commit as `managedImageRevision`. A manual candidate run preserves
-the existing exact-candidate selection.
+the exact-candidate selection only when it has a qualified `linux/arm64`
+managed-image revision. A changed-input PR candidate catalog qualifies
+`linux/amd64` only. The trusted publication job reports that limitation, and
+the Jetson job does not dispatch.
 
 The job grants only `contents: read` and `id-token: write`. The controller
 requests a short-lived GitHub OIDC token with audience

@@ -551,10 +551,6 @@ function validateLlamaCppPreset(
       },
     ],
     [
-      "container-runtime",
-      { operator: "equals", value: recipe.spec.runtime.containerRuntime },
-    ],
-    [
       "gpu-count",
       { operator: "at-least", value: recipe.spec.runtime.gpu.count },
     ],

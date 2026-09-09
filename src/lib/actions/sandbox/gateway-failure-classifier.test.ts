@@ -10,7 +10,12 @@ vi.mock("../../state/registry", () => ({
   listSandboxes: vi.fn(() => ({ sandboxes: [] })),
 }));
 
-import { classifyGatewayFailure, type GatewayFailureRunners } from "./gateway-failure-classifier";
+import {
+  classifyGatewayFailure,
+  classifyObservedSandboxContainerFailure,
+  type GatewayFailureRunners,
+  isDockerRuntimeDown,
+} from "./gateway-failure-classifier";
 
 function runners(overrides: Partial<GatewayFailureRunners> = {}): GatewayFailureRunners {
   return {
@@ -84,12 +89,57 @@ describe("classifyGatewayFailure (#7348)", () => {
     expect(result.detail).toContain("'openshell-cluster-nemoclaw'");
   });
 
-  it("short-circuits on an unreachable Docker daemon before resolving the gateway", async () => {
+  it("short-circuits on an unreachable Docker daemon before resolving the gateway container", async () => {
     const result = await classifyGatewayFailure("sb-1", {
       runners: runners({ dockerInfo: () => false }),
     });
 
     expect(result.layer).toBe("docker_unreachable");
-    expect(getSandboxMock).not.toHaveBeenCalled();
+    expect(getSandboxMock).toHaveBeenCalledWith("sb-1");
+  });
+
+  it("classifies native Podman gateway failure without invoking Docker", async () => {
+    getSandboxMock.mockReturnValue({ name: "sb-1", openshellDriver: " PODMAN " });
+    const dockerInfo = vi.fn(() => false);
+    const dockerIsRunning = vi.fn(() => false);
+    const dockerExists = vi.fn(() => false);
+    const portProbe = vi.fn(async () => false);
+
+    await expect(
+      classifyGatewayFailure("sb-1", {
+        runners: { dockerInfo, dockerIsRunning, dockerExists, portProbe },
+      }),
+    ).resolves.toEqual({
+      layer: "gateway_unreachable",
+      detail: "The OpenShell gateway for sandbox 'sb-1' is unreachable.",
+    });
+    expect(dockerInfo).not.toHaveBeenCalled();
+    expect(dockerIsRunning).not.toHaveBeenCalled();
+    expect(dockerExists).not.toHaveBeenCalled();
+    expect(portProbe).not.toHaveBeenCalled();
+  });
+});
+
+describe("classifyObservedSandboxContainerFailure", () => {
+  it("classifies a provider-observed stopped sandbox without naming its runtime", async () => {
+    await expect(
+      classifyObservedSandboxContainerFailure("alpha", "stopped", 18789, async () => false),
+    ).resolves.toMatchObject({ layer: "sandbox_container_stopped" });
+  });
+
+  it("does not duplicate running provider observations", async () => {
+    await expect(
+      classifyObservedSandboxContainerFailure("alpha", "running", 18789),
+    ).resolves.toBeNull();
+  });
+});
+
+describe("isDockerRuntimeDown", () => {
+  it("does not invoke Docker for a native Podman sandbox", () => {
+    getSandboxMock.mockReturnValue({ openshellDriver: " PODMAN " });
+    const dockerInfo = vi.fn(() => false);
+
+    expect(isDockerRuntimeDown("alpha", { runners: { dockerInfo } })).toBe(false);
+    expect(dockerInfo).not.toHaveBeenCalled();
   });
 });

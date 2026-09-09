@@ -17,6 +17,34 @@ describe("Docker GPU supervisor reconnect", () => {
 });
 
 describe("Docker GPU final handoff acknowledgement", () => {
+  it("expires a subsecond final handoff budget in milliseconds (#11096)", () => {
+    vi.useFakeTimers();
+    try {
+      const startedAtMs = new Date("2026-09-04T07:42:01Z").getTime();
+      vi.setSystemTime(startedAtMs);
+      const runCaptureOpenshell = vi.fn(() => "alpha  2026-09-04 07:42:01  Provisioning\n");
+      const sleep = vi.fn((seconds: number) => {
+        vi.advanceTimersByTime(seconds * 1000);
+      });
+
+      const acknowledgement = waitForOpenShellFinalHandoff("alpha", startedAtMs + 500, {
+        runCaptureOpenshell,
+        runOpenshell: vi.fn(() => ({ status: 1 })),
+        replacementIsExactAndRunning: vi.fn(() => true),
+        sleep,
+      });
+
+      expect(acknowledgement).toEqual({
+        acknowledged: false,
+        lastSandboxPhase: "Provisioning",
+      });
+      expect(Date.now() - startedAtMs).toBe(500);
+      expect(runCaptureOpenshell).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("accepts the exact running replacement only after OpenShell reports Ready (#9531)", () => {
     const events: string[] = [];
     const runCaptureOpenshell = vi
@@ -38,7 +66,7 @@ describe("Docker GPU final handoff acknowledgement", () => {
       return true;
     });
 
-    const acknowledgement = waitForOpenShellFinalHandoff("alpha", 60, {
+    const acknowledgement = waitForOpenShellFinalHandoff("alpha", Date.now() + 60_000, {
       runCaptureOpenshell,
       runOpenshell,
       replacementIsExactAndRunning,
@@ -78,7 +106,7 @@ describe("Docker GPU final handoff acknowledgement", () => {
     const sleep = vi.fn();
 
     expect(
-      waitForOpenShellFinalHandoff("alpha", 60, {
+      waitForOpenShellFinalHandoff("alpha", Date.now() + 60_000, {
         runCaptureOpenshell,
         runOpenshell,
         replacementIsExactAndRunning,
@@ -96,7 +124,7 @@ describe("Docker GPU final handoff acknowledgement", () => {
     const replacementIsExactAndRunning = vi.fn(() => false);
 
     expect(
-      waitForOpenShellFinalHandoff("alpha", 60, {
+      waitForOpenShellFinalHandoff("alpha", Date.now() + 60_000, {
         runCaptureOpenshell,
         runOpenshell: vi.fn(() => ({ status: 1 })),
         replacementIsExactAndRunning,
@@ -115,7 +143,7 @@ describe("Docker GPU final handoff acknowledgement", () => {
     const replacementIsExactAndRunning = vi.fn(() => true);
 
     expect(
-      waitForOpenShellFinalHandoff("alpha", 60, {
+      waitForOpenShellFinalHandoff("alpha", Date.now() + 60_000, {
         runCaptureOpenshell,
         runOpenshell,
         replacementIsExactAndRunning,
@@ -135,7 +163,7 @@ describe("Docker GPU final handoff acknowledgement", () => {
     const replacementIsExactAndRunning = vi.fn().mockReturnValueOnce(true).mockReturnValue(false);
 
     expect(
-      waitForOpenShellFinalHandoff("alpha", 60, {
+      waitForOpenShellFinalHandoff("alpha", Date.now() + 60_000, {
         runCaptureOpenshell,
         runOpenshell,
         replacementIsExactAndRunning,

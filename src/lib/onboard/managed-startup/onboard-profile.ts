@@ -108,6 +108,10 @@ function requireDashboardPort(port: number): number {
   return port;
 }
 
+function loopbackDashboardUrl(port: number): string {
+  return `http://127.0.0.1:${String(port)}`;
+}
+
 function dashboardHostname(chatUiUrl: string): string {
   try {
     return new URL(chatUiUrl).hostname;
@@ -161,11 +165,13 @@ function dashboardForInput(
   }
 
   const config = input.hermesDashboardState.config;
+  const effectivePort = requireDashboardPort(input.effectiveDashboardPort);
   if (!input.hermesDashboardState.enabled) {
     return {
       agent,
       mode: "disabled",
-      url: input.chatUiUrl,
+      url: loopbackDashboardUrl(effectivePort),
+      browserUrl: input.chatUiUrl,
       publicPort: null,
       internalPort: null,
       tuiEnabled: false,
@@ -176,11 +182,18 @@ function dashboardForInput(
       "Hermes dashboard is enabled without resolved configuration",
     );
   }
+  const publicPort = requireDashboardPort(config.port);
+  if (publicPort !== effectivePort) {
+    throw new ManagedStartupOnboardProfileError(
+      "Hermes dashboard state must match the allocated dashboard port",
+    );
+  }
   return {
     agent,
     mode: "loopback-forwarded",
-    url: input.chatUiUrl,
-    publicPort: requireDashboardPort(config.port),
+    url: loopbackDashboardUrl(publicPort),
+    browserUrl: input.chatUiUrl,
+    publicPort,
     internalPort: requireDashboardPort(config.internalPort),
     tuiEnabled: config.tuiEnabled,
   };

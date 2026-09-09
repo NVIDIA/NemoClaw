@@ -4,9 +4,29 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   deferSandboxLifecycleExit,
+  normalizeProcessExitCode,
   runWithDeferredSandboxLifecycleExit,
   spawnExitCode,
 } from "./process-exit";
+
+describe("normalizeProcessExitCode", () => {
+  it.each([
+    ["absent value", undefined, 0, 0],
+    ["null value", null, 0, 0],
+    ["custom absent fallback", undefined, 1, 1],
+    ["numeric value", 7, 0, 7],
+    ["integer-string value", "7", 0, 7],
+    ["whitespace zero", "  ", 1, 0],
+    ["empty string", "", 0, 1],
+    ["fractional string", "7.5", 0, 1],
+    ["nonnumeric string", "bad", 0, 1],
+  ] satisfies Array<[string, number | string | null | undefined, number, number]>)(
+    "normalizes %s",
+    (_label, value, absentExitCode, expected) => {
+      expect(normalizeProcessExitCode(value, absentExitCode)).toBe(expected);
+    },
+  );
+});
 
 describe("runWithDeferredSandboxLifecycleExit", () => {
   it("returns a completed operation without exiting", async () => {

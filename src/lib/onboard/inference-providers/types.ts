@@ -213,7 +213,7 @@ export type HermesDeps = CommonDeps & {
 // loosely so callers can pass either shape without casting.
 export type RunFn = (
   cmd: any,
-  opts?: { ignoreError?: boolean; suppressOutput?: boolean },
+  opts?: { ignoreError?: boolean; suppressOutput?: boolean; env?: NodeJS.ProcessEnv },
 ) => RunResult;
 
 export type VllmDeps = CommonDeps & {
@@ -242,7 +242,6 @@ export type OllamaDeps = CommonDeps & {
   };
   getLocalProviderBaseUrl: (provider: string) => any;
   applyLocalInferenceRoute: (provider: string, model: string) => Promise<boolean>;
-  getOllamaWarmupCommand: (model: string) => any;
   run: RunFn;
   shouldFrontOllamaWithProxy: () => boolean;
   ensureOllamaAuthProxy: () => void;
@@ -255,6 +254,15 @@ export type OllamaDeps = CommonDeps & {
       allowToolsIncompatible: boolean,
     ): { ok: boolean; message?: string };
     validateSandboxFacingOllamaModel(model: string): { ok: boolean; message?: string };
+    runOllamaWarmup(model: string, runImpl: RunFn): void;
+    loadPendingOllamaModelCleanup?(sandboxName: string): readonly string[];
+    persistPendingOllamaModelCleanup?(sandboxName: string, models: readonly string[]): void;
+    clearPendingOllamaModelCleanup?(sandboxName: string, releasedModels?: readonly string[]): void;
+    persistResolvedOllamaHost(): () => void;
+    loadPersistedOllamaHost?(): "127.0.0.1" | "host.docker.internal" | null;
+    clearPersistedOllamaHostIfUnused?(
+      routes: readonly { provider?: string | null; endpointUrl?: string | null }[],
+    ): boolean;
   };
   /** Exact provider-owned proof used instead of legacy host warmup/probes. */
   providerOwnedInferenceProof?: {

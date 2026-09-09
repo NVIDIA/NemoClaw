@@ -299,6 +299,16 @@ function artifactDirectory(homeDir: string, root: "config" | "receipt" | "regist
       : path.join(homeDir, ".nemoclaw");
 }
 
+/** Report whether this host owns a portable lifecycle receipt. */
+function ownsPortableLifecycleReceipt(boundary: PortableOnboardRetirementBoundary): boolean {
+  return (
+    readPortableAuthorityDirectory(
+      path.join(boundary.homeDir, ".nemoclaw/portable-demo-lifecycle"),
+      false,
+    ).entries.length > 0
+  );
+}
+
 function rejectUnknownRetirementArtifacts(
   homeDir: string,
   recovery: PortableRetirementRecovery | null,
@@ -456,7 +466,20 @@ async function recover(
     );
     return;
   }
-  rejectUnknownRetirementArtifacts(boundary.homeDir, recovery, recovery !== null);
+  // A host that owns no portable lifecycle resource has no portable authority
+  // to protect, so an abandoned `~/.config/nemoclaw/portable` must not gate an
+  // ordinary onboarding. `admission()` already draws that line for the same
+  // directory, and `hasPortableUninstallAuthority` draws it for uninstall
+  // (#10545). Onboarding is the last path that inspected it unconditionally,
+  // which refused every run on a host where an empty directory survived at an
+  // ordinary umask (#10740).
+  rejectUnknownRetirementArtifacts(
+    boundary.homeDir,
+    recovery,
+    recovery !== null,
+    false,
+    recovery !== null || ownsPortableLifecycleReceipt(boundary),
+  );
   if (!recovery) return;
   await resumeBeforeOnboard(boundary, recovery, deps);
   const completed = inspectPortableRetirementRecovery(boundary.homeDir);
@@ -551,7 +574,17 @@ export async function supersedePortableRetirementAfterCompletedOnboard(
   deps: PortableRetirementAuthorityDeps,
 ): Promise<void> {
   const recovery = inspectPortableOnboardSupersession(boundary.homeDir);
-  if (recovery === null) return rejectUnknownRetirementArtifacts(boundary.homeDir, recovery);
+  // Same rule as the entry gate, so a completed ordinary onboarding cannot be
+  // failed at its last step by the directory it was already admitted past, and
+  // a host that gained a lifecycle receipt during the run is still inspected.
+  if (recovery === null)
+    return rejectUnknownRetirementArtifacts(
+      boundary.homeDir,
+      recovery,
+      true,
+      false,
+      expected === "portable" || ownsPortableLifecycleReceipt(boundary),
+    );
   await lockedAuthority(boundary, expected, deps, (authority) =>
     supersedePortableRetirementAfterOnboard(boundary.homeDir, authority),
   );

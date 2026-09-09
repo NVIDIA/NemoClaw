@@ -27,6 +27,7 @@ import type {
 } from "../../../src/lib/onboard/runtime-provider/contract";
 import { createPodmanRuntimeProviderBundle } from "../../../src/lib/onboard/runtime-provider/podman";
 import type { SandboxEntry } from "../../../src/lib/state/registry/types";
+import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import { OPENSHELL_V0106_QUALIFICATION } from "../fixtures/openshell-v0106-qualification.ts";
@@ -134,7 +135,15 @@ test(
     });
     expect(doctor.detail).toContain("rootless server 5.");
     expect(bundle.identity.id).toBe("podman");
-    expect(bundle.workload.profile.support).toBeNull();
+    expect(bundle.workload.profile).toMatchObject({
+      support: {
+        exactDigestReferences: true,
+        platforms: ["linux/amd64", "linux/arm64"],
+      },
+      hostArchitectures: ["amd64", "arm64"],
+      managedImageSelectionPolicy: "require-managed",
+      legacyDockerfileBuilds: false,
+    });
     expect(bundle.capabilities.hostLocalInference).toBe(false);
 
     const openshellBin = executableOnPath("openshell");
@@ -215,7 +224,7 @@ exit 1
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-podman-openshell-"));
     const stateDir = path.join(root, "gateway-state");
     const cliEnv: NodeJS.ProcessEnv = {
-      ...process.env,
+      ...buildAvailabilityProbeEnv(),
       OPENSHELL_GATEWAY: GATEWAY_NAME,
       XDG_CONFIG_HOME: path.join(root, "cli-config"),
     };

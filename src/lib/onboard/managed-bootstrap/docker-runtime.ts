@@ -247,6 +247,7 @@ function createDockerLifecycle(
       fingerprint: input.request.profileFingerprint,
     },
     agentIdentity: input.agentIdentity,
+    managedStateRoots: input.managedStateRoots,
     intendedWorkloadArgv: input.intendedWorkloadArgv,
     expectedSupervisorArgv: input.expectedSupervisorArgv,
     metadata: {},
@@ -287,6 +288,7 @@ function createDockerLifecycle(
           selectedRoute: input.route,
           gatewayPort: input.network.gatewayPort,
           log: console.log,
+          reverifyBridgeReachability: input.network.reverifyBridgeReachability,
         },
       );
     },
@@ -345,6 +347,7 @@ function createDockerLifecycle(
       );
       patch.attachManagedBootstrapCutover({
         selectedMode: mode,
+        replacementRuntimeId: activated.replacement.replacementRuntimeId,
         failureContext: {
           sandboxName: input.sandboxName,
           oldContainerId: activated.snapshot.runtimeId,

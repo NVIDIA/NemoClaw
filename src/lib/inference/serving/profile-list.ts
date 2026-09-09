@@ -82,6 +82,9 @@ function compatibility(
       incompatibilityReason: `Backend ${recipe.spec.backend} is not available through Express onboarding yet.`,
     };
   }
+  // Managed vLLM installation still invokes the Docker-backed installer.
+  // Keep Docker readiness authoritative here until onboarding starts vLLM
+  // through the selected runtime provider's host-local operation.
   const resolution = resolveManagedInferenceServing(
     {
       readinessReports,

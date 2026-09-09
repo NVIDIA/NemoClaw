@@ -73,6 +73,7 @@ describe("managed inference YAML profile contract", () => {
     ["vllm.qwen3-6-27b-fp8.linux-amd64-single.v1", 48_000_000_000, 0.7, 30_900_000_000],
     ["vllm.qwen3-6-27b-fp8.linux-arm64-single.v1", 48_000_000_000, 0.7, 30_900_000_000],
     ["vllm.qwen3-6-27b-fp8.optimized-arm64-single.v1", 48_000_000_000, 0.7, 30_900_000_000],
+    ["vllm.qwen3-6-35b-a3b-nvfp4.n1x-single.v1", 64_000_000_000, 0.6, 23_500_000_000],
     ["vllm.qwen3-6-35b-a3b-nvfp4.spark-single.v1", 64_000_000_000, 0.4, 23_500_000_000],
     [
       "vllm.muse-glimmer-30b-nvfp4-w4a4.linux-amd64-single.v1",

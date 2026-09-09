@@ -3,6 +3,10 @@
 
 import type { SandboxGpuProofResult } from "../../state/registry";
 import type { ManagedStartupRootApplyRequest } from "../managed-startup/root-apply";
+import type {
+  ManagedStartupStateRoot,
+  ManagedStartupWorkspaceRoot,
+} from "../managed-startup/state-roots";
 import type { SandboxGpuConfig } from "../sandbox-gpu-mode";
 import type {
   ManagedBootstrapAdapter,
@@ -70,7 +74,11 @@ export interface ManagedBootstrapRuntimePatch {
     | Promise<void | ManagedBootstrapNativeGpuFallbackRollbackOutcome>;
   ensureApplied(): void | Promise<void>;
   waitForSupervisorReconnectIfNeeded(): void | Promise<void>;
-  commitAfterReady(): void | Promise<void>;
+  commitAfterReady(options?: {
+    readonly beforeFinalHandoff?: (replacementRuntimeId: string | null) => void;
+  }): void | Promise<void>;
+  /** True only after an exact replacement completed its owner-scoped final handoff. */
+  allowsNotReadyLifecycleRevalidation?(): boolean;
   selectedMode(): {
     readonly kind: string;
     readonly label: string;
@@ -85,11 +93,14 @@ export interface ManagedBootstrapRuntimePatch {
 
 export interface ManagedBootstrapRuntimeCreateLifecycleInput {
   readonly providerId: string;
+  readonly environment: NodeJS.ProcessEnv;
   readonly stateRoot: string;
   readonly bootstrapIdentity: string;
   readonly request: ManagedStartupRootApplyRequest;
   readonly image: ManagedBootstrapImageIdentity;
   readonly agentIdentity: ManagedBootstrapAgentIdentity;
+  readonly workspaceRoot: ManagedStartupWorkspaceRoot;
+  readonly managedStateRoots: readonly ManagedStartupStateRoot[];
   readonly intendedWorkloadArgv: readonly string[];
   readonly expectedSupervisorArgv: readonly string[];
   readonly launchArgv: readonly string[];
@@ -109,6 +120,7 @@ export interface ManagedBootstrapRuntimeCreateLifecycleInput {
     readonly inferenceProvider: string;
     readonly gatewayUsesContainerBridge: boolean;
     readonly gatewayPort: number;
+    readonly reverifyBridgeReachability: () => void | Promise<void>;
   };
   readonly dependencies: ManagedBootstrapRuntimeDependencies;
 }

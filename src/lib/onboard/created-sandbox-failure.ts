@@ -2,7 +2,35 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { redact } from "../security/redact";
+import { cliName } from "./branding";
 import type { CreatedSandboxReadinessResult } from "./sandbox-readiness-tracing";
+
+/** Format recovery without authorizing mutable-name deletion or an unsafe onboarding retry. */
+export function formatRetainedSandboxRecoveryMessage(input: {
+  sandboxName: string;
+  gatewayName: string;
+  createAttemptLabel: string;
+  sandboxIdentityFingerprint: string | null;
+}): string {
+  const createAttemptEvidence = `Create-attempt label: ${input.createAttemptLabel}. `;
+  if (!input.sandboxIdentityFingerprint) {
+    return (
+      createAttemptEvidence +
+      `Sandbox '${input.sandboxName}' reached Ready before OpenShell returned one exact durable create identity. Gateway '${input.gatewayName}'. ` +
+      "OpenShell did not return one exact durable sandbox identity for this create attempt. " +
+      `Do not delete the sandbox by mutable name. Run '${cliName()} ${input.sandboxName} destroy'; it can clear retained recovery only after OpenShell confirms absence.`
+    );
+  }
+  return (
+    createAttemptEvidence +
+    `Durable sandbox identity fingerprint: ${input.sandboxIdentityFingerprint}. ` +
+    `NemoClaw stopped before owning-gateway publication and identity verification completed for sandbox '${input.sandboxName}' through gateway '${input.gatewayName}'. ` +
+    `Do not delete the sandbox by mutable name. Run '${cliName()} ${input.sandboxName} destroy'. ` +
+    "If OpenShell reports the sandbox present or cannot determine presence, the command removes nothing and preserves the recovery record. " +
+    "Inspection is diagnostic only and does not authorize mutable-name deletion. " +
+    `Recovery remains blocked while the sandbox is present or presence is unknown. Rerun '${cliName()} ${input.sandboxName} destroy --yes' after the owning gateway reports absence.`
+  );
+}
 
 export type SandboxCreateFailureReportOptions = {
   sandboxName: string;
@@ -81,7 +109,6 @@ export type SandboxReadinessFailureReportDeps = {
   ): void;
   printCreateFailureDiagnostics(sandboxName: string, options: { backupPath: string | null }): void;
   printDockerGpuReadinessFailure(): void;
-  deleteSandbox(sandboxName: string): { status: number | null };
   cliName(): string;
   error(message: string): void;
   exitProcess(code: number): never;
@@ -89,20 +116,16 @@ export type SandboxReadinessFailureReportDeps = {
 
 export type SandboxReadinessTerminalResolution =
   | "deferred_to_docker_gpu_patch"
-  | "terminal_failure_deleted"
   | "terminal_failure_retained"
-  | "timed_out_deleted"
   | "timed_out_retained";
 
-/** Map the readiness reason and cleanup outcome into the receipt terminal state. */
+/** Map the readiness reason into the retained receipt terminal state. */
 function readinessTerminalResolution(
   readiness: CreatedSandboxReadinessResult,
-  deleted: boolean,
 ): SandboxReadinessTerminalResolution {
-  if (readiness.reason === "terminal_failure_phase") {
-    return deleted ? "terminal_failure_deleted" : "terminal_failure_retained";
-  }
-  return deleted ? "timed_out_deleted" : "timed_out_retained";
+  return readiness.reason === "terminal_failure_phase"
+    ? "terminal_failure_retained"
+    : "timed_out_retained";
 }
 
 /** Name the readiness gate that blocked the created sandbox from becoming Ready. */
@@ -143,8 +166,8 @@ function formatCreatedSandboxReadinessReceipt(options: {
 
 /**
  * Report a sandbox that never reached Ready: print the readiness failure and
- * create diagnostics, then either defer cleanup to the Docker-GPU patch or
- * delete the failed sandbox so a same-name retry does not collide, and exit.
+ * create diagnostics, then preserve the failed sandbox for retained recovery
+ * unless the Docker-GPU patch owns its identity-bound cleanup, and exit.
  */
 export function reportSandboxReadinessFailure(
   options: SandboxReadinessFailureReportOptions,
@@ -167,37 +190,22 @@ export function reportSandboxReadinessFailure(
     }
     deps.printDockerGpuReadinessFailure();
   } else {
-    // Clean up non-GPU failures after preserving local diagnostics so the
-    // next onboard retry with the same name does not fail on "sandbox already exists".
-    const delResult = deps.deleteSandbox(options.sandboxName);
-    if (delResult.status === 0) {
-      for (const line of formatCreatedSandboxReadinessReceipt({
-        sandboxName: options.sandboxName,
-        readiness: options.readiness,
-        createStatus: options.createStatus,
-        timeoutSecs: options.timeoutSecs,
-        terminalResolution: readinessTerminalResolution(options.readiness, true),
-      })) {
-        deps.error(line);
-      }
-      deps.error(
-        `  Deleted sandbox '${options.sandboxName}' after the readiness gate failed; retry will recreate it.`,
-      );
-    } else {
-      for (const line of formatCreatedSandboxReadinessReceipt({
-        sandboxName: options.sandboxName,
-        readiness: options.readiness,
-        createStatus: options.createStatus,
-        timeoutSecs: options.timeoutSecs,
-        terminalResolution: readinessTerminalResolution(options.readiness, false),
-      })) {
-        deps.error(line);
-      }
-      deps.error("  Could not remove the failed sandbox. Manual cleanup:");
-      deps.error(`    openshell sandbox delete "${options.sandboxName}"`);
+    for (const line of formatCreatedSandboxReadinessReceipt({
+      sandboxName: options.sandboxName,
+      readiness: options.readiness,
+      createStatus: options.createStatus,
+      timeoutSecs: options.timeoutSecs,
+      terminalResolution: readinessTerminalResolution(options.readiness),
+    })) {
+      deps.error(line);
     }
+    deps.error(
+      `  Recovery remains blocked while sandbox '${options.sandboxName}' exists. Do not delete it by mutable name; run '${deps.cliName()} ${options.sandboxName} destroy' to check for authoritative absence.`,
+    );
   }
-  deps.error(`  Retry: ${deps.cliName()} onboard`);
+  if (options.useDockerGpuPatch) {
+    deps.error(`  Retry: ${deps.cliName()} onboard`);
+  }
   const exitCode = options.createStatus === 0 ? 1 : options.createStatus;
   return deps.exitProcess(exitCode);
 }

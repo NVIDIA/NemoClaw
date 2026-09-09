@@ -57,11 +57,14 @@ describe("portable lifecycle timing recorder", () => {
   });
 
   it("keeps already-running readiness fail-open when receipt output fails", () => {
+    const write = vi.fn(() => {
+      throw new Error("diagnostic writer failed");
+    });
+
     expect(() =>
-      emitPortableOpenClawAlreadyRunningTiming(() => {
-        throw new Error("diagnostic writer failed");
-      }),
+      emitPortableOpenClawAlreadyRunningTiming(write),
     ).not.toThrow();
+    expect(write).toHaveBeenCalledTimes(2);
   });
 
   it("emits one stable credential-free success line", () => {

@@ -29,8 +29,6 @@ function createDeps(
 ) {
   const calls = {
     setDefaultSandbox: vi.fn(),
-    ensureAgentDashboard: vi.fn(() => 18789),
-    persistDashboardPort: vi.fn(),
     removeLegacy: vi.fn(),
     cleanupHost: vi.fn(),
     recoverProcesses: vi.fn(),
@@ -57,8 +55,6 @@ function createDeps(
   return {
     calls,
     deps: {
-      ensureAgentDashboardForward: calls.ensureAgentDashboard,
-      persistDashboardPort: calls.persistDashboardPort,
       setDefaultSandbox: calls.setDefaultSandbox,
       toSessionUpdates: (updates: Record<string, unknown>) => updates as SessionUpdates,
       removeLegacyCredentialsFile: calls.removeLegacy,
@@ -302,74 +298,36 @@ describe("finalization handlers", () => {
     });
   });
 
-  it("restores the default OpenClaw dashboard forward after process recovery", async () => {
-    let forwardLive = true;
+  it("relies on process recovery to restore the default OpenClaw dashboard forward", async () => {
+    let forwardLive = false;
     const recoverProcesses = vi.fn(() => {
-      forwardLive = false;
-    });
-    const ensureDashboard = vi.fn(() => {
       forwardLive = true;
-      return 18789;
     });
     const verify = vi.fn(async () => ({ ok: forwardLive }));
     const { deps } = createDeps({
       checkAndRecoverSandboxProcesses: recoverProcesses,
-      ensureAgentDashboardForward: ensureDashboard,
       verifyDeployment: verify,
       isDeploymentHealthy: vi.fn((result) => result.ok),
     });
 
     const result = await runFinalizationHandlers(baseOptions(deps));
 
-    expect(ensureDashboard).toHaveBeenCalledWith("my-assistant", null);
-    expect(ensureDashboard.mock.invocationCallOrder[0]).toBeGreaterThan(
-      recoverProcesses.mock.invocationCallOrder[1],
-    );
-    expect(ensureDashboard.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(recoverProcesses).toHaveBeenCalledTimes(2);
+    expect(recoverProcesses.mock.invocationCallOrder[1]).toBeLessThan(
       verify.mock.invocationCallOrder[0],
     );
     expect(result.deploymentHealthy).toBe(true);
     expect(result.stateResult.type).toBe("complete");
   });
 
-  it("persists the dashboard port selected after final recovery (#8214)", async () => {
-    const persistDashboardPort = vi.fn();
-    const { deps } = createDeps({
-      ensureAgentDashboardForward: vi.fn(() => 18792),
-      persistDashboardPort,
-    });
-
-    await handleFinalizationPhase({
-      ...baseOptions(deps),
-      agent: { name: "hermes" },
-    });
-
-    expect(persistDashboardPort).toHaveBeenCalledWith("my-assistant", 18792);
-  });
-
-  it("does not persist a zero dashboard port after final recovery (#8214)", async () => {
-    const persistDashboardPort = vi.fn();
-    const { deps } = createDeps({
-      ensureAgentDashboardForward: vi.fn(() => 0),
-      persistDashboardPort,
-    });
-
-    await handleFinalizationPhase({
-      ...baseOptions(deps),
-      agent: { name: "hermes" },
-    });
-
-    expect(persistDashboardPort).not.toHaveBeenCalled();
-  });
-
-  it("ensures agent dashboard forwarding before completion for non-OpenClaw agents", async () => {
+  it("recovers agent dashboard forwarding before completion for non-OpenClaw agents", async () => {
     const { deps, calls } = createDeps();
     const agent = { name: "hermes" };
 
     await runFinalizationHandlers({ ...baseOptions(deps), agent });
 
-    expect(calls.ensureAgentDashboard).toHaveBeenCalledWith("my-assistant", agent);
-    expect(calls.ensureAgentDashboard.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(calls.recoverProcesses).toHaveBeenCalledWith("my-assistant", { quiet: true });
+    expect(calls.recoverProcesses.mock.invocationCallOrder[0]).toBeLessThan(
       calls.dashboard.mock.invocationCallOrder[0],
     );
     expect(calls.dashboard).toHaveBeenCalledWith(
@@ -394,15 +352,12 @@ describe("finalization handlers", () => {
     });
 
     const recoveryOrders = calls.recoverProcesses.mock.invocationCallOrder;
-    const refreshOrder = calls.ensureAgentDashboard.mock.invocationCallOrder[0];
     expect(recoveryOrders).toHaveLength(2);
     expect(calls.settleOrdinaryPairing).toHaveBeenCalledExactlyOnceWith("my-assistant");
     expect(recoveryOrders[1]).toBeGreaterThan(
       calls.settleOrdinaryPairing.mock.invocationCallOrder[0],
     );
-    expect(refreshOrder).toBeGreaterThan(recoveryOrders[1]);
-    expect(calls.verifyWebSearch.mock.invocationCallOrder[0]).toBeGreaterThan(refreshOrder);
-    expect(refreshOrder).toBeLessThan(calls.verify.mock.invocationCallOrder[0]);
+    expect(calls.verifyWebSearch.mock.invocationCallOrder[0]).toBeGreaterThan(recoveryOrders[1]);
     expect(calls.verifyWebSearch.mock.invocationCallOrder[0]).toBeLessThan(
       calls.verify.mock.invocationCallOrder[0],
     );
@@ -426,7 +381,6 @@ describe("finalization handlers", () => {
       webSearchEnabled: true,
     });
 
-    expect(calls.ensureAgentDashboard).not.toHaveBeenCalled();
     expect(calls.recoverProcesses).not.toHaveBeenCalled();
     expect(calls.settleOrdinaryPairing).not.toHaveBeenCalled();
     expect(calls.getChatUiUrl).not.toHaveBeenCalled();
@@ -568,7 +522,9 @@ describe("finalization handlers", () => {
 
     expect(result.stateResult.type).toBe("complete");
     expect(calls.settleOrdinaryPairing).not.toHaveBeenCalled();
-    expect(calls.ensureAgentDashboard).toHaveBeenCalledWith("my-assistant", null);
+    expect(calls.recoverProcesses).toHaveBeenCalledExactlyOnceWith("my-assistant", {
+      quiet: true,
+    });
     expect(calls.verify).toHaveBeenCalledOnce();
   });
 
@@ -603,7 +559,6 @@ describe("finalization handlers", () => {
     ]);
     expect(calls.verify).not.toHaveBeenCalled();
     expect(calls.dashboard).not.toHaveBeenCalled();
-    expect(calls.ensureAgentDashboard).not.toHaveBeenCalled();
     expect(calls.reportReadiness).toHaveBeenCalledWith(false);
     expect(calls.error).toHaveBeenCalledWith(
       "  OpenClaw onboarding is incomplete; resume onboarding.",

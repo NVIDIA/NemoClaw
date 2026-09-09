@@ -7,7 +7,7 @@ import YAML from "yaml";
 
 import { shellQuote } from "../../../src/lib/core/shell-quote";
 import { setPolicyDocument } from "../../../src/lib/policy";
-import { parseOpenShellPolicy } from "../../../src/lib/policy/merge";
+import { parseOpenShellPolicy } from "../../../src/lib/adapters/openshell/policy-boundary";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
@@ -783,14 +783,10 @@ export async function assertExactMainPolicyNftAndIdentityContracts(options: {
     );
     restoreRequired = true;
     expect(
-      setPolicyDocument(
-        options.sandboxName,
-        buildIdentityPolicy(basePolicyYaml, options.mcpUrl),
-        {
-          nonFatal: true,
-          operation: "apply the exact-main live-exe identity policy",
-        },
-      ),
+      setPolicyDocument(options.sandboxName, buildIdentityPolicy(basePolicyYaml, options.mcpUrl), {
+        nonFatal: true,
+        operation: "apply the exact-main live-exe identity policy",
+      }),
       "exact-main-policy-hot-update",
     ).toBe(true);
     const effective = await readPolicyStatus(

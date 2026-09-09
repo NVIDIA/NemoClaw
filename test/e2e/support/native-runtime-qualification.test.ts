@@ -154,7 +154,7 @@ describe("native runtime qualification contract", () => {
     );
   });
 
-  it("accepts candidate prerequisites only for the expected candidate commit and target-branch base SHA without activating Podman", () => {
+  it("accepts candidate prerequisites only for the expected candidate commit and target-branch base SHA", () => {
     expect(consumeNativeRuntimeCandidateEvidence(candidateEvidence(), SOURCE_REVISION)).toEqual({
       schemaVersion: 1,
       candidateId: "podman-cpu-lifecycle",
@@ -165,7 +165,7 @@ describe("native runtime qualification contract", () => {
     expect(() =>
       consumeNativeRuntimeCandidateEvidence(candidateEvidence(), "b".repeat(40)),
     ).toThrow("does not match source");
-    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES).not.toHaveProperty("podman");
+    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES).toHaveProperty("podman");
   });
 
   it("consumes complete evidence only against externally resolved protected identities", () => {
@@ -183,7 +183,7 @@ describe("native runtime qualification contract", () => {
       source: expectedProtectedSource(),
     });
     expect(Object.isFrozen(authority.source.artifact)).toBe(true);
-    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES).not.toHaveProperty("podman");
+    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES).toHaveProperty("podman");
   });
 
   it.each([
@@ -197,19 +197,16 @@ describe("native runtime qualification contract", () => {
       { headSha: "f".repeat(40), baseSha: "e".repeat(40) },
       "externally expected protected source",
     ],
-  ])(
-    "rejects an internally consistent but wrong %s evidence pair",
-    (_label, source, error) => {
-      expect(() =>
-        consumeNativeRuntimeQualificationEvidence(
-          PODMAN_PROTECTED_HOST_LOCAL_INFERENCE_QUALIFICATION,
-          qualificationEvidence(source),
-          expectedProtectedSource(),
-          nativeQualificationReceiptReader,
-        ),
-      ).toThrow(error);
-    },
-  );
+  ])("rejects an internally consistent but wrong %s evidence pair", (_label, source, error) => {
+    expect(() =>
+      consumeNativeRuntimeQualificationEvidence(
+        PODMAN_PROTECTED_HOST_LOCAL_INFERENCE_QUALIFICATION,
+        qualificationEvidence(source),
+        expectedProtectedSource(),
+        nativeQualificationReceiptReader,
+      ),
+    ).toThrow(error);
+  });
 
   it("rejects missing immutable GitHub artifact identity", () => {
     const source = {
