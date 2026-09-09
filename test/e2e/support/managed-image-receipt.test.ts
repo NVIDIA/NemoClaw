@@ -47,12 +47,15 @@ afterEach(() => {
   }
 });
 
-function managedReceipt(sourceRevision = REVISION): Record<string, unknown> {
-  const encodedProfile = encodeManagedStartupProfile(managedStartupE2eProfile("openclaw"));
+function managedReceipt(
+  sourceRevision = REVISION,
+  agent: keyof typeof CATALOG_REFERENCES = "openclaw",
+): Record<string, unknown> {
+  const encodedProfile = encodeManagedStartupProfile(managedStartupE2eProfile(agent));
   return {
     schemaVersion: 1,
     kind: "managed-image",
-    reference: REFERENCE,
+    reference: CATALOG_REFERENCES[agent],
     platform: "linux/amd64",
     release: "v0.0.100",
     sourceRevision,
@@ -139,7 +142,10 @@ function candidateInlineCatalogEnvironment(home: string): NodeJS.ProcessEnv {
   return environment;
 }
 
-function writeRegistry(workload: Record<string, unknown>): string {
+function writeRegistry(
+  workload: Record<string, unknown>,
+  agent: keyof typeof CATALOG_REFERENCES = "openclaw",
+): string {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-only-receipt-"));
   temporaryHomes.push(home);
   const stateRoot = nemoclawStateRoot(home, 8080);
@@ -150,7 +156,7 @@ function writeRegistry(workload: Record<string, unknown>): string {
       sandboxes: {
         [SANDBOX_NAME]: {
           name: SANDBOX_NAME,
-          agent: "openclaw",
+          agent,
           fromDockerfile: null,
           imageTag: workload.reference,
           workload,
@@ -163,48 +169,70 @@ function writeRegistry(workload: Record<string, unknown>): string {
 }
 
 describe("stock E2E managed-image receipt assertion", () => {
-  it("rejects a stale receipt after the fresh re-onboarding script succeeds (#11305)", async () => {
-    const home = writeRegistry(managedReceipt("a".repeat(40)));
-    const environment = selectedEnvironment(home);
-    vi.stubEnv("HOME", home);
-    vi.stubEnv("E2E_MANAGED_IMAGE_REVISION", environment.E2E_MANAGED_IMAGE_REVISION);
-    vi.stubEnv("E2E_MANAGED_IMAGE_COHORT_RECEIPT", environment.E2E_MANAGED_IMAGE_COHORT_RECEIPT);
-    vi.stubEnv("E2E_WORKLOAD_SOURCE", "managed-image");
-    const run = vi.fn(async () => ({
-      command: [],
-      exitCode: 0,
-      signal: null,
-      timedOut: false,
-      stdout: "",
-      stderr: "",
-      artifacts: { stdout: "stdout.txt", stderr: "stderr.txt", result: "result.json" },
-    }));
-    try {
-      await expect(
-        runE2eCloudExperimentalChecks(
-          "cloud-langchain-deepagents-code",
-          SANDBOX_NAME,
-          [DEEPAGENTS_FRESH_REONBOARD_CHECK],
-          {
-            artifacts: new ArtifactSink(path.join(home, "artifacts")),
-            host: new HostCliClient({ run }),
-            secrets: new SecretStore({}, (note) => {
-              throw new Error(note);
-            }),
-          },
-        ),
-      ).rejects.toThrow("managed-image revision does not match the selected cohort");
-      expect(run).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          command: "bash",
-          args: [path.join(process.cwd(), DEEPAGENTS_FRESH_REONBOARD_CHECK)],
-        }),
-        expect.anything(),
+  it.each([
+    ["accepts a valid", REVISION, "accepted"],
+    [
+      "rejects a stale",
+      "a".repeat(40),
+      `stock sandbox '${SANDBOX_NAME}' managed-image revision does not match the selected cohort`,
+    ],
+  ])(
+    "%s DCode receipt after the fresh re-onboarding script succeeds (#11305)",
+    async (_label, revision, expected) => {
+      const home = writeRegistry(
+        managedReceipt(revision, "langchain-deepagents-code"),
+        "langchain-deepagents-code",
       );
-    } finally {
-      vi.unstubAllEnvs();
-    }
-  });
+      const environment = selectedEnvironment(home);
+      vi.stubEnv("HOME", home);
+      vi.stubEnv("E2E_MANAGED_IMAGE_REVISION", environment.E2E_MANAGED_IMAGE_REVISION);
+      vi.stubEnv("E2E_MANAGED_IMAGE_COHORT_RECEIPT", environment.E2E_MANAGED_IMAGE_COHORT_RECEIPT);
+      vi.stubEnv("E2E_WORKLOAD_SOURCE", "managed-image");
+      const run = vi.fn(async () => ({
+        command: [],
+        exitCode: 0,
+        signal: null,
+        timedOut: false,
+        stdout: "",
+        stderr: "",
+        artifacts: { stdout: "stdout.txt", stderr: "stderr.txt", result: "result.json" },
+      }));
+      try {
+        await expect(
+          runE2eCloudExperimentalChecks(
+            "cloud-langchain-deepagents-code",
+            SANDBOX_NAME,
+            [DEEPAGENTS_FRESH_REONBOARD_CHECK],
+            {
+              artifacts: new ArtifactSink(path.join(home, "artifacts")),
+              host: new HostCliClient({ run }),
+              secrets: new SecretStore({}, (note) => {
+                throw new Error(note);
+              }),
+            },
+          ).then(
+            () => "accepted",
+            (error: Error) => error.message,
+          ),
+        ).resolves.toBe(expected);
+        expect(run).toHaveBeenCalledTimes(2);
+        expect(run).toHaveBeenNthCalledWith(
+          1,
+          expect.objectContaining({ command: "openshell" }),
+          expect.anything(),
+        );
+        expect(run).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            command: "bash",
+            args: [path.join(process.cwd(), DEEPAGENTS_FRESH_REONBOARD_CHECK)],
+          }),
+          expect.anything(),
+        );
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    },
+  );
 
   it("accepts the durable receipt from the selected cohort revision", () => {
     const home = writeRegistry(managedReceipt());

@@ -281,7 +281,7 @@ describe("onboarding phase fixture", () => {
   });
 
   it.each([
-    ["published cohort", "", undefined],
+    ["published cohort", undefined, undefined],
     ["candidate catalog", '{"langchain-deepagents-code":{}}', undefined],
     ["explicit override", "", DCODE_BASE_IMAGE_REF],
   ])(
