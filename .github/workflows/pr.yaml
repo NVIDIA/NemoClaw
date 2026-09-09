@@ -385,6 +385,7 @@ jobs:
             .github/actions/ci-install-dependencies.sh
             ci/reviewed-npm-audit.json
             scripts/audit-reviewed-npm-graph.mts
+            scripts/check-dist-sourcemaps.mts
             scripts/checks/prepare-ci-npm-install.mts
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
@@ -413,7 +414,15 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+      - name: Detect legacy coverage artifact reader
+        id: legacy_coverage
+        run: |
+          if grep -q 'name: cli-build-output' .trusted-ci-actions/.github/actions/ci-cli-coverage-merge/action.yaml; then
+            echo 'required=true' >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Upload compiled CLI artifact
+        if: steps.legacy_coverage.outputs.required == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: cli-build-output

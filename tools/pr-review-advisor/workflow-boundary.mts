@@ -189,5 +189,19 @@ export function validatePrReviewAdvisorWorkflow(workflowPath = DEFAULT_WORKFLOW_
   ) {
     errors.push("Unified advisor specialist artifacts must be unique per rerun attempt");
   }
+  const runtimeInstall = (advisor.jobs?.["build-advisor-runtime"]?.steps ?? []).find(
+    (step) => step.name === "Install locked runtime",
+  );
+  const runtimeInstallScript = String(runtimeInstall?.run ?? "");
+  if (
+    !runtimeInstallScript.includes(
+      'UBUNTU_APT_SOURCES="/etc/apt/sources.list.d/ubuntu.sources"',
+    ) ||
+    !runtimeInstallScript.includes('Dir::Etc::sourcelist=$UBUNTU_APT_SOURCES') ||
+    !runtimeInstallScript.includes("Dir::Etc::sourceparts=-") ||
+    runtimeInstallScript.includes("sudo apt-get update -qq")
+  ) {
+    errors.push("Unified advisor runtime package install must use only Ubuntu archive sources");
+  }
   return errors;
 }
