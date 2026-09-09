@@ -16,7 +16,7 @@ describe("compiled config schema consumer", () => {
       prefix: "nemoclaw-config-schema-pack-",
       entries: [
         "dist/lib/config",
-        "dist/lib/core/endpoint-contract.js",
+        "dist/lib/core/endpoint-url-safety.js",
         "dist/lib/core/immutable.js",
         "dist/lib/name-validation.js",
         "dist/lib/sandbox-name-contract.js",

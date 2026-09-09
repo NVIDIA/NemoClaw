@@ -44,6 +44,19 @@ export default class ConfigExportCommand extends NemoClawCommand {
     },
   ] as const;
 
+  private exportTarget(output: string, force: boolean, json: boolean): ConfigExportTarget {
+    if (json && output === "-") {
+      this.error("--json cannot be used when --output is stdout (-).");
+    }
+    if (force && output === "-") {
+      this.error("--force cannot be used when --output is stdout (-).");
+    }
+    if (output !== "-" && process.platform !== "linux") {
+      this.error("Config export file output currently requires Linux. Use --output - instead.");
+    }
+    return output === "-" ? { kind: "stdout" } : { kind: "file", outputPath: output, force };
+  }
+
   public async run(): Promise<unknown> {
     const { args, flags } = await this.parse(ConfigExportCommand);
     const json = this.jsonEnabled();
@@ -51,19 +64,7 @@ export default class ConfigExportCommand extends NemoClawCommand {
     const { isValidNemoClawConfigDocumentName, parseNemoClawConfigDocumentUid } =
       await import("../../lib/config/model");
     if (!isValidNemoClawConfigDocumentName(documentName)) this.error("The config name is invalid.");
-    if (json && flags.output === "-") {
-      this.error("--json cannot be used when --output is stdout (-).");
-    }
-    if (flags.force && flags.output === "-") {
-      this.error("--force cannot be used when --output is stdout (-).");
-    }
-    if (flags.output !== "-" && process.platform !== "linux") {
-      this.error("Config export file output currently requires Linux. Use --output - instead.");
-    }
-    const target: ConfigExportTarget =
-      flags.output === "-"
-        ? { kind: "stdout" }
-        : { kind: "file", outputPath: flags.output, force: flags.force };
+    const target = this.exportTarget(flags.output, flags.force, json);
     const [
       { runConfigExport },
       { observeStableExportSource },

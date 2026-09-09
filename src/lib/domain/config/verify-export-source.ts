@@ -22,6 +22,7 @@ import {
 } from "../../config/model";
 import { fingerprintOpenShellSandboxId } from "../sandbox/openshell-identity";
 import type {
+  CanonicalExportPolicy,
   ExportFinding,
   ExportSourceFailureCategory,
   ExportSourceVerificationResult,
@@ -67,8 +68,7 @@ function hasEntries(value: unknown): boolean {
     : value !== undefined && value !== null && value !== false;
 }
 
-/** Report every v1-excluded capability represented by the registry row. */
-export function classifyExportRegistry(entry: ObservedExportRegistry): ExportFinding[] {
+function classifyExcludedCapabilities(entry: ObservedExportRegistry): ExportFinding[] {
   const excluded: Array<[string, unknown, string]> = [
     [
       "spec.sandboxes[].runtime.customImage",
@@ -115,18 +115,11 @@ export function classifyExportRegistry(entry: ObservedExportRegistry): ExportFin
     .map(([field, , capability]) =>
       finding(field, "unsupported", "V1 export does not support " + capability + "."),
     );
-  if (entry.agent !== "openclaw")
-    findings.push(
-      finding("spec.sandboxes[].agents[0].type", "unsupported", "V1 export requires OpenClaw."),
-    );
-  if (entry.pendingRouteReservation === true)
-    findings.push(
-      finding(
-        "source.registry",
-        "ambiguous",
-        "The registry row is a pending route reservation, not a published sandbox.",
-      ),
-    );
+  return findings;
+}
+
+function classifyRegistryProvenance(entry: ObservedExportRegistry): ExportFinding[] {
+  const findings: ExportFinding[] = [];
   if (!entry.lifecycleGeneration || !entry.lifecycleLiveIdentityFingerprint)
     findings.push(
       finding(
@@ -159,56 +152,80 @@ export function classifyExportRegistry(entry: ObservedExportRegistry): ExportFin
         "The persisted OpenShell runtime driver is not a supported provider identity.",
       ),
     );
-  if (!entry.workload)
-    findings.push(
+  return findings;
+}
+
+function classifyWorkload(entry: ObservedExportRegistry): ExportFinding[] {
+  if (!entry.workload) {
+    return [
       finding(
         "spec.sandboxes[].runtime.image",
         "missing-provenance",
         "A managed immutable workload receipt is required.",
       ),
-    );
-  else if (entry.workload.kind !== "managed-image")
-    findings.push(
+    ];
+  }
+  if (entry.workload.kind !== "managed-image") {
+    return [
       finding(
         "spec.sandboxes[].runtime.image",
         "unsupported",
         "V1 export requires a managed immutable release image.",
       ),
-    );
-  else {
-    if (!isImmutableImageReference(entry.workload.reference))
-      findings.push(
-        finding(
-          "spec.sandboxes[].runtime.image",
-          "ambiguous",
-          "The managed workload reference is not pinned to an immutable digest.",
-        ),
-      );
-    if (!entry.workload.platform)
-      findings.push(
-        finding(
-          "source.workload.platform",
-          "missing-provenance",
-          "The immutable workload platform is required.",
-        ),
-      );
-    if (entry.workload.credentialProxyReplayRequired)
-      findings.push(
-        finding(
-          "spec.sandboxes[].runtime.proxy",
-          "unsupported",
-          "V1 export does not support host proxy credential replay.",
-        ),
-      );
-    if (entry.workload.corporateCaB64 !== undefined)
-      findings.push(
-        finding(
-          "spec.sandboxes[].runtime.corporateCa",
-          "unsupported",
-          "V1 export does not support a custom corporate CA bundle.",
-        ),
-      );
+    ];
   }
+  const findings: ExportFinding[] = [];
+  if (!isImmutableImageReference(entry.workload.reference))
+    findings.push(
+      finding(
+        "spec.sandboxes[].runtime.image",
+        "ambiguous",
+        "The managed workload reference is not pinned to an immutable digest.",
+      ),
+    );
+  if (!entry.workload.platform)
+    findings.push(
+      finding(
+        "source.workload.platform",
+        "missing-provenance",
+        "The immutable workload platform is required.",
+      ),
+    );
+  if (entry.workload.credentialProxyReplayRequired)
+    findings.push(
+      finding(
+        "spec.sandboxes[].runtime.proxy",
+        "unsupported",
+        "V1 export does not support host proxy credential replay.",
+      ),
+    );
+  if (entry.workload.corporateCaB64 !== undefined)
+    findings.push(
+      finding(
+        "spec.sandboxes[].runtime.corporateCa",
+        "unsupported",
+        "V1 export does not support a custom corporate CA bundle.",
+      ),
+    );
+  return findings;
+}
+
+/** Report every v1-excluded capability represented by the registry row. */
+export function classifyExportRegistry(entry: ObservedExportRegistry): ExportFinding[] {
+  const findings = classifyExcludedCapabilities(entry);
+  if (entry.agent !== "openclaw")
+    findings.push(
+      finding("spec.sandboxes[].agents[0].type", "unsupported", "V1 export requires OpenClaw."),
+    );
+  if (entry.pendingRouteReservation === true)
+    findings.push(
+      finding(
+        "source.registry",
+        "ambiguous",
+        "The registry row is a pending route reservation, not a published sandbox.",
+      ),
+    );
+  findings.push(...classifyRegistryProvenance(entry), ...classifyWorkload(entry));
   if (entry.hostLocalInferenceReceipt || entry.hostLocalInferenceProvenance || entry.nimContainer)
     findings.push(
       finding(
@@ -311,12 +328,12 @@ function endpointConfigKey(api: string): ObservedExportEndpointEvidence["configK
   return null;
 }
 
-function validateAgreement(
+function validateSandboxIdentity(
   requestedSandboxName: string,
   snapshot: QualifiedExportSnapshot,
 ): ExportFinding[] {
-  const { registry: entry, sandbox, gateway, inference, policy, configuration } = snapshot;
-  const findings = classifyExportRegistry(entry);
+  const { registry: entry, sandbox } = snapshot;
+  const findings: ExportFinding[] = [];
   if (snapshot.sandboxName !== requestedSandboxName || entry.name !== requestedSandboxName) {
     findings.push(
       finding(
@@ -359,6 +376,12 @@ function validateAgreement(
         "Registry and live sandbox identities differ.",
       ),
     );
+  return findings;
+}
+
+function validateSandboxConfiguration(snapshot: QualifiedExportSnapshot): ExportFinding[] {
+  const { registry: entry, sandbox, inference } = snapshot;
+  const findings: ExportFinding[] = [];
   if (sandbox.workspace !== "default")
     findings.push(
       finding(
@@ -383,6 +406,12 @@ function validateAgreement(
         "V1 export does not support additional provider attachments.",
       ),
     );
+  return findings;
+}
+
+function validateGateway(snapshot: QualifiedExportSnapshot): ExportFinding[] {
+  const { registry: entry, gateway } = snapshot;
+  const findings: ExportFinding[] = [];
   if (gateway.management !== "nemoclaw" || !gateway.stateRootOwned)
     findings.push(
       finding(
@@ -402,6 +431,12 @@ function validateAgreement(
       ),
     );
   }
+  return findings;
+}
+
+function validateInferenceSelection(snapshot: QualifiedExportSnapshot): ExportFinding[] {
+  const { registry: entry, inference } = snapshot;
+  const findings: ExportFinding[] = [];
   if (inference.topology !== "hosted")
     findings.push(
       finding(
@@ -437,7 +472,15 @@ function validateAgreement(
         "Registry and live inference route identities differ.",
       ),
     );
-  if (!inference.provider || !inference.model || !inference.api || !inference.endpoint)
+  return findings;
+}
+
+function validateInferenceRepresentation(snapshot: QualifiedExportSnapshot): ExportFinding[] {
+  const { inference } = snapshot;
+  const findings: ExportFinding[] = [];
+  if (
+    [inference.provider, inference.model, inference.api, inference.endpoint].some((value) => !value)
+  )
     findings.push(
       finding(
         "spec.inferenceProviders",
@@ -446,8 +489,9 @@ function validateAgreement(
       ),
     );
   if (
-    (inference.provider && !isValidNemoClawBoundedText(inference.provider)) ||
-    (inference.model && !isValidNemoClawBoundedText(inference.model)) ||
+    [inference.provider, inference.model].some(
+      (value) => value && !isValidNemoClawBoundedText(value),
+    ) ||
     (inference.api && !isSupportedInferenceApi(inference.api))
   )
     findings.push(
@@ -465,49 +509,61 @@ function validateAgreement(
         "The inference endpoint is not safe for export.",
       ),
     );
-  if (!inference.endpointEvidence)
-    findings.push(
+  return findings;
+}
+
+function validateEndpointEvidence(snapshot: QualifiedExportSnapshot): ExportFinding[] {
+  const { inference, sandbox, gateway } = snapshot;
+  const evidence = inference.endpointEvidence;
+  if (!evidence) {
+    return [
       finding(
         "source.inference.endpoint",
         "missing-provenance",
         "Independent live inference endpoint evidence is required.",
       ),
-    );
-  else {
-    const expectedConfigKey = endpointConfigKey(inference.api);
-    if (!isValidNemoClawInferenceEndpoint(inference.endpointEvidence.endpoint))
-      findings.push(
-        finding(
-          "source.inference.endpoint",
-          "unsupported",
-          "The live inference endpoint evidence is invalid or unsafe.",
-        ),
-      );
-    if (inference.endpointEvidence.endpoint !== inference.endpoint)
-      findings.push(
-        finding(
-          "spec.inferenceProviders[].endpoint",
-          "drifted",
-          "Registry and live inference endpoints differ.",
-        ),
-      );
-    if (
-      inference.endpointEvidence.workspace !== sandbox.workspace ||
-      !inference.endpointEvidence.providerId ||
-      !inference.endpointEvidence.resourceVersion ||
-      inference.endpointEvidence.gatewayName !== gateway.name ||
-      inference.endpointEvidence.providerName !== inference.provider ||
-      expectedConfigKey === null ||
-      inference.endpointEvidence.configKey !== expectedConfigKey
-    )
-      findings.push(
-        finding(
-          "source.inference.endpoint",
-          "drifted",
-          "The live endpoint evidence is not bound to the observed provider route.",
-        ),
-      );
+    ];
   }
+  const findings: ExportFinding[] = [];
+  const expectedConfigKey = endpointConfigKey(inference.api);
+  if (!isValidNemoClawInferenceEndpoint(evidence.endpoint))
+    findings.push(
+      finding(
+        "source.inference.endpoint",
+        "unsupported",
+        "The live inference endpoint evidence is invalid or unsafe.",
+      ),
+    );
+  if (evidence.endpoint !== inference.endpoint)
+    findings.push(
+      finding(
+        "spec.inferenceProviders[].endpoint",
+        "drifted",
+        "Registry and live inference endpoints differ.",
+      ),
+    );
+  if (
+    !evidence.providerId ||
+    !evidence.resourceVersion ||
+    expectedConfigKey === null ||
+    !isDeepStrictEqual(
+      [evidence.workspace, evidence.gatewayName, evidence.providerName, evidence.configKey],
+      [sandbox.workspace, gateway.name, inference.provider, expectedConfigKey],
+    )
+  )
+    findings.push(
+      finding(
+        "source.inference.endpoint",
+        "drifted",
+        "The live endpoint evidence is not bound to the observed provider route.",
+      ),
+    );
+  return findings;
+}
+
+function validateCredentialReference(snapshot: QualifiedExportSnapshot): ExportFinding[] {
+  const { inference } = snapshot;
+  const findings: ExportFinding[] = [];
   if (
     inference.credentialEnv !== null &&
     !isCredentialEnvironmentReferenceName(inference.credentialEnv)
@@ -519,6 +575,12 @@ function validateAgreement(
         "The credential environment identifier is invalid or reserved for internal use.",
       ),
     );
+  return findings;
+}
+
+function validatePolicyIdentity(snapshot: QualifiedExportSnapshot): ExportFinding[] {
+  const { configuration, sandbox, policy } = snapshot;
+  const findings: ExportFinding[] = [];
   if (
     configuration.sandboxId !== sandbox.sandboxId ||
     configuration.workspace !== sandbox.workspace ||
@@ -551,13 +613,26 @@ function validateAgreement(
   return findings;
 }
 
-export function verifyExportSource(
+function validateAgreement(
   requestedSandboxName: string,
   snapshot: QualifiedExportSnapshot,
-): ExportSourceVerificationResult {
-  const entry = snapshot.registry;
+): ExportFinding[] {
+  return [
+    ...classifyExportRegistry(snapshot.registry),
+    ...validateSandboxIdentity(requestedSandboxName, snapshot),
+    ...validateSandboxConfiguration(snapshot),
+    ...validateGateway(snapshot),
+    ...validateInferenceSelection(snapshot),
+    ...validateInferenceRepresentation(snapshot),
+    ...validateEndpointEvidence(snapshot),
+    ...validateCredentialReference(snapshot),
+    ...validatePolicyIdentity(snapshot),
+  ];
+}
+
+function inspectWorkload(entry: ObservedExportRegistry) {
   let authority: NonNullable<ReturnType<typeof readManagedWorkloadAuthority>> | null = null;
-  let findings = validateAgreement(requestedSandboxName, snapshot);
+  const findings: ExportFinding[] = [];
   if (entry.workload?.kind === "managed-image") {
     try {
       authority = readManagedWorkloadAuthority(entry);
@@ -572,20 +647,37 @@ export function verifyExportSource(
       );
     }
   }
-  const policy = snapshot.policy.kind === "verified" ? snapshot.policy.canonical : undefined;
-  if (snapshot.policy.kind === "not-representable") {
-    findings = [
-      ...findings,
-      finding(
-        "spec.sandboxes[].network.policy",
-        "policy-not-representable",
-        "Verified effective policy is malformed, unknown, or cannot be represented losslessly.",
-      ),
-    ];
-  }
-  if (findings.length > 0 || !policy) return { kind: "rejected", findings: nonEmpty(findings) };
+  return { authority, findings };
+}
 
+function verifiedInference(
+  entry: ObservedExportRegistry,
+): VerifiedExportSource["inference"] | null {
   const selected = normalizeInferenceSelection(entry);
+  if (
+    !isValidNemoClawBoundedText(selected.provider) ||
+    !isValidNemoClawBoundedText(selected.model) ||
+    !isValidNemoClawInferenceEndpoint(selected.endpointUrl) ||
+    !isSupportedInferenceApi(selected.preferredInferenceApi)
+  )
+    return null;
+  return {
+    provider: selected.provider,
+    model: selected.model,
+    api: selected.preferredInferenceApi,
+    endpoint: selected.endpointUrl,
+    ...(selected.credentialEnv === null ? {} : { credentialEnv: selected.credentialEnv }),
+  };
+}
+
+function completeVerifiedSource(
+  requestedSandboxName: string,
+  snapshot: QualifiedExportSnapshot,
+  authority: NonNullable<ReturnType<typeof readManagedWorkloadAuthority>> | null,
+  policy: CanonicalExportPolicy,
+): ExportSourceVerificationResult {
+  const entry = snapshot.registry;
+  const inference = verifiedInference(entry);
   if (
     !isValidNemoClawRuntimeProvider(entry.openshellDriver) ||
     !authority ||
@@ -593,14 +685,7 @@ export function verifyExportSource(
     !isValidNemoClawSandboxName(requestedSandboxName) ||
     !isValidNemoClawLocalResourceName(snapshot.gateway.name) ||
     !isValidNemoClawPort(snapshot.gateway.port) ||
-    !selected.provider ||
-    !isValidNemoClawBoundedText(selected.provider) ||
-    !selected.model ||
-    !isValidNemoClawBoundedText(selected.model) ||
-    !selected.endpointUrl ||
-    !isValidNemoClawInferenceEndpoint(selected.endpointUrl) ||
-    !selected.preferredInferenceApi ||
-    !isSupportedInferenceApi(selected.preferredInferenceApi)
+    !inference
   ) {
     return {
       kind: "rejected",
@@ -616,17 +701,34 @@ export function verifyExportSource(
       imageRef: authority.receipt.reference,
     },
     gateway: { name: snapshot.gateway.name, port: snapshot.gateway.port },
-    inference: {
-      provider: selected.provider,
-      model: selected.model,
-      api: selected.preferredInferenceApi,
-      endpoint: selected.endpointUrl,
-      ...(selected.credentialEnv === null ? {} : { credentialEnv: selected.credentialEnv }),
-    },
+    inference,
     policy,
   } satisfies VerifiedExportSourceData);
   return {
     kind: "verified",
     source,
   };
+}
+
+export function verifyExportSource(
+  requestedSandboxName: string,
+  snapshot: QualifiedExportSnapshot,
+): ExportSourceVerificationResult {
+  const entry = snapshot.registry;
+  const findings = validateAgreement(requestedSandboxName, snapshot);
+  const { authority, findings: workloadFindings } = inspectWorkload(entry);
+  findings.push(...workloadFindings);
+  const policy = snapshot.policy.kind === "verified" ? snapshot.policy.canonical : undefined;
+  if (snapshot.policy.kind === "not-representable") {
+    findings.push(
+      finding(
+        "spec.sandboxes[].network.policy",
+        "policy-not-representable",
+        "Verified effective policy is malformed, unknown, or cannot be represented losslessly.",
+      ),
+    );
+  }
+  if (findings.length > 0 || !policy) return { kind: "rejected", findings: nonEmpty(findings) };
+
+  return completeVerifiedSource(requestedSandboxName, snapshot, authority, policy);
 }

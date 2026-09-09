@@ -6,7 +6,7 @@ import type * as TypeBoxValueModule from "typebox/value" with { "resolution-mode
 import {
   MAX_CANONICAL_ENDPOINT_LENGTH,
   unsafeEndpointUrlViolation,
-} from "../core/endpoint-contract";
+} from "../core/endpoint-url-safety";
 import { isValidName, NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../sandbox-name-contract";
 
 const { Type } = require("typebox") as typeof TypeBoxModule;

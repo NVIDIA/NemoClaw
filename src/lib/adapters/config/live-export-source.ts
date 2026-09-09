@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import os from "node:os";
+import { isDeepStrictEqual } from "node:util";
 import { isValidNemoClawPort } from "../../config/model";
 
 import { createProviders } from "../openshell/providers";
@@ -87,14 +88,8 @@ function sandboxIdentity(row: Sandbox): ObservedExportSandboxIdentity {
   };
 }
 
-async function inferenceFor(
-  entry: Readonly<SandboxEntry>,
-  beforeProviderRead: () => void,
-  signal: AbortSignal,
-): Promise<ObservedExportInference> {
+function readInferenceRoute(entry: Readonly<SandboxEntry>, gatewayName: string) {
   const selected = getSandboxEntryInference(entry);
-  const normalized = normalizeInferenceSelection(entry);
-  const gateway = resolveGatewayBinding(entry);
   const live = getLiveGatewayInference(
     (args, options) =>
       args.includes("-g") || args.includes("--gateway")
@@ -106,7 +101,7 @@ async function inferenceFor(
             timeout: options?.timeout ?? CAPTURE_TIMEOUT_MS,
           })
         : { status: 1, output: "" },
-    { gatewayName: gateway.name, timeout: CAPTURE_TIMEOUT_MS },
+    { gatewayName: gatewayName, timeout: CAPTURE_TIMEOUT_MS },
   );
   if (live.failure || !live.inference)
     throw new Error("The live gateway inference route could not be read.");
@@ -116,52 +111,78 @@ async function inferenceFor(
     live.inference.model !== selected.model
   )
     throw new Error("The live gateway inference route does not match the registry.");
-  beforeProviderRead();
-  const expectedType = normalized.preferredInferenceApi?.startsWith("anthropic")
-    ? "anthropic"
-    : normalized.preferredInferenceApi?.startsWith("openai")
-      ? "openai"
-      : null;
-  const expectedConfigKey = expectedType === "anthropic" ? "ANTHROPIC_BASE_URL" : "OPENAI_BASE_URL";
+  return { provider: live.inference.provider, model: live.inference.model };
+}
+
+function providerContract(api: string | null | undefined) {
+  if (api?.startsWith("anthropic")) {
+    return { type: "anthropic", configKey: "ANTHROPIC_BASE_URL" } as const;
+  }
+  const type = api?.startsWith("openai") ? "openai" : null;
+  return { type, configKey: "OPENAI_BASE_URL" } as const;
+}
+
+async function readProviderEvidence(
+  normalized: ReturnType<typeof normalizeInferenceSelection>,
+  routeProvider: string,
+  gatewayName: string,
+  signal: AbortSignal,
+) {
+  const { type, configKey } = providerContract(normalized.preferredInferenceApi);
   const provider = await createProviders().get({
-    target: namedOpenShellGateway(gateway.name),
+    target: namedOpenShellGateway(gatewayName),
     workspace: "default",
-    name: live.inference.provider,
-    configKeys: [expectedConfigKey],
+    name: routeProvider,
+    configKeys: [configKey],
     signal,
   });
   if (!provider) throw new Error("The live inference provider is missing.");
-  const expectedCredentialCount = normalized.credentialEnv === null ? 0 : 1;
+  const credentialKeys = normalized.credentialEnv === null ? [] : [normalized.credentialEnv];
   if (
-    provider.name !== live.inference.provider ||
-    expectedType === null ||
-    provider.type !== expectedType ||
-    provider.credentialKeys.length !== expectedCredentialCount ||
-    (normalized.credentialEnv !== null &&
-      provider.credentialKeys[0] !== normalized.credentialEnv) ||
-    provider.configKeys.length !== 1 ||
-    provider.configKeys[0] !== expectedConfigKey
-  )
+    type === null ||
+    !isDeepStrictEqual(
+      [provider.name, provider.type, provider.credentialKeys, provider.configKeys],
+      [routeProvider, type, credentialKeys, [configKey]],
+    )
+  ) {
     throw new Error("The live inference provider metadata does not match the registry.");
+  }
+  return {
+    endpoint: provider.config[configKey] ?? "",
+    gatewayName,
+    providerName: provider.name,
+    configKey,
+    providerId: provider.id,
+    workspace: provider.workspace,
+    resourceVersion: provider.resourceVersion,
+  };
+}
 
+async function inferenceFor(
+  entry: Readonly<SandboxEntry>,
+  beforeProviderRead: () => void,
+  signal: AbortSignal,
+): Promise<ObservedExportInference> {
+  const normalized = normalizeInferenceSelection(entry);
+  const gateway = resolveGatewayBinding(entry);
+  const live = readInferenceRoute(entry, gateway.name);
+  beforeProviderRead();
+  const endpointEvidence = await readProviderEvidence(
+    normalized,
+    live.provider,
+    gateway.name,
+    signal,
+  );
   return {
     topology:
       entry.hostLocalInferenceReceipt || entry.hostLocalInferenceProvenance || entry.nimContainer
         ? "local"
         : "hosted",
-    provider: live.inference.provider,
-    model: live.inference.model,
+    provider: live.provider,
+    model: live.model,
     api: normalized.preferredInferenceApi ?? "",
     endpoint: normalized.endpointUrl ?? "",
-    endpointEvidence: {
-      endpoint: provider.config[expectedConfigKey] ?? "",
-      gatewayName: gateway.name,
-      providerName: provider.name,
-      configKey: expectedConfigKey,
-      providerId: provider.id,
-      workspace: provider.workspace,
-      resourceVersion: provider.resourceVersion,
-    },
+    endpointEvidence,
     credentialEnv: normalized.credentialEnv,
   };
 }

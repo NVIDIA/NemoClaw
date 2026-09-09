@@ -10,13 +10,14 @@ import Ajv, {
   type ValidateFunction,
 } from "ajv/dist/2020.js";
 import YAML from "yaml";
-import { unsafeEndpointUrlViolation } from "../core/endpoint-contract";
+import { unsafeEndpointUrlViolation } from "../core/endpoint-url-safety";
 import { cloneAndDeepFreeze } from "../core/immutable";
 import { isSandboxPolicyCredentialFree } from "../policy/sandbox-policy-validation";
 import {
   isCredentialEnvironmentReferenceName,
   NemoClawConfigSchema,
   type NemoClawConfig,
+  type NemoClawSandboxConfig,
   type ValidatedNemoClawConfig,
 } from "./model";
 
@@ -61,6 +62,40 @@ function duplicateProblems(values: readonly string[], location: string): string[
   return [...duplicate].sort().map(() => `${location} contains a duplicate name`);
 }
 
+function sandboxProblems(
+  sandbox: NemoClawSandboxConfig,
+  sandboxIndex: number,
+  providers: ReadonlySet<string>,
+): string[] {
+  const problems: string[] = [];
+  if (!isSandboxPolicyCredentialFree(YAML.stringify(sandbox.network.policy.explicit))) {
+    problems.push(
+      `/spec/sandboxes/${sandboxIndex}/network/policy/explicit must be credential-free`,
+    );
+  }
+  problems.push(
+    ...duplicateProblems(
+      sandbox.agents.map(({ name }) => name),
+      `/spec/sandboxes/${sandboxIndex}/agents`,
+    ),
+  );
+  for (const [agentIndex, agent] of sandbox.agents.entries()) {
+    problems.push(
+      ...duplicateProblems(
+        agent.inference.routes.map(({ name }) => name),
+        `/spec/sandboxes/${sandboxIndex}/agents/${agentIndex}/inference/routes`,
+      ),
+    );
+    for (const [routeIndex, route] of agent.inference.routes.entries()) {
+      if (!providers.has(route.providerRef))
+        problems.push(
+          `/spec/sandboxes/${sandboxIndex}/agents/${agentIndex}/inference/routes/${routeIndex}/providerRef does not match an inference provider`,
+        );
+    }
+  }
+  return problems;
+}
+
 function semanticProblems(config: NemoClawConfig): string[] {
   const problems = [
     ...duplicateProblems(
@@ -85,31 +120,7 @@ function semanticProblems(config: NemoClawConfig): string[] {
       );
   }
   for (const [sandboxIndex, sandbox] of config.spec.sandboxes.entries()) {
-    if (!isSandboxPolicyCredentialFree(YAML.stringify(sandbox.network.policy.explicit))) {
-      problems.push(
-        `/spec/sandboxes/${sandboxIndex}/network/policy/explicit must be credential-free`,
-      );
-    }
-    problems.push(
-      ...duplicateProblems(
-        sandbox.agents.map(({ name }) => name),
-        `/spec/sandboxes/${sandboxIndex}/agents`,
-      ),
-    );
-    for (const [agentIndex, agent] of sandbox.agents.entries()) {
-      problems.push(
-        ...duplicateProblems(
-          agent.inference.routes.map(({ name }) => name),
-          `/spec/sandboxes/${sandboxIndex}/agents/${agentIndex}/inference/routes`,
-        ),
-      );
-      for (const [routeIndex, route] of agent.inference.routes.entries()) {
-        if (!providers.has(route.providerRef))
-          problems.push(
-            `/spec/sandboxes/${sandboxIndex}/agents/${agentIndex}/inference/routes/${routeIndex}/providerRef does not match an inference provider`,
-          );
-      }
-    }
+    problems.push(...sandboxProblems(sandbox, sandboxIndex, providers));
   }
   return problems;
 }

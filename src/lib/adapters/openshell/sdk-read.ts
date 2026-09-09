@@ -60,6 +60,16 @@ export function metadata(
 }
 export const owned = cloneAndDeepFreeze;
 
+function readError(error: unknown): OpenShellReadError {
+  if (error instanceof OpenShellReadError) return error;
+  const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+  if ([7, 16, "permission_denied", "unauthenticated"].some((status) => status === code)) {
+    return new OpenShellReadError("authentication");
+  }
+  if (code === 4 || code === "deadline_exceeded") return new OpenShellReadError("timeout");
+  return new OpenShellReadError("transport");
+}
+
 /** Bound connection and read time; never return transport details or caught response data. */
 export async function readOpenShell<T>(
   request: ReadRequest,
@@ -79,15 +89,7 @@ export async function readOpenShell<T>(
     return await Promise.race([operation(), deadline]);
   } catch (error) {
     if (signal.aborted) throw new OpenShellReadError("timeout");
-    if (error instanceof OpenShellReadError) throw error;
-    const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
-    throw new OpenShellReadError(
-      code === 7 || code === 16 || code === "permission_denied" || code === "unauthenticated"
-        ? "authentication"
-        : code === 4 || code === "deadline_exceeded"
-          ? "timeout"
-          : "transport",
-    );
+    throw readError(error);
   } finally {
     signal.removeEventListener("abort", abort);
   }
