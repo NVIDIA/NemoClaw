@@ -587,6 +587,11 @@ async function proveHistoricalHermesPortableLifecycle(input: {
 }): Promise<Record<string, unknown>> {
   const sandboxName = HERMES_PORTABLE_E2E_SANDBOX_NAME;
   const receiptStateDir = path.join(input.runtimeAuthority.homeDir, ".nemoclaw");
+  const qualifiedPolicyPath = path.join(input.runtimeAuthority.homeDir, ".hermes-policy.yaml");
+  fs.writeFileSync(qualifiedPolicyPath, fs.readFileSync(HERMES_PORTABLE_E2E_POLICY), {
+    flag: "wx",
+    mode: 0o600,
+  });
   const lifecycleEnv = withoutPodmanConnectionSelectors(input.openshellClientEnv);
   const socketAuthority = capturePodmanSocketAuthority(input.runtimeAuthority.socketPath);
   const podmanAuthority = captureHermesPortablePodmanExecutableAuthority(
@@ -619,7 +624,7 @@ async function proveHistoricalHermesPortableLifecycle(input: {
     "--from",
     input.hermesImageRef,
     "--policy",
-    HERMES_PORTABLE_E2E_POLICY,
+    qualifiedPolicyPath,
     "--no-tty",
     "--",
     ...startupArgv,
@@ -704,7 +709,7 @@ async function proveHistoricalHermesPortableLifecycle(input: {
           sandboxName,
           transactionId,
           stateDir: receiptStateDir,
-          source: captureHermesPortablePolicySource(HERMES_PORTABLE_E2E_POLICY),
+          source: captureHermesPortablePolicySource(qualifiedPolicyPath),
         });
         const pending: HermesPortablePendingReceipt = {
           schemaVersion: 7,
