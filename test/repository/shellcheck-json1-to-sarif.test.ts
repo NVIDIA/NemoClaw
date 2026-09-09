@@ -213,7 +213,7 @@ describe("ShellCheck JSON1 to SARIF conversion", () => {
 
     const result = spawnSync(
       process.execPath,
-      ["--experimental-strip-types", HELPER_PATH, inputPath, outputPath],
+      [HELPER_PATH, inputPath, outputPath],
       { encoding: "utf-8" },
     );
 
@@ -234,7 +234,7 @@ describe("ShellCheck JSON1 to SARIF conversion", () => {
 
     const result = spawnSync(
       process.execPath,
-      ["--experimental-strip-types", HELPER_PATH, inputPath, outputPath],
+      [HELPER_PATH, inputPath, outputPath],
       { encoding: "utf-8" },
     );
 

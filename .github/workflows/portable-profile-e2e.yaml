@@ -74,7 +74,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: ">=22.19.0 <23"
           cache: npm
 
       - name: Install root dependencies
@@ -329,7 +329,7 @@ jobs:
 
           /usr/bin/systemctl --user start podman.socket
           /usr/bin/systemctl --user is-active --quiet podman.socket
-          node --experimental-strip-types --no-warnings --input-type=module --eval '
+          node --no-warnings --input-type=module --eval '
             const { inspectPortableCpuDelegation } = await import(
               "./src/lib/onboard/experimental/portable-cpu-delegation-preflight.ts"
             );
