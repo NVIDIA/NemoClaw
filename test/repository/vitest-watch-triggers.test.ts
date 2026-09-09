@@ -35,7 +35,6 @@ const E2E_WORKFLOW_CONTRACTS = [
   "test/e2e/support/openshell-gateway-upgrade-workflow-boundary.test.ts",
   "test/e2e/support/prepare-e2e-workflow-boundary.test.ts",
   "test/e2e/support/runner-pressure-workflow-boundary.test.ts",
-  "test/e2e/support/sandbox-images-workflow-boundary.test.ts",
   "test/e2e/support/security-posture-workflow-boundary.test.ts",
   "test/e2e/support/shared-e2e-workflow-boundary.test.ts",
   "test/e2e/support/staging-brev-launchable-identity-workflow-boundary.test.ts",
@@ -54,7 +53,6 @@ const OPAQUE_INPUTS = [
   "tools/e2e/brev-launchable-e2e.sh",
   "managed-inference/models/example.yaml",
   "managed-inference/recipes/vllm.example.managed-cluster.v1.yaml",
-  "internal/security-reviews/hermes-0.20.6-dependency-review.md",
   ".github/actions/resolve-hermes-base-image/action.yaml",
   ".github/actions/resolve-reviewed-hermes-platform/action.yaml",
   "Dockerfile",
@@ -89,8 +87,6 @@ const OPAQUE_INPUTS = [
   ".github/actions/docker-auth-cleanup/action.yaml",
   ".github/scripts/docker-auth-setup.sh",
   ".github/scripts/docker-auth-cleanup.sh",
-  ".github/workflows/pr-self-hosted.yaml",
-  ".github/workflows/sandbox-images.yaml",
   ".github/workflows/code-scanning.yaml",
   ".github/workflows/post-merge-docs.yaml",
   "tools/post-merge-docs/review-policy.yaml",
@@ -198,7 +194,6 @@ describe("Vitest opaque-input watch triggers", () => {
       "src/lib/inference/serving/resolver.test.ts",
       "test/inference/managed/managed-inference-catalog-compiler.test.ts",
     ]);
-    expect(triggeredBy("internal/security-reviews/hermes-0.20.6-dependency-review.md")).toEqual([]);
     expect(triggeredBy(".github/actions/resolve-hermes-base-image/action.yaml")).toEqual([
       "test/platform/images/base-image-resolver-helper.test.ts",
     ]);
@@ -335,12 +330,6 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/e2e/support/dockerhub-auth-workflow-boundary.test.ts",
     ]);
 
-    expect(triggeredBy(".github/workflows/sandbox-images.yaml")).toEqual([
-      "test/e2e/support/sandbox-images-workflow-boundary.test.ts",
-    ]);
-    expect(triggeredBy(".github/workflows/pr-self-hosted.yaml")).toEqual([
-      "test/e2e/support/sandbox-images-workflow-boundary.test.ts",
-    ]);
     expect(triggeredBy(".github/workflows/code-scanning.yaml")).toEqual([
       "test/repository/code-scanning-workflow.test.ts",
     ]);
@@ -354,7 +343,7 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/generation/post-merge-docs.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/pr-review-advisor.yaml")).toEqual([
-      "test/e2e/support/e2e-operations-workflow-boundary.test.ts",
+      "test/e2e/support/pr-review-advisor-workflow-boundary.test.ts",
     ]);
     expect(triggeredBy("tools/pr-review-advisor/openshell-policy.yaml")).toEqual([
       "test/automation/pull-requests/pr-review-advisor-openshell.test.ts",

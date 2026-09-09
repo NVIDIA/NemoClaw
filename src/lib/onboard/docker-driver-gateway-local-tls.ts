@@ -210,7 +210,7 @@ export function ensureDockerDriverGatewayLocalTlsBundle({
         }
         return (
           gatewayHostRuntime ??
-          provider.gateway.prepareHostRuntime({
+          provider.gateway.observeHostRuntime({
             environment: env,
             platform,
           })

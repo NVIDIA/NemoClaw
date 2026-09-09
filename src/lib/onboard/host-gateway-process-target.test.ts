@@ -182,7 +182,7 @@ function stopScopedTarget(
               ({
                 gateway: {
                   supported: true,
-                  prepareHostRuntime: () => ({
+                  observeHostRuntime: () => ({
                     gatewayConfig: { processOwnership: "runtime-marker" },
                   }),
                 },

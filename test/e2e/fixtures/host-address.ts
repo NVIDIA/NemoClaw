@@ -3,7 +3,7 @@
 
 import { isIP } from "node:net";
 
-import { prepareConfiguredGatewayHostRuntime } from "../../../src/lib/onboard/docker-driver-gateway-env.ts";
+import { observeConfiguredGatewayHostRuntime } from "../../../src/lib/onboard/docker-driver-gateway-env.ts";
 import { isPortableExperimentalProfile } from "../../../src/lib/onboard/docker-driver-platform.ts";
 import { buildAvailabilityProbeEnv } from "./availability-env.ts";
 import { assertExitZero } from "./clients/command.ts";
@@ -26,12 +26,12 @@ export interface HostAddressResult {
 export function configuredRuntimeProviderHostAddress(
   environment: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
-  prepareHostRuntime = prepareConfiguredGatewayHostRuntime,
+  observeHostRuntime = observeConfiguredGatewayHostRuntime,
 ): string | null {
   if (!environment.NEMOCLAW_GATEWAY_RUNTIME || isPortableExperimentalProfile(environment)) {
     return null;
   }
-  return prepareHostRuntime({ environment, platform }).sandboxHostAddress;
+  return observeHostRuntime({ environment, platform }).sandboxHostAddress;
 }
 
 export function parseHostAddressProbe(
@@ -62,12 +62,12 @@ export async function discoverHostAddress(
   artifactName = "host-address-for-sandbox",
   environment: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
-  prepareHostRuntime = prepareConfiguredGatewayHostRuntime,
+  observeHostRuntime = observeConfiguredGatewayHostRuntime,
 ): Promise<HostAddressResult> {
   const runtimeProviderAddress = configuredRuntimeProviderHostAddress(
     environment,
     platform,
-    prepareHostRuntime,
+    observeHostRuntime,
   );
   if (runtimeProviderAddress !== null) {
     if (isIP(runtimeProviderAddress) !== 4) {
