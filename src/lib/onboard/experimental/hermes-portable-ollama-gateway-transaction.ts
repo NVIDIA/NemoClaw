@@ -257,7 +257,7 @@ type GatewayProviderJournalPhase =
 type GatewayProviderJournalIntent = Readonly<{
   transactionId: string;
   targetSha256: string;
-  gatewayName: "nemoclaw";
+  gatewayName: string;
   sandboxName: string;
   provider: "ollama-local";
   model: string;
@@ -519,6 +519,7 @@ function observeExactGatewayProvider(
 
 function exactGatewayMutation(
   runGatewayOpenshell: HermesPortableOllamaGatewayRunner,
+  expectedGatewayName: string,
   expectedModel: string,
   expectedSandboxName: string,
   expectedCredentialEnv: string,
@@ -617,7 +618,7 @@ function exactGatewayMutation(
   const prepareGatewayMutation: HostLocalInferenceStartupSelection["prepareGatewayMutation"] =
     async (input) => {
       if (
-        input.gatewayName !== "nemoclaw" ||
+        input.gatewayName !== expectedGatewayName ||
         input.sandboxName !== expectedSandboxName ||
         input.provider !== "ollama-local" ||
         input.model !== expectedModel ||
@@ -829,6 +830,7 @@ export function createHermesPortableOllamaGatewayTransaction(options: {
   readonly directory: string;
   readonly transactionId: string;
   readonly targetSha256: string;
+  readonly gatewayName: string;
   readonly sandboxName: string;
   readonly model: string;
   readonly credentialEnv: string;
@@ -858,7 +860,7 @@ export function createHermesPortableOllamaGatewayTransaction(options: {
     Object.freeze({
       transactionId,
       targetSha256: options.targetSha256,
-      gatewayName: "nemoclaw",
+      gatewayName: options.gatewayName,
       sandboxName: options.sandboxName,
       provider: "ollama-local",
       model: options.model,
@@ -886,6 +888,7 @@ export function createHermesPortableOllamaGatewayTransaction(options: {
   }
   const gatewayMutation = exactGatewayMutation(
     options.runGatewayOpenshell,
+    options.gatewayName,
     options.model,
     options.sandboxName,
     options.credentialEnv,
@@ -918,6 +921,7 @@ export interface HermesPortableOllamaPublishedReceiptAuthority {
 /** Bind the committed private receipt and journal without repeating the live provider observation. */
 export function prepareHermesPortableOllamaPublishedReceiptAuthority(options: {
   readonly directory: string;
+  readonly gatewayName: string;
   readonly sandboxName: string;
   readonly credentialEnv: string;
 }): HermesPortableOllamaPublishedReceiptAuthority {
@@ -952,7 +956,7 @@ export function prepareHermesPortableOllamaPublishedReceiptAuthority(options: {
     Object.freeze({
       transactionId,
       targetSha256: receipt.publication.targetSha256,
-      gatewayName: "nemoclaw" as const,
+      gatewayName: options.gatewayName,
       sandboxName: options.sandboxName,
       provider: "ollama-local" as const,
       model: receipt.inference.model,
@@ -982,6 +986,7 @@ export function prepareHermesPortableOllamaPublishedReceiptAuthority(options: {
 /** Re-prove an already committed Ollama publication without opening a mutation path. */
 export function prepareHermesPortableOllamaPublishedInferenceAuthority(options: {
   readonly directory: string;
+  readonly gatewayName: string;
   readonly sandboxName: string;
   readonly credentialEnv: string;
   readonly runGatewayOpenshell: HermesPortableOllamaGatewayRunner;
@@ -1016,7 +1021,7 @@ export function prepareHermesPortableOllamaPublishedInferenceAuthority(options: 
   const intent = Object.freeze({
     transactionId,
     targetSha256,
-    gatewayName: "nemoclaw" as const,
+    gatewayName: options.gatewayName,
     sandboxName: options.sandboxName,
     provider: "ollama-local" as const,
     model: receipt.inference.model,
@@ -1102,6 +1107,7 @@ export function prepareHermesPortableOllamaProviderRetirement(options: {
   readonly directory: string;
   readonly transactionId: string;
   readonly targetSha256: string;
+  readonly gatewayName: string;
   readonly sandboxName: string;
   readonly model: string;
   readonly credentialEnv: string;
@@ -1117,7 +1123,7 @@ export function prepareHermesPortableOllamaProviderRetirement(options: {
     Object.freeze({
       transactionId: options.transactionId,
       targetSha256: options.targetSha256,
-      gatewayName: "nemoclaw",
+      gatewayName: options.gatewayName,
       sandboxName: options.sandboxName,
       provider: "ollama-local",
       model: options.model,

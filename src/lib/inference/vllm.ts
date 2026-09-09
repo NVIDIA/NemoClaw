@@ -68,6 +68,7 @@ import {
   VLLM_EXTRA_ARGS_ENV,
   VLLM_MODELS,
   vllmModelForOrchestration,
+  vllmModelMatchesAlias,
   vllmModelUsesOrchestration,
   vllmPlatformSpecificity,
   type VllmModelDef,
@@ -1846,7 +1847,12 @@ interface ServingPortProbe {
 }
 
 type VllmInstallSelectionEnv =
-  | { readonly ok: true; readonly env: NodeJS.ProcessEnv; readonly explicitModel: string }
+  | {
+      readonly ok: true;
+      readonly env: NodeJS.ProcessEnv;
+      readonly explicitModel: string;
+      readonly resumedPresetModel: string;
+    }
   | { readonly ok: false };
 
 function resolveVllmInstallSelectionEnv(
@@ -1862,11 +1868,20 @@ function resolveVllmInstallSelectionEnv(
   ) {
     return { ok: false };
   }
-  const selectionEnv = resumedModel ? { ...env, NEMOCLAW_VLLM_MODEL: resumedModel } : env;
+  // A serving preset already names the model to install, so the preset stays
+  // authoritative and the resumed checkpoint is only verified against it.
+  // Feeding that checkpoint back through NEMOCLAW_VLLM_MODEL made NemoClaw's
+  // own record look like a competing operator override, and resuming a
+  // preset-driven install was refused as a preset/model conflict even though
+  // the operator had set neither variable (#11148).
+  const presetSelected = String(env[NEMOCLAW_SERVING_PRESET_ENV] ?? "").trim().length > 0;
+  const selectionEnv =
+    resumedModel && !presetSelected ? { ...env, NEMOCLAW_VLLM_MODEL: resumedModel } : env;
   return {
     ok: true,
     env: selectionEnv,
     explicitModel: String(selectionEnv.NEMOCLAW_VLLM_MODEL ?? "").trim(),
+    resumedPresetModel: presetSelected ? resumedModel : "",
   };
 }
 
@@ -1875,6 +1890,7 @@ type VllmInstallRequestEnv =
       readonly ok: true;
       readonly env: NodeJS.ProcessEnv;
       readonly explicitModel: string;
+      readonly resumedPresetModel: string;
       readonly requestedGpuDevice: string | null;
       readonly configuredPeer: string;
       readonly configuredManagedClusterPeers: string;
@@ -2009,6 +2025,7 @@ async function runVllmInstall(
   const {
     env: selectionEnv,
     explicitModel,
+    resumedPresetModel,
     requestedGpuDevice,
     configuredPeer,
     configuredManagedClusterPeers,
@@ -2047,6 +2064,9 @@ async function runVllmInstall(
         promptFn: opts.promptFn,
         beforeInstall: opts.beforeInstall,
         checkpointInstallIntent: opts.checkpointInstallIntent,
+        // This branch returns before the host-local revalidation below, so the
+        // resumed checkpoint has to travel with it (#11148).
+        resumedPresetModel,
       },
       {
         prerequisites: dockerPrereqsOk,
@@ -2150,6 +2170,18 @@ async function runVllmInstall(
     });
   }
   if (!resolved) return { ok: false };
+  // The preset chose the model above; this is the receipt check that the
+  // interrupted run had committed to the same one. It covers every branch that
+  // produced `resolved` — preset selection, a fixed catalog profile, and the
+  // Station pair — because each of them is reachable on resume (#11148).
+  if (resumedPresetModel && !vllmModelMatchesAlias(resolved.model, resumedPresetModel)) {
+    console.error(
+      `  vLLM install failed: the resumed model '${resumedPresetModel}' does not match ` +
+        `'${resolved.model.envValue}', which ${NEMOCLAW_SERVING_PRESET_ENV} selects. ` +
+        `Re-run onboarding with --fresh to discard the interrupted session.`,
+    );
+    return { ok: false };
+  }
   if (
     !hostLocalSelection &&
     resolved.source === "picker" &&
