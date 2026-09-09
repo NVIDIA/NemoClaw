@@ -218,6 +218,61 @@ describe("prepareRebuildTargetPreflights", () => {
     expect(mocks.resolveContextWindowForModel).toHaveBeenCalledWith("ollama-local", "qwen3.5:9b");
   });
 
+  it("stops managed rebuild when its base-image override cannot be honored (#11138)", async () => {
+    mocks.prepareRebuildTargetConfig.mockReturnValue({
+      agentDefinition: {},
+      resumeConfig: {
+        provider: "nvidia",
+        model: "moonshotai/kimi-k2.6",
+        preferredInferenceApi: "openai-completions",
+        endpointUrl: null,
+        compatibleEndpointReasoning: null,
+        compatibleEndpointReasoningEffort: null,
+        registryInferenceRoute: null,
+      },
+      durableConfig: {
+        toolDisclosure: "progressive",
+        dcodeAutoApprovalMode: "disabled",
+        webSearchConfig: null,
+      },
+      credentialEnv: null,
+      fromDockerfile: false,
+      hermesToolGateways: [],
+    });
+    mocks.prepareRebuildRecreateOptions.mockReturnValue({
+      controlUiPort: 19_189,
+      targetGatewayName: "nemoclaw",
+      toolDisclosure: "progressive",
+      dcodeAutoApprovalMode: "disabled",
+      observabilityEnabled: false,
+    });
+    mocks.prepareManagedWorkloadRebuildHandoff.mockRejectedValue(
+      new Error("'NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF' is set"),
+    );
+
+    await expect(
+      prepareRebuildTargetPreflights({
+        sandboxName: "hermes-managed",
+        sandboxEntry: {
+          name: "hermes-managed",
+          agent: "hermes",
+          gatewayName: "nemoclaw",
+          openshellDriver: "docker",
+          workload: { kind: "managed-image" },
+        } as never,
+        rebuildAgent: "hermes",
+        autoYes: true,
+        log: vi.fn(),
+        bail: mocks.bail as never,
+      }),
+    ).resolves.toBeNull();
+    expect(mocks.bail).toHaveBeenCalledWith(
+      "'NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF' is set",
+    );
+    expect(mocks.prepareSandboxWorkloadSourceFromRebuildHandoff).not.toHaveBeenCalled();
+    expect(mocks.preflightAuthoritativeOnboardRuntime).not.toHaveBeenCalled();
+  });
+
   it("passes exact legacy N1x intent into authoritative readiness (#9292)", async () => {
     const readinessOptions = await prepareN1xTarget("onboard");
 

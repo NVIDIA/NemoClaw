@@ -105,6 +105,39 @@ describe("agent variant docs", () => {
     expect(rendered).not.toContain("<AgentOnly");
   });
 
+  it("publishes Deep Agents forward recovery scope only for Deep Agents (#11176)", () => {
+    const sourcePath = "manage-sandboxes/recover-rebuild-sandboxes.mdx";
+    const pageSource = readFileSync(path.join(repoRoot, "docs", sourcePath), "utf8");
+    const render = (variant: "openclaw" | "hermes" | "deepagents") =>
+      renderAgentVariantPage(pageSource, variant, { sourcePath });
+    const gatewayStartRepair =
+      "The `start` command repairs the agent runtime and host-side port forwards.";
+    const gatewayStartSuccess =
+      "It returns success only after it authenticates the recovered agent runtime, OpenShell reports the sandbox ready, and host-side port forwards pass their checks.";
+    const gatewayStartFailure =
+      "If a check fails, the command exits nonzero, identifies the failure, and prints recovery guidance before you retry `start`.";
+    const terminalRuntimeScope =
+      "Deep Agents uses a terminal runtime without an in-sandbox agent gateway or host-side port forward.";
+    const forwardPrerequisites =
+      "The OpenShell ownership and local endpoint reachability prerequisites for an active port forward do not apply.";
+
+    expect(render("openclaw")).toContain(gatewayStartRepair);
+    expect(render("hermes")).toContain(gatewayStartRepair);
+    expect(render("deepagents")).not.toContain(gatewayStartRepair);
+    expect(render("openclaw")).toContain(gatewayStartSuccess);
+    expect(render("hermes")).toContain(gatewayStartSuccess);
+    expect(render("deepagents")).not.toContain(gatewayStartSuccess);
+    expect(render("openclaw")).toContain(gatewayStartFailure);
+    expect(render("hermes")).toContain(gatewayStartFailure);
+    expect(render("deepagents")).not.toContain(gatewayStartFailure);
+    expect(render("deepagents")).toContain(terminalRuntimeScope);
+    expect(render("deepagents")).toContain(forwardPrerequisites);
+    expect(render("openclaw")).not.toContain(terminalRuntimeScope);
+    expect(render("openclaw")).not.toContain(forwardPrerequisites);
+    expect(render("hermes")).not.toContain(terminalRuntimeScope);
+    expect(render("hermes")).not.toContain(forwardPrerequisites);
+  });
+
   it("renders Pi placeholder code and content", () => {
     const rendered = renderAgentVariantPage(source, "pi");
 

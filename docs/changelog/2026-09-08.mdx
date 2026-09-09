@@ -1,0 +1,50 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.121
+
+NemoClaw v0.0.121 adds managed MCP tool-denial rules and moves skill lifecycle to agent-owned state.
+It also hardens messaging providers, Windows and WSL inference, sandbox recovery, file transfer, and Hermes state repair.
+
+- Managed MCP servers can now deny exact tool names or glob patterns through repeatable `--deny-tool` options.
+  The new `mcp update` command replaces the complete denied-tool list or clears it with `--clear-deny-tools`.
+  Status, restart, rebuild, and launch-readiness checks use the persisted rules and report drift with a recovery command.
+  Related change: [PR #11135](https://github.com/NVIDIA/NemoClaw/pull/11135).
+  For more information, refer to [Add an MCP Server](/user-guide/openclaw/manage-sandboxes/mcp-servers/add-an-mcp-server), [Manage MCP Servers](/user-guide/openclaw/manage-sandboxes/mcp-servers/manage-mcp-servers), and [Troubleshoot MCP Servers](/user-guide/openclaw/reference/troubleshoot-mcp-servers).
+- Skill lifecycle state now belongs to the selected agent instead of a parallel NemoClaw inventory.
+  `skill list` streams the agent's native result, while install and remove use native commands when the agent exposes an equivalent operation.
+  Other operations use the manifest-declared writable skill directory without claiming that a same-name skill elsewhere is absent.
+  Related change: [PR #11093](https://github.com/NVIDIA/NemoClaw/pull/11093).
+  For more information, refer to [Understand Sandbox State](/user-guide/openclaw/manage-sandboxes/state-and-backups/understand-sandbox-state) and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- Messaging provider setup now uses typed OpenShell lifecycle results for registration, reuse, authorized replacement, attachment, refresh observation, and partial-failure recovery.
+  Typed lifecycle results include credential names but never credential values, and channel removal omits placeholder credentials that were never configured.
+  Channel stop and start now preserve credentials and runtime configuration through rebuild and stopped-sandbox restart.
+  Related changes: [PR #11009](https://github.com/NVIDIA/NemoClaw/pull/11009), [PR #11126](https://github.com/NVIDIA/NemoClaw/pull/11126), [PR #11188](https://github.com/NVIDIA/NemoClaw/pull/11188), and [PR #11193](https://github.com/NVIDIA/NemoClaw/pull/11193).
+  For more information, refer to [Manage Messaging Channels](/user-guide/openclaw/manage-sandboxes/messaging-channels/manage-messaging-channels) and [Credential Storage](/user-guide/openclaw/security/credential-storage).
+- A CUDA-qualified WSL RTX Spark N1x with at least 30,000 MiB available now ranks an installed `qwen3.6:35b` before `qwen3.5:9b` for Ollama.
+  Windows Ollama onboarding and restart keep traffic in Docker Desktop's verified network context and restore the previous User-scope binding and process state when a transaction fails.
+  Recovery also reports bounded probe-timeout guidance instead of leaving the route failure ambiguous.
+  Related changes: [PR #11187](https://github.com/NVIDIA/NemoClaw/pull/11187), [PR #10855](https://github.com/NVIDIA/NemoClaw/pull/10855), [PR #10889](https://github.com/NVIDIA/NemoClaw/pull/10889), and [PR #11192](https://github.com/NVIDIA/NemoClaw/pull/11192).
+  For more information, refer to [Set Up Ollama](/user-guide/openclaw/inference/local-inference/set-up-ollama), [Prepare Windows](/user-guide/openclaw/get-started/additional-setup/windows-preparation), and [System Readiness](/user-guide/openclaw/reference/system-readiness).
+- Inference provider creation, update, deletion, inspection, settlement, and rollback now use the typed OpenShell provider boundary.
+  Mutations fail closed when ownership or revision identity is incomplete, and rollback verifies the provider revision before deletion.
+  `inference get` reports a reusable endpoint for compatible custom providers only when persisted metadata is safe, complete, and unambiguous.
+  Status distinguishes the configured model from the live routed model and requires verified llama.cpp routes.
+  Related changes: [PR #11008](https://github.com/NVIDIA/NemoClaw/pull/11008), [PR #10833](https://github.com/NVIDIA/NemoClaw/pull/10833), [PR #10261](https://github.com/NVIDIA/NemoClaw/pull/10261), [PR #10471](https://github.com/NVIDIA/NemoClaw/pull/10471), and [PR #11207](https://github.com/NVIDIA/NemoClaw/pull/11207).
+  For more information, refer to [Switch Inference Providers](/user-guide/openclaw/inference/manage-inference/switch-providers) and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- Sandbox download now rejects a directory that contains a symbolic link or another special file before transfer or host destination creation.
+  Snapshot and rebuild recovery preserve fail-closed identity checks, recover an interrupted backup, and reject unsafe local fallback images.
+  A retained sandbox is removed only after its gateway confirms absence and residual resources have sufficient identity evidence.
+  Related changes: [PR #10654](https://github.com/NVIDIA/NemoClaw/pull/10654), [PR #11142](https://github.com/NVIDIA/NemoClaw/pull/11142), [PR #11094](https://github.com/NVIDIA/NemoClaw/pull/11094), and [PR #10867](https://github.com/NVIDIA/NemoClaw/pull/10867).
+  For more information, refer to [Transfer State Manually](/user-guide/openclaw/manage-sandboxes/state-and-backups/transfer-state-manually), [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes), and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
+- Hermes startup now repairs restored session, gateway, runtime, history, and log state through descriptor-verified paths before the gateway opens them.
+  It rejects symbolic-link and file substitutions without changing their targets, and it keeps mutable runtime configuration outside relaunch policy.
+  Hermes diagnostics also preserve invalid dashboard URL details and initialize the Kanban schema atomically.
+  Related changes: [PR #10872](https://github.com/NVIDIA/NemoClaw/pull/10872), [PR #11110](https://github.com/NVIDIA/NemoClaw/pull/11110), [PR #11227](https://github.com/NVIDIA/NemoClaw/pull/11227), and [PR #11177](https://github.com/NVIDIA/NemoClaw/pull/11177).
+  For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/hermes/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes), [Gateway Lifecycle Control](/user-guide/hermes/manage-sandboxes/configure-sandboxes/understand-gateway-lifecycle-control), and [Troubleshooting](/user-guide/hermes/reference/troubleshooting).
+- Onboarding now fails before sandbox mutation when a managed-image flow cannot honor a configured base-image override.
+  GPU handoff resumes from validated checkpoints, managed vLLM avoids repeated retries after a rejected pinned image, and Gemini HTTP `400` failures include provider-specific recovery guidance.
+  Related changes: [PR #11152](https://github.com/NVIDIA/NemoClaw/pull/11152), [PR #11124](https://github.com/NVIDIA/NemoClaw/pull/11124), [PR #11048](https://github.com/NVIDIA/NemoClaw/pull/11048), and [PR #11171](https://github.com/NVIDIA/NemoClaw/pull/11171).
+  For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands), [Set Up vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm), and [Use Google Gemini](/user-guide/openclaw/inference/hosted-inference/use-google-gemini).

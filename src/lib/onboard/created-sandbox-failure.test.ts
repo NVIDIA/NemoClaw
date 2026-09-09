@@ -163,7 +163,6 @@ function readinessDeps(
     printReadinessFailure: vi.fn(),
     printCreateFailureDiagnostics: vi.fn(),
     printDockerGpuReadinessFailure: vi.fn(),
-    deleteSandbox: vi.fn(() => ({ status: 0 })),
     cliName: vi.fn(() => "nemoclaw"),
     error: vi.fn(),
     exitProcess: vi.fn((code: number): never => {
@@ -202,33 +201,12 @@ function expectReceiptBlock(
 }
 
 describe("reportSandboxReadinessFailure", () => {
-  it("deletes the failed sandbox on the non-GPU path and exits 1", () => {
+  it("preserves the failed sandbox on the non-GPU path and exits 1", () => {
     const deps = readinessDeps();
     expect(() => reportSandboxReadinessFailure(readinessOptions(), deps)).toThrow(ExitSignal);
     expect(deps.printReadinessFailure).toHaveBeenCalledWith(NOT_READY, "alpha", 300);
     expect(deps.printCreateFailureDiagnostics).toHaveBeenCalledWith("alpha", { backupPath: null });
-    expect(deps.deleteSandbox).toHaveBeenCalledWith("alpha");
     expect(deps.printDockerGpuReadinessFailure).not.toHaveBeenCalled();
-    expectReceiptBlock(deps, [
-      "  Sandbox lifecycle receipt:",
-      "    state: created_but_not_ready",
-      "    sandbox: alpha",
-      "    readiness_gate: sandbox_list:not_ready_timeout",
-      "    readiness_reason: timeout",
-      "    create_stream_status: 0",
-      "    timeout_seconds: 300",
-      "    terminal_resolution: timed_out_deleted",
-    ]);
-    expect(deps.error).toHaveBeenCalledWith(
-      "  Deleted sandbox 'alpha' after the readiness gate failed; retry will recreate it.",
-    );
-    expect(deps.error).toHaveBeenCalledWith("  Retry: nemoclaw onboard");
-    expect(deps.exitProcess).toHaveBeenCalledWith(1);
-  });
-
-  it("surfaces manual cleanup when deletion fails", () => {
-    const deps = readinessDeps({ deleteSandbox: vi.fn(() => ({ status: 1 })) });
-    expect(() => reportSandboxReadinessFailure(readinessOptions(), deps)).toThrow(ExitSignal);
     expectReceiptBlock(deps, [
       "  Sandbox lifecycle receipt:",
       "    state: created_but_not_ready",
@@ -240,9 +218,10 @@ describe("reportSandboxReadinessFailure", () => {
       "    terminal_resolution: timed_out_retained",
     ]);
     expect(deps.error).toHaveBeenCalledWith(
-      "  Could not remove the failed sandbox. Manual cleanup:",
+      "  Recovery remains blocked while sandbox 'alpha' exists. Do not delete it by mutable name; run 'nemoclaw alpha destroy' to check for authoritative absence.",
     );
-    expect(deps.error).toHaveBeenCalledWith('    openshell sandbox delete "alpha"');
+    expect(errorLines(deps)).not.toContain("  Retry: nemoclaw onboard");
+    expect(deps.exitProcess).toHaveBeenCalledWith(1);
   });
 
   it("defers cleanup to the Docker-GPU patch and never deletes the sandbox", () => {
@@ -251,7 +230,6 @@ describe("reportSandboxReadinessFailure", () => {
       reportSandboxReadinessFailure(readinessOptions({ useDockerGpuPatch: true }), deps),
     ).toThrow(ExitSignal);
     expect(deps.printDockerGpuReadinessFailure).toHaveBeenCalledTimes(1);
-    expect(deps.deleteSandbox).not.toHaveBeenCalled();
     expectReceiptBlock(deps, [
       "  Sandbox lifecycle receipt:",
       "    state: created_but_not_ready",
@@ -287,12 +265,12 @@ describe("reportSandboxReadinessFailure", () => {
       "    readiness_reason: terminal_failure_phase",
       "    create_stream_status: 0",
       "    timeout_seconds: 300",
-      "    terminal_resolution: terminal_failure_deleted",
+      "    terminal_resolution: terminal_failure_retained",
     ]);
   });
 
-  it("reports retained cleanup for terminal readiness failures when delete fails", () => {
-    const deps = readinessDeps({ deleteSandbox: vi.fn(() => ({ status: 1 })) });
+  it("reports retained cleanup for terminal readiness failures", () => {
+    const deps = readinessDeps();
     expect(() =>
       reportSandboxReadinessFailure(
         readinessOptions({
@@ -342,7 +320,7 @@ describe("reportSandboxReadinessFailure", () => {
       "    readiness_reason: terminal_failure_phase",
       "    create_stream_status: 0",
       "    timeout_seconds: 300",
-      "    terminal_resolution: terminal_failure_deleted",
+      "    terminal_resolution: terminal_failure_retained",
     ]);
   });
 

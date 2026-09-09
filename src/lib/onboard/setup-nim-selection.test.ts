@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 
-import { describe, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { requireValue } from "../core/require-value";
 import { OnboardInferenceCapabilityCache } from "./inference-capability-cache";
@@ -11,6 +11,7 @@ import {
   applyCloudFallbackSelection,
   clearNimContainerBeforeRetry,
   createRemoteModelValidator,
+  resolveCompatibleEndpointSelection,
   type SetupNimSelectionState,
 } from "./setup-nim-selection";
 
@@ -64,6 +65,33 @@ describe("setupNim selection state helpers", () => {
     assert.equal(state.nimContainer, null);
     assert.equal(state.model, "nvidia/local-nim");
     assert.equal(state.provider, "vllm-local");
+  });
+});
+
+describe("resolveCompatibleEndpointSelection", () => {
+  it("rejects an unsafe endpoint at the onboarding selection boundary", async () => {
+    const prompt = vi.fn(async () => "https://later.example.test/v1");
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exit = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit:${String(code)}`);
+    }) as typeof process.exit);
+
+    try {
+      await expect(
+        resolveCompatibleEndpointSelection({
+          kind: "openai",
+          envUrl: "ftp://unsafe.example.test/v1",
+          recoveredEndpointUrl: null,
+          nonInteractive: true,
+          prompt,
+        }),
+      ).rejects.toThrow("process.exit:1");
+      expect(prompt).not.toHaveBeenCalled();
+      expect(error).toHaveBeenCalledWith("  Endpoint URL must use HTTP or HTTPS.");
+    } finally {
+      exit.mockRestore();
+      error.mockRestore();
+    }
   });
 });
 

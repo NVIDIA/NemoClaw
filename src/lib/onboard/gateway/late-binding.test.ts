@@ -12,7 +12,10 @@ import {
 } from "../docker-driver-gateway-config";
 import * as dockerDriverGatewayLaunch from "../docker-driver-gateway-launch";
 import * as gatewayBinding from "../gateway-binding";
-import { createDockerDriverGatewayStart } from "./docker-driver-start";
+import {
+  createDockerDriverGatewayStart,
+  resolveDockerDriverGatewayRuntimeMarkerEndpoint,
+} from "./docker-driver-start";
 import { createGatewayRecoveryOrchestration } from "./recovery";
 import { createGatewayRegistration } from "./registration";
 import * as gatewayStateLifecycleLock from "./state-lifecycle-lock";
@@ -21,6 +24,24 @@ const runResult = (status = 0) =>
   ({ status, stdout: "", stderr: "" }) as ReturnType<typeof import("../../runner").run>;
 
 describe("gateway lifecycle late binding", () => {
+  it("records the selected runtime's advertised gateway endpoint", () => {
+    const fallback = vi.fn(() => "https://127.0.0.1:8080");
+
+    expect(
+      resolveDockerDriverGatewayRuntimeMarkerEndpoint(
+        { OPENSHELL_GRPC_ENDPOINT: "https://169.254.2.2:8080" },
+        fallback,
+      ),
+    ).toBe("https://169.254.2.2:8080");
+    expect(fallback).not.toHaveBeenCalled();
+  });
+
+  it("retains the Docker gateway endpoint fallback for legacy launch environments", () => {
+    expect(
+      resolveDockerDriverGatewayRuntimeMarkerEndpoint({}, () => "https://127.0.0.1:8080"),
+    ).toBe("https://127.0.0.1:8080");
+  });
+
   it("uses the current binding for select, add, and health commands", () => {
     let name = "initial";
     const runCaptureOpenshell = vi.fn((args: string[]) => args.join(" "));

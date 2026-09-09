@@ -78,6 +78,13 @@ export interface DockerDriverGatewayStart {
   }): Promise<void>;
 }
 
+export function resolveDockerDriverGatewayRuntimeMarkerEndpoint(
+  desiredEnv: Readonly<Record<string, string>>,
+  fallback: () => string,
+): string {
+  return desiredEnv.OPENSHELL_GRPC_ENDPOINT?.trim() || fallback();
+}
+
 export function createDockerDriverGatewayStart(
   deps: DockerDriverGatewayStartDeps,
 ): DockerDriverGatewayStart {
@@ -273,7 +280,10 @@ export function createDockerDriverGatewayStart(
       dockerDriverGatewayRuntimeMarker.writeDockerDriverGatewayRuntimeMarkerForStateDir(stateDir, {
         pid: childPid,
         desiredEnv: driftGatewayEnv,
-        endpoint: deps.getDockerDriverGatewayEndpoint(),
+        endpoint: resolveDockerDriverGatewayRuntimeMarkerEndpoint(
+          driftGatewayEnv,
+          deps.getDockerDriverGatewayEndpoint,
+        ),
         gatewayBin: driftGatewayBin,
         openshellVersion: deps.getInstalledOpenshellVersion(openshellVersionOutput),
         dockerHost: process.env.DOCKER_HOST || null,

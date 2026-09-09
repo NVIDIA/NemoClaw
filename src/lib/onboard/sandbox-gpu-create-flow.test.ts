@@ -970,7 +970,7 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     expect(mocks.streamSandboxCreate).toHaveBeenCalledOnce();
     expect(mocks.verifyGpuSandboxAccessAfterReady).not.toHaveBeenCalled();
     expect(deps.runOpenshell).not.toHaveBeenCalled();
-    expect(errorOutput()).toContain("Verify the sandbox identity before manual cleanup");
+    expect(errorOutput()).toContain("Recovery remains blocked while this sandbox exists");
     expect(mocks.streamSandboxCreate).toHaveBeenCalledOnce();
   });
 
@@ -1384,7 +1384,7 @@ describe("runSandboxGpuCreateFlow cleanup and provenance", () => {
     const output = vi.mocked(console.error).mock.calls.flat().join("\n");
     expect(deps.runOpenshell).not.toHaveBeenCalled();
     expect(output).toContain("left sandbox 'alpha' in place");
-    expect(output).toContain("Verify the sandbox identity before manual cleanup");
+    expect(output).toContain("Recovery remains blocked while this sandbox exists");
     expect(output).not.toContain("openshell sandbox delete");
     expect(output).not.toContain("Retry: nemoclaw onboard");
   });
@@ -1401,7 +1401,7 @@ describe("runSandboxGpuCreateFlow cleanup and provenance", () => {
     const output = vi.mocked(console.error).mock.calls.flat().join("\n");
     expect(deps.runOpenshell).not.toHaveBeenCalled();
     expect(output).toContain("left sandbox 'alpha' in place");
-    expect(output).toContain("Verify the sandbox identity before manual cleanup");
+    expect(output).toContain("Recovery remains blocked while this sandbox exists");
     expect(output).not.toContain("Retry: nemoclaw onboard");
   });
 
