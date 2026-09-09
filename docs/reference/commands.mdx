@@ -198,13 +198,16 @@ Start a new shell session to refresh the cached sandbox names after creating or 
 
 Export a supported registered OpenClaw sandbox as a secret-free `NemoClawConfig` document. The command reads the registry and current OpenShell state without changing the sandbox. It stops without writing output when required identity, policy, inference, or workload evidence is missing or inconsistent. If the source changes during observation, the command retries the complete observation once and stops without output if the retry also changes.
 
+The command reads the provider endpoint from the sandbox's OpenShell gateway and compares it with the registered endpoint.
+If OpenShell cannot supply the required evidence, the command stops without writing output.
+
 Write a file on Linux:
 
 ```bash
 $$nemoclaw config export my-assistant --output nemoclaw.yaml
 ```
 
-Use `--output -` to write YAML to standard output on another supported host or in a pipeline:
+Use `--output -` to write YAML to standard output on any supported host or in a pipeline:
 
 ```bash
 $$nemoclaw config export my-assistant --output -
@@ -219,7 +222,15 @@ $$nemoclaw config export my-assistant --output -
 
 The export contains credential environment-variable references, not credential values. File output uses mode `0600`. Without `--force`, an existing destination is preserved and the command fails. With `--force`, publication checks that the existing destination is a regular file before ordinary atomic replacement.
 
-Version 1 exports managed OpenClaw sandboxes that use hosted external inference, an immutable managed image, a NemoClaw-owned gateway, and an explicit representable policy. Other profiles fail with a diagnostic instead of producing an incomplete document.
+If staging cleanup fails, the diagnostic identifies the temporary file and its original directory by device and inode when that evidence is available.
+The directory can have moved from the requested output location.
+Before manual removal, use `stat` to verify both identities and confirm that the temporary entry is a regular file.
+If either identity cannot be verified, do not remove files by name alone.
+Do not remove the requested output file to clean up a temporary link.
+
+Version 1 exports managed OpenClaw sandboxes in the default workspace.
+Supported sandboxes use hosted external inference, an immutable managed image, a NemoClaw-owned gateway, and an explicit representable policy.
+Other profiles fail with a diagnostic instead of producing an incomplete document.
 
 ### `$$nemoclaw resources`
 
