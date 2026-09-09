@@ -61,6 +61,7 @@ describe("host address discovery", () => {
           OPENSHELL_PODMAN_SOCKET: "/tmp/podman.sock",
         },
         "linux",
+        () => ({ sandboxHostAddress: "169.254.2.2" }) as never,
       ),
     ).resolves.toEqual({ source: "runtime-provider", address: "169.254.2.2", probe: null });
   });

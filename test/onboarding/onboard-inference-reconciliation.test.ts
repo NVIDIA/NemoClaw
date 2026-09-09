@@ -213,10 +213,18 @@ describe("onboard helpers", () => {
       const bridgeDnsPreflightPath = JSON.stringify(
         path.join(repoRoot, "src", "lib", "onboard", "bridge-dns-preflight.ts"),
       );
+      const onboardScriptMocksPath = JSON.stringify(
+        path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
+      );
 
       fs.mkdirSync(fakeBin, { recursive: true });
       writeOkOpenshell(fakeBin);
       fs.writeFileSync(path.join(fakeBin, "brew"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+      fs.writeFileSync(
+        path.join(fakeBin, "docker"),
+        '#!/bin/sh\ncase "$1" in\n  info) printf \'%s\\n\' \'{"ServerVersion":"test"}\' ;;\n  version) printf \'%s\\n\' \'{"Server":{"Version":"test"}}\' ;;\nesac\n',
+        { mode: 0o755 },
+      );
 
       const script = String.raw`
 const runner = require(${runnerPath});
@@ -230,6 +238,9 @@ const dockerDriverPlatform = require(${dockerDriverPlatformPath});
 const gatewayGpuPassthrough = require(${gatewayGpuPassthroughPath});
 const onboardProbes = require(${onboardProbesPath});
 const preflight = require(${preflightPath});
+const fixtureMocks = require(${onboardScriptMocksPath});
+fixtureMocks.mockStandaloneGatewayTeardownAuthority();
+fixtureMocks.mockManagedStateVolumeOnboardLifecycle();
 preflight.assessHost = () => ({
   platform: "linux",
   isWsl: false,

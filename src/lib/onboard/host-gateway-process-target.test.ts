@@ -176,6 +176,19 @@ function stopScopedTarget(
         [NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV]:
           overrides.namespace ?? gatewayIdForStateDir(stateDir),
       }),
+      ...(provider === "podman"
+        ? {
+            resolveRuntimeProvider: () =>
+              ({
+                gateway: {
+                  supported: true,
+                  prepareHostRuntime: () => ({
+                    gatewayConfig: { processOwnership: "runtime-marker" },
+                  }),
+                },
+              }) as never,
+          }
+        : {}),
       warn: vi.fn(),
     },
     {
@@ -241,7 +254,7 @@ describe("stopHostGatewayProcesses target filtering", () => {
     try {
       const { kill, pidFile, result, run } = stopScopedTarget({ provider: "podman" });
 
-      expect(result.stopped).toEqual([9_999_601]);
+      expect(result.stopped, result.ownershipFailures?.join("\n")).toEqual([9_999_601]);
       expect(result.ownershipFailures).toEqual([]);
       expect(kill).toHaveBeenCalledWith(9_999_601, "SIGTERM");
       expect(run.mock.calls.some(([command]) => command === "pgrep")).toBe(false);

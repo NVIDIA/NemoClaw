@@ -66,29 +66,31 @@ describe("platform evidence workflow", () => {
     });
   });
 
-  it("uses the runner's preinstalled GNU tar without adding mutable formulae", () => {
+  it("verifies GNU tar without replacing the native macOS tar", () => {
     const install = step("macos-vitest", "Install macOS test dependencies").run ?? "";
     expect(install).toContain('test -x "$(command -v gtar)"');
     expect(install.indexOf('test -x "$(command -v gtar)"')).toBeLessThan(
       install.indexOf("brew install"),
     );
-    expect(install).toContain('ln -s "$(command -v gtar)" "$RUNNER_TEMP/nemoclaw-bin/tar"');
-    expect(install).toContain('"$RUNNER_TEMP/nemoclaw-bin"');
+    expect(install).not.toContain('ln -s "$(command -v gtar)"');
+    expect(install).not.toContain('"$RUNNER_TEMP/nemoclaw-bin"');
     expect(install).not.toMatch(/brew install[^\n]*(?:docker|gnu-tar|iproute2mac|podman)/u);
   });
 
-  it("keeps container clients out of the non-live WSL suite", () => {
+  it("installs container clients before Vitest but starts Docker only afterward", () => {
     const steps = job("wsl-vitest").steps ?? [];
     const install = step("wsl-vitest", "Install Ubuntu dependencies").run ?? "";
-    const runtime = step("wsl-vitest", "Install and start the WSL container runtime").run ?? "";
+    const runtime = step("wsl-vitest", "Start the WSL container runtime").run ?? "";
     const runtimeIndex = steps.findIndex(
-      (entry) => entry.name === "Install and start the WSL container runtime",
+      (entry) => entry.name === "Start the WSL container runtime",
     );
     const suiteIndex = steps.findIndex((entry) => entry.name === "Run full Vitest suite in WSL");
-    expect(install).not.toContain("'docker.io'");
-    expect(install).not.toContain("'podman'");
-    expect(runtime).toContain("'docker.io'");
-    expect(runtime).toContain("'podman'");
+    expect(install).toContain("'docker.io'");
+    expect(install).toContain("'podman'");
+    expect(install).toContain("'iproute2'");
+    expect(install).toContain("'zip'");
+    expect(install).not.toContain("service docker start");
+    expect(runtime).not.toContain("Install-WslUbuntuDependencies");
     expect(runtime).toContain("service docker start");
     expect(runtime).toContain("docker info");
     expect(runtime).toContain("podman --version");

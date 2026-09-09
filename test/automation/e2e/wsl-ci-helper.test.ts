@@ -107,6 +107,9 @@ Get-WslCheckoutSyncScript -Checkout "/mnt/d/agent work/repo's" -Workdir "/tmp/ne
       expect(result.stdout).toContain(
         "chown -R 'nemoclaw-ci:nemoclaw-ci' '/tmp/nemoclaw-wsl-workdir/123-1'",
       );
+      expect(result.stdout).toContain(
+        "chmod 0755 '/tmp/nemoclaw-wsl-workdir' '/tmp/nemoclaw-wsl-workdir/123-1'",
+      );
     },
   );
 

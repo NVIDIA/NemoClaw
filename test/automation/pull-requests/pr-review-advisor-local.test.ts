@@ -24,7 +24,7 @@ const SIGTERM_IGNORING_CHILD_FIXTURE = fileURLToPath(
 const temporaryDirectories: string[] = [];
 
 function temporaryDirectory(): string {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "local-review-test-"));
+  const directory = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "local-review-test-")));
   temporaryDirectories.push(directory);
   return directory;
 }
@@ -425,8 +425,12 @@ describe("local PR review advisor", () => {
     expect(fs.existsSync(path.join(snapshot, "ignored.txt"))).toBe(false);
     expect(fs.readlinkSync(path.join(snapshot, "tracked-internal-link"))).toBe("committed.txt");
     expect(fs.readlinkSync(path.join(snapshot, "tracked-retargeted-link"))).toBe("committed.txt");
-    expect(git(snapshot, ["ls-tree", refs.headRef, "tracked-internal-link"])).toContain("120000 blob");
-    expect(git(snapshot, ["ls-tree", refs.headRef, "tracked-retargeted-link"])).toContain("120000 blob");
+    expect(git(snapshot, ["ls-tree", refs.headRef, "tracked-internal-link"])).toContain(
+      "120000 blob",
+    );
+    expect(git(snapshot, ["ls-tree", refs.headRef, "tracked-retargeted-link"])).toContain(
+      "120000 blob",
+    );
     expect(git(snapshot, ["ls-tree", refs.headRef, "untracked-link"])).toContain("120000 blob");
     expect(fs.existsSync(path.join(snapshot, "untracked-link"))).toBe(false);
     expect(git(source, ["status", "--porcelain=v1", "-uall"])).toBe(before);

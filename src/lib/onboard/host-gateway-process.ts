@@ -46,6 +46,7 @@ export interface HostGatewayProcessDeps {
   log?: (message: string) => void;
   readProcessExecutable?: (pid: number) => string | null;
   readProcessEnvironment?: (pid: number) => Record<string, string> | null;
+  resolveRuntimeProvider?: typeof resolveRegisteredRuntimeProvider;
   warn?: (message: string) => void;
 }
 
@@ -138,6 +139,7 @@ function defaultDeps(overrides: Partial<HostGatewayProcessDeps> = {}): HostGatew
     log: overrides.log,
     readProcessExecutable: overrides.readProcessExecutable,
     readProcessEnvironment: overrides.readProcessEnvironment,
+    resolveRuntimeProvider: overrides.resolveRuntimeProvider ?? resolveRegisteredRuntimeProvider,
     warn: overrides.warn,
   };
 }
@@ -351,7 +353,7 @@ function scopedGatewayOwnershipFailure(
   if (Number(pidText?.trim()) !== pid || marker?.pid !== pid) {
     return "PID file and runtime marker do not identify the same process";
   }
-  const provider = resolveRegisteredRuntimeProvider(marker.driver);
+  const provider = deps.resolveRuntimeProvider!(marker.driver);
   if (!provider?.gateway.supported) {
     return "runtime marker does not identify a registered gateway provider";
   }

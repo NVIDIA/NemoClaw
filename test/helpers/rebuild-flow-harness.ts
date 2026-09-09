@@ -56,6 +56,9 @@ export const openshellRuntime = requireDist("../../adapters/openshell/runtime.js
 export const policies = requireDist("../../policy/index.js");
 export const policyState = requireDist("../../adapters/openshell/policy-state.js");
 export const policyGet = requireDist("./policy-get.js");
+export const portableRetirementAuthority = requireDist(
+  "../../onboard/portable-retirement-authority.js",
+);
 export const portableAgentLifecycle = requireDist(
   "../../onboard/experimental/portable-agent-lifecycle.js",
 );

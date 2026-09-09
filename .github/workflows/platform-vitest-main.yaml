@@ -122,10 +122,7 @@ jobs:
           set -euo pipefail
           test -x "$(command -v gtar)"
           brew install bash coreutils fd gawk ripgrep
-          mkdir -p "$RUNNER_TEMP/nemoclaw-bin"
-          ln -s "$(command -v gtar)" "$RUNNER_TEMP/nemoclaw-bin/tar"
           printf '%s\n' \
-            "$RUNNER_TEMP/nemoclaw-bin" \
             "$(brew --prefix bash)/bin" \
             "$(brew --prefix coreutils)/libexec/gnubin" \
             "$(brew --prefix gawk)/libexec/gnubin" \
@@ -316,8 +313,9 @@ jobs:
           . "$env:TRUSTED_WSL_HELPER"
           $packages = @(
             'bash', 'ca-certificates', 'curl', 'git', 'jq', 'lsb-release', 'make',
+            'docker.io', 'gcc', 'iproute2', 'podman',
             'procps', 'python3', 'python3-pip', 'python3-venv',
-            'ripgrep', 'rsync', 'tar', 'unzip', 'xz-utils'
+            'ripgrep', 'rsync', 'tar', 'unzip', 'xz-utils', 'zip'
           )
           Install-WslUbuntuDependencies -Distro $env:WSL_DISTRO -Packages $packages -TestUser $env:WSL_TEST_USER
 
@@ -411,15 +409,11 @@ jobs:
           "@
           Invoke-WslScript -Distro $env:WSL_DISTRO -User root -Script $script
 
-      - name: Install and start the WSL container runtime
+      - name: Start the WSL container runtime
         if: ${{ matrix.shard == 1 && github.ref == 'refs/heads/main' }}
         shell: powershell
         run: |
           . "$env:TRUSTED_WSL_HELPER"
-          Install-WslUbuntuDependencies `
-            -Distro $env:WSL_DISTRO `
-            -Packages @('docker.io', 'iproute2', 'podman') `
-            -TestUser $env:WSL_TEST_USER
           $testUser = ConvertTo-BashLiteral -Value $env:WSL_TEST_USER
           $script = @"
           set -euo pipefail

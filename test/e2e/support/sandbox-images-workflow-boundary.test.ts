@@ -687,10 +687,7 @@ describe("sandbox image workflow boundary", () => {
         (step) => step.name === "Remove swap after Hermes image export",
       );
       expect(cleanup).toBeDefined();
-      cleanup!.run = cleanup!.run!.replace(
-        'sudo swapoff "$swap_file"',
-        'echo "swap retained"',
-      );
+      cleanup!.run = cleanup!.run!.replace('sudo swapoff "$swap_file"', 'echo "swap retained"');
 
       expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
         `${jobName} Hermes export swap cleanup must include sudo swapoff "$swap_file"`,
@@ -716,8 +713,8 @@ describe("sandbox image workflow boundary", () => {
     producer.steps!.push({ ...runtime });
     producer.steps!.push({ ...runtimeSteps.find((step) => step.name === "Set up Node")! });
     const save = producer.steps!.find((step) => step.name === "Save production image")!;
-    save.run = save.run!
-      .replace("set -euo pipefail", "set -eu")
+    save.run = save
+      .run!.replace("set -euo pipefail", "set -eu")
       .replace("docker save nemoclaw-production", "docker save rebuilt-image");
     producer.steps!.push({ ...save });
     const isolationUpload = producer.steps!.find((step) => step.name === "Upload isolation image")!;

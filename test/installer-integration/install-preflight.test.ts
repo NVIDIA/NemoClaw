@@ -506,7 +506,7 @@ exit 89
       writeNodeStub(fakeBin);
       writeDockerOkStub(fakeBin);
       writeSourceCheckoutNpmStub(fakeBin, { commandLog: true });
-
+      writeExecutable(path.join(fakeBin, "uname"), "#!/bin/sh\nprintf 'Linux\\n'\n");
       writeSourceCheckoutPackages(tmp);
 
       fs.mkdirSync(path.join(tmp, "scripts"), { recursive: true });
