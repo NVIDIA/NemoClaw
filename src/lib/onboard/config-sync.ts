@@ -41,10 +41,7 @@ export function sandboxConfigSyncArgs(sandboxName: string): string[] {
   return ["sandbox", "exec", "-n", sandboxName, "--no-tty", "--", "/bin/bash", "-s"];
 }
 
-// Write `~/.nemoclaw/config.json` and normalize OpenClaw config-dir perms
-// inside the sandbox. Idempotent — safe to invoke from the rebuild resume
-// path where the Dockerfile leaves config.json as a zero-byte placeholder
-// that crashes the OpenClaw nemoclaw plugin's loadOnboardConfig. Fixes #3999.
+// Populate provider selection, including rebuilt config placeholders (#3999).
 export function runSandboxConfigSync(sandboxName: string, deps: RunSandboxConfigSyncDeps): void {
   const selectionConfig = deps.getSelectionConfig();
   if (!selectionConfig) return;
@@ -54,11 +51,7 @@ export function runSandboxConfigSync(sandboxName: string, deps: RunSandboxConfig
 }
 
 export function buildSandboxConfigSyncScript(selectionConfig: ProviderSelectionConfig): string {
-  // Do not rewrite openclaw.json at runtime. Model routing is handled by the
-  // host-side gateway (`openshell inference set` in Step 5), not from inside
-  // the sandbox. We write the NemoClaw selection config and normalize the
-  // mutable-default OpenClaw config permissions after the gateway has had a
-  // chance to perform its own startup initialization.
+  // Native baseline setup preserves valid routing and creates its own state.
   return `
 set -euo pipefail
 # OpenShell exec and the OpenClaw gateway can expose different HOME values.
@@ -79,10 +72,15 @@ config_dir=/sandbox/.openclaw
 if [ -d "$config_dir" ]; then
   config_dir_owner="$(stat -c '%U' "$config_dir" 2>/dev/null || echo unknown)"
   if [ "$config_dir_owner" != "root" ]; then
-    chmod -R g+rwX,o-rwx "$config_dir" 2>/dev/null || true
-    find "$config_dir" -type d -exec chmod g+s {} + 2>/dev/null || true
-    chmod 2770 "$config_dir" 2>/dev/null || true
-    chmod 660 "$config_dir/openclaw.json" "$config_dir/.config-hash" 2>/dev/null || true
+    if [ -L "$config_dir" ] || [ -L "$config_dir/openclaw.json" ] || [ -L "$config_dir/.config-hash" ]; then
+      echo "Refusing OpenClaw state initialization through a symlink" >&2
+      exit 1
+    fi
+    export HOME=/sandbox OPENCLAW_STATE_DIR="$config_dir" OPENCLAW_CONFIG_PATH="$config_dir/openclaw.json"
+    /usr/local/bin/openclaw config validate
+    /usr/local/bin/openclaw setup --baseline
+    (cd "$config_dir" && sha256sum openclaw.json >.config-hash)
+    python3 -I /usr/local/lib/nemoclaw/normalize_mutable_config_perms.py "$config_dir" "$current_uid" "$(id -g)" || true
   fi
 fi
 exit

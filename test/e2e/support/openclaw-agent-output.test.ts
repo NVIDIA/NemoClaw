@@ -4,7 +4,10 @@
 import { describe, expect, it } from "vitest";
 
 import { containsAnswer } from "../../helpers/e2e-answer-assertions.ts";
-import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
+import {
+  nativeStateDoctorReportIsValid,
+  parseOpenClawAgentText,
+} from "../fixtures/openclaw-agent-output.ts";
 
 describe("OpenClaw agent-output fixture", () => {
   it("rejects echoed user messages as agent-response evidence", () => {
@@ -353,5 +356,74 @@ describe("OpenClaw agent-output fixture", () => {
     ["incomplete-turn error", { error: { kind: "incomplete_turn" } }],
   ])("rejects reply evidence with declared %s metadata", (_label, meta) => {
     expect(parseOpenClawAgentText(JSON.stringify({ payloads: [{ text: "56" }], meta }))).toBe("");
+  });
+});
+
+describe("OpenClaw native state doctor evidence", () => {
+  const report = (findings: unknown[] = []) =>
+    JSON.stringify({ ok: findings.length === 0, checksRun: 1, checksSkipped: 50, findings });
+  const checkId = "core/doctor/state-integrity";
+  const warning = { checkId, severity: "warning", path: "/unrelated-state-volume" };
+  const clean = report();
+  const unrelated = report([warning]);
+
+  it.each([
+    ["clean selected report", 0, false, clean, true],
+    ["native startup text", 0, false, `native startup info\n${clean}`, true],
+    ["unrelated warning", 1, false, unrelated, true],
+    [
+      "pathless detector exception",
+      1,
+      false,
+      report([{ checkId, severity: "error", message: "health check threw: EACCES" }]),
+      false,
+    ],
+    [
+      "nested state write error",
+      1,
+      false,
+      report([
+        {
+          checkId,
+          severity: "error",
+          path: "/sandbox/.openclaw/agents/main/sessions",
+          message: "Sessions dir is not writable.",
+        },
+      ]),
+      false,
+    ],
+    ["unknown severity", 1, false, report([{ ...warning, severity: "unknown" }]), false],
+    [
+      "state directory permissions",
+      1,
+      false,
+      report([{ ...warning, path: "/sandbox/.openclaw" }]),
+      false,
+    ],
+    [
+      "config permissions",
+      1,
+      false,
+      report([{ ...warning, path: "/sandbox/.openclaw/openclaw.json" }]),
+      false,
+    ],
+    [
+      "different selected check",
+      1,
+      false,
+      report([{ ...warning, checkId: "core/doctor/disk-space" }]),
+      false,
+    ],
+    ["timeout with exit1", 1, true, unrelated, false],
+    ["timeout with exit0", 0, true, clean, false],
+    ["missing completion metadata", 0, undefined, clean, false],
+    ["unavailable command", 127, false, unrelated, false],
+    ["absent completed exit", null, false, unrelated, false],
+    ["duplicate reports", 0, false, `${clean}\n${clean}`, false],
+    ["malformed report", 0, false, '{"ok":true,', false],
+  ] as const)("classifies %s", (_name, exitCode, timedOut, stdout, expected) => {
+    expect(
+      nativeStateDoctorReportIsValid({ exitCode, timedOut: timedOut as boolean, stdout }),
+    ).toBe(expected);
   });
 });

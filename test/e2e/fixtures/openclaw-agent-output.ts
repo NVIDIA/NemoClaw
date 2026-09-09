@@ -12,6 +12,8 @@ import {
   containsToolCallStructure,
 } from "../../helpers/e2e-answer-assertions.ts";
 
+import type { ShellProbeResult } from "./shell-probe.ts";
+
 const OPENCLAW_TEXT_KEYS = ["text", "content"] as const;
 const OPENCLAW_CONTAINER_KEYS = [
   "result",
@@ -141,4 +143,28 @@ export function parseOpenClawAgentText(raw: string): string {
 export function isExactOpenClawAgentText(raw: string, expected: string): boolean {
   const parts = openClawAgentTextParts(raw);
   return parts.length === 1 && parts[0] === expected;
+}
+
+export function nativeStateDoctorReportIsValid(
+  result: Pick<ShellProbeResult, "stdout" | "exitCode" | "timedOut">,
+): boolean {
+  const reports = parseOpenClawJsonDocuments(result.stdout);
+  const report = reports[0] as Record<string, unknown> | undefined;
+  // Keep unrelated warnings in the raw report. Detector and state-write errors,
+  // plus any finding on the state root or config, fail this permission check.
+  return (
+    reports.length === 1 &&
+    result.timedOut === false &&
+    (result.exitCode === 0 || result.exitCode === 1) &&
+    report?.ok === (result.exitCode === 0) &&
+    report?.checksRun === 1 &&
+    Array.isArray(report?.findings) &&
+    report.findings.every(
+      (finding) =>
+        finding?.checkId === "core/doctor/state-integrity" &&
+        (finding.severity === "info" || finding.severity === "warning") &&
+        finding.path !== "/sandbox/.openclaw" &&
+        finding.path !== "/sandbox/.openclaw/openclaw.json",
+    )
+  );
 }

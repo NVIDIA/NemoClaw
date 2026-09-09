@@ -298,10 +298,11 @@ def _kind(st: os.stat_result) -> str:
     return "special entry"
 
 
-def _open_absolute_dir(path: str) -> int:
+def _open_absolute_dir(path: str, extra_flags: int = 0) -> int:
     if not posixpath.isabs(path):
         raise GuardError("invalid-config-path", path, "path must be absolute")
-    fd = os.open("/", _directory_flags())
+    flags = _directory_flags() | extra_flags
+    fd = os.open("/", flags)
     try:
         for component in posixpath.normpath(path).split("/"):
             if not component:
@@ -313,7 +314,7 @@ def _open_absolute_dir(path: str) -> int:
                     path,
                     f"path component {component!r} is a {_kind(before)}",
                 )
-            next_fd = os.open(component, _directory_flags(), dir_fd=fd)
+            next_fd = os.open(component, flags, dir_fd=fd)
             after = os.fstat(next_fd)
             if not _same_inode(before, after):
                 os.close(next_fd)
@@ -331,11 +332,13 @@ def _open_absolute_dir(path: str) -> int:
 
 
 def _open_private_state_dir(
-    state_dir: str, identity: Identity, create: bool
+    state_dir: str, identity: Identity, create: bool, *, metadata_only: bool = False
 ) -> int | None:
     parent_path = posixpath.dirname(state_dir)
     state_name = posixpath.basename(state_dir)
-    parent_fd = _open_absolute_dir(parent_path)
+    # Marker metadata needs no Landlock directory-read grant.
+    extra_flags = getattr(os, "O_PATH", 0) if metadata_only else 0
+    parent_fd = _open_absolute_dir(parent_path, extra_flags)
     try:
         try:
             before = os.stat(state_name, dir_fd=parent_fd, follow_symlinks=False)
@@ -349,7 +352,7 @@ def _open_private_state_dir(
             raise GuardError(
                 "unsafe-state-path", state_dir, "state parent is not a directory"
             )
-        fd = os.open(state_name, _directory_flags(), dir_fd=parent_fd)
+        fd = os.open(state_name, _directory_flags() | extra_flags, dir_fd=parent_fd)
         actual = os.fstat(fd)
         if not _same_inode(before, actual):
             os.close(fd)
@@ -1216,7 +1219,7 @@ def _startup_protocol_active(identity: Identity) -> bool:
 
 def _startup_markers_absent(identity: Identity) -> bool:
     parent_fd = _open_private_state_dir(
-        posixpath.dirname(STARTUP_READY_PATH), identity, False
+        posixpath.dirname(STARTUP_READY_PATH), identity, False, metadata_only=True
     )
     if parent_fd is None:
         return True
@@ -1250,6 +1253,7 @@ def mutable_config_modes(identity: Identity) -> tuple[int, int]:
             ):
                 return 0o700, 0o600
     except (OSError, GuardError):
+        # Unverified startup metadata retains the shared permission contract.
         pass
     return 0o2770, 0o660
 

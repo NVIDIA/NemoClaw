@@ -43,6 +43,33 @@ module.STARTUP_READY_PATH = os.path.join(os.path.dirname(config_dir), ".nemoclaw
 module.STARTUP_CAPABILITY_PATH = os.path.join(os.path.dirname(config_dir), ".nemoclaw-test", "ready-capability.json")
 module.NODE_BINARY_PATH = os.environ.get("NEMOCLAW_TEST_NODE_PATH", module.NODE_BINARY_PATH)
 module.JSON5_MODULE_PATH = os.environ.get("NEMOCLAW_TEST_JSON5_PATH", module.JSON5_MODULE_PATH)
+if failure == "denied-marker-directory":
+    import errno
+    import json
+    private_dir = os.path.dirname(module.STARTUP_READY_PATH)
+    os.mkdir(private_dir, 0o700)
+    descriptor = module._open_private_state_dir(private_dir, identity, False)
+    os.fsync(descriptor)
+    os.close(descriptor)
+    original_open = os.open
+    metadata_flag = getattr(os, "O_PATH", 1 << 29)
+    module.os.O_PATH = metadata_flag
+    def deny_directory_reads(path, flags, *args, **kwargs):
+        if flags & os.O_DIRECTORY and not flags & metadata_flag:
+            raise PermissionError(errno.EACCES, "directory reads denied", path)
+        return original_open(path, flags & ~metadata_flag, *args, **kwargs)
+    module.os.open = deny_directory_reads
+    absent = module._startup_markers_absent(identity)
+    with open(module.STARTUP_READY_PATH, "w") as marker:
+        marker.write("present")
+    marker_absent = module._startup_markers_absent(identity)
+    default_denied = False
+    try:
+        module._open_private_state_dir(private_dir, identity, False)
+    except PermissionError:
+        default_denied = True
+    print(json.dumps({"absent": absent, "markerAbsent": marker_absent, "defaultDenied": default_denied}))
+    raise SystemExit(0)
 if failure in {"installed-current", "installed-not-ready", "installed-nonroot-no-cap", "installed-nonroot-not-ready", "startup-owner", "old-image-no-cap"}:
     module._pid1_is_nemoclaw_start = lambda: True
     module._process_start_time = lambda pid: "424242" if pid == 1 else None
@@ -327,6 +354,13 @@ afterEach(() => {
 });
 
 describe("openclaw-config-guard", () => {
+  it("checks marker absence without directory-read access while retaining ordinary descriptors", () => {
+    const { configDir } = fixture();
+    const result = runGuard("preflight-restart", configDir, "denied-marker-directory");
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.lines).toEqual([{ absent: true, markerAbsent: false, defaultDenied: true }]);
+  });
+
   it.each([
     ["shared", 0o2770, 0o660],
     ["private", 0o700, 0o600],
