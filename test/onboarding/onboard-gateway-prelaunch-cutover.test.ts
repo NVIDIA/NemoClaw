@@ -165,6 +165,10 @@ Module._load = function(request, parent, isMain) {
           validatePortOwner: () => {},
         }),
         getDockerDriverGatewayEnv: () => ({}),
+        getDockerDriverGatewayPreparation: () => ({
+          gatewayEnv: {},
+          gatewayHostRuntime: {},
+        }),
         getDockerDriverGatewayPid: () => null,
         getDockerDriverGatewayPortListenerScan: (portCheck) => ({
           complete: true,
