@@ -797,26 +797,21 @@ async function proveHistoricalHermesPortableLifecycle(input: {
               sandboxName,
             }),
           );
-          gatewayEvidence.health = requireOpenShellResult(
-            capture(
-              [
-                "sandbox",
-                "exec",
-                "-g",
-                HERMES_PORTABLE_E2E_GATEWAY_NAME,
-                "--name",
-                sandboxName,
-                "--no-tty",
-                "--",
-                "python3",
-                "-I",
-                "-c",
-                hermesPortableContainerInternals.authenticatedHealthScript,
-              ],
-              40_000,
-            ),
-            "public-start gateway health verification",
+          const health = retryUntil(
+            () =>
+              capture(
+                ["sandbox", "exec", "-g", HERMES_PORTABLE_E2E_GATEWAY_NAME, "--name", sandboxName,
+                  "--no-tty", "--", "python3", "-I", "-c",
+                  hermesPortableContainerInternals.authenticatedHealthScript],
+                10_000,
+              ),
+            {
+              accept: (result) => result.status === 0 && !result.error && String(result.stdout).trim() === "200",
+              retryDelaysMs: OPENSHELL_SETTLEMENT_DELAYS_MS.slice(0, 2),
+              sleep: (milliseconds) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds),
+            },
           );
+          gatewayEvidence.health = requireOpenShellResult(health, "public-start gateway health verification");
         },
       } satisfies Parameters<typeof startSandbox>[1];
       const upgradeResult = await startSandbox(sandboxName, publicStartDeps);
