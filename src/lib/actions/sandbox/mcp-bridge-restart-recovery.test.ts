@@ -55,6 +55,10 @@ vi.mock("./mcp-bridge-state", () => ({
     mcpCapability: { support: "bridge", adapter: "openclaw-config" },
   })),
   getSandboxOrThrow: vi.fn(() => ({ name: "alpha", agent: "openclaw" })),
+  resolveMcpOperationTarget: vi.fn(() => ({
+    sandbox: { name: "alpha", agent: "openclaw" },
+    runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
+  })),
 }));
 vi.mock("./mcp-bridge-source", () => ({
   inspectSourceBridgeState: mocks.inspectSources,

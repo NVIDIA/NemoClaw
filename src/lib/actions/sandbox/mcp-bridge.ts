@@ -36,7 +36,7 @@ import { credentialResolutionWarning } from "./mcp-bridge-resolution-probe";
 import { restartMcpBridge as restartMcpBridgeLifecycle } from "./mcp-bridge-restart";
 import { getMcpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider";
 import { inspectSourceBridgeState, joinMcpEntriesToOpenShell } from "./mcp-bridge-source";
-import { getSandboxAgent, getSandboxOrThrow } from "./mcp-bridge-state";
+import { getSandboxAgent, getSandboxOrThrow, resolveMcpOperationTarget } from "./mcp-bridge-state";
 import { buildJsonSummary, statusMcpBridge } from "./mcp-bridge-status";
 import { parseMcpAddArgs, parseMcpUpdateArgs } from "./mcp-bridge-validation";
 
@@ -192,11 +192,7 @@ export async function prepareMcpBridgesForAbsentSandboxRebuild(
   runtimeSelection?: McpProviderInspectionRuntimeSelection,
   entries: readonly McpSourceEntry[] = [],
 ): Promise<McpRebuildPreparation> {
-  return prepareMcpBridgesForAbsentSandboxRebuildLifecycle(
-    sandboxName,
-    entries,
-    runtimeSelection,
-  );
+  return prepareMcpBridgesForAbsentSandboxRebuildLifecycle(sandboxName, entries, runtimeSelection);
 }
 
 export async function prepareMcpBridgesForRebuild(
@@ -426,9 +422,11 @@ export async function dispatchMcpBridgeCommand(
       case "list": {
         const { json, rest: listRest } = parseJsonFlag(rest);
         requireNoExtraArgs(listRest, "Usage: nemoclaw <sandbox> mcp list [--json]");
-        const sandbox = getSandboxOrThrow(sandboxName);
-        const agent = getSandboxAgent(sandbox);
-        const statuses = await statusMcpBridge(sandboxName);
+        const target = resolveMcpOperationTarget(sandboxName);
+        const agent = getSandboxAgent(target.sandbox);
+        const statuses = target.liveIdentity
+          ? await statusMcpBridge(sandboxName, undefined, { operationTarget: target })
+          : await statusMcpBridge(sandboxName);
         if (json)
           process.stdout.write(
             `${JSON.stringify(buildJsonSummary(sandboxName, agent, statuses), null, 2)}\n`,
@@ -447,9 +445,10 @@ export async function dispatchMcpBridgeCommand(
         if (tools && server === undefined) {
           throw new McpBridgeError("Pass one MCP server name with --tools.", 2);
         }
-        const sandbox = getSandboxOrThrow(sandboxName);
-        const agent = getSandboxAgent(sandbox);
+        const target = resolveMcpOperationTarget(sandboxName);
+        const agent = getSandboxAgent(target.sandbox);
         const statuses = await statusMcpBridge(sandboxName, server, {
+          ...(target.liveIdentity ? { operationTarget: target } : {}),
           probeCredentialResolution: probe === true || (probe !== false && !tools && !!server),
           discoverTools: tools,
         });
@@ -501,7 +500,9 @@ export async function dispatchMcpBridgeCommand(
             `  ${item.action === "migrate" ? "Migrate" : "Verify"} '${item.server}': legacy -> native (${item.url})`,
           );
           if (item.activationChanges) {
-            console.log("    This activates an OpenClaw server that the legacy Mcporter adapter did not load.");
+            console.log(
+              "    This activates an OpenClaw server that the legacy Mcporter adapter did not load.",
+            );
           }
         }
         console.log(

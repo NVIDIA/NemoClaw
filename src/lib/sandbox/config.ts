@@ -12,7 +12,15 @@
 // config set:          Host-initiated config mutation with validation.
 // config rotate-token: Credential rotation via stdin or env var.
 
-import type { AgentConfigTarget } from "./agent-config";
+import type { AgentConfigTarget, AgentConfigDependencies } from "./agent-config";
+import type { PrivilegedSandboxExecutionContext } from "./privileged-exec";
+import type { OpenShellRuntimeSelection } from "../adapters/openshell/runtime-selection";
+
+export interface SandboxConfigExecutionContext {
+  readonly runtimeSelection: OpenShellRuntimeSelection;
+  readonly commandEnvironment: Record<string, string>;
+  readonly privileged: PrivilegedSandboxExecutionContext;
+}
 
 export type { AgentConfigTarget } from "./agent-config";
 
@@ -207,7 +215,11 @@ function privilegedSandboxExec(
   );
 }
 
-function openClawConfigGuardExec(sandboxName: string, expectedContainerId?: string) {
+function openClawConfigGuardExec(
+  sandboxName: string,
+  expectedContainerId?: string,
+  context?: PrivilegedSandboxExecutionContext,
+) {
   return {
     run: (cmd: string[], input?: string) => {
       try {
@@ -220,6 +232,7 @@ function openClawConfigGuardExec(sandboxName: string, expectedContainerId?: stri
               : { expectedResourceHandle: expectedContainerId }),
             timeout: OPENCLAW_CONFIG_GUARD_TIMEOUT_MS,
             maxOutputBytes: 2 * 1024 * 1024,
+            ...(context ? { context } : {}),
           });
           return {
             status: result.status,
@@ -242,8 +255,11 @@ function openClawConfigGuardExec(sandboxName: string, expectedContainerId?: stri
   };
 }
 
-function resolveAgentConfig(sandboxName: string): AgentConfigTarget {
-  return resolveAgentConfigTarget(sandboxName);
+function resolveAgentConfig(
+  sandboxName: string,
+  dependencies?: AgentConfigDependencies,
+): AgentConfigTarget {
+  return resolveAgentConfigTarget(sandboxName, dependencies);
 }
 
 // ---------------------------------------------------------------------------
@@ -467,7 +483,12 @@ function isSandboxNotReadyExecDetail(detail: string): boolean {
  * Read the agent's config from a running sandbox.
  * Resolves the correct config path based on the agent type.
  */
-function readSandboxConfig(sandboxName: string, target: AgentConfigTarget): ConfigObject {
+function readSandboxConfig(
+  sandboxName: string,
+  target: AgentConfigTarget,
+  context?: SandboxConfigExecutionContext,
+): ConfigObject {
+  context?.privileged.assertCurrent();
   const binary = getOpenshellBinary();
   let raw: string;
   try {
@@ -478,6 +499,12 @@ function readSandboxConfig(sandboxName: string, target: AgentConfigTarget): Conf
         ignoreError: true,
         includeStreams: true,
         maxBuffer: CONFIG_CAPTURE_MAX_BUFFER,
+        ...(context
+          ? {
+              env: context.commandEnvironment,
+              replaceEnv: true as const,
+            }
+          : {}),
         errorLine: console.error,
         exit: (code: number) => process.exit(code),
       },
@@ -510,6 +537,7 @@ function readSandboxConfig(sandboxName: string, target: AgentConfigTarget): Conf
     raw = "";
   }
 
+  context?.privileged.assertCurrent();
   if (!raw || !raw.trim()) {
     configFail([
       `  Cannot read ${target.agentName} config (${target.configPath}).`,
@@ -557,7 +585,9 @@ function writeSandboxConfig(
   // Interactive config set supplies this after validating outside the mutation locks.
   // Other callers retain the existing digest-bound write behavior.
   validatedOpenClawCandidate?: ValidatedOpenClawCandidate,
+  context?: SandboxConfigExecutionContext,
 ): void {
+  context?.privileged.assertCurrent();
   const content = validatedOpenClawCandidate?.content ?? composeSandboxConfigBody(config, target);
   if (target.agentName === "hermes") {
     const expectedConfigSha256 = (config as ConfigObject & { [CONFIG_SOURCE_SHA256]?: string })[
@@ -609,7 +639,8 @@ function writeSandboxConfig(
       );
     }
     const result = writeOpenClawConfigCandidate(
-      validatedOpenClawCandidate?.privileged ?? openClawConfigGuardExec(sandboxName),
+      validatedOpenClawCandidate?.privileged ??
+        openClawConfigGuardExec(sandboxName, undefined, context?.privileged),
       content,
       expectedConfigSha256,
     );

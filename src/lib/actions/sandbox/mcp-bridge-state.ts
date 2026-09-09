@@ -28,7 +28,10 @@ import {
   getPersistedSandboxTargetGatewayName,
 } from "./gateway-target";
 import { McpBridgeError } from "./mcp-bridge-contracts";
-import { getMcpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
+import {
+  getMcpProviderInspectionRuntimeSelection,
+  type McpProviderInspectionRuntimeSelection,
+} from "./mcp-bridge-provider-inspection";
 import { validateSandboxName } from "./mcp-bridge-validation";
 
 function registeredMcpSandbox(sandboxName: string): SandboxEntry | null {
@@ -162,11 +165,25 @@ function liveSandboxIdentity(
   );
 }
 
-/** Resolve MCP sources without reconstructing or publishing a sandbox registry. */
-export function getSandboxOrThrow(sandboxName: string): SandboxEntry {
+export interface McpOperationTarget {
+  readonly sandbox: SandboxEntry;
+  readonly runtimeSelection: McpProviderInspectionRuntimeSelection;
+  readonly liveIdentity?: {
+    readonly sandboxId: string;
+    assertCurrent(): void;
+    assertRuntimeResource?(providerId: string, resourceHandle: string): void;
+  };
+}
+
+/** Resolve one command's target without reconstructing a sandbox registry. */
+export function resolveMcpOperationTarget(sandboxName: string): McpOperationTarget {
   validateSandboxName(sandboxName);
   const registered = registeredMcpSandbox(sandboxName);
-  if (registered) return registered;
+  if (registered)
+    return {
+      sandbox: registered,
+      runtimeSelection: getMcpProviderInspectionRuntimeSelection(registered),
+    };
   assertNoOpenShellGatewayEndpointOverride();
   const explicitGateway = process.env.OPENSHELL_GATEWAY;
   if (explicitGateway) requireMcpTargetGateway(explicitGateway);
@@ -243,7 +260,50 @@ export function getSandboxOrThrow(sandboxName: string): SandboxEntry {
       1,
     );
   }
-  return { ...target, agent: agentName };
+  const sandbox = Object.freeze({ ...target, agent: agentName });
+  const capturedSelection = Object.freeze({ ...runtimeSelection });
+  let runtimeResource: readonly [string, string] | undefined;
+  return Object.freeze({
+    sandbox,
+    runtimeSelection: capturedSelection,
+    liveIdentity: Object.freeze({
+      sandboxId: identity,
+      assertRuntimeResource(providerId: string, resourceHandle: string) {
+        if (
+          runtimeResource &&
+          (runtimeResource[0] !== providerId || runtimeResource[1] !== resourceHandle)
+        ) {
+          throw new McpBridgeError(
+            "The MCP sandbox runtime resource changed during this operation.",
+          );
+        }
+        runtimeResource ??= Object.freeze([providerId, resourceHandle] as const);
+      },
+      assertCurrent() {
+        // Permission failures remain terminal even if the command began with no row.
+        const current = registeredMcpSandbox(sandboxName);
+        if (
+          current &&
+          (current.agent !== agentName ||
+            getPersistedSandboxTargetGatewayName(current) !== gatewayName)
+        ) {
+          throw new McpBridgeError("The MCP sandbox registration changed during this operation.");
+        }
+        assertNoOpenShellGatewayEndpointOverride();
+        if (liveSandboxIdentity(sandboxName, capturedSelection) !== identity) {
+          throw new McpBridgeError("The MCP sandbox identity changed during this operation.");
+        }
+      },
+    }),
+  });
+}
+
+/** Retained for callers which only consume the resolved sandbox description. */
+export function getSandboxOrThrow(sandboxName: string): SandboxEntry {
+  validateSandboxName(sandboxName);
+  const registered = registeredMcpSandbox(sandboxName);
+  if (registered) return registered;
+  return resolveMcpOperationTarget(sandboxName).sandbox;
 }
 
 function getSandboxAgentName(sandbox: SandboxEntry): string {

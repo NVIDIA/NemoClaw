@@ -17,6 +17,7 @@ import {
   buildMcpBridgePolicyYaml,
   buildMcpBridgePolicyName,
   getPolicyPresence,
+  mcpPolicySourceAuthority,
 } from "./mcp-bridge-policy";
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import { McpBridgeError } from "./mcp-bridge-contracts";
@@ -37,7 +38,8 @@ import {
   ensureSandboxGatewaySelected,
   getBridgeAdapter,
   getSandboxAgent,
-  getSandboxOrThrow,
+  resolveMcpOperationTarget,
+  type McpOperationTarget,
 } from "./mcp-bridge-state";
 import { normalizeMcpDenyTools, validateSandboxName } from "./mcp-bridge-validation";
 import { discoverMcpTools } from "./mcp-bridge-tool-discovery";
@@ -185,7 +187,10 @@ async function preflightMigrationOpenShellState(
   sandboxName: string,
   entries: readonly McpSourceEntry[],
   runtimeSelection: ReturnType<typeof getMcpProviderInspectionRuntimeSelection>,
+  operationTarget?: McpOperationTarget,
 ): Promise<void> {
+  const sourceAuthority = mcpPolicySourceAuthority(operationTarget);
+  operationTarget?.liveIdentity?.assertCurrent();
   const targets = await preflightMcpEntryTargets(entries);
   for (const entry of entries) {
     const target = targets.get(entry.server);
@@ -214,6 +219,7 @@ async function preflightMigrationOpenShellState(
         expectedPolicy,
         undefined,
         runtimeSelection,
+        ...(sourceAuthority ? ([sourceAuthority] as const) : ([] as const)),
       ) !== "match"
     ) {
       throw new McpBridgeError(
@@ -228,10 +234,17 @@ async function verifyMigratedMcpRuntime(
   entries: readonly McpSourceEntry[],
   adapter: ReturnType<typeof getBridgeAdapter>,
   runtimeSelection: ReturnType<typeof getMcpProviderInspectionRuntimeSelection>,
+  operationTarget?: McpOperationTarget,
 ): Promise<void> {
   for (const entry of entries) {
     await waitForAttachedMcpCredential(sandboxName, entry, runtimeSelection);
-    await preflightMigrationOpenShellState(sandboxName, [entry], runtimeSelection);
+    await preflightMigrationOpenShellState(
+      sandboxName,
+      [entry],
+      runtimeSelection,
+      ...(operationTarget ? ([operationTarget] as const) : ([] as const)),
+    );
+    operationTarget?.liveIdentity?.assertCurrent();
     const discovery = discoverMcpTools(
       sandboxName,
       entry,
@@ -256,10 +269,15 @@ export async function migrateMcpBridges(
 ): Promise<McpMigrationPlan> {
   return withMcpLifecycleLock(sandboxName, async () => {
     validateSandboxName(sandboxName);
-    const sandbox = getSandboxOrThrow(sandboxName);
-    const runtimeSelection = getMcpProviderInspectionRuntimeSelection(sandbox);
+    const target = resolveMcpOperationTarget(sandboxName);
+    const { sandbox, runtimeSelection } = target;
+    const operationTarget = target.liveIdentity ? target : undefined;
     await ensureSandboxGatewaySelected(sandboxName, runtimeSelection);
-    const observed = await inspectLegacyBridgeState(sandbox, runtimeSelection);
+    const observed = await inspectLegacyBridgeState(
+      sandbox,
+      runtimeSelection,
+      ...(operationTarget ? ([operationTarget] as const) : ([] as const)),
+    );
     const agent = getSandboxAgent(sandbox);
     const adapter = getBridgeAdapter(agent);
     const committedRegistryEntries = readCommittedLegacyRegistryEntries(
@@ -272,10 +290,16 @@ export async function migrateMcpBridges(
       committedRegistryEntries,
       runtimeSelection,
       "inspect legacy MCP registry migration state",
+      ...(operationTarget ? ([operationTarget] as const) : ([] as const)),
     );
     for (const [server, committedEntry] of Object.entries(committedRegistryEntries)) {
       if (
-        getPolicyPresence(sandboxName, committedEntry, runtimeSelection) === true &&
+        getPolicyPresence(
+          sandboxName,
+          committedEntry,
+          runtimeSelection,
+          ...(operationTarget ? ([operationTarget] as const) : ([] as const)),
+        ) === true &&
         !isDeepStrictEqual(
           committedEntry.denyTools ?? [],
           rawRegistryEntries[server]?.denyTools ?? [],
@@ -321,7 +345,12 @@ export async function migrateMcpBridges(
           url: entry.url,
           credentialEnv: entry.env[0] ?? null,
           policyName: entry.policyName,
-          policyPresent: getPolicyPresence(sandboxName, entry, runtimeSelection),
+          policyPresent: getPolicyPresence(
+            sandboxName,
+            entry,
+            runtimeSelection,
+            ...(operationTarget ? ([operationTarget] as const) : ([] as const)),
+          ),
           providerName: entry.providerName ?? null,
           providerAttached: await providerAttached(
             sandboxName,
@@ -337,7 +366,12 @@ export async function migrateMcpBridges(
     if (!options.apply || entries.length === 0) {
       return { sandbox: sandboxName, items, applied: false };
     }
-    await preflightMigrationOpenShellState(sandboxName, entries, runtimeSelection);
+    await preflightMigrationOpenShellState(
+      sandboxName,
+      entries,
+      runtimeSelection,
+      ...(operationTarget ? ([operationTarget] as const) : ([] as const)),
+    );
 
     if (adapter === "deepagents-config") {
       if (!options.rebuildSandbox) {
@@ -427,10 +461,12 @@ export async function migrateMcpBridges(
             credentialRevision,
             {
               replaceExisting: false,
+              ...(operationTarget ? { operationTarget } : {}),
             },
           );
           created.push(entry);
         }
+        operationTarget?.liveIdentity?.assertCurrent();
         const current = inspectAgentMcpSources(sandbox, runtimeSelection).native[entry.server];
         if (!current || !sameRegistration(current, entry)) {
           throw new McpBridgeError(
@@ -438,11 +474,22 @@ export async function migrateMcpBridges(
           );
         }
       }
-      reloadOpenClawGatewayAfterMcpMutation(sandboxName, [adapter]);
-      await verifyMigratedMcpRuntime(sandboxName, entries, adapter, runtimeSelection);
+      reloadOpenClawGatewayAfterMcpMutation(
+        sandboxName,
+        [adapter],
+        ...(operationTarget ? ([operationTarget] as const) : ([] as const)),
+      );
+      await verifyMigratedMcpRuntime(
+        sandboxName,
+        entries,
+        adapter,
+        runtimeSelection,
+        ...(operationTarget ? ([operationTarget] as const) : ([] as const)),
+      );
       for (const entry of entries) {
         if (observed.sources.legacy[entry.server]) {
           cleanupStarted = true;
+          operationTarget?.liveIdentity?.assertCurrent();
           removeLegacyAgentMcpEntry(sandbox, entry, runtimeSelection);
         }
       }
@@ -450,7 +497,7 @@ export async function migrateMcpBridges(
       // omitted immediately after verification. Publication may retire the last
       // legacy source before reporting a durability failure.
       cleanupStarted = true;
-      registry.updateSandbox(sandboxName, {});
+      if (!operationTarget) registry.updateSandbox(sandboxName, {});
       return { sandbox: sandboxName, items, applied: true };
     } catch (error) {
       if (!cleanupStarted) {
@@ -459,6 +506,7 @@ export async function migrateMcpBridges(
             unregisterAgentAdapter(sandboxName, adapter, entry, runtimeSelection, {
               force: true,
               bestEffort: true,
+              ...(operationTarget ? { operationTarget } : {}),
             });
           } catch {
             // The original legacy source is retained; a rerun reports the exact

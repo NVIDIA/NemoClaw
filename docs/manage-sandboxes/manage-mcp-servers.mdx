@@ -32,11 +32,32 @@ $$nemoclaw my-sandbox mcp status github --json
 
 `list --json` and `status --json` never include environment values. They report the agent-native registration together with current OpenShell provider, attachment, policy, credential-readiness, and runtime observations. Provider and policy objects use source-state terms such as `configured`, `unbound`, `blocked`, `unavailable`, and `conflict`; there are no registry-presence fields.
 
+`mcp list`, `status`, `add`, `update`, `restart`, and `remove` use agent configuration and live OpenShell state.
+If the sandbox registry is missing or corrupt, these commands require a verified gateway and live sandbox and do not recreate the registry.
+
+<AgentOnly variant="openclaw">
+
+Without a usable registry entry, OpenClaw configuration changes and gateway reloads require a local Docker gateway owned by NemoClaw in the `default` workspace.
+NemoClaw must verify its scoped namespace, container identity, loaded configuration, and Linux process environment.
+Unavailable or inconsistent evidence stops the command.
+Registered sandboxes keep their existing execution path.
+
+</AgentOnly>
+
 The per-server `warnings` array reports unsupported stored boundaries, trusted-private DNS pin changes, and credential-resolution findings. The `env.missing` field lists recorded host variable names that are currently unset.
 
 An existing valid provider can remain ready when a host variable is unset because OpenShell retains the credential. The JSON value `support.mode: "bridge"` identifies the agent's config-adapter capability, not a host-side traffic bridge.
 
 ## Migrate an Existing Registration
+
+`mcp migrate` stops when the registry is corrupt because it cannot inspect committed legacy intent.
+When the registry is absent, migration does not create it.
+
+<AgentOnly variant="deepagents">
+
+Deep Agents migration still requires a registered sandbox for its rebuild workflow.
+
+</AgentOnly>
 
 Preview legacy Mcporter or Deep Agents projection entries before the first mutation with the cutover release:
 

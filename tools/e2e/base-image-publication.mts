@@ -56,6 +56,7 @@ const REVIEWED_PATH_GLOBS = new Map<string, RegExp>([
     "src/lib/actions/sandbox/mcp-bridge-*.ts",
     /^src\/lib\/actions\/sandbox\/mcp-bridge-[^/]*[.]ts$/u,
   ],
+  ["src/lib/actions/sandbox/mcp-bridge/**", /^src\/lib\/actions\/sandbox\/mcp-bridge\/.+$/u],
   [
     "src/lib/actions/sandbox/openshell-child-visible-credentials.v*.json",
     /^src\/lib\/actions\/sandbox\/openshell-child-visible-credentials[.]v[^/]*[.]json$/u,

@@ -4,11 +4,14 @@
 import { spawnSync } from "node:child_process";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import * as extraProviders from "../../state/registry/extra-providers";
+import { ConfigCorruptError } from "../../state/config-io";
 import * as providerCommand from "../../adapters/openshell/provider-command";
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import { buildMcpCredentialRevisionObservationCommand } from "./mcp-bridge";
 import {
   assertNoAttachedProviderCredentialCollisions,
+  assertNoProviderCredentialCollisions,
   assertNoRegisteredProviderCredentialCollisions,
   providerMatchesCredential,
   providerMatchesManagedCredential,
@@ -331,6 +334,187 @@ describe("OpenShell MCP provider state", () => {
     ).rejects.toThrow("MCP server 'example' has no complete authenticated credential binding");
     expect(providerCommandRun).not.toHaveBeenCalled();
   });
+
+  it.each([
+    {
+      state: "corrupt with current authority",
+      error: new ConfigCorruptError("/fixture/registry.json"),
+      current: true,
+      live: true,
+      listStatus: 0,
+      listOutput: "No providers attached to sandbox alpha.\n",
+      expected: "ok",
+      checks: 1,
+      extraReads: 1,
+    },
+    {
+      state: "corrupt with stale authority",
+      error: new ConfigCorruptError("/fixture/registry.json"),
+      current: false,
+      live: true,
+      listStatus: 0,
+      listOutput: "No providers attached to sandbox alpha.\n",
+      expected: "identity changed",
+      checks: 1,
+      extraReads: 1,
+    },
+    {
+      state: "permission failure",
+      error: Object.assign(new Error("registry permission denied"), { code: "EACCES" }),
+      current: true,
+      live: true,
+      listStatus: 0,
+      listOutput: "No providers attached to sandbox alpha.\n",
+      expected: "registry permission denied",
+      checks: 0,
+      extraReads: 1,
+    },
+    {
+      state: "unknown failure",
+      error: new Error("unknown registry read failure"),
+      current: true,
+      live: true,
+      listStatus: 0,
+      listOutput: "No providers attached to sandbox alpha.\n",
+      expected: "unknown registry read failure",
+      checks: 0,
+      extraReads: 1,
+    },
+    {
+      state: "corrupt without live authority",
+      error: new ConfigCorruptError("/fixture/registry.json"),
+      current: true,
+      live: false,
+      listStatus: 0,
+      listOutput: "No providers attached to sandbox alpha.\n",
+      expected: "ConfigCorruptError",
+      checks: 0,
+      extraReads: 1,
+    },
+    {
+      state: "corrupt with unavailable attachment proof",
+      error: new ConfigCorruptError("/fixture/registry.json"),
+      current: true,
+      live: true,
+      listStatus: 1,
+      listOutput: "",
+      expected: "Could not",
+      checks: 0,
+      extraReads: 0,
+    },
+    {
+      state: "corrupt with a live credential collision",
+      error: new ConfigCorruptError("/fixture/registry.json"),
+      current: true,
+      live: true,
+      listStatus: 0,
+      listOutput: "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\nforeign-provider nemoclaw-mcp-v1 1 0\n",
+      expected: "already supplied by attached provider",
+      checks: 0,
+      extraReads: 0,
+    },
+  ])(
+    "checks complete live collision evidence before handling $state",
+    async ({ error, current, live, listStatus, listOutput, expected, checks, extraReads }) => {
+      const entry: McpSourceEntry = {
+        server: "github",
+        agent: "hermes",
+        adapter: "hermes-config",
+        url: "https://8.8.8.8/mcp",
+        env: ["HOSTLESS_TOKEN"],
+        providerName: "alpha-mcp-github",
+        policyName: "mcp-bridge-github",
+      };
+      const extra = vi.spyOn(extraProviders, "listExtraProviders").mockImplementation(() => {
+        throw error;
+      });
+      const assertCurrent = vi.fn();
+      const proof = {
+        true: () => undefined,
+        false: () => {
+          throw new Error("identity changed");
+        },
+      };
+      assertCurrent.mockImplementation(proof[String(current) as "true" | "false"]);
+      const target = {
+        sandbox: { name: "alpha", agent: "hermes" },
+        runtimeSelection,
+        ...(live ? { liveIdentity: { sandboxId: "exact-id", assertCurrent } } : {}),
+      };
+      const metadata = providerMetadataOutput(
+        "foreign-provider",
+        "nemoclaw-mcp-v1",
+        "11111111-2222-4333-8444-555555555555",
+        7,
+        "HOSTLESS_TOKEN",
+      );
+      const responses = [
+        { status: listStatus, stdout: listOutput, stderr: "Could not inspect attachments" },
+        { status: 0, stdout: metadata, stderr: "" },
+      ];
+      vi.spyOn(providerCommand, "runOpenshellProviderCommand").mockImplementation(
+        () => responses.shift() as never,
+      );
+      const result = await assertNoProviderCredentialCollisions(
+        "alpha",
+        [entry],
+        runtimeSelection,
+        target,
+      ).then(
+        () => "ok",
+        (failure: unknown) => String(failure),
+      );
+      expect(result).toContain(expected);
+      expect(assertCurrent).toHaveBeenCalledTimes(checks);
+      expect(extra).toHaveBeenCalledTimes(extraReads);
+    },
+  );
+
+  it.each([
+    { scope: "sandbox name", name: "beta", selection: runtimeSelection },
+    {
+      scope: "gateway",
+      name: "alpha",
+      selection: { ...runtimeSelection, gatewayName: "nemoclaw-9090" },
+    },
+    { scope: "workspace", name: "alpha", selection: { ...runtimeSelection, workspace: "other" } },
+    {
+      scope: "TLS directory",
+      name: "alpha",
+      selection: { ...runtimeSelection, localTlsDir: "/other/tls" },
+    },
+  ])(
+    "refuses corrupt-registry omission with authority for another $scope",
+    async ({ name, selection }) => {
+      const error = new ConfigCorruptError("/fixture/registry.json");
+      vi.spyOn(extraProviders, "listExtraProviders").mockImplementation(() => {
+        throw error;
+      });
+      const assertCurrent = vi.fn();
+      const entry: McpSourceEntry = {
+        server: "github",
+        agent: "hermes",
+        adapter: "hermes-config",
+        url: "https://8.8.8.8/mcp",
+        env: ["HOSTLESS_TOKEN"],
+        providerName: "alpha-mcp-github",
+        policyName: "mcp-bridge-github",
+      };
+      vi.spyOn(providerCommand, "runOpenshellProviderCommand").mockReturnValue({
+        status: 0,
+        stdout: "No providers attached to sandbox alpha.\n",
+        stderr: "",
+      } as never);
+      await expect(
+        assertNoProviderCredentialCollisions("alpha", [entry], runtimeSelection, {
+          sandbox: { name, agent: "hermes" },
+          runtimeSelection: selection,
+          liveIdentity: { sandboxId: "exact-id", assertCurrent },
+        }),
+      ).rejects.toBe(error);
+      expect(assertCurrent).not.toHaveBeenCalled();
+    },
+  );
 
   it("rejects a registered provider that will collide on the next rebuild (#9388)", async () => {
     const entry: McpSourceEntry = {

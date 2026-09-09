@@ -16,7 +16,6 @@ import {
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import {
   detachProvider,
-  getMcpProviderInspectionRuntimeSelection,
   inspectMcpProvider,
   providerMatchesManagedCredential,
   waitForDetachedMcpCredential,
@@ -25,7 +24,7 @@ import {
   ensureSandboxGatewaySelected,
   getBridgeAdapter,
   getSandboxAgent,
-  getSandboxOrThrow,
+  resolveMcpOperationTarget,
 } from "./mcp-bridge-state";
 import { inspectSourceBridgeState } from "./mcp-bridge-source";
 import {
@@ -43,9 +42,14 @@ export async function removeMcpBridge(
     assertHermesPortableCommandUnavailable(sandboxName, "sandbox:mcp:remove");
     validateSandboxName(sandboxName);
     validateMcpServerName(server);
-    const sandbox = getSandboxOrThrow(sandboxName);
-    const runtimeSelection = getMcpProviderInspectionRuntimeSelection(sandbox);
-    const observed = await inspectSourceBridgeState(sandbox, runtimeSelection);
+    const target = resolveMcpOperationTarget(sandboxName);
+    const { sandbox, runtimeSelection } = target;
+    const operationTarget = target.liveIdentity ? target : undefined;
+    const observed = await inspectSourceBridgeState(
+      sandbox,
+      runtimeSelection,
+      ...(operationTarget ? ([operationTarget] as const) : ([] as const)),
+    );
     if (Object.keys(observed.sources.legacy).length > 0) {
       throw new McpBridgeError(
         `Legacy MCP agent configuration requires explicit migration. Run \`nemoclaw ${sandboxName} mcp migrate\` first.`,
@@ -73,7 +77,12 @@ export async function removeMcpBridge(
     const envValues = resolvePersistedCredentialEnvForRedaction(entry.env);
     let preservedProvider: string | undefined;
     try {
-      const policyPresent = getPolicyPresence(sandboxName, entry, runtimeSelection);
+      const policyPresent = getPolicyPresence(
+        sandboxName,
+        entry,
+        runtimeSelection,
+        ...(operationTarget ? ([operationTarget] as const) : ([] as const)),
+      );
       if (policyPresent === null) {
         throw new McpBridgeError("Could not prove the current generated MCP policy state.");
       }
@@ -88,6 +97,7 @@ export async function removeMcpBridge(
             allowLegacyGeneric: true,
           });
         if (exact) {
+          operationTarget?.liveIdentity?.assertCurrent();
           const outcome = await detachProvider(sandboxName, entry, {
             allowLegacyGeneric: true,
             runtimeSelection,
@@ -109,7 +119,11 @@ export async function removeMcpBridge(
         // policy was already absent and conveyed no detach authority.
         waitForDetachedMcpCredential(sandboxName, entry, runtimeSelection);
       }
-      if (policyPresent) removeGeneratedPolicy(sandboxName, entry, { runtimeSelection });
+      if (policyPresent)
+        removeGeneratedPolicy(sandboxName, entry, {
+          runtimeSelection,
+          ...(operationTarget ? { operationTarget } : {}),
+        });
     } catch (error) {
       const detail = redactBridgeSecretsForDisplay(
         error instanceof Error ? error.message : String(error),
@@ -125,6 +139,7 @@ export async function removeMcpBridge(
       force: options.force === true,
       envValues,
       teardown: true,
+      ...(operationTarget ? { operationTarget } : {}),
     });
     if (removal === "unowned" && !options.force) {
       throw new McpBridgeError(

@@ -28,6 +28,7 @@ import {
   buildMcpBridgePolicyName,
   buildMcpBridgePolicyYaml,
   removeGeneratedPolicy,
+  mcpPolicySourceAuthority,
 } from "./mcp-bridge-policy";
 import {
   assertMcpProviderRecoverable,
@@ -54,7 +55,8 @@ import {
   ensureSandboxGatewaySelected,
   getBridgeAdapter,
   getSandboxAgent,
-  getSandboxOrThrow,
+  resolveMcpOperationTarget,
+  type McpOperationTarget,
 } from "./mcp-bridge-state";
 import { inspectPolicyOnlyMcpEntry, inspectSourceBridgeState } from "./mcp-bridge-source";
 import {
@@ -139,13 +141,15 @@ function replayMcpAddTarget(
 
 async function recoverCommittedPolicyTarget(
   sandboxName: string,
-  sandbox: ReturnType<typeof getSandboxOrThrow>,
+  sandbox: McpOperationTarget["sandbox"],
   adapter: AgentMcpAdapter,
   requestedEntry: McpSourceEntry,
   currentTarget: McpBridgeTargetValidation,
   matchingTrustedPrivateHosts: readonly string[],
   runtimeSelection: ReturnType<typeof getMcpProviderInspectionRuntimeSelection>,
+  operationTarget?: McpOperationTarget,
 ): Promise<McpBridgeTargetValidation | null> {
+  const sourceAuthority = mcpPolicySourceAuthority(operationTarget);
   const boundState = policies.getPresetContentGatewayState(
     sandboxName,
     buildMcpBridgePolicyYaml(
@@ -158,6 +162,7 @@ async function recoverCommittedPolicyTarget(
     ),
     undefined,
     runtimeSelection,
+    ...(sourceAuthority ? ([sourceAuthority] as const) : ([] as const)),
   );
   const capabilityState = policies.getPresetContentGatewayState(
     sandboxName,
@@ -170,6 +175,7 @@ async function recoverCommittedPolicyTarget(
     ),
     undefined,
     runtimeSelection,
+    ...(sourceAuthority ? ([sourceAuthority] as const) : ([] as const)),
   );
   if (boundState !== "drift" || capabilityState !== "drift") return null;
   const policyEntry = await inspectPolicyOnlyMcpEntry(
@@ -178,6 +184,7 @@ async function recoverCommittedPolicyTarget(
     requestedEntry.agent,
     adapter,
     runtimeSelection,
+    ...(operationTarget ? ([operationTarget] as const) : ([] as const)),
   );
   if (!policyEntry) return null;
   if (policyEntry.url !== requestedEntry.url) {
@@ -203,7 +210,10 @@ async function inspectMcpAddRecovery(
   entry: McpSourceEntry,
   target: McpBridgeTargetValidation,
   providerRuntimeSelection: ReturnType<typeof getMcpProviderInspectionRuntimeSelection>,
+  operationTarget?: McpOperationTarget,
 ): Promise<McpAddRecovery> {
+  const sourceAuthority = mcpPolicySourceAuthority(operationTarget);
+  operationTarget?.liveIdentity?.assertCurrent();
   const adapterInspection = inspectAgentAdapterRegistration(
     sandboxName,
     adapter,
@@ -255,6 +265,7 @@ async function inspectMcpAddRecovery(
     boundPolicyContent,
     undefined,
     providerRuntimeSelection,
+    ...(sourceAuthority ? ([sourceAuthority] as const) : ([] as const)),
   );
   let policyState: McpAddRecovery["policyState"];
   if (boundPolicyState === "match") {
@@ -267,6 +278,7 @@ async function inspectMcpAddRecovery(
       buildMcpBridgeCapabilityPolicyYaml(entry.server, entry.url, adapter, target, entry.denyTools),
       undefined,
       providerRuntimeSelection,
+      ...(sourceAuthority ? ([sourceAuthority] as const) : ([] as const)),
     );
     if (capabilityPolicyState !== "match") {
       throw new McpBridgeError(
@@ -350,9 +362,14 @@ async function updateMcpBridgeDenyToolsUnlocked(
   validateSandboxName(sandboxName);
   validateMcpServerName(server);
   const normalizedDenyTools = normalizeMcpDenyTools(denyTools);
-  const sandbox = getSandboxOrThrow(sandboxName);
-  const runtimeSelection = getMcpProviderInspectionRuntimeSelection(sandbox);
-  const observed = await inspectSourceBridgeState(sandbox, runtimeSelection);
+  const resolvedTarget = resolveMcpOperationTarget(sandboxName);
+  const { sandbox, runtimeSelection } = resolvedTarget;
+  const operationTarget = resolvedTarget.liveIdentity ? resolvedTarget : undefined;
+  const observed = await inspectSourceBridgeState(
+    sandbox,
+    runtimeSelection,
+    ...(operationTarget ? ([operationTarget] as const) : ([] as const)),
+  );
   const legacyNames = Object.keys(observed.sources.legacy).sort();
   if (legacyNames.length > 0) {
     throw new McpBridgeError(
@@ -385,9 +402,15 @@ async function updateMcpBridgeDenyToolsUnlocked(
   // Live OpenShell policy owns enforcement state. Remove the prior allow route
   // before applying a stricter replacement so interruption fails closed; the
   // source registration remains available for an explicit update retry.
-  removeGeneratedPolicy(sandboxName, storedEntry, { runtimeSelection });
+  removeGeneratedPolicy(sandboxName, storedEntry, {
+    runtimeSelection,
+    ...(operationTarget ? { operationTarget } : {}),
+  });
   try {
-    applyGeneratedPolicy(sandboxName, updatedEntry, target, { runtimeSelection });
+    applyGeneratedPolicy(sandboxName, updatedEntry, target, {
+      runtimeSelection,
+      ...(operationTarget ? { operationTarget } : {}),
+    });
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     const retryArgs =
@@ -446,9 +469,14 @@ async function addMcpBridgeUnlocked(
     );
   }
   const matchingTrustedPrivateHosts = allTrustedPrivateHosts.filter((host) => host === urlHost);
-  const sandbox = getSandboxOrThrow(sandboxName);
-  const sourceRuntimeSelection = getMcpProviderInspectionRuntimeSelection(sandbox);
-  const observed = await inspectSourceBridgeState(sandbox, sourceRuntimeSelection);
+  const resolvedTarget = resolveMcpOperationTarget(sandboxName);
+  const { sandbox, runtimeSelection: sourceRuntimeSelection } = resolvedTarget;
+  const operationTarget = resolvedTarget.liveIdentity ? resolvedTarget : undefined;
+  const observed = await inspectSourceBridgeState(
+    sandbox,
+    sourceRuntimeSelection,
+    ...(operationTarget ? ([operationTarget] as const) : ([] as const)),
+  );
   const legacyNames = Object.keys(observed.sources.legacy).sort();
   if (legacyNames.length > 0) {
     throw new McpBridgeError(
@@ -513,7 +541,7 @@ async function addMcpBridgeUnlocked(
   }
 
   let entry = requestedEntry;
-  const providerRuntimeSelection = getMcpProviderInspectionRuntimeSelection(sandbox);
+  const providerRuntimeSelection = sourceRuntimeSelection;
   // Bind the static credential-name deny-list to the OpenShell binary before
   // mutating a provider, policy, or adapter.
   assertMcpCredentialBoundaryRuntimeVersion();
@@ -526,6 +554,7 @@ async function addMcpBridgeUnlocked(
     target,
     matchingTrustedPrivateHosts,
     providerRuntimeSelection,
+    ...(operationTarget ? ([operationTarget] as const) : ([] as const)),
   );
   if (committedPolicyTarget) {
     target = committedPolicyTarget;
@@ -552,11 +581,17 @@ async function addMcpBridgeUnlocked(
       entry,
       target,
       providerRuntimeSelection,
+      ...(operationTarget ? ([operationTarget] as const) : ([] as const)),
     );
     entry = recovery.entry;
     // Check live providers under the same cross-command lock used by
     // credentials add so neither command can race its collision check.
-    await assertNoProviderCredentialCollisions(sandboxName, [entry], providerRuntimeSelection);
+    await assertNoProviderCredentialCollisions(
+      sandboxName,
+      [entry],
+      providerRuntimeSelection,
+      ...(operationTarget ? ([operationTarget] as const) : ([] as const)),
+    );
   });
   if (!entry.providerId && !Object.hasOwn(adapterEnvValues, entry.env[0])) {
     throw new McpBridgeError(
@@ -581,7 +616,12 @@ async function addMcpBridgeUnlocked(
     // Credential keys are sandbox-global. Prove this key is not already
     // supplied by a foreign attachment before opening its MCP route, then check
     // again after provider creation to close the intervening race.
-    await assertNoProviderCredentialCollisions(sandboxName, [entry], providerRuntimeSelection);
+    await assertNoProviderCredentialCollisions(
+      sandboxName,
+      [entry],
+      providerRuntimeSelection,
+      ...(operationTarget ? ([operationTarget] as const) : ([] as const)),
+    );
     await ensureMcpBridgeProviderProfile(providerRuntimeSelection);
     // Load the real protocol:mcp policy without a credential binding before
     // provider mutation. OpenShell requires the endpointless provider to be
@@ -591,9 +631,11 @@ async function addMcpBridgeUnlocked(
       applyGeneratedPolicy(sandboxName, entry, target, {
         bindCredential: false,
         runtimeSelection: providerRuntimeSelection,
+        ...(operationTarget ? { operationTarget } : {}),
       });
       policyApplied = true;
     }
+    operationTarget?.liveIdentity?.assertCurrent();
     const providerResult = await upsertMcpProvider(providerName ?? "", options.env, {
       // Existing provider identity is accepted only after the complete live
       // partial-state prefix above has tied it to this exact add request.
@@ -623,19 +665,26 @@ async function addMcpBridgeUnlocked(
     if (entry.providerId !== providerId) {
       entry = { ...entry, providerId };
     }
-    await assertNoProviderCredentialCollisions(sandboxName, [entry], providerRuntimeSelection);
+    await assertNoProviderCredentialCollisions(
+      sandboxName,
+      [entry],
+      providerRuntimeSelection,
+      ...(operationTarget ? ([operationTarget] as const) : ([] as const)),
+    );
     if (providerResult.action === "updated" && previousCredentialRevision === undefined) {
       throw new McpBridgeError(
         `Could not retain the prior OpenShell credential revision for provider '${entry.providerName}'.`,
       );
     }
     if (!recovery.attachmentPresent) {
+      operationTarget?.liveIdentity?.assertCurrent();
       providerAttachAttempted = true;
       await attachProvider(sandboxName, entry, providerRuntimeSelection);
     }
     if (recovery.policyState !== "bound") {
       applyGeneratedPolicy(sandboxName, entry, target, {
         runtimeSelection: providerRuntimeSelection,
+        ...(operationTarget ? { operationTarget } : {}),
       });
       policyRebound = recovery.policyState === "capability";
     }
@@ -667,6 +716,7 @@ async function addMcpBridgeUnlocked(
           // removalCondition: remove the credential-bearing republish when the
           // supported OpenShell version guarantees that a post-policy no-field
           // refresh projects the bound credential into fresh sandbox execs.
+          operationTarget?.liveIdentity?.assertCurrent();
           const republished = await upsertMcpProvider(entry.providerName ?? "", options.env, {
             allowExisting: true,
             expectedProviderId: entry.providerId,
@@ -685,6 +735,7 @@ async function addMcpBridgeUnlocked(
       // bound policy is active and require a different observed revision.
       // This prevents a quick series of reads from accepting an intermediate
       // generation while the final credential-bearing update is still queued.
+      operationTarget?.liveIdentity?.assertCurrent();
       await upsertMcpProvider(entry.providerName ?? "", options.env, {
         allowExisting: true,
         expectedProviderId: entry.providerId,
@@ -710,9 +761,14 @@ async function addMcpBridgeUnlocked(
         // An exact adapter entry is evidence of a post-commit process death.
         // Replacing it is idempotent and, for Hermes, re-verifies runtime reload.
         replaceExisting: recovery.adapterRegistered,
+        ...(operationTarget ? { operationTarget } : {}),
       },
     );
-    reloadOpenClawGatewayAfterMcpMutation(sandboxName, [adapter]);
+    reloadOpenClawGatewayAfterMcpMutation(
+      sandboxName,
+      [adapter],
+      ...(operationTarget ? ([operationTarget] as const) : ([] as const)),
+    );
   } catch (error) {
     const rollbackProviderInspection =
       (providerAttachAttempted || providerCreated) && entry.providerId
@@ -726,23 +782,27 @@ async function addMcpBridgeUnlocked(
         force: false,
         bestEffort: true,
         envValues: adapterEnvValues,
+        ...(operationTarget ? { operationTarget } : {}),
       });
     }
     if (policyApplied) {
       removeGeneratedPolicy(sandboxName, entry, {
         bestEffort: true,
         runtimeSelection: providerRuntimeSelection,
+        ...(operationTarget ? { operationTarget } : {}),
       });
     } else if (policyRebound) {
       try {
         applyGeneratedPolicy(sandboxName, entry, target, {
           bindCredential: false,
           runtimeSelection: providerRuntimeSelection,
+          ...(operationTarget ? { operationTarget } : {}),
         });
       } catch {
         // Preserve the live source set for an identity-checked retry.
       }
     }
+    operationTarget?.liveIdentity?.assertCurrent();
     const detachOutcome = providerAttachAttempted
       ? await detachProvider(sandboxName, entry, {
           bestEffort: true,

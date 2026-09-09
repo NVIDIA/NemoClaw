@@ -45,6 +45,9 @@ const policyReader = requireForTest(
 const registry = requireForTest(
   path.join(import.meta.dirname, "..", "../..", "src", "lib", "state", "registry.ts"),
 ) as typeof import("../../../src/lib/state/registry");
+const { ConfigCorruptError } = requireForTest(
+  path.join(import.meta.dirname, "..", "../..", "src", "lib", "state", "config-io.ts"),
+) as typeof import("../../../src/lib/state/config-io");
 const CUSTOM_PRESET = "network_policies:\n  example:\n    host: example.com\n";
 const MALFORMED_BASE_POLICIES = [
   ["network_policies string", "version: 1\nnetwork_policies: invalid\n"],
@@ -86,6 +89,203 @@ describe("OpenShell policy mutation read failures", () => {
     for (const tempDir of tempDirs.splice(0)) {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
+  });
+
+  it.each([
+    { state: "missing", readRegistry: () => null },
+    {
+      state: "corrupt",
+      readRegistry: () => {
+        throw new ConfigCorruptError("/fixture/sandboxes.json");
+      },
+    },
+  ])("reads through verified live authority when the registry is $state", ({ readRegistry }) => {
+    vi.spyOn(registry, "getSandbox").mockImplementation(readRegistry);
+    const read = vi
+      .spyOn(policyReader.syncCliOpenShellSandboxPolicyReader, "readSandboxPolicy")
+      .mockReturnValue({
+        ok: true,
+        value: { document: "version: 1\nnetwork_policies: {}\n", appliedRevision: null },
+      });
+    const runtimeSelection = { gatewayName: "nemoclaw-9090", workspace: "default" };
+    const assertCurrent = vi.fn();
+    const sourceAuthority = { sandboxName: "alpha", runtimeSelection, assertCurrent };
+    expect(
+      policies.captureRecordedSandboxBasePolicy(
+        "alpha",
+        "inspect MCP policy",
+        runtimeSelection,
+        sourceAuthority,
+      ),
+    ).toContain("network_policies");
+    expect(assertCurrent).toHaveBeenCalled();
+    expect(read).toHaveBeenCalledWith(
+      expect.objectContaining({ sandboxName: "alpha", runtimeSelection }),
+    );
+  });
+
+  it("refuses plain runtime selection and mismatched or stale live authority", () => {
+    vi.spyOn(registry, "getSandbox").mockReturnValue(null);
+    const read = vi.spyOn(policyReader.syncCliOpenShellSandboxPolicyReader, "readSandboxPolicy");
+    const runtimeSelection = { gatewayName: "nemoclaw-9090", workspace: "default" };
+    const authority = { sandboxName: "alpha", runtimeSelection, assertCurrent: vi.fn() };
+    expect(() =>
+      policies.captureRecordedSandboxBasePolicy("alpha", "inspect", runtimeSelection),
+    ).toThrow(/unavailable/);
+    expect(() =>
+      policies.captureRecordedSandboxBasePolicy("beta", "inspect", runtimeSelection, authority),
+    ).toThrow();
+    expect(() =>
+      policies.captureRecordedSandboxBasePolicy(
+        "alpha",
+        "inspect",
+        { ...runtimeSelection, workspace: "other" },
+        authority,
+      ),
+    ).toThrow();
+    authority.assertCurrent.mockImplementation(() => {
+      throw new Error("sandbox identity changed");
+    });
+    expect(() =>
+      policies.captureRecordedSandboxBasePolicy("alpha", "inspect", runtimeSelection, authority),
+    ).toThrow(/identity changed/);
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it("preserves registry permission failures even with verified live authority", () => {
+    vi.spyOn(registry, "getSandbox").mockImplementation(() => {
+      throw Object.assign(new Error("private permission failure"), { code: "EACCES" });
+    });
+    const read = vi.spyOn(policyReader.syncCliOpenShellSandboxPolicyReader, "readSandboxPolicy");
+    const runtimeSelection = { gatewayName: "nemoclaw-9090", workspace: "default" };
+    expect(() =>
+      policies.captureRecordedSandboxBasePolicy("alpha", "inspect", runtimeSelection, {
+        sandboxName: "alpha",
+        runtimeSelection,
+        assertCurrent() {},
+      }),
+    ).toThrow(/unavailable/);
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it("keeps live authority through policy submission and authoritative readback", () => {
+    vi.spyOn(registry, "getSandbox").mockReturnValue(null);
+    let document = "version: 1\nnetwork_policies: {}\n";
+    vi.spyOn(
+      policyReader.syncCliOpenShellSandboxPolicyReader,
+      "readSandboxPolicy",
+    ).mockImplementation(() => ({ ok: true, value: { document, appliedRevision: null } }));
+    const runtimeSelection = { gatewayName: "nemoclaw-9090", workspace: "default" };
+    const sourceAuthority = { sandboxName: "alpha", runtimeSelection, assertCurrent: vi.fn() };
+    const write = vi
+      .spyOn(policyReader.syncCliOpenShellSandboxPolicyWriter, "setSandboxPolicy")
+      .mockImplementation((request) => {
+        document = fs.readFileSync(request.policyPath, "utf8");
+        return { outcome: { kind: "applied" }, status: 0 };
+      });
+    const desired = "version: 1\nnetwork_policies:\n  example:\n    host: example.com\n";
+    expect(
+      policies.setPolicyDocument("alpha", desired, {
+        nonFatal: true,
+        runtimeSelection,
+        sourceAuthority,
+      }),
+    ).toBe(true);
+    expect(write).toHaveBeenCalledOnce();
+    expect(write).toHaveBeenCalledWith(
+      expect.objectContaining({ sandboxName: "alpha", runtimeSelection }),
+    );
+    expect(document).toBe(desired);
+  });
+
+  it("refuses stale live authority immediately before submission without writing", () => {
+    vi.spyOn(registry, "getSandbox").mockReturnValue(null);
+    vi.spyOn(policyReader.syncCliOpenShellSandboxPolicyReader, "readSandboxPolicy").mockReturnValue(
+      {
+        ok: true,
+        value: { document: "version: 1\nnetwork_policies: {}\n", appliedRevision: null },
+      },
+    );
+    const runtimeSelection = { gatewayName: "nemoclaw-9090", workspace: "default" };
+    const assertCurrent = vi.fn();
+    const sourceAuthority = { sandboxName: "alpha", runtimeSelection, assertCurrent };
+    const context = policies.inspectPolicyMutationContext(
+      "alpha",
+      "prepare",
+      runtimeSelection.gatewayName,
+      runtimeSelection,
+      sourceAuthority,
+    );
+    const write = vi.spyOn(policyReader.syncCliOpenShellSandboxPolicyWriter, "setSandboxPolicy");
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    assertCurrent.mockImplementation(() => {
+      throw new Error("live identity changed");
+    });
+    expect(
+      policies.setPolicyDocument("alpha", context.basePolicyDocument, { context, nonFatal: true }),
+    ).toBe(false);
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it("does not retry policy writes after the live sandbox changes during submission", () => {
+    vi.spyOn(registry, "getSandbox").mockReturnValue(null);
+    vi.spyOn(policyReader.syncCliOpenShellSandboxPolicyReader, "readSandboxPolicy").mockReturnValue(
+      {
+        ok: true,
+        value: { document: "version: 1\nnetwork_policies: {}\n", appliedRevision: null },
+      },
+    );
+    const runtimeSelection = { gatewayName: "nemoclaw-9090", workspace: "default" };
+    const assertCurrent = vi.fn();
+    const sourceAuthority = { sandboxName: "alpha", runtimeSelection, assertCurrent };
+    const write = vi
+      .spyOn(policyReader.syncCliOpenShellSandboxPolicyWriter, "setSandboxPolicy")
+      .mockImplementation(() => {
+        assertCurrent.mockImplementation(() => {
+          throw new Error("live identity changed");
+        });
+        return { outcome: { kind: "applied" }, status: 0 };
+      });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    expect(
+      policies.setPolicyDocument("alpha", "version: 1\nnetwork_policies: {}\n", {
+        nonFatal: true,
+        runtimeSelection,
+        sourceAuthority,
+      }),
+    ).toBe(false);
+    expect(write).toHaveBeenCalledOnce();
+  });
+
+  it("rechecks live identity after composing private policy material and before the writer", () => {
+    vi.spyOn(registry, "getSandbox").mockReturnValue(null);
+    vi.spyOn(policyReader.syncCliOpenShellSandboxPolicyReader, "readSandboxPolicy").mockReturnValue(
+      {
+        ok: true,
+        value: { document: "version: 1\nnetwork_policies: {}\n", appliedRevision: null },
+      },
+    );
+    const runtimeSelection = { gatewayName: "nemoclaw-9090", workspace: "default" };
+    const assertCurrent = vi.fn();
+    const sourceAuthority = { sandboxName: "alpha", runtimeSelection, assertCurrent };
+    const write = vi.spyOn(policyReader.syncCliOpenShellSandboxPolicyWriter, "setSandboxPolicy");
+    const temp = vi.spyOn(fs, "mkdtempSync");
+    const writeFile = fs.writeFileSync.bind(fs);
+    vi.spyOn(fs, "writeFileSync").mockImplementationOnce((...args) => {
+      writeFile(...args);
+      assertCurrent.mockImplementation(() => {
+        throw new Error("live identity changed before submission");
+      });
+    });
+    expect(() =>
+      policies.setPolicyDocument("alpha", "version: 1\nnetwork_policies: {}\n", {
+        nonFatal: true,
+        runtimeSelection,
+        sourceAuthority,
+      }),
+    ).toThrow(/identity changed before submission/);
+    expect(write).not.toHaveBeenCalled();
+    expect(fs.existsSync(String(temp.mock.results[0]?.value))).toBe(false);
   });
 
   describe.each([

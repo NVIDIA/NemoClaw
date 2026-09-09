@@ -22,7 +22,14 @@ import * as registry from "../state/registry";
 
 type SandboxEntry = import("../state/registry").SandboxEntry;
 
+export interface PrivilegedSandboxExecutionContext {
+  readonly sandbox: SandboxEntry;
+  readonly control: RuntimeProviderPrivilegedSandboxControl;
+  readonly assertCurrent: () => void;
+}
+
 export interface PrivilegedSandboxCommandOptions {
+  readonly context?: PrivilegedSandboxExecutionContext;
   readonly input?: string | Buffer;
   readonly sanitizeEnvironment?: boolean;
   readonly expectedResourceHandle?: string;
@@ -41,10 +48,19 @@ function readSandboxEntry(sandboxName: string): SandboxEntry {
   );
 }
 
-function privilegedSandboxControl(sandboxName: string): {
+function privilegedSandboxControl(
+  sandboxName: string,
+  context?: PrivilegedSandboxExecutionContext,
+): {
   readonly sandbox: SandboxEntry;
   readonly control: RuntimeProviderPrivilegedSandboxControl;
 } {
+  if (context) {
+    if (context.sandbox.name !== sandboxName)
+      throw new Error("Privileged sandbox context targets another sandbox.");
+    context.assertCurrent();
+    return context;
+  }
   const sandbox = readSandboxEntry(sandboxName);
   const provider = requireRuntimeProviderBundleForSandbox(
     sandbox,
@@ -82,10 +98,11 @@ export function withPrivilegedSandboxExecutionLease<T>(
 
 export function resolvePrivilegedSandboxTarget(
   sandboxName: string,
+  context?: PrivilegedSandboxExecutionContext,
 ): RuntimeProviderPrivilegedSandboxTarget {
-  const { sandbox, control } = privilegedSandboxControl(sandboxName);
+  const { sandbox, control } = privilegedSandboxControl(sandboxName, context);
   return control.resolveTarget({
-    registeredSandboxNames: registeredSandboxNames(sandboxName),
+    registeredSandboxNames: context ? [sandboxName] : registeredSandboxNames(sandboxName),
     sandbox,
     sandboxName,
   });
@@ -101,7 +118,7 @@ export function executePrivilegedSandboxCommand(
   command: readonly string[],
   options: PrivilegedSandboxCommandOptions = {},
 ): RuntimeProviderPrivilegedSandboxCommandResult {
-  const { sandbox, control } = privilegedSandboxControl(sandboxName);
+  const { sandbox, control } = privilegedSandboxControl(sandboxName, options.context);
   const input =
     options.input === undefined
       ? undefined
@@ -109,7 +126,7 @@ export function executePrivilegedSandboxCommand(
         ? Buffer.from(options.input)
         : Buffer.from(options.input, "utf8");
   return control.execute({
-    registeredSandboxNames: registeredSandboxNames(sandboxName),
+    registeredSandboxNames: options.context ? [sandboxName] : registeredSandboxNames(sandboxName),
     sandbox,
     sandboxName,
     command,

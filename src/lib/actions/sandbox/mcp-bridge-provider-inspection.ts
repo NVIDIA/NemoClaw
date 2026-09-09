@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
 import {
@@ -26,6 +27,8 @@ import {
 } from "../../onboard/gateway-ownership";
 import { replayTrustedPrivateEndpoint } from "../../security/trusted-private-endpoint";
 import { listExtraProviders } from "../../state/registry/extra-providers";
+import { ConfigCorruptError } from "../../state/config-io";
+import type { McpOperationTarget } from "./mcp-bridge-state";
 import type { SandboxEntry } from "../../state/registry/types";
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import { getPersistedSandboxTargetGateway } from "./gateway-target";
@@ -311,9 +314,30 @@ export async function assertNoProviderCredentialCollisions(
   sandboxName: string,
   entries: readonly McpSourceEntry[],
   runtimeSelection: McpProviderInspectionRuntimeSelection,
+  operationTarget?: McpOperationTarget,
 ): Promise<void> {
   await assertNoAttachedProviderCredentialCollisions(sandboxName, entries, runtimeSelection);
-  await assertNoRegisteredProviderCredentialCollisions(entries, { runtimeSelection });
+  const liveIdentity = operationTarget?.liveIdentity;
+  const queryExtraProviders = liveIdentity
+    ? () => {
+        try {
+          return listExtraProviders();
+        } catch (error) {
+          if (
+            !(error instanceof ConfigCorruptError) ||
+            operationTarget?.sandbox.name !== sandboxName ||
+            !isDeepStrictEqual(operationTarget.runtimeSelection, runtimeSelection)
+          )
+            throw error;
+          liveIdentity.assertCurrent();
+          return [];
+        }
+      }
+    : undefined;
+  await assertNoRegisteredProviderCredentialCollisions(entries, {
+    runtimeSelection,
+    ...(queryExtraProviders ? { listExtraProviders: queryExtraProviders } : {}),
+  });
 }
 
 export function providerMatchesCredential(

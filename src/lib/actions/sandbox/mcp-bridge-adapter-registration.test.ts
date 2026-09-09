@@ -90,10 +90,10 @@ const sandbox = { name: "alpha", agent: "hermes", gatewayName: "nemoclaw-8091" }
 const runtimeSelection = { gatewayName: "nemoclaw-8091", workspace: "default" };
 
 function resetOpenClawConfigMocks(): void {
-    mocks.readSandboxConfig.mockReset().mockReturnValue({
-      plugins: { allow: ["nemoclaw"] },
-      tools: { toolSearch: { mode: "tools" } },
-    });
+  mocks.readSandboxConfig.mockReset().mockReturnValue({
+    plugins: { allow: ["nemoclaw"] },
+    tools: { toolSearch: { mode: "tools" } },
+  });
   mocks.resolveAgentConfig.mockReset().mockReturnValue({
     agentName: "openclaw",
     configPath: "/sandbox/.openclaw/openclaw.json",
@@ -620,5 +620,63 @@ describe("MCP adapter credential revision reconciliation failures", () => {
       ),
     ).toThrow("credential revision did not stabilize");
     expect(mocks.writeSandboxConfig).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("MCP adapter operation target revalidation", () => {
+  it.each(["openclaw-config", "hermes-config", "deepagents-config"] as const)(
+    "rechecks the live target before %s registration and removal",
+    (adapter) => {
+      const assertCurrent = vi.fn(() => {
+        throw new Error("live target changed");
+      });
+      const operationTarget = {
+        sandbox,
+        runtimeSelection,
+        liveIdentity: { sandboxId: "sb-alpha", assertCurrent },
+      };
+      const entry: McpSourceEntry = {
+        server: "github",
+        policyName: "mcp-bridge-github",
+        agent: "hermes",
+        adapter,
+        url: "https://example.com/mcp",
+        env: ["TOKEN"],
+      };
+      expect(() =>
+        registerAgentAdapter("alpha", adapter, entry, runtimeSelection, {}, { operationTarget }),
+      ).toThrow("live target changed");
+      expect(() =>
+        unregisterAgentAdapter("alpha", adapter, entry, runtimeSelection, { operationTarget }),
+      ).toThrow("live target changed");
+      expect(assertCurrent).toHaveBeenCalledTimes(2);
+    },
+  );
+  it("refuses to apply a verified target to another sandbox", () => {
+    const assertCurrent = vi.fn();
+    const operationTarget = {
+      sandbox,
+      runtimeSelection,
+      liveIdentity: { sandboxId: "sb-alpha", assertCurrent },
+    };
+    const entry: McpSourceEntry = {
+      server: "github",
+      policyName: "mcp-bridge-github",
+      agent: "hermes",
+      adapter: "hermes-config",
+      url: "https://example.com/mcp",
+      env: ["TOKEN"],
+    };
+    expect(() =>
+      registerAgentAdapter(
+        "other",
+        "hermes-config",
+        entry,
+        runtimeSelection,
+        {},
+        { operationTarget },
+      ),
+    ).toThrow("does not match");
+    expect(assertCurrent).not.toHaveBeenCalled();
   });
 });

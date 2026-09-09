@@ -163,6 +163,20 @@ function successfulJobs(overrides: { runAttempt?: number } = {}): Record<string,
   ];
 }
 
+describe("Nested MCP image qualification inputs", () => {
+  it("requires new publication when the scoped OpenClaw authority changes", () => {
+    const paths = parseBaseImagePushPaths(
+      fs.readFileSync(".github/workflows/base-image.yaml", "utf8"),
+    );
+    expect(
+      baseImageInputsChanged(["src/lib/actions/sandbox/mcp-bridge/openclaw-control.ts"], paths),
+    ).toBe(true);
+    expect(
+      baseImageInputsChanged(["src/lib/actions/sandbox/mcp-bridge-extra/unrelated.ts"], paths),
+    ).toBe(false);
+  });
+});
+
 describe("base-image publication evidence", () => {
   it("publishes after a root package manifest changes", () => {
     const workflowSource = fs.readFileSync(

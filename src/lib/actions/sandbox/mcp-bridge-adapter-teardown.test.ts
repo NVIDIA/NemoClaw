@@ -90,6 +90,10 @@ vi.mock("./mcp-bridge-state", () => ({
   getBridgeAdapter: mocks.getBridgeAdapter,
   getSandboxAgent: mocks.getSandboxAgent,
   getSandboxOrThrow: mocks.getSandboxOrThrow,
+  resolveMcpOperationTarget: (name: string) => ({
+    sandbox: mocks.getSandboxOrThrow(name),
+    runtimeSelection: { gatewayName: "nemoclaw-8091", workspace: "default" },
+  }),
 }));
 vi.mock("./mcp-bridge-validation", () => ({
   assertAuthenticatedBridgeEntry: vi.fn(),

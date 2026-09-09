@@ -13,6 +13,8 @@ import { inspectMcpDeniedToolSelectors } from "../../security/mcp-denied-tool-se
 import { isBlockedMcpUrlTargetHost } from "../../security/mcp-url-target";
 import type { SandboxEntry } from "../../state/registry";
 import { buildMcpBridgePolicyKey, buildMcpBridgePolicyName } from "./mcp-bridge-policy-render";
+import { mcpPolicySourceAuthority } from "./mcp-bridge-policy";
+import type { McpOperationTarget } from "./mcp-bridge-state";
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import {
@@ -415,11 +417,14 @@ export async function joinMcpEntriesToOpenShell(
   entries: Readonly<Record<string, McpSourceEntry>>,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
   operation = "inspect current MCP source state",
+  operationTarget?: McpOperationTarget,
 ): Promise<Record<string, McpSourceEntry>> {
+  const sourceAuthority = mcpPolicySourceAuthority(operationTarget);
   const policyDocument = captureRecordedSandboxBasePolicy(
     sandbox.name,
     operation,
     runtimeSelection,
+    ...(sourceAuthority ? ([sourceAuthority] as const) : ([] as const)),
   );
   return Object.fromEntries(
     await Promise.all(
@@ -445,11 +450,14 @@ export async function inspectPolicyOnlyMcpEntry(
   agentName: string,
   adapter: AgentMcpAdapter,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
+  operationTarget?: McpOperationTarget,
 ): Promise<McpSourceEntry | null> {
+  const sourceAuthority = mcpPolicySourceAuthority(operationTarget);
   const policyDocument = captureRecordedSandboxBasePolicy(
     sandbox.name,
     "inspect orphaned MCP policy state",
     runtimeSelection,
+    ...(sourceAuthority ? ([sourceAuthority] as const) : ([] as const)),
   );
   const policy = policyEntryForServer(policyDocument, server);
   if (!policy || !Array.isArray(policy.endpoints)) return null;
@@ -497,22 +505,35 @@ export async function inspectPolicyOnlyMcpEntry(
 export async function inspectSourceBridgeState(
   sandbox: SandboxEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
+  operationTarget?: McpOperationTarget,
 ): Promise<{ bridges: Record<string, McpSourceEntry>; sources: AgentMcpSourceSnapshot }> {
+  operationTarget?.liveIdentity?.assertCurrent();
   const sources = inspectAgentMcpSources(sandbox, runtimeSelection);
-  const bridges = await joinMcpEntriesToOpenShell(sandbox, sources.native, runtimeSelection);
+  const bridges = operationTarget
+    ? await joinMcpEntriesToOpenShell(
+        sandbox,
+        sources.native,
+        runtimeSelection,
+        undefined,
+        operationTarget,
+      )
+    : await joinMcpEntriesToOpenShell(sandbox, sources.native, runtimeSelection);
   return { bridges, sources };
 }
 
 export async function inspectLegacyBridgeState(
   sandbox: SandboxEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
+  operationTarget?: McpOperationTarget,
 ): Promise<{ bridges: Record<string, McpSourceEntry>; sources: AgentMcpSourceSnapshot }> {
+  operationTarget?.liveIdentity?.assertCurrent();
   const sources = inspectAgentMcpSources(sandbox, runtimeSelection);
   const bridges = await joinMcpEntriesToOpenShell(
     sandbox,
     sources.legacy,
     runtimeSelection,
     "inspect legacy MCP migration state",
+    ...(operationTarget ? ([operationTarget] as const) : ([] as const)),
   );
   return { bridges, sources };
 }
@@ -522,8 +543,8 @@ function deepAgentsLegacyRemovalCommand(configDir: string, server: string): stri
   return [
     "/opt/venv/bin/python3 -I - <<'PY'",
     "import json, os, pathlib, secrets, stat",
-    `config_path = pathlib.Path(${sourcePayload(configPath)})`,
-    `server = ${sourcePayload(server)}`,
+    `config_path = pathlib.Path(${JSON.stringify(configPath)})`,
+    `server = ${JSON.stringify(server)}`,
     "flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NONBLOCK | os.O_NOFOLLOW",
     "try: fd = os.open(config_path, flags)",
     "except FileNotFoundError: raise SystemExit(0)",

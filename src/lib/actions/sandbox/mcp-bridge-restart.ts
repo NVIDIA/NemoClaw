@@ -18,7 +18,6 @@ import {
   attachProvider,
   detachMissingProviderReference,
   ensureMcpBridgeProviderProfile,
-  getMcpProviderInspectionRuntimeSelection,
   refreshMcpProviderEnvironment,
   type McpCredentialRevisionObservation,
   type McpProviderInspection,
@@ -37,7 +36,8 @@ import {
   ensureSandboxGatewaySelected,
   getBridgeAdapter,
   getSandboxAgent,
-  getSandboxOrThrow,
+  resolveMcpOperationTarget,
+  type McpOperationTarget,
 } from "./mcp-bridge-state";
 import { inspectSourceBridgeState } from "./mcp-bridge-source";
 import { statusMcpBridge } from "./mcp-bridge-status";
@@ -66,10 +66,15 @@ function reloadAttemptedOpenClawMutation(
   sandboxName: string,
   adapters: readonly AgentMcpAdapter[],
   failure: unknown,
+  operationTarget?: McpOperationTarget,
 ): void {
   if (!adapters.includes("openclaw-config")) return;
   try {
-    reloadOpenClawGatewayAfterMcpMutation(sandboxName, adapters);
+    reloadOpenClawGatewayAfterMcpMutation(
+      sandboxName,
+      adapters,
+      ...(operationTarget ? ([operationTarget] as const) : ([] as const)),
+    );
   } catch (reloadFailure) {
     const originalDetail = failure instanceof Error ? failure.message : String(failure);
     const reloadDetail =
@@ -89,9 +94,14 @@ export async function restartMcpBridge(sandboxName: string, server?: string): Pr
 
 async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): Promise<void> {
   validateSandboxName(sandboxName);
-  const sandbox = getSandboxOrThrow(sandboxName);
-  const sourceRuntimeSelection = getMcpProviderInspectionRuntimeSelection(sandbox);
-  const observed = await inspectSourceBridgeState(sandbox, sourceRuntimeSelection);
+  const target = resolveMcpOperationTarget(sandboxName);
+  const { sandbox, runtimeSelection: sourceRuntimeSelection } = target;
+  const operationTarget = target.liveIdentity ? target : undefined;
+  const observed = await inspectSourceBridgeState(
+    sandbox,
+    sourceRuntimeSelection,
+    ...(operationTarget ? ([operationTarget] as const) : ([] as const)),
+  );
   if (Object.keys(observed.sources.legacy).length > 0) {
     throw new McpBridgeError(
       `Legacy MCP agent configuration requires explicit migration. Run \`nemoclaw ${sandboxName} mcp migrate\` first.`,
@@ -115,7 +125,7 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
   const targetEntries = targets
     .map(([, entry]) => entry)
     .filter((entry): entry is McpSourceEntry => !!entry);
-  const providerRuntimeSelection = getMcpProviderInspectionRuntimeSelection(sandbox);
+  const providerRuntimeSelection = sourceRuntimeSelection;
   const attemptedAdapters: AgentMcpAdapter[] = [];
   assertMcpCredentialBoundaryRuntimeVersion();
   await ensureSandboxGatewaySelected(sandboxName, providerRuntimeSelection);
@@ -130,6 +140,7 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
       if (!entry) continue;
       const [status] = await statusMcpBridge(sandboxName, name, {
         runtimeSelection: providerRuntimeSelection,
+        ...(operationTarget ? { operationTarget } : {}),
       });
       if (
         status?.policy.present !== true ||
@@ -164,15 +175,24 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
         providerRuntimeSelection,
         {},
         credentialObservation,
-        { replaceExisting: true },
+        { replaceExisting: true, ...(operationTarget ? { operationTarget } : {}) },
       );
       console.log(`  Reloaded MCP server '${name}' from current agent configuration.`);
     }
   } catch (error) {
-    reloadAttemptedOpenClawMutation(sandboxName, attemptedAdapters, error);
+    reloadAttemptedOpenClawMutation(
+      sandboxName,
+      attemptedAdapters,
+      error,
+      ...(operationTarget ? ([operationTarget] as const) : ([] as const)),
+    );
     throw error;
   }
-  reloadOpenClawGatewayAfterMcpMutation(sandboxName, attemptedAdapters);
+  reloadOpenClawGatewayAfterMcpMutation(
+    sandboxName,
+    attemptedAdapters,
+    ...(operationTarget ? ([operationTarget] as const) : ([] as const)),
+  );
 }
 
 export async function restoreExistingMcpBridgeRuntime(
@@ -182,6 +202,7 @@ export async function restoreExistingMcpBridgeRuntime(
     lifecyclePhase?: "active-mutation" | "teardown-rollback";
     applyPolicy?: boolean;
     runtimeSelection?: McpProviderInspectionRuntimeSelection;
+    operationTarget?: McpOperationTarget;
   } = {},
 ): Promise<void> {
   if (entries.length === 0) return;
@@ -190,9 +211,10 @@ export async function restoreExistingMcpBridgeRuntime(
   if (options.lifecyclePhase !== "teardown-rollback") {
     assertMcpCredentialBoundaryRuntimeVersion();
   }
-  const sandbox = getSandboxOrThrow(sandboxName);
-  const providerRuntimeSelection =
-    options.runtimeSelection ?? getMcpProviderInspectionRuntimeSelection(sandbox);
+  const target = options.operationTarget ?? resolveMcpOperationTarget(sandboxName);
+  const sandbox = target.sandbox;
+  const operationTarget = target.liveIdentity ? target : undefined;
+  const providerRuntimeSelection = options.runtimeSelection ?? target.runtimeSelection;
   await ensureSandboxGatewaySelected(sandboxName, providerRuntimeSelection);
   if (options.lifecyclePhase === "teardown-rollback") {
     // A failed delete/rebuild must be able to restore a backward-compatible
@@ -228,7 +250,12 @@ export async function restoreExistingMcpBridgeRuntime(
   // pre-existing collision on a later entry cannot follow an earlier restore
   // mutation. Per-entry attached-provider checks detect new collisions at each
   // restore mutation edge.
-  await assertNoProviderCredentialCollisions(sandboxName, entries, providerRuntimeSelection);
+  await assertNoProviderCredentialCollisions(
+    sandboxName,
+    entries,
+    providerRuntimeSelection,
+    ...(operationTarget ? ([operationTarget] as const) : ([] as const)),
+  );
   try {
     for (const entry of entries) {
       await assertNoAttachedProviderCredentialCollisions(
@@ -241,15 +268,19 @@ export async function restoreExistingMcpBridgeRuntime(
         applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry), {
           bindCredential: false,
           runtimeSelection: providerRuntimeSelection,
+          ...(operationTarget ? { operationTarget } : {}),
         });
       }
+      operationTarget?.liveIdentity?.assertCurrent();
       await attachProvider(sandboxName, entry, providerRuntimeSelection);
       if (options.applyPolicy !== false) {
         applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry), {
           runtimeSelection: providerRuntimeSelection,
+          ...(operationTarget ? { operationTarget } : {}),
         });
       }
       const adapter = entry.adapter ?? defaultAdapter;
+      operationTarget?.liveIdentity?.assertCurrent();
       await refreshMcpProviderEnvironment(entry, providerRuntimeSelection);
       const credentialRevision = await waitForAttachedMcpCredential(
         sandboxName,
@@ -267,12 +298,22 @@ export async function restoreExistingMcpBridgeRuntime(
         {
           replaceExisting: true,
           teardownRollback: options.lifecyclePhase === "teardown-rollback",
+          ...(operationTarget ? { operationTarget } : {}),
         },
       );
     }
   } catch (error) {
-    reloadAttemptedOpenClawMutation(sandboxName, attemptedAdapters, error);
+    reloadAttemptedOpenClawMutation(
+      sandboxName,
+      attemptedAdapters,
+      error,
+      ...(operationTarget ? ([operationTarget] as const) : ([] as const)),
+    );
     throw error;
   }
-  reloadOpenClawGatewayAfterMcpMutation(sandboxName, attemptedAdapters);
+  reloadOpenClawGatewayAfterMcpMutation(
+    sandboxName,
+    attemptedAdapters,
+    ...(operationTarget ? ([operationTarget] as const) : ([] as const)),
+  );
 }

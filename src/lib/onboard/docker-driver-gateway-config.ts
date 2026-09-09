@@ -686,6 +686,74 @@ function resolveDockerDriverGatewayIdentity(
   return { configProof: null, kind: "scoped", gatewayId, sandboxNamespace: gatewayId };
 }
 
+export interface ExistingGatewayConfigAuthority {
+  readonly driver: string;
+  readonly sandboxNamespace: string | null;
+  readonly socketPath: string | null;
+  readonly configPath: string;
+  readonly configSha256: string;
+  readonly gatewayId: string;
+  assertCurrent(): void;
+  close(): void;
+}
+
+/** Retain existing generated config authority without preparing or repairing gateway state. */
+export function openExistingGatewayConfigAuthority(
+  stateDir: string,
+  runtime: RuntimeProviderGatewayHostRuntime,
+): ExistingGatewayConfigAuthority {
+  const driver = runtime.openShellDriver;
+  if (driver !== "docker" && driver !== "podman") {
+    throw new Error(
+      "Existing gateway config authority requires an explicitly observed Docker or Podman driver.",
+    );
+  }
+  const identity = existingGatewayIdentityFromConfig(path.resolve(stateDir), runtime);
+  if (!identity) throw new Error("Existing gateway config authority is unavailable.");
+  if (identity.kind === "legacy") {
+    closeLegacyJwtBundleProof(identity.jwtProof);
+    closeRegularFileProof(identity.configProof);
+    throw new Error("Legacy gateway config cannot authorize a source-backed sandbox operation.");
+  }
+  const proof = identity.configProof;
+  if (!proof) throw new Error("Existing gateway config authority has no retained file proof.");
+  try {
+    const config = asTomlTable(parseToml(proof.bytes.toString("utf-8")));
+    const openshell = asTomlTable(config?.openshell);
+    const driverConfig = asTomlTable(asTomlTable(openshell?.drivers)?.[driver]);
+    const socket = driverConfig?.socket_path;
+    if (driver === "docker" && socket !== undefined) {
+      throw new Error("Docker gateway config cannot supply container-engine socket authority.");
+    }
+    if (driver === "podman" && !isNonEmptyString(socket)) {
+      throw new Error("Podman gateway config has no explicit container-engine socket.");
+    }
+    assertExistingConfigProof(proof);
+    let closed = false;
+    return Object.freeze({
+      driver,
+      sandboxNamespace:
+        runtime.gatewayConfig.sandboxNamespace === "scoped" ? identity.sandboxNamespace : null,
+      socketPath: typeof socket === "string" ? socket : null,
+      configPath: proof.path,
+      configSha256: createHash("sha256").update(proof.bytes).digest("hex"),
+      gatewayId: identity.gatewayId,
+      assertCurrent: () => {
+        if (closed) throw new Error("Existing gateway config authority is closed.");
+        assertExistingConfigProof(proof);
+      },
+      close: () => {
+        if (closed) return;
+        closed = true;
+        closeRegularFileProof(proof);
+      },
+    });
+  } catch (error) {
+    closeRegularFileProof(proof);
+    throw error;
+  }
+}
+
 /** Prove that a NemoClaw-owned Docker gateway config uses its state-scoped namespace. */
 export function hasStateScopedSandboxNamespace(stateDir: string): boolean {
   let identity: DockerDriverGatewayIdentity | null = null;

@@ -22,6 +22,7 @@ import {
 
 function liveTargetCase(
   options: {
+    revalidate?: "same" | "permission" | "replacement" | "registration" | "runtime";
     agent?: string;
     registryText?: string;
     permissionFailure?: boolean;
@@ -82,7 +83,17 @@ const state = require("./src/lib/actions/sandbox/mcp-bridge-state.js");
 (async () => {
   let sandbox, error;
   try {
-    sandbox = state.getSandboxOrThrow("alpha");
+    if (options.revalidate) {
+      const operation = state.resolveMcpOperationTarget("alpha");
+      sandbox = operation.sandbox;
+      process.env.OPENSHELL_GATEWAY = "nemoclaw-9191";
+      responses.push(successful(JSON.stringify({...identity,id:options.revalidate === "replacement" ? "sb-other" : identity.id})));
+      if (options.revalidate === "permission") replace(registry,"getSandbox",() => {throw new ConfigPermissionError("unsafe registry permissions","registry");});
+      if (options.revalidate === "registration") replace(registry,"getSandbox",() => ({name:"alpha",agent:"hermes",gatewayName:"nemoclaw-9090",gatewayPort:9090}));
+      operation.liveIdentity.assertCurrent();
+      operation.liveIdentity.assertRuntimeResource("docker", "a".repeat(64));
+      operation.liveIdentity.assertRuntimeResource("docker", options.revalidate === "runtime" ? "b".repeat(64) : "a".repeat(64));
+    } else sandbox = state.getSandboxOrThrow("alpha");
     if (options.ensureGateway) await state.ensureSandboxGatewaySelected("alpha", {gatewayName:sandbox.gatewayName,workspace:"default",localTlsDir:"/trusted/tls"});
   } catch (caught) { error = {name:caught.name,message:caught.message}; }
   process.stdout.write(JSON.stringify({sandbox,error,calls,runtimeSelections,gatewayHealthChecks,recoveryCalls}));
@@ -115,6 +126,21 @@ const state = require("./src/lib/actions/sandbox/mcp-bridge-state.js");
 }
 
 describe("MCP live targets without registry reconstruction", () => {
+  it("keeps revalidation on the captured gateway after ambient selection changes", () => {
+    const proof = liveTargetCase({ revalidate: "same" });
+    expect(proof.error).toBeUndefined();
+    expect(proof.calls.at(-1).env.OPENSHELL_GATEWAY).toBe("nemoclaw-9090");
+    expect(proof.registryExists).toBe(false);
+  });
+  it.each(["permission", "replacement", "registration", "runtime"] as const)(
+    "refuses %s drift during a live operation",
+    (revalidate) => {
+      const proof = liveTargetCase({ revalidate });
+      expect(proof.error).toBeDefined();
+      expect(proof.registryExists).toBe(false);
+    },
+  );
+
   it("reads successful gateway-info metadata from stderr without reconstructing the registry", () => {
     const proof = liveTargetCase({ gatewayInStderr: true });
     expect(proof.error).toBeUndefined();

@@ -34,6 +34,7 @@ import {
   executePrivilegedSandboxCommand as executeProviderPrivilegedSandboxCommand,
   resolvePrivilegedSandboxTarget,
   withPrivilegedSandboxExecutionLease,
+  type PrivilegedSandboxExecutionContext,
 } from "../../sandbox/privileged-exec";
 import { withMcpLifecycleLockSync } from "../../state/mcp-lifecycle-lock-acquisition";
 import * as registry from "../../state/registry";
@@ -270,12 +271,13 @@ function executeGatewaySupervisorActionPinned(
   action: "restart" | "recover" | "probe",
   timeout: number,
   expectedContainerId?: string,
+  context?: PrivilegedSandboxExecutionContext,
 ): ManagedGatewaySupervisorActionResult | null {
   const nonce = randomBytes(32).toString("hex");
   try {
     return withPrivilegedSandboxExecutionLease(sandboxName, `gateway supervisor ${action}`, () => {
       const targetContainerId =
-        expectedContainerId ?? resolvePrivilegedSandboxTarget(sandboxName).resourceHandle;
+        expectedContainerId ?? resolvePrivilegedSandboxTarget(sandboxName, context).resourceHandle;
       const result = executeProviderPrivilegedSandboxCommand(
         sandboxName,
         [MANAGED_GATEWAY_CONTROL_PATH, action, nonce],
@@ -283,6 +285,7 @@ function executeGatewaySupervisorActionPinned(
           sanitizeEnvironment: true,
           expectedResourceHandle: targetContainerId,
           timeout,
+          ...(context ? { context } : {}),
         },
       );
       const status = result.status ?? 1;
@@ -341,6 +344,22 @@ export function executeGatewaySupervisorAction(
   timeout = 210000,
 ): ManagedGatewaySupervisorActionResult | null {
   return executeGatewaySupervisorActionPinned(sandboxName, action, timeout);
+}
+
+/** Retain the controller protocol while using an explicitly qualified live target. */
+export function executeScopedGatewaySupervisorAction(
+  sandboxName: string,
+  action: "restart" | "recover" | "probe",
+  timeout: number | undefined,
+  context: PrivilegedSandboxExecutionContext,
+): ManagedGatewaySupervisorActionResult | null {
+  return executeGatewaySupervisorActionPinned(
+    sandboxName,
+    action,
+    timeout ?? 210000,
+    undefined,
+    context,
+  );
 }
 
 function refuseHostLocalSupervisorForSelectedRuntime(
@@ -1005,22 +1024,12 @@ function recoverSandboxProcesses(
             ).output,
           confirmMissingSupervisor: (containerId) =>
             isExactlyManagedControlMarker(
-              effectivePinnedGatewaySupervisorAction(
-                sandboxName,
-                "probe",
-                210000,
-                containerId,
-              ),
+              effectivePinnedGatewaySupervisorAction(sandboxName, "probe", 210000, containerId),
               "SUPERVISOR_NOT_RUNNING",
             ),
           restartRestoredManagedGateway: (containerId) => {
             const restarted = parseManagedGatewayControlCompletion(
-              effectivePinnedGatewaySupervisorAction(
-                sandboxName,
-                "restart",
-                210000,
-                containerId,
-              ),
+              effectivePinnedGatewaySupervisorAction(sandboxName, "restart", 210000, containerId),
             );
             if (restarted?.disposition !== "ok") return false;
             return waitForRecoveredSandboxGateway(sandboxName, {
@@ -1120,8 +1129,7 @@ export function restartSandboxGateway(
                     deps.requestGatewaySupervisorAction ?? defaultSupervisorAction,
                 }),
             }),
-          ensureSandboxPortForward: (name) =>
-            ensureSandboxPortForward(name, { runtimeSelection }),
+          ensureSandboxPortForward: (name) => ensureSandboxPortForward(name, { runtimeSelection }),
           ensureHermesDashboardPortForwardIfEnabled: (name) =>
             ensureHermesDashboardPortForwardIfEnabled(name, runtimeSelection),
           recoverMessagingHostForward: (name, options) =>

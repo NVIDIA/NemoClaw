@@ -44,6 +44,7 @@ on:
       - "test/e2e/live/managed-image-activation-e2e*.ts"
       - "test/e2e/live/mcp-bridge*.ts"
       - "src/lib/actions/sandbox/mcp-bridge-*.ts"
+      - "src/lib/actions/sandbox/mcp-bridge/**"
       - "src/lib/actions/sandbox/openshell-child-visible-credentials.v*.json"
       - "src/lib/actions/sandbox/rebuild-post-restore-phase.ts"
       - "src/lib/agent/candidate-authority.ts"

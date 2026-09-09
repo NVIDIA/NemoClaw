@@ -15,7 +15,6 @@ import { isAgentMcpAdapter, McpBridgeError, type McpBridgeStatus } from "./mcp-b
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import { getPolicyPresence } from "./mcp-bridge-policy";
 import {
-  getMcpProviderInspectionRuntimeSelection,
   inspectMcpProvider,
   inspectMcpProviderAttachments,
   observeMcpCredentialRevision,
@@ -35,13 +34,11 @@ import {
   ensureSandboxGatewaySelected,
   getAgentConfigDir,
   getSandboxAgent,
-  getSandboxOrThrow,
+  resolveMcpOperationTarget,
+  type McpOperationTarget,
 } from "./mcp-bridge-state";
 import { inspectPolicyOnlyMcpEntry, inspectSourceBridgeState } from "./mcp-bridge-source";
-import {
-  discoverMcpTools,
-  mcpToolDiscoveryPreconditionFailure,
-} from "./mcp-bridge-tool-discovery";
+import { discoverMcpTools, mcpToolDiscoveryPreconditionFailure } from "./mcp-bridge-tool-discovery";
 import {
   inspectMcpRecordedTargetPins,
   type McpBridgeRecordedPinStatus,
@@ -169,6 +166,7 @@ export interface McpBridgeStatusOptions {
   discoverTools?: boolean;
   /** Reuse the operation-scoped OpenShell target when status closes another lifecycle action. */
   runtimeSelection?: McpProviderInspectionRuntimeSelection;
+  operationTarget?: McpOperationTarget;
 }
 
 function attachedCredentialRevision(
@@ -203,11 +201,16 @@ export async function statusMcpBridge(
 ): Promise<McpBridgeStatus[]> {
   validateSandboxName(sandboxName);
   if (server !== undefined) validateMcpServerName(server);
-  const sandbox = getSandboxOrThrow(sandboxName);
+  const target = options.operationTarget ?? resolveMcpOperationTarget(sandboxName);
+  const sandbox = target.sandbox;
+  const operationTarget = target.liveIdentity ? target : undefined;
   const agent = getSandboxAgent(sandbox);
-  const providerRuntimeSelection =
-    options.runtimeSelection ?? getMcpProviderInspectionRuntimeSelection(sandbox);
-  const observed = await inspectSourceBridgeState(sandbox, providerRuntimeSelection);
+  const providerRuntimeSelection = options.runtimeSelection ?? target.runtimeSelection;
+  const observed = await inspectSourceBridgeState(
+    sandbox,
+    providerRuntimeSelection,
+    ...(operationTarget ? ([operationTarget] as const) : ([] as const)),
+  );
   const bridges = observed.bridges;
   const legacyNames = Object.keys(observed.sources.legacy).sort();
   if (legacyNames.length > 0) {
@@ -227,6 +230,7 @@ export async function statusMcpBridge(
         agent.name,
         agent.mcpCapability.adapter,
         providerRuntimeSelection,
+        ...(operationTarget ? ([operationTarget] as const) : ([] as const)),
       )) ?? undefined;
   }
   const entries: Array<[string, McpSourceEntry | undefined]> =
@@ -303,7 +307,12 @@ export async function statusMcpBridge(
   return Promise.all(
     entries.map(async ([name, entry]) => {
       const support = entry ? getPersistedBridgeSupport(entry) : getSupportSummary(agent);
-      const policyPresence = getPolicyPresence(sandboxName, entry, providerRuntimeSelection);
+      const policyPresence = getPolicyPresence(
+        sandboxName,
+        entry,
+        providerRuntimeSelection,
+        ...(operationTarget ? ([operationTarget] as const) : ([] as const)),
+      );
       const hasCredentialBinding =
         !!entry &&
         Array.isArray(entry.env) &&
@@ -366,6 +375,7 @@ export async function statusMcpBridge(
         providerAttached: attached,
         providerCredentialReady,
       };
+      operationTarget?.liveIdentity?.assertCurrent();
       const adapterRegistration = getAdapterRegistration(
         sandboxName,
         support.adapter,

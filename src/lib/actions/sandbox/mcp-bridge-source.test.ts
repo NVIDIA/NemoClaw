@@ -53,6 +53,7 @@ import {
   inspectLegacyBridgeState,
   inspectPolicyOnlyMcpEntry,
   inspectSourceBridgeState,
+  removeLegacyAgentMcpEntry,
 } from "./mcp-bridge-source";
 
 const sandbox = {
@@ -182,6 +183,66 @@ network_policies:
       native: {},
       legacy: {},
     });
+  });
+
+  it("removes the exact DeepAgents legacy key while preserving unrelated and native configuration", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nemoclaw-mcp-cleanup-"quoted"-'));
+    mocks.configRoot = root;
+    try {
+      const directory = path.join(root, ".deepagents");
+      fs.mkdirSync(directory);
+      const legacyPath = path.join(directory, ".nemoclaw-mcp.json");
+      const nativePath = path.join(directory, ".mcp.json");
+      const retained = { command: "fixture-command", args: ["preserve"] };
+      const nativeText = '{"mcpServers":{"native_server":{"url":"https://native.example/mcp"}}}\n';
+      fs.writeFileSync(
+        legacyPath,
+        JSON.stringify({
+          mcpServers: {
+            "github_tools-1": { url: "https://api.githubcopilot.com/mcp/" },
+            unrelated_server: retained,
+          },
+          unrelated: { preserved: true },
+        }),
+        { mode: 0o600 },
+      );
+      fs.writeFileSync(nativePath, nativeText, { mode: 0o600 });
+      mocks.executeSandboxCommand.mockImplementation((_name: string, command: string) => {
+        const program = command.split("<<'PY'\n")[1]?.split("\nPY")[0] ?? "";
+        const result = spawnSync("python3", ["-I", "-S", "-"], {
+          cwd: root,
+          input: program,
+          encoding: "utf8",
+          timeout: 10_000,
+        });
+        return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+      });
+
+      removeLegacyAgentMcpEntry(
+        { ...sandbox, agent: "langchain-deepagents-code" },
+        {
+          server: "github_tools-1",
+          agent: "langchain-deepagents-code",
+          adapter: "deepagents-config",
+          url: "https://api.githubcopilot.com/mcp/",
+          env: [],
+          policyName: "mcp-bridge-github-tools-1",
+          source: "legacy",
+        },
+        runtimeSelection,
+      );
+
+      expect(JSON.parse(fs.readFileSync(legacyPath, "utf8"))).toEqual({
+        mcpServers: { unrelated_server: retained },
+        unrelated: { preserved: true },
+      });
+      expect(fs.readFileSync(nativePath, "utf8")).toBe(nativeText);
+      expect(fs.statSync(legacyPath).mode & 0o777).toBe(0o600);
+      expect(fs.readdirSync(directory).sort()).toEqual([".mcp.json", ".nemoclaw-mcp.json"]);
+    } finally {
+      mocks.configRoot = "/sandbox";
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("reads Hermes MCP URL and credential references from YAML merge defaults", () => {

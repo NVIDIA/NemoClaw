@@ -85,6 +85,13 @@ vi.mock("./mcp-bridge-state", () => ({
   getSandboxAgent: mocks.getAgent,
   getBridgeAdapter: mocks.getAdapter,
   getSandboxOrThrow: mocks.resolveTarget,
+  resolveMcpOperationTarget: (name: string) => ({
+    sandbox: mocks.resolveTarget(name),
+    runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
+    ...(mocks.getSandbox(name)
+      ? {}
+      : { liveIdentity: { sandboxId: "live-alpha", assertCurrent() {} } }),
+  }),
 }));
 
 import { migrateMcpBridges } from "./mcp-bridge-migration";
@@ -147,19 +154,33 @@ describe("explicit MCP migration", () => {
     });
   });
 
-  it("previews legacy agent sources through an ephemeral target without a registry row", async () => {
-    mocks.getSandbox.mockReturnValue(undefined);
-    mocks.resolveTarget.mockReturnValue({
-      name: "alpha",
-      agent: "openclaw",
-      gatewayName: "nemoclaw",
-    });
+  it.each([false, true])(
+    "handles agent legacy sources without a registry row (apply=%s)",
+    async (apply) => {
+      mocks.getSandbox.mockReturnValue(undefined);
+      mocks.resolveTarget.mockReturnValue({
+        name: "alpha",
+        agent: "openclaw",
+        gatewayName: "nemoclaw",
+      });
 
-    await expect(migrateMcpBridges("alpha")).resolves.toMatchObject({
-      applied: false,
-      items: [{ server: "github", source: "legacy-agent" }],
+      await expect(migrateMcpBridges("alpha", { apply })).resolves.toMatchObject({
+        applied: apply,
+        items: [{ server: "github", source: "legacy-agent" }],
+      });
+      expect(mocks.register).toHaveBeenCalledTimes(Number(apply));
+      expect(mocks.updateSandbox).not.toHaveBeenCalled();
+    },
+  );
+
+  it("refuses migration when committed registry intent cannot be read", async () => {
+    const failure = new Error("committed legacy registry is corrupt");
+    mocks.readConfig.mockImplementationOnce(() => {
+      throw failure;
     });
+    await expect(migrateMcpBridges("alpha", { apply: true })).rejects.toBe(failure);
     expect(mocks.register).not.toHaveBeenCalled();
+    expect(mocks.removeLegacy).not.toHaveBeenCalled();
     expect(mocks.updateSandbox).not.toHaveBeenCalled();
   });
 
