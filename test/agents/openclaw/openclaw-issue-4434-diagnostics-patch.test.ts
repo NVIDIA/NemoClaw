@@ -89,7 +89,7 @@ function writeRenamedArrowAssistantFormatterFixture(dist: string): string {
 }
 
 function runPatch(dist: string, args: string[] = []) {
-  return spawnSync(process.execPath, ["--experimental-strip-types", PATCH_SCRIPT, ...args, dist], {
+  return spawnSync(process.execPath, [PATCH_SCRIPT, ...args, dist], {
     encoding: "utf-8",
     timeout: 10000,
   });
@@ -288,7 +288,7 @@ describe("OpenClaw diagnostics compatibility patch (#4434)", () => {
     try {
       const result = spawnSync(
         process.execPath,
-        ["--experimental-strip-types", PATCH_SCRIPT, tmp, tmp],
+        [PATCH_SCRIPT, tmp, tmp],
         {
           encoding: "utf-8",
           timeout: 10000,

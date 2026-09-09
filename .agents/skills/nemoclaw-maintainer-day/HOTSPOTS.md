@@ -8,7 +8,7 @@ Find files that slow development and reduce future merge conflicts.
 ## Step 1: Run the Hotspot Script
 
 ```bash
-node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/hotspots.ts
+node --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/hotspots.ts
 ```
 
 The script combines 30 days of `main` changes with file overlap from open PRs.
@@ -17,7 +17,7 @@ It marks risky areas and returns a ranked JSON list.
 Pipe into state:
 
 ```bash
-node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/hotspots.ts | node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/state.ts set-hotspots
+node --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/hotspots.ts | node --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/state.ts set-hotspots
 ```
 
 ## Step 2: Prioritize

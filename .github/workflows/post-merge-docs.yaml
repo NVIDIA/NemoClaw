@@ -73,7 +73,7 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: ">=22.19.0 <23"
 
       - name: Find the documentation range
         working-directory: trusted
@@ -96,7 +96,7 @@ jobs:
       - name: Configure isolated inference
         env:
           OPENAI_API_KEY: ${{ secrets.POST_MERGE_DOCS_API_KEY }}
-        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/post-merge-docs/run.mts" configure
+        run: node --no-warnings "$TRUSTED_CHECKOUT/tools/post-merge-docs/run.mts" configure
 
       - name: Author the documentation
         env:
@@ -104,7 +104,7 @@ jobs:
           POST_MERGE_DOCS_PHASE: author
           POST_MERGE_DOCS_WORKDIR: ${{ github.workspace }}/author
           SANDBOX_NAME: docs-main-author
-        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/post-merge-docs/run.mts" execute
+        run: node --no-warnings "$TRUSTED_CHECKOUT/tools/post-merge-docs/run.mts" execute
 
       - name: Validate the documentation candidate
         working-directory: author/repo
@@ -124,7 +124,7 @@ jobs:
           POST_MERGE_DOCS_PHASE: review
           POST_MERGE_DOCS_WORKDIR: ${{ github.workspace }}/review
           SANDBOX_NAME: docs-main-review
-        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/post-merge-docs/run.mts" execute
+        run: node --no-warnings "$TRUSTED_CHECKOUT/tools/post-merge-docs/run.mts" execute
 
       - name: Explain failed independent review
         if: ${{ failure() && steps.review.outcome == 'failure' }}
@@ -171,7 +171,7 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: ">=22.19.0 <23"
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -181,4 +181,4 @@ jobs:
       - name: Publish the reviewed patch
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/post-merge-docs/publish.mts"
+        run: node --no-warnings "$TRUSTED_CHECKOUT/tools/post-merge-docs/publish.mts"

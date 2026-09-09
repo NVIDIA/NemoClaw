@@ -8,7 +8,7 @@
  * anywhere in the title.
  *
  * Usage:
- *   node --experimental-strip-types --no-warnings \
+ *   node --no-warnings \
  *     .agents/skills/nemoclaw-maintainer-normalize-title-tags/scripts/normalize-title-tags.ts \
  *     [--repo OWNER/REPO] [--state all|open|closed] [--apply]
  */
@@ -53,7 +53,7 @@ const BRACKET_TAG_REGEX = /\[[^\]]+\]/g;
 function usage(): string {
   return [
     "Usage:",
-    "  node --experimental-strip-types --no-warnings \\",
+    "  node --no-warnings \\",
     "    .agents/skills/nemoclaw-maintainer-normalize-title-tags/scripts/normalize-title-tags.ts \\",
     "    [--repo OWNER/REPO] [--state all|open|closed] [--apply]",
     "",
