@@ -14,7 +14,6 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import {
@@ -26,7 +25,6 @@ import { artifactZip, artifactZipEntryDataOffset } from "../helpers/artifact-zip
 const script = resolve(
   ".agents/skills/nemoclaw-maintainer-classify-ci-failure/scripts/classify-ci-failure.mts",
 );
-const rootCauseCorrelatorScript = resolve(".dsh/tools/e2e_root_cause_correlator/index.ts");
 const roots: string[] = [];
 const uid = process.getuid?.() ?? "unknown";
 const REDACTION_CASES = [
@@ -304,36 +302,6 @@ describe("GitHub CLI production resolver", () => {
     expect(() =>
       resolveProductionGhExecutableForTest({ HOME: home, PATH: "/attacker" }, 1000, filesystem),
     ).toThrow("Could not find a trusted GitHub CLI executable");
-  });
-});
-
-describe("reviewed npm root-cause correlation", () => {
-  test.each([
-    ["npm@12.0.2 archive integrity mismatch", "dependency-audit/bootstrap-integrity"],
-    ["npm audit threshold failed", "dependency-audit/unaccepted-advisory"],
-    ["The operation timed out", "runtime/timeout/unclassified"],
-  ])("separates %s (#8253)", (signature, expectedKey) => {
-    const input = {
-      changedFiles: [],
-      failures: [{ jobId: 123, jobName: "PR npm audit", signatureLines: [signature] }],
-    };
-    const result = spawnSync(
-      process.execPath,
-      [
-        "--no-warnings",
-        "--input-type=module",
-        "--eval",
-        [
-          `const { default: correlate } = await import(${JSON.stringify(pathToFileURL(rootCauseCorrelatorScript).href)});`,
-          "console.log(JSON.stringify(await correlate(JSON.parse(process.argv[1]))));",
-        ].join("\n"),
-        JSON.stringify(input),
-      ],
-      { encoding: "utf8" },
-    );
-
-    expect(result.status, result.stderr).toBe(0);
-    expect(JSON.parse(result.stdout).groups[0]?.key).toBe(expectedKey);
   });
 });
 

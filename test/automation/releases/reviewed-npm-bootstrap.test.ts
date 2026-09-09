@@ -141,16 +141,18 @@ function createRealArchive(version?: string): { archive: Buffer; cleanup: () => 
 describe("reviewed npm bootstrap", () => {
   const archive = "verified archive\n";
 
-  it("rejects a malformed reviewed archive SHA-256 before download (#8253)", () => {
+  it.each([
+    ["npmVersion", { ...identity(archive), npmVersion: "12.x" }],
+    ["npmIntegrity", { ...identity(archive), npmIntegrity: "not-a-reviewed-integrity" }],
+    ["npmArchiveSha256", { ...identity(archive), npmArchiveSha256: "not-a-reviewed-digest" }],
+  ])("rejects a malformed %s before download (#8253)", (field, reviewedIdentity) => {
     const fixture = runBootstrapFixture({
       archive,
-      reviewedIdentity: { ...identity(archive), npmArchiveSha256: "not-a-reviewed-digest" },
+      reviewedIdentity,
     });
     try {
       expect(fixture.result.status).toBe(1);
-      expect(fixture.result.stderr).toContain(
-        "npm audit configuration has an invalid npmArchiveSha256",
-      );
+      expect(fixture.result.stderr).toContain(`npm audit configuration has an invalid ${field}`);
       expect(fixture.npmInvocations).toEqual([]);
       expect(fixture.installCalled).toBe(false);
     } finally {
