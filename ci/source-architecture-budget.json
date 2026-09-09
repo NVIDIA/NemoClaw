@@ -10,7 +10,7 @@
       "src/lib/adapters/openshell/client.ts": 19,
       "src/lib/adapters/openshell/command-argv.ts": 23,
       "src/lib/adapters/openshell/resolve.ts": 25,
-      "src/lib/adapters/openshell/runtime.ts": 49,
+      "src/lib/adapters/openshell/runtime.ts": 52,
       "src/lib/adapters/openshell/sandbox-observer.ts": 35,
       "src/lib/adapters/openshell/timeouts.ts": 32,
       "src/lib/agent/defs.ts": 32,
