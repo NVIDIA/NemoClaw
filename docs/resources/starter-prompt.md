@@ -155,7 +155,7 @@ Before collecting secrets, determine every environment-variable name and the com
 Do not generate, rewrite, or redesign the helper or form.
 Use this reviewed pair without modification:
 
-- Helper: `https://raw.githubusercontent.com/NVIDIA/NemoClaw/7da64b9ceb3e53d9dd27c8d4bbc7d0963eef77bb/scripts/local-credential-helper.mts` (SHA-256 `1b58a6dbb6611e29e1daf88b8eb8ec502e82d3bf5cdba86b23db9a0804e6cfad`).
+- Helper: `https://raw.githubusercontent.com/NVIDIA/NemoClaw/7da64b9ceb3e53d9dd27c8d4bbc7d0963eef77bb/scripts/local-credential-helper.mts` (SHA-256 `f7c255120735307c93767c348bfcd54e7c7008275f9f5215f249e4c1a9daa9be`).
 - Form: `https://raw.githubusercontent.com/NVIDIA/NemoClaw/7da64b9ceb3e53d9dd27c8d4bbc7d0963eef77bb/docs/resources/local-credential-form.html` (SHA-256 `cdd85dc6a0b31a8b9773e7ddaacb38a4e8162b0a13b70bebef3dc297ae7a6c44`).
 
 - Treat the two immutable URL and digest pairs as one reviewed trust boundary; before executing the helper, compute the SHA-256 digest of both downloaded files and compare each result with its pinned digest.
@@ -171,7 +171,7 @@ Use this reviewed pair without modification:
 - Never omit the literal `--`.
 - Never use a relative, alias-only, or PATH-only approved executable.
 - Never put credentials in argv.
-- Command shape: `node --experimental-strip-types <helper> --execution-profile <profile> --form <form> --field NAME:secret -- <absolute-executable> <approved-args...>`.
+- Command shape: `node <helper> --execution-profile <profile> --form <form> --field NAME:secret -- <absolute-executable> <approved-args...>`.
 - Use **Preview Credentials**, **Edit**, then **Confirm and Run Approved Command**.
 - If the outcome is unknown, check whether the command ran; do not retry or resubmit blindly.
 - Keep secrets in memory only long enough to start the command.

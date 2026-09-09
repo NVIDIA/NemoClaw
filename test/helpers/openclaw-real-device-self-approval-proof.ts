@@ -2182,7 +2182,7 @@ fs.statSync = function nemoclawProofStatSync(candidate, ...args) {
 export async function runRealOpenClawDeviceSelfApprovalProof(options: ProofOptions): Promise<void> {
   const patch = spawnSync(
     options.nodeExecutable,
-    ["--experimental-strip-types", options.patchScript, options.dist],
+    [options.patchScript, options.dist],
     {
       encoding: "utf8",
       timeout: options.timeoutMs,
@@ -2197,7 +2197,7 @@ export async function runRealOpenClawDeviceSelfApprovalProof(options: ProofOptio
 
   const audit = spawnSync(
     options.nodeExecutable,
-    ["--experimental-strip-types", options.patchScript, "--audit", options.dist],
+    [options.patchScript, "--audit", options.dist],
     {
       encoding: "utf8",
       timeout: options.timeoutMs,
