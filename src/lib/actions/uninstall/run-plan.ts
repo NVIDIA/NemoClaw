@@ -920,8 +920,13 @@ function isExplicitGatewayRegistrationAbsence(output: string, gatewayLabel: stri
     return (
       /^gateway not found\.?$/iu.test(line) ||
       new RegExp(`^No gateway metadata found for ${namedGateway}\\.?$`, "iu").test(line) ||
-      new RegExp(`^gateway\\s+${namedGateway}\\s+(?:does not exist|not found)\\.?$`, "iu").test(line) ||
-      new RegExp(`^status:\\s*NotFound,\\s*message:\\s*['"]gateway\\s+${escapedLabel}\\s+(?:does not exist|not found)['"]\\.?$`, "iu").test(line)
+      new RegExp(`^gateway\\s+${namedGateway}\\s+(?:does not exist|not found)\\.?$`, "iu").test(
+        line,
+      ) ||
+      new RegExp(
+        `^status:\\s*['"]?NotFound['"]?,\\s*message:\\s*['"]gateway(?:\\s+${escapedLabel})?\\s+(?:does not exist|not found)['"]\\.?$`,
+        "iu",
+      ).test(line)
     );
   });
 }

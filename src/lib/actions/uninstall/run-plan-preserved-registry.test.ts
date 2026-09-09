@@ -116,12 +116,16 @@ describe("uninstall messaging for a preserved-but-orphaned sandbox registry (#65
           command === "openshell" && args[0] === "gateway" && args[1] === "list"
             ? ok(JSON.stringify([{ name: "nemoclaw" }]))
             : command === "openshell" && args[0] === "gateway" && args[1] === "remove"
-              ? { status: 1, stdout: "", stderr: "gateway not found" }
+              ? {
+                  status: 1,
+                  stdout: "",
+                  stderr: "Error: × status: 'NotFound', message: \"gateway not found\"",
+                }
               : command === "openshell"
                 ? notFound()
-              : args[0] === "-c"
-                ? ok("/fake/bin/tool\n")
-                : ok(),
+                : args[0] === "-c"
+                  ? ok("/fake/bin/tool\n")
+                  : ok(),
         runDocker: () => ok(""),
       },
     );
@@ -130,6 +134,7 @@ describe("uninstall messaging for a preserved-but-orphaned sandbox registry (#65
     const combined = `${warnings.join("\n")}\n${logs.join("\n")}`;
     expect(warnings.join("\n")).toContain("Provider 'nvidia-nim' already removed or unreachable");
     expect(warnings.join("\n")).toContain("OpenShell sandboxes already removed or unreachable");
+    expect(warnings.join("\n")).toContain("Gateway 'nemoclaw' already removed or unreachable");
     expect(combined).not.toContain("Deleted provider 'nvidia-nim' skipped");
     expect(combined).not.toContain("Deleted all OpenShell sandboxes skipped");
   });
