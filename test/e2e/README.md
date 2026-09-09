@@ -479,11 +479,15 @@ The host must provide that user a secure, independently writable OS runtime auth
 The host must provide the util-linux `script` command and GNU `timeout` command.
 
 The helper rebuilds the candidate CLI, runs `connect --probe-only`, and then
-runs two `launch` sessions during the same fixed lease.
-Each real pseudo-terminal session sends two distinct messages and `/exit`, then
-requires process exit status `0`. The OpenClaw session store must append two
-nonempty `user` and `assistant` record pairs in one session. The helper does not
-compare message content. Terminal output is a bounded failure diagnostic only.
+runs two logical `launch` sessions during the same fixed lease. Each logical
+session may retry once with a fresh run ID and input only when the OpenClaw
+session store contains a structured transient provider-unavailability record
+and cleanup succeeds. Authentication, authorization, policy, malformed-response,
+cleanup, and unknown failures stop the acceptance test without retrying.
+Each successful real pseudo-terminal attempt sends two distinct messages and
+`/exit`, then requires process exit status `0`. The OpenClaw session store must
+append two nonempty `user` and `assistant` record pairs in one session. The helper
+does not compare message content. Terminal output is a bounded failure diagnostic only.
 Deterministic unit tests separately prove selection of the complete preflight
 and lease paths, stale-producer exclusion, the fixed time-unsafe quarantine,
 refusal to recover when prior evidence cannot be durably fenced, and the named

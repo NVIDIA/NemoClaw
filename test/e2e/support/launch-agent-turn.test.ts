@@ -31,6 +31,7 @@ import {
   OPENCLAW_LAUNCH_READINESS_LEASE_MAXIMUM_MS,
   OPENCLAW_LAUNCH_OPENSHELL_SHIM_SCRIPT,
   OPENCLAW_LAUNCH_RUNTIME_ENV_SCRIPT,
+  OPENCLAW_PROVIDER_UNAVAILABLE_MARKER,
   OPENCLAW_PTY_MONITOR_STARTER_SCRIPT,
   OPENCLAW_SESSION_EVIDENCE_SCRIPT,
   runOpenClawLaunchSession,
@@ -1107,6 +1108,71 @@ it.runIf(process.platform === "linux")(
     }
   },
   testTimeout(30_000),
+);
+
+it.runIf(process.platform === "linux")(
+  "executes two real provider failures before reporting exhausted availability (#10978)",
+  async () => {
+    const calls: Array<{
+      artifactName?: string;
+      firstInput?: string;
+      runId?: string;
+      stderr: string;
+    }> = [];
+    const host = {
+      command: async (
+        command: string,
+        args: string[],
+        options?: { artifactName?: string; env?: NodeJS.ProcessEnv },
+      ) => {
+        const fixture = runLaunchSessionFixture("provider-empty-message", "provider", {
+          args,
+          command,
+          env: options?.env,
+        }).result;
+        calls.push({
+          artifactName: options?.artifactName,
+          firstInput: options?.env?.NEMOCLAW_LAUNCH_FIRST_INPUT,
+          runId: options?.env?.NEMOCLAW_LAUNCH_RUN_ID,
+          stderr: fixture.stderr,
+        });
+        return {
+          exitCode: fixture.status ?? 1,
+          signal: fixture.signal,
+          stderr: fixture.stderr,
+          stdout: fixture.stdout,
+        };
+      },
+      openshellCommandPath: "/usr/bin/openshell",
+    };
+    vi.useFakeTimers();
+    try {
+      const launch = runOpenClawLaunchSession({
+        artifactName: "producer-exhaustion",
+        cliCommand: "openclaw",
+        env: {},
+        exitCommand: "/exit",
+        host: host as never,
+        redactionValues: [],
+        sandboxName: "alpha",
+      });
+      expect(calls).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(1_000);
+      await expect(launch).rejects.toThrow("OpenClaw launch provider unavailable after 2 attempts");
+      expect(calls.map((call) => call.artifactName)).toEqual([
+        "producer-exhaustion",
+        "producer-exhaustion-provider-retry-02",
+      ]);
+      expect(new Set(calls.map((call) => call.runId)).size).toBe(2);
+      expect(new Set(calls.map((call) => call.firstInput)).size).toBe(2);
+      for (const call of calls) {
+        expect(call.stderr).toContain(`${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}:${call.runId}`);
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+  testTimeout(45_000),
 );
 
 it.runIf(process.platform === "linux")(
