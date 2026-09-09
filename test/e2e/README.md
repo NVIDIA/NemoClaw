@@ -364,7 +364,8 @@ After ordinary restricted OpenClaw onboarding, it invokes the candidate `config 
 It compares the exported sandbox name, immutable managed image, hosted endpoint, and explicit policy with the fixture's registered and effective state.
 It then changes the fixture's recorded sandbox fingerprint and requires export to fail without creating a file.
 The fixture restores the registry in `finally` and removes private export files through its existing cleanup registry.
-This covers the SDK connection and complete export observation boundary; the deterministic adapter tests remain the owners of individual wire shapes and malformed responses.
+The exported effective policy comes from the SDK configuration response and is compared with the
+independent CLI policy observation. This covers the SDK connection and complete export observation boundary; the deterministic adapter tests remain the owners of individual wire shapes and malformed responses.
 The assertion budget is unchanged. Nine export assertions replace nine redundant checks in the same target:
 
 - Two CLI-file and two OpenShell-version checks are covered by the retained successful onboarding checks.

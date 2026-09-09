@@ -10,8 +10,7 @@ issue #10938 and PR #11065. They do not complete the capability migrations in th
 | --- | --- | --- |
 | Provider endpoint and identity | `providers.ts` | SDK `raw.getProvider`, plus `raw.getProviderProfile` for native NVIDIA inference without overrides; the pinned SDK has no curated gateway-provider read. Reuses the metadata fields from `provider-adapter.ts` (#9806, #9825). |
 | Sandbox identity, image, and attachments | `sandboxes.ts` | SDK `raw.getSandbox`; curated `sandbox.get` omits workspace, image, and active policy version. |
-| Configuration identity | `sandbox-config.ts` | SDK `raw.getSandboxConfig` by verified ID; curated `sandbox.getConfig` does a new name lookup and omits workspace. |
-| Effective policy document and applied revision | `sandbox-policy.ts` and `sandbox-policy-cli.ts` | Retains the existing policy contract from #10150. YAML conversion and policy migration remain with #9805 and #9826. |
+| Configuration identity and effective policy | `sandbox-config.ts` | SDK `raw.getSandboxConfig` by verified ID returns both in one response; curated `sandbox.getConfig` does a new name lookup and omits workspace. Policy reads for other consumers remain with #9805 and #9826. |
 | Inference route | `inference/live.ts` | Retains the CLI read with an explicit gateway. The separate generated inference client remains with #9809 and #9828. |
 | Managed workload and gateway ownership | NemoClaw registry and gateway state | These are NemoClaw provenance, not OpenShell resource fields. |
 
@@ -38,7 +37,11 @@ as the endpoint evidence. Custom profiles, profile scope changes, and provider c
 cannot use this derivation.
 
 Provider reads retain the complete config-key inventory so export can reject unsupported configuration. Sandbox reads omit
-environment values. Configuration reads return revision metadata, not settings or credential values.
+environment values. Configuration reads return revision metadata and a credential-free effective policy document, without settings values.
+The policy conversion follows the reviewed OpenShell release: filesystem defaults, compact ports,
+query matchers, MCP selectors, and provider-composed rules retain their document meaning. Unknown
+protobuf fields are rejected instead of omitted. Global policy revisions use the same precedence as
+`policy get --full`; export still requires agreement with the observed sandbox and configuration revision.
 Export compares two complete observations and can repeat that pair once when state changes.
 
 Managed rebuild recovery and snapshot-clone provider inspection, profile import, and creation use

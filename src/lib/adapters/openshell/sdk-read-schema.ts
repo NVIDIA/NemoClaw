@@ -60,6 +60,7 @@ export const SandboxResponseSchema = Type.Object({
   }),
 });
 export const SandboxConfigResponseSchema = Type.Object({
+  policy: Type.Unknown(),
   workspace: WorkspaceSchema,
   version: IntegerSchema,
   policyHash: ReadTextSchema,

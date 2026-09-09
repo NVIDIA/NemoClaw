@@ -2,9 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
+import YAML from "yaml";
 import { createProviders } from "../../src/lib/adapters/openshell/providers";
 import { createSandboxes } from "../../src/lib/adapters/openshell/sandboxes";
-import { createSandboxConfig } from "../../src/lib/adapters/openshell/sandbox-config";
+import {
+  createSandboxConfig,
+  serializeSdkPolicy,
+} from "../../src/lib/adapters/openshell/sandbox-config";
 import type { OpenShellReadClient } from "../../src/lib/adapters/openshell/sdk-read";
 
 // CI stages the reviewed optional SDK artifact. Source-only checkouts can run
@@ -68,6 +72,17 @@ describe("released OpenShell SDK export reads", () => {
             }),
           getSandboxConfig: async () =>
             roundTrip(raw.GetSandboxConfigResponseSchema, {
+              policy: {
+                version: 1,
+                filesystem: { readOnly: ["/usr"] },
+                networkPolicies: {
+                  api: {
+                    name: "api",
+                    endpoints: [{ host: "api.example", ports: [443] }],
+                    binaries: [{ path: "/usr/bin/curl" }],
+                  },
+                },
+              },
               workspace: "default",
               version: 3,
               policyHash: "a".repeat(64),
@@ -98,14 +113,131 @@ describe("released OpenShell SDK export reads", () => {
         policyVersion: 3,
         providers: [],
       });
-      expect(
-        await createSandboxConfig(connect).get({ ...request, sandboxId: "resource-id" }),
-      ).toMatchObject({
+      const config = await createSandboxConfig(connect).get({
+        ...request,
+        sandboxId: "resource-id",
+      });
+      expect(config).toMatchObject({
         policySource: "sandbox",
         globalPolicyVersion: 0,
         configRevision: "9007199254740993",
         providerEnvRevision: "18446744073709551615",
+        policy: { appliedRevision: 3 },
+      });
+      expect(YAML.parse(config.policy.document)).toEqual({
+        version: 1,
+        filesystem_policy: { include_workdir: false, read_only: ["/usr"] },
+        network_policies: {
+          api: {
+            name: "api",
+            endpoints: [{ host: "api.example", port: 443 }],
+            binaries: [{ path: "/usr/bin/curl" }],
+          },
+        },
       });
     },
   );
+});
+
+describe.skipIf(!hasSdkArtifact())("released OpenShell policy wire safety", () => {
+  it("rejects unknown policy wire fields instead of exporting a partial policy", async () => {
+    const sdkPackage = "@nvidia/openshell-sdk/raw";
+    const protobufPackage = "@bufbuild/protobuf";
+    const [{ SandboxPolicySchema }, { create, toBinary, fromBinary }] = await Promise.all([
+      import(sdkPackage),
+      import(protobufPackage),
+    ]);
+    const bytes = toBinary(SandboxPolicySchema, create(SandboxPolicySchema, { version: 1 }));
+    const policy = fromBinary(SandboxPolicySchema, Uint8Array.from([...bytes, 0xf8, 0x07, 0x01]));
+    await expect(serializeSdkPolicy(policy)).rejects.toMatchObject({
+      kind: "schema",
+      message: "OpenShell read failed (schema).",
+    });
+  });
+
+  it("serializes equal policy maps identically regardless of wire order", async () => {
+    const sdkPackage = "@nvidia/openshell-sdk/raw";
+    const protobufPackage = "@bufbuild/protobuf";
+    const [{ SandboxPolicySchema }, { create }] = await Promise.all([
+      import(sdkPackage),
+      import(protobufPackage),
+    ]);
+    const rule = {
+      name: "api",
+      endpoints: [{ host: "api.example", port: 443 }],
+      binaries: [{ path: "/usr/bin/curl" }],
+    };
+    const first = create(SandboxPolicySchema, {
+      version: 1,
+      networkPolicies: { z: rule, a: rule },
+    });
+    const second = create(SandboxPolicySchema, {
+      version: 1,
+      networkPolicies: { a: rule, z: rule },
+    });
+    expect(await serializeSdkPolicy(first)).toBe(await serializeSdkPolicy(second));
+  });
+
+  it("rejects unknown nested policy wire fields", async () => {
+    const sdkPackage = "@nvidia/openshell-sdk/raw";
+    const protobufPackage = "@bufbuild/protobuf";
+    const [{ SandboxPolicySchema }, { create, toBinary, fromBinary }] = await Promise.all([
+      import(sdkPackage),
+      import(protobufPackage),
+    ]);
+    const input = create(SandboxPolicySchema, {
+      version: 1,
+      networkPolicies: {
+        api: {
+          name: "api",
+          endpoints: [{ host: "api.example", port: 443 }],
+          binaries: [{ path: "/usr/bin/curl" }],
+        },
+      },
+    });
+    input.networkPolicies.api.endpoints[0].$unknown = [
+      { no: 127, wireType: 0, data: Uint8Array.of(1) },
+    ];
+    const policy = fromBinary(SandboxPolicySchema, toBinary(SandboxPolicySchema, input));
+    await expect(serializeSdkPolicy(policy)).rejects.toMatchObject({
+      kind: "schema",
+      message: "OpenShell read failed (schema).",
+    });
+  });
+
+  it.each([undefined, {}])("rejects missing or untyped policy messages: %j", async (policy) => {
+    await expect(serializeSdkPolicy(policy)).rejects.toMatchObject({
+      kind: "schema",
+      message: "OpenShell read failed (schema).",
+    });
+  });
+
+  it("rejects credential-bearing policy matchers without exposing their values", async () => {
+    const sdkPackage = "@nvidia/openshell-sdk/raw";
+    const protobufPackage = "@bufbuild/protobuf";
+    const [{ SandboxPolicySchema }, { create }] = await Promise.all([
+      import(sdkPackage),
+      import(protobufPackage),
+    ]);
+    const policy = create(SandboxPolicySchema, {
+      version: 1,
+      networkPolicies: {
+        api: {
+          name: "api",
+          endpoints: [
+            {
+              host: "api.example",
+              port: 443,
+              rules: [{ allow: { query: { api_key: { glob: "credential-canary" } } } }],
+            },
+          ],
+          binaries: [{ path: "/usr/bin/curl" }],
+        },
+      },
+    });
+    await expect(serializeSdkPolicy(policy)).rejects.toMatchObject({
+      kind: "schema",
+      message: "OpenShell read failed (schema).",
+    });
+  });
 });
