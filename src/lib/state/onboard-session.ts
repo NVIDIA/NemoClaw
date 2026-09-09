@@ -62,8 +62,8 @@ import {
 import { nextMachineStateAfterCompletedStep } from "./onboard-step-state";
 import {
   createOnboardLockOwner,
+  inspectOnboardLock,
   listRetainedSandboxRecoveryRecords as readRetainedSandboxRecoveryRecords,
-  observeOnboardLock,
   recordRetainedSandboxRecovery as writeRetainedSandboxRecovery,
   retainedSandboxRecoveryAuthorityIsCurrent,
   retainedSandboxRecoveryFile,
@@ -1351,29 +1351,6 @@ function parseLockFile(contents: string): LockInfo | null {
   }
 }
 
-interface LockFileSnapshot {
-  info: LockInfo | null;
-  inode: bigint;
-  mtimeMs: number;
-}
-
-function readLockFileSnapshot(): LockFileSnapshot {
-  const fd = fs.openSync(LOCK_FILE, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
-  try {
-    const stat = fs.fstatSync(fd, { bigint: true });
-    if (!stat.isFile()) {
-      return { info: null, inode: stat.ino, mtimeMs: Number(stat.mtimeMs) };
-    }
-    return {
-      info: parseLockFile(String(fs.readFileSync(fd, "utf8"))),
-      inode: stat.ino,
-      mtimeMs: Number(stat.mtimeMs),
-    };
-  } finally {
-    fs.closeSync(fd);
-  }
-}
-
 const MALFORMED_STALE_SECONDS = 30;
 
 // File descriptor we hold across the lifetime of an acquired lock. On
@@ -1470,22 +1447,17 @@ export function acquireOnboardLock(
         throw error;
       }
 
-      // Capture both the parsed lock and the inode so we can verify the
-      // file we're about to unlink is STILL the same stale file we read.
-      // Without the inode check, two concurrent processes can both read
-      // the same stale lock, and the slower one will unlink the fresh
-      // lock the faster one just claimed, breaking mutual exclusion.
-      // See issue #1281.
-      let snapshot: LockFileSnapshot;
-      try {
-        snapshot = readLockFileSnapshot();
-      } catch (readError) {
-        if (isErrnoException(readError) && readError.code === "ENOENT") {
-          continue;
-        }
-        throw readError;
+      // Inspect through the shared bounded, nonblocking reader. The returned
+      // snapshot and observation describe the same verified inode, so cleanup
+      // never needs an independent read of an attacker-controlled path.
+      const inspection = inspectOnboardLock(LOCK_FILE, evidence);
+      const { observation, snapshot } = inspection;
+      if (observation.kind === "absent") continue;
+      if (!snapshot) {
+        return { acquired: false, lockFile: LOCK_FILE, stale: false };
       }
-      const { info: existing, inode: staleInode } = snapshot;
+      const existing = parseLockFile(snapshot.contents);
+      const staleInode = snapshot.inode;
       if (!existing) {
         // Malformed lock file. If the file is very recent (<30 s), a
         // concurrent process may be mid-write — leave it and retry.
@@ -1496,10 +1468,6 @@ export function acquireOnboardLock(
         if (ageMs > MALFORMED_STALE_SECONDS * 1000) {
           unlinkIfInodeMatches(LOCK_FILE, staleInode);
         }
-        continue;
-      }
-      const observation = observeOnboardLock(LOCK_FILE, evidence);
-      if (observation.kind === "absent") {
         continue;
       }
       if (observation.kind === "busy") {
@@ -1656,15 +1624,10 @@ export function releaseOnboardLock(): void {
   // behavior so we never unlink a malformed lock and never unlink a
   // lock owned by another pid.
   try {
-    let snapshot: LockFileSnapshot;
-    try {
-      snapshot = readLockFileSnapshot();
-    } catch (error) {
-      if (isErrnoException(error) && error.code === "ENOENT") return;
-      throw error;
-    }
-    if (!snapshot.info) return;
-    if (snapshot.info.pid !== process.pid) return;
+    const snapshot = inspectOnboardLock(LOCK_FILE).snapshot;
+    if (!snapshot) return;
+    const info = parseLockFile(snapshot.contents);
+    if (!info || info.pid !== process.pid) return;
     unlinkIfInodeMatches(LOCK_FILE, snapshot.inode);
   } catch {
     return;

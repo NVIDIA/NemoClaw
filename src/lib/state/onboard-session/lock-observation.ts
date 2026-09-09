@@ -41,6 +41,17 @@ export type OnboardLockObservation =
       owner?: OnboardLockOwner;
     };
 
+export interface OnboardLockFileSnapshot {
+  contents: string;
+  inode: bigint;
+  mtimeMs: number;
+}
+
+export interface OnboardLockInspection {
+  observation: OnboardLockObservation;
+  snapshot?: OnboardLockFileSnapshot;
+}
+
 function errnoCode(error: unknown): string | undefined {
   if (!error || typeof error !== "object" || !("code" in error)) return undefined;
   return typeof error.code === "string" ? error.code : undefined;
@@ -108,10 +119,10 @@ function parseOwner(value: unknown): OnboardLockOwner | null {
   };
 }
 
-export function observeOnboardLock(
+export function inspectOnboardLock(
   lockPath: string,
   evidence: OnboardLockEvidence = systemOnboardLockEvidence,
-): OnboardLockObservation {
+): OnboardLockInspection {
   let fd: number;
   try {
     fd = fs.openSync(
@@ -119,8 +130,8 @@ export function observeOnboardLock(
       fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0),
     );
   } catch (error) {
-    if (errnoCode(error) === "ENOENT") return { kind: "absent" };
-    return { kind: "busy", reason: "unsafe" };
+    if (errnoCode(error) === "ENOENT") return { observation: { kind: "absent" } };
+    return { observation: { kind: "busy", reason: "unsafe" } };
   }
 
   try {
@@ -136,7 +147,7 @@ export function observeOnboardLock(
       pathStat.dev !== before.dev ||
       pathStat.ino !== before.ino
     ) {
-      return { kind: "busy", reason: "unsafe" };
+      return { observation: { kind: "busy", reason: "unsafe" } };
     }
     const bytes = Buffer.alloc(Math.min(MAX_LOCK_BYTES + 1, before.size + 1));
     const length = fs.readSync(fd, bytes, 0, bytes.length, 0);
@@ -150,30 +161,55 @@ export function observeOnboardLock(
       before.mtimeMs !== after.mtimeMs ||
       before.ctimeMs !== after.ctimeMs
     ) {
-      return { kind: "busy", reason: "publishing" };
+      return { observation: { kind: "busy", reason: "publishing" } };
     }
-    const owner = parseOwner(JSON.parse(bytes.subarray(0, length).toString("utf8")));
-    if (!owner) return { kind: "busy", reason: "unverified" };
+    const snapshot: OnboardLockFileSnapshot = {
+      contents: bytes.subarray(0, length).toString("utf8"),
+      inode: fs.fstatSync(fd, { bigint: true }).ino,
+      mtimeMs: before.mtimeMs,
+    };
+    let value: unknown;
+    try {
+      value = JSON.parse(snapshot.contents);
+    } catch {
+      return { observation: { kind: "busy", reason: "unverified" }, snapshot };
+    }
+    const owner = parseOwner(value);
+    if (!owner) {
+      return { observation: { kind: "busy", reason: "unverified" }, snapshot };
+    }
 
     const hostIdentity = evidence.hostIdentity();
     const pidNamespaceIdentity = evidence.pidNamespaceIdentity();
     if (!hostIdentity || !pidNamespaceIdentity)
-      return { kind: "busy", reason: "unverified", owner };
+      return { observation: { kind: "busy", reason: "unverified", owner }, snapshot };
     if (
       owner.hostIdentity !== hostIdentity ||
       owner.pidNamespaceIdentity !== pidNamespaceIdentity
     ) {
-      return { kind: "busy", reason: "foreign", owner };
+      return { observation: { kind: "busy", reason: "foreign", owner }, snapshot };
     }
-    if (!evidence.processAlive(owner.pid)) return { kind: "stale", reason: "departed", owner };
+    if (!evidence.processAlive(owner.pid)) {
+      return { observation: { kind: "stale", reason: "departed", owner }, snapshot };
+    }
     const generation = evidence.processGeneration(owner.pid);
-    if (!generation) return { kind: "busy", reason: "unverified", owner };
-    if (generation !== owner.processGeneration)
-      return { kind: "stale", reason: "pid-reused", owner };
-    return { kind: "busy", reason: "active", owner };
+    if (!generation) {
+      return { observation: { kind: "busy", reason: "unverified", owner }, snapshot };
+    }
+    if (generation !== owner.processGeneration) {
+      return { observation: { kind: "stale", reason: "pid-reused", owner }, snapshot };
+    }
+    return { observation: { kind: "busy", reason: "active", owner }, snapshot };
   } catch {
-    return { kind: "busy", reason: "unverified" };
+    return { observation: { kind: "busy", reason: "unverified" } };
   } finally {
     fs.closeSync(fd);
   }
+}
+
+export function observeOnboardLock(
+  lockPath: string,
+  evidence: OnboardLockEvidence = systemOnboardLockEvidence,
+): OnboardLockObservation {
+  return inspectOnboardLock(lockPath, evidence).observation;
 }

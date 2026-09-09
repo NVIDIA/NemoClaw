@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -43,6 +44,40 @@ describe("onboard lock ownership", () => {
       stale: false,
     });
     expect(fs.existsSync(session.LOCK_FILE)).toBe(false);
+  });
+
+  it.runIf(process.platform !== "win32")(
+    "refuses a FIFO lock path without blocking or replacing it",
+    () => {
+      fs.mkdirSync(path.dirname(session.LOCK_FILE), { recursive: true });
+      expect(spawnSync("mkfifo", [session.LOCK_FILE]).status).toBe(0);
+
+      expect(session.acquireOnboardLock("nemoclaw onboard")).toEqual({
+        acquired: false,
+        lockFile: session.LOCK_FILE,
+        stale: false,
+      });
+      expect(fs.lstatSync(session.LOCK_FILE).isFIFO()).toBe(true);
+    },
+  );
+
+  it("refuses an oversized lock file without reading or replacing it", () => {
+    fs.mkdirSync(path.dirname(session.LOCK_FILE), { recursive: true });
+    const contents = Buffer.alloc(64 * 1024 + 1, "x");
+    fs.writeFileSync(session.LOCK_FILE, contents, { mode: 0o600 });
+
+    const readSpy = vi.spyOn(fs, "readSync");
+    try {
+      expect(session.acquireOnboardLock("nemoclaw onboard")).toEqual({
+        acquired: false,
+        lockFile: session.LOCK_FILE,
+        stale: false,
+      });
+      expect(readSpy).not.toHaveBeenCalled();
+    } finally {
+      readSpy.mockRestore();
+    }
+    expect(fs.readFileSync(session.LOCK_FILE)).toEqual(contents);
   });
 
   it("reports ownership only while this process holds the acquired lock (#9833)", () => {

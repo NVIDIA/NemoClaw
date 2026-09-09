@@ -3,11 +3,14 @@
 
 export {
   createOnboardLockOwner,
+  inspectOnboardLock,
   observeOnboardLock,
   systemOnboardLockEvidence,
 } from "./lock-observation";
 export type {
   OnboardLockEvidence,
+  OnboardLockFileSnapshot,
+  OnboardLockInspection,
   OnboardLockObservation,
   OnboardLockOwner,
 } from "./lock-observation";
