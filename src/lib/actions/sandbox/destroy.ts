@@ -58,7 +58,10 @@ import {
   redactDestroyError,
   retirePortableLifecycleAuthority,
 } from "./destroy-execution";
-import { cleanupGatewayAfterLastSandbox } from "./destroy-gateway";
+import {
+  cleanupGatewayAfterLastSandbox,
+  resolveGatewayCleanupRuntimeProviderId,
+} from "./destroy-gateway";
 import { shouldCleanupGatewayAfterConfirmedFinalDestroy } from "./destroy-gateway-cleanup";
 import {
   assertUnambiguousDestroyContainerIdentity,
@@ -69,6 +72,7 @@ import {
 } from "./destroy-presence";
 import {
   prepareSandboxDestroy,
+  resolveSandboxDestroyGatewayName,
   resolveSandboxDestroyRuntimeSelection,
   stopModelRouterForDestroyedSandbox,
   stopSandboxInferenceResources,
@@ -642,6 +646,15 @@ async function destroySandboxUnlocked(
   }
   const retainedSandboxIdentityFingerprint =
     retainedRecoveryAuthority?.sandboxIdentityFingerprint ?? undefined;
+  const destroyGatewayName = resolveSandboxDestroyGatewayName(
+    sandboxName,
+    registeredSandbox,
+    retainedRecoveryAuthority?.gatewayName,
+  );
+  const destroyRuntimeProviderId = resolveGatewayCleanupRuntimeProviderId(
+    destroyGatewayName,
+    registeredSandbox?.openshellDriver,
+  );
   let portableContainerAuthority: ReturnType<typeof preparePortableDemoSandboxDestroyAuthority>;
   try {
     portableContainerAuthority = preparePortableDemoSandboxDestroyAuthority(sandboxName, () => {
@@ -664,9 +677,7 @@ async function destroySandboxUnlocked(
     const registeredSandbox = registry.getSandbox(sandboxName);
     return assertUnambiguousDestroyContainerIdentity(sandboxName, {
       cliName: CLI_NAME,
-      providerId: registeredSandbox
-        ? normalizeRuntimeProviderIdentity(registeredSandbox.openshellDriver)
-        : normalizeRuntimeProviderIdentity(null),
+      providerId: destroyRuntimeProviderId ?? normalizeRuntimeProviderIdentity(null),
       redact: redactDestroyError,
       sandbox: registeredSandbox,
       ...(retainedSandboxIdentityFingerprint ? { retainedSandboxIdentityFingerprint } : {}),
@@ -756,6 +767,11 @@ async function destroySandboxUnlocked(
     sandboxConfirmedAbsent,
     sandboxPresence = sandboxConfirmedAbsent ? "absent" : "unknown",
   } = destroyPreflight;
+  if (cleanupGatewayName !== destroyGatewayName) {
+    throw new Error(
+      `Refusing to destroy sandbox '${sandboxName}': gateway authority changed during preflight.`,
+    );
+  }
   if (retainedRecoveryAuthority && sandboxPresence !== "absent") {
     // OpenShell has no atomic delete-by-identity primitive: it exposes no
     // way to bind a mutable-name delete to the retained record's immutable
@@ -1044,6 +1060,10 @@ async function destroySandboxUnlocked(
   }
   const removalOutcome = removeSandboxRegistryEntryOutcome(sandboxName);
   const removed = removalOutcome.removed;
+  // A retry after successful registry removal still owns final gateway cleanup.
+  // The gateway runtime marker captured its provider before the first delete.
+  const registryEntryAbsent =
+    removalOutcome.status === "complete" || removalOutcome.status === "not-found";
   if (removalOutcome.status === "blocked") {
     const providerId = normalizeRuntimeProviderIdentity(
       (registry.getSandbox(sandboxName) ?? sandbox)?.openshellDriver,
@@ -1176,14 +1196,21 @@ async function destroySandboxUnlocked(
     shouldCleanupGatewayAfterConfirmedFinalDestroy(
       {
         deleteSucceededOrAlreadyGone,
-        removedRegistryEntry: removed,
+        removedRegistryEntry: registryEntryAbsent,
+        ...(destroyRuntimeProviderId ? { runtimeProviderId: destroyRuntimeProviderId } : {}),
       },
       cleanupCaptureOpenshell ? { captureOpenshell: cleanupCaptureOpenshell } : {},
     )
   ) {
     const shouldCleanupGateway = await resolveCleanupGatewayDecision(normalized);
     if (shouldCleanupGateway) {
-      cleanupGatewayAfterLastSandbox(cleanupGatewayName, cleanupRunOpenshell);
+      if (destroyRuntimeProviderId) {
+        cleanupGatewayAfterLastSandbox(cleanupGatewayName, cleanupRunOpenshell, {
+          runtimeProviderId: destroyRuntimeProviderId,
+        });
+      } else {
+        cleanupGatewayAfterLastSandbox(cleanupGatewayName, cleanupRunOpenshell);
+      }
     } else {
       // `gateway remove <name>` is the modern OpenShell subcommand on every
       // platform; the old `gateway destroy -g` was pre-0.0.44 only and current
