@@ -32,12 +32,26 @@
     "architecture": "arm64",
     "retainedReferenceInstallerChecks": "passed",
     "earlyAndRepeatedProcessAudit": "passed",
-    "installedAcceptance": "pending",
+    "installedAcceptance": "failed",
     "requiredCompleteNativePasses": 2,
     "completeNativePasses": 0,
     "physicalN1x": "not-qualified",
-    "productionSupport": false
+    "productionSupport": false,
+    "failure": {
+      "step": "Qualify MSI and setup executable",
+      "reportedError": "Installed NemoClaw CLI did not report expected version 0.1.0.",
+      "credentialAndOptionalServiceControlsPassed": true,
+      "fullPackageQualificationPassed": false
+    }
   },
   "criticalSourcePayloadHashesMatched": 12,
-  "payloadFiles": 81806
+  "payloadFiles": 81806,
+  "knownRuntimeIssue": {
+    "observedCandidate": "36cdec5a1e8cd5fb0618afd5b20d8055ed051d53",
+    "affectedRuntimeUnchangedInThisCandidate": true,
+    "stage": "contained broker bootstrap",
+    "errorCode": "ETIMEDOUT",
+    "hostProbeStatus": 403,
+    "status": "repair in progress; no deployed fix claimed"
+  }
 }
