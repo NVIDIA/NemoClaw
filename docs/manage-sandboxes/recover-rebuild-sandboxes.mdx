@@ -314,11 +314,6 @@ A gateway that reports no live inference route does not stop the rebuild. Replac
 
 <AgentOnly variant="hermes">
 The rebuild command preserves Hermes state, the complete current OpenShell policy, and managed MCP configuration while recreating the container.
-It also captures credential-free, non-managed values for supported Hermes dotpaths that host-side `config set` previously recorded.
-After it writes the fresh managed route, rebuild merges and verifies those values.
-The completion output lists the restored and dropped Hermes operator config keys.
-Rebuild drops managed-route fields and values that contain credentials.
-If it cannot capture or restore the operator configuration, rebuild exits nonzero and preserves the backup for recovery.
 For that one replacement create, NemoClaw adds baseline fields required by the current replacement image when they are absent from the live policy. Existing values, network keys, and same-name live network entries win, so host changes are not overwritten. NemoClaw does not save a desired-policy copy or enforce that handoff after OpenShell creates the sandbox.
 It reuses a messaging provider only when its exact type and credential keys match the recorded channel binding.
 A stopped channel remains inactive and contributes no token upsert, rendered runtime configuration, channel startup effect, or inactive built-in messaging preset.
@@ -326,6 +321,10 @@ Custom and host-edited policy entries are preserved as part of that one OpenShel
 A policy-required provider attachment is the narrow exception: when a preserved custom policy still credential-binds stopped Hermes Discord, rebuild attaches its exact validated static provider without starting Discord.
 If that required provider is missing or incompatible, restore or re-add the channel credentials, then rerun the rebuild.
 A rebuild creates a new sandbox home and a new Hermes API bearer token.
+It also restores supported non-gateway configuration values that you previously wrote with `config set`.
+The rebuild result lists the restored keys and any keys it dropped.
+If it cannot capture those values before replacement, rebuild stops before it deletes the existing sandbox.
+If it cannot restore them after replacement, rebuild exits nonzero and retains recovery state.
 After the rebuild succeeds, retrieve the replacement token before reconnecting API clients:
 
 <Warning>

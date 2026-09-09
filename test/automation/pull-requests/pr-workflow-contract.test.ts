@@ -466,9 +466,7 @@ describe("pull request and main workflow contracts", () => {
   ) as TypeScriptConfig;
   const sharedActions = {
     staticChecks: readYaml<CompositeAction>(".github/actions/ci-static-checks/action.yaml"),
-    compileArtifacts: readYaml<CompositeAction>(
-      ".github/actions/ci-compile-artifacts/action.yaml",
-    ),
+    compileArtifacts: readYaml<CompositeAction>(".github/actions/ci-compile-artifacts/action.yaml"),
     buildTypecheck: readYaml<CompositeAction>(".github/actions/ci-build-typecheck/action.yaml"),
     cliCoverageShard: readYaml<CompositeAction>(
       ".github/actions/ci-cli-coverage-shard/action.yaml",
@@ -493,10 +491,7 @@ describe("pull request and main workflow contracts", () => {
   it("verifies changed Hugging Face catalog references without credentials", () => {
     const job = prWorkflow.jobs["hugging-face-models"];
     const filterStep = prWorkflow.jobs.changes.steps?.find((step) => step.id === "filter");
-    const filters = YAML.parse(String(filterStep?.with?.filters ?? "")) as Record<
-      string,
-      string[]
-    >;
+    const filters = YAML.parse(String(filterStep?.with?.filters ?? "")) as Record<string, string[]>;
     const huggingFaceModelFilters = filters.hugging_face_models ?? [];
 
     expect(
@@ -922,6 +917,7 @@ describe("pull request and main workflow contracts", () => {
     );
     expect(fetch.env).toEqual({
       NEMOCLAW_OPEN_SHELL_SDK_OUTPUT_DIRECTORY: "${{ runner.temp }}/openshell-sdk",
+      NEMOCLAW_OPEN_SHELL_SDK_INCLUDE_REPLACEMENT: "1",
       NODE_AUTH_TOKEN: "${{ github.token }}",
     });
     expect(fetch.run).toContain(
