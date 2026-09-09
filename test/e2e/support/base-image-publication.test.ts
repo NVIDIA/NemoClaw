@@ -644,6 +644,7 @@ describe("base-image publication evidence", () => {
         ]),
         history(),
         WORKFLOW_ID,
+        { allowWorkflowDispatch: true, completedSuccessOnly: true },
       ),
     ).toThrow(/multiple trusted/u);
     expect(() =>
@@ -976,6 +977,54 @@ describe("base-image publication evidence", () => {
         { allowWorkflowDispatch: true, completedSuccessOnly: true },
       ),
     ).toMatchObject({ state: "selected", run: { id: newerManualRunId, event: "workflow_dispatch" } });
+  });
+
+  it("falls back through multiple ineligible manual publications to an older push (#11289)", async () => {
+    const olderManualRunId = RUN_ID + 1;
+    const newerManualRunId = RUN_ID + 2;
+    const manualRun = (id: number) =>
+      workflowRun({
+        id,
+        event: "workflow_dispatch",
+        head_sha: DESCENDANT_SHA,
+        html_url: `${RUN_URL_ROOT}/${id}`,
+      });
+    const manualJobs = (runId: number) =>
+      successfulJobs().map((job) => ({ ...job, run_id: runId, head_sha: DESCENDANT_SHA }));
+    const olderManualRun = manualRun(olderManualRunId);
+    const newerManualRun = manualRun(newerManualRunId);
+    const pushRun = workflowRun();
+    const responses = [
+      workflowMetadata(),
+      runsPayload([olderManualRun, newerManualRun, pushRun]),
+      { total_count: manualJobs(newerManualRunId).length, jobs: manualJobs(newerManualRunId) },
+      { total_count: manualJobs(olderManualRunId).length, jobs: manualJobs(olderManualRunId) },
+      { total_count: successfulJobs().length, jobs: successfulJobs() },
+      pushRun,
+    ];
+    const requests: string[] = [];
+
+    await expect(
+      waitForBaseImagePublication({
+        history: history(),
+        request: async (requestPath) => {
+          requests.push(requestPath);
+          return responses.shift();
+        },
+        requireWorkflowSuccess: true,
+        selectNearestSuccessfulRun: true,
+        waitMs: 100,
+        pollMs: 10,
+      }),
+    ).resolves.toEqual(selectedRun());
+    expect(requests).toEqual([
+      "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml",
+      "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&per_page=100&page=1",
+      `/repos/NVIDIA/NemoClaw/actions/runs/${newerManualRunId}/attempts/1/jobs?per_page=100&page=1`,
+      `/repos/NVIDIA/NemoClaw/actions/runs/${olderManualRunId}/attempts/1/jobs?per_page=100&page=1`,
+      `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/1/jobs?per_page=100&page=1`,
+      `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}`,
+    ]);
   });
 
   it("selects an older eligible push after skipping a newer manual run without managed-image promotion (#11289)", async () => {
