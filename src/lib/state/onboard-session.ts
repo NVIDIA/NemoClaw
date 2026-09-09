@@ -2394,6 +2394,29 @@ export function checkpointVllmInstallModel(modelId: string): Session {
   });
 }
 
+/** Persist the exact profile needed to retry an interrupted managed llama.cpp install. */
+export function checkpointManagedLlamaCppSelection(input: {
+  model: string;
+  servingProfileProvenance: ServingProfileProvenance;
+}): Session {
+  const model = parseVllmInstallModel(input.model);
+  const provenance = parseServingProfileProvenance(input.servingProfileProvenance);
+  if (!model || provenance?.recipe.backend !== "install-llama-cpp") {
+    throw new Error("Managed llama.cpp install produced an invalid selection checkpoint.");
+  }
+  return updateSession((session) => {
+    const providerStep = session.steps.provider_selection;
+    if (providerStep?.status !== "in_progress") {
+      throw new Error(
+        "Managed llama.cpp selection can only be checkpointed during provider selection.",
+      );
+    }
+    session.provider = "llama-cpp-local";
+    session.model = model;
+    session.servingProfileProvenance = provenance;
+  });
+}
+
 /**
  * Single synchronous terminal-failure owner for process-exit / backstop paths.
  *

@@ -125,6 +125,8 @@ describe("public compiled CLI contracts", () => {
     const result = spawnSync(process.execPath, [CLI_ENTRYPOINT, "--version"], {
       cwd: REPO_ROOT,
       encoding: "utf-8",
+      // Version output is independent of persisted automatic gateway-port discovery.
+      env: { ...process.env, NEMOCLAW_GATEWAY_PORT: "8080" },
       timeout: 30_000,
     });
 

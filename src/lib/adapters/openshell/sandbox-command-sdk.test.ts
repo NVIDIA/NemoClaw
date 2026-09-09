@@ -7,10 +7,8 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ensureManagedGatewayStateRoot } from "../../onboard/gateway/state-dir";
-import {
-  connectManagedOpenShellSdk,
-  createSdkOpenShellSandboxCommandExecutor,
-} from "./sandbox-command-sdk";
+import { connectManagedOpenShellSdk } from "./sdk";
+import { createSdkOpenShellSandboxCommandExecutor } from "./sandbox-command-sdk";
 
 const roots: string[] = [];
 const request = (timeoutSeconds = 120) =>

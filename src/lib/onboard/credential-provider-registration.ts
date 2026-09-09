@@ -234,7 +234,7 @@ function validatePlannedCredentialProviderBindings(
 export function createCredentialProviderRegistration(deps: CredentialProviderRegistrationDeps) {
   const gatewayRunner = (gatewayName = deps.getGatewayName()) =>
     createGatewayScopedOpenshellRunner(deps.runOpenshell, gatewayName);
-  function upsertProvider(
+  async function upsertProvider(
     name: string,
     type: string,
     credentialEnv: string,
@@ -243,7 +243,7 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     gatewayName = deps.getGatewayName(),
     options: MessagingProviderRegistrationOptions = {},
   ) {
-    const result = providers.upsertProvider(
+    const result = await providers.upsertProvider(
       name,
       type,
       credentialEnv,
@@ -332,45 +332,53 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     }
   }
 
-  function credentialBindingMatchesGateway(
+  async function credentialBindingMatchesGateway(
     binding: CheckpointProviderBinding,
     runOpenshell: OpenshellCliHelpers["runOpenshell"],
-  ): boolean {
-    return inspectGatewayCredentialBinding(binding, runOpenshell).kind === "exact";
+  ): Promise<boolean> {
+    return (await inspectGatewayCredentialBinding(binding, runOpenshell)).kind === "exact";
   }
 
-  function inspectGatewayCredentialBinding(
+  async function inspectGatewayCredentialBinding(
     binding: CheckpointProviderBinding,
     runOpenshell: OpenshellCliHelpers["runOpenshell"],
-  ): gatewayProviderMetadata.GatewayCredentialOnlyProviderInspection {
+  ): Promise<gatewayProviderMetadata.GatewayCredentialOnlyProviderInspection> {
     const profileMatches = messagingBridgeProvider.matchesRegisteredMessagingBridgeProfile(
       binding.type,
       { root: deps.root, runOpenshell },
     );
     if (profileMatches === false) return { kind: "indeterminate" };
-    return gatewayProviderMetadata.inspectGatewayCredentialFamilyProviderBinding(
-      {
-        name: binding.name,
-        type: binding.type,
-        credentialKey: binding.credentialEnv,
-      },
-      runOpenshell,
-    );
+    const observed = await createCliOpenShellProviderAdapter({ run: runOpenshell }).getProvider({
+      target: { kind: "selected" },
+      providerName: binding.name,
+    });
+    if (!observed.ok) {
+      return observed.error.kind === "command" && observed.error.reason === "not_found"
+        ? { kind: "missing" }
+        : { kind: "indeterminate" };
+    }
+    return gatewayProviderMetadata.matchesGatewayCredentialFamilyProviderBinding(observed.value, {
+      name: binding.name,
+      type: binding.type,
+      credentialKey: binding.credentialEnv,
+    })
+      ? { kind: "exact" }
+      : { kind: "collision" };
   }
 
-  function inspectGatewayCredential(
+  async function inspectGatewayCredential(
     name: string,
     type: string,
     credentialEnv: string,
-  ): gatewayProviderMetadata.GatewayCredentialOnlyProviderInspection {
+  ): Promise<gatewayProviderMetadata.GatewayCredentialOnlyProviderInspection> {
     return inspectGatewayCredentialBinding({ name, type, credentialEnv }, gatewayRunner());
   }
 
-  function providerMatchesGatewayCredential(
+  async function providerMatchesGatewayCredential(
     name: string,
     type: string,
     credentialEnv: string,
-  ): boolean {
+  ): Promise<boolean> {
     return credentialBindingMatchesGateway({ name, type, credentialEnv }, gatewayRunner());
   }
 

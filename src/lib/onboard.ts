@@ -812,9 +812,6 @@ const { promptValidationRecovery } = createValidationRecoveryPromptHelpers({
   exitOnboardFromPrompt,
 });
 
-// Provider CRUD — thin wrappers that inject runOpenshell to avoid circular deps.
-const { buildProviderArgs } = onboardProviders;
-
 // Snapshot of legacy {env-key → value} pairs that stageLegacyCredentialsToEnv()
 // imported from ~/.nemoclaw/credentials.json at the start of this run.
 // Captured by the onboard() entry point; consulted by the upsertProvider /
@@ -1618,6 +1615,7 @@ type ProviderChoice = import("./onboard/provider-menu").ProviderMenuChoice;
 type RebuildRouteHandoff = import("./onboard/rebuild-route-handoff").RebuildRouteHandoff;
 
 const {
+  providerSelectionReaders,
   readRecordedProvider,
   readRecordedNimContainer,
   readRecordedModel,
@@ -2038,15 +2036,15 @@ async function handleRemoteProviderSelection(
     providerKeyBridge.stageBuildProviderKeyBridge();
     let apiKeyNavigation: unknown = null;
     if (isNonInteractive()) {
-      const reuseGatewayCredential = buildCredentialReuse.resolveNonInteractiveBuildCredential({
-        provider: state.provider,
-        helpUrl: REMOTE_PROVIDER_CONFIG.build.helpUrl,
-        recoveredFromSandbox,
-        providerExistsInGateway: (name) =>
-          providerExistsInGateway(name, args.gatewayName ?? GATEWAY_NAME),
-      });
-      state.skipHostInferenceSmoke = reuseGatewayCredential;
-      state.reuseGatewayCredentialWithoutLocalKey = reuseGatewayCredential;
+      state.skipHostInferenceSmoke =
+        await buildCredentialReuse.resolveNonInteractiveBuildCredential({
+          provider: state.provider,
+          helpUrl: REMOTE_PROVIDER_CONFIG.build.helpUrl,
+          recoveredFromSandbox,
+          providerExistsInGateway: (name) =>
+            providerExistsInGateway(name, args.gatewayName ?? GATEWAY_NAME),
+        });
+      state.reuseGatewayCredentialWithoutLocalKey = state.skipHostInferenceSmoke;
     } else {
       assertSelectionMutationAuthority(state, "register the NVIDIA provider credential");
       apiKeyNavigation = await ensureApiKey();
@@ -2297,6 +2295,7 @@ function getSetupNimDeps(): SetupNimDeps {
     vllmPort: VLLM_PORT,
     getGatewayPort: () => GATEWAY_PORT,
     getRuntimeProvider: () => setupNimFlow.resolveCurrentRuntimeProviderBundle(),
+    checkpointManagedLlamaCppSelection: onboardSession.checkpointManagedLlamaCppSelection,
     step,
     isNonInteractive,
     getNonInteractiveProvider,
@@ -2305,9 +2304,7 @@ function getSetupNimDeps(): SetupNimDeps {
     detectInferenceProviderHostState,
     getAgentInferenceProviderOptions,
     loadRoutedProfile: () => loadBlueprintProfile("routed"),
-    readRecordedProvider,
-    readRecordedNimContainer,
-    readRecordedModel,
+    ...providerSelectionReaders,
     prompt,
     selectFromNumberedMenu: selectFromNumberedMenuOrExit,
     note,
@@ -2469,11 +2466,11 @@ const stageSandboxCredentialProviders = (
     sandboxCreateIntentResolver.prepareCredentialProviders,
   );
 
-function getRecordedMessagingChannelsForResume(
+async function getRecordedMessagingChannelsForResume(
   resume: boolean,
   session: Session | null,
   sandboxName: string | null,
-): string[] | null {
+): Promise<string[] | null> {
   return getRecordedMessagingChannelsForResumeFromState({
     resume,
     sessionMessagingChannels: getChannelsFromPlan(session?.messagingPlan),
@@ -3055,6 +3052,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             resolveHostLocalInferenceStartupSelection:
               setupNimFlow.createHermesPortableOllamaInferenceResolver({
                 runtimeContext: lockedRuntime.portableRuntimeContext,
+                gatewayName: GATEWAY_NAME,
                 credentialEnv: OLLAMA_PROXY_CREDENTIAL_ENV,
                 getReservationSessionId: () => session?.sessionId,
                 runGatewayOpenshell: runCoreGatewayOpenshell,
@@ -3385,10 +3383,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   }
   preserveIncompleteSession = true;
 }
-
 module.exports = {
   buildOrphanedSandboxRollbackMessage,
-  buildProviderArgs,
   buildGatewayBootstrapSecretsScript,
   buildCompatibleEndpointSandboxSmokeCommand,
   buildCompatibleEndpointSandboxSmokeScript,
