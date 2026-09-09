@@ -285,7 +285,7 @@ describe("onboarding phase fixture", () => {
     ["candidate catalog", '{"langchain-deepagents-code":{}}', undefined],
     ["explicit override", "", DCODE_BASE_IMAGE_REF],
   ])(
-    "uses the %s without a Deep Agents base override (#11305)",
+    "omits the Deep Agents base override for managed-image onboarding with %s (#11305)",
     async (_source, catalog, dcodeBaseImageReference) => {
       const runner = new FakeRunner();
       runner.enqueue(shellResult(0, "onboarded\n"));
