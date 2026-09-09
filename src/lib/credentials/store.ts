@@ -19,6 +19,7 @@ import { createPromptActivityCleanup } from "../core/prompt-activity";
 import { listMessagingCredentialMetadata } from "../messaging/channels";
 import { rejectSymlinksOnPath } from "../state/config-io";
 import { nemoclawStateRoot } from "../state/state-root";
+import { legacyCredentialAliases } from "./legacy-env-aliases";
 import { getScopedCredentialOverride } from "./scoped-overrides";
 
 export { withCredentialOverrides } from "./scoped-overrides";
@@ -54,10 +55,6 @@ export const KNOWN_CREDENTIAL_ENV_KEYS: readonly string[] = [
   "HUGGING_FACE_HUB_TOKEN",
   ...listMessagingCredentialMetadata().map((credential) => credential.providerEnvKey),
 ];
-
-const LEGACY_CREDENTIAL_ENV_ALIASES: Partial<Record<string, readonly string[]>> = {
-  NVIDIA_INFERENCE_API_KEY: ["NVIDIA_API_KEY"],
-};
 
 // Hard upper bound on the legacy credentials.json size we are willing to
 // read into memory. The largest realistic credential set NemoClaw has ever
@@ -195,7 +192,7 @@ export function getCredential(key: string): string | null {
 }
 
 function getLegacyCredentialAlias(envName: string): string | null {
-  for (const alias of LEGACY_CREDENTIAL_ENV_ALIASES[envName] ?? []) {
+  for (const alias of legacyCredentialAliases(envName)) {
     const value = getCredential(alias);
     if (value) return value;
   }
@@ -441,9 +438,8 @@ export function removeLegacyCredentialsFile(): void {
 
 /**
  * Securely remove the legacy plaintext credentials.json *iff* it carries
- * no migratable credential payload — i.e. it's an empty `{}`, contains
- * only keys outside `KNOWN_CREDENTIAL_ENV_KEYS`, or every allowlisted key
- * has a blank/non-string value. Used by the onboard completion path to
+ * no payload at all — i.e. it's empty, whitespace-only, an empty `{}`, or
+ * every value is a blank string. Used by the onboard completion path to
  * clean up the stale empty file left behind on upgrades from pre-gateway
  * NemoClaw versions (#3105).
  *
@@ -499,11 +495,12 @@ export function removeLegacyCredentialsFileIfEmpty(): boolean {
       return false;
     }
 
-    const allowed = new Set<string>(KNOWN_CREDENTIAL_ENV_KEYS);
-    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
-      if (!allowed.has(key)) continue;
-      if (typeof value !== "string") continue;
-      if (normalizeCredentialValue(value)) {
+    // Any surviving value is payload this sweep did not migrate, whether or
+    // not NemoClaw recognizes its key. Keys outside KNOWN_CREDENTIAL_ENV_KEYS
+    // used to be treated as absent, so a file holding only unrecognized
+    // secrets was destroyed without ever being read (#10373).
+    for (const value of Object.values(parsed as Record<string, unknown>)) {
+      if (typeof value !== "string" || normalizeCredentialValue(value)) {
         return false;
       }
     }
