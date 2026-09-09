@@ -13,8 +13,11 @@ type WorkflowStep = WorkflowRecord & {
 };
 
 const JOB_ID = "managed-image-protected-runtime";
+const AUDIT_JOB_ID = "managed-image-protected-audit";
 const SELECTOR =
-  "${{ always() && github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && needs['base-image-publication'].result == 'success' && needs['generate-matrix'].result == 'success' && needs['managed-image-multiarch-startup'].result == 'success' && contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'managed-image-protected-runtime') }}";
+  "${{ always() && github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && needs['base-image-publication'].result == 'success' && needs['generate-matrix'].result == 'success' && needs['managed-image-multiarch-startup'].result == 'success' && needs['managed-image-protected-audit'].result == 'success' && contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'managed-image-protected-runtime') }}";
+const AUDIT_SELECTOR =
+  "${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'managed-image-protected-runtime') }}";
 const ACTIVATION_PATH = "ci/protected-managed-image-runtime-activation-v1.json";
 const LIVE_TEST_PATH = "test/e2e/live/managed-image-protected-runtime.test.ts";
 const REGISTRY_IMAGE =
@@ -91,6 +94,77 @@ function requireOrderedSteps(
 
 export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowRecord): string[] {
   const errors: string[] = [];
+  const auditJob = record(record(workflow.jobs)[AUDIT_JOB_ID]);
+  if (Object.keys(auditJob).length === 0) {
+    errors.push(`workflow missing ${AUDIT_JOB_ID} job`);
+  } else {
+    if (auditJob.needs !== "generate-matrix") {
+      errors.push(`${AUDIT_JOB_ID} must depend on generate-matrix`);
+    }
+    if (auditJob.if !== AUDIT_SELECTOR) {
+      errors.push(`${AUDIT_JOB_ID} must use the protected runtime execution plan`);
+    }
+    if (auditJob["runs-on"] !== "ubuntu-24.04" || auditJob["timeout-minutes"] !== 25) {
+      errors.push(`${AUDIT_JOB_ID} must keep its reviewed hosted runner and timeout`);
+    }
+    if (!isDeepStrictEqual(auditJob.permissions, { contents: "read" })) {
+      errors.push(`${AUDIT_JOB_ID} permissions must be exactly contents: read`);
+    }
+    const auditSteps = steps(auditJob.steps);
+    const trustedAuditCheckout = auditSteps.find(
+      (step) => step.name === "Checkout trusted reviewed npm audit",
+    );
+    const candidateAuditCheckout = auditSteps.find(
+      (step) => step.name === "Checkout exact protected audit target",
+    );
+    const trustedAudit = auditSteps.find(
+      (step) => step.name === "Audit exact candidate mcporter graph from trusted code",
+    );
+    const checkoutAction = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
+    if (
+      trustedAuditCheckout?.uses !== checkoutAction ||
+      candidateAuditCheckout?.uses !== checkoutAction
+    ) {
+      errors.push(`${AUDIT_JOB_ID} must pin both trusted and candidate checkouts`);
+    }
+    requireValues(errors, `${AUDIT_JOB_ID} trusted checkout`, record(trustedAuditCheckout?.with), {
+      repository: "${{ github.repository }}",
+      ref: "${{ inputs.workflow_sha || github.workflow_sha }}",
+      "persist-credentials": false,
+    });
+    const trustedSparseCheckout = text(record(trustedAuditCheckout?.with)["sparse-checkout"]);
+    for (const trustedPath of [
+      ".github/actions/ci-reviewed-npm-audit",
+      "ci/npm-audit-exceptions.json",
+      "ci/reviewed-npm-audit.json",
+      "scripts/audit-reviewed-npm-graph.mts",
+      "scripts/lib/npm-audit-receipt.mts",
+    ]) {
+      if (!trustedSparseCheckout.split("\n").includes(trustedPath)) {
+        errors.push(`${AUDIT_JOB_ID} trusted checkout must include ${trustedPath}`);
+      }
+    }
+    requireValues(
+      errors,
+      `${AUDIT_JOB_ID} candidate checkout`,
+      record(candidateAuditCheckout?.with),
+      {
+        repository: "${{ inputs.checkout_repository || github.repository }}",
+        ref: "${{ inputs.checkout_sha || github.sha }}",
+        path: ".candidate-audit",
+        "persist-credentials": false,
+      },
+    );
+    if (trustedAudit?.uses !== "./.github/actions/ci-reviewed-npm-audit") {
+      errors.push(`${AUDIT_JOB_ID} must execute the trusted reviewed npm audit action`);
+    }
+    requireValues(errors, `${AUDIT_JOB_ID} action`, record(trustedAudit?.with), {
+      "target-root": "${{ github.workspace }}/.candidate-audit",
+      "report-dir": "artifacts/reviewed-npm-audit",
+      "cache-directory": "${{ runner.temp }}/reviewed-npm-audit-cache",
+      "locked-graph": "mcporter-runtime",
+    });
+  }
   const job = record(record(workflow.jobs)[JOB_ID]);
   if (Object.keys(job).length === 0) return [`workflow missing ${JOB_ID} job`];
 
@@ -99,10 +173,11 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
       "base-image-publication",
       "generate-matrix",
       "managed-image-multiarch-startup",
+      "managed-image-protected-audit",
     ])
   ) {
     errors.push(
-      `${JOB_ID} must depend on base-image-publication, generate-matrix, and managed-image-multiarch-startup`,
+      `${JOB_ID} must depend on base-image-publication, generate-matrix, managed-image-multiarch-startup, and managed-image-protected-audit`,
     );
   }
   if (job.if !== SELECTOR) errors.push(`${JOB_ID} must use the trusted execution plan`);
@@ -221,6 +296,20 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     name: "${{ env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE_ARTIFACT }}",
     path: "${{ env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE }}",
   });
+  const auditDownload = requireStep(
+    errors,
+    workflowSteps,
+    "Download trusted protected mcporter audit evidence",
+  );
+  if (
+    auditDownload?.uses !== "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
+  ) {
+    errors.push(`${JOB_ID} must pin the reviewed audit evidence download action`);
+  }
+  requireValues(errors, `${JOB_ID} audit evidence download`, record(auditDownload?.with), {
+    name: "reviewed-npm-audit",
+    path: "${{ runner.temp }}/protected-reviewed-npm-audit",
+  });
 
   const buildx = requireStep(errors, workflowSteps, "Set up protected runtime Buildx");
   if (buildx?.uses !== "docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c") {
@@ -317,10 +406,16 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     "--platform linux/amd64",
     '--source-root "$GITHUB_WORKSPACE/.candidate-runtime"',
     '--cache-from "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE"',
+    '--audit-evidence-from "$RUNNER_TEMP/protected-reviewed-npm-audit"',
     '--openclaw-base "$BASE_OPENCLAW"',
     '--hermes-base "$BASE_HERMES"',
     '--dcode-base "$BASE_DCODE"',
   ]);
+  if (
+    text(build?.run).includes(".candidate-runtime/scripts/checks/build-protected-managed-images.sh")
+  ) {
+    errors.push(`${JOB_ID} build controller must execute trusted workflow code`);
+  }
   requireValues(errors, `${JOB_ID} protected runtime build bases`, record(build?.env), {
     BASE_HERMES:
       "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${{ steps.runtime-hermes-base.outputs.digest }}",
@@ -383,6 +478,7 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     "Checkout trusted protected runtime qualification",
     "Checkout exact protected runtime candidate source",
     "Download exact protected runtime build cache",
+    "Download trusted protected mcporter audit evidence",
     "Prepare E2E workspace",
     "Validate protected runtime activation contract",
     "Resolve reviewed Hermes runtime base image",

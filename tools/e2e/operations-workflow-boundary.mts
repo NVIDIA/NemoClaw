@@ -596,8 +596,10 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         step.name === "Check out trusted OpenShell SDK package verifier" &&
         step.with?.ref === "${{ github.workflow_sha }}";
       const trustedManagedImageRuntimeCheckout =
-        jobName === "managed-image-protected-runtime" &&
-        step.name === "Checkout trusted protected runtime qualification" &&
+        ((jobName === "managed-image-protected-runtime" &&
+          step.name === "Checkout trusted protected runtime qualification") ||
+          (jobName === "managed-image-protected-audit" &&
+            step.name === "Checkout trusted reviewed npm audit")) &&
         step.with?.repository === "${{ github.repository }}" &&
         step.with?.ref === "${{ inputs.workflow_sha || github.workflow_sha }}";
       const trustedManagedImageMultiarchResolverCheckout =

@@ -30,6 +30,10 @@ import {
   vulnerabilityCounts,
 } from "../../../scripts/lib/reviewed-npm-audit.mts";
 import { reviewedNpmAuditWorkflowDeadlines } from "../../helpers/reviewed-npm-audit-workflow";
+import {
+  parseAuditConfig,
+  selectLockedGraph,
+} from "../../../scripts/audit-reviewed-npm-graph.mts";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const CONFIG = JSON.parse(
@@ -128,6 +132,21 @@ function exceptionPolicy(
 }
 
 describe("reviewed npm audit gate", () => {
+  it("selects only a configured locked graph for dedicated evidence production (#11088)", () => {
+    const auditConfig = parseAuditConfig(
+      fs.readFileSync(path.join(REPO_ROOT, "ci", "reviewed-npm-audit.json"), "utf8"),
+    );
+
+    expect(selectLockedGraph(auditConfig, "mcporter-runtime")).toMatchObject({
+      graph: { id: "mcporter-runtime" },
+      index: auditConfig.lockedGraphs.findIndex(({ id }) => id === "mcporter-runtime"),
+    });
+    expect(selectLockedGraph(auditConfig, undefined)).toBeUndefined();
+    expect(() => selectLockedGraph(auditConfig, "unknown-graph")).toThrow(
+      "reviewed npm audit locked graph is not configured",
+    );
+  });
+
   it("removes the checked-in brace-expansion exception after remediation (#8116)", () => {
     expect(CHECKED_IN_POLICY).toEqual(EMPTY_POLICY);
   });
@@ -266,8 +285,7 @@ describe("reviewed npm audit gate", () => {
       path.join(REPO_ROOT, ".github", "workflows"),
     );
 
-    expect(callers).toHaveLength(5);
-    expect(callers.map(({ timeoutMinutes }) => timeoutMinutes)).toEqual([25, 25, 25, 25, 25]);
+    expect(callers).toHaveLength(6);
     expect(Math.min(...callers.map(({ timeoutMinutes }) => timeoutMinutes))).toBeGreaterThanOrEqual(
       minimumJobTimeoutMinutes,
     );

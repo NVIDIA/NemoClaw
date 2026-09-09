@@ -348,7 +348,31 @@ describe("protected managed-image runtime workflow", () => {
     runtimeJob(value).needs = ["generate-matrix"];
 
     expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
-      "managed-image-protected-runtime must depend on base-image-publication, generate-matrix, and managed-image-multiarch-startup",
+      "managed-image-protected-runtime must depend on base-image-publication, generate-matrix, managed-image-multiarch-startup, and managed-image-protected-audit",
+    );
+  });
+
+  it("keeps protected audit production in trusted workflow code", () => {
+    const value = workflow();
+    const audit = namedJobStep(
+      value,
+      "managed-image-protected-audit",
+      "Audit exact candidate mcporter graph from trusted code",
+    );
+    audit.uses = "./.candidate-audit/.github/actions/ci-reviewed-npm-audit";
+
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
+      "managed-image-protected-audit must execute the trusted reviewed npm audit action",
+    );
+  });
+
+  it("requires the trusted audit artifact at the protected consumer", () => {
+    const value = workflow();
+    const download = namedStep(value, "Download trusted protected mcporter audit evidence");
+    (download.with as Record<string, unknown>).path = ".candidate-runtime/reviewed-npm-audit";
+
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
+      "managed-image-protected-runtime audit evidence download must bind path to ${{ runner.temp }}/protected-reviewed-npm-audit",
     );
   });
 
@@ -409,6 +433,19 @@ describe("protected managed-image runtime workflow", () => {
 
     expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
       "managed-image-protected-runtime step 'Build exact all-agent protected runtime images' must include --cache-from \"$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE\"",
+    );
+  });
+
+  it("keeps the protected build controller in the trusted checkout", () => {
+    const value = workflow();
+    const build = namedStep(value, "Build exact all-agent protected runtime images");
+    build.run = String(build.run).replace(
+      "scripts/checks/build-protected-managed-images.sh",
+      '"$GITHUB_WORKSPACE/.candidate-runtime/scripts/checks/build-protected-managed-images.sh"',
+    );
+
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
+      "managed-image-protected-runtime build controller must execute trusted workflow code",
     );
   });
 
