@@ -633,6 +633,9 @@ describe("protected managed-image build-cache boundary", () => {
       `--secret id=nemoclaw-mcporter-audit-receipt,src=${realpathSync(auditRoot)}/mcporter-runtime.receipt.json`,
     );
     expect(recordedBuildInvocation("openclaw")).toContain(
+      `--secret id=nemoclaw-mcporter-audit-raw-report,src=${realpathSync(auditRoot)}/mcporter-runtime.raw.json`,
+    );
+    expect(recordedBuildInvocation("openclaw")).toContain(
       `--build-arg NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256=${DIGEST}`,
     );
     expect(recordedBuildInvocation("hermes").split(" ")).not.toContain("--no-cache");
