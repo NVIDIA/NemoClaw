@@ -302,7 +302,7 @@ export function createDockerDriverGatewayStart(
         exitOnFailure,
         ...(output ? { printError: output.error } : {}),
       });
-      (output?.log ?? console.log)("  Starting OpenShell Docker-driver gateway...");
+      (output?.log ?? console.log)("  Starting OpenShell gateway...");
       (output?.log ?? console.log)(`  Gateway log: ${logPath}`);
       dockerDriverGatewayLaunch.prepareAndLogDockerDriverGatewayLaunch(
         gatewayLaunch,

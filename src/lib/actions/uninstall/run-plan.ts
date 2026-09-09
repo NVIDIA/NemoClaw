@@ -58,7 +58,10 @@ import {
 } from "../../onboard/gateway-binding";
 import { type GatewayOwner, isExternallySupervised } from "../../onboard/gateway-ownership";
 import {
+  collectOpenShellGatewayNames,
+  gatewayRegistrationRemovalFailureMessage,
   type GatewayTeardownAuthorityResolver,
+  removeGatewayRegistrationWithPolicy,
   resolveGatewayTeardownAuthority,
 } from "../../onboard/gateway-teardown-authority";
 import {
@@ -905,56 +908,43 @@ function deletePortableOpenShellSandbox(
   return false;
 }
 
-const GATEWAY_ALREADY_ABSENT =
-  /gateway[^\n]*(?:does not exist|not found)|No (?:active )?gateway|No gateway metadata found/i;
-const GATEWAY_REMOVE_UNSUPPORTED =
-  /unrecognized subcommand ['"]remove['"]|unknown command ['"]remove['"]/i;
-
 function removeGatewayRegistration(
   runtime: UninstallRuntime,
   gatewayLabel: string,
   allowLegacyDestroy: boolean,
 ): boolean {
-  const removeResult = runtime.run("openshell", ["gateway", "remove", gatewayLabel], {
-    env: runtime.env,
+  const outcome = removeGatewayRegistrationWithPolicy({
+    allowLegacyDestroy,
+    gatewayLabel,
+    run: (args) =>
+      runtime.run("openshell", args, {
+        env: runtime.env,
+      }),
   });
-  if (removeResult.status === 0) {
-    runtime.log(`Removed gateway registration '${gatewayLabel}'`);
-    return true;
-  }
-
-  const removeOutput = `${removeResult.stdout}\n${removeResult.stderr}`;
-  if (GATEWAY_ALREADY_ABSENT.test(removeOutput)) {
+  if (outcome.ok && outcome.state === "absent") {
     runtime.warn(gatewayDestroySkipMessage(gatewayLabel));
     return true;
   }
-  if (!GATEWAY_REMOVE_UNSUPPORTED.test(removeOutput)) {
-    runtime.warn(gatewayDestroySkipMessage(gatewayLabel));
-    return false;
+  if (outcome.ok) {
+    const verb =
+      outcome.operation === "destroy" ? "Destroyed legacy gateway" : "Removed gateway registration";
+    runtime.log(`${verb} '${gatewayLabel}'`);
+    return true;
   }
-  if (!allowLegacyDestroy) {
+  if (outcome.reason === "legacy-disabled") {
     runtime.warn(
       `Could not remove local registration for externally supervised gateway '${gatewayLabel}'. ` +
         "NemoClaw will not use the legacy gateway destroy command for an externally supervised gateway.",
     );
     return false;
   }
-
-  // OpenShell builds before 0.0.44 exposed `gateway destroy` instead of the
-  // current `gateway remove` command. Only fall back when the modern verb is
-  // explicitly unsupported so a real removal failure is not hidden.
-  const destroyResult = runtime.run("openshell", ["gateway", "destroy", "-g", gatewayLabel], {
-    env: runtime.env,
-  });
-  if (destroyResult.status === 0) {
-    runtime.log(`Destroyed legacy gateway '${gatewayLabel}'`);
-    return true;
-  }
-  if (GATEWAY_ALREADY_ABSENT.test(`${destroyResult.stdout}\n${destroyResult.stderr}`)) {
-    runtime.warn(gatewayDestroySkipMessage(gatewayLabel));
-    return true;
-  }
-  runtime.warn(gatewayDestroySkipMessage(gatewayLabel));
+  runtime.warn(
+    gatewayRegistrationRemovalFailureMessage(gatewayLabel, outcome.operation, {
+      status: outcome.result.status,
+      stdout: outcome.result.stdout ?? "",
+      stderr: outcome.result.stderr ?? "",
+    }),
+  );
   return false;
 }
 
@@ -1613,8 +1603,7 @@ function removeOpenShellResources(
       { onSkip: providerDeleteSkipMessage(provider) },
     );
   }
-  removeGatewayRegistration(runtime, gatewayLabel, !externallySupervised);
-  return true;
+  return removeGatewayRegistration(runtime, gatewayLabel, !externallySupervised);
 }
 
 function normalizeGatewayProcessExecutable(
@@ -2621,24 +2610,11 @@ function otherGatewaysRemain(
  */
 function collectLiveOpenShellGatewayNames(runtime: UninstallRuntime): Set<string> | null {
   if (!runtime.commandExists("openshell")) return null;
-  const result = runtime.run("openshell", ["gateway", "list", "-o", "json"], {
-    env: runtime.env,
-  });
-  if (result.status !== 0) return null;
-  try {
-    const parsed: unknown = JSON.parse(result.stdout);
-    if (!Array.isArray(parsed)) return null;
-    const names = new Set<string>();
-    for (const item of parsed) {
-      if (item === null || typeof item !== "object") return null;
-      const name = (item as { name?: unknown }).name;
-      if (typeof name !== "string" || name.length === 0) return null;
-      names.add(name);
-    }
-    return names;
-  } catch {
-    return null;
-  }
+  return collectOpenShellGatewayNames((args) =>
+    runtime.run("openshell", args, {
+      env: runtime.env,
+    }),
+  );
 }
 
 /**

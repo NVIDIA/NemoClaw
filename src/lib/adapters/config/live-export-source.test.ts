@@ -258,6 +258,7 @@ describe("live export snapshot reader", () => {
   });
 
   it("returns a complete non-secret raw snapshot", async () => {
+    vi.stubEnv("NVIDIA_API_KEY", readFailureCanary);
     mockSupportedLiveSource();
     const result = await createLiveExportSnapshotReader().read("alpha");
 
@@ -279,7 +280,6 @@ describe("live export snapshot reader", () => {
     });
     expect(result).not.toHaveProperty("registry.createdAt");
     expect(result).not.toHaveProperty("inference.credential");
-    expect(process.env.NVIDIA_API_KEY).toBeUndefined();
     expect(captureSanitizedResolvedOpenshell).not.toHaveBeenCalled();
     expect(JSON.stringify(result)).not.toContain(readFailureCanary);
   });

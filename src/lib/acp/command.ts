@@ -13,10 +13,7 @@ import {
   createCliOpenShellSandboxObserver,
   type CaptureSandboxCommand,
 } from "../adapters/openshell/sandbox-observer-cli";
-import {
-  namedOpenShellGateway,
-  type OpenShellSandboxObserver,
-} from "../adapters/openshell/sandbox-observer";
+import type { OpenShellSandboxObserver } from "../adapters/openshell/sandbox-observer";
 import { captureSanitizedResolvedOpenshell } from "../adapters/openshell/sanitized-capture";
 import { OPENSHELL_DEFAULT_WORKSPACE } from "../adapters/openshell/sandbox-ssh-host";
 import { getVersion } from "../core/version";
@@ -273,7 +270,7 @@ async function validateLiveTarget(
   inspectIdentity: typeof inspectOpenShellSandboxIdentityFingerprint,
 ): Promise<string | null> {
   const inventory = await observer.listSandboxes({
-    target: namedOpenShellGateway(target.gatewayName),
+    target: { kind: "named", gatewayName: target.gatewayName },
   });
   if (!inventory.ok) return "OpenShell could not inspect the selected sandbox.";
   const matches = inventory.value.sandboxes.filter(({ name }) => name === target.sandboxName);
