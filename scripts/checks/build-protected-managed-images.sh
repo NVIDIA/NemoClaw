@@ -216,7 +216,6 @@ trap restore_worktree EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-audit_evidence_dir=""
 audit_receipt=""
 audit_raw_report=""
 audit_receipt_sha256=""
