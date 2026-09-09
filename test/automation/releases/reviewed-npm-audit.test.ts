@@ -224,19 +224,19 @@ describe("reviewed npm audit gate", () => {
     });
   });
 
-  it("retries the observed registry lookup failure with bounded backoff", () => {
+  it("retries an empty registry lookup response with bounded backoff", () => {
     const completeReport = {
       metadata: {
         vulnerabilities: { info: 0, low: 0, moderate: 0, high: 0, critical: 0 },
       },
     };
     const sensitiveStderr =
-      "request failed for https://audit-user:secret-token@registry.example/\n\u001b[31mstderr detail";
+      "request failed with EAI_AGAIN for https://audit-user:secret-token@registry.example/\n\u001b[31mstderr detail";
     const responses = [
       {
         status: 1,
         stderr: sensitiveStderr,
-        stdout: JSON.stringify({ message: "connect ECONNREFUSED", error: { summary: "" } }),
+        stdout: "",
       },
       { status: 0, stderr: "", stdout: JSON.stringify(completeReport) },
     ];
@@ -254,7 +254,7 @@ describe("reviewed npm audit gate", () => {
     expect(delays).toEqual([1_000]);
     expect(warnings).toEqual([
       expect.stringMatching(
-        /^npm audit scan failed on attempt 1\/2; retrying in 1000 ms \(reason=registry-network-error; exit=1 stdout-bytes=\d+ stdout-sha256=[a-f0-9]{64} condition=registry-network-error transport=ECONNREFUSED required-field=metadata:missing\)$/,
+        /^npm audit scan failed on attempt 1\/2; retrying in 1000 ms \(reason=registry-network-error; exit=1 stdout-bytes=0 stdout-sha256=[a-f0-9]{64} condition=registry-network-error transport=EAI_AGAIN\)$/,
       ),
     ]);
     const warningOutput = warnings.join("\n");

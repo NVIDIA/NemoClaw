@@ -377,7 +377,15 @@ export function classifyNpmAuditResponse(result: {
   stderr: string;
   stdout: string;
 }): NpmAuditResponseClassification {
-  if (!result.stdout.trim()) return rejectedAuditResponse(result, "empty-output", false);
+  if (!result.stdout.trim()) {
+    const transport = retryableTransportCode({}, result.stderr);
+    return rejectedAuditResponse(
+      result,
+      transport ? "registry-network-error" : "empty-output",
+      transport !== undefined,
+      transport ? [`transport=${transport}`] : [],
+    );
+  }
 
   let value: unknown;
   try {
