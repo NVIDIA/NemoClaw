@@ -116,28 +116,28 @@ describe("stable CLI coverage sharding", () => {
 
     expect(Object.fromEntries(owners)).toEqual({
       "cli:src/lib/example.test.ts": 1,
-      "e2e-support:test/e2e/support/example.test.ts": 8,
-      "integration:test/agents/hermes/hermes-restart-config-seal-write-lock.test.ts": 8,
-      "integration:test/credentials/local-credential-helper-fields.test.ts": 7,
-      "integration:test/regular-0.test.ts": 8,
+      "e2e-support:test/e2e/support/example.test.ts": 7,
+      "integration:test/agents/hermes/hermes-restart-config-seal-write-lock.test.ts": 1,
+      "integration:test/credentials/local-credential-helper-fields.test.ts": 1,
+      "integration:test/regular-0.test.ts": 5,
     });
   });
 
-  it("keeps the current test roster balanced across the ten CI shards (#6237)", () => {
-    const shards = assignStableShards(currentCliCoverageEntries(), 10);
+  it("keeps the current test roster balanced across the twelve CI shards (#6237)", () => {
+    const shards = assignStableShards(currentCliCoverageEntries(), 12);
     const weights = shards.map((shard) => shard.totalWeightMs);
     const averageWeight = weights.reduce((total, weight) => total + weight, 0) / weights.length;
 
-    expect(Math.max(...weights)).toBeLessThanOrEqual(averageWeight * 1.06);
+    expect(Math.max(...weights)).toBeLessThanOrEqual(averageWeight * 1.05);
   });
 
-  it("balances the serialized integration lane across the ten CI shards (#6237)", () => {
+  it("balances the serialized integration lane across the twelve CI shards (#6237)", () => {
     const integrationEntries = currentCliCoverageEntries().filter((entry) =>
       entry.key.startsWith("integration:"),
     );
     expect(integrationEntries.length).toBeGreaterThan(0);
 
-    const weights = assignStableShards(integrationEntries, 10).map(
+    const weights = assignStableShards(integrationEntries, 12).map(
       (shard) => shard.totalWeightMs,
     );
     const averageWeight = weights.reduce((total, weight) => total + weight, 0) / weights.length;

@@ -91,7 +91,7 @@ const trustedActionDirs = [
   ".github/actions/ci-installer-integration",
 ] as const;
 
-const cliShardCount = "10";
+const cliShardCount = "12";
 const cliShardTimeoutMinutes = 30;
 const dependencyInstallJobs = [
   "build-typecheck",
@@ -1067,7 +1067,7 @@ describe("pull request and main workflow contracts", () => {
         GITHUB_OUTPUT: output,
       });
       const invalidRange = runWorkflowShellStep(shardValidationStep, {
-        CLI_SHARD: "11",
+        CLI_SHARD: String(Number(cliShardCount) + 1),
         CLI_SHARD_COUNT: cliShardCount,
         GITHUB_OUTPUT: join(temp, "github-output"),
       });
