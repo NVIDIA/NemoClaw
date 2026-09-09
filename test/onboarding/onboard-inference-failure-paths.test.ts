@@ -128,7 +128,7 @@ describe("setupInference dependency failures", () => {
   it("fails through the injected exit boundary when a remote credential is missing", async () => {
     const exitProcess = createInjectedExit();
     const hydrateCredentialEnv = vi.fn(() => null);
-    const upsertProvider = vi.fn(() => ({ ok: true }));
+    const upsertProvider = vi.fn(async () => ({ ok: true }));
     const promptValidationRecovery = vi.fn(async () => "selection" as const);
     const setupBedrockRuntimeInference = vi.fn(async () => ({ handled: false as const }));
     const harness = createDirectSetupInferenceHarness({
@@ -161,7 +161,7 @@ describe("setupInference dependency failures", () => {
   it("preserves a remote provider upsert status through the injected exit boundary", async () => {
     const exitProcess = createInjectedExit();
     const hydrateCredentialEnv = vi.fn(() => "openai-secret");
-    const upsertProvider = vi.fn(() => ({
+    const upsertProvider = vi.fn(async () => ({
       ok: false,
       status: 23,
       message: "remote provider registration rejected",
@@ -205,7 +205,7 @@ describe("setupInference dependency failures", () => {
   it("redacts a remote inference-set failure and preserves its status at the exit boundary", async () => {
     const exitProcess = createInjectedExit();
     const hydrateCredentialEnv = vi.fn(() => "openai-secret");
-    const upsertProvider = vi.fn(() => ({ ok: true }));
+    const upsertProvider = vi.fn(async () => ({ ok: true }));
     const promptValidationRecovery = vi.fn(async () => "selection" as const);
     const setupBedrockRuntimeInference = vi.fn(async () => ({ handled: false as const }));
     const commandRouter = createDirectCommandRouter([
@@ -405,7 +405,7 @@ describe("setupInference dependency failures", () => {
   it("exits through injected Hermes boundaries when provider storage is unavailable", async () => {
     const exitProcess = createInjectedExit();
     const isHermesProviderRegistered = vi.fn(
-      (_runOpenshell: SetupInferenceDeps["runOpenshell"]) => true,
+      async (_runOpenshell: SetupInferenceDeps["runOpenshell"]) => true,
     );
     const ensureHermesProviderApiKeyCredentials = vi.fn(async () => ({}));
     const ensureHermesProviderOAuthCredentials = vi.fn(async () => ({}));
@@ -451,13 +451,13 @@ describe("setupInference dependency failures", () => {
   it("exits through injected boundaries when Hermes API-key preparation throws", async () => {
     const exitProcess = createInjectedExit();
     const isHermesProviderRegistered = vi.fn(
-      (_runOpenshell: SetupInferenceDeps["runOpenshell"]) => false,
+      async (_runOpenshell: SetupInferenceDeps["runOpenshell"]) => false,
     );
     const ensureHermesProviderApiKeyCredentials = vi.fn(async () => {
       throw new Error("API-key preparation failed");
     });
     const ensureHermesProviderOAuthCredentials = vi.fn(async () => ({}));
-    const providerExistsInGateway = vi.fn(() => true);
+    const providerExistsInGateway = vi.fn(async () => true);
     const resolveHermesNousApiKey = vi.fn(() => "nous-secret");
     const checkHermesProviderStoreReachable = vi.fn(
       (_runOpenshell: SetupInferenceDeps["runOpenshell"]) => ({ ok: true }),
@@ -512,13 +512,13 @@ describe("setupInference dependency failures", () => {
   it("exits through injected boundaries when Hermes OAuth preparation throws", async () => {
     const exitProcess = createInjectedExit();
     const isHermesProviderRegistered = vi.fn(
-      (_runOpenshell: SetupInferenceDeps["runOpenshell"]) => false,
+      async (_runOpenshell: SetupInferenceDeps["runOpenshell"]) => false,
     );
     const ensureHermesProviderApiKeyCredentials = vi.fn(async () => ({}));
     const ensureHermesProviderOAuthCredentials = vi.fn(async () => {
       throw new Error("OAuth preparation failed");
     });
-    const providerExistsInGateway = vi.fn(() => true);
+    const providerExistsInGateway = vi.fn(async () => true);
     const resolveHermesNousApiKey = vi.fn(() => "unused-key");
     const checkHermesProviderStoreReachable = vi.fn(
       (_runOpenshell: SetupInferenceDeps["runOpenshell"]) => ({ ok: true }),
@@ -600,7 +600,7 @@ describe("setupInference dependency failures", () => {
     stubMissingBedrockAuth();
     const exitProcess = createInjectedExit();
     const ensureAdapter = vi.fn(async () => successfulBedrockAdapter());
-    const upsertProvider = vi.fn(() => ({ ok: true }));
+    const upsertProvider = vi.fn(async () => ({ ok: true }));
     const harness = createDirectSetupInferenceHarness({
       overrides: {
         isNonInteractive: () => true,
@@ -637,7 +637,7 @@ describe("setupInference dependency failures", () => {
     const ensureAdapter = vi.fn(async () => {
       throw new Error("adapter unavailable");
     });
-    const upsertProvider = vi.fn(() => ({ ok: true }));
+    const upsertProvider = vi.fn(async () => ({ ok: true }));
     const harness = createDirectSetupInferenceHarness({
       overrides: {
         exitProcess,
@@ -672,7 +672,7 @@ describe("setupInference dependency failures", () => {
     const ensureAdapter = vi.fn(async () => {
       throw new Error("adapter unavailable");
     });
-    const upsertProvider = vi.fn(() => ({ ok: true }));
+    const upsertProvider = vi.fn(async () => ({ ok: true }));
     const harness = createDirectSetupInferenceHarness({
       overrides: {
         isNonInteractive: () => true,
@@ -707,7 +707,7 @@ describe("setupInference dependency failures", () => {
     vi.stubEnv(BEDROCK_CREDENTIAL_ENV, "bedrock-bearer");
     const exitProcess = createInjectedExit();
     const ensureAdapter = vi.fn(async () => successfulBedrockAdapter());
-    const upsertProvider = vi.fn(() => ({
+    const upsertProvider = vi.fn(async () => ({
       ok: false,
       status: 23,
       message: "Bedrock provider registration failed",
@@ -744,7 +744,7 @@ describe("setupInference dependency failures", () => {
     vi.stubEnv(BEDROCK_CREDENTIAL_ENV, "bedrock-bearer");
     const exitProcess = createInjectedExit();
     const ensureAdapter = vi.fn(async () => successfulBedrockAdapter());
-    const upsertProvider = vi.fn(() => ({
+    const upsertProvider = vi.fn(async () => ({
       ok: false,
       status: 0,
       message: "Bedrock provider registration failed without status",
@@ -781,7 +781,7 @@ describe("setupInference dependency failures", () => {
     vi.stubEnv(BEDROCK_CREDENTIAL_ENV, "bedrock-bearer");
     const exitProcess = createInjectedExit();
     const ensureAdapter = vi.fn(async () => successfulBedrockAdapter());
-    const upsertProvider = vi.fn(() => ({ ok: true }));
+    const upsertProvider = vi.fn(async () => ({ ok: true }));
     const harness = createDirectSetupInferenceHarness({
       runOpenshell: (args) =>
         args.slice(0, 2).join(" ") === "inference set"
@@ -825,7 +825,7 @@ describe("setupInference dependency failures", () => {
     vi.stubEnv(BEDROCK_CREDENTIAL_ENV, "bedrock-bearer");
     const exitProcess = createInjectedExit();
     const ensureAdapter = vi.fn(async () => successfulBedrockAdapter());
-    const upsertProvider = vi.fn(() => ({ ok: true }));
+    const upsertProvider = vi.fn(async () => ({ ok: true }));
     const harness = createDirectSetupInferenceHarness({
       runOpenshell: (args) =>
         args.slice(0, 2).join(" ") === "inference set"
@@ -924,7 +924,7 @@ describe("setupInference dependency failures", () => {
   it("preserves a routed-provider upsert status through the injected exit boundary", async () => {
     const exitProcess = createInjectedExit();
     const reconcileModelRouter = vi.fn(async () => {});
-    const upsertProvider = vi.fn(() => ({ ok: true }));
+    const upsertProvider = vi.fn(async () => ({ ok: true }));
     const hydrateCredentialEnv = vi.fn(() => "unused-secret");
     const upsertRoutedProvider = vi.fn<
       SetupInferenceDeps["routedInference"]["upsertRoutedProvider"]
