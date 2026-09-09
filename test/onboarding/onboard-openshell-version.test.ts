@@ -56,6 +56,7 @@ const pinModule = require("../../src/lib/onboard/openshell-pin") as {
       versionGte: (a: string, b: string) => boolean;
       listReleases?: () => string[] | null;
       log?: (m: string) => void;
+      error?: (m: string) => void;
     },
   ) => { env: Record<string, string | undefined> | null };
 };

@@ -247,9 +247,13 @@ describe("package-managed gateway version gate (#8094)", () => {
         env: { NEMOCLAW_OPENSHELL_CHANNEL: "dev" },
       }),
     );
-    expect(result.supported).toBe(false);
-    expect(result.message).toContain("development build");
-    expect(result.message).toContain("exact stable OpenShell 0.0.116");
+    expect(result).toMatchObject({
+      supported: false,
+      message: expect.stringContaining("development build"),
+    });
+    expect(result).toMatchObject({
+      message: expect.stringContaining("exact stable OpenShell 0.0.116"),
+    });
   });
 
   it("keeps the package unit paths the gate scans in sync with the resolver", () => {
