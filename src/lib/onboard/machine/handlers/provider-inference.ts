@@ -104,6 +104,7 @@ export interface ProviderSelectionResult {
   compatibleEndpointReasoning: string | null;
   compatibleEndpointReasoningEffort: string | null;
   nimContainer: string | null;
+  servingProfileProvenance?: ServingProfileProvenance | null;
   allowToolsIncompatible?: boolean;
   skipHostInferenceSmoke?: boolean;
   reuseGatewayCredentialWithoutLocalKey?: boolean;
@@ -1157,6 +1158,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   let compatibleEndpointReasoning = initial.compatibleEndpointReasoning;
   let compatibleEndpointReasoningEffort = initial.compatibleEndpointReasoningEffort;
   let nimContainer = initial.nimContainer;
+  let servingProfileProvenance = session?.servingProfileProvenance ?? null;
   const webSearchConfig = initial.webSearchConfig;
   let forceProviderSelection = initialForceProviderSelection;
   let allowToolsIncompatible = false;
@@ -1481,6 +1483,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       compatibleEndpointReasoning = selection.compatibleEndpointReasoning;
       compatibleEndpointReasoningEffort = selection.compatibleEndpointReasoningEffort;
       nimContainer = selection.nimContainer;
+      servingProfileProvenance = selection.servingProfileProvenance ?? null;
       allowToolsIncompatible = selection.allowToolsIncompatible === true;
       skipHostInferenceSmoke = selection.skipHostInferenceSmoke === true;
       reuseGatewayCredentialWithoutLocalKey =
@@ -1561,6 +1564,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           compatibleEndpointReasoning,
           compatibleEndpointReasoningEffort,
           nimContainer,
+          servingProfileProvenance,
           stationExpressModelIdentity: vllmModelIdentity,
         }),
       );
@@ -1700,6 +1704,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
             compatibleEndpointReasoning,
             compatibleEndpointReasoningEffort,
             nimContainer,
+            servingProfileProvenance,
             hermesToolGateways,
           }),
         );
@@ -1821,6 +1826,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           compatibleEndpointReasoning,
           compatibleEndpointReasoningEffort,
           nimContainer,
+          servingProfileProvenance,
           hermesToolGateways,
         }),
       );
@@ -1893,6 +1899,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
             compatibleEndpointReasoning,
             compatibleEndpointReasoningEffort,
             nimContainer,
+            servingProfileProvenance,
             stationExpressModelIdentity: vllmModelIdentity,
           }),
         );
@@ -1985,6 +1992,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           compatibleEndpointReasoning,
           compatibleEndpointReasoningEffort,
           nimContainer,
+          servingProfileProvenance,
           stationExpressModelIdentity: vllmModelIdentity,
         }),
       );
@@ -1998,6 +2006,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         compatibleEndpointReasoning,
         compatibleEndpointReasoningEffort,
         nimContainer,
+        servingProfileProvenance,
         hermesToolGateways,
         ...hostLocalInferenceSessionRoute(hostLocalInferenceRouteOnly, endpointUrl, endpointSource),
         // The forced #6294/#6289 heal succeeded: the gateway registration now

@@ -46,6 +46,9 @@ describe("Pi release cohort separation", () => {
 describe("Pi candidate contract validation", () => {
   it("accepts an exact candidate contract", () => {
     const contract = validateCandidateContract(candidateContract(), "linux/amd64");
+    expect(contract.agent).toBe("pi");
+    expect(contract.platform).toBe("linux/amd64");
+    expect(contract.source.repository).toBe("NVIDIA/NemoClaw");
     expect(contract.reference).toBe(`ghcr.io/nvidia/nemoclaw/pi-sandbox@${DIGEST}`);
   });
 

@@ -15,17 +15,6 @@ export HOME=/sandbox
 export PATH="/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 readonly NEMOCLAW_PI_STATE_DIR="/sandbox/.pi/agent"
-readonly NEMOCLAW_PI_SHELL_INIT_FILES=(/sandbox/.bashrc /sandbox/.profile)
-
-verify_pi_shell_init() {
-  local file
-  [ -d /sandbox ] && [ ! -L /sandbox ] || return 1
-  for file in "${NEMOCLAW_PI_SHELL_INIT_FILES[@]}"; do
-    [ -f "$file" ] && [ ! -L "$file" ] || return 1
-    [ "$(stat -c '%U:%G:%a' "$file" 2>/dev/null || true)" = "root:root:444" ] || return 1
-  done
-}
-
 # managed-entrypoint-env-wrapper begin
 _NEMOCLAW_ENTRYPOINT_ENV_WRAPPER="/usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh"
 if [ ! -f "$_NEMOCLAW_ENTRYPOINT_ENV_WRAPPER" ]; then
@@ -50,23 +39,13 @@ unset NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGC NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGV \
 unset -f nemoclaw_normalize_entrypoint_env_wrapper
 # managed-entrypoint-env-wrapper end
 
-# The published managed image uses uid 0 as its OCI entry user so every start
-# can repair the protected workspace boundary and create the protected merged
-# CA bundle before dropping to the sandbox user. A sandbox-user image verifies
-# the image-baked boundary instead.
+# Root startup prepares protected state and trust before dropping privileges.
 _NEMOCLAW_PI_DROP_PRIVILEGES=0
 if [ "$(id -u)" -eq 0 ]; then
-  if ! verify_pi_shell_init; then
-    printf '%s\n' '[SECURITY] Managed Pi shell initialization files are missing or unsafe.' >&2
-    exit 1
-  fi
   chown root:sandbox /sandbox
   chmod 1775 /sandbox
   install -d -o sandbox -g sandbox -m 0700 "$NEMOCLAW_PI_STATE_DIR"
   _NEMOCLAW_PI_DROP_PRIVILEGES=1
-elif ! verify_pi_shell_init; then
-  printf '%s\n' '[SECURITY] Pi shell initialization files are not protected; rebuild this sandbox.' >&2
-  exit 1
 fi
 
 export PI_OFFLINE=1

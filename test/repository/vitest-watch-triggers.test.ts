@@ -205,6 +205,7 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy("Dockerfile")).toEqual([
       "src/lib/onboard/managed-startup-profile.test.ts",
       "src/lib/sandbox/optimized-build-context-copy-sources.test.ts",
+      "test/mcp/mcp-tool-discovery-image-contract.test.ts",
     ]);
     expect(triggeredBy("agents/hermes/Dockerfile.base")).toEqual([
       "test/agents/hermes/hermes-share-mount-deps.test.ts",
@@ -221,6 +222,7 @@ describe("Vitest opaque-input watch triggers", () => {
       "src/lib/onboard/experimental/hermes-portable-build-context.test.ts",
       "src/lib/onboard/managed-startup-profile.test.ts",
       "test/agents/hermes/hermes-mcp-runtime-capability.test.ts",
+      "test/mcp/mcp-tool-discovery-image-contract.test.ts",
     ]);
     expect(triggeredBy("scripts/checks/download-hermes-source-archive.sh")).toEqual([
       "test/agents/hermes/hermes-share-mount-deps.test.ts",
@@ -228,6 +230,7 @@ describe("Vitest opaque-input watch triggers", () => {
     ]);
     expect(triggeredBy("agents/langchain-deepagents-code/Dockerfile")).toEqual([
       "src/lib/onboard/managed-startup-profile.test.ts",
+      "test/mcp/mcp-tool-discovery-image-contract.test.ts",
     ]);
     expect(triggeredBy("agents/hermes/policy-additions.yaml")).toEqual([
       "src/lib/onboard/initial-policy-real-policy.test.ts",
