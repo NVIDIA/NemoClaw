@@ -5,6 +5,8 @@
 
 [Download the setup EXE](https://media.githubusercontent.com/media/NVIDIA/NemoClaw/refs/heads/artifacts/windows-native-pr-10799/NemoClawSetup-0.1.0-windows-arm64.exe).
 
+[Download the MSI](https://media.githubusercontent.com/media/NVIDIA/NemoClaw/refs/heads/artifacts/windows-native-pr-10799/NemoClaw-0.1.0-windows-arm64.msi).
+
 This unsigned preview comes from earlier qualified commit `0fd3b6ee4f9bdcbc1fc5a0f0d97b10719e6f95c0`.
 It is a test installer, not a production release or the current PR build.
 

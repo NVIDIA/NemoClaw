@@ -1,3 +1,4 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 NemoClawSetup-0.1.0-windows-arm64.exe filter=lfs diff=lfs merge=lfs -text
+NemoClaw-0.1.0-windows-arm64.msi filter=lfs diff=lfs merge=lfs -text

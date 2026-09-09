@@ -21,6 +21,11 @@
       "name": "NemoClawSetup-0.1.0-windows-arm64.exe",
       "size": 249578791,
       "sha256": "7b3ac6e595393aecec1ffc1621c08e540089769f352a95422b8fae2f2c1ed70d"
+    },
+    {
+      "name": "NemoClaw-0.1.0-windows-arm64.msi",
+      "size": 205067809,
+      "sha256": "8fb9c6ada28f8d27ab16ef3744a4a5ae9384c8a67d96e02c0c1adf76893df2a3"
     }
   ],
   "knownDependencyAdvisory": {
