@@ -169,7 +169,7 @@ function createDoctorHarness(
     });
   const getNamedGatewayLifecycleStateSpy = vi
     .spyOn(gatewayRuntime, "getNamedGatewayLifecycleState")
-    .mockReturnValue({
+    .mockResolvedValue({
       state: "healthy_named",
       activeGateway: "nemoclaw-19080",
       diagnostic: "Status: Connected",
@@ -667,7 +667,7 @@ describe("runSandboxDoctor flow", () => {
   it("does not run live or tool-scope probes when the named gateway is disconnected", async () => {
     const harness = createDoctorHarness();
     harness.configuredMessagingChannelsSpy.mockReturnValue(["telegram"]);
-    harness.getNamedGatewayLifecycleStateSpy.mockReturnValue({
+    harness.getNamedGatewayLifecycleStateSpy.mockResolvedValue({
       state: "missing_named",
       activeGateway: null,
       diagnostic: "Status: Disconnected",

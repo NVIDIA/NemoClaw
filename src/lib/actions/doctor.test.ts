@@ -73,7 +73,7 @@ describe("global doctor action", () => {
     mocks.gatewayDoctorStartHint.mockReturnValue(
       "Start the gateway again with `nemoclaw onboard`. Then retry this command.",
     );
-    mocks.getNamedGatewayLifecycleState.mockReturnValue({
+    mocks.getNamedGatewayLifecycleState.mockResolvedValue({
       state: "healthy_named",
       activeGateway: "nemoclaw",
       diagnostic: "Status: Connected",
@@ -188,7 +188,7 @@ describe("global doctor action", () => {
     mocks.gatewayDoctorStartHint.mockImplementationOnce(() => {
       throw new Error("invalid declaration at /private/gateway-management.json");
     });
-    mocks.getNamedGatewayLifecycleState.mockReturnValueOnce({
+    mocks.getNamedGatewayLifecycleState.mockResolvedValueOnce({
       state: "missing_named",
       activeGateway: null,
       diagnostic: "Status: Disconnected",
@@ -225,7 +225,7 @@ describe("global doctor action", () => {
   });
 
   it("renders actionable text without naming a sandbox (#10212)", async () => {
-    mocks.getNamedGatewayLifecycleState.mockReturnValueOnce({
+    mocks.getNamedGatewayLifecycleState.mockResolvedValueOnce({
       state: "missing_named",
       activeGateway: null,
       diagnostic: "Status: Disconnected",

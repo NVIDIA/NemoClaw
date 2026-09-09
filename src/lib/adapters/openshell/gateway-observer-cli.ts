@@ -9,6 +9,7 @@ import { stripAnsi as stripOpenShellCliAnsi } from "./client";
 import {
   classifyCliOpenShellCommandError,
   type CaptureOpenShellCommand,
+  type CapturedOpenShellCommandResult,
 } from "./sandbox-observer-cli";
 import type { OpenShellSandboxError } from "./sandbox-observer";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "./timeouts";
@@ -19,6 +20,15 @@ const messages = {
   schema: "The OpenShell CLI and gateway schemas do not match.",
   timeout: "OpenShell gateway observation timed out.",
 };
+
+function gatewayError(result: CapturedOpenShellCommandResult): OpenShellSandboxError | null {
+  // OpenShell status can print an Error line while exiting successfully.
+  const printedError = /^\s*Error:/im.test(stripOpenShellCliAnsi(result.output));
+  return classifyCliOpenShellCommandError(
+    printedError && result.status === 0 ? { ...result, status: 1 } : result,
+    messages,
+  );
+}
 
 function gatewayName(output: string): string | null {
   const names = [...output.matchAll(/^\s*Gateway:\s+(.+?)\s*$/gm)].map((match) => match[1].trim());
@@ -81,8 +91,8 @@ export function createCliOpenShellGatewayObserver(
           infoText,
         );
         const missing = /\bNo (?:active )?gateway(?: configured)?\b|No gateway metadata found/i;
-        const statusError = classifyCliOpenShellCommandError(status, messages);
-        const infoError = classifyCliOpenShellCommandError(info, messages);
+        const statusError = gatewayError(status);
+        const infoError = gatewayError(info);
         const absentInfo = missing.test(infoText);
         const absentStatus = missing.test(statusText);
         // Only known absence and unreachable responses describe resource state. Other failures are not absence.

@@ -17,16 +17,31 @@ afterEach(() => vi.unstubAllEnvs());
 
 describe("CLI gateway observation", () => {
   it.each([
-    [connected, info, 0, 0, "healthy_named"],
-    ["Status: Connected\nGateway: foreign", info, 0, 0, "connected_other"],
-    ["Gateway: nemoclaw-8090\nConnection refused", info, 1, 0, "named_unreachable"],
-    ["Gateway: nemoclaw-8090\nStatus: Disconnected", info, 0, 0, "named_unhealthy"],
-    ["No gateway configured", "No gateway metadata found", 1, 1, "missing_named"],
-    [connected, "gateway info is not supported by this gateway version", 0, 1, "healthy_named"],
-    ["\u001b[32m" + connected + "\u001b[0m", info, 0, 0, "healthy_named"],
+    [connected, info, 0, 0, "healthy_named", false],
+    ["Status: Connected\nGateway: foreign", info, 0, 0, "connected_other", false],
+    ["Gateway: nemoclaw-8090\nConnection refused", info, 1, 0, "named_unreachable", true],
+    [
+      "Gateway: nemoclaw-8090\nError: client error (Connect): Connection refused",
+      info,
+      0,
+      0,
+      "named_unreachable",
+      true,
+    ],
+    ["Gateway: nemoclaw-8090\nStatus: Disconnected", info, 0, 0, "named_unhealthy", true],
+    ["No gateway configured", "No gateway metadata found", 1, 1, "missing_named", true],
+    [
+      connected,
+      "gateway info is not supported by this gateway version",
+      0,
+      1,
+      "healthy_named",
+      false,
+    ],
+    ["\u001b[32m" + connected + "\u001b[0m", info, 0, 0, "healthy_named", false],
   ])(
     "classifies status %s and metadata %s as %s",
-    async (status, metadata, statusCode, infoCode, state) => {
+    async (status, metadata, statusCode, infoCode, state, unavailable) => {
       const capture = captureFor(
         String(status),
         String(metadata),
@@ -35,6 +50,7 @@ describe("CLI gateway observation", () => {
       );
       const result = await createCliOpenShellGatewayObserver(capture).observeGateway(request);
       expect(result.state).toBe(state);
+      expect(result.unavailable).toBe(unavailable);
       expect(result).not.toHaveProperty("status");
       expect(result).not.toHaveProperty("gatewayInfo");
       expect(capture.mock.calls.map(([args]) => args)).toEqual([
@@ -87,6 +103,17 @@ describe("CLI gateway observation", () => {
       recoveryBlocked: true,
       error: { kind: "schema" },
     });
+  });
+
+  it("blocks recovery for an authentication Error line even when status exits zero", async () => {
+    const capture = captureFor(`${connected}Error: authentication failed token=secret`, info);
+    const result = await createCliOpenShellGatewayObserver(capture).observeGateway(request);
+    expect(result).toMatchObject({
+      state: "observation_failed",
+      recoveryBlocked: true,
+      error: { kind: "authentication" },
+    });
+    expect(JSON.stringify(result)).not.toContain("secret");
   });
 
   it("does not interpret a timeout as gateway absence", async () => {

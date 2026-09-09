@@ -43,7 +43,7 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
     mockSandboxPhase("Ready");
     getNamedGatewayLifecycleStateSpy = vi
       .spyOn(gatewayRuntime, "getNamedGatewayLifecycleState")
-      .mockReturnValue({ state: "healthy_named", status: "Gateway: nemoclaw" });
+      .mockResolvedValue({ state: "healthy_named", status: "Gateway: nemoclaw" });
     recoverNamedGatewayRuntimeSpy = vi
       .spyOn(gatewayRuntime, "recoverNamedGatewayRuntime")
       .mockResolvedValue({ recovered: false });
@@ -346,6 +346,11 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
       expectedGatewayRecoveryFailed: undefined,
     },
     {
+      lifecycle: { state: "named_unhealthy", diagnostic: "Gateway is not connected." },
+      expectedState: "gateway_unreachable_after_restart",
+      expectedGatewayRecoveryFailed: undefined,
+    },
+    {
       lifecycle: { state: "missing_named", status: "No gateway configured" },
       expectedState: "gateway_missing_after_restart",
       expectedGatewayRecoveryFailed: undefined,
@@ -362,7 +367,7 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
   ])(
     "maps failed gateway recovery to $expectedState",
     async ({ lifecycle, expectedState, expectedGatewayRecoveryFailed }) => {
-      getNamedGatewayLifecycleStateSpy.mockReturnValue(lifecycle);
+      getNamedGatewayLifecycleStateSpy.mockResolvedValue(lifecycle);
 
       const lookup = await gatewayState.getReconciledSandboxGatewayState("instance-a", {
         getState: async () => ({ state: "gateway_error", output: "transport error" }),
@@ -372,6 +377,20 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
       expect(lookup.gatewayRecoveryFailed).toBe(expectedGatewayRecoveryFailed);
     },
   );
+
+  it("preserves restart guidance from an unhealthy recovery observation", async () => {
+    recoverNamedGatewayRuntimeSpy.mockResolvedValue({
+      recovered: false,
+      after: { state: "named_unhealthy", diagnostic: "Gateway is not connected." },
+    });
+    const lookup = await gatewayState.getReconciledSandboxGatewayState("instance-a", {
+      getState: async () => ({ state: "gateway_error", output: "transport error" }),
+    });
+    expect(lookup).toMatchObject({
+      state: "gateway_unreachable_after_restart",
+      output: "Gateway is not connected.",
+    });
+  });
 
   it("prints reconnect and recreate guidance when identity drift persists", async () => {
     captureOpenshellSpy.mockReturnValue({
@@ -404,7 +423,7 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
       status: 1,
       output: "Error: transport error: Connection refused",
     });
-    getNamedGatewayLifecycleStateSpy.mockReturnValue({
+    getNamedGatewayLifecycleStateSpy.mockResolvedValue({
       state: "named_unreachable",
       status: "Gateway: nemoclaw\nConnection refused",
     });

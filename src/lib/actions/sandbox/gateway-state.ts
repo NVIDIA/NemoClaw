@@ -968,7 +968,10 @@ export async function getReconciledSandboxGatewayState(
         output: latestLifecycle.diagnostic || lookup.output,
       };
     }
-    if (latestLifecycle.state === "named_unreachable") {
+    if (
+      latestLifecycle.state === "named_unreachable" ||
+      latestLifecycle.state === "named_unhealthy"
+    ) {
       return {
         state: "gateway_unreachable_after_restart",
         output: latestLifecycle.diagnostic || lookup.output,
@@ -976,7 +979,9 @@ export async function getReconciledSandboxGatewayState(
     }
     if (
       recovery.after?.state === "named_unreachable" ||
-      recovery.before?.state === "named_unreachable"
+      recovery.before?.state === "named_unreachable" ||
+      recovery.after?.state === "named_unhealthy" ||
+      recovery.before?.state === "named_unhealthy"
     ) {
       return {
         state: "gateway_unreachable_after_restart",

@@ -13,7 +13,7 @@ vi.mock("../../adapters/openshell/runtime", () => ({
 }));
 
 vi.mock("../../gateway-runtime-action", () => ({
-  getNamedGatewayLifecycleState: vi.fn(() => ({ kind: "healthy_named" })),
+  getNamedGatewayLifecycleState: vi.fn().mockResolvedValue({ state: "healthy_named", activeGateway: "nemoclaw", diagnostic: "Connected.", recoveryBlocked: false, unavailable: false }),
 }));
 
 vi.mock("../../inference/local", () => ({

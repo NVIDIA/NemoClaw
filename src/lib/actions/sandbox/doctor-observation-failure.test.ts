@@ -27,7 +27,7 @@ vi.mock("../../agent/defs", () => ({
 }));
 
 vi.mock("../../gateway-runtime-action", () => ({
-  getNamedGatewayLifecycleState: () => ({
+  getNamedGatewayLifecycleState: async () => ({
     state: "healthy_named",
     diagnostic: "Status: Connected",
     recoveryBlocked: false,
