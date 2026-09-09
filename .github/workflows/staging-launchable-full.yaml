@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: E2E / Staging Launchable Control Plane
+name: E2E / Staging Launchable Remote Execution
 
 on:
   workflow_dispatch:
@@ -88,7 +88,7 @@ jobs:
           brev login --api-key "$BREV_API_KEY" --org-id "$BREV_ORG_ID"
           printf 'work_dir=%s\n' "$work_dir" >>"$GITHUB_OUTPUT"
 
-      - name: Verify staging Launchable control-plane checkpoint
+      - name: Verify staging Launchable remote execution readiness
         timeout-minutes: 60
         env:
           BREV_LAUNCHABLE_ID: ${{ vars.NEMOCLAW_STAGING_LAUNCHABLE_ID }}
@@ -127,5 +127,5 @@ jobs:
         timeout-minutes: 10
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
-          name: staging-launchable-control-plane-${{ github.run_id }}-${{ github.run_attempt }}
+          name: staging-launchable-remote-execution-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ steps.prepare.outputs.work_dir }}/

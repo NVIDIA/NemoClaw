@@ -7,17 +7,18 @@ import { ISSUE_9880_STAGING_LAUNCHABLE_CLEANUP_TIMEOUT_MS } from "../../../tools
 import { BrevLaunchableFixture } from "../fixtures/brev-launchable.ts";
 import { test } from "../fixtures/e2e-test.ts";
 
-const CONTROL_PLANE_TEST_TIMEOUT_MS = 45 * 60_000;
+const REMOTE_EXECUTION_READINESS_TEST_TIMEOUT_MS = 60 * 60_000;
 
 test(
-  "creates the staging Launchable workspace and records its control-plane identity",
+  "creates the staging Launchable workspace and proves remote execution readiness",
   {
-    timeout: CONTROL_PLANE_TEST_TIMEOUT_MS,
+    timeout: REMOTE_EXECUTION_READINESS_TEST_TIMEOUT_MS,
     meta: {
       e2eCleanupTimeoutMs: ISSUE_9880_STAGING_LAUNCHABLE_CLEANUP_TIMEOUT_MS,
       e2ePhases: [
         "resolve the latest staging handoff",
         "create the staging workspace",
+        "prove remote execution readiness",
         "record the control-plane checkpoint",
       ],
     },
@@ -33,6 +34,9 @@ test(
     cleanup.add(`delete Brev workspace ${name}`, () => brevLaunchable.delete(ownership));
     const workspace = await brevLaunchable.create(ownership, launchableId);
 
+    progress.phase("prove remote execution readiness");
+    await brevLaunchable.waitForExec(ownership);
+
     progress.phase("record the control-plane checkpoint");
     await artifacts.writeJson("staging-launchable-control-plane-checkpoint.json", {
       bootImage: handoff.bootImage,
@@ -40,12 +44,13 @@ test(
       imageRepositorySha: handoff.imageRepositorySha,
       launchableId,
       producerRunId: handoff.producerRunId,
+      remoteExecutionReady: true,
       workspaceId: workspace.id,
       workspaceName: workspace.name,
     });
     await artifacts.target.complete({
       id: "staging-launchable-full",
-      classification: "control-plane-checkpoint-passed",
+      classification: "remote-execution-ready",
     });
   },
 );
