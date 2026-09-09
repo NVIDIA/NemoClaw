@@ -12,6 +12,7 @@ import {
   type DockerGpuPatchFinalizeOutcome,
   finalizeDockerGpuPatchBackup,
 } from "./docker-gpu-patch-finalize";
+import { isExactOpenShellDockerSandboxReplacement } from "./openshell-docker-sandbox-containers";
 
 function deferredCreateResult(): DockerGpuPatchResult {
   return {
@@ -77,6 +78,62 @@ function collectRollbackDiagnostics(
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 }
+
+describe("isExactOpenShellDockerSandboxReplacement", () => {
+  it("accepts the exact stopped replacement only when it is the sole namespaced runtime", () => {
+    const replacementRuntimeId = "b".repeat(64);
+    const dockerRun = vi.fn((args: readonly string[]) =>
+      args[0] === "ps"
+        ? { status: 0, stdout: `${replacementRuntimeId}\n` }
+        : { status: 0, stdout: "current-gateway\n" },
+    );
+
+    expect(
+      isExactOpenShellDockerSandboxReplacement("alpha", replacementRuntimeId, false, {
+        dockerRun,
+      }),
+    ).toBe(true);
+    expect(dockerRun).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects a retained backup before a name-scoped resume start", () => {
+    const replacementRuntimeId = "b".repeat(64);
+    const dockerRun = vi.fn((args: readonly string[]) =>
+      args[0] === "ps"
+        ? { status: 0, stdout: `${replacementRuntimeId}\n${"a".repeat(64)}\n` }
+        : { status: 0, stdout: "current-gateway\n" },
+    );
+
+    expect(
+      isExactOpenShellDockerSandboxReplacement("alpha", replacementRuntimeId, false, {
+        dockerRun,
+      }),
+    ).toBe(false);
+  });
+
+  it.each([
+    { running: "true", expected: true },
+    { running: "false", expected: false },
+  ])("requires the exact replacement to be running when requested", ({ running, expected }) => {
+    const replacementRuntimeId = "b".repeat(64);
+    const dockerRun = vi.fn((args: readonly string[]) => ({
+      status: 0,
+      stdout:
+        args[0] === "ps"
+          ? `${replacementRuntimeId}\n`
+          : args.includes("{{json .State.Running}}")
+            ? `${running}\n`
+            : "current-gateway\n",
+    }));
+
+    expect(
+      isExactOpenShellDockerSandboxReplacement("alpha", replacementRuntimeId, true, {
+        dockerRun,
+      }),
+    ).toBe(expected);
+    expect(dockerRun).toHaveBeenCalledTimes(3);
+  });
+});
 
 describe("finalizeDockerGpuPatchBackup", () => {
   it("retains both containers when final acknowledgement probes are unavailable (#9531)", () => {
