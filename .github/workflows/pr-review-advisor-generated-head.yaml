@@ -117,7 +117,7 @@ jobs:
       contents: read
       pull-requests: read
     runs-on: ubuntu-24.04
-    timeout-minutes: 70
+    timeout-minutes: 360
     env:
       ADVISOR_DIR: ${{ github.workspace }}/advisor
     steps:

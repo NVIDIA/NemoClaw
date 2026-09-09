@@ -81,6 +81,18 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  validate-repair-target:
+    if: ${{ inputs.repair_attempt_key != '' }}
+    uses: ./.github/workflows/validate-repair-target.yaml
+    with:
+      repair_pr_number: ${{ inputs.target_pr }}
+      repair_head_sha: ${{ inputs.repair_head_sha }}
+      repair_base_sha: ${{ inputs.repair_base_sha }}
+      repair_attempt_key: ${{ inputs.repair_attempt_key }}
+    permissions:
+      contents: read
+      pull-requests: read
+
   require-green-checks:
     name: Require green PR checks
     if: >-
@@ -139,8 +151,8 @@ jobs:
 
   discover-specialists:
     name: Discover review specialists and collect GitHub context
-    if: ${{ github.repository == 'NVIDIA/NemoClaw' }}
-    needs: require-green-checks
+    needs: [require-green-checks, validate-repair-target]
+    if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && needs.require-green-checks.result == 'success' && (inputs.repair_attempt_key == '' || needs.validate-repair-target.result == 'success') }}
     permissions:
       contents: read
       issues: read
@@ -167,32 +179,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: node --experimental-strip-types --no-warnings tools/pr-review-advisor/github-context.mts
-      - name: Bind validation to the live generated head
+      - name: Enforce generated-head advisor scope
         if: ${{ inputs.repair_attempt_key != '' }}
         env:
-          BASE_SHA: ${{ inputs.repair_base_sha }}
           FINDING_IDS: ${{ inputs.repair_finding_ids_json }}
-          GH_TOKEN: ${{ github.token }}
-          HEAD_SHA: ${{ inputs.repair_head_sha }}
-          PR_NUMBER: ${{ inputs.target_pr }}
           PUBLISH_REQUESTED: ${{ inputs.repair_publish }}
-          REPAIR_ATTEMPT_KEY: ${{ inputs.repair_attempt_key }}
         run: |
           set -euo pipefail
-          [[ "$GITHUB_REF" == refs/heads/main ]]
-          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]
-          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$REPAIR_ATTEMPT_KEY" =~ ^sha256:[0-9a-f]{64}$ ]]
           [[ "$FINDING_IDS" == '[]' ]]
           [[ "$PUBLISH_REQUESTED" == 'false' ]]
-          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" |
-            jq -e --arg head "$HEAD_SHA" --arg base "$BASE_SHA" '
-              .state == "open" and .draft == false and
-              .head.sha == $head and .head.repo.full_name == "NVIDIA/NemoClaw" and
-              .base.sha == $base and .base.ref == "main" and
-              .base.repo.full_name == "NVIDIA/NemoClaw"
-            ' >/dev/null
       - name: Upload GitHub review context
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

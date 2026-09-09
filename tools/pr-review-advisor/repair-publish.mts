@@ -2,10 +2,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash, randomUUID } from "node:crypto";
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import YAML from "yaml";
 
 import {
   createVerifiedCommit,
@@ -18,7 +19,11 @@ export type { GitHubRequest, GraphqlRequest } from "../pull-requests/publication
 
 import { githubApiWithResponse } from "../advisors/github.mts";
 import { buildRiskPlan, riskPlanRequiredJobIds, type RiskPlan } from "../advisors/risk-plan.mts";
-import { e2eEvidenceJobNamesForSelectors } from "../e2e/workflow-plan.mts";
+import {
+  buildE2eWorkflowPlan,
+  e2eEvidenceJobNamesForSelectors,
+  selectedWorkflowJobs,
+} from "../e2e/workflow-plan.mts";
 import { dispatchWorkflowWithReconciliation } from "../e2e/pr-e2e-dispatch-reconciliation.mts";
 import { readValidatedArtifactZipEntries } from "../../scripts/lib/read-artifact-zip.mts";
 
@@ -67,6 +72,14 @@ const ADVISOR_REPAIR_E2E_WORKFLOW = "e2e.yaml";
 const ADVISOR_REPAIR_E2E_CHECK = "advisor-repair-risk-plan-e2e";
 const MAX_E2E_RECEIPT_ARCHIVE_BYTES = 256 * 1024;
 const MAX_E2E_RECEIPT_BYTES = 16 * 1024;
+const E2E_WORKFLOW_PATH = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+  ".github",
+  "workflows",
+  "e2e.yaml",
+);
 
 type WorkflowRun = {
   id?: unknown;
@@ -134,6 +147,19 @@ type AdvisorRepairE2eDispatch = {
   source: "dispatch-response" | "workflow-run-inventory";
 };
 
+type AdvisorRepairDispatchCheckpoint = {
+  workflow: string;
+  runId: number | null;
+  url: string | null;
+  status: string;
+  conclusion: string | null;
+};
+
+export type AdvisorRepairHeadCheckpoint = {
+  workflows: AdvisorRepairDispatchCheckpoint[];
+  e2e: (AdvisorRepairDispatchCheckpoint & { correlationId: string }) | null;
+};
+
 type AdvisorRepairE2eEvidence = AdvisorRepairE2eDispatch & {
   runAttempt: number;
   url: string;
@@ -153,7 +179,7 @@ type AdvisorRepairRiskPlan = {
 type ArtifactArchiveRequest = (artifactId: number, maxBytes: number) => Promise<Buffer>;
 
 export type AdvisorRepairHeadReceipt = {
-  version: 2;
+  version: 3;
   attemptKey: string;
   sourceHeadSha: string;
   baseSha: string;
@@ -171,6 +197,7 @@ export type AdvisorRepairHeadReceipt = {
   riskPlan: AdvisorRepairRiskPlan;
   e2e: AdvisorRepairE2eEvidence | null;
   checks: PublishedCheck[];
+  checkpoint: AdvisorRepairHeadCheckpoint;
   failure: string | null;
 };
 
@@ -247,6 +274,15 @@ function repairValidationRunName(attemptKey: string, generatedHeadSha: string): 
   return `Repair validation ${attemptKey} head ${generatedHeadSha}`;
 }
 
+export function advisorRepairCorrelationId(attemptKey: string, generatedHeadSha: string): string {
+  const digest = createHash("sha256").update(`${attemptKey}\0${generatedHeadSha}`).digest("hex");
+  return `${digest.slice(0, 8)}-${digest.slice(8, 12)}-4${digest.slice(13, 16)}-a${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
+}
+
+export function createAdvisorRepairHeadCheckpoint(): AdvisorRepairHeadCheckpoint {
+  return { workflows: [], e2e: null };
+}
+
 function repairValidationReceiptName(input: {
   attemptKey: string;
   prNumber: number;
@@ -300,6 +336,58 @@ export function advisorRepairRiskPlan(
     changedPaths: [...plan.changedFiles],
     requiredJobs: riskPlanRequiredJobIds(plan),
   };
+}
+
+function record(value: unknown, label: string): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new RepairError(`${label} is invalid`);
+  return value as Record<string, unknown>;
+}
+
+export function e2eControllerDeadlineMinutesForSelectors(
+  requiredJobs: readonly string[],
+  marginMinutes = 15,
+): number {
+  if (requiredJobs.length === 0) return 0;
+  const plan = buildE2eWorkflowPlan(
+    { jobs: requiredJobs.join(",") },
+    { gatewayRuntimes: ["docker"] },
+  );
+  const workflow = record(YAML.parse(readFileSync(E2E_WORKFLOW_PATH, "utf8")), "E2E workflow");
+  const jobs = record(workflow.jobs, "E2E workflow jobs");
+  const overrides: Record<string, number> = {};
+  if (plan.matrix.length > 0)
+    overrides.live = Math.max(...plan.matrix.map(({ timeout_minutes }) => timeout_minutes));
+  for (const [profile, rows] of Object.entries(plan.catalogueMatrices)) {
+    if (rows.length > 0)
+      overrides[`catalogue-${profile}`] = Math.max(
+        ...rows.map(({ timeout_minutes }) => timeout_minutes),
+      );
+  }
+  const visiting = new Set<string>();
+  const memo = new Map<string, number>();
+  const duration = (jobId: string): number => {
+    const cached = memo.get(jobId);
+    if (cached !== undefined) return cached;
+    if (visiting.has(jobId)) throw new RepairError(`E2E workflow dependency cycle at ${jobId}`);
+    visiting.add(jobId);
+    const job = record(jobs[jobId], `E2E workflow job ${jobId}`);
+    const configured = overrides[jobId] ?? job["timeout-minutes"];
+    if (!Number.isSafeInteger(configured) || Number(configured) < 1)
+      throw new RepairError(`E2E workflow job ${jobId} has no bounded timeout`);
+    const rawNeeds = job.needs;
+    const needs =
+      typeof rawNeeds === "string"
+        ? [rawNeeds]
+        : Array.isArray(rawNeeds) && rawNeeds.every((entry) => typeof entry === "string")
+          ? rawNeeds
+          : [];
+    const result = Number(configured) + Math.max(0, ...needs.map(duration));
+    visiting.delete(jobId);
+    memo.set(jobId, result);
+    return result;
+  };
+  return Math.max(...selectedWorkflowJobs(plan).map(duration)) + marginMinutes;
 }
 
 type DispatchAdvisorRepairE2e = (input: {
@@ -366,7 +454,7 @@ const defaultDispatchAdvisorRepairE2e: DispatchAdvisorRepairE2e = async (input) 
       ),
   });
 
-async function dispatchAdvisorRepairE2e(input: {
+export async function dispatchAdvisorRepairE2e(input: {
   prNumber: number;
   generatedHeadSha: string;
   baseSha: string;
@@ -374,10 +462,33 @@ async function dispatchAdvisorRepairE2e(input: {
   requiredJobs: readonly string[];
   attemptKey: string;
   token: string;
+  request?: GitHubRequest;
   correlationId?: () => string;
   dispatch?: DispatchAdvisorRepairE2e;
 }): Promise<AdvisorRepairE2eDispatch> {
-  const correlationId = (input.correlationId ?? randomUUID)();
+  const correlationId =
+    input.correlationId?.() ?? advisorRepairCorrelationId(input.attemptKey, input.generatedHeadSha);
+  if (!input.dispatch && input.request) {
+    const title = `E2E PR #${input.prNumber} (${correlationId})`;
+    const matches = (
+      await listRepairValidationRuns(ADVISOR_REPAIR_E2E_WORKFLOW, input.request)
+    ).filter(
+      (run) =>
+        run.path === `.github/workflows/${ADVISOR_REPAIR_E2E_WORKFLOW}` &&
+        run.event === "workflow_dispatch" &&
+        run.head_branch === "main" &&
+        run.head_sha === input.workflowSha &&
+        run.display_title === title &&
+        run.html_url === `https://github.com/${REPAIR_REPOSITORY}/actions/runs/${run.id}`,
+    );
+    if (matches.length > 1) throw new RepairError("generated-head E2E run identity is ambiguous");
+    if (matches.length === 1)
+      return {
+        correlationId,
+        runId: Number(matches[0].id),
+        source: "workflow-run-inventory",
+      };
+  }
   const result = await (input.dispatch ?? defaultDispatchAdvisorRepairE2e)({
     ...input,
     correlationId,
@@ -387,16 +498,34 @@ async function dispatchAdvisorRepairE2e(input: {
 
 async function dispatchRepairValidation(
   workflow: string,
-  input: Parameters<typeof repairValidationInputs>[1],
+  input: Parameters<typeof repairValidationInputs>[1] & { workflowSha: string },
   runName: string,
   request: GitHubRequest,
-): Promise<{ workflow: string; priorRunIds: Set<number>; runName: string }> {
+): Promise<{
+  workflow: string;
+  runName: string;
+  workflowSha: string;
+  existingRun?: WorkflowRun;
+}> {
   const prior = await listRepairValidationRuns(workflow, request);
+  const matches = prior.filter(
+    (run) =>
+      run.path === `.github/workflows/${workflow}` &&
+      run.event === "workflow_dispatch" &&
+      run.head_branch === "main" &&
+      run.head_sha === input.workflowSha &&
+      run.display_title === runName &&
+      run.html_url === `https://github.com/${REPAIR_REPOSITORY}/actions/runs/${run.id}`,
+  );
+  if (matches.length > 1)
+    throw new RepairError(`generated-head ${workflow} run identity is ambiguous`);
+  if (matches.length === 1)
+    return { workflow, runName, workflowSha: input.workflowSha, existingRun: matches[0] };
   await request("POST", `/repos/${REPAIR_REPOSITORY}/actions/workflows/${workflow}/dispatches`, {
     ref: "main",
     inputs: repairValidationInputs(workflow, input),
   });
-  return { workflow, priorRunIds: new Set(prior.map(({ id }) => Number(id))), runName };
+  return { workflow, runName, workflowSha: input.workflowSha };
 }
 
 async function listRepairValidationRuns(
@@ -422,12 +551,15 @@ async function discoverRepairValidationRun(
   pending: Awaited<ReturnType<typeof dispatchRepairValidation>>,
   request: GitHubRequest,
 ): Promise<{ workflow: string; runId: number; url: string } | null> {
-  const matches = (await listRepairValidationRuns(pending.workflow, request)).filter(
+  const inventory = pending.existingRun
+    ? [pending.existingRun]
+    : await listRepairValidationRuns(pending.workflow, request);
+  const matches = inventory.filter(
     (run) =>
-      !pending.priorRunIds.has(Number(run.id)) &&
       run.path === `.github/workflows/${pending.workflow}` &&
       run.event === "workflow_dispatch" &&
       run.head_branch === "main" &&
+      run.head_sha === pending.workflowSha &&
       run.display_title === pending.runName &&
       run.html_url === `https://github.com/${REPAIR_REPOSITORY}/actions/runs/${run.id}`,
   );
@@ -439,14 +571,12 @@ async function discoverRepairValidationRun(
     : null;
 }
 
-async function completedWorkflowEvidence(
+async function readRepairValidationRun(
   dispatch: { workflow: string; runId: number; url: string },
-  requiredJobs: readonly string[],
   runName: string,
-  receiptName: string,
   workflowSha: string,
   request: GitHubRequest,
-): Promise<AdvisorRepairHeadReceipt["workflows"][number] | null> {
+): Promise<WorkflowRun> {
   const run = (await request(
     "GET",
     `/repos/${REPAIR_REPOSITORY}/actions/runs/${dispatch.runId}`,
@@ -463,6 +593,20 @@ async function completedWorkflowEvidence(
     Number(run.run_attempt) < 1
   )
     throw new RepairError(`generated-head ${dispatch.workflow} run evidence is invalid`);
+  return run;
+}
+
+async function completedWorkflowEvidence(
+  dispatch: { workflow: string; runId: number; url: string },
+  requiredJobs: readonly string[],
+  runName: string,
+  receiptName: string,
+  workflowSha: string,
+  request: GitHubRequest,
+  observe?: (run: WorkflowRun) => void,
+): Promise<AdvisorRepairHeadReceipt["workflows"][number] | null> {
+  const run = await readRepairValidationRun(dispatch, runName, workflowSha, request);
+  observe?.(run);
   if (run.status !== "completed") return null;
   if (run.conclusion !== "success")
     throw new RepairError(`generated-head ${dispatch.workflow} run failed`);
@@ -728,6 +872,7 @@ async function completedE2eEvidence(
     requiredJobs: readonly string[];
     request: GitHubRequest;
     requestArchive: ArtifactArchiveRequest;
+    observe?: (run: WorkflowRun) => void;
   },
 ): Promise<AdvisorRepairE2eEvidence | null> {
   const url = `https://github.com/${REPAIR_REPOSITORY}/actions/runs/${dispatch.runId}`;
@@ -746,6 +891,7 @@ async function completedE2eEvidence(
     run.run_attempt !== 1
   )
     throw new RepairError("generated-head E2E run evidence is invalid");
+  input.observe?.(run);
   if (run.status !== "completed") return null;
   if (run.conclusion !== "success") throw new RepairError("generated-head E2E run failed");
   const jobs = await listE2eJobs(dispatch.runId, input.request);
@@ -852,41 +998,91 @@ export async function waitForAdvisorRepairHead(input: {
   correlationId?: () => string;
   wait?: (milliseconds: number) => Promise<void>;
   attempts?: number;
+  checkpoint?: AdvisorRepairHeadCheckpoint;
 }): Promise<AdvisorRepairHeadReceipt> {
   const wait =
     input.wait ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
-  const attempts = input.attempts ?? 120;
   const runName = repairValidationRunName(input.attemptKey, input.generatedHeadSha);
   const receiptName = repairValidationReceiptName(input);
   const riskPlan = advisorRepairRiskPlan(input.generatedHeadSha, input.changedPaths);
+  const checkpoint = input.checkpoint ?? createAdvisorRepairHeadCheckpoint();
   const credentialJob = credentialBearingRepairE2eJob(riskPlan.requiredJobs);
   if (credentialJob)
     throw new RepairError(
       `generated-head repair validation requires credential-bearing E2E job ${credentialJob}`,
     );
-  await Promise.all(
-    ADVISOR_REPAIR_PREREQUISITE_WORKFLOWS.map((workflow) =>
-      dispatchRepairValidation(workflow, input, runName, input.request),
-    ),
+  const deadlineMinutes = Math.max(
+    60,
+    e2eControllerDeadlineMinutesForSelectors(riskPlan.requiredJobs),
   );
-  const pendingDispatches = await Promise.all(
-    ADVISOR_REPAIR_HEAD_WORKFLOWS.map(({ workflow }) =>
-      dispatchRepairValidation(workflow, input, runName, input.request),
-    ),
-  );
-  const e2eDispatch = riskPlan.requiredJobs.length
-    ? await dispatchAdvisorRepairE2e({
-        prNumber: input.prNumber,
-        generatedHeadSha: input.generatedHeadSha,
-        baseSha: input.baseSha,
-        workflowSha: input.workflowSha,
-        attemptKey: input.attemptKey,
-        requiredJobs: riskPlan.requiredJobs,
-        token: required(input.token, "GITHUB_TOKEN"),
-        correlationId: input.correlationId,
-        dispatch: input.dispatchE2e,
-      })
-    : null;
+  if (deadlineMinutes > 345)
+    throw new RepairError(
+      `generated-head E2E dependency graph requires ${deadlineMinutes} minutes and exceeds the bounded controller window`,
+    );
+  const attempts = input.attempts ?? deadlineMinutes * 2;
+  const pendingDispatches: Awaited<ReturnType<typeof dispatchRepairValidation>>[] = [];
+  for (const workflow of ADVISOR_REPAIR_PREREQUISITE_WORKFLOWS) {
+    const observed: AdvisorRepairDispatchCheckpoint = {
+      workflow,
+      runId: null,
+      url: null,
+      status: "dispatching",
+      conclusion: null,
+    };
+    checkpoint.workflows.push(observed);
+    const pending = await dispatchRepairValidation(workflow, input, runName, input.request);
+    pendingDispatches.push(pending);
+    const dispatch = await discoverRepairValidationRun(pending, input.request);
+    observed.runId = dispatch?.runId ?? null;
+    observed.url = dispatch?.url ?? null;
+    observed.status = pending.existingRun ? "adopted" : dispatch ? "queued" : "dispatched";
+  }
+  for (const { workflow } of ADVISOR_REPAIR_HEAD_WORKFLOWS) {
+    const observed: AdvisorRepairDispatchCheckpoint = {
+      workflow,
+      runId: null,
+      url: null,
+      status: "dispatching",
+      conclusion: null,
+    };
+    checkpoint.workflows.push(observed);
+    const pending = await dispatchRepairValidation(workflow, input, runName, input.request);
+    pendingDispatches.push(pending);
+    const dispatch = await discoverRepairValidationRun(pending, input.request);
+    observed.runId = dispatch?.runId ?? null;
+    observed.url = dispatch?.url ?? null;
+    observed.status = pending.existingRun ? "adopted" : dispatch ? "queued" : "dispatched";
+  }
+  let e2eDispatch: AdvisorRepairE2eDispatch | null = null;
+  if (riskPlan.requiredJobs.length) {
+    const correlationId =
+      input.correlationId?.() ??
+      advisorRepairCorrelationId(input.attemptKey, input.generatedHeadSha);
+    checkpoint.e2e = {
+      workflow: ADVISOR_REPAIR_E2E_WORKFLOW,
+      correlationId,
+      runId: null,
+      url: null,
+      status: "dispatching",
+      conclusion: null,
+    };
+    e2eDispatch = await dispatchAdvisorRepairE2e({
+      prNumber: input.prNumber,
+      generatedHeadSha: input.generatedHeadSha,
+      baseSha: input.baseSha,
+      workflowSha: input.workflowSha,
+      attemptKey: input.attemptKey,
+      requiredJobs: riskPlan.requiredJobs,
+      token: required(input.token, "GITHUB_TOKEN"),
+      request: input.request,
+      correlationId: () => correlationId,
+      dispatch: input.dispatchE2e,
+    });
+    checkpoint.e2e.runId = e2eDispatch.runId;
+    checkpoint.e2e.url = `https://github.com/${REPAIR_REPOSITORY}/actions/runs/${e2eDispatch.runId}`;
+    checkpoint.e2e.status =
+      e2eDispatch.source === "workflow-run-inventory" ? "adopted" : "dispatched";
+  }
   const dispatches = new Map<string, { workflow: string; runId: number; url: string }>();
   let e2e: AdvisorRepairE2eEvidence | null = null;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
@@ -908,9 +1104,34 @@ export async function waitForAdvisorRepairHead(input: {
     for (const pending of pendingDispatches) {
       if (dispatches.has(pending.workflow)) continue;
       const dispatch = await discoverRepairValidationRun(pending, input.request);
-      if (dispatch) dispatches.set(pending.workflow, dispatch);
+      if (dispatch) {
+        dispatches.set(pending.workflow, dispatch);
+        const observed = checkpoint.workflows.find(({ workflow }) => workflow === pending.workflow);
+        if (observed) {
+          observed.runId = dispatch.runId;
+          observed.url = dispatch.url;
+          observed.status = "queued";
+        }
+      }
     }
     const workflows: AdvisorRepairHeadReceipt["workflows"] = [];
+    for (const workflow of ADVISOR_REPAIR_PREREQUISITE_WORKFLOWS) {
+      const dispatch = dispatches.get(workflow);
+      if (!dispatch) continue;
+      const run = await readRepairValidationRun(
+        dispatch,
+        runName,
+        input.workflowSha,
+        input.request,
+      );
+      const observed = checkpoint.workflows.find((entry) => entry.workflow === workflow);
+      if (observed) {
+        observed.status = String(run.status);
+        observed.conclusion = run.conclusion == null ? null : String(run.conclusion);
+      }
+      if (run.status === "completed" && run.conclusion !== "success")
+        throw new RepairError(`generated-head ${workflow} run failed`);
+    }
     for (const specification of ADVISOR_REPAIR_HEAD_WORKFLOWS) {
       const dispatch = dispatches.get(specification.workflow);
       if (!dispatch) continue;
@@ -921,6 +1142,15 @@ export async function waitForAdvisorRepairHead(input: {
         receiptName,
         input.workflowSha,
         input.request,
+        (run) => {
+          const observed = checkpoint.workflows.find(
+            ({ workflow }) => workflow === specification.workflow,
+          );
+          if (observed) {
+            observed.status = String(run.status);
+            observed.conclusion = run.conclusion == null ? null : String(run.conclusion);
+          }
+        },
       );
       if (evidence) workflows.push(evidence);
     }
@@ -937,6 +1167,12 @@ export async function waitForAdvisorRepairHead(input: {
           input.requestArchive ??
           ((artifactId, maxBytes) =>
             githubArtifactArchive(artifactId, maxBytes, required(input.token, "GITHUB_TOKEN"))),
+        observe: (run) => {
+          if (checkpoint.e2e) {
+            checkpoint.e2e.status = String(run.status);
+            checkpoint.e2e.conclusion = run.conclusion == null ? null : String(run.conclusion);
+          }
+        },
       });
     if (workflows.length === ADVISOR_REPAIR_HEAD_WORKFLOWS.length && (!e2eDispatch || e2e)) {
       const checks = await publishRepairChecks(
@@ -947,7 +1183,7 @@ export async function waitForAdvisorRepairHead(input: {
         input.request,
       );
       return {
-        version: 2,
+        version: 3,
         attemptKey: input.attemptKey,
         sourceHeadSha: input.sourceHeadSha,
         baseSha: input.baseSha,
@@ -958,12 +1194,13 @@ export async function waitForAdvisorRepairHead(input: {
         riskPlan,
         e2e,
         checks,
+        checkpoint,
         failure: null,
       };
     }
     if (attempt < attempts) await wait(30_000);
   }
-  throw new RepairError("generated-head validation did not finish within sixty minutes");
+  throw new RepairError("generated-head validation did not finish before its controller deadline");
 }
 
 function writeAdvisorRepairHeadReceipt(directory: string, receipt: AdvisorRepairHeadReceipt): void {
@@ -999,6 +1236,7 @@ async function main(): Promise<void> {
     const changedPaths = validation.changedPaths.map(({ path: file }) => file);
     const riskPlan = advisorRepairRiskPlan(generatedHeadSha, changedPaths);
     const output = required(process.env.VERIFICATION_OUTPUT_DIR, "VERIFICATION_OUTPUT_DIR");
+    const checkpoint = createAdvisorRepairHeadCheckpoint();
     try {
       const token = required(process.env.GITHUB_TOKEN, "GITHUB_TOKEN");
       const receipt = await waitForAdvisorRepairHead({
@@ -1014,12 +1252,13 @@ async function main(): Promise<void> {
         attemptKey: selection.attemptKey,
         request: githubClient(token).request,
         token,
+        checkpoint,
       });
       writeAdvisorRepairHeadReceipt(output, receipt);
       console.log(`Verified all generated-head workflows on ${generatedHeadSha}.`);
     } catch (error) {
       writeAdvisorRepairHeadReceipt(output, {
-        version: 2,
+        version: 3,
         attemptKey: selection.attemptKey,
         sourceHeadSha: selection.sourceHeadSha,
         baseSha: selection.baseSha,
@@ -1030,6 +1269,7 @@ async function main(): Promise<void> {
         riskPlan,
         e2e: null,
         checks: [],
+        checkpoint,
         failure: sanitizeDiagnostic(error),
       });
       throw error;

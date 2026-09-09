@@ -646,11 +646,6 @@ describe("pull request and main workflow contracts", () => {
         (workflow) => String(workflow["run-name"]).match(/^[$][{][{] (.*?) [|][|]/u)?.[1],
       ),
     ).toEqual(Array.from({ length: 6 }, () => repairRunNameClause));
-    expect(serialized.every((workflow) => workflow.includes("refs/heads/main"))).toBe(true);
-    expect(serialized.every((workflow) => workflow.includes("REPAIR_ATTEMPT_KEY"))).toBe(true);
-    expect(serialized.every((workflow) => workflow.includes("^sha256:[0-9a-f]{64}$"))).toBe(true);
-    expect(serialized.every((workflow) => workflow.includes(".head.sha == $head"))).toBe(true);
-    expect(serialized.every((workflow) => workflow.includes(".base.sha == $base"))).toBe(true);
     expect(String(commitLintWorkflow.concurrency?.group)).toContain("inputs.repair_attempt_key");
     expect(String(dcoWorkflow.concurrency?.group)).toContain("inputs.repair_attempt_key");
     expect(
@@ -669,7 +664,7 @@ describe("pull request and main workflow contracts", () => {
     );
     const generatedHeadGuard = requiredWorkflowStep(
       prWorkflow.jobs.changes,
-      "Bind validation to the live generated head",
+      "Bind generated commit to its source head",
     );
     expect(generatedHeadGuard.run).toContain("commits/$HEAD_SHA");
     expect(generatedHeadGuard.run).toContain(".parents[0].sha == $parent");

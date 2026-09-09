@@ -81,14 +81,26 @@ changed paths and the generated SHA. When that plan requires E2E jobs, it dispat
 through the trusted `main` workflow, bound to the exact repair attempt. Repair E2E cannot cancel an
 earlier run, uses mock inference, posts nothing to Slack, receives no E2E credentials, and cannot
 select protected or dedicated infrastructure. The authoritative E2E planner and workflow metadata
-determine the expected job names. Each name must have one job record with completed status and a
-successful conclusion.
+determine the expected job names and the longest selected dependency path. The controller adds a
+reporting margin to that path, keeps a sixty-minute minimum, and rejects a plan that cannot finish
+inside its bounded workflow window. Each expected name must have one job record with completed
+status and a successful conclusion.
 Missing, skipped, failed, duplicate, or unmapped job evidence fails closed. The reporter also
 downloads the sole dispatch receipt, verifies its artifact digest, and requires its PR, commit,
-workflow, run, and selector fields to match the request. The version 2 generated-head receipt records
-the risk plan, verified dispatch receipt, each required job URL, workflow evidence, and published
-checks. One `advisor-repair-risk-plan-e2e` check represents the complete successful E2E set on the
-generated commit.
+workflow, run, and selector fields to match the request. Workflow and E2E dispatch identities are
+deterministic for the repair attempt and generated SHA. Reconciliation adopts the sole matching
+exact run and dispatches only missing work; an ambiguous identity fails closed. The version 3
+generated-head receipt records the risk plan, verified dispatch receipt, bounded workflow and E2E
+checkpoint status and URLs, each required job URL, workflow evidence, and published checks. Failure
+receipts preserve the partial checkpoint so a maintainer can identify work that already ran. One
+`advisor-repair-risk-plan-e2e` check represents the complete successful E2E set on the generated
+commit.
+
+All six generated-head validation workflows call the same trusted reusable live-target validator.
+That validator binds the open, non-draft same-repository PR, exact generated head, exact base, and
+repair attempt key before a dispatched workflow can inspect the generated commit. `CI / Pull
+Request` additionally retains its distinct single-parent check that binds the generated commit to
+the selected source head.
 
 Trusted selection accepts a finding only when its specialist and path match one of these pairs and
 its exclusion list is empty:

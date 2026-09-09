@@ -12,7 +12,11 @@ import YAML from "yaml";
 import {
   ADVISOR_REPAIR_HEAD_WORKFLOWS,
   ADVISOR_REPAIR_PREREQUISITE_WORKFLOWS,
+  advisorRepairCorrelationId,
   advisorRepairE2eDispatchRequest,
+  createAdvisorRepairHeadCheckpoint,
+  dispatchAdvisorRepairE2e,
+  e2eControllerDeadlineMinutesForSelectors,
   type GitHubRequest,
   waitForAdvisorRepairHead,
 } from "../../../tools/pr-review-advisor/repair-publish.mts";
@@ -134,6 +138,54 @@ function runLocator(
   const outputs = readFileSync(output, "utf8");
   rmSync(root, { recursive: true, force: true });
   return { outputs, status: result.status };
+}
+
+function runRepairTargetValidator(
+  input: { env?: Record<string, string>; pullRequest?: Record<string, unknown> } = {},
+) {
+  const workflow = YAML.parse(
+    readFileSync(".github/workflows/validate-repair-target.yaml", "utf8"),
+  ) as { jobs: { validate: { steps: LocatorStep[] } } };
+  const step = workflow.jobs.validate.steps.find(
+    ({ name }) => name === "Bind validation to the live generated head",
+  );
+  expect(step?.run).toBeTruthy();
+  const root = mkdtempSync(join(tmpdir(), "nemoclaw-advisor-repair-target-"));
+  const fakeBin = join(root, "bin");
+  mkdirSync(fakeBin);
+  writeFileSync(
+    join(fakeBin, "gh"),
+    ["#!/usr/bin/env node", "process.stdout.write(process.env.FAKE_PR);"].join("\n"),
+    { mode: 0o755 },
+  );
+  const head = "1".repeat(40);
+  const base = "2".repeat(40);
+  const result = spawnSync("bash", ["-c", step?.run ?? ""], {
+    cwd: root,
+    encoding: "utf8",
+    timeout: 5_000,
+    env: {
+      ...process.env,
+      PATH: `${fakeBin}:${process.env.PATH}`,
+      GITHUB_REF: "refs/heads/main",
+      GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+      GH_TOKEN: "token",
+      PR_NUMBER: "11073",
+      HEAD_SHA: head,
+      BASE_SHA: base,
+      REPAIR_ATTEMPT_KEY: `sha256:${"3".repeat(64)}`,
+      FAKE_PR: JSON.stringify({
+        state: "open",
+        draft: false,
+        head: { sha: head, repo: { full_name: "NVIDIA/NemoClaw" } },
+        base: { sha: base, ref: "main", repo: { full_name: "NVIDIA/NemoClaw" } },
+        ...input.pullRequest,
+      }),
+      ...input.env,
+    },
+  });
+  rmSync(root, { recursive: true, force: true });
+  return result.status;
 }
 
 describe("PR Review Advisor generated-head evidence", () => {
@@ -261,19 +313,15 @@ describe("PR Review Advisor generated-head evidence", () => {
               (candidate) => candidate === workflowName,
             );
             const runId = prerequisite
-              ? 0
+              ? ADVISOR_REPAIR_HEAD_WORKFLOWS.length + 1
               : ADVISOR_REPAIR_HEAD_WORKFLOWS.findIndex((item) => item.workflow === workflowName) +
                 1;
-            const run: Record<string, unknown> = prerequisite
-              ? {}
-              : ((await request(
-                  "GET",
-                  `/repos/${selection.repository}/actions/runs/${runId}`,
-                )) as Record<string, unknown>);
+            const run = (await request(
+              "GET",
+              `/repos/${selection.repository}/actions/runs/${runId}`,
+            )) as Record<string, unknown>;
             const runs: Record<string, unknown>[] =
-              !prerequisite && dispatchedWorkflows.has(workflowName) && correlationMode !== "zero"
-                ? [run]
-                : [];
+              dispatchedWorkflows.has(workflowName) && correlationMode !== "zero" ? [run] : [];
             return {
               workflow_runs:
                 correlationMode === "ambiguous" && runs.length === 1 ? [...runs, run] : runs,
@@ -367,13 +415,14 @@ describe("PR Review Advisor generated-head evidence", () => {
           case method === "GET" && runMatch !== null: {
             const runId = Number(runMatch[1]);
             const specification = ADVISOR_REPAIR_HEAD_WORKFLOWS[runId - 1];
-            expect(specification).toBeDefined();
+            const workflowName =
+              specification?.workflow ?? ADVISOR_REPAIR_PREREQUISITE_WORKFLOWS[0];
             return {
               id: runId,
               event: "workflow_dispatch",
-              path: `.github/workflows/${specification?.workflow}`,
+              path: `.github/workflows/${workflowName}`,
               status: "completed",
-              conclusion: specification?.workflow === failedWorkflow ? "failure" : "success",
+              conclusion: workflowName === failedWorkflow ? "failure" : "success",
               display_title: runName,
               head_branch: "main",
               head_sha: workflowHeadSha,
@@ -425,7 +474,7 @@ describe("PR Review Advisor generated-head evidence", () => {
         }
       },
     );
-    const verify = () => {
+    const verify = (checkpoint = createAdvisorRepairHeadCheckpoint()) => {
       e2eArchive = zipEntries({
         "dispatch.json": JSON.stringify({
           kind: "nemoclaw-e2e-dispatch-v2",
@@ -468,19 +517,28 @@ describe("PR Review Advisor generated-head evidence", () => {
         dispatchE2e,
         correlationId: () => e2eCorrelationId,
         attempts: 1,
+        checkpoint,
       });
     };
 
     await expect(verify()).resolves.toMatchObject({
-      version: 2,
+      version: 3,
       outcome: "success",
       workflows: { length: 6 },
       riskPlan: { requiredJobs: [] },
       e2e: null,
       checks: { length: 5 },
+      checkpoint: { workflows: { length: 7 }, e2e: null },
     });
     expect(dispatchE2e).not.toHaveBeenCalled();
     expect(dispatchedWorkflows).toContain("openshell-sdk-package-pr.yaml");
+    const workflowDispatchCalls = () =>
+      request.mock.calls.filter(
+        ([method, apiPath]) => method === "POST" && String(apiPath).endsWith("/dispatches"),
+      ).length;
+    const dispatchCount = workflowDispatchCalls();
+    await expect(verify()).resolves.toMatchObject({ outcome: "success" });
+    expect(workflowDispatchCalls()).toBe(dispatchCount);
     changedPaths = ["src/lib/credentials/example.ts"];
     dispatchedWorkflows.clear();
     await expect(verify()).rejects.toThrow(
@@ -491,11 +549,22 @@ describe("PR Review Advisor generated-head evidence", () => {
     changedPaths = [];
     workflowHeadSha = "6".repeat(40);
     dispatchedWorkflows.clear();
-    await expect(verify()).rejects.toThrow("run evidence is invalid");
+    await expect(verify()).rejects.toThrow("controller deadline");
     workflowHeadSha = "5".repeat(40);
     failedWorkflow = "pr.yaml";
     dispatchedWorkflows.clear();
-    await expect(verify()).rejects.toThrow("generated-head pr.yaml run failed");
+    const failureCheckpoint = createAdvisorRepairHeadCheckpoint();
+    await expect(verify(failureCheckpoint)).rejects.toThrow("generated-head pr.yaml run failed");
+    expect(failureCheckpoint.workflows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          workflow: "pr.yaml",
+          runId: 1,
+          status: "completed",
+          conclusion: "failure",
+        }),
+      ]),
+    );
     failedWorkflow = undefined;
     mismatchedReceipt = true;
     dispatchedWorkflows.clear();
@@ -511,7 +580,7 @@ describe("PR Review Advisor generated-head evidence", () => {
     changedPaths = ["src/lib/onboard/sandbox-create-step.ts"];
     dispatchedWorkflows.clear();
     await expect(verify()).resolves.toMatchObject({
-      version: 2,
+      version: 3,
       outcome: "success",
       riskPlan: { requiredJobs: ["onboard-repair", "onboard-resume"] },
       e2e: {
@@ -522,6 +591,10 @@ describe("PR Review Advisor generated-head evidence", () => {
         jobs: expectedE2eJobNames.map((name) => ({ name })),
       },
       checks: { length: 6 },
+      checkpoint: {
+        workflows: { length: 7 },
+        e2e: { runId: e2eRunId, status: "completed", conclusion: "success" },
+      },
     });
     expect(dispatchE2e).toHaveBeenLastCalledWith(
       expect.objectContaining({
@@ -580,6 +653,43 @@ describe("PR Review Advisor generated-head evidence", () => {
     await expect(verify()).rejects.toThrow("dispatch receipt content is invalid");
   });
 
+  it("derives stable dispatch identity and a deadline beyond the selected dependency graph (#10791)", () => {
+    const attemptKey = `sha256:${"a".repeat(64)}`;
+    const head = "b".repeat(40);
+    expect(advisorRepairCorrelationId(attemptKey, head)).toBe(
+      advisorRepairCorrelationId(attemptKey, head),
+    );
+    expect(advisorRepairCorrelationId(attemptKey, "c".repeat(40))).not.toBe(
+      advisorRepairCorrelationId(attemptKey, head),
+    );
+    expect(e2eControllerDeadlineMinutesForSelectors(["cloud-onboard"])).toBe(150);
+    expect(e2eControllerDeadlineMinutesForSelectors(["managed-image-protected-runtime"])).toBe(590);
+  });
+
+  it("routes every repair workflow through one executable trusted target gate (#10791)", () => {
+    const workflowPaths = [
+      "code-scanning.yaml",
+      "commit-lint.yaml",
+      "dco-check.yaml",
+      "installer-hash-check.yaml",
+      "pr.yaml",
+      "pr-review-advisor.yaml",
+    ];
+    const workflows = workflowPaths.map((name) =>
+      YAML.parse(readFileSync(`.github/workflows/${name}`, "utf8")),
+    ) as Array<{ jobs: Record<string, { uses?: string; "timeout-minutes"?: number }> }>;
+    expect(workflows.map(({ jobs }) => jobs["validate-repair-target"]?.uses)).toEqual(
+      Array.from({ length: 6 }, () => "./.github/workflows/validate-repair-target.yaml"),
+    );
+    expect(runRepairTargetValidator()).toBe(0);
+    expect(runRepairTargetValidator({ env: { GITHUB_REF: "refs/heads/topic" } })).not.toBe(0);
+    expect(runRepairTargetValidator({ env: { REPAIR_ATTEMPT_KEY: "invalid" } })).not.toBe(0);
+    expect(runRepairTargetValidator({ pullRequest: { draft: true } })).not.toBe(0);
+    expect(runRepairTargetValidator({ pullRequest: { head: { sha: "4".repeat(40) } } })).not.toBe(
+      0,
+    );
+  });
+
   it("derives E2E evidence names from the trusted plan rather than a repair map (#10791)", () => {
     const plan = buildE2eWorkflowPlan({ jobs: "onboard-repair" }, { gatewayRuntimes: ["docker"] });
     const changed = structuredClone(plan);
@@ -621,6 +731,44 @@ describe("PR Review Advisor generated-head evidence", () => {
         repair_attempt_key: `sha256:${"4".repeat(64)}`,
       },
     });
+  });
+
+  it("adopts the existing deterministic E2E run instead of dispatching it again (#10791)", async () => {
+    const prNumber = 10791;
+    const generatedHeadSha = "1".repeat(40);
+    const workflowSha = "3".repeat(40);
+    const attemptKey = `sha256:${"4".repeat(64)}`;
+    const correlationId = advisorRepairCorrelationId(attemptKey, generatedHeadSha);
+    const runId = 991;
+    const request = vi.fn(async () => ({
+      workflow_runs: [
+        {
+          id: runId,
+          event: "workflow_dispatch",
+          path: ".github/workflows/e2e.yaml",
+          status: "in_progress",
+          conclusion: null,
+          display_title: `E2E PR #${prNumber} (${correlationId})`,
+          head_branch: "main",
+          head_sha: workflowSha,
+          html_url: `https://github.com/NVIDIA/NemoClaw/actions/runs/${runId}`,
+          run_attempt: 1,
+        },
+      ],
+    }));
+    await expect(
+      dispatchAdvisorRepairE2e({
+        prNumber,
+        generatedHeadSha,
+        baseSha: "2".repeat(40),
+        workflowSha,
+        requiredJobs: ["onboard-repair"],
+        attemptKey,
+        token: "token",
+        request: request as GitHubRequest,
+      }),
+    ).resolves.toEqual({ correlationId, runId, source: "workflow-run-inventory" });
+    expect(request).toHaveBeenCalledOnce();
   });
 
   it("binds representative E2E selectors to fixed workflow evidence names (#10791)", () => {
