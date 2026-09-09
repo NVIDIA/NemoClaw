@@ -11,7 +11,7 @@ import {
   getDashboardForwardPort,
   getDashboardForwardTarget,
   getDashboardGuidanceLines,
-  getWslHostAddress,
+  resolveDashboardPlatformHints,
 } from "./dashboard-access";
 
 describe("dashboard access helpers", () => {
@@ -30,11 +30,17 @@ describe("dashboard access helpers", () => {
     );
   });
 
-  it("detects a WSL host address only when WSL is active", () => {
+  it("resolves a WSL host address only when WSL is active", () => {
     const runCapture = vi.fn(() => "172.22.1.1 10.0.0.2\n");
 
-    expect(getWslHostAddress({ isWsl: true, runCapture })).toBe("172.22.1.1");
-    expect(getWslHostAddress({ isWsl: false, runCapture })).toBeNull();
+    expect(resolveDashboardPlatformHints({ isWsl: true, runCapture })).toMatchObject({
+      isWsl: true,
+      wslHostAddress: "172.22.1.1",
+    });
+    expect(resolveDashboardPlatformHints({ isWsl: false, runCapture })).toMatchObject({
+      isWsl: false,
+      wslHostAddress: null,
+    });
   });
 
   it("builds dashboard access entries including a WSL URL", () => {

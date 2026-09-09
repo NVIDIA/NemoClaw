@@ -169,9 +169,6 @@ export interface OnboardDashboardHelpers {
     chatUiUrl?: string,
     options?: Parameters<typeof dashboardAccess.getDashboardForwardTarget>[1],
   ): string;
-  getWslHostAddress(
-    options?: Parameters<typeof dashboardAccess.getWslHostAddress>[0],
-  ): string | null;
   printDashboard(
     sandboxName: string,
     model: string,
@@ -304,15 +301,6 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     options: Parameters<typeof dashboardAccess.getDashboardForwardTarget>[1] = {},
   ): string {
     return dashboardAccess.getDashboardForwardTarget(chatUiUrl, {
-      ...options,
-      runCapture: options.runCapture || runCapture,
-    });
-  }
-
-  function getWslHostAddress(
-    options: Parameters<typeof dashboardAccess.getWslHostAddress>[0] = {},
-  ): string | null {
-    return dashboardAccess.getWslHostAddress({
       ...options,
       runCapture: options.runCapture || runCapture,
     });
@@ -827,7 +815,6 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     fetchAgentWebAuthTokenFromSandbox,
     getDashboardForwardPort,
     getDashboardForwardTarget,
-    getWslHostAddress,
     printDashboard,
     stopAllDashboardForwards,
   };
