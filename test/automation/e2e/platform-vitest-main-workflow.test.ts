@@ -89,6 +89,10 @@ describe("platform evidence workflow", () => {
       (entry) => entry.name === "Start the WSL container runtime",
     );
     const suiteIndex = steps.findIndex((entry) => entry.name === "Run full Vitest suite in WSL");
+    const detectionIndex = steps.findIndex(
+      (entry) => entry.name === "Detect Docker availability in WSL",
+    );
+    const liveIndex = steps.findIndex((entry) => entry.name === "Run WSL live E2E");
     expect(install).toContain("'docker.io'");
     expect(install).toContain("'libc6-dev'");
     expect(install).toContain("'podman'");
@@ -102,7 +106,11 @@ describe("platform evidence workflow", () => {
     expect(runtime).toContain("ip -Version");
     expect(runtimeIndex).toBeGreaterThanOrEqual(0);
     expect(suiteIndex).toBeGreaterThanOrEqual(0);
+    expect(detectionIndex).toBeGreaterThanOrEqual(0);
+    expect(liveIndex).toBeGreaterThanOrEqual(0);
     expect(runtimeIndex).toBeGreaterThan(suiteIndex);
+    expect(detectionIndex).toBeGreaterThan(runtimeIndex);
+    expect(liveIndex).toBeGreaterThan(detectionIndex);
   });
 
   it("uses one native WSL npm cache for installation and package-contract tests", () => {
