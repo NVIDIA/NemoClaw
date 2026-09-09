@@ -7,6 +7,7 @@ import systemReadinessSchema from "../../../schemas/system-readiness.schema.json
 import type { GpuDetection, NvidiaPlatform } from "../inference/nim";
 import type { HostAssessment } from "../onboard/preflight";
 import { collectHostObservations, createHostReadinessReport, projectHostReadiness } from "./host";
+import type { PlatformIdentity } from "./platform-qualification";
 
 const { detectGpu, detectNvidiaDriverVersion, detectNvidiaPlatform } = vi.hoisted(() => ({
   detectGpu: vi.fn<(_deps?: unknown) => GpuDetection | null>(() => null),
@@ -26,7 +27,7 @@ const ajv = new Ajv2020({ allErrors: true, strict: true });
 ajv.addFormat("date-time", { type: "string", validate: () => true });
 const validateReport = ajv.compile(systemReadinessSchema as AnySchema);
 
-function emptyPlatformIdentity() {
+function emptyPlatformIdentity(): PlatformIdentity {
   return {
     productName: null,
     nvidiaPlatform: null,
@@ -126,6 +127,54 @@ describe("host readiness projection (#7408)", () => {
         now: () => NOW,
       }).mutated,
     ).toBe(false);
+  });
+
+  it("reports the qualified Linux distribution and release (#11026)", () => {
+    const result = report(
+      {},
+      {
+        platformIdentity: {
+          ...emptyPlatformIdentity(),
+          osId: "ubuntu",
+          osVersionId: "24.04",
+          osPrettyName: "Ubuntu 24.04.4 LTS",
+        },
+      },
+    );
+
+    expect(result.observations).toEqual(
+      expect.arrayContaining([
+        { id: "host.os.distribution", state: "present", value: "ubuntu" },
+        { id: "host.os.version", state: "present", value: "24.04" },
+        { id: "host.os.pretty_name", state: "present", value: "Ubuntu 24.04.4 LTS" },
+      ]),
+    );
+    expect(findingIds(result)).not.toContain("host.os.release_unqualified");
+    expect(findingIds(result)).not.toContain("host.os.release_inconclusive");
+  });
+
+  it.each([
+    ["debian", "12"],
+    ["ubuntu", "22.04"],
+  ])("warns when Linux %s %s is outside the qualified release boundary (#11026)", (osId, osVersionId) => {
+    const result = report(
+      {},
+      { platformIdentity: { ...emptyPlatformIdentity(), osId, osVersionId } },
+    );
+
+    expect(result.status).toBe("supported");
+    expect(result.exitCode).toBe(0);
+    expect(result.findings).toContainEqual(
+      expect.objectContaining({ id: "host.os.release_unqualified", severity: "warning" }),
+    );
+  });
+
+  it("warns when Linux release evidence is unavailable (#11026)", () => {
+    const result = report();
+
+    expect(result.findings).toContainEqual(
+      expect.objectContaining({ id: "host.os.release_inconclusive", severity: "warning" }),
+    );
   });
 
   it.each([

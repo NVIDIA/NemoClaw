@@ -318,6 +318,13 @@ export function collectPlatformIdentity(
     ? options.n1xWslProductObservation
     : collectN1xWslProduct(options);
   const wslIdentity = options.isWsl ? { n1xWslProduct } : {};
+  const osRelease = readOptional(readFile, options.osReleasePath ?? "/etc/os-release");
+  const { osId, osVersionId, osPrettyName } = osRelease ? parseOsRelease(osRelease) : {};
+  const osIdentity = {
+    ...(osId === undefined ? {} : { osId }),
+    ...(osVersionId === undefined ? {} : { osVersionId }),
+    ...(osPrettyName === undefined ? {} : { osPrettyName }),
+  };
   if (firmwareIdentity.platformIdentityConflict) {
     return {
       productName,
@@ -326,6 +333,7 @@ export function collectPlatformIdentity(
       ...(deviceTreeModel === undefined ? {} : { deviceTreeModel }),
       platformIdentityConflict: true,
       ...wslIdentity,
+      ...osIdentity,
     };
   }
   let nvidiaPlatform: NvidiaPlatform | undefined = firmwareIdentity.nvidiaPlatform;
@@ -347,15 +355,15 @@ export function collectPlatformIdentity(
         nvidiaPlatform,
         productName,
         ...wslIdentity,
+        ...osIdentity,
         n1xCandidate: true,
         n1xFastOsMarker: n1xIdentity.fastOsMarker,
         n1xPciGpu: n1xIdentity.pciGpu,
       };
     }
   }
-  if (nvidiaPlatform !== "station") return { nvidiaPlatform, productName, ...wslIdentity };
-  const osRelease = readOptional(readFile, options.osReleasePath ?? "/etc/os-release");
-  const { osId, osVersionId, osPrettyName } = osRelease ? parseOsRelease(osRelease) : {};
+  if (nvidiaPlatform !== "station")
+    return { nvidiaPlatform, productName, ...wslIdentity, ...osIdentity };
   const stationCpuCoreCount = parseCpuPossibleCount(
     readOptional(
       readFile,
@@ -414,9 +422,7 @@ export function collectPlatformIdentity(
       readdir,
       options.pciDevicesPath ?? "/sys/bus/pci/devices",
     ),
-    osId,
-    osVersionId,
-    ...(osPrettyName === undefined ? {} : { osPrettyName }),
+    ...osIdentity,
   };
 }
 
