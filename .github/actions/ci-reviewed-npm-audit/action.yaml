@@ -18,10 +18,6 @@ inputs:
     description: Whether this trusted caller may publish reusable audit records.
     required: false
     default: "false"
-  locked-graph:
-    description: Optional configured locked graph to audit instead of every reviewed graph.
-    required: false
-    default: ""
 
 runs:
   using: composite
@@ -36,7 +32,6 @@ runs:
       shell: bash
       env:
         NEMOCLAW_REVIEWED_NPM_AUDIT_CACHE_DIRECTORY: ${{ inputs.cache-directory }}
-        NEMOCLAW_REVIEWED_NPM_AUDIT_LOCKED_GRAPH: ${{ inputs.locked-graph }}
         NEMOCLAW_REVIEWED_NPM_AUDIT_TARGET_ROOT: ${{ inputs.target-root }}
       run: |
         set -euo pipefail
@@ -57,39 +52,15 @@ runs:
         const { resolvePathWithinRoot } = await import(pathToFileURL(resolverFile).href);
         const configSource = readFileSync(configFile, "utf8");
         const config = JSON.parse(configSource);
-        const selectedGraphId = process.env.NEMOCLAW_REVIEWED_NPM_AUDIT_LOCKED_GRAPH ?? "";
         if (!/^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/.test(config.npmVersion) || /[\r\n]/.test(config.npmVersion)) {
           throw new Error("reviewed npm audit configuration has an invalid npmVersion");
         }
         if (!/^sha512-[A-Za-z0-9+/]+={0,2}$/.test(config.npmIntegrity) || /[\r\n]/.test(config.npmIntegrity)) {
           throw new Error("reviewed npm audit configuration has an invalid npmIntegrity");
         }
-        if (!Array.isArray(config.lockedGraphs)) {
-          throw new Error("reviewed npm audit configuration has invalid lockedGraphs");
-        }
-        const selectedGraph = selectedGraphId
-          ? config.lockedGraphs.find((graph) => graph.id === selectedGraphId)
-          : undefined;
-        if (selectedGraphId && !selectedGraph) {
-          throw new Error("reviewed npm audit locked graph is not configured");
-        }
-        const directories = selectedGraph
-          ? [selectedGraph.directory]
-          : ["", ...config.lockedGraphs.map((graph) => graph.directory)].sort();
-        const configIdentity = selectedGraph
-          ? JSON.stringify({
-              exceptionFile: config.exceptionFile,
-              lockedGraph: selectedGraph,
-              nodeVersion: config.nodeVersion,
-              npmIntegrity: config.npmIntegrity,
-              npmVersion: config.npmVersion,
-              registryOrigin: config.registryOrigin,
-              schemaVersion: config.schemaVersion,
-              severityThreshold: config.severityThreshold,
-            })
-          : configSource;
+        const directories = ["", ...config.lockedGraphs.map((graph) => graph.directory)].sort();
         const hash = createHash("sha256");
-        hash.update(configIdentity);
+        hash.update(configSource);
         hash.update(JSON.stringify({ argv: ["audit", "--registry=https://registry.yarnpkg.com", "--omit=dev", "--json"], npmVersion: config.npmVersion, registry: "https://registry.yarnpkg.com/", schemaVersion: 1 }));
         for (const directory of directories) {
           for (const file of ["package.json", "package-lock.json"]) {
@@ -130,7 +101,6 @@ runs:
     - name: Materialize and audit reviewed npm graphs
       shell: bash
       env:
-        NEMOCLAW_REVIEWED_NPM_AUDIT_LOCKED_GRAPH: ${{ inputs.locked-graph }}
         NEMOCLAW_REVIEWED_NPM_AUDIT_TARGET_ROOT: ${{ inputs.target-root }}
         NEMOCLAW_REVIEWED_NPM_AUDIT_REPORT_DIR: ${{ inputs.report-dir }}
         NEMOCLAW_REVIEWED_NPM_AUDIT_CACHE_DIR: ${{ inputs.cache-directory }}

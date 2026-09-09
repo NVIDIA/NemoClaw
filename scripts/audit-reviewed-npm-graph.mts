@@ -73,16 +73,6 @@ type ReviewedAuditReport = Readonly<{
   threshold?: Severity;
 }>;
 
-export function selectLockedGraph(
-  config: Readonly<{ lockedGraphs: readonly LockedGraph[] }>,
-  graphId: string | undefined,
-): Readonly<{ graph: LockedGraph; index: number }> | undefined {
-  if (!graphId) return undefined;
-  const index = config.lockedGraphs.findIndex((graph) => graph.id === graphId);
-  if (index < 0) throw new Error("reviewed npm audit locked graph is not configured");
-  return { graph: config.lockedGraphs[index]!, index };
-}
-
 const TRUSTED_REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const TARGET_REPO_ROOT = fs.realpathSync(
   path.resolve(process.env.NEMOCLAW_REVIEWED_NPM_AUDIT_TARGET_ROOT ?? TRUSTED_REPO_ROOT),
@@ -910,10 +900,6 @@ export function assertReviewedAuditReportsPass(
 
 function main(): void {
   const config = readConfig();
-  const selectedLockedGraph = selectLockedGraph(
-    config,
-    process.env.NEMOCLAW_REVIEWED_NPM_AUDIT_LOCKED_GRAPH,
-  );
   const expectedNode = `v${config.nodeVersion}`;
   if (process.version !== expectedNode) {
     throw new Error(`reviewed npm audit requires Node ${expectedNode}; running ${process.version}`);
@@ -942,43 +928,6 @@ function main(): void {
   }
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-npm-audit-"));
   try {
-    if (selectedLockedGraph) {
-      const { graph, index } = selectedLockedGraph;
-      const result = auditLockedGraph(
-        graph,
-        index,
-        config,
-        tempRoot,
-        exceptionFile,
-        artifactDirectory,
-        npmVersion,
-      );
-      assertReviewedAuditReportsPass(
-        [{ label: graph.label, threshold: graph.severityThreshold, result }],
-        config.severityThreshold,
-      );
-      emitAuditReceipt({
-        artifactDirectory,
-        graphId: graph.id,
-        npmVersion,
-        packageJsonFile: targetRepositoryPath(
-          path.join(graph.directory, "package.json"),
-          `${graph.label} package manifest`,
-        ),
-        packageLockFile: targetRepositoryPath(
-          path.join(graph.directory, "package-lock.json"),
-          `${graph.label} lockfile`,
-        ),
-        rawReportFile: path.join(
-          artifactDirectory,
-          `locked-graph-${index + 1}.json`,
-        ),
-        registryOrigin: NPM_AUDIT_REGISTRY,
-        result,
-        threshold: graph.severityThreshold ?? config.severityThreshold,
-      });
-      return;
-    }
     const sourceResult = auditSourceGraph(
       config,
       tempRoot,

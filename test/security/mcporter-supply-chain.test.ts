@@ -239,7 +239,7 @@ describe("mcporter image supply-chain controls", () => {
     expect(contents).toContain("StreamableHTTPServerTransport");
   });
 
-  it("copies the cached base-image audit report only after receipt verification succeeds", () => {
+    it("copies the cached base-image audit report only after receipt verification succeeds", () => {
     const contents = fs.readFileSync(path.join(repoRoot, "Dockerfile.base"), "utf8");
     const flattenedContents = contents.replace(/\\\s*\n/g, " ").replace(/\s+/g, " ");
 

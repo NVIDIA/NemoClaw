@@ -94,7 +94,6 @@ describe("complete managed-image publication workflow", () => {
     );
     expect(action.inputs).toMatchObject({
       "cache-directory": { required: true },
-      "locked-graph": { default: "", required: false },
       "trusted-cache-write": { default: "false", required: false },
     });
     expect(restores).toHaveLength(2);
@@ -130,7 +129,6 @@ describe("complete managed-image publication workflow", () => {
       ).env,
     ).toMatchObject({
       NEMOCLAW_REVIEWED_NPM_AUDIT_CACHE_DIR: "${{ inputs.cache-directory }}",
-      NEMOCLAW_REVIEWED_NPM_AUDIT_LOCKED_GRAPH: "${{ inputs.locked-graph }}",
       NPM_CONFIG_USERCONFIG: "/dev/null",
     });
 
