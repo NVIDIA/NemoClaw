@@ -229,6 +229,27 @@ describe("base-image publication workflow boundary (#7372)", () => {
           "node unreviewed.mts"),
     ],
     [
+      "PR base publication run binding",
+      (value) =>
+        (gateStep(value, "Select base and optional managed-image publication").env![
+          "BASE_IMAGE_PUBLICATION_RUN_ID"
+        ] = "${{ github.run_id }}"),
+    ],
+    [
+      "PR base publication controller binding",
+      (value) =>
+        (gateStep(value, "Select base and optional managed-image publication").env![
+          "WORKFLOW_SHA"
+        ] = "${{ inputs.checkout_sha }}"),
+    ],
+    [
+      "PR base publication catalog requirement",
+      (value) => {
+        const step = gateStep(value, "Select base and optional managed-image publication");
+        step.run = step.run!.replace('[[ "$REQUIRE_MANAGED_IMAGE_PUBLICATION" == "0" ]]', "true");
+      },
+    ],
+    [
       "contract run binding",
       (value) =>
         (gateStep(value, "Download immutable Deep Agents Code base contract").env![
