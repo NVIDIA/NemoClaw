@@ -79,6 +79,15 @@ export type DcodeReplacementPreflightInput = {
   toolDisclosure: ToolDisclosure;
   dcodeAutoApprovalMode: DcodeAutoApprovalMode;
   skipLiveRoute: boolean;
+  /**
+   * When the sandbox is live but in a terminal phase (e.g. `Error`), its
+   * container cannot run the in-sandbox inference invocation probe. Rebuild is
+   * about to destroy+recreate it, so a probe that is unavailable because the
+   * container is unresponsive must not block recovery. This degrades only the
+   * probe-unavailable case; a probe that reaches the route and gets a genuine
+   * rejection still fails (#11165).
+   */
+  degradeUnavailableRoute?: boolean;
   /** Authoritative persisted gateway port carried by the rebuild target. */
   gatewayPort?: number;
   log(message: string): void;
@@ -201,6 +210,8 @@ function requireInferenceRoute(
   target: ResolvedDcodeRebuildTarget,
   bail: DcodeRebuildPreflightBail,
   runtimeSelection?: OpenShellRuntimeSelection,
+  degradeUnavailableRoute = false,
+  log?: (message: string) => void,
 ): void {
   const result = probeSandboxInferenceInvocation({
     sandboxName,
@@ -208,13 +219,24 @@ function requireInferenceRoute(
     ...target,
     ...(runtimeSelection ? { runtimeSelection } : {}),
   });
-  if (!result.ok) {
-    fail(
-      `recorded inference credentials or route were rejected: ${result.detail}`,
-      bail,
-      "Recorded inference route smoke check failed",
+  if (result.ok) return;
+  // A live-but-unresponsive container (terminal phase) cannot run the in-sandbox
+  // probe. Because rebuild will replace that container, an unavailable probe
+  // there is not a route rejection and must not block recovery. The route
+  // metadata was already validated by resolveDcodeRebuildTarget. Only the live
+  // in-sandbox smoke check is degraded; a probe that reached the route and was
+  // rejected (httpStatus set / invalid body) still fails. See #11165.
+  if (degradeUnavailableRoute && result.unavailable === true) {
+    log?.(
+      `Degrading the in-sandbox inference route smoke check for '${sandboxName}': ${result.detail} (sandbox is in a terminal phase; rebuild will recreate the container)`,
     );
+    return;
   }
+  fail(
+    `recorded inference credentials or route were rejected: ${result.detail}`,
+    bail,
+    "Recorded inference route smoke check failed",
+  );
 }
 
 function loadMatchingDcodeSession(
@@ -497,6 +519,7 @@ export async function prepareDcodeReplacementBeforeMutation(
     resumeConfig,
     webSearchConfig,
     skipLiveRoute,
+    degradeUnavailableRoute = false,
     gatewayPort,
     log,
     bail,
@@ -515,7 +538,15 @@ export async function prepareDcodeReplacementBeforeMutation(
 
     const session = loadMatchingDcodeSession(sandboxName);
     const target = resolveTarget(entry, resumeConfig, bail, gatewayPort);
-    if (!skipLiveRoute) requireInferenceRoute(sandboxName, target, bail, runtimeSelection);
+    if (!skipLiveRoute)
+      requireInferenceRoute(
+        sandboxName,
+        target,
+        bail,
+        runtimeSelection,
+        degradeUnavailableRoute,
+        log,
+      );
 
     pinnedBase = resolvePinnedDcodeBaseImage(bail, input.baseImageOptions);
     const sandboxGpuConfig = getRecordedGpuConfig(sandboxName, entry, session);
@@ -552,7 +583,15 @@ export async function prepareDcodeReplacementBeforeMutation(
       return null;
     }
     if (!input.checkGatewaySchema(runtimeSelection)) return null;
-    if (!skipLiveRoute) requireInferenceRoute(sandboxName, target, bail, runtimeSelection);
+    if (!skipLiveRoute)
+      requireInferenceRoute(
+        sandboxName,
+        target,
+        bail,
+        runtimeSelection,
+        degradeUnavailableRoute,
+        log,
+      );
     requireCurrentTarget(sandboxName, entry, target, resumeConfig, bail, gatewayPort);
     if (!verifyPreparedDcodeRebuildImage(buildContext) || !pinnedBase.verify()) {
       fail("the prepared DCode replacement inputs changed during preflight", bail);
@@ -584,6 +623,7 @@ export async function revalidateDcodeReplacementAtMutationEdge(
     entry,
     resumeConfig,
     skipLiveRoute,
+    degradeUnavailableRoute = false,
     gatewayPort,
     log,
     bail,
@@ -612,7 +652,15 @@ export async function revalidateDcodeReplacementAtMutationEdge(
     return false;
   }
   if (!input.checkGatewaySchema(runtimeSelection)) return false;
-  if (!skipLiveRoute) requireInferenceRoute(sandboxName, target, bail, runtimeSelection);
+  if (!skipLiveRoute)
+    requireInferenceRoute(
+      sandboxName,
+      target,
+      bail,
+      runtimeSelection,
+      degradeUnavailableRoute,
+      log,
+    );
   requireCurrentTarget(sandboxName, entry, target, resumeConfig, bail, gatewayPort);
   if (!replacement.verify()) {
     fail("the prepared DCode replacement inputs changed before deletion", bail);
@@ -633,6 +681,7 @@ export async function revalidateManagedDcodeWorkloadAtMutationEdge(
     entry,
     resumeConfig,
     skipLiveRoute,
+    degradeUnavailableRoute = false,
     gatewayPort,
     log,
     bail,
@@ -651,7 +700,15 @@ export async function revalidateManagedDcodeWorkloadAtMutationEdge(
     return false;
   }
   if (!input.checkGatewaySchema(runtimeSelection)) return false;
-  if (!skipLiveRoute) requireInferenceRoute(sandboxName, target, bail, runtimeSelection);
+  if (!skipLiveRoute)
+    requireInferenceRoute(
+      sandboxName,
+      target,
+      bail,
+      runtimeSelection,
+      degradeUnavailableRoute,
+      log,
+    );
   requireCurrentTarget(sandboxName, entry, target, resumeConfig, bail, gatewayPort);
   return true;
 }

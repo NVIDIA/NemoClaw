@@ -44,6 +44,12 @@ export interface RebuildBackupPhaseInput {
   gatewayPort: number;
   sandboxEntry: RebuildSandboxEntry;
   staleRecovery: boolean;
+  /**
+   * The sandbox is live but in a terminal phase; its container cannot serve
+   * the SSH backup transport. Rebuild degrades to a no-backup destroy+recreate
+   * when the live state is unreachable (#11165).
+   */
+  terminalPhase: boolean;
   preparedRecoveryManifest: RebuildBackupManifest;
   recoveryTransactionId?: string;
   messagingPlan: SandboxMessagingPlan | null;
@@ -161,6 +167,7 @@ export async function runRebuildBackupPhase(
       input.staleRecovery,
       input.log,
       input.bail,
+      input.terminalPhase,
     ));
   if (backupManifest === undefined) return null;
   if (

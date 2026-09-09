@@ -151,6 +151,81 @@ describe("rebuildSandbox DCode flow: preflight", () => {
     expect(harness.disposePreparedDcodeRebuildImageSpy).not.toHaveBeenCalled();
     expectNoDcodeMutation(harness);
   });
+  it("degrades an unavailable in-sandbox probe on a terminal-phase sandbox and rebuilds (#11165)", async () => {
+    const harness = createRebuildFlowHarness({
+      agentName: "langchain-deepagents-code",
+      sandboxEntry: makeDcodeSandboxEntry(),
+      // Live but in a terminal phase: the container is unresponsive, so the
+      // in-sandbox probe can never run. Rebuild must degrade and proceed.
+      sandboxInventory: { sandboxes: [{ name: "alpha", phase: "Error", readiness: "terminal" }] },
+    });
+    // Every route gate (early, late, revalidate, delete-edge) sees the
+    // container-unresponsive probe result. Rebuild must still reach recreate.
+    harness.preflightDcodeRouteSpy.mockReturnValue({
+      ok: false,
+      detail: "sandbox inference invocation probe was unavailable",
+      httpStatus: null,
+      unavailable: true,
+    });
+    configureDcodeSession(harness);
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.prepareManagedDcodeRebuildImageSpy).toHaveBeenCalled();
+    expect(harness.onboardSpy).toHaveBeenCalled();
+  });
+  it("still rejects a reachable-but-rejected route on a terminal-phase sandbox (#11165)", async () => {
+    const harness = createRebuildFlowHarness({
+      agentName: "langchain-deepagents-code",
+      sandboxEntry: makeDcodeSandboxEntry(),
+      sandboxInventory: { sandboxes: [{ name: "alpha", phase: "Error", readiness: "terminal" }] },
+      // A probe that reached the route and was rejected (HTTP status set, not
+      // "unavailable") must still fail even on a terminal-phase sandbox: the
+      // degrade covers only an unresponsive container, not an invalid route.
+      dcodeRouteResults: [
+        {
+          ok: false,
+          detail: "sandbox inference invocation probe returned HTTP 401",
+          httpStatus: 401,
+        },
+      ],
+    });
+    configureDcodeSession(harness);
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("Recorded inference route smoke check failed");
+
+    expect(harness.prepareManagedDcodeRebuildImageSpy).not.toHaveBeenCalled();
+    expectNoDcodeMutation(harness);
+  });
+  it("does not degrade an unavailable probe for a healthy Ready sandbox (#11165)", async () => {
+    const harness = createRebuildFlowHarness({
+      agentName: "langchain-deepagents-code",
+      sandboxEntry: makeDcodeSandboxEntry(),
+      // Default inventory is Ready (not terminal). A transient probe-unavailable
+      // result on a healthy sandbox must NOT be degraded — the route check still
+      // fails closed. Protects the "do not weaken healthy sandbox" non-goal.
+      dcodeRouteResults: [
+        {
+          ok: false,
+          detail: "sandbox inference invocation probe was unavailable",
+          httpStatus: null,
+          unavailable: true,
+        },
+      ],
+    });
+    configureDcodeSession(harness);
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("Recorded inference route smoke check failed");
+
+    expect(harness.prepareManagedDcodeRebuildImageSpy).not.toHaveBeenCalled();
+    expectNoDcodeMutation(harness);
+  });
   it("keeps DCode intact when its recorded gateway cannot become healthy (#6195)", async () => {
     const restoreEnv = snapshotEnv(["OPENSHELL_GATEWAY"]);
     process.env.OPENSHELL_GATEWAY = "previous-gateway";
