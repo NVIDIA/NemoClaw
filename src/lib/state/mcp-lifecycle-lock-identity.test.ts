@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import childProcess from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -13,6 +14,7 @@ import {
   isMcpLifecycleLockOwner,
   readMcpLockHostIdentity,
   readMcpLockPidNamespaceIdentity,
+  readMcpLockStableHostIdentity,
   type LockObservation,
   type McpLifecycleLockIdentityProbes,
   type McpLifecycleLockOwner,
@@ -95,6 +97,30 @@ function probes(
 }
 
 describe("MCP lifecycle lock identity properties", () => {
+  it("does not substitute a hostname when stable Linux host identity is unavailable", () => {
+    const platform = vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    const readFileSync = vi.spyOn(fs, "readFileSync").mockImplementation(() => {
+      throw Object.assign(new Error("machine identity unavailable"), { code: "ENOENT" });
+    });
+
+    try {
+      expect(readMcpLockStableHostIdentity()).toBeNull();
+    } finally {
+      readFileSync.mockRestore();
+      platform.mockRestore();
+    }
+  });
+
+  it("uses the macOS platform UUID as the stable host identity", () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    vi.spyOn(childProcess, "spawnSync").mockReturnValue({
+      status: 0,
+      stdout: '\"IOPlatformUUID\" = \"stable-platform-uuid\"\n',
+    } as ReturnType<typeof childProcess.spawnSync>);
+
+    expect(readMcpLockStableHostIdentity()).toBe("darwin:stable-platform-uuid");
+  });
+
   it("reclaims a zombie local owner without treating its PID as live", () => {
     const localHostIdentity = readMcpLockHostIdentity();
     const localPidNamespaceIdentity = readMcpLockPidNamespaceIdentity();

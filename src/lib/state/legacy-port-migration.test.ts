@@ -537,6 +537,48 @@ describe("legacy non-default gateway state migration", () => {
     expect(fs.existsSync(path.join(selected, "onboard-session.json"))).toBe(true);
   });
 
+  it("migrates past a persisted departed owner through the real lock observer", async () => {
+    const actualLockObservation = await vi.importActual<
+      typeof import("./onboard-session/lock-observation")
+    >("./onboard-session/lock-observation");
+    inspectOnboardLock.mockImplementation((lockPath: string) =>
+      actualLockObservation.inspectOnboardLock(lockPath),
+    );
+    const hostIdentity = actualLockObservation.systemOnboardLockEvidence.hostIdentity();
+    const pidNamespaceIdentity =
+      actualLockObservation.systemOnboardLockEvidence.pidNamespaceIdentity();
+    expect(hostIdentity).not.toBeNull();
+    expect(pidNamespaceIdentity).not.toBeNull();
+
+    const home = makeHome();
+    const shared = path.join(home, ".nemoclaw");
+    const selected = path.join(shared, "gateways", "9123");
+    const lock = path.join(shared, "onboard.lock");
+    writeJson(path.join(shared, "sandboxes.json"), {
+      defaultSandbox: "port-box",
+      sandboxes: {
+        "port-box": { name: "port-box", gatewayName: "nemoclaw-9123", gatewayPort: 9123 },
+      },
+    });
+    writeJson(path.join(shared, "onboard-session.json"), {
+      sandboxName: "port-box",
+      metadata: { gatewayName: "nemoclaw-9123" },
+    });
+    const lockBefore = JSON.stringify({
+      pid: 2_147_483_647,
+      startedAt: "2026-09-09T00:00:00.000Z",
+      command: "departed nemoclaw onboard",
+      processGeneration: "departed-process-generation",
+      hostIdentity: hostIdentity as string,
+      pidNamespaceIdentity: pidNamespaceIdentity as string,
+    });
+    fs.writeFileSync(lock, lockBefore, { mode: 0o600 });
+
+    expect(migrateLegacyPortState({ home, gatewayPort: 9123 }).migratedSession).toBe(true);
+    expect(fs.readFileSync(lock, "utf8")).toBe(lockBefore);
+    expect(fs.existsSync(path.join(selected, "onboard-session.json"))).toBe(true);
+  });
+
   it("refuses an onboarding lock below a symbolic-link state root", () => {
     const home = makeHome();
     const shared = path.join(home, ".nemoclaw");

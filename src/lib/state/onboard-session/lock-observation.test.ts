@@ -82,9 +82,15 @@ describe("onboarding lock observation", () => {
   );
 
   it("creates complete owner evidence on a host without Linux PID namespaces", () => {
+    const evidence: OnboardLockEvidence = {
+      hostIdentity: () => "darwin:stable-platform-uuid",
+      pidNamespaceIdentity: systemOnboardLockEvidence.pidNamespaceIdentity,
+      processGeneration: () => "darwin:process-start",
+      processAlive: systemOnboardLockEvidence.processAlive,
+    };
     vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
 
-    expect(createOnboardLockOwner("nemoclaw onboard", systemOnboardLockEvidence)).toMatchObject({
+    expect(createOnboardLockOwner("nemoclaw onboard", evidence)).toMatchObject({
       pid: process.pid,
       processGeneration: expect.stringMatching(/^darwin:/u),
       hostIdentity: expect.stringMatching(/^darwin:/u),
@@ -253,5 +259,20 @@ describe("onboarding lock observation", () => {
     });
     expect(result).toMatchObject({ kind: "busy", reason: "foreign" });
     expect(probed).toBe(false);
+  });
+
+  it("does not consult the local PID table without stable local host identity", () => {
+    const { evidence, lock, owner } = fixture();
+    writeOwner(lock, owner);
+    const processAlive = vi.fn(() => false);
+
+    expect(
+      observeOnboardLock(lock, {
+        ...evidence,
+        hostIdentity: () => null,
+        processAlive,
+      }),
+    ).toEqual({ kind: "busy", reason: "unverified", owner });
+    expect(processAlive).not.toHaveBeenCalled();
   });
 });

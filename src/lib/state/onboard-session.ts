@@ -1495,19 +1495,27 @@ export function acquireOnboardLock(
     // Atomic create succeeded — write the payload and keep the fd open
     // for the lifetime of the lock so releaseOnboardLock() can verify
     // ownership via the live descriptor.
+    let createdInode: bigint | null = null;
     try {
-      fs.writeSync(fd, payload);
+      createdInode = fs.fstatSync(fd, { bigint: true }).ino;
+      const bytes = Buffer.from(payload);
+      let offset = 0;
+      while (offset < bytes.length) {
+        const written = fs.writeSync(fd, bytes, offset, bytes.length - offset, offset);
+        if (written <= 0) {
+          throw new Error(
+            "Could not publish the onboarding lock because the write made no progress.",
+          );
+        }
+        offset += written;
+      }
     } catch (writeError) {
       try {
         fs.closeSync(fd);
       } catch {
         /* ignore */
       }
-      try {
-        fs.unlinkSync(LOCK_FILE);
-      } catch {
-        /* ignore */
-      }
+      unlinkIfInodeMatches(LOCK_FILE, createdInode);
       throw writeError;
     }
     heldLockFd = fd;
@@ -1619,19 +1627,9 @@ export function releaseOnboardLock(): void {
     return;
   }
 
-  // Fallback (no fd held — e.g., a test wrote the lock file directly,
-  // or a previous release already ran): preserve the legacy pid-based
-  // behavior so we never unlink a malformed lock and never unlink a
-  // lock owned by another pid.
-  try {
-    const snapshot = inspectOnboardLock(LOCK_FILE).snapshot;
-    if (!snapshot) return;
-    const info = parseLockFile(snapshot.contents);
-    if (!info || info.pid !== process.pid) return;
-    unlinkIfInodeMatches(LOCK_FILE, snapshot.inode);
-  } catch {
-    return;
-  }
+  // Without the live descriptor retained by a successful acquisition there
+  // is no release authority. A PID match alone is not sufficient across hosts
+  // or PID namespaces that share a state root.
 }
 
 // ── Step management ──────────────────────────────────────────────

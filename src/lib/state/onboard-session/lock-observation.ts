@@ -4,9 +4,9 @@
 import fs from "node:fs";
 
 import {
-  readMcpLockHostIdentity,
   readMcpLockPidNamespaceIdentity,
   readMcpLockProcessIdentity,
+  readMcpLockStableHostIdentity,
 } from "../mcp-lifecycle-lock-identity";
 
 const MAX_LOCK_BYTES = 64 * 1024;
@@ -68,7 +68,7 @@ function defaultProcessAlive(pid: number): boolean {
 }
 
 export const systemOnboardLockEvidence: OnboardLockEvidence = {
-  hostIdentity: readMcpLockHostIdentity,
+  hostIdentity: readMcpLockStableHostIdentity,
   pidNamespaceIdentity: () =>
     readMcpLockPidNamespaceIdentity() ??
     (process.platform === "linux" ? null : `${process.platform}:host-pid-namespace`),
