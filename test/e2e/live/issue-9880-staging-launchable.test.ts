@@ -19,7 +19,7 @@ test(
         "resolve the latest staging handoff",
         "create the staging workspace",
         "prove remote execution readiness",
-        "record the control-plane checkpoint",
+        "record remote execution readiness",
       ],
     },
   },
@@ -37,8 +37,8 @@ test(
     progress.phase("prove remote execution readiness");
     await brevLaunchable.waitForExec(ownership);
 
-    progress.phase("record the control-plane checkpoint");
-    await artifacts.writeJson("staging-launchable-control-plane-checkpoint.json", {
+    progress.phase("record remote execution readiness");
+    await artifacts.writeJson("staging-launchable-remote-execution-readiness.json", {
       bootImage: handoff.bootImage,
       candidateSha: handoff.nemoclawSha,
       imageRepositorySha: handoff.imageRepositorySha,
