@@ -15,7 +15,13 @@ import {
 
 const DOCKERFILE = path.join(import.meta.dirname, "..", "..", "Dockerfile");
 const DOCKERFILE_BASE = path.join(import.meta.dirname, "..", "..", "Dockerfile.base");
-const BLUEPRINT = path.join(import.meta.dirname, "..", "..", "nemoclaw-blueprint", "blueprint.yaml");
+const BLUEPRINT = path.join(
+  import.meta.dirname,
+  "..",
+  "..",
+  "nemoclaw-blueprint",
+  "blueprint.yaml",
+);
 const REVIEWED_NPM_AUDIT_HELPER = path.join(
   import.meta.dirname,
   "..",
@@ -399,7 +405,7 @@ describe("fetch-guard patch regression guard", () => {
     expect(current.calls).not.toContain("npm install -g");
     expect(current.calls).not.toContain("npm pack");
 
-    const newer = runOpenClawUpgradeBlock("2026.7.2");
+    const newer = runOpenClawUpgradeBlock("2026.9.2");
     expect(newer.result.status).toBe(1);
     expect(newer.result.stderr).toContain(
       "newer than reviewed target " + CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION,

@@ -106,8 +106,7 @@ function requiredMessagingPluginIntegrity(channel: string): string {
   const agentPackage = createBuiltInChannelManifestRegistry()
     .get(channel)
     ?.agentPackages?.find(
-      (candidate) =>
-        candidate.agent === "openclaw" && candidate.manager === "openclaw-plugin",
+      (candidate) => candidate.agent === "openclaw" && candidate.manager === "openclaw-plugin",
     );
   const integrity =
     agentPackage?.integrity ?? agentPackage?.integrityByVersion?.[PINNED_OPENCLAW_VERSION];
@@ -806,10 +805,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         expect(calls).toMatch(
           /openclaw plugins install npm-pack:\S*\/diagnostics-otel-2026\.9\.1\.tgz\n/,
         );
-        expect(calls).toContain(`remediate --archive`);
-        expect(calls).toContain(
-          `--package-spec @openclaw/diagnostics-otel@${PINNED_OPENCLAW_VERSION}`,
-        );
+        expect(calls).not.toContain(`remediate --archive`);
         expect(calls).toContain(
           `npm view @openclaw/brave-plugin@${PINNED_OPENCLAW_VERSION} dist.integrity`,
         );
@@ -1744,28 +1740,21 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         );
 
         expect(archiveBlock).toContain(
-          "ADD --chmod=0444 --checksum=sha256:a447a223cf4764865570e71e92fb5173bf79a3d8307dd99382eb56ea6aff93f6",
+          "ADD --chmod=0444 --checksum=sha256:df2c7f5f880da6ab13a43d0cf2efdd8f196802db9ebbffb9492cf81d32b15a62",
         );
         expect(archiveBlock).toContain(
-          "ADD --chmod=0444 --checksum=sha256:f5198ea18ea0adebc376c669b8e5e1100781f07ec2d9e24e86c90cb82acb039c",
+          "ADD --chmod=0444 --checksum=sha256:f679af12fa00947d994e6a8454aded205b5bf2454dce0674bff88f741dfb9af8",
         );
-        expect(archiveBlock).toContain(
-          "ADD --chmod=0444 --checksum=sha256:2ed6796c07bb15b8d98ff7ae178b94327d570dcbc9a99a81f3e12ecf938ded61",
-        );
-        expect(archiveBlock).toContain(
-          "ADD --chmod=0444 --checksum=sha256:b1b01eb1522aea8f652cc7b692d1c417195713deb12b348955e3ac8d608fc9ab",
-        );
+        expect(archiveBlock).not.toContain("propagator-jaeger-2.9.0.tgz");
+        expect(archiveBlock).not.toContain("core-2.9.0.tgz");
         expect(installSource).toContain("RUN --network=none");
         expect(installSource).toContain("--mount=from=openclaw-optional-plugin-archives");
         expect(installBlock).toContain(
           "export NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR=/opt/nemoclaw-reviewed-npm-archives",
         );
         expect(installBlock).toContain('actual="sha512-"+crypto.createHash("sha512")');
-        expect(installBlock).toContain(
-          'plugin_work_root="$(mktemp -d /tmp/nemoclaw-openclaw-plugin.XXXXXX)"',
-        );
-        expect(installBlock).toContain('--working-directory "$plugin_work_root"');
-        expect(installBlock).toContain('rm -rf "$plugin_work_root"');
+        expect(installBlock).not.toContain("openclaw-npm-remediation.mts");
+        expect(installBlock).not.toContain("plugin_work_root");
         expect(installBlock).not.toContain('--working-directory "$plugin_source_root"');
         expect(remediation).toContain("NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR");
         expect(remediation).toContain("constants.O_RDONLY | constants.O_NOFOLLOW");

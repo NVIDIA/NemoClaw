@@ -212,11 +212,11 @@ export const discordManifest = {
       spec: "npm:@openclaw/discord@{{openclaw.version}}",
       pin: true,
       integrityByVersion: {
-        "2026.7.1":
-          "sha512-tZfdC1YA8oVLvc2BK1w0F6rUljS5ugCOp2uWe0vPsbG1fbzVVIO4V32RoqZznGHe5u2R9u4n1aV5Z/qa1m2oFg==",
+        "2026.9.1":
+          "sha512-qNmN2a8A9dET4igPp0RML171sEn8PDMyNCYNp/DqcJ4tn3XTHpacSOTkqBmv5yXTycJRC9rfFP8FT/SdW0Rldg==",
       },
       tarballUrlByVersion: {
-        "2026.7.1": "https://registry.npmjs.org/@openclaw/discord/-/discord-2026.7.1.tgz",
+        "2026.9.1": "https://registry.npmjs.org/@openclaw/discord/-/discord-2026.9.1.tgz",
       },
       required: true,
     },

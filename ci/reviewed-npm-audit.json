@@ -11,9 +11,7 @@
     "integrity": "sha512-MFnyX2vs47f/yVJRUXKmA7C6wZDH03ZGFFg+R5gZME+yMQDg9WF6G4Kdz/APM7nCUpaoGk2bwNEdUUmR60J54A==",
     "tarballUrl": "https://npm.pkg.github.com/download/@nvidia/openshell-sdk/0.0.116/3380652847354127ed1bb8010490f8815040ada3"
   },
-  "sourceNestedShrinkwrapPackages": [
-    "@earendil-works/pi-coding-agent@0.80.6"
-  ],
+  "sourceNestedShrinkwrapPackages": ["@earendil-works/pi-coding-agent@0.80.6"],
   "sourceRegistryPackagesWithoutIntegrity": [
     {
       "label": "Pi agent core 0.80.6 nested shrinkwrap entry",
@@ -38,10 +36,10 @@
   "artifactDirectory": "coverage/reviewed-npm-audit",
   "archivePackages": [
     {
-      "label": "OpenClaw 2026.7.1",
-      "packageSpec": "openclaw@2026.7.1",
-      "integrity": "sha512-ge/Xss99CHAjPL/ikmH/UFoiOrjcxDB4sW3y9mhyCD+dYW3wzV7TKbAVdkrXFgAG2d2BjpJofP97zUZ+umxo8g==",
-      "tarballUrl": "https://registry.npmjs.org/openclaw/-/openclaw-2026.7.1.tgz"
+      "label": "OpenClaw 2026.9.1",
+      "packageSpec": "openclaw@2026.9.1",
+      "integrity": "sha512-0Ve0631CdgkJDwd4NNG1BawIdF5yCL2sO+Tts8amStw+H6vKURTj0K4rOa4+hFpJk1Dnw5LyKl5twzwX1VtA2w==",
+      "tarballUrl": "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.1.tgz"
     },
     {
       "label": "Codex ACP 0.11.1",
@@ -50,40 +48,40 @@
       "tarballUrl": "https://registry.npmjs.org/@zed-industries/codex-acp/-/codex-acp-0.11.1.tgz"
     },
     {
-      "label": "OpenClaw diagnostics OTEL 2026.7.1",
-      "packageSpec": "@openclaw/diagnostics-otel@2026.7.1",
-      "integrity": "sha512-XXhMifYWTgoR6yFN4T3JkHxdPvQCe8k1cNZjVIgXNmk1svCdBWuALfQQicmpemlmWwauIQuHYgBURY6k63e+rw==",
-      "tarballUrl": "https://registry.npmjs.org/@openclaw/diagnostics-otel/-/diagnostics-otel-2026.7.1.tgz"
+      "label": "OpenClaw diagnostics OTEL 2026.9.1",
+      "packageSpec": "@openclaw/diagnostics-otel@2026.9.1",
+      "integrity": "sha512-3MWLli9L6HTVdrjqHmwOvNvIr6emsnuNQe4iE2sDqb8E5wn4Vq1rcsz+InL1YFudbStr089ZtS0tNAQ6qU+tnA==",
+      "tarballUrl": "https://registry.npmjs.org/@openclaw/diagnostics-otel/-/diagnostics-otel-2026.9.1.tgz"
     },
     {
-      "label": "OpenClaw Brave plugin 2026.7.1",
-      "packageSpec": "@openclaw/brave-plugin@2026.7.1",
-      "integrity": "sha512-7Z+GZ/6K6a8LlkTsWVnAZ1hv8EarORzHQvFHD7ekcg033FGJOXYPEZSbvvE3qR9vM+vnoZplNjMZ7vFMRcvQgw==",
-      "tarballUrl": "https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.7.1.tgz"
+      "label": "OpenClaw Brave plugin 2026.9.1",
+      "packageSpec": "@openclaw/brave-plugin@2026.9.1",
+      "integrity": "sha512-4+j+eQTToV3k7Cb25MUL6h2uL8cJYyuLytfpd/sJK/HjR43dgKBqKpBsb1+I3w1Jr6PLpnjSf6/I3//3K0cdnA==",
+      "tarballUrl": "https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.9.1.tgz"
     },
     {
-      "label": "OpenClaw Discord plugin 2026.7.1",
-      "packageSpec": "@openclaw/discord@2026.7.1",
-      "integrity": "sha512-tZfdC1YA8oVLvc2BK1w0F6rUljS5ugCOp2uWe0vPsbG1fbzVVIO4V32RoqZznGHe5u2R9u4n1aV5Z/qa1m2oFg==",
-      "tarballUrl": "https://registry.npmjs.org/@openclaw/discord/-/discord-2026.7.1.tgz"
+      "label": "OpenClaw Discord plugin 2026.9.1",
+      "packageSpec": "@openclaw/discord@2026.9.1",
+      "integrity": "sha512-qNmN2a8A9dET4igPp0RML171sEn8PDMyNCYNp/DqcJ4tn3XTHpacSOTkqBmv5yXTycJRC9rfFP8FT/SdW0Rldg==",
+      "tarballUrl": "https://registry.npmjs.org/@openclaw/discord/-/discord-2026.9.1.tgz"
     },
     {
-      "label": "OpenClaw Slack plugin 2026.7.1",
-      "packageSpec": "@openclaw/slack@2026.7.1",
-      "integrity": "sha512-dwVGEVCmoTQrOIeZaSCIOPg8pT7hB883QQEXdp9EZUDzTGuvSc+KxH2iERSOV/59hROQctYdcobGn/vdB1H4XA==",
-      "tarballUrl": "https://registry.npmjs.org/@openclaw/slack/-/slack-2026.7.1.tgz"
+      "label": "OpenClaw Slack plugin 2026.9.1",
+      "packageSpec": "@openclaw/slack@2026.9.1",
+      "integrity": "sha512-tU372jE40nnPcKQ6oxmDHf2/UhGtdz8ysi4JKsRZIO1QBAEkZd2YfsOw8aucmb2r0B0vjcFD3OmIV/Qzb57COg==",
+      "tarballUrl": "https://registry.npmjs.org/@openclaw/slack/-/slack-2026.9.1.tgz"
     },
     {
-      "label": "OpenClaw WhatsApp plugin 2026.7.1",
-      "packageSpec": "@openclaw/whatsapp@2026.7.1",
-      "integrity": "sha512-wLY/Omc5fleRpl2lKGN8sxt/8hYfHGwLRezmWsk8oCbea5pRKUPE6ZX+wJO1O52NOJkAGCuiXvS7x0qIeKxXbQ==",
-      "tarballUrl": "https://registry.npmjs.org/@openclaw/whatsapp/-/whatsapp-2026.7.1.tgz"
+      "label": "OpenClaw WhatsApp plugin 2026.9.1",
+      "packageSpec": "@openclaw/whatsapp@2026.9.1",
+      "integrity": "sha512-llIcoMa6FM4SgYn7GG1FQIeTTA5JDdcHW5D7PT+3aGYT3/E2eLFutKwDvD/w7G0hvDwSftzZgLi3iA8dzK7a3A==",
+      "tarballUrl": "https://registry.npmjs.org/@openclaw/whatsapp/-/whatsapp-2026.9.1.tgz"
     },
     {
-      "label": "OpenClaw Microsoft Teams plugin 2026.7.1",
-      "packageSpec": "@openclaw/msteams@2026.7.1",
-      "integrity": "sha512-gG/Yk6HZAguHwrmKjsqdONbFz5WNy126PEAXQWNW/TulO1kIifQ6tktM16BQPNLnkmWqLbj+TrrO55Cjas1aFg==",
-      "tarballUrl": "https://registry.npmjs.org/@openclaw/msteams/-/msteams-2026.7.1.tgz"
+      "label": "OpenClaw Microsoft Teams plugin 2026.9.1",
+      "packageSpec": "@openclaw/msteams@2026.9.1",
+      "integrity": "sha512-seRGr9/X6Vk9xU5elLVpDwq8R+TO0QFvUmxPEitqkngqDnMoXW0LEEXkriG6jgue74w2YLcNnAv/Rjf0a9jong==",
+      "tarballUrl": "https://registry.npmjs.org/@openclaw/msteams/-/msteams-2026.9.1.tgz"
     },
     {
       "label": "Tencent WeChat plugin 2.4.3",

@@ -685,7 +685,7 @@ PY_CLASSIFY_MUTABLE_CONFIG
   fi
 }
 
-# OpenClaw 2026.7.1 requires its startup migration checkpoint to complete
+# OpenClaw 2026.9.1 requires its startup migration checkpoint to complete
 # without warnings before the gateway reports readiness. Older NemoClaw images
 # persisted update-check.json as update polling and notification cache. Empty
 # placeholders fail JSON parsing, while nonempty files cannot be archived by
@@ -3042,7 +3042,7 @@ def list_failure_reason(rc, out, err):
 # Workaround boundary (NemoClaw#4462): the watcher child sources the trusted
 # runtime environment, so its first list call resolves the live gateway through
 # local loopback and retains the shared token plus a private child marker. The
-# reviewed 2026.7.1 dist patch uses that marker to retain CLI identity before a
+# reviewed 2026.9.1 dist patch uses that marker to retain CLI identity before a
 # stored device credential exists. Once OpenClaw issues that credential, later
 # list calls drop the gateway env triplet and use the reviewed settlement marker
 # to select pairing-only stored-device auth. Approval calls keep their separate
@@ -3687,7 +3687,7 @@ openclaw() {
   local _nemoclaw_guard_request_handled=0 _nemoclaw_guard_request_status=0
   # NemoClaw#4462: approval calls temporarily drop the gateway URL/port/token
   # so OpenClaw resolves the local loopback gateway and device token. The
-  # reviewed 2026.7.1 compatibility patch then performs bounded same-device
+  # reviewed 2026.9.1 compatibility patch then performs bounded same-device
   # scope upgrades in the gateway's canonical locked pairing writer. This
   # wrapper never reads or writes pending.json/paired.json.
   if [ "${1:-}" = "devices" ] && [ "${2:-}" = "approve" ]; then
@@ -5837,7 +5837,7 @@ handle_openclaw_gateway_control_request() {
 
 # ── Main ─────────────────────────────────────────────────────────
 
-# OpenClaw 2026.7.1 enforces owner-only SQLite and models-file modes on every
+# OpenClaw 2026.9.1 enforces owner-only SQLite and models-file modes on every
 # open. Only the root entrypoint uses NemoClaw's separate sandbox/gateway UIDs;
 # OpenShell starts this entrypoint as the sandbox UID and runs both roles as that
 # same user. Derive the compatibility marker from the real topology instead of

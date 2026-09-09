@@ -203,10 +203,13 @@ describe("effective built-in policy contracts", () => {
       );
     });
 
+    // The published 2026.7.1 and 2026.9.1 archives contain byte-identical
+    // skills/weather/SKILL.md content (SHA-256 62ab4821aa873949d1c1091836be1659a42b32caadce4bd145f5505a1ceaeec1),
+    // so the reviewed read-only egress contract remains unchanged.
     expect(
       loadAgent("openclaw").expectedVersion,
       "Revalidate the bundled OpenClaw weather skill before changing its reviewed egress contract",
-    ).toBe("2026.7.1");
+    ).toBe("2026.9.1");
   });
 
   it("uses raw L4 tunnels only for protocols that cannot be REST-inspected", () => {
@@ -470,9 +473,9 @@ describe("effective built-in policy contracts", () => {
         "/sandbox/.hermes/node/bin/agent-browser*",
       ]),
     );
-    expect(binaries(browser).filter((binary) => binary.startsWith("/sandbox/.hermes-data/"))).toEqual(
-      [],
-    );
+    expect(
+      binaries(browser).filter((binary) => binary.startsWith("/sandbox/.hermes-data/")),
+    ).toEqual([]);
   });
 
   it("keeps OpenClaw messaging credentials and WebSockets inside inspected endpoints", () => {
