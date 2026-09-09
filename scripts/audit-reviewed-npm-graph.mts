@@ -868,8 +868,15 @@ export function emitAuditReceipt(
   });
   const receiptFile = path.join(options.artifactDirectory, `${options.graphId}.receipt.json`);
   const transportRawFile = path.join(options.artifactDirectory, `${options.graphId}.raw.json`);
+  const transportPolicyFile = path.join(
+    options.artifactDirectory,
+    `${options.graphId}.policy.json`,
+  );
   fs.copyFileSync(options.rawReportFile, transportRawFile);
   fs.chmodSync(transportRawFile, 0o600);
+  fs.writeFileSync(transportPolicyFile, `${JSON.stringify(options.result, null, 2)}\n`, {
+    mode: 0o600,
+  });
   if (options.preserveInputs) {
     for (const [source, suffix] of [
       [options.packageJsonFile, "package.json"],

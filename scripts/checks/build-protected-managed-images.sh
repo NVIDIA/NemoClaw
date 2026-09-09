@@ -218,7 +218,9 @@ trap 'exit 143' TERM
 
 audit_receipt=""
 audit_raw_report=""
+audit_policy_result=""
 audit_receipt_sha256=""
+audit_policy_result_sha256=""
 validate_audit_evidence() {
   local directory="$1"
   [[ -d "$directory" && ! -L "$directory" && -z "$(find "$directory" -type l -print -quit)" ]] || {
@@ -232,6 +234,7 @@ validate_audit_evidence() {
     exit 1
   }
   audit_receipt_sha256="$(sha256sum "$audit_receipt" | awk '{print $1}')"
+  audit_policy_result="$work_dir/mcporter-runtime.policy.json"
   node --experimental-strip-types --no-warnings "$trusted_receipt_verifier" \
     --receipt "$audit_receipt" \
     --package-json "$source_root/agents/openclaw/mcporter-runtime/package.json" \
@@ -242,7 +245,13 @@ validate_audit_evidence() {
     --audit-config "$trusted_audit_config" \
     --registry https://registry.yarnpkg.com \
     --threshold high \
-    --legacy-npmjs true
+    --legacy-npmjs true \
+    --result "$audit_policy_result"
+  [[ -f "$audit_policy_result" && -s "$audit_policy_result" && ! -L "$audit_policy_result" ]] || {
+    echo "ERROR: protected managed-image reviewed audit policy result is missing or unsafe" >&2
+    exit 1
+  }
+  audit_policy_result_sha256="$(sha256sum "$audit_policy_result" | awk '{print $1}')"
 }
 
 if [[ -n "$cache_from" ]]; then
@@ -423,7 +432,9 @@ build_agent() {
     cache_args+=(
       --secret "id=nemoclaw-mcporter-audit-receipt,src=${audit_receipt}"
       --secret "id=nemoclaw-mcporter-audit-raw-report,src=${audit_raw_report}"
+      --secret "id=nemoclaw-mcporter-audit-policy-result,src=${audit_policy_result}"
       --build-arg "NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256=${audit_receipt_sha256}"
+      --build-arg "NEMOCLAW_MCPORTER_AUDIT_POLICY_RESULT_SHA256=${audit_policy_result_sha256}"
     )
   fi
 
@@ -461,9 +472,6 @@ build_agent() {
     --label "io.nvidia.nemoclaw.managed-image.capabilities=1"
     --label "io.nvidia.nemoclaw.managed-image.cohort=${cohort}"
     --build-arg "BASE_IMAGE=${base_reference}"
-    # Dockerfile defaults preserve direct Podman x86 builds. Pass the selected
-    # Buildx target explicitly so that default cannot override linux/arm64.
-    --build-arg "TARGETARCH=${platform#linux/}"
     --build-arg "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1"
     --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root"
     --build-arg "TARGETARCH=${target_arch}"

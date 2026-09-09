@@ -28,7 +28,7 @@ Update it and `agents/openclaw/mcporter-runtime/package*.json` together whenever
 
 Both image paths install the committed graph with `npm ci --ignore-scripts --omit=dev` because the published package declares no install-time lifecycle script and NemoClaw needs only its already-built CLI.
 The reviewed audit wrapper reports lower-severity production findings and blocks unaccepted high or critical advisories. The default `ci/npm-audit-exceptions.json` registry is empty. Any future exception must match one advisory, graph, package, installed version, and severity; identify an owner and NemoClaw tracking issue; state a decision, rationale, and expiry no more than 30 days away; and include compensating controls for temporary risk acceptance. Missing, malformed, expired, overlong, mismatched, or unused exceptions fail closed. The repository-wide audit also rejects exceptions for unknown graph IDs. Registry signature verification remains a separate control.
-Managed image publication supplies the mcporter receipt and raw report as BuildKit secrets. Before its offline build, the protected job runs the existing trusted audit action against the candidate inputs. The action reuses matching, unexpired audit records or refreshes them through the configured registry. The offline consumer verifies the receipt and raw report before building an image. Other image builds without paired evidence run the reviewed audit directly and fail closed if completeness cannot be established.
+Protected runtime qualification supplies the mcporter receipt, raw report, and trusted policy result as BuildKit secrets. Before its offline build, the protected job runs the existing trusted audit action against the candidate inputs and verifies the resulting evidence with policy from the trusted workflow checkout. Standard trusted base- and managed-image publication carries the audit producer's named policy result with the same receipt and raw report. The action reuses matching, unexpired audit records or refreshes them through the configured registry. Offline consumers check the receipt and policy result transport hashes before retaining the trusted result. Other image builds without protected evidence run the reviewed audit directly and fail closed if completeness cannot be established.
 
 ## WeChat plugin runtime graph
 
@@ -43,7 +43,7 @@ Managed image publication supplies the mcporter receipt and raw report as BuildK
   It also exercises the reviewed archive through a copied writable cache while the trusted source remains read-only.
   Signature verification makes at most three attempts and retries only `npm error Failed to download`; all other failures stop immediately.
   The shared report artifact stores the audit policy, signature-attempt evidence, and whether each response came from a matching cache entry or a live registry request.
-  Its mcporter receipt and raw response cross into the image build; the other graph receipts remain CI evidence.
+  Its mcporter receipt, raw report, and trusted policy result cross into image builds; the other graph receipts remain CI evidence.
   The archive graph also retains the generated manifest and lock bytes authenticated by its receipt.
 - Advisory command: `npm ci --ignore-scripts --omit=dev --legacy-peer-deps --prefix agents/openclaw/wechat-runtime && npm audit --registry=https://registry.yarnpkg.com --omit=dev --audit-level=low --json --prefix agents/openclaw/wechat-runtime && npm audit signatures --registry=https://registry.yarnpkg.com --omit=dev --prefix agents/openclaw/wechat-runtime`.
 - Advisory review: `2026-07-12`; result: `0` known vulnerabilities across the resolved production graph.
@@ -58,7 +58,10 @@ The lock records the exact version, registry URL, and integrity for every transi
 - `invalidState`: the image installs a package graph, tarball, license, or advisory state that differs from the independently queried npm registry records for `mcporter@0.7.3`, resolves `@hono/node-server` to any version other than exact `2.0.11`, resolves `fast-uri` to any version other than exact `3.1.6`, resolves `hono` to any version other than exact `4.12.34`, or resolves `ip-address` to any version other than exact `10.3.1`.
 - `sourceBoundary`: npm owns registry metadata, tarball integrity, provenance signatures, and advisory responses; NemoClaw owns the exact lock, script-disabled install, Docker integrity assertion, empty-by-default audit exception registry, and review record.
 - `whyNotSourceFix`: a repository note cannot make external registry state trustworthy, so the required `reviewed-npm-audit` CI check materializes the exact locked production graph and verifies its registry signatures.
-- `imageBuildBoundary`: image builds verify the committed lock, registry origin, tarball integrity, installed graph, lifecycle suppression, and reviewed advisory policy without connecting to Sigstore.
+- `imageBuildBoundary`: image builds verify the committed lock, registry origin, tarball integrity, installed graph, and lifecycle suppression.
+  Builds without supplied audit evidence evaluate the reviewed advisory policy directly.
+  Evidence-backed builds instead verify the receipt and policy-result transport hashes after trusted workflow code validates the candidate graph and policy.
+  Neither path connects to Sigstore.
   The `schema=4` and `mcporter-recipe=locked-ci+reviewed-audit-v3` provenance values record this boundary.
   They do not attest that trusted CI verified registry signatures.
 - `enforcementBoundary`: any nonzero `npm audit signatures` status fails the required CI check.

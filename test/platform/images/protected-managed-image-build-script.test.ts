@@ -103,7 +103,15 @@ esac
 set -euo pipefail
 printf '%s\n' "$*" >>"$NEMOCLAW_TEST_SEED_LOG"
 if [[ "$*" == *"/scripts/lib/npm-audit-receipt.mts"* ]]; then
-  exit "$NEMOCLAW_TEST_RECEIPT_VERIFY_STATUS"
+  status="$NEMOCLAW_TEST_RECEIPT_VERIFY_STATUS"
+  result=""
+  while (($# > 0)); do
+    if [[ "$1" == "--result" ]]; then result="$2"; shift 2; else shift; fi
+  done
+  if [[ "$status" == 0 && -n "$result" ]]; then
+    printf '{"status":"clean"}\n' >"$result"
+  fi
+  exit "$status"
 fi
 mode="$4"
 shift 4
@@ -228,6 +236,14 @@ function recordedBuildInvocation(agent: string): string {
   return invocation!;
 }
 
+function expectSingleTargetArch(agent: string, architecture: string): void {
+  expect(
+    recordedBuildInvocation(agent)
+      .split(" ")
+      .filter((argument) => argument === `TARGETARCH=${architecture}`),
+  ).toHaveLength(1);
+}
+
 function runBuild(sourceRoot: string, extraArgs: readonly string[] = [], platform = "linux/amd64") {
   const output = path.join(testRoot, "contracts.json");
   return spawnSync(
@@ -340,15 +356,13 @@ describe("protected managed-image build-cache boundary", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(recordedBuildInvocation("openclaw")).toContain("--platform linux/arm64");
-    expect(recordedBuildInvocation("openclaw")).toContain("--build-arg TARGETARCH=arm64");
+    expectSingleTargetArch("openclaw", "arm64");
     expect(recordedBuildInvocation("hermes")).toContain("--platform linux/arm64");
-    expect(recordedBuildInvocation("hermes")).toContain("--build-arg TARGETARCH=arm64");
+    expectSingleTargetArch("hermes", "arm64");
     expect(recordedBuildInvocation("langchain-deepagents-code")).toContain(
       "--platform linux/arm64",
     );
-    expect(recordedBuildInvocation("langchain-deepagents-code")).toContain(
-      "--build-arg TARGETARCH=arm64",
-    );
+    expectSingleTargetArch("langchain-deepagents-code", "arm64");
   });
 
   it("builds every agent without optional cache arguments", () => {
@@ -380,15 +394,13 @@ describe("protected managed-image build-cache boundary", () => {
     expect(result.status, result.stderr).toBe(0);
     expect(recordedBuildInvocations()).toHaveLength(3);
     expect(recordedBuildInvocation("openclaw")).toContain("--platform linux/arm64");
-    expect(recordedBuildInvocation("openclaw")).toContain("--build-arg TARGETARCH=arm64");
+    expectSingleTargetArch("openclaw", "arm64");
     expect(recordedBuildInvocation("hermes")).toContain("--platform linux/arm64");
-    expect(recordedBuildInvocation("hermes")).toContain("--build-arg TARGETARCH=arm64");
+    expectSingleTargetArch("hermes", "arm64");
     expect(recordedBuildInvocation("langchain-deepagents-code")).toContain(
       "--platform linux/arm64",
     );
-    expect(recordedBuildInvocation("langchain-deepagents-code")).toContain(
-      "--build-arg TARGETARCH=arm64",
-    );
+    expectSingleTargetArch("langchain-deepagents-code", "arm64");
   });
 
   it("passes each agent one empty absolute cache export root", () => {
@@ -635,8 +647,14 @@ describe("protected managed-image build-cache boundary", () => {
     expect(recordedBuildInvocation("openclaw")).toContain(
       `--secret id=nemoclaw-mcporter-audit-raw-report,src=${realpathSync(auditRoot)}/mcporter-runtime.raw.json`,
     );
+    expect(recordedBuildInvocation("openclaw")).toMatch(
+      /--secret id=nemoclaw-mcporter-audit-policy-result,src=\S+\/mcporter-runtime[.]policy[.]json/,
+    );
     expect(recordedBuildInvocation("openclaw")).toContain(
       `--build-arg NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256=${DIGEST}`,
+    );
+    expect(recordedBuildInvocation("openclaw")).toContain(
+      `--build-arg NEMOCLAW_MCPORTER_AUDIT_POLICY_RESULT_SHA256=${DIGEST}`,
     );
     expect(recordedBuildInvocation("hermes").split(" ")).not.toContain("--no-cache");
     expect(recordedBuildInvocation("langchain-deepagents-code").split(" ")).not.toContain(

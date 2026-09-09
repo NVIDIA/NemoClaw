@@ -6,21 +6,19 @@ set -euo pipefail
 
 receipt=/run/secrets/nemoclaw-mcporter-audit-receipt
 raw_report=/run/secrets/nemoclaw-mcporter-audit-raw-report
+policy_result=/run/secrets/nemoclaw-mcporter-audit-policy-result
 receipt_sha256="${NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256:-}"
+policy_result_sha256="${NEMOCLAW_MCPORTER_AUDIT_POLICY_RESULT_SHA256:-}"
 seed=/run/nemoclaw-mcporter-audit-cache/reviewed-npm-audit
 report_path="${NEMOCLAW_MCPORTER_AUDIT_REPORT_PATH:-}"
 result_path="${NEMOCLAW_MCPORTER_AUDIT_RESULT_PATH:-}"
 audit_output_args=()
-receipt_output_args=()
 [[ -z "$report_path" ]] || audit_output_args+=(--report "$report_path")
-if [[ -n "$result_path" ]]; then
-  audit_output_args+=(--result "$result_path")
-  receipt_output_args+=(--result "$result_path")
-fi
+[[ -z "$result_path" ]] || audit_output_args+=(--result "$result_path")
 
-if [[ -e "$receipt" || -L "$receipt" || -e "$raw_report" || -L "$raw_report" || -n "$receipt_sha256" ]]; then
-  [[ -f "$receipt" && ! -L "$receipt" && -f "$raw_report" && ! -L "$raw_report" && -n "$receipt_sha256" ]] || {
-    echo "ERROR: cached mcporter audit requires paired receipt, raw report, and receipt SHA-256" >&2
+if [[ -e "$receipt" || -L "$receipt" || -e "$raw_report" || -L "$raw_report" || -e "$policy_result" || -L "$policy_result" || -n "$receipt_sha256" || -n "$policy_result_sha256" ]]; then
+  [[ -f "$receipt" && ! -L "$receipt" && -f "$raw_report" && ! -L "$raw_report" && -f "$policy_result" && ! -L "$policy_result" && -n "$receipt_sha256" && -n "$policy_result_sha256" ]] || {
+    echo "ERROR: cached mcporter audit requires paired receipt, raw report, trusted policy result, and transport SHA-256 values" >&2
     exit 1
   }
 elif [[ -e "$seed" || -L "$seed" ]]; then
@@ -42,11 +40,13 @@ printf '%s  %s\n' "$receipt_sha256" "$receipt" | sha256sum --check --status - ||
   echo "ERROR: cached mcporter audit receipt hash does not match" >&2
   exit 1
 }
-node --experimental-strip-types /scripts/lib/npm-audit-receipt.mts \
-  --receipt "$receipt" \
-  --package-json /usr/local/lib/nemoclaw/mcporter-runtime/package.json --package-lock /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json \
-  --raw-report "$raw_report" --exceptions /scripts/npm-audit-exceptions.json \
-  --graph mcporter-runtime --audit-config /scripts/reviewed-npm-audit.json \
-  --registry https://registry.yarnpkg.com --threshold high --legacy-npmjs true \
-  "${receipt_output_args[@]}"
+printf '%s' "$policy_result_sha256" | grep -qxE '[0-9a-f]{64}' || {
+  echo "ERROR: cached mcporter audit policy result SHA-256 is invalid" >&2
+  exit 1
+}
+printf '%s  %s\n' "$policy_result_sha256" "$policy_result" | sha256sum --check --status - || {
+  echo "ERROR: cached mcporter audit policy result hash does not match" >&2
+  exit 1
+}
 [[ -z "$report_path" ]] || cp -- "$raw_report" "$report_path"
+[[ -z "$result_path" ]] || cp -- "$policy_result" "$result_path"

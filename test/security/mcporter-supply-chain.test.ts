@@ -71,19 +71,6 @@ function extractIntegrityGate(contents: string): string {
     .trim();
 }
 
-function extractAuditReceiptInvocation(contents: string): string {
-  const startMarker = "node --experimental-strip-types /scripts/lib/npm-audit-receipt.mts";
-  const endMarker = "--legacy-npmjs true";
-  const start = contents.indexOf(startMarker);
-  const end = contents.indexOf(endMarker, start);
-  expect(start).toBeGreaterThanOrEqual(0);
-  expect(end).toBeGreaterThan(start);
-  return contents
-    .slice(start, end + endMarker.length)
-    .replace(/\\\s*\n/g, " ")
-    .replace(/\s+/g, " ");
-}
-
 function runIntegrityGate(contents: string, version: string) {
   const script = [
     "set -euo pipefail",
@@ -195,7 +182,6 @@ describe("mcporter image supply-chain controls", () => {
   it.each(dockerfiles)("audits the committed dependency graph in $name", ({ contents }) => {
     const auditContents = `${contents}\n${mcporterAuditHelper}`;
     const flattenedContents = auditContents.replace(/\\\s*\n/g, " ").replace(/\s+/g, " ");
-    const auditReceiptInvocation = extractAuditReceiptInvocation(auditContents);
     expect(contents).toContain(
       "COPY ci/npm-audit-exceptions.json ci/reviewed-npm-audit.json /scripts/",
     );
@@ -211,26 +197,21 @@ describe("mcporter image supply-chain controls", () => {
       "node --experimental-strip-types /scripts/lib/reviewed-npm-audit.mts --directory /usr/local/lib/nemoclaw/mcporter-runtime --exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --threshold high",
     );
     expect(contents).toContain("ARG NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256=");
+    expect(contents).toContain("ARG NEMOCLAW_MCPORTER_AUDIT_POLICY_RESULT_SHA256=");
     expect(contents).toContain(
       "--mount=type=secret,id=nemoclaw-mcporter-audit-receipt,required=false",
     );
     expect(contents).toContain(
       "--mount=type=secret,id=nemoclaw-mcporter-audit-raw-report,required=false",
     );
-    expect(flattenedContents).toContain(
-      "node --experimental-strip-types /scripts/lib/npm-audit-receipt.mts --receipt",
-    );
-    expect(flattenedContents).toContain(
-      "--package-json /usr/local/lib/nemoclaw/mcporter-runtime/package.json --package-lock /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json --raw-report",
-    );
-    expect(auditReceiptInvocation).toContain(
-      "--exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --audit-config /scripts/reviewed-npm-audit.json --registry https://registry.yarnpkg.com --threshold high --legacy-npmjs true",
+    expect(contents).toContain(
+      "--mount=type=secret,id=nemoclaw-mcporter-audit-policy-result,required=false",
     );
     expect(expectedReviewedNpmVersion).toMatch(/^[0-9]+\.[0-9]+\.[0-9]+$/);
-    expect(auditReceiptInvocation).not.toContain("--npm-version");
+    expect(auditContents).not.toContain("/scripts/lib/npm-audit-receipt.mts");
+    expect(auditContents).toContain("sha256sum --check --status");
+    expect(auditContents).toContain("policy_result_sha256");
     expect(auditContents).not.toContain("--raw-copy");
-    expect(auditReceiptInvocation).not.toMatch(/\bnpm\s+--version\b/);
-    expect(auditReceiptInvocation).not.toMatch(/\$\(|`/);
     expect(contents).not.toContain(`${runtimePrefix} audit --omit=dev --audit-level=low`);
     expect(contents).not.toContain(`${runtimePrefix} audit signatures`);
     expect(flattenedContents).toContain(
