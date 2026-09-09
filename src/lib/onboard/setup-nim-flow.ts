@@ -22,7 +22,9 @@ import {
   type ManagedLlamaCppDiscoveryResult,
   type ManagedLlamaCppSelectionChoice,
   type ManagedLlamaCppSelectionResult,
+  type ServingProfileProvenance,
   discoverManagedLlamaCppSelectionsForGpu,
+  servingProfileProvenanceFromResolvedLlamaCpp,
 } from "../inference/llama-cpp/managed-selection";
 import { getOllamaContextWindowFloorForAgent } from "../inference/ollama-runtime-context";
 import {
@@ -180,6 +182,10 @@ export interface SetupNimFlowDeps {
   localModelProfileIntegration?: ReturnType<typeof createLocalModelProfileIntegration>;
   discoverManagedLlamaCppSelections?: typeof discoverManagedLlamaCppSelectionsForGpu;
   installManagedLlamaCpp?: typeof installManagedLlamaCpp;
+  checkpointManagedLlamaCppSelection?(input: {
+    model: string;
+    servingProfileProvenance: ServingProfileProvenance;
+  }): void;
   handleRemoteProviderSelection(
     args: SetupNimRemoteSelectionArgs,
     state: SetupNimSelectionState,
@@ -872,6 +878,7 @@ export function createSetupNim(
     let endpointPinnedAddresses: string[] | undefined;
     let endpointTrustedPrivateCapability: TrustedPrivateEndpointCapability | undefined;
     let vllmModelIdentity: string | undefined;
+    let selectedServingProfileProvenance: ServingProfileProvenance | null = null;
     const inferenceCapabilityCache = new OnboardInferenceCapabilityCache();
     const nvidiaFeaturedModels = deps.createNvidiaFeaturedModelSession({
       defaultModel: resolveAgentDefaultCloudModel(agent),
@@ -1054,6 +1061,7 @@ export function createSetupNim(
     vllmModelIdentity = localModelState?.vllmModelIdentity;
     if (localModelProfile.providerMenuOptionCount > 1) {
       selectionLoop: while (true) {
+        selectedServingProfileProvenance = null;
         let selected: ProviderMenuChoice | undefined;
         let selectedFromInteractiveMenu = false;
         recoveredFromSandbox = false;
@@ -1191,6 +1199,13 @@ export function createSetupNim(
           state.preferredInferenceApi = "openai-completions";
           state.assertRouteCompatible?.();
           state.revalidateSandboxIdentity?.("install managed llama.cpp runtime");
+          selectedServingProfileProvenance = servingProfileProvenanceFromResolvedLlamaCpp(
+            resolved.selection,
+          );
+          deps.checkpointManagedLlamaCppSelection?.({
+            model: state.model,
+            servingProfileProvenance: selectedServingProfileProvenance,
+          });
           const installed = await (deps.installManagedLlamaCpp ?? installManagedLlamaCpp)(
             resolved.selection,
             {
@@ -1446,6 +1461,9 @@ export function createSetupNim(
       compatibleEndpointReasoning,
       compatibleEndpointReasoningEffort,
       nimContainer,
+      ...(selectedServingProfileProvenance
+        ? { servingProfileProvenance: selectedServingProfileProvenance }
+        : {}),
       allowToolsIncompatible,
       skipHostInferenceSmoke: reuseGatewayCredential,
       reuseGatewayCredentialWithoutLocalKey: reuseGatewayCredential,

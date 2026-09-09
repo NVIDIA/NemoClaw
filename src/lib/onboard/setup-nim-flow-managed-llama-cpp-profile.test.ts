@@ -13,6 +13,36 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
+function managedSelectionFixture(recipeId: string, displayName: string, model: string) {
+  return {
+    outcome: "selected",
+    selection: "automatic",
+    catalogDigest: `sha256:${"a".repeat(64)}`,
+    presetDigest: `sha256:${"b".repeat(64)}`,
+    recipeDigest: `sha256:${"c".repeat(64)}`,
+    preset: {
+      metadata: { id: `${recipeId}.preset`, displayName },
+      spec: { selection: "automatic" },
+    },
+    recipe: {
+      metadata: { id: recipeId, displayName },
+      spec: {
+        backend: "install-llama-cpp",
+        model: {
+          id: `model/${model}`,
+          revision: "revision-1",
+          servedName: model,
+          files: [{ sizeBytes: 1024 }],
+        },
+        runtime: {
+          image: "example.invalid/llama.cpp@sha256:fixture",
+          imageDownloadSizeBytes: 2048,
+        },
+      },
+    },
+  } as never;
+}
+
 function n1xCollectionOptions(): Omit<
   CollectHostObservationsOptions,
   "detectGpu" | "containerGpuProof"
@@ -53,13 +83,11 @@ function n1xCollectionOptions(): Omit<
 }
 
 function n1xProofHarness(proofPassed: boolean, requestedProvider: string | null) {
-  const selection = {
-    preset: { metadata: { id: "llama-cpp.n1x-wsl-arm64.single.qwen3-6-35b-a3b" } },
-    recipe: {
-      metadata: { id: "llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1" },
-      spec: { model: { servedName: "qwen3.6-35b-a3b" } },
-    },
-  } as never;
+  const selection = managedSelectionFixture(
+    "llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1",
+    "Qwen3.6 35B A3B",
+    "qwen3.6-35b-a3b",
+  );
   const discoverManagedLlamaCppSelections = vi.fn((_env?: NodeJS.ProcessEnv, gpu?: SetupNimGpu) =>
     gpu?.containerGpuProof?.passed === true
       ? {
@@ -86,6 +114,7 @@ function n1xProofHarness(proofPassed: boolean, requestedProvider: string | null)
   );
   const runtimeProvider = makeDeps().getRuntimeProvider();
   const getRuntimeProvider = vi.fn(() => runtimeProvider);
+  const checkpointManagedLlamaCppSelection = vi.fn();
   return {
     gpu: {
       platform: "n1x",
@@ -94,6 +123,7 @@ function n1xProofHarness(proofPassed: boolean, requestedProvider: string | null)
     getRuntimeProvider,
     handleLlamaCppSelection,
     installManagedLlamaCpp,
+    checkpointManagedLlamaCppSelection,
     discoverManagedLlamaCppSelections,
     runtimeProvider,
     selection,
@@ -103,6 +133,7 @@ function n1xProofHarness(proofPassed: boolean, requestedProvider: string | null)
         getNonInteractiveProvider: () => requestedProvider,
         discoverManagedLlamaCppSelections,
         installManagedLlamaCpp,
+        checkpointManagedLlamaCppSelection,
         handleLlamaCppSelection,
         getRuntimeProvider,
       }),
@@ -113,20 +144,12 @@ function n1xProofHarness(proofPassed: boolean, requestedProvider: string | null)
 describe("managed llama.cpp profile onboarding", () => {
   it("installs an interactive profile despite a different recipe environment", async () => {
     vi.stubEnv("NEMOCLAW_LLAMACPP_RECIPE", "llama-cpp.recommended.v1");
-    const selectedProfile = (recipeId: string, displayName: string, model: string) =>
-      ({
-        preset: { metadata: { id: `${recipeId}.preset`, displayName } },
-        recipe: {
-          metadata: { id: recipeId, displayName },
-          spec: { model: { servedName: model } },
-        },
-      }) as never;
-    const recommended = selectedProfile(
+    const recommended = managedSelectionFixture(
       "llama-cpp.recommended.v1",
       "Recommended model",
       "recommended-model",
     );
-    const alternate = selectedProfile(
+    const alternate = managedSelectionFixture(
       "llama-cpp.alternate.v1",
       "Alternate model",
       "alternate-model",
@@ -213,16 +236,16 @@ describe("managed llama.cpp profile onboarding", () => {
   });
 
   it("resumes the exact managed llama.cpp recipe recorded for the sandbox", async () => {
-    const selectedProfile = (recipeId: string, model: string) =>
-      ({
-        preset: { metadata: { id: `${recipeId}.preset`, displayName: recipeId } },
-        recipe: {
-          metadata: { id: recipeId, displayName: recipeId },
-          spec: { model: { servedName: model } },
-        },
-      }) as never;
-    const recommended = selectedProfile("llama-cpp.recommended.v1", "recommended-model");
-    const alternate = selectedProfile("llama-cpp.alternate.v1", "alternate-model");
+    const recommended = managedSelectionFixture(
+      "llama-cpp.recommended.v1",
+      "llama-cpp.recommended.v1",
+      "recommended-model",
+    );
+    const alternate = managedSelectionFixture(
+      "llama-cpp.alternate.v1",
+      "llama-cpp.alternate.v1",
+      "alternate-model",
+    );
     const discoverManagedLlamaCppSelections = vi.fn((env?: NodeJS.ProcessEnv) => {
       const selection =
         env?.NEMOCLAW_LLAMACPP_RECIPE === "llama-cpp.alternate.v1" ? alternate : recommended;
@@ -313,6 +336,21 @@ describe("managed llama.cpp profile onboarding", () => {
       "qwen3.6-35b-a3b",
       null,
     );
+    expect(harness.checkpointManagedLlamaCppSelection).toHaveBeenCalledWith({
+      model: "qwen3.6-35b-a3b",
+      servingProfileProvenance: expect.objectContaining({
+        catalogDigest: `sha256:${"a".repeat(64)}`,
+        preset: expect.objectContaining({
+          id: "llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1.preset",
+          digest: `sha256:${"b".repeat(64)}`,
+        }),
+        recipe: expect.objectContaining({
+          id: "llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1",
+          digest: `sha256:${"c".repeat(64)}`,
+          backend: "install-llama-cpp",
+        }),
+      }),
+    });
     expect(harness.getRuntimeProvider).toHaveBeenCalledTimes(2);
   });
 
@@ -350,8 +388,10 @@ describe("managed llama.cpp profile onboarding", () => {
         return "selected";
       },
     );
+    const checkpointManagedLlamaCppSelection = vi.fn();
     const setupNim = createSetupNim(
       makeDeps({
+        checkpointManagedLlamaCppSelection,
         discoverManagedLlamaCppSelections,
         handleLlamaCppSelection,
         installManagedLlamaCpp,
@@ -359,9 +399,13 @@ describe("managed llama.cpp profile onboarding", () => {
       }),
     );
 
-    await expect(setupNim(gpu, "n1x-agent")).resolves.toMatchObject({
+    const result = await setupNim(gpu, "n1x-agent");
+    expect(result).toMatchObject({
       provider: "llama-cpp-local",
       model: "qwen3.6-35b-a3b",
+      servingProfileProvenance: {
+        recipe: { id: "llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1" },
+      },
     });
     const produced = discoverManagedLlamaCppSelections.mock.results[1]?.value;
     expect(produced).toMatchObject({
@@ -381,6 +425,36 @@ describe("managed llama.cpp profile onboarding", () => {
       "qwen3.6-35b-a3b",
       null,
     );
+    const expectedSelection = producedSelection!;
+    expect(checkpointManagedLlamaCppSelection).toHaveBeenCalledWith({
+      model: "qwen3.6-35b-a3b",
+      servingProfileProvenance: {
+        schemaVersion: 1,
+        catalogDigest: expectedSelection.catalogDigest,
+        preset: {
+          id: expectedSelection.preset.metadata.id,
+          digest: expectedSelection.presetDigest,
+          displayName:
+            expectedSelection.preset.metadata.displayName ?? expectedSelection.preset.metadata.id,
+          supportState: expectedSelection.preset.metadata.supportState ?? "experimental",
+        },
+        recipe: {
+          id: expectedSelection.recipe.metadata.id,
+          digest: expectedSelection.recipeDigest,
+          backend: "install-llama-cpp",
+        },
+        model: {
+          id: expectedSelection.recipe.spec.model.id,
+          revision: expectedSelection.recipe.spec.model.revision,
+        },
+        runtimeImage: expectedSelection.recipe.spec.runtime.image,
+        estimatedImageDownloadBytes: expectedSelection.recipe.spec.runtime.imageDownloadSizeBytes,
+        estimatedModelDownloadBytes: expectedSelection.recipe.spec.model.files.reduce(
+          (total: number, file: { sizeBytes: number }) => total + file.sizeBytes,
+          0,
+        ),
+      },
+    });
   });
 
   it("routes an explicit model to WSL Ollama instead of automatic managed llama.cpp", async () => {

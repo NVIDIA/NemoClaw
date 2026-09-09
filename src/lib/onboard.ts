@@ -2298,6 +2298,7 @@ function getSetupNimDeps(): SetupNimDeps {
     vllmPort: VLLM_PORT,
     getGatewayPort: () => GATEWAY_PORT,
     getRuntimeProvider: () => setupNimFlow.resolveCurrentRuntimeProviderBundle(),
+    checkpointManagedLlamaCppSelection: onboardSession.checkpointManagedLlamaCppSelection,
     step,
     isNonInteractive,
     getNonInteractiveProvider,
