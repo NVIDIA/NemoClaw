@@ -99,7 +99,8 @@ Set `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` on the `bash` side of the install pi
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_GATEWAY_PORT=<selected-port> NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash
 ```
 
-You can omit `NEMOCLAW_GATEWAY_PORT` when you prepared the default gateway on port `8080`.
+Set `NEMOCLAW_GATEWAY_PORT=8080` when you prepared the default gateway.
+Omitting it selects port `8080` only when no automatic alternate-port marker exists, so an explicit value prevents a previously recorded alternate environment from receiving the prepared upgrade.
 `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED` asserts that you completed those steps, so the installer skips the repeated backup and gateway-retirement phase before it checks whether OpenShell is installed or whether its version is in range.
 It reuses the latest backups, forces installation of the OpenShell version pinned by the prepared source, and starts recovery only after that installation succeeds.
 If the installation fails, rerun the same install-pipeline command to preserve `NEMOCLAW_GATEWAY_PORT` and `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED`.

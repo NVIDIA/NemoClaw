@@ -2416,9 +2416,15 @@ Pass `--tools` with one server name to request a live tool inventory. The shared
 
 Use `--tools` only with a configured endpoint you trust to advertise names while authenticated. The endpoint controls its returned names and can derive them from the request or credential it receives; NemoClaw validates and bounds the text but cannot prove that the endpoint did not encode credential-derived data in an otherwise valid name.
 
-The `toolDiscovery` JSON field contains `ok`, `count`, `tools`, and `truncated`, plus a redacted `detail` on failure or a bounded partial result. These names are the server's point-in-time advertised tools, not an attestation of the exact tools visible to the model after agent filters, progressive disclosure, or session state. An older sandbox image without the shared client reports that the sandbox must be rebuilt.
+The `toolDiscovery` JSON field contains `ok`, `count`, `tools`, `truncated`, and `commandStatus`.
+A failed result also contains `failedStage`, `failureClass`, and a redacted `detail`.
+A runtime-emitted precondition reports `commandStatus` as `0`.
+A bridge-level precondition that skips runtime execution reports `null`.
+An unreachable sandbox also reports `null` when no runtime exit status exists.
+These names are the server's point-in-time advertised tools, not an attestation of the exact tools visible to the model after agent filters, progressive disclosure, or session state.
+An older sandbox image without the shared client reports that the sandbox must be rebuilt.
 
-Tool discovery is opt-in and sends authenticated network traffic to the configured endpoint. Passing `--tools` suppresses the named-server credential-resolution probe that otherwise runs by default. Pass `--probe --tools` to request both checks explicitly. An unsuccessful discovery does not remove the ordinary provider, policy, environment, or adapter status from the result.
+Tool discovery is opt-in and sends authenticated network traffic to the configured endpoint. Passing `--tools` suppresses the named-server credential-resolution probe that otherwise runs by default. Pass `--probe --tools` to request both checks explicitly. An unsuccessful discovery exits nonzero but does not remove the ordinary provider, policy, environment, or adapter status from the result.
 
 ```bash
 $$nemoclaw my-assistant mcp status [server] [--json] [--probe|--no-probe] [--tools]
@@ -3728,7 +3734,7 @@ Commands whose parser owns the base logging options also accept the hidden long-
 
 | Variable | Default | Service |
 | --- | --- | --- |
-| `NEMOCLAW_GATEWAY_PORT` | 8080 | OpenShell gateway port |
+| `NEMOCLAW_GATEWAY_PORT` | A recorded automatic alternate port, otherwise 8080 | OpenShell gateway port. An explicit supported value remains authoritative. See [Installer Reports That the Systemd User Manager Is Unavailable](./troubleshooting#installer-reports-that-the-systemd-user-manager-is-unavailable). |
 | `NEMOCLAW_GATEWAY_BIND_ADDRESS` | 127.0.0.1 | The OpenShell gateway uses this bind address. NemoClaw keeps Docker-driver gateways on loopback while gateway JWT auth is active. |
 
 <AgentOnly variant="openclaw,hermes">
@@ -3774,7 +3780,7 @@ export NEMOCLAW_DASHBOARD_PORT=19000
 $$nemoclaw onboard
 ```
 
-These overrides apply to onboarding, status checks, health probes, and the uninstaller. Defaults are unchanged when no variable is set.
+These overrides apply to onboarding, status checks, health probes, and the uninstaller. Defaults are unchanged when no variable is set, except that a recorded automatic gateway-port marker selects its alternate port.
 
 <AgentOnly variant="openclaw,hermes">
 If `NEMOCLAW_DASHBOARD_PORT` or the port from `CHAT_UI_URL` is already occupied by another sandbox, onboarding scans `18789` through `18799` and uses the next free dashboard port.
