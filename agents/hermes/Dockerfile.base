@@ -347,6 +347,7 @@ RUN mkdir -p /sandbox/.hermes/memories \
         /sandbox/.hermes/lazy-packages \
     && chown -R sandbox:sandbox /sandbox/.hermes \
     && chown gateway:sandbox \
+        /sandbox/.hermes/sessions \
         /sandbox/.hermes/cron \
         /sandbox/.hermes/gateway \
         /sandbox/.hermes/runtime \
@@ -380,6 +381,7 @@ RUN mkdir -p /sandbox/.hermes/memories \
         /sandbox/.hermes/platforms \
         /sandbox/.hermes/platforms/whatsapp \
         /sandbox/.hermes/platforms/whatsapp/session \
+        /sandbox/.hermes/sessions \
         /sandbox/.hermes/cron \
         /sandbox/.hermes/gateway \
         /sandbox/.hermes/runtime \
@@ -412,8 +414,8 @@ RUN printf '%s\n' \
         '[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh' \
         'export PATH="/usr/local/bin:/opt/hermes/.venv/bin:${PATH}"' \
         > /sandbox/.profile \
-    && chown root:root /sandbox/.bashrc /sandbox/.profile \
-    && chmod 444 /sandbox/.bashrc /sandbox/.profile
+    && chown sandbox:sandbox /sandbox/.bashrc /sandbox/.profile \
+    && chmod 644 /sandbox/.bashrc /sandbox/.profile
 
 # Install Hermes Agent from the selected GitHub release.
 # The image prebakes only the extras selected for the managed Hermes image:

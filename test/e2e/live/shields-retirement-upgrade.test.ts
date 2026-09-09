@@ -271,7 +271,7 @@ test.skipIf(process.platform !== "linux")(
         cleanup,
         host,
         port: Number(new URL(fake.baseUrl).port),
-        ...legacyGatewayUpgradeHostFirewallOptions(RELEASE_TAG),
+        ...legacyGatewayUpgradeHostFirewallOptions(),
       });
     } catch (error) {
       await fake.close();

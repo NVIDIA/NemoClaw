@@ -48,6 +48,7 @@ on:
       - "src/lib/actions/sandbox/mcp-bridge-*.ts"
       - "src/lib/actions/sandbox/rebuild-post-restore-phase.ts"
       - "src/lib/agent/candidate-authority.ts"
+      - "src/lib/extra-agents-validation.ts"
       - "src/lib/core/json-types.ts"
       - "src/lib/core/ports.ts"
       - "src/lib/messaging/**"
@@ -353,9 +354,14 @@ jobs:
           fi
           if ! node -e '
             const expected = {
-              protocol: 1,
+              protocol: 2,
               ok: false,
+              count: 0,
+              tools: [],
+              truncated: false,
               detail: "tool discovery received invalid runtime arguments",
+              failedStage: "preflight",
+              failureClass: "precondition",
             };
             let result;
             try {
@@ -369,9 +375,16 @@ jobs:
                 : undefined;
             if (
               !record ||
+              Object.keys(record).length !== Object.keys(expected).length ||
               record.protocol !== expected.protocol ||
               record.ok !== expected.ok ||
-              record.detail !== expected.detail
+              record.count !== expected.count ||
+              !Array.isArray(record.tools) ||
+              record.tools.length !== 0 ||
+              record.truncated !== expected.truncated ||
+              record.detail !== expected.detail ||
+              record.failedStage !== expected.failedStage ||
+              record.failureClass !== expected.failureClass
             ) {
               process.exit(1);
             }
@@ -741,9 +754,14 @@ jobs:
           fi
           if ! node -e '
             const expected = {
-              protocol: 1,
+              protocol: 2,
               ok: false,
+              count: 0,
+              tools: [],
+              truncated: false,
               detail: "tool discovery received invalid runtime arguments",
+              failedStage: "preflight",
+              failureClass: "precondition",
             };
             let result;
             try {
@@ -757,9 +775,16 @@ jobs:
                 : undefined;
             if (
               !record ||
+              Object.keys(record).length !== Object.keys(expected).length ||
               record.protocol !== expected.protocol ||
               record.ok !== expected.ok ||
-              record.detail !== expected.detail
+              record.count !== expected.count ||
+              !Array.isArray(record.tools) ||
+              record.tools.length !== 0 ||
+              record.truncated !== expected.truncated ||
+              record.detail !== expected.detail ||
+              record.failedStage !== expected.failedStage ||
+              record.failureClass !== expected.failureClass
             ) {
               process.exit(1);
             }
@@ -1362,13 +1387,6 @@ jobs:
             node -e "const c=require(\"/sandbox/.pi/agent/models.json\"); if (!c.defaultModel || !c.providers.openshell.baseUrl) process.exit(1)"
             test -x /usr/local/bin/nemoclaw-managed-bootstrap
           '
-      - name: Remove Pi anonymous Docker configuration
-        if: always() && steps.publish.outputs.docker-config != ''
-        shell: bash
-        env:
-          ANONYMOUS_CONFIG: ${{ steps.publish.outputs.docker-config }}
-        run: rm -rf -- "$ANONYMOUS_CONFIG"
-
       # The checks above bypass /usr/local/bin/nemoclaw-start with a direct
       # --entrypoint override, so they never prove the entrypoint itself runs
       # correctly. Start the published digest through its declared entrypoint
@@ -1581,6 +1599,8 @@ jobs:
           set -euo pipefail
           [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
           [[ "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]{0,9}$ ]]
+          # Failed-job reruns retain this successful job's original output,
+          # while rerun-all executes it again and must mint fresh immutable aliases.
           printf 'cohort=ghrun-%s-%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
 
   reviewed-npm-audit:
@@ -2073,10 +2093,11 @@ jobs:
               throw new Error(`managed OpenClaw plugin ${id} is missing, duplicated, or active`);
             }
           }
-          for (const id of ["telegram", "tavily"]) {
-            if (config.plugins?.entries?.[id]?.enabled !== false) {
-              throw new Error(`bundled OpenClaw plugin ${id} is not explicitly disabled`);
-            }
+          if (config.plugins?.entries?.telegram?.enabled !== false) {
+            throw new Error("bundled OpenClaw plugin telegram is not explicitly disabled");
+          }
+          if (config.plugins?.entries?.tavily !== undefined) {
+            throw new Error("uninstalled OpenClaw plugin tavily is present in managed configuration");
           }
           for (const id of [
             "telegram",
@@ -2140,13 +2161,6 @@ jobs:
               --platform "$PLATFORM"
           printf 'local_id=%s\n' "$image_id" >> "$GITHUB_OUTPUT"
           printf 'reference=%s\n' "$reference" >> "$GITHUB_OUTPUT"
-
-      - name: Remove anonymous Docker configuration
-        if: always() && steps.build.outputs.docker-config != ''
-        shell: bash
-        env:
-          ANONYMOUS_CONFIG: ${{ steps.build.outputs.docker-config }}
-        run: rm -rf -- "$ANONYMOUS_CONFIG"
 
       - name: Capture exact managed image publication evidence
         id: evidence
@@ -2935,6 +2949,7 @@ jobs:
                     digest,
                     reference,
                     baseReference,
+                    run,
                     publicationEvidence
                   }
                 }) | from_entries)
@@ -2943,7 +2958,11 @@ jobs:
 
           cohort_manifests="$RUNNER_TEMP/managed-image-cohort-manifests.json"
           jq -s 'sort_by(.agent)' "$manifests" > "$cohort_manifests"
-          if ! jq -e '
+          if ! jq -e \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
+            --argjson runId "$GITHUB_RUN_ID" \
+            '
             length == 3
             and ([.[].agent] | sort) == [
               "hermes",
@@ -2964,6 +2983,12 @@ jobs:
               and all(.platforms[];
                 (.digest | test("^sha256:[0-9a-f]{64}$"))
                 and (.baseReference | test("@sha256:[0-9a-f]{64}$"))
+                and (.run | keys | sort) == ["attempt", "id"]
+                and .run.id == $runId
+                and (.run.attempt | type) == "number"
+                and .run.attempt >= 1
+                and (.run.attempt | floor) == .run.attempt
+                and .run.attempt <= $runAttempt
                 and .publicationEvidence.candidateDescriptor.digest == .digest
                 and .publicationEvidence.attestations.manifestDescriptor.annotations[
                   "vnd.docker.reference.digest"
@@ -2972,6 +2997,9 @@ jobs:
                   .publicationEvidence.workloadDescriptor.digest
                 and .publicationEvidence.attestations.spdx.statement.subject.digest ==
                   .publicationEvidence.workloadDescriptor.digest
+                and .publicationEvidence.attestations.slsa.statement.builderId ==
+                  ("https://github.com/" + $repository + "/actions/runs/" +
+                   ($runId | tostring) + "/attempts/" + (.run.attempt | tostring))
               )
             )
           ' "$cohort_manifests" >/dev/null; then
@@ -3117,6 +3145,7 @@ jobs:
             }' > "$cohort_contract"
           jq -e \
             --arg cohort "$cohort" \
+            --arg repository "$GITHUB_REPOSITORY" \
             --arg revision "$GITHUB_SHA" \
             --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
             --argjson runId "$GITHUB_RUN_ID" \
@@ -3151,10 +3180,19 @@ jobs:
                and .alias == (.image + ":cohort-" + $cohort)
                and (.platforms | keys | sort) == ["linux/amd64", "linux/arm64"]
                and all(.platforms[];
-                 .publicationEvidence.candidateDescriptor.digest == .digest
+                 (.run | keys | sort) == ["attempt", "id"]
+                 and .run.id == $runId
+                 and (.run.attempt | type) == "number"
+                 and .run.attempt >= 1
+                 and (.run.attempt | floor) == .run.attempt
+                 and .run.attempt <= $runAttempt
+                 and .publicationEvidence.candidateDescriptor.digest == .digest
                  and .publicationEvidence.attestations.manifestDescriptor.annotations[
                    "vnd.docker.reference.digest"
                  ] == .publicationEvidence.workloadDescriptor.digest
+                 and .publicationEvidence.attestations.slsa.statement.builderId ==
+                   ("https://github.com/" + $repository + "/actions/runs/" +
+                    ($runId | tostring) + "/attempts/" + (.run.attempt | tostring))
                )
              )' "$cohort_contract" >/dev/null
 

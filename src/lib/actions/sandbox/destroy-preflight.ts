@@ -24,7 +24,10 @@ import type {
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import { type DestroyRunOpenshell, selectGatewayForSandboxDestroy } from "./destroy-gateway";
-import { classifyDestroySandboxPresence } from "./destroy-presence";
+import {
+  classifyDestroySandboxPresence,
+  type DestroySandboxPresence,
+} from "./destroy-presence";
 import {
   getPersistedSandboxTargetGatewayName,
   getSandboxTargetGatewayName,
@@ -40,7 +43,26 @@ export type SandboxDestroyPreflight = {
   selectedRunOpenshell: DestroyRunOpenshell;
   sandbox: SandboxEntry | null;
   sandboxConfirmedAbsent: boolean;
+  sandboxPresence?: DestroySandboxPresence;
 };
+
+export function resolveSandboxDestroyGatewayName(
+  sandboxName: string,
+  sandbox: SandboxEntry | null,
+  retainedRecoveryGatewayName?: string,
+): string {
+  const registeredGatewayName = sandbox ? getPersistedSandboxTargetGatewayName(sandbox) : null;
+  if (
+    retainedRecoveryGatewayName &&
+    registeredGatewayName &&
+    retainedRecoveryGatewayName !== registeredGatewayName
+  ) {
+    throw new Error(
+      `Refusing to destroy sandbox '${sandboxName}': retained recovery gateway '${retainedRecoveryGatewayName}' does not match registered gateway '${registeredGatewayName}'.`,
+    );
+  }
+  return retainedRecoveryGatewayName ?? registeredGatewayName ?? getSandboxTargetGatewayName();
+}
 
 export function resolveSandboxDestroyRuntimeSelection(
   sandbox: SandboxEntry | null,
@@ -304,18 +326,11 @@ export function prepareSandboxDestroy(
   // following OpenShell subprocess against that same durable authority. A
   // retained recovery record remains authoritative after a partial destroy
   // has already retired the registry row.
-  const registeredGatewayName = sandbox ? getPersistedSandboxTargetGatewayName(sandbox) : null;
-  if (
-    retainedRecoveryGatewayName &&
-    registeredGatewayName &&
-    retainedRecoveryGatewayName !== registeredGatewayName
-  ) {
-    throw new Error(
-      `Refusing to destroy sandbox '${sandboxName}': retained recovery gateway '${retainedRecoveryGatewayName}' does not match registered gateway '${registeredGatewayName}'.`,
-    );
-  }
-  const cleanupGatewayName =
-    retainedRecoveryGatewayName ?? registeredGatewayName ?? getSandboxTargetGatewayName();
+  const cleanupGatewayName = resolveSandboxDestroyGatewayName(
+    sandboxName,
+    sandbox,
+    retainedRecoveryGatewayName,
+  );
   const runtimeSelection =
     operationRuntimeSelection ?? resolveSandboxDestroyRuntimeSelection(sandbox);
   if (runtimeSelection && runtimeSelection.gatewayName !== cleanupGatewayName) {
@@ -350,13 +365,14 @@ export function prepareSandboxDestroy(
       timeout: OPENSHELL_PROBE_TIMEOUT_MS,
     }),
   );
-  const sandboxConfirmedAbsent = sandboxPresence === "absent";
+
   return {
     cleanupGatewayName,
     runOpenshell,
     selectedRunOpenshell,
     sandbox,
-    sandboxConfirmedAbsent,
+    sandboxConfirmedAbsent: sandboxPresence === "absent",
+    sandboxPresence,
     ...(selectedCaptureOpenshell ? { selectedCaptureOpenshell } : {}),
     ...(runtimeSelection ? { runtimeSelection } : {}),
   };

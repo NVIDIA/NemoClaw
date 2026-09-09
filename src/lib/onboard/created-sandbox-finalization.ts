@@ -22,6 +22,7 @@ import {
   type RecreatedSandboxRestoreOptions,
   type RestoreResult,
 } from "../state/sandbox";
+import { cliName } from "./branding";
 import { createDcodeSelectionDriftReader } from "./dcode-selection-drift";
 import { restoreDefaultAfterRecreate } from "./default-preservation";
 import * as dockerGpuLocalInference from "./docker-gpu-local-inference";
@@ -300,8 +301,8 @@ export function completeOrdinaryOnboardSandboxCreation(
         `  Sandbox '${input.sandboxName}' was created on gateway '${deps.gatewayName}', but NemoClaw could not verify its durable identity.`,
         "  The sandbox registry entry and onboarding session were preserved for recovery.",
         "  Do not delete the sandbox by mutable sandbox name.",
-        "  Ask an OpenShell administrator to establish the exact live durable identity before removal.",
-        "  After confirmed identity-bound removal, rerun the original onboarding command with the same required inputs, add --fresh, and use a new sandbox name.",
+        `  Run '${cliName()} ${input.sandboxName} destroy'. It can clear retained recovery only after OpenShell confirms the sandbox absent.`,
+        "  Until recovery completes, use a different explicit sandbox name for new onboarding.",
       ]) {
         console.error(line);
       }
@@ -808,7 +809,9 @@ export function finalizeCreatedSandbox(
     deps.error(
       `  NemoClaw left unregistered sandbox '${options.sandboxName}' in place because OpenShell can delete it only by mutable name.`,
     );
-    deps.error("  Verify its durable identity before manual cleanup; do not act by name alone.");
+    deps.error(
+      `  Recovery remains blocked while this sandbox exists. Do not delete it by mutable name; run '${cliName()} ${options.sandboxName} destroy' to check for authoritative absence.`,
+    );
   };
   let freshOpenClawImagePluginInstalls: readonly OpenClawImagePluginInstall[] | undefined;
   if (options.discoverOpenClawImagePluginInstalls === true) {
