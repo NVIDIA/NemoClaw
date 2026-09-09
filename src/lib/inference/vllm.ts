@@ -2064,6 +2064,9 @@ async function runVllmInstall(
         promptFn: opts.promptFn,
         beforeInstall: opts.beforeInstall,
         checkpointInstallIntent: opts.checkpointInstallIntent,
+        // This branch returns before the host-local revalidation below, so the
+        // resumed checkpoint has to travel with it (#11148).
+        resumedPresetModel,
       },
       {
         prerequisites: dockerPrereqsOk,
