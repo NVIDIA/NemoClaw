@@ -330,6 +330,7 @@ describe("Hermes privileged state capture scripts", () => {
 
     expect(captured.status).toBe(13);
     expect(fs.readFileSync(path.join(workspace, "late-state"), "utf8")).toBe("late");
+    expect(captured.stdout.includes(Buffer.from("late"))).toBe(false);
   });
 
   it("rejects unsafe directory entries before streaming a tar archive", () => {
@@ -352,7 +353,9 @@ describe("Hermes privileged state capture scripts", () => {
     );
     expect(captured.status).toBe(0);
     expect(spawnSync("tar", ["-tf", "-"], { input: captured.stdout }).status).toBe(0);
-    fs.symlinkSync(path.join(workspace, "marker"), path.join(workspace, "unsafe"));
+    const outside = path.join(path.dirname(directory), "outside-secret");
+    fs.writeFileSync(outside, "outside-secret");
+    fs.symlinkSync(outside, path.join(workspace, "unsafe"));
     const unsafe = spawnSync(
       "/usr/bin/python3",
       [
@@ -367,6 +370,7 @@ describe("Hermes privileged state capture scripts", () => {
       { encoding: null },
     );
     expect(unsafe.status).not.toBe(0);
+    expect(unsafe.stdout.includes(Buffer.from("outside-secret"))).toBe(false);
   });
 
   it("stops a directory archive before it exceeds the supplied byte limit", () => {

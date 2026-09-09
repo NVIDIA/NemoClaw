@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { afterAll, expect, it } from "vitest";
+import { afterAll, expect, it, vi } from "vitest";
 
 // sandbox-state captures HOME when the module loads, so isolate its registry
 // and rebuild backups before importing it.
@@ -283,7 +283,20 @@ it("keeps a failed privileged Hermes capture unpublished and removes its staging
 });
 
 it("rejects an oversized privileged Hermes archive and removes its staging file (#10375)", () => {
-  const result = exercisePermissionDeniedDirectoryCapture("oversized");
+  const oldVerbose = process.env.NEMOCLAW_REBUILD_VERBOSE;
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  let diagnostics: string[] = [];
+  let result: ReturnType<typeof exercisePermissionDeniedDirectoryCapture>;
+  try {
+    process.env.NEMOCLAW_REBUILD_VERBOSE = "1";
+    result = exercisePermissionDeniedDirectoryCapture("oversized");
+  } finally {
+    diagnostics = errorSpy.mock.calls.map(([message]) => String(message));
+    errorSpy.mockRestore();
+    oldVerbose === undefined
+      ? delete process.env.NEMOCLAW_REBUILD_VERBOSE
+      : (process.env.NEMOCLAW_REBUILD_VERBOSE = oldVerbose);
+  }
 
   expect(result.backup.success).toBe(false);
   expect(result.backup.backedUpDirs).toEqual([]);
@@ -292,6 +305,13 @@ it("rejects an oversized privileged Hermes archive and removes its staging file 
   expect(sandboxState.findBackup("hermes", "directory-oversized").match).toBeNull();
   expect(result.restoredMarker).toBeNull();
   expect(result.stagingEntries).toEqual([]);
+  expect(
+    diagnostics.some((message) =>
+      message.endsWith(
+        "FAILED: privileged state directory capture: archive exceeded the 268435456-byte snapshot limit",
+      ),
+    ),
+  ).toBe(true);
 });
 
 it("fails closed when the remote Hermes SQLite backup command fails (#7144)", () => {
