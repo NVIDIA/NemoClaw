@@ -649,7 +649,7 @@ describe("CLI dispatch", () => {
     );
   });
 
-  it("dispatches the global doctor without a sandbox name (#10212)", async () => {
+  it("dispatches bare doctor globally despite a same-named sandbox (#11159)", async () => {
     await withDirectPublicDispatch(
       async ({
         dispatchCli,
@@ -669,6 +669,7 @@ describe("CLI dispatch", () => {
         expect(recoverRegistryEntries).not.toHaveBeenCalled();
         expect(stderr).toEqual([]);
       },
+      { sandboxNames: ["doctor"] },
     );
   });
 
@@ -944,7 +945,6 @@ describe("CLI dispatch", () => {
   });
 
   it.each([
-    { label: "bare", args: [] as string[], migrationCalls: 1, helpCalls: 0 },
     { label: "help", args: ["--help"], migrationCalls: 0, helpCalls: 1 },
     { label: "probe-only", args: ["--probe-only"], migrationCalls: 1, helpCalls: 0 },
   ])("keeps $label connect for a sandbox literally named doctor (#10212)", async (testCase) => {
@@ -978,7 +978,6 @@ describe("CLI dispatch", () => {
   });
 
   it.each([
-    { label: "bare", args: [] as string[] },
     { label: "probe-only", args: ["--probe-only"] },
   ])("migrates a legacy sandbox named doctor before $label connect (#10212)", async (testCase) => {
     await withDirectPublicDispatch(
