@@ -58,6 +58,7 @@ describe("DCode rebuild orchestrator", () => {
         "progressive",
         "disabled",
         false,
+        false,
         19_080,
         baseImageOptions,
       ),
@@ -94,10 +95,19 @@ describe("DCode rebuild orchestrator", () => {
     const resolutionHint = { key: "sandbox-alpha" } as SandboxBaseImageResolutionMetadata;
 
     await expect(
-      orchestrator.prepareImage(resumeConfig, null, "progressive", "thread-opt-in", false, 19_080, {
-        resolutionHint,
-        forceBaseImageRefresh: true,
-      }),
+      orchestrator.prepareImage(
+        resumeConfig,
+        null,
+        "progressive",
+        "thread-opt-in",
+        false,
+        false,
+        19_080,
+        {
+          resolutionHint,
+          forceBaseImageRefresh: true,
+        },
+      ),
     ).resolves.toBe(true);
 
     expect(prepareDcodeReplacementBeforeMutation).toHaveBeenCalledWith(
@@ -109,6 +119,7 @@ describe("DCode rebuild orchestrator", () => {
         toolDisclosure: "progressive",
         dcodeAutoApprovalMode: "thread-opt-in",
         skipLiveRoute: false,
+        degradeUnavailableRoute: false,
         gatewayPort: 19_080,
         baseImageOptions: {
           resolutionHint,
@@ -143,7 +154,15 @@ describe("DCode rebuild orchestrator", () => {
     });
 
     await expect(
-      orchestrator.prepareImage(resumeConfig, null, "progressive", "thread-opt-in", false, 19_080),
+      orchestrator.prepareImage(
+        resumeConfig,
+        null,
+        "progressive",
+        "thread-opt-in",
+        false,
+        false,
+        19_080,
+      ),
     ).resolves.toBe(true);
 
     expect(revalidateManagedDcodeWorkloadAtMutationEdge).toHaveBeenCalledWith(
@@ -159,13 +178,21 @@ describe("DCode rebuild orchestrator", () => {
         "progressive",
         "thread-opt-in",
         false,
+        false,
         19_080,
       ),
     ).resolves.toBe(true);
 
     vi.mocked(revalidateManagedDcodeWorkloadAtMutationEdge).mockResolvedValueOnce(false);
     await expect(
-      orchestrator.checkAtDeleteEdge(resumeConfig, "progressive", "thread-opt-in", false, 19_080),
+      orchestrator.checkAtDeleteEdge(
+        resumeConfig,
+        "progressive",
+        "thread-opt-in",
+        false,
+        false,
+        19_080,
+      ),
     ).resolves.toEqual({
       ok: false,
       message: "Managed DCode workload validation failed before sandbox deletion.",
@@ -175,7 +202,14 @@ describe("DCode rebuild orchestrator", () => {
       async ({ bail: managedBail }) => managedBail("managed authority changed", 74),
     );
     await expect(
-      orchestrator.checkAtDeleteEdge(resumeConfig, "progressive", "thread-opt-in", false, 19_080),
+      orchestrator.checkAtDeleteEdge(
+        resumeConfig,
+        "progressive",
+        "thread-opt-in",
+        false,
+        false,
+        19_080,
+      ),
     ).resolves.toEqual({ ok: false, message: "managed authority changed", code: 74 });
   });
 });

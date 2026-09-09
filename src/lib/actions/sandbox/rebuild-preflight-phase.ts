@@ -307,6 +307,7 @@ export async function runRebuildPreflightPhase(
           preparedTarget.targetConfig.durableConfig.toolDisclosure,
           preparedTarget.targetConfig.durableConfig.dcodeAutoApprovalMode,
           recoveryRecreate,
+          liveState.terminalPhase,
           preparedTarget.recreateOptions.targetGatewayPort,
           {
             resolutionHint: preparedTarget.recreateOptions.baseImageResolutionHint,

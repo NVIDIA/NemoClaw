@@ -95,7 +95,10 @@ export type RebuildFlowOverrides = {
   gatewayPresets?: string[];
   verificationUnavailableAfterPresetRemoval?: boolean;
   updateSession?: () => void;
-  dcodeRouteResults?: Array<{ ok: true } | { ok: false; detail: string }>;
+  dcodeRouteResults?: Array<
+    | { ok: true }
+    | { ok: false; detail: string; httpStatus?: number | null; unavailable?: boolean }
+  >;
   gatewayRecoveryResult?: Record<string, unknown>;
   dcodeImageVerificationResults?: boolean[];
   dcodeBaseImageIds?: string[];

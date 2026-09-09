@@ -27,7 +27,18 @@ export type SandboxInferenceInvocationInput = {
 
 export type SandboxInferenceInvocationResult =
   | { ok: true }
-  | { ok: false; detail: string; httpStatus: number | null };
+  | {
+      ok: false;
+      detail: string;
+      httpStatus: number | null;
+      /**
+       * True only when the in-sandbox probe could not run at all (the exec did
+       * not produce a usable result), as opposed to reaching the route and
+       * getting a rejection. A stuck/unresponsive container yields this. See
+       * #11165: rebuild must be able to recover such a sandbox.
+       */
+      unavailable?: boolean;
+    };
 
 export type SandboxInferenceInvocationDeps = {
   runOpenshell?: typeof runOpenshellProviderCommand;
@@ -198,6 +209,7 @@ export function probeSandboxInferenceInvocation(
       ok: false,
       detail: "sandbox inference invocation probe was unavailable",
       httpStatus: null,
+      unavailable: true,
     };
   }
   if (result.status === 0) {

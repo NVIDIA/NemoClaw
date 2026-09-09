@@ -283,6 +283,7 @@ describe("rebuild gateway drift preflight", () => {
     ).resolves.toEqual({
       staleRecovery: true,
       staleRegistrySnapshot: registrySnapshot,
+      terminalPhase: false,
     });
 
     expect(registryPersistence.load).toHaveBeenCalledOnce();
@@ -290,6 +291,30 @@ describe("rebuild gateway drift preflight", () => {
       "transaction-bound policy handoff is intact",
     );
     expect(errorSpy).not.toHaveBeenCalled();
+  });
+
+  it("flags a live sandbox in a terminal phase for rebuild recovery (#11165)", async () => {
+    const entry = makeSandboxEntry();
+    const behaviorLog = vi.fn();
+    captureOpenshellSpy.mockReturnValueOnce({ status: 0, output: "alpha Error" });
+
+    await expect(resolveRebuildLiveState("alpha", entry, behaviorLog, bail)).resolves.toEqual({
+      staleRecovery: false,
+      staleRegistrySnapshot: null,
+      terminalPhase: true,
+    });
+    expect(behaviorLog.mock.calls.flat().join("\n")).toContain("terminal phase 'Error'");
+  });
+
+  it("keeps a live Ready sandbox on the normal rebuild path (#11165)", async () => {
+    const entry = makeSandboxEntry();
+    captureOpenshellSpy.mockReturnValueOnce({ status: 0, output: "alpha Ready" });
+
+    await expect(resolveRebuildLiveState("alpha", entry, vi.fn(), bail)).resolves.toEqual({
+      staleRecovery: false,
+      staleRegistrySnapshot: null,
+      terminalPhase: false,
+    });
   });
 
   it("recovers the named gateway before a generic sandbox-list query fails (#10421)", async () => {
