@@ -258,6 +258,30 @@ it("does not qualify structured turns recorded before the baseline (#9160)", () 
   expect(qualification.status).toBe(1);
 });
 
+it.each([
+  { content: undefined, contentShape: "missing" },
+  { content: null, contentShape: "null" },
+  { content: {}, contentShape: "object-valued" },
+])("rejects a provider error with $contentShape content (#10978)", ({ content }) => {
+  const after = {
+    "session-a": [message("user"), providerUnavailableMessage({ content })],
+  };
+  const { baseline, qualification } = runEvidenceFixture({ after, expectedTurns: 1 });
+
+  expect(baseline.status).toBe(0);
+  expect(qualification.status).toBe(2);
+});
+
+it("rejects a provider error when later messages are appended (#10978)", () => {
+  const after = {
+    "session-a": [message("user"), providerUnavailableMessage(), message("assistant")],
+  };
+  const { baseline, qualification } = runEvidenceFixture({ after, expectedTurns: 1 });
+
+  expect(baseline.status).toBe(0);
+  expect(qualification.status).toBe(2);
+});
+
 it.each<{ after: SessionRecords; status: number }>([
   { after: { "session-a": [message("assistant"), message("user")] }, status: 2 },
   {

@@ -978,15 +978,16 @@ const providerAuthenticationError =
 
 function isStructuredProviderUnavailable(message) {
   const errorMessage = typeof message.errorMessage === "string" ? message.errorMessage.trim() : "";
+  const validEmptyContent = JSON.stringify(message.content) === "[]";
   const identity = [
     message.role,
-    hasStructuredContent(message),
+    validEmptyContent,
     message.stopReason,
     message.api,
     message.provider,
   ].join("\n");
   return (
-    identity === "assistant\nfalse\nerror\nopenai-completions\ninference" &&
+    identity === "assistant\ntrue\nerror\nopenai-completions\ninference" &&
     typeof message.errorCode === "string" &&
     providerUnavailableCodes.has(message.errorCode.trim()) &&
     providerUnavailableError.test(errorMessage) &&
@@ -1052,20 +1053,25 @@ function qualifyTurns() {
 
   const { messages, sessionId } = changedSessions[0];
   const expectedRoles = Array.from({ length: expectedTurns }, () => ["user", "assistant"]).flat();
+  const providerUnavailableIndex = messages.findIndex((message) => message.providerUnavailable);
   for (const [index, message] of messages.entries()) {
-    if (index >= expectedRoles.length) finish(2, "extra_message", { sessionId });
+    if (index >= expectedRoles.length || (providerUnavailableIndex !== -1 && index > providerUnavailableIndex)) {
+      const reason = index >= expectedRoles.length ? "extra_message" : "message_after_provider_unavailable";
+      finish(2, reason, { sessionId });
+    }
     if (message.role !== expectedRoles[index]) {
       finish(2, "message_order_invalid", { sessionId });
     }
-    if (!message.hasStructuredContent) {
-      const emptyStatus = message.providerUnavailable ? 3 : 2;
-      const emptyReason = message.providerUnavailable
-        ? "provider_unavailable"
-        : "message_content_empty";
-      finish(emptyStatus, emptyReason, { sessionId });
+    if (!message.hasStructuredContent && !message.providerUnavailable) {
+      finish(2, "message_content_empty", { sessionId });
     }
   }
-  if (messages.length < expectedRoles.length) finish(1);
+  const providerUnavailable = providerUnavailableIndex !== -1;
+  if (providerUnavailable || messages.length < expectedRoles.length) {
+    finish(providerUnavailable ? 3 : 1, providerUnavailable ? "provider_unavailable" : undefined, {
+      sessionId,
+    });
+  }
   finish(0);
 }
 
